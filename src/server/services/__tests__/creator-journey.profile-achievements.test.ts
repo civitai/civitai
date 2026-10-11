@@ -128,6 +128,52 @@ describe('getProfileAchievements', () => {
     expect(result.achievements.find((a) => a.key === 'create:models-25')?.hint).toBeNull();
   });
 
+  // A visitor who opened a shared special's link holds its key from the link; that card is keyed by
+  // it, so the tab can ring it. Nothing else about it, or about any other secret, changes.
+  it('keys the secret a shared link named by that key, and only that one', async () => {
+    const other = row({
+      key: 'hidden:early-bird',
+      track: 'hidden',
+      hidden: true,
+      name: 'Early Bird',
+      cosmeticId: 3002,
+    });
+    given([MODELS, SECRET, other]);
+    const result = await getProfileAchievements({
+      userId: OWNER,
+      viewerId: VISITOR,
+      spotlight: 'hidden:night-owl',
+    });
+    expect(result.achievements).toEqual([
+      expect.objectContaining({ key: 'create:models-25' }),
+      {
+        key: 'hidden:night-owl',
+        track: 'secret',
+        name: null,
+        description: null,
+        hint: null,
+        badgeUrl: 'art-3001',
+        achievedAt: OBSERVED,
+      },
+      expect.objectContaining({ key: 'secret:2', name: null }),
+    ]);
+    const payload = JSON.stringify(result);
+    expect(payload).not.toContain('Night Owl');
+    expect(payload).not.toContain('2am');
+    expect(payload).not.toContain('midnight oil');
+    expect(payload).not.toContain('early-bird');
+  });
+
+  it('keys nothing differently for a link naming a secret the creator does not hold', async () => {
+    const plain = await getProfileAchievements({ userId: OWNER, viewerId: VISITOR });
+    const guessed = await getProfileAchievements({
+      userId: OWNER,
+      viewerId: VISITOR,
+      spotlight: 'hidden:night-owk',
+    });
+    expect(guessed).toEqual(plain);
+  });
+
   it('lists held tiers lowest first and keeps them out of the achievements', async () => {
     const result = await getProfileAchievements({ userId: OWNER, viewerId: VISITOR });
     expect(result.tiers.map((t) => t.key)).toEqual(['score:spark', 'score:supernova']);

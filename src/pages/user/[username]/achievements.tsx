@@ -31,8 +31,9 @@ export const getServerSideProps = createServerSideProps({
 function AchievementsPage() {
   const router = useRouter();
   const username = router.query.username as string;
+  const spotlight = parseMilestoneShareToken(router.query.milestone);
   const { data: user } = trpc.userProfile.get.useQuery({ username }, { enabled: !!username });
-  const { data, count, isLoading } = useProfileAchievements(user?.id);
+  const { data, count, isLoading } = useProfileAchievements(user?.id, spotlight);
 
   if (!user || isLoading)
     return (
@@ -50,11 +51,7 @@ function AchievementsPage() {
 
   return (
     <div className="py-6">
-      <ProfileAchievementsList
-        data={data}
-        userId={user.id}
-        spotlight={parseMilestoneShareToken(router.query.milestone)}
-      />
+      <ProfileAchievementsList data={data} userId={user.id} spotlight={spotlight} />
     </div>
   );
 }

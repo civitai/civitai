@@ -170,7 +170,9 @@ function Spotlit({
     <div
       id={milestoneCardId(spotlight)}
       data-spotlight
-      className="scroll-mt-24 rounded-lg ring-2 ring-yellow-5 ring-offset-2 ring-offset-white dark:ring-offset-dark-7"
+      // A one-cell grid: this is the grid item that stretches to the row, and its card stretches with
+      // it. Same radius as the card, so the ring follows its corners.
+      className="grid scroll-mt-24 rounded-md ring-2 ring-yellow-5 ring-offset-2 ring-offset-white dark:ring-offset-dark-7"
     >
       {children}
     </div>
@@ -200,9 +202,14 @@ export function ProfileAchievementsList({
     [...data.tiers, ...data.achievements].some((milestone) => milestone.key === spotlightKey);
   useEffect(() => {
     if (!spotlit || !spotlight) return;
-    document
-      .getElementById(milestoneCardId(spotlight))
-      ?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    // A frame later: the app's scroll area resets to the top in its own effect, which runs after
+    // this one when the list mounts with the page (data already cached by the profile).
+    const frame = requestAnimationFrame(() =>
+      document
+        .getElementById(milestoneCardId(spotlight))
+        ?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    );
+    return () => cancelAnimationFrame(frame);
   }, [spotlit, spotlight]);
   const thresholds = new Map(ladder?.tiers.map((tier) => [tier.key, tier.threshold]));
   const highest = data.tiers.at(-1);

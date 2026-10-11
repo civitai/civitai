@@ -2,7 +2,10 @@ import { clickhouse } from '~/server/clickhouse/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import type { FirstPublishCardInput } from '~/server/schema/creator-journey.schema';
-import { FIRST_PUBLISH_CARD_DAYS } from '~/shared/constants/creator-journey.constants';
+import {
+  FIRST_PUBLISH_CARD_DAYS,
+  milestoneKeyOfShareToken,
+} from '~/shared/constants/creator-journey.constants';
 import { ArticleStatus, ModelStatus } from '~/shared/utils/prisma/enums';
 import { getCreatorScoreUnlocks } from '~/server/services/creator-score-unlocks.service';
 import type { CreatorScoreTier } from '~/shared/utils/creator-score-unlocks';
@@ -363,9 +366,11 @@ export async function getLegendStatus(userId: number, source?: ShowcaseSource) {
 export async function getProfileAchievements({
   userId,
   viewerId,
+  spotlight,
 }: {
   userId: number;
   viewerId?: number;
+  spotlight?: string;
 }) {
   const [user, rows] = await Promise.all([
     dbRead.user.findUnique({
@@ -398,6 +403,7 @@ export async function getProfileAchievements({
 
   const privacy = user.profile?.privacySettings as PrivacySettingsSchema | null | undefined;
   const isOwner = viewerId === userId;
+  const spotlightKey = spotlight ? milestoneKeyOfShareToken(spotlight) : undefined;
   const shown = rows.filter((row) => isBadgeShownOnProfile(privacy, row.milestone.cosmeticId));
   // A hidden tier is a secret like any other, so a visitor sees it with the secret achievements.
   const isTier = (milestone: (typeof rows)[number]['milestone']) =>
@@ -419,8 +425,9 @@ export async function getProfileAchievements({
       const { milestone } = row;
       const secret = milestone.hidden && !isOwner;
       return {
-        // Keys can name the milestone, so a secret one is keyed by its place in this list.
-        key: secret ? `secret:${index}` : milestone.key,
+        // Keys can name the milestone, so a secret one is keyed by its place in this list, except the
+        // one a shared link named: the visitor already holds that key, from the link.
+        key: secret && milestone.key !== spotlightKey ? `secret:${index}` : milestone.key,
         track: milestone.hidden ? 'secret' : milestone.track,
         name: secret ? null : milestone.name,
         description: secret ? null : milestone.description,
