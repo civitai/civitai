@@ -78,7 +78,7 @@ vi.mock('~/server/auth/session-client', () => ({
 }));
 vi.mock('~/server/db/appsDb', () => ({ requireAppsDb: () => mockPool }));
 vi.mock('~/server/utils/shared-storage-rate-limit', () => ({
-  checkSharedAppendRateLimit: vi.fn(async () => ({ allowed: true })),
+  reserveSharedWrite: vi.fn(async () => ({ allowed: true, release: async () => undefined })),
   checkSharedVoteRateLimit: (...a: unknown[]) => mockCheckVoteRl(...a),
 }));
 vi.mock('~/server/services/block-revocation.service', () => ({
@@ -102,6 +102,7 @@ vi.mock('~/server/clickhouse/client', () => ({
 vi.mock('~/server/services/blocklist.service', () => ({
   throwOnBlockedLinkDomain: vi.fn(async () => undefined),
   throwOnBlockedUserContent: vi.fn(),
+  getBlocklistData: async () => [],
   findBlockedUserContent: (values: unknown, opts?: unknown) => mockFindBlocked(values, opts),
   stripBenignPhrases: async (text: string) => text,
 }));

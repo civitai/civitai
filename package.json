@@ -417,6 +417,7 @@
     "typescript": "^5.9.2",
     "vitest": "^4.1.11",
     "vitest-browser-react": "^2.2.0",
+    "wasmoon": "1.16.0",
     "ws": "^8.19.0"
   },
   "ct3aMetadata": {

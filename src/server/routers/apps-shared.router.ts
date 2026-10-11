@@ -44,7 +44,10 @@ import { newUlid } from '~/server/utils/app-block-ids';
 import { parseSubjectUserId, verifyBlockToken } from '~/server/middleware/block-scope.middleware';
 import { BlockRevocation } from '~/server/services/block-revocation.service';
 import { logToAxiom } from '~/server/logging/client';
-import { escalateToServerFault } from '~/server/logging/server-fault-override';
+import {
+  escalateToServerFault,
+  isEscalatedServerFault,
+} from '~/server/logging/server-fault-override';
 import { FLIPT_FEATURE_FLAGS, getFliptBoolean } from '~/server/flipt/client';
 import { isAppBlocksSharedStorageEnabled } from '~/server/services/app-blocks-flag';
 import {
@@ -73,10 +76,10 @@ import {
   type SharedTextScan,
 } from '~/server/services/apps/shared-data-moderation';
 import {
-  checkSharedAppendRateLimit,
   checkSharedVoteRateLimit,
   checkSharedReportRateLimit,
   checkSharedWithdrawRateLimit,
+  reserveSharedWrite,
 } from '~/server/utils/shared-storage-rate-limit';
 import { throwSharedRateLimited } from '~/server/utils/rate-limit-error';
 import { moderatorProcedure, publicProcedure, router } from '~/server/trpc';
@@ -427,6 +430,41 @@ export const SHARED_REASON_MAX = 500;
 
 const sharedKeyInput = z.string().min(1).max(SHARED_KEY_MAX);
 
+/**
+ * A JSON.stringify'd escape Postgres' jsonb input refuses: NUL (`\u0000`, error 22P05) or an
+ * unpaired UTF-16 surrogate (`\ud800`–`\udfff`, error 22P02). Both were measured against
+ * Postgres 18 through node-postgres with the stored-size probe's `::jsonb::text` cast, in a string
+ * value, an object key and the title; a paired surrogate (an emoji), `\u0001` and the literal six
+ * characters `\u0000` all store.
+ *
+ * JSON.stringify writes these as `\uXXXX` escapes (a paired surrogate is written raw; other
+ * control characters are escaped too, hence the specific code points) and every literal backslash
+ * as `\\`, so an escape preceded by an EVEN run of backslashes is a real character, while text
+ * that spells `\u0000` serializes as `\\u0000` and is not matched.
+ */
+const JSONB_UNSTORABLE_ESCAPE = /(?<!\\)(?:\\\\)*\\u(?:0000|d[89a-f][0-9a-f]{2})/;
+const JSONB_UNSTORABLE_MESSAGE = 'value contains a NUL character or an unpaired surrogate';
+
+/**
+ * Whether a shared value holds text Postgres cannot store (NUL or an unpaired surrogate, at any
+ * depth, in a value or an object key). Checks the value as JSON.stringify writes it, which is
+ * how it is stored.
+ *
+ * Runs before moderation so a value Postgres will refuse costs no moderation run: the jsonb cast
+ * first fails at the stored-size probe, after the content-safety belt. A value JSON.stringify
+ * cannot serialize (BigInt, a cycle) returns false here; the serialize guard in
+ * `assertSharedValueSafeAndSerialize` refuses it.
+ */
+function hasJsonbUnstorableText(value: unknown): boolean {
+  let serialized: string;
+  try {
+    serialized = JSON.stringify(value);
+  } catch {
+    return false;
+  }
+  return serialized !== undefined && JSONB_UNSTORABLE_ESCAPE.test(serialized);
+}
+
 // Structured append payload (design M3: title ≤200, body ≤ few KB).
 //
 // `title`/`body` are the MODERATED, user-visible TEXT — they run the full
@@ -450,11 +488,16 @@ const sharedKeyInput = z.string().min(1).max(SHARED_KEY_MAX);
 // REST copy that drifted — an extra key admitted, `title` made optional — would be
 // a difference only a fuzzer would find, on the one input that reaches the
 // content-safety belt.
-export const sharedValueInput = z.object({
-  title: z.string().min(1).max(SHARED_TITLE_MAX),
-  body: z.string().max(SHARED_BODY_MAX).optional(),
-  data: z.unknown().optional(),
-});
+//
+// The refine refuses text Postgres cannot store, before the request reaches the write budget
+// or moderation — see `hasJsonbUnstorableText`.
+export const sharedValueInput = z
+  .object({
+    title: z.string().min(1).max(SHARED_TITLE_MAX),
+    body: z.string().max(SHARED_BODY_MAX).optional(),
+    data: z.unknown().optional(),
+  })
+  .refine((value) => !hasJsonbUnstorableText(value), { message: JSONB_UNSTORABLE_MESSAGE });
 
 // ── Shared READ surface (tRPC procedures + block REST adapters) ───────────────
 // The three functions below are the ONE implementation of every shared read.
@@ -708,30 +751,85 @@ export interface SharedValueInput {
   data?: unknown;
 }
 
+type SharedWriteContext = SharedContext & { uid: number };
+
+/**
+ * Runs an append/update against the (user, app) write budget: a token is reserved before
+ * moderation and given back unless the write calls `markLanded` — so only landed writes spend
+ * the budget, while moderation stays bounded per landed write.
+ *
+ * 🔴 A failure that did not land is refunded FREE only if it is marked as our server fault
+ * (`escalateToServerFault`); every other failure, 4xx or not, is also charged to the rejection
+ * bucket. The marked set is:
+ *   - the `data` scan failing (`enforceScan`) and the title/body belt's blocklist read failing
+ *     (`assertSharedTextSafe`) — both refused as a 400 but escalated;
+ *   - transaction plumbing (`asTransactionFault`): acquiring the connection, BEGIN, the
+ *     `SET LOCAL` of the server-derived app id, and COMMIT.
+ * It is an allow-list because a refund is only safe for a failure the caller cannot cause.
+ *
+ * Accepted cost: a database brownout that fails any other query (e.g. the row count, the
+ * stored-size probe, the INSERT/UPDATE) is charged to the caller, so retries during an outage can
+ * empty the rejection bucket (or, with writes in flight at once, run it into debt) and delay the
+ * next write by up to the cap described at `SHARED_WRITE_BUDGET.rejections`. Do not mark the
+ * probe or the INSERT/UPDATE: they carry the caller's value, and marking them reopens the hole
+ * this rule closes.
+ */
+async function withSharedWriteBudget<T>(
+  ctx: SharedWriteContext,
+  write: (markLanded: () => void) => Promise<T>
+): Promise<T> {
+  const budget = await reserveSharedWrite(ctx.uid, ctx.appBlockId);
+  if (!budget.allowed)
+    throwSharedRateLimited(budget, `Too many submissions — retry in ${budget.retryAfterSeconds}s`);
+  let landed = false;
+  try {
+    return await write(() => {
+      landed = true;
+    });
+  } catch (err) {
+    if (!landed) await budget.release({ rejected: !isEscalatedServerFault(err) });
+    throw err;
+  }
+}
+
+/**
+ * Marks a failure of transaction plumbing as our server fault, so the write budget refunds it.
+ * Only for statements with no caller input (the connection, BEGIN, a `SET LOCAL` of a
+ * server-derived value, COMMIT): nothing a caller sends can make them fail. Do NOT wrap the
+ * INSERT/UPDATE or the stored-size probe — they carry the caller's value, and a value can make
+ * them fail. The marker changes no status or message; a plain error is already logged as a
+ * server fault.
+ */
+function asTransactionFault<T>(op: Promise<T>): Promise<T> {
+  return op.catch((err: unknown) => {
+    throw escalateToServerFault(err);
+  });
+}
+
 /**
  * Create a shared row (a "request"). The server GENERATES a ULID key (C1: never
  * accept a client key on create → user B can't overwrite user A's row).
  * INSERT-only; author = the token subject. Runs the BLOCKING content-safety belt
  * (C2/C3/M1) synchronously, the per-user + per-app row caps + byte quota, and the
- * per-(user,app) daily rate limit — all before the row lands.
+ * per-(user,app) write budget — all before the row lands.
  */
 export async function appendSharedRow(
   blockToken: string,
   value: SharedValueInput
 ): Promise<{ key: string }> {
-  const { userId, subjectUser, slug, schema, appBlockId } = await resolveSharedContext(
-    blockToken,
-    'append'
-  );
+  const ctx = await resolveSharedContext(blockToken, 'append');
   // userId is non-null (trust gate ran in the resolver).
-  const uid = userId as number;
+  const writeCtx = { ...ctx, uid: ctx.userId as number };
+  return withSharedWriteBudget(writeCtx, (markLanded) =>
+    appendWithinBudget(writeCtx, value, markLanded)
+  );
+}
 
-  // Rate limit FIRST — bounds a flood AND the external-moderation cost the
-  // safety belt would otherwise incur per attempt.
-  const rl = await checkSharedAppendRateLimit(uid, appBlockId);
-  if (!rl.allowed)
-    throwSharedRateLimited(rl, `Too many submissions — retry in ${rl.retryAfterSeconds}s`);
-
+async function appendWithinBudget(
+  { uid, subjectUser, slug, schema, appBlockId }: SharedWriteContext,
+  value: SharedValueInput,
+  markLanded: () => void
+): Promise<{ key: string }> {
   // BLOCKING content safety (belt on title/body) + serialize-guard + whole-value
   // byte cap → RAW, store-ready serialized JSON. Shared verbatim with `update`
   // (see assertSharedValueSafeAndSerialize): a policy-violating edit and a create
@@ -799,11 +897,13 @@ export async function appendSharedRow(
   }
 
   const key = newUlid();
-  const client = await pool.connect();
+  const client = await asTransactionFault(pool.connect());
   try {
-    await client.query('BEGIN');
+    await asTransactionFault(client.query('BEGIN'));
     // GUC drives the shared_kv quota trigger (byte/row accounting).
-    await client.query(`SET LOCAL app.current_app_block_id = ${pgQuoteLiteral(appBlockId)}`);
+    await asTransactionFault(
+      client.query(`SET LOCAL app.current_app_block_id = ${pgQuoteLiteral(appBlockId)}`)
+    );
     await client.query(
       `INSERT INTO ${schema}.shared_kv (key, author_user_id, value)
            VALUES ($1, $2, $3::jsonb)`,
@@ -815,7 +915,8 @@ export async function appendSharedRow(
            ON CONFLICT (key) DO NOTHING`,
       [key]
     );
-    await client.query('COMMIT');
+    await asTransactionFault(client.query('COMMIT'));
+    markLanded();
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
     throw err;
@@ -851,26 +952,27 @@ export async function appendSharedRow(
  * the write. The write is IN PLACE: value + updated_at (+ the generated size_bytes,
  * which the shared_kv UPDATE quota trigger folds into used_bytes) change; the key,
  * author_user_id, created_at, and the row's votes/counters/reports are PRESERVED.
- * Shares append's daily rate-limit bucket so an edit isn't an unbounded write.
+ * Shares append's write budget so an edit isn't an unbounded write.
  */
 export async function updateSharedRow(
   blockToken: string,
   key: string,
   value: SharedValueInput
 ): Promise<{ ok: true }> {
-  const { userId, subjectUser, slug, schema, appBlockId } = await resolveSharedContext(
-    blockToken,
-    'update'
-  );
+  const ctx = await resolveSharedContext(blockToken, 'update');
   // userId is non-null (trust gate ran in the resolver).
-  const uid = userId as number;
+  const writeCtx = { ...ctx, uid: ctx.userId as number };
+  return withSharedWriteBudget(writeCtx, (markLanded) =>
+    updateWithinBudget(writeCtx, key, value, markLanded)
+  );
+}
 
-  // Same daily bucket as append (design H4) so repeated edits can't become an
-  // unbounded write — AND it bounds the external-moderation cost the belt incurs.
-  const rl = await checkSharedAppendRateLimit(uid, appBlockId);
-  if (!rl.allowed)
-    throwSharedRateLimited(rl, `Too many submissions — retry in ${rl.retryAfterSeconds}s`);
-
+async function updateWithinBudget(
+  { uid, subjectUser, slug, schema, appBlockId }: SharedWriteContext,
+  key: string,
+  value: SharedValueInput,
+  markLanded: () => void
+): Promise<{ ok: true }> {
   const pool = requireAppsDb();
 
   // Resolve the target row in THIS app's schema (schema is server-derived from the
@@ -1022,11 +1124,13 @@ export async function updateSharedRow(
   // gated in the WHERE too — belt-and-suspenders against a race between the SELECT
   // above and this write. Only `value`/`updated_at` change → key, author_user_id,
   // created_at and the FK'd votes/counters/reports are all PRESERVED.
-  const client = await pool.connect();
+  const client = await asTransactionFault(pool.connect());
   let updated = 0;
   try {
-    await client.query('BEGIN');
-    await client.query(`SET LOCAL app.current_app_block_id = ${pgQuoteLiteral(appBlockId)}`);
+    await asTransactionFault(client.query('BEGIN'));
+    await asTransactionFault(
+      client.query(`SET LOCAL app.current_app_block_id = ${pgQuoteLiteral(appBlockId)}`)
+    );
     const result = await client.query(
       `UPDATE ${schema}.shared_kv
               SET value = $2::jsonb, updated_at = now()
@@ -1034,7 +1138,8 @@ export async function updateSharedRow(
       [key, serialized, uid]
     );
     updated = result.rowCount ?? 0;
-    await client.query('COMMIT');
+    await asTransactionFault(client.query('COMMIT'));
+    if (updated > 0) markLanded();
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
     throw err;
@@ -1146,11 +1251,8 @@ export async function withdrawSharedRow(
   const { userId, schema, appBlockId } = await resolveSharedContext(blockToken, 'withdraw');
   const uid = userId as number;
 
-  // This op had NO bucket while every other write on the surface had one — a
-  // gap worth closing on its own terms, and one a REST ingress would widen.
-  // Own per-minute bucket; the window/ceiling rationale (and why it is NOT the
-  // append daily bucket and NOT the shared vote bucket) lives beside the
-  // constants in shared-storage-rate-limit.ts.
+  // Own per-minute bucket; why it is neither the report daily bucket nor the vote
+  // bucket lives beside the constants in shared-storage-rate-limit.ts.
   const rl = await checkSharedWithdrawRateLimit(uid, appBlockId);
   if (!rl.allowed)
     throwSharedRateLimited(rl, `Too many withdrawals — retry in ${rl.retryAfterSeconds}s`);
@@ -1671,6 +1773,12 @@ async function assertSharedValueSafeAndSerialize(params: {
 }> {
   const { schema, slug, appBlockId, uid, subjectUser, value } = params;
 
+  // The schema refuses this already; repeated here, BEFORE the belt, so a caller that skips the
+  // schema still cannot spend a moderation run on a value Postgres will refuse.
+  if (hasJsonbUnstorableText(value)) {
+    throw new TRPCError({ code: 'BAD_REQUEST', message: JSONB_UNSTORABLE_MESSAGE });
+  }
+
   let safe: { title: string; body?: string };
   try {
     safe = await assertSharedTextSafe({
@@ -1685,7 +1793,10 @@ async function assertSharedValueSafeAndSerialize(params: {
         { schema, slug, appBlockId, uid },
         { policy: e.category, category: e.category, reason: `auto:${e.category}` }
       );
-      throw new TRPCError({ code: 'BAD_REQUEST', message: e.message, cause: e });
+      const refusal = new TRPCError({ code: 'BAD_REQUEST', message: e.message, cause: e });
+      // An outage the belt refused on (its blocklist read failing) stays our fault on the
+      // refusal too, so the write budget refunds it instead of charging the caller.
+      throw isEscalatedServerFault(e) ? escalateToServerFault(refusal) : refusal;
     }
     throw e;
   }
@@ -1794,8 +1905,9 @@ async function fileSharedBlockConsequences(
  * Run an ENFORCE scan, turning an infrastructure failure (the blocklist or benign-phrase read)
  * into a clean refusal rather than a raw 500 — the same contract the title/body belt keeps in
  * `assertSharedTextSafe`. It fails CLOSED: an unread write is not let through. The refusal is
- * escalated to server-fault severity so the outage is logged as one, not as user error, and the
- * failure is logged by error NAME only.
+ * escalated to server-fault severity so the outage is logged as one, not as user error, and so
+ * the shared write budget refunds the token rather than charging a rejection (see
+ * `withSharedWriteBudget`); the failure is logged by error NAME only.
  */
 async function enforceScan(
   run: () => Promise<SharedTextScan>,

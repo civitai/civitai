@@ -16,12 +16,13 @@ export function throwSharedRateLimited(rl: { retryAfterSeconds: number }, messag
 }
 
 /**
- * The retry metadata a TOO_MANY_REQUESTS `TRPCError` carries, or `undefined`. Forwarded
- * unvalidated: `throwSharedRateLimited` must stay the only writer of `cause.rateLimit`.
+ * The retry metadata a TOO_MANY_REQUESTS `TRPCError` carries, or `undefined`. Copies only the
+ * two known fields, so anything else a writer puts on `cause.rateLimit` never reaches a client.
  */
 export function rateLimitMetaOf(error: unknown): RateLimitMeta | undefined {
   if (!(error instanceof TRPCError) || error.code !== 'TOO_MANY_REQUESTS') return undefined;
   const rateLimit = (error.cause as { rateLimit?: unknown } | undefined)?.rateLimit;
   if (!rateLimit || typeof rateLimit !== 'object') return undefined;
-  return rateLimit as RateLimitMeta;
+  const { retryAfterSeconds, retryAt } = rateLimit as RateLimitMeta;
+  return { retryAfterSeconds, retryAt };
 }
