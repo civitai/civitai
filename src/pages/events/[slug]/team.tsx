@@ -1,4 +1,5 @@
 import { Container } from '@mantine/core';
+import { useMarkEventVisited } from '~/components/AppLayout/AppHeader/useEventMenuItems';
 import type { InferGetServerSidePropsType } from 'next';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { TeamRoster } from '~/components/Events/ScoredEvent/TeamRoster';
@@ -27,6 +28,7 @@ export default function EventTeamsPage({
   event,
 }: InferGetServerSidePropsType<typeof getServerSideProps>) {
   const currentUser = useCurrentUser();
+  useMarkEventVisited(event);
   const { data, isLoading } = trpc.event.getData.useQuery({ event });
   const { data: cosmetic } = trpc.event.getCosmetic.useQuery({ event }, { enabled: !!currentUser });
   const ownTeam = cosmetic?.obtained

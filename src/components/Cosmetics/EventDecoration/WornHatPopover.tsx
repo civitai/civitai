@@ -3,6 +3,8 @@ import { IconArrowsMove } from '@tabler/icons-react';
 import dynamic from 'next/dynamic';
 import type { ReactNode } from 'react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
+import { teamRosterHref } from '~/components/Events/event-promos';
+import { useEventPromos } from '~/components/Events/useEventPromos';
 import { useTeamColor } from '~/components/Events/events.utils';
 import { WornHatLivePoints } from '~/components/Events/ScoredEvent/event-points-live';
 import { HatStats } from '~/components/Events/ScoredEvent/HatStats';
@@ -97,6 +99,7 @@ export function WornHatPopover({
           >
             {definition?.eventLinkLabel ?? 'See the event'}
           </Button>
+          <TeamRostersButton event={event} onClick={() => onChange(false)} />
           {data?.team && (
             <Text size="xs" c="dimmed" ta="center">
               Scores for Team {data.team} while it&apos;s worn
@@ -105,6 +108,24 @@ export function WornHatPopover({
         </Stack>
       </Popover.Dropdown>
     </Popover>
+  );
+}
+
+// Rendered only inside the open dropdown, so a feed of hatted cards holds no subscription for it.
+export function TeamRostersButton({ event, onClick }: { event: string; onClick: () => void }) {
+  const href = teamRosterHref(useEventPromos(), event);
+  if (!href) return null;
+  return (
+    <Button
+      component={NextLink}
+      href={href}
+      radius="xl"
+      variant="light"
+      fullWidth
+      onClick={onClick}
+    >
+      Team rosters
+    </Button>
   );
 }
 

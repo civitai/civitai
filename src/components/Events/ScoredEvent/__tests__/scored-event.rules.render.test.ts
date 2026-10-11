@@ -187,6 +187,31 @@ describe('How it works', () => {
     );
   });
 
+  it('says what articles score, from the types that score articles', () => {
+    const note = (el: HTMLElement) =>
+      el.querySelector('[data-testid="event-points"]')?.nextElementSibling?.textContent;
+    const withArticles = { ...decoration, entityTypes: ['Image', 'Article'] };
+    expect(
+      note(
+        render({
+          decoration: withArticles,
+          rules: { ...rules, modelLikeWeight: 5, articleScores: ['view', 'reaction', 'comment'] },
+        })
+      )
+    ).toBe(
+      'Hats go on your own images and articles. Articles score views, reactions and comments. Models score views and thumbs-up reviews.'
+    );
+    act(() => root?.unmount());
+    host?.remove();
+    // Nothing to say when hats can't go on articles, or nothing scores them.
+    expect(note(render({ rules: { ...rules, articleScores: ['view'] } }))).not.toContain(
+      'Articles'
+    );
+    act(() => root?.unmount());
+    host?.remove();
+    expect(note(render({ decoration: withArticles, rules }))).not.toContain('Articles score');
+  });
+
   it('puts the prize on its own banner', () => {
     expect(render().querySelector('[data-testid="event-prize"]')?.textContent).toBe(
       'The prizeChampion badgeFor the winning team.'

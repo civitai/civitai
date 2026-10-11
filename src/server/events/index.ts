@@ -15,6 +15,7 @@ import { eventPointSeason, eventPointsWindow } from '~/server/events/points/keys
 import { isEventPointsEnabled } from '~/server/events/points/enabled';
 import { runEventPointsReferee } from '~/server/events/points/referee';
 import { syncEventHats } from '~/server/events/points/sync';
+import { pointTypesFor } from '~/server/events/points/types';
 import {
   getEventStandings,
   getTeamScoreHistory as getScoredTeamScoreHistory,
@@ -433,6 +434,7 @@ export const eventEngine = {
         stickerWeight: eventDef.scoring.types.sticker?.weight,
         remixWeight: eventDef.scoring.types.remix?.weight,
         modelLikeWeight: eventDef.scoring.types.modelLike?.weight,
+        articleScores: pointTypesFor(eventDef.scoring, 'Article'),
         pointsCapPerDay: eventDef.scoring.capPerActorPerOwnerPerDay,
         newAccountDays: eventDef.scoring.newAccountDays,
       },

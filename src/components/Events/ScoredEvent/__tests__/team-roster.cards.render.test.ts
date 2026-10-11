@@ -527,9 +527,11 @@ describe('TeamRoster cards', () => {
     ]);
   });
 
-  it('says no one has joined when the team has no listed members', () => {
+  it('says the roster is opt-in when the team has no listed members', () => {
     const el = render([]);
-    expect(el.textContent).toContain('No one on Team Pink has joined the roster yet.');
+    expect(el.textContent).toContain(
+      "No one on Team Pink has opted in to the roster yet. The roster only shows members who turn on “Show me on my team's roster”."
+    );
     expect(podium(el)).toBeNull();
   });
 });

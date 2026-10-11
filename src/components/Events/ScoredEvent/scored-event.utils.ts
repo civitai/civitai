@@ -40,9 +40,12 @@ const ENTITY_NOUNS: Record<string, string> = {
 
 /** "images, models and articles" for the types an event's decoration can be worn on. */
 export function describeEntityTypes(types: readonly CosmeticEntity[]) {
-  const nouns = types.map((t) => ENTITY_NOUNS[t] ?? t.toLowerCase());
-  if (nouns.length <= 1) return nouns.join('');
-  return `${nouns.slice(0, -1).join(', ')} and ${nouns[nouns.length - 1]}`;
+  return joinWithAnd(types.map((t) => ENTITY_NOUNS[t] ?? t.toLowerCase()));
+}
+
+export function joinWithAnd(words: readonly string[]) {
+  if (words.length <= 1) return words.join('');
+  return `${words.slice(0, -1).join(', ')} and ${words[words.length - 1]}`;
 }
 
 /**
