@@ -77,7 +77,10 @@ export function TeamRoster({
   );
   // Ranked after the viewer's own card is dropped, so a hidden card leaves no gap.
   const ranks = useMemo(() => rosterRanks(items, sort), [items, sort]);
-  const prices = useMemo(() => rosterPricePoints(items.map((i) => i.hats)), [items]);
+  // Keyed on the prices themselves: a live push gives `items` a new identity but almost never a new
+  // price, and a new array here would re-render every card through `ctx`.
+  const priceKey = rosterPricePoints(items.map((i) => i.hats)).join(',');
+  const prices = useMemo(() => (priceKey ? priceKey.split(',').map(Number) : []), [priceKey]);
   const total = data?.pages[0]?.total ?? 0;
 
   // The cards in view, whose totals are followed live.

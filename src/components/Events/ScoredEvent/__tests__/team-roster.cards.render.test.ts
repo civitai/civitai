@@ -291,7 +291,7 @@ describe('TeamRoster cards', () => {
     expect(triggered[0].props.hats[0]).toMatchObject({ cosmeticId: 100, worn: true });
   });
 
-  it('fits a podium card\'s mini row of 9 hats as 3 + "+6" narrow and 5 + "+4" wide', () => {
+  it('fits the 9 hats past a podium card\'s hero as 3 + "+6" narrow and 5 + "+4" wide', () => {
     const hats = Array.from({ length: 10 }, (_, i) => hat(100 + i, { worn: i === 0 }));
     const el = render([member(1, { hats })]);
     const card = all(podium(el)!, 'roster-podium-card')[0];
@@ -302,16 +302,49 @@ describe('TeamRoster cards', () => {
     expect(all(card, 'roster-more')[1].className).toContain('@[220px]:grid');
   });
 
-  // The container queries match only under an @container ancestor.
-  it('puts every container-query user under an @container', () => {
+  // A container query measures its nearest @container: the page's for the podium layout, each
+  // card's own for its hat rows. A card without one would measure the whole roster and go wide.
+  it('measures the podium layout by the page and each hat row by its own card', () => {
     const hats = Array.from({ length: 12 }, (_, i) => hat(100 + i));
     const el = render([member(1, { hats }), ...[2, 3, 4].map((id) => member(id, { hats }))]);
-    const users = [
-      ...el.querySelectorAll('[class*="@sm:"], [class*="@[220px]:"], [class*="@[300px]:"]'),
-    ];
-    expect(users.length).toBeGreaterThan(0);
-    for (const node of users)
-      expect(node.parentElement?.closest('[class~="@container"]')).not.toBeNull();
+    const nearest = (node: Element) => node.parentElement?.closest('[class~="@container"]');
+    const pageLevel = [...el.querySelectorAll('[class*="@sm:"]')];
+    const cardLevel = [...el.querySelectorAll('[class*="@[220px]:"], [class*="@[300px]:"]')];
+    expect(pageLevel.length).toBeGreaterThan(0);
+    expect(cardLevel.length).toBeGreaterThan(0);
+    const cards = [...all(el, 'roster-podium-card'), ...all(el, 'roster-card')];
+    for (const node of pageLevel) {
+      expect(nearest(node)).toBeTruthy();
+      expect(cards).not.toContain(nearest(node));
+    }
+    for (const node of cardLevel) {
+      const card = node.closest('[data-testid="roster-podium-card"], [data-testid="roster-card"]');
+      expect(nearest(node)).toBe(card);
+    }
+  });
+
+  it("borders a shelf card in its team's colour", () => {
+    const el = render([...podiumOf(30), member(4)]);
+    expect(all(grid(el)!, 'roster-card')[0].getAttribute('style')).toContain('border-color: pink');
+  });
+
+  it('tells a viewer on an empty team how to be the first, and only them', () => {
+    state.user = { id: 9 };
+    state.status = { optedIn: false, listedTeam: null };
+    const el = render([]);
+    expect(el.textContent).toContain('above to be the first');
+    // Another team's empty roster is not theirs to start.
+    act(() => el.querySelector<HTMLInputElement>('input[value="Blue"]')!.click());
+    expect(el.textContent).toContain('No one on Team Blue');
+    expect(el.textContent).not.toContain('above to be the first');
+    act(() => root?.unmount());
+    host?.remove();
+    state.status = { optedIn: true, listedTeam: null };
+    expect(render([]).textContent).not.toContain('above to be the first');
+    act(() => root?.unmount());
+    host?.remove();
+    state.status = undefined;
+    expect(render([]).textContent).not.toContain('above to be the first');
   });
 
   it('fits a shelf of 12 hats as 7 + "+5" on a narrow card and 9 + "+3" on a wide one', () => {

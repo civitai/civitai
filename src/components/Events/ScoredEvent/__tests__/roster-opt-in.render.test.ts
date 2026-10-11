@@ -106,5 +106,8 @@ describe('RosterOptIn', () => {
     expect(render().textContent).toContain('Saved. You will appear once');
     act(() => root?.unmount());
     expect(render(true).textContent).not.toContain('Saved.');
+    act(() => root?.unmount());
+    state.status = { optedIn: true, listedTeam: 'Pink' };
+    expect(render(true).textContent).not.toContain('on the roster.');
   });
 });
