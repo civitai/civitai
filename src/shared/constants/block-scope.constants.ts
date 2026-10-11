@@ -209,7 +209,7 @@ export type BlockScopeString = keyof typeof BLOCK_SCOPE_TO_OAUTH_BIT;
  * `verifyBlockToken` requires a JWS with a `kid` it can pin, deliberately and strictly.
  * An `auth: "oauth"` app is minted an OPAQUE OAuth access token instead of a block JWT
  * (`/api/v1/block-tokens`, `mintOauthAppToken`), so that bearer is not a JWS and every
- * app-storage op 401s. `BlockManifestValidator` refuses the combination at submit time
+ * app-storage op 401s. `BlockManifestValidator` refuses the combination
  * for exactly this reason — see `oauthAppStorageConflictError`.
  *
  * DERIVED from the scope vocabulary above by prefix, never re-typed, so a fifth
