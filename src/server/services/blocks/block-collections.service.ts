@@ -151,10 +151,12 @@ export function toCoverFields(
 }
 
 /**
- * Fallback cover source for collections whose own cover is null OR is itself over
- * the ceiling: the media (url,type,nsfwLevel) of each collection's most-recent
- * ACCEPTED item WHOSE OWN `Image.nsfwLevel` is PERMITTED by the token's clamped
- * `browsingLevel`. This is the maturity clamp the discovery cover MUST apply — a
+ * Fallback cover source for collections whose own cover is null OR is not usable
+ * (over the ceiling, or flagged poi/minor): the media (url,type,nsfwLevel) of each
+ * collection's most-recent ACCEPTED item WHOSE OWN `Image.nsfwLevel` is PERMITTED
+ * by the token's clamped `browsingLevel` and that carries neither the poi nor the
+ * minor flag (the exclusion the public image endpoints apply). The nsfwLevel test
+ * is the maturity clamp the discovery cover MUST apply — a
  * MIXED-bucket collection (nsfwLevel 29) intersects a SFW ceiling and passes the
  * collection-level discovery gate, but its newest item can be R/X; surfacing that
  * thumbnail on a SFW-domain / region-restricted token would leak mature media.
@@ -191,6 +193,8 @@ export async function getFallbackCoverImages(
     WHERE ci."collectionId" IN (${Prisma.join(collectionIds)})
       AND ci."status" = ${CollectionItemStatus.ACCEPTED}::"CollectionItemStatus"
       AND ((i."nsfwLevel" & ${browsingLevel}) != 0 OR i."nsfwLevel" = 0)
+      AND i."poi" != TRUE
+      AND i."minor" != TRUE
     ORDER BY ci."collectionId", ci."createdAt" DESC
   `;
   const map = new Map<number, { url: string | null; type: string | null; nsfwLevel: number }>();

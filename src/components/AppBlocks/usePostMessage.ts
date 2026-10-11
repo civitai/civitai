@@ -162,6 +162,15 @@ interface UsePostMessageResult {
 
 const RATE_LIMIT_WINDOW_MS = 1000;
 const RATE_LIMIT_MAX_MESSAGES = 30;
+
+/**
+ * Fire-and-forget telemetry that skips the shared inbound budget, so a block's own events cannot
+ * rate-limit its requests (which are not NACKed when limited, and hang to the SDK timeout). Each
+ * type's handler must bound itself; `blockEventBeacon.ts` does for TRACK_EVENT.
+ */
+export const BRIDGE_BUDGET_EXEMPT_TYPES: ReadonlySet<keyof typeof INVENTORY> = new Set([
+  'TRACK_EVENT',
+]);
 const DEDUP_WINDOW_MS = 5000;
 
 /**
@@ -427,6 +436,12 @@ export function usePostMessage(opts: UsePostMessageOptions): UsePostMessageResul
           }
           nackTimestampsRef.current = nackWindow;
         }
+        return;
+      }
+
+      if ((BRIDGE_BUDGET_EXEMPT_TYPES as ReadonlySet<string>).has(data.type)) {
+        report(data.type, 'handled');
+        for (const handler of subscribers) handler(data.payload);
         return;
       }
 

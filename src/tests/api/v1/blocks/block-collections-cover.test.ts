@@ -55,7 +55,12 @@ describe('toCoverFields', () => {
     // `0` is a REAL level (unrated). A consumer branches on `undefined` (no claim →
     // use its own domain ceiling) versus any supplied value (authoritative), so
     // emitting 0 for "there is no cover" silently moves it onto the other path.
-    for (const noImage of [null, undefined, { url: null, type: 'image' }, { url: '', type: 'image' }]) {
+    for (const noImage of [
+      null,
+      undefined,
+      { url: null, type: 'image' },
+      { url: '', type: 'image' },
+    ]) {
       const fields = toCoverFields(noImage);
       expect(fields.coverImageUrl).toBeNull();
       // The KEY must be missing — `{ coverNsfwLevel: undefined }` would serialise
@@ -96,7 +101,7 @@ describe('toCoverFields', () => {
     expect(b.coverNsfwLevel).toBe(16);
   });
 
-  it('a VIDEO cover keeps the poster shaping AND carries that video item\'s level', () => {
+  it("a VIDEO cover keeps the poster shaping AND carries that video item's level", () => {
     const fields = toCoverFields({ url: 'clip', type: 'video', nsfwLevel: 2 });
     const out = JSON.parse(fields.coverImageUrl!);
     expect(out.type).toBe('image');
@@ -108,7 +113,10 @@ describe('toCoverFields', () => {
     // Invariant guard, not regression coverage: a Collection's own `nsfwLevel` is
     // OR-ed over its items and cannot separate a 97%-safe collection from a
     // 1%-safe one, so the two names must never be confusable on this response.
-    const fields = toCoverFields({ url: 'k', type: 'image', nsfwLevel: 4 }) as Record<string, unknown>;
+    const fields = toCoverFields({ url: 'k', type: 'image', nsfwLevel: 4 }) as Record<
+      string,
+      unknown
+    >;
     expect('nsfwLevel' in fields).toBe(false);
   });
 });
@@ -145,12 +153,34 @@ describe('getFallbackCoverImages (maturity clamp)', () => {
     expect(values).toContain(3);
   });
 
+  it('excludes poi and minor items from the fallback cover', async () => {
+    mockQueryRaw.mockResolvedValueOnce([]);
+    await getFallbackCoverImages([10], 3);
+    const [strings] = mockQueryRaw.mock.calls[0] as unknown as [TemplateStringsArray, ...unknown[]];
+    // Whole-line equality, so a clause appended to either line fails the test; both
+    // lines must sit in the WHERE, after the maturity clause and before ORDER BY.
+    const lines = strings
+      .join(' ? ')
+      .split('\n')
+      .map((l) => l.trim());
+    const at = (line: string) => lines.indexOf(line);
+    const maturity = lines.findIndex((l) => l.startsWith('AND ((i."nsfwLevel" &'));
+    const orderBy = lines.findIndex((l) => l.startsWith('ORDER BY'));
+    expect(maturity).toBeGreaterThan(-1);
+    for (const clause of ['AND i."poi" != TRUE', 'AND i."minor" != TRUE']) {
+      expect(at(clause)).toBeGreaterThan(maturity);
+      expect(at(clause)).toBeLessThan(orderBy);
+    }
+  });
+
   it('🔴 SELECTS the item nsfwLevel, so a fallback cover can publish ITS OWN level', async () => {
     // The level is not merely a filter predicate here: the endpoint publishes the
     // level of the cover it serves, and for a fallback cover THIS row is that
     // cover. Selecting only (url,type) is what forces the endpoint to describe the
     // primary image it just rejected.
-    mockQueryRaw.mockResolvedValueOnce([{ collectionId: 10, url: 'k', type: 'image', nsfwLevel: 4 }]);
+    mockQueryRaw.mockResolvedValueOnce([
+      { collectionId: 10, url: 'k', type: 'image', nsfwLevel: 4 },
+    ]);
     const map = await getFallbackCoverImages([10], 7);
     expect(map.get(10)?.nsfwLevel).toBe(4);
 
@@ -162,7 +192,9 @@ describe('getFallbackCoverImages (maturity clamp)', () => {
   it('a NULL nsfwLevel column reads as the real level 0 (unrated), never dropped', async () => {
     // Unrated is a value, not an absence — a row with a null level still yields a
     // usable cover, and `0` is what the wire must carry for it.
-    mockQueryRaw.mockResolvedValueOnce([{ collectionId: 10, url: 'k', type: 'image', nsfwLevel: null }]);
+    mockQueryRaw.mockResolvedValueOnce([
+      { collectionId: 10, url: 'k', type: 'image', nsfwLevel: null },
+    ]);
     const map = await getFallbackCoverImages([10], 3);
     expect(map.get(10)).toEqual({ url: 'k', type: 'image', nsfwLevel: 0 });
   });
@@ -184,7 +216,10 @@ describe('getFallbackCoverImages (maturity clamp)', () => {
   it('a stricter ceiling is threaded through verbatim', async () => {
     mockQueryRaw.mockResolvedValueOnce([]);
     await getFallbackCoverImages([10], 1);
-    const [, ...values] = mockQueryRaw.mock.calls[0] as unknown as [TemplateStringsArray, ...unknown[]];
+    const [, ...values] = mockQueryRaw.mock.calls[0] as unknown as [
+      TemplateStringsArray,
+      ...unknown[]
+    ];
     expect(values).toContain(1);
   });
 });

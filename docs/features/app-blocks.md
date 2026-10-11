@@ -399,11 +399,8 @@ read that file. As of this writing the families are:
   `_SET` / `_DELETE` / `_LIST` / `_QUOTA`.
 - **Navigation**: `NAVIGATE` — page host only; the model slot intentionally does
   not bridge it (an embedded panel navigating the host away is out of remit).
-- **Analytics**: `TRACK_EVENT` — fire-and-forget, and **not** host-bridged by
-  either real host yet, so an event a block sends today is still dropped at the
-  host (never hangs the block). The server side exists: see "Custom events"
-  below. Flip the host entries to `required` in the inventory when the hosts
-  start forwarding.
+- **Analytics**: `TRACK_EVENT` — fire-and-forget (no reply), forwarded by both
+  real hosts to the custom-events ingest; see "Custom events" below.
 
 `SUSPEND` / `RESUME`, `TOKEN_REFRESH` (see "Token refresh") and `THEME_CHANGE`
 (see "Theme changes") flow the other direction (host→block), which is why they
@@ -422,8 +419,22 @@ of declared string values, a `number` or a `boolean`; there is no free-text type
 `src/server/services/blocks/block-event-ingest.service.ts`) records them in the
 `appBlockEvents` ClickHouse table
 (`src/server/clickhouse/migrations/2026-10-10-app-block-events.sql`, applied by
-hand before the route deploys). **Nothing calls it yet**: neither host forwards
-`TRACK_EVENT`, so the table stays empty until they do.
+hand before the route deploys).
+
+- **The hosts forward them.** `IframeHost` and `PageBlockHost` handle
+  `TRACK_EVENT` and queue one row per event in `blockEventBeacon.ts`, stamping
+  `appBlockId` and `blockInstanceId` from their own props (the page's `page_…`
+  id on the page host, the install's instance id in a model slot); the block's
+  payload supplies only `eventName` and `properties`, which are forwarded as
+  given for the server to classify. `TRACK_EVENT` does not count against the
+  bridge's shared inbound limit, so a block's events cannot rate-limit its own
+  requests. The queue flushes every 10 s, at 50 rows, and on `pagehide` /
+  `visibilitychange` (hidden), in POSTs of at most 50 rows and 32 KiB; a
+  page-exit flush sends one body at most, and an event larger than a body is
+  dropped. Each host mount may send 10 events a second and 500 in all, so a
+  remount (a new page or app) starts a fresh budget and two mounts of one app
+  do not share one. A moderator's review preview forwards nothing. Nothing is
+  retried, and client-side drops are not counted.
 
 - **Declared events only.** A row is checked against the app's APPROVED manifest.
   An event the manifest does not declare is stored as one `__undeclared__` row
@@ -797,8 +808,8 @@ documented above, so they're dropped from this list.
   `/api/track/block-render`) and workflow attribution flows through
   `/api/internal/blocks/workflow-completed`, but the analytics tables are still
   being stood up (the hosts note "until the … ClickHouse table exists"). Custom
-  events have their ingest endpoint and table (see "Custom events"), but no host
-  forwards `TRACK_EVENT` to it yet and no owner-facing view reads it.
+  events are forwarded by both hosts and recorded (see "Custom events"), but no
+  owner-facing view reads them yet.
 - **Health-check job + auto-suspend on consecutive failures.** The
   `health_status` column exists (default `'unknown'`) but nothing populates it
   and there's no auto-suspend job (and no suspend transition — see the

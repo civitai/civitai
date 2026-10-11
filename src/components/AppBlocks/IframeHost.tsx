@@ -54,6 +54,7 @@ import { sanitizeAppChromeName } from './appChromeName';
 import { resolveChromeGeometry } from './chromeGeometry';
 import type { ChromeGeometry } from './chromeGeometry';
 import { useResizeObserver } from '~/hooks/useResizeObserver';
+import { createBlockEventRecorder } from './blockEventBeacon';
 import { sendBlockRender } from './sendBlockRender';
 import { effectiveSandboxIsOpaque, intersectSandbox } from './sandbox';
 import {
@@ -1960,6 +1961,15 @@ export function IframeHost({
     });
     return off;
   }, [onMessage]);
+
+  useEffect(() => {
+    const record = createBlockEventRecorder({
+      appBlockId: install.appBlockId,
+      blockInstanceId: install.blockInstanceId,
+    });
+    const off = onMessage<unknown>('TRACK_EVENT', record);
+    return off;
+  }, [onMessage, install.appBlockId, install.blockInstanceId]);
 
   // Anonymous conversion: the block (rendered for a logged-out viewer from the
   // scope-free BLOCK_INIT context) asks the host to start the civitai login

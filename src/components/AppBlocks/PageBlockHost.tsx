@@ -79,6 +79,7 @@ import {
   UPLOAD_BYTES_NO_TOKEN_ERROR,
 } from './imageUploadBytes';
 import { projectBlockInitMaturity, withSignedInFlag } from './projectBlockInit';
+import { createBlockEventRecorder } from './blockEventBeacon';
 import { sendBlockRender } from './sendBlockRender';
 import {
   computeLaunchTimings,
@@ -1722,6 +1723,17 @@ export function PageBlockHost({
     });
     return off;
   }, [onMessage]);
+
+  useEffect(() => {
+    const record = createBlockEventRecorder({ appBlockId, blockInstanceId });
+    const off = onMessage<unknown>('TRACK_EVENT', (raw) => {
+      // A review mount's app id is a synthetic request id the ingest drops as an unknown app;
+      // this only saves the pointless request.
+      if (reviewMode) return;
+      record(raw);
+    });
+    return off;
+  }, [onMessage, reviewMode, appBlockId, blockInstanceId]);
 
   // App Blocks runtime observability — render-FAILURE beacon. The success beacon
   // fires at BLOCK_READY above (guarded by `blockRenderEmittedRef`). Here we fire
