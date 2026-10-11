@@ -44,15 +44,14 @@
  * scanning, the script requires both blocklists to be non-empty and proves each catches a probe
  * built from its own live entries — an unreadable list fails the run instead of reading as zero.
  */
-import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { AppSchemaRow, Query } from './shared-data-replay/replay';
+import { assertDataDirOutsideRepo } from './decision-eval/safety';
 import { runScriptAndExit } from './lib/run-as-script';
 
 const SCRIPT_BASENAME = 'replay-shared-data-moderation.ts';
-const REPO_ROOT = path.resolve(__dirname, '..');
 
 export interface ReplayArgs {
   out: string;
@@ -86,43 +85,27 @@ export function parseArgs(argv: string[], now: Date = new Date()): ReplayArgs {
   return args;
 }
 
-const isInside = (dir: string, root: string) => {
-  const relative = path.relative(root, dir);
-  return relative === '' || (!path.isAbsolute(relative) && relative.split(path.sep)[0] !== '..');
-};
-
-/** True when `dir` is inside ANY git work tree — another clone of this repo included. */
-export function isInGitWorkTree(dir: string): boolean {
-  const result = spawnSync('git', ['-C', dir, 'rev-parse', '--is-inside-work-tree'], {
-    encoding: 'utf8',
-  });
-  return result.status === 0 && result.stdout.trim() === 'true';
-}
-
 /**
- * The CSV holds user-written text, so it must never land where it could be committed: not inside
- * this checkout, and not inside any other git work tree (another clone of this public repo). The
- * parent directory is resolved through symlinks first, so a link cannot smuggle the file in.
+ * The CSV holds user-written text, so it must never land where it could be committed: inside this
+ * checkout or any other (another clone of this public repo). `assertDataDirOutsideRepo` is the
+ * repo's one rule for that — it resolves links on the real path, walks up looking for `.git` (a
+ * linked worktree's `.git` file included) and needs no `git` binary, so it cannot fail open.
  */
 export function resolveOutPath(
   out: string,
-  {
-    repoRoot = REPO_ROOT,
-    inGitWorkTree = isInGitWorkTree,
-    realpath = fs.realpathSync,
-  }: {
-    repoRoot?: string;
-    inGitWorkTree?: (dir: string) => boolean;
-    realpath?: (p: string) => string;
-  } = {}
+  exists?: (p: string) => boolean,
+  realpath?: (p: string) => string
 ): string {
   const absolute = path.resolve(out);
-  const parent = realpath(path.dirname(absolute));
-  const resolved = path.join(parent, path.basename(absolute));
-  if (isInside(parent, realpath(repoRoot)) || inGitWorkTree(parent)) {
-    throw new Error(`refusing to write the CSV inside a git work tree: ${resolved}`);
+  let dir: string;
+  try {
+    dir = assertDataDirOutsideRepo(path.dirname(absolute), exists, realpath);
+  } catch (error) {
+    throw new Error(`refusing to write the CSV inside a git checkout: ${absolute}`, {
+      cause: error,
+    });
   }
-  return resolved;
+  return path.join(dir, path.basename(absolute));
 }
 
 /**
@@ -139,30 +122,36 @@ export function assertNoSinks(env: Record<string, string | undefined>): void {
 }
 
 /**
- * Turn the cache client's `set` into a write to a RUN-LOCAL memo, and make `get` read that memo
- * first. See the header: `set` is the one Redis write the scan path can reach.
+ * Turn the cache client's `set` into a write to a RUN-LOCAL memo, and make the client's own `get`
+ * read that memo first. See the header: `set` is the one Redis write the scan path can reach.
  *
  * Why a memo rather than a plain no-op: a no-op leaves a cold blocklist key cold, so every later
  * scan would miss again and re-read the main database. With the memo, a key that missed once is
  * served from this process for the rest of the run — one main-DB read per list, no Redis write.
- * Only keys this run tried to `set` are intercepted; every other `get` goes to Redis unchanged.
+ *
+ * 🔴 The overrides sit on the client object, and node-redis derives clients from it by prototype
+ * (`withTypeMapping` returns `Object.create(client)` — the Buffer-returning reader behind
+ * `redis.packed` is one). So `get` serves the memo ONLY when called on this exact object, and
+ * otherwise runs the original method with the caller's own `this`, keeping a derived client's type
+ * mapping. A bound original would hand a derived reader strings, and its corrupt-entry eviction would
+ * then DELETE live keys. `set` is intercepted for every caller: no path through it may write.
  */
-export function suppressCacheWrites(client: object): { suppressed: () => number } {
+export function suppressCacheWrites(client: object): { memoisedKeys: () => number } {
   const memo = new Map<unknown, unknown>();
   // `object`, not the client's own type: its `get` is a wide overload set no narrower signature
   // matches, and only the call shape `blocklist.service.ts` uses (`get(key)`) matters here.
-  const { get } = client as { get: (...args: unknown[]) => unknown };
-  const originalGet = get.bind(client);
-  const define = (name: 'get' | 'set', value: (...args: unknown[]) => unknown) =>
+  const originalGet = (client as { get: (...args: unknown[]) => unknown }).get;
+  const define = (name: 'get' | 'set', value: (this: unknown, ...args: unknown[]) => unknown) =>
     Object.defineProperty(client, name, { configurable: true, writable: true, value });
   define('set', async (key, value) => {
     memo.set(key, value);
     return null;
   });
-  define('get', (key, ...rest) =>
-    memo.has(key) ? Promise.resolve(memo.get(key)) : originalGet(key, ...rest)
-  );
-  return { suppressed: () => memo.size };
+  define('get', function (this: unknown, key, ...rest) {
+    if (this === client && memo.has(key)) return Promise.resolve(memo.get(key));
+    return originalGet.call(this, key, ...rest);
+  });
+  return { memoisedKeys: () => memo.size };
 }
 
 interface ReadOnlyPool {
@@ -195,6 +184,31 @@ export async function withReadOnlyTransaction<T>(
   }
 }
 
+/**
+ * Create the CSV (exclusively, 0600: it holds user-written text), print its path, and hand `body` a
+ * line writer. If `body` throws, the file is deleted — a partial CSV reads as a finished run. Only
+ * the file this call created can be deleted: an existing path fails the exclusive open first.
+ * (A signal or OOM kill skips the cleanup; the printed path is how to find what was left.)
+ */
+export async function withCsvFile<T>(
+  out: string,
+  body: (write: (line: string) => void) => Promise<T>,
+  log: (message: string) => void = console.log
+): Promise<T> {
+  const fd = fs.openSync(out, 'wx', 0o600);
+  log(`writing CSV: ${out}`);
+  try {
+    const result = await body((line) => fs.writeSync(fd, line));
+    fs.closeSync(fd);
+    return result;
+  } catch (error) {
+    fs.closeSync(fd);
+    fs.rmSync(out, { force: true });
+    log(`run failed; deleted the partial CSV ${out}`);
+    throw error;
+  }
+}
+
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   const out = resolveOutPath(args.out);
@@ -223,13 +237,10 @@ async function main() {
   await replay.blocklistSelfCheck({ linkDomains, messagePatterns });
   console.log('self-check: link and pattern detectors both caught their probe');
 
-  const fd = fs.openSync(out, 'wx', 0o600);
-  console.log(`writing CSV: ${out}`);
   let hitRows = 0;
-  let complete = false;
-  try {
-    fs.writeSync(fd, replay.csvHeader());
-    const tallies = await withReadOnlyTransaction(requireAppsDb(), async (query) => {
+  const tallies = await withCsvFile(out, async (write) => {
+    write(replay.csvHeader());
+    return withReadOnlyTransaction(requireAppsDb(), async (query) => {
       const selection = replay.selectAppSchemas(
         await query<AppSchemaRow>(replay.LIST_APP_SCHEMAS_SQL)
       );
@@ -247,7 +258,7 @@ async function main() {
             query,
             app,
             (row) => {
-              fs.writeSync(fd, replay.csvRowLine(row));
+              write(replay.csvRowLine(row));
               hitRows += 1;
             },
             { pageSize: args.pageSize }
@@ -256,17 +267,11 @@ async function main() {
       }
       return results;
     });
-    console.log(replay.formatSummary(tallies));
-    complete = true;
-  } finally {
-    fs.closeSync(fd);
-    // A partial CSV of user text is worse than none: it reads as a finished run.
-    if (!complete) {
-      fs.rmSync(out, { force: true });
-      console.error(`run failed; deleted the partial CSV ${out}`);
-    }
-  }
-  console.log(`blocklist cache keys served from the run-local memo: ${cacheGuard.suppressed()}`);
+  });
+  console.log(replay.formatSummary(tallies));
+  console.log(
+    `blocklist keys that were cold and are held in the run-local memo: ${cacheGuard.memoisedKeys()}`
+  );
   console.log(`wrote ${hitRows} hit row(s) to ${out}`);
 }
 

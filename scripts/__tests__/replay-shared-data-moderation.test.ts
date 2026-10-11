@@ -1,7 +1,8 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { createCluster } from 'redis';
+import { createCluster, RESP_TYPES } from 'redis';
+import ts from 'typescript';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { BlockedContentHit } from '~/server/services/blocklist.service';
@@ -47,10 +48,10 @@ import {
 } from '../shared-data-replay/replay';
 import {
   assertNoSinks,
-  isInGitWorkTree,
   parseArgs,
   resolveOutPath,
   suppressCacheWrites,
+  withCsvFile,
   withReadOnlyTransaction,
 } from '../replay-shared-data-moderation';
 import {
@@ -516,34 +517,37 @@ describe('entry-script guards', () => {
   });
 
   describe('resolveOutPath', () => {
-    const repoRoot = path.resolve('/work/repo');
-    const opts = (inGit = false) => ({
-      repoRoot,
-      inGitWorkTree: () => inGit,
-      realpath: (p: string) => p,
+    // A fake filesystem: these paths exist, and `/tmp/link` is a symlink into a checkout.
+    const fsFake = (paths: string[], links: Record<string, string> = {}) => ({
+      exists: (p: string) => paths.includes(p),
+      realpath: (p: string) => links[p] ?? p,
     });
 
-    it('refuses this repository, and accepts a sibling whose name merely starts with the repo or ..', () => {
-      expect(() => resolveOutPath('/work/repo/out.csv', opts())).toThrow(/inside a git work tree/);
-      expect(() => resolveOutPath('/work/repo/..foo/out.csv', opts())).toThrow(/inside a git/);
-      expect(resolveOutPath('/work/repo-other/out.csv', opts())).toBe('/work/repo-other/out.csv');
-      expect(resolveOutPath('/work/..x/out.csv', opts())).toBe('/work/..x/out.csv');
+    it('refuses a path inside any checkout — found by its .git — and accepts one outside', () => {
+      const f = fsFake(['/', '/work', '/work/repo', '/work/repo/.git', '/work/other', '/tmp']);
+      const resolve = (out: string) => resolveOutPath(out, f.exists, f.realpath);
+      expect(() => resolve('/work/repo/out.csv')).toThrow(
+        /inside a git checkout: \/work\/repo\/out.csv/
+      );
+      // A directory that does not exist yet, inside the checkout, is still refused.
+      expect(() => resolve('/work/repo/new/dir/out.csv')).toThrow(/inside a git checkout/);
+      expect(resolve('/work/other/out.csv')).toBe('/work/other/out.csv');
+      expect(resolve('/tmp/out.csv')).toBe('/tmp/out.csv');
     });
 
-    it('refuses any OTHER git work tree, and resolves the parent through symlinks first', () => {
-      expect(() => resolveOutPath('/elsewhere/out.csv', opts(true))).toThrow(/inside a git/);
-      const realpath = (p: string) => (p === '/tmp/link' ? '/work/repo/sub' : p);
-      expect(() => resolveOutPath('/tmp/link/out.csv', { ...opts(), realpath })).toThrow(
-        /inside a git work tree: \/work\/repo\/sub\/out.csv/
+    it('resolves the parent through symlinks first, so a link cannot smuggle the file in', () => {
+      const f = fsFake(['/', '/tmp', '/tmp/link', '/work', '/work/repo', '/work/repo/.git'], {
+        '/tmp/link': '/work/repo/sub',
+      });
+      expect(() => resolveOutPath('/tmp/link/out.csv', f.exists, f.realpath)).toThrow(
+        /inside a git checkout/
       );
     });
 
-    it('against the real filesystem and git: the OS temp dir passes, this checkout does not', () => {
+    it('against the real filesystem: the OS temp dir passes, this checkout does not', () => {
       const tmp = fs.realpathSync(os.tmpdir());
-      expect(isInGitWorkTree(tmp)).toBe(false);
-      expect(isInGitWorkTree(process.cwd())).toBe(true);
       expect(resolveOutPath(path.join(tmp, 'x.csv'))).toBe(path.join(tmp, 'x.csv'));
-      expect(() => resolveOutPath(path.join(process.cwd(), 'x.csv'))).toThrow(/inside a git/);
+      expect(() => resolveOutPath(path.join(__dirname, 'x.csv'))).toThrow(/inside a git checkout/);
     });
   });
 
@@ -571,20 +575,105 @@ describe('entry-script guards', () => {
       const client = { set: originalSet, get: originalGet };
       const guard = suppressCacheWrites(client);
       await expect(client.set('k1', 'v1')).resolves.toBeNull();
-      await expect(client.get('k1')).resolves.toBe('v1');
+      await expect(client.set('k1', 'v2')).resolves.toBeNull();
+      await expect(client.get('k1')).resolves.toBe('v2');
       await expect(client.get('other')).resolves.toBe('redis:other');
       expect(originalSet).not.toHaveBeenCalled();
       expect(originalGet).toHaveBeenCalledTimes(1);
       expect(originalGet).toHaveBeenCalledWith('other');
-      expect(guard.suppressed()).toBe(1);
+      expect(guard.memoisedKeys()).toBe(1);
     });
 
-    it('takes effect on a real node-redis cluster client (never connected)', async () => {
+    it('a client DERIVED by prototype keeps its own get (its own `this`), and never sees the memo', async () => {
+      class Client {
+        constructor(public tag: string) {}
+        async get(key: string) {
+          return `${this.tag}:${key}`;
+        }
+        async set() {
+          return 'OK';
+        }
+      }
+      const base = new Client('base');
+      const derived = Object.create(base) as Client;
+      derived.tag = 'derived';
+      suppressCacheWrites(base);
+      await base.set();
+      await (base.set as (k: string, v: string) => Promise<unknown>)('k', 'memo');
+      await expect(base.get('k')).resolves.toBe('memo');
+      await expect(derived.get('k')).resolves.toBe('derived:k');
+      await expect(derived.get('x')).resolves.toBe('derived:x');
+      // `set` is intercepted for every caller, derived ones included: no path through it writes.
+      await expect(derived.set()).resolves.toBeNull();
+    });
+
+    it('on a real node-redis cluster client (never connected): set and get are served locally, while a derived reader still goes to Redis', async () => {
+      // Control: unguarded, a never-connected client refuses the write.
+      const control = createCluster({ rootNodes: [{ url: 'redis://127.0.0.1:1' }] });
+      await expect(control.set('k', 'v')).rejects.toThrow();
+
       const client = createCluster({ rootNodes: [{ url: 'redis://127.0.0.1:1' }] });
+      const derived = client.withTypeMapping({ [RESP_TYPES.BLOB_STRING]: Buffer });
       suppressCacheWrites(client);
       await expect(client.set('k', 'v')).resolves.toBeNull();
       await expect(client.get('k')).resolves.toBe('v');
+      // The Buffer-mapped reader is NOT handed the memo's string: it runs the real command, which
+      // rejects here because nothing is connected.
+      await expect(derived.get('k')).rejects.toThrow();
       expect(client.isOpen).toBe(false);
+    });
+  });
+
+  describe('withCsvFile', () => {
+    let dir: string;
+    beforeEach(() => {
+      dir = fs.mkdtempSync(path.join(os.tmpdir(), 'replay-csv-test-'));
+      return () => fs.rmSync(dir, { recursive: true, force: true });
+    });
+
+    it('creates the file 0600, writes the lines, and prints its path', async () => {
+      const out = path.join(dir, 'a.csv');
+      const log = vi.fn();
+      await expect(
+        withCsvFile(
+          out,
+          async (write) => {
+            write('h\r\n');
+            write('r\r\n');
+            return 7;
+          },
+          log
+        )
+      ).resolves.toBe(7);
+      expect(fs.readFileSync(out, 'utf8')).toBe('h\r\nr\r\n');
+      expect(fs.statSync(out).mode & 0o777).toBe(0o600);
+      expect(log).toHaveBeenCalledWith(`writing CSV: ${out}`);
+    });
+
+    it('deletes the partial file when the body fails, and rethrows', async () => {
+      const out = path.join(dir, 'b.csv');
+      const log = vi.fn();
+      await expect(
+        withCsvFile(
+          out,
+          async (write) => {
+            write('partial user text\r\n');
+            throw new Error('scan failed');
+          },
+          log
+        )
+      ).rejects.toThrow('scan failed');
+      expect(fs.existsSync(out)).toBe(false);
+      expect(log).toHaveBeenCalledWith(`run failed; deleted the partial CSV ${out}`);
+    });
+
+    it('refuses an existing file and leaves it untouched', async () => {
+      const out = path.join(dir, 'c.csv');
+      fs.writeFileSync(out, 'keep');
+      const body = vi.fn(async () => undefined);
+      await expect(withCsvFile(out, body, () => undefined)).rejects.toThrow(/EEXIST/);
+      expect(body).not.toHaveBeenCalled();
+      expect(fs.readFileSync(out, 'utf8')).toBe('keep');
     });
   });
 
@@ -596,7 +685,7 @@ describe('entry-script guards', () => {
         connect: async () => ({
           query: async (sql: string, params?: unknown[]) => {
             statements.push([sql, params]);
-            if (sql === fail) throw new Error('boom');
+            if (sql === fail) throw new Error(`boom: ${sql}`);
             return { rows: [{ sql }] };
           },
           release,
@@ -620,35 +709,126 @@ describe('entry-script guards', () => {
     it('failure: still ROLLBACK and release', async () => {
       const { pool, statements, release } = fakePool('SELECT 1');
       await expect(withReadOnlyTransaction(pool, (query) => query('SELECT 1'))).rejects.toThrow(
-        'boom'
+        'boom: SELECT 1'
       );
       expect(statements).toEqual([...OPEN, ['SELECT 1', undefined], ['ROLLBACK', undefined]]);
       expect(release).toHaveBeenCalledTimes(1);
     });
+
+    it('a failing ROLLBACK does not mask the result, and the client is still released', async () => {
+      const { pool, release } = fakePool('ROLLBACK');
+      await expect(withReadOnlyTransaction(pool, (query) => query('SELECT 2'))).resolves.toEqual([
+        { sql: 'SELECT 2' },
+      ]);
+      expect(release).toHaveBeenCalledTimes(1);
+    });
   });
 
-  it('STRUCTURAL: the entry script statically imports nothing that could build a client', () => {
+  describe('STRUCTURAL: nothing that could build a client loads before the sink check', () => {
     // The sink check must run after `.env` loads and BEFORE any module that constructs a ClickHouse,
-    // Axiom or Redis client. That holds only while every server-graph import in the entry script is
-    // a dynamic `await import(...)` inside `main`. A static import is hoisted above the check.
-    const source = fs.readFileSync(
-      path.join(__dirname, '..', 'replay-shared-data-moderation.ts'),
-      'utf8'
-    );
-    const staticImports = [...source.matchAll(/^import\s+(?!type\b)[^;]*?from\s+'([^']+)'/gms)].map(
-      (m) => m[1]
-    );
-    expect(staticImports).toEqual([
-      'node:child_process',
+    // Axiom or Redis client, and the cache guard must be installed before any blocklist read. Read
+    // from the entry script's AST, so the spelling of an import (quotes, side-effect form, require,
+    // re-export) cannot walk past it.
+    const ALLOWED_STATIC = [
       'node:fs',
       'node:os',
       'node:path',
+      './decision-eval/safety',
       './lib/run-as-script',
-    ]);
-    const order = ['~/env/server', 'assertNoSinks(process.env)', '~/server/redis/client'].map(
-      (needle) => source.indexOf(needle, source.indexOf('async function main'))
+    ];
+
+    function violations(source: string): string[] {
+      const file = ts.createSourceFile('entry.ts', source, ts.ScriptTarget.Latest, true);
+      const found: string[] = [];
+      const dynamicImports: Array<{ spec: string; pos: number }> = [];
+      const calls: Record<string, number[]> = {};
+      const visit = (node: ts.Node) => {
+        if (ts.isImportDeclaration(node)) {
+          const spec = (node.moduleSpecifier as ts.StringLiteral).text;
+          if (!node.importClause?.isTypeOnly && !ALLOWED_STATIC.includes(spec)) {
+            found.push(`static import ${spec}`);
+          }
+        } else if (ts.isImportEqualsDeclaration(node)) {
+          found.push('import = require');
+        } else if (ts.isExportDeclaration(node) && node.moduleSpecifier) {
+          found.push('export … from');
+        } else if (ts.isCallExpression(node)) {
+          const callee = node.expression;
+          if (callee.kind === ts.SyntaxKind.ImportKeyword) {
+            const arg = node.arguments[0];
+            dynamicImports.push({
+              spec: arg && ts.isStringLiteral(arg) ? arg.text : '<computed>',
+              pos: node.getStart(),
+            });
+          } else {
+            const name = ts.isIdentifier(callee)
+              ? callee.text
+              : ts.isPropertyAccessExpression(callee)
+              ? callee.name.text
+              : '';
+            if (name === 'require') found.push('require()');
+            (calls[name] ??= []).push(node.getStart());
+          }
+        }
+        ts.forEachChild(node, visit);
+      };
+      visit(file);
+
+      const sinkCheck = calls.assertNoSinks?.[0] ?? -1;
+      const guard = calls.suppressCacheWrites?.[0] ?? -1;
+      if (sinkCheck < 0) found.push('no assertNoSinks call');
+      if (guard < 0) found.push('no suppressCacheWrites call');
+      for (const { spec, pos } of dynamicImports) {
+        if (spec === '~/env/server' ? pos > sinkCheck : pos < sinkCheck) {
+          found.push(`import(${spec}) on the wrong side of assertNoSinks`);
+        }
+      }
+      for (const name of ['getBlocklistData', 'blocklistSelfCheck', 'replayApp']) {
+        for (const pos of calls[name] ?? []) {
+          if (pos < guard) found.push(`${name} before suppressCacheWrites`);
+        }
+      }
+      return found;
+    }
+
+    const entry = fs.readFileSync(
+      path.join(__dirname, '..', 'replay-shared-data-moderation.ts'),
+      'utf8'
     );
-    expect(order.every((i) => i > 0)).toBe(true);
-    expect([...order].sort((x, y) => x - y)).toEqual(order);
+
+    it('the entry script has no violation', () => {
+      expect(violations(entry)).toEqual([]);
+    });
+
+    it.each([
+      ['a side-effect import', `import '~/server/redis/client';\n${entry}`, 'static import'],
+      [
+        'a double-quoted import',
+        `import { x } from "~/server/db/client";\n${entry}`,
+        'static import',
+      ],
+      ['a re-export', `export * from '~/server/db/client';\n${entry}`, 'export … from'],
+      ['import = require', `import x = require('y');\n${entry}`, 'import = require'],
+      ['a bare require', `${entry}\nconst z = require('w');`, 'require()'],
+      [
+        'a server import hoisted above the check',
+        entry.replace(
+          '  assertNoSinks(process.env);',
+          "  await import('./shared-data-replay/replay');\n  assertNoSinks(process.env);"
+        ),
+        'wrong side of assertNoSinks',
+      ],
+      [
+        'a blocklist read before the cache guard',
+        entry.replace(
+          '  const cacheGuard = suppressCacheWrites(redis);',
+          "  getBlocklistData('x');\n  const cacheGuard = suppressCacheWrites(redis);"
+        ),
+        'getBlocklistData before suppressCacheWrites',
+      ],
+    ])('negative control: catches %s', (_, source, expected) => {
+      expect(source).not.toBe(entry);
+      expect(violations(source).join('\n')).toContain(expected);
+    });
   });
 });
