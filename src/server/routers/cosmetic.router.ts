@@ -76,7 +76,8 @@ export const cosmeticRouter = router({
     .input(getByIdSchema)
     .query(async ({ input, ctx }) => {
       const cosmetic = await getCosmeticDetail(input);
-      if (!cosmetic) return cosmetic;
+      // Moderators edit event decorations in every state, armed launch included.
+      if (!cosmetic || ctx.user.isModerator) return cosmetic;
       // An event decoration the viewer may not see yet reads as missing, like an unknown id.
       const [visible] = await withoutHiddenEventDecorations([{ cosmetic }], ctx.user);
       return visible ? cosmetic : null;

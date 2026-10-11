@@ -80,6 +80,15 @@ describe('cosmetic.getById', () => {
     expect(await callerFor({ id: 99, isModerator: true }).getById({ id: hat.id })).toEqual(hat);
   });
 
+  it('returns it to a moderator in every state, so the fit editor keeps working', async () => {
+    stored(hat);
+    testerFlag.reset({ public: true }); // armed: closed to everyone else
+    expect(await callerFor({ id: TESTER }).getById({ id: hat.id })).toBeNull();
+    expect(await callerFor({ id: 99, isModerator: true }).getById({ id: hat.id })).toEqual(hat);
+    testerFlag.reset({ readable: false });
+    expect(await callerFor({ id: 99, isModerator: true }).getById({ id: hat.id })).toEqual(hat);
+  });
+
   it('returns it to everyone once the event is open', async () => {
     testerFlag.reset({ public: true });
     vi.setSystemTime(c.BIRTHDAY_2026_STARTS_AT);
