@@ -28,16 +28,11 @@ const earlier = readdirSync(MIGRATIONS)
 
 const OLD_BADGE = 'Earned a hidden Creator Journey achievement.';
 const NEW_BADGE = 'Earned a special Creator Journey achievement.';
-// Prod's ids and numbering, which do not run in order.
+// Numbered out of id order, one past a single digit.
 const BADGES = [
-  [2900, 1],
-  [2899, 2],
-  [2895, 3],
-  [2894, 4],
-  [2896, 5],
-  [2901, 6],
-  [2897, 7],
-  [2898, 8],
+  [1, 2],
+  [2, 12],
+  [3, 1],
 ] as const;
 
 let db: PGlite;
@@ -55,10 +50,12 @@ async function before() {
       `Hidden Achievement Badge ${n}`,
       OLD_BADGE,
     ]);
-  // Outside the range, and a name the numbering does not match.
+  // Names that only contain the old one, and an unrelated cosmetic.
   await db.exec(`
     INSERT INTO "Cosmetic" (id, name, description) VALUES
-      (2893, 'Hidden Achievement Badge 1', '${OLD_BADGE}'),
+      (10, 'Hidden Achievement Badge', '${OLD_BADGE}'),
+      (11, 'Old Hidden Achievement Badge 1', '${OLD_BADGE}'),
+      (12, 'Hidden Achievement Badge 1 copy', '${OLD_BADGE}'),
       (100, 'Downloads Art', 'One of your models reached 100 downloads.');
   `);
 }
@@ -109,13 +106,15 @@ describe(DOWNLOADS_TOTAL, () => {
     await before();
     await db.exec(read(DOWNLOADS_TOTAL));
     expect(await cosmetics()).toEqual([
-      { id: 100, name: 'Downloads Art', description: 'One of your models reached 100 downloads.' },
-      { id: 2893, name: 'Hidden Achievement Badge 1', description: OLD_BADGE },
       ...BADGES.map(([id, n]) => ({
         id,
         name: `Special Achievement Badge ${n}`,
         description: NEW_BADGE,
-      })).sort((a, b) => a.id - b.id),
+      })),
+      { id: 10, name: 'Hidden Achievement Badge', description: OLD_BADGE },
+      { id: 11, name: 'Old Hidden Achievement Badge 1', description: OLD_BADGE },
+      { id: 12, name: 'Hidden Achievement Badge 1 copy', description: OLD_BADGE },
+      { id: 100, name: 'Downloads Art', description: 'One of your models reached 100 downloads.' },
     ]);
   });
 
@@ -123,14 +122,14 @@ describe(DOWNLOADS_TOTAL, () => {
     await before();
     await db.exec(`
       UPDATE "CreatorMilestone" SET description = 'Edited.' WHERE key = 'reach:downloads-1000';
-      UPDATE "Cosmetic" SET description = 'Edited.' WHERE id = 2894;
+      UPDATE "Cosmetic" SET description = 'Edited.' WHERE id = 1;
     `);
     await db.exec(read(DOWNLOADS_TOTAL));
     const rows = await descriptions();
     expect(rows.find((row) => row.key === 'reach:downloads-1000')?.description).toBe('Edited.');
-    expect((await cosmetics()).find((row) => row.id === 2894)).toEqual({
-      id: 2894,
-      name: 'Hidden Achievement Badge 4',
+    expect((await cosmetics()).find((row) => row.id === 1)).toEqual({
+      id: 1,
+      name: 'Hidden Achievement Badge 2',
       description: 'Edited.',
     });
   });

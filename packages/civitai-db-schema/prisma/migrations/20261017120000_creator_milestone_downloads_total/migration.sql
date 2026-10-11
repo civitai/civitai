@@ -13,11 +13,9 @@ UPDATE "CreatorMilestone" SET description = 'Your models reached 1,000,000 downl
 WHERE key = 'reach:downloads-1000000' AND description = 'One of your models reached 1,000,000 downloads.';
 
 -- The special-achievement badges keep their numbered, non-descriptive names; only the old "hidden"
--- wording changes.
-UPDATE "Cosmetic" c SET name = 'Special Achievement Badge ' || v.n,
+-- wording changes. Each row is matched by its own old name and old description.
+UPDATE "Cosmetic"
+SET name = 'Special Achievement Badge ' || substring(name FROM '[0-9]+$'),
   description = 'Earned a special Creator Journey achievement.'
-FROM (VALUES (2900, 1), (2899, 2), (2895, 3), (2894, 4), (2896, 5), (2901, 6), (2897, 7), (2898, 8))
-  AS v(id, n)
-WHERE c.id = v.id
-  AND c.name = 'Hidden Achievement Badge ' || v.n
-  AND c.description = 'Earned a hidden Creator Journey achievement.';
+WHERE name ~ '^Hidden Achievement Badge [0-9]+$'
+  AND description = 'Earned a hidden Creator Journey achievement.';

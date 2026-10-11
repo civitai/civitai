@@ -704,8 +704,9 @@ describe('watermark definitions', () => {
 });
 
 /**
- * 🔴 Downloads stay silent at launch by product decision. Every other group is announced now that the journey page shows them. A group must be
- * wholly silent or wholly announced, since its tiers share one watermark row.
+ * 🔴 Downloads stay silent at launch by product decision. Every other group is announced now that
+ * the journey page shows them. A group must be wholly silent or wholly announced, since its tiers
+ * share one watermark row.
  */
 describe('which activity groups announce', () => {
   it('announces every activity group except downloads', () => {
@@ -810,6 +811,16 @@ describe('journey progress values', () => {
       .sort();
     expect(granted).toEqual(reached);
     expect(granted.length).toBeGreaterThan(4);
+  });
+
+  it('clamp a download total past int range instead of failing the page', async () => {
+    await q(
+      `INSERT INTO "ModelMetric" ("modelId", "userId", status, "downloadCount") VALUES
+        (1, $1, 'Published', 2000000000), (2, $1, 'Published', 2000000000)`,
+      [CREATOR]
+    );
+    const [values] = await q<Record<ActivityMeasure, number>>(activityValuesSql, [CREATOR]);
+    expect(values.downloads).toBe(2147483647);
   });
 
   it('read zero for a creator with nothing', async () => {
