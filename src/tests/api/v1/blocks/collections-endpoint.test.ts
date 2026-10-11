@@ -73,6 +73,7 @@ const {
   mockMaturity,
   mockFallbackCovers,
   mockPlayableSample,
+  mockRestricted,
 } = vi.hoisted(() => ({
   mockGetAll: vi.fn(),
   mockItemCount: vi.fn(),
@@ -83,6 +84,7 @@ const {
   mockMaturity: vi.fn(),
   mockFallbackCovers: vi.fn(),
   mockPlayableSample: vi.fn(),
+  mockRestricted: vi.fn(),
 }));
 
 vi.mock('~/server/services/collection.service', () => ({
@@ -99,6 +101,7 @@ vi.mock('~/server/services/blocks/block-collections.service', async () => {
     getFollowedCollectionIds: mockFollowed,
     getFallbackCoverImages: mockFallbackCovers,
     getCollectionPlayableSample: mockPlayableSample,
+    getModelRestrictedImageIds: mockRestricted,
     // Cover url helper: a video cover yields a poster (`poster:` prefix), a still
     // image yields `edge:`; null when there is no url — mirrors toCoverImageUrl.
     toCoverImageUrl: (img: any) =>
@@ -234,6 +237,7 @@ beforeEach(() => {
   // Default: nothing sampled for any id → `meetsPlayableFloor` reads "nothing to
   // judge, keep", so tests that are not about the floor see no drops.
   mockPlayableSample.mockResolvedValue(new Map());
+  mockRestricted.mockResolvedValue(new Set<number>());
   mockItemCount.mockResolvedValue([
     { id: 10, count: 5 },
     { id: 11, count: 2 },
@@ -1315,7 +1319,7 @@ describe('cover moderation and scan gate', () => {
     nsfwLevel: 1,
     userId: 1,
     user: { id: 1, username: 'a' },
-    image: { ...SCANNED, url: 'primary-10', type: 'image', nsfwLevel: 1, ...image },
+    image: { ...SCANNED, id: 110, url: 'primary-10', type: 'image', nsfwLevel: 1, ...image },
   });
 
   const mineRow = (image: Record<string, unknown>) => ({
@@ -1324,7 +1328,7 @@ describe('cover moderation and scan gate', () => {
     description: null,
     read: 'Public',
     userId: 42,
-    image: { ...SCANNED, url: 'primary-20', type: 'image', nsfwLevel: 1, ...image },
+    image: { ...SCANNED, id: 120, url: 'primary-20', type: 'image', nsfwLevel: 1, ...image },
   });
 
   it('mode=public: selects every field the gate reads on the primary cover', async () => {
@@ -1333,6 +1337,7 @@ describe('cover moderation and scan gate', () => {
     await handler(req as never, res as never);
     expect(mockGetAll.mock.calls[0][0].select.image).toEqual({
       select: {
+        id: true,
         url: true,
         type: true,
         nsfwLevel: true,
@@ -1420,4 +1425,49 @@ describe('cover moderation and scan gate', () => {
       expect('coverNsfwLevel' in item).toBe(false);
     }
   );
+
+  describe('restricted base model on a mature ceiling', () => {
+    // 1|2|4|8|16: a ceiling that admits mature levels.
+    const MATURE = 31;
+    beforeEach(() => {
+      mockMaturity.mockReturnValue({ browsingLevel: MATURE, isSfwCeiling: false });
+    });
+
+    it('mode=public: a restricted mature primary cover is replaced by the fallback', async () => {
+      mockGetAll.mockResolvedValueOnce([publicRow({ nsfwLevel: 4 })]);
+      mockRestricted.mockResolvedValueOnce(new Set([110]));
+      mockFallbackCovers.mockResolvedValueOnce(
+        new Map([[10, { url: 'fallback-10', type: 'image', nsfwLevel: 1 }]])
+      );
+      const { req, res } = createMocks({ query: { mode: 'public', limit: '24' } });
+      await handler(req as never, res as never);
+      expect(mockRestricted).toHaveBeenCalledWith([110]);
+      expect(mockFallbackCovers).toHaveBeenCalledWith([10], MATURE);
+      expect((res._json() as any).items[0].coverImageUrl).toBe('edge:fallback-10');
+    });
+
+    it('mode=mine: a restricted mature primary cover is replaced by the fallback', async () => {
+      mockUserCollections.mockResolvedValueOnce([mineRow({ nsfwLevel: 4 })]);
+      mockRestricted.mockResolvedValueOnce(new Set([120]));
+      const { req, res } = createMocks({ query: { mode: 'mine', limit: '24' } });
+      await handler(req as never, res as never);
+      expect(mockRestricted).toHaveBeenCalledWith([120]);
+      expect((res._json() as any).items[0].coverImageUrl).toBeNull();
+    });
+
+    it('keeps an unrestricted mature primary cover', async () => {
+      mockGetAll.mockResolvedValueOnce([publicRow({ nsfwLevel: 4 })]);
+      const { req, res } = createMocks({ query: { mode: 'public', limit: '24' } });
+      await handler(req as never, res as never);
+      expect((res._json() as any).items[0].coverImageUrl).toBe('edge:primary-10');
+    });
+  });
+
+  it('skips the restricted lookup when the ceiling admits no mature level', async () => {
+    mockGetAll.mockResolvedValueOnce([publicRow({})]);
+    const { req, res } = createMocks({ query: { mode: 'public', limit: '24' } });
+    await handler(req as never, res as never);
+    expect((res._json() as any).items[0].coverImageUrl).toBe('edge:primary-10');
+    expect(mockRestricted).not.toHaveBeenCalled();
+  });
 });

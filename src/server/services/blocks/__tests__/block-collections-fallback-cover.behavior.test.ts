@@ -14,7 +14,10 @@ vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 vi.mock('~/client-utils/edge-url', () => ({ getEdgeUrl: (src: string) => src }));
 vi.mock('~/server/auth/session-client', () => ({ sessionClient: {} }));
 
-import { getFallbackCoverImages } from '~/server/services/blocks/block-collections.service';
+import {
+  getFallbackCoverImages,
+  getModelRestrictedImageIds,
+} from '~/server/services/blocks/block-collections.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
 const holder = vi.hoisted(() => ({ db: null as unknown as PGlite }));
@@ -200,5 +203,21 @@ describe('getFallbackCoverImages against Postgres', () => {
       await insertItem(10, 2, '2026-01-02');
       expect((await getFallbackCoverImages([10], ALL_LEVELS)).get(10)?.url).toBe('img-2');
     });
+  });
+});
+
+describe('getModelRestrictedImageIds against Postgres', () => {
+  it('returns only the mature images on a restricted base model', async () => {
+    await insertImage(1, { nsfwLevel: 4, modelRestricted: true });
+    await insertImage(2, { nsfwLevel: 4 });
+    await insertImage(3, { nsfwLevel: 1, modelRestricted: true });
+    await insertImage(4, { nsfwLevel: 2, modelRestricted: true });
+    expect([...(await getModelRestrictedImageIds([1, 2, 3, 4, 99]))]).toEqual([1]);
+  });
+
+  it('runs no query for no ids', async () => {
+    vi.mocked(dbMock.dbRead.$queryRaw).mockClear();
+    expect((await getModelRestrictedImageIds([])).size).toBe(0);
+    expect(dbMock.dbRead.$queryRaw).not.toHaveBeenCalled();
   });
 });

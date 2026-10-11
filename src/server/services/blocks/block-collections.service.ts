@@ -185,6 +185,24 @@ export function isPublicCollectionImage(
 }
 
 /**
+ * Of `imageIds`, the ones `getAllImages` refuses on its restricted base model condition:
+ * a mature level on an image linked to a license-restricted base model. The column is
+ * written by raw SQL only and is not in the Prisma schema, so a cover select cannot read
+ * it. `getFallbackCoverImages` applies the same condition in its own WHERE.
+ */
+export async function getModelRestrictedImageIds(imageIds: number[]): Promise<Set<number>> {
+  if (imageIds.length === 0) return new Set();
+  const rows = await dbRead.$queryRaw<{ id: number }[]>`
+    SELECT i."id" as "id"
+    FROM "Image" i
+    WHERE i."id" IN (${Prisma.join(imageIds)})
+      AND (i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) != 0
+      AND i."modelRestricted"
+  `;
+  return new Set(rows.map((r) => r.id));
+}
+
+/**
  * Fallback cover source for collections whose own cover is null OR fails
  * `isPublicCollectionImage`: the media (url,type,nsfwLevel) of each collection's
  * most-recent ACCEPTED item that passes the same rule, written here in SQL —
