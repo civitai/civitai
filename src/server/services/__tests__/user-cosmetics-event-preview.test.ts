@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import * as c from '~/shared/constants/birthday2026.constants';
@@ -179,5 +181,25 @@ describe('the profile shows event hats only to viewers the event is open to', ()
     vi.setSystemTime(c.BIRTHDAY_2026_STARTS_AT);
     expect(await profileHats({})).toHaveLength(2);
     expect(await profileHats({ sessionUserId: 99 })).toHaveLength(2);
+  });
+});
+
+/**
+ * The profile filters hats for the viewer, which is safe only while nothing caches its response
+ * per URL: an edge or Redis cache would serve one tester's preview hats to everyone.
+ */
+describe('userProfile.get stays per-viewer', () => {
+  it('has no cache middleware', () => {
+    const router = readFileSync(
+      join(process.cwd(), 'src/server/routers/user-profile.router.ts'),
+      'utf8'
+    );
+    const start = router.indexOf('get: publicProcedure');
+    expect(start, 'userProfile.get procedure not found').toBeGreaterThan(-1);
+    const end = router.indexOf('.query(getUserProfileHandler)', start);
+    expect(end).toBeGreaterThan(start);
+    const route = router.slice(start, end);
+    expect(route).not.toMatch(/edgeCacheIt|cacheIt/);
+    expect(route).not.toMatch(/\.use\(/);
   });
 });
