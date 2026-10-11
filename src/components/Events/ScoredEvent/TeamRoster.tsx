@@ -190,9 +190,10 @@ export function TeamRoster({
         </>
       ) : (
         <Alert color="gray">
-          No one on Team {team} has joined the roster yet.
+          No one on Team {team} has opted in to the roster yet. The roster only shows members who
+          turn on &ldquo;Show me on my team&apos;s roster&rdquo;.
           {team === initialTeam && status && !status.optedIn && (
-            <> Turn on &ldquo;Show me on my team&apos;s roster&rdquo; above to be the first.</>
+            <> Turn it on above to be the first.</>
           )}
         </Alert>
       )}

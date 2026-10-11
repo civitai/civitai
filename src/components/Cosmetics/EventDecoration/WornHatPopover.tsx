@@ -3,6 +3,8 @@ import { IconArrowsMove } from '@tabler/icons-react';
 import dynamic from 'next/dynamic';
 import type { ReactNode } from 'react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
+import { teamRosterHref } from '~/components/Events/event-promos';
+import { useEventPromos } from '~/components/Events/useEventPromos';
 import { useTeamColor } from '~/components/Events/events.utils';
 import { WornHatLivePoints } from '~/components/Events/ScoredEvent/event-points-live';
 import { HatStats } from '~/components/Events/ScoredEvent/HatStats';
@@ -48,6 +50,7 @@ export function WornHatPopover({
     { enabled: opened }
   );
   const definition = getEventDecorationDefinition(event);
+  const rosterHref = teamRosterHref(useEventPromos(), event);
 
   return (
     <Popover
@@ -97,6 +100,18 @@ export function WornHatPopover({
           >
             {definition?.eventLinkLabel ?? 'See the event'}
           </Button>
+          {rosterHref && (
+            <Button
+              component={NextLink}
+              href={rosterHref}
+              radius="xl"
+              variant="light"
+              fullWidth
+              onClick={() => onChange(false)}
+            >
+              Team rosters
+            </Button>
+          )}
           {data?.team && (
             <Text size="xs" c="dimmed" ta="center">
               Scores for Team {data.team} while it&apos;s worn

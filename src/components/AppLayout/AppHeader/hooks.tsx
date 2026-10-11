@@ -1,4 +1,5 @@
 import { useMantineTheme, getPrimaryShade, useComputedColorScheme } from '@mantine/core';
+import { useLocalStorage } from '@mantine/hooks';
 import {
   type Icon,
   type IconProps,
@@ -37,6 +38,8 @@ import dynamic from 'next/dynamic';
 import { useRouter } from 'next/router';
 import { appsNavVisibility } from '~/components/AppLayout/AppHeader/appsNavVisibility';
 import { dialogStore } from '~/components/Dialog/dialogStore';
+import { eventMenuEntries } from '~/components/Events/event-promos';
+import { useEventPromos } from '~/components/Events/useEventPromos';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useQueryNotificationsCount } from '~/components/Notifications/notifications.utils';
 import { PLACEMENT_QUEUE_URL } from '~/components/Placement/queue-routes';
@@ -61,6 +64,9 @@ export type UserMenuItem = {
   currency?: boolean;
   redirectReason?: LoginRedirectReason;
   newUntil?: Date;
+  // NEW until the viewer follows the link once; `onNavigate` records that.
+  isNew?: boolean;
+  onNavigate?: () => void;
   /**
    * A count rendered as a filled badge after the label. Zero and undefined both
    * render nothing — a badge that says "0" reads as a broken badge, not as an
@@ -104,6 +110,20 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
   // `staleTime: Infinity`. Reading it here adds no round trip.
   const { pendingPlacements, pendingCollectionReviews } = useQueryNotificationsCount();
 
+  const [seenEvents, setSeenEvents] = useLocalStorage<string[]>({
+    key: 'event-menu-seen',
+    defaultValue: [],
+  });
+  const eventItems: UserMenuItem[] = eventMenuEntries(useEventPromos()).map((entry) => ({
+    href: entry.href,
+    icon: entry.icon,
+    color: theme.colors.grape[getPrimaryShade(theme, colorScheme ?? 'dark')],
+    label: entry.label,
+    isNew: !seenEvents.includes(entry.event),
+    onNavigate: () =>
+      setSeenEvents((seen) => (seen.includes(entry.event) ? seen : [...seen, entry.event])),
+  }));
+
   return [
     {
       visible: !!currentUser,
@@ -114,6 +134,8 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           color: theme.colors.blue[getPrimaryShade(theme, colorScheme ?? 'dark')],
           label: 'Your Profile',
         },
+        // Stays after the event's strip is dismissed: the way back to the event.
+        ...eventItems,
         {
           href: `/user/${currentUser?.username as string}/shop`,
           // Only Creator Program members qualify to run a shop.
@@ -323,6 +345,7 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
     {
       visible: !currentUser,
       items: [
+        ...eventItems,
         {
           href: '/leaderboard/overall',
           icon: IconCrown,
