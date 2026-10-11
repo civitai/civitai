@@ -150,6 +150,27 @@ beforeEach(async () => {
 });
 
 describe('getFallbackCoverImages against Postgres', () => {
+  it('picks each collection its own newest clean item, and omits a collection with none', async () => {
+    // Collection 10: newest is refused, so the older clean one. Collection 20: its own
+    // newest, even though 10's items are newer. Collection 30: only refused items.
+    // Collection 40: no items at all.
+    await insertImage(1, {});
+    await insertImage(2, { poi: true });
+    await insertImage(3, {});
+    await insertImage(4, {});
+    await insertImage(5, { minor: true });
+    await insertItem(10, 1, '2026-02-01');
+    await insertItem(10, 2, '2026-02-05');
+    await insertItem(20, 3, '2026-01-01');
+    await insertItem(20, 4, '2026-01-02');
+    await insertItem(30, 5, '2026-03-01');
+    const map = await getFallbackCoverImages([10, 20, 30, 40], SFW);
+    expect([...map.entries()].sort(([a], [b]) => a - b)).toEqual([
+      [10, { url: 'img-1', type: 'image', nsfwLevel: 1 }],
+      [20, { url: 'img-4', type: 'image', nsfwLevel: 1 }],
+    ]);
+  });
+
   it('serves the newest clean accepted item', async () => {
     await insertImage(1, {});
     await insertImage(2, {});
