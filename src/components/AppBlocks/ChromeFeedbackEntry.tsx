@@ -19,6 +19,7 @@ import { FEEDBACK_MESSAGE_MAX_LENGTH } from '~/shared/constants/feedback.constan
 import { hasAppsStoreAccess } from '~/shared/utils/app-blocks-access';
 import { trpc } from '~/utils/trpc';
 import type { AppFeedbackRequest } from './appFeedbackChrome';
+import type { BlockHostSurface } from './blockInitFragmentGate';
 import {
   APP_FEEDBACK_SENT_MESSAGE,
   APP_FEEDBACK_PRIVATE_NOTICE,
@@ -68,10 +69,13 @@ const TOOLTIP_EVENTS = { hover: true, focus: true, touch: false };
  */
 export function ChromeFeedbackButton({
   request,
+  hostSurface,
   labelled,
   onOpenFeedback,
 }: {
   request: AppFeedbackRequest | null;
+  /** The mounting host. Omitted, or a surface that offers no feedback → renders nothing. */
+  hostSurface: BlockHostSurface | undefined;
   /** Show the "Feedback" text beside the icon (wide bar) or the icon alone (narrow bar). */
   labelled: boolean;
   onOpenFeedback: (target: AppFeedbackModalTarget) => void;
@@ -81,6 +85,7 @@ export function ChromeFeedbackButton({
   const entry = appFeedbackEntryRequest({
     isSignedIn: !!currentUser,
     hasStoreAccess: hasAppsStoreAccess(features),
+    hostSurface,
     request,
   });
   if (!entry) return null;

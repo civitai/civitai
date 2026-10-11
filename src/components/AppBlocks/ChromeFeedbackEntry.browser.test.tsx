@@ -145,9 +145,19 @@ function ProdishProviders({ children }: { children: React.ReactNode }) {
 }
 
 /** Page host: what `PageBlockHost` passes. */
-const PAGE_PROPS = { appBlockId: APP_BLOCK_ID, slug: SLUG, slotId: 'app.page' };
+const PAGE_PROPS = {
+  appBlockId: APP_BLOCK_ID,
+  slug: SLUG,
+  slotId: 'app.page',
+  hostSurface: 'page-run',
+} as const;
 /** Model slot: what `IframeHost` passes — no slug, a model id. */
-const SLOT_PROPS = { appBlockId: APP_BLOCK_ID, slotId: 'model.sidebar_top', modelId: MODEL_ID };
+const SLOT_PROPS = {
+  appBlockId: APP_BLOCK_ID,
+  slotId: 'model.sidebar_top',
+  modelId: MODEL_ID,
+  hostSurface: 'model-slot',
+} as const;
 
 /**
  * A second observer of the eligibility query that renders a marker once it has resolved, so an
@@ -378,6 +388,17 @@ describe('the bar button', () => {
     expect(feedbackButton().elements()).toHaveLength(0);
     expect(mocks.eligibilityInputs).toHaveLength(0);
   });
+
+  // 🔴 The dev tunnel runs unpublished code; a report there would be stamped with the published
+  // version. Same page props as the CONTROL above, only the host surface differs.
+  for (const hostSurface of ['dev-tunnel', 'review-preview', undefined]) {
+    test(`host surface ${String(hostSurface)}: no button and no eligibility request`, async () => {
+      renderChrome({ ...PAGE_PROPS, hostSurface });
+      await expect.element(menuTrigger()).toBeInTheDocument();
+      expect(feedbackButton().elements()).toHaveLength(0);
+      expect(mocks.eligibilityInputs).toHaveLength(0);
+    });
+  }
 
   test('no store access: no button and no eligibility request', async () => {
     mocks.features = {};
