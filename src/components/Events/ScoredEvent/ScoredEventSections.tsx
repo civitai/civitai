@@ -1,4 +1,5 @@
-import { Stack } from '@mantine/core';
+import { Button, Stack } from '@mantine/core';
+import { NextLink } from '~/components/NextLink/NextLink';
 import { useMutateEvent, useTeamColor } from '~/components/Events/events.utils';
 import { EventRules } from '~/components/Events/ScoredEvent/EventRules';
 import {
@@ -96,6 +97,13 @@ export function ScoredEventSections({ event, data }: { event: string; data: Even
           startDate={data.startDate}
           preview={data.preview}
         />
+        {data.joinable && (
+          <div className="mt-3 flex justify-end">
+            <Button component={NextLink} href={`/events/${event}/team`} variant="light" size="sm">
+              See who&apos;s on each team
+            </Button>
+          </div>
+        )}
       </div>
     ),
     hats: joined && hats.length > 0 && (

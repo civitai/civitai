@@ -150,6 +150,14 @@ export const seasonTeamsTopic = (event: string, topicId: string) =>
     ? eventTeamsTopic(event)
     : (`${eventTeamsTopic(event)}:${topicId}` as const);
 
+// A roster member's total, pushed while their card is on screen (events/points/roster.ts). Keyed in
+// both seasons, unlike a hat's: an owner id is public, so a plain hash of it would let anyone name
+// the topic of someone who is not on a roster. The leading `o` keeps it apart from hat ids.
+export const seasonOwnerTopicId = (event: string, ownerId: number, season: EventPointSeason) =>
+  `o${previewTopicId(event, `owner:${season}:${ownerId}`).slice(0, 31)}`;
+export const eventOwnerTopic = (event: string, topicId: string) =>
+  `${SignalTopic.EventPoints}:${event}:owner:${topicId}` as const;
+
 export const LIVE_BUCKET_MS = 5 * 60 * 1000;
 export const liveBucket = (time: Date) => Math.floor(time.getTime() / LIVE_BUCKET_MS);
 export const utcDay = (time: Date) => time.toISOString().slice(0, 10);

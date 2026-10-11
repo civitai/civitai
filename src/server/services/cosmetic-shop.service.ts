@@ -89,6 +89,7 @@ import {
   MediaType,
   MetricTimeframe,
 } from '~/shared/utils/prisma/enums';
+import { syncEventRosterMember } from '~/server/events/points/roster-sync';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 
 /**
@@ -1295,6 +1296,10 @@ export const purchaseCosmeticShopItem = async ({
     });
 
     await refreshOwnedStickerCache([userId]);
+    // An event hat counts on its owner's team roster, if they are listed.
+    const hatEvent = (singleCosmetic.data as { event?: unknown } | null)?.event;
+    if (typeof hatEvent === 'string')
+      void syncEventRosterMember(userId, { event: hatEvent, onlyIfListed: true });
 
     try {
       await withRetries(async () => {

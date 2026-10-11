@@ -26,6 +26,7 @@ import {
   utcDay,
 } from '~/server/events/points/keys';
 import { markEventPointsDirty } from '~/server/events/points/push';
+import { addRosterPoints } from '~/server/events/points/roster';
 import type { SelfHealReason } from '~/server/events/points/self-heal';
 import type {
   EventHat,
@@ -92,6 +93,7 @@ export type EventPointsRedis = Pick<
   | 'hIncrBy'
   | 'xRange'
   | 'xRevRange'
+  | 'zAddIncr'
 >;
 
 export type EventPointsFailure = 'redis' | 'ledger' | 'push';
@@ -364,6 +366,21 @@ export function createEventPointsEngine(deps: EventPointsDeps) {
               return false;
             }
           ),
+          // The roster's points sort (roster.ts) is display only, like the count. Only an owner
+          // already listed is touched, and its key has no TTL to set. Started inside a promise, so
+          // even a synchronous throw costs only the roster, never the grant's push.
+          Promise.resolve()
+            .then(() =>
+              addRosterPoints(
+                deps.redis,
+                def.name,
+                hat.team,
+                eventPointSeason(def.startDate, time),
+                hat.ownerId,
+                grant
+              )
+            )
+            .catch((error) => deps.logError('redis', 'eventPoints.rosterPoints', error)),
         ]);
         // A push is only display: its failure must not cost the buckets their TTL.
         try {

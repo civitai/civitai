@@ -31,6 +31,7 @@ import {
 } from '~/server/search-index';
 import { throwAuthorizationError, throwBadRequestError } from '~/server/utils/errorHandling';
 import { getEntityOwnerId } from '~/server/services/entity-owner.service';
+import { syncEventRosterMember, syncEventRosterMembers } from '~/server/events/points/roster-sync';
 import { syncOwnerEventHats, syncOwnersEventHats } from '~/server/events/points/sync';
 import {
   getEventDecorationDefinition,
@@ -314,6 +315,8 @@ export async function equipCosmeticToEntity({
         ? [{ entityType: userCosmetic.equippedToType, entityId: userCosmetic.equippedToId }]
         : []),
     ]);
+  // Which hat a listed roster member wears is on their card.
+  if (eventDecoration) void syncEventRosterMember(userId, { onlyIfListed: true });
 
   await refreshEntityDecorationCaches(equippedToType, [equippedToId]);
 
@@ -352,8 +355,10 @@ export async function unequipCosmetic({
     where: { cosmeticId, equippedToId, equippedToType, userId, ...(claimKey && { claimKey }) },
     data: { equippedToId: null, equippedToType: null, equippedAt: null },
   });
-  if (updated.count)
+  if (updated.count) {
     void syncOwnerEventHats(userId, [{ entityType: equippedToType, entityId: equippedToId }]);
+    void syncEventRosterMember(userId, { onlyIfListed: true });
+  }
 
   await refreshEntityDecorationCaches(equippedToType, [equippedToId]);
 
@@ -536,6 +541,11 @@ function writeThroughRemovedEventHats(
       : []
   );
   if (hats.length) void syncOwnersEventHats(hats);
+  if (hats.length)
+    void syncEventRosterMembers(
+      hats.map((h) => h.userId),
+      { onlyIfListed: true }
+    );
 }
 
 async function refreshEntityDecorationCaches(type: CosmeticEntity, ids: number[]) {

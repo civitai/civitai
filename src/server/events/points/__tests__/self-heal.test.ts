@@ -17,6 +17,7 @@ const {
   SETTLE_LOCK_S,
   SWITCH_ON_RETRIES,
   SWITCH_ON_RETRY_MS,
+  ROSTER_STEP_MAX_MS,
 } = await import('~/server/events/points/self-heal');
 const { acquireJobLock, jobLockKey } = await import('~/server/jobs/job-lock');
 const { COUNT_BASE_MARK, encodeHat, eventPointKeys, eventSeasonKeys } = await import(
@@ -158,6 +159,7 @@ function pod(fake: Fake, overrides: Partial<SelfHealDeps> = {}) {
       calls.referee.push(season);
       return { season, rows: 0, changed: 0, final: false };
     }) as SelfHealDeps['runReferee'],
+    reconcileRoster: async () => ({ complete: true }),
     log: (entry) => void calls.logs.push(entry),
     now: () => NOW,
     pod: 'pod-a',
@@ -565,5 +567,67 @@ describe('the engine asks for a heal', () => {
     await engine.refresh();
     await engine.awardEventPoints([reaction]);
     expect(ledger).toHaveLength(1);
+  });
+});
+
+// The team rosters re-base on the owner totals the settle just wrote, inside the same lock, as a
+// step of their own that can never fail the heal.
+describe('the self-heal, roster step', () => {
+  it('re-bases the rosters after the settle, with a deadline, inside the lock', async () => {
+    const fake = fakeRedis();
+    const order: string[] = [];
+    const roster = vi.fn(async () => {
+      order.push(
+        fake.strings.has(jobLockKey(SETTLE_JOB)) ? 'roster (locked)' : 'roster (unlocked)'
+      );
+      return { complete: true };
+    });
+    const { heal } = pod(fake, {
+      runReferee: (async (_e, season) => {
+        order.push('referee');
+        return { season, rows: 0, changed: 0, final: false };
+      }) as SelfHealDeps['runReferee'],
+      reconcileRoster: roster,
+    });
+    expect(await heal(EVENT.name, 'switch-on')).toBe('ran');
+    expect(order).toEqual(['referee', 'roster (locked)']);
+    expect(roster).toHaveBeenCalledWith(EVENT.name, NOW.getTime() + ROSTER_STEP_MAX_MS);
+  });
+
+  it('still ran when the roster step throws, and logs the step', async () => {
+    const fake = fakeRedis();
+    const { heal, calls } = pod(fake, {
+      reconcileRoster: async () => {
+        throw new Error('roster down');
+      },
+    });
+    expect(await heal(EVENT.name, 'empty-map')).toBe('ran');
+    expect(calls.logs).toContainEqual(
+      expect.objectContaining({ type: 'error', step: 'roster', message: 'roster down' })
+    );
+    expect(fake.strings.has(jobLockKey(SETTLE_JOB))).toBe(false);
+  });
+
+  it('logs a roster step that ran out of time, and still ran', async () => {
+    const fake = fakeRedis();
+    const { heal, calls } = pod(fake, { reconcileRoster: async () => ({ complete: false }) });
+    expect(await heal(EVENT.name, 'empty-map')).toBe('ran');
+    expect(calls.logs).toContainEqual(
+      expect.objectContaining({ type: 'warning', step: 'roster', outcome: 'timeout' })
+    );
+  });
+
+  it('skips the rosters when nothing was settled, or the lock was held', async () => {
+    const roster = vi.fn(async () => ({ complete: true }));
+    const unsettled = pod(fakeRedis(), {
+      getScoringPhase: async () => null,
+      reconcileRoster: roster,
+    });
+    expect(await unsettled.heal(EVENT.name, 'empty-map')).toBe('ran');
+    const fake = fakeRedis();
+    await fake.redis.set(jobLockKey(SETTLE_JOB), 'someone-else');
+    const locked = pod(fake, { reconcileRoster: roster });
+    expect(await locked.heal(EVENT.name, 'empty-map')).toBe('locked');
+    expect(roster).not.toHaveBeenCalled();
   });
 });

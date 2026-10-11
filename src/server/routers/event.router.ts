@@ -5,6 +5,8 @@ import type { EventInput } from '~/server/schema/event.schema';
 import {
   eventCosmeticScoresSchema,
   eventSchema,
+  rosterOptInSchema,
+  teamRosterSchema,
   teamScoreHistorySchema,
   watchEventPointsSchema,
   wornEventHatSchema,
@@ -29,6 +31,9 @@ import {
   getMyEventHats,
   getPlaceableEventContent,
   getWornEventHat,
+  getTeamRoster,
+  getMyRosterStatus,
+  setRosterOptIn,
 } from '~/server/services/event.service';
 import { getNavBanners } from '~/server/services/nav-banner.service';
 import { middleware, protectedProcedure, publicProcedure, router } from '~/server/trpc';
@@ -182,6 +187,23 @@ export const eventRouter = router({
     .input(watchEventPointsSchema)
     .use(rateLimit({ limit: 60, period: 60 }))
     .mutation(({ ctx, input }) => markEventPointsWatched(input, ctx.user)),
+  // One page of a team's roster: only members who opted in. The same for every viewer who sees the
+  // event, so short-lived at the edge; cards then move on pushes.
+  getTeamRoster: publicProcedure
+    .meta({ requiredScope: TokenScope.MediaRead })
+    .input(teamRosterSchema)
+    .use(eventGate)
+    .use(edgeCacheIt({ ttl: CacheTTL.xs }))
+    .query(({ ctx, input }) => getTeamRoster({ ...input, viewer: ctx.user })),
+  getMyRosterStatus: protectedProcedure
+    .meta({ requiredScope: TokenScope.MediaRead })
+    .input(eventSchema)
+    .query(({ ctx, input }) => getMyRosterStatus({ user: ctx.user, ...input })),
+  setRosterOptIn: protectedProcedure
+    .meta({ requiredScope: TokenScope.UserWrite })
+    .input(rosterOptInSchema)
+    .use(rateLimit({ limit: 20, period: 60 }))
+    .mutation(({ ctx, input }) => setRosterOptIn({ user: ctx.user, ...input })),
   getUserRank: protectedProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(eventSchema)

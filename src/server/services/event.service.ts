@@ -25,6 +25,8 @@ import { redis, REDIS_KEYS, REDIS_SUB_KEYS, sysRedis } from '~/server/redis/clie
 import { hSetWithTTL } from '~/server/redis/atomic';
 import type {
   EventInput,
+  RosterOptInInput,
+  TeamRosterInput,
   TeamScoreHistoryInput,
   WornEventHatInput,
 } from '~/server/schema/event.schema';
@@ -45,15 +47,32 @@ import {
   eventPointSeason,
   hatField,
   seasonHatTopicId,
+  seasonOwnerTopicId,
   seasonTeamsTopicId,
   type EventPointSeason,
 } from '~/server/events/points/keys';
+import { eventRosterKeys, readRosterPage, type RosterHat } from '~/server/events/points/roster';
+import {
+  defaultRosterSyncDeps,
+  ROSTER_SETTING,
+  rosterEvents,
+  rosterTeam,
+  syncEventRosterMember,
+  syncRosterMembersWith,
+} from '~/server/events/points/roster-sync';
 import { isEventPointsEnabled } from '~/server/events/points/enabled';
 import { getHatTotals, getTeamPoints } from '~/server/events/points/read';
 import type { EventHat, EventPointEntityType } from '~/server/events/points/types';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import { getCosmeticDetail } from '~/server/services/cosmetic.service';
-import { cosmeticStatus, getCosmeticsForUsers } from '~/server/services/user.service';
+import {
+  cosmeticStatus,
+  getCosmeticsForUsers,
+  getUserSettings,
+  patchUserSettings,
+} from '~/server/services/user.service';
+import { throwNotFoundError } from '~/server/utils/errorHandling';
+import { isDefined } from '~/utils/type-guards';
 
 // Every event read is gated on what the viewer may see (event-access.ts); a closed event reads as an
 // unknown one.
@@ -210,6 +229,8 @@ export async function activateEventCosmetic({
           userId.toString()
         );
         await eventEngine.queueAddRole({ event, team, userId });
+        // Lists them now if they opted in before joining.
+        void syncEventRosterMember(userId, { event });
       }
       return { cosmetic };
     }
@@ -797,6 +818,116 @@ export async function getWornEventHat({
           )
         : UNSCORED_HAT),
     };
+  } catch (error) {
+    throw getTRPCErrorFromUnknown(error);
+  }
+}
+
+// One page of a team's roster: the members who opted in, sorted, with their hats and points. Redis
+// only (roster.ts) plus the user and cosmetic caches; a hidden member is in no set it reads.
+export async function getTeamRoster({
+  event,
+  team,
+  sort,
+  cursor,
+  limit,
+  viewer,
+}: TeamRosterInput & Viewer) {
+  try {
+    const scored = await eventEngine.getReadableScoredEvent(event, viewer);
+    if (!scored.teams.includes(team)) throw throwNotFoundError('That team does not exist');
+    const season = eventPointSeason(scored.startDate, new Date());
+    const page = await readRosterPage({
+      event: scored.name,
+      team,
+      sort,
+      season,
+      offset: cursor ?? 0,
+      limit,
+    });
+    const userIds = page.rows.map((r) => r.userId);
+    const [users, profilePictures, cosmetics] = await Promise.all([
+      userBasicCache.fetch(userIds),
+      profilePictureCache.fetch(userIds),
+      cosmeticCache.fetch([...new Set(page.rows.flatMap((r) => r.hats.map((h) => h.id)))]),
+    ]);
+    const hatOf = ({ id, worn, price }: RosterHat) => {
+      const c = cosmetics[id];
+      if (!c) return null;
+      const data = (c.data ?? {}) as { url?: unknown; team?: unknown };
+      return {
+        cosmeticId: id,
+        name: typeof data.team === 'string' ? hatDesignName(c.name, data.team) : c.name,
+        url: typeof data.url === 'string' ? data.url : null,
+        worn,
+        price,
+      };
+    };
+    const items = page.rows.flatMap((row) => {
+      const user = users[row.userId];
+      if (!user || user.deletedAt) return [];
+      return [
+        {
+          user: {
+            id: user.id,
+            username: user.username,
+            image: user.image,
+            profilePicture: profilePictures[user.id] ?? null,
+          },
+          hats: row.hats.map(hatOf).filter(isDefined),
+          hatCount: row.hatCount,
+          points: row.points,
+          joinedAt: row.joinedAt,
+          // What the card subscribes to for its live total (roster.ts, push.ts).
+          topicId: seasonOwnerTopicId(scored.name, row.userId, season),
+        },
+      ];
+    });
+    return { items, total: page.total, nextCursor: page.nextOffset };
+  } catch (error) {
+    throw getTRPCErrorFromUnknown(error);
+  }
+}
+
+// Whether the caller is listed on their team's roster, and whether they asked to be. Per user, never
+// cached. The settings read is the cached one.
+export async function getMyRosterStatus({
+  event,
+  user,
+}: EventInput & { user: { id: number; isModerator?: boolean } }) {
+  try {
+    const scored = await eventEngine.getReadableScoredEvent(event, user);
+    const [team, settings] = await Promise.all([
+      sysRedis.hGet(eventRosterKeys(scored.name).members, String(user.id)),
+      getUserSettings(user.id),
+    ]);
+    return {
+      optedIn: settings.eventRosterOptIn?.[scored.name] === true,
+      listedTeam: rosterTeam(team),
+    };
+  } catch (error) {
+    throw getTRPCErrorFromUnknown(error);
+  }
+}
+
+// Lists or unlists the caller on their team's roster. The setting is the durable record; the sync
+// then writes or removes their entries, and lists them only if they joined and may earn.
+export async function setRosterOptIn({
+  event,
+  optIn,
+  user,
+}: RosterOptInInput & { user: { id: number; isModerator?: boolean } }) {
+  try {
+    const scored = await eventEngine.getReadableScoredEvent(event, user);
+    await patchUserSettings(user.id, {
+      mergeInto: { [ROSTER_SETTING]: { [scored.name]: optIn } },
+      location: 'event.service:setRosterOptIn',
+    });
+    // Before the event's preview there is no roster yet: only the setting changes.
+    const rosterEvent = (await rosterEvents()).find((e) => e.name === scored.name);
+    if (rosterEvent) await syncRosterMembersWith(rosterEvent, [user.id], defaultRosterSyncDeps());
+    const team = await sysRedis.hGet(eventRosterKeys(scored.name).members, String(user.id));
+    return { optedIn: optIn, listedTeam: rosterTeam(team) };
   } catch (error) {
     throw getTRPCErrorFromUnknown(error);
   }

@@ -60,8 +60,15 @@ const sessionCtx = (user: User) =>
     res: { setHeader: () => undefined },
   } as never);
 
+// A personal API key: moderator procedures take no other bearer credential.
 const tokenCtx = (user: User, tokenScope: number) =>
-  ({ ...(sessionCtx(user) as object), apiKeyId: 999, tokenScope } as never);
+  ({
+    ...(sessionCtx(user) as object),
+    apiKeyId: 999,
+    apiKeyType: 'User',
+    subject: { type: 'apiKey', id: 999 },
+    tokenScope,
+  } as never);
 
 type Proc = { name: string; user: User; input: unknown; mock: ReturnType<typeof vi.fn> };
 // `reaches`: the service arguments, with the caller bound from the session and never the input.

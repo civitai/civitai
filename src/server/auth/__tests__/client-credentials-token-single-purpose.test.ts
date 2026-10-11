@@ -14,8 +14,9 @@ import { TokenScope } from '~/shared/constants/token-scope.constants';
  * A client-credentials token is single-purpose: it is only accepted on the catalog endpoints.
  * Everything else that authenticates a bearer credential (tRPC context, the REST session
  * helper, moderator endpoints) resolves it to no session, while an ordinary OAuth access token
- * with the same base scope still works. The real `getSessionFromBearerToken` runs throughout;
- * only the key row, the user lookup and side-effect modules are stubbed.
+ * with the same base scope still works outside moderator surfaces. The real
+ * `getSessionFromBearerToken` runs throughout; only the key row, the user lookup and side-effect
+ * modules are stubbed.
  */
 
 vi.mock('~/server/utils/key-generator', async (importOriginal) => ({
@@ -60,6 +61,8 @@ const { resolveCatalogCaller } = await import(
 const OWNER = 1;
 const CATALOG_TOKEN = 'civitai_catalog';
 const ORDINARY_TOKEN = 'civitai_ordinary';
+/** Moderator surfaces take a full-scope personal key, so it is their positive control. */
+const PERSONAL_TOKEN = 'civitai_personal';
 /** Tokens carrying OTHER opt-in bits above `Full`: they are not client-credentials-only. */
 const OPT_IN_TOKENS: Record<string, number> = {
   civitai_cli: TokenScope.UserRead | TokenScope.AppBlocksSubmit | TokenScope.LinkConnect,
@@ -67,6 +70,17 @@ const OPT_IN_TOKENS: Record<string, number> = {
 };
 
 function keyRow(token: string) {
+  if (token === PERSONAL_TOKEN) {
+    return {
+      id: 503,
+      userId: OWNER,
+      tokenScope: TokenScope.Full,
+      lastUsedAt: new Date(),
+      buzzLimit: null,
+      clientId: null,
+      type: 'User',
+    };
+  }
   return {
     id: token === CATALOG_TOKEN ? 501 : 502,
     userId: OWNER,
@@ -172,7 +186,7 @@ describe('tRPC', () => {
     await expect((await caller(CATALOG_TOKEN)).searchForModerator({})).rejects.toMatchObject({
       code: 'UNAUTHORIZED',
     });
-    await expect((await caller(ORDINARY_TOKEN)).searchForModerator({})).resolves.toBeDefined();
+    await expect((await caller(PERSONAL_TOKEN)).searchForModerator({})).resolves.toBeDefined();
   });
 
   it('a protectedProcedure declaring UserRead refuses it too', async () => {
@@ -205,7 +219,7 @@ describe('moderator endpoints', () => {
     expect(handlerSpy).not.toHaveBeenCalled();
 
     const ok = res();
-    await endpoint(req(ORDINARY_TOKEN), ok);
+    await endpoint(req(PERSONAL_TOKEN), ok);
     expect(ok.statusCode).toBe(200);
     expect(handlerSpy).toHaveBeenCalledTimes(1);
   });

@@ -27,6 +27,7 @@ vi.mock('~/server/events/points/self-heal', () => ({ healEventPoints: vi.fn() })
 
 const { logToAxiom } = await import('~/server/logging/client');
 const { drainEventPointsPush, markEventPointsDirty } = await import('~/server/events/points/push');
+const { eventRosterKeys } = await import('~/server/events/points/roster');
 const {
   COUNT_BASE_MARK,
   countField,
@@ -36,6 +37,7 @@ const {
   hatField,
   hatTopicId,
   previewTopicId,
+  seasonOwnerTopicId,
 } = await import('~/server/events/points/keys');
 
 // HMGET over a table, by key and field: a read of the wrong key, scope or field reads nothing.
@@ -111,10 +113,11 @@ describe('the pusher with its default deps', () => {
     markEventPointsDirty(event, HAT, new Date());
     expect(await drainEventPointsPush()).toEqual({ left: 0 });
     expect(topicSend).not.toHaveBeenCalled();
-    // One interest-set read per flush, for the hat and the teams together.
+    // One interest-set read per flush, for the hat, its owner's roster card and the teams together.
+    const owner = seasonOwnerTopicId(event.name, HAT.ownerId, 'live');
     expect(zmScore().mock.calls).toEqual([
-      [eventPointKeys(event.name).watch, [hatTopicId(HAT), 'teams']],
-      [eventPointKeys(event.name).watch, [hatTopicId(HAT), 'teams']],
+      [eventPointKeys(event.name).watch, [hatTopicId(HAT), owner, 'teams']],
+      [eventPointKeys(event.name).watch, [hatTopicId(HAT), owner, 'teams']],
     ]);
   });
 
@@ -227,6 +230,70 @@ describe('the pusher with its default deps', () => {
 
 // In the preview, a tester who was handed the keyed ids (and marked them) gets the preview season's
 // totals pushed to the keyed topics; nothing goes to the public ones, and the key never leaves.
+describe('roster card pushes with the default deps', () => {
+  const owner = () => seasonOwnerTopicId(event.name, HAT.ownerId, 'live');
+  const serve = (listed: boolean) => {
+    const keys = eventSeasonKeys(event.name, eventPointSeason(event.startDate, new Date()));
+    serveHashes({
+      [keys.base('hat')]: { [hatField(HAT)]: '30' },
+      [keys.base('owner')]: { [String(HAT.ownerId)]: '77' },
+      // The roster's topic map names only members listed now (roster.ts).
+      [eventRosterKeys(event.name).topics]: listed ? { [owner()]: String(HAT.ownerId) } : {},
+      // ...and the gate decides who is listed.
+      [eventRosterKeys(event.name).members]: listed ? { [String(HAT.ownerId)]: 'Blue' } : {},
+    });
+  };
+  const ownerSends = () =>
+    topicSend.mock.calls
+      .map(([s]) => s as { target: string; topic: string; data: unknown })
+      .filter((s) => s.target === 'event-points:owner');
+
+  it("pushes a listed owner's total to their card's topic while it is watched", async () => {
+    serve(true);
+    watch.set(owner(), Date.now() + 60_000);
+    markEventPointsDirty(event, HAT, new Date());
+    await drainEventPointsPush();
+    expect(ownerSends()).toEqual([
+      {
+        topic: `event-points:${event.name}:owner:${owner()}`,
+        target: 'event-points:owner',
+        data: { event: event.name, topicId: owner(), points: 77 },
+      },
+    ]);
+  });
+
+  it('pushes nothing for a listed owner whose card nobody has on screen', async () => {
+    serve(true);
+    markEventPointsDirty(event, HAT, new Date());
+    await drainEventPointsPush();
+    expect(ownerSends()).toEqual([]);
+  });
+
+  // A topic entry a failed unlisting left behind: the topic map still names them, the gate does not.
+  it('pushes nothing for an owner the topic map names but the gate has hidden', async () => {
+    const keys = eventSeasonKeys(event.name, eventPointSeason(event.startDate, new Date()));
+    serveHashes({
+      [keys.base('hat')]: { [hatField(HAT)]: '30' },
+      [keys.base('owner')]: { [String(HAT.ownerId)]: '77' },
+      [eventRosterKeys(event.name).topics]: { [owner()]: String(HAT.ownerId) },
+      [eventRosterKeys(event.name).members]: { [String(HAT.ownerId)]: 'x:1760000000000' },
+    });
+    watch.set(owner(), Date.now() + 60_000);
+    markEventPointsDirty(event, HAT, new Date());
+    await drainEventPointsPush();
+    expect(ownerSends()).toEqual([]);
+  });
+
+  // An owner who left the roster after a card marked them: the mark is still live, they are not.
+  it('pushes nothing for a watched owner who is no longer listed', async () => {
+    serve(false);
+    watch.set(owner(), Date.now() + 60_000);
+    markEventPointsDirty(event, HAT, new Date());
+    await drainEventPointsPush();
+    expect(ownerSends()).toEqual([]);
+  });
+});
+
 describe('the pusher in the preview', () => {
   const DAY = 24 * 60 * 60 * 1000;
   const preview = {
@@ -255,7 +322,10 @@ describe('the pusher in the preview', () => {
     expect(markEventPointsDirty(preview, HAT, new Date())).toBe(true);
     expect(await drainEventPointsPush()).toEqual({ left: 0 });
     expect(zmScore().mock.calls).toEqual([
-      [eventPointKeys(preview.name).watch, [keyedHat, keyedTeams]],
+      [
+        eventPointKeys(preview.name).watch,
+        [keyedHat, seasonOwnerTopicId(preview.name, HAT.ownerId, 'preview'), keyedTeams],
+      ],
     ]);
     expect(topicSend.mock.calls).toEqual([
       [

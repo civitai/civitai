@@ -5,15 +5,18 @@ import { signalClient } from '~/utils/signal-client';
 import { isEventPointsEnabledSync } from './enabled';
 import {
   eventHatTopic,
+  eventOwnerTopic,
   eventPointKeys,
   eventPointSeason,
   hatField,
   seasonHatTopicId,
+  seasonOwnerTopicId,
   seasonTeamsTopic,
   seasonTeamsTopicId,
   type EventPointSeason,
 } from './keys';
-import { getHatTotals, getTeamPoints } from './read';
+import { getHatTotals, getOwnerPoints, getTeamPoints } from './read';
+import { listedOwnerTopics } from './roster';
 import { readWatched } from './watch';
 import type { EventHat } from './types';
 
@@ -50,27 +53,34 @@ type Hat = Omit<EventHat, 'team'>;
 // Narrows a flush to the topics someone has on screen (watch.ts), with one interest-set read per
 // event. Fails closed: if the read fails nothing is pushed, since pushing everything would restore
 // the unwatched fan-out exactly while Redis is struggling; screens catch up on their next read.
+// Roster owners (roster.ts) go the same way, and also need to still be listed: someone who left
+// the roster since a card marked them gets nothing pushed.
 export async function selectWatched(
   event: PushEvent,
   hats: Hat[],
   teams: boolean,
-  season: EventPointSeason
+  season: EventPointSeason,
+  owners: number[] = []
 ) {
   const hatId = (hat: Hat) => seasonHatTopicId(event.name, hat, season);
+  const ownerId = (owner: number) => seasonOwnerTopicId(event.name, owner, season);
   const teamsId = seasonTeamsTopicId(event.name, season);
-  const topics = [...hats.map(hatId), ...(teams ? [teamsId] : [])];
+  const topics = [...hats.map(hatId), ...owners.map(ownerId), ...(teams ? [teamsId] : [])];
   try {
     const watched = await readWatched(event.name, topics, Date.now());
+    const watchedOwners = owners.filter((owner) => watched.has(ownerId(owner)));
+    const listed = await listedOwnerTopics(event.name, watchedOwners.map(ownerId));
     return {
       hats: hats.filter((hat) => watched.has(hatId(hat))),
       teams: teams && watched.has(teamsId),
+      owners: watchedOwners.filter((owner) => listed.get(ownerId(owner)) === owner),
     };
   } catch (error) {
     logPush('error', event.name, {
       message: 'interest set read failed',
       error: (error as Error).message,
     });
-    return { hats: [] as Hat[], teams: false };
+    return { hats: [] as Hat[], teams: false, owners: [] as number[] };
   }
 }
 
@@ -104,6 +114,7 @@ export type PushDeps = {
   claimTeamsPush: typeof claimTeamsPush;
   getHatTotals: typeof getHatTotals;
   getTeamPoints: typeof getTeamPoints;
+  getOwnerPoints: typeof getOwnerPoints;
   topicSend: typeof signalClient.topicSend;
   // The engine's kill switch: off, nothing is marked and nothing dirty is sent.
   isEnabled: () => boolean;
@@ -191,12 +202,17 @@ export function createEventPointsPusher(deps: PushDeps) {
         taken.push(hat);
         entry.hats.delete(field);
       }
+      // A roster card's total moves with its owner's hats, so the owners of the hats taken are the
+      // ones to push. Not kept dirty of their own: they ride on the hats, in the same interest-set
+      // read, and take only budget the hats and teams left.
+      const takenOwners = [...new Set(taken.map((hat) => hat.ownerId))];
       if (!entry.hats.size) dirty.delete(name);
       try {
-        const { hats: watchedHats, teams: watchedTeams } =
+        const watched =
           taken.length || teams
-            ? await deps.selectWatched(event, taken, teams, season)
-            : { hats: [] as Hat[], teams: false };
+            ? await deps.selectWatched(event, taken, teams, season, takenOwners)
+            : { hats: [] as Hat[], teams: false, owners: [] as number[] };
+        const { hats: watchedHats, teams: watchedTeams } = watched;
         // Before the claim: the second-loss test below compares this to the end of the first loss.
         const claimFrom = Date.now();
         const pushTeams = watchedTeams && (await deps.claimTeamsPush(event));
@@ -215,11 +231,16 @@ export function createEventPointsPusher(deps: PushDeps) {
             entryNow.teamsLostAt = teamsLostAt ?? Date.now();
           }
         }
-        const [hatTotals, totals] = await Promise.all([
+        // Owners take only budget the hats and teams left. What is over it is dropped, not kept:
+        // the owner's next grant pushes it again.
+        const ownerRoom = budget - queue.length - watchedHats.length - (pushTeams ? 1 : 0);
+        const owners = (watched.owners ?? []).slice(0, Math.max(0, ownerRoom));
+        const [hatTotals, totals, ownerTotals] = await Promise.all([
           watchedHats.length ? deps.getHatTotals(event, watchedHats, now) : null,
           // Read as of now, after the claim: the losers drop their teams trusting this read is
           // later than their grants.
           pushTeams ? deps.getTeamPoints(event, new Date()) : null,
+          owners.length ? deps.getOwnerPoints(event, owners, now) : null,
         ]);
         if (totals)
           queue.push({
@@ -245,6 +266,18 @@ export function createEventPointsPusher(deps: PushDeps) {
               },
             },
             putBack: () => void entryFor(event).hats.set(hatField(hat), hat),
+          });
+        }
+        // Last, so a deadline cuts a roster card's push before a hat's.
+        for (const owner of owners) {
+          const topicId = seasonOwnerTopicId(name, owner, season);
+          queue.push({
+            send: {
+              topic: eventOwnerTopic(name, topicId),
+              target: SignalMessages.EventPointsOwner,
+              data: { event: name, topicId, points: ownerTotals?.[String(owner)] ?? 0 },
+            },
+            putBack: () => undefined,
           });
         }
       } catch (error) {
@@ -365,6 +398,7 @@ function getPusher() {
     claimTeamsPush,
     getHatTotals,
     getTeamPoints,
+    getOwnerPoints,
     topicSend: (args) => signalClient.topicSend(args),
     isEnabled: isEventPointsEnabledSync,
   });

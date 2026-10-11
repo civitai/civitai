@@ -30,6 +30,7 @@ const { access, service } = vi.hoisted(() => {
       getEventStandings: ok(),
       getEventCosmeticScores: ok(),
       getWornEventHat: ok(),
+      getTeamRoster: ok(),
     },
   };
 });
@@ -87,6 +88,7 @@ const ROUTES = {
   getStandings: 'getEventStandings',
   getCosmeticScores: 'getEventCosmeticScores',
   getWornHat: 'getWornEventHat',
+  getTeamRoster: 'getTeamRoster',
 } as const;
 // getData's edgeCacheIt is commented out, so it is gated but never edge-cached.
 const EDGE_CACHED = Object.keys(ROUTES).filter((r) => r !== 'getData');
@@ -103,7 +105,13 @@ const rootCtx = (user?: Ctx['user']): Ctx => ({
 
 async function runChain(name: string, user: Ctx['user'] = VIEWER) {
   const middlewares = procedures[name]._def.middlewares;
-  const input = { event: 'birthday2026', cosmetics: [], entityType: 'Image', entityId: 1 };
+  const input = {
+    event: 'birthday2026',
+    cosmetics: [],
+    entityType: 'Image',
+    entityId: 1,
+    team: 'Blue',
+  };
   const root = rootCtx(user);
   let i = 0;
   const step = async (ctx: Ctx): Promise<unknown> => {

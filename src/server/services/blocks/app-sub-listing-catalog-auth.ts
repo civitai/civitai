@@ -7,7 +7,7 @@ import {
   SubListingError,
   subListingErrorResponse,
 } from '~/server/services/blocks/app-sub-listing.service';
-import { requestCarriesQueryToken } from '~/server/utils/endpoint-helpers';
+import { requestCarriesQueryToken } from '~/server/utils/request-query-token';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { ApiKeyType } from '~/shared/utils/prisma/enums';
 import { Flags } from '~/shared/utils/flags';

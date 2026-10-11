@@ -2810,7 +2810,33 @@ describe('resolveBlockPollWaitSeconds', () => {
 describe('snapshotFromWorkflow — additionalCostBuzz', () => {
   it('ADDS a positive addend to the reported total', () => {
     const snap = snapshotFromWorkflow(fakeWorkflow() as never, { additionalCostBuzz: 7 });
-    expect(snap.cost).toEqual({ total: 49 });
+    expect(snap.cost).toEqual({ total: 49, authorFee: 7 });
+  });
+
+  it('🔴 ITEMISES the addend as `cost.authorFee`, and `total - authorFee` is the pre-fee cost', () => {
+    // The fixture's total is 42. Two addends, so a hardcoded literal is red on one.
+    const a = snapshotFromWorkflow(fakeWorkflow() as never, { additionalCostBuzz: 37 });
+    expect(a.cost).toEqual({ total: 79, authorFee: 37 });
+    expect(a.cost!.total - a.cost!.authorFee!).toBe(42);
+
+    const b = snapshotFromWorkflow(fakeWorkflow() as never, { additionalCostBuzz: 113 });
+    expect(b.cost).toEqual({ total: 155, authorFee: 113 });
+    expect(b.cost!.total - b.cost!.authorFee!).toBe(42);
+  });
+
+  it('🔴 reports `authorFee: 0` when a fee was quoted and none applies — NOT absent', () => {
+    // `0` = no fee on this request; absent = this total is not itemised.
+    const snap = snapshotFromWorkflow(fakeWorkflow() as never, { additionalCostBuzz: 0 });
+    expect(snap.cost).toEqual({ total: 42, authorFee: 0 });
+    expect(Object.keys(snap.cost!)).toEqual(['total', 'authorFee']);
+  });
+
+  it('🔴 OMITS `authorFee` when the caller priced no fee — every submit and poll', () => {
+    // Keys, not `toEqual`, which cannot tell an `undefined` value from absence.
+    for (const extra of [undefined, {}, { modelSubstitutions: [] }]) {
+      const snap = snapshotFromWorkflow(fakeWorkflow() as never, extra as never);
+      expect(Object.keys(snap.cost!)).toEqual(['total']);
+    }
   });
 
   it('is a no-op when omitted — every existing caller is byte-identical', () => {
@@ -2823,8 +2849,9 @@ describe('snapshotFromWorkflow — additionalCostBuzz', () => {
     // report 32 against a 42 debit. Showing less than the viewer is charged is
     // precisely the defect the disclosure exists to remove, so the arithmetic
     // must be one-directional rather than merely "additive".
+    // A rejected addend itemises as 0: `authorFee` is what was added.
     expect(snapshotFromWorkflow(fakeWorkflow() as never, { additionalCostBuzz: -10 }).cost).toEqual(
-      { total: 42 }
+      { total: 42, authorFee: 0 }
     );
   });
 
@@ -2848,7 +2875,7 @@ describe('snapshotFromWorkflow — additionalCostBuzz', () => {
       expect(
         snapshotFromWorkflow(fakeWorkflow() as never, { additionalCostBuzz: bad }).cost,
         `addend ${bad} reached the reported total`
-      ).toEqual({ total: 42 });
+      ).toEqual({ total: 42, authorFee: 0 });
     }
   });
 
@@ -2869,7 +2896,7 @@ describe('snapshotFromWorkflow — additionalCostBuzz', () => {
       additionalCostBuzz: 3,
       modelSubstitutions: [{ requested: 1, served: 2 }] as never,
     });
-    expect(snap.cost).toEqual({ total: 45 });
+    expect(snap.cost).toEqual({ total: 45, authorFee: 3 });
     expect(snap.modelSubstitutions).toHaveLength(1);
   });
 });

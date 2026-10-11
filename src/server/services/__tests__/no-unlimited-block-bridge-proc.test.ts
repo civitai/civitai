@@ -100,6 +100,7 @@ const BUCKET_BY_FN: Readonly<Record<string, string>> = Object.freeze({
   checkBlockPostAppRateLimit: 'post-app',
   checkBlockPollRateLimit: 'poll',
   checkBlockTrainingDatasetRateLimit: 'training-dataset',
+  checkBlockEstimateCellsRateLimit: 'estimate-cells',
 });
 
 type Decision = {
@@ -121,11 +122,14 @@ type Decision = {
  * "this guarantees a ceiling". They are cost ceilings, not security controls; what bounds AUTHORITY
  * on these procedures is the guard, the viewer/app scope assertions and the consent scopes.
  *
- * ⚠️ AND `weight` IS 1 EVERYWHERE EXCEPT PUBLISH. `checkBlockPublishRateLimit` is charged by IMAGE
- * COUNT because its cost is per-image (fetch + S3 upload + scan); everything else charges one token
- * per call because the call is the unit. `createPostFromApp` charges BOTH — `post`/`post-app` by
- * the post, `publish` by the images it adopts — so a post cannot be used to bypass the image
- * ceiling.
+ * ⚠️ AND `weight` IS 1 EXCEPT WHERE THE COST IS PER ITEM. `checkBlockPublishRateLimit` is charged by
+ * IMAGE COUNT because its cost is per-image (fetch + S3 upload + scan), `training-dataset` likewise,
+ * and `estimate-cells` is charged by CELL COUNT because each cell is an orchestrator whatif; the
+ * rest charge one token per call because the call is the unit. `createPostFromApp` charges BOTH —
+ * `post`/`post-app` by the post, `publish` by the images it adopts — so a post cannot be used to
+ * bypass the image ceiling. `estimateWorkflowBatch` charges BOTH for the mirror-image reason: the
+ * call takes one `catalog` token and the cells take `estimate-cells`, so a batch cannot be used to
+ * multiply cost quotes past a ceiling.
  */
 const RATE_LIMIT_DECISION_LEDGER: Readonly<Record<string, Decision>> = Object.freeze({
   cancelAppWorkflow: {
@@ -147,6 +151,10 @@ const RATE_LIMIT_DECISION_LEDGER: Readonly<Record<string, Decision>> = Object.fr
   estimateWorkflow: {
     buckets: ['catalog'],
     why: 'An orchestrator whatif submit plus version/checkpoint/entitlement reads, with no spend attached to bound it. Charged ABOVE the kind branch so all three branches are covered.',
+  },
+  estimateWorkflowBatch: {
+    buckets: ['catalog', 'estimate-cells'],
+    why: 'The batch twin of estimateWorkflow. ONE catalog token per call, like a single estimate, plus the cell-WEIGHTED estimate-cells bucket, keyed per install like catalog so the bound does not grow with viewers: each cell is still an orchestrator whatif, so the call alone would let the cell cap multiply cost quotes for the price of one request.',
   },
   getImagesByIds: {
     buckets: ['catalog'],

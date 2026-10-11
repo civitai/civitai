@@ -6,6 +6,7 @@ import {
   hatTopicId,
   previewTopicId,
   seasonHatTopicId,
+  seasonOwnerTopicId,
   seasonTeamsTopic,
   seasonTeamsTopicId,
 } from '~/server/events/points/keys';
@@ -76,5 +77,23 @@ describe('topic ids', () => {
     expect(seasonTeamsTopic('birthday2026', teams)).toBe(
       `event-points:birthday2026:teams:${teams}`
     );
+  });
+});
+
+// An owner id is public, so a roster card's topic is keyed in both seasons: nobody can name the
+// topic of a member they were not handed.
+describe('owner topic ids', () => {
+  it('are keyed with the server secret, per season, and never the public hash of the owner', () => {
+    const keyed = (season: string) =>
+      `o${createHmac('sha256', env.NEXTAUTH_SECRET)
+        .update(`event-points:preview:birthday2026:owner:${season}:9`)
+        .digest('hex')
+        .slice(0, 31)}`;
+    expect(seasonOwnerTopicId('birthday2026', 9, 'live')).toBe(keyed('live'));
+    expect(seasonOwnerTopicId('birthday2026', 9, 'preview')).toBe(keyed('preview'));
+    expect(keyed('live')).not.toBe(keyed('preview'));
+    expect(seasonOwnerTopicId('birthday2026', 9, 'live')).toMatch(/^o[0-9a-f]{31}$/);
+    const unkeyed = createHash('sha256').update('owner:live:9').digest('hex').slice(0, 31);
+    expect(seasonOwnerTopicId('birthday2026', 9, 'live')).not.toBe(`o${unkeyed}`);
   });
 });

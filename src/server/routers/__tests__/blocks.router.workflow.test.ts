@@ -483,8 +483,18 @@ vi.mock('~/server/services/buzz.service', () => ({
   getUserBuzzAccount: (...args: unknown[]) => mockGetUserBuzzAccount(...args),
   getDailyCompensationRewardByUser: (...args: unknown[]) => mockGetDailyCompensation(...args),
 }));
+// The per-CELL bucket `estimateWorkflowBatch` charges beside the catalog one. Its own
+// `vi.hoisted` so the batch suite can assert the exact arguments it is charged with.
+const { mockCheckBlockEstimateCellsRateLimit } = vi.hoisted(() => ({
+  mockCheckBlockEstimateCellsRateLimit: vi.fn(async (...args: unknown[]) => {
+    void args;
+    return { allowed: true };
+  }),
+}));
 vi.mock('~/server/utils/block-catalog-rate-limit', () => ({
   checkBlockCatalogRateLimit: (...args: unknown[]) => mockCheckBlockCatalogRateLimit(...args),
+  checkBlockEstimateCellsRateLimit: (...args: unknown[]) =>
+    mockCheckBlockEstimateCellsRateLimit(...args),
   // `pollWorkflow` charges the DEDICATED `:poll:` bucket, not the catalog one. Declared here
   // because the router imports it: a factory that omits an export the module under test binds
   // makes every call through it throw `No "…" export is defined on the mock`.
@@ -559,6 +569,7 @@ vi.mock('~/server/middleware.trpc', async () => {
 });
 
 import { blocksRouter } from '../blocks.router';
+import { failureSnapshot } from '~/components/AppBlocks/failureSnapshot';
 import { REDIS_SYS_KEYS } from '~/server/redis/client';
 import { BlockRegistry } from '~/server/services/block-registry.service';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
@@ -960,6 +971,12 @@ describe('blocks.pollWorkflow', () => {
     expect(result.snapshot.workflowId).toBe('wf_1');
     expect(result.snapshot.status).toBe('succeeded');
     expect(result.snapshot.imageUrls).toEqual(['https://cdn/i.png']);
+    // A submitted workflow's snapshot is not itemised: no `cost.authorFee`.
+    expect(
+      Object.keys(result.snapshot.cost!),
+      'a poll snapshot must not carry cost.authorFee'
+    ).toEqual(['total']);
+    expect(result.snapshot.cost).toStrictEqual({ total: 10 });
     expect(mockGetWorkflow).toHaveBeenCalledWith({
       token: 'orch_token',
       path: { workflowId: 'wf_1' },
@@ -1087,13 +1104,19 @@ describe('blocks.cancelWorkflow', () => {
       tags: [BLOCK_APP_TAG],
       id: 'wf_1',
       status: 'canceled',
-      cost: { total: 0 },
+      cost: { total: 3 },
       steps: [],
     });
     const caller = blocksRouter.createCaller(fakeCtx() as never);
     const result = await caller.cancelWorkflow({ blockToken: 'tok', workflowId: 'wf_1' });
     expect(result.snapshot.workflowId).toBe('wf_1');
     expect(result.snapshot.status).toBe('canceled');
+    // A submitted workflow's snapshot is not itemised: no `cost.authorFee`.
+    expect(
+      Object.keys(result.snapshot.cost!),
+      'a cancel snapshot must not carry cost.authorFee'
+    ).toEqual(['total']);
+    expect(result.snapshot.cost).toStrictEqual({ total: 3 });
     // Cancel hits the orchestrator with the VIEWER's token — that's the
     // ownership gate (the orchestrator 403/404s for non-owned workflows).
     expect(mockCancelWorkflow).toHaveBeenCalledWith({ workflowId: 'wf_1', token: 'orch_token' });
@@ -1188,7 +1211,7 @@ describe('blocks.estimateWorkflow', () => {
     });
     const caller = blocksRouter.createCaller(fakeCtx() as never);
     const result = await caller.estimateWorkflow({ blockToken: 'tok', body: validBody() });
-    expect(result.snapshot.cost).toEqual({ total: 12 });
+    expect(result.snapshot.cost).toEqual({ total: 12, authorFee: 0 });
     // Estimate must use whatif=true so the orchestrator computes cost
     // without actually queueing the job.
     expect(mockSubmitWorkflow).toHaveBeenCalledWith(
@@ -2115,7 +2138,7 @@ describe('blocks.submitWorkflow', () => {
     const caller = blocksRouter.createCaller(fakeCtx() as never);
     const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
     expect(result.snapshot.status).toBe('failed');
-    expect(result.snapshot.cost).toEqual({ total: 25 });
+    expect(result.snapshot.cost).toEqual({ total: 25, authorFee: 0 });
     expect(result.snapshot.error).toMatch(/insufficient buzz/i);
     // Critical: the real submit must NOT have been called when we rejected
     // for budget — only the whatif.
@@ -2584,7 +2607,7 @@ describe('blocks.submitWorkflow', () => {
       const caller = blocksRouter.createCaller(fakeCtx() as never);
       const result = await caller.estimateWorkflow({ blockToken: 'tok', body: validBody() });
       // Got past the flag gate → the orchestrator whatif ran and produced a cost.
-      expect(result.snapshot.cost).toEqual({ total: 12 });
+      expect(result.snapshot.cost).toEqual({ total: 12, authorFee: 0 });
       // The flag was evaluated against the TOKEN subject ({ user: <mod row> }),
       // NOT ctx.user (undefined) — the dev:live fix.
       expect(mockIsAppBlocksEnabled).toHaveBeenCalledWith({
@@ -3844,7 +3867,7 @@ describe('blocks workflow — W10 page token (entityType:none)', () => {
       });
       const caller = blocksRouter.createCaller(fakeCtx() as never);
       const result = await caller.estimateWorkflow({ blockToken: 'tok', body: validBody() });
-      expect(result.snapshot.cost).toEqual({ total: 12 });
+      expect(result.snapshot.cost).toEqual({ total: 12, authorFee: 0 });
       // The entitlement gate ran against the picked version (99) with the REAL
       // viewer (id 42, mod true) — NOT an elevated/hardcoded context.
       expect(mockResolveCanGenerateForVersions).toHaveBeenCalledTimes(1);
@@ -4032,7 +4055,7 @@ describe('blocks workflow — W10 page token (entityType:none)', () => {
       const caller = blocksRouter.createCaller(fakeCtx() as never);
       const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
       expect(result.snapshot.status).toBe('failed');
-      expect(result.snapshot.cost).toEqual({ total: 25 });
+      expect(result.snapshot.cost).toEqual({ total: 25, authorFee: 0 });
       expect(result.snapshot.error).toMatch(/insufficient buzz/i);
       // Only the whatif ran; the real submit did not.
       expect(mockSubmitWorkflow).toHaveBeenCalledTimes(1);
@@ -4391,7 +4414,7 @@ describe('blocks workflow — W10 page token (entityType:none)', () => {
         body: bodyWithLoras([{ modelVersionId: 201 }, { modelVersionId: 202 }]),
       });
       expect(result.snapshot.status).toBe('failed');
-      expect(result.snapshot.cost).toEqual({ total: 75 });
+      expect(result.snapshot.cost).toEqual({ total: 75, authorFee: 0 });
       expect(result.snapshot.error).toMatch(/insufficient buzz/i);
       // Only the whatif ran; no real submit, no reservation taken.
       expect(mockSubmitWorkflow).toHaveBeenCalledTimes(1);
@@ -9505,7 +9528,7 @@ describe('blocks — #3520 model substitution observability', () => {
       const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
 
       expect(result.snapshot.status).toBe('failed');
-      expect(result.snapshot.cost).toEqual({ total: 25 });
+      expect(result.snapshot.cost).toEqual({ total: 25, authorFee: 0 });
       expect((result.snapshot as { modelSubstitutions?: unknown }).modelSubstitutions).toEqual([
         SUBSTITUTION,
       ]);
@@ -9591,7 +9614,7 @@ describe('blocks — #3520 model substitution observability', () => {
       const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
 
       expect(result.snapshot.error).toMatch(/daily Buzz cap reached/);
-      expect(result.snapshot.cost).toEqual({ total: 25 });
+      expect(result.snapshot.cost).toEqual({ total: 25, authorFee: 0 });
       expect(result.snapshot.modelSubstitutions).toEqual([SUB_DAILY_CAP]);
       expect(mockSubmitWorkflow).toHaveBeenCalledTimes(1); // whatIf only, no submit
     });
@@ -9609,7 +9632,7 @@ describe('blocks — #3520 model substitution observability', () => {
       const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
 
       expect(result.snapshot.error).toMatch(/app daily spend cap reached/);
-      expect(result.snapshot.cost).toEqual({ total: 25 });
+      expect(result.snapshot.cost).toEqual({ total: 25, authorFee: 0 });
       expect(result.snapshot.modelSubstitutions).toEqual([SUB_APP_CAP]);
       // The ceiling itself is still not leaked — the message stays number-free.
       expect(result.snapshot.error).not.toMatch(/\d/);
@@ -9625,7 +9648,7 @@ describe('blocks — #3520 model substitution observability', () => {
       const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
 
       expect(result.snapshot.error).toMatch(/dev tunnel session Buzz cap reached/);
-      expect(result.snapshot.cost).toEqual({ total: 25 });
+      expect(result.snapshot.cost).toEqual({ total: 25, authorFee: 0 });
       expect(result.snapshot.modelSubstitutions).toEqual([SUB_DEV_CAP]);
       expect(mockSubmitWorkflow).toHaveBeenCalledTimes(1);
     });
@@ -11506,7 +11529,7 @@ describe('blocks workflow — author-fee price disclosure', () => {
       const result = await caller.estimateWorkflow({ blockToken: 'tok', body: validBody() });
 
       // Pre-change this was `{ total: 12 }` — the orchestrator's number alone.
-      expect(result.snapshot.cost).toEqual({ total: 12 + EXPECTED_FEE });
+      expect(result.snapshot.cost).toEqual({ total: 12 + EXPECTED_FEE, authorFee: EXPECTED_FEE });
     });
 
     it('prices the fee off `cost.base`, NEVER off `cost.total`', async () => {
@@ -11523,7 +11546,7 @@ describe('blocks workflow — author-fee price disclosure', () => {
 
       const caller = blocksRouter.createCaller(fakeCtx() as never);
       const result = await caller.estimateWorkflow({ blockToken: 'tok', body: validBody() });
-      expect(result.snapshot.cost).toEqual({ total: 22 });
+      expect(result.snapshot.cost).toEqual({ total: 22, authorFee: 10 });
     });
 
     it('adds NOTHING when the price is a CAP (`cost.variable`)', async () => {
@@ -11538,7 +11561,7 @@ describe('blocks workflow — author-fee price disclosure', () => {
 
       const caller = blocksRouter.createCaller(fakeCtx() as never);
       const result = await caller.estimateWorkflow({ blockToken: 'tok', body: validBody() });
-      expect(result.snapshot.cost).toEqual({ total: 12 });
+      expect(result.snapshot.cost).toEqual({ total: 12, authorFee: 0 });
     });
 
     it('adds NOTHING when the whatIf carries no `base`', async () => {
@@ -11550,7 +11573,7 @@ describe('blocks workflow — author-fee price disclosure', () => {
 
       const caller = blocksRouter.createCaller(fakeCtx() as never);
       const result = await caller.estimateWorkflow({ blockToken: 'tok', body: validBody() });
-      expect(result.snapshot.cost).toEqual({ total: 12 });
+      expect(result.snapshot.cost).toEqual({ total: 12, authorFee: 0 });
     });
 
     it('adds NOTHING when the flag is OFF (the as-merged posture)', async () => {
@@ -11566,7 +11589,7 @@ describe('blocks workflow — author-fee price disclosure', () => {
 
       const caller = blocksRouter.createCaller(fakeCtx() as never);
       const result = await caller.estimateWorkflow({ blockToken: 'tok', body: validBody() });
-      expect(result.snapshot.cost).toEqual({ total: 12 });
+      expect(result.snapshot.cost).toEqual({ total: 12, authorFee: 0 });
     });
 
     it('adds NOTHING for a SELF-DEALING author viewing their own app', async () => {
@@ -11584,7 +11607,7 @@ describe('blocks workflow — author-fee price disclosure', () => {
 
       const caller = blocksRouter.createCaller(fakeCtx() as never);
       const result = await caller.estimateWorkflow({ blockToken: 'tok', body: validBody() });
-      expect(result.snapshot.cost).toEqual({ total: 12 });
+      expect(result.snapshot.cost).toEqual({ total: 12, authorFee: 0 });
     });
 
     it('still reserves NOTHING — a disclosing quote moves no money', async () => {
@@ -11643,7 +11666,10 @@ describe('blocks workflow — author-fee price disclosure', () => {
       // max(declared floor 1, quoted 4) = 4, plus the fee. Pre-change: 4.
       // 🔴 A DIFFERENT BASE FROM THE TXT2IMG ARM ON PURPOSE — see FEE_BASE_2.
       // A `feeBuzz` hardcoded to either arm's expected value is red on the other.
-      expect(result.snapshot.cost).toEqual({ total: 4 + EXPECTED_FEE_2 });
+      expect(result.snapshot.cost).toEqual({
+        total: 4 + EXPECTED_FEE_2,
+        authorFee: EXPECTED_FEE_2,
+      });
     });
 
     it('🔴 still reserves NOTHING — a disclosing quote moves no money', async () => {
@@ -11671,7 +11697,10 @@ describe('blocks workflow — author-fee price disclosure', () => {
       // Positive control: the fee really was priced on this run, so the zeroes
       // below are a claim about a LIVE fee path and not about a quote that
       // silently did nothing.
-      expect(result.snapshot.cost).toEqual({ total: 4 + EXPECTED_FEE_2 });
+      expect(result.snapshot.cost).toEqual({
+        total: 4 + EXPECTED_FEE_2,
+        authorFee: EXPECTED_FEE_2,
+      });
       expect(mockReserveAppSpend).not.toHaveBeenCalled();
       expect(
         mockSysRedis.incrBy.mock.calls.filter((c) => String(c[0]).startsWith('system:blocks:'))
@@ -11689,7 +11718,7 @@ describe('blocks workflow — author-fee price disclosure', () => {
 
       const caller = blocksRouter.createCaller(fakeCtx() as never);
       const result = await caller.estimateWorkflow({ blockToken: 'tok', body: stepBody() });
-      expect(result.snapshot.cost).toEqual({ total: 1 + EXPECTED_FEE });
+      expect(result.snapshot.cost).toEqual({ total: 1 + EXPECTED_FEE, authorFee: EXPECTED_FEE });
     });
 
     it('adds NOTHING when the orchestrator quote DEGRADES', async () => {
@@ -11703,7 +11732,236 @@ describe('blocks workflow — author-fee price disclosure', () => {
 
       const caller = blocksRouter.createCaller(fakeCtx() as never);
       const result = await caller.estimateWorkflow({ blockToken: 'tok', body: stepBody() });
-      expect(result.snapshot.cost).toEqual({ total: 1 });
+      expect(result.snapshot.cost).toEqual({ total: 1, authorFee: 0 });
+    });
+  });
+
+  /**
+   * Two bases no other test here uses (5% of 740 = 37, 5% of 2260 = 113), so an
+   * `authorFee` hardcoded to any one literal is red on at least one arm.
+   */
+  describe('the fee is ITEMISED beside the total — `cost.authorFee`', () => {
+    const STEP_ID = 'convert-image';
+    function stepClaims(over: Record<string, unknown> = {}) {
+      return validClaims({
+        ctx: { entityType: 'none', slotId: 'page' },
+        appBlockId: 'apb_test',
+        buzzBudget: 500,
+        ...over,
+      });
+    }
+    function stepBody() {
+      return {
+        kind: 'step' as const,
+        step: STEP_ID,
+        params: {
+          image: 'https://image.civitai.com/source.png',
+          output: { format: 'webp', quality: 90 },
+        },
+      };
+    }
+    function stepQuoting(cost: Record<string, unknown>) {
+      mockSubmitWorkflow.mockImplementation(async (opts: { query?: { whatif?: boolean } }) =>
+        opts?.query?.whatif === true
+          ? { id: 'wf_quote', status: 'unassigned', steps: [], cost }
+          : { id: 'wf_step_1', status: 'processing', steps: [], cost: { total: 4 } }
+      );
+    }
+    function txt2imgQuoting(cost: Record<string, unknown>) {
+      mockSubmitWorkflow.mockResolvedValue({ id: '', status: 'succeeded', steps: [], cost });
+    }
+
+    it('🔴 txt2img ESTIMATE: literal total, literal fee, and total − fee = the pre-fee cost', async () => {
+      mockVerifyBlockToken.mockResolvedValue(validClaims());
+      happyVersionLookup();
+      happyUser();
+      feeLive();
+      txt2imgQuoting({ total: 12, base: 740 });
+
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const { snapshot } = await caller.estimateWorkflow({ blockToken: 'tok', body: validBody() });
+
+      expect(snapshot.cost).toEqual({ total: 49, authorFee: 37 });
+      expect(snapshot.cost!.total - snapshot.cost!.authorFee!).toBe(12);
+    });
+
+    it('🔴 registry-step ESTIMATE: the same, on the other base', async () => {
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      feeLive();
+      stepQuoting({ total: 4, base: 2260 });
+
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const { snapshot } = await caller.estimateWorkflow({ blockToken: 'tok', body: stepBody() });
+
+      expect(snapshot.cost).toEqual({ total: 117, authorFee: 113 });
+      expect(snapshot.cost!.total - snapshot.cost!.authorFee!).toBe(4);
+    });
+
+    it('🔴 `authorFee` is `0` — present, not omitted — when a fee was quoted and none applies', async () => {
+      // `0` = no fee on this request; absent = this total is not itemised.
+      mockVerifyBlockToken.mockResolvedValue(validClaims());
+      happyVersionLookup();
+      happyUser();
+      mockIsAppBlocksAuthorFeeEnabled.mockResolvedValue(false);
+      txt2imgQuoting({ total: 12, base: 740 });
+
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const { snapshot } = await caller.estimateWorkflow({ blockToken: 'tok', body: validBody() });
+      expect(snapshot.cost).toEqual({ total: 12, authorFee: 0 });
+      expect(Object.keys(snapshot.cost!).sort()).toEqual(['authorFee', 'total']);
+    });
+
+    it('🔴 txt2img SUBMIT refused on budget: the quoted price is itemised too', async () => {
+      // 25 + 37 = 62 against a budget of 50.
+      mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 50 }));
+      happyVersionLookup();
+      happyUser();
+      feeLive();
+      mockSubmitWorkflow.mockResolvedValueOnce({
+        id: '',
+        status: 'succeeded',
+        cost: { total: 25, base: 740 },
+        steps: [],
+      });
+
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const { snapshot } = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+
+      expect(snapshot.status).toBe('failed');
+      expect(snapshot.cost).toEqual({ total: 62, authorFee: 37 });
+      expect(snapshot.cost!.total - snapshot.cost!.authorFee!).toBe(25);
+      expect(snapshot.error).toBe('insufficient buzz budget: estimate 62 exceeds budget 50');
+      // Only the whatIf ran — nothing was submitted.
+      expect(mockSubmitWorkflow).toHaveBeenCalledTimes(1);
+    });
+
+    it('🔴 registry-step SUBMIT refused on budget: itemised on the other base', async () => {
+      // max(declared floor 1, quoted 4) = 4, + 113 = 117 against a budget of 100.
+      mockVerifyBlockToken.mockResolvedValue(stepClaims({ buzzBudget: 100 }));
+      happyUser();
+      feeLive();
+      stepQuoting({ total: 4, base: 2260 });
+
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const { snapshot } = await caller.submitWorkflow({ blockToken: 'tok', body: stepBody() });
+
+      expect(snapshot.status).toBe('failed');
+      expect(snapshot.cost).toEqual({ total: 117, authorFee: 113 });
+      expect(snapshot.cost!.total - snapshot.cost!.authorFee!).toBe(4);
+      expect(snapshot.error).toBe('insufficient buzz budget: step price 117 exceeds budget 100');
+    });
+
+    // ── A SUBMITTED workflow's snapshot is NOT itemised. ─────────────────────
+    // Invariant guards (the field never existed on these replies): the success
+    // reply's total is the orchestrator's realized generation cost and the fee
+    // is a separate charge, so an `authorFee` here would describe a number that
+    // is not inside `total`. The fee is LIVE in both submit tests and the
+    // reservation is asserted to carry it, so the absence is a claim about a
+    // priced run, not about a quote that did nothing.
+
+    it('🔴 txt2img SUBMIT success: `cost` is exactly `{ total }`, though a fee was reserved', async () => {
+      // whatIf 25 + fee 37 (5% of 740) = 62 reserved; realized cost 29.
+      mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 500 }));
+      happyVersionLookup();
+      happyUser();
+      feeLive();
+      mockSubmitWorkflow
+        .mockResolvedValueOnce({
+          id: '',
+          status: 'succeeded',
+          cost: { total: 25, base: 740 },
+          steps: [],
+        })
+        .mockResolvedValueOnce({
+          id: 'wf_real',
+          status: 'unassigned',
+          cost: { total: 29 },
+          steps: [],
+        });
+
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const { snapshot } = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+
+      expect(snapshot.workflowId).toBe('wf_real');
+      expect(
+        mockReserveAppSpend.mock.calls.map((c) => c[1]),
+        'positive control: the fee was priced into the reservation'
+      ).toEqual([62]);
+      expect(
+        Object.keys(snapshot.cost!),
+        'a submit success snapshot must not carry cost.authorFee'
+      ).toEqual(['total']);
+      expect(snapshot.cost).toStrictEqual({ total: 29 });
+    });
+
+    it('🔴 registry-step SUBMIT success: `cost` is exactly `{ total }`, though a fee was reserved', async () => {
+      // max(declared floor 1, quoted 4) = 4, + 113 (5% of 2260) = 117 reserved.
+      mockVerifyBlockToken.mockResolvedValue(stepClaims({ buzzBudget: 500 }));
+      happyUser();
+      feeLive();
+      stepQuoting({ total: 4, base: 2260 });
+
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const { snapshot } = await caller.submitWorkflow({ blockToken: 'tok', body: stepBody() });
+
+      expect(snapshot.workflowId).toBe('wf_step_1');
+      expect(
+        mockReserveAppSpend,
+        'positive control: the fee was priced into the reservation'
+      ).toHaveBeenCalledWith('apb_test', 117);
+      expect(
+        Object.keys(snapshot.cost!),
+        'a step submit success snapshot must not carry cost.authorFee'
+      ).toEqual(['total']);
+      expect(snapshot.cost).toStrictEqual({ total: 4 });
+    });
+
+    it('🔴 registry-step SUBMIT "no price quote" refusal: `cost` is exactly `{ total }` (no fee was quoted)', async () => {
+      // The whatIf returns no `cost`, so the submit refuses BEFORE the fee is
+      // quoted: its total is the declared generation price (1) and carries no
+      // fee. Not itemised — and NOT `authorFee: 0`, which would claim a fee
+      // lookup that never happened.
+      mockVerifyBlockToken.mockResolvedValue(stepClaims({ buzzBudget: 500 }));
+      happyUser();
+      feeLive();
+      mockSubmitWorkflow.mockImplementation(async (opts: { query?: { whatif?: boolean } }) =>
+        opts?.query?.whatif === true
+          ? { id: 'wf_quote', status: 'unassigned', steps: [] }
+          : { id: 'wf_step_1', status: 'processing', steps: [], cost: { total: 4 } }
+      );
+
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const { snapshot } = await caller.submitWorkflow({ blockToken: 'tok', body: stepBody() });
+
+      expect(snapshot).toStrictEqual({
+        workflowId: 'failed',
+        status: 'failed',
+        cost: { total: 1 },
+        error:
+          'generation temporarily unavailable: the orchestrator returned no price quote for ' +
+          'this step, so its cost could not be bounded before execution — please retry shortly',
+      });
+      expect(mockReserveAppSpend).not.toHaveBeenCalled();
+    });
+
+    it('a kind that prices NO fee leaves the field ABSENT (not `0`)', async () => {
+      // Invariant guard (green before the field existed): customComfy never
+      // quotes a fee, so its total is not itemised.
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      feeLive();
+
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const { snapshot } = await caller.estimateWorkflow({
+        blockToken: 'tok',
+        body: {
+          kind: 'customComfy' as const,
+          recipe: 'seamless-pano-360',
+          params: { prompt: 'a sunset over mountains', engine: 'zimage-turbo' },
+        },
+      });
+      expect(Object.keys(snapshot.cost!)).toEqual(['total']);
     });
   });
 
@@ -11794,7 +12052,454 @@ describe('blocks workflow — author-fee price disclosure', () => {
       const priced = await caller.estimateWorkflow({ blockToken: 'tok', body: validBody() });
       expect(priced.snapshot.cost, 'the control priced no fee — this test proves nothing').toEqual({
         total: 12 + EXPECTED_FEE,
+        authorFee: EXPECTED_FEE,
       });
     });
+  });
+});
+
+/**
+ * `blocks.estimateWorkflowBatch` — the batch twin of `estimateWorkflow`.
+ *
+ * 🔴 EVERY EXPECTED NUMBER HERE IS A LITERAL, AND THE CELL PRICES ARE PAIRWISE
+ * DISTINCT (12, 150, 31, 20). A fixture that priced every cell the same could not
+ * see a reply in the wrong ORDER, and a total equal to `n × price` could not see a
+ * sum that dropped or repeated a cell. 213 is not a multiple of any of them.
+ *
+ * Three body kinds are mixed on purpose. The `step` and `textToImage` cells are
+ * priced by the mocked orchestrator `whatif`, keyed on a marker in the cell's own
+ * body so the price follows the BODY and not the call order (cells run
+ * concurrently); the `customComfy` cells are priced by the real recipe registry.
+ *
+ * 🔴 AT MOST ONE `textToImage` CELL PER BATCH, AND THAT IS A LIMIT OF THE TEST
+ * RUNNER, NOT OF THE ROUTER. The txt2img arm reaches two `vi.mock`ed modules
+ * through a dynamic `import()`. vitest's mock registry tracks an in-flight mocked
+ * import on a shared call stack and documents that it "will not work if user does
+ * Promise.all(import(), import())": a second concurrent import of the same mocked
+ * module is handed the REAL module. Measured here — with several txt2img cells in
+ * flight the real entitlement gate ran and refused the fixture version. Production
+ * has one module, so nothing is being hidden; the concurrency cases below use
+ * registry `step` cells, whose arm imports nothing lazily.
+ */
+describe('blocks.estimateWorkflowBatch', () => {
+  // A PAGE token: txt2img, customComfy and registry steps are all reachable on it.
+  function gridClaims(over: Record<string, unknown> = {}) {
+    return validClaims({
+      blockInstanceId: 'page_apb_grid',
+      appBlockId: 'apb_test',
+      ctx: { slotId: 'app.page', entityType: 'none' },
+      buzzBudget: 500,
+      ...over,
+    });
+  }
+  /** A `textToImage` cell whose prompt is its marker. */
+  const txt = (marker: string, over: Record<string, unknown> = {}) =>
+    validBody({ params: { prompt: marker, quantity: 1 }, ...over });
+  /** A registry `step` cell whose source image URL carries its marker. */
+  const step = (marker: string) => ({
+    kind: 'step' as const,
+    step: 'convert-image',
+    params: {
+      image: `https://image.civitai.com/${marker}.png`,
+      output: { format: 'webp', quality: 90 },
+    },
+  });
+  const comfy = (engine: string) => ({
+    kind: 'customComfy' as const,
+    recipe: 'seamless-pano-360',
+    params: { prompt: 'a sunset over mountains', engine },
+  });
+  const caller = () => blocksRouter.createCaller(fakeCtx() as never);
+
+  /** Orchestrator whatif price per cell, keyed on the cell's marker. */
+  const WHATIF_PRICE: Record<string, number> = { 'cell-a': 12, 'cell-c': 31, 'cell-e': 7 };
+  /** How long each cell's whatif takes — the FIRST cell is the SLOWEST. */
+  const WHATIF_DELAY_MS: Record<string, number> = { 'cell-a': 40, 'cell-c': 5, 'cell-e': 1 };
+
+  let inFlight = 0;
+  let maxInFlight = 0;
+
+  beforeEach(() => {
+    mockCheckBlockEstimateCellsRateLimit.mockReset();
+    mockCheckBlockEstimateCellsRateLimit.mockResolvedValue({ allowed: true });
+    mockVerifyBlockToken.mockResolvedValue(gridClaims());
+    happyVersionLookup();
+    happyUser();
+    inFlight = 0;
+    maxInFlight = 0;
+    // The graph step echoes a txt2img cell's marker, so the whatif mock can see it.
+    mockCreateStepsFromGraph.mockImplementation(async (args: unknown) => {
+      const marker = /cell-[a-z0-9]+/.exec(JSON.stringify(args))?.[0] ?? 'unmarked';
+      return {
+        steps: [{ $type: 'textToImage', name: 's1', input: { prompt: marker } }],
+        workflowMetadata: undefined,
+      };
+    });
+    mockSubmitWorkflow.mockImplementation(async (args: { body: unknown }) => {
+      const marker = /cell-[a-z0-9]+/.exec(JSON.stringify(args.body))?.[0] ?? 'unmarked';
+      inFlight += 1;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, WHATIF_DELAY_MS[marker] ?? 3));
+      inFlight -= 1;
+      if (marker === 'cell-boom') throw new Error('pg: relation "secret_internal_table" missing');
+      return { id: '', status: 'succeeded', steps: [], cost: { total: WHATIF_PRICE[marker] ?? 3 } };
+    });
+  });
+
+  it('returns one snapshot per body IN ORDER and a literal aggregate over distinct prices', async () => {
+    const result = await caller().estimateWorkflowBatch({
+      blockToken: 'tok',
+      bodies: [step('cell-a'), comfy('qwen-image'), txt('cell-c'), comfy('zimage-turbo')],
+    });
+    // cell-a is the slowest whatif, so a reply assembled in COMPLETION order would
+    // not start with 12.
+    expect(result.snapshots.map((s) => s.cost?.total)).toEqual([12, 150, 31, 20]);
+    expect(result.aggregate).toEqual({ total: 213, pricedCells: 4, cellCount: 4 });
+  });
+
+  it('prices each cell exactly as the SINGLE estimate prices that body', async () => {
+    const bodies = [txt('cell-c'), comfy('qwen-image'), step('cell-e')];
+    const batch = await caller().estimateWorkflowBatch({ blockToken: 'tok', bodies });
+    const singles = [];
+    for (const body of bodies) {
+      singles.push((await caller().estimateWorkflow({ blockToken: 'tok', body })).snapshot);
+    }
+    expect(batch.snapshots).toEqual(singles);
+    // textToImage and registered-step cells itemise the author fee (0 here: the fee is
+    // dark); comfy prices no fee, so its cost stays `{ total }` — as on the single estimate.
+    expect(batch.snapshots.map((s) => s.cost)).toEqual([
+      { total: 31, authorFee: 0 },
+      { total: 150 },
+      { total: 7, authorFee: 0 },
+    ]);
+  });
+
+  it("one INVALID cell is that cell's failure; the others still price", async () => {
+    const result = await caller().estimateWorkflowBatch({
+      blockToken: 'tok',
+      // The middle cell has no `params` — the single estimate's schema refuses it.
+      bodies: [
+        step('cell-a'),
+        { kind: 'textToImage', modelId: 7, modelVersionId: 99 },
+        txt('cell-c'),
+      ],
+    });
+    expect(result.snapshots[0].cost).toEqual({ total: 12, authorFee: 0 });
+    expect(result.snapshots[2].cost).toEqual({ total: 31, authorFee: 0 });
+    expect(result.snapshots[1]).toMatchObject({ workflowId: 'failed', status: 'failed' });
+    expect(result.snapshots[1].cost).toBeUndefined();
+    // The schema's own issue list, naming the missing field.
+    expect(result.snapshots[1].error).toContain('"params"');
+    expect(result.aggregate).toEqual({ total: 43, pricedCells: 2, cellCount: 3 });
+  });
+
+  it('a cell that is not a body at all (null, a string) fails alone', async () => {
+    const result = await caller().estimateWorkflowBatch({
+      blockToken: 'tok',
+      bodies: [null, txt('cell-e'), 'not a body'],
+    });
+    expect(result.snapshots.map((s) => s.status)).toEqual(['failed', 'succeeded', 'failed']);
+    expect(result.aggregate).toEqual({ total: 7, pricedCells: 1, cellCount: 3 });
+  });
+
+  it('ENFORCES A PER-CELL RULE OF THE SINGLE ESTIMATE: a page-only body kind is refused on a model token, per cell', async () => {
+    // A MODEL-bound token. img2img (`sourceImage`) is page-only, and the single
+    // estimate refuses it with this exact message; the plain cell beside it prices.
+    mockVerifyBlockToken.mockResolvedValue(validClaims());
+    const result = await caller().estimateWorkflowBatch({
+      blockToken: 'tok',
+      bodies: [
+        txt('cell-c'),
+        txt('cell-a', {
+          sourceImage: { url: 'https://image.civitai.com/abc/def.jpeg', width: 768, height: 1024 },
+        }),
+      ],
+    });
+    expect(result.snapshots[0].cost).toEqual({ total: 31, authorFee: 0 });
+    expect(result.snapshots[1]).toEqual({
+      workflowId: 'failed',
+      status: 'failed',
+      error: 'source image (img2img) is not supported for model-bound blocks',
+    });
+    expect(result.aggregate).toEqual({ total: 31, pricedCells: 1, cellCount: 2 });
+  });
+
+  it('a refused cell has EXACTLY the shape a host builds when the single estimate throws', async () => {
+    // The same body through the SINGLE estimate, as its caller receives the throw…
+    mockVerifyBlockToken.mockResolvedValue(validClaims());
+    const body = txt('cell-a', { modelId: 8 });
+    const single: unknown = await caller()
+      .estimateWorkflow({ blockToken: 'tok', body })
+      .then(
+        () => null,
+        (err: unknown) => err
+      );
+    expect(single).toBeInstanceOf(TRPCError);
+    // …is what a host hands to `failureSnapshot`. The batch cell must equal it.
+    const result = await caller().estimateWorkflowBatch({ blockToken: 'tok', bodies: [body] });
+    expect(result.snapshots[0]).toEqual(failureSnapshot(single));
+    expect(result.snapshots[0]).toEqual({
+      workflowId: 'failed',
+      status: 'failed',
+      error: 'modelId mismatch with token',
+    });
+  });
+
+  it('NEVER SUBMITS: every orchestrator call is a whatif, and nothing is reserved, recorded or persisted', async () => {
+    const result = await caller().estimateWorkflowBatch({
+      blockToken: 'tok',
+      bodies: [step('cell-a'), txt('cell-c'), comfy('zimage-turbo'), step('cell-e')],
+    });
+    // The control: all four cells really ran and priced.
+    expect(result.aggregate).toEqual({ total: 70, pricedCells: 4, cellCount: 4 });
+    // Two step cells and one txt2img cell → three orchestrator calls, each a dry run.
+    expect(mockSubmitWorkflow).toHaveBeenCalledTimes(3);
+    for (const [args] of mockSubmitWorkflow.mock.calls) {
+      expect((args as { query?: unknown }).query, 'a non-whatif orchestrator submit').toEqual({
+        whatif: true,
+      });
+    }
+    // None of the submit path's money or persistence primitives ran.
+    expect(mockReserveAppSpend).not.toHaveBeenCalled();
+    expect(mockSysRedis.incrBy).not.toHaveBeenCalled();
+    expect(mockReserveDevSessionBuzz).not.toHaveBeenCalled();
+    expect(mockClaimGen).not.toHaveBeenCalled();
+    expect(mockUpsertBlockWorkflow).not.toHaveBeenCalled();
+    expect(mockRecordSpendAttribution).not.toHaveBeenCalled();
+    expect(mockAuditPromptServer).not.toHaveBeenCalled();
+  });
+
+  it('refuses a `training` cell per cell — a training estimate stores a quote record', async () => {
+    const result = await caller().estimateWorkflowBatch({
+      blockToken: 'tok',
+      bodies: [
+        {
+          // A body the single estimate's schema ACCEPTS — so the refusal below is the
+          // batch's own, not a parse failure that would have happened anyway.
+          kind: 'training',
+          datasetId: `tds_${'a'.repeat(32)}`,
+          engine: 'ai-toolkit',
+          model: 'sdxl',
+          params: {
+            engine: 'ai-toolkit',
+            ecosystem: 'sdxl',
+            epochs: 5,
+            resolution: 1024,
+            lr: 0.0001,
+            textEncoderLr: null,
+            trainTextEncoder: false,
+            lrScheduler: 'cosine',
+            optimizerType: 'adamw8bit',
+            networkDim: 32,
+            networkAlpha: 16,
+            noiseOffset: null,
+            minSnrGamma: null,
+            flipAugmentation: false,
+            shuffleTokens: false,
+            keepTokens: 0,
+          },
+          triggerWord: 'mychar',
+          samplePrompts: ['mychar on a beach'],
+        },
+        txt('cell-c'),
+      ],
+    });
+    expect(result.snapshots[0]).toEqual({
+      workflowId: 'failed',
+      status: 'failed',
+      error: 'a training estimate cannot be part of a batch — estimate it on its own',
+    });
+    expect(result.snapshots[1].cost).toEqual({ total: 31, authorFee: 0 });
+    expect(result.aggregate).toEqual({ total: 31, pricedCells: 1, cellCount: 2 });
+  });
+
+  it('a server fault inside ONE cell is withheld from the block and does not fail the call', async () => {
+    const result = await caller().estimateWorkflowBatch({
+      blockToken: 'tok',
+      bodies: [txt('cell-boom'), comfy('zimage-turbo')],
+    });
+    expect(result.snapshots[0].status).toBe('failed');
+    // The raw upstream text never reaches a third-party block; a reference does.
+    expect(result.snapshots[0].error).not.toContain('secret_internal_table');
+    expect(result.snapshots[0].error).toMatch(
+      /^An unexpected error occurred \(ref: [0-9a-f]{12}\)$/
+    );
+    expect(result.snapshots[1].cost).toEqual({ total: 20 });
+    expect(result.aggregate).toEqual({ total: 20, pricedCells: 1, cellCount: 2 });
+    // …and the full error is logged under the same reference.
+    const logged = mockLogToAxiom.mock.calls.find(
+      ([entry]) => (entry as { name?: string }).name === 'block-estimate-batch-cell-fault'
+    );
+    expect(logged?.[0]).toMatchObject({
+      message: 'pg: relation "secret_internal_table" missing',
+    });
+    expect(result.snapshots[0].error).toContain((logged?.[0] as { errorRef: string }).errorRef);
+  });
+
+  it('charges ONE catalog token for the call and the CELL COUNT to the cells bucket', async () => {
+    await caller().estimateWorkflowBatch({
+      blockToken: 'tok',
+      bodies: [step('cell-a'), txt('cell-c'), comfy('zimage-turbo')],
+    });
+    expect(mockCheckBlockCatalogRateLimit).toHaveBeenCalledTimes(1);
+    expect(mockCheckBlockCatalogRateLimit).toHaveBeenCalledWith('page_apb_grid');
+    expect(mockCheckBlockEstimateCellsRateLimit).toHaveBeenCalledTimes(1);
+    // (install, cells) — the install alone, like the catalog bucket; 3 cells.
+    expect(mockCheckBlockEstimateCellsRateLimit).toHaveBeenCalledWith('page_apb_grid', 3);
+  });
+
+  it('an EMPTY list fails the whole call before anything is charged', async () => {
+    await expect(
+      caller().estimateWorkflowBatch({ blockToken: 'tok', bodies: [] })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(mockCheckBlockCatalogRateLimit).not.toHaveBeenCalled();
+    expect(mockCheckBlockEstimateCellsRateLimit).not.toHaveBeenCalled();
+    expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('16 cells are accepted and a 17th fails the whole call', async () => {
+    const sixteen = Array.from({ length: 16 }, () => comfy('zimage-turbo'));
+    const ok = await caller().estimateWorkflowBatch({ blockToken: 'tok', bodies: sixteen });
+    expect(ok.aggregate).toEqual({ total: 320, pricedCells: 16, cellCount: 16 });
+
+    mockCheckBlockCatalogRateLimit.mockClear();
+    await expect(
+      caller().estimateWorkflowBatch({
+        blockToken: 'tok',
+        bodies: [...sixteen, comfy('zimage-turbo')],
+      })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(mockCheckBlockCatalogRateLimit).not.toHaveBeenCalled();
+  });
+
+  it('`bodies` that is not a list fails the whole call', async () => {
+    await expect(
+      caller().estimateWorkflowBatch({ blockToken: 'tok', bodies: txt('cell-a') as never })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+  });
+
+  it('a token without the spend scope fails the whole call', async () => {
+    mockVerifyBlockToken.mockResolvedValue(gridClaims({ scopes: ['user:read:self'] }));
+    await expect(
+      caller().estimateWorkflowBatch({ blockToken: 'tok', bodies: [txt('cell-a')] })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN', message: 'block lacks ai:write:budgeted scope' });
+    expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('an invalid token and an anonymous viewer each fail the whole call', async () => {
+    mockVerifyBlockToken.mockResolvedValue(null);
+    await expect(
+      caller().estimateWorkflowBatch({ blockToken: 'tok', bodies: [txt('cell-a')] })
+    ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+
+    mockVerifyBlockToken.mockResolvedValue(gridClaims({ sub: 'anon' }));
+    await expect(
+      caller().estimateWorkflowBatch({ blockToken: 'tok', bodies: [txt('cell-a')] })
+    ).rejects.toMatchObject({
+      code: 'UNAUTHORIZED',
+      message: 'estimate requires authenticated viewer',
+    });
+    expect(mockCheckBlockEstimateCellsRateLimit).not.toHaveBeenCalled();
+    expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('runs at most 4 cells at a time', async () => {
+    const result = await caller().estimateWorkflowBatch({
+      blockToken: 'tok',
+      bodies: Array.from({ length: 12 }, (_, i) => step(`cell-n${i}`)),
+    });
+    // The control: all twelve really priced (3 each), so the ceiling below was
+    // observed over a batch that ran, not one that failed early.
+    expect(result.aggregate).toEqual({ total: 36, pricedCells: 12, cellCount: 12 });
+    expect(mockSubmitWorkflow).toHaveBeenCalledTimes(12);
+    expect(maxInFlight).toBe(4);
+  });
+
+  it('replies at the 30 s call budget: fast cells priced, the rest "estimate timed out" in order, and no cell starts after it', async () => {
+    // Per-cell whatif durations and prices, keyed on the cell's marker. Prices are
+    // pairwise distinct so a reply in the wrong order cannot pass.
+    const delayMs: Record<string, number> = {
+      'cell-fa': 1_000,
+      'cell-sb': 60_000,
+      'cell-fc': 2_000,
+      'cell-sd': 60_000,
+      'cell-se': 60_000,
+      'cell-sf': 60_000,
+    };
+    const price: Record<string, number> = {
+      'cell-fa': 11,
+      'cell-sb': 101,
+      'cell-fc': 17,
+      'cell-sd': 103,
+      'cell-se': 107,
+      'cell-sf': 109,
+      'cell-gg': 113,
+      'cell-gh': 127,
+    };
+    const started: string[] = [];
+    mockSubmitWorkflow.mockImplementation(async (args: { body: unknown }) => {
+      const marker = /cell-[a-z0-9]+/.exec(JSON.stringify(args.body))?.[0] ?? 'unmarked';
+      started.push(marker);
+      await new Promise((resolve) => setTimeout(resolve, delayMs[marker] ?? 1_000));
+      return { id: '', status: 'succeeded', steps: [], cost: { total: price[marker] } };
+    });
+    vi.useFakeTimers();
+    try {
+      // 4 workers take fa, sb, fc, sd at t=0; fa and fc finish by 2 s and their
+      // workers take se and sf. All four slots are then held by 60 s cells, so gg
+      // and gh are still queued when the budget runs out at 30 s.
+      let reply:
+        | Awaited<ReturnType<ReturnType<typeof caller>['estimateWorkflowBatch']>>
+        | undefined;
+      const call = caller()
+        .estimateWorkflowBatch({
+          blockToken: 'tok',
+          bodies: [
+            step('cell-fa'),
+            step('cell-sb'),
+            step('cell-fc'),
+            step('cell-sd'),
+            step('cell-se'),
+            step('cell-sf'),
+            step('cell-gg'),
+            step('cell-gh'),
+          ],
+        })
+        .then((r) => {
+          reply = r;
+          return r;
+        });
+
+      await vi.advanceTimersByTimeAsync(29_999);
+      expect(reply, 'replied before the budget ran out').toBeUndefined();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(reply, 'no reply at the 30 s budget').toBeDefined();
+      const result = await call;
+
+      const TIMED_OUT = { workflowId: 'failed', status: 'failed', error: 'estimate timed out' };
+      expect(result.snapshots.map((s) => s.cost?.total)).toEqual([
+        11,
+        undefined,
+        17,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+      ]);
+      expect(result.snapshots[1]).toEqual(TIMED_OUT);
+      for (const i of [3, 4, 5, 6, 7]) expect(result.snapshots[i]).toEqual(TIMED_OUT);
+      expect(result.aggregate).toEqual({ total: 28, pricedCells: 2, cellCount: 8 });
+
+      // Let the in-flight slow cells finish. Their workers must not start the queued
+      // cells, and their late prices must not leak into the reply already sent.
+      const before = JSON.stringify(result);
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(started).toEqual(['cell-fa', 'cell-sb', 'cell-fc', 'cell-sd', 'cell-se', 'cell-sf']);
+      expect(mockSubmitWorkflow).toHaveBeenCalledTimes(6);
+      expect(JSON.stringify(result)).toBe(before);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
