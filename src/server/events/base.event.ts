@@ -285,7 +285,7 @@ export type EventPromoCopy = {
   postEditor?: {
     title?: string;
     body: string;
-    // Shown instead of nothing while the post is unpublished.
+    // Shown while the post is unpublished.
     draftNote?: string;
     image?: string;
   };

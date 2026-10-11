@@ -89,6 +89,12 @@ describe('the birthday promo, through the real access rule', () => {
     expect(await promos(ANON, PREVIEW)).toEqual([]);
   });
 
+  it('reaches everyone, signed out included, once the flag is public and the event open', async () => {
+    testerFlag.reset({ public: true });
+    for (const viewer of [TESTER, PUBLIC_USER, ANON])
+      expect((await promos(viewer, DURING)).map((p) => p.event)).toEqual(['birthday2026']);
+  });
+
   it('reaches nobody once the event ends', async () => {
     testerFlag.reset({ public: true, testers: [TESTER.id] });
     for (const viewer of [TESTER, MOD, PUBLIC_USER, ANON])
@@ -183,6 +189,15 @@ describe('getNavBanners', () => {
       getAccess: open,
     });
     expect(banner).toMatchObject({ title: 'Own title', image: 'own-img', dismissible: false });
+  });
+
+  it('serves no promo for an event without a banner', async () => {
+    const result = await getNavBanners({
+      viewer: TESTER,
+      eventDefs: [event('e1', { promo: { menuLabel: 'Menu' } })],
+      getAccess: open,
+    });
+    expect(result).toEqual([]);
   });
 
   it('links the roster only for an event that is both scored and joinable', async () => {
