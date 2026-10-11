@@ -34,8 +34,9 @@ import {
  * "Send feedback to developer": private, text-only feedback from a running App Block to its
  * developer (their collaborators and moderators read it too). The entry point is a button in the
  * chrome bar itself, beside the ⋮ trigger, on every surface (page host and model slot, desktop
- * bar and compact shell) — labelled "Feedback" on a wide bar, icon-only on a narrow one — it used to be a ⋮ menu item, which buried the one action whose whole
- * point is to be reached while the app is in front of you. It hands what it resolved UP to
+ * bar and compact shell): labelled "Feedback" on a wide bar, icon-only on a narrow one. It used
+ * to be a ⋮ menu item, which buried the one action whose whole point is to be reached while the
+ * app is in front of you. It hands what it resolved UP to
  * `AppBlockChrome`, which owns the modal, so the modal's lifetime does not depend on where the
  * trigger lives (the ⋮ surface unmounts its children on close).
  */
@@ -55,7 +56,7 @@ export const APP_FEEDBACK_BUTTON_LABEL = 'Send feedback to developer';
 /** The visible text on the wide bar. The accessible name stays the full sentence above. */
 export const APP_FEEDBACK_BUTTON_TEXT = 'Feedback';
 
-/** Hover for a pointer, focus so a keyboard user also sees the label (Mantine's default is hover only). */
+/** Hover for a pointer, and focus so a keyboard user sees the label too (Mantine: hover only). */
 const TOOLTIP_EVENTS = { hover: true, focus: true, touch: false };
 
 /**

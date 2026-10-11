@@ -884,9 +884,10 @@ export function AppBlockChrome({
           than the bar's own so the pair reads as one group of app actions. The button renders
           its own gates and may be null. */}
         <Group gap={4} wrap="nowrap">
-          {/* Labelled on a wide bar, icon-only below `sm` (the same `compact` width test the
-            mobile shell uses, but WITHOUT its `isPage` term: a narrow model sidebar is just as
-            short of room). An unmeasured bar (SSR, first paint) is not compact, so it starts
+          {/* Labelled on a wide bar, icon-only below `sm`: the bar-width test the mobile shell
+            uses, but WITHOUT the `isPage` term of the local `compact` above. Two different
+            questions, so do not unify them: a narrow model sidebar has no shell but is just as
+            short of room. An unmeasured bar (SSR, first paint) is not compact, so it starts
             labelled. */}
           <ChromeFeedbackButton
             request={feedbackRequest}

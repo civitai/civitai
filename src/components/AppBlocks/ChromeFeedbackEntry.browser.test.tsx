@@ -203,6 +203,17 @@ function expectLabelled() {
   expect(el.getAttribute('aria-label')).toBe('Send feedback to developer');
 }
 
+/**
+ * Wait until the bar has been MEASURED narrow. An unmeasured bar renders the wide (labelled) form
+ * first and flips once the resize observer fires, so asserting straight after `toBeVisible` would
+ * race that flip.
+ */
+async function waitForIconOnly() {
+  await vi.waitFor(() =>
+    expect(feedbackButton().element().getAttribute('data-labelled')).toBe('false')
+  );
+}
+
 /** The narrow-bar form: the bare 22px icon, no visible text. */
 function expectIconOnly() {
   const el = feedbackButton().element() as HTMLElement;
@@ -610,6 +621,7 @@ describe('narrow bars', () => {
       { wrapper: ProdishProviders }
     );
     await expect.element(feedbackButton()).toBeVisible();
+    await waitForIconOnly();
     expectStyledOneLineBar();
     const bar = rectOf(chromeBar());
     expect(Math.round(bar.width)).toBe(320);
@@ -625,6 +637,43 @@ describe('narrow bars', () => {
     expect(chromeBar().getAttribute('data-chrome-compact')).toBe('false');
     expect(chromeBar().getAttribute('data-chrome-tier')).toBe('base');
     expectIconOnly();
+  });
+
+  test.each([
+    [767, false],
+    [768, true],
+  ] as const)(
+    'the label switches at the `sm` bar width: %ipx model area → labelled=%s',
+    async (width, labelled) => {
+      await page.viewport(1280, 720);
+      render(
+        <div style={{ width }}>
+          <AppBlockChrome blockInstanceId="inst-fb" appName={APP_NAME} {...SLOT_PROPS} />
+        </div>,
+        { wrapper: ProdishProviders }
+      );
+      await expect.element(feedbackButton()).toBeVisible();
+      await vi.waitFor(() => expect(Math.round(rectOf(chromeBar()).width)).toBe(width));
+      await vi.waitFor(() =>
+        expect(feedbackButton().element().getAttribute('data-labelled')).toBe(String(labelled))
+      );
+      if (labelled) expectLabelled();
+      else expectIconOnly();
+    }
+  );
+
+  test('the icon-only form keeps the tooltip', async () => {
+    render(
+      <div style={{ width: 320 }}>
+        <AppBlockChrome blockInstanceId="inst-fb" appName={APP_NAME} {...SLOT_PROPS} />
+      </div>,
+      { wrapper: ProdishProviders }
+    );
+    await expect.element(feedbackButton()).toBeVisible();
+    await waitForIconOnly();
+    expect(page.getByRole('tooltip').elements()).toHaveLength(0);
+    await feedbackButton().hover();
+    await expect.element(page.getByRole('tooltip')).toHaveTextContent('Send feedback to developer');
   });
 
   const LONG_NAME =
@@ -648,6 +697,7 @@ describe('narrow bars', () => {
         { wrapper: ProdishProviders }
       );
       await expect.element(feedbackButton()).toBeVisible();
+      if (!labelled) await waitForIconOnly();
       expectStyledOneLineBar();
       const bar = rectOf(chromeBar());
       if (labelled) expectLabelled();
