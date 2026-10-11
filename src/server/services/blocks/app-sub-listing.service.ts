@@ -1087,23 +1087,84 @@ export async function withdrawCatalogSubListingsForRevokedConsent(args: {
   userId: number;
   clientId: string;
 }): Promise<number> {
-  const where = {
+  return withdrawPlatformListedItems({
+    parent: { connectClientId: args.clientId },
     authorUserId: args.userId,
-    parentListing: {
-      connectClientId: args.clientId,
-      kind: CATALOG_PARENT_KIND,
-      userId: { not: args.userId },
-    },
-  } satisfies Prisma.AppSubListingWhereInput;
+  });
+}
+
+/**
+ * The catalog parents linked to `clientId`, read before the client is deleted: the delete nulls
+ * their `connectClientId`, after which nothing can find them by client. Pass the result to
+ * {@link withdrawCatalogSubListingsForDeletedClient} once the delete has succeeded.
+ */
+export async function findCatalogParentIdsForClient(clientId: string): Promise<string[]> {
   try {
-    const withdrawn = await transitionActive({
-      where,
-      data: { status: 'withdrawn', ...CLEAR_PENDING },
+    const rows = await dbWrite.appListing.findMany({
+      where: { connectClientId: clientId, kind: CATALOG_PARENT_KIND },
+      select: { id: true },
     });
-    await dbWrite.appSubListing.updateMany({
-      where: { ...where, status: 'hidden', approvedAt: { not: null } },
-      data: { approvedAt: null, updatedAt: new Date() },
+    return rows.map((r) => r.id);
+  } catch (err) {
+    if (isMissingTableError(err)) return [];
+    throw err;
+  }
+}
+
+/**
+ * When an OAuth client is deleted, withdraw what its platform listed in the store under its
+ * catalog parents (`parentListingIds`, read by {@link findCatalogParentIdsForClient} before the
+ * delete), for every author but the parent's owner, as a consent revoke does for one author.
+ * Only parents no longer linked to any client are touched, so a call made while the client
+ * still exists (its delete failed) withdraws nothing. Returns the number withdrawn.
+ */
+export async function withdrawCatalogSubListingsForDeletedClient(args: {
+  parentListingIds: string[];
+}): Promise<number> {
+  if (args.parentListingIds.length === 0) return 0;
+  return withdrawPlatformListedItems({
+    parent: { id: { in: args.parentListingIds }, connectClientId: null },
+  });
+}
+
+/**
+ * Withdraw the items a platform listed under the catalog parents matching `parent` — only
+ * `authorUserId`'s when given, else every author's — skipping each parent's owner's own items,
+ * which never depended on the platform's client. Pending and approved items are withdrawn; a
+ * hidden item stays hidden but loses its approval, so a restore sends it back to review. Returns
+ * the number withdrawn; 0 while the tables are absent.
+ */
+async function withdrawPlatformListedItems(args: {
+  parent: Prisma.AppListingWhereInput;
+  authorUserId?: number;
+}): Promise<number> {
+  const parentListing = { ...args.parent, kind: CATALOG_PARENT_KIND };
+  try {
+    const parents = await dbWrite.appListing.findMany({
+      where: parentListing,
+      select: { id: true, userId: true },
     });
+    let withdrawn = 0;
+    // One pass per parent: the owner exclusion compares two tables' columns, which a Prisma
+    // `where` cannot. A client normally has one parent (more is a 409 at sync).
+    for (const parent of parents) {
+      if (args.authorUserId === parent.userId) continue;
+      // The parent must still have the owner read above, so an ownership change in between
+      // skips the parent rather than withdrawing the new owner's own items.
+      const where = {
+        parentListingId: parent.id,
+        parentListing: { ...parentListing, userId: parent.userId },
+        authorUserId: args.authorUserId ?? { not: parent.userId },
+      } satisfies Prisma.AppSubListingWhereInput;
+      withdrawn += await transitionActive({
+        where,
+        data: { status: 'withdrawn', ...CLEAR_PENDING },
+      });
+      await dbWrite.appSubListing.updateMany({
+        where: { ...where, status: 'hidden', approvedAt: { not: null } },
+        data: { approvedAt: null, updatedAt: new Date() },
+      });
+    }
     return withdrawn;
   } catch (err) {
     if (isMissingTableError(err)) return 0;

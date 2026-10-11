@@ -223,6 +223,35 @@ export async function withdrawCatalogItemsOnConsentRevoke(opts: {
   }
 }
 
+/**
+ * `oauthClient.delete` runs this AFTER the delete succeeds: it withdraws the store items the
+ * client's platform listed under its catalog parents, for every author but each parent's owner.
+ * It never throws; a failure is logged with the parent ids (the delete has unlinked them, so
+ * the client id no longer finds them) and returned as `null`.
+ */
+export async function withdrawCatalogItemsOnClientDelete(opts: {
+  clientId: string;
+  parentListingIds: string[];
+}): Promise<number | null> {
+  try {
+    const { withdrawCatalogSubListingsForDeletedClient } = await import(
+      '~/server/services/blocks/app-sub-listing.service'
+    );
+    return await withdrawCatalogSubListingsForDeletedClient({
+      parentListingIds: opts.parentListingIds,
+    });
+  } catch (err) {
+    logToAxiom({
+      type: 'oauth.withdraw-catalog-items.failed',
+      message: `catalog item withdraw failed for deleted oauth client ${opts.clientId}`,
+      clientId: opts.clientId,
+      parentListingIds: opts.parentListingIds,
+      error: safeError(err),
+    }).catch(() => undefined);
+    return null;
+  }
+}
+
 export async function revokeOauthConsentForBlock(opts: {
   userId: number;
   appBlockId: string;

@@ -51,10 +51,12 @@ vi.mock('~/server/auth/session-client', () => ({
 }));
 
 const {
+  findCatalogParentIdsForClient,
   listMyCatalogSubListings,
   moderateSubListing,
   SubListingError,
   upsertCatalogSubListing,
+  withdrawCatalogSubListingsForDeletedClient,
   withdrawCatalogSubListingsForRevokedConsent,
   withdrawMyCatalogSubListing,
 } = await import('~/server/services/blocks/app-sub-listing.service');
@@ -72,6 +74,8 @@ const toCamel = (row: Record<string, unknown>) =>
 
 function whereSql(where: Record<string, unknown>, values: unknown[]): string {
   const parts = Object.entries(where).flatMap(([key, v]): string[] => {
+    // Prisma treats an undefined field as no filter, not as `= NULL`.
+    if (v === undefined) return [];
     if (key === 'parentListingId_itemKey') return [whereSql(v as Record<string, unknown>, values)];
     if (key === 'parentListing') {
       return [
@@ -118,6 +122,16 @@ async function selectRows(where: Record<string, unknown>) {
 
 function bridgePrisma() {
   const w = dbMock.dbWrite.appSubListing;
+  dbMock.dbWrite.appListing.findMany.mockImplementation(
+    async (a: { where: Record<string, unknown> }) => {
+      const values: unknown[] = [];
+      const { rows } = await holder.db.query<Record<string, unknown>>(
+        `SELECT * FROM app_listings WHERE ${whereSql(a.where, values)} ORDER BY id`,
+        values
+      );
+      return rows.map(toCamel);
+    }
+  );
   dbMock.dbRead.$queryRaw.mockImplementation((q: Prisma.Sql) =>
     holder.db.query(q.text, q.values as unknown[]).then((r) => r.rows)
   );
@@ -559,6 +573,149 @@ describe('withdrawCatalogSubListingsForRevokedConsent', () => {
     expect(await statuses()).toEqual(SEEDED_STATUSES);
     expect(await approvals()).toEqual(SEEDED_APPROVALS);
     expect(mockBust).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Deleting an OAuth client: its catalog parents' ids are read first, the delete unlinks them
+ * (`connect_client_id` → NULL, as the relation's `SetNull` does), then the withdraw runs.
+ */
+describe('withdrawCatalogSubListingsForDeletedClient', () => {
+  async function unlinkClient(clientId: string) {
+    await holder.db.query(
+      'UPDATE app_listings SET connect_client_id = NULL WHERE connect_client_id = $1',
+      [clientId]
+    );
+  }
+  async function deleteClient(clientId: string) {
+    const parentListingIds = await findCatalogParentIdsForClient(clientId);
+    await unlinkClient(clientId);
+    return withdrawCatalogSubListingsForDeletedClient({ parentListingIds });
+  }
+
+  it("finds only the client's off-site parents (not an on-site listing linked to it)", async () => {
+    await expect(findCatalogParentIdsForClient(CLIENT_A)).resolves.toEqual([PARENT_A]);
+    await expect(findCatalogParentIdsForClient(CLIENT_B)).resolves.toEqual([PARENT_B]);
+    await expect(findCatalogParentIdsForClient('client-gamma')).resolves.toEqual([]);
+  });
+
+  it("withdraws every author's active items under the client's parents, except the owner's", async () => {
+    await expect(deleteClient(CLIENT_A)).resolves.toBe(3);
+    expect(await statuses()).toEqual({
+      ...SEEDED_STATUSES,
+      [A_LIVE]: 'withdrawn',
+      [A_PENDING]: 'withdrawn',
+      [A_OTHER]: 'withdrawn',
+    });
+    expect((await rows())[A_LIVE]).toMatchObject({
+      pending_title: null,
+      pending_sub_path: null,
+      pending_submitted_at: null,
+    });
+    // Hidden items stay hidden and lose their approval, for both authors. Untouched: the owner's
+    // own item, the other client's parent, and the on-site listing linked to the same client.
+    expect(await approvals()).toEqual({
+      ...SEEDED_APPROVALS,
+      [A_HIDDEN_WAS_LIVE]: false,
+      [A_OTHER_HIDDEN]: false,
+    });
+    expect(mockBust).toHaveBeenCalledTimes(1);
+  });
+
+  it('sums across several parents, sparing each parent its own owner', async () => {
+    // A second off-site parent on the same client, owned by someone else: there OWNER is just
+    // another author, and OTHER_AUTHOR's item is the owner's own.
+    const PARENT_A2 = 'apl_ALPHA_TWO';
+    const [A2_BY_OWNER, A2_BY_ITS_OWNER, A2_PENDING] = [
+      'asl_01JA0000000000000000000D01',
+      'asl_01JA0000000000000000000D02',
+      'asl_01JA0000000000000000000D03',
+    ];
+    await holder.db.exec(`
+      INSERT INTO app_listings (id, kind, slug, name, status, connect_client_id, user_id) VALUES
+        ('${PARENT_A2}', 'offsite', 'alpha-two', 'Alpha Two', 'approved', '${CLIENT_A}', ${OTHER_AUTHOR});
+      INSERT INTO app_sub_listing_parents (parent_listing_id, enabled, link_template) VALUES
+        ('${PARENT_A2}', true, '${TEMPLATE_A}');
+      INSERT INTO app_sub_listings
+        (id, parent_listing_id, item_key, author_user_id, title, sub_path, status, approved_at,
+         created_at, updated_at) VALUES
+        ('${A2_BY_OWNER}', '${PARENT_A2}', 'two-a', ${OWNER}, 'Two A', 'two-a', 'approved', now(),
+         now(), '2026-10-01T00:00:00Z'),
+        ('${A2_BY_ITS_OWNER}', '${PARENT_A2}', 'two-b', ${OTHER_AUTHOR}, 'Two B', 'two-b', 'approved', now(),
+         now(), '2026-10-01T00:00:00Z'),
+        ('${A2_PENDING}', '${PARENT_A2}', 'two-c', ${CREATOR}, 'Two C', 'two-c', 'pending', NULL,
+         now(), '2026-10-01T00:00:00Z');
+    `);
+    await expect(deleteClient(CLIENT_A)).resolves.toBe(5);
+    expect(await statuses()).toEqual({
+      ...SEEDED_STATUSES,
+      [A_LIVE]: 'withdrawn',
+      [A_PENDING]: 'withdrawn',
+      [A_OTHER]: 'withdrawn',
+      [A2_BY_OWNER]: 'withdrawn',
+      [A2_BY_ITS_OWNER]: 'approved',
+      [A2_PENDING]: 'withdrawn',
+    });
+  });
+
+  it('skips a parent whose owner changed after it was read', async () => {
+    const parentListingIds = await findCatalogParentIdsForClient(CLIENT_A);
+    await unlinkClient(CLIENT_A);
+    // The listing changes hands to CREATOR between the withdraw's parent read and its updates.
+    const read = dbMock.dbWrite.appListing.findMany.getMockImplementation()!;
+    dbMock.dbWrite.appListing.findMany.mockImplementationOnce(async (a) => {
+      const result = await read(a);
+      await holder.db.query('UPDATE app_listings SET user_id = $1 WHERE id = $2', [
+        CREATOR,
+        PARENT_A,
+      ]);
+      return result;
+    });
+    await expect(withdrawCatalogSubListingsForDeletedClient({ parentListingIds })).resolves.toBe(0);
+    expect(await statuses()).toEqual(SEEDED_STATUSES);
+  });
+
+  it("keeps the parent owner's own items live", async () => {
+    await deleteClient(CLIENT_A);
+    expect((await rows())[A_OWNERS]).toMatchObject({ status: 'approved' });
+    expect((await approvals())[A_OWNERS]).toBe(true);
+  });
+
+  it("deleting the other client withdraws only that client's items", async () => {
+    await expect(deleteClient(CLIENT_B)).resolves.toBe(1);
+    expect(await statuses()).toEqual({ ...SEEDED_STATUSES, [B_LIVE]: 'withdrawn' });
+    expect(await approvals()).toEqual({ ...SEEDED_APPROVALS, [B_HIDDEN]: false });
+  });
+
+  it('withdraws nothing while the parents are still linked (the client delete failed)', async () => {
+    const parentListingIds = await findCatalogParentIdsForClient(CLIENT_A);
+    expect(parentListingIds).toEqual([PARENT_A]);
+    await expect(withdrawCatalogSubListingsForDeletedClient({ parentListingIds })).resolves.toBe(0);
+    expect(await statuses()).toEqual(SEEDED_STATUSES);
+    expect(await approvals()).toEqual(SEEDED_APPROVALS);
+    expect(mockBust).not.toHaveBeenCalled();
+  });
+
+  it('withdraws nothing for a client with no catalog parent', async () => {
+    await expect(deleteClient('client-gamma')).resolves.toBe(0);
+    expect(await statuses()).toEqual(SEEDED_STATUSES);
+    expect(await approvals()).toEqual(SEEDED_APPROVALS);
+    expect(mockBust).not.toHaveBeenCalled();
+  });
+
+  it("a moderator restore of another author's hidden item then sends it back to review", async () => {
+    await deleteClient(CLIENT_A);
+    dbMock.dbRead.appListing.findUnique.mockResolvedValue({ kind: 'offsite', appBlock: null });
+    const { rows: v } = await holder.db.query<{ updated_at: Date }>(
+      'SELECT updated_at FROM app_sub_listings WHERE id = $1',
+      [A_OTHER_HIDDEN]
+    );
+    await expect(
+      moderateSubListing({
+        input: { id: A_OTHER_HIDDEN, action: 'restore', version: v[0].updated_at.toISOString() },
+        moderatorId: OWNER,
+      })
+    ).resolves.toMatchObject({ status: 'pending' });
   });
 });
 
