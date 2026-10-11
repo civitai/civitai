@@ -272,8 +272,15 @@ describe('AspectRatioInput "Custom"', () => {
 
     // 512 tall caps the width at 1280 (2.5:1); End drives the thumb to the top of the
     // full range, and it stops at the grey zone's edge.
+    // The modal gets its accessible name and its initial focus after mount, the focus in a
+    // `setTimeout` (Mantine's focus trap). Focusing the thumb before then lets the trap take focus
+    // back, and End lands on another control. Wait for the thumb, then for the trap to have placed
+    // focus inside the modal, then focus the thumb and confirm it holds focus.
     const thumb = modal().getByRole('slider', { name: 'Width' });
+    await expect.element(thumb).toBeInTheDocument();
+    await vi.waitFor(() => expect(modal().element().contains(document.activeElement)).toBe(true));
     (thumb.element() as HTMLElement).focus();
+    await expect.element(thumb).toHaveFocus();
     await userEvent.keyboard('{End}');
     await expect.element(readout()).toHaveTextContent('1280 × 512');
 
