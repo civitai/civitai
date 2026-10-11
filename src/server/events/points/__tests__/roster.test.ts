@@ -23,6 +23,12 @@ const {
   syncRosterMembersWith,
 } = await import('~/server/events/points/roster-sync');
 const { seasonOwnerTopicId } = await import('~/server/events/points/keys');
+const { MAX_POINTS, packStanding, POINT_STEP, WRITE_STANDING } = await import(
+  '~/server/events/points/roster-score'
+);
+const { rosterComparator } = await import('~/shared/utils/roster-order');
+const { RANK_SETTLE_MS } = await import('~/server/events/points/roster');
+const { logToAxiom } = await import('~/server/logging/client');
 
 // A small Redis with real sorted-set and hash semantics, including ZADD's NX / XX conditions: the
 // roster's privacy rests on what XX refuses to create and on which keys a write leaves behind, so a
@@ -30,6 +36,7 @@ const { seasonOwnerTopicId } = await import('~/server/events/points/keys');
 function fakeRedis() {
   const zsets = new Map<string, Map<string, number>>();
   const hashes = new Map<string, Map<string, string>>();
+  const strings = new Map<string, string>();
   const z = (key: string) => {
     let set = zsets.get(key);
     if (!set) zsets.set(key, (set = new Map()));
@@ -110,7 +117,31 @@ function fakeRedis() {
     // The roster's two scripts: HSET, or HDEL per pair, only if the field still holds what the
     // caller read. The fake can only act out the scripts it knows, so any other text fails here,
     // loudly. What the real scripts do on a real Redis was measured against redis:7 (PR body).
-    async eval(script: string, { keys: [key], arguments: args }: EvalArgs) {
+    async get(key: string) {
+      return strings.get(key) ?? null;
+    },
+    async set(key: string, value: string) {
+      strings.set(key, value);
+      return 'OK';
+    },
+    async eval(script: string, { keys: evalKeys, arguments: args }: EvalArgs) {
+      const [key] = evalKeys;
+      // The rank write, acted out: what the Lua does on a real Redis is roster.real-redis.test.ts's.
+      if (script === WRITE_STANDING) {
+        const [member, hats, join, given] = args;
+        const points =
+          given === ''
+            ? Math.min(
+                Math.floor((z(evalKeys[1]).get(member) ?? 0) / POINT_STEP.points),
+                MAX_POINTS
+              )
+            : Number(given);
+        const standing = { hats: Number(hats), points, joinMinute: Number(join) };
+        (['hats', 'points', 'newest'] as const).forEach((sort, i) =>
+          z(evalKeys[i]).set(member, packStanding(sort, standing))
+        );
+        return 1;
+      }
       if (script === LIST_IF_UNCHANGED_AS_MEASURED) {
         const [field, expected, value] = args;
         if ((h(key).get(field) ?? '') !== expected) return 0;
@@ -136,7 +167,7 @@ function fakeRedis() {
       )
       .map(([k]) => k),
   ];
-  return { redis, zsets, hashes, allKeysHolding };
+  return { redis, zsets, hashes, strings, allKeysHolding };
 }
 
 const EVENT = {
@@ -146,6 +177,7 @@ const EVENT = {
   join: { claimKey: 'claimed', design: 'basic' },
 };
 const PREVIEW_NOW = new Date('2026-10-20T12:00:00.000Z');
+const PAGE = { event: EVENT.name, team: 'Blue', startDate: EVENT.startDate } as const;
 const LIVE_NOW = new Date('2026-11-05T12:00:00.000Z');
 const keys = eventRosterKeys(EVENT.name);
 
@@ -162,9 +194,12 @@ const member = (userId: number, over: Partial<RosterMemberState> = {}): RosterMe
 function setup(
   states: RosterMemberState[],
   now = PREVIEW_NOW,
-  points: Record<string, number> = {}
+  points: Record<string, number> = {},
+  // Whether a full reconcile has marked the rank sets ready (roster.ts): the steady state.
+  { rankReady = true }: { rankReady?: boolean } = {}
 ) {
   const fake = fakeRedis();
+  if (rankReady) fake.strings.set(keys.rankReady, 'ready');
   const db = new Map(states.map((s) => [s.userId, s]));
   const deps: RosterSyncDeps = {
     redis: fake.redis as unknown as RosterSyncDeps['redis'],
@@ -190,7 +225,7 @@ function setup(
     season: 'preview' | 'live' = now < EVENT.startDate ? 'preview' : 'live'
   ) =>
     readRosterPage(
-      { event: EVENT.name, team, sort, season, offset: 0, limit: 48 },
+      { event: EVENT.name, team, sort, season, startDate: EVENT.startDate, offset: 0, limit: 48 },
       fake.redis as never
     );
   return { ...fake, deps, db, read };
@@ -242,7 +277,7 @@ describe('team roster', () => {
 
   // Redis orders equal scores by member string, which is not a standing: REV puts "9" above "10"
   // and "100" above "10". Each page comes back in the full key the client ranks by.
-  it('breaks a tie on the sort score by the rest of the full key, then the lower id', async () => {
+  it('breaks a tie on the sort score by the rest of the full key, then the member string', async () => {
     const same = new Date(PREVIEW_NOW.getTime() - 60_000);
     const oneHat = [{ id: 1, worn: true, price: null }];
     const twoHats = [...oneHat, { id: 2, worn: false, price: 500 }];
@@ -271,7 +306,7 @@ describe('team roster', () => {
       await ids(
         [
           member(9, { hats: oneHat, joinedAt: same }),
-          member(10, { hats: oneHat, joinedAt: new Date(same.getTime() + 1) }),
+          member(10, { hats: oneHat, joinedAt: new Date(same.getTime() + 60_000) }),
         ],
         {},
         'hats'
@@ -281,7 +316,7 @@ describe('team roster', () => {
     expect(
       await ids(
         [
-          member(9, { hats: oneHat, joinedAt: new Date(same.getTime() + 1) }),
+          member(9, { hats: oneHat, joinedAt: new Date(same.getTime() + 60_000) }),
           member(10, { hats: oneHat, joinedAt: same }),
         ],
         { 9: 50, 10: 100 },
@@ -300,7 +335,7 @@ describe('team roster', () => {
     expect(
       await ids(
         [
-          member(9, { hats: oneHat, joinedAt: new Date(same.getTime() + 1) }),
+          member(9, { hats: oneHat, joinedAt: new Date(same.getTime() + 60_000) }),
           member(10, { hats: twoHats, joinedAt: same }),
         ],
         { 9: 50, 10: 50 },
@@ -318,7 +353,18 @@ describe('team roster', () => {
         'newest'
       )
     ).toEqual([10, 9]);
-    // Everything equal: the lower id first, not the member string.
+    // Join time counts by the minute: 30 seconds apart is a tie, left to the member string.
+    expect(
+      await ids(
+        [
+          member(9, { hats: oneHat, joinedAt: same }),
+          member(10, { hats: oneHat, joinedAt: new Date(same.getTime() + 30_000) }),
+        ],
+        {},
+        'hats'
+      )
+    ).toEqual([9, 10]);
+    // Everything equal: the member string, highest first, as a reversed Redis range has it.
     expect(
       await ids(
         [
@@ -328,7 +374,7 @@ describe('team roster', () => {
         {},
         'hats'
       )
-    ).toEqual([10, 100]);
+    ).toEqual([100, 10]);
   });
 
   // The decision this whole store rests on: a member is hidden unless they opted in. Whatever a
@@ -450,7 +496,7 @@ describe('team roster', () => {
     let offset: number | undefined = 0;
     while (offset !== undefined) {
       const page = await readRosterPage(
-        { event: EVENT.name, team: 'Blue', sort: 'hats', season: 'preview', offset, limit: 3 },
+        { ...PAGE, sort: 'hats', season: 'preview', offset, limit: 3 },
         s.redis as never
       );
       seen.push(...page.rows.map((r) => r.userId));
@@ -635,7 +681,7 @@ describe('team roster', () => {
     const drifted = async () =>
       (
         await readRosterPage(
-          { event: EVENT.name, team: 'Blue', sort: 'points', season: 'live', offset: 0, limit: 48 },
+          { ...PAGE, sort: 'points', season: 'live', offset: 0, limit: 48 },
           s.redis as never
         )
       ).total;
@@ -1059,5 +1105,184 @@ describe('team roster', () => {
     });
     expect(n).toBe(3);
     expect(thrown).toBeGreaterThan(0);
+  });
+});
+
+// The rank sets score each sort's whole key (roster-score.ts), so Redis itself pages a tie the way
+// the page ranks it, however many pages the tie spans.
+describe('team roster rank scores', () => {
+  const overflowLogs = () =>
+    vi.mocked(logToAxiom).mock.calls.filter(([e]) => {
+      const { name, fn } = e as { name?: string; fn?: string };
+      return name === 'event-roster' && fn === 'scoreOverflow';
+    }).length;
+  const oneHat = [{ id: 1, worn: true, price: null }];
+  const twoHats = [...oneHat, { id: 2, worn: false, price: 500 }];
+  const minute = (n: number) => new Date(PREVIEW_NOW.getTime() - n * 60_000);
+  const gateOf = (s: ReturnType<typeof setup>) => async () =>
+    Object.fromEntries(s.hashes.get(keys.members) ?? []);
+  const pageAll = async (s: ReturnType<typeof setup>, sort: 'hats' | 'points' | 'newest') => {
+    const seen: number[] = [];
+    let offset: number | undefined = 0;
+    while (offset !== undefined) {
+      const page = await readRosterPage(
+        { ...PAGE, sort, season: 'preview', offset, limit: 24 },
+        s.redis as never
+      );
+      seen.push(...page.rows.map((r) => r.userId));
+      offset = page.nextOffset;
+    }
+    return seen;
+  };
+
+  // The launch shape: nearly everyone on the join hat, so points and then join time decide.
+  it('pages a tie that spans pages in the full key, the same as one sort of everyone', async () => {
+    const states = Array.from({ length: 40 }, (_, i) =>
+      member(i + 1, { hats: oneHat, joinedAt: minute(i % 7) })
+    );
+    const points = Object.fromEntries(states.map((x) => [x.userId, (x.userId * 37) % 11]));
+    const s = setup(states, PREVIEW_NOW, points);
+    await syncRosterMembersWith(
+      EVENT,
+      states.map((x) => x.userId),
+      s.deps
+    );
+    const rows = states.map((x) => ({
+      userId: x.userId,
+      hatCount: 1,
+      points: points[x.userId],
+      joinedAt: x.joinedAt as Date,
+    }));
+    for (const sort of ['hats', 'points', 'newest'] as const) {
+      const expected = [...rows].sort(rosterComparator(sort, (r) => r.userId)).map((r) => r.userId);
+      expect(await pageAll(s, sort)).toEqual(expected);
+    }
+  });
+
+  it('reads the single-score sets until a full reconcile marks the rank sets ready', async () => {
+    const s = setup([member(1), member(2)], PREVIEW_NOW, { 1: 5, 2: 9 }, { rankReady: false });
+    await syncRosterMembersWith(EVENT, [1, 2], s.deps);
+    // Not ready: a planted rank score is not read.
+    s.zsets.get(keys.rank('Blue', 'points', 'preview'))?.set('1', 2 ** 52);
+    expect((await s.read('points')).rows.map((r) => [r.userId, r.points])).toEqual([
+      [2, 9],
+      [1, 5],
+    ]);
+    // One complete pass is not enough: pods on the previous release may still be serving.
+    await reconcileEventRosters({ ...s.deps, gate: gateOf(s) }, [EVENT]);
+    expect(s.strings.get(keys.rankReady)).toBe(`pending:${PREVIEW_NOW.getTime()}`);
+    // Still pending: a planted rank score is still not read.
+    s.zsets.get(keys.rank('Blue', 'points', 'preview'))?.set('1', 2 ** 52);
+    expect((await s.read('points')).rows.map((r) => [r.userId, r.points])).toEqual([
+      [2, 9],
+      [1, 5],
+    ]);
+    const later = { ...s.deps, now: () => new Date(PREVIEW_NOW.getTime() + RANK_SETTLE_MS) };
+    await reconcileEventRosters({ ...later, gate: gateOf(s) }, [EVENT]);
+    expect(s.strings.get(keys.rankReady)).toBe('ready');
+    // The second pass rewrote the planted score, and pages now come from the rank sets.
+    s.zsets.get(keys.points('Blue', 'preview'))?.set('1', 1_000);
+    expect((await s.read('points')).rows.map((r) => [r.userId, r.points])).toEqual([
+      [2, 9],
+      [1, 5],
+    ]);
+  });
+
+  it('leaves the rank sets unmarked when a deadline stops the reconcile', async () => {
+    const s = setup([member(1)], PREVIEW_NOW, {}, { rankReady: false });
+    await syncRosterMembersWith(EVENT, [1], s.deps);
+    const result = await reconcileEventRosters({ ...s.deps, gate: gateOf(s) }, [EVENT], {
+      deadline: 0,
+    });
+    expect(result.complete).toBe(false);
+    expect(s.strings.has(keys.rankReady)).toBe(false);
+    // Nor does a stopped pass advance a pending marker.
+    s.strings.set(keys.rankReady, 'pending:0');
+    await reconcileEventRosters({ ...s.deps, gate: gateOf(s) }, [EVENT], { deadline: 0 });
+    expect(s.strings.get(keys.rankReady)).toBe('pending:0');
+  });
+
+  it('counts a rebuild as a pass, but a second pass soon after does not make the sets ready', async () => {
+    const s = setup([member(1)], PREVIEW_NOW, {}, { rankReady: false });
+    const at = (ms: number) => ({
+      ...s.deps,
+      now: () => new Date(PREVIEW_NOW.getTime() + ms),
+      optedInUserIds: async () => [1],
+    });
+    await rebuildEventRoster(EVENT, at(0));
+    const pending = `pending:${PREVIEW_NOW.getTime()}`;
+    expect(s.strings.get(keys.rankReady)).toBe(pending);
+    await rebuildEventRoster(EVENT, at(RANK_SETTLE_MS - 1));
+    await reconcileEventRosters({ ...at(RANK_SETTLE_MS - 1), gate: gateOf(s) }, [EVENT]);
+    expect(s.strings.get(keys.rankReady)).toBe(pending);
+    await reconcileEventRosters({ ...at(RANK_SETTLE_MS), gate: gateOf(s) }, [EVENT]);
+    expect(s.strings.get(keys.rankReady)).toBe('ready');
+  });
+
+  it('adds a grant to every rank set, so the order follows live points', async () => {
+    const s = setup([member(1, { hats: oneHat }), member(2, { hats: oneHat })], PREVIEW_NOW, {
+      1: 10,
+      2: 20,
+    });
+    await syncRosterMembersWith(EVENT, [1, 2], s.deps);
+    expect((await s.read('hats')).rows.map((r) => r.userId)).toEqual([2, 1]);
+    await addRosterPoints(s.redis as never, EVENT.name, 'Blue', 'preview', 1, 15);
+    for (const sort of ['hats', 'points', 'newest'] as const) {
+      const one = (await s.read(sort)).rows.find((r) => r.userId === 1);
+      expect([one?.hatCount, one?.points]).toEqual([1, 25]);
+    }
+    expect((await s.read('hats')).rows.map((r) => r.userId)).toEqual([1, 2]);
+    expect((await s.read('points')).rows.map((r) => r.userId)).toEqual([1, 2]);
+    // Unlisted: XX creates nothing in any rank set.
+    await addRosterPoints(s.redis as never, EVENT.name, 'Blue', 'preview', 3, 15);
+    expect(s.allKeysHolding('3')).toEqual([]);
+  });
+
+  it("keeps a later season's points through a preview sync, and refreshes its hats", async () => {
+    const s = setup([member(1, { hats: oneHat })], PREVIEW_NOW, { 1: 70 });
+    await syncRosterMembersWith(EVENT, [1], s.deps);
+    await addRosterPoints(s.redis as never, EVENT.name, 'Blue', 'live', 1, 3);
+    s.db.set(1, member(1, { hats: twoHats }));
+    await syncRosterMembersWith(EVENT, [1], s.deps);
+    const live = (await s.read('hats', 'Blue', 'live')).rows[0];
+    expect([live.hatCount, live.points]).toEqual([2, 3]);
+    expect((await s.read('hats', 'Blue', 'preview')).rows[0].points).toBe(70);
+  });
+
+  // The pre-launch reset clears test joins, test hats and the ledger in Postgres. The reconcile
+  // after it must leave no test-run hats or points in either season's rank scores.
+  it('rebuilds clean rank scores at the reconcile after a pre-launch reset', async () => {
+    const points: Record<number, number> = { 1: 400, 2: 900 };
+    const s = setup(
+      [member(1, { hats: twoHats }), member(2, { hats: twoHats })],
+      PREVIEW_NOW,
+      points
+    );
+    await syncRosterMembersWith(EVENT, [1, 2], s.deps);
+    await addRosterPoints(s.redis as never, EVENT.name, 'Blue', 'preview', 1, 50);
+    // The reset: 2's join is gone, 1 keeps only the join hat, and the ledger is empty.
+    s.db.set(1, member(1, { hats: oneHat }));
+    s.db.set(2, member(2, { team: null, joinedAt: null, hats: [] }));
+    points[1] = 0;
+    points[2] = 0;
+    await reconcileEventRosters({ ...s.deps, gate: gateOf(s) }, [EVENT]);
+    for (const season of ['preview', 'live'] as const) {
+      const rows = (await s.read('hats', 'Blue', season)).rows;
+      expect(rows.map((r) => [r.userId, r.hatCount, r.points])).toEqual([[1, 1, 0]]);
+      for (const sort of ['hats', 'points', 'newest'] as const)
+        expect(s.zsets.get(keys.rank('Blue', sort, season))?.has('2') ?? false).toBe(false);
+    }
+  });
+
+  it('clamps a total past the points field, and logs the overflow where Axiom finds it', async () => {
+    const before = overflowLogs();
+    const s = setup([member(1, { hats: oneHat })], LIVE_NOW, { 1: MAX_POINTS + 5 });
+    await syncRosterMembersWith(EVENT, [1], s.deps);
+    expect((await s.read('points')).rows[0].points).toBe(MAX_POINTS);
+    expect(overflowLogs()).toBe(before + 1);
+    // An award past the field carries over: the award and the next read both say so.
+    await addRosterPoints(s.redis as never, EVENT.name, 'Blue', 'live', 1, 10);
+    await s.read('points');
+    expect(overflowLogs()).toBe(before + 3);
   });
 });

@@ -12,10 +12,11 @@ import {
 } from '~/components/Events/ScoredEvent/roster/roster-cards.utils';
 
 const at = (ms: number) => new Date(Date.UTC(2026, 9, 10) + ms);
-const member = (hatCount: number, points: number, joinedMs = 0) => ({
+// Join times in whole minutes: the rank key counts join time by the minute.
+const member = (hatCount: number, points: number, joinedMin = 0) => ({
   hatCount,
   points,
-  joinedAt: at(joinedMs),
+  joinedAt: at(joinedMin * 60_000),
 });
 
 describe('rosterRanks', () => {
@@ -44,9 +45,12 @@ describe('rosterRanks', () => {
     expect(rosterRanks([member(9, 5, 1000), member(1, 5, 1000)], 'newest')).toEqual([1, 1]);
   });
 
-  it('ties newest only on the same join instant', () => {
+  it('ties newest only in the same join minute', () => {
     const items = [member(0, 0, 2000), member(0, 0, 2000), member(0, 0, 1000)];
     expect(rosterRanks(items, 'newest')).toEqual([1, 1, 3]);
+    // Seconds apart in one minute: a tie.
+    const second = { ...member(0, 0, 2000), joinedAt: at(2000 * 60_000 + 30_000) };
+    expect(rosterRanks([second, member(0, 0, 2000)], 'newest')).toEqual([1, 1]);
   });
 
   it('carries a tie across what were two pages', () => {
@@ -144,34 +148,38 @@ describe('orderRoster', () => {
 
   const order = (items: ReturnType<typeof m>[], sort: 'hats' | 'points' | 'newest') =>
     orderRoster(items, sort).map((x) => x.user.id);
-  const at2 = (id: number, hatCount: number, points: number, joinedMs: number) => ({
+  const at2 = (id: number, hatCount: number, points: number, joinedMin: number) => ({
     user: { id },
-    ...member(hatCount, points, joinedMs),
+    ...member(hatCount, points, joinedMin),
   });
 
-  it('breaks a hats tie by points, then the newest join, then the lower id', () => {
+  // The member id last, by its string highest first, as a reversed Redis range orders equal scores.
+  it('breaks a hats tie by points, then the newest join, then the member string', () => {
     expect(order([at2(1, 1, 953, 0), at2(2, 1, 4006, 0)], 'hats')).toEqual([2, 1]);
     expect(order([at2(1, 1, 5, 1000), at2(2, 1, 5, 2000)], 'hats')).toEqual([2, 1]);
-    expect(order([at2(9, 1, 5, 0), at2(2, 1, 5, 0), at2(5, 1, 5, 0)], 'hats')).toEqual([2, 5, 9]);
+    expect(order([at2(2, 1, 5, 0), at2(9, 1, 5, 0), at2(5, 1, 5, 0)], 'hats')).toEqual([9, 5, 2]);
+    expect(order([at2(10, 1, 5, 0), at2(9, 1, 5, 0), at2(100, 1, 5, 0)], 'hats')).toEqual([
+      9, 100, 10,
+    ]);
   });
 
-  it('breaks a points tie by hats, then the newest join, then the lower id', () => {
+  it('breaks a points tie by hats, then the newest join, then the member string', () => {
     expect(order([at2(1, 1, 50, 0), at2(2, 3, 50, 0)], 'points')).toEqual([2, 1]);
     expect(order([at2(1, 2, 50, 1000), at2(2, 2, 50, 2000)], 'points')).toEqual([2, 1]);
-    expect(order([at2(9, 2, 50, 0), at2(2, 2, 50, 0)], 'points')).toEqual([2, 9]);
+    expect(order([at2(2, 2, 50, 0), at2(9, 2, 50, 0)], 'points')).toEqual([9, 2]);
   });
 
   // Later fields disagree with each other: only the key's own priority decides.
   it('puts points before join time for hats, and hats before join time for points', () => {
     expect(order([at2(1, 1, 50, 2000), at2(2, 1, 100, 1000)], 'hats')).toEqual([2, 1]);
     expect(order([at2(1, 1, 50, 2000), at2(2, 3, 50, 1000)], 'points')).toEqual([2, 1]);
-    // Newest: points before id.
+    // Newest: points before the member string.
     expect(order([at2(1, 0, 1, 1000), at2(2, 0, 2, 1000)], 'newest')).toEqual([2, 1]);
   });
 
-  it('breaks a newest tie by points, then the lower id, ignoring hats', () => {
+  it('breaks a newest tie by points, then the member string, ignoring hats', () => {
     expect(order([at2(1, 9, 1, 1000), at2(2, 0, 2, 1000)], 'newest')).toEqual([2, 1]);
-    expect(order([at2(9, 9, 1, 1000), at2(2, 0, 1, 1000)], 'newest')).toEqual([2, 9]);
+    expect(order([at2(2, 9, 1, 1000), at2(9, 0, 1, 1000)], 'newest')).toEqual([9, 2]);
   });
 
   it('orders the same members the same way whatever order they arrive in', () => {

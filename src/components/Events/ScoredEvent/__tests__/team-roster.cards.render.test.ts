@@ -407,7 +407,9 @@ describe('TeamRoster cards', () => {
     const podiumHats = (id: number) =>
       Array.from({ length: 3 }, (_, i) => hat(id * 100 + i, { worn: i === 0 }));
     const el = render([
-      ...[1, 2, 3].map((id) => member(id, { hats: podiumHats(id), hatCount: 20 })),
+      ...[1, 2, 3].map((id) =>
+        member(id, { hats: podiumHats(id), hatCount: 20, points: 100 - id })
+      ),
       member(5, { hats: Array.from({ length: 9 }, (_, i) => hat(10 + i)) }),
       member(4, { hats: [hat(4)] }),
       member(6),

@@ -842,6 +842,7 @@ export async function getTeamRoster({
       team,
       sort,
       season,
+      startDate: scored.startDate,
       offset: cursor ?? 0,
       limit,
     });

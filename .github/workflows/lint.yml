@@ -456,6 +456,18 @@ jobs:
     # Per-shard, not the whole suite: 555.5/4 + overhead is ~3.4m, so 15m is
     # ~4x headroom. It is NOT 30/4 — the fixed 66.5s does not shard.
     timeout-minutes: 15
+    # A real Redis for the tests that must see what Redis itself does: Lua scripts, sorted-set
+    # order of equal scores, increment exactness (roster.real-redis.test.ts). Such a test skips
+    # itself without its URL, so a shard that does not hold it pays only the container start.
+    services:
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 2s --health-timeout 2s --health-retries 15
+    env:
+      ROSTER_REDIS_URL: redis://localhost:6379/15
     steps:
       - uses: actions/checkout@v4
         with:
