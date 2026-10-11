@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type * as AppAnalyticsModule from '../app-analytics.service';
 
 /**
  * The owner read of `appBlockEvents`. The SQL is pinned WHOLE because each clause is a privacy or
@@ -8,10 +9,16 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
  */
 
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: undefined }));
+const { mockGetOwnedAppBlocks } = vi.hoisted(() => ({ mockGetOwnedAppBlocks: vi.fn() }));
+vi.mock('../app-analytics.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof AppAnalyticsModule>()),
+  getOwnedAppBlocks: (...a: unknown[]) => mockGetOwnedAppBlocks(...a),
+}));
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import {
   CUSTOM_EVENTS_QUERY_TIMEOUT_SECONDS,
   getAppCustomEvents,
+  getMyAppCustomEvents,
 } from '../app-custom-events.service';
 
 const APP = 'apb_custom';
@@ -48,7 +55,7 @@ const topSql = (where: string, uniq: string) =>
 const seriesSql = (where: string, bucket: string) =>
   `SELECT ${bucket} AS bucket, count() AS value FROM appBlockEvents ${where} AND eventName = {event:String} GROUP BY bucket ORDER BY bucket LIMIT 400`;
 const scalarSql = (where: string) =>
-  `SELECT countIf(mapContains(numProps, {n0:String})) AS n0_count, sumIf(numProps[{n0:String}], mapContains(numProps, {n0:String})) AS n0_sum, avgIf(numProps[{n0:String}], mapContains(numProps, {n0:String})) AS n0_avg, quantilesExactIf(0.5, 0.95)(numProps[{n0:String}], mapContains(numProps, {n0:String})) AS n0_q, countIf(mapContains(boolProps, {b0:String}) AND boolProps[{b0:String}] = 1) AS b0_true, countIf(mapContains(boolProps, {b0:String}) AND boolProps[{b0:String}] = 0) AS b0_false FROM appBlockEvents ${where} AND eventName = {event:String}`;
+  `SELECT countIf(mapContains(numProps, {n0:String})) AS n0_count, sumIf(numProps[{n0:String}], mapContains(numProps, {n0:String})) AS n0_sum, avgIf(numProps[{n0:String}], mapContains(numProps, {n0:String})) AS n0_avg, quantilesTDigestIf(0.5, 0.95)(numProps[{n0:String}], mapContains(numProps, {n0:String})) AS n0_q, countIf(mapContains(boolProps, {b0:String}) AND boolProps[{b0:String}] = 1) AS b0_true, countIf(mapContains(boolProps, {b0:String}) AND boolProps[{b0:String}] = 0) AS b0_false FROM appBlockEvents ${where} AND eventName = {event:String}`;
 const enumSql = (where: string) =>
   `SELECT property, value, count() AS events FROM appBlockEvents ARRAY JOIN mapKeys(enumProps) AS property, mapValues(enumProps) AS value ${where} AND eventName = {event:String} AND property IN {enumNames:Array(String)} GROUP BY property, value LIMIT 1000`;
 
@@ -184,7 +191,7 @@ describe('getAppCustomEvents: SQL', () => {
     ]);
   });
 
-  it('a week-bucketed range (>60 days) switches to uniqCombined and Monday weeks', async () => {
+  it('a week-bucketed range (>60 days) keeps exact uniques and buckets by Monday weeks', async () => {
     const ch = fakeCh();
     await getAppCustomEvents({
       appBlockId: APP,
@@ -194,7 +201,7 @@ describe('getAppCustomEvents: SQL', () => {
       ch: asCh(ch),
     });
     expect(sqls(ch)).toEqual([
-      topSql(OWNERLESS, 'uniqCombinedIf'),
+      topSql(OWNERLESS, 'uniqExactIf'),
       seriesSql(OWNERLESS, "toStartOfWeek(time, 1, 'UTC')"),
     ]);
   });
@@ -222,10 +229,7 @@ describe('getAppCustomEvents: SQL', () => {
       expect(call.query).not.toContain("'generate_clicked'");
       expect(call.format).toBe('JSONEachRow');
       expect(call.abort_signal).toBeInstanceOf(AbortSignal);
-      expect(call.clickhouse_settings).toEqual({
-        max_execution_time: 10,
-        max_memory_usage: '536870912',
-      });
+      expect(call.clickhouse_settings).toEqual({ max_execution_time: 10 });
     }
   });
 
@@ -391,16 +395,10 @@ describe('getAppCustomEvents: never throws', () => {
     ).resolves.toEqual({ ...UNAVAILABLE, declared: expect.any(Array) });
   });
 
-  it('a failing selected-event read drops only the detail; the table survives', async () => {
-    const result = await getAppCustomEvents({ ...args, ch: asCh(fakeCh({ failDetail: true })) });
-    expect(result.unavailable).toBeUndefined();
-    expect(result.selected).toBeUndefined();
-    expect(result.undeclaredDrops).toBe(3);
-    expect(result.topEvents.map((e) => [e.eventName, e.count])).toEqual([
-      ['generate_clicked', 57],
-      ['share_clicked', 8],
-      ['never_sent', 0],
-    ]);
+  it('the queries of one call succeed or fail together: a failing detail read is unavailable', async () => {
+    await expect(
+      getAppCustomEvents({ ...args, ch: asCh(fakeCh({ failDetail: true })) })
+    ).resolves.toEqual({ ...UNAVAILABLE, declared: expect.any(Array) });
   });
 
   it('a failed top read aborts the detail queries still in flight, and logs once', async () => {
@@ -417,12 +415,18 @@ describe('getAppCustomEvents: never throws', () => {
     ).toEqual(['appBlockEvents read failed']);
   });
 
-  it('a failed detail read is logged as such', async () => {
+  it('a detail read that hangs to the timeout, beside a top read that succeeded, logs exactly once', async () => {
+    vi.useFakeTimers();
     loggingMock.logToAxiom.mockClear();
-    await getAppCustomEvents({ ...args, ch: asCh(fakeCh({ failDetail: true })) });
+    const ch = fakeCh({ hangDetailUntilAborted: true });
+    const pending = getAppCustomEvents({ ...args, ch: asCh(ch) });
+    await vi.advanceTimersByTimeAsync(CUSTOM_EVENTS_QUERY_TIMEOUT_SECONDS * 1000);
+    await expect(pending).resolves.toEqual({ ...UNAVAILABLE, declared: expect.any(Array) });
+    await vi.advanceTimersByTimeAsync(1);
+    expect(ch.calls).toHaveLength(4);
     expect(
       loggingMock.logToAxiom.mock.calls.map((c) => (c[0] as { message: string }).message)
-    ).toEqual(['appBlockEvents selected-event read failed']);
+    ).toEqual(['appBlockEvents read failed']);
   });
 
   it('a hung query is aborted at the timeout and reads as unavailable', async () => {
@@ -439,5 +443,62 @@ describe('getAppCustomEvents: never throws', () => {
     expect(settled).toBe(false);
     await vi.advanceTimersByTimeAsync(1);
     await expect(pending).resolves.toEqual({ ...UNAVAILABLE, declared: expect.any(Array) });
+  });
+});
+
+describe('getMyAppCustomEvents: ownership and range', () => {
+  const NOW = new Date('2026-07-31T00:00:00.000Z');
+  const DEFAULT_RANGE = {
+    from: new Date('2026-07-01T00:00:00.000Z'),
+    to: NOW,
+    granularity: 'day',
+  };
+
+  it('an app the caller cannot see: denied, and no ClickHouse query runs', async () => {
+    mockGetOwnedAppBlocks.mockReset().mockResolvedValue([]);
+    const ch = fakeCh();
+    const result = await getMyAppCustomEvents({
+      userId: 42,
+      appBlockId: 'apb_foreign',
+      now: NOW,
+      ch: asCh(ch),
+    });
+    expect(mockGetOwnedAppBlocks).toHaveBeenCalledWith({
+      ownerUserId: 42,
+      appBlockId: 'apb_foreign',
+    });
+    expect(ch.calls).toHaveLength(0);
+    expect(result).toEqual({
+      declared: [],
+      includeOwner: false,
+      topEvents: [],
+      undeclaredDrops: 0,
+      unavailable: true,
+      range: DEFAULT_RANGE,
+      denied: 'notOwned',
+    });
+  });
+
+  it("an owned app: reads THAT app with its manifest over the panel's resolved range", async () => {
+    mockGetOwnedAppBlocks.mockReset().mockResolvedValue([{ id: APP, manifest: MANIFEST }]);
+    const ch = fakeCh();
+    const result = await getMyAppCustomEvents({
+      userId: 42,
+      appBlockId: APP,
+      now: NOW,
+      includeOwner: true,
+      event: 'share_clicked',
+      ch: asCh(ch),
+    });
+    expect(result.range).toEqual(DEFAULT_RANGE);
+    expect(result.includeOwner).toBe(true);
+    expect(result.denied).toBeUndefined();
+    expect(result.selected?.eventName).toBe('share_clicked');
+    expect(ch.calls[0].query_params).toMatchObject({
+      appBlockId: APP,
+      from: '2026-07-01 00:00:00.000',
+      to: '2026-07-31 00:00:00.000',
+    });
+    expect(norm(ch.calls[0].query)).toBe(topSql(WHERE, 'uniqExactIf'));
   });
 });

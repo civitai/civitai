@@ -44,14 +44,12 @@ vi.mock('../app-views.service', async (importOriginal) => {
   return { ...actual, getAppViews: (...args: unknown[]) => mockGetAppViews(...args) };
 });
 
+// Custom events have their own procedure; this payload must never read them.
 const { mockGetAppCustomEvents } = vi.hoisted(() => ({ mockGetAppCustomEvents: vi.fn() }));
-vi.mock('../app-custom-events.service', async (importOriginal) => {
-  const actual = await importOriginal<typeof AppCustomEventsModule>();
-  return {
-    ...actual,
-    getAppCustomEvents: (...args: unknown[]) => mockGetAppCustomEvents(...args),
-  };
-});
+vi.mock('../app-custom-events.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof AppCustomEventsModule>()),
+  getAppCustomEvents: (...args: unknown[]) => mockGetAppCustomEvents(...args),
+}));
 
 // `Prisma.sql` / `Prisma.join` are used by the service to build the raw
 // queries. Provide a minimal shim that records the static SQL strings so
@@ -696,74 +694,10 @@ describe('getMyAppAnalytics (installs applicability wiring)', () => {
   });
 });
 
-describe('getMyAppAnalytics (custom events wiring)', () => {
-  const CUSTOM_MANIFEST = { analytics: { events: { generate_clicked: {} } } };
-  const SECTION = {
-    declared: [{ name: 'generate_clicked', properties: [] }],
-    includeOwner: true,
-    topEvents: [
-      { eventName: 'generate_clicked', count: 31, signedInViewers: 6, anonymousEvents: 17 },
-    ],
-    undeclaredDrops: 2,
-  };
-
-  beforeEach(() => {
-    mockDbRead.appBlock.findMany.mockResolvedValue([
-      { id: OWNED_ID, manifest: CUSTOM_MANIFEST },
-      { id: OWNED_ID_2, manifest: MODEL_MANIFEST },
-    ]);
-    mockGetAppCustomEvents.mockResolvedValue(SECTION);
-  });
-
-  it('one owned app with withCustomEvents: reads THAT app with its manifest, range and options', async () => {
-    const result = await getMyAppAnalytics({
-      userId: OWNER_ID,
-      appBlockId: OWNED_ID,
-      withCustomEvents: true,
-      includeOwner: true,
-      event: 'generate_clicked',
-      now: new Date('2026-07-31T00:00:00.000Z'),
-    });
-
-    expect(mockGetAppCustomEvents).toHaveBeenCalledTimes(1);
-    expect(mockGetAppCustomEvents).toHaveBeenCalledWith({
-      appBlockId: OWNED_ID,
-      manifest: CUSTOM_MANIFEST,
-      range: {
-        from: new Date('2026-07-01T00:00:00.000Z'),
-        to: new Date('2026-07-31T00:00:00.000Z'),
-        granularity: 'day',
-      },
-      includeOwner: true,
-      event: 'generate_clicked',
-    });
-    expect(result.customEvents).toBe(SECTION);
-  });
-
-  it('defaults to excluding the owner', async () => {
-    await getMyAppAnalytics({ userId: OWNER_ID, appBlockId: OWNED_ID, withCustomEvents: true });
-    expect(mockGetAppCustomEvents.mock.calls[0][0].includeOwner).toBe(false);
-  });
-
-  it('without withCustomEvents (the per-row inline stat): no read and no key', async () => {
+describe('getMyAppAnalytics does not read custom events', () => {
+  it('for a single owned app: no appBlockEvents read and no customEvents key', async () => {
     const result = await getMyAppAnalytics({ userId: OWNER_ID, appBlockId: OWNED_ID });
-    expect(mockGetAppCustomEvents).not.toHaveBeenCalled();
-    expect('customEvents' in result).toBe(false);
-  });
-
-  it('"All my apps": no read and no key, even when asked', async () => {
-    const result = await getMyAppAnalytics({ userId: OWNER_ID, withCustomEvents: true });
-    expect(mockGetAppCustomEvents).not.toHaveBeenCalled();
-    expect('customEvents' in result).toBe(false);
-  });
-
-  it('a foreign app: no read', async () => {
-    const result = await getMyAppAnalytics({
-      userId: OWNER_ID,
-      appBlockId: FOREIGN_ID,
-      withCustomEvents: true,
-    });
-    expect(result.unavailable).toBe('notOwned');
+    expect(result.views).toBeDefined();
     expect(mockGetAppCustomEvents).not.toHaveBeenCalled();
     expect('customEvents' in result).toBe(false);
   });

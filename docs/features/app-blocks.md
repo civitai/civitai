@@ -470,8 +470,9 @@ hand before the route deploys).
   label; the per-app breakdown is the table).
 
 **The owner panel.** The app analytics panel (`AppAnalyticsPanel.tsx`) has a
-"Custom events" card, read by `getMyAppAnalytics` with `withCustomEvents` for one
-app (`src/server/services/blocks/app-custom-events.service.ts`). Owners see
+"Custom events" card, read by its own procedure, `blocks.getMyAppCustomEvents`, for
+one app (`src/server/services/blocks/app-custom-events.service.ts`). It has the same
+scope, flag gate, ownership check and date range as `getMyAppAnalytics`. Owners see
 aggregates only, never rows:
 
 - every event the app's manifest declares, including ones never sent, with its
@@ -486,10 +487,9 @@ aggregates only, never rows:
 
 The owner's own activity (rows with `isOwner`, including dev-tunnel testing) is
 excluded by default, from the drop count too; an "Include owner activity" toggle
-adds it. Counts are exact (there is no small-count suppression) and are lower
-bounds, since client-side drops are never recorded. A ClickHouse failure shows
-"couldn't load", never a zero. Week-bucketed ranges (over 60 days) count viewers
-approximately.
+adds it. Collaborators' activity is always counted. Counts are exact (there is no
+small-count suppression) and are lower bounds, since client-side drops are never
+recorded. A ClickHouse failure shows "couldn't load", never a zero.
 
 ### Buzz and per-account spend
 

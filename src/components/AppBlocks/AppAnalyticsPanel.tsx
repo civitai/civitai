@@ -2,6 +2,7 @@ import {
   Alert,
   Anchor,
   Badge,
+  Button,
   Card,
   Group,
   Loader,
@@ -37,10 +38,7 @@ import {
   scopeBucketLabel,
 } from '~/components/AppBlocks/analytics-bucket-labels';
 import { trpc } from '~/utils/trpc';
-import type {
-  AppCustomEvents,
-  CustomEventPropertyBreakdown,
-} from '~/server/services/blocks/app-custom-events.service';
+import type { CustomEventPropertyBreakdown } from '~/server/services/blocks/app-custom-events.service';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, ChartTooltip, Filler);
 
@@ -102,8 +100,6 @@ type AnalyticsData = {
     anonCount: number;
     unavailable?: boolean;
   };
-  /** Optional for the same rolling-deploy reason as `views`: absent renders like unavailable. */
-  customEvents?: AppCustomEvents;
 };
 
 const MANIFEST_DOCS_URL = 'https://developer.civitai.com/apps/reference/manifest';
@@ -279,30 +275,32 @@ function PropertyBreakdown({ property }: { property: CustomEventPropertyBreakdow
 }
 
 /**
- * 🔴 An unavailable OR absent `customEvents` (ClickHouse down, or an old pod that omits the key)
- * must never render a count: "0 events" there is a fabricated zero.
+ * Reads `blocks.getMyAppCustomEvents`, its own procedure, so the toggle and event selection
+ * re-run only these ClickHouse reads. 🔴 An unavailable section, or a failed request (including
+ * an old pod without the procedure), must never render a count: "0 events" there is a
+ * fabricated zero.
  */
-function CustomEventsCard({
-  customEvents,
-  appSelected,
-  granularity,
-  includeOwner,
-  onIncludeOwnerChange,
-  selectedEvent,
-  onSelectEvent,
-  refreshing,
-}: {
-  customEvents: AppCustomEvents | undefined;
-  appSelected: boolean;
-  granularity: 'day' | 'week';
-  includeOwner: boolean;
-  onIncludeOwnerChange: (include: boolean) => void;
-  selectedEvent: string | null;
-  onSelectEvent: (eventName: string | null) => void;
-  refreshing: boolean;
-}) {
+function CustomEventsCard({ appBlockId }: { appBlockId: string | null }) {
+  const [includeOwner, setIncludeOwner] = useState(false);
+  const [selectedEvent, setSelectedEvent] = useState<string | null>(null);
+  const {
+    data: customEvents,
+    isLoading,
+    isPlaceholderData,
+    error,
+  } = trpc.blocks.getMyAppCustomEvents.useQuery(
+    {
+      appBlockId: appBlockId ?? '',
+      includeOwner,
+      ...(selectedEvent ? { event: selectedEvent } : {}),
+    },
+    { enabled: appBlockId != null, placeholderData: keepPreviousData }
+  );
+  const appSelected = appBlockId != null;
+  const refreshing = !!isPlaceholderData;
+  const granularity = customEvents?.range.granularity ?? 'day';
   const detailRef = useRef<HTMLDivElement>(null);
-  const measured = customEvents && !customEvents.unavailable ? customEvents : undefined;
+  const measured = !error && customEvents && !customEvents.unavailable ? customEvents : undefined;
   // During a refetch the previous payload is shown, and its selection may be another event's.
   const selected =
     measured?.selected && measured.selected.eventName === selectedEvent
@@ -311,7 +309,7 @@ function CustomEventsCard({
   const nothingRecorded = measured ? measured.topEvents.every((e) => e.count === 0) : false;
 
   const selectEvent = (eventName: string | null) => {
-    onSelectEvent(eventName);
+    setSelectedEvent(eventName);
     // In one column (the modal) the detail sits below the whole table, often off-screen.
     const detail = detailRef.current;
     if (eventName && detail && detail.getBoundingClientRect().top > window.innerHeight - 80) {
@@ -338,9 +336,9 @@ function CustomEventsCard({
           <Switch
             size="sm"
             label="Include owner activity"
-            description="Events sent while the app's owner was signed in, such as your own testing. Also changes the undeclared-events count."
+            description="Events sent while the app owner was signed in. Collaborators' activity is always counted."
             checked={includeOwner}
-            onChange={(e) => onIncludeOwnerChange(e.currentTarget.checked)}
+            onChange={(e) => setIncludeOwner(e.currentTarget.checked)}
             maw={340}
           />
         )}
@@ -350,11 +348,22 @@ function CustomEventsCard({
         <Text c="dimmed" size="sm" mt="sm">
           Choose an app to see its custom events.
         </Text>
+      ) : isLoading ? (
+        <Group justify="center" py="sm">
+          <Loader size="sm" role="status" aria-label="Loading custom events" />
+        </Group>
       ) : !measured ? (
-        <Text c="dimmed" size="sm" mt="sm">
-          Couldn&apos;t load custom events right now. This is not a report of zero events; the other
-          metrics on this page are unaffected.
-        </Text>
+        <Stack gap="xs" mt="sm" align="flex-start">
+          <Text c="dimmed" size="sm">
+            Couldn&apos;t load custom events right now. This is not a report of zero events; the
+            other metrics on this page are unaffected.
+          </Text>
+          {selectedEvent && (
+            <Button variant="subtle" size="compact-sm" onClick={() => setSelectedEvent(null)}>
+              Clear the selected event
+            </Button>
+          )}
+        </Stack>
       ) : (
         <Stack
           gap="sm"
@@ -480,7 +489,6 @@ function CustomEventsCard({
                 Counts are lower bounds: apps stop sending events after a per-page limit, and those
                 events are never recorded. Signed-in viewers counts each signed-in person once;
                 signed-out activity is counted as events only.
-                {granularity === 'week' ? ' On weekly ranges viewer counts are approximate.' : ''}
               </Text>
             </>
           )}
@@ -505,33 +513,13 @@ export function AppAnalyticsPanel({ scopedAppBlockId }: { scopedAppBlockId?: str
   const apps = (appsRaw as MyApp[] | undefined) ?? [];
   const [pickedAppBlockId, setPickedAppBlockId] = useState<string | null>(null);
   const appBlockId = scoped ? scopedAppBlockId : pickedAppBlockId;
-  const [includeOwner, setIncludeOwner] = useState(false);
-  const [selectedEvent, setSelectedEvent] = useState<string | null>(null);
-
   const {
     data: analyticsRaw,
     isLoading: analyticsLoading,
-    isPlaceholderData,
     error,
-  } = trpc.blocks.getMyAppAnalytics.useQuery(
-    appBlockId
-      ? {
-          appBlockId,
-          withCustomEvents: true,
-          includeOwner,
-          ...(selectedEvent ? { event: selectedEvent } : {}),
-        }
-      : {},
-    {
-      // Keep the panel up while a toggle or an event selection refetches, but never show one
-      // app's numbers under another app's name while the picker's new app loads.
-      placeholderData: (previous, previousQuery) =>
-        (previousQuery?.queryKey[1] as { input?: { appBlockId?: string } } | undefined)?.input
-          ?.appBlockId === (appBlockId ?? undefined)
-          ? keepPreviousData(previous)
-          : undefined,
-    }
-  );
+  } = trpc.blocks.getMyAppAnalytics.useQuery({
+    appBlockId: appBlockId ?? undefined,
+  });
   const analytics = analyticsRaw as AnalyticsData | undefined;
   const unavailable = analytics?.unavailable;
 
@@ -551,10 +539,7 @@ export function AppAnalyticsPanel({ scopedAppBlockId }: { scopedAppBlockId?: str
             label="App"
             data={appOptions}
             value={pickedAppBlockId ?? ''}
-            onChange={(v) => {
-              setPickedAppBlockId(v ? v : null);
-              setSelectedEvent(null);
-            }}
+            onChange={(v) => setPickedAppBlockId(v ? v : null)}
             disabled={appsLoading}
             w={260}
             comboboxProps={{ withinPortal: true }}
@@ -823,16 +808,9 @@ export function AppAnalyticsPanel({ scopedAppBlockId }: { scopedAppBlockId?: str
           </SimpleGrid>
 
           <SimpleGrid type="container" cols={{ base: 1 }} spacing="md">
-            <CustomEventsCard
-              customEvents={analytics.customEvents}
-              appSelected={appBlockId != null}
-              granularity={analytics.range.granularity}
-              includeOwner={includeOwner}
-              onIncludeOwnerChange={setIncludeOwner}
-              selectedEvent={selectedEvent}
-              onSelectEvent={setSelectedEvent}
-              refreshing={!!isPlaceholderData}
-            />
+            {/* Keyed by app so a new app starts fresh: its own toggle, no selection, and no
+                previous app's numbers kept as placeholder data. */}
+            <CustomEventsCard key={appBlockId ?? ''} appBlockId={appBlockId ?? null} />
           </SimpleGrid>
         </>
       )}

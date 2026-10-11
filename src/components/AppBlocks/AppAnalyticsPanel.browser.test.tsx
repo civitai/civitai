@@ -17,7 +17,9 @@ const mocks = vi.hoisted(() => ({
   analytics: { current: undefined as unknown },
   apps: { current: [] as unknown[] },
   queryInputs: [] as unknown[],
-  queryOptions: [] as unknown[],
+  cardInputs: [] as unknown[],
+  cardOptions: [] as unknown[],
+  cardError: { current: null as unknown },
   isPlaceholderData: { current: false },
 }));
 
@@ -26,14 +28,25 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
   trpc: makeTrpcProxy({
     'blocks.getMyApps': { useQuery: () => ({ data: mocks.apps.current, isLoading: false }) },
     'blocks.getMyAppAnalytics': {
-      useQuery: (input: unknown, options: unknown) => {
+      useQuery: (input: unknown) => {
         mocks.queryInputs.push(input);
-        mocks.queryOptions.push(options);
+        return { data: mocks.analytics.current, isLoading: false, error: null };
+      },
+    },
+    // The card's own read. Fixtures carry its section under `customEvents` beside the panel
+    // payload, so one fixture object drives both reads.
+    'blocks.getMyAppCustomEvents': {
+      useQuery: (input: unknown, options: unknown) => {
+        mocks.cardInputs.push(input);
+        mocks.cardOptions.push(options);
+        const section = (mocks.analytics.current as { customEvents?: unknown } | undefined)
+          ?.customEvents;
         return {
-          data: mocks.analytics.current,
+          // A refetch that errors keeps the previous data, so the error must win over it.
+          data: section,
           isLoading: false,
           isPlaceholderData: mocks.isPlaceholderData.current,
-          error: null,
+          error: mocks.cardError.current,
         };
       },
     },
@@ -639,7 +652,9 @@ describe('AppAnalyticsPanel — custom events', () => {
     },
     { name: 'share_clicked', properties: [] },
   ];
+  const RANGE = { from: new Date(0), to: new Date(0), granularity: 'day' as const };
   const MEASURED = {
+    range: RANGE,
     declared: DECLARED,
     includeOwner: false,
     topEvents: [
@@ -675,16 +690,15 @@ describe('AppAnalyticsPanel — custom events', () => {
     if (!(root instanceof HTMLElement)) throw new Error('Custom events card not found');
     return root;
   }
-  const lastInput = () => mocks.queryInputs[mocks.queryInputs.length - 1];
+  const lastInput = () => mocks.cardInputs[mocks.cardInputs.length - 1];
 
   test('requests the section for the scoped app, owner rows excluded by default', async () => {
     mocks.analytics.current = { ...ZEROED, customEvents: MEASURED };
-    mocks.queryInputs.length = 0;
+    mocks.cardInputs.length = 0;
     renderWithProviders(<AppAnalyticsPanel scopedAppBlockId="apb_1" />);
     await expect.element(page.getByText('Custom events', { exact: true })).toBeInTheDocument();
     expect(lastInput()).toEqual({
       appBlockId: 'apb_1',
-      withCustomEvents: true,
       includeOwner: false,
     });
   });
@@ -743,6 +757,7 @@ describe('AppAnalyticsPanel — custom events', () => {
     mocks.analytics.current = {
       ...ZEROED,
       customEvents: {
+        range: RANGE,
         declared: DECLARED,
         includeOwner: false,
         topEvents: [],
@@ -759,7 +774,7 @@ describe('AppAnalyticsPanel — custom events', () => {
     expect(card().textContent).not.toMatch(/\d/);
   });
 
-  test('(d) section absent (old pod): renders like unavailable, never as zero', async () => {
+  test('(d) no section returned: renders like unavailable, never as zero', async () => {
     mocks.analytics.current = { ...ZEROED };
     renderWithProviders(<AppAnalyticsPanel scopedAppBlockId="apb_1" />);
     await expect
@@ -793,7 +808,7 @@ describe('AppAnalyticsPanel — custom events', () => {
 
   test('the owner toggle refetches with includeOwner: true', async () => {
     mocks.analytics.current = { ...ZEROED, customEvents: MEASURED };
-    mocks.queryInputs.length = 0;
+    mocks.cardInputs.length = 0;
     renderWithProviders(<AppAnalyticsPanel scopedAppBlockId="apb_1" />);
     const toggle = page.getByRole('switch', { name: 'Include owner activity' });
     await expect.element(toggle).not.toBeChecked();
@@ -801,14 +816,13 @@ describe('AppAnalyticsPanel — custom events', () => {
     await expect.element(toggle).toBeChecked();
     expect(lastInput()).toEqual({
       appBlockId: 'apb_1',
-      withCustomEvents: true,
       includeOwner: true,
     });
   });
 
   test('selecting an event requests it and renders its series and property breakdown', async () => {
     mocks.analytics.current = { ...ZEROED, customEvents: { ...MEASURED, selected: SELECTED } };
-    mocks.queryInputs.length = 0;
+    mocks.cardInputs.length = 0;
     renderWithProviders(<AppAnalyticsPanel scopedAppBlockId="apb_1" />);
 
     await expect
@@ -822,7 +836,6 @@ describe('AppAnalyticsPanel — custom events', () => {
 
     expect(lastInput()).toEqual({
       appBlockId: 'apb_1',
-      withCustomEvents: true,
       includeOwner: false,
       event: 'generate_clicked',
     });
@@ -861,7 +874,7 @@ describe('AppAnalyticsPanel — custom events', () => {
 
   test('clicking the selected event again deselects it', async () => {
     mocks.analytics.current = { ...ZEROED, customEvents: { ...MEASURED, selected: SELECTED } };
-    mocks.queryInputs.length = 0;
+    mocks.cardInputs.length = 0;
     renderWithProviders(<AppAnalyticsPanel scopedAppBlockId="apb_1" />);
     const eventButton = page.getByRole('button', { name: 'generate_clicked' });
     await eventButton.click();
@@ -870,7 +883,6 @@ describe('AppAnalyticsPanel — custom events', () => {
     await expect.element(eventButton).toHaveAttribute('aria-pressed', 'false');
     expect(lastInput()).toEqual({
       appBlockId: 'apb_1',
-      withCustomEvents: true,
       includeOwner: false,
     });
   });
@@ -927,36 +939,69 @@ describe('AppAnalyticsPanel — custom events', () => {
       .toBeInTheDocument();
   });
 
-  test('placeholder data is kept only for the same app (never one app under another name)', async () => {
-    mocks.analytics.current = { ...ZEROED, customEvents: MEASURED };
-    mocks.queryOptions.length = 0;
-    renderWithProviders(<AppAnalyticsPanel scopedAppBlockId="apb_1" />);
-    await expect.element(page.getByText('Custom events', { exact: true })).toBeInTheDocument();
-    const { placeholderData } = mocks.queryOptions[mocks.queryOptions.length - 1] as {
-      placeholderData: (previous: unknown, previousQuery: unknown) => unknown;
-    };
-    const previous = { marker: 'previous payload' };
-    // tRPC v11 query keys are `[path, { input, type }]`.
-    const keyFor = (appBlockId?: string) => ({
-      queryKey: [['blocks', 'getMyAppAnalytics'], { input: { appBlockId }, type: 'query' }],
-    });
-    expect(placeholderData(previous, keyFor('apb_1'))).toBe(previous);
-    expect(placeholderData(previous, keyFor('apb_2'))).toBeUndefined();
-    expect(placeholderData(previous, keyFor(undefined))).toBeUndefined();
-    expect(placeholderData(previous, undefined)).toBeUndefined();
-  });
-
-  test('"All my apps" keeps placeholder data across its own refetches', async () => {
+  test("the card's query keeps previous data while it refetches, and waits for an app", async () => {
     mocks.analytics.current = { ...ZEROED };
-    mocks.queryOptions.length = 0;
+    mocks.cardOptions.length = 0;
     renderWithProviders(<AppAnalyticsPanel />);
     await expect.element(page.getByText('Custom events', { exact: true })).toBeInTheDocument();
-    const { placeholderData } = mocks.queryOptions[mocks.queryOptions.length - 1] as {
-      placeholderData: (previous: unknown, previousQuery: unknown) => unknown;
+    const options = mocks.cardOptions[mocks.cardOptions.length - 1] as {
+      enabled: boolean;
+      placeholderData: (previous: unknown) => unknown;
     };
+    expect(options.enabled).toBe(false);
     const previous = { marker: 'previous payload' };
-    const allApps = { queryKey: [['blocks', 'getMyAppAnalytics'], { input: {}, type: 'query' }] };
-    expect(placeholderData(previous, allApps)).toBe(previous);
+    expect(options.placeholderData(previous)).toBe(previous);
+  });
+
+  test('the panel payload is requested exactly as before: no custom-events input', async () => {
+    mocks.analytics.current = { ...ZEROED, customEvents: MEASURED };
+    mocks.queryInputs.length = 0;
+    renderWithProviders(<AppAnalyticsPanel scopedAppBlockId="apb_1" />);
+    await page.getByRole('switch', { name: 'Include owner activity' }).click();
+    await page.getByRole('button', { name: 'generate_clicked' }).click();
+    await expect
+      .element(page.getByRole('button', { name: 'generate_clicked' }))
+      .toHaveAttribute('aria-pressed', 'true');
+    expect(new Set(mocks.queryInputs.map((i) => JSON.stringify(i)))).toEqual(
+      new Set([JSON.stringify({ appBlockId: 'apb_1' })])
+    );
+  });
+
+  test('a failed card request (an old pod without the procedure) shows "couldn\'t load", not the panel error', async () => {
+    mocks.analytics.current = { ...ZEROED, customEvents: MEASURED };
+    mocks.cardError.current = {
+      message: 'No "query"-procedure on path "blocks.getMyAppCustomEvents"',
+    };
+    try {
+      renderWithProviders(<AppAnalyticsPanel scopedAppBlockId="apb_1" />);
+      await expect
+        .element(page.getByText(/Couldn't load custom events right now/))
+        .toBeInTheDocument();
+      expect(card().textContent).not.toMatch(/\d/);
+      expect(page.getByText(/Failed to load analytics/).elements()).toHaveLength(0);
+      await expect.element(page.getByText('Active installs', { exact: true })).toBeInTheDocument();
+    } finally {
+      mocks.cardError.current = null;
+    }
+  });
+
+  test('when the section is unavailable with an event selected, the selection can be cleared', async () => {
+    mocks.analytics.current = { ...ZEROED, customEvents: MEASURED };
+    mocks.cardInputs.length = 0;
+    renderWithProviders(<AppAnalyticsPanel scopedAppBlockId="apb_1" />);
+    const eventButton = page.getByRole('button', { name: 'generate_clicked' });
+    await eventButton.click();
+    await expect.element(eventButton).toHaveAttribute('aria-pressed', 'true');
+    mocks.cardError.current = { message: 'timeout' };
+    try {
+      await page.getByRole('switch', { name: 'Include owner activity' }).click();
+      const clear = page.getByRole('button', { name: 'Clear the selected event' });
+      await clear.click();
+      await expect.element(clear).not.toBeInTheDocument();
+      expect(lastInput()).toEqual({ appBlockId: 'apb_1', includeOwner: true });
+    } finally {
+      mocks.cardError.current = null;
+    }
   });
 
   test('while a selection refetches: a loader in the detail pane, the stale table marked busy', async () => {
@@ -996,13 +1041,13 @@ describe('AppAnalyticsPanel — custom events', () => {
     expect(page.getByText('Not set on any event in this range.').elements()).toHaveLength(0);
   });
 
-  test('picking another app clears the selected event', async () => {
+  test('picking another app starts the card fresh: no selection, owner toggle off', async () => {
     mocks.apps.current = [
       { id: 'apb_1', appName: 'First app', blockId: 'b1' },
       { id: 'apb_2', appName: 'Second app', blockId: 'b2' },
     ];
     mocks.analytics.current = { ...ZEROED, customEvents: MEASURED };
-    mocks.queryInputs.length = 0;
+    mocks.cardInputs.length = 0;
     try {
       renderWithProviders(<AppAnalyticsPanel />);
       await page.getByRole('textbox', { name: 'App' }).click();
@@ -1010,14 +1055,18 @@ describe('AppAnalyticsPanel — custom events', () => {
       const eventButton = page.getByRole('button', { name: 'generate_clicked' });
       await eventButton.click();
       await expect.element(eventButton).toHaveAttribute('aria-pressed', 'true');
-      expect(lastInput()).toMatchObject({ appBlockId: 'apb_1', event: 'generate_clicked' });
+      await page.getByRole('switch', { name: 'Include owner activity' }).click();
+      expect(lastInput()).toEqual({
+        appBlockId: 'apb_1',
+        includeOwner: true,
+        event: 'generate_clicked',
+      });
 
       await page.getByRole('textbox', { name: 'App' }).click();
       await page.getByRole('option', { name: 'Second app' }).click();
       await expect.element(eventButton).toHaveAttribute('aria-pressed', 'false');
       expect(lastInput()).toEqual({
         appBlockId: 'apb_2',
-        withCustomEvents: true,
         includeOwner: false,
       });
     } finally {
@@ -1027,12 +1076,14 @@ describe('AppAnalyticsPanel — custom events', () => {
 
   test('"All my apps" asks for no custom events and says to pick an app', async () => {
     mocks.analytics.current = { ...ZEROED };
-    mocks.queryInputs.length = 0;
+    mocks.cardOptions.length = 0;
     renderWithProviders(<AppAnalyticsPanel />);
     await expect
       .element(page.getByText('Choose an app to see its custom events.', { exact: true }))
       .toBeInTheDocument();
-    expect(lastInput()).toEqual({});
+    expect((mocks.cardOptions[mocks.cardOptions.length - 1] as { enabled: boolean }).enabled).toBe(
+      false
+    );
     expect(page.getByText(/Couldn't load custom events/).elements()).toHaveLength(0);
   });
 });

@@ -1,6 +1,7 @@
 import { clickhouse } from '~/server/clickhouse/client';
 import { formatClickhouseDateTime64 } from '~/server/clickhouse/datetime';
 import { logToAxiom } from '~/server/logging/client';
+import { getOwnedAppBlocks, resolveRange } from '~/server/services/blocks/app-analytics.service';
 import {
   APP_BLOCK_EVENTS_TABLE,
   UNDECLARED_EVENT_NAME,
@@ -13,15 +14,15 @@ import { parseManifestAnalytics } from '~/shared/constants/block-analytics.const
  *
  * - Owner rows are excluded unless asked for, and that exclusion must also cover the
  *   `__undeclared__` drop count: the owner's dev-tunnel testing of unpublished events lands there.
- * - Never throws: any failure, including the timeout, degrades to `unavailable`.
+ * - Never throws: any failure, including the timeout, degrades to `unavailable` for the whole
+ *   section. The queries of one call succeed or fail together (the card lets the owner clear a
+ *   selected event whose read keeps failing).
  *
  * Every value rides in `query_params`. The only text built at runtime is chosen from closed sets
  * (an aggregate name, a bucket expression, a property's positional index), never from input.
  */
 
 export const CUSTOM_EVENTS_QUERY_TIMEOUT_SECONDS = 10;
-/** `quantilesExactIf` keeps every value it sorts; past this a heavy event's detail fails to load. */
-export const CUSTOM_EVENTS_MAX_MEMORY_BYTES = 512 * 1024 * 1024;
 
 /** One app, one bounded time range; `time` is the partition and sort column. */
 export const CUSTOM_EVENTS_WHERE =
@@ -44,7 +45,7 @@ export type CustomEventDeclaration = {
 export type CustomEventTotals = {
   eventName: string;
   count: number;
-  /** Distinct signed-in viewers. Approximate (`uniqCombined`) on week-bucketed ranges. */
+  /** Distinct signed-in viewers. */
   signedInViewers: number;
   /** Events from signed-out viewers: an event count, not a viewer count. */
   anonymousEvents: number;
@@ -72,7 +73,7 @@ export type AppCustomEvents = {
   topEvents: CustomEventTotals[];
   /** Rows stored as `__undeclared__`: sent under a name the approved manifest does not declare. */
   undeclaredDrops: number;
-  /** Present only when the requested event is declared and its detail read succeeded. */
+  /** Present only when the requested event is declared. */
   selected?: {
     eventName: string;
     series: TimePoint[];
@@ -114,18 +115,6 @@ function finiteOrNull(value: unknown): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-function logReadFailure(error: unknown, message: string) {
-  logToAxiom(
-    {
-      name: 'app-custom-events-service',
-      type: 'error',
-      message,
-      error: (error as Error)?.message,
-    },
-    'clickhouse'
-  ).catch(() => undefined);
-}
-
 type TopRow = {
   eventName: string;
   events: number | string;
@@ -154,8 +143,6 @@ export async function getAppCustomEvents({
   if (!ch) return unavailableCustomEvents(declared, includeOwner);
 
   const where = CUSTOM_EVENTS_WHERE + (includeOwner ? '' : OWNER_EXCLUSION);
-  // Exact distinct counts are costly over long ranges, so week-bucketed ranges use the approximate one.
-  const uniqIf = range.granularity === 'week' ? 'uniqCombinedIf' : 'uniqExactIf';
   const bucketExpr =
     range.granularity === 'week' ? "toStartOfWeek(time, 1, 'UTC')" : "toDate(time, 'UTC')";
   const selected = event ? declared.find((d) => d.name === event) : undefined;
@@ -179,17 +166,14 @@ export async function getAppCustomEvents({
       query_params: { ...baseParams, ...params },
       format: 'JSONEachRow',
       abort_signal: controller.signal,
-      clickhouse_settings: {
-        max_execution_time: CUSTOM_EVENTS_QUERY_TIMEOUT_SECONDS,
-        max_memory_usage: String(CUSTOM_EVENTS_MAX_MEMORY_BYTES),
-      },
+      clickhouse_settings: { max_execution_time: CUSTOM_EVENTS_QUERY_TIMEOUT_SECONDS },
     });
     return (await resp.json()) as T[];
   };
 
   try {
     const topQuery = run<TopRow>(
-      `SELECT eventName, count() AS events, ${uniqIf}(viewerKey, viewerKey != 0) AS signedInViewers, countIf(viewerKey = 0) AS anonymousEvents FROM ${APP_BLOCK_EVENTS_TABLE} ${where} AND eventName IN {eventNames:Array(String)} GROUP BY eventName LIMIT 100`,
+      `SELECT eventName, count() AS events, uniqExactIf(viewerKey, viewerKey != 0) AS signedInViewers, countIf(viewerKey = 0) AS anonymousEvents FROM ${APP_BLOCK_EVENTS_TABLE} ${where} AND eventName IN {eventNames:Array(String)} GROUP BY eventName LIMIT 100`,
       { eventNames: [...declared.map((d) => d.name), UNDECLARED_EVENT_NAME] }
     );
 
@@ -208,7 +192,7 @@ export async function getAppCustomEvents({
           `countIf(mapContains(numProps, {n${i}:String})) AS n${i}_count, ` +
           `sumIf(numProps[{n${i}:String}], mapContains(numProps, {n${i}:String})) AS n${i}_sum, ` +
           `avgIf(numProps[{n${i}:String}], mapContains(numProps, {n${i}:String})) AS n${i}_avg, ` +
-          `quantilesExactIf(0.5, 0.95)(numProps[{n${i}:String}], mapContains(numProps, {n${i}:String})) AS n${i}_q`
+          `quantilesTDigestIf(0.5, 0.95)(numProps[{n${i}:String}], mapContains(numProps, {n${i}:String})) AS n${i}_q`
       ),
       ...booleanProps.map(
         (_, i) =>
@@ -238,16 +222,12 @@ export async function getAppCustomEvents({
           )
         : Promise.resolve([]);
 
-    // A failing detail (a heavy event over the memory cap, say) must not take the table with it:
-    // the owner could then never deselect the event that keeps failing.
-    const detail = Promise.all([seriesQuery, scalarQuery, enumQuery]).catch((error: unknown) => {
-      // A timeout is logged once, by the outer catch.
-      if (!controller.signal.aborted) {
-        logReadFailure(error, 'appBlockEvents selected-event read failed');
-      }
-      return null;
-    });
-    const [topRows, detailRows] = await Promise.all([topQuery, detail]);
+    const [topRows, seriesRows, scalarRows, enumRows] = await Promise.all([
+      topQuery,
+      seriesQuery,
+      scalarQuery,
+      enumQuery,
+    ]);
 
     const byName = new Map(topRows.map((r) => [r.eventName, r]));
     const topEvents = declared
@@ -269,8 +249,7 @@ export async function getAppCustomEvents({
       undeclaredDrops: Number(byName.get(UNDECLARED_EVENT_NAME)?.events ?? 0),
     };
 
-    if (selected && detailRows) {
-      const [seriesRows, scalarRows, enumRows] = detailRows;
+    if (selected) {
       const scalar = scalarRows[0] ?? {};
       const enumCounts = new Map(enumRows.map((r) => [`${r.property}\u0000${r.value}`, r.events]));
       const numberIndex = new Map(numberProps.map((p, i) => [p.name, i]));
@@ -315,11 +294,72 @@ export async function getAppCustomEvents({
     }
     return result;
   } catch (error) {
-    logReadFailure(error, 'appBlockEvents read failed');
+    logToAxiom(
+      {
+        name: 'app-custom-events-service',
+        type: 'error',
+        message: 'appBlockEvents read failed',
+        error: (error as Error)?.message,
+      },
+      'clickhouse'
+    ).catch(() => undefined);
     return unavailableCustomEvents(declared, includeOwner);
   } finally {
     clearTimeout(timer);
-    // A failed top query must not leave the detail queries running.
+    // One failed query must not leave the others running.
     controller.abort();
   }
+}
+
+export type CustomEventsRange = { from: Date; to: Date; granularity: 'day' | 'week' };
+
+export type MyAppCustomEvents = AppCustomEvents & {
+  /** The resolved range, the same one `getMyAppAnalytics` uses. */
+  range: CustomEventsRange;
+  /** Set when nothing was queried: the flag is off, or the caller cannot see this app. */
+  denied?: 'notEntitled' | 'notOwned';
+};
+
+export function deniedCustomEvents(
+  range: CustomEventsRange,
+  denied: 'notEntitled' | 'notOwned'
+): MyAppCustomEvents {
+  return { ...unavailableCustomEvents([], false), range, denied };
+}
+
+/**
+ * The Custom events section for ONE app the caller can see. Ownership is resolved first, by the
+ * same `getOwnedAppBlocks` `getMyAppAnalytics` uses, and fails closed before any ClickHouse read.
+ */
+export async function getMyAppCustomEvents({
+  userId,
+  appBlockId,
+  from,
+  to,
+  now,
+  includeOwner = false,
+  event,
+  ch,
+}: {
+  userId: number;
+  appBlockId: string;
+  from?: Date;
+  to?: Date;
+  now?: Date;
+  includeOwner?: boolean;
+  event?: string;
+  ch?: typeof clickhouse;
+}): Promise<MyAppCustomEvents> {
+  const range = resolveRange({ from, to, now });
+  const [app] = await getOwnedAppBlocks({ ownerUserId: userId, appBlockId });
+  if (!app) return deniedCustomEvents(range, 'notOwned');
+  const section = await getAppCustomEvents({
+    appBlockId: app.id,
+    manifest: app.manifest,
+    range,
+    includeOwner,
+    event,
+    ...(ch !== undefined ? { ch } : {}),
+  });
+  return { ...section, range };
 }
