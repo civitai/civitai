@@ -247,10 +247,16 @@ export async function syncRosterMembersWith(
     retried = await syncRosterMembersWith(event, changed, deps, attempt + 1);
   else if (changed.length) {
     const current = await deps.redis.hmGet(keys.members, changed.map(String));
+    // Only hides: the gate already keeps leftovers out of every read, so a failed clear is logged.
     await clearEntries(
       event,
       changed.filter((_, i) => !rosterTeam(current[i])),
       deps
+    ).catch((error) =>
+      logRoster('error', 'syncRosterMembersWith.giveUpClear', {
+        event: event.name,
+        error: (error as Error).message,
+      })
     );
     logRoster('warning', 'syncRosterMembersWith', { event: event.name, gaveUp: changed.length });
   }

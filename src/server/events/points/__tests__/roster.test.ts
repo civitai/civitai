@@ -935,6 +935,31 @@ describe('team roster', () => {
     await syncRosterMembersWith(EVENT, [1], s.deps);
     expect(failed).toBe(true);
     expect(isTombstone(s.hashes.get(keys.members)?.get('1'))).toBe(true);
-    expect((await s.read('hats')).rows).toEqual([]);
+    // The clear failed part-way: the join-time entry is still there, and the gate hides it anyway.
+    expect(s.zsets.get(keys.joined('Blue'))?.has('1')).toBe(true);
+    for (const sort of ['hats', 'points', 'newest'] as const)
+      expect((await s.read(sort)).rows).toEqual([]);
+  });
+
+  it('still finishes a give-up when its clear fails', async () => {
+    const s = setup([member(1)]);
+    let n = 0;
+    const churn: RosterSyncDeps = {
+      ...s.deps,
+      loadStates: async (event, ids) => {
+        await s.redis.hSet(keys.members, '1', `x:churn-${n++}`);
+        return s.deps.loadStates(event, ids);
+      },
+    };
+    const zRemOf = s.redis.zRem.bind(s.redis);
+    (s.redis as { zRem: typeof zRemOf }).zRem = async (key, members) => {
+      if (n >= 3) throw new Error('redis blip');
+      return zRemOf(key, members);
+    };
+    await expect(syncRosterMembersWith(EVENT, [1], churn)).resolves.toEqual({
+      listed: 0,
+      removed: 0,
+    });
+    expect(n).toBe(3);
   });
 });
