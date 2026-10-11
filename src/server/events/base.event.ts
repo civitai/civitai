@@ -14,6 +14,7 @@ import {
 } from '~/server/redis/client';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import type { FeatureFlagKey } from '~/server/services/feature-flags.service';
+import type { EventPromoIcon } from '~/shared/constants/nav-banner.constants';
 
 // Disable pod memory keeping for now... We might not need it.
 // const manualAssignments: Record<string, Record<string, string>> = {};
@@ -274,10 +275,29 @@ export type EventBannerCopy = {
   priority?: number;
 };
 
+// Copy for the event's other entry points, served beside its banner (see nav-banner.service.ts).
+// Links, visibility and the hat button are derived from the rest of the definition, never set here.
+export type EventPromoCopy = {
+  // The user-menu entry. Defaults to the event title.
+  menuLabel?: string;
+  menuIcon?: EventPromoIcon;
+  // The card under Publish in the post editor. Omit it and the editor shows no card.
+  postEditor?: {
+    title?: string;
+    body: string;
+    // Shown instead of nothing while the post is unpublished.
+    draftNote?: string;
+    image?: string;
+  };
+  homeBlock?: { eyebrow?: string; title?: string; body?: string; cta?: string };
+};
+
 type HolidayEventDefinition = {
   title: string;
   page?: EventPageCopy;
   banner?: EventBannerCopy;
+  // Needs `banner`: the promo rides on the banner's entry.
+  promo?: EventPromoCopy;
   startDate: Date;
   endDate: Date;
   teams: readonly string[];

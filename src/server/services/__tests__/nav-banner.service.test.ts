@@ -74,6 +74,45 @@ describe('the birthday banner, through the real access rule', () => {
   });
 });
 
+/**
+ * The menu entry, the post-editor card and the home block read this promo. It must reach exactly the
+ * viewers the strip reaches: anyone else would be shown an event that 404s for them.
+ */
+describe('the birthday promo, through the real access rule', () => {
+  const promos = async (viewer: Parameters<typeof getNavBanners>[0]['viewer'], now: Date) =>
+    (await getNavBanners({ viewer, now })).flatMap((b) => (b.promo ? [b.promo] : []));
+
+  it('reaches testers and moderators in the preview, and nobody else', async () => {
+    expect((await promos(TESTER, PREVIEW)).map((p) => p.event)).toEqual(['birthday2026']);
+    expect((await promos(MOD, PREVIEW)).map((p) => p.event)).toEqual(['birthday2026']);
+    expect(await promos(PUBLIC_USER, PREVIEW)).toEqual([]);
+    expect(await promos(ANON, PREVIEW)).toEqual([]);
+  });
+
+  it('reaches nobody once the event ends', async () => {
+    testerFlag.reset({ public: true, testers: [TESTER.id] });
+    for (const viewer of [TESTER, MOD, PUBLIC_USER, ANON])
+      expect(await promos(viewer, AFTER)).toEqual([]);
+  });
+
+  it('carries the menu entry, roster link and post-editor card', async () => {
+    const [promo] = await promos(TESTER, PREVIEW);
+    expect(promo).toEqual({
+      event: 'birthday2026',
+      menuLabel: "Civitai's 4th Birthday",
+      menuIcon: 'confetti',
+      teamHref: '/events/birthday2026/team',
+      postEditor: {
+        title: 'Civitai turns 4.',
+        body: 'Put a party hat on an image in this post. Its views and reactions score for your team.',
+        draftNote: 'Scores as people see it, so publish to start earning.',
+        image: '4a5e404d-ece2-4cca-bbab-cb5a7b0d8d9d',
+      },
+      homeBlock: undefined,
+    });
+  });
+});
+
 describe('getNavBanners', () => {
   const event = (name: string, extra: object = {}) => ({
     name,
@@ -111,6 +150,14 @@ describe('getNavBanners', () => {
       background: undefined,
       dismissible: true,
       priority: 0,
+      promo: {
+        event: 'e1',
+        menuLabel: 'e1 title',
+        menuIcon: 'confetti',
+        teamHref: undefined,
+        postEditor: undefined,
+        homeBlock: undefined,
+      },
     });
   });
 
@@ -136,6 +183,47 @@ describe('getNavBanners', () => {
       getAccess: open,
     });
     expect(banner).toMatchObject({ title: 'Own title', image: 'own-img', dismissible: false });
+  });
+
+  it('links the roster only for an event that is both scored and joinable', async () => {
+    const teamHref = async (extra: object) =>
+      (
+        await getNavBanners({
+          viewer: TESTER,
+          eventDefs: [event('e1', { banner: {}, ...extra })],
+          getAccess: open,
+        })
+      )[0].promo?.teamHref;
+    expect(await teamHref({ scoring: {}, join: {} })).toBe('/events/e1/team');
+    expect(await teamHref({ scoring: {} })).toBeUndefined();
+    expect(await teamHref({ join: {} })).toBeUndefined();
+  });
+
+  it('lets the promo block override the defaults, and fills what it leaves out', async () => {
+    const [banner] = await getNavBanners({
+      viewer: TESTER,
+      eventDefs: [
+        event('e1', {
+          banner: { image: 'strip-img', text: 'Strip text', cta: 'Strip cta' },
+          page: { headline: 'Hello', heroImage: 'img-1' },
+          promo: {
+            menuLabel: 'Menu',
+            menuIcon: 'trophy',
+            postEditor: { body: 'Editor body' },
+            homeBlock: { eyebrow: 'Eyebrow' },
+          },
+        }),
+      ],
+      getAccess: open,
+    });
+    expect(banner.promo).toEqual({
+      event: 'e1',
+      menuLabel: 'Menu',
+      menuIcon: 'trophy',
+      teamHref: undefined,
+      postEditor: { title: 'Hello', body: 'Editor body', image: 'strip-img' },
+      homeBlock: { eyebrow: 'Eyebrow', title: 'Hello', body: 'Strip text', cta: 'Strip cta' },
+    });
   });
 
   it('orders by priority, highest first', async () => {
