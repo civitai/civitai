@@ -1,5 +1,6 @@
 import { includesMinor, includesPoi } from '~/utils/metadata/audit';
 import { BlocklistType } from '~/server/common/enums';
+import { logToAxiom } from '~/server/logging/client';
 import { escalateToServerFault } from '~/server/logging/server-fault-override';
 import { getBlocklistData, throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { auditPromptServer } from '~/server/services/orchestrator/promptAuditing';
@@ -130,8 +131,9 @@ export async function assertSharedTextSafe(
   // guard with no caller input involved. A throw here is our outage: the text was never checked,
   // so it is refused, but escalated with a retry message. Category 'link' because it files no
   // Report and no alert; the retry message reaches shared-storage callers only (sub-listing
-  // callers substitute their own refusal). This read runs even when the guard would skip its own
-  // (both fields empty) — that costs one cached read and keeps the escalation unconditional.
+  // callers substitute their own refusal). These run even when the guard would skip its own
+  // reads (both fields empty) — that costs the two list reads and keeps the escalation
+  // unconditional.
   const retryMessage = 'Content could not be reviewed right now. Please try again.';
   try {
     await Promise.all([
@@ -144,10 +146,14 @@ export async function assertSharedTextSafe(
 
   // Then the guard itself, which scans the caller's text. A block is rethrown as-is. Any OTHER
   // throw is still refused with the retry message rather than escaping as a raw 500, but it is
-  // NOT escalated, so it is charged: the lists were just proven readable (the guard's Flipt read
-  // swallows its own failures), so what is left is a later list read racing an outage (rare, and
-  // bounded by the rejection bucket) or a scan bug that a crafted input could trigger — and that
-  // one must never become a free refund.
+  // NOT escalated, so it is charged. The lists were just proven readable (the guard's Flipt read
+  // swallows its own failures), so three causes remain: a later list read racing an outage (rare,
+  // and bounded by the rejection bucket); list CONTENTS the scan cannot process (a malformed entry
+  // written into the shared cache key, which several apps populate); or a scan bug that a crafted
+  // input could trigger — and that last one must never become a free refund. All three are ours
+  // to see, and a charged BAD_REQUEST is classified as a client fault and never logged on its own,
+  // so the swallowed error is logged here at error severity. Its name and message only: never the
+  // title/body, which is user content.
   try {
     // `[title, body]`, NOT `combined`: the guard scans values separately so a pattern cannot match
     // across the seam between two independent fields. Handing it the joined string reintroduces
@@ -163,6 +169,16 @@ export async function assertSharedTextSafe(
     });
   } catch (error) {
     if (error instanceof SharedContentBlockedError) throw error;
+    logToAxiom({
+      name: 'app-shared-content-scan-failed',
+      type: 'error',
+      message: 'Shared-text blocklist scan threw; write refused and charged',
+      details: {
+        surface: 'appSharedStorage',
+        errorName: error instanceof Error ? error.name : typeof error,
+        errorMessage: error instanceof Error ? error.message : String(error),
+      },
+    }).catch(() => undefined);
     throw new SharedContentBlockedError('link', retryMessage);
   }
 

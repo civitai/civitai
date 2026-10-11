@@ -1,6 +1,7 @@
 import { vi, describe, it, expect, beforeEach } from 'vitest';
 
 import { isEscalatedServerFault } from '~/server/logging/server-fault-override';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { assertSharedTextSafe, SharedContentBlockedError } from '../shared-content-safety';
 
 const throwOnBlockedUserContent = vi.hoisted(() =>
@@ -118,6 +119,42 @@ describe('assertSharedTextSafe — how a blocklist rejection is classified', () 
     expect((error as SharedContentBlockedError).message).toBe(
       'Content could not be reviewed right now. Please try again.'
     );
+  });
+
+  /**
+   * A charged BAD_REQUEST is a client fault to the error classifier, so nothing downstream logs
+   * it. Without this log a scan that throws on every write — e.g. a malformed cached list entry —
+   * is charged to every caller and invisible to us. Logged once, at error severity, with the
+   * error's message and never the user's text; still unescalated.
+   */
+  it('logs a non-block guard throw once at error severity, without the user text', async () => {
+    throwOnBlockedUserContent.mockRejectedValue(new TypeError('Cannot read properties of null'));
+
+    const error = await assertSharedTextSafe(input).catch((e) => e);
+
+    expect(isEscalatedServerFault(error)).toBe(false);
+    const errorLogs = loggingMock.logToAxiom.mock.calls.filter(
+      ([entry]) => (entry as { type?: string })?.type === 'error'
+    );
+    expect(errorLogs).toHaveLength(1);
+    expect(errorLogs[0][0]).toEqual({
+      name: 'app-shared-content-scan-failed',
+      type: 'error',
+      message: 'Shared-text blocklist scan threw; write refused and charged',
+      details: {
+        surface: 'appSharedStorage',
+        errorName: 'TypeError',
+        errorMessage: 'Cannot read properties of null',
+      },
+    });
+  });
+
+  it('logs nothing for a real block or a clean pass', async () => {
+    await assertSharedTextSafe(input);
+    blockWith('link');
+    await assertSharedTextSafe(input).catch(() => undefined);
+
+    expect(loggingMock.logToAxiom).not.toHaveBeenCalled();
   });
 
   it.each(['link', 'pattern'] as const)('a real %s block is NOT escalated', async (kind) => {
