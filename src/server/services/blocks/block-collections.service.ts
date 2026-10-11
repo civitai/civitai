@@ -216,9 +216,9 @@ export async function getModelRestrictedImageIds(imageIds: number[]): Promise<Se
  * thumbnail on a SFW-domain / region-restricted token would leak mature media.
  *
  * The nsfw test is BITWISE (`nsfwLevel & browsingLevel != 0`, which also refuses
- * an unrated 0, as `getAllImages` does for a non-owner), applied IN the
- * WHERE so `DISTINCT ON (collectionId)` picks the newest *permitted* item per
- * collection (filtering after `distinct` would drop the cover entirely). Returns
+ * an unrated 0, as `getAllImages` does for a non-owner), applied INSIDE the
+ * per-collection `LATERAL ... LIMIT 1` so the limit picks the newest *permitted*
+ * item (filtering after the limit would drop the cover entirely). Returns
  * a Map keyed by collectionId; a collection with no permitted item is absent
  * (→ placeholder tile).
  *
@@ -237,29 +237,36 @@ export async function getFallbackCoverImages(
   const rows = await dbRead.$queryRaw<
     { collectionId: number; url: string | null; type: string | null; nsfwLevel: number | null }[]
   >`
-    SELECT DISTINCT ON (ci."collectionId")
-      ci."collectionId" as "collectionId",
-      i."url" as "url",
-      i."type"::text as "type",
-      i."nsfwLevel" as "nsfwLevel"
-    FROM "CollectionItem" ci
-    JOIN "Image" i ON i."id" = ci."imageId"
-    JOIN "Post" p ON p."id" = i."postId"
-    WHERE ci."collectionId" IN (${Prisma.join(collectionIds)})
-      AND ci."status" = ${CollectionItemStatus.ACCEPTED}::"CollectionItemStatus"
-      AND (i."nsfwLevel" & ${browsingLevel}) != 0
-      AND i."ingestion" = 'Scanned'
-      AND i."needsReview" IS NULL
-      AND i."poi" != TRUE
-      AND i."minor" != TRUE
-      AND i."acceptableMinor" != TRUE
-      AND i."tosViolation" != TRUE
-      AND i."blockedFor" IS NULL
-      AND p."publishedAt" < now()
-      AND p."availability" != 'Private'
-      -- Same restricted-base-model condition getAllImages applies to every row.
-      AND ((i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) = 0 OR NOT i."modelRestricted")
-    ORDER BY ci."collectionId", ci."createdAt" DESC
+    SELECT
+      c."collectionId" as "collectionId",
+      cover."url" as "url",
+      cover."type" as "type",
+      cover."nsfwLevel" as "nsfwLevel"
+    FROM unnest(ARRAY[${Prisma.join(collectionIds)}]::int[]) AS c("collectionId")
+    CROSS JOIN LATERAL (
+      SELECT i."url", i."type"::text as "type", i."nsfwLevel"
+      FROM "CollectionItem" ci
+      JOIN "Image" i ON i."id" = ci."imageId"
+      JOIN "Post" p ON p."id" = i."postId"
+      WHERE ci."collectionId" = c."collectionId"
+        AND ci."status" = ${CollectionItemStatus.ACCEPTED}::"CollectionItemStatus"
+        AND (i."nsfwLevel" & ${browsingLevel}) != 0
+        AND i."ingestion" = 'Scanned'
+        AND i."needsReview" IS NULL
+        AND i."poi" != TRUE
+        AND i."minor" != TRUE
+        AND i."acceptableMinor" != TRUE
+        AND i."tosViolation" != TRUE
+        AND i."blockedFor" IS NULL
+        AND p."publishedAt" < now()
+        AND p."availability" != 'Private'
+        -- Same restricted-base-model condition getAllImages applies to every row.
+        AND ((i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) = 0 OR NOT i."modelRestricted")
+      -- Walks CollectionItem_collectionId_status_covered ("createdAt" DESC) and stops at
+      -- the first item that passes, per collection.
+      ORDER BY ci."createdAt" DESC
+      LIMIT 1
+    ) cover
   `;
   const map = new Map<number, { url: string | null; type: string | null; nsfwLevel: number }>();
   for (const r of rows) {

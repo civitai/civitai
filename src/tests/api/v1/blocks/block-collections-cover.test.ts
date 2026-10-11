@@ -143,14 +143,13 @@ describe('getFallbackCoverImages (maturity clamp)', () => {
     expect(map.has(12)).toBe(false);
 
     // The raw tagged-template call must carry the browsingLevel (3) as a bound
-    // value and use a bitwise nsfwLevel predicate + DISTINCT ON so the newest
-    // PERMITTED item per collection is selected (not filtered-after-distinct).
+    // value and use a bitwise nsfwLevel predicate. Which item each collection gets
+    // (the newest PERMITTED one) is pinned against Postgres in
+    // block-collections-fallback-cover.behavior.test.ts.
     const call = mockQueryRaw.mock.calls[0] as unknown as [TemplateStringsArray, ...unknown[]];
     const [strings, ...values] = call;
     const sql = strings.join(' ? ');
     expect(sql).toContain('"nsfwLevel" &');
-    expect(sql).toContain('DISTINCT ON (ci."collectionId")');
-    expect(sql).toContain('ORDER BY ci."collectionId", ci."createdAt" DESC');
     expect(values).toContain(3);
   });
 
@@ -167,7 +166,7 @@ describe('getFallbackCoverImages (maturity clamp)', () => {
 
     const [strings] = mockQueryRaw.mock.calls[0] as unknown as [TemplateStringsArray, ...unknown[]];
     // The projection, not the WHERE clause: an aliased select of the column.
-    expect(strings.join(' ? ')).toContain('i."nsfwLevel" as "nsfwLevel"');
+    expect(strings.join(' ? ')).toContain('cover."nsfwLevel" as "nsfwLevel"');
   });
 
   it('a NULL nsfwLevel column reads as the real level 0 (unrated), never dropped', async () => {
