@@ -139,7 +139,9 @@ vi.mock('~/server/services/blocks/app-listing-assets.service', () => ({
   ),
 }));
 
-const { approveRequest } = await import('~/server/services/blocks/publish-request.service');
+const { approveRequest, draftTransitionWhere, resetRestoreWhere } = await import(
+  '~/server/services/blocks/publish-request.service'
+);
 
 /** The manifest the NEW version being approved declares. */
 const NEW_MANIFEST = {
@@ -680,5 +682,31 @@ describe('approveRequest (3b-transition) — draft-at-submit transitions the pen
     // Scoped to the submitter (the fixture request's submittedByUserId) — a same-slug
     // draft owned by anyone else cannot match.
     expect(draftProbe!.userId).toBe(4242);
+  });
+});
+
+/**
+ * The moderator's pre-approve rating warning answers "which listing will this approve
+ * re-rate" with the same two `where` builders. These pin that approveRequest's own reads
+ * ARE those builders' output, so the warning cannot drift from the write.
+ */
+describe('approveRequest — its re-rate lookups are the shared where-builders', () => {
+  const whereArgs = () =>
+    db.write.appListing.findFirst.mock.calls.map(
+      (c) => (c[0] as { where?: Record<string, unknown> })?.where ?? {}
+    );
+
+  it('the (3b-transition) draft lookup is draftTransitionWhere(request)', async () => {
+    db.write.appListing.updateMany.mockResolvedValue({ count: 1 });
+    await approveRequest({ publishRequestId: 'req_1', reviewerUserId: 9 });
+    expect(whereArgs()).toContainEqual(
+      draftTransitionWhere({ slug: 'cool-app', submittedByUserId: 4242 })
+    );
+  });
+
+  it('the (3b-reset) restore lookup is resetRestoreWhere(appBlockId)', async () => {
+    db.write.appListing.updateMany.mockResolvedValue({ count: 1 });
+    await approveRequest({ publishRequestId: 'req_1', reviewerUserId: 9 });
+    expect(whereArgs()).toContainEqual(resetRestoreWhere('apb_1'));
   });
 });

@@ -164,6 +164,7 @@ import {
 // it is spread into a Prisma `where` below. See `app-listing-owner-unpublish`.
 import { LISTING_STATUS_CHANGING_MODERATION_ACTIONS } from '~/server/services/blocks/app-listing-owner-unpublish';
 import { getRequestDomainColor, isHostForColor } from '~/server/utils/server-domain';
+import { declaredListingRating } from '~/shared/utils/listing-rating-display';
 // Type-only: the runtime `resolveCanGenerateForVersions` is loaded via a
 // dynamic import() inside assertViewerCanGeneratePageResources so the heavy
 // generation-service import graph (image.service → event-engine-common, etc.)
@@ -2972,6 +2973,7 @@ export const blocksRouter = router({
             // W13 P4: `hasPage` for the Open-live run-page link (does the manifest
             // declare a launchable page). PUBLIC subset only — never the raw manifest.
             manifest: true,
+            contentRating: true,
             _count: { select: { userSubscriptions: true } },
           },
         },
@@ -3026,6 +3028,7 @@ export const blocksRouter = router({
         tagline: string | null;
         category: string | null;
         screenshotCount: number;
+        contentRating: string | null;
         /**
          * The listing's kind, threaded into `computeListingProblems` so the three
          * empty-text problems name the right remedy.
@@ -3052,6 +3055,7 @@ export const blocksRouter = router({
           description: true,
           tagline: true,
           category: true,
+          contentRating: true,
           // Filtered COUNT — only screenshots whose Image is still live. A row
           // whose Image was deleted (imageId → null via onDelete: SetNull) has
           // no displayable asset, so it must not inflate the count, else the
@@ -3075,6 +3079,7 @@ export const blocksRouter = router({
             tagline: l.tagline,
             category: l.category,
             screenshotCount: l._count.screenshots,
+            contentRating: l.contentRating ?? null,
           });
       }
     }
@@ -3150,6 +3155,13 @@ export const blocksRouter = router({
               description: listing.description,
               tagline: listing.tagline,
               category: listing.category,
+              status: listing.status,
+              contentRating: listing.contentRating,
+              declaredContentRating: declaredListingRating({
+                kind: listing.kind,
+                appRating: r.appBlock?.contentRating,
+                listingRating: listing.contentRating,
+              }),
             }).problems
           : [],
         // Whether the manifest declares a launchable page (drives the Open-live →
