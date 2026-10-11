@@ -171,14 +171,15 @@ describe('TeamRoster cards', () => {
   it("drops the viewer's own card once they opt out, and ranks the rest with no gap", () => {
     state.user = { id: 1 };
     state.status = { optedIn: false, listedTeam: null };
+    // The two behind the viewer tie: ranked without the viewer they are both #1, not #2.
     const el = render([
       member(1, { hatCount: 9 }),
       member(2, { hatCount: 8 }),
-      member(3, { hatCount: 7 }),
+      member(3, { hatCount: 8 }),
       member(4, { hatCount: 6 }),
     ]);
     expect(el.textContent).not.toContain('user1');
-    expect(ranksIn(podium(el))).toEqual(['1', '2', '3']);
+    expect(ranksIn(podium(el))).toEqual(['1', '1', '3']);
     expect(el.textContent).toContain('user4');
   });
 
@@ -255,12 +256,18 @@ describe('TeamRoster cards', () => {
     expect(cards.map((c) => all(c, 'roster-new').length)).toEqual([1, 0, 0, 1, 0]);
   });
 
-  it('underlines the stat the roster is sorted by', () => {
+  it.each([
+    ['hats', 'hats'],
+    ['points', 'points'],
+    ['newest', 'days on team'],
+  ])('underlines the stat the roster is sorted by: %s', (sort, label) => {
     const el = render([member(1, { hatCount: 3, points: 50 })]);
+    const input = el.querySelector<HTMLInputElement>(`input[value="${sort}"]`)!;
+    act(() => input.click());
     const card = all(podium(el)!, 'roster-podium-card')[0];
     const active = [...card.querySelectorAll('[data-active]')];
     expect(active).toHaveLength(1);
-    expect(active[0].textContent).toContain('hats');
+    expect(active[0].textContent).toContain(label);
   });
 
   it('puts the gold dot only on the dearest tier', () => {
