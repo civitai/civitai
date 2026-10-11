@@ -4,6 +4,7 @@ import { logToAxiom } from '~/server/logging/client';
 import type { FirstPublishCardInput } from '~/server/schema/creator-journey.schema';
 import {
   FIRST_PUBLISH_CARD_DAYS,
+  HIDDEN_MILESTONE_KEY_PREFIX,
   milestoneKeyOfShareToken,
 } from '~/shared/constants/creator-journey.constants';
 import { ArticleStatus, ModelStatus } from '~/shared/utils/prisma/enums';
@@ -55,7 +56,7 @@ export function maskUnearnedMilestone<T extends MilestoneDefinition>(
   // Keys can name the milestone, so a masked one is keyed by its place in the list it is shown in.
   return {
     ...milestone,
-    key: `hidden:${slot}`,
+    key: `${HIDDEN_MILESTONE_KEY_PREFIX}${slot}`,
     name: '???',
     description: null,
   };

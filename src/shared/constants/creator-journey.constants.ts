@@ -7,6 +7,9 @@ export const HIDDEN_ACHIEVEMENT_PLACEHOLDER = '697cac26-7f27-4205-8a3c-886d31e17
 /** The account score card, where the "how Creator Score is earned" explainer lives. */
 export const CREATOR_SCORE_EXPLAINER_HREF = '/user/account#creator-score';
 
+/** An unearned hidden milestone is sent keyed `hidden:<slot>`, with no name or description. */
+export const HIDDEN_MILESTONE_KEY_PREFIX = 'hidden:';
+
 /** When the nightly job grants activity milestones (UTC); the journey page shows its next run. */
 export const CREATOR_MILESTONE_GRANT_CRON = '20 1 * * *';
 

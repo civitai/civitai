@@ -1,3 +1,4 @@
+import { readFileSync } from 'fs';
 import { describe, expect, it } from 'vitest';
 import {
   CREATOR_MILESTONE_GRANT_CRON,
@@ -19,7 +20,14 @@ describe('nextDailyCronRun', () => {
     expect(() => nextDailyCronRun('20 1 * * 1', new Date())).toThrow('Not a daily cron');
   });
 
-  it('reads the grant job schedule', () => {
-    expect(() => nextDailyCronRun(CREATOR_MILESTONE_GRANT_CRON, new Date())).not.toThrow();
+  // The journey page's unlock time is only right while the job runs on this constant.
+  it('is the schedule the grant job registers with', () => {
+    const job = readFileSync(
+      new URL('../../../server/jobs/grant-creator-milestones.ts', import.meta.url),
+      'utf8'
+    );
+    expect(job).toMatch(
+      /createJob\(\s*'grant-creator-milestones',\s*CREATOR_MILESTONE_GRANT_CRON,\s*async/
+    );
   });
 });

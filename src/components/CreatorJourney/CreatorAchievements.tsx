@@ -15,6 +15,7 @@ import {
 import {
   ACHIEVEMENT_TRACK_STYLES,
   CREATOR_MILESTONE_GRANT_CRON,
+  HIDDEN_MILESTONE_KEY_PREFIX,
   nextDailyCronRun,
 } from '~/shared/constants/creator-journey.constants';
 import type { RouterOutput } from '~/types/router';
@@ -136,13 +137,12 @@ function nextOf(milestones: Milestone[], measure: Measure) {
   return milestones.find((m) => m.measure === measure && !m.earned && m.current < m.threshold);
 }
 
-/** Passed but not granted until the nightly job runs. A masked (hidden) rung never says it was passed. */
+/** A masked hidden rung, which never shows progress, so it cannot say it was passed. */
+const isMasked = (milestone: Milestone) => milestone.key.startsWith(HIDDEN_MILESTONE_KEY_PREFIX);
+
+/** Passed but not granted until the nightly job runs. */
 function isPending(milestone: Milestone) {
-  return (
-    !milestone.earned &&
-    milestone.current >= milestone.threshold &&
-    !milestone.key.startsWith('hidden:')
-  );
+  return !milestone.earned && milestone.current >= milestone.threshold && !isMasked(milestone);
 }
 
 /** The next nightly grant in the viewer's time zone, set after mount so SSR and hydration agree. */
@@ -279,7 +279,7 @@ function MilestoneTile({ milestone, state }: { milestone: Milestone; state: Tile
             earnedLabel(milestone.achievedAt)
           ) : state === 'pending' ? (
             <PendingLabel />
-          ) : milestone.current < milestone.threshold ? (
+          ) : !isMasked(milestone) ? (
             `${numberWithCommas(milestone.current)} / ${numberWithCommas(milestone.threshold)}`
           ) : (
             `${numberWithCommas(milestone.threshold)} ${copy.unit}`

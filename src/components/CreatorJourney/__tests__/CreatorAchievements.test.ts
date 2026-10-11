@@ -1,11 +1,12 @@
 // @vitest-environment happy-dom
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as React from 'react';
 import type { act as actType } from 'react-dom/test-utils';
 import { createRoot, type Root } from 'react-dom/client';
 import { MantineProvider } from '@mantine/core';
 import { CreatorAchievements, measureHref } from '~/components/CreatorJourney/CreatorAchievements';
 import { buildActivityProgress } from '~/server/services/creator-journey.service';
+import { formatDate } from '~/utils/date-helpers';
 
 const act = (React as unknown as { act: typeof actType }).act;
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -129,14 +130,27 @@ describe('Achievements section', () => {
     expect(tile(el, '1k Followers')?.dataset.state).toBe('progress');
   });
 
+  it('counts a rung reached exactly as pending', () => {
+    const el = render(new Map(), 100);
+    expect(tile(el, '100 Followers')?.dataset.state).toBe('pending');
+  });
+
   // Testers read a passed rung at 60% opacity with no counter as a bug ("10k locked at 47k").
   it('tells a pending tile when it unlocks, in local time, at full opacity', () => {
-    const el = render(new Map(), 150);
-    const pending = tile(el, '100 Followers');
-    expect(pending?.textContent).toMatch(/Unlocks at the next update, \d{1,2}:\d{2} (AM|PM)$/);
-    // Class-level only: component tests load no stylesheet, so nothing here measures opacity.
-    expect(pending?.className.split(' ')).not.toContain('opacity-60');
-    expect(tile(el, '1k Followers')?.textContent).not.toContain('Unlocks');
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      // The job runs at 01:20 UTC, so at 01:00 UTC the next update is twenty minutes away.
+      vi.setSystemTime(new Date('2026-10-11T01:00:00Z'));
+      const nextRun = formatDate(new Date('2026-10-11T01:20:00Z'), 'h:mm A');
+      const el = render(new Map(), 150);
+      const pending = tile(el, '100 Followers');
+      expect(pending?.textContent).toMatch(new RegExp(`Unlocks at the next update, ${nextRun}$`));
+      // Class-level only: component tests load no stylesheet, so nothing here measures opacity.
+      expect(pending?.className.split(' ')).not.toContain('opacity-60');
+      expect(tile(el, '1k Followers')?.textContent).not.toContain('Unlocks');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('shows a counter on every locked rung, not only the next one', () => {
@@ -152,21 +166,39 @@ describe('Achievements section', () => {
     expect(el.querySelectorAll('[data-state="pending"]')).toHaveLength(definitions.length);
     expect(el.textContent).toContain('Closest next');
     expect(el.textContent).toMatch(/First Model: Unlocks at the next update/);
+    // The card's artless hexagon: a progress one is tinted with the accent, a pending one grey.
+    const cardHex = [...el.querySelectorAll<HTMLElement>('[aria-hidden]')].find(
+      (node) => node.style.height === '72px'
+    );
+    expect(cardHex?.className.split(' ')).toContain('bg-gray-3');
+    expect(cardHex?.style.background).toBe('');
   });
 
-  it('never marks a hidden milestone pending', () => {
-    const hidden = { ...definition('create:models-1', 1, 'Secret First'), hidden: true };
+  // A passed rung reading differently from an unpassed one would say a secret was passed.
+  it('never marks a hidden milestone pending, nor shows its progress', () => {
+    const hidden = (key: string, threshold: number) => ({
+      ...definition(key, threshold, 'Secret'),
+      hidden: true,
+    });
     const activity = {
-      ...buildActivityProgress([hidden], new Map(), {
-        models: 3,
-        articles: 0,
-        downloads: 0,
-        followers: 0,
-        reactions: 0,
-        revenue: 0,
-        votes: 0,
-        wins: 0,
-      }),
+      ...buildActivityProgress(
+        [
+          hidden('create:models-1', 1),
+          hidden('create:models-5', 5),
+          hidden('create:models-25', 25),
+        ],
+        new Map(),
+        {
+          models: 3,
+          articles: 0,
+          downloads: 0,
+          followers: 0,
+          reactions: 0,
+          revenue: 0,
+          votes: 0,
+          wins: 0,
+        }
+      ),
       winBreakdown: { challenges: 0, crucibles: 0 },
     };
     container = document.createElement('div');
@@ -181,9 +213,16 @@ describe('Achievements section', () => {
         )
       )
     );
-    expect(tile(container, '???')?.dataset.state).toBe('locked');
+    // The next hidden rung (5) is in progress, as before; the passed one reads as the unreached one.
+    const [passed, next, unreached] = [...container.querySelectorAll<HTMLElement>('[data-state]')];
+    expect([passed, next, unreached].map((t) => t?.dataset.state)).toEqual([
+      'locked',
+      'progress',
+      'locked',
+    ]);
+    expect(passed?.textContent).toBe('1???1 models');
+    expect(unreached?.textContent).toBe('25???25 models');
     expect(container.textContent).not.toContain('Unlocks');
-    expect(container.textContent).not.toContain('Closest next');
   });
 });
 
