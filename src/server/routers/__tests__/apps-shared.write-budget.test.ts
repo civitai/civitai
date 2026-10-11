@@ -26,6 +26,8 @@ const {
   mockIsRevoked,
   mockIsFlipt,
   mockFindBlocked,
+  mockThrowOnBlocked,
+  mockAudit,
 } = vi.hoisted(() => {
   type QueryFn = (
     sql: string,
@@ -48,6 +50,11 @@ const {
     ),
     mockIsFlipt: vi.fn<(flag: string) => Promise<boolean>>(async () => false),
     mockFindBlocked: vi.fn<() => Promise<unknown[]>>(async () => []),
+    mockThrowOnBlocked: vi.fn<
+      (content: unknown, options: { onBlocked?: (kind: string) => never }) => Promise<void>
+    >(async () => undefined),
+    // The external moderation call — counted to measure how many runs a caller can buy.
+    mockAudit: vi.fn<() => Promise<void>>(async () => undefined),
   };
 });
 
@@ -70,7 +77,8 @@ vi.mock('~/server/utils/shared-storage-rate-limit', async (importOriginal) => ({
   checkSharedWithdrawRateLimit: async () => ({ allowed: true }),
 }));
 vi.mock('~/server/services/blocklist.service', () => ({
-  throwOnBlockedUserContent: async () => undefined,
+  throwOnBlockedUserContent: (content: unknown, options: { onBlocked?: (kind: string) => never }) =>
+    mockThrowOnBlocked(content, options),
   findBlockedUserContent: () => mockFindBlocked(),
   stripBenignPhrases: async (text: string) => text,
 }));
@@ -81,7 +89,7 @@ vi.mock('~/server/flipt/client', async (importOriginal) => ({
 }));
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: { insert: async () => undefined } }));
 vi.mock('~/server/services/orchestrator/promptAuditing', () => ({
-  auditPromptServer: async () => undefined,
+  auditPromptServer: () => mockAudit(),
 }));
 vi.mock('~/server/services/block-revocation.service', () => ({
   BlockRevocation: {
@@ -145,6 +153,8 @@ beforeEach(() => {
   dbMock.dbRead.account.count.mockResolvedValue(0);
   mockIsFlipt.mockResolvedValue(false);
   mockFindBlocked.mockResolvedValue([]);
+  mockThrowOnBlocked.mockResolvedValue(undefined);
+  mockAudit.mockResolvedValue(undefined);
   mockWritePath({});
 });
 
@@ -152,6 +162,16 @@ afterEach(() => {
   expect(lua.errors).toEqual([]);
   vi.useRealTimers();
 });
+
+/** Whether a serialized value holds a NUL in any key or string (decoded, not pattern-matched). */
+function holdsNul(serialized: string) {
+  let found = false;
+  JSON.parse(serialized, (key, value: unknown) => {
+    if (key.includes('\0') || (typeof value === 'string' && value.includes('\0'))) found = true;
+    return value;
+  });
+  return found;
+}
 
 /** Append/update data path: row count, quota, the existing row, and the UPDATE's row count. */
 function mockWritePath({
@@ -163,8 +183,11 @@ function mockWritePath({
   existingRow?: boolean;
   updatedRows?: number;
 }) {
-  mockPool.query.mockImplementation(async (sql: string) => {
+  mockPool.query.mockImplementation(async (sql: string, params?: unknown[]) => {
     if (sql.includes('count(*)')) return { rows: [{ n: String(userRows) }], rowCount: 1 };
+    // The stored-size probe's `$2::jsonb` cast, as Postgres answers a NUL (measured: 22P05).
+    if (sql.includes('.quota') && holdsNul(String(params?.[1])))
+      throw Object.assign(new Error('unsupported Unicode escape sequence'), { code: '22P05' });
     if (sql.includes('.quota'))
       return {
         rows: [{ used_bytes: '0', row_count: '0', stored_size_bytes: 97 }],
@@ -245,7 +268,7 @@ describe('write budget: only landed writes spend it', () => {
     expect(budget()).toEqual([0, 0, 0]);
   });
 
-  it('a 5xx TRPCError before the write lands refunds without charging a rejection', async () => {
+  it('a 5xx TRPCError that is not marked as our fault is charged like any refusal', async () => {
     mockClient.query.mockImplementation(async (sql: string) => {
       if (sql.trim().startsWith('INSERT INTO')) {
         throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'insert failed' });
@@ -253,6 +276,46 @@ describe('write budget: only landed writes spend it', () => {
       return { rows: [], rowCount: 0 };
     });
     expect(await codeOf(appendSharedRow('tok', CLEAN))).toBe('INTERNAL_SERVER_ERROR');
+    expect(budget()).toEqual([0, 0, REJECT_MS]);
+  });
+
+  it('an unknown plain Error thrown after the reserve is charged, not refunded', async () => {
+    mockClient.query.mockImplementation(async (sql: string) => {
+      if (sql.trim().startsWith('INSERT INTO')) throw new Error('something unexpected');
+      return { rows: [], rowCount: 0 };
+    });
+    await expect(appendSharedRow('tok', CLEAN)).rejects.toThrow('something unexpected');
+    expect(budget()).toEqual([0, 0, REJECT_MS]);
+  });
+
+  it('an update whose UPDATE statement throws a plain Error is charged', async () => {
+    mockClient.query.mockImplementation(async (sql: string) => {
+      if (sql.trim().startsWith('UPDATE')) throw new Error('something unexpected');
+      return { rows: [], rowCount: 0 };
+    });
+    await expect(updateSharedRow('tok', 'ROW-1', CLEAN)).rejects.toThrow('something unexpected');
+    expect(budget()).toEqual([0, 0, REJECT_MS]);
+  });
+
+  it.each(['BEGIN', 'SET LOCAL', 'COMMIT'])(
+    'a failed %s (transaction plumbing) refunds free on both append and update',
+    async (statement) => {
+      mockClient.query.mockImplementation(async (sql: string) => {
+        if (sql.startsWith(statement)) throw new Error('connection reset');
+        if (sql.trim().startsWith('UPDATE')) return { rows: [], rowCount: 1 };
+        return { rows: [], rowCount: 0 };
+      });
+      await expect(appendSharedRow('tok', CLEAN)).rejects.toThrow('connection reset');
+      await expect(updateSharedRow('tok', 'ROW-1', CLEAN)).rejects.toThrow('connection reset');
+      expect(budget()).toEqual([0, 0, 0]);
+    }
+  );
+
+  it('failing to acquire a connection refunds free', async () => {
+    mockPool.connect.mockRejectedValueOnce(new Error('pool exhausted'));
+    mockPool.connect.mockRejectedValueOnce(new Error('pool exhausted'));
+    await expect(appendSharedRow('tok', CLEAN)).rejects.toThrow('pool exhausted');
+    await expect(updateSharedRow('tok', 'ROW-1', CLEAN)).rejects.toThrow('pool exhausted');
     expect(budget()).toEqual([0, 0, 0]);
   });
 
@@ -266,6 +329,29 @@ describe('write budget: only landed writes spend it', () => {
       message: 'Content could not be reviewed right now. Please try again.',
     });
     expect(budget()).toEqual([0, 0, 0]);
+  });
+
+  it('the title/body blocklist read failing is refunded free, with a retry message', async () => {
+    mockThrowOnBlocked.mockRejectedValue(new Error('redis unreachable'));
+    await expect(appendSharedRow('tok', CLEAN)).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: 'Content could not be reviewed right now. Please try again.',
+    });
+    await expect(updateSharedRow('tok', 'ROW-1', CLEAN)).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+    });
+    expect(budget()).toEqual([0, 0, 0]);
+  });
+
+  it('a real blocked link in the title is still charged a rejection', async () => {
+    mockThrowOnBlocked.mockImplementation(async (_content, options) => {
+      options.onBlocked?.('link');
+    });
+    await expect(appendSharedRow('tok', CLEAN)).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: 'Content contains a blocked link',
+    });
+    expect(budget()).toEqual([0, 0, REJECT_MS]);
   });
 
   it('a write that LANDED and then threw keeps its token spent', async () => {
@@ -347,34 +433,139 @@ describe('write budget: refusals', () => {
   });
 });
 
-describe('SEAM: a write-budget refusal through the real tRPC handler', () => {
-  const client = createTRPCClient<typeof appsSharedRouter>({
-    links: [
-      httpLink({
-        url: 'http://localhost/api/trpc',
-        transformer: clientTransformer,
-        fetch: (input, init) =>
-          fetchRequestHandler({
-            endpoint: '/api/trpc',
-            req: new Request(input as RequestInfo, init as RequestInit),
-            router: appsSharedRouter,
-            createContext: () =>
-              ({
-                acceptableOrigin: true,
-                user: undefined,
-                apiKeyId: null,
-                tokenScope: TokenScope.Full,
-                req: { headers: {} },
-                res: { setHeader: () => undefined },
-                cache: { edgeTTL: 0 },
-                features: {},
-                track: undefined,
-              } as never),
-          }),
-      }),
-    ],
+/** The real tRPC handler, so input validation runs exactly as it does for a caller. */
+const client = createTRPCClient<typeof appsSharedRouter>({
+  links: [
+    httpLink({
+      url: 'http://localhost/api/trpc',
+      transformer: clientTransformer,
+      fetch: (input, init) =>
+        fetchRequestHandler({
+          endpoint: '/api/trpc',
+          req: new Request(input as RequestInfo, init as RequestInit),
+          router: appsSharedRouter,
+          createContext: () =>
+            ({
+              acceptableOrigin: true,
+              user: undefined,
+              apiKeyId: null,
+              tokenScope: TokenScope.Full,
+              req: { headers: {} },
+              res: { setHeader: () => undefined },
+              cache: { edgeTTL: 0 },
+              features: {},
+              track: undefined,
+            } as never),
+        }),
+    }),
+  ],
+});
+
+/** A tRPC client call's outcome: 'OK' or the error code the client received. */
+async function trpcCodeOf(p: Promise<unknown>) {
+  return p.then(
+    () => 'OK',
+    (e: unknown) => (e as TRPCClientError<typeof appsSharedRouter>).data?.code ?? 'UNKNOWN'
+  );
+}
+
+describe('write budget: values Postgres cannot store', () => {
+  const NUL_DATA = { ...CLEAN, data: { nested: [{ note: 'a\u0000b' }] } };
+
+  it('200 NUL appends over tRPC are refused 400 before the budget or moderation', async () => {
+    const codes = new Set<string>();
+    for (let i = 0; i < 200; i++) {
+      codes.add(await trpcCodeOf(client.append.mutate({ blockToken: 'tok', value: NUL_DATA })));
+    }
+    expect([...codes]).toEqual(['BAD_REQUEST']);
+    expect(mockAudit).not.toHaveBeenCalled();
+    expect(lua.hash(KEY)).toBeUndefined();
   });
 
+  it('the refusal names the problem and covers object keys and the title', async () => {
+    const values = [
+      { ...CLEAN, data: { ['k\u0000']: 1 } },
+      { title: 'nul \u0000 in title' },
+      { ...CLEAN, body: 'nul \u0000 in body' },
+    ];
+    for (const value of values) {
+      const err = await client.append.mutate({ blockToken: 'tok', value }).then(
+        () => undefined,
+        (e: unknown) => e as TRPCClientError<typeof appsSharedRouter>
+      );
+      expect(err?.data?.code).toBe('BAD_REQUEST');
+      expect(err?.message).toContain('value contains a NUL character or an unpaired surrogate');
+    }
+    expect(mockAudit).not.toHaveBeenCalled();
+  });
+
+  it('an unpaired surrogate is refused too; a paired one and a spelled-out \\u0000 are not', async () => {
+    // The last two follow a literal backslash (an odd run), so the escape is still a real one.
+    for (const s of ['a\ud800b', 'a\udc00', '\udfff', 'a\\\u0000', '\\\ud800']) {
+      expect(
+        await trpcCodeOf(
+          client.append.mutate({ blockToken: 'tok', value: { ...CLEAN, data: { s } } })
+        )
+      ).toBe('BAD_REQUEST');
+    }
+    expect(mockAudit).not.toHaveBeenCalled();
+    for (const s of ['\ud83d\ude00', '\\u0000', '\\\\u0000']) {
+      expect(
+        await trpcCodeOf(
+          client.append.mutate({ blockToken: 'tok', value: { ...CLEAN, data: { s } } })
+        )
+      ).toBe('OK');
+    }
+    // Positive control for the `not.toHaveBeenCalled()` checks in this block.
+    expect(mockAudit).toHaveBeenCalledTimes(3);
+  });
+
+  it('called directly, a NUL after a literal backslash is refused before moderation', async () => {
+    expect(await codeOf(appendSharedRow('tok', { ...CLEAN, data: { s: 'a\\\u0000' } }))).toBe(
+      'BAD_REQUEST'
+    );
+    expect(mockAudit).not.toHaveBeenCalled();
+  });
+
+  it('a plain error from the stored-size probe itself is charged on append and update', async () => {
+    mockPool.query.mockImplementation(async (sql: string) => {
+      if (sql.includes('.quota')) throw new Error('probe failed');
+      if (sql.includes('count(*)')) return { rows: [{ n: '0' }], rowCount: 1 };
+      if (sql.includes('author_user_id, size_bytes'))
+        return { rows: [{ author_user_id: 42, size_bytes: 89 }], rowCount: 1 };
+      return { rows: [], rowCount: 0 };
+    });
+    await expect(appendSharedRow('tok', CLEAN)).rejects.toThrow('probe failed');
+    await expect(updateSharedRow('tok', 'ROW-1', CLEAN)).rejects.toThrow('probe failed');
+    expect(budget()).toEqual([0, 0, 2 * REJECT_MS]);
+  });
+
+  it('update over tRPC refuses a NUL the same way', async () => {
+    expect(
+      await trpcCodeOf(client.update.mutate({ blockToken: 'tok', key: 'ROW-1', value: NUL_DATA }))
+    ).toBe('BAD_REQUEST');
+    expect(mockAudit).not.toHaveBeenCalled();
+  });
+
+  // A caller that skips the schema (the functions are exported) still meets the router's own copy
+  // of the check, before moderation; the refusal is charged like any other.
+  it('called directly, 200 NUL appends cost no moderation and are refused within the rejection capacity', async () => {
+    const codes: string[] = [];
+    for (let i = 0; i < 200; i++) codes.push(await codeOf(appendSharedRow('tok', NUL_DATA)));
+    expect(codes.slice(0, 10)).toEqual(Array(10).fill('BAD_REQUEST'));
+    expect(new Set(codes.slice(10))).toEqual(new Set(['TOO_MANY_REQUESTS']));
+    expect(mockAudit).not.toHaveBeenCalled();
+    expect(budget()).toEqual([0, 0, 10 * REJECT_MS]);
+  });
+
+  it('called directly, a NUL update is refused before moderation and charged', async () => {
+    expect(await codeOf(updateSharedRow('tok', 'ROW-1', NUL_DATA))).toBe('BAD_REQUEST');
+    expect(mockAudit).not.toHaveBeenCalled();
+    expect(budget()).toEqual([0, 0, REJECT_MS]);
+  });
+});
+
+describe('SEAM: a write-budget refusal through the real tRPC handler', () => {
   it('data.rateLimit carries the wait derived from the binding bucket', async () => {
     for (let i = 0; i < 10; i++) await appendSharedRow('tok', CLEAN);
     // 137.4s after the burst drained: the next token is 222.6s away → 223s.

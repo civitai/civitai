@@ -170,8 +170,9 @@ export async function checkSubListingSyncRateLimit(
 //
 // Token buckets: the budget refills continuously, and only writes that LAND spend it — the
 // caller reserves a token before moderation and releases it if the write never lands
-// (civitai/civitai-app-starters#597). Writes refused as the caller's fault are charged to a
-// separate rejection bucket, capping moderation spent on writes that never land.
+// (civitai/civitai-app-starters#597). A write that fails for any reason other than a marked
+// server fault is also charged to a separate rejection bucket, capping moderation spent on
+// writes that never land (the router's `withSharedWriteBudget` decides which failures those are).
 
 export type TokenBucketParams = { capacity: number; refillIntervalMs: number };
 export type SharedWriteBudgetParams = {
@@ -189,6 +190,19 @@ export const SHARED_WRITE_BUDGET: SharedWriteBudgetParams = {
   // (one every ~29 min), so exhausting it costs ~29 min, not up to 24h.
   daily: { capacity: 50, refillIntervalMs: DAY_MS / 50 },
   // Writes refused after the reserve (moderation block, row cap, quota, NOT_FOUND, …).
+  //
+  // DEBT: a rejection is charged when the refused write RETURNS, so concurrent writes that all
+  // passed the reserve are all charged, and the bucket can go below empty, to a floor of
+  // -capacity (enforced in the script). Writes in flight at once are bounded by the burst
+  // capacity (plus any burst refill during a slow write).
+  //   - Clamping at empty instead would let every refilled token admit a fresh wave of
+  //     burst-capacity refused writes: (DAY_MS / refillIntervalMs) × burst capacity moderation
+  //     runs per day.
+  //   - With the debt, charges per day are at most
+  //     capacity + DAY_MS / refillIntervalMs + (burst capacity - 1).
+  // The cost: a caller in debt d waits (d + 1) × refillIntervalMs for the next write. Only a
+  // caller with more refused writes in flight than tokens left goes into debt at all, and the
+  // floor caps the wait at (capacity + 1) × refillIntervalMs.
   rejections: { capacity: 10, refillIntervalMs: 30 * 60 * 1000 },
 };
 
@@ -227,7 +241,8 @@ else
   full[1] = math.max(full[1] - ivs[1], now)
   full[2] = math.max(full[2] - ivs[2], now)
   if ARGV[8] == '1' then
-    -- Debt is bounded at -capacity so a concurrent burst is repaid, never a permanent lock.
+    -- Debt is kept, bounded at -capacity: a concurrent burst is repaid (not forgiven, see
+    -- SHARED_WRITE_BUDGET.rejections for the cost of each choice), never a permanent lock.
     full[3] = math.min(full[3] + ivs[3], now + 2 * caps[3] * ivs[3])
   end
 end

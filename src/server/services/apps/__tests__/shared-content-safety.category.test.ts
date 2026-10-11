@@ -1,5 +1,6 @@
 import { vi, describe, it, expect, beforeEach } from 'vitest';
 
+import { isEscalatedServerFault } from '~/server/logging/server-fault-override';
 import { assertSharedTextSafe, SharedContentBlockedError } from '../shared-content-safety';
 
 const throwOnBlockedUserContent = vi.hoisted(() =>
@@ -68,15 +69,29 @@ describe('assertSharedTextSafe — how a blocklist rejection is classified', () 
 
   /**
    * The guard reaches redis and Flipt. An infrastructure failure must not escape as a raw 500 on
-   * user input — but it must also not be mistaken for a content block that the router would then
-   * act on. It is reported as a block, deliberately: refusing the write is the safe direction when
-   * we cannot tell whether the text is clean.
+   * user input, so it is still refused — refusing is the safe direction when we cannot tell
+   * whether the text is clean. But the outage is ours: it is escalated to a server fault (which
+   * the shared write budget refunds instead of charging) and says to retry rather than claiming a
+   * blocked link.
    */
-  it('does not let an infrastructure failure escape unwrapped', async () => {
+  it('refuses on an infrastructure failure, escalated as our fault with a retry message', async () => {
     throwOnBlockedUserContent.mockRejectedValue(new Error('redis unreachable'));
 
     const error = await assertSharedTextSafe(input).catch((e) => e);
 
     expect(error).toBeInstanceOf(SharedContentBlockedError);
+    expect(isEscalatedServerFault(error)).toBe(true);
+    expect((error as SharedContentBlockedError).message).toBe(
+      'Content could not be reviewed right now. Please try again.'
+    );
+  });
+
+  it.each(['link', 'pattern'] as const)('a real %s block is NOT escalated', async (kind) => {
+    blockWith(kind);
+
+    const error = await assertSharedTextSafe(input).catch((e) => e);
+
+    expect(error).toBeInstanceOf(SharedContentBlockedError);
+    expect(isEscalatedServerFault(error)).toBe(false);
   });
 });

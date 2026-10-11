@@ -4,7 +4,6 @@ import { resetSharedMocks } from '~/__tests__/mocks';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import {
   checkSharedReportRateLimit,
-  checkSubListingWriteRateLimit,
   checkSharedVoteRateLimit,
   checkSharedWithdrawRateLimit,
   SHARED_REPORT_RATE_LIMIT_WINDOW_SECONDS,
@@ -58,31 +57,6 @@ describe('INVARIANT GUARD: shared-storage rate-limit refusal', () => {
       allowed: false,
       retryAfterSeconds: window,
     });
-  });
-});
-
-describe('INVARIANT GUARD (not regression coverage): the sub-listing write windows', () => {
-  it('allows 30 per hour per (parent, user), then refuses with the bucket TTL', async () => {
-    const counts = new Map<string, number>();
-    redisMock.redis.incrBy.mockImplementation(async (key: string, by: number) => {
-      counts.set(key, (counts.get(key) ?? 0) + by);
-      return counts.get(key);
-    });
-    redisMock.redis.ttl.mockResolvedValue(TTL_SECONDS);
-
-    for (let i = 0; i < 30; i++) {
-      await expect(checkSubListingWriteRateLimit(7, 'apl_fixture')).resolves.toEqual({
-        allowed: true,
-      });
-    }
-    await expect(checkSubListingWriteRateLimit(7, 'apl_fixture')).resolves.toEqual({
-      allowed: false,
-      retryAfterSeconds: TTL_SECONDS,
-    });
-    expect([...counts.keys()].sort()).toEqual([
-      expect.stringMatching(/:sub-listing-write:apl_fixture:7:d$/),
-      expect.stringMatching(/:sub-listing-write:apl_fixture:7:h$/),
-    ]);
   });
 });
 

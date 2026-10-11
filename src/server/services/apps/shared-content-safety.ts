@@ -1,4 +1,5 @@
 import { includesMinor, includesPoi } from '~/utils/metadata/audit';
+import { escalateToServerFault } from '~/server/logging/server-fault-override';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { auditPromptServer } from '~/server/services/orchestrator/promptAuditing';
 
@@ -121,7 +122,11 @@ export async function assertSharedTextSafe(
   // router's decision rather than being flattened here.
   //
   // The outer catch is still load-bearing: the guard reaches redis and Flipt, and an
-  // infrastructure throw from either must not escape as a raw 500 on user input.
+  // infrastructure throw from either must not escape as a raw 500 on user input. It is still
+  // refused (the text was never checked), but escalated to a server fault: the outage is ours,
+  // so the shared write budget refunds it rather than charging the caller a rejection. Category
+  // 'link' because it files no Report and no alert; the retry message reaches shared-storage
+  // callers only (sub-listing callers substitute their own refusal).
   try {
     // `[title, body]`, NOT `combined`: the guard scans values separately so a pattern cannot match
     // across the seam between two independent fields. Handing it the joined string reintroduces
@@ -137,7 +142,12 @@ export async function assertSharedTextSafe(
     });
   } catch (error) {
     if (error instanceof SharedContentBlockedError) throw error;
-    throw new SharedContentBlockedError('link', 'Content contains a blocked link');
+    throw escalateToServerFault(
+      new SharedContentBlockedError(
+        'link',
+        'Content could not be reviewed right now. Please try again.'
+      )
+    );
   }
 
   // C3 — full platform audit (regex + external moderation). isGreen:true forces
