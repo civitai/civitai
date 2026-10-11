@@ -94,26 +94,39 @@ describe('minutesUntilMovable', () => {
 });
 
 describe('coverRequestWidth', () => {
-  it('asks for the box width when the picture is no wider than the 4:5 box', () => {
-    expect(coverRequestWidth({ width: 800, height: 1000 })).toBe(450);
-    expect(coverRequestWidth({ width: 600, height: 1200 })).toBe(450);
+  const meta = (width: unknown, height: unknown) => ({ metadata: { width, height } });
+
+  it('asks for the card width when the picture is no wider than the 4:5 card', () => {
+    expect(coverRequestWidth(meta(800, 1000), 450)).toBe(450);
+    expect(coverRequestWidth(meta(600, 1200), 450)).toBe(450);
   });
 
-  // A 2:1 cover at 450 wide comes back 225 tall and is stretched to fill a 562px-tall box.
+  // A 2:1 cover at 450 wide comes back 225 tall and is stretched to fill a 562px-tall card.
   it('asks for enough width that a wide cover still fills the height', () => {
-    expect(coverRequestWidth({ width: 1000, height: 1000 })).toBe(563);
-    expect(coverRequestWidth({ width: 1600, height: 1000 })).toBe(900);
+    expect(coverRequestWidth(meta(1000, 1000), 450)).toBe(563);
+    expect(coverRequestWidth(meta(1600, 1000), 450)).toBe(900);
+    expect(coverRequestWidth(meta(2000, 1000), 320)).toBe(800);
   });
 
   it('stops at the cap however wide the picture', () => {
-    expect(coverRequestWidth({ width: 2000, height: 1000 })).toBe(1125);
-    expect(coverRequestWidth({ width: 4000, height: 1000 })).toBe(1200);
+    expect(coverRequestWidth(meta(2000, 1000), 450)).toBe(1125);
+    expect(coverRequestWidth(meta(4000, 1000), 450)).toBe(1200);
+  });
+
+  // About 6% of covers have no size in their metadata but do on the image row.
+  it("takes the image row's own size first, then the metadata's", () => {
+    expect(coverRequestWidth({ width: 2000, height: 1000, metadata: null }, 450)).toBe(1125);
+    expect(
+      coverRequestWidth({ width: 2000, height: 1000, metadata: { width: 800, height: 1000 } }, 450)
+    ).toBe(1125);
+    expect(coverRequestWidth({ width: null, height: null, ...meta(2000, 1000) }, 450)).toBe(1125);
   });
 
   it('falls back to the old fixed width without a usable size', () => {
-    expect(coverRequestWidth(null)).toBe(320);
-    expect(coverRequestWidth({})).toBe(320);
-    expect(coverRequestWidth({ width: 2000, height: 0 })).toBe(320);
-    expect(coverRequestWidth({ width: '2000', height: 1000 })).toBe(320);
+    expect(coverRequestWidth({ metadata: null }, 450)).toBe(320);
+    expect(coverRequestWidth({}, 450)).toBe(320);
+    expect(coverRequestWidth(meta(2000, 0), 450)).toBe(320);
+    expect(coverRequestWidth(meta(0, 1000), 450)).toBe(320);
+    expect(coverRequestWidth(meta('2000', 1000), 450)).toBe(320);
   });
 });

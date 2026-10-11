@@ -24,6 +24,7 @@ export function EventContentThumb({
   hat,
   className,
   wornOn,
+  displayWidth = 450,
 }: {
   entityType: string;
   image: (ImageProps & { entityId: number; entityType: string }) | null;
@@ -35,6 +36,8 @@ export function EventContentThumb({
    * its stats, as on a feed card. Without it (a picker's candidates) a click only bursts.
    */
   wornOn?: EventDecorationEntity;
+  /** About how wide the card is drawn at 2x, for the picture request. */
+  displayWidth?: number;
 }) {
   const Icon = TYPE_ICON[entityType as keyof typeof TYPE_ICON] ?? IconPhoto;
   const card = (
@@ -54,7 +57,7 @@ export function EventContentThumb({
                 alt=""
                 type={image.type}
                 metadata={image.metadata}
-                width={coverRequestWidth(image.metadata)}
+                width={coverRequestWidth(image, displayWidth)}
                 className="size-full object-cover"
               />
             ) : (

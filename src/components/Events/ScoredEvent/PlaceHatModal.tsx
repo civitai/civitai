@@ -95,6 +95,8 @@ export default function PlaceHatModal({
                   <EventContentThumb
                     entityType={c.entityType}
                     image={c.image}
+                    // Four to a row in the modal: a smaller card than Your hats'.
+                    displayWidth={320}
                     hat={(other?.data ?? (current ? hat.data : undefined)) as EventDecorationData}
                   />
                   {c.title && (

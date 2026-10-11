@@ -48,9 +48,9 @@ vi.mock('~/components/Events/events.utils', async (importOriginal) => ({
   useTeamColor: () => () => 'pink',
 }));
 vi.mock('~/components/Events/ScoredEvent/EventContentThumb', () => ({
-  // Records which tile wears a hat, by the hat's art.
-  EventContentThumb: ({ hat }: { hat?: { url: string } }) =>
-    hat ? React.createElement('span', { 'data-hat': hat.url }) : null,
+  // Records which tile wears a hat, by the hat's art, and how wide a picture it asks for.
+  EventContentThumb: ({ hat, displayWidth }: { hat?: { url: string }; displayWidth?: number }) =>
+    React.createElement('span', { 'data-hat': hat?.url, 'data-display-width': displayWidth }),
 }));
 vi.mock('~/components/EdgeMedia/EdgeMedia', () => ({ EdgeMedia: () => null }));
 vi.mock('~/components/Countdown/Countdown', () => ({ Countdown: () => null }));
@@ -144,6 +144,17 @@ describe('PlaceHatModal tiles', () => {
       [...b.querySelectorAll('p')].map((p) => p.textContent)
     );
     expect(labels).toEqual([[], ['My LoRA']]);
+  });
+
+  // Four to a row in a modal, its cards are smaller than Your hats': it asks for less picture.
+  it('asks for pictures sized to its own smaller cards', () => {
+    placeable = [{ entityType: 'Image', entityId: 500, title: null, image: null }];
+    const modal = render(
+      React.createElement(PlaceHatModal, { event: 'birthday2026', hat: hat(), myHats: [hat()] })
+    );
+    expect(modal.querySelector('[data-display-width]')?.getAttribute('data-display-width')).toBe(
+      '320'
+    );
   });
 
   // A feed-sized hat on the first tile reaches about 24px past it at rest and twice that grown;

@@ -132,8 +132,9 @@ describe('EventContentThumb wears its hat as a feed card does', () => {
 });
 
 describe('EventContentThumb asks for a picture that fills its card', () => {
-  const image = (metadata: Record<string, unknown> | null) =>
+  const image = (metadata: Record<string, unknown> | null, size: Record<string, unknown> = {}) =>
     ({
+      ...size,
       id: 5,
       url: 'aa5ee01e-dfee-458a-9431-16c5e8656754',
       name: 'cover',
@@ -142,9 +143,16 @@ describe('EventContentThumb asks for a picture that fills its card', () => {
       entityId: 5,
       entityType: 'Article',
     } as unknown as React.ComponentProps<typeof EventContentThumb>['image']);
-  const srcFor = (metadata: Record<string, unknown> | null) =>
+  const srcFor = (
+    metadata: Record<string, unknown> | null,
+    { size, displayWidth }: { size?: Record<string, unknown>; displayWidth?: number } = {}
+  ) =>
     render(
-      React.createElement(EventContentThumb, { entityType: 'Article', image: image(metadata) })
+      React.createElement(EventContentThumb, {
+        entityType: 'Article',
+        image: image(metadata, size),
+        displayWidth,
+      })
     ).querySelector('img')!.src;
 
   // A 2:1 article cover cropped into the 4:5 card: 320 wide came back 160 tall and blurred.
@@ -154,6 +162,15 @@ describe('EventContentThumb asks for a picture that fills its card', () => {
 
   it('asks for a portrait at the card width', () => {
     expect(srcFor({ width: 800, height: 1000 })).toContain('width=450');
+  });
+
+  it("reads the image row's size when the metadata has none", () => {
+    expect(srcFor(null, { size: { width: 2000, height: 1000 } })).toContain('width=1200');
+  });
+
+  // The hat picker's cards are smaller: a 2:1 cover needs 800 there, not 1200.
+  it('sizes the request to the width the caller draws the card at', () => {
+    expect(srcFor({ width: 2000, height: 1000 }, { displayWidth: 320 })).toContain('width=800');
   });
 
   it('keeps the old width when the picture has no size', () => {
