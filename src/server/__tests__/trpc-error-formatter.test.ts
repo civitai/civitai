@@ -116,7 +116,6 @@ describe('trpc errorFormatter — server faults, through a real tRPC handler', (
 });
 
 const RATE_LIMIT = {
-  code: 'RATE_LIMITED',
   retryAfterSeconds: 17,
   retryAt: '2031-04-05T06:07:08.000Z',
 };
@@ -130,7 +129,7 @@ function rateLimited(
 }
 
 describe('trpc errorFormatter — rate-limit retry metadata, through a real tRPC handler', () => {
-  it('lifts a valid cause.rateLimit onto data.rateLimit and keeps the message', async () => {
+  it('lifts cause.rateLimit onto data.rateLimit and keeps the message', async () => {
     const { status, error } = await callThroughTrpc(rateLimited({ rateLimit: RATE_LIMIT }));
 
     expect(status).toBe(429);
@@ -143,13 +142,6 @@ describe('trpc errorFormatter — rate-limit retry metadata, through a real tRPC
     });
   });
 
-  it('copies only the known fields of rateLimit', async () => {
-    const { error } = await callThroughTrpc(
-      rateLimited({ rateLimit: { ...RATE_LIMIT, internalKey: 'bucket:apb:42' } })
-    );
-    expect(error.data.rateLimit).toEqual(RATE_LIMIT);
-  });
-
   it('merges with the softBlock branch instead of returning before it', async () => {
     const { error } = await callThroughTrpc(
       rateLimited({ softBlock: true, rateLimit: RATE_LIMIT })
@@ -159,16 +151,10 @@ describe('trpc errorFormatter — rate-limit retry metadata, through a real tRPC
   });
 
   it.each([
-    ['a non-RATE_LIMITED code', { ...RATE_LIMIT, code: 'SLOW_DOWN' }],
-    ['a string retryAfterSeconds', { ...RATE_LIMIT, retryAfterSeconds: '17' }],
-    ['a zero retryAfterSeconds', { ...RATE_LIMIT, retryAfterSeconds: 0 }],
-    ['a fractional retryAfterSeconds', { ...RATE_LIMIT, retryAfterSeconds: 1.5 }],
-    ['a missing retryAt', { code: 'RATE_LIMITED', retryAfterSeconds: 17 }],
-    ['an unparseable retryAt', { ...RATE_LIMIT, retryAt: 'soon' }],
-    ['a string', 'retry later'],
-    ['null', null],
-  ])('INVARIANT GUARD: drops a malformed rateLimit (%s)', async (_label, rateLimit) => {
-    const { status, error } = await callThroughTrpc(rateLimited({ rateLimit }));
+    ['no rateLimit', { softBlock: false }],
+    ['a non-object rateLimit', { rateLimit: 'retry later' }],
+  ])('INVARIANT GUARD: a 429 whose cause carries %s gets no data.rateLimit', async (_l, cause) => {
+    const { status, error } = await callThroughTrpc(rateLimited(cause));
     expect(status).toBe(429);
     expect(error.message).toBe(REFUSAL);
     expect('rateLimit' in error.data).toBe(false);

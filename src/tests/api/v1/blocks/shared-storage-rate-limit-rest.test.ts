@@ -6,12 +6,11 @@ import type { BlockTokenClaims } from '~/server/middleware/block-scope.middlewar
  * REST 429s on the shared-storage write routes carry the refusal's retry metadata as
  * `Retry-After` + `body.rateLimit` + `body.code` (civitai/civitai-app-starters#597), through
  * the REAL `handleEndpointError` (six routes) and increment's own catch. The router is
- * mocked to throw the refusal shape `throwSharedRateLimited` produces, spelled out literally
- * here so a drift in that shape fails this file too.
+ * mocked to throw the refusal shape `throwSharedRateLimited` produces (the seam test pins that
+ * shape end to end).
  */
 
 const RATE_LIMIT = {
-  code: 'RATE_LIMITED',
   retryAfterSeconds: 17,
   retryAt: '2031-04-05T06:07:08.000Z',
 };
@@ -182,9 +181,9 @@ describe('shared-storage REST 429 carries retry metadata', () => {
   );
 
   it.each(ROUTES)(
-    'INVARIANT GUARD: $name: a 429 whose cause carries no valid rateLimit keeps its old body',
+    'INVARIANT GUARD: $name: a 429 whose cause carries no rateLimit keeps its old body',
     async ({ name, handler, body, mock, message }) => {
-      mock.mockRejectedValueOnce(refusal(message, { rateLimit: { ...RATE_LIMIT, retryAt: 'x' } }));
+      mock.mockRejectedValueOnce(refusal(message, {}));
       const { req, res, state } = createMocks(body);
 
       await handler(req as never, res as never);

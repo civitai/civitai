@@ -75,7 +75,7 @@ export const SHARED_WITHDRAW_RATE_LIMIT_WINDOW_SECONDS = 60;
 
 export type SharedStorageRateLimitResult =
   | { allowed: true }
-  | { allowed: false; retryAfterSeconds: number; retryAt: string };
+  | { allowed: false; retryAfterSeconds: number };
 
 async function checkFixedWindow(
   key: string,
@@ -97,11 +97,7 @@ async function checkFixedWindow(
 
     let retryAfter = await redis.ttl(key as never);
     if (!Number.isFinite(retryAfter) || retryAfter < 1) retryAfter = windowSeconds;
-    return {
-      allowed: false,
-      retryAfterSeconds: retryAfter,
-      retryAt: new Date(Date.now() + retryAfter * 1000).toISOString(),
-    };
+    return { allowed: false, retryAfterSeconds: retryAfter };
   } catch {
     // Fail open — a redis incident must not break shared writes.
     return { allowed: true };

@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as FliptClientModule from '~/server/flipt/client';
 import { TRPCError } from '@trpc/server';
 
@@ -64,7 +64,7 @@ const {
   type RateLimitFn = (
     userId: number,
     appBlockId: string
-  ) => Promise<{ allowed: boolean; retryAfterSeconds?: number; retryAt?: string }>;
+  ) => Promise<{ allowed: boolean; retryAfterSeconds?: number }>;
   const mockClient = {
     query: vi.fn<QueryFn>(async () => ({ rows: [], rowCount: 0 })),
     release: vi.fn(),
@@ -2867,12 +2867,16 @@ describe('shared `data` local moderation', () => {
 
 // civitai/civitai-app-starters#597: a refusal must carry its wait as data, not only as prose.
 describe('rate-limit refusals carry machine-readable retry metadata', () => {
-  // Not any production window, and a retryAt that is NOT now + 17s: the router must forward the
-  // limiter's instant, never recompute its own.
+  // Not any production window. retryAt is derived at the throw site from the clock.
   const RETRY_AFTER = 17;
-  const RETRY_AT = '2031-04-05T06:07:08.000Z';
+  const NOW = Date.parse('2031-04-05T06:07:08.000Z');
+  const RETRY_AT = '2031-04-05T06:07:25.000Z'; // NOW + RETRY_AFTER
   const KEY = 'k-rl-417';
   const VALUE = { title: 'rl title 433' };
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
 
   const OPS: Array<{
     name: string;
@@ -2927,12 +2931,10 @@ describe('rate-limit refusals carry machine-readable retry metadata', () => {
   it.each(OPS)(
     '$name: TOO_MANY_REQUESTS with cause.rateLimit and the prose message unchanged',
     async ({ call, bucket, message }) => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(NOW);
       mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
-      bucket().mockResolvedValueOnce({
-        allowed: false,
-        retryAfterSeconds: RETRY_AFTER,
-        retryAt: RETRY_AT,
-      });
+      bucket().mockResolvedValueOnce({ allowed: false, retryAfterSeconds: RETRY_AFTER });
 
       const err = await call().then(
         () => undefined,
@@ -2944,7 +2946,6 @@ describe('rate-limit refusals carry machine-readable retry metadata', () => {
       expect(trpcError.code).toBe('TOO_MANY_REQUESTS');
       expect(trpcError.message).toBe(message);
       expect((trpcError.cause as { rateLimit?: unknown } | undefined)?.rateLimit).toEqual({
-        code: 'RATE_LIMITED',
         retryAfterSeconds: RETRY_AFTER,
         retryAt: RETRY_AT,
       });

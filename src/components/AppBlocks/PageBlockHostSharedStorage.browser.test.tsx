@@ -6,7 +6,7 @@ import { useDialogStore } from '~/components/Dialog/dialogStore';
 import { renderWithProviders } from '../../../test/component-setup';
 import {
   RATE_LIMIT,
-  RATE_LIMITED_OPS,
+  RATE_LIMIT_OPS,
   rateLimitedClientError,
 } from '../../../test/fixtures/shared-storage-rate-limit';
 import {
@@ -690,10 +690,9 @@ describe('PageBlockHost SHARED storage bridge (Phase 2b cross-user datastore)', 
     replies.stop();
   });
 
-  // ── rate-limit refusals carry structured retry metadata ─────────────────────
   // A real TRPCClientError with `data.rateLimit`, the shape the tRPC error formatter produces;
   // a plain Error has no `data`, so it could never show whether the host forwards it.
-  test.each(RATE_LIMITED_OPS)(
+  test.each(RATE_LIMIT_OPS)(
     '$type rate-limit refusal posts error + rateLimit (no hang)',
     async ({ type, mock, payload, message, reply }) => {
       mocks[mock].mockRejectedValue(rateLimitedClientError(message));

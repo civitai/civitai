@@ -6,7 +6,6 @@ import { TRPCClientError } from '@trpc/client';
  * says 1849s against a `retryAfterSeconds` of 17, so a host that parsed the message would fail.
  */
 export const RATE_LIMIT = {
-  code: 'RATE_LIMITED',
   retryAfterSeconds: 17,
   retryAt: '2031-04-05T06:07:08.000Z',
 };
@@ -21,7 +20,7 @@ export function rateLimitedClientError(message: string) {
   });
 }
 
-export const RATE_LIMITED_OPS = [
+export const RATE_LIMIT_OPS = [
   {
     type: 'SHARED_APPEND',
     mock: 'append',

@@ -4,7 +4,7 @@ import { page } from 'vitest/browser';
 import { renderWithProviders } from '../../../test/component-setup';
 import {
   RATE_LIMIT,
-  RATE_LIMITED_OPS,
+  RATE_LIMIT_OPS,
   rateLimitedClientError,
 } from '../../../test/fixtures/shared-storage-rate-limit';
 
@@ -483,10 +483,10 @@ describe('IframeHost ESTIMATE_WORKFLOW → ESTIMATE_RESULT (model.sidebar_top)',
 
 describe('IframeHost shared-storage rate-limit refusals (model.sidebar_top)', () => {
   beforeEach(() => {
-    for (const { mock } of RATE_LIMITED_OPS) mocks[mock].mockReset();
+    for (const { mock } of RATE_LIMIT_OPS) mocks[mock].mockReset();
   });
 
-  test.each(RATE_LIMITED_OPS)(
+  test.each(RATE_LIMIT_OPS)(
     '$type rate-limit refusal posts error + rateLimit (no hang)',
     async ({ type, mock, payload, message, reply }) => {
       mocks[mock].mockRejectedValue(rateLimitedClientError(message));
