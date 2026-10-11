@@ -224,15 +224,21 @@ export function buildActivityProgress(
   return { milestones, closestNext };
 }
 
+const secretSelect = { ...withArt, unlisted: true } as const;
+
 /**
  * Hidden milestones outside the score and activity sections. An unearned one shows its hint and
- * nothing that would tell it apart from the others.
+ * nothing that would tell it apart from the others. An unlisted one is left out until earned, so it
+ * is neither a tile nor counted; it goes before numbering so the slot keys keep no gap where it was.
  */
 export function buildSecretMilestones(
-  definitions: DefinitionWithArt[],
+  definitions: (DefinitionWithArt & { unlisted: boolean })[],
   held: Map<string, Date | null>
 ) {
-  return definitions.map((definition, index) => {
+  const listed = definitions.filter(
+    (definition) => !definition.unlisted || held.has(definition.key)
+  );
+  return listed.map((definition, index) => {
     const earned = held.has(definition.key);
     const visible = maskUnearnedMilestone(definition, earned, `secret-${index}`);
     return {
@@ -276,7 +282,7 @@ export async function getCreatorJourney(userId: number) {
         track: { not: 'score' },
         key: { notIn: [...activityMeasures.keys()] },
       },
-      select: withArt,
+      select: secretSelect,
       orderBy: [{ sortOrder: 'asc' }, { key: 'asc' }],
     }),
   ]);
@@ -312,6 +318,7 @@ export async function getCreatorJourney(userId: number) {
       threshold: milestone.threshold,
       name: milestone.name,
       description: milestone.description,
+      hint: milestone.hidden ? milestone.hint : null,
       badgeUrl: badgeUrlByKey.get(milestone.key) ?? null,
       achievedAt: observedAt.get(milestone.key) ?? null,
     })),
@@ -378,6 +385,7 @@ export async function getProfileAchievements({
             hidden: true,
             name: true,
             description: true,
+            hint: true,
             cosmeticId: true,
             cosmetic: { select: { data: true } },
           },
@@ -416,6 +424,7 @@ export async function getProfileAchievements({
         track: milestone.hidden ? 'secret' : milestone.track,
         name: secret ? null : milestone.name,
         description: secret ? null : milestone.description,
+        hint: milestone.hidden && !secret ? milestone.hint : null,
         badgeUrl: badgeArtUrl(milestone.cosmetic),
         achievedAt: achievedAtIsObserved(row) ? row.achievedAt : null,
       };

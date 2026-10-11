@@ -1059,3 +1059,29 @@ export const blockMessageBatchSchema = z.object({
     .min(1)
     .max(BRIDGE_MESSAGE_BATCH_MAX),
 });
+
+// ── App Blocks custom events ─────────────────────────────────────────────────
+//
+// The wire shape for /api/track/block-event: one row per `track()` call. Unknown keys are
+// stripped, which is how a client-sent `userId`, `isOwner` or `ts` is ignored: identity and time
+// are stamped by the server.
+//
+// `eventName` and `properties` are deliberately NOT bounded or shaped here. A zod array rejects
+// wholesale, and one batch can carry rows from several apps on a page, so a strict rule would
+// let one app's malformed event discard its neighbours'. Neither is stored unless it equals
+// something the app's manifest declares. The route's body-size limit bounds them.
+export const BLOCK_EVENT_BATCH_MAX = 50;
+export type BlockEventBatchInput = z.infer<typeof blockEventBatchSchema>;
+export const blockEventBatchSchema = z.object({
+  events: z
+    .array(
+      z.object({
+        appBlockId: z.string().trim().min(1).max(256),
+        blockInstanceId: z.string().trim().min(1).max(256),
+        eventName: z.unknown(),
+        properties: z.unknown().optional(),
+      })
+    )
+    .min(1)
+    .max(BLOCK_EVENT_BATCH_MAX),
+});

@@ -8,15 +8,12 @@ import { TRPCError } from '@trpc/server';
 import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { defineModeratorEndpoint, moderatorBoolean } from '~/server/utils/moderator-endpoint';
 import { userId } from '~/server/schema/moderator/user';
-import { TokenScope } from '~/shared/constants/token-scope.constants';
-import { Flags } from '~/shared/utils/flags';
 
 export default defineModeratorEndpoint('user.delete', {
   summary: "Delete an account on its owner's behalf, for a data-subject erasure request.",
   returns: '{ deleted: true, userId, auditRecorded }',
   notes: [
     'Calls the same `deleteUser` service the self-serve path uses — one definition of deletion.',
-    'Refuses a delegated token that is not full-scope. A cookie session carries no scope and is unaffected.',
     'Requires the moderator app permission `user.deleteAccount`: held by `moderator:admin`, and by any role granted it on the moderator app’s `/admin`.',
     '`username` is REQUIRED for any account that has one — it is the only check that catches a mistyped id landing on another live account. Accounts with a null username, and already-deleted rows, do not ask for it.',
     'Refuses an account that is already deleted rather than re-running the scrub.',
@@ -60,24 +57,6 @@ export default defineModeratorEndpoint('user.delete', {
       .describe('True deletes the images now. Default keeps them for the 7-day grace period.'),
   }),
   async handler(input, ctx) {
-    // A DELEGATED TOKEN MAY NOT REACH FURTHER HERE THAN IT REACHES THROUGH tRPC. `user.delete` there
-    // is `requiredScope: TokenScope.Full`, so a narrowly-scoped token cannot delete even its own
-    // account; without this, one scoped for something unrelated could delete anybody's.
-    //
-    // It is a CEILING on delegated tokens, not a floor on everyone: `enforceTokenScope` runs its
-    // check only when the scope is not Full, and an un-delegated request resolves to Full — so a
-    // cookie-authenticated moderator is not scope-checked there or here. This buys SCOPE parity and
-    // not AUTHORITY parity: tRPC can only erase the caller's own account, a Full token here erases
-    // anyone's. `Flags.hasFlag` rather than a restated comparison, so it cannot drift from
-    // `enforceTokenScope`.
-    if (!Flags.hasFlag(ctx.tokenScope, TokenScope.Full))
-      // FORBIDDEN, not UNAUTHORIZED: re-authenticating does not widen a token's scope, so telling
-      // the caller to sign in again cannot help.
-      throw new TRPCError({
-        code: 'FORBIDDEN',
-        message: 'Your API key does not have the required scope for this action',
-      });
-
     // Checked here as well as in the moderator app's form action, so every caller of this endpoint
     // is held to the same grant.
     if (!(await hasModeratorGrant(ctx.actor, 'user.deleteAccount')))

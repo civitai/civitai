@@ -679,6 +679,7 @@ type Bundle = {
   requestDurationSeconds: Histogram<string>;
   rendersTotal: Counter<string>;
   bridgeMessagesTotal: Counter<string>;
+  customEventsTotal: Counter<string>;
   customComfyActualBuzz: Histogram<string>;
   customComfyWallclockSeconds: Histogram<string>;
   capLimitsDegradedTotal: Counter<string>;
@@ -1331,11 +1332,21 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
     APP_BLOCK_LAUNCH_INIT_POST_BUCKETS
   );
 
+  // No `app_block_id` label on purpose: the per-app breakdown is the table's job, and this route
+  // is public, so the label set must not grow with anything a caller sends.
+  const customEventsTotal = getOrCreateCounter(
+    reg,
+    'civitai_app_block_custom_events_total',
+    'App Blocks custom-event rows received by POST /api/track/block-event, by outcome. Dispositions (one per row that passed the request schema): accepted = written as the declared event; undeclared_event = written as one `__undeclared__` row because the approved manifest does not declare the event; non_prod_skipped = validated but not written because this deployment identifies as non-production; insert_failed = the write threw, timed out, was shed because too many writes were already in flight, or no ClickHouse client is configured; rate_limited = over the per-process budget for one client address and app; unknown_app = the app is not in the approved set (which is every app while the approved-app lookup is failing); session_failed = the session could not be resolved; private_run = the viewer is privately running an app that left the approved set within the last cache lifetime. Flags (at most one of each per row, in addition to its disposition): undeclared_prop = at least one property the event does not declare was stripped; invalid_value = at least one declared property was stripped for a wrong type or an undeclared enum value; invalid_instance_id = the block instance id was not shaped like a platform id (or, for a page, was not the page id of that app) and was stored empty; unattested_address = a row of an approved app whose request carried no edge-attested client address, so it was budgeted under the one shared fallback budget; counted whether or not the budget then admitted it (the address is used for rate limiting only and is never stored). Flags are counted whether or not the row is then written, so do not sum all outcomes into a row total. accepted counts rows handed to an asynchronous insert that does not wait for the server, so it is not proof the rows were stored.',
+    ['outcome']
+  );
+
   return {
     requestsTotal,
     requestDurationSeconds,
     rendersTotal,
     bridgeMessagesTotal,
+    customEventsTotal,
     customComfyActualBuzz,
     customComfyWallclockSeconds,
     capLimitsDegradedTotal,
@@ -1798,5 +1809,37 @@ export function observeCustomComfyWallclockSeconds(
     customComfyWallclockSeconds.observe({ engine, recipe }, seconds);
   } catch {
     /* instrument-only — never let a metrics error touch the settle path */
+  }
+}
+
+/**
+ * Every value of the `outcome` label on `civitai_app_block_custom_events_total`. A closed list:
+ * the emitter takes this type, so a caller cannot mint a label from request data. The counter's
+ * help text says what each means and which are per-row dispositions and which are flags.
+ */
+export const APP_BLOCK_CUSTOM_EVENT_OUTCOMES = [
+  'accepted',
+  'undeclared_event',
+  'undeclared_prop',
+  'invalid_value',
+  'invalid_instance_id',
+  'rate_limited',
+  'unknown_app',
+  'session_failed',
+  'unattested_address',
+  'private_run',
+  'non_prod_skipped',
+  'insert_failed',
+] as const;
+export type AppBlockCustomEventOutcome = (typeof APP_BLOCK_CUSTOM_EVENT_OUTCOMES)[number];
+
+/** Fail-soft emit of `count` custom-event rows with one outcome. Never throws. */
+export function recordBlockCustomEvents(outcome: AppBlockCustomEventOutcome, count = 1): void {
+  if (count <= 0) return;
+  try {
+    const { customEventsTotal } = ensureRegisterAppBlockRuntimeMetrics();
+    customEventsTotal.inc({ outcome }, count);
+  } catch {
+    /* instrument-only */
   }
 }

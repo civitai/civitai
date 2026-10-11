@@ -1,4 +1,5 @@
 import { Anchor, Stack, Text, Title } from '@mantine/core';
+import { sortEarnedBadges } from '~/components/CreatorJourney/badge-order';
 import { achievementTracks, earnedLabel } from '~/components/CreatorJourney/CreatorAchievements';
 import { SECRET_ACCENT } from '~/components/CreatorJourney/CreatorSecrets';
 import { EarnedBadgeCard } from '~/components/CreatorJourney/EarnedBadgeCard';
@@ -12,8 +13,11 @@ import {
 import { NextLink } from '~/components/NextLink/NextLink';
 import { SpotlightBorderCard } from '~/components/SpotlightCard/SpotlightBorderCard';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { Fragment, useEffect } from 'react';
+import type { ScoreTierSlug } from '~/shared/constants/creator-journey.constants';
 import {
   CREATOR_JOURNEY_HREF,
+  scoreTierKey,
   scoreTierSlugFromKey,
 } from '~/shared/constants/creator-journey.constants';
 import { creatorScoreFromSession } from '~/shared/utils/creator-score';
@@ -25,7 +29,7 @@ type ProfileAchievements = RouterOutput['creatorJourney']['getProfileAchievement
 type Tier = ProfileAchievements['tiers'][number];
 type Achievement = ProfileAchievements['achievements'][number];
 
-export const SECRET_ACHIEVEMENT_LABEL = 'Secret achievement';
+export const SECRET_ACHIEVEMENT_LABEL = 'Special achievement';
 
 /** Cards about as wide as the journey page's shelf (four across its 960px container), wrapping. */
 export const BADGE_CARD_GRID = 'grid grid-cols-2 gap-3 sm:grid-cols-[repeat(auto-fill,220px)]';
@@ -84,11 +88,9 @@ export function ProfileTierCard({ tier, userId }: { tier: Tier; userId: number }
       <Text fw={800} size="xl">
         {tier.name}
       </Text>
-      {tier.achievedAt && (
-        <Text size="sm" c="dimmed">
-          {earnedLabel(tier.achievedAt)}
-        </Text>
-      )}
+      <Text size="sm" c="dimmed">
+        {earnedLabel(tier.achievedAt)}
+      </Text>
       {ownScore !== undefined && (
         <Text
           size="sm"
@@ -110,7 +112,7 @@ export function ProfileTierCard({ tier, userId }: { tier: Tier; userId: number }
 
 const achievementGroups = [
   ...achievementTracks.map(({ key, title }) => ({ key, title })),
-  { key: 'secret', title: 'Secret' },
+  { key: 'secret', title: 'Special' },
 ];
 
 /**
@@ -126,29 +128,53 @@ function TierCard({ tier, threshold }: { tier: Tier; threshold?: number }) {
   );
 }
 
-/** The Achievements tab: the highest tier, every earned tier, then each achievement by track. */
+/** The element id of a tier's card on the Achievements tab, for a shared tier link to land on. */
+export const tierCardId = (slug: ScoreTierSlug) => `tier-${slug}`;
+
+/**
+ * The Achievements tab: the highest tier, every earned tier, then each achievement by track.
+ * `spotlight` is the tier a shared link named: its card is scrolled to and ringed.
+ */
 export function ProfileAchievementsList({
   data,
   userId,
+  spotlight,
 }: {
   data: ProfileAchievements;
   userId: number;
+  spotlight?: ScoreTierSlug | null;
 }) {
+  const currentUser = useCurrentUser();
   const { data: ladder } = trpc.creatorJourney.getLadder.useQuery();
+  const spotlightKey = spotlight ? scoreTierKey(spotlight) : undefined;
+  const spotlit = !!spotlightKey && data.tiers.some((tier) => tier.key === spotlightKey);
+  useEffect(() => {
+    if (!spotlit || !spotlight) return;
+    document
+      .getElementById(tierCardId(spotlight))
+      ?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, [spotlit, spotlight]);
   const thresholds = new Map(ladder?.tiers.map((tier) => [tier.key, tier.threshold]));
   const highest = data.tiers.at(-1);
+  const tiers = sortEarnedBadges(data.tiers.map((tier) => ({ ...tier, track: 'score' })));
+  const achievements = sortEarnedBadges(data.achievements);
 
   const known = new Set(achievementGroups.map((group) => group.key));
   const groups = [
     ...achievementGroups.map((group) => ({
       ...group,
-      items: data.achievements.filter((a) => a.track === group.key),
+      items: achievements.filter((a) => a.track === group.key),
     })),
-    { key: 'other', title: 'More', items: data.achievements.filter((a) => !known.has(a.track)) },
+    { key: 'other', title: 'More', items: achievements.filter((a) => !known.has(a.track)) },
   ].filter((group) => group.items.length > 0);
 
   return (
     <Stack gap="xl">
+      {currentUser?.id === userId && (
+        <Anchor component={NextLink} href={CREATOR_JOURNEY_HREF} size="sm" className="self-start">
+          See your progress on your Creator Journey
+        </Anchor>
+      )}
       {highest && (
         <div className="grid grid-cols-1 gap-4 md:grid-cols-[minmax(220px,280px)_1fr]">
           <div className="md:self-start">
@@ -157,9 +183,21 @@ export function ProfileAchievementsList({
           <Stack gap="sm" className="min-w-0">
             <GroupTitle title="Creator Score" count={data.tiers.length} />
             <div className={BADGE_CARD_GRID}>
-              {[...data.tiers].reverse().map((tier) => (
-                <TierCard key={tier.key} tier={tier} threshold={thresholds.get(tier.key)} />
-              ))}
+              {tiers.map((tier) => {
+                const card = <TierCard tier={tier} threshold={thresholds.get(tier.key)} />;
+                if (tier.key !== spotlightKey || !spotlight)
+                  return <Fragment key={tier.key}>{card}</Fragment>;
+                return (
+                  <div
+                    key={tier.key}
+                    id={tierCardId(spotlight)}
+                    data-spotlight
+                    className="scroll-mt-24 rounded-lg ring-2 ring-yellow-5 ring-offset-2 ring-offset-white dark:ring-offset-dark-7"
+                  >
+                    {card}
+                  </div>
+                );
+              })}
             </div>
           </Stack>
         </div>

@@ -1,3 +1,5 @@
+import { parseManifestAnalytics } from '~/shared/constants/block-analytics.constants';
+
 // Known-approved AppBlock id set — a cheap, in-memory, TTL-cached lookup used to
 // BOUND the `app_block_id` prom label on the PUBLIC, unauthenticated
 // /api/track/block-render beacon (see src/pages/api/track/block-render.ts).
@@ -135,10 +137,122 @@ export async function boundAppBlockIdLabel(appBlockId: string): Promise<string> 
   return (await isKnownAppBlockId(appBlockId)) ? appBlockId : 'other';
 }
 
+/** One declared custom-event property, with enum values as a set for the per-event lookup. */
+export type ApprovedEventProperty =
+  | { type: 'enum'; values: ReadonlySet<string> }
+  | { type: 'number' }
+  | { type: 'boolean' };
+
+/** Event name → property name → declaration. Maps, for the reason `DeclaredEvents` gives. */
+export type ApprovedEventDeclarations = ReadonlyMap<
+  string,
+  ReadonlyMap<string, ApprovedEventProperty>
+>;
+
+/**
+ * What the custom-events ingest needs to know about one approved app: who owns it and which
+ * events its APPROVED manifest declares. A projection, so the cache never holds a whole manifest.
+ */
+export type ApprovedAppBlockAnalytics = {
+  /** `null` when the row carried no owner; then nobody is the owner. */
+  ownerUserId: number | null;
+  events: ApprovedEventDeclarations;
+};
+
+const NO_EVENTS: ApprovedEventDeclarations = new Map();
+
+function projectDeclaredEvents(manifest: unknown): ApprovedEventDeclarations {
+  // All-or-nothing: `parseManifestAnalytics` returns no events when anything in the declaration
+  // is invalid, so a half-valid manifest declares nothing here either.
+  const { events } = parseManifestAnalytics(manifest);
+  if (events.size === 0) return NO_EVENTS;
+  const projected = new Map<string, ReadonlyMap<string, ApprovedEventProperty>>();
+  for (const [eventName, event] of events) {
+    const properties = new Map<string, ApprovedEventProperty>();
+    for (const [propertyName, property] of event.properties) {
+      properties.set(
+        propertyName,
+        property.type === 'enum'
+          ? { type: 'enum', values: new Set(property.values) }
+          : { type: property.type }
+      );
+    }
+    projected.set(eventName, properties);
+  }
+  return projected;
+}
+
+/**
+ * How long a FAILED analytics read is cached. Far shorter than a good one: while it lasts every
+ * custom event is dropped, where a failed id-set read only costs a label.
+ */
+const ANALYTICS_FAILURE_TTL_MS = 15_000;
+
+type AnalyticsMap = Map<string, ApprovedAppBlockAnalytics>;
+let _analyticsCache: { byId: AnalyticsMap; expiresAt: number } | null = null;
+let _analyticsInflight: Promise<AnalyticsMap> | null = null;
+
+async function loadApprovedAppBlockAnalytics(): Promise<AnalyticsMap | null> {
+  const byId: AnalyticsMap = new Map();
+  try {
+    const { dbRead } = await import('~/server/db/client');
+    const rows = (await dbRead.appBlock.findMany({
+      where: { status: 'approved' },
+      select: { id: true, manifest: true, app: { select: { userId: true } } },
+    })) as Array<{ id: string; manifest?: unknown; app?: { userId?: unknown } | null }>;
+    for (const row of rows) {
+      const ownerUserId = row.app?.userId;
+      byId.set(row.id, {
+        ownerUserId: typeof ownerUserId === 'number' ? ownerUserId : null,
+        events: projectDeclaredEvents(row.manifest),
+      });
+    }
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[known-app-blocks] approved AppBlock analytics lookup failed; treating every app as unknown: ${
+        err instanceof Error ? err.message : String(err)
+      }`
+    );
+    return null;
+  }
+  return byId;
+}
+
+/**
+ * The owner and declared custom events of an approved app; `null` when the id is not approved.
+ *
+ * A SEPARATE cached read from the approved-id set above, on purpose: it is loaded only when the
+ * custom-events ingest asks, and a failure of this wider query cannot empty the id set the other
+ * beacons clamp their labels with. Same TTL and single-flight; while the lookup is failing every
+ * id answers `null`, which for an ingest means dropping events rather than storing ones nobody
+ * could check. The two reads refresh on their own clocks, so for up to one TTL they can disagree
+ * about an app whose status just changed.
+ */
+export async function getApprovedAppBlockAnalytics(
+  appBlockId: string
+): Promise<ApprovedAppBlockAnalytics | null> {
+  const cached = _analyticsCache;
+  if (cached && cached.expiresAt > Date.now()) return cached.byId.get(appBlockId) ?? null;
+  _analyticsInflight ??= loadApprovedAppBlockAnalytics()
+    .then((loaded) => {
+      const byId: AnalyticsMap = loaded ?? new Map();
+      const ttl = loaded ? KNOWN_APP_BLOCKS_TTL_MS : ANALYTICS_FAILURE_TTL_MS;
+      _analyticsCache = { byId, expiresAt: Date.now() + ttl };
+      return byId;
+    })
+    .finally(() => {
+      _analyticsInflight = null;
+    });
+  return (await _analyticsInflight).get(appBlockId) ?? null;
+}
+
 /** Test-only: clear the in-memory cache so a unit test can swap the DB mock. */
 export const _internalsForTests = {
   reset(): void {
     _cache = null;
     _inflight = null;
+    _analyticsCache = null;
+    _analyticsInflight = null;
   },
 };

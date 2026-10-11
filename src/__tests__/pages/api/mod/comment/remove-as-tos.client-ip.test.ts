@@ -75,6 +75,7 @@ vi.mock('~/server/services/commentsv2.service', () => ({
 import handler from '~/pages/api/mod/comment/remove-as-tos';
 import { resolveClientIpOrNull } from '~/server/utils/client-ip';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
 const mockRedis = redisMock.sysRedis;
 redisMock.sysRedis.multi.mockImplementation(() => ({
   set: vi.fn().mockReturnThis(),
@@ -134,6 +135,10 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockGetSession.mockResolvedValue({
     user: { id: 7, isModerator: true, bannedAt: null, permissions: [] },
+    apiKeyId: 1,
+    apiKeyType: 'User',
+    subject: { type: 'apiKey', id: 1 },
+    tokenScope: TokenScope.Full,
   });
   setTos.mockResolvedValue({ count: 1, notified: 0, rewardedReports: 0 });
 });

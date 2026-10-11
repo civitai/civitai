@@ -93,8 +93,8 @@ describe('profile achievement cards', () => {
         },
       })
     );
-    expect(SECRET_ACHIEVEMENT_LABEL).toBe('Secret achievement');
-    expect(card.textContent).toContain('Secret achievement');
+    expect(SECRET_ACHIEVEMENT_LABEL).toBe('Special achievement');
+    expect(card.textContent).toContain('Special achievement');
     expect(card.textContent).not.toContain('Creator Score');
   });
 
@@ -114,6 +114,27 @@ describe('profile achievement cards', () => {
     expect(card.textContent).toContain('25 Models');
     expect(card.textContent).toContain('Publish 25 models');
   });
+
+  // Justin (2026-10-10): the owner's earned special keeps its hint, above the description.
+  it('shows an earned special its hint above the description', () => {
+    const text =
+      mount(
+        React.createElement(AchievementCard, {
+          achievement: {
+            key: 'hidden:remix',
+            track: 'secret',
+            name: 'Remixed',
+            description: 'Someone remixed your model.',
+            hint: 'Someone builds on your work',
+            badgeUrl: null,
+            achievedAt: EARNED,
+          },
+        })
+      ).textContent ?? '';
+    const hintAt = text.indexOf('Someone builds on your work');
+    expect(hintAt).toBeGreaterThan(-1);
+    expect(hintAt).toBeLessThan(text.indexOf('Someone remixed your model.'));
+  });
 });
 
 describe('profile tier card', () => {
@@ -129,6 +150,13 @@ describe('profile tier card', () => {
 
   // A signed-in visitor's session carries their own score, never the owner's; showing it here
   // would read as the owner's number.
+  it('says a tier granted at launch was earned before launch', () => {
+    const card = mount(
+      React.createElement(ProfileTierCard, { tier: { ...tier, achievedAt: null }, userId: OWNER })
+    );
+    expect(card.textContent).toContain('Earned before launch');
+  });
+
   it('shows a visitor the tier and no score line', () => {
     mocks.viewer = { id: OWNER + 1, meta: { scores: { total: OWN_SCORE } } };
     const card = mount(React.createElement(ProfileTierCard, { tier, userId: OWNER }));
@@ -237,20 +265,101 @@ describe('achievements tab', () => {
           [...card.querySelectorAll('*')].some((node) => node.textContent === name)
         ) ?? ''
     );
-    expect(names).toEqual(['Nova', 'Blaze', 'Spark']);
+    // Dated first, then launch grants highest first.
+    expect(names).toEqual(['Blaze', 'Nova', 'Spark']);
     // A floor, not the creator's score (lead's call, 2026-10-09).
     expect(cardOf(el, 'Blaze')?.textContent).toContain('10,000+Creator Score');
     expect(cardOf(el, 'Blaze')?.textContent).toContain('Earned Sep 28, 2026');
     expect(cardOf(el, 'Spark')?.textContent).toContain('100+Creator Score');
-    // A backfilled tier has no observed date: plain "Earned", like the journey page.
-    expect(cardOf(el, 'Spark')?.textContent).toMatch(/Earned$/);
+    // A backfilled tier has no observed date, like the journey page.
+    expect(cardOf(el, 'Spark')?.textContent).toMatch(/Earned before launch$/);
     expect(cardOf(el, 'Nova')?.textContent).not.toMatch(/\d/);
+  });
+
+  it('orders each track dated first, then launch grants by metal', () => {
+    const achievement = (key: string, name: string, achievedAt: Date | null) => ({
+      key,
+      track: key.split(':')[0],
+      name,
+      description: null,
+      badgeUrl: null,
+      achievedAt,
+    });
+    const el = mount(
+      React.createElement(ProfileAchievementsList, {
+        data: {
+          tiers: [],
+          achievements: [
+            achievement('create:models-1', 'First Model', null),
+            achievement('create:articles-1', 'First Article', EARNED),
+            achievement('reach:followers-100', '100 Followers', null),
+            achievement('create:models-500', '500 Models', null),
+            achievement('reach:followers-10000', '10k Followers', null),
+          ],
+        },
+        userId: OWNER,
+      })
+    );
+    const names = (grid: HTMLElement) =>
+      [...grid.children].map(
+        (card) =>
+          ['First Model', '500 Models', 'First Article', '100 Followers', '10k Followers'].find(
+            (name) => [...card.querySelectorAll('*')].some((node) => node.textContent === name)
+          ) ?? ''
+      );
+    expect(grids(el).map(names)).toEqual([
+      ['First Article', '500 Models', 'First Model'],
+      ['10k Followers', '100 Followers'],
+    ]);
+  });
+
+  it('points the owner, and only the owner, at their journey', () => {
+    const journeyLinks = (el: HTMLElement) =>
+      [...el.querySelectorAll('a')].filter((a) => a.getAttribute('href') === '/creators/journey');
+    mocks.viewer = { id: OWNER, meta: { scores: { total: 1 } } };
+    const own = mount(React.createElement(ProfileAchievementsList, { data, userId: OWNER }));
+    expect(journeyLinks(own).map((a) => a.textContent)).toContain(
+      'See your progress on your Creator Journey'
+    );
+    act(() => root?.unmount());
+    container?.remove();
+    mocks.viewer = { id: OWNER + 1, meta: { scores: { total: 1 } } };
+    const visitor = mount(React.createElement(ProfileAchievementsList, { data, userId: OWNER }));
+    expect(journeyLinks(visitor)).toEqual([]);
   });
 
   it('shows the owner their own score on the hero', () => {
     mocks.viewer = { id: OWNER, meta: { scores: { total: 824228 } } };
     const el = mount(React.createElement(ProfileAchievementsList, { data, userId: OWNER }));
     expect(el.textContent).toContain('Only you see this: score 824,228');
+  });
+
+  // A shared tier link lands here with `?milestone=`; that tier's card is the one to look at.
+  it('scrolls to and rings the tier a shared link named, and only that one', () => {
+    const scrolled: Element[] = [];
+    const original = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = function (this: Element) {
+      scrolled.push(this);
+    };
+    try {
+      const el = mount(
+        React.createElement(ProfileAchievementsList, { data, userId: OWNER, spotlight: 'blaze' })
+      );
+      const spotlit = [...el.querySelectorAll<HTMLElement>('[data-spotlight]')];
+      expect(spotlit.map((node) => node.id)).toEqual(['tier-blaze']);
+      expect(spotlit[0].textContent).toContain('Blaze');
+      expect(spotlit[0].className).toContain('ring-2');
+      expect(scrolled).toEqual([spotlit[0]]);
+    } finally {
+      Element.prototype.scrollIntoView = original;
+    }
+  });
+
+  it('picks out nothing for a tier the creator does not hold', () => {
+    const el = mount(
+      React.createElement(ProfileAchievementsList, { data, userId: OWNER, spotlight: 'legend' })
+    );
+    expect(el.querySelectorAll('[data-spotlight]')).toHaveLength(0);
   });
 
   // The width itself is a stylesheet fact the test environment cannot measure; what is pinned here

@@ -6,6 +6,7 @@ import React, { useMemo } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { Page } from '~/components/AppLayout/Page';
 import { UserProfileLayout } from '~/components/Profile/ProfileLayout2';
+import { useMilestoneLanding } from '~/components/CreatorJourney/useMilestoneLanding';
 import {
   getAllAvailableProfileSections,
   ProfileSectionComponent,
@@ -58,6 +59,8 @@ function ProfileOverview() {
     username,
   });
   const { data: userOverview } = trpc.userProfile.overview.useQuery({ username });
+
+  useMilestoneLanding(user);
 
   const sections = useMemo(
     () =>

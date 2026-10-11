@@ -91,11 +91,25 @@ describe('Badges Earned shelf', () => {
   // Silent grants carry the run time, not the moment, so they show no date.
   it('shows no date for a badge whose moment was never observed', () => {
     const text = shelfText([badge({ achievedAt: null })]);
-    expect(text).toContain('Earned');
-    expect(text).toMatch(/Earned$/);
+    expect(text).toMatch(/Earned before launch$/);
     act(() => root?.unmount());
     container?.remove();
     expect(shelfText([badge({})])).toMatch(/Earned Oct \d+, 2026/);
+  });
+
+  // The server sends them by grant time, which for launch grants is the backfill run's.
+  it('shows dated badges first, newest first, then launch grants highest first', () => {
+    const text = shelfText([
+      badge({ key: 'score:blaze', name: 'Blaze', achievedAt: null }),
+      badge({ key: 'score:spark', name: 'Spark', achievedAt: new Date('2026-10-07T00:00:00Z') }),
+      badge({ key: 'score:kindle', name: 'Kindle', achievedAt: new Date('2026-10-09T00:00:00Z') }),
+      badge({ key: 'score:beacon', name: 'Beacon', achievedAt: null }),
+    ]);
+    // Lower tiers carry the dates, so tier order alone would put them last.
+    const order = ['Kindle', 'Spark', 'Beacon', 'Blaze'];
+    const at = (name: string) => text.indexOf(name);
+    expect(order.filter((name) => at(name) < 0)).toEqual([]);
+    expect(order.map(at)).toEqual(order.map(at).sort((x, y) => x - y));
   });
 
   it('reads as empty when only activity milestones are held', () => {

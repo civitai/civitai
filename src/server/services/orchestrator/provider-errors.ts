@@ -73,7 +73,7 @@ const UNSAFE_PATTERNS: RegExp[] = [
 
 const MAX_SAFE_LENGTH = 300;
 
-function isLikelySafeMessage(msg: string): boolean {
+export function isLikelySafeMessage(msg: string): boolean {
   if (!msg || msg.length > MAX_SAFE_LENGTH) return false;
   if (/[\r\n]/.test(msg)) return false; // multi-line ⇒ almost always a dump/trace
   return !UNSAFE_PATTERNS.some((re) => re.test(msg));

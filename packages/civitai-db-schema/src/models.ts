@@ -3158,6 +3158,7 @@ export interface CreatorMilestone {
   track: string;
   threshold: number | null;
   hidden: boolean;
+  unlisted: boolean;
   hint: string | null;
   name: string;
   description: string | null;

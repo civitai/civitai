@@ -1,6 +1,7 @@
 import { Button, Text } from '@mantine/core';
 import clsx from 'clsx';
 import { IconArrowRight, IconTrophy } from '@tabler/icons-react';
+import { sortEarnedBadges } from '~/components/CreatorJourney/badge-order';
 import { AchievementGrid, ProfileTierCard } from '~/components/CreatorJourney/ProfileAchievements';
 import { useProfileAchievements } from '~/components/CreatorJourney/useProfileAchievements';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
@@ -16,7 +17,7 @@ export const CreatorJourneySection = ({ user }: ProfileSectionProps) => {
   if (!data || count === 0) return null;
 
   const tier = data.tiers.at(-1);
-  const latest = data.achievements.slice(0, LATEST_ACHIEVEMENTS);
+  const latest = sortEarnedBadges(data.achievements).slice(0, LATEST_ACHIEVEMENTS);
 
   return (
     <div className={classes.profileSection}>

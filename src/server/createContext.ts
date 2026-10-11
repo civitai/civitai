@@ -6,8 +6,7 @@ import { isProd } from '~/env/other';
 import { getFeatureFlagsLazy } from '~/server/services/feature-flags.service';
 import { getRequestDomainColor } from '~/server/utils/server-domain';
 import { isAllowedOriginRequest } from '~/server/utils/origin-helpers';
-import { TokenScope } from '~/shared/constants/token-scope.constants';
-import type { ApiKeyType } from '~/shared/utils/prisma/enums';
+import { getRequestCredential } from '~/server/auth/request-credential';
 
 type CacheSettings = {
   browserTTL?: number;
@@ -74,19 +73,11 @@ export const createContext = async ({
   };
   res.once('close', onDisconnect);
 
-  // tokenScope: from bearer token auth (stored on req.context by getServerAuthSession).
-  // Session auth (cookies) gets Full scope â€” no restrictions for browser users.
-  const tokenScope = ((req as any).context?.tokenScope as number) ?? TokenScope.Full;
   // apiKeyId / subject are only present when auth came from a Bearer token.
   // Modeled as optional (undefined when absent) so DeepNonNullable<Context> in
   // controller signatures can collapse them to required fields when the caller
   // already knows the request is token-auth'd.
-  const apiKeyId = (req as any).context?.apiKeyId as number | undefined;
-  const apiKeyType = ((req as any).context?.apiKeyType ?? undefined) as ApiKeyType | undefined;
-  const subject = (req as any).context?.subject as
-    | { type: 'apiKey'; id: number }
-    | { type: 'oauth'; id: string }
-    | undefined;
+  const { tokenScope, apiKeyId, apiKeyType, subject } = getRequestCredential(req);
 
   // Tag content-creation tracking with how the request was authenticated (web vs.
   // personal API key vs. OAuth app) so moderators can trace agent/API activity.

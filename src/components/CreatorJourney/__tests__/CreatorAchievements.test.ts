@@ -105,9 +105,10 @@ describe('Achievements section', () => {
     expect(tile(el, '1k Followers')?.dataset.state).toBe('locked');
   });
 
-  it('shows an undated grant as plain Earned', () => {
+  // A grant with no observed moment was made at launch to someone already past the bar.
+  it('says an undated grant was earned before launch', () => {
     const el = render(new Map([['create:models-1', null]]));
-    expect(tile(el, 'First Model')?.textContent).toMatch(/Earned$/);
+    expect(tile(el, 'First Model')?.textContent).toMatch(/Earned before launch$/);
   });
 
   // A creator who unpublished after the grant keeps the badge; the next tier up is still the target.

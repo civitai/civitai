@@ -422,6 +422,8 @@ Some Civitai actions are **only available to session-authenticated users**, rega
 
 API-key and connected-app management (`apiKey.add`, `apiKey.setBuzzLimit`, `apiKey.delete`, `oauthConsent.setBuzzLimit`, `oauthConsent.revokeApp`) accepts a browser session or a full-scope personal API key. OAuth access tokens (at any scope), System keys and reduced-scope keys get `403 FORBIDDEN`.
 
+Moderator procedures, pages gated to moderators and the moderator REST endpoints called with a user credential follow the same rule: a browser session or a full-scope personal API key, whatever scope the procedure declares. The App Blocks CLI routes `/api/v1/blocks/{submit-version,dev-token,submissions,withdraw}` are the exception: they accept an OAuth token carrying the opt-in `AppBlocksSubmit` scope.
+
 Buzz-spending operations that flow through the orchestrator (image generation, training, scanning, recommenders) **are** available to tokens — that's the entire point of the OAuth/API key surface. The orchestrator enforces buzz spend on its side using each token's per-subject budget.
 
 ## /api/v1/me — token introspection

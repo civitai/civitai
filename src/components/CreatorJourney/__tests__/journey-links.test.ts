@@ -10,6 +10,7 @@ import {
   rewardLinks,
   unlockLinks,
   unlockLinksFor,
+  unlockLinksDownLadder,
 } from '~/components/CreatorJourney/journey-links';
 import { tierRewards } from '~/components/CreatorJourney/tier-rewards';
 import {
@@ -88,10 +89,49 @@ describe('journey ladder links', () => {
       'early-access-days': [`${studio}/models`],
       'early-access-quantity': [`${studio}/models`],
       announcements: [`${studio}/announcements`],
-      'placement-price-cap': ['/user/placements'],
-      'placement-free-slots': ['/user/placements'],
+      'placement-price-cap': ['/user/account#creator-controls'],
+      'placement-free-slots': ['/user/account#creator-controls'],
       'creator-program': ['/creator-program'],
     });
+  });
+
+  // Testers saw one Creator Studio link on six rows running, across rungs: only the first links.
+  it('links only the first of a run of unlock rows that would link the same place', () => {
+    const studio = 'https://creator-studio.civitai.com';
+    const hrefs = (rows: (string | null)[]) =>
+      unlockLinksDownLadder(rows).map((links) => links.map((link) => link.href));
+
+    expect(
+      hrefs([
+        'monetize-pricing:1',
+        'early-access-days:2',
+        'early-access-quantity:3',
+        'monetize-pricing:4',
+        'early-access-days:5',
+        'early-access-quantity:6',
+      ])
+    ).toEqual([[`${studio}/models`], [], [], [], [], []]);
+
+    // A different link, an unlinked unlock, or a reward row between them ends the run.
+    expect(
+      hrefs([
+        'monetize-pricing:1',
+        'monetize-sales:2',
+        'monetize-pricing:3',
+        'comment-rate-limit:4',
+        'monetize-pricing:5',
+        null,
+        'monetize-pricing:6',
+      ])
+    ).toEqual([
+      [`${studio}/models`],
+      [`${studio}/sales`],
+      [`${studio}/models`],
+      [],
+      [`${studio}/models`],
+      [],
+      [`${studio}/models`],
+    ]);
   });
 
   it('opens Creator Studio in a new tab and keeps app paths in the tab', () => {
