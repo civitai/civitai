@@ -4,6 +4,7 @@ import { useEquipContentDecoration } from '~/components/Cosmetics/cosmetics.util
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { EventContentThumb } from '~/components/Events/ScoredEvent/EventContentThumb';
 import type { EventDecorationData } from '~/shared/constants/event-decoration.constants';
+import { getEventDecorationDefinition } from '~/shared/constants/event-decoration.constants';
 import type { CosmeticEntity } from '~/shared/utils/prisma/enums';
 import type { RouterOutput } from '~/types/router';
 import { trpc } from '~/utils/trpc';
@@ -95,6 +96,8 @@ export default function PlaceHatModal({
                   <EventContentThumb
                     entityType={c.entityType}
                     image={c.image}
+                    // Four to a row in the modal: a smaller card than Your hats'.
+                    displayWidth={320}
                     hat={(other?.data ?? (current ? hat.data : undefined)) as EventDecorationData}
                   />
                   {c.title && (
@@ -111,6 +114,14 @@ export default function PlaceHatModal({
               );
             })}
           </SimpleGrid>
+        )}
+        {/* Only the newest posts of each type are listed. An older one takes a hat from the menu on its
+            card (a profile or feed): a model's or article's own page has no such item. */}
+        {!isLoading && (
+          <Text size="xs" c="dimmed" ta="center" data-testid="older-posts-hint">
+            Looking for an older post? Find it on your profile and use Add{' '}
+            {getEventDecorationDefinition(event)?.label ?? 'Party Hat'} from the ⋮ menu on its card.
+          </Text>
         )}
       </Stack>
     </Modal>

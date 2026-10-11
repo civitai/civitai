@@ -101,7 +101,7 @@ export async function resolveAppFeedbackTarget(
 
   if (user.muted) return refuse('muted');
   // First of the IO checks: it needs no listing, and while the area is dark it spares every
-  // chrome dropdown the listing reads below.
+  // chrome mount (the feedback button asks on mount) the listing reads below.
   if (!(await isFeedbackAreaEnabled({ area: APP_BLOCK_FEEDBACK_AREA, user })))
     return refuse('flag_off');
 

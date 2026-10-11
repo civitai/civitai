@@ -3,12 +3,16 @@ import { withAxiom } from '@civitai/next-axiom';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
 import { getSessionFromBearerToken } from '~/server/auth/bearer-token';
+import { isFullScopeUserKey, type BearerCredential } from '~/server/auth/full-user-credential';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 import { Tracker } from '~/server/clickhouse/client';
 import { sysRedis, REDIS_SYS_KEYS } from '~/server/redis/client';
 import { handleEndpointError } from '~/server/utils/endpoint-helpers';
+import {
+  FULL_SCOPE_SESSION_REQUIRED,
+  isFullScopeSession,
+} from '~/server/utils/require-full-scope-session';
 import type { SessionUser } from '~/types/session';
-import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 // MODERATOR ENDPOINTS — one declaration per endpoint, carrying its own summary, input schema and
 // handler. Mirrors `apps/moderator/src/lib/server/api-endpoint.ts`, for the same reason: the spec is
@@ -28,7 +32,8 @@ import { TokenScope } from '~/shared/constants/token-scope.constants';
 //                          one session, not a second scheme — and not cross-domain, which is why none
 //                          of the `first-party-bridge` machinery (for spokes on another registrable
 //                          domain, which cannot read that cookie) is involved.
-//   a moderator's API key — `Authorization: Bearer`, for scripts and for Retool until it is retired.
+//   a moderator's API key — `Authorization: Bearer` with a full-access personal key, for scripts and
+//                          for Retool until it is retired. Any other token is refused.
 //
 // 🔒 These are mutating POSTs authenticated by a cookie, so CSRF is only prevented by the session
 // cookie being `SameSite=Lax` (`server/auth/civ-cookie.ts`): a browser will not attach it to a
@@ -40,12 +45,6 @@ type AxiomAPIRequest = NextApiRequest & { log: Logger };
 
 export type ModeratorCtx = {
   actor: SessionUser;
-  /**
-   * The OAuth/API-key scope the caller authenticated with, or `TokenScope.Full` for a cookie
-   * session. Nothing here enforces it — an endpoint that needs a scope narrower than "any
-   * moderator" reads this itself, the way `/api/mod/user/delete` does.
-   */
-  tokenScope: number;
   tracker: Tracker;
   req: NextApiRequest;
   res: NextApiResponse;
@@ -102,10 +101,9 @@ export const moderatorBoolean = z.preprocess((v) => {
   return v;
 }, z.boolean());
 
-type ActorResult = { actor: SessionUser; tokenScope: number } | { status: number; error: string };
-
-type ScopedSession = { tokenScope?: number };
-type RequestWithContext = NextApiRequest & { context?: { tokenScope?: number } };
+type ActorResult =
+  | { actor: SessionUser; fullCredential: boolean }
+  | { status: number; error: string };
 
 async function resolveActor(req: NextApiRequest, res: NextApiResponse): Promise<ActorResult> {
   const authHeader = req.headers.authorization;
@@ -115,18 +113,13 @@ async function resolveActor(req: NextApiRequest, res: NextApiResponse): Promise<
     if (!session?.user) return { status: 401, error: 'Invalid API key' };
     return {
       actor: session.user as SessionUser,
-      tokenScope: (session as ScopedSession).tokenScope ?? TokenScope.Full,
+      fullCredential: isFullScopeUserKey(session as BearerCredential),
     };
   }
 
   const session = await getServerAuthSession({ req, res });
   if (!session?.user) return { status: 401, error: 'Not signed in' };
-  // Absent means the cookie path, which carries no scope and is the full-authority case. Same
-  // fallback as `createContext`, so the REST and tRPC surfaces resolve a caller's scope alike.
-  return {
-    actor: session.user as SessionUser,
-    tokenScope: (req as RequestWithContext).context?.tokenScope ?? TokenScope.Full,
-  };
+  return { actor: session.user as SessionUser, fullCredential: isFullScopeSession(req) };
 }
 
 function collectInput(req: NextApiRequest): Record<string, unknown> {
@@ -218,9 +211,12 @@ export function defineModeratorEndpoint<S extends z.ZodType, TOutput>(
     const resolved = await resolveActor(req, res);
     if ('error' in resolved) return res.status(resolved.status).json({ error: resolved.error });
 
-    const { actor, tokenScope } = resolved;
+    const { actor, fullCredential } = resolved;
     if (!actor.isModerator || actor.bannedAt) {
       return res.status(403).json({ error: 'Moderator role required' });
+    }
+    if (!fullCredential) {
+      return res.status(403).json({ error: FULL_SCOPE_SESSION_REQUIRED });
     }
     if (def.privileged && !actor.permissions?.includes(def.privileged)) {
       return res
@@ -266,7 +262,7 @@ export function defineModeratorEndpoint<S extends z.ZodType, TOutput>(
     const auditPayload = auditablePayload(raw, input, Boolean(def.input), def.auditExclude);
     const tracker = new Tracker(req, res);
     try {
-      const result = await def.handler(input, { actor, tokenScope, tracker, req, res });
+      const result = await def.handler(input, { actor, tracker, req, res });
       const { affected, response } = extractAffected(result);
       void tracker.retoolAudit({
         action: name,

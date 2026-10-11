@@ -2353,6 +2353,7 @@ export interface AppSubListingParent {
   parentListing?: AppListing;
   enabled: boolean;
   maxPerAuthor: number;
+  linkTemplate: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -3144,6 +3145,10 @@ export interface EventCosmeticScoreDaily {
   impressions: number;
   anonImpressions: number;
   reactions: number;
+  comments: number;
+  stickers: number;
+  remixes: number;
+  modelLikes: number;
   points: number;
   updatedAt: Date;
 }
@@ -3153,6 +3158,7 @@ export interface CreatorMilestone {
   track: string;
   threshold: number | null;
   hidden: boolean;
+  unlisted: boolean;
   hint: string | null;
   name: string;
   description: string | null;

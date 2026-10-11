@@ -295,6 +295,9 @@ describe('crucible.getEntries — podium', () => {
   const isPlacingsQuery = (sql: string) => sql.includes('ce.position IS NOT NULL');
   const isPodiumQuery = (sql: string) => /WHERE ce\.id = ANY\(\$\d+::int\[\]\)/.test(sql);
   const podiumQuery = () => queryRaw.mock.calls.map(rendered).find(isPodiumQuery);
+  const podiumIds = ([strings, ...values]: unknown[]) =>
+    Prisma.sql(strings as TemplateStringsArray, ...values).values.find(Array.isArray) as number[];
+  const visibleRow = (id: number) => ({ id, imageVisible: true });
   const completedWith = (prizePositions: Record<string, number>) =>
     findUnique.mockResolvedValue({ ...scanned, status: CrucibleStatus.Completed, prizePositions });
 
@@ -305,11 +308,7 @@ describe('crucible.getEntries — podium', () => {
       const sql = rendered(call);
       if (isPlacingsQuery(sql)) return placings;
       // Every requested winner is visible; returned out of prize order.
-      if (isPodiumQuery(sql)) {
-        const [strings, ...values] = call;
-        const [ids] = Prisma.sql(strings as TemplateStringsArray, ...values).values as [number[]];
-        return [...ids].reverse().map((id) => ({ id }));
-      }
+      if (isPodiumQuery(sql)) return [...podiumIds(call)].reverse().map(visibleRow);
       return all.map(({ id }) => ({ id }));
     });
   });
@@ -342,33 +341,74 @@ describe('crucible.getEntries — podium', () => {
     ]);
   });
 
-  it('loads podium entries through the same image visibility as the page', async () => {
-    await caller(undefined).getEntries({ crucibleId: CRUCIBLE_ID });
+  it("judges a podium image by its moderation and the crucible's levels, not the viewer's", async () => {
+    await caller(undefined).getEntries({ crucibleId: CRUCIBLE_ID, browsingLevel: 1 });
 
     const sql = podiumQuery();
     expect(sql).toBeDefined();
-    expect(sql).toMatch(/WHERE ce\.id = ANY\(\$\d+::int\[\]\) AND \( ?\(/);
+    expect(sql).toMatch(
+      /LEFT JOIN "Image" i ON i\.id = ce\."imageId" WHERE ce\.id = ANY\(\$\d+::int\[\]\) ?$/
+    );
     expectEnteredEntryImage(sql!);
+    expect(sql).toContain('i."nsfwLevel" &');
+    expect(sql!.match(/i\."nsfwLevel" &/g)).toHaveLength(1);
   });
 
-  it('leaves a winner the viewer cannot see off the podium', async () => {
+  it('keeps a winner whose image the viewer cannot see on the podium, without the image', async () => {
     const page = queryRaw.getMockImplementation()!;
     queryRaw.mockImplementation(async (...call: unknown[]) => {
       const rows = (await page(...call)) as { id: number }[];
-      return isPodiumQuery(rendered(call)) ? rows.filter(({ id }) => id !== 3) : rows;
+      return isPodiumQuery(rendered(call))
+        ? rows.map((row) => ({ ...row, imageVisible: row.id !== 3 }))
+        : rows;
     });
 
     const { podium } = await caller(undefined).getEntries({ crucibleId: CRUCIBLE_ID });
 
-    expect(podium.map((e) => [e.id, e.prizePlace])).toEqual([[1, 1]]);
+    expect(podium.map((e) => [e.id, e.prizePlace, e.imageId, e.image?.url ?? null])).toEqual([
+      [1, 1, 10, 'image-1'],
+      [3, 2, null, null],
+    ]);
   });
 
-  it('shows a signed-in creator their own podium entry, inside the id filter', async () => {
+  it('keeps a winner whose image was deleted on the podium', async () => {
+    findEntries.mockImplementation(async () =>
+      all.map((e) => (e.id === 3 ? { ...e, imageId: null, image: null } : e))
+    );
+
+    const { podium } = await caller(undefined).getEntries({ crucibleId: CRUCIBLE_ID });
+
+    expect(podium.map((e) => [e.id, e.prizePlace, e.image])).toEqual([
+      [1, 1, expect.objectContaining({ url: 'image-1' })],
+      [3, 2, null],
+    ]);
+  });
+
+  it('withholds the url, not the hash, of a mature winner image on green', async () => {
+    findUnique.mockResolvedValue({
+      ...scanned,
+      nsfwLevel: 3,
+      status: CrucibleStatus.Completed,
+      prizePositions: { '1': 60, '2': 40 },
+    });
+    findEntries.mockImplementation(async () =>
+      all.map((e) => (e.id === 3 ? { ...e, image: { ...e.image, nsfwLevel: 2, hash: 'h3' } } : e))
+    );
+
+    const { podium } = await caller(undefined, { isGreen: true }).getEntries({
+      crucibleId: CRUCIBLE_ID,
+    });
+
+    expect(podium.map((e) => [e.id, e.image?.url ?? null, e.image?.hash])).toEqual([
+      [1, 'image-1', undefined],
+      [3, null, 'h3'],
+    ]);
+  });
+
+  it('shows a signed-in creator their own podium image', async () => {
     await caller(signedIn(OWNER_ID)).getEntries({ crucibleId: CRUCIBLE_ID });
 
-    expect(podiumQuery()).toMatch(
-      /WHERE ce\.id = ANY\(\$\d+::int\[\]\) AND \(ce\."userId" = \$\d+ OR \(/
-    );
+    expect(podiumQuery()).toMatch(/COALESCE\(\(ce\."userId" = \$\d+ OR \(/);
     const call = queryRaw.mock.calls.find((c) => isPodiumQuery(rendered(c)))!;
     expect(Prisma.sql(call[0] as TemplateStringsArray, ...call.slice(1)).values).toContain(
       OWNER_ID

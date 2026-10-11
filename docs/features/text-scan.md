@@ -87,11 +87,9 @@ so chat verdicts don't pair one to one with text scan's per-message ones.
   `ceil(items / concurrency) * wait`, exceeds 120 seconds (`HARNESS_BUDGET_SECONDS`). Locally, the
   scan and quote actions are reached through `/api/testing/chat-completion-scan`. `composeEntities`
   and `sampleShadow` read any entity's text and author, so they are refused there (403) and only the
-  attributed, audited moderator endpoint `/api/mod/text-scan` serves them. There, an API key that is
-  not full-scope reaches only the read and caller-text scan actions (`getPrompts`, `quoteEntities`,
-  `scanTexts`, `quoteTexts`); every other action, including any added
-  later, refuses it. That endpoint also attributes prompt and config writes to the signed-in
-  moderator.
+  attributed, audited moderator endpoint `/api/mod/text-scan` serves them. Like every moderator
+  endpoint it takes a moderator's session or full-access personal API key. That endpoint also
+  attributes prompt and config writes to the signed-in moderator.
 - The moderator app's text-scan lab drives those actions: Check (`/text-scan/check`) judges links, ids
   or text with the current prompts and, side by side, with a moderator's edits, which are kept only in
   that moderator's browser; Versions (`/text-scan/prompts`) shows each prompt's history. It stores

@@ -24,6 +24,9 @@ const definitions = [
   definition('create:models-1', 1, 'First Model'),
   definition('create:models-5', 5, '5 Models'),
   definition('create:models-25', 25, '25 Models'),
+  definition('reach:downloads-1000', 1000, '1k Downloads'),
+  definition('reach:downloads-10000', 10000, '10k Downloads'),
+  definition('reach:downloads-100000', 100000, '100k Downloads'),
   definition('reach:followers-100', 100, '100 Followers'),
   definition('reach:followers-1000', 1000, '1k Followers'),
   definition('earn:shop-sales-100000', 100000, '100k Sales'),
@@ -47,13 +50,14 @@ function render(
   revenue = 0,
   votes = 0,
   wins = 0,
-  winBreakdown = { challenges: wins, crucibles: 0 }
+  winBreakdown = { challenges: wins, crucibles: 0 },
+  downloads = 0
 ) {
   const activity = {
     ...buildActivityProgress(definitions, held, {
       models,
       articles: 0,
-      downloads: 0,
+      downloads,
       followers,
       reactions: 0,
       revenue,
@@ -105,9 +109,10 @@ describe('Achievements section', () => {
     expect(tile(el, '1k Followers')?.dataset.state).toBe('locked');
   });
 
-  it('shows an undated grant as plain Earned', () => {
+  // A grant with no observed moment was made at launch to someone already past the bar.
+  it('says an undated grant was earned before launch', () => {
     const el = render(new Map([['create:models-1', null]]));
-    expect(tile(el, 'First Model')?.textContent).toMatch(/Earned$/);
+    expect(tile(el, 'First Model')?.textContent).toMatch(/Earned before launch$/);
   });
 
   // A creator who unpublished after the grant keeps the badge; the next tier up is still the target.
@@ -139,6 +144,17 @@ describe('Shop track', () => {
     expect(tile(el, '250k Sales')?.dataset.state).toBe('progress');
     expect(tile(el, '250k Sales')?.textContent).toContain('120,000 / 250,000');
     expect(tile(el, '500k Sales')?.textContent).toContain('500,000 Buzz in shop sales');
+  });
+});
+
+describe('Downloads', () => {
+  it("shows the creator's total downloads against each threshold", () => {
+    const el = render(new Map([['reach:downloads-1000', null]]), 87, 3, 0, 0, 0, undefined, 1200);
+    expect(el.textContent).toContain('Downloads1,200 total');
+    expect(tile(el, '1k Downloads')?.dataset.state).toBe('earned');
+    expect(tile(el, '10k Downloads')?.dataset.state).toBe('progress');
+    expect(tile(el, '10k Downloads')?.textContent).toContain('1,200 / 10,000');
+    expect(tile(el, '100k Downloads')?.textContent).toContain('100,000 downloads');
   });
 });
 

@@ -12,8 +12,10 @@ const mocks = vi.hoisted(() => ({
     username?: string;
     meta: { scores: { total: number } };
   } | null,
-  shareable: undefined as boolean | undefined,
-  shareQueries: [] as { input: unknown; enabled: boolean }[],
+  myShare: undefined as
+    | { shareable: string[]; hiddenOnProfile: string[]; secret: string[] }
+    | undefined,
+  myShareEnabled: [] as boolean[],
   ladderTiers: [] as { key: string; threshold: number }[],
 }));
 vi.mock('~/hooks/useCurrentUser', async (importOriginal) => ({
@@ -23,12 +25,12 @@ vi.mock('~/hooks/useCurrentUser', async (importOriginal) => ({
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof Trpc>()),
   trpc: makeTrpcProxy({
-    'creatorJourney.isMilestoneShareable': {
-      useQuery: (input: unknown, { enabled }: { enabled: boolean }) => {
-        mocks.shareQueries.push({ input, enabled });
-        // Regardless of `enabled`: a disabled query still serves a cached answer, and the profile
-        // page prefetches this one for `?milestone=` links.
-        return { data: mocks.shareable };
+    'creatorJourney.getMyShareStates': {
+      useQuery: (_input: unknown, { enabled }: { enabled: boolean }) => {
+        mocks.myShareEnabled.push(enabled);
+        // Regardless of `enabled`: a disabled query can still serve a cached answer, so the card
+        // must gate on ownership itself.
+        return { data: mocks.myShare };
       },
     },
     'creatorJourney.getLadder': {
@@ -69,12 +71,18 @@ function mount(element: React.ReactElement) {
   return container;
 }
 
+// Any frame the list asked for has run by the time this one does.
+const nextFrame = () =>
+  act(async () => {
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+  });
+
 afterEach(() => {
   act(() => root?.unmount());
   container?.remove();
   mocks.viewer = null;
-  mocks.shareable = undefined;
-  mocks.shareQueries = [];
+  mocks.myShare = undefined;
+  mocks.myShareEnabled = [];
   mocks.ladderTiers = [];
 });
 
@@ -93,8 +101,8 @@ describe('profile achievement cards', () => {
         },
       })
     );
-    expect(SECRET_ACHIEVEMENT_LABEL).toBe('Secret achievement');
-    expect(card.textContent).toContain('Secret achievement');
+    expect(SECRET_ACHIEVEMENT_LABEL).toBe('Special achievement');
+    expect(card.textContent).toContain('Special achievement');
     expect(card.textContent).not.toContain('Creator Score');
   });
 
@@ -114,6 +122,27 @@ describe('profile achievement cards', () => {
     expect(card.textContent).toContain('25 Models');
     expect(card.textContent).toContain('Publish 25 models');
   });
+
+  // Justin (2026-10-10): the owner's earned special keeps its hint, above the description.
+  it('shows an earned special its hint above the description', () => {
+    const text =
+      mount(
+        React.createElement(AchievementCard, {
+          achievement: {
+            key: 'hidden:remix',
+            track: 'secret',
+            name: 'Remixed',
+            description: 'Someone remixed your model.',
+            hint: 'Someone builds on your work',
+            badgeUrl: null,
+            achievedAt: EARNED,
+          },
+        })
+      ).textContent ?? '';
+    const hintAt = text.indexOf('Someone builds on your work');
+    expect(hintAt).toBeGreaterThan(-1);
+    expect(hintAt).toBeLessThan(text.indexOf('Someone remixed your model.'));
+  });
 });
 
 describe('profile tier card', () => {
@@ -129,6 +158,13 @@ describe('profile tier card', () => {
 
   // A signed-in visitor's session carries their own score, never the owner's; showing it here
   // would read as the owner's number.
+  it('says a tier granted at launch was earned before launch', () => {
+    const card = mount(
+      React.createElement(ProfileTierCard, { tier: { ...tier, achievedAt: null }, userId: OWNER })
+    );
+    expect(card.textContent).toContain('Earned before launch');
+  });
+
   it('shows a visitor the tier and no score line', () => {
     mocks.viewer = { id: OWNER + 1, meta: { scores: { total: OWN_SCORE } } };
     const card = mount(React.createElement(ProfileTierCard, { tier, userId: OWNER }));
@@ -146,7 +182,7 @@ describe('profile tier card', () => {
 
   it('offers the owner a share link to the tier card when it renders', () => {
     mocks.viewer = { id: OWNER, username: 'maker', meta: { scores: { total: OWN_SCORE } } };
-    mocks.shareable = true;
+    mocks.myShare = { shareable: ['score:star'], hiddenOnProfile: [], secret: [] };
     const card = mount(React.createElement(ProfileTierCard, { tier, userId: OWNER }));
     expect(shareLinks(card)).toEqual([
       {
@@ -155,28 +191,33 @@ describe('profile tier card', () => {
         label: 'Share Star',
       },
     ]);
-    expect(mocks.shareQueries.at(-1)).toEqual({
-      input: { userId: OWNER, slug: 'star' },
-      enabled: true,
-    });
+    expect(mocks.myShareEnabled.at(-1)).toBe(true);
   });
 
   it('offers no share link when the card would not render', () => {
     mocks.viewer = { id: OWNER, username: 'maker', meta: { scores: { total: OWN_SCORE } } };
-    mocks.shareable = false;
+    mocks.myShare = { shareable: ['score:nova'], hiddenOnProfile: ['score:star'], secret: [] };
     expect(
       shareLinks(mount(React.createElement(ProfileTierCard, { tier, userId: OWNER })))
     ).toEqual([]);
   });
 
+  // A hidden tier is a secret like any other: the server says so, and the share text keeps it.
+  it('keeps a secret tier secret in the share text', () => {
+    mocks.viewer = { id: OWNER, username: 'maker', meta: { scores: { total: OWN_SCORE } } };
+    mocks.myShare = { shareable: ['score:star'], hiddenOnProfile: [], secret: ['score:star'] };
+    const [link] = shareLinks(mount(React.createElement(ProfileTierCard, { tier, userId: OWNER })));
+    expect(link.title).toBe('I unlocked a secret achievement on Civitai');
+  });
+
   // Sharing someone else's tier is the site's ordinary profile share; this button is the owner's.
   it('never offers a visitor the share link, nor asks the server', () => {
     mocks.viewer = { id: OWNER + 1, username: 'visitor', meta: { scores: { total: 0 } } };
-    mocks.shareable = true;
+    mocks.myShare = { shareable: ['score:star'], hiddenOnProfile: [], secret: [] };
     const card = mount(React.createElement(ProfileTierCard, { tier, userId: OWNER }));
     expect(shareLinks(card)).toEqual([]);
-    expect(mocks.shareQueries.every((query) => !query.enabled)).toBe(true);
-    expect(mocks.shareQueries.length).toBeGreaterThan(0);
+    expect(mocks.myShareEnabled.length).toBeGreaterThan(0);
+    expect(mocks.myShareEnabled.every((enabled) => !enabled)).toBe(true);
   });
 });
 
@@ -237,20 +278,275 @@ describe('achievements tab', () => {
           [...card.querySelectorAll('*')].some((node) => node.textContent === name)
         ) ?? ''
     );
-    expect(names).toEqual(['Nova', 'Blaze', 'Spark']);
+    // Dated first, then launch grants highest first.
+    expect(names).toEqual(['Blaze', 'Nova', 'Spark']);
     // A floor, not the creator's score (lead's call, 2026-10-09).
     expect(cardOf(el, 'Blaze')?.textContent).toContain('10,000+Creator Score');
     expect(cardOf(el, 'Blaze')?.textContent).toContain('Earned Sep 28, 2026');
     expect(cardOf(el, 'Spark')?.textContent).toContain('100+Creator Score');
-    // A backfilled tier has no observed date: plain "Earned", like the journey page.
-    expect(cardOf(el, 'Spark')?.textContent).toMatch(/Earned$/);
+    // A backfilled tier has no observed date, like the journey page.
+    expect(cardOf(el, 'Spark')?.textContent).toMatch(/Earned before launch$/);
     expect(cardOf(el, 'Nova')?.textContent).not.toMatch(/\d/);
+  });
+
+  it('orders each track dated first, then launch grants by metal', () => {
+    const achievement = (key: string, name: string, achievedAt: Date | null) => ({
+      key,
+      track: key.split(':')[0],
+      name,
+      description: null,
+      badgeUrl: null,
+      achievedAt,
+    });
+    const el = mount(
+      React.createElement(ProfileAchievementsList, {
+        data: {
+          tiers: [],
+          achievements: [
+            achievement('create:models-1', 'First Model', null),
+            achievement('create:articles-1', 'First Article', EARNED),
+            achievement('reach:followers-100', '100 Followers', null),
+            achievement('create:models-500', '500 Models', null),
+            achievement('reach:followers-10000', '10k Followers', null),
+          ],
+        },
+        userId: OWNER,
+      })
+    );
+    const names = (grid: HTMLElement) =>
+      [...grid.children].map(
+        (card) =>
+          ['First Model', '500 Models', 'First Article', '100 Followers', '10k Followers'].find(
+            (name) => [...card.querySelectorAll('*')].some((node) => node.textContent === name)
+          ) ?? ''
+      );
+    expect(grids(el).map(names)).toEqual([
+      ['First Article', '500 Models', 'First Model'],
+      ['10k Followers', '100 Followers'],
+    ]);
+  });
+
+  it('points the owner, and only the owner, at their journey', () => {
+    const journeyLinks = (el: HTMLElement) =>
+      [...el.querySelectorAll('a')].filter((a) => a.getAttribute('href') === '/creators/journey');
+    mocks.viewer = { id: OWNER, meta: { scores: { total: 1 } } };
+    const own = mount(React.createElement(ProfileAchievementsList, { data, userId: OWNER }));
+    expect(journeyLinks(own).map((a) => a.textContent)).toContain(
+      'See your progress on your Creator Journey'
+    );
+    act(() => root?.unmount());
+    container?.remove();
+    mocks.viewer = { id: OWNER + 1, meta: { scores: { total: 1 } } };
+    const visitor = mount(React.createElement(ProfileAchievementsList, { data, userId: OWNER }));
+    expect(journeyLinks(visitor)).toEqual([]);
   });
 
   it('shows the owner their own score on the hero', () => {
     mocks.viewer = { id: OWNER, meta: { scores: { total: 824228 } } };
     const el = mount(React.createElement(ProfileAchievementsList, { data, userId: OWNER }));
     expect(el.textContent).toContain('Only you see this: score 824,228');
+  });
+
+  // A shared tier link lands here with `?milestone=`; that tier's card is the one to look at.
+  it('scrolls to and rings the tier a shared link named, and only that one', async () => {
+    const scrolled: Element[] = [];
+    const original = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = function (this: Element) {
+      scrolled.push(this);
+    };
+    try {
+      const el = mount(
+        React.createElement(ProfileAchievementsList, { data, userId: OWNER, spotlight: 'blaze' })
+      );
+      const spotlit = [...el.querySelectorAll<HTMLElement>('[data-spotlight]')];
+      expect(spotlit.map((node) => node.id)).toEqual(['tier-blaze']);
+      expect(spotlit[0].textContent).toContain('Blaze');
+      expect(spotlit[0].className).toContain('ring-2');
+      await nextFrame();
+      expect(scrolled).toEqual([spotlit[0]]);
+    } finally {
+      Element.prototype.scrollIntoView = original;
+    }
+  });
+
+  // A shared achievement link names the achievement by its key; that card is the one to look at.
+  it('scrolls to and rings the achievement a shared link named', async () => {
+    const scrolled: Element[] = [];
+    const original = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = function (this: Element) {
+      scrolled.push(this);
+    };
+    try {
+      const el = mount(
+        React.createElement(ProfileAchievementsList, {
+          data,
+          userId: OWNER,
+          spotlight: 'create:models-25',
+        })
+      );
+      const spotlit = [...el.querySelectorAll<HTMLElement>('[data-spotlight]')];
+      expect(spotlit.map((node) => node.id)).toEqual(['achievement-create:models-25']);
+      expect(spotlit[0].textContent).toContain('25 Models');
+      await nextFrame();
+      expect(scrolled).toEqual([spotlit[0]]);
+    } finally {
+      Element.prototype.scrollIntoView = original;
+    }
+  });
+
+  // A visitor's special is keyed by its place in the list; the server marks the one the link named.
+  it("rings and scrolls to a visitor's secret the server marked for the link", async () => {
+    const scrolled: Element[] = [];
+    const original = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = function (this: Element) {
+      scrolled.push(this);
+    };
+    const secret = (key: string, spotlit: boolean) => ({
+      key,
+      track: 'secret',
+      name: null,
+      description: null,
+      badgeUrl: null,
+      achievedAt: EARNED,
+      spotlit,
+    });
+    try {
+      const el = mount(
+        React.createElement(ProfileAchievementsList, {
+          data: { tiers: [], achievements: [secret('secret:0', false), secret('secret:1', true)] },
+          userId: OWNER,
+          spotlight: 'hidden:night-owl',
+        })
+      );
+      const spotlit = [...el.querySelectorAll<HTMLElement>('[data-spotlight]')];
+      expect(spotlit.map((node) => node.id)).toEqual(['achievement-hidden:night-owl']);
+      expect(spotlit[0].textContent).toContain(SECRET_ACHIEVEMENT_LABEL);
+      const cards = [...el.querySelectorAll<HTMLElement>('div')].find(
+        (div) => div.className === BADGE_CARD_GRID
+      )?.children;
+      expect(cards?.[1]).toBe(spotlit[0]);
+      await nextFrame();
+      expect(scrolled).toEqual([spotlit[0]]);
+    } finally {
+      Element.prototype.scrollIntoView = original;
+    }
+  });
+
+  // Landing from the profile, the list mounts with the page (the profile cached its data), and the
+  // app's scroll area resets to the top in its own effect, after the list's. Scrolling in the list's
+  // effect lost to that reset; the scroll must come after every effect of the commit.
+  it('scrolls after the effects of the page it mounts with', async () => {
+    const order: string[] = [];
+    const original = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = function () {
+      order.push('scroll');
+    };
+    function ScrollAreaLike({ children }: { children: React.ReactNode }) {
+      React.useEffect(() => {
+        order.push('reset');
+      }, []);
+      return React.createElement(React.Fragment, null, children);
+    }
+    try {
+      mount(
+        React.createElement(
+          ScrollAreaLike,
+          null,
+          React.createElement(ProfileAchievementsList, { data, userId: OWNER, spotlight: 'blaze' })
+        )
+      );
+      await nextFrame();
+      expect(order).toEqual(['reset', 'scroll']);
+    } finally {
+      Element.prototype.scrollIntoView = original;
+    }
+  });
+
+  // The ring is drawn by the wrapper, which is the grid item: it must fill its cell and the card
+  // must fill it, with the card's own radius. Pinned by class (component tests load no stylesheet).
+  it('rings the card with a wrapper its card fills, at the card radius', () => {
+    const el = mount(
+      React.createElement(ProfileAchievementsList, { data, userId: OWNER, spotlight: 'blaze' })
+    );
+    const ring = el.querySelector<HTMLElement>('[data-spotlight]');
+    const classes = ring?.className.split(' ') ?? [];
+    expect(classes).toContain('grid');
+    expect(classes).toContain('rounded-md');
+    expect(classes.filter((c) => /^rounded(-|$)/.test(c))).toEqual(['rounded-md']);
+    const card = ring?.firstElementChild as HTMLElement | null;
+    expect(card?.className.split(' ')).toContain('rounded-md');
+  });
+
+  const achievementShareLinks = (el: HTMLElement) =>
+    [...el.querySelectorAll('[data-share-url]')].map((link) => ({
+      url: link.getAttribute('data-share-url'),
+      title: link.getAttribute('data-share-title'),
+    }));
+  const twoAchievements = {
+    ...data,
+    tiers: [],
+    achievements: [
+      ...data.achievements,
+      {
+        key: 'reach:followers-100',
+        track: 'reach',
+        name: '100 Followers',
+        description: null,
+        badgeUrl: null,
+        achievedAt: EARNED,
+      },
+    ],
+  };
+
+  it('offers the owner a share link on each achievement whose card renders', () => {
+    mocks.viewer = { id: OWNER, username: 'maker', meta: { scores: { total: 1 } } };
+    mocks.myShare = { shareable: ['create:models-25'], hiddenOnProfile: [], secret: [] };
+    const el = mount(
+      React.createElement(ProfileAchievementsList, { data: twoAchievements, userId: OWNER })
+    );
+    expect(achievementShareLinks(el)).toEqual([
+      { url: '/user/maker?milestone=create:models-25', title: 'I earned 25 Models on Civitai' },
+    ]);
+    expect(mocks.myShareEnabled.at(-1)).toBe(true);
+  });
+
+  it('keeps a secret achievement secret in its share text', () => {
+    mocks.viewer = { id: OWNER, username: 'maker', meta: { scores: { total: 1 } } };
+    mocks.myShare = {
+      shareable: ['create:models-25', 'reach:followers-100'],
+      hiddenOnProfile: [],
+      secret: ['reach:followers-100'],
+    };
+    const el = mount(
+      React.createElement(ProfileAchievementsList, { data: twoAchievements, userId: OWNER })
+    );
+    expect(achievementShareLinks(el).map((link) => link.title)).toEqual([
+      'I earned 25 Models on Civitai',
+      'I unlocked a secret achievement on Civitai',
+    ]);
+  });
+
+  // The owner's share list is theirs: a visitor neither sees the buttons nor asks for it.
+  it('never offers a visitor an achievement share link, nor asks the server', () => {
+    mocks.viewer = { id: OWNER + 1, username: 'visitor', meta: { scores: { total: 0 } } };
+    mocks.myShare = {
+      shareable: ['create:models-25', 'reach:followers-100'],
+      hiddenOnProfile: [],
+      secret: [],
+    };
+    const el = mount(
+      React.createElement(ProfileAchievementsList, { data: twoAchievements, userId: OWNER })
+    );
+    expect(achievementShareLinks(el)).toEqual([]);
+    expect(mocks.myShareEnabled.length).toBeGreaterThan(0);
+    expect(mocks.myShareEnabled.every((enabled) => !enabled)).toBe(true);
+  });
+
+  it('picks out nothing for a tier the creator does not hold', () => {
+    const el = mount(
+      React.createElement(ProfileAchievementsList, { data, userId: OWNER, spotlight: 'legend' })
+    );
+    expect(el.querySelectorAll('[data-spotlight]')).toHaveLength(0);
   });
 
   // The width itself is a stylesheet fact the test environment cannot measure; what is pinned here

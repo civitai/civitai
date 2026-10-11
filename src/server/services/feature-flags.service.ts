@@ -760,6 +760,9 @@ const featureFlags = createFeatureFlags({
   // cohort is opened. isFliptSync answers false for an unknown flag or an
   // unreachable Flipt, so an absent flag is deny-by-default.
   resourceIntentJev: { availability: [], fliptKey: 'resource-intent-jev' },
+  // Serves the co-occurrence POOL_MERGE list instead of HYBRID_10. Read only behind
+  // `resourceIntentJev`, so it changes nothing while that is off. Dark like it.
+  resourceIntentPoolMerge: { availability: [], fliptKey: 'resource-intent-pool-merge' },
 });
 
 export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];

@@ -120,7 +120,19 @@ function RowContent({ row }: { row: QueueRow }) {
           </Text>
         )}
         <Text size="xs" c="dimmed">
-          /{row.live.subPath}
+          {row.externalHref ? (
+            <Anchor
+              href={row.externalHref}
+              target="_blank"
+              rel="noopener noreferrer"
+              size="xs"
+              data-testid="sub-listing-external-link"
+            >
+              {row.externalHref}
+            </Anchor>
+          ) : (
+            `/${row.live.subPath}`
+          )}
           {row.live.contentRating ? ` · ${row.live.contentRating}` : ''}
         </Text>
         {row.live.imageUrl && <FieldValue field="imageUrl" value={row.live.imageUrl} />}

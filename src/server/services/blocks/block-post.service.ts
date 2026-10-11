@@ -1,10 +1,16 @@
 import { TRPCError } from '@trpc/server';
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { getEdgeUrl } from '~/client-utils/edge-url';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
-import { BLOCK_PUBLISHED_APP_ID_META_KEY } from '~/server/services/blocks/block-image-upload.service';
-import { isAllowedOutputHost } from '~/server/services/blocks/block-image-upload.logic';
+import {
+  BLOCK_POSTABLE_APP_ID_META_KEYS,
+  BLOCK_PUBLISHED_APP_ID_META_KEY,
+} from '~/server/services/blocks/block-image-upload.service';
+import {
+  isAllowedOutputHost,
+  isWithinSfwImageCeiling,
+} from '~/server/services/blocks/block-image-upload.logic';
 import { classifyGatedImageForViewer } from '~/server/services/blocks/block-gated-images.logic';
 import { assertBlockWorkflowTaggedForApp } from '~/server/services/blocks/block-workflow-access';
 import { blockWorkflowOwnedByAppUser } from '~/server/services/blocks/block-workflows.service';
@@ -506,12 +512,23 @@ const POST_PREVIEW_EDGE_WIDTH = 450;
  *     does NOT have this conjunct, because that read is BY DESIGN cross-user;
  *     copying it here unchanged would have let a block pull ANOTHER viewer's
  *     image of the same app into this viewer's post.
- *   - `metadata->>'blockPublishedAppId' = <token appId>` — the app may only
- *     re-use what IT published, never another app's images.
+ *   - `blockPublishedAppId` OR `blockUploadedAppId` = <token appId> — only what
+ *     THIS app published or uploaded. The uploaded key is safe here, and only
+ *     here, because the owner conjunct above binds the row to this viewer; the
+ *     cross-user gated read must never accept it.
  *   - `postId IS NULL` — an image already in a post is not adoptable. This also
  *     makes double-posting impossible without a second check.
  *   - `classifyGatedImageForViewer` — terminally `Scanned`, unflagged, and within
  *     the viewer's ceiling.
+ *
+ * 🔴 A ROW ACCEPTED ONLY THROUGH `blockUploadedAppId` IS ALSO HELD TO THE SFW
+ * CEILING, whatever the viewer's own ceiling allows. Bytes uploads are SFW-only in
+ * v1 (an operator decision); the upload's scan gate enforces it on the host reply
+ * with `isWithinSfwImageCeiling`, and this reader applies the SAME helper so a row
+ * the scan gate refused is not postable either. A row carrying the PUBLISHED key
+ * keeps the viewer clamp alone. This is the ONLY maturity check on the post path:
+ * `adoptImagesIntoPost` re-checks owner, provenance and `postId`, never maturity,
+ * and every adopted `published` id has passed through here first.
  *
  * 🔴 THE `postId IS NULL` CONJUNCT HAS A PRODUCT CONSEQUENCE THE SDK MUST
  * DOCUMENT: the app's own grid read (`blocks.getImagesByIds`) is scoped the same
@@ -563,16 +580,24 @@ export async function resolveAppPublishedImages(input: {
       tosViolation: boolean | null;
       acceptableMinor: boolean | null;
       blockedFor: string | null;
+      /** True when the PUBLISHED key matched; null/false = accepted only via the uploaded key. */
+      viaPublished: boolean | null;
     }>
   >`
     SELECT
       i."id", i."url", i."nsfwLevel", i."ingestion", i."width", i."height",
-      i."needsReview", i."poi", i."minor", i."tosViolation", i."acceptableMinor", i."blockedFor"
+      i."needsReview", i."poi", i."minor", i."tosViolation", i."acceptableMinor", i."blockedFor",
+      (i."metadata"->>(${BLOCK_PUBLISHED_APP_ID_META_KEY}::text) = ${input.appId}) AS "viaPublished"
     FROM "Image" i
     WHERE i."id" = ANY(${ids}::int[])
       AND i."userId" = ${input.userId}
       AND i."postId" IS NULL
-      AND i."metadata"->>(${BLOCK_PUBLISHED_APP_ID_META_KEY}::text) = ${input.appId}
+      AND (${Prisma.join(
+        BLOCK_POSTABLE_APP_ID_META_KEYS.map(
+          (key) => Prisma.sql`i."metadata"->>(${key}::text) = ${input.appId}`
+        ),
+        ' OR '
+      )})
   `;
 
   const byId = new Map(rows.map((r) => [r.id, r]));
@@ -606,6 +631,10 @@ export async function resolveAppPublishedImages(input: {
     // must not carry one, and this spelling refuses it without needing to know the
     // state exists. The seam test asserts every call site keeps this shape.
     if (verdict.status !== 'visible') badRequest('an image is not available to post');
+    // Uploaded-only rows: the bytes-upload SFW ceiling, on top of the viewer clamp above.
+    if (row.viaPublished !== true && !isWithinSfwImageCeiling(row.nsfwLevel)) {
+      badRequest('an image is not available to post');
+    }
     out.push({
       imageId: row.id,
       // The raw storage key never leaves the server.
@@ -866,7 +895,9 @@ async function adoptImagesIntoPost(
         id,
         userId: input.userId,
         postId: null,
-        metadata: { path: [BLOCK_PUBLISHED_APP_ID_META_KEY], equals: input.appId },
+        OR: BLOCK_POSTABLE_APP_ID_META_KEYS.map((key) => ({
+          metadata: { path: [key], equals: input.appId },
+        })),
       },
       data: { postId: input.postId, index: input.startIndex + i },
     });

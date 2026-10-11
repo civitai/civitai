@@ -16,6 +16,7 @@ import { readListingVisibility } from '~/server/services/blocks/app-listing-visi
 import { listingCoverUrl, listingIconUrl } from '~/server/services/blocks/listing-media-url';
 import type { ListingProblem } from '~/server/services/blocks/listing-problems';
 import { computeListingProblems } from '~/server/services/blocks/listing-problems';
+import { declaredListingRating } from '~/shared/utils/listing-rating-display';
 import type {
   AppRole,
   ListingCapability,
@@ -1095,6 +1096,8 @@ async function hydrateMyAppListings(
       description: true,
       tagline: true,
       category: true,
+      contentRating: true,
+      appBlock: { select: { contentRating: true } },
       _count: { select: { screenshots: { where: { imageId: { not: null } } } } },
     },
     orderBy: { serialId: 'desc' },
@@ -1188,6 +1191,8 @@ async function hydrateMyAppListings(
       description?: string | null;
       tagline?: string | null;
       category?: string | null;
+      contentRating?: string | null;
+      appBlock?: { contentRating: string | null } | null;
       _count?: { screenshots: number } | null;
     }) => {
       const kind = r.kind as ListingKind;
@@ -1225,6 +1230,13 @@ async function hydrateMyAppListings(
           tagline: r.tagline ?? null,
           category: r.category ?? null,
           assetScans: scansByListingId.get(r.id) ?? [],
+          status: r.status,
+          contentRating: r.contentRating ?? null,
+          declaredContentRating: declaredListingRating({
+            kind,
+            appRating: r.appBlock?.contentRating,
+            listingRating: r.contentRating,
+          }),
         }).problems,
         // 🔴 Only a `removed` row can carry one — see the field's doc. A non-removed row
         // returning an action would let a stale event re-open Republish on a live listing.

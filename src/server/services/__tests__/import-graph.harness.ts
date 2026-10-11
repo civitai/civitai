@@ -243,6 +243,57 @@ export function importGraph(
   return graph;
 }
 
+/**
+ * Every import cycle in `graph`: strongly connected components of two or more modules, each sorted,
+ * largest first. Iterative Tarjan: the graph is deep enough to overflow the stack recursively.
+ */
+export function importCycles(graph: Map<string, string[]>): string[][] {
+  let next = 0;
+  const index = new Map<string, number>();
+  const low = new Map<string, number>();
+  const onStack = new Set<string>();
+  const stack: string[] = [];
+  const cycles: string[][] = [];
+  for (const root of graph.keys()) {
+    if (index.has(root)) continue;
+    const work: [string, number][] = [[root, 0]];
+    while (work.length) {
+      const frame = work[work.length - 1]!;
+      const [v, i] = frame;
+      if (i === 0) {
+        index.set(v, next);
+        low.set(v, next++);
+        stack.push(v);
+        onStack.add(v);
+      }
+      const deps = graph.get(v) ?? [];
+      if (i < deps.length) {
+        frame[1]++;
+        const w = deps[i]!;
+        if (!index.has(w)) work.push([w, 0]);
+        else if (onStack.has(w)) low.set(v, Math.min(low.get(v)!, index.get(w)!));
+        continue;
+      }
+      work.pop();
+      if (work.length) {
+        const parent = work[work.length - 1]![0];
+        low.set(parent, Math.min(low.get(parent)!, low.get(v)!));
+      }
+      if (low.get(v) === index.get(v)) {
+        const scc: string[] = [];
+        let w: string;
+        do {
+          w = stack.pop()!;
+          onStack.delete(w);
+          scc.push(w);
+        } while (w !== v);
+        if (scc.length > 1) cycles.push(scc.sort());
+      }
+    }
+  }
+  return cycles.sort((a, b) => b.length - a.length || a[0]!.localeCompare(b[0]!));
+}
+
 /** The import cycle `file` sits in: every module it reaches that also reaches it back. */
 export function cycleContaining(graph: Map<string, string[]>, file: string): string[] {
   const reach = (from: string, edges: (f: string) => string[]) => {

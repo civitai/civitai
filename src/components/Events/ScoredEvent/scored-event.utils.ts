@@ -54,6 +54,41 @@ export function minutesUntilMovable(cooldownLeftMs: number, elapsedMs: number) {
   return Math.max(0, Math.ceil((cooldownLeftMs - Math.max(0, elapsedMs)) / 60_000));
 }
 
+const COVER_ASPECT = 4 / 5;
+const COVER_MAX_WIDTH = 1200;
+const COVER_FALLBACK_WIDTH = 320;
+
+function sizeOf(width: unknown, height: unknown) {
+  return typeof width === 'number' && typeof height === 'number' && width > 0 && height > 0
+    ? { width, height }
+    : undefined;
+}
+
+/**
+ * The width to ask the image CDN for so a picture still fills a 4:5 card `boxWidth` px wide after
+ * `object-cover` crops it. The CDN keeps the source's shape, so a source wider than the card comes
+ * back too short at the card's width and is stretched to fill the height: ask for that much more
+ * width. The size is the image row's own, else its metadata's; with neither, the old fixed 320.
+ * A video is transcoded at the width asked for, so it is not stretched: the extra width would cost
+ * far more there than on a still.
+ */
+export function coverRequestWidth(
+  image: {
+    type?: unknown;
+    width?: unknown;
+    height?: unknown;
+    metadata?: { width?: unknown; height?: unknown } | null;
+  },
+  boxWidth: number
+) {
+  if (image.type === MediaType.video) return boxWidth;
+  const size =
+    sizeOf(image.width, image.height) ?? sizeOf(image.metadata?.width, image.metadata?.height);
+  if (!size) return COVER_FALLBACK_WIDTH;
+  const stretch = Math.max(1, size.width / size.height / COVER_ASPECT);
+  return Math.min(COVER_MAX_WIDTH, Math.round(boxWidth * stretch));
+}
+
 /** The page's card surface (shop tiles, hat cards, standings rows): a step lighter than the page. */
 export const EVENT_CARD_SURFACE = 'bg-white dark:bg-dark-6';
 

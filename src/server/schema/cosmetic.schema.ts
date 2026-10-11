@@ -92,3 +92,25 @@ export const updateEventHatFitSchema = z.object({
       message: 'Change at least one setting',
     }),
 });
+
+/** Mirrors the reaction lookup's cap, which the home blocks already chunk to. */
+export const VIEWER_EVENT_DECORATION_LIMIT = 100;
+
+export type GetViewerEventDecorationsInput = z.infer<typeof getViewerEventDecorationsSchema>;
+export const getViewerEventDecorationsSchema = z.object({
+  entityType: z.enum([CosmeticEntity.Image, CosmeticEntity.Model, CosmeticEntity.Article]),
+  ids: z.array(z.number().int().positive()).min(1).max(VIEWER_EVENT_DECORATION_LIMIT),
+});
+
+/**
+ * The search grids' edge-cached lookup. Ids strictly ascending: the edge keys on the URL, so one
+ * page of hits has one spelling, and a reordered or padded list is refused rather than cached as
+ * another key.
+ */
+export type GetSearchEventDecorationsInput = z.infer<typeof getSearchEventDecorationsSchema>;
+export const getSearchEventDecorationsSchema = getViewerEventDecorationsSchema.extend({
+  ids: getViewerEventDecorationsSchema.shape.ids.refine(
+    (ids) => ids.every((id, i) => i === 0 || id > ids[i - 1]),
+    'ids must be unique and ascending'
+  ),
+});

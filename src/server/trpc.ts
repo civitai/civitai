@@ -35,7 +35,10 @@ import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { Flags } from '~/shared/utils/flags';
-import { runEnforceTokenScope } from '~/server/services/oauth/enforce-token-scope';
+import {
+  assertSessionOrFullUserKey,
+  runEnforceTokenScope,
+} from '~/server/services/oauth/enforce-token-scope';
 import { parseVerifiedBotHeader, VERIFIED_BOT_HEADER } from '~/server/utils/bot-detection/header';
 import { errorFormatter } from '~/server/trpc/error-formatter';
 import type { Context } from './createContext';
@@ -428,6 +431,7 @@ const isMod = t.middleware(({ ctx: { user, acceptableOrigin, ...ctx }, next }) =
       code: 'FORBIDDEN',
       message: 'You do not have permission to perform this action',
     });
+  assertSessionOrFullUserKey(ctx);
   return next({
     ctx: { ...ctx, user, acceptableOrigin },
   });
@@ -461,7 +465,8 @@ const isOnboarded = t.middleware(({ ctx, next }) => {
 export const protectedProcedure = publicProcedure.use(isAuthed);
 
 /**
- * Moderator procedure
+ * Moderator procedure. A token-based request must be a full-scope personal API key, whatever
+ * `requiredScope` the procedure declares.
  **/
 export const moderatorProcedure = protectedProcedure.use(isMod);
 

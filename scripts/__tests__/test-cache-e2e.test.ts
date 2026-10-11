@@ -1,7 +1,7 @@
 import { spawnSync } from 'child_process';
-import { mkdtempSync, readFileSync } from 'fs';
+import { mkdtempSync, readdirSync, readFileSync, statSync, utimesSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
-import { join, resolve } from 'path';
+import { dirname, join, resolve } from 'path';
 import { describe, expect, it } from 'vitest';
 
 import { recordsFor } from '../test-cache/core.mjs';
@@ -60,13 +60,35 @@ describe('the cache, run for real', () => {
     // Both fixtures, one of which is a happy-dom file: that one resolves a node builtin to a vite
     // virtual id, and a key that treats such an id as a path records nothing for it.
     expect({ recorded: cold.last.recorded, notRecorded: cold.last.notRecorded }).toEqual({
-      recorded: 8,
+      recorded: 9,
       notRecorded: {},
     });
 
+    // Age every record, so a hit that refreshes it is visible: eviction goes by mtime, and a record
+    // the real sequencer hits must move to the front of that order.
+    const recDir = join(cacheDir, 'rec');
+    const old = Date.now() / 1000 - 86_400;
+    const files = readdirSync(recDir).flatMap((id) =>
+      readdirSync(join(recDir, id)).map((n) => join(recDir, id, n))
+    );
+    expect(files).toHaveLength(9);
+    for (const f of files) utimesSync(f, old, old);
+    // A second record beside one of them that matches nothing: only the record that answered the
+    // lookup may be refreshed, not whichever sorts first or every record in the directory.
+    const decoy = join(dirname(files[0]!), 'decoy.json');
+    writeFileSync(
+      decoy,
+      JSON.stringify({ ...JSON.parse(readFileSync(files[0]!, 'utf8')), key: 'decoy' })
+    );
+    utimesSync(decoy, old + 60, old + 60);
+
     const warm = runOnce(cacheDir);
     expect(warm.status).toBe(0);
-    expect({ ran: warm.last.ran, skipped: warm.last.skipped }).toEqual({ ran: 0, skipped: 8 });
+    expect({ ran: warm.last.ran, skipped: warm.last.skipped }).toEqual({ ran: 0, skipped: 9 });
+    // CIVITAI_TEST_CACHE_SAMPLE: '0' is load-bearing here: a sampled re-run rewrites its record,
+    // which would refresh the mtime without markHit.
+    expect(files.filter((f) => statSync(f).mtimeMs / 1000 > old + 3600)).toHaveLength(9);
+    expect(statSync(decoy).mtimeMs / 1000).toBeLessThan(old + 3600);
   }, 300_000);
 
   // Both files import heavy.ts, so the run's shared graph carries heavy-dep.ts under it. Only the
@@ -94,5 +116,19 @@ describe('the cache, run for real', () => {
     // keyed without the subtree heavy-real.e2e.ts loaded under it.
     expect(real).toContain(`${dir}/sibling-dep.ts`);
     expect(entriesOf(cacheDir, `${dir}/heavy-reset.e2e.ts`)).not.toContain(`${dir}/sibling-dep.ts`);
+  }, 300_000);
+
+  // setup.ts's factory loads factory-dep.ts only in a file that imports the mocked specifier, but
+  // the shared graph hangs it under setup.ts for every file. The loading file's entry is the
+  // control that it was in the graph at all.
+  it('keys a module a setup factory loads only for the file that ran the factory', () => {
+    const cacheDir = mkdtempSync(join(tmpdir(), 'test-cache-e2e-'));
+    expect(runOnce(cacheDir).status).toBe(0);
+
+    const dir = 'scripts/test-cache/__e2e__';
+    expect(entriesOf(cacheDir, `${dir}/factory-loads.e2e.ts`)).toContain(`${dir}/factory-dep.ts`);
+    const other = entriesOf(cacheDir, `${dir}/probe.e2e.ts`);
+    expect(other).toContain(`${dir}/setup.ts`);
+    expect(other).not.toContain(`${dir}/factory-dep.ts`);
   }, 300_000);
 });

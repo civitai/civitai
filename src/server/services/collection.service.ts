@@ -66,6 +66,7 @@ import type { GetModelsWithImagesAndModelVersions } from '~/server/services/mode
 import { createNotification } from '~/server/services/notification.service';
 import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
 import { sanitizeProvenance } from '~/server/services/orchestrator/remix-provenance';
+import { pickClientImageColumns } from '~/server/utils/image-columns';
 import type { PostsInfiniteModel } from '~/server/services/post.service';
 import { getPostsInfinite } from '~/server/services/post.service';
 import { enqueueJobs } from '~/server/services/job-queue.service';
@@ -1414,7 +1415,7 @@ export const upsertCollection = async ({
                   connectOrCreate: {
                     where: { id: image.id ?? -1 },
                     create: {
-                      ...image,
+                      ...pickClientImageColumns(image),
                       meta:
                         (sanitizeProvenance(
                           image?.meta as Record<string, unknown> | null | undefined
@@ -1737,10 +1738,17 @@ export const AI_REVIEW_SYSTEM_USER_ID = -1;
 export const getCollectionItemsByCollectionId = async ({
   input,
   user,
+  imagesAsPublicCatalog = false,
 }: {
   input: UserPreferencesInput & GetAllCollectionItemsSchema;
   // Requires user here because models service uses it
   user?: SessionUser;
+  /**
+   * Read image items the way the public image catalog (`runImageSearch`) does: with no
+   * viewer, so no owner or moderator carve-outs, and with the poi/minor exclusion. The
+   * collection permission check above still uses `user`.
+   */
+  imagesAsPublicCatalog?: boolean;
 }): Promise<CollectionItemsResult> => {
   const {
     statuses = [CollectionItemStatus.ACCEPTED],
@@ -2062,7 +2070,8 @@ export const getCollectionItemsByCollectionId = async ({
           sort: ImageSort.Newest,
           ...userPreferencesInput,
           browsingLevel: input.browsingLevel,
-          user,
+          user: imagesAsPublicCatalog ? undefined : user,
+          ...(imagesAsPublicCatalog && { disablePoi: true, disableMinor: true }),
           ids: imageIds,
           headers: { src: 'getCollectionItemsByCollectionId' },
           includeBaseModel: true,

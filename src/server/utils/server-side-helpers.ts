@@ -1,5 +1,10 @@
 import { createServerSideHelpers } from '@trpc/react-query/server';
-import type { GetServerSidePropsContext, GetServerSidePropsResult, Redirect } from 'next';
+import type {
+  GetServerSidePropsContext,
+  GetServerSidePropsResult,
+  NextApiRequest,
+  Redirect,
+} from 'next';
 import type { Session } from '~/types/session';
 import { jsonSafeSession } from '~/server/utils/session-props';
 import { Tracker } from '~/server/clickhouse/client';
@@ -15,7 +20,9 @@ import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import { getFeatureFlagsAsync } from '~/server/services/feature-flags.service';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 import { getRequestDomainColor } from '~/server/utils/server-domain';
-import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { getRequestCredential } from '~/server/auth/request-credential';
+import { requestCarriesQueryToken } from '~/server/utils/request-query-token';
+import { isFullScopeSession } from '~/server/utils/require-full-scope-session';
 
 export const getServerProxySSGHelpers = async (
   ctx: GetServerSidePropsContext,
@@ -36,10 +43,7 @@ export const getServerProxySSGHelpers = async (
       req: ctx.req as any,
       domain,
       signal: new AbortController().signal,
-      tokenScope: TokenScope.Full,
-      apiKeyId: undefined,
-      apiKeyType: undefined,
-      subject: undefined,
+      ...getRequestCredential(ctx.req),
     },
     // Phase 2 of the superjson → devalue migration: SSR runs server-side, so its
     // dehydrate WRITE goes through the env-gated server writer (`unionTransformer`
@@ -65,19 +69,31 @@ export function createServerSideProps<P>({
     context: GetServerSidePropsContext
   ): Promise<GetServerSidePropsResult<NonNullable<P>>> {
     const isClient = context.req.url?.startsWith('/_next/data') ?? false;
+    // `_app` seeds `req.session` from its own request, which carries this request's headers but not
+    // its URL. With an Authorization header the seed holds that token's user but not its
+    // credential, so it resolves here, which records the credential on `req.context`.
+    const presentsHeader = !!context.req.headers.authorization;
     const session =
-      ((context.req as any)['session'] as Session | null) ??
-      (useSession || requireModerator || !isClient ? await getServerAuthSession(context) : null);
+      (presentsHeader ? null : ((context.req as any)['session'] as Session | null)) ??
+      (useSession || requireModerator || !isClient || presentsHeader
+        ? await getServerAuthSession(context)
+        : null);
 
-    // Page-level moderator gate (replaces the edge route-guard — the thin hub civ-token can't resolve the full
-    // user in the edge runtime). Anon → login; authed-non-moderator → home (login can't grant the permission
-    // and would loop back here). Runs on SSR AND client-nav data fetches.
-    if (requireModerator && !session?.user?.isModerator) {
+    // Page-level moderator gate. Anon with no token → login; any other refusal →
+    // home (login can't change the outcome and would loop back here). Runs on SSR AND client-nav
+    // data fetches.
+    if (
+      requireModerator &&
+      (!session?.user?.isModerator || !isFullScopeSession(context.req as NextApiRequest))
+    ) {
       return {
         redirect: {
-          destination: session?.user
-            ? '/'
-            : `/login?returnUrl=${encodeURIComponent(context.resolvedUrl)}`,
+          destination:
+            session?.user ||
+            presentsHeader ||
+            requestCarriesQueryToken(context.req as NextApiRequest)
+              ? '/'
+              : `/login?returnUrl=${encodeURIComponent(context.resolvedUrl)}`,
           permanent: false,
         },
       };
@@ -164,8 +180,8 @@ type CreateServerSidePropsProps<P> = {
   useSSG?: boolean;
   useSession?: boolean;
   prefetch?: 'always' | 'once';
-  /** Gate the page to moderators (replaces the edge `/moderator` route-guard). Resolves the session and
-   *  redirects non-moderators before the resolver runs. */
+  /** Gate the page to moderators on a browser session or a full-scope personal API key sent in the
+   *  Authorization header. Redirects everyone else before the resolver runs. */
   requireModerator?: boolean;
   resolver?: (context: CustomGetServerSidePropsContext) => Promise<
     | (GetServerSidePropsResult<P> & {

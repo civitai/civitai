@@ -2,6 +2,7 @@ import type { PrismaClient } from '@prisma/client';
 import Rand, { PRNG } from 'rand-seed';
 import { dbWrite } from '~/server/db/client';
 import { discord } from '~/server/integrations/discord';
+import type { EventPointsConfig } from '~/server/events/points/types';
 import type { RedisKeyTemplateCache } from '~/server/redis/client';
 import {
   redis,
@@ -13,6 +14,7 @@ import {
 } from '~/server/redis/client';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import type { FeatureFlagKey } from '~/server/services/feature-flags.service';
+import type { EventPromoIcon } from '~/shared/constants/nav-banner.constants';
 
 // Disable pod memory keeping for now... We might not need it.
 // const manualAssignments: Record<string, Record<string, string>> = {};
@@ -226,20 +228,11 @@ export type BuzzEventContext = {
   db: PrismaClient;
 };
 
-// Scores a team by the impressions and reactions on content wearing that team's event cosmetics.
-// See src/server/events/scoring/cosmetic-placement.sql.ts for how each parameter is applied.
-export type CosmeticPlacementScoring = {
-  reactionWeight: number;
-  // Signed-out viewers per day are capped at max(anonFloor, signed viewers x anonRatio), per entity
-  // and again per cosmetic owner.
-  anonFloor: number;
-  anonRatio: number;
-  // A signed-out session that saw more distinct entities than this in a day is treated as a bot.
-  botSessionEntityLimit: number;
-  // Accounts registered less than this many days before the event starts do not count as viewers.
+// Scores a team by the points its event cosmetics earn: every qualifying action on content wearing
+// one is recorded in a ledger and settled hourly. See src/server/events/points/.
+export type EventScoring = EventPointsConfig & {
+  // Accounts registered less than this many days before the event starts earn nobody points.
   newAccountDays: number;
-  // Most entities one viewer can credit to one cosmetic owner per day.
-  viewerOwnerDailyCap: number;
   // Scoring keeps running this long past endDate for late data; the winner is decided after it.
   finalizeAfterMs: number;
 };
@@ -282,10 +275,29 @@ export type EventBannerCopy = {
   priority?: number;
 };
 
+// Copy for the event's other entry points, served beside its banner (see nav-banner.service.ts).
+// Links, visibility and the hat button are derived from the rest of the definition, never set here.
+export type EventPromoCopy = {
+  // The user-menu entry. Defaults to the event title.
+  menuLabel?: string;
+  menuIcon?: EventPromoIcon;
+  // The card under Publish in the post editor. Omit it and the editor shows no card.
+  postEditor?: {
+    title?: string;
+    body: string;
+    // Shown while the post is unpublished.
+    draftNote?: string;
+    image?: string;
+  };
+  homeBlock?: { eyebrow?: string; title?: string; body?: string; cta?: string };
+};
+
 type HolidayEventDefinition = {
   title: string;
   page?: EventPageCopy;
   banner?: EventBannerCopy;
+  // Needs `banner`: the promo rides on the banner's entry.
+  promo?: EventPromoCopy;
   startDate: Date;
   endDate: Date;
   teams: readonly string[];
@@ -294,7 +306,7 @@ type HolidayEventDefinition = {
   previewFrom?: Date;
   // Buzz-bank events score each team by its bank balance. Omit it and set `scoring` instead.
   bankIndex?: number;
-  scoring?: CosmeticPlacementScoring;
+  scoring?: EventScoring;
   // Joining grants the team's cosmetic of this design (Cosmetic.data.design) under this claimKey,
   // once per user, only inside the event window. Without it, activateCosmetic keeps the bank-event
   // behaviour.

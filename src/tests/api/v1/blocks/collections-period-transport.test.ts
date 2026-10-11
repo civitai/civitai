@@ -111,6 +111,9 @@ vi.mock('~/server/services/blocks/block-collections.service', () => ({
   getCollectionPlayableSample: mockPlayableSample,
   toCoverFields: () => ({ coverImageUrl: null }),
   collectionWithinCeiling: () => true,
+  // Covers are not under test here.
+  isPublicCollectionImage: () => false,
+  getModelRestrictedImageIds: async () => new Set<number>(),
 }));
 /**
  * 🔴 THE ONLY DOUBLE ON THE RANKING PATH. `block-collection-popularity.service` is NOT

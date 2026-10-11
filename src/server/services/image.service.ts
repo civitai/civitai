@@ -104,6 +104,8 @@ import { getNewCreatorUserIds } from '~/server/services/new-creators.service';
 import { imageOnSiteSql, isImageMetaOnSite } from '~/server/utils/image-onsite';
 import { stripImageForInfiniteWire } from '~/server/utils/image-infinite-wire';
 import { deriveUnmatchedResources } from '~/server/utils/unmatched-resources';
+import { pickClientImageColumns } from '~/server/utils/image-columns';
+import { getEntityOwnerId } from '~/server/services/entity-owner.service';
 import {
   getBaseModelFromResources,
   getUserFollows,
@@ -142,8 +144,8 @@ import type {
   ImageModerationBlockSchema,
   ImageModerationSchema,
   ImageModerationUnblockSchema,
+  ImageReferenceInput,
   ImageSchema,
-  ImageUploadProps,
   IngestImageInput,
   RemoveImageResourceSchema,
   ReportCsamImagesInput,
@@ -6493,12 +6495,39 @@ export const getImagesByEntity = async ({
   return attachTagsToImages(images, tagsVar);
 };
 
+/** Refuses unless `postId` belongs to `userId`. */
+export type AssertPostOwnedBy = (args: { postId: number; userId: number }) => Promise<void>;
+
+/**
+ * An image may only be written into a post owned by the image's own user. The returned check
+ * looks each (post, user) pair up once and reuses that answer for later calls, including calls
+ * made while the first lookup is still in flight.
+ *
+ * Create one per request — a handler adding several images to one post shares it across them —
+ * and never hold one beyond that request.
+ */
+export function createPostOwnerCheck(): AssertPostOwnedBy {
+  const checks = new Map<string, Promise<void>>();
+  return ({ postId, userId }) => {
+    const key = `${postId}:${userId}`;
+    let check = checks.get(key);
+    if (!check) {
+      check = getEntityOwnerId('Post', postId, dbWrite).then((ownerId) => {
+        if (ownerId !== userId) throw throwAuthorizationError();
+      });
+      checks.set(key, check);
+    }
+    return check;
+  };
+}
+
 export async function createImage({
   toolIds,
   techniqueIds,
   skipIngestion,
   verifiedSourceImageIds,
   blockProvenance,
+  assertPostOwnedBy = createPostOwnerCheck(),
   ...image
 }: ImageSchema & {
   userId: number;
@@ -6514,10 +6543,17 @@ export async function createImage({
    * row gets a `BLOCK_PROVENANCE_METADATA_KEYS` entry: any copy in `metadata` is dropped.
    */
   blockProvenance?: { key: BlockProvenanceMetadataKey; appId: string } | null;
+  /**
+   * The request's post-owner check, from {@link createPostOwnerCheck}. A caller adding several
+   * images to one post passes one so the post is looked up once; without it, each call checks.
+   */
+  assertPostOwnedBy?: AssertPostOwnedBy;
 }) {
   if (blockProvenance && !blockProvenance.appId) {
     throw new Error('createImage: blockProvenance requires an appId');
   }
+  if (image.postId != null) await assertPostOwnedBy({ postId: image.postId, userId: image.userId });
+
   /**
    * 🔴 THE ROW MUST NOT OUTLIVE ITS MEDIA — so ask the store before writing it.
    *
@@ -6686,7 +6722,10 @@ export async function createImage({
   const metadata = stripBlockProvenanceMetadata(image.metadata);
   const result = await dbWrite.image.create({
     data: {
-      ...image,
+      ...pickClientImageColumns(image),
+      userId: image.userId,
+      postId: image.postId,
+      index: image.index,
       metadata: blockProvenance
         ? { ...metadata, [blockProvenance.key]: blockProvenance.appId }
         : metadata,
@@ -6773,7 +6812,7 @@ export const createEntityImages = async ({
   tx?: Prisma.TransactionClient;
   entityId?: number;
   entityType?: string;
-  images: ImageUploadProps[];
+  images: ImageReferenceInput[];
   userId: number;
 }) => {
   const dbClient = tx ?? dbWrite;
@@ -6784,7 +6823,7 @@ export const createEntityImages = async ({
 
   await dbClient.image.createMany({
     data: images.map((image) => ({
-      ...image,
+      ...pickClientImageColumns(image),
       // Same strip as `createImage`: nothing that reaches an Image row keeps a
       // provenance claim it didn't prove. These rows have no post, so they can't
       // reach a remix gallery today — but the invariant is "no unproven claim on
@@ -6932,7 +6971,8 @@ export const getEntityCoverImage = async ({
             i.id as "imageId",
             mv.index "order1",
             p.id "order2",
-            i.index "order3"
+            i.index "order3",
+            0 "coverRank"
           FROM entities e
           JOIN "Model" m ON e."entityId" = m.id
           JOIN "ModelVersion" mv ON m.id = mv."modelId"
@@ -6959,7 +6999,8 @@ export const getEntityCoverImage = async ({
             i.id as "imageId",
             mv.index "order1",
             p.id "order2",
-            i.index "order3"
+            i.index "order3",
+            0 "coverRank"
           FROM entities e
           JOIN "ModelVersion" mv ON e."entityId" = mv."id"
           JOIN "Post" p ON mv.id = p."modelVersionId"
@@ -6983,7 +7024,8 @@ export const getEntityCoverImage = async ({
             e."entityId" AS "imageId",
             0 "order1",
             0 "order2",
-            0 "order3"
+            0 "order3",
+            0 "coverRank"
         FROM entities e
         WHERE e."entityType" = 'Image'
 
@@ -6996,7 +7038,8 @@ export const getEntityCoverImage = async ({
               i.id AS "imageId",
               0 "order1",
 	          0 "order2",
-	          0 "order3"
+	          0 "order3",
+	          0 "coverRank"
           FROM entities e
           JOIN "Article" a ON a.id = e."entityId"
           JOIN "Image" i ON a."coverId" = i.id
@@ -7015,7 +7058,8 @@ export const getEntityCoverImage = async ({
               i.id AS "imageId",
               i."postId" "order1",
 	          i.index "order2",
-	          0 "order3"
+	          0 "order3",
+	          0 "coverRank"
           FROM entities e
           JOIN "Post" p ON p.id = e."entityId"
           LEFT JOIN "ModelVersion" mv ON p."modelVersionId" = mv.id
@@ -7067,7 +7111,8 @@ export const getEntityCoverImage = async ({
               i.id AS "imageId",
               0 "order1",
               0 "order2",
-              0 "order3"
+              0 "order3",
+              1 "coverRank"
           FROM entities e
           JOIN "ImageConnection" ic ON ic."entityId" = e."entityId" AND ic."entityType" = e."entityType"
           JOIN "Image" i ON i.id = ic."imageId"
@@ -7077,12 +7122,15 @@ export const getEntityCoverImage = async ({
         ) t
     ) t
     JOIN "Image" i ON i.id = t."imageId"
-    WHERE i."ingestion" = 'Scanned' AND i."needsReview" IS NULL`;
+    WHERE i."ingestion" = 'Scanned' AND i."needsReview" IS NULL
+    -- An Article draws a row from its own branch (the cover) and one from CONNECTIONS (a
+    -- content image). A UNION has no order of its own, so without this the lower image id
+    -- came first and a content image could replace the cover. The connection is a fallback.
+    ORDER BY t."coverRank"`;
 
   // Index once instead of scanning `imagesRaw` per entity. `set` is guarded so the
-  // first row for a key wins, matching what `.find()` returned: an entity can still
-  // draw rows from two branches at once (an Article has both a cover image and
-  // content-image connections), and this must not silently switch which one is kept.
+  // first row for a key wins: rows arrive ordered by "coverRank", so an entity's own
+  // cover beats a connected image.
   const imagesByEntity = new Map<string, GetEntityImageRaw>();
   for (const image of imagesRaw) {
     const key = `${image.entityId}:${image.entityType}`;
@@ -7140,7 +7188,7 @@ export const updateEntityImages = async ({
   tx?: Prisma.TransactionClient;
   entityId: number;
   entityType: string;
-  images: ImageUploadProps[];
+  images: ImageReferenceInput[];
   userId: number;
 }) => {
   const dbClient = tx ?? dbWrite;
@@ -7166,7 +7214,13 @@ export const updateEntityImages = async ({
     (x) => !!x.id && !connections.find((c) => c.imageId === x.id)
   );
 
-  const links = [...newLinkedImages.map((i) => i.id)];
+  const linkIds = newLinkedImages.map((i) => i.id).filter(isDefined);
+  if (linkIds.length > 0) {
+    const owned = await dbClient.image.count({ where: { id: { in: linkIds }, userId } });
+    if (owned !== new Set(linkIds).size) throw throwAuthorizationError();
+  }
+
+  const links = [...linkIds];
   let imageRecords: {
     id: number;
     url: string;
@@ -7178,7 +7232,7 @@ export const updateEntityImages = async ({
   if (newImages.length > 0) {
     await dbClient.image.createMany({
       data: newImages.map((image) => ({
-        ...image,
+        ...pickClientImageColumns(image),
         meta:
           (sanitizeProvenance(image?.meta as Record<string, unknown> | null | undefined) as
             | Prisma.JsonObject
@@ -7373,9 +7427,11 @@ export async function updateImageNsfwLevel({
 }) {
   if (!nsfwLevel) throw throwBadRequestError();
   if (isModerator) {
-    const image = await dbRead.image.findUnique({
+    // Primary: `nsfwLevel` is the level this write replaces, and the listing re-derive below
+    // decides whether a rating may come down from it — a lagging replica would misreport it.
+    const image = await dbWrite.image.findUnique({
       where: { id },
-      select: { metadata: true, postId: true },
+      select: { metadata: true, postId: true, nsfwLevel: true },
     });
     if (!image) throw throwNotFoundError('Image not found');
 
@@ -7403,6 +7459,18 @@ export async function updateImageNsfwLevel({
       entityId: id,
       activity: activity ?? 'setNsfwLevel',
     });
+    // Knights consensus locks through this branch too, but it is a vote, not a moderator's
+    // decision, so it does not move a store listing's rating.
+    if (activity !== 'setNsfwLevelKono') {
+      const { reDeriveListingRatingsForModeratedImage } = await import(
+        '~/server/services/blocks/app-listing-rating-rederive.service'
+      );
+      await reDeriveListingRatingsForModeratedImage({
+        imageId: id,
+        previousNsfwLevel: image.nsfwLevel,
+        actorUserId: userId,
+      });
+    }
   } else {
     // Track potential content leaking
     // If the image is currently PG and the new level is R or higher, and the image isn't from the original user, increment the counter
@@ -8247,10 +8315,10 @@ export async function setVideoThumbnail({
     throw throwAuthorizationError("You don't have permission to set the thumbnail for this video.");
   if (image.type !== MediaType.video) throw throwBadRequestError('This is not a video.');
 
-  let thumbnailId = customThumbnail?.id;
+  let thumbnailId: number | undefined;
   if (customThumbnail) {
     const thumbnail = await createImage({
-      ...customThumbnail,
+      ...pickClientImageColumns(customThumbnail),
       userId: image.userId,
       metadata: { parentId: image.id },
     });

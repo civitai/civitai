@@ -1251,6 +1251,127 @@ describe('BlockManifestValidator', () => {
     });
   });
 
+  // Custom events declaration. The rules live in `parseManifestAnalytics`; these
+  // pin that the validator REPORTS them, with the exact message an author sees.
+  describe('analytics.events (optional custom events declaration)', () => {
+    const withAnalytics = (analytics: unknown) => ({ ...VALID_MANIFEST, analytics });
+    const errorsFor = (analytics: unknown): string[] => {
+      const result = BlockManifestValidator.validate(withAnalytics(analytics), APP_CTX);
+      return result.valid ? [] : result.errors;
+    };
+    const manyNamed = (count: number, value: unknown) =>
+      Object.fromEntries(Array.from({ length: count }, (_, i) => [`e_${i}`, value]));
+
+    it('accepts a manifest with no analytics key, and a full valid declaration', () => {
+      expect(errorsFor(undefined)).toEqual([]);
+      expect(
+        errorsFor({
+          events: {
+            generate_clicked: {
+              description: 'User pressed Generate',
+              properties: {
+                mode: { type: 'enum', values: ['txt2img', 'img2img'] },
+                batch: { type: 'number' },
+                advanced: { type: 'boolean' },
+              },
+            },
+            level_up: {},
+          },
+        })
+      ).toEqual([]);
+    });
+
+    it.each([
+      ['Generate', 'uppercase'],
+      ['1st_run', 'leading digit'],
+      ['_hidden', 'leading underscore'],
+      ['kebab-case', 'hyphen'],
+      ['z'.repeat(65), '65 chars'],
+    ])('rejects event name %j (%s)', (name) => {
+      expect(errorsFor({ events: { [name]: {} } })).toEqual([
+        `analytics.events key ${JSON.stringify(
+          name
+        )} must be lowercase snake_case: a letter, then up to 63 of a-z, 0-9 or _`,
+      ]);
+    });
+
+    it('rejects 51 events and accepts 50', () => {
+      expect(errorsFor({ events: manyNamed(51, {}) })).toEqual([
+        'analytics.events may declare at most 50 events (found 51)',
+      ]);
+      expect(errorsFor({ events: manyNamed(50, {}) })).toEqual([]);
+    });
+
+    it('rejects 11 properties on one event and accepts 10', () => {
+      const flag = { type: 'boolean' };
+      expect(errorsFor({ events: { tapped: { properties: manyNamed(11, flag) } } })).toEqual([
+        'analytics.events.tapped.properties may declare at most 10 properties (found 11)',
+      ]);
+      expect(errorsFor({ events: { tapped: { properties: manyNamed(10, flag) } } })).toEqual([]);
+    });
+
+    it('rejects a free-text string property type', () => {
+      expect(
+        errorsFor({ events: { searched: { properties: { query: { type: 'string' } } } } })
+      ).toEqual([
+        'analytics.events.searched.properties.query.type must be one of enum, number, boolean (free-text strings are not allowed — declare an enum)',
+      ]);
+    });
+
+    it('rejects an enum with zero values and with 51 values, and accepts 50', () => {
+      const enumOf = (values: unknown[]) => ({
+        events: { picked: { properties: { tone: { type: 'enum', values } } } },
+      });
+      const bound =
+        'analytics.events.picked.properties.tone.values must declare between 1 and 50 values';
+      expect(errorsFor(enumOf([]))).toEqual([bound]);
+      expect(errorsFor(enumOf(Array.from({ length: 51 }, (_, i) => `v${i}`)))).toEqual([bound]);
+      expect(errorsFor(enumOf(Array.from({ length: 50 }, (_, i) => `v${i}`)))).toEqual([]);
+    });
+
+    it('rejects duplicate enum values', () => {
+      expect(
+        errorsFor({
+          events: {
+            picked: { properties: { tone: { type: 'enum', values: ['warm', 'cool', 'warm'] } } },
+          },
+        })
+      ).toEqual([
+        'analytics.events.picked.properties.tone.values[2] duplicates an earlier value ("warm")',
+      ]);
+    });
+
+    it('rejects an over-long enum value and an over-long description', () => {
+      expect(
+        errorsFor({
+          events: { picked: { properties: { tone: { type: 'enum', values: ['q'.repeat(65)] } } } },
+        })
+      ).toEqual([
+        'analytics.events.picked.properties.tone.values[0] must be a non-empty string of at most 64 characters',
+      ]);
+      expect(errorsFor({ events: { picked: { description: 'd'.repeat(201) } } })).toEqual([
+        'analytics.events.picked.description must be a string of at most 200 characters',
+      ]);
+    });
+
+    it('rejects unknown keys at every level', () => {
+      expect(errorsFor({ events: {}, retention: 30 })).toEqual([
+        'analytics.retention is not allowed (analytics takes only events)',
+      ]);
+      expect(errorsFor({ events: { saved: { label: 'Saved' } } })).toEqual([
+        'analytics.events.saved.label is not allowed (an event takes only description and properties)',
+      ]);
+      expect(
+        errorsFor({ events: { saved: { properties: { n: { type: 'number', values: ['1'] } } } } })
+      ).toEqual(['analytics.events.saved.properties.n.values is not allowed on a number property']);
+    });
+
+    it('rejects a non-object analytics', () => {
+      expect(errorsFor(null)).toEqual(['analytics must be an object']);
+      expect(errorsFor([])).toEqual(['analytics must be an object']);
+    });
+  });
+
   // SUBMISSION gate: validateSubmission = the synchronous shape/security checks
   // PLUS the accurate ReDoS + input-bound gate on settings-field patterns. This
   // is what every manifest-SUBMISSION path calls (git-push webhook, developer

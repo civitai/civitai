@@ -114,6 +114,7 @@ const WRITE_SITE_LEDGER: Record<string, { decision: Decision; sites: number }> =
  * count, so refactoring inside a listed function does not churn this list.
  */
 const STAMPER_FUNCTIONS: string[] = [
+  'src/server/services/blocks/block-image-upload.service.ts#persistBlockUploadImage',
   'src/server/services/blocks/block-image-upload.service.ts#persistBlockWorkflowOutputImage',
   'src/server/services/image.service.ts#createImage',
 ];
@@ -284,7 +285,9 @@ function checkDecision(decision: Decision, site: Site): string | null {
       if (!/const metadata = stripBlockProvenanceMetadata\(image\.metadata\)/.test(body))
         return 'createImage no longer strips image.metadata';
       if (
-        !/\.\.\.image,\s*metadata:\s*blockProvenance\s*\?\s*\{\s*\.\.\.metadata,\s*\[blockProvenance\.key\]:\s*blockProvenance\.appId\s*\}\s*:\s*metadata,/.test(
+        // The row's only spread is the client-column helper; `metadata` follows it (after any
+        // plain `column: value` entries), so the stripped copy plus the stamp is what lands.
+        !/\.\.\.pickClientImageColumns\(image\),(?:\s*\w+:\s*[\w.]+,)*\s*metadata:\s*blockProvenance\s*\?\s*\{\s*\.\.\.metadata,\s*\[blockProvenance\.key\]:\s*blockProvenance\.appId\s*\}\s*:\s*metadata,/.test(
           region
         )
       )
@@ -963,7 +966,17 @@ describe('detector controls', () => {
     ],
     [
       'createImage-strip',
-      'const metadata = stripBlockProvenanceMetadata(image.metadata); { data: { ...image, metadata: blockProvenance ? { ...image.metadata } : metadata, meta } }',
+      'const metadata = stripBlockProvenanceMetadata(image.metadata); { data: { ...pickClientImageColumns(image), metadata: blockProvenance ? { ...image.metadata } : metadata, meta } }',
+      'createImage no longer writes',
+    ],
+    [
+      'createImage-strip',
+      'const metadata = stripBlockProvenanceMetadata(image.metadata); { data: { metadata: blockProvenance ? { ...metadata, [blockProvenance.key]: blockProvenance.appId } : metadata, ...pickClientImageColumns(image), meta } }',
+      'createImage no longer writes',
+    ],
+    [
+      'createImage-strip',
+      'const metadata = stripBlockProvenanceMetadata(image.metadata); { data: { ...image, metadata: blockProvenance ? { ...metadata, [blockProvenance.key]: blockProvenance.appId } : metadata, meta } }',
       'createImage no longer writes',
     ],
     ['in-function-strip', '{ data: { ...image, meta } }', 'spreads input without overriding'],

@@ -1,4 +1,5 @@
 import { TRPCError } from '@trpc/server';
+import { dbRead } from '~/server/db/client';
 import { OnboardingSteps } from '~/server/common/enums';
 import type { SessionUser } from '~/types/session';
 import { Flags } from '~/shared/utils/flags';
@@ -78,4 +79,12 @@ export function assertSharedWriteTrust(
   if (REQUIRE_PAID_TIER && (!user.tier || user.tier === 'free')) {
     return deny('A membership is required to contribute');
   }
+}
+
+/** `assertSharedWriteTrust`'s `hasLinkedOAuth` for `user`; only looked up when the email is unverified. */
+export async function hasLinkedOAuthAccount(
+  user: Pick<SessionUser, 'id' | 'emailVerified'>
+): Promise<boolean> {
+  if (user.emailVerified) return false;
+  return (await dbRead.account.count({ where: { userId: user.id } })) > 0;
 }

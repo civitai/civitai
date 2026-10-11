@@ -29,11 +29,13 @@ import {
 import type { ChromeSurfaceControl } from './ChromeSurface';
 import { ChromeReviewMenuItem } from './ChromeReviewEntry';
 import type { AppFeedbackModalTarget } from './ChromeFeedbackEntry';
-import { AppFeedbackModal, ChromeFeedbackMenuItem } from './ChromeFeedbackEntry';
+import { AppFeedbackModal, ChromeFeedbackButton } from './ChromeFeedbackEntry';
 import { resolveAppFeedbackRequest } from './appFeedbackChrome';
 import { ReviewListingModal } from '~/components/Apps/ReviewListingButton';
 import { AppPermissionsActivityDrawer } from './AppPermissionsActivityDrawer';
 import { BlockFallback } from './BlockFallback';
+import { BRIDGE_NACK_NO_TOKEN } from './bridgeLabels';
+import { handleEstimateBatch } from './estimateBatchGate';
 import { failureSnapshot } from './failureSnapshot';
 import { hostRenderDecision } from './hostRenderDecision';
 import { resolveBuzzPurchaseRequest } from './openBuzzPurchaseGate';
@@ -52,6 +54,7 @@ import { sanitizeAppChromeName } from './appChromeName';
 import { resolveChromeGeometry } from './chromeGeometry';
 import type { ChromeGeometry } from './chromeGeometry';
 import { useResizeObserver } from '~/hooks/useResizeObserver';
+import { createBlockEventRecorder } from './blockEventBeacon';
 import { sendBlockRender } from './sendBlockRender';
 import { effectiveSandboxIsOpaque, intersectSandbox } from './sandbox';
 import {
@@ -79,6 +82,10 @@ import type { BuyBuzzModalProps } from '~/components/Modals/BuyBuzzModal';
 import { openResourceSelectModal } from '~/components/Dialog/triggers/resource-select';
 import { getBaseModelGroup, getBaseModelsByGroup } from '~/shared/constants/basemodel.constants';
 import { trpc } from '~/utils/trpc';
+import {
+  sharedStorageErrorReply,
+  storageErrorMessage,
+} from '~/components/AppBlocks/sharedStorageError';
 import {
   BLOCK_STORAGE_READ_OPTS,
   invalidatePrivateStorageReads,
@@ -306,19 +313,6 @@ const RECENTLY_RUN_LIMIT = 5;
 
 type Status = 'loading' | 'ready' | 'timeout' | 'fatal' | 'no_token';
 
-// Reduce a thrown tRPC error to a single short string the block can surface.
-// TRPCClientError exposes `.message` which is already the server message
-// (apps.storage.* throws with explicit code + message strings); everything
-// else gets a generic fallback. Keep this conservative — the iframe is
-// untrusted and we don't want to leak server stack traces.
-function storageErrorMessage(err: unknown): string {
-  if (err && typeof err === 'object' && 'message' in err) {
-    const message = (err as { message?: unknown }).message;
-    if (typeof message === 'string' && message.length > 0) return message;
-  }
-  return 'storage request failed';
-}
-
 /**
  * Renders a block inside a sandboxed iframe and drives the postMessage
  * lifecycle. Implements the @civitai/app-sdk/blocks v1 contract — see
@@ -450,8 +444,9 @@ export function AppBlockChrome({
   // only when there is something to review: an id is what the entry point resolved
   // and handed up, so there is no window in which the modal exists without one.
   const [reviewListingId, setReviewListingId] = useState<string | null>(null);
-  // The feedback modal's target, `null` while closed — owned here for the same reason as
-  // `reviewListingId`.
+  // The feedback modal's target, `null` while closed. Owned here beside `reviewListingId` so the
+  // chrome's modals all mount in one place, outside the bar; the entry point (a bar button) hands
+  // up the snapshot it took at click time.
   const [feedbackTarget, setFeedbackTarget] = useState<AppFeedbackModalTarget | null>(null);
   const feedbackRequest = resolveAppFeedbackRequest({ slug, appBlockId, slotId, modelId });
 
@@ -740,8 +735,9 @@ export function AppBlockChrome({
           store subnav must also list.
 
           Placed directly under "Manage apps" so the whole-app actions about the
-          running app (rate it, send feedback, see what it can do) sit together
-          above the dismissal, and "Hide app" stays last.
+          running app (rate it, see what it can do) sit together above the
+          dismissal, and "Hide app" stays last. Sending feedback is not here: it is its
+          own button in the bar, beside this menu's trigger.
 
           🔴 THE ITEM RENDERS ITS OWN GATES AND MAY RETURN NULL. It is offered
           only to a viewer the server would accept: signed in, not the owner,
@@ -753,9 +749,6 @@ export function AppBlockChrome({
           dropdown AND in the sheet, since Mantine unmounts a closed `Drawer`'s
           children exactly as it unmounts a closed `Menu.Dropdown`'s. */}
       <ChromeReviewMenuItem slug={slug} onOpenReview={setReviewListingId} />
-      {/* Private feedback to the developer. Unlike the review item it also works on the model
-          slot (no slug there): eligibility is asked of the server by AppBlock id. */}
-      <ChromeFeedbackMenuItem request={feedbackRequest} onOpenFeedback={setFeedbackTarget} />
       {appBlockId && (
         <ChromeSurfaceItem
           leftSection={<IconShieldLock size={14} stroke={1.5} />}
@@ -839,9 +832,10 @@ export function AppBlockChrome({
             >
               <IconChevronLeft size={16} stroke={1.5} />
             </ActionIcon>
-            {/* The centered app name. `flex: 1 1 auto` between two 22px icon buttons is
-              what centers it, and `minWidth: 0` is what lets the name truncate rather
-              than push a control off the row.
+            {/* The centered app name. `flex: 1 1 auto` between the back chevron and the
+              trailing cluster is what centers it — exactly when only ⋮ trails, slightly left
+              of true center when the feedback button renders too — and `minWidth: 0` is
+              what lets the name truncate rather than push a control off the row.
 
               The provenance icon rides along rather than being dropped with the
               platform-nav trigger it used to live in. That trigger is GONE on this
@@ -878,50 +872,65 @@ export function AppBlockChrome({
             onOpenReview={setReviewListingId}
           />
         )}
-        {/* The ⋮ overflow. On a desktop-width bar it is the same dropdown it always
-          was. Below `sm` it becomes a bottom sheet AND absorbs the platform nav,
-          because the mobile bar has no second trigger to hang that behind — the
-          operator's call, and the reason `platformNavItems` is authored as a fragment
-          rather than inline in its own dropdown.
+        {/* The trailing cluster: the feedback button, then the ⋮ trigger, with a tighter gap
+          than the bar's own so the pair reads as one group of app actions. The button renders
+          its own gates and may be null. */}
+        <Group gap={4} wrap="nowrap">
+          {/* Labelled on a wide bar, icon-only below `sm`: the bar-width test the mobile shell
+            uses, but WITHOUT the `isPage` term of the local `compact` above. Two different
+            questions, so do not unify them: a narrow model sidebar has no shell but is just as
+            short of room. An unmeasured bar (SSR, first paint) is not compact, so it starts
+            labelled. */}
+          <ChromeFeedbackButton
+            request={feedbackRequest}
+            labelled={!geometry.compact}
+            onOpenFeedback={setFeedbackTarget}
+          />
+          {/* The ⋮ overflow. On a desktop-width bar it is the same dropdown it always
+            was. Below `sm` it becomes a bottom sheet AND absorbs the platform nav,
+            because the mobile bar has no second trigger to hang that behind — the
+            operator's call, and the reason `platformNavItems` is authored as a fragment
+            rather than inline in its own dropdown.
 
-          Order: the running app's own actions first (that is what ⋮ has always
-          meant), then the platform destinations. The back chevron already covers the
-          most common of those, so the folded-in nav is the secondary half of the
-          sheet, not its headline. */}
-        <ChromeSurface
-          compact={compact}
-          kind="menu"
-          control={overflowMenu}
-          title="App menu"
-          width={180}
-          position="bottom-end"
-          dropdownTestId="app-block-menu-dropdown"
-          target={
-            /* `data-testid` alongside the accessible name: the sibling controls in
-             this chrome (`app-block-back`, `app-block-name`, `app-block-breadcrumb*`)
-             are all addressable that way, and a test reaching this trigger by
-             accessible name alone breaks on a copy change that is not a behaviour
-             change. */
-            <ActionIcon
-              variant="subtle"
-              color="gray"
-              size="sm"
-              aria-label="App menu"
-              data-testid="app-block-menu-trigger"
-              // The row is `wrap="nowrap"` (it must stay one line — CHROME_BAR_PX).
-              // Without this the ⋯ trigger is a shrinkable flex item and a long name
-              // at a narrow width can squeeze it below its resting `ActionIcon
-              // size="sm"` (22px in @mantine/core 7.17.8); its sibling on the left
-              // has carried `flexShrink: 0` all along.
-              style={{ flexShrink: 0 }}
-            >
-              <IconDots size={16} stroke={1.5} />
-            </ActionIcon>
-          }
-        >
-          {appMenuItems}
-          {compact && platformNavItems}
-        </ChromeSurface>
+            Order: the running app's own actions first (that is what ⋮ has always
+            meant), then the platform destinations. The back chevron already covers the
+            most common of those, so the folded-in nav is the secondary half of the
+            sheet, not its headline. */}
+          <ChromeSurface
+            compact={compact}
+            kind="menu"
+            control={overflowMenu}
+            title="App menu"
+            width={180}
+            position="bottom-end"
+            dropdownTestId="app-block-menu-dropdown"
+            target={
+              /* `data-testid` alongside the accessible name: the sibling controls in
+               this chrome (`app-block-back`, `app-block-name`, `app-block-breadcrumb*`)
+               are all addressable that way, and a test reaching this trigger by
+               accessible name alone breaks on a copy change that is not a behaviour
+               change. */
+              <ActionIcon
+                variant="subtle"
+                color="gray"
+                size="sm"
+                aria-label="App menu"
+                data-testid="app-block-menu-trigger"
+                // The row is `wrap="nowrap"` (it must stay one line — CHROME_BAR_PX).
+                // Without this the ⋯ trigger is a shrinkable flex item and a long name
+                // at a narrow width can squeeze it below its resting `ActionIcon
+                // size="sm"` (22px in @mantine/core 7.17.8); its sibling on the left
+                // has carried `flexShrink: 0` all along.
+                style={{ flexShrink: 0 }}
+              >
+                <IconDots size={16} stroke={1.5} />
+              </ActionIcon>
+            }
+          >
+            {appMenuItems}
+            {compact && platformNavItems}
+          </ChromeSurface>
+        </Group>
       </Group>
       {/* Per-app transparency drawer (Part B). Rendered only when the caller
         threaded an appBlockId; the body's queries fire only once opened. */}
@@ -1944,6 +1953,15 @@ export function IframeHost({
     return off;
   }, [onMessage]);
 
+  useEffect(() => {
+    const record = createBlockEventRecorder({
+      appBlockId: install.appBlockId,
+      blockInstanceId: install.blockInstanceId,
+    });
+    const off = onMessage<unknown>('TRACK_EVENT', record);
+    return off;
+  }, [onMessage, install.appBlockId, install.blockInstanceId]);
+
   // Anonymous conversion: the block (rendered for a logged-out viewer from the
   // scope-free BLOCK_INIT context) asks the host to start the civitai login
   // flow when the user clicks an action that needs auth/money (e.g. Generate).
@@ -2500,6 +2518,29 @@ export function IframeHost({
   const storageSetMutation = trpc.apps.storage.set.useMutation();
   const storageDeleteMutation = trpc.apps.storage.delete.useMutation();
 
+  // ESTIMATE_WORKFLOW_BATCH → ESTIMATE_BATCH_RESULT. The batch twin of
+  // ESTIMATE_WORKFLOW above: a list of bodies in, one snapshot per body plus a
+  // run total out. Estimate only — nothing is submitted. Decision + reply live in
+  // `estimateBatchGate.ts`, shared with the page host so the two cannot answer
+  // the same message differently. There is no review preview on a model slot, so
+  // `refusal` is always null here.
+  useEffect(() => {
+    const off = onMessage<unknown>('ESTIMATE_WORKFLOW_BATCH', (raw) => {
+      void handleEstimateBatch({
+        raw,
+        refusal: null,
+        token,
+        estimateBatch: (input) => trpcUtils.client.blocks.estimateWorkflowBatch.mutate(input),
+        send,
+        onNoToken: (requestId) => {
+          reportNoToken('ESTIMATE_WORKFLOW_BATCH');
+          send('ESTIMATE_BATCH_RESULT', { requestId, error: BRIDGE_NACK_NO_TOKEN });
+        },
+      });
+    });
+    return off;
+  }, [onMessage, send, token, trpcUtils, reportNoToken]);
+
   useEffect(() => {
     const off = onMessage<{ requestId?: unknown; key?: unknown } | undefined>(
       'APP_STORAGE_GET',
@@ -2835,7 +2876,7 @@ export function IframeHost({
           await invalidateSharedStorageReads(trpcUtils);
           send('SHARED_APPEND_RESULT', { requestId, key: result.key });
         } catch (err) {
-          send('SHARED_APPEND_RESULT', { requestId, error: storageErrorMessage(err) });
+          send('SHARED_APPEND_RESULT', { requestId, ...sharedStorageErrorReply(err) });
         }
       }
     );
@@ -2873,7 +2914,7 @@ export function IframeHost({
           await invalidateSharedStorageReads(trpcUtils);
           send('SHARED_UPDATE_RESULT', { requestId, ok: true });
         } catch (err) {
-          send('SHARED_UPDATE_RESULT', { requestId, ok: false, error: storageErrorMessage(err) });
+          send('SHARED_UPDATE_RESULT', { requestId, ok: false, ...sharedStorageErrorReply(err) });
         }
       }
     );
@@ -2893,7 +2934,7 @@ export function IframeHost({
           await invalidateSharedStorageReads(trpcUtils);
           send('SHARED_VOTE_RESULT', { requestId, count: result.count });
         } catch (err) {
-          send('SHARED_VOTE_RESULT', { requestId, error: storageErrorMessage(err) });
+          send('SHARED_VOTE_RESULT', { requestId, ...sharedStorageErrorReply(err) });
         }
       }
     );
@@ -2916,7 +2957,7 @@ export function IframeHost({
           await invalidateSharedStorageReads(trpcUtils);
           send('SHARED_UNVOTE_RESULT', { requestId, count: result.count });
         } catch (err) {
-          send('SHARED_UNVOTE_RESULT', { requestId, error: storageErrorMessage(err) });
+          send('SHARED_UNVOTE_RESULT', { requestId, ...sharedStorageErrorReply(err) });
         }
       }
     );
@@ -2939,7 +2980,7 @@ export function IframeHost({
           await invalidateSharedStorageReads(trpcUtils);
           send('SHARED_WITHDRAW_RESULT', { requestId, ok: result.ok, deleted: result.deleted });
         } catch (err) {
-          send('SHARED_WITHDRAW_RESULT', { requestId, error: storageErrorMessage(err) });
+          send('SHARED_WITHDRAW_RESULT', { requestId, ...sharedStorageErrorReply(err) });
         }
       }
     );
@@ -3009,7 +3050,7 @@ export function IframeHost({
           await invalidateSharedStorageReads(trpcUtils);
           send('SHARED_REPORT_RESULT', { requestId, ok: true });
         } catch (err) {
-          send('SHARED_REPORT_RESULT', { requestId, ok: false, error: storageErrorMessage(err) });
+          send('SHARED_REPORT_RESULT', { requestId, ok: false, ...sharedStorageErrorReply(err) });
         }
       }
     );

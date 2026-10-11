@@ -9,7 +9,7 @@
  * NSFW/CSAM scanning, and Model3DFile rows registered by the same shared
  * service used by the real workflow result handler.
  *
- * Auth: WEBHOOK_TOKEN (?token=…) OR session moderator cookie. The mod-gated
+ * Auth: WEBHOOK_TOKEN (?token=…) OR a moderator's browser session or full-scope personal API key. The mod-gated
  * UI page at /moderator/testing/model3d-seed posts here via the session path.
  *
  * Body (JSON):
@@ -39,6 +39,7 @@ import type { Prisma } from '@prisma/client';
 import { env } from '~/env/server';
 import { matchesConfiguredSecret } from '~/server/utils/configured-secret';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
+import { requireFullScopeSession } from '~/server/utils/require-full-scope-session';
 import { createImage } from '~/server/services/image.service';
 import { MediaType } from '~/shared/utils/prisma/enums';
 import { publishModel3D, upsertModel3DFromWorkflow } from '~/server/services/model3d.service';
@@ -107,6 +108,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         .status(401)
         .json({ error: 'Unauthorized — supply ?token=WEBHOOK_TOKEN or sign in as a moderator.' });
     }
+    if (!requireFullScopeSession(req, res)) return;
     sessionUserId = session.user.id;
   }
 

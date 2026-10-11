@@ -268,6 +268,39 @@ describe('modules the file never loaded', () => {
     ]);
     expect(entriesOf('a.test.ts')).toContain('c.ts');
   });
+
+  // setup.ts's vi.mock factories `await import` packages, and once any file runs one, the shared
+  // graph hangs them under setup.ts for every file. Unlike a mocked import of the test's own, a
+  // setup child this file never loaded is dropped, not kept as a leaf: no import of this file's
+  // names it.
+  describe('under the setup file', () => {
+    const setupShape = {
+      setupFiles: ['setup.ts'],
+      edges: { 'setup.ts': ['env.mock.ts', 'pkg-client.ts'], 'pkg-client.ts': ['pkg-dep.ts'] },
+    };
+    const all = ['a.test.ts', 'env.mock.ts', 'pkg-client.ts', 'pkg-dep.ts', 'setup.ts'];
+    const setupFiles = () => all.forEach((f) => write(f));
+
+    it('drops a module a setup factory loaded for another file', () => {
+      setupFiles();
+      run([testModule('a.test.ts', { ...setupShape, loaded: ['setup.ts', 'env.mock.ts'] })]);
+      expect(entriesOf('a.test.ts').sort()).toEqual(['a.test.ts', 'env.mock.ts', 'setup.ts']);
+    });
+
+    it('keys a module a setup factory loaded for this file, and what it imports', () => {
+      setupFiles();
+      run([
+        testModule('a.test.ts', { ...setupShape, loaded: all.filter((f) => f !== 'a.test.ts') }),
+      ]);
+      expect(entriesOf('a.test.ts').sort()).toEqual(all);
+    });
+
+    it('walks the whole setup closure when the file reported nothing about what it loaded', () => {
+      setupFiles();
+      run([testModule('a.test.ts', setupShape)]);
+      expect(entriesOf('a.test.ts').sort()).toEqual(all);
+    });
+  });
 });
 
 describe('unhandled errors', () => {

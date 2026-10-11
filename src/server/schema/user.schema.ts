@@ -350,6 +350,9 @@ export const userSettingsSchema = z.object({
   // green are `purchasable`, so the remaining balance still mixes earned and bought.
   hideBlueBuzzInHeader: z.boolean().optional(),
   hideFromCreatorShowcase: z.boolean().optional(),
+  // Opt-in, per event name: list me on my team's roster (events/points/roster.ts). The durable record
+  // the Redis roster is rebuilt from; absent means hidden. Written only by event.setRosterOptIn.
+  eventRosterOptIn: z.record(z.string(), z.boolean()).optional(),
   // Opt-out: the arrival pop and idle sway on placed stickers. Animation that
   // never ends is the kind a viewer wants a way out of, and `prefers-reduced-motion`
   // only covers people who set it at the OS level.

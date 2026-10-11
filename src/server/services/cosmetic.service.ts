@@ -9,6 +9,7 @@ import {
   cosmeticCache,
   cosmeticEntityCaches,
   eventDecorationEntityCaches,
+  publicContentCaches,
   refreshOwnedStickerCache,
   userCosmeticCache,
   userOwnedStickerCache,
@@ -30,6 +31,8 @@ import {
 } from '~/server/search-index';
 import { throwAuthorizationError, throwBadRequestError } from '~/server/utils/errorHandling';
 import { getEntityOwnerId } from '~/server/services/entity-owner.service';
+import { syncEventRosterMember, syncEventRosterMembers } from '~/server/events/points/roster-sync';
+import { syncOwnerEventHats, syncOwnersEventHats } from '~/server/events/points/sync';
 import {
   getEventDecorationDefinition,
   isEventDecorationData,
@@ -305,6 +308,16 @@ export async function equipCosmeticToEntity({
     data: { equippedToId, equippedToType, equippedAt: now },
   });
 
+  if (eventDecoration)
+    void syncOwnerEventHats(userId, [
+      { entityType: equippedToType, entityId: equippedToId },
+      ...(userCosmetic.equippedToId && userCosmetic.equippedToType
+        ? [{ entityType: userCosmetic.equippedToType, entityId: userCosmetic.equippedToId }]
+        : []),
+    ]);
+  // Which hat a listed roster member wears is on their card.
+  if (eventDecoration) void syncEventRosterMember(userId, { onlyIfListed: true });
+
   await refreshEntityDecorationCaches(equippedToType, [equippedToId]);
 
   if (equippedToType === 'Model')
@@ -342,6 +355,10 @@ export async function unequipCosmetic({
     where: { cosmeticId, equippedToId, equippedToType, userId, ...(claimKey && { claimKey }) },
     data: { equippedToId: null, equippedToType: null, equippedAt: null },
   });
+  if (updated.count) {
+    void syncOwnerEventHats(userId, [{ entityType: equippedToType, entityId: equippedToId }]);
+    void syncEventRosterMember(userId, { onlyIfListed: true });
+  }
 
   await refreshEntityDecorationCaches(equippedToType, [equippedToId]);
 
@@ -394,8 +411,27 @@ export async function getEventDecorationsForEntity({
   viewer?: EventViewer;
 }): Promise<Record<number, EventDecorationCosmetic>> {
   if (ids.length === 0) return {};
-  const events = await getVisibleDecorationEvents(entity, viewer);
-  if (!events.size) return {};
+  return decorationsForEvents({
+    ids,
+    entity,
+    writeBack,
+    events: await getVisibleDecorationEvents(entity, viewer),
+  });
+}
+
+/** The event decoration each entity wears, for the given events only. */
+async function decorationsForEvents({
+  ids,
+  entity,
+  writeBack,
+  events,
+}: {
+  ids: number[];
+  entity: CosmeticEntity;
+  writeBack?: boolean;
+  events: Set<string>;
+}): Promise<Record<number, EventDecorationCosmetic>> {
+  if (!ids.length || !events.size) return {};
   const decorations = await eventDecorationEntityCaches[entity].fetch(ids, { writeBack });
   const visible: Record<number, EventDecorationCosmetic> = {};
   for (const [id, decoration] of Object.entries(decorations))
@@ -413,6 +449,103 @@ export async function getEventDecorationsForEntity({
       };
     }
   return visible;
+}
+
+/**
+ * This viewer's event decorations on ids the caller names, for cards served from a cache every
+ * viewer shares. The ids are the caller's, not a feed's, so only public content answers: a hat on
+ * anything else would tell the caller it exists.
+ */
+export async function getViewerEventDecorations({
+  ids,
+  entity,
+  viewer,
+}: {
+  ids: number[];
+  entity: 'Image' | 'Model' | 'Article';
+  viewer: EventViewer;
+}) {
+  return onlyPublicContent(entity, await getEventDecorationsForEntity({ ids, entity, viewer }));
+}
+
+async function onlyPublicContent(
+  entity: 'Image' | 'Model' | 'Article',
+  decorations: Record<number, EventDecorationCosmetic>
+) {
+  const worn = Object.keys(decorations).map(Number);
+  if (!worn.length) return decorations;
+  const visible = (await publicContentCaches[entity]?.fetch(worn)) ?? {};
+  return Object.fromEntries(
+    Object.entries(decorations).filter(([id]) => visible[Number(id)])
+  ) as typeof decorations;
+}
+
+/**
+ * The search grids' hats on public ids, for exactly the events the caller already read: the same
+ * set decides whether the answer may be cached, so a flag read that flickers between the two can
+ * never put a tester's preview hats in an answer cached for everyone.
+ */
+export async function getSearchEventDecorations({
+  ids,
+  entity,
+  events,
+}: {
+  ids: number[];
+  entity: 'Image' | 'Model' | 'Article';
+  events: Set<string>;
+}) {
+  return onlyPublicContent(entity, await decorationsForEvents({ ids, entity, events }));
+}
+
+/**
+ * Whether the events this viewer was read to see are everyone's, so one answer can serve them all.
+ * For a signed-out viewer `events` already is everyone's set.
+ *
+ * 🔴 Non-empty as well as equal. Before launch the signed-out set is empty, and a cached empty
+ * answer would be served to a tester asking the same URL, hiding their preview. After a kill switch
+ * the signed-out set empties again, so hats stop being cached the moment the flag goes off.
+ */
+export async function isEveryonesDecorationAnswer(
+  entity: CosmeticEntity,
+  events: Set<string>,
+  viewer: EventViewer
+) {
+  if (!viewer) return events.size > 0;
+  const everyone = await getVisibleDecorationEvents(entity, undefined);
+  return (
+    everyone.size > 0 &&
+    events.size === everyone.size &&
+    [...events].every((event) => everyone.has(event))
+  );
+}
+
+const equippedHatSelect = {
+  userId: true,
+  equippedToId: true,
+  equippedToType: true,
+  cosmetic: { select: { data: true } },
+} as const;
+
+// Event hats among deleted holdings come off the live hat map; other cosmetics never earn.
+function writeThroughRemovedEventHats(
+  rows: {
+    userId: number;
+    equippedToId: number | null;
+    equippedToType: CosmeticEntity | null;
+    cosmetic?: { data: unknown } | null;
+  }[]
+) {
+  const hats = rows.flatMap(({ userId, equippedToId, equippedToType, cosmetic }) =>
+    equippedToId && equippedToType && isEventDecorationData(cosmetic?.data)
+      ? [{ userId, entityType: equippedToType, entityId: equippedToId }]
+      : []
+  );
+  if (hats.length) void syncOwnersEventHats(hats);
+  if (hats.length)
+    void syncEventRosterMembers(
+      hats.map((h) => h.userId),
+      { onlyIfListed: true }
+    );
 }
 
 async function refreshEntityDecorationCaches(type: CosmeticEntity, ids: number[]) {
@@ -526,7 +659,7 @@ export async function revokeCosmeticsFromUsers({
       ...claimKeyFilter,
       equippedToId: { not: null },
     },
-    select: { equippedToId: true, equippedToType: true },
+    select: equippedHatSelect,
   });
 
   const { count } = await dbWrite.userCosmetic.deleteMany({
@@ -536,6 +669,7 @@ export async function revokeCosmeticsFromUsers({
       ...claimKeyFilter,
     },
   });
+  writeThroughRemovedEventHats(equipped);
 
   await userCosmeticCache.refresh(uniqueUserIds);
   await refreshOwnedStickerCache(uniqueUserIds);
@@ -639,9 +773,14 @@ export async function unassignCosmetic({
   userIds: number[];
 }) {
   if (userIds.length === 0) return { count: 0 };
+  const equipped = await dbWrite.userCosmetic.findMany({
+    where: { cosmeticId, userId: { in: userIds }, equippedToId: { not: null } },
+    select: equippedHatSelect,
+  });
   const result = await dbWrite.userCosmetic.deleteMany({
     where: { cosmeticId, userId: { in: userIds } },
   });
+  writeThroughRemovedEventHats(equipped);
   await refreshOwnedStickerCache(userIds);
   return { count: result.count };
 }

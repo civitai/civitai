@@ -23,6 +23,7 @@ import {
   renameSync,
   rmSync,
   statSync,
+  utimesSync,
   writeFileSync,
 } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
@@ -30,7 +31,7 @@ import { fileURLToPath } from 'node:url';
 
 export const CACHE_FORMAT = 2;
 export const MODES = ['off', 'shadow', 'on'];
-export const RECORDS_PER_TEST = 8;
+export const RECORDS_PER_TEST = 32;
 
 // Read once, at load: the daemon's checkout can pull mid-run, and a record must be salted with the
 // code that made it, not with whatever is on disk when the run ends.
@@ -427,7 +428,7 @@ export function cacheDir(root) {
 }
 
 /**
- * Every recorded pass for one test file, newest first. More than one so two worktrees on different
+ * Every recorded pass for one test file, most recently written or hit first. More than one so two worktrees on different
  * versions of the same code can BOTH stay fast, instead of evicting each other's record.
  */
 export function recordsFor(dir, project, testRel) {
@@ -446,6 +447,20 @@ export function recordsFor(dir, project, testRel) {
     }
   }
   return out.sort((a, b) => b.mtime - a.mtime);
+}
+
+/**
+ * A record that just answered a lookup moves to the front of the eviction order. Eviction goes by
+ * mtime, so without this a record that every tree on the current main keeps hitting is dropped as
+ * soon as enough newer branch records are written.
+ */
+export function markHit(dir, project, testRel, key) {
+  const now = new Date();
+  try {
+    utimesSync(join(dir, 'rec', identity(project, testRel), `${key}.json`), now, now);
+  } catch {
+    /* evicted between the lookup and now: nothing to keep */
+  }
 }
 
 export function writeRecord(dir, project, testRel, record) {

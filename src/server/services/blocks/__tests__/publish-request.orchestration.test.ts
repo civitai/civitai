@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as AppListingRating from '~/server/services/blocks/app-listing-rating';
 import JSZip from 'jszip';
 
 import { NsfwLevel } from '~/server/common/enums';
@@ -218,6 +219,16 @@ const {
 vi.mock('~/server/db/client', () => ({
   dbRead: mockDbRead,
   dbWrite: mockDbWrite,
+}));
+
+// The post-commit history write is a seam: these suites pin what each go-live HANDS it;
+// `app-listing-rating.test.ts` pins that it writes one event only when the value changed.
+const { recordRatingChange } = vi.hoisted(() => ({
+  recordRatingChange: vi.fn(async (..._a: unknown[]): Promise<void> => undefined),
+}));
+vi.mock('~/server/services/blocks/app-listing-rating', async (importOriginal) => ({
+  ...(await importOriginal<typeof AppListingRating>()),
+  recordListingRatingChangeAfterCommit: (...a: unknown[]) => recordRatingChange(...a),
 }));
 
 vi.mock('~/utils/bundle-s3', () => ({
@@ -1892,6 +1903,7 @@ describe('approveRequest', () => {
     // a mutant that echoed the declared value, or read the icon instead of the cover,
     // produces a different answer than the one asserted.
     const { approveRequest } = await import('../publish-request.service');
+    recordRatingChange.mockClear();
     mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(pendingRequest());
     mockDbRead.appBlock.findFirst.mockResolvedValue({
       id: 'apb_existing',
@@ -1900,7 +1912,12 @@ describe('approveRequest', () => {
       app: { allowedScopes: 33554431, allowedOrigins: ['https://hello.civit.ai'] },
     });
     mockBundleBuffer.current = await makeValidBundle({ version: '0.2.0' });
-    mockDbWrite.appListing.findFirst.mockResolvedValue({ id: 'apl_reset', contentRating: 'g' });
+    // Answer ONLY the (3b-reset) probe. Answering the (3b-transition) draft probe as well
+    // would run that branch too, and its hand-off to the history would stand in for this one.
+    mockDbWrite.appListing.findFirst.mockImplementation(
+      async (args: { where?: { status?: string } }) =>
+        args?.where?.status === 'pending' ? { id: 'apl_reset', contentRating: 'g' } : null
+    );
     mockDbWrite.appListing.findUnique.mockResolvedValue({
       iconId: 1,
       coverId: 2,
@@ -1930,6 +1947,14 @@ describe('approveRequest', () => {
         data: { status: 'approved', contentRating: 'x' },
       })
     );
+    expect(recordRatingChange).toHaveBeenCalledTimes(1);
+    expect(recordRatingChange).toHaveBeenCalledWith({
+      appListingId: 'apl_reset',
+      slug: 'hello',
+      before: 'g',
+      after: 'x',
+      actorUserId: 999,
+    });
   });
 
   it('the reset restore floor is RAISE-ONLY — tame media never lowers a mature rating', async () => {

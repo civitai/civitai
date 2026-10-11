@@ -11,6 +11,7 @@ import {
 } from '~/server/services/blocks/listing-media-url';
 import {
   effectiveSubListingRating,
+  subListingExternalHref,
   subListingRunHref,
 } from '~/shared/constants/app-sub-listing.constants';
 import {
@@ -39,6 +40,7 @@ type SubListingHydrateRow = {
   parent_content_rating: string | null;
   parent_cover_url: string | null;
   parent_icon_url: string | null;
+  parent_link_template: string | null;
   image_url: string | null;
   image_nsfw_level: number | null;
   image_ingestion: string | null;
@@ -51,6 +53,13 @@ type SubListingHydrateRow = {
   /** The item image is in a published, non-private post (see `hydrateSubListingCards`). */
   image_public: boolean | null;
 };
+
+/**
+ * `app_sub_listing_parents.link_template` for the row aliased `sp`. Read through `to_jsonb` so
+ * the statement stays valid before the manual-apply column exists: the value is then NULL, which
+ * keeps every off-site parent's children out of the store.
+ */
+export const PARENT_LINK_TEMPLATE_SQL = Prisma.sql`(to_jsonb(sp) ->> 'link_template')`;
 
 export type SubListingViewer = {
   /** The viewer's own browsing level, when signed in. */
@@ -71,10 +80,16 @@ export function subListingImageCeiling(viewer: SubListingViewer, rating: string 
   return viewerLevel & ratingLevels & hostLevels;
 }
 
+/** Null when the card has nowhere valid to link to. */
 export function projectSubListingCard(
   row: SubListingHydrateRow,
   viewer: SubListingViewer
-): SubListingCard {
+): SubListingCard | null {
+  const externalHref =
+    row.parent_kind === 'offsite'
+      ? subListingExternalHref(row.parent_link_template, row.sub_path)
+      : null;
+  if (row.parent_kind === 'offsite' && !externalHref) return null;
   const contentRating = effectiveSubListingRating(row.parent_content_rating, row.content_rating);
   const parentCover = listingCoverUrl({ url: row.parent_cover_url }, null);
   let coverUrl = parentCover;
@@ -120,16 +135,18 @@ export function projectSubListingCard(
       name: row.parent_name,
       iconUrl: listingIconUrl({ url: row.parent_icon_url }),
     },
-    runHref: subListingRunHref(row.parent_slug, row.sub_path, row.id),
+    ...(externalHref
+      ? { runHref: externalHref, external: true as const }
+      : { runHref: subListingRunHref(row.parent_slug, row.sub_path, row.id) }),
   };
 }
 
 /**
  * Sub-listing rows for the store grid, hydrated live below the catalog cache.
  *
- * Only `approved` rows by authors who are not banned or deleted are returned, so a child that
- * changed after its id was cached drops out on the next render rather than waiting for the
- * cache to expire.
+ * Only `approved` rows by authors who are not banned or deleted, and, for an off-site parent, with
+ * a usable link template, are returned, so a child that changed after its id was cached drops out
+ * on the next render rather than waiting for the cache to expire.
  */
 export async function hydrateSubListingCards(
   db: Pick<PrismaClient, '$queryRaw'>,
@@ -144,6 +161,7 @@ export async function hydrateSubListingCards(
            al.kind AS parent_kind, al.category AS parent_category,
            al.content_rating AS parent_content_rating,
            pc.url AS parent_cover_url, pi.url AS parent_icon_url,
+           ${PARENT_LINK_TEMPLATE_SQL} AS parent_link_template,
            i.url AS image_url, i."nsfwLevel" AS image_nsfw_level,
            i.ingestion::text AS image_ingestion, i."needsReview" AS image_needs_review,
            i.poi AS image_poi, i.minor AS image_minor,
@@ -154,6 +172,7 @@ export async function hydrateSubListingCards(
     FROM app_sub_listings s
     JOIN app_listings al ON al.id = s.parent_listing_id
     JOIN "User" u ON u.id = s.author_user_id
+    LEFT JOIN app_sub_listing_parents sp ON sp.parent_listing_id = al.id
     LEFT JOIN "Image" i ON i.id = s.image_id
     LEFT JOIN "Post" p ON p.id = i."postId"
     LEFT JOIN "Image" pc ON pc.id = al.cover_id
@@ -163,5 +182,10 @@ export async function hydrateSubListingCards(
       AND u."bannedAt" IS NULL
       AND u."deletedAt" IS NULL
   `);
-  return new Map(rows.map((r) => [r.id, projectSubListingCard(r, viewer)]));
+  const cards = new Map<string, SubListingCard>();
+  for (const row of rows) {
+    const card = projectSubListingCard(row, viewer);
+    if (card) cards.set(row.id, card);
+  }
+  return cards;
 }

@@ -87,6 +87,16 @@ describe('posts:write:self — registry', () => {
     // name the ACTION, not merely the resource.
     expect(description.toLowerCase()).toContain('post');
   });
+
+  it('the consent description is pinned whole, and covers uploads as well as posts', () => {
+    // The scope gates two things: uploading an image the app produced in the
+    // browser, and publishing a post. The viewer reads this sentence in the
+    // consent dialog, so it is pinned as a whole string — a reword must be a
+    // deliberate edit here, not a side effect.
+    expect(SCOPE_DESCRIPTIONS[SCOPE]).toBe(
+      "Upload images this app makes and publish posts to your profile from them or from this app's results — you approve each post"
+    );
+  });
 });
 
 describe('posts:write:self — CONSENT-PROMPTED, not exempt', () => {
@@ -131,9 +141,9 @@ describe('posts:write:self — runtime binding in enforceContextBinding', () => 
     // The message must name THIS scope. A generic "forbidden" would pass while
     // the `default:` fail-closed arm was the thing that actually fired, which is
     // the exact mis-attribution this case exists to rule out.
-    expect(() => enforceContextBinding({ scopes: [SCOPE], sub: 'anon' } as never, req, SCOPE)).toThrow(
-      `${SCOPE} requires authenticated subject`
-    );
+    expect(() =>
+      enforceContextBinding({ scopes: [SCOPE], sub: 'anon' } as never, req, SCOPE)
+    ).toThrow(`${SCOPE} requires authenticated subject`);
   });
 
   it('does NOT interfere with a route that requires a DIFFERENT scope', () => {

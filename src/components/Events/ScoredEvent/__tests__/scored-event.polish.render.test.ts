@@ -21,12 +21,16 @@ const act = (React as unknown as { act: typeof actType }).act;
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 let placeable: unknown[] = [];
+let placeableLoading = false;
 const { equip } = vi.hoisted(() => ({ equip: vi.fn() }));
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof Trpc>()),
   trpc: makeTrpcProxy({
     'event.getPlaceableContent': {
-      useQuery: () => ({ data: placeable, isLoading: false }),
+      useQuery: () => ({
+        data: placeableLoading ? undefined : placeable,
+        isLoading: placeableLoading,
+      }),
     },
   }),
 }));
@@ -48,9 +52,9 @@ vi.mock('~/components/Events/events.utils', async (importOriginal) => ({
   useTeamColor: () => () => 'pink',
 }));
 vi.mock('~/components/Events/ScoredEvent/EventContentThumb', () => ({
-  // Records which tile wears a hat, by the hat's art.
-  EventContentThumb: ({ hat }: { hat?: { url: string } }) =>
-    hat ? React.createElement('span', { 'data-hat': hat.url }) : null,
+  // Records which tile wears a hat, by the hat's art, and how wide a picture it asks for.
+  EventContentThumb: ({ hat, displayWidth }: { hat?: { url: string }; displayWidth?: number }) =>
+    React.createElement('span', { 'data-hat': hat?.url, 'data-display-width': displayWidth }),
 }));
 vi.mock('~/components/EdgeMedia/EdgeMedia', () => ({ EdgeMedia: () => null }));
 vi.mock('~/components/Countdown/Countdown', () => ({ Countdown: () => null }));
@@ -130,6 +134,34 @@ const hat = (over: Partial<MyHat> = {}) =>
     ...over,
   } as MyHat);
 
+describe('PlaceHatModal older posts', () => {
+  const modal = () =>
+    render(
+      React.createElement(PlaceHatModal, { event: 'birthday2026', hat: hat(), myHats: [hat()] })
+    );
+  afterEach(() => {
+    placeableLoading = false;
+  });
+
+  // Only the newest posts are listed: say where an older one takes a hat, in the menu's own words.
+  it('points to the menu item on each post for older posts', () => {
+    placeable = [{ entityType: 'Image', entityId: 500, title: null, image: null }];
+    expect(modal().querySelector('[data-testid="older-posts-hint"]')?.textContent).toBe(
+      'Looking for an older post? Find it on your profile and use Add Party Hat from the ⋮ menu on its card.'
+    );
+  });
+
+  it('says it with nothing listed too', () => {
+    placeable = [];
+    expect(modal().querySelector('[data-testid="older-posts-hint"]')).not.toBeNull();
+  });
+
+  it('waits until the list has loaded', () => {
+    placeableLoading = true;
+    expect(modal().querySelector('[data-testid="older-posts-hint"]')).toBeNull();
+  });
+});
+
 describe('PlaceHatModal tiles', () => {
   // No id or type line: an untitled image is its picture alone, a titled model shows its title.
   it('labels a candidate only with a real title', () => {
@@ -144,6 +176,17 @@ describe('PlaceHatModal tiles', () => {
       [...b.querySelectorAll('p')].map((p) => p.textContent)
     );
     expect(labels).toEqual([[], ['My LoRA']]);
+  });
+
+  // Four to a row in a modal, its cards are smaller than Your hats': it asks for less picture.
+  it('asks for pictures sized to its own smaller cards', () => {
+    placeable = [{ entityType: 'Image', entityId: 500, title: null, image: null }];
+    const modal = render(
+      React.createElement(PlaceHatModal, { event: 'birthday2026', hat: hat(), myHats: [hat()] })
+    );
+    expect(modal.querySelector('[data-display-width]')?.getAttribute('data-display-width')).toBe(
+      '320'
+    );
   });
 
   // A feed-sized hat on the first tile reaches about 24px past it at rest and twice that grown;

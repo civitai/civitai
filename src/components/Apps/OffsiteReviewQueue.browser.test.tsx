@@ -548,6 +548,24 @@ describe('OffsiteReviewModal — content-rating derive + mod override', () => {
     await expect.element(page.getByTestId('apps-offsite-rating-mismatch')).toBeInTheDocument();
   });
 
+  test('with the asset read not in yet, nothing is flagged as a mismatch', async () => {
+    mocks.assetsData.current = undefined;
+    renderWithProviders(<OffsiteReviewQueue />);
+    await page.getByRole('button', { name: 'Review' }).click();
+    const derived = page.getByTestId('apps-offsite-derived-rating');
+    await expect.element(derived).toBeInTheDocument();
+    expect(derived.element().textContent).toBe('G');
+    expect(page.getByTestId('apps-offsite-rating-mismatch').elements()).toHaveLength(0);
+  });
+
+  test('the mismatch warning names the asset behind the detected rating, not the tame ones', async () => {
+    renderWithProviders(<OffsiteReviewQueue />);
+    await page.getByRole('button', { name: 'Review' }).click();
+    const assets = page.getByTestId('apps-offsite-rating-mismatch-assets');
+    await expect.element(assets).toBeInTheDocument();
+    expect(assets.element().textContent).toBe('Rated highest: Screenshot 1 (R).');
+  });
+
   test('the approve rating Select defaults to the derived value and approve passes it', async () => {
     renderWithProviders(<OffsiteReviewQueue />);
     await page.getByRole('button', { name: 'Review' }).click();

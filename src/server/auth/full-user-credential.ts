@@ -8,8 +8,8 @@ export type BearerCredential = {
 };
 
 /**
- * The one bearer credential allowed to manage credentials: a full-scope personal (`User`) key
- * not issued to an OAuth client.
+ * The one bearer credential accepted where a full user credential is required: a full-scope
+ * personal (`User`) key not issued to an OAuth client.
  *
  * Callers decide first whether a bearer credential was presented at all; a browser session has
  * none and is allowed without calling this.

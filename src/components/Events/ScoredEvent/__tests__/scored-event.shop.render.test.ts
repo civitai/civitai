@@ -3,7 +3,7 @@ import { MantineProvider } from '@mantine/core';
 import * as React from 'react';
 import { createRoot } from 'react-dom/client';
 import type { act as actType } from 'react-dom/test-utils';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as EventsUtils from '~/components/Events/events.utils';
 import type * as Trpc from '~/utils/trpc';
 import { makeTrpcProxy } from '../../../../../test/trpcProxyStub';
@@ -69,6 +69,18 @@ vi.mock('react-chartjs-2', () => ({
   },
 }));
 vi.mock('~/components/UserAvatar/UserAvatar', () => ({ UserAvatar: () => null }));
+// Formats as the real one does, without its digit columns, so the text reads as on screen.
+vi.mock('~/components/Metrics/AnimatedCount', () => ({
+  AnimatedCount: ({ value, abbreviate = true }: { value: number; abbreviate?: boolean }) =>
+    React.createElement(
+      'span',
+      null,
+      new Intl.NumberFormat(
+        'en-US',
+        abbreviate ? { notation: 'compact', maximumFractionDigits: 1 } : {}
+      ).format(value)
+    ),
+}));
 
 const { TeamHatShelf } = await import('~/components/Events/ScoredEvent/TeamHatShelf');
 const { HatCatalogPreview } = await import('~/components/Events/ScoredEvent/HatCatalogPreview');
@@ -288,6 +300,73 @@ describe('standings rows (A7)', () => {
     expect(el.querySelector('[data-testid="chart-pending"]')?.textContent).toBe(
       "Competition hasn't started yetThere will be a graph of every team's points here. Scoring starts Nov 11."
     );
+  });
+
+  // Event dates are UTC midnights. West of UTC that instant is the evening before, so a local
+  // format named the day before the start (the preview page read "Scoring starts Oct 31").
+  describe('west of UTC', () => {
+    const tz = process.env.TZ;
+    beforeEach(() => {
+      process.env.TZ = 'America/Denver';
+    });
+    afterEach(() => {
+      if (tz === undefined) delete process.env.TZ;
+      else process.env.TZ = tz;
+    });
+    const utcStart = new Date(Date.UTC(2099, 10, 11));
+
+    it('names the start day in UTC', () => {
+      // The condition the bug needs: locally, the start instant is still the 10th.
+      expect(utcStart.getDate()).toBe(10);
+      const el = render(
+        React.createElement(TeamStandings, { standings: standings(), startDate: utcStart })
+      );
+      expect(el.querySelector('[data-testid="chart-pending"]')?.textContent).toBe(
+        "Competition hasn't started yetThere will be a graph of every team's points here. Scoring starts Nov 11."
+      );
+    });
+
+    const pending = (liveTotals: boolean) =>
+      render(
+        React.createElement(TeamStandings, {
+          standings: { ...standings(), liveTotals } as React.ComponentProps<
+            typeof TeamStandings
+          >['standings'],
+          startDate: utcStart,
+          preview: true,
+        })
+      ).querySelector('[data-testid="chart-pending"]')?.textContent;
+
+    it('in the preview, says the preview is scoring now', () => {
+      expect(pending(true)).toBe(
+        "Competition hasn't started yetThe preview is scoring now and draws its first point after the first hour. The competition starts Nov 11."
+      );
+    });
+
+    // Kill switch off: the preview is not scoring, so it does not say it is.
+    it('in the preview with the engine switched off, only says when scoring starts', () => {
+      expect(pending(false)).toBe(
+        "Competition hasn't started yetThere will be a graph of every team's points here. Scoring starts Nov 11."
+      );
+    });
+  });
+
+  it('calls the team points live when the totals came from the live engine', () => {
+    const heading = (liveTotals?: boolean) =>
+      render(
+        React.createElement(TeamStandings, {
+          standings: { ...standings(), liveTotals } as React.ComponentProps<
+            typeof TeamStandings
+          >['standings'],
+          startDate: later,
+        })
+      ).textContent ?? '';
+    expect(heading(true)).toMatch(
+      /Team standingsPoints live · graph updated hourly · last update \d/
+    );
+    act(() => root?.unmount());
+    host?.remove();
+    expect(heading(false)).toMatch(/Team standingsUpdated hourly · last update \d/);
   });
 
   // Positive control: with scores the chart renders and the pending line goes.

@@ -10,7 +10,8 @@ who acted. The new helper takes a signed-in moderator.
 
 **Three ways in, one actor rule.** A moderator's browser session; that same session forwarded one hop by
 a `*.civitai.com` spoke (which shares the hub's `.civitai.com` cookie, so it is not cross-domain); or a
-moderator's own API key for scripts. All three resolve to a real moderator.
+moderator's own full-access personal API key for scripts (any other token gets 403). All three resolve
+to a real moderator.
 
 🔒 The mutating endpoints are cookie-authenticated POSTs, so CSRF is prevented **only** by the session
 cookie being `SameSite=Lax`. That invariant is recorded in `moderator-endpoint.ts`; read it before

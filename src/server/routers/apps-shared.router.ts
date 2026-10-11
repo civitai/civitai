@@ -47,7 +47,10 @@ import { logToAxiom } from '~/server/logging/client';
 import { escalateToServerFault } from '~/server/logging/server-fault-override';
 import { FLIPT_FEATURE_FLAGS, getFliptBoolean } from '~/server/flipt/client';
 import { isAppBlocksSharedStorageEnabled } from '~/server/services/app-blocks-flag';
-import { assertSharedWriteTrust } from '~/server/services/blocks/block-write-trust.service';
+import {
+  assertSharedWriteTrust,
+  hasLinkedOAuthAccount,
+} from '~/server/services/blocks/block-write-trust.service';
 import { sessionClient } from '~/server/auth/session-client';
 import type { SessionUser } from '~/types/session';
 import type { SyncSubListingForSharedRowArgs } from '~/server/services/blocks/app-sub-listing.service';
@@ -75,6 +78,7 @@ import {
   checkSharedReportRateLimit,
   checkSharedWithdrawRateLimit,
 } from '~/server/utils/shared-storage-rate-limit';
+import { throwSharedRateLimited } from '~/server/utils/rate-limit-error';
 import { moderatorProcedure, publicProcedure, router } from '~/server/trpc';
 import { appsModUserStorageRouter } from '~/server/routers/apps-mod-storage.router';
 
@@ -382,15 +386,8 @@ export async function resolveSharedContext(
         message: 'shared storage writes require an authenticated viewer',
       });
     }
-    // "Verified email" is satisfied by emailVerified OR a linked OAuth account.
-    // Only query when emailVerified is absent (the common OAuth case) — a
-    // verified-email user short-circuits with NO extra query per write op. The
-    // query keys on the SUBJECT `userId` (parsed from the verified block token),
-    // never client-forgeable input.
-    let hasLinkedOAuth = false;
-    if (subjectUser && !subjectUser.emailVerified) {
-      hasLinkedOAuth = (await dbRead.account.count({ where: { userId } })) > 0;
-    }
+    // Keyed on the SUBJECT (from the verified block token), never client-forgeable input.
+    const hasLinkedOAuth = subjectUser ? await hasLinkedOAuthAccount(subjectUser) : false;
     assertSharedWriteTrust(subjectUser, hasLinkedOAuth);
   }
 
@@ -732,12 +729,8 @@ export async function appendSharedRow(
   // Rate limit FIRST — bounds a flood AND the external-moderation cost the
   // safety belt would otherwise incur per attempt.
   const rl = await checkSharedAppendRateLimit(uid, appBlockId);
-  if (!rl.allowed) {
-    throw new TRPCError({
-      code: 'TOO_MANY_REQUESTS',
-      message: `Too many submissions — retry in ${rl.retryAfterSeconds}s`,
-    });
-  }
+  if (!rl.allowed)
+    throwSharedRateLimited(rl, `Too many submissions — retry in ${rl.retryAfterSeconds}s`);
 
   // BLOCKING content safety (belt on title/body) + serialize-guard + whole-value
   // byte cap → RAW, store-ready serialized JSON. Shared verbatim with `update`
@@ -875,12 +868,8 @@ export async function updateSharedRow(
   // Same daily bucket as append (design H4) so repeated edits can't become an
   // unbounded write — AND it bounds the external-moderation cost the belt incurs.
   const rl = await checkSharedAppendRateLimit(uid, appBlockId);
-  if (!rl.allowed) {
-    throw new TRPCError({
-      code: 'TOO_MANY_REQUESTS',
-      message: `Too many submissions — retry in ${rl.retryAfterSeconds}s`,
-    });
-  }
+  if (!rl.allowed)
+    throwSharedRateLimited(rl, `Too many submissions — retry in ${rl.retryAfterSeconds}s`);
 
   const pool = requireAppsDb();
 
@@ -1078,12 +1067,7 @@ export async function voteSharedRow(blockToken: string, key: string): Promise<{ 
   const uid = userId as number;
 
   const rl = await checkSharedVoteRateLimit(uid, appBlockId);
-  if (!rl.allowed) {
-    throw new TRPCError({
-      code: 'TOO_MANY_REQUESTS',
-      message: `Too many votes — retry in ${rl.retryAfterSeconds}s`,
-    });
-  }
+  if (!rl.allowed) throwSharedRateLimited(rl, `Too many votes — retry in ${rl.retryAfterSeconds}s`);
 
   const pool = requireAppsDb();
   // Visibility/existence pre-check → NOT_FOUND for hidden OR missing (H2). The
@@ -1132,12 +1116,7 @@ export async function unvoteSharedRow(blockToken: string, key: string): Promise<
   const uid = userId as number;
 
   const rl = await checkSharedVoteRateLimit(uid, appBlockId);
-  if (!rl.allowed) {
-    throw new TRPCError({
-      code: 'TOO_MANY_REQUESTS',
-      message: `Too many votes — retry in ${rl.retryAfterSeconds}s`,
-    });
-  }
+  if (!rl.allowed) throwSharedRateLimited(rl, `Too many votes — retry in ${rl.retryAfterSeconds}s`);
 
   const pool = requireAppsDb();
   const rows = (
@@ -1173,12 +1152,8 @@ export async function withdrawSharedRow(
   // append daily bucket and NOT the shared vote bucket) lives beside the
   // constants in shared-storage-rate-limit.ts.
   const rl = await checkSharedWithdrawRateLimit(uid, appBlockId);
-  if (!rl.allowed) {
-    throw new TRPCError({
-      code: 'TOO_MANY_REQUESTS',
-      message: `Too many withdrawals — retry in ${rl.retryAfterSeconds}s`,
-    });
-  }
+  if (!rl.allowed)
+    throwSharedRateLimited(rl, `Too many withdrawals — retry in ${rl.retryAfterSeconds}s`);
 
   const pool = requireAppsDb();
   const client = await pool.connect();
@@ -1243,12 +1218,8 @@ export async function reportSharedRow(
   // the per-(user, app) report velocity on its own daily bucket (fail-open, like the
   // other buckets — the containment is defence-in-depth, not the auth boundary).
   const rl = await checkSharedReportRateLimit(uid, appBlockId);
-  if (!rl.allowed) {
-    throw new TRPCError({
-      code: 'TOO_MANY_REQUESTS',
-      message: `Too many reports — retry in ${rl.retryAfterSeconds}s`,
-    });
-  }
+  if (!rl.allowed)
+    throwSharedRateLimited(rl, `Too many reports — retry in ${rl.retryAfterSeconds}s`);
 
   const pool = requireAppsDb();
   const exists = (await pool.query(`SELECT 1 FROM ${schema}.shared_kv WHERE key = $1`, [key]))
@@ -1435,12 +1406,8 @@ export async function incrementSharedCounter(
   const uid = userId as number; // non-null (write path ran the trust gate)
 
   const rl = await checkSharedVoteRateLimit(uid, appBlockId);
-  if (!rl.allowed) {
-    throw new TRPCError({
-      code: 'TOO_MANY_REQUESTS',
-      message: `Too many increments — retry in ${rl.retryAfterSeconds}s`,
-    });
-  }
+  if (!rl.allowed)
+    throwSharedRateLimited(rl, `Too many increments — retry in ${rl.retryAfterSeconds}s`);
 
   // The key is app-chosen text that `getTop` hands to every reader, so it is moderated as one
   // leaf, under the same two flags as `data` (see `shared-data-moderation.ts`).
