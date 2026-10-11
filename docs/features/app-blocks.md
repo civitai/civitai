@@ -469,8 +469,27 @@ hand before the route deploys).
 - **Counts**: `civitai_app_block_custom_events_total{outcome}` (no per-app
   label; the per-app breakdown is the table).
 
-Owners cannot read these rows yet; an aggregate view in the owner analytics
-panel is planned.
+**The owner panel.** The app analytics panel (`AppAnalyticsPanel.tsx`) has a
+"Custom events" card, read by `getMyAppAnalytics` with `withCustomEvents` for one
+app (`src/server/services/blocks/app-custom-events.service.ts`). Owners see
+aggregates only, never rows:
+
+- every event the app's manifest declares, including ones never sent, with its
+  event count, **signed-in viewers** (distinct signed-in viewers only; signed-out
+  activity appears as an event count) and signed-out events;
+- for a selected event, its series and a property breakdown: a count per declared
+  enum value, count / sum / average / median / p95 for a number, and a true /
+  false split for a boolean. Each covers only the events that carried the
+  property;
+- a banner when events arrived under names the approved manifest does not
+  declare (`__undeclared__` rows).
+
+The owner's own activity (rows with `isOwner`, including dev-tunnel testing) is
+excluded by default, from the drop count too; an "Include owner activity" toggle
+adds it. Counts are exact (there is no small-count suppression) and are lower
+bounds, since client-side drops are never recorded. A ClickHouse failure shows
+"couldn't load", never a zero. Week-bucketed ranges (over 60 days) count viewers
+approximately.
 
 ### Buzz and per-account spend
 
@@ -808,8 +827,8 @@ documented above, so they're dropped from this list.
   `/api/track/block-render`) and workflow attribution flows through
   `/api/internal/blocks/workflow-completed`, but the analytics tables are still
   being stood up (the hosts note "until the … ClickHouse table exists"). Custom
-  events are forwarded by both hosts and recorded (see "Custom events"), but no
-  owner-facing view reads them yet.
+  events are forwarded by both hosts, recorded, and shown to owners (see "Custom
+  events").
 - **Health-check job + auto-suspend on consecutive failures.** The
   `health_status` column exists (default `'unknown'`) but nothing populates it
   and there's no auto-suspend job (and no suspend transition — see the
