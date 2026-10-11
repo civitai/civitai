@@ -159,6 +159,7 @@ const LISTING_PREVIEW = {
     sourceRepoUrl: null,
     isBeta: false,
     betaMessage: null,
+    restrictedAudience: null,
     kindData: { kind: 'onsite' as const, appBlockId: 'blk_1', hasPage: false, liveUrl: '' },
   } satisfies ListingDetail,
 };
