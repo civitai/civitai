@@ -12,13 +12,14 @@ import { MyEventHats } from '~/components/Events/ScoredEvent/MyEventHats';
 import { ScoredEventHero } from '~/components/Events/ScoredEvent/ScoredEventHero';
 import { TeamHatShelf } from '~/components/Events/ScoredEvent/TeamHatShelf';
 import { TeamStandings, TopHats } from '~/components/Events/ScoredEvent/TeamStandings';
+import { RosterOptIn, useSetRosterOptIn } from '~/components/Events/ScoredEvent/roster/RosterOptIn';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useInView } from '~/hooks/useInView';
 import type { RouterOutput } from '~/types/router';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import type { ReactNode } from 'react';
-import { Fragment } from 'react';
+import { Fragment, useState } from 'react';
 import type { ScoredSection } from '~/components/Events/ScoredEvent/scored-event.utils';
 import { scoredSectionOrder } from '~/components/Events/ScoredEvent/scored-event.utils';
 
@@ -74,6 +75,9 @@ export function ScoredEventSections({ event, data }: { event: string; data: Even
     { enabled: joined }
   );
   const { activateCosmetic, equipping } = useMutateEvent();
+  // Off by default: the roster lists only members who chose it.
+  const [rosterOnJoin, setRosterOnJoin] = useState(false);
+  const setRosterOptIn = useSetRosterOptIn(event);
 
   const handleJoin = async () => {
     try {
@@ -81,7 +85,9 @@ export function ScoredEventSections({ event, data }: { event: string; data: Even
       await utils.event.getMyHats.invalidate({ event });
     } catch (e) {
       showErrorNotification({ title: 'Unable to join', error: e as Error });
+      return;
     }
+    if (data.joinable && rosterOnJoin) setRosterOptIn.mutate({ event, optIn: true });
   };
 
   const color = (team && teamColor(team)) ?? 'var(--mantine-color-blue-5)';
@@ -156,6 +162,10 @@ export function ScoredEventSections({ event, data }: { event: string; data: Even
           teamHats={standings?.teamHats}
           onJoin={handleJoin}
           joining={equipping}
+          rosterOnJoin={
+            data.joinable ? { checked: rosterOnJoin, onChange: setRosterOnJoin } : undefined
+          }
+          rosterSwitch={data.joinable ? <RosterOptIn event={event} compact /> : undefined}
         />
       </div>
       {scoredSectionOrder({ joined, ended }).map((key) => (

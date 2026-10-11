@@ -289,8 +289,8 @@ function OwnerTopic({ topic }: { topic: ReturnType<typeof ownerTopic> }) {
 
 /**
  * While cards are on screen: each listed member's total, live. `topicIds` are the cards in view;
- * `input` is the roster query's own input, without the cursor. Renders nothing visible. The order
- * does not change on a push; it refreshes on the next read.
+ * `input` is the roster query's own input, without the cursor. Renders nothing visible. A push
+ * changes only the cached total; the roster re-sorts what it has loaded (TeamRoster).
  */
 export function RosterLivePoints({
   event,
