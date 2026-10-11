@@ -690,7 +690,7 @@ describe('BlockManifestValidator', () => {
   });
 
   /**
-   * `auth: "oauth"` × `apps:storage:*` — refused at submit, because the runtime cannot
+   * `auth: "oauth"` × `apps:storage:*` — refused, because the runtime cannot
    * serve it. An `auth: "oauth"` app is minted an OPAQUE OAuth access token when a viewer
    * is signed in, and every app-storage resolver re-verifies the RAW bearer with
    * `verifyBlockToken` (JWS + pinned `kid`), so the whole storage surface 401s for signed-in
