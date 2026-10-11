@@ -167,6 +167,45 @@ describe('BlockImageUploadModal — a pick the photo picker made unreadable', ()
     expect(onAccepted).not.toHaveBeenCalled();
   });
 
+  test('the preview and the dimension read use an in-memory copy, never the picked File', async () => {
+    const createObjectURL = vi.spyOn(URL, 'createObjectURL');
+    const createImageBitmap = vi.spyOn(window, 'createImageBitmap');
+    const onAccepted = vi.fn();
+    openModal(onAccepted);
+    const picked = await pngFile('photo-0.png');
+    await chooseFiles(fileInputEl(), [picked]);
+
+    await vi.waitFor(() => expect(onAccepted).toHaveBeenCalledTimes(1));
+    const files = (calls: unknown[][]) =>
+      calls.map(([arg]) => arg).filter((arg): arg is File => arg instanceof File);
+    const previewed = files(createObjectURL.mock.calls);
+    const decoded = files(createImageBitmap.mock.calls);
+    createObjectURL.mockRestore();
+    createImageBitmap.mockRestore();
+    for (const read of [previewed, decoded]) {
+      expect(read).toHaveLength(1);
+      expect(isPickSnapshot(read[0])).toBe(true);
+      expect(pickOriginal(read[0])).toBe(picked);
+    }
+  });
+
+  test('closing the modal mid-upload accepts nothing', async () => {
+    let finishUpload: (v: { id: string }) => void = () => undefined;
+    mocks.uploadToCF.mockReturnValue(new Promise((r) => (finishUpload = r)));
+    const onAccepted = vi.fn();
+    openModal(onAccepted);
+    await chooseFiles(fileInputEl(), [await pngFile('photo-0.png')]);
+    await vi.waitFor(() => expect(mocks.uploadToCF).toHaveBeenCalledTimes(1));
+
+    useDialogStore.getState().closeAll();
+    finishUpload({ id: 'cf-key' });
+    await new Promise((r) => setTimeout(r, 100));
+
+    expect(mocks.persistMutate).not.toHaveBeenCalled();
+    expect(onAccepted).not.toHaveBeenCalled();
+  });
+
+  // Passes at base too: the control that the friendly copy is not shown for every error.
   test('an upload failure still shows its own message', async () => {
     mocks.uploadToCF.mockRejectedValue(new Error('Failed to upload image: 500'));
     openModal(vi.fn());

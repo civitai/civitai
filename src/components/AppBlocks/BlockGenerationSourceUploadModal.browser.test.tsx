@@ -273,6 +273,7 @@ const PICK_MESSAGE =
   "Your phone's photo picker gave us a file we can't open. Choose it from Files instead.";
 const PREP_MESSAGE =
   "Couldn't read this image on your device. Try a different file or a screenshot.";
+const LOAD_MESSAGE = "Couldn't read this image. Try a different file or a screenshot.";
 const RAW_LOAD_ERROR = 'Image failed to load (complete=true, naturalWidth=0)';
 
 function filesFallbackInput() {
@@ -361,12 +362,19 @@ describe('BlockGenerationSourceUploadModal — a pick the photo picker made unre
       )
       .toBeVisible();
     expect(document.querySelector('[data-testid="unreadable-pick-files-input"]')).toBeNull();
+    expect(previewEl()).toBeNull();
     expect(mocks.resizeImage).not.toHaveBeenCalled();
+    expect(mocks.reportApplicationError.mock.calls.map(([, ctx]) => ctx)).toEqual([
+      expect.objectContaining({
+        message: 'picked-file image/jpeg <5MB NotReadableError android:false',
+      }),
+    ]);
   });
 
   test('every stage reads an in-memory copy of the pick, never the picked File itself', async () => {
     mocks.uploadConsumerBlob.mockResolvedValue({ url: BLOB_URL });
     mocks.getImageDimensions.mockResolvedValue({ width: 640, height: 480 });
+    const createObjectURL = vi.spyOn(URL, 'createObjectURL');
     const picked = makeImageFile('photo-0.jpg', 'image/jpeg');
     const onResolved = vi.fn();
     openModal(onResolved);
@@ -377,6 +385,29 @@ describe('BlockGenerationSourceUploadModal — a pick the photo picker made unre
     expect(resizedFrom).not.toBe(picked);
     expect(isPickSnapshot(resizedFrom as File)).toBe(true);
     expect(pickOriginal(resizedFrom as File)).toBe(picked);
+    // The preview too: a url made for the picked File dies with it.
+    const previewed = createObjectURL.mock.calls
+      .map(([arg]) => arg)
+      .filter((arg): arg is File => arg instanceof File);
+    createObjectURL.mockRestore();
+    expect(previewed).toHaveLength(1);
+    expect(isPickSnapshot(previewed[0])).toBe(true);
+    expect(pickOriginal(previewed[0])).toBe(picked);
+  });
+
+  test('an image the browser cannot decode shows friendly copy, through the real resize', async () => {
+    const { resizeImage } = await vi.importActual<typeof CanvasUtils>(
+      '~/shared/utils/canvas-utils'
+    );
+    mocks.resizeImage.mockImplementationOnce(resizeImage);
+    const onResolved = vi.fn();
+    openModal(onResolved);
+    // Bytes no browser can decode: the real decode fails the way #5746's screenshot shows.
+    await chooseFiles(fileInputEl(), [makeImageFile('photo-0.jpg', 'image/jpeg')]);
+
+    await expect.element(page.getByText(PREP_MESSAGE, { exact: true })).toBeVisible();
+    expect(document.body.textContent).not.toContain('complete=');
+    expect(mocks.uploadConsumerBlob).not.toHaveBeenCalled();
   });
 
   test('a decode failure shows friendly copy, not the browser diagnostic', async () => {
@@ -402,8 +433,26 @@ describe('BlockGenerationSourceUploadModal — a pick the photo picker made unre
     openModal(onResolved);
     await chooseFiles(fileInputEl(), [makeImageFile('photo-0.jpg', 'image/jpeg')]);
 
-    await expect.element(page.getByText(PREP_MESSAGE, { exact: true })).toBeVisible();
+    // Not the "on your device" text: the upload succeeded and the url is what failed to load.
+    await expect.element(page.getByText(LOAD_MESSAGE, { exact: true })).toBeVisible();
     expect(document.body.textContent).not.toContain('complete=');
+    expect(onResolved).not.toHaveBeenCalled();
+  });
+
+  test('closing the modal mid-upload resolves nothing', async () => {
+    let finishUpload: (v: { url: string }) => void = () => undefined;
+    mocks.uploadConsumerBlob.mockReturnValue(new Promise((r) => (finishUpload = r)));
+    mocks.getImageDimensions.mockResolvedValue({ width: 640, height: 480 });
+    const onResolved = vi.fn();
+    openModal(onResolved);
+    await chooseFiles(fileInputEl(), [makeImageFile('photo-0.jpg', 'image/jpeg')]);
+    await vi.waitFor(() => expect(mocks.uploadConsumerBlob).toHaveBeenCalledTimes(1));
+
+    useDialogStore.getState().closeAll();
+    finishUpload({ url: BLOB_URL });
+    await new Promise((r) => setTimeout(r, 100));
+
+    expect(mocks.getImageDimensions).not.toHaveBeenCalled();
     expect(onResolved).not.toHaveBeenCalled();
   });
 });

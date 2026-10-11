@@ -28,6 +28,7 @@ import {
   type ImagePrepStage,
   imageToJpegBlob,
   prepStage,
+  IMAGE_LOAD_ERROR,
   IMAGE_PREP_ERROR,
   resizeImage,
 } from '~/shared/utils/canvas-utils';
@@ -220,7 +221,6 @@ function MetadataAction({ url, apply }: { url: string; apply?: ImageMetadataAppl
 const iconSize = 18;
 const maxSizeFormatted = formatBytes(maxOrchestratorImageFileSize);
 
-const IMAGE_LOAD_ERROR = "Couldn't read this image. Try a different file or a screenshot.";
 const IMAGE_PREP_TIMEOUT_ERROR =
   "Couldn't process this image on your device. Try a smaller photo or a screenshot.";
 const IMAGE_NETWORK_TIMEOUT_ERROR =

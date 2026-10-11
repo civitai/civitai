@@ -19,10 +19,10 @@ import { maxOrchestratorImageFileSize } from '~/server/common/constants';
 import { DIM_MAX, DIM_MIN } from '~/server/schema/blocks/workflow.schema';
 import { IMAGE_MIME_TYPE } from '~/shared/constants/mime-types';
 import {
+  IMAGE_LOAD_ERROR,
   IMAGE_PREP_ERROR,
   ImagePrepError,
   imageToJpegBlob,
-  prepStage,
   resizeImage,
 } from '~/shared/utils/canvas-utils';
 import { uploadConsumerBlob } from '~/utils/consumer-blob-upload';
@@ -73,6 +73,8 @@ export default function BlockGenerationSourceUploadModal({
   const objectUrlRef = useRef<string | null>(null);
   useEffect(() => {
     return () => {
+      // eslint-disable-next-line react-hooks/exhaustive-deps -- the live epoch counter, not a DOM node
+      epochRef.current++;
       if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current);
     };
   }, []);
@@ -136,8 +138,10 @@ export default function BlockGenerationSourceUploadModal({
       if (epoch !== epochRef.current) return;
       if (!url) throw new Error('Upload did not return a URL');
       // Real dimensions from the uploaded (resized) blob (mirrors SourceImageUpload).
-      const { width, height } = await prepStage('dims', () =>
-        getImageDimensions(url, { loadRetries: 2 })
+      const { width, height } = await getImageDimensions(url, { loadRetries: 2 }).catch(
+        (e: unknown) => {
+          throw new Error(IMAGE_LOAD_ERROR, { cause: e });
+        }
       );
       if (epoch !== epochRef.current) return;
       setStatus('ready');

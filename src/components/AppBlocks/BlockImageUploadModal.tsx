@@ -109,6 +109,8 @@ export default function BlockImageUploadModal({
   }
   useEffect(() => {
     return () => {
+      // eslint-disable-next-line react-hooks/exhaustive-deps -- the live epoch counter, not a DOM node
+      epochRef.current++;
       clearTimer();
       if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current);
     };

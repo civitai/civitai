@@ -32,6 +32,8 @@ export class ImagePrepError extends Error {
 /** Shown for an ImagePrepError in place of the browser's own text ("failed to load image blob", …). */
 export const IMAGE_PREP_ERROR =
   "Couldn't read this image on your device. Try a different file or a screenshot.";
+/** Shown when an image url (not a file on the device) fails to load. */
+export const IMAGE_LOAD_ERROR = "Couldn't read this image. Try a different file or a screenshot.";
 
 /**
  * Runs one preparation stage. A failure becomes an ImagePrepError for that stage (an inner stage's
