@@ -278,7 +278,7 @@ async function renderAndMeasure(measurePx: AppsMeasure | undefined, collapsed: b
 }
 
 describe('the /apps route set that renders the shared chrome', () => {
-  test('🔴 is exactly these 12 routes (fails when it GROWS or SHRINKS)', () => {
+  test('🔴 is exactly these 13 routes (fails when it GROWS or SHRINKS)', () => {
     // A ledger, not a floor. The alignment assertions below loop over this set, so a
     // set that silently shrank — or emptied — would make them pass while checking
     // nothing. Adding an apps page is meant to fail here and be added deliberately.
@@ -294,6 +294,7 @@ describe('the /apps route set that renders the shared chrome', () => {
       // repointed ('a' < 'b', where 'i' > 'b'), so the position moving is not a second
       // change to review.
       '/apps/activity',
+      '/apps/assistant',
       '/apps/build',
       '/apps/invites',
       '/apps/listing/[appListingId]/edit',
@@ -310,7 +311,8 @@ describe('the /apps route set that renders the shared chrome', () => {
     // floor the readable band's 1368 ceiling cannot clear — while `/apps/get-started`, which
     // WAS measured, left with the merge. Net: the full-container half holds at 6 (one in,
     // one out) and the measured half drops from 7 to 6.
-    expect(ROUTES.filter((r) => r.measure === undefined)).toHaveLength(6);
+    // 7 since `/apps/assistant` (chat beside a live preview) joined the full-container half.
+    expect(ROUTES.filter((r) => r.measure === undefined)).toHaveLength(7);
     expect(ROUTES.filter((r) => r.measure !== undefined)).toHaveLength(6);
   });
 });
@@ -322,7 +324,7 @@ describe.each(VIEWPORTS)(
       const railWidth = collapsed ? APPS_RAIL_COLLAPSED_WIDTH : APPS_RAIL_WIDTH;
       const railChrome = appsRailChromeWidth(collapsed);
 
-      test('nav left AND width are the same on all 12 routes', async () => {
+      test('nav left AND width are the same on all 13 routes', async () => {
         await page.viewport(width, height);
         const seen: Record<string, [number, number]> = {};
         const container: Record<string, [number, number]> = {};
@@ -418,7 +420,7 @@ describe.each(VIEWPORTS)(
         expect(bodyLefts.size, `the body starts at ${[...bodyLefts]} across routes`).toBe(1);
 
         // And the measured routes are genuinely DISTINCT widths, so the fixture varies
-        // the dimension under test instead of feeding one value 12 times. TWO classes
+        // the dimension under test instead of feeding one value 13 times. TWO classes
         // since the narrow-table cap was deleted.
         const measuredWidths = new Set(
           ROUTES.filter((r) => r.measure !== undefined).map((r) => seen[r.route][1])

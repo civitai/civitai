@@ -22,6 +22,8 @@ export const clientSchema = z.object({
   NEXT_PUBLIC_VAPID_PUBLIC_KEY: z.string().optional(),
   NEXT_PUBLIC_MODERATOR_APP_URL: z.url().default('https://moderator.civitai.com'),
   NEXT_PUBLIC_TRAINING_STUDIO_URL: z.url().default('https://training.civitai.com'),
+  // App Assistant's hosted sandbox service, called from the browser. Unset = not configured.
+  NEXT_PUBLIC_APP_ASSISTANT_SANDBOX_URL: z.url().optional(),
   // 🔴 The BROWSER-facing orchestrator origin, and deliberately NOT the server-side
   // `ORCHESTRATOR_ENDPOINT`. That one is an in-cluster address
   // (`http://orchestration-api.…svc.cluster.local:8080`), so handing it to client code yields a
@@ -110,6 +112,7 @@ export const clientEnv = {
   NEXT_PUBLIC_VAPID_PUBLIC_KEY: process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY,
   NEXT_PUBLIC_MODERATOR_APP_URL: process.env.NEXT_PUBLIC_MODERATOR_APP_URL,
   NEXT_PUBLIC_TRAINING_STUDIO_URL: process.env.NEXT_PUBLIC_TRAINING_STUDIO_URL,
+  NEXT_PUBLIC_APP_ASSISTANT_SANDBOX_URL: process.env.NEXT_PUBLIC_APP_ASSISTANT_SANDBOX_URL,
   NEXT_PUBLIC_ORCHESTRATOR_ENDPOINT: process.env.NEXT_PUBLIC_ORCHESTRATOR_ENDPOINT,
   NEXT_PUBLIC_GPTT_UUID: process.env.NEXT_PUBLIC_GPTT_UUID,
   NEXT_PUBLIC_GPTT_UUID_ALT: process.env.NEXT_PUBLIC_GPTT_UUID_ALT,

@@ -1,0 +1,117 @@
+import { Alert, Anchor, Button, Center, Group, Loader, Stack, Text } from '@mantine/core';
+import { IconExternalLink, IconRefresh } from '@tabler/icons-react';
+import { useQuery } from '@tanstack/react-query';
+import { DevTunnelBlockHost } from '~/components/AppBlocks/DevTunnelBlockHost';
+import type { PreviewSession } from '~/components/Apps/AppAssistant/previewTools';
+import type { DevTunnelFrame } from '~/server/services/blocks/dev-tunnel-frame.service';
+
+type PreviewFrame = DevTunnelFrame & { iframeSrc: string };
+
+async function fetchPreviewFrame(blockId: string): Promise<PreviewFrame> {
+  const res = await fetch(`/api/apps/assistant/preview?blockId=${encodeURIComponent(blockId)}`, {
+    credentials: 'same-origin',
+  });
+  const data = (await res.json().catch(() => null)) as (PreviewFrame & { error?: string }) | null;
+  if (!res.ok || !data?.iframeSrc) throw new Error(data?.error ?? 'The preview is unavailable');
+  return data;
+}
+
+function EmptyState({ children }: { children: React.ReactNode }) {
+  return (
+    <Center className="h-full p-6">
+      <Text size="sm" c="dimmed" ta="center" maw={360}>
+        {children}
+      </Text>
+    </Center>
+  );
+}
+
+export function AppAssistantPreview({
+  canPreview,
+  session,
+}: {
+  canPreview: boolean;
+  session: PreviewSession | null;
+}) {
+  const frame = useQuery({
+    queryKey: ['app-assistant', 'preview', session?.sessionId],
+    queryFn: () => fetchPreviewFrame((session as PreviewSession).blockId),
+    enabled: !!session,
+    // The entry token in `iframeSrc` is short-lived and used once, on load; never reuse an old one.
+    staleTime: Infinity,
+    gcTime: 0,
+    retry: false,
+  });
+
+  if (!canPreview)
+    return (
+      <EmptyState>
+        Live preview isn’t enabled for your account yet. The assistant can still build and test your
+        app in its sandbox.
+      </EmptyState>
+    );
+  if (!session)
+    return (
+      <EmptyState>
+        Your app appears here once it runs. Ask the assistant to start the live preview.
+      </EmptyState>
+    );
+
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      <Group justify="space-between" px="sm" py={6} wrap="nowrap" className="shrink-0">
+        <Text size="xs" c="dimmed" truncate>
+          New previews can take a minute to appear.
+        </Text>
+        <Group gap={6} wrap="nowrap">
+          <Button
+            size="compact-xs"
+            variant="subtle"
+            leftSection={<IconRefresh size={14} />}
+            loading={frame.isFetching}
+            onClick={() => frame.refetch()}
+          >
+            Reload
+          </Button>
+          <Anchor
+            size="xs"
+            href={`/apps/dev/${encodeURIComponent(session.blockId)}`}
+            target="_blank"
+            rel="noopener"
+            className="flex items-center gap-1"
+          >
+            Open full page <IconExternalLink size={12} />
+          </Anchor>
+        </Group>
+      </Group>
+      <div className="flex min-h-0 flex-1 flex-col">
+        {frame.isLoading ? (
+          <Center className="h-full">
+            <Loader size="sm" />
+          </Center>
+        ) : frame.error || !frame.data ? (
+          <Stack p="md">
+            <Alert color="yellow" variant="light">
+              {frame.error instanceof Error ? frame.error.message : 'The preview is unavailable'}
+            </Alert>
+          </Stack>
+        ) : (
+          <DevTunnelBlockHost
+            // A fresh entry URL is a fresh mount, so the host re-runs its handshake.
+            key={frame.data.iframeSrc}
+            {...frame.data}
+            fit="fill"
+            tokenErrorFallback={
+              <Stack p="md">
+                <Alert color="red" variant="light">
+                  The preview couldn’t sign in to your app. Reload, or ask the assistant to restart
+                  the preview.
+                </Alert>
+              </Stack>
+            }
+          />
+        )}
+      </div>
+    </div>
+  );
+}

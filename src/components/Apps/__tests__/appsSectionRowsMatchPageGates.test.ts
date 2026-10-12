@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { describe, expect, it } from 'vitest';
 import {
+  canAccessAppAssistant,
   canAccessAppsActivity,
   canAccessAppsBuild,
   hasAppsStoreAccess,
@@ -489,5 +490,34 @@ describe('🔴 no sub-nav row offers a page its own gate would refuse', () => {
         'Give the row the predicate its page enforces — see `canAccessAppsBuild` for the ' +
         'shared-predicate pattern.'
     ).toEqual([]);
+  });
+});
+
+describe('App Assistant row', () => {
+  const rows = parseRows(code(read(SUBNAV)));
+  const PAGE = path.resolve(__dirname, '../../../pages/apps/assistant.tsx');
+
+  it('is visible exactly when the shared gate admits the viewer', () => {
+    const row = rows.find((r) => r.href === '/apps/assistant');
+    expect(row, 'the App Assistant row is missing from appsSections').toBeDefined();
+    for (const summary of [NO_SUMMARY, ALL_SUMMARY])
+      for (const appBlocks of [false, true])
+        for (const appAssistant of [false, true]) {
+          const admits = canAccessAppAssistant({ appBlocks, appAssistant });
+          const visible = evaluate(row!.visible, summary, {
+            ...context({ store: true, author: true, getStarted: true }),
+            canUseAssistant: admits,
+          });
+          expect(visible, `appBlocks=${appBlocks} appAssistant=${appAssistant}`).toBe(admits);
+        }
+    // Positive control: the gate is not constant.
+    expect(canAccessAppAssistant({ appBlocks: true, appAssistant: true })).toBe(true);
+    expect(canAccessAppAssistant({ appBlocks: true })).toBe(false);
+  });
+
+  it("the page's getServerSideProps gates on that same predicate", () => {
+    expect(code(read(PAGE))).toMatch(
+      /if \(!canAccessAppAssistant\(features\)\) return \{ notFound: true \}/
+    );
   });
 });
