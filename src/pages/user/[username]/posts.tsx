@@ -1,4 +1,7 @@
-import { Box, Group, Stack } from '@mantine/core';
+import { Box, Button, Group, Stack } from '@mantine/core';
+import { IconCalendarEvent } from '@tabler/icons-react';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 import React, { useState } from 'react';
 
@@ -56,6 +59,7 @@ function UserPostsPage() {
   // images and videos tabs; the server authorizes this independently in
   // `post.service.ts` and does not trust the control being rendered.
   const canViewDrafts = selfView || (currentUser?.isModerator ?? false);
+  const features = useFeatureFlags();
 
   const [section, setSection] = useState<'published' | 'draft'>(
     canViewDrafts ? querySection ?? 'published' : 'published'
@@ -85,6 +89,17 @@ function UserPostsPage() {
                     replace({ section: nextSection, scheduled: undefined });
                   }}
                 />
+              )}
+              {selfView && features.postPlanner && (
+                <Button
+                  component={Link}
+                  href="/user/schedule"
+                  size="xs"
+                  variant="light"
+                  leftSection={<IconCalendarEvent size={14} />}
+                >
+                  Open planner
+                </Button>
               )}
               {!selfView && <ActiveTagFilter tagIds={query.tags ?? []} />}
               <Group gap={8} ml="auto" wrap="nowrap">

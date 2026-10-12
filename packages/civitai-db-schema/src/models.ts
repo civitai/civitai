@@ -659,6 +659,7 @@ export interface User {
   issuedStrikes?: UserStrike[];
   voidedStrikes?: UserStrike[];
   generationPresets?: GenerationPreset[];
+  postPresets?: PostPreset[];
   generationSizePresets?: GenerationSizePreset[];
   ownedWildcardSets?: WildcardSet[];
   blurbs?: Blurb[];
@@ -5545,6 +5546,16 @@ export interface UserStrike {
   voidReason: string | null;
   issuedBy: number | null;
   issuedByUser?: User | null;
+}
+
+export interface PostPreset {
+  id: number;
+  userId: number;
+  user?: User;
+  name: string;
+  data: JsonValue;
+  createdAt: Date;
+  updatedAt: Date;
 }
 
 export interface GenerationPreset {

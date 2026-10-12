@@ -578,6 +578,7 @@ model User {
   issuedStrikes               UserStrike[]                    @relation("strikeIssuedBy")
   voidedStrikes               UserStrike[]                    @relation("strikeVoidedBy")
   generationPresets           GenerationPreset[]
+  postPresets                 PostPreset[]
   generationSizePresets       GenerationSizePreset[]
   ownedWildcardSets           WildcardSet[]                   @relation("WildcardSetOwner")
   blurbs                      Blurb[]
@@ -8551,6 +8552,18 @@ model UserStrike {
   @@index([userId, expiresAt])
   @@index([status])
   @@index([createdAt])
+}
+
+model PostPreset {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name      String   @db.Citext
+  data      Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, name])
 }
 
 model GenerationPreset {

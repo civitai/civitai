@@ -3957,6 +3957,14 @@ export type PostMetric = {
   updatedAt: Generated<Timestamp>;
   ageGroup: Generated<MetricTimeframe>;
 };
+export type PostPreset = {
+  id: Generated<number>;
+  userId: number;
+  name: string;
+  data: unknown;
+  createdAt: Generated<Timestamp>;
+  updatedAt: Timestamp;
+};
 export type PostReaction = {
   id: Generated<number>;
   postId: number;
@@ -5345,6 +5353,7 @@ export type DB = {
   PostHelper: PostHelper;
   PostImageTag: PostImageTag;
   PostMetric: PostMetric;
+  PostPreset: PostPreset;
   PostReaction: PostReaction;
   PostReport: PostReport;
   PostResourceHelper: PostResourceHelper;
