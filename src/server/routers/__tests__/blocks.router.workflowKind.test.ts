@@ -1020,10 +1020,13 @@ describe("kind:'workflow' SUBMIT — the money path", () => {
     await submit(sentBody);
     const [sent] = realSubmits()[0].body.steps;
     expect(sent.timeout).toBe(formatStepTimeout(BUDGET));
+    // Two iterations share the one step's budget: 37 / 2, rounded down.
     expect(sent.input).toEqual({
       for: repeatInput.for,
-      template: { ...repeatInput.template, timeout: formatStepTimeout(BUDGET) },
+      template: { ...repeatInput.template, timeout: formatStepTimeout(18) },
     });
+    // …and each iteration is a generation against the velocity ceiling.
+    expect(h.reserveAppSpend).toHaveBeenCalledWith('apb_test', BUDGET, { units: 2 });
     // The app's own object is not written to.
     expect('timeout' in repeatInput.template).toBe(false);
   });

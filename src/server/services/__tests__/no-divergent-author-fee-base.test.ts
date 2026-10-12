@@ -772,7 +772,7 @@ describe('author fee — the viewer-charge seam', () => {
       // one may also pass how many generations it counts as.
       expect(region!).toContain(`reserveBlockBuzzSpendForClaims(claims, userId, ${name})`);
       expect(region!).toMatch(
-        new RegExp(`reserveAppSpend\\(claims\\.appBlockId, ${name}(?:, \\{ units: \\w+ \\})?\\)`)
+        new RegExp(`reserveAppSpend\\(claims\\.appBlockId, ${name}(?:, \\{ units \\})?\\)`)
       );
       expect(region!).toMatch(
         new RegExp(`reserveDevSessionBuzz\\(\\s*devTunnel\\.sessionId,\\s*${name},`)

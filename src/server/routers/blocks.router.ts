@@ -10445,9 +10445,7 @@ function assertPassThroughStepTypeAllowed($type: string, input: unknown): void {
  * that the quote and the submit hold ONE step object, which is what makes
  * "the quote priced the same work" true; building the step twice kills it.
  *
- * No `timeout` is stamped here; see `stampUnquotedTimeout`, which is also the one
- * place `input` is not forwarded as given: for an unquoted `repeat` it sends a
- * copy with the timeout set on the template.
+ * No `timeout` is stamped here; see `stampUnquotedTimeout`.
  */
 function buildPassThroughOrchestratorStep(body: PassThroughStepBody): {
   $type: string;
@@ -10475,8 +10473,6 @@ function stampUnquotedTimeout(
   maxBuzz: number
 ): void {
   step.timeout = formatStepTimeout(maxBuzz);
-  // A `repeat` child takes its timeout from the template, not from the step.
-  step.input = withRepeatTemplateTimeout(step.$type, step.input, step.timeout);
 }
 
 /**
@@ -12689,7 +12685,19 @@ async function submitMultiStepWorkflow(opts: {
   // With no quote each step gets a timeout of the per-step budget in seconds —
   // the pass-through arm's fallback, with the budget standing in for `maxBuzz`.
   if (quotedBuzz === null) {
-    for (const step of orchestratorSteps) stampUnquotedTimeout(step, perStepBudget);
+    orchestratorSteps.forEach((step, index) => {
+      stampUnquotedTimeout(step, perStepBudget);
+      // A `repeat` child takes its timeout from the template, not from the step,
+      // so the children share the one step's budget between them. This is the
+      // one place `input` is not forwarded as given.
+      step.input = withRepeatTemplateTimeout(
+        step.$type,
+        step.input,
+        formatStepTimeout(
+          Math.max(1, Math.floor(perStepBudget / prepared.steps[index].generations))
+        )
+      );
+    });
   }
 
   // (1) STATIC pre-submit gate: the whole workflow, fee included, must fit under
@@ -12792,12 +12800,13 @@ async function submitMultiStepWorkflow(opts: {
   }
 
   // 🔴 (3) Reserve against the PER-APP aggregate cap (daily Buzz + velocity).
-  // `units: stepCount` — the velocity ceiling counts generations, and this is
-  // one per step. Skipped ONLY for DEV tokens, as every kind does.
+  // The velocity ceiling counts generations: one per step, or one per iteration
+  // of a `repeat`. Skipped ONLY for DEV tokens, as every kind does.
+  const units = prepared.steps.reduce((sum, step) => sum + step.generations, 0);
   let appSpendReserve: { key: AppSpendDailyKey; cost: number } | null = null;
   if (claims.dev !== true) {
     const { reserveAppSpend } = await import('~/server/services/blocks/app-spend-cap.service');
-    const appSpend = await reserveAppSpend(claims.appBlockId, reserveBuzz, { units: stepCount });
+    const appSpend = await reserveAppSpend(claims.appBlockId, reserveBuzz, { units });
     if (!appSpend.allowed) {
       await refundBlockBuzzReservation(reservation, reserveBuzz);
       if (genClaimKey) await releaseGenIdempotency(genClaimKey);

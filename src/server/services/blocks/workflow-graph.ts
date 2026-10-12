@@ -65,6 +65,8 @@ export type ResolvedBlockWorkflowStep = {
    * step (and of a `repeat` nested inside that template).
    */
   stepTypes: string[];
+  /** How many generations this step runs: 1, or a `repeat`'s iteration count. */
+  generations: number;
 };
 
 export type BlockWorkflowGraphResult =
@@ -97,7 +99,7 @@ function hasOnlyKeys(object: Record<string, unknown>, allowed: readonly string[]
 
 type RepeatInput = {
   forClause: { $ref: string; path: string; as: string };
-  template: { $type: string; name?: unknown; input?: unknown };
+  template: { $type: string; name?: string; input?: unknown };
 };
 
 /**
@@ -123,6 +125,7 @@ function readRepeatInput(input: unknown): RepeatInput | null {
   }
   if (!isPlainObject(template) || !hasOnlyKeys(template, ['$type', 'name', 'input'])) return null;
   if (typeof template.$type !== 'string') return null;
+  if (template.name !== undefined && typeof template.name !== 'string') return null;
   return {
     forClause: forClause as RepeatInput['forClause'],
     template: template as RepeatInput['template'],
@@ -135,7 +138,7 @@ export const REPEAT_SHAPE_ERROR =
   `nested at most ${REPEAT_NESTING_MAX} deep`;
 
 /**
- * Max child steps one `repeat` step may generate, nested repeats multiplied
+ * Max iterations of one top-level `repeat` step, nested repeats multiplied
  * together. The same number as the batch-estimate cell cap.
  */
 export const WORKFLOW_REPEAT_MAX_ITERATIONS = 16;
@@ -201,7 +204,7 @@ export function isMergeStepType(stepType: unknown): boolean {
 
 /** The refusal for a `merge` step whose sources cannot be read for certain. */
 export const MERGE_SHAPE_ERROR =
-  'a merge step needs a "fields" object whose entries each carry a string "$ref"';
+  'a merge step needs a "fields" object whose entries each carry a string "$ref" and a "reduce"';
 
 /**
  * The step or `$arguments` each field of a `merge` reads, or `null` when that
@@ -220,10 +223,28 @@ function readMergeSources(input: unknown): string[] | null {
     if (Object.keys(field).some((key) => key !== '$ref' && key.toLowerCase() === '$ref')) {
       return null;
     }
-    if (typeof field.$ref !== 'string') return null;
+    // Without `reduce` the entry is a plain reference object, which the
+    // orchestrator replaces with whatever it points at before reading the field.
+    if (typeof field.$ref !== 'string' || !('reduce' in field)) return null;
     sources.push(field.$ref);
   }
   return sources;
+}
+
+/**
+ * How many generations a step runs: 1, or for a `repeat` its iteration count
+ * with nested repeats multiplied (never less than 1). Only meaningful for an
+ * input `repeatUnboundedProblem` accepted.
+ */
+export function blockStepGenerations(stepType: string, input: unknown, args: unknown): number {
+  if (!isRepeatStepType(stepType)) return 1;
+  const repeat = readRepeatInput(input);
+  const items = repeat ? readArgumentsArray(args, repeat.forClause.path) : null;
+  if (!repeat || !items) return 1;
+  return Math.max(
+    1,
+    items.length * blockStepGenerations(repeat.template.$type, repeat.template.input, args)
+  );
 }
 
 /**
@@ -281,7 +302,7 @@ function isRefObject(value: Record<string, unknown>): boolean {
   return true;
 }
 
-type WalkState = { refs: number };
+type WalkState = { refs: number; loopVars: Set<string> };
 
 /** A refusal message, or `null` when `value` is fine. */
 function checkValue(
@@ -356,6 +377,10 @@ function checkStepInput(
     const mergeSources = readMergeSources(input);
     if (!mergeSources) return MERGE_SHAPE_ERROR;
     for (const source of mergeSources) {
+      // A merge waits on its sources as STEPS, so a loop variable is not one.
+      if (state.loopVars.has(source)) {
+        return `a merge field cannot read the repeat variable ${JSON.stringify(source)}`;
+      }
       const problem = checkSource(source, sources, state);
       if (problem) return problem;
     }
@@ -367,6 +392,7 @@ function checkStepInput(
   const { forClause, template } = repeat;
   const sourceProblem = checkSource(forClause.$ref, sources, state);
   if (sourceProblem) return sourceProblem;
+  state.loopVars.add(forClause.as);
   return checkStepInput(
     template.$type,
     template.input,
@@ -379,7 +405,8 @@ function checkStepInput(
 /**
  * Resolve a `kind:'workflow'` body's step names and check its reference graph.
  *
- * The rules (every refusal but the first names the step index):
+ * The rules (every refusal but the first and the repeat-variable one names the
+ * step index):
  *  - at most `WORKFLOW_MAX_STEPS` steps;
  *  - a name is `[a-z][a-z0-9_-]{0,31}`, or exactly the step's own positional
  *    `$<index>`; names are unique; `block-step` is reserved. A step given no
@@ -416,7 +443,7 @@ export function resolveBlockWorkflowGraph(body: {
   const steps: ResolvedBlockWorkflowStep[] = [];
   const earlier = new Set<string>([WORKFLOW_ARGUMENTS_REF]);
   const taken = new Set<string>();
-  const state: WalkState = { refs: 0 };
+  const state: WalkState = { refs: 0, loopVars: new Set() };
 
   for (let index = 0; index < body.steps.length; index += 1) {
     const step = body.steps[index];
@@ -454,7 +481,21 @@ export function resolveBlockWorkflowGraph(body: {
       input: step.input,
       suppressOutput: step.suppressOutput === true,
       stepTypes,
+      generations: blockStepGenerations(step.$type, step.input, body.arguments),
     });
+  }
+  // A repeat variable that is also a step name (or `$arguments`) would make a
+  // template reference ambiguous between the two.
+  for (const loopVar of state.loopVars) {
+    if (earlier.has(loopVar)) {
+      return {
+        ok: false,
+        errorCode: 'workflow_ref_invalid',
+        error: `a repeat "as" name ${JSON.stringify(
+          loopVar
+        )} is also a step name or "${WORKFLOW_ARGUMENTS_REF}"`,
+      };
+    }
   }
   return { ok: true, steps };
 }

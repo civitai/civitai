@@ -350,6 +350,29 @@ describe('resolveBlockWorkflowGraph — repeat', () => {
     }
   });
 
+  it('🔴 refuses a repeat variable that is also a step name, earlier or later', () => {
+    for (const steps of [
+      [step({ name: 'item' }), repeat(overImages, { $type: 'echo', input: {} })],
+      [repeat(overImages, { $type: 'echo', input: { v: ref('item') } }), step({ name: 'item' })],
+    ]) {
+      const r = graph(steps);
+      expect(r.ok).toBe(false);
+      if (!r.ok) {
+        expect(r.errorCode).toBe('workflow_ref_invalid');
+        expect(r.error).toBe('a repeat "as" name "item" is also a step name or "$arguments"');
+      }
+    }
+  });
+
+  it('counts generations: one per step, one per iteration of a repeat', () => {
+    const r = graph([step(), repeat(overImages, { $type: 'echo', input: {} })]);
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.steps.map((s) => s.generations)).toEqual([1, 3]);
+    const empty = graph([repeat(overImages, { $type: 'echo' })], { images: [] });
+    expect(empty.ok).toBe(true);
+    if (empty.ok) expect(empty.steps[0].generations).toBe(1);
+  });
+
   it('does not let the loop variable leak outside the template', () => {
     const r = graph([
       repeat(overImages, { $type: 'wdTagging', input: {} }),
@@ -464,6 +487,10 @@ describe('collectBlockStepTypes', () => {
     ],
     ['a template `retries`', { for: FOR, template: { $type: 'echo', input: {}, retries: 5 } }],
     ['a template `metadata`', { for: FOR, template: { $type: 'echo', input: {}, metadata: {} } }],
+    [
+      'a template `name` that is not a string (a reference)',
+      { for: FOR, template: { $type: 'echo', name: { $ref: 'loop', path: 'output' }, input: {} } },
+    ],
     ['no template', { for: FOR }],
     ['no for clause', { template: { $type: 'echo', input: {} } }],
     ['a template that is not an object', { for: FOR, template: 'echo' }],
@@ -513,7 +540,8 @@ describe('resolveBlockWorkflowGraph — merge', () => {
   const merge = (fields: Record<string, unknown>, over: Partial<BlockWorkflowStepInput> = {}) =>
     step({ $type: 'merge', input: { onMissing: 'fail', fields }, ...over });
   const field = ($ref: string) => ({ $ref, path: 'output.steps[*].output.tags', reduce: 'push' });
-  const SHAPE = 'a merge step needs a "fields" object whose entries each carry a string "$ref"';
+  const SHAPE =
+    'a merge step needs a "fields" object whose entries each carry a string "$ref" and a "reduce"';
 
   it('accepts a merge over EARLIER steps and `$arguments`', () => {
     const steps = resolved([
@@ -568,9 +596,16 @@ describe('resolveBlockWorkflowGraph — merge', () => {
     ['a field with no `$ref`', { fields: { tags: { path: 'p', reduce: 'push' } } }],
     [
       'a field whose `$ref` is re-cased',
-      { fields: { tags: { $ref: '$arguments', $Ref: 'ghost' } } },
+      { fields: { tags: { ...field('$arguments'), $Ref: 'ghost' } } },
     ],
-    ['a field whose `$ref` is not a string', { fields: { tags: { $ref: 4, path: 'p' } } }],
+    [
+      'a field whose `$ref` is not a string',
+      { fields: { tags: { $ref: 4, path: 'p', reduce: 'push' } } },
+    ],
+    [
+      'a field with no `reduce` (a plain reference object)',
+      { fields: { tags: { $ref: '$arguments', path: 'f' } } },
+    ],
   ])('refuses a merge with %s rather than checking it in part', (_label, input) => {
     const r = refusal([step({ $type: 'merge', input: input as Record<string, unknown> })]);
     expect(r.errorCode).toBe('workflow_ref_invalid');
@@ -585,10 +620,11 @@ describe('resolveBlockWorkflowGraph — merge', () => {
     expect(r.error).toBe('workflow step 0: a workflow may hold at most 64 references');
   });
 
-  it('checks a merge that a `repeat` runs, with the loop variable in scope', () => {
-    const repeatOver = (source: string) =>
+  it('checks a merge that a `repeat` runs, and does not let it read the loop variable', () => {
+    const repeatOver = (source: string, extra: BlockWorkflowStepInput[] = []) =>
       resolveBlockWorkflowGraph({
         steps: [
+          ...extra,
           step({
             $type: 'repeat',
             input: {
@@ -599,9 +635,18 @@ describe('resolveBlockWorkflowGraph — merge', () => {
         ],
         arguments: { sets: [1, 2] },
       });
-    expect(repeatOver('set').ok).toBe(true);
-    const r = repeatOver('ghost');
-    expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.error).toContain('workflow step 0: "$ref": "ghost" does not name');
+    expect(repeatOver('scan', [step({ name: 'scan' })]).ok).toBe(true);
+    const loopVar = repeatOver('set');
+    expect(loopVar.ok).toBe(false);
+    if (!loopVar.ok) {
+      expect(loopVar.error).toBe(
+        'workflow step 0: a merge field cannot read the repeat variable "set"'
+      );
+    }
+    const unknown = repeatOver('ghost');
+    expect(unknown.ok).toBe(false);
+    if (!unknown.ok) {
+      expect(unknown.error).toContain('workflow step 0: "$ref": "ghost" does not name');
+    }
   });
 });
