@@ -53,6 +53,10 @@ vi.mock('~/server/services/model-version.service', () => ({
   bustMvCache: vi.fn(),
 }));
 vi.mock('~/server/services/image.service', () => ({ imagesForModelVersionsCache: {} }));
+// Visibility is covered by image-generation-data-visibility.behavior.test.ts.
+vi.mock('~/server/services/image-visibility.service', () => ({
+  assertImageVisibleToViewer: vi.fn(),
+}));
 vi.mock('~/server/services/generation/version-generation-state.service', () => ({
   getVisibleSystemWildcardSetIdsByVersionId: vi.fn(),
 }));

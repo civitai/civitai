@@ -39,6 +39,10 @@ vi.mock('~/server/services/model-version.service', () => ({
   bustMvCache: vi.fn(),
 }));
 vi.mock('~/server/services/image.service', () => ({ imagesForModelVersionsCache: {} }));
+// Visibility is covered by image-generation-data-visibility.behavior.test.ts.
+vi.mock('~/server/services/image-visibility.service', () => ({
+  assertImageVisibleToViewer: vi.fn(),
+}));
 vi.mock('~/server/services/generation/version-generation-state.service', () => ({
   getVisibleSystemWildcardSetIdsByVersionId: vi.fn(),
 }));
@@ -50,6 +54,8 @@ const findUnique = dbMock.dbRead.image.findUnique;
 import { getGenerationData } from '~/server/services/generation/generation.service';
 import type { SessionUser } from '~/types/session';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { assertImageVisibleToViewer } from '~/server/services/image-visibility.service';
+import { throwNotFoundError } from '~/server/utils/errorHandling';
 
 const OWNER_ID = 555;
 
@@ -174,5 +180,43 @@ describe('getGenerationData - hidden prompt', () => {
 
     expect(params.prompt).toBe(PROMPT);
     expect(params.negativePrompt).toBe(NEGATIVE_PROMPT);
+  });
+});
+
+// The tRPC procedure and /api/generation/data both reach media through getGenerationData.
+describe('getGenerationData - image visibility', () => {
+  beforeEach(() => {
+    findUnique.mockReset();
+    vi.mocked(assertImageVisibleToViewer).mockReset();
+  });
+
+  it.each(['image', 'video'] as const)('checks the %s against the caller', async (type) => {
+    mockImage(baseMeta, false);
+    await getGenerationData({
+      query: { type, id: 1, generation: false },
+      user: otherUser as SessionUser,
+    });
+    expect(assertImageVisibleToViewer).toHaveBeenCalledWith({
+      id: 1,
+      userId: otherUser.id,
+      isModerator: false,
+    });
+  });
+
+  it('checks a signed-out caller as signed out', async () => {
+    mockImage(baseMeta, false);
+    await getParams();
+    expect(assertImageVisibleToViewer).toHaveBeenCalledWith({
+      id: 1,
+      userId: undefined,
+      isModerator: undefined,
+    });
+  });
+
+  it('reads nothing when the caller may not see the image', async () => {
+    mockImage(baseMeta, false);
+    vi.mocked(assertImageVisibleToViewer).mockImplementation(async () => throwNotFoundError());
+    await expect(getParams(otherUser)).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    expect(findUnique).not.toHaveBeenCalled();
   });
 });

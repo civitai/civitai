@@ -51,6 +51,10 @@ import {
 } from '~/server/common/constants';
 import { imageReviewedSql, KNIGHTS_VOTE_NSFW_LEVEL_REASON } from '~/server/common/image-visibility';
 import {
+  assertImageVisibleToViewer,
+  imageVisibilityConditions,
+} from '~/server/services/image-visibility.service';
+import {
   BlockedReason,
   ImageSort,
   NotificationCategory,
@@ -210,7 +214,6 @@ import { bustCachesForPosts, updatePostNsfwLevel } from '~/server/services/post.
 import { bulkSetReportStatus, resolveEntityAppeal } from '~/server/services/report.service';
 import { upsertTagsOnImageNew } from '~/server/services/tagsOnImageNew.service';
 import {
-  amIBlockedByUser,
   getBasicDataForUsers,
   getCosmeticsForUsers,
   getProfilePicturesForUsers,
@@ -5627,78 +5630,6 @@ type GetImageRaw = GetAllImagesRaw & {
   userImage: string | null;
   deletedAt: Date | null;
 };
-/**
- * Who may fetch a single image by id, as SQL over `"Image" i` (and `"Post" p` LEFT JOINed on
- * `i."postId"` unless `postGates` is `'none'`). Moderators see everything.
- *
- * `postGates`:
- * - `'always'`: the post must be published and not Private; a postless image is the owner's only.
- * - `'none'`: no post checks (`image.get` with `withoutPost`, for images shown outside a post).
- * - `'whenPosted'`: post checks for an image that has a post, none for a postless one.
- */
-export function imageVisibilityConditions({
-  userId,
-  isModerator,
-  postGates,
-}: {
-  userId?: number;
-  isModerator?: boolean;
-  postGates: 'always' | 'none' | 'whenPosted';
-}) {
-  if (isModerator) return [];
-  const AND: Prisma.Sql[] = [];
-  AND.push(
-    Prisma.sql`(${Prisma.join(
-      [
-        Prisma.sql`i."needsReview" IS NULL AND ${imageReviewedSql()}`,
-        postGates === 'none'
-          ? null
-          : Prisma.sql`
-              p."collectionId" IS NOT NULL AND EXISTS (
-                SELECT 1 FROM "CollectionContributor" cc
-                WHERE cc."collectionId" = p."collectionId"
-                  AND cc."userId" = ${userId}
-                  AND cc."permissions" && ARRAY['MANAGE']::"CollectionContributorPermission"[]
-              )`,
-        Prisma.sql`i."userId" = ${userId}`,
-      ].filter(isDefined),
-      ' OR '
-    )})`
-  );
-
-  if (postGates !== 'none') {
-    // Post gates sit in the WHERE, not the JOIN: an image outlives a deleted post (`Image.postId`
-    // is ON DELETE SET NULL) and an inner join drops it before ownership is tested. Nothing on
-    // `Image` separates that from a never-posted upload, so a postless image is owner-only unless
-    // it is the cover of an article the viewer could read (getArticleById's non-owner rule).
-    AND.push(
-      Prisma.sql`(
-          p."publishedAt" < now()
-          OR p."userId" = ${userId}
-          OR (i."postId" IS NULL AND ${
-            postGates === 'whenPosted' ? Prisma.sql`TRUE` : Prisma.sql`i."userId" = ${userId}`
-          })
-          OR (i."postId" IS NULL AND EXISTS (
-            SELECT 1 FROM "Article" a
-            WHERE a."coverId" = i.id
-              AND a.status = 'Published'
-              AND a."publishedAt" IS NOT NULL
-              AND a.ingestion = 'Scanned'
-          ))
-        )`
-    );
-    AND.push(
-      Prisma.sql`(i."postId" IS NULL OR p."availability" != 'Private' OR p."userId" = ${userId})`
-    );
-  }
-
-  // A Blocked-level rating is a ToS removal (or a pending-Blocked verdict awaiting
-  // mod review) — never serve it by direct id to anyone but the owner. Feeds already
-  // drop it via the browsingLevel mask; single-image fetch had no equivalent gate.
-  AND.push(Prisma.sql`(i."nsfwLevel" != ${NsfwLevel.Blocked} OR i."userId" = ${userId})`);
-  return AND;
-}
-
 export const getImage = async ({
   id,
   userId,
@@ -7970,11 +7901,7 @@ export function purgeImageGenerationDataCache(id: number) {
 
 const strengthTypes: ModelType[] = ['TextualInversion', 'LORA', 'DoRA', 'LoCon'];
 
-/**
- * Generation data for one image, under the same visibility rules as `image.get` (and the same
- * owner block check as its handler). Post checks apply whenever the image has a post; a postless
- * image follows `image.get`'s `withoutPost` rules, which is how images outside a post are viewed.
- */
+/** Generation data for one image, for a viewer `assertImageVisibleToViewer` admits. */
 export async function getImageGenerationData({
   id,
   userId,
@@ -7984,23 +7911,7 @@ export async function getImageGenerationData({
   userId?: number;
   isModerator?: boolean;
 }) {
-  const [visible] = await dbRead.$queryRaw<{ userId: number }[]>`
-    SELECT i."userId"
-    FROM "Image" i
-    LEFT JOIN "Post" p ON p.id = i."postId"
-    WHERE ${Prisma.join(
-      [
-        Prisma.sql`i.id = ${id}`,
-        ...imageVisibilityConditions({ userId, isModerator, postGates: 'whenPosted' }),
-      ],
-      ' AND '
-    )}
-  `;
-  if (!visible) throw throwNotFoundError();
-  if (userId && !isModerator) {
-    const blocked = await amIBlockedByUser({ userId, targetUserId: visible.userId });
-    if (blocked) throw throwNotFoundError();
-  }
+  await assertImageVisibleToViewer({ id, userId, isModerator });
 
   const image = await dbRead.image.findUnique({
     where: { id },

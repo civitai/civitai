@@ -1,4 +1,5 @@
 import { PGlite } from '@electric-sql/pglite';
+import { Prisma } from '@prisma/client';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
@@ -26,6 +27,7 @@ vi.mock('~/server/services/user.service', async (importOriginal) => ({
 
 import { getImageGenerationData } from '../image.service';
 import { imageResourcesCache } from '~/server/redis/caches';
+import { imageVisibilityConditions } from '~/server/services/image-visibility.service';
 import { amIBlockedByUser } from '~/server/services/user.service';
 
 const OWNER = 10;
@@ -37,16 +39,18 @@ let db: PGlite;
 beforeAll(async () => {
   db = new PGlite();
   await db.exec(`
-    CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'PendingManualAssignment');
+    CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'PendingManualAssignment', 'Rescan');
+    CREATE TYPE "Availability" AS ENUM ('Public', 'Unsearchable', 'Private', 'EarlyAccess');
     CREATE TYPE "CollectionContributorPermission" AS ENUM ('VIEW', 'ADD', 'ADD_REVIEW', 'MANAGE');
     CREATE TABLE "Image" (
       id int PRIMARY KEY, "userId" int NOT NULL, "postId" int, "nsfwLevel" int DEFAULT 1,
       "needsReview" text, ingestion "ImageIngestionStatus" DEFAULT 'Scanned',
-      "nsfwLevelLocked" boolean DEFAULT false, metadata jsonb, "scanJobs" jsonb
+      "nsfwLevelLocked" boolean DEFAULT false, metadata jsonb NOT NULL DEFAULT '{}',
+      "scanJobs" jsonb
     );
     CREATE TABLE "Post" (
       id int PRIMARY KEY, "userId" int NOT NULL, "publishedAt" timestamp,
-      availability text DEFAULT 'Public', "collectionId" int
+      availability "Availability" DEFAULT 'Public', "collectionId" int
     );
     CREATE TABLE "CollectionContributor" (
       "collectionId" int, "userId" int, permissions "CollectionContributorPermission"[]
@@ -125,6 +129,25 @@ async function sees(viewer: Viewer) {
 const HIDDEN: Array<[string, Parameters<typeof seed>[0]]> = [
   ['awaiting review', { image: { '"needsReview"': `'minor'` } }],
   ['not yet scanned', { image: { ingestion: `'Pending'` } }],
+  [
+    'with a mod-locked rating from a Knights vote whose scan errored',
+    {
+      image: {
+        ingestion: `'Error'`,
+        '"nsfwLevelLocked"': 'true',
+        metadata: `'{"nsfwLevelReason":"Knights Vote"}'`,
+      },
+    },
+  ],
+  [
+    'removed at ingestion, even with a locked rating',
+    { image: { ingestion: `'Blocked'`, '"nsfwLevelLocked"': 'true' } },
+  ],
+  ['awaiting review, with no post', { image: { '"needsReview"': `'minor'` }, post: null }],
+  [
+    'rated Blocked, with no post',
+    { image: { '"nsfwLevelLocked"': 'false', '"nsfwLevel"': '32' }, post: null },
+  ],
   ['rated Blocked', { image: { '"nsfwLevel"': '32' } }],
   ['in an unpublished post', { post: { '"publishedAt"': 'NULL' } }],
   ['in a post scheduled for later', { post: { '"publishedAt"': `now() + interval '1 day'` } }],
@@ -142,6 +165,29 @@ describe('getImageGenerationData visibility', () => {
     await seed({ post: null });
     expect(await sees(ANON)).toBe(true);
     expect(await sees(OTHER)).toBe(true);
+  });
+
+  it('serves an image whose stalled scan a moderator replaced with a locked rating', async () => {
+    await seed({ image: { ingestion: `'Pending'`, '"nsfwLevelLocked"': 'true' } });
+    expect(await sees(ANON)).toBe(true);
+  });
+
+  it('serves an errored scan with a moderator-locked rating', async () => {
+    await seed({ image: { ingestion: `'Error'`, '"nsfwLevelLocked"': 'true' } });
+    expect(await sees(OTHER)).toBe(true);
+  });
+
+  it('applies the post owner, not the image owner, to an unpublished post', async () => {
+    // Another user's image in OWNER's unpublished post.
+    await seed({ image: { '"userId"': String(VIEWER) }, post: { '"publishedAt"': 'NULL' } });
+    expect(await sees({ userId: OWNER })).toBe(true);
+    expect(await sees({ userId: VIEWER })).toBe(false);
+  });
+
+  it('applies the post owner, not the image owner, to a Private post', async () => {
+    await seed({ image: { '"userId"': String(VIEWER) }, post: { availability: `'Private'` } });
+    expect(await sees({ userId: OWNER })).toBe(true);
+    expect(await sees({ userId: VIEWER })).toBe(false);
   });
 
   it('answers NOT_FOUND for an id that does not exist', async () => {
@@ -191,5 +237,43 @@ describe('getImageGenerationData visibility', () => {
     expect(await sees(MOD)).toBe(true);
     expect(await sees(ANON)).toBe(true);
     expect(amIBlockedByUser).not.toHaveBeenCalled();
+  });
+});
+
+/** `getImage`'s two modes over the same rows, so the extraction is pinned by behaviour too. */
+describe('imageVisibilityConditions for image.get', () => {
+  async function visibleTo(viewer: Viewer, postGates: 'always' | 'none') {
+    const raw = pgliteRaw(db);
+    const where = Prisma.join(
+      [Prisma.sql`i.id = 1`, ...imageVisibilityConditions({ ...viewer, postGates })],
+      ' AND '
+    );
+    const rows =
+      postGates === 'none'
+        ? await raw.queryRaw`SELECT i.id FROM "Image" i WHERE ${where}`
+        : await raw.queryRaw`SELECT i.id FROM "Image" i LEFT JOIN "Post" p ON p.id = i."postId" WHERE ${where}`;
+    return rows.length === 1;
+  }
+
+  it('hides a postless image from everyone but its owner by default', async () => {
+    await seed({ post: null });
+    expect(await visibleTo(ANON, 'always')).toBe(false);
+    expect(await visibleTo(OTHER, 'always')).toBe(false);
+    expect(await visibleTo(SELF, 'always')).toBe(true);
+    expect(await visibleTo(MOD, 'always')).toBe(true);
+  });
+
+  it('applies the post checks by default and skips them without the post', async () => {
+    await seed({ post: { '"publishedAt"': 'NULL' } });
+    expect(await visibleTo(ANON, 'always')).toBe(false);
+    expect(await visibleTo(ANON, 'none')).toBe(true);
+  });
+
+  it('keeps the review and Blocked checks without the post', async () => {
+    await seed({ image: { '"needsReview"': `'minor'` }, post: null });
+    expect(await visibleTo(ANON, 'none')).toBe(false);
+    await db.exec(`UPDATE "Image" SET "needsReview" = NULL, "nsfwLevel" = 32`);
+    expect(await visibleTo(ANON, 'none')).toBe(false);
+    expect(await visibleTo(SELF, 'none')).toBe(true);
   });
 });

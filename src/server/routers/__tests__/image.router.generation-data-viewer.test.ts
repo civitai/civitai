@@ -64,6 +64,19 @@ describe('image.getGenerationData viewer', () => {
     });
   });
 
+  it('takes the viewer from the session, never from the input', async () => {
+    await callerFor({ id: 7 }).getGenerationData({
+      id: 3,
+      userId: 999,
+      isModerator: true,
+    } as never);
+    expect(mockGetImageGenerationData).toHaveBeenCalledWith({
+      id: 3,
+      userId: 7,
+      isModerator: undefined,
+    });
+  });
+
   it('passes no viewer when signed out', async () => {
     await callerFor(undefined).getGenerationData({ id: 3 });
     expect(mockGetImageGenerationData).toHaveBeenCalledWith({

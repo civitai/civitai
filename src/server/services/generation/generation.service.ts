@@ -28,6 +28,7 @@ import type {
 } from '~/server/schema/generation.schema';
 import { generationStatusSchema } from '~/server/schema/generation.schema';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
+import { assertImageVisibleToViewer } from '~/server/services/image-visibility.service';
 import type { ModelFileCached } from '~/server/services/model-file.service';
 import { getFilesForModelVersionCache } from '~/server/services/model-file.service';
 import type { GenerationResourceDataModel } from '~/server/redis/resource-data.redis';
@@ -454,6 +455,8 @@ async function getMediaGenerationData({
   withPreview?: boolean;
   browsingLevel?: number;
 }): Promise<GenerationData> {
+  await assertImageVisibleToViewer({ id, userId: user?.id, isModerator: user?.isModerator });
+
   const media = await dbRead.image.findUnique({
     where: { id },
     select: {
