@@ -257,12 +257,6 @@ describe('achievements tab', () => {
   };
   const grids = (el: HTMLElement) =>
     [...el.querySelectorAll<HTMLElement>('div')].filter((div) => div.className === BADGE_CARD_GRID);
-  // Cards only: the hero above the grid also names the highest tier.
-  const cardOf = (el: HTMLElement, name: string) =>
-    grids(el)
-      .flatMap((grid) => [...grid.children] as HTMLElement[])
-      .find((card) => [...card.querySelectorAll('*')].some((node) => node.textContent === name));
-
   const ladder = (...tiers: [string, string, number][]) =>
     tiers.map(([key, name, threshold]) => ({ key, name, threshold, hint: null, badgeUrl: null }));
   const rungs = (el: HTMLElement) =>
@@ -630,7 +624,7 @@ describe('achievements tab', () => {
     const offsetLeft = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'offsetLeft');
     const offsetWidth = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'offsetWidth');
     const clientWidth = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientWidth');
-    Element.prototype.scrollIntoView = function () {};
+    Element.prototype.scrollIntoView = vi.fn();
     HTMLElement.prototype.scrollTo = function (options?: ScrollToOptions | number) {
       lefts.push(typeof options === 'object' ? options.left : undefined);
     } as typeof HTMLElement.prototype.scrollTo;
@@ -693,7 +687,7 @@ describe('achievements tab', () => {
     const strips: Element[] = [];
     const originalScroll = Element.prototype.scrollIntoView;
     const originalScrollTo = HTMLElement.prototype.scrollTo;
-    Element.prototype.scrollIntoView = function () {};
+    Element.prototype.scrollIntoView = vi.fn();
     HTMLElement.prototype.scrollTo = function (this: HTMLElement) {
       strips.push(this);
     } as typeof HTMLElement.prototype.scrollTo;
