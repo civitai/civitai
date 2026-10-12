@@ -26,7 +26,8 @@ import { handleEndpointError } from '~/server/utils/endpoint-helpers';
  * calls, so the whole ladder runs verbatim: the `ai:write:budgeted` assertion, the
  * anon refusal, the App-Blocks kill-switch against the TOKEN subject, the
  * dedicated `:poll:` rate-limit bucket (which RETURNS a non-terminal snapshot
- * rather than throwing, because a thrown 429 here destroys a paid generation), the
+ * rather than throwing; here a throw would be a 429, which a block can read as a
+ * failed generation it has already paid for), the
  * inline output-moderation scan on any generated text, the terminal read-model
  * write, the post-paid settle and the author-fee reversal.
  *

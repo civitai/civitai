@@ -495,8 +495,9 @@ export async function checkBlockPostRateLimit(
  *
  * Same fail-open posture as every sibling limiter. 🔴 But unlike them, the CALLER
  * must not turn a refusal into a throw: `pollWorkflow` returns a non-terminal
- * snapshot instead, because both hosts convert any throw from that mutation into a
- * `status: 'failed'` snapshot, which the SDK treats as terminal — so a thrown 429
+ * snapshot instead. The current hosts would turn a thrown TOO_MANY_REQUESTS into a
+ * non-terminal snapshot too, but an older host bundle still open in a browser turns
+ * any throw into a terminal `failed`, and the REST twin would answer 429 — either
  * ends the watch loop on a generation the viewer has already paid for. The reasoning
  * lives at the call site; this note exists so a second caller does not inherit the
  * fail-open posture and miss the return-don't-throw one.

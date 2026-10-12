@@ -4518,22 +4518,23 @@ export const blocksRouter = router({
       const pollRate = await checkBlockPollRateLimit(claims.blockInstanceId, userId);
       if (!pollRate.allowed) {
         recordBlockBridgeRateLimitRefusal('pollWorkflow', 'poll');
-        // 🔴 IT RETURNS A NON-TERMINAL SNAPSHOT. IT DOES NOT THROW, AND THAT IS THE
-        // WHOLE DESIGN — A THROWN 429 HERE DESTROYS A PAID GENERATION.
+        // 🔴 IT RETURNS A NON-TERMINAL SNAPSHOT. IT DOES NOT THROW.
         //
-        // Both hosts wrap this mutation in `try { … } catch (err) { send(
-        // 'WORKFLOW_STATUS', { snapshot: failureSnapshot(err) }) }`
-        // (`components/AppBlocks/PageBlockHost.tsx`,
-        // `components/AppBlocks/IframeHost.tsx`), and `failureSnapshot` returns
-        // `status: 'failed'` — which is in the SDK's TERMINAL set. So ANY throw from
-        // this procedure reaches the block as a finished, failed workflow and its
-        // watch loop STOPS. Applied to a rate limit that means: the viewer's Buzz is
-        // already spent, the orchestrator is still working, and one refused poll
-        // makes the block render the generation as failed and stop looking. Nothing
-        // then refunds it — `reverseBlockAuthorFee` and `settleCustomComfySpend` fire
-        // only on an OBSERVED terminal status, and after the loop stops there is no
-        // observer. A limiter that converts load into lost paid work is worse than no
-        // limiter, which is exactly the asymmetry this card was told to respect.
+        // What a throw from this procedure does depends on its code. The hosts reply
+        // via `pollFailureSnapshot` (`components/AppBlocks/failureSnapshot.ts`): no
+        // tRPC code, a 5xx-class code, TIMEOUT, TOO_MANY_REQUESTS or
+        // CLIENT_CLOSED_REQUEST reaches the block as `processing` and it polls again;
+        // any other code reaches it as `failed`, which is TERMINAL for its watch loop.
+        // So with the current hosts a thrown TOO_MANY_REQUESTS would no longer end the
+        // loop. Returning still matters for two callers that do not go through them:
+        //   - a host bundle loaded before that change, still open in a browser after
+        //     this server deploys, turns ANY throw into `failed`;
+        //   - the REST twin (`/api/v1/blocks/workflows/poll`) would answer a 429
+        //     instead of a 200 non-terminal snapshot.
+        // For either, a refused poll would make the block render a paid, still-running
+        // generation as failed and stop looking. Nothing then refunds it —
+        // `reverseBlockAuthorFee` and `settleCustomComfySpend` fire only on an
+        // OBSERVED terminal status, and after the loop stops there is no observer.
         //
         // SHED THE WORK, NOT THE REQUEST. Returning here still skips everything the
         // bucket exists to bound — the orchestrator token fetch, the held GET, the
