@@ -51,25 +51,18 @@ export const GET: RequestHandler = async ({ params, url, cookies, locals }) => {
     cookies.delete(name, { path: '/' });
   }
 
-  // Resolve the registry-aware origin allow-check once (cached); reused by every redirect path below.
-  const isAllowedOrigin = await buildPostLoginOriginCheck();
-
-  // The provider refused (user cancelled, or it rejected the request, e.g. `invalid_scope`): no code to
-  // exchange, so return the user to where the flow started with an error code that page can show.
-  // Only a code from a fixed set travels in the URL, never the provider's own text. A `code` riding
-  // alongside an error is ignored, so this branch never reaches the exchange below.
+  // Provider refused (user cancelled, or e.g. `invalid_scope`): no code to exchange, so send the user
+  // back to where the flow started.
   const providerError = url.searchParams.get('error');
   if (providerError) {
     const errorCode = providerError === 'access_denied' ? 'AccessDenied' : 'OAuthCallback';
     logCallbackFailure(provider.id, 'provider_error', linkIntent, providerError);
     if (linkIntent) {
       const target = appendQuery(returnUrl, 'error', errorCode);
+      const isAllowedOrigin = await buildPostLoginOriginCheck();
       redirect(302, buildPostLoginRedirect(target, null, url.origin, dev, isAllowedOrigin));
     }
-    const retry = new URL('/login', url.origin);
-    retry.searchParams.set('error', errorCode);
-    if (returnUrl && returnUrl !== '/') retry.searchParams.set('returnUrl', returnUrl);
-    redirect(302, `${retry.pathname}${retry.search}`);
+    redirect(302, loginRetry(url.origin, errorCode, returnUrl));
   }
 
   if (!code || !state || !savedState || state !== savedState || !verifier) {
@@ -94,6 +87,9 @@ export const GET: RequestHandler = async ({ params, url, cookies, locals }) => {
   // sync). On conflict, bounce back with an error the account page surfaces. The session must STILL be present
   // (it rides the callback as a Lax cookie) — if it was lost between start and callback, fail rather than fall
   // through to login/create, which could silently switch the user to a different account.
+  // Resolve the registry-aware origin allow-check once (cached); reused by both redirect paths below.
+  const isAllowedOrigin = await buildPostLoginOriginCheck();
+
   if (linkIntent) {
     if (!locals.user) error(401, 'Session expired — sign in and try linking again');
     const result = await linkAccountToUser(locals.user.id, provider.id, profile, scope);
@@ -122,10 +118,7 @@ export const GET: RequestHandler = async ({ params, url, cookies, locals }) => {
       // hub's own login page, which is what the email half of this same gate effectively does.
       // `returnUrl` was read at the top, BEFORE the flow cookies were deleted, so a successful
       // retry still lands where they started rather than at AUTH_DEFAULT_RETURN_URL.
-      const retry = new URL('/login', url.origin);
-      retry.searchParams.set('error', 'BlockedDomain');
-      if (returnUrl && returnUrl !== '/') retry.searchParams.set('returnUrl', returnUrl);
-      redirect(302, `${retry.pathname}${retry.search}`);
+      redirect(302, loginRetry(url.origin, 'BlockedDomain', returnUrl));
     }
   }
 
@@ -143,8 +136,15 @@ export const GET: RequestHandler = async ({ params, url, cookies, locals }) => {
   redirect(302, buildPostLoginRedirect(loginReturn, sync, url.origin, dev, isAllowedOrigin));
 };
 
-// Why a callback failed, without the code or state values. The provider's error is logged only when it is a
-// plain OAuth error token, so arbitrary query text never reaches the log.
+// The hub login page with an error to show, keeping a real returnUrl so a retry lands where the user started.
+function loginRetry(origin: string, errorCode: string, returnUrl: string): string {
+  const retry = new URL('/login', origin);
+  retry.searchParams.set('error', errorCode);
+  if (returnUrl && returnUrl !== '/') retry.searchParams.set('returnUrl', returnUrl);
+  return `${retry.pathname}${retry.search}`;
+}
+
+// Never log the code, state, or free-form provider text.
 function logCallbackFailure(
   provider: string,
   reason: 'provider_error' | 'no_code' | 'no_cookie' | 'state_mismatch',

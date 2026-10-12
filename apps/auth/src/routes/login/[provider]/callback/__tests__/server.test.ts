@@ -1,11 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { isHttpError, isRedirect } from '@sveltejs/kit';
 
-/**
- * `/login/[provider]/callback` sends a provider's own refusal (`?error=`) back to where the flow started
- * instead of a generic 400, and still refuses a code that doesn't come with the flow's state + verifier.
- */
-
 const h = vi.hoisted(() => ({
   exchangeCode: vi.fn(),
   fetchProfile: vi.fn(),
