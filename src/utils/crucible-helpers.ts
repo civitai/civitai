@@ -409,7 +409,7 @@ export function getCrucibleMinVotes({
   return Math.ceil((totalVotes * CRUCIBLE_MIN_VOTES_PERCENT) / (entryCount * 100));
 }
 
-/** The most the time-adjusted bar's floor asks for; the old bar is lower in a low-vote crucible. */
+/** The fewest votes the time-adjusted bar asks for, unless the old bar is lower. */
 export const CRUCIBLE_MIN_VOTES_FLOOR = 25;
 
 type TimedVoteEntry = { voteCount: number; createdAt: Date };
@@ -434,12 +434,11 @@ function getTimeAdjustedBar({
 }) {
   const oldBar = getCrucibleMinVotes({ totalVotes, entryCount });
   if (totalLiveMs <= 0) return oldBar;
-  const floor = Math.min(CRUCIBLE_MIN_VOTES_FLOOR, oldBar);
   // Integer arithmetic so an exact 75% stays exact, as in getCrucibleMinVotes.
   const share = Math.ceil(
     (totalVotes * CRUCIBLE_MIN_VOTES_PERCENT * liveMs) / (100 * totalLiveMs)
   );
-  return Math.min(Math.max(share, floor), oldBar);
+  return Math.min(Math.max(share, CRUCIBLE_MIN_VOTES_FLOOR), oldBar);
 }
 
 /**
