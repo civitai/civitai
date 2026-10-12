@@ -765,7 +765,11 @@ export const getImageHandler = async ({ input, ctx }: { input: GetImageInput; ct
       !!ctx.user &&
       !!result.postId &&
       !canViewImageMedia(ctx, result) &&
-      (await managesPostCollection({ postId: result.postId, userId: ctx.user.id }));
+      (await managesPostCollection({
+        postId: result.postId,
+        imageOwnerId: result.user.id,
+        userId: ctx.user.id,
+      }));
 
     return withViewerMedia(ctx, result, { managesCollection });
   } catch (error) {

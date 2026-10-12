@@ -14,7 +14,7 @@ type MediaFields = {
 };
 
 type ViewerExemptions = {
-  /** The viewer manages the collection the image's post was submitted to (contest judges). */
+  /** The viewer manages the collection the image's post was submitted to (e.g. contest judges). */
   managesCollection?: boolean;
 };
 
@@ -61,14 +61,17 @@ export function withViewerMedia<T extends MediaFields>(
 
 /**
  * Whether the user holds MANAGE on the collection the image's post was submitted to. Only the
- * post's author chooses that collection; membership of a collection does not count, since anyone
- * can create one, of any mode, and add any image to it.
+ * post's author (or a moderator) chooses that collection, so the post must also belong to the
+ * image's owner. Membership of a collection does not count: anyone can create one, of any mode,
+ * and add any image to it.
  */
 export async function managesPostCollection({
   postId,
+  imageOwnerId,
   userId,
 }: {
   postId: number;
+  imageOwnerId: number;
   userId: number;
 }) {
   const rows = await dbRead.$queryRaw<{ managed: boolean }[]>(Prisma.sql`
@@ -76,6 +79,7 @@ export async function managesPostCollection({
       SELECT 1 FROM "Post" p
       JOIN "CollectionContributor" cc ON cc."collectionId" = p."collectionId"
       WHERE p.id = ${postId}
+        AND p."userId" = ${imageOwnerId}
         AND cc."userId" = ${userId}
         AND cc."permissions" && ARRAY['MANAGE']::"CollectionContributorPermission"[]
     ) AS managed

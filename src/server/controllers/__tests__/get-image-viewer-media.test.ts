@@ -14,7 +14,9 @@ import { VERIFIED_BOT_HEADER } from '~/server/utils/bot-detection/header';
 const { image, blocked, manages } = vi.hoisted(() => ({
   image: vi.fn(),
   blocked: vi.fn(async () => false),
-  manages: vi.fn<(args: { postId: number; userId: number }) => Promise<boolean>>(async () => false),
+  manages: vi.fn<
+    (args: { postId: number; imageOwnerId: number; userId: number }) => Promise<boolean>
+  >(async () => false),
 }));
 vi.mock('~/server/services/image.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ImageService>()),
@@ -112,7 +114,11 @@ describe('getImageHandler', () => {
     expect(manages).not.toHaveBeenCalled();
 
     await urlFor(ctxFor({ canViewNsfw: false, user: { id: 99 } }), NsfwLevel.R);
-    expect(manages).toHaveBeenCalledExactlyOnceWith({ postId: POST_ID, userId: 99 });
+    expect(manages).toHaveBeenCalledExactlyOnceWith({
+      postId: POST_ID,
+      imageOwnerId: OWNER_ID,
+      userId: 99,
+    });
   });
 
   it('serves a verified crawler on the mature domain during SSR, where there is no cache', async () => {
