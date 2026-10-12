@@ -13,6 +13,7 @@ import { ScoredEventHero } from '~/components/Events/ScoredEvent/ScoredEventHero
 import { TeamHatShelf } from '~/components/Events/ScoredEvent/TeamHatShelf';
 import { TeamStandings, TopHats } from '~/components/Events/ScoredEvent/TeamStandings';
 import { RosterOptIn, useSetRosterOptIn } from '~/components/Events/ScoredEvent/roster/RosterOptIn';
+import { ShowEventHomeBlock } from '~/components/HomeBlocks/ShowEventHomeBlock';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useInView } from '~/hooks/useInView';
 import type { RouterOutput } from '~/types/router';
@@ -160,6 +161,9 @@ export function ScoredEventSections({ event, data }: { event: string; data: Even
           }
           rosterSwitch={data.joinable ? <RosterOptIn event={event} compact /> : undefined}
         />
+        <div className="mt-2 flex justify-end empty:hidden">
+          <ShowEventHomeBlock event={event} title={data.title} />
+        </div>
       </div>
       {scoredSectionOrder({ joined, ended }).map((key) => (
         <Fragment key={key}>{sections[key]}</Fragment>

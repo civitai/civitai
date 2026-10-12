@@ -56,6 +56,11 @@ vi.mock('~/components/Events/ScoredEvent/ScoredEventHero', () => ({
   },
 }));
 vi.mock('~/components/Events/ScoredEvent/MyEventHats', () => ({ MyEventHats: marker('hats') }));
+// Its own states are tested in show-event-home-block.render.test.ts.
+vi.mock('~/components/HomeBlocks/ShowEventHomeBlock', () => ({
+  ShowEventHomeBlock: ({ event, title }: { event: string; title: string }) =>
+    React.createElement('span', { 'data-show-home-block': `${event}|${title}` }),
+}));
 // The live points subscriptions need the app's SignalProvider; they render nothing.
 vi.mock('~/components/Events/ScoredEvent/event-points-live', () => ({
   useEventTeamsLivePoints: () => undefined,
@@ -168,6 +173,14 @@ describe('ScoredEventSections order', () => {
     expect(heroProps).toMatchObject({ team: 'Pink', rank: 3, teamPoints: 4200, points: 12 });
     expect(heroProps).toMatchObject({ ended: false, finalizing: false });
     expect(heroProps.winner).toBeUndefined();
+  });
+
+  it('offers the way back to a hidden home block under the hero', () => {
+    sections({ joined: false, ended: false });
+    const hero = host!.querySelector('[data-section="hero"]')!.parentElement!;
+    expect(hero.querySelector('[data-show-home-block]')?.getAttribute('data-show-home-block')).toBe(
+      'birthday2026|Birthday'
+    );
   });
 });
 

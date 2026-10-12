@@ -252,6 +252,8 @@ describe('joined', () => {
     const tiles = el.querySelectorAll('[data-testid="event-home-block-hat"]');
     expect(tiles).toHaveLength(1);
     expect(text(tiles[0])).toContain('+512');
+    // The tile truncates the name; the full name is on hover.
+    expect(tiles[0].querySelector('[title]')?.getAttribute('title')).toBe('Hat 1');
     expect(el.querySelector('[data-testid="event-home-block-get-hat"]')?.getAttribute('href')).toBe(
       '/events/birthday2026#team-hats'
     );
