@@ -47,5 +47,12 @@ export const teamRosterSchema = eventSchema.extend({
   limit: z.number().int().min(1).max(48).default(24),
 });
 
+export type PlaceableContentPageInput = z.infer<typeof placeableContentPageSchema>;
+export const placeableContentPageSchema = eventSchema.extend({
+  entityType: z.enum(CosmeticEntity),
+  // Images: the id to page below. Models and articles: an offset into the caller's own list.
+  cursor: z.number().int().min(0).optional(),
+});
+
 export type RosterOptInInput = z.infer<typeof rosterOptInSchema>;
 export const rosterOptInSchema = eventSchema.extend({ optIn: z.boolean() });

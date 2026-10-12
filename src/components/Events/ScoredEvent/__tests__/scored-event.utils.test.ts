@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
   coverRequestWidth,
+  defaultPlaceableTab,
   describeEntityTypes,
   minutesUntilMovable,
+  placeableTabCount,
   teamPositionsOverTime,
 } from '~/components/Events/ScoredEvent/scored-event.utils';
 
@@ -133,5 +135,38 @@ describe('coverRequestWidth', () => {
     expect(coverRequestWidth(meta(2000, 0), 450)).toBe(320);
     expect(coverRequestWidth(meta(0, 1000), 450)).toBe(320);
     expect(coverRequestWidth(meta('2000', 1000), 450)).toBe(320);
+  });
+});
+
+describe('defaultPlaceableTab', () => {
+  const tabs = ['Image', 'Model', 'Article'] as const;
+  const loaded = (count: number) => ({ count, more: false, loaded: true });
+
+  it('opens where the hat is now, before anything has loaded', () => {
+    expect(defaultPlaceableTab(tabs, {}, 'Article')).toBe('Article');
+  });
+
+  it('opens on the first type with content once every tab has loaded', () => {
+    const state = { Image: loaded(0), Model: loaded(0), Article: loaded(2) };
+    expect(defaultPlaceableTab(tabs, state, null)).toBe('Article');
+  });
+
+  // Not before: a slow images tab would otherwise open on models, then jump.
+  it('stays on the first type while any tab is still loading', () => {
+    const state = { Image: { count: 0, more: false, loaded: false }, Model: loaded(3) };
+    expect(defaultPlaceableTab(tabs, state, null)).toBe('Image');
+  });
+
+  it('ignores a placement on a type the hat cannot go on', () => {
+    expect(defaultPlaceableTab(['Image', 'Model'], {}, 'Article')).toBe('Image');
+  });
+});
+
+describe('placeableTabCount', () => {
+  it('reads "24+" while there is more, the count when that is all, nothing before loading', () => {
+    expect(placeableTabCount({ count: 24, more: true, loaded: true })).toBe('24+');
+    expect(placeableTabCount({ count: 3, more: false, loaded: true })).toBe('3');
+    expect(placeableTabCount({ count: 0, more: false, loaded: false })).toBe('');
+    expect(placeableTabCount(undefined)).toBe('');
   });
 });
