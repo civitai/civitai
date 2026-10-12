@@ -638,13 +638,25 @@ describe('imageVisibilityConditions for image.get', () => {
     });
   });
 
-  it('matches a bounty connection on its entity type, not its id alone', async () => {
-    // Entry 4 exists and bounty 4 is Private, so only a type-blind join would admit this image
-    // through the Public bounty 9 that entry 4 belongs to.
+  it.each([
+    ['a Private bounty whose id is also an entry on a Public one', `(1, 4, 'Bounty')`],
+    ['another kind of entity sharing an id with a Public bounty', `(1, 9, 'Article')`],
+  ])('does not admit an image connected to %s', async (_label, connection) => {
+    // Bounty 4 is Private and entry 4 sits on Public bounty 9. Only a join that ignores the
+    // connection's entity type reaches a Public bounty from either connection.
     await seed({ post: null });
     await db.exec(`INSERT INTO "Bounty" VALUES (4, ${MANAGER}, 'Private'), (9, ${MANAGER}, 'Public');
       INSERT INTO "BountyEntry" VALUES (4, 9, ${OWNER});
-      INSERT INTO "ImageConnection" VALUES (1, 4, 'Bounty')`);
+      INSERT INTO "ImageConnection" VALUES ${connection}`);
+    expect(await visibleTo(ANON, 'always')).toBe(false);
+  });
+
+  it("does not admit a postless image through another image's bounty", async () => {
+    await seed({ post: null });
+    await db.exec(`INSERT INTO "Image" (id, "userId") VALUES (2, ${OWNER});
+      INSERT INTO "Bounty" VALUES (4, ${MANAGER}, 'Public');
+      INSERT INTO "BountyEntry" VALUES (8, 4, ${OWNER});
+      INSERT INTO "ImageConnection" VALUES (2, 4, 'Bounty'), (2, 8, 'BountyEntry')`);
     expect(await visibleTo(ANON, 'always')).toBe(false);
   });
 
