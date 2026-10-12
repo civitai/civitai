@@ -317,6 +317,11 @@ export function blockingHit(
 
 /** ClickHouse table holding the per-leaf hit list (30-day TTL — see its migration). */
 export const SHARED_DATA_HITS_TABLE = 'appBlocksSharedDataHits';
+/**
+ * ClickHouse table holding the per-write DENOMINATOR: one count-only row per scanned write, in both
+ * modes, hits or not (same TTL as the hit list — see its migration).
+ */
+export const SHARED_DATA_SCANS_TABLE = 'appBlocksSharedDataScans';
 /** Leaf text (shadow-mode rows only) is kept for review, cut to this many UTF-8 bytes. */
 export const SHARED_DATA_HIT_TEXT_MAX_BYTES = 1024;
 /** The leaf path is cut too, because it is made of user-authored keys. */
@@ -425,6 +430,26 @@ export function sharedDataHitRows(
   }));
 }
 
+/**
+ * The DENOMINATOR row: one per scanned write, in both modes, hits or not (see its migration).
+ *
+ * 🔴 NO USER TEXT IN ANY COLUMN, IN EITHER MODE — an id, platform values and counts only. No row
+ * key, no path, no leaf, no matched term. The same fields as the `...-moderation-scan` log event.
+ */
+function sharedDataScanRow(scan: SharedTextScan, ctx: SharedDataScanContext, now: Date) {
+  return {
+    time: formatClickhouseDateTime64(now),
+    appBlockId: ctx.appBlockId,
+    surface: ctx.surface,
+    mode: ctx.mode,
+    blocked: ctx.blocked ? 1 : 0,
+    leafCount: scan.leafCount,
+    hitCount: scan.hits.length,
+    ...categoryCounts(scan),
+    overflowKind: scan.overflow ?? '',
+  };
+}
+
 function categoryCounts(scan: SharedTextScan): Record<SharedDataHitCategory, number> {
   const counts: Record<SharedDataHitCategory, number> = {
     minor: 0,
@@ -439,15 +464,20 @@ function categoryCounts(scan: SharedTextScan): Record<SharedDataHitCategory, num
 }
 
 /**
- * Record one scan: a count-only Axiom event (the denominator — one per scanned write, hits or not)
- * and, when there are hits, one ClickHouse row per hit.
+ * Record one scan: the DENOMINATOR — one ClickHouse row in `SHARED_DATA_SCANS_TABLE` per scanned
+ * write, hits or not (`sharedDataScanRow`) — and, when there are hits, one ClickHouse row per hit in
+ * `SHARED_DATA_HITS_TABLE`. The two tables share a TTL, so every hit rate can be read against its
+ * denominator over the whole window. The same counts also go out as a log event; that event is not
+ * a durable store, so the table is the denominator of record.
  *
- * 🔴 USER TEXT GOES TO CLICKHOUSE ONLY, AND ONLY FROM A SHADOW-MODE SCAN (enforce rows carry none
- * in any column — see `sharedDataHitRows`). It is user content, and the hit table is the one sink
- * here with a retention this repo enforces (a TTL in its DDL). The Axiom event carries ids, counts
- * and platform values — not the text, not a key, not the matched term — and so does every failure
- * log below.
+ * 🔴 USER TEXT GOES TO CLICKHOUSE ONLY, AND ONLY FROM A SHADOW-MODE SCAN INTO THE HIT TABLE
+ * (enforce hit rows carry none in any column — see `sharedDataHitRows`). It is user content, and
+ * the hit table is the one sink here with a retention this repo enforces (a TTL in its DDL). The
+ * denominator row and the log event carry ids, counts and platform values — not the text, not a
+ * key, not the matched term — and so does every failure log below.
  * With no ClickHouse client (dev, build) the rows are dropped, never re-routed to a log.
+ *
+ * The two inserts are independent: one failing does not cost the other its rows.
  *
  * Never throws: a recording failure must not change the outcome of a write.
  */
@@ -474,27 +504,33 @@ export async function recordSharedDataScan(
     'block-audit'
   ).catch(() => undefined);
 
-  if (!scan.hits.length || !clickhouse) return;
-  try {
-    await clickhouse.insert({
-      table: SHARED_DATA_HITS_TABLE,
-      values: sharedDataHitRows(scan, ctx),
-      format: 'JSONEachRow',
-    });
-  } catch (error) {
-    await logToAxiom(
-      {
-        name: 'app-blocks-shared-data-moderation-record-failed',
-        type: 'error',
-        appBlockId: ctx.appBlockId,
-        hitCount: scan.hits.length,
-        // The error NAME only: a ClickHouse parse error can quote the row it rejected, and the
-        // row carries the leaf text this function promises never to log.
-        error: error instanceof Error ? error.name : typeof error,
-      },
-      'block-audit'
-    ).catch(() => undefined);
-  }
+  const client = clickhouse;
+  if (!client) return;
+  // One instant for both tables, so a write's hit rows and its denominator row carry the same time.
+  const now = new Date();
+  const insert = async (table: string, values: unknown[]) => {
+    try {
+      await client.insert({ table, values, format: 'JSONEachRow' });
+    } catch (error) {
+      await logToAxiom(
+        {
+          name: 'app-blocks-shared-data-moderation-record-failed',
+          type: 'error',
+          table,
+          appBlockId: ctx.appBlockId,
+          hitCount: scan.hits.length,
+          // The error NAME only: a ClickHouse parse error can quote the row it rejected, and a hit
+          // row carries the leaf text this function promises never to log.
+          error: error instanceof Error ? error.name : typeof error,
+        },
+        'block-audit'
+      ).catch(() => undefined);
+    }
+  };
+  await Promise.all([
+    scan.hits.length ? insert(SHARED_DATA_HITS_TABLE, sharedDataHitRows(scan, ctx, now)) : null,
+    insert(SHARED_DATA_SCANS_TABLE, [sharedDataScanRow(scan, ctx, now)]),
+  ]);
 }
 
 /**
