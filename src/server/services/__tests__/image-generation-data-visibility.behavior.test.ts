@@ -479,6 +479,15 @@ describe('getImageGenerationData source media', () => {
     expect(await linksFor(OTHER, {})).toBe(false);
   });
 
+  it('withholds a source whose owner has blocked the viewer', async () => {
+    await seedEdit(1);
+    vi.mocked(amIBlockedByUser).mockImplementation(
+      async ({ targetUserId }) => targetUserId === SOURCE_OWNER
+    );
+    expect(await linksFor(OTHER, {})).toBe(false);
+    expect(amIBlockedByUser).toHaveBeenCalledWith({ userId: VIEWER, targetUserId: SOURCE_OWNER });
+  });
+
   it('withholds when any one source is above the cap', async () => {
     await seedEdit(1);
     await db.exec(`INSERT INTO "Image" (id, "userId", "nsfwLevel") VALUES (3, ${SOURCE_OWNER}, 4)`);

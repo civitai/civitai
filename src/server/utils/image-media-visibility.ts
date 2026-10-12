@@ -137,6 +137,15 @@ export async function viewerCanSeeSourceMedia(
     )}
   `);
   if (sources.length < sourceIds.length) return false;
+  if (ctx.user) {
+    // image.get's other half: a source's owner may have blocked the viewer. Imported here, as in
+    // assertImageVisibleToViewer: user.service sits in the image.service import cycle.
+    const { amIBlockedByUser } = await import('~/server/services/user.service');
+    const viewerId = ctx.user.id;
+    const owners = [...new Set(sources.map((source) => source.userId))];
+    for (const targetUserId of owners)
+      if (await amIBlockedByUser({ userId: viewerId, targetUserId })) return false;
+  }
   return sources.every(
     ({ nsfwLevel, userId }) =>
       ctx.user?.id === userId ||
