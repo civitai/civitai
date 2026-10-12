@@ -45,3 +45,15 @@ describe('image detail media schema', () => {
     expect(schemaFor('image', level)).toBeUndefined();
   });
 });
+
+describe('image detail media schema without media', () => {
+  it('emits no schema when the media was withheld', () => {
+    for (const type of ['image', 'video'] as const)
+      expect(
+        buildImageMediaSchema({
+          image: { ...base, url: null, type, nsfwLevel: NsfwLevel.PG13 },
+          title: 'Posted by maker',
+        })
+      ).toBeUndefined();
+  });
+});

@@ -75,6 +75,7 @@ import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { Gated } from '~/components/Gated/Gated';
 import { buildBreadcrumbSchema } from '~/components/Meta/site-schema';
 import { buildImageMediaSchema } from '~/components/Image/DetailV2/image-media-schema';
+import { imageDetailGateLevel } from '~/components/Image/DetailV2/image-detail-gate';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { Metrics } from '~/components/Metrics';
 import { Reactions } from '~/components/Reaction/Reactions';
@@ -290,7 +291,7 @@ export function ImageDetail2() {
 
   return (
     <Gated
-      contentNsfwLevel={forcedBrowsingLevel || image.nsfwLevel}
+      contentNsfwLevel={imageDetailGateLevel(image, forcedBrowsingLevel)}
       bypassRating={isOwner || !!currentUser?.isModerator}
       meta={{
         title,
