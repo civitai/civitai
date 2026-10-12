@@ -78,7 +78,6 @@ describe('saving a profile answers with the saved profile as its saver sees it',
       fn(tx)) as never);
   });
 
-  // A moderator may save another user's profile.
   it('carries no claim keys for a moderator saving it', async () => {
     const saved = await updateUserProfile({ userId: OWNER, sessionUserId: 99, isModerator: true });
     expect(saved.cosmetics[0]).toMatchObject({ cosmeticId: 1, claimKey: null });

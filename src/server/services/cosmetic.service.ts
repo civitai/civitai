@@ -394,7 +394,7 @@ export async function getCosmeticsForEntity({
   if (ids.length === 0) return {};
   const frames = await cosmeticEntityCaches[entity].fetch(ids);
   const result: Record<number, ContentDecorationCosmetic> = {};
-  // Entries cached before the claimKey was dropped still carry it.
+  // Frame entries cached for up to a day may predate the lookup dropping claimKey.
   for (const [id, frame] of Object.entries(frames)) {
     const { claimKey: _claimKey, ...rest } = frame as typeof frame & { claimKey?: string };
     result[Number(id)] = rest;

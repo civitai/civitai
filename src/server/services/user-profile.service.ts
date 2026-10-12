@@ -172,7 +172,7 @@ export const getUserWithProfile = async ({
 
     return {
       ...user,
-      // A claim key picks one holding to equip; only its owner equips it.
+      // Claim keys are owner-only; withheld from every other viewer, moderators included.
       cosmetics: (await withoutHiddenEventDecorations(user.cosmetics, eventViewer)).map((c) => ({
         ...c,
         claimKey: sameUser ? c.claimKey : null,

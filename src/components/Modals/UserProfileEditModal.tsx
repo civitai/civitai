@@ -198,7 +198,7 @@ export default function UserProfileEditModal() {
     { username: currentUser ? currentUser.username : '' },
     { enabled: !!currentUser?.username }
   );
-  // The profile carries claim keys only for its owner, which this editor always is.
+  // claimKey is null on anyone else's profile; this editor only ever loads the owner's.
   const owned = useMemo(
     () =>
       (user?.cosmetics ?? []).flatMap(({ claimKey, ...c }) =>
