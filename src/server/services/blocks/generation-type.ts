@@ -176,6 +176,13 @@ export const BLOCK_PASS_THROUGH_COARSE_TYPE = 'step';
 export const BLOCK_TRAINING_COARSE_TYPE = 'training';
 
 /**
+ * The COARSE key for `kind: 'workflow'` — the wire `kind` itself. It carries NO
+ * subtype: one multi-step workflow is one generation, charged one author fee, and
+ * the step `$type`s it ran are on the invocation row's `detail`.
+ */
+export const BLOCK_MULTI_STEP_COARSE_TYPE = 'workflow';
+
+/**
  * The ai-toolkit ecosystems a `kind: 'training'` body can name — the closed subtype
  * set for the `training` coarse key.
  *
@@ -235,6 +242,7 @@ export const BLOCK_WORKFLOW_KIND_GENERATION_TYPES = [
   'customComfy',
   BLOCK_PASS_THROUGH_COARSE_TYPE,
   BLOCK_TRAINING_COARSE_TYPE,
+  BLOCK_MULTI_STEP_COARSE_TYPE,
 ] as const;
 
 /**
@@ -427,6 +435,7 @@ export type BlockGenerationType =
   | `${typeof BLOCK_PASS_THROUGH_COARSE_TYPE}:${string}`
   | typeof BLOCK_TRAINING_COARSE_TYPE
   | `${typeof BLOCK_TRAINING_COARSE_TYPE}:${BlockTrainingEcosystem}`
+  | typeof BLOCK_MULTI_STEP_COARSE_TYPE
   | (typeof REGISTERED_STEP_IDS)[number];
 
 /**
@@ -715,6 +724,11 @@ export function resolveBlockGenerationType(
     // again here by `composeBlockGenerationType` against the closed set.
     const ecosystem = (body as { params?: { ecosystem?: unknown } }).params?.ecosystem;
     return composeBlockGenerationType(kind, typeof ecosystem === 'string' ? ecosystem : null);
+  }
+
+  if (kind === BLOCK_MULTI_STEP_COARSE_TYPE) {
+    // No subtype axis, so the bare coarse key is the whole value.
+    return composeBlockGenerationType(kind, null);
   }
 
   if (kind === 'step') {

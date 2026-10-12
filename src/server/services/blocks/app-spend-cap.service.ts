@@ -245,9 +245,18 @@ async function denyAppSpend(
  */
 export async function reserveAppSpend(
   appBlockId: string,
-  cost: number
+  cost: number,
+  /**
+   * `units` is how many generations this reservation counts as against the
+   * VELOCITY ceiling. 1 for every single-step submit; a multi-step workflow
+   * passes its step count, so N steps cannot run for one velocity slot.
+   */
+  opts: { units?: number } = {}
 ): Promise<ReserveAppSpendResult> {
   const want = Math.max(0, Math.ceil(cost));
+  // Anything but a whole number above 1 counts as one generation.
+  const units =
+    Number.isInteger(opts.units) && (opts.units as number) > 1 ? (opts.units as number) : 1;
   const dailyKey = appSpendDailyKey(appBlockId);
 
   let dailyReserved = 0;
@@ -287,8 +296,8 @@ export async function reserveAppSpend(
 
     // 2) VELOCITY reserve (always — 0-cost gens still count as gens).
     const velocityKey = appSpendVelocityKey(appBlockId);
-    const velocityCount = await sysRedis.incrBy(velocityKey, 1);
-    if (velocityCount <= 1) {
+    const velocityCount = await sysRedis.incrBy(velocityKey, units);
+    if (velocityCount <= units) {
       await sysRedis.expire(velocityKey, BLOCK_APP_SPEND_VELOCITY_WINDOW_SECONDS);
     } else {
       const ttl = await sysRedis.ttl(velocityKey);

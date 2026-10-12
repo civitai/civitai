@@ -105,6 +105,14 @@ type SettleRecord = {
    * for the same back-compat reason; the wall-clock emit self-skips when absent.
    */
   submittedAt?: number;
+  /**
+   * Set by a submit whose reservation is a QUOTE the job can legitimately bill
+   * above — a `kind:'workflow'` chain, where the orchestrator re-prices a step once
+   * the values it references resolve. When the realized cost is ABOVE the reserved
+   * ceiling, settle adds the difference to every counter the record names instead
+   * of leaving them short. Absent on every other record, whose settle is unchanged.
+   */
+  correctOverage?: boolean;
 };
 
 /**
@@ -129,6 +137,8 @@ export async function persistCustomComfySettle(input: {
   recipe?: string;
   /** Submit ms-epoch, for the wall-clock metric. Defaults to now if omitted. */
   submittedAt?: number;
+  /** Charge a realized cost above `ceiling` to every counter at settle. */
+  correctOverage?: boolean;
 }): Promise<void> {
   const {
     workflowId,
@@ -140,6 +150,7 @@ export async function persistCustomComfySettle(input: {
     engine,
     recipe,
     submittedAt = Date.now(),
+    correctOverage = false,
   } = input;
   if (!workflowId) return;
   const record: SettleRecord = { buzzCapKey, appSpendKey, ceiling };
@@ -154,6 +165,8 @@ export async function persistCustomComfySettle(input: {
   if (engine) record.engine = engine;
   if (recipe) record.recipe = recipe;
   if (Number.isFinite(submittedAt)) record.submittedAt = submittedAt;
+  // Only when asked for, so every other record keeps its exact shape.
+  if (correctOverage) record.correctOverage = true;
   try {
     await sysRedis.set(settleKey(workflowId), JSON.stringify(record), {
       EX: SETTLE_TTL_SECONDS,
@@ -243,9 +256,11 @@ export async function persistCustomComfySettle(input: {
 //      refund is owed. That is the assumption the whole decision rests on, and
 //      it is the one that would change the severity if it stopped holding.
 //
-//      🔴 IT IS CONTINGENT ON ONE BOOLEAN, NOT STRUCTURAL. The real-money
-//      neighbour is the author fee, and it is not charged on any path that
-//      writes a settle record TODAY only because the single production step
+//      🔴 IT NO LONGER HOLDS FOR EVERY RECORD. The real-money neighbour is the
+//      author fee, and the `kind:'workflow'` submit both writes a settle record
+//      and charges one, so a strand on that path also holds a fee debit whose
+//      reversal runs only in these same guarded observers. For the registry
+//      step it is still contingent on one boolean: the single production step
 //      entry hardcodes `postPaidSettle: false`
 //      (`src/server/services/blocks/steps/index.ts`). `submitStepWorkflow` in
 //      `blocks.router.ts` already contains BOTH the `plan.postPaidSettle`-gated
@@ -329,6 +344,9 @@ export async function persistCustomComfySettle(input: {
  * is clamped to `[0, ceiling]`: an `actual >= ceiling` refunds nothing (the full
  * ceiling stays counted), a missing/zero `actual` refunds the whole ceiling. Both
  * DECRBYs are best-effort; a lost refund over-counts (stricter cap). Never throws.
+ *
+ * A record persisted with `correctOverage` additionally ADDS `actual - ceiling`
+ * to the same counters when the job billed above its reservation.
  */
 export async function settleCustomComfySpend(input: {
   workflowId: string;
@@ -389,6 +407,48 @@ export async function settleCustomComfySpend(input: {
     }
   } catch {
     /* instrument-only — a metrics emit error can NEVER perturb the refund below */
+  }
+
+  // ── OVERAGE CORRECTION (opt-in per record) ─────────────────────────────────
+  // The job billed MORE than was reserved, so every counter is short by the
+  // difference. This is an accounting correction for Buzz already spent, not a
+  // gate: nothing here can deny, and a counter it pushes past its cap binds on
+  // the NEXT submit. Charged on the EXACT keys the submit reserved, so it lands
+  // in the window the spend belongs to. Each leg is best-effort and independent;
+  // a lost one under-counts by the overage only.
+  const overage = record.correctOverage ? actual - ceiling : 0;
+  if (overage > 0) {
+    if (record.buzzCapKey) {
+      await sysRedis.incrBy(record.buzzCapKey as BuzzCapKey, overage).catch(() => {
+        /* best-effort correction */
+      });
+    }
+    if (record.appSpendKey) {
+      try {
+        const { chargeAppSpendOverage } = await import(
+          '~/server/services/blocks/app-spend-cap.service'
+        );
+        await chargeAppSpendOverage(record.appSpendKey as AppSpendDailyKey, overage);
+      } catch {
+        /* best-effort correction */
+      }
+    }
+    if (record.consentBudgetKey) {
+      await sysRedis.incrBy(record.consentBudgetKey as ConsentBudgetKey, overage).catch(() => {
+        /* best-effort correction */
+      });
+    }
+    if (record.devSessionId) {
+      try {
+        const { chargeDevSessionOverage } = await import(
+          '~/server/services/blocks/dev-tunnel.service'
+        );
+        await chargeDevSessionOverage(record.devSessionId, overage);
+      } catch {
+        /* best-effort correction */
+      }
+    }
+    return;
   }
 
   const refund = Math.max(0, ceiling - actual);
