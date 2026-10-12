@@ -81,6 +81,7 @@ function headFor(query: Record<string, string>, shareable: boolean | undefined) 
   const props = mocks.metaProps.at(-1) as { ogEndpoint?: string; schema?: Schema };
   return {
     ogEndpoint: props.ogEndpoint,
+    hasSchema: !!props.schema,
     pageImage: props.schema?.primaryImageOfPage.contentUrl,
     personImage: props.schema?.mainEntity.image,
   };
@@ -145,6 +146,7 @@ describe('profile head with an uploaded avatar', () => {
 
   it('names no page image from the unrated account image when there is no uploaded avatar', () => {
     const head = headFor({}, undefined);
+    expect(head.hasSchema).toBe(true);
     expect(head.pageImage).toBeUndefined();
     expect(head.personImage).toBeUndefined();
   });
