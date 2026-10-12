@@ -1,5 +1,6 @@
 <script lang="ts">
   import { enhance } from '$app/forms';
+  import { invalidateAll } from '$app/navigation';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import * as Dialog from '@civitai/ui/components/ui/dialog/index.js';
   import { Label } from '@civitai/ui/components/ui/label/index.js';
@@ -23,6 +24,10 @@
     onSuccess: () => {
       open = false;
       toast.success(`Restored ${promptKeyName(promptKey)} as a new version`);
+    },
+    // A refusal means the page is behind: reload so the next try carries the version now current.
+    onSettled: (result) => {
+      if (result.type === 'failure') void invalidateAll();
     },
   });
 </script>

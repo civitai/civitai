@@ -35,6 +35,19 @@ export const load: PageServerLoad = async ({ url }) => {
   return { key: q.key, prompts, authors };
 };
 
+const STALE =
+  'A newer version was published since you opened this page; the list has been refreshed — review it and try again.';
+const UNKNOWN =
+  'The restore may or may not have gone live; the list has been refreshed — check the current version.';
+
+/** `publishChanges` words its refusals for Check's drafts; a restore has no draft to review. */
+function restoreWording(result: Awaited<ReturnType<typeof publishChanges>>) {
+  if (!('status' in result)) return result;
+  if (result.status === 409) return fail(409, { error: STALE });
+  if (result.status === 502 && 'published' in result.data) return fail(502, { error: UNKNOWN });
+  return result;
+}
+
 const restoreSchema = z.object({
   key: z.enum(PROMPT_KEYS),
   id: z.coerce.number().int().positive(),
@@ -62,10 +75,11 @@ export const actions: Actions = {
     if (active?.id === version.id || active?.content === version.content)
       return fail(400, { error: 'That text is already the current version.' });
 
-    return publishChanges({
+    const result = await publishChanges({
       prompts: { [input.key]: version.content },
       activeIds: { [input.key]: input.activeId },
       note: input.note,
     });
+    return restoreWording(result);
   }),
 };

@@ -89,7 +89,13 @@ describe('restore', () => {
   });
 
   it('returns 409 when the page was loaded before the current version changed', async () => {
-    expect(await restore({ ...fields, activeId: '2' })).toMatchObject({ status: 409 });
+    expect(await restore({ ...fields, activeId: '2' })).toMatchObject({
+      status: 409,
+      data: {
+        error:
+          'A newer version was published since you opened this page; the list has been refreshed — review it and try again.',
+      },
+    });
     expect(harness.putPrompt).not.toHaveBeenCalled();
   });
 
@@ -103,6 +109,17 @@ describe('restore', () => {
     const { activeId: _omit, ...without } = fields;
     expect(await restore(without)).toMatchObject({ status: 400 });
     expect(harness.putPrompt).not.toHaveBeenCalled();
+  });
+
+  it('says in restore terms that a failed publish may or may not have gone live', async () => {
+    harness.putPrompt.mockRejectedValue(new LabHarnessError('harness down'));
+    expect(await restore(fields)).toMatchObject({
+      status: 502,
+      data: {
+        error:
+          'The restore may or may not have gone live; the list has been refreshed — check the current version.',
+      },
+    });
   });
 
   it('says plainly when the prompts cannot be loaded', async () => {
