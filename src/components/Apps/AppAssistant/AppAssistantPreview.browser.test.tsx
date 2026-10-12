@@ -54,10 +54,12 @@ describe('AppAssistantPreview — a preview whose host is not resolvable yet', (
     m.fetchFrame.mockResolvedValue({ preparing: true });
     await renderWithProviders(<AppAssistantPreview canPreview session={SESSION} />);
 
-    await expect.element(page.getByTestId('dns-gate')).toBeInTheDocument();
-    expect(page.getByTestId('frame').query(), 'the app was framed before its host resolved').toBe(
-      null
-    );
+    // Wait for whichever of the two rendered, so a framed app fails on the line that names it.
+    const gate = page.getByTestId('dns-gate');
+    const frame = page.getByTestId('frame');
+    await vi.waitFor(() => expect(gate.query() ?? frame.query()).not.toBeNull());
+    expect(frame.query(), 'the app was framed before its host resolved').toBeNull();
+    await expect.element(gate).toBeInTheDocument();
     expect(m.gate!.blockId).toBe('my-app');
     expect(m.fetchFrame).toHaveBeenCalledTimes(1);
   });

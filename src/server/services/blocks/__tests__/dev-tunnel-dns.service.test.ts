@@ -80,6 +80,11 @@ describe('isDevTunnelHostPublished', () => {
     expect(warn).not.toHaveBeenCalled();
   });
 
+  it('is not ready on an answer that carries no address', async () => {
+    const { deps } = wiring({ a: async () => [] });
+    expect(await isDevTunnelHostPublished(HOST, deps)).toBe(false);
+  });
+
   it.each(['ETIMEOUT', 'ECONNREFUSED', 'ESERVFAIL'])(
     'is not ready, and does not throw, when the query fails with %s',
     async (code) => {
