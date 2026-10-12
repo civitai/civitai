@@ -25,6 +25,8 @@ export type NavBanner = {
 export const EVENT_PROMO_ICONS = ['confetti', 'trophy', 'sparkles'] as const;
 export type EventPromoIcon = (typeof EVENT_PROMO_ICONS)[number];
 
+export type EditorCardPromo = { title: string; body: string; draftNote?: string; image?: string };
+
 /**
  * An event's entry points beyond its strip. Never filtered by the strip's dismissal: it is how a
  * viewer who closed the strip gets back to the event.
@@ -35,7 +37,8 @@ export type EventPromo = {
   menuIcon: EventPromoIcon;
   // Only for events with a team roster page.
   teamHref?: string;
-  postEditor?: { title: string; body: string; draftNote?: string; image?: string };
+  postEditor?: EditorCardPromo;
+  articleEditor?: EditorCardPromo;
   homeBlock?: { eyebrow?: string; title: string; body?: string; cta?: string };
 };
 

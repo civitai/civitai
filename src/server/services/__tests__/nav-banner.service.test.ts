@@ -101,7 +101,7 @@ describe('the birthday promo, through the real access rule', () => {
       expect(await promos(viewer, AFTER)).toEqual([]);
   });
 
-  it('carries the menu entry, roster link and post-editor card', async () => {
+  it('carries the menu entry, roster link and editor cards', async () => {
     const [promo] = await promos(TESTER, PREVIEW);
     expect(promo).toEqual({
       event: 'birthday2026',
@@ -112,6 +112,12 @@ describe('the birthday promo, through the real access rule', () => {
         title: 'Civitai turns 4.',
         body: 'Put a party hat on an image in this post. Its views and reactions score for your team.',
         draftNote: 'Scores once people can see it.',
+        image: '4a5e404d-ece2-4cca-bbab-cb5a7b0d8d9d',
+      },
+      articleEditor: {
+        title: 'Civitai turns 4.',
+        body: 'Put a party hat on this article. Its views, reactions and comments score for your team.',
+        draftNote: 'Scores once it is published.',
         image: '4a5e404d-ece2-4cca-bbab-cb5a7b0d8d9d',
       },
       homeBlock: {
@@ -230,6 +236,7 @@ describe('getNavBanners', () => {
             menuLabel: 'Menu',
             menuIcon: 'trophy',
             postEditor: { body: 'Editor body' },
+            articleEditor: { body: 'Article body', title: 'Own title', image: 'own-img' },
             homeBlock: { eyebrow: 'Eyebrow' },
           },
         }),
@@ -242,6 +249,7 @@ describe('getNavBanners', () => {
       menuIcon: 'trophy',
       teamHref: undefined,
       postEditor: { title: 'Hello', body: 'Editor body', image: 'strip-img' },
+      articleEditor: { title: 'Own title', body: 'Article body', image: 'own-img' },
       homeBlock: { eyebrow: 'Eyebrow', title: 'Hello', body: 'Strip text', cta: 'Strip cta' },
     });
   });

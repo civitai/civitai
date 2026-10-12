@@ -47,19 +47,26 @@ export function dismissHint(banner: NavBanner, banners: NavBanner[]) {
     : undefined;
 }
 
-export const postEditorCardId = (event: string) => `post-editor:event:${event}`;
+export type EditorSurface = 'postEditor' | 'articleEditor';
 
-/** The event card the post editor shows: the first playable event with editor copy, unless hidden. */
-export function postEditorPromo(promos: EventPromo[], dismissed: string[]) {
+const EDITOR_CARD_PREFIX = {
+  postEditor: 'post-editor',
+  articleEditor: 'article-editor',
+} satisfies Record<EditorSurface, string>;
+
+/** Hiding the card in one editor leaves the other's. */
+export const editorCardId = (surface: EditorSurface, event: string) =>
+  `${EDITOR_CARD_PREFIX[surface]}:event:${event}`;
+
+/** The event card an editor shows: the first playable event with copy for it, unless hidden. */
+export function editorPromo(promos: EventPromo[], dismissed: string[], surface: EditorSurface) {
   return promos.find(
-    (promo) => promo.postEditor && !dismissed.includes(postEditorCardId(promo.event))
+    (promo) => promo[surface] && !dismissed.includes(editorCardId(surface, promo.event))
   );
 }
 
-/** "Put on a Party Hat", for an event whose decoration can sit on an image. */
-export function hatButtonLabel(event: string) {
+/** "Put on a Party Hat", for an event whose decoration can sit on this kind of content. */
+export function hatButtonLabel(event: string, entityType: CosmeticEntity = CosmeticEntity.Image) {
   const decoration = getEventDecorationDefinition(event);
-  return decoration?.entityTypes.includes(CosmeticEntity.Image)
-    ? `Put on a ${decoration.label}`
-    : undefined;
+  return decoration?.entityTypes.includes(entityType) ? `Put on a ${decoration.label}` : undefined;
 }

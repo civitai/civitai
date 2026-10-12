@@ -76,17 +76,20 @@ function eventBanner(event: BannerEvent, banner: EventBannerCopy): NavBanner {
 function eventPromo(event: BannerEvent, banner: EventBannerCopy): EventPromo {
   const { promo = {} } = event;
   const headline = event.page?.headline ?? event.title;
+  const editorCard = (copy: EventPromoCopy['postEditor']) =>
+    copy && {
+      ...copy,
+      title: copy.title ?? headline,
+      image: copy.image ?? banner.image ?? event.page?.heroImage,
+    };
   return {
     event: event.name,
     menuLabel: promo.menuLabel ?? event.title,
     menuIcon: promo.menuIcon ?? 'confetti',
     // The roster page refuses any event that is not both scored and joinable.
     teamHref: event.scoring && event.join ? `/events/${event.name}/team` : undefined,
-    postEditor: promo.postEditor && {
-      ...promo.postEditor,
-      title: promo.postEditor.title ?? headline,
-      image: promo.postEditor.image ?? banner.image ?? event.page?.heroImage,
-    },
+    postEditor: editorCard(promo.postEditor),
+    articleEditor: editorCard(promo.articleEditor),
     homeBlock: promo.homeBlock && {
       ...promo.homeBlock,
       title: promo.homeBlock.title ?? headline,
