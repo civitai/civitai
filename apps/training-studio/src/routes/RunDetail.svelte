@@ -444,7 +444,7 @@
   const continueQuoteKey = $derived.by(() => {
     const epochs = Number(furtherEpochs) || 0;
     if (!browser || !runComplete || quoteFromEpoch === null || epochs < 1) return null;
-    return `${workflowIdKey}#${quoteFromEpoch}#${epochs}`;
+    return `${workflowIdKey}#${quoteFromEpoch}#${epochs}#${buzzMode.value}`;
   });
   $effect(() => {
     // A stale "could not price" must not linger after the panel closes or the input empties.
@@ -457,7 +457,8 @@
         const q = await backend().continueQuote(
           workflowIdKey,
           quoteFromEpoch!,
-          Number(furtherEpochs) || 0
+          Number(furtherEpochs) || 0,
+          buzzMode.currencies
         );
         quoteError = '';
         return {
@@ -481,7 +482,8 @@
       const id = await backend().continueRun(
         d.workflowId,
         publishTarget.number,
-        Number(furtherEpochs) || 5
+        Number(furtherEpochs) || 5,
+        buzzMode.currencies
       );
       await navigate({ view: 'run', workflowId: id });
     } catch (err) {
