@@ -4,6 +4,7 @@ import type { ChatTool } from '@civitai/components-chat/civitai-chat';
 import type * as TrpcMod from '~/utils/trpc';
 import type * as TokenMod from '~/components/Apps/AppAssistant/assistantToken';
 import type { Sandbox } from '~/components/Apps/AppAssistant/sandboxClient';
+import { SandboxApiError } from '~/components/Apps/AppAssistant/sandboxClient';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../../test/component-setup';
 import { makeTrpcProxy } from '../../../../test/trpcProxyStub';
@@ -34,6 +35,7 @@ const m = vi.hoisted(() => ({
   enable: vi.fn(async () => 'chat-token'),
   sandboxClient: null as null | { list: () => Promise<unknown> },
   onConsentRequired: null as null | (() => void),
+  openError: null as unknown,
 }));
 
 vi.mock('~/env/client', () => ({ env: { NEXT_PUBLIC_APP_ASSISTANT_SANDBOX_URL: BASE } }));
@@ -60,7 +62,7 @@ vi.mock('~/components/Apps/AppAssistant/useSandboxes', () => ({
         mutate: (app: string, opts?: { onSuccess?: (r: { sandbox: Sandbox }) => void }) =>
           opts?.onSuccess?.({ sandbox: m.list.find((s) => s.app === app)! }),
         isPending: false,
-        error: null,
+        error: m.openError,
       },
       suspend: { mutate: m.suspend, isPending: false, error: null },
       remove: { mutate: vi.fn(), isPending: false, error: null },
@@ -118,6 +120,7 @@ beforeEach(() => {
   m.enable.mockClear();
   m.sandboxClient = null;
   m.onConsentRequired = null;
+  m.openError = null;
 });
 
 describe('AppAssistantWorkspace preview teardown', () => {
@@ -268,5 +271,22 @@ describe('AppAssistantWorkspace revoke', () => {
     await page.getByRole('button', { name: 'Turn on App Assistant' }).click();
     expect(m.enable).toHaveBeenCalledTimes(1);
     await expect.element(page.getByTestId('chat')).toBeInTheDocument();
+  });
+});
+
+describe('AppAssistantWorkspace header actions', () => {
+  test('a Resume refused for the running-sandbox limit is shown without opening the drawer', async () => {
+    m.list = [sandbox('sbx-aaaaaaaaaaaa', { state: 'suspended' }), sandbox('sbx-bbbbbbbbbbbb')];
+    const screen = await mount();
+    await page.getByRole('button', { name: 'Resume', exact: true }).first().click();
+    await expect.element(page.getByTestId('preview')).toBeInTheDocument();
+    m.openError = new SandboxApiError(
+      'running-sandbox limit (1) reached: sbx-bbbbbbbbbbbb (app "app-bbbb") is running; suspend it first',
+      409,
+      'limit'
+    );
+    screen.rerender(<AppAssistantWorkspace canPreview />);
+    await expect.element(page.getByText('Sandbox limit reached')).toBeInTheDocument();
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
   });
 });

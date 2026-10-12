@@ -14,7 +14,7 @@ const STATE_COLOR: Record<Sandbox['state'], string> = {
   suspended: 'gray',
 };
 
-function SandboxError({ error }: { error: unknown }) {
+export function SandboxError({ error }: { error: unknown }) {
   if (!error) return null;
   if (error instanceof SandboxApiError && error.kind === 'limit')
     return (

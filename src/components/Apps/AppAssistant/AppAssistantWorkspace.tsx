@@ -32,7 +32,7 @@ import {
   createSandboxClient,
   isSandboxServiceUrl,
 } from '~/components/Apps/AppAssistant/sandboxClient';
-import { SandboxPanel } from '~/components/Apps/AppAssistant/SandboxPanel';
+import { SandboxError, SandboxPanel } from '~/components/Apps/AppAssistant/SandboxPanel';
 import { useSandboxes } from '~/components/Apps/AppAssistant/useSandboxes';
 import { env } from '~/env/client';
 import { APP_ASSISTANT_DAILY_BUZZ_CAP } from '~/shared/constants/app-assistant.constants';
@@ -287,6 +287,12 @@ export function AppAssistantWorkspace({ canPreview }: { canPreview: boolean }) {
           </Button>
         </Group>
       </Group>
+      {/* With a sandbox open the panel lives in the closed drawer, so header actions report here. */}
+      {active && !drawerOpen && (
+        <div className="shrink-0">
+          <SandboxError error={sandboxes.open.error ?? sandboxes.suspend.error} />
+        </div>
+      )}
 
       <SegmentedControl
         className="shrink-0 md:hidden"
