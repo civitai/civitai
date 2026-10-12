@@ -306,29 +306,51 @@ describe('upsertModelVersion — cannot publish through the editor', () => {
     expect(createData().availability).toBe('Public');
   });
 
-  it.each(PUBLISH_STATUSES)('refuses a non-moderator moving a Draft to %s', async (status) => {
-    seedExisting(ModelStatus.Draft);
+  // Every ordered pair of distinct statuses, minus leaving Published (its own guard, above).
+  const transitions = Object.values(ModelStatus)
+    .filter((from) => from !== ModelStatus.Published)
+    .flatMap((from) =>
+      Object.values(ModelStatus)
+        .filter((to) => to !== from)
+        .map((to) => [from, to] as const)
+    );
 
-    await expect(upsertModelVersion({ id: VERSION_ID, status } as never)).rejects.toThrowError(
-      /Use the publish action/
+  it.each(transitions)('refuses a non-moderator moving %s to %s', async (from, to) => {
+    seedExisting(from);
+
+    await expect(upsertModelVersion({ id: VERSION_ID, status: to } as never)).rejects.toThrowError(
+      /Use the publish or unpublish action/
     );
 
     expect(mockTx.modelVersion.update).not.toHaveBeenCalled();
   });
 
-  it('refuses a non-moderator moving a Scheduled version to Published', async () => {
-    seedExisting(ModelStatus.Scheduled);
+  // The live repro: Draft is the one status modelVersion.publish accepts from an owner, so this
+  // move turned a moderator takedown into a self-serve republish.
+  it('refuses laundering a moderator takedown into Draft', async () => {
+    seedExisting(ModelStatus.UnpublishedViolation);
 
     await expect(
-      upsertModelVersion({ id: VERSION_ID, status: ModelStatus.Published } as never)
-    ).rejects.toThrowError(/Use the publish action/);
+      upsertModelVersion({ id: VERSION_ID, status: ModelStatus.Draft } as never)
+    ).rejects.toThrowError(/Use the publish or unpublish action/);
   });
 
-  // The review handlers replay the stored row, status included, with no moderator flag.
-  it('lets a save that carries the current Scheduled status through', async () => {
-    seedExisting(ModelStatus.Scheduled);
+  // The form and the review handlers replay the stored row, status included, with no moderator flag.
+  it.each(Object.values(ModelStatus).filter((s) => s !== ModelStatus.Published))(
+    'lets a save that carries the current %s status through',
+    async (status) => {
+      seedExisting(status);
 
-    await upsertModelVersion({ id: VERSION_ID, status: ModelStatus.Scheduled } as never);
+      await upsertModelVersion({ id: VERSION_ID, status } as never);
+
+      expect(mockTx.modelVersion.update).toHaveBeenCalled();
+    }
+  );
+
+  it('lets a save without a status through', async () => {
+    seedExisting(ModelStatus.UnpublishedViolation);
+
+    await upsertModelVersion({ id: VERSION_ID, name: 'renamed' } as never);
 
     expect(mockTx.modelVersion.update).toHaveBeenCalled();
   });

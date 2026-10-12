@@ -867,13 +867,12 @@ export const upsertModelVersion = async ({
       );
     }
 
-    // The converse. A replay of the stored status (the review handlers) is not a publish.
-    if (
-      !isModerator &&
-      (data.status === ModelStatus.Published || data.status === ModelStatus.Scheduled) &&
-      data.status !== existingVersion.status
-    ) {
-      throw throwBadRequestError('Use the publish action to publish a version.');
+    // Any other move is a publish or a takedown laundered into Draft, which modelVersion.publish then
+    // accepts. The form and the review handlers replay the stored status, which is not a change.
+    if (!isModerator && data.status !== undefined && data.status !== existingVersion.status) {
+      throw throwBadRequestError(
+        "Use the publish or unpublish action to change a version's status."
+      );
     }
 
     const mergedMeta =
