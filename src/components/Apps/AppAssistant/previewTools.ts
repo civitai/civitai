@@ -17,6 +17,8 @@ export interface StartedDevTunnel {
 export interface PreviewToolDeps {
   /** The account may open dev tunnels (author capability + dev-tunnel flag). */
   canPreview: boolean;
+  /** The open sandbox's name; a preview started for one must not land on another. */
+  currentSandbox: () => string | null;
   /** Used when the assistant passes no `block_id`. */
   defaultBlockId: () => string | null;
   startDevTunnel: (input: {
@@ -102,6 +104,7 @@ export function createPreviewTools(deps: PreviewToolDeps): Record<string, ChatTo
           ? input.declared_auth
           : undefined;
 
+      const sandbox = deps.currentSandbox();
       let started: StartedDevTunnel;
       try {
         started = await deps.startDevTunnel({
@@ -117,6 +120,13 @@ export function createPreviewTools(deps: PreviewToolDeps): Record<string, ChatTo
       if (!started.sshHostPublicKey) {
         await deps.stopDevTunnel({ sessionId: started.sessionId }).catch(() => undefined);
         throw new Error('The preview service is not configured. Tell the user; do not retry.');
+      }
+
+      if (deps.currentSandbox() !== sandbox) {
+        await deps.stopDevTunnel({ sessionId: started.sessionId }).catch(() => undefined);
+        throw new Error(
+          'The sandbox changed while the preview was starting. Start the preview again in the open sandbox.'
+        );
       }
 
       const previous = deps.getSession();

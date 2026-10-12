@@ -17,6 +17,7 @@ const trpcError = (code: string, message = code) =>
   Object.assign(new Error(message), { data: { code } });
 
 let session: PreviewSession | null;
+let sandboxName: string | null;
 let deps: PreviewToolDeps & {
   startDevTunnel: ReturnType<typeof vi.fn>;
   stopDevTunnel: ReturnType<typeof vi.fn>;
@@ -24,7 +25,9 @@ let deps: PreviewToolDeps & {
 
 beforeEach(() => {
   session = null;
+  sandboxName = 'sbx-aaaaaaaaaaaa';
   deps = {
+    currentSandbox: () => sandboxName,
     canPreview: true,
     defaultBlockId: () => 'my-app',
     startDevTunnel: vi.fn(async () => STARTED),
@@ -156,6 +159,24 @@ describe('start_preview', () => {
     );
     deps.startDevTunnel.mockRejectedValueOnce(new Error('socket hang up'));
     await expect(start({ public_key: KEY })).rejects.toThrow(/could not start/);
+  });
+});
+
+describe('start_preview when the sandbox changes mid-start', () => {
+  it('stops the tunnel it started and records nothing for the new sandbox', async () => {
+    deps.startDevTunnel.mockImplementation(async () => {
+      sandboxName = 'sbx-bbbbbbbbbbbb'; // the user switched while the mint was in flight
+      return STARTED;
+    });
+    await expect(start({ public_key: KEY })).rejects.toThrow(/sandbox changed/);
+    expect(deps.stopDevTunnel).toHaveBeenCalledWith({ sessionId: STARTED.sessionId });
+    expect(session).toBeNull();
+  });
+
+  it('CONTROL: an unchanged sandbox keeps its preview', async () => {
+    await start({ public_key: KEY });
+    expect(deps.stopDevTunnel).not.toHaveBeenCalled();
+    expect(session?.sessionId).toBe(STARTED.sessionId);
   });
 });
 

@@ -161,6 +161,28 @@ describe('AppAssistantWorkspace preview teardown', () => {
   });
 });
 
+describe('AppAssistantWorkspace preview start racing a sandbox switch', () => {
+  test('a preview that lands after the switch is stopped, not shown for the new sandbox', async () => {
+    await mount();
+    await openFirst();
+    let land!: (v: unknown) => void;
+    m.start.mockImplementation(() => new Promise((resolve) => (land = resolve)));
+    const pending = m.chat!.tools.start_preview.execute(
+      { public_key: KEY, block_id: 'my-app' },
+      ctx
+    );
+    await page.getByRole('button', { name: 'Sandboxes', exact: true }).click();
+    await page.getByRole('button', { name: 'Open', exact: true }).nth(1).click();
+    land({
+      sessionId: 'bki_late',
+      host: 'dev-0123456789abcdef.civit.ai',
+      sshHostPublicKey: 'ssh-ed25519 AAAAhostkey',
+    });
+    await expect(pending).rejects.toThrow(/sandbox changed/);
+    expect(m.stop).toHaveBeenCalledWith({ sessionId: 'bki_late' });
+  });
+});
+
 describe('AppAssistantWorkspace MCP wiring', () => {
   test('hands the running sandbox to the chat with the sandbox token', async () => {
     await mount();

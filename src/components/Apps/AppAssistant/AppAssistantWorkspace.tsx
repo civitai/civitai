@@ -142,6 +142,7 @@ export function AppAssistantWorkspace({ canPreview }: { canPreview: boolean }) {
     () =>
       createPreviewTools({
         canPreview,
+        currentSandbox: () => live.current.active?.name ?? null,
         defaultBlockId: () => {
           const app = live.current.active?.app;
           return app && isAppBlockId(app) ? app : null;
