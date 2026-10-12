@@ -172,18 +172,50 @@ export const userScoreCheckpointKeys = [...Object.keys(scoreFetchers), TIER_GRAN
   checkpointKey
 );
 
-async function getModelScore(ctx: Context) {
+// A model taken down by anyone but its owner stops counting; one the owner unpublished or deleted
+// keeps its points. A missing actor counts as the owner: nothing shows a moderator acted.
+const unpublishedByOther = `COALESCE(m.meta->>'unpublishedBy' <> m."userId"::text, false)`;
+const LIVE_MODEL_COUNTS = `(m.status IN ('Published', 'Scheduled')
+  OR (m.status = 'Unpublished' AND NOT ${unpublishedByOther}))`;
+// An owner can delete a model a moderator already took down, so a delete keeps only what the model
+// held when it was deleted: `statusAtDelete` where the delete recorded it, else the takedown marks.
+const DELETED_MODEL_COUNTS = `(m.status = 'Deleted'
+  AND COALESCE(m."deletedBy" = m."userId", true)
+  AND CASE WHEN m.meta ? 'statusAtDelete'
+    THEN m.meta->>'statusAtDelete' IN ('Published', 'Scheduled')
+      OR (m.meta->>'statusAtDelete' = 'Unpublished' AND NOT ${unpublishedByOther})
+    ELSE NOT (m.meta ? 'unpublishedReason') AND NOT ${unpublishedByOther}
+  END)`;
+export const MODEL_COUNTS_TOWARD_SCORE = `(${LIVE_MODEL_COUNTS} OR ${DELETED_MODEL_COUNTS})`;
+
+export async function getModelScore(
+  ctx: Pick<Context, 'pg' | 'jobContext' | 'scoreMultipliers' | 'lastUpdate' | 'setScore'>
+) {
+  const { reviews, downloads, generations } = ctx.scoreMultipliers.models;
+  // A takedown writes `Model`, not `ModelMetric`, so owners whose models changed are re-scored too.
+  // Every model of a re-scored owner is summed, so one who no longer has any counting model gets 0.
   await getScores(ctx, 'models')`
+    WITH changed AS (
+      SELECT "userId" FROM "ModelMetric" WHERE "updatedAt" > '${ctx.lastUpdate}'
+      UNION
+      SELECT "userId" FROM "Model"
+      WHERE "updatedAt" > '${ctx.lastUpdate}' OR "deletedAt" > '${ctx.lastUpdate}'
+    )
     SELECT
-      mm."userId",
+      s."userId",
       (
-          SUM(mm."thumbsUpCount") * ${ctx.scoreMultipliers.models.reviews}
-        + SUM(mm."downloadCount") * ${ctx.scoreMultipliers.models.downloads}
-        + SUM(mm."generationCount") * ${ctx.scoreMultipliers.models.generations}
+          COALESCE(SUM(s."thumbsUpCount") FILTER (WHERE s.counts), 0) * ${reviews}
+        + COALESCE(SUM(s."downloadCount") FILTER (WHERE s.counts), 0) * ${downloads}
+        + COALESCE(SUM(s."generationCount") FILTER (WHERE s.counts), 0) * ${generations}
       ) as score
-    FROM "ModelMetric" mm
+    FROM (
+      SELECT mm."userId", mm."thumbsUpCount", mm."downloadCount", mm."generationCount",
+        ${MODEL_COUNTS_TOWARD_SCORE} AS counts
+      FROM "ModelMetric" mm
+      JOIN "Model" m ON m.id = mm."modelId"
+      WHERE mm."userId" IN (SELECT "userId" FROM changed)
+    ) s
     GROUP BY 1
-    HAVING BOOL_OR(mm."updatedAt" > '${ctx.lastUpdate}')
   `;
 }
 

@@ -130,6 +130,7 @@ import {
 } from '~/server/services/image.service';
 import { getFilesForModelVersionCache } from '~/server/services/model-file.service';
 import { buildRepublishImageIndexTouch } from '~/server/services/model-republish-image-index.sql';
+import { recordStatusAtDelete } from '~/server/services/model-status-at-delete';
 import {
   expandBlurbs,
   getReferencedBlurbIds,
@@ -1876,6 +1877,7 @@ export const deleteModelById = async ({
   }
 
   const deletedModel = await dbWrite.$transaction(async (tx) => {
+    await recordStatusAtDelete(tx, id);
     const model = await tx.model.update({
       where: { id },
       data: {

@@ -240,3 +240,29 @@ describe('toggleBan -> live event hats', () => {
     );
   });
 });
+
+// The creator score re-scores an owner from `Model."updatedAt"`, which raw SQL does not bump.
+describe('toggleBan -> model takedown', () => {
+  it('bumps updatedAt on the models it takes down', async () => {
+    userFindUnique.mockResolvedValue({
+      bannedAt: null,
+      meta: {},
+      username: 'someone',
+      email: null,
+    });
+    dbMock.dbRead.model.findMany.mockResolvedValue([{ id: 7701, modelVersions: [] }] as never);
+
+    await call();
+
+    const modelUpdates = dbMock.dbWrite.$executeRaw.mock.calls
+      .map(([strings]) =>
+        (strings as unknown as string[])
+          .join('?')
+          .replace(/--[^\n]*/g, '')
+          .replace(/\s+/g, ' ')
+      )
+      .filter((sql) => sql.includes('UPDATE "Model" SET'));
+    expect(modelUpdates).toHaveLength(1);
+    expect(modelUpdates[0]).toContain('"updatedAt" = now() WHERE id IN');
+  });
+});
