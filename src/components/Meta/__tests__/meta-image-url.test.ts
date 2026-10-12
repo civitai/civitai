@@ -29,8 +29,8 @@ function ogImages(props: Record<string, unknown>) {
     og: [...html.matchAll(/<meta property="og:image" content="([^"]*)"/g)].map((m) =>
       m[1].replaceAll('&amp;', '&')
     ),
-    twitter: [...html.matchAll(/<meta property="twitter:image" content="([^"]*)"/g)].map(
-      (m) => m[1]
+    twitter: [...html.matchAll(/<meta property="twitter:image" content="([^"]*)"/g)].map((m) =>
+      m[1].replaceAll('&amp;', '&')
     ),
   };
 }
@@ -50,6 +50,8 @@ describe('Meta imageUrl', () => {
     ['PG combined with R', NsfwLevel.PG | NsfwLevel.R],
     ['unrated', 0],
     ['unknown', undefined],
+    ['null', null],
+    ['NaN', NaN],
   ])('emits no %s image', (_, imageNsfwLevel) => {
     expect(ogImages({ imageUrl: url, imageNsfwLevel })).toEqual({ og: [], twitter: [] });
   });
@@ -64,14 +66,27 @@ describe('Meta imageUrl', () => {
     expect(ogImages({ images, imageUrl: url, imageNsfwLevel: NsfwLevel.PG }).og).toEqual([url]);
   });
 
-  it('prefers the og endpoint, which rates its own image', () => {
-    const og = `https://civitai.com/api/og?type=model&id=1`;
-    expect(
-      ogImages({
-        ogEndpoint: '/api/og?type=model&id=1',
-        imageUrl: url,
-        imageNsfwLevel: NsfwLevel.R,
-      }).og
-    ).toEqual([og]);
+  it.each([
+    ['PG', NsfwLevel.PG],
+    ['R', NsfwLevel.R],
+  ])(
+    'prefers the og endpoint, which rates its own image, over a %s imageUrl',
+    (_, imageNsfwLevel) => {
+      const og = 'https://civitai.com/api/og?type=model&id=1';
+      expect(
+        ogImages({ ogEndpoint: '/api/og?type=model&id=1', imageUrl: url, imageNsfwLevel })
+      ).toEqual({ og: [og], twitter: [og] });
+    }
+  );
+
+  it('prefers a safe listed image over a safe imageUrl', () => {
+    const images = [
+      { url: 'r-key', nsfwLevel: NsfwLevel.R },
+      { url: 'pg-key', nsfwLevel: NsfwLevel.PG },
+    ];
+    const { og } = ogImages({ images, imageUrl: url, imageNsfwLevel: NsfwLevel.PG });
+    expect(og).toHaveLength(1);
+    expect(og[0]).toContain('pg-key');
+    expect(og[0]).not.toContain('r-key');
   });
 });

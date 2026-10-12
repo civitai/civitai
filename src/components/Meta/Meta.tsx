@@ -91,7 +91,7 @@ export function Meta<TImage extends { nsfwLevel: number; url: string; type?: Med
     _image?.type === 'video' ? { anim: false, transcode: true, optimized: true } : {};
   const _fallbackImageUrl = _image
     ? getEdgeUrl(_image.url, { width: 1200, ..._imageProps })
-    : imageNsfwLevel !== undefined && getIsSafeBrowsingLevel(imageNsfwLevel)
+    : Number.isInteger(imageNsfwLevel) && getIsSafeBrowsingLevel(imageNsfwLevel as number)
     ? imageUrl
     : undefined;
   const _ogImageUrl = ogEndpoint ? `${env.NEXT_PUBLIC_BASE_URL}${ogEndpoint}` : _fallbackImageUrl;
