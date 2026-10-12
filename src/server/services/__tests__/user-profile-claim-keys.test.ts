@@ -13,7 +13,9 @@ vi.mock('~/server/services/image.service', () => ({
   enqueueImageIngestion: vi.fn(async () => undefined),
 }));
 
-const { getUserWithProfile } = await import('~/server/services/user-profile.service');
+const { getUserWithProfile, updateUserProfile } = await import(
+  '~/server/services/user-profile.service'
+);
 
 const OWNER = 7;
 const CLAIM_KEY = 'tx-claim-3307';
@@ -63,5 +65,27 @@ describe('the profile read carries claim keys for the owner alone', () => {
   it('for the owner', async () => {
     const profile = await getUserWithProfile({ id: OWNER, sessionUserId: OWNER });
     expect(profile.cosmetics[0]).toMatchObject({ cosmeticId: 1, claimKey: CLAIM_KEY });
+  });
+});
+
+describe('saving a profile answers with the saved profile as its saver sees it', () => {
+  beforeEach(() => {
+    const tx = {
+      userLink: { deleteMany: vi.fn(), createMany: vi.fn(), updateMany: vi.fn() },
+      userProfile: { update: vi.fn(async () => ({ userId: OWNER, coverImage: null })) },
+    };
+    dbMock.dbWrite.$transaction.mockImplementation((async (fn: (c: unknown) => unknown) =>
+      fn(tx)) as never);
+  });
+
+  // A moderator may save another user's profile.
+  it('carries no claim keys for a moderator saving it', async () => {
+    const saved = await updateUserProfile({ userId: OWNER, sessionUserId: 99, isModerator: true });
+    expect(saved.cosmetics[0]).toMatchObject({ cosmeticId: 1, claimKey: null });
+  });
+
+  it('carries them for the owner, whose editor caches the answer', async () => {
+    const saved = await updateUserProfile({ userId: OWNER, sessionUserId: OWNER });
+    expect(saved.cosmetics[0]).toMatchObject({ cosmeticId: 1, claimKey: CLAIM_KEY });
   });
 });

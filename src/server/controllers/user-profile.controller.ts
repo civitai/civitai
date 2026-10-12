@@ -124,6 +124,7 @@ export const updateUserProfileHandler = async ({
       ...input,
       userId,
       isModerator: sessionUser.isModerator,
+      sessionUserId: sessionUser.id,
       domain: ctx.domain,
     });
 
@@ -167,6 +168,7 @@ export const addEntityToShowcaseHandler = async ({
     const result = await updateUserProfile({
       userId: ctx.user.id,
       isModerator: ctx.user.isModerator,
+      sessionUserId: ctx.user.id,
       showcaseItems: updatedShowcaseItems,
     });
 

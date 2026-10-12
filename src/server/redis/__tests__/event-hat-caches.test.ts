@@ -118,9 +118,15 @@ describe('eventDecorationEntityCaches', () => {
 describe('cosmeticEntityCaches', () => {
   // Feed responses attach the cached frame as it is, so it holds nothing a viewer may not see.
   it("caches a frame without its owner's claim key", async () => {
-    dbMock.dbWrite.$queryRaw.mockResolvedValue([
-      { cosmeticId: 41, equippedToId: 5, userData: null },
-    ]);
+    // Returns a column only when the lookup selects it, as Postgres would.
+    dbMock.dbWrite.$queryRaw.mockImplementation((async (strings: string[]) => [
+      {
+        cosmeticId: 41,
+        equippedToId: 5,
+        userData: null,
+        ...(strings.join('').includes('"claimKey"') && { claimKey: 'tx-claim-6620' }),
+      },
+    ]) as never);
     const fetch = cosmeticCache.fetch;
     cosmeticCache.fetch = (async () => ({
       41: {
@@ -134,6 +140,7 @@ describe('cosmeticEntityCaches', () => {
     try {
       const frames = await cosmeticEntityCaches.Image.fetch([5]);
       expect(frames[5]).toMatchObject({ id: 41, equippedToId: 5, data: { cssFrame: 'gold' } });
+      expect(frames[5]).not.toHaveProperty('claimKey');
     } finally {
       cosmeticCache.fetch = fetch;
     }
