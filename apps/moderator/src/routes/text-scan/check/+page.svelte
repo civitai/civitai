@@ -1,10 +1,12 @@
 <script lang="ts">
-  import { onMount, untrack } from 'svelte';
-  import { replaceState } from '$app/navigation';
+  import { onMount, tick, untrack } from 'svelte';
+  import { goto } from '$app/navigation';
   import { page } from '$app/state';
+  import * as AlertDialog from '@civitai/ui/components/ui/alert-dialog/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
+  import { promptKeyName } from '$lib/text-scan-lab/labels';
   import type { PromptKey } from '$lib/text-scan-lab/types';
-  import type { CheckResult } from './+page.server';
+  import type { CheckResult, Seed } from './+page.server';
   import { changesStorageKey, seedOverwritesDraft } from './changes';
   import { createChanges } from './changes.svelte';
   import ChangesBar from './ChangesBar.svelte';
@@ -21,17 +23,37 @@
 
   let editing = $state<PromptKey | null>(null);
 
+  // The notice outlives the strip below, which re-runs `load` without the params.
+  let seedNotice = $state(untrack(() => data.seedNotice));
+  let pendingSeed = $state<Seed | null>(null);
+
+  function applySeed(seed: Seed) {
+    changes.seed(seed.key, seed.content);
+    editing = seed.key;
+  }
+
   // Versions links here with `?key=&from=`; the draft is set once, then the params go so a reload or
   // a shared link does not reseed.
   function seedFromLink() {
     const seed = data.seed;
-    if (!seed) return;
-    const draft = changes.prompts[seed.key];
-    const overwrite = seedOverwritesDraft(draft, seed.content);
-    if (!overwrite || confirm('Replace your unpublished changes to this prompt with that version?'))
-      changes.seed(seed.key, seed.content);
-    editing = seed.key;
-    replaceState(page.url.pathname, page.state);
+    if (seed) {
+      const draft = changes.prompts[seed.key];
+      if (draft === seed.content) editing = seed.key;
+      else if (seedOverwritesDraft(draft, seed.content)) pendingSeed = seed;
+      else applySeed(seed);
+    }
+    if (seed || data.seedNotice) {
+      // `replaceState` neither updates `page.url` nor works before the router starts; the first
+      // microtask after mount is past hydration.
+      void tick().then(() =>
+        goto(page.url.pathname, {
+          replaceState: true,
+          noScroll: true,
+          keepFocus: true,
+          invalidateAll: false,
+        })
+      );
+    }
   }
 
   let mounted = $state(false);
@@ -68,8 +90,8 @@
   </Button>
 </div>
 
-{#if data.seedNotice}
-  <p class="mb-4 text-sm text-amber-300">{data.seedNotice}</p>
+{#if seedNotice}
+  <p role="status" class="mb-4 text-sm text-amber-300">{seedNotice}</p>
 {/if}
 
 {#if changes.keys.length}
@@ -115,3 +137,30 @@
   currentError={data.active.ok ? null : data.active.error}
   onclose={() => (editing = null)}
 />
+
+<AlertDialog.Root
+  bind:open={
+    () => pendingSeed !== null,
+    (v) => {
+      if (!v) pendingSeed = null;
+    }
+  }
+>
+  <AlertDialog.Content>
+    <AlertDialog.Header>
+      <AlertDialog.Title>Replace your changes?</AlertDialog.Title>
+      <AlertDialog.Description>
+        You already have unpublished changes to {pendingSeed ? promptKeyName(pendingSeed.key) : ''}.
+        Starting from version #{pendingSeed?.id} replaces them.
+      </AlertDialog.Description>
+    </AlertDialog.Header>
+    <AlertDialog.Footer>
+      <AlertDialog.Cancel>Keep my changes</AlertDialog.Cancel>
+      <AlertDialog.Action
+        onclick={() => {
+          if (pendingSeed) applySeed(pendingSeed);
+        }}>Replace</AlertDialog.Action
+      >
+    </AlertDialog.Footer>
+  </AlertDialog.Content>
+</AlertDialog.Root>
