@@ -95,12 +95,16 @@ export function ImageMenuItems(props: ImageContextMenuProps & { disableDelete?: 
                 image={image}
                 currentCosmetic={image.cosmetic}
               />
-              <AddEventDecorationMenuItem
-                entityType={CosmeticEntity.Image}
-                entityId={imageId}
-                image={image}
-                currentCosmetic={image.eventDecoration}
-              />
+              {/* A hat can't go on an image outside a post (an article cover, say), but one already
+                  there can come off. `undefined` is a feed that didn't select postId, not "none". */}
+              {(postId !== null || image.eventDecoration) && (
+                <AddEventDecorationMenuItem
+                  entityType={CosmeticEntity.Image}
+                  entityId={imageId}
+                  image={image}
+                  currentCosmetic={image.eventDecoration}
+                />
+              )}
             </>
           )}
         </>

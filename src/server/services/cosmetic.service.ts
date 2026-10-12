@@ -265,6 +265,7 @@ export async function equipCosmeticToEntity({
       now,
       user: { id: userId, isModerator },
     });
+    if (equippedToType === 'Image') await assertImageCanWearEventDecoration(equippedToId);
     // The cooldown is enforced by the write itself, not only by the read above: concurrent equips
     // of one decoration all read the same placedAt, and each placement counts toward a score.
     // Placed before the displacement below so a refused move leaves the target entity untouched.
@@ -595,6 +596,29 @@ async function assertCanPlaceEventDecoration({
     );
 
   return definition;
+}
+
+/**
+ * An image outside a post (an article cover, a profile picture, an image whose post was deleted)
+ * is left out of every feed and its page 404s for anyone but its owner, so a hat on it is seen
+ * almost nowhere.
+ */
+async function assertImageCanWearEventDecoration(imageId: number) {
+  const image = await dbWrite.image.findUnique({
+    where: { id: imageId },
+    select: { postId: true },
+  });
+  if (image?.postId) return;
+
+  const article = await dbWrite.article.findUnique({
+    where: { coverId: imageId },
+    select: { id: true },
+  });
+  throw throwBadRequestError(
+    article
+      ? "This image is your article's cover, which isn't shown on its own. Put the hat on the article instead, from the ⋯ menu on its card in your profile."
+      : 'Hats can only go on images that are in a post.'
+  );
 }
 
 export const grantCosmetics = async ({
