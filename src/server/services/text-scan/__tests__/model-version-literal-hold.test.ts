@@ -83,7 +83,7 @@ beforeEach(() => {
     model: { userId: 7, nsfw: false },
   });
   checkModelRulesLiteralHold.mockResolvedValue(HOLD);
-  unpublishLiveModelForLiteralRules.mockResolvedValue(undefined);
+  unpublishLiveModelForLiteralRules.mockResolvedValue(true);
   mockReindex.mockResolvedValue(undefined);
   mockTrack.mockResolvedValue(undefined);
 });
@@ -129,6 +129,17 @@ describe('publishModelVersionHandler — Model rules literal hit on a live model
     );
     expect(mockScan).toHaveBeenCalledWith({ entityType: 'ModelRules', entityId: MODEL_ID });
     expect(mockTrack).toHaveBeenCalledTimes(1);
+    expect(mockRefresh).toHaveBeenCalledWith(MODEL_ID);
+  });
+
+  it('is not held when the takedown claimed nothing, and the normal publish side effects run', async () => {
+    unpublishLiveModelForLiteralRules.mockResolvedValue(false);
+
+    const result = await call();
+
+    expect(result).toMatchObject({ id: VERSION_ID, held: false });
+    expect(mockTrack).toHaveBeenCalledTimes(1);
+    expect(mockReindex).toHaveBeenCalledTimes(1);
     expect(mockRefresh).toHaveBeenCalledWith(MODEL_ID);
   });
 

@@ -886,8 +886,10 @@ export const publishModelVersionHandler = async ({
     let held = false;
     if (literalHold) {
       try {
-        await unpublishLiveModelForLiteralRules({ modelId: version.modelId, ...literalHold });
-        held = true;
+        held = await unpublishLiveModelForLiteralRules({
+          modelId: version.modelId,
+          ...literalHold,
+        });
       } catch (error) {
         // The version is already published; the ModelRules scan below is the backstop.
         logToAxiom({

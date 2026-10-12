@@ -44,7 +44,7 @@ async function claimAndUnpublishForModelRules({
   entityId: number;
   meta: ModelMeta;
   modelRules: NonNullable<ModelMeta['modelRules']>;
-}) {
+}): Promise<boolean> {
   const { workflowId } = modelRules;
   // Claimed in one statement so a model the owner unpublished or deleted since the scan, or a second
   // delivery of the same callback, is never taken down (or notified) again.
@@ -59,9 +59,10 @@ async function claimAndUnpublishForModelRules({
       AND "deletedAt" IS NULL
       AND COALESCE(meta->'modelRules'->>'workflowId', '') <> ${workflowId}
   `;
-  if (!claimed) return;
+  if (!claimed) return false;
 
   await unpublishForModelRules({ entityId, meta, modelRules });
+  return true;
 }
 
 async function unpublishForModelRules({
@@ -89,7 +90,9 @@ async function unpublishForModelRules({
 function literalModelRules(ruleIds: number[], textHash: string) {
   return {
     ruleIds,
-    workflowId: `literal:${textHash}`,
+    // The rule ids are part of the claim: a stale claim for the same text (kept through a moderator
+    // republish) must not block a rule that was added since.
+    workflowId: `literal:${textHash}:${[...ruleIds].sort((a, b) => a - b).join(',')}`,
     textHash,
     at: new Date().toISOString(),
     source: 'literal' as const,
@@ -118,7 +121,7 @@ export async function holdModelForLiteralRules({
   });
 }
 
-/** A literal match found as a version was added to a model that is already public. */
+/** A literal match found as a version was added to a model that is already public. True when it was taken down. */
 export async function unpublishLiveModelForLiteralRules({
   modelId,
   ruleIds,
@@ -127,10 +130,10 @@ export async function unpublishLiveModelForLiteralRules({
   modelId: number;
   ruleIds: number[];
   textHash: string;
-}) {
+}): Promise<boolean> {
   const model = await dbWrite.model.findUnique({ where: { id: modelId }, select: { meta: true } });
-  if (!model) return;
-  await claimAndUnpublishForModelRules({
+  if (!model) return false;
+  return claimAndUnpublishForModelRules({
     entityId: modelId,
     meta: (model.meta ?? {}) as ModelMeta,
     modelRules: literalModelRules(ruleIds, textHash),

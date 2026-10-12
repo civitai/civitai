@@ -145,7 +145,7 @@ describe('holdModelForLiteralRules', () => {
         needsReview: true,
         modelRules: {
           ruleIds: [3],
-          workflowId: 'literal:h1',
+          workflowId: 'literal:h1:3',
           textHash: 'h1',
           at: expect.any(String),
           source: 'literal',
@@ -172,11 +172,11 @@ describe('unpublishLiveModelForLiteralRules', () => {
     const [, json, id, workflowId] = claimCall();
     expect(JSON.parse(json as string)).toMatchObject({
       ruleIds: [3],
-      workflowId: 'literal:h1',
+      workflowId: 'literal:h1:3',
       textHash: 'h1',
       source: 'literal',
     });
-    expect([id, workflowId]).toEqual([7, 'literal:h1']);
+    expect([id, workflowId]).toEqual([7, 'literal:h1:3']);
     expect(unpublishModelById).toHaveBeenCalledWith(
       expect.objectContaining({
         id: 7,
@@ -189,14 +189,22 @@ describe('unpublishLiveModelForLiteralRules', () => {
 
   it('acts once for the same text, and not at all when the model is no longer public', async () => {
     dbMock.dbWrite.$executeRaw.mockResolvedValueOnce(1).mockResolvedValue(0);
-    await run();
-    await run();
+    await expect(run()).resolves.toBe(true);
+    await expect(run()).resolves.toBe(false);
     expect(unpublishModelById).toHaveBeenCalledTimes(1);
+  });
+
+  it('claims under an id that changes with the rule set, whatever order the ids arrive in', async () => {
+    await unpublishLiveModelForLiteralRules({ modelId: 7, ruleIds: [4, 3], textHash: 'h1' });
+
+    const [, , , workflowId] = claimCall();
+    expect(workflowId).toBe('literal:h1:3,4');
+    expect(workflowId).not.toBe('literal:h1:3');
   });
 
   it('does nothing for a model that is gone', async () => {
     dbMock.dbWrite.model.findUnique.mockResolvedValue(null);
-    await run();
+    await expect(run()).resolves.toBe(false);
     expect(unpublishModelById).not.toHaveBeenCalled();
   });
 });
