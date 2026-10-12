@@ -2906,6 +2906,8 @@ export interface Thread {
   model3dReview?: Model3DReview | null;
   appListingId: number | null;
   appListing?: AppListing | null;
+  crucibleId: number | null;
+  crucible?: Crucible | null;
   metadata: JsonValue;
   commentCount: number;
   comments?: CommentV2[];
@@ -5983,6 +5985,7 @@ export interface Crucible {
   entries?: CrucibleEntry[];
   reports?: CrucibleReport[];
   engagements?: CrucibleEngagement[];
+  thread?: Thread | null;
 }
 
 export interface CrucibleEngagement {

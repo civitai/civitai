@@ -4823,6 +4823,8 @@ model Thread {
   // is the same DB (main civitai nvme0), so this is a plain FK, not a cross-DB bridge.
   appListingId     Int?            @unique
   appListing       AppListing?     @relation("AppListingThread", fields: [appListingId], references: [serialId], onDelete: SetNull)
+  crucibleId       Int?            @unique
+  crucible         Crucible?       @relation(fields: [crucibleId], references: [id], onDelete: SetNull)
 
   metadata     Json @default("{}") // unused
   commentCount Int  @default(0)
@@ -9406,6 +9408,7 @@ model Crucible {
   entries     CrucibleEntry[]
   reports     CrucibleReport[]
   engagements CrucibleEngagement[]
+  thread      Thread?
 
   @@index([userId], type: Hash)
   @@index([status])

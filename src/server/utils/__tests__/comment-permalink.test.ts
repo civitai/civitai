@@ -118,8 +118,18 @@ const HANDLED: Array<[string, Partial<ThreadEntitySource>, string]> = [
  * `clubPost` and `model3dReview` have no public route at all. All four fall to the `comment`
  * fallback in the notification SQL and are unaddressable BY DESIGN — unlike `model3d`, which was
  * addressable everywhere except here.
+ *
+ * `crucible` is NOT by design: `threadUrlMap` addresses it (`/crucibles/<id>`) but `getThreadEntity`
+ * in comment-permalink.ts has no arm for it yet, so a crucible comment's permalink 404s. It sits
+ * here only until that arm and its `threadEntitySelect` relation land; then it moves to HANDLED.
  */
-const INTENTIONALLY_UNADDRESSABLE = ['question', 'answer', 'clubPost', 'model3dReview'] as const;
+const INTENTIONALLY_UNADDRESSABLE = [
+  'question',
+  'answer',
+  'clubPost',
+  'model3dReview',
+  'crucible',
+] as const;
 
 describe('buildCommentPermalink — the appListing branch (the fix)', () => {
   it('POSITIVE: an app-listing comment resolves to the listing detail URL, highlighted', () => {

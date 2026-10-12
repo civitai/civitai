@@ -235,6 +235,10 @@ export async function getThreadEntityOwnerId({
       });
       return row?.createdById ?? null;
     }
+    case 'crucible':
+      return findUserId(
+        dbRead.crucible.findUnique({ where: { id: entityId }, select: { userId: true } })
+      );
     case 'comicChapter': {
       const row = await dbRead.comicChapter.findUnique({
         where: { id: entityId },
@@ -245,6 +249,26 @@ export async function getThreadEntityOwnerId({
     default:
       return null;
   }
+}
+
+/**
+ * Who may lock a thread: moderators for any entity, and the creator for a crucible only. Every
+ * other entity's owner stays out, so opening the lock to crucibles does not widen it elsewhere.
+ */
+export async function canToggleThreadLock({
+  userId,
+  isModerator,
+  entityType,
+  entityId,
+}: {
+  userId: number;
+  isModerator: boolean;
+  entityType: CommentConnectorInput['entityType'];
+  entityId: number;
+}): Promise<boolean> {
+  if (isModerator) return true;
+  if (entityType !== 'crucible') return false;
+  return (await getThreadEntityOwnerId({ entityType, entityId })) === userId;
 }
 
 /**

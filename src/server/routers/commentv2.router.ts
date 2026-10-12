@@ -87,7 +87,9 @@ export const commentv2Router = router({
     .input(getCommentsInfiniteSchema)
     .query(getCommentsInfiniteHandler),
   setTosViolation: moderatorProcedure.input(getByIdSchema).mutation(setTosViolationHandler),
-  toggleLockThread: moderatorProcedure
+  // Moderators for any entity; a crucible's creator for that crucible only (see canToggleThreadLock).
+  toggleLockThread: protectedProcedure
+    .meta({ requiredScope: TokenScope.SocialWrite })
     .input(commentConnectorSchema)
     .mutation(toggleLockThreadDetailsHandler),
   toggleHide: protectedProcedure
