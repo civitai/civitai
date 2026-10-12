@@ -51,7 +51,7 @@ When the dev-server queue has the cache on (`cli.mjs test config --cache on`), a
 
 Keep handler tests in a `__tests__/` directory outside `src/pages` (e.g. `src/server/__tests__/`) and import the handler via the `~/pages/...` alias.
 
-A test file under `src/pages` fails `next build` (`Type '...test' does not satisfy the constraint 'ApiRouteConfig'`), and only `next build` catches it; typecheck, vitest and CI tasks pass (PR #2653).
+A test file under `src/pages` fails `next build` (`Type '...test' does not satisfy the constraint 'ApiRouteConfig'`) (PR #2653). `pnpm run typecheck` (and the CI typecheck) catches it, because it runs `next typegen` before `tsc`; vitest does not.
 
 ## Prefer `importOriginal` over hand-listed `vi.mock` exports
 
