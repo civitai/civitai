@@ -6187,7 +6187,9 @@ export const blocksRouter = router({
    * `snapshots[i]` answers `bodies[i]`, and `aggregate` sums the cells that priced.
    * Nothing is submitted, reserved or charged, no workflow is created and no id is
    * issued for the list: each cell is still submitted later through
-   * `submitWorkflow`, with its own budget gate and its own viewer confirmation.
+   * `submitWorkflow`, which runs every per-submit gate (budget, caps, rate
+   * limits) on its own. The host shows no confirmation dialog for a submit; any
+   * confirm step a viewer sees before one is the app's own UI.
    *
    * 🔴 IT CANNOT SUBMIT, BY CONSTRUCTION. The only thing it runs per cell is
    * `estimateBlockWorkflowCell` — the single estimate's own tail — and nothing in
