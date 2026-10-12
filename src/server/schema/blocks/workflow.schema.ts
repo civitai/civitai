@@ -397,18 +397,18 @@ export const blockCustomComfyBodySchema = z
  * 1000, and RAISING IT CHANGES WHAT ONE JOB CAN COST AN ORDINARY VIEWER. The
  * false version read as "raising this changes nothing".
  *
- * Its VALUE is still derived rather than invented: it is pinned equal to
- * `DEV_BUZZ_BUDGET_CAP` (250) in `services/blocks/dev-scoped-mint.service` so the
- * two cannot diverge silently, and it sits comfortably above the largest shipped
- * recipe ceiling (180, the `qwen-image` engine of `seamless-pano-360`) so an
- * inline graph is not more constrained than a recipe. What the pin is NOT is a
- * restatement of some other gate that already clamps this path.
+ * Its VALUE is a policy choice about what one inline job may cost a viewer, set
+ * comfortably above the largest shipped recipe ceiling (180, the `qwen-image`
+ * engine of `seamless-pano-360`) so an inline graph is not more constrained than a
+ * recipe. It must stay at or below `DEV_BUZZ_BUDGET_CAP` in
+ * `services/blocks/dev-scoped-mint.service`, so a pre-approval token can afford any
+ * inline job and an app can be developed and reviewed at the price it will charge.
  *
  * Deliberately a LITERAL here rather than an import: this module is imported by
  * the wire layer and must stay import-light, while `dev-scoped-mint.service`
  * pulls in the block-token service.
  * `src/server/schema/blocks/__tests__/workflow.schema.inline-comfy.test.ts`
- * imports both and pins them equal, so the derivation cannot drift silently.
+ * imports both and pins `INLINE_MAX_BUZZ <= DEV_BUZZ_BUDGET_CAP`.
  * (That sentence used to name `inline-comfy-budget.test.ts`, a file that does not
  * exist anywhere in this repo — the guard is real, the filename was not.)
  */
@@ -574,7 +574,7 @@ export const blockStepBodySchema = makeBlockStepBodySchema(REGISTERED_STEP_IDS);
  *
  * 🔴 IT IS THE BINDING BOUND, NOT A REDUNDANT ONE. A draft of this comment said
  * both arms were developer-only and therefore already clamped by
- * `DEV_BUZZ_BUDGET_CAP` (250); both halves are false — neither arm runs
+ * `DEV_BUZZ_BUDGET_CAP`; both halves are false — neither arm runs
  * `assertViewerIsAppDeveloper`, and an ordinary install token's per-call budget
  * clamps at `BUZZ_BUDGET_CAP` (1000, see `shared/constants/block-scope.constants`).
  * Recorded because the false version read as "raising this changes nothing".

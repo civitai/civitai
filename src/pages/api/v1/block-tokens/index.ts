@@ -35,6 +35,7 @@ import {
 } from '~/shared/constants/browsingLevel.constants';
 import { getServerBrowsingLevel } from '~/server/utils/browsing-level';
 import {
+  BUZZ_BUDGET_CAP,
   isKnownBlockScope,
   validateBlockScopesAgainstOauthClient,
 } from '~/shared/constants/block-scope.constants';
@@ -185,7 +186,6 @@ const PAGE_INSTANCE_PREFIX = 'page_';
 const EPHEMERAL_APP_ID_PREFIX = 'ephemeral-';
 
 const BUZZ_BUDGET_DEFAULT = 10;
-const BUZZ_BUDGET_CAP = 1000;
 
 const PER_IP_RATE_LIMIT_WINDOW_SECONDS = 60;
 const PER_IP_RATE_LIMIT_MAX = 120;
