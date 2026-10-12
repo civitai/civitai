@@ -5,9 +5,9 @@ import { EdgeVideo } from '~/components/EdgeMedia/EdgeVideo';
 
 const SRC = '00000001-0000-4000-8000-000000000000';
 
-async function playButtonWidth(boxPx: number) {
+async function playButtonSize(boxW: number, boxH = boxW) {
   renderWithProviders(
-    <div style={{ width: boxPx, height: boxPx, position: 'relative' }}>
+    <div style={{ width: boxW, height: boxH, position: 'relative' }}>
       <EdgeVideo src={SRC} wrapperProps={{ style: { width: '100%', height: '100%' } }} />
     </div>
   );
@@ -16,15 +16,20 @@ async function playButtonWidth(boxPx: number) {
     .toBeTruthy();
   const icon = document.querySelector('svg.tabler-icon-player-play-filled')!;
   // Computed width, not the rect: the harness loads no preflight, so padding would add to a content-box.
-  return parseFloat(getComputedStyle(icon).width);
+  const { width, height } = getComputedStyle(icon);
+  return { width: parseFloat(width), height: parseFloat(height) };
 }
 
 describe('EdgeVideo play button', () => {
   test('shrinks inside a 64px thumbnail so the frame stays visible', async () => {
-    expect(await playButtonWidth(64)).toBe(32);
+    expect(await playButtonSize(64)).toEqual({ width: 32, height: 32 });
   });
 
   test('keeps the full 80px size on a large card', async () => {
-    expect(await playButtonWidth(400)).toBe(80);
+    expect(await playButtonSize(400)).toEqual({ width: 80, height: 80 });
+  });
+
+  test('stays square in a wide, short wrapper', async () => {
+    expect(await playButtonSize(300, 100)).toEqual({ width: 80, height: 80 });
   });
 });

@@ -60,9 +60,11 @@
 
 .playButton {
   // Percentages resolve against the positioned wrapper, so thumbnails under 160px get a
-  // proportionally smaller button instead of one that covers the frame.
+  // proportionally smaller button instead of one that covers the frame. Height follows width so a
+  // wide, short wrapper can't stretch it into an oval.
   width: min(80px, 50%);
-  height: min(80px, 50%);
+  height: auto;
+  aspect-ratio: 1;
   color: var(--mantine-color-white);
   background-color: rgba(0, 0, 0, 0.6);
   padding: min(20px, 12.5%);
