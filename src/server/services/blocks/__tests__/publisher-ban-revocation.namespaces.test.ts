@@ -505,8 +505,9 @@ describe('canonicallyOwnedAppBlock is resolveCanonicalListingOwner, branch for b
  */
 describe('the blockInstanceId MINT-SITE ledger', () => {
   const MINT_SITE_LEDGER: Record<string, string> = {
-    'src/pages/apps/dev/[blockId].tsx':
-      'CLIENT-SIDE construction of `page_<appBlockId>` for the dev harness. For an ' +
+    'src/components/AppBlocks/DevTunnelBlockHost.tsx':
+      'CLIENT-SIDE construction of `page_<appBlockId>` for the dev harness ' +
+      '(mounted by `/apps/dev/[blockId]`). For an ' +
       'EPHEMERAL app `appBlockId` IS `ephemeral-<slug>`, so this is where ' +
       '`page_ephemeral-<slug>` is actually built — COVERED via ' +
       'listActiveDevTunnelBlockIds (an ephemeral app has no AppBlock row, so the tunnel ' +
@@ -569,7 +570,7 @@ describe('the blockInstanceId MINT-SITE ledger', () => {
       } else if (
         // 🔴 `.tsx` TOO. This read `.endsWith('.ts')`, and the two REAL constructors of
         // `page_<appBlockId>` — which for an ephemeral app IS `page_ephemeral-<slug>` —
-        // are `src/pages/apps/dev/[blockId].tsx` and
+        // are `src/components/AppBlocks/DevTunnelBlockHost.tsx` and
         // `src/pages/apps/run/[slug]/[[...path]].tsx`. So the shape this PR went to the
         // trouble of covering was minted in a file the ledger's own population excluded:
         // a probe constructing a brand-new shape passed as a `.tsx` while the
