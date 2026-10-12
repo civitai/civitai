@@ -107,7 +107,9 @@ import { NotificationCategory } from '~/server/common/enums';
 import { imageResourcesCache } from '~/server/redis/caches';
 import {
   areCrucibleEntriesClosed,
+  getCrucibleLiveMinVotes,
   getCrucibleMinVotes,
+  getCrucibleTimeAdjustedMinVotes,
   baseModelMakesMediaType,
   getAverageFinishTopPercent,
   getCreatorFinish,
@@ -3332,6 +3334,9 @@ export const getCrucibleMinVotesToPlace = async ({
       textNsfw: true,
       nsfwLevel: true,
       ingestion: true,
+      startAt: true,
+      endAt: true,
+      timeAdjustedPlacement: true,
       image: { select: { ingestion: true } },
     },
   });
@@ -3342,6 +3347,21 @@ export const getCrucibleMinVotesToPlace = async ({
     isCrucibleBlockedForViewer(crucible, viewer)
   )
     throw throwNotFoundError('Crucible not found');
+
+  if (crucible.timeAdjustedPlacement && crucible.endAt) {
+    const entries = await dbRead.crucibleEntry.findMany({
+      where: rankableEntryWhere(crucibleId, crucible.nsfwLevel),
+      select: { voteCount: true, createdAt: true },
+    });
+    return {
+      minVotes: getCrucibleLiveMinVotes({
+        entries,
+        startAt: crucible.startAt,
+        endAt: crucible.endAt,
+        now: new Date(),
+      }),
+    };
+  }
 
   const { _sum, _count } = await dbRead.crucibleEntry.aggregate({
     where: rankableEntryWhere(crucibleId, crucible.nsfwLevel),
@@ -3408,7 +3428,9 @@ export const finalizeCrucible = async (crucibleId: number): Promise<FinalizeCruc
       seededPrizePool: true,
       seedTransactionId: true,
       prizePositions: true,
+      startAt: true,
       endAt: true,
+      timeAdjustedPlacement: true,
       nsfwLevel: true,
       _count: {
         select: { entries: true },
@@ -3551,6 +3573,10 @@ export const finalizeCrucible = async (crucibleId: number): Promise<FinalizeCruc
     redisVoteCounts,
     prizePositions,
     totalPrizePool,
+    timeWindow:
+      crucible.timeAdjustedPlacement && crucible.endAt
+        ? { startAt: crucible.startAt, endAt: crucible.endAt }
+        : null,
   });
   // Written only if no run has written one, under the crucible's row lock: an earlier attempt may
   // have paid part of its ranking before failing, and an overlapping run would pay a second one.
@@ -3741,7 +3767,13 @@ function rankEntries(
     redisVoteCounts,
     prizePositions,
     totalPrizePool,
-  }: PrizeContext & { redisElos: Record<number, number>; redisVoteCounts: Record<number, number> }
+    timeWindow,
+  }: PrizeContext & {
+    redisElos: Record<number, number>;
+    redisVoteCounts: Record<number, number>;
+    /** Set for crucibles whose placement bar follows the time each entry was live. */
+    timeWindow: { startAt: Date | null; endAt: Date } | null;
+  }
 ): FinalizedEntry[] {
   // Redis can lose a crucible's hashes (a reset or redeploy); the last sync is the fallback.
   const entriesWithElo = entries.map((entry) => ({
@@ -3752,17 +3784,20 @@ function rankEntries(
     createdAt: entry.createdAt,
   }));
 
+  const minVotesByEntry = timeWindow
+    ? getCrucibleTimeAdjustedMinVotes(entriesWithElo, timeWindow)
+    : null;
   const minVotes = getCrucibleMinVotes({
     totalVotes: entriesWithElo.reduce((sum, entry) => sum + entry.voteCount, 0),
     entryCount: entriesWithElo.length,
   });
+  const isPlaced = (entry: (typeof entriesWithElo)[number], index: number) =>
+    entry.voteCount >= (minVotesByEntry?.[index] ?? minVotes);
   const byScoreThenEntryTime = (a: (typeof entriesWithElo)[number], b: typeof a) =>
     b.finalScore - a.finalScore || a.createdAt.getTime() - b.createdAt.getTime();
-  const placedEntries = entriesWithElo
-    .filter((entry) => entry.voteCount >= minVotes)
-    .sort(byScoreThenEntryTime);
+  const placedEntries = entriesWithElo.filter(isPlaced).sort(byScoreThenEntryTime);
   const unplacedEntries = entriesWithElo
-    .filter((entry) => entry.voteCount < minVotes)
+    .filter((entry, index) => !isPlaced(entry, index))
     .sort(byScoreThenEntryTime);
 
   return withPrizes(

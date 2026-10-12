@@ -9404,6 +9404,9 @@ model Crucible {
   scannedAt         DateTime?
   // The scan found the text adult: list surfaces show it only to viewers who browse R or above.
   textNsfw          Boolean        @default(false)
+  // Placement bar scaled to the time each entry was live. Rows from before it keep the old bar
+  // (the migration backfills false); new rows default to true.
+  timeAdjustedPlacement Boolean    @default(true)
 
   entries     CrucibleEntry[]
   reports     CrucibleReport[]
