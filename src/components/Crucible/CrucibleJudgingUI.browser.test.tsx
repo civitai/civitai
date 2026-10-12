@@ -248,6 +248,8 @@ for (const type of [
 // registration order, so this still runs BEFORE unmount — unchanged from the per-describe form.
 afterEach(() => vi.restoreAllMocks());
 
+let previousIsAuthed: typeof window.isAuthed;
+
 beforeEach(() => {
   playheads.clear();
   clipDurations.clear();
@@ -255,7 +257,12 @@ beforeEach(() => {
   lastVideoProps.clear();
   myReactions.clear();
   reactionToggle.mockClear();
+  previousIsAuthed = window.isAuthed;
   window.isAuthed = true;
+});
+
+afterEach(() => {
+  window.isAuthed = previousIsAuthed;
 });
 
 describe('CrucibleJudgingUI — minimum view time', () => {
