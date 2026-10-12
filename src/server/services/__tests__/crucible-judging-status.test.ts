@@ -88,7 +88,16 @@ describe('countJudgingPairs', () => {
 
     expect(before.remainingPairs - after.remainingPairs).toBeGreaterThan(1);
     expect(after.totalPairs).toBe(before.totalPairs);
-    expect(after.judgedPairs).toBeLessThanOrEqual(after.totalPairs);
+  });
+
+  it('never reports fewer total pairs than the judge already voted', async () => {
+    queryRaw.mockResolvedValue(entries({ 1: [10, 11] }));
+    // Three voted keys among two visible ids can't happen for real; the clamp still holds.
+    judgeState({ 1: { voted: ['10:11', '11:10', '10:10'], votes: { 10: 3, 11: 3 } } });
+
+    const counts = await countJudgingPairs({ crucibleIds: [1], userId: JUDGE, viewerLevel: 1 });
+
+    expect(counts.get(1)).toMatchObject({ judgedPairs: 3, totalPairs: 3 });
   });
 
   it('answers a crucible with no visible entries', async () => {

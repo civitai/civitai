@@ -166,9 +166,7 @@ describe('countTotalPairs', () => {
     const after = { votes: { 1: 1, 2: 4, 3: 4, 4: CAP }, voted: ['1:2'] };
     // Entry 4 is already an anchor and 2:3 run low, so one vote removes two pairs from the count.
     expect(count(entryIds, before) - count(entryIds, after)).toBeGreaterThan(1);
-    expect(countTotalPairs({ entryCount: 4, judgedPairs: 0, maxVotesPerEntry: CAP })).toBe(
-      countTotalPairs({ entryCount: 4, judgedPairs: 1, maxVotesPerEntry: CAP })
-    );
+    expect(countTotalPairs({ entryCount: 4, judgedPairs: 1, maxVotesPerEntry: CAP })).toBe(6);
   });
 
   it('grows when an entry is added and shrinks when one is hidden', () => {
