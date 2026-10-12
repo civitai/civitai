@@ -122,7 +122,7 @@ const cases: [file: string, start: string, call: string, times: number][] = [
   [
     'src/server/controllers/model-version.controller.ts',
     'export const publishModelVersionHandler',
-    'await unpublishLiveModelForLiteralRules({ modelId: version.modelId, ...literalHold })',
+    'await unpublishLiveModelForLiteralRules({',
     1,
   ],
   [

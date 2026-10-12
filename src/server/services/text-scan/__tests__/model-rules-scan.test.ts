@@ -233,7 +233,6 @@ describe('handleTextScanCallback — ModelRules', () => {
     vi.mocked(getModelRuleSnapshots).mockImplementation(async (ids) =>
       ids.map((id) => ({ id, subject: `S${id}`, description: '', aliases: [] }))
     );
-    vi.mocked(getWorkflow).mockResolvedValue(workflow({ modelRules: { matched: [] } }) as any);
     const withLiteral = { ...metadata, literalRuleIds: [8, 42] };
     vi.mocked(getWorkflow).mockResolvedValue({
       data: { ...workflow({ modelRules: { matched: [] } }).data, metadata: withLiteral },

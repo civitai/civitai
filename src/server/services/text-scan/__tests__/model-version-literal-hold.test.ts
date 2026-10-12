@@ -157,6 +157,11 @@ describe('publishModelVersionHandler — Model rules literal hit on a live model
     expect(unpublishLiveModelForLiteralRules).not.toHaveBeenCalled();
   });
 
+  it('counts a Scheduled model as live', async () => {
+    await call({ model: { status: 'Scheduled' } });
+    expect(checkModelRulesLiteralHold).toHaveBeenCalledTimes(1);
+  });
+
   it.each(['Draft', 'Unpublished'])(
     'leaves a model that is not public (%s) to the model-level hold',
     async (status) => {
