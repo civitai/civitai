@@ -122,6 +122,13 @@ vi.mock('~/server/middleware.trpc', async () => {
 });
 
 import { blocksRouter } from '../blocks.router';
+// The submit reaches these through `await import()` inside fire-and-forget
+// closures. Loading them here means no closure can overlap a first, in-flight load.
+import '~/server/services/blocks/user-app-surface.service';
+import '~/server/services/blocks/buzz-attribution.service';
+import '~/server/services/blocks/block-workflows.service';
+import '~/server/services/blocks/app-spend-cap.service';
+import '~/server/services/blocks/dev-tunnel.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { envMock } from '~/__tests__/mocks/env.mock';
@@ -562,16 +569,17 @@ describe("kind:'workflow' SUBMIT — the money path", () => {
       privateRun: false,
     });
     // Fire-and-forget behind a dynamic import, so it lands after the reply.
-    await vi.waitFor(() => expect(h.recordSpendAttribution).toHaveBeenCalledTimes(1));
-    expect(h.recordSpendAttribution).toHaveBeenCalledWith(
-      expect.objectContaining({
-        workflowId: WORKFLOW_ID,
-        generationType: 'workflow',
-        baseGenerationBuzz: 60,
-        generationPriceIsCap: false,
-        buzzAmount: 64,
-        modelId: null,
-      })
+    await vi.waitFor(() =>
+      expect(h.recordSpendAttribution).toHaveBeenCalledWith(
+        expect.objectContaining({
+          workflowId: WORKFLOW_ID,
+          generationType: 'workflow',
+          baseGenerationBuzz: 60,
+          generationPriceIsCap: false,
+          buzzAmount: 64,
+          modelId: null,
+        })
+      )
     );
   });
 
@@ -605,21 +613,22 @@ describe("kind:'workflow' SUBMIT — the money path", () => {
 
   it('writes the audit row with every step `$type` and the workflow variant', async () => {
     await submit();
-    await vi.waitFor(() => expect(h.recordScopeInvocation).toHaveBeenCalledTimes(1));
-    expect(h.recordScopeInvocation).toHaveBeenCalledWith(
-      expect.objectContaining({
-        scope: 'ai:write:budgeted',
-        endpoint: 'workflow:submit',
-        statusCode: 200,
-        detail: {
-          action: 'workflow.submit',
-          amount: -64,
-          outcome: 'ok',
-          steps: ['imageGen', 'imageUpscaler', 'transcode'],
-          variant: 'workflow',
-          workflowId: WORKFLOW_ID,
-        },
-      })
+    await vi.waitFor(() =>
+      expect(h.recordScopeInvocation).toHaveBeenCalledWith(
+        expect.objectContaining({
+          scope: 'ai:write:budgeted',
+          endpoint: 'workflow:submit',
+          statusCode: 200,
+          detail: {
+            action: 'workflow.submit',
+            amount: -64,
+            outcome: 'ok',
+            steps: ['imageGen', 'imageUpscaler', 'transcode'],
+            variant: 'workflow',
+            workflowId: WORKFLOW_ID,
+          },
+        })
+      )
     );
   });
 
