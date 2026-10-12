@@ -279,8 +279,7 @@ export const computePackOwnershipDiscount = ({
  *
  * The buyer is neither charged for it, paid for it, nor granted it — charging
  * and then paying them back through the bank would cost them the platform's cut
- * to buy their own work. Bought on its own, a creator's cosmetic is refused unless
- * it is a sticker restock (see purchaseCosmeticShopItem). The charge and the grant derive from here; while
+ * to buy their own work. The charge and the grant derive from here; while
  * the grant read its own rule, a subtracted member was still granted, and a pack
  * of the buyer's own uncapped stickers minted free top-ups indefinitely.
  *

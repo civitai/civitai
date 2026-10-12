@@ -2259,8 +2259,10 @@ export const takedownCosmeticShopItem = async ({
     // Sales made since the payout-recording migration carry exactly who was paid
     // what, in which color — reverse those verbatim, refunding the payout
     // transaction itself where its id was recorded.
+    // An empty list is a record too: a creator restocking their own sticker is
+    // paid nothing, and must not be charged back a re-derived share.
     const recordedPayouts = (purchase.meta as CosmeticPurchaseMeta | null)?.payouts;
-    if (recordedPayouts?.length) {
+    if (recordedPayouts) {
       for (const payout of recordedPayouts) {
         if (payout.amount <= 0) continue;
         if (payout.transactionId)

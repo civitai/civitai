@@ -125,8 +125,6 @@ describe('getStickerOffers', () => {
 
   // Each of these is a refusal `purchaseCosmeticShopItem` makes. Offering a
   // price it would reject is the one thing this function must not do.
-  // The maker's approval grant is a finite batch, so once it is spent they
-  // restock the same way anyone else does.
   it('offers the listing to the sticker maker too', async () => {
     mocks.cosmeticFindMany.mockResolvedValue([cosmeticRow(undefined, VIEWER_ID)]);
     const [offer] = await offers();

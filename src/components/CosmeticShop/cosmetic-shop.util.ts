@@ -191,6 +191,7 @@ export const useMutateCosmeticShop = () => {
     await queryUtils.creatorShop.getPack.invalidate();
     await queryUtils.userProfile.get.invalidate();
     await queryUtils.user.getCosmetics.invalidate();
+    await queryUtils.cosmetic.getStickerBalances.invalidate();
     // An event hat bought from its event page shows up in "Your hats" there.
     await queryUtils.event.getMyHats.invalidate();
     if (currentUser?.id) {

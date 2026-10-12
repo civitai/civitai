@@ -770,8 +770,6 @@ describe('purchaseCosmeticShopItem repeat purchases', () => {
   });
 });
 
-// A creator's approval grant of their own sticker is finite, so they can run out
-// and must be able to buy more, as the comment picker's top-up already lets them.
 describe('purchaseCosmeticShopItem creator restocking their own sticker', () => {
   beforeEach(() => {
     Object.values(mocks).forEach((m) => m.mockReset());
@@ -833,12 +831,29 @@ describe('purchaseCosmeticShopItem creator restocking their own sticker', () => 
     );
   });
 
-  it('still refuses a creator their own badge', async () => {
-    mocks.shopItemFindUnique.mockResolvedValue(shopItemRow({ createdById: BUYER_ID }));
+  // No holding is found, so only the creator gate can refuse: the single-ownership
+  // check further down would otherwise throw the same message for a badge.
+  it.each(['Badge', 'ContentDecoration'])('still refuses a creator their own %s', async (type) => {
+    mocks.userCosmeticFindFirst.mockResolvedValue(null);
+    mocks.shopItemFindUnique.mockResolvedValue(shopItemRow({ type, createdById: BUYER_ID }));
 
     await expect(
       purchaseCosmeticShopItem({ userId: BUYER_ID, shopItemId: SHOP_ITEM_ID })
     ).rejects.toThrow('You already own this cosmetic');
+    expect(mocks.createMultiTx).not.toHaveBeenCalled();
+  });
+
+  it('refuses a creator whose own sticker grant is unlimited', async () => {
+    ownSticker();
+    mocks.userCosmeticFindFirst.mockResolvedValue({ claimKey: 'creator-shop' });
+
+    await expect(
+      purchaseCosmeticShopItem({
+        userId: BUYER_ID,
+        shopItemId: SHOP_ITEM_ID,
+        stickersEnabled: true,
+      })
+    ).rejects.toThrow('unlimited uses');
     expect(mocks.createMultiTx).not.toHaveBeenCalled();
   });
 });

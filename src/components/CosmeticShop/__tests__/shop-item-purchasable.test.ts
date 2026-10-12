@@ -13,8 +13,6 @@ describe('canPurchaseShopCosmetic', () => {
     ).toBe(true);
   });
 
-  // A creator holds their own sticker from approval; once those uses are spent,
-  // holding it must not hide the Purchase button.
   it.each([0, 12])('sells another batch of a sticker held with %i uses left', (remaining) => {
     expect(
       canPurchaseShopCosmetic({
