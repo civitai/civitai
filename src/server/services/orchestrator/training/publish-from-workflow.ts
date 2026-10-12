@@ -31,6 +31,7 @@ import {
 } from '~/utils/training';
 import type { BaseModel } from '~/shared/constants/basemodel.constants';
 import {
+  ModelFileVisibility,
   ModelStatus,
   ModelType,
   ModelUploadType,
@@ -385,11 +386,14 @@ export async function createDraftModelFromWorkflow({
     trainingDetails,
   });
 
+  // Not a dataset (the studio uploads blobs, never a zip): this row only carries the run's results
+  // for the epoch picker and training readers. Private keeps it off the public files list.
   await createFile({
     name: `${modelVersion.id}_training_data.zip`,
     url: selectedEpoch.modelUrl,
     sizeKB: 0,
     type: 'Training Data',
+    visibility: ModelFileVisibility.Private,
     modelVersionId: modelVersion.id,
     metadata: {
       trainingResults,
