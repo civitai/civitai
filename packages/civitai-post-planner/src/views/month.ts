@@ -85,6 +85,11 @@ function renderCell(day: CalendarDay, posts: PlannerPost[], props: MonthProps): 
     <div
       class=${classes}
       role="gridcell"
+      aria-label=${dayStart(day.key).toLocaleDateString(undefined, {
+        weekday: 'long',
+        month: 'long',
+        day: 'numeric',
+      })}
       @dragover=${(e: DragEvent) => actions.onDragOver(day.key, e)}
       @dragleave=${() => actions.onDragLeave(day.key)}
       @drop=${(e: DragEvent) => actions.onDrop(day.key, e)}

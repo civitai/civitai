@@ -14,7 +14,8 @@
   },
   "scripts": {
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "test:browser": "vitest run --config vitest.browser.config.ts"
   },
   "dependencies": {
     "@civitai/components": "0.9.2",
@@ -31,6 +32,7 @@
     }
   },
   "devDependencies": {
+    "@vitest/browser-playwright": "4.1.11",
     "vitest": "^4.1.11"
   }
 }

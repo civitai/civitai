@@ -13,12 +13,12 @@ Done when: Phase 1 is merged and switched on for creators, or Justin decides not
 
 ## 1. State of play (2026-10-06)
 
-| Phase | Scope                                                     | State                                                                                                                                                                                                                  |
-| ----- | --------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 0     | Fix stale image `sortAt` on reschedule                    | **Fixed on main** since June (`820f4ecedc`, `b5f8f4047d`): `updatePost` → `afterPostPublish` reindexes the post's images. Bug ticket 868k68g0z is still `pending review`; needs a prod verification query and closing. |
-| 1     | Batch composer in the main app, behind a flag             | **Not started.** Technical plan ready; no code.                                                                                                                                                                        |
-| 2     | Planner (calendar of scheduled posts, drag to reschedule) | **First pass exists**, built by the foreman agent in Creator Studio, uncommitted, reviewed below. Ships as a Web Component in both apps (decided 2026-10-06; see the element plan).                                    |
-| 3     | Saved presets                                             | Not started; Phase 1 leaves hooks (UX plan §5).                                                                                                                                                                        |
+| Phase | Scope                                                     | State                                                                                                                                                                                                                           |
+| ----- | --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0     | Fix stale image `sortAt` on reschedule                    | **Fixed on main** since June (`820f4ecedc`, `b5f8f4047d`): `updatePost` → `afterPostPublish` reindexes the post's images. Bug ticket 868k68g0z is still `pending review`; needs a prod verification query and closing.          |
+| 1     | Batch composer in the main app, behind a flag             | **Not started.** Technical plan ready; no code.                                                                                                                                                                                 |
+| 2     | Planner (calendar of scheduled posts, drag to reschedule) | **First pass exists**, built by the foreman agent in Creator Studio, uncommitted, reviewed below. Ships as a Web Component in both apps (decided 2026-10-06; see the element plan).                                             |
+| 3     | Saved presets                                             | **Built on the feature branch** behind `postPresets` (`post-presets`): `PostPreset` table (migration applied by hand), `postPreset` router, composer select + save modal, post editor "Apply preset" (tags, tools, techniques). |
 
 The first pass was built out of order: the agent that ran on the feature request built Phase 2 before
 Phase 1 existed, in Creator Studio, on a `main` from 2026-10-02. It lives in the worktree
@@ -142,15 +142,20 @@ jitter, never :00.
   lists, the full-detail drawer with a lightbox, blur/unblur controls, drag-with-undo and keyboard
   nudge, select mode with the bulk bar, filters, quick-add, the `/calendar` route as a thin host, and
   the `routes/api/planner/*` proxy routes; release posts amber and excluded from bulk moves.
-- PR G, the element: Week and Day as hour grids with drag-to-time, the Shift ± dialog and
-  move-to-day, a compact phone toolbar, the file split, browser-mode tests.
+- PR G, the element: Week and Day as hour grids (6 AM – 2 AM band with `Show all hours`,
+  drop-to-time snapped to five minutes, colliding chips side by side), the Shift ± dialog with a
+  local conflict preview over the shared validator, Move to day… as one reschedule per post, the
+  two-row phone toolbar with a Filters panel, and browser-mode tests for the interactions
+  (`pnpm --filter @civitai/post-planner test:browser`; not yet in a CI job).
 - PR H, main app: the `/user/schedule` host page over the planner REST twins, the posts tab's "Open
   planner" entry, the composer's "Open calendar" CTA. Still open: a Creator Studio dashboard tile.
 - Bulk publish-now and drafts on the calendar come later.
 
-**Phase 3 — presets** (~1 week, migration applied by hand): named presets of resources, tools,
-techniques, tags, title template; used in the composer and the post editor. Phase 1 ships the hooks
-(UX plan §5) and a localStorage "use last settings" to measure demand first.
+**Phase 3 — presets** (built; migration applied by hand): named presets of resources, tools,
+techniques, tags, title template; used in the composer and the post editor. The composer applies
+all five; the post editor applies tags, tools and techniques (resources stay per image). Up to 20
+per user, names unique per user. The localStorage "use last settings" from Phase 1 stays as the
+zero-setup path.
 
 ## 5. Open items with closing conditions
 

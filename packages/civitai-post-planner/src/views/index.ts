@@ -1,9 +1,11 @@
 import { css, html, type TemplateResult } from 'lit';
 import type { PlannerLocation, PlannerPost } from '../host';
-import { addDays, monthGrid, weekDays } from '../model/calendar';
+import { addDays, monthGrid } from '../model/calendar';
 import type { PostContext } from '../parts/props';
+import { renderDay } from './day';
 import { renderList } from './list';
 import { renderMonth } from './month';
+import { renderWeek } from './week';
 
 export interface ViewProps {
   loc: PlannerLocation;
@@ -14,7 +16,9 @@ export interface ViewProps {
   loaded: boolean;
   posts: PlannerPost[];
   cap: number;
+  allHours: boolean;
   dragOver: string | null;
+  dragAt: Date | null;
   context: PostContext;
 }
 
@@ -46,9 +50,9 @@ export function renderView(props: ViewProps): TemplateResult {
     case 'month':
       return renderMonth(props);
     case 'week':
-      return list(weekDays(loc.anchor, today).map((d) => d.key));
+      return renderWeek(props);
     case 'day':
-      return list([loc.anchor]);
+      return renderDay(props);
     case 'agenda':
       return list(
         Array.from({ length: 42 }, (_, i) => addDays(loc.anchor, i)),

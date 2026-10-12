@@ -213,19 +213,28 @@ packages/civitai-post-planner/
   package.json         @civitai/post-planner; deps lit, @civitai/components, @civitai/shared;
                        exports ".", "./define", "./react", "./host", "./contract"
   src/
-    civitai-post-planner.ts        the element (CivitaiElement subclass); one file until PR G splits
-                                   it into views/ and parts/
+    civitai-post-planner.ts        the element (CivitaiElement subclass): state, the backend calls,
+                                   and the `PlannerActions` it hands to every render function
     define.ts                      defineElement('civitai-post-planner', …)
     host.ts                        PlannerHost / PlannerBackend / PlannerLocation, hostLink
     contract.ts (+ test)           the REST wire contract: action table, request/response types,
                                    createPlannerBackend — shared by the main-app route, the Studio
                                    proxy and any HTTP host
     react.ts                       @lit/react createComponent binding
-    styles.ts                      the element's stylesheet on @civitai/theme tokens
-    parts/media.ts                 blur rule, thumbnails, icons
-    model/calendar.ts (+ test)     pure helpers: local-day bucketing, visible range per view,
-                                   density default, snapping
-  vitest.config.ts                 picked up by the root config's packages/*/vitest.config.ts glob
+    styles.ts                      the element's base stylesheet on @civitai/theme tokens
+    views/                         index (view switch), month, hour-grid (shared by day and week),
+                                   list (agenda and the narrow-screen month)
+    parts/                         plain render functions taking props + actions: toolbar, legend,
+                                   chip, row, drawer, media-strip, lightbox, bulk-bar, shift-dialog
+                                   (Shift ± and Move to day…), notices, media (blur rule, icons)
+    model/                         pure helpers with node tests: calendar (days, ranges, snapping,
+                                   density default), hour-grid (band, time↔pixel, lanes), posts
+                                   (filters, counts, the move validator), bulk (shift / move-to-day
+                                   previews), messages (copy built from data)
+    __tests__/planner.browser.test.ts  browser-mode tests against a fake PlannerHost
+  vitest.config.ts                 node tests; picked up by the root config's packages/*/vitest.config.ts
+                                   glob (a `projects` list in this file is ignored by that glob)
+  vitest.browser.config.ts         the browser project, run on its own (below)
 ```
 
 - Raw TypeScript like every other `@civitai/*` package: Next's `transpilePackages` and Creator Studio's
@@ -234,8 +243,11 @@ packages/civitai-post-planner/
   `@civitai/theme` come with them. Lock the components version; the elements manifest changing is a
   visible diff in the lockfile, not a CDN surprise.
 - Pure helpers run under `test:packages:run`. Browser-mode tests for the element's interactions
-  (drag, keyboard nudge, select mode, lightbox, undo, the narrow-screen list) reuse the main app's
-  `test:component` project pattern and land with PR G; until then those paths are checked by hand.
+  (month drag, hour-grid drop-to-time, keyboard nudge, lightbox paging, undo, the narrow-screen
+  list, the Shift ± preview and apply, Move to day…) run in real Chromium like the main app's
+  `component` project: `pnpm --filter @civitai/post-planner test:browser`. They are not in a CI job
+  yet: the packages job installs no Chromium, which is why the browser project lives in its own
+  config rather than beside the node one.
 
 ## 6. What carries over from the first pass
 
@@ -263,9 +275,19 @@ Phase 1 (composer) is unchanged. Phase 2, four PRs on `main`, each flag-dark:
   mode with the bulk bar (±1 day, +1 week, unschedule), model and status filters, quick-add, the
   loading state and the `truncated` notice, Creator Studio route and `routes/api/planner/*`. Replaces
   the first pass's page.
-- **PR G — hour grids and polish** (~800 LOC). Week and Day as hour grids with drag-to-time, the
-  `Shift ±` dialog and `Move to day…`, a compact phone toolbar, the file split into views/ and parts/,
-  browser-mode tests for the interactions.
+- **PR G — hour grids and polish** (as built). Week and Day as hour grids: one column per local
+  day, 6 AM to 2 AM by default with a `Show all hours` toggle that names how many posts it hides,
+  chips placed by time, a drop line with the five-minute-snapped time under the pointer, colliding
+  chips laned side by side, a now line, the same chip as the month (thumbnail + time once a column
+  is narrow). Every move still passes `moveIssues` before a call, and a release drop still opens
+  the drawer. Select mode: `Shift ±…` opens `[−][ 1 ][+] [days|hours]` with a preview
+  (`Oct 7–9 → Oct 8–10 · N conflicts`) computed locally with the shared validator against the
+  loaded range, then `backend.shift`; `Move to day…` picks a date and moves each selected post
+  keeping its time of day as one `reschedule` per post (the shift endpoint takes one delta for all),
+  validated as a batch first and summarised in one notice. Release posts stay excluded with the
+  notice. Phone toolbar: the switcher on its own row, then `‹ Today ›`, the compact range, a
+  `Filters` button and `Select`; the filters, model select, Show mature and the legend sit in a
+  panel behind that button. Browser-mode tests as in §5.
 - **PR H — main-app host** (~250 LOC). `/user/schedule` with the React binding, `data-theme` sync, the
   posts-tab "Open planner" entry, the composer success CTA, the Creator Studio dashboard tile. Measure
   the bundle on this route before widening the flag.

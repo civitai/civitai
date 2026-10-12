@@ -14,22 +14,15 @@ export function renderBulkBar({ selectedIds, actions }: BulkBarProps): TemplateR
       size="sm"
       variant="outline"
       ?disabled=${count === 0}
-      @click=${() => actions.shiftSelected(-1440)}
-      >−1 day</civitai-button
+      @click=${() => actions.openShiftDialog()}
+      >Shift ±…</civitai-button
     >
     <civitai-button
       size="sm"
       variant="outline"
       ?disabled=${count === 0}
-      @click=${() => actions.shiftSelected(1440)}
-      >+1 day</civitai-button
-    >
-    <civitai-button
-      size="sm"
-      variant="outline"
-      ?disabled=${count === 0}
-      @click=${() => actions.shiftSelected(7 * 1440)}
-      >+1 week</civitai-button
+      @click=${() => actions.openMoveDialog()}
+      >Move to day…</civitai-button
     >
     <civitai-button
       size="sm"
@@ -37,7 +30,7 @@ export function renderBulkBar({ selectedIds, actions }: BulkBarProps): TemplateR
       color="error"
       ?disabled=${count === 0}
       @click=${() => actions.unschedule([...selectedIds])}
-      >Unschedule</civitai-button
+      >Unschedule to drafts</civitai-button
     >
     <civitai-button size="sm" variant="subtle" @click=${() => actions.clearSelection()}
       >Clear</civitai-button

@@ -178,23 +178,39 @@ export function formatDateTime(date: Date, locale?: string): string {
   return date.toLocaleString(locale, { dateStyle: 'medium', timeStyle: 'short' });
 }
 
-export function formatRangeLabel(view: PlannerView, anchor: string, locale?: string): string {
+export function formatRangeLabel(
+  view: PlannerView,
+  anchor: string,
+  locale?: string,
+  opts: { compact?: boolean } = {}
+): string {
   const start = dayStart(anchor);
   switch (view) {
     case 'month':
-      return start.toLocaleDateString(locale, { month: 'long', year: 'numeric' });
-    case 'day':
       return start.toLocaleDateString(locale, {
-        weekday: 'long',
-        month: 'long',
-        day: 'numeric',
+        month: opts.compact ? 'short' : 'long',
         year: 'numeric',
       });
+    case 'day':
+      return opts.compact
+        ? start.toLocaleDateString(locale, { weekday: 'short', month: 'short', day: 'numeric' })
+        : start.toLocaleDateString(locale, {
+            weekday: 'long',
+            month: 'long',
+            day: 'numeric',
+            year: 'numeric',
+          });
     case 'week': {
       const first = dayStart(weekStart(anchor));
       const last = dayStart(addDays(weekStart(anchor), 6));
       const sameMonth = first.getMonth() === last.getMonth();
       const a = first.toLocaleDateString(locale, { month: 'short', day: 'numeric' });
+      if (opts.compact) {
+        const b = sameMonth
+          ? String(last.getDate())
+          : last.toLocaleDateString(locale, { month: 'short', day: 'numeric' });
+        return `${a} – ${b}`;
+      }
       const b = sameMonth
         ? `${last.getDate()}, ${last.getFullYear()}`
         : last.toLocaleDateString(locale, { month: 'short', day: 'numeric', year: 'numeric' });

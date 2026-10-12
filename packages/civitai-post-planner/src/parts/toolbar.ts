@@ -4,6 +4,7 @@ import { css, html, nothing, type TemplateResult } from 'lit';
 import type { PlannerHost, PlannerLocation, PlannerView } from '../host';
 import { formatRangeLabel, stepAnchor } from '../model/calendar';
 import type { Filters } from '../model/posts';
+import { renderLegend } from './legend';
 import type { PlannerActions } from './props';
 
 const VIEWS: { value: PlannerView; label: string }[] = [
@@ -12,6 +13,8 @@ const VIEWS: { value: PlannerView; label: string }[] = [
   { value: 'month', label: 'Month' },
   { value: 'agenda', label: 'Agenda' },
 ];
+
+const DEFAULT_FILTERS: Filters = { scheduled: true, published: false, releases: true };
 
 export interface ToolbarProps {
   host: PlannerHost;
@@ -22,98 +25,150 @@ export interface ToolbarProps {
   showMature: boolean;
   hasMature: boolean;
   selectMode: boolean;
+  narrow: boolean;
+  filtersOpen: boolean;
   modelOptions: { value: string; label: string }[];
   actions: PlannerActions;
 }
 
 export function renderToolbar(props: ToolbarProps): TemplateResult {
-  const { host, loc, filters, actions } = props;
-  const todayLoc = { ...loc, anchor: props.today };
-  const prevLoc = { ...loc, anchor: stepAnchor(loc.view, loc.anchor, -1) };
-  const nextLoc = { ...loc, anchor: stepAnchor(loc.view, loc.anchor, 1) };
+  return props.narrow ? renderNarrowToolbar(props) : renderWideToolbar(props);
+}
+
+function renderWideToolbar(props: ToolbarProps): TemplateResult {
   return html`
     <div class="toolbar">
-      <civitai-segmented-control
-        aria-label="View"
-        size="sm"
-        .data=${VIEWS}
-        .value=${loc.view}
-        @change=${(e: Event) => {
-          const view = (e.target as CivitaiSegmentedControl).value as PlannerView;
-          if (view && view !== loc.view) actions.navigate({ ...loc, view });
-        }}
-      ></civitai-segmented-control>
-      <civitai-button-group>
-        <civitai-button
-          variant="outline"
-          size="sm"
-          href=${host.hrefFor(prevLoc)}
-          @click=${(e: Event) => actions.link(e, prevLoc)}
-          aria-label="Previous"
-          >‹</civitai-button
-        >
-        <civitai-button
-          variant="outline"
-          size="sm"
-          href=${host.hrefFor(todayLoc)}
-          @click=${(e: Event) => actions.link(e, todayLoc)}
-          >Today</civitai-button
-        >
-        <civitai-button
-          variant="outline"
-          size="sm"
-          href=${host.hrefFor(nextLoc)}
-          @click=${(e: Event) => actions.link(e, nextLoc)}
-          aria-label="Next"
-          >›</civitai-button
-        >
-      </civitai-button-group>
+      ${renderViewSwitcher(props)} ${renderNav(props)}
       <span class="range"
-        >${formatRangeLabel(loc.view, loc.anchor)}${props.loading
-          ? html` <civitai-loader size="sm" label="Loading"></civitai-loader>`
-          : nothing}</span
+        >${formatRangeLabel(props.loc.view, props.loc.anchor)}${renderLoader(props)}</span
       >
       <span class="spacer"></span>
       ${renderModelFilter(props)}
-      <div class="filters">
-        <civitai-checkbox
-          label="Scheduled"
-          size="sm"
-          .checked=${filters.scheduled}
-          @change=${(e: Event) =>
-            actions.setFilters({ scheduled: (e.target as HTMLInputElement).checked })}
-        ></civitai-checkbox>
-        <civitai-checkbox
-          label="Published"
-          size="sm"
-          .checked=${filters.published}
-          @change=${(e: Event) =>
-            actions.setFilters({ published: (e.target as HTMLInputElement).checked })}
-        ></civitai-checkbox>
-        <civitai-checkbox
-          label="Releases"
-          size="sm"
-          .checked=${filters.releases}
-          @change=${(e: Event) =>
-            actions.setFilters({ releases: (e.target as HTMLInputElement).checked })}
-        ></civitai-checkbox>
-      </div>
-      ${props.hasMature
-        ? html`<civitai-switch
-            label="Show mature"
-            size="sm"
-            .checked=${props.showMature}
-            @change=${(e: Event) => actions.setShowMature((e.target as HTMLInputElement).checked)}
-          ></civitai-switch>`
-        : nothing}
-      <civitai-button
-        variant=${props.selectMode ? 'light' : 'outline'}
-        size="sm"
-        @click=${() => actions.toggleSelectMode()}
-        >${props.selectMode ? 'Done' : 'Select'}</civitai-button
-      >
+      <div class="filters">${renderStatusFilters(props)}</div>
+      ${renderMatureToggle(props)} ${renderSelectToggle(props)}
     </div>
   `;
+}
+
+function renderNarrowToolbar(props: ToolbarProps): TemplateResult {
+  const active = activeFilterCount(props);
+  return html`
+    <div class="toolbar narrow">
+      <div class="view-row">
+        ${renderViewSwitcher(props)}
+        <span class="range"
+          >${formatRangeLabel(props.loc.view, props.loc.anchor, undefined, {
+            compact: true,
+          })}${renderLoader(props)}</span
+        >
+      </div>
+      <div class="nav-row">
+        ${renderNav(props)}
+        <span class="spacer"></span>
+        <civitai-button
+          variant=${props.filtersOpen || active ? 'light' : 'outline'}
+          size="sm"
+          aria-expanded=${props.filtersOpen ? 'true' : 'false'}
+          @click=${() => props.actions.toggleFilters()}
+          >Filters${active ? ` · ${active}` : ''}</civitai-button
+        >
+        ${renderSelectToggle(props)}
+      </div>
+      ${props.filtersOpen
+        ? html`<div class="filters-panel">
+            ${renderModelFilter(props)}
+            <div class="filters">${renderStatusFilters(props)}</div>
+            ${renderMatureToggle(props)} ${renderLegend()}
+          </div>`
+        : nothing}
+    </div>
+  `;
+}
+
+function activeFilterCount({ filters, loc }: ToolbarProps): number {
+  const changed = (Object.keys(DEFAULT_FILTERS) as (keyof Filters)[]).filter(
+    (key) => filters[key] !== DEFAULT_FILTERS[key]
+  ).length;
+  return changed + (loc.modelVersionId ? 1 : 0);
+}
+
+function renderViewSwitcher({ loc, actions }: ToolbarProps): TemplateResult {
+  return html`<civitai-segmented-control
+    aria-label="View"
+    size="sm"
+    .data=${VIEWS}
+    .value=${loc.view}
+    @change=${(e: Event) => {
+      const view = (e.target as CivitaiSegmentedControl).value as PlannerView;
+      if (view && view !== loc.view) actions.navigate({ ...loc, view });
+    }}
+  ></civitai-segmented-control>`;
+}
+
+function renderNav({ host, loc, today, actions }: ToolbarProps): TemplateResult {
+  const todayLoc = { ...loc, anchor: today };
+  const prevLoc = { ...loc, anchor: stepAnchor(loc.view, loc.anchor, -1) };
+  const nextLoc = { ...loc, anchor: stepAnchor(loc.view, loc.anchor, 1) };
+  return html`<civitai-button-group>
+    <civitai-button
+      variant="outline"
+      size="sm"
+      href=${host.hrefFor(prevLoc)}
+      @click=${(e: Event) => actions.link(e, prevLoc)}
+      aria-label="Previous"
+      >‹</civitai-button
+    >
+    <civitai-button
+      variant="outline"
+      size="sm"
+      href=${host.hrefFor(todayLoc)}
+      @click=${(e: Event) => actions.link(e, todayLoc)}
+      >Today</civitai-button
+    >
+    <civitai-button
+      variant="outline"
+      size="sm"
+      href=${host.hrefFor(nextLoc)}
+      @click=${(e: Event) => actions.link(e, nextLoc)}
+      aria-label="Next"
+      >›</civitai-button
+    >
+  </civitai-button-group>`;
+}
+
+function renderLoader({ loading }: ToolbarProps): TemplateResult | typeof nothing {
+  return loading ? html` <civitai-loader size="sm" label="Loading"></civitai-loader>` : nothing;
+}
+
+function renderStatusFilters({ filters, actions }: ToolbarProps): TemplateResult {
+  const checkbox = (key: keyof Filters, label: string) =>
+    html`<civitai-checkbox
+      label=${label}
+      size="sm"
+      .checked=${filters[key]}
+      @change=${(e: Event) => actions.setFilters({ [key]: (e.target as HTMLInputElement).checked })}
+    ></civitai-checkbox>`;
+  return html`${checkbox('scheduled', 'Scheduled')} ${checkbox('published', 'Published')}
+  ${checkbox('releases', 'Releases')}`;
+}
+
+function renderMatureToggle(props: ToolbarProps): TemplateResult | typeof nothing {
+  if (!props.hasMature) return nothing;
+  return html`<civitai-switch
+    label="Show mature"
+    size="sm"
+    .checked=${props.showMature}
+    @change=${(e: Event) => props.actions.setShowMature((e.target as HTMLInputElement).checked)}
+  ></civitai-switch>`;
+}
+
+function renderSelectToggle({ selectMode, actions }: ToolbarProps): TemplateResult {
+  return html`<civitai-button
+    variant=${selectMode ? 'light' : 'outline'}
+    size="sm"
+    @click=${() => actions.toggleSelectMode()}
+    >${selectMode ? 'Done' : 'Select'}</civitai-button
+  >`;
 }
 
 function renderModelFilter({
@@ -155,6 +210,47 @@ export const toolbarStyles = css`
   .filters {
     display: inline-flex;
     align-items: center;
+    flex-wrap: wrap;
     gap: 12px;
+  }
+  .toolbar.narrow {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+  }
+  .view-row,
+  .nav-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+  }
+  .view-row > civitai-segmented-control,
+  .nav-row > civitai-button-group,
+  .nav-row > civitai-button {
+    flex: none;
+  }
+  .toolbar.narrow .range {
+    display: block;
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    text-align: right;
+    font-size: 13px;
+  }
+  .filters-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 10px 12px;
+    border-radius: var(--civitai-radius);
+    background: var(--civitai-color-surface-2);
+    border: 1px solid var(--civitai-color-border);
+  }
+  .filters-panel .legend {
+    flex-wrap: wrap;
+    gap: 6px 14px;
   }
 `;

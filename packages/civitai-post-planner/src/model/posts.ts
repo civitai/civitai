@@ -96,9 +96,37 @@ export function drawerPost(
     : detail ?? list;
 }
 
-/** The spacing and daily-cap rules a move must pass, checked against the loaded range so a bad
- *  drop is refused before the round trip. A release's own posts share its instant and are skipped.
- *  The server re-checks against everything; this only covers what is on screen. */
+export type PlannedMove = { post: PlannerPost; when: Date };
+
+/** The spacing and daily-cap rules a set of moves must pass, checked against the loaded range so
+ *  a bad drop is refused before the round trip. A release's own posts share its instant and are
+ *  skipped. The server re-checks against everything; this only covers what is on screen. */
+export function moveSetIssues(
+  posts: PlannerPost[],
+  moves: PlannedMove[],
+  range: { dailyLimit: number; minGapMinutes: number } | null,
+  now: Date
+): string[] {
+  const movingIds = new Set(moves.map(({ post }) => post.id));
+  const releaseVersions = new Set(
+    moves.filter(({ post }) => post.release).map(({ post }) => post.modelVersionId)
+  );
+  const neighbours = posts.filter(
+    (post) =>
+      !movingIds.has(post.id) &&
+      isScheduled(post, now) &&
+      !(post.modelVersionId != null && releaseVersions.has(post.modelVersionId))
+  );
+  const validation = validateBatchSchedule({
+    now,
+    publishedAts: moves.map(({ when }) => when),
+    existingPublishedAts: neighbours.map((post) => new Date(post.publishedAt)),
+    dailyLimit: range?.dailyLimit ?? Number.POSITIVE_INFINITY,
+    minGapMinutes: range?.minGapMinutes,
+  });
+  return [...new Set(validation.issues.map((issue) => issue.message))];
+}
+
 export function moveIssues(
   posts: PlannerPost[],
   moving: PlannerPost,
@@ -106,18 +134,5 @@ export function moveIssues(
   range: { dailyLimit: number; minGapMinutes: number } | null,
   now: Date
 ): string[] {
-  const neighbours = posts.filter(
-    (post) =>
-      post.id !== moving.id &&
-      isScheduled(post, now) &&
-      !(moving.release && post.modelVersionId === moving.modelVersionId)
-  );
-  const validation = validateBatchSchedule({
-    now,
-    publishedAts: [when],
-    existingPublishedAts: neighbours.map((post) => new Date(post.publishedAt)),
-    dailyLimit: range?.dailyLimit ?? Number.POSITIVE_INFINITY,
-    minGapMinutes: range?.minGapMinutes,
-  });
-  return validation.issues.map((issue) => issue.message);
+  return moveSetIssues(posts, [{ post: moving, when }], range, now);
 }

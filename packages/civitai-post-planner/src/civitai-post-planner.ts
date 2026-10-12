@@ -28,7 +28,20 @@ import {
   snapToFiveMinutes,
   visibleRange,
 } from './model/calendar';
-import { messageOf, releaseScopeLabel, shiftedMessage, unscheduledMessage } from './model/messages';
+import {
+  moveToDayMoves,
+  previewMoves,
+  shiftDeltaMinutes,
+  type ShiftDraft,
+  shiftMoves,
+} from './model/bulk';
+import {
+  messageOf,
+  movedToDayMessage,
+  releaseScopeLabel,
+  shiftedMessage,
+  unscheduledMessage,
+} from './model/messages';
 import {
   applyOverrides,
   countScheduled,
@@ -55,8 +68,10 @@ import { mediaStripStyles } from './parts/media-strip';
 import { noticeStyles, renderNotice, renderTruncatedNotice, renderUndo } from './parts/notices';
 import type { PlannerActions, PostContext } from './parts/props';
 import { rowStyles } from './parts/row';
+import { renderMoveDialog, renderShiftDialog, shiftDialogStyles } from './parts/shift-dialog';
 import { renderToolbar, toolbarStyles } from './parts/toolbar';
 import { baseStyles } from './styles';
+import { hourGridStyles } from './views/hour-grid';
 import { renderView, viewStyles } from './views/index';
 import { listStyles } from './views/list';
 import { monthStyles } from './views/month';
@@ -65,6 +80,8 @@ const UNDO_WINDOW_MS = 8_000;
 const SHOW_MATURE_KEY = 'civitai-post-planner:show-mature';
 
 type Undo = { id: number; from: string; expectedScope: PlannerScope; until: number };
+
+type MoveOutcome = { ok: true } | { ok: false; reason: string };
 
 export class CivitaiPostPlanner extends CivitaiElement {
   static override styles = [
@@ -75,6 +92,7 @@ export class CivitaiPostPlanner extends CivitaiElement {
     noticeStyles,
     viewStyles,
     monthStyles,
+    hourGridStyles,
     chipStyles,
     listStyles,
     rowStyles,
@@ -82,6 +100,7 @@ export class CivitaiPostPlanner extends CivitaiElement {
     mediaStripStyles,
     lightboxStyles,
     bulkBarStyles,
+    shiftDialogStyles,
   ];
 
   static override properties: PropertyDeclarations = {
@@ -98,10 +117,16 @@ export class CivitaiPostPlanner extends CivitaiElement {
     _showMature: { state: true },
     _unblurred: { state: true },
     _filters: { state: true },
+    _filtersOpen: { state: true },
+    _allHours: { state: true },
     _selectMode: { state: true },
     _selectedIds: { state: true },
     _dragId: { state: true },
     _dragOver: { state: true },
+    _dragAt: { state: true },
+    _shiftDraft: { state: true },
+    _moveDay: { state: true },
+    _bulkBusy: { state: true },
     _pending: { state: true },
     _overrides: { state: true },
     _undo: { state: true },
@@ -125,10 +150,16 @@ export class CivitaiPostPlanner extends CivitaiElement {
   declare _showMature: boolean;
   declare _unblurred: Set<number>;
   declare _filters: Filters;
+  declare _filtersOpen: boolean;
+  declare _allHours: boolean;
   declare _selectMode: boolean;
   declare _selectedIds: Set<number>;
   declare _dragId: number | null;
   declare _dragOver: string | null;
+  declare _dragAt: Date | null;
+  declare _shiftDraft: ShiftDraft | null;
+  declare _moveDay: string | null;
+  declare _bulkBusy: boolean;
   declare _pending: Set<number>;
   declare _overrides: Map<number, Override>;
   declare _undo: Undo | null;
@@ -155,10 +186,16 @@ export class CivitaiPostPlanner extends CivitaiElement {
     this._showMature = false;
     this._unblurred = new Set();
     this._filters = { scheduled: true, published: false, releases: true };
+    this._filtersOpen = false;
+    this._allHours = false;
     this._selectMode = false;
     this._selectedIds = new Set();
     this._dragId = null;
     this._dragOver = null;
+    this._dragAt = null;
+    this._shiftDraft = null;
+    this._moveDay = null;
+    this._bulkBusy = false;
     this._pending = new Set();
     this._overrides = new Map();
     this._undo = null;
@@ -367,23 +404,27 @@ export class CivitaiPostPlanner extends CivitaiElement {
     this._selectedIds = next;
   }
 
-  async #reschedule(post: PlannerPost, when: Date, opts: { undo?: boolean } = {}): Promise<void> {
+  /** `quiet` skips the per-move toast and undo, for a caller that reports a whole batch at once. */
+  async #reschedule(
+    post: PlannerPost,
+    when: Date,
+    opts: { undo?: boolean; quiet?: boolean } = {}
+  ): Promise<MoveOutcome> {
     const host = this.host;
-    if (!host || this._pending.has(post.id)) return;
+    if (!host) return { ok: false, reason: 'No host.' };
+    if (this._pending.has(post.id)) return { ok: false, reason: 'That post is still moving.' };
+    const refuse = (reason: string): MoveOutcome => {
+      if (!opts.quiet) this.#toast(reason, 'error');
+      return { ok: false, reason };
+    };
     const refusal = getPostScheduleError(
       { publishedAt: new Date(post.publishedAt) },
       when,
       this._now
     );
-    if (refusal) {
-      this.#toast(refusal, 'error');
-      return;
-    }
+    if (refusal) return refuse(refusal);
     const issues = moveIssues(this.#posts, post, when, this._range, this._now);
-    if (issues.length) {
-      this.#toast(issues.join(' '), 'error');
-      return;
-    }
+    if (issues.length) return refuse(issues.join(' '));
     const expectedScope = scopeOf(post);
     const from = post.publishedAt;
     this.#setPending(post.id, true);
@@ -397,20 +438,25 @@ export class CivitaiPostPlanner extends CivitaiElement {
       });
       this.#applyMove(post.id, result);
       this.#emit('rescheduled', { id: post.id, ...result });
-      const label = result.scope === 'post' ? 'Moved to' : 'Release moved to';
-      this.#toast(`${label} ${formatDateTime(new Date(result.publishedAt))}`);
-      this._announcement = `${label} ${formatDateTime(new Date(result.publishedAt))}`;
-      this._undo =
-        opts.undo === false
-          ? null
-          : { id: post.id, from, expectedScope, until: Date.now() + UNDO_WINDOW_MS };
-      this.#armUndoExpiry();
       if (this._selectedId === post.id) this._draftWhen = new Date(result.publishedAt);
+      if (!opts.quiet) {
+        const label = result.scope === 'post' ? 'Moved to' : 'Release moved to';
+        this.#toast(`${label} ${formatDateTime(new Date(result.publishedAt))}`);
+        this._announcement = `${label} ${formatDateTime(new Date(result.publishedAt))}`;
+        this._undo =
+          opts.undo === false
+            ? null
+            : { id: post.id, from, expectedScope, until: Date.now() + UNDO_WINDOW_MS };
+        this.#armUndoExpiry();
+      }
+      return { ok: true };
     } catch (error) {
       this.#override(post.id, null);
-      this.#toast(messageOf(error, 'Could not move that post.'), 'error');
-      this.#emit('error', { message: messageOf(error, 'Could not move that post.') });
+      const reason = messageOf(error, 'Could not move that post.');
+      if (!opts.quiet) this.#toast(reason, 'error');
+      this.#emit('error', { message: reason });
       void this.#load();
+      return { ok: false, reason };
     } finally {
       this.#optimisticTo.delete(post.id);
       this.#setPending(post.id, false);
@@ -482,10 +528,10 @@ export class CivitaiPostPlanner extends CivitaiElement {
     }
   }
 
-  async #shiftSelected(deltaMinutes: number): Promise<void> {
+  async #shiftSelected(deltaMinutes: number): Promise<boolean> {
     const host = this.host;
     const ids = [...this._selectedIds];
-    if (!host || ids.length === 0) return;
+    if (!host || ids.length === 0) return false;
     try {
       const result = await host.backend.shift({ ids, deltaMinutes });
       const next = new Map(this._overrides);
@@ -496,11 +542,68 @@ export class CivitaiPostPlanner extends CivitaiElement {
       this._overrides = next;
       this.#emit('shifted', { moved: result.moved });
       this.#toast(shiftedMessage(result, deltaMinutes));
+      this._announcement = shiftedMessage(result, deltaMinutes);
       void this.#load();
+      return true;
     } catch (error) {
       this.#toast(messageOf(error, 'Could not shift those posts.'), 'error');
       void this.#load();
+      return false;
     }
+  }
+
+  async #applyShift(): Promise<void> {
+    const draft = this._shiftDraft;
+    if (!draft || this._bulkBusy) return;
+    const deltaMinutes = shiftDeltaMinutes(draft);
+    if (!deltaMinutes) return;
+    const posts = this.#posts;
+    const preview = previewMoves(
+      posts,
+      shiftMoves(posts, this._selectedIds, deltaMinutes, this._now),
+      this._range,
+      this._now
+    );
+    if (preview.issues.length) {
+      this.#toast(preview.issues.join(' '), 'error');
+      return;
+    }
+    this._bulkBusy = true;
+    try {
+      if (await this.#shiftSelected(deltaMinutes)) this._shiftDraft = null;
+    } finally {
+      this._bulkBusy = false;
+    }
+  }
+
+  /** `shift` takes one delta for every post, so keeping each post's time of day means one
+   *  reschedule per post. */
+  async #applyMoveToDay(): Promise<void> {
+    const day = this._moveDay;
+    if (!day || this._bulkBusy) return;
+    const posts = this.#posts;
+    const moves = moveToDayMoves(posts, this._selectedIds, day, this._now);
+    const preview = previewMoves(posts, moves, this._range, this._now);
+    if (preview.issues.length) {
+      this.#toast(preview.issues.join(' '), 'error');
+      return;
+    }
+    this._bulkBusy = true;
+    let moved = 0;
+    const failed: string[] = [];
+    try {
+      for (const { post, when } of moves) {
+        const outcome = await this.#reschedule(post, when, { quiet: true });
+        if (outcome.ok) moved++;
+        else failed.push(outcome.reason);
+      }
+    } finally {
+      this._bulkBusy = false;
+    }
+    const message = movedToDayMessage(moved, failed, day);
+    this.#toast(message, failed.length ? 'error' : undefined);
+    this._announcement = message;
+    if (!failed.length) this._moveDay = null;
   }
 
   #applyMove(id: number, result: MoveResult): void {
@@ -602,6 +705,7 @@ export class CivitaiPostPlanner extends CivitaiElement {
   #onDragEnd(): void {
     this._dragId = null;
     this._dragOver = null;
+    this._dragAt = null;
   }
 
   #onDragOver(dayKey: string, event: DragEvent): void {
@@ -611,18 +715,40 @@ export class CivitaiPostPlanner extends CivitaiElement {
     if (this._dragOver !== dayKey) this._dragOver = dayKey;
   }
 
+  #onDragOverAt(dayKey: string, when: Date, event: DragEvent): void {
+    if (this._dragId == null) return;
+    event.preventDefault();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+    if (this._dragOver !== dayKey) this._dragOver = dayKey;
+    if (this._dragAt?.getTime() !== when.getTime()) this._dragAt = when;
+  }
+
   #onDrop(dayKey: string, event: DragEvent): void {
     event.preventDefault();
-    const post = this.#posts.find((p) => p.id === this._dragId);
-    this._dragId = null;
-    this._dragOver = null;
-    if (!post || !this.#isScheduled(post)) return;
+    const post = this.#endDrag();
+    if (!post || localDayKey(new Date(post.publishedAt)) === dayKey) return;
+    this.#dropTo(post, snapToFiveMinutes(moveToDay(new Date(post.publishedAt), dayKey)));
+  }
+
+  #onDropAt(when: Date, event: DragEvent): void {
+    event.preventDefault();
+    const post = this.#endDrag();
+    if (!post || new Date(post.publishedAt).getTime() === when.getTime()) return;
+    this.#dropTo(post, when);
+  }
+
+  #endDrag(): PlannerPost | null {
+    const post = this.#posts.find((p) => p.id === this._dragId) ?? null;
+    this.#onDragEnd();
+    if (!post || !this.#isScheduled(post)) return null;
     if (this._pending.has(post.id)) {
       this.#toast('That post is still moving. Try again in a moment.', 'error');
-      return;
+      return null;
     }
-    if (localDayKey(new Date(post.publishedAt)) === dayKey) return;
-    const target = snapToFiveMinutes(moveToDay(new Date(post.publishedAt), dayKey));
+    return post;
+  }
+
+  #dropTo(post: PlannerPost, target: Date): void {
     // A release drop moves a model and its other posts, so it is confirmed in the drawer.
     if (post.release) {
       this.#open(post, target);
@@ -650,7 +776,9 @@ export class CivitaiPostPlanner extends CivitaiElement {
     navigate: (loc) => this.#navigate(loc),
     link: (event, loc) => this.#link(event, loc),
     setFilters: (filters) => (this._filters = { ...this._filters, ...filters }),
+    toggleFilters: () => (this._filtersOpen = !this._filtersOpen),
     setShowMature: (value) => this.#setShowMature(value),
+    toggleAllHours: () => (this._allHours = !this._allHours),
     toggleSelectMode: () => {
       this._selectMode = !this._selectMode;
       if (!this._selectMode) this._selectedIds = new Set();
@@ -667,7 +795,21 @@ export class CivitaiPostPlanner extends CivitaiElement {
     reschedule: (post, when) => void this.#reschedule(post, when),
     publishNow: (post) => void this.#publishNow(post),
     unschedule: (ids) => void this.#unschedule(ids),
-    shiftSelected: (deltaMinutes) => void this.#shiftSelected(deltaMinutes),
+    openShiftDialog: () => (this._shiftDraft = { amount: 1, unit: 'days' }),
+    setShiftDraft: (draft) => {
+      if (this._shiftDraft) this._shiftDraft = { ...this._shiftDraft, ...draft };
+    },
+    applyShift: () => void this.#applyShift(),
+    openMoveDialog: () => (this._moveDay = this.#today),
+    setMoveDay: (dayKey) => {
+      if (dayKey) this._moveDay = dayKey;
+    },
+    applyMoveToDay: () => void this.#applyMoveToDay(),
+    closeDialog: () => {
+      if (this._bulkBusy) return;
+      this._shiftDraft = null;
+      this._moveDay = null;
+    },
     undoMove: () => void this.#undoMove(),
     rowAction: (post, action) => this.#rowAction(post, action),
     onChipKey: (post, event) => this.#onChipKey(post, event),
@@ -675,10 +817,12 @@ export class CivitaiPostPlanner extends CivitaiElement {
     onDragStart: (post, event) => this.#onDragStart(post, event),
     onDragEnd: () => this.#onDragEnd(),
     onDragOver: (dayKey, event) => this.#onDragOver(dayKey, event),
+    onDragOverAt: (dayKey, when, event) => this.#onDragOverAt(dayKey, when, event),
     onDragLeave: (dayKey) => {
       if (this._dragOver === dayKey) this._dragOver = null;
     },
     onDrop: (dayKey, event) => this.#onDrop(dayKey, event),
+    onDropAt: (when, event) => this.#onDropAt(when, event),
   };
 
   override render(): TemplateResult {
@@ -715,10 +859,13 @@ export class CivitaiPostPlanner extends CivitaiElement {
             showMature: this._showMature,
             hasMature: hasMature(posts),
             selectMode: this._selectMode,
+            narrow: this._narrow,
+            filtersOpen: this._filtersOpen,
             modelOptions,
             actions: this.#actions,
           })}
-          ${renderLegend()} ${this._error ? renderNotice(this._error) : nothing}
+          ${this._narrow ? nothing : renderLegend()}
+          ${this._error ? renderNotice(this._error) : nothing}
           ${this._range?.truncated
             ? renderTruncatedNotice({
                 view: loc.view,
@@ -738,18 +885,49 @@ export class CivitaiPostPlanner extends CivitaiElement {
             loaded: this._range != null,
             posts: this.#visiblePosts,
             cap: this._range?.dailyLimit ?? 0,
+            allHours: this._allHours,
             dragOver: this._dragOver,
+            dragAt: this._dragAt,
             context,
           })}
           ${this._selectMode
             ? renderBulkBar({ selectedIds: this._selectedIds, actions: this.#actions })
             : nothing}
+          ${this.#dialogs(posts)}
         </div>
         ${this._selectedId != null ? this.#drawer(host, posts) : nothing}
       </div>
       <div class="sr-only" role="status" aria-live="polite">${this._announcement}</div>
       <civitai-confirm-dialog></civitai-confirm-dialog>
     `;
+  }
+
+  #dialogs(posts: PlannerPost[]): TemplateResult | typeof nothing {
+    if (this._shiftDraft) {
+      const moves = shiftMoves(
+        posts,
+        this._selectedIds,
+        shiftDeltaMinutes(this._shiftDraft),
+        this._now
+      );
+      return renderShiftDialog({
+        draft: this._shiftDraft,
+        preview: previewMoves(posts, moves, this._range, this._now),
+        busy: this._bulkBusy,
+        actions: this.#actions,
+      });
+    }
+    if (this._moveDay) {
+      const moves = moveToDayMoves(posts, this._selectedIds, this._moveDay, this._now);
+      return renderMoveDialog({
+        day: this._moveDay,
+        today: this.#today,
+        preview: previewMoves(posts, moves, this._range, this._now),
+        busy: this._bulkBusy,
+        actions: this.#actions,
+      });
+    }
+    return nothing;
   }
 
   #drawer(host: PlannerHost, posts: PlannerPost[]): TemplateResult {

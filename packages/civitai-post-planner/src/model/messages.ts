@@ -42,3 +42,39 @@ export function shiftedMessage(
 export function releaseScopeLabel(scope: 'model' | 'version'): string {
   return scope === 'model' ? 'the whole model release' : "this version's release";
 }
+
+/** `Oct 7–9`, `Oct 7 – Nov 2`, or `Oct 7` when both ends share a day. */
+export function spanLabel([from, to]: [Date, Date], locale?: string): string {
+  const day = (date: Date) => date.toLocaleDateString(locale, { month: 'short', day: 'numeric' });
+  if (from.toDateString() === to.toDateString()) return day(from);
+  return from.getMonth() === to.getMonth() && from.getFullYear() === to.getFullYear()
+    ? `${day(from)}–${to.getDate()}`
+    : `${day(from)} – ${day(to)}`;
+}
+
+export function previewLine(
+  preview: { from: [Date, Date] | null; to: [Date, Date] | null; issues: string[] },
+  locale?: string
+): string {
+  if (!preview.from || !preview.to) return 'Nothing to move.';
+  return `${spanLabel(preview.from, locale)} → ${spanLabel(preview.to, locale)} · ${plural(
+    preview.issues.length,
+    'conflict'
+  )}`;
+}
+
+export function movedToDayMessage(
+  moved: number,
+  failed: string[],
+  dayKey: string,
+  locale?: string
+): string {
+  const [year, month, day] = dayKey.split('-').map(Number);
+  const label = new Date(year, month - 1, day).toLocaleDateString(locale, {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+  });
+  const head = `${plural(moved, 'post')} moved to ${label}.`;
+  return failed.length ? `${head} ${plural(failed.length, 'post')} not moved: ${failed[0]}` : head;
+}
