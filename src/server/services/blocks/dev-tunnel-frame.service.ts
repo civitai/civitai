@@ -14,8 +14,6 @@ export interface DevTunnelFrame {
   blockId: string;
   appId: string;
   appName: string;
-  pageTitle: string;
-  status: string;
   trustTier: 'unverified' | 'verified' | 'internal';
   sandbox: string;
   scopes: string[];
@@ -60,8 +58,6 @@ export async function resolveDevTunnelFrame(
     blockId: app.blockId,
     appId: app.appId,
     appName: app.name,
-    pageTitle: app.pageTitle,
-    status: app.status,
     trustTier: app.trustTier,
     sandbox: app.sandbox,
     scopes: app.scopes,

@@ -69,8 +69,6 @@ describe('resolveDevTunnelFrame', () => {
       blockId: 'my-app',
       appId: 'appblk-my-app',
       appName: 'My App',
-      pageTitle: 'My App page',
-      status: 'ephemeral',
       trustTier: 'unverified',
       sandbox: 'allow-scripts allow-forms',
       scopes: ['user:read:self'],

@@ -35,8 +35,6 @@ const FRAME = {
   blockId: 'my-app',
   appId: 'appblk-my-app',
   appName: 'My App',
-  pageTitle: 'My App',
-  status: 'pending',
   trustTier: 'unverified' as const,
   sandbox: 'allow-scripts allow-forms',
   scopes: ['user:read:self'],
