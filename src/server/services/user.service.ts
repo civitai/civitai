@@ -1934,7 +1934,9 @@ async function bulkUnpublishModelsForBannedUser({
         UPDATE "Model"
         SET
           status = ${ModelStatus.UnpublishedViolation}::"ModelStatus",
-          meta = COALESCE(meta, '{}'::jsonb) || ${unpublishedMeta}::jsonb
+          meta = COALESCE(meta, '{}'::jsonb) || ${unpublishedMeta}::jsonb,
+          -- Raw SQL skips @updatedAt; the creator score re-scores owners from it.
+          "updatedAt" = now()
         WHERE id IN (${Prisma.join(modelIds)})
       `;
 

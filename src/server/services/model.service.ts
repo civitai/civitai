@@ -130,6 +130,7 @@ import {
 } from '~/server/services/image.service';
 import { getFilesForModelVersionCache } from '~/server/services/model-file.service';
 import { buildRepublishImageIndexTouch } from '~/server/services/model-republish-image-index.sql';
+import { recordStatusAtDelete } from '~/server/services/model-status-at-delete';
 import {
   expandBlurbs,
   getReferencedBlurbIds,
@@ -1876,12 +1877,14 @@ export const deleteModelById = async ({
   }
 
   const deletedModel = await dbWrite.$transaction(async (tx) => {
+    // Re-deleting a deleted model keeps the first delete's actor: the creator score reads `deletedBy`,
+    // and an owner must not be able to overwrite a moderator's.
+    const firstDelete = (await recordStatusAtDelete(tx, id)) > 0;
     const model = await tx.model.update({
       where: { id },
       data: {
-        deletedAt: new Date(),
+        ...(firstDelete ? { deletedAt: new Date(), deletedBy: userId } : {}),
         status: ModelStatus.Deleted,
-        deletedBy: userId,
         modelVersions: {
           updateMany: {
             where: { status: { in: [ModelStatus.Published, ModelStatus.Scheduled] } },
