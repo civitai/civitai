@@ -495,6 +495,8 @@ describe('namesIdentifier and callsImported', () => {
  * `src/server/__tests__/*credential-requirements.test.ts` and `*session-scope.test.ts` files.
  */
 const FULL_SCOPE_SESSION_ROUTES = [
+  'apps/assistant/preview',
+  'apps/assistant/token',
   'auth/freshdesk',
   'media/ingest/[mediaId]',
   'testing/model3d-seed',

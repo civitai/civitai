@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as ApiKeyService from '~/server/services/api-key.service';
+import type * as AppAssistantService from '~/server/services/app-assistant/app-assistant.service';
 import type * as FeatureFlagsService from '~/server/services/feature-flags.service';
 import type * as UserService from '~/server/services/user.service';
 import { OnboardingSteps } from '~/server/common/enums';
@@ -32,8 +33,17 @@ vi.mock('~/server/orchestrator/get-orchestrator-token', () => ({
 vi.mock('~/server/services/feature-flags.service', async (importOriginal) => ({
   ...(await importOriginal<typeof FeatureFlagsService>()),
   getFeatureFlagsLazy: vi.fn(() => ({ trainingStudioUi: true })),
+  getFeatureFlagsAsync: vi.fn(async () => ({ appBlocks: true, appAssistant: true })),
   computeUserFeatureFlagsOverlay: vi.fn(() => ({})),
   getFliptGatedEligibility: vi.fn(() => ({})),
+}));
+vi.mock('~/server/services/app-assistant/app-assistant.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof AppAssistantService>()),
+  enableAppAssistant: vi.fn(async () => undefined),
+  mintAppAssistantToken: vi.fn(async () => ({
+    token: 'minted-assistant-token',
+    expiresAt: '2099-01-01T00:00:00Z',
+  })),
 }));
 vi.mock('~/server/services/user.service', async (importOriginal) => ({
   ...(await importOriginal<typeof UserService>()),
@@ -42,6 +52,9 @@ vi.mock('~/server/services/user.service', async (importOriginal) => ({
 
 const { addApiKey } = await import('~/server/services/api-key.service');
 const { getOrchestratorToken } = await import('~/server/orchestrator/get-orchestrator-token');
+const { enableAppAssistant, mintAppAssistantToken } = await import(
+  '~/server/services/app-assistant/app-assistant.service'
+);
 
 type Handler = (req: NextApiRequest, res: NextApiResponse) => Promise<void>;
 
@@ -57,6 +70,12 @@ const routes: { name: string; path: string; handler: Handler; minted: () => unkn
     path: '/api/training-studio/host',
     handler: (await import('~/pages/api/training-studio/host')).default as unknown as Handler,
     minted: () => getOrchestratorToken,
+  },
+  {
+    name: '/api/apps/assistant/token',
+    path: '/api/apps/assistant/token',
+    handler: (await import('~/pages/api/apps/assistant/token')).default as unknown as Handler,
+    minted: () => mintAppAssistantToken,
   },
 ];
 
@@ -90,13 +109,27 @@ const oauthToken = (tokenScope: number) => ({
 
 async function call(
   route: (typeof routes)[number],
-  { authorization, queryToken }: { authorization?: string; queryToken?: string } = {}
+  {
+    authorization,
+    queryToken,
+    method = 'GET',
+    headers: extraHeaders = {},
+  }: {
+    authorization?: string;
+    queryToken?: string;
+    method?: string;
+    headers?: Record<string, string>;
+  } = {}
 ) {
   const url = queryToken ? `${route.path}?token=${queryToken}` : route.path;
   const req = {
-    method: 'GET',
+    method,
     url,
-    headers: { host: 'civitai.com', ...(authorization ? { authorization } : {}) },
+    headers: {
+      host: 'civitai.com',
+      ...(authorization ? { authorization } : {}),
+      ...extraHeaders,
+    },
     query: queryToken ? { token: queryToken } : {},
     cookies: {},
   } as unknown as NextApiRequest;
@@ -197,5 +230,49 @@ describe('the minted credential is still returned to an allowed caller', () => {
   it('returns the token from training-studio/host', async () => {
     hubSession.current = { user: USER };
     expect((await call(routes[1])).body).toMatchObject({ token: 'minted-orchestrator-token' });
+  });
+
+  it('returns the token from apps/assistant/token', async () => {
+    hubSession.current = { user: USER };
+    const assistant = routes.find((r) => r.path === '/api/apps/assistant/token')!;
+    expect((await call(assistant)).body).toEqual({
+      token: 'minted-assistant-token',
+      expiresAt: '2099-01-01T00:00:00Z',
+    });
+  });
+});
+
+describe('apps/assistant/token POST (turn the assistant on), through the real AuthedEndpoint', () => {
+  const assistant = routes.find((r) => r.path === '/api/apps/assistant/token')!;
+  beforeEach(() => {
+    hubSession.current = { user: USER };
+  });
+
+  it('accepts a JSON POST from a browser session and writes consent', async () => {
+    const { status } = await call(assistant, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+    });
+    expect(status).toBe(200);
+    expect(enableAppAssistant).toHaveBeenCalledWith(USER.id);
+  });
+
+  it('refuses a POST that is not JSON (a cross-origin form) without writing anything', async () => {
+    const { status } = await call(assistant, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    });
+    expect(status).toBe(415);
+    expect(enableAppAssistant).not.toHaveBeenCalled();
+  });
+
+  it('allows only GET and POST', async () => {
+    expect((await call(assistant, { method: 'PUT' })).status).toBe(405);
+    expect(enableAppAssistant).not.toHaveBeenCalled();
+  });
+
+  it('a GET never writes consent', async () => {
+    await call(assistant);
+    expect(enableAppAssistant).not.toHaveBeenCalled();
   });
 });

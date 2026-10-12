@@ -1052,6 +1052,9 @@ export const serverSchema = z
     APPS_TEKTON_REVIEW_TRIGGER_URL: z.string().url().optional(),
     APPS_KUBE_NAMESPACE: z.string().default('civitai-apps'),
     APPS_DOMAIN: z.string().default('civit.ai'),
+    // App Assistant's hosted sandbox service, which the browser calls. Server-side so it is read per
+    // request and set per environment; a NEXT_PUBLIC_ var would be frozen into the client at build.
+    APP_ASSISTANT_SANDBOX_URL: z.url().optional(),
     // How long the review-build callback waits for a freshly-deployed review
     // preview's PUBLIC host to become reachable before giving up and marking the
     // preview failed. The dominant lag is the per-host DNS record's creation +
