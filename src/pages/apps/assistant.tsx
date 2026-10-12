@@ -27,9 +27,8 @@ export const getServerSideProps = createServerSideProps<AppAssistantPageProps>({
     const { isAppBlocksDevTunnelEnabled } = await import('~/server/services/app-blocks-flag');
     const canPreview = !!features?.appBlocksAuthor && (await isAppBlocksDevTunnelEnabled({ user }));
 
-    // No route CSP: a header CSP stays on the document for every page the tab then reaches by
-    // client-side navigation, where it would block payment and captcha frames. The preview's frame
-    // URL comes only from the server's own tunnel record (`resolveDevTunnelFrame`).
+    // No route CSP: a header CSP persists across the tab's client-side navigations and would block
+    // payment and captcha frames on later pages.
     return { props: { canPreview } };
   },
 });

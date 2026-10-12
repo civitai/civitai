@@ -2,19 +2,8 @@ import { Alert, Button, Center, Group, Loader, Stack, Text } from '@mantine/core
 import { IconRefresh } from '@tabler/icons-react';
 import { useQuery } from '@tanstack/react-query';
 import { DevTunnelBlockHost } from '~/components/AppBlocks/DevTunnelBlockHost';
+import { fetchPreviewFrame } from '~/components/Apps/AppAssistant/previewFrame';
 import type { PreviewSession } from '~/components/Apps/AppAssistant/previewTools';
-import type { DevTunnelFrame } from '~/server/services/blocks/dev-tunnel-frame.service';
-
-type PreviewFrame = DevTunnelFrame & { iframeSrc: string };
-
-async function fetchPreviewFrame(blockId: string): Promise<PreviewFrame> {
-  const res = await fetch(`/api/apps/assistant/preview?blockId=${encodeURIComponent(blockId)}`, {
-    credentials: 'same-origin',
-  });
-  const data = (await res.json().catch(() => null)) as (PreviewFrame & { error?: string }) | null;
-  if (!res.ok || !data?.iframeSrc) throw new Error(data?.error ?? 'The preview is unavailable');
-  return data;
-}
 
 function EmptyState({ children }: { children: React.ReactNode }) {
   return (

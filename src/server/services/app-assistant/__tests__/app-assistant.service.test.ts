@@ -177,6 +177,18 @@ describe('enableAppAssistant', () => {
     }
   );
 
+  it("keeps bits the consent already carries beyond the assistant's own", async () => {
+    const EXTRA = 1 << 30;
+    dbMock.dbWrite.oauthConsent.findUnique.mockResolvedValue({
+      scope: TokenScope.UserRead | EXTRA,
+      buzzLimit: null,
+    });
+    await enableAppAssistant(USER_ID);
+    expect(dbMock.dbWrite.oauthConsent.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({ update: expect.objectContaining({ scope: SCOPE | EXTRA }) })
+    );
+  });
+
   it('heals a client whose allowed scopes were narrowed', async () => {
     dbMock.dbWrite.oauthClient.findUnique.mockResolvedValue({ allowedScopes: TokenScope.UserRead });
     await enableAppAssistant(USER_ID);
@@ -214,11 +226,12 @@ describe('mintAppAssistantToken', () => {
   });
 
   it.each([
-    ['never turned on (or revoked)', null],
-    ['a consent without the spend bit', { scope: TokenScope.UserRead }],
-  ])('returns null and re-grants nothing when there is %s', async (_label, consent) => {
+    ['never turned on (or revoked), for the chat', null, 'chat'],
+    ['never turned on (or revoked), for the sandbox', null, 'sandbox'],
+    ['a consent without the spend bit, for the chat', { scope: TokenScope.UserRead }, 'chat'],
+  ] as const)('returns null and re-grants nothing: %s', async (_label, consent, purpose) => {
     dbMock.dbWrite.oauthConsent.findUnique.mockResolvedValue(consent);
-    expect(await mintAppAssistantToken(USER_ID, 'chat')).toBeNull();
+    expect(await mintAppAssistantToken(USER_ID, purpose)).toBeNull();
     expect(mintAppTokenMock).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.oauthConsent.upsert).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.oauthClient.upsert).not.toHaveBeenCalled();

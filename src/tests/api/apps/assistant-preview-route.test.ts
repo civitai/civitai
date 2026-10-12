@@ -7,8 +7,7 @@ const { refusal, preview, fullScope } = vi.hoisted(() => ({
   fullScope: vi.fn(() => true),
 }));
 
-// The credential rules are pinned in `credential-minting-routes-session-scope.test.ts` and the
-// route ledger; this file is about what the route answers once a caller is through them.
+// Credential rules are pinned in `credential-minting-routes-session-scope.test.ts`.
 vi.mock('~/server/utils/endpoint-helpers', () => ({
   AuthedEndpoint:
     (handler: (req: unknown, res: unknown, user: unknown) => Promise<unknown>) =>

@@ -32,6 +32,8 @@ const m = vi.hoisted(() => ({
   suspend: vi.fn(),
   getToken: vi.fn<(opts?: unknown) => Promise<string>>(async () => 'sandbox-token'),
   enable: vi.fn(async () => 'chat-token'),
+  sandboxClient: null as null | { list: () => Promise<unknown> },
+  onConsentRequired: null as null | (() => void),
 }));
 
 vi.mock('~/env/client', () => ({ env: { NEXT_PUBLIC_APP_ASSISTANT_SANDBOX_URL: BASE } }));
@@ -45,21 +47,32 @@ vi.mock('~/components/Apps/AppAssistant/AppAssistantPreview', () => ({
   AppAssistantPreview: () => <div data-testid="preview" />,
 }));
 vi.mock('~/components/Apps/AppAssistant/useSandboxes', () => ({
-  useSandboxes: (client: unknown) => ({
-    list: { data: client ? m.list : undefined, isSuccess: !!client, isLoading: false, error: null },
-    open: {
-      mutate: (app: string, opts?: { onSuccess?: (r: { sandbox: Sandbox }) => void }) =>
-        opts?.onSuccess?.({ sandbox: m.list.find((s) => s.app === app)! }),
-      isPending: false,
-      error: null,
-    },
-    suspend: { mutate: m.suspend, isPending: false, error: null },
-    remove: { mutate: vi.fn(), isPending: false, error: null },
-  }),
+  useSandboxes: (client: { list: () => Promise<unknown> } | null) => (
+    (m.sandboxClient = client),
+    {
+      list: {
+        data: client ? m.list : undefined,
+        isSuccess: !!client,
+        isLoading: false,
+        error: null,
+      },
+      open: {
+        mutate: (app: string, opts?: { onSuccess?: (r: { sandbox: Sandbox }) => void }) =>
+          opts?.onSuccess?.({ sandbox: m.list.find((s) => s.app === app)! }),
+        isPending: false,
+        error: null,
+      },
+      suspend: { mutate: m.suspend, isPending: false, error: null },
+      remove: { mutate: vi.fn(), isPending: false, error: null },
+    }
+  ),
 }));
 vi.mock('~/components/Apps/AppAssistant/assistantToken', async (importOriginal) => ({
   ...(await importOriginal<typeof TokenMod>()),
-  createAssistantTokenProvider: () => ({ getToken: m.getToken, enable: m.enable }),
+  createAssistantTokenProvider: (opts?: { onConsentRequired?: () => void }) => {
+    m.onConsentRequired = opts?.onConsentRequired ?? null;
+    return { getToken: m.getToken, enable: m.enable };
+  },
 }));
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof TrpcMod>()),
@@ -103,10 +116,12 @@ beforeEach(() => {
   m.suspend.mockReset();
   m.getToken.mockReset().mockResolvedValue('sandbox-token');
   m.enable.mockClear();
+  m.sandboxClient = null;
+  m.onConsentRequired = null;
 });
 
 describe('AppAssistantWorkspace preview teardown', () => {
-  test('NEGATIVE CONTROL: switching and unmounting with no preview stops nothing', async () => {
+  test('NEGATIVE CONTROL: opening and unmounting with no preview stops nothing', async () => {
     const screen = await mount();
     await openFirst();
     screen.unmount();
@@ -155,6 +170,28 @@ describe('AppAssistantWorkspace MCP wiring', () => {
     );
   });
 
+  test('🔴 the sandbox service and its MCP only ever get the sandbox (UserRead) token', async () => {
+    await mount();
+    await openFirst();
+    await vi.waitFor(() => expect(m.chat!.mcpServers).toHaveLength(1));
+    m.getToken.mockClear();
+    await (m.chat!.mcpServers[0] as unknown as { token: () => Promise<string> }).token();
+    expect(m.getToken).toHaveBeenCalledWith({ purpose: 'sandbox' });
+
+    // The REST client: a 401 makes it ask for a refreshed token, still for the sandbox.
+    const fetchSpy = vi
+      .spyOn(window, 'fetch')
+      .mockResolvedValueOnce(new Response('{}', { status: 401 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ sandboxes: [] }), { status: 200 }));
+    m.getToken.mockClear();
+    await m.sandboxClient!.list();
+    expect(m.getToken.mock.calls).toEqual([
+      [expect.objectContaining({ purpose: 'sandbox', refresh: false })],
+      [expect.objectContaining({ purpose: 'sandbox', refresh: true })],
+    ]);
+    fetchSpy.mockRestore();
+  });
+
   test('🔴 never sends the token to an MCP URL outside the sandbox service', async () => {
     m.list = [sandbox('sbx-aaaaaaaaaaaa', { mcpUrl: 'https://elsewhere.example/s/x/mcp' })];
     await mount();
@@ -174,11 +211,27 @@ describe('AppAssistantWorkspace consent', () => {
     renderWithProviders(<AppAssistantWorkspace canPreview />);
     const button = page.getByRole('button', { name: 'Turn on App Assistant' });
     await expect.element(button).toBeInTheDocument();
+    // Give any effect a chance to fire before asserting it did not.
+    await new Promise((resolve) => setTimeout(resolve, 100));
     expect(m.enable).not.toHaveBeenCalled();
     expect(document.querySelector('[data-testid="chat"]')).toBeNull();
 
     await button.click();
     expect(m.enable).toHaveBeenCalledTimes(1);
     await expect.element(page.getByTestId('chat')).toBeInTheDocument();
+  });
+});
+
+describe('AppAssistantWorkspace revoke', () => {
+  test('a revoke mid-session puts the turn-on card back', async () => {
+    await mount();
+    m.getToken.mockRejectedValue(
+      new AssistantTokenError('Turn on App Assistant', 403, 'consent_required')
+    );
+    m.onConsentRequired!();
+    await expect
+      .element(page.getByRole('button', { name: 'Turn on App Assistant' }))
+      .toBeInTheDocument();
+    expect(document.querySelector('[data-testid="chat"]')).toBeNull();
   });
 });

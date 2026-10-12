@@ -48,6 +48,7 @@ describe('buildAssistantInstructions', () => {
   });
 
   it.each([
+    ['running', /running and its tools are available/],
     ['starting', /appear in a few seconds/],
     ['suspended', /no sandbox tools: ask the user to press Resume/],
   ] as const)('explains a %s sandbox', (state, note) => {

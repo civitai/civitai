@@ -60,7 +60,7 @@ export function AppAssistantChat({
       const app = await initialize({
         token: () => tokens.getToken(),
         refresh: () => tokens.getToken({ refresh: true }),
-        // The token route already holds `ai:write:budgeted` for this session.
+        // The chat mounts only after the user has turned App Assistant on, so the grant is theirs.
         requestGrants: () => true,
       });
       if (cancelled || !ref.current) return;

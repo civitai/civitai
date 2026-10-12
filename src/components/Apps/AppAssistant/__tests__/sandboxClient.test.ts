@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { Sandbox } from '~/components/Apps/AppAssistant/sandboxClient';
-import { SandboxApiError, createSandboxClient } from '~/components/Apps/AppAssistant/sandboxClient';
+import {
+  SandboxApiError,
+  createSandboxClient,
+  isSandboxServiceUrl,
+} from '~/components/Apps/AppAssistant/sandboxClient';
 
 const BASE = 'https://sandbox.example';
 const SANDBOX: Sandbox = {
@@ -137,9 +141,32 @@ describe('createSandboxClient', () => {
     await expect(client.list()).rejects.toMatchObject({ status: 502, kind: 'unavailable' });
   });
 
-  it('refuses a name that is not a sandbox name without sending anything', async () => {
-    const { client, fetchMock } = setup();
-    await expect(client.remove('../v1/sandboxes')).rejects.toBeInstanceOf(SandboxApiError);
-    expect(fetchMock).not.toHaveBeenCalled();
+  it.each([['../v1/sandboxes'], ['sbx-aaa/../x'], ['a?x'], ['SBX-AAA'], ['sbx-aaa%2f..']])(
+    'refuses %j as a sandbox name without sending anything',
+    async (name) => {
+      const { client, fetchMock } = setup();
+      await expect(client.remove(name)).rejects.toBeInstanceOf(SandboxApiError);
+      await expect(client.get(name)).rejects.toBeInstanceOf(SandboxApiError);
+      expect(fetchMock).not.toHaveBeenCalled();
+    }
+  );
+});
+
+describe('isSandboxServiceUrl (who may receive the token)', () => {
+  it.each([
+    [`${BASE}/s/sbx-0123456789ab/mcp`, true],
+    [`${BASE}:443/s/x/mcp`, true],
+    ['http://sandbox.example/s/x/mcp', false],
+    ['https://sandbox.example:8443/s/x/mcp', false],
+    ['https://sandbox.example.evil.example/s/x/mcp', false],
+    ['https://sandbox.example@evil.example/s/x/mcp', false],
+    ['https://evil.example/?u=https://sandbox.example', false],
+    ['not a url', false],
+  ])('%s → %s', (url, ok) => {
+    expect(isSandboxServiceUrl(url, BASE)).toBe(ok);
+  });
+
+  it('refuses everything when the configured base cannot be parsed', () => {
+    expect(isSandboxServiceUrl(`${BASE}/s/x/mcp`, 'not a url')).toBe(false);
   });
 });

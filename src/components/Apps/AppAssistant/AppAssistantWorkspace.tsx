@@ -79,7 +79,13 @@ function EnableCard({
 }
 
 export function AppAssistantWorkspace({ canPreview }: { canPreview: boolean }) {
-  const tokens = useMemo(() => createAssistantTokenProvider(), []);
+  // A revoke under connected apps surfaces as `consent_required` on the next mint; re-checking access
+  // then puts the turn-on card back instead of leaving every call failing.
+  const recheckAccess = useRef<() => void>(() => undefined);
+  const tokens = useMemo(
+    () => createAssistantTokenProvider({ onConsentRequired: () => recheckAccess.current() }),
+    []
+  );
   const sandboxUrl = env.NEXT_PUBLIC_APP_ASSISTANT_SANDBOX_URL;
   // Whether the user has turned the assistant on: the sandbox token mints only against their consent.
   const access = useQuery({
@@ -89,6 +95,7 @@ export function AppAssistantWorkspace({ canPreview }: { canPreview: boolean }) {
     retry: false,
     staleTime: Infinity,
   });
+  recheckAccess.current = () => void access.refetch();
   const enable = useMutation({
     mutationFn: () => tokens.enable(),
     onSuccess: () => access.refetch(),

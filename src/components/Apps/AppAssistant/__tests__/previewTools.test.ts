@@ -133,6 +133,22 @@ describe('start_preview', () => {
     });
   });
 
+  it.each([
+    ['block-token', 'block-token'],
+    ['bogus', undefined],
+  ])('forwards declared_auth %j as %j', async (given, sent) => {
+    await start({ public_key: KEY, declared_auth: given });
+    expect(deps.startDevTunnel.mock.calls[0][0].declaredAuth).toBe(sent);
+  });
+
+  it('caps declared scopes at 32 and keeps a 64-character scope', async () => {
+    const scopes = ['x'.repeat(64), ...Array.from({ length: 40 }, (_, i) => `scope-${i}`)];
+    await start({ public_key: KEY, declared_scopes: scopes });
+    const sent = deps.startDevTunnel.mock.calls[0][0].declaredScopes;
+    expect(sent).toHaveLength(32);
+    expect(sent[0]).toBe('x'.repeat(64));
+  });
+
   it('turns BAD_REQUEST into a retry hint and anything else into a plain failure', async () => {
     deps.startDevTunnel.mockRejectedValueOnce(trpcError('BAD_REQUEST', 'invalid SSH public key'));
     await expect(start({ public_key: KEY })).rejects.toThrow(

@@ -50,7 +50,7 @@ export interface AppAssistantRefusal {
 
 type GateContext = { user: SessionUser; req?: NextApiRequest | IncomingMessage };
 
-/** `guardedProcedure`'s gates (banned → onboarded → muted → email-verified), then the feature gate. */
+/** The `guardedProcedure` gates, then the feature gate. */
 export async function getAppAssistantRefusal({
   user,
   req,

@@ -30,17 +30,33 @@ type Cached = { token: string; expiresAtMs: number };
  * App Assistant's OAuth access tokens, cached per purpose until shortly before they expire;
  * concurrent callers share one request.
  */
-export function createAssistantTokenProvider(
-  fetchImpl: typeof fetch = (...args) => fetch(...args),
-  now: () => number = Date.now
-): AssistantTokenProvider {
+export function createAssistantTokenProvider({
+  fetchImpl = (...args) => fetch(...args),
+  now = Date.now,
+  onConsentRequired,
+}: {
+  fetchImpl?: typeof fetch;
+  now?: () => number;
+  /** Called when the route says the user has not turned the assistant on (or revoked it). */
+  onConsentRequired?: () => void;
+} = {}): AssistantTokenProvider {
   const cached = new Map<AssistantTokenPurpose, Cached>();
   const inflight = new Map<AssistantTokenPurpose, Promise<string>>();
 
   async function request(purpose: AssistantTokenPurpose, method: 'GET' | 'POST') {
     const url =
       method === 'POST' ? APP_ASSISTANT_TOKEN_ROUTE : `${APP_ASSISTANT_TOKEN_ROUTE}?for=${purpose}`;
-    const res = await fetchImpl(url, { method, credentials: 'same-origin' });
+    const res = await fetchImpl(
+      url,
+      method === 'POST'
+        ? {
+            method,
+            credentials: 'same-origin',
+            headers: { 'content-type': 'application/json' },
+            body: '{}',
+          }
+        : { method, credentials: 'same-origin' }
+    );
     const data = (await res.json().catch(() => null)) as {
       token?: unknown;
       expiresAt?: unknown;
@@ -48,6 +64,7 @@ export function createAssistantTokenProvider(
       code?: unknown;
     } | null;
     if (!res.ok || typeof data?.token !== 'string') {
+      if (data?.code === 'consent_required') onConsentRequired?.();
       throw new AssistantTokenError(
         typeof data?.error === 'string' ? data.error : 'Could not start an App Assistant session',
         res.status,

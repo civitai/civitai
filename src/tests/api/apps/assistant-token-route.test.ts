@@ -8,8 +8,7 @@ const { refusal, enable, mint, fullScope } = vi.hoisted(() => ({
   fullScope: vi.fn(() => true),
 }));
 
-// Credential rules are pinned in `credential-minting-routes-session-scope.test.ts`; this file is
-// about what the route does for a caller who is through them.
+// Credential rules are pinned in `credential-minting-routes-session-scope.test.ts`.
 vi.mock('~/server/utils/endpoint-helpers', () => ({
   AuthedEndpoint:
     (handler: (req: unknown, res: unknown, user: unknown) => Promise<unknown>) =>
@@ -18,10 +17,6 @@ vi.mock('~/server/utils/endpoint-helpers', () => ({
 }));
 vi.mock('~/server/utils/require-full-scope-session', () => ({
   requireFullScopeSession: fullScope,
-}));
-vi.mock('~/server/logging/client', () => ({
-  logToAxiom: vi.fn(async () => undefined),
-  safeError: (e: unknown) => e,
 }));
 vi.mock('~/server/services/app-assistant/app-assistant.service', () => ({
   getAppAssistantRefusal: refusal,
@@ -34,10 +29,14 @@ const handler = (await import('~/pages/api/apps/assistant/token')).default as un
   res: NextApiResponse
 ) => Promise<void>;
 
-async function call(method: 'GET' | 'POST', query: Record<string, unknown> = {}) {
+async function call(
+  method: 'GET' | 'POST',
+  query: Record<string, unknown> = {},
+  headers: Record<string, string> = method === 'POST' ? { 'content-type': 'application/json' } : {}
+) {
   let status = 200;
   let body: unknown;
-  const headers = new Map<string, unknown>();
+  const resHeaders = new Map<string, unknown>();
   const res = {
     status(code: number) {
       status = code;
@@ -48,12 +47,12 @@ async function call(method: 'GET' | 'POST', query: Record<string, unknown> = {})
       return res;
     },
     setHeader(k: string, v: unknown) {
-      headers.set(k.toLowerCase(), v);
+      resHeaders.set(k.toLowerCase(), v);
       return res;
     },
   } as unknown as NextApiResponse;
-  await handler({ method, query } as unknown as NextApiRequest, res);
-  return { status, body, cacheControl: headers.get('cache-control') };
+  await handler({ method, query, headers } as unknown as NextApiRequest, res);
+  return { status, body, cacheControl: resHeaders.get('cache-control') };
 }
 
 const TOKEN = { token: 't', expiresAt: '2099-01-01T00:00:00Z' };
@@ -98,6 +97,12 @@ describe('/api/apps/assistant/token', () => {
     expect(await call('POST', { for: 'sandbox' })).toMatchObject({ status: 200, body: TOKEN });
     expect(order).toEqual(['enable', 'mint']);
     expect(mint).toHaveBeenCalledWith(7, 'chat');
+  });
+
+  it('POST without JSON is refused before anything is written', async () => {
+    expect((await call('POST', {}, { 'content-type': 'text/plain' })).status).toBe(415);
+    expect(enable).not.toHaveBeenCalled();
+    expect(mint).not.toHaveBeenCalled();
   });
 
   it('a refused caller gets the refusal and nothing is written or minted', async () => {

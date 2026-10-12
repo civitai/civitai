@@ -13,15 +13,18 @@ import { requireFullScopeSession } from '~/server/utils/require-full-scope-sessi
  * spends Buzz.
  *
  *   GET  ?for=chat|sandbox → `{ token, expiresAt }`, or 403 `consent_required` until it is turned on
- *   POST                   → turns App Assistant on (the user's click), then as GET for the chat
+ *   POST (JSON)            → turns App Assistant on (the user's click), then as GET for the chat
  *
  * Only POST writes consent, so a GET from a token refresh cannot re-grant what the user revoked.
+ * POST must be JSON so a cross-origin form cannot send it without a CORS preflight.
  */
 export default AuthedEndpoint(
   async (req, res, user) => {
     if (!requireFullScopeSession(req, res)) return;
     const refusal = await getAppAssistantRefusal({ user, req });
     if (refusal) return res.status(refusal.status).json({ error: refusal.error });
+    if (req.method === 'POST' && !req.headers['content-type']?.startsWith('application/json'))
+      return res.status(415).json({ error: 'Expected a JSON request' });
 
     const purpose: AppAssistantTokenPurpose =
       req.method === 'GET' && req.query.for === 'sandbox' ? 'sandbox' : 'chat';
