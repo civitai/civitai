@@ -178,7 +178,7 @@ export default function BlockImageUploadModal({
     });
     if (epoch !== epochRef.current) return;
     if (error) {
-      reportUnreadablePick(picked, 'app-block-upload');
+      reportUnreadablePick(picked, 'app-block-display-upload');
       showPreview(null);
       setStatus('idle');
       setUnreadablePick(true);
@@ -260,7 +260,6 @@ export default function BlockImageUploadModal({
         {unreadablePick && (
           <UnreadablePickAlert
             accept={IMAGE_MIME_TYPE}
-            maxSize={constants.mediaUpload.maxImageFileSize}
             disabled={busy}
             onFiles={([file]) => void handleFile(file)}
           />

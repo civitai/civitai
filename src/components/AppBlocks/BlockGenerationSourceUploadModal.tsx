@@ -19,7 +19,6 @@ import { maxOrchestratorImageFileSize } from '~/server/common/constants';
 import { DIM_MAX, DIM_MIN } from '~/server/schema/blocks/workflow.schema';
 import { IMAGE_MIME_TYPE } from '~/shared/constants/mime-types';
 import {
-  IMAGE_LOAD_ERROR,
   IMAGE_PREP_ERROR,
   ImagePrepError,
   imageToJpegBlob,
@@ -53,6 +52,9 @@ import { reportUnreadablePick, snapshotPick } from '~/utils/unreadable-pick';
 export type BlockSourceImageInfo = { url: string; width: number; height: number };
 
 type UploadStatus = 'idle' | 'uploading' | 'ready' | 'error';
+
+/** Shown when the upload went through but the uploaded image then failed to load back. */
+const UPLOAD_UNCONFIRMED_ERROR = "Couldn't confirm the upload. Please try again.";
 
 export default function BlockGenerationSourceUploadModal({
   onResolved,
@@ -97,7 +99,7 @@ export default function BlockGenerationSourceUploadModal({
     const { file, error } = await snapshotPick(picked, { maxBytes: maxOrchestratorImageFileSize });
     if (epoch !== epochRef.current) return;
     if (error) {
-      reportUnreadablePick(picked, 'app-block-upload');
+      reportUnreadablePick(picked, 'app-block-source-upload');
       showPreview(null);
       setStatus('idle');
       setUnreadablePick(true);
@@ -140,7 +142,7 @@ export default function BlockGenerationSourceUploadModal({
       // Real dimensions from the uploaded (resized) blob (mirrors SourceImageUpload).
       const { width, height } = await getImageDimensions(url, { loadRetries: 2 }).catch(
         (e: unknown) => {
-          throw new Error(IMAGE_LOAD_ERROR, { cause: e });
+          throw new Error(UPLOAD_UNCONFIRMED_ERROR, { cause: e });
         }
       );
       if (epoch !== epochRef.current) return;
@@ -197,7 +199,6 @@ export default function BlockGenerationSourceUploadModal({
         {unreadablePick && (
           <UnreadablePickAlert
             accept={IMAGE_MIME_TYPE}
-            maxSize={maxOrchestratorImageFileSize}
             disabled={busy}
             onFiles={([file]) => void handleFile(file)}
           />
