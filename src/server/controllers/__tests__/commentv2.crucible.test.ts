@@ -24,13 +24,14 @@ vi.mock('~/server/services/commentsv2.service', async (importOriginal) => ({
 }));
 
 const blockedBy = { ids: [] as number[] };
+const blocked = { ids: [] as number[] };
 const preference = (ids: () => number[]) => ({
   getCached: vi.fn(async () => ids().map((id) => ({ id }))),
 });
 vi.mock('~/server/services/user-preferences.service', async (importOriginal) => ({
   ...(await importOriginal<typeof UserPreferences>()),
   HiddenUsers: preference(() => []),
-  BlockedUsers: preference(() => []),
+  BlockedUsers: preference(() => blocked.ids),
   BlockedByUsers: preference(() => blockedBy.ids),
 }));
 
@@ -73,10 +74,17 @@ describe.each(HANDLERS)('crucible comments visibility: %s', (_name, handler, ser
   beforeEach(() => {
     vi.clearAllMocks();
     blockedBy.ids = [];
+    blocked.ids = [];
     dbMock.dbRead.crucible.findUnique.mockResolvedValue(crucibleRow());
   });
 
   const call = (ctx: unknown) => handler({ ctx: ctx as never, input: input as never });
+
+  it('refuses a viewer who blocked the creator', async () => {
+    blocked.ids = [CREATOR];
+    await expect(call(ctxFor({ id: 9 }))).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    expect(service.mock.calls.length).toBe(0);
+  });
 
   it('serves the thread of a crucible the viewer can open', async () => {
     await call(ctxFor({ id: 9 }));

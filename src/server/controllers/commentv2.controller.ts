@@ -49,6 +49,15 @@ import {
   upsertComment,
 } from './../services/commentsv2.service';
 
+/** Creators who blocked the viewer and creators the viewer blocked. */
+async function getBlockedCreatorIds(userId: number) {
+  const [blockedBy, blocked] = await Promise.all([
+    BlockedByUsers.getCached({ userId }),
+    BlockedUsers.getCached({ userId }),
+  ]);
+  return [...new Set([...blockedBy, ...blocked].map((x) => x.id))];
+}
+
 export async function assertCommentEntityVisible(
   input: { entityType: string; entityId: number },
   ctx: Pick<Context, 'user' | 'features'>
@@ -62,10 +71,7 @@ export async function assertCommentEntityVisible(
       viewerId: user?.id,
       isModerator: !!user?.isModerator,
       isGreen: !!ctx.features?.isGreen,
-      blockedByUserIds:
-        user && !user.isModerator
-          ? (await BlockedByUsers.getCached({ userId: user.id })).map((x) => x.id)
-          : [],
+      blockedCreatorIds: user && !user.isModerator ? await getBlockedCreatorIds(user.id) : [],
     });
 }
 
