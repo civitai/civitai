@@ -656,6 +656,9 @@ export const upsertModelVersion = async ({
     }
   }
 
+  // Publishing goes through modelVersion.publish, which enforces what this route would skip.
+  if (!isModerator && (!id || templateId)) data.status = ModelStatus.Draft;
+
   // Check if trying to publish a model version when model is marked as cannotPublish
   const modelMeta = model.meta as ModelMeta | null;
   if (modelMeta?.cannotPublish && data.status === ModelStatus.Published) {
@@ -862,6 +865,15 @@ export const upsertModelVersion = async ({
       throw throwBadRequestError(
         'Use the unpublish action to take a published version down — it settles any refunds owed to buyers.'
       );
+    }
+
+    // The converse. A replay of the stored status (the review handlers) is not a publish.
+    if (
+      !isModerator &&
+      (data.status === ModelStatus.Published || data.status === ModelStatus.Scheduled) &&
+      data.status !== existingVersion.status
+    ) {
+      throw throwBadRequestError('Use the publish action to publish a version.');
     }
 
     const mergedMeta =
