@@ -1,3 +1,4 @@
+import type { TextScanSubject } from '~/server/services/text-scan/types';
 import { foldConfusables } from '~/server/utils/confusable-fold';
 import { foldDiacritics } from '~/utils/fold-diacritics';
 
@@ -25,4 +26,9 @@ export function findLiteralModelRuleHits(text: string, rules: LiteralModelRule[]
     if (matched) hits.push(rule.id);
   }
   return hits;
+}
+
+export function findLiteralHitsInSubject(subject: TextScanSubject, rules: LiteralModelRule[]) {
+  const text = subject.fields.map((field) => field.text ?? '').join('\n');
+  return findLiteralModelRuleHits(text, rules);
 }

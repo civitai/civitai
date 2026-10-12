@@ -14,6 +14,7 @@ vi.mock('~/server/redis/caches', () => ({ dataForModelsCache: { refresh: refresh
 
 const {
   applyModelRulesTextScan,
+  holdModelForLiteralRules,
   modelRulesClearedOnRepublish,
   withModelRulesClearance,
   MODEL_RULES_UNPUBLISH_MESSAGE,
@@ -124,6 +125,40 @@ describe('applyModelRulesTextScan', () => {
         meta: expect.objectContaining({ modelRules: expect.objectContaining({ ruleIds: [5] }) }),
       })
     );
+  });
+});
+
+describe('holdModelForLiteralRules', () => {
+  it('takes the model to review with the unpublish notice keys and no claim on a public row', async () => {
+    await holdModelForLiteralRules({ modelId: 7, ruleIds: [3], textHash: 'h1', meta: { foo: 1 } });
+
+    expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
+    expect(unpublishModelById).toHaveBeenCalledWith({
+      id: 7,
+      userId: -1,
+      isModerator: true,
+      reason: 'other',
+      customMessage: MODEL_RULES_UNPUBLISH_MESSAGE,
+      meta: {
+        foo: 1,
+        needsReview: true,
+        modelRules: {
+          ruleIds: [3],
+          workflowId: 'literal:h1',
+          textHash: 'h1',
+          at: expect.any(String),
+          source: 'literal',
+        },
+      },
+    });
+    expect(refreshModelData).toHaveBeenCalledWith(7);
+    expect(bustPublicModelResponseCache).toHaveBeenCalledWith(7);
+  });
+
+  it('is cleared by a moderator republish like an LLM match', async () => {
+    await holdModelForLiteralRules({ modelId: 7, ruleIds: [3], textHash: 'h1' });
+    const { meta } = unpublishModelById.mock.calls[0][0];
+    expect(modelRulesClearedOnRepublish(meta)).toEqual({ ruleIds: [3], textHash: 'h1' });
   });
 });
 

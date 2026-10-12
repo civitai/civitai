@@ -876,7 +876,10 @@ export const publishModelHandler = async ({
       ...input,
       meta: withModelRulesClearance(meta, modelMeta, isModerator),
       republishing,
+      enforceModelRules: !isModerator,
     });
+    // Held for review: not published, so no publish side effects below.
+    if (updatedModel.status === ModelStatus.UnpublishedViolation) return updatedModel;
     if (!isModerator)
       scanEntityInBackground({ entityType: 'ModelRules', entityId: updatedModel.id });
 
@@ -2514,7 +2517,9 @@ export const publishPrivateModelHandler = async ({
       callerId: userId,
     });
 
-    const { versionIds } = await publishPrivateModel(input);
+    const { versionIds } = await publishPrivateModel(input, {
+      enforceModelRules: !ctx.user.isModerator,
+    });
     await dataForModelsCache.refresh(input.modelId);
     await bustMvCache(versionIds, input.modelId);
     await modelsSearchIndex.queueUpdate([

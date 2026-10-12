@@ -102,6 +102,18 @@ const cases: [file: string, start: string, call: string, times: number][] = [
     1,
   ],
   [
+    'src/server/controllers/model.controller.ts',
+    'export const publishModelHandler',
+    'enforceModelRules: !isModerator',
+    1,
+  ],
+  [
+    'src/server/controllers/model.controller.ts',
+    'export const publishPrivateModelHandler',
+    'enforceModelRules: !ctx.user.isModerator',
+    1,
+  ],
+  [
     'src/server/routers/model.router.ts',
     'migrateToCollection:',
     'migrateResourceToCollection({ ...input, isModerator: ctx.user.isModerator })',

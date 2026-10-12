@@ -138,6 +138,8 @@ import {
 import { submitModelTextModeration } from '~/server/services/model-moderation.adapter';
 import { summarizeTextScan } from '~/server/services/text-scan/moderator-summary';
 import { reassertModelPoiRestrictions } from '~/server/services/text-scan/actions/model-poi-minor';
+import { holdModelForLiteralRules } from '~/server/services/text-scan/actions/model-rules';
+import { checkModelRulesLiteralHold } from '~/server/services/text-scan/model-rules-hold';
 import { legacyProfanityAutoNsfwApplies } from '~/server/services/text-scan/route';
 import { scanEntityInBackground, scanModelAndRules } from '~/server/services/text-scan/submit';
 import {
@@ -3306,18 +3308,46 @@ export async function applyModelContentChange({
   return true;
 }
 
+const publishedModelSelect = {
+  id: true,
+  name: true,
+  description: true,
+  poi: true,
+  nsfw: true,
+  minor: true,
+  sfwOnly: true,
+  type: true,
+  userId: true,
+  modelVersions: { select: { id: true, baseModel: true } },
+  status: true,
+} satisfies Prisma.ModelSelect;
+
 export const publishModelById = async ({
   id,
   versionIds,
   publishedAt,
   meta,
   republishing,
+  enforceModelRules,
 }: PublishModelSchema & {
   meta?: ModelMeta;
   republishing?: boolean;
+  /** Hold the model for review instead of publishing it when its text literally matches a Model rule. */
+  enforceModelRules?: boolean;
 }) => {
   if (meta?.cannotPublish) {
     throw throwBadRequestError('This model cannot be published due to moderation restrictions.');
+  }
+  if (enforceModelRules) {
+    const hold = await checkModelRulesLiteralHold({
+      modelId: id,
+      versionIds: versionIds ?? [],
+      meta,
+    });
+    if (hold) {
+      await holdModelForLiteralRules({ modelId: id, ...hold, meta });
+      return dbWrite.model.findUniqueOrThrow({ where: { id }, select: publishedModelSelect });
+    }
   }
   const includeVersions = versionIds && versionIds.length > 0;
   let status: ModelStatus = ModelStatus.Published;
@@ -3333,19 +3363,7 @@ export const publishModelById = async ({
           meta: isEmpty(meta) ? Prisma.JsonNull : meta,
           deletedAt: null,
         },
-        select: {
-          id: true,
-          name: true,
-          description: true,
-          poi: true,
-          nsfw: true,
-          minor: true,
-          sfwOnly: true,
-          type: true,
-          userId: true,
-          modelVersions: { select: { id: true, baseModel: true } },
-          status: true,
-        },
+        select: publishedModelSelect,
       });
 
       // Anti-bump guard: publishedAt is immutable once a model has gone
@@ -5251,10 +5269,10 @@ export const privateModelFromTraining = async ({
   }
 };
 
-export const publishPrivateModel = async ({
-  modelId,
-  publishVersions,
-}: PublishPrivateModelInput) => {
+export const publishPrivateModel = async (
+  { modelId, publishVersions }: PublishPrivateModelInput,
+  { enforceModelRules }: { enforceModelRules?: boolean } = {}
+) => {
   const model = await dbRead.model.findUnique({
     where: { id: modelId },
     select: { id: true, userId: true, availability: true, status: true, meta: true },
@@ -5294,6 +5312,22 @@ export const publishPrivateModel = async ({
       throw throwBadRequestError(
         'Add example images before making this model public. Each version must include a showcase post.'
       );
+    }
+  }
+
+  if (publishVersions && enforceModelRules) {
+    const hold = await checkModelRulesLiteralHold({
+      modelId,
+      versionIds,
+      meta: model.meta as ModelMeta | null,
+    });
+    if (hold) {
+      await holdModelForLiteralRules({
+        modelId,
+        ...hold,
+        meta: (model.meta ?? {}) as ModelMeta,
+      });
+      return { versionIds };
     }
   }
 

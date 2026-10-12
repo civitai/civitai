@@ -45,6 +45,18 @@ export async function applyModelRulesTextScan({
   `;
   if (!claimed) return;
 
+  await unpublishForModelRules({ entityId, meta, modelRules });
+}
+
+async function unpublishForModelRules({
+  entityId,
+  meta,
+  modelRules,
+}: {
+  entityId: number;
+  meta: ModelMeta;
+  modelRules: NonNullable<ModelMeta['modelRules']>;
+}) {
   const { unpublishModelById } = await loadModelService();
   await unpublishModelById({
     id: entityId,
@@ -56,6 +68,31 @@ export async function applyModelRulesTextScan({
   });
   await dataForModelsCache.refresh(entityId);
   await bustPublicModelResponseCache(entityId);
+}
+
+/**
+ * A literal match found before the model went public. It is taken straight to review instead of
+ * being published first, so no claim on a public row is needed.
+ */
+export async function holdModelForLiteralRules({
+  modelId,
+  ruleIds,
+  textHash,
+  meta,
+}: {
+  modelId: number;
+  ruleIds: number[];
+  textHash: string;
+  meta?: ModelMeta;
+}) {
+  const modelRules = {
+    ruleIds,
+    workflowId: `literal:${textHash}`,
+    textHash,
+    at: new Date().toISOString(),
+    source: 'literal' as const,
+  };
+  await unpublishForModelRules({ entityId: modelId, meta: meta ?? {}, modelRules });
 }
 
 /** What a moderator approves by republishing a model these rules unpublished. */

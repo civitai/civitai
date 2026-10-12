@@ -10,16 +10,22 @@ import { removeTags } from '~/utils/string-helpers';
 /**
  * Shared with the `ModelRules` profile, so both scans read the same model text. `publicOnly` loads
  * only what the public can see: a Published or Scheduled, non-Private model and its public versions.
+ * `prePublish` loads a model that is not public yet as the post-publish scan will see it, so the two
+ * text hashes agree: any status, and the public versions plus the ones this publish makes public.
  */
 export async function loadModelScanSubjects(
   ids: number[],
-  { publicOnly = false }: { publicOnly?: boolean } = {}
+  {
+    publicOnly = false,
+    prePublish,
+  }: { publicOnly?: boolean; prePublish?: { versionIds: number[] } } = {}
 ): Promise<Map<number, TextScanSubject>> {
+  const publicVersions = { status: { in: PUBLIC_STATUSES } };
   const rows = await dbWrite.model.findMany({
     where: {
       id: { in: ids },
-      deletedAt: null,
-      ...(publicOnly
+      ...(prePublish ? {} : { deletedAt: null }),
+      ...(publicOnly && !prePublish
         ? {
             status: { in: PUBLIC_STATUSES },
             availability: { not: Availability.Private },
@@ -35,7 +41,11 @@ export async function loadModelScanSubjects(
       poi: true,
       minor: true,
       modelVersions: {
-        ...(publicOnly ? { where: { status: { in: PUBLIC_STATUSES } } } : {}),
+        ...(prePublish
+          ? { where: { OR: [publicVersions, { id: { in: prePublish.versionIds } }] } }
+          : publicOnly
+          ? { where: publicVersions }
+          : {}),
         select: { name: true, description: true, trainedWords: true },
         orderBy: { index: 'asc' },
       },

@@ -36,6 +36,16 @@ describe('loadModelScanSubjects', () => {
   });
 });
 
+describe('loadModelScanSubjects with prePublish', () => {
+  it('reads the model whatever its status, with the public versions and the ones about to be', async () => {
+    await loadModelScanSubjects([1], { prePublish: { versionIds: [5, 6] } });
+    expect(call().where).toEqual({ id: { in: [1] } });
+    expect(call().select.modelVersions.where).toEqual({
+      OR: [{ status: { in: ['Published', 'Scheduled'] } }, { id: { in: [5, 6] } }],
+    });
+  });
+});
+
 describe('profiles', () => {
   it('the ModelRules profile loads public text only, and Model does not', async () => {
     await getTextScanProfile('ModelRules')!.load([1]);

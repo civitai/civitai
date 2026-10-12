@@ -384,7 +384,14 @@ export type ModelMeta = Partial<{
   minorHashAccepted: { at: string };
   textScanFlags: TextScanFlags;
   /** The `ModelRules` text-scan match that unpublished the model. Moderator-only. */
-  modelRules: { ruleIds: number[]; workflowId: string; textHash: string; at: string };
+  modelRules: {
+    ruleIds: number[];
+    workflowId: string;
+    textHash: string;
+    at: string;
+    /** Absent for an LLM match. A literal one carries a synthetic `workflowId` of `literal:<textHash>`. */
+    source?: 'literal';
+  };
   /**
    * Rules a moderator approved by republishing, for the text they reviewed: a rescan of that same
    * text does not act on them again, while edited text is judged afresh.
