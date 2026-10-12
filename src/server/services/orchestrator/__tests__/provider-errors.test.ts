@@ -88,12 +88,12 @@ describe('sanitizeProviderError', () => {
 
 describe('sanitizeStepErrors', () => {
   const refusal =
-    "The request failed because the input image 'content[1]' may contain real person. Request id: 0217917616433749601394fd5171fb187b1a439528361d3539d8d";
+    "The request failed because the input image 'content[1]' may contain real person. Request id: 0123456789abcdef";
 
   it('shows a provider content refusal instead of a generic system error', () => {
     const step = { output: { externalTOSViolation: true, message: refusal } };
     expect(sanitizeStepErrors(step, 'seedance')).toEqual([
-      'Seedance: The request failed because the input image may contain real person. Request id: 0217917616433749601394fd5171fb187b1a439528361d3539d8d',
+      'Seedance: The request failed because the input image may contain real person. Request id: 0123456789abcdef',
     ]);
   });
 
