@@ -12,17 +12,18 @@ import { VERIFIED_BOT_HEADER } from '~/server/utils/bot-detection/header';
 
 const BROWSER = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/130.0 Safari/537.36';
 const GOOGLEBOT = 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)';
-// Inside a published Googlebot range (googlebot-ips.json), and outside every crawler range.
-const GOOGLEBOT_IP = '108.177.2.1';
+// GOOGLEBOT_IP is in a googlebot-ips.json range; OTHER_IP is in no crawler range.
+const GOOGLEBOT_IP = '192.178.4.1';
 const OTHER_IP = '203.0.113.9';
 
 function requestTo(
   path: string,
-  carriesHeader: boolean,
+  carriesHeader: boolean | string,
   { ua = BROWSER, ip = OTHER_IP }: { ua?: string; ip?: string } = {}
 ) {
   const headers = new Headers({ 'user-agent': ua, 'cf-connecting-ip': ip });
-  if (carriesHeader) headers.set(VERIFIED_BOT_HEADER, 'googlebot');
+  if (carriesHeader)
+    headers.set(VERIFIED_BOT_HEADER, carriesHeader === true ? 'googlebot' : carriesHeader);
   return new NextRequest(`https://civitai.red${path}`, { headers });
 }
 
@@ -41,6 +42,8 @@ describe('botDetectionMiddleware and an inbound crawler header', () => {
     ['a tRPC call', '/api/trpc/image.get'],
     ['a public REST call', '/api/v1/images'],
     ['a listing page under a matched prefix', '/images'],
+    ['the home page', '/'],
+    ['a profile page', '/user/someone'],
   ])('drops the header a browser sent to %s', async (_, path) => {
     const request = requestTo(path, true);
     expect(botDetectionMiddleware.shouldRun?.(request)).toBe(true);
@@ -55,12 +58,19 @@ describe('botDetectionMiddleware and an inbound crawler header', () => {
   });
 
   it.each([
-    ['without', false],
-    ['with', true],
-  ])('sets it for a verified crawler arriving %s one', async (_, carriesHeader) => {
+    ['without one', false],
+    ['with its own value', true],
+    ['with a different value', 'bingbot'],
+  ])('sets it for a verified crawler arriving %s', async (_, carriesHeader) => {
     const request = requestTo('/images/123', carriesHeader, { ua: GOOGLEBOT, ip: GOOGLEBOT_IP });
     const response = await runMiddlewares(request, [botDetectionMiddleware]);
     expect(headerSeenByApp(response, request)).toBe('googlebot');
+  });
+
+  it('verifies crawlers only on the paths that use it', async () => {
+    const request = requestTo('/images', false, { ua: GOOGLEBOT, ip: GOOGLEBOT_IP });
+    const response = await runMiddlewares(request, [botDetectionMiddleware]);
+    expect(headerSeenByApp(response, request)).toBeNull();
   });
 
   it('leaves a request without the header untouched', async () => {
