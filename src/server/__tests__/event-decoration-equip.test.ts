@@ -59,6 +59,7 @@ const { equipCosmeticSchema, unequipCosmeticSchema } = await import(
 );
 
 const OWNER = 7;
+const POST = 900;
 const IMAGE = 501;
 const DURING = new Date(BIRTHDAY_2026_STARTS_AT.getTime() + 24 * 60 * 60 * 1000);
 
@@ -101,7 +102,7 @@ beforeEach(() => {
     caches.frame[entity] = entityCache();
     caches.event[entity] = entityCache();
   }
-  db.image.findUnique.mockResolvedValue({ userId: OWNER });
+  db.image.findUnique.mockResolvedValue({ userId: OWNER, postId: POST });
   // clearAllMocks keeps resolved values; a lookup one test set must not answer the next.
   for (const lookup of [db.model.findUnique, db.article.findUnique, db.post.findUnique])
     lookup.mockReset().mockResolvedValue(null);
@@ -275,6 +276,101 @@ describe('placing an event decoration', () => {
       equippedToId: IMAGE,
       equippedToType: 'Image',
       equippedAt: BIRTHDAY_2026_ENDS_AT,
+    });
+  });
+});
+
+// An image outside a post (an article cover, a profile picture) is in no feed and its page 404s
+// for everyone else, so a hat there scores almost nothing. Testers put hats on article covers
+// expecting the article to wear them.
+describe('an event decoration on an image outside a post', () => {
+  const postless = () => db.image.findUnique.mockResolvedValue({ userId: OWNER, postId: null });
+
+  it('is refused on an article cover, pointing at the article', async () => {
+    db.userCosmetic.findFirst.mockResolvedValue(hatRow());
+    postless();
+    db.article.findUnique.mockResolvedValue({ id: 36 });
+
+    await expect(equipHat()).rejects.toThrow(
+      /your article's cover.*Put the hat on the article instead/
+    );
+    expect(db.article.findUnique).toHaveBeenCalledWith({
+      where: { coverId: IMAGE },
+      select: { id: true },
+    });
+    expect(db.$executeRaw).not.toHaveBeenCalled();
+    expect(db.userCosmetic.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('is refused on any other image without a post', async () => {
+    db.userCosmetic.findFirst.mockResolvedValue(hatRow());
+    postless();
+
+    await expect(equipHat()).rejects.toThrow(/^Hats can only go on images that are in a post\.$/);
+    expect(db.$executeRaw).not.toHaveBeenCalled();
+    expect(db.userCosmetic.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('reads the post from the primary', async () => {
+    db.userCosmetic.findFirst.mockResolvedValue(hatRow());
+    await equipHat();
+    expect(db.image.findUnique).toHaveBeenCalledWith({
+      where: { id: IMAGE },
+      select: { postId: true },
+    });
+    expect(dbMock.dbRead.image.findUnique).not.toHaveBeenCalled();
+    expect(db.article.findUnique).not.toHaveBeenCalled();
+    expect(db.$executeRaw).toHaveBeenCalledTimes(1);
+  });
+
+  // Checked after ownership, so a refusal says nothing about someone else's image.
+  it("refuses someone else's image as not theirs, before looking for an article", async () => {
+    db.userCosmetic.findFirst.mockResolvedValue(hatRow());
+    db.image.findUnique.mockResolvedValue({ userId: OWNER + 1, postId: null });
+
+    await expect(equipHat()).rejects.toThrow(/your own content/);
+    expect(db.article.findUnique).not.toHaveBeenCalled();
+  });
+
+  it('is not asked of a hat going on an article', async () => {
+    db.userCosmetic.findFirst.mockResolvedValue(hatRow());
+    postless();
+    db.article.findUnique.mockResolvedValue({ userId: OWNER, id: 36 });
+
+    await equipCosmeticToEntity({
+      userId: OWNER,
+      cosmeticId: 1,
+      claimKey: 'tx-1',
+      equippedToId: 36,
+      equippedToType: 'Article',
+    });
+    expect(db.image.findUnique).not.toHaveBeenCalled();
+    expect(db.$executeRaw).toHaveBeenCalledTimes(1);
+  });
+
+  it('still lets a frame go on it', async () => {
+    db.userCosmetic.findFirst.mockResolvedValue(frameRow());
+    postless();
+    await equipHat();
+    expect(db.userCosmetic.updateMany.mock.calls.at(-1)![0].data).toMatchObject({
+      equippedToId: IMAGE,
+      equippedToType: 'Image',
+    });
+  });
+
+  it('still lets a hat already on it come off', async () => {
+    postless();
+    await unequipCosmetic({
+      userId: OWNER,
+      cosmeticId: 1,
+      claimKey: 'tx-1',
+      equippedToId: IMAGE,
+      equippedToType: 'Image',
+    });
+    expect(db.userCosmetic.updateMany.mock.calls[0][0].data).toEqual({
+      equippedToId: null,
+      equippedToType: null,
+      equippedAt: null,
     });
   });
 });

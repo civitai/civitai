@@ -51,6 +51,7 @@ vi.mock('~/server/flipt/tester-segment', async () => {
 const { equipCosmeticToEntity } = await import('~/server/services/cosmetic.service');
 
 const OWNER = 7;
+const POST = 900;
 const HAT_ID = 1;
 const DURING = new Date(BIRTHDAY_2026_STARTS_AT.getTime() + 24 * 60 * 60 * 1000);
 const minutesAgo = (n: number) => new Date(DURING.getTime() - n * 60 * 1000).toISOString();
@@ -116,7 +117,7 @@ beforeEach(async () => {
   vi.setSystemTime(DURING);
   testerFlag.reset({ public: true });
   await holder.db.exec(`DELETE FROM "UserCosmetic"`);
-  db.image.findUnique.mockResolvedValue({ userId: OWNER });
+  db.image.findUnique.mockResolvedValue({ userId: OWNER, postId: POST });
   db.userCosmetic.findMany.mockResolvedValue([]);
 });
 afterEach(() => vi.useRealTimers());
