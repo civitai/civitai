@@ -52,6 +52,7 @@
     parseLabel,
     runCard,
     splitTags,
+    startLabelPass,
     tagsHaveTrigger,
     type DatasetFilter,
     type Img,
@@ -207,7 +208,7 @@
   const labelingActive = $derived(images.some((i) => i.labeling));
   // Uploaded images with no label, not already being labeled, and not already auto-label-attempted —
   // what an auto-label run targets. Excluding attempted ones stops the button re-offering a model that
-  // returned nothing (a failed step clears the flag, so genuine failures stay retryable).
+  // returned nothing (failed steps go to the editor's Re-run).
   const unlabeled = $derived(
     images.filter((i) => isTrainable(i) && !isLabeled(i) && !i.labeling && !i.labelTried && !!i.blobUrl)
   );
@@ -521,9 +522,8 @@
     try {
       while (unlabeled.length > 0) {
         const targets = unlabeled;
-        const items = targets.map((t) => ({ key: String(t.id), mediaUrl: t.blobUrl! }));
-        labelRun = { total: targets.length, done: 0, keys: new Set(items.map((i) => i.key)) };
-        for (const t of targets) patch(t.id, { labeling: true });
+        const { byKey, items } = startLabelPass(targets);
+        labelRun = { total: targets.length, done: 0, keys: new Set(byKey.keys()) };
         // A result that resolves between abort and delivery must be dropped — post-switch it
         // would write an OLD-mode label into a freshly reset tile and mark it done.
         await runAutoLabel(
@@ -531,7 +531,8 @@
           media,
           items,
           (r) => {
-            if (!controller.signal.aborted) applyLabel(r);
+            const img = byKey.get(r.key);
+            if (img && !controller.signal.aborted) applyLabel(img, r);
           },
           controller.signal
         );
@@ -540,6 +541,7 @@
         if (autoLabel !== 'auto') break;
       }
     } catch (err) {
+      // labelTried stays set: these tiles may already be submitted (and charged) — Re-run is the retry.
       if (!isAbort(err)) for (const i of images) if (i.labeling) patch(i.id, { labeling: false });
     } finally {
       // Only release the slot/progress if they're still OURS — an aborted drain's finally runs
@@ -552,9 +554,7 @@
     }
   }
 
-  function applyLabel(r: AutoLabelResult) {
-    const img = images.find((x) => String(x.id) === r.key);
-    if (!img) return;
+  function applyLabel(img: Img, r: AutoLabelResult) {
     img.labeling = false;
     img.labelTried = true; // attempted (any outcome) — the drain labels each image once; failures go manual
     if (labelRun?.keys.has(r.key)) labelRun.done += 1; // count only this pass's own targets
@@ -665,8 +665,9 @@
     if (!img || !img.blobUrl || img.labeling) return;
     patch(id, { labeling: true, labelTried: false, tags: [], caption: '' });
     try {
-      const item = [{ key: String(id), mediaUrl: img.blobUrl }];
-      await runAutoLabel(labelMode, media, item, applyLabel, new AbortController().signal);
+      // Not a drain-pass index, so the drain's progress counter never counts it.
+      const item = [{ key: 'relabel', mediaUrl: img.blobUrl }];
+      await runAutoLabel(labelMode, media, item, (r) => applyLabel(img, r), new AbortController().signal);
     } catch (err) {
       if (!isAbort(err)) patch(id, { labeling: false });
     }

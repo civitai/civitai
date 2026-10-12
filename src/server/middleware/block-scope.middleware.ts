@@ -237,9 +237,9 @@ export interface BlockTokenClaims {
  *
  * ── WHY IT EXISTS AT ALL ────────────────────────────────────────────────────
  * The submit gates spell the same comparison and are NOT interchangeable. The
- * txt2img and registry-step gates add the per-generation author fee into the value
- * they compare; the custom-comfy and pass-through gates do not, because neither has
- * a pre-submit `cost.base` to price a fee from, and training charges no fee (that split is
+ * txt2img, registry-step and multi-step workflow gates add the per-generation author
+ * fee into the value they compare; the custom-comfy and pass-through gates do not,
+ * because neither reserves one, and training charges no fee (that split is
  * documented at `src/server/services/blocks/author-fee-charge.service.ts` and
  * ledgered in `src/server/services/__tests__/no-divergent-author-fee-base.test.ts`).
  * Any future change to the ceiling is correct for at most one of those two
@@ -1662,10 +1662,11 @@ export function withBlockScope(handler: NextApiHandler, opts: WithBlockScopeOpts
       //
       // ⚠️ THE 503 BUYS AN HONEST MESSAGE, NOT AUTOMATIC RECOVERY. `client-safe-error.ts` passes
       // a 503's message through (every other 5xx is replaced), and `utils/trpc.ts` retries
-      // QUERIES only — and the block host currently turns any poll throw into a terminal `failed`
-      // snapshot (`PageBlockHost.tsx`). So today this changes what the viewer is TOLD, not
-      // whether the SDK resumes; teaching the host to branch on 503 is client work and is NOT
-      // done here. Do not read this branch as delivering retry.
+      // QUERIES only. Over the BRIDGE the hosts now answer a poll that throws SERVICE_UNAVAILABLE
+      // with a non-terminal snapshot (`pollFailureSnapshot`), so the block keeps polling; this is
+      // the REST seam, where no host sits in between and what the caller does with a 503 is up to
+      // it. So here this changes what the caller is TOLD, not whether it resumes. Do not read this
+      // branch as delivering retry.
       // 🔴 AND IT REFUSES ONLY WHEN THE ROUTE'S OWN SCOPE IS REVOKABLE. Placing this branch
       // ahead of the `requiredScope` test made it refuse EVERY consulted request, including the
       // 21 routes whose `requiredScope` is a `CONSENT_EXEMPT_SCOPES` member (5 `app-storage/*`,

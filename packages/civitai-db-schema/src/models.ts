@@ -659,6 +659,7 @@ export interface User {
   issuedStrikes?: UserStrike[];
   voidedStrikes?: UserStrike[];
   generationPresets?: GenerationPreset[];
+  postPresets?: PostPreset[];
   generationSizePresets?: GenerationSizePreset[];
   ownedWildcardSets?: WildcardSet[];
   blurbs?: Blurb[];
@@ -5547,6 +5548,16 @@ export interface UserStrike {
   issuedByUser?: User | null;
 }
 
+export interface PostPreset {
+  id: number;
+  userId: number;
+  user?: User;
+  name: string;
+  data: JsonValue;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 export interface GenerationPreset {
   id: number;
   userId: number;
@@ -5982,6 +5993,7 @@ export interface Crucible {
   ingestion: CrucibleIngestionStatus;
   scannedAt: Date | null;
   textNsfw: boolean;
+  timeAdjustedPlacement: boolean;
   entries?: CrucibleEntry[];
   reports?: CrucibleReport[];
   engagements?: CrucibleEngagement[];

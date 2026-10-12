@@ -49,13 +49,14 @@ export interface StudioBackend {
   continueQuote(
     workflowId: string,
     fromEpoch: number,
-    addEpochs: number
+    addEpochs: number,
+    currencies: string[]
   ): Promise<{ cost: number | null; steps?: number }>;
   continueRun(
     workflowId: string,
     fromEpoch: number,
     addEpochs: number,
-    currencies?: string[]
+    currencies: string[]
   ): Promise<string>;
   /** The new-flow per-card "from" quotes. */
   getFromPrices(): Promise<FromPrices>;

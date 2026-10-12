@@ -42,7 +42,7 @@ type Rung = {
   held?: Tier;
   /**
    * Below a held tier but not shown, e.g. its badge hidden from the profile: the score passed it.
-   * Drawn without its art, which the creator chose to hide.
+   * Drawn with the public ladder's art, never the creator's earned date.
    */
   reached?: boolean;
 };
@@ -163,7 +163,7 @@ function TierRungChip({
       >
         <TierBadge
           name={rung.name}
-          badgeUrl={rung.reached ? null : rung.badgeUrl}
+          badgeUrl={rung.badgeUrl}
           state={lit ? 'earned' : 'locked'}
           size={48}
         />
