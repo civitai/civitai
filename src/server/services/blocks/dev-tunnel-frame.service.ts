@@ -29,14 +29,13 @@ export interface DevTunnelFrame {
  * Resolves the caller's OWN app (any status, or an unclaimed slug) and, when its dev tunnel is
  * live, a freshly signed entry URL. `null` for an app the caller does not own — the same answer as
  * one that does not exist. The host comes only from the server-side tunnel record, never from input.
- *
- * Callers gate on the author capability and the dev-tunnel flag first.
  */
 export async function resolveDevTunnelFrame(
   user: SessionUser,
   blockId: string
 ): Promise<DevTunnelFrame | null> {
-  // The tunnel comes first: a brand-new app's scopes are the ones its session declared.
+  // The session's scopes feed the resolver, so a brand-new app's declaredScopes match what the
+  // block-token mint (api/v1/block-tokens) will grant.
   const tunnel = await getActiveDevTunnel(user.id, blockId);
   const unsubmittedSpendAllowed = await isAppBlocksDevTunnelUnsubmittedSpendEnabled({ user });
   const app = await BlockRegistry.resolveDevPageBlockForAuthor(blockId, user.id, {
@@ -49,6 +48,8 @@ export async function resolveDevTunnelFrame(
   let host: string | null = null;
   if (tunnel && isValidDevHost(tunnel.host, env.APPS_DOMAIN)) {
     host = tunnel.host;
+    // A fresh short-TTL, author-bound entry token on every render, so the live iframe never serves a
+    // stale one; the apps-domain edge verifies it on the ENTRY document (T3).
     const token = signDevTunnelAccessToken({ userId: user.id, host });
     iframeSrc = `https://${host}/?dev=${encodeURIComponent(token)}`;
   }

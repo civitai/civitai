@@ -31,7 +31,7 @@ const USER = { id: 42 } as SessionUser;
 const APP = {
   appBlockId: 'ephemeral-my-app',
   blockId: 'my-app',
-  appId: 'ephemeral-my-app',
+  appId: 'appblk-my-app',
   status: 'ephemeral',
   trustTier: 'unverified',
   name: 'My App',
@@ -67,7 +67,7 @@ describe('resolveDevTunnelFrame', () => {
     expect(frame).toEqual({
       appBlockId: 'ephemeral-my-app',
       blockId: 'my-app',
-      appId: 'ephemeral-my-app',
+      appId: 'appblk-my-app',
       appName: 'My App',
       pageTitle: 'My App page',
       status: 'ephemeral',
@@ -93,6 +93,7 @@ describe('resolveDevTunnelFrame', () => {
   it('is null for an app the caller does not own', async () => {
     resolveDev.mockResolvedValue(null);
     expect(await resolveDevTunnelFrame(USER, 'their-app')).toBeNull();
+    expect(sign).not.toHaveBeenCalled();
   });
 
   it('has no URL without a live tunnel', async () => {

@@ -29,9 +29,7 @@ import { createServerSideProps } from '~/server/utils/server-side-helpers';
  *     here, or this summary goes stale on the first edit that adds one.
  */
 
-type DevTunnelProps = DevTunnelFrame;
-
-export const getServerSideProps = createServerSideProps<DevTunnelProps>({
+export const getServerSideProps = createServerSideProps<DevTunnelFrame>({
   useSession: true,
   resolver: async ({ features, ctx, session }) => {
     // GATE FIRST, fail-closed. Author capability + the dev-tunnel kill-switch.
@@ -57,9 +55,7 @@ export const getServerSideProps = createServerSideProps<DevTunnelProps>({
       typeof rawBlockId === 'string' ? rawBlockId : Array.isArray(rawBlockId) ? rawBlockId[0] : '';
     if (!blockId) return { notFound: true };
 
-    // Ownership-scoped resolve (any status). null for a foreign/absent app → the
-    // SAME notFound (no oracle). A fresh entry token is signed on every render, so
-    // the live iframe never serves a stale one.
+    // null (foreign or absent app) → the same notFound, no oracle.
     const { resolveDevTunnelFrame } = await import(
       '~/server/services/blocks/dev-tunnel-frame.service'
     );
@@ -68,9 +64,10 @@ export const getServerSideProps = createServerSideProps<DevTunnelProps>({
     const { host } = frame;
 
     if (host) {
-      // ROUTE-SCOPED CSP (T7). `setHeader` REPLACES — next.config's `headers()`
-      // sets a CSP on `/gift-cards` alone, which this route never matches, so
-      // there is nothing to merge with today. 🔴 The coupling runs the
+      // ROUTE-SCOPED CSP (T7). `setHeader` REPLACES, and this is the only
+      // `Content-Security-Policy`-setting site in `src/` — next.config's
+      // `headers()` sets a CSP on `/gift-cards` alone, which this route never
+      // matches, so there is nothing to merge with today. 🔴 The coupling runs the
       // other way, though: if a GLOBAL CSP is ever added to `headers()`, THIS
       // RESPONSE drops every directive of it — only on this branch, since the
       // no-tunnel and invalid-host paths never reach `setHeader` and so keep it.
@@ -113,13 +110,14 @@ export const getServerSideProps = createServerSideProps<DevTunnelProps>({
   },
 });
 
-export default function DevTunnelPage({ iframeSrc, host: _host, ...app }: DevTunnelProps) {
+export default function DevTunnelPage({ iframeSrc, host, ...app }: DevTunnelFrame) {
   const { appName, blockId } = app;
   return (
     <>
       <Meta title={`${appName} — Dev tunnel — Civitai Apps`} deIndex />
       <Box style={{ width: '100%' }}>
-        {!iframeSrc ? (
+        {/* `host` too: the route CSP above is set from it, so never frame without it. */}
+        {!iframeSrc || !host ? (
           <Stack p="md" gap="sm" style={{ maxWidth: 720, margin: '0 auto' }}>
             <Title order={3}>No active dev tunnel</Title>
             <Text size="sm">
@@ -136,7 +134,6 @@ export default function DevTunnelPage({ iframeSrc, host: _host, ...app }: DevTun
           <DevTunnelBlockHost
             {...app}
             iframeSrc={iframeSrc}
-            fit="viewport"
             tokenErrorFallback={
               // Owner-specific copy: the public host's generic "Couldn't authenticate
               // this app" would mislead here.
