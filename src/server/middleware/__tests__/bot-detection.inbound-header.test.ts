@@ -68,7 +68,7 @@ describe('botDetectionMiddleware and an inbound crawler header', () => {
   });
 
   it('verifies crawlers only on the paths that use it', async () => {
-    const request = requestTo('/images', false, { ua: GOOGLEBOT, ip: GOOGLEBOT_IP });
+    const request = requestTo('/images', true, { ua: GOOGLEBOT, ip: GOOGLEBOT_IP });
     const response = await runMiddlewares(request, [botDetectionMiddleware]);
     expect(headerSeenByApp(response, request)).toBeNull();
   });
