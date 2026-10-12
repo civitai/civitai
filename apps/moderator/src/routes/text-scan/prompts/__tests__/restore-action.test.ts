@@ -82,6 +82,15 @@ describe('restore', () => {
     expect(harness.putPrompt).not.toHaveBeenCalled();
   });
 
+  it('refuses an older version whose text is the same as the current text', async () => {
+    harness.getPrompts.mockResolvedValue({
+      ...prompts(3),
+      active: { base: { id: 3, key: 'base', content: 'TEXT 2' } },
+    });
+    expect(await restore(fields)).toMatchObject({ status: 400 });
+    expect(harness.putPrompt).not.toHaveBeenCalled();
+  });
+
   it('publishes the stored text of the old version, not anything sent by the client', async () => {
     const res = await restore({ ...fields, content: 'FORGED' });
     expect(res).toEqual({ success: true, published: ['base'] });
