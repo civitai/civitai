@@ -5,7 +5,7 @@ import { useRouter } from 'next/router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { sanitizeAppChromeName } from './appChromeName';
 import { BlockFallback } from './BlockFallback';
-import { failureSnapshot } from './failureSnapshot';
+import { failureSnapshot, pollFailureSnapshot } from './failureSnapshot';
 import { AppBlockChrome } from './IframeHost';
 import { IframeInitController, shouldStartInit } from './iframeInitController';
 import {
@@ -2330,14 +2330,22 @@ export function PageBlockHost({
           return;
         }
         const requestId = raw.requestId;
+        const workflowId = raw.workflowId;
+        const { waitSeconds } = raw as { waitSeconds?: unknown };
         try {
           const { snapshot } = await pollWorkflowMutation.mutateAsync({
             blockToken: token,
             workflowId: raw.workflowId,
+            ...(typeof waitSeconds === 'number' && Number.isFinite(waitSeconds)
+              ? { waitSeconds }
+              : {}),
           });
           send('WORKFLOW_STATUS', { requestId, snapshot });
         } catch (err) {
-          send('WORKFLOW_STATUS', { requestId, snapshot: failureSnapshot(err) });
+          send('WORKFLOW_STATUS', {
+            requestId,
+            snapshot: pollFailureSnapshot(err, workflowId),
+          });
         }
       }
     );

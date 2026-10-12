@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { failureSnapshot } from '../failureSnapshot';
+import { failureSnapshot, isPollUnanswered, pollFailureSnapshot } from '../failureSnapshot';
 
 // Mirror of the block SDK's inbound validator rule (isValidWorkflowSnapshot in
 // @civitai/blocks-react): a snapshot is dropped unless workflowId is a
@@ -37,5 +37,48 @@ describe('failureSnapshot', () => {
     const snap = failureSnapshot({ secret: 'do-not-leak' });
     expect(snap.error).toBe('workflow request failed');
     expect(isNonEmptyString(snap.workflowId)).toBe(true);
+  });
+});
+
+const withCode = (code: string) => Object.assign(new Error(code), { data: { code } });
+
+describe('pollFailureSnapshot', () => {
+  it.each([
+    ['no data (network failure)', new Error('Failed to fetch')],
+    ['data without a code (non-JSON gateway reply)', Object.assign(new Error('x'), { data: null })],
+    ['a non-Error throw', 'boom'],
+    ['INTERNAL_SERVER_ERROR', withCode('INTERNAL_SERVER_ERROR')],
+    ['BAD_GATEWAY', withCode('BAD_GATEWAY')],
+    ['SERVICE_UNAVAILABLE', withCode('SERVICE_UNAVAILABLE')],
+    ['GATEWAY_TIMEOUT', withCode('GATEWAY_TIMEOUT')],
+    ['TIMEOUT', withCode('TIMEOUT')],
+    ['TOO_MANY_REQUESTS', withCode('TOO_MANY_REQUESTS')],
+    ['CLIENT_CLOSED_REQUEST', withCode('CLIENT_CLOSED_REQUEST')],
+  ])('keeps the block polling on %s', (_label, err) => {
+    expect(isPollUnanswered(err)).toBe(true);
+    expect(pollFailureSnapshot(err, 'wf_kept')).toStrictEqual({
+      workflowId: 'wf_kept',
+      status: 'processing',
+    });
+  });
+
+  it.each([
+    'BAD_REQUEST',
+    'UNAUTHORIZED',
+    'FORBIDDEN',
+    'NOT_FOUND',
+    'PAYMENT_REQUIRED',
+    'CONFLICT',
+    'PRECONDITION_FAILED',
+    'UNPROCESSABLE_CONTENT',
+    'PARSE_ERROR',
+    'A_CODE_THIS_FILE_HAS_NEVER_SEEN',
+  ])('stays terminal on %s', (code) => {
+    expect(isPollUnanswered(withCode(code))).toBe(false);
+    expect(pollFailureSnapshot(withCode(code), 'wf_kept')).toStrictEqual({
+      workflowId: 'failed',
+      status: 'failed',
+      error: code,
+    });
   });
 });

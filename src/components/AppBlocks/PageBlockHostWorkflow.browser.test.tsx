@@ -1,8 +1,10 @@
 import { describe, expect, test, vi, beforeEach } from 'vitest';
+import { TRPCClientError } from '@trpc/client';
 import { page } from 'vitest/browser';
 import { useDialogStore } from '~/components/Dialog/dialogStore';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+import { trpcError } from '../../../test/fixtures/trpc-client-error';
 import { onReadyAttributeWrite } from '../../../test/commitWindow';
 
 /**
@@ -352,6 +354,65 @@ describe('PageBlockHost workflow bridge (W10 money-path wiring)', () => {
     });
     replies.stop();
   });
+
+  test.each([
+    ['a whole number of seconds', { waitSeconds: 7 }, { waitSeconds: 7 }],
+    ['a value the server will cap (sent as-is)', { waitSeconds: 90 }, { waitSeconds: 90 }],
+    ['no waitSeconds', {}, {}],
+  ])(
+    'POLL_WORKFLOW with %s calls pollWorkflow with exactly the expected input',
+    async (_label, sent, expectedExtra) => {
+      const snapshot = { workflowId: 'wf_wait', status: 'processing' };
+      mocks.poll.mockResolvedValue({ snapshot });
+      renderWithProviders(<PageBlockHost {...baseProps} />);
+      await driveToReady();
+      const replies = listenForReply();
+
+      postFromBlock('POLL_WORKFLOW', { requestId: 'rq_wait', workflowId: 'wf_wait', ...sent });
+
+      await vi.waitFor(() => {
+        const r = replies.last('WORKFLOW_STATUS');
+        if (!r) throw new Error('no reply yet');
+        expect(r.payload).toEqual({ requestId: 'rq_wait', snapshot });
+      });
+      // toStrictEqual, not toHaveBeenCalledWith: an explicit `waitSeconds: undefined` must not
+      // pass as "omitted".
+      expect(mocks.poll.mock.calls).toStrictEqual([
+        [{ blockToken: 'tok_abc', workflowId: 'wf_wait', ...expectedExtra }],
+      ]);
+      replies.stop();
+    }
+  );
+
+  test.each([
+    ['a network failure (no tRPC code)', 'processing', new TRPCClientError('Failed to fetch')],
+    ['SERVICE_UNAVAILABLE', 'processing', trpcError('SERVICE_UNAVAILABLE', 503, 'try again')],
+    ['NOT_FOUND', 'failed', trpcError('NOT_FOUND', 404, 'workflow not found')],
+    ['FORBIDDEN', 'failed', trpcError('FORBIDDEN', 403, 'not this app')],
+  ] as const)(
+    'POLL_WORKFLOW that rejects with %s replies with a %s snapshot',
+    async (_label, status, err) => {
+      mocks.poll.mockRejectedValue(err);
+      renderWithProviders(<PageBlockHost {...baseProps} />);
+      await driveToReady();
+      const replies = listenForReply();
+
+      postFromBlock('POLL_WORKFLOW', { requestId: 'rq_perr', workflowId: 'wf_perr' });
+
+      await vi.waitFor(() => {
+        const r = replies.last('WORKFLOW_STATUS');
+        if (!r) throw new Error('no reply yet');
+        expect(r.payload).toEqual({
+          requestId: 'rq_perr',
+          snapshot:
+            status === 'processing'
+              ? { workflowId: 'wf_perr', status: 'processing' }
+              : { workflowId: 'failed', status: 'failed', error: err.message },
+        });
+      });
+      replies.stop();
+    }
+  );
 
   test('CANCEL_WORKFLOW forwards workflowId and posts WORKFLOW_CANCELED', async () => {
     const snapshot = { workflowId: 'wf_cancel', status: 'canceled' };

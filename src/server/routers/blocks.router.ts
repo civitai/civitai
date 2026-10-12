@@ -61,6 +61,7 @@ import {
   checkBlockPublishRateLimit,
   checkBlockTrainingDatasetRateLimit,
 } from '~/server/utils/block-catalog-rate-limit';
+import { acquireBlockPollHoldSlot } from '~/server/utils/block-poll-hold-slots';
 import {
   BLOCK_IDEMPOTENCY_KEY_REGEX,
   claimGenIdempotency,
@@ -189,6 +190,8 @@ import {
   formatStepTimeout,
   isPageLoraResource,
   projectAppWorkflow,
+  blockPollWaitSecondsInput,
+  MAX_BLOCK_POLL_CONCURRENT_HOLDS,
   resolveBlockPollWaitSeconds,
   resolveBlockVersionContext,
   resolvePageResourceContext,
@@ -4485,14 +4488,8 @@ export const blocksRouter = router({
       z.object({
         blockToken: z.string().min(1),
         workflowId: z.string().min(1).max(64),
-        /**
-         * Orchestrator-side hold, in SECONDS. Untrusted (it comes from a block
-         * via the host) — bounded here by the wire schema AND clamped again by
-         * `resolveBlockPollWaitSeconds`, which owns the real ceiling. The zod
-         * `.max()` is deliberately the LOOSER of the two: it rejects nonsense,
-         * the resolver decides policy, and the policy lives in one place.
-         */
-        waitSeconds: z.number().int().min(0).max(60).optional(),
+        /** Orchestrator-side hold, in SECONDS. Untrusted; `resolveBlockPollWaitSeconds` owns the policy. */
+        waitSeconds: blockPollWaitSecondsInput,
       })
     )
     .mutation(async ({ ctx, input }) => {
@@ -4531,22 +4528,23 @@ export const blocksRouter = router({
       const pollRate = await checkBlockPollRateLimit(claims.blockInstanceId, userId);
       if (!pollRate.allowed) {
         recordBlockBridgeRateLimitRefusal('pollWorkflow', 'poll');
-        // 🔴 IT RETURNS A NON-TERMINAL SNAPSHOT. IT DOES NOT THROW, AND THAT IS THE
-        // WHOLE DESIGN — A THROWN 429 HERE DESTROYS A PAID GENERATION.
+        // 🔴 IT RETURNS A NON-TERMINAL SNAPSHOT. IT DOES NOT THROW.
         //
-        // Both hosts wrap this mutation in `try { … } catch (err) { send(
-        // 'WORKFLOW_STATUS', { snapshot: failureSnapshot(err) }) }`
-        // (`components/AppBlocks/PageBlockHost.tsx`,
-        // `components/AppBlocks/IframeHost.tsx`), and `failureSnapshot` returns
-        // `status: 'failed'` — which is in the SDK's TERMINAL set. So ANY throw from
-        // this procedure reaches the block as a finished, failed workflow and its
-        // watch loop STOPS. Applied to a rate limit that means: the viewer's Buzz is
-        // already spent, the orchestrator is still working, and one refused poll
-        // makes the block render the generation as failed and stop looking. Nothing
-        // then refunds it — `reverseBlockAuthorFee` and `settleCustomComfySpend` fire
-        // only on an OBSERVED terminal status, and after the loop stops there is no
-        // observer. A limiter that converts load into lost paid work is worse than no
-        // limiter, which is exactly the asymmetry this card was told to respect.
+        // What a throw from this procedure does depends on its code. The hosts reply
+        // via `pollFailureSnapshot` (`components/AppBlocks/failureSnapshot.ts`): no
+        // tRPC code, a 5xx-class code, TIMEOUT, TOO_MANY_REQUESTS or
+        // CLIENT_CLOSED_REQUEST reaches the block as `processing` and it polls again;
+        // any other code reaches it as `failed`, which is TERMINAL for its watch loop.
+        // So with the current hosts a thrown TOO_MANY_REQUESTS would no longer end the
+        // loop. Returning still matters for two callers that do not go through them:
+        //   - a host bundle loaded before that change, still open in a browser after
+        //     this server deploys, turns ANY throw into `failed`;
+        //   - the REST twin (`/api/v1/blocks/workflows/poll`) would answer a 429
+        //     instead of a 200 non-terminal snapshot.
+        // For either, a refused poll would make the block render a paid, still-running
+        // generation as failed and stop looking. Nothing then refunds it —
+        // `reverseBlockAuthorFee` and `settleCustomComfySpend` fire only on an
+        // OBSERVED terminal status, and after the loop stops there is no observer.
         //
         // SHED THE WORK, NOT THE REQUEST. Returning here still skips everything the
         // bucket exists to bound — the orchestrator token fetch, the held GET, the
@@ -4585,14 +4583,28 @@ export const blocksRouter = router({
       // VIEWER SCOPE, before any orchestrator call: the id must name this viewer as its owner.
       assertBlockWorkflowMintedForViewer({ workflowId: input.workflowId, userId });
       const token = await getOrchestratorToken(userId, ctx);
-      const waitSeconds = resolveBlockPollWaitSeconds(input.waitSeconds);
-      const workflow = await getWorkflow({
-        token,
-        path: { workflowId: input.workflowId },
-        // `undefined` when there is no hold, so the request is byte-identical
-        // to the pre-long-poll one rather than carrying a `?wait=0`.
-        ...(waitSeconds !== undefined ? { query: { wait: waitSeconds } } : {}),
-      });
+      const requestedWait = resolveBlockPollWaitSeconds(input.waitSeconds);
+      const releaseHoldSlot =
+        requestedWait !== undefined
+          ? await acquireBlockPollHoldSlot(
+              claims.blockInstanceId,
+              userId,
+              MAX_BLOCK_POLL_CONCURRENT_HOLDS
+            )
+          : null;
+      const waitSeconds = releaseHoldSlot ? requestedWait : undefined;
+      let workflow: Awaited<ReturnType<typeof getWorkflow>>;
+      try {
+        workflow = await getWorkflow({
+          token,
+          path: { workflowId: input.workflowId },
+          // `undefined` when there is no hold, so the request is byte-identical
+          // to the pre-long-poll one rather than carrying a `?wait=0`.
+          ...(waitSeconds !== undefined ? { query: { wait: waitSeconds } } : {}),
+        });
+      } finally {
+        await releaseHoldSlot?.();
+      }
       // APP SCOPE — the orchestrator's own record must agree this is the calling app's workflow.
       // It runs here, on the fetched record, because the tag lives on the record; it is still
       // ahead of every line below that publishes anything derived from it back to the block.
