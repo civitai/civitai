@@ -235,6 +235,25 @@ describe('snapshotFromWorkflow — kind:workflow', () => {
     });
   });
 
+  it('reports the children of a `repeat` nested inside a `repeat`', () => {
+    const grandchild = {
+      $type: 'imageUpscaler',
+      name: 'loop.0.1',
+      status: 'succeeded',
+      output: { blob: blob('https://img/grandchild.png') },
+    };
+    const snapshot = snapshotFromWorkflow(workflow([grandchild], [{ name: 'loop' }]));
+    expect(snapshot.imageUrls).toEqual(['https://img/grandchild.png']);
+    expect(snapshot.steps?.map((s) => s.name)).toEqual(['loop.0.1']);
+  });
+
+  it('maps an `expired` step', () => {
+    const snapshot = snapshotFromWorkflow(
+      workflow([{ $type: 'echo', name: 'a', status: 'expired' }], [{ name: 'a' }])
+    );
+    expect(snapshot.steps).toEqual([{ name: 'a', $type: 'echo', status: 'expired' }]);
+  });
+
   it('does not treat a look-alike name as a child of a recorded step', () => {
     const lookalikes = ['loop.x', 'loopy.0', 'loop.0.png', 'other.0'].map((name) => ({
       ...UPSCALE,
@@ -314,6 +333,37 @@ describe('snapshotFromWorkflow — kind:workflow', () => {
     expect(snapshot.publishedModel).toEqual({ modelId: 7, modelVersionId: 9, published: false });
     // The checkpoint itself is in neither channel.
     expect(JSON.stringify(snapshot)).not.toContain('safetensors');
+  });
+});
+
+describe('a suppressed TRAINING step still reports its ready epochs', () => {
+  const training = {
+    $type: 'training',
+    name: 'train',
+    status: 'succeeded',
+    output: {
+      moderationStatus: 'approved',
+      epochs: [
+        {
+          epochNumber: 2,
+          model: blob('https://m/e2.safetensors'),
+          samples: [blob('https://img/s.png')],
+        },
+      ],
+    },
+  };
+  const record = [{ name: 'train', suppressOutput: true as const }];
+
+  it('on the snapshot', () => {
+    const snapshot = snapshotFromWorkflow(workflow([training], record));
+    expect(snapshot.trainedEpochs).toEqual([{ $type: 'training', epochNumber: 2 }]);
+    expect('imageUrls' in snapshot).toBe(false);
+  });
+
+  it('on the queue projection', () => {
+    const projection = projectAppWorkflow(workflow([training], record));
+    expect(projection.trainedEpochs).toEqual([{ $type: 'training', epochNumber: 2 }]);
+    expect(projection.images).toEqual([]);
   });
 });
 

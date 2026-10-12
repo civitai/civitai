@@ -494,9 +494,8 @@ const NO_FEE_PATHS: Record<string, { charges: number; reason: string; whatifAttr
         'stamps an id on every workflow it returns, so the sentinel is never observed and no ' +
         'attribution row is dropped today.',
       reason:
-        'POST-PAID, same as customComfy. Its pre-submit quote goes through ' +
-        '`quotePassThroughStepBuzz`, which returns `cost.total` and nothing else, so there is no ' +
-        '`cost.base` at reservation time. Widening that helper is what would wire a fee here.',
+        'POST-PAID, same as customComfy: it reserves the declared ceiling, which settles ' +
+        'down, and nothing is reserved for a fee.',
     },
     submitTrainingWorkflow: {
       charges: 0,

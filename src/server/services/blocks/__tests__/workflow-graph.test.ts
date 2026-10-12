@@ -258,31 +258,75 @@ describe('resolveBlockWorkflowGraph — repeat', () => {
 });
 
 describe('collectBlockStepTypes', () => {
+  const FOR = { $ref: '$arguments', path: 'items', as: 'item' };
+  const SHAPE_ERROR =
+    'a repeat step needs exactly { for, template } with a template "$type", nested at most 4 deep';
+  /** `depth` repeats wrapped around one `leaf` step. */
+  const nested = (depth: number, leaf = 'mediaHash') => {
+    let input: Record<string, unknown> = { for: FOR, template: { $type: leaf, input: {} } };
+    for (let i = 1; i < depth; i += 1) input = { for: FOR, template: { $type: 'repeat', input } };
+    return input;
+  };
+
   it('returns only the step’s own type for an ordinary step', () => {
     expect(collectBlockStepTypes('imageGen', { template: { $type: 'x' } })).toEqual(['imageGen']);
   });
 
   it('follows a `repeat` template, however `repeat` is cased', () => {
     expect(isRepeatStepType('Repeat')).toBe(true);
-    expect(
-      collectBlockStepTypes('REPEAT', { template: { $type: 'wdTagging', input: {} } })
-    ).toEqual(['REPEAT', 'wdTagging']);
+    expect(collectBlockStepTypes('REPEAT', nested(1, 'wdTagging'))).toEqual([
+      'REPEAT',
+      'wdTagging',
+    ]);
   });
 
-  it('follows a `repeat` nested inside a `repeat` template', () => {
+  it('follows repeats nested up to the bound, and no further', () => {
+    expect(collectBlockStepTypes('repeat', nested(4))).toEqual([
+      'repeat',
+      'repeat',
+      'repeat',
+      'repeat',
+      'mediaHash',
+    ]);
+    expect(collectBlockStepTypes('repeat', nested(5))).toBeNull();
     expect(
-      collectBlockStepTypes('repeat', {
-        template: { $type: 'repeat', input: { template: { $type: 'mediaHash', input: {} } } },
-      })
-    ).toEqual(['repeat', 'repeat', 'mediaHash']);
-  });
-
-  it('returns null — refuse, do not check in part — when repeats nest too deep', () => {
-    let input: Record<string, unknown> = { template: { $type: 'imageGen', input: {} } };
-    for (let i = 0; i < 5; i += 1) input = { template: { $type: 'repeat', input } };
-    expect(collectBlockStepTypes('repeat', input)).toBeNull();
-    const r = resolveBlockWorkflowGraph({ steps: [{ $type: 'repeat', input }] });
+      resolveBlockWorkflowGraph({ steps: [{ $type: 'repeat', input: nested(4, 'echo') }] }).ok
+    ).toBe(true);
+    const r = resolveBlockWorkflowGraph({ steps: [{ $type: 'repeat', input: nested(5, 'echo') }] });
     expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.error).toBe('workflow step 0: repeat steps may nest at most 4 deep');
+    if (!r.ok) expect(r.error).toBe(`workflow step 0: ${SHAPE_ERROR}`);
+  });
+
+  it.each([
+    ['a re-cased `template` key', { for: FOR, Template: { $type: 'mediaHash', input: {} } }],
+    [
+      'both spellings of `template`',
+      { for: FOR, template: { $type: 'echo' }, TEMPLATE: { $type: 'mediaHash' } },
+    ],
+    [
+      'a re-cased `$type` in the template',
+      { for: FOR, template: { $type: 'echo', $Type: 'mediaHash' } },
+    ],
+    ['a re-cased `input` in the template', { for: FOR, template: { $type: 'echo', Input: {} } }],
+    ['a re-cased `for` key', { For: FOR, template: { $type: 'echo', input: {} } }],
+    [
+      'a re-cased `$ref` in the for clause',
+      { for: { $Ref: 'x', path: 'p', as: 'i' }, template: { $type: 'echo' } },
+    ],
+    ['no template', { for: FOR }],
+    ['no for clause', { template: { $type: 'echo', input: {} } }],
+    ['a template that is not an object', { for: FOR, template: 'echo' }],
+    ['a template `$type` that is not a string', { for: FOR, template: { $type: 7, input: {} } }],
+    ['an unknown key', { for: FOR, template: { $type: 'echo', input: {} }, extra: 1 }],
+  ])('🔴 refuses a repeat with %s rather than checking it in part', (_label, input) => {
+    expect(collectBlockStepTypes('repeat', input)).toBeNull();
+    const r = resolveBlockWorkflowGraph({
+      steps: [{ $type: 'repeat', input: input as Record<string, unknown> }],
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.errorCode).toBe('workflow_ref_invalid');
+      expect(r.error).toBe(`workflow step 0: ${SHAPE_ERROR}`);
+    }
   });
 });

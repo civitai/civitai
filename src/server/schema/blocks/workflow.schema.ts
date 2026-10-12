@@ -640,16 +640,9 @@ export const blockPassThroughStepBodySchema = z
 
 // ── App Blocks MULTI-STEP kind (`kind:'workflow'`) ────────────────────────────
 //
-// 1..N orchestrator steps submitted as ONE workflow. Each step is the
-// pass-through arm's shape minus its spend knob — an orchestrator `$type` and its
-// native `input`, forwarded unmodified — plus an optional `name` other steps can
-// reference and an optional `suppressOutput`. Step inputs may hold the
-// orchestrator's own reference object (`{ "$ref", "path", "default"?, "format"? }`)
+// 1..N pass-through steps submitted as ONE workflow. A step input may hold the
+// orchestrator's reference object (`{ "$ref", "path", "default"?, "format"? }`)
 // naming `$arguments` or an earlier step.
-//
-// A NEW OUTER `kind`, not a third arm of `kind:'step'`: that member is already a
-// nested discriminated union on `step`, and `blockStepMemberSchema` below records
-// what widening it does to every deployed body.
 //
 // 🔴 THERE IS NO `maxBuzz`. The ceiling is the token's per-generation budget
 // times the number of steps, computed by the server; the app declares nothing.
@@ -1254,8 +1247,9 @@ export type BlockWorkflowSnapshot = {
    * unscanned-text surface is real for every `$type` that does NOT collide.
    *
    * OMITTED entirely when the workflow carries no step with an UNRECOGNISED
-   * `$type` — which is every workflow the other three kinds produce — so their
-   * snapshots stay byte-identical.
+   * `$type` submitted by the pass-through arm — which is every workflow the other
+   * kinds produce (`kind:'workflow'` reports step output on {@link steps}) — so
+   * their snapshots stay byte-identical.
    *
    * 🔴 WIRE CONTRACT: additive on the type `@civitai/app-sdk`'s `blocks/types.ts`
    * mirrors, exactly like `textOutputs` above. The SDK's inbound validator does

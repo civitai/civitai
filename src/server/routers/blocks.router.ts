@@ -199,6 +199,7 @@ import {
 } from '~/server/services/blocks/workflow.service';
 import {
   collectBlockStepTypes,
+  REPEAT_SHAPE_ERROR,
   resolveBlockWorkflowGraph,
 } from '~/server/services/blocks/workflow-graph';
 import type { ResolvedBlockWorkflowStep } from '~/server/services/blocks/workflow-graph';
@@ -235,7 +236,7 @@ import {
   PlatformInternalStepTypeError,
 } from '~/server/services/blocks/steps/orchestrator-denylist';
 // APP-FACING generation type for the spend-attribution row, resolved from the
-// submitted body. Imported (not open-coded at each of the three submit paths) so
+// submitted body. Imported (not open-coded at each submit path) so
 // the `kind` → key and step-id → key mapping has exactly one definition — and so
 // the "registry id, never orchestratorType" decision lives in one place.
 import { resolveBlockGenerationType } from '~/server/services/blocks/generation-type';
@@ -6497,8 +6498,6 @@ export const blocksRouter = router({
       if (input.body.kind === 'training') {
         return await submitTrainingWorkflow({ ctx, claims, body: input.body });
       }
-      // App Blocks MULTI-STEP kind — 1..N orchestrator steps as ONE workflow, under
-      // one reservation and one author fee. Everything specific lives in the helper.
       if (input.body.kind === 'workflow') {
         return await submitMultiStepWorkflow({
           ctx,
@@ -9260,7 +9259,6 @@ async function estimateBlockWorkflowCell(
   if (input.body.kind === 'training') {
     return await estimateTrainingWorkflow({ ctx, claims, body: input.body });
   }
-  // App Blocks MULTI-STEP kind: one `whatif` for the whole workflow.
   if (input.body.kind === 'workflow') {
     return await estimateMultiStepWorkflow({ ctx, claims, body: input.body });
   }
@@ -10413,13 +10411,10 @@ const PASS_THROUGH_RECIPE_LABEL = '__passthrough__';
  * `PlatformInternalStepTypeError` is its own class.
  */
 function assertPassThroughStepTypeAllowed($type: string, input: unknown): void {
-  // Every `$type` the step can run — its own and, for a step type that runs
-  // another step, the one it names. `null` means that nesting went deeper than
-  // this can follow, which is refused rather than checked in part.
+  // `null` is a `repeat` whose nested step cannot be read for certain; refused
+  // rather than checked in part.
   const stepTypes = collectBlockStepTypes($type, input);
-  if (stepTypes === null) {
-    throw new TRPCError({ code: 'BAD_REQUEST', message: 'step templates are nested too deeply' });
-  }
+  if (stepTypes === null) throw new TRPCError({ code: 'BAD_REQUEST', message: REPEAT_SHAPE_ERROR });
   try {
     for (const stepType of stepTypes) assertStepTypeAllowed(stepType, 'block pass-through step');
   } catch (e) {
@@ -10477,16 +10472,16 @@ function stampUnquotedTimeout(
 
 /**
  * The refusal for a training `$type` the orchestrator would not quote, or `null`
- * when the step may proceed. Shared by the pass-through estimate and submit so
- * the two cannot disagree about which steps are refused.
+ * when the step may proceed. Shared by the estimate and the submit of the
+ * pass-through and multi-step arms, so none can disagree about which steps are
+ * refused.
  *
- * A training run takes far longer than any `maxBuzz` an app could sensibly
- * declare as seconds, so the stamped-timeout fallback (`stampUnquotedTimeout`)
- * would cancel the run partway through. Refusing up front lets the block retry
+ * A training run takes far longer than the timeout the no-quote fallback stamps
+ * (`stampUnquotedTimeout`), which would cancel the run partway through. Refusing up front lets the block retry
  * once a quote is available.
  *
- * The snapshot carries no `cost`: there is no price to show, and the declared
- * `maxBuzz` is not one.
+ * The snapshot carries no `cost`: there is no price to show, and a ceiling is
+ * not one.
  */
 function refuseUnquotedTraining(
   stepType: string,
@@ -11859,21 +11854,21 @@ type PassThroughQuote =
   | { quotedBuzz: null; failure: PassThroughQuoteFailure };
 
 /**
- * The orchestrator's live price for an already-built pass-through step, or a
- * `null` price and why it could not be had.
+ * The orchestrator's live price for already-built step(s) — one pass-through
+ * step, or every step of a `kind:'workflow'` body — or a `null` price and why it
+ * could not be had.
  *
  * Only the orchestrator ROUND-TRIP is swallowed. The `$type` refusal is
- * deliberately outside this, at both call sites, so a deterministic denial can
+ * deliberately outside this, at every call site, so a deterministic denial can
  * never degrade into "no quote" and then into a price. (The registry arm learned
  * that the expensive way; see the note at `estimateStepWorkflow`'s build site.)
  *
  * 🔴 EVERY OUTCOME IS COUNTED, and it matters MORE here than on the registry arm
  * it borrows the counter from. There a missing quote fails the submit closed, so
- * the outage is loud; here the arm deliberately falls back to the declared
- * `maxBuzz` and proceeds (a training `$type` excepted, see
- * `refuseUnquotedTraining`) — so without this pair, an orchestrator that stopped
- * pricing would move every pass-through job onto its declared ceiling with
- * nothing anywhere moving. Read the ratio, not `estimate_absent` alone.
+ * the outage is loud; here both arms deliberately fall back to their ceiling
+ * and proceed (a training `$type` excepted, see `refuseUnquotedTraining`) — so
+ * without this pair, an orchestrator that stopped pricing would move every job
+ * onto its ceiling with nothing anywhere moving. Read the ratio, not `estimate_absent` alone.
  *
  * 🔴 LABELLED WITH A CONSTANT, never the submitted `$type` — `step` is a metric
  * label and the `$type` set is open by construction on this arm. Same reasoning
@@ -11900,8 +11895,8 @@ async function quotePassThroughBuzz(opts: {
   token: string;
   /**
    * 🔴 THE PHASE, THREADED, NOT ASSUMED. `estimate_*` is defined by the counter
-   * as "one emit per estimate, BEFORE any spend exists". This helper serves both
-   * call sites, so a fixed label would file the one event that precedes a
+   * as "one emit per estimate, BEFORE any spend exists". This helper serves
+   * estimates and submits, so a fixed label would file the one event that precedes a
    * reservation — a submit proceeding at the declared ceiling because no quote
    * was had — into the estimate bucket, blended with estimate traffic under one
    * constant `step` label.
@@ -12379,14 +12374,10 @@ async function submitPassThroughStepWorkflow(opts: {
     spendWorkflowId !== 'whatif' &&
     snapshot.status !== 'failed'
   ) {
-    // 🔴 THIS PATH CHARGES NO AUTHOR FEE — same reason as customComfy, and the
-    // same retired no-op call. This arm is POST-PAID and reserves a CEILING; its
-    // pre-submit quote goes through `quotePassThroughStepBuzz`, which returns
-    // `cost.total` and nothing else, so there is no `cost.base` at reservation
-    // time to price a fee from and nothing is reserved for one. Widening that
-    // helper to surface a base is what would wire a fee here; until then the
-    // exemption in the seam ledger is what keeps the population closed, and it
-    // fails if this path silently grows a charge OR if the exemption outlives it.
+    // 🔴 THIS PATH CHARGES NO AUTHOR FEE. It is POST-PAID and reserves the app's
+    // declared CEILING, which settles down, so nothing is reserved for a fee. The
+    // exemption in the seam ledger keeps the population closed: it fails if this
+    // path silently grows a charge OR if the exemption outlives it.
     void (async () => {
       const { recordSpendAttribution } = await import(
         '~/server/services/blocks/buzz-attribution.service'
@@ -12450,34 +12441,10 @@ async function submitPassThroughStepWorkflow(opts: {
   return genResult;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// App Blocks MULTI-STEP bridge (`kind: 'workflow'`).
-//
-// 1..N orchestrator steps submitted as ONE workflow: one quote, one reservation,
-// one idempotency key, one author fee, one settle. Each step is the pass-through
-// arm's — a `$type` and its native `input`, forwarded unmodified — and the gates
-// are that arm's, run once for the whole workflow:
-//
-//   - the step-type denylist runs on EVERY step (and on the step a `repeat`
-//     runs), on the estimate and the submit, before the orchestrator token, the
-//     quote or any reservation;
-//   - the reference graph is checked by `resolveBlockWorkflowGraph` at the same
-//     point;
-//   - the per-app velocity ceiling counts one generation PER STEP.
-//
-// 🔴 THE SPEND SHAPE. There is no app-declared `maxBuzz`. The ceiling is the
-// token's per-generation budget times the number of steps. A quoted workflow is
-// reserved at its quote plus the author fee, and that sum must fit under the
-// ceiling; a workflow the orchestrator would not price is reserved AT the ceiling
-// and proceeds, as the pass-through arm does on a missing quote.
-//
-// 🔴 THE QUOTE IS NOT A MAXIMUM FOR A CHAINED WORKFLOW. The orchestrator prices a
-// step that depends on another against placeholder inputs and prices it again
-// once those resolve, so the workflow can bill above what was reserved. The
-// terminal settle therefore corrects every counter UP by that overage as well as
-// down (`correctOverage` on the settle record). That is accounting for Buzz
-// already spent, not a bound on it.
-// ─────────────────────────────────────────────────────────────────────────────
+// App Blocks MULTI-STEP bridge (`kind: 'workflow'`): N pass-through steps as ONE
+// workflow. 🔴 The quote is not a maximum for a chained workflow — the
+// orchestrator prices a step again once the values it references resolve — so the
+// settle corrects the cap counters UP as well as down (`correctOverage`).
 
 type MultiStepWorkflowBody = Extract<BlockWorkflowBody, { kind: 'workflow' }>;
 
@@ -12519,11 +12486,7 @@ function prepareMultiStepWorkflow(
   return { steps: graph.steps };
 }
 
-/**
- * The orchestrator steps a `kind:'workflow'` body submits. Each `input` is the
- * app's own object, forwarded unmodified; the name is the app's, or the
- * positional `$<index>` the orchestrator would have defaulted to.
- */
+/** Each `input` is the app's own object, forwarded unmodified. */
 function buildMultiStepOrchestratorSteps(
   steps: readonly ResolvedBlockWorkflowStep[]
 ): Array<ReturnType<typeof buildPassThroughOrchestratorStep>> {
@@ -12545,12 +12508,10 @@ function buildMultiStepWorkflowTags(
     : tags;
 }
 
-/** The first training `$type` a workflow runs, or `''` when it runs none. */
 function multiStepTrainingType(steps: readonly ResolvedBlockWorkflowStep[]): string {
   return steps.flatMap((step) => step.stepTypes).find(isTrainingStepType) ?? '';
 }
 
-/** The whole-workflow ceiling: the per-generation budget, once per step. */
 function multiStepWorkflowCeiling(perStepBudget: number, stepCount: number): number {
   return perStepBudget * stepCount;
 }
@@ -12603,8 +12564,6 @@ async function estimateMultiStepWorkflow(opts: {
   if (refusal) return refusal;
 
   const whatIfResult = quote.quotedBuzz === null ? null : quote.whatIfResult;
-  // ONE resolved value: the submit derives the same local from the same call and
-  // hands it to the quote, the charge and the attribution row.
   const workflowGenerationType = resolveBlockGenerationType(body);
   // DISCLOSING QUOTE — the same call the submit makes, on the same `cost.base`.
   // An absent quote prices no fee, as on the registered-step estimate.
@@ -12643,11 +12602,8 @@ async function estimateMultiStepWorkflow(opts: {
 }
 
 /**
- * MULTI-STEP SUBMIT. `submitPassThroughStepWorkflow`'s order and refund rules —
- * gates → quote → static budget gate → idempotency claim → per-user cap → consent
- * budget → per-app cap → dev-session cap → submit → settle record → audit +
- * attribution — with the author fee priced in before the gate, as on the
- * registered-step path.
+ * MULTI-STEP SUBMIT. Same order and refund rules as
+ * `submitPassThroughStepWorkflow`, plus the author fee priced in before the gate.
  */
 async function submitMultiStepWorkflow(opts: {
   ctx: Context;
@@ -12672,12 +12628,10 @@ async function submitMultiStepWorkflow(opts: {
   const stepCount = prepared.steps.length;
 
   const { allowMatureContent, isGreen } = resolveBlockMaturity(claims);
-  // The body carries no `accountType`, so currency selection is Auto.
   const currencies = resolveBlockCurrenciesForAccount(isGreen, undefined);
 
   const orchestratorSteps = buildMultiStepOrchestratorSteps(prepared.steps);
   const tags = buildMultiStepWorkflowTags(claims, prepared.steps);
-  // ONE resolved value for the fee quote, the fee charge and the attribution row.
   const workflowGenerationType = resolveBlockGenerationType(body);
 
   const token = await getOrchestratorToken(userId, ctx);
@@ -12721,11 +12675,10 @@ async function submitMultiStepWorkflow(opts: {
   // Quoted → the quote. Unquoted → the ceiling.
   const reserveGenerationBuzz = quotedBuzz ?? workflowCeiling;
   const reserveBuzz = reserveGenerationBuzz + reservedAuthorFeeBuzz;
-  // The price every refusal reply below reports.
   const refusalCost = { total: reserveBuzz, authorFee: reservedAuthorFeeBuzz };
 
-  // With no quote, each step is stamped the timeout the pass-through arm stamps
-  // on its one step: the per-step budget, in seconds.
+  // With no quote each step gets a timeout of the per-step budget in seconds —
+  // the pass-through arm's fallback, with the budget standing in for `maxBuzz`.
   if (quotedBuzz === null) {
     for (const step of orchestratorSteps) stampUnquotedTimeout(step, perStepBudget);
   }
@@ -12903,7 +12856,6 @@ async function submitMultiStepWorkflow(opts: {
     const submitted = await submitWorkflow({
       token,
       body: {
-        // The SAME step objects the quote priced.
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         steps: orchestratorSteps as any,
         tags,
@@ -12950,8 +12902,7 @@ async function submitMultiStepWorkflow(opts: {
       appSpendKey: appSpendReserve?.key ?? null,
       ...(devSessionReserve ? { devSessionId: devSessionReserve.sessionId } : {}),
       // 🔴 The GENERATION leg, not `reserveBuzz`: settle compares it against the
-      // generation's realized `cost.total`, and the fee leg is charged at exactly
-      // what was reserved.
+      // generation's realized `cost.total`; the fee is a separate charge.
       ceiling: reserveGenerationBuzz,
       engine: MULTI_STEP_ENGINE_LABEL,
       recipe: MULTI_STEP_RECIPE_LABEL,
@@ -13057,12 +13008,9 @@ async function submitMultiStepWorkflow(opts: {
         appBlockId: claims.appBlockId,
         blockInstanceId: claims.blockInstanceId,
         privateRun: claims.privateRun === true,
-        // No model binding and no sharedContentKey on this wire shape.
         modelId: null,
         sharedContentKey: null,
-        // The same resolved value the fee quote and the fee charge read.
         generationType: workflowGenerationType,
-        // `.base`, never `.total` — same rule as every other submit path.
         baseGenerationBuzz: realizedBaseCost,
         generationPriceIsCap: realizedPriceIsCap,
       });

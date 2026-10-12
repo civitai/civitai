@@ -361,7 +361,7 @@ function extractSnapshotStep(
   // A REGISTERED step type (`kind: 'step'`) declares its OWN output extraction
   // in its registry entry, because the output key is step-type-specific —
   // `convertImage` returns `{ blob }` (SINGULAR). Without this branch the
-  // native `$type` filter below `continue`s on every registered step and its
+  // native `$type` filter below skips every registered step and its
   // result is unreachable: the caller is charged, the workflow reaches
   // `succeeded`, and `imageUrls` is absent on every poll.
   //
@@ -369,7 +369,7 @@ function extractSnapshotStep(
   // natively-extracted `$type` values (`NATIVELY_EXTRACTED_STEP_TYPES`,
   // enforced at registry load), so this branch cannot shadow the customComfy /
   // textToImage / imageGen / comfy behaviour below — it only reaches `$type`s
-  // that used to fall through to `continue`.
+  // that used to be dropped.
   const registeredStep = getStepByOrchestratorType(step.$type);
   if (registeredStep) {
     // 🔴 POSTURE-GATED, and this is the THIRD enforcement of the one
@@ -533,10 +533,7 @@ export function projectAppWorkflow(workflow: Workflow): AppWorkflow {
   const status = ORCH_STATUS_MAP[workflow.status] ?? 'pending';
   const images: AppWorkflowImage[] = [];
   const trainedEpochs: TrainedEpoch[] = [];
-  // `kind:'workflow'` only — see `snapshotFromWorkflow`, which applies the same
-  // three rules: a recorded step's pass-through media is published, a `repeat`
-  // step's own output (a copy of its children) is not, and a step submitted with
-  // `suppressOutput` contributes no image.
+  // Mirrors `snapshotFromWorkflow`'s member-step handling.
   const submittedSteps = readBlockWorkflowSteps(workflow.metadata);
   for (const step of workflow.steps ?? []) {
     const member = submittedSteps ? resolveBlockWorkflowStep(submittedSteps, step.name) : null;
@@ -1444,7 +1441,7 @@ export const BLOCK_CUSTOM_COMFY_STEP_NAME = 'block-custom-comfy';
  * Orchestrator step name stamped on BOTH `kind:'step'` arms' submissions.
  *
  * 🔴 IT LIVES HERE, NOT IN `blocks.router`, BECAUSE THE EXTRACTORS READ IT. The
- * pass-through branch in `snapshotFromWorkflow` / `projectAppWorkflow` keys on
+ * pass-through branch of `extractSnapshotStep` / `projectAppWorkflow` keys on
  * it to tell "a step THIS BRIDGE submitted" from "some other step that ended up
  * on the workflow", and a second copy of that literal is how the stamp and the
  * read stop agreeing. `WorkflowStep.name` is a REQUIRED field on the

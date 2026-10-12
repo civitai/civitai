@@ -168,6 +168,7 @@ const counter = (prefix: string) =>
     .reduce((s, k) => s + Number(store.get(k) ?? 0), 0);
 const keysWith = (fragment: string) => [...store.keys()].filter((k) => k.includes(fragment));
 const USER_CAP = 'system:blocks:buzz-cap';
+const CONSENT_BUDGET = 'system:blocks:consent-budget';
 /** Idempotency claims hold a sentinel or a JSON result, so they are counted by key. */
 const idemKeys = () => keysWith(':apb_test:idem-key-');
 
@@ -378,6 +379,21 @@ describe("kind:'workflow' ESTIMATE", () => {
     expect(whatifs()).toHaveLength(0);
   });
 
+  it('refuses an unquoted workflow that runs a TRAINING step, as the submit does', async () => {
+    whatifCost = undefined;
+    const { snapshot } = await estimate(
+      body({
+        steps: [
+          { $type: 'echo', input: {} },
+          { $type: 'training', input: {} },
+        ],
+      })
+    );
+    expect(snapshot.status).toBe('failed');
+    expect(snapshot.errorCode).toBe('training-quote-unpriced');
+    expect(snapshot.cost).toBeUndefined();
+  });
+
   it('prices no fee on a cap-priced quote, and none when the fee flag is off', async () => {
     whatifCost = { total: 64, base: 60, variable: true };
     expect((await estimate()).snapshot.cost).toEqual({ total: 64, authorFee: 0 });
@@ -410,9 +426,10 @@ describe("kind:'workflow' — refusals a block can branch on (estimate AND submi
         workflowId: 'failed',
         status: 'failed',
         errorCode: 'workflow_step_denied',
-        error: new PlatformInternalStepTypeError('xGuardModeration', 'workflow step 2').message,
+        error:
+          "workflow step 2: orchestrator step type 'xGuardModeration' is platform-internal and " +
+          'cannot be submitted by an app block',
       });
-      expect(snapshot.error).toContain('workflow step 2');
       // Before the token mint, the quote and every reservation.
       expect(h.getOrchestratorToken).not.toHaveBeenCalled();
       expect(h.submitWorkflow).not.toHaveBeenCalled();
@@ -446,10 +463,60 @@ describe("kind:'workflow' — refusals a block can branch on (estimate AND submi
     );
     expect(snapshot.errorCode).toBe('workflow_step_denied');
     expect(snapshot.error).toBe(
-      new PlatformInternalStepTypeError('imageScanning', 'workflow step 1').message
+      "workflow step 1: orchestrator step type 'imageScanning' is platform-internal and " +
+        'cannot be submitted by an app block'
     );
     expect(h.submitWorkflow).not.toHaveBeenCalled();
   });
+
+  it.each(paths)(
+    '🔴 %s: a `repeat` whose template key is re-cased is refused, not half-checked',
+    async (_n, run) => {
+      const { snapshot } = await run(
+        body({
+          steps: [
+            {
+              $type: 'repeat',
+              input: {
+                for: { $ref: '$arguments', path: 'images', as: 'image' },
+                Template: { $type: 'imageScanning', input: {} },
+              },
+            },
+          ],
+        })
+      );
+      expect(snapshot.errorCode).toBe('workflow_ref_invalid');
+      expect(snapshot.error).toBe(
+        'workflow step 0: a repeat step needs exactly { for, template } with a template ' +
+          '"$type", nested at most 4 deep'
+      );
+      expect(h.submitWorkflow).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each(paths)(
+    '%s: an unquoted workflow that runs TRAINING inside a `repeat` is refused',
+    async (_n, run) => {
+      whatifCost = undefined;
+      const { snapshot } = await run(
+        body({
+          steps: [
+            {
+              $type: 'repeat',
+              input: {
+                for: { $ref: '$arguments', path: 'sets', as: 'set' },
+                template: { $type: 'training', input: {} },
+              },
+            },
+          ],
+        })
+      );
+      expect(snapshot.status).toBe('failed');
+      expect(snapshot.errorCode).toBe('training-quote-unpriced');
+      expect(realSubmits()).toHaveLength(0);
+      expect(counter(USER_CAP)).toBe(0);
+    }
+  );
 
   it.each(paths)('%s: a reference to a LATER step is `workflow_ref_invalid`', async (_n, run) => {
     const { snapshot } = await run(
@@ -611,6 +678,66 @@ describe("kind:'workflow' SUBMIT — the money path", () => {
     );
   });
 
+  it('records every reservation key on the settle record', async () => {
+    dbMock.dbWrite.appUserScopeGrant.findUnique.mockResolvedValue({
+      buzzBudgetPerDay: 5000,
+      revokedAt: null,
+    });
+    h.getActiveDevTunnel.mockImplementation(async () => ({
+      sessionId: 'bki_1',
+      spendCapBuzz: 500,
+    }));
+    h.reserveDevSessionBuzz.mockImplementation(async () => ({ allowed: true, total: 67 }));
+    await submit();
+    const [capKey] = keysWith(USER_CAP);
+    const [consentKey] = keysWith(CONSENT_BUDGET);
+    expect(capKey).toBeDefined();
+    expect(consentKey).toBeDefined();
+    // Both legs hold the same reservation.
+    expect(Number(store.get(consentKey))).toBe(QUOTE + FEE);
+    expect(h.persistSettle).toHaveBeenCalledWith({
+      workflowId: WORKFLOW_ID,
+      buzzCapKey: capKey,
+      consentBudgetKey: consentKey,
+      appSpendKey: 'app-daily',
+      devSessionId: 'bki_1',
+      ceiling: QUOTE,
+      engine: 'multistep',
+      recipe: '__workflow__',
+      submittedAt: expect.any(Number),
+      correctOverage: true,
+    });
+  });
+
+  it('a DEV token skips the per-app cap and still reserves the per-user one', async () => {
+    h.authorize.mockImplementation(async () => claims({ dev: true }));
+    const { snapshot } = await submit();
+    expect(snapshot.workflowId).toBe(WORKFLOW_ID);
+    expect(h.reserveAppSpend).not.toHaveBeenCalled();
+    expect(counter(USER_CAP)).toBe(QUOTE + FEE);
+    expect(h.persistSettle).toHaveBeenCalledWith(expect.objectContaining({ appSpendKey: null }));
+  });
+
+  it('🔴 a submit the orchestrator answers as FAILED charges no fee and writes no attribution', async () => {
+    h.submitWorkflow.mockImplementation(async (args: SubmitArgs) =>
+      args.query?.whatif
+        ? { id: 'whatif-id', status: 'scheduled', cost: whatifCost }
+        : { id: WORKFLOW_ID, status: 'failed', cost: { total: 9, base: 9 }, steps: [] }
+    );
+    const { snapshot } = await submit();
+    expect(snapshot.status).toBe('failed');
+    await vi.waitFor(() =>
+      expect(h.recordScopeInvocation).toHaveBeenCalledWith(
+        expect.objectContaining({
+          statusCode: 500,
+          detail: expect.objectContaining({ outcome: 'failed', amount: -9 }),
+        })
+      )
+    );
+    expect(h.chargeAuthorFee).not.toHaveBeenCalled();
+    expect(h.recordSpendAttribution).not.toHaveBeenCalled();
+  });
+
   it('writes the audit row with every step `$type` and the workflow variant', async () => {
     await submit();
     await vi.waitFor(() =>
@@ -736,6 +863,23 @@ describe("kind:'workflow' SUBMIT — the money path", () => {
     whatifCost = { total: 20, base: 20 };
     await submit(body({ steps: [{ $type: 'training', input: {} }] }));
     expect(realSubmits()[0].body.tags).toContain(TRAINING_WORKFLOW_TAG);
+    // …including one a `repeat` runs.
+    h.submitWorkflow.mockClear();
+    await submit(
+      body({
+        steps: [
+          {
+            $type: 'repeat',
+            input: {
+              for: { $ref: '$arguments', path: 'sets', as: 'set' },
+              template: { $type: 'training', input: {} },
+            },
+          },
+        ],
+      })
+    );
+    expect(realSubmits()[0].body.tags).toContain(TRAINING_WORKFLOW_TAG);
+    whatifCost = { total: 64, base: 60 };
     h.submitWorkflow.mockClear();
     await submit();
     expect(realSubmits()[0].body.tags).not.toContain(TRAINING_WORKFLOW_TAG);
@@ -750,13 +894,41 @@ describe("kind:'workflow' SUBMIT — refusals after the gate refund every key", 
     const [capKey] = keysWith(USER_CAP);
     store.set(capKey, String(10_000_000));
     h.reserveAppSpend.mockClear();
-    const { snapshot } = await submit();
+    const { snapshot } = await submit(body(), 'idem-key-0010');
     expect(snapshot.status).toBe('failed');
     expect(snapshot.cost).toEqual({ total: QUOTE + FEE, authorFee: FEE });
-    expect(snapshot.error).toContain(`this workflow may cost up to ${QUOTE + FEE}`);
+    expect(snapshot.error).toMatch(
+      /^daily Buzz cap reached: 10000000 already spent today across your installed apps, this workflow may cost up to 67, daily cap is \d+$/
+    );
     expect(Number(store.get(capKey))).toBe(10_000_000);
+    expect(idemKeys()).toEqual([]);
     expect(h.reserveAppSpend).not.toHaveBeenCalled();
     expect(realSubmits()).toHaveLength(1);
+  });
+
+  it("the viewer's CONSENT budget refuses on its own, refunding both legs", async () => {
+    dbMock.dbWrite.appUserScopeGrant.findUnique.mockResolvedValue({
+      // Under the 67 this workflow reserves; the platform daily cap is far above it.
+      buzzBudgetPerDay: 50,
+      revokedAt: null,
+    });
+    const { snapshot } = await submit(body(), 'idem-key-0011');
+    expect(snapshot.status).toBe('failed');
+    expect(snapshot.cost).toEqual({ total: QUOTE + FEE, authorFee: FEE });
+    expect(snapshot.error).toContain('this workflow may cost up to 67');
+    expect(snapshot.error).not.toContain('daily Buzz cap reached');
+    expect(counter(USER_CAP)).toBe(0);
+    expect(counter(CONSENT_BUDGET)).toBe(0);
+    expect(idemKeys()).toEqual([]);
+    expect(h.reserveAppSpend).not.toHaveBeenCalled();
+    expect(realSubmits()).toHaveLength(0);
+  });
+
+  it('a reservation that THROWS releases the idempotency claim', async () => {
+    redisMock.sysRedis.incrBy.mockRejectedValueOnce(new Error('redis down'));
+    await expect(submit(body(), 'idem-key-0012')).rejects.toBeTruthy();
+    expect(idemKeys()).toEqual([]);
+    expect(realSubmits()).toHaveLength(0);
   });
 
   it('the per-app cap refuses with the priced reply and refunds the per-user leg', async () => {
@@ -773,12 +945,13 @@ describe("kind:'workflow' SUBMIT — refusals after the gate refund every key", 
   it('the dev-tunnel backstop refuses and refunds the per-user and per-app legs', async () => {
     h.getActiveDevTunnel.mockImplementation(async () => ({ sessionId: 'bki_1', spendCapBuzz: 50 }));
     h.reserveDevSessionBuzz.mockImplementation(async () => ({ allowed: false, total: 41 }));
-    const { snapshot } = await submit();
+    const { snapshot } = await submit(body(), 'idem-key-0013');
     expect(snapshot.status).toBe('failed');
     expect(snapshot.cost).toEqual({ total: QUOTE + FEE, authorFee: FEE });
     expect(h.reserveDevSessionBuzz).toHaveBeenCalledWith('bki_1', QUOTE + FEE, 50);
     expect(counter(USER_CAP)).toBe(0);
     expect(h.refundAppSpend).toHaveBeenCalledWith('app-daily', QUOTE + FEE);
+    expect(idemKeys()).toEqual([]);
     expect(realSubmits()).toHaveLength(0);
   });
 
@@ -818,6 +991,26 @@ describe("kind:'workflow' SUBMIT — idempotency", () => {
     expect(counter(USER_CAP)).toBe(QUOTE + FEE);
     expect(h.reserveAppSpend).toHaveBeenCalledTimes(1);
     expect(h.chargeAuthorFee).toHaveBeenCalledTimes(1);
+  });
+
+  it('🔴 a same-key submit that is still IN FLIGHT is a CONFLICT, and reserves nothing', async () => {
+    let release: () => void = () => undefined;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    h.reserveAppSpend.mockImplementationOnce(async () => {
+      await held;
+      return { allowed: true, dailyKey: 'app-daily' };
+    });
+    const first = submit(body(), 'idem-key-0008');
+    await vi.waitFor(() => expect(h.reserveAppSpend).toHaveBeenCalledTimes(1));
+
+    await expect(submit(body(), 'idem-key-0008')).rejects.toMatchObject({ code: 'CONFLICT' });
+    // Only the first submit's reservation exists.
+    expect(counter(USER_CAP)).toBe(QUOTE + FEE);
+    expect(h.reserveAppSpend).toHaveBeenCalledTimes(1);
+
+    release();
+    expect((await first).snapshot.workflowId).toBe(WORKFLOW_ID);
+    expect(realSubmits()).toHaveLength(1);
   });
 
   it('a different key is a different workflow', async () => {
@@ -958,6 +1151,20 @@ describe("pass-through arm (kind:'step') — the denylist follows a `repeat` tem
     ...passThrough,
     input: { ...passThrough.input, template: { $type: 'modelClamScan', input: {} } },
   };
+
+  it('refuses a `repeat` it cannot read for certain (a re-cased template key)', async () => {
+    const recased = {
+      ...passThrough,
+      input: { for: passThrough.input.for, TEMPLATE: { $type: 'modelClamScan', input: {} } },
+    };
+    await expect(estimate(recased)).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message:
+        'a repeat step needs exactly { for, template } with a template "$type", nested at most 4 deep',
+    });
+    await expect(submit(recased)).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(h.submitWorkflow).not.toHaveBeenCalled();
+  });
 
   it('still lets a `repeat` over an allowed step through', async () => {
     const { snapshot } = await estimate(passThrough);

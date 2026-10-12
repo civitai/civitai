@@ -545,6 +545,13 @@ describe('settleCustomComfySpend — overage correction (a record that asks for 
     expect(mockRefundDevSessionBuzz).not.toHaveBeenCalled();
   });
 
+  it('touches no counter when the job billed exactly its reservation', async () => {
+    seedRecord({ ceiling: 64, correctOverage: true });
+    await settleCustomComfySpend({ workflowId: 'wf_o', actualCost: 64 });
+    expect(mockSysRedis.incrBy).not.toHaveBeenCalled();
+    expect(mockSysRedis.decrBy).not.toHaveBeenCalled();
+  });
+
   it('ceils a fractional overage', async () => {
     seedRecord({ ceiling: 64, correctOverage: true });
     await settleCustomComfySpend({ workflowId: 'wf_o', actualCost: 64.2 });

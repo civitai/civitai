@@ -28,7 +28,9 @@ import type { AppSpendDailyKey } from '~/server/services/blocks/app-spend-cap.se
 // a trailing poll can both observe terminal, but only the caller that wins the
 // DEL performs the refund.
 //
-// FAIL-SAFE in both directions:
+// FAIL-SAFE in both directions (for a record that asks for the overage
+// correction, a lost settle of a job that billed ABOVE its reservation
+// under-counts by that overage instead):
 //   - a lost PERSIST degrades to reserve-without-settle: the caps over-count by
 //     `ceiling - actual` for the ~25h TTL (the documented R5 fallback) — STRICTER,
 //     never looser.
@@ -165,7 +167,6 @@ export async function persistCustomComfySettle(input: {
   if (engine) record.engine = engine;
   if (recipe) record.recipe = recipe;
   if (Number.isFinite(submittedAt)) record.submittedAt = submittedAt;
-  // Only when asked for, so every other record keeps its exact shape.
   if (correctOverage) record.correctOverage = true;
   try {
     await sysRedis.set(settleKey(workflowId), JSON.stringify(record), {
@@ -278,9 +279,10 @@ export async function persistCustomComfySettle(input: {
 //      AVERAGED over those 44 days. Read it as an UPPER BOUND on the affected
 //      population, because it counts every budgeted submit and not only the
 //      ones that write a settle record. ⚠️ That record-writing population is
-//      WIDER than customComfy: `persistCustomComfySettle` has three call sites
-//      in `blocks.router.ts` — customComfy and the pass-through step, neither
-//      gated on a plan flag (both still sit behind a real `workflowId`, so a
+//      WIDER than customComfy: `persistCustomComfySettle` has five call sites
+//      in `blocks.router.ts` — customComfy, the pass-through step, the multi-step
+//      workflow and the training run, none
+//      gated on a plan flag (all still sit behind a real `workflowId`, so a
 //      `whatif` or failed submit writes nothing), plus the `postPaidSettle`-gated
 //      registry step in (3). It is still a strict subset of 585, so the
 //      inference holds. ⚠️ It is a MEAN,
@@ -318,7 +320,9 @@ export async function persistCustomComfySettle(input: {
 //     and already-scaffolded trigger, not a hypothetical: per (3) it is the one
 //     boolean standing between "abuse counters" and "a stranded real-Buzz fee
 //     debit", and the machinery on the other side of it is already written. Do
-//     not flip it without re-taking this decision.
+//     not flip it without re-taking this decision. (The `kind:'workflow'`
+//     submit is already such a path, per (3); this decision has not been
+//     re-taken for it.)
 //   - a materially higher budgeted-submit rate, so a window of pinned daily cap
 //     stops being rare. Re-run the `block_scope_invocations` count in (4),
 //     narrowed to the post-paid customComfy population rather than the same
@@ -409,13 +413,8 @@ export async function settleCustomComfySpend(input: {
     /* instrument-only — a metrics emit error can NEVER perturb the refund below */
   }
 
-  // ── OVERAGE CORRECTION (opt-in per record) ─────────────────────────────────
-  // The job billed MORE than was reserved, so every counter is short by the
-  // difference. This is an accounting correction for Buzz already spent, not a
-  // gate: nothing here can deny, and a counter it pushes past its cap binds on
-  // the NEXT submit. Charged on the EXACT keys the submit reserved, so it lands
-  // in the window the spend belongs to. Each leg is best-effort and independent;
-  // a lost one under-counts by the overage only.
+  // Accounting for Buzz already spent, not a gate; charged on the keys the
+  // submit reserved. Legs are independent and best-effort.
   const overage = record.correctOverage ? actual - ceiling : 0;
   if (overage > 0) {
     if (record.buzzCapKey) {

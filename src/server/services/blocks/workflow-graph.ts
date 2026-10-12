@@ -1,17 +1,5 @@
-// ─────────────────────────────────────────────────────────────────────────────
-// App Blocks MULTI-STEP bridge (`kind: 'workflow'`) — the step graph.
-//
-// A `kind:'workflow'` body names 1..N orchestrator steps whose inputs may
-// reference each other with the orchestrator's own reference object,
-// `{ "$ref": <source>, "path": <dotted path>, "default"?, "format"? }`. This
-// module resolves the step names and checks the reference graph BEFORE anything
-// is sent upstream, so a bad graph is refused with the step index instead of
-// whatever the orchestrator would answer for it.
-//
-// PURE AND IMPORT-FREE on purpose: the wire schema imports the bounds below, and
-// both the estimate and the submit call `resolveBlockWorkflowGraph` on the same
-// body, so they cannot disagree about which graphs are refused.
-// ─────────────────────────────────────────────────────────────────────────────
+// App Blocks `kind:'workflow'` step graph: step names and the reference rules.
+// Import-free: the wire schema imports this module's types.
 
 /** Max steps in one `kind:'workflow'` body. */
 export const WORKFLOW_MAX_STEPS = 8;
@@ -104,24 +92,60 @@ export function isRepeatStepType(stepType: unknown): boolean {
   return typeof stepType === 'string' && stepType.toLowerCase() === 'repeat';
 }
 
+/** True when `object` spells one of `names` in any casing other than its own. */
+function hasRecasedKey(object: Record<string, unknown>, names: readonly string[]): boolean {
+  return Object.keys(object).some(
+    (key) => !names.includes(key) && names.includes(key.toLowerCase())
+  );
+}
+
+type RepeatInput = {
+  forClause: Record<string, unknown>;
+  template: Record<string, unknown> & { $type: string };
+};
+
+/**
+ * A `repeat` step's input, or `null` when this cannot say for certain which step
+ * it runs and what it iterates.
+ *
+ * FAIL-CLOSED ON SHAPE: the input must hold exactly `for` and `template`, the
+ * template must name a string `$type`, and none of the keys this module reads may
+ * appear under another casing. Whether the orchestrator would bind a re-cased key
+ * is not something this repo can know, so a body that relies on it is refused.
+ */
+function readRepeatInput(input: unknown): RepeatInput | null {
+  if (!isPlainObject(input)) return null;
+  if (Object.keys(input).some((key) => key !== 'for' && key !== 'template')) return null;
+  const { for: forClause, template } = input;
+  if (!isPlainObject(forClause) || hasRecasedKey(forClause, ['$ref', 'path', 'as'])) return null;
+  if (!isPlainObject(template) || hasRecasedKey(template, ['$type', 'input'])) return null;
+  if (typeof template.$type !== 'string') return null;
+  return { forClause, template: template as RepeatInput['template'] };
+}
+
+/** The refusal for a `repeat` step `readRepeatInput` or the nesting bound turns away. */
+export const REPEAT_SHAPE_ERROR =
+  `a repeat step needs exactly { for, template } with a template "$type", nested at most ` +
+  `${REPEAT_NESTING_MAX} deep`;
+
 /**
  * Every `$type` a step can run — its own and, for a `repeat`, its template's.
  *
- * Returns `null` when `repeat` templates nest deeper than `REPEAT_NESTING_MAX`,
- * so a caller refuses the body instead of checking only part of it.
+ * Returns `null` for a `repeat` it cannot follow (see `readRepeatInput`) or one
+ * nested deeper than `REPEAT_NESTING_MAX`, so a caller refuses the body instead
+ * of checking only part of it.
  */
 export function collectBlockStepTypes(stepType: string, input: unknown): string[] | null {
   const types: string[] = [];
-  let currentType: unknown = stepType;
-  let currentInput: unknown = input;
+  let currentType = stepType;
+  let currentInput = input;
   for (let depth = 0; depth <= REPEAT_NESTING_MAX; depth += 1) {
-    if (typeof currentType !== 'string') return types;
     types.push(currentType);
-    if (!isRepeatStepType(currentType) || !isPlainObject(currentInput)) return types;
-    const template = currentInput.template;
-    if (!isPlainObject(template)) return types;
-    currentType = template.$type;
-    currentInput = template.input;
+    if (!isRepeatStepType(currentType)) return types;
+    const repeat = readRepeatInput(currentInput);
+    if (!repeat) return null;
+    currentType = repeat.template.$type;
+    currentInput = repeat.template.input;
   }
   return null;
 }
@@ -203,51 +227,28 @@ function checkStepInput(
   input: unknown,
   depth: number,
   sources: ReadonlySet<string>,
-  state: WalkState,
-  repeatDepth: number
+  state: WalkState
 ): string | null {
-  if (!isRepeatStepType(stepType) || !isPlainObject(input)) {
-    return checkValue(input, depth, sources, state);
+  if (!isRepeatStepType(stepType)) return checkValue(input, depth, sources, state);
+  const repeat = readRepeatInput(input);
+  if (!repeat) return REPEAT_SHAPE_ERROR;
+  const { forClause, template } = repeat;
+  if (typeof forClause.$ref === 'string') {
+    const problem = checkSource(forClause.$ref, sources, state);
+    if (problem) return problem;
   }
-  if (repeatDepth >= REPEAT_NESTING_MAX) {
-    return `repeat steps may nest at most ${REPEAT_NESTING_MAX} deep`;
+  for (const entry of Object.values(forClause)) {
+    const problem = checkValue(entry, depth + 2, sources, state);
+    if (problem) return problem;
   }
-  const forClause = input.for;
-  let templateSources = sources;
-  if (isPlainObject(forClause)) {
-    if (typeof forClause.$ref === 'string') {
-      const problem = checkSource(forClause.$ref, sources, state);
-      if (problem) return problem;
-    }
-    for (const entry of Object.values(forClause)) {
-      const problem = checkValue(entry, depth + 2, sources, state);
-      if (problem) return problem;
-    }
-    if (typeof forClause.as === 'string') {
-      templateSources = new Set([...sources, forClause.as]);
-    }
-  }
-  for (const [key, entry] of Object.entries(input)) {
-    if (key === 'for' && isPlainObject(entry)) continue;
-    if (key !== 'template' || !isPlainObject(entry)) {
-      const problem = checkValue(entry, depth + 1, sources, state);
-      if (problem) return problem;
-      continue;
-    }
-    for (const [templateKey, templateEntry] of Object.entries(entry)) {
-      const problem =
-        templateKey === 'input'
-          ? checkStepInput(
-              entry.$type,
-              templateEntry,
-              depth + 2,
-              templateSources,
-              state,
-              repeatDepth + 1
-            )
-          : checkValue(templateEntry, depth + 2, templateSources, state);
-      if (problem) return problem;
-    }
+  const templateSources =
+    typeof forClause.as === 'string' ? new Set([...sources, forClause.as]) : sources;
+  for (const [key, entry] of Object.entries(template)) {
+    const problem =
+      key === 'input'
+        ? checkStepInput(template.$type, entry, depth + 2, templateSources, state)
+        : checkValue(entry, depth + 2, templateSources, state);
+    if (problem) return problem;
   }
   return null;
 }
@@ -255,13 +256,14 @@ function checkStepInput(
 /**
  * Resolve a `kind:'workflow'` body's step names and check its reference graph.
  *
- * The rules, each refused with the step index:
+ * The rules (every refusal but the first names the step index):
  *  - at most `WORKFLOW_MAX_STEPS` steps;
  *  - a name is `[a-z][a-z0-9_-]{0,31}`, or exactly the step's own positional
  *    `$<index>`; names are unique; `block-step` is reserved. A step given no
  *    name is named `$<index>`;
  *  - every reference names `$arguments` or an EARLIER step, so the graph has no
- *    cycle and no self-reference by construction;
+ *    cycle and no self-reference by construction. Inside a `repeat` template
+ *    the loop variable (`for.as`) is a source too;
  *  - at most `WORKFLOW_MAX_REFS` references, and no input nested deeper than
  *    `WORKFLOW_INPUT_DEPTH_MAX`.
  *
@@ -305,10 +307,8 @@ export function resolveBlockWorkflowGraph(body: {
     if (taken.has(name)) return invalid(index, `name ${JSON.stringify(name)} is used twice`);
 
     const stepTypes = collectBlockStepTypes(step.$type, step.input);
-    if (stepTypes === null) {
-      return invalid(index, `repeat steps may nest at most ${REPEAT_NESTING_MAX} deep`);
-    }
-    const problem = checkStepInput(step.$type, step.input, 0, earlier, state, 0);
+    if (stepTypes === null) return invalid(index, REPEAT_SHAPE_ERROR);
+    const problem = checkStepInput(step.$type, step.input, 0, earlier, state);
     if (problem) return invalid(index, problem);
 
     taken.add(name);

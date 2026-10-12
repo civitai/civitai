@@ -219,7 +219,8 @@ async function denyAppSpend(
  *     pinned key) and deny — the whole submit is rejected, so we never leave a
  *     partial reservation. A `cost <= 0` gen (cache-hit / 0-cost) adds nothing
  *     to the daily total but STILL counts toward velocity below.
- *   - Velocity: INCR the current fixed-window bucket by 1. If it exceeds the
+ *   - Velocity: INCR the current fixed-window bucket by `units` (1 unless a
+ *     multi-step workflow passes its step count). If it exceeds the
  *     max, REFUND the daily reservation and deny. The velocity counter itself
  *     is NOT refunded on a velocity-deny — a denied ATTEMPT still consumed a
  *     rate slot (standard fixed-window limiter), and the bucket self-expires.
@@ -254,7 +255,6 @@ export async function reserveAppSpend(
   opts: { units?: number } = {}
 ): Promise<ReserveAppSpendResult> {
   const want = Math.max(0, Math.ceil(cost));
-  // Anything but a whole number above 1 counts as one generation.
   const units =
     Number.isInteger(opts.units) && (opts.units as number) > 1 ? (opts.units as number) : 1;
   const dailyKey = appSpendDailyKey(appBlockId);

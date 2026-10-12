@@ -241,13 +241,13 @@ export async function quoteBlockAuthorFee(args: {
   //
   // 🔴 `surface` IS DERIVED FROM `workflowLabel`, NOT FROM `suppressQuoteLogs`,
   // AND AN EARLIER REVISION OF THIS LINE GOT IT WRONG IN A WAY THE TESTS COULD
-  // NOT SEE. `suppressQuoteLogs` is set at ONE of the two estimate call sites
-  // (the `kind:'step'` estimate) and NOT at the other (the workflow estimate), so deriving from it
+  // NOT SEE. `suppressQuoteLogs` was then set at ONE of the two estimate call sites
+  // (the `kind:'step'` estimate) and NOT at the other (the txt2img estimate), so deriving from it
   // reported a genuine estimate as `gating`. The tests passed because they
   // asserted the label against the flag the test itself passed — the
   // expectation was taken from the implementation rather than from the router.
-  // `workflowLabel` is `'estimate'` at both estimate sites and the external id at
-  // both gating sites (the two submits), so it discriminates all four.
+  // `workflowLabel` is `'estimate'` at every estimate site and the external id at
+  // every gating site (the submits), so it discriminates them all.
   //
   // ⚠️ THAT MAKES THE LABEL A CLAIM ABOUT A STRING THE ROUTER PASSES, AND THE
   // ONLY THING ENFORCING IT IS THAT BOTH ESTIMATE SITES NOW IMPORT
@@ -263,7 +263,7 @@ export async function quoteBlockAuthorFee(args: {
   // level up. The coupling is now structural (a shared import) instead of a
   // sentence about a test.
   //
-  // The GATING side needs no such pin: both gating sites (the two SUBMIT paths) pass
+  // The GATING side needs no such pin: every gating site (the SUBMIT paths) passes
   // `blockExternalId`, which `composeBlockExternalId` /
   // `mintServerBlockExternalId` always prefix with `blk`/`bls`, so a gating
   // caller cannot produce `'estimate'` by construction.
@@ -398,11 +398,10 @@ export type ChargeBlockAuthorFeeResult =
  * folded into its budget gate and its reservations. `charged = min(reserved,
  * realized)`, so:
  *   * a path that priced no fee (0) can never take one, whatever the realized
- *     base says. THREE OF THE FIVE SUBMIT PATHS ARE DELIBERATELY IN THIS STATE:
+ *     base says. THREE OF THE SIX SUBMIT PATHS ARE DELIBERATELY IN THIS STATE:
  *     `submitCustomComfyWorkflow` takes no whatIf quote at all (its ceiling IS
- *     the app's declared `maxBuzz`) and `submitPassThroughStepWorkflow`'s quote
- *     helper returns a total only. Neither has a pre-submit `cost.base` to price
- *     a fee from, so neither reserves one, so neither charges one. The third,
+ *     the app's declared `maxBuzz`) and `submitPassThroughStepWorkflow` reserves
+ *     the app's declared ceiling. Neither reserves a fee, so neither charges one. The third,
  *     `submitTrainingWorkflow`, prices its step but charges no fee by decision
  *     (the viewer confirms one exact price). None of the three calls this
  *     function; the `NO_FEE_PATHS` ledger in `no-divergent-author-fee-base.test.ts`

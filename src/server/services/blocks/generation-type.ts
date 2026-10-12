@@ -45,6 +45,7 @@ import { REGISTERED_STEP_IDS } from './steps';
 //   convert-image              chat-completion
 //   step:<orchestrator $type>
 //   training:<ai-toolkit ecosystem>
+//   workflow
 //
 // A bare `textToImage` / `customComfy` / `step` / `training` is still a legal value: it is
 // what a submit degrades to when the sub-axis cannot be established (see
@@ -727,7 +728,6 @@ export function resolveBlockGenerationType(
   }
 
   if (kind === BLOCK_MULTI_STEP_COARSE_TYPE) {
-    // No subtype axis, so the bare coarse key is the whole value.
     return composeBlockGenerationType(kind, null);
   }
 
