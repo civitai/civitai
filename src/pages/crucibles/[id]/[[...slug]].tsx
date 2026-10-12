@@ -57,6 +57,7 @@ import { CrucibleHeader } from '~/components/Crucible/CrucibleHeader';
 import { PrizeClaimBanner } from '~/components/Prize/PrizeClaimBanner';
 import { CrucibleLeaderboard } from '~/components/Crucible/CrucibleLeaderboard';
 import { CrucibleRulesPanel } from '~/components/Crucible/CrucibleRulesPanel';
+import { CrucibleDiscussion } from '~/components/Crucible/CrucibleDiscussion';
 import { CrucibleEntryGrid, type CrucibleEntryData } from '~/components/Crucible/CrucibleEntryGrid';
 import { CruciblePodium } from '~/components/Crucible/CruciblePodium';
 import {
@@ -471,6 +472,11 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
                     onClick={() => router.push(`/crucibles/${crucible.id}/judge`)}
                   />
                 ))}
+
+              {/* Discussion sits before the entries feed, as on the challenge page */}
+              <div className="mb-8">
+                <CrucibleDiscussion crucibleId={crucible.id} userId={crucible.user.id} />
+              </div>
 
               {/* Entry Grid with User Entries section */}
               <CrucibleEntryGrid

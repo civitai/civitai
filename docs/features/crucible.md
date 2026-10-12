@@ -95,6 +95,14 @@ Anyone signed in can follow an upcoming or active crucible with the bell on its 
 
 A crucible's name appears in notifications and Buzz transaction descriptions only once its text has passed review as safe for everyone; a crucible with mature text is never named there.
 
+## Comments
+
+Every crucible page has a discussion, placed above the entries, where testers can ask the creator questions. It is open for as long as the crucible exists, whatever its status. People who can't open the crucible (blocked by its creator, still in review, mature on the green site) can't read or write its comments either.
+
+Moderators can lock the discussion from the menu at the top of the page, as on every other kind of thread. A locked discussion is hidden from everyone, as on challenges. The creator can't lock it.
+
+The creator is notified of new comments from others ("New comments on your crucibles" in notification settings, under Comments). Replies and mentions notify as they do elsewhere.
+
 ## Availability
 
 Crucible is behind a feature flag, currently limited to testers. The background jobs that start, close and pay out crucibles don't check it, so hiding the feature doesn't strand crucibles already in progress.

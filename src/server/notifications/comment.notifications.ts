@@ -137,6 +137,7 @@ export const threadUrlMap = ({ threadType, threadParentId, ...details }: any) =>
     bounty: `/bounties/${threadParentId}?${queryString}`,
     bountyEntry: `/bounties/entries/${threadParentId}?${queryString}`,
     challenge: `/challenges/${threadParentId}?${queryString}`,
+    crucible: `/crucibles/${threadParentId}?${queryString}`,
     comicChapter: `/comics/${threadParentId}?${queryString}`,
     comicProject: `/comics/${threadParentId}?${queryString}`,
     model3d: `/3d-models/${threadParentId}?${queryString}`,
@@ -363,6 +364,7 @@ export const commentNotifications = createNotificationProcessor({
                 root."bountyId",
                 root."bountyEntryId",
                 root."challengeId",
+                root."crucibleId",
                 root."model3dId",
                 root."comicProjectId"
              ),
@@ -377,6 +379,7 @@ export const commentNotifications = createNotificationProcessor({
                 WHEN root."bountyId" IS NOT NULL THEN 'bounty'
                 WHEN root."bountyEntryId" IS NOT NULL THEN 'bountyEntry'
                 WHEN root."challengeId" IS NOT NULL THEN 'challenge'
+                WHEN root."crucibleId" IS NOT NULL THEN 'crucible'
                 WHEN root."model3dId" IS NOT NULL THEN 'model3d'
                 WHEN root."comicProjectId" IS NOT NULL THEN 'comicProject'
                 -- App-store listing threads are SLUG-addressed, so this arm keys on the
@@ -483,6 +486,7 @@ export const commentNotifications = createNotificationProcessor({
                 root."bountyId",
                 root."bountyEntryId",
                 root."challengeId",
+                root."crucibleId",
                 root."model3dId",
                 root."comicProjectId",
                 t."imageId",
@@ -495,6 +499,7 @@ export const commentNotifications = createNotificationProcessor({
                 t."bountyId",
                 t."bountyEntryId",
                 t."challengeId",
+                t."crucibleId",
                 t."model3dId",
                 t."comicProjectId"
              ),
@@ -509,6 +514,7 @@ export const commentNotifications = createNotificationProcessor({
               WHEN COALESCE(root."bountyId", t."bountyId") IS NOT NULL THEN 'bounty'
               WHEN COALESCE(root."bountyEntryId", t."bountyEntryId") IS NOT NULL THEN 'bountyEntry'
               WHEN COALESCE(root."challengeId", t."challengeId") IS NOT NULL THEN 'challenge'
+              WHEN COALESCE(root."crucibleId", t."crucibleId") IS NOT NULL THEN 'crucible'
               WHEN COALESCE(root."model3dId", t."model3dId") IS NOT NULL THEN 'model3d'
               WHEN COALESCE(root."comicProjectId", t."comicProjectId") IS NOT NULL THEN 'comicProject'
               -- SLUG-addressed; see the same arm in new-comment-reply above.
@@ -527,6 +533,7 @@ export const commentNotifications = createNotificationProcessor({
                 t."bountyId",
                 t."bountyEntryId",
                 t."challengeId",
+                t."crucibleId",
                 t."model3dId",
                 t."commentId"
              ),
@@ -541,6 +548,7 @@ export const commentNotifications = createNotificationProcessor({
                 WHEN t."bountyId" IS NOT NULL THEN 'bounty'
                 WHEN t."bountyEntryId" IS NOT NULL THEN 'bountyEntry'
                 WHEN t."challengeId" IS NOT NULL THEN 'challenge'
+                WHEN t."crucibleId" IS NOT NULL THEN 'crucible'
                 WHEN t."model3dId" IS NOT NULL THEN 'model3d'
                 ELSE 'comment'
               END,
@@ -1056,6 +1064,49 @@ export const commentNotifications = createNotificationProcessor({
       FROM new_challenge_comment
       WHERE
         NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-challenge-comment');
+    `,
+  },
+  'new-crucible-comment': {
+    displayName: 'New comments on your crucibles',
+    category: NotificationCategory.Comment,
+    priority: CommentNotificationPriority.EntityOwner,
+    prepareMessage: ({ details }) => ({
+      // The name is null until the text has passed review as safe for everyone.
+      message: `${details.username} commented on your crucible${
+        details.crucibleName ? `: "${details.crucibleName}"` : ''
+      }`,
+      url: `/crucibles/${details.crucibleId}?highlight=${details.commentId}`,
+    }),
+    prepareQuery: ({ lastSent }) => `
+      WITH new_crucible_comment AS (
+        SELECT DISTINCT
+          cr."userId" "ownerId",
+          JSONB_BUILD_OBJECT(
+            'version', 2,
+            'crucibleId', cr.id,
+            'crucibleName', CASE WHEN cr.ingestion = 'Scanned' AND NOT cr."textNsfw" THEN cr.name END,
+            'commentId', c.id,
+            'username', u.username
+          ) as "details"
+        FROM "CommentV2" c
+        JOIN "User" u ON c."userId" = u.id
+        JOIN "Thread" t ON t.id = c."threadId" AND t."crucibleId" IS NOT NULL
+        JOIN "Crucible" cr ON cr.id = t."crucibleId"
+        WHERE cr."userId" > 0
+          AND c."createdAt" > '${lastSent}'
+          AND c."userId" != cr."userId"
+          AND ${notBlockedBetween('cr."userId"', 'c."userId"')}
+          AND ${notThreadMuted('cr."userId"', 't.id')}
+      )
+      SELECT
+        concat('new-comment-crucible:owner:v2:', details->>'commentId') "key",
+        ${commentDedupeKey('v2')} "dedupeKey",
+        "ownerId" "userId",
+        'new-crucible-comment' "type",
+        details
+      FROM new_crucible_comment
+      WHERE
+        NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-crucible-comment');
     `,
   },
   // Model3D comments — mirror the Model 3-tier (`new-comment` /

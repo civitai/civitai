@@ -11,6 +11,7 @@ import {
 } from '~/server/services/user-preferences.service';
 import { getContentOwnerIdForComment } from '~/server/services/block-check.service';
 import { bulkSetCommentV2TosViolation } from '~/server/services/commentsv2.service';
+import { assertCrucibleVisible } from '~/server/services/crucible.service';
 import { amIBlockedByUser } from '~/server/services/user.service';
 import { assertBountyVisible } from '~/server/services/bounty-visibility';
 import {
@@ -40,6 +41,7 @@ import {
   getCommentsThreadDetails2,
   getCommentsInfinite,
   getCommentThreadBounty,
+  getCommentThreadCrucibleId,
   isViewerContentOwner,
   toggleHideComment,
   toggleLockCommentsThread,
@@ -47,13 +49,30 @@ import {
   upsertComment,
 } from './../services/commentsv2.service';
 
-async function assertCommentEntityVisible(
+/** Creators who blocked the viewer and creators the viewer blocked. */
+async function getBlockedCreatorIds(userId: number) {
+  const [blockedBy, blocked] = await Promise.all([
+    BlockedByUsers.getCached({ userId }),
+    BlockedUsers.getCached({ userId }),
+  ]);
+  return [...new Set([...blockedBy, ...blocked].map((x) => x.id))];
+}
+
+export async function assertCommentEntityVisible(
   input: { entityType: string; entityId: number },
-  user: Context['user']
+  ctx: Pick<Context, 'user' | 'features'>
 ) {
+  const { user } = ctx;
   if (input.entityType === 'bounty') await assertBountyVisible({ bountyId: input.entityId }, user);
   else if (input.entityType === 'bountyEntry')
     await assertBountyVisible({ entryId: input.entityId }, user);
+  else if (input.entityType === 'crucible')
+    await assertCrucibleVisible(input.entityId, {
+      viewerId: user?.id,
+      isModerator: !!user?.isModerator,
+      isGreen: !!ctx.features?.isGreen,
+      blockedCreatorIds: user && !user.isModerator ? await getBlockedCreatorIds(user.id) : [],
+    });
 }
 
 export const getCommentHandler = async ({ ctx, input }: { ctx: Context; input: GetByIdInput }) => {
@@ -64,6 +83,9 @@ export const getCommentHandler = async ({ ctx, input }: { ctx: Context; input: G
     if (!ctx.user?.isModerator) {
       const bounty = await getCommentThreadBounty(comment.threadId);
       if (bounty) await assertBountyVisible(bounty, ctx.user);
+      const crucibleId = await getCommentThreadCrucibleId(comment.threadId);
+      if (crucibleId)
+        await assertCommentEntityVisible({ entityType: 'crucible', entityId: crucibleId }, ctx);
     }
 
     if (ctx.user && !ctx.user.isModerator) {
@@ -88,7 +110,7 @@ export const upsertCommentV2Handler = async ({
   input: UpsertCommentV2Input;
 }) => {
   try {
-    await assertCommentEntityVisible(input, ctx.user);
+    await assertCommentEntityVisible(input, ctx);
     const type =
       input.entityType === 'image'
         ? 'Image'
@@ -181,7 +203,7 @@ export const getCommentCountV2Handler = async ({
   input: CommentConnectorInput;
 }) => {
   try {
-    await assertCommentEntityVisible(input, ctx.user);
+    await assertCommentEntityVisible(input, ctx);
     return await getCommentCount({ ...input, isModerator: ctx.user?.isModerator ?? false });
   } catch (error) {
     throw throwDbError(error);
@@ -196,7 +218,7 @@ export const getCommentsThreadDetailsHandler = async ({
   ctx: Context;
 }) => {
   try {
-    await assertCommentEntityVisible(input, ctx.user);
+    await assertCommentEntityVisible(input, ctx);
     return await getCommentsThreadDetails2(input);
   } catch (error) {
     throw throwDbError(error);
@@ -327,7 +349,7 @@ export const getCommentsInfiniteHandler = async ({
   input: GetCommentsInfiniteInput;
 }) => {
   try {
-    await assertCommentEntityVisible(input, ctx.user);
+    await assertCommentEntityVisible(input, ctx);
     const hiddenUsers = (await HiddenUsers.getCached({ userId: ctx.user?.id })).map((x) => x.id);
     const blockedByUsers = (await BlockedByUsers.getCached({ userId: ctx.user?.id })).map(
       (x) => x.id

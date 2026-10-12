@@ -151,6 +151,7 @@ export function CrucibleHeader({ crucible, className }: CrucibleHeaderProps) {
             <CrucibleContextMenu
               crucible={{ id: crucible.id, userId: crucible.user.id }}
               position="bottom-end"
+              withCommentsLock
             />
           </div>
         </div>
