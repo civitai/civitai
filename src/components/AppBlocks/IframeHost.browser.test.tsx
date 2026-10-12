@@ -3,6 +3,7 @@ import { TRPCClientError } from '@trpc/client';
 import { page } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+import { trpcError } from '../../../test/fixtures/trpc-client-error';
 import {
   RATE_LIMIT,
   RATE_LIMIT_OPS,
@@ -264,13 +265,6 @@ async function driveToReady() {
   });
 }
 
-// A TRPCClientError shaped the way the client builds one from a server error response.
-function trpcError(code: string, httpStatus: number, message: string) {
-  return new TRPCClientError(message, {
-    result: { error: { code: -32000, message, data: { code, httpStatus } } },
-  } as unknown as ConstructorParameters<typeof TRPCClientError>[1]);
-}
-
 describe('IframeHost block render/impression (Analytics Phase 2, model.sidebar_top)', () => {
   let fetchSpy: ReturnType<typeof vi.spyOn>;
 
@@ -497,12 +491,8 @@ describe('IframeHost POLL_WORKFLOW waitSeconds forwarding (model.sidebar_top)', 
 
   test.each([
     ['a whole number of seconds', { waitSeconds: 7 }, { waitSeconds: 7 }],
-    ['a fraction (floored)', { waitSeconds: 7.9 }, { waitSeconds: 7 }],
-    ['a value above the wire bound (capped)', { waitSeconds: 90 }, { waitSeconds: 60 }],
+    ['a value the server will cap (sent as-is)', { waitSeconds: 90 }, { waitSeconds: 90 }],
     ['no waitSeconds', {}, {}],
-    ['a numeric string', { waitSeconds: '7' }, {}],
-    ['NaN', { waitSeconds: Number.NaN }, {}],
-    ['a negative', { waitSeconds: -3 }, {}],
   ])(
     'POLL_WORKFLOW with %s calls pollWorkflow with exactly the expected input',
     async (_label, sent, expectedExtra) => {

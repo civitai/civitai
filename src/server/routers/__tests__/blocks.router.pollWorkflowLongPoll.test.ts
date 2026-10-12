@@ -299,17 +299,29 @@ describe('blocks.pollWorkflow — long poll wiring', () => {
     expect(queryArg()).toBeUndefined();
   });
 
-  it('rejects a nonsensical waitSeconds at the wire schema without calling the orchestrator', async () => {
+  // The wire schema never refuses a waitSeconds: a refused poll reaches the block as a failed
+  // generation. Every number goes to the resolver; anything else is no hold.
+  it.each([
+    [2.5, { wait: 2 }],
+    [90, { wait: MAX_BLOCK_POLL_WAIT_SECONDS }],
+    [99_999, { wait: MAX_BLOCK_POLL_WAIT_SECONDS }],
+    [-3, undefined],
+    [null, undefined],
+    ['7', undefined],
+    [Number.NaN, undefined],
+    [Number.POSITIVE_INFINITY, undefined],
+  ])('accepts waitSeconds %s and asks the orchestrator for %o', async (waitSeconds, query) => {
     mockGetWorkflow.mockResolvedValue(RUNNING);
 
-    await expect(
-      caller().pollWorkflow({ blockToken: 'tok', workflowId: 'wf_running', waitSeconds: 99_999 })
-    ).rejects.toThrow();
-    await expect(
-      caller().pollWorkflow({ blockToken: 'tok', workflowId: 'wf_running', waitSeconds: -3 })
-    ).rejects.toThrow();
+    const result = await caller().pollWorkflow({
+      blockToken: 'tok',
+      workflowId: 'wf_running',
+      waitSeconds: waitSeconds as number,
+    });
 
-    expect(mockGetWorkflow).not.toHaveBeenCalled();
+    expect(mockGetWorkflow).toHaveBeenCalledTimes(1);
+    expect(queryArg()).toEqual(query);
+    expect(result.snapshot.status).toBe('processing');
   });
 
   it('COMPLETES INSIDE THE HOLD: terminal snapshot + terminal side effects fire', async () => {

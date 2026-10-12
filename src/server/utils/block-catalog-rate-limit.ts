@@ -230,8 +230,8 @@ export const BLOCK_POST_APP_RATE_LIMIT_WINDOW_SECONDS = 3600;
 //     │
 //     │  THE BRIDGE FORWARDS THE HOLD. THE REST ROUTE ACCEPTS IT; NOTHING CALLS IT YET.
 //     │
-//     │  Bridge: both hosts forward a block's `waitSeconds` once it normalises to a
-//     │  whole second or more, so such a poll asks the orchestrator for a hold.
+//     │  Bridge: both hosts forward a block's finite numeric `waitSeconds`, and any
+//     │  value that resolves to a whole second or more asks the orchestrator for a hold.
 //     │  REST: `/api/v1/blocks/workflows/poll` (#5068) takes the field off the wire with
 //     │  no host in the path; no shipped client calls that route yet.
 //     │  Therefore: the ~300-concurrent-hold figure below is the ceiling for a block
@@ -239,9 +239,8 @@ export const BLOCK_POST_APP_RATE_LIMIT_WINDOW_SECONDS = 3600;
 //     └─
 //
 //     EVIDENCE — for the BRIDGE arm: `PageBlockHost` and `IframeHost` pass the field
-//     through `pollWaitSecondsForWire` (`components/AppBlocks/pollWaitSeconds.ts`) into
-//     `blocks.pollWorkflow`. Which blocks SEND it is a fact about another repo:
-//     `@civitai/blocks-react`'s `watch` defaults `waitSeconds` to 15
+//     into `blocks.pollWorkflow`, whose `resolveBlockPollWaitSeconds` decides the hold.
+//     Which blocks SEND it is a fact about another repo: `@civitai/blocks-react`'s `watch` defaults `waitSeconds` to 15
 //     (`DEFAULT_WATCH_WAIT_SECONDS`) from a loop that awaits each poll.
 //
 //     EVIDENCE — for the REST arm: a whole-tree sweep of `civitai-app-starters` found no

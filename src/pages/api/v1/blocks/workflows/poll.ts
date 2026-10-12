@@ -10,8 +10,8 @@ import {
   blockWorkflowBearer,
   blockWorkflowCaller,
 } from '~/server/services/blocks/block-workflow-rest';
+import { blockPollWaitSecondsInput } from '~/server/services/blocks/workflow.service';
 import { handleEndpointError } from '~/server/utils/endpoint-helpers';
-import { BLOCK_POLL_WAIT_SECONDS_WIRE_MAX } from '~/shared/constants/block-poll-wait.constants';
 
 /**
  * POST /api/v1/blocks/workflows/poll  body `{ workflowId, waitSeconds? }` → `{ snapshot }`
@@ -20,8 +20,7 @@ import { BLOCK_POLL_WAIT_SECONDS_WIRE_MAX } from '~/shared/constants/block-poll-
  * Read one workflow's current status — the REST twin of the `POLL_WORKFLOW`
  * bridge message, and the route a block's watch loop lives on. Optionally a LONG
  * POLL: `waitSeconds` asks the orchestrator to hold the read until the workflow
- * goes terminal (bounded by the wire schema and clamped again by
- * `resolveBlockPollWaitSeconds`, which owns the policy).
+ * goes terminal (`resolveBlockPollWaitSeconds` owns the policy).
  *
  * A thin adapter over `blocks.pollWorkflow`, the SAME procedure the page host
  * calls, so the whole ladder runs verbatim: the `ai:write:budgeted` assertion, the
@@ -67,12 +66,10 @@ import { BLOCK_POLL_WAIT_SECONDS_WIRE_MAX } from '~/shared/constants/block-poll-
 export const config = { api: { bodyParser: { sizeLimit: '4kb' } } };
 
 // Mirrors `blocks.pollWorkflow`'s input minus `blockToken` (which rides the
-// Authorization header here). The `waitSeconds` bound is deliberately the LOOSER
-// of the two gates — it rejects nonsense, `resolveBlockPollWaitSeconds` decides
-// policy, and the policy stays in one place.
+// Authorization header here).
 const bodySchema = z.object({
   workflowId: z.string().min(1).max(64),
-  waitSeconds: z.number().int().min(0).max(BLOCK_POLL_WAIT_SECONDS_WIRE_MAX).optional(),
+  waitSeconds: blockPollWaitSecondsInput,
 });
 
 // Exported for unit testing (the default export is wrapped in withBlockScope,

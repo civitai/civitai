@@ -1,4 +1,5 @@
 import { TRPCError } from '@trpc/server';
+import * as z from 'zod';
 import { coveragePair, nextCoverageEnabled } from '~/server/services/generation/coverage-source';
 import type { CustomComfyStepTemplate, Workflow, WorkflowStatus } from '@civitai/client';
 import type { AnyBlockRecipe, CustomComfyStepInput, ResolvedRecipeResources } from './recipes';
@@ -1387,3 +1388,11 @@ export function resolveBlockPollWaitSeconds(waitSeconds?: number): number | unde
   if (floored <= 0) return undefined;
   return Math.min(floored, MAX_BLOCK_POLL_WAIT_SECONDS);
 }
+
+/**
+ * The wire schema for `waitSeconds` on `blocks.pollWorkflow` and its REST twin. It never rejects: a
+ * missing, `null`, non-number or non-finite value becomes `undefined`, and every finite number is
+ * left for `resolveBlockPollWaitSeconds` to floor and cap. A
+ * rejected poll reaches the block as a failed generation, which a tuning value must not cause.
+ */
+export const blockPollWaitSecondsInput = z.number().optional().catch(undefined);
