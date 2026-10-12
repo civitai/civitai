@@ -72,7 +72,7 @@ Three boards rank crucible activity over the last 30 days, refreshed nightly:
 - New entries' ratings move faster until they have enough votes.
 - Judges can skip a pair. Skipped entries stay out for the rest of the visit (up to the last 20) and come back only once nothing else is left to judge.
 - On video crucibles with a minimum view time, only real playback counts. Skipping ahead or pausing does not add to it. A vote on an under-watched pair is rejected, and the judge keeps that pair.
-- Someone the creator has blocked can't see, enter or judge the crucible.
+- A block hides the crucible both ways: a creator who blocked someone, and anyone the creator blocked, can't see each other's crucibles in lists or on their pages, enter, judge or follow them. Moderators are exempt.
 
 ## Judging is blind while a crucible runs
 
@@ -94,6 +94,14 @@ Showing a live leaderboard would bias judges, so scores and positions stay hidde
 Anyone signed in can follow an upcoming or active crucible with the bell on its page. Every crucible notification except a cancellation, a moderator's removal and the notices about its review can be turned off in notification settings.
 
 A crucible's name appears in notifications and Buzz transaction descriptions only once its text has passed review as safe for everyone; a crucible with mature text is never named there.
+
+## Comments
+
+Every crucible page has a discussion, placed above the entries, where testers can ask the creator questions. It is open for as long as the crucible exists, whatever its status. People who can't open the crucible (blocked by its creator, still in review, mature on the green site) can't read or write its comments either.
+
+Moderators can lock the discussion from the menu at the top of the page, as on every other kind of thread. A locked discussion is hidden from everyone, as on challenges. The creator can't lock it.
+
+The creator is notified of new comments from others ("New comments on your crucibles" in notification settings, under Comments). Replies and mentions notify as they do elsewhere.
 
 ## Availability
 

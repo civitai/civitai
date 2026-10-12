@@ -9,6 +9,7 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import { HatArt } from '~/components/Events/ScoredEvent/HatArt';
 import { EVENT_CARD_SURFACE } from '~/components/Events/ScoredEvent/scored-event.utils';
 import type { CosmeticShopItemMeta } from '~/server/schema/cosmetic-shop.schema';
+import type { EventDecorationFit } from '~/shared/constants/event-decoration.constants';
 import type { CosmeticShopItemGetById } from '~/types/router';
 import { numberWithCommas } from '~/utils/number-helpers';
 
@@ -54,7 +55,7 @@ export function EventHatTile({
   /** The item's price tier on the shelf, 0 for the cheapest. */
   tier?: number;
 }) {
-  const url = (item.cosmetic?.data as { url?: unknown } | null)?.url;
+  const { url, fit } = (item.cosmetic?.data ?? {}) as { url?: unknown; fit?: EventDecorationFit };
   const purchases = (item.meta as CosmeticShopItemMeta | null)?.purchases ?? 0;
   const soldOut = item.availableQuantity != null && item.availableQuantity - purchases <= 0;
   // The price is in the site's Buzz (yellow, or green on the green site), coloured as the shop does.
@@ -84,7 +85,7 @@ export function EventHatTile({
       )}
       style={tierStyle(tier, color)}
     >
-      {typeof url === 'string' && <HatArt url={url} color={color} width={192} />}
+      {typeof url === 'string' && <HatArt url={url} color={color} width={192} fit={fit} />}
       <Text fw={700} size="sm" truncate px={2}>
         {item.title}
       </Text>

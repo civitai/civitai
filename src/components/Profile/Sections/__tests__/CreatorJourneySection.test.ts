@@ -4,6 +4,7 @@ import * as React from 'react';
 import type { act as actType } from 'react-dom/test-utils';
 import { createRoot, type Root } from 'react-dom/client';
 import { MantineProvider } from '@mantine/core';
+import { makeTrpcProxy } from '../../../../../test/trpcProxyStub';
 
 const achievement = (n: number, achievedAt: Date | null = null, track = 'create') => ({
   key: `${track}:${track === 'create' ? 'models' : 'followers'}-${n}`,
@@ -14,10 +15,10 @@ const achievement = (n: number, achievedAt: Date | null = null, track = 'create'
   achievedAt,
 });
 const daysAgo = (days: number) => new Date(Date.UTC(2026, 9, 10 - days));
-const mocks = vi.hoisted(() => ({ achievements: [] as unknown[] }));
+const mocks = vi.hoisted(() => ({ achievements: [] as unknown[], tiers: [] as unknown[] }));
 vi.mock('~/components/CreatorJourney/useProfileAchievements', () => ({
   useProfileAchievements: () => ({
-    data: { tiers: [], achievements: mocks.achievements },
+    data: { tiers: mocks.tiers, achievements: mocks.achievements },
     count: mocks.achievements.length,
     isLoading: false,
   }),
@@ -27,6 +28,20 @@ vi.mock('~/components/NextLink/NextLink', () => ({
     React.createElement('a', { href }, children),
 }));
 
+vi.mock('~/hooks/useCurrentUser', async (importOriginal) => ({
+  ...(await importOriginal<typeof CurrentUser>()),
+  useCurrentUser: () => null,
+}));
+vi.mock('~/utils/trpc', async (importOriginal) => ({
+  ...(await importOriginal<typeof Trpc>()),
+  trpc: makeTrpcProxy({
+    'creatorJourney.getMyShareStates': { useQuery: () => ({ data: undefined }) },
+    'creatorJourney.getLadder': { useQuery: () => ({ data: undefined }) },
+  }),
+}));
+
+import type * as CurrentUser from '~/hooks/useCurrentUser';
+import type * as Trpc from '~/utils/trpc';
 import { CreatorJourneySection } from '~/components/Profile/Sections/CreatorJourneySection';
 import type { ProfileSectionProps } from '~/components/Profile/ProfileSection';
 
@@ -39,6 +54,7 @@ let container: HTMLDivElement | undefined;
 afterEach(() => {
   act(() => root?.unmount());
   container?.remove();
+  mocks.tiers = [];
 });
 
 // Ellie's review (2026-10-09): three cards a row was too wide on desktop. The row sizes on its own
@@ -109,5 +125,31 @@ describe('profile Creator Journey section', () => {
     );
     // 10,000 followers is that ladder's diamond; 100 models is gold; one model is wood.
     expect(names).toEqual(['500 Models', '5 Models', '10000 Followers', '100 Models', '1 Models']);
+  });
+
+  // The old tier tile sat beside this row at a different size; the band takes a row of its own.
+  it("shows a creator's tier as the ladder band above the latest achievements, with no ring", () => {
+    mocks.achievements = [achievement(1, daysAgo(0))];
+    mocks.tiers = [{ key: 'score:blaze', name: 'Blaze', badgeUrl: null, achievedAt: null }];
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+    const user = { id: 7, username: 'maker' } as ProfileSectionProps['user'];
+    act(() =>
+      root?.render(
+        React.createElement(
+          MantineProvider,
+          null,
+          React.createElement(CreatorJourneySection, { user })
+        )
+      )
+    );
+    const strip = container.querySelector('[data-tier-ladder]');
+    expect(strip?.textContent).toContain('Blaze');
+    expect(container.querySelector('[data-spotlight]')).toBeNull();
+    const heading = [...container.querySelectorAll<HTMLElement>('*')].find(
+      (node) => node.childElementCount === 0 && node.textContent === 'Latest achievements'
+    );
+    expect(strip?.compareDocumentPosition(heading as Node)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
   });
 });

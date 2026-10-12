@@ -5,8 +5,8 @@ import { LuaFactory } from 'wasmoon';
  * with a settable clock, so a script's arithmetic and its redis.call sequence are tested rather
  * than mocked. CI has no Redis server.
  *
- * Supports only the commands the scripts under test use: TIME, HMGET, HSET, PEXPIRE, DEL. It is
- * deliberately stricter than Redis in two places that would otherwise hide a 5.1/5.4 divergence:
+ * Supports only the commands the scripts under test use: TIME, HGET, HMGET, HSET, HINCRBY, PEXPIRE,
+ * DEL, and redis.error_reply (thrown, as the client would). It is deliberately stricter than Redis in two places that would otherwise hide a 5.1/5.4 divergence:
  * every redis.call argument must already be a string (so a script must format its own numbers),
  * and every number it returns must be an integer (Redis would silently truncate a float).
  */
@@ -17,6 +17,8 @@ export type LuaRedis = {
   hash: (key: string) => Record<string, string> | undefined;
   /** Remaining ms until `key` expires, -2 if missing, -1 if it has no TTL. */
   pttl: (key: string) => number;
+  /** Replaces the hash at `key`, as a test's starting data. */
+  setHash: (key: string, fields: Record<string, string>) => void;
   /** Every redis.call issued, as [command, ...args]. */
   calls: string[][];
   /**
@@ -45,7 +47,12 @@ export function createLuaRedis(startMs: number): LuaRedis {
       try {
         engine.global.set('KEYS', keys);
         engine.global.set('ARGV', argv);
-        engine.global.set('redis', { call: redisCall });
+        engine.global.set('redis', {
+          call: redisCall,
+          error_reply: (message: string) => {
+            throw new Error(message);
+          },
+        });
         return toRedisReply(await engine.doString(script));
       } catch (err) {
         errors.push(err);
@@ -58,6 +65,10 @@ export function createLuaRedis(startMs: number): LuaRedis {
       expire(key);
       const h = hashes.get(key);
       return h ? Object.fromEntries(h) : undefined;
+    },
+    setHash: (key, fields) => {
+      hashes.set(key, new Map(Object.entries(fields)));
+      expiresAt.delete(key);
     },
     pttl: (key) => {
       expire(key);
@@ -91,6 +102,20 @@ export function createLuaRedis(startMs: number): LuaRedis {
           String(Math.floor(state.nowMs / 1000)),
           String(Math.floor(state.nowMs % 1000) * 1000),
         ];
+      case 'HGET':
+        return hashes.get(key)?.get(strArgs[1]) ?? false;
+      case 'HINCRBY': {
+        const h = hashes.get(key) ?? new Map<string, string>();
+        const by = strArgs[2];
+        const current = h.get(strArgs[1]) ?? '0';
+        if (!/^-?\d+$/.test(by) || !/^-?\d+$/.test(current)) {
+          throw new Error('ERR value is not an integer or out of range');
+        }
+        const next = String(BigInt(current) + BigInt(by));
+        h.set(strArgs[1], next);
+        hashes.set(key, h);
+        return Number(next);
+      }
       case 'HMGET': {
         const h = hashes.get(key);
         return strArgs.slice(1).map((f) => h?.get(f) ?? false);

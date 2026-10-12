@@ -4667,6 +4667,7 @@ export type Thread = {
   model3dId: number | null;
   model3dReviewId: number | null;
   appListingId: number | null;
+  crucibleId: number | null;
   metadata: Generated<unknown>;
   commentCount: Generated<number>;
 };

@@ -61,6 +61,42 @@ const isNumbers = (value: unknown, length: number): value is number[] =>
   value.length === length &&
   value.every((x) => typeof x === 'number' && Number.isFinite(x));
 
+function getArtBounds(fit?: EventDecorationFit) {
+  return isNumbers(fit?.bounds, 4) && fit.bounds[2] > fit.bounds[0] && fit.bounds[3] > fit.bounds[1]
+    ? (fit.bounds as [number, number, number, number])
+    : undefined;
+}
+
+/**
+ * A hat preview is sized by its visible art, not its canvas, so a flat hat is not dwarfed by a tall
+ * one. `area` is the square-root of the art's area as a share of the square's side; `max` caps
+ * the art's width and height.
+ */
+export const HAT_PREVIEW = { area: 0.62, max: 0.8 };
+
+/** The image's box as shares of the square's side, art centred; `undefined` without bounds. */
+export function getHatPreviewBox(fit?: EventDecorationFit) {
+  const bounds = getArtBounds(fit);
+  if (!bounds) return undefined;
+  const [canvasW, canvasH] =
+    isNumbers(fit?.canvas, 2) && fit.canvas[0] > 0 && fit.canvas[1] > 0
+      ? fit.canvas
+      : DEFAULT_CANVAS;
+  const [left, top, right, bottom] = bounds;
+  const [artW, artH] = [right - left, bottom - top];
+  const scale = Math.min(
+    HAT_PREVIEW.area / Math.sqrt(artW * artH),
+    HAT_PREVIEW.max / artW,
+    HAT_PREVIEW.max / artH
+  );
+  return {
+    width: canvasW * scale,
+    height: canvasH * scale,
+    left: 0.5 - ((left + right) / 2) * scale,
+    top: 0.5 - ((top + bottom) / 2) * scale,
+  };
+}
+
 /**
  * The hat's box, in px from the card's top-left corner, rotated about the middle of its brim.
  * Sizing and the overhang solve use the art's own brim and outline when its fit gives them, so
@@ -76,10 +112,7 @@ export function getHatLayout(
 ) {
   const cardScale = getHatCardScale(cardWidth);
   const [canvasW, canvasH] = isNumbers(fit?.canvas, 2) ? fit.canvas : DEFAULT_CANVAS;
-  const [left, top, right, bottom] =
-    isNumbers(fit?.bounds, 4) && fit.bounds[2] > fit.bounds[0] && fit.bounds[3] > fit.bounds[1]
-      ? fit.bounds
-      : DEFAULT_BOUNDS;
+  const [left, top, right, bottom] = getArtBounds(fit) ?? DEFAULT_BOUNDS;
   const [brimLeft, brimRight, brimY] =
     isNumbers(fit?.brim, 3) && fit.brim[1] > fit.brim[0] ? fit.brim : [left, right, bottom];
   const artOutline =

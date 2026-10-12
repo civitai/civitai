@@ -1,17 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import type * as UserService from '~/server/services/user.service';
-
-const { amIBlockedByUser } = vi.hoisted(() => ({
-  amIBlockedByUser: vi.fn<typeof UserService.amIBlockedByUser>(),
-}));
-
-vi.mock('~/server/services/user.service', async (importOriginal) => ({
-  ...(await importOriginal<typeof UserService>()),
-  amIBlockedByUser,
-}));
-
 const { toggleCrucibleFollow, getFollowedCrucibleIds } = await import(
   '~/server/services/crucible-engagement.service'
 );
@@ -30,8 +19,9 @@ const openCrucible = {
   image: { ingestion: 'Scanned' },
 };
 
-const follow = (opts: { userId?: number; isModerator?: boolean } = {}) =>
-  toggleCrucibleFollow({ crucibleId: 7, userId: USER, setTo: true, ...opts });
+const follow = (
+  opts: { userId?: number; isModerator?: boolean; blockedCreatorIds?: number[] } = {}
+) => toggleCrucibleFollow({ crucibleId: 7, userId: USER, setTo: true, ...opts });
 
 beforeEach(() => {
   vi.resetAllMocks();
@@ -40,7 +30,6 @@ beforeEach(() => {
   write.crucibleEngagement.findUnique.mockResolvedValue(null);
   write.crucibleEngagement.create.mockResolvedValue({});
   write.crucibleEngagement.deleteMany.mockResolvedValue({ count: 1 });
-  amIBlockedByUser.mockResolvedValue(false);
 });
 
 describe('toggleCrucibleFollow', () => {
@@ -130,18 +119,17 @@ describe('toggleCrucibleFollow', () => {
     await expect(follow({ isModerator: true })).resolves.toBe(true);
   });
 
-  it('answers not-found when the host has blocked the user', async () => {
-    amIBlockedByUser.mockResolvedValue(true);
-
-    await expect(follow()).rejects.toThrow('Crucible not found');
-    expect(amIBlockedByUser).toHaveBeenCalledWith({ userId: USER, targetUserId: HOST });
+  it('answers not-found when the host is in the blocked creator ids', async () => {
+    await expect(follow({ blockedCreatorIds: [HOST] })).rejects.toThrow('Crucible not found');
     expect(write.crucibleEngagement.create).not.toHaveBeenCalled();
   });
 
-  it('does not apply a block to a moderator', async () => {
-    amIBlockedByUser.mockResolvedValue(true);
+  it('follows a host the user has not blocked', async () => {
+    await expect(follow({ blockedCreatorIds: [HOST + 1] })).resolves.toBe(true);
+  });
 
-    await expect(follow({ isModerator: true })).resolves.toBe(true);
+  it('does not apply a block to a moderator', async () => {
+    await expect(follow({ isModerator: true, blockedCreatorIds: [HOST] })).resolves.toBe(true);
   });
 
   it.each(['Completed', 'Cancelled'])('refuses to follow a %s crucible', async (status) => {

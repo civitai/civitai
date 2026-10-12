@@ -6,7 +6,7 @@ import { getWorkflow } from '~/server/services/orchestrator/workflows';
 import { createImage } from '~/server/services/image.service';
 import { registerMediaLocation } from '~/server/services/storage-resolver';
 import { orchestratorNsfwLevelMap } from '~/shared/constants/browsingLevel.constants';
-import { extractStepErrors, sanitizeProviderError } from './provider-errors';
+import { sanitizeStepErrors } from './provider-errors';
 
 /**
  * Translate the orchestrator's string nsfwLevel ("pg", "pg13", "r", ...)
@@ -168,9 +168,7 @@ export async function pollIterationWorkflow({
 
   const engine =
     (firstStep?.metadata?.params as { engine?: string })?.engine ?? firstStep?.input?.engine;
-  const providerErrors = extractStepErrors(firstStep).map((msg) =>
-    sanitizeProviderError(msg, engine)
-  );
+  const providerErrors = sanitizeStepErrors(firstStep, engine);
   const providerErrorMessage = providerErrors.length > 0 ? providerErrors.join('\n') : undefined;
 
   // Hard failure: workflow itself terminated without success.

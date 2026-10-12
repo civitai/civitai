@@ -15,6 +15,7 @@ const OWNER_TABLES = [
   'question',
   'answer',
   'challenge',
+  'crucible',
   'comicChapter',
 ] as const;
 
@@ -34,6 +35,11 @@ describe('getThreadEntityOwnerId', () => {
   it('resolves the challenge owner via createdById', async () => {
     lookup('challenge').mockResolvedValueOnce({ createdById: 7 });
     await expect(getThreadEntityOwnerId({ entityType: 'challenge', entityId: 1 })).resolves.toBe(7);
+  });
+
+  it('resolves the crucible creator via userId', async () => {
+    lookup('crucible').mockResolvedValueOnce({ userId: 31 });
+    await expect(getThreadEntityOwnerId({ entityType: 'crucible', entityId: 5 })).resolves.toBe(31);
   });
 
   it('resolves the comicChapter owner via the parent project', async () => {
