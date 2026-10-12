@@ -24,6 +24,7 @@ export const birthday2026 = createEvent(name, {
     headline: 'Civitai turns 4.',
     headlineAccent: 'Pick up a hat.',
     heroImage: '4a5e404d-ece2-4cca-bbab-cb5a7b0d8d9d',
+    homeImage: '15d5d13d-42ad-4d93-9bbe-a50179a5240e',
     // The 42-second cut. Its duration is the file's own (mvhd 42411 / 1000); re-read it on a new cut.
     heroVideo: { id: 'ecd5aeef-b4d5-497d-bdd7-51750c302122', title: 'Hats On', duration: 42.411 },
     dates: 'Nov 1 to Nov 30',
