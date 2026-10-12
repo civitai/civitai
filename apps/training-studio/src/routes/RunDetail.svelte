@@ -15,7 +15,6 @@
   import { loraBlobAir } from '$lib/train-core';
   import { debouncedQuote } from '$lib/debounced-quote.svelte';
   import { locationHref } from '$lib/actions/locationHref';
-  import JSZip from 'jszip';
   import { onSignal } from '$lib/signals';
   import { WORKFLOW_UPDATE_SIGNAL } from '$lib/signal-events';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
@@ -52,7 +51,8 @@
   } from '$lib/data/trainingRows';
   import { mediaCount } from '$lib/data/trainingModels';
   import { directDatasetUrl, handoffReuse, toReuseItems } from '$lib/reuse';
-  import { extOfAir, extOfMime } from '$lib/media';
+  import { extOfAir } from '$lib/media';
+  import { buildDatasetZip, saveBlob } from '$lib/dataset-zip';
   import { slugify } from '$lib/slug';
   import { RETENTION_DAYS } from '$lib/orchestrator-core';
   import { nonBlueSpend } from '$lib/buzz-balance.svelte';
@@ -275,23 +275,12 @@
     return directDatasetUrl(air) ?? datasetSrcs[air] ?? null;
   }
 
-  // The blob's own extension (the air ends in one, e.g. `…-0.png`), falling back to the fetched
-  // mime — both answered by $lib/media's one table, which the Data step's zip IMPORT reads too, so
-  // a downloaded zip's names always round-trip.
-  function fileExt(air: string, mime: string): string {
+  // The air ends in the blob's own extension (`…-0.png`); anything longer isn't one, so the fetched
+  // mime decides.
+  function airExt(air: string): string | undefined {
     const fromAir = extOfAir(air);
-    if (fromAir && fromAir.length <= 4) return fromAir;
-    return extOfMime(mime) ?? 'png';
+    return fromAir && fromAir.length <= 4 ? fromAir : undefined;
   }
-  function saveBlob(blob: Blob, fileName: string) {
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = fileName;
-    a.click();
-    URL.revokeObjectURL(url);
-  }
-
   async function fetchDatasetBlob(air: string): Promise<Blob> {
     const direct = directDatasetUrl(air);
     if (!direct) return backend().datasetBlob(air, d.workflowId);
@@ -300,8 +289,6 @@
     return res.blob();
   }
 
-  // Download the training data as a standard LoRA-layout zip: each image plus a same-named .txt caption,
-  // so it round-trips with the Data step's "Import .zip" and works in other trainers.
   let downloading = $state(false);
   let downloadError = $state('');
   async function downloadDataset() {
@@ -309,29 +296,20 @@
     downloading = true;
     downloadError = '';
     try {
-      const zip = new JSZip();
       const pad = Math.max(2, String(d.dataset.length).length);
-      let fetched = 0;
-      await Promise.all(
-        d.dataset.map(async (item, i) => {
-          let blob: Blob;
-          try {
-            blob = await fetchDatasetBlob(item.air);
-          } catch {
-            return;
-          }
-          fetched += 1;
-          const base = String(i + 1).padStart(pad, '0');
-          zip.file(`${base}.${fileExt(item.air, blob.type)}`, blob);
-          if (item.caption.trim()) zip.file(`${base}.txt`, item.caption.trim());
-        })
+      const { blob } = await buildDatasetZip(
+        d.dataset.map((item, i) => ({
+          base: String(i + 1).padStart(pad, '0'),
+          ext: airExt(item.air),
+          caption: item.caption,
+          load: () => fetchDatasetBlob(item.air),
+        }))
       );
-      // An all-skips zip would download EMPTY and read as success.
-      if (fetched === 0) {
+      if (!blob) {
         downloadError = "Couldn't fetch the dataset images — nothing to download.";
         return;
       }
-      saveBlob(await zip.generateAsync({ type: 'blob' }), `${slugify(d.name, 'dataset')}-dataset.zip`);
+      saveBlob(blob, `${slugify(d.name, 'dataset')}-dataset.zip`);
     } finally {
       downloading = false;
     }
