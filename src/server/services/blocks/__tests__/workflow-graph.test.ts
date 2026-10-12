@@ -260,7 +260,7 @@ describe('resolveBlockWorkflowGraph — repeat', () => {
 describe('collectBlockStepTypes', () => {
   const FOR = { $ref: '$arguments', path: 'items', as: 'item' };
   const SHAPE_ERROR =
-    'a repeat step needs exactly { for, template } with a template "$type", nested at most 4 deep';
+    'a repeat step needs exactly { for, template } with a template "$type", keys spelled in lower case, nested at most 4 deep';
   /** `depth` repeats wrapped around one `leaf` step. */
   const nested = (depth: number, leaf = 'mediaHash') => {
     let input: Record<string, unknown> = { for: FOR, template: { $type: leaf, input: {} } };
@@ -313,6 +313,16 @@ describe('collectBlockStepTypes', () => {
       'a re-cased `$ref` in the for clause',
       { for: { $Ref: 'x', path: 'p', as: 'i' }, template: { $type: 'echo' } },
     ],
+    [
+      'a re-cased `path` in the for clause',
+      { for: { $ref: '$arguments', Path: 'p', as: 'i' }, template: { $type: 'echo' } },
+    ],
+    [
+      'a re-cased `as` in the for clause',
+      { for: { $ref: '$arguments', path: 'p', AS: 'i' }, template: { $type: 'echo' } },
+    ],
+    ['an array for clause', { for: [FOR], template: { $type: 'echo' } }],
+    ['an array template', { for: FOR, template: [{ $type: 'echo' }] }],
     ['no template', { for: FOR }],
     ['no for clause', { template: { $type: 'echo', input: {} } }],
     ['a template that is not an object', { for: FOR, template: 'echo' }],

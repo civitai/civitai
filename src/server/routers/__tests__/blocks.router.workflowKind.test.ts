@@ -487,8 +487,8 @@ describe("kind:'workflow' — refusals a block can branch on (estimate AND submi
       );
       expect(snapshot.errorCode).toBe('workflow_ref_invalid');
       expect(snapshot.error).toBe(
-        'workflow step 0: a repeat step needs exactly { for, template } with a template ' +
-          '"$type", nested at most 4 deep'
+        'workflow step 0: a repeat step needs exactly { for, template } with a template "$type", ' +
+          'keys spelled in lower case, nested at most 4 deep'
       );
       expect(h.submitWorkflow).not.toHaveBeenCalled();
     }
@@ -925,8 +925,13 @@ describe("kind:'workflow' SUBMIT — refusals after the gate refund every key", 
   });
 
   it('a reservation that THROWS releases the idempotency claim', async () => {
+    redisMock.sysRedis.incrBy.mockClear();
     redisMock.sysRedis.incrBy.mockRejectedValueOnce(new Error('redis down'));
     await expect(submit(body(), 'idem-key-0012')).rejects.toBeTruthy();
+    // It was the reservation that threw: the quote ran, and nothing after it did.
+    expect(whatifs()).toHaveLength(1);
+    expect(redisMock.sysRedis.incrBy).toHaveBeenCalledTimes(1);
+    expect(h.reserveAppSpend).not.toHaveBeenCalled();
     expect(idemKeys()).toEqual([]);
     expect(realSubmits()).toHaveLength(0);
   });
@@ -1160,9 +1165,12 @@ describe("pass-through arm (kind:'step') — the denylist follows a `repeat` tem
     await expect(estimate(recased)).rejects.toMatchObject({
       code: 'BAD_REQUEST',
       message:
-        'a repeat step needs exactly { for, template } with a template "$type", nested at most 4 deep',
+        'a repeat step needs exactly { for, template } with a template "$type", keys spelled in lower case, nested at most 4 deep',
     });
-    await expect(submit(recased)).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    await expect(submit(recased)).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: expect.stringContaining('a repeat step needs exactly { for, template }'),
+    });
     expect(h.submitWorkflow).not.toHaveBeenCalled();
   });
 

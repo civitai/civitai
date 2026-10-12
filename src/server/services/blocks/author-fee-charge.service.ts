@@ -28,7 +28,7 @@ import { blockGenerationCoarseType } from './generation-type';
  * the block's external id instead. It is what `surface` on
  * `blockAuthorFeeQuotedCounter` is derived from.
  *
- * 🔴 BOTH ESTIMATE SITES IMPORT THIS, AND THAT IMPORT IS THE ONLY THING HOLDING
+ * 🔴 EVERY ESTIMATE SITE IMPORTS THIS, AND THAT IMPORT IS THE ONLY THING HOLDING
  * THE LABEL TOGETHER. An earlier revision left them spelling `'estimate'` and
  * claimed the pairing was "pinned behaviourally by
  * `blocks.router.workflow.test.ts`". It was not: that file never mentions
@@ -181,8 +181,9 @@ export async function quoteBlockAuthorFee(args: {
    * So do NOT re-spell it for log readability: an estimate caller that stops
    * passing the estimate label moves its whole population onto the `gating`
    * series. A whatIf has no workflow id, which is why callers pass a stable
-   * label at all; both estimate sites import the constant rather than spelling
-   * it, and both are pinned in `blocks.router.workflow.test.ts`.
+   * label at all; every estimate site imports the constant rather than spelling
+   * it (the txt2img and registered-step ones are pinned in
+   * `blocks.router.workflow.test.ts`).
    */
   workflowLabel: string;
   /**
@@ -250,7 +251,7 @@ export async function quoteBlockAuthorFee(args: {
   // every gating site (the submits), so it discriminates them all.
   //
   // ⚠️ THAT MAKES THE LABEL A CLAIM ABOUT A STRING THE ROUTER PASSES, AND THE
-  // ONLY THING ENFORCING IT IS THAT BOTH ESTIMATE SITES NOW IMPORT
+  // ONLY THING ENFORCING IT IS THAT EVERY ESTIMATE SITE NOW IMPORTS
   // `BLOCK_AUTHOR_FEE_ESTIMATE_LABEL` RATHER THAN SPELLING `'estimate'`.
   //
   // 🔴 AN EARLIER REVISION OF THIS COMMENT CLAIMED IT WAS "pinned behaviourally

@@ -11897,7 +11897,7 @@ async function quotePassThroughBuzz(opts: {
    * 🔴 THE PHASE, THREADED, NOT ASSUMED. `estimate_*` is defined by the counter
    * as "one emit per estimate, BEFORE any spend exists". This helper serves
    * estimates and submits, so a fixed label would file the one event that precedes a
-   * reservation — a submit proceeding at the declared ceiling because no quote
+   * reservation — a submit proceeding at its ceiling because no quote
    * was had — into the estimate bucket, blended with estimate traffic under one
    * constant `step` label.
    *
