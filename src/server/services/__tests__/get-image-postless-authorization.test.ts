@@ -139,15 +139,21 @@ describe('getImage postless authorization', () => {
     expect(sql).toContain('i."postId" IS NULL AND i."userId" = NULL');
   });
 
-  it('emits no Post reference when the caller opts out of the post', async () => {
-    // `withoutPost` is a client-supplied field on a public procedure, and the article lightbox
-    // sends it. Emitting the post gates without the join is `missing FROM-clause entry for "p"`.
+  it('keeps the post gates for an image with a post when the caller sends withoutPost', async () => {
+    // `withoutPost` is a client-supplied field on a public procedure (the article lightbox and the
+    // bounty viewer send it). It may only relax the rule for a postless image.
     const sql = await captureQuery({ id: IMAGE_ID, userId: VIEWER, withoutPost: true });
 
-    expect(sql).not.toContain('JOIN "Post"');
-    expect(sql).not.toContain('p."');
-    // The article-cover branch lives inside the post gate, so it is skipped here with the rest.
-    expect(sql).not.toContain('"Article" a');
+    expect(sql).toContain('LEFT JOIN "Post" p ON p.id = i."postId"');
+    expect(sql).toContain(`p."publishedAt" < now() OR p."userId" = ${VIEWER}`);
+    expect(sql).toContain(
+      `(i."postId" IS NULL OR p."availability" != 'Private' OR p."userId" = ${VIEWER})`
+    );
+    expect(sql).toContain('OR (i."postId" IS NULL AND TRUE)');
+    expect(sql).not.toContain(`i."postId" IS NULL AND i."userId" = ${VIEWER}`);
+    // The payload reads the post too, rather than a literal 'Public'.
+    expect(sql).toContain(`COALESCE(p."availability", 'Public') "availability"`);
+    expect(sql).not.toContain(`'Public' "availability"`);
   });
 
   it('leaves the moderator path ungated', async () => {

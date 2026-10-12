@@ -28,6 +28,12 @@ import type {
 } from '~/server/schema/generation.schema';
 import { generationStatusSchema } from '~/server/schema/generation.schema';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
+import { assertImageVisibleToViewer } from '~/server/services/image-visibility.service';
+import {
+  type MediaViewer,
+  viewerCanSeeImageMedia,
+  withoutMediaReferences,
+} from '~/server/utils/image-media-visibility';
 import type { ModelFileCached } from '~/server/services/model-file.service';
 import { getFilesForModelVersionCache } from '~/server/services/model-file.service';
 import type { GenerationResourceDataModel } from '~/server/redis/resource-data.redis';
@@ -271,10 +277,13 @@ export const getGenerationData = async ({
   query,
   user,
   browsingLevel,
+  mediaViewer,
 }: {
   query: GetGenerationDataSchema;
   user?: SessionUser;
   browsingLevel?: number;
+  /** Who is asking, for whether a media item's own source media may be returned. */
+  mediaViewer: MediaViewer;
 }): Promise<GenerationData> => {
   switch (query.type) {
     case 'image':
@@ -282,6 +291,7 @@ export const getGenerationData = async ({
       return await getMediaGenerationData({
         id: query.id,
         user,
+        mediaViewer,
         generation: query.generation,
         withPreview: query.withPreview,
         browsingLevel,
@@ -444,16 +454,25 @@ function stripHiddenPrompt(meta: ImageMetaProps): ImageMetaProps {
 async function getMediaGenerationData({
   id,
   user,
+  mediaViewer,
   generation,
   withPreview = false,
   browsingLevel,
 }: {
   id: number;
   user?: SessionUser;
+  mediaViewer: MediaViewer;
   generation: boolean;
   withPreview?: boolean;
   browsingLevel?: number;
 }): Promise<GenerationData> {
+  const visible = await assertImageVisibleToViewer({
+    id,
+    userId: user?.id,
+    isModerator: user?.isModerator,
+  });
+  const showMedia = await viewerCanSeeImageMedia(mediaViewer, visible);
+
   const media = await dbRead.image.findUnique({
     where: { id },
     select: {
@@ -475,12 +494,13 @@ async function getMediaGenerationData({
   const remixOf: RemixOfProps = {
     id: media.id,
     type: media.type,
-    url: media.url,
+    url: showMedia ? media.url : undefined,
     similarity: 1,
     createdAt: media.createdAt,
   };
 
-  const storedMeta = (media.meta ?? {}) as ImageMetaProps;
+  const rawMeta = (media.meta ?? {}) as ImageMetaProps;
+  const storedMeta = showMedia ? rawMeta : withoutMediaReferences(rawMeta);
   const canSeeHiddenPrompt = !!user && (user.isModerator || user.id === media.userId);
   const initialMeta =
     media.hideMeta && !canSeeHiddenPrompt ? stripHiddenPrompt(storedMeta) : storedMeta;

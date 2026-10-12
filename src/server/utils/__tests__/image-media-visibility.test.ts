@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { NsfwLevel } from '~/server/common/enums';
 import { VERIFIED_BOT_HEADER } from '~/server/utils/bot-detection/header';
-import { withViewerMedia } from '~/server/utils/image-media-visibility';
+import { withoutMediaReferences, withViewerMedia } from '~/server/utils/image-media-visibility';
 
 const OWNER_ID = 7;
 
@@ -135,5 +135,41 @@ describe('withViewerMedia', () => {
     const human = ctxFor(viewers['signed out on the mature domain']);
     withViewerMedia(human, imageAt(NsfwLevel.PG));
     expect(human.cache).toMatchObject({ edgeTTL: 60, browserTTL: 60 });
+  });
+});
+
+describe('withoutMediaReferences', () => {
+  it.each([
+    ['an entry holding a url, whole', { a: { url: 'https://x/a.png', w: 1 }, b: 1 }, { b: 1 }],
+    ['a root url, leaving the rest', { url: 'https://x/a.png', prompt: 'p' }, { prompt: 'p' }],
+    ['a link in any case', { x: 'HTTPS://x/a.png', y: 'Data:image/png;base64,AA' }, {}],
+    ['a padded data URI', { mask: '  data:image/png;base64,AA  ' }, {}],
+    ['a protocol-relative link', { thumb: '//image.example/a.png' }, {}],
+    ['bare links inside nested arrays', { a: [['https://x/a.png', 'keep']] }, { a: [['keep']] }],
+    ['a prompt that is only a link', { prompt: 'https://x/a.png' }, {}],
+    ['a comfy graph, as text or object', { comfy: '{"a":1}', ComfyUI: { nodes: [] } }, {}],
+    [
+      'a workflow graph',
+      { a: { workflow: { nodes: [] } }, b: { workflow: ' {"a":1}' } },
+      { a: {}, b: {} },
+    ],
+  ])('drops %s', (_label, input, expected) => {
+    expect(withoutMediaReferences(input)).toEqual(expected);
+  });
+
+  it.each([
+    ['a workflow name', { workflow: 'txt2img:face-fix' }],
+    ['a link inside text', { prompt: 'see https://x/a.png for more' }],
+    ['a non-string url field', { url: null, n: 1 }],
+    ['settings', { steps: 30, cfgScale: 7, sampler: 'Euler a', extra: { sourceImageIds: [1] } }],
+  ])('keeps %s', (_label, input) => {
+    expect(withoutMediaReferences(input)).toEqual(input);
+  });
+
+  it('does not change its input', () => {
+    const input = { images: [{ url: 'https://x/a.png' }], prompt: 'p' };
+    const copy = structuredClone(input);
+    withoutMediaReferences(input);
+    expect(input).toEqual(copy);
   });
 });

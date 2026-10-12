@@ -51,6 +51,15 @@ import {
 } from '~/server/common/constants';
 import { imageReviewedSql, KNIGHTS_VOTE_NSFW_LEVEL_REASON } from '~/server/common/image-visibility';
 import {
+  assertImageVisibleToViewer,
+  imageVisibilityConditions,
+} from '~/server/services/image-visibility.service';
+import {
+  type MediaViewer,
+  viewerCanSeeImageMedia,
+  withoutMediaReferences,
+} from '~/server/utils/image-media-visibility';
+import {
   BlockedReason,
   ImageSort,
   NotificationCategory,
@@ -5632,56 +5641,14 @@ export const getImage = async ({
   isModerator,
   withoutPost,
 }: GetImageInput & { userId?: number; isModerator?: boolean }) => {
-  const AND = [Prisma.sql`i.id = ${id}`];
-  if (!isModerator) {
-    AND.push(
-      Prisma.sql`(${Prisma.join(
-        [
-          Prisma.sql`i."needsReview" IS NULL AND ${imageReviewedSql()}`,
-          withoutPost
-            ? null
-            : Prisma.sql`
-              p."collectionId" IS NOT NULL AND EXISTS (
-                SELECT 1 FROM "CollectionContributor" cc
-                WHERE cc."collectionId" = p."collectionId"
-                  AND cc."userId" = ${userId}
-                  AND cc."permissions" && ARRAY['MANAGE']::"CollectionContributorPermission"[]
-              )`,
-          Prisma.sql`i."userId" = ${userId}`,
-        ].filter(isDefined),
-        ' OR '
-      )})`
-    );
-
-    if (!withoutPost) {
-      // Post gates sit in the WHERE, not the JOIN: an image outlives a deleted post (`Image.postId`
-      // is ON DELETE SET NULL) and an inner join drops it before ownership is tested. Nothing on
-      // `Image` separates that from a never-posted upload, so a postless image is owner-only unless
-      // it is the cover of an article the viewer could read (getArticleById's non-owner rule).
-      AND.push(
-        Prisma.sql`(
-          p."publishedAt" < now()
-          OR p."userId" = ${userId}
-          OR (i."postId" IS NULL AND i."userId" = ${userId})
-          OR (i."postId" IS NULL AND EXISTS (
-            SELECT 1 FROM "Article" a
-            WHERE a."coverId" = i.id
-              AND a.status = 'Published'
-              AND a."publishedAt" IS NOT NULL
-              AND a.ingestion = 'Scanned'
-          ))
-        )`
-      );
-      AND.push(
-        Prisma.sql`(i."postId" IS NULL OR p."availability" != 'Private' OR p."userId" = ${userId})`
-      );
-    }
-
-    // A Blocked-level rating is a ToS removal (or a pending-Blocked verdict awaiting
-    // mod review) — never serve it by direct id to anyone but the owner. Feeds already
-    // drop it via the browsingLevel mask; single-image fetch had no equivalent gate.
-    AND.push(Prisma.sql`(i."nsfwLevel" != ${NsfwLevel.Blocked} OR i."userId" = ${userId})`);
-  }
+  const AND = [
+    Prisma.sql`i.id = ${id}`,
+    ...imageVisibilityConditions({
+      userId,
+      isModerator,
+      postGates: withoutPost ? 'whenPosted' : 'always',
+    }),
+  ];
 
   const rawImages = await dbRead.$queryRaw<GetImageRaw[]>`
     SELECT
@@ -5728,14 +5695,8 @@ export const getImage = async ({
       u.image as "userImage",
       u."deletedAt",
       u."profilePictureId",
-      ${
-        !withoutPost
-          ? Prisma.sql`
-            COALESCE(p."availability", 'Public') "availability",
-            GREATEST(p."publishedAt", i."scannedAt", i."createdAt") "publishedAt",
-          `
-          : Prisma.sql`'Public' "availability",`
-      }
+      COALESCE(p."availability", 'Public') "availability",
+      GREATEST(p."publishedAt", i."scannedAt", i."createdAt") "publishedAt",
       (
         SELECT jsonb_agg(reaction)
         FROM "ImageReaction"
@@ -5744,7 +5705,7 @@ export const getImage = async ({
       ) reactions
     FROM "Image" i
     JOIN "User" u ON u.id = i."userId"
-    ${Prisma.raw(withoutPost ? '' : `LEFT JOIN "Post" p ON p.id = i."postId"`)}
+    LEFT JOIN "Post" p ON p.id = i."postId"
     WHERE ${Prisma.join(AND, ' AND ')}
   `;
   if (!rawImages.length) throw throwNotFoundError(`No image with id ${id}`);
@@ -7939,7 +7900,18 @@ export function purgeImageGenerationDataCache(id: number) {
 
 const strengthTypes: ModelType[] = ['TextualInversion', 'LORA', 'DoRA', 'LoCon'];
 
-export async function getImageGenerationData({ id }: { id: number }) {
+/**
+ * Generation data for one image, for a viewer `assertImageVisibleToViewer` admits, without media
+ * links when the viewer may not see the image's media.
+ */
+export async function getImageGenerationData({ id, viewer }: { id: number; viewer: MediaViewer }) {
+  const visible = await assertImageVisibleToViewer({
+    id,
+    userId: viewer.user?.id,
+    isModerator: viewer.user?.isModerator,
+  });
+  const showMedia = await viewerCanSeeImageMedia(viewer, visible);
+
   const image = await dbRead.image.findUnique({
     where: { id },
     select: {
@@ -7995,7 +7967,14 @@ export async function getImageGenerationData({ id }: { id: number }) {
 
   const parsedMeta = imageMetaOutput.safeParse(image.meta);
   const data = parsedMeta.success ? parsedMeta.data : {};
-  const { 'Clip skip': legacyClipSkip, clipSkip = legacyClipSkip, external, ...rest } = data;
+  // Read before media references are withheld, which drops the graph.
+  const isComfy = !!data.comfy;
+  const {
+    'Clip skip': legacyClipSkip,
+    clipSkip = legacyClipSkip,
+    external,
+    ...rest
+  } = showMedia ? data : withoutMediaReferences(data);
   const meta =
     parsedMeta.success && !image.hideMeta ? removeEmpty({ ...rest, clipSkip }) : undefined;
 
@@ -8008,14 +7987,14 @@ export async function getImageGenerationData({ id }: { id: number }) {
       process = meta.process ?? meta.type;
     }
 
-    if (meta.comfy) {
+    if (isComfy) {
       hasControlNet = !!meta.controlNets?.length;
     } else {
       hasControlNet = Object.keys(meta).some((x) => x.toLowerCase().startsWith('controlnet'));
     }
 
     if (!process) {
-      if (meta.comfy) process = 'comfy';
+      if (isComfy) process = 'comfy';
       else if (image.generationProcess === 'txt2imgHiRes') process = 'txt2img + Hi-Res';
       else process = image.generationProcess;
 

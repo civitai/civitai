@@ -70,6 +70,7 @@ export const generationRouter = router({
         query: input,
         user: ctx.user,
         browsingLevel: getRequestBrowsingLevel(ctx),
+        mediaViewer: ctx,
       })
     ),
   checkResourcesCoverage: publicProcedure
