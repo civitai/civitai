@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { extractStepErrors, sanitizeProviderError } from '../provider-errors';
+import {
+  extractStepErrors,
+  providerName,
+  sanitizeProviderError,
+  sanitizeStepErrors,
+} from '../provider-errors';
 
 describe('sanitizeProviderError', () => {
   it('passes a plain message through, prefixed with the provider name', () => {
@@ -78,6 +83,44 @@ describe('sanitizeProviderError', () => {
     expect(sanitizeProviderError('x'.repeat(400), 'grok')).toBe(
       'xAI (Grok) reported a system error. Please try again.'
     );
+  });
+});
+
+describe('sanitizeStepErrors', () => {
+  const refusal =
+    "The request failed because the input image 'content[1]' may contain real person. Request id: 0123456789abcdef";
+
+  it('shows a provider content refusal instead of a generic system error', () => {
+    const step = { output: { externalTOSViolation: true, message: refusal } };
+    expect(sanitizeStepErrors(step, 'seedance')).toEqual([
+      'Seedance: The request failed because the input image may contain real person. Request id: 0123456789abcdef',
+    ]);
+  });
+
+  it('still sanitises a refusal that carries unsafe content beyond the index token', () => {
+    const step = {
+      output: { externalTOSViolation: true, message: "Blocked 'content[1]' at https://internal/x" },
+    };
+    expect(sanitizeStepErrors(step, 'seedance')).toEqual([
+      'Seedance reported a system error. Please try again.',
+    ]);
+  });
+
+  // Control: the index-token normalisation is only for externalTOSViolation messages.
+  it('still sanitises a non-refusal message that contains brackets', () => {
+    const msg = "The request failed because the input image 'content[1]' may contain real person.";
+    expect(sanitizeStepErrors({ output: { errors: [msg] } }, 'seedance')).toEqual([
+      'Seedance reported a system error. Please try again.',
+    ]);
+    expect(sanitizeStepErrors({ metadata: { error: msg } }, 'seedance')).toEqual([
+      'Seedance reported a system error. Please try again.',
+    ]);
+  });
+});
+
+describe('providerName', () => {
+  it('names seedance', () => {
+    expect(providerName('seedance')).toBe('Seedance');
   });
 });
 
