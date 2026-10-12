@@ -55,6 +55,7 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { getRequestBoardDomainColor } from '~/server/utils/server-domain';
+import { withViewerMedia } from '~/server/utils/image-media-visibility';
 import { getNsfwLevelDeprecatedReverseMapping } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
 import {
@@ -756,7 +757,7 @@ export const getImageHandler = async ({ input, ctx }: { input: GetImageInput; ct
       if (blocked) throw throwNotFoundError();
     }
 
-    return result;
+    return withViewerMedia(ctx, result);
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

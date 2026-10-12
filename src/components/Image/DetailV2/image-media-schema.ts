@@ -3,7 +3,7 @@ import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constan
 
 type SchemaImage = {
   id: number;
-  url: string;
+  url: string | null;
   type?: string | null;
   nsfwLevel: number;
   width?: number | null;
@@ -26,7 +26,7 @@ export function buildImageMediaSchema({
   title: string;
   baseUrl?: string;
 }) {
-  if (!getIsSafeBrowsingLevel(image.nsfwLevel)) return undefined;
+  if (!getIsSafeBrowsingLevel(image.nsfwLevel) || !image.url) return undefined;
 
   const hasCreator = !!image.user.username && !image.user.deletedAt;
   const creator = hasCreator

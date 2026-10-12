@@ -1,7 +1,7 @@
 import { initTRPC, TRPCError } from '@trpc/server';
 import {
   clampRequestBrowsingLevels,
-  domainBrowsingLevelCap,
+  requestDomainBrowsingLevelCap,
   type RequestBrowsingLevels,
 } from '~/server/utils/browsing-level';
 import { requiresEmailVerification } from '~/server/common/email-verification-gate';
@@ -39,7 +39,6 @@ import {
   assertSessionOrFullUserKey,
   runEnforceTokenScope,
 } from '~/server/services/oauth/enforce-token-scope';
-import { parseVerifiedBotHeader, VERIFIED_BOT_HEADER } from '~/server/utils/bot-detection/header';
 import { errorFormatter } from '~/server/trpc/error-formatter';
 import type { Context } from './createContext';
 
@@ -218,18 +217,7 @@ const applyDomainFeature = t.middleware(async (options) => {
   // v11: `rawInput` became the async `getRawInput()`.
   const input = ((await options.getRawInput()) ?? {}) as RequestBrowsingLevels;
 
-  // Verified search-engine crawlers (set by botDetectionMiddleware) are
-  // treated as authorized only on mature-allowed domains. On the SFW site
-  // they're a regular public user — no level expansion. This enables the
-  // bot bypass on civitai.red while keeping civitai.com strictly SFW for
-  // crawlers and humans alike.
-  const verifiedBot = parseVerifiedBotHeader(ctx.req?.headers[VERIFIED_BOT_HEADER]);
-  const isAuthorized = !!ctx.user || (verifiedBot !== null && ctx.features.canViewNsfw);
-
-  const maxAllowed = domainBrowsingLevelCap({
-    isAuthorized,
-    canViewNsfw: ctx.features.canViewNsfw,
-  });
+  const maxAllowed = requestDomainBrowsingLevelCap(ctx);
 
   if (maxAllowed !== undefined) clampRequestBrowsingLevels(input, maxAllowed);
 
