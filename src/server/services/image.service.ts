@@ -178,7 +178,6 @@ import type {
 import type {
   ContentDecorationCosmetic,
   EventDecorationCosmetic,
-  WithClaimKey,
 } from '~/server/selectors/cosmetic.selector';
 import type { ImageResourceHelperModel } from '~/server/selectors/image.selector';
 import {
@@ -2697,7 +2696,7 @@ const getAllImagesUncaptured = async (
         baseModel?: string | null; // TODO - remove
         availability?: Availability;
         nsfwLevel: NsfwLevel;
-        cosmetic?: WithClaimKey<ContentDecorationCosmetic> | null;
+        cosmetic?: ContentDecorationCosmetic | null;
         eventDecoration?: EventDecorationCosmetic | null;
         metadata: ImageMetadata | VideoMetadata | null;
         onSite: boolean;

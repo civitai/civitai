@@ -1313,6 +1313,8 @@ export const getUserCosmeticsHandler = async ({
           obtainedAt,
           claimKey,
           inUse: !!equippedToId,
+          equippedToId,
+          equippedToType,
           entityImage: coverImages.find(
             (x) => x.entityId === equippedToId && x.entityType === equippedToType
           ),

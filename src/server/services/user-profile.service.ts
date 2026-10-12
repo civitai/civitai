@@ -172,7 +172,11 @@ export const getUserWithProfile = async ({
 
     return {
       ...user,
-      cosmetics: await withoutHiddenEventDecorations(user.cosmetics, eventViewer),
+      // Claim keys are owner-only; withheld from every other viewer, moderators included.
+      cosmetics: (await withoutHiddenEventDecorations(user.cosmetics, eventViewer)).map((c) => ({
+        ...c,
+        claimKey: sameUser ? c.claimKey : null,
+      })),
       meta: undefined,
       // Never leak the private settings blob; expose only whether the shop is public.
       settings: undefined,
@@ -293,11 +297,14 @@ export const updateUserProfile = async ({
   // profilePicture,
   creatorCardStatsPreferences,
   domain,
+  sessionUserId,
   ...profile
 }: UserProfileUpdateSchema & {
   userId: number;
   isModerator?: boolean;
   domain?: ColorDomain;
+  /** Who saved it: a moderator may save another user's profile, and is answered as a viewer. */
+  sessionUserId: number;
 }) => {
   // Both domain variants, not just the field being edited: the SFW override and the field it
   // overrides are independently writable and independently rendered, so checking one leaves the
@@ -526,5 +533,5 @@ export const updateUserProfile = async ({
   )
     queueScamScan({ entityType: 'UserProfile', entityId: userId });
 
-  return getUserWithProfile({ id: userId, sessionUserId: userId, domain });
+  return getUserWithProfile({ id: userId, sessionUserId, domain });
 };

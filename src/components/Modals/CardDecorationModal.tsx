@@ -1,4 +1,5 @@
 import { Button, Center, Grid, Group, Loader, Modal, Paper, Stack } from '@mantine/core';
+import { useEffect } from 'react';
 import { openConfirmModal } from '@mantine/modals';
 import type { CosmeticEntity } from '~/shared/utils/prisma/enums';
 import { IconArrowRight } from '@tabler/icons-react';
@@ -15,7 +16,7 @@ import type { ImageProps } from '~/components/ImageViewer/ImageViewer';
 import { MasonryCard } from '~/components/MasonryGrid/MasonryCard';
 import { Form, InputCosmeticSelect, useForm } from '~/libs/form';
 import { DEFAULT_EDGE_IMAGE_WIDTH, constants } from '~/server/common/constants';
-import type { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
+import type { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
 import { cosmeticInputSchema } from '~/server/schema/cosmetic.schema';
 import classes from './CardDecorationModal.module.scss';
 import type { EventDecorationData } from '~/shared/constants/event-decoration.constants';
@@ -32,7 +33,7 @@ export default function CardDecorationModal({
   currentCosmetic,
 }: Props) {
   const dialog = useDialogContext();
-  const form = useForm({ schema, defaultValues: { cosmetic: currentCosmetic } });
+  const form = useForm({ schema, defaultValues: { cosmetic: null } });
 
   const { data: userCosmetics, isInitialLoading } = useQueryUserCosmetics();
 
@@ -45,7 +46,6 @@ export default function CardDecorationModal({
         equippedToId: entityId,
         equippedToType: entityType,
         cosmeticId: currentCosmetic.id,
-        claimKey: currentCosmetic.claimKey,
       }).catch(() => null); // error is handled in the custom hook
       dialog.onClose();
       return;
@@ -96,6 +96,19 @@ export default function CardDecorationModal({
   const selectedItem = items.find(
     (item) => item.id === cosmetic?.id && item.claimKey === cosmetic?.claimKey
   );
+  // Feeds do not carry a frame's claimKey, so the one worn here is found among the owner's own.
+  const worn = currentCosmetic
+    ? items.find(
+        (item) =>
+          item.id === currentCosmetic.id &&
+          item.equippedToId === entityId &&
+          item.equippedToType === entityType
+      )
+    : undefined;
+  useEffect(() => {
+    if (worn) form.reset({ cosmetic: { id: worn.id, claimKey: worn.claimKey } });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [worn?.id, worn?.claimKey]);
 
   return (
     <Modal
@@ -202,7 +215,7 @@ export type Props = {
   entityType: CosmeticEntity;
   entityId: number;
   image: Pick<ImageProps, 'id' | 'url' | 'width' | 'height' | 'name' | 'type' | 'thumbnailUrl'>;
-  currentCosmetic?: WithClaimKey<Pick<ContentDecorationCosmetic, 'id'>> | null;
+  currentCosmetic?: Pick<ContentDecorationCosmetic, 'id'> | null;
 };
 
 export const PreviewCard = ({

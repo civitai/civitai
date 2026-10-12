@@ -51,6 +51,7 @@ import {
   stickerPlacementRatingFlags,
 } from '~/shared/constants/cosmetic-flags.constants';
 import type {
+  ContentDecorationCosmetic,
   EventDecorationCosmetic,
   StickerCosmetic,
 } from '~/server/selectors/cosmetic.selector';
@@ -391,7 +392,14 @@ export async function getCosmeticsForEntity({
   entity: CosmeticEntity;
 }) {
   if (ids.length === 0) return {};
-  return await cosmeticEntityCaches[entity].fetch(ids);
+  const frames = await cosmeticEntityCaches[entity].fetch(ids);
+  const result: Record<number, ContentDecorationCosmetic> = {};
+  // Frame entries cached for up to a day may predate the lookup dropping claimKey.
+  for (const [id, frame] of Object.entries(frames)) {
+    const { claimKey: _claimKey, ...rest } = frame as typeof frame & { claimKey?: string };
+    result[Number(id)] = rest;
+  }
+  return result;
 }
 
 /**

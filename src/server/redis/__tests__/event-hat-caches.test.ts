@@ -8,9 +8,8 @@ import { redisMock } from '~/__tests__/mocks/redis.mock';
  * one per miss; these pin what each one asks.
  */
 
-const { eventDecorationEntityCaches, publicContentCaches, cosmeticCache } = await import(
-  '~/server/redis/caches'
-);
+const { cosmeticEntityCaches, eventDecorationEntityCaches, publicContentCaches, cosmeticCache } =
+  await import('~/server/redis/caches');
 
 const sql = (call: unknown[]) => (call[0] as string[]).join('?').replace(/\s+/g, ' ').trim();
 
@@ -113,5 +112,43 @@ describe('eventDecorationEntityCaches', () => {
     expect(writes()).toEqual([
       ['packed:caches:cosmetics2:event:v2:Model:7', expect.anything(), { EX: 3600, NX: true }],
     ]);
+  });
+});
+
+describe('cosmeticEntityCaches', () => {
+  // Feed responses attach the cached frame as it is, so it holds nothing a viewer may not see.
+  it("caches a frame without its owner's claim key", async () => {
+    // Returns a column only when the lookup selects it, as Postgres would.
+    dbMock.dbWrite.$queryRaw.mockImplementation((async (strings: string[]) => [
+      {
+        cosmeticId: 41,
+        equippedToId: 5,
+        userData: null,
+        ...(strings.join('').includes('"claimKey"') && { claimKey: 'tx-claim-6620' }),
+      },
+    ]) as never);
+    const fetch = cosmeticCache.fetch;
+    cosmeticCache.fetch = (async () => ({
+      41: {
+        id: 41,
+        name: 'Gold Frame',
+        type: 'ContentDecoration',
+        source: 'Purchase',
+        data: { cssFrame: 'gold' },
+      },
+    })) as never;
+    try {
+      const frames = await cosmeticEntityCaches.Image.fetch([5]);
+      expect(frames[5]).toMatchObject({ id: 41, equippedToId: 5, data: { cssFrame: 'gold' } });
+      expect(frames[5]).not.toHaveProperty('claimKey');
+    } finally {
+      cosmeticCache.fetch = fetch;
+    }
+    const [call] = dbMock.dbWrite.$queryRaw.mock.calls;
+    expect(sql(call)).toBe(
+      `SELECT uc."cosmeticId", uc."equippedToId", uc."data" as "userData" FROM "UserCosmetic" uc ` +
+        `JOIN "Cosmetic" c ON c.id = uc."cosmeticId" WHERE uc."equippedToId" IN (?) ` +
+        `AND uc."equippedToType" = '?'::"CosmeticEntity" AND jsonb_typeof(c.data->'event') IS DISTINCT FROM 'string';`
+    );
   });
 });

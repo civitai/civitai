@@ -50,6 +50,7 @@ vi.mock('~/server/flipt/tester-segment', async () => {
 const {
   equipCosmeticToEntity,
   assertImageCanWearEventDecoration,
+  getCosmeticsForEntity,
   getEventDecorationsForEntity,
   revokeCosmeticsFromUsers,
   unassignCosmetic,
@@ -588,6 +589,19 @@ describe('getEventDecorationsForEntity', () => {
 
 // Justin, 2026-10-09: the whole event runs for testers and moderators before launch, behind the
 // `birthday2026` flag, and nobody else sees any of it. See event-access.test.ts for the rule.
+// Feed responses attach a frame as it is, and frame entries are cached for a day.
+describe('getCosmeticsForEntity', () => {
+  it('drops the claim key from frames cached before it was dropped', async () => {
+    const rendered = { id: 4, data: FRAME, equippedToId: IMAGE };
+    caches.frame.Image.fetch.mockResolvedValue({
+      [IMAGE]: { ...rendered, claimKey: 'tx-claim-5512' },
+    });
+    const result = await getCosmeticsForEntity({ ids: [IMAGE], entity: 'Image' });
+    expect(JSON.stringify(result)).not.toContain('tx-claim-5512');
+    expect(result).toStrictEqual({ [IMAGE]: rendered });
+  });
+});
+
 describe('behind the flag before launch', () => {
   const PREVIEW = new Date(BIRTHDAY_2026_PREVIEW_FROM.getTime() + 24 * 60 * 60 * 1000);
   beforeEach(() => {
