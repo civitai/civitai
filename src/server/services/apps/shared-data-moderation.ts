@@ -495,8 +495,8 @@ export async function recordSharedDataScan(
       mode: ctx.mode,
       blocked: ctx.blocked,
       leafCount: scan.leafCount,
-      // `depth` | `leaves` | `chars` | `audit_budget`, or empty. The per-category counts below
-      // include `overflow` as a NUMBER, hence the different name.
+      // `depth` | `leaves` | `chars` | `audit_budget` | `leaf_length`, or empty. The per-category
+      // counts below include `overflow` as a NUMBER, hence the different name.
       overflowKind: scan.overflow ?? '',
       hitCount: scan.hits.length,
       ...counts,
@@ -508,9 +508,11 @@ export async function recordSharedDataScan(
   if (!client) return;
   // One instant for both tables, so a write's hit rows and its denominator row carry the same time.
   const now = new Date();
-  const insert = async (table: string, values: unknown[]) => {
+  // `rows` is a thunk, built INSIDE the try: a throw while building rows must be logged and
+  // swallowed like a failed insert — the enforce caller does not await or catch this function.
+  const insert = async (table: string, rows: () => unknown[]) => {
     try {
-      await client.insert({ table, values, format: 'JSONEachRow' });
+      await client.insert({ table, values: rows(), format: 'JSONEachRow' });
     } catch (error) {
       await logToAxiom(
         {
@@ -528,8 +530,10 @@ export async function recordSharedDataScan(
     }
   };
   await Promise.all([
-    scan.hits.length ? insert(SHARED_DATA_HITS_TABLE, sharedDataHitRows(scan, ctx, now)) : null,
-    insert(SHARED_DATA_SCANS_TABLE, [sharedDataScanRow(scan, ctx, now)]),
+    scan.hits.length
+      ? insert(SHARED_DATA_HITS_TABLE, () => sharedDataHitRows(scan, ctx, now))
+      : null,
+    insert(SHARED_DATA_SCANS_TABLE, () => [sharedDataScanRow(scan, ctx, now)]),
   ]);
 }
 

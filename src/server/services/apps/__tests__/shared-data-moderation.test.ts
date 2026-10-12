@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import type * as FliptClientModule from '~/server/flipt/client';
+import type * as ClickhouseDatetimeModule from '~/server/clickhouse/datetime';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { BlockedContentHit } from '~/server/services/blocklist.service';
@@ -33,6 +34,13 @@ vi.mock('~/server/flipt/client', async (importOriginal) => ({
   isFlipt: (flag: string, entityId?: string, context?: unknown) =>
     mockIsFlipt(flag, entityId, context),
 }));
+// The real formatter, spied: lets a test see WHICH instant each row's time was built from.
+const mockFormatTime = vi.hoisted(() => vi.fn<(at: number | Date) => string>());
+vi.mock('~/server/clickhouse/datetime', async (importOriginal) => {
+  const real = await importOriginal<typeof ClickhouseDatetimeModule>();
+  mockFormatTime.mockImplementation(real.formatClickhouseDateTime64);
+  return { ...real, formatClickhouseDateTime64: mockFormatTime };
+});
 const clickhouseBox = vi.hoisted(() => ({ client: undefined as unknown }));
 vi.mock('~/server/clickhouse/client', () => ({
   get clickhouse() {
@@ -675,8 +683,24 @@ describe('denominator — one ClickHouse row per scanned write', () => {
     expect(insertsInto(SHARED_DATA_HITS_TABLE)).toEqual([]);
     const [insert] = insertsInto(SCANS);
     expect(insert.format).toBe('JSONEachRow');
+    // Exact, so a null overflow is pinned to '' (the column is not Nullable).
     expect(insert.values).toEqual([
-      expect.objectContaining({ appBlockId: 'apb_one', leafCount: 4, hitCount: 0 }),
+      {
+        time: expect.stringMatching(TIME),
+        appBlockId: 'apb_one',
+        surface: 'update',
+        mode: 'shadow',
+        blocked: 0,
+        leafCount: 4,
+        hitCount: 0,
+        minor: 0,
+        poi: 0,
+        link: 0,
+        pattern: 0,
+        audit_regex: 0,
+        overflow: 0,
+        overflowKind: '',
+      },
     ]);
   });
 
@@ -690,6 +714,41 @@ describe('denominator — one ClickHouse row per scanned write', () => {
     expect(scans.values).toHaveLength(1);
     const time = (scans.values[0] as { time: string }).time;
     for (const row of hits.values as Array<{ time: string }>) expect(row.time).toBe(time);
+    // Two `new Date()`s almost always land in the same millisecond, so equal strings alone cannot
+    // fail. What makes the times equal by construction is ONE Date object behind both tables.
+    const instants = new Set(mockFormatTime.mock.calls.map(([at]) => at));
+    expect(mockFormatTime).toHaveBeenCalledTimes(2);
+    expect(instants.size).toBe(1);
+  });
+
+  it('a throw while BUILDING rows is logged and swallowed like a failed insert', async () => {
+    // A leaf whose path segments cannot be read: the enforce-mode path builder throws.
+    const bad = {
+      raw: TEXT,
+      path: PATH,
+      kind: 'value' as const,
+      get segments(): string[] {
+        throw new RangeError(`unreadable ${TEXT}`);
+      },
+    };
+    const scan: SharedTextScan = {
+      leafCount: 1,
+      overflow: null,
+      hits: [{ category: 'minor', matched: 'minor', label: 'minor', leaf: bad }],
+    };
+    await expect(
+      recordSharedDataScan(scan, { ...ctx, mode: 'enforce', blocked: true })
+    ).resolves.toBeUndefined();
+    expect(mockLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'app-blocks-shared-data-moderation-record-failed',
+        table: SHARED_DATA_HITS_TABLE,
+        error: 'RangeError',
+      }),
+      'block-audit'
+    );
+    // ...and the denominator row still lands.
+    expect(insertsInto(SCANS)).toHaveLength(1);
   });
 
   it('🔴 the denominator row is EXACTLY the count-only column set — no user text in any column', async () => {
