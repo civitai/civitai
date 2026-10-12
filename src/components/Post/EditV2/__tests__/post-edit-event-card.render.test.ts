@@ -260,7 +260,7 @@ describe('image menu Add Party Hat', () => {
 });
 
 describe('menu item reading the worn hat from the viewer', () => {
-  const item = (props: { findWornHat?: boolean }) =>
+  const item = (props: { findWornHat?: boolean; currentCosmetic?: { id: number } }) =>
     render(
       React.createElement(
         Menu,
@@ -310,6 +310,16 @@ describe('menu item reading the worn hat from the viewer', () => {
     h.access = 'preview';
     h.hats = [{ cosmeticId: 2, placedOn: { entityType: 'Image', entityId: MODEL_ID } }];
     expect(text(item({ findWornHat: true }))).toContain('Add Party Hat');
+  });
+
+  it('takes off the hat the content carries without refreshing hats it never read', async () => {
+    h.access = 'preview';
+    const el = item({ currentCosmetic: { id: 3 } });
+    await act(async () => button(el, 'Remove Party Hat')!.click());
+    expect(h.unequip.mock.calls).toEqual([
+      [{ equippedToId: MODEL_ID, equippedToType: 'Model', cosmeticId: 3 }],
+    ]);
+    expect(h.invalidateHats).not.toHaveBeenCalled();
   });
 
   it("does not ask for the viewer's hats where the content carries its own", () => {

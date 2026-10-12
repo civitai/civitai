@@ -49,6 +49,7 @@ vi.mock('~/server/flipt/tester-segment', async () => {
 
 const {
   equipCosmeticToEntity,
+  assertImageCanWearEventDecoration,
   getEventDecorationsForEntity,
   revokeCosmeticsFromUsers,
   unassignCosmetic,
@@ -285,6 +286,29 @@ describe('placing an event decoration', () => {
 // expecting the article to wear them.
 describe('an event decoration on an image outside a post', () => {
   const postless = () => db.image.findUnique.mockResolvedValue({ userId: OWNER, postId: null });
+
+  // The refusal follows the event: its own decoration's name, and the article only where it can go.
+  it("names another event's decoration, and leaves articles out for one that cannot wear them", async () => {
+    postless();
+    db.article.findUnique.mockResolvedValue({ id: 36 });
+    await expect(
+      assertImageCanWearEventDecoration(IMAGE, {
+        label: 'Snow Crown',
+        entityTypes: ['Image', 'Article'],
+      })
+    ).rejects.toThrow(
+      /Put the hat on the article instead: Add Snow Crown in the article's ⋯ menu\.$/
+    );
+
+    db.article.findUnique.mockClear();
+    await expect(
+      assertImageCanWearEventDecoration(IMAGE, {
+        label: 'Snow Crown',
+        entityTypes: ['Image', 'Model'],
+      })
+    ).rejects.toThrow(/^Hats can only go on images that are in a post\.$/);
+    expect(db.article.findUnique).not.toHaveBeenCalled();
+  });
 
   it('is refused on an article cover, pointing at the article', async () => {
     db.userCosmetic.findFirst.mockResolvedValue(hatRow());

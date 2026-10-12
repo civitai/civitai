@@ -606,7 +606,7 @@ async function assertCanPlaceEventDecoration({
  * is left out of every feed and its page 404s for anyone but its owner, so a hat on it is seen
  * almost nowhere.
  */
-async function assertImageCanWearEventDecoration(
+export async function assertImageCanWearEventDecoration(
   imageId: number,
   definition: Pick<EventDecorationDefinition, 'label' | 'entityTypes'>
 ) {
