@@ -23,6 +23,7 @@ import { establishSession } from '$lib/server/auth/session';
 import { buildPostLoginRedirect } from '$lib/server/auth/redirect';
 import { buildPostLoginOriginCheck } from '$lib/server/oauth/first-party';
 import { blockedEmailDomainSignupsTotal, loginsTotal } from '$lib/server/metrics';
+import { logToAxiom } from '$lib/server/axiom';
 
 export const GET: RequestHandler = async ({ params, url, cookies, locals }) => {
   const provider = getProvider(params.provider);
@@ -50,7 +51,31 @@ export const GET: RequestHandler = async ({ params, url, cookies, locals }) => {
     cookies.delete(name, { path: '/' });
   }
 
+  // Resolve the registry-aware origin allow-check once (cached); reused by every redirect path below.
+  const isAllowedOrigin = await buildPostLoginOriginCheck();
+
+  // The provider refused (user cancelled, or it rejected the request, e.g. `invalid_scope`): no code to
+  // exchange, so return the user to where the flow started with an error code that page can show.
+  // Only a code from a fixed set travels in the URL, never the provider's own text. A `code` riding
+  // alongside an error is ignored, so this branch never reaches the exchange below.
+  const providerError = url.searchParams.get('error');
+  if (providerError) {
+    const errorCode = providerError === 'access_denied' ? 'AccessDenied' : 'OAuthCallback';
+    logCallbackFailure(provider.id, 'provider_error', linkIntent, providerError);
+    if (linkIntent) {
+      const target = appendQuery(returnUrl, 'error', errorCode);
+      redirect(302, buildPostLoginRedirect(target, null, url.origin, dev, isAllowedOrigin));
+    }
+    const retry = new URL('/login', url.origin);
+    retry.searchParams.set('error', errorCode);
+    if (returnUrl && returnUrl !== '/') retry.searchParams.set('returnUrl', returnUrl);
+    redirect(302, `${retry.pathname}${retry.search}`);
+  }
+
   if (!code || !state || !savedState || state !== savedState || !verifier) {
+    const reason =
+      !code || !state ? 'no_code' : !savedState || !verifier ? 'no_cookie' : 'state_mismatch';
+    logCallbackFailure(provider.id, reason, linkIntent);
     error(400, 'Invalid OAuth state');
   }
 
@@ -69,9 +94,6 @@ export const GET: RequestHandler = async ({ params, url, cookies, locals }) => {
   // sync). On conflict, bounce back with an error the account page surfaces. The session must STILL be present
   // (it rides the callback as a Lax cookie) — if it was lost between start and callback, fail rather than fall
   // through to login/create, which could silently switch the user to a different account.
-  // Resolve the registry-aware origin allow-check once (cached); reused by both redirect paths below.
-  const isAllowedOrigin = await buildPostLoginOriginCheck();
-
   if (linkIntent) {
     if (!locals.user) error(401, 'Session expired — sign in and try linking again');
     const result = await linkAccountToUser(locals.user.id, provider.id, profile, scope);
@@ -120,6 +142,26 @@ export const GET: RequestHandler = async ({ params, url, cookies, locals }) => {
     returnUrl === '/' && env.AUTH_DEFAULT_RETURN_URL ? env.AUTH_DEFAULT_RETURN_URL : returnUrl;
   redirect(302, buildPostLoginRedirect(loginReturn, sync, url.origin, dev, isAllowedOrigin));
 };
+
+// Why a callback failed, without the code or state values. The provider's error is logged only when it is a
+// plain OAuth error token, so arbitrary query text never reaches the log.
+function logCallbackFailure(
+  provider: string,
+  reason: 'provider_error' | 'no_code' | 'no_cookie' | 'state_mismatch',
+  link: boolean,
+  providerError?: string
+) {
+  void logToAxiom({
+    type: 'warn',
+    name: 'oauth-callback-failed',
+    provider,
+    reason,
+    link,
+    ...(providerError && {
+      providerError: /^[a-z_]{1,64}$/.test(providerError) ? providerError : 'unrecognised',
+    }),
+  }).catch(() => undefined);
+}
 
 // Append a query param to a (relative or absolute) returnUrl, preserving any hash.
 function appendQuery(rawUrl: string, key: string, value: string): string {
