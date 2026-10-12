@@ -53,6 +53,9 @@ beforeAll(async () => {
       id int PRIMARY KEY, "userId" int NOT NULL, "publishedAt" timestamp,
       availability "Availability" DEFAULT 'Public', "collectionId" int
     );
+    CREATE TABLE "Article" (
+      id int PRIMARY KEY, "coverId" int, status text, "publishedAt" timestamp, ingestion text
+    );
     CREATE TABLE "CollectionContributor" (
       "collectionId" int, "userId" int, permissions "CollectionContributorPermission"[]
     );
@@ -68,7 +71,7 @@ beforeAll(async () => {
 });
 
 beforeEach(async () => {
-  await db.exec(`TRUNCATE "Image", "Post", "CollectionContributor";`);
+  await db.exec(`TRUNCATE "Image", "Post", "CollectionContributor", "Article";`);
   vi.mocked(amIBlockedByUser).mockReset().mockResolvedValue(false);
   vi.spyOn(imageResourcesCache, 'fetch').mockResolvedValue({});
   dbMock.dbRead.image.findUnique.mockResolvedValue({
@@ -379,16 +382,14 @@ describe('getImageGenerationData media links', () => {
 
 /** `getImage`'s two modes over the same rows, so the extraction is pinned by behaviour too. */
 describe('imageVisibilityConditions for image.get', () => {
-  async function visibleTo(viewer: Viewer, postGates: 'always' | 'none') {
+  async function visibleTo(viewer: Viewer, postGates: 'always' | 'whenPosted') {
     const raw = pgliteRaw(db);
     const where = Prisma.join(
       [Prisma.sql`i.id = 1`, ...imageVisibilityConditions({ ...viewer, postGates })],
       ' AND '
     );
     const rows =
-      postGates === 'none'
-        ? await raw.queryRaw`SELECT i.id FROM "Image" i WHERE ${where}`
-        : await raw.queryRaw`SELECT i.id FROM "Image" i LEFT JOIN "Post" p ON p.id = i."postId" WHERE ${where}`;
+      await raw.queryRaw`SELECT i.id FROM "Image" i LEFT JOIN "Post" p ON p.id = i."postId" WHERE ${where}`;
     return rows.length === 1;
   }
 
@@ -400,17 +401,36 @@ describe('imageVisibilityConditions for image.get', () => {
     expect(await visibleTo(MOD, 'always')).toBe(true);
   });
 
-  it('applies the post checks by default and skips them without the post', async () => {
-    await seed({ post: { '"publishedAt"': 'NULL' } });
+  it('admits a postless image to anyone without the post', async () => {
+    await seed({ post: null });
+    expect(await visibleTo(ANON, 'whenPosted')).toBe(true);
+  });
+
+  it('admits the cover of a readable article either way', async () => {
+    await seed({ post: null });
+    await db.exec(`INSERT INTO "Article" VALUES (1, 1, 'Published', now(), 'Scanned')`);
+    expect(await visibleTo(ANON, 'always')).toBe(true);
+    await db.exec(`UPDATE "Article" SET status = 'Draft'`);
     expect(await visibleTo(ANON, 'always')).toBe(false);
-    expect(await visibleTo(ANON, 'none')).toBe(true);
+  });
+
+  it.each([
+    ['an unpublished post', { '"publishedAt"': 'NULL' }],
+    ['a Private post', { availability: `'Private'` }],
+  ])('applies the post checks to an image in %s even without the post', async (_label, post) => {
+    await seed({ post });
+    for (const postGates of ['always', 'whenPosted'] as const) {
+      expect(await visibleTo(ANON, postGates)).toBe(false);
+      expect(await visibleTo(OTHER, postGates)).toBe(false);
+      expect(await visibleTo(SELF, postGates)).toBe(true);
+    }
   });
 
   it('keeps the review and Blocked checks without the post', async () => {
     await seed({ image: { '"needsReview"': `'minor'` }, post: null });
-    expect(await visibleTo(ANON, 'none')).toBe(false);
+    expect(await visibleTo(ANON, 'whenPosted')).toBe(false);
     await db.exec(`UPDATE "Image" SET "needsReview" = NULL, "nsfwLevel" = 32`);
-    expect(await visibleTo(ANON, 'none')).toBe(false);
-    expect(await visibleTo(SELF, 'none')).toBe(true);
+    expect(await visibleTo(ANON, 'whenPosted')).toBe(false);
+    expect(await visibleTo(SELF, 'whenPosted')).toBe(true);
   });
 });

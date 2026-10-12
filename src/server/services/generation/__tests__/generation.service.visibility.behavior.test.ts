@@ -9,18 +9,6 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
-vi.mock('~/server/redis/client', () => {
-  const make = (): any => new Proxy(() => 'k', { get: () => make() });
-  const keyProxy = make();
-  return {
-    redis: { packed: { get: vi.fn(), set: vi.fn(), mGet: vi.fn() }, get: vi.fn(), set: vi.fn() },
-    sysRedis: { hGet: vi.fn() },
-    REDIS_KEYS: keyProxy,
-    REDIS_SYS_KEYS: keyProxy,
-    REDIS_SUB_KEYS: keyProxy,
-    withSysReadDeadline: vi.fn((p: Promise<unknown>) => p),
-  };
-});
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: vi.fn() }));
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: {} }));
 vi.mock('~/server/db/db-lag-helpers', () => ({
@@ -73,6 +61,9 @@ beforeAll(async () => {
       id int PRIMARY KEY, "userId" int NOT NULL, "publishedAt" timestamp,
       availability "Availability" DEFAULT 'Public', "collectionId" int
     );
+    CREATE TABLE "Article" (
+      id int PRIMARY KEY, "coverId" int, status text, "publishedAt" timestamp, ingestion text
+    );
     CREATE TABLE "CollectionContributor" (
       "collectionId" int, "userId" int, permissions "CollectionContributorPermission"[]
     );
@@ -87,7 +78,7 @@ beforeAll(async () => {
 });
 
 beforeEach(async () => {
-  await db.exec(`TRUNCATE "Image", "Post", "CollectionContributor";`);
+  await db.exec(`TRUNCATE "Image", "Post", "CollectionContributor", "Article";`);
   dbMock.dbRead.image.findUnique.mockResolvedValue({
     id: 1,
     type: 'image',
