@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import {
   collectBlockStepTypes,
+  isMergeStepType,
   isRepeatStepType,
   resolveBlockWorkflowGraph,
+  withRepeatTemplateTimeout,
   WORKFLOW_INPUT_DEPTH_MAX,
   WORKFLOW_MAX_REFS,
   WORKFLOW_MAX_STEPS,
+  WORKFLOW_REPEAT_MAX_ITERATIONS,
   WORKFLOW_RESERVED_STEP_NAME,
 } from '~/server/services/blocks/workflow-graph';
 import type { BlockWorkflowStepInput } from '~/server/services/blocks/workflow-graph';
@@ -212,55 +215,169 @@ describe('resolveBlockWorkflowGraph — references', () => {
 });
 
 describe('resolveBlockWorkflowGraph — repeat', () => {
-  const repeat = (forRef: string, template: Record<string, unknown>, as = 'item') =>
-    step({
-      $type: 'repeat',
-      name: 'loop',
-      input: { for: { $ref: forRef, path: 'output.frames', as }, template },
-    });
+  const ARGS = { images: [{ url: 'a' }, { url: 'b' }, { url: 'c' }], strength: 0.4 };
+  const repeat = (
+    forClause: Record<string, unknown>,
+    template: Record<string, unknown>,
+    over: Partial<BlockWorkflowStepInput> = {}
+  ) => step({ $type: 'repeat', name: 'loop', input: { for: forClause, template }, ...over });
+  const overImages = { $ref: '$arguments', path: 'images', as: 'item' };
+  const graph = (
+    steps: BlockWorkflowStepInput[],
+    args: Record<string, unknown> | undefined = ARGS
+  ) => resolveBlockWorkflowGraph({ steps, arguments: args });
+  const unbounded = (steps: BlockWorkflowStepInput[], args?: Record<string, unknown>) => {
+    const r = graph(steps, args);
+    if (r.ok) throw new Error('expected a refusal, got a resolved graph');
+    expect(r.errorCode).toBe('workflow_repeat_unbounded');
+    return r.error;
+  };
 
-  it('lets the template reference the loop variable, an earlier step and `$arguments`', () => {
-    const steps = resolved([
-      step({ name: 'frames', $type: 'videoFrameExtraction' }),
-      repeat('frames', {
+  it('accepts a repeat over an `arguments` array; its template may read the loop variable, an earlier step and `$arguments`', () => {
+    const r = graph([
+      step({ name: 'gen' }),
+      repeat(overImages, {
         $type: 'wdTagging',
-        input: { mediaUrl: ref('item', 'url'), other: ref('frames'), arg: ref('$arguments', 'x') },
+        input: {
+          mediaUrl: ref('item', 'url'),
+          other: ref('gen'),
+          arg: ref('$arguments', 'strength'),
+        },
       }),
     ]);
-    expect(steps[1].stepTypes).toEqual(['repeat', 'wdTagging']);
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.steps[1].stepTypes).toEqual(['repeat', 'wdTagging']);
   });
 
-  it('refuses a `for` clause that iterates a LATER step', () => {
-    const r = refusal([
-      repeat('frames', { $type: 'wdTagging', input: {} }),
-      step({ name: 'frames' }),
-    ]);
-    expect(r.errorCode).toBe('workflow_ref_invalid');
-    expect(r.error).toContain('workflow step 0: "$ref": "frames" does not name');
+  it('🔴 refuses a repeat over an EARLIER STEP’s output, naming the step index', () => {
+    expect(
+      unbounded([
+        step({ name: 'frames', $type: 'videoFrameExtraction' }),
+        repeat(
+          { $ref: 'frames', path: 'output.frames', as: 'frame' },
+          { $type: 'wdTagging', input: {} }
+        ),
+      ])
+    ).toBe(
+      'workflow step 1: a repeat may only iterate over the workflow\'s own arguments ("$ref": ' +
+        '"$arguments"), not "frames" — pass the list in "arguments" instead'
+    );
+  });
+
+  it('🔴 refuses it in a NESTED template too (the inner loop over the outer loop variable)', () => {
+    expect(
+      unbounded([
+        repeat(overImages, {
+          $type: 'repeat',
+          input: {
+            for: { $ref: 'item', path: 'tiles', as: 'tile' },
+            template: { $type: 'wdTagging', input: {} },
+          },
+        }),
+      ])
+    ).toContain("workflow step 0: a repeat may only iterate over the workflow's own arguments");
+  });
+
+  it('refuses it however `repeat` is cased', () => {
+    expect(
+      unbounded([
+        step({ name: 'frames' }),
+        repeat(
+          { $ref: 'frames', path: 'output.frames', as: 'f' },
+          { $type: 'echo' },
+          { $type: 'REPEAT' }
+        ),
+      ])
+    ).toContain('not "frames"');
+  });
+
+  it.each([
+    ['a path that is missing', 'nope'],
+    ['a path to a non-array', 'strength'],
+    ['a path through a non-object', 'images.length'],
+    ['an inherited key', 'constructor'],
+  ])('refuses %s in arguments', (_label, path) => {
+    expect(unbounded([repeat({ $ref: '$arguments', path, as: 'i' }, { $type: 'echo' })])).toBe(
+      `workflow step 0: repeat "for" path "${path}" does not name an array in "arguments"`
+    );
+  });
+
+  it('refuses a repeat when the body has no arguments at all', () => {
+    const r = resolveBlockWorkflowGraph({ steps: [repeat(overImages, { $type: 'echo' })] });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.errorCode).toBe('workflow_repeat_unbounded');
+  });
+
+  it('reads a dotted path', () => {
+    expect(
+      graph([repeat({ $ref: '$arguments', path: 'a.b', as: 'i' }, { $type: 'echo' })], {
+        a: { b: [1, 2] },
+      }).ok
+    ).toBe(true);
+  });
+
+  it('🔴 caps the iteration count at 16', () => {
+    expect(WORKFLOW_REPEAT_MAX_ITERATIONS).toBe(16);
+    const list = (n: number) => ({ images: Array.from({ length: n }, (_, i) => i) });
+    expect(graph([repeat(overImages, { $type: 'echo' })], list(16)).ok).toBe(true);
+    expect(unbounded([repeat(overImages, { $type: 'echo' })], list(17))).toBe(
+      'workflow step 0: a repeat may run at most 16 iterations, nested repeats multiplied (got 17)'
+    );
+  });
+
+  it('🔴 multiplies nested repeats: 3 × 5 fits, 3 × 6 does not', () => {
+    const nestedOver = (inner: number) =>
+      graph(
+        [
+          repeat(overImages, {
+            $type: 'repeat',
+            input: {
+              for: { $ref: '$arguments', path: 'inner', as: 'j' },
+              template: { $type: 'echo', input: {} },
+            },
+          }),
+        ],
+        { ...ARGS, inner: Array.from({ length: inner }, (_, i) => i) }
+      );
+    expect(nestedOver(5).ok).toBe(true);
+    const r = nestedOver(6);
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.errorCode).toBe('workflow_repeat_unbounded');
+      expect(r.error).toBe(
+        'workflow step 0: a repeat may run at most 16 iterations, nested repeats multiplied (got 18)'
+      );
+    }
   });
 
   it('does not let the loop variable leak outside the template', () => {
-    const r = refusal([
-      step({ name: 'frames' }),
-      repeat('frames', { $type: 'wdTagging', input: {} }),
+    const r = graph([
+      repeat(overImages, { $type: 'wdTagging', input: {} }),
       step({ input: { v: ref('item', 'url') } }),
     ]);
-    expect(r.error).toContain('workflow step 2: "$ref": "item" does not name');
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.errorCode).toBe('workflow_ref_invalid');
+      expect(r.error).toContain('workflow step 1: "$ref": "item" does not name');
+    }
   });
 
   it('refuses a template reference to an unknown source', () => {
-    const r = refusal([
-      step({ name: 'frames' }),
-      repeat('frames', { $type: 'wdTagging', input: { mediaUrl: ref('elsewhere') } }),
+    const r = graph([
+      repeat(overImages, { $type: 'wdTagging', input: { mediaUrl: ref('elsewhere') } }),
     ]);
-    expect(r.error).toContain('workflow step 1: "$ref": "elsewhere" does not name');
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.errorCode).toBe('workflow_ref_invalid');
+      expect(r.error).toContain('workflow step 0: "$ref": "elsewhere" does not name');
+    }
   });
 });
 
 describe('collectBlockStepTypes', () => {
   const FOR = { $ref: '$arguments', path: 'items', as: 'item' };
   const SHAPE_ERROR =
-    'a repeat step needs exactly { for, template } with a template "$type", those keys spelled exactly, nested at most 4 deep';
+    'a repeat step needs exactly { for: { $ref, path, as }, template: { $type, name?, input? } }, nested at most 4 deep';
   /** `depth` repeats wrapped around one `leaf` step. */
   const nested = (depth: number, leaf = 'mediaHash') => {
     let input: Record<string, unknown> = { for: FOR, template: { $type: leaf, input: {} } };
@@ -289,10 +406,17 @@ describe('collectBlockStepTypes', () => {
       'mediaHash',
     ]);
     expect(collectBlockStepTypes('repeat', nested(5))).toBeNull();
+    const args = { items: ['only'] };
     expect(
-      resolveBlockWorkflowGraph({ steps: [{ $type: 'repeat', input: nested(4, 'echo') }] }).ok
+      resolveBlockWorkflowGraph({
+        steps: [{ $type: 'repeat', input: nested(4, 'echo') }],
+        arguments: args,
+      }).ok
     ).toBe(true);
-    const r = resolveBlockWorkflowGraph({ steps: [{ $type: 'repeat', input: nested(5, 'echo') }] });
+    const r = resolveBlockWorkflowGraph({
+      steps: [{ $type: 'repeat', input: nested(5, 'echo') }],
+      arguments: args,
+    });
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.error).toBe(`workflow step 0: ${SHAPE_ERROR}`);
   });
@@ -311,17 +435,35 @@ describe('collectBlockStepTypes', () => {
     ['a re-cased `for` key', { For: FOR, template: { $type: 'echo', input: {} } }],
     [
       'a re-cased `$ref` in the for clause',
-      { for: { $Ref: 'x', path: 'p', as: 'i' }, template: { $type: 'echo' } },
+      { for: { ...FOR, $Ref: 'x' }, template: { $type: 'echo' } },
     ],
     [
       'a re-cased `path` in the for clause',
-      { for: { $ref: '$arguments', Path: 'p', as: 'i' }, template: { $type: 'echo' } },
+      { for: { ...FOR, Path: 'p' }, template: { $type: 'echo' } },
     ],
     [
       'a re-cased `as` in the for clause',
-      { for: { $ref: '$arguments', path: 'p', AS: 'i' }, template: { $type: 'echo' } },
+      { for: { ...FOR, AS: 'i' }, template: { $type: 'echo' } },
     ],
     ['an array for clause', { for: [FOR], template: { $type: 'echo' } }],
+    [
+      'a for clause with no `as`',
+      { for: { $ref: '$arguments', path: 'p' }, template: { $type: 'echo' } },
+    ],
+    [
+      'a for clause whose `$ref` is not a string',
+      { for: { ...FOR, $ref: 3 }, template: { $type: 'echo' } },
+    ],
+    [
+      'a template `timeout`',
+      { for: FOR, template: { $type: 'echo', input: {}, timeout: '01:00:00' } },
+    ],
+    [
+      'a template `priority`',
+      { for: FOR, template: { $type: 'echo', input: {}, priority: 'high' } },
+    ],
+    ['a template `retries`', { for: FOR, template: { $type: 'echo', input: {}, retries: 5 } }],
+    ['a template `metadata`', { for: FOR, template: { $type: 'echo', input: {}, metadata: {} } }],
     ['no template', { for: FOR }],
     ['no for clause', { template: { $type: 'echo', input: {} } }],
     ['a template that is not an object', { for: FOR, template: 'echo' }],
@@ -337,5 +479,129 @@ describe('collectBlockStepTypes', () => {
       expect(r.errorCode).toBe('workflow_ref_invalid');
       expect(r.error).toBe(`workflow step 0: ${SHAPE_ERROR}`);
     }
+  });
+});
+
+describe('withRepeatTemplateTimeout', () => {
+  const FOR = { $ref: '$arguments', path: 'items', as: 'item' };
+
+  it('returns any other step input untouched, as the same object', () => {
+    const input = { template: { $type: 'echo' } };
+    expect(withRepeatTemplateTimeout('imageGen', input, '00:00:37')).toBe(input);
+  });
+
+  it('sets the timeout on a repeat template and on a repeat nested in it, without mutating', () => {
+    const inner = { for: FOR, template: { $type: 'wdTagging', name: 'tag', input: { a: 1 } } };
+    const input = { for: FOR, template: { $type: 'repeat', input: inner } };
+    const frozen = JSON.stringify(input);
+    expect(withRepeatTemplateTimeout('Repeat', input, '00:00:37')).toEqual({
+      for: FOR,
+      template: {
+        $type: 'repeat',
+        timeout: '00:00:37',
+        input: {
+          for: FOR,
+          template: { $type: 'wdTagging', name: 'tag', input: { a: 1 }, timeout: '00:00:37' },
+        },
+      },
+    });
+    expect(JSON.stringify(input)).toBe(frozen);
+  });
+});
+
+describe('resolveBlockWorkflowGraph — merge', () => {
+  const merge = (fields: Record<string, unknown>, over: Partial<BlockWorkflowStepInput> = {}) =>
+    step({ $type: 'merge', input: { onMissing: 'fail', fields }, ...over });
+  const field = ($ref: string) => ({ $ref, path: 'output.steps[*].output.tags', reduce: 'push' });
+  const SHAPE = 'a merge step needs a "fields" object whose entries each carry a string "$ref"';
+
+  it('accepts a merge over EARLIER steps and `$arguments`', () => {
+    const steps = resolved([
+      step({ name: 'scan' }),
+      merge({ tags: field('scan'), arg: field('$arguments') }),
+    ]);
+    expect(steps).toHaveLength(2);
+  });
+
+  it('🔴 refuses a merge field that reads a LATER step, naming the step index', () => {
+    const r = refusal([merge({ tags: field('scan') }), step({ name: 'scan' })]);
+    expect(r.errorCode).toBe('workflow_ref_invalid');
+    expect(r.error).toBe(
+      'workflow step 0: "$ref": "scan" does not name "$arguments" or an earlier step'
+    );
+  });
+
+  it('🔴 refuses a merge field that reads its OWN step', () => {
+    const r = refusal([step(), merge({ tags: field('me') }, { name: 'me' })]);
+    expect(r.errorCode).toBe('workflow_ref_invalid');
+    expect(r.error).toBe(
+      'workflow step 1: "$ref": "me" does not name "$arguments" or an earlier step'
+    );
+  });
+
+  it('🔴 refuses a merge field that reads a step that does not exist', () => {
+    const r = refusal([step({ name: 'scan' }), merge({ ok: field('scan'), bad: field('ghost') })]);
+    expect(r.errorCode).toBe('workflow_ref_invalid');
+    expect(r.error).toBe(
+      'workflow step 1: "$ref": "ghost" does not name "$arguments" or an earlier step'
+    );
+  });
+
+  it('matches `merge` however it is cased', () => {
+    expect(isMergeStepType('Merge')).toBe(true);
+    const r = refusal([
+      merge({ tags: field('later') }, { $type: 'MERGE' }),
+      step({ name: 'later' }),
+    ]);
+    expect(r.error).toContain('workflow step 0: "$ref": "later" does not name');
+  });
+
+  it.each([
+    ['a re-cased `fields` key', { Fields: { tags: field('ghost') } }],
+    [
+      'both spellings of `fields`',
+      { fields: { ok: field('$arguments') }, Fields: { bad: field('ghost') } },
+    ],
+    ['no fields', { onMissing: 'fail' }],
+    ['fields that are not an object', { fields: [field('ghost')] }],
+    ['a field that is not an object', { fields: { tags: 'ghost' } }],
+    ['a field with no `$ref`', { fields: { tags: { path: 'p', reduce: 'push' } } }],
+    [
+      'a field whose `$ref` is re-cased',
+      { fields: { tags: { $ref: '$arguments', $Ref: 'ghost' } } },
+    ],
+    ['a field whose `$ref` is not a string', { fields: { tags: { $ref: 4, path: 'p' } } }],
+  ])('refuses a merge with %s rather than checking it in part', (_label, input) => {
+    const r = refusal([step({ $type: 'merge', input: input as Record<string, unknown> })]);
+    expect(r.errorCode).toBe('workflow_ref_invalid');
+    expect(r.error).toBe(`workflow step 0: ${SHAPE}`);
+  });
+
+  it('counts merge sources toward the reference bound', () => {
+    const fields = (n: number) =>
+      Object.fromEntries(Array.from({ length: n }, (_, i) => [`f${i}`, field('$arguments')]));
+    expect(resolved([merge(fields(64))])).toHaveLength(1);
+    const r = refusal([merge(fields(65))]);
+    expect(r.error).toBe('workflow step 0: a workflow may hold at most 64 references');
+  });
+
+  it('checks a merge that a `repeat` runs, with the loop variable in scope', () => {
+    const repeatOver = (source: string) =>
+      resolveBlockWorkflowGraph({
+        steps: [
+          step({
+            $type: 'repeat',
+            input: {
+              for: { $ref: '$arguments', path: 'sets', as: 'set' },
+              template: { $type: 'merge', input: { fields: { tags: field(source) } } },
+            },
+          }),
+        ],
+        arguments: { sets: [1, 2] },
+      });
+    expect(repeatOver('set').ok).toBe(true);
+    const r = repeatOver('ghost');
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toContain('workflow step 0: "$ref": "ghost" does not name');
   });
 });

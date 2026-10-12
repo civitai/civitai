@@ -449,12 +449,13 @@ describe("kind:'workflow' — refusals a block can branch on (estimate AND submi
   it.each(paths)('🔴 %s: the denylist covers the step a `repeat` runs', async (_n, run) => {
     const { snapshot } = await run(
       body({
+        arguments: { frames: [{ url: 'a' }] },
         steps: [
-          { name: 'frames', $type: 'videoFrameExtraction', input: {} },
+          { $type: 'echo', input: {} },
           {
             $type: 'repeat',
             input: {
-              for: { $ref: 'frames', path: 'output.frames', as: 'frame' },
+              for: { $ref: '$arguments', path: 'frames', as: 'frame' },
               template: { $type: 'imageScanning', input: { url: { $ref: 'frame', path: 'url' } } },
             },
           },
@@ -487,8 +488,7 @@ describe("kind:'workflow' — refusals a block can branch on (estimate AND submi
       );
       expect(snapshot.errorCode).toBe('workflow_ref_invalid');
       expect(snapshot.error).toBe(
-        'workflow step 0: a repeat step needs exactly { for, template } with a template "$type", ' +
-          'those keys spelled exactly, nested at most 4 deep'
+        'workflow step 0: a repeat step needs exactly { for: { $ref, path, as }, template: { $type, name?, input? } }, nested at most 4 deep'
       );
       expect(h.submitWorkflow).not.toHaveBeenCalled();
     }
@@ -500,6 +500,7 @@ describe("kind:'workflow' — refusals a block can branch on (estimate AND submi
       whatifCost = undefined;
       const { snapshot } = await run(
         body({
+          arguments: { sets: ['one'] },
           steps: [
             {
               $type: 'repeat',
@@ -515,6 +516,162 @@ describe("kind:'workflow' — refusals a block can branch on (estimate AND submi
       expect(snapshot.errorCode).toBe('training-quote-unpriced');
       expect(realSubmits()).toHaveLength(0);
       expect(counter(USER_CAP)).toBe(0);
+    }
+  );
+
+  it.each(paths)(
+    '🔴 %s: a `merge` that reads a LATER step is `workflow_ref_invalid`',
+    async (_n, run) => {
+      const { snapshot } = await run(
+        body({
+          steps: [
+            {
+              $type: 'merge',
+              input: { fields: { tags: { $ref: 'scan', path: 'output.tags', reduce: 'push' } } },
+            },
+            { name: 'scan', $type: 'wdTagging', input: {} },
+          ],
+        })
+      );
+      expect(snapshot).toEqual({
+        workflowId: 'failed',
+        status: 'failed',
+        errorCode: 'workflow_ref_invalid',
+        error: 'workflow step 0: "$ref": "scan" does not name "$arguments" or an earlier step',
+      });
+      expect(h.getOrchestratorToken).not.toHaveBeenCalled();
+      expect(h.submitWorkflow).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each(paths)(
+    '%s: a `repeat` template may not set a server-owned step field',
+    async (_n, run) => {
+      const { snapshot } = await run(
+        body({
+          steps: [
+            {
+              $type: 'repeat',
+              input: {
+                for: { $ref: '$arguments', path: 'images', as: 'image' },
+                template: { $type: 'wdTagging', input: {}, priority: 'high' },
+              },
+            },
+          ],
+        })
+      );
+      expect(snapshot.errorCode).toBe('workflow_ref_invalid');
+      expect(snapshot.error).toBe(
+        'workflow step 0: a repeat step needs exactly { for: { $ref, path, as }, template: { $type, name?, input? } }, nested at most 4 deep'
+      );
+      expect(h.submitWorkflow).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each(paths)(
+    '🔴 %s: a `repeat` over an EARLIER STEP is `workflow_repeat_unbounded`',
+    async (_n, run) => {
+      const { snapshot } = await run(
+        body({
+          steps: [
+            { name: 'frames', $type: 'videoFrameExtraction', input: {} },
+            {
+              $type: 'repeat',
+              input: {
+                for: { $ref: 'frames', path: 'output.frames', as: 'frame' },
+                template: {
+                  $type: 'wdTagging',
+                  input: { mediaUrl: { $ref: 'frame', path: 'url' } },
+                },
+              },
+            },
+          ],
+        })
+      );
+      expect(snapshot).toEqual({
+        workflowId: 'failed',
+        status: 'failed',
+        errorCode: 'workflow_repeat_unbounded',
+        error:
+          'workflow step 1: a repeat may only iterate over the workflow\'s own arguments ("$ref": ' +
+          '"$arguments"), not "frames" — pass the list in "arguments" instead',
+      });
+      expect(h.getOrchestratorToken).not.toHaveBeenCalled();
+      expect(h.submitWorkflow).not.toHaveBeenCalled();
+      expect(counter(USER_CAP)).toBe(0);
+      expect(h.reserveAppSpend).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each(paths)(
+    '%s: a NESTED repeat over the outer loop variable is refused the same way',
+    async (_n, run) => {
+      const { snapshot } = await run(
+        body({
+          arguments: { images: [{ tiles: [1, 2] }] },
+          steps: [
+            {
+              $type: 'Repeat',
+              input: {
+                for: { $ref: '$arguments', path: 'images', as: 'image' },
+                template: {
+                  $type: 'repeat',
+                  input: {
+                    for: { $ref: 'image', path: 'tiles', as: 'tile' },
+                    template: { $type: 'wdTagging', input: {} },
+                  },
+                },
+              },
+            },
+          ],
+        })
+      );
+      expect(snapshot.errorCode).toBe('workflow_repeat_unbounded');
+      expect(snapshot.error).toContain('workflow step 0: a repeat may only iterate over');
+      expect(snapshot.error).toContain('not "image"');
+      expect(h.submitWorkflow).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each(paths)(
+    '🔴 %s: a repeat over more than 16 arguments is `workflow_repeat_unbounded`',
+    async (_n, run) => {
+      const repeatOver = (count: number) =>
+        body({
+          arguments: { images: Array.from({ length: count }, (_, i) => ({ url: `u${i}` })) },
+          steps: [
+            {
+              $type: 'repeat',
+              input: {
+                for: { $ref: '$arguments', path: 'images', as: 'image' },
+                template: {
+                  $type: 'wdTagging',
+                  input: { mediaUrl: { $ref: 'image', path: 'url' } },
+                },
+              },
+            },
+          ],
+        });
+      const { snapshot } = await run(repeatOver(17));
+      expect(snapshot).toEqual({
+        workflowId: 'failed',
+        status: 'failed',
+        errorCode: 'workflow_repeat_unbounded',
+        error:
+          'workflow step 0: a repeat may run at most 16 iterations, nested repeats multiplied (got 17)',
+      });
+      expect(h.submitWorkflow).not.toHaveBeenCalled();
+
+      // 16 is allowed, and the whatif carries the loop AND the list it iterates,
+      // so the orchestrator prices every child.
+      whatifCost = { total: 32, base: 32 };
+      realizedCost = { total: 32, base: 32 };
+      const allowed = await run(repeatOver(16));
+      expect(allowed.snapshot.status).toBe('pending');
+      const quoted = whatifs()[0].body;
+      expect(quoted.steps).toHaveLength(1);
+      expect(quoted.steps[0].$type).toBe('repeat');
+      expect((quoted.arguments as { images: unknown[] }).images).toHaveLength(16);
     }
   );
 
@@ -648,6 +805,34 @@ describe("kind:'workflow' SUBMIT — the money path", () => {
         })
       )
     );
+  });
+
+  it('🔴 when the workflow bills a HIGHER base than it was quoted, the fee stays the quoted one', async () => {
+    // Quoted: total 86, base 80 → fee 4. Realized: total 251, base 240 → a fee of
+    // 12 on that base. Every number here is distinct from every other.
+    whatifCost = { total: 86, base: 80 };
+    realizedCost = { total: 251, base: 240 };
+
+    // 1. The estimate discloses the fee on the QUOTED base.
+    expect((await estimate()).snapshot.cost).toEqual({ total: 90, authorFee: 4 });
+
+    await submit();
+    // 2. The reservation holds the quote plus that same fee.
+    expect(counter(USER_CAP)).toBe(90);
+    expect(h.reserveAppSpend).toHaveBeenCalledWith('apb_test', 90, { units: STEPS });
+    // 3. The charge is handed the REALIZED base and the QUOTED fee as its ceiling,
+    //    so what is debited is the smaller of the two fees: 4.
+    expect(h.chargeAuthorFee).toHaveBeenCalledWith(
+      expect.objectContaining({ baseGenerationBuzz: 240, reservedAuthorFeeBuzz: 4 })
+    );
+    // The attribution row records the realized base and total.
+    await vi.waitFor(() =>
+      expect(h.recordSpendAttribution).toHaveBeenCalledWith(
+        expect.objectContaining({ baseGenerationBuzz: 240, buzzAmount: 251 })
+      )
+    );
+    // The settle is taken against the quoted generation price, not the fee.
+    expect(h.persistSettle).toHaveBeenCalledWith(expect.objectContaining({ ceiling: 86 }));
   });
 
   it('prices the fee off the whatif `cost.base`, never `cost.total`', async () => {
@@ -822,6 +1007,48 @@ describe("kind:'workflow' SUBMIT — the money path", () => {
     }
   });
 
+  it('🔴 with no quote, a `repeat` template is stamped too — its children take their timeout from it', async () => {
+    whatifCost = undefined;
+    const repeatInput = {
+      for: { $ref: '$arguments', path: 'images', as: 'image' },
+      template: { $type: 'wdTagging', input: { mediaUrl: { $ref: 'image', path: 'url' } } },
+    };
+    const sentBody = body({
+      steps: [{ $type: 'repeat', input: repeatInput }],
+      arguments: { images: [{ url: 'a' }, { url: 'b' }] },
+    });
+    await submit(sentBody);
+    const [sent] = realSubmits()[0].body.steps;
+    expect(sent.timeout).toBe(formatStepTimeout(BUDGET));
+    expect(sent.input).toEqual({
+      for: repeatInput.for,
+      template: { ...repeatInput.template, timeout: formatStepTimeout(BUDGET) },
+    });
+    // The app's own object is not written to.
+    expect('timeout' in repeatInput.template).toBe(false);
+  });
+
+  it('with a quote, a `repeat` input is forwarded as the same object, unstamped', async () => {
+    whatifCost = { total: 20, base: 20 };
+    await submit(
+      body({
+        steps: [
+          {
+            $type: 'repeat',
+            input: {
+              for: { $ref: '$arguments', path: 'images', as: 'image' },
+              template: { $type: 'wdTagging', input: {} },
+            },
+          },
+        ],
+        arguments: { images: [{ url: 'a' }] },
+      })
+    );
+    const [sent] = realSubmits()[0].body.steps;
+    expect(sent.input).toBe(whatifs()[0].body.steps[0].input);
+    expect(JSON.stringify(sent)).not.toContain('timeout');
+  });
+
   it('an unpriced answer (no finite total) is the same no-quote path', async () => {
     whatifCost = { base: 60 };
     await submit();
@@ -867,6 +1094,7 @@ describe("kind:'workflow' SUBMIT — the money path", () => {
     h.submitWorkflow.mockClear();
     await submit(
       body({
+        arguments: { sets: ['one'] },
         steps: [
           {
             $type: 'repeat',
@@ -1041,8 +1269,25 @@ describe("kind:'workflow' in a BATCH estimate", () => {
           ],
         }),
         { kind: 'workflow', steps: [] },
+        body({
+          steps: [
+            { name: 'frames', $type: 'videoFrameExtraction', input: {} },
+            {
+              $type: 'repeat',
+              input: {
+                for: { $ref: 'frames', path: 'output.frames', as: 'frame' },
+                template: { $type: 'wdTagging', input: {} },
+              },
+            },
+          ],
+        }),
       ],
     });
+    expect(result.snapshots[3]).toMatchObject({
+      status: 'failed',
+      errorCode: 'workflow_repeat_unbounded',
+    });
+    expect((result.snapshots[3] as Snap).error).toContain('workflow step 1: a repeat may only');
     expect(result.snapshots[0]).toEqual({
       workflowId: 'wf_estimate',
       status: 'pending',
@@ -1056,7 +1301,7 @@ describe("kind:'workflow' in a BATCH estimate", () => {
     // A body the wire schema refuses is that cell's failure, with no code.
     expect(result.snapshots[2].status).toBe('failed');
     expect(result.snapshots[2].errorCode).toBeUndefined();
-    expect(result.aggregate).toEqual({ total: QUOTE + FEE, pricedCells: 1, cellCount: 3 });
+    expect(result.aggregate).toEqual({ total: QUOTE + FEE, pricedCells: 1, cellCount: 4 });
     // One whatif for the one cell that got as far as pricing.
     expect(whatifs()).toHaveLength(1);
     expect(realSubmits()).toHaveLength(0);
@@ -1099,7 +1344,7 @@ describe("kind:'workflow' POLL / CANCEL", () => {
     };
   }
 
-  it('🔴 a partial failure reports per-step status, the paid cost and the usable images', async () => {
+  it('🔴 a partial failure reports per-step status, the paid cost and the usable images, and reverses the WHOLE fee', async () => {
     h.getWorkflow.mockResolvedValue(terminalWorkflow());
     const { snapshot } = (await caller().pollWorkflow({
       blockToken: 't',
@@ -1120,7 +1365,8 @@ describe("kind:'workflow' POLL / CANCEL", () => {
         error: 'The source video could not be decoded.',
       },
     ]);
-    // Settle reads the realized total, and the fee follows the generation.
+    // Settle reads the realized total. The author fee is reversed whole for any
+    // workflow that did not succeed, even though step one delivered paid output.
     expect(h.settle).toHaveBeenCalledWith({ workflowId: WORKFLOW_ID, actualCost: 41 });
     expect(h.reverseAuthorFee).toHaveBeenCalledWith({
       workflowId: WORKFLOW_ID,
@@ -1142,7 +1388,7 @@ describe("kind:'workflow' POLL / CANCEL", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-describe("pass-through arm (kind:'step') — the denylist follows a `repeat` template too", () => {
+describe("pass-through arm (kind:'step') — `repeat`", () => {
   const passThrough = {
     kind: 'step' as const,
     $type: 'repeat',
@@ -1152,50 +1398,78 @@ describe("pass-through arm (kind:'step') — the denylist follows a `repeat` tem
     },
     maxBuzz: 20,
   };
-  const denied = {
-    ...passThrough,
-    input: { ...passThrough.input, template: { $type: 'modelClamScan', input: {} } },
-  };
-
-  it('refuses a `repeat` it cannot read for certain (a re-cased template key)', async () => {
-    const recased = {
-      ...passThrough,
-      input: { for: passThrough.input.for, TEMPLATE: { $type: 'modelClamScan', input: {} } },
-    };
-    await expect(estimate(recased)).rejects.toMatchObject({
-      code: 'BAD_REQUEST',
-      message:
-        'a repeat step needs exactly { for, template } with a template "$type", those keys spelled exactly, nested at most 4 deep',
-    });
-    await expect(submit(recased)).rejects.toMatchObject({
-      code: 'BAD_REQUEST',
-      message:
-        'a repeat step needs exactly { for, template } with a template "$type", those keys spelled exactly, nested at most 4 deep',
-    });
-    expect(h.submitWorkflow).not.toHaveBeenCalled();
-  });
-
-  it('still lets a `repeat` over an allowed step through', async () => {
-    const { snapshot } = await estimate(passThrough);
-    expect(snapshot.status).toBe('pending');
-    expect(whatifs()).toHaveLength(1);
-  });
-
-  it.each([
+  const paths = [
     ['estimate', estimate],
     ['submit', submit],
-  ] as const)('%s refuses a `repeat` whose template is platform-internal', async (_n, run) => {
-    const err = await run(denied).then(
+  ] as const;
+  const rejection = (p: Promise<unknown>) =>
+    p.then(
       () => null,
-      (e: unknown) => e
+      (e: unknown) => e as TRPCError
     );
-    expect(err).toBeInstanceOf(TRPCError);
-    expect((err as TRPCError).code).toBe('FORBIDDEN');
-    expect((err as TRPCError).cause).toBeInstanceOf(PlatformInternalStepTypeError);
-    expect(((err as TRPCError).cause as PlatformInternalStepTypeError).stepType).toBe(
-      'modelClamScan'
-    );
-    expect(h.submitWorkflow).not.toHaveBeenCalled();
-    expect(counter(USER_CAP)).toBe(0);
-  });
+
+  it.each(paths)(
+    '🔴 %s refuses a `repeat`: this body has no arguments for it to iterate',
+    async (_n, run) => {
+      const err = await rejection(run(passThrough));
+      expect(err).toBeInstanceOf(TRPCError);
+      expect(err?.code).toBe('BAD_REQUEST');
+      expect(err?.message).toBe('repeat "for" path "images" does not name an array in "arguments"');
+      expect(h.getOrchestratorToken).not.toHaveBeenCalled();
+      expect(h.submitWorkflow).not.toHaveBeenCalled();
+      expect(counter(USER_CAP)).toBe(0);
+    }
+  );
+
+  it.each(paths)(
+    '%s refuses a `repeat` over a step, with the arguments-only message',
+    async (_n, run) => {
+      const err = await rejection(
+        run({
+          ...passThrough,
+          input: { ...passThrough.input, for: { $ref: '$0', path: 'o', as: 'i' } },
+        })
+      );
+      expect(err?.code).toBe('BAD_REQUEST');
+      expect(err?.message).toBe(
+        'a repeat may only iterate over the workflow\'s own arguments ("$ref": "$arguments"), ' +
+          'not "$0" — pass the list in "arguments" instead'
+      );
+      expect(h.submitWorkflow).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each(paths)(
+    '%s names the DENYLIST when the template is platform-internal',
+    async (_n, run) => {
+      const err = await rejection(
+        run({
+          ...passThrough,
+          input: { ...passThrough.input, template: { $type: 'modelClamScan', input: {} } },
+        })
+      );
+      expect(err?.code).toBe('FORBIDDEN');
+      expect(err?.cause).toBeInstanceOf(PlatformInternalStepTypeError);
+      expect((err?.cause as PlatformInternalStepTypeError).stepType).toBe('modelClamScan');
+      expect(h.submitWorkflow).not.toHaveBeenCalled();
+      expect(counter(USER_CAP)).toBe(0);
+    }
+  );
+
+  it.each(paths)(
+    '%s refuses a `repeat` it cannot read for certain (a re-cased template key)',
+    async (_n, run) => {
+      const err = await rejection(
+        run({
+          ...passThrough,
+          input: { for: passThrough.input.for, TEMPLATE: { $type: 'modelClamScan', input: {} } },
+        })
+      );
+      expect(err?.code).toBe('BAD_REQUEST');
+      expect(err?.message).toBe(
+        'a repeat step needs exactly { for: { $ref, path, as }, template: { $type, name?, input? } }, nested at most 4 deep'
+      );
+      expect(h.submitWorkflow).not.toHaveBeenCalled();
+    }
+  );
 });

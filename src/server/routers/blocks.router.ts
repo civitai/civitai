@@ -200,7 +200,9 @@ import {
 import {
   collectBlockStepTypes,
   REPEAT_SHAPE_ERROR,
+  repeatUnboundedProblem,
   resolveBlockWorkflowGraph,
+  withRepeatTemplateTimeout,
 } from '~/server/services/blocks/workflow-graph';
 import type { ResolvedBlockWorkflowStep } from '~/server/services/blocks/workflow-graph';
 import { projectModelSubstitutions } from '~/shared/generation/model-substitution';
@@ -10423,6 +10425,9 @@ function assertPassThroughStepTypeAllowed($type: string, input: unknown): void {
     }
     throw e;
   }
+  // This arm's body has no `arguments`, so there is nothing a `repeat` may iterate.
+  const unbounded = repeatUnboundedProblem($type, input, undefined);
+  if (unbounded) throw new TRPCError({ code: 'BAD_REQUEST', message: unbounded });
 }
 
 /**
@@ -10440,7 +10445,9 @@ function assertPassThroughStepTypeAllowed($type: string, input: unknown): void {
  * that the quote and the submit hold ONE step object, which is what makes
  * "the quote priced the same work" true; building the step twice kills it.
  *
- * No `timeout` is stamped here; see `stampUnquotedTimeout`.
+ * No `timeout` is stamped here; see `stampUnquotedTimeout`, which is also the one
+ * place `input` is not forwarded as given: for an unquoted `repeat` it sends a
+ * copy with the timeout set on the template.
  */
 function buildPassThroughOrchestratorStep(body: PassThroughStepBody): {
   $type: string;
@@ -10468,6 +10475,8 @@ function stampUnquotedTimeout(
   maxBuzz: number
 ): void {
   step.timeout = formatStepTimeout(maxBuzz);
+  // A `repeat` child takes its timeout from the template, not from the step.
+  step.input = withRepeatTemplateTimeout(step.$type, step.input, step.timeout);
 }
 
 /**

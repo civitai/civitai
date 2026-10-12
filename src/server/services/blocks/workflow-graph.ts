@@ -42,6 +42,7 @@ export const BLOCK_WORKFLOW_ERROR_CODES = [
   'workflow_step_denied',
   'workflow_ref_invalid',
   'workflow_too_many_steps',
+  'workflow_repeat_unbounded',
 ] as const;
 export type BlockWorkflowErrorCode = (typeof BLOCK_WORKFLOW_ERROR_CODES)[number];
 
@@ -70,10 +71,7 @@ export type BlockWorkflowGraphResult =
   | { ok: true; steps: ResolvedBlockWorkflowStep[] }
   | {
       ok: false;
-      errorCode: Extract<
-        BlockWorkflowErrorCode,
-        'workflow_ref_invalid' | 'workflow_too_many_steps'
-      >;
+      errorCode: Exclude<BlockWorkflowErrorCode, 'workflow_step_denied'>;
       error: string;
     };
 
@@ -92,41 +90,167 @@ export function isRepeatStepType(stepType: unknown): boolean {
   return typeof stepType === 'string' && stepType.toLowerCase() === 'repeat';
 }
 
-/** True when `object` spells one of `names` in any casing other than its own. */
-function hasRecasedKey(object: Record<string, unknown>, names: readonly string[]): boolean {
-  return Object.keys(object).some(
-    (key) => !names.includes(key) && names.includes(key.toLowerCase())
-  );
+/** True when every key of `object` is one of `allowed`, spelled exactly. */
+function hasOnlyKeys(object: Record<string, unknown>, allowed: readonly string[]): boolean {
+  return Object.keys(object).every((key) => allowed.includes(key));
 }
 
 type RepeatInput = {
-  forClause: Record<string, unknown>;
-  template: Record<string, unknown> & { $type: string };
+  forClause: { $ref: string; path: string; as: string };
+  template: { $type: string; name?: unknown; input?: unknown };
 };
 
 /**
  * A `repeat` step's input, or `null` when this cannot say for certain which step
  * it runs and what it iterates.
  *
- * FAIL-CLOSED ON SHAPE: the input must hold exactly `for` and `template`, the
- * template must name a string `$type`, and none of the keys this module reads may
- * appear under another casing. Whether the orchestrator would bind a re-cased key
- * is not something this repo can know, so a body that relies on it is refused.
+ * FAIL-CLOSED ON SHAPE, every key spelled exactly: `{ for: { $ref, path, as },
+ * template: { $type, name?, input? } }` and nothing else. A template is held to
+ * what a top-level step may carry, so it cannot set a field the wire schema keeps
+ * server-owned; and whether the orchestrator would bind a re-cased key is not
+ * something this repo can know, so a body that relies on it is refused.
  */
 function readRepeatInput(input: unknown): RepeatInput | null {
-  if (!isPlainObject(input)) return null;
-  if (Object.keys(input).some((key) => key !== 'for' && key !== 'template')) return null;
+  if (!isPlainObject(input) || !hasOnlyKeys(input, ['for', 'template'])) return null;
   const { for: forClause, template } = input;
-  if (!isPlainObject(forClause) || hasRecasedKey(forClause, ['$ref', 'path', 'as'])) return null;
-  if (!isPlainObject(template) || hasRecasedKey(template, ['$type', 'input'])) return null;
+  if (!isPlainObject(forClause) || !hasOnlyKeys(forClause, ['$ref', 'path', 'as'])) return null;
+  if (
+    typeof forClause.$ref !== 'string' ||
+    typeof forClause.path !== 'string' ||
+    typeof forClause.as !== 'string'
+  ) {
+    return null;
+  }
+  if (!isPlainObject(template) || !hasOnlyKeys(template, ['$type', 'name', 'input'])) return null;
   if (typeof template.$type !== 'string') return null;
-  return { forClause, template: template as RepeatInput['template'] };
+  return {
+    forClause: forClause as RepeatInput['forClause'],
+    template: template as RepeatInput['template'],
+  };
 }
 
 /** The refusal for a `repeat` step `readRepeatInput` or the nesting bound turns away. */
 export const REPEAT_SHAPE_ERROR =
-  `a repeat step needs exactly { for, template } with a template "$type", those keys ` +
-  `spelled exactly, nested at most ${REPEAT_NESTING_MAX} deep`;
+  'a repeat step needs exactly { for: { $ref, path, as }, template: { $type, name?, input? } }, ' +
+  `nested at most ${REPEAT_NESTING_MAX} deep`;
+
+/**
+ * Max child steps one `repeat` step may generate, nested repeats multiplied
+ * together. The same number as the batch-estimate cell cap.
+ */
+export const WORKFLOW_REPEAT_MAX_ITERATIONS = 16;
+
+/** The array a `for` path names in `arguments`, by exact own keys, or `null`. */
+function readArgumentsArray(args: unknown, path: string): unknown[] | null {
+  let current: unknown = args;
+  for (const part of path.split('.')) {
+    if (!isPlainObject(current) || !Object.prototype.hasOwnProperty.call(current, part)) {
+      return null;
+    }
+    current = current[part];
+  }
+  return Array.isArray(current) ? current : null;
+}
+
+/**
+ * THE ONE PLACE the "what may a `repeat` iterate" rule lives. A refusal message,
+ * or `null` when the step is not a `repeat` or its loop is bounded.
+ *
+ * A `repeat` may iterate only an array the body's own `arguments` hold: its
+ * length is then fixed in the submitted body, so the orchestrator's quote prices
+ * every child. A loop over another step's output has no length until that step
+ * has run, and is refused. The count, nested repeats multiplied, is capped.
+ */
+export function repeatUnboundedProblem(
+  stepType: unknown,
+  input: unknown,
+  args: unknown,
+  outerIterations = 1
+): string | null {
+  if (!isRepeatStepType(stepType)) return null;
+  const repeat = readRepeatInput(input);
+  if (!repeat) return REPEAT_SHAPE_ERROR;
+  const { forClause, template } = repeat;
+  if (forClause.$ref !== WORKFLOW_ARGUMENTS_REF) {
+    return (
+      `a repeat may only iterate over the workflow's own arguments ("$ref": ` +
+      `"${WORKFLOW_ARGUMENTS_REF}"), not ${JSON.stringify(forClause.$ref)} — pass the list in ` +
+      '"arguments" instead'
+    );
+  }
+  const items = readArgumentsArray(args, forClause.path);
+  if (!items) {
+    return `repeat "for" path ${JSON.stringify(
+      forClause.path
+    )} does not name an array in "arguments"`;
+  }
+  const iterations = outerIterations * items.length;
+  if (iterations > WORKFLOW_REPEAT_MAX_ITERATIONS) {
+    return (
+      `a repeat may run at most ${WORKFLOW_REPEAT_MAX_ITERATIONS} iterations, nested repeats ` +
+      `multiplied (got ${iterations})`
+    );
+  }
+  return repeatUnboundedProblem(template.$type, template.input, args, iterations);
+}
+
+/** `merge` reads other steps through `input.fields[*].$ref`, which is not a reference object. */
+export function isMergeStepType(stepType: unknown): boolean {
+  return typeof stepType === 'string' && stepType.toLowerCase() === 'merge';
+}
+
+/** The refusal for a `merge` step whose sources cannot be read for certain. */
+export const MERGE_SHAPE_ERROR =
+  'a merge step needs a "fields" object whose entries each carry a string "$ref"';
+
+/**
+ * The step or `$arguments` each field of a `merge` reads, or `null` when that
+ * cannot be read for certain (same fail-closed rule as `readRepeatInput`).
+ */
+function readMergeSources(input: unknown): string[] | null {
+  if (!isPlainObject(input)) return null;
+  if (Object.keys(input).some((key) => key !== 'fields' && key.toLowerCase() === 'fields')) {
+    return null;
+  }
+  const { fields } = input;
+  if (!isPlainObject(fields)) return null;
+  const sources: string[] = [];
+  for (const field of Object.values(fields)) {
+    if (!isPlainObject(field)) return null;
+    if (Object.keys(field).some((key) => key !== '$ref' && key.toLowerCase() === '$ref')) {
+      return null;
+    }
+    if (typeof field.$ref !== 'string') return null;
+    sources.push(field.$ref);
+  }
+  return sources;
+}
+
+/**
+ * A step input with `timeout` set on the template of a `repeat` (and of any
+ * `repeat` nested in it), or the same object for any other step. A `repeat`
+ * child takes its timeout from the template, not from the `repeat` step.
+ */
+export function withRepeatTemplateTimeout(
+  stepType: string,
+  input: Record<string, unknown>,
+  timeout: string
+): Record<string, unknown> {
+  if (!isRepeatStepType(stepType)) return input;
+  const repeat = readRepeatInput(input);
+  if (!repeat) return input;
+  const { template } = repeat;
+  return {
+    ...input,
+    template: {
+      ...template,
+      timeout,
+      ...(isPlainObject(template.input)
+        ? { input: withRepeatTemplateTimeout(template.$type, template.input, timeout) }
+        : {}),
+    },
+  };
+}
 
 /**
  * Every `$type` a step can run — its own and, for a `repeat`, its template's.
@@ -217,10 +341,9 @@ function checkSource(
 }
 
 /**
- * Check one step's input. A `repeat` step is the one shape with structure this
- * has to know: its `for` clause names what to iterate (a step or the arguments,
- * with an extra `as` key, so it is not a reference object), and inside its
- * `template` the `as` name is a legal reference source.
+ * Check one step's input. Two step types name their sources outside a reference
+ * object and are read by shape: `repeat` (its `for` clause, with the `as` name a
+ * legal source inside its template) and `merge` (its fields).
  */
 function checkStepInput(
   stepType: unknown,
@@ -229,28 +352,28 @@ function checkStepInput(
   sources: ReadonlySet<string>,
   state: WalkState
 ): string | null {
+  if (isMergeStepType(stepType)) {
+    const mergeSources = readMergeSources(input);
+    if (!mergeSources) return MERGE_SHAPE_ERROR;
+    for (const source of mergeSources) {
+      const problem = checkSource(source, sources, state);
+      if (problem) return problem;
+    }
+    return checkValue(input, depth, sources, state);
+  }
   if (!isRepeatStepType(stepType)) return checkValue(input, depth, sources, state);
   const repeat = readRepeatInput(input);
   if (!repeat) return REPEAT_SHAPE_ERROR;
   const { forClause, template } = repeat;
-  if (typeof forClause.$ref === 'string') {
-    const problem = checkSource(forClause.$ref, sources, state);
-    if (problem) return problem;
-  }
-  for (const entry of Object.values(forClause)) {
-    const problem = checkValue(entry, depth + 2, sources, state);
-    if (problem) return problem;
-  }
-  const templateSources =
-    typeof forClause.as === 'string' ? new Set([...sources, forClause.as]) : sources;
-  for (const [key, entry] of Object.entries(template)) {
-    const problem =
-      key === 'input'
-        ? checkStepInput(template.$type, entry, depth + 2, templateSources, state)
-        : checkValue(entry, depth + 2, templateSources, state);
-    if (problem) return problem;
-  }
-  return null;
+  const sourceProblem = checkSource(forClause.$ref, sources, state);
+  if (sourceProblem) return sourceProblem;
+  return checkStepInput(
+    template.$type,
+    template.input,
+    depth + 2,
+    new Set([...sources, forClause.as]),
+    state
+  );
 }
 
 /**
@@ -261,9 +384,12 @@ function checkStepInput(
  *  - a name is `[a-z][a-z0-9_-]{0,31}`, or exactly the step's own positional
  *    `$<index>`; names are unique; `block-step` is reserved. A step given no
  *    name is named `$<index>`;
- *  - every reference names `$arguments` or an EARLIER step, so the graph has no
- *    cycle and no self-reference by construction. Inside a `repeat` template
- *    the loop variable (`for.as`) is a source too;
+ *  - every source a step reads — a reference, a `repeat`'s `for` clause, a
+ *    `merge` field — names `$arguments` or an EARLIER step, so the graph has no
+ *    cycle and no self-reference. Inside a `repeat` template the loop variable
+ *    (`for.as`) is a source too;
+ *  - a `repeat` iterates only an array in `arguments`, at most
+ *    `WORKFLOW_REPEAT_MAX_ITERATIONS` times (`workflow_repeat_unbounded`);
  *  - at most `WORKFLOW_MAX_REFS` references, and no input nested deeper than
  *    `WORKFLOW_INPUT_DEPTH_MAX`.
  *
@@ -272,6 +398,7 @@ function checkStepInput(
  */
 export function resolveBlockWorkflowGraph(body: {
   steps: readonly BlockWorkflowStepInput[];
+  arguments?: Record<string, unknown>;
 }): BlockWorkflowGraphResult {
   if (body.steps.length > WORKFLOW_MAX_STEPS) {
     return {
@@ -308,6 +435,14 @@ export function resolveBlockWorkflowGraph(body: {
 
     const stepTypes = collectBlockStepTypes(step.$type, step.input);
     if (stepTypes === null) return invalid(index, REPEAT_SHAPE_ERROR);
+    const unbounded = repeatUnboundedProblem(step.$type, step.input, body.arguments);
+    if (unbounded) {
+      return {
+        ok: false,
+        errorCode: 'workflow_repeat_unbounded',
+        error: `workflow step ${index}: ${unbounded}`,
+      };
+    }
     const problem = checkStepInput(step.$type, step.input, 0, earlier, state);
     if (problem) return invalid(index, problem);
 

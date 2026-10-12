@@ -1303,6 +1303,8 @@ export type BlockWorkflowSnapshot = {
    * `cost` stays on the snapshot: the orchestrator reports one price for the whole
    * workflow. A `failed` workflow can carry a non-zero `cost.total` and usable
    * `imageUrls`, because steps that finished before the failing one stay charged.
+   * The author fee is the exception: it is reversed WHOLE for any workflow that
+   * does not succeed, whatever its earlier steps delivered.
    *
    * Present ONLY on a workflow this kind submitted; every other snapshot is
    * byte-identical to before.
