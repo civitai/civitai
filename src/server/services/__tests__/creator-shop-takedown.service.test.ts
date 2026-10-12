@@ -402,6 +402,65 @@ describe('takedownCosmeticShopItem', () => {
     });
   });
 
+  it('claws nothing back from a creator who bought their own sticker and was paid nothing', async () => {
+    mocks.purchaseFindMany.mockResolvedValue([
+      {
+        userId: 11,
+        buzzTransactionId: 'restock-1',
+        unitAmount: 1000,
+        meta: { payouts: [], platformCut: 1000 },
+      },
+    ]);
+
+    const result = await takedownCosmeticShopItem({
+      id: 42,
+      reason: 'IP infringement',
+      moderatorId: 999,
+    });
+
+    expect(mocks.refundMultiAccountTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({ externalTransactionIdPrefix: 'restock-1' })
+    );
+    expect(mocks.createBuzzTransaction).not.toHaveBeenCalled();
+    expect(mocks.refundTransaction).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ refunded: 1, owedBack: 0, clawedBack: 0, failures: [] });
+  });
+
+  it('still reports the reseller share of an unrecorded creator restock as unrecovered', async () => {
+    mocks.shopItemFindUnique.mockResolvedValue({
+      ...shopItemRow,
+      meta: { ...shopItemRow.meta, sellableByOthers: true, sellerShare: 20 },
+    });
+    mocks.purchaseFindMany.mockResolvedValue([
+      { userId: 11, buzzTransactionId: 'restock-3', unitAmount: 1000, meta: null },
+    ]);
+
+    const result = await takedownCosmeticShopItem({
+      id: 42,
+      reason: 'IP infringement',
+      moderatorId: 999,
+    });
+
+    expect(mocks.createBuzzTransaction).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ owedBack: 0, unrecoveredResellerShare: 200 });
+  });
+
+  it('claws nothing back from a creator restock whose payout record never landed', async () => {
+    mocks.purchaseFindMany.mockResolvedValue([
+      { userId: 11, buzzTransactionId: 'restock-2', unitAmount: 1000, meta: null },
+    ]);
+
+    const result = await takedownCosmeticShopItem({
+      id: 42,
+      reason: 'IP infringement',
+      moderatorId: 999,
+    });
+
+    expect(mocks.refundMultiAccountTransaction).toHaveBeenCalledTimes(1);
+    expect(mocks.createBuzzTransaction).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ refunded: 1, owedBack: 0, clawedBack: 0, failures: [] });
+  });
+
   it('falls back to a reversing charge when a recorded payout has no transaction id', async () => {
     mocks.purchaseFindMany.mockResolvedValue([
       {

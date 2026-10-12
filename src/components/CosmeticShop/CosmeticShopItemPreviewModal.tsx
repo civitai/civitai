@@ -25,6 +25,7 @@ import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { useMutateCosmeticShop } from '~/components/CosmeticShop/cosmetic-shop.util';
 import {
   useEquipProfileDecoration,
+  useQueryStickerBalances,
   useQueryUserCosmetics,
 } from '~/components/Cosmetics/cosmetics.util';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
@@ -45,6 +46,7 @@ import dayjs from '~/shared/utils/dayjs';
 import { NotificationToggle } from '~/components/Notifications/NotificationToggle';
 import { CosmeticSample } from '~/components/Shop/CosmeticSample';
 import { stickerPurchaseTerms } from '~/components/Sticker/sticker.util';
+import { canPurchaseShopCosmetic } from '~/components/CosmeticShop/shop-item-purchasable';
 import { stickerSurfaceLabels } from '~/shared/utils/sticker-token';
 
 const { charged, free } = stickerSurfaceLabels();
@@ -147,10 +149,18 @@ export const CosmeticShopItemPreviewModal = ({ shopItem, viaShopUserId }: Props)
   const isTwoColumn = useMatches({ base: false, md: true });
   const { data: userCosmetics, isLoading } = useQueryUserCosmetics();
   const { equip, isLoading: isEquipping } = useEquipProfileDecoration();
+  const isSticker = cosmetic.type === CosmeticType.Sticker;
+  const { data: stickerBalances, isLoading: isLoadingBalances } = useQueryStickerBalances({
+    enabled: isSticker,
+  });
   const hasCosmetic = Object.values(userCosmetics ?? {})
     .flat()
     .some(({ id }) => id === cosmetic.id);
-  const canPurchase = cosmetic.type === CosmeticType.ContentDecoration || !hasCosmetic;
+  const canPurchase = canPurchaseShopCosmetic({
+    type: cosmetic.type,
+    owned: hasCosmetic,
+    stickerRemaining: stickerBalances?.find((b) => b.cosmeticId === cosmetic.id)?.remaining,
+  });
   const isAvailable =
     (shopItem.availableQuantity === null || shopItem.availableQuantity > 0) &&
     (shopItem.availableFrom === null || dayjs(shopItem.availableFrom).isBefore(dayjs()));
@@ -254,12 +264,12 @@ export const CosmeticShopItemPreviewModal = ({ shopItem, viaShopUserId }: Props)
                   {stickerTerms.extraUseLabel ? ` · ${stickerTerms.extraUseLabel}` : ''}
                 </Text>
               )}
-              {isLoading && (
+              {(isLoading || (isSticker && isLoadingBalances)) && (
                 <Center>
                   <Loader type="bars" />
                 </Center>
               )}
-              {!isLoading && (
+              {!isLoading && !(isSticker && isLoadingBalances) && (
                 <>
                   {isResale && (
                     <Paper withBorder radius="md" p="sm">

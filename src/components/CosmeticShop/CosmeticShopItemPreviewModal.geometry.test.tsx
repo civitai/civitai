@@ -42,6 +42,7 @@ vi.mock('~/components/CosmeticShop/cosmetic-shop.util', () => ({
 }));
 vi.mock('~/components/Cosmetics/cosmetics.util', () => ({
   useQueryUserCosmetics: () => ({ data: {}, isLoading: false }),
+  useQueryStickerBalances: () => ({ data: [], isLoading: false }),
   useEquipProfileDecoration: () => ({ equip: vi.fn(), isLoading: false }),
 }));
 

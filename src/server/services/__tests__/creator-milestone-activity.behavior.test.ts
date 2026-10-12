@@ -141,13 +141,14 @@ async function addSales(
     at: string;
     refunded?: boolean;
     id?: string;
+    buyerId?: number;
   }[]
 ) {
   for (const sale of sales)
     await q(
       `INSERT INTO "UserCosmeticShopPurchases"
-        ("buzzTransactionId", "cosmeticId", "shopItemId", "unitAmount", "purchasedAt", refunded)
-       VALUES ($1, $2, $3, $4, $5::timestamp, $6)`,
+        ("buzzTransactionId", "cosmeticId", "shopItemId", "unitAmount", "purchasedAt", refunded, "userId")
+       VALUES ($1, $2, $3, $4, $5::timestamp, $6, $7)`,
       [
         sale.id ?? `tx-${++purchaseSeq}`,
         sale.cosmeticId ?? null,
@@ -155,6 +156,7 @@ async function addSales(
         sale.amount,
         sale.at,
         sale.refunded ?? false,
+        sale.buyerId ?? null,
       ]
     );
 }
@@ -175,7 +177,8 @@ beforeAll(async () => {
     CREATE TABLE "CosmeticShopItem" (id int PRIMARY KEY, "addedById" int);
     CREATE TABLE "UserCosmeticShopPurchases" (
       "buzzTransactionId" text PRIMARY KEY, "cosmeticId" int, "shopItemId" int NOT NULL,
-      "unitAmount" int NOT NULL, "purchasedAt" timestamp(3) NOT NULL, refunded boolean NOT NULL
+      "unitAmount" int NOT NULL, "purchasedAt" timestamp(3) NOT NULL, refunded boolean NOT NULL,
+      "userId" int
     );
     CREATE TABLE "UserCosmeticShopPurchaseCosmetic" (
       "buzzTransactionId" text NOT NULL, "cosmeticId" int NOT NULL, "unitAmount" int NOT NULL,
@@ -364,6 +367,14 @@ describe('shop revenue detector', () => {
     expect((await held(CREATOR)).map((r) => r.key)).toEqual(['earn:shop-sales-100000']);
     expect((await held(QUIET)).map((r) => r.key)).toEqual(['earn:shop-sales-100000']);
     expect(await held(TESTER)).toEqual([]);
+  });
+
+  it("does not count a creator's purchase of their own cosmetic as a sale", async () => {
+    await addSales([
+      { cosmeticId: 1, shopItemId: 40, amount: 100000, at: '2026-03-01', buyerId: CREATOR },
+    ]);
+    await run(SHOP);
+    expect(await held(CREATOR)).toEqual([]);
   });
 
   // A pack built around official or other creators' cosmetics: each member is its creator's sale.

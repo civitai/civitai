@@ -79,6 +79,7 @@ export const shopSalesSource = `SELECT c."createdById" AS "userId", p."purchased
     FROM "UserCosmeticShopPurchases" p
     JOIN "Cosmetic" c ON c.id = p."cosmeticId"
     WHERE NOT p.refunded AND c."createdById" IS NOT NULL
+      AND p."userId" IS DISTINCT FROM c."createdById"
     UNION ALL
     SELECT i."addedById", p."purchasedAt", p."buzzTransactionId",
       greatest(p."unitAmount" - coalesce((

@@ -253,8 +253,8 @@ export type StickerOffer = {
  *
  * ⚠️ Every refusal `purchaseCosmeticShopItem` makes has to be made here too, or
  * the tray offers a price the press then rejects. That is why it takes the
- * viewer: self-created, blocked and sold-out are answers about a person and a
- * moment, not about a listing.
+ * viewer: blocked and sold-out are answers about a person and a moment, not
+ * about a listing.
  */
 export async function getStickerOffers({
   ids,
@@ -314,11 +314,9 @@ export async function getStickerOffers({
     const soldOut =
       listing?.availableQuantity != null &&
       listing.availableQuantity - (listing._count?.purchases ?? 0) <= 0;
-    // The creator is granted their own sticker on approval, so the shop refuses
-    // to sell it to them; the block is refused in either direction, against both
-    // the maker and whoever listed it.
+    // A block is refused in either direction, against both the maker and whoever
+    // listed it.
     const refusedForViewer =
-      cosmetic.createdById === viewerId ||
       (cosmetic.createdById != null && blockedPairIds.includes(cosmetic.createdById)) ||
       (listing?.addedById != null && blockedPairIds.includes(listing.addedById));
 
