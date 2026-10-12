@@ -193,8 +193,18 @@ import {
   resolveBlockVersionContext,
   resolvePageResourceContext,
   snapshotFromWorkflow,
+  buildBlockWorkflowStepsMetadata,
+  WORKFLOW_METADATA_BLOCK_STEPS_KEY,
   WORKFLOW_METADATA_MODEL_SUBSTITUTIONS_KEY,
 } from '~/server/services/blocks/workflow.service';
+import {
+  collectBlockStepTypes,
+  isRepeatStepType,
+  REPEAT_SHAPE_ERROR,
+  repeatUnboundedProblem,
+  resolveBlockWorkflowGraph,
+} from '~/server/services/blocks/workflow-graph';
+import type { ResolvedBlockWorkflowStep } from '~/server/services/blocks/workflow-graph';
 import { projectModelSubstitutions } from '~/shared/generation/model-substitution';
 import {
   assertInlineGraphAirsDeclared,
@@ -228,7 +238,7 @@ import {
   PlatformInternalStepTypeError,
 } from '~/server/services/blocks/steps/orchestrator-denylist';
 // APP-FACING generation type for the spend-attribution row, resolved from the
-// submitted body. Imported (not open-coded at each of the three submit paths) so
+// submitted body. Imported (not open-coded at each submit path) so
 // the `kind` → key and step-id → key mapping has exactly one definition — and so
 // the "registry id, never orchestratorType" decision lives in one place.
 import { resolveBlockGenerationType } from '~/server/services/blocks/generation-type';
@@ -6490,6 +6500,14 @@ export const blocksRouter = router({
       if (input.body.kind === 'training') {
         return await submitTrainingWorkflow({ ctx, claims, body: input.body });
       }
+      if (input.body.kind === 'workflow') {
+        return await submitMultiStepWorkflow({
+          ctx,
+          claims,
+          body: input.body,
+          idempotencyKey: input.idempotencyKey,
+        });
+      }
       // App Blocks STEP-TYPE bridge (RFC #3515 migration step 1) — a SPEND
       // path. Branch to the registry-backed handler, which runs the same
       // developer/page gates and the SAME cap belt (per-user daily +
@@ -9243,6 +9261,9 @@ async function estimateBlockWorkflowCell(
   if (input.body.kind === 'training') {
     return await estimateTrainingWorkflow({ ctx, claims, body: input.body });
   }
+  if (input.body.kind === 'workflow') {
+    return await estimateMultiStepWorkflow({ ctx, claims, body: input.body });
+  }
   // App Blocks STEP-TYPE bridge (RFC #3515 migration step 1). A registered
   // step's cost now comes from a real `whatif` quote, with the declared
   // billing mode as the FLOOR and the fallback — this used to read "not a
@@ -10391,15 +10412,22 @@ const PASS_THROUGH_RECIPE_LABEL = '__passthrough__';
  * `cause` is what keeps that test honest; it is the reason
  * `PlatformInternalStepTypeError` is its own class.
  */
-function assertPassThroughStepTypeAllowed($type: string): void {
+function assertPassThroughStepTypeAllowed($type: string, input: unknown): void {
+  // `null` is a `repeat` whose nested step cannot be read for certain; refused
+  // rather than checked in part.
+  const stepTypes = collectBlockStepTypes($type, input);
+  if (stepTypes === null) throw new TRPCError({ code: 'BAD_REQUEST', message: REPEAT_SHAPE_ERROR });
   try {
-    assertStepTypeAllowed($type, 'block pass-through step');
+    for (const stepType of stepTypes) assertStepTypeAllowed(stepType, 'block pass-through step');
   } catch (e) {
     if (e instanceof PlatformInternalStepTypeError) {
       throw new TRPCError({ code: 'FORBIDDEN', message: e.message, cause: e });
     }
     throw e;
   }
+  // This arm's body has no `arguments`, so there is nothing a `repeat` may iterate.
+  const unbounded = repeatUnboundedProblem($type, input, undefined);
+  if (unbounded) throw new TRPCError({ code: 'BAD_REQUEST', message: unbounded });
 }
 
 /**
@@ -10449,16 +10477,16 @@ function stampUnquotedTimeout(
 
 /**
  * The refusal for a training `$type` the orchestrator would not quote, or `null`
- * when the step may proceed. Shared by the pass-through estimate and submit so
- * the two cannot disagree about which steps are refused.
+ * when the step may proceed. Shared by the estimate and the submit of the
+ * pass-through and multi-step arms, so none can disagree about which steps are
+ * refused.
  *
- * A training run takes far longer than any `maxBuzz` an app could sensibly
- * declare as seconds, so the stamped-timeout fallback (`stampUnquotedTimeout`)
- * would cancel the run partway through. Refusing up front lets the block retry
+ * A training run takes far longer than the timeout the no-quote fallback stamps
+ * (`stampUnquotedTimeout`), which would cancel the run partway through. Refusing up front lets the block retry
  * once a quote is available.
  *
- * The snapshot carries no `cost`: there is no price to show, and the declared
- * `maxBuzz` is not one.
+ * The snapshot carries no `cost`: there is no price to show, and a ceiling is
+ * not one.
  */
 function refuseUnquotedTraining(
   stepType: string,
@@ -11783,7 +11811,7 @@ async function estimatePassThroughStepWorkflow(opts: {
 }) {
   const { ctx, claims, body } = opts;
   const userId = await assertStepRequestAllowed(claims);
-  assertPassThroughStepTypeAllowed(body.$type);
+  assertPassThroughStepTypeAllowed(body.$type, body.input);
 
   const orchestratorStep = buildPassThroughOrchestratorStep(body);
   // The token mint is INSIDE the quote's catch on this path and outside it on
@@ -11795,8 +11823,11 @@ async function estimatePassThroughStepWorkflow(opts: {
   if (token) {
     quote = await quotePassThroughBuzz({
       claims,
-      body,
-      orchestratorStep,
+      steps: [orchestratorStep],
+      tags: buildPassThroughWorkflowTags(claims, body.$type),
+      callerText: JSON.stringify(body.input),
+      stepType: body.$type,
+      priceCheckLabel: PASS_THROUGH_RECIPE_LABEL,
       token,
       phase: 'estimate',
     });
@@ -11820,25 +11851,29 @@ async function estimatePassThroughStepWorkflow(opts: {
 }
 
 type PassThroughQuote =
-  | { quotedBuzz: number }
+  | {
+      quotedBuzz: number;
+      /** The whole `whatif` response — `cost.base` / `cost.variable` price an author fee. */
+      whatIfResult: Awaited<ReturnType<typeof submitWorkflow>>;
+    }
   | { quotedBuzz: null; failure: PassThroughQuoteFailure };
 
 /**
- * The orchestrator's live price for an already-built pass-through step, or a
- * `null` price and why it could not be had.
+ * The orchestrator's live price for already-built step(s) — one pass-through
+ * step, or every step of a `kind:'workflow'` body — or a `null` price and why it
+ * could not be had.
  *
  * Only the orchestrator ROUND-TRIP is swallowed. The `$type` refusal is
- * deliberately outside this, at both call sites, so a deterministic denial can
+ * deliberately outside this, at every call site, so a deterministic denial can
  * never degrade into "no quote" and then into a price. (The registry arm learned
  * that the expensive way; see the note at `estimateStepWorkflow`'s build site.)
  *
  * 🔴 EVERY OUTCOME IS COUNTED, and it matters MORE here than on the registry arm
  * it borrows the counter from. There a missing quote fails the submit closed, so
- * the outage is loud; here the arm deliberately falls back to the declared
- * `maxBuzz` and proceeds (a training `$type` excepted, see
- * `refuseUnquotedTraining`) — so without this pair, an orchestrator that stopped
- * pricing would move every pass-through job onto its declared ceiling with
- * nothing anywhere moving. Read the ratio, not `estimate_absent` alone.
+ * the outage is loud; here both arms deliberately fall back to their ceiling
+ * and proceed (a training `$type` excepted, see `refuseUnquotedTraining`) — so
+ * without this pair, an orchestrator that stopped pricing would move every job
+ * onto its ceiling with nothing anywhere moving. Read the ratio, not `estimate_absent` alone.
  *
  * 🔴 LABELLED WITH A CONSTANT, never the submitted `$type` — `step` is a metric
  * label and the `$type` set is open by construction on this arm. Same reasoning
@@ -11846,14 +11881,28 @@ type PassThroughQuote =
  */
 async function quotePassThroughBuzz(opts: {
   claims: BlockClaims;
-  body: PassThroughStepBody;
-  orchestratorStep: ReturnType<typeof buildPassThroughOrchestratorStep>;
+  /**
+   * The built step(s) to price — the SAME objects the submit sends. One for the
+   * pass-through arm; every step of a `kind:'workflow'` body, priced as one
+   * workflow.
+   */
+  steps: ReadonlyArray<ReturnType<typeof buildPassThroughOrchestratorStep>>;
+  /** The tags the submit will send, so the quote prices the same workflow. */
+  tags: string[];
+  /** A `kind:'workflow'` body's `arguments`, forwarded as the workflow's own. */
+  workflowArguments?: Record<string, unknown>;
+  /** The caller's own submitted input, serialized — see `classifyQuoteFailure`. */
+  callerText: string;
+  /** The submitted `$type`(s), for the failure log line only. */
+  stepType: string;
+  /** The CONSTANT `step` label the price-check counter is emitted under. */
+  priceCheckLabel: string;
   token: string;
   /**
    * 🔴 THE PHASE, THREADED, NOT ASSUMED. `estimate_*` is defined by the counter
-   * as "one emit per estimate, BEFORE any spend exists". This helper serves both
-   * call sites, so a fixed label would file the one event that precedes a
-   * reservation — a submit proceeding at the declared ceiling because no quote
+   * as "one emit per estimate, BEFORE any spend exists". This helper serves
+   * estimates and submits, so a fixed label would file the one event that precedes a
+   * reservation — a submit proceeding at its ceiling because no quote
    * was had — into the estimate bucket, blended with estimate traffic under one
    * constant `step` label.
    *
@@ -11862,7 +11911,8 @@ async function quotePassThroughBuzz(opts: {
    */
   phase: 'estimate' | 'submit';
 }): Promise<PassThroughQuote> {
-  const { claims, body, orchestratorStep, token, phase } = opts;
+  const { claims, steps, tags, workflowArguments, callerText, stepType, token, phase } = opts;
+  const { priceCheckLabel } = opts;
   const [quoted, absent] =
     phase === 'estimate'
       ? (['estimate_quoted', 'estimate_absent'] as const)
@@ -11873,23 +11923,24 @@ async function quotePassThroughBuzz(opts: {
       token,
       body: {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        steps: [orchestratorStep as any],
-        tags: buildPassThroughWorkflowTags(claims, body.$type),
+        steps: steps as any,
+        tags,
         currencies: resolveBlockCurrenciesForAccount(isGreen, undefined),
         ...(allowMatureContent === false ? { allowMatureContent: false } : {}),
+        ...(workflowArguments ? { arguments: workflowArguments } : {}),
       },
       query: { whatif: true },
     });
     const total = quote.cost?.total;
     if (typeof total !== 'number' || !Number.isFinite(total)) {
-      recordStepPriceCheck(PASS_THROUGH_RECIPE_LABEL, absent);
+      recordStepPriceCheck(priceCheckLabel, absent);
       return { quotedBuzz: null, failure: { kind: 'unpriced' } };
     }
-    recordStepPriceCheck(PASS_THROUGH_RECIPE_LABEL, quoted);
-    return { quotedBuzz: Math.ceil(total) };
+    recordStepPriceCheck(priceCheckLabel, quoted);
+    return { quotedBuzz: Math.ceil(total), whatIfResult: quote };
   } catch (e) {
-    recordStepPriceCheck(PASS_THROUGH_RECIPE_LABEL, absent);
-    const failure = classifyQuoteFailure(e, JSON.stringify(body.input));
+    recordStepPriceCheck(priceCheckLabel, absent);
+    const failure = classifyQuoteFailure(e, callerText);
     const response = getOrchestratorSubmitFailure(e);
     void Promise.resolve(
       logToAxiom({
@@ -11897,7 +11948,7 @@ async function quotePassThroughBuzz(opts: {
         type: quoteFailureLogLevel(failure, e),
         outcome: failure.kind,
         phase,
-        stepType: body.$type,
+        stepType,
         appBlockId: claims.appBlockId,
         code: e instanceof TRPCError ? e.code : null,
         attempt: response?.attempt ?? null,
@@ -11954,7 +12005,7 @@ async function submitPassThroughStepWorkflow(opts: {
   // before the orchestrator token, before the quote, before every reservation.
   // A refusal here therefore costs no orchestrator call and has nothing to
   // refund. A denylist the wire does not consult is decoration.
-  assertPassThroughStepTypeAllowed(body.$type);
+  assertPassThroughStepTypeAllowed(body.$type, body.input);
 
   const { allowMatureContent, isGreen } = resolveBlockMaturity(claims);
   // A pass-through body carries no `accountType` (its `.strict()` wire shape has
@@ -11969,8 +12020,11 @@ async function submitPassThroughStepWorkflow(opts: {
   const token = await getOrchestratorToken(userId, ctx);
   const quote = await quotePassThroughBuzz({
     claims,
-    body,
-    orchestratorStep,
+    steps: [orchestratorStep],
+    tags,
+    callerText: JSON.stringify(body.input),
+    stepType: body.$type,
+    priceCheckLabel: PASS_THROUGH_RECIPE_LABEL,
     token,
     phase: 'submit',
   });
@@ -12325,14 +12379,10 @@ async function submitPassThroughStepWorkflow(opts: {
     spendWorkflowId !== 'whatif' &&
     snapshot.status !== 'failed'
   ) {
-    // 🔴 THIS PATH CHARGES NO AUTHOR FEE — same reason as customComfy, and the
-    // same retired no-op call. This arm is POST-PAID and reserves a CEILING; its
-    // pre-submit quote goes through `quotePassThroughStepBuzz`, which returns
-    // `cost.total` and nothing else, so there is no `cost.base` at reservation
-    // time to price a fee from and nothing is reserved for one. Widening that
-    // helper to surface a base is what would wire a fee here; until then the
-    // exemption in the seam ledger is what keeps the population closed, and it
-    // fails if this path silently grows a charge OR if the exemption outlives it.
+    // 🔴 THIS PATH CHARGES NO AUTHOR FEE. It is POST-PAID and reserves the app's
+    // declared CEILING, which settles down, so nothing is reserved for a fee. The
+    // exemption in the seam ledger keeps the population closed: it fails if this
+    // path silently grows a charge OR if the exemption outlives it.
     void (async () => {
       const { recordSpendAttribution } = await import(
         '~/server/services/blocks/buzz-attribution.service'
@@ -12387,6 +12437,613 @@ async function submitPassThroughStepWorkflow(opts: {
         // simply not passed, and `null` is a legitimate value here, so nothing
         // surfaced it. An untyped spend event can never be typed retrospectively.
         generationType: resolveBlockGenerationType(body),
+      });
+    })().catch(() => {
+      /* best-effort: a failed attribution write never breaks submit */
+    });
+  }
+
+  return genResult;
+}
+
+// App Blocks MULTI-STEP bridge (`kind: 'workflow'`): N pass-through steps as ONE
+// workflow. 🔴 The quote is not a maximum for a chained workflow — the
+// orchestrator prices a step again once the values it references resolve — so the
+// settle corrects the cap counters UP as well as down (`correctOverage`).
+
+type MultiStepWorkflowBody = Extract<BlockWorkflowBody, { kind: 'workflow' }>;
+
+/** Constant observability labels — never a submitted `$type` (metric cardinality). */
+const MULTI_STEP_ENGINE_LABEL = 'multistep';
+const MULTI_STEP_RECIPE_LABEL = '__workflow__';
+
+/** A refusal a block can branch on: failed-shape snapshot plus an `errorCode`. */
+function multiStepRefusal(
+  errorCode: NonNullable<BlockWorkflowSnapshot['errorCode']>,
+  error: string
+): { snapshot: BlockWorkflowSnapshot } {
+  return { snapshot: { workflowId: 'failed', status: 'failed', error, errorCode } };
+}
+
+/**
+ * The checks a `kind:'workflow'` body passes before anything is spent or sent:
+ * the step graph, then the step-type denylist on every step. Shared by the
+ * estimate and the submit so the two refuse the same bodies.
+ *
+ * Returns the refusal rather than throwing it: a throw reaches a block as a bare
+ * failed snapshot with no `errorCode`.
+ */
+function prepareMultiStepWorkflow(
+  body: MultiStepWorkflowBody
+): { refusal: { snapshot: BlockWorkflowSnapshot } } | { steps: ResolvedBlockWorkflowStep[] } {
+  const graph = resolveBlockWorkflowGraph(body);
+  if (!graph.ok) return { refusal: multiStepRefusal(graph.errorCode, graph.error) };
+  for (const [index, step] of graph.steps.entries()) {
+    for (const stepType of step.stepTypes) {
+      try {
+        assertStepTypeAllowed(stepType, `workflow step ${index}`);
+      } catch (e) {
+        if (!(e instanceof PlatformInternalStepTypeError)) throw e;
+        return { refusal: multiStepRefusal('workflow_step_denied', e.message) };
+      }
+    }
+  }
+  return { steps: graph.steps };
+}
+
+/** Each `input` is the app's own object, forwarded unmodified. */
+function buildMultiStepOrchestratorSteps(
+  steps: readonly ResolvedBlockWorkflowStep[]
+): Array<ReturnType<typeof buildPassThroughOrchestratorStep>> {
+  return steps.map((step) => ({ $type: step.$type, name: step.name, input: step.input }));
+}
+
+/**
+ * The multi-step arm's tags — constants only, like the pass-through arm's (see
+ * `buildPassThroughWorkflowTags` for why no app text may reach this array), plus
+ * the training tag when any step runs a training `$type`.
+ */
+function buildMultiStepWorkflowTags(
+  claims: BlockClaims,
+  steps: readonly ResolvedBlockWorkflowStep[]
+): string[] {
+  const tags = buildWorkflowTags(claims, MULTI_STEP_ENGINE_LABEL, 'workflow');
+  return steps.some((step) => step.stepTypes.some(isTrainingStepType))
+    ? [...tags, TRAINING_WORKFLOW_TAG]
+    : tags;
+}
+
+/**
+ * The refusal for a workflow the orchestrator would not price, when it may not
+ * proceed at its ceiling: one running a training step (see
+ * `refuseUnquotedTraining`), or one with a `repeat` at any depth. A step
+ * `timeout` is a deadline from workflow creation shared by every child of a
+ * `repeat`, so it cannot bound their spend.
+ */
+function refuseUnpricedMultiStep(
+  steps: readonly ResolvedBlockWorkflowStep[],
+  quote: PassThroughQuote
+): { snapshot: BlockWorkflowSnapshot } | null {
+  const training = refuseUnquotedTraining(multiStepTrainingType(steps), quote);
+  if (training) return training;
+  if (quote.quotedBuzz !== null) return null;
+  const index = steps.findIndex((step) => step.stepTypes.some(isRepeatStepType));
+  if (index === -1) return null;
+  return multiStepRefusal(
+    'workflow_repeat_unbounded',
+    `workflow step ${index}: a workflow with a repeat needs a price quote and none could be ` +
+      'obtained; try again'
+  );
+}
+
+function multiStepTrainingType(steps: readonly ResolvedBlockWorkflowStep[]): string {
+  return steps.flatMap((step) => step.stepTypes).find(isTrainingStepType) ?? '';
+}
+
+function multiStepWorkflowCeiling(perStepBudget: number, stepCount: number): number {
+  return perStepBudget * stepCount;
+}
+
+/** The serialized step inputs and arguments — the caller's own text, for a quote refusal. */
+function multiStepCallerText(body: MultiStepWorkflowBody): string {
+  return JSON.stringify([body.steps.map((step) => step.input), body.arguments ?? null]);
+}
+
+/**
+ * MULTI-STEP ESTIMATE. One `whatif` for the whole workflow, plus the author fee
+ * the submit will reserve — so the number shown is the number reserved.
+ *
+ * With no quote it shows the ceiling, which is what the submit reserves then. A
+ * workflow running a training `$type` or a `repeat` is refused instead, on both
+ * paths (`refuseUnpricedMultiStep`).
+ */
+async function estimateMultiStepWorkflow(opts: {
+  ctx: Context;
+  claims: BlockClaims;
+  body: MultiStepWorkflowBody;
+}) {
+  const { ctx, claims, body } = opts;
+  const userId = await assertStepRequestAllowed(claims);
+  const prepared = prepareMultiStepWorkflow(body);
+  if ('refusal' in prepared) return prepared.refusal;
+
+  const orchestratorSteps = buildMultiStepOrchestratorSteps(prepared.steps);
+  // Inside the estimate's degradation, outside the submit's — see the same line
+  // in `estimatePassThroughStepWorkflow`.
+  const token = await getOrchestratorToken(userId, ctx).catch(() => null);
+  let quote: PassThroughQuote = { quotedBuzz: null, failure: { kind: 'unavailable' } };
+  if (token) {
+    quote = await quotePassThroughBuzz({
+      claims,
+      steps: orchestratorSteps,
+      tags: buildMultiStepWorkflowTags(claims, prepared.steps),
+      workflowArguments: body.arguments,
+      callerText: multiStepCallerText(body),
+      stepType: prepared.steps.map((step) => step.$type).join(','),
+      priceCheckLabel: MULTI_STEP_RECIPE_LABEL,
+      token,
+      phase: 'estimate',
+    });
+  } else {
+    recordStepPriceCheck(MULTI_STEP_RECIPE_LABEL, 'estimate_absent');
+  }
+
+  const refusal = refuseUnpricedMultiStep(prepared.steps, quote);
+  if (refusal) return refusal;
+
+  const whatIfResult = quote.quotedBuzz === null ? null : quote.whatIfResult;
+  const workflowGenerationType = resolveBlockGenerationType(body);
+  // DISCLOSING QUOTE — the same call the submit makes, on the same `cost.base`.
+  // An absent quote prices no fee, as on the registered-step estimate.
+  const authorFeeQuote = await quoteBlockAuthorFee({
+    baseGenerationBuzz: whatIfResult?.cost?.base,
+    priceIsCap: whatIfResult?.cost?.variable,
+    generationType: workflowGenerationType,
+    appId: claims.appId,
+    viewerUserId: userId,
+    workflowLabel: BLOCK_AUTHOR_FEE_ESTIMATE_LABEL,
+    privateRun: claims.privateRun === true,
+    // Unbounded surface — see the flag's own note on `quoteBlockAuthorFee`.
+    suppressQuoteLogs: true,
+  });
+  // One local feeds both the sum and `cost.authorFee`, so they cannot disagree.
+  const shownAuthorFeeBuzz = authorFeeQuote.charge ? authorFeeQuote.feeBuzz : 0;
+  // `pricesAuthorFee: false` — this read is only the no-quote display, and no fee
+  // can be priced without a quote, so the number it yields carries none.
+  const shownGenerationBuzz =
+    quote.quotedBuzz ??
+    multiStepWorkflowCeiling(
+      blockPerCallBudget(claims, { pricesAuthorFee: false }),
+      prepared.steps.length
+    );
+  const shownBuzz = shownGenerationBuzz + shownAuthorFeeBuzz;
+
+  return {
+    snapshot: {
+      // Non-empty sentinel: the SDK's inbound validator drops empty-workflowId
+      // snapshots. The block treats estimate as a cost quote and never polls it.
+      workflowId: 'wf_estimate',
+      status: 'pending' as const,
+      cost: { total: shownBuzz, authorFee: shownAuthorFeeBuzz },
+    },
+  };
+}
+
+/**
+ * MULTI-STEP SUBMIT. Same order and refund rules as
+ * `submitPassThroughStepWorkflow`, plus the author fee priced in before the gate.
+ */
+async function submitMultiStepWorkflow(opts: {
+  ctx: Context;
+  claims: BlockClaims;
+  body: MultiStepWorkflowBody;
+  /** OPTIONAL client idempotency key → orchestrator externalId. */
+  idempotencyKey?: string;
+}) {
+  const { ctx, claims, body, idempotencyKey } = opts;
+
+  const blockExternalId = idempotencyKey
+    ? composeBlockExternalId(claims.appBlockId, idempotencyKey)
+    : mintServerBlockExternalId();
+
+  const userId = await assertStepRequestAllowed(claims);
+
+  // 🔴 BEFORE EVERYTHING THAT COSTS SOMETHING — the orchestrator token, the quote
+  // and every reservation. A refusal here costs no orchestrator call and has
+  // nothing to refund.
+  const prepared = prepareMultiStepWorkflow(body);
+  if ('refusal' in prepared) return prepared.refusal;
+  const stepCount = prepared.steps.length;
+
+  const { allowMatureContent, isGreen } = resolveBlockMaturity(claims);
+  const currencies = resolveBlockCurrenciesForAccount(isGreen, undefined);
+
+  const orchestratorSteps = buildMultiStepOrchestratorSteps(prepared.steps);
+  const tags = buildMultiStepWorkflowTags(claims, prepared.steps);
+  const workflowGenerationType = resolveBlockGenerationType(body);
+
+  const token = await getOrchestratorToken(userId, ctx);
+  const quote = await quotePassThroughBuzz({
+    claims,
+    steps: orchestratorSteps,
+    tags,
+    workflowArguments: body.arguments,
+    callerText: multiStepCallerText(body),
+    stepType: prepared.steps.map((step) => step.$type).join(','),
+    priceCheckLabel: MULTI_STEP_RECIPE_LABEL,
+    token,
+    phase: 'submit',
+  });
+  const { quotedBuzz } = quote;
+  const whatIfResult = quote.quotedBuzz === null ? null : quote.whatIfResult;
+
+  // `pricesAuthorFee: true` — the number compared against it carries the fee.
+  // 🔴 NOT a pass-through for `claims.buzzBudget`: it is 0 for an editor's
+  // private run. See `blockPerCallBudget`.
+  const perStepBudget = blockPerCallBudget(claims, { pricesAuthorFee: true });
+  const workflowCeiling = multiStepWorkflowCeiling(perStepBudget, stepCount);
+
+  // 🔴 THE AUTHOR FEE IS PRICED IN BEFORE THE GATE AND BEFORE EVERY RESERVATION,
+  // as on the txt2img and registered-step paths: `reserveBuzz` is what the budget
+  // gate and all four reservations are taken against, so the fee has to be inside
+  // it. ONE fee for the whole workflow, on the whole workflow's `cost.base`; with
+  // no quote there is no base and no fee.
+  const authorFeeQuote = await quoteBlockAuthorFee({
+    baseGenerationBuzz: whatIfResult?.cost?.base,
+    priceIsCap: whatIfResult?.cost?.variable,
+    generationType: workflowGenerationType,
+    appId: claims.appId,
+    viewerUserId: userId,
+    workflowLabel: blockExternalId,
+    privateRun: claims.privateRun === true,
+  });
+  const reservedAuthorFeeBuzz = authorFeeQuote.charge ? authorFeeQuote.feeBuzz : 0;
+  // 🔴 TWO NUMBERS, for the reason spelled out in `submitStepWorkflow`: the settle
+  // compares the orchestrator's GENERATION cost against the generation leg alone.
+  // Quoted → the quote. Unquoted → the ceiling.
+  const reserveGenerationBuzz = quotedBuzz ?? workflowCeiling;
+  const reserveBuzz = reserveGenerationBuzz + reservedAuthorFeeBuzz;
+  const refusalCost = { total: reserveBuzz, authorFee: reservedAuthorFeeBuzz };
+
+  // With no quote each step gets a timeout of the per-step budget in seconds —
+  // the pass-through arm's fallback, with the budget standing in for `maxBuzz`.
+  // (An unpriced workflow with a `repeat` never gets here; see
+  // `refuseUnpricedMultiStep`.)
+  if (quotedBuzz === null) {
+    for (const step of orchestratorSteps) stampUnquotedTimeout(step, perStepBudget);
+  }
+
+  // (1) STATIC pre-submit gate: the whole workflow, fee included, must fit under
+  // the ceiling. A zero ceiling refuses everything — without that clause an
+  // unquoted workflow would reserve 0 against a ceiling of 0 and pass.
+  if (workflowCeiling <= 0 || reserveBuzz > workflowCeiling) {
+    return {
+      snapshot: {
+        workflowId: 'failed',
+        status: 'failed' as const,
+        cost: refusalCost,
+        error:
+          `insufficient buzz budget: workflow price ${reserveBuzz} exceeds budget ` +
+          `${workflowCeiling} (${stepCount} steps at ${perStepBudget} each)`,
+      },
+    };
+  }
+
+  // ── GEN IDEMPOTENCY CLAIM — before the reservations and the orchestrator
+  //    submit, so two concurrent same-key submits cannot both reserve and both
+  //    charge. Fail-CLOSED on a redis error; every non-committed exit RELEASEs.
+  let genClaimKey: string | null = null;
+  if (idempotencyKey) {
+    let claim: BlockGenIdempotencyClaim<{ snapshot: ReturnType<typeof snapshotFromWorkflow> }>;
+    try {
+      claim = await claimGenIdempotency<{ snapshot: ReturnType<typeof snapshotFromWorkflow> }>(
+        userId,
+        claims.appBlockId,
+        idempotencyKey
+      );
+    } catch {
+      throw new TRPCError({
+        code: 'INTERNAL_SERVER_ERROR',
+        message: 'generation idempotency unavailable; please retry',
+      });
+    }
+    if (claim.state === 'replay') return claim.result;
+    if (claim.state === 'in_progress') {
+      throw new TRPCError({
+        code: 'CONFLICT',
+        message: 'a generation with this idempotency key is already in progress',
+      });
+    }
+    genClaimKey = claim.key;
+  }
+
+  // After the claim, not before it — see the same line in
+  // `submitPassThroughStepWorkflow`.
+  const unpricedRefusal = refuseUnpricedMultiStep(prepared.steps, quote);
+  if (unpricedRefusal) {
+    if (genClaimKey) await releaseGenIdempotency(genClaimKey);
+    return unpricedRefusal;
+  }
+
+  // (2) Reserve against the per-user cumulative cap.
+  let reservation: Awaited<ReturnType<typeof reserveBlockBuzzSpendForClaims>>;
+  try {
+    reservation = await reserveBlockBuzzSpendForClaims(claims, userId, reserveBuzz);
+  } catch (e) {
+    if (genClaimKey) await releaseGenIdempotency(genClaimKey);
+    throw e;
+  }
+  const { total, key: buzzCapKey, cap: buzzCap } = reservation;
+  if (total > buzzCap) {
+    await refundBlockBuzzReservation(reservation, reserveBuzz);
+    if (genClaimKey) await releaseGenIdempotency(genClaimKey);
+    return {
+      snapshot: {
+        workflowId: 'failed',
+        status: 'failed' as const,
+        cost: refusalCost,
+        error:
+          claims.reviewRunForReal === true
+            ? `review run-for-real Buzz cap reached: ${total - reserveBuzz} already ` +
+              `spent this review session, this workflow may cost up to ${reserveBuzz}, ` +
+              `session cap is ${buzzCap}`
+            : `daily Buzz cap reached: ${total - reserveBuzz} already spent today ` +
+              `across your installed apps, this workflow may cost up to ${reserveBuzz}, ` +
+              `daily cap is ${buzzCap}`,
+      },
+    };
+  }
+
+  // ── CONSENT BUDGET — the viewer's own per-app ceiling, on the same number.
+  if (consentBudgetExceeded(reservation)) {
+    await refundBlockBuzzReservation(reservation, reserveBuzz);
+    if (genClaimKey) await releaseGenIdempotency(genClaimKey);
+    return {
+      snapshot: {
+        workflowId: 'failed',
+        status: 'failed' as const,
+        cost: refusalCost,
+        error: consentBudgetRejection(
+          reservation.consent,
+          reserveBuzz,
+          `this workflow may cost up to ${reserveBuzz}`
+        ),
+      },
+    };
+  }
+
+  // 🔴 (3) Reserve against the PER-APP aggregate cap (daily Buzz + velocity).
+  // The velocity ceiling counts generations: one per step, or one per iteration
+  // of a `repeat`. Skipped ONLY for DEV tokens, as every kind does.
+  const units = prepared.steps.reduce((sum, step) => sum + step.generations, 0);
+  let appSpendReserve: { key: AppSpendDailyKey; cost: number } | null = null;
+  if (claims.dev !== true) {
+    const { reserveAppSpend } = await import('~/server/services/blocks/app-spend-cap.service');
+    const appSpend = await reserveAppSpend(claims.appBlockId, reserveBuzz, { units });
+    if (!appSpend.allowed) {
+      await refundBlockBuzzReservation(reservation, reserveBuzz);
+      if (genClaimKey) await releaseGenIdempotency(genClaimKey);
+      return {
+        snapshot: {
+          workflowId: 'failed',
+          status: 'failed' as const,
+          cost: refusalCost,
+          error:
+            appSpend.reason === 'velocity'
+              ? 'app generation rate limit reached: this app has run too many generations in a short window — please retry shortly'
+              : appSpend.reason === 'unavailable'
+              ? 'generation temporarily unavailable — please retry shortly'
+              : 'app daily spend cap reached: this app has hit its aggregate daily generation-spend ceiling — please try again later',
+        },
+      };
+    }
+    if (appSpend.dailyKey) appSpendReserve = { key: appSpend.dailyKey, cost: reserveBuzz };
+  }
+
+  // (4) APP DEV TUNNEL per-session spend backstop.
+  let devSessionReserve: { sessionId: string; cost: number } | null = null;
+  {
+    const { getActiveDevTunnel, reserveDevSessionBuzz } = await import(
+      '~/server/services/blocks/dev-tunnel.service'
+    );
+    const devTunnel = await getActiveDevTunnel(userId, claims.blockId).catch(() => null);
+    if (devTunnel) {
+      const reserved = await reserveDevSessionBuzz(
+        devTunnel.sessionId,
+        reserveBuzz,
+        devTunnel.spendCapBuzz
+      );
+      if (!reserved.allowed) {
+        await refundBlockBuzzReservation(reservation, reserveBuzz);
+        if (appSpendReserve) {
+          const { refundAppSpend } = await import('~/server/services/blocks/app-spend-cap.service');
+          await refundAppSpend(appSpendReserve.key, appSpendReserve.cost);
+        }
+        if (genClaimKey) await releaseGenIdempotency(genClaimKey);
+        return {
+          snapshot: {
+            workflowId: 'failed',
+            status: 'failed' as const,
+            cost: refusalCost,
+            error:
+              `dev tunnel session Buzz cap reached: ${reserved.total} already spent ` +
+              `this dev session, this workflow may cost up to ${reserveBuzz}, ` +
+              `session cap is ${devTunnel.spendCapBuzz}`,
+          },
+        };
+      }
+      devSessionReserve = { sessionId: devTunnel.sessionId, cost: reserveBuzz };
+    }
+  }
+
+  // ── Submit. On ANY throw AFTER reserving, refund on ALL keys and re-throw.
+  let snapshot: ReturnType<typeof snapshotFromWorkflow>;
+  let realizedTransactions: Awaited<ReturnType<typeof submitWorkflow>>['transactions'];
+  // Read off the raw response, never `snapshot` — see the txt2img path.
+  let realizedBaseCost: number | null = null;
+  let realizedPriceIsCap: boolean | null = null;
+  const submittedAt = Date.now();
+  try {
+    const submitted = await submitWorkflow({
+      token,
+      body: {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        steps: orchestratorSteps as any,
+        tags,
+        currencies,
+        ...(allowMatureContent === false ? { allowMatureContent: false } : {}),
+        ...(body.arguments ? { arguments: body.arguments } : {}),
+        // Which steps this submit named, so a later poll can tell them from a
+        // step the orchestrator added. See `WORKFLOW_METADATA_BLOCK_STEPS_KEY`.
+        metadata: {
+          [WORKFLOW_METADATA_BLOCK_STEPS_KEY]: buildBlockWorkflowStepsMetadata(prepared.steps),
+        },
+        externalId: blockExternalId,
+      },
+    });
+    snapshot = snapshotFromWorkflow(submitted);
+    realizedTransactions = submitted.transactions;
+    realizedBaseCost = typeof submitted.cost?.base === 'number' ? submitted.cost.base : null;
+    realizedPriceIsCap = submitted.cost?.variable === true;
+  } catch (e) {
+    await refundBlockBuzzReservation(reservation, reserveBuzz);
+    if (appSpendReserve) {
+      const { refundAppSpend } = await import('~/server/services/blocks/app-spend-cap.service');
+      await refundAppSpend(appSpendReserve.key, appSpendReserve.cost);
+    }
+    if (devSessionReserve) {
+      const { refundDevSessionBuzz } = await import('~/server/services/blocks/dev-tunnel.service');
+      await refundDevSessionBuzz(devSessionReserve.sessionId, devSessionReserve.cost);
+    }
+    if (genClaimKey) await releaseGenIdempotency(genClaimKey);
+    throw e;
+  }
+
+  const genResult = { snapshot };
+  if (genClaimKey) await finalizeGenIdempotency(genClaimKey, genResult);
+
+  if (snapshot.workflowId && snapshot.workflowId !== 'failed' && snapshot.workflowId !== 'whatif') {
+    // ── The settle record. The terminal poll/cancel hook refunds
+    // `ceiling − actual` on every reservation key and, because this record asks
+    // for it, ADDS `actual − ceiling` when the workflow billed above its quote.
+    await persistCustomComfySettle({
+      workflowId: snapshot.workflowId,
+      buzzCapKey,
+      consentBudgetKey: reservation.consent?.key ?? null,
+      appSpendKey: appSpendReserve?.key ?? null,
+      ...(devSessionReserve ? { devSessionId: devSessionReserve.sessionId } : {}),
+      // 🔴 The GENERATION leg, not `reserveBuzz`: settle compares it against the
+      // generation's realized `cost.total`; the fee is a separate charge.
+      ceiling: reserveGenerationBuzz,
+      engine: MULTI_STEP_ENGINE_LABEL,
+      recipe: MULTI_STEP_RECIPE_LABEL,
+      submittedAt,
+      correctOverage: true,
+    });
+    // G6 — persistent output queue (best-effort, non-dev), as every kind does.
+    if (claims.dev !== true) {
+      const realWorkflowId = snapshot.workflowId;
+      void (async () => {
+        const { upsertBlockWorkflowOnSubmit } = await import(
+          '~/server/services/blocks/block-workflows.service'
+        );
+        await upsertBlockWorkflowOnSubmit({
+          workflowId: realWorkflowId,
+          appBlockId: claims.appBlockId,
+          blockInstanceId: claims.blockInstanceId,
+          userId,
+          status: snapshot.status,
+        });
+      })().catch(() => {
+        /* best-effort: a failed queue write never breaks (or slows) submit */
+      });
+    }
+  }
+
+  // ── Durable audit row, server-derived from the VERIFIED claims, fire-and-forget.
+  {
+    const realizedCost = snapshot.cost?.total;
+    const invocationCost = typeof realizedCost === 'number' ? realizedCost : reserveBuzz;
+    void (async () => {
+      const { recordScopeInvocation } = await import(
+        '~/server/services/blocks/user-app-surface.service'
+      );
+      await recordScopeInvocation({
+        userId,
+        appBlockId: claims.appBlockId,
+        blockInstanceId: claims.blockInstanceId,
+        scope: 'ai:write:budgeted',
+        endpoint: 'workflow:submit',
+        statusCode: snapshot.status === 'failed' ? 500 : 200,
+        detail: {
+          action: 'workflow.submit',
+          amount: -Math.abs(invocationCost),
+          outcome: snapshot.status === 'failed' ? 'failed' : 'ok',
+          // The submitted `$type` of every step, in order — a JSON column, so no
+          // cardinality budget (unlike the metric labels above).
+          steps: prepared.steps.map((step) => step.$type),
+          variant: 'workflow',
+          ...(snapshot.workflowId ? { workflowId: snapshot.workflowId } : {}),
+        },
+        dev: claims.dev === true,
+        privateRun: claims.privateRun === true,
+      });
+    })().catch(() => {
+      /* swallowed inside helper */
+    });
+  }
+
+  const spendWorkflowId = snapshot.workflowId;
+  // 🔴 `'whatif'` EXCLUDED — see the txt2img guard: the fee's idempotency key and
+  // its UNIQUE accrual row are both derived from this id.
+  if (
+    spendWorkflowId &&
+    spendWorkflowId !== 'failed' &&
+    spendWorkflowId !== 'whatif' &&
+    snapshot.status !== 'failed'
+  ) {
+    const realizedGenerationCost = snapshot.cost?.total;
+    const spendBasis = deriveBlockSpendBasis(
+      realizedTransactions,
+      isGreen,
+      // The GENERATION leg; the author fee is a separate charge with its own row.
+      typeof realizedGenerationCost === 'number' ? realizedGenerationCost : reserveGenerationBuzz
+    );
+
+    // 🔴 THE VIEWER-FACING DEBIT, AWAITED, CLAMPED TO WHAT WAS RESERVED ABOVE —
+    // one charge for the whole workflow. See the txt2img path for the reasoning.
+    await chargeBlockAuthorFee({
+      workflowId: spendWorkflowId,
+      appId: claims.appId,
+      appBlockId: claims.appBlockId,
+      viewerUserId: userId,
+      buzzType: spendBasis.buzzType,
+      baseGenerationBuzz: realizedBaseCost,
+      priceIsCap: realizedPriceIsCap,
+      generationType: workflowGenerationType,
+      reservedAuthorFeeBuzz,
+      privateRun: claims.privateRun === true,
+    });
+
+    void (async () => {
+      const { recordSpendAttribution } = await import(
+        '~/server/services/blocks/buzz-attribution.service'
+      );
+      const { buzzType, buzzAmount } = spendBasis;
+      await recordSpendAttribution({
+        userId,
+        buzzAmount,
+        buzzType,
+        workflowId: spendWorkflowId,
+        appId: claims.appId,
+        appBlockId: claims.appBlockId,
+        blockInstanceId: claims.blockInstanceId,
+        privateRun: claims.privateRun === true,
+        modelId: null,
+        sharedContentKey: null,
+        generationType: workflowGenerationType,
+        baseGenerationBuzz: realizedBaseCost,
+        generationPriceIsCap: realizedPriceIsCap,
       });
     })().catch(() => {
       /* best-effort: a failed attribution write never breaks submit */

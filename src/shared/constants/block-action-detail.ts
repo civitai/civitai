@@ -125,6 +125,12 @@ export type BlockActionDetail = {
    */
   variant?: string;
   /**
+   * The orchestrator `$type` of every step, in order, for a `kind: 'workflow'`
+   * submit. App-supplied text, like `step` on the pass-through arm; treat it as
+   * untrusted if anything starts to display it. Absent on every other row.
+   */
+  steps?: string[];
+  /**
    * Number of images in a `post.create`. Bounded by construction
    * (`BLOCK_POST_MAX_IMAGES`), server-counted, never a client claim.
    */

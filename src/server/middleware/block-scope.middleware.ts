@@ -237,9 +237,9 @@ export interface BlockTokenClaims {
  *
  * ── WHY IT EXISTS AT ALL ────────────────────────────────────────────────────
  * The submit gates spell the same comparison and are NOT interchangeable. The
- * txt2img and registry-step gates add the per-generation author fee into the value
- * they compare; the custom-comfy and pass-through gates do not, because neither has
- * a pre-submit `cost.base` to price a fee from, and training charges no fee (that split is
+ * txt2img, registry-step and multi-step workflow gates add the per-generation author
+ * fee into the value they compare; the custom-comfy and pass-through gates do not,
+ * because neither reserves one, and training charges no fee (that split is
  * documented at `src/server/services/blocks/author-fee-charge.service.ts` and
  * ledgered in `src/server/services/__tests__/no-divergent-author-fee-base.test.ts`).
  * Any future change to the ceiling is correct for at most one of those two
