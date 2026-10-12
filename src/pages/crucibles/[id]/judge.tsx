@@ -622,7 +622,7 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
                       percentileRank={judgeStats?.percentileRank}
                       judgedPairs={progress?.judgedPairs}
                       totalPairs={progress?.totalPairs}
-                      votesUsedUp={progress?.votesUsedUp}
+                      votesUsedUp={progress?.votesUsedUp ?? false}
                     />
                   }
                   footerEnd={
@@ -761,7 +761,7 @@ type JudgingSessionStatsProps = {
   percentileRank?: number | null;
   judgedPairs?: number;
   totalPairs?: number;
-  votesUsedUp?: boolean;
+  votesUsedUp: boolean;
 };
 
 function JudgingSessionStats({
@@ -775,7 +775,7 @@ function JudgingSessionStats({
   const motionOn = !useReducedMotion(true);
   const pairProgress =
     judgedPairs !== undefined && totalPairsProp !== undefined
-      ? getPairProgress({ judgedPairs, totalPairs: totalPairsProp, votesUsedUp: !!votesUsedUp })
+      ? getPairProgress({ judgedPairs, totalPairs: totalPairsProp, votesUsedUp })
       : null;
 
   return (
