@@ -39,6 +39,7 @@ export type EventPromo = {
   teamHref?: string;
   postEditor?: EditorCardPromo;
   articleEditor?: EditorCardPromo;
+  modelEditor?: EditorCardPromo;
   homeBlock?: { eyebrow?: string; title: string; body?: string; cta?: string };
 };
 

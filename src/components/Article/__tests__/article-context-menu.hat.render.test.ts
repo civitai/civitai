@@ -52,9 +52,12 @@ vi.mock('~/components/Decorations/AddEventDecorationMenuItem', () => ({
     entityId: number;
     image?: { id: number };
     currentCosmetic?: { id: number } | null;
+    findWornHat?: boolean;
   }) =>
     React.createElement('div', {
-      'data-testid': `hat-item:${p.entityType}:${p.entityId}:image-${p.image?.id}:on-${p.currentCosmetic?.id}`,
+      'data-testid': `hat-item:${p.entityType}:${p.entityId}:image-${p.image?.id}:on-${
+        p.currentCosmetic?.id
+      }:find-${!!p.findWornHat}`,
     }),
 }));
 vi.mock('~/components/Decorations/AddArtFrameMenuItem', () => ({
@@ -111,11 +114,12 @@ function openMenu(article: Article = ARTICLE) {
 describe('article menu hat item', () => {
   it("offers the owner a hat for the article on the article's own page, without the frame", () => {
     h.pathname = '/articles/[id]/[[...slug]]';
-    expect(openMenu()).toEqual(['hat-item:Article:7:image-42:on-9']);
+    // Its own query does not carry the hat, so the item reads it from the owner's hats.
+    expect(openMenu()).toEqual(['hat-item:Article:7:image-42:on-9:find-true']);
   });
 
   it('offers the owner both on a card', () => {
-    expect(openMenu()).toEqual(['frame-item', 'hat-item:Article:7:image-42:on-9']);
+    expect(openMenu()).toEqual(['frame-item', 'hat-item:Article:7:image-42:on-9:find-false']);
   });
 
   it("offers neither to a moderator on someone else's article", () => {

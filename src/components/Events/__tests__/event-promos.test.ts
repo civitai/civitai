@@ -50,6 +50,7 @@ describe('event entry points, from the gated answer', () => {
       postEditor: editorPromo(promos, [], 'postEditor')?.event,
       editorCopy: !!editorPromo(promos, [], 'postEditor')?.postEditor?.body,
       articleEditor: !!editorPromo(promos, [], 'articleEditor')?.articleEditor?.body,
+      modelEditor: !!editorPromo(promos, [], 'modelEditor')?.modelEditor?.body,
     };
   };
 
@@ -62,6 +63,7 @@ describe('event entry points, from the gated answer', () => {
         postEditor: undefined,
         editorCopy: false,
         articleEditor: false,
+        modelEditor: false,
       });
   });
 
@@ -73,6 +75,7 @@ describe('event entry points, from the gated answer', () => {
       postEditor: 'birthday2026',
       editorCopy: true,
       articleEditor: true,
+      modelEditor: true,
     });
   });
 
@@ -85,6 +88,7 @@ describe('event entry points, from the gated answer', () => {
       postEditor: undefined,
       editorCopy: false,
       articleEditor: false,
+      modelEditor: false,
     });
   });
 });
@@ -182,6 +186,9 @@ describe('editorPromo', () => {
     // The post editor's id predates the article card: changing it would bring back hidden cards.
     expect(editorCardId('postEditor', 'a')).toBe('post-editor:event:a');
     expect(editorCardId('articleEditor', 'a')).toBe('article-editor:event:a');
+    expect(editorCardId('modelEditor', 'a')).toBe('model-editor:event:a');
+    expect(editorPromo(promos, [], 'modelEditor')).toBeUndefined();
+    expect(editorPromo([promo('m', { modelEditor: editor })], [], 'modelEditor')?.event).toBe('m');
   });
 });
 

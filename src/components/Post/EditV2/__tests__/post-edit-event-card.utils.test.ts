@@ -9,6 +9,7 @@ const base = {
   publishedAt: null,
   unpublishedByParent: false,
   addedImages: [{ id: 1 }, { id: 2 }],
+  ownModelId: null,
   now: NOW,
 };
 
@@ -30,6 +31,11 @@ describe('postEditEventCard', () => {
     expect(note({ publishedAt: NOW })).toBe(false);
     expect(note({ publishedAt: new Date('2026-11-09T00:00:00Z') })).toBe(true);
     expect(note({ unpublishedByParent: true })).toBe(false);
+  });
+
+  it("names the owner's model a post belongs to, so the card hats the model", () => {
+    expect(postEditEventCard({ ...base, ownModelId: 99 })?.modelId).toBe(99);
+    expect(postEditEventCard(base)?.modelId).toBeUndefined();
   });
 
   it('has no cover for a post without images', () => {

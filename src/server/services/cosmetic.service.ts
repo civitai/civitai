@@ -38,6 +38,7 @@ import {
   isEventDecorationData,
 } from '~/shared/constants/event-decoration.constants';
 import type { EventViewer } from '~/server/events/event-access';
+import type { EventDecorationDefinition } from '~/shared/constants/event-decoration.constants';
 import { refreshEventDecorations } from '~/server/events/event-decoration-cache';
 import {
   getVisibleDecorationEvents,
@@ -258,14 +259,16 @@ export async function equipCosmeticToEntity({
   const now = new Date();
   let updated: { count: number } | undefined;
   if (eventDecoration) {
-    const { moveCooldownMs } = await assertCanPlaceEventDecoration({
+    const definition = await assertCanPlaceEventDecoration({
       decoration: eventDecoration,
       placedAt: getPlacedAt(userCosmetic.data),
       equippedToType,
       now,
       user: { id: userId, isModerator },
     });
-    if (equippedToType === 'Image') await assertImageCanWearEventDecoration(equippedToId);
+    const { moveCooldownMs } = definition;
+    if (equippedToType === 'Image')
+      await assertImageCanWearEventDecoration(equippedToId, definition);
     // The cooldown is enforced by the write itself, not only by the read above: concurrent equips
     // of one decoration all read the same placedAt, and each placement counts toward a score.
     // Placed before the displacement below so a refused move leaves the target entity untouched.
@@ -603,20 +606,23 @@ async function assertCanPlaceEventDecoration({
  * is left out of every feed and its page 404s for anyone but its owner, so a hat on it is seen
  * almost nowhere.
  */
-async function assertImageCanWearEventDecoration(imageId: number) {
+export async function assertImageCanWearEventDecoration(
+  imageId: number,
+  definition: Pick<EventDecorationDefinition, 'label' | 'entityTypes'>
+) {
   const image = await dbWrite.image.findUnique({
     where: { id: imageId },
     select: { postId: true },
   });
   if (image?.postId) return;
 
-  const article = await dbWrite.article.findUnique({
-    where: { coverId: imageId },
-    select: { id: true },
-  });
+  // Point at the article only for an event whose decoration can go on one.
+  const article = definition.entityTypes.includes('Article')
+    ? await dbWrite.article.findUnique({ where: { coverId: imageId }, select: { id: true } })
+    : null;
   throw throwBadRequestError(
     article
-      ? "This image is your article's cover, which isn't shown on its own. Put the hat on the article instead: Add Party Hat in the article's ⋯ menu, or the hat card in the article editor."
+      ? `This image is your article's cover, which isn't shown on its own. Put the hat on the article instead: Add ${definition.label} in the article's ⋯ menu.`
       : 'Hats can only go on images that are in a post.'
   );
 }

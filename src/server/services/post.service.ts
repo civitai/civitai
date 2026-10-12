@@ -710,9 +710,35 @@ export const getPostEditDetail = async ({ id, user }: GetByIdInput & { user: Ses
     collectionItemExists = !!collectionItem;
   }
 
+  const ownModelId = await getOwnModelId({
+    modelVersionId: post.modelVersionId,
+    postOwnerId: post.user.id,
+  });
+
   // Unpublish context is already attached by getPostDetail above.
-  return { ...post, collectionTagId, images, collectionItemExists };
+  return { ...post, collectionTagId, images, collectionItemExists, ownModelId };
 };
+
+/**
+ * The model a post belongs to, when the post's owner also owns the model: the editor's event card
+ * then hats the model. A review post on someone else's model gets null.
+ */
+export async function getOwnModelId({
+  modelVersionId,
+  postOwnerId,
+  db = dbRead,
+}: {
+  modelVersionId: number | null;
+  postOwnerId: number;
+  db?: typeof dbRead | typeof dbWrite;
+}) {
+  if (!modelVersionId) return null;
+  const version = await db.modelVersion.findUnique({
+    where: { id: modelVersionId },
+    select: { model: { select: { id: true, userId: true } } },
+  });
+  return version?.model.userId === postOwnerId ? version.model.id : null;
+}
 
 export type PostUnpublishContext = {
   // True when the post carries a `prevPublishedAt` stash — i.e. it was
@@ -902,6 +928,11 @@ export const createPost = async ({
     unpublishedAt: null,
     unpublishedBy: null,
     parentModelId: null,
+    ownModelId: await getOwnModelId({
+      modelVersionId: data.modelVersionId ?? null,
+      postOwnerId: userId,
+      db: dbWrite,
+    }),
   };
 };
 

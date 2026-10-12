@@ -102,6 +102,10 @@ export const birthday2026 = createEvent(name, {
       body: 'Put a party hat on this article. Its views, reactions and comments score for your team.',
       draftNote: 'Scores once it is published.',
     },
+    modelEditor: {
+      body: 'Put a party hat on this model. Its views and likes score for your team.',
+      draftNote: 'Scores once it is published.',
+    },
     homeBlock: {
       eyebrow: "Civitai's 4th Birthday",
       cta: 'See the event',

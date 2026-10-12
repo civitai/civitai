@@ -135,6 +135,7 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
     publishedAt: post.publishedAt,
     unpublishedByParent: !!isUnpublishedByParent,
     addedImages,
+    ownModelId: post.ownModelId,
   });
   // Build a link to the parent model edit page so the user can see why the
   // parent was taken down (the unpublish reason lives on the model/version,
