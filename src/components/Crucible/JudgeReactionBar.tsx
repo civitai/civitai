@@ -30,7 +30,7 @@ export function JudgeReactionBar({
       data-testid="judge-reactions"
       data-side={side}
       className={clsx(
-        'flex items-center gap-0.5 rounded-3xl border border-solid border-white/[0.12] bg-[#101113CC] p-1',
+        'flex items-center rounded-[18px] border border-solid border-white/[0.12] bg-[#101113CC] p-[3px]',
         className
       )}
       onClick={(e) => e.stopPropagation()}
@@ -78,7 +78,7 @@ function JudgeReactionPill({
         aria-pressed={hasReacted}
         disabled={!canClick}
         className={clsx(
-          'flex h-10 w-11 items-center justify-center rounded-[20px] text-xl leading-none',
+          'flex h-7 w-8 items-center justify-center rounded-[14px] text-[15px] leading-none',
           'border-0 bg-transparent p-0 transition-colors hover:bg-white/10',
           'focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-white',
           'aria-pressed:bg-[#1971C240] aria-pressed:ring-1 aria-pressed:ring-inset aria-pressed:ring-[#228BE6]',

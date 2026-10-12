@@ -657,7 +657,7 @@ function ImageCard({
           reactionsLoaded={reactionsLoaded}
           side={position}
           // Native video controls own the bottom edge, so the pill sits above them.
-          className={clsx('absolute right-3.5 z-10', isVideo ? 'bottom-[60px]' : 'bottom-3.5')}
+          className={clsx('absolute right-2.5 z-10', isVideo ? 'bottom-[60px]' : 'bottom-2.5')}
         />
 
         {plusOneId != null && (
