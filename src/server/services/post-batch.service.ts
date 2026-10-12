@@ -107,13 +107,13 @@ async function discardFailedPost(postId: number) {
   await dbWrite.post.delete({ where: { id: postId } });
 }
 
+const IDEMPOTENCY_TTL_SECONDS = 60 * 60;
+
 /**
  * Every post either exists complete and scheduled or does not exist. Not a transaction:
  * `addPostImage` and the publish path do their own I/O (ingestion, caches, tracking), so a failed
  * post is deleted instead, as `createPostWithImagesHandler` does.
  */
-const IDEMPOTENCY_TTL_SECONDS = 60 * 60;
-
 async function runScheduleBatch({
   input,
   ctx,

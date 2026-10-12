@@ -40,8 +40,8 @@ import type {
   UnscheduleResult,
 } from '@civitai/post-planner/host';
 
-// A burst scheduler posts 25+ a day; a six-week month grid must hold all of it before the UI has to
-// say "incomplete". A row serialises to ~210 bytes, so 1,500 is ~300 KiB before compression.
+// Must hold a full six-week grid for a burst scheduler (docs/batch-scheduling-ux.md §4, over-fetch
+// guard) before the UI has to say "incomplete".
 const PLANNER_PAGE_LIMIT = 1500;
 export const SCHEDULE_CHANGED_MESSAGE = "This post's schedule changed. Refresh and try again.";
 

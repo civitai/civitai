@@ -13,17 +13,16 @@ Done when: Phase 1 is merged and switched on for creators, or Justin decides not
 
 ## 1. State of play (2026-10-06)
 
-| Phase | Scope                                                     | State                                                                                                                                                                                                                           |
-| ----- | --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 0     | Fix stale image `sortAt` on reschedule                    | **Fixed on main** since June (`820f4ecedc`, `b5f8f4047d`): `updatePost` → `afterPostPublish` reindexes the post's images. Bug ticket 868k68g0z is still `pending review`; needs a prod verification query and closing.          |
-| 1     | Batch composer in the main app, behind a flag             | **Not started.** Technical plan ready; no code.                                                                                                                                                                                 |
-| 2     | Planner (calendar of scheduled posts, drag to reschedule) | **First pass exists**, built by the foreman agent in Creator Studio, uncommitted, reviewed below. Ships as a Web Component in both apps (decided 2026-10-06; see the element plan).                                             |
-| 3     | Saved presets                                             | **Built on the feature branch** behind `postPresets` (`post-presets`): `PostPreset` table (migration applied by hand), `postPreset` router, composer select + save modal, post editor "Apply preset" (tags, tools, techniques). |
+| Phase | Scope                                                     | State                                                                                                                                                                                                                                                 |
+| ----- | --------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0     | Fix stale image `sortAt` on reschedule                    | **Fixed on main** since June (`820f4ecedc`, `b5f8f4047d`): `updatePost` → `afterPostPublish` reindexes the post's images. Bug ticket 868k68g0z is still `pending review`; needs a prod verification query and closing.                                |
+| 1     | Batch composer in the main app, behind a flag             | **Built**, flag-dark behind `batchPostScheduling` (`batch-post-scheduling`); see `docs/features/batch-post-scheduling.md`.                                                                                                                            |
+| 2     | Planner (calendar of scheduled posts, drag to reschedule) | **Built** as `<civitai-post-planner>` (Lit, on Civitai Elements), hosted at `/user/schedule` and Creator Studio `/calendar`, flag-dark behind `postPlanner` (`post-planner`). The Creator Studio first pass reviewed below was ported and superseded. |
+| 3     | Saved presets                                             | **Built on the feature branch** behind `postPresets` (`post-presets`): `PostPreset` table (migration applied by hand), `postPreset` router, composer select + save modal, post editor "Apply preset" (tags, tools, techniques).                       |
 
 The first pass was built out of order: the agent that ran on the feature request built Phase 2 before
-Phase 1 existed, in Creator Studio, on a `main` from 2026-10-02. It lives in the worktree
-`~/foreman/data/civitai/worktrees/868m9kjnm` (branch `foreman/868m9kjnm`, nothing committed). Its own
-notes are in `REVIEW.md` there; its screenshots in `.foreman/shots/`.
+Phase 1 existed, in Creator Studio, on a `main` from 2026-10-02, in an uncommitted local worktree. Its
+UI, query and endpoint logic were ported into PRs E–F below; nothing from it was committed as-is.
 
 ## 2. Review of the first pass
 
@@ -98,7 +97,7 @@ jitter, never :00.
    app, SvelteKit server routes in Creator Studio); no credential or CORS surface is added. Full design
    in the element plan. Cost: ~1–1.5 weeks over a single-host, month-only planner.
 
-**Recommended, needs Justin's confirmation**
+**Recommended; implemented as recommended (2–6), Justin to confirm or amend**
 
 2. **Batch limits**: 200 posts and 500 files per batch (the UX plan's 500 and the tech plan's 200
    reconciled: grouping N images per post makes 500 files fit in ≤ 200 posts; the composer says so when
@@ -159,10 +158,10 @@ zero-setup path.
 
 ## 5. Open items with closing conditions
 
-| Item                              | Closes when                                                                                                                                                                         | Who checks        |
-| --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------- |
-| Phase 0 verification              | Prod query shows 0 stale images for reschedules in the last 14 days; 868k68g0z set to complete                                                                                      | Luis              |
-| Scope decisions 2–6               | Justin confirms or amends them on 868mcqb8t                                                                                                                                         | Justin            |
-| `Post(userId, publishedAt)` index | `pg_indexes` shows it, or EXPLAIN shows the month query is already cheap                                                                                                            | Luis, before PR E |
-| First-pass worktree               | Deleted once PR F has ported its UI, query and endpoint logic                                                                                                                       | Luis              |
-| Kit gaps to upstream              | `civitai-drawer`, `civitai-date-input` and a calendar grid proposed to `civitai/civitai-app-starters` once the planner's versions settle, or a decision to keep them in the package | Luis, after PR G  |
+| Item                              | Closes when                                                                                                                                                                                         | Who checks       |
+| --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------- |
+| Phase 0 verification              | Prod query shows 0 stale images for reschedules in the last 14 days; 868k68g0z set to complete                                                                                                      | Luis             |
+| Scope decisions 2–6               | Implemented as recommended (batch limits 200/500, review as its own screen, forward-only spacing fix, posts-tab CTA; weekday mode deferred to Phase 2). Justin confirms or amends them on 868mcqb8t | Justin           |
+| `Post(userId, publishedAt)` index | Closed before PR E: production already has the covering indexes (§4 PR E; element plan §4)                                                                                                          | —                |
+| First-pass worktree               | Deleted once PR F has ported its UI, query and endpoint logic                                                                                                                                       | Luis             |
+| Kit gaps to upstream              | `civitai-drawer`, `civitai-date-input` and a calendar grid proposed to `civitai/civitai-app-starters` once the planner's versions settle, or a decision to keep them in the package                 | Luis, after PR G |

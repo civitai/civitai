@@ -29,7 +29,10 @@ then shows and moves what was scheduled. Plans: `docs/batch-scheduling-plan.md` 
 | `postPlanner`         | `post-planner`          | `['mod']` | The planner procedures, their REST twins, Creator Studio's `/calendar`                   |
 | `postPresets`         | `post-presets`          | `['mod']` | The `postPreset` procedures, the composer's preset controls, the editor's "Apply preset" |
 
-Rollout: create the Flipt flags, start with a rule for the `isMember` segment, widen to 100%.
+Rollout: while a key is absent from Flipt the static fallback gives moderators the feature. Create
+each key `enabled: false` with one rollout to the `moderators` segment (the `creator-promotions`
+pattern, so moderators keep it once Flipt is authoritative), add the `members` segment to widen to
+members, then set `enabled: true` for everyone.
 
 ## Rules every path shares
 
@@ -74,6 +77,6 @@ Rollout: create the Flipt flags, start with a rule for the `isMember` segment, w
 - Batch posts are counted against the daily limit in the database by go-live day, while ordinary
   creates count in Redis at creation time; the two can add up to one tier size on the same day.
 - Files uploaded and then abandoned in the composer leave S3 keys with no `Image` row.
-- Weekday/time-slot schedules and Week and Day hour grids in the planner are planned, not built.
+- Weekday/time-slot schedules in the planner are planned, not built.
 - A preset stores resource display names at save time, so a renamed or deleted model version keeps
   its old chip until the preset is re-saved; the post editor applies no resources from a preset.

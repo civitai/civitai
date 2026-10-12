@@ -53,7 +53,7 @@ export function groupIntoPosts<T>(items: T[], perPost: number): T[][] {
 const PROGRESS_STEPS = 8;
 
 /** Posts per call: small enough that the progress bar moves at least ~8 times, never over the
- *  server's per-call cap. Six posts go one at a time; two hundred go ten at a time. */
+ *  server's per-call cap. */
 export function chunkSizeFor(total: number): number {
   return Math.min(POST_BATCH_CHUNK_POSTS, Math.max(1, Math.ceil(total / PROGRESS_STEPS)));
 }

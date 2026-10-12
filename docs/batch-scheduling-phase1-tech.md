@@ -244,7 +244,7 @@ Create:
   mid-chunk failure deletes post k and reports `created` for `<k`; tools/techniques calls per post;
   `updatePostHandler` called with each date; moderator cap skip. Mock with `importOriginal` spreads
   as in `post-planner.service.test.ts`.
-- `src/components/Post/Batch/BatchComposer.tsx`, `batch-composer.store.ts`, `BatchSchedulePreview.tsx`,
+- `src/components/Post/Batch/BatchComposer.tsx`, `batch-composer.store.ts`, `SchedulePreview.tsx`,
   plus the UX plan's `ScheduleBuilder`, `BatchReviewTable`, `BatchProgressModal`, `TitleTemplateInput`.
 - `src/components/Post/Batch/BatchComposer.browser.test.tsx` — preview dates have no :00 minute;
   submit disabled while `validate` reports issues; chunked submission reports created count.
