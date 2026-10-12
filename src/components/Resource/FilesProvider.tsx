@@ -27,6 +27,7 @@ import { useModelFileOptions } from '~/hooks/useModelFileOptions';
 import { getSimilarFiles } from '~/components/Resource/file-conflicts';
 import { resolveOfficialFileHash } from '~/components/Resource/official-match';
 import { useFileHash } from '~/hooks/useFileHash';
+import { notifyIfPublishHeld } from '~/utils/model-publish-toast';
 import {
   showErrorNotification,
   showSuccessNotification,
@@ -322,8 +323,7 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
       hideNotification('publishing-version');
       const modelId = variables.id;
       const modelVersionId = variables.versionIds?.[0];
-      if (result.status === ModelStatus.UnpublishedViolation) {
-        showSubmittedForReviewNotification();
+      if (notifyIfPublishHeld(result)) {
         await queryUtils.model.getById.invalidate({ id: modelId });
         return;
       }
@@ -341,8 +341,7 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
     async onSuccess(results) {
       hideNotification('publishing-version');
       if (!results) return;
-      if (results.held) {
-        showSubmittedForReviewNotification();
+      if (notifyIfPublishHeld(results)) {
         await queryUtils.model.getById.invalidate({ id: results.modelId });
         return;
       }
@@ -356,13 +355,6 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
       });
     },
   });
-
-  const showSubmittedForReviewNotification = () =>
-    showSuccessNotification({
-      title: 'Submitted for review',
-      message: 'A moderator will review it before it goes live.',
-      autoClose: 6000,
-    });
 
   const showPublishedNotification = async (modelId: number, modelVersionId?: number) => {
     const pubNotificationId = `version-published-${modelVersionId}`;

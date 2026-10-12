@@ -160,6 +160,7 @@ import {
 import type { ModelById } from '~/types/router';
 import { HiddenMetricNotice } from '~/components/Model/HiddenMetricNotice';
 import { formatDate, formatDateMin } from '~/utils/date-helpers';
+import { notifyIfPublishHeld } from '~/utils/model-publish-toast';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { componentTypeConfig, getFileIconConfig } from '~/utils/file-display-icons';
 import { formatKBytes } from '~/utils/number-helpers';
@@ -341,15 +342,6 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
     });
   };
 
-  const notifyIfHeld = (held: boolean) => {
-    if (!held) return;
-    showSuccessNotification({
-      title: 'Submitted for review',
-      message: 'A moderator will review it before it goes live.',
-      autoClose: 6000,
-    });
-  };
-
   // Handler for republishing a private model while keeping it private
   const handleRepublishPrivateModel = async () => {
     try {
@@ -365,11 +357,11 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
           id: model.id,
           versionIds,
         });
-        notifyIfHeld(result.status === ModelStatus.UnpublishedViolation);
+        notifyIfPublishHeld(result);
       } else {
         // Just republish the version and its posts
         const result = await publishVersionMutation.mutateAsync({ id: version.id });
-        notifyIfHeld(result.held);
+        notifyIfPublishHeld(result);
       }
       await queryUtils.model.getById.invalidate({ id: model.id });
     } catch (e) {
@@ -440,14 +432,14 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
           publishedAt: publishDate,
           versionIds,
         });
-        notifyIfHeld(result.status === ModelStatus.UnpublishedViolation);
+        notifyIfPublishHeld(result);
       } else {
         // Just publish the version and its posts
         const result = await publishVersionMutation.mutateAsync({
           id: version.id,
           publishedAt: publishDate,
         });
-        notifyIfHeld(result.held);
+        notifyIfPublishHeld(result);
       }
 
       await queryUtils.model.getById.invalidate({ id: model.id });
