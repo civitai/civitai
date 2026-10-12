@@ -1,4 +1,5 @@
 import { describe, expect, test, vi, beforeEach } from 'vitest';
+import { TRPCClientError } from '@trpc/client';
 import { page } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
@@ -263,6 +264,13 @@ async function driveToReady() {
   });
 }
 
+// A TRPCClientError shaped the way the client builds one from a server error response.
+function trpcError(code: string, httpStatus: number, message: string) {
+  return new TRPCClientError(message, {
+    result: { error: { code: -32000, message, data: { code, httpStatus } } },
+  } as unknown as ConstructorParameters<typeof TRPCClientError>[1]);
+}
+
 describe('IframeHost block render/impression (Analytics Phase 2, model.sidebar_top)', () => {
   let fetchSpy: ReturnType<typeof vi.spyOn>;
 
@@ -516,6 +524,42 @@ describe('IframeHost POLL_WORKFLOW waitSeconds forwarding (model.sidebar_top)', 
       expect(mocks.poll.mock.calls).toStrictEqual([
         [{ blockToken: 'tok_abc', workflowId: 'wf_wait', ...expectedExtra }],
       ]);
+      replies.stop();
+    }
+  );
+});
+
+describe('IframeHost POLL_WORKFLOW failure replies (model.sidebar_top)', () => {
+  beforeEach(() => {
+    mocks.poll.mockReset();
+  });
+
+  test.each([
+    ['a network failure (no tRPC code)', 'processing', new TRPCClientError('Failed to fetch')],
+    ['SERVICE_UNAVAILABLE', 'processing', trpcError('SERVICE_UNAVAILABLE', 503, 'try again')],
+    ['NOT_FOUND', 'failed', trpcError('NOT_FOUND', 404, 'workflow not found')],
+    ['FORBIDDEN', 'failed', trpcError('FORBIDDEN', 403, 'not this app')],
+  ] as const)(
+    'POLL_WORKFLOW that rejects with %s replies with a %s snapshot',
+    async (_label, status, err) => {
+      mocks.poll.mockRejectedValue(err);
+      renderWithProviders(<IframeHost {...baseProps} />);
+      await driveToReady();
+      const replies = listenForReply();
+
+      postFromBlock('POLL_WORKFLOW', { requestId: 'rq_perr', workflowId: 'wf_perr' });
+
+      await vi.waitFor(() => {
+        const r = replies.last('WORKFLOW_STATUS');
+        if (!r) throw new Error('no reply yet');
+        expect(r.payload).toEqual({
+          requestId: 'rq_perr',
+          snapshot:
+            status === 'processing'
+              ? { workflowId: 'wf_perr', status: 'processing' }
+              : { workflowId: 'failed', status: 'failed', error: err.message },
+        });
+      });
       replies.stop();
     }
   );
