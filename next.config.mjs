@@ -23,10 +23,9 @@ const includeCircularDependencyPlugin = process.env.CIRCULAR_DEPENDENCY_PLUGIN =
  *
  * `ignoreBuildErrors` SKIPS the pass entirely rather than running it and discarding errors (read
  * from `startTypeChecking` in `next/dist/build/type-check.js`). That includes the type-check of the
- * generated `.next/types/validator.ts`, which is the only thing that rejects a module under
- * `src/pages` with no default export. `tsc` alone cannot see that class (the validator does not
- * exist before a build), so with this set it is caught by the release build, not the preview.
- * `src/__tests__/pages/no-test-files-in-pages-tree.test.ts` still covers the commonest instance.
+ * generated `.next/types/validator.ts`, which rejects a module under `src/pages` with no default
+ * export. That class is still caught before merge: `scripts/typecheck.mjs` runs `next typegen`
+ * before `tsc`, so the CI typecheck reads the same validator.
  *
  * `next build` no longer runs ESLint (Next 16), so there is no lint equivalent to switch.
  */

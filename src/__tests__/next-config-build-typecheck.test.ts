@@ -1,5 +1,3 @@
-import fs from 'node:fs';
-import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 /**
@@ -11,7 +9,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
  * text scan passes on a setting that never reaches the exported object.
  */
 
-const REPO_ROOT = path.resolve(__dirname, '../..');
 const VAR = 'CIVITAI_SKIP_BUILD_TYPECHECK';
 
 async function loadIgnoreBuildErrors(value: string | undefined) {
@@ -41,24 +38,5 @@ describe('next build type-check opt-out', () => {
     // The positive control: without it, every case above would also pass against a config that
     // ignored the variable entirely and hardcoded `false`.
     expect(await loadIgnoreBuildErrors('1')).toBe(true);
-  });
-});
-
-describe('the Dockerfile forwards the opt-out without enabling it', () => {
-  const dockerfile = fs.readFileSync(path.join(REPO_ROOT, 'Dockerfile'), 'utf8');
-  const builderStart = dockerfile.indexOf('AS builder');
-  const buildRun = dockerfile.indexOf('pnpm run build', builderStart);
-
-  it('declares an empty-default ARG in the builder stage, before the build runs', () => {
-    expect(builderStart).toBeGreaterThan(-1);
-    expect(buildRun).toBeGreaterThan(builderStart);
-    const declared = dockerfile.indexOf(`ARG ${VAR}=""`, builderStart);
-    expect(declared).toBeGreaterThan(builderStart);
-    expect(declared).toBeLessThan(buildRun);
-  });
-
-  it('never sets it as an ENV or with a non-empty default', () => {
-    expect(dockerfile).not.toMatch(new RegExp(`^\\s*ENV\\s+${VAR}`, 'm'));
-    expect(dockerfile).not.toMatch(new RegExp(`ARG\\s+${VAR}=(?!"")`));
   });
 });

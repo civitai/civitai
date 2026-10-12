@@ -150,11 +150,10 @@ script, check this specifically.
 ### Tests in the wrong place
 
 **Never put unit tests under `src/pages`.** Next.js treats every `.ts`/`.tsx` there — including nested
-`__tests__/` — as a route, and `next build` fails the route-type validation. **Only `next build`
-catches it**: typecheck, vitest and the CI typecheck/unit/component tasks all pass, and the PR-preview
-build skips that type-check (`CIVITAI_SKIP_BUILD_TYPECHECK`), so it reaches the release build. Handler
-tests go in a `__tests__/` directory outside `src/pages`, importing the handler via the `~/pages/...`
-alias.
+`__tests__/` — as a route, and `next build` fails the route-type validation. `pnpm run typecheck` (and the CI
+typecheck) catches it, because it runs `next typegen` before `tsc`; vitest and the unit/component tasks
+do not. Handler tests go in a `__tests__/` directory outside `src/pages`, importing the handler via the
+`~/pages/...` alias.
 
 ### Browser/component tests: self-deleting state
 
