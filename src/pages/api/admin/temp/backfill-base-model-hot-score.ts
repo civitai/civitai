@@ -137,7 +137,12 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
       baseModel: r.baseModel,
       generationCount: parseInt(r.generationCount) || 0,
       publishedAt: r.publishedAt,
-      uniqueGeneratorCount: generators.get(`${r.modelId}:${r.baseModel}`) ?? null,
+      // 0, not null, when ClickHouse returned nothing for a slice it covered: no generation
+      // rows means no generators, which is known. null would keep the slice mirroring the
+      // whole-model score forever. null only survives below, where the lookup never ran.
+      uniqueGeneratorCount: versionIds.length
+        ? generators.get(`${r.modelId}:${r.baseModel}`) ?? 0
+        : null,
     }));
     slicesSeen += slices.length;
     withGenerators += slices.filter((s) => s.uniqueGeneratorCount !== null).length;

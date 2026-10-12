@@ -218,6 +218,17 @@ async function addUniqueGeneratorCounts(ctx: BaseModelMetricContext) {
       GROUP BY grp
     `;
 
+    // 0 first, for every slice this query COVERED. ClickHouse returns no row for a slice
+    // nobody has generated with, and that is a known zero, not an unknown — leaving it NULL
+    // pins the slice on the mirrored whole-model score for good. Most slices have no
+    // generations at all, so NULL-by-default left the majority of a filtered feed's top
+    // ranking on engagement earned in other ecosystems, which is the bug this was meant to
+    // fix. Only a slice we never asked about stays NULL.
+    for (const pair of pairs) {
+      const update = ctx.baseModelUpdates[pair];
+      if (update && update.uniqueGeneratorCount === undefined) update.uniqueGeneratorCount = 0;
+    }
+
     for (const row of rows) {
       const pair = pairs[row.grp];
       // Only slices this run already aggregated: the ClickHouse rows cover every published
