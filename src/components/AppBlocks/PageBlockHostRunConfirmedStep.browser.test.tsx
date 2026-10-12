@@ -340,6 +340,38 @@ describe('PageBlockHost RUN_CONFIRMED_STEP (consent-gated over-budget step)', ()
     replies.stop();
   });
 
+  test('a refused confirmation replies with the error and NEVER submits', async () => {
+    consentMutate.mockRejectedValue(new Error('step quote not found or expired'));
+    await mount();
+    await driveToReady();
+    const replies = listenForReply();
+    postFromBlock('RUN_CONFIRMED_STEP', { requestId: 'rq_12', body: BODY });
+    await page.getByRole('button', { name: CONFIRM }).click();
+    expect(await reply(replies)).toEqual({
+      requestId: 'rq_12',
+      error: 'step quote not found or expired',
+    });
+    expect(submitMutate).not.toHaveBeenCalled();
+    replies.stop();
+  });
+
+  test('a known shortfall is shown with a Get Buzz action; none without one', async () => {
+    previewMutate.mockResolvedValue({ ...PREVIEW, shortfall: 140 });
+    await mount();
+    await driveToReady();
+    postFromBlock('RUN_CONFIRMED_STEP', { requestId: 'rq_13', body: BODY });
+    await expect
+      .element(page.getByTestId('block-confirmed-step-shortfall'))
+      .toHaveTextContent('You need 140 more Buzz to run this job.');
+    await expect.element(page.getByRole('button', { name: 'Get Buzz' })).toBeInTheDocument();
+    useDialogStore.getState().closeAll();
+
+    previewMutate.mockResolvedValue({ ...PREVIEW, shortfall: 0 });
+    postFromBlock('RUN_CONFIRMED_STEP', { requestId: 'rq_14', body: BODY });
+    await expect.element(page.getByRole('button', { name: CONFIRM })).toBeInTheDocument();
+    expect(page.getByTestId('block-confirmed-step-shortfall').elements()).toHaveLength(0);
+  });
+
   test('a lost submit RESPONSE replies `submission-unconfirmed` and is never resent', async () => {
     submitMutate.mockRejectedValueOnce(new Error('Failed to fetch'));
     await mount();

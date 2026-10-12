@@ -9,6 +9,7 @@ import type * as FlagModule from '~/server/services/app-blocks-flag';
 import type * as AttributionModule from '~/server/services/blocks/buzz-attribution.service';
 import type * as AuthorFeeChargeModule from '~/server/services/blocks/author-fee-charge.service';
 import type * as RateLimitModule from '~/server/utils/block-catalog-rate-limit';
+import type * as SessionClientModule from '~/server/auth/session-client';
 
 /**
  * The CONFIRMED pass-through step end-to-end through `blocksRouter`: estimate (grant)
@@ -30,6 +31,7 @@ const h = vi.hoisted(() => ({
   getOrchestratorToken: vi.fn(async () => 'orch-token'),
   submitWorkflow: vi.fn(),
   getUserById: vi.fn(async () => ({ id: 42, isModerator: false })),
+  sessionUser: vi.fn(async (): Promise<unknown> => ({ id: 42, isModerator: false })),
   reserveAppSpend: vi.fn(async () => ({ allowed: true, dailyKey: 'app-daily' })),
   refundAppSpend: vi.fn(async () => undefined),
   persistSettle: vi.fn(async () => undefined),
@@ -47,6 +49,18 @@ vi.mock('~/server/services/blocks/block-bridge-auth.service', async (importOrigi
   ...(await importOriginal<typeof BridgeAuthModule>()),
   authorizeBlockBridgeToken: (...a: unknown[]) => h.authorize(...a),
 }));
+vi.mock('~/server/auth/session-client', async (importOriginal) => {
+  const mod = await importOriginal<typeof SessionClientModule>();
+  return {
+    ...mod,
+    sessionClient: new Proxy(mod.sessionClient, {
+      get: (target, prop, receiver) =>
+        prop === 'getSessionUserById'
+          ? (...a: unknown[]) => h.sessionUser(...(a as []))
+          : Reflect.get(target, prop, receiver),
+    }),
+  };
+});
 vi.mock('~/server/services/blocks/block-token-access.service', async (importOriginal) => ({
   ...(await importOriginal<typeof TokenAccessModule>()),
   assertAppBlocksEnabledForTokenUser: (...a: unknown[]) => h.assertEnabled(...(a as [])),
@@ -228,6 +242,7 @@ function seedQuote(quoteId: string, over: Record<string, unknown> = {}) {
 const SEEDED = `sq_${'1'.repeat(32)}`;
 
 let whatifPrice: { total?: number; variable?: boolean } = { total: PRICE };
+let chargedPrice = PRICE;
 let workflowId = `${VIEWER}-20261012`;
 function installOrchestrator() {
   h.submitWorkflow.mockImplementation(
@@ -236,7 +251,7 @@ function installOrchestrator() {
       return {
         id: workflowId,
         status: 'scheduled',
-        cost: { total: PRICE, base: PRICE },
+        cost: { total: chargedPrice, base: chargedPrice },
         transactions: { list: [] },
         steps: args.body.steps,
       };
@@ -306,7 +321,9 @@ beforeEach(() => {
   installRedis();
   installOrchestrator();
   whatifPrice = { total: PRICE };
+  chargedPrice = PRICE;
   workflowId = `${VIEWER}-20261012`;
+  h.sessionUser.mockImplementation(async () => ({ id: VIEWER, isModerator: false }));
   h.authorize.mockImplementation(async () => claims());
   h.confirmedStepFlag.mockImplementation(async () => true);
   h.reserveAppSpend.mockImplementation(async () => ({ allowed: true, dailyKey: 'app-daily' }));
@@ -581,12 +598,19 @@ describe('SUBMIT refusals — each with its own error, nothing charged', () => {
     await expectNothingCharged();
   });
 
-  it('a lower requote is charged at the requoted price', async () => {
+  // 🔴 Requoted prices that equal neither PRICE nor BUDGET, so a mutant that reserves
+  // the confirmed total or the per-call budget instead of the requote cannot pass.
+  it.each([
+    ['still above the budget', 1017],
+    ['now BELOW the budget (the grant still governs; nothing falls back)', 803],
+  ])('a lower requote — %s — is charged at the requoted price', async (_l, requoted) => {
     const quoteId = await confirmedQuote();
-    whatifPrice = { total: PRICE - 40 };
-    await submit(body({ quoteId }));
-    expect(counter('system:blocks:buzz-cap')).toBe(PRICE - 40);
-    expect(h.reserveAppSpend).toHaveBeenCalledWith('apb_test', PRICE - 40);
+    whatifPrice = { total: requoted };
+    const r = await submit(body({ quoteId }));
+    expect(r.snapshot.workflowId).toBe(workflowId);
+    expect(counter('system:blocks:buzz-cap')).toBe(requoted);
+    expect(h.reserveAppSpend).toHaveBeenCalledWith('apb_test', requoted);
+    expect(h.persistSettle).toHaveBeenCalledWith(expect.objectContaining({ ceiling: requoted }));
   });
 
   it('a confirmed quote ABOVE 5000 (the estimate never stores one)', async () => {
@@ -714,9 +738,10 @@ describe('the viewer’s DAILY LIMIT — never overridden by the confirm', () =>
     const r = await submit(body({ quoteId }));
     expect(r.snapshot.status).toBe('failed');
     expect(r.snapshot.errorCode).toBe('daily-limit-exceeded');
+    // The shared wording every arm uses for this limit; the CODE is what is new.
     expect(r.snapshot.error).toBe(
-      `this job costs ${PRICE} Buzz, which exceeds what remains of your daily limit of 1500 ` +
-        'Buzz for this app (900 left today)'
+      'app Buzz limit reached: 600 already spent today by this app on your behalf, ' +
+        `this job costs ${PRICE}, your limit for this app is 1500`
     );
     expect(realSubmits()).toHaveLength(0);
     // Every leg refunded: the consent counter is back at what was already spent.
@@ -725,6 +750,34 @@ describe('the viewer’s DAILY LIMIT — never overridden by the confirm', () =>
       600
     );
     expect(h.reserveAppSpend).not.toHaveBeenCalled();
+  });
+
+  // 🔴 THE BOUNDARY, both sides, at the submit AND the preview: remaining exactly
+  // equal to the price runs; one Buzz less is refused. Kills a `<` ↔ `<=` mutant at
+  // either site.
+  it.each([
+    [460, 'runs', false],
+    [461, 'is refused', true],
+  ])(
+    'spent %i of a 1500 limit (1040 left vs 1039): the 1040 job %s',
+    async (spent, _l, refused) => {
+      setDailyLimit(1500);
+      store.set(`system:blocks:consent-budget:${VIEWER}:apb_test:${dayKey()}`, String(spent));
+      const quoteId = await confirmedQuote();
+      const preview = await caller(VIEWER).previewStepQuote({ blockToken: 't', quoteId });
+      expect(preview.exceedsDailyLimit).toBe(refused);
+      const r = await submit(body({ quoteId }));
+      expect(r.snapshot.errorCode).toBe(refused ? 'daily-limit-exceeded' : undefined);
+      expect(realSubmits()).toHaveLength(refused ? 0 : 1);
+    }
+  );
+
+  it('a lower requote is what the limit is judged on, and what it is charged', async () => {
+    setDailyLimit(1500);
+    const quoteId = await confirmedQuote();
+    whatifPrice = { total: 1017 };
+    await submit(body({ quoteId }));
+    expect(counter('system:blocks:consent-budget')).toBe(1017);
   });
 
   it('control: a job within the limit runs and is reserved against it', async () => {
@@ -757,6 +810,42 @@ describe('AGGREGATE caps still bind a confirmed job', () => {
     expect(r.snapshot.error).toMatch(/^app daily spend cap reached/);
     expect(realSubmits()).toHaveLength(0);
     expect(counter('system:blocks:buzz-cap')).toBe(0);
+  });
+});
+
+describe('a submit billed ABOVE the confirmed price is detected', () => {
+  it('logs the overcharge with both amounts', async () => {
+    const quoteId = await confirmedQuote();
+    chargedPrice = PRICE + 25;
+    await submit(body({ quoteId }));
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'block-confirmed-step-overcharge',
+        confirmedBuzz: PRICE,
+        realizedBuzz: PRICE + 25,
+        quoteId,
+      })
+    );
+  });
+
+  it('control: a submit billed at (or below) the confirmed price logs nothing', async () => {
+    const quoteId = await confirmedQuote();
+    await submit(body({ quoteId }));
+    expect(loggingMock.logToAxiom).not.toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'block-confirmed-step-overcharge' })
+    );
+  });
+});
+
+describe('the flag is evaluated for a hydrated token subject', () => {
+  it('an unhydratable subject gets no grant and cannot submit', async () => {
+    h.sessionUser.mockImplementation(async () => null);
+    expect((await estimate()).snapshot.stepQuote).toBeUndefined();
+    expect(h.confirmedStepFlag).not.toHaveBeenCalled();
+    seedQuote(SEEDED);
+    await expect(submit(body({ quoteId: SEEDED }))).rejects.toThrow(
+      'confirmed steps from apps are not enabled'
+    );
   });
 });
 

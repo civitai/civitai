@@ -65,6 +65,37 @@ describe('the step quote record', () => {
     expect(opts).toEqual({ XX: true, KEEPTTL: true });
   });
 
+  it('🔴 consent after the submit CLAIMED the quote does not resurrect it', async () => {
+    // A store that honours `XX` (and `GETDEL`), so this is the behaviour, not the
+    // shape of the mock's arguments.
+    const kv = new Map<string, string>();
+    redisMock.sysRedis.set.mockImplementation((async (
+      k: string,
+      v: string,
+      o?: { XX?: boolean }
+    ) => {
+      if (o?.XX && !kv.has(k)) return null;
+      kv.set(k, v);
+      return 'OK';
+    }) as never);
+    redisMock.sysRedis.get.mockImplementation((async (k: string) => kv.get(k) ?? null) as never);
+    redisMock.sysRedis.getDel.mockImplementation((async (k: string) => {
+      const v = kv.get(k) ?? null;
+      kv.delete(k);
+      return v;
+    }) as never);
+    const q = await storeStepQuote(fields);
+    // Read between the claim and the consent write: the read still sees it…
+    redisMock.sysRedis.get.mockImplementationOnce((async (k: string) => {
+      const v = kv.get(k) ?? null;
+      expect(await claimStepQuote(q.quoteId)).not.toBeNull();
+      return v;
+    }) as never);
+    // …but the claim landed first, so the XX write must not recreate the key.
+    expect(await recordStepQuoteConsent(q.quoteId, binding, 42)).toBeNull();
+    expect(kv.has(`system:blocks:step-quote:${q.quoteId}`)).toBe(false);
+  });
+
   it('consent is refused for a session user who is not the quote’s subject', async () => {
     const q = await storeStepQuote(fields);
     redisMock.sysRedis.get.mockResolvedValue(redisMock.sysRedis.set.mock.calls[0][1]);
@@ -135,10 +166,13 @@ describe('the confirmed-step run identity', () => {
     expect(confirmedStepRunGenerationKey(42, 'apb_1', 'h2')).not.toBe(k);
   });
 
-  it('the run key moves with the generation and is a sha256 hex digest', () => {
+  it('the run key is the sha256 of app, body hash and generation — each one moves it', () => {
     const k0 = quotedRunKey('apb_1', 'h1', 0);
-    expect(k0).toMatch(/^[a-f0-9]{64}$/);
+    // A LITERAL, not a re-derivation: sha256("apb_1\nh1\n0").
+    expect(k0).toBe('7a2d26ab15b538fd72a15c0e476c2ddc47e3f1160eee7fdd691d9e86c8d192be');
     expect(quotedRunKey('apb_1', 'h1', 1)).not.toBe(k0);
+    expect(quotedRunKey('apb_2', 'h1', 0)).not.toBe(k0);
+    expect(quotedRunKey('apb_1', 'h2', 0)).not.toBe(k0);
     expect(quotedRunKey('apb_1', 'h1', 0)).toBe(k0);
   });
 });

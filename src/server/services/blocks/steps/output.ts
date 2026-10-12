@@ -367,25 +367,32 @@ function walkPassThroughOutput(
     // NESTED inside a non-blob sibling: `[blob, { nested: blob }]` lifted the
     // first and discarded the second from BOTH sides — never published, never
     // forwarded. Lifting per element and walking the rest keeps both.
+    // The key path is extended only for a value that is lifted or descended into, so
+    // a large array of primitives allocates no path per element.
     const out: unknown[] = [];
     value.forEach((entry, index) => {
-      const at = [...path, String(index)];
       if (isOrchestratorBlobLike(entry)) {
-        liftBlob(entry as OrchestratorBlobLike, sink, at);
+        liftBlob(entry as OrchestratorBlobLike, sink, [...path, String(index)]);
         return;
       }
-      out.push(walkPassThroughOutput(entry, sink, depth + 1, at));
+      out.push(
+        entry !== null && typeof entry === 'object'
+          ? walkPassThroughOutput(entry, sink, depth + 1, [...path, String(index)])
+          : entry
+      );
     });
     return out;
   }
   const rest: Record<string, unknown> = {};
   for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
-    const at = [...path, key];
     if (isOrchestratorBlobLike(entry)) {
-      liftBlob(entry as OrchestratorBlobLike, sink, at);
+      liftBlob(entry as OrchestratorBlobLike, sink, [...path, key]);
       continue;
     }
-    rest[key] = walkPassThroughOutput(entry, sink, depth + 1, at);
+    rest[key] =
+      entry !== null && typeof entry === 'object'
+        ? walkPassThroughOutput(entry, sink, depth + 1, [...path, key])
+        : entry;
   }
   return rest;
 }

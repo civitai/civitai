@@ -6058,10 +6058,7 @@ export const blocksRouter = router({
       // dialog offers a top-up; the submit runs the same read as its own gate.
       let shortfall: number | null = null;
       try {
-        shortfall = Math.max(
-          0,
-          quote.total - (await readBlockTrainingSpendableBuzz(claims, userId))
-        );
+        shortfall = Math.max(0, quote.total - (await readBlockSpendableBuzz(claims, userId)));
       } catch {
         shortfall = null;
       }
@@ -6172,10 +6169,7 @@ export const blocksRouter = router({
       // a top-up; the submit runs the same read as its own gate.
       let shortfall: number | null = null;
       try {
-        shortfall = Math.max(
-          0,
-          quote.total - (await readBlockTrainingSpendableBuzz(claims, userId))
-        );
+        shortfall = Math.max(0, quote.total - (await readBlockSpendableBuzz(claims, userId)));
       } catch {
         shortfall = null;
       }
@@ -12641,9 +12635,15 @@ async function confirmedStepTokenGate(
   return { perCallBudget };
 }
 
-/** The confirmed-step flag, for the token SUBJECT (never `ctx.user`). */
+/**
+ * The confirmed-step flag, for the token SUBJECT (never `ctx.user`). Hydrated through
+ * the CACHED `sessionClient` — the same read `assertAppBlocksEnabledForTokenUser`
+ * makes just before — so an over-budget estimate (up to once per batch cell) adds no
+ * uncached user or subscription query. An unhydratable subject is refused.
+ */
 async function isConfirmedStepEnabledForSubject(userId: number): Promise<boolean> {
-  const user = await getBlockSessionUser(userId);
+  const user = (await sessionClient.getSessionUserById(userId)) as SessionUser | null;
+  if (!user) return false;
   const { isAppBlocksConfirmedStepEnabled } = await import('~/server/services/app-blocks-flag');
   return isAppBlocksConfirmedStepEnabled({ user });
 }
@@ -12873,7 +12873,7 @@ async function submitConfirmedPassThroughStepWorkflow(opts: {
     // error (the orchestrator still checks). The same accounts the submit charges.
     let spendable: number | null = null;
     try {
-      spendable = await readBlockTrainingSpendableBuzz(claims, userId);
+      spendable = await readBlockSpendableBuzz(claims, userId);
     } catch {
       spendable = null;
     }
@@ -12922,15 +12922,13 @@ async function submitConfirmedPassThroughStepWorkflow(opts: {
   if (consentBudgetExceeded(reservation)) {
     await refundBlockBuzzReservation(reservation, jobBuzz);
     await releaseGenIdempotency(genClaimKey);
-    const remaining = Math.max(0, reservation.consent.cap - (reservation.consent.total - jobBuzz));
     return {
       snapshot: {
         workflowId: 'failed',
         status: 'failed' as const,
         cost: { total: jobBuzz },
-        error:
-          `this job costs ${jobBuzz} Buzz, which exceeds what remains of your daily limit ` +
-          `of ${reservation.consent.cap} Buzz for this app (${remaining} left today)`,
+        // The shared wording every arm uses for this limit; the CODE is what is new.
+        error: consentBudgetRejection(reservation.consent, jobBuzz, `this job costs ${jobBuzz}`),
         errorCode: CONFIRMED_STEP_DAILY_LIMIT_ERROR_CODE,
       },
     };
@@ -13066,6 +13064,27 @@ async function submitConfirmedPassThroughStepWorkflow(opts: {
   const realizedTransactions = submitted.transactions;
   const realizedBaseCost = typeof submitted.cost?.base === 'number' ? submitted.cost.base : null;
   const realizedPriceIsCap = submitted.cost?.variable === true;
+
+  // 🔴 THE CONFIRMED PRICE IS A PROMISE TO THE VIEWER; DETECT IT BEING BROKEN. The
+  // re-quote and the real submit are separate orchestrator calls, so a submit billed
+  // ABOVE the price the viewer confirmed (a price change between the two, or a `$type`
+  // whose submit-time price differs from its `whatif`) cannot be prevented here — the
+  // charge has already happened — and the settle refund clamps at 0, so no counter
+  // would show it either. Logged loudly so it is visible and attributable.
+  const realizedTotal = submitted.cost?.total;
+  if (typeof realizedTotal === 'number' && realizedTotal > jobBuzz) {
+    logToAxiom({
+      name: 'block-confirmed-step-overcharge',
+      type: 'error',
+      userId,
+      appBlockId: claims.appBlockId,
+      quoteId,
+      stepType: body.$type,
+      workflowId: submitted.id ?? null,
+      confirmedBuzz: jobBuzz,
+      realizedBuzz: realizedTotal,
+    }).catch(() => undefined);
+  }
 
   const genResult = { snapshot };
   await finalizeGenIdempotency(genClaimKey, genResult);
@@ -13375,13 +13394,13 @@ async function loadEligibleBlockTrainingDataset(
 }
 
 /**
- * The viewer's Buzz across the accounts a training run charges: the block's allowed
+ * The viewer's Buzz across the accounts a training run or a confirmed step charges: the block's allowed
  * set for its maturity (`getBlockAllowedAccountTypes`), the same set
  * `resolveBlockCurrenciesForAccount(isGreen, undefined)` sends with the submit.
  * Throws when the balance cannot be read — including a response naming none of
  * those accounts, which is an unreadable balance, not a zero one.
  */
-async function readBlockTrainingSpendableBuzz(claims: BlockClaims, userId: number) {
+async function readBlockSpendableBuzz(claims: BlockClaims, userId: number) {
   const { isGreen } = resolveBlockMaturity(claims);
   const accounts = (await getUserBuzzAccounts({ userId })) as Record<string, number | null>;
   const types = getBlockAllowedAccountTypes(isGreen);
@@ -13627,7 +13646,7 @@ async function submitTrainingWorkflow(opts: {
     // the orchestrator still checks.
     let spendable: number | null = null;
     try {
-      spendable = await readBlockTrainingSpendableBuzz(claims, userId);
+      spendable = await readBlockSpendableBuzz(claims, userId);
     } catch {
       spendable = null;
     }

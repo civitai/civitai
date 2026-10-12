@@ -157,4 +157,15 @@ describe('confirmedStepReplyFromResult', () => {
   ])('maps %j', (result, expected) => {
     expect(confirmedStepReplyFromResult(result)).toEqual(expected);
   });
+
+  it('an unconfirmed outcome wins over a daily-limit code on the same result', () => {
+    // `submission-unconfirmed` means the job MAY be running and charged — it must never
+    // be reported as "refused, nothing charged".
+    expect(
+      confirmedStepReplyFromResult({
+        snapshot: { workflowId: 'failed', status: 'failed', errorCode: 'daily-limit-exceeded' },
+        submissionUnconfirmed: true,
+      })
+    ).toEqual({ error: 'submission-unconfirmed' });
+  });
 });
