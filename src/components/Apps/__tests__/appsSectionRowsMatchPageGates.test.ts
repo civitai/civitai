@@ -493,9 +493,9 @@ describe('🔴 no sub-nav row offers a page its own gate would refuse', () => {
   });
 });
 
+// The page's own gate is pinned behaviourally in `src/tests/pages/apps/assistant-page.test.ts`.
 describe('App Assistant row', () => {
   const rows = parseRows(code(read(SUBNAV)));
-  const PAGE = path.resolve(__dirname, '../../../pages/apps/assistant.tsx');
 
   it('is visible exactly when the shared gate admits the viewer', () => {
     const row = rows.find((r) => r.href === '/apps/assistant');
@@ -513,11 +513,5 @@ describe('App Assistant row', () => {
     // Positive control: the gate is not constant.
     expect(canAccessAppAssistant({ appBlocks: true, appAssistant: true })).toBe(true);
     expect(canAccessAppAssistant({ appBlocks: true })).toBe(false);
-  });
-
-  it("the page's getServerSideProps gates on that same predicate", () => {
-    expect(code(read(PAGE))).toMatch(
-      /if \(!canAccessAppAssistant\(features\)\) return \{ notFound: true \}/
-    );
   });
 });

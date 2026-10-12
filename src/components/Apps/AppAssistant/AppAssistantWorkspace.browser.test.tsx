@@ -1,0 +1,184 @@
+import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { page } from 'vitest/browser';
+import type { ChatTool } from '@civitai/components-chat/civitai-chat';
+import type * as TrpcMod from '~/utils/trpc';
+import type * as TokenMod from '~/components/Apps/AppAssistant/assistantToken';
+import type { Sandbox } from '~/components/Apps/AppAssistant/sandboxClient';
+// `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
+import { renderWithProviders } from '../../../../test/component-setup';
+import { makeTrpcProxy } from '../../../../test/trpcProxyStub';
+
+const BASE = 'https://sandbox.example';
+const sandbox = (name: string, overrides: Partial<Sandbox> = {}): Sandbox => ({
+  name,
+  app: `app-${name.slice(-4)}`,
+  state: 'running',
+  mcpUrl: `${BASE}/s/${name}/mcp`,
+  createdAt: null,
+  lastActivityAt: null,
+  expiresAt: null,
+  ...overrides,
+});
+
+const m = vi.hoisted(() => ({
+  chat: null as null | {
+    tools: Record<string, ChatTool>;
+    instructions: () => string;
+    mcpServers: { id: string; url: string }[];
+  },
+  list: [] as Sandbox[],
+  start: vi.fn(),
+  stop: vi.fn(),
+  suspend: vi.fn(),
+  getToken: vi.fn<(opts?: unknown) => Promise<string>>(async () => 'sandbox-token'),
+  enable: vi.fn(async () => 'chat-token'),
+}));
+
+vi.mock('~/env/client', () => ({ env: { NEXT_PUBLIC_APP_ASSISTANT_SANDBOX_URL: BASE } }));
+vi.mock('~/components/Apps/AppAssistant/AppAssistantChat', () => ({
+  AppAssistantChat: (props: NonNullable<typeof m.chat>) => {
+    m.chat = props;
+    return <div data-testid="chat" />;
+  },
+}));
+vi.mock('~/components/Apps/AppAssistant/AppAssistantPreview', () => ({
+  AppAssistantPreview: () => <div data-testid="preview" />,
+}));
+vi.mock('~/components/Apps/AppAssistant/useSandboxes', () => ({
+  useSandboxes: (client: unknown) => ({
+    list: { data: client ? m.list : undefined, isSuccess: !!client, isLoading: false, error: null },
+    open: {
+      mutate: (app: string, opts?: { onSuccess?: (r: { sandbox: Sandbox }) => void }) =>
+        opts?.onSuccess?.({ sandbox: m.list.find((s) => s.app === app)! }),
+      isPending: false,
+      error: null,
+    },
+    suspend: { mutate: m.suspend, isPending: false, error: null },
+    remove: { mutate: vi.fn(), isPending: false, error: null },
+  }),
+}));
+vi.mock('~/components/Apps/AppAssistant/assistantToken', async (importOriginal) => ({
+  ...(await importOriginal<typeof TokenMod>()),
+  createAssistantTokenProvider: () => ({ getToken: m.getToken, enable: m.enable }),
+}));
+vi.mock('~/utils/trpc', async (importOriginal) => ({
+  ...(await importOriginal<typeof TrpcMod>()),
+  trpc: makeTrpcProxy({
+    'blocks.startDevTunnel': { useMutation: () => ({ mutateAsync: m.start }) },
+    'blocks.stopDevTunnel': { useMutation: () => ({ mutateAsync: m.stop }) },
+  }),
+}));
+
+const { AppAssistantWorkspace } = await import('./AppAssistantWorkspace');
+const { AssistantTokenError } = await import('~/components/Apps/AppAssistant/assistantToken');
+
+const KEY = 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExampleExample sandbox-dev-tunnel';
+const ctx = { signal: new AbortController().signal, conversationId: 'c', files: [] };
+
+async function mount() {
+  await page.viewport(1440, 900);
+  const screen = renderWithProviders(<AppAssistantWorkspace canPreview />);
+  await expect.element(page.getByTestId('chat')).toBeInTheDocument();
+  return screen;
+}
+
+async function openFirst() {
+  await page.getByRole('button', { name: 'Open', exact: true }).first().click();
+  await expect.element(page.getByTestId('preview')).toBeInTheDocument();
+}
+
+async function startPreview(blockId: string) {
+  await m.chat!.tools.start_preview.execute({ public_key: KEY, block_id: blockId }, ctx);
+}
+
+beforeEach(() => {
+  m.chat = null;
+  m.list = [sandbox('sbx-aaaaaaaaaaaa'), sandbox('sbx-bbbbbbbbbbbb')];
+  m.start.mockReset().mockResolvedValue({
+    sessionId: 'bki_1',
+    host: 'dev-0123456789abcdef.civit.ai',
+    sshHostPublicKey: 'ssh-ed25519 AAAAhostkey',
+  });
+  m.stop.mockReset().mockResolvedValue({ ok: true });
+  m.suspend.mockReset();
+  m.getToken.mockReset().mockResolvedValue('sandbox-token');
+  m.enable.mockClear();
+});
+
+describe('AppAssistantWorkspace preview teardown', () => {
+  test('NEGATIVE CONTROL: switching and unmounting with no preview stops nothing', async () => {
+    const screen = await mount();
+    await openFirst();
+    screen.unmount();
+    expect(m.stop).not.toHaveBeenCalled();
+  });
+
+  test('stops the preview when the page unmounts', async () => {
+    const screen = await mount();
+    await openFirst();
+    await startPreview('my-app');
+    screen.unmount();
+    expect(m.stop).toHaveBeenCalledTimes(1);
+    expect(m.stop).toHaveBeenCalledWith({ sessionId: 'bki_1' });
+  });
+
+  test('stops the preview when another sandbox is opened', async () => {
+    await mount();
+    await openFirst();
+    await startPreview('my-app');
+    await page.getByRole('button', { name: 'Sandboxes', exact: true }).click();
+    await page.getByRole('button', { name: 'Open', exact: true }).nth(1).click();
+    await vi.waitFor(() => expect(m.stop).toHaveBeenCalledWith({ sessionId: 'bki_1' }));
+    expect(m.stop).toHaveBeenCalledTimes(1);
+  });
+
+  test('stops the preview when its sandbox is suspended', async () => {
+    const screen = await mount();
+    await openFirst();
+    await startPreview('my-app');
+    m.list = [sandbox('sbx-aaaaaaaaaaaa', { state: 'suspended' }), m.list[1]];
+    screen.rerender(<AppAssistantWorkspace canPreview />);
+    await vi.waitFor(() => expect(m.stop).toHaveBeenCalledWith({ sessionId: 'bki_1' }));
+    expect(m.stop).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('AppAssistantWorkspace MCP wiring', () => {
+  test('hands the running sandbox to the chat with the sandbox token', async () => {
+    await mount();
+    expect(m.chat!.mcpServers).toEqual([]);
+    await openFirst();
+    await vi.waitFor(() =>
+      expect(m.chat!.mcpServers).toEqual([
+        expect.objectContaining({ id: 'sandbox', url: `${BASE}/s/sbx-aaaaaaaaaaaa/mcp` }),
+      ])
+    );
+  });
+
+  test('🔴 never sends the token to an MCP URL outside the sandbox service', async () => {
+    m.list = [sandbox('sbx-aaaaaaaaaaaa', { mcpUrl: 'https://elsewhere.example/s/x/mcp' })];
+    await mount();
+    await openFirst();
+    expect(m.chat!.mcpServers).toEqual([]);
+  });
+});
+
+describe('AppAssistantWorkspace consent', () => {
+  test('asks the user to turn the assistant on, and only their click writes consent', async () => {
+    m.getToken
+      .mockRejectedValueOnce(
+        new AssistantTokenError('Turn on App Assistant', 403, 'consent_required')
+      )
+      .mockResolvedValue('sandbox-token');
+    await page.viewport(1440, 900);
+    renderWithProviders(<AppAssistantWorkspace canPreview />);
+    const button = page.getByRole('button', { name: 'Turn on App Assistant' });
+    await expect.element(button).toBeInTheDocument();
+    expect(m.enable).not.toHaveBeenCalled();
+    expect(document.querySelector('[data-testid="chat"]')).toBeNull();
+
+    await button.click();
+    expect(m.enable).toHaveBeenCalledTimes(1);
+    await expect.element(page.getByTestId('chat')).toBeInTheDocument();
+  });
+});

@@ -102,6 +102,45 @@ describe('start_preview', () => {
     await start({ public_key: KEY, block_id: 'my-app' });
     expect(deps.stopDevTunnel).toHaveBeenCalledWith({ sessionId: 'bki_old' });
   });
+
+  it('does not stop the session it replaces for the same app (the server already did)', async () => {
+    session = { blockId: 'my-app', sessionId: 'bki_old', host: 'dev-ffffffffffffffff.civit.ai' };
+    await start({ public_key: KEY, block_id: 'my-app' });
+    expect(deps.stopDevTunnel).not.toHaveBeenCalled();
+    expect(session?.sessionId).toBe('bki_01');
+  });
+
+  it('still starts when stopping the previous app fails', async () => {
+    session = { blockId: 'old-app', sessionId: 'bki_old', host: 'dev-ffffffffffffffff.civit.ai' };
+    deps.stopDevTunnel.mockRejectedValueOnce(new Error('gone'));
+    await expect(start({ public_key: KEY, block_id: 'my-app' })).resolves.toMatchObject({
+      host: STARTED.host,
+    });
+    expect(session?.sessionId).toBe('bki_01');
+  });
+
+  it("forwards the manifest's scopes and auth, dropping values the server would refuse", async () => {
+    await start({
+      public_key: KEY,
+      declared_scopes: ['ai:write:budgeted', '', 7, 'x'.repeat(65), 'user:read:self'],
+      declared_auth: 'oauth',
+    });
+    expect(deps.startDevTunnel).toHaveBeenCalledWith({
+      blockId: 'my-app',
+      sshPublicKey: KEY,
+      declaredScopes: ['ai:write:budgeted', 'user:read:self'],
+      declaredAuth: 'oauth',
+    });
+  });
+
+  it('turns BAD_REQUEST into a retry hint and anything else into a plain failure', async () => {
+    deps.startDevTunnel.mockRejectedValueOnce(trpcError('BAD_REQUEST', 'invalid SSH public key'));
+    await expect(start({ public_key: KEY })).rejects.toThrow(
+      /invalid SSH public key.*sandbox__tunnel_key/
+    );
+    deps.startDevTunnel.mockRejectedValueOnce(new Error('socket hang up'));
+    await expect(start({ public_key: KEY })).rejects.toThrow(/could not start/);
+  });
 });
 
 describe('stop_preview', () => {
@@ -112,6 +151,13 @@ describe('stop_preview', () => {
     expect(await stop()).toMatchObject({ stopped: true });
     expect(deps.stopDevTunnel).toHaveBeenCalledWith({ sessionId: 'bki_01' });
     expect(session).toBeNull();
+  });
+
+  it('keeps the session when stopping fails, so a retry can stop it', async () => {
+    session = { blockId: 'my-app', sessionId: 'bki_01', host: STARTED.host };
+    deps.stopDevTunnel.mockRejectedValueOnce(new Error('network'));
+    await expect(stop()).rejects.toThrow('network');
+    expect(session).not.toBeNull();
   });
 
   it('is a no-op without a session', async () => {

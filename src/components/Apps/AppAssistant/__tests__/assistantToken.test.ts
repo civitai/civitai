@@ -10,6 +10,7 @@ const minted = (token: string, expiresInMs: number) =>
   new Response(JSON.stringify({ token, expiresAt: new Date(NOW + expiresInMs).toISOString() }), {
     status: 200,
   });
+const refused = (status: number, body: object) => new Response(JSON.stringify(body), { status });
 
 describe('createAssistantTokenProvider', () => {
   it('reuses a token until shortly before it expires, and shares one in-flight request', async () => {
@@ -22,10 +23,25 @@ describe('createAssistantTokenProvider', () => {
 
     expect(await Promise.all([provider.getToken(), provider.getToken()])).toEqual(['t1', 't1']);
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(fetchMock.mock.calls[0][0]).toBe(APP_ASSISTANT_TOKEN_ROUTE);
+    expect(fetchMock.mock.calls[0][0]).toBe(`${APP_ASSISTANT_TOKEN_ROUTE}?for=chat`);
 
     now = NOW + 9.5 * 60_000; // inside the one-minute margin
     expect(await provider.getToken()).toBe('t2');
+  });
+
+  it('keeps the chat and sandbox tokens apart', async () => {
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(minted('chat', 3_600_000))
+      .mockResolvedValueOnce(minted('sandbox', 3_600_000));
+    const provider = createAssistantTokenProvider(fetchMock, () => NOW);
+    expect(await provider.getToken()).toBe('chat');
+    expect(await provider.getToken({ purpose: 'sandbox' })).toBe('sandbox');
+    expect(await provider.getToken({ purpose: 'sandbox' })).toBe('sandbox');
+    expect(fetchMock.mock.calls.map((c) => c[0])).toEqual([
+      `${APP_ASSISTANT_TOKEN_ROUTE}?for=chat`,
+      `${APP_ASSISTANT_TOKEN_ROUTE}?for=sandbox`,
+    ]);
   });
 
   it('mints a new one on refresh', async () => {
@@ -38,12 +54,57 @@ describe('createAssistantTokenProvider', () => {
     expect(await provider.getToken({ refresh: true })).toBe('t2');
   });
 
+  it('reports consent_required, and enable() turns the assistant on with a POST', async () => {
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        refused(403, { error: 'Turn on App Assistant', code: 'consent_required' })
+      )
+      .mockResolvedValueOnce(minted('t1', 3_600_000));
+    const provider = createAssistantTokenProvider(fetchMock, () => NOW);
+
+    await expect(provider.getToken()).rejects.toMatchObject({
+      status: 403,
+      code: 'consent_required',
+    });
+    expect(await provider.enable()).toBe('t1');
+    expect(fetchMock.mock.calls[1]).toEqual([
+      APP_ASSISTANT_TOKEN_ROUTE,
+      expect.objectContaining({ method: 'POST' }),
+    ]);
+    expect(await provider.getToken()).toBe('t1');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('retries after a failed mint instead of keeping the failure', async () => {
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response('oops', { status: 503 }))
+      .mockResolvedValueOnce(minted('t1', 3_600_000));
+    const provider = createAssistantTokenProvider(fetchMock, () => NOW);
+    await expect(provider.getToken()).rejects.toMatchObject({
+      status: 503,
+      message: 'Could not start an App Assistant session',
+    });
+    expect(await provider.getToken()).toBe('t1');
+  });
+
+  it('does not reuse a token whose expiry it cannot read', async () => {
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockImplementation(
+        async () => new Response(JSON.stringify({ token: 't' }), { status: 200 })
+      );
+    const provider = createAssistantTokenProvider(fetchMock, () => NOW);
+    await provider.getToken();
+    await provider.getToken();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it("surfaces the route's refusal", async () => {
-    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
-      new Response(JSON.stringify({ error: 'App Assistant is not available on this account' }), {
-        status: 403,
-      })
-    );
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(refused(403, { error: 'App Assistant is not available on this account' }));
     const provider = createAssistantTokenProvider(fetchMock, () => NOW);
     await expect(provider.getToken()).rejects.toEqual(
       new AssistantTokenError('App Assistant is not available on this account', 403)

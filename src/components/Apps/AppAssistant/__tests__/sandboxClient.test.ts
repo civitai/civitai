@@ -67,6 +67,7 @@ describe('createSandboxClient', () => {
     await client.get(SANDBOX.name);
     expect((await client.suspend(SANDBOX.name)).state).toBe('suspended');
     await client.remove(SANDBOX.name);
+    for (const i of [0, 1, 2]) expect(call(i).headers.authorization).toBe('Bearer cached-token');
     expect([call(0), call(1), call(2)].map((c) => `${c.method} ${c.url}`)).toEqual([
       `GET ${BASE}/v1/sandboxes/${SANDBOX.name}`,
       `POST ${BASE}/v1/sandboxes/${SANDBOX.name}/suspend`,
@@ -105,6 +106,30 @@ describe('createSandboxClient', () => {
     expect(call(1).headers.authorization).toBe('Bearer fresh-token');
     await expect(client.list()).rejects.toMatchObject({ kind: 'unauthorized' });
     expect(fetchMock).toHaveBeenCalledTimes(4);
+  });
+
+  it.each([
+    [400, 'bad_request'],
+    [413, 'bad_request'],
+    [403, 'forbidden'],
+    [404, 'not_found'],
+    [429, 'rate_limited'],
+    [503, 'unavailable'],
+  ] as const)('maps %i to "%s"', async (status, kind) => {
+    const { client } = setup(json(status, { error: 'nope' }));
+    await expect(client.get(SANDBOX.name)).rejects.toMatchObject({ status, kind, message: 'nope' });
+  });
+
+  it('resends the body when a create is retried after a 401', async () => {
+    const { client, call } = setup(json(401, {}), json(201, SANDBOX));
+    await client.open('my-app');
+    expect(call(1).body).toBe(JSON.stringify({ app: 'my-app' }));
+    expect(call(1).headers.authorization).toBe('Bearer fresh-token');
+  });
+
+  it('reads a malformed list as empty', async () => {
+    const { client } = setup(json(200, { sandboxes: 'nope' }));
+    expect(await client.list()).toEqual([]);
   });
 
   it('turns a non-JSON gateway error into "unavailable"', async () => {

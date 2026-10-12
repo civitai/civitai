@@ -3,39 +3,105 @@ import {
   Alert,
   Badge,
   Button,
+  Center,
   Drawer,
   Group,
+  Loader,
   Paper,
   ScrollArea,
   SegmentedControl,
+  Stack,
   Text,
+  Title,
 } from '@mantine/core';
+import { useMutation, useQuery } from '@tanstack/react-query';
 import clsx from 'clsx';
 import type { ChatMcpServer } from '~/components/Apps/AppAssistant/AppAssistantChat';
 import { AppAssistantChat } from '~/components/Apps/AppAssistant/AppAssistantChat';
 import { AppAssistantPreview } from '~/components/Apps/AppAssistant/AppAssistantPreview';
 import { isAppBlockId } from '~/components/Apps/AppAssistant/appKey';
 import { buildAssistantInstructions } from '~/components/Apps/AppAssistant/assistantInstructions';
-import { createAssistantTokenProvider } from '~/components/Apps/AppAssistant/assistantToken';
+import {
+  AssistantTokenError,
+  createAssistantTokenProvider,
+} from '~/components/Apps/AppAssistant/assistantToken';
 import type { PreviewSession } from '~/components/Apps/AppAssistant/previewTools';
 import { createPreviewTools } from '~/components/Apps/AppAssistant/previewTools';
 import type { Sandbox } from '~/components/Apps/AppAssistant/sandboxClient';
-import { createSandboxClient } from '~/components/Apps/AppAssistant/sandboxClient';
+import {
+  createSandboxClient,
+  isSandboxServiceUrl,
+} from '~/components/Apps/AppAssistant/sandboxClient';
 import { SandboxPanel } from '~/components/Apps/AppAssistant/SandboxPanel';
 import { useSandboxes } from '~/components/Apps/AppAssistant/useSandboxes';
 import { env } from '~/env/client';
+import { APP_ASSISTANT_DAILY_BUZZ_CAP } from '~/shared/constants/app-assistant.constants';
+import { numberWithCommas } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 import classes from './AppAssistant.module.scss';
 
 const NO_MCP_SERVERS: ChatMcpServer[] = [];
 
+function EnableCard({
+  onEnable,
+  pending,
+  error,
+}: {
+  onEnable: () => void;
+  pending: boolean;
+  error: unknown;
+}) {
+  return (
+    <Center className="py-10">
+      <Paper withBorder radius="md" p="xl" maw={520}>
+        <Stack gap="sm">
+          <Title order={3}>Turn on App Assistant</Title>
+          <Text size="sm">
+            The assistant builds your app in a sandbox of your own, and can make images and other
+            media for it with your Buzz, up to {numberWithCommas(APP_ASSISTANT_DAILY_BUZZ_CAP)} Buzz
+            a day. You can change that limit or turn the assistant off at any time under connected
+            apps in your account settings.
+          </Text>
+          {!!error && (
+            <Alert color="red" variant="light">
+              {error instanceof Error ? error.message : 'App Assistant could not be turned on.'}
+            </Alert>
+          )}
+          <Group justify="flex-end">
+            <Button onClick={onEnable} loading={pending}>
+              Turn on App Assistant
+            </Button>
+          </Group>
+        </Stack>
+      </Paper>
+    </Center>
+  );
+}
+
 export function AppAssistantWorkspace({ canPreview }: { canPreview: boolean }) {
   const tokens = useMemo(() => createAssistantTokenProvider(), []);
   const sandboxUrl = env.NEXT_PUBLIC_APP_ASSISTANT_SANDBOX_URL;
+  // Whether the user has turned the assistant on: the sandbox token mints only against their consent.
+  const access = useQuery({
+    queryKey: ['app-assistant', 'access'],
+    queryFn: () => tokens.getToken({ purpose: 'sandbox' }),
+    enabled: !!sandboxUrl,
+    retry: false,
+    staleTime: Infinity,
+  });
+  const enable = useMutation({
+    mutationFn: () => tokens.enable(),
+    onSuccess: () => access.refetch(),
+  });
   const sandboxClient = useMemo(
     () =>
-      sandboxUrl ? createSandboxClient({ baseUrl: sandboxUrl, getToken: tokens.getToken }) : null,
-    [sandboxUrl, tokens]
+      sandboxUrl && access.isSuccess
+        ? createSandboxClient({
+            baseUrl: sandboxUrl,
+            getToken: (opts) => tokens.getToken({ ...opts, purpose: 'sandbox' }),
+          })
+        : null,
+    [sandboxUrl, tokens, access.isSuccess]
   );
   const sandboxes = useSandboxes(sandboxClient);
 
@@ -93,11 +159,22 @@ export function AppAssistantWorkspace({ canPreview }: { canPreview: boolean }) {
     []
   );
 
-  const mcpUrl = active?.state === 'running' ? active.mcpUrl : null;
+  // The token goes only to the configured sandbox service, whatever URL a response names.
+  const mcpUrl =
+    active?.state === 'running' && sandboxUrl && isSandboxServiceUrl(active.mcpUrl, sandboxUrl)
+      ? active.mcpUrl
+      : null;
   const mcpServers = useMemo<ChatMcpServer[]>(
     () =>
       mcpUrl
-        ? [{ id: 'sandbox', url: mcpUrl, label: 'Sandbox', token: () => tokens.getToken() }]
+        ? [
+            {
+              id: 'sandbox',
+              url: mcpUrl,
+              label: 'Sandbox',
+              token: () => tokens.getToken({ purpose: 'sandbox' }),
+            },
+          ]
         : NO_MCP_SERVERS,
     [mcpUrl, tokens]
   );
@@ -117,10 +194,30 @@ export function AppAssistantWorkspace({ canPreview }: { canPreview: boolean }) {
     setDrawerOpen(false);
   };
 
-  if (!sandboxClient)
+  if (!sandboxUrl)
     return (
       <Alert color="yellow" variant="light">
         Sandboxes are not configured on this deployment, so App Assistant can’t build apps here yet.
+      </Alert>
+    );
+  if (access.isPending)
+    return (
+      <Center className="py-10">
+        <Loader size="sm" />
+      </Center>
+    );
+  if (access.error instanceof AssistantTokenError && access.error.code === 'consent_required')
+    return (
+      <EnableCard
+        onEnable={() => enable.mutate()}
+        pending={enable.isPending}
+        error={enable.error}
+      />
+    );
+  if (access.error)
+    return (
+      <Alert color="red" variant="light">
+        {access.error instanceof Error ? access.error.message : 'App Assistant is unavailable.'}
       </Alert>
     );
 

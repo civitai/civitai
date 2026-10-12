@@ -27,15 +27,9 @@ export const getServerSideProps = createServerSideProps<AppAssistantPageProps>({
     const { isAppBlocksDevTunnelEnabled } = await import('~/server/services/app-blocks-flag');
     const canPreview = !!features?.appBlocksAuthor && (await isAppBlocksDevTunnelEnabled({ user }));
 
-    // The preview frames a dev-tunnel host that is only known after the page loads, and CSP host
-    // sources cannot match a `dev-*` label, so this allows the apps domain's subdomains. The frame's
-    // URL itself only ever comes from the server's own tunnel record. Like the dev route's CSP, it
-    // reaches the document on a hard navigation only.
-    const { env } = await import('~/env/server');
-    ctx.res.setHeader(
-      'Content-Security-Policy',
-      `frame-src https://*.${env.APPS_DOMAIN}; frame-ancestors 'none'`
-    );
+    // No route CSP: a header CSP stays on the document for every page the tab then reaches by
+    // client-side navigation, where it would block payment and captcha frames. The preview's frame
+    // URL comes only from the server's own tunnel record (`resolveDevTunnelFrame`).
     return { props: { canPreview } };
   },
 });
@@ -54,7 +48,6 @@ export default function AppAssistantPage({ canPreview }: AppAssistantPageProps) 
   );
 }
 
-// No footer: the workspace fills the viewport, and the footer's ad frames would also fall outside
-// this route's `frame-src`. `Page` sets these on the component itself; the default export stays a
-// plain function declaration so the `/apps` layout guards can parse it.
+// No footer: the workspace fills the viewport. `Page` sets these on the component itself; the default
+// export stays a plain function declaration so the `/apps` layout guards can parse it.
 Page(AppAssistantPage, { footer: null, features: canAccessAppAssistant });

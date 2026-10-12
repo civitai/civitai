@@ -1,5 +1,5 @@
-import { Alert, Anchor, Button, Center, Group, Loader, Stack, Text } from '@mantine/core';
-import { IconExternalLink, IconRefresh } from '@tabler/icons-react';
+import { Alert, Button, Center, Group, Loader, Stack, Text } from '@mantine/core';
+import { IconRefresh } from '@tabler/icons-react';
 import { useQuery } from '@tanstack/react-query';
 import { DevTunnelBlockHost } from '~/components/AppBlocks/DevTunnelBlockHost';
 import type { PreviewSession } from '~/components/Apps/AppAssistant/previewTools';
@@ -73,15 +73,6 @@ export function AppAssistantPreview({
           >
             Reload
           </Button>
-          <Anchor
-            size="xs"
-            href={`/apps/dev/${encodeURIComponent(session.blockId)}`}
-            target="_blank"
-            rel="noopener"
-            className="flex items-center gap-1"
-          >
-            Open full page <IconExternalLink size={12} />
-          </Anchor>
         </Group>
       </Group>
       <div className="flex min-h-0 flex-1 flex-col">

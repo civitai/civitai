@@ -12,16 +12,19 @@ import type { DevTunnelFrame } from '~/server/services/blocks/dev-tunnel-frame.s
 import { resolveDevTunnelFrame } from '~/server/services/blocks/dev-tunnel-frame.service';
 import { writeOauthConsent } from '~/server/services/blocks/oauth-consent-sync.service';
 import { getFeatureFlagsAsync } from '~/server/services/feature-flags.service';
+import { APP_ASSISTANT_DAILY_BUZZ_CAP } from '~/shared/constants/app-assistant.constants';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { canAccessAppAssistant } from '~/shared/utils/app-blocks-access';
 import { Flags } from '~/shared/utils/flags';
 import type { SessionUser } from '~/types/session';
 
 /**
  * One OAuth client per user rather than one shared row: an `OauthClient` belongs to the user in its
- * `userId`, who may edit or delete it through the OAuth-apps settings, so a shared first-party row
- * would be one user's to break for everyone.
+ * `userId`, who may edit or delete it through the OAuth-apps settings, so a shared row would be one
+ * user's to break for everyone. Not `firstparty-`: the auth hub reserves that prefix for its own
+ * trusted clients.
  */
-export const APP_ASSISTANT_CLIENT_PREFIX = 'firstparty-app-assistant-';
+export const APP_ASSISTANT_CLIENT_PREFIX = 'appassist-';
 
 export function appAssistantClientId(userId: number): string {
   return `${APP_ASSISTANT_CLIENT_PREFIX}${userId}`;
@@ -30,8 +33,15 @@ export function appAssistantClientId(userId: number): string {
 /** `<civitai-chat>` refuses to start without `ai:write:budgeted`; every OAuth token also carries `UserRead`. */
 export const APP_ASSISTANT_SCOPES = ['ai:write:budgeted'] as const;
 
-/** The daily Buzz limit a NEW consent gets; the user can change it under their connected apps. */
-export const APP_ASSISTANT_DAILY_BUZZ_CAP = 5000;
+/**
+ * Who a token is for. The chat spends Buzz; the hosted sandbox service only needs to know who the
+ * user is, so it gets `UserRead` alone.
+ */
+export type AppAssistantTokenPurpose = 'chat' | 'sandbox';
+
+function scopeFor(purpose: AppAssistantTokenPurpose): number {
+  return purpose === 'chat' ? oauthScopeBitsFor([...APP_ASSISTANT_SCOPES]) : TokenScope.UserRead;
+}
 
 export interface AppAssistantRefusal {
   status: 403;
@@ -74,38 +84,44 @@ export interface AppAssistantToken {
 }
 
 /**
- * Mints an OAuth access token for the caller's own App Assistant client. The user is the only
- * person who can reach their client, so consent is written for them here rather than collected
- * through the dialog. An existing consent that already covers the scopes is left alone, so a Buzz
- * limit the user changed survives the next mint.
+ * Turns App Assistant on for the user: their own client, and consent for its scopes with a daily
+ * Buzz cap. Only an explicit request from the user may call this, never a token refresh, so revoking
+ * the app under connected apps stays revoked. A consent that already covers the scopes is left alone,
+ * so a limit the user changed survives.
  */
-export async function mintAppAssistantToken(userId: number): Promise<AppAssistantToken> {
+export async function enableAppAssistant(userId: number): Promise<void> {
   const clientId = appAssistantClientId(userId);
-  const scope = oauthScopeBitsFor([...APP_ASSISTANT_SCOPES]);
+  const scope = scopeFor('chat');
 
-  await dbWrite.oauthClient.upsert({
+  const client = await dbWrite.oauthClient.findUnique({
     where: { id: clientId },
-    create: {
-      id: clientId,
-      secret: null,
-      name: 'App Assistant',
-      description: 'The Civitai App Assistant, building apps in your sandbox. Only you can use it.',
-      redirectUris: [],
-      allowedOrigins: [],
-      isConfidential: false,
-      grants: [],
-      allowedScopes: scope,
-      userId,
-    },
-    update: { allowedScopes: scope },
-    select: { id: true },
+    select: { allowedScopes: true },
   });
+  if (client?.allowedScopes !== scope)
+    await dbWrite.oauthClient.upsert({
+      where: { id: clientId },
+      create: {
+        id: clientId,
+        secret: null,
+        name: 'App Assistant',
+        description:
+          'The Civitai App Assistant, building apps in your sandbox. Only you can use it.',
+        redirectUris: [],
+        allowedOrigins: [],
+        isConfidential: false,
+        grants: [],
+        allowedScopes: scope,
+        userId,
+      },
+      update: { allowedScopes: scope },
+      select: { id: true },
+    });
 
   const existing = await dbWrite.oauthConsent.findUnique({
     where: { userId_clientId: { userId, clientId } },
     select: { scope: true, buzzLimit: true },
   });
-  if (!existing || (existing.scope & scope) !== scope) {
+  if (!existing || (existing.scope & scope) !== scope)
     await writeOauthConsent({
       userId,
       clientId,
@@ -114,7 +130,23 @@ export async function mintAppAssistantToken(userId: number): Promise<AppAssistan
         ? (existing.buzzLimit as BuzzLimit | null)
         : simpleBuzzLimitToBudgets({ limit: APP_ASSISTANT_DAILY_BUZZ_CAP, period: 'day' }),
     });
-  }
+}
+
+/**
+ * Mints an access token for `purpose` against the consent `enableAppAssistant` wrote, or returns
+ * `null` when there is none covering the scopes (never turned on, or revoked since).
+ */
+export async function mintAppAssistantToken(
+  userId: number,
+  purpose: AppAssistantTokenPurpose
+): Promise<AppAssistantToken | null> {
+  const clientId = appAssistantClientId(userId);
+  const scope = scopeFor(purpose);
+  const consent = await dbWrite.oauthConsent.findUnique({
+    where: { userId_clientId: { userId, clientId } },
+    select: { scope: true },
+  });
+  if (!consent || (consent.scope & scope) !== scope) return null;
 
   const minted = await mintAppToken({ userId, clientId, scope });
   return { token: minted.accessToken, expiresAt: minted.expiresAt };

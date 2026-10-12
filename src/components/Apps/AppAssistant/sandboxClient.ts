@@ -32,10 +32,7 @@ export class SandboxApiError extends Error {
 /** The service's sandbox names: a DNS label. Checked before a name goes into a path. */
 const SANDBOX_NAME = /^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$/;
 
-/**
- * 409 covers both the per-user caps and a transient concurrent change, and the service tells them
- * apart only in its message ("sandbox limit (3) reached…", "running-sandbox limit (1) reached…").
- */
+/** 409 covers both the per-user caps and a transient concurrent change; only the message tells them apart. */
 const LIMIT_MESSAGE = /limit \(\d+\) reached/;
 
 function errorKind(status: number, message: string): SandboxErrorKind {
@@ -55,6 +52,15 @@ function errorKind(status: number, message: string): SandboxErrorKind {
       return 'rate_limited';
     default:
       return 'unavailable';
+  }
+}
+
+/** Whether `url` is served by the sandbox service at `baseUrl`, so it may receive the user's token. */
+export function isSandboxServiceUrl(url: string, baseUrl: string): boolean {
+  try {
+    return new URL(url).origin === new URL(baseUrl).origin;
+  } catch {
+    return false;
   }
 }
 

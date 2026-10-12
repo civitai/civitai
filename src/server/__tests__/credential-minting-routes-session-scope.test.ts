@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as ApiKeyService from '~/server/services/api-key.service';
+import type * as AppAssistantService from '~/server/services/app-assistant/app-assistant.service';
 import type * as FeatureFlagsService from '~/server/services/feature-flags.service';
 import type * as UserService from '~/server/services/user.service';
 import { OnboardingSteps } from '~/server/common/enums';
@@ -32,8 +33,16 @@ vi.mock('~/server/orchestrator/get-orchestrator-token', () => ({
 vi.mock('~/server/services/feature-flags.service', async (importOriginal) => ({
   ...(await importOriginal<typeof FeatureFlagsService>()),
   getFeatureFlagsLazy: vi.fn(() => ({ trainingStudioUi: true })),
+  getFeatureFlagsAsync: vi.fn(async () => ({ appBlocks: true, appAssistant: true })),
   computeUserFeatureFlagsOverlay: vi.fn(() => ({})),
   getFliptGatedEligibility: vi.fn(() => ({})),
+}));
+vi.mock('~/server/services/app-assistant/app-assistant.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof AppAssistantService>()),
+  mintAppAssistantToken: vi.fn(async () => ({
+    token: 'minted-assistant-token',
+    expiresAt: '2099-01-01T00:00:00Z',
+  })),
 }));
 vi.mock('~/server/services/user.service', async (importOriginal) => ({
   ...(await importOriginal<typeof UserService>()),
@@ -42,6 +51,9 @@ vi.mock('~/server/services/user.service', async (importOriginal) => ({
 
 const { addApiKey } = await import('~/server/services/api-key.service');
 const { getOrchestratorToken } = await import('~/server/orchestrator/get-orchestrator-token');
+const { mintAppAssistantToken } = await import(
+  '~/server/services/app-assistant/app-assistant.service'
+);
 
 type Handler = (req: NextApiRequest, res: NextApiResponse) => Promise<void>;
 
@@ -57,6 +69,12 @@ const routes: { name: string; path: string; handler: Handler; minted: () => unkn
     path: '/api/training-studio/host',
     handler: (await import('~/pages/api/training-studio/host')).default as unknown as Handler,
     minted: () => getOrchestratorToken,
+  },
+  {
+    name: 'GET /api/apps/assistant/token',
+    path: '/api/apps/assistant/token',
+    handler: (await import('~/pages/api/apps/assistant/token')).default as unknown as Handler,
+    minted: () => mintAppAssistantToken,
   },
 ];
 
@@ -197,5 +215,13 @@ describe('the minted credential is still returned to an allowed caller', () => {
   it('returns the token from training-studio/host', async () => {
     hubSession.current = { user: USER };
     expect((await call(routes[1])).body).toMatchObject({ token: 'minted-orchestrator-token' });
+  });
+
+  it('returns the token from apps/assistant/token', async () => {
+    hubSession.current = { user: USER };
+    expect((await call(routes[2])).body).toEqual({
+      token: 'minted-assistant-token',
+      expiresAt: '2099-01-01T00:00:00Z',
+    });
   });
 });

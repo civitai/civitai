@@ -19,7 +19,12 @@ export interface PreviewToolDeps {
   canPreview: boolean;
   /** Used when the assistant passes no `block_id`. */
   defaultBlockId: () => string | null;
-  startDevTunnel: (input: { blockId: string; sshPublicKey: string }) => Promise<StartedDevTunnel>;
+  startDevTunnel: (input: {
+    blockId: string;
+    sshPublicKey: string;
+    declaredScopes?: string[];
+    declaredAuth?: 'block-token' | 'oauth';
+  }) => Promise<StartedDevTunnel>;
   stopDevTunnel: (input: { sessionId: string }) => Promise<unknown>;
   getSession: () => PreviewSession | null;
   setSession: (session: PreviewSession | null) => void;
@@ -61,6 +66,17 @@ export function createPreviewTools(deps: PreviewToolDeps): Record<string, ChatTo
           description:
             "The app's blockId from block.manifest.json: 3-40 characters, lowercase letters, digits and dashes, starting with a letter.",
         },
+        declared_scopes: {
+          type: 'array',
+          items: { type: 'string' },
+          description:
+            "The scopes in block.manifest.json. Without them the preview runs read-only; spending scopes also depend on the user's account.",
+        },
+        declared_auth: {
+          type: 'string',
+          enum: ['block-token', 'oauth'],
+          description: "The manifest's auth, if it declares one.",
+        },
       },
       required: ['public_key'],
     },
@@ -75,13 +91,29 @@ export function createPreviewTools(deps: PreviewToolDeps): Record<string, ChatTo
           'Pass block_id: 3-40 characters, lowercase letters, digits and dashes, starting with a letter.'
         );
 
+      const declaredScopes = Array.isArray(input.declared_scopes)
+        ? input.declared_scopes
+            // The bounds `blocks.startDevTunnel`'s input enforces.
+            .filter((s): s is string => typeof s === 'string' && s.length >= 1 && s.length <= 64)
+            .slice(0, 32)
+        : undefined;
+      const declaredAuth =
+        input.declared_auth === 'oauth' || input.declared_auth === 'block-token'
+          ? input.declared_auth
+          : undefined;
+
       let started: StartedDevTunnel;
       try {
-        started = await deps.startDevTunnel({ blockId, sshPublicKey: publicKey.trim() });
+        started = await deps.startDevTunnel({
+          blockId,
+          sshPublicKey: publicKey.trim(),
+          ...(declaredScopes ? { declaredScopes } : {}),
+          ...(declaredAuth ? { declaredAuth } : {}),
+        });
       } catch (error) {
         throw new Error(previewErrorMessage(error));
       }
-      // Without the server's host key sandbox__tunnel_connect cannot pin it and must not connect.
+      // No host key means the sandbox cannot pin it, so it must not connect.
       if (!started.sshHostPublicKey) {
         await deps.stopDevTunnel({ sessionId: started.sessionId }).catch(() => undefined);
         throw new Error('The preview service is not configured. Tell the user; do not retry.');

@@ -114,6 +114,7 @@ import { page } from 'vitest/browser';
 import { cleanup } from 'vitest-browser-react';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+import { makeTrpcProxy } from '../../../test/trpcProxyStub';
 import type * as TrpcMod from '~/utils/trpc';
 import type { AppsMeasure } from './appsPageWidths';
 
@@ -133,7 +134,7 @@ vi.mock('~/hooks/useCurrentUser', () => ({
 // module-mock) — see the sibling browser tests for why.
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof TrpcMod>()),
-  trpc: { blocks: { getNavSummary: { useQuery: () => ({ data: undefined }) } } },
+  trpc: makeTrpcProxy({ 'blocks.getNavSummary': { useQuery: () => ({ data: undefined }) } }),
 }));
 
 const { AppsPageLayout } = await import('./AppsPageLayout');
@@ -305,13 +306,7 @@ describe('the /apps route set that renders the shared chrome', () => {
       '/apps/submit',
     ]);
     // Both classes are represented, so the loops below exercise the measured AND the
-    // measure-free branch of the layout rather than one of them 13 times. 6/7 since
-    // `/apps/review` gave up its 1368 cap and joined the full-container list. `/apps/build`
-    // joins it too — its workbench state renders the submissions table, whose 1424px scroll
-    // floor the readable band's 1368 ceiling cannot clear — while `/apps/get-started`, which
-    // WAS measured, left with the merge. Net: the full-container half holds at 6 (one in,
-    // one out) and the measured half drops from 7 to 6.
-    // 7 since `/apps/assistant` (chat beside a live preview) joined the full-container half.
+    // measure-free branch of the layout rather than one of them 13 times.
     expect(ROUTES.filter((r) => r.measure === undefined)).toHaveLength(7);
     expect(ROUTES.filter((r) => r.measure !== undefined)).toHaveLength(6);
   });
