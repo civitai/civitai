@@ -138,7 +138,7 @@ import {
 import { submitModelTextModeration } from '~/server/services/model-moderation.adapter';
 import { summarizeTextScan } from '~/server/services/text-scan/moderator-summary';
 import { reassertModelPoiRestrictions } from '~/server/services/text-scan/actions/model-poi-minor';
-import { holdModelForLiteralRules } from '~/server/services/text-scan/actions/model-rules';
+import type { holdModelForLiteralRules } from '~/server/services/text-scan/actions/model-rules';
 import { checkModelRulesLiteralHold } from '~/server/services/text-scan/model-rules-hold';
 import { legacyProfanityAutoNsfwApplies } from '~/server/services/text-scan/route';
 import { scanEntityInBackground, scanModelAndRules } from '~/server/services/text-scan/submit';
@@ -3326,6 +3326,10 @@ const publishedModelSelect = {
 // ModelRules scan is the backstop.
 async function tryHoldModelForLiteralRules(args: Parameters<typeof holdModelForLiteralRules>[0]) {
   try {
+    // Dynamic: the action imports model-version.service, which imports this module.
+    const { holdModelForLiteralRules } = await import(
+      '~/server/services/text-scan/actions/model-rules'
+    );
     await holdModelForLiteralRules(args);
     return true;
   } catch (error) {
