@@ -769,3 +769,76 @@ describe('purchaseCosmeticShopItem repeat purchases', () => {
     expect(mocks.createMultiTx).not.toHaveBeenCalled();
   });
 });
+
+// A creator's approval grant of their own sticker is finite, so they can run out
+// and must be able to buy more, as the comment picker's top-up already lets them.
+describe('purchaseCosmeticShopItem creator restocking their own sticker', () => {
+  beforeEach(() => {
+    Object.values(mocks).forEach((m) => m.mockReset());
+    mocks.getBlockedPairIds.mockResolvedValue([]);
+    mocks.resaleFindUnique.mockResolvedValue(null);
+    mocks.userCosmeticCreate.mockResolvedValue({ userId: BUYER_ID, cosmeticId: 7 });
+    mocks.createBuzzTransaction.mockResolvedValue({ transactionId: 'tx-1' });
+    mocks.createMultiTx.mockResolvedValue(
+      chargeResponse([{ accountType: 'yellow', amount: PRICE }])
+    );
+    // The creator holds their spent approval grant; only the unlimited lookup
+    // (which filters on `remaining`) comes back empty.
+    mocks.userCosmeticFindFirst.mockImplementation(({ where }: { where: { remaining?: null } }) =>
+      Promise.resolve('remaining' in where ? null : { claimKey: 'creator-shop' })
+    );
+  });
+
+  const ownSticker = () =>
+    mocks.shopItemFindUnique.mockResolvedValue(
+      shopItemRow({ type: 'Sticker', createdById: BUYER_ID })
+    );
+
+  it('sells the creator their own sticker at full price and grants the uses', async () => {
+    ownSticker();
+
+    await purchaseCosmeticShopItem({
+      userId: BUYER_ID,
+      shopItemId: SHOP_ITEM_ID,
+      stickersEnabled: true,
+    });
+
+    expect(mocks.createMultiTx.mock.calls[0][0]).toMatchObject({
+      fromAccountId: BUYER_ID,
+      toAccountId: 0,
+      amount: PRICE,
+    });
+    expect(mocks.userCosmeticCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ userId: BUYER_ID }) })
+    );
+  });
+
+  it.each([
+    ['the official shop', undefined],
+    ['their own storefront', BUYER_ID],
+  ])('pays the creator none of their own money back, bought through %s', async (_, via) => {
+    ownSticker();
+
+    await purchaseCosmeticShopItem({
+      userId: BUYER_ID,
+      shopItemId: SHOP_ITEM_ID,
+      viaShopUserId: via,
+      stickersEnabled: true,
+    });
+
+    expect(mocks.createMultiTx).toHaveBeenCalled();
+    expect(sellCalls()).toEqual([]);
+    expect(mocks.purchasesUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { meta: { payouts: [], platformCut: PRICE } } })
+    );
+  });
+
+  it('still refuses a creator their own badge', async () => {
+    mocks.shopItemFindUnique.mockResolvedValue(shopItemRow({ createdById: BUYER_ID }));
+
+    await expect(
+      purchaseCosmeticShopItem({ userId: BUYER_ID, shopItemId: SHOP_ITEM_ID })
+    ).rejects.toThrow('You already own this cosmetic');
+    expect(mocks.createMultiTx).not.toHaveBeenCalled();
+  });
+});

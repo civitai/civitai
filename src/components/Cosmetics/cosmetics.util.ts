@@ -58,6 +58,14 @@ export const useQueryUserCosmetics = () => {
   return trpc.user.getCosmetics.useQuery(undefined, { enabled: !!currentUser });
 };
 
+export const useQueryStickerBalances = ({ enabled = true } = {}) => {
+  const currentUser = useCurrentUser();
+
+  return trpc.cosmetic.getStickerBalances.useQuery(undefined, {
+    enabled: enabled && !!currentUser,
+  });
+};
+
 export const useEquipProfileDecoration = () => {
   const queryUtils = trpc.useUtils();
   const currentUser = useCurrentUser();

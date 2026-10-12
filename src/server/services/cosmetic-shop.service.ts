@@ -1033,8 +1033,12 @@ export const purchaseCosmeticShopItem = async ({
         throw throwBadRequestError(`This ${noun} is not available`);
       }
 
-      // Creators can't buy their own cosmetic — they're granted it on approval.
-      if (shopItem.cosmetic.createdById === userId) {
+      // Creators are granted their own cosmetic on approval. A sticker grant is a
+      // finite batch of uses, though, so a creator who spends it may restock.
+      if (
+        shopItem.cosmetic.createdById === userId &&
+        shopItem.cosmetic.type !== CosmeticType.Sticker
+      ) {
         throw throwBadRequestError('You already own this cosmetic');
       }
 
@@ -1361,7 +1365,11 @@ export const purchaseCosmeticShopItem = async ({
         );
 
         let recipients: { userId: number; amount: number }[];
-        if (creatorId) {
+        // Never the buyer's own money back: a creator restocking their sticker
+        // would round-trip 70% through the bank. Same rule as `purchaseStickerUses`.
+        if (creatorId === userId) {
+          recipients = [];
+        } else if (creatorId) {
           if (resellerId || platformResale) {
             recipients = [
               ...(creatorAmount > 0 ? [{ userId: creatorId, amount: creatorAmount }] : []),
