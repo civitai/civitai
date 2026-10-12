@@ -315,8 +315,9 @@ type HolidayEventDefinition = {
   scoring?: EventScoring;
   // Joining grants the team's cosmetic of this design (Cosmetic.data.design) under this claimKey,
   // once per user, only inside the event window. Without it, activateCosmetic keeps the bank-event
-  // behaviour.
-  join?: { claimKey: string; design: string };
+  // behaviour. `balance` places users on the event's team-balance list by predicted points instead of
+  // the hash; see team-balance.ts.
+  join?: { claimKey: string; design: string; balance?: boolean };
   cosmeticName: string;
   badgePrefix: string;
   coverImage?: string;

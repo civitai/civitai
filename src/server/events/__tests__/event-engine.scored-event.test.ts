@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import {
@@ -10,6 +10,8 @@ import {
 } from '~/shared/constants/birthday2026.constants';
 import { EVENT_DECORATION_DEFINITIONS } from '~/shared/constants/event-decoration.constants';
 import { testerFlag } from '~/test-utils/testerFlagFake';
+import { teamBalanceKeys } from '~/server/events/team-balance';
+import { createLuaRedis, type LuaRedis } from '~/server/utils/__tests__/redis-lua-harness';
 
 const { mockCreateNotification, mockRefresh, mockScoring, mockReferee, mockSync } = vi.hoisted(
   () => ({
@@ -593,6 +595,81 @@ describe('join team lookup', () => {
     await expect(
       eventEngine.join(BIRTHDAY_2026_EVENT, { id: 7 }, BIRTHDAY_2026_STARTS_AT)
     ).rejects.toThrow('ECONNREFUSED');
+    expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
+  });
+});
+
+// Join-time team balancing: the placement script runs for real (team-balance.test.ts pins it alone).
+describe('join balancing', () => {
+  const keys = teamBalanceKeys(BIRTHDAY_2026_EVENT);
+  const joinAs = (id: number) =>
+    eventEngine.join(BIRTHDAY_2026_EVENT, { id }, BIRTHDAY_2026_STARTS_AT);
+  let lua: LuaRedis;
+
+  beforeEach(() => {
+    lua = createLuaRedis(0);
+    redisMock.sysRedis.eval.mockImplementation(lua.eval);
+    redisMock.sysRedis.hGetAll.mockImplementation(async (key: string) => lua.hash(key) ?? {});
+    lua.setHash(keys.list, { '7': '500', '8': '400', '9': '300', '10': '200' });
+    // Not joined yet: no team cosmetic held.
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([]);
+  });
+  // clearAllMocks keeps implementations, and later describes expect the default sysRedis.
+  afterEach(() => {
+    redisMock.sysRedis.eval.mockReset();
+    redisMock.sysRedis.hGetAll.mockReset();
+  });
+
+  it('places a listed user on the team whose listed joiners are predicted to earn least', async () => {
+    lua.setHash(keys.totals, { Yellow: '900', Blue: '200', Pink: '700', Green: '400' });
+    expect(await joinAs(7)).toEqual({ team: 'Blue', cosmeticId: 22, joined: true });
+    expect(dbMock.dbWrite.$executeRaw.mock.calls[0][2]).toBe(22);
+    expect(lua.hash(keys.totals)?.Blue).toBe('700');
+    expect(lua.hash(keys.manual)).toEqual({ '7': 'Blue' });
+    // Later reads of the user's team agree with the join.
+    expect(await birthday2026.getUserTeam(7)).toBe('Blue');
+  });
+
+  it('leaves an unlisted user on the hashed team, writing no placement', async () => {
+    const hashed = await birthday2026.getUserTeam(99);
+    // The lightest team is one the hash did not pick, so landing on it would be the balancer.
+    const lightest = BIRTHDAY_2026_TEAMS.find((t) => t !== hashed) as string;
+    lua.setHash(
+      keys.totals,
+      Object.fromEntries(BIRTHDAY_2026_TEAMS.map((t) => [t, t === lightest ? '0' : '1000']))
+    );
+    expect((await joinAs(99)).team).toBe(hashed);
+    expect(lua.hash(keys.manual)).toBeUndefined();
+    expect(lua.hash(keys.totals)?.[lightest]).toBe('0');
+  });
+
+  it('splits listed users joining at once across the teams', async () => {
+    const joined = await Promise.all([7, 8, 9, 10].map(joinAs));
+    expect(joined.map((j) => j.team).sort()).toEqual([...BIRTHDAY_2026_TEAMS].sort());
+    const totals = Object.values(lua.hash(keys.totals) ?? {}).map(Number);
+    expect(totals.sort((a, b) => a - b)).toEqual([200, 300, 400, 500]);
+  });
+
+  it('keeps a manual assignment made before the user joined', async () => {
+    lua.setHash(keys.manual, { '7': 'Green' });
+    expect((await joinAs(7)).team).toBe('Green');
+    expect(lua.hash(keys.totals)).toBeUndefined();
+  });
+
+  // Already holding Yellow's cosmetic, the user keeps Yellow and is not counted toward any team.
+  it('does not place a listed user who already joined', async () => {
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([{ cosmeticId: 21 }]);
+    dbMock.dbWrite.$executeRaw.mockResolvedValue(0);
+    lua.setHash(keys.totals, { Yellow: '900', Blue: '0', Pink: '900', Green: '900' });
+    expect(await joinAs(7)).toEqual({ team: 'Yellow', cosmeticId: 21, joined: false });
+    expect(redisMock.sysRedis.eval).not.toHaveBeenCalled();
+    expect(lua.hash(keys.manual)).toBeUndefined();
+    expect(lua.hash(keys.totals)?.Blue).toBe('0');
+  });
+
+  it('refuses to join when the balance list cannot be read', async () => {
+    redisMock.sysRedis.eval.mockRejectedValue(new Error('ECONNREFUSED'));
+    await expect(joinAs(7)).rejects.toThrow('ECONNREFUSED');
     expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
   });
 });

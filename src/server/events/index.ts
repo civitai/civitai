@@ -15,6 +15,7 @@ import { eventPointSeason, eventPointsWindow } from '~/server/events/points/keys
 import { isEventPointsEnabled } from '~/server/events/points/enabled';
 import { runEventPointsReferee } from '~/server/events/points/referee';
 import { syncEventHats } from '~/server/events/points/sync';
+import { placeListedJoiner } from '~/server/events/team-balance';
 import { pointTypesFor } from '~/server/events/points/types';
 import {
   getEventStandings,
@@ -547,18 +548,33 @@ export const eventEngine = {
     await this.assertPlayable(event, user, now);
     const userId = user.id;
 
-    // Strict: a degraded manual-assignment read refuses the join rather than granting the computed
-    // team's colour to someone assigned by hand.
-    const team = await eventDef.getUserTeam(userId, { strict: true });
-    const cosmeticId = await eventDef.getTeamCosmetic(team);
-    if (!cosmeticId) throw new Error("This event's cosmetics are not set up yet");
-
     const teamByCosmetic = new Map<number, string>();
     for (const t of eventDef.teams) {
       const id = await eventDef.getTeamCosmetic(t);
       if (id) teamByCosmetic.set(id, t);
     }
     const teamCosmeticIds = [...teamByCosmetic.keys()];
+    const heldTeamCosmetic = async () => {
+      const [held] = await dbWrite.$queryRaw<{ cosmeticId: number }[]>`
+        SELECT "cosmeticId" FROM "UserCosmetic"
+        WHERE "userId" = ${userId} AND "claimKey" = ${claimKey}
+          AND "cosmeticId" = ANY(${teamCosmeticIds}::int[])
+        LIMIT 1
+      `;
+      return held?.cosmeticId;
+    };
+
+    // Balancing places only a user who has not joined yet: one who already holds a team cosmetic keeps
+    // it, and must not be counted toward a team's total or handed a different team.
+    let placed: string | undefined;
+    if (eventDef.join?.balance && !(await heldTeamCosmetic())) {
+      placed = await placeListedJoiner(eventDef.name, userId, eventDef.teams);
+    }
+    // Strict: a degraded manual-assignment read refuses the join rather than granting the computed
+    // team's colour to someone assigned by hand.
+    const team = placed ?? (await eventDef.getUserTeam(userId, { strict: true }));
+    const cosmeticId = await eventDef.getTeamCosmetic(team);
+    if (!cosmeticId) throw new Error("This event's cosmetics are not set up yet");
 
     const inserted = await dbWrite.$executeRaw`
       INSERT INTO "UserCosmetic" ("userId", "cosmeticId", "claimKey", "obtainedAt")
@@ -575,13 +591,7 @@ export const eventEngine = {
 
     // Already joined. Report the cosmetic actually held, which differs from `team` when the user was
     // reassigned after joining.
-    const [held] = await dbWrite.$queryRaw<{ cosmeticId: number }[]>`
-      SELECT "cosmeticId" FROM "UserCosmetic"
-      WHERE "userId" = ${userId} AND "claimKey" = ${claimKey}
-        AND "cosmeticId" = ANY(${teamCosmeticIds}::int[])
-      LIMIT 1
-    `;
-    const heldId = held?.cosmeticId ?? cosmeticId;
+    const heldId = (await heldTeamCosmetic()) ?? cosmeticId;
     return { team: teamByCosmetic.get(heldId) ?? team, cosmeticId: heldId, joined: false };
   },
   // What this viewer may do with the event; see event-access.ts. An unknown event is closed.
