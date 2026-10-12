@@ -533,6 +533,7 @@ describe('getPlaceableEventContentPage', () => {
       id: { lt: 101 },
     });
     expect(args.orderBy).toEqual({ id: 'desc' });
+    expect(args.take).toBe(25);
     expect(result.items.map((i) => i.entityId)).toEqual(ids(24).map((x) => x.id));
     // The 25th row only says there is more; the next page starts below the last one shown.
     expect(result.nextCursor).toBe(77);
@@ -549,15 +550,41 @@ describe('getPlaceableEventContentPage', () => {
     });
     expect(models.nextCursor).toBe(48);
 
-    dbMock.dbRead.article.findMany.mockResolvedValueOnce(ids(3));
-    const articles = await page({ entityType: 'Article' });
+    dbMock.dbRead.article.findMany.mockResolvedValueOnce(ids(25));
+    const articles = await page({ entityType: 'Article', cursor: 48 });
     expect(dbMock.dbRead.article.findMany.mock.calls[0][0]).toMatchObject({
       where: { userId: 9, status: 'Published' },
       orderBy: [{ publishedAt: 'desc' }, { id: 'desc' }],
-      skip: 0,
+      skip: 48,
+      take: 25,
     });
-    expect(articles.items).toHaveLength(3);
+    expect(articles.items).toHaveLength(24);
+    expect(articles.nextCursor).toBe(72);
+  });
+
+  // A full page of exactly 24 is the last one: only a 25th row means more.
+  it('ends on a page of exactly 24', async () => {
+    dbMock.dbRead.image.findMany.mockResolvedValueOnce(ids(24));
+    dbMock.dbRead.article.findMany.mockResolvedValueOnce(ids(24));
+    const images = await page({ entityType: 'Image' });
+    expect(dbMock.dbRead.image.findMany.mock.calls[0][0].where).not.toHaveProperty('id');
+    expect(images.items).toHaveLength(24);
+    expect(images.nextCursor).toBeNull();
+    const articles = await page({ entityType: 'Article' });
+    expect(dbMock.dbRead.article.findMany.mock.calls[0][0].skip).toBe(0);
     expect(articles.nextCursor).toBeNull();
+  });
+
+  // An event whose hat can go on a type the picker has no reader for still reads nothing for it.
+  it('reads nothing for an allowed type the picker does not list', async () => {
+    decorations.getEventDecorationDefinition.mockReturnValueOnce({
+      ...decorations.real('birthday2026'),
+      entityTypes: ['Post', 'Image'],
+    });
+    expect(await page({ entityType: 'Post' })).toEqual({ items: [], nextCursor: null });
+    expect(dbMock.dbRead.article.findMany).not.toHaveBeenCalled();
+    expect(dbMock.dbRead.model.findMany).not.toHaveBeenCalled();
+    expect(dbMock.dbRead.image.findMany).not.toHaveBeenCalled();
   });
 
   it('reads nothing for a type the hat cannot go on', async () => {

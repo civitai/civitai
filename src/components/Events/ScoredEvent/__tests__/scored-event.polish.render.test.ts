@@ -24,21 +24,36 @@ let placeable: ({ entityType: string } & Record<string, unknown>)[] = [];
 let placeableLoading = false;
 // The types with another page to load.
 let placeableMore: string[] = [];
+// Several pages for a type, in place of the single page `placeable` gives it.
+let placeablePages: Record<string, unknown[][]> = {};
+// Every infinite query the modal opens: its input and its options.
+const placeableCalls: {
+  input: { event: string; entityType: string };
+  opts: {
+    enabled: boolean;
+    getNextPageParam: (page: { items: unknown[]; nextCursor: number | null }) => unknown;
+  };
+}[] = [];
 const { equip, fetchNextPage } = vi.hoisted(() => ({ equip: vi.fn(), fetchNextPage: vi.fn() }));
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof Trpc>()),
   trpc: makeTrpcProxy({
     // One tab's pages: the fixture's items of the type asked for.
     'event.getPlaceableContentPage': {
-      useInfiniteQuery: ({ entityType }: { entityType: string }) => ({
-        data: placeableLoading
-          ? undefined
-          : { pages: [{ items: placeable.filter((p) => p.entityType === entityType) }] },
-        isLoading: placeableLoading,
-        hasNextPage: placeableMore.includes(entityType),
-        isFetchingNextPage: false,
-        fetchNextPage: () => fetchNextPage(entityType),
-      }),
+      useInfiniteQuery: (input: { event: string; entityType: string }, opts: never) => {
+        placeableCalls.push({ input, opts });
+        const { entityType } = input;
+        const pages = placeablePages[entityType] ?? [
+          placeable.filter((p) => p.entityType === entityType),
+        ];
+        return {
+          data: placeableLoading ? undefined : { pages: pages.map((items) => ({ items })) },
+          isLoading: placeableLoading,
+          hasNextPage: placeableMore.includes(entityType),
+          isFetchingNextPage: false,
+          fetchNextPage: () => fetchNextPage(entityType),
+        };
+      },
     },
   }),
 }));
@@ -166,7 +181,55 @@ describe('PlaceHatModal tabs', () => {
   afterEach(() => {
     placeableLoading = false;
     placeableMore = [];
+    placeablePages = {};
+    placeableCalls.length = 0;
     fetchNextPage.mockClear();
+  });
+
+  // Each tab asks for this event's content of its own type; the next page starts at the server's
+  // cursor, and a null cursor means there is none.
+  it('asks for each type of this event, paging on the server cursor', () => {
+    placeable = [];
+    modal();
+    const last = placeableCalls.slice(-3);
+    expect(last.map((c) => [c.input.event, c.input.entityType, c.opts.enabled])).toEqual([
+      ['birthday2026', 'Image', true],
+      ['birthday2026', 'Model', true],
+      ['birthday2026', 'Article', true],
+    ]);
+    const next = last[1].opts.getNextPageParam;
+    expect(next({ items: [], nextCursor: 24 })).toBe(24);
+    expect(next({ items: [], nextCursor: null })).toBeUndefined();
+  });
+
+  // A hat with nowhere to go fetches nothing at all.
+  it('fetches nothing for an event whose hat has no types', () => {
+    placeable = [];
+    const page = render(
+      React.createElement(PlaceHatModal, { event: 'no-such-event', hat: hat(), myHats: [hat()] })
+    );
+    expect(placeableCalls.map((c) => c.opts.enabled)).toEqual([false, false, false]);
+    expect(page.textContent).toContain('Nothing you publish can wear this hat.');
+  });
+
+  // An offset page can repeat a model published between two loads: it is listed once.
+  it('lists a model repeated across two pages once', () => {
+    const m = (entityId: number) => ({
+      entityType: 'Model',
+      entityId,
+      title: `M${entityId}`,
+      image: null,
+    });
+    placeablePages = {
+      Model: [
+        [m(7), m(8)],
+        [m(8), m(9)],
+      ],
+    };
+    const page = modal();
+    pickTab(page, /^Models/);
+    expect(tileIds(page)).toEqual(['Model:7', 'Model:8', 'Model:9']);
+    expect(tabLabels(page)[1]).toBe('Models 3');
   });
 
   // One tab per type the hat can go on, each with its own count; "+" while it has more to load.
