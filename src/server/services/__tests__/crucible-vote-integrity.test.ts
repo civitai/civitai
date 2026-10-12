@@ -137,7 +137,7 @@ describe('submitVote — a creator who blocked the judge', () => {
         winnerEntryId: 10,
         loserEntryId: 20,
         userId: JUDGE,
-        blockedByUserIds: [500],
+        blockedCreatorIds: [500],
       })
     ).rejects.toThrow('Crucible not found');
     expect(processVote).not.toHaveBeenCalled();

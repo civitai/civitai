@@ -216,7 +216,7 @@ describe('getJudgingStatuses', () => {
     const statuses = await getJudgingStatuses({
       crucibleIds: [1, 2, 3],
       userId: JUDGE,
-      blockedByUserIds: [777],
+      blockedCreatorIds: [777],
     });
 
     expect(statuses.map((s) => s.crucibleId)).toEqual([3]);
