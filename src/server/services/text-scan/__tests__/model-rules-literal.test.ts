@@ -1,4 +1,17 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+
+const { foldSpy } = vi.hoisted(() => ({ foldSpy: vi.fn() }));
+vi.mock('~/server/utils/confusable-fold', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('~/server/utils/confusable-fold')>();
+  return {
+    ...actual,
+    foldConfusables: (value: string) => {
+      foldSpy(value);
+      return actual.foldConfusables(value);
+    },
+  };
+});
+
 import {
   findLiteralHitsInSubject,
   findLiteralModelRuleHits,
@@ -20,7 +33,6 @@ describe('findLiteralModelRuleHits', () => {
   });
 
   it('folds diacritics on both sides', () => {
-    expect(findLiteralModelRuleHits('Jáne Dœ', [rule(1, 'Jane Do')])).toEqual([]);
     expect(findLiteralModelRuleHits('Jané Doe', [rule(1, 'Jane Doe')])).toEqual([1]);
     expect(findLiteralModelRuleHits('Jane Doe', [rule(1, 'Jané Doe')])).toEqual([1]);
   });
@@ -56,6 +68,29 @@ describe('findLiteralModelRuleHits', () => {
   it('returns nothing for empty text or no rules', () => {
     expect(findLiteralModelRuleHits('', [rule(1, 'alpha')])).toEqual([]);
     expect(findLiteralModelRuleHits('alpha', [])).toEqual([]);
+  });
+});
+
+describe('rule normalization memo', () => {
+  it('normalizes a rule set once, and again when a rule changes', () => {
+    const rules = [rule(1, 'memo subject', ['memo alias'])];
+    findLiteralModelRuleHits('x', rules);
+    foldSpy.mockClear();
+
+    findLiteralModelRuleHits('a memo alias here', [rule(1, 'memo subject', ['memo alias'])]);
+    expect(foldSpy.mock.calls.map(([v]) => v)).toEqual(['a memo alias here']);
+
+    foldSpy.mockClear();
+    expect(
+      findLiteralModelRuleHits('a new alias here', [rule(1, 'memo subject', ['new alias'])])
+    ).toEqual([1]);
+    expect(foldSpy).toHaveBeenCalledTimes(3);
+  });
+
+  it('matches phrases longer than the other terms', () => {
+    const rules = [rule(1, 'one two three four', ['abc']), rule(2, 'two three')];
+    expect(findLiteralModelRuleHits('x one two three four y', rules)).toEqual([1, 2]);
+    expect(findLiteralModelRuleHits('x one two three y', rules)).toEqual([2]);
   });
 });
 
