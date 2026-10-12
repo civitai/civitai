@@ -17,17 +17,41 @@ const h = vi.hoisted(() => ({
   banners: [] as NavBanner[],
   access: 'closed' as string,
   openPicker: vi.fn(),
+  hats: [] as {
+    cosmeticId: number;
+    name?: string;
+    points?: number;
+    data?: { url: string };
+    placedOn: { entityType: string; entityId: number } | null;
+  }[],
+  hatsAsked: [] as unknown[],
+  unequip: vi.fn(async () => ({ count: 1 })),
+  invalidateHats: vi.fn(async () => undefined),
 }));
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof Trpc>()),
-  trpc: makeTrpcProxy({
-    'event.getNavBanners': { useQuery: () => ({ data: h.banners }) },
-    'event.getAccess': {
-      useQuery: (_input: unknown, opts?: { enabled?: unknown }) => ({
-        data: opts?.enabled ? h.access : undefined,
-      }),
+  trpc: makeTrpcProxy(
+    {
+      'event.getNavBanners': { useQuery: () => ({ data: h.banners }) },
+      'event.getAccess': {
+        useQuery: (_input: unknown, opts?: { enabled?: unknown }) => ({
+          data: opts?.enabled ? h.access : undefined,
+        }),
+      },
+      'event.getMyHats': {
+        useQuery: (input: unknown, opts?: { enabled?: boolean }) => {
+          if (opts?.enabled === false) return { data: undefined, isLoading: false };
+          h.hatsAsked.push(input);
+          return { data: h.hats, isLoading: false };
+        },
+      },
     },
-  }),
+    { useUtils: () => ({ event: { getMyHats: { invalidate: h.invalidateHats } } }) }
+  ),
+}));
+vi.mock('~/components/Cosmetics/cosmetics.util', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  useEquipContentDecoration: () => ({ equip: vi.fn(), unequip: h.unequip, isLoading: false }),
 }));
 vi.mock('~/components/Dialog/dialogStore', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
@@ -42,6 +66,7 @@ vi.mock('~/providers/AppProvider', async (importOriginal) => ({
   useMaybeAppContext: () => ({ navBannersDismissed: [] }),
 }));
 vi.mock('~/components/EdgeMedia/EdgeImage', () => ({ EdgeImage: () => null }));
+vi.mock('~/components/EdgeMedia/EdgeMedia', () => ({ EdgeMedia: () => null }));
 
 const { PostEditEventCard } = await import('~/components/Post/EditV2/PostEditEventCard');
 const { AddEventDecorationMenuItem } = await import(
@@ -64,8 +89,10 @@ const BIRTHDAY: NavBanner = {
       body: 'Put a party hat on an image in this post.',
       draftNote: 'Scores as people see it, so publish to start earning.',
     },
+    modelEditor: { title: 'Civitai turns 4.', body: 'Put a party hat on this model.' },
   },
 };
+const MODEL_ID = 99;
 const COVER = {
   id: 42,
   url: 'img-42',
@@ -84,7 +111,11 @@ afterEach(() => {
 beforeEach(() => {
   h.banners = [];
   h.access = 'closed';
+  h.hats = [];
+  h.hatsAsked = [];
   h.openPicker.mockClear();
+  h.unequip.mockClear();
+  h.invalidateHats.mockClear();
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(new Date(BIRTHDAY_2026_PREVIEW_FROM.getTime() + 60 * 60 * 1000));
 });
@@ -103,6 +134,8 @@ const card = (props: Partial<React.ComponentProps<typeof PostEditEventCard>> = {
     React.createElement(PostEditEventCard, { coverImage: COVER, showDraftNote: true, ...props })
   );
 const text = (el: HTMLElement) => el.textContent ?? '';
+const button = (el: HTMLElement, label: string) =>
+  [...el.querySelectorAll('button')].find((b) => text(b) === label);
 
 describe('post editor event card', () => {
   it('is absent when the gated answer has no promo for this viewer', () => {
@@ -132,6 +165,53 @@ describe('post editor event card', () => {
     expect(text(el)).toContain('Civitai turns 4.');
     expect(text(el)).not.toContain('publish to start earning');
     expect(text(el)).not.toContain('Put on a Party Hat');
+  });
+
+  it("hats the model for a model's post, with the cover a step aside", () => {
+    h.banners = [BIRTHDAY];
+    h.hats = [{ cosmeticId: 1, placedOn: null }];
+    const el = card({ modelId: MODEL_ID });
+    expect(el.querySelector('[data-testid="post-edit-event-card"]')).toBeNull();
+    expect(text(el)).toContain('Put a party hat on this model.');
+    expect(h.hatsAsked.length).toBeGreaterThan(0);
+
+    act(() => button(el, 'Put on a Party Hat')!.click());
+    act(() => button(el, 'or hat the cover image instead')!.click());
+    expect(h.openPicker.mock.calls).toEqual([
+      [{ props: { entityType: 'Model', entityId: MODEL_ID, image: COVER, event: 'birthday2026' } }],
+      [{ props: { entityType: 'Image', entityId: 42, image: COVER, event: 'birthday2026' } }],
+    ]);
+  });
+
+  it('shows the hat on the model and takes it off the model', async () => {
+    h.banners = [BIRTHDAY];
+    h.hats = [
+      {
+        cosmeticId: 3,
+        name: 'Party Cap',
+        points: 12,
+        data: { url: 'hat-3' },
+        placedOn: { entityType: 'Model', entityId: MODEL_ID },
+      },
+    ];
+    const el = card({ modelId: MODEL_ID });
+    expect(text(el)).toContain('Party CapOn this model · 12 pts');
+    await act(async () => button(el, 'Take off')!.click());
+    expect(h.unequip.mock.calls).toEqual([
+      [{ equippedToType: 'Model', equippedToId: MODEL_ID, cosmeticId: 3 }],
+    ]);
+  });
+
+  it('keeps the post card for an event with no model copy, and for a post without a model', () => {
+    h.banners = [{ ...BIRTHDAY, promo: { ...BIRTHDAY.promo!, modelEditor: undefined } }];
+    expect(
+      card({ modelId: MODEL_ID }).querySelector('[data-testid="post-edit-event-card"]')
+    ).not.toBeNull();
+    act(() => root?.unmount());
+    h.banners = [BIRTHDAY];
+    const el = card();
+    expect(el.querySelector('[data-testid="post-edit-event-card"]')).not.toBeNull();
+    expect(el.querySelector('[data-testid="model-post-edit-event-card"]')).toBeNull();
   });
 
   // Must stay the last card case: the dismissed-strip store it writes is module scope.
@@ -174,5 +254,54 @@ describe('image menu Add Party Hat', () => {
     expect(h.openPicker.mock.calls).toEqual([
       [{ props: { entityType: 'Image', entityId: 42, image: COVER, event: 'birthday2026' } }],
     ]);
+  });
+});
+
+describe('menu item reading the worn hat from the viewer', () => {
+  const item = (props: { findWornHat?: boolean }) =>
+    render(
+      React.createElement(
+        Menu,
+        { opened: true, withinPortal: false },
+        React.createElement(Menu.Target, null, React.createElement('button', null, 'menu')),
+        React.createElement(
+          Menu.Dropdown,
+          null,
+          React.createElement(AddEventDecorationMenuItem, {
+            entityType: 'Model',
+            entityId: MODEL_ID,
+            image: COVER,
+            ...props,
+          })
+        )
+      )
+    );
+
+  it('offers to take off the hat the viewer has on this model, and refreshes their hats', async () => {
+    h.access = 'preview';
+    h.hats = [
+      { cosmeticId: 2, placedOn: { entityType: 'Image', entityId: MODEL_ID } },
+      { cosmeticId: 3, placedOn: { entityType: 'Model', entityId: MODEL_ID } },
+    ];
+    const el = item({ findWornHat: true });
+    await act(async () => button(el, 'Remove Party Hat')!.click());
+    expect(h.unequip.mock.calls).toEqual([
+      [{ equippedToId: MODEL_ID, equippedToType: 'Model', cosmeticId: 3 }],
+    ]);
+    expect(h.invalidateHats.mock.calls).toEqual([[{ event: 'birthday2026' }]]);
+    expect(h.openPicker).not.toHaveBeenCalled();
+  });
+
+  it('offers to add one when none of their hats is on it', () => {
+    h.access = 'preview';
+    h.hats = [{ cosmeticId: 2, placedOn: { entityType: 'Image', entityId: MODEL_ID } }];
+    expect(text(item({ findWornHat: true }))).toContain('Add Party Hat');
+  });
+
+  it("does not ask for the viewer's hats where the content carries its own", () => {
+    h.access = 'preview';
+    h.hats = [{ cosmeticId: 3, placedOn: { entityType: 'Model', entityId: MODEL_ID } }];
+    expect(text(item({}))).toContain('Add Party Hat');
+    expect(h.hatsAsked).toEqual([]);
   });
 });

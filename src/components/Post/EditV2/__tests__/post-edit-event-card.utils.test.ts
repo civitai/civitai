@@ -32,6 +32,12 @@ describe('postEditEventCard', () => {
     expect(note({ unpublishedByParent: true })).toBe(false);
   });
 
+  it("names the model a model's post belongs to, so the card hats the model", () => {
+    expect(postEditEventCard({ ...base, parentModelId: 99 })?.modelId).toBe(99);
+    expect(postEditEventCard({ ...base, parentModelId: null })?.modelId).toBeUndefined();
+    expect(postEditEventCard(base)?.modelId).toBeUndefined();
+  });
+
   it('has no cover for a post without images', () => {
     expect(postEditEventCard({ ...base, addedImages: [] })?.coverImage).toBeUndefined();
   });

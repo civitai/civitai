@@ -192,6 +192,7 @@ export function ArticleContextMenu({ article, ...props }: Props) {
                 entityId={article.id}
                 image={article.coverImage}
                 currentCosmetic={article.eventDecoration}
+                findWornHat={atDetailsPage}
               />
             )}
             <Menu.Item

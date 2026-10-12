@@ -90,6 +90,7 @@ function eventPromo(event: BannerEvent, banner: EventBannerCopy): EventPromo {
     teamHref: event.scoring && event.join ? `/events/${event.name}/team` : undefined,
     postEditor: editorCard(promo.postEditor),
     articleEditor: editorCard(promo.articleEditor),
+    modelEditor: editorCard(promo.modelEditor),
     homeBlock: promo.homeBlock && {
       ...promo.homeBlock,
       title: promo.homeBlock.title ?? headline,

@@ -120,6 +120,12 @@ describe('the birthday promo, through the real access rule', () => {
         draftNote: 'Scores once it is published.',
         image: '4a5e404d-ece2-4cca-bbab-cb5a7b0d8d9d',
       },
+      modelEditor: {
+        title: 'Civitai turns 4.',
+        body: 'Put a party hat on this model. Its views and likes score for your team.',
+        draftNote: 'Scores once it is published.',
+        image: '4a5e404d-ece2-4cca-bbab-cb5a7b0d8d9d',
+      },
       homeBlock: {
         eyebrow: "Civitai's 4th Birthday",
         title: 'Civitai turns 4.',
@@ -237,6 +243,7 @@ describe('getNavBanners', () => {
             menuIcon: 'trophy',
             postEditor: { body: 'Editor body' },
             articleEditor: { body: 'Article body', title: 'Own title', image: 'own-img' },
+            modelEditor: { body: 'Model body' },
             homeBlock: { eyebrow: 'Eyebrow' },
           },
         }),
@@ -250,6 +257,7 @@ describe('getNavBanners', () => {
       teamHref: undefined,
       postEditor: { title: 'Hello', body: 'Editor body', image: 'strip-img' },
       articleEditor: { title: 'Own title', body: 'Article body', image: 'own-img' },
+      modelEditor: { title: 'Hello', body: 'Model body', image: 'strip-img' },
       homeBlock: { eyebrow: 'Eyebrow', title: 'Hello', body: 'Strip text', cta: 'Strip cta' },
     });
   });

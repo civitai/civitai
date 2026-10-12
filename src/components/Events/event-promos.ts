@@ -47,11 +47,12 @@ export function dismissHint(banner: NavBanner, banners: NavBanner[]) {
     : undefined;
 }
 
-export type EditorSurface = 'postEditor' | 'articleEditor';
+export type EditorSurface = 'postEditor' | 'articleEditor' | 'modelEditor';
 
 const EDITOR_CARD_PREFIX = {
   postEditor: 'post-editor',
   articleEditor: 'article-editor',
+  modelEditor: 'model-editor',
 } satisfies Record<EditorSurface, string>;
 
 /** Hiding the card in one editor leaves the other's. */

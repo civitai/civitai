@@ -293,6 +293,8 @@ export type EventPromoCopy = {
   postEditor?: EditorCardCopy;
   // The same card in the article editor, for an event whose decoration can sit on an article.
   articleEditor?: EditorCardCopy;
+  // The post editor's card for a post that belongs to a model: it hats the model.
+  modelEditor?: EditorCardCopy;
   homeBlock?: { eyebrow?: string; title?: string; body?: string; cta?: string };
 };
 

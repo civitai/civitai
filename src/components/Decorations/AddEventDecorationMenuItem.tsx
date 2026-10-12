@@ -6,6 +6,7 @@ import { createDialogTrigger } from '~/components/Dialog/dialogStore';
 import type { Props as CardDecorationModalProps } from '~/components/Modals/CardDecorationModal';
 import { usePlayableEventDecoration } from '~/components/Decorations/usePlayableEventDecoration';
 import type { EventDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
+import { trpc } from '~/utils/trpc';
 
 const EventHatPickerModal = dynamic(() => import('~/components/Decorations/EventHatPickerModal'), {
   ssr: false,
@@ -19,20 +20,39 @@ export const openEventHatPicker = createDialogTrigger(EventHatPickerModal);
 export function AddEventDecorationMenuItem(
   props: Omit<CardDecorationModalProps, 'currentCosmetic'> & {
     currentCosmetic?: Pick<EventDecorationCosmetic, 'id'> | null;
+    /**
+     * Where the content's own query does not carry its decoration (a model's or article's page),
+     * read it from the viewer's hats. Only for the owner: they are the only one who can wear it.
+     */
+    findWornHat?: boolean;
   }
 ) {
+  const utils = trpc.useUtils();
   const { unequip } = useEquipContentDecoration();
   const definition = usePlayableEventDecoration(props.entityType);
+  const { data: myHats } = trpc.event.getMyHats.useQuery(
+    { event: definition?.event ?? '' },
+    { enabled: !!definition && !!props.findWornHat }
+  );
   if (!definition) return null;
 
-  const currentCosmetic = props.currentCosmetic;
+  const worn = props.findWornHat
+    ? myHats?.find(
+        (h) => h.placedOn?.entityType === props.entityType && h.placedOn.entityId === props.entityId
+      )
+    : undefined;
+  const currentCosmetic = worn ? { id: worn.cosmeticId } : props.currentCosmetic;
   const onClick = () => {
     if (currentCosmetic) {
       unequip({
         equippedToId: props.entityId,
         equippedToType: props.entityType,
         cosmeticId: currentCosmetic.id,
-      }).catch(() => null); // error is handled in the custom hook
+      })
+        .then(() =>
+          props.findWornHat ? utils.event.getMyHats.invalidate({ event: definition.event }) : null
+        )
+        .catch(() => null); // error is handled in the custom hook
     } else {
       const { entityType, entityId, image } = props;
       openEventHatPicker({ props: { entityType, entityId, image, event: definition.event } });

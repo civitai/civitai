@@ -291,8 +291,9 @@ describe('an event decoration on an image outside a post', () => {
     postless();
     db.article.findUnique.mockResolvedValue({ id: 36 });
 
+    // Names the event's own decoration and the menu item that puts it on the article.
     await expect(equipHat()).rejects.toThrow(
-      /your article's cover.*Put the hat on the article instead/
+      /^This image is your article's cover, which isn't shown on its own\. Put the hat on the article instead: Add Party Hat in the article's ⋯ menu\.$/
     );
     expect(db.article.findUnique).toHaveBeenCalledWith({
       where: { coverId: IMAGE },
