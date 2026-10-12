@@ -10,6 +10,7 @@ import {
   cacheFailOpenDegradedCounter,
   cacheFailOpenOriginFetchCounter,
   cacheHitCounter,
+  cacheMissWouldJoinCounter,
   cacheMissCounter,
   cacheRevalidateCounter,
 } from '~/server/prom/client';
@@ -189,6 +190,7 @@ const { createCachedArray, createCachedObject } = createCacheBuilders({
     failOpenDegraded: (cache_name) => cacheFailOpenDegradedCounter.inc({ cache_name }),
     failOpenOriginFetch: (cache_name, count) =>
       cacheFailOpenOriginFetchCounter.inc({ cache_name }, count),
+    missWouldJoin: (cache_name, count) => cacheMissWouldJoinCounter.inc({ cache_name }, count),
   },
   logFailOpen: (kind, message, error, meta) => logSysRedisFailOpen(kind, message, error, meta),
   logRefreshError: ({ cacheKey, ids, error }) =>

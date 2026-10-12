@@ -32,7 +32,8 @@ export async function applyChallengeNsfwEscalation({
   entityId: number;
   isNsfw: boolean;
 }): Promise<void> {
-  const challenge = await dbRead.challenge.findUnique({
+  // Primary: a moderator rating written just before this callback must be seen.
+  const challenge = await dbWrite.challenge.findUnique({
     where: { id: entityId },
     select: {
       allowedNsfwLevel: true,
@@ -41,9 +42,22 @@ export async function applyChallengeNsfwEscalation({
       createdById: true,
       collectionId: true,
       status: true,
+      moderatorNsfwLevel: true,
     },
   });
   if (!challenge) return;
+
+  // A resolved rating dispute is final for this challenge: no void, no raise.
+  if (challenge.moderatorNsfwLevel != null) {
+    await dbWrite.challenge.updateMany({
+      where: {
+        id: entityId,
+        ingestion: { in: [ChallengeIngestionStatus.Pending, ChallengeIngestionStatus.Error] },
+      },
+      data: { ingestion: ChallengeIngestionStatus.Scanned, scannedAt: new Date() },
+    });
+    return;
+  }
 
   const buzzType: ChallengeBuzzType = challenge.buzzType === 'green' ? 'green' : 'yellow';
   const escalation = computeNsfwEscalation({

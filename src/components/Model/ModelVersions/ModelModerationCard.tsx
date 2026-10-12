@@ -14,6 +14,7 @@ import { IconHistory, IconShieldCheck, IconShieldHalfFilled } from '@tabler/icon
 import type { ReactNode } from 'react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import ModelChangeHistoryModal from '~/components/Model/ModelVersions/ModelChangeHistoryModal';
+import { getBrowsingLevelLabel } from '~/shared/constants/browsingLevel.constants';
 import { getModelVersionFlagLabels } from '~/shared/constants/model-version-flags.constants';
 import { formatDate } from '~/utils/date-helpers';
 import { trpc } from '~/utils/trpc';
@@ -56,6 +57,7 @@ export function ModelModerationCard({
   const hasFooter = !!(
     data?.profanity ||
     data?.textModeration ||
+    data?.textScan ||
     data?.unpublishedAt ||
     data?.takenDownAt ||
     data?.deletedAt
@@ -86,6 +88,7 @@ export function ModelModerationCard({
     locked.length +
     (data?.profanity ? 1 : 0) +
     (data?.textModeration ? 1 : 0) +
+    (data?.textScan?.triggeredLabels.length ? 1 : 0) +
     (data?.unpublishedAt ? 1 : 0) +
     (data?.takenDownAt ? 1 : 0) +
     (data?.deletedAt ? 1 : 0);
@@ -209,6 +212,22 @@ export function ModelModerationCard({
                       <Text size="xs" c="dimmed">
                         Recorded even when a lock kept the flag from being applied.
                       </Text>
+                    </Stack>
+                  )}
+                  {data.textScan && (
+                    <Stack gap={4}>
+                      <Text size="xs" fw={600} c="orange">
+                        Text scan · {data.textScan.status}
+                        {data.textScan.nsfwLevel
+                          ? ` · ${getBrowsingLevelLabel(data.textScan.nsfwLevel)}`
+                          : ''}{' '}
+                        · {formatDate(data.textScan.updatedAt)}
+                      </Text>
+                      {data.textScan.reasons.map((r) => (
+                        <Text key={r.label} size="xs">
+                          <Code>{r.label}</Code> {r.reason}
+                        </Text>
+                      ))}
                     </Stack>
                   )}
                   {data.unpublishedAt && (

@@ -230,12 +230,12 @@ describe('blockWorkflowBodySchema — inline arm bounds', () => {
     ).toBe(false);
   });
 
-  it('🔴 INLINE_MAX_BUZZ is DERIVED from DEV_BUZZ_BUDGET_CAP, not invented', () => {
+  it('🔴 a pre-approval token can afford any inline job (INLINE_MAX_BUZZ <= DEV_BUZZ_BUDGET_CAP)', () => {
     // The constant is spelled as a literal in the schema so the wire layer stays
-    // import-light. This is what stops the derivation drifting silently: if
-    // someone changes the dev per-call cap, this goes red and the reason for
-    // the inline ceiling has to be re-stated rather than quietly diverging.
-    expect(INLINE_MAX_BUZZ).toBe(DEV_BUZZ_BUDGET_CAP);
+    // import-light, so nothing but this test relates the two. If the inline
+    // ceiling rose above the dev per-call cap, an inline job priced in between
+    // would run for viewers yet be impossible to develop or review.
+    expect(INLINE_MAX_BUZZ).toBeLessThanOrEqual(DEV_BUZZ_BUDGET_CAP);
   });
 
   it('an empty graph is rejected', () => {

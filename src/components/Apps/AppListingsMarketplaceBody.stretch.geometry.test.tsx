@@ -111,6 +111,7 @@ function makeCard(id: string, name: string, tagline: string | null): ListingCard
     recommend: { recommendedCount: 0, notRecommendedCount: 0, recommendPct: null },
     reviewCount: 0,
     openCount: 0,
+    restrictedAudience: null,
     kindData: {
       kind: 'onsite',
       appBlockId: `blk-${id}`,
@@ -156,11 +157,14 @@ vi.mock('~/providers/FeatureFlagsProvider', () => ({
   useFeatureFlagsReady: () => true,
 }));
 // Spread the REAL module and override only `trpc` (local-rules/no-wholesale-module-mock).
-vi.mock('~/utils/trpc', async (importOriginal) => ({
-  ...(await importOriginal<typeof TrpcMod>()),
-  trpc: {
-    appListings: {
-      listAvailable: {
+// A proxy, so a procedure `AppLayout` gains later (the nav slot's `event.getNavBanners`
+// broke the literal this replaced) renders inert instead of crashing the real chain.
+vi.mock('~/utils/trpc', async (importOriginal) => {
+  const { makeTrpcProxy } = await import('../../../test/trpcProxyStub');
+  return {
+    ...(await importOriginal<typeof TrpcMod>()),
+    trpc: makeTrpcProxy({
+      'appListings.listAvailable': {
         useInfiniteQuery: () => ({
           data: { pages: [{ items: mocks.items, nextCursor: undefined }] },
           isLoading: false,
@@ -169,12 +173,9 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
           hasNextPage: false,
         }),
       },
-    },
-    // `AppsPageLayout` -> `AppsSubNav` reads this; the real-chain fixture below renders
-    // the layout, so the factory has to carry it or that render throws.
-    blocks: { getNavSummary: { useQuery: () => ({ data: undefined }) } },
-  },
-}));
+    }),
+  };
+});
 
 // Import AFTER the mocks (vi.mock is hoisted; static imports are not).
 const { AppListingsMarketplaceBody } = await import('./AppListingsMarketplaceBody');

@@ -5,7 +5,7 @@ import type {
   UpscaleResolutionOption,
   UpscaleSelection,
   UpscaleSelectionMeta,
-} from '~/shared/data-graph/generation/image-upscale-graph';
+} from '~/shared/form-graph/generation/workflows/image-upscale.graph';
 
 // =============================================================================
 // Types
@@ -177,4 +177,3 @@ function ResolutionGroup({
     </Input.Wrapper>
   );
 }
-

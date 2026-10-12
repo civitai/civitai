@@ -42,6 +42,9 @@ export const moderatorModelLookupPath = (modelId: number, versionId?: number) =>
 export const moderatorModelVersionLookupPath = (versionId: number) =>
   `/retool/model-lookup?mv=${q(versionId)}`;
 
+/** The permanent per-report page, independent of the triage queue's filters and paging. */
+export const moderatorFeedbackReportPath = (feedbackId: number) => `/feedback/${q(feedbackId)}`;
+
 export type BulkImageManagerSource =
   | 'post'
   | 'model'

@@ -77,3 +77,14 @@ export async function usernameExists(username: string): Promise<boolean> {
     .executeTakeFirst();
   return !!row;
 }
+
+/** citext: matches case-insensitively via the unique index. */
+export async function userIdByUsername(username: string): Promise<number | null> {
+  const row = await dbRead
+    .selectFrom('User')
+    .select('id')
+    .where('username', '=', username)
+    .where('deletedAt', 'is', null)
+    .executeTakeFirst();
+  return row?.id ?? null;
+}

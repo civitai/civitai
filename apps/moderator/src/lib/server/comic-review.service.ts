@@ -1,5 +1,6 @@
 import { sql } from '@civitai/db/kysely';
 import { dbRead } from './db';
+import { takePage } from './keyset-page';
 import type { MediaType } from '$lib/media/edge-url';
 
 // A ComicPanel links to its chapter by (projectId, chapterPosition) — there is no chapterId column.
@@ -40,7 +41,7 @@ export async function getComicReviewQueue({
   needsReview?: string;
   includeTosViolations?: boolean;
 }): Promise<{ items: ComicReviewPanel[]; nextCursor?: number }> {
-  const rows = await dbRead
+  const fetched = await dbRead
     .selectFrom('ComicPanel as p')
     .innerJoin('Image as i', 'i.id', 'p.imageId')
     .innerJoin('ComicProject as proj', 'proj.id', 'p.projectId')
@@ -90,7 +91,6 @@ export async function getComicReviewQueue({
     .limit(limit + 1)
     .execute();
 
-  let nextCursor: number | undefined;
-  if (rows.length > limit) nextCursor = rows.pop()?.id;
-  return { items: rows as ComicReviewPanel[], nextCursor };
+  const { items, nextCursor } = takePage(fetched, limit, (r) => r.id);
+  return { items: items as ComicReviewPanel[], nextCursor };
 }

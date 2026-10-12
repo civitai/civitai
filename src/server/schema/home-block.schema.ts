@@ -130,6 +130,8 @@ export const homeBlockMetaSchema = z
       autoFeature: autoFeatureSchema.optional(),
     }),
     footer: z.string().optional(),
+    // A FeatureFlagKey with a Flipt key: the row shows only to viewers that flag is on for.
+    featureFlag: z.string(),
   })
   .partial();
 

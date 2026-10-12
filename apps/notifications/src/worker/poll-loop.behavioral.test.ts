@@ -61,6 +61,7 @@ vi.mock('../lib/server/metrics', () => ({
 vi.mock('../env', async (importOriginal) => ({
   ...(await importOriginal<typeof EnvModule>()),
   signalsEndpoint: 'http://signals.test',
+  counterBumpTimeoutMs: 20,
   // Push stays off in this suite — dispatchPush is covered by push.test.ts.
   pushEnabled: false,
 }));
@@ -475,6 +476,30 @@ describe('run (poll pass)', () => {
       expect.stringContaining('/users/11/signals/'),
       expect.stringContaining('/users/12/signals/'),
     ]);
+  });
+
+  it('bounds a counter bump that never settles, and stops bumping for the tick after 3 such failures', async () => {
+    const users = [11, 12, 13, 14, 15, 16];
+    const client = makeClient({
+      notifSelect: { rows: [{ id: 1 }] },
+      userInsert: { rows: users.map((userId, i) => ({ id: 100 + i, userId, createdAt: 'q' })) },
+    });
+    h.state.connectClient = client;
+    h.state.pendingRows = [{ ...baseRow, users, debounceSeconds: null }];
+    vi.mocked(notificationCache.incrementUser).mockImplementation(
+      () => new Promise(() => undefined)
+    );
+
+    // Race against a sentinel so a regression fails this assertion instead of hanging the test.
+    const outcome = await Promise.race([
+      run().then(() => 'finished'),
+      new Promise((resolve) => setTimeout(() => resolve('stalled'), 2_000)),
+    ]);
+
+    expect(outcome).toBe('finished');
+    expect(notificationCache.incrementUser).toHaveBeenCalledTimes(3);
+    // Every recipient still gets a signal.
+    expect((globalThis.fetch as any).mock.calls).toHaveLength(users.length);
   });
 
   it('does no work when there are no pending rows', async () => {

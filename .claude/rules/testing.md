@@ -41,15 +41,17 @@ When the dev-server queue has the cache on (`cli.mjs test config --cache on`), a
 [test-cache] 1880 test files: 41 ran, 1839 skipped as unchanged since they last passed. 92 unchanged file(s) re-run to verify; false skips: 0.
 ```
 
+- The key follows imports only through first-party modules the file actually loaded: a module it replaces with a `vi.mock` factory is keyed, but not what that module imports.
 - A random ~5% of unchanged files run anyway. If one fails, the cache mispredicted (a false skip) and trips itself off (`TRIPPED.json` in the cache dir) until a human looks.
-- Environment variables are not part of the cache key.
+- Environment variables are not part of the cache key, and neither are `package.json` `scripts` or `version`: a change to how a script invokes vitest (its flags) does not invalidate anything. A test that reads a `package.json` is still keyed on the whole file.
+- The key definition (`scripts/test-cache/core.mjs`) is the dev-server daemon's copy, not the tree's, so a fix to it reaches every tree once the daemon's checkout pulls it; a change to `test-queue.mjs` itself needs a daemon restart. A tree older than `load-core.mjs` keys with its own copy until it rebases, and a tree's own edit to `core.mjs` is not what its queued runs key with unless the daemon's copy lacks one of its exports (its unit tests still import it directly).
 - Never on in CI; a run that filters files (filename, directory, substring) is never trimmed. Code: `scripts/test-cache/`.
 
 ## Where handler tests go
 
 Keep handler tests in a `__tests__/` directory outside `src/pages` (e.g. `src/server/__tests__/`) and import the handler via the `~/pages/...` alias.
 
-A test file under `src/pages` fails `next build` (`Type '...test' does not satisfy the constraint 'ApiRouteConfig'`), and only `next build` catches it; typecheck, vitest and CI tasks pass (PR #2653).
+A test file under `src/pages` fails `next build` (`Type '...test' does not satisfy the constraint 'ApiRouteConfig'`) (PR #2653). `pnpm run typecheck` (and the CI typecheck) catches it, because it runs `next typegen` before `tsc`; vitest does not.
 
 ## Prefer `importOriginal` over hand-listed `vi.mock` exports
 
@@ -75,8 +77,6 @@ Why: a hand-listed mock couples the test to the whole transitive import graph. A
 - **Any fake driving a bounded loop must terminate on its own, and the test must assert it stopped early.** Cap a cursor fake at 50 pages so a regression reads `expected 51 to be less than 5`. See the `n = 10_000` cap in `src/server/auth/__tests__/session-invalidation.test.ts`.
 - **Don't prove a property by absence of termination.** A non-terminating fake over already-resolved promises is a pure microtask loop; it starves the macrotask queue, so vitest's `setTimeout`-based `testTimeout` never fires and CI hangs with nothing to read.
 - The paging guard in `test:lint-rules` catches cursor-shaped fakes only; a loop driven by anything else is still yours to bound.
-
-(Formulation from @ivy's review of PR #3756.)
 
 ## Never `await` a browser-test state that deletes itself
 

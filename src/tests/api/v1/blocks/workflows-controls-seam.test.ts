@@ -570,6 +570,11 @@ describe('the budget and cap ladder reaches the wire as a PRICED 200, not an err
       tags: [APP_TAG],
     });
     mockReserveAppSpend.mockResolvedValue({ allowed: true, dailyKey: 'appspend:key' });
+    // LAYER 2 drives the per-viewer reservation past its cap. Restored HERE rather
+    // than at the end of that test: a restore placed after its assertions never runs
+    // when one of them fails, and the leaked over-cap total then refuses every later
+    // submit in this block with the wrong layer's message.
+    redisMock.sysRedis.incrBy.mockImplementation(async () => 0);
   });
 
   it('LAYER 1 — over the per-call buzzBudget: 200, priced, and no orchestrator submit', async () => {
@@ -584,7 +589,12 @@ describe('the budget and cap ladder reaches the wire as a PRICED 200, not an err
     expect(out.json.snapshot.status).toBe('failed');
     // 🔴 THE PRICE IS PRESENT AND NUMERIC. This single field is what makes the
     // outcome recoverable for the block — it is the number a top-up CTA quotes.
-    expect(out.json.snapshot.cost).toEqual({ total: QUOTED });
+    // `authorFee: 0` rides along because this route returns the procedure's
+    // snapshot byte-for-byte (`BlockWorkflowSnapshot`, the bridge's shape): a priced
+    // refusal itemises the author's fee, and `0` means it was looked up and none
+    // applies — this fixture's app charges none. LAYERS 2 and 3 pin the same
+    // literal, so dropping the field on this transport goes red here.
+    expect(out.json.snapshot.cost).toEqual({ total: QUOTED, authorFee: 0 });
     expect(out.json.snapshot.error).toContain('insufficient buzz budget');
     // Only the whatIf ran. A REAL submit would have been a charge.
     expect(mockOrchSubmitWorkflow).toHaveBeenCalledTimes(1);
@@ -607,14 +617,13 @@ describe('the budget and cap ladder reaches the wire as a PRICED 200, not an err
 
     expect(out.status).toBe(200);
     expect(out.json.snapshot.status).toBe('failed');
-    expect(out.json.snapshot.cost).toEqual({ total: QUOTED });
+    expect(out.json.snapshot.cost).toEqual({ total: QUOTED, authorFee: 0 });
     // The LAYER, named: this is the per-user platform ceiling, not the per-call
     // budget above it and not the per-app aggregate below it.
     expect(out.json.snapshot.error).toContain('daily Buzz cap reached');
     expect(out.json.snapshot.error).toContain(String(BLOCK_BUZZ_CAP_PER_DAY));
     // Still no real submit — the reservation is taken BEFORE the orchestrator call.
     expect(mockOrchSubmitWorkflow).toHaveBeenCalledTimes(1);
-    redisMock.sysRedis.incrBy.mockImplementation(async () => 0);
   });
 
   it('LAYER 3 — over the PER-APP aggregate cap (G8): 200, priced, refused by reserveAppSpend', async () => {
@@ -629,7 +638,7 @@ describe('the budget and cap ladder reaches the wire as a PRICED 200, not an err
 
     expect(out.status).toBe(200);
     expect(out.json.snapshot.status).toBe('failed');
-    expect(out.json.snapshot.cost).toEqual({ total: QUOTED });
+    expect(out.json.snapshot.cost).toEqual({ total: QUOTED, authorFee: 0 });
     expect(out.json.snapshot.error).toContain('app daily spend cap reached');
     // 🔴 The aggregate ceiling is deliberately number-free on the wire — a
     // (potentially hostile) app must not learn it. Pinned so a later "helpful"

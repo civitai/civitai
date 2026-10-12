@@ -2,7 +2,7 @@ import {
   getBaseModelsByEcosystemId,
   getRootEcosystem,
 } from '~/shared/constants/basemodel.constants';
-import { isWorkflowAvailable } from '~/shared/data-graph/generation/config/workflows';
+import { isWorkflowAvailable } from '~/shared/generation/config/workflows';
 import {
   getEcosystemByAirSegment,
   parseRawAirResourceUrn,

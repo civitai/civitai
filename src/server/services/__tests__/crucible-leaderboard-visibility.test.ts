@@ -27,6 +27,7 @@ const { mockGetJudgingPair, imagesFetch, blockedBy } = vi.hoisted(() => ({
 vi.mock('~/server/services/user-preferences.service', async (importOriginal) => ({
   ...(await importOriginal<typeof UserPreferencesService>()),
   BlockedByUsers: { getCached: blockedBy },
+  BlockedUsers: { getCached: vi.fn().mockResolvedValue([]) },
 }));
 
 vi.mock('~/server/services/image.service', async (importOriginal) => ({
@@ -295,6 +296,9 @@ describe('crucible.getEntries — podium', () => {
   const isPlacingsQuery = (sql: string) => sql.includes('ce.position IS NOT NULL');
   const isPodiumQuery = (sql: string) => /WHERE ce\.id = ANY\(\$\d+::int\[\]\)/.test(sql);
   const podiumQuery = () => queryRaw.mock.calls.map(rendered).find(isPodiumQuery);
+  const podiumIds = ([strings, ...values]: unknown[]) =>
+    Prisma.sql(strings as TemplateStringsArray, ...values).values.find(Array.isArray) as number[];
+  const visibleRow = (id: number) => ({ id, imageVisible: true });
   const completedWith = (prizePositions: Record<string, number>) =>
     findUnique.mockResolvedValue({ ...scanned, status: CrucibleStatus.Completed, prizePositions });
 
@@ -305,11 +309,7 @@ describe('crucible.getEntries — podium', () => {
       const sql = rendered(call);
       if (isPlacingsQuery(sql)) return placings;
       // Every requested winner is visible; returned out of prize order.
-      if (isPodiumQuery(sql)) {
-        const [strings, ...values] = call;
-        const [ids] = Prisma.sql(strings as TemplateStringsArray, ...values).values as [number[]];
-        return [...ids].reverse().map((id) => ({ id }));
-      }
+      if (isPodiumQuery(sql)) return [...podiumIds(call)].reverse().map(visibleRow);
       return all.map(({ id }) => ({ id }));
     });
   });
@@ -342,33 +342,74 @@ describe('crucible.getEntries — podium', () => {
     ]);
   });
 
-  it('loads podium entries through the same image visibility as the page', async () => {
-    await caller(undefined).getEntries({ crucibleId: CRUCIBLE_ID });
+  it("judges a podium image by its moderation and the crucible's levels, not the viewer's", async () => {
+    await caller(undefined).getEntries({ crucibleId: CRUCIBLE_ID, browsingLevel: 1 });
 
     const sql = podiumQuery();
     expect(sql).toBeDefined();
-    expect(sql).toMatch(/WHERE ce\.id = ANY\(\$\d+::int\[\]\) AND \( ?\(/);
+    expect(sql).toMatch(
+      /LEFT JOIN "Image" i ON i\.id = ce\."imageId" WHERE ce\.id = ANY\(\$\d+::int\[\]\) ?$/
+    );
     expectEnteredEntryImage(sql!);
+    expect(sql).toContain('i."nsfwLevel" &');
+    expect(sql!.match(/i\."nsfwLevel" &/g)).toHaveLength(1);
   });
 
-  it('leaves a winner the viewer cannot see off the podium', async () => {
+  it('keeps a winner whose image the viewer cannot see on the podium, without the image', async () => {
     const page = queryRaw.getMockImplementation()!;
     queryRaw.mockImplementation(async (...call: unknown[]) => {
       const rows = (await page(...call)) as { id: number }[];
-      return isPodiumQuery(rendered(call)) ? rows.filter(({ id }) => id !== 3) : rows;
+      return isPodiumQuery(rendered(call))
+        ? rows.map((row) => ({ ...row, imageVisible: row.id !== 3 }))
+        : rows;
     });
 
     const { podium } = await caller(undefined).getEntries({ crucibleId: CRUCIBLE_ID });
 
-    expect(podium.map((e) => [e.id, e.prizePlace])).toEqual([[1, 1]]);
+    expect(podium.map((e) => [e.id, e.prizePlace, e.imageId, e.image?.url ?? null])).toEqual([
+      [1, 1, 10, 'image-1'],
+      [3, 2, null, null],
+    ]);
   });
 
-  it('shows a signed-in creator their own podium entry, inside the id filter', async () => {
+  it('keeps a winner whose image was deleted on the podium', async () => {
+    findEntries.mockImplementation(async () =>
+      all.map((e) => (e.id === 3 ? { ...e, imageId: null, image: null } : e))
+    );
+
+    const { podium } = await caller(undefined).getEntries({ crucibleId: CRUCIBLE_ID });
+
+    expect(podium.map((e) => [e.id, e.prizePlace, e.image])).toEqual([
+      [1, 1, expect.objectContaining({ url: 'image-1' })],
+      [3, 2, null],
+    ]);
+  });
+
+  it('withholds the url, not the hash, of a mature winner image on green', async () => {
+    findUnique.mockResolvedValue({
+      ...scanned,
+      nsfwLevel: 3,
+      status: CrucibleStatus.Completed,
+      prizePositions: { '1': 60, '2': 40 },
+    });
+    findEntries.mockImplementation(async () =>
+      all.map((e) => (e.id === 3 ? { ...e, image: { ...e.image, nsfwLevel: 2, hash: 'h3' } } : e))
+    );
+
+    const { podium } = await caller(undefined, { isGreen: true }).getEntries({
+      crucibleId: CRUCIBLE_ID,
+    });
+
+    expect(podium.map((e) => [e.id, e.image?.url ?? null, e.image?.hash])).toEqual([
+      [1, 'image-1', undefined],
+      [3, null, 'h3'],
+    ]);
+  });
+
+  it('shows a signed-in creator their own podium image', async () => {
     await caller(signedIn(OWNER_ID)).getEntries({ crucibleId: CRUCIBLE_ID });
 
-    expect(podiumQuery()).toMatch(
-      /WHERE ce\.id = ANY\(\$\d+::int\[\]\) AND \(ce\."userId" = \$\d+ OR \(/
-    );
+    expect(podiumQuery()).toMatch(/COALESCE\(\(ce\."userId" = \$\d+ OR \(/);
     const call = queryRaw.mock.calls.find((c) => isPodiumQuery(rendered(c)))!;
     expect(Prisma.sql(call[0] as TemplateStringsArray, ...call.slice(1)).values).toContain(
       OWNER_ID
@@ -541,7 +582,11 @@ describe('crucible.getRequiredModels', () => {
 
 describe('crucible.getJudgingProgress', () => {
   it("counts the caller's pairs left among the entries they can judge", async () => {
-    queryRaw.mockResolvedValue([{ id: 1 }, { id: 2 }, { id: 3 }]);
+    queryRaw.mockResolvedValue([
+      { crucibleId: CRUCIBLE_ID, id: 1 },
+      { crucibleId: CRUCIBLE_ID, id: 2 },
+      { crucibleId: CRUCIBLE_ID, id: 3 },
+    ]);
     redisMock.sysRedis.hGetAll.mockResolvedValue({});
     redisMock.sysRedis.sMembers.mockResolvedValue(['1:2']);
 
@@ -549,7 +594,12 @@ describe('crucible.getJudgingProgress', () => {
       crucibleId: CRUCIBLE_ID,
     });
 
-    expect(progress).toEqual({ remainingPairs: 2, votesUsedUp: false });
+    expect(progress).toEqual({
+      remainingPairs: 2,
+      judgedPairs: 1,
+      totalPairs: 3,
+      votesUsedUp: false,
+    });
     expect(lastRenderedSql()).toContain('ce."userId" !=');
   });
 
@@ -574,7 +624,7 @@ describe('crucible.getJudgingProgress', () => {
 
     expect(
       await caller(signedIn(STRANGER_ID)).getJudgingProgress({ crucibleId: CRUCIBLE_ID })
-    ).toEqual({ remainingPairs: 0, votesUsedUp: false });
+    ).toEqual({ remainingPairs: 0, judgedPairs: 0, totalPairs: 0, votesUsedUp: false });
   });
 
   // The judge page shows "you've used all your votes" only on votesUsedUp. Zero pairs from too few
@@ -583,15 +633,18 @@ describe('crucible.getJudgingProgress', () => {
     redisMock.sysRedis.hGetAll.mockResolvedValue({});
     redisMock.sysRedis.sMembers.mockResolvedValue(['1:2']);
 
-    queryRaw.mockResolvedValue([{ id: 1 }, { id: 2 }]);
+    queryRaw.mockResolvedValue([
+      { crucibleId: CRUCIBLE_ID, id: 1 },
+      { crucibleId: CRUCIBLE_ID, id: 2 },
+    ]);
     expect(
       await caller(signedIn(STRANGER_ID)).getJudgingProgress({ crucibleId: CRUCIBLE_ID })
-    ).toEqual({ remainingPairs: 0, votesUsedUp: true });
+    ).toEqual({ remainingPairs: 0, judgedPairs: 1, totalPairs: 1, votesUsedUp: true });
 
-    queryRaw.mockResolvedValue([{ id: 1 }]);
+    queryRaw.mockResolvedValue([{ crucibleId: CRUCIBLE_ID, id: 1 }]);
     expect(
       await caller(signedIn(STRANGER_ID)).getJudgingProgress({ crucibleId: CRUCIBLE_ID })
-    ).toEqual({ remainingPairs: 0, votesUsedUp: false });
+    ).toEqual({ remainingPairs: 0, judgedPairs: 0, totalPairs: 0, votesUsedUp: false });
   });
 });
 
@@ -693,14 +746,15 @@ describe('crucible.getById', () => {
     );
   });
 
-  it('leaves out an own entry whose image was deleted, but still counts it as used', async () => {
+  it('frees the slot of an own entry whose image is gone, but counts it for the free-entry math', async () => {
     const imageGone = { ...latestAndSecond, userId: OWNER_ID, imageId: null, image: null };
     findEntries.mockResolvedValue([ownedAndFirst, imageGone]);
 
     const crucible = await caller(signedIn(OWNER_ID)).getById({ id: CRUCIBLE_ID });
 
     expect(crucible!.viewerEntries).toEqual([ownedAndFirst]);
-    expect(crucible!.viewerEntryCount).toBe(2);
+    expect(crucible!.viewerEntryCount).toBe(1);
+    expect(crucible!.viewerEntriesSoFar).toBe(2);
   });
 
   it('gives an anonymous caller no entries without querying for any', async () => {
@@ -823,7 +877,7 @@ describe('a creator who blocked the caller', () => {
     await caller(signedIn(STRANGER_ID)).getJudgingPair({ crucibleId: CRUCIBLE_ID });
 
     expect(mockGetJudgingPair).toHaveBeenCalledWith(
-      expect.objectContaining({ blockedByUserIds: [scanned.userId] })
+      expect.objectContaining({ blockedCreatorIds: [scanned.userId] })
     );
   });
 

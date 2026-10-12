@@ -15,6 +15,7 @@ import {
   parseMaxWorkersFlag,
 } from './scripts/test-queue.mjs';
 import { resolveDaemonUrl } from './scripts/daemon-port.mjs';
+import { daemonFetch } from './scripts/daemon-http.mjs';
 import { resolveDaemonHome } from './scripts/paths.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -74,7 +75,7 @@ const DAEMON_URL = resolveDaemonUrl();
 async function daemonRequest(path, options = {}) {
   const url = `${DAEMON_URL}${path}`;
   try {
-    const response = await fetch(url, {
+    const response = await daemonFetch(url, {
       ...options,
       headers: { 'Content-Type': 'application/json', ...options.headers },
     });
@@ -927,6 +928,12 @@ async function cmdWorktree(rest) {
   const [action, ...tail] = rest;
   const { cmdStale, cmdRemove, cmdCreate, parseNewArgs } = await import('./scripts/worktree.mjs');
 
+  if (action === 'env') {
+    const { cmdSkillEnv } = await import('./scripts/skill-env.mjs');
+    cmdSkillEnv(projectRoot, tail);
+    return;
+  }
+
   if (action === 'new') {
     const { name, branch, ...opts } = parseNewArgs(tail);
     await cmdCreate(projectRoot, name, branch, opts);
@@ -950,7 +957,7 @@ async function cmdWorktree(rest) {
     );
     return;
   }
-  console.error('Usage: wt <new|stale|rm>');
+  console.error('Usage: wt <new|stale|rm|env>');
   process.exit(1);
 }
 

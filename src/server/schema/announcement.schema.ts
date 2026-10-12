@@ -1,7 +1,7 @@
 import * as z from 'zod';
 import { paginationSchema } from '~/server/schema/base.schema';
 import { DomainColor } from '~/shared/utils/prisma/enums';
-import { imageSchema } from '~/server/schema/image.schema';
+import { imageReferenceInputSchema } from '~/server/schema/image.schema';
 
 export const domainColorEnum = z.enum(DomainColor);
 
@@ -176,7 +176,7 @@ export const upsertCreatorAnnouncementSchema = z.object({
   // announcement by deleting it or by setting an endsAt.
   /** Shows on the author's profile only: no feed, no notification, no allowance spent. */
   profileOnly: z.boolean().default(false),
-  coverImage: imageSchema.optional(),
+  coverImage: imageReferenceInputSchema.optional(),
   /** The pre-multi-button shape, still accepted from older clients. Ignored when `actions` is sent. */
   action: creatorAnnouncementActionSchema.optional(),
   actions: z

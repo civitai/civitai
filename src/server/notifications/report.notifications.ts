@@ -5,6 +5,7 @@ import { EntityType } from '~/shared/utils/prisma/enums';
 const entityUrlMap: Partial<{ [k in EntityType]?: string }> = {
   [EntityType.Image]: '/images',
   [EntityType.Model]: '/models',
+  [EntityType.Bounty]: '/bounties',
 } as const;
 
 export const reportNotifications = createNotificationProcessor({

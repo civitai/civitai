@@ -8,7 +8,7 @@ import type {
 import { removeEmpty } from '~/utils/object-helpers';
 import { maiCropAspectRatios } from '~/shared/form-graph/generation/image/mai.graph';
 import { findClosestAspectRatio } from '~/utils/aspect-ratio-helpers';
-import { defineHandler } from '../ecosystems/handler-factory';
+import { defineHandler } from '../handlers/handler-factory';
 import type { EcosystemData } from './types';
 
 type MAIAspectRatio = NonNullable<MaiImageCreateFalImageGenInput['aspectRatio']>;

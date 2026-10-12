@@ -65,9 +65,9 @@ const redisMetricsBridge = {
 (globalThis as unknown as { __civitaiRedisMetrics?: unknown }).__civitaiRedisMetrics =
   redisMetricsBridge;
 
-// pgPoolAcquireHistogram is registered in @civitai/db's db-helpers, not here, to avoid
-// a module-init cycle (this module imports pgDb → db-helpers, which would import the
-// histogram back), which webpack's CJS chunking can break with a TDZ error at runtime.
+// The pg pool acquire histogram is registered in ~/server/db/db-helpers (instrumentationRegistry),
+// not here, to avoid a module-init cycle (this module imports pgDb → db-helpers, which would import
+// the histogram back), which webpack's CJS chunking can break with a TDZ error at runtime.
 
 // `heavyBulkheadGaugeInitialized` was declared here and is gone: a globalThis flag guarding a
 // per-graph registry is the bug this file documents at length below, not a pattern to reach for.
@@ -346,10 +346,9 @@ registerInstrumentationMetric(
 // moving them to `instrumentationRegistry` does make them appear in the scrape. But a
 // collect()-based metric needs BOTH halves shared: the registry it registers into AND the state
 // its closure reads. The bulkhead has both — `request-bulkhead.ts` pins its maps on globalThis.
-// These do not: `src/server/db/pgDb.ts` globalThis-pins the pools ONLY in the `!isProd` branch, so
-// in production every emitted copy of that module builds its OWN pg pools. The graph that wins
-// registration is the instrumentation graph, whose pools serve nothing but the ingestion-backlog
-// query in this file.
+// When this was tried, `src/server/db/pgDb.ts` globalThis-pinned the pools only outside
+// production, so every emitted copy of that module built its OWN pg pools, and the graph that won
+// registration (instrumentation) read pools that served nothing but the ingestion-backlog query.
 //
 // Measured on a preview running exactly that change: `node_postgres_read_total_count` read 1 while
 // idle and still 1 under 30 concurrent `/api/v1/images` requests, with every write-pool gauge at 0
@@ -357,9 +356,9 @@ registerInstrumentationMetric(
 // absence they have today. It is the same false-all-clear class as an `or vector(0)` on a panel
 // whose metric does not exist: an absent metric prompts a question, a confident 0 ends one.
 //
-// Making them real means pinning the pools in `pgDb.ts` for prod too. That changes production DB
-// connection topology (today: one pool set per emitted graph), so it is its own change with its
-// own blast radius, not a rider on a metrics fix.
+// pgDb.ts now pins the pools process-wide in every environment, which is the precondition the
+// move was missing. The move itself is still a separate change: re-measure the frozen-gauge case
+// above on a preview before shipping it.
 if (!global.pgGaugeInitialized) {
   new client.Gauge({
     name: 'node_postgres_read_total_count',

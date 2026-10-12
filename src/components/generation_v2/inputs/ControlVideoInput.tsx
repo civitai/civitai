@@ -25,7 +25,7 @@ import {
   type ControlNetCategory,
   type VideoControlNetPreprocessorKey,
 } from '~/shared/constants/controlnets.constants';
-import type { VideoValue } from '~/shared/data-graph/generation/common';
+import type { VideoValue } from '~/shared/generation/values';
 import { PreprocessorExamples } from './PreprocessorExamples';
 import { SliderInput } from './SliderInput';
 import { VideoInput } from './VideoInput';

@@ -655,6 +655,7 @@ describe('getFileForModelVersion — the direct flag reaches resolveDownloadUrl'
   // user-less call returns `unauthorized` before it ever resolves a URL — which
   // would make every assertion below vacuous rather than failing.
   const A_USER = { id: 1, isModerator: true };
+  const ATTRIBUTION = { caller: 'download-route', actor: 'user' } as const;
 
   // The 4th argument is the options bag. Asserting on it by index rather than
   // with objectContaining is deliberate: a dropped argument is `undefined`
@@ -665,21 +666,43 @@ describe('getFileForModelVersion — the direct flag reaches resolveDownloadUrl'
     ['true', true],
     ['false', false],
   ])('forwards direct:%s exactly as given', async (_label, direct) => {
-    await getFileForModelVersion({ modelVersionId: 1, noAuth: true, user: A_USER, direct });
+    await getFileForModelVersion({
+      modelVersionId: 1,
+      noAuth: true,
+      user: A_USER,
+      direct,
+      attribution: ATTRIBUTION,
+    });
 
     expect(resolveDownloadUrlMock).toHaveBeenCalledTimes(1);
-    expect(optionsArg()).toEqual({ direct });
+    expect(optionsArg()).toEqual({ direct, ...ATTRIBUTION });
+  });
+
+  // The caller's attribution reaches the resolver unchanged. Two distinct pairs
+  // so a hardcoded caller or actor at the resolve cannot pass both.
+  it.each([
+    [{ caller: 'download-route', actor: 'anon' }],
+    [{ caller: 'wildcard', actor: 'user' }],
+  ] as const)('forwards attribution %o unchanged', async (attribution) => {
+    await getFileForModelVersion({ modelVersionId: 1, noAuth: true, user: A_USER, attribution });
+
+    expect(optionsArg()).toStrictEqual({ direct: undefined, ...attribution });
   });
 
   // A caller that omits `direct` must not be upgraded to a direct resolve. This
   // is the default every pre-existing call site takes.
   it('passes direct:undefined when the caller omits it, never true', async () => {
-    await getFileForModelVersion({ modelVersionId: 1, noAuth: true, user: A_USER });
+    await getFileForModelVersion({
+      modelVersionId: 1,
+      noAuth: true,
+      user: A_USER,
+      attribution: ATTRIBUTION,
+    });
 
     // toStrictEqual, not toEqual: toEqual treats an undefined-valued key as equal
     // to a MISSING one, so it cannot tell `{ direct: undefined }` from `{}` — which
     // is exactly the distinction the comment above claims this assertion makes.
-    expect(optionsArg()).toStrictEqual({ direct: undefined });
+    expect(optionsArg()).toStrictEqual({ direct: undefined, ...ATTRIBUTION });
     expect(optionsArg()?.direct).not.toBe(true);
   });
 });

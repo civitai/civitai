@@ -1,8 +1,11 @@
 import { useContext, useEffect, useRef } from 'react';
 import { ScrollAreaContext } from '~/components/ScrollArea/ScrollAreaContext';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { recordImpression } from '~/components/TrackView/impressionBuffer';
-import type { ImpressionEntityType } from '~/server/schema/track.schema';
+import { useOptionalFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import {
+  getCurrentImpressionSurface,
+  recordImpression,
+} from '~/components/TrackView/impressionBuffer';
+import type { ImpressionEntityType, ImpressionSurface } from '~/server/schema/track.schema';
 
 export type ImpressionTarget = { entityType: ImpressionEntityType; entityId: number };
 
@@ -24,7 +27,13 @@ const DWELL_MS = 1000;
 // of warning. Reusing it here would count a screenful of cards ABOVE and BELOW
 // the viewport as seen, in both scroll directions. Impressions need their own
 // observer with no margin.
-type ElementState = { targets: ImpressionTarget[]; timer: ReturnType<typeof setTimeout> | null };
+type ElementState = {
+  targets: ImpressionTarget[];
+  timer: ReturnType<typeof setTimeout> | null;
+  // Where the card was first seen. Kept across a tab-hide re-arm, which can
+  // happen with the image-detail dialog open over the feed.
+  surface?: ImpressionSurface;
+};
 
 type Registry = {
   observer: IntersectionObserver;
@@ -39,9 +48,12 @@ let visibilityBound = false;
 
 function armDwell(registry: Registry, element: Element, state: ElementState) {
   if (state.timer !== null) return;
+  // Where the card was when the dwell began, not when it ends — see recordImpression.
+  const surface = (state.surface ??= getCurrentImpressionSurface());
   state.timer = setTimeout(() => {
     state.timer = null;
-    for (const target of state.targets) recordImpression(target.entityType, target.entityId);
+    for (const target of state.targets)
+      recordImpression(target.entityType, target.entityId, surface);
     // Recorded — stop watching. The session-level dedupe in the buffer would drop
     // a repeat anyway; this just avoids re-arming the timer on every scroll.
     registry.observer.unobserve(element);
@@ -124,8 +136,11 @@ export function useTrackImpression<T extends HTMLElement = HTMLDivElement>(
   targets: ImpressionTarget[] | undefined
 ) {
   const ref = useRef<T>(null);
-  const features = useFeatureFlags();
-  const enabled = !!features.feedImpressions && !!targets?.length;
+  // Optional, not `useFeatureFlags`: ElementInView calls this for every caller,
+  // tracked or not, and must not throw outside a FeatureFlagsProvider. No flags
+  // means off.
+  const features = useOptionalFeatureFlags();
+  const enabled = !!features?.feedImpressions && !!targets?.length;
 
   // Identity of the entities, not of the array — callers rebuild the array every
   // render, and re-observing on that would be constant churn. This is the effect's
@@ -185,3 +200,6 @@ export function useTrackImpression<T extends HTMLElement = HTMLDivElement>(
 
   return ref;
 }
+
+// Test-only, mirroring impressionBuffer's hooks. Not part of the runtime contract.
+export const __trackImpressionTestHooks = { armDwell, disarmDwell, DWELL_MS };

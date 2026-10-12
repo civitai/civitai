@@ -12,6 +12,7 @@ const {
   mockUnwrap,
   mockWaitForApplyJob,
   mockRecordTeardown,
+  mockRecordDnsGc,
   sysRedis,
   evalTtls,
   mockEnv,
@@ -36,6 +37,7 @@ const {
     // don't poll; the failure test overrides it.
     mockWaitForApplyJob: vi.fn(async () => 'succeeded' as const),
     mockRecordTeardown: vi.fn(),
+    mockRecordDnsGc: vi.fn(),
     sysRedis: {
       _store: store,
       get: vi.fn(async (k: string) => store.get(k) ?? null),
@@ -128,6 +130,7 @@ vi.mock('~/server/utils/app-block-ids', () => ({ newBlockInstanceId: () => mockN
 vi.mock('~/server/prom/dev-tunnel.metrics', () => ({
   recordDevTunnelMint: vi.fn(),
   recordDevTunnelTeardown: (...a: unknown[]) => mockRecordTeardown(...(a as [])),
+  recordDevTunnelDnsGc: (...a: unknown[]) => mockRecordDnsGc(...(a as [])),
 }));
 
 import {
@@ -962,6 +965,104 @@ describe('deleteDevTunnelDns (best-effort orphan CF DNS cleanup)', () => {
     ).resolves.toBeUndefined();
     const deletes = fetchMock.mock.calls.filter((c) => (c[1] as any)?.method === 'DELETE');
     expect(deletes.length).toBe(0);
+  });
+});
+
+describe('deleteDevTunnelDns outcome counter (exactly one outcome per call)', () => {
+  const run = (host: string, fetchMock: unknown) =>
+    deleteDevTunnelDns(host, fetchMock as unknown as typeof fetch);
+  const isDelete = (c: unknown[]) => (c[1] as RequestInit | undefined)?.method === 'DELETE';
+
+  beforeEach(() => {
+    mockEnv.APPS_DEV_TUNNEL_CF_API_TOKEN = 'cf-token';
+    mockEnv.APPS_DEV_TUNNEL_CF_ZONE_ID = undefined;
+    __resetDevTunnelDnsCacheForTest();
+  });
+
+  it('skipped — token unset (feature off)', async () => {
+    mockEnv.APPS_DEV_TUNNEL_CF_API_TOKEN = undefined;
+    await run(CF_DEV_HOST, vi.fn());
+    expect(mockRecordDnsGc.mock.calls).toEqual([['skipped']]);
+  });
+
+  it('skipped — zone id unresolvable (lookup returns no zone)', async () => {
+    const fetchMock = routeCfFetch({ [CF_DEV_HOST]: [{ id: 'rec-a' }] }, []);
+    await run(CF_DEV_HOST, fetchMock);
+    expect(mockRecordDnsGc.mock.calls).toEqual([['skipped']]);
+    expect(fetchMock.mock.calls.filter(isDelete)).toHaveLength(0);
+  });
+
+  it('refused — host fails the dev-host guard (once per call)', async () => {
+    await run('civitai.com', vi.fn());
+    await run('evil-dev-0123456789abcdef.civit.ai', vi.fn());
+    expect(mockRecordDnsGc.mock.calls).toEqual([['refused'], ['refused']]);
+  });
+
+  it('deleted — records found and every DELETE ok', async () => {
+    const fetchMock = routeCfFetch({
+      [CF_DEV_HOST]: [{ id: 'rec-a' }],
+      [`a-${CF_DEV_HOST}`]: [{ id: 'rec-txt' }],
+    });
+    await run(CF_DEV_HOST, fetchMock);
+    expect(mockRecordDnsGc.mock.calls).toEqual([['deleted']]);
+  });
+
+  it('none_found — zone resolved, both names list fine but match nothing', async () => {
+    const fetchMock = routeCfFetch({});
+    await run(CF_DEV_HOST, fetchMock);
+    expect(mockRecordDnsGc.mock.calls).toEqual([['none_found']]);
+  });
+
+  it('failed — one DELETE returns non-ok while another succeeds', async () => {
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (init?.method === 'DELETE') {
+        return String(url).endsWith('/rec-txt')
+          ? cfEnvelope(null, false, 500)
+          : cfEnvelope({ id: 'deleted' });
+      }
+      if (String(url).includes('/zones?name=')) return cfEnvelope([{ id: 'zone-1' }]);
+      if (String(url).includes(encodeURIComponent(`a-${CF_DEV_HOST}`)))
+        return cfEnvelope([{ id: 'rec-txt' }]);
+      return cfEnvelope([{ id: 'rec-a' }]);
+    });
+    await run(CF_DEV_HOST, fetchMock);
+    expect(fetchMock.mock.calls.filter(isDelete)).toHaveLength(2);
+    expect(mockRecordDnsGc.mock.calls).toEqual([['failed']]);
+  });
+
+  it('failed — a DELETE rejects (network error)', async () => {
+    const base = routeCfFetch({ [CF_DEV_HOST]: [{ id: 'rec-a' }] });
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (init?.method === 'DELETE') throw new Error('socket hang up');
+      return base(url, init);
+    });
+    await run(CF_DEV_HOST, fetchMock);
+    expect(mockRecordDnsGc.mock.calls).toEqual([['failed']]);
+  });
+
+  it('failed — a record LIST fails (not miscounted as none_found)', async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      if (String(url).includes('/zones?name=')) return cfEnvelope([{ id: 'zone-1' }]);
+      return cfEnvelope([], false, 403);
+    });
+    await run(CF_DEV_HOST, fetchMock);
+    expect(mockRecordDnsGc.mock.calls).toEqual([['failed']]);
+  });
+
+  it('failed — the outer catch fires (zone lookup throws)', async () => {
+    const fetchMock = vi.fn(async () => {
+      throw new Error('cf down');
+    });
+    await expect(run(CF_DEV_HOST, fetchMock)).resolves.toBeUndefined();
+    expect(mockRecordDnsGc.mock.calls).toEqual([['failed']]);
+  });
+
+  it('still never throws when the recorder itself throws', async () => {
+    mockRecordDnsGc.mockImplementationOnce(() => {
+      throw new Error('registry exploded');
+    });
+    await expect(run(CF_DEV_HOST, routeCfFetch({}))).resolves.toBeUndefined();
+    expect(mockRecordDnsGc).toHaveBeenCalledTimes(1);
   });
 });
 

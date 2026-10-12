@@ -151,6 +151,13 @@ mkobs "${WORK}/obs-gen-matrix.json" \
 mkobs "${WORK}/obs-playable-collections.json" \
       'Pro / Create ZA 2.3M Home Models Images Videos Hubs Articles Shop / Apps / Playable Collections Terms of Service Privacy Safety API Status' \
       '[{"frameId":4059,"url":"https://playable-collections.civit.ai/"}]'
+# Live-observed 2026-10-10 on the `personal` laptop profile (moderator), from the
+# `observed.json` the first oauth-probe capture.sh run wrote — flattened and
+# truncated, NOT derived from the recipe. oauth-probe is SUSPENDED and reached by
+# the moderator private-run fallback, hence the moderator notice in topText.
+mkobs "${WORK}/obs-oauth-probe.json" \
+      'Pro / Create ZA 2.1M You are viewing this app as a moderator. It is not publicly listed or publicly runnable, and this page is serving its last approved build. / Marketplace / OAuth Probe Terms of Service Privacy Safety API Status' \
+      '[{"frameId":3160,"url":"https://oauth-probe.civit.ai/"}]'
 
 # ── THE host -> observed-fixture MAP: ONE PLACE. ────────────────────────────
 # 🔴 This used to be open-coded in THREE python heredocs (P2, P3, G3), so adding
@@ -176,6 +183,7 @@ json.dump({
     "app-requests.civit.ai":         work + "/obs-app-requests.json",
     "gen-matrix.civit.ai":           work + "/obs-gen-matrix.json",
     "playable-collections.civit.ai": work + "/obs-playable-collections.json",
+    "oauth-probe.civit.ai":          work + "/obs-oauth-probe.json",
 }, open(out, "w"))
 MAPPY
 # Fail LOUD if the map does not name a real file — a missing fixture must not
@@ -186,8 +194,8 @@ m = json.load(open(sys.argv[1]))
 missing = sorted(h for h, f in m.items() if not os.path.exists(f))
 if missing:
     print("fixture-map names files that do not exist: %s" % missing); raise SystemExit(1)
-if len(m) < 7:
-    print("fixture-map has %d entries, expected >= 7" % len(m)); raise SystemExit(1)
+if len(m) < 8:
+    print("fixture-map has %d entries, expected >= 8" % len(m)); raise SystemExit(1)
 MAPCHK
 
 steps_of() {  # steps_of <plan.json>  ->  "op|argv joined" per line
@@ -5863,7 +5871,8 @@ else:
 # full_frame to an AND on both axes, so nothing downstream catches a bad one.
 FORMS = {"model-benchmarking": "appFrame", "custom-generators": "appFrame",
          "panorama-360": "detect", "gen-matrix": "detect", "sensei": "appFrame",
-         "app-requests": "appFrame", "playable-collections": "appFrame"}
+         "app-requests": "appFrame", "playable-collections": "appFrame",
+         "oauth-probe": "detect"}
 shipped = sorted(f[:-5] for f in os.listdir(RECIPES) if f.endswith(".json"))
 if shipped != sorted(FORMS):
     bad.append("the crop-form ledger does not cover every shipped recipe: ledger=%s "
@@ -6218,7 +6227,7 @@ print("\n".join(bad))
 sys.exit(1 if bad else 0)
 PY
 then
-  pass "P18: model-benchmarking dismisses the how-to with \`clickIfPresent\` (its persistence makes the control present on a fresh profile and absent on a used one) and KEEPS the waitForGone that stops the next click racing the dismissal on a fresh one; its content veto is corrected but the Buzz caveat is not; EVERY shipped recipe is in the crop-form ledger and matches it (3 detect, 4 frame-relative WITH their measurements recorded AND their rects run against a canvas built at the viewport those measurements name — sensei included since 2026-08-27 — and NO shipped absolute); and exactly ONE planned step carries the \`optional\` key capture.sh branches on"
+  pass "P18: model-benchmarking dismisses the how-to with \`clickIfPresent\` (its persistence makes the control present on a fresh profile and absent on a used one) and KEEPS the waitForGone that stops the next click racing the dismissal on a fresh one; its content veto is corrected but the Buzz caveat is not; EVERY shipped recipe is in the crop-form ledger and matches it (3 detect, 5 frame-relative WITH their measurements recorded AND their rects run against a canvas built at the viewport those measurements name — sensei included since 2026-08-27 — and NO shipped absolute); and exactly ONE planned step carries the \`optional\` key capture.sh branches on"
 else
   fail "P18: a recipe-side fact drifted"
   sed 's/^/          /' "${WORK}/p18.txt" | head -12

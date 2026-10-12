@@ -23,7 +23,9 @@ import type { SessionUser } from '~/types/session';
 
 const createCaller = createCallerFactory(appRouter);
 
-type RequestContext = Pick<Context, 'apiKeyId' | 'subject'> & { tokenScope?: number };
+type RequestContext = Pick<Context, 'apiKeyId' | 'apiKeyType' | 'subject'> & {
+  tokenScope?: number;
+};
 
 export function createPlannerCaller(req: NextApiRequest, res: NextApiResponse, user: SessionUser) {
   const requestContext = ((req as NextApiRequest & { context?: RequestContext }).context ??
@@ -45,6 +47,7 @@ export function createPlannerCaller(req: NextApiRequest, res: NextApiResponse, u
     // No tokenScope means a cookie session: full authority, as in `createContext`.
     tokenScope: requestContext.tokenScope ?? TokenScope.Full,
     apiKeyId: requestContext.apiKeyId,
+    apiKeyType: requestContext.apiKeyType,
     subject: requestContext.subject,
   });
 }

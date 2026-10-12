@@ -30,6 +30,11 @@ export type RestrictionTrigger = {
   inputImages?: string[];
   inputVideo?: string;
   time?: string;
+  reason?: string;
+  text?: string;
+  entityType?: string;
+  entityId?: number;
+  cleanup?: { kind: string; count: number; truncated: boolean; ids?: number[] } | null;
 };
 
 export type RestrictionTriggerView = RestrictionTrigger & { key: string };
@@ -44,6 +49,8 @@ export type RestrictionRow = {
   createdAt: Date;
   resolvedAt: Date | null;
   resolvedMessage: string | null;
+  resolvedReason: string | null;
+  internalNotes: string | null;
   userMessage: string | null;
   userMessageAt: Date | null;
   triggers: RestrictionTriggerView[];
@@ -81,10 +88,12 @@ const asTriggerArray = (value: unknown): RestrictionTrigger[] => {
  * user actually typed. Highlighting happens in the component against the recorded `matchedWord` by
  * literal search; the stored `matchedRegex` is attacker-influenced text and is never executed.
  */
-const toView = (trigger: RestrictionTrigger, key: string): RestrictionTriggerView => ({
-  ...trigger,
-  key,
-});
+const toView = (trigger: RestrictionTrigger, key: string): RestrictionTriggerView => {
+  // A scam cleanup records up to thousands of ids for the restore; the page needs only the count.
+  if (!trigger.cleanup) return { ...trigger, key };
+  const { ids: _ids, ...cleanup } = trigger.cleanup;
+  return { ...trigger, cleanup, key };
+};
 
 export async function getGenerationRestrictions(query: RestrictionQuery): Promise<{
   items: RestrictionRow[];
@@ -107,6 +116,10 @@ export async function getGenerationRestrictions(query: RestrictionQuery): Promis
     .$if(!!restrictionId, (qb) => qb.where('ur.id', '=', restrictionId!))
     .$if(!!username, (qb) => qb.where('u.username', 'ilike', `%${username}%`));
 
+  // The account is muted while its row is Pending, so the queue is worked oldest first: newest first
+  // left month-old mutes on the last page. A history view reads newest first.
+  const direction = status === 'Pending' ? 'asc' : 'desc';
+
   const [rows, count] = await Promise.all([
     base
       .select([
@@ -119,10 +132,13 @@ export async function getGenerationRestrictions(query: RestrictionQuery): Promis
         'ur.createdAt',
         'ur.resolvedAt',
         'ur.resolvedMessage',
+        'ur.resolvedReason',
+        'ur.internalNotes',
         'ur.userMessage',
         'ur.userMessageAt',
       ])
-      .orderBy('ur.createdAt', 'desc')
+      .orderBy('ur.createdAt', direction)
+      .orderBy('ur.id', direction)
       .limit(limit)
       .offset((page - 1) * limit)
       .execute(),

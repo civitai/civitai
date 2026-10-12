@@ -211,6 +211,7 @@ export async function blockWorkflowCaller(
     signal: new AbortController().signal,
     tokenScope: TokenScope.Full,
     apiKeyId: undefined,
+    apiKeyType: undefined,
     subject: undefined,
     // No `as BlocksCaller` here: with `callerFactory` typed, the literal above is
     // checked against `Context` and the return type follows. Re-adding a cast would

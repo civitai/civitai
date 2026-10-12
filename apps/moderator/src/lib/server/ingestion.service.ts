@@ -3,6 +3,7 @@ import { REDIS_KEYS } from '@civitai/redis';
 import { assertMediaPresentForPublish, MediaPresence, summarizeProbeError } from '@civitai/shared';
 import { STUCK_PENDING_MINUTES } from '@civitai/shared/image-ingestion';
 import { dbRead, dbWrite } from './db';
+import { takePage } from './keyset-page';
 import { bustCachedObject } from './cache';
 import { invalidateThumbnails, thumbnailParentId } from './thumbnail-cache';
 import { syncSearchIndex } from './search-index';
@@ -44,7 +45,7 @@ export async function getImagesPendingIngestion({
   limit: number;
   view: PendingIngestionView;
 }): Promise<{ items: PendingIngestionImage[]; nextCursor?: number }> {
-  const rows = await dbRead
+  const fetched = await dbRead
     .selectFrom('Image')
     .select(['id', 'name', 'url', 'type', 'createdAt', 'metadata'])
     .$if(view === 'stuck', (qb) => qb.where(stuckWhere()))
@@ -54,9 +55,7 @@ export async function getImagesPendingIngestion({
     .limit(limit + 1)
     .execute();
 
-  let nextCursor: number | undefined;
-  if (rows.length > limit) nextCursor = rows.pop()?.id;
-  return { items: rows, nextCursor };
+  return takePage(fetched, limit, (r) => r.id);
 }
 
 export async function countImagesPendingIngestion(): Promise<number> {
@@ -213,15 +212,11 @@ export async function getIngestionErrorImages({
     FROM "Image" i
     WHERE ${ingestionErrorWhere}
       AND (${cursor != null ? sql`i.id < ${cursor}` : sql`TRUE`})
-    ORDER BY i."createdAt" DESC
+    ORDER BY i.id DESC
     LIMIT ${limit + 1}
   `.execute(dbRead);
 
-  const items = result.rows;
-  let nextCursor: number | undefined;
-  if (items.length > limit) nextCursor = items.pop()?.id;
-
-  return { items, nextCursor };
+  return takePage(result.rows, limit, (r) => r.id);
 }
 
 /** The badge for `/images/ingestion-errors` — same window and predicates as the queue, or the count

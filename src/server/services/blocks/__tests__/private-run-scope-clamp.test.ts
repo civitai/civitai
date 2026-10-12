@@ -310,9 +310,9 @@ describe('clampPrivateRunScopes — EDITOR is READ-ONLY [REG]', () => {
 
 describe('private-run budget containment [REG]', () => {
   /**
-   * 🔴 FIXTURE BOUNDS OVERSHOOT AND ARE NOT MULTIPLES OF THE CAP. 137 and 301 are
-   * chosen so a clamp mutant MOVES the output: a manifest budget of 250 (the cap
-   * itself) or 500 (a multiple) would land exactly on the boundary, the guard would
+   * 🔴 FIXTURE BOUNDS OVERSHOOT AND ARE NOT MULTIPLES OF THE CAP. 137 and 1301 are
+   * chosen so a clamp mutant MOVES the output: a manifest budget of 1000 (the cap
+   * itself) or 2000 (a multiple) would land exactly on the boundary, the guard would
    * never execute, and the mutant would survive a fully green suite.
    */
   it('a manifest budget UNDER the cap passes through verbatim', () => {
@@ -322,8 +322,8 @@ describe('private-run budget containment [REG]', () => {
 
   it('a manifest budget OVER the cap clamps to the cap', () => {
     const granted = clampPrivateRunScopes(['ai:write:budgeted'], 'moderator');
-    expect(resolveDevBuzzBudget(granted, undefined, 301)).toBe(DEV_BUZZ_BUDGET_CAP);
-    expect(DEV_BUZZ_BUDGET_CAP).toBe(250);
+    expect(resolveDevBuzzBudget(granted, undefined, 1301)).toBe(DEV_BUZZ_BUDGET_CAP);
+    expect(DEV_BUZZ_BUDGET_CAP).toBe(1000);
   });
 
   it('an ABSENT manifest budget falls back to the platform default', () => {

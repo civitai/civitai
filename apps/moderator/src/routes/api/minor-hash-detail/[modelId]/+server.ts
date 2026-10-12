@@ -1,14 +1,13 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { canAccess } from '$lib/server/access';
+import { canAccessMinorQueue } from '$lib/server/minor-queue-access';
 import { getAutoFlaggedMinorDetail, getMinorHashMatchDetail } from '$lib/server/minor-hash.service';
-import { MINOR_HASH_PATH } from '../../../models/minor-hash-matches/tabs';
 
 // Per-row on expand, not joined into the list: covers, uploader counts and flag provenance are
 // per-model lookups that would turn a 50-row page into 50x the work for detail most rows never show.
-// `/api/*` is exempt from the global route gate, so this checks the page's own path itself.
+// `/api/*` is exempt from the global route gate, so this checks the pages' own paths itself.
 export const GET: RequestHandler = async ({ params, url, locals }) => {
-  if (!locals.user || !canAccess(locals.user, MINOR_HASH_PATH))
+  if (!locals.user || !canAccessMinorQueue(locals.user))
     return json({ error: 'No access.' }, { status: 403 });
 
   const modelId = Number(params.modelId);

@@ -10,8 +10,8 @@ import { sonilo } from './sonilo.graph';
 /**
  * The AUDIO hub: ecosystem selection scoped to audio output, then the family
  * dispatch — a keyed branch whose table types each arm's `ecosystem` as its
- * literal. No quantity/priority/outputFormat — those are image (or partly
- * video) concerns in the oracle. Workflow and the output/input computeds live
+ * literal. No quantity/priority/outputFormat — those are image and video
+ * concerns only. Workflow and the output/input computeds live
  * on the root (`../hub.graph.ts`).
  */
 
@@ -37,7 +37,7 @@ export const audioHub = defineGraph<RootCtx>()
         usableEcosystems
       ),
       default: defaultValue,
-      // v1 stores the ecosystem selection per OUTPUT type
+      // The ecosystem selection is stored per OUTPUT type.
       scope: 'audio',
       meta: {
         compatibleEcosystems,

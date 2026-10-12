@@ -72,6 +72,23 @@ describe('recordAppListingOpen', () => {
     expect(Object.keys(details)).toEqual(['appBlockId']);
   });
 
+  it('adds the sub-listing id, and only the id, when the launch came from a sub-card', async () => {
+    const sl = 'asl_01J9ZK3Q4R5S6T7V8W9X0Y1Z2A';
+    await recordAppListingOpen({ appBlockId: 'ab_42', subListingId: sl, session: null, ctx: CTX });
+    expect(mockAction).toHaveBeenCalledWith({
+      type: 'App_Open',
+      details: { appBlockId: 'ab_42', subListingId: sl },
+    });
+    mockAction.mockClear();
+    await recordAppListingOpen({
+      appBlockId: 'ab_42',
+      subListingId: null,
+      session: null,
+      ctx: CTX,
+    });
+    expect(Object.keys(mockAction.mock.calls[0][0].details)).toEqual(['appBlockId']);
+  });
+
   it('does not use skipActorMeta — a play is an interaction, not a private judgement', async () => {
     // Dropping ip/userAgent here would also drop the only signal the rollup can use to
     // collapse a refresh loop into one play, so the absence of that option is deliberate.

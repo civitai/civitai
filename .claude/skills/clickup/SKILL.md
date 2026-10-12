@@ -64,7 +64,7 @@ Set `defaultListId` in your account to enable creating tasks without specifying 
 
 ### Multi-Account
 
-Support multiple named accounts (e.g., "bot" for automation, "justin" for personal use):
+Support multiple named accounts (e.g., "bot" for automation, "jane" for personal use):
 
 ```json
 {
@@ -76,10 +76,10 @@ Support multiple named accounts (e.g., "bot" for automation, "justin" for person
       "userId": "75386805",
       "defaultListId": "901111220963"
     },
-    "justin": {
+    "jane": {
       "apiToken": "pk_...",
       "teamId": "8459928",
-      "userId": "10620972"
+      "userId": "12345678"
     }
   }
 }
@@ -90,7 +90,7 @@ Only `apiToken` is required per account. Other fields are auto-detected and cach
 Use `--account <name>` with any command to target a specific account:
 
 ```bash
-node query.mjs me --account justin
+node query.mjs me --account jane
 node query.mjs my-tasks --account bot
 ```
 
@@ -98,8 +98,8 @@ Account management commands:
 
 ```bash
 node query.mjs accounts                          # List all accounts
-node query.mjs switch-account justin             # Change default
-node query.mjs add-account justin --token pk_... # Add account
+node query.mjs switch-account jane               # Change default
+node query.mjs add-account jane --token pk_...   # Add account
 node query.mjs remove-account old-account        # Remove account
 ```
 
@@ -250,7 +250,7 @@ node query.mjs search --me --status "in progress"
 node query.mjs search "oauth" --folder 90111122009
 
 # Filter by assignee + text
-node query.mjs search "migration" --assignee justin
+node query.mjs search "migration" --assignee jane
 
 # Multiple statuses (comma-separated)
 node query.mjs search --me --status "in progress,review"
@@ -292,7 +292,7 @@ node query.mjs status 86a1b2c3d "complete"
 
 ```bash
 # Assign by username
-node query.mjs assign 86a1b2c3d justin
+node query.mjs assign 86a1b2c3d jane
 
 # Assign by email
 node query.mjs assign 86a1b2c3d jane@example.com
@@ -429,28 +429,28 @@ Bare mentions are a **fallback** so mentions work even if agents forget the brac
 
 ```bash
 # Explicit bracket syntax (preferred)
-node query.mjs comment 86a1b2c3d "Hey @[justin], can you review this?"
+node query.mjs comment 86a1b2c3d "Hey @[jane], can you review this?"
 
 # Bare mention (auto-detected against workspace members)
-node query.mjs comment 86a1b2c3d "Hey @Justin Maier, can you review this?"
+node query.mjs comment 86a1b2c3d "Hey @Jane Doe, can you review this?"
 
 # Both work the same — these are equivalent:
-node query.mjs comment 86a1b2c3d "@[justin] please review"
-node query.mjs comment 86a1b2c3d "@Justin please review"
+node query.mjs comment 86a1b2c3d "@[jane] please review"
+node query.mjs comment 86a1b2c3d "@Jane please review"
 
 # Mention by numeric user ID (bracket syntax only)
-node query.mjs comment 86a1b2c3d "@[10620972] please take a look"
+node query.mjs comment 86a1b2c3d "@[12345678] please take a look"
 
 # Mention by email (bracket syntax only)
 node query.mjs comment 86a1b2c3d "Assigned to @[jane@example.com]"
 
 # Multiple mentions in one comment
-node query.mjs comment 86a1b2c3d "@[justin] and @[koen] - need your input on this"
+node query.mjs comment 86a1b2c3d "@[jane] and @[john] - need your input on this"
 
 
-**Bracket syntax**: Fuzzy matches partial names, emails, or numeric IDs. `@[justin]` matches "Justin Maier". Unknown users throw an error.
+**Bracket syntax**: Fuzzy matches partial names, emails, or numeric IDs. `@[jane]` matches "Jane Doe". Unknown users throw an error.
 
-**Bare syntax**: Matches `@Name` against workspace member usernames (case-insensitive). Tries full name first (`@Justin Maier`), then first name (`@Justin`). Unmatched bare mentions are left as plain text (no error).
+**Bare syntax**: Matches `@Name` against workspace member usernames (case-insensitive). Tries full name first (`@Jane Doe`), then first name (`@Jane`). Unmatched bare mentions are left as plain text (no error).
 
 ### Show Current User
 
@@ -469,10 +469,10 @@ node query.mjs delete-comment 90110200841741
 
 ```bash
 # Add user as watcher on a task
-node query.mjs watch 86a1b2c3d koen
+node query.mjs watch 86a1b2c3d john
 
 # Remove watcher
-node query.mjs unwatch 86a1b2c3d koen
+node query.mjs unwatch 86a1b2c3d john
 ```
 
 ### Add Tags
@@ -647,7 +647,7 @@ node query.mjs comment 86a1b2c3d "Design review assets" --attach ./mockup.png --
 Comments containing images or file attachments display them inline in plain-text output:
 
 ```
-[Feb 11, 2026, 04:55 PM] Justin Maier (id: 90110209630450):
+[Feb 11, 2026, 04:55 PM] Jane Doe (id: 90110200000001):
   [Attachment: image.png](https://t8459928.p.clickup-attachments.com/...)
   If you look at the component, you'll see that...
 ```

@@ -55,7 +55,7 @@ describe('permanent system blocks are not cloned per user', () => {
       permanentRows: [row({ ...ANNOUNCEMENT, index: -1 })],
     });
 
-    const blocks = await getHomeBlocks({ userId: 7 });
+    const blocks = await getHomeBlocks({ userId: 7, viewer: { id: 7 } });
 
     // 900 is the clone; 2 is the system block it points at. Exactly one Announcement renders.
     expect(blocks.map((b) => b.id)).toEqual([2, 901]);
@@ -67,7 +67,7 @@ describe('permanent system blocks are not cloned per user', () => {
       permanentRows: [row({ ...ANNOUNCEMENT })],
     });
 
-    const blocks = await getHomeBlocks({ userId: 7 });
+    const blocks = await getHomeBlocks({ userId: 7, viewer: { id: 7 } });
 
     expect(blocks.map((b) => b.id)).toContain(901);
   });
@@ -78,7 +78,7 @@ describe('permanent system blocks are not cloned per user', () => {
       permanentRows: [row({ ...ANNOUNCEMENT })],
     });
 
-    const blocks = await getHomeBlocks({ userId: 7 });
+    const blocks = await getHomeBlocks({ userId: 7, viewer: { id: 7 } });
 
     expect(blocks.map((b) => b.id)).toContain(902);
   });
@@ -86,7 +86,7 @@ describe('permanent system blocks are not cloned per user', () => {
   it('keeps permanent blocks out of the editor seed, by query rather than after the fact', async () => {
     stubHomeBlockReads({ userRows: [], permanentRows: [] });
 
-    await getHomeBlocks({ userId: 7, ownedOnly: true });
+    await getHomeBlocks({ userId: 7, ownedOnly: true, viewer: { id: 7 } });
 
     const [args] = dbMock.dbRead.homeBlock.findMany.mock.calls.at(-1) as [any];
     // A post-filter here would leave the editor listing a row it cannot act on; the exclusion
@@ -100,6 +100,7 @@ describe('permanent system blocks are not cloned per user', () => {
     dbMock.dbRead.homeBlock.findMany.mockResolvedValue([]);
 
     await setHomeBlocksOrder({
+      viewer: { id: 7 },
       input: { userId: 7, homeBlocks: [{ id: 901, index: 0, userId: 7 }] },
     });
 
@@ -133,6 +134,7 @@ describe('permanent system blocks are not cloned per user', () => {
     });
 
     await setHomeBlocksOrder({
+      viewer: { id: 7 },
       input: {
         userId: 7,
         homeBlocks: [

@@ -198,7 +198,7 @@ Responses:
 
 ## Client Credentials Flow
 
-For server-to-server communication (no user context):
+For server-to-server communication (the client acts as itself):
 
 ```
 POST https://auth.civitai.com/api/auth/oauth/token
@@ -210,7 +210,21 @@ grant_type=client_credentials
 &scope=SCOPE_BITMASK
 ```
 
-The token acts on behalf of the client owner's account, scoped to the client's allowed permissions.
+This grant is the client acting as itself, not on a user's behalf:
+
+- **Confidential clients only.** The client must hold a secret and have `client_credentials` in its
+  grants; a public client is refused (`invalid_grant`), whatever secret it sends.
+- **Client-credentials scopes only.** The token may carry only the scopes reserved for this grant,
+  today `AppStoreCatalogWrite` (268435456), plus `UserRead`, and only within the client's allowed
+  scopes. Anything else is `invalid_scope`, even a scope the client may request through the other
+  flows.
+- **Access token only.** The response has no `refresh_token`; the access token lives one hour
+  (`expires_in: 3600`). Cache it and request a new one shortly before it expires or on a 401.
+- **Single-purpose.** A client-credentials token is only accepted on the endpoints its scope is
+  for (today the App Store catalog endpoints); everywhere else it is refused as a credential.
+
+The token's account is the client owner's. The scopes reserved for this grant are refused by every
+other flow (authorization code, device and app tokens), so they never appear on a consent screen.
 
 ## Revoking Tokens
 
@@ -282,7 +296,8 @@ Active token:
 
 Anything else returns `200 {"active": false}` — unknown token, expired token, a refresh token, a
 personal API key (a different key type; only OAuth **access** tokens introspect as active), a
-missing `token` parameter, or a live token whose **owner's account is closed or suspended**. The
+client-credentials token (single-purpose), a missing `token` parameter, or a live token whose
+**owner's account is closed or suspended**. The
 endpoint never distinguishes those cases.
 
 So `active` covers the subject as well as the token: `active: true` means the token is live *and*
@@ -328,8 +343,10 @@ Scopes are represented as a bitmask integer. Combine scopes with bitwise OR.
 | **Full**           | **33554431** | All permissions                                 |
 
 > **Opt-in scopes are not in `Full`.** `AppBlocksSubmit` (33554432), `AppBlocksDevTunnel`
-> (67108864) and `LinkConnect` (134217728) are granted only to clients whose registration lists
-> them, and are deliberately excluded from `Full` so an existing key is never silently widened.
+> (67108864), `LinkConnect` (134217728) and `AppStoreCatalogWrite` (268435456) are granted only to
+> clients whose registration lists them, and are deliberately excluded from `Full` so an existing
+> key is never silently widened. `AppStoreCatalogWrite` is issued only through the
+> [Client Credentials Flow](#client-credentials-flow).
 
 ### Common Scope Combinations
 
@@ -403,6 +420,10 @@ Some Civitai actions are **only available to session-authenticated users**, rega
 - Creator-program bank/extract/withdraw (`creator-program.*`)
 - Direct user-to-club buzz transfers (`buzz.depositClubFunds`)
 
+API-key and connected-app management (`apiKey.add`, `apiKey.setBuzzLimit`, `apiKey.delete`, `oauthConsent.setBuzzLimit`, `oauthConsent.revokeApp`) accepts a browser session or a full-scope personal API key. OAuth access tokens (at any scope), System keys and reduced-scope keys get `403 FORBIDDEN`.
+
+Moderator procedures, pages gated to moderators and the moderator REST endpoints called with a user credential follow the same rule: a browser session or a full-scope personal API key, whatever scope the procedure declares. The App Blocks CLI routes `/api/v1/blocks/{submit-version,dev-token,submissions,withdraw}` are the exception: they accept an OAuth token carrying the opt-in `AppBlocksSubmit` scope.
+
 Buzz-spending operations that flow through the orchestrator (image generation, training, scanning, recommenders) **are** available to tokens — that's the entire point of the OAuth/API key surface. The orchestrator enforces buzz spend on its side using each token's per-subject budget.
 
 ## /api/v1/me — token introspection
@@ -458,4 +479,4 @@ type BuzzBudget =
 - **rollover** — calendar-based reset driven by a cron expression. Cron syntax matches Hangfire Cronos.
 - Optional `currencies` restricts the cap to specific buzz pools (e.g. `["yellow"]`).
 
-Civitai's UI today only exposes a single sliding budget (limit + day/week/month period), but the JSON shape supports the full set. Programmatic clients with a Full-scope key can set any combination via the tRPC `apiKey.setBuzzLimit` and `oauthConsent.setBuzzLimit` mutations. A token cannot modify the limit on its own subject — use a different management key or session auth.
+Civitai's UI today only exposes a single sliding budget (limit + day/week/month period), but the JSON shape supports the full set. A full-scope personal API key can set any combination via the tRPC `apiKey.setBuzzLimit` and `oauthConsent.setBuzzLimit` mutations; OAuth access tokens, System keys and reduced-scope keys cannot call them. A key cannot modify its own limit — use a different personal key or session auth.

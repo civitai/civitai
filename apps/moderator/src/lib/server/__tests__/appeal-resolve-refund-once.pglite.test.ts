@@ -66,6 +66,8 @@ CREATE TABLE "Appeal" (
   "resolvedBy" INTEGER,
   "resolvedAt" TIMESTAMP(3),
   "resolvedMessage" TEXT,
+  "resolvedReason" TEXT,
+  "internalNotes" TEXT,
   "buzzTransactionId" TEXT
 );
 CREATE FUNCTION update_nsfw_levels_new(ids INTEGER[]) RETURNS VOID LANGUAGE SQL AS $$ SELECT $$;
@@ -110,9 +112,54 @@ const imageRow = async () =>
     }>(`SELECT "needsReview", "blockedFor", "ingestion" FROM "Image" WHERE "id" = $1`, [IMAGE_ID])
   ).rows[0];
 
+const appealLabels = async () =>
+  (
+    await db.query<{ resolvedReason: string | null; internalNotes: string | null }>(
+      `SELECT "resolvedReason", "internalNotes" FROM "Appeal" ORDER BY "id"`
+    )
+  ).rows;
+
+describe('the ruling reason', () => {
+  it('is written to the appeal it closes, with the note', async () => {
+    await resolveImageAppeal({
+      imageId: IMAGE_ID,
+      status: 'Rejected',
+      resolvedReason: 'other',
+      internalNotes: 'second account of a banned user',
+      userId: 2,
+    });
+
+    expect(await appealLabels()).toEqual([
+      { resolvedReason: 'other', internalNotes: 'second account of a banned user' },
+    ]);
+  });
+
+  it('is not written by a resolution that lost the race', async () => {
+    await db.query(`UPDATE "Appeal" SET "status" = 'Approved', "resolvedReason" = 'misclassified'`);
+
+    await resolveImageAppeal({
+      imageId: IMAGE_ID,
+      status: 'Rejected',
+      resolvedReason: 'violation-confirmed',
+      internalNotes: 'late',
+      userId: 2,
+    });
+
+    expect(await appealLabels()).toEqual([
+      { resolvedReason: 'misclassified', internalNotes: null },
+    ]);
+  });
+});
+
 describe('resolving one appeal twice at once', () => {
   it('resolveImageAppeal refunds the fee once', async () => {
-    const approve = () => resolveImageAppeal({ imageId: IMAGE_ID, status: 'Approved', userId: 2 });
+    const approve = () =>
+      resolveImageAppeal({
+        imageId: IMAGE_ID,
+        status: 'Approved',
+        resolvedReason: 'misclassified',
+        userId: 2,
+      });
 
     const closed = await Promise.all([approve(), approve()]);
 
@@ -140,7 +187,12 @@ describe('resolving one appeal twice at once', () => {
   it('applies no verdict to the image when another resolution already decided the appeal', async () => {
     await db.query(`UPDATE "Appeal" SET "status" = 'Rejected'`);
 
-    const closed = await resolveImageAppeal({ imageId: IMAGE_ID, status: 'Approved', userId: 2 });
+    const closed = await resolveImageAppeal({
+      imageId: IMAGE_ID,
+      status: 'Approved',
+      resolvedReason: 'misclassified',
+      userId: 2,
+    });
 
     expect(closed).toBeUndefined();
     expect(refundAppealFee).not.toHaveBeenCalled();
@@ -157,7 +209,12 @@ describe('resolving one appeal twice at once', () => {
     await db.query(`UPDATE "Appeal" SET "status" = 'Rejected'`);
     await db.query(`UPDATE "Image" SET "needsReview" = 'minor'`);
 
-    await resolveImageAppeal({ imageId: IMAGE_ID, status: 'Approved', userId: 2 });
+    await resolveImageAppeal({
+      imageId: IMAGE_ID,
+      status: 'Approved',
+      resolvedReason: 'misclassified',
+      userId: 2,
+    });
 
     expect(await imageRow()).toEqual({
       needsReview: 'minor',

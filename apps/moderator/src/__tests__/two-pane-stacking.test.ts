@@ -30,8 +30,8 @@ const read = (p: string) => stripComments(readFileSync(path.resolve(dir, '..', p
 const LAYOUTS = [
   { name: 'retool/user-lookup', file: 'routes/retool/user-lookup/+layout.svelte' },
   {
-    name: 'audit/generator-restrictions',
-    file: 'routes/audit/generator-restrictions/+page.svelte',
+    name: 'restrictions queue',
+    file: 'lib/components/restrictions/RestrictionQueue.svelte',
   },
 ] as const;
 

@@ -1,9 +1,10 @@
 import { Badge, Stack, Text, ThemeIcon, Box, Group } from '@mantine/core';
 import { IconCrown, IconTrendingUp } from '@tabler/icons-react';
+import clsx from 'clsx';
 import { getBackground, getBorder } from '~/components/Challenge/DynamicPrizeCard/constants';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
-import { SpotlightCard } from '~/components/SpotlightCard/SpotlightCard';
+import { SpotlightGlow, SpotlightSurface } from '~/components/SpotlightCard/SpotlightBorderCard';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { Currency } from '~/shared/utils/prisma/enums';
 import type { PrizePosition } from '~/utils/crucible-helpers';
@@ -30,13 +31,8 @@ export function CruciblePrizeBreakdown({
   const sortedPositions = [...prizePositions].sort((a, b) => a.position - b.position);
 
   return (
-    <SpotlightCard
-      borderColor="transparent"
-      bg="transparent"
-      p={0}
-      className={className}
-      style={{ overflow: 'hidden' }}
-    >
+    <SpotlightSurface className={clsx('overflow-hidden rounded-md', className)}>
+      <SpotlightGlow color="rgba(255,255,255,0.04)" />
       <Stack
         gap="sm"
         align="center"
@@ -86,7 +82,7 @@ export function CruciblePrizeBreakdown({
           ))}
         </Stack>
       )}
-    </SpotlightCard>
+    </SpotlightSurface>
   );
 }
 

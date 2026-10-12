@@ -20,6 +20,8 @@ import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { HelpButton } from '~/components/HelpButton/HelpButton';
 import { PostingToModel3DCard } from '~/components/Model3D/Posting/PostingToModel3DCard';
+import { PostEditEventCard } from '~/components/Post/EditV2/PostEditEventCard';
+import { postEditEventCard } from '~/components/Post/EditV2/post-edit-event-card.utils';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { DeletePostButton } from '~/components/Post/DeletePostButton';
 import { usePostEditParams, usePostEditStore } from '~/components/Post/EditV2/PostEditProvider';
@@ -127,6 +129,15 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
   // directly would just restore the stashed date (via the CASE in
   // updatePost) without making the post visible, which is confusing.
   const isUnpublishedByParent = post.wasPublished && !post.publishedAt;
+  const eventCard = postEditEventCard({
+    ownerId: post.user.id,
+    viewerId: currentUser?.id,
+    collectionId,
+    publishedAt: post.publishedAt,
+    unpublishedByParent: !!isUnpublishedByParent,
+    addedImages,
+    ownModelId: post.ownModelId,
+  });
   // Build a link to the parent model edit page so the user can see why the
   // parent was taken down (the unpublish reason lives on the model/version,
   // not on the post). Use `post.parentModelId` from the unpublish-context
@@ -463,6 +474,8 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
           )}
         </Button.Group>
       )}
+
+      {eventCard && <PostEditEventCard {...eventCard} />}
 
       {!post.publishedAt && !isUnpublishedByParent && !deleted && (
         <Button

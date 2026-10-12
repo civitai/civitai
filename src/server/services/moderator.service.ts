@@ -13,6 +13,7 @@ type ModelModActivity = {
     | 'setSfwOnly'
     | 'unsetSfwOnly'
     | 'setMinorAutoHash'
+    | 'setMinorTextScan'
     | 'rollbackMinorAutoHash'
     | 'dismissMinorHashMatch';
 };
@@ -53,8 +54,13 @@ type UserModActivity = {
     | 'setRewardsEligibility'
     | 'removeContent'
     | 'autoMuteScam'
+    // The account was already muted by a moderator, so a scam verdict hid its content and opened no case.
+    | 'scamCleanup'
     | 'mutePendingReview'
     | 'overturnPendingReviewMute'
+    | 'mute'
+    | 'unmute'
+    | 'revokeTimedMute'
     // Written from /api/admin/reaction-abuse so the moderator app can show that an account was
     // dropped from reaction metrics/ranking, and by whom. Named for WHAT happened, not who did it —
     // `userId` carries the actor (the -1 sentinel for the scheduled poller, a real moderator id when
@@ -84,6 +90,12 @@ type PlacementModActivity = {
   activity: 'removePlacement';
 };
 
+/** A moderator hid an `app-block` report from the app's developer, or unhid it. */
+type FeedbackModActivity = {
+  entityType: 'feedback';
+  activity: 'hideFromOwner' | 'unhideFromOwner';
+};
+
 type ModActivity = {
   entityId?: number | number[];
 } & (
@@ -97,6 +109,7 @@ type ModActivity = {
   | UserModActivity
   | ComicProjectModActivity
   | PlacementModActivity
+  | FeedbackModActivity
 );
 
 // `ON CONFLICT DO NOTHING` carries NO conflict target on purpose: a targetless clause is valid whether or
@@ -113,9 +126,13 @@ type ModActivity = {
 // `MODERATOR_TAKEDOWN_ACTIVITIES` in `src/server/jobs/image-ingestion.ts`, where a suppressed row means a
 // takedown demoted to a delete-without-blob-retraction. That demotion is reproducible locally and cannot
 // happen in production — do not diagnose one from the other.
-export async function trackModActivity(userId: number, input: ModActivity) {
+export async function trackModActivity(
+  userId: number,
+  input: ModActivity,
+  client: Pick<typeof dbWrite, '$executeRaw'> = dbWrite
+) {
   if (!input.entityId) {
-    await dbWrite.$executeRaw`
+    await client.$executeRaw`
       INSERT INTO "ModActivity" ("userId", "entityType", activity)
       VALUES (${userId}, ${input.entityType}, ${input.activity})
       ON CONFLICT DO NOTHING
@@ -124,7 +141,7 @@ export async function trackModActivity(userId: number, input: ModActivity) {
   }
 
   if (input.entityId && !Array.isArray(input.entityId)) input.entityId = [input.entityId];
-  await dbWrite.$executeRaw`
+  await client.$executeRaw`
     INSERT INTO "ModActivity" ("userId", "entityType", activity, "entityId")
     SELECT ${userId}, ${input.entityType}, ${input.activity}, UNNEST(${input.entityId})
     ON CONFLICT DO NOTHING

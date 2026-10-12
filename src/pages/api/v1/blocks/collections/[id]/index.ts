@@ -15,6 +15,7 @@ import {
 import {
   getFollowedCollectionIds,
   hydrateBlockSubject,
+  isPublicCollectionImage,
   mapImageItemToMedia,
 } from '~/server/services/blocks/block-collections.service';
 import { resolveCatalogBrowsingLevel } from '~/server/utils/block-catalog-maturity';
@@ -152,12 +153,19 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
         statuses: [CollectionItemStatus.ACCEPTED],
       },
       user: subjectUser,
+      // The same image population /api/v1/blocks/images serves.
+      imagesAsPublicCatalog: true,
     });
 
-    // Only playable media (image/video). Model/post/article items are dropped.
+    // Only playable media (image/video) that passes the shared block image gate.
+    // Model/post/article items are dropped.
+    type ImageItem = Parameters<typeof mapImageItemToMedia>[0] &
+      Parameters<typeof isPublicCollectionImage>[0];
     const items = expanded
       .filter((it) => it.type === 'image')
-      .map((it) => mapImageItemToMedia(it.data as Parameters<typeof mapImageItemToMedia>[0]));
+      .map((it) => it.data as ImageItem)
+      .filter((image) => isPublicCollectionImage(image, browsingLevel))
+      .map((image) => mapImageItemToMedia(image));
 
     const followed = await getFollowedCollectionIds(subjectUserId, [collectionId]);
 

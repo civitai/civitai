@@ -1,4 +1,6 @@
 import type { Context } from '~/server/createContext';
+import { parseVerifiedBotHeader, VERIFIED_BOT_HEADER } from '~/server/utils/bot-detection/header';
+import { resolveBrowsingSettingsAddons } from '~/shared/constants/browsing-settings-addons';
 import {
   allBrowsingLevelsFlag,
   publicBrowsingLevelsFlag,
@@ -40,6 +42,27 @@ export function getServerBrowsingLevel({
   if (!canViewNsfw) return user ? sfwBrowsingLevelsFlag : publicBrowsingLevelsFlag;
   // Blue/red: honor the user's saved preference; fall back to public when nsfw is off.
   return user?.showNsfw && user.browsingLevel ? user.browsingLevel : publicBrowsingLevelsFlag;
+}
+
+/**
+ * The level plus the addon-derived fields `useQueryImages` adds to every `image.getInfinite`
+ * key. An SSR prefetch that omits any of them is keyed differently from the client query, so
+ * the page renders its loading state and refetches after hydration (a layout shift). Null
+ * when the addons can't be read; the caller should skip the prefetch.
+ */
+export async function getServerImageQueryFilters(
+  browsingLevel: number,
+  opts?: { isModerator?: boolean }
+) {
+  const { getBrowsingSettingAddons } = await import('~/server/services/system-cache');
+  const addons = await getBrowsingSettingAddons().catch(() => null);
+  if (!addons) return null;
+  const { excludedTagIds, disablePoi, disableMinor } = resolveBrowsingSettingsAddons(
+    addons,
+    browsingLevel,
+    opts
+  );
+  return { browsingLevel, excludedTagIds, disablePoi, disableMinor };
 }
 
 /** `getServerBrowsingLevel` for a request whose feature flags are already resolved. */
@@ -85,6 +108,17 @@ export const domainBrowsingLevelCap = ({
   isAuthorized: boolean;
   canViewNsfw: boolean;
 }) => (!isAuthorized ? publicBrowsingLevelsFlag : !canViewNsfw ? sfwBrowsingLevelsFlag : undefined);
+
+/**
+ * `domainBrowsingLevelCap` for a request. A verified search crawler counts as signed in
+ * where mature content is allowed (the `Gated` paywall bypass) and as signed out elsewhere.
+ */
+export function requestDomainBrowsingLevelCap(ctx: Pick<Context, 'user' | 'features' | 'req'>) {
+  const canViewNsfw = !!ctx.features.canViewNsfw;
+  const verifiedBot = parseVerifiedBotHeader(ctx.req?.headers[VERIFIED_BOT_HEADER]);
+  const isAuthorized = !!ctx.user || (verifiedBot !== null && canViewNsfw);
+  return domainBrowsingLevelCap({ isAuthorized, canViewNsfw });
+}
 
 /** A requested level held to a cap. Unset, or with nothing in common with it, becomes the cap. */
 export const clampToDomainCap = (requested: number | undefined, cap: number) =>

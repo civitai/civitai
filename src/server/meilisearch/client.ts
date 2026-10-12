@@ -613,12 +613,50 @@ type LimiterKey = MeiliBackend | 'healthProbe' | 'resourceSelect';
 
 const HEALTH_PROBE_CONCURRENCY = 2;
 
-const limiters: Record<LimiterKey, ReturnType<typeof pLimit>> = {
-  search: pLimit(env.MEILI_CALL_CONCURRENCY),
-  metricsSearch: pLimit(env.MEILI_CALL_CONCURRENCY),
-  healthProbe: pLimit(HEALTH_PROBE_CONCURRENCY),
-  resourceSelect: pLimit(env.MEILI_RESOURCE_SELECT_CONCURRENCY),
-};
+// 🔴 SHARED_STATE: the limiters and circuits live on globalThis, not in module scope.
+//
+// The production server build emits this module TWICE, once per Turbopack runtime
+// (`chunks/` serves API routes and instrumentation, `chunks/ssr/` serves page SSR). Each
+// runtime has its own module cache, so a module-scope `const` here would be two independent
+// sets of limiters and circuits in one process. prom-client is externalized, so both copies
+// register into ONE default registry. The second copy to evaluate gets the first copy's gauge
+// back from `registerGaugeWithLabels` and reassigns its `collect` below. With private state,
+// the scraped gauges then read whichever copy evaluated last. That was the SSR copy, warmed
+// last via `/`, and it is idle on the API pods that carry the Meili traffic. So
+// meili_call_active, meili_call_queue_depth and meili_circuit_state read 0 on every pod through
+// a six-day brownout that tripped the circuit ~108k times. The counters were unaffected
+// because both copies increment the one shared counter object.
+//
+// One shared object means every copy's withMeili() admits against the same circuit and the same
+// per-backend concurrency cap, and every copy's collect() reads that state, whichever one won.
+// `??=`, not `=`: with `=`, a later copy would REPLACE the state, orphan the first copy's
+// in-flight slots and reopen the bug. Enrolled in scripts/server-graph-watchlist.mjs so the
+// build fails if an emitted copy loses this pin. Vitest loads each module once and cannot see
+// any of this unless it is made to (src/server/meilisearch/__tests__/client-gauges.dual-graph.test.ts).
+declare global {
+  // eslint-disable-next-line no-var
+  var __civitaiMeiliWrapperState:
+    | {
+        limiters: Record<LimiterKey, ReturnType<typeof pLimit>>;
+        circuits: Record<MeiliBackend, Circuit>;
+      }
+    | undefined;
+}
+
+const meiliWrapperState = (globalThis.__civitaiMeiliWrapperState ??= {
+  limiters: {
+    search: pLimit(env.MEILI_CALL_CONCURRENCY),
+    metricsSearch: pLimit(env.MEILI_CALL_CONCURRENCY),
+    healthProbe: pLimit(HEALTH_PROBE_CONCURRENCY),
+    resourceSelect: pLimit(env.MEILI_RESOURCE_SELECT_CONCURRENCY),
+  },
+  circuits: {
+    search: { state: 'CLOSED', failures: [], cooldownUntil: 0, trialInFlight: false },
+    metricsSearch: { state: 'CLOSED', failures: [], cooldownUntil: 0, trialInFlight: false },
+  },
+});
+
+const limiters = meiliWrapperState.limiters;
 
 // Observability counters & gauge — see N1 in PR description. The active gauge
 // is sampled lazily on Prometheus scrape via a `collect` hook so we don't
@@ -702,10 +740,8 @@ type Circuit = {
   trialInFlight: boolean;
 };
 
-const circuits: Record<MeiliBackend, Circuit> = {
-  search: { state: 'CLOSED', failures: [], cooldownUntil: 0, trialInFlight: false },
-  metricsSearch: { state: 'CLOSED', failures: [], cooldownUntil: 0, trialInFlight: false },
-};
+// Process-wide, shared by every emitted copy of this module (see the SHARED_STATE note above).
+const circuits = meiliWrapperState.circuits;
 
 const meiliCircuitStateGauge = registerGaugeWithLabels({
   name: 'meili_circuit_state',

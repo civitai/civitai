@@ -4,11 +4,9 @@ import { SEED, aspectRatioDef } from '../defs';
 import { familyScope, textBlock, type FamilyExt } from '../shared';
 
 /**
- * Imagen 4 (Google), ported from `imagen4-graph.ts`. Locked single version; no
+ * Imagen 4 (Google). Locked single version; no
  * LoRAs, sampler, cfg, steps, or CLIP skip. Negative prompt supported.
  */
-
-// ---- copied from imagen4-graph.ts, which dies with the data-graph engine ----
 
 const imagen4VersionId = 1889632;
 
@@ -19,8 +17,6 @@ const imagen4AspectRatios = [
   { label: '3:4', value: '3:4', width: 1080, height: 1440 },
   { label: '9:16', value: '9:16', width: 1080, height: 1920 },
 ];
-
-// ---- end of imagen4-graph.ts copies -----------------------------------------
 
 export const imagen4 = defineGraph<FamilyExt>({ scope: familyScope })
   .field('model', ({ _ext }) =>

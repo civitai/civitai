@@ -26,6 +26,9 @@ vi.mock('~/server/search-index', () => ({
   imagesSearchIndex: { queueUpdate: vi.fn() },
   modelsSearchIndex: { queueUpdate: vi.fn() },
 }));
+vi.mock('~/server/search-index/collections.search-index', () => ({
+  collectionsSearchIndex: { queueUpdate: mockCollectionsQueueUpdate },
+}));
 
 import {
   COVER_INDEX_NAME,

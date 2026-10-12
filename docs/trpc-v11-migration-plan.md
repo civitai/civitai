@@ -243,7 +243,7 @@ The other 9 (medium/low: `stripe↔buzz↔user`, `research.router↔research.web
 `image.service↔{post,report,collection,cosmetic,new-order,tagsOnImageNew}.service`) are all
 function-body-only cycles — harmless now, but **latent hazards**: if any of those modules later
 adds module-scope code that reads a cross-import, it will throw under lazy eval. The fix pattern is
-the established one ([version-ids.ts](../src/shared/data-graph/generation/version-ids.ts)): extract
+the established one ([version-ids.ts](../src/shared/generation/version-ids.ts)): extract
 the shared value into a zero-import leaf module. **Not applied** — out of scope for the lazy
 conversion and unnecessary for correctness.
 

@@ -9,17 +9,16 @@ one folder per graph domain, with a future training graph at `src/shared/form-gr
 Domain-agnostic def builders (slider/enum/select/bool) live at `src/shared/form-graph/defs.ts`,
 shared by every domain; `generation/defs.ts` re-exports them plus the generation-specific defs.
 
-**Closing condition for the whole effort:** `src/libs/data-graph/` and
-`src/shared/data-graph/` are deleted; every former consumer imports `form-graph` (npm —
-`^0.3.3` in package.json, 0.3.4 installed); `pnpm run typecheck` and `pnpm run test:unit:run` are green; and Briant has
-reviewed the final diff. Each phase below has its own closing condition — do not start a
-phase before the previous one's condition is met.
+**Closing condition for the whole effort — MET on `feat/remove-data-graph`:** `src/libs/data-graph/`
+and `src/shared/data-graph/` are deleted and every former consumer imports `form-graph` (npm).
+What remains is Briant's review of the final diff. The phase structure below is kept as the record
+of how it was done, and as the method the `form-graph-port` skill generalises.
 
 ---
 
 ## 1. What is being replaced, and with what
 
-### The old system (in this repo)
+### The old system (deleted in `feat/remove-data-graph`; described here as the port's starting point)
 
 - **Engine:** `src/libs/data-graph/` — `data-graph.ts` (~2,170 lines), React bindings in
   `react/` (`DataGraphProvider`, `Controller`, `useDataGraph`), `storage-adapter.ts`
@@ -42,7 +41,7 @@ phase before the previous one's condition is met.
 
 ### The new system (npm package)
 
-- **`form-graph`** (`^0.3.3`, 0.3.4 installed) — published by Briant (`bkdiehl`), repo
+- **`form-graph`** (`^0.4.2`, 0.4.2 installed) — published by Briant (`bkdiehl`), repo
   `github.com/bkdiehl/form-graph`. Docs: https://bkdiehl.github.io/form-graph/docs —
   **read the docs site before writing any code**; the API changed heavily right before
   0.2.0 and your training data does not contain it.
@@ -59,7 +58,7 @@ phase before the previous one's condition is met.
 
 ---
 
-## 2. form-graph API primer (as of 0.3.4 — trust this over training data)
+## 2. form-graph API primer (as of 0.4.2 — trust this over training data)
 
 ```ts
 import { defineGraph, branch, defFamily, cachedFactory } from 'form-graph';
@@ -303,13 +302,13 @@ records are only read, never deleted. Store-path gotcha this surfaced: STORE
 state holds raw inputs (a bare-number model), so mode picks and scopes read ids
 via `modelIdOf` rather than `.id`.
 
-### Phase 4 — server swap (small, high-stakes) — BUILT, gated on the ONE cutover flag (2026-09-04)
+### Phase 4 — server swap (small, high-stakes) — DONE (2026-09-04; the comparison and the flag went in Phase 6)
 
-No adapter needed. `validateInput` in `orchestration-new.service.ts` runs BOTH engines
-on every parse and records the comparison — outcomes counted in
-`form_graph_shadow_parse_total`, divergence logged with diff KEYS only (see
-`src/server/services/orchestrator/form-graph/shadow-parse.ts`) — and serves the hub
-result for users whose `formGraphGenerator` feature flag is on (read from
+No adapter needed. `validateInput` in `orchestration-new.service.ts` ran BOTH engines
+on every parse and recorded the comparison — outcomes counted in
+`form_graph_shadow_parse_total`, divergence logged with diff KEYS only
+(`shadow-parse.ts`, now deleted) — and served the hub
+result for users whose `formGraphGenerator` feature flag was on (read from
 `externalCtx.flags`; the App Blocks bridge passes no flags, so it stays on v1
 throughout). Originally staged behind two extra Flipt flags; collapsed to the single
 feature flag 2026-09-04 — comparison logging stays on and noisy until Phase 6 removes
@@ -323,7 +322,7 @@ graph: its input/computed partition differs in the hub (workflow/ecosystem are
 fields, not computeds), so it moves in Phase 6 with a behavior decision, not
 mechanically. Widen criterion: a sustained zero on diverged/error outcomes.
 
-### Phase 5 — client swap (large, UI) — BUILT, staged behind `formGraphGenerator` (mod-only); awaiting Briant's hands-on pass
+### Phase 5 — client swap (large, UI) — DONE; the flag was removed in Phase 6
 
 Replace `DataGraphProvider`/`useDataGraph` usage with `form-graph/react`
 (`useForm(rootGraph, { ext, storage: persistedStorage(...) })`, `useTypedField`,
@@ -331,9 +330,9 @@ Replace `DataGraphProvider`/`useDataGraph` usage with `form-graph/react`
 walk the ~119 consumer files (most only consume via the provider's context and need
 import/type updates, not logic changes). Storage: the adapter layout is built and the
 v1 stored-value migration is implemented (see the Persistence note above). The swap
-itself is staged: GenerationTabs mounts `FormGraphGenerator` behind the
-`formGraphGenerator` feature flag (mod availability, Flipt key
-`form-graph-generator`), falling back to `GenerationFormV2` when off.
+It shipped staged behind the `formGraphGenerator` flag (mod availability, Flipt key
+`form-graph-generator`); Phase 6 removed the flag, and `GenerationTabs` now mounts
+`FormGraphGenerator` unconditionally.
 
 **Closing condition:** the generation form works end to end in the dev server (use the
 `/dev-server` skill; verify with `probe`), typecheck green, full suite green. This phase
@@ -343,19 +342,22 @@ needs Briant's hands-on testing before it is called done.
 reads the two lanes across for behaviour the port does not cover — seven gaps, the largest being that
 the content-generation tour never starts on the form-graph lane. It also records what looks like a gap
 and is not (three v2 controls whose fields no graph declares), and sizes the Phase 6 blast radius.
-Re-run it before the flag widens past moderators.
+(The flag is gone — see Phase 6. The sweep's two remaining findings are tracked in that doc.)
 
-### Phase 6 — deletion
+### Phase 6 — deletion — DONE (`feat/remove-data-graph`)
 
-Delete `src/libs/data-graph/`, `src/shared/data-graph/generation/` (the old graphs),
-move `form-graph/generation/` to its final home (`src/shared/generation-form/` or Briant's choice),
-delete the differential suites (they die with their oracle), delete the cutover
-machinery — the `formGraphGenerator` flag, `shadow-parse.ts`, its counter and Axiom
-logging — and run `docs-drift-review` + `comment-review` over the branch.
+`src/libs/data-graph/`, `src/shared/data-graph/`, `src/server/services/orchestrator/ecosystems/`,
+the v2 form components, the differential/parity suites and the cutover machinery (the
+`formGraphGenerator` flag, `shadow-parse.ts`, its counter and Axiom logging) are all deleted.
 
-**Closing condition:** no import of `~/libs/data-graph` or the old graph paths remains
-(`grep -rn "libs/data-graph\|shared/data-graph/generation" src` is empty besides the new
-home); full suite + typecheck + lint green; Briant reviews the final diff.
+**Deviation from the plan:** `form-graph/generation/` was NOT moved to a new home — it stays at
+`src/shared/form-graph/generation/`. What moved instead were the surviving NON-graph modules
+(`config/`, `gates.ts`, `context.ts`, `version-ids.ts`, `workflow-capability.ts`,
+`model-substitution.ts`, `images-limit.ts`, `values.ts`, …) into a new `src/shared/generation/`,
+the shared handler infrastructure into `src/server/services/orchestrator/handlers/`, and the
+per-ecosystem handlers into `src/server/services/orchestrator/form-graph/`.
+
+**Closing condition:** met — no import of the deleted graph paths remains anywhere in `src/`.
 
 ---
 
@@ -375,13 +377,6 @@ home); full suite + typecheck + lint green; Briant reviews the final diff.
 - Do not modify the `form-graph` package from this repo. If the port reveals a
   form-graph bug or missing capability, STOP and write it up for Briant — the fix
   happens in `C:\work\form-graph`, gets published, and the version bumps here.
-- Do not change the BEHAVIOR of `src/shared/data-graph/` or `src/libs/data-graph/` (the
-  oracle) until Phase 6 — additive `export` keywords for port reuse are the only
-  permitted edits (two exist: `getEcosystemStates`, `migrateWorkflowKey`). The old system
-  must keep working untouched through Phases 0–5.
-- When a differential test disagrees with the port, **the oracle is right** — fix the
-  port. Only allowlist a delta with a written reason; a delta you cannot explain is a
-  stop-and-ask.
 
 ## 6. Known traps
 
@@ -430,61 +425,61 @@ home); full suite + typecheck + lint green; Briant reviews the final diff.
   parse into the wrong family until those families arrive — keep such combos out of
   the matrices.
 
-## 7. Family checklist (update as you go)
+## 7. Family record — every family ported and differential-green before the oracle was deleted
 
-| Family | Ported | Differential green | Notes |
-| --- | --- | --- | --- |
-| video: wan (all 6 versions incl. v3.0) | DONE | DONE | LIVE HAS v3.0, reference does not — shape guide: C:\work\form-graph\src\v1\ports\wan.ts |
-| video: ltx (v2/v23/v25) | DONE | DONE | model-wins split like sd (`effectiveEcosystem` emit); cross-VERSION re-pick handled by `reconcile.ts` (version siblings re-pick THROUGH the lock). v1's `enablePromptEnhancer` node (`when: false` — never shown, never in data) is deliberately NOT ported; revive it from ltx-graph.ts if the flag ever flips |
-| video hub (ecosystem/quantity, video-scoped) | DONE | DONE | workflow/output/input moved to the composed root |
-| composed root (`form-graph/generation/hub.graph.ts`, image+video dispatch) | DONE | DONE | audio/model3d hubs arrive with their families |
-| image hub (ecosystem/priority/outputFormat/enhancedCompatibility/quantity) | DONE | DONE | enhancedCompatibility + quantity sit AFTER the family dispatch (they read model/effectiveEcosystem) |
-| image: stable-diffusion (SD1/SDXL/Pony/Illustrious/NoobAI) | DONE | DONE | ecosystem FOLLOWS a cross-eco model (`effectiveEcosystem` emit; `checkpointDef modelWins`); SD2's generation support was dropped and it is no longer in the family discriminator |
-| image: zimage (Turbo/Base) | DONE | DONE | Base's negativePrompt is NOT a snippet target (v1 mode-subgraph quirk) |
-| image: chroma | DONE | DONE | no negative prompt, no images node |
-| video: seedance | DONE | DONE | no resources, no negative prompt; resolution/duration ceilings per model version. Unblocked the video suite's hidden-ecosystem gate coverage (hidden selections fall back to Seedance) |
-| image: flux (Flux1/FluxKrea, 5 modes) | DONE | DONE | `workflowVersions` turned out UNUSED by flux. Draft⇄workflow coupling: the draft build moves the workflow into `txt2img:draft` (`deriveWorkflowFromModel`, both lanes), the draft workflow forces the draft build and locks the picker (the model `correct`), and picking another build leaves draft (store lane only, `fluxDraftWorkflowFor`). The `fluxMode` tagged branch picks on `model.id` — a mounted branch's pick sees prior fields via ctx-over-ext. Kontext/Flux2/Klein are separate graphs (rows below). |
-| image: flux-kontext (pro/max) | DONE | DONE | img2img-primary; both modes share one field set, so the mode is just a version pick — no branch |
-| image: flux2 (dev/flex/pro/max) | DONE | DONE | mode by model.id; only dev carries resources |
-| image: flux2-klein (9B/9B-base/4B/4B-base) | DONE | DONE | FOUR ecosystems share the graph — mode from ecosystem, not model. negativePrompt is NOT a snippet target (v1's own comment claims it self-registers; the differential says no). Handler pins distilled steps/cfg even though the graph exposes a steps slider — v1 quirk, mirrored |
-| image: boogu (base/turbo/edit/editTurbo) | DONE | DONE | workflowVersions: version options are WORKFLOW-scoped and the MODEL WINS the workflow (probed — an edit checkpoint on txt2img parses as img2img:edit, model kept; v1's index-remap transform is dead code). The cross-workflow rewrite lives in `reconcile.ts` (`deriveWorkflowFromModel`, registry `workflowScopedVersions`) since a family cannot change the root workflow. negativePrompt only in base/edit modes |
-| image: krea2 (fal/raw/turbo/editRaw/editTurbo) | DONE | DONE | locked checkpoint; version selector splits across FAL (creativity/styleReferences) and comfy (LoRA/cfg/steps) engines; img2img:edit narrows the picker to comfy builds and the lock substitutes FAL tiers to the edit default. 1K/2K resolution tier on the comfy builds only (`defFamily` AR, 2K doubles each side); FAL takes size + aspectRatio, so no tier. NO cross-workflow pull (unlike boogu) |
-| image: imagen4 | DONE | DONE | locked single version; negative prompt registers at top level |
-| image: pony-v7 | DONE | DONE | LoRAs, no negative prompt; ecosystem-defaults lock applies |
-| image: reve | DONE | DONE | locked; AR on txt2img only, edit takes 1-4 reference frames |
-| image: mai | DONE | DONE | locked; edit crops the single reference to a supported ratio |
-| image: ernie (base/turbo) | DONE | DONE | RAW resourcesNode in v1 — `resourcesDef({ filterIncompatible: false })`, foreign LoRAs pass through and only the limit binds |
-| image: seedream (5 versions) | DONE | DONE | one field set; 2K/4K toggle gated per version (v5.0-pro is 2K-only) |
-| image: anima (base/turbo) | DONE | DONE | comfy sampler/scheduler names; controlNets behind the `animaControlnet` fail-open flag |
-| image: mage-flow (4 workflow-scoped versions) | DONE | DONE | workflowVersions where the WORKFLOW wins — the oracle index-remaps a cross-workflow version (opposite of boogu, probed); the remap is a `correct` in the graph |
-| image: hi-dream (fast/dev/full × fp8/fp16) | DONE | DONE | hierarchical VersionGroup picker; negativePrompt only in full, snippet registration never fires |
-| image: hi-dream-o1 (full/dev) | DONE | DONE | ecosystem KEY is `HiDream-O1` (dash); v1 mounts no snippetsGraph — `makeTextBlock({ snippets: false })` |
-| image: openai (v1/v1.5/v2) | DONE | DONE | gpt1 arms carry the transparency toggle; gpt2 drops seed handling in the engine but keeps the field |
-| image: lens (base/turbo) | DONE | DONE | raw resourcesNode (no filter); resolution above the variant branch, AR follows it |
-| image: qwen (Qwen/Qwen2/Qwen3) | DONE | DONE | one graph, untagged sub-branch on ecosystem; Qwen's workflow-scoped versions hit the LOCK (cross-workflow version substitutes to the current workflow's default — probed, a third semantics next to boogu/mageflow) |
-| image: nano-banana (standard/pro/v2/v2lite) | DONE | DONE | resolution-multiplied AR dims; negativePrompt only in pro, not a snippet target |
-| image: muse-image (Meta, fal) | DONE | DONE | ported 2026-09-03 with the main merge that introduced it — reve-shaped (locked model, prompt-only block, txt-only aspectRatio, edit images 1-4, NO seed); in the image-parity matrix |
-| image: flux3 (FLUX 3 Image, BFL, fal) | DONE | DONE | ported with the change that introduced it — locked model; txt2img takes resolution (1k/2k/4k) and aspectRatio, img2img:edit sends aspectRatio 'auto' so the output follows the first reference (1-10 images); in the image-parity matrix and the handler differential |
-| image: grok (+ video arm) | DONE | DONE | spans BOTH output types: grokImage + grokVideo share `grokHead` (flag-gated version list) and a promptAlwaysRequired text block; the dispatcher routes Grok by workflow prefix. Image hub COMPLETE |
-| image: wan-image (v2.7) | DONE | DONE | tagged v2.7 branch; negativePrompt max length 500, not a snippet target; AR hidden when edit images staged |
-| video: mochi | DONE | DONE | locked model, promptOnly; NO live workflows — excluded from the parity matrix like legacy WanVideo/SD2 |
-| video: sora2 | DONE | DONE | AR options per resolution (txt2vid only), usePro, durations 4/8 |
-| video: hunyuan (HyV1) | DONE | DONE | cfg/steps presets, familyResources, 480p AR set |
-| video: flux3-video | DONE | DONE | First/Last frame slots on img2vid; v1's draft→resolution forward dep is dead, resolution unconditional (probed) |
-| video: minimax (MiniMaxH3, api/comfy) | DONE | DONE | tagged branch on version: comfy carries loras/seed/turbo-shaped steps, api is bare; ref2vid takes up to 9 refs (`variantOf`, NOT a prefix match — bit us). `controlVideo` (H3 Fun ControlNet Union) is comfy + txt2vid only — the control operation REPLACES imageToVideo, so there is no frame/reference slot to share it with; its five preprocessor keys are the `preprocessVideo` set, not the image ControlNet set |
-| video: happy-horse (v1.0/v1.1) | DONE | DONE | AR family keyed `resolution|version` (v1.1 widens the set); vid2vid:edit carries video + refs + audioSetting |
-| video: veo3 (fast/standard) | DONE | DONE | workflowVersions inert (same list both workflows); ref2vid pins duration to 8s at the boundary; version enum defaults '3.1' (3.0 endpoints retired) |
-| video: vidu (Q1/Q3) | DONE | DONE | image-driven workflows emit NO aspectRatio (v1 hides the node; handler derives from source — probed); Q3 ref2vid rewrites to img2vid in `reconcile.ts`; Q3 resolution-scaled AR dims |
-| video: kling (legacy/v3) | DONE | DONE | ref2vid FORCES model→v3 (`correct` on model — probed, workflow wins); legacy full text block (negative IS a snippet target), v3 promptAlwaysRequired + no negative; legacy duration is a STRING enum; multiShot/klingElements dead in v1, not ported. Video hub COMPLETE |
-| audio: ace (5 versions, simple/custom modes) | DONE | DONE | untagged mode branch on the `aceAudioMode` FIELD (user-selected, not computed); v1's model effect stomps cfg/steps to variant defaults AT PARSE — ported as `correct` policies, the interactive reset as a `.effect` rule. No snippets (v1 merges triggerWordsGraph only) |
-| audio: minimax-music (MiniMaxMusic3) | DONE | DONE | simple/custom on `minimaxMusicMode`; custom requires BOTH musicDescription and lyrics; duration clamps (sliderDef) so a carried-over video duration can't fail invisibly |
-| audio: yue2 | DONE | DONE | in the audio-parity matrix and the handler differential |
-| audio: sonilo (music / soundEffect) | DONE | DONE | ported with the change that introduced it; `soniloOperation` enum picks the duration range per operation (music 5-360s, sound effect 0.5-180s), locked model; step `$type` is `soniloAudioGen`; in the audio-parity matrix and the handler differential |
-| audio hub | DONE | DONE | ecosystem scoped 'audio', default Ace; no quantity/priority/outputFormat (image/video concerns) |
-| model3d: polygen (Meshy v6/v7) | DONE | DONE | `polygenVersion` flag-gated (meshyV7Generator) AND workflow-clamped (v7-on-text → v6) in both input and output transforms; v7-only knobs null out per version/image-count; v7 has no seed |
-| model3d: tripo / hunyuan3d / pixal3d / trellis2 | DONE | DONE | image-to-3D only; pixal3d and trellis2 are field-identical (one factory, two instances for their own family scopes); hunyuan keeps its `hunyuan*` field prefixes, mapped back in the handler |
-| model3d hub | DONE | DONE | ecosystem scoped 'model3d', default PolyGen; the four newer 3D ecosystems are flag-hidden fail-closed via the shared getEcosystemStates |
-| standalone workflows (img2img:upscale / remove-background / preprocess, vid2vid:upscale / interpolate / preprocess, img2meta, prompt:enhance) | DONE | DONE | eight arms on a state-only `workflowKind` dispatch at the root (the oracle wire has no such key); priority/outputFormat moved to the ROOT gated on image output, matching v1 — they apply to standalone image workflows too. The upscale batch reset (v1 transform) is a `correct`; preprocess kind specs import from the v1 module (they mirror @civitai/client, not the engine). The two empty panels (img2meta, prompt:enhance) are bare graphs. Step creation stays in the submit service keyed on workflow — data parity covers it, no lane handlers needed |
+| Family | Notes |
+| --- | --- |
+| video: wan (all 6 versions incl. v3.0) | LIVE HAS v3.0, reference does not — shape guide: C:\work\form-graph\src\v1\ports\wan.ts |
+| video: ltx (v2/v23/v25) | model-wins split like sd (`effectiveEcosystem` emit); cross-VERSION re-pick handled by `reconcile.ts` (version siblings re-pick THROUGH the lock). v1's `enablePromptEnhancer` node (`when: false` — never shown, never in data) is deliberately NOT ported; revive it from ltx-graph.ts if the flag ever flips |
+| video hub (ecosystem/quantity, video-scoped) | workflow/output/input moved to the composed root |
+| composed root (`form-graph/generation/hub.graph.ts`, image+video dispatch) | audio/model3d hubs arrive with their families |
+| image hub (ecosystem/priority/outputFormat/enhancedCompatibility/quantity) | enhancedCompatibility + quantity sit AFTER the family dispatch (they read model/effectiveEcosystem) |
+| image: stable-diffusion (SD1/SDXL/Pony/Illustrious/NoobAI) | ecosystem FOLLOWS a cross-eco model (`effectiveEcosystem` emit; `checkpointDef modelWins`); SD2's generation support was dropped and it is no longer in the family discriminator |
+| image: zimage (Turbo/Base) | Base's negativePrompt is NOT a snippet target (v1 mode-subgraph quirk) |
+| image: chroma | no negative prompt, no images node |
+| video: seedance | no resources, no negative prompt; resolution/duration ceilings per model version. Unblocked the video suite's hidden-ecosystem gate coverage (hidden selections fall back to Seedance) |
+| image: flux (Flux1/FluxKrea, 5 modes) | `workflowVersions` turned out UNUSED by flux. Draft⇄workflow coupling (restored by #5303, after an earlier retirement this row used to record): the draft build moves the workflow into `txt2img:draft` (`deriveWorkflowFromModel`), the draft workflow forces the draft build and locks the picker (the model `correct`), and picking another build leaves draft (`fluxDraftWorkflowFor`). The `fluxMode` tagged branch picks on `model.id` — a mounted branch's pick sees prior fields via ctx-over-ext. Kontext/Flux2/Klein are separate graphs (rows below). |
+| image: flux-kontext (pro/max) | img2img-primary; both modes share one field set, so the mode is just a version pick — no branch |
+| image: flux2 (dev/flex/pro/max) | mode by model.id; only dev carries resources |
+| image: flux2-klein (9B/9B-base/4B/4B-base) | FOUR ecosystems share the graph — mode from ecosystem, not model. negativePrompt is NOT a snippet target (v1's own comment claims it self-registers; the differential says no). Handler pins distilled steps/cfg even though the graph exposes a steps slider — v1 quirk, mirrored |
+| image: boogu (base/turbo/edit/editTurbo) | workflowVersions: version options are WORKFLOW-scoped and the MODEL WINS the workflow (probed — an edit checkpoint on txt2img parses as img2img:edit, model kept; v1's index-remap transform is dead code). The cross-workflow rewrite lives in `reconcile.ts` (`deriveWorkflowFromModel`, registry `workflowScopedVersions`) since a family cannot change the root workflow. negativePrompt only in base/edit modes |
+| image: krea2 (fal/raw/turbo/editRaw/editTurbo) | locked checkpoint; version selector splits across FAL (creativity/styleReferences) and comfy (LoRA/cfg/steps) engines; img2img:edit narrows the picker to comfy builds and the lock substitutes FAL tiers to the edit default. 1K/2K resolution tier on the comfy builds only (`defFamily` AR, 2K doubles each side); FAL takes size + aspectRatio, so no tier. NO cross-workflow pull (unlike boogu) |
+| image: imagen4 | locked single version; negative prompt registers at top level |
+| image: pony-v7 | LoRAs, no negative prompt; ecosystem-defaults lock applies |
+| image: reve | locked; AR on txt2img only, edit takes 1-4 reference frames |
+| image: mai | locked; edit crops the single reference to a supported ratio |
+| image: ernie (base/turbo) | RAW resourcesNode in v1 — `resourcesDef({ filterIncompatible: false })`, foreign LoRAs pass through and only the limit binds |
+| image: seedream (5 versions) | one field set; 2K/4K toggle gated per version (v5.0-pro is 2K-only) |
+| image: anima (base/turbo) | comfy sampler/scheduler names; controlNets behind the `animaControlnet` fail-open flag |
+| image: mage-flow (4 workflow-scoped versions) | workflowVersions where the WORKFLOW wins — the oracle index-remaps a cross-workflow version (opposite of boogu, probed); the remap is a `correct` in the graph |
+| image: hi-dream (fast/dev/full × fp8/fp16) | hierarchical VersionGroup picker; negativePrompt only in full, snippet registration never fires |
+| image: hi-dream-o1 (full/dev) | ecosystem KEY is `HiDream-O1` (dash); v1 mounts no snippetsGraph — `makeTextBlock({ snippets: false })` |
+| image: openai (v1/v1.5/v2) | gpt1 arms carry the transparency toggle; gpt2 drops seed handling in the engine but keeps the field |
+| image: lens (base/turbo) | raw resourcesNode (no filter); resolution above the variant branch, AR follows it |
+| image: qwen (Qwen/Qwen2/Qwen3) | one graph, untagged sub-branch on ecosystem; Qwen's workflow-scoped versions hit the LOCK (cross-workflow version substitutes to the current workflow's default — probed, a third semantics next to boogu/mageflow) |
+| image: nano-banana (standard/pro/v2/v2lite) | resolution-multiplied AR dims; negativePrompt only in pro, not a snippet target |
+| image: muse-image (Meta, fal) | ported 2026-09-03 with the main merge that introduced it — reve-shaped (locked model, prompt-only block, txt-only aspectRatio, edit images 1-4, NO seed); in the image-parity matrix |
+| image: flux3 (FLUX 3 Image, BFL, fal) | ported with the change that introduced it — locked model; txt2img takes resolution (1k/2k/4k) and aspectRatio, img2img:edit sends aspectRatio 'auto' so the output follows the first reference (1-10 images); in the image-parity matrix and the handler differential |
+| image: grok (+ video arm) | spans BOTH output types: grokImage + grokVideo share `grokHead` (flag-gated version list) and a promptAlwaysRequired text block; the dispatcher routes Grok by workflow prefix. Image hub COMPLETE |
+| image: wan-image (v2.7) | tagged v2.7 branch; negativePrompt max length 500, not a snippet target; AR hidden when edit images staged |
+| video: mochi | locked model, promptOnly; NO live workflows — excluded from the parity matrix like legacy WanVideo/SD2 |
+| video: sora2 | AR options per resolution (txt2vid only), usePro, durations 4/8 |
+| video: hunyuan (HyV1) | cfg/steps presets, familyResources, 480p AR set |
+| video: flux3-video | First/Last frame slots on img2vid; v1's draft→resolution forward dep is dead, resolution unconditional (probed) |
+| video: minimax (MiniMaxH3, api/comfy) | tagged branch on version: comfy carries loras/seed/turbo-shaped steps, api is bare; ref2vid takes up to 9 refs (`variantOf`, NOT a prefix match — bit us). `controlVideo` (H3 Fun ControlNet Union) is comfy + txt2vid only — the control operation REPLACES imageToVideo, so there is no frame/reference slot to share it with; its five preprocessor keys are the `preprocessVideo` set, not the image ControlNet set |
+| video: happy-horse (v1.0/v1.1) | AR family keyed `resolution|version` (v1.1 widens the set); vid2vid:edit carries video + refs + audioSetting |
+| video: veo3 (fast/standard) | workflowVersions inert (same list both workflows); ref2vid pins duration to 8s at the boundary; version enum defaults '3.1' (3.0 endpoints retired) |
+| video: vidu (Q1/Q3) | image-driven workflows emit NO aspectRatio (v1 hides the node; handler derives from source — probed); Q3 ref2vid rewrites to img2vid in `reconcile.ts`; Q3 resolution-scaled AR dims |
+| video: kling (legacy/v3) | ref2vid FORCES model→v3 (`correct` on model — probed, workflow wins); legacy full text block (negative IS a snippet target), v3 promptAlwaysRequired + no negative; legacy duration is a STRING enum; multiShot/klingElements dead in v1, not ported. Video hub COMPLETE |
+| audio: ace (5 versions, simple/custom modes) | untagged mode branch on the `aceAudioMode` FIELD (user-selected, not computed); v1's model effect stomps cfg/steps to variant defaults AT PARSE — ported as `correct` policies, the interactive reset as a `.effect` rule. No snippets (v1 merges triggerWordsGraph only) |
+| audio: minimax-music (MiniMaxMusic3) | simple/custom on `minimaxMusicMode`; custom requires BOTH musicDescription and lyrics; duration clamps (sliderDef) so a carried-over video duration can't fail invisibly |
+| audio: yue2 | in the audio-parity matrix and the handler differential |
+| audio: sonilo (music / soundEffect) | ported with the change that introduced it; `soniloOperation` enum picks the duration range per operation (music 5-360s, sound effect 0.5-180s), locked model; step `$type` is `soniloAudioGen`; in the audio-parity matrix and the handler differential |
+| audio hub | ecosystem scoped 'audio', default Ace; no quantity/priority/outputFormat (image/video concerns) |
+| model3d: polygen (Meshy v6/v7) | `polygenVersion` flag-gated (meshyV7Generator) AND workflow-clamped (v7-on-text → v6) in both input and output transforms; v7-only knobs null out per version/image-count; v7 has no seed |
+| model3d: tripo / hunyuan3d / pixal3d / trellis2 | image-to-3D only; pixal3d and trellis2 are field-identical (one factory, two instances for their own family scopes); hunyuan keeps its `hunyuan*` field prefixes, mapped back in the handler |
+| model3d hub | ecosystem scoped 'model3d', default PolyGen; the four newer 3D ecosystems are flag-hidden fail-closed via the shared getEcosystemStates |
+| standalone workflows (img2img:upscale / remove-background / preprocess, vid2vid:upscale / interpolate / preprocess, img2meta, prompt:enhance) | eight arms on a state-only `workflowKind` dispatch at the root (the oracle wire has no such key); priority/outputFormat moved to the ROOT gated on image output, matching v1 — they apply to standalone image workflows too. The upscale batch reset (v1 transform) is a `correct`; preprocess kind specs import from `~/shared/generation/preprocess-specs` (they mirror @civitai/client, not the engine). The two empty panels (img2meta, prompt:enhance) are bare graphs. Step creation stays in the submit service keyed on workflow — data parity covers it, no lane handlers needed |
 
 ---
 

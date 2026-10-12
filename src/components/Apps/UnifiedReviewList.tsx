@@ -22,6 +22,7 @@ import {
 import { useEffect, useMemo, useState } from 'react';
 import type { OffsitePendingRow } from '~/components/Apps/OffsiteReviewQueue';
 import { canRetriggerBuild } from '~/components/Apps/deploy-status';
+import type { BuildAttemptSignals } from '~/shared/constants/app-block-build.constants';
 import { AppsTableColgroup, APPS_REVIEW_QUEUE_COLUMNS } from '~/components/Apps/appsWideLayout';
 import { getPlayCountLabel } from '~/components/Apps/appListingCardView';
 import { STANDALONE_KIND_LABEL } from '~/components/Apps/listingKindLabels';
@@ -33,6 +34,7 @@ import {
 } from '~/components/Apps/reviewRelativeTime';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import {
+  failedBuildSummary,
   mergeReviewRows,
   offsiteRequestToUnifiedRow,
   onsiteRequestToUnifiedRow,
@@ -288,7 +290,15 @@ export function UnifiedReviewList({
  * `null` case: an approval whose build never started looked, until now, exactly
  * like a healthy one in the mod queue.
  */
-function DeployStateChip({ state, rowKey }: { state: string | null; rowKey: string }) {
+function DeployStateChip({
+  state,
+  rowKey,
+  buildSignals,
+}: {
+  state: string | null;
+  rowKey: string;
+  buildSignals?: BuildAttemptSignals | null;
+}) {
   const testId = `apps-unified-review-deploy-${rowKey}`;
   if (state === null || state === undefined) {
     return (
@@ -312,9 +322,11 @@ function DeployStateChip({ state, rowKey }: { state: string | null; rowKey: stri
       : state.startsWith('preview-')
       ? 'grape'
       : 'blue';
+  // A failed build names its step and class: structured fields, never the excerpt.
+  const summary = state === 'failed' ? failedBuildSummary(buildSignals) : null;
   return (
     <Badge size="sm" color={color} variant="light" data-testid={testId}>
-      {state}
+      {summary ? `${state} · ${summary}` : state}
     </Badge>
   );
 }
@@ -577,7 +589,11 @@ function UnifiedReviewRowView({
         <Table.Td>
           {deploy ? (
             <Stack gap={4} align="flex-start">
-              <DeployStateChip state={deploy.state} rowKey={row.key} />
+              <DeployStateChip
+                state={deploy.state}
+                rowKey={row.key}
+                buildSignals={deploy.buildSignals}
+              />
               {onRetriggerBuild && (
                 <RetriggerBuildButton
                   publishRequestId={deploy.publishRequestId}

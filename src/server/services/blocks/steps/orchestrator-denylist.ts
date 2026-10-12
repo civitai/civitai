@@ -113,6 +113,7 @@ export const PLATFORM_INTERNAL_STEP_TYPES: readonly string[] = Object.freeze([
   // Moderation classifiers — the models that grade at the publish boundary.
   'xGuardModeration',
   'shieldstralModeration',
+  'promptModeration',
 
   // Hashing / model ingestion — dedup and catalogue identity.
   // ⚠️ `mediaHash` is denied here while `./index.ts` records it as "considered
@@ -212,9 +213,8 @@ export function isPlatformInternalStepType(stepType: string): boolean {
  *     estimate and the submit, BEFORE any orchestrator call and before any spend
  *     reservation. A denylist that the wire does not consult is decoration.
  *
- * 🔴 THE MATCH IS EXACT AND CASE-SENSITIVE. Whether the orchestrator's own
- * `$type` discriminator matches case-insensitively has NOT been measured; if it
- * does, a re-cased variant walks past this set on the pass-through arm.
+ * The match is case-folded (see `isPlatformInternalStepType`), so a re-cased
+ * `$type` is refused on the pass-through arm too.
  */
 export function assertStepTypeAllowed(stepType: string, where?: string): void {
   if (isPlatformInternalStepType(stepType)) {

@@ -84,10 +84,10 @@ If the user hasn't already pointed you at docs, check the HuggingFace or officia
 
 Based on research, pick the right shape:
 
-- **Single model, simple**: one `sliderNode` per parameter, one aspect ratio set. Seedance is a good reference.
+- **Single model, simple**: one `sliderDef` per parameter, one aspect ratio set. Seedance is a good reference.
 - **Multiple versions with same controls but different defaults**: use `createCheckpointGraph` with `versions.options`. Parameter defaults can vary via `ctx.model?.id` checks. Seedream is a reference.
 - **Multiple versions with different capability sets**: use a computed `<name>Variant` discriminator and branch into separate subgraphs. Ernie is a reference — base has LoRAs, turbo doesn't.
-- **Model-dependent defaults on the same node key**: if both variants have `cfgScale` but different defaults, just declare each subgraph with its own `sliderNode` defaults. **Do NOT add a `.effect()` that calls `set('cfgScale', ...)` on variant change** — see "Don't use `.effect()` to reset slider values across variants" below.
+- **Model-dependent defaults on the same node key**: if both variants have `cfgScale` but different defaults, just declare each branch arm with its own `sliderDef` defaults. **Do NOT add a `.effect()` that calls `set('cfgScale', ...)` on variant change** — see "Don't use `.effect()` to reset slider values across variants" below.
 
 ### 4. Confirm the plan with the user
 
@@ -96,23 +96,23 @@ Summarize:
 ```
 Adding generation support for: <EcosystemName>
 
-Graph: src/shared/data-graph/generation/<name>-graph.ts
+Graph: src/shared/form-graph/generation/<image|video|audio|model3d>/<name>.graph.ts
 - Versions: <list with IDs>
 - Aspect ratios: <list>
 - Sliders: cfgScale (<range>, default <n>), steps (<range>, default <n>)
 - Features: [resources, negativePrompt, images for I2V, etc.]
 - Structure: [single graph | discriminator with subgraphs | version-dependent defaults]
 
-Handler: src/server/services/orchestrator/ecosystems/<name>.handler.ts
+Handler: src/server/services/orchestrator/form-graph/<name>.handler.ts
 - Types: <from @civitai/orchestration-client, or generic>
 - Step type: <imageGen | videoGen>
 - Fixed params: sampler=<x>, scheduler=<y> (if applicable)
 
 Wiring:
 - basemodel.constants.ts: uncomment/add ecosystem support + settings
-- workflows.ts: add to <TXT2IMG_IDS | TXT2VID_IDS | etc.>
-- ecosystem-graph.ts: add to grouped discriminator
-- ecosystems/index.ts: import, type, export, router case
+- shared/generation/config/workflows.ts: add to <TXT2IMG_IDS | TXT2VID_IDS | etc.>
+- <modality>/hub.graph.ts: add the branch arm
+- form-graph/index.ts: import, re-export, createStep case
 ```
 
 Wait for confirmation.
@@ -146,143 +146,82 @@ Two sections:
 
 3. **`crossEcosystemRules`** (only if the ecosystem is cross-compatible with another) — add explicit rules for every directional pair that should allow cross-ecosystem LoRAs (or other addon types). See the "Cross-ecosystem compatibility" section below before writing any.
 
-#### 5b. `src/shared/data-graph/generation/config/workflows.ts`
+#### 5b. `src/shared/generation/config/workflows.ts`
 
 - Add `ECO.<Name>` to the appropriate workflow array (`TXT2IMG_IDS`, `TXT2VID_IDS`, `EDIT_IMG_IDS`, `I2V_ONLY_IDS`, etc.)
 
-#### 5c. Create the graph file: `src/shared/data-graph/generation/<name>-graph.ts`
+#### 5c. Create the graph file
 
-Follow the pattern matching your structural decision from step 3. Key imports:
+`src/shared/form-graph/generation/<image|video|audio|model3d>/<name>.graph.ts`. Build it with
+`defineGraph<FamilyExt>({ scope: familyScope })`. Field helpers come from `../shared`
+(`familyResources`, `perModelSlider`, `promptOnlyTextBlock`) and `../defs`. Ideogram 4
+(`e680364460`) is a compact reference for the whole set.
 
-```ts
-import { DataGraph } from '~/libs/data-graph/data-graph';
-import type { GenerationCtx } from './context';
-import {
-  aspectRatioNode,
-  createCheckpointGraph,
-  createResourcesGraph,
-  imagesNode,
-  negativePromptNode,
-  seedNode,
-  sliderNode,
-  // ... etc
-} from './common';
-```
+Exports: always export `<name>VersionIds` (as a `const` object) so the handler can import it for
+version-to-model-string mapping.
 
-Exports: always export `<name>VersionIds` (as `const` object) so the handler can import it for version-to-model-string mapping.
+#### 5d. Register the graph
 
-#### 5d. Create the handler file: `src/server/services/orchestrator/ecosystems/<name>.handler.ts`
+Add it to that modality's `hub.graph.ts` as a `branch` arm — `[['<Name>'], <name>]` — placed with
+its family grouping.
 
-Template:
+#### 5e. Create the handler file
+
+`src/server/services/orchestrator/form-graph/<name>.handler.ts`:
 
 ```ts
-import type {
-  <EcosystemSpecificInputType>, // e.g., SeedanceVideoGenInput
-  <StepTemplateType>,            // ImageGenStepTemplate | VideoGenStepTemplate
-} from '@civitai/orchestration-client';
+import type { <StepTemplateType> } from '@civitai/client';          // ImageGenStepTemplate | VideoGenStepTemplate
+import type { <EcosystemSpecificInputType> } from '@civitai/orchestration-client';
 import { removeEmpty } from '~/utils/object-helpers';
-import type { GenerationGraphTypes } from '~/shared/data-graph/generation/generation-graph';
-import { <name>VersionIds } from '~/shared/data-graph/generation/<name>-graph';
-import { defineHandler } from './handler-factory';
+import { <name>VersionIds } from '~/shared/form-graph/generation/<modality>/<name>.graph';
+import { defineHandler } from '../handlers/handler-factory';
+import { resourcesToLoras, type EcosystemData } from './types';
 
-type EcosystemGraphOutput = Extract<GenerationGraphTypes['Ctx'], { ecosystem: string }>;
-type <Name>Ctx = EcosystemGraphOutput & { ecosystem: '<Name>' };
+export const create<Name>Input = defineHandler<EcosystemData<'<Name>'>, [<StepTemplateType>]>(
+  (data, ctx) => {
+    if (!data.aspectRatio) throw new Error('Aspect ratio is required');
 
-export const create<Name>Input = defineHandler<<Name>Ctx, [<StepTemplateType>]>((data, ctx) => {
-  // Guard on required fields
-  if (!data.aspectRatio) throw new Error('Aspect ratio is required');
-
-  // Branch by model version if multiple variants produce different input types
-  // For LoRA support: map resources to the format the type expects
-  //   - Record<string, number> for comfy-based ecosystems (AIR → strength)
-  //   - Array of { air, strength } for some video types
-
-  return [
-    {
-      $type: '<imageGen | videoGen>',
-      input: removeEmpty({
-        engine: '<engine>',
-        // ecosystem: '<name>',  // only for comfy engine
-        // operation: 'createImage' | 'editImage',  // only when the type requires it
-        prompt: data.prompt,
-        // ... other fields
-        seed: data.seed,
-      }) as <EcosystemSpecificInputType>,
-    } as <StepTemplateType>,
-  ];
-});
+    return [
+      {
+        $type: '<imageGen | videoGen>',
+        input: removeEmpty({
+          engine: '<engine>',
+          prompt: data.prompt,
+          seed: data.seed,
+        }) as <EcosystemSpecificInputType>,
+      },
+    ];
+  }
+);
 ```
 
 Key points:
 - Use `removeEmpty` to strip undefined values
 - Cast the input to the ecosystem-specific type so TypeScript validates field names and enum values
-- For resources, use `ctx.airs.getOrThrow(resource.id)` to get the AIR string
+- For resources, use `ctx.airs.getOrThrow(resource.id)` to get the AIR string, or `resourcesToLoras`
+  for the common LoRA shape
 
-#### 5e. `src/shared/data-graph/generation/ecosystem-graph.ts`
+#### 5f. `src/server/services/orchestrator/form-graph/index.ts`
 
-Two edits:
+Add the import, the re-export, and the `createStep` case:
 
-1. Import the graph:
-   ```ts
-   import { <name>Graph } from './<name>-graph';
-   ```
-
-2. Add to the `groupedDiscriminator`:
-   ```ts
-   { values: ['<Name>'] as const, graph: <name>Graph },
-   ```
-
-   Place it with its category (image ecosystems vs video ecosystems) — match the existing groupings.
-
-#### 5f. `src/server/services/orchestrator/ecosystems/index.ts`
-
-Four edits:
-
-1. Import the handler:
-   ```ts
-   import { create<Name>Input } from './<name>.handler';
-   ```
-
-2. Add the context type:
-   ```ts
-   export type <Name>Ctx = EcosystemGraphOutput & { ecosystem: '<Name>' };
-   ```
-
-3. Export the handler:
-   ```ts
-   export { create<Name>Input } from './<name>.handler';
-   ```
-
-4. Add the switch case in `createEcosystemStep` (in the right section comment block):
-   ```ts
-   case '<Name>':
-     return create<Name>Input(normalizedData, handlerCtx);
-   ```
-
-#### 5g. The form-graph lane
-
-The generator runs two lanes side by side, and every ecosystem needs both. Steps 5c–5f are the data-graph lane. This step is the form-graph lane. Ideogram 4 (`e680364460`) is a compact reference for the whole set.
-
-1. **Graph:** `src/shared/form-graph/generation/<image|video|audio|model3d>/<name>.graph.ts`. Build it with `defineGraph<FamilyExt>({ scope: familyScope })`. The field helpers come from `../shared` (`familyResources`, `perModelSlider`, `promptOnlyTextBlock`) and `../defs`. **Copy** the version-ID constants into it instead of importing them from the data-graph file, because that file is deleted along with the data-graph engine.
-2. **Register** the graph in that modality's `hub.graph.ts` as `[['<Name>'], <name>]`.
-3. **Handler:** `src/server/services/orchestrator/form-graph/<name>.handler.ts`, typed as `defineHandler<EcosystemData<'<Name>'>, [<StepTemplate>]>`. For LoRAs, use `resourcesToLoras` from `./types`.
-4. **`form-graph/index.ts`:** add the import, the re-export, and the `createStep` case.
-5. **Tests:** these lists are maintained by hand, so a missing entry isn't flagged anywhere.
-   - Add the key to `ECOSYSTEMS` in `image-parity.test.ts` or `video-parity.test.ts`. Audio and 3D ecosystems go in `AUDIO_ECOSYSTEMS` or `MODEL3D_ECOSYSTEMS` in `audio-model3d-parity.test.ts`.
-   - Add cases to `CASES` in `handlers.differential.test.ts`, covering at least the default request and one with each optional feature (LoRAs, images).
+```ts
+case '<Name>':
+  return create<Name>Input(data, handlerCtx);
+```
 
 ### 6. Typecheck
 
 ```bash
 pnpm run typecheck
-pnpm exec vitest run --project 'unit*' src/shared/form-graph/generation/__tests__/image-parity.test.ts src/server/services/orchestrator/form-graph/__tests__/handlers.differential.test.ts
+pnpm exec vitest run --project 'unit*' src/server/services/orchestrator/__tests__/form-graph-step-input.test.ts src/server/services/orchestrator/form-graph/__tests__/data-discrimination.test.ts
 ```
 
 If there are errors, iterate until clean. Common failures:
 
 - **Ecosystem-specific type not found in @civitai/orchestration-client**: fall back to generic `ImageGenStepTemplate`/`VideoGenStepTemplate` with `as <Type>` casts.
-- **Discriminator value not in union**: verify the value in `ecosystem-graph.ts` `groupedDiscriminator` matches the case in `ecosystems/index.ts` exactly (case-sensitive).
-- **Graph context missing a key**: the ecosystemGraph shared nodes (`prompt`, `enhancedCompatibility`) expect certain keys — don't redefine them in your ecosystem subgraph.
+- **Discriminator value not in union**: verify the key in the modality's `hub.graph.ts` `branch` arm matches the case in `form-graph/index.ts` exactly (case-sensitive).
+- **Graph context missing a key**: the hub's shared fields (`prompt`, `enhancedCompatibility`) expect certain keys — don't redefine them in your ecosystem subgraph.
 
 ### 7. Verify in the form (optional but recommended)
 
@@ -409,9 +348,9 @@ Use this to avoid combinatorial rule duplication, but **be aware**: adding a rul
 
 ### Always use the `images` node — never `sourceImage` or a singular `image` node
 
-**Uniformity decision:** every image input in a generation graph uses the shared `imagesNode` (`.node('images', imagesNode({ min, max }))`), even when a workflow accepts exactly one image — cap it with `max: 1` instead of introducing a singular `sourceImage` (or `image`) node. Handlers read `data.images[0]`.
+**Uniformity decision:** every image input in a generation graph uses the shared `imagesDef` (`.field('images', imagesDef({ slots }))`), even when a workflow accepts exactly one image — give it a single slot instead of introducing a singular `sourceImage` (or `image`) field. Handlers read `data.images[0]`.
 
-- Single-image example: `.node('images', imagesNode({ min: 1, max: 1 }))` (see `image-preprocess-graph.ts`).
+- Single-image example: see `img2imgImages` in `src/shared/form-graph/generation/defs.ts`.
 - `normalizeInput` (in `orchestration-new.service.ts`) folds any legacy `sourceImage` into `images[]`, so older stored/remixed data still resolves — do **not** reintroduce or depend on `sourceImage`.
 - Exception: a per-entry `image` field *inside a list node* (controlnet entries, Krea2 style references — each `{ image, strength }`) is a different shape and stays `image`; those are not top-level source images.
 
@@ -435,19 +374,19 @@ Why it's wrong:
 
 1. **It overwrites localStorage values.** The user's tuned cfg/steps for the variant they actually use get wiped on every graph evaluation.
 2. **It runs server-side too.** When the submission is validated through the graph on the server, the effect fires and overwrites whatever the user just submitted — they get the defaults instead of their input.
-3. **It's unnecessary.** `sliderNode` already clamps via `snapToStep(val, step, min, max)` in its zod transform ([common.ts](src/shared/data-graph/generation/common.ts)), so an out-of-range value persisted from one variant gets auto-corrected to the new variant's range on the next pass. No effect needed.
+3. **It's unnecessary.** `sliderDef` already clamps via `snapToStep(val, step, min, max)` in its zod transform ([defs.ts](src/shared/form-graph/defs.ts)), so an out-of-range value persisted from one variant gets auto-corrected to the new variant's range on the next pass. No effect needed.
 
-Correct pattern: declare the defaults on each subgraph's `sliderNode` and let zod handle clamping.
+Correct pattern: declare the defaults on each branch arm's `sliderDef` and let zod handle clamping.
 
 ```ts
-// ✅ CORRECT — defaults live on the sliderNode itself
-const normalGraph = new DataGraph<...>()
-  .node('cfgScale', sliderNode({ min: 1, max: 20, defaultValue: 5, step: 0.5 }))
-  .node('steps', sliderNode({ min: 1, max: 50, defaultValue: 20 }));
+// ✅ CORRECT — defaults live on the slider def itself
+const normal = defineGraph<FamilyExt>({ scope: familyScope })
+  .field('cfgScale', sliderDef({ min: 1, max: 20, defaultValue: 5, step: 0.5 }))
+  .field('steps', sliderDef({ min: 1, max: 50, defaultValue: 20 }));
 
-const turboGraph = new DataGraph<...>()
-  .node('cfgScale', sliderNode({ min: 1, max: 2,  defaultValue: 1, step: 0.1 }))
-  .node('steps', sliderNode({ min: 1, max: 12, defaultValue: 4 }));
+const turbo = defineGraph<FamilyExt>({ scope: familyScope })
+  .field('cfgScale', sliderDef({ min: 1, max: 2, defaultValue: 1, step: 0.1 }))
+  .field('steps', sliderDef({ min: 1, max: 12, defaultValue: 4 }));
 ```
 
 The `.effect()` mechanism is fine for *derived* state that the user shouldn't be editing directly (e.g. computed flags). It is NOT fine for slider values the user has agency over.
@@ -456,18 +395,19 @@ The `.effect()` mechanism is fine for *derived* state that the user shouldn't be
 
 When the new ecosystem ships a **turbo (or distilled) variant alongside a base variant** with meaningfully different `cfgScale` / `steps` ranges, the variants will trample each other's stored values without an extra step. Example: a user sets cfg=8 on base, switches to turbo (max=2), `snapToStep` clamps to 2 and persists; switching back to base now shows cfg=2 instead of the prior 8.
 
-The fix lives in [GenerationFormProvider.tsx](src/components/generation_v2/GenerationFormProvider.tsx) — there's a `TURBO_VARIANT_ECOSYSTEMS` `Set<string>` that drives a conditional storage group scoping `cfgScale`/`steps` per `model.id`. **Add your ecosystem's key to that set** when introducing a turbo/distilled variant.
+The fix is per-FIELD, not per-ecosystem: declare those sliders with `perModelSlider` from
+[`shared.ts`](src/shared/form-graph/generation/shared.ts) instead of `sliderDef`. It appends the
+model version id as a relative scope segment to the family bucket the graph inherits, so each
+variant stores `cfgScale`/`steps` under its own address. There is no ecosystem list to register in.
 
 ```ts
-// src/components/generation_v2/GenerationFormProvider.tsx
-const TURBO_VARIANT_ECOSYSTEMS = new Set<string>([
-  'Lens',
-  'Ernie',
-  'ZImageTurbo',
-  'ZImageBase',
-  // 'YourNewEcosystem',
-]);
+import { perModelSlider } from '../shared';
+
+.field('cfgScale', perModelSlider({ min: 1, max: 20, defaultValue: 5, step: 0.5 }))
+.field('steps', perModelSlider({ min: 1, max: 50, defaultValue: 20 }))
 ```
+
+`minimax-turbo-scope.test.ts` pins the behaviour.
 
 Skip this if the variants share the same slider ranges (e.g. version bumps with identical capabilities) — there's nothing to trample in that case.
 
@@ -475,12 +415,12 @@ Skip this if the variants share the same slider ranges (e.g. version bumps with 
 
 | Pattern | Reference file |
 |--------|----------------|
-| Simple image ecosystem (comfy) | `chroma.handler.ts`, `chroma-graph.ts` |
-| Image ecosystem with version variants (different types per variant) | `ernie.handler.ts`, `ernie-graph.ts` |
-| Image ecosystem with version-dependent defaults (same shape) | `seedream.handler.ts`, `seedream-graph.ts` |
-| Simple video ecosystem | `seedance.handler.ts`, `seedance-graph.ts` |
-| Complex video ecosystem (txt/img/ref variants) | `vidu.handler.ts`, `vidu-graph.ts` |
-| Image+video on one ecosystem | `grok.handler.ts`, `grok-graph.ts` |
+| Simple image ecosystem (comfy) | `form-graph/chroma.handler.ts`, `image/chroma.graph.ts` |
+| Image ecosystem with version variants (different types per variant) | `form-graph/ernie.handler.ts`, `image/ernie.graph.ts` |
+| Image ecosystem with version-dependent defaults (same shape) | `form-graph/seedream.handler.ts`, `image/seedream.graph.ts` |
+| Simple video ecosystem | `form-graph/seedance.handler.ts`, `video/seedance.graph.ts` |
+| Complex video ecosystem (txt/img/ref variants) | `form-graph/vidu.handler.ts`, `video/vidu.graph.ts` |
+| Image+video on one ecosystem | `form-graph/grok.handler.ts`, `image/grok.graph.ts` + `video/grok.graph.ts` |
 
 ## Notes
 
@@ -489,7 +429,7 @@ Skip this if the variants share the same slider ranges (e.g. version bumps with 
 - **Sampler/scheduler**: if the provider recommends a single fixed sampler+scheduler, hardcode them in the handler rather than creating UI controls. Simpler UX and avoids bad user choices.
 - **Model-locked ecosystems**: set `modelLocked: true` in `ecosystemSettings.defaults` unless the ecosystem has multiple user-selectable checkpoints. This is **not** only a form setting — `isGenerationEligible` reads the same flag through `isModelLockedBaseModel` and holds every Checkpoint on the ecosystem to the LIVE coverage column, so the staged expansion stops making community checkpoints there generatable or loadable (an `EcosystemCheckpoints` row or an auction win still does). Clearing the flag restores them on the next request. Nothing else to update: no migration, no view change, no backfill.
 - **Aspect ratio source**: prefer HuggingFace model card recommended resolutions over round-number guesses. They affect output quality significantly.
-- **~1M-pixel diffusion models (SDXL-style bucketing)**: don't write a bucket list. Use `sdxlFullAspectRatioNode()` (data-graph, from `./common`) / `SDXL_FULL_AR` (form-graph, from `../defs`) — the nine SDXL buckets 21:9 → 9:21 with a 3:2 / 1:1 / 2:3 first row. Before you do, read the width/height attributes on the engine's input class in `civitai-orchestration` (`Grains.Abstractions/Workflows/Steps/ImageGen/**`): the comfy inputs take `[Range(64, 2048)] [DivisibleBy(16)]`, so all nine fit, but a provider API can be tighter — BFL's `flux1-pro` caps each side at 1440, so Flux.1 Pro uses `flux1ProAspectRatioNode()` / `FLUX1_PRO_AR`, which drops 21:9 and 9:21. Any ratio that fits the engine's limits is valid; the buckets are about quality, not acceptance.
-- **Custom width × height**: the `SDXL_FULL_AR*` / `FLUX1_PRO_AR` defs carry `custom` limits from `generation.constants.ts` (SD1 passes `sd1CustomDimensionLimits` itself in `sd.graph.ts`), which add a "Custom" entry to the picker. A request opts in with `value: CUSTOM_ASPECT_RATIO` and is fitted by `fitCustomDimensions` (step, side range, area and ratio caps) in the def's `input` and `correct` — so the server enforces it on every parse. Pick the group from what the model's authors document, not from what the engine accepts: `sdxlCustomDimensionLimits` / `SDXL_FULL_AR` (~1 MP: warn past 1 MP, cap 1536²), `twoMegapixelCustomDimensionLimits` / `SDXL_FULL_AR_2MP` (documented to ~2 MP: warn past 2), `fourMegapixelCustomDimensionLimits` / `SDXL_FULL_AR_4MP` (documented to ~4 MP). MP is `MEGAPIXEL` = 1024² px, and **no image may pass 4 MP = 2048²** — a product rule. `maxArea` is enforced; `recommendedArea` only warns. The Custom segment opens `CustomDimensionsModal`: its sliders grey what `sideRange` rules out, and its ratio buttons (`atRatio`) change the shape at the current pixel count. An ecosystem without `custom` snaps a custom value to its nearest bucket. The old data-graph engine (shadow-parsed until it is removed) knows only the ~1 MP group. Users can save custom sizes (`GenerationSizePreset`): one list per user, offered on every model whose limits accept a size unchanged and greyed out where they don't, so a new limits object needs nothing extra; add it to `allCustomDimensionLimits` so the server accepts sizes only it allows.
+- **~1M-pixel diffusion models (SDXL-style bucketing)**: don't write a bucket list. Use `SDXL_FULL_AR` (from `../defs`) — the nine SDXL buckets 21:9 → 9:21 with a 3:2 / 1:1 / 2:3 first row. Before you do, read the width/height attributes on the engine's input class in `civitai-orchestration` (`Grains.Abstractions/Workflows/Steps/ImageGen/**`): the comfy inputs take `[Range(64, 2048)] [DivisibleBy(16)]`, so all nine fit, but a provider API can be tighter — BFL's `flux1-pro` caps each side at 1440, so Flux.1 Pro uses `FLUX1_PRO_AR`, which drops 21:9 and 9:21. Any ratio that fits the engine's limits is valid; the buckets are about quality, not acceptance.
+- **Custom width × height**: the `SDXL_FULL_AR*` / `FLUX1_PRO_AR` defs carry `custom` limits from `generation.constants.ts` (SD1 passes `sd1CustomDimensionLimits` itself in `sd.graph.ts`), which add a "Custom" entry to the picker. A request opts in with `value: CUSTOM_ASPECT_RATIO` and is fitted by `fitCustomDimensions` (step, side range, area and ratio caps) in the def's `input` and `correct` — so the server enforces it on every parse. Pick the group from what the model's authors document, not from what the engine accepts: `sdxlCustomDimensionLimits` / `SDXL_FULL_AR` (~1 MP: warn past 1 MP, cap 1536²), `twoMegapixelCustomDimensionLimits` / `SDXL_FULL_AR_2MP` (documented to ~2 MP: warn past 2), `fourMegapixelCustomDimensionLimits` / `SDXL_FULL_AR_4MP` (documented to ~4 MP). MP is `MEGAPIXEL` = 1024² px, and **no image may pass 4 MP = 2048²** — a product rule. `maxArea` is enforced; `recommendedArea` only warns. The Custom segment opens `CustomDimensionsModal`: its sliders grey what `sideRange` rules out, and its ratio buttons (`atRatio`) change the shape at the current pixel count. An ecosystem without `custom` snaps a custom value to its nearest bucket. Users can save custom sizes (`GenerationSizePreset`): one list per user, offered on every model whose limits accept a size unchanged and greyed out where they don't, so a new limits object needs nothing extra; add it to `allCustomDimensionLimits` so the server accepts sizes only it allows.
 - **Aspect ratio order**: declaration order does not matter — `AspectRatioInput` sorts every list widest first, and a pick from "More" takes its neighbour's slot in that order. Declare widest first anyway, so the data reads the way it displays.
-- **Aspect ratio `priorityOptions`**: when an ecosystem exposes more than ~5 aspect ratios, pass `priorityOptions` to `aspectRatioNode` so the UI shows a standard preferred subset up front and tucks the rest behind the "More" overflow. Use the standard preferred set `['16:9', '4:3', '1:1', '3:4', '9:16']` (as Lens and NanoBanana do) when the ecosystem supports those ratios; substitute the nearest available ratio for any it lacks (e.g. Krea2 uses `4:5` in place of `3:4`). Without `priorityOptions`, the picker fills the row from the middle of the sorted list, which is rarely the set you'd choose. On a phone, "More" opens the shared `MobileMenuDrawer` bottom sheet rather than a popover — nothing to wire.
+- **Aspect ratio `priorityOptions`**: when an ecosystem exposes more than ~5 aspect ratios, pass `priorityOptions` to `aspectRatioDef` so the UI shows a standard preferred subset up front and tucks the rest behind the "More" overflow. Use the standard preferred set `['16:9', '4:3', '1:1', '3:4', '9:16']` (as Lens and NanoBanana do) when the ecosystem supports those ratios; substitute the nearest available ratio for any it lacks (e.g. Krea2 uses `4:5` in place of `3:4`). Without `priorityOptions`, the picker fills the row from the middle of the sorted list, which is rarely the set you'd choose. On a phone, "More" opens the shared `MobileMenuDrawer` bottom sheet rather than a popover — nothing to wire.

@@ -140,8 +140,8 @@ export function migrateLegacyLocalStorageToCookie(): void {
   try {
     // Rollout-window caveat: clearing the legacy key means if this session THEN
     // loads a stale OLD (pre-cookie) bundle, it reads the now-empty localStorage
-    // key → dismissals reappear for that session. Bounded by the rollout window +
-    // the flag's mod-gate; the cookie is authoritative once the new bundle sticks.
+    // key → dismissals reappear for that session. Bounded by the rollout window;
+    // the cookie is authoritative once the new bundle sticks.
     window.localStorage.removeItem(LEGACY_LOCALSTORAGE_KEY);
   } catch {
     // Best-effort cleanup; the cookie now wins regardless.

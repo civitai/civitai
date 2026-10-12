@@ -784,7 +784,8 @@ interface BlockStepBase<P> {
    * `canonicalOutputFor` makes the output shape explicit rather than inferred.
    *
    * 🔴 AND IT CANNOT BE SATISFIED BY RETURNING NOTHING. `auditPromptServer`
-   * RETURNS EARLY on an empty prompt, so `() => ({ prompt: '' })` would be a
+   * audits no prompt text when the prompt is empty (it returns early unless a
+   * negative prompt is present), so `() => ({ prompt: '' })` would be a
    * declared posture that audits nothing and reports success — the same defect
    * class as an `extractOutput` satisfiable by `() => []`, which is why that
    * field got a probe. This one gets the same treatment: the load-time invariant
@@ -1755,8 +1756,8 @@ export function assertStepInvariants(id: string, step: AnyBlockStep): void {
     }
 
     // (5a) THE NON-VACUITY PROBE for `auditableText`, the moderation analogue of
-    // clause 8's extraction probe. `auditPromptServer` RETURNS EARLY on an empty
-    // prompt, so an entry that declares `'promptAudit'` and returns `''` would
+    // clause 8's extraction probe. `auditPromptServer` audits no prompt text on an
+    // empty prompt, so an entry that declares `'promptAudit'` and returns `''` would
     // pass clause 1a, run the audit, and audit nothing — reporting success. The
     // declaration alone is therefore not enough; it has to produce real text for
     // params the entry itself calls canonical.
@@ -1767,7 +1768,7 @@ export function assertStepInvariants(id: string, step: AnyBlockStep): void {
       if (typeof text?.prompt !== 'string' || text.prompt.trim().length === 0) {
         throw new Error(
           `${vWhere}: auditableText() returned no prompt text for canonicalParamsFor() — ` +
-            'auditPromptServer returns early on an empty prompt, so this posture would ' +
+            'auditPromptServer audits no prompt text on an empty prompt, so this posture would ' +
             'audit NOTHING while reporting success'
         );
       }

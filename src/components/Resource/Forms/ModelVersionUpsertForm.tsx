@@ -92,6 +92,7 @@ import {
   formatPricingAllowance,
   monetizationLimits,
   pricingAllowanceState,
+  feeAllowanceBoostNote,
   ratioToFee,
   resolveCapTier,
   seedFeeRatio,
@@ -804,14 +805,24 @@ export function ModelVersionUpsertForm({
     enabled: showPaidAccessInput || showLicensingFeeBlock,
   });
   // A version that already carries a price is exempt, so the counter must not read "used up" while the
-  // edit in front of the creator is free.
+  // edit in front of the creator is free (a boosted licensed version gaining a gate aside).
   const allowanceState = pricingAllowance
     ? pricingAllowanceState({
         used: pricingAllowance.used,
-        limit: pricingAllowance.limit,
+        limit: pricingAllowance.baseLimit,
         exempt: hasExistingCharge,
       })
     : null;
+  // Held to baseLimit above, which is what a paid-access gate is enforced against; only a licensing fee
+  // may spend the boost.
+  const feeAllowanceState =
+    pricingAllowance && pricingAllowance.feeBoost > 0
+      ? pricingAllowanceState({
+          used: pricingAllowance.used,
+          limit: pricingAllowance.feeLimit,
+          exempt: hasExistingCharge,
+        })
+      : null;
   // Not waived for moderators, and not applied to a version that already charges. Absent while the
   // query is in flight, so the control stays enabled rather than flickering shut; the server refuses anyway.
   const eligibility = pricingAllowance?.eligibility;
@@ -1240,6 +1251,11 @@ export function ModelVersionUpsertForm({
                       <Group gap={6}>
                         <Text size="xs" c={allowanceState.atLimit ? 'yellow.5' : 'dimmed'}>
                           {formatPricingAllowance(allowanceState)}
+                          {feeAllowanceState && pricingAllowance
+                            ? ` · licensing fees: ${feeAllowanceState.used} of ${
+                                feeAllowanceState.limit
+                              }, ${feeAllowanceBoostNote(pricingAllowance.feeBoost)}`
+                            : ''}
                           {hasExistingCharge ? ' · editing this one is free' : ''}
                         </Text>
                         <Popover width={320} withArrow withinPortal shadow="sm">
@@ -1261,7 +1277,7 @@ export function ModelVersionUpsertForm({
                         {!allowanceState.unlimited && (
                           <CapUpsell
                             used={allowanceState.used}
-                            limit={pricingAllowance?.limit ?? Infinity}
+                            limit={pricingAllowance?.baseLimit ?? Infinity}
                             capTier={feeCapTier}
                           />
                         )}
@@ -1275,10 +1291,21 @@ export function ModelVersionUpsertForm({
                     <Alert
                       color="yellow"
                       icon={<IconAlertTriangle size={18} />}
-                      title="You've priced all this month's versions"
+                      title={
+                        feeAllowanceState && !feeAllowanceState.atLimit
+                          ? "You've used this month's paid-access allowance"
+                          : "You've priced all this month's versions"
+                      }
                       mb="sm"
                     >
                       <Text size="sm">{PRICING_SLOT_EXPLAINER}</Text>
+                      {feeAllowanceState && !feeAllowanceState.atLimit && (
+                        <Text size="sm" mt={4}>
+                          You can still add a licensing fee: your extra slots cover{' '}
+                          {feeAllowanceState.remaining} more this month. They don&apos;t cover
+                          permanent paid access.
+                        </Text>
+                      )}
                       {showPaidAccessInput && canChooseTimed && (
                         <Text size="sm" mt={4}>
                           You can still put this version on a timed Early Access window — that
@@ -1288,7 +1315,7 @@ export function ModelVersionUpsertForm({
                       <Box mt="xs">
                         <CapUpsell
                           used={allowanceState.used}
-                          limit={pricingAllowance?.limit ?? Infinity}
+                          limit={pricingAllowance?.baseLimit ?? Infinity}
                           capTier={feeCapTier}
                           expanded
                         />
@@ -1901,7 +1928,8 @@ export function ModelVersionUpsertForm({
                                 />
                                 <Text size="xs" c="yellow">
                                   With a license fee set, this version stops earning creator
-                                  compensation and tips — you earn through the license fee instead.
+                                  compensation — you earn through the license fee instead. It can
+                                  still receive creator tips.
                                 </Text>
                               </Group>
                             )}

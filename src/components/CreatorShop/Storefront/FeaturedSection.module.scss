@@ -1,6 +1,7 @@
 // Featured "slice": a tinted band with a gold-tinted top border, a soft static
 // glow feathering down from the top, and a cursor-tracking spotlight bloom — the
-// same treatment as the challenges Dynamic Prize card.
+// same treatment as the challenges Dynamic Prize card. The bloom and the lit top
+// edge are SpotlightGlow / SpotlightDivider in the component.
 .band {
   position: relative;
   background: light-dark(var(--mantine-color-gray-1), var(--mantine-color-dark-8));
@@ -15,21 +16,6 @@
   pointer-events: none;
   z-index: 0;
   background: radial-gradient(90% 55% at 50% 0%, rgba(255, 212, 59, 0.1), transparent 62%);
-}
-
-// Cursor-following spotlight bloom in the background.
-.bloom {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  z-index: 0;
-  background: radial-gradient(
-    500px circle at var(--spotlight-x) var(--spotlight-y),
-    rgba(250, 176, 5, 0.1),
-    transparent 60%
-  );
-  opacity: var(--spotlight-opacity);
-  transition: opacity 0.5s ease;
 }
 
 .content {

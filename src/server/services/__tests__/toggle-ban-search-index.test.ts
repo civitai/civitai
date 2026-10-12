@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import type * as HatSync from '~/server/events/points/sync';
 
 /**
  * BANNING REMOVES AN ACCOUNT FROM USER SEARCH — SO LIFTING A BAN HAS TO PUT IT BACK.
@@ -58,6 +59,15 @@ vi.mock('~/server/services/subscriptions.service', async (importOriginal) => {
     reinstateSubscription: vi.fn(async () => undefined),
   };
 });
+
+const hatSync = vi.hoisted(() => ({ owner: vi.fn() }));
+vi.mock('~/server/events/points/sync', async (importOriginal) => ({
+  ...(await importOriginal<typeof HatSync>()),
+  syncOwnerEventHats: hatSync.owner,
+}));
+
+const roster = vi.hoisted(() => ({ member: vi.fn() }));
+vi.mock('~/server/events/points/roster-sync', () => ({ syncEventRosterMember: roster.member }));
 
 const { toggleBan } = await import('~/server/services/user.service');
 const { BanReasonCode } = await import('~/server/common/enums');
@@ -199,5 +209,60 @@ describe('toggleBan -> removeComments', () => {
 
     expect(commentUpdateMany).not.toHaveBeenCalled();
     expect(commentV2UpdateMany).not.toHaveBeenCalled();
+  });
+});
+
+// A banned owner's event hats stop earning at once, and earn again when the ban is lifted.
+describe('toggleBan -> live event hats', () => {
+  it.each([
+    ['banning', null],
+    ['unbanning', ALREADY_BANNED_AT],
+  ])('%s brings the owner’s hats up to date after the write', async (_arm, bannedAt) => {
+    userFindUnique.mockResolvedValue({ bannedAt, meta: {}, username: 'someone', email: null });
+    await call();
+    expect(hatSync.owner.mock.calls).toEqual([[USER_ID]]);
+    expect(hatSync.owner.mock.invocationCallOrder[0]).toBeGreaterThan(
+      userUpdate.mock.invocationCallOrder[0]
+    );
+  });
+
+  // A banned member leaves their team's roster at once; unbanned, the sync lists them again if
+  // they had opted in.
+  it.each([
+    ['banning', null],
+    ['unbanning', ALREADY_BANNED_AT],
+  ])('%s re-derives their roster entry after the write', async (_arm, bannedAt) => {
+    userFindUnique.mockResolvedValue({ bannedAt, meta: {}, username: 'someone', email: null });
+    await call();
+    expect(roster.member.mock.calls).toEqual([[USER_ID]]);
+    expect(roster.member.mock.invocationCallOrder[0]).toBeGreaterThan(
+      userUpdate.mock.invocationCallOrder[0]
+    );
+  });
+});
+
+// The creator score re-scores an owner from `Model."updatedAt"`, which raw SQL does not bump.
+describe('toggleBan -> model takedown', () => {
+  it('bumps updatedAt on the models it takes down', async () => {
+    userFindUnique.mockResolvedValue({
+      bannedAt: null,
+      meta: {},
+      username: 'someone',
+      email: null,
+    });
+    dbMock.dbRead.model.findMany.mockResolvedValue([{ id: 7701, modelVersions: [] }] as never);
+
+    await call();
+
+    const modelUpdates = dbMock.dbWrite.$executeRaw.mock.calls
+      .map(([strings]) =>
+        (strings as unknown as string[])
+          .join('?')
+          .replace(/--[^\n]*/g, '')
+          .replace(/\s+/g, ' ')
+      )
+      .filter((sql) => sql.includes('UPDATE "Model" SET'));
+    expect(modelUpdates).toHaveLength(1);
+    expect(modelUpdates[0]).toContain('"updatedAt" = now() WHERE id IN');
   });
 });

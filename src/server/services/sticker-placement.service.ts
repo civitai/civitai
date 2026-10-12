@@ -10,6 +10,7 @@ import {
 } from '~/server/services/placement-escrow.service';
 import { createFreePlacement } from '~/server/services/free-placement.service';
 import { assertCanPlace } from '~/server/services/placement-moderation.service';
+import { onPlacementsTakenDown } from '~/server/events/points/hooks';
 import { resolvePlacementSpaceFor } from '~/server/services/placement-space.service';
 import { spendStickerUsesFor } from '~/server/services/sticker.service';
 import {
@@ -24,9 +25,9 @@ import {
 } from '~/server/utils/errorHandling';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import {
-  CosmeticFlag,
   isStickerKeptOffImage,
-  STICKER_SFW_ONLY_REFUSAL,
+  STICKER_PLACEMENT_RATING_MASK,
+  stickerPlacementRefusal,
 } from '~/shared/constants/cosmetic-flags.constants';
 import { Flags } from '~/shared/utils/flags';
 import { isDefined } from '~/utils/type-guards';
@@ -159,13 +160,13 @@ async function loadPlaceableSticker({
 
   if (!cosmetic) throw throwBadRequestError('placement: that sticker no longer exists');
   if (!cosmetic.owned) throw throwAuthorizationError('placement: you do not own that sticker');
-  if (isKeptOffRow(cosmetic)) throw throwBadRequestError(STICKER_SFW_ONLY_REFUSAL);
+  if (isKeptOffRow(cosmetic)) throw throwBadRequestError(stickerPlacementRefusal(cosmetic.flags));
 
   return cosmetic;
 }
 
 /**
- * The two columns every primary-side SFW check reads, selected against
+ * The two columns every primary-side rating check reads, selected against
  * `"Cosmetic" c`. One fragment so the placement and the approval cannot drift
  * apart on what a missing image means (unrated, so refused).
  */
@@ -697,7 +698,7 @@ async function keptOffPlacementIds(
   const flagged = rows.filter(
     (row) =>
       row.cosmeticId != null &&
-      Flags.hasFlag(cosmetics[row.cosmeticId]?.flags ?? 0, CosmeticFlag.SfwPlacementsOnly)
+      Flags.intersects(cosmetics[row.cosmeticId]?.flags ?? 0, STICKER_PLACEMENT_RATING_MASK)
   );
   if (!flagged.length) return new Set<number>();
 
@@ -1082,6 +1083,7 @@ async function removeApprovedSticker({
       takenDownById: userId,
     },
   });
+  if (count > 0) void onPlacementsTakenDown([placement.id]);
 
   return { settled: count > 0 };
 }

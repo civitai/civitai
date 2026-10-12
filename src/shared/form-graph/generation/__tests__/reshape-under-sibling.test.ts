@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { generationHub } from '../hub.graph';
 import { seedanceVersionIds } from '../video/seedance.graph';
-import { klingVersionIds, grokVersionIds } from '~/shared/data-graph/generation/version-ids';
-import type { GenerationCtx } from '~/shared/data-graph/generation/context';
+import { klingVersionIds, grokVersionIds } from '~/shared/generation/version-ids';
+import type { GenerationCtx } from '~/shared/generation/context';
 
 /**
  * The reshape-under-sibling class: a field whose def (range / option set /

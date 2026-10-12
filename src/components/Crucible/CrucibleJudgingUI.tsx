@@ -9,16 +9,18 @@ import {
   Skeleton,
   Tooltip,
 } from '@mantine/core';
-import { useHotkeys } from '@mantine/hooks';
+import { useHotkeys, useReducedMotion } from '@mantine/hooks';
+import type { HotkeyItem } from '@mantine/hooks';
 import {
   IconPlayerSkipForward,
-  IconCheck,
   IconPhotoOff,
   IconRefresh,
   IconVolume,
   IconVolumeOff,
 } from '@tabler/icons-react';
 import clsx from 'clsx';
+import { LazyMotion } from 'motion/react';
+import { div as MotionDiv, span as MotionSpan } from 'motion/react-m';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import type { RouterOutput } from '~/types/router';
@@ -26,6 +28,7 @@ import { MediaType } from '~/shared/utils/prisma/enums';
 import {
   accumulatePlaybackMs,
   CRUCIBLE_PLAYBACK_SAMPLE_CEILING_MS,
+  playsToEnd,
 } from '~/shared/constants/crucible.constants';
 
 /**
@@ -47,6 +50,7 @@ const IMAGE_LOAD_TIMEOUT_MS = 12_000;
 const VIDEO_LOAD_TIMEOUT_MS = 20_000;
 const bothLoading = { left: 'loading', right: 'loading' } as const;
 const notPlayedThrough = { left: false, right: false };
+const noDurations = { left: null, right: null };
 const LOOP_WRAP_WINDOW_SECONDS = CRUCIBLE_PLAYBACK_SAMPLE_CEILING_MS / 1000;
 
 // Below md the pair gets fixed heights and the page scrolls: squeezed into the space left under
@@ -55,11 +59,22 @@ const pairGridClass =
   'grid grid-cols-1 gap-3 max-md:landscape:grid-cols-2 md:min-h-0 md:flex-1 md:grid-cols-2 md:gap-4';
 const mediaBoxClass =
   'h-[36svh] min-h-[200px] max-md:landscape:h-[calc(100svh-8rem)] md:h-auto md:min-h-0 md:flex-1';
+const footerSlotClass = 'flex min-w-0 items-center empty:hidden md:w-[420px] md:empty:flex';
+
+const loadMotion = () => import('~/utils/lazy-motion').then((res) => res.default);
+const VOTE_FEEDBACK_MS = 200;
+const PLUS_ONE_MS = 600;
 
 // A held key would otherwise vote on every pair that loads while it is down.
 const ignoreKeyRepeat = (action: () => void) => (event: KeyboardEvent) => {
   if (!event.repeat) action();
 };
+
+// Space on a focused control outside the arena (the page header, a menu, the briefing) belongs to
+// that control; the hotkey listens on the whole document and would skip the pair instead.
+const isChromeTarget = (event: KeyboardEvent) =>
+  event.target instanceof Element &&
+  !!event.target.closest('[role="dialog"], [role="menu"], [data-judge-chrome]');
 
 export type CrucibleJudgingUIProps = {
   pair: JudgingPairData;
@@ -73,6 +88,16 @@ export type CrucibleJudgingUIProps = {
   onVote: (winnerId: number, loserId: number, watched: WatchedMs) => void;
   /** `unavailable`: an entry in the pair didn't load, so skipping wasn't the judge's choice. */
   onSkip: (skip: { unavailable: boolean }) => void;
+  /** Fires the moment a side is chosen, before the feedback delay that precedes `onVote`. */
+  onVoteCast?: (side: Side) => void;
+  /** Bottom-row content either side of the vote controls. */
+  footerStart?: React.ReactNode;
+  footerEnd?: React.ReactNode;
+  /**
+   * Holds every clip still while the arena is covered (the first-visit briefing): no autoplay, any
+   * playing clip paused, and no playback counted. The sequence starts once this turns false.
+   */
+  paused?: boolean;
   className?: string;
 };
 
@@ -83,11 +108,23 @@ export function CrucibleJudgingUI({
   minViewSeconds,
   onVote,
   onSkip,
+  onVoteCast,
+  footerStart,
+  footerEnd,
+  paused = false,
   className,
 }: CrucibleJudgingUIProps) {
+  // The tree's shape never depends on this, only the animation values: a structural switch would
+  // remount the media mid-pair and drop its watch time.
+  const motionOn = !useReducedMotion(true);
   const [selectedSide, setSelectedSide] = useState<Side | null>(null);
+  const [plusOne, setPlusOne] = useState<{ side: Side; id: number } | null>(null);
+  const plusOneTimer = useRef<ReturnType<typeof setTimeout>>();
+  useEffect(() => () => clearTimeout(plusOneTimer.current), []);
   const [watchedMs, setWatchedMs] = useState<Record<Side, number>>(emptyWatched);
   const [playedThrough, setPlayedThrough] = useState<Record<Side, boolean>>(notPlayedThrough);
+  const [reachedEnd, setReachedEnd] = useState<Record<Side, boolean>>(notPlayedThrough);
+  const [durations, setDurations] = useState<Record<Side, number | null>>(noDurations);
   const [mediaStatus, setMediaStatus] = useState<
     { pairKey: string | null } & Record<Side, MediaStatus>
   >({ pairKey: null, ...bothLoading });
@@ -108,6 +145,8 @@ export function CrucibleJudgingUI({
   useEffect(() => {
     setWatchedMs(emptyWatched);
     setPlayedThrough(notPlayedThrough);
+    setReachedEnd(notPlayedThrough);
+    setDurations(noDurations);
   }, [pairKey]);
 
   // Keyed on the pair so a new pair reads as loading from its first render, not after an effect.
@@ -144,12 +183,23 @@ export function CrucibleJudgingUI({
   // totals so a judge who plays a clip by hand is counted rather than fought.
   const isVideoPair =
     pair?.left.image.type === MediaType.video && pair?.right.image.type === MediaType.video;
-  const sequencing = isVideoPair && mediaReady && !watchGateOpen;
-  const autoplaySide: Side | null = !sequencing ? null : !sideDone('left') ? 'left' : 'right';
+  // The gate opens at the rule, but a clip only a little longer still plays on to its end.
+  const playbackDone = (side: Side) =>
+    sideDone(side) && (reachedEnd[side] || !playsToEnd(durations[side], ruleSeconds(side)));
+  const sequencing = isVideoPair && mediaReady && !(playbackDone('left') && playbackDone('right'));
+  const autoplaySide: Side | null =
+    paused || !sequencing ? null : !playbackDone('left') ? 'left' : 'right';
   const voteLocked = isDisabled || !mediaReady || !watchGateOpen;
 
-  const handleWatched = useCallback((side: Side, ms: number) => {
+  const handleWatched = useCallback((side: Side, ms: number, durationSeconds: number) => {
     setWatchedMs((prev) => (ms > prev[side] ? { ...prev, [side]: ms } : prev));
+    setDurations((prev) =>
+      prev[side] === durationSeconds ? prev : { ...prev, [side]: durationSeconds }
+    );
+  }, []);
+
+  const handleReachedEnd = useCallback((side: Side) => {
+    setReachedEnd((prev) => (prev[side] ? prev : { ...prev, [side]: true }));
   }, []);
 
   const handlePlayedThrough = useCallback((side: Side) => {
@@ -164,8 +214,12 @@ export function CrucibleJudgingUI({
 
       voteQueued.current = true;
       setSelectedSide(side);
+      onVoteCast?.(side);
+      // Outlives the pair: the next one usually loads inside the chip's 600ms.
+      setPlusOne((prev) => ({ side, id: (prev?.id ?? 0) + 1 }));
+      clearTimeout(plusOneTimer.current);
+      plusOneTimer.current = setTimeout(() => setPlusOne(null), PLUS_ONE_MS);
 
-      // Small delay for visual feedback, then call onVote
       setTimeout(() => {
         voteQueued.current = false;
         const winnerId = side === 'left' ? pair.left.id : pair.right.id;
@@ -175,11 +229,23 @@ export function CrucibleJudgingUI({
           loserWatchedMs: reportedMs(side === 'left' ? 'right' : 'left'),
         });
         setSelectedSide(null);
-      }, 200);
+      }, VOTE_FEEDBACK_MS);
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `reportedMs` reads only the deps below
-    [voteLocked, pair, onVote, watchedMs, playedThrough, requiredMs.left, requiredMs.right]
+    [
+      voteLocked,
+      pair,
+      onVote,
+      onVoteCast,
+      watchedMs,
+      playedThrough,
+      requiredMs.left,
+      requiredMs.right,
+    ]
   );
+
+  const remainingSeconds = (side: Side) =>
+    sideDone(side) ? 0 : Math.ceil(Math.max(0, requiredMs[side] - watchedMs[side]) / 1000);
 
   const anyUnavailable = media.left === 'error' || media.right === 'error';
   const handleSkip = useCallback(() => {
@@ -188,20 +254,32 @@ export function CrucibleJudgingUI({
     onSkip({ unavailable: anyUnavailable });
   }, [isDisabled, onSkip, anyUnavailable]);
 
+  // Mantine would preventDefault before the handler runs, which also cancels a focused button's own
+  // Space activation, so this one prevents only when it acts.
+  const spaceHotkey: HotkeyItem = [
+    'Space',
+    (event: KeyboardEvent) => {
+      if (isChromeTarget(event)) return;
+      event.preventDefault();
+      if (!event.repeat) handleSkip();
+    },
+    { preventDefault: false },
+  ];
+
   // Keyboard shortcuts
   useHotkeys(
     voteLocked
       ? [
           // Skip stays live while voting is locked: a judge facing an entry that won't load, or
           // who does not want to watch either clip through, needs a way past the pair.
-          ['Space', ignoreKeyRepeat(handleSkip)],
+          spaceHotkey,
         ]
       : [
           ['1', ignoreKeyRepeat(() => handleVote('left'))],
           ['ArrowLeft', ignoreKeyRepeat(() => handleVote('left'))],
           ['2', ignoreKeyRepeat(() => handleVote('right'))],
           ['ArrowRight', ignoreKeyRepeat(() => handleVote('right'))],
-          ['Space', ignoreKeyRepeat(handleSkip)],
+          spaceHotkey,
         ],
     // VIDEO on top of Mantine's defaults: a focused video player answers Space with play/pause and
     // the arrows with seek, and every one of those is also bound here — so without it, pausing a
@@ -219,99 +297,117 @@ export function CrucibleJudgingUI({
     return null; // Parent should handle empty state
   }
 
+  const slot = (side: Side) => (
+    <ImageCard
+      entry={pair?.[side] ?? null}
+      position={side}
+      isSelected={selectedSide === side}
+      dimmed={selectedSide != null && selectedSide !== side}
+      plusOneId={plusOne?.side === side ? plusOne.id : null}
+      motionOn={motionOn}
+      isLoading={isLoading}
+      disabled={voteLocked}
+      pairKey={pairKey}
+      remainingSeconds={remainingSeconds(side)}
+      requiredMs={requiredMs[side]}
+      autoplay={autoplaySide === side}
+      sequencing={sequencing}
+      paused={paused}
+      onWatched={(ms, durationSeconds) => handleWatched(side, ms, durationSeconds)}
+      onPlayedThrough={() => handlePlayedThrough(side)}
+      onReachedEnd={() => handleReachedEnd(side)}
+      onVote={() => handleVote(side)}
+      onSkip={handleSkip}
+      onMediaStatus={handleMediaStatus}
+      otherPlaying={playingSide != null && playingSide !== side}
+      onPlay={setPlayingSide}
+      soundOn={soundOn}
+      onSoundChange={handleSoundChange}
+      onSoundBlocked={handleSoundBlocked}
+      hotkeyLabel={side === 'left' ? '1' : '2'}
+    />
+  );
+
+  const voteButton = (side: Side) => {
+    const seconds = remainingSeconds(side);
+    return (
+      <Button
+        color="blue"
+        radius="xl"
+        h={40}
+        className={clsx(
+          'min-w-0 flex-1 px-4 font-semibold',
+          selectedSide === side && 'bg-blue-500'
+        )}
+        data-testid="judge-vote"
+        data-side={side}
+        onClick={() => handleVote(side)}
+        disabled={voteLocked}
+      >
+        <span className="flex items-center gap-2">
+          {seconds > 0 ? (
+            // Shortened to "12s" on phones, where the full label overflows the HUD.
+            <span>
+              <span className="max-md:hidden">Watch </span>
+              {seconds}s<span className="max-md:hidden"> more</span>
+            </span>
+          ) : (
+            'Vote'
+          )}
+          <Kbd size="xs" className="opacity-75">
+            {side === 'left' ? '1' : '2'}
+          </Kbd>
+        </span>
+      </Button>
+    );
+  };
+
   return (
-    <div className={clsx('flex flex-col gap-4', className)}>
-      <div className={pairGridClass}>
-        <ImageCard
-          entry={pair?.left ?? null}
-          position="left"
-          isSelected={selectedSide === 'left'}
-          isLoading={isLoading}
-          disabled={voteLocked}
-          pairKey={pairKey}
-          watchedMs={sideDone('left') ? Math.max(watchedMs.left, requiredMs.left) : watchedMs.left}
-          requiredMs={requiredMs.left}
-          autoplay={autoplaySide === 'left'}
-          sequencing={sequencing}
-          onWatched={(ms) => handleWatched('left', ms)}
-          onPlayedThrough={() => handlePlayedThrough('left')}
-          onVote={() => handleVote('left')}
-          onSkip={handleSkip}
-          onMediaStatus={handleMediaStatus}
-          otherPlaying={playingSide === 'right'}
-          onPlay={setPlayingSide}
-          soundOn={soundOn}
-          onSoundChange={handleSoundChange}
-          onSoundBlocked={handleSoundBlocked}
-          hotkeyLabel="1"
-        />
+    <LazyMotion features={loadMotion} strict>
+      <div className={clsx('flex flex-col gap-4', className)}>
+        <div className={pairGridClass}>
+          {slot('left')}
+          {slot('right')}
+        </div>
 
-        <ImageCard
-          entry={pair?.right ?? null}
-          position="right"
-          isSelected={selectedSide === 'right'}
-          isLoading={isLoading}
-          disabled={voteLocked}
-          pairKey={pairKey}
-          watchedMs={
-            sideDone('right') ? Math.max(watchedMs.right, requiredMs.right) : watchedMs.right
-          }
-          requiredMs={requiredMs.right}
-          autoplay={autoplaySide === 'right'}
-          sequencing={sequencing}
-          onWatched={(ms) => handleWatched('right', ms)}
-          onPlayedThrough={() => handlePlayedThrough('right')}
-          onVote={() => handleVote('right')}
-          onSkip={handleSkip}
-          onMediaStatus={handleMediaStatus}
-          otherPlaying={playingSide === 'left'}
-          onPlay={setPlayingSide}
-          soundOn={soundOn}
-          onSoundChange={handleSoundChange}
-          onSoundBlocked={handleSoundBlocked}
-          hotkeyLabel="2"
-        />
+        <div className="flex shrink-0 flex-col items-stretch gap-3 md:min-h-[76px] md:flex-row md:items-center md:justify-between md:gap-4">
+          <div className={footerSlotClass}>{footerStart}</div>
+
+          <div className="order-first flex justify-center md:order-none">
+            <div className="flex h-14 max-w-full items-center gap-2 rounded-full border border-[#373A40] bg-[#2C2E33]/95 px-2 shadow-lg">
+              {voteButton('left')}
+              <Tooltip
+                label="Skips this pair without voting. The pair may appear again later."
+                position="top"
+                withArrow
+              >
+                <Button
+                  variant="default"
+                  radius="xl"
+                  h={40}
+                  data-testid="judge-skip"
+                  onClick={handleSkip}
+                  disabled={isDisabled}
+                  aria-label="Skip"
+                  // Icon only on phones, so both vote buttons keep room for their key hint.
+                  className="shrink-0 border-[#495057] bg-[#373a40] font-semibold text-[#c1c2c5] hover:border-[#5c636e] hover:bg-[#495057] max-md:px-3"
+                  classNames={{ section: 'max-md:hidden' }}
+                  rightSection={<Kbd size="xs">Space</Kbd>}
+                >
+                  <span className="flex items-center gap-2">
+                    <IconPlayerSkipForward size={16} />
+                    <span className="max-md:hidden">Skip</span>
+                  </span>
+                </Button>
+              </Tooltip>
+              {voteButton('right')}
+            </div>
+          </div>
+
+          <div className={clsx(footerSlotClass, 'md:justify-end')}>{footerEnd}</div>
+        </div>
       </div>
-
-      <div className="flex shrink-0 flex-col items-center gap-2 md:flex-row md:justify-center md:gap-4">
-        <Tooltip
-          label="Skips this pair without voting. The pair may appear again later."
-          position="top"
-          withArrow
-        >
-          <Button
-            variant="default"
-            size="md"
-            onClick={handleSkip}
-            disabled={isDisabled}
-            className="border-[#495057] bg-[#373a40] font-semibold text-[#c1c2c5] hover:border-[#5c636e] hover:bg-[#495057]"
-            styles={{
-              root: {
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: '0.5rem',
-              },
-              inner: {
-                display: 'flex',
-                width: '100%',
-                alignItems: 'center',
-                justifyContent: 'center',
-              },
-            }}
-            leftSection={<IconPlayerSkipForward size={18} />}
-            rightSection={<Kbd>Space</Kbd>}
-          >
-            Skip Pair
-          </Button>
-        </Tooltip>
-
-        <Text size="xs" c="dimmed" className="hidden whitespace-nowrap md:block">
-          Press <Kbd>1</Kbd> or <Kbd>←</Kbd> to vote left, <Kbd>2</Kbd> or <Kbd>→</Kbd> to vote
-          right, <Kbd>Space</Kbd> to skip
-        </Text>
-      </div>
-    </div>
+    </LazyMotion>
   );
 }
 
@@ -321,15 +417,20 @@ type ImageCardProps = {
   entry: JudgingEntry | null;
   position: Side;
   isSelected: boolean;
+  dimmed: boolean;
+  plusOneId: number | null;
+  motionOn: boolean;
   isLoading?: boolean;
   disabled: boolean;
   pairKey: string | null;
-  watchedMs: number;
+  remainingSeconds: number;
   requiredMs: number;
   autoplay: boolean;
   sequencing: boolean;
-  onWatched: (ms: number) => void;
+  paused: boolean;
+  onWatched: (ms: number, durationSeconds: number) => void;
   onPlayedThrough: () => void;
+  onReachedEnd: () => void;
   onVote: () => void;
   onSkip: () => void;
   onMediaStatus: (side: Side, status: MediaStatus) => void;
@@ -342,21 +443,26 @@ type ImageCardProps = {
 };
 
 /**
- * Individual image card for judging
+ * One arena slot: the entry shown whole, voted by click (images) or by the HUD and hotkeys.
  */
 function ImageCard({
   entry,
   position,
   isSelected,
+  dimmed,
+  plusOneId,
+  motionOn,
   isLoading,
   disabled,
   pairKey,
-  watchedMs,
+  remainingSeconds,
   requiredMs,
   autoplay,
   sequencing,
+  paused,
   onWatched,
   onPlayedThrough,
+  onReachedEnd,
   onVote,
   onSkip,
   onMediaStatus,
@@ -391,27 +497,30 @@ function ImageCard({
 
   const handleTimeUpdate = (e: React.SyntheticEvent<HTMLVideoElement>) => {
     const { currentTime, duration } = e.currentTarget;
+    if (paused) {
+      // Tracked so playback counts from here once the arena is uncovered, not from the old mark.
+      lastTimeRef.current = currentTime;
+      return;
+    }
     const previousTime = lastTimeRef.current;
     // The player loops, so `ended` never fires: reaching the end shows up as the playhead wrapping.
     // The element's decoded duration, not the uploader-reported one, decides what counts as short.
-    if (
+    const wrapped =
       previousTime != null &&
-      duration * 1000 < requiredMs &&
       currentTime < previousTime &&
       previousTime >= duration - LOOP_WRAP_WINDOW_SECONDS &&
-      currentTime <= LOOP_WRAP_WINDOW_SECONDS
-    )
-      onPlayedThrough();
+      currentTime <= LOOP_WRAP_WINDOW_SECONDS;
+    if (wrapped && duration * 1000 < requiredMs) onPlayedThrough();
+    // Only after the rule is met, so a skip to the end cannot cut the tail short.
+    if (wrapped && watchedRef.current >= requiredMs) onReachedEnd();
     watchedRef.current = accumulatePlaybackMs({
       watchedMs: watchedRef.current,
       previousTime: lastTimeRef.current,
       currentTime,
     });
     lastTimeRef.current = currentTime;
-    onWatched(watchedRef.current);
+    onWatched(watchedRef.current, duration);
   };
-
-  const remainingSeconds = Math.ceil(Math.max(0, requiredMs - watchedMs) / 1000);
 
   if (!entry) {
     return <Skeleton radius="lg" className={mediaBoxClass} />;
@@ -422,88 +531,110 @@ function ImageCard({
   return (
     <Paper
       className={clsx(
-        'flex min-h-0 cursor-pointer flex-col overflow-hidden rounded-xl border-2 transition-all duration-200',
-        'focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 focus:ring-offset-[#1a1b1e]',
-        isSelected
-          ? 'border-green-500 shadow-[0_0_20px_rgba(64,192,87,0.3)]'
-          : 'border-transparent hover:-translate-y-0.5 hover:border-blue-500'
+        'group relative flex min-h-0 cursor-pointer flex-col overflow-hidden rounded-xl',
+        motionOn && 'transition-[transform,opacity,box-shadow] duration-200',
+        'focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 focus-visible:ring-offset-2 focus-visible:ring-offset-[#1a1b1e]',
+        isSelected && 'ring ring-blue-500',
+        isSelected && motionOn && 'scale-[1.02]',
+        dimmed && 'opacity-50',
+        !isSelected && !disabled && motionOn && 'hover:-translate-y-0.5'
       )}
-      bg="dark.7"
+      bg="dark.8"
       role="button"
       tabIndex={disabled ? -1 : 0}
       aria-label={`Vote for ${position} ${isVideo ? 'video' : 'image'}`}
       aria-disabled={disabled}
+      data-selected={isSelected || undefined}
       data-watch-remaining={remainingSeconds || undefined}
       onClick={disabled ? undefined : onVote}
       onKeyDown={handleKeyDown}
     >
       <Box
-        className={clsx('relative bg-[#1a1b1e]', mediaBoxClass)}
+        className={clsx('relative overflow-hidden bg-[#1a1b1e]', mediaBoxClass)}
         // A video owns its own clicks: scrubbing, play/pause and unmuting all land inside this
         // box, and the card votes on click, so without this every control press is a misvote.
         // Voting a video is therefore the Vote button or the hotkey. Images still vote on click.
         onClick={isVideo ? (e: React.MouseEvent) => e.stopPropagation() : undefined}
         onKeyDown={isVideo ? (e: React.KeyboardEvent) => e.stopPropagation() : undefined}
       >
-        {isLoading ? (
-          <div className="flex size-full items-center justify-center">
-            <Loader size="lg" />
+        {!isVideo && !isLoading && (
+          // Outside JudgingMedia, whose capture handlers would read this copy's load or error as
+          // the entry's own.
+          <div aria-hidden className="pointer-events-none absolute inset-0">
+            <EdgeMedia
+              src={entry.image.url}
+              type={entry.image.type}
+              // Same width and anim as the entry itself, so this is a cache hit, not a second download.
+              anim
+              width={600}
+              className="size-full scale-110 object-cover opacity-30 blur-2xl"
+              style={{ maxWidth: 'none' }}
+            />
           </div>
-        ) : (
-          <JudgingMedia
-            // A fresh element per pair and per retry, so each starts paused, muted and unloaded.
-            key={`${pairKey}:${attempt}`}
-            entry={entry}
-            side={position}
-            onStatus={onMediaStatus}
-            onRetry={() => setAttempt((n) => n + 1)}
-            onSkip={onSkip}
-            otherPlaying={otherPlaying}
-            autoplay={autoplay}
-            sequencing={sequencing}
-            onPlay={onPlay}
-            soundOn={soundOn}
-            onSoundChange={onSoundChange}
-            onSoundBlocked={onSoundBlocked}
-            onTimeUpdate={handleTimeUpdate}
-          />
         )}
 
-        {/* Selected indicator */}
-        {isSelected && (
-          <div className="absolute inset-0 flex items-center justify-center bg-black/40">
-            <div className="flex size-16 items-center justify-center rounded-full bg-green-500">
-              <IconCheck size={32} className="text-white" />
+        {/* Keyed on the pair alone, which JudgingMedia already remounts on, so the entrance adds
+            no remount of its own. Scale only: `initial` renders before the lazy motion chunk
+            loads, and if it never does an opacity entrance leaves a live pair invisible. */}
+        <MotionDiv
+          key={pairKey}
+          className="relative size-full"
+          initial={motionOn ? { scale: 0.98 } : false}
+          animate={{ scale: 1 }}
+          transition={{ duration: 0.25, ease: 'easeOut' }}
+        >
+          {isLoading ? (
+            <div className="flex size-full items-center justify-center">
+              <Loader size="lg" />
             </div>
-          </div>
+          ) : (
+            <JudgingMedia
+              // A fresh element per pair and per retry, so each starts paused, muted and unloaded.
+              key={`${pairKey}:${attempt}`}
+              entry={entry}
+              side={position}
+              onStatus={onMediaStatus}
+              onRetry={() => setAttempt((n) => n + 1)}
+              onSkip={onSkip}
+              otherPlaying={otherPlaying}
+              autoplay={autoplay}
+              sequencing={sequencing}
+              paused={paused}
+              onPlay={onPlay}
+              soundOn={soundOn}
+              onSoundChange={onSoundChange}
+              onSoundBlocked={onSoundBlocked}
+              onTimeUpdate={handleTimeUpdate}
+            />
+          )}
+        </MotionDiv>
+
+        <span
+          aria-hidden
+          className={clsx(
+            'pointer-events-none absolute left-3 top-3 z-10 flex size-7 items-center justify-center rounded-md text-sm font-semibold',
+            motionOn && 'transition-colors duration-150',
+            isSelected
+              ? 'bg-blue-600 text-white'
+              : 'bg-black/60 text-gray-400 group-hover:bg-black/80 group-hover:text-white'
+          )}
+        >
+          {hotkeyLabel}
+        </span>
+
+        {plusOneId != null && (
+          <MotionSpan
+            key={plusOneId}
+            aria-hidden
+            className="pointer-events-none absolute bottom-4 left-1/2 z-10 -ml-5 w-10 rounded-full bg-blue-600 py-1 text-center text-sm font-bold text-white shadow-lg"
+            initial={motionOn ? { opacity: 1, y: 0 } : false}
+            animate={motionOn ? { opacity: 0, y: -24 } : { opacity: 1 }}
+            transition={{ duration: PLUS_ONE_MS / 1000, ease: 'easeOut' }}
+          >
+            +1
+          </MotionSpan>
         )}
       </Box>
-
-      {/* Vote button section */}
-      <div className="flex shrink-0 items-center justify-center gap-3 p-2 md:p-3">
-        <Button
-          className={clsx(
-            'flex-1 font-semibold transition-all duration-200',
-            isSelected
-              ? 'bg-green-600 hover:bg-green-500'
-              : 'bg-blue-600 hover:-translate-y-0.5 hover:bg-blue-500'
-          )}
-          size="md"
-          data-testid="judge-vote"
-          onClick={(e: React.MouseEvent) => {
-            e.stopPropagation();
-            if (!disabled) onVote();
-          }}
-          disabled={disabled}
-        >
-          <span className="flex items-center gap-2">
-            {remainingSeconds > 0 ? `Watch ${remainingSeconds}s more` : 'Vote'}
-            <Kbd size="xs" className="opacity-75">
-              {hotkeyLabel}
-            </Kbd>
-          </span>
-        </Button>
-      </div>
     </Paper>
   );
 }
@@ -517,6 +648,7 @@ type JudgingMediaProps = {
   otherPlaying: boolean;
   autoplay: boolean;
   sequencing: boolean;
+  paused: boolean;
   onPlay: (side: Side) => void;
   soundOn: boolean;
   onSoundChange: (soundOn: boolean) => void;
@@ -533,6 +665,7 @@ function JudgingMedia({
   otherPlaying,
   autoplay,
   sequencing,
+  paused,
   onPlay,
   soundOn,
   onSoundChange,
@@ -583,8 +716,8 @@ function JudgingMedia({
   );
 
   useEffect(() => {
-    if (otherPlaying) ref.current?.querySelector('video')?.pause();
-  }, [otherPlaying]);
+    if (otherPlaying || paused) ref.current?.querySelector('video')?.pause();
+  }, [otherPlaying, paused]);
 
   const wasAutoplaying = useRef(false);
   useEffect(() => {
@@ -614,7 +747,7 @@ function JudgingMedia({
   };
 
   const handlePointerEnter = (e: React.PointerEvent) => {
-    if (e.pointerType !== 'mouse' || sequencing) return;
+    if (e.pointerType !== 'mouse' || sequencing || paused) return;
     const video = getVideo();
     if (!video) return;
     video.muted = !soundOn;
@@ -735,15 +868,10 @@ export function CrucibleJudgingUISkeleton() {
     <div className="flex flex-1 flex-col gap-4 md:min-h-0">
       <div className={pairGridClass}>
         {[0, 1].map((i) => (
-          <Paper key={i} className="flex min-h-0 flex-col overflow-hidden rounded-xl" bg="dark.7">
-            <Skeleton radius={0} className={mediaBoxClass} />
-            <div className="p-2 md:p-3">
-              <Skeleton height={36} radius="md" />
-            </div>
-          </Paper>
+          <Skeleton key={i} radius="lg" className={mediaBoxClass} />
         ))}
       </div>
-      <Skeleton height={42} width={220} radius="md" className="mx-auto" />
+      <Skeleton height={56} width={300} radius="xl" className="mx-auto shrink-0" />
     </div>
   );
 }

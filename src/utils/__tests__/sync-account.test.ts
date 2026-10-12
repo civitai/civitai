@@ -20,18 +20,22 @@ const domains: ServerDomains = {
 
 describe('syncAccountFor — works without a browser', () => {
   it('stamps a cross-colour link with the SOURCE colour', () => {
-    expect(syncAccountFor('//civitai.red/models/1', 'green', domains)).toBe(
+    expect(syncAccountFor('//civitai.red/models/1', 'green', domains, true)).toBe(
       '//civitai.red/models/1?sync-account=green'
     );
   });
 
   it('stamps an absolute url and an aliased host too', () => {
-    expect(syncAccountFor('https://civitai.red/x', 'green', domains)).toContain('sync-account=green');
-    expect(syncAccountFor('//www.civitai.red/x', 'green', domains)).toContain('sync-account=green');
+    expect(syncAccountFor('https://civitai.red/x', 'green', domains, true)).toContain(
+      'sync-account=green'
+    );
+    expect(syncAccountFor('//www.civitai.red/x', 'green', domains, true)).toContain(
+      'sync-account=green'
+    );
   });
 
   it('preserves an existing query string', () => {
-    const out = syncAccountFor('//civitai.red/search?query=cats', 'green', domains);
+    const out = syncAccountFor('//civitai.red/search?query=cats', 'green', domains, true);
     expect(out).toContain('query=cats');
     expect(out).toContain('sync-account=green');
   });
@@ -43,14 +47,20 @@ describe('syncAccountFor — leaves everything else alone', () => {
     ['a relative url', '/models/1', 'green' as const],
     ['an external host', '//example.com/x', 'green' as const],
   ])('%s', (_label, url, color) => {
-    expect(syncAccountFor(url, color, domains)).toBe(url);
+    expect(syncAccountFor(url, color, domains, true)).toBe(url);
   });
 
   it('no current colour resolved', () => {
-    expect(syncAccountFor('//civitai.red/x', undefined, domains)).toBe('//civitai.red/x');
+    expect(syncAccountFor('//civitai.red/x', undefined, domains, true)).toBe('//civitai.red/x');
   });
 
   it('no domain map yet', () => {
-    expect(syncAccountFor('//civitai.red/x', 'green', undefined)).toBe('//civitai.red/x');
+    expect(syncAccountFor('//civitai.red/x', 'green', undefined, true)).toBe('//civitai.red/x');
+  });
+
+  it('signed-out viewer (incl. crawlers): no session to sync, so no marker', () => {
+    expect(syncAccountFor('//civitai.red/models/1', 'green', domains, false)).toBe(
+      '//civitai.red/models/1'
+    );
   });
 });

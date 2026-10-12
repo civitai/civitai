@@ -47,6 +47,12 @@ export type CapDefinition = {
   hidden?: boolean;
 };
 export const PEAK_EARNING_WINDOW = 12;
+
+/**
+ * Must be the start of a UTC month: this month's deposits are read from the bank account, so a
+ * mid-month cutover would subtract pre-cutover deposits the snapshot already reflects.
+ */
+export const BANKABLE_CUTOVER = new Date('2026-11-01T00:00:00Z');
 export const MIN_CAP = 100000;
 export const CAP_DEFINITIONS: CapDefinition[] = [
   { tier: 'founder', limit: MIN_CAP, hidden: true },

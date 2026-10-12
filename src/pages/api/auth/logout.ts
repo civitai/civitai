@@ -10,6 +10,7 @@ import {
   clearLegacyCookies,
   POST_LOGIN_MARKER,
 } from '~/server/auth/civ-cookie';
+import { safeInternalPath } from '~/utils/url-helpers';
 import { resolveSelfOrigin } from '~/server/auth/oauth-bridge';
 import { generationServiceCookie } from '~/shared/constants/generation.constants';
 
@@ -46,11 +47,6 @@ function clearCookie(name: string, secure: boolean, domains: (string | undefined
   });
 }
 
-function safeCallback(cb: unknown): string {
-  if (typeof cb !== 'string' || !cb) return '/';
-  return cb.startsWith('/') && !cb.startsWith('//') && !cb.startsWith('/\\') ? cb : '/';
-}
-
 // The full set of Set-Cookie headers that end a session on this host. Pulled out so the cookie names cleared
 // (in particular the device cookie that gates seamless switching) are unit-testable without an HTTP round-trip.
 export function buildLogoutCookies(host: string | undefined): string[] {
@@ -85,7 +81,7 @@ export function buildLogoutCookies(host: string | undefined): string[] {
 }
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
-  const callbackUrl = safeCallback(req.query.callbackUrl);
+  const callbackUrl = safeInternalPath(req.query.callbackUrl, '/');
   const token = req.cookies[sessionCookieName()];
 
   // Always clear THIS spoke's own cookies (registrable domain) + best-effort revoke its token's jti at the hub

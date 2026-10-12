@@ -41,7 +41,14 @@ const whereClause = (uid: number, from: string, to: string) =>
 
 const CURRENCY_LIST = BUZZ_CURRENCIES.map((c) => `'${c}'`).join(',');
 
-const SOURCE_EXPR = `multiIf(type = 'tip', 'tip', type = 'compensation', 'compensation', type IN ('licenseFee','27'), 'licenseFee', type = 'sell', 'cosmeticSale', 'accessSale')`;
+// A `tip` from account 0 is not from a user. Until 2025-10-13 the payout job paid generation tips that way, keyed
+// `creator-tip-`; the rest are refunds and manual credits staff file as tips, some of them creator income, so
+// they stay in the totals under their own source.
+const ACCOUNT_ZERO_TIP = `(type = 'tip' AND fromAccountId = 0)`;
+// Generation tips are paid as `compensation`; only the payout job's externalTransactionId prefix tells them
+// apart, so that arm must come before plain compensation. Tips paid between 2025-10-13 and the split are inside
+// compensation; tips paid before that are `tip` rows from account 0.
+export const SOURCE_EXPR = `multiIf(${ACCOUNT_ZERO_TIP} AND externalTransactionId LIKE 'creator-tip-%', 'generationTip', ${ACCOUNT_ZERO_TIP}, 'otherCredit', type = 'tip', 'tip', type = 'compensation' AND externalTransactionId LIKE 'generation-tip-%', 'generationTip', type = 'compensation', 'compensation', type IN ('licenseFee','27'), 'licenseFee', type = 'sell', 'cosmeticSale', 'accessSale')`;
 
 async function fetchSummary({
   userId,
@@ -105,7 +112,7 @@ async function fetchSeries({
 
 // By-source × currency totals over the range — the /earnings source cards and the dashboard headline.
 export const getEarningsSummary = createCache({
-  name: 'earnings:summary',
+  name: 'earnings:summary:v3',
   fetch: fetchSummary,
   ttlSeconds: ({ from, to }) => rangeTtlSeconds({ from, to }),
 }).get;
@@ -114,7 +121,7 @@ export const getEarningsSummary = createCache({
 export const getEarningsSeries = createCache({
   // Keys derive from the args, not the payload, so a stored value outlives a change to the returned shape. Bump
   // the suffix whenever that shape or the numbers change.
-  name: 'earnings:series:v2',
+  name: 'earnings:series:v4',
   fetch: fetchSeries,
   ttlSeconds: ({ from, to }) => rangeTtlSeconds({ from, to }),
 }).get;

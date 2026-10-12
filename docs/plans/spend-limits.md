@@ -135,9 +135,12 @@ subjects that have a limit set (filtering done in
 | `oauthConsent.revokeApp`    | Best-effort `DELETE …/auth/oauth/:clientId` after the consent + tokens are gone           |
 | `apiKey.getSpend`           | Builds the user's subject list (filtered to those with a limit), fans out per-subject GET |
 
-Both `setBuzzLimit` mutations refuse to modify the limit on the calling
-token's own subject — a token can't raise or clear its own cap. Session
-auth and other tokens belonging to the same user can edit any limit.
+These management mutations (and `apiKey.add`) accept a browser session or a
+full-scope personal API key (`requireFullUserCredential`); OAuth access tokens,
+System keys and reduced-scope keys are refused. `apiKey.setBuzzLimit` also
+refuses to modify the calling key's own limit, so a key can't raise or clear
+its own cap. Session auth and other full-scope personal keys of the same user
+can edit any limit.
 
 ## UI
 
@@ -173,7 +176,7 @@ from the browser or via an agent token."
 ## Self-modify protection summary
 
 - `apiKey.setBuzzLimit` rejects when `ctx.subject.type === 'apiKey' && ctx.subject.id === input.id`.
-- `oauthConsent.setBuzzLimit` rejects when `ctx.subject.type === 'oauth' && ctx.subject.id === input.clientId`.
+- `oauthConsent.setBuzzLimit` refuses every OAuth access token through `requireFullUserCredential`, so no token can reach its own consent.
 
 ## Open follow-ups
 

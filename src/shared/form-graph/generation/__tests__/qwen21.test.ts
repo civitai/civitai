@@ -1,8 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { generationGraph } from '~/shared/data-graph/generation/generation-graph';
-import { getImagesLimit } from '~/shared/data-graph/generation/images-limit';
+import { getImagesLimit } from '~/shared/generation/images-limit';
 import { generationHub } from '../hub.graph';
-import type { GenerationCtx } from '~/shared/data-graph/generation/context';
+import type { GenerationCtx } from '~/shared/generation/context';
 import { qwen21AspectRatios } from '~/shared/constants/qwen21.constants';
 
 const EXT: GenerationCtx = {
@@ -13,14 +12,13 @@ const EXT: GenerationCtx = {
 };
 const IMAGE = { url: 'https://example.com/reference.png', width: 896, height: 1152 };
 const parse = (raw: Record<string, unknown>) => {
-  const input = { ecosystem: 'Qwen21', prompt: 'A ceramic teapot', seed: 42, ...raw };
-  const legacy = generationGraph.safeParse(input, EXT);
-  const current = generationHub.parse(input, EXT);
-  expect(legacy.success).toBe(true);
-  expect(current.success).toBe(true);
-  if (!legacy.success || !current.success) throw new Error('Qwen 2.1 did not validate');
-  expect(current.data).toEqual(legacy.data);
-  return current.data;
+  const result = generationHub.parse(
+    { ecosystem: 'Qwen21', prompt: 'A ceramic teapot', seed: 42, ...raw },
+    EXT
+  );
+  if (!result.success)
+    throw new Error(`Qwen 2.1 did not validate: ${JSON.stringify(result.errors)}`);
+  return result.data;
 };
 
 describe('Qwen Image 2.1 generator contract', () => {

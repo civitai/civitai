@@ -634,7 +634,8 @@ function EditAppModal({
       description: description.trim(),
       redirectUris: uris,
       allowedOrigins: originsParsed.value,
-      allowedScopes: tokenScope,
+      // Opt-in bits above `Full` aren't editable here.
+      allowedScopes: tokenScope & TokenScope.Full,
     });
   };
 
@@ -751,6 +752,10 @@ export function OAuthAppsCard({ flat }: { flat?: boolean } = {}) {
           </Text>
           <Text size="sm" c="red">
             This will revoke all tokens and disconnect all users.
+          </Text>
+          <Text size="sm">
+            Any store items other creators listed through this app will also be removed from the
+            store. To list them again they would need to be republished and reviewed.
           </Text>
         </Stack>
       ),

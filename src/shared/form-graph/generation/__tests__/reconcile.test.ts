@@ -9,7 +9,8 @@ import {
   FLUX_MODE_IDS,
   reconcileSelectors,
 } from '../reconcile';
-import type { GenerationCtx } from '~/shared/data-graph/generation/context';
+import type { GenerationCtx } from '~/shared/generation/context';
+import { viduVersionIds } from '~/shared/generation/version-ids';
 
 /**
  * The selector-reconciliation policy: one pure function, two adapters. The
@@ -100,6 +101,24 @@ describe('deriveWorkflowFromModel', () => {
     // unregistered families never move
     expect(
       deriveWorkflowFromModel({ id: 2983023 }, { ecosystem: 'Krea2', workflow: 'txt2img' })
+    ).toBeUndefined();
+  });
+
+  it('vidu Q4 moves text-to-video and first/last frame to img2vid, and keeps ref2vid', () => {
+    const q4 = { id: viduVersionIds.q4 };
+    expect(deriveWorkflowFromModel(q4, { ecosystem: 'Vidu', workflow: 'txt2vid' })).toEqual({
+      workflow: 'img2vid',
+    });
+    expect(
+      deriveWorkflowFromModel(q4, { ecosystem: 'Vidu', workflow: 'img2vid:first-last' })
+    ).toEqual({ workflow: 'img2vid' });
+    expect(deriveWorkflowFromModel(q4, { ecosystem: 'Vidu', workflow: 'img2vid' })).toBeUndefined();
+    expect(
+      deriveWorkflowFromModel(q4, { ecosystem: 'Vidu', workflow: 'img2vid:ref2vid' })
+    ).toBeUndefined();
+    // Q1 still does text-to-video
+    expect(
+      deriveWorkflowFromModel({ id: viduVersionIds.q1 }, { ecosystem: 'Vidu', workflow: 'txt2vid' })
     ).toBeUndefined();
   });
 });

@@ -27,7 +27,7 @@ import classes from './GeneratedImageActions.module.scss';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { imageGenerationDrawerZIndex } from '~/shared/constants/app-layout.constants';
 import type { BlobData } from '~/shared/orchestrator/workflow-data';
-import { bulkWorkflowLimits } from '~/shared/data-graph/generation/config/workflows';
+import { bulkWorkflowLimits } from '~/shared/generation/config/workflows';
 import {
   useGeneratedItemWorkflows,
   applyBulkWorkflow,

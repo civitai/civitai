@@ -1,6 +1,6 @@
 import * as z from 'zod';
 import { MAX_SEED } from '~/shared/constants/generation.constants';
-import { MAX_PROMPT_LENGTH } from '~/shared/data-graph/generation/common';
+import { MAX_PROMPT_LENGTH } from '~/shared/generation/values';
 import { WILDCARD_CATEGORY_NAME } from '~/utils/prompt-helpers';
 
 // Category names match the import-side normalization (basename of the source

@@ -88,27 +88,35 @@ Ladle auto-discovers stories matching `src/**/*.stories.tsx`.
 Use the browser-automation skill to capture cropped, padded screenshots:
 
 ```bash
-# Create a browser session
-node ~/.claude/skills/browser-automation/cli.mjs session http://localhost:61111 --name ladle
+# Start the server and create a browser session on Ladle
+node .claude/skills/browser-automation/server.mjs &
+curl -X POST http://localhost:9222/sessions -d '{"name": "ladle", "url": "http://localhost:61111"}'
+```
 
-# Capture all story variants in dark and light themes
-node ~/.claude/skills/browser-automation/cli.mjs run "
-  const stories = [
-    { name: 'default', path: 'my-component--default' },
-    { name: 'empty', path: 'my-component--empty' },
-  ];
-  const themes = ['dark', 'light'];
-  const dir = '<session-screenshots-dir>';
+Put the capture code in a scratch file, e.g. `<scratch-dir>/capture.js`:
 
-  for (const theme of themes) {
-    for (const story of stories) {
-      await page.goto('http://localhost:61111/?story=' + story.path + '&theme=' + theme + '&mode=preview');
-      await page.waitForTimeout(800);
-      const wrapper = page.locator('.ladle-story-wrapper');
-      await wrapper.screenshot({ path: dir + '/crop-' + theme + '-' + story.name + '.png' });
-    }
+```js
+const stories = [
+  { name: 'default', path: 'my-component--default' },
+  { name: 'empty', path: 'my-component--empty' },
+];
+const themes = ['dark', 'light'];
+const dir = '<absolute-output-dir>';
+
+for (const theme of themes) {
+  for (const story of stories) {
+    await page.goto('http://localhost:61111/?story=' + story.path + '&theme=' + theme + '&mode=preview');
+    await page.waitForTimeout(800);
+    const wrapper = page.locator('.ladle-story-wrapper');
+    await wrapper.screenshot({ path: dir + '/crop-' + theme + '-' + story.name + '.png' });
   }
-" --label "Component preview screenshots" -s ladle
+}
+```
+
+Then run it as a chunk:
+
+```bash
+node -e "fetch('http://localhost:9222/chunk?session=ladle', { method: 'POST', body: JSON.stringify({ label: 'Component preview screenshots', code: require('fs').readFileSync(process.argv[1], 'utf8') }) }).then((r) => r.text()).then(console.log)" "<scratch-dir>/capture.js"
 ```
 
 **Story path format:** The story path is derived from the file name and export name:

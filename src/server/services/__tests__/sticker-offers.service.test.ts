@@ -125,11 +125,10 @@ describe('getStickerOffers', () => {
 
   // Each of these is a refusal `purchaseCosmeticShopItem` makes. Offering a
   // price it would reject is the one thing this function must not do.
-  it('offers no listing to the sticker maker, who is granted it and cannot buy it', async () => {
+  it('offers the listing to the sticker maker too', async () => {
     mocks.cosmeticFindMany.mockResolvedValue([cosmeticRow(undefined, VIEWER_ID)]);
     const [offer] = await offers();
-    expect(offer.listing).toBeNull();
-    // The per-use half is a different purchase and stays open.
+    expect(offer.listing).toMatchObject({ shopItemId: 77, unitAmount: 666 });
     expect(offer.pricePerUse).toBe(5);
   });
 

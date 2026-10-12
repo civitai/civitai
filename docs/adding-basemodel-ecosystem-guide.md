@@ -315,7 +315,7 @@ export const BM = {
 },
 ```
 
-**Note**: Generation parameters like sampler, steps, CFG, and resolution are configured in data-graph workflow configs, not in ecosystem settings.
+**Note**: Generation parameters like sampler, steps, CFG, and resolution are configured in the graph's field defs and `src/shared/generation/config/workflows.ts`, not in ecosystem settings.
 
 **Common engines**:
 - `'wan'` - WanVideo models
@@ -598,7 +598,7 @@ ecosystemSettings: [
     },
   },
 ]
-// Note: Resolution, sampler, steps, CFG are configured in data-graph workflow configs
+// Note: Resolution, sampler, steps, CFG are configured in the graph's field defs
 
 // 9. No cross-ecosystem rules
 ```

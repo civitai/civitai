@@ -114,7 +114,8 @@ function ViewOriginalMenuItem({ imageId }: { imageId: number }) {
   // provenance, which is exactly what this link is.
   const { items } = useApplyHiddenPreferences({
     type: 'images',
-    data: source ? [source] : [],
+    // Null `url`: media withheld from this viewer, nothing to link to.
+    data: source?.url ? [source] : [],
   });
 
   if (!sourceId || !items.length) return null;

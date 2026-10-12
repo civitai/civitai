@@ -5,6 +5,8 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { resetEnv, setEnv } from '~/__tests__/mocks/env.mock';
 import { logToAxiom, markServerFaultLogged } from '~/server/logging/client';
+// Namespace import so this file still collects on a tree without the counter export.
+import * as httpErrors from '~/server/prom/http-errors';
 import {
   __resetTrpcBatchMetricsForTest,
   isTrpcBatchOverCap,
@@ -189,6 +191,71 @@ describe('src/pages/api/trpc/[trpc].ts wiring', () => {
     await callOnError(req, new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'boom' }));
     expect(vi.mocked(logToAxiom)).toHaveBeenCalledTimes(1);
   });
+
+  // -------------------------------------------------------------------------
+  // Allowlisted-404 skip: image.getGenerationData NOT_FOUND is counted, not logged
+  // -------------------------------------------------------------------------
+
+  const GEN_DATA = 'image.getGenerationData';
+
+  const callOnErrorAt = (path: string, error: TRPCError) =>
+    h.options?.onError?.({
+      error,
+      type: 'query',
+      path,
+      input: { id: 1 },
+      ctx: {},
+      req: request(2),
+    });
+
+  /** The skipped case's counter value, read off the real module (http-errors is not mocked). */
+  const unloggedCount = async (path: string, code: string) => {
+    // Absent counter reads as 0 so the [invariant] controls below fail only on their own
+    // assertions; the skip case still needs a real +1, so a missing counter cannot pass it.
+    const counter = httpErrors.trpcUnloggedClientErrorCounter as
+      | typeof httpErrors.trpcUnloggedClientErrorCounter
+      | undefined;
+    if (!counter) return 0;
+    const metric = await counter.get();
+    const values = metric.values as { value: number; labels: Record<string, string | number> }[];
+    return values.find((v) => v.labels.path === path && v.labels.code === code)?.value ?? 0;
+  };
+
+  it('does NOT ingest a NOT_FOUND from image.getGenerationData, and counts it instead', async () => {
+    const before = await unloggedCount(GEN_DATA, 'NOT_FOUND');
+
+    await callOnErrorAt(GEN_DATA, new TRPCError({ code: 'NOT_FOUND', message: 'none' }));
+
+    expect(vi.mocked(logToAxiom)).not.toHaveBeenCalled();
+    expect(await unloggedCount(GEN_DATA, 'NOT_FOUND')).toBe(before + 1);
+  });
+
+  it('[invariant] POSITIVE CONTROL: a NOT_FOUND from any other procedure IS still ingested', async () => {
+    // Same code, same input shape, one variable changed (the path). Without this, "not called"
+    // above is indistinguishable from an onError that never reaches the ingest at all.
+    const before = await unloggedCount(GEN_DATA, 'NOT_FOUND');
+
+    await callOnErrorAt('image.get', new TRPCError({ code: 'NOT_FOUND', message: 'none' }));
+
+    expect(vi.mocked(logToAxiom)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(logToAxiom)).toHaveBeenCalledWith(
+      expect.objectContaining({ path: 'image.get' }),
+      'civitai-prod'
+    );
+    expect(await unloggedCount(GEN_DATA, 'NOT_FOUND')).toBe(before);
+  });
+
+  it.each(['INTERNAL_SERVER_ERROR', 'BAD_REQUEST'] as const)(
+    '[invariant] still ingests %s from image.getGenerationData (the skip is NOT_FOUND only)',
+    async (code) => {
+      await callOnErrorAt(GEN_DATA, new TRPCError({ code, message: 'boom' }));
+      expect(vi.mocked(logToAxiom)).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(logToAxiom)).toHaveBeenCalledWith(
+        expect.objectContaining({ path: GEN_DATA }),
+        'civitai-prod'
+      );
+    }
+  );
 
   // -------------------------------------------------------------------------
   // A masked error's ref reaches the log line

@@ -20,6 +20,7 @@ import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApp
 import { ITEMS_PER_ROW } from '~/components/HomeBlocks/homeBlockItems';
 import { dedupeOrder, useDedupedCappedItems } from '~/components/HomeBlocks/homeBlockDedupe';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useViewerEventDecorations } from '~/components/Decorations/useViewerEventDecorations';
 import { ImagesProvider } from '~/components/Image/Providers/ImagesProvider';
 import { useHydratedImageReactions } from '~/components/Reaction/useHydratedImageReactions';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
@@ -205,12 +206,17 @@ function ImageFeedGrid({
   // so it changes as they resolve — hydrating after it re-keyed the query and stranded the answer.
   // It does NOT buy the detail dialog anything: the dialog browses the capped list, which is
   // hydrated wherever this sits.
-  const visible = useDedupedCappedItems(useHydratedImageReactions(filtered, { entity: 'image' }), {
-    order,
-    entity: 'image',
-    rows,
-    maxPerUser,
-  });
+  const visible = useDedupedCappedItems(
+    useHydratedImageReactions(useViewerEventDecorations(filtered, { entity: 'image' }), {
+      entity: 'image',
+    }),
+    {
+      order,
+      entity: 'image',
+      rows,
+      maxPerUser,
+    }
+  );
 
   if (loadingPreferences) return <FeedSkeleton rows={rows} />;
 
@@ -240,7 +246,7 @@ function ModelFeedGrid({
     type: 'models',
     data: rotated,
   });
-  const visible = useDedupedCappedItems(filtered, {
+  const visible = useDedupedCappedItems(useViewerEventDecorations(filtered, { entity: 'model' }), {
     order,
     entity: 'model',
     rows,

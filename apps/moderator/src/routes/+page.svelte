@@ -30,7 +30,7 @@
   import { LINK_CLASS } from '$lib/format';
   import { SvelteMap } from 'svelte/reactivity';
   import NumberedPager from '$lib/components/NumberedPager.svelte';
-  import { sidebarCounts } from '$lib/sidebar-counts.svelte';
+    import { sidebarCounts } from '$lib/sidebar-counts.svelte';
   import { URGENT_REPORT_COUNT, queueSeverityClass } from '$lib/queue-thresholds';
   import { FormState } from '$lib/form-state.svelte';
   import type { ActionData, PageData } from './$types';
@@ -38,8 +38,8 @@
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
 
-  // Only ever a pathname this app redirected from, but rendered as text rather than a link so a
-  // hand-edited `?denied=` cannot turn the dashboard into a jumping-off point to somewhere else.
+  // Rendered as text. The link beside it is `data.returnTo`, which the server validated as a path on
+  // this app, so a hand-edited `?denied=` cannot turn the dashboard into a jumping-off point elsewhere.
   const denied = $derived(page.url.searchParams.get('denied'));
 
   const name = $derived(data.user?.username ?? 'moderator');
@@ -312,6 +312,9 @@
   >
     You don't have access to <code>{denied}</code>, so you were sent here. An admin can grant it on the
     Permissions page.
+    {#if data.returnTo}
+      Once granted, <a class="underline hover:text-amber-100" href={data.returnTo}>try it again</a>.
+    {/if}
   </div>
 {/if}
 
@@ -704,6 +707,12 @@
                 {#if !u.muted}<Badge variant="secondary">already unmuted</Badge>{/if}
                 {ago(u.createdAt)}
               </span>
+              {#if u.scanReason}
+                <p class="w-full text-xs text-dark-2">
+                  {u.scanEntityType} #{u.scanEntityId}: {u.scanReason}
+                  {#if u.restrictionStatus}· {u.restrictionStatus}{/if}
+                </p>
+              {/if}
             </li>
           {/each}
         </ul>

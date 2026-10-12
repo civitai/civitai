@@ -327,8 +327,9 @@ function parseAnswer(question: JevQuestionSpec, raw: unknown, idPath: string): J
       }
       // 🔴 The argmax must APPEAR in its own distribution. Without this, a
       // `choice` the distribution omits passes every check above and then
-      // `reorderShortlistByDistribution` — which reads `distribution[key] ?? 0` —
-      // ranks the vendor's own pick LAST. Nothing leaks (the option set is ours),
+      // `combineStage3Answers` (`services/resource-intent-stage3.ts`) — which reads
+      // `distribution[key] ?? 0` — scores the vendor's own pick 0 for that call. Nothing
+      // leaks (the option set is ours),
       // but the ranking would silently contradict the answer. Membership in the
       // option set is already proven, so `hasOwnProperty` here is about the
       // distribution, not about prototype safety.
@@ -433,18 +434,6 @@ export function buildDecisionsQuestions(
           // The vendor chooses among the KEYS, so the key set is the option set
           // and that is the load-bearing half. An option with no entry in
           // `optionDescriptions` describes itself.
-          //
-          // ⚠️ `buildStage3Question` (`services/resource-intent.service.ts`) ALREADY
-          // computes exactly the per-option descriptions this slot wants — model
-          // name, version, type, base model — and smuggles them through `prompt` as
-          // numbered lines, because the old chat transport had only one text field.
-          // So the option→description map ships TWICE in one request, and at the
-          // 255-option cap the degenerate copy is a measurable fraction of the body.
-          // Moving them here is deliberately NOT done in this change: it alters what
-          // the model sees, so it alters ranking quality, and that is not gradeable
-          // from a recorded fixture. **Closing condition: do it when the study can
-          // A/B it against live calls**, and delete the numbered lines in the same
-          // edit or the vendor sees both.
           criteria: Object.fromEntries(
             question.options.map((option) => [
               option,

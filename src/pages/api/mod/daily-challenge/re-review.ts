@@ -159,6 +159,7 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
         entityType: 'image',
         entityId: entry.imageId,
         content: review.comment,
+        eventPoints: false,
       });
 
       successes++;

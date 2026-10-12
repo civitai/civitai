@@ -5,7 +5,7 @@ import {
   REQUEST_RESOLVED_GENERATION_SURFACES,
   type GenerationSurfaceRequest,
 } from '~/server/services/orchestrator/generation-surface';
-import { isGenerationSurface } from '~/shared/data-graph/generation/model-substitution';
+import { isGenerationSurface } from '~/shared/generation/model-substitution';
 
 /**
  * The request→surface mapping behind the `api` / `onsite` split (#3665).

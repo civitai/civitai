@@ -1,19 +1,15 @@
 import { ecosystemByKey, getEcosystemDefaults } from '~/shared/constants/basemodel.constants';
 import { DRAFT_WORKFLOW } from '~/shared/constants/generation.constants';
-import {
-  getWorkflowsForEcosystem,
-  isWorkflowAvailable,
-} from '~/shared/data-graph/generation/config';
+import { getWorkflowsForEcosystem, isWorkflowAvailable } from '~/shared/generation/config';
 import { ecosystemKeyForBaseModel } from './checkpoint';
 import { booguVersionIds } from './image/boogu.graph';
-import { viduVersionIds } from '~/shared/data-graph/generation/version-ids';
+import { viduVersionIds } from '~/shared/generation/version-ids';
 
 /**
- * Selector reconciliation: v1's cross-level effects — a model whose baseModel
+ * Selector reconciliation: a model whose baseModel
  * belongs to another ecosystem drags `ecosystem` (and, when that ecosystem
- * doesn't support the current workflow, `workflow`) with it. In v1 this runs
- * as checkpoint effects DURING resolution; here it is ONE pure policy with two
- * adapters — a raw→raw normalizer applied before `parse` at the server
+ * doesn't support the current workflow, `workflow`) with it. ONE pure policy with
+ * two adapters — a raw→raw normalizer applied before `parse` at the server
  * boundary, and a store rule for interactive edits. The derivation depends
  * only on raw-visible facts, so the normalizer is idempotent by construction:
  * a second pass sees `ecosystem === modelEco` and returns nothing.
@@ -27,9 +23,9 @@ export type SelectorCorrection = {
 };
 
 /**
- * The policy: v1's checkpoint effect as a pure function. Returns the selector
+ * The policy, as a pure function. Returns the selector
  * rewrite a cross-ecosystem model implies, or undefined when nothing moves.
- * The workflow fallback mirrors v1 exactly: the target ecosystem's FIRST
+ * The workflow fallback is the target ecosystem's FIRST
  * configured workflow, unfiltered.
  */
 export function deriveSelectorsFromModel(
@@ -39,9 +35,8 @@ export function deriveSelectorsFromModel(
   const modelEco = model?.baseModel ? ecosystemKeyForBaseModel(model.baseModel) : undefined;
   if (!modelEco || modelEco === current.ecosystem) return undefined;
 
-  // A LOCKED model slot beats a cross-FAMILY model: v1's input substitution
-  // replaces it with the locked default before its effect could see it, so no
-  // switch happens there. Version SIBLINGS (LTXV23 on LTXV2, wan on wan) are
+  // A LOCKED model slot beats a cross-FAMILY model: the locked substitution replaces
+  // it before anything could switch on it, so no switch happens there. Version SIBLINGS (LTXV23 on LTXV2, wan on wan) are
   // valid entries in the locked picker's own version list, so they re-pick the
   // version branch — the lock does not apply.
   if (
@@ -60,7 +55,7 @@ export function deriveSelectorsFromModel(
   }
 
   const compatibleWorkflows = getWorkflowsForEcosystem(target.id);
-  if (compatibleWorkflows.length === 0) return undefined; // v1: don't switch
+  if (compatibleWorkflows.length === 0) return undefined; // don't switch
   return { ecosystem: modelEco, workflow: compatibleWorkflows[0].id };
 }
 
@@ -84,18 +79,17 @@ function isModelLocked(ecosystem: string, workflow: string | undefined): boolean
 
 /**
  * Families whose version picker is WORKFLOW-scoped: a known version id that
- * belongs to another workflow's list drags the workflow with it (v1's
- * workflowVersions effect — probed on Boogu: an edit checkpoint on txt2img
- * parses as img2img:edit with the model kept).
+ * belongs to another workflow's list drags the workflow with it (Boogu: an edit
+ * checkpoint on txt2img parses as img2img:edit with the model kept).
  */
 const workflowScopedVersions: Record<string, Record<string, ReadonlySet<number>>> = {
   Boogu: {
     txt2img: new Set([booguVersionIds.base, booguVersionIds.turbo]),
     'img2img:edit': new Set([booguVersionIds.edit, booguVersionIds.editTurbo]),
   },
-  // MageFlow shares the workflowVersions machinery but the oracle REMAPS its
-  // model into the current workflow (index-equivalent) instead of following it
-  // — probed; the remap is a `correct` in mage-flow.graph.ts.
+  // MageFlow shares the workflowVersions machinery but REMAPS its model into the
+  // current workflow (index-equivalent) instead of following it — the remap is a
+  // `correct` in mage-flow.graph.ts.
 };
 
 export function deriveWorkflowFromModel(
@@ -113,8 +107,8 @@ export function deriveWorkflowFromModel(
   ) {
     return { workflow: DRAFT_WORKFLOW };
   }
-  // Vidu Q3 has no reference-to-video operation: v1's effect drops the
-  // workflow back to plain img2vid when the Q3 build is picked (probed)
+  // Vidu Q3 has no reference-to-video operation, so picking the Q3 build drops the
+  // workflow back to plain img2vid
   if (
     current.ecosystem === 'Vidu' &&
     id === viduVersionIds.q3 &&
@@ -122,11 +116,19 @@ export function deriveWorkflowFromModel(
   ) {
     return { workflow: 'img2vid' };
   }
+  // Vidu Q4 has no text-to-video or last-frame input: both land on plain img2vid
+  if (
+    current.ecosystem === 'Vidu' &&
+    id === viduVersionIds.q4 &&
+    (current.workflow === 'txt2vid' || current.workflow === 'img2vid:first-last')
+  ) {
+    return { workflow: 'img2vid' };
+  }
   const table = current.ecosystem ? workflowScopedVersions[current.ecosystem] : undefined;
   if (!table || id == null) return undefined;
   const workflow = current.workflow ?? 'txt2img';
   const keys = Object.keys(table);
-  // prefix matching, as v1's findWorkflowConfig does
+  // prefix matching on the workflow key
   const currentKey = keys.find((k) => workflow === k || workflow.startsWith(k));
   if (currentKey && table[currentKey]!.has(id)) return undefined;
   const targetKey = keys.find((k) => table[k]!.has(id));
@@ -226,8 +228,7 @@ function looseModel(value: unknown): { id?: number; baseModel?: string } | undef
 
 /**
  * The parse-boundary adapter: applied to the raw payload BEFORE `parse`,
- * beside `normalizeInput` in the server adapter (and by the differential
- * harness's port wrapper). Never throws — an unreadable shape is a no-op and
+ * beside `normalizeInput` in the server adapter. Never throws — an unreadable shape is a no-op and
  * the graph's own schemas deal with it.
  */
 export function reconcileSelectors(raw: Record<string, unknown>): ReconcileResult {

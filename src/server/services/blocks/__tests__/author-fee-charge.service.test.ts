@@ -294,6 +294,7 @@ describe('chargeBlockAuthorFee — the debit', () => {
     // and dies only in `clickhouse-transaction-type.test.ts`. That suite is load
     // bearing for this one — do not delete it on the strength of these two lines.
     expect(tx.type).toBe(28);
+    expect(tx.description).toBe('App author fee');
 
     // D1 — the author is owed exactly what the viewer was debited.
     const row = mockDbWrite.blockAuthorFeeAccrual.create.mock.calls[0][0].data;

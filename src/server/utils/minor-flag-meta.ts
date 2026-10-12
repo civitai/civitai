@@ -1,5 +1,6 @@
 import { filterSensitiveProfanityData } from '~/libs/profanity-simple/helpers';
 import type { ModelMeta } from '~/server/schema/model.schema';
+import { hasOpenTextScanFlag } from '~/server/services/text-scan/flag-snapshot';
 
 export function isMinorAutoFlagged(meta: ModelMeta | null | undefined): boolean {
   const snapshot = meta?.minorFlagSnapshot;
@@ -18,7 +19,19 @@ export function resolveMinorFlagged({
   minor: boolean | null | undefined;
   meta: ModelMeta | null | undefined;
 }): boolean {
-  return !!isOwner && !!minor && !!meta?.minorFlagSnapshot;
+  return !!isOwner && !!minor && (!!meta?.minorFlagSnapshot || hasOpenTextScanFlag(meta, 'minor'));
+}
+
+export function resolvePoiFlagged({
+  isOwner,
+  poi,
+  meta,
+}: {
+  isOwner: boolean | null | undefined;
+  poi: boolean | null | undefined;
+  meta: ModelMeta | null | undefined;
+}): boolean {
+  return !!isOwner && !!poi && hasOpenTextScanFlag(meta, 'poi');
 }
 
 // The enforced privacy boundary for the appeal: whatever the caller passes in
@@ -50,6 +63,7 @@ export function stripMinorHashMeta(meta: ModelMeta | null): ModelMeta | null {
     minorHashCleared: _cleared,
     minorHashAccepted: _accepted,
     textModeration: _textModeration,
+    textScanFlags: _textScanFlags,
     ...rest
   } = meta;
 
@@ -73,6 +87,7 @@ const MODERATION_OWNED_META_KEYS = [
   'minorHashCleared',
   'minorHashAccepted',
   'textModeration',
+  'textScanFlags',
   'profanityMatches',
   'profanityEvaluation',
 ] as const satisfies readonly (keyof ModelMeta)[];

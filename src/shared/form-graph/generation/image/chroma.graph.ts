@@ -10,9 +10,8 @@ import {
 } from '../defs';
 import { familyResources, familyScope, promptOnlyTextBlock, type FamilyExt } from '../shared';
 
-/** Chroma, ported from `chroma-graph.ts`. No negative prompt, no CLIP skip. */
+/** Chroma. No negative prompt, no CLIP skip. */
 
-// Copied from chroma-graph.ts, which dies with the data-graph engine.
 const chromaVersionId = 2164239;
 /** Flow-compatible samplers. */
 const chromaSamplers = ['Euler', 'Euler a', 'DPM++ SDE', 'DPM++ 2M Karras', 'DPM++ SDE Karras'];

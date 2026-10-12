@@ -22,8 +22,9 @@ One process owns the whole notification write side:
   `Notification` + `UserNotification` rows (normal / debounced), deletes/reschedules the pending row,
   and POSTs a realtime `notification:new` signal per affected user, bumping that user's redis unread
   counter only if one is already cached (an uncached user is recounted from the DB on the next read).
-- **Ops routes** — `GET /health` (no-dep liveness), `GET /pool-stats` (notif pool snapshots),
-  `GET /metrics` (Prometheus, private-by-XFF).
+- **Ops routes** — `GET /health` (liveness; touches no dependency, but returns 503 on a worker pod whose
+  redis commands have all failed for 60s or whose poll loop has stalled for 10 min), `GET /pool-stats`
+  (notif pool snapshots), `GET /metrics` (Prometheus, private-by-XFF).
 
 The producer↔consumer contract is the `PendingNotification` table, not HTTP — so the monolith's
 existing direct writes and this app's producer API can coexist during the transition (plan R3).

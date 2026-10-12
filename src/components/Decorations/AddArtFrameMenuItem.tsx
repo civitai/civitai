@@ -20,7 +20,6 @@ export function AddArtFrameMenuItem(props: CardDecorationModalProps) {
         equippedToId: props.entityId,
         equippedToType: props.entityType,
         cosmeticId: currentCosmetic.id,
-        claimKey: currentCosmetic.claimKey,
       }).catch(() => null); // error is handled in the custom hook
     } else {
       openCardDecorationModal({ props });

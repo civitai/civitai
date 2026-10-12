@@ -4,7 +4,7 @@ import type { Veo3VideoGenInput, VideoGenStepTemplate } from '@civitai/client';
 import { removeEmpty } from '~/utils/object-helpers';
 import { findClosestAspectRatio } from '~/utils/aspect-ratio-helpers';
 import { veo3AspectRatios, veo3VersionIds } from '~/shared/form-graph/generation/video/veo3.graph';
-import { defineHandler } from '../ecosystems/handler-factory';
+import { defineHandler } from '../handlers/handler-factory';
 import type { EcosystemData } from './types';
 
 type Veo3Mode = 'fast' | 'standard';

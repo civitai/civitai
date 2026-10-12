@@ -1,5 +1,5 @@
 import type { PromptEnhancementSchema } from '~/server/schema/orchestrator/promptEnhancement.schema';
-import { MAX_PROMPT_LENGTH } from '~/shared/data-graph/generation/common';
+import { MAX_PROMPT_LENGTH } from '~/shared/generation/values';
 
 /**
  * Word budget stated to the analyzer in place of `MAX_PROMPT_LENGTH`. A character

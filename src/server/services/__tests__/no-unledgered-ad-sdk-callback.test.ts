@@ -83,7 +83,10 @@ function walk(dir: string, out: string[] = []): string[] {
     const full = path.join(dir, entry);
     if (statSync(full).isDirectory()) walk(full, out);
     else if (/\.(?:tsx?|jsx?|mjs|cjs)$/.test(entry) && !isTestFile(full))
-      out.push(path.relative(repoRoot, full));
+      // Posix separators: the ledger below is written with `/`, so on Windows every walked
+      // path missed it and this guard reported all five of its own files as unledgered —
+      // red for everyone locally, which masks a real failure rather than showing one.
+      out.push(path.relative(repoRoot, full).split(path.sep).join('/'));
   }
   return out;
 }

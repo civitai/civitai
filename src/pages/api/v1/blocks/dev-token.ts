@@ -248,7 +248,7 @@ type AxiomAPIRequest = NextApiRequest & { log: Logger };
  *    pending request's un-reviewed `manifest.scopes` (local-manifest mode, where
  *    the absent OAuth ceiling is replaced by 7f). Unknown / out-of-allowlist
  *    scopes are STRIPPED, never error.
- *  - BUDGET CAP: a LOWER dev cap (DEV_BUZZ_BUDGET_CAP) than the prod 1000. The
+ *  - BUDGET CAP: the per-call DEV_BUZZ_BUDGET_CAP (= the install-token BUZZ_BUDGET_CAP). The
  *    existing per-user daily cumulative cap (reserveBlockBuzzSpend) is untouched.
  *  - FORCED SFW: maxBrowsingLevel = domainBrowsingCeiling(null) UNCONDITIONALLY
  *    (localhost has no color domain; we never read the request host, so a
@@ -986,7 +986,7 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
   //
   // What DOES bound it is only what the token itself carries: it is SELF-BOUND (the
   // `sub` is the minter, so any spend is their OWN Buzz), per-call budget capped at
-  // the lower DEV_BUZZ_BUDGET_CAP, subject to the same cumulative per-user daily cap
+  // DEV_BUZZ_BUDGET_CAP, subject to the same cumulative per-user daily cap
   // as everything else, forced-SFW, and revocable through BlockRevocation on its
   // `blockInstanceId`. That bounds the HARM (self-inflicted, capped) — it does not
   // bound the LIFETIME, and no comment here should imply otherwise.

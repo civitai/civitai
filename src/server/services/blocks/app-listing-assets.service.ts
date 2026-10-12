@@ -4,6 +4,7 @@ import { randomUUID } from 'crypto';
 
 import { dbRead, dbWrite } from '~/server/db/client';
 import { bustAppListingCatalogCache } from '~/server/services/blocks/app-listing.service';
+import { recordListingRatingChangeAfterCommit } from '~/server/services/blocks/app-listing-rating';
 import { logToAxiom } from '~/server/logging/client';
 import { NsfwLevel } from '~/server/common/enums';
 import {
@@ -1194,15 +1195,15 @@ async function reDeriveContentRatingForModLiveEdit(
     contentRating: string | null;
   },
   user: SessionUser
-): Promise<void> {
-  if (!user.isModerator) return;
-  if (listing.status !== 'approved' || listing.revisionOfId != null) return;
+): Promise<{ before: string | null; after: string } | null> {
+  if (!user.isModerator) return null;
+  if (listing.status !== 'approved' || listing.revisionOfId != null) return null;
 
   const current = await tx.appListing.findUnique({
     where: { id: listing.id },
     select: { iconId: true, coverId: true, contentRating: true },
   });
-  if (!current) return;
+  if (!current) return null;
   const shots = await tx.appListingScreenshot.findMany({
     where: { appListingId: listing.id, imageId: { not: null } },
     select: { imageId: true },
@@ -1218,8 +1219,24 @@ async function reDeriveContentRatingForModLiveEdit(
   // ceiling is strictly higher (never auto-lower). `nsfwLevelFromContentRating`
   // maps null → the SFW floor, so a null stored rating is raised by any mature asset.
   if (nsfwLevelFromContentRating(derived) <= nsfwLevelFromContentRating(current.contentRating))
-    return;
+    return null;
   await tx.appListing.update({ where: { id: listing.id }, data: { contentRating: derived } });
+  return { before: current.contentRating, after: derived };
+}
+
+/** History for a rating {@link reDeriveContentRatingForModLiveEdit} raised, once committed. */
+async function recordModLiveEditRatingChange(
+  listing: { id: string; slug: string },
+  user: SessionUser,
+  raised: { before: string | null; after: string } | null
+): Promise<void> {
+  if (!raised) return;
+  await recordListingRatingChangeAfterCommit({
+    appListingId: listing.id,
+    slug: listing.slug,
+    ...raised,
+    actorUserId: user.id,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -1260,13 +1277,14 @@ export async function setListingIcon(
   assertOwnerAssetEditable(listing, user);
   const validated = await loadValidatedImage(args.imageId, 'icon', user, { allowPending: true });
   if (validated.pending) return { status: 'pending' };
-  await dbWrite.$transaction(async (tx) => {
+  const raised = await dbWrite.$transaction(async (tx) => {
     await tx.appListing.update({
       where: { id: listing.id },
       data: { iconId: validated.imageId },
     });
-    await reDeriveContentRatingForModLiveEdit(tx, listing, user);
+    return reDeriveContentRatingForModLiveEdit(tx, listing, user);
   });
+  await recordModLiveEditRatingChange(listing, user, raised);
   // Catalog bust: the tx may have RAISED `content_rating` via
   // `reDeriveContentRatingForModLiveEdit` — the `listingMatureFilter` axis the cached page
   // IS keyed on. That helper runs INSIDE the transaction, so its bust belongs here,
@@ -1295,13 +1313,14 @@ export async function setListingCover(
   assertOwnerAssetEditable(listing, user);
   const validated = await loadValidatedImage(args.imageId, 'cover', user, { allowPending: true });
   if (validated.pending) return { status: 'pending' };
-  await dbWrite.$transaction(async (tx) => {
+  const raised = await dbWrite.$transaction(async (tx) => {
     await tx.appListing.update({
       where: { id: listing.id },
       data: { coverId: validated.imageId },
     });
-    await reDeriveContentRatingForModLiveEdit(tx, listing, user);
+    return reDeriveContentRatingForModLiveEdit(tx, listing, user);
   });
+  await recordModLiveEditRatingChange(listing, user, raised);
   // Catalog bust: the same in-tx `content_rating` re-derive as the icon path above — that
   // is the cached axis. (`coverUrl` is NOT: it is hydrated live, see the icon path's note.)
   await bustAppListingCatalogCache().catch(() => undefined);
@@ -1347,7 +1366,7 @@ export async function addListingScreenshot(
   }
   const nextOrder = existing.length > 0 ? existing[0].order + 1 : 0;
   const id = newAppListingScreenshotId();
-  await dbWrite.$transaction(async (tx) => {
+  const raised = await dbWrite.$transaction(async (tx) => {
     await tx.appListingScreenshot.create({
       data: {
         id,
@@ -1357,8 +1376,9 @@ export async function addListingScreenshot(
         caption: args.caption ?? null,
       },
     });
-    await reDeriveContentRatingForModLiveEdit(tx, listing, user);
+    return reDeriveContentRatingForModLiveEdit(tx, listing, user);
   });
+  await recordModLiveEditRatingChange(listing, user, raised);
   // Catalog bust: a screenshot can RAISE `content_rating` via the same in-tx re-derive,
   // flipping the maturity gate the cached page is keyed on.
   await bustAppListingCatalogCache().catch(() => undefined);

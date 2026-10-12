@@ -26,7 +26,7 @@ import type {
 import { removeEmpty } from '~/utils/object-helpers';
 import { findClosestAspectRatio } from '~/utils/aspect-ratio-helpers';
 import { ecosystemToVersionDef } from '~/shared/form-graph/generation/video/wan.graph';
-import { defineHandler } from '../ecosystems/handler-factory';
+import { defineHandler } from '../handlers/handler-factory';
 import type { EcosystemData } from './types';
 
 export type WanGenerationData = EcosystemData<
