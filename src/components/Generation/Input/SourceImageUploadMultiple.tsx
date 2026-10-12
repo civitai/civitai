@@ -28,6 +28,8 @@ import {
   type ImagePrepStage,
   imageToJpegBlob,
   prepStage,
+  IMAGE_LOAD_ERROR,
+  IMAGE_PREP_ERROR,
   resizeImage,
 } from '~/shared/utils/canvas-utils';
 import { getImageDimensions } from '~/utils/image-utils';
@@ -219,10 +221,6 @@ function MetadataAction({ url, apply }: { url: string; apply?: ImageMetadataAppl
 const iconSize = 18;
 const maxSizeFormatted = formatBytes(maxOrchestratorImageFileSize);
 
-const IMAGE_LOAD_ERROR = "Couldn't read this image. Try a different file or a screenshot.";
-/** A local preparation step failed: the browser's own text ("failed to load image blob", …) is not shown. */
-const IMAGE_PREP_ERROR =
-  "Couldn't read this image on your device. Try a different file or a screenshot.";
 const IMAGE_PREP_TIMEOUT_ERROR =
   "Couldn't process this image on your device. Try a smaller photo or a screenshot.";
 const IMAGE_NETWORK_TIMEOUT_ERROR =
