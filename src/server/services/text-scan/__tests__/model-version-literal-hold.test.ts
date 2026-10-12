@@ -1,15 +1,29 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type * as Logging from '~/server/logging/client';
+
 const {
   mockGetVersionById,
   mockPublishModelVersionById,
   checkModelRulesLiteralHold,
   unpublishLiveModelForLiteralRules,
+  mockReindex,
+  mockRefresh,
+  mockProcessEngagement,
+  mockScan,
+  mockTrack,
+  mockLog,
 } = vi.hoisted(() => ({
   mockGetVersionById: vi.fn(),
   mockPublishModelVersionById: vi.fn(),
   checkModelRulesLiteralHold: vi.fn(),
   unpublishLiveModelForLiteralRules: vi.fn(),
+  mockReindex: vi.fn(),
+  mockRefresh: vi.fn(),
+  mockProcessEngagement: vi.fn(),
+  mockScan: vi.fn(),
+  mockTrack: vi.fn(),
+  mockLog: vi.fn(),
 }));
 
 vi.mock('~/server/services/model-version.service', () => ({
@@ -17,10 +31,16 @@ vi.mock('~/server/services/model-version.service', () => ({
   publishModelVersionById: mockPublishModelVersionById,
 }));
 vi.mock('~/server/services/model.service', () => ({
-  queueModelEarlyAccessReindex: vi.fn().mockResolvedValue(undefined),
+  queueModelEarlyAccessReindex: mockReindex,
 }));
 vi.mock('~/server/services/training.service', () => ({}));
-vi.mock('~/server/redis/caches', () => ({ dataForModelsCache: { refresh: vi.fn() } }));
+vi.mock('~/server/redis/caches', () => ({ dataForModelsCache: { refresh: mockRefresh } }));
+vi.mock('~/server/events', () => ({ eventEngine: { processEngagement: mockProcessEngagement } }));
+vi.mock('~/server/services/text-scan/submit', () => ({ scanEntityInBackground: mockScan }));
+vi.mock('~/server/logging/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof Logging>()),
+  logToAxiom: mockLog,
+}));
 vi.mock('~/server/services/text-scan/model-rules-hold', () => ({ checkModelRulesLiteralHold }));
 vi.mock('~/server/services/text-scan/actions/model-rules', () => ({
   unpublishLiveModelForLiteralRules,
@@ -55,7 +75,7 @@ const call = ({
     input: { id: VERSION_ID },
     ctx: {
       user: { id: 7, isModerator },
-      track: { modelVersionEvent: vi.fn().mockResolvedValue(undefined) },
+      track: { modelVersionEvent: mockTrack },
     },
   } as never);
 };
@@ -69,6 +89,8 @@ beforeEach(() => {
   });
   checkModelRulesLiteralHold.mockResolvedValue(HOLD);
   unpublishLiveModelForLiteralRules.mockResolvedValue(undefined);
+  mockReindex.mockResolvedValue(undefined);
+  mockTrack.mockResolvedValue(undefined);
 });
 
 describe('publishModelVersionHandler — Model rules literal hit on a live model', () => {
@@ -90,10 +112,37 @@ describe('publishModelVersionHandler — Model rules literal hit on a live model
     );
   });
 
+  it('reports the hold and skips the side effects of a version going live', async () => {
+    const result = await call();
+
+    expect(result).toMatchObject({ id: VERSION_ID, held: true });
+    expect(mockReindex).not.toHaveBeenCalled();
+    expect(mockTrack).not.toHaveBeenCalled();
+    expect(mockProcessEngagement).not.toHaveBeenCalled();
+    expect(mockRefresh).not.toHaveBeenCalled();
+    expect(mockScan).toHaveBeenCalledWith({ entityType: 'ModelRules', entityId: MODEL_ID });
+  });
+
+  it('logs and carries on as a normal publish when the takedown throws', async () => {
+    unpublishLiveModelForLiteralRules.mockRejectedValue(new Error('boom'));
+
+    const result = await call();
+
+    expect(result).toMatchObject({ id: VERSION_ID, held: false });
+    expect(mockLog).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'text-scan', type: 'error', entityId: MODEL_ID })
+    );
+    expect(mockScan).toHaveBeenCalledWith({ entityType: 'ModelRules', entityId: MODEL_ID });
+    expect(mockTrack).toHaveBeenCalledTimes(1);
+    expect(mockRefresh).toHaveBeenCalledWith(MODEL_ID);
+  });
+
   it('does nothing when no literal rule matches', async () => {
     checkModelRulesLiteralHold.mockResolvedValue(null);
-    await call();
+    const result = await call();
     expect(unpublishLiveModelForLiteralRules).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ held: false });
+    expect(mockTrack).toHaveBeenCalledTimes(1);
   });
 
   it('never checks a moderator', async () => {

@@ -883,10 +883,27 @@ export const publishModelVersionHandler = async ({
           })
         : null;
     const updatedVersion = await publishModelVersionById({ ...input, meta, republishing });
-    if (literalHold)
-      await unpublishLiveModelForLiteralRules({ modelId: version.modelId, ...literalHold });
+    let held = false;
+    if (literalHold) {
+      try {
+        await unpublishLiveModelForLiteralRules({ modelId: version.modelId, ...literalHold });
+        held = true;
+      } catch (error) {
+        // The version is already published; the ModelRules scan below is the backstop.
+        logToAxiom({
+          name: 'text-scan',
+          type: 'error',
+          message: 'model rules literal takedown failed',
+          entityType: 'ModelRules',
+          entityId: version.modelId,
+          error: error instanceof Error ? error.message : error,
+        });
+      }
+    }
     if (!ctx.user.isModerator)
       scanEntityInBackground({ entityType: 'ModelRules', entityId: updatedVersion.modelId });
+    // The takedown refreshed the caches, and the model is no longer live to announce or reindex.
+    if (held) return { ...updatedVersion, held };
 
     await queueModelEarlyAccessReindex({ id: updatedVersion.modelId }).catch((e) => {
       console.error('Unable to update model early access deadline');
@@ -914,7 +931,7 @@ export const publishModelVersionHandler = async ({
 
     await dataForModelsCache.refresh(version.modelId);
 
-    return updatedVersion;
+    return { ...updatedVersion, held };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throwDbError(error);
