@@ -2517,16 +2517,18 @@ export const publishPrivateModelHandler = async ({
       callerId: userId,
     });
 
-    const { versionIds } = await publishPrivateModel(input, {
+    const { versionIds, held } = await publishPrivateModel(input, {
       enforceModelRules: !ctx.user.isModerator,
     });
+    // The hold refreshed the caches itself and nothing went public, so no publish side effects.
+    if (held) return { held };
     await dataForModelsCache.refresh(input.modelId);
     await bustMvCache(versionIds, input.modelId);
     await modelsSearchIndex.queueUpdate([
       { id: input.modelId, action: SearchIndexUpdateQueueAction.Update },
     ]);
 
-    return true;
+    return { held };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

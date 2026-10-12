@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import type * as Logging from '~/server/logging/client';
 
 const { mockTx, checkModelRulesLiteralHold, holdModelForLiteralRules } = vi.hoisted(() => ({
   checkModelRulesLiteralHold: vi.fn(),
@@ -85,9 +86,14 @@ vi.mock('~/server/utils/cache-helpers', () => ({
 vi.mock('~/utils/s3-utils', () => ({ deleteModelFileObjects: vi.fn() }));
 vi.mock('~/utils/storage-resolver', () => ({ deregisterFileLocationsBatch: vi.fn() }));
 
+vi.mock('~/server/logging/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof Logging>()),
+  logToAxiom: vi.fn(),
+}));
 vi.mock('~/server/services/text-scan/model-rules-hold', () => ({ checkModelRulesLiteralHold }));
 vi.mock('~/server/services/text-scan/actions/model-rules', () => ({ holdModelForLiteralRules }));
 
+import { logToAxiom } from '~/server/logging/client';
 import { publishModelById, publishPrivateModel } from '~/server/services/model.service';
 
 const MODEL_ID = 42;
@@ -96,6 +102,7 @@ const HOLD = { ruleIds: [3], textHash: 'h1' };
 beforeEach(() => {
   vi.clearAllMocks();
   checkModelRulesLiteralHold.mockResolvedValue(null);
+  holdModelForLiteralRules.mockResolvedValue(undefined);
   dbMock.dbWrite.$transaction.mockImplementation((fn: (tx: typeof mockTx) => unknown) =>
     fn(mockTx)
   );
@@ -139,6 +146,19 @@ describe('publishModelById — Model rules literal hold', () => {
     expect(result).toMatchObject({ id: MODEL_ID, status: 'UnpublishedViolation' });
   });
 
+  it('publishes and logs when the hold action throws', async () => {
+    checkModelRulesLiteralHold.mockResolvedValue(HOLD);
+    holdModelForLiteralRules.mockRejectedValue(new Error('boom'));
+
+    const result = await publish({ enforceModelRules: true });
+
+    expect(result).toMatchObject({ status: 'Published' });
+    expect(dbMock.dbWrite.$transaction).toHaveBeenCalledTimes(1);
+    expect(logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'text-scan', type: 'error', entityId: MODEL_ID })
+    );
+  });
+
   it('publishes when there is no hit', async () => {
     const result = await publish({ enforceModelRules: true });
     expect(holdModelForLiteralRules).not.toHaveBeenCalled();
@@ -175,6 +195,7 @@ describe('publishPrivateModel — Model rules literal hold', () => {
 
     await expect(publishPrivateModel(input, { enforceModelRules: true })).resolves.toEqual({
       versionIds: [100, 101],
+      held: true,
     });
 
     expect(checkModelRulesLiteralHold).toHaveBeenCalledWith({
@@ -190,8 +211,25 @@ describe('publishPrivateModel — Model rules literal hold', () => {
     expect(dbMock.dbWrite.$transaction).not.toHaveBeenCalled();
   });
 
+  it('makes the model public and logs when the hold action throws', async () => {
+    checkModelRulesLiteralHold.mockResolvedValue(HOLD);
+    holdModelForLiteralRules.mockRejectedValue(new Error('boom'));
+
+    await expect(publishPrivateModel(input, { enforceModelRules: true })).resolves.toEqual({
+      versionIds: [100, 101],
+      held: false,
+    });
+
+    expect(dbMock.dbWrite.$transaction).toHaveBeenCalledTimes(1);
+    expect(logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'text-scan', type: 'error', entityId: MODEL_ID })
+    );
+  });
+
   it('makes the model public when nothing matches, or for a moderator', async () => {
-    await publishPrivateModel(input, { enforceModelRules: true });
+    await expect(publishPrivateModel(input, { enforceModelRules: true })).resolves.toMatchObject({
+      held: false,
+    });
     expect(holdModelForLiteralRules).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.$transaction).toHaveBeenCalledTimes(1);
 

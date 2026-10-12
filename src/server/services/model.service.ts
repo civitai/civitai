@@ -3322,6 +3322,25 @@ const publishedModelSelect = {
   status: true,
 } satisfies Prisma.ModelSelect;
 
+// Fails open like the check: a model that cannot be held is published, and the post-publish
+// ModelRules scan is the backstop.
+async function tryHoldModelForLiteralRules(args: Parameters<typeof holdModelForLiteralRules>[0]) {
+  try {
+    await holdModelForLiteralRules(args);
+    return true;
+  } catch (error) {
+    logToAxiom({
+      name: 'text-scan',
+      type: 'error',
+      message: 'model rules literal hold failed',
+      entityType: 'ModelRules',
+      entityId: args.modelId,
+      error: error instanceof Error ? error.message : error,
+    });
+    return false;
+  }
+}
+
 export const publishModelById = async ({
   id,
   versionIds,
@@ -3344,8 +3363,7 @@ export const publishModelById = async ({
       versionIds: versionIds ?? [],
       meta,
     });
-    if (hold) {
-      await holdModelForLiteralRules({ modelId: id, ...hold, meta });
+    if (hold && (await tryHoldModelForLiteralRules({ modelId: id, ...hold, meta }))) {
       return dbWrite.model.findUniqueOrThrow({ where: { id }, select: publishedModelSelect });
     }
   }
@@ -5321,13 +5339,15 @@ export const publishPrivateModel = async (
       versionIds,
       meta: model.meta as ModelMeta | null,
     });
-    if (hold) {
-      await holdModelForLiteralRules({
+    if (
+      hold &&
+      (await tryHoldModelForLiteralRules({
         modelId,
         ...hold,
         meta: (model.meta ?? {}) as ModelMeta,
-      });
-      return { versionIds };
+      }))
+    ) {
+      return { versionIds, held: true };
     }
   }
 
@@ -5431,7 +5451,7 @@ export const publishPrivateModel = async (
     );
   }
 
-  return { versionIds };
+  return { versionIds, held: false };
 };
 
 export const toggleCannotPromote = async ({
