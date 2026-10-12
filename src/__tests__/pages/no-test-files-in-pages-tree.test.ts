@@ -40,8 +40,11 @@ import path from 'node:path';
  * structurally blind to this class: it is not that the check is weak, it is that
  * the file it would have to read has not been generated yet. Unit tests, ESLint and
  * Prettier are all likewise blind — the file is perfectly valid TypeScript. The
- * only gate that runs `next build` is the preview pipeline, which is why this
- * surfaces as "Typecheck green, preview build red".
+ * PR-preview build used to be the PR-time catch ("Typecheck green, preview build
+ * red"), but it now sets `CIVITAI_SKIP_BUILD_TYPECHECK=1` (see `next.config.mjs`),
+ * which skips the type-check pass that reads the validator. So before merge, THIS
+ * guard is the only check for this class; otherwise it surfaces at the release
+ * build.
  *
  * 🔴 WHY THE GUARD COVERS ALL OF `src/pages/**`, NOT JUST `src/pages/api/**`.
  * `isPageFile` does not distinguish the two, and `generateValidatorFile` applies

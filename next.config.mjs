@@ -11,6 +11,27 @@ const isDev = process.env.NODE_ENV === 'development';
 const analyze = process.env.ANALYZE === 'true';
 const includeCircularDependencyPlugin = process.env.CIRCULAR_DEPENDENCY_PLUGIN === 'true';
 
+/**
+ * Opt-OUT of `next build`'s own TypeScript pass. OFF unless the environment sets EXACTLY `'1'`:
+ * unset, empty, `'0'`, `'true'` or a typo all leave full checking on, so a build that does not
+ * know about this variable is a checked build. The Dockerfile forwards it as a build-arg that
+ * defaults empty.
+ *
+ * Only the PR-preview image build sets it. That pipeline already runs the full `tsc` in its own
+ * typecheck task, and PR CI runs it again, so the build's pass was a third serial copy of the same
+ * check on the critical path to a usable preview. Release and production builds never set it.
+ *
+ * `ignoreBuildErrors` SKIPS the pass entirely rather than running it and discarding errors (read
+ * from `startTypeChecking` in `next/dist/build/type-check.js`). That includes the type-check of the
+ * generated `.next/types/validator.ts`, which is the only thing that rejects a module under
+ * `src/pages` with no default export. `tsc` alone cannot see that class (the validator does not
+ * exist before a build), so with this set it is caught by the release build, not the preview.
+ * `src/__tests__/pages/no-test-files-in-pages-tree.test.ts` still covers the commonest instance.
+ *
+ * `next build` no longer runs ESLint (Next 16), so there is no lint equivalent to switch.
+ */
+const skipBuildTypecheck = process.env.CIVITAI_SKIP_BUILD_TYPECHECK === '1';
+
 const withBundleAnalyzer = bundlAnalyzer({
   enabled: analyze,
 });
@@ -130,6 +151,7 @@ export default defineNextConfig(
       return config;
     },
     reactStrictMode: true,
+    typescript: { ignoreBuildErrors: skipBuildTypecheck },
     // Source maps for prod CPU-profile de-minification.
     //
     // Under Turbopack (our prod bundler, Next 16), the ONLY source-map lever is the
