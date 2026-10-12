@@ -395,6 +395,14 @@ describe('Your hats', () => {
     expect(h.teamsLive.at(-1)?.[2]).toBe(false);
     expect(h.hatsLive.at(-1)?.inView).toBe(false);
   });
+
+  it('follows nothing behind the collapsed bar', () => {
+    joinAs('Pink');
+    h.standings = { ...STANDINGS, teamsTopicId: 'teams' };
+    h.hats = [placed(1, 1)];
+    block(true);
+    expect(h.teamsLive.at(-1)?.[2]).toBe(false);
+  });
 });
 
 describe('ended', () => {
