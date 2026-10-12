@@ -10,6 +10,7 @@ import {
   promptHasTrigger,
   runExtraCapabilities,
   seedPrompts,
+  startLabelPass,
   withTrigger,
   type Img,
   type Run,
@@ -195,5 +196,17 @@ describe('nextImgId', () => {
     const second = Array.from({ length: 5 }, nextImgId);
     expect(new Set([...first, ...second]).size).toBe(10);
     expect(Math.min(...second)).toBeGreaterThan(Math.max(...first));
+  });
+});
+
+describe('auto-label pass', () => {
+  it('keys each target uniquely and marks it tried at submit, even when tile ids collide', () => {
+    const a = { ...image(7, []), blobUrl: 'https://x/a.png' };
+    const b = { ...image(7, []), blobUrl: 'https://x/b.png' };
+    const { byKey, items } = startLabelPass([a, b]);
+    expect(new Set(items.map((i) => i.key)).size).toBe(2);
+    expect(items.map((i) => byKey.get(i.key))).toEqual([a, b]);
+    expect(items.map((i) => i.mediaUrl)).toEqual([a.blobUrl, b.blobUrl]);
+    for (const t of [a, b]) expect(t).toMatchObject({ labeling: true, labelTried: true });
   });
 });
