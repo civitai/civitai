@@ -38,6 +38,7 @@ import {
 import type { PlannedPost } from './batch-composer.utils';
 import { defaultTitleTemplate, describeCadence, fixSpacing } from './batch-composer.utils';
 import { BatchMediaGrid } from './BatchMediaGrid';
+import { SavePresetButton } from './BatchPresets';
 import type { DroppedFile } from './BatchMediaGrid';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { ModelStatus } from '~/shared/utils/prisma/enums';
@@ -386,6 +387,7 @@ function ComposerBody({ modelId, modelVersionId }: { modelId?: number; modelVers
             number={2}
             title="Apply to every post"
             disabledReason={plan.uploaded.length ? null : 'Add media first'}
+            action={features.postPresets && <SavePresetButton disabled={!plan.uploaded.length} />}
           >
             <BatchSharedMetadata
               disabled={!plan.uploaded.length}
@@ -415,11 +417,13 @@ function Section({
   number,
   title,
   disabledReason,
+  action,
   children,
 }: {
   number: number;
   title: string;
   disabledReason?: string | null;
+  action?: React.ReactNode;
   children: React.ReactNode;
 }) {
   return (
@@ -438,7 +442,7 @@ function Section({
             </Text>
           )}
         </div>
-        <div className="min-h-[28px]" />
+        <div className="flex min-h-[28px] items-center">{action}</div>
       </div>
       {children}
     </section>

@@ -23,6 +23,7 @@ import { PostingToModel3DCard } from '~/components/Model3D/Posting/PostingToMode
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { DeletePostButton } from '~/components/Post/DeletePostButton';
 import { usePostEditParams, usePostEditStore } from '~/components/Post/EditV2/PostEditProvider';
+import { PostEditApplyPreset } from '~/components/Post/EditV2/PostEditApplyPreset';
 import { ReorderImagesButton } from '~/components/Post/EditV2/PostReorderImages';
 import { SchedulePostModal } from '~/components/Post/EditV2/SchedulePostModal';
 import { usePostContestCollectionDetails } from '~/components/Post/post.utils';
@@ -475,6 +476,8 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
       )}
 
       {showReorder && <ReorderImagesButton />}
+
+      {features.postPresets && features.canWrite && <PostEditApplyPreset post={post} />}
 
       {/*
         Always show the View button (gated only by having ≥1 image). Owners

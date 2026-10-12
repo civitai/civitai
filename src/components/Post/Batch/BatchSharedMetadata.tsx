@@ -6,12 +6,14 @@ import type { ComboboxOption } from '~/components/Combobox/combobox.types';
 import { ResourceSelectMultiple } from '~/components/ImageGeneration/GenerationForm/ResourceSelectMultiple';
 import { TagPicker } from '~/components/Post/EditV2/EditPostTags';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useQueryTools } from '~/components/Tool/tools.utils';
 import { MAX_MANUAL_RESOURCES_PER_IMAGE, POST_TAG_LIMIT } from '~/server/common/constants';
 import { getDisplayName } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import type { NamedOption, SharedSettings } from './batch-composer.store';
 import { useBatchComposerStore } from './batch-composer.store';
+import { PresetSelect } from './BatchPresets';
 import { TitleTemplateInput } from './TitleTemplateInput';
 
 const LAST_SHARED_KEY = 'batch-composer:last-shared';
@@ -63,6 +65,7 @@ export function BatchSharedMetadata({
   const [remembered, setRemembered] = useState<RememberedShared | null>(null);
   const userId = useCurrentUser()?.id;
   useEffect(() => setRemembered(readRememberedShared(userId)), [userId]);
+  const presetsEnabled = !!useFeatureFlags().postPresets;
   const isEmpty =
     !shared.tools.length &&
     !shared.techniques.length &&
@@ -71,6 +74,7 @@ export function BatchSharedMetadata({
 
   return (
     <fieldset disabled={disabled} className="flex flex-col gap-4 border-0 p-0 disabled:opacity-60">
+      {presetsEnabled && <PresetSelect disabled={disabled} />}
       {isEmpty && remembered && (
         <Button
           size="compact-xs"

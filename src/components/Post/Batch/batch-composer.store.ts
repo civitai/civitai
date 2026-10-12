@@ -27,6 +27,8 @@ export type BatchComposerState = {
   media: MediaUploadOnCompleteProps[];
   imagesPerPost: number;
   shared: SharedSettings;
+  /** The saved preset section 2 currently matches; cleared by any edit to it. */
+  presetId: number | null;
   schedule: ScheduleSettings;
   seed: number;
   /** Dates produced by "Fix spacing automatically"; dropped by any edit that changes the plan. */
@@ -38,6 +40,7 @@ export type BatchComposerState = {
   shuffleMedia: () => void;
   setImagesPerPost: (count: number) => void;
   updateShared: (patch: Partial<SharedSettings>) => void;
+  applyPreset: (presetId: number | null, settings: Partial<SharedSettings>) => void;
   updateSchedule: (patch: Partial<ScheduleSettings>) => void;
   setFixedDates: (dates: Date[] | null) => void;
   openReview: (plan: PlannedPost[]) => void;
@@ -69,6 +72,7 @@ export function createBatchComposerStore(input: {
       tags: [],
       titleTemplate: input.titleTemplate,
     },
+    presetId: null,
     schedule: defaultScheduleSettings(input.now ?? new Date(), input.startAt),
     seed: Math.floor(Math.random() * 2 ** 31),
     fixedDates: null,
@@ -104,6 +108,12 @@ export function createBatchComposerStore(input: {
         updateShared: (patch) =>
           set((state) => {
             Object.assign(state.shared, patch);
+            state.presetId = null;
+          }),
+        applyPreset: (presetId, settings) =>
+          set((state) => {
+            Object.assign(state.shared, settings);
+            state.presetId = presetId;
           }),
         updateSchedule: (patch) =>
           set((state) => {

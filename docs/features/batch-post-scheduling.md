@@ -16,15 +16,18 @@ then shows and moves what was scheduled. Plans: `docs/batch-scheduling-plan.md` 
 | `src/server/routers/post.router.ts`              | `post.validateBatchSchedule`, `post.scheduleBatch`, `post.getScheduled`, `post.getPlannerDetail`, `post.reschedule`, `post.publishNow`, `post.unschedule`, `post.shiftSchedule` |
 | `src/pages/api/v1/posts/planner/[action].ts`     | REST twins of the planner procedures for Creator Studio, table-driven by `@civitai/post-planner/contract`                                                                       |
 | `src/components/Post/Batch/`                     | The `/posts/batch` composer: media grid, shared metadata, schedule builder, summary rail, review table, progress modal                                                          |
+| `src/server/services/post-preset.service.ts`     | Saved presets (`getPostPresets`, `upsertPostPreset`, `deletePostPreset`; 20 per user, name unique per user); router `src/server/routers/post-preset.router.ts`                  |
+| `src/components/Post/Batch/BatchPresets.tsx`     | Composer preset select and "Save as preset…" modal; `src/components/Post/EditV2/PostEditApplyPreset.tsx` applies tags, tools and techniques in the post editor                  |
 | `packages/civitai-post-planner/`                 | The planner element (Lit, on `@civitai/components`), its host contract and REST backend                                                                                         |
 | `apps/creator-studio/src/routes/(app)/calendar/` | Creator Studio host of the planner; `routes/api/planner/[action]` proxies to the main app                                                                                       |
 
 ## Flags
 
-| Flag                  | Flipt key               | Fallback  | Gates                                                                                  |
-| --------------------- | ----------------------- | --------- | -------------------------------------------------------------------------------------- |
-| `batchPostScheduling` | `batch-post-scheduling` | `['mod']` | `/posts/batch`, the two batch procedures, the model page's "Promote this model" button |
-| `postPlanner`         | `post-planner`          | `['mod']` | The planner procedures, their REST twins, Creator Studio's `/calendar`                 |
+| Flag                  | Flipt key               | Fallback  | Gates                                                                                    |
+| --------------------- | ----------------------- | --------- | ---------------------------------------------------------------------------------------- |
+| `batchPostScheduling` | `batch-post-scheduling` | `['mod']` | `/posts/batch`, the two batch procedures, the model page's "Promote this model" button   |
+| `postPlanner`         | `post-planner`          | `['mod']` | The planner procedures, their REST twins, Creator Studio's `/calendar`                   |
+| `postPresets`         | `post-presets`          | `['mod']` | The `postPreset` procedures, the composer's preset controls, the editor's "Apply preset" |
 
 Rollout: create the Flipt flags, start with a rule for the `isMember` segment, widen to 100%.
 
@@ -71,5 +74,6 @@ Rollout: create the Flipt flags, start with a rule for the `isMember` segment, w
 - Batch posts are counted against the daily limit in the database by go-live day, while ordinary
   creates count in Redis at creation time; the two can add up to one tier size on the same day.
 - Files uploaded and then abandoned in the composer leave S3 keys with no `Image` row.
-- Weekday/time-slot schedules, Week and Day hour grids in the planner, and saved presets are planned,
-  not built.
+- Weekday/time-slot schedules and Week and Day hour grids in the planner are planned, not built.
+- A preset stores resource display names at save time, so a renamed or deleted model version keeps
+  its old chip until the preset is re-saved; the post editor applies no resources from a preset.

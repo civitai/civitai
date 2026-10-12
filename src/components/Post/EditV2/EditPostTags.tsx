@@ -50,6 +50,8 @@ export function EditPostTags({
   autosuggest?: boolean;
 }) {
   const [tags, setTags] = useState<TagProps[]>(post.tags);
+  // Applying a preset writes tags to the store from the sidebar; the picker owns its own list.
+  useEffect(() => setTags(post.tags), [post.tags]);
   const handleSetTags = (cb: (tags: TagProps[]) => TagProps[]) => setTags(cb);
   return (
     <EditPostTagsContext.Provider
