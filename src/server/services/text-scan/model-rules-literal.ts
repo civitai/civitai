@@ -1,0 +1,28 @@
+import { foldConfusables } from '~/server/utils/confusable-fold';
+import { foldDiacritics } from '~/utils/fold-diacritics';
+
+const MIN_TERM_LENGTH = 3;
+
+export type LiteralModelRule = { id: number; subject: string; aliases: string[] };
+
+function normalizeForLiteralMatch(value: string) {
+  return foldDiacritics(foldConfusables(value))
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .trim();
+}
+
+/** Ids of the rules whose subject or alias appears in `text` as a whole word or phrase. */
+export function findLiteralModelRuleHits(text: string, rules: LiteralModelRule[]): number[] {
+  if (!text || !rules.length) return [];
+  const haystack = ` ${normalizeForLiteralMatch(text)} `;
+  if (haystack.trim().length < MIN_TERM_LENGTH) return [];
+  const hits: number[] = [];
+  for (const rule of rules) {
+    const matched = [rule.subject, ...rule.aliases].some((raw) => {
+      const term = normalizeForLiteralMatch(raw);
+      return term.length >= MIN_TERM_LENGTH && haystack.includes(` ${term} `);
+    });
+    if (matched) hits.push(rule.id);
+  }
+  return hits;
+}
