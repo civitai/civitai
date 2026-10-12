@@ -84,6 +84,11 @@ export const birthday2026 = createEvent(name, {
         question: 'Can I change teams?',
         answer: 'No. Teams are assigned at random when you join and stay fixed.',
       },
+      {
+        question: "Won't the biggest creators make it unfair?",
+        answer:
+          "We've thought about that. Teams are still random, but we make sure the most active creators are spread evenly across all four teams, so no team starts out stacked.",
+      },
     ],
   },
   banner: {
