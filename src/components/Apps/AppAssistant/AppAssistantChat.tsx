@@ -13,7 +13,8 @@ import classes from './AppAssistant.module.scss';
 export interface ChatMcpServer {
   id: string;
   url: string;
-  token?: () => string | Promise<string>;
+  /** Required: an entry without one is skipped. */
+  token: () => string | Promise<string>;
   label?: string;
 }
 

@@ -191,9 +191,10 @@ export function AppAssistantWorkspace({ canPreview }: { canPreview: boolean }) {
   // A preview belongs to the sandbox it was started from; tear it down when that changes or the
   // page goes away. The tunnel also expires on its own.
   useEffect(() => stopPreview, [activeName, stopPreview]);
+  // `session` too: a preview start already in flight can land after the suspend or revoke.
   useEffect(() => {
-    if (active?.state === 'suspended' || revoked) stopPreview();
-  }, [active?.state, revoked, stopPreview]);
+    if (session && (active?.state === 'suspended' || revoked)) stopPreview();
+  }, [session, active?.state, revoked, stopPreview]);
   useEffect(() => {
     if (activeName && sandboxes.list.isSuccess && !active) setActiveName(null);
   }, [activeName, active, sandboxes.list.isSuccess]);

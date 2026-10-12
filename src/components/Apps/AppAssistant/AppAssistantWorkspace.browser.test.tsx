@@ -223,6 +223,23 @@ describe('AppAssistantWorkspace consent', () => {
 });
 
 describe('AppAssistantWorkspace revoke', () => {
+  test('a preview start that lands after the revoke is stopped too', async () => {
+    await mount();
+    await openFirst();
+    const tools = m.chat!.tools;
+    m.getToken.mockRejectedValue(
+      new AssistantTokenError('Turn on App Assistant', 403, 'consent_required')
+    );
+    m.onConsentRequired!();
+    await expect
+      .element(page.getByRole('button', { name: 'Turn on App Assistant' }))
+      .toBeInTheDocument();
+    expect(m.stop).not.toHaveBeenCalled();
+    await tools.start_preview.execute({ public_key: KEY, block_id: 'my-app' }, ctx);
+    await vi.waitFor(() => expect(m.stop).toHaveBeenCalledWith({ sessionId: 'bki_1' }));
+    expect(m.stop).toHaveBeenCalledTimes(1);
+  });
+
   test('a revoke stops a running preview', async () => {
     await mount();
     await openFirst();
