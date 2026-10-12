@@ -3,6 +3,7 @@ import {
   ChangesState,
   changesStorageKey,
   readChanges,
+  seedOverwritesDraft,
   writeChanges,
   type ChangesFields,
   type CurrentPrompts,
@@ -212,5 +213,13 @@ describe('two tabs', () => {
     a.drop(['base']);
     b.set('label:scam', 'FROM B');
     expect(Object.keys(stored(store))).toEqual(['label:scam']);
+  });
+});
+
+describe('seedOverwritesDraft', () => {
+  it('is true only when a different draft already exists', () => {
+    expect(seedOverwritesDraft(undefined, 'seed')).toBe(false);
+    expect(seedOverwritesDraft('seed', 'seed')).toBe(false);
+    expect(seedOverwritesDraft('mine', 'seed')).toBe(true);
   });
 });

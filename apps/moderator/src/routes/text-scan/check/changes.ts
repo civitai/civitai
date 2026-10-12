@@ -63,6 +63,10 @@ export function writeChanges(store: Store | null, key: string, changes: StoredCh
   }
 }
 
+/** Seeding a version replaces the moderator's draft for that key only when it holds different text. */
+export const seedOverwritesDraft = (draft: string | undefined, seedText: string) =>
+  draft !== undefined && draft !== seedText;
+
 export type ChangesFields = { changes: StoredChanges; current: CurrentPrompts | null };
 
 export class ChangesState {

@@ -2,7 +2,7 @@ import { fail } from '@sveltejs/kit';
 import { z } from 'zod';
 import type { Actions, PageServerLoad } from './$types';
 import { requiresGrant } from '$lib/server/access';
-import { parseForm } from '$lib/server/query';
+import { parseForm, parseQuery } from '$lib/server/query';
 import { LabError, refused } from '$lib/server/text-scan-lab/errors';
 import {
   FREE_TEXT_KEY,
@@ -44,9 +44,31 @@ export type ActivePrompts =
     }
   | { ok: false; error: string };
 
-export const load: PageServerLoad = async () => {
-  const active = await getPrompts().then(
+const seedQuerySchema = z.object({
+  key: z.enum(PROMPT_KEYS).optional().catch(undefined),
+  from: z.coerce.number().int().positive().optional().catch(undefined),
+});
+
+/** A version of a prompt, to start a draft from: what Versions' "Edit in Check" link carries. */
+export type Seed = { key: PromptKey; content: string; id: number };
+
+export const load: PageServerLoad = async ({ url }) => {
+  const hasSeedParams = url.searchParams.has('key') || url.searchParams.has('from');
+  const q = parseQuery(url, seedQuerySchema);
+  const request = q.key && q.from ? { key: q.key, from: q.from } : null;
+  let seed = null as Seed | null;
+  let seedNotice = (hasSeedParams && !request ? 'That version link is not valid.' : null) as
+    | string
+    | null;
+
+  const active = await getPrompts(request?.key).then(
     (p): ActivePrompts => {
+      if (request) {
+        const version = p.history?.find((v) => v.id === request.from && v.key === request.key);
+        if (version) seed = { key: request.key, content: version.content, id: version.id };
+        else
+          seedNotice = `Version #${request.from} is not among the recent versions, so it could not be loaded.`;
+      }
       const keys = PROMPT_KEYS.filter((k) => p.active[k]);
       return {
         ok: true,
@@ -54,14 +76,17 @@ export const load: PageServerLoad = async () => {
         ids: Object.fromEntries(keys.map((k) => [k, p.active[k].id])),
       };
     },
-    (e: unknown): ActivePrompts => ({
-      ok: false,
-      error: `Could not load the current prompts: ${
-        e instanceof LabHarnessError ? e.message : 'unexpected error'
-      }`,
-    })
+    (e: unknown): ActivePrompts => {
+      if (request) seedNotice = 'Could not load that version.';
+      return {
+        ok: false,
+        error: `Could not load the current prompts: ${
+          e instanceof LabHarnessError ? e.message : 'unexpected error'
+        }`,
+      };
+    }
   );
-  return { active, wide: true };
+  return { active, wide: true, seed, seedNotice };
 };
 
 const PROFILE_TYPES = ['UserProfile', 'User'] as const satisfies readonly LabEntityType[];

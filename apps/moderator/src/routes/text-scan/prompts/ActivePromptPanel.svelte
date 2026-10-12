@@ -1,5 +1,6 @@
 <script lang="ts">
   import * as Collapsible from '@civitai/ui/components/ui/collapsible/index.js';
+  import { LINK_CLASS } from '$lib/format';
   import type { LabPrompts } from '$lib/server/text-scan-lab/harness-client';
   import { promptKeyName } from '$lib/text-scan-lab/labels';
   import type { PromptKey } from '$lib/text-scan-lab/types';
@@ -55,6 +56,11 @@
               <p class="mt-1 text-xs text-dark-2">{version.note}</p>
             {/if}
             <Collapsible.Content class="mt-2">
+              <p class="mb-2 text-xs">
+                <a href="/text-scan/check?key={promptKey}&from={version.id}" class={LINK_CLASS}
+                  >Edit in Check</a
+                >
+              </p>
               {#if previous}
                 <p class="mb-1 text-xs text-dark-2">Changes from the version of {when(previous.createdAt)}</p>
                 <DiffView before={previous.content} after={version.content} />
