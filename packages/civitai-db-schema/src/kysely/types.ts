@@ -2615,6 +2615,7 @@ export type Crucible = {
   ingestion: Generated<CrucibleIngestionStatus>;
   scannedAt: Timestamp | null;
   textNsfw: Generated<boolean>;
+  timeAdjustedPlacement: Generated<boolean>;
 };
 export type CrucibleEngagement = {
   userId: number;

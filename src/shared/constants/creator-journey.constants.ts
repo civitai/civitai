@@ -10,6 +10,9 @@ export const CREATOR_SCORE_EXPLAINER_HREF = '/user/account#creator-score';
 /** An unearned hidden milestone is sent keyed `hidden:<slot>`, with no name or description. */
 export const HIDDEN_MILESTONE_KEY_PREFIX = 'hidden:';
 
+/** A milestone the server masked: key, name and art replaced, as in `maskUnearnedMilestone`. */
+export const isMaskedMilestoneKey = (key: string) => key.startsWith(HIDDEN_MILESTONE_KEY_PREFIX);
+
 /** When the nightly job grants activity milestones (UTC); the journey page shows its next run. */
 export const CREATOR_MILESTONE_GRANT_CRON = '20 1 * * *';
 

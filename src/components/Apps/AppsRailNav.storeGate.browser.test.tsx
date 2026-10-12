@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+import { makeTrpcProxy } from '../../../test/trpcProxyStub';
 // Type-only namespace import (NOT `typeof import('...')`, which
 // @typescript-eslint/consistent-type-imports rejects) so the spread below keeps the
 // real module's type.
@@ -84,18 +85,16 @@ vi.mock('~/hooks/useCurrentUser', () => ({
 // load with 0 tests collected and no failing assertion.
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof TrpcMod>()),
-  trpc: {
-    blocks: {
-      getNavSummary: {
-        useQuery: (_input: unknown, opts?: { enabled?: boolean }) => {
-          mocks.navSummaryEnabled.push(opts?.enabled);
-          // Honour `enabled` like the real hook: a disabled query never resolves,
-          // so `data` stays undefined and the container falls back to EMPTY_SUMMARY.
-          return { data: opts?.enabled ? mocks.navSummary : undefined };
-        },
+  trpc: makeTrpcProxy({
+    'blocks.getNavSummary': {
+      useQuery: (_input: unknown, opts?: { enabled?: boolean }) => {
+        mocks.navSummaryEnabled.push(opts?.enabled);
+        // Honour `enabled` like the real hook: a disabled query never resolves,
+        // so `data` stays undefined and the container falls back to EMPTY_SUMMARY.
+        return { data: opts?.enabled ? mocks.navSummary : undefined };
       },
     },
-  },
+  }),
 }));
 
 const { AppsPageLayout } = await import('./AppsPageLayout');
@@ -508,5 +507,31 @@ describe('the rail — the getNavSummary query gate stays on appBlocks', () => {
     expect(renderedSections()).toEqual([]); // the store gate returned null
     expect(mocks.navSummaryEnabled.length).toBeGreaterThan(0); // …but the hook did run
     expect(mocks.navSummaryEnabled.every((e) => e === false)).toBe(true);
+  });
+});
+
+describe('the rail — App Assistant follows canAccessAppAssistant and a signed-in viewer', () => {
+  const AUTHOR_FLAGS = { appBlocks: true, appBlocksAuthor: true };
+
+  test.each([
+    ['both flags → shown', { ...AUTHOR_FLAGS, appAssistant: true }, true],
+    ['the block runtime without the feature flag → hidden', AUTHOR_FLAGS, false],
+    [
+      'the feature flag without the block runtime → hidden',
+      { appListings: true, appBlocksAuthor: true, appAssistant: true },
+      false,
+    ],
+  ])('signed in with %s', async (_label, flags, shown) => {
+    mocks.flags = flags;
+    await renderRail();
+    await expect.element(link('Build')).toBeInTheDocument();
+    expect(renderedSections().includes('App Assistant')).toBe(shown);
+  });
+
+  test('signed out, even with both flags → no App Assistant link anywhere', async () => {
+    mocks.flags = { ...AUTHOR_FLAGS, appAssistant: true };
+    mocks.user = null;
+    await renderRail();
+    expect(document.querySelector('a[href="/apps/assistant"]')).toBeNull();
   });
 });

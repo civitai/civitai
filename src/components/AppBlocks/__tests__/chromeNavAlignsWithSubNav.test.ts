@@ -491,6 +491,8 @@ describe('the app-block chrome platform nav agrees with the store subnav', () =>
       // direction this ledger is meant to make visible.
       '/apps/invites',
       '/apps/revenue',
+      // An authoring workspace, not somewhere to go from inside a running app.
+      '/apps/assistant',
     ]);
   });
 

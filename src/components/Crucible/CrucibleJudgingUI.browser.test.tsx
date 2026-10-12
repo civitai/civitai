@@ -1,8 +1,10 @@
 import { useState, type ComponentProps } from 'react';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
+import type * as TrpcMod from '~/utils/trpc';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+import { makeTrpcProxy } from '../../../test/trpcProxyStub';
 
 /**
  * EdgeMedia is stubbed: headless Chromium cannot decode most clips, and a codec is not what is
@@ -66,6 +68,45 @@ vi.mock('~/components/EdgeMedia/EdgeMedia', async () => {
     },
   };
 });
+
+const reactionToggle = vi.hoisted(() => vi.fn());
+const myReactions = vi.hoisted(() => new Map<number, string[]>());
+const reactionEnv = vi.hoisted(() => ({
+  viewer: { id: 7 } as { id: number; muted?: boolean } | null,
+  togglePending: false,
+  lookupLoaded: true,
+}));
+
+vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => reactionEnv.viewer }));
+vi.mock('~/providers/FeatureFlagsProvider', () => ({ useFeatureFlags: () => ({}) }));
+vi.mock('~/utils/trpc', async (importOriginal) => ({
+  ...(await importOriginal<typeof TrpcMod>()),
+  trpc: makeTrpcProxy(
+    {
+      'reaction.toggle': {
+        useMutation: () => ({ mutate: reactionToggle, isPending: reactionEnv.togglePending }),
+      },
+      'reaction.getMyImageReactions': {
+        useQuery: () => ({ isSuccess: reactionEnv.lookupLoaded }),
+      },
+    },
+    {
+      useQueries: (
+        build: (t: {
+          reaction: {
+            getMyImageReactions: (input: { imageIds: number[] }) => { imageIds: number[] };
+          };
+        }) => { imageIds: number[] }[]
+      ) =>
+        build({ reaction: { getMyImageReactions: (input) => input } }).map(({ imageIds }) => ({
+          data: Object.fromEntries(
+            imageIds.filter((id) => myReactions.has(id)).map((id) => [id, myReactions.get(id)])
+          ),
+          dataUpdatedAt: 1,
+        })),
+    }
+  ),
+}));
 
 const { CrucibleJudgingUI } = await import('~/components/Crucible/CrucibleJudgingUI');
 const { CrucibleJudgingBriefing } = await import('~/components/Crucible/CrucibleJudgingBriefing');
@@ -219,11 +260,24 @@ for (const type of [
 // registration order, so this still runs BEFORE unmount — unchanged from the per-describe form.
 afterEach(() => vi.restoreAllMocks());
 
+let previousIsAuthed: typeof window.isAuthed;
+
 beforeEach(() => {
   playheads.clear();
   clipDurations.clear();
   mediaOutcome.clear();
   lastVideoProps.clear();
+  myReactions.clear();
+  reactionToggle.mockClear();
+  reactionEnv.viewer = { id: 7 };
+  reactionEnv.togglePending = false;
+  reactionEnv.lookupLoaded = true;
+  previousIsAuthed = window.isAuthed;
+  window.isAuthed = true;
+});
+
+afterEach(() => {
+  window.isAuthed = previousIsAuthed;
 });
 
 describe('CrucibleJudgingUI — minimum view time', () => {
@@ -1095,3 +1149,152 @@ function PairSwitchingHarness({ onVote }: { onVote: OnVote }) {
     </>
   );
 }
+
+describe('CrucibleJudgingUI — reactions', () => {
+  const pastFeedbackDelay = () => new Promise((resolve) => setTimeout(resolve, 400));
+  // A fresh image id per test: the reactions store is module-level and cannot be reset from here.
+  let nextEntry = 100;
+  let rightImageId = 0;
+  const reactionBar = (side: 'left' | 'right') =>
+    document.querySelector<HTMLElement>(`[data-testid="judge-reactions"][data-side="${side}"]`);
+  const reactionButton = (side: 'left' | 'right', reaction: string) =>
+    reactionBar(side)?.querySelector<HTMLButtonElement>(`[aria-label="${reaction} reaction"]`);
+  const pressKey = (key: string, code: string) =>
+    document.documentElement.dispatchEvent(
+      new KeyboardEvent('keydown', { key, code, bubbles: true })
+    );
+
+  const renderPair = async (onVote = vi.fn(), onSkip = vi.fn()) => {
+    const left = nextEntry++;
+    const right = nextEntry++;
+    rightImageId = right * 10;
+    const ui = () => (
+      <CrucibleJudgingUI
+        pair={{ left: entry(left, 'image'), right: entry(right, 'image') } as never}
+        onVote={onVote}
+        onSkip={onSkip}
+      />
+    );
+    const view = await renderWithProviders(ui());
+    await vi.waitFor(() => expect(reactionButton('left', 'Like')).toBeTruthy());
+    await vi.waitFor(() => expect(voteButton('left')!.disabled).toBe(false));
+    await pastFeedbackDelay();
+    return { onVote, onSkip, rerender: () => view.rerender(ui()) };
+  };
+
+  test('the vote and skip keys do act on this pair (control for the tests below)', async () => {
+    const { onVote, onSkip } = await renderPair();
+
+    pressKey('1', 'Digit1');
+    await vi.waitFor(() => expect(onVote).toHaveBeenCalledTimes(1));
+    await pastFeedbackDelay();
+    pressKey(' ', 'Space');
+
+    await vi.waitFor(() => expect(onSkip).toHaveBeenCalledTimes(1));
+  });
+
+  test('clicking a reaction reacts to the image and does not vote or skip', async () => {
+    const { onVote, onSkip } = await renderPair();
+
+    reactionButton('right', 'Heart')!.click();
+    await pastFeedbackDelay();
+
+    expect(reactionToggle).toHaveBeenCalledTimes(1);
+    expect(reactionToggle).toHaveBeenCalledWith({
+      entityId: rightImageId,
+      entityType: 'image',
+      reaction: 'Heart',
+    });
+    expect(onVote).not.toHaveBeenCalled();
+    expect(onSkip).not.toHaveBeenCalled();
+  });
+
+  test('Enter and Space on a reaction button neither vote nor skip', async () => {
+    const { onVote, onSkip } = await renderPair();
+
+    for (const key of ['Enter', ' ', '1', 'ArrowRight']) {
+      reactionButton('left', 'Like')!.dispatchEvent(
+        new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true })
+      );
+    }
+    await pastFeedbackDelay();
+
+    expect(onVote).not.toHaveBeenCalled();
+    expect(onSkip).not.toHaveBeenCalled();
+  });
+
+  test('shows no reaction counts, even for an image that has reactions', async () => {
+    myReactions.set(nextEntry * 10, ['Like', 'Cry']);
+    await renderPair();
+
+    for (const side of ['left', 'right'] as const) {
+      expect(reactionBar(side)!.textContent).not.toMatch(/\d/);
+      expect(reactionBar(side)!.innerHTML).not.toMatch(/count/i);
+    }
+  });
+
+  test("shows the judge's own earlier reaction as active", async () => {
+    myReactions.set(nextEntry * 10, ['Laugh']);
+    await renderPair();
+
+    await vi.waitFor(() =>
+      expect(reactionButton('left', 'Laugh')!.getAttribute('aria-pressed')).toBe('true')
+    );
+    expect(reactionButton('left', 'Like')!.getAttribute('aria-pressed')).toBe('false');
+    expect(reactionButton('right', 'Laugh')!.getAttribute('aria-pressed')).toBe('false');
+  });
+
+  test('offers the same four reactions on every entry', async () => {
+    await renderPair();
+
+    for (const side of ['left', 'right'] as const) {
+      expect(
+        [...reactionBar(side)!.querySelectorAll('button')].map((b) => b.getAttribute('aria-label'))
+      ).toEqual(['Like reaction', 'Heart reaction', 'Laugh reaction', 'Cry reaction']);
+    }
+  });
+
+  describe.each([
+    ['signed out', () => (reactionEnv.viewer = null)],
+    ['muted', () => (reactionEnv.viewer = { id: 7, muted: true })],
+    ['a toggle is already in flight', () => (reactionEnv.togglePending = true)],
+    ['own reactions have not loaded', () => (reactionEnv.lookupLoaded = false)],
+  ])('when %s', (_name, setup) => {
+    test('a reaction click does nothing: no toggle, no vote, no skip', async () => {
+      setup();
+      const { onVote, onSkip } = await renderPair();
+
+      for (const side of ['left', 'right'] as const) {
+        const button = reactionButton(side, 'Like')!;
+        expect(button.disabled).toBe(true);
+        button.click();
+      }
+      await pastFeedbackDelay();
+
+      expect(reactionToggle).not.toHaveBeenCalled();
+      expect(onVote).not.toHaveBeenCalled();
+      expect(onSkip).not.toHaveBeenCalled();
+    });
+  });
+
+  test('pills turn interactive once own reactions have loaded', async () => {
+    reactionEnv.lookupLoaded = false;
+    const { rerender } = await renderPair();
+    expect(reactionButton('left', 'Like')!.disabled).toBe(true);
+
+    reactionEnv.lookupLoaded = true;
+    rerender();
+
+    await vi.waitFor(() => expect(reactionButton('left', 'Like')!.disabled).toBe(false));
+    reactionButton('left', 'Like')!.click();
+    expect(reactionToggle).toHaveBeenCalledTimes(1);
+  });
+
+  test('the pill carries no stray DOM attributes from the shared reaction button', async () => {
+    await renderPair();
+
+    for (const attr of ['count', 'countunknown', 'hasreacted', 'cantclick']) {
+      expect(reactionBar('left')!.querySelector(`[${attr}]`)).toBeNull();
+    }
+  });
+});

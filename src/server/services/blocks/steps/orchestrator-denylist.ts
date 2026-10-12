@@ -200,7 +200,7 @@ export function isPlatformInternalStepType(stepType: string): boolean {
 /**
  * Fail-closed assertion for a single orchestrator `$type`.
  *
- * 🔴 READ THIS BEFORE WIRING A NEW SUBMIT PATH. This set now has TWO
+ * 🔴 READ THIS BEFORE WIRING A NEW SUBMIT PATH. This set now has THREE
  * enforcement sites, and they are different in kind:
  *
  *   - the registry invariant in `assertStepInvariants` — no registered entry may
@@ -208,13 +208,18 @@ export function isPlatformInternalStepType(stepType: string): boolean {
  *   - `assertPassThroughStepTypeAllowed` in `blocks.router` — the PASS-THROUGH
  *     arm (`kind:'step'` with a bare `$type`, note the SINGULAR `step`; an
  *     earlier draft of this paragraph called it `kind:'steps'` and the plural
- *     greps to nothing), which lets a block name a `$type` directly and is
- *     therefore the site where this set is the only bound. It runs on both the
+ *     greps to nothing), which lets a block name a `$type` directly, so
+ *     this set is the only bound there. It runs on both the
  *     estimate and the submit, BEFORE any orchestrator call and before any spend
  *     reservation. A denylist that the wire does not consult is decoration.
+ *   - `prepareMultiStepWorkflow` in `blocks.router` — the `kind:'workflow'` arm,
+ *     which runs it on EVERY step at the same point on both paths.
+ *
+ * Both router sites also check the step a `repeat` runs
+ * (`collectBlockStepTypes`).
  *
  * The match is case-folded (see `isPlatformInternalStepType`), so a re-cased
- * `$type` is refused on the pass-through arm too.
+ * `$type` is refused on both router arms too.
  */
 export function assertStepTypeAllowed(stepType: string, where?: string): void {
   if (isPlatformInternalStepType(stepType)) {

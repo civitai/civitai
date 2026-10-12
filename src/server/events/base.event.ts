@@ -265,6 +265,9 @@ export type EventPageCopy = {
   headlineAccent?: string;
   // CDN image id for the hero art. Keep its subject on the right: the left side sits under the copy.
   heroImage?: string;
+  // CDN image id for the home block's art, composed for its short, nearly square slot; the block
+  // falls back to the hero. The left side fades into the block and carries the play button.
+  homeImage?: string;
   // A short film about the event, as a CDN video id. The hero puts a play button on its art that
   // opens it; `title` names it in the button's label and the player's heading. `duration` is the
   // file's length in seconds, as its own header states it; the button shows it, or just "Watch".

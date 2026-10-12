@@ -35,7 +35,7 @@ const FRAME = {
   blockId: 'my-app',
   appId: 'appblk-my-app',
   appName: 'My App',
-  trustTier: 'unverified' as const,
+  trustTier: 'verified' as const,
   sandbox: 'allow-scripts allow-forms',
   scopes: ['user:read:self'],
   bootSkeleton: false,
@@ -62,7 +62,7 @@ describe('/apps/dev/[blockId] client', () => {
     expect(m.useBlockToken).toHaveBeenCalled();
     expect(m.useBlockToken.mock.calls[0][0]).toMatchObject({
       blockInstanceId: 'page_apb_dev',
-      trustTier: 'unverified',
+      trustTier: 'verified',
       manifest: {
         scopes: ['user:read:self'],
         iframe: {
@@ -76,7 +76,7 @@ describe('/apps/dev/[blockId] client', () => {
     });
     expect(m.hostProps).toMatchObject({
       sandbox: 'allow-scripts allow-forms',
-      trustTier: 'unverified',
+      trustTier: 'verified',
       declaredScopes: ['user:read:self'],
       surface: 'dev-tunnel',
       blockInstanceId: 'page_apb_dev',
