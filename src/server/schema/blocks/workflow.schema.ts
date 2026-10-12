@@ -678,6 +678,8 @@ export type PassThroughStepBody = z.infer<typeof blockPassThroughStepBodySchema>
 export const BLOCK_TRAINING_DATASET_ID_REGEX = /^tds_[a-f0-9]{32}$/;
 /** Opaque handle to a server-stored training quote. */
 export const BLOCK_TRAINING_QUOTE_ID_REGEX = /^tq_[a-f0-9]{32}$/;
+/** Either kind of viewer-confirmed quote id (`tq_` training, `sq_` step). */
+export const BLOCK_QUOTE_GRANT_ID_REGEX = /^(?:tq|sq)_[a-f0-9]{32}$/;
 /** Max sample prompts on a training run. */
 export const BLOCK_TRAINING_SAMPLE_PROMPTS_MAX = 6;
 /** Max characters of one sample prompt. */

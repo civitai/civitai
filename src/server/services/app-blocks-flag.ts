@@ -1085,7 +1085,7 @@ export async function isAppBlocksTrainingKindEnabled(opts: {
  * `$type` job whose FIXED orchestrator price exceeds the token's per-call budget, run
  * only once the viewer confirms that exact price in host chrome. Gates the estimate's
  * grant (`stepQuote`), the host's `RUN_CONFIRMED_STEP` consent pair
- * (`blocks.previewStepQuote` / `blocks.consentStepQuote`) and the confirmed submit.
+ * (`blocks.previewQuoteGrant` / `blocks.consentQuoteGrant` for an `sq_` quote) and the confirmed submit.
  * With it off, the pass-through arm is exactly what it was: a job above the per-call
  * budget is refused.
  *

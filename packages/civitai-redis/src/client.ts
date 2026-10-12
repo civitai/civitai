@@ -2174,8 +2174,8 @@ export const REDIS_SYS_KEYS = {
     TRAINING_QUOTE: 'system:blocks:training-quote',
     /**
      * App Blocks confirmed pass-through STEP quote (a fixed price above the token's
-     * per-call budget); claimed exactly once (GETDEL) by the submit. Its run-generation
-     * counters live under `<this>:runs:…`. See block-quote-grant.service.
+     * per-call budget); claimed exactly once (GETDEL) by the submit. See
+     * block-quote-grant.service.
      */
     STEP_QUOTE: 'system:blocks:step-quote',
   },

@@ -226,27 +226,27 @@ export function mintServerBlockExternalId(): string {
  * `blt` tag keeps it disjoint from the client (`blk`) and minted (`bls`) namespaces.
  */
 export function composeTrainingBlockExternalId(runKey: string): string {
-  return composeRunKeyedExternalId('training', BLOCK_EXTERNAL_ID_PREFIX_TRAINING, runKey);
+  if (!/^[a-f0-9]{64}$/.test(runKey)) {
+    throw new Error('training externalId: runKey must be a sha256 hex digest');
+  }
+  return assertOrchestratorExternalId(`${BLOCK_EXTERNAL_ID_PREFIX_TRAINING}${runKey}`);
 }
 
 /**
- * The orchestrator `externalId` for a CONFIRMED pass-through step, keyed on the RUN
- * exactly as `composeTrainingBlockExternalId` is (see `quotedRunKey`), under its own
- * `blc` tag — disjoint from `blk` / `bls` / `blt` at index 2.
+ * The orchestrator `externalId` for a CONFIRMED pass-through step, derived from the
+ * server-minted QUOTE the viewer confirmed (`sq_<32 hex>`) — NOT from the body. Every
+ * confirmation consumes its own quote, so every confirmed job is a distinct run: two
+ * confirms of an identical body get two ids, and there is no counter whose expiry could
+ * hand a new job an old job's id. (Training keys on the run instead — see
+ * `composeTrainingBlockExternalId` — because its body names a one-shot dataset.)
+ *
+ * SHAPE: `blc<32 hex>` — the quote's own 128 random bits under the `blc` tag, disjoint
+ * from `blk` / `bls` / `blt` at index 2.
  */
-export function composeConfirmedStepBlockExternalId(runKey: string): string {
-  return composeRunKeyedExternalId(
-    'confirmed step',
-    BLOCK_EXTERNAL_ID_PREFIX_CONFIRMED_STEP,
-    runKey
-  );
-}
-
-function composeRunKeyedExternalId(label: string, prefix: string, runKey: string): string {
-  if (!/^[a-f0-9]{64}$/.test(runKey)) {
-    throw new Error(`${label} externalId: runKey must be a sha256 hex digest`);
-  }
-  return assertOrchestratorExternalId(`${prefix}${runKey}`);
+export function composeConfirmedStepBlockExternalId(quoteId: string): string {
+  const match = /^sq_([a-f0-9]{32})$/.exec(quoteId);
+  if (!match) throw new Error('confirmed step externalId: quoteId must be an sq_ quote id');
+  return assertOrchestratorExternalId(`${BLOCK_EXTERNAL_ID_PREFIX_CONFIRMED_STEP}${match[1]}`);
 }
 
 export type BlockGenIdempotencyClaim<T> =

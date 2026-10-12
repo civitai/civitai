@@ -74,6 +74,7 @@ import {
 } from './runConfirmedStepGate';
 import { ConfirmedStepConsentBody, ConfirmedStepDailyLimitBody } from './ConfirmedStepConsentBody';
 import AlertDialog from '~/components/Dialog/Common/AlertDialog';
+import GuardedConfirmDialog from './GuardedConfirmDialog';
 import { CONFIRMED_STEP_DAILY_LIMIT_ERROR_CODE } from '~/shared/constants/block-scope.constants';
 import { projectSafeGenerationResource } from '~/server/schema/blocks/generation-resource-projection';
 import type { GenerationResource } from '~/shared/types/generation.types';
@@ -4693,7 +4694,8 @@ export function PageBlockHost({
         dialogStore.trigger({
           // Per-request id — a deduped dialog would be a request that never replies.
           id: `block-run-training-${requestId}`,
-          component: ConfirmDialog,
+          // A confirm that spends Buzz: disabled briefly after it appears.
+          component: GuardedConfirmDialog,
           props: {
             title: copy.title,
             message: <TrainingConsentBody copy={copy} preview={preview} onBuyBuzz={openBuyBuzz} />,
@@ -4797,7 +4799,7 @@ export function PageBlockHost({
       void (async () => {
         let preview: ConfirmedStepQuotePreview;
         try {
-          preview = (await trpcUtils.client.blocks.previewStepQuote.mutate({
+          preview = (await trpcUtils.client.blocks.previewQuoteGrant.mutate({
             blockToken: token,
             quoteId,
           })) as ConfirmedStepQuotePreview;
@@ -4825,7 +4827,8 @@ export function PageBlockHost({
         dialogStore.trigger({
           // Per-request id — a deduped dialog would be a request that never replies.
           id: `block-run-confirmed-step-${requestId}`,
-          component: ConfirmDialog,
+          // A confirm that spends Buzz: disabled briefly after it appears.
+          component: GuardedConfirmDialog,
           props: {
             title: copy.title,
             message: (
@@ -4839,7 +4842,7 @@ export function PageBlockHost({
               // able to claim `declined` for a job that is being submitted.
               settlement.markConsented();
               try {
-                await trpcUtils.client.blocks.consentStepQuote.mutate({
+                await trpcUtils.client.blocks.consentQuoteGrant.mutate({
                   blockToken: token,
                   quoteId,
                 });

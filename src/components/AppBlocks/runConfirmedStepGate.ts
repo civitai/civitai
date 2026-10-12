@@ -17,12 +17,12 @@ import { CONFIRMED_STEP_DAILY_LIMIT_ERROR_CODE } from '~/shared/constants/block-
  * the estimate returned. On `RUN_CONFIRMED_STEP { requestId, body }` (the body carries
  * that `quoteId`) the PAGE host:
  *   1. asks the server for the quote it is about to confirm
- *      (`blocks.previewStepQuote`) — price, `$type`, expiry, shortfall, and the
+ *      (`blocks.previewQuoteGrant`) — price, `$type`, expiry, shortfall, and the
  *      viewer's own daily limit for the app — all server-resolved;
  *   2. if the job would exceed what remains of that daily limit, shows WHY and where
  *      to raise it, and replies `daily-limit-exceeded` — there is no confirm to click;
  *   3. otherwise shows the price in a host-chrome confirm;
- *   4. on confirm, records the viewer's confirmation (`blocks.consentStepQuote`,
+ *   4. on confirm, records the viewer's confirmation (`blocks.consentQuoteGrant`,
  *      session-required) and THEN submits the body (`blocks.submitWorkflow`);
  *   5. replies `CONFIRMED_STEP_RESULT { requestId, snapshot }` or `{ requestId, error }`.
  *
@@ -42,7 +42,7 @@ import { CONFIRMED_STEP_DAILY_LIMIT_ERROR_CODE } from '~/shared/constants/block-
  * confirmed steps are page-only on the server too.
  */
 
-/** The server-resolved consent payload. Mirrors `blocks.previewStepQuote`. */
+/** The server-resolved consent payload. Mirrors `blocks.previewQuoteGrant` for an `sq_` quote. */
 export type ConfirmedStepQuotePreview = {
   quoteId: string;
   total: number;

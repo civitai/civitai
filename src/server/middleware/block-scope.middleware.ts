@@ -443,7 +443,7 @@ export function blockTrainingRunCeiling(
  * 🔴 THE SECOND "SEPARATE, GRANTED CEILING" `blockPerCallBudget` DESCRIBES, for the
  * same reason as `blockTrainingRunCeiling`: the viewer confirmed THIS fixed price in
  * host chrome, recorded only by a procedure that requires their own signed-in session
- * (`blocks.consentStepQuote`), which the block, holding nothing but its token, cannot
+ * (`blocks.consentQuoteGrant`), which the block, holding nothing but its token, cannot
  * call. `buzzBudget` keeps meaning exactly what it did.
  *
  * 🔴 IT REFUSES ABOVE THE PER-JOB MAXIMUM; IT DOES NOT CLAMP. The training ceiling

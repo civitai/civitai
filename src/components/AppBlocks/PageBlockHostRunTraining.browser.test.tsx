@@ -178,6 +178,7 @@ describe('PageBlockHost RUN_TRAINING (consent-gated training run)', () => {
     expect(submitMutate).not.toHaveBeenCalled();
     expect(previewMutate).toHaveBeenCalledWith({ blockToken: 'tok_abc', quoteId: QUOTE_ID });
 
+    await expect.element(confirmBtn, { timeout: 4000 }).toBeEnabled();
     await confirmBtn.click();
 
     await vi.waitFor(() => {
@@ -243,6 +244,26 @@ describe('PageBlockHost RUN_TRAINING (consent-gated training run)', () => {
     replies.stop();
   });
 
+  test('Confirm is disabled when the dialog appears, then enabled after the delay', async () => {
+    // The training confirm shares the delayed-confirm dialog with the confirmed step:
+    // a button that spends Buzz gives the viewer a moment to read first.
+    await mount();
+    await driveToReady();
+    postFromBlock('RUN_TRAINING', { requestId: 'rq_g1', body: BODY });
+    const confirmBtn = page.getByRole('button', { name: 'Train for 1,234 Buzz' });
+    await expect.element(confirmBtn).toBeInTheDocument();
+    await expect.element(confirmBtn).toBeDisabled();
+    (confirmBtn.element() as HTMLButtonElement).click();
+    expect(consentMutate).not.toHaveBeenCalled();
+    await expect.element(confirmBtn, { timeout: 4000 }).toBeEnabled();
+
+    window.dispatchEvent(new Event('blur'));
+    await expect.element(confirmBtn).toBeDisabled();
+    window.dispatchEvent(new Event('focus'));
+    await expect.element(confirmBtn, { timeout: 4000 }).toBeEnabled();
+    expect(submitMutate).not.toHaveBeenCalled();
+  });
+
   test('a block that is not ready is refused — no preview, no dialog', async () => {
     await mount();
     const replies = listenForReply();
@@ -284,6 +305,7 @@ describe('PageBlockHost RUN_TRAINING (consent-gated training run)', () => {
     postFromBlock('RUN_TRAINING', { requestId: 'rq_7', body: BODY });
     const confirmBtn = page.getByRole('button', { name: 'Train for 1,234 Buzz' });
     await expect.element(confirmBtn).toBeInTheDocument();
+    await expect.element(confirmBtn, { timeout: 4000 }).toBeEnabled();
     await confirmBtn.click();
     await vi.waitFor(() => {
       const r = replies.last('TRAINING_RESULT');
@@ -319,6 +341,7 @@ describe('PageBlockHost RUN_TRAINING (consent-gated training run)', () => {
     postFromBlock('RUN_TRAINING', { requestId: 'rq_9', body: BODY });
     const confirmBtn = page.getByRole('button', { name: 'Train for 1,234 Buzz' });
     await expect.element(confirmBtn).toBeInTheDocument();
+    await expect.element(confirmBtn, { timeout: 4000 }).toBeEnabled();
     await confirmBtn.click();
     await vi.waitFor(() => {
       const r = replies.last('TRAINING_RESULT');
@@ -342,6 +365,7 @@ describe('PageBlockHost RUN_TRAINING (consent-gated training run)', () => {
     postFromBlock('RUN_TRAINING', { requestId: 'rq_11', body: BODY });
     const confirmBtn = page.getByRole('button', { name: 'Train for 1,234 Buzz' });
     await expect.element(confirmBtn).toBeInTheDocument();
+    await expect.element(confirmBtn, { timeout: 4000 }).toBeEnabled();
     await confirmBtn.click();
     await vi.waitFor(() => {
       const r = replies.last('TRAINING_RESULT');
@@ -364,6 +388,7 @@ describe('PageBlockHost RUN_TRAINING (consent-gated training run)', () => {
     postFromBlock('RUN_TRAINING', { requestId: 'rq_10', body: BODY });
     const confirmBtn = page.getByRole('button', { name: 'Train for 1,234 Buzz' });
     await expect.element(confirmBtn).toBeInTheDocument();
+    await expect.element(confirmBtn, { timeout: 4000 }).toBeEnabled();
     await confirmBtn.click();
     await vi.waitFor(() => {
       const r = replies.last('TRAINING_RESULT');

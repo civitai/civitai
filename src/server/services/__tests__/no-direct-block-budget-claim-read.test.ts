@@ -355,17 +355,17 @@ describe('every submit gate is routed through one helper', () => {
     // txt2img submit and the registry step price a fee; customComfy/recipe and
     // the pass-through step do not. Adding a gate means deciding which it is.
     //
-    // The viewer-confirmed quote grants add THREE fee-free sites, none a further copy
-    // of the comparison: `assertTrainingRequestAllowed` reads the helper only for its 0
-    // REFUSAL (no budget / editor private run); `confirmedStepTokenGate` reads it for
-    // that refusal and for the "is this price ABOVE the budget" test that decides
+    // The viewer-confirmed quote grants add TWO fee-free sites, neither a further copy
+    // of the comparison: `quotedGrantTokenGate` — the ONE token gate both kinds
+    // (training, confirmed step) share — reads the helper for its 0 REFUSAL (no budget /
+    // editor private run) and for the "is this price ABOVE the budget" test that decides
     // whether a confirmed-step quote is granted at all; and `blockQuoteGrantRefusal` in
     // the middleware routes through it before either confirmed ceiling
-    // (`blockTrainingRunCeiling`, `blockConfirmedStepCeiling`) grants anything. All are
+    // (`blockTrainingRunCeiling`, `blockConfirmedStepCeiling`) grants anything. Both are
     // pinned to their owners in the tests below.
     expect(pricing).toHaveLength(2);
-    expect(feeFree).toHaveLength(5);
-    expect(sites).toHaveLength(7);
+    expect(feeFree).toHaveLength(4);
+    expect(sites).toHaveLength(6);
   });
 
   it('the fee-pricing population agrees with the RESERVING fee call sites', () => {
@@ -512,8 +512,7 @@ describe('every submit gate is routed through one helper', () => {
         .sort(),
       'a fee-free submit gate is missing, or one gained a fee quote without flipping its flag'
     ).toEqual([
-      'assertTrainingRequestAllowed',
-      'confirmedStepTokenGate',
+      'quotedGrantTokenGate',
       'submitCustomComfyWorkflow',
       'submitPassThroughStepWorkflow',
     ]);

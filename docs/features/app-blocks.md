@@ -622,14 +622,21 @@ A quote is single-use, expires after 15 minutes, and is re-priced at submit; a h
 re-price is refused, and so is a run the viewer's Buzz cannot cover (checked before anything is
 reserved, when the balance can be read). Training charges no author fee.
 
+If the viewer set a daily Buzz limit for the app and the run would exceed what remains of
+it, the submit returns a failed snapshot with `errorCode: 'daily-limit-exceeded'` (the same
+code a confirmed step uses). Training and confirmed steps share one confirmation and submit
+path on the server; see "Confirmed steps" below.
+
 ### Confirmed steps (one pass-through job above the per-call budget)
 
 A pass-through `kind: 'step'` job (`{ $type, input, maxBuzz }`) whose price exceeds the
 token's per-call budget is refused — unless the viewer confirms that exact price in host
 chrome. Behind its own fail-closed flag, `app-blocks-confirmed-step`. It is the training
 run's quote grant applied to any pass-through `$type` (the platform denylist still
-applies). Page tokens of an ordinary viewer only: dev, dev-tunnel, review-sandbox and
-private-run tokens are refused, because none of them has host chrome to show a price in.
+applies). Page tokens only, under the same rule as training: dev, dev-tunnel and
+review-sandbox tokens are refused, and so is an editor's read-only private run. The app
+owner's own private run is allowed, under the private-run Buzz cap — it renders in the
+same page host, so the owner sees the same confirm.
 
 1. **Estimate** — `ESTIMATE_WORKFLOW` with the pass-through body. When the orchestrator
    quotes a **fixed** price (positive, not variable/metered) that is above the per-call
@@ -639,8 +646,8 @@ private-run tokens are refused, because none of them has host chrome to show a p
    is never grantable: the viewer confirms what they are charged. Below the budget the
    estimate is unchanged and the job runs as before.
 2. **Run** — `RUN_CONFIRMED_STEP { requestId, body: { …the same body, quoteId } }`. The host
-   reads the quote back from the server (`blocks.previewStepQuote`), shows the price, and on
-   the viewer's confirm records it through `blocks.consentStepQuote` (signed-in session
+   reads the quote back from the server (`blocks.previewQuoteGrant`), shows the price, and on
+   the viewer's confirm records it through `blocks.consentQuoteGrant` (signed-in session
    only) and then submits. A submit naming a quote nobody confirmed is refused, so a block
    cannot start the job by calling `SUBMIT_WORKFLOW` itself. The reply is
    `CONFIRMED_STEP_RESULT { requestId, snapshot }` or `{ requestId, error }`; the host's
@@ -657,6 +664,15 @@ private-run tokens are refused, because none of them has host chrome to show a p
 A quote is single-use, bound to the viewer, app, install and exact body, expires after 15
 minutes, and is re-priced at submit; a higher re-price, or one that is no longer fixed, is
 refused. Every other ceiling above still applies, and the job charges no author fee.
+
+Each confirmation is its own run: the orchestrator id is derived from the confirmed quote,
+so confirming the same body twice starts two jobs. If a submit comes back
+`submission-unconfirmed`, the job may have started; a retry needs a new estimate and
+confirmation and would be a second job, so check the viewer's generations first.
+
+The confirm button of both spend confirms (training and confirmed step) stays disabled for
+about a second after the dialog appears, and again after the page regains focus or
+visibility, so the viewer has a moment to read it.
 
 **3D outputs.** A step that produces 3D models (`polyGen`) still lists every model url in
 `imageUrls`; `model3dOutputs: [{ url, format, variant }]` says which is which — `format`

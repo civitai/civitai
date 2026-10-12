@@ -282,18 +282,31 @@ describe('composeTrainingBlockExternalId', () => {
 });
 
 describe('composeConfirmedStepBlockExternalId', () => {
-  it('namespaces a run key under `blc`, disjoint from the training, client and minted ids', () => {
-    const key = 'b'.repeat(64);
-    const id = composeConfirmedStepBlockExternalId(key);
-    expect(id).toBe(`blc${key}`);
-    // Same run key, different tag: the two run-keyed namespaces never collide.
-    expect(id).not.toBe(composeTrainingBlockExternalId(key));
+  it('derives the id from the QUOTE: `blc` + the quote id’s 32 hex chars', () => {
+    const hex = '0123456789abcdef0123456789abcdef';
+    const id = composeConfirmedStepBlockExternalId(`sq_${hex}`);
+    expect(id).toBe(`blc${hex}`);
+    expect(id).toMatch(ORCHESTRATOR_EXTERNAL_ID_REGEX);
+    expect(id.length).toBeLessThanOrEqual(ORCHESTRATOR_EXTERNAL_ID_MAX);
+    // Disjoint from the training, client and minted namespaces at index 2.
+    expect(id.slice(0, 3)).not.toBe(composeTrainingBlockExternalId('b'.repeat(64)).slice(0, 3));
     expect(id.slice(0, 3)).not.toBe(mintServerBlockExternalId().slice(0, 3));
   });
 
-  it('refuses a run key that is not a sha256 hex digest', () => {
-    expect(() => composeConfirmedStepBlockExternalId('z'.repeat(64))).toThrow(
-      'confirmed step externalId: runKey must be a sha256 hex digest'
+  it('two quotes give two ids', () => {
+    expect(composeConfirmedStepBlockExternalId(`sq_${'a'.repeat(32)}`)).not.toBe(
+      composeConfirmedStepBlockExternalId(`sq_${'b'.repeat(32)}`)
+    );
+  });
+
+  it.each([
+    ['a training quote id', `tq_${'a'.repeat(32)}`],
+    ['a short id', `sq_${'a'.repeat(31)}`],
+    ['a non-hex id', `sq_${'z'.repeat(32)}`],
+    ['a run key', 'a'.repeat(64)],
+  ])('refuses %s', (_l, quoteId) => {
+    expect(() => composeConfirmedStepBlockExternalId(quoteId)).toThrow(
+      'confirmed step externalId: quoteId must be an sq_ quote id'
     );
   });
 });

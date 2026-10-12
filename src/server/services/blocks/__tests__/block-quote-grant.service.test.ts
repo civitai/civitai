@@ -5,9 +5,7 @@ import {
   BLOCK_QUOTE_GRANT_TTL_SECONDS,
   claimStepQuote,
   claimQuoteGrant,
-  confirmedStepRunGenerationKey,
   hashPassThroughStepBody,
-  quotedRunKey,
   readQuoteGrant,
   readStepQuote,
   recordStepQuoteConsent,
@@ -158,25 +156,5 @@ describe('hashPassThroughStepBody', () => {
     );
     expect(hashPassThroughStepBody(body({ $type: 'otherGen' }))).not.toBe(base);
     expect(hashPassThroughStepBody(body({ maxBuzz: 201 }))).not.toBe(base);
-  });
-});
-
-describe('the confirmed-step run identity', () => {
-  it('the generation counter is per viewer, app and body', () => {
-    const k = confirmedStepRunGenerationKey(42, 'apb_1', 'h1');
-    expect(k).toBe('system:blocks:step-quote:runs:42:apb_1:h1');
-    expect(confirmedStepRunGenerationKey(7, 'apb_1', 'h1')).not.toBe(k);
-    expect(confirmedStepRunGenerationKey(42, 'apb_2', 'h1')).not.toBe(k);
-    expect(confirmedStepRunGenerationKey(42, 'apb_1', 'h2')).not.toBe(k);
-  });
-
-  it('the run key is the sha256 of app, body hash and generation — each one moves it', () => {
-    const k0 = quotedRunKey('apb_1', 'h1', 0);
-    // A LITERAL, not a re-derivation: sha256("apb_1\nh1\n0").
-    expect(k0).toBe('7a2d26ab15b538fd72a15c0e476c2ddc47e3f1160eee7fdd691d9e86c8d192be');
-    expect(quotedRunKey('apb_1', 'h1', 1)).not.toBe(k0);
-    expect(quotedRunKey('apb_2', 'h1', 0)).not.toBe(k0);
-    expect(quotedRunKey('apb_1', 'h2', 0)).not.toBe(k0);
-    expect(quotedRunKey('apb_1', 'h1', 0)).toBe(k0);
   });
 });

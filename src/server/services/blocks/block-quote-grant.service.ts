@@ -85,42 +85,6 @@ export function hashQuotedBody(body: { quoteId?: string }): string {
 }
 
 /**
- * The identity of a RUN — app, the quoted body's hash, and how many runs of that body
- * have been SUBMITTED — as a sha256 hex digest. Retries of one run share it; it keys
- * the run's orchestrator `externalId` (deduped per `(userId, externalId)`), so a retry
- * after an ambiguous failure — which needs a fresh quote — dedupes onto the run the
- * orchestrator may already have created, while a deliberate re-run after a known
- * result is a new run.
- */
-export function quotedRunKey(appBlockId: string, bodyHash: string, generation: number): string {
-  return createHash('sha256').update(`${appBlockId}\n${bodyHash}\n${generation}`).digest('hex');
-}
-
-export const QUOTED_RUN_GENERATION_TTL_SECONDS = 2 * 24 * 60 * 60;
-
-/** Where a kind keeps its run-generation counters. */
-export type QuotedRunGenerationKey =
-  | `${typeof REDIS_SYS_KEYS.BLOCKS.TRAINING_DATASET}:${string}`
-  | `${typeof REDIS_SYS_KEYS.BLOCKS.STEP_QUOTE}:runs:${string}`;
-
-/** How many runs under `key` have been submitted (0 when unknown or malformed). */
-export async function readQuotedRunGeneration(key: QuotedRunGenerationKey): Promise<number> {
-  const raw = await sysRedis.get(key);
-  const n = Number(raw ?? 0);
-  return Number.isInteger(n) && n >= 0 ? n : 0;
-}
-
-/** Record a submitted run. Best-effort: a lost bump only makes the next re-run dedupe. */
-export async function bumpQuotedRunGeneration(key: QuotedRunGenerationKey): Promise<void> {
-  try {
-    await sysRedis.incrBy(key, 1);
-    await sysRedis.expire(key, QUOTED_RUN_GENERATION_TTL_SECONDS);
-  } catch {
-    // best-effort
-  }
-}
-
-/**
  * Store a fresh quote of `kind`. The `quoteId` is server-minted (128 random bits) and
  * the record starts UNCONSENTED.
  */
@@ -234,19 +198,6 @@ export type BlockStepQuoteRecord = BlockQuoteGrantRecord & { stepType: string };
 /** `hashQuotedBody` for a pass-through step body. */
 export function hashPassThroughStepBody(body: PassThroughStepBody): string {
   return hashQuotedBody(body);
-}
-
-/**
- * The run-generation counter for a confirmed step body. Per (viewer, app, body): unlike
- * a training body, a step body names nothing user-bound, so the viewer and app are in
- * the key to keep one viewer's submits from moving another's run identity.
- */
-export function confirmedStepRunGenerationKey(
-  userId: number,
-  appBlockId: string,
-  bodyHash: string
-): QuotedRunGenerationKey {
-  return `${REDIS_SYS_KEYS.BLOCKS.STEP_QUOTE}:runs:${userId}:${appBlockId}:${bodyHash}`;
 }
 
 export function storeStepQuote(

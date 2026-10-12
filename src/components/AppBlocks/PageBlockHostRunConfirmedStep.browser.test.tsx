@@ -39,8 +39,8 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
       useUtils: () => ({
         client: {
           blocks: {
-            previewStepQuote: { mutate: previewMutate },
-            consentStepQuote: { mutate: consentMutate },
+            previewQuoteGrant: { mutate: previewMutate },
+            consentQuoteGrant: { mutate: consentMutate },
           },
         },
       }),
@@ -157,6 +157,13 @@ const PREVIEW = {
 };
 const SNAPSHOT = { workflowId: '42-1', status: 'pending' };
 const CONFIRM = 'Run for 1,040 Buzz';
+const confirmButton = () => page.getByRole('button', { name: CONFIRM });
+// The confirm is disabled for ~1s after it appears; give the assertion room past it.
+const ARMED = { timeout: 4000 };
+function setVisibility(state: 'visible' | 'hidden') {
+  Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => state });
+  document.dispatchEvent(new Event('visibilitychange'));
+}
 
 describe('PageBlockHost RUN_CONFIRMED_STEP (consent-gated over-budget step)', () => {
   beforeEach(() => {
@@ -185,6 +192,7 @@ describe('PageBlockHost RUN_CONFIRMED_STEP (consent-gated over-budget step)', ()
     expect(submitMutate).not.toHaveBeenCalled();
     expect(previewMutate).toHaveBeenCalledWith({ blockToken: 'tok_abc', quoteId: QUOTE_ID });
 
+    await expect.element(confirmBtn, ARMED).toBeEnabled();
     await confirmBtn.click();
 
     expect(await reply(replies)).toEqual({ requestId: 'rq_1', snapshot: SNAPSHOT });
@@ -283,7 +291,8 @@ describe('PageBlockHost RUN_CONFIRMED_STEP (consent-gated over-budget step)', ()
     await driveToReady();
     const replies = listenForReply();
     postFromBlock('RUN_CONFIRMED_STEP', { requestId: 'rq_6', body: BODY });
-    await page.getByRole('button', { name: CONFIRM }).click();
+    await expect.element(confirmButton(), ARMED).toBeEnabled();
+    await confirmButton().click();
     expect(await reply(replies)).toEqual({ requestId: 'rq_6', error: 'daily-limit-exceeded' });
     await expect
       .element(page.getByTestId('block-confirmed-step-daily-limit-refusal'))
@@ -346,7 +355,8 @@ describe('PageBlockHost RUN_CONFIRMED_STEP (consent-gated over-budget step)', ()
     await driveToReady();
     const replies = listenForReply();
     postFromBlock('RUN_CONFIRMED_STEP', { requestId: 'rq_12', body: BODY });
-    await page.getByRole('button', { name: CONFIRM }).click();
+    await expect.element(confirmButton(), ARMED).toBeEnabled();
+    await confirmButton().click();
     expect(await reply(replies)).toEqual({
       requestId: 'rq_12',
       error: 'step quote not found or expired',
@@ -372,13 +382,68 @@ describe('PageBlockHost RUN_CONFIRMED_STEP (consent-gated over-budget step)', ()
     expect(page.getByTestId('block-confirmed-step-shortfall').elements()).toHaveLength(0);
   });
 
+  // ── The confirm is not clickable the instant it appears ──────────────────────
+  // A button that spends Buzz gives the viewer a moment to read the dialog first, and
+  // again whenever they come back to the page.
+  test('Confirm is disabled when the dialog appears, then enabled after the delay', async () => {
+    await mount();
+    await driveToReady();
+    postFromBlock('RUN_CONFIRMED_STEP', { requestId: 'rq_g1', body: BODY });
+    await expect.element(confirmButton()).toBeInTheDocument();
+    await expect.element(confirmButton()).toBeDisabled();
+    // A click while it is disabled does nothing.
+    (confirmButton().element() as HTMLButtonElement).click();
+    expect(consentMutate).not.toHaveBeenCalled();
+    // Cancel is never delayed.
+    await expect.element(page.getByRole('button', { name: 'Cancel' })).toBeEnabled();
+    await expect.element(confirmButton(), ARMED).toBeEnabled();
+    expect(consentMutate).not.toHaveBeenCalled();
+    expect(submitMutate).not.toHaveBeenCalled();
+  });
+
+  test('Confirm is disabled again when the window loses focus, and re-arms on return', async () => {
+    await mount();
+    await driveToReady();
+    postFromBlock('RUN_CONFIRMED_STEP', { requestId: 'rq_g2', body: BODY });
+    await expect.element(confirmButton(), ARMED).toBeEnabled();
+
+    window.dispatchEvent(new Event('blur'));
+    await expect.element(confirmButton()).toBeDisabled();
+    // Still disabled while away, however long that is.
+    await new Promise((r) => setTimeout(r, 1300));
+    expect((confirmButton().element() as HTMLButtonElement).disabled).toBe(true);
+
+    window.dispatchEvent(new Event('focus'));
+    // Not instantly: the delay starts over.
+    expect((confirmButton().element() as HTMLButtonElement).disabled).toBe(true);
+    await expect.element(confirmButton(), ARMED).toBeEnabled();
+  });
+
+  test('Confirm is disabled again when the tab is hidden, and re-arms when it is visible', async () => {
+    await mount();
+    await driveToReady();
+    postFromBlock('RUN_CONFIRMED_STEP', { requestId: 'rq_g3', body: BODY });
+    await expect.element(confirmButton(), ARMED).toBeEnabled();
+    try {
+      setVisibility('hidden');
+      await expect.element(confirmButton()).toBeDisabled();
+      setVisibility('visible');
+      expect((confirmButton().element() as HTMLButtonElement).disabled).toBe(true);
+      await expect.element(confirmButton(), ARMED).toBeEnabled();
+    } finally {
+      // Hand the real getter back to the document.
+      delete (document as unknown as Record<string, unknown>).visibilityState;
+    }
+  });
+
   test('a lost submit RESPONSE replies `submission-unconfirmed` and is never resent', async () => {
     submitMutate.mockRejectedValueOnce(new Error('Failed to fetch'));
     await mount();
     await driveToReady();
     const replies = listenForReply();
     postFromBlock('RUN_CONFIRMED_STEP', { requestId: 'rq_11', body: BODY });
-    await page.getByRole('button', { name: CONFIRM }).click();
+    await expect.element(confirmButton(), ARMED).toBeEnabled();
+    await confirmButton().click();
     expect(await reply(replies)).toEqual({ requestId: 'rq_11', error: 'submission-unconfirmed' });
     expect(submitMutate).toHaveBeenCalledTimes(1);
     expect(replies.of('CONFIRMED_STEP_RESULT')).toHaveLength(1);

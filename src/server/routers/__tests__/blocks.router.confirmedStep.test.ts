@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TRPCError } from '@trpc/server';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { annotateOrchestratorSubmitFailure } from '~/server/services/orchestrator/submit-failure';
@@ -9,7 +9,7 @@ import type * as FlagModule from '~/server/services/app-blocks-flag';
 import type * as AttributionModule from '~/server/services/blocks/buzz-attribution.service';
 import type * as AuthorFeeChargeModule from '~/server/services/blocks/author-fee-charge.service';
 import type * as RateLimitModule from '~/server/utils/block-catalog-rate-limit';
-import type * as SessionClientModule from '~/server/auth/session-client';
+import type * as MetricsModule from '~/server/metrics/app-block-runtime.metrics';
 
 /**
  * The CONFIRMED pass-through step end-to-end through `blocksRouter`: estimate (grant)
@@ -30,8 +30,8 @@ const h = vi.hoisted(() => ({
   confirmedStepFlag: vi.fn(async () => true),
   getOrchestratorToken: vi.fn(async () => 'orch-token'),
   submitWorkflow: vi.fn(),
-  getUserById: vi.fn(async () => ({ id: 42, isModerator: false })),
-  sessionUser: vi.fn(async (): Promise<unknown> => ({ id: 42, isModerator: false })),
+  getUserById: vi.fn(async (): Promise<unknown> => ({ id: 42, isModerator: false })),
+  overcharge: vi.fn(),
   reserveAppSpend: vi.fn(async () => ({ allowed: true, dailyKey: 'app-daily' })),
   refundAppSpend: vi.fn(async () => undefined),
   persistSettle: vi.fn(async () => undefined),
@@ -49,18 +49,6 @@ vi.mock('~/server/services/blocks/block-bridge-auth.service', async (importOrigi
   ...(await importOriginal<typeof BridgeAuthModule>()),
   authorizeBlockBridgeToken: (...a: unknown[]) => h.authorize(...a),
 }));
-vi.mock('~/server/auth/session-client', async (importOriginal) => {
-  const mod = await importOriginal<typeof SessionClientModule>();
-  return {
-    ...mod,
-    sessionClient: new Proxy(mod.sessionClient, {
-      get: (target, prop, receiver) =>
-        prop === 'getSessionUserById'
-          ? (...a: unknown[]) => h.sessionUser(...(a as []))
-          : Reflect.get(target, prop, receiver),
-    }),
-  };
-});
 vi.mock('~/server/services/blocks/block-token-access.service', async (importOriginal) => ({
   ...(await importOriginal<typeof TokenAccessModule>()),
   assertAppBlocksEnabledForTokenUser: (...a: unknown[]) => h.assertEnabled(...(a as [])),
@@ -68,6 +56,10 @@ vi.mock('~/server/services/blocks/block-token-access.service', async (importOrig
 vi.mock('~/server/services/app-blocks-flag', async (importOriginal) => ({
   ...(await importOriginal<typeof FlagModule>()),
   isAppBlocksConfirmedStepEnabled: (...a: unknown[]) => h.confirmedStepFlag(...(a as [])),
+}));
+vi.mock('~/server/metrics/app-block-runtime.metrics', async (importOriginal) => ({
+  ...(await importOriginal<typeof MetricsModule>()),
+  recordConfirmedQuoteOvercharge: (...a: unknown[]) => h.overcharge(...a),
 }));
 vi.mock('~/server/orchestrator/get-orchestrator-token', () => ({
   getOrchestratorToken: () => h.getOrchestratorToken(),
@@ -136,13 +128,11 @@ vi.mock('~/server/middleware.trpc', async () => {
 import { blocksRouter } from '../blocks.router';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
+import { envMock } from '~/__tests__/mocks/env.mock';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { BLOCK_STEP_NAME } from '~/server/services/blocks/workflow.service';
 import { composeConfirmedStepBlockExternalId } from '~/server/utils/block-gen-idempotency';
-import {
-  hashPassThroughStepBody,
-  quotedRunKey,
-} from '~/server/services/blocks/block-quote-grant.service';
+import { hashPassThroughStepBody } from '~/server/services/blocks/block-quote-grant.service';
 import { blockPassThroughStepBodySchema } from '~/server/schema/blocks/workflow.schema';
 
 // ── An in-memory sysRedis: get/set (NX/XX)/getDel/del/incrBy/decrBy. ──────────
@@ -292,7 +282,7 @@ async function estimate(b: Record<string, unknown> = body()) {
   return (await caller().estimateWorkflow({ blockToken: 't', body: b as never })) as EstimateReply;
 }
 async function consent(quoteId: string, sessionUserId = VIEWER) {
-  return caller(sessionUserId).consentStepQuote({ blockToken: 't', quoteId });
+  return caller(sessionUserId).consentQuoteGrant({ blockToken: 't', quoteId });
 }
 type SubmitReply = {
   submissionUnconfirmed?: true;
@@ -323,7 +313,7 @@ beforeEach(() => {
   whatifPrice = { total: PRICE };
   chargedPrice = PRICE;
   workflowId = `${VIEWER}-20261012`;
-  h.sessionUser.mockImplementation(async () => ({ id: VIEWER, isModerator: false }));
+  h.getUserById.mockImplementation(async () => ({ id: VIEWER, isModerator: false }));
   h.authorize.mockImplementation(async () => claims());
   h.confirmedStepFlag.mockImplementation(async () => true);
   h.reserveAppSpend.mockImplementation(async () => ({ allowed: true, dailyKey: 'app-daily' }));
@@ -361,20 +351,20 @@ describe('REGRESSION — a ~1040 fixed-price pass-through step above the 1000 bu
     // Bounded by its confirmed price, never by the app's declared `maxBuzz`.
     expect('timeout' in step).toBe(false);
     expect(step.input).toEqual({ engine: 'meshy', prompt: 'a teapot' });
-    // Keyed on the RUN (viewer, app, body, generation 0), the way training is.
-    expect(req.body.externalId).toBe(
-      composeConfirmedStepBlockExternalId(quotedRunKey('apb_test', BODY_HASH(), 0))
-    );
-    expect(req.body.externalId.startsWith('blc')).toBe(true);
+    // Keyed on the consumed QUOTE: `blc` + the quote id's own 32 hex chars. A literal
+    // shape, not a re-derivation through the composer.
+    expect(req.body.externalId).toBe(`blc${quoteId.slice(3)}`);
+    expect(req.body.externalId).toMatch(/^blc[a-f0-9]{32}$/);
+    expect(composeConfirmedStepBlockExternalId(quoteId)).toBe(req.body.externalId);
 
     expect(counter('system:blocks:buzz-cap')).toBe(PRICE);
     expect(h.reserveAppSpend).toHaveBeenCalledWith('apb_test', PRICE);
     expect(h.persistSettle).toHaveBeenCalledWith(
       expect.objectContaining({ workflowId, ceiling: PRICE, engine: 'passthrough' })
     );
-    // Single use: the quote is gone, and the run generation moved.
+    // Single use: the quote is gone. There is no run counter for this kind.
     expect(keysWith(QUOTE_PREFIX)).toEqual([]);
-    expect(store.get(`system:blocks:step-quote:runs:${VIEWER}:apb_test:${BODY_HASH()}`)).toBe('1');
+    expect(keysWith('system:blocks:step-quote')).toEqual([]);
   });
 
   it('records attribution as step:<$type> and charges NO author fee', async () => {
@@ -438,7 +428,6 @@ describe('ESTIMATE — grants a confirmable quote only for a fixed price above t
     ['the flag is off', claims(), false],
     ['a dev token', claims({ dev: true }), true],
     ['a review run-for-real token', claims({ reviewRunForReal: true }), true],
-    ['a private-run token', claims({ privateRun: true, privateRunAudience: 'owner' }), true],
     ['an editor private run', claims({ privateRun: true, privateRunAudience: 'editor' }), true],
   ])('grants nothing when %s (and the estimate still answers)', async (_l, c, flag) => {
     h.authorize.mockImplementation(async () => c);
@@ -454,10 +443,10 @@ describe('CONSENT — session-only, and only the quote’s own subject', () => {
   it('requires a signed-in session (the block, holding only its token, cannot call it)', async () => {
     const { snapshot } = await estimate();
     await expect(
-      caller(undefined).consentStepQuote({ blockToken: 't', quoteId: snapshot.stepQuote!.quoteId })
+      caller(undefined).consentQuoteGrant({ blockToken: 't', quoteId: snapshot.stepQuote!.quoteId })
     ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
     await expect(
-      caller(undefined).previewStepQuote({ blockToken: 't', quoteId: snapshot.stepQuote!.quoteId })
+      caller(undefined).previewQuoteGrant({ blockToken: 't', quoteId: snapshot.stepQuote!.quoteId })
     ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
   });
 
@@ -470,15 +459,25 @@ describe('CONSENT — session-only, and only the quote’s own subject', () => {
     );
   });
 
-  it('refuses a training quote id (another kind) at the input', async () => {
-    await expect(consent(`tq_${'1'.repeat(32)}`)).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+  it('a training-shaped id is dispatched to the TRAINING kind — it can never name a step quote', async () => {
+    // Same hex, other prefix: the step record exists, but a `tq_` id goes to the
+    // training kind (whose own flag is off here) and never reads the step store.
+    seedQuote(SEEDED, { consentedBy: null });
+    await expect(consent(`tq_${'1'.repeat(32)}`)).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      message: 'training from apps is not enabled',
+    });
+    expect(JSON.parse(store.get(`system:blocks:step-quote:${SEEDED}`) as string).consentedBy).toBe(
+      null
+    );
+    await expect(consent('sq_nope')).rejects.toMatchObject({ code: 'BAD_REQUEST' });
   });
 
   it('records the confirmation; the preview shows only server-resolved values', async () => {
     const { snapshot } = await estimate();
     const quoteId = snapshot.stepQuote!.quoteId;
     h.buzzAccounts.mockImplementation(async () => ({ blue: 40, green: 900, yellow: 0 }));
-    const preview = await caller(VIEWER).previewStepQuote({ blockToken: 't', quoteId });
+    const preview = await caller(VIEWER).previewQuoteGrant({ blockToken: 't', quoteId });
     expect(preview).toMatchObject({
       quoteId,
       total: PRICE,
@@ -500,7 +499,7 @@ describe('CONSENT — session-only, and only the quote’s own subject', () => {
     const { snapshot } = await estimate();
     const quoteId = snapshot.stepQuote!.quoteId;
     // Nothing spent yet: 1500 left, a 1040 job fits.
-    expect(await caller(VIEWER).previewStepQuote({ blockToken: 't', quoteId })).toMatchObject({
+    expect(await caller(VIEWER).previewQuoteGrant({ blockToken: 't', quoteId })).toMatchObject({
       dailyLimit: { limit: 1500, spentToday: 0, remaining: 1500 },
       exceedsDailyLimit: false,
     });
@@ -508,7 +507,7 @@ describe('CONSENT — session-only, and only the quote’s own subject', () => {
     const [limitKey] = keysWith('system:blocks:consent-budget');
     expect(limitKey).toBeUndefined();
     store.set(`system:blocks:consent-budget:${VIEWER}:apb_test:${dayKey()}`, '600');
-    expect(await caller(VIEWER).previewStepQuote({ blockToken: 't', quoteId })).toMatchObject({
+    expect(await caller(VIEWER).previewQuoteGrant({ blockToken: 't', quoteId })).toMatchObject({
       dailyLimit: { limit: 1500, spentToday: 600, remaining: 900 },
       exceedsDailyLimit: true,
     });
@@ -665,26 +664,25 @@ describe('SUBMIT refusals — each with its own error, nothing charged', () => {
   });
 
   it.each([
-    ['a dev (and tunnel) token', claims({ dev: true }), 'development, review or private-run'],
+    [
+      'a dev (and tunnel) token',
+      claims({ dev: true }),
+      'a confirmed step is not available from a development or review session',
+    ],
     [
       'a review run-for-real token',
       claims({ reviewRunForReal: true }),
-      'development, review or private-run',
-    ],
-    [
-      'a private-run token',
-      claims({ privateRun: true, privateRunAudience: 'owner' }),
-      'development, review or private-run',
+      'a confirmed step is not available from a development or review session',
     ],
     [
       'an editor (read-only) private run',
       claims({ privateRun: true, privateRunAudience: 'editor' }),
-      'development, review or private-run',
+      'block token missing budget',
     ],
     [
       'a model-slot token',
       claims({ ctx: { modelId: 7, slotId: 'model.sidebar_top' } }),
-      'page-only',
+      'a confirmed step is page-only',
     ],
   ])('%s', async (_l, c, msg) => {
     seedQuote(SEEDED);
@@ -712,7 +710,7 @@ describe('SUBMIT refusals — each with its own error, nothing charged', () => {
       message: 'confirmed steps from apps are not enabled',
     });
     await expect(
-      caller(VIEWER).previewStepQuote({ blockToken: 't', quoteId: SEEDED })
+      caller(VIEWER).previewQuoteGrant({ blockToken: 't', quoteId: SEEDED })
     ).rejects.toThrow('confirmed steps from apps are not enabled');
     await expect(consent(SEEDED)).rejects.toThrow('confirmed steps from apps are not enabled');
     expect(h.submitWorkflow).not.toHaveBeenCalled();
@@ -764,7 +762,7 @@ describe('the viewer’s DAILY LIMIT — never overridden by the confirm', () =>
       setDailyLimit(1500);
       store.set(`system:blocks:consent-budget:${VIEWER}:apb_test:${dayKey()}`, String(spent));
       const quoteId = await confirmedQuote();
-      const preview = await caller(VIEWER).previewStepQuote({ blockToken: 't', quoteId });
+      const preview = await caller(VIEWER).previewQuoteGrant({ blockToken: 't', quoteId });
       expect(preview.exceedsDailyLimit).toBe(refused);
       const r = await submit(body({ quoteId }));
       expect(r.snapshot.errorCode).toBe(refused ? 'daily-limit-exceeded' : undefined);
@@ -814,14 +812,18 @@ describe('AGGREGATE caps still bind a confirmed job', () => {
 });
 
 describe('a submit billed ABOVE the confirmed price is detected', () => {
-  it('logs the overcharge with both amounts', async () => {
+  it('counts it once under kind=step and logs the amounts', async () => {
     const quoteId = await confirmedQuote();
     chargedPrice = PRICE + 25;
     await submit(body({ quoteId }));
+    expect(h.overcharge.mock.calls).toEqual([['step']]);
     expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({
-        name: 'block-confirmed-step-overcharge',
+        name: 'block-confirmed-quote-overcharge',
+        kind: 'step',
+        stepType: 'polyGen',
         confirmedBuzz: PRICE,
+        chargedBuzz: PRICE,
         realizedBuzz: PRICE + 25,
         quoteId,
       })
@@ -842,33 +844,97 @@ describe('a submit billed ABOVE the confirmed price is detected', () => {
     chargedPrice = billed;
     await submit(body({ quoteId }));
     const logged = loggingMock.logToAxiom.mock.calls.some(
-      (c) => (c[0] as { name?: string }).name === 'block-confirmed-step-overcharge'
+      (c) => (c[0] as { name?: string }).name === 'block-confirmed-quote-overcharge'
     );
     expect(logged).toBe(logs);
+    // The counter moves exactly when the log does.
+    expect(h.overcharge).toHaveBeenCalledTimes(logs ? 1 : 0);
   });
 
   it('control: a submit billed exactly at the confirmed price logs nothing', async () => {
     const quoteId = await confirmedQuote();
     await submit(body({ quoteId }));
     expect(loggingMock.logToAxiom).not.toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'block-confirmed-step-overcharge' })
+      expect.objectContaining({ name: 'block-confirmed-quote-overcharge' })
     );
+    expect(h.overcharge).not.toHaveBeenCalled();
+  });
+});
+
+describe('every confirmation is its own run (keyed on the quote, not the body)', () => {
+  it('two confirms of an IDENTICAL body submit under two distinct externalIds', async () => {
+    const first = await confirmedQuote();
+    await submit(body({ quoteId: first }));
+    const second = await confirmedQuote();
+    workflowId = `${VIEWER}-second`;
+    const r = await submit(body({ quoteId: second }));
+    expect(r.snapshot.workflowId).toBe(`${VIEWER}-second`);
+
+    const ids = realSubmits().map(
+      (c) => (c[0] as { body: { externalId: string } }).body.externalId
+    );
+    expect(ids).toEqual([`blc${first.slice(3)}`, `blc${second.slice(3)}`]);
+    expect(ids[0]).not.toBe(ids[1]);
+    // Both were charged, and nothing counts runs for this kind.
+    expect(counter('system:blocks:buzz-cap')).toBe(2 * PRICE);
+    expect(keysWith('system:blocks:step-quote')).toEqual([]);
+  });
+});
+
+describe('a PRIVATE RUN — the one token rule shared with training', () => {
+  it('the owner’s private run is granted a quote and runs, under the private-run cap', async () => {
+    h.authorize.mockImplementation(async () =>
+      claims({ privateRun: true, privateRunAudience: 'owner' })
+    );
+    const quoteId = await confirmedQuote();
+    const r = await submit(body({ quoteId }));
+    expect(r.snapshot.workflowId).toBe(workflowId);
+    expect(realSubmits()).toHaveLength(1);
+    // Reserved against the private-run counter, not the viewer's daily one.
+    expect(counter('system:blocks:buzz-cap')).toBe(0);
+    expect(counter('system:blocks:private-run-buzz-cap')).toBe(PRICE);
+  });
+
+  it('…and a job above the private-run cap is refused by that cap', async () => {
+    h.authorize.mockImplementation(async () =>
+      claims({ privateRun: true, privateRunAudience: 'owner' })
+    );
+    whatifPrice = { total: 2501 };
+    const quoteId = await confirmedQuote();
+    const r = await submit(body({ quoteId }));
+    expect(r.snapshot.status).toBe('failed');
+    expect(r.snapshot.error).toBe('private run Buzz cap reached: this job costs 2501, cap is 2500');
+    expect(realSubmits()).toHaveLength(0);
   });
 });
 
 describe('the flag is evaluated for a hydrated token subject', () => {
   it('an unhydratable subject gets no grant and cannot submit', async () => {
-    h.sessionUser.mockImplementation(async () => null);
+    h.getUserById.mockImplementation(async () => null);
     expect((await estimate()).snapshot.stepQuote).toBeUndefined();
     expect(h.confirmedStepFlag).not.toHaveBeenCalled();
     seedQuote(SEEDED);
-    await expect(submit(body({ quoteId: SEEDED }))).rejects.toThrow(
-      'confirmed steps from apps are not enabled'
-    );
+    await expect(submit(body({ quoteId: SEEDED }))).rejects.toMatchObject({
+      code: 'UNAUTHORIZED',
+      message: 'user not found',
+    });
+    expect(realSubmits()).toHaveLength(0);
   });
 });
 
+afterEach(() => envMock.reset());
+
 describe('orchestrator submit failures — the training contract', () => {
+  it('tears down and refunds a job the orchestrator attributed to someone else', async () => {
+    envMock.set({ ORCHESTRATOR_MODE: 'prod' });
+    const quoteId = await confirmedQuote();
+    workflowId = '7-20261012';
+    await expect(submit(body({ quoteId }))).rejects.toThrow('could not confirm who this');
+    expect(counter('system:blocks:buzz-cap')).toBe(0);
+    expect(h.refundAppSpend).toHaveBeenCalledWith('app-daily', PRICE);
+    expect(h.recordSpendAttribution).not.toHaveBeenCalled();
+  });
+
   it('an ambiguous failure is UNCONFIRMED and keeps every reservation', async () => {
     const quoteId = await confirmedQuote();
     h.submitWorkflow.mockImplementation(async (args: { query?: { whatif?: boolean } }) => {
@@ -883,8 +949,8 @@ describe('orchestrator submit failures — the training contract', () => {
     expect(counter('system:blocks:buzz-cap')).toBe(PRICE);
     expect(h.refundAppSpend).not.toHaveBeenCalled();
     expect(h.persistSettle).not.toHaveBeenCalled();
-    // The run generation did not move, so a re-confirmed retry reuses the externalId.
-    expect(keysWith('system:blocks:step-quote:runs')).toEqual([]);
+    // The quote is spent and the claim released: a retry needs a new estimate.
+    await expect(submit(body({ quoteId }))).rejects.toThrow('step quote not found');
   });
 
   it('a first-attempt orchestrator 4xx is definite: refunded and rethrown', async () => {

@@ -1,18 +1,15 @@
+import { createHash } from 'crypto';
 import { TRPCError } from '@trpc/server';
 import type { TrainingStepTemplate } from '@civitai/client';
 import { OrchPriorityTypes } from '~/server/common/enums';
-import { REDIS_SYS_KEYS } from '~/server/redis/client';
+import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import type { BlockTrainingBody } from '~/server/schema/blocks/workflow.schema';
 import type { AiToolkitTrainingParams } from '~/server/schema/orchestrator/training.schema';
 import {
   BLOCK_QUOTE_GRANT_TTL_SECONDS,
-  bumpQuotedRunGeneration,
   claimQuoteGrant,
   hashQuotedBody,
-  QUOTED_RUN_GENERATION_TTL_SECONDS,
-  quotedRunKey,
   readQuoteGrant,
-  readQuotedRunGeneration,
   recordQuoteGrantConsent,
   storeQuoteGrant,
   type BlockQuoteBinding,
@@ -37,9 +34,9 @@ import {
 // and the submit claims the record exactly once and charges against it. Nothing in
 // this file trusts a number the block supplied.
 //
-// The store itself — binding, TTL, consent write, consume-once claim, run identity —
-// is `block-quote-grant.service`, shared with the confirmed pass-through step; this
-// file adds only what is training-specific.
+// The store itself — binding, TTL, consent write, consume-once claim — is
+// `block-quote-grant.service`, shared with the confirmed pass-through step; this file
+// adds only what is training-specific: run resolution and the RUN-keyed identity.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** How long a training quote stays usable — consent and submit must both land inside it. */
@@ -75,7 +72,9 @@ export function trainingRunKey(
   body: BlockTrainingBody,
   generation: number
 ): string {
-  return quotedRunKey(appBlockId, hashTrainingBody(body), generation);
+  return createHash('sha256')
+    .update(`${appBlockId}\n${hashTrainingBody(body)}\n${generation}`)
+    .digest('hex');
 }
 
 // Per (dataset, body): a definite submit of one body must not change the run key of
@@ -93,15 +92,22 @@ function runGenerationKey(
  * deliberate re-run after a known result is a new run, while a retry after an
  * ambiguous failure (no bump) still dedupes onto the run that may exist.
  */
-export function readTrainingRunGeneration(body: BlockTrainingBody): Promise<number> {
-  return readQuotedRunGeneration(runGenerationKey(body));
+export async function readTrainingRunGeneration(body: BlockTrainingBody): Promise<number> {
+  const raw = await sysRedis.get(runGenerationKey(body));
+  const n = Number(raw ?? 0);
+  return Number.isInteger(n) && n >= 0 ? n : 0;
 }
 
-export const TRAINING_RUN_GENERATION_TTL_SECONDS = QUOTED_RUN_GENERATION_TTL_SECONDS;
+export const TRAINING_RUN_GENERATION_TTL_SECONDS = 2 * 24 * 60 * 60;
 
 /** Record a submitted run. Best-effort: a lost bump only makes the next re-run dedupe. */
-export function bumpTrainingRunGeneration(body: BlockTrainingBody): Promise<void> {
-  return bumpQuotedRunGeneration(runGenerationKey(body));
+export async function bumpTrainingRunGeneration(body: BlockTrainingBody): Promise<void> {
+  try {
+    await sysRedis.incrBy(runGenerationKey(body), 1);
+    await sysRedis.expire(runGenerationKey(body), TRAINING_RUN_GENERATION_TTL_SECONDS);
+  } catch {
+    // best-effort
+  }
 }
 
 /** Training-service status, as `getTrainingServiceStatus` returns it. */
