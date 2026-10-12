@@ -93,10 +93,10 @@ export function ScoredEventHomeBlock({
 
   const copy = scoredEventHomeBlockCopy(data, promo?.homeBlock);
   const view = scoredEventHomeBlockView({ data, standings, team, hats });
-  // Points move live while the full block is on screen, as on the event page; frozen once ended,
-  // so the winner it names is the settled one.
+  // A member's points move live while the full block is on screen, as on the event page; frozen
+  // once ended, so the winner it names is the settled one.
   const { ref: liveRef, inView } = useInView();
-  const live = inView && !collapsed && view.state !== 'ended';
+  const live = inView && !collapsed && view.state === 'joined';
   useEventTeamsLivePoints(event, standings?.teamsTopicId, live);
   const eventHref = `/events/${event}`;
   const colors = data.teams.map((t) => teamColor(t)).filter((c): c is string => !!c);
@@ -189,8 +189,8 @@ export function ScoredEventHomeBlock({
 
   return (
     <div
-      // Capped so the stretching column cannot leave a wide empty band on large screens.
       ref={liveRef}
+      // Capped so the stretching column cannot leave a wide empty band on large screens.
       className={clsx(styles.party, 'mx-auto grid max-w-[1400px] rounded-[18px]', layout.grid)}
       data-testid="event-home-block"
     >
@@ -480,9 +480,9 @@ function HatTiles({
 
   return (
     // Worn on each tile's corner as on a feed card, with the feed card's room past it (36px) once
-    // the block is wide enough for four tiles (about 1320px). A narrower block
-    // scrolls the row rather than run it under the art: the scroller crops at the column's padding,
-    // so the hats get that much room and hold still on hover.
+    // the block is wide enough for four tiles (about 1320px). A narrower block scrolls the row
+    // rather than run it under the art: the scroller crops at the column's padding, so the hats get
+    // that much room and hold still on hover.
     <div className="mx-[-22px] flex gap-5 overflow-x-auto px-[22px] pt-6 [--event-decoration-allowance:22px] [--event-decoration-grow:1] @[82.5rem]:mx-0 @[82.5rem]:overflow-visible @[82.5rem]:px-0 @[82.5rem]:[--event-decoration-allowance:36px] @[82.5rem]:[--event-decoration-grow:initial]">
       {hats.slice(0, shown).map((hat) => (
         <div

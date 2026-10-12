@@ -252,6 +252,8 @@ describe('not joined', () => {
       'cap-pink',
     ]);
     expect(el.querySelector('[data-testid="event-home-block-standings"]')).toBeNull();
+    // Shows no standings, so follows no team totals.
+    expect(h.teamsLive.at(-1)?.[2]).toBe(false);
     act(() => button(el, 'Join and get your free hat')!.click());
     expect(h.join).toHaveBeenCalledWith({ event: 'birthday2026' });
   });
