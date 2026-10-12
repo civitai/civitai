@@ -292,8 +292,8 @@ export type ModelRuleMatchRow = {
 /**
  * Ordered by verdict time; the cursor is the last row's `updatedAt` as Postgres prints it, so it
  * round-trips without a timezone conversion. A row matches when the model matched a rule
- * (`modelRules`) or the text names one literally (`modelRulesLiteral`). The entity type, status and label filters are SQL
- * literals, not bound parameters: the planner can only use the partial index
+ * (`modelRules`) or the text names one literally (`modelRulesLiteral`). The entity type, status and
+ * label filters are SQL literals, not bound parameters: the planner can only use the partial index
  * `EntityModeration_modelRules_matches_idx` when the query repeats its predicate as literals.
  */
 export async function getModelRuleMatches({

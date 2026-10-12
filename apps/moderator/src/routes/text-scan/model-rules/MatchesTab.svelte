@@ -43,6 +43,8 @@
   );
   const sourceLabel = (match: { llm: boolean; literal: boolean }) =>
     !match.literal ? 'Model only' : match.llm ? 'Literal + model' : 'Literal only';
+  const sourceVariant = (match: { llm: boolean; literal: boolean }) =>
+    !match.literal ? 'secondary' : match.llm ? 'outline' : 'default';
   const filtered = $derived(query.mode !== 'all' || query.rule !== undefined);
 
   const nextHref = $derived(
@@ -112,7 +114,7 @@
                     <a href={urlWith(url, { rule: match.ruleId, cursor: null })} class="ml-1 text-xs {LINK_CLASS}">
                       rule {match.ruleId}
                     </a>
-                    <Badge variant={match.literal ? 'default' : 'secondary'} class="ml-1">
+                    <Badge variant={sourceVariant(match)} class="ml-1">
                       {sourceLabel(match)}
                     </Badge>
                     {#if match.reason}
