@@ -35,6 +35,9 @@ export function findLiteralModelRuleHits(text: string, rules: LiteralModelRule[]
 }
 
 export function findLiteralHitsInSubject(subject: TextScanSubject, rules: LiteralModelRule[]) {
-  const text = subject.fields.map((field) => field.text ?? '').join('\n');
-  return findLiteralModelRuleHits(text, rules);
+  const hit = new Set<number>();
+  for (const field of subject.fields) {
+    for (const id of findLiteralModelRuleHits(field.text ?? '', rules)) hit.add(id);
+  }
+  return rules.filter((rule) => hit.has(rule.id)).map((rule) => rule.id);
 }

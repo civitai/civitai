@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { findLiteralModelRuleHits } from '~/server/services/text-scan/model-rules-literal';
+import {
+  findLiteralHitsInSubject,
+  findLiteralModelRuleHits,
+} from '~/server/services/text-scan/model-rules-literal';
 
 const rule = (id: number, subject: string, aliases: string[] = []) => ({ id, subject, aliases });
 
@@ -53,5 +56,30 @@ describe('findLiteralModelRuleHits', () => {
   it('returns nothing for empty text or no rules', () => {
     expect(findLiteralModelRuleHits('', [rule(1, 'alpha')])).toEqual([]);
     expect(findLiteralModelRuleHits('alpha', [])).toEqual([]);
+  });
+});
+
+describe('findLiteralHitsInSubject', () => {
+  const subject = (...texts: (string | null)[]) =>
+    ({
+      fields: texts.map((text, i) => ({ heading: `f${i}`, text })),
+      declared: {},
+    } as never);
+
+  it('does not match a phrase split across two fields', () => {
+    expect(
+      findLiteralHitsInSubject(subject('about jane', 'doe portrait'), [rule(1, 'jane doe')])
+    ).toEqual([]);
+  });
+
+  it('matches a phrase inside one field', () => {
+    expect(
+      findLiteralHitsInSubject(subject('a style', 'about jane doe'), [rule(1, 'jane doe')])
+    ).toEqual([1]);
+  });
+
+  it('unions hits across fields in rule order', () => {
+    const rules = [rule(2, 'alpha'), rule(1, 'beta')];
+    expect(findLiteralHitsInSubject(subject('beta', null, 'alpha'), rules)).toEqual([2, 1]);
   });
 });
