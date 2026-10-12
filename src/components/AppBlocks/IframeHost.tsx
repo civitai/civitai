@@ -2197,8 +2197,9 @@ export function IframeHost({
           // The "30 seconds" above is the SDK-side request timeout carried over
           // from #3680's reasoning. It is NOT verifiable in this repo:
           // `@civitai/blocks-react` is not a dependency (0 hits in
-          // pnpm-lock.yaml; the installed SDK is `@civitai/app-sdk@0.14.0`,
-          // which implements neither OPEN_BUZZ_PURCHASE nor a request timeout).
+          // pnpm-lock.yaml; when this was written the installed SDK was
+          // `@civitai/app-sdk@0.14.0`, which implements neither
+          // OPEN_BUZZ_PURCHASE nor a request timeout — not re-checked at 0.65.1).
           // Treat it as the reasonable inference it is, not a measurement.
           //
           // `!raw` is implied by requestId != null; the compound condition also
