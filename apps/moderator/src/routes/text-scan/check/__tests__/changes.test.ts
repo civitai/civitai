@@ -223,3 +223,27 @@ describe('seedOverwritesDraft', () => {
     expect(seedOverwritesDraft('mine', 'seed')).toBe(true);
   });
 });
+
+describe('seed', () => {
+  it('replaces an older draft and binds it to the current version, not the draft’s base', () => {
+    const store = memoryStore();
+    const changes = make(store);
+    changes.set('base', 'MINE');
+    // The page moved on: the draft is now written against a version that is no longer current.
+    changes.setCurrent({ content: { ...CURRENT.content }, ids: { ...CURRENT.ids, base: 2 } });
+    expect(changes.stale).toEqual(['base']);
+
+    changes.seed('base', 'OLD VERSION');
+    expect(changes.prompts.base).toBe('OLD VERSION');
+    expect(changes.baseIds.base).toBe(2);
+    expect(changes.stale).toEqual([]);
+    expect(stored(store).base).toEqual({ text: 'OLD VERSION', baseId: 2 });
+  });
+
+  it('drops the draft when the seed is the current text', () => {
+    const changes = make(memoryStore());
+    changes.set('base', 'MINE');
+    changes.seed('base', 'BASE PROMPT');
+    expect(changes.keys).toEqual([]);
+  });
+});

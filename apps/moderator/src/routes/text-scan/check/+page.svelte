@@ -29,7 +29,7 @@
     const draft = changes.prompts[seed.key];
     const overwrite = seedOverwritesDraft(draft, seed.content);
     if (!overwrite || confirm('Replace your unpublished changes to this prompt with that version?'))
-      changes.set(seed.key, seed.content);
+      changes.seed(seed.key, seed.content);
     editing = seed.key;
     replaceState(page.url.pathname, page.state);
   }

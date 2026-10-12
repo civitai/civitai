@@ -141,6 +141,14 @@ export class ChangesState {
     this.#save([key]);
   }
 
+  /** Starts the key's change from an earlier version's text, written against the current version; whatever draft there was is replaced, not carried on. */
+  seed(key: PromptKey, text: string) {
+    const current = this.#f.current;
+    if (text === current?.content[key]) return this.drop([key]);
+    this.#f.changes = { ...this.#f.changes, [key]: { text, baseId: current?.ids[key] ?? null } };
+    this.#save([key]);
+  }
+
   /** Keeps this text over the newer version: it is now written against the current one. */
   keepMine(key: PromptKey) {
     const change = this.#f.changes[key];
