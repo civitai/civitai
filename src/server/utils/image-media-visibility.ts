@@ -14,7 +14,7 @@ type MediaFields = {
 };
 
 type ViewerExemptions = {
-  /** The viewer manages the collection the image's post was submitted to (contest judges). */
+  /** The viewer manages a collection judging this image (see `managesImageCollection`). */
   managesCollection?: boolean;
 };
 
@@ -23,9 +23,9 @@ type ViewerExemptions = {
  * the image's own rating, with the owner, moderators and collection managers always allowed.
  *
  * Close to `Gated`'s page state, but not the same: `Gated` also honours a contest's forced
- * level, lets a rating through on any one allowed bit, and redirects an owner on the SFW domain.
- * Where they differ this side is the stricter one, and the image page gates on the image's own
- * rating when `url` comes back null.
+ * level, lets a rating through on any one allowed bit, and still redirects owners, moderators and
+ * managers on the SFW domain. The image page gates on the image's own rating when `url` comes
+ * back null, so it never shows a frame the server left empty, except for a mixed rating.
  */
 export function canViewImageMedia(
   ctx: Pick<Context, 'user' | 'features' | 'req'>,
@@ -63,12 +63,19 @@ export function withViewerMedia<T extends MediaFields>(
   return { ...image, url: null, metadata };
 }
 
-/** Same test `getImage` uses to show a collection manager an unreviewed entry. */
-export async function managesPostCollection({
+/**
+ * Whether the user holds MANAGE on a collection judging this image: the collection its post was
+ * submitted to (the test `getImage` uses to show a manager an unreviewed entry), or a contest
+ * collection holding the image itself. Other collections don't count: anyone can add an image
+ * to a collection of their own.
+ */
+export async function managesImageCollection({
+  imageId,
   postId,
   userId,
 }: {
-  postId: number;
+  imageId: number;
+  postId: number | null;
   userId: number;
 }) {
   const rows = await dbRead.$queryRaw<{ managed: boolean }[]>(Prisma.sql`
@@ -76,6 +83,14 @@ export async function managesPostCollection({
       SELECT 1 FROM "Post" p
       JOIN "CollectionContributor" cc ON cc."collectionId" = p."collectionId"
       WHERE p.id = ${postId}
+        AND cc."userId" = ${userId}
+        AND cc."permissions" && ARRAY['MANAGE']::"CollectionContributorPermission"[]
+    ) OR EXISTS (
+      SELECT 1 FROM "CollectionItem" ci
+      JOIN "Collection" c ON c.id = ci."collectionId"
+      JOIN "CollectionContributor" cc ON cc."collectionId" = ci."collectionId"
+      WHERE ci."imageId" = ${imageId}
+        AND c.mode = 'Contest'
         AND cc."userId" = ${userId}
         AND cc."permissions" && ARRAY['MANAGE']::"CollectionContributorPermission"[]
     ) AS managed

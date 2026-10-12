@@ -127,6 +127,11 @@ describe('withViewerMedia', () => {
     withViewerMedia(crawler, imageAt(NsfwLevel.R));
     expect(crawler.cache).toMatchObject({ edgeTTL: 0, browserTTL: 0, staleWhileRevalidate: 0 });
 
+    // Signed-in answers are never edge-cached; a header on one changes nothing.
+    const signedInCrawler = ctxFor({ canViewNsfw: true, user: signedIn, bot: 'googlebot' });
+    withViewerMedia(signedInCrawler, imageAt(NsfwLevel.R));
+    expect(signedInCrawler.cache).toMatchObject({ edgeTTL: 60, browserTTL: 60 });
+
     const human = ctxFor(viewers['signed out on the mature domain']);
     withViewerMedia(human, imageAt(NsfwLevel.PG));
     expect(human.cache).toMatchObject({ edgeTTL: 60, browserTTL: 60 });

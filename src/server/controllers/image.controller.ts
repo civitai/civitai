@@ -57,7 +57,7 @@ import {
 import { getRequestBoardDomainColor } from '~/server/utils/server-domain';
 import {
   canViewImageMedia,
-  managesPostCollection,
+  managesImageCollection,
   withViewerMedia,
 } from '~/server/utils/image-media-visibility';
 import { getNsfwLevelDeprecatedReverseMapping } from '~/shared/constants/browsingLevel.constants';
@@ -763,9 +763,12 @@ export const getImageHandler = async ({ input, ctx }: { input: GetImageInput; ct
 
     const managesCollection =
       !!ctx.user &&
-      !!result.postId &&
       !canViewImageMedia(ctx, result) &&
-      (await managesPostCollection({ postId: result.postId, userId: ctx.user.id }));
+      (await managesImageCollection({
+        imageId: result.id,
+        postId: result.postId ?? null,
+        userId: ctx.user.id,
+      }));
 
     return withViewerMedia(ctx, result, { managesCollection });
   } catch (error) {
