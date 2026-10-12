@@ -156,6 +156,51 @@ describe('persistScoreBatch with grants open to everyone', () => {
   });
 });
 
+describe('persistScoreBatch with grants open, for a user the flag is off for', () => {
+  const legendCrossing = {
+    userId: 7,
+    milestoneKey: 'score:legend',
+    name: 'Legend',
+    threshold: 1_000_000,
+  };
+  const staffAlerts = () =>
+    (mocks.createNotification.mock.calls as unknown as [{ type: string }][])
+      .map(([n]) => n)
+      .filter((n) => n.type === 'creator-legend-reached-staff');
+
+  beforeEach(() => {
+    dbMock.dbRead.keyValue.findUnique.mockResolvedValue({ value: { legendAlertUserIds: [1, 2] } });
+    dbMock.dbRead.user.findMany.mockResolvedValue([{ id: 7, username: 'newlegend' }]);
+  });
+
+  it('sends no staff Legend alert, and sends one once the flag is on', async () => {
+    mocks.isFlipt.mockResolvedValue(false);
+    const off = batchCtx({ grant: async () => [legendCrossing] });
+    await persistScoreBatch(off.ctx, [['7', { models: 600 }]], { now: afterLaunch });
+    expect(off.grantCalls()).toHaveLength(1);
+    expect(staffAlerts()).toEqual([]);
+
+    mocks.isFlipt.mockResolvedValue(true);
+    const on = batchCtx({ grant: async () => [legendCrossing] });
+    await persistScoreBatch(on.ctx, [['7', { models: 600 }]], { now: afterLaunch });
+    expect(staffAlerts()).toHaveLength(1);
+  });
+
+  it('does not mark a silenced grant seen, and does once the flag is on', async () => {
+    const silenced = { ...crossing, milestoneKey: 'score:unregistered' };
+    mocks.isFlipt.mockResolvedValue(false);
+    const off = batchCtx({ grant: async () => [silenced] });
+    await persistScoreBatch(off.ctx, [['7', { models: 600 }]], { now: afterLaunch });
+    expect(off.grantCalls()).toHaveLength(1);
+    expect(off.markSeenCalls()).toEqual([]);
+
+    mocks.isFlipt.mockResolvedValue(true);
+    const on = batchCtx({ grant: async () => [silenced] });
+    await persistScoreBatch(on.ctx, [['7', { models: 600 }]], { now: afterLaunch });
+    expect(on.markSeenCalls()).toHaveLength(1);
+  });
+});
+
 describe('persistScoreBatch before a definition launches', () => {
   const unregistered = { ...crossing, milestoneKey: 'score:unregistered' };
 
