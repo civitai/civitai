@@ -8,6 +8,7 @@ import { hashContent } from '~/server/services/entity-moderation.service';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
 import { getTextScanMode, textScanEmEntityType } from '~/server/services/text-scan/mode';
 import { getModelRulesForPrompt } from '~/server/services/text-scan/model-rules';
+import { findLiteralHitsInSubject } from '~/server/services/text-scan/model-rules-literal';
 import { getTextScanProfile } from '~/server/services/text-scan/profiles';
 import '~/server/services/text-scan/profiles/index';
 import {
@@ -325,6 +326,9 @@ export async function scanEntity({
     ...(subject.meta ? { subjectMeta: subject.meta } : {}),
     ...(composed.ruleIds
       ? { ruleIds: composed.ruleIds, rulesFingerprint: composed.rulesFingerprint }
+      : {}),
+    ...(composed.ruleIds && modelRules
+      ? { literalRuleIds: findLiteralHitsInSubject(subject, modelRules) }
       : {}),
   };
 

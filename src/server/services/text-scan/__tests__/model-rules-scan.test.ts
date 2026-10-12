@@ -92,6 +92,23 @@ describe('scanEntity — ModelRules', () => {
     expect(system).toContain('### Rules\n[3] Example — Desc\n[8] Other');
   });
 
+  it('records the rules the text names literally, whatever the model says later', async () => {
+    load.mockResolvedValue(
+      new Map([[7, { fields: [{ heading: 'Name', text: 'An Example LoRA' }], declared: {} }]])
+    );
+    await scanEntity({ entityType: 'ModelRules', entityId: 7 });
+    expect(vi.mocked(submitWorkflow).mock.calls[0][0].body!.metadata).toMatchObject({
+      literalRuleIds: [3],
+    });
+  });
+
+  it('records an empty literal list when no rule is named', async () => {
+    await scanEntity({ entityType: 'ModelRules', entityId: 7 });
+    expect(vi.mocked(submitWorkflow).mock.calls[0][0].body!.metadata).toMatchObject({
+      literalRuleIds: [],
+    });
+  });
+
   it('does not submit while no rule is enabled', async () => {
     vi.mocked(getModelRulesForPrompt).mockResolvedValue([]);
     await expect(scanEntity({ entityType: 'ModelRules', entityId: 7 })).resolves.toEqual({
@@ -210,6 +227,41 @@ describe('handleTextScanCallback — ModelRules', () => {
     expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({ name: 'scan-verdict', tags: 'modelRules,modelRules:3' })
     );
+  });
+
+  it('stores the literal hits beside the verdict and finds a literal-only hit by its own label', async () => {
+    vi.mocked(getModelRuleSnapshots).mockImplementation(async (ids) =>
+      ids.map((id) => ({ id, subject: `S${id}`, description: '', aliases: [] }))
+    );
+    vi.mocked(getWorkflow).mockResolvedValue(workflow({ modelRules: { matched: [] } }) as any);
+    const withLiteral = { ...metadata, literalRuleIds: [8, 42] };
+    vi.mocked(getWorkflow).mockResolvedValue({
+      data: { ...workflow({ modelRules: { matched: [] } }).data, metadata: withLiteral },
+    } as any);
+
+    await handleTextScanCallback({ workflowId: 'wf-1', status: 'succeeded' });
+
+    expect(getModelRuleSnapshots).toHaveBeenCalledWith([8]);
+    const { data } = em.updateMany.mock.calls[0][0];
+    expect(data.triggeredLabels).toEqual(['modelRulesLiteral']);
+    expect(data.result.modelRules).toMatchObject({ literalRuleIds: [8] });
+    expect(adapter.applyTextScan).toHaveBeenCalledWith(
+      expect.objectContaining({ outcome: expect.objectContaining({ triggeredLabels: [] }) })
+    );
+  });
+
+  it('records no literal label when no rule was named, or the named rule is gone', async () => {
+    vi.mocked(getModelRuleSnapshots).mockResolvedValue([]);
+    vi.mocked(getWorkflow).mockResolvedValue({
+      data: {
+        ...workflow({ modelRules: { matched: [] } }).data,
+        metadata: { ...metadata, literalRuleIds: [8] },
+      },
+    } as any);
+    await handleTextScanCallback({ workflowId: 'wf-1', status: 'succeeded' });
+    const { data } = em.updateMany.mock.calls[0][0];
+    expect(data.triggeredLabels).toEqual([]);
+    expect(data.result.modelRules.literalRuleIds).toEqual([]);
   });
 
   it('acts on nothing for a workflow submitted before rule ids were recorded', async () => {

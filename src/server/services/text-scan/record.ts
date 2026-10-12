@@ -1,6 +1,7 @@
 import type { Prisma } from '@prisma/client';
 import { dbWrite } from '~/server/db/client';
 import type { ModelRuleSnapshot } from '~/server/services/text-scan/model-rules';
+import { MODEL_RULES_LITERAL_LABEL } from '~/server/services/text-scan/model-rules-literal';
 import type { PromptIds, TextScanOutcome, TextScanOutput } from '~/server/services/text-scan/types';
 import { EntityModerationStatus } from '~/shared/utils/prisma/enums';
 
@@ -12,8 +13,12 @@ export type TextScanResult = {
   /** `textScanTextHash` of the subject as submitted. */
   textHash?: string;
   meta?: Record<string, unknown>;
-  /** `ModelRules` scans only: the rule set the prompt carried, and the matched rules as they read then. */
-  modelRules?: { fingerprint?: string; snapshot: ModelRuleSnapshot[] };
+  /**
+   * `ModelRules` scans only: the rule set the prompt carried, and the matched rules as they read then.
+   * `literalRuleIds` are the rules the text names literally, whether or not the model matched them;
+   * `snapshot` covers both.
+   */
+  modelRules?: { fingerprint?: string; snapshot: ModelRuleSnapshot[]; literalRuleIds?: number[] };
 };
 
 type RowKey = { entityType: string; entityId: number };
@@ -105,7 +110,10 @@ export async function recordTextScanSuccess({
       workflowId,
       status: EntityModerationStatus.Succeeded,
       blocked: false,
-      triggeredLabels: outcome.triggeredLabels,
+      triggeredLabels: [
+        ...outcome.triggeredLabels,
+        ...(modelRules?.literalRuleIds?.length ? [MODEL_RULES_LITERAL_LABEL] : []),
+      ],
       nsfwLevel: outcome.nsfwLevel,
       result: result as unknown as Prisma.InputJsonValue,
     },

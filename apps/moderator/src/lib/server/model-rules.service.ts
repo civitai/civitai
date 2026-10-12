@@ -291,7 +291,8 @@ export type ModelRuleMatchRow = {
 
 /**
  * Ordered by verdict time; the cursor is the last row's `updatedAt` as Postgres prints it, so it
- * round-trips without a timezone conversion. The entity type, status and label filters are SQL
+ * round-trips without a timezone conversion. A row matches when the model matched a rule
+ * (`modelRules`) or the text names one literally (`modelRulesLiteral`). The entity type, status and label filters are SQL
  * literals, not bound parameters: the planner can only use the partial index
  * `EntityModeration_modelRules_matches_idx` when the query repeats its predicate as literals.
  */
@@ -322,12 +323,16 @@ export async function getModelRuleMatches({
       sql<boolean>`em."entityType" IN (${sql.join(ENTITY_TYPES[mode].map((t) => sql.lit(t)))})`
     )
     .where(sql<boolean>`em.status = 'Succeeded'`)
-    .where(sql<boolean>`'modelRules' = ANY(em."triggeredLabels")`);
+    .where(
+      sql<boolean>`('modelRules' = ANY(em."triggeredLabels") OR 'modelRulesLiteral' = ANY(em."triggeredLabels"))`
+    );
   if (ruleId !== undefined)
     query = query.where(
-      sql<boolean>`em.result #> '{labels,modelRules,matched}' @> ${JSON.stringify([
+      sql<boolean>`(em.result #> '{labels,modelRules,matched}' @> ${JSON.stringify([
         { ruleId },
-      ])}::jsonb`
+      ])}::jsonb OR em.result #> '{modelRules,literalRuleIds}' @> ${JSON.stringify([
+        ruleId,
+      ])}::jsonb)`
     );
   const after = parseMatchCursor(cursor);
   if (after)

@@ -207,20 +207,34 @@ export function ruleMatchesText(
   );
 }
 
-export type RuleMatch = { ruleId: number; subject: string | null; reason: string | null };
+/** `llm`: the model matched the rule. `literal`: the text names the rule's subject or an alias. */
+export type RuleMatch = {
+  ruleId: number;
+  subject: string | null;
+  reason: string | null;
+  llm: boolean;
+  literal: boolean;
+};
 
 export function parseRuleMatches(result: unknown): RuleMatch[] {
   if (!isRecord(result)) return [];
   const labels = result.labels;
   const matched =
-    isRecord(labels) && isRecord(labels.modelRules) ? labels.modelRules.matched : null;
-  if (!Array.isArray(matched)) return [];
-  const snapshot = isRecord(result.modelRules) ? result.modelRules.snapshot : null;
+    isRecord(labels) && isRecord(labels.modelRules) && Array.isArray(labels.modelRules.matched)
+      ? labels.modelRules.matched
+      : [];
+  const stored = isRecord(result.modelRules) ? result.modelRules : null;
+  const snapshot = stored?.snapshot;
   const subjects = new Map<number, string>();
   if (Array.isArray(snapshot))
     for (const s of snapshot)
       if (isRecord(s) && typeof s.id === 'number' && typeof s.subject === 'string')
         subjects.set(s.id, s.subject);
+  const literalIds = new Set(
+    Array.isArray(stored?.literalRuleIds)
+      ? stored.literalRuleIds.filter((id): id is number => typeof id === 'number')
+      : []
+  );
 
   // First match per rule wins: the matches tab keys its rows by `ruleId`.
   const byRule = new Map<number, RuleMatch>();
@@ -230,8 +244,19 @@ export function parseRuleMatches(result: unknown): RuleMatch[] {
       ruleId: m.ruleId,
       subject: subjects.get(m.ruleId) ?? null,
       reason: typeof m.reason === 'string' && m.reason.trim() ? m.reason.trim() : null,
+      llm: true,
+      literal: literalIds.has(m.ruleId),
     });
   }
+  for (const ruleId of literalIds)
+    if (!byRule.has(ruleId))
+      byRule.set(ruleId, {
+        ruleId,
+        subject: subjects.get(ruleId) ?? null,
+        reason: null,
+        llm: false,
+        literal: true,
+      });
   return [...byRule.values()];
 }
 

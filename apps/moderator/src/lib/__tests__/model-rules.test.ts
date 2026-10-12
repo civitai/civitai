@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
   convertLegacyModelRule,
@@ -173,8 +174,31 @@ describe('parseRuleMatches', () => {
       modelRules: { snapshot: [{ id: 5, subject: 'Subject Five' }] },
     };
     expect(parseRuleMatches(result)).toEqual([
-      { ruleId: 5, subject: 'Subject Five', reason: 'because' },
-      { ruleId: 9, subject: null, reason: null },
+      { ruleId: 5, subject: 'Subject Five', reason: 'because', llm: true, literal: false },
+      { ruleId: 9, subject: null, reason: null, llm: true, literal: false },
+    ]);
+  });
+
+  it('flags the rules the text names literally, and lists a literal-only hit the model missed', () => {
+    const result = {
+      labels: { modelRules: { matched: [{ ruleId: 5, reason: 'because' }] } },
+      modelRules: {
+        snapshot: [
+          { id: 5, subject: 'Subject Five' },
+          { id: 7, subject: 'Subject Seven' },
+        ],
+        literalRuleIds: [7, 5, 7, 'x'],
+      },
+    };
+    expect(parseRuleMatches(result)).toEqual([
+      { ruleId: 5, subject: 'Subject Five', reason: 'because', llm: true, literal: true },
+      { ruleId: 7, subject: 'Subject Seven', reason: null, llm: false, literal: true },
+    ]);
+  });
+
+  it('reads a literal-only result with no model verdict at all', () => {
+    expect(parseRuleMatches({ modelRules: { snapshot: [], literalRuleIds: [3] } })).toEqual([
+      { ruleId: 3, subject: null, reason: null, llm: false, literal: true },
     ]);
   });
 
@@ -191,8 +215,8 @@ describe('parseRuleMatches', () => {
       },
     };
     expect(parseRuleMatches(result)).toEqual([
-      { ruleId: 5, subject: null, reason: 'first' },
-      { ruleId: 9, subject: null, reason: 'other' },
+      { ruleId: 5, subject: null, reason: 'first', llm: true, literal: false },
+      { ruleId: 9, subject: null, reason: 'other', llm: true, literal: false },
     ]);
   });
 
@@ -219,5 +243,25 @@ describe('parseMatchCursor', () => {
     expect(parseMatchCursor('garbage')).toBeUndefined();
     expect(parseMatchCursor('2026-05-02T10:11:12Z|42')).toBeUndefined();
     expect(parseMatchCursor(undefined)).toBeUndefined();
+  });
+});
+
+describe('Matches list and its partial index', () => {
+  const read = (path: string) => readFileSync(new URL(path, import.meta.url), 'utf8');
+  const service = read('../server/model-rules.service.ts');
+  const migration = read(
+    '../../../../../packages/civitai-db-schema/prisma/migrations/20261015120000_entity_moderation_model_rules_matches_idx/migration.sql'
+  );
+
+  // The planner only uses the partial index when the query repeats its predicate.
+  it('finds literal-only hits, and repeats the index predicate in the query', () => {
+    for (const label of ['modelRules', 'modelRulesLiteral']) {
+      expect(migration).toContain(`'${label}' = ANY("triggeredLabels")`);
+      expect(service).toContain(`'${label}' = ANY(em."triggeredLabels")`);
+    }
+  });
+
+  it('filters by rule id on literal hits as well as model matches', () => {
+    expect(service).toContain("{modelRules,literalRuleIds}'");
   });
 });
