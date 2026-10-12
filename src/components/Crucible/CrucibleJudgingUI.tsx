@@ -21,8 +21,12 @@ import {
 import clsx from 'clsx';
 import { LazyMotion } from 'motion/react';
 import { div as MotionDiv, span as MotionSpan } from 'motion/react-m';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import type { ComponentProps } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { Reactions } from '~/components/Reaction/Reactions';
+import { ReactionSettingsProvider } from '~/components/Reaction/ReactionSettingsProvider';
+import { useHydratedImageReactions } from '~/components/Reaction/useHydratedImageReactions';
 import type { RouterOutput } from '~/types/router';
 import { MediaType } from '~/shared/utils/prisma/enums';
 import {
@@ -60,6 +64,8 @@ const pairGridClass =
 const mediaBoxClass =
   'h-[36svh] min-h-[200px] max-md:landscape:h-[calc(100svh-8rem)] md:h-auto md:min-h-0 md:flex-1';
 const footerSlotClass = 'flex min-w-0 items-center empty:hidden md:w-[420px] md:empty:flex';
+
+const hiddenReactionCounts = { hideReactionCount: true };
 
 const loadMotion = () => import('~/utils/lazy-motion').then((res) => res.default);
 const VOTE_FEEDBACK_MS = 200;
@@ -287,6 +293,15 @@ export function CrucibleJudgingUI({
     ['INPUT', 'TEXTAREA', 'SELECT', 'VIDEO']
   );
 
+  const pairImages = useMemo(
+    () =>
+      pair
+        ? [pair.left, pair.right].map(({ image }) => ({ id: image.id, reactions: [] as never[] }))
+        : [],
+    [pair]
+  );
+  const hydratedImages = useHydratedImageReactions(pairImages, { entity: 'image' });
+
   // Loading state
   if (isLoading && !pair) {
     return <CrucibleJudgingUISkeleton />;
@@ -300,6 +315,7 @@ export function CrucibleJudgingUI({
   const slot = (side: Side) => (
     <ImageCard
       entry={pair?.[side] ?? null}
+      reactions={hydratedImages.find((x) => x.id === pair?.[side].image.id)?.reactions}
       position={side}
       isSelected={selectedSide === side}
       dimmed={selectedSide != null && selectedSide !== side}
@@ -415,6 +431,7 @@ const emptyWatched = { left: 0, right: 0 };
 
 type ImageCardProps = {
   entry: JudgingEntry | null;
+  reactions?: ComponentProps<typeof Reactions>['reactions'];
   position: Side;
   isSelected: boolean;
   dimmed: boolean;
@@ -447,6 +464,7 @@ type ImageCardProps = {
  */
 function ImageCard({
   entry,
+  reactions,
   position,
   isSelected,
   dimmed,
@@ -635,6 +653,24 @@ function ImageCard({
           </MotionSpan>
         )}
       </Box>
+
+      <div
+        data-testid="judge-reactions"
+        data-side={position}
+        className="flex justify-center bg-[#1a1b1e] py-1"
+        onClick={(e) => e.stopPropagation()}
+        onKeyDown={(e) => e.stopPropagation()}
+      >
+        <ReactionSettingsProvider settings={hiddenReactionCounts}>
+          <Reactions
+            entityType="image"
+            entityId={entry.image.id}
+            reactions={reactions ?? []}
+            showAll
+            disableBuzzTip
+          />
+        </ReactionSettingsProvider>
+      </div>
     </Paper>
   );
 }

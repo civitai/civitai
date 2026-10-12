@@ -1,8 +1,10 @@
 import { useState, type ComponentProps } from 'react';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
+import type * as TrpcMod from '~/utils/trpc';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+import { makeTrpcProxy } from '../../../test/trpcProxyStub';
 
 /**
  * EdgeMedia is stubbed: headless Chromium cannot decode most clips, and a codec is not what is
@@ -66,6 +68,33 @@ vi.mock('~/components/EdgeMedia/EdgeMedia', async () => {
     },
   };
 });
+
+const reactionToggle = vi.hoisted(() => vi.fn());
+const myReactions = vi.hoisted(() => new Map<number, string[]>());
+
+vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => ({ id: 7 }) }));
+vi.mock('~/providers/FeatureFlagsProvider', () => ({ useFeatureFlags: () => ({}) }));
+vi.mock('~/utils/trpc', async (importOriginal) => ({
+  ...(await importOriginal<typeof TrpcMod>()),
+  trpc: makeTrpcProxy(
+    { 'reaction.toggle': { useMutation: () => ({ mutate: reactionToggle, isPending: false }) } },
+    {
+      useQueries: (
+        build: (t: {
+          reaction: {
+            getMyImageReactions: (input: { imageIds: number[] }) => { imageIds: number[] };
+          };
+        }) => { imageIds: number[] }[]
+      ) =>
+        build({ reaction: { getMyImageReactions: (input) => input } }).map(({ imageIds }) => ({
+          data: Object.fromEntries(
+            imageIds.filter((id) => myReactions.has(id)).map((id) => [id, myReactions.get(id)])
+          ),
+          dataUpdatedAt: 1,
+        })),
+    }
+  ),
+}));
 
 const { CrucibleJudgingUI } = await import('~/components/Crucible/CrucibleJudgingUI');
 const { CrucibleJudgingBriefing } = await import('~/components/Crucible/CrucibleJudgingBriefing');
@@ -224,6 +253,9 @@ beforeEach(() => {
   clipDurations.clear();
   mediaOutcome.clear();
   lastVideoProps.clear();
+  myReactions.clear();
+  reactionToggle.mockClear();
+  window.isAuthed = true;
 });
 
 describe('CrucibleJudgingUI — minimum view time', () => {
@@ -1095,3 +1127,78 @@ function PairSwitchingHarness({ onVote }: { onVote: OnVote }) {
     </>
   );
 }
+
+describe('CrucibleJudgingUI — reactions', () => {
+  const pastFeedbackDelay = () => new Promise((resolve) => setTimeout(resolve, 400));
+  const imagePair = () => ({ left: entry(1, 'image'), right: entry(2, 'image') } as never);
+  const reactionBar = (side: 'left' | 'right') =>
+    document.querySelector<HTMLElement>(`[data-testid="judge-reactions"][data-side="${side}"]`);
+  const reactionButton = (side: 'left' | 'right', reaction: string) =>
+    reactionBar(side)?.querySelector<HTMLButtonElement>(`[aria-label="${reaction} reaction"]`);
+
+  const renderPair = async (onVote = vi.fn(), onSkip = vi.fn()) => {
+    renderWithProviders(<CrucibleJudgingUI pair={imagePair()} onVote={onVote} onSkip={onSkip} />);
+    await vi.waitFor(() => expect(reactionButton('left', 'Like')).toBeTruthy());
+    await pastFeedbackDelay();
+    return { onVote, onSkip };
+  };
+
+  test('clicking a reaction reacts to the image and does not vote', async () => {
+    const { onVote } = await renderPair();
+
+    reactionButton('right', 'Heart')!.click();
+    await pastFeedbackDelay();
+
+    expect(reactionToggle).toHaveBeenCalledTimes(1);
+    expect(reactionToggle).toHaveBeenCalledWith({
+      entityId: 20,
+      entityType: 'image',
+      reaction: 'Heart',
+    });
+    expect(onVote).not.toHaveBeenCalled();
+  });
+
+  test('Enter and Space on a reaction button neither vote nor skip', async () => {
+    const { onVote, onSkip } = await renderPair();
+
+    for (const key of ['Enter', ' ', '1', 'ArrowRight']) {
+      reactionButton('left', 'Like')!.dispatchEvent(
+        new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true })
+      );
+    }
+    await pastFeedbackDelay();
+
+    expect(onVote).not.toHaveBeenCalled();
+    expect(onSkip).not.toHaveBeenCalled();
+  });
+
+  test('shows no reaction counts, even for an image that has reactions', async () => {
+    myReactions.set(10, ['Like', 'Cry']);
+    await renderPair();
+
+    for (const side of ['left', 'right'] as const) {
+      expect(reactionBar(side)!.textContent).not.toMatch(/\d/);
+    }
+  });
+
+  test("shows the judge's own earlier reaction as active", async () => {
+    myReactions.set(10, ['Laugh']);
+    await renderPair();
+
+    await vi.waitFor(() =>
+      expect(reactionButton('left', 'Laugh')!.getAttribute('data-variant')).toBe('light')
+    );
+    expect(reactionButton('left', 'Like')!.getAttribute('data-variant')).toBe('subtle');
+    expect(reactionButton('right', 'Laugh')!.getAttribute('data-variant')).toBe('subtle');
+  });
+
+  test('offers the same four reactions on every entry', async () => {
+    await renderPair();
+
+    for (const side of ['left', 'right'] as const) {
+      expect(
+        [...reactionBar(side)!.querySelectorAll('button')].map((b) => b.getAttribute('aria-label'))
+      ).toEqual(['Like reaction', 'Heart reaction', 'Laugh reaction', 'Cry reaction']);
+    }
+  });
+});
