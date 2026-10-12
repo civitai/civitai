@@ -27,6 +27,7 @@ const { mockGetJudgingPair, imagesFetch, blockedBy } = vi.hoisted(() => ({
 vi.mock('~/server/services/user-preferences.service', async (importOriginal) => ({
   ...(await importOriginal<typeof UserPreferencesService>()),
   BlockedByUsers: { getCached: blockedBy },
+  BlockedUsers: { getCached: vi.fn().mockResolvedValue([]) },
 }));
 
 vi.mock('~/server/services/image.service', async (importOriginal) => ({
@@ -876,7 +877,7 @@ describe('a creator who blocked the caller', () => {
     await caller(signedIn(STRANGER_ID)).getJudgingPair({ crucibleId: CRUCIBLE_ID });
 
     expect(mockGetJudgingPair).toHaveBeenCalledWith(
-      expect.objectContaining({ blockedByUserIds: [scanned.userId] })
+      expect.objectContaining({ blockedCreatorIds: [scanned.userId] })
     );
   });
 

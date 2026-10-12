@@ -1462,7 +1462,7 @@ describe('submitEntry — free entries', () => {
 });
 
 describe('createCrucibleEntryPost', () => {
-  const create = (viewer: { isGreen?: boolean; blockedByUserIds?: number[] } = {}) =>
+  const create = (viewer: { isGreen?: boolean; blockedCreatorIds?: number[] } = {}) =>
     createCrucibleEntryPost({ crucibleId: 1, userId: 42, ...viewer });
   const arena = (overrides: Record<string, unknown> = {}) => ({
     name: 'Open Arena',
@@ -1522,7 +1522,7 @@ describe('createCrucibleEntryPost', () => {
   it.each([
     ['still under review', { ingestion: 'Pending' }, {}],
     ['accepting mature entries, on the green site', { nsfwLevel: 1 | 4 }, { isGreen: true }],
-    ['whose creator blocked the caller', {}, { blockedByUserIds: [99] }],
+    ['whose creator blocked the caller', {}, { blockedCreatorIds: [99] }],
   ])('is not found for a crucible %s, and creates no post', async (_, crucible, viewer) => {
     dbMock.dbRead.crucible.findUnique.mockResolvedValue(arena(crucible));
 

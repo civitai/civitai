@@ -72,7 +72,7 @@ Three boards rank crucible activity over the last 30 days, refreshed nightly:
 - New entries' ratings move faster until they have enough votes.
 - Judges can skip a pair. Skipped entries stay out for the rest of the visit (up to the last 20) and come back only once nothing else is left to judge.
 - On video crucibles with a minimum view time, only real playback counts. Skipping ahead or pausing does not add to it. A vote on an under-watched pair is rejected, and the judge keeps that pair.
-- Someone the creator has blocked can't see, enter or judge the crucible.
+- A block hides the crucible both ways: a creator who blocked someone, and anyone the creator blocked, can't see each other's crucibles in lists or on their pages, enter, judge or follow them. Moderators are exempt.
 
 ## Judging is blind while a crucible runs
 
