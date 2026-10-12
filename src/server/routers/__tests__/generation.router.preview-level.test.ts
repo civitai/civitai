@@ -99,3 +99,13 @@ describe('generation router passes the viewer preview level', () => {
     expect(mockResolveImageMeta.mock.calls[0][0].browsingLevel).toBe(expected);
   });
 });
+
+describe('generation router passes the media viewer', () => {
+  it('passes the request context, so source media follow the caller', async () => {
+    await callerFor(nsfwUser, true).getGenerationData({ type: 'image', id: 1 });
+    const { mediaViewer } = mockGetGenerationData.mock.calls[0][0];
+    expect(mediaViewer.user).toBe(nsfwUser);
+    expect(mediaViewer.features).toEqual({ canViewNsfw: true });
+    expect(mediaViewer.req).toBeDefined();
+  });
+});
