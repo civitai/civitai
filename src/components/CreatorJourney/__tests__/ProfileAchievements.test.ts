@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
     | undefined,
   myShareEnabled: [] as boolean[],
   ladderTiers: [] as { key: string; name: string; threshold: number; hint: null; badgeUrl: null }[],
+  ladderPending: false,
 }));
 vi.mock('~/hooks/useCurrentUser', async (importOriginal) => ({
   ...(await importOriginal<typeof CurrentUser>()),
@@ -34,7 +35,9 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
       },
     },
     'creatorJourney.getLadder': {
-      useQuery: () => ({ data: { unlocks: [], tiers: mocks.ladderTiers } }),
+      useQuery: () => ({
+        data: mocks.ladderPending ? undefined : { unlocks: [], tiers: mocks.ladderTiers },
+      }),
     },
   }),
 }));
@@ -85,6 +88,7 @@ afterEach(() => {
   mocks.myShare = undefined;
   mocks.myShareEnabled = [];
   mocks.ladderTiers = [];
+  mocks.ladderPending = false;
 });
 
 describe('profile achievement cards', () => {
@@ -306,6 +310,7 @@ describe('achievements tab', () => {
   });
 
   it('shows the held tiers on the ladder while the public ladder loads', () => {
+    mocks.ladderPending = true;
     const el = mount(React.createElement(ProfileAchievementsList, { data, userId: OWNER }));
     expect(rungs(el)).toEqual([
       'Spark: Earned before launch',
@@ -583,7 +588,7 @@ describe('achievements tab', () => {
 
   // On a phone the ladder scrolls sideways: a shared tier's rung must be centred in the strip, or the
   // page scrolls to a band whose ringed rung is off-screen. No stylesheet here, so layout is stubbed.
-  it("centres a shared tier's rung in the ladder strip before scrolling the page", async () => {
+  it("centres a shared tier's rung in the ladder strip and scrolls the page to it", async () => {
     const calls: string[] = [];
     const strips: { el: Element; left: number | undefined }[] = [];
     const originalScroll = Element.prototype.scrollIntoView;
@@ -608,11 +613,79 @@ describe('achievements tab', () => {
       Object.defineProperty(rung, 'offsetWidth', { value: 64 });
       Object.defineProperty(strip, 'clientWidth', { value: 300 });
       await nextFrame();
-      expect(calls).toEqual(['strip', 'page']);
+      expect([...calls].sort()).toEqual(['page', 'strip']);
       expect(strips).toEqual([{ el: strip, left: 400 - (300 - 64) / 2 }]);
     } finally {
       Element.prototype.scrollIntoView = originalScroll;
       HTMLElement.prototype.scrollTo = originalScrollTo;
+    }
+  });
+
+  // Seen on a real phone: centred while only the held tiers were on the strip, the rung then moved
+  // right when the rest of the ladder arrived, and the ring ended off-screen.
+  it('centres the rung where it sits once the whole ladder is in', async () => {
+    const lefts: (number | undefined)[] = [];
+    const originalScroll = Element.prototype.scrollIntoView;
+    const originalScrollTo = HTMLElement.prototype.scrollTo;
+    const offsetLeft = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'offsetLeft');
+    const offsetWidth = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'offsetWidth');
+    const clientWidth = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientWidth');
+    Element.prototype.scrollIntoView = function () {};
+    HTMLElement.prototype.scrollTo = function (options?: ScrollToOptions | number) {
+      lefts.push(typeof options === 'object' ? options.left : undefined);
+    } as typeof HTMLElement.prototype.scrollTo;
+    // Each rung 72px wide, laid out left to right; the strip shows 300px.
+    Object.defineProperty(HTMLElement.prototype, 'offsetLeft', {
+      configurable: true,
+      get(this: HTMLElement) {
+        return this.parentElement ? [...this.parentElement.children].indexOf(this) * 72 : 0;
+      },
+    });
+    Object.defineProperty(HTMLElement.prototype, 'offsetWidth', {
+      configurable: true,
+      get: () => 72,
+    });
+    Object.defineProperty(HTMLElement.prototype, 'clientWidth', {
+      configurable: true,
+      get: () => 300,
+    });
+    try {
+      mocks.ladderPending = true;
+      mocks.ladderTiers = ladder(
+        ['score:spark', 'Spark', 100],
+        ['score:kindle', 'Kindle', 1000],
+        ['score:flame', 'Flame', 5000],
+        ['score:blaze', 'Blaze', 10000],
+        ['score:nova', 'Nova', 100000],
+        ['score:legend', 'Legend', 10000000]
+      );
+      const props = { data, userId: OWNER, spotlight: 'nova' };
+      mount(React.createElement(ProfileAchievementsList, props));
+      await nextFrame();
+      expect(lefts).toEqual([]);
+
+      mocks.ladderPending = false;
+      act(() =>
+        root?.render(
+          React.createElement(
+            MantineProvider,
+            null,
+            React.createElement(ProfileAchievementsList, props)
+          )
+        )
+      );
+      await nextFrame();
+      // Nova is the fifth rung once the ladder is in.
+      expect(lefts).toEqual([4 * 72 - (300 - 72) / 2]);
+    } finally {
+      Element.prototype.scrollIntoView = originalScroll;
+      HTMLElement.prototype.scrollTo = originalScrollTo;
+      if (offsetLeft) Object.defineProperty(HTMLElement.prototype, 'offsetLeft', offsetLeft);
+      else delete (HTMLElement.prototype as { offsetLeft?: number }).offsetLeft;
+      if (offsetWidth) Object.defineProperty(HTMLElement.prototype, 'offsetWidth', offsetWidth);
+      else delete (HTMLElement.prototype as { offsetWidth?: number }).offsetWidth;
+      if (clientWidth) Object.defineProperty(HTMLElement.prototype, 'clientWidth', clientWidth);
+      else delete (HTMLElement.prototype as { clientWidth?: number }).clientWidth;
     }
   });
 

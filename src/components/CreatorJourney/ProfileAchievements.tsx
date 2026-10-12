@@ -123,16 +123,6 @@ export function milestoneCardId(token: string) {
 export const centredScrollLeft = (rung: HTMLElement, strip: HTMLElement) =>
   rung.offsetLeft - (strip.clientWidth - rung.offsetWidth) / 2;
 
-/**
- * Brings a shared link's card into view. A rung is centred in its strip first: on a phone the strip
- * scrolls sideways, and a smooth `scrollIntoView` does not reliably move two scrollers at once.
- */
-export function scrollToMilestone(element: HTMLElement) {
-  const strip = element.closest<HTMLElement>('[data-tier-ladder]');
-  if (strip) strip.scrollTo({ left: centredScrollLeft(element, strip) });
-  element.scrollIntoView({ behavior: 'smooth', block: 'center' });
-}
-
 function LadderRung({
   rung,
   current,
@@ -158,7 +148,7 @@ function LadderRung({
         data-spotlight={spotlightId ? true : undefined}
         aria-label={`${rung.name}: ${status}`}
         className={clsx(
-          'flex w-16 shrink-0 flex-col items-center gap-1 rounded-md px-0.5 py-1.5',
+          'flex w-[72px] shrink-0 flex-col items-center gap-1 rounded-md px-0.5 py-1.5',
           // Inset: the strip clips anything drawn outside a rung.
           spotlightId && 'scroll-mt-24 ring-2 ring-inset ring-yellow-5'
         )}
@@ -204,10 +194,25 @@ export function TierLadderBand({
   const ownScore = isOwner ? creatorScoreFromSession(currentUser) : undefined;
   const share = useMyShareStates(isOwner);
   const { data: ladder } = trpc.creatorJourney.getLadder.useQuery();
+  const spotlightKey = spotlight ? milestoneKeyOfShareToken(spotlight) : undefined;
+  const spotlightId =
+    spotlight && tiers.some((tier) => tier.key === spotlightKey)
+      ? milestoneCardId(spotlight)
+      : undefined;
+  // On a phone the strip scrolls sideways, so a shared rung is centred in it. Only once the ladder is
+  // in: until then the strip holds the held tiers alone, and the rung moves when the rest arrive.
+  useEffect(() => {
+    if (!ladder || !spotlightId) return;
+    const frame = requestAnimationFrame(() => {
+      const rung = document.getElementById(spotlightId);
+      const strip = rung?.closest<HTMLElement>('[data-tier-ladder]');
+      if (rung && strip) strip.scrollTo({ left: centredScrollLeft(rung, strip) });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [ladder, spotlightId]);
   const highest = tiers.at(-1);
   if (!highest) return null;
   const accent = tierAccents[highest.key] ?? DEFAULT_ACCENT;
-  const spotlightKey = spotlight ? milestoneKeyOfShareToken(spotlight) : undefined;
 
   return (
     <Stack gap="xs">
@@ -257,11 +262,7 @@ export function TierLadderBand({
               key={rung.key}
               rung={rung}
               current={rung.key === highest.key}
-              spotlightId={
-                spotlight && rung.held && rung.key === spotlightKey
-                  ? milestoneCardId(spotlight)
-                  : undefined
-              }
+              spotlightId={rung.held && rung.key === spotlightKey ? spotlightId : undefined}
             />
           ))}
         </div>
@@ -370,10 +371,11 @@ export function ProfileAchievementsList({
     if (!spotlit || !spotlight) return;
     // A frame later: the app's scroll area resets to the top in its own effect, which runs after
     // this one when the list mounts with the page (data already cached by the profile).
-    const frame = requestAnimationFrame(() => {
-      const element = document.getElementById(milestoneCardId(spotlight));
-      if (element) scrollToMilestone(element);
-    });
+    const frame = requestAnimationFrame(() =>
+      document
+        .getElementById(milestoneCardId(spotlight))
+        ?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    );
     return () => cancelAnimationFrame(frame);
   }, [spotlit, spotlight]);
   const achievements = sortEarnedBadges(data.achievements);
