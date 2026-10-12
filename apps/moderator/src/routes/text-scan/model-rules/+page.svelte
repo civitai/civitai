@@ -47,7 +47,6 @@
       class="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-500/40 bg-amber-500/10 p-4"
     >
       <p class="text-sm text-amber-200">
-        {data.legacyCount}
         {plural(data.legacyCount, 'rule')} still {data.legacyCount === 1 ? 'uses' : 'use'} regex.
         Converting rewrites them in place as plain-language rules and keeps the regex for reference.
       </p>
@@ -67,7 +66,7 @@
           }}
         >
           <Button type="submit" disabled={converting}>
-            Convert {data.legacyCount} {plural(data.legacyCount, 'rule')}
+            Convert {plural(data.legacyCount, 'rule')}
           </Button>
         </form>
       {/if}
