@@ -1,8 +1,9 @@
 import { PGlite } from '@electric-sql/pglite';
-import { Prisma } from '@prisma/client';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { getModelScore } from '~/server/jobs/update-user-score';
+import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import { recordStatusAtDelete } from '~/server/services/model-status-at-delete';
+import { ModelStatus } from '~/shared/utils/prisma/enums';
 
 // Booting PGlite (WASM Postgres) can exceed the default hook timeout on a contended runner.
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
@@ -113,8 +114,11 @@ const counts = (userId: number, all: Map<number, number>) => {
 
 beforeAll(async () => {
   holder.db = new PGlite();
-  await q(`CREATE TYPE "ModelStatus" AS ENUM ('Draft', 'Training', 'Published', 'Scheduled',
-    'Unpublished', 'UnpublishedViolation', 'GatherInterest', 'Deleted')`);
+  await q(
+    `CREATE TYPE "ModelStatus" AS ENUM (${Object.values(ModelStatus)
+      .map((s) => `'${s}'`)
+      .join(', ')})`
+  );
   await q(`CREATE TABLE "Model" (
     id int PRIMARY KEY,
     "userId" int NOT NULL,
@@ -291,9 +295,8 @@ describe('who is re-scored', () => {
 
 describe('recordStatusAtDelete', () => {
   const tx = {
-    $executeRaw: async (strings: TemplateStringsArray, ...values: unknown[]) => {
-      const sql = Prisma.sql(strings, ...(values as never[]));
-      return (await q(sql.text, sql.values as unknown[])).affectedRows ?? 0;
+    get $executeRaw() {
+      return pgliteRaw(holder.db).executeRaw;
     },
   } as never;
 
@@ -330,5 +333,22 @@ describe('recordStatusAtDelete', () => {
     ]);
     expect(rows[0]).toEqual({ s: 'Published' });
     expect(counts(1, await scores())).toBe(true);
+  });
+
+  // deleteModelById keeps the first delete's actor when this reports nothing recorded.
+  it('reports one row for a live model and none for one already deleted', async () => {
+    const modelId = await owner(1, { status: 'Published' });
+    expect(await recordStatusAtDelete(tx, modelId)).toBe(1);
+    await q(`UPDATE "Model" SET status = 'Deleted' WHERE id = $1`, [modelId]);
+    expect(await recordStatusAtDelete(tx, modelId)).toBe(0);
+  });
+
+  it('records onto a JSON null meta as an object', async () => {
+    const modelId = await owner(1, { status: 'Published' });
+    await q(`UPDATE "Model" SET meta = 'null'::jsonb WHERE id = $1`, [modelId]);
+    await recordStatusAtDelete(tx, modelId);
+
+    const { rows } = await q(`SELECT meta FROM "Model" WHERE id = $1`, [modelId]);
+    expect(rows[0]).toEqual({ meta: { statusAtDelete: 'Published' } });
   });
 });

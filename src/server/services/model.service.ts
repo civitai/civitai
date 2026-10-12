@@ -1877,13 +1877,14 @@ export const deleteModelById = async ({
   }
 
   const deletedModel = await dbWrite.$transaction(async (tx) => {
-    await recordStatusAtDelete(tx, id);
+    // Re-deleting a deleted model keeps the first delete's actor: the creator score reads `deletedBy`,
+    // and an owner must not be able to overwrite a moderator's.
+    const firstDelete = (await recordStatusAtDelete(tx, id)) > 0;
     const model = await tx.model.update({
       where: { id },
       data: {
-        deletedAt: new Date(),
+        ...(firstDelete ? { deletedAt: new Date(), deletedBy: userId } : {}),
         status: ModelStatus.Deleted,
-        deletedBy: userId,
         modelVersions: {
           updateMany: {
             where: { status: { in: [ModelStatus.Published, ModelStatus.Scheduled] } },
