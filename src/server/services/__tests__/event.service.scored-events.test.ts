@@ -1003,12 +1003,20 @@ describe('getWornEventHat', () => {
         comments: 5,
         stickers: 4,
         remixes: 3,
+        modelLikes: 11,
       }),
     });
     live.getHatTotals.mockResolvedValue({
       points: { '9:31:claimed': 64 },
       counts: {
-        '9:31:claimed': { impressions: 20, reactions: 9, comments: 1, stickers: 6, remixes: 2 },
+        '9:31:claimed': {
+          impressions: 20,
+          reactions: 9,
+          comments: 1,
+          stickers: 6,
+          remixes: 2,
+          modelLikes: 8,
+        },
       },
     });
     at(LIVE_NOW);
@@ -1026,6 +1034,7 @@ describe('getWornEventHat', () => {
       comments: 1,
       stickers: 6,
       remixes: 2,
+      modelLikes: 8,
     });
     expect(live.getHatTotals).toHaveBeenCalledWith(season, [
       { ownerId: 9, cosmeticId: 31, claimKey: 'claimed' },
