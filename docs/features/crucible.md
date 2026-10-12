@@ -99,7 +99,7 @@ A crucible's name appears in notifications and Buzz transaction descriptions onl
 
 Every crucible page has a discussion, placed above the entries, where testers can ask the creator questions. It is open for as long as the crucible exists, whatever its status. People who can't open the crucible (blocked by its creator, still in review, mature on the green site) can't read or write its comments either.
 
-The creator and moderators can lock the discussion from the menu at the top of the page. A locked discussion is hidden from everyone, as on challenges. The creator's lock is limited to their own crucible; locking any other kind of thread stays with moderators.
+Moderators can lock the discussion from the menu at the top of the page, as on every other kind of thread. A locked discussion is hidden from everyone, as on challenges. The creator can't lock it.
 
 The creator is notified of new comments from others ("New comments on your crucibles" in notification settings, under Comments). Replies and mentions notify as they do elsewhere.
 

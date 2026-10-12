@@ -79,16 +79,17 @@ describe('CrucibleContextMenu comment lock', () => {
     await vi.waitFor(() => expect(items().length).toBeGreaterThan(0));
   };
 
-  test('offers the creator the lock, and nothing to report', async () => {
+  test('gives the creator no menu at all, lock or not', async () => {
     mocks.currentUser = { id: CREATOR, isModerator: false };
     renderWithProviders(
-      <CrucibleContextMenu crucible={{ id: 17, userId: CREATOR }} withCommentsLock />
+      <>
+        <CrucibleContextMenu crucible={{ id: 17, userId: CREATOR }} withCommentsLock />
+        <span data-testid="rendered" />
+      </>
     );
-    await open();
+    await vi.waitFor(() => expect(document.querySelector('[data-testid="rendered"]')).toBeTruthy());
 
-    expect(items()).toEqual(['Lock Comments']);
-    [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')][0].click();
-    expect(mocks.toggleLock).toHaveBeenCalled();
+    expect(menuButton()).toBeNull();
   });
 
   test('offers a moderator both', async () => {
@@ -99,6 +100,8 @@ describe('CrucibleContextMenu comment lock', () => {
     await open();
 
     expect(items()).toEqual(['Report crucible', 'Lock Comments']);
+    [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')][1].click();
+    expect(mocks.toggleLock).toHaveBeenCalled();
   });
 
   test('keeps the lock from an ordinary viewer', async () => {
@@ -112,10 +115,10 @@ describe('CrucibleContextMenu comment lock', () => {
   });
 
   test('stays off cards, which do not opt in', async () => {
-    mocks.currentUser = { id: CREATOR, isModerator: false };
+    mocks.currentUser = { id: 1, isModerator: true };
     renderWithProviders(<CrucibleContextMenu crucible={{ id: 17, userId: CREATOR }} />);
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await open();
 
-    expect(menuButton()).toBeNull();
+    expect(items()).toEqual(['Report crucible']);
   });
 });

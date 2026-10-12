@@ -4,14 +4,22 @@ import type * as CommentsV2Service from '~/server/services/commentsv2.service';
 import type * as UserPreferences from '~/server/services/user-preferences.service';
 
 const getCommentsInfinite = vi.fn(async () => null);
-const toggleLockCommentsThread = vi.fn(async () => ({ locked: true }));
-const canToggleThreadLock = vi.fn<(...args: unknown[]) => Promise<boolean>>(async () => true);
+const getCommentsThreadDetails2 = vi.fn(async () => null);
+const getCommentCount = vi.fn(async () => 0);
+const upsertComment = vi.fn(async () => ({ id: 1 }));
+const getComment = vi.fn(async () => ({ id: 5, threadId: 70, user: { id: 9 } }));
+const getCommentThreadBounty = vi.fn(async () => null);
+const getCommentThreadCrucibleId = vi.fn<() => Promise<number | null>>(async () => null);
 
 vi.mock('~/server/services/commentsv2.service', async (importOriginal) => ({
   ...(await importOriginal<typeof CommentsV2Service>()),
   getCommentsInfinite: (...args: unknown[]) => getCommentsInfinite(...(args as [])),
-  toggleLockCommentsThread: (...args: unknown[]) => toggleLockCommentsThread(...(args as [])),
-  canToggleThreadLock: (...args: unknown[]) => canToggleThreadLock(...args),
+  getCommentsThreadDetails2: (...args: unknown[]) => getCommentsThreadDetails2(...(args as [])),
+  getCommentCount: (...args: unknown[]) => getCommentCount(...(args as [])),
+  upsertComment: (...args: unknown[]) => upsertComment(...(args as [])),
+  getComment: (...args: unknown[]) => getComment(...(args as [])),
+  getCommentThreadBounty: (...args: unknown[]) => getCommentThreadBounty(...(args as [])),
+  getCommentThreadCrucibleId: (...args: unknown[]) => getCommentThreadCrucibleId(...(args as [])),
   isViewerContentOwner: vi.fn(async () => false),
 }));
 
@@ -26,9 +34,15 @@ vi.mock('~/server/services/user-preferences.service', async (importOriginal) => 
   BlockedByUsers: preference(() => blockedBy.ids),
 }));
 
-const { getCommentsInfiniteHandler, toggleLockThreadDetailsHandler } = await import(
-  '../commentv2.controller'
-);
+vi.mock('~/server/services/user.service', () => ({ amIBlockedByUser: vi.fn(async () => false) }));
+
+const {
+  getCommentsInfiniteHandler,
+  getCommentsThreadDetailsHandler,
+  getCommentCountV2Handler,
+  upsertCommentV2Handler,
+  getCommentHandler,
+} = await import('../commentv2.controller');
 
 const CREATOR = 4;
 const input = { entityType: 'crucible', entityId: 17 } as never;
@@ -46,68 +60,98 @@ const crucibleRow = (over: Record<string, unknown> = {}) => ({
   ...over,
 });
 
-describe('crucible comments visibility', () => {
+const HANDLERS = [
+  ['getInfinite', getCommentsInfiniteHandler, getCommentsInfinite],
+  ['getThreadDetails', getCommentsThreadDetailsHandler, getCommentsThreadDetails2],
+  ['getCount', getCommentCountV2Handler, getCommentCount],
+  ['upsert', upsertCommentV2Handler, upsertComment],
+] as unknown as Array<
+  [string, (a: { ctx: never; input: never }) => Promise<unknown>, { mock: { calls: unknown[] } }]
+>;
+
+describe.each(HANDLERS)('crucible comments visibility: %s', (_name, handler, service) => {
   beforeEach(() => {
     vi.clearAllMocks();
     blockedBy.ids = [];
     dbMock.dbRead.crucible.findUnique.mockResolvedValue(crucibleRow());
   });
 
+  const call = (ctx: unknown) => handler({ ctx: ctx as never, input: input as never });
+
   it('serves the thread of a crucible the viewer can open', async () => {
-    await getCommentsInfiniteHandler({
-      ctx: ctxFor({ id: 9 }),
-      input: { ...(input as object) } as never,
-    });
-    expect(getCommentsInfinite).toHaveBeenCalled();
+    await call(ctxFor({ id: 9 }));
+    expect(service.mock.calls.length).toBe(1);
+  });
+
+  it('serves an adult-level crucible off the green site (negative control)', async () => {
+    dbMock.dbRead.crucible.findUnique.mockResolvedValue(crucibleRow({ nsfwLevel: 16 }));
+    await call(ctxFor({ id: 9 }, { isGreen: false }));
+    expect(service.mock.calls.length).toBe(1);
   });
 
   it.each([
-    ['missing', null, { id: 9 }],
-    ['still being scanned', crucibleRow({ ingestion: 'Pending' }), { id: 9 }],
-    ['adult on the green site', crucibleRow({ nsfwLevel: 16 }), { id: 9, green: true }],
-  ])('refuses the thread of a crucible that is %s', async (_label, row, viewer) => {
+    ['missing', null, false],
+    ['still being scanned', crucibleRow({ ingestion: 'Pending' }), false],
+    ['adult on the green site', crucibleRow({ nsfwLevel: 16 }), true],
+  ])('refuses the thread of a crucible that is %s', async (_label, row, isGreen) => {
     dbMock.dbRead.crucible.findUnique.mockResolvedValue(row);
-    await expect(
-      getCommentsInfiniteHandler({
-        ctx: ctxFor({ id: viewer.id }, { isGreen: 'green' in viewer }),
-        input,
-      } as never)
-    ).rejects.toThrow();
-    expect(getCommentsInfinite).not.toHaveBeenCalled();
+    await expect(call(ctxFor({ id: 9 }, { isGreen }))).rejects.toMatchObject({
+      code: 'NOT_FOUND',
+    });
+    expect(service.mock.calls.length).toBe(0);
   });
 
   it('refuses a viewer whom the creator blocked', async () => {
     blockedBy.ids = [CREATOR];
-    await expect(getCommentsInfiniteHandler({ ctx: ctxFor({ id: 9 }), input })).rejects.toThrow();
-    expect(getCommentsInfinite).not.toHaveBeenCalled();
+    await expect(call(ctxFor({ id: 9 }))).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    expect(service.mock.calls.length).toBe(0);
   });
 
   it('still lets a moderator through a block and a pending scan', async () => {
     blockedBy.ids = [CREATOR];
     dbMock.dbRead.crucible.findUnique.mockResolvedValue(crucibleRow({ ingestion: 'Pending' }));
-    await getCommentsInfiniteHandler({ ctx: ctxFor({ id: 1, isModerator: true }), input });
-    expect(getCommentsInfinite).toHaveBeenCalled();
+    await call(ctxFor({ id: 1, isModerator: true }));
+    expect(service.mock.calls.length).toBe(1);
   });
 });
 
-describe('toggleLockThreadDetailsHandler', () => {
-  beforeEach(() => vi.clearAllMocks());
-
-  it('locks when the policy allows the caller', async () => {
-    canToggleThreadLock.mockResolvedValueOnce(true);
-    await toggleLockThreadDetailsHandler({ ctx: ctxFor({ id: CREATOR }), input } as never);
-
-    expect(canToggleThreadLock).toHaveBeenCalledWith(
-      expect.objectContaining({ userId: CREATOR, isModerator: false, entityType: 'crucible' })
-    );
-    expect(toggleLockCommentsThread).toHaveBeenCalledWith(input);
+describe('getCommentHandler on a crucible comment', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    blockedBy.ids = [];
+    getCommentThreadCrucibleId.mockResolvedValue(17);
+    dbMock.dbRead.crucible.findUnique.mockResolvedValue(crucibleRow());
   });
 
-  it('refuses, and locks nothing, when the policy says no', async () => {
-    canToggleThreadLock.mockResolvedValueOnce(false);
-    await expect(
-      toggleLockThreadDetailsHandler({ ctx: ctxFor({ id: 9 }), input } as never)
-    ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
-    expect(toggleLockCommentsThread).not.toHaveBeenCalled();
+  const read = (ctx: unknown) =>
+    getCommentHandler({ ctx: ctx as never, input: { id: 5 } as never });
+
+  it('resolves the crucible from the comment thread', async () => {
+    await read(ctxFor({ id: 9 }));
+    expect(getCommentThreadCrucibleId).toHaveBeenCalledWith(70);
+  });
+
+  it.each([
+    ['blocked by the creator', () => (blockedBy.ids = [CREATOR])],
+    [
+      'hidden by its scan',
+      () =>
+        dbMock.dbRead.crucible.findUnique.mockResolvedValue(crucibleRow({ ingestion: 'Pending' })),
+    ],
+  ])('refuses a comment on a crucible that is %s', async (_label, arrange) => {
+    arrange();
+    await expect(read(ctxFor({ id: 9 }))).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+
+  it('lets a moderator read it, without resolving the crucible', async () => {
+    blockedBy.ids = [CREATOR];
+    await expect(read(ctxFor({ id: 1, isModerator: true }))).resolves.toBeTruthy();
+    expect(getCommentThreadCrucibleId).not.toHaveBeenCalled();
+  });
+
+  it('does not gate a comment outside any crucible', async () => {
+    getCommentThreadCrucibleId.mockResolvedValue(null);
+    blockedBy.ids = [CREATOR];
+    await expect(read(ctxFor({ id: 9 }))).resolves.toBeTruthy();
   });
 });

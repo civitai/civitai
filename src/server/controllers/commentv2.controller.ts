@@ -39,9 +39,9 @@ import {
   toggleThreadMute,
   getCommentCount,
   getCommentsThreadDetails2,
-  canToggleThreadLock,
   getCommentsInfinite,
   getCommentThreadBounty,
+  getCommentThreadCrucibleId,
   isViewerContentOwner,
   toggleHideComment,
   toggleLockCommentsThread,
@@ -77,6 +77,9 @@ export const getCommentHandler = async ({ ctx, input }: { ctx: Context; input: G
     if (!ctx.user?.isModerator) {
       const bounty = await getCommentThreadBounty(comment.threadId);
       if (bounty) await assertBountyVisible(bounty, ctx.user);
+      const crucibleId = await getCommentThreadCrucibleId(comment.threadId);
+      if (crucibleId)
+        await assertCommentEntityVisible({ entityType: 'crucible', entityId: crucibleId }, ctx);
     }
 
     if (ctx.user && !ctx.user.isModerator) {
@@ -282,16 +285,8 @@ export const toggleLockThreadDetailsHandler = async ({
   input: CommentConnectorInput;
 }) => {
   try {
-    const allowed = await canToggleThreadLock({
-      ...input,
-      userId: ctx.user.id,
-      isModerator: ctx.user.isModerator ?? false,
-    });
-    if (!allowed) throw throwAuthorizationError();
-
     await toggleLockCommentsThread(input);
   } catch (error) {
-    if (error instanceof TRPCError) throw error;
     throw throwDbError(error);
   }
 };

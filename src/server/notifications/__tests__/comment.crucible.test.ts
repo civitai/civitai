@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { commentNotifications, threadUrlMap } from '~/server/notifications/comment.notifications';
+import { notBlockedBetween, notThreadMuted } from '~/server/notifications/base.notifications';
 import { mentionNotifications } from '~/server/notifications/mention.notifications';
 
 const sqlOf = (def: { prepareQuery?: (a: never) => unknown }) =>
@@ -19,6 +20,12 @@ describe('crucible comment notifications', () => {
     expect(sql).toContain('cr."userId" "ownerId"');
     expect(sql).toContain('c."userId" != cr."userId"');
     expect(sql).not.toContain('LEFT JOIN');
+  });
+
+  it('keeps the block and per-thread mute filters on the creator notification', () => {
+    const sql = sqlOf(commentNotifications['new-crucible-comment']);
+    expect(sql).toContain(notBlockedBetween('cr."userId"', 'c."userId"'));
+    expect(sql).toContain(notThreadMuted('cr."userId"', 't.id'));
   });
 
   it('deep-links the creator notification to the comment', () => {
@@ -52,5 +59,22 @@ describe('crucible comment notifications', () => {
     const sql = sqlOf(def);
     expect(sql).toContain('"crucibleId"');
     expect(sql).toContain(`THEN 'crucible'`);
+  });
+});
+
+describe('new-mention: every crucibleId placement', () => {
+  const lines = sqlOf(mentionNotifications['new-mention'])
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => l.includes('crucibleId'));
+
+  it('is selected, in order, into parent id, type, comment parent id and comment parent type', () => {
+    expect(lines).toEqual([
+      'root."crucibleId",',
+      't."crucibleId",',
+      `WHEN COALESCE(root."crucibleId", t."crucibleId") IS NOT NULL THEN 'crucible'`,
+      't."crucibleId",',
+      `WHEN t."crucibleId" IS NOT NULL THEN 'crucible'`,
+    ]);
   });
 });

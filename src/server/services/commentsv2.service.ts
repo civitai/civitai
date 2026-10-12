@@ -252,26 +252,6 @@ export async function getThreadEntityOwnerId({
 }
 
 /**
- * Who may lock a thread: moderators for any entity, and the creator for a crucible only. Every
- * other entity's owner stays out, so opening the lock to crucibles does not widen it elsewhere.
- */
-export async function canToggleThreadLock({
-  userId,
-  isModerator,
-  entityType,
-  entityId,
-}: {
-  userId: number;
-  isModerator: boolean;
-  entityType: CommentConnectorInput['entityType'];
-  entityId: number;
-}): Promise<boolean> {
-  if (isModerator) return true;
-  if (entityType !== 'crucible') return false;
-  return (await getThreadEntityOwnerId({ entityType, entityId })) === userId;
-}
-
-/**
  * Whether `userId` owns the entity this comment thread hangs off of. Skips the lookup unless a
  * viewer is present AND has a non-empty blocked-by list — dropping `blockedByUsers` only
  * matters (and only for the owner) in that case, so the extra query stays off the hot path for
@@ -691,6 +671,14 @@ export async function getCommentThreadBounty(
   if (bountyId) return { bountyId };
   const entryId = thread?.bountyEntryId ?? thread?.rootThread?.bountyEntryId;
   return entryId ? { entryId } : null;
+}
+
+export async function getCommentThreadCrucibleId(threadId: number): Promise<number | null> {
+  const thread = await dbRead.thread.findUnique({
+    where: { id: threadId },
+    select: { crucibleId: true, rootThread: { select: { crucibleId: true } } },
+  });
+  return thread?.crucibleId ?? thread?.rootThread?.crucibleId ?? null;
 }
 
 export const deleteComment = async ({ id }: { id: number }) => {

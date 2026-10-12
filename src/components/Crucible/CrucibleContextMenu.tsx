@@ -11,7 +11,7 @@ import { ReportEntity } from '~/shared/utils/report-helpers';
 type Props = MenuProps & {
   crucible: { id: number; userId: number };
   buttonProps?: ActionIconProps;
-  /** Only where the crucible's discussion is shown; each lock item reads its thread on open. */
+  /** Moderators only, and only where the discussion is shown: each lock item reads its thread on open. */
   withCommentsLock?: boolean;
 };
 
@@ -24,7 +24,7 @@ export function CrucibleContextMenu({
   const currentUser = useCurrentUser();
   const isOwner = currentUser?.id === crucible.userId;
   const isModerator = !!currentUser?.isModerator;
-  const canLockComments = !!withCommentsLock && (isOwner || isModerator);
+  const canLockComments = !!withCommentsLock && isModerator;
   const canReport = !isOwner || isModerator;
   if (!canReport && !canLockComments) return null;
 

@@ -22,11 +22,7 @@ const OWNER_TABLES = [
 const lookup = (table: (typeof OWNER_TABLES)[number]) => dbMock.dbRead[table].findUnique;
 const anyLookupCalled = () => OWNER_TABLES.some((t) => lookup(t).mock.calls.length > 0);
 
-import {
-  canToggleThreadLock,
-  getThreadEntityOwnerId,
-  isViewerContentOwner,
-} from '../commentsv2.service';
+import { getThreadEntityOwnerId, isViewerContentOwner } from '../commentsv2.service';
 
 describe('getThreadEntityOwnerId', () => {
   beforeEach(() => OWNER_TABLES.forEach((t) => lookup(t).mockReset()));
@@ -112,48 +108,4 @@ describe('isViewerContentOwner', () => {
     ).resolves.toBe(false);
     expect(anyLookupCalled()).toBe(false);
   });
-});
-
-describe('canToggleThreadLock', () => {
-  beforeEach(() => OWNER_TABLES.forEach((t) => lookup(t).mockReset()));
-
-  const lockAs = (
-    userId: number,
-    entityType: Parameters<typeof canToggleThreadLock>[0]['entityType']
-  ) => canToggleThreadLock({ userId, isModerator: false, entityType, entityId: 5 });
-
-  it('lets a moderator lock any thread without resolving an owner', async () => {
-    await expect(
-      canToggleThreadLock({ userId: 1, isModerator: true, entityType: 'article', entityId: 5 })
-    ).resolves.toBe(true);
-    expect(anyLookupCalled()).toBe(false);
-  });
-
-  it("lets a crucible's creator lock its thread", async () => {
-    lookup('crucible').mockResolvedValueOnce({ userId: 31 });
-    await expect(lockAs(31, 'crucible')).resolves.toBe(true);
-  });
-
-  it('refuses someone who is not the crucible creator', async () => {
-    lookup('crucible').mockResolvedValueOnce({ userId: 31 });
-    await expect(lockAs(32, 'crucible')).resolves.toBe(false);
-  });
-
-  it('refuses when the crucible does not exist', async () => {
-    lookup('crucible').mockResolvedValueOnce(null);
-    await expect(lockAs(31, 'crucible')).resolves.toBe(false);
-  });
-
-  it.each(['article', 'challenge', 'post', 'image', 'model', 'bounty'] as const)(
-    'still refuses the owner of a %s: only crucibles open the lock to their owner',
-    async (entityType) => {
-      lookup('article').mockResolvedValue({ userId: 31 });
-      lookup('challenge').mockResolvedValue({ createdById: 31 });
-      lookup('post').mockResolvedValue({ userId: 31 });
-      lookup('image').mockResolvedValue({ userId: 31 });
-      lookup('bounty').mockResolvedValue({ userId: 31 });
-      await expect(lockAs(31, entityType)).resolves.toBe(false);
-      expect(anyLookupCalled()).toBe(false);
-    }
-  );
 });
