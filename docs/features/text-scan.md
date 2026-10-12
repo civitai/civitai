@@ -37,7 +37,11 @@ matches.
 The rules are the enabled `ModerationRule` rows with `entityType = Model` and a `semantic`
 definition (`subject`, `description`, `aliases`). They are appended to the `label:modelRules` prompt
 as a numbered list at scan time, so the rule text lives only in the database. Moderators manage them
-on the moderator app's `/text-scan/model-rules` page, which also lists recent matches. A verdict can
+on the moderator app's `/text-scan/model-rules` page, which also lists recent matches. Rules written
+before the scan are regex; a one-off endpoint, `/api/admin/temp/convert-model-rules` (`count`, then
+`apply`), converts them in place once per environment. A rule that does not reduce to plain text, or
+was an Approve rule, ends disabled and flagged until a moderator rewrites it, and nothing in the
+response or its log carries rule text. A verdict can
 only name rules the prompt listed, and it stores the matched rules as they read when the scan ran.
 When it is active, a match unpublishes the model for review (`needsReview`) with a notice that does
 not name the rule, and a match on a rule disabled since the scan began is dropped. A moderator who
