@@ -146,6 +146,8 @@ describe('getImage postless authorization', () => {
 
     expect(sql).not.toContain('JOIN "Post"');
     expect(sql).not.toContain('p."');
+    // The article-cover branch lives inside the post gate, so it is skipped here with the rest.
+    expect(sql).not.toContain('"Article" a');
   });
 
   it('leaves the moderator path ungated', async () => {
