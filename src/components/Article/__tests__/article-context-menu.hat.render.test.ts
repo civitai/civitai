@@ -46,8 +46,16 @@ vi.mock('~/hooks/useRescanArticle', () => ({ useRescanArticle: () => ({}) }));
 // The items stand in as markers. The hat item's own event gate is tested in
 // post-edit-event-card.render.test.ts ('image menu Add Party Hat').
 vi.mock('~/components/Decorations/AddEventDecorationMenuItem', () => ({
-  AddEventDecorationMenuItem: (p: { entityType: string; entityId: number }) =>
-    React.createElement('div', { 'data-testid': `hat-item:${p.entityType}:${p.entityId}` }),
+  // Named by what it is handed: the entity, the preview image, and the hat already on it.
+  AddEventDecorationMenuItem: (p: {
+    entityType: string;
+    entityId: number;
+    image?: { id: number };
+    currentCosmetic?: { id: number } | null;
+  }) =>
+    React.createElement('div', {
+      'data-testid': `hat-item:${p.entityType}:${p.entityId}:image-${p.image?.id}:on-${p.currentCosmetic?.id}`,
+    }),
 }));
 vi.mock('~/components/Decorations/AddArtFrameMenuItem', () => ({
   AddArtFrameMenuItem: () => React.createElement('div', { 'data-testid': 'frame-item' }),
@@ -64,6 +72,9 @@ const ARTICLE = {
   status: 'Published',
   user: { id: 1 },
   coverImage: { id: 42, url: 'img-42' },
+  // A frame and a hat both on it: the hat item must be handed the hat.
+  cosmetic: { id: 5 },
+  eventDecoration: { id: 9 },
 } as unknown as Article;
 
 let root: ReturnType<typeof createRoot> | undefined;
@@ -100,11 +111,11 @@ function openMenu(article: Article = ARTICLE) {
 describe('article menu hat item', () => {
   it("offers the owner a hat for the article on the article's own page, without the frame", () => {
     h.pathname = '/articles/[id]/[[...slug]]';
-    expect(openMenu()).toEqual(['hat-item:Article:7']);
+    expect(openMenu()).toEqual(['hat-item:Article:7:image-42:on-9']);
   });
 
   it('offers the owner both on a card', () => {
-    expect(openMenu()).toEqual(['frame-item', 'hat-item:Article:7']);
+    expect(openMenu()).toEqual(['frame-item', 'hat-item:Article:7:image-42:on-9']);
   });
 
   it("offers neither to a moderator on someone else's article", () => {

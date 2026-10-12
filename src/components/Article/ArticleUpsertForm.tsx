@@ -163,7 +163,7 @@ export function ArticleUpsertForm({ article }: Props) {
   }, [currentUser?.isModerator, userNsfwLevel]);
 
   const [publishing, setPublishing] = useState(false);
-  const eventCard = articleEditEventCard(article, currentUser?.id);
+  const eventCard = articleEditEventCard(article, currentUser);
 
   const { data, isLoading: loadingCategories } = trpc.tag.getAll.useQuery({
     categories: true,

@@ -13,7 +13,7 @@ const article = (extra: Partial<Parameters<typeof articleEditEventCard>[0] & obj
 
 describe('articleEditEventCard', () => {
   it('offers the owner a card on the article, previewed on its cover', () => {
-    expect(articleEditEventCard(article(), 1)).toEqual({
+    expect(articleEditEventCard(article(), { id: 1 })).toEqual({
       articleId: 7,
       coverImage: COVER,
       showDraftNote: false,
@@ -22,16 +22,19 @@ describe('articleEditEventCard', () => {
 
   it('shows the draft note until the article is published', () => {
     for (const status of [ArticleStatus.Draft, ArticleStatus.Processing, ArticleStatus.Unpublished])
-      expect(articleEditEventCard(article({ status }), 1)?.showDraftNote).toBe(true);
+      expect(articleEditEventCard(article({ status }), { id: 1 })?.showDraftNote).toBe(true);
   });
 
   it('passes no cover for an article without one', () => {
-    expect(articleEditEventCard(article({ coverImage: null }), 1)?.coverImage).toBeUndefined();
+    expect(
+      articleEditEventCard(article({ coverImage: null }), { id: 1 })?.coverImage
+    ).toBeUndefined();
   });
 
   it('offers nothing to anyone but the owner, a moderator editing it included', () => {
-    expect(articleEditEventCard(article(), 2)).toBeUndefined();
+    expect(articleEditEventCard(article(), { id: 2 })).toBeUndefined();
     expect(articleEditEventCard(article(), undefined)).toBeUndefined();
-    expect(articleEditEventCard(undefined, 1)).toBeUndefined();
+    expect(articleEditEventCard(article(), null)).toBeUndefined();
+    expect(articleEditEventCard(undefined, { id: 1 })).toBeUndefined();
   });
 });

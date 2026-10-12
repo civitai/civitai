@@ -37,7 +37,8 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
       'event.getNavBanners': { useQuery: () => ({ data: h.banners }) },
       'event.getMyHats': {
         useQuery: (input: unknown, opts?: { enabled?: boolean }) => {
-          if (opts?.enabled === false) return { data: undefined, isLoading: true };
+          // A disabled query still answers from the cache, which another surface may have filled.
+          if (opts?.enabled === false) return { data: h.hats, isLoading: false };
           h.hatsInput.push(input);
           return { data: h.hats, isLoading: false };
         },

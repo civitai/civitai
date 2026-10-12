@@ -8,9 +8,9 @@ export function articleEditEventCard<TImage>(
   article:
     | { id: number; userId: number; status: ArticleStatus; coverImage?: TImage | null }
     | undefined,
-  viewerId: number | undefined
+  viewer: { id: number } | null | undefined
 ) {
-  if (!article || !viewerId || article.userId !== viewerId) return undefined;
+  if (!article || !viewer || article.userId !== viewer.id) return undefined;
   return {
     articleId: article.id,
     coverImage: article.coverImage ?? undefined,
