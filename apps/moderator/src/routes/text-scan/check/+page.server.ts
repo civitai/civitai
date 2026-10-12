@@ -17,6 +17,7 @@ import {
   publishSchema,
   validatePromptChanges,
 } from '$lib/server/text-scan-lab/publish';
+import { getVersion } from '$lib/server/text-scan-lab/version';
 import { userIdByUsername } from '$lib/server/users.service';
 import { normaliseLabFields } from '$lib/text-scan-lab/compose';
 import { parseCheckInput } from '$lib/text-scan-lab/input';
@@ -61,10 +62,12 @@ export const load: PageServerLoad = async ({ url }) => {
     | string
     | null;
 
-  const active = await getPrompts(request?.key).then(
-    (p): ActivePrompts => {
+  const read = request
+    ? getVersion(request.key, request.from)
+    : getPrompts().then((p) => ({ prompts: p, version: null }));
+  const active = await read.then(
+    ({ prompts: p, version }): ActivePrompts => {
       if (request) {
-        const version = p.history?.find((v) => v.id === request.from && v.key === request.key);
         if (version) seed = { key: request.key, content: version.content, id: version.id };
         else
           seedNotice = `Version #${request.from} is not among the recent versions, so it could not be loaded.`;

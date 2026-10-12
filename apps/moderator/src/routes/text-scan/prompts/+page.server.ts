@@ -8,6 +8,7 @@ import {
   getPrompts,
   type LabPrompts,
 } from '$lib/server/text-scan-lab/harness-client';
+import { getVersion } from '$lib/server/text-scan-lab/version';
 import { publishChanges } from '$lib/server/text-scan-lab/publish';
 import { usersByIds } from '$lib/server/users.service';
 import { PROMPT_KEYS } from '$lib/text-scan-lab/types';
@@ -48,17 +49,16 @@ export const actions: Actions = {
     const input = parseForm(restoreSchema, await request.formData());
     if (typeof input === 'string') return fail(400, { error: input });
 
-    let prompts: LabPrompts;
+    let found: Awaited<ReturnType<typeof getVersion>>;
     try {
-      prompts = await getPrompts(input.key);
+      found = await getVersion(input.key, input.id);
     } catch (e) {
       const why = e instanceof LabHarnessError ? e.message : 'unexpected error';
       return fail(502, { error: `Could not load the versions: ${why}` });
     }
-    const version = prompts.history?.find((v) => v.id === input.id && v.key === input.key);
+    const { version, active } = found;
     if (!version)
       return fail(404, { error: `Version #${input.id} is not among the recent versions.` });
-    const active = prompts.active[input.key];
     if (active?.id === version.id || active?.content === version.content)
       return fail(400, { error: 'That text is already the current version.' });
 

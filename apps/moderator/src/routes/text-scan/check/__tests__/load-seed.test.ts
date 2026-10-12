@@ -37,7 +37,7 @@ describe('load seed', () => {
   it('has no seed without params, and asks for no history', async () => {
     const res = await run();
     expect(res).toMatchObject({ seed: null, seedNotice: null });
-    expect(harness.getPrompts).toHaveBeenCalledWith(undefined);
+    expect(harness.getPrompts).toHaveBeenCalledWith();
   });
 
   it('seeds from the version with that id in the key history', async () => {
@@ -62,7 +62,7 @@ describe('load seed', () => {
       const res = await run(q);
       expect(res.seed).toBeNull();
       expect(res.seedNotice).toMatch(/not valid/);
-      expect(harness.getPrompts).toHaveBeenCalledWith(undefined);
+      expect(harness.getPrompts).toHaveBeenCalledWith();
     }
   });
 
