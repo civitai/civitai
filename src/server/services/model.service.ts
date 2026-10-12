@@ -100,7 +100,7 @@ import {
   modelsSearchIndex,
 } from '~/server/search-index';
 import type { ModelSearchIndexRecord } from '~/server/search-index/models.search-index';
-import type { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
+import type { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
 import { associatedResourceSelect } from '~/server/selectors/model.selector';
 import { modelFileSelect } from '~/server/selectors/modelFile.selector';
 import { simpleUserSelect, userWithCosmeticsSelect } from '~/server/selectors/user.selector';
@@ -309,7 +309,7 @@ type ModelRaw = {
     flags: number;
   }[];
   userId: number;
-  cosmetic?: WithClaimKey<ContentDecorationCosmetic> | null;
+  cosmetic?: ContentDecorationCosmetic | null;
   availability?: Availability;
 };
 
@@ -1155,7 +1155,7 @@ export const getModelsRaw = async ({
       dataForModelsCache.fetch(modelIds),
       includeCosmetics
         ? getCosmeticsForEntity({ ids: modelIds, entity: 'Model' })
-        : ({} as Record<string, WithClaimKey<ContentDecorationCosmetic>>),
+        : ({} as Record<number, ContentDecorationCosmetic>),
       getModelPaidAccessGates(modelIds),
       includeCosmetics
         ? getEventDecorationsForEntity({

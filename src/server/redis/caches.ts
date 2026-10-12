@@ -35,7 +35,6 @@ import type { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema'
 import type {
   ContentDecorationCosmetic,
   EventDecorationCosmetic,
-  WithClaimKey,
 } from '~/server/selectors/cosmetic.selector';
 import { isEventDecorationData } from '~/shared/constants/event-decoration.constants';
 import type { ProfileImage } from '~/server/selectors/image.selector';
@@ -276,20 +275,19 @@ export const profilePictureCache = createCachedObject<ProfileImage>({
 type EntityCosmeticLookupRaw = {
   equippedToId: number;
   cosmeticId: number;
-  claimKey: string;
   userData: Prisma.JsonValue;
 };
 export const cosmeticEntityCaches = Object.fromEntries(
   Object.values(CosmeticEntity).map((entity) => [
     entity as CosmeticEntity,
-    createCachedObject<WithClaimKey<ContentDecorationCosmetic>>({
+    createCachedObject<ContentDecorationCosmetic>({
       key: `${REDIS_KEYS.CACHES.COSMETICS}:${entity}`,
       idKey: 'equippedToId',
       cacheNotFound: false,
       staleWhileRevalidate: false,
       lookupFn: async (ids) => {
         const entityCosmetics = await dbWrite.$queryRaw<EntityCosmeticLookupRaw[]>`
-          SELECT uc."cosmeticId", uc."equippedToId", uc."claimKey", uc."data" as "userData"
+          SELECT uc."cosmeticId", uc."equippedToId", uc."data" as "userData"
           FROM "UserCosmetic" uc
           JOIN "Cosmetic" c ON c.id = uc."cosmeticId"
           WHERE uc."equippedToId" IN (${Prisma.join(ids as number[])})
@@ -300,7 +298,7 @@ export const cosmeticEntityCaches = Object.fromEntries(
           entityCosmetics.map((x) => [
             x.equippedToId,
             // Hack here so we can fix it in the appendFn
-            x as any as WithClaimKey<ContentDecorationCosmetic>,
+            x as any as ContentDecorationCosmetic,
           ])
         );
       },
@@ -330,7 +328,7 @@ export const cosmeticEntityCaches = Object.fromEntries(
       ttl: CacheTTL.day,
     }),
   ])
-) as Record<CosmeticEntity, CachedObject<WithClaimKey<ContentDecorationCosmetic>>>;
+) as Record<CosmeticEntity, CachedObject<ContentDecorationCosmetic>>;
 
 type EntityEventDecorationLookupRaw = {
   equippedToId: number;

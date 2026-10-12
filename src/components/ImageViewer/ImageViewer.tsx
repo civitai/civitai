@@ -11,7 +11,6 @@ import type { NsfwLevel } from '~/server/common/enums';
 import type {
   ContentDecorationCosmetic,
   EventDecorationCosmetic,
-  WithClaimKey,
 } from '~/server/selectors/cosmetic.selector';
 import { removeEmpty } from '~/utils/object-helpers';
 
@@ -46,7 +45,7 @@ export interface ImageProps {
   needsReview?: string | null;
   userId?: number;
   user?: SimpleUser;
-  cosmetic?: WithClaimKey<ContentDecorationCosmetic> | null;
+  cosmetic?: ContentDecorationCosmetic | null;
   eventDecoration?: EventDecorationCosmetic | null;
   tags?: Array<{ id: number }> | number[];
   metadata?: MixedObject | null;

@@ -172,7 +172,11 @@ export const getUserWithProfile = async ({
 
     return {
       ...user,
-      cosmetics: await withoutHiddenEventDecorations(user.cosmetics, eventViewer),
+      // A claim key picks one holding to equip; only its owner equips it.
+      cosmetics: (await withoutHiddenEventDecorations(user.cosmetics, eventViewer)).map((c) => ({
+        ...c,
+        claimKey: sameUser ? c.claimKey : null,
+      })),
       meta: undefined,
       // Never leak the private settings blob; expose only whether the shop is public.
       settings: undefined,
