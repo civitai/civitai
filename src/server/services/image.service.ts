@@ -7967,6 +7967,8 @@ export async function getImageGenerationData({ id, viewer }: { id: number; viewe
 
   const parsedMeta = imageMetaOutput.safeParse(image.meta);
   const data = parsedMeta.success ? parsedMeta.data : {};
+  // Read before media references are withheld, which drops the graph.
+  const isComfy = !!data.comfy;
   const {
     'Clip skip': legacyClipSkip,
     clipSkip = legacyClipSkip,
@@ -7985,14 +7987,14 @@ export async function getImageGenerationData({ id, viewer }: { id: number; viewe
       process = meta.process ?? meta.type;
     }
 
-    if (meta.comfy) {
+    if (isComfy) {
       hasControlNet = !!meta.controlNets?.length;
     } else {
       hasControlNet = Object.keys(meta).some((x) => x.toLowerCase().startsWith('controlnet'));
     }
 
     if (!process) {
-      if (meta.comfy) process = 'comfy';
+      if (isComfy) process = 'comfy';
       else if (image.generationProcess === 'txt2imgHiRes') process = 'txt2img + Hi-Res';
       else process = image.generationProcess;
 

@@ -139,6 +139,13 @@ describe('generation.getGenerationData for an image', () => {
     expect(data.params.steps).toBe(30);
   });
 
+  it('keeps them for the owner of an R image on the SFW domain', async () => {
+    await seed(PUBLISHED, 4);
+    const data = await fetchAs(OWNER, false);
+    expect(JSON.stringify(data)).toContain(`${SOURCE}?comfy`);
+    expect(data.remixOf?.url).toBe('image-own-url');
+  });
+
   it('keeps them for a signed-in viewer on the mature domain', async () => {
     await seed(PUBLISHED, 4);
     const data = await fetchAs(STRANGER, true);

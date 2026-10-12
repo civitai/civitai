@@ -274,6 +274,7 @@ describe('getImageGenerationData media links', () => {
     mask: '  data:image/png;base64,AAAA  ',
     thumbnail: '//image.civitai.com/protocol-relative.png',
     comfy: JSON.stringify({ prompt: { '1': { inputs: { image: `${SOURCE}?comfy` } } } }),
+    workflow: 'txt2img:face-fix',
     external: { source: { name: 'Tool', homepage: HOMEPAGE } },
   };
   const MARKERS = [SOURCE, HOMEPAGE, 'image-key-without', 'data:image', 'protocol-relative'];
@@ -323,6 +324,9 @@ describe('getImageGenerationData media links', () => {
     expect(meta.images ?? []).toEqual([]);
     expect(meta).not.toHaveProperty('video');
     expect(meta).not.toHaveProperty('comfy');
+    // The generator workflow name and the process label are not media.
+    expect(meta.workflow).toBe('txt2img:face-fix');
+    expect(data.process).toBe('comfy');
   });
 
   it.each([
@@ -406,12 +410,19 @@ describe('imageVisibilityConditions for image.get', () => {
     expect(await visibleTo(ANON, 'whenPosted')).toBe(true);
   });
 
-  it('admits the cover of a readable article either way', async () => {
+  it('admits a postless cover of a readable article by default', async () => {
     await seed({ post: null });
     await db.exec(`INSERT INTO "Article" VALUES (1, 1, 'Published', now(), 'Scanned')`);
     expect(await visibleTo(ANON, 'always')).toBe(true);
     await db.exec(`UPDATE "Article" SET status = 'Draft'`);
     expect(await visibleTo(ANON, 'always')).toBe(false);
+  });
+
+  it('does not let an image in an unpublished post borrow an article cover', async () => {
+    await seed({ post: { '"publishedAt"': 'NULL' } });
+    await db.exec(`INSERT INTO "Article" VALUES (1, 1, 'Published', now(), 'Scanned')`);
+    for (const postGates of ['always', 'whenPosted'] as const)
+      expect(await visibleTo(OTHER, postGates)).toBe(false);
   });
 
   it.each([

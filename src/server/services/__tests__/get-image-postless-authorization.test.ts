@@ -151,6 +151,9 @@ describe('getImage postless authorization', () => {
     );
     expect(sql).toContain('OR (i."postId" IS NULL AND TRUE)');
     expect(sql).not.toContain(`i."postId" IS NULL AND i."userId" = ${VIEWER}`);
+    // The payload reads the post too, rather than a literal 'Public'.
+    expect(sql).toContain(`COALESCE(p."availability", 'Public') "availability"`);
+    expect(sql).not.toContain(`'Public' "availability"`);
   });
 
   it('leaves the moderator path ungated', async () => {

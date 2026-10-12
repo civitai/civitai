@@ -122,11 +122,17 @@ const BARE_URL = /^\s*(https?:\/\/|\/\/|data:)\S*\s*$/i;
 const isMediaReference = (key: string, value: unknown) =>
   typeof value === 'string' && (key.toLowerCase() === 'url' || BARE_URL.test(value));
 // Workflow graphs, usually stored as JSON text, carry their input media inside node values.
-const WORKFLOW_KEYS = new Set(['comfy', 'workflow']);
+// `workflow` also names the generator workflow ('img2img:edit'), which is kept.
+const isWorkflowGraph = (key: string, value: unknown) => {
+  const name = key.toLowerCase();
+  if (name.startsWith('comfy')) return true;
+  if (name !== 'workflow') return false;
+  return typeof value !== 'string' || /^\s*[[{]/.test(value);
+};
 const REMOVED = Symbol('removed');
 
 function strip(value: unknown, key: string): unknown {
-  if (isMediaReference(key, value) || WORKFLOW_KEYS.has(key)) return REMOVED;
+  if (isMediaReference(key, value) || isWorkflowGraph(key, value)) return REMOVED;
   if (Array.isArray(value))
     return value.map((item) => strip(item, '')).filter((item) => item !== REMOVED);
   if (value && typeof value === 'object') {
