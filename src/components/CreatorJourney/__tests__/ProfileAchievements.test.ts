@@ -286,7 +286,7 @@ describe('achievements tab', () => {
       'Spark: Earned before launch',
       'Blaze: Earned Sep 28, 2026',
       'Nova: Earned before launch',
-      'Legend: Not reached yet',
+      'Legend: Unlocks at 10,000,000 Creator Score',
     ]);
     const rungText = [...el.querySelectorAll('[data-tier-ladder] > button')].map((rung) =>
       [...rung.querySelectorAll('p')].map((line) => line.textContent)
@@ -693,6 +693,42 @@ describe('ladder rungs', () => {
       ['hidden:tier-2', '???', undefined, false],
     ]);
     expect(result[1].badgeUrl).toBe('own-art');
+  });
+
+  // A creator can hide a tier's badge from their profile; the score still passed it, so the ladder
+  // must not call a rung under their top tier unreached. No date: that stays hidden.
+  it('marks a shown-tier gap below the top held tier as reached, never a masked one', () => {
+    const ladder = [
+      rung('score:spark', 'Spark', 500),
+      rung('hidden:tier-1', '???', 1000),
+      rung('score:flame', 'Flame', 5000),
+      rung('score:blaze', 'Blaze', 10000),
+      rung('score:beacon', 'Beacon', 40000),
+    ];
+    const result = ladderRungs([held('score:blaze', 'Blaze')], ladder);
+    expect(result.map((r) => [r.key, !!r.held, !!r.reached])).toEqual([
+      ['score:spark', false, true],
+      ['hidden:tier-1', false, false],
+      ['score:flame', false, true],
+      ['score:blaze', true, false],
+      ['score:beacon', false, false],
+    ]);
+  });
+
+  it('labels a reached rung without a date, lit, on the tab', () => {
+    mocks.ladderTiers = [
+      { key: 'score:spark', name: 'Spark', threshold: 500, hint: null, badgeUrl: null },
+      { key: 'score:blaze', name: 'Blaze', threshold: 10000, hint: null, badgeUrl: null },
+    ];
+    const el = mount(
+      React.createElement(ProfileAchievementsList, {
+        data: { tiers: [held('score:blaze', 'Blaze')], achievements: [] },
+        userId: OWNER,
+      })
+    );
+    const [spark] = el.querySelectorAll<HTMLElement>('[data-tier-ladder] > button');
+    expect(spark.getAttribute('aria-label')).toBe('Spark: Reached');
+    expect(spark.firstElementChild?.className.split(' ')).not.toContain('grayscale');
   });
 
   it('keeps a held tier the ladder does not list, after the ladder', () => {

@@ -40,6 +40,8 @@ type Rung = {
   badgeUrl: string | null;
   threshold?: number;
   held?: Tier;
+  /** Below a held tier but not shown, e.g. its badge hidden from the profile: the score passed it. */
+  reached?: boolean;
 };
 
 export const SECRET_ACHIEVEMENT_LABEL = 'Special achievement';
@@ -81,7 +83,8 @@ function useMyShareStates(isOwner: boolean) {
 
 /**
  * Every tier on the public ladder, lowest first, carrying the creator's earned tier where they hold
- * it. A tier the ladder masks shows no threshold. Until the ladder loads, the held tiers alone.
+ * it. A tier the ladder masks shows no threshold, and never reads as reached. Until the ladder loads,
+ * the held tiers alone.
  */
 export function ladderRungs(held: Tier[], ladder: LadderTier[] | undefined): Rung[] {
   if (!ladder) return held.map((tier) => ({ ...tier, held: tier }));
@@ -99,6 +102,10 @@ export function ladderRungs(held: Tier[], ladder: LadderTier[] | undefined): Run
       threshold: masked ? undefined : tier.threshold,
       held: own,
     };
+  });
+  const top = rungs.findLastIndex((rung) => rung.held);
+  rungs.forEach((rung, index) => {
+    if (index < top && !rung.held && rung.threshold != null) rung.reached = true;
   });
   return [...rungs, ...[...unplaced.values()].map((tier) => ({ ...tier, held: tier }))];
 }
@@ -135,7 +142,14 @@ function LadderRung({
   current: boolean;
   spotlightId?: string;
 }) {
-  const status = rung.held ? earnedLabel(rung.held.achievedAt) : 'Not reached yet';
+  const lit = !!rung.held || !!rung.reached;
+  const status = rung.held
+    ? earnedLabel(rung.held.achievedAt)
+    : rung.reached
+    ? 'Reached'
+    : rung.threshold != null
+    ? `Unlocks at ${numberWithCommas(rung.threshold)} Creator Score`
+    : 'Locked';
   return (
     <Tooltip label={status} events={{ hover: true, focus: true, touch: true }}>
       <button
@@ -156,10 +170,10 @@ function LadderRung({
         <TierBadge
           name={rung.name}
           badgeUrl={rung.badgeUrl}
-          state={rung.held ? 'earned' : 'locked'}
+          state={lit ? 'earned' : 'locked'}
           size={48}
         />
-        <Text size="xs" fw={700} lh={1.1} c={rung.held ? undefined : 'dimmed'}>
+        <Text size="xs" fw={700} lh={1.1} c={lit ? undefined : 'dimmed'}>
           {rung.name}
         </Text>
         {rung.threshold != null && (
