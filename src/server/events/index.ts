@@ -547,9 +547,10 @@ export const eventEngine = {
     await this.assertPlayable(event, user, now);
     const userId = user.id;
 
+    const placed = await eventDef.settleBalancedTeam(userId);
     // Strict: a degraded manual-assignment read refuses the join rather than granting the computed
     // team's colour to someone assigned by hand.
-    const team = await eventDef.getUserTeam(userId, { strict: true });
+    const team = placed ?? (await eventDef.getUserTeam(userId, { strict: true }));
     const cosmeticId = await eventDef.getTeamCosmetic(team);
     if (!cosmeticId) throw new Error("This event's cosmetics are not set up yet");
 

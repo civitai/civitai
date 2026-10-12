@@ -2920,6 +2920,10 @@ export const REDIS_SUB_KEYS = {
     PARTNERS: 'partners', // sys
     ADD_ROLE: 'add-role', // sys
     MANUAL_ASSIGNMENTS: 'manual-assignments', //sys
+    // Join-time team balancing (src/server/events/team-balance.ts).
+    TEAM_BALANCE_LIST: 'team-balance-list', // sys
+    TEAM_BALANCE_TOTALS: 'team-balance-totals', // sys
+    TEAM_BALANCE_ASSIGNED: 'team-balance-assigned', // sys
     DISCORD_ROLES: 'discord-roles', // sys
     POINTS: 'points', // sys
     ROSTER: 'roster', // sys

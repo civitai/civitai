@@ -6,6 +6,7 @@ import { REGISTERED_STEP_IDS } from '~/server/services/blocks/steps';
 import type { BlockStepToolCall } from '~/server/services/blocks/steps';
 import type { TrainingQuoteErrorCode } from '~/server/services/blocks/pass-through-quote-failure';
 import type { CONFIRMED_STEP_DAILY_LIMIT_ERROR_CODE } from '~/shared/constants/block-scope.constants';
+import type { BlockWorkflowErrorCode } from '~/server/services/blocks/workflow-graph';
 import {
   civitaiHostedImageUrlSchema,
   SOURCE_IMAGE_URL_MAX,
@@ -657,6 +658,61 @@ export const blockPassThroughStepBodySchema = z
 
 export type PassThroughStepBody = z.infer<typeof blockPassThroughStepBodySchema>;
 
+// ── App Blocks MULTI-STEP kind (`kind:'workflow'`) ────────────────────────────
+//
+// 1..N pass-through steps submitted as ONE workflow. A step input may hold the
+// orchestrator's reference object (`{ "$ref", "path", "default"?, "format"? }`)
+// naming `$arguments` or an earlier step.
+//
+// 🔴 THERE IS NO `maxBuzz`. The ceiling is the token's per-generation budget
+// times the number of steps, computed by the server; the app declares nothing.
+//
+// 🔴 THIS SCHEMA CHECKS SHAPE AND SIZE ONLY. The step count, the step-name rules
+// and the reference graph are checked by `resolveBlockWorkflowGraph`, and the
+// step-type denylist by the router — both on the estimate and the submit, before
+// any orchestrator call. They are NOT here because a schema rejection is thrown
+// at the tRPC boundary, where it cannot carry the `errorCode` a block branches
+// on; those refusals are returned as a failed snapshot instead.
+
+/**
+ * Max serialized bytes of every step `input` plus `arguments`, summed. The same
+ * payload bound a single pass-through `input` gets, applied to the whole body.
+ */
+export const WORKFLOW_INPUT_BYTES_MAX = PASS_THROUGH_INPUT_BYTES_MAX;
+
+/** Max characters of a step `name` on the wire; the name rules are tighter. */
+const WORKFLOW_STEP_NAME_WIRE_MAX = 64;
+
+const blockMultiStepWorkflowStepSchema = z
+  .object({
+    name: z.string().min(1).max(WORKFLOW_STEP_NAME_WIRE_MAX).optional(),
+    $type: z.string().min(1).max(PASS_THROUGH_TYPE_MAX_CHARS),
+    // Orchestrator-native and forwarded unmodified, like the pass-through arm's.
+    input: z.record(z.string(), z.unknown()),
+    suppressOutput: z.boolean().optional(),
+  })
+  .strict();
+
+export const blockMultiStepWorkflowBodySchema = z
+  .object({
+    kind: z.literal('workflow'),
+    steps: z.array(blockMultiStepWorkflowStepSchema).min(1),
+    arguments: z.record(z.string(), z.unknown()).optional(),
+  })
+  .strict()
+  .refine(
+    (b) =>
+      b.steps.reduce((bytes, step) => bytes + JSON.stringify(step.input).length, 0) +
+        (b.arguments ? JSON.stringify(b.arguments).length : 0) <=
+      WORKFLOW_INPUT_BYTES_MAX,
+    {
+      path: ['steps'],
+      message: `workflow step inputs and arguments exceed the ${WORKFLOW_INPUT_BYTES_MAX}-byte limit`,
+    }
+  );
+
+export type BlockMultiStepWorkflowBody = z.infer<typeof blockMultiStepWorkflowBodySchema>;
+
 // ── App Blocks TRAINING kind (`kind:'training'`) ───────────────────────────────
 //
 // Trains a LoRA with the ai-toolkit engine on a dataset the server prepared
@@ -834,6 +890,7 @@ export const blockWorkflowBodySchema = z.discriminatedUnion('kind', [
   blockCustomComfyMemberSchema,
   blockStepMemberSchema,
   blockTrainingBodySchema,
+  blockMultiStepWorkflowBodySchema,
 ]);
 
 export { BLOCK_ESTIMATE_BATCH_MAX_CELLS };
@@ -937,7 +994,10 @@ export type BlockWorkflowSnapshot = {
    * the limit themselves. Returned by the submit for an ordinary page token only: a
    * private run reserves against its own cap and makes no daily-limit check at submit.
    */
-  errorCode?: TrainingQuoteErrorCode | typeof CONFIRMED_STEP_DAILY_LIMIT_ERROR_CODE;
+  errorCode?:
+    | TrainingQuoteErrorCode
+    | BlockWorkflowErrorCode
+    | typeof CONFIRMED_STEP_DAILY_LIMIT_ERROR_CODE;
   // The buzz account that primarily funded this generation (the accountType of
   // the largest realized debit). OPTIONAL + additive: existing consumers that
   // don't read it are unaffected. Only the account TYPE is surfaced — nothing
@@ -1234,8 +1294,9 @@ export type BlockWorkflowSnapshot = {
    * unscanned-text surface is real for every `$type` that does NOT collide.
    *
    * OMITTED entirely when the workflow carries no step with an UNRECOGNISED
-   * `$type` — which is every workflow the other three kinds produce — so their
-   * snapshots stay byte-identical.
+   * `$type` submitted by the pass-through arm — which is every workflow the other
+   * kinds produce (`kind:'workflow'` reports step output on {@link steps}) — so
+   * their snapshots stay byte-identical.
    *
    * 🔴 WIRE CONTRACT: additive on the type `@civitai/app-sdk`'s `blocks/types.ts`
    * mirrors, exactly like `textOutputs` above. The SDK's inbound validator does
@@ -1295,6 +1356,38 @@ export type BlockWorkflowSnapshot = {
    * workflow produced none. 🔴 WIRE CONTRACT: additive; mirrored by `@civitai/app-sdk`.
    */
   model3dOutputs?: BlockModel3dOutput[];
+  /**
+   * One entry per step of a `kind:'workflow'` submit, in the orchestrator's order.
+   * The children a `repeat` step generates follow it, named `<repeat name>.<n>`.
+   *
+   * `imageUrls` is that step's available media and is omitted for a step submitted
+   * with `suppressOutput`; the snapshot's own `imageUrls` is the union of the steps
+   * that did not suppress theirs. `output` follows the {@link stepOutputs} rule
+   * (blobs removed, the rest forwarded unscanned) and is absent for a step whose
+   * `$type` has its own extraction — scanned text arrives on {@link textOutputs}.
+   * `error` is the orchestrator's reason for a step that did not succeed, and only
+   * when it is plain prose.
+   *
+   * `cost` stays on the snapshot: the orchestrator reports one price for the whole
+   * workflow. A `failed` workflow can carry a non-zero `cost.total` and usable
+   * `imageUrls`, because steps that finished before the failing one stay charged.
+   * The author fee is the exception: it is reversed WHOLE for any workflow that
+   * does not succeed, whatever its earlier steps delivered.
+   *
+   * Present ONLY on a workflow this kind submitted; every other snapshot is
+   * byte-identical to before.
+   * 🔴 WIRE CONTRACT: additive; mirrored by `@civitai/app-sdk` in its own repo.
+   */
+  steps?: BlockWorkflowStepSnapshot[];
+};
+
+export type BlockWorkflowStepSnapshot = {
+  name: string;
+  $type: string;
+  status: BlockWorkflowSnapshot['status'];
+  imageUrls?: string[];
+  output?: unknown;
+  error?: string;
 };
 
 export type BlockStepQuote = {

@@ -23,6 +23,8 @@
     "noUncheckedIndexedAccess": false, // TODO swap to true
     "paths": {
       "~/*": ["./src/*"],
+      "@civitai/post-planner": ["./packages/civitai-post-planner/src/index"],
+      "@civitai/post-planner/*": ["./packages/civitai-post-planner/src/*"],
       "@civitai/db-schema": ["./packages/civitai-db-schema/src/index"],
       "@civitai/db-schema/*": ["./packages/civitai-db-schema/src/*"],
       "@civitai/db": ["./packages/civitai-db/src/index"],

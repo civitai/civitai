@@ -308,6 +308,19 @@ export function canAccessAppsActivity(features: AppsActivityFeatureFlags): boole
   return !!features?.appBlocks || !!features?.appBlocksPages;
 }
 
+export type AppAssistantFeatureFlags =
+  | Partial<Pick<FeatureAccess, 'appBlocks' | 'appAssistant'>>
+  | null
+  | undefined;
+
+/**
+ * The App Assistant gate, shared by its page, sidebar row and token routes so they cannot drift.
+ * Neither flag is `toggleable`, so the SSR and first-client values agree. Sign-in is the caller's.
+ */
+export function canAccessAppAssistant(features: AppAssistantFeatureFlags): boolean {
+  return !!features?.appBlocks && !!features?.appAssistant;
+}
+
 /**
  * The viewer's {@link StoreVisibilityScope}, derived CLIENT-SIDE from the resolved
  * feature flags — the mirror of the server's `resolveStoreVisibilityScope`.

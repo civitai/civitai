@@ -14,14 +14,14 @@ import { describeSubmitError, type OrchestratorClient } from './orchestrator-cor
 
 // One orchestrator step per image labels it for free (system-paid). Tag models use WD-tagging; caption
 // models use media (or audio) captioning. Each step is named by its batch index and carries the tile's
-// stable key in metadata, so poll results map straight back to tiles. Mirrors the main app's
+// key in metadata, so poll results map straight back to tiles. Mirrors the main app's
 // submitAutoLabelWorkflow (src/server/services/training.service.ts).
 
 export type AutoLabelMode = 'tag' | 'caption';
 export interface AutoLabelItem {
   /** The uploaded blob's media URL. */
   mediaUrl: string;
-  /** The caller's stable tile id, echoed back on each result. */
+  /** The caller's key for this item, unique within the run, echoed back on each result. */
   key: string;
 }
 
@@ -102,7 +102,7 @@ type LabelStepOutput = {
 };
 
 /** Poll one auto-label workflow: `done` once the workflow reaches a terminal status; `results` carries
- *  each step's current state keyed by the tile id we stamped in metadata. The caller's per-user token IS
+ *  each step's current state keyed by the caller's key stamped in metadata. The caller's per-user token IS
  *  the auth scope — getWorkflow 404s on another user's id — so unlike the main app (which polls with a
  *  system token) we don't re-check owner/kind here. Keep this per-user; a shared token would need those. */
 export async function pollAutoLabel(

@@ -1,4 +1,5 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as DevTunnelFrameService from '~/server/services/blocks/dev-tunnel-frame.service';
 
 /**
  * APP DEV TUNNEL — `/apps/dev/[blockId]` SSR resolver.
@@ -43,11 +44,21 @@ vi.mock('~/server/services/block-registry.service', () => ({
     resolvePageBlockBySlug: mockResolvePageBySlug,
   },
 }));
+const { mockDevTunnelEnabled, mockResolveFrame } = vi.hoisted(() => ({
+  mockDevTunnelEnabled: vi.fn<(...a: unknown[]) => Promise<boolean>>(async () => true),
+  mockResolveFrame: vi.fn(),
+}));
 vi.mock('~/server/services/app-blocks-flag', () => ({
-  isAppBlocksDevTunnelEnabled: vi.fn(async () => true),
+  isAppBlocksDevTunnelEnabled: (...a: unknown[]) => mockDevTunnelEnabled(...a),
   isAppBlocksDevTunnelUnsubmittedSpendEnabled: (...a: unknown[]) =>
     mockUnsubmittedSpend(...(a as [])),
 }));
+// The real resolver, observed: a spy that delegates, so a call can be asserted absent.
+vi.mock('~/server/services/blocks/dev-tunnel-frame.service', async (importOriginal) => {
+  const real = await importOriginal<typeof DevTunnelFrameService>();
+  mockResolveFrame.mockImplementation(real.resolveDevTunnelFrame);
+  return { ...real, resolveDevTunnelFrame: mockResolveFrame };
+});
 vi.mock('~/server/services/blocks/dev-tunnel.service', () => ({
   getActiveDevTunnel: (...a: unknown[]) => mockGetActiveTunnel(...(a as [])),
 }));
@@ -154,6 +165,31 @@ describe('/apps/dev/[blockId] SSR resolver', () => {
     mockGetActiveTunnel.mockReset();
     mockUnsubmittedSpend.mockReset();
     mockUnsubmittedSpend.mockResolvedValue(true);
+    mockDevTunnelEnabled.mockReset();
+    mockDevTunnelEnabled.mockResolvedValue(true);
+    mockResolveFrame.mockClear();
+  });
+
+  it('kill switch off → notFound before anything is resolved or signed, and no CSP', async () => {
+    const resolver = await loadDevResolver();
+    mockDevTunnelEnabled.mockResolvedValue(false);
+    mockResolveDev.mockResolvedValue(DEV_APP);
+    mockGetActiveTunnel.mockResolvedValue(activeTunnel('dev-0123456789abcdef.civit.ai'));
+    const headers: Record<string, string> = {};
+    const res = await resolver(makeCtx({ user: AUTHOR, setHeader: (k, v) => (headers[k] = v) }));
+    expect(res).toEqual({ notFound: true });
+    expect(mockDevTunnelEnabled).toHaveBeenCalledWith({ user: AUTHOR });
+    expect(mockResolveFrame).not.toHaveBeenCalled();
+    expect(mockGetActiveTunnel).not.toHaveBeenCalled();
+    expect(headers).toEqual({});
+  });
+
+  it('POSITIVE CONTROL: with the kill switch on, the same request resolves the frame', async () => {
+    const resolver = await loadDevResolver();
+    mockResolveDev.mockResolvedValue(DEV_APP);
+    mockGetActiveTunnel.mockResolvedValue(activeTunnel('dev-0123456789abcdef.civit.ai'));
+    await resolver(makeCtx({ user: AUTHOR, setHeader: () => undefined }));
+    expect(mockResolveFrame).toHaveBeenCalledTimes(1);
   });
   afterAll(() => {
     process.env.NEXTAUTH_SECRET = prev;

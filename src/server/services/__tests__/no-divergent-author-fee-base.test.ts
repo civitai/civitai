@@ -282,6 +282,32 @@ const QUOTE_SITE_LEDGER: Record<
       'orchestrator round-trip degrades; an absent whatIf prices no fee, exactly as the shown ' +
       'generation price already falls back to the declared floor.',
   },
+  // `kind:'workflow'` — ONE fee per workflow, on the whole workflow's `cost.base`.
+  // Both sites are optional-chained: this arm proceeds without a quote (reserved
+  // at its ceiling), and an absent whatIf prices no fee on either path.
+  submitMultiStepWorkflow: {
+    role: 'reserving',
+    baseExpr: 'baseGenerationBuzz: whatIfResult?.cost?.base',
+    capExpr: 'priceIsCap: whatIfResult?.cost?.variable',
+    typeExpr: 'generationType: workflowGenerationType',
+    typeDerivation: 'const workflowGenerationType = resolveBlockGenerationType(body);',
+    disclosedBy: 'estimateMultiStepWorkflow',
+    reason:
+      'multi-step submit. `reserveBuzz = reserveGenerationBuzz + reservedAuthorFeeBuzz`, compared ' +
+      'against the per-step budget times the step count and reserved on every cap before the ' +
+      'orchestrator submit.',
+  },
+  estimateMultiStepWorkflow: {
+    role: 'disclosing',
+    baseExpr: 'baseGenerationBuzz: whatIfResult?.cost?.base',
+    capExpr: 'priceIsCap: whatIfResult?.cost?.variable',
+    typeExpr: 'generationType: workflowGenerationType',
+    // The same call on the same body as the submit — one resolved value.
+    typeDerivation: 'const workflowGenerationType = resolveBlockGenerationType(body);',
+    reason:
+      'multi-step ESTIMATE. Added to the whole-workflow quote the block is shown, so the price ' +
+      'quoted is the price reserved. Reserves nothing; the submit runs its own quote.',
+  },
 };
 
 /** Every `<fn>({ … })` argument object in the router source, braces balanced. */
@@ -307,13 +333,13 @@ describe('author fee — the spend-attribution seam', () => {
     expect(sites.filter((s) => !s.includes('workflowId'))).toEqual([]);
   });
 
-  it('there are exactly FIVE spend-attribution call sites', () => {
+  it('there are exactly SIX spend-attribution call sites', () => {
     // textToImage, customComfy, the registry-step bridge, the pass-through step,
-    // and the shared confirmed-quote path (`kind:'training'` runs and confirmed
-    // steps). A new submit path is a deliberate decision
-    // about whether it charges an author fee, so it should land here rather than
-    // silently inherit a skip.
-    expect(sites).toHaveLength(5);
+    // the multi-step workflow, and the shared confirmed-quote path (`kind:'training'`
+    // runs and confirmed steps). A new submit path is a deliberate decision about
+    // whether it charges an author fee, so it should land here rather than silently
+    // inherit a skip.
+    expect(sites).toHaveLength(6);
   });
 
   it('every call site passes a base generation cost', () => {
@@ -362,13 +388,13 @@ describe('author fee — the spend-attribution seam', () => {
     // tri-state is SLICE 2'S POLICY CALL — this guard deliberately pins the
     // current shape rather than pre-empting it.
     const assignments = source.match(/realizedBaseCost =\s*\n?\s*typeof submitted\.cost\?\.base/g);
-    expect(assignments).toHaveLength(5);
+    expect(assignments).toHaveLength(6);
     expect(source).not.toMatch(/realizedBaseCost\s*=\s*[^;]*cost\?\.total/);
 
     const capAssignments = source.match(
       /realizedPriceIsCap =\s*\n?\s*submitted\.cost\?\.variable === true/g
     );
-    expect(capAssignments).toHaveLength(5);
+    expect(capAssignments).toHaveLength(6);
     // `snapshot` has no `variable` either — reading one would be `undefined`,
     // i.e. "never a cap", which is the fail-OPEN direction.
     expect(source).not.toMatch(/realizedPriceIsCap\s*=\s*[^;]*snapshot\./);
@@ -469,9 +495,8 @@ const NO_FEE_PATHS: Record<string, { charges: number; reason: string; whatifAttr
         'stamps an id on every workflow it returns, so the sentinel is never observed and no ' +
         'attribution row is dropped today.',
       reason:
-        'POST-PAID, same as customComfy. Its pre-submit quote goes through ' +
-        '`quotePassThroughStepBuzz`, which returns `cost.total` and nothing else, so there is no ' +
-        '`cost.base` at reservation time. Widening that helper is what would wire a fee here.',
+        'POST-PAID, same as customComfy: it reserves the declared ceiling, which settles ' +
+        'down, and nothing is reserved for a fee.',
     },
     // The ONE submit path for every viewer-confirmed quote — `kind:'training'` runs and
     // confirmed pass-through steps both reach it through their thin entry points
@@ -521,7 +546,7 @@ describe('author fee — the viewer-charge seam', () => {
     expect(charges.filter((c) => !c.includes('workflowId'))).toEqual([]);
   });
 
-  it('the submit-path locator names all five paths (positive control)', () => {
+  it('the submit-path locator names all six paths (positive control)', () => {
     // The ledger below is keyed on these names, so a locator that resolved every
     // offset to `<module scope>` would make the ledger vacuous rather than red.
     expect(submitPaths).toEqual([
@@ -529,6 +554,7 @@ describe('author fee — the viewer-charge seam', () => {
       'submitCustomComfyWorkflow',
       'submitStepWorkflow',
       'submitPassThroughStepWorkflow',
+      'submitMultiStepWorkflow',
       'submitConfirmedQuoteWorkflow',
     ]);
   });
@@ -722,7 +748,7 @@ describe('author fee — the viewer-charge seam', () => {
     }
   });
 
-  it('🔴 THE FEE IS INSIDE THE NUMBER EVERY RESERVATION READS, on both priced paths', () => {
+  it('🔴 THE FEE IS INSIDE THE NUMBER EVERY RESERVATION READS, on every priced path', () => {
     // 🔴 THIS IS THE WHOLE POINT OF THE SLICE, AND THE PREVIOUS VERSION OF THIS
     // TEST DID NOT CHECK IT. It asserted only that two `… + reservedAuthorFeeBuzz`
     // assignments existed — true of two folded locals nothing reads. What makes
@@ -731,16 +757,30 @@ describe('author fee — the viewer-charge seam', () => {
     // the dev-session backstop is that the folded NAME is the argument each
     // reservation is taken with.
     const folded = [...source.matchAll(/const (\w+) = \w+ \+ reservedAuthorFeeBuzz;/g)].map(
-      (m) => m[1]
+      (m) => ({ path: enclosingSubmitPath(source, m.index), name: m[1] })
     );
-    // txt2img folds into `cost`; the registry-step bridge folds into `reserveBuzz`.
-    expect(folded).toEqual(['cost', 'reserveBuzz']);
+    // txt2img folds into `cost`; the registry-step bridge and the multi-step
+    // workflow each fold into their own `reserveBuzz`.
+    expect(folded).toEqual([
+      { path: 'submitWorkflow', name: 'cost' },
+      { path: 'submitStepWorkflow', name: 'reserveBuzz' },
+      { path: 'submitMultiStepWorkflow', name: 'reserveBuzz' },
+    ]);
 
-    for (const name of folded) {
-      // The three reservations, each taken against the FOLDED number.
-      expect(source).toContain(`reserveBlockBuzzSpendForClaims(claims, userId, ${name})`);
-      expect(source).toContain(`reserveAppSpend(claims.appBlockId, ${name})`);
-      expect(source).toMatch(
+    // 🔴 EACH PATH'S OWN REGION, not the whole file: two paths fold into a local
+    // of the same name, so a whole-file `toContain` would let one path's
+    // reservations vouch for the other's.
+    const pathRegionsByName = pathRegions(source);
+    for (const { path: owner, name } of folded) {
+      const region = pathRegionsByName.get(owner);
+      expect(region, `no region for ${owner} — the slicer is wrong`).toBeDefined();
+      // The three reservations, each taken against the FOLDED number. The per-app
+      // one may also pass how many generations it counts as.
+      expect(region!).toContain(`reserveBlockBuzzSpendForClaims(claims, userId, ${name})`);
+      expect(region!).toMatch(
+        new RegExp(`reserveAppSpend\\(claims\\.appBlockId, ${name}(?:, \\{ units \\})?\\)`)
+      );
+      expect(region!).toMatch(
         new RegExp(`reserveDevSessionBuzz\\(\\s*devTunnel\\.sessionId,\\s*${name},`)
       );
     }
@@ -883,7 +923,7 @@ describe('author fee — the viewer-charge seam', () => {
       expect(
         ledgered.typeExpr,
         `${owner}: an unrecognised generationType spelling was ledgered without review`
-      ).toMatch(/^generationType: (?:step\.id|blockGenerationType)$/);
+      ).toMatch(/^generationType: (?:step\.id|blockGenerationType|workflowGenerationType)$/);
 
       // 🔴 AND WHERE IT NAMES A LOCAL, THE DERIVATION OF THAT LOCAL IS PINNED
       // TOO. `generationType: blockGenerationType` is byte-identical on the

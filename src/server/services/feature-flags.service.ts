@@ -384,6 +384,15 @@ const featureFlags = createFeatureFlags({
   // Creator Studio composer. Both apps must read the key `creator-announcements`
   // verbatim — a flag only one side honours ships the half-visible state.
   creatorAnnouncements: { availability: ['mod'], fliptKey: 'creator-announcements' },
+  // The post planner (docs/batch-scheduling-planner-element.md): the `post.*` planner procedures,
+  // their REST twins and both hosts. Creator Studio reads the same Flipt key.
+  postPlanner: { availability: ['mod'], fliptKey: 'post-planner', displayName: 'Post planner' },
+  batchPostScheduling: {
+    availability: ['mod'],
+    fliptKey: 'batch-post-scheduling',
+    displayName: 'Batch post scheduling',
+  },
+  postPresets: { availability: ['mod'], fliptKey: 'post-presets', displayName: 'Post presets' },
   // Gates CREATING stickers, seeing them in shops, and the picker. Deliberately
   // does NOT gate rendering — a sticker already in a comment or DM must render
   // for everyone, or flipping this off orphans content that is already out there.
@@ -667,6 +676,9 @@ const featureFlags = createFeatureFlags({
   // only on-switch + kill-switch. (Mirrors the `hiddenPrefsCompact` /
   // `genTabDeferView` `availability: []` precedent.)
   appBlocksAgenticReview: { availability: [], fliptKey: 'app-blocks-agentic-review' },
+  // App Assistant (`/apps/assistant`); read only through `canAccessAppAssistant`. `[]` rather than
+  // `['mod']` for the `appBlocksAgenticReview` reason: client and server agree while the flag is absent.
+  appAssistant: { availability: [], fliptKey: 'app-assistant' },
   // App Store sub-listings — RESPONSE-SHAPE flag for the store grid: when on for the viewer AND
   // the caller sets `includeSubListings`, `appListings.listAvailable` mixes approved sub-listing
   // cards into the page. `[]` so it is dark for everyone, mods included, until the Flipt flag

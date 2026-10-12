@@ -44,6 +44,7 @@ export const threadContentSelect = {
   comicChapterPosition: true,
   challengeId: true,
   appListingId: true,
+  crucibleId: true,
 } as const;
 
 type ThreadContent = {
@@ -62,6 +63,7 @@ type ThreadContent = {
   comicChapterPosition: number | null;
   challengeId: number | null;
   appListingId: number | null;
+  crucibleId: number | null;
 };
 
 async function ownerOfThreadContent(thread: ThreadContent | null): Promise<number | undefined> {
@@ -155,6 +157,13 @@ async function ownerOfThreadContent(thread: ThreadContent | null): Promise<numbe
     return (
       await guardDb.appListing.findUnique({
         where: { serialId: thread.appListingId },
+        select: { userId: true },
+      })
+    )?.userId;
+  if (thread.crucibleId)
+    return (
+      await guardDb.crucible.findUnique({
+        where: { id: thread.crucibleId },
         select: { userId: true },
       })
     )?.userId;
@@ -429,6 +438,13 @@ export async function getBlockCheckOwnerIds({
       // not the listing's ULID `id`.
       const r = await guardDb.appListing.findUnique({
         where: { serialId: entityId },
+        select: { userId: true },
+      });
+      return r ? [r.userId] : [];
+    }
+    case 'crucible': {
+      const r = await guardDb.crucible.findUnique({
+        where: { id: entityId },
         select: { userId: true },
       });
       return r ? [r.userId] : [];

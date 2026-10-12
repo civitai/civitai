@@ -363,9 +363,13 @@ describe('every submit gate is routed through one helper', () => {
     // the middleware routes through it before either confirmed ceiling
     // (`blockTrainingRunCeiling`, `blockConfirmedStepCeiling`) grants anything. Both are
     // pinned to their owners in the tests below.
-    expect(pricing).toHaveLength(2);
-    expect(feeFree).toHaveLength(4);
-    expect(sites).toHaveLength(6);
+    //
+    // `kind:'workflow'` adds one of each: its submit gate prices the fee, and its
+    // estimate reads the helper only for the price it shows when the orchestrator
+    // returns no quote — where no fee can be priced.
+    expect(pricing).toHaveLength(3);
+    expect(feeFree).toHaveLength(5);
+    expect(sites).toHaveLength(8);
   });
 
   it('the fee-pricing population agrees with the RESERVING fee call sites', () => {
@@ -466,7 +470,7 @@ describe('every submit gate is routed through one helper', () => {
       ).toBe(byName);
     }
 
-    expect(reserving).toHaveLength(2);
+    expect(reserving).toHaveLength(3);
 
     // 🔴 THE SET, NOT THE COUNT — AND THE COUNT WAS WALKABLE BY A SWAP. This read
     // `count(/pricesAuthorFee:\s*true\b/) === reserving.length`, i.e. 2 === 2.
@@ -503,8 +507,8 @@ describe('every submit gate is routed through one helper', () => {
         'ceiling decision made about the wrong money.'
     ).toEqual([...reserving].sort());
     // …and the false half is named too, so a gate that simply LOST its flag is
-    // red rather than silently leaving the true-set correct. These are the two
-    // post-paid paths: no pre-submit `cost.base`, so no fee can be priced on them.
+    // red rather than silently leaving the true-set correct. None of these can
+    // price a fee into the number it compares or shows.
     expect(
       feePricingGates
         .filter((g) => !g.prices)
@@ -512,6 +516,8 @@ describe('every submit gate is routed through one helper', () => {
         .sort(),
       'a fee-free submit gate is missing, or one gained a fee quote without flipping its flag'
     ).toEqual([
+      // Not a gate: the multi-step estimate's no-quote display (see above).
+      'estimateMultiStepWorkflow',
       'quotedGrantTokenGate',
       'submitCustomComfyWorkflow',
       'submitPassThroughStepWorkflow',

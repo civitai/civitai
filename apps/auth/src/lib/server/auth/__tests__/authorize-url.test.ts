@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildAuthorizeUrl } from '../providers';
+import { buildAuthorizeUrl, usesPkce } from '../providers';
 
 // buildAuthorizeUrl assembles the upstream OAuth authorize URL (PKCE + per-provider scope + the optional OIDC
 // `prompt` that the add-account flow forwards). ProviderDef isn't exported, so we derive its type from the
@@ -69,6 +69,31 @@ describe('buildAuthorizeUrl', () => {
     expect(
       new URL(buildAuthorizeUrl(def(), { ...baseOpts, prompt: null })).searchParams.has('prompt')
     ).toBe(false);
+  });
+
+  it('omits PKCE params when no code challenge is given', () => {
+    const roles = new URL(
+      buildAuthorizeUrl(def(), { ...baseOpts, codeChallenge: null, incremental: true })
+    );
+    expect(roles.searchParams.get('scope')).toBe('identify email role_connections.write');
+    expect(roles.searchParams.has('code_challenge')).toBe(false);
+    expect(roles.searchParams.has('code_challenge_method')).toBe(false);
+    expect(roles.searchParams.get('state')).toBe('state-abc');
+  });
+
+  it('usesPkce is false only for the incremental LINK leg of a flagged provider', () => {
+    const discord = def({ incrementalSkipsPkce: true });
+    expect(usesPkce(discord, { incremental: true, link: true })).toBe(false);
+    expect(usesPkce(discord, { incremental: true, link: false })).toBe(true);
+    expect(usesPkce(discord, { incremental: false, link: true })).toBe(true);
+    expect(usesPkce(discord, {})).toBe(true);
+    expect(usesPkce(def(), { incremental: true, link: true })).toBe(true);
+    expect(
+      usesPkce(def({ incrementalSkipsPkce: true, incrementalScope: undefined }), {
+        incremental: true,
+        link: true,
+      })
+    ).toBe(true);
   });
 
   it('adds duration=temporary only for reddit', () => {

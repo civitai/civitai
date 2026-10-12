@@ -38,6 +38,11 @@ describe('orchestrator denylist — the predicate', () => {
     expect(() => assertStepTypeAllowed('xGuardModeration')).toThrow(PlatformInternalStepTypeError);
   });
 
+  it('refuses the prompt moderation classifier, in any casing', () => {
+    expect(() => assertStepTypeAllowed('promptModeration')).toThrow(PlatformInternalStepTypeError);
+    expect(() => assertStepTypeAllowed('PromptModeration')).toThrow(PlatformInternalStepTypeError);
+  });
+
   it('prefixes the caller-supplied context when given one', () => {
     expect(() => assertStepTypeAllowed('modelHash', "block step 'x'")).toThrow(
       /block step 'x': orchestrator step type 'modelHash' is platform-internal/
@@ -113,6 +118,7 @@ describe('orchestrator denylist — the predicate', () => {
       'modelHash',
       'modelParseMetadata',
       'modelPickleScan',
+      'promptModeration',
       'qwenImageBench',
       'shieldstralModeration',
       'textToImage',

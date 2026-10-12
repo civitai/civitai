@@ -47,7 +47,7 @@ Settings can change only before the crucible starts; after that only the name, d
 
 The pool is the seeded amount plus the fee of every paid entry. Free entries add nothing, so a crucible with no seed and only free entries has a pool of 0.
 
-At the end, entries need a minimum share of votes to place; ties go to the earlier entry. Prizes follow the prize distribution, but an entrant takes at most one: their best-placed entry. Their other entries keep their positions on the leaderboard and win nothing, and the next entrant takes the next prize. When fewer entrants place than there are prizes, the unfilled shares go to the winners in proportion to their own. Entries whose media was blocked, taken down or re-rated outside the crucible's levels can't place, and their fees stay in the pool. If nobody entered, or nothing could be awarded, the seed goes back to the creator.
+At the end, entries need a minimum number of votes to place; ties go to the earlier entry. On a new crucible that bar follows the time the entry was live: 75% of the votes it was expected to get, given how much of the run it was entered for, with a floor of 25 votes. It is never higher than the old bar (75% of the average), so the change only loosens it for entries that were live for less of the run. The submit modal's "votes needed" is a live estimate of the same bar. Crucibles that were already running or finished when this shipped keep the old bar, 75% of the average votes per entry. Prizes follow the prize distribution, but an entrant takes at most one: their best-placed entry. Their other entries keep their positions on the leaderboard and win nothing, and the next entrant takes the next prize. When fewer entrants place than there are prizes, the unfilled shares go to the winners in proportion to their own. Entries whose media was blocked, taken down or re-rated outside the crucible's levels can't place, and their fees stay in the pool. If nobody entered, or nothing could be awarded, the seed goes back to the creator.
 
 The discovery page's Prize Pool sort uses the same pool. Whenever upcoming crucibles are listed alongside running ones, every running crucible comes first, whatever the sort.
 
@@ -70,9 +70,10 @@ Three boards rank crucible activity over the last 30 days, refreshed nightly:
 - Judges never see their own entries, and never see the same pair twice.
 - Pairs favour the entries this judge has voted on least, then those with the fewest votes overall, so new entries get ranked quickly without one late entry turning up in every pair a judge sees.
 - New entries' ratings move faster until they have enough votes.
+- Judges can react to each entry (Like, Heart, Laugh or Cry) from a compact pill on the entry. Neither counts nor reactors are shown on the judge page or the crucible pages, the same as contest collections. The reactions are ordinary image reactions: Buzz rewards and notifications fire as usual, and counts show normally on other surfaces.
 - Judges can skip a pair. Skipped entries stay out for the rest of the visit (up to the last 20) and come back only once nothing else is left to judge.
 - On video crucibles with a minimum view time, only real playback counts. Skipping ahead or pausing does not add to it. A vote on an under-watched pair is rejected, and the judge keeps that pair.
-- Someone the creator has blocked can't see, enter or judge the crucible.
+- A block hides the crucible both ways: a creator who blocked someone, and anyone the creator blocked, can't see each other's crucibles in lists or on their pages, enter, judge or follow them. Moderators are exempt.
 
 ## Judging is blind while a crucible runs
 
@@ -94,6 +95,14 @@ Showing a live leaderboard would bias judges, so scores and positions stay hidde
 Anyone signed in can follow an upcoming or active crucible with the bell on its page. Every crucible notification except a cancellation, a moderator's removal and the notices about its review can be turned off in notification settings.
 
 A crucible's name appears in notifications and Buzz transaction descriptions only once its text has passed review as safe for everyone; a crucible with mature text is never named there.
+
+## Comments
+
+Every crucible page has a discussion, placed above the entries, where testers can ask the creator questions. It is open for as long as the crucible exists, whatever its status. People who can't open the crucible (blocked by its creator, still in review, mature on the green site) can't read or write its comments either.
+
+Moderators can lock the discussion from the menu at the top of the page, as on every other kind of thread. A locked discussion is hidden from everyone, as on challenges. The creator can't lock it.
+
+The creator is notified of new comments from others ("New comments on your crucibles" in notification settings, under Comments). Replies and mentions notify as they do elsewhere.
 
 ## Availability
 

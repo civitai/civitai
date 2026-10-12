@@ -120,8 +120,9 @@ export type BlockHostSurface =
  * `/apps/run`. `PageBlockHost` is never mounted with `surface: 'model-slot'` in
  * production: its THREE production mount sites pass FOUR surfaces between them —
  * `src/pages/apps/run/[slug]/[[...path]].tsx` passes `hostSurfaceFor(audience)`, which
- * is `page-run` OR `private-run`; `src/pages/apps/dev/[blockId].tsx` passes
- * `dev-tunnel`; and `~/components/Apps/ReviewBlockPreviewHost` passes `review-preview`
+ * is `page-run` OR `private-run`; `src/components/AppBlocks/DevTunnelBlockHost.tsx`
+ * (mounted by `src/pages/apps/dev/[blockId].tsx`) passes `dev-tunnel`; and
+ * `~/components/Apps/ReviewBlockPreviewHost` passes `review-preview`
  * — the moderator's live preview, which the paragraph above names and which this
  * enumeration used to omit.
  * ⚠️ IT SAID "FOUR PRODUCTION MOUNTS … the private run route (`private-run`)" AND BOTH

@@ -18,6 +18,7 @@ const { mocks } = vi.hoisted(() => {
     getBlockedPairIds: vi.fn(),
     sectionFindMany: vi.fn(),
     getUserTeam: vi.fn(),
+    settleBalancedTeam: vi.fn(),
   };
   return { mocks };
 });
@@ -37,6 +38,8 @@ vi.mock('~/server/events', async () => {
         teams: [...c.BIRTHDAY_2026_TEAMS],
         getUserTeam: (userId: number, opts?: { strict?: boolean }) =>
           mocks.getUserTeam(userId, opts) as Promise<string>,
+        settleBalancedTeam: (userId: number) =>
+          mocks.settleBalancedTeam(userId) as Promise<string | undefined>,
       },
     ],
   };
@@ -217,6 +220,27 @@ describe('buying an event-gated item (team hat)', () => {
   it('asks for the strict team lookup', async () => {
     await purchase();
     expect(mocks.getUserTeam).toHaveBeenCalledWith(BUYER_ID, { strict: true });
+  });
+
+  // A join racing this purchase must not move the buyer off the colour they pay for: the buyer's team
+  // is settled (a listed buyer placed, team-balance.ts) before it is read.
+  it('settles a balanced team before reading it', async () => {
+    let settle!: () => void;
+    mocks.settleBalancedTeam.mockReturnValue(new Promise<void>((r) => (settle = r)));
+    const bought = purchase();
+    await vi.waitFor(() => expect(mocks.settleBalancedTeam).toHaveBeenCalledWith(BUYER_ID));
+    // Still placing: the team must not have been read yet.
+    expect(mocks.getUserTeam).not.toHaveBeenCalled();
+    settle();
+    await bought;
+    expect(mocks.getUserTeam).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses, before any charge, when the team cannot be settled', async () => {
+    mocks.settleBalancedTeam.mockRejectedValue(new Error('sysRedis down'));
+
+    await expect(purchase()).rejects.toThrow("We couldn't confirm your team. Please try again.");
+    expect(mocks.createMultiTx).not.toHaveBeenCalled();
   });
 
   it('refuses, before any charge, when the team lookup fails', async () => {

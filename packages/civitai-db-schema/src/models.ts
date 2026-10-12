@@ -659,6 +659,7 @@ export interface User {
   issuedStrikes?: UserStrike[];
   voidedStrikes?: UserStrike[];
   generationPresets?: GenerationPreset[];
+  postPresets?: PostPreset[];
   generationSizePresets?: GenerationSizePreset[];
   ownedWildcardSets?: WildcardSet[];
   blurbs?: Blurb[];
@@ -2906,6 +2907,8 @@ export interface Thread {
   model3dReview?: Model3DReview | null;
   appListingId: number | null;
   appListing?: AppListing | null;
+  crucibleId: number | null;
+  crucible?: Crucible | null;
   metadata: JsonValue;
   commentCount: number;
   comments?: CommentV2[];
@@ -5545,6 +5548,16 @@ export interface UserStrike {
   issuedByUser?: User | null;
 }
 
+export interface PostPreset {
+  id: number;
+  userId: number;
+  user?: User;
+  name: string;
+  data: JsonValue;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 export interface GenerationPreset {
   id: number;
   userId: number;
@@ -5980,9 +5993,11 @@ export interface Crucible {
   ingestion: CrucibleIngestionStatus;
   scannedAt: Date | null;
   textNsfw: boolean;
+  timeAdjustedPlacement: boolean;
   entries?: CrucibleEntry[];
   reports?: CrucibleReport[];
   engagements?: CrucibleEngagement[];
+  thread?: Thread | null;
 }
 
 export interface CrucibleEngagement {

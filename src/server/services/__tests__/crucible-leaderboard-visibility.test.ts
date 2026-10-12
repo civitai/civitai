@@ -27,6 +27,7 @@ const { mockGetJudgingPair, imagesFetch, blockedBy } = vi.hoisted(() => ({
 vi.mock('~/server/services/user-preferences.service', async (importOriginal) => ({
   ...(await importOriginal<typeof UserPreferencesService>()),
   BlockedByUsers: { getCached: blockedBy },
+  BlockedUsers: { getCached: vi.fn().mockResolvedValue([]) },
 }));
 
 vi.mock('~/server/services/image.service', async (importOriginal) => ({
@@ -593,7 +594,12 @@ describe('crucible.getJudgingProgress', () => {
       crucibleId: CRUCIBLE_ID,
     });
 
-    expect(progress).toEqual({ remainingPairs: 2, judgedPairs: 1, votesUsedUp: false });
+    expect(progress).toEqual({
+      remainingPairs: 2,
+      judgedPairs: 1,
+      totalPairs: 3,
+      votesUsedUp: false,
+    });
     expect(lastRenderedSql()).toContain('ce."userId" !=');
   });
 
@@ -618,7 +624,7 @@ describe('crucible.getJudgingProgress', () => {
 
     expect(
       await caller(signedIn(STRANGER_ID)).getJudgingProgress({ crucibleId: CRUCIBLE_ID })
-    ).toEqual({ remainingPairs: 0, judgedPairs: 0, votesUsedUp: false });
+    ).toEqual({ remainingPairs: 0, judgedPairs: 0, totalPairs: 0, votesUsedUp: false });
   });
 
   // The judge page shows "you've used all your votes" only on votesUsedUp. Zero pairs from too few
@@ -633,12 +639,12 @@ describe('crucible.getJudgingProgress', () => {
     ]);
     expect(
       await caller(signedIn(STRANGER_ID)).getJudgingProgress({ crucibleId: CRUCIBLE_ID })
-    ).toEqual({ remainingPairs: 0, judgedPairs: 1, votesUsedUp: true });
+    ).toEqual({ remainingPairs: 0, judgedPairs: 1, totalPairs: 1, votesUsedUp: true });
 
     queryRaw.mockResolvedValue([{ crucibleId: CRUCIBLE_ID, id: 1 }]);
     expect(
       await caller(signedIn(STRANGER_ID)).getJudgingProgress({ crucibleId: CRUCIBLE_ID })
-    ).toEqual({ remainingPairs: 0, judgedPairs: 0, votesUsedUp: false });
+    ).toEqual({ remainingPairs: 0, judgedPairs: 0, totalPairs: 0, votesUsedUp: false });
   });
 });
 
@@ -646,6 +652,11 @@ describe('crucible.getMinVotesToPlace', () => {
   const aggregate = dbMock.dbRead.crucibleEntry.aggregate;
 
   it('asks for 75% of the average vote count across the entries that can place', async () => {
+    findUnique.mockResolvedValue({
+      ...scanned,
+      status: CrucibleStatus.Active,
+      timeAdjustedPlacement: false,
+    });
     aggregate.mockResolvedValue({ _sum: { voteCount: 56 }, _count: { _all: 4 } });
 
     const result = await caller(signedIn(STRANGER_ID)).getMinVotesToPlace({ id: CRUCIBLE_ID });
@@ -660,6 +671,26 @@ describe('crucible.getMinVotesToPlace', () => {
         post: { publishedAt: { not: null } },
       },
     });
+  });
+
+  it('projects the vote rate over the time left for a time-adjusted crucible', async () => {
+    const HOUR = 3_600_000;
+    const startAt = new Date(Date.now() - 50 * HOUR);
+    findUnique.mockResolvedValue({
+      ...scanned,
+      status: CrucibleStatus.Active,
+      timeAdjustedPlacement: true,
+      startAt,
+      endAt: new Date(startAt.getTime() + 100 * HOUR),
+    });
+    findEntries.mockResolvedValue([{ voteCount: 400, createdAt: startAt }]);
+
+    const result = await caller(signedIn(STRANGER_ID)).getMinVotesToPlace({ id: CRUCIBLE_ID });
+
+    // 8 votes/hour so far, 50 hours left: 400 expected, 75% of it. Allow for the clock moving on.
+    expect(result.minVotes).toBeGreaterThanOrEqual(299);
+    expect(result.minVotes).toBeLessThanOrEqual(300);
+    expect(aggregate).not.toHaveBeenCalled();
   });
 
   it('is not found for a crucible still under review, like its entries', async () => {
@@ -871,7 +902,7 @@ describe('a creator who blocked the caller', () => {
     await caller(signedIn(STRANGER_ID)).getJudgingPair({ crucibleId: CRUCIBLE_ID });
 
     expect(mockGetJudgingPair).toHaveBeenCalledWith(
-      expect.objectContaining({ blockedByUserIds: [scanned.userId] })
+      expect.objectContaining({ blockedCreatorIds: [scanned.userId] })
     );
   });
 

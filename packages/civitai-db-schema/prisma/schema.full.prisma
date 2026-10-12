@@ -578,6 +578,7 @@ model User {
   issuedStrikes               UserStrike[]                    @relation("strikeIssuedBy")
   voidedStrikes               UserStrike[]                    @relation("strikeVoidedBy")
   generationPresets           GenerationPreset[]
+  postPresets                 PostPreset[]
   generationSizePresets       GenerationSizePreset[]
   ownedWildcardSets           WildcardSet[]                   @relation("WildcardSetOwner")
   blurbs                      Blurb[]
@@ -4823,6 +4824,8 @@ model Thread {
   // is the same DB (main civitai nvme0), so this is a plain FK, not a cross-DB bridge.
   appListingId     Int?            @unique
   appListing       AppListing?     @relation("AppListingThread", fields: [appListingId], references: [serialId], onDelete: SetNull)
+  crucibleId       Int?            @unique
+  crucible         Crucible?       @relation(fields: [crucibleId], references: [id], onDelete: SetNull)
 
   metadata     Json @default("{}") // unused
   commentCount Int  @default(0)
@@ -8551,6 +8554,18 @@ model UserStrike {
   @@index([createdAt])
 }
 
+model PostPreset {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name      String   @db.Citext
+  data      Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, name])
+}
+
 model GenerationPreset {
   id          Int      @id @default(autoincrement())
   userId      Int
@@ -9402,10 +9417,14 @@ model Crucible {
   scannedAt         DateTime?
   // The scan found the text adult: list surfaces show it only to viewers who browse R or above.
   textNsfw          Boolean        @default(false)
+  // Placement bar scaled to the time each entry was live. Rows from before it keep the old bar
+  // (the migration backfills false); new rows default to true.
+  timeAdjustedPlacement Boolean    @default(true)
 
   entries     CrucibleEntry[]
   reports     CrucibleReport[]
   engagements CrucibleEngagement[]
+  thread      Thread?
 
   @@index([userId], type: Hash)
   @@index([status])

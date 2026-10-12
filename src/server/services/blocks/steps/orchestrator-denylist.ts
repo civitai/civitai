@@ -115,6 +115,7 @@ export const PLATFORM_INTERNAL_STEP_TYPES: readonly string[] = Object.freeze([
   // Moderation classifiers — the models that grade at the publish boundary.
   'xGuardModeration',
   'shieldstralModeration',
+  'promptModeration',
 
   // Hashing / model ingestion — dedup and catalogue identity.
   // ⚠️ `mediaHash` is denied here while `./index.ts` records it as "considered
@@ -222,12 +223,15 @@ const TRAINING_STEP_TYPE_LOOKUP: ReadonlySet<string> = new Set(
  * `blocks.router`:
  *   - `assertNotTrainingStepType` — a training type is never a confirmed step;
  *   - `refuseUnquotedTraining` — an unquoted training step is refused;
- *   - `buildPassThroughWorkflowTags` — a training step carries `TRAINING_WORKFLOW_TAG`.
+ *   - `buildPassThroughWorkflowTags` — a training step carries `TRAINING_WORKFLOW_TAG`;
+ *   - `buildMultiStepWorkflowTags` / `multiStepTrainingType` — the same two rules for
+ *     every step of a `kind:'workflow'` body.
  *
  * `isTrainingStepType` (exact) is kept ONLY where the `$type` was read off a workflow
  * the orchestrator RETURNED, and as the type guard narrowing to `TrainingStepType`:
  *   - `splitPassThroughStep` (`steps/output.ts`) — splitting a returned step's output;
- *   - `hasBlockTrainingStep` (`workflow.service.ts`) — finding a returned training step.
+ *   - `hasBlockTrainingStep` / `projectAppWorkflow` (`workflow.service.ts`) — reading a
+ *     returned training step.
  */
 export function isTrainingStepTypeIgnoringCase(stepType: string): boolean {
   return TRAINING_STEP_TYPE_LOOKUP.has(foldStepTypeCase(stepType));
@@ -236,7 +240,7 @@ export function isTrainingStepTypeIgnoringCase(stepType: string): boolean {
 /**
  * Fail-closed assertion for a single orchestrator `$type`.
  *
- * 🔴 READ THIS BEFORE WIRING A NEW SUBMIT PATH. This set now has TWO
+ * 🔴 READ THIS BEFORE WIRING A NEW SUBMIT PATH. This set now has THREE
  * enforcement sites, and they are different in kind:
  *
  *   - the registry invariant in `assertStepInvariants` — no registered entry may
@@ -244,14 +248,18 @@ export function isTrainingStepTypeIgnoringCase(stepType: string): boolean {
  *   - `assertPassThroughStepTypeAllowed` in `blocks.router` — the PASS-THROUGH
  *     arm (`kind:'step'` with a bare `$type`, note the SINGULAR `step`; an
  *     earlier draft of this paragraph called it `kind:'steps'` and the plural
- *     greps to nothing), which lets a block name a `$type` directly and is
- *     therefore the site where this set is the only bound. It runs on both the
+ *     greps to nothing), which lets a block name a `$type` directly, so
+ *     this set is the only bound there. It runs on both the
  *     estimate and the submit, BEFORE any orchestrator call and before any spend
  *     reservation. A denylist that the wire does not consult is decoration.
+ *   - `prepareMultiStepWorkflow` in `blocks.router` — the `kind:'workflow'` arm,
+ *     which runs it on EVERY step at the same point on both paths.
  *
- * 🔴 THE MATCH IS EXACT AND CASE-SENSITIVE. Whether the orchestrator's own
- * `$type` discriminator matches case-insensitively has NOT been measured; if it
- * does, a re-cased variant walks past this set on the pass-through arm.
+ * Both router sites also check the step a `repeat` runs
+ * (`collectBlockStepTypes`).
+ *
+ * The match is case-folded (see `isPlatformInternalStepType`), so a re-cased
+ * `$type` is refused on both router arms too.
  */
 export function assertStepTypeAllowed(stepType: string, where?: string): void {
   if (isPlatformInternalStepType(stepType)) {
