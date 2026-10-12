@@ -62,22 +62,77 @@ function quoteKey(kind: BlockQuoteGrantKind, quoteId: string) {
   return `${QUOTE_KINDS[kind].namespace}:${quoteId}` as const;
 }
 
-/** JSON with object keys sorted at every depth, so a hash does not depend on key order. */
-export function canonicalJson(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
-  if (value && typeof value === 'object') {
-    const entries = Object.keys(value as Record<string, unknown>)
-      .filter((k) => (value as Record<string, unknown>)[k] !== undefined)
+/**
+ * Thrown by `canonicalJson` for a value that is not plain JSON. `message` names the
+ * path and what was found there (`input.when is a Date`), and nothing else.
+ */
+export class NonJsonQuotedBodyError extends Error {
+  constructor(path: string, found: string) {
+    super(`${path} is ${found}`);
+    this.name = 'NonJsonQuotedBodyError';
+  }
+}
+
+export function isNonJsonQuotedBodyError(e: unknown): e is NonJsonQuotedBodyError {
+  return e instanceof NonJsonQuotedBodyError;
+}
+
+function describeNonJson(value: unknown): string {
+  if (value === undefined) return 'undefined';
+  if (typeof value === 'number') return `the non-finite number ${String(value)}`;
+  if (typeof value === 'object' && value !== null) {
+    const name = (Object.getPrototypeOf(value) as { constructor?: { name?: string } } | null)
+      ?.constructor?.name;
+    return name ? `a ${name}` : 'a non-plain object';
+  }
+  return `a ${typeof value}`;
+}
+
+/**
+ * The canonical form a quoted body is hashed in: JSON with object keys sorted at every
+ * depth, so the hash does not depend on key order.
+ *
+ * 🔴 EXACT, OR IT THROWS. Only plain JSON is accepted — plain objects, arrays, strings,
+ * FINITE numbers, booleans and `null`. Anything else (`Date`, `Map`, `Set`, a class
+ * instance, `BigInt`, a symbol or function, `NaN`/`Infinity`, an `undefined` array
+ * element) throws `NonJsonQuotedBodyError` rather than being squeezed into a string two
+ * different values could share: a `Date` and a `Map` both have no own enumerable keys,
+ * so a looser form hashed every one of them as `{}` and a quote confirmed for one such
+ * body matched any other. A body is bound exactly, or it is not quotable.
+ *
+ * An object key whose value is `undefined` is skipped — that is how the wire body
+ * carries an absent optional (`step: undefined`), and JSON drops it from what the
+ * orchestrator receives, so it is not a difference in the work.
+ */
+export function canonicalJson(value: unknown, path = 'body'): string {
+  if (value === null) return 'null';
+  if (typeof value === 'string' || typeof value === 'boolean') return JSON.stringify(value);
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) throw new NonJsonQuotedBodyError(path, describeNonJson(value));
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map((entry, i) => canonicalJson(entry, `${path}[${i}]`)).join(',')}]`;
+  }
+  if (typeof value === 'object') {
+    const proto = Object.getPrototypeOf(value) as unknown;
+    if (proto !== Object.prototype && proto !== null) {
+      throw new NonJsonQuotedBodyError(path, describeNonJson(value));
+    }
+    const record = value as Record<string, unknown>;
+    const entries = Object.keys(record)
+      .filter((k) => record[k] !== undefined)
       .sort()
-      .map((k) => `${JSON.stringify(k)}:${canonicalJson((value as Record<string, unknown>)[k])}`);
+      .map((k) => `${JSON.stringify(k)}:${canonicalJson(record[k], `${path}.${k}`)}`);
     return `{${entries.join(',')}}`;
   }
-  return JSON.stringify(value);
+  throw new NonJsonQuotedBodyError(path, describeNonJson(value));
 }
 
 /**
  * The hash that binds a quote to the body it priced. `quoteId` is excluded — it is
- * the one field the submit adds — and everything else must be identical.
+ * the one field the submit adds — and every other value must be identical. Throws
+ * `NonJsonQuotedBodyError` for a body that is not plain JSON (see `canonicalJson`).
  */
 export function hashQuotedBody(body: { quoteId?: string }): string {
   const { quoteId: _quoteId, ...rest } = body;

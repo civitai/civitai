@@ -1,19 +1,22 @@
 import { useEffect, useState } from 'react';
 import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
+import { useIsLevelFocused } from '~/components/Dialog/dialogStore';
 
 /** How long a spend confirm stays disabled after it appears, or after the page regains focus. */
 export const CONFIRM_ARM_DELAY_MS = 1000;
 
 /**
- * `true` once the dialog has been on screen, in a focused and visible page, for
- * `delayMs`. It starts `false`, and goes back to `false` whenever the window loses
- * focus or the tab is hidden; the delay restarts when the page comes back.
+ * `true` once the dialog has been the one in front, in a focused and visible page, for
+ * `delayMs` without interruption. It starts `false`, and goes back to `false` whenever
+ * the window loses focus, the tab is hidden, or the dialog stops being in front
+ * (`active` is false — another dialog opened over it). The WHOLE delay starts again
+ * when the page comes back or the dialog is in front again.
  *
  * An ordinary safety measure for a button that spends Buzz: the viewer gets a moment to
- * read what the dialog says before it can be confirmed, including when they return to
- * the page from somewhere else.
+ * read what the dialog says before it can be confirmed — including when they return to
+ * the page, and when the dialog only becomes visible because one above it closed.
  */
-export function useConfirmArmDelay(delayMs: number = CONFIRM_ARM_DELAY_MS): boolean {
+export function useConfirmArmDelay(delayMs: number = CONFIRM_ARM_DELAY_MS, active = true): boolean {
   const [armed, setArmed] = useState(false);
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -22,6 +25,12 @@ export function useConfirmArmDelay(delayMs: number = CONFIRM_ARM_DELAY_MS): bool
       timer = undefined;
       setArmed(false);
     };
+    // Time spent behind another dialog never counts: nothing is scheduled, and no
+    // focus or visibility event can start the wait, until this one is in front.
+    if (!active) {
+      disarm();
+      return;
+    }
     const arm = () => {
       disarm();
       timer = setTimeout(() => setArmed(true), delayMs);
@@ -37,7 +46,7 @@ export function useConfirmArmDelay(delayMs: number = CONFIRM_ARM_DELAY_MS): bool
       window.removeEventListener('focus', arm);
       document.removeEventListener('visibilitychange', onVisibility);
     };
-  }, [delayMs]);
+  }, [delayMs, active]);
   return armed;
 }
 
@@ -45,8 +54,14 @@ export function useConfirmArmDelay(delayMs: number = CONFIRM_ARM_DELAY_MS): bool
  * `ConfirmDialog` for a host-chrome confirm that SPENDS the viewer's Buzz (a training
  * run, a confirmed step): identical, except the confirm button is disabled until
  * `useConfirmArmDelay` arms it. Cancel, the close button and Escape are never delayed.
+ *
+ * The delay runs only while this is the top-most dialog (`useIsLevelFocused`, the same
+ * signal `DialogProvider` uses for Escape): every open dialog is mounted at once, so one
+ * opened underneath another would otherwise finish its wait while covered and be
+ * confirmable the instant it is uncovered.
  */
 export default function GuardedConfirmDialog(props: React.ComponentProps<typeof ConfirmDialog>) {
-  const armed = useConfirmArmDelay();
+  const isTopMost = useIsLevelFocused();
+  const armed = useConfirmArmDelay(CONFIRM_ARM_DELAY_MS, isTopMost);
   return <ConfirmDialog {...props} confirmProps={{ ...props.confirmProps, disabled: !armed }} />;
 }

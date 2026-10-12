@@ -6153,7 +6153,8 @@ export const blocksRouter = router({
       // lives in `estimateBlockWorkflowCell`, which `estimateWorkflowBatch` calls
       // once per cell. One function, so a per-cell rule cannot hold here and be
       // missing there.
-      return await estimateBlockWorkflowCell(ctx, claims, input);
+      // The SINGLE estimate is the only caller that may store a confirmable quote.
+      return await estimateBlockWorkflowCell(ctx, claims, { body: input.body, storeQuotes: true });
     }),
 
   /**
@@ -9211,11 +9212,19 @@ async function estimateBatchCell(
  * 🔴 IT QUOTES, IT NEVER SUBMITS. Every orchestrator call it reaches carries
  * `whatif: true`, and it reserves, debits and accrues nothing. That is what makes
  * it safe to call N times from the batch procedure.
+ *
+ * 🔴 AND FROM A BATCH IT PERSISTS NOTHING. The one thing an estimate can store is a
+ * viewer-confirmable QUOTE (a training quote, or a confirmed-step quote for a fixed
+ * price above the per-call budget). That happens only with `storeQuotes: true`, which
+ * the single `estimateWorkflow` passes and the batch does not: a batch cell never
+ * writes a quote record and its reply never carries a `stepQuote`. (A training body
+ * always stores its quote, and is refused in a batch before it reaches here.) An
+ * author who needs a confirmable quote estimates that one body on its own.
  */
 async function estimateBlockWorkflowCell(
   ctx: Context,
   claims: BlockClaims,
-  input: { body: BlockWorkflowBody }
+  input: { body: BlockWorkflowBody; storeQuotes?: boolean }
 ) {
   // App Blocks customComfy bridge (v1): a fixed server-authored recipe has no
   // whatIf-able cost, so estimate returns the recipe's per-engine DISPLAY
@@ -9236,7 +9245,12 @@ async function estimateBlockWorkflowCell(
   // below stays byte-identical (we only ADD a branch).
   if (input.body.kind === 'step') {
     return isPassThroughStepBody(input.body)
-      ? await estimatePassThroughStepWorkflow({ ctx, claims, body: input.body })
+      ? await estimatePassThroughStepWorkflow({
+          ctx,
+          claims,
+          body: input.body,
+          storeQuote: input.storeQuotes === true,
+        })
       : await estimateStepWorkflow({ ctx, claims, body: input.body });
   }
   // Context binding. A MODEL token pins `ctx.modelId`; the body must match
@@ -11766,8 +11780,10 @@ async function estimatePassThroughStepWorkflow(opts: {
   ctx: Context;
   claims: BlockClaims;
   body: PassThroughStepBody;
+  /** TRUE only from the single estimate; a batch cell never stores a quote. */
+  storeQuote: boolean;
 }) {
-  const { ctx, claims, body } = opts;
+  const { ctx, claims, body, storeQuote } = opts;
   const userId = await assertStepRequestAllowed(claims);
   assertPassThroughStepTypeAllowed(body.$type);
 
@@ -11796,8 +11812,10 @@ async function estimatePassThroughStepWorkflow(opts: {
 
   // A fixed price above the per-call budget (and within the per-job ceiling) becomes
   // a server-stored quote the viewer can confirm — `null` everywhere else, so every
-  // other estimate reply is byte-identical to before.
-  const stepQuote = await grantConfirmedStepQuote({ claims, body, userId, quote });
+  // other estimate reply is byte-identical to before. Never from a batch cell.
+  const stepQuote = storeQuote
+    ? await grantConfirmedStepQuote({ claims, body, userId, quote })
+    : null;
 
   return {
     snapshot: {
@@ -12668,8 +12686,19 @@ async function previewQuoteGrantFor(
   } catch {
     shortfall = null;
   }
-  // NOT fail-open: a limit the dialog cannot read must not be shown as "no limit".
-  const limit = await readConsentDailyLimit(auth.userId, claims.appBlockId, quote.total);
+  // 🔴 PER KIND, DELIBERATELY. For a STEP this is NOT fail-open: its dialog shows the
+  // limit and refuses on it, so a limit it cannot read must not be shown as "no limit"
+  // — the preview fails. For TRAINING the limit fields are an additive extra its dialog
+  // does not use, and the training preview never depended on this read; a failed read
+  // there yields "unknown" (`null` / `false`) and the preview still succeeds. Either
+  // way the SUBMIT enforces the limit on its own reservation.
+  let limit: Awaited<ReturnType<typeof readConsentDailyLimit>>;
+  try {
+    limit = await readConsentDailyLimit(auth.userId, claims.appBlockId, quote.total);
+  } catch (e) {
+    if (kind !== 'training') throw e;
+    limit = null;
+  }
   const shared = {
     quoteId: quote.quoteId,
     total: quote.total,
@@ -12764,8 +12793,12 @@ type QuotedGrantSubmitArm = {
   quoteId: string | undefined;
   /** Refused with this when the body names no quote. */
   missingQuoteMessage: string;
-  /** `hashQuotedBody(body)` — the quote must have been priced for exactly this body. */
-  bodyHash: string;
+  /**
+   * The quote-binding hash of this body — the quote must have been priced for exactly
+   * it. A FUNCTION, called after the quote is claimed and its ceiling checked, so a
+   * body the kind refuses to hash is refused there, behind the gate.
+   */
+  bodyHash: () => Promise<string>;
   /** `resolveBlockGenerationType(body)` — the attribution row's generation type. */
   generationType: ReturnType<typeof resolveBlockGenerationType>;
   /** Extra fields on the submit-failure log line. */
@@ -12860,7 +12893,7 @@ async function submitConfirmedQuoteWorkflow(opts: {
     // than a shadowed second copy.
     const grant = arm.ceiling(quote, userId);
     if ('refusal' in grant) throw grant.refusal;
-    if (quote.bodyHash !== arm.bodyHash) {
+    if (quote.bodyHash !== (await arm.bodyHash())) {
       throw new TRPCError({
         code: 'BAD_REQUEST',
         message: `the ${copy.quoteNoun} body differs from the one that was quoted — estimate again`,
@@ -13284,14 +13317,65 @@ function confirmedStepCeilingRefusal(
   }
 }
 
+/** What a block is told when it tries to run a TRAINING `$type` as a confirmed step. */
+const CONFIRMED_STEP_TRAINING_TYPE_MESSAGE =
+  "a training step type cannot run as a confirmed step — use kind:'training'";
+
+/**
+ * A training `$type` (`training`, `imageResourceTraining`) is never a confirmed step.
+ *
+ * 🔴 WITHOUT THIS THE STEP PATH IS A SECOND, UNGUARDED DOOR TO TRAINING: a
+ * `{kind:'step', $type:'training', …}` body with a fixed price would get a step quote
+ * and run under the STEP flag — skipping everything `kind:'training'` exists to do
+ * (the server-prepared dataset bound to the viewer, the caption and prompt audit, run
+ * resolution against the training service's own gates, and the training flag).
+ * Checked at BOTH the grant and the submit; the canonical predicate is
+ * `isTrainingStepType`, the same one the unquoted arm refuses on.
+ */
+function assertNotTrainingStepType(stepType: string): void {
+  if (isTrainingStepType(stepType)) {
+    throw new TRPCError({ code: 'BAD_REQUEST', message: CONFIRMED_STEP_TRAINING_TYPE_MESSAGE });
+  }
+}
+
+/**
+ * The quote-binding hash of a confirmed-step body, or a BAD_REQUEST naming the offending
+ * path when its `input` is not plain JSON.
+ *
+ * 🔴 THE HASH IS ONLY A BINDING IF EVERY VALUE IN THE BODY REACHES IT. `input` is
+ * `Record<string, unknown>` and the transport can carry a `Date`, `Map`, `Set` or
+ * `BigInt`; hashed loosely those all collapse to the same bytes, so a quote confirmed
+ * for one such body would also match a different one. The store's canonical form
+ * therefore REFUSES anything that is not plain JSON, and this turns that refusal into
+ * the caller-facing error — at the grant and again at the submit.
+ */
+async function hashConfirmedStepBodyOrRefuse(body: PassThroughStepBody): Promise<string> {
+  const { hashPassThroughStepBody, isNonJsonQuotedBodyError } = await import(
+    '~/server/services/blocks/block-quote-grant.service'
+  );
+  try {
+    return hashPassThroughStepBody(body);
+  } catch (e) {
+    if (isNonJsonQuotedBodyError(e)) {
+      throw new TRPCError({
+        code: 'BAD_REQUEST',
+        message: `a confirmed step needs plain JSON input (objects, arrays, strings, finite numbers, booleans, null) — ${e.message}`,
+      });
+    }
+    throw e;
+  }
+}
+
 /**
  * The estimate's half: store a confirmable quote, or `null` (and the estimate reply is
  * unchanged). Granted only for a FIXED price strictly above the per-call budget and at
  * most `BLOCK_CONFIRMED_STEP_MAX_BUZZ_PER_JOB`, to a token the shared gate admits, with
  * the flag on for a hydratable subject. Below the budget the ordinary arm runs the job.
  *
- * Never throws for an ineligible request — this rides the ordinary pass-through
- * estimate, which must behave exactly as before for every such caller.
+ * Never throws for an INELIGIBLE request — this rides the ordinary pass-through
+ * estimate, which must behave exactly as before for every such caller. It throws only
+ * where a quote would otherwise be granted and must not be: a training `$type`, or an
+ * `input` that is not plain JSON.
  */
 async function grantConfirmedStepQuote(opts: {
   claims: BlockClaims;
@@ -13313,15 +13397,17 @@ async function grantConfirmedStepQuote(opts: {
   }
   if (!enabled) return null;
 
-  const { hashPassThroughStepBody, storeStepQuote } = await import(
-    '~/server/services/blocks/block-quote-grant.service'
-  );
+  // From here a quote WOULD be granted, so the two things that must never be granted
+  // are refused out loud rather than silently skipped — the author needs to know why
+  // no confirmable quote came back.
+  assertNotTrainingStepType(body.$type);
+  const { storeStepQuote } = await import('~/server/services/blocks/block-quote-grant.service');
   const record = await storeStepQuote({
     userId,
     appBlockId: claims.appBlockId,
     blockInstanceId: claims.blockInstanceId,
     total: price,
-    bodyHash: hashPassThroughStepBody(body),
+    bodyHash: await hashConfirmedStepBodyOrRefuse(body),
     stepType: body.$type,
   });
   return {
@@ -13350,9 +13436,6 @@ async function submitConfirmedPassThroughStepWorkflow(opts: {
   body: PassThroughStepBody & { quoteId: string };
 }) {
   const { ctx, claims, body } = opts;
-  const { hashPassThroughStepBody } = await import(
-    '~/server/services/blocks/block-quote-grant.service'
-  );
   return submitConfirmedQuoteWorkflow({
     ctx,
     claims,
@@ -13360,12 +13443,15 @@ async function submitConfirmedPassThroughStepWorkflow(opts: {
       kind: 'step',
       quoteId: body.quoteId,
       missingQuoteMessage: 'a confirmed step submit must name the confirmed quoteId',
-      bodyHash: hashPassThroughStepBody(body),
+      bodyHash: () => hashConfirmedStepBodyOrRefuse(body),
       generationType: resolveBlockGenerationType(body),
       logFields: { stepType: body.$type },
-      // The platform denylist, before anything that costs something — the same rule
-      // as the unconfirmed arm.
-      preflight: () => assertPassThroughStepTypeAllowed(body.$type),
+      // Before anything that costs something: the platform denylist (the same rule as
+      // the unconfirmed arm), then no training `$type` through this door.
+      preflight: () => {
+        assertPassThroughStepTypeAllowed(body.$type);
+        assertNotTrainingStepType(body.$type);
+      },
       runIdentity: async (_auth, quoteId) => ({
         externalId: composeConfirmedStepBlockExternalId(quoteId),
         onDefiniteSubmit: async () => undefined,
@@ -13666,7 +13752,7 @@ async function submitTrainingWorkflow(opts: {
       kind: 'training',
       quoteId: body.quoteId,
       missingQuoteMessage: 'a training submit must name the confirmed quoteId from its estimate',
-      bodyHash: hashTrainingBody(body),
+      bodyHash: async () => hashTrainingBody(body),
       generationType: resolveBlockGenerationType(body),
       logFields: {},
       runIdentity: async () => ({

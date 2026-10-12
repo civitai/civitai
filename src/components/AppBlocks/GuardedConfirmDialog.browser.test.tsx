@@ -14,12 +14,20 @@ import { CONFIRM_ARM_DELAY_MS, useConfirmArmDelay } from './GuardedConfirmDialog
  * pinned here, where time only moves when the test moves it.
  */
 
-function Probe() {
-  const armed = useConfirmArmDelay();
+function Probe({ active = true }: { active?: boolean }) {
+  const armed = useConfirmArmDelay(CONFIRM_ARM_DELAY_MS, active);
   return <span data-testid="armed">{armed ? 'armed' : 'waiting'}</span>;
 }
 
 const state = () => page.getByTestId('armed').element().textContent;
+/** Mount the probe and hand back the render result (`act` itself resolves to nothing). */
+async function mountProbe(active: boolean) {
+  let view!: Awaited<ReturnType<typeof renderWithProviders>>;
+  await act(async () => {
+    view = await renderWithProviders(<Probe active={active} />);
+  });
+  return view;
+}
 const advance = (ms: number) => act(async () => void vi.advanceTimersByTime(ms));
 const fire = (target: EventTarget, type: string) =>
   act(async () => void target.dispatchEvent(new Event(type)));
@@ -90,6 +98,44 @@ describe('useConfirmArmDelay', () => {
     await advance(60_000);
     expect(state()).toBe('waiting');
     await setVisibility('visible');
+    expect(state()).toBe('waiting');
+    await advance(CONFIRM_ARM_DELAY_MS - 1);
+    expect(state()).toBe('waiting');
+    await advance(1);
+    expect(state()).toBe('armed');
+  });
+
+  // ── Only the dialog in front counts down ─────────────────────────────────────
+  test('a dialog that is NOT in front never arms, however long it waits or what events fire', async () => {
+    await act(async () => void renderWithProviders(<Probe active={false} />));
+    await advance(60_000);
+    expect(state()).toBe('waiting');
+    await fire(window, 'focus');
+    await setVisibility('visible');
+    await advance(60_000);
+    expect(state()).toBe('waiting');
+  });
+
+  test('coming to the front starts the WHOLE delay — time spent covered does not count', async () => {
+    const view = await mountProbe(false);
+    await advance(60_000);
+    await act(async () => void view.rerender(<Probe active />));
+    expect(state()).toBe('waiting');
+    await advance(CONFIRM_ARM_DELAY_MS - 1);
+    expect(state()).toBe('waiting');
+    await advance(1);
+    expect(state()).toBe('armed');
+  });
+
+  test('being covered disarms an armed dialog, and uncovering starts the delay over', async () => {
+    const view = await mountProbe(true);
+    await advance(CONFIRM_ARM_DELAY_MS);
+    expect(state()).toBe('armed');
+    await act(async () => void view.rerender(<Probe active={false} />));
+    expect(state()).toBe('waiting');
+    await advance(60_000);
+    expect(state()).toBe('waiting');
+    await act(async () => void view.rerender(<Probe active />));
     expect(state()).toBe('waiting');
     await advance(CONFIRM_ARM_DELAY_MS - 1);
     expect(state()).toBe('waiting');

@@ -1569,6 +1569,23 @@ describe('training on the shared confirmed-quote path', () => {
     });
   });
 
+  it('🔴 a failed daily-limit read does NOT fail the training preview (it never depended on it)', async () => {
+    const { snapshot } = (await estimate()) as { snapshot: { trainingQuote: { quoteId: string } } };
+    dbMock.dbWrite.appUserScopeGrant.findUnique.mockRejectedValue(new Error('db unavailable'));
+    const preview = await caller(VIEWER).previewTrainingQuote({
+      blockToken: 't',
+      quoteId: snapshot.trainingQuote.quoteId,
+    });
+    expect(preview).toMatchObject({
+      total: 1200,
+      imageCount: 2,
+      modelName: 'SDXL',
+      thumbnails: ['t1', 't2'],
+      dailyLimit: null,
+      exceedsDailyLimit: false,
+    });
+  });
+
   it('the generic consent pair serves a training quote exactly as the training-named one does', async () => {
     const { snapshot } = (await estimate()) as { snapshot: { trainingQuote: { quoteId: string } } };
     const quoteId = snapshot.trainingQuote.quoteId;

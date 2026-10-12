@@ -466,6 +466,40 @@ describe('PageBlockHost RUN_CONFIRMED_STEP (consent-gated over-budget step)', ()
     }
   });
 
+  test('two confirms open at once: the one underneath is not armed while covered, and waits the full delay once uncovered', async () => {
+    await mount();
+    await driveToReady();
+    postFromBlock('RUN_CONFIRMED_STEP', { requestId: 'rq_s1', body: BODY });
+    await expect.element(confirmButton().first()).toBeInTheDocument();
+    postFromBlock('RUN_CONFIRMED_STEP', { requestId: 'rq_s2', body: BODY });
+    await vi.waitFor(() => expect(confirmButton().elements()).toHaveLength(2));
+    const [under, top] = confirmButton().elements() as HTMLButtonElement[];
+
+    // The one in front arms after its delay; the one underneath never does, however
+    // long it stays covered (well past the delay).
+    await vi.waitFor(() => expect(top.disabled).toBe(false), ARMED);
+    await new Promise((r) => setTimeout(r, 1500));
+    expect(under.disabled).toBe(true);
+
+    // Record when the lower dialog is uncovered and when its button becomes enabled.
+    let enabledAt: number | null = null;
+    const observer = new MutationObserver(() => {
+      if (enabledAt === null && !under.disabled) enabledAt = performance.now();
+    });
+    observer.observe(under, { attributes: true, attributeFilter: ['disabled', 'data-disabled'] });
+    useDialogStore.getState().closeLatest();
+    const uncoveredAt = performance.now();
+    try {
+      await vi.waitFor(() => expect(enabledAt).not.toBeNull(), ARMED);
+    } finally {
+      observer.disconnect();
+    }
+    // It waited (at least) the whole delay from the moment it was uncovered. A slow
+    // machine only makes this larger; 50 ms covers timer rounding.
+    expect((enabledAt as unknown as number) - uncoveredAt).toBeGreaterThanOrEqual(950);
+    expect(consentMutate).not.toHaveBeenCalled();
+  });
+
   test('a lost submit RESPONSE replies `submission-unconfirmed` and is never resent', async () => {
     submitMutate.mockRejectedValueOnce(new Error('Failed to fetch'));
     await mount();

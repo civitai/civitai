@@ -4,8 +4,10 @@ import { blockPassThroughStepBodySchema } from '~/server/schema/blocks/workflow.
 import {
   BLOCK_QUOTE_GRANT_TTL_SECONDS,
   claimStepQuote,
+  canonicalJson,
   claimQuoteGrant,
   hashPassThroughStepBody,
+  isNonJsonQuotedBodyError,
   readQuoteGrant,
   readStepQuote,
   recordStepQuoteConsent,
@@ -156,5 +158,53 @@ describe('hashPassThroughStepBody', () => {
     );
     expect(hashPassThroughStepBody(body({ $type: 'otherGen' }))).not.toBe(base);
     expect(hashPassThroughStepBody(body({ maxBuzz: 201 }))).not.toBe(base);
+  });
+});
+
+describe('canonicalJson — exact, or it throws', () => {
+  it('plain JSON is canonical: keys sorted at every depth, undefined keys skipped', () => {
+    expect(canonicalJson({ b: [1, 'x', true, null], a: { d: 2, c: undefined } })).toBe(
+      '{"a":{"d":2},"b":[1,"x",true,null]}'
+    );
+    expect(canonicalJson(Object.assign(Object.create(null), { z: 1 }))).toBe('{"z":1}');
+  });
+
+  // Pairwise-distinct fixtures: each would previously have hashed like some other value.
+  it.each([
+    ['a Date', { v: new Date(7) }, 'body.v is a Date'],
+    ['a Map', { v: new Map([[1, 2]]) }, 'body.v is a Map'],
+    ['a Set', { v: new Set([3]) }, 'body.v is a Set'],
+    ['a RegExp', { v: /4/ }, 'body.v is a RegExp'],
+    ['a BigInt', { v: BigInt(5) }, 'body.v is a bigint'],
+    ['a symbol', { v: Symbol('6') }, 'body.v is a symbol'],
+    ['a function', { v: () => 8 }, 'body.v is a function'],
+    ['Infinity', { v: Number.POSITIVE_INFINITY }, 'body.v is the non-finite number Infinity'],
+    ['NaN', { v: Number.NaN }, 'body.v is the non-finite number NaN'],
+    ['an undefined array element', { v: [9, undefined] }, 'body.v[1] is undefined'],
+    [
+      'a nested class instance',
+      { a: [{ b: new URL('https://example.com/10') }] },
+      'body.a[0].b is a URL',
+    ],
+  ])('refuses %s, naming the path', (_l, value, message) => {
+    let thrown: unknown;
+    try {
+      canonicalJson(value);
+    } catch (e) {
+      thrown = e;
+    }
+    expect(isNonJsonQuotedBodyError(thrown)).toBe(true);
+    expect((thrown as Error).message).toBe(message);
+  });
+
+  it('the values that used to collide no longer produce a hash at all', () => {
+    const hash = (input: Record<string, unknown>) =>
+      hashPassThroughStepBody({ kind: 'step', $type: 'polyGen', input, maxBuzz: 1 } as never);
+    expect(() => hash({ when: new Date(1) })).toThrow('body.input.when is a Date');
+    expect(() => hash({ when: new Date(2) })).toThrow('body.input.when is a Date');
+    expect(() => hash({ when: new Map() })).toThrow('body.input.when is a Map');
+    // Positive control: the plain forms hash, and differ.
+    expect(hash({ when: 1 })).not.toBe(hash({ when: 2 }));
+    expect(hash({ when: 1 })).toMatch(/^[a-f0-9]{64}$/);
   });
 });

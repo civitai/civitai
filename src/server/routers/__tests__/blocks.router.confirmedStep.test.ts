@@ -111,6 +111,7 @@ vi.mock('~/server/services/blocks/user-app-surface.service', () => ({
 vi.mock('~/server/utils/block-catalog-rate-limit', async (importOriginal) => ({
   ...(await importOriginal<typeof RateLimitModule>()),
   checkBlockCatalogRateLimit: (...a: unknown[]) => h.catalogRate(...(a as [])),
+  checkBlockEstimateCellsRateLimit: async () => ({ allowed: true }),
 }));
 vi.mock('~/server/services/buzz.service', () => ({
   getUserBuzzAccounts: () => h.buzzAccounts(),
@@ -436,6 +437,160 @@ describe('ESTIMATE — grants a confirmable quote only for a fixed price above t
     expect(snapshot.cost.total).toBe(PRICE);
     expect(snapshot.stepQuote).toBeUndefined();
     expect(keysWith(QUOTE_PREFIX)).toEqual([]);
+  });
+});
+
+describe("a TRAINING step type is never a confirmed step — use kind:'training'", () => {
+  const TRAINING_TYPE_ERROR =
+    "a training step type cannot run as a confirmed step — use kind:'training'";
+
+  it.each(['training', 'imageResourceTraining'])(
+    'the estimate refuses to grant a quote for $type "%s", and stores nothing',
+    async ($type) => {
+      whatifPrice = { total: 4000 };
+      await expect(estimate(body({ $type }))).rejects.toMatchObject({
+        code: 'BAD_REQUEST',
+        message: TRAINING_TYPE_ERROR,
+      });
+      expect(keysWith(QUOTE_PREFIX)).toEqual([]);
+    }
+  );
+
+  it.each(['training', 'imageResourceTraining'])(
+    'a submit naming a confirmed step quote for $type "%s" is refused before the quote is touched',
+    async ($type) => {
+      whatifPrice = { total: 4000 };
+      // A record the estimate would never write: bound, confirmed, and hashed for THIS body.
+      seedQuote(SEEDED, {
+        total: 4000,
+        stepType: $type,
+        bodyHash: hashPassThroughStepBody(blockPassThroughStepBodySchema.parse(body({ $type }))),
+      });
+      await expect(submit(body({ $type, quoteId: SEEDED }))).rejects.toMatchObject({
+        code: 'BAD_REQUEST',
+        message: TRAINING_TYPE_ERROR,
+      });
+      expect(h.submitWorkflow).not.toHaveBeenCalled();
+      expect(keysWith(QUOTE_PREFIX)).toHaveLength(1);
+    }
+  );
+
+  it('control: with the flag off the training-type estimate is exactly what it was', async () => {
+    h.confirmedStepFlag.mockImplementation(async () => false);
+    whatifPrice = { total: 4000 };
+    const { snapshot } = await estimate(body({ $type: 'training' }));
+    expect(snapshot).toEqual({
+      workflowId: 'wf_estimate',
+      status: 'pending',
+      cost: { total: 4000 },
+    });
+  });
+});
+
+describe('a BATCH estimate never stores a quote', () => {
+  it('over-budget fixed-price cells store 0 records and carry no stepQuote', async () => {
+    const out = await caller().estimateWorkflowBatch({
+      blockToken: 't',
+      bodies: [body(), body({ input: { engine: 'meshy', prompt: 'a cup' } })] as never,
+    });
+    expect(out.snapshots).toHaveLength(2);
+    for (const snapshot of out.snapshots) {
+      expect(snapshot.cost?.total).toBe(PRICE);
+      expect('stepQuote' in snapshot).toBe(false);
+    }
+    expect(keysWith('system:blocks:step-quote')).toEqual([]);
+    // The flag is never even evaluated for a batch cell.
+    expect(h.confirmedStepFlag).not.toHaveBeenCalled();
+  });
+
+  it('positive control: the SAME body estimated on its own stores exactly one', async () => {
+    const { snapshot } = await estimate();
+    expect(snapshot.stepQuote?.total).toBe(PRICE);
+    expect(keysWith(QUOTE_PREFIX)).toHaveLength(1);
+  });
+});
+
+describe('the quote binds the EXACT body — non-JSON input is refused, not hashed loosely', () => {
+  // One fixture per type, each different from the others, with the path it sits at.
+  // (A BigInt is not here: the wire schema's own size check serialises `input` and
+  // throws on one before any quote code runs. The hash's refusal of it is pinned in
+  // `block-quote-grant.service.test.ts`.)
+  const NON_JSON: Array<[string, Record<string, unknown>, string]> = [
+    ['a Date', { engine: 'meshy', when: new Date(1) }, 'body.input.when is a Date'],
+    ['a Map', { engine: 'meshy', m: new Map([['a', 1]]) }, 'body.input.m is a Map'],
+    ['a Set', { engine: 'meshy', s: new Set([2]) }, 'body.input.s is a Set'],
+    ['NaN', { engine: 'meshy', n: Number.NaN }, 'body.input.n is the non-finite number NaN'],
+    [
+      'an undefined array element',
+      { engine: 'meshy', list: [4, undefined] },
+      'body.input.list[1] is undefined',
+    ],
+    [
+      'a nested class instance',
+      { engine: 'meshy', deep: { url: new URL('https://example.com/5') } },
+      'body.input.deep.url is a URL',
+    ],
+  ];
+  const PREFIX =
+    'a confirmed step needs plain JSON input (objects, arrays, strings, finite numbers, booleans, null) — ';
+
+  it.each(NON_JSON)('the estimate refuses to grant a quote for %s', async (_l, input, where) => {
+    await expect(estimate(body({ input }))).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: `${PREFIX}${where}`,
+    });
+    expect(keysWith(QUOTE_PREFIX)).toEqual([]);
+  });
+
+  it.each(NON_JSON)(
+    'a confirmed submit whose body carries %s is refused',
+    async (_l, input, where) => {
+      // A confirmed quote for the plain body; the submit swaps in the non-JSON input.
+      const quoteId = await confirmedQuote();
+      await expect(submit(body({ quoteId, input }))).rejects.toMatchObject({
+        code: 'BAD_REQUEST',
+        message: `${PREFIX}${where}`,
+      });
+      expect(realSubmits()).toHaveLength(0);
+      expect(counter('system:blocks:buzz-cap')).toBe(0);
+    }
+  );
+
+  it('🔴 two bodies differing ONLY in a Date can no longer share a quote', async () => {
+    // The probe that used to pass: quote `{when: Date(1)}`, submit `{when: Date(2)}`.
+    // Neither is quotable now, so there is no quote for the second to ride on.
+    await expect(estimate(body({ input: { engine: 'meshy', when: new Date(1) } }))).rejects.toThrow(
+      'body.input.when is a Date'
+    );
+    seedQuote(SEEDED);
+    await expect(
+      submit(body({ quoteId: SEEDED, input: { engine: 'meshy', when: new Date(2) } }))
+    ).rejects.toThrow('body.input.when is a Date');
+    expect(realSubmits()).toHaveLength(0);
+  });
+
+  it('control: deeply nested PLAIN JSON is quotable and binds — a changed leaf is a different body', async () => {
+    const input = { engine: 'meshy', opts: { tags: ['a', 'b'], n: 1.5, on: true, none: null } };
+    const { snapshot } = await estimate(body({ input }));
+    const quoteId = snapshot.stepQuote!.quoteId;
+    await consent(quoteId);
+    await expect(
+      submit(body({ quoteId, input: { ...input, opts: { ...input.opts, tags: ['a', 'c'] } } }))
+    ).rejects.toThrow('differs from the one that was quoted');
+  });
+});
+
+describe('the preview’s daily-limit read, per kind', () => {
+  it('a STEP preview FAILS when the limit cannot be read (never shown as "no limit")', async () => {
+    const { snapshot } = await estimate();
+    dbMock.dbWrite.appUserScopeGrant.findUnique.mockRejectedValue(new Error('db unavailable'));
+    await expect(
+      caller(VIEWER).previewQuoteGrant({
+        kind: 'step',
+        blockToken: 't',
+        quoteId: snapshot.stepQuote!.quoteId,
+      })
+    ).rejects.toThrow();
   });
 });
 

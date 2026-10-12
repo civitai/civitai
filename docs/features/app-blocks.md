@@ -645,6 +645,19 @@ same page host, so the owner sees the same confirm.
    price the viewer will confirm and be charged. No quote, a zero price or a variable price
    is never grantable: the viewer confirms what they are charged. Below the budget the
    estimate is unchanged and the job runs as before.
+
+   Three things to know as an author:
+   - **Estimate it on its own.** Only the single `ESTIMATE_WORKFLOW` stores a confirmable
+     quote. A batch estimate (`ESTIMATE_WORKFLOW_BATCH`) never persists anything, so its
+     cells never carry `stepQuote`; price the grid in a batch, then estimate the one body
+     you want to run.
+   - **Plain JSON input only.** The quote is bound to the exact body, so `input` must be
+     plain JSON — objects, arrays, strings, finite numbers, booleans and `null`. A `Date`,
+     `Map`, `Set` or similar is refused (`a confirmed step needs plain JSON input … —
+     body.input.<path> is a Date`), at the estimate and at the submit.
+   - **Not for training.** A training `$type` (`training`, `imageResourceTraining`) is
+     refused with `a training step type cannot run as a confirmed step — use
+     kind:'training'`. Training runs have their own kind, with its own dataset and checks.
 2. **Run** — `RUN_CONFIRMED_STEP { requestId, body: { …the same body, quoteId } }`. The host
    reads the quote back from the server (`blocks.previewQuoteGrant`), shows the price, and on
    the viewer's confirm records it through `blocks.consentQuoteGrant` (signed-in session
@@ -672,7 +685,8 @@ confirmation and would be a second job, so check the viewer's generations first.
 
 The confirm button of both spend confirms (training and confirmed step) stays disabled for
 about a second after the dialog appears, and again after the page regains focus or
-visibility, so the viewer has a moment to read it.
+visibility, so the viewer has a moment to read it. If more than one such dialog is open,
+only the one in front counts down; the others start their wait when they come to the front.
 
 **3D outputs.** A step that produces 3D models (`polyGen`) still lists every model url in
 `imageUrls`; `model3dOutputs: [{ url, format, variant }]` says which is which — `format`
