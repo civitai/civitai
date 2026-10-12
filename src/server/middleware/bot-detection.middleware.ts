@@ -38,6 +38,8 @@ const API_PATH_RE = /^\/api\/(?:trpc|v1)\//;
 
 const IS_DEV = process.env.NODE_ENV !== 'production';
 
+const isBotAwarePath = (path: string) => DETAIL_PAGE_RE.test(path) || API_PATH_RE.test(path);
+
 function getClientIp(request: NextRequest): string | null {
   // Cloudflare sets cf-connecting-ip with the real client IP. Fall back to
   // x-forwarded-for (proxies, curl-spoofed local tests). NextRequest.ip was
@@ -55,19 +57,18 @@ function getClientIp(request: NextRequest): string | null {
 
 export const botDetectionMiddleware = createMiddleware({
   matcher: BOT_DETECTION_MATCHER,
-  shouldRun: ({ nextUrl }) => {
-    const path = nextUrl.pathname;
-    return DETAIL_PAGE_RE.test(path) || API_PATH_RE.test(path);
-  },
+  shouldRun: ({ nextUrl, headers }) =>
+    isBotAwarePath(nextUrl.pathname) || headers.has(VERIFIED_BOT_HEADER),
   handler: async ({ request }) => {
-    const ua = request.headers.get('user-agent');
-    const ip = getClientIp(request);
-
-    const bot = verifyBot(ua, ip);
-    if (!bot) return; // pass through unchanged
+    // Only this middleware may set the header: a value that arrived with the request is dropped.
+    const bot = isBotAwarePath(request.nextUrl.pathname)
+      ? verifyBot(request.headers.get('user-agent'), getClientIp(request))
+      : null;
+    if (!bot && !request.headers.has(VERIFIED_BOT_HEADER)) return; // pass through unchanged
 
     const headers = new Headers(request.headers);
-    headers.set(VERIFIED_BOT_HEADER, bot);
+    if (bot) headers.set(VERIFIED_BOT_HEADER, bot);
+    else headers.delete(VERIFIED_BOT_HEADER);
     return NextResponse.next({ request: { headers } });
   },
 });
