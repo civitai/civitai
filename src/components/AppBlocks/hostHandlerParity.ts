@@ -710,6 +710,17 @@ export const INVENTORY = {
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
   },
+  // Run ONE confirmed pass-through step whose fixed price exceeds the per-call budget —
+  // see `runConfirmedStepGate.ts`. REQUEST-style; ahead of the published SDK dist union
+  // (the SDK pair lands in the SDK repo), exactly like RUN_TRAINING.
+  RUN_CONFIRMED_STEP: {
+    request: true,
+    reply: 'CONFIRMED_STEP_RESULT',
+    IframeHost:
+      'confirmed steps are page-only on the server; the shared dispatcher NACKs it with a CONFIRMED_STEP_RESULT error',
+    PageBlockHost: 'required',
+    InlineHost: INLINE_STUB,
+  },
   // Prepare the dataset a `kind:'training'` body names — see
   // `prepareTrainingDatasetGate.ts`. The host calls `blocks.prepareTrainingDataset`
   // with the page token, which the block's own origin cannot reach. REQUEST-style;

@@ -107,6 +107,22 @@ export function resolveTrainingBridgePrelude(
   | { kind: 'drop' }
   | { kind: 'refuse'; requestId: string; error: TrainingBridgePreludeError }
   | { kind: 'ok'; requestId: string; obj: Record<string, unknown> } {
+  return resolveConsentBridgePrelude(input, 'sign in to train');
+}
+
+/**
+ * The prelude every CONSENT-GATED spend message shares (`RUN_TRAINING`,
+ * `PREPARE_TRAINING_DATASET`, `RUN_CONFIRMED_STEP`), parameterised only by the
+ * signed-out code each one names. One order, one place: drop without a `requestId`,
+ * then review mode, ready, signed in.
+ */
+export function resolveConsentBridgePrelude<SignIn extends string>(
+  input: TrainingBridgeGateInput,
+  signInError: SignIn
+):
+  | { kind: 'drop' }
+  | { kind: 'refuse'; requestId: string; error: 'review-mode' | 'block is not ready' | SignIn }
+  | { kind: 'ok'; requestId: string; obj: Record<string, unknown> } {
   const { raw, ready, signedIn, reviewNack } = input;
   if (!raw || typeof raw !== 'object') return { kind: 'drop' };
   const obj = raw as Record<string, unknown>;
@@ -115,7 +131,7 @@ export function resolveTrainingBridgePrelude(
 
   if (reviewNack) return { kind: 'refuse', requestId, error: 'review-mode' };
   if (!ready) return { kind: 'refuse', requestId, error: 'block is not ready' };
-  if (!signedIn) return { kind: 'refuse', requestId, error: 'sign in to train' };
+  if (!signedIn) return { kind: 'refuse', requestId, error: signInError };
   return { kind: 'ok', requestId, obj };
 }
 

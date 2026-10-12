@@ -25,6 +25,7 @@ import { getImagesLimit } from '~/shared/generation/images-limit';
 import { ModelType } from '~/shared/utils/prisma/enums';
 import { isSingletonSlotResource } from '~/shared/utils/resource.utils';
 import type {
+  BlockModel3dOutput,
   BlockPublishedModel,
   BlockSourceImage,
   BlockWorkflowBody,
@@ -126,6 +127,7 @@ export function snapshotFromWorkflow(
   const imageUrls: string[] = [];
   const stepOutputs: NonNullable<BlockWorkflowSnapshot['stepOutputs']> = [];
   const trainedEpochs: TrainedEpoch[] = [];
+  const model3dOutputs: BlockModel3dOutput[] = [];
   for (const step of workflow.steps ?? []) {
     // A `customComfy` step (App Blocks customComfy bridge) surfaces its outputs
     // as `output.blobs` (CustomComfyOutput), NOT `output.images` — so it needs
@@ -204,9 +206,12 @@ export function snapshotFromWorkflow(
         media,
         rest,
         trainedEpochs: epochs,
+        model3d,
       } = splitPassThroughStep(step.$type, (step as unknown as { output?: unknown }).output);
       for (const m of media) imageUrls.push(m.url);
       trainedEpochs.push(...epochs);
+      // ADDITIVE: the 3D models among those urls, labelled — `imageUrls` is unchanged.
+      model3dOutputs.push(...model3d);
       // A step with no output yet — the submit reply — would otherwise get an
       // entry saying nothing.
       if (rest !== undefined) stepOutputs.push({ $type: step.$type, output: rest });
@@ -290,6 +295,8 @@ export function snapshotFromWorkflow(
     ...(modelSubstitutions?.length ? { modelSubstitutions } : {}),
     ...(trainedEpochs.length > 0 ? { trainedEpochs } : {}),
     ...(publishedModel ? { publishedModel } : {}),
+    // See the field's own doc in `schema/blocks/workflow.schema`. Omitted when none.
+    ...(model3dOutputs.length > 0 ? { model3dOutputs } : {}),
   };
 }
 
@@ -360,6 +367,8 @@ export function appBlockTag(appId: string): string {
  *           pass-through training run has a ready checkpoint.
  *   publishedModel: OPTIONAL, same value and rule as the snapshot field — see
  *           `BlockWorkflowSnapshot.publishedModel`. Absent on every other item.
+ *   model3dOutputs: OPTIONAL, same value and rule as the snapshot field — see
+ *           `BlockWorkflowSnapshot.model3dOutputs`. Every url is also in `images`.
  */
 export type AppWorkflowImage = {
   url: string;
@@ -375,6 +384,7 @@ export type AppWorkflow = {
   createdAt: string;
   trainedEpochs?: TrainedEpoch[];
   publishedModel?: BlockPublishedModel;
+  model3dOutputs?: BlockModel3dOutput[];
 };
 
 /**
@@ -385,6 +395,7 @@ export function projectAppWorkflow(workflow: Workflow): AppWorkflow {
   const status = ORCH_STATUS_MAP[workflow.status] ?? 'pending';
   const images: AppWorkflowImage[] = [];
   const trainedEpochs: TrainedEpoch[] = [];
+  const model3dOutputs: BlockModel3dOutput[] = [];
   for (const step of workflow.steps ?? []) {
     // A `customComfy` step surfaces its outputs as `output.blobs`
     // (CustomComfyOutput) — no width/height, `nsfwLevel` is the same string
@@ -462,6 +473,7 @@ export function projectAppWorkflow(workflow: Workflow): AppWorkflow {
         (step as unknown as { output?: unknown }).output
       );
       trainedEpochs.push(...split.trainedEpochs);
+      model3dOutputs.push(...split.model3d);
       for (const m of split.media) {
         images.push({
           url: m.url,
@@ -516,6 +528,7 @@ export function projectAppWorkflow(workflow: Workflow): AppWorkflow {
     createdAt: workflow.createdAt,
     ...(trainedEpochs.length > 0 ? { trainedEpochs } : {}),
     ...(publishedModel ? { publishedModel } : {}),
+    ...(model3dOutputs.length > 0 ? { model3dOutputs } : {}),
   };
 }
 

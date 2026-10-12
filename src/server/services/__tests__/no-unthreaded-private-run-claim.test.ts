@@ -139,10 +139,11 @@ const countThreaded = (src: string) => countPrivateRunThreading(src, THREADED_SP
 const LEDGER = [
   {
     opener: 'recordSpendAttribution({',
-    count: 5,
+    count: 6,
     why:
-      'ARM A. Five submit paths write a spend-attribution row: txt2img, customComfy, ' +
-      'the registry-step bridge, the pass-through step and the training run. A path that omits the claim ' +
+      'ARM A. Six submit paths write a spend-attribution row: txt2img, customComfy, ' +
+      'the registry-step bridge, the pass-through step, the confirmed pass-through step and ' +
+      'the training run. A path that omits the claim ' +
       "writes `tracked` for a private run, which lands in the suspended app's " +
       'owner-visible analytics as engagement.',
     /** A field every site in this population already carries — the extractor's control. */
@@ -170,16 +171,17 @@ const LEDGER = [
   },
   {
     opener: 'recordScopeInvocation({',
-    count: 6,
+    count: 7,
     why:
       'THE AUDIT-VISIBILITY ARM, which is NOT a money arm and is in this ledger for the ' +
-      'seam, not the spend. Six router paths write a `block_scope_invocations` row: the ' +
+      'seam, not the spend. Seven router paths write a `block_scope_invocations` row: the ' +
       'block-post writer, the txt2img submit, the registry-step submit, the custom-comfy ' +
-      "submit, the pass-through submit and the training submit. That row carries the app's REAL id and the " +
+      'submit, the pass-through submit, the confirmed pass-through submit and the training ' +
+      "submit. That row carries the app's REAL id and the " +
       "viewer's REAL user id, and `app-analytics.service.ts` aggregates it by " +
       '`appBlockId IN (ownedIds)` — so a path that omits the claim writes an UNMARKED row ' +
       "that appears in a delisted app owner's own analytics, which is exactly the signal " +
-      'the private-run feature exists to withhold. The full cross-file population (eleven ' +
+      'the private-run feature exists to withhold. The full cross-file population (twelve ' +
       'sites over five files) is ledgered by ' +
       '`no-unmarked-private-run-invocation.test.ts`; this entry exists so the TOTAL below ' +
       'stays an honest count of the router.',

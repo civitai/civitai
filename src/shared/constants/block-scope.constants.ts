@@ -454,8 +454,27 @@ export const BLOCK_BUZZ_CAP_PER_DAY = 50_000;
  * generation only; total spend is bounded by `BLOCK_BUZZ_CAP_PER_DAY`,
  * `PRIVATE_RUN_BUZZ_CAP`, `REVIEW_RUN_FOR_REAL_BUZZ_CAP`, the dev-tunnel session
  * cap and the per-app caps.
+ *
+ * The two exceptions are jobs whose exact price the VIEWER confirmed in host chrome —
+ * a `kind:'training'` run and a confirmed pass-through step. Those are charged against
+ * that confirmed quote, under their own per-job ceilings, not against this claim
+ * (`blockTrainingRunCeiling` / `blockConfirmedStepCeiling` in block-scope.middleware).
  */
 export const BUZZ_BUDGET_CAP = 1000;
+
+/**
+ * The machine-readable code a CONFIRMED pass-through step is refused with when the job
+ * would exceed what remains of the viewer's own opted-in daily Buzz limit for the app
+ * (`app_user_scope_grants.buzz_budget_per_day`). The confirm can never override that
+ * limit; the viewer raises it on the app activity page (`/apps/activity`).
+ *
+ * Shared because three places must agree on the string: the server's failed-snapshot
+ * `errorCode`, the host's `CONFIRMED_STEP_RESULT` error, and the SDK that branches on it.
+ */
+export const CONFIRMED_STEP_DAILY_LIMIT_ERROR_CODE = 'daily-limit-exceeded' as const;
+
+/** Where a viewer sets, raises or removes their per-app daily Buzz limit. */
+export const APP_DAILY_LIMIT_SETTINGS_PATH = '/apps/activity';
 
 /**
  * Bounds for a user-set per-app consent budget

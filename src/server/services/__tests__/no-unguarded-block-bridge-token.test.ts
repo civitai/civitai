@@ -196,6 +196,10 @@ const GUARD_CALL_SITE_LEDGER = [
   // reach the guard through it and nothing else — the same shape as the post
   // preamble above, and router-local for the same reason.
   'authorizeBlockTrainingConsentRequest',
+  // The confirmed pass-through step's consent preamble: `previewStepQuote` and
+  // `consentStepQuote` reach the guard through it and nothing else — same shape, and
+  // router-local for the same reason.
+  'authorizeConfirmedStepConsentRequest',
   'cancelAppWorkflow',
   'cancelWorkflow',
   'estimateWorkflow',
@@ -253,6 +257,10 @@ const BRIDGE_INPUT_LEDGER = [
   'prepareTrainingDataset',
   'previewTrainingQuote',
   'consentTrainingQuote',
+  // The confirmed pass-through step's consent halves, via
+  // `authorizeConfirmedStepConsentRequest`, above.
+  'previewStepQuote',
+  'consentStepQuote',
   'publishGenerationOutputs',
   'queryAppWorkflows',
   'submitWorkflow',

@@ -111,6 +111,7 @@ const APP_BLOCK_ID_MAX_FOR_ENCODING = 99;
 const BLOCK_EXTERNAL_ID_PREFIX_CLIENT = 'blk';
 const BLOCK_EXTERNAL_ID_PREFIX_SERVER = 'bls';
 const BLOCK_EXTERNAL_ID_PREFIX_TRAINING = 'blt';
+const BLOCK_EXTERNAL_ID_PREFIX_CONFIRMED_STEP = 'blc';
 
 /**
  * The SINGLE gate every emitted externalId passes. Shared by the client-key
@@ -225,10 +226,27 @@ export function mintServerBlockExternalId(): string {
  * `blt` tag keeps it disjoint from the client (`blk`) and minted (`bls`) namespaces.
  */
 export function composeTrainingBlockExternalId(runKey: string): string {
+  return composeRunKeyedExternalId('training', BLOCK_EXTERNAL_ID_PREFIX_TRAINING, runKey);
+}
+
+/**
+ * The orchestrator `externalId` for a CONFIRMED pass-through step, keyed on the RUN
+ * exactly as `composeTrainingBlockExternalId` is (see `quotedRunKey`), under its own
+ * `blc` tag — disjoint from `blk` / `bls` / `blt` at index 2.
+ */
+export function composeConfirmedStepBlockExternalId(runKey: string): string {
+  return composeRunKeyedExternalId(
+    'confirmed step',
+    BLOCK_EXTERNAL_ID_PREFIX_CONFIRMED_STEP,
+    runKey
+  );
+}
+
+function composeRunKeyedExternalId(label: string, prefix: string, runKey: string): string {
   if (!/^[a-f0-9]{64}$/.test(runKey)) {
-    throw new Error('training externalId: runKey must be a sha256 hex digest');
+    throw new Error(`${label} externalId: runKey must be a sha256 hex digest`);
   }
-  return assertOrchestratorExternalId(`${BLOCK_EXTERNAL_ID_PREFIX_TRAINING}${runKey}`);
+  return assertOrchestratorExternalId(`${prefix}${runKey}`);
 }
 
 export type BlockGenIdempotencyClaim<T> =

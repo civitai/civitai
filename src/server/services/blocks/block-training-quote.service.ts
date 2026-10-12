@@ -1,14 +1,23 @@
-import { createHash, randomBytes } from 'crypto';
 import { TRPCError } from '@trpc/server';
 import type { TrainingStepTemplate } from '@civitai/client';
 import { OrchPriorityTypes } from '~/server/common/enums';
-import type { BlockTrainingQuoteGrant } from '~/server/middleware/block-scope.middleware';
-import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
-import {
-  BLOCK_TRAINING_QUOTE_ID_REGEX,
-  type BlockTrainingBody,
-} from '~/server/schema/blocks/workflow.schema';
+import { REDIS_SYS_KEYS } from '~/server/redis/client';
+import type { BlockTrainingBody } from '~/server/schema/blocks/workflow.schema';
 import type { AiToolkitTrainingParams } from '~/server/schema/orchestrator/training.schema';
+import {
+  BLOCK_QUOTE_GRANT_TTL_SECONDS,
+  bumpQuotedRunGeneration,
+  claimQuoteGrant,
+  hashQuotedBody,
+  QUOTED_RUN_GENERATION_TTL_SECONDS,
+  quotedRunKey,
+  readQuoteGrant,
+  readQuotedRunGeneration,
+  recordQuoteGrantConsent,
+  storeQuoteGrant,
+  type BlockQuoteBinding,
+  type BlockQuoteGrantRecord,
+} from '~/server/services/blocks/block-quote-grant.service';
 import type { BlockTrainingDataset } from '~/server/services/blocks/block-training-dataset.service';
 import { buildAiToolkitTrainingStep } from '~/server/services/orchestrator/training/training.orch';
 import {
@@ -27,16 +36,16 @@ import {
 // confirms THAT price from their own signed-in session (`consentTrainingQuote`),
 // and the submit claims the record exactly once and charges against it. Nothing in
 // this file trusts a number the block supplied.
+//
+// The store itself — binding, TTL, consent write, consume-once claim, run identity —
+// is `block-quote-grant.service`, shared with the confirmed pass-through step; this
+// file adds only what is training-specific.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** How long a training quote stays usable — consent and submit must both land inside it. */
-export const BLOCK_TRAINING_QUOTE_TTL_SECONDS = 15 * 60;
+export const BLOCK_TRAINING_QUOTE_TTL_SECONDS = BLOCK_QUOTE_GRANT_TTL_SECONDS;
 
-export type BlockTrainingQuoteRecord = BlockTrainingQuoteGrant & {
-  v: 1;
-  quoteId: string;
-  /** `hashTrainingBody` of the body that was quoted — the submit must match it. */
-  bodyHash: string;
+export type BlockTrainingQuoteRecord = BlockQuoteGrantRecord & {
   datasetId: string;
   imageCount: number;
   /** The `trainingModelInfo` key and its display name, for the consent dialog. */
@@ -45,34 +54,14 @@ export type BlockTrainingQuoteRecord = BlockTrainingQuoteGrant & {
   ecosystem: string;
   epochs: number | null;
   steps: number | null;
-  expiresAt: string;
-  consentedAt: string | null;
 };
-
-function quoteKey(quoteId: string): `${typeof REDIS_SYS_KEYS.BLOCKS.TRAINING_QUOTE}:${string}` {
-  return `${REDIS_SYS_KEYS.BLOCKS.TRAINING_QUOTE}:${quoteId}`;
-}
-
-/** JSON with object keys sorted at every depth, so a hash does not depend on key order. */
-function canonicalJson(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
-  if (value && typeof value === 'object') {
-    const entries = Object.keys(value as Record<string, unknown>)
-      .filter((k) => (value as Record<string, unknown>)[k] !== undefined)
-      .sort()
-      .map((k) => `${JSON.stringify(k)}:${canonicalJson((value as Record<string, unknown>)[k])}`);
-    return `{${entries.join(',')}}`;
-  }
-  return JSON.stringify(value);
-}
 
 /**
  * The hash that binds a quote to the body it priced. `quoteId` is excluded — it is
  * the one field the submit adds — and everything else must be identical.
  */
 export function hashTrainingBody(body: BlockTrainingBody): string {
-  const { quoteId: _quoteId, ...rest } = body;
-  return createHash('sha256').update(canonicalJson(rest)).digest('hex');
+  return hashQuotedBody(body);
 }
 
 /**
@@ -86,9 +75,7 @@ export function trainingRunKey(
   body: BlockTrainingBody,
   generation: number
 ): string {
-  return createHash('sha256')
-    .update(`${appBlockId}\n${hashTrainingBody(body)}\n${generation}`)
-    .digest('hex');
+  return quotedRunKey(appBlockId, hashTrainingBody(body), generation);
 }
 
 // Per (dataset, body): a definite submit of one body must not change the run key of
@@ -106,22 +93,15 @@ function runGenerationKey(
  * deliberate re-run after a known result is a new run, while a retry after an
  * ambiguous failure (no bump) still dedupes onto the run that may exist.
  */
-export async function readTrainingRunGeneration(body: BlockTrainingBody): Promise<number> {
-  const raw = await sysRedis.get(runGenerationKey(body));
-  const n = Number(raw ?? 0);
-  return Number.isInteger(n) && n >= 0 ? n : 0;
+export function readTrainingRunGeneration(body: BlockTrainingBody): Promise<number> {
+  return readQuotedRunGeneration(runGenerationKey(body));
 }
 
-export const TRAINING_RUN_GENERATION_TTL_SECONDS = 2 * 24 * 60 * 60;
+export const TRAINING_RUN_GENERATION_TTL_SECONDS = QUOTED_RUN_GENERATION_TTL_SECONDS;
 
 /** Record a submitted run. Best-effort: a lost bump only makes the next re-run dedupe. */
-export async function bumpTrainingRunGeneration(body: BlockTrainingBody): Promise<void> {
-  try {
-    await sysRedis.incrBy(runGenerationKey(body), 1);
-    await sysRedis.expire(runGenerationKey(body), TRAINING_RUN_GENERATION_TTL_SECONDS);
-  } catch {
-    // best-effort
-  }
+export function bumpTrainingRunGeneration(body: BlockTrainingBody): Promise<void> {
+  return bumpQuotedRunGeneration(runGenerationKey(body));
 }
 
 /** Training-service status, as `getTrainingServiceStatus` returns it. */
@@ -246,46 +226,13 @@ export function resolveBlockTrainingRun(input: {
  * Store a fresh quote. The `quoteId` is server-minted (128 random bits) and the
  * record starts UNCONSENTED.
  */
-export async function storeTrainingQuote(
+export function storeTrainingQuote(
   input: Omit<
     BlockTrainingQuoteRecord,
     'v' | 'quoteId' | 'expiresAt' | 'consentedBy' | 'consentedAt'
   >
 ): Promise<BlockTrainingQuoteRecord> {
-  const quoteId = `tq_${randomBytes(16).toString('hex')}`;
-  const record: BlockTrainingQuoteRecord = {
-    ...input,
-    v: 1,
-    quoteId,
-    expiresAt: new Date(Date.now() + BLOCK_TRAINING_QUOTE_TTL_SECONDS * 1000).toISOString(),
-    consentedBy: null,
-    consentedAt: null,
-  };
-  await sysRedis.set(quoteKey(quoteId), JSON.stringify(record), {
-    EX: BLOCK_TRAINING_QUOTE_TTL_SECONDS,
-  });
-  return record;
-}
-
-function parseQuote(raw: unknown): BlockTrainingQuoteRecord | null {
-  if (typeof raw !== 'string') return null;
-  try {
-    const parsed = JSON.parse(raw) as BlockTrainingQuoteRecord;
-    return parsed && parsed.v === 1 ? parsed : null;
-  } catch {
-    return null;
-  }
-}
-
-function isBoundTo(
-  quote: BlockTrainingQuoteRecord,
-  binding: { userId: number; appBlockId: string; blockInstanceId: string }
-): boolean {
-  return (
-    quote.userId === binding.userId &&
-    quote.appBlockId === binding.appBlockId &&
-    quote.blockInstanceId === binding.blockInstanceId
-  );
+  return storeQuoteGrant<BlockTrainingQuoteRecord>('training', input);
 }
 
 /**
@@ -293,52 +240,36 @@ function isBoundTo(
  * malformed, or bound to someone else — one answer for all, so a quote id cannot
  * be used to probe another viewer's runs). Does not consume it.
  */
-export async function readTrainingQuote(
+export function readTrainingQuote(
   quoteId: string,
-  binding: { userId: number; appBlockId: string; blockInstanceId: string }
+  binding: BlockQuoteBinding
 ): Promise<BlockTrainingQuoteRecord | null> {
-  if (!BLOCK_TRAINING_QUOTE_ID_REGEX.test(quoteId)) return null;
-  const quote = parseQuote(await sysRedis.get(quoteKey(quoteId)));
-  return quote && isBoundTo(quote, binding) ? quote : null;
+  return readQuoteGrant<BlockTrainingQuoteRecord>('training', quoteId, binding);
 }
 
 /**
- * Record that `sessionUserId` confirmed this quote. Returns the updated record, or
- * `null` when the quote is not readable for this binding or the session user is not
- * the quote's own subject.
- *
- * The write keeps the quote's remaining TTL (`KEEPTTL`) and only overwrites an
- * existing key (`XX`), so confirming never extends a quote's life and never
- * resurrects one the submit already claimed.
+ * Record that `sessionUserId` confirmed this quote. `null` when the quote is not
+ * readable for this binding or the session user is not its own subject. Keeps the
+ * remaining TTL and never resurrects a claimed quote — see `recordQuoteGrantConsent`.
  */
-export async function recordTrainingQuoteConsent(
+export function recordTrainingQuoteConsent(
   quoteId: string,
-  binding: { userId: number; appBlockId: string; blockInstanceId: string },
+  binding: BlockQuoteBinding,
   sessionUserId: number
 ): Promise<BlockTrainingQuoteRecord | null> {
-  const quote = await readTrainingQuote(quoteId, binding);
-  if (!quote || quote.userId !== sessionUserId) return null;
-  const updated: BlockTrainingQuoteRecord = {
-    ...quote,
-    consentedBy: sessionUserId,
-    consentedAt: new Date().toISOString(),
-  };
-  const written = await sysRedis.set(quoteKey(quoteId), JSON.stringify(updated), {
-    XX: true,
-    KEEPTTL: true,
-  });
-  return written ? updated : null;
+  return recordQuoteGrantConsent<BlockTrainingQuoteRecord>(
+    'training',
+    quoteId,
+    binding,
+    sessionUserId
+  );
 }
 
 /**
- * Claim a quote for a submit — EXACTLY ONCE. `GETDEL` is atomic, so of two
- * concurrent submits naming one quote only one gets the record; the other gets
- * `null`. The record is consumed whatever the caller then decides, so a submit
- * refused for any reason needs a fresh quote and a fresh confirmation.
+ * Claim a quote for a submit — EXACTLY ONCE (atomic `GETDEL`). The record is consumed
+ * whatever the caller then decides, so a submit refused for any reason needs a fresh
+ * quote and a fresh confirmation.
  */
-export async function claimTrainingQuote(
-  quoteId: string
-): Promise<BlockTrainingQuoteRecord | null> {
-  if (!BLOCK_TRAINING_QUOTE_ID_REGEX.test(quoteId)) return null;
-  return parseQuote(await sysRedis.getDel(quoteKey(quoteId)));
+export function claimTrainingQuote(quoteId: string): Promise<BlockTrainingQuoteRecord | null> {
+  return claimQuoteGrant<BlockTrainingQuoteRecord>('training', quoteId);
 }

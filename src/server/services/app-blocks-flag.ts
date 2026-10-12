@@ -1081,6 +1081,32 @@ export async function isAppBlocksTrainingKindEnabled(opts: {
 }
 
 /**
+ * Dedicated fail-closed flag for the CONFIRMED pass-through step — a `kind:'step'`
+ * `$type` job whose FIXED orchestrator price exceeds the token's per-call budget, run
+ * only once the viewer confirms that exact price in host chrome. Gates the estimate's
+ * grant (`stepQuote`), the host's `RUN_CONFIRMED_STEP` consent pair
+ * (`blocks.previewStepQuote` / `blocks.consentStepQuote`) and the confirmed submit.
+ * With it off, the pass-through arm is exactly what it was: a job above the per-call
+ * budget is refused.
+ *
+ * Same posture as `app-blocks-training-kind`: independent of the runtime flag so a GA
+ * widening of `app-blocks-enabled` does not arm it on the same day; an ABSENT flag
+ * resolves `false` for everyone, moderators included. Evaluated with the TOKEN
+ * SUBJECT'S hydrated `SessionUser`, never `ctx.user`.
+ *
+ * 🔴 SHIPS OFF. Create it in Flipt as base `enabled: false` with the `moderators`
+ * segment first.
+ */
+export const APP_BLOCKS_CONFIRMED_STEP_FLAG = 'app-blocks-confirmed-step';
+
+export async function isAppBlocksConfirmedStepEnabled(opts: {
+  user: SessionUser;
+}): Promise<boolean> {
+  const user = opts.user;
+  return isFlipt(APP_BLOCKS_CONFIRMED_STEP_FLAG, String(user.id), buildFliptContext(user));
+}
+
+/**
  * Dedicated flag for the EXTERNAL-ONLY App-store read scope — the mechanism that
  * lets the store serve `kind='offsite'` (external app) listings to a viewer while
  * `kind='onsite'` App Blocks stay hidden from them. This is a SEPARATE, ORTHOGONAL

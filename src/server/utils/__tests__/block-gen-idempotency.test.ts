@@ -42,6 +42,7 @@ import {
   ORCHESTRATOR_EXTERNAL_ID_REGEX,
   claimGenIdempotency,
   composeBlockExternalId,
+  composeConfirmedStepBlockExternalId,
   composeTrainingBlockExternalId,
   finalizeGenIdempotency,
   mintServerBlockExternalId,
@@ -277,5 +278,22 @@ describe('composeTrainingBlockExternalId', () => {
     ['upper-case', 'A'.repeat(64)],
   ])('refuses a run key that is %s', (_l, key) => {
     expect(() => composeTrainingBlockExternalId(key)).toThrow('sha256 hex digest');
+  });
+});
+
+describe('composeConfirmedStepBlockExternalId', () => {
+  it('namespaces a run key under `blc`, disjoint from the training, client and minted ids', () => {
+    const key = 'b'.repeat(64);
+    const id = composeConfirmedStepBlockExternalId(key);
+    expect(id).toBe(`blc${key}`);
+    // Same run key, different tag: the two run-keyed namespaces never collide.
+    expect(id).not.toBe(composeTrainingBlockExternalId(key));
+    expect(id.slice(0, 3)).not.toBe(mintServerBlockExternalId().slice(0, 3));
+  });
+
+  it('refuses a run key that is not a sha256 hex digest', () => {
+    expect(() => composeConfirmedStepBlockExternalId('z'.repeat(64))).toThrow(
+      'confirmed step externalId: runKey must be a sha256 hex digest'
+    );
   });
 });

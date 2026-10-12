@@ -64,6 +64,17 @@ import {
   type TrainingQuotePreview,
 } from './runTrainingGate';
 import { TrainingConsentBody } from './TrainingConsentBody';
+import {
+  buildConfirmedStepConsentCopy,
+  buildConfirmedStepDailyLimitCopy,
+  confirmedStepReplyFromResult,
+  isDailyLimitRefusal,
+  resolveRunConfirmedStepRequest,
+  type ConfirmedStepQuotePreview,
+} from './runConfirmedStepGate';
+import { ConfirmedStepConsentBody, ConfirmedStepDailyLimitBody } from './ConfirmedStepConsentBody';
+import AlertDialog from '~/components/Dialog/Common/AlertDialog';
+import { CONFIRMED_STEP_DAILY_LIMIT_ERROR_CODE } from '~/shared/constants/block-scope.constants';
 import { projectSafeGenerationResource } from '~/server/schema/blocks/generation-resource-projection';
 import type { GenerationResource } from '~/shared/types/generation.types';
 import type { BlockUploadedImageInfo } from './BlockImageUploadModal';
@@ -4712,6 +4723,145 @@ export function PageBlockHost({
                   return;
                 }
                 settlement.reply(trainingSubmitReplyFromResult(result));
+              } catch (err) {
+                settlement.reply({ error: err instanceof Error ? err.message : 'unknown' });
+              }
+            },
+            onCancel: settlement.decline,
+          },
+        });
+      })();
+    });
+    return off;
+  }, [
+    onMessage,
+    send,
+    token,
+    readGateStatus,
+    viewer,
+    reviewNack,
+    appName,
+    trpcUtils,
+    submitWorkflowMutation,
+    reportNoToken,
+  ]);
+
+  // ── RUN_CONFIRMED_STEP → CONFIRMED_STEP_RESULT ────────────────────────────
+  // One pass-through step whose FIXED price exceeds the app's per-call budget: preview
+  // the stored quote, refuse with an explanation if it would exceed the viewer's own
+  // daily limit, else confirm in host chrome, record consent (session-only), then
+  // submit — see `runConfirmedStepGate.ts`. The same shape, settlement and transport
+  // rules as RUN_TRAINING above.
+  useEffect(() => {
+    const showDailyLimitRefusal = (
+      requestId: string,
+      total: number,
+      dailyLimit: ConfirmedStepQuotePreview['dailyLimit']
+    ) => {
+      const copy = buildConfirmedStepDailyLimitCopy({ appName, total, dailyLimit });
+      dialogStore.trigger({
+        id: `block-confirmed-step-limit-${requestId}`,
+        component: AlertDialog,
+        props: {
+          type: 'info',
+          title: copy.title,
+          size: 'md',
+          children: ({ handleClose }: { handleClose: () => void }) => (
+            <ConfirmedStepDailyLimitBody copy={copy} onClose={handleClose} />
+          ),
+        },
+      });
+    };
+    const off = onMessage<unknown>('RUN_CONFIRMED_STEP', (raw) => {
+      const gate = resolveRunConfirmedStepRequest({
+        raw,
+        ready: readGateStatus() === 'ready',
+        signedIn: viewer != null,
+        reviewNack,
+      });
+      if (gate.kind === 'drop') return;
+      if (gate.kind === 'refuse') {
+        send('CONFIRMED_STEP_RESULT', { requestId: gate.requestId, error: gate.error });
+        return;
+      }
+      const { requestId, quoteId, body } = gate.request;
+      const settlement = createPostSettlement({
+        requestId,
+        emit: (payload) => send('CONFIRMED_STEP_RESULT', payload),
+      });
+      if (!token) {
+        reportNoToken('RUN_CONFIRMED_STEP');
+        settlement.reply({ error: 'no block token' });
+        return;
+      }
+      void (async () => {
+        let preview: ConfirmedStepQuotePreview;
+        try {
+          preview = (await trpcUtils.client.blocks.previewStepQuote.mutate({
+            blockToken: token,
+            quoteId,
+          })) as ConfirmedStepQuotePreview;
+        } catch (err) {
+          settlement.reply({ error: err instanceof Error ? err.message : 'unknown' });
+          return;
+        }
+        // The viewer's own limit binds and the confirm cannot override it: explain,
+        // point at where to raise it, and refuse — no confirm is offered.
+        if (preview.exceedsDailyLimit) {
+          settlement.reply({ error: CONFIRMED_STEP_DAILY_LIMIT_ERROR_CODE });
+          showDailyLimitRefusal(requestId, preview.total, preview.dailyLimit);
+          return;
+        }
+        const copy = buildConfirmedStepConsentCopy({ appName, preview });
+        const openBuyBuzz =
+          preview.shortfall != null && preview.shortfall > 0
+            ? () =>
+                dialogStore.trigger<BuyBuzzModalProps>({
+                  id: `block-confirmed-step-buy-buzz-${requestId}`,
+                  component: BuyBuzzModal,
+                  props: { minBuzzAmount: preview.shortfall ?? undefined },
+                })
+            : undefined;
+        dialogStore.trigger({
+          // Per-request id — a deduped dialog would be a request that never replies.
+          id: `block-run-confirmed-step-${requestId}`,
+          component: ConfirmDialog,
+          props: {
+            title: copy.title,
+            message: (
+              <ConfirmedStepConsentBody copy={copy} preview={preview} onBuyBuzz={openBuyBuzz} />
+            ),
+            labels: { confirm: copy.confirmLabel, cancel: 'Cancel' },
+            confirmProps: { color: 'blue' },
+            size: 'lg',
+            onConfirm: async () => {
+              // SYNCHRONOUS, before any await: from here on a dismissal must not be
+              // able to claim `declined` for a job that is being submitted.
+              settlement.markConsented();
+              try {
+                await trpcUtils.client.blocks.consentStepQuote.mutate({
+                  blockToken: token,
+                  quoteId,
+                });
+                let result: { snapshot?: unknown; submissionUnconfirmed?: unknown };
+                try {
+                  result = await submitWorkflowMutation.mutateAsync({
+                    blockToken: token,
+                    // Schema-validated server-side and checked against the quote's
+                    // body hash; the host never renders or trusts it.
+                    body: body as never,
+                  });
+                } catch (err) {
+                  // Never resent: the quote is spent once.
+                  settlement.reply(trainingSubmitReplyFromError(err));
+                  return;
+                }
+                settlement.reply(confirmedStepReplyFromResult(result));
+                // The day's spend moved between preview and submit: tell the viewer
+                // the same thing the preview would have.
+                if (isDailyLimitRefusal(result.snapshot)) {
+                  showDailyLimitRefusal(requestId, preview.total, preview.dailyLimit);
+                }
               } catch (err) {
                 settlement.reply({ error: err instanceof Error ? err.message : 'unknown' });
               }

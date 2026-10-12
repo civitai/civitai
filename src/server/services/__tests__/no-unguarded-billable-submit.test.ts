@@ -37,11 +37,14 @@ const SRC = path.join(REPO_ROOT, 'src');
  */
 const EXEMPT: Record<string, { unguarded: number; reason: string }> = {
   'src/server/routers/blocks.router.ts': {
-    unguarded: 10,
+    unguarded: 11,
     reason:
-      "App Blocks: 5 paid submits + 5 whatIf/quote estimates (the pass-through `kind:'step'` " +
+      "App Blocks: 6 paid submits + 5 whatIf/quote estimates (the pass-through `kind:'step'` " +
       'arm added one of each — it is the same block spend path, so it inherits this exemption ' +
-      "rather than getting a different answer to the same question; the `kind:'training'` arm " +
+      'rather than getting a different answer to the same question; its CONFIRMED variant ' +
+      '(a viewer-confirmed fixed price above the per-call budget) added one more paid submit on ' +
+      'that same arm and reuses its quote helper, so it adds no estimate site; ' +
+      "the `kind:'training'` arm " +
       'added a whatIf quote here, while its PAID submit is guarded, because a training workflow ' +
       'is the same shape the training form already checks). The paid ones SHOULD be guarded, ' +
       'but blocks record spend through reserveBlockBuzzSpend rather than a generation/training ' +

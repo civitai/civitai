@@ -381,8 +381,9 @@ read that file. As of this writing the families are:
 - **Workflows** (REQUEST-style, host-brokered via `blocks.submitWorkflow` /
   `estimateWorkflow` / `pollWorkflow`): `SUBMIT_WORKFLOW`, `ESTIMATE_WORKFLOW`,
   `POLL_WORKFLOW`, `CANCEL_WORKFLOW`, `PREPARE_TRAINING_DATASET` (→
-  `TRAINING_DATASET_RESULT`) and `RUN_TRAINING` (→ `TRAINING_RESULT`), the last two
-  page host only — see "Training runs".
+  `TRAINING_DATASET_RESULT`), `RUN_TRAINING` (→ `TRAINING_RESULT`) and
+  `RUN_CONFIRMED_STEP` (→ `CONFIRMED_STEP_RESULT`), the last three page host only — see
+  "Training runs" and "Confirmed steps".
 - **Buzz**: `OPEN_BUZZ_PURCHASE` (host-mediated purchase) and `GET_BUZZ_BALANCE`
   (per-account balance read — see below).
 - **Resource pickers** (host chrome so the iframe only learns the resources the
@@ -620,6 +621,48 @@ A confirmed run may cost more than the token's per-call budget, up to
 A quote is single-use, expires after 15 minutes, and is re-priced at submit; a higher
 re-price is refused, and so is a run the viewer's Buzz cannot cover (checked before anything is
 reserved, when the balance can be read). Training charges no author fee.
+
+### Confirmed steps (one pass-through job above the per-call budget)
+
+A pass-through `kind: 'step'` job (`{ $type, input, maxBuzz }`) whose price exceeds the
+token's per-call budget is refused — unless the viewer confirms that exact price in host
+chrome. Behind its own fail-closed flag, `app-blocks-confirmed-step`. It is the training
+run's quote grant applied to any pass-through `$type` (the platform denylist still
+applies). Page tokens of an ordinary viewer only: dev, dev-tunnel, review-sandbox and
+private-run tokens are refused, because none of them has host chrome to show a price in.
+
+1. **Estimate** — `ESTIMATE_WORKFLOW` with the pass-through body. When the orchestrator
+   quotes a **fixed** price (positive, not variable/metered) that is above the per-call
+   budget and at most `BLOCK_CONFIRMED_STEP_MAX_BUZZ_PER_JOB` (5,000 Buzz), the reply
+   carries `snapshot.stepQuote: { quoteId, total, stepType, expiresAt }`. `total` is the
+   price the viewer will confirm and be charged. No quote, a zero price or a variable price
+   is never grantable: the viewer confirms what they are charged. Below the budget the
+   estimate is unchanged and the job runs as before.
+2. **Run** — `RUN_CONFIRMED_STEP { requestId, body: { …the same body, quoteId } }`. The host
+   reads the quote back from the server (`blocks.previewStepQuote`), shows the price, and on
+   the viewer's confirm records it through `blocks.consentStepQuote` (signed-in session
+   only) and then submits. A submit naming a quote nobody confirmed is refused, so a block
+   cannot start the job by calling `SUBMIT_WORKFLOW` itself. The reply is
+   `CONFIRMED_STEP_RESULT { requestId, snapshot }` or `{ requestId, error }`; the host's
+   own codes are `review-mode`, `block is not ready`, `sign in to run`,
+   `invalid confirmed step request`, `no block token`, `declined`, `daily-limit-exceeded`
+   and `submission-unconfirmed` (same meaning as on training).
+3. **The viewer's daily limit binds.** If the viewer set a daily Buzz limit for the app
+   and the job would exceed what remains of it today, the host explains that instead of
+   offering a confirm, links to `/apps/activity` (where the limit is raised or removed), and
+   replies `daily-limit-exceeded`. The submit enforces the same limit and returns a failed
+   snapshot with `errorCode: 'daily-limit-exceeded'`. A viewer with no limit set (the
+   default) is unaffected.
+
+A quote is single-use, bound to the viewer, app, install and exact body, expires after 15
+minutes, and is re-priced at submit; a higher re-price, or one that is no longer fixed, is
+refused. Every other ceiling above still applies, and the job charges no author fee.
+
+**3D outputs.** A step that produces 3D models (`polyGen`) still lists every model url in
+`imageUrls`; `model3dOutputs: [{ url, format, variant }]` says which is which — `format`
+is the model's own format (`glb`, `fbx`, …) and `variant` the output field it came from
+(`model`, `riggedFbxModel`, `basicAnimations.walkingModel`, …). The same field is on
+`QUERY_APP_WORKFLOWS` items.
 
 ## Publish / review / deploy lifecycle (no trust on push)
 
