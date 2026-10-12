@@ -1,5 +1,6 @@
 // @vitest-environment happy-dom
 import { MantineProvider } from '@mantine/core';
+import type * as MantineCore from '@mantine/core';
 import * as React from 'react';
 import { createRoot } from 'react-dom/client';
 import type { act as actType } from 'react-dom/test-utils';
@@ -24,7 +25,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
 }));
 // The menu drawn flat, so what it holds is in the DOM without driving Mantine's open state.
 vi.mock('@mantine/core', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@mantine/core')>();
+  const actual = await importOriginal<typeof MantineCore>();
   const pass = ({ children }: { children?: React.ReactNode }) =>
     React.createElement(React.Fragment, null, children);
   const Menu = Object.assign(pass, {
