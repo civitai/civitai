@@ -139,6 +139,18 @@ describe('generation.getGenerationData for an image', () => {
     expect(data.params.steps).toBe(30);
   });
 
+  it('keeps the workflow for a restricted remix, with no source image', async () => {
+    await seed(PUBLISHED, 4);
+    const row = await dbMock.dbRead.image.findUnique({ where: { id: 1 } } as never);
+    dbMock.dbRead.image.findUnique.mockResolvedValue({
+      ...(row as object),
+      meta: { ...(row as { meta: object }).meta, workflow: 'img2img:edit' },
+    } as never);
+    const data = await fetchAs(undefined, false);
+    expect(data.params.workflow).toBe('img2img:edit');
+    expect(JSON.stringify(data)).not.toContain(SOURCE);
+  });
+
   it('keeps them for the owner of an R image on the SFW domain', async () => {
     await seed(PUBLISHED, 4);
     const data = await fetchAs(OWNER, false);
