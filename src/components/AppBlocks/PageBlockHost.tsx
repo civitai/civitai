@@ -733,7 +733,7 @@ export interface PageBlockHostProps {
    *     other functions, which is exactly the kind of distant coupling that
    *     produced the original defect. Encode the target route's predicate here.
    *
-   * All three mounters (`/apps/run/[slug]`, `/apps/dev/[blockId]`,
+   * All three mounters (`/apps/run/[slug]`, `DevTunnelBlockHost` for the dev tunnel,
    * `ReviewBlockPreviewHost`) read the conjunction; the source-level guard in
    * `recentAppsRail.test.ts` enumerates them by scanning the tree, so a NEW
    * mounter cannot quietly omit it or downgrade it to one flag.
