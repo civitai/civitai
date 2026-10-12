@@ -1361,6 +1361,13 @@ export function createBlockCustomComfyStep(
 export const MAX_BLOCK_POLL_WAIT_SECONDS = 15;
 
 /**
+ * Concurrent held polls per (install, viewer). The rate bucket alone allows ~300 at once by Little's
+ * law; past this cap a poll is answered without a hold, i.e. today's short poll, never refused. 4
+ * covers a viewer watching a few generations; a larger batch degrades to short polls.
+ */
+export const MAX_BLOCK_POLL_CONCURRENT_HOLDS = 4;
+
+/**
  * Normalize a caller-supplied `waitSeconds` into a value safe to hand the
  * orchestrator.
  *

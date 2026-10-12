@@ -61,6 +61,7 @@ import {
   checkBlockPublishRateLimit,
   checkBlockTrainingDatasetRateLimit,
 } from '~/server/utils/block-catalog-rate-limit';
+import { acquireBlockPollHoldSlot } from '~/server/utils/block-poll-hold-slots';
 import {
   BLOCK_IDEMPOTENCY_KEY_REGEX,
   claimGenIdempotency,
@@ -190,6 +191,7 @@ import {
   isPageLoraResource,
   projectAppWorkflow,
   blockPollWaitSecondsInput,
+  MAX_BLOCK_POLL_CONCURRENT_HOLDS,
   resolveBlockPollWaitSeconds,
   resolveBlockVersionContext,
   resolvePageResourceContext,
@@ -4570,14 +4572,28 @@ export const blocksRouter = router({
       // VIEWER SCOPE, before any orchestrator call: the id must name this viewer as its owner.
       assertBlockWorkflowMintedForViewer({ workflowId: input.workflowId, userId });
       const token = await getOrchestratorToken(userId, ctx);
-      const waitSeconds = resolveBlockPollWaitSeconds(input.waitSeconds);
-      const workflow = await getWorkflow({
-        token,
-        path: { workflowId: input.workflowId },
-        // `undefined` when there is no hold, so the request is byte-identical
-        // to the pre-long-poll one rather than carrying a `?wait=0`.
-        ...(waitSeconds !== undefined ? { query: { wait: waitSeconds } } : {}),
-      });
+      const requestedWait = resolveBlockPollWaitSeconds(input.waitSeconds);
+      const releaseHoldSlot =
+        requestedWait !== undefined
+          ? await acquireBlockPollHoldSlot(
+              claims.blockInstanceId,
+              userId,
+              MAX_BLOCK_POLL_CONCURRENT_HOLDS
+            )
+          : null;
+      const waitSeconds = releaseHoldSlot ? requestedWait : undefined;
+      let workflow: Awaited<ReturnType<typeof getWorkflow>>;
+      try {
+        workflow = await getWorkflow({
+          token,
+          path: { workflowId: input.workflowId },
+          // `undefined` when there is no hold, so the request is byte-identical
+          // to the pre-long-poll one rather than carrying a `?wait=0`.
+          ...(waitSeconds !== undefined ? { query: { wait: waitSeconds } } : {}),
+        });
+      } finally {
+        await releaseHoldSlot?.();
+      }
       // APP SCOPE — the orchestrator's own record must agree this is the calling app's workflow.
       // It runs here, on the fetched record, because the tag lives on the record; it is still
       // ahead of every line below that publishes anything derived from it back to the block.

@@ -35,6 +35,8 @@ const {
   mockIsAppBlocksAuthorEnabled,
   mockUpdateBlockWorkflowStatus,
   mockSettleCustomComfySpend,
+  mockAcquireHoldSlot,
+  mockReleaseHoldSlot,
 } = vi.hoisted(() => ({
   mockVerifyBlockToken: vi.fn(),
   mockParseSubjectUserId: vi.fn(),
@@ -50,6 +52,12 @@ const {
   mockIsAppBlocksAuthorEnabled: vi.fn(async () => true),
   mockUpdateBlockWorkflowStatus: vi.fn(async () => undefined),
   mockSettleCustomComfySpend: vi.fn(async () => undefined),
+  mockAcquireHoldSlot: vi.fn(),
+  mockReleaseHoldSlot: vi.fn(async () => undefined),
+}));
+
+vi.mock('~/server/utils/block-poll-hold-slots', () => ({
+  acquireBlockPollHoldSlot: (...args: unknown[]) => mockAcquireHoldSlot(...args),
 }));
 
 vi.mock('~/server/middleware/block-scope.middleware', () => ({
@@ -128,7 +136,10 @@ import { blocksRouter } from '../blocks.router';
 
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
-import { MAX_BLOCK_POLL_WAIT_SECONDS } from '~/server/services/blocks/workflow.service';
+import {
+  MAX_BLOCK_POLL_CONCURRENT_HOLDS,
+  MAX_BLOCK_POLL_WAIT_SECONDS,
+} from '~/server/services/blocks/workflow.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 const mockRedis = redisMock.redis;
@@ -236,6 +247,8 @@ beforeEach(() => {
   mockGetUserById.mockResolvedValue({ id: 42, isModerator: true, tier: 'free' });
   mockGetSessionUser.mockResolvedValue({ id: 42, isModerator: true, tier: 'free' });
   mockParseSubjectUserId.mockImplementation((sub: string) => (sub === 'anon' ? null : 42));
+  mockReleaseHoldSlot.mockReset().mockResolvedValue(undefined);
+  mockAcquireHoldSlot.mockReset().mockResolvedValue(mockReleaseHoldSlot);
   mockGetOrchestratorToken.mockResolvedValue('orch_token');
   mockCheckBlockCatalogRateLimit.mockResolvedValue({ allowed: true });
   mockVerifyBlockToken.mockResolvedValue(validClaims());
@@ -322,6 +335,56 @@ describe('blocks.pollWorkflow — long poll wiring', () => {
     expect(mockGetWorkflow).toHaveBeenCalledTimes(1);
     expect(queryArg()).toEqual(query);
     expect(result.snapshot.status).toBe('processing');
+  });
+
+  describe('concurrent hold cap', () => {
+    const held = { blockToken: 'tok', workflowId: 'wf_running', waitSeconds: 9 };
+
+    it('takes a slot keyed on the install and the viewer, and holds', async () => {
+      mockGetWorkflow.mockResolvedValue(RUNNING);
+      await caller().pollWorkflow(held);
+      expect(mockAcquireHoldSlot.mock.calls).toEqual([
+        ['bki_01JQ8XG7YV2K4M6P8R0T2W4Y6C', 42, MAX_BLOCK_POLL_CONCURRENT_HOLDS],
+      ]);
+      expect(queryArg()).toEqual({ wait: 9 });
+    });
+
+    it('OVER THE CAP: answers the poll without a hold instead of refusing it', async () => {
+      mockGetWorkflow.mockResolvedValue(RUNNING);
+      mockAcquireHoldSlot.mockResolvedValue(null);
+
+      const result = await caller().pollWorkflow(held);
+
+      expect(mockGetWorkflow).toHaveBeenCalledTimes(1);
+      expect(queryArg()).toBeUndefined();
+      expect(result.snapshot.status).toBe('processing');
+    });
+
+    it('releases the slot once, after the read, when the read succeeds', async () => {
+      const order: string[] = [];
+      mockGetWorkflow.mockImplementation(async () => {
+        order.push('read');
+        return RUNNING;
+      });
+      mockReleaseHoldSlot.mockImplementation(async () => {
+        order.push('release');
+      });
+      await caller().pollWorkflow(held);
+      expect(order).toEqual(['read', 'release']);
+    });
+
+    it('releases the slot when the read throws', async () => {
+      mockGetWorkflow.mockRejectedValue(new Error('orchestrator down'));
+      await expect(caller().pollWorkflow(held)).rejects.toThrow();
+      expect(mockReleaseHoldSlot).toHaveBeenCalledTimes(1);
+    });
+
+    it('takes no slot for a poll without a hold', async () => {
+      mockGetWorkflow.mockResolvedValue(RUNNING);
+      await caller().pollWorkflow({ ...held, waitSeconds: 0 });
+      await caller().pollWorkflow({ blockToken: 'tok', workflowId: 'wf_running' });
+      expect(mockAcquireHoldSlot).not.toHaveBeenCalled();
+    });
   });
 
   it('COMPLETES INSIDE THE HOLD: terminal snapshot + terminal side effects fire', async () => {

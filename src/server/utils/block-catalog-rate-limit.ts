@@ -234,8 +234,8 @@ export const BLOCK_POST_APP_RATE_LIMIT_WINDOW_SECONDS = 3600;
 //     │  value that resolves to a whole second or more asks the orchestrator for a hold.
 //     │  REST: `/api/v1/blocks/workflows/poll` (#5068) takes the field off the wire with
 //     │  no host in the path; no shipped client calls that route yet.
-//     │  Therefore: the ~300-concurrent-hold figure below is the ceiling for a block
-//     │  whose polls overlap. A loop that awaits each poll holds one per workflow.
+//     │  Concurrency: `acquireBlockPollHoldSlot` caps held polls per (install, viewer)
+//     │  at `MAX_BLOCK_POLL_CONCURRENT_HOLDS`; past it a poll is answered with no hold.
 //     └─
 //
 //     EVIDENCE — for the BRIDGE arm: `PageBlockHost` and `IframeHost` pass the field
@@ -257,10 +257,8 @@ export const BLOCK_POST_APP_RATE_LIMIT_WINDOW_SECONDS = 3600;
 //
 // ⚠️ THIS IS A RATE CEILING AND THE RESOURCE THAT ACTUALLY FAILS IS CONCURRENCY. With a
 // 15 s hold, 20/s sustained is ~300 simultaneously-held request slots per (install,
-// viewer) by Little's law, and `pollWorkflow` is a plain `publicProcedure` with no
-// bulkhead admission control. Nothing here caps concurrent holds; this bucket does not
-// pretend to. That is the number a GA reviewer should be looking at, and the control for
-// it is a concurrency cap, not a smaller rate.
+// viewer) by Little's law. This bucket does not cap that; the per-(install, viewer) hold
+// slots in `~/server/utils/block-poll-hold-slots` do, by answering without a hold.
 //
 // DELIBERATELY GENEROUS, because the two failure directions are not symmetric: a
 // too-tight poll ceiling degrades a generation the viewer already paid for, while a
