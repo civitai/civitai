@@ -79,8 +79,8 @@ function EnableCard({
 }
 
 export function AppAssistantWorkspace({ canPreview }: { canPreview: boolean }) {
-  // A revoke under connected apps surfaces as `consent_required` on the next mint, for every purpose
-  // (the consent row is gone); show the turn-on card rather than leaving every call failing.
+  // A revoke surfaces as `consent_required` on the next mint, for any purpose; show the turn-on card
+  // rather than leaving every call failing.
   const [revoked, setRevoked] = useState(false);
   const tokens = useMemo(
     () => createAssistantTokenProvider({ onConsentRequired: () => setRevoked(true) }),
@@ -192,8 +192,8 @@ export function AppAssistantWorkspace({ canPreview }: { canPreview: boolean }) {
   // page goes away. The tunnel also expires on its own.
   useEffect(() => stopPreview, [activeName, stopPreview]);
   useEffect(() => {
-    if (active?.state === 'suspended') stopPreview();
-  }, [active?.state, stopPreview]);
+    if (active?.state === 'suspended' || revoked) stopPreview();
+  }, [active?.state, revoked, stopPreview]);
   useEffect(() => {
     if (activeName && sandboxes.list.isSuccess && !active) setActiveName(null);
   }, [activeName, active, sandboxes.list.isSuccess]);

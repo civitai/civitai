@@ -223,6 +223,18 @@ describe('AppAssistantWorkspace consent', () => {
 });
 
 describe('AppAssistantWorkspace revoke', () => {
+  test('a revoke stops a running preview', async () => {
+    await mount();
+    await openFirst();
+    await startPreview('my-app');
+    m.getToken.mockRejectedValue(
+      new AssistantTokenError('Turn on App Assistant', 403, 'consent_required')
+    );
+    m.onConsentRequired!();
+    await vi.waitFor(() => expect(m.stop).toHaveBeenCalledWith({ sessionId: 'bki_1' }));
+    expect(m.stop).toHaveBeenCalledTimes(1);
+  });
+
   test('a revoke mid-session puts the turn-on card back', async () => {
     await mount();
     m.getToken.mockRejectedValue(
