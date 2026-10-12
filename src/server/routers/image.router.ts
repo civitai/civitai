@@ -160,7 +160,13 @@ export const imageRouter = router({
     //     tags: (i) => ['image-generation-data', `image-generation-data-${i.id}`],
     //   })
     // )
-    .query(({ input }) => getImageGenerationData(input)),
+    .query(({ input, ctx }) =>
+      getImageGenerationData({
+        ...input,
+        userId: ctx.user?.id,
+        isModerator: ctx.user?.isModerator,
+      })
+    ),
 
   // #region [tools]
   addTools: verifiedProcedure
