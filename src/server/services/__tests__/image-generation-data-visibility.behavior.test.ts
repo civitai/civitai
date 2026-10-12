@@ -28,6 +28,7 @@ vi.mock('~/server/services/user.service', async (importOriginal) => ({
 import { getImageGenerationData } from '../image.service';
 import { imageResourcesCache } from '~/server/redis/caches';
 import { imageVisibilityConditions } from '~/server/services/image-visibility.service';
+import type { MediaViewer } from '~/server/utils/image-media-visibility';
 import { amIBlockedByUser } from '~/server/services/user.service';
 
 const OWNER = 10;
@@ -57,7 +58,13 @@ beforeAll(async () => {
     );
   `);
   const raw = pgliteRaw(db);
-  (dbMock.dbRead.$queryRaw as unknown as ReturnType<typeof vi.fn>).mockImplementation(raw.queryRaw);
+  // Tagged-template calls, and `managesPostCollection`'s single prebuilt `Prisma.sql` argument.
+  (dbMock.dbRead.$queryRaw as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+    async (first: TemplateStringsArray | Prisma.Sql, ...values: unknown[]) =>
+      Array.isArray(first)
+        ? raw.queryRaw(first as TemplateStringsArray, ...values)
+        : (await db.query((first as Prisma.Sql).text, (first as Prisma.Sql).values)).rows
+  );
 });
 
 beforeEach(async () => {
@@ -114,9 +121,19 @@ const OTHER: Viewer = { userId: VIEWER };
 const SELF: Viewer = { userId: OWNER };
 const MOD: Viewer = { userId: VIEWER, isModerator: true };
 
+/** A request context: on the mature domain unless `canViewNsfw` is false, optionally a crawler. */
+function ctxFor(viewer: Viewer, { canViewNsfw = true, crawler = false } = {}) {
+  return {
+    user: viewer.userId ? { id: viewer.userId, isModerator: viewer.isModerator } : undefined,
+    features: { canViewNsfw },
+    req: { headers: crawler ? { 'x-civitai-verified-bot': 'googlebot' } : {} },
+    cache: { edgeTTL: 60, browserTTL: 60, staleWhileRevalidate: 30 },
+  } as unknown as MediaViewer & { cache: { edgeTTL: number } };
+}
+
 async function sees(viewer: Viewer) {
   try {
-    const data = await getImageGenerationData({ id: 1, ...viewer });
+    const data = await getImageGenerationData({ id: 1, viewer: ctxFor(viewer) });
     // The payload itself, so a stubbed early return can't pass as "visible".
     expect(data.meta?.prompt).toBe('a prompt');
     return true;
@@ -237,6 +254,87 @@ describe('getImageGenerationData visibility', () => {
     expect(await sees(MOD)).toBe(true);
     expect(await sees(ANON)).toBe(true);
     expect(amIBlockedByUser).not.toHaveBeenCalled();
+  });
+});
+
+describe('getImageGenerationData media links', () => {
+  const SOURCE = 'https://orchestration-new.civitai.com/source.png';
+  const HOMEPAGE = 'https://example.com/tool';
+  const PROMPT = 'a prompt, see https://civitai.com/posts/1 for more';
+
+  beforeEach(async () => {
+    dbMock.dbRead.image.findUnique.mockResolvedValue({
+      hideMeta: false,
+      generationProcess: null,
+      meta: {
+        prompt: PROMPT,
+        images: [{ url: SOURCE, width: 512, height: 512 }],
+        video: { url: SOURCE },
+        styleReferences: [{ image: { url: 'image-key-without-a-scheme' } }],
+        external: { source: { name: 'Tool', homepage: HOMEPAGE } },
+      },
+      type: 'image',
+      tools: [],
+      techniques: [],
+    } as never);
+    // An R-rated image in a published post that was submitted to collection 7.
+    await seed({ image: { '"nsfwLevel"': '4' }, post: { '"collectionId"': '7' } });
+    await db.exec(
+      `INSERT INTO "CollectionContributor" VALUES (7, ${MANAGER}, ARRAY['MANAGE']::"CollectionContributorPermission"[])`
+    );
+  });
+
+  async function fetchFor(viewer: Viewer, options?: Parameters<typeof ctxFor>[1]) {
+    const ctx = ctxFor(viewer, options);
+    const data = await getImageGenerationData({ id: 1, viewer: ctx });
+    return { data, json: JSON.stringify(data), ctx };
+  }
+
+  const withheld = (json: string) =>
+    !json.includes(SOURCE) && !json.includes(HOMEPAGE) && !json.includes('image-key-without');
+
+  it.each([
+    ['signed out, SFW domain', ANON, { canViewNsfw: false }],
+    ['signed out, mature domain', ANON, {}],
+    ['signed in, SFW domain', OTHER, { canViewNsfw: false }],
+    ['a crawler on the SFW domain', ANON, { canViewNsfw: false, crawler: true }],
+  ] as const)('withholds them from a viewer %s', async (_label, viewer, options) => {
+    const { data, json } = await fetchFor(viewer, options);
+    expect(withheld(json)).toBe(true);
+    // The rest of the generation data stays, including links inside the prompt text.
+    expect(data.meta?.prompt).toBe(PROMPT);
+    expect((data.meta as { styleReferences?: unknown[] })?.styleReferences).toEqual([
+      { image: {} },
+    ]);
+  });
+
+  it.each([
+    ['signed in on the mature domain', OTHER, {}],
+    ['the owner, SFW domain', SELF, { canViewNsfw: false }],
+    ['a moderator, SFW domain', MOD, { canViewNsfw: false }],
+    ["a manager of the post's collection, SFW domain", { userId: MANAGER }, { canViewNsfw: false }],
+  ] as const)('keeps them for %s', async (_label, viewer, options) => {
+    const { json } = await fetchFor(viewer, options);
+    expect(json).toContain(SOURCE);
+    expect(json).toContain(HOMEPAGE);
+    expect(json).toContain('image-key-without');
+  });
+
+  it('keeps them for a signed-out viewer of a PG image', async () => {
+    await db.exec(`UPDATE "Image" SET "nsfwLevel" = 1`);
+    const { json } = await fetchFor(ANON, { canViewNsfw: false });
+    expect(json).toContain(SOURCE);
+  });
+
+  it('keeps them for a crawler on the mature domain, out of the shared cache', async () => {
+    const { json, ctx } = await fetchFor(ANON, { crawler: true });
+    expect(json).toContain(SOURCE);
+    expect(ctx.cache.edgeTTL).toBe(0);
+  });
+
+  it('leaves the cache alone for an ordinary signed-out answer', async () => {
+    const { ctx } = await fetchFor(ANON, {});
+    expect(ctx.cache.edgeTTL).toBe(60);
   });
 });
 

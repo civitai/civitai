@@ -35,6 +35,16 @@ export function canViewImageMedia(
   return cap === undefined || (image.nsfwLevel !== 0 && Flags.hasFlag(cap, image.nsfwLevel));
 }
 
+/** Signed-out answers are edge-cached by URL alone; a crawler's must not be served to others. */
+function keepCrawlerAnswerOutOfEdgeCache(ctx: Pick<Context, 'user' | 'req' | 'cache'>) {
+  const verifiedBot = parseVerifiedBotHeader(ctx.req?.headers[VERIFIED_BOT_HEADER]);
+  if (!ctx.user && verifiedBot !== null && ctx.cache) {
+    ctx.cache.edgeTTL = 0;
+    ctx.cache.browserTTL = 0;
+    ctx.cache.staleWhileRevalidate = 0;
+  }
+}
+
 /**
  * The image as this viewer may receive it: with `url` null and external video ids dropped when
  * the viewer can't see the media. The blur hash, dimensions and rating stay for the gate card.
@@ -45,13 +55,7 @@ export function withViewerMedia<T extends MediaFields>(
   exemptions?: ViewerExemptions
 ): Omit<T, 'url'> & { url: string | null } {
   if (canViewImageMedia(ctx, image, exemptions)) {
-    // Signed-out answers are edge-cached by URL alone; a crawler's must not be served to others.
-    const verifiedBot = parseVerifiedBotHeader(ctx.req?.headers[VERIFIED_BOT_HEADER]);
-    if (!ctx.user && verifiedBot !== null && ctx.cache) {
-      ctx.cache.edgeTTL = 0;
-      ctx.cache.browserTTL = 0;
-      ctx.cache.staleWhileRevalidate = 0;
-    }
+    keepCrawlerAnswerOutOfEdgeCache(ctx);
     return image;
   }
   if (!image.metadata) return { ...image, url: null };
@@ -85,4 +89,52 @@ export async function managesPostCollection({
     ) AS managed
   `);
   return rows[0]?.managed ?? false;
+}
+
+export type MediaViewer = Pick<Context, 'user' | 'features' | 'req'> &
+  Partial<Pick<Context, 'cache'>>;
+
+/**
+ * `canViewImageMedia` with the post-collection manager exemption `getImageHandler` grants, for an
+ * image fetched by id. The collection lookup only runs when it could change the answer.
+ */
+export async function viewerCanSeeImageMedia(
+  ctx: MediaViewer,
+  image: { nsfwLevel: number; userId: number; postId: number | null }
+) {
+  const media = { nsfwLevel: image.nsfwLevel, user: { id: image.userId } };
+  const canSee =
+    canViewImageMedia(ctx, media) ||
+    (!!ctx.user &&
+      !!image.postId &&
+      (await managesPostCollection({
+        postId: image.postId,
+        imageOwnerId: image.userId,
+        userId: ctx.user.id,
+      })));
+  if (canSee) keepCrawlerAnswerOutOfEdgeCache(ctx);
+  return canSee;
+}
+
+const BARE_URL = /^\s*(https?:\/\/|data:)\S*\s*$/i;
+const isMediaReference = (key: string, value: unknown) =>
+  typeof value === 'string' && (key.toLowerCase() === 'url' || BARE_URL.test(value));
+
+/**
+ * Generation meta for a viewer who may not see the image's media: every `url` field and every
+ * string that is only a link, at any depth, removed. Source images (img2img, img2vid, ControlNet,
+ * style references) are recorded that way.
+ */
+export function withoutMediaReferences<T>(value: T): T {
+  if (Array.isArray(value))
+    return value
+      .filter((item) => !isMediaReference('', item))
+      .map((item) => withoutMediaReferences(item)) as T;
+  if (value && typeof value === 'object')
+    return Object.fromEntries(
+      Object.entries(value)
+        .filter(([key, item]) => !isMediaReference(key, item))
+        .map(([key, item]) => [key, withoutMediaReferences(item)])
+    ) as T;
+  return value;
 }

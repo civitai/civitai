@@ -55,6 +55,11 @@ import {
   imageVisibilityConditions,
 } from '~/server/services/image-visibility.service';
 import {
+  type MediaViewer,
+  viewerCanSeeImageMedia,
+  withoutMediaReferences,
+} from '~/server/utils/image-media-visibility';
+import {
   BlockedReason,
   ImageSort,
   NotificationCategory,
@@ -7901,17 +7906,17 @@ export function purgeImageGenerationDataCache(id: number) {
 
 const strengthTypes: ModelType[] = ['TextualInversion', 'LORA', 'DoRA', 'LoCon'];
 
-/** Generation data for one image, for a viewer `assertImageVisibleToViewer` admits. */
-export async function getImageGenerationData({
-  id,
-  userId,
-  isModerator,
-}: {
-  id: number;
-  userId?: number;
-  isModerator?: boolean;
-}) {
-  await assertImageVisibleToViewer({ id, userId, isModerator });
+/**
+ * Generation data for one image, for a viewer `assertImageVisibleToViewer` admits, without media
+ * links when the viewer may not see the image's media.
+ */
+export async function getImageGenerationData({ id, viewer }: { id: number; viewer: MediaViewer }) {
+  const visible = await assertImageVisibleToViewer({
+    id,
+    userId: viewer.user?.id,
+    isModerator: viewer.user?.isModerator,
+  });
+  const showMedia = await viewerCanSeeImageMedia(viewer, visible);
 
   const image = await dbRead.image.findUnique({
     where: { id },
@@ -7968,7 +7973,12 @@ export async function getImageGenerationData({
 
   const parsedMeta = imageMetaOutput.safeParse(image.meta);
   const data = parsedMeta.success ? parsedMeta.data : {};
-  const { 'Clip skip': legacyClipSkip, clipSkip = legacyClipSkip, external, ...rest } = data;
+  const {
+    'Clip skip': legacyClipSkip,
+    clipSkip = legacyClipSkip,
+    external,
+    ...rest
+  } = showMedia ? data : withoutMediaReferences(data);
   const meta =
     parsedMeta.success && !image.hideMeta ? removeEmpty({ ...rest, clipSkip }) : undefined;
 

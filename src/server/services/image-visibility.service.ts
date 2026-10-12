@@ -79,7 +79,7 @@ export function imageVisibilityConditions({
 }
 
 /**
- * Throws NOT_FOUND unless the viewer may see this image's generation data: `image.get`'s
+ * The image's owner, rating and post, or NOT_FOUND unless the viewer may see its generation data: `image.get`'s
  * visibility conditions plus its owner block check. Post checks apply whenever the image has a
  * post; a postless image follows `image.get`'s `withoutPost` rules, which is how images outside a
  * post (article covers, profile pictures) are viewed.
@@ -93,8 +93,10 @@ export async function assertImageVisibleToViewer({
   userId?: number;
   isModerator?: boolean;
 }) {
-  const [visible] = await dbRead.$queryRaw<{ userId: number }[]>`
-    SELECT i."userId"
+  const [visible] = await dbRead.$queryRaw<
+    { userId: number; nsfwLevel: number; postId: number | null }[]
+  >`
+    SELECT i."userId", i."nsfwLevel", i."postId"
     FROM "Image" i
     LEFT JOIN "Post" p ON p.id = i."postId"
     WHERE ${Prisma.join(
@@ -110,4 +112,5 @@ export async function assertImageVisibleToViewer({
     const blocked = await amIBlockedByUser({ userId, targetUserId: visible.userId });
     if (blocked) throw throwNotFoundError();
   }
+  return visible;
 }

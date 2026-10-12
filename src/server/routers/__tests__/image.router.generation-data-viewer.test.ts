@@ -46,22 +46,25 @@ beforeEach(() => {
 });
 
 describe('image.getGenerationData viewer', () => {
-  it('passes the signed-in viewer', async () => {
+  const viewerOf = () => {
+    const [args] = mockGetImageGenerationData.mock.calls[0] as [
+      { id: number; viewer: { user?: unknown; features?: unknown; req?: unknown } }
+    ];
+    return args;
+  };
+
+  it('passes the request context as the viewer', async () => {
     await callerFor({ id: 7 }).getGenerationData({ id: 3 });
-    expect(mockGetImageGenerationData).toHaveBeenCalledWith({
-      id: 3,
-      userId: 7,
-      isModerator: undefined,
-    });
+    const { id, viewer } = viewerOf();
+    expect(id).toBe(3);
+    expect(viewer.user).toEqual({ id: 7 });
+    expect(viewer.features).toBeDefined();
+    expect(viewer.req).toBeDefined();
   });
 
   it('passes the moderator flag', async () => {
     await callerFor({ id: 7, isModerator: true }).getGenerationData({ id: 3 });
-    expect(mockGetImageGenerationData).toHaveBeenCalledWith({
-      id: 3,
-      userId: 7,
-      isModerator: true,
-    });
+    expect(viewerOf().viewer.user).toEqual({ id: 7, isModerator: true });
   });
 
   it('takes the viewer from the session, never from the input', async () => {
@@ -69,20 +72,14 @@ describe('image.getGenerationData viewer', () => {
       id: 3,
       userId: 999,
       isModerator: true,
+      viewer: { user: { id: 999, isModerator: true } },
     } as never);
-    expect(mockGetImageGenerationData).toHaveBeenCalledWith({
-      id: 3,
-      userId: 7,
-      isModerator: undefined,
-    });
+    expect(Object.keys(viewerOf())).toEqual(['id', 'viewer']);
+    expect(viewerOf().viewer.user).toEqual({ id: 7 });
   });
 
-  it('passes no viewer when signed out', async () => {
+  it('passes no user when signed out', async () => {
     await callerFor(undefined).getGenerationData({ id: 3 });
-    expect(mockGetImageGenerationData).toHaveBeenCalledWith({
-      id: 3,
-      userId: undefined,
-      isModerator: undefined,
-    });
+    expect(viewerOf().viewer.user).toBeUndefined();
   });
 });
