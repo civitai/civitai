@@ -406,8 +406,8 @@ describe('lifecycle', () => {
 
 describe('identity scope — the hook can outlive the app instance', () => {
   /**
-   * 🔴 The two standalone page mounters (`/apps/run/[slug]`, and `DevTunnelBlockHost`, which
-   * `/apps/dev/[blockId]` renders) call this hook from the PAGE component, and Next does NOT remount a page on a
+   * 🔴 The two standalone mounters (`/apps/run/[slug]`'s page and `DevTunnelBlockHost`) call this
+   * hook with no `key` on the app, and Next does NOT remount a page on a
    * same-route dynamic-segment navigation — so the hook instance, and every ref
    * in it, survives an app change. The model slot is already safe (it renders
    * with `key={install.blockInstanceId}`), which is exactly why this needs its

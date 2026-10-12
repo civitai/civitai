@@ -78,6 +78,8 @@ describe('/apps/dev/[blockId] client', () => {
       blockInstanceId: 'page_apb_dev',
       iframeSrc: FRAME.iframeSrc,
       appId: 'appblk-my-app',
+      token: 't',
+      tokenError: false,
       canOpenPage: true,
     });
   });

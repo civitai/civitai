@@ -29,6 +29,7 @@ export interface DevTunnelFrame {
  * Resolves the caller's OWN app (any status, or an unclaimed slug) and, when its dev tunnel is
  * live, a freshly signed entry URL. `null` for an app the caller does not own — the same answer as
  * one that does not exist. The host comes only from the server-side tunnel record, never from input.
+ * It signs without checking the dev-tunnel kill switch, so callers must gate on it first.
  */
 export async function resolveDevTunnelFrame(
   user: SessionUser,
