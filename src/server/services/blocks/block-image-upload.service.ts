@@ -9,8 +9,9 @@ import {
 } from '~/server/services/blocks/block-image-upload.logic';
 import type { OffsiteRatingValue } from '~/shared/constants/browsingLevel.constants';
 import type { BlockProvenanceMetadataKey } from '~/shared/utils/block-provenance-metadata';
+import type { ImageMetaProps } from '~/server/schema/image.schema';
 import type { PersistBlockUploadImageInput } from '~/server/schema/blocks/block-image-upload.schema';
-import { measureUploadedImage } from '~/server/services/blocks/measure-uploaded-image';
+import { measureUploadedImageWithBytes } from '~/server/services/blocks/measure-uploaded-image';
 import { storedObjectEtagMetadata } from '~/server/services/blocks/stored-object-integrity';
 import { BLOCK_IMAGE_MAX_BYTES } from '~/shared/constants/block-image-upload.constants';
 import { sniffImageFormat, type ImageMagicFormat } from '~/shared/utils/image-magic-bytes';
@@ -54,15 +55,24 @@ export async function persistBlockUploadImage(opts: {
   uploadedByAppId?: string;
 }): Promise<{ imageId: number }> {
   const { input, userId, uploadedByAppId } = opts;
-  const measured = await measureUploadedImage(input.url, {
+  const { measured, bytes } = await measureUploadedImageWithBytes(input.url, {
     maxBytes: BLOCK_IMAGE_MAX_BYTES,
     subject: 'block images',
   });
+  // An app's bytes never pass the browser-side parse + audit an on-site upload gets, so the
+  // server runs them. A viewer-picked block upload still stores no meta. The stored prompt
+  // reaches the scan like any upload's, so it can make `gateBlockUploadImage` refuse the image.
+  let meta: ImageMetaProps | undefined;
+  if (uploadedByAppId) {
+    const { readEmbeddedImageMeta } = await import('~/server/services/blocks/embedded-image-meta');
+    meta = await readEmbeddedImageMeta(bytes);
+  }
   const { createImage } = await import('~/server/services/image.service');
   const image = await createImage({
     url: input.url,
     name: input.name ?? undefined,
     type: 'image',
+    meta,
     width: measured.width,
     height: measured.height,
     mimeType: measured.mimeType,

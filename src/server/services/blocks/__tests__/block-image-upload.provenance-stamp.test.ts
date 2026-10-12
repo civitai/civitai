@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as MeasureUploadedImage from '~/server/services/blocks/measure-uploaded-image';
 import type * as OrchestratorService from '~/server/services/orchestrator/orchestrator.service';
@@ -19,21 +20,24 @@ vi.mock('~/server/services/orchestrator/orchestrator.service', async (importOrig
   ...(await importOriginal<typeof OrchestratorService>()),
   createImageIngestionRequest: vi.fn(async () => ({ data: {} })),
 }));
-// Measuring reads the stored object; its values are not under test.
+// Measuring reads the stored object; its values are not under test. The bytes are what the
+// embedded-meta read parses.
+const h = vi.hoisted(() => ({ storedBytes: Buffer.alloc(0) }));
 vi.mock('~/server/services/blocks/measure-uploaded-image', async (importOriginal) => ({
   ...(await importOriginal<typeof MeasureUploadedImage>()),
-  measureUploadedImage: vi.fn(async () => ({
-    width: 800,
-    height: 450,
-    mimeType: 'image/png',
-    sizeBytes: 4321,
-    etag: null,
+  measureUploadedImageWithBytes: vi.fn(async () => ({
+    measured: { width: 800, height: 450, mimeType: 'image/png', sizeBytes: 4321, etag: null },
+    bytes: h.storedBytes,
   })),
 }));
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { persistBlockUploadImage } from '~/server/services/blocks/block-image-upload.service';
 import { createImage } from '~/server/services/image.service';
+import {
+  A1111_PARAMETERS,
+  pngWithTextChunks,
+} from '~/server/services/blocks/__tests__/embedded-meta-images.fixture';
 
 const KEY = '33333333-3333-4333-8333-333333333333';
 const CALLER = 42;
@@ -47,9 +51,17 @@ function storedMetadata(): Record<string, unknown> | undefined {
   return calls[0][0].data.metadata as Record<string, unknown> | undefined;
 }
 
-beforeEach(() => {
+/** The `meta` column value of the one `Image` row written. */
+function storedMeta(): unknown {
+  const calls = dbMock.dbWrite.image.create.mock.calls;
+  expect(calls).toHaveLength(1);
+  return calls[0][0].data.meta;
+}
+
+beforeEach(async () => {
   vi.clearAllMocks();
   dbMock.dbWrite.image.create.mockResolvedValue({ id: IMAGE_ID } as never);
+  h.storedBytes = await pngWithTextChunks({ parameters: A1111_PARAMETERS });
 });
 
 describe('persistBlockUploadImage → real createImage', () => {
@@ -75,6 +87,27 @@ describe('persistBlockUploadImage → real createImage', () => {
     expect(metadata && 'blockUploadedAppId' in metadata).toBe(false);
     expect(metadata && 'blockPublishedAppId' in metadata).toBe(false);
     expect(metadata?.size).toBe(4321);
+  });
+
+  it('an app bytes upload stores the parameters embedded in the file as meta', async () => {
+    await persistBlockUploadImage({
+      input: { url: KEY } as never,
+      userId: CALLER,
+      uploadedByAppId: APP_ID,
+    });
+
+    expect(storedMeta()).toMatchObject({
+      prompt: 'a lighthouse at dusk, oil painting',
+      negativePrompt: 'blurry',
+      steps: 24,
+      seed: 1234567,
+    });
+  });
+
+  it('a viewer-picked upload does not read embedded parameters', async () => {
+    await persistBlockUploadImage({ input: { url: KEY } as never, userId: CALLER });
+
+    expect(storedMeta()).toBe(Prisma.JsonNull);
   });
 });
 
