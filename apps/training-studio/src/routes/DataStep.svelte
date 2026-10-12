@@ -6,6 +6,7 @@
   import {
     IconSparkles,
     IconArchive,
+    IconDownload,
     IconRepeat,
     IconUpload,
     IconPhoto,
@@ -39,6 +40,7 @@
   import { runAutoLabel, type AutoLabelResult } from '$lib/autolabel';
   import { isAbort, uploadFile, UploadError } from '$lib/upload';
   import { trainingBlobKey } from '$lib/train-core';
+  import { buildDatasetZip, saveBlob, uniqueBaseNames } from '$lib/dataset-zip';
   import {
     blobAirFromUrl,
     captionTriggerHit,
@@ -459,6 +461,68 @@
     }
   }
 
+  // Uploads keep their File; blob-backed items (generations, a reused dataset) only have URLs, and a
+  // reused item's previewUrl is the local object URL its hydration already fetched.
+  async function imgBytes(img: Img): Promise<Blob> {
+    if (img.file) return img.file;
+    for (const url of [img.previewUrl, img.blobUrl]) {
+      if (!url) continue;
+      const res = await fetch(url).catch(() => null);
+      if (res?.ok) return res.blob();
+    }
+    throw new Error(`${img.name} unavailable`);
+  }
+
+  // Exports the current labels so a dataset can be tagged across sessions: nothing in this step
+  // persists, and the run page's Download only exists after Start.
+  let exporting = $state(false);
+  let exportNotice = $state('');
+  async function exportZip() {
+    if (exporting) return;
+    // A tile still uploading or that failed to upload keeps its File and labels — the work this exists
+    // to save. Blocked ones failed the scan and stay out.
+    const items = images.filter((i) => i.status !== 'blocked');
+    const blocked = images.length - items.length;
+    if (items.length === 0) return;
+    exporting = true;
+    exportNotice = '';
+    try {
+      const splitExt = (name: string) => {
+        const dot = name.lastIndexOf('.');
+        const ext = dot > 0 ? name.slice(dot + 1).toLowerCase() : '';
+        return mediaOfExt(ext) ? { base: name.slice(0, dot), ext } : { base: name, ext: undefined };
+      };
+      const named = items.map((img) => splitExt(img.name));
+      const bases = uniqueBaseNames(named.map((n) => n.base));
+      const { blob, failed } = await buildDatasetZip(
+        items.map((img, i) => {
+          const airExt = img.blobId ? extOfAir(img.blobId) : undefined;
+          return {
+            base: bases[i]!,
+            ext: named[i]!.ext ?? (airExt && mediaOfExt(airExt) ? airExt : undefined),
+            caption: labelString(img, labelMode),
+            load: () => imgBytes(img),
+          };
+        })
+      );
+      if (!blob) {
+        exportNotice = "Couldn't fetch any of the files — nothing to download.";
+        return;
+      }
+      saveBlob(blob, 'training-dataset.zip');
+      const plural = (n: number) => `${n} file${n === 1 ? '' : 's'}`;
+      exportNotice = [
+        failed > 0 && `${plural(failed)} couldn't be fetched`,
+        blocked > 0 && `${plural(blocked)} blocked by the scan`,
+      ]
+        .filter(Boolean)
+        .join(' and ');
+      if (exportNotice) exportNotice += ' — left out of the zip.';
+    } finally {
+      exporting = false;
+    }
+  }
+
   // Upload zip-imported files, seeding each with its caption (and marking it label-tried so a captioned
   // image isn't re-labeled). Mirrors addFiles, plus the caption seed.
   async function addImported(entries: { file: File; caption: string }[]) {
@@ -774,10 +838,22 @@
     <Button variant="outline" onclick={() => zipInput.click()} disabled={importing}>
       <IconArchive size={15} stroke={2} class="mr-1.5 inline" />{importing ? 'Importing…' : 'Import .zip'}
     </Button>
+    <Button
+      variant="outline"
+      onclick={exportZip}
+      disabled={exporting || images.every((i) => i.status === 'blocked')}
+      title="Download your {media} files with their {noun} as same-named .txt files"
+    >
+      <IconDownload size={15} stroke={2} class="mr-1.5 inline" />{exporting ? 'Zipping…' : 'Download .zip'}
+    </Button>
     <Button variant="outline" onclick={() => (reuseOpen = true)}>
       <IconRepeat size={15} stroke={2} class="mr-1.5 inline" />Reuse a dataset
     </Button>
   </div>
+
+  {#if exportNotice}
+    <p class="text-sm text-amber-400" role="status">{exportNotice}</p>
+  {/if}
 
   {#if dupNotice.count > 0}
     <Alert.Root class="flex items-start justify-between gap-3 border-dark-4 bg-dark-6 text-dark-2">
