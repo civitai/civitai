@@ -167,14 +167,18 @@ describe('state check on a code callback', () => {
     expect(logged).not.toContain('st-1');
   });
 
-  it('a provider error does not bypass the state check for a code that rides along', async () => {
-    const thrown = await callback(
-      { error: 'invalid_scope', code: 'c-1', state: 'st-OTHER' },
-      linkJar,
-      { id: 7 }
-    ).run();
-    expect(h.exchangeCode).not.toHaveBeenCalled();
-    expect(h.linkAccountToUser).not.toHaveBeenCalled();
-    expect(isRedirect(thrown) || isHttpError(thrown)).toBe(true);
-  });
+  it.each([
+    ['matching', 'st-1'],
+    ['mismatched', 'st-OTHER'],
+  ])(
+    'never exchanges a code that rides along with a provider error (%s state)',
+    async (_, state) => {
+      const thrown = await callback({ error: 'invalid_scope', code: 'c-1', state }, linkJar, {
+        id: 7,
+      }).run();
+      expect(isRedirect(thrown) && thrown.location).toBe(`${LANDING}?error=OAuthCallback`);
+      expect(h.exchangeCode).not.toHaveBeenCalled();
+      expect(h.linkAccountToUser).not.toHaveBeenCalled();
+    }
+  );
 });
