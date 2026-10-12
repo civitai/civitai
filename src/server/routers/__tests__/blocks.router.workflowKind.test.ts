@@ -725,6 +725,11 @@ describe("kind:'workflow' — refusals a block can branch on (estimate AND submi
 
 // ─────────────────────────────────────────────────────────────────────────────
 describe("kind:'workflow' SUBMIT — the money path", () => {
+  const paths = [
+    ['estimate', estimate],
+    ['submit', submit],
+  ] as const;
+
   it('🔴 reserves quote + fee ONCE, under a ceiling of budget × steps', async () => {
     // 64 is above ONE per-generation budget (37): a ceiling that forgot the step
     // multiplier would refuse this.
@@ -1007,28 +1012,71 @@ describe("kind:'workflow' SUBMIT — the money path", () => {
     }
   });
 
-  it('🔴 with no quote, a `repeat` template is stamped too — its children take their timeout from it', async () => {
-    whatifCost = undefined;
-    const repeatInput = {
-      for: { $ref: '$arguments', path: 'images', as: 'image' },
-      template: { $type: 'wdTagging', input: { mediaUrl: { $ref: 'image', path: 'url' } } },
-    };
-    const sentBody = body({
-      steps: [{ $type: 'repeat', input: repeatInput }],
-      arguments: { images: [{ url: 'a' }, { url: 'b' }] },
-    });
-    await submit(sentBody);
-    const [sent] = realSubmits()[0].body.steps;
-    expect(sent.timeout).toBe(formatStepTimeout(BUDGET));
-    // Two iterations share the one step's budget: 37 / 2, rounded down.
-    expect(sent.input).toEqual({
-      for: repeatInput.for,
-      template: { ...repeatInput.template, timeout: formatStepTimeout(18) },
-    });
-    // …and each iteration is a generation against the velocity ceiling.
-    expect(h.reserveAppSpend).toHaveBeenCalledWith('apb_test', BUDGET, { units: 2 });
-    // The app's own object is not written to.
-    expect('timeout' in repeatInput.template).toBe(false);
+  it.each(paths)(
+    '🔴 %s: an UNPRICED workflow with a `repeat` is refused before any reservation',
+    async (_n, run) => {
+      whatifCost = undefined;
+      const repeatStep = (template: Record<string, unknown>) => ({
+        $type: 'repeat',
+        input: { for: { $ref: '$arguments', path: 'images', as: 'image' }, template },
+      });
+      for (const steps of [
+        [{ $type: 'echo', input: {} }, repeatStep({ $type: 'wdTagging', input: {} })],
+        [
+          repeatStep({
+            $type: 'repeat',
+            input: {
+              for: { $ref: '$arguments', path: 'tiles', as: 'tile' },
+              template: { $type: 'wdTagging', input: {} },
+            },
+          }),
+        ],
+      ]) {
+        const { snapshot } = await run(
+          body({ steps, arguments: { images: [{ url: 'a' }], tiles: [1] } })
+        );
+        expect(snapshot).toEqual({
+          workflowId: 'failed',
+          status: 'failed',
+          errorCode: 'workflow_repeat_unbounded',
+          error: `workflow step ${
+            steps.length - 1
+          }: a workflow with a repeat needs a price quote and none could be obtained; try again`,
+        });
+      }
+      expect(realSubmits()).toHaveLength(0);
+      expect(counter(USER_CAP)).toBe(0);
+      expect(h.reserveAppSpend).not.toHaveBeenCalled();
+      expect(idemKeys()).toEqual([]);
+    }
+  );
+
+  it('🔴 a nested repeat counts 3 × 5 = 15 generations against the velocity ceiling', async () => {
+    whatifCost = { total: 70, base: 70 };
+    realizedCost = { total: 70, base: 70 };
+    await submit(
+      body({
+        arguments: { images: [1, 2, 3], tiles: [1, 2, 3, 4, 5] },
+        steps: [
+          {
+            $type: 'repeat',
+            input: {
+              for: { $ref: '$arguments', path: 'images', as: 'image' },
+              template: {
+                $type: 'repeat',
+                input: {
+                  for: { $ref: '$arguments', path: 'tiles', as: 'tile' },
+                  template: { $type: 'wdTagging', input: {} },
+                },
+              },
+            },
+          },
+          { $type: 'echo', input: {} },
+        ],
+      })
+    );
+    // 15 from the loop + 1 for the plain step; 70 + fee 3 (5% of 70).
+    expect(h.reserveAppSpend).toHaveBeenCalledWith('apb_test', 73, { units: 16 });
   });
 
   it('with a quote, a `repeat` input is forwarded as the same object, unstamped', async () => {

@@ -248,32 +248,6 @@ export function blockStepGenerations(stepType: string, input: unknown, args: unk
 }
 
 /**
- * A step input with `timeout` set on the template of a `repeat` (and of any
- * `repeat` nested in it), or the same object for any other step. A `repeat`
- * child takes its timeout from the template, not from the `repeat` step.
- */
-export function withRepeatTemplateTimeout(
-  stepType: string,
-  input: Record<string, unknown>,
-  timeout: string
-): Record<string, unknown> {
-  if (!isRepeatStepType(stepType)) return input;
-  const repeat = readRepeatInput(input);
-  if (!repeat) return input;
-  const { template } = repeat;
-  return {
-    ...input,
-    template: {
-      ...template,
-      timeout,
-      ...(isPlainObject(template.input)
-        ? { input: withRepeatTemplateTimeout(template.$type, template.input, timeout) }
-        : {}),
-    },
-  };
-}
-
-/**
  * Every `$type` a step can run — its own and, for a `repeat`, its template's.
  *
  * Returns `null` for a `repeat` it cannot follow (see `readRepeatInput`) or one

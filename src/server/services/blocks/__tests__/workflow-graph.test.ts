@@ -4,7 +4,6 @@ import {
   isMergeStepType,
   isRepeatStepType,
   resolveBlockWorkflowGraph,
-  withRepeatTemplateTimeout,
   WORKFLOW_INPUT_DEPTH_MAX,
   WORKFLOW_MAX_REFS,
   WORKFLOW_MAX_STEPS,
@@ -364,6 +363,23 @@ describe('resolveBlockWorkflowGraph — repeat', () => {
     }
   });
 
+  it('🔴 nested repeats MULTIPLY their generations: 3 × 5 = 15', () => {
+    const r = graph(
+      [
+        repeat(overImages, {
+          $type: 'repeat',
+          input: {
+            for: { $ref: '$arguments', path: 'tiles', as: 'tile' },
+            template: { $type: 'echo', input: {} },
+          },
+        }),
+      ],
+      { ...ARGS, tiles: [1, 2, 3, 4, 5] }
+    );
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.steps[0].generations).toBe(15);
+  });
+
   it('counts generations: one per step, one per iteration of a repeat', () => {
     const r = graph([step(), repeat(overImages, { $type: 'echo', input: {} })]);
     expect(r.ok).toBe(true);
@@ -506,33 +522,6 @@ describe('collectBlockStepTypes', () => {
       expect(r.errorCode).toBe('workflow_ref_invalid');
       expect(r.error).toBe(`workflow step 0: ${SHAPE_ERROR}`);
     }
-  });
-});
-
-describe('withRepeatTemplateTimeout', () => {
-  const FOR = { $ref: '$arguments', path: 'items', as: 'item' };
-
-  it('returns any other step input untouched, as the same object', () => {
-    const input = { template: { $type: 'echo' } };
-    expect(withRepeatTemplateTimeout('imageGen', input, '00:00:37')).toBe(input);
-  });
-
-  it('sets the timeout on a repeat template and on a repeat nested in it, without mutating', () => {
-    const inner = { for: FOR, template: { $type: 'wdTagging', name: 'tag', input: { a: 1 } } };
-    const input = { for: FOR, template: { $type: 'repeat', input: inner } };
-    const frozen = JSON.stringify(input);
-    expect(withRepeatTemplateTimeout('Repeat', input, '00:00:37')).toEqual({
-      for: FOR,
-      template: {
-        $type: 'repeat',
-        timeout: '00:00:37',
-        input: {
-          for: FOR,
-          template: { $type: 'wdTagging', name: 'tag', input: { a: 1 }, timeout: '00:00:37' },
-        },
-      },
-    });
-    expect(JSON.stringify(input)).toBe(frozen);
   });
 });
 

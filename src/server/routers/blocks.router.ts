@@ -199,10 +199,10 @@ import {
 } from '~/server/services/blocks/workflow.service';
 import {
   collectBlockStepTypes,
+  isRepeatStepType,
   REPEAT_SHAPE_ERROR,
   repeatUnboundedProblem,
   resolveBlockWorkflowGraph,
-  withRepeatTemplateTimeout,
 } from '~/server/services/blocks/workflow-graph';
 import type { ResolvedBlockWorkflowStep } from '~/server/services/blocks/workflow-graph';
 import { projectModelSubstitutions } from '~/shared/generation/model-substitution';
@@ -12513,6 +12513,29 @@ function buildMultiStepWorkflowTags(
     : tags;
 }
 
+/**
+ * The refusal for a workflow the orchestrator would not price, when it may not
+ * proceed at its ceiling: one running a training step (see
+ * `refuseUnquotedTraining`), or one with a `repeat` at any depth. A step
+ * `timeout` is a deadline from workflow creation shared by every child of a
+ * `repeat`, so it cannot bound their spend.
+ */
+function refuseUnpricedMultiStep(
+  steps: readonly ResolvedBlockWorkflowStep[],
+  quote: PassThroughQuote
+): { snapshot: BlockWorkflowSnapshot } | null {
+  const training = refuseUnquotedTraining(multiStepTrainingType(steps), quote);
+  if (training) return training;
+  if (quote.quotedBuzz !== null) return null;
+  const index = steps.findIndex((step) => step.stepTypes.some(isRepeatStepType));
+  if (index === -1) return null;
+  return multiStepRefusal(
+    'workflow_repeat_unbounded',
+    `workflow step ${index}: a workflow with a repeat needs a price quote and none could be ` +
+      'obtained; try again'
+  );
+}
+
 function multiStepTrainingType(steps: readonly ResolvedBlockWorkflowStep[]): string {
   return steps.flatMap((step) => step.stepTypes).find(isTrainingStepType) ?? '';
 }
@@ -12565,7 +12588,7 @@ async function estimateMultiStepWorkflow(opts: {
     recordStepPriceCheck(MULTI_STEP_RECIPE_LABEL, 'estimate_absent');
   }
 
-  const refusal = refuseUnquotedTraining(multiStepTrainingType(prepared.steps), quote);
+  const refusal = refuseUnpricedMultiStep(prepared.steps, quote);
   if (refusal) return refusal;
 
   const whatIfResult = quote.quotedBuzz === null ? null : quote.whatIfResult;
@@ -12684,20 +12707,10 @@ async function submitMultiStepWorkflow(opts: {
 
   // With no quote each step gets a timeout of the per-step budget in seconds —
   // the pass-through arm's fallback, with the budget standing in for `maxBuzz`.
+  // (An unpriced workflow with a `repeat` never gets here; see
+  // `refuseUnpricedMultiStep`.)
   if (quotedBuzz === null) {
-    orchestratorSteps.forEach((step, index) => {
-      stampUnquotedTimeout(step, perStepBudget);
-      // A `repeat` child takes its timeout from the template, not from the step,
-      // so the children share the one step's budget between them. This is the
-      // one place `input` is not forwarded as given.
-      step.input = withRepeatTemplateTimeout(
-        step.$type,
-        step.input,
-        formatStepTimeout(
-          Math.max(1, Math.floor(perStepBudget / prepared.steps[index].generations))
-        )
-      );
-    });
+    for (const step of orchestratorSteps) stampUnquotedTimeout(step, perStepBudget);
   }
 
   // (1) STATIC pre-submit gate: the whole workflow, fee included, must fit under
@@ -12746,10 +12759,10 @@ async function submitMultiStepWorkflow(opts: {
 
   // After the claim, not before it — see the same line in
   // `submitPassThroughStepWorkflow`.
-  const trainingRefusal = refuseUnquotedTraining(multiStepTrainingType(prepared.steps), quote);
-  if (trainingRefusal) {
+  const unpricedRefusal = refuseUnpricedMultiStep(prepared.steps, quote);
+  if (unpricedRefusal) {
     if (genClaimKey) await releaseGenIdempotency(genClaimKey);
-    return trainingRefusal;
+    return unpricedRefusal;
   }
 
   // (2) Reserve against the per-user cumulative cap.
@@ -13031,6 +13044,8 @@ async function submitMultiStepWorkflow(opts: {
         generationType: workflowGenerationType,
         baseGenerationBuzz: realizedBaseCost,
         generationPriceIsCap: realizedPriceIsCap,
+        // The charge is held to the reserved fee; the recorded fee is too.
+        authorFeeCeilingBuzz: reservedAuthorFeeBuzz,
       });
     })().catch(() => {
       /* best-effort: a failed attribution write never breaks submit */
