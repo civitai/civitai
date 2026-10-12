@@ -4656,8 +4656,10 @@ function formatTimeRemaining(endAt: Date): string {
  */
 export const getUserActiveCrucibles = async ({
   userId,
+  blockedCreatorIds,
 }: {
   userId: number;
+  blockedCreatorIds?: number[];
 }): Promise<
   Array<{
     id: number;
@@ -4684,6 +4686,7 @@ export const getUserActiveCrucibles = async ({
       crucible: {
         select: {
           id: true,
+          userId: true,
           name: true,
           entryFee: true,
           seededPrizePool: true,
@@ -4731,6 +4734,7 @@ export const getUserActiveCrucibles = async ({
   >();
 
   for (const entry of entries) {
+    if (isCrucibleBlockedForViewer(entry.crucible, { blockedCreatorIds })) continue;
     const crucibleId = entry.crucibleId;
     const existing = crucibleMap.get(crucibleId);
 

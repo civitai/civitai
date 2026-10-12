@@ -119,7 +119,7 @@ describe('toggleCrucibleFollow', () => {
     await expect(follow({ isModerator: true })).resolves.toBe(true);
   });
 
-  it('answers not-found when the host and the user have blocked each other, either way round', async () => {
+  it('answers not-found when the host is in the blocked creator ids', async () => {
     await expect(follow({ blockedCreatorIds: [HOST] })).rejects.toThrow('Crucible not found');
     expect(write.crucibleEngagement.create).not.toHaveBeenCalled();
   });

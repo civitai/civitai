@@ -63,18 +63,26 @@ import {
   withPaidEntryCount,
 } from '~/server/services/crucible.service';
 
-/** Creators the viewer can't see crucibles from: those who blocked them and those they blocked. */
-const getAllBlockedCreatorIds = async (user: Context['user']) => {
-  if (!user || user.isModerator) return [];
+/** Creators who blocked the viewer and creators the viewer blocked; empty for moderators. */
+const getBlockLists = async (user: Context['user']) => {
+  if (!user || user.isModerator) return { blockedBy: [], blocked: [] };
   const [blockedBy, blocked] = await Promise.all([
     BlockedByUsers.getCached({ userId: user.id }),
     BlockedUsers.getCached({ userId: user.id }),
   ]);
-  return [...new Set([...blockedBy, ...blocked].map((u) => u.id))];
+  return { blockedBy: blockedBy.map((u) => u.id), blocked: blocked.map((u) => u.id) };
 };
 
-const getBlockedCreatorIds = async (user: Context['user']) =>
-  boundExcludedUserIds([], await getAllBlockedCreatorIds(user), []);
+const getAllBlockedCreatorIds = async (user: Context['user']) => {
+  const { blockedBy, blocked } = await getBlockLists(user);
+  return [...new Set([...blockedBy, ...blocked])];
+};
+
+/** Bounded for a `notIn`; on overflow the viewer's own block list is dropped first. */
+const getBlockedCreatorIds = async (user: Context['user']) => {
+  const { blockedBy, blocked } = await getBlockLists(user);
+  return boundExcludedUserIds([], blockedBy, blocked);
+};
 
 export const getInfiniteCruciblesHandler = async ({
   input,
@@ -364,7 +372,10 @@ export const getUserCrucibleStatsHandler = async ({ ctx }: { ctx: ProtectedConte
 };
 
 export const getUserActiveCruciblesHandler = async ({ ctx }: { ctx: ProtectedContext }) => {
-  return getUserActiveCrucibles({ userId: ctx.user.id });
+  return getUserActiveCrucibles({
+    userId: ctx.user.id,
+    blockedCreatorIds: await getAllBlockedCreatorIds(ctx.user),
+  });
 };
 
 export const getFeaturedCrucibleHandler = async ({

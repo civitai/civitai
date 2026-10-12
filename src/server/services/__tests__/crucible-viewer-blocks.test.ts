@@ -39,6 +39,9 @@ vi.mock('~/server/services/feature-flags.service', async (importOriginal) => ({
 }));
 
 import { crucibleRouter } from '~/server/routers/crucible.router';
+const { checkCrucibleEntryEligibility, getCrucibleJudgesCount } = await vi.importActual<
+  typeof CrucibleService
+>('~/server/services/crucible.service');
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 const CRUCIBLE_ID = 7;
@@ -86,6 +89,21 @@ const openCrucible = {
   minViewSeconds: null,
 };
 
+const activeEntry = {
+  id: 1,
+  position: null,
+  crucibleId: CRUCIBLE_ID,
+  crucible: {
+    id: CRUCIBLE_ID,
+    userId: HOST_ID,
+    name: 'Crucible',
+    entryFee: 0,
+    seededPrizePool: 0,
+    endAt: null,
+    image: null,
+  },
+};
+
 const directions = [
   ['a host who blocked the viewer', blockedBy, blocked],
   ['a viewer who blocked the host', blocked, blockedBy],
@@ -108,6 +126,12 @@ beforeEach(() => {
     _sum: { voteCount: 0 },
     _count: { _all: 0 },
   });
+  dbMock.dbRead.crucible.findMany.mockResolvedValue([openCrucible]);
+  dbMock.dbRead.$queryRaw.mockResolvedValue(
+    [1, 2, 3].map((id) => ({ crucibleId: CRUCIBLE_ID, id }))
+  );
+  redisMock.sysRedis.hGetAll.mockResolvedValue({});
+  redisMock.sysRedis.sMembers.mockResolvedValue(['1:2']);
   redisMock.sysRedis.sCard.mockResolvedValue(3);
   redisMock.sysRedis.set.mockResolvedValue('OK');
 });
@@ -165,10 +189,21 @@ describe.each(directions)('%s', (_, blockingList, otherList) => {
       () => caller().submitVote({ crucibleId: CRUCIBLE_ID, winnerEntryId: 1, loserEntryId: 2 }),
     ],
     ['entry', () => caller().submitEntry({ crucibleId: CRUCIBLE_ID, imageId: 1 })],
+    ['entry post', () => caller().createEntryPost({ crucibleId: CRUCIBLE_ID })],
   ])('gets not found for the crucible’s %s', async (__, call) => {
     await expect(call()).rejects.toThrow(NOT_FOUND);
     expect(dbMock.dbWrite.crucibleEngagement.create).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.crucibleEntry.create).not.toHaveBeenCalled();
+  });
+
+  it('leaves the host’s crucible out of the judging statuses', async () => {
+    await expect(caller().getJudgingStatuses({ crucibleIds: [CRUCIBLE_ID] })).resolves.toEqual([]);
+  });
+
+  it('leaves the host’s crucible out of the viewer’s active crucibles', async () => {
+    dbMock.dbRead.crucibleEntry.findMany.mockResolvedValue([activeEntry]);
+
+    await expect(caller().getUserActiveCrucibles({})).resolves.toEqual([]);
   });
 
   it('still lets a moderator follow, and read the side endpoints', async () => {
@@ -181,6 +216,18 @@ describe.each(directions)('%s', (_, blockingList, otherList) => {
 });
 
 describe('a viewer with no block either way', () => {
+  it('gets the host’s crucible in the judging statuses', async () => {
+    const statuses = await caller().getJudgingStatuses({ crucibleIds: [CRUCIBLE_ID] });
+
+    expect(statuses).toMatchObject([{ crucibleId: CRUCIBLE_ID, judged: true }]);
+  });
+
+  it('keeps the host’s crucible in the viewer’s active crucibles', async () => {
+    dbMock.dbRead.crucibleEntry.findMany.mockResolvedValue([activeEntry]);
+
+    await expect(caller().getUserActiveCrucibles({})).resolves.toHaveLength(1);
+  });
+
   it('sees the detail page and the side endpoints', async () => {
     await expect(caller().getById({ id: CRUCIBLE_ID })).resolves.toBeTruthy();
     await expect(caller().getJudgesCount({ crucibleId: CRUCIBLE_ID })).resolves.toEqual({
@@ -195,5 +242,40 @@ describe('a viewer with no block either way', () => {
     dbMock.dbRead.crucible.findUnique.mockResolvedValue(null);
 
     await expect(caller().getJudgesCount({ crucibleId: CRUCIBLE_ID })).rejects.toThrow(NOT_FOUND);
+  });
+});
+
+describe('a moderator, at the service', () => {
+  const mod = { isModerator: true, blockedCreatorIds: [HOST_ID] };
+
+  it('can check entry eligibility on a blocked host’s crucible', async () => {
+    dbMock.dbRead.image.findMany.mockResolvedValue([]);
+
+    await expect(
+      checkCrucibleEntryEligibility({ crucibleId: CRUCIBLE_ID, imageIds: [1], userId: 1, ...mod })
+    ).resolves.toBeDefined();
+  });
+
+  it('can read the judge count of a blocked host’s crucible', async () => {
+    await expect(
+      getCrucibleJudgesCount({
+        crucibleId: CRUCIBLE_ID,
+        viewer: { isModerator: true, blockedCreatorIds: [HOST_ID] },
+      })
+    ).resolves.toBe(3);
+  });
+
+  it('is refused both without the moderator flag', async () => {
+    await expect(
+      checkCrucibleEntryEligibility({
+        crucibleId: CRUCIBLE_ID,
+        imageIds: [1],
+        userId: 1,
+        blockedCreatorIds: [HOST_ID],
+      })
+    ).rejects.toThrow(NOT_FOUND);
+    await expect(
+      getCrucibleJudgesCount({ crucibleId: CRUCIBLE_ID, viewer: { blockedCreatorIds: [HOST_ID] } })
+    ).rejects.toThrow(NOT_FOUND);
   });
 });
