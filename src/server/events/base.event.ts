@@ -275,6 +275,14 @@ export type EventBannerCopy = {
   priority?: number;
 };
 
+type EditorCardCopy = {
+  title?: string;
+  body: string;
+  // Shown while the content is unpublished.
+  draftNote?: string;
+  image?: string;
+};
+
 // Copy for the event's other entry points, served beside its banner (see nav-banner.service.ts).
 // Links, visibility and the hat button are derived from the rest of the definition, never set here.
 export type EventPromoCopy = {
@@ -282,13 +290,9 @@ export type EventPromoCopy = {
   menuLabel?: string;
   menuIcon?: EventPromoIcon;
   // The card under Publish in the post editor. Omit it and the editor shows no card.
-  postEditor?: {
-    title?: string;
-    body: string;
-    // Shown while the post is unpublished.
-    draftNote?: string;
-    image?: string;
-  };
+  postEditor?: EditorCardCopy;
+  // The same card in the article editor, for an event whose decoration can sit on an article.
+  articleEditor?: EditorCardCopy;
   homeBlock?: { eyebrow?: string; title?: string; body?: string; cta?: string };
 };
 

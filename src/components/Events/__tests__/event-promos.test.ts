@@ -17,8 +17,8 @@ const {
   eventMenuEntries,
   eventPromosFrom,
   hatButtonLabel,
-  postEditorCardId,
-  postEditorPromo,
+  editorCardId,
+  editorPromo,
   teamRosterHref,
 } = await import('~/components/Events/event-promos');
 const { visibleNavBanners } = await import(
@@ -47,8 +47,9 @@ describe('event entry points, from the gated answer', () => {
       menu: eventMenuEntries(promos).map((e) => e.href),
       roster: teamRosterHref(promos, 'birthday2026'),
       hints: banners.map((b) => dismissHint(b, banners)).filter(Boolean),
-      postEditor: postEditorPromo(promos, [])?.event,
-      editorCopy: !!postEditorPromo(promos, [])?.postEditor?.body,
+      postEditor: editorPromo(promos, [], 'postEditor')?.event,
+      editorCopy: !!editorPromo(promos, [], 'postEditor')?.postEditor?.body,
+      articleEditor: !!editorPromo(promos, [], 'articleEditor')?.articleEditor?.body,
     };
   };
 
@@ -60,6 +61,7 @@ describe('event entry points, from the gated answer', () => {
         hints: [],
         postEditor: undefined,
         editorCopy: false,
+        articleEditor: false,
       });
   });
 
@@ -70,6 +72,7 @@ describe('event entry points, from the gated answer', () => {
       hints: ["Find Civitai's 4th Birthday in your menu any time."],
       postEditor: 'birthday2026',
       editorCopy: true,
+      articleEditor: true,
     });
   });
 
@@ -81,6 +84,7 @@ describe('event entry points, from the gated answer', () => {
       hints: [],
       postEditor: undefined,
       editorCopy: false,
+      articleEditor: false,
     });
   });
 });
@@ -145,7 +149,7 @@ describe('teamRosterHref', () => {
   });
 });
 
-describe('postEditorPromo', () => {
+describe('editorPromo', () => {
   const editor = { title: 'T', body: 'B' };
 
   it('is the first event with editor copy that the viewer has not hidden', () => {
@@ -154,13 +158,30 @@ describe('postEditorPromo', () => {
       promo('b', { postEditor: editor }),
       promo('c', { postEditor: editor }),
     ];
-    expect(postEditorPromo(promos, [])?.event).toBe('b');
-    expect(postEditorPromo(promos, [postEditorCardId('b')])?.event).toBe('c');
-    expect(postEditorPromo([promo('a')], [])).toBeUndefined();
+    expect(editorPromo(promos, [], 'postEditor')?.event).toBe('b');
+    expect(editorPromo(promos, [editorCardId('postEditor', 'b')], 'postEditor')?.event).toBe('c');
+    expect(editorPromo([promo('a')], [], 'postEditor')).toBeUndefined();
   });
 
   it("is not hidden by dismissing the event's strip", () => {
-    expect(postEditorPromo([promo('b', { postEditor: editor })], ['event:b'])?.event).toBe('b');
+    expect(
+      editorPromo([promo('b', { postEditor: editor })], ['event:b'], 'postEditor')?.event
+    ).toBe('b');
+  });
+
+  it("reads each editor's own copy and is hidden per editor", () => {
+    const promos = [
+      promo('a', { postEditor: editor }),
+      promo('b', { articleEditor: editor }),
+      promo('c', { postEditor: editor, articleEditor: editor }),
+    ];
+    expect(editorPromo(promos, [], 'articleEditor')?.event).toBe('b');
+    const hidden = [editorCardId('articleEditor', 'b'), editorCardId('articleEditor', 'c')];
+    expect(editorPromo(promos, hidden, 'articleEditor')).toBeUndefined();
+    expect(editorPromo(promos, hidden, 'postEditor')?.event).toBe('a');
+    // The post editor's id predates the article card: changing it would bring back hidden cards.
+    expect(editorCardId('postEditor', 'a')).toBe('post-editor:event:a');
+    expect(editorCardId('articleEditor', 'a')).toBe('article-editor:event:a');
   });
 });
 
@@ -168,5 +189,10 @@ describe('hatButtonLabel', () => {
   it('names the decoration for an event whose hats sit on images, and nothing otherwise', () => {
     expect(hatButtonLabel('birthday2026')).toBe('Put on a Party Hat');
     expect(hatButtonLabel('no-such-event')).toBeUndefined();
+  });
+
+  it('checks the kind of content the hat would go on', () => {
+    expect(hatButtonLabel('birthday2026', 'Article')).toBe('Put on a Party Hat');
+    expect(hatButtonLabel('birthday2026', 'Post')).toBeUndefined();
   });
 });

@@ -616,7 +616,7 @@ async function assertImageCanWearEventDecoration(imageId: number) {
   });
   throw throwBadRequestError(
     article
-      ? "This image is your article's cover, which isn't shown on its own. Put the hat on the article instead, from the ⋯ menu on its card in your profile."
+      ? "This image is your article's cover, which isn't shown on its own. Put the hat on the article instead: Add Party Hat in the article's ⋯ menu, or the hat card in the article editor."
       : 'Hats can only go on images that are in a post.'
   );
 }
