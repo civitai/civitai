@@ -316,6 +316,14 @@ describe('upsertModelVersion — cannot publish through the editor', () => {
     expect(mockTx.modelVersion.update).not.toHaveBeenCalled();
   });
 
+  it('refuses a non-moderator moving a Scheduled version to Published', async () => {
+    seedExisting(ModelStatus.Scheduled);
+
+    await expect(
+      upsertModelVersion({ id: VERSION_ID, status: ModelStatus.Published } as never)
+    ).rejects.toThrowError(/Use the publish action/);
+  });
+
   // The review handlers replay the stored row, status included, with no moderator flag.
   it('lets a save that carries the current Scheduled status through', async () => {
     seedExisting(ModelStatus.Scheduled);
