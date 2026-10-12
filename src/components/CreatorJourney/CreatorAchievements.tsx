@@ -15,7 +15,7 @@ import {
 import {
   ACHIEVEMENT_TRACK_STYLES,
   CREATOR_MILESTONE_GRANT_CRON,
-  HIDDEN_MILESTONE_KEY_PREFIX,
+  isMaskedMilestoneKey,
   nextDailyCronRun,
 } from '~/shared/constants/creator-journey.constants';
 import type { RouterOutput } from '~/types/router';
@@ -138,7 +138,7 @@ function nextOf(milestones: Milestone[], measure: Measure) {
 }
 
 /** A masked hidden rung, which never shows progress, so it cannot say it was passed. */
-const isMasked = (milestone: Milestone) => milestone.key.startsWith(HIDDEN_MILESTONE_KEY_PREFIX);
+const isMasked = (milestone: Milestone) => isMaskedMilestoneKey(milestone.key);
 
 /** Passed but not granted until the nightly job runs. */
 function isPending(milestone: Milestone) {
