@@ -24,8 +24,7 @@ import { div as MotionDiv, span as MotionSpan } from 'motion/react-m';
 import type { ComponentProps } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import { Reactions } from '~/components/Reaction/Reactions';
-import { ReactionSettingsProvider } from '~/components/Reaction/ReactionSettingsProvider';
+import { JudgeReactionBar } from '~/components/Crucible/JudgeReactionBar';
 import { useHydratedImageReactions } from '~/components/Reaction/useHydratedImageReactions';
 import type { RouterOutput } from '~/types/router';
 import { MediaType } from '~/shared/utils/prisma/enums';
@@ -64,8 +63,6 @@ const pairGridClass =
 const mediaBoxClass =
   'h-[36svh] min-h-[200px] max-md:landscape:h-[calc(100svh-8rem)] md:h-auto md:min-h-0 md:flex-1';
 const footerSlotClass = 'flex min-w-0 items-center empty:hidden md:w-[420px] md:empty:flex';
-
-const hiddenReactionCounts = { hideReactionCount: true };
 
 const loadMotion = () => import('~/utils/lazy-motion').then((res) => res.default);
 const VOTE_FEEDBACK_MS = 200;
@@ -640,6 +637,14 @@ function ImageCard({
           {hotkeyLabel}
         </span>
 
+        <JudgeReactionBar
+          imageId={entry.image.id}
+          reactions={reactions ?? []}
+          side={position}
+          // Native video controls own the bottom edge, so the pill sits above them.
+          className={clsx('absolute right-3.5 z-10', isVideo ? 'bottom-[60px]' : 'bottom-3.5')}
+        />
+
         {plusOneId != null && (
           <MotionSpan
             key={plusOneId}
@@ -653,24 +658,6 @@ function ImageCard({
           </MotionSpan>
         )}
       </Box>
-
-      <div
-        data-testid="judge-reactions"
-        data-side={position}
-        className="flex justify-center bg-[#1a1b1e] py-1"
-        onClick={(e) => e.stopPropagation()}
-        onKeyDown={(e) => e.stopPropagation()}
-      >
-        <ReactionSettingsProvider settings={hiddenReactionCounts}>
-          <Reactions
-            entityType="image"
-            entityId={entry.image.id}
-            reactions={reactions ?? []}
-            showAll
-            disableBuzzTip
-          />
-        </ReactionSettingsProvider>
-      </div>
     </Paper>
   );
 }

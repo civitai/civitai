@@ -1193,10 +1193,10 @@ describe('CrucibleJudgingUI — reactions', () => {
     await renderPair();
 
     await vi.waitFor(() =>
-      expect(reactionButton('left', 'Laugh')!.getAttribute('data-variant')).toBe('light')
+      expect(reactionButton('left', 'Laugh')!.getAttribute('aria-pressed')).toBe('true')
     );
-    expect(reactionButton('left', 'Like')!.getAttribute('data-variant')).toBe('subtle');
-    expect(reactionButton('right', 'Laugh')!.getAttribute('data-variant')).toBe('subtle');
+    expect(reactionButton('left', 'Like')!.getAttribute('aria-pressed')).toBe('false');
+    expect(reactionButton('right', 'Laugh')!.getAttribute('aria-pressed')).toBe('false');
   });
 
   test('offers the same four reactions on every entry', async () => {
