@@ -353,6 +353,39 @@ describe('PageBlockHost workflow bridge (W10 money-path wiring)', () => {
     replies.stop();
   });
 
+  test.each([
+    ['a whole number of seconds', { waitSeconds: 7 }, { waitSeconds: 7 }],
+    ['a fraction (floored)', { waitSeconds: 7.9 }, { waitSeconds: 7 }],
+    ['a value above the wire bound (capped)', { waitSeconds: 90 }, { waitSeconds: 60 }],
+    ['no waitSeconds', {}, {}],
+    ['a numeric string', { waitSeconds: '7' }, {}],
+    ['NaN', { waitSeconds: Number.NaN }, {}],
+    ['a negative', { waitSeconds: -3 }, {}],
+  ])(
+    'POLL_WORKFLOW with %s calls pollWorkflow with exactly the expected input',
+    async (_label, sent, expectedExtra) => {
+      const snapshot = { workflowId: 'wf_wait', status: 'processing' };
+      mocks.poll.mockResolvedValue({ snapshot });
+      renderWithProviders(<PageBlockHost {...baseProps} />);
+      await driveToReady();
+      const replies = listenForReply();
+
+      postFromBlock('POLL_WORKFLOW', { requestId: 'rq_wait', workflowId: 'wf_wait', ...sent });
+
+      await vi.waitFor(() => {
+        const r = replies.last('WORKFLOW_STATUS');
+        if (!r) throw new Error('no reply yet');
+        expect(r.payload).toEqual({ requestId: 'rq_wait', snapshot });
+      });
+      // toStrictEqual, not toHaveBeenCalledWith: an explicit `waitSeconds: undefined` must not
+      // pass as "omitted".
+      expect(mocks.poll.mock.calls).toStrictEqual([
+        [{ blockToken: 'tok_abc', workflowId: 'wf_wait', ...expectedExtra }],
+      ]);
+      replies.stop();
+    }
+  );
+
   test('CANCEL_WORKFLOW forwards workflowId and posts WORKFLOW_CANCELED', async () => {
     const snapshot = { workflowId: 'wf_cancel', status: 'canceled' };
     mocks.cancel.mockResolvedValue({ snapshot });

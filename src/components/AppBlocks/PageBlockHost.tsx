@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { sanitizeAppChromeName } from './appChromeName';
 import { BlockFallback } from './BlockFallback';
 import { failureSnapshot } from './failureSnapshot';
+import { pollWaitSecondsForWire } from './pollWaitSeconds';
 import { AppBlockChrome } from './IframeHost';
 import { IframeInitController, shouldStartInit } from './iframeInitController';
 import {
@@ -2330,10 +2331,12 @@ export function PageBlockHost({
           return;
         }
         const requestId = raw.requestId;
+        const waitSeconds = pollWaitSecondsForWire((raw as { waitSeconds?: unknown }).waitSeconds);
         try {
           const { snapshot } = await pollWorkflowMutation.mutateAsync({
             blockToken: token,
             workflowId: raw.workflowId,
+            ...(waitSeconds !== undefined ? { waitSeconds } : {}),
           });
           send('WORKFLOW_STATUS', { requestId, snapshot });
         } catch (err) {

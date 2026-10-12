@@ -11,6 +11,7 @@ import {
   blockWorkflowCaller,
 } from '~/server/services/blocks/block-workflow-rest';
 import { handleEndpointError } from '~/server/utils/endpoint-helpers';
+import { BLOCK_POLL_WAIT_SECONDS_WIRE_MAX } from '~/shared/constants/block-poll-wait.constants';
 
 /**
  * POST /api/v1/blocks/workflows/poll  body `{ workflowId, waitSeconds? }` → `{ snapshot }`
@@ -71,7 +72,7 @@ export const config = { api: { bodyParser: { sizeLimit: '4kb' } } };
 // policy, and the policy stays in one place.
 const bodySchema = z.object({
   workflowId: z.string().min(1).max(64),
-  waitSeconds: z.number().int().min(0).max(60).optional(),
+  waitSeconds: z.number().int().min(0).max(BLOCK_POLL_WAIT_SECONDS_WIRE_MAX).optional(),
 });
 
 // Exported for unit testing (the default export is wrapped in withBlockScope,

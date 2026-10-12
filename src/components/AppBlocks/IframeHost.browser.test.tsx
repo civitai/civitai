@@ -14,6 +14,7 @@ import {
 // throwaway fns — only GET_BUZZ_BALANCE is behaviorally exercised here.
 const mocks = vi.hoisted(() => ({
   estimate: vi.fn(),
+  poll: vi.fn(),
   balance: vi.fn(),
   append: vi.fn(),
   update: vi.fn(),
@@ -86,7 +87,7 @@ vi.mock('~/utils/trpc', () => ({
       // these beacon tests).
       submitWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       estimateWorkflow: { useMutation: () => ({ mutateAsync: mocks.estimate }) },
-      pollWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      pollWorkflow: { useMutation: () => ({ mutateAsync: mocks.poll }) },
       cancelWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       updateUserSettings: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       getMyBuzzBalance: { useMutation: () => ({ mutateAsync: mocks.balance }) },
@@ -479,6 +480,45 @@ describe('IframeHost ESTIMATE_WORKFLOW → ESTIMATE_RESULT (model.sidebar_top)',
     });
     replies.stop();
   });
+});
+
+describe('IframeHost POLL_WORKFLOW waitSeconds forwarding (model.sidebar_top)', () => {
+  beforeEach(() => {
+    mocks.poll.mockReset();
+  });
+
+  test.each([
+    ['a whole number of seconds', { waitSeconds: 7 }, { waitSeconds: 7 }],
+    ['a fraction (floored)', { waitSeconds: 7.9 }, { waitSeconds: 7 }],
+    ['a value above the wire bound (capped)', { waitSeconds: 90 }, { waitSeconds: 60 }],
+    ['no waitSeconds', {}, {}],
+    ['a numeric string', { waitSeconds: '7' }, {}],
+    ['NaN', { waitSeconds: Number.NaN }, {}],
+    ['a negative', { waitSeconds: -3 }, {}],
+  ])(
+    'POLL_WORKFLOW with %s calls pollWorkflow with exactly the expected input',
+    async (_label, sent, expectedExtra) => {
+      const snapshot = { workflowId: 'wf_wait', status: 'processing' };
+      mocks.poll.mockResolvedValue({ snapshot });
+      renderWithProviders(<IframeHost {...baseProps} />);
+      await driveToReady();
+      const replies = listenForReply();
+
+      postFromBlock('POLL_WORKFLOW', { requestId: 'rq_wait', workflowId: 'wf_wait', ...sent });
+
+      await vi.waitFor(() => {
+        const r = replies.last('WORKFLOW_STATUS');
+        if (!r) throw new Error('no reply yet');
+        expect(r.payload).toEqual({ requestId: 'rq_wait', snapshot });
+      });
+      // toStrictEqual, not toHaveBeenCalledWith: an explicit `waitSeconds: undefined` must not
+      // pass as "omitted".
+      expect(mocks.poll.mock.calls).toStrictEqual([
+        [{ blockToken: 'tok_abc', workflowId: 'wf_wait', ...expectedExtra }],
+      ]);
+      replies.stop();
+    }
+  );
 });
 
 describe('IframeHost shared-storage rate-limit refusals (model.sidebar_top)', () => {

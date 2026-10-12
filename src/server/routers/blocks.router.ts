@@ -2,6 +2,7 @@ import { GLOBAL_SCOPE_ACTIVITY_OR } from '~/server/services/blocks/scope-activit
 import { TRPCError, getTRPCErrorFromUnknown } from '@trpc/server';
 import * as z from 'zod';
 import { BLOCK_ANALYTICS_NAME_RE } from '~/shared/constants/block-analytics.constants';
+import { BLOCK_POLL_WAIT_SECONDS_WIRE_MAX } from '~/shared/constants/block-poll-wait.constants';
 import {
   KNOWN_SLOT_IDS as SLOT_KNOWN_SLOT_IDS,
   isLaunchSlot,
@@ -4482,7 +4483,7 @@ export const blocksRouter = router({
          * `.max()` is deliberately the LOOSER of the two: it rejects nonsense,
          * the resolver decides policy, and the policy lives in one place.
          */
-        waitSeconds: z.number().int().min(0).max(60).optional(),
+        waitSeconds: z.number().int().min(0).max(BLOCK_POLL_WAIT_SECONDS_WIRE_MAX).optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {

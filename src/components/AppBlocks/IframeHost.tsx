@@ -37,6 +37,7 @@ import { BlockFallback } from './BlockFallback';
 import { BRIDGE_NACK_NO_TOKEN } from './bridgeLabels';
 import { handleEstimateBatch } from './estimateBatchGate';
 import { failureSnapshot } from './failureSnapshot';
+import { pollWaitSecondsForWire } from './pollWaitSeconds';
 import { hostRenderDecision } from './hostRenderDecision';
 import { resolveBuzzPurchaseRequest } from './openBuzzPurchaseGate';
 import { resolveRequestSignIn } from './requestSignInGate';
@@ -2437,10 +2438,12 @@ export function IframeHost({
           return;
         }
         const requestId = raw.requestId;
+        const waitSeconds = pollWaitSecondsForWire((raw as { waitSeconds?: unknown }).waitSeconds);
         try {
           const { snapshot } = await pollWorkflowMutation.mutateAsync({
             blockToken: token,
             workflowId: raw.workflowId,
+            ...(waitSeconds !== undefined ? { waitSeconds } : {}),
           });
           send('WORKFLOW_STATUS', { requestId, snapshot });
         } catch (err) {
