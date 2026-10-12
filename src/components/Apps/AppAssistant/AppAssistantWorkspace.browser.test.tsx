@@ -38,7 +38,6 @@ const m = vi.hoisted(() => ({
   openError: null as unknown,
 }));
 
-vi.mock('~/env/client', () => ({ env: { NEXT_PUBLIC_APP_ASSISTANT_SANDBOX_URL: BASE } }));
 vi.mock('~/components/Apps/AppAssistant/AppAssistantChat', () => ({
   AppAssistantChat: (props: NonNullable<typeof m.chat>) => {
     m.chat = props;
@@ -92,7 +91,7 @@ const ctx = { signal: new AbortController().signal, conversationId: 'c', files: 
 
 async function mount() {
   await page.viewport(1440, 900);
-  const screen = renderWithProviders(<AppAssistantWorkspace canPreview />);
+  const screen = renderWithProviders(<AppAssistantWorkspace canPreview sandboxUrl={BASE} />);
   await expect.element(page.getByTestId('chat')).toBeInTheDocument();
   return screen;
 }
@@ -155,7 +154,7 @@ describe('AppAssistantWorkspace preview teardown', () => {
     await openFirst();
     await startPreview('my-app');
     m.list = [sandbox('sbx-aaaaaaaaaaaa', { state: 'suspended' }), m.list[1]];
-    screen.rerender(<AppAssistantWorkspace canPreview />);
+    screen.rerender(<AppAssistantWorkspace canPreview sandboxUrl={BASE} />);
     await vi.waitFor(() => expect(m.stop).toHaveBeenCalledWith({ sessionId: 'bki_1' }));
     expect(m.stop).toHaveBeenCalledTimes(1);
   });
@@ -214,6 +213,11 @@ describe('AppAssistantWorkspace MCP wiring', () => {
       [expect.objectContaining({ purpose: 'sandbox', refresh: false })],
       [expect.objectContaining({ purpose: 'sandbox', refresh: true })],
     ]);
+    // …and it talks to the service named by the server-provided prop.
+    expect(fetchSpy.mock.calls.map(([url]) => String(url))).toEqual([
+      `${BASE}/v1/sandboxes`,
+      `${BASE}/v1/sandboxes`,
+    ]);
     fetchSpy.mockRestore();
   });
 
@@ -233,7 +237,7 @@ describe('AppAssistantWorkspace consent', () => {
       )
       .mockResolvedValue('sandbox-token');
     await page.viewport(1440, 900);
-    renderWithProviders(<AppAssistantWorkspace canPreview />);
+    renderWithProviders(<AppAssistantWorkspace canPreview sandboxUrl={BASE} />);
     const button = page.getByRole('button', { name: 'Turn on App Assistant' });
     await expect.element(button).toBeInTheDocument();
     // Give any effect a chance to fire before asserting it did not.
@@ -307,7 +311,7 @@ describe('AppAssistantWorkspace header actions', () => {
       409,
       'limit'
     );
-    screen.rerender(<AppAssistantWorkspace canPreview />);
+    screen.rerender(<AppAssistantWorkspace canPreview sandboxUrl={BASE} />);
     await expect.element(page.getByText('Sandbox limit reached')).toBeInTheDocument();
     expect(document.querySelector('[role="dialog"]')).toBeNull();
   });
@@ -319,7 +323,7 @@ describe('AppAssistantWorkspace access failure', () => {
       .mockRejectedValueOnce(new AssistantTokenError('Could not start a session', 503))
       .mockResolvedValue('sandbox-token');
     await page.viewport(1440, 900);
-    renderWithProviders(<AppAssistantWorkspace canPreview />);
+    renderWithProviders(<AppAssistantWorkspace canPreview sandboxUrl={BASE} />);
     const retry = page.getByRole('button', { name: 'Retry' });
     await expect.element(retry).toBeInTheDocument();
     expect(m.getToken).toHaveBeenCalledTimes(1);
@@ -332,11 +336,22 @@ describe('AppAssistantWorkspace access failure', () => {
       new AssistantTokenError('Turn on App Assistant', 403, 'consent_required')
     );
     await page.viewport(1440, 900);
-    renderWithProviders(<AppAssistantWorkspace canPreview />);
+    renderWithProviders(<AppAssistantWorkspace canPreview sandboxUrl={BASE} />);
     await expect
       .element(page.getByRole('button', { name: 'Turn on App Assistant' }))
       .toBeInTheDocument();
     expect(document.body.textContent).not.toContain('Retry');
     expect(m.getToken).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('AppAssistantWorkspace without a sandbox service', () => {
+  test('says sandboxes are not configured and asks for no token', async () => {
+    await page.viewport(1440, 900);
+    renderWithProviders(<AppAssistantWorkspace canPreview sandboxUrl={null} />);
+    await expect
+      .element(page.getByText(/Sandboxes are not configured on this deployment/))
+      .toBeInTheDocument();
+    expect(m.getToken).not.toHaveBeenCalled();
   });
 });

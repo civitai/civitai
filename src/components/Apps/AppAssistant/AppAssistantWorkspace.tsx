@@ -34,7 +34,6 @@ import {
 } from '~/components/Apps/AppAssistant/sandboxClient';
 import { SandboxError, SandboxPanel } from '~/components/Apps/AppAssistant/SandboxPanel';
 import { useSandboxes } from '~/components/Apps/AppAssistant/useSandboxes';
-import { env } from '~/env/client';
 import { APP_ASSISTANT_DAILY_BUZZ_CAP } from '~/shared/constants/app-assistant.constants';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
@@ -78,7 +77,14 @@ function EnableCard({
   );
 }
 
-export function AppAssistantWorkspace({ canPreview }: { canPreview: boolean }) {
+export function AppAssistantWorkspace({
+  canPreview,
+  sandboxUrl,
+}: {
+  canPreview: boolean;
+  /** The hosted sandbox service's base URL, from the server; null when not configured. */
+  sandboxUrl: string | null;
+}) {
   // A revoke surfaces as `consent_required` on the next mint, for any purpose; show the turn-on card
   // rather than leaving every call failing.
   const [revoked, setRevoked] = useState(false);
@@ -86,7 +92,6 @@ export function AppAssistantWorkspace({ canPreview }: { canPreview: boolean }) {
     () => createAssistantTokenProvider({ onConsentRequired: () => setRevoked(true) }),
     []
   );
-  const sandboxUrl = env.NEXT_PUBLIC_APP_ASSISTANT_SANDBOX_URL;
   // Whether the user has turned the assistant on: the sandbox token mints only against their consent.
   const access = useQuery({
     queryKey: ['app-assistant', 'access'],

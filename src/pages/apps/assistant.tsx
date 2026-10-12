@@ -8,6 +8,8 @@ import { canAccessAppAssistant } from '~/shared/utils/app-blocks-access';
 type AppAssistantPageProps = {
   /** The account may open dev tunnels, which the live preview runs on. */
   canPreview: boolean;
+  /** The hosted sandbox service's base URL, or null when this deployment has none. */
+  sandboxUrl: string | null;
 };
 
 export const getServerSideProps = createServerSideProps<AppAssistantPageProps>({
@@ -27,13 +29,14 @@ export const getServerSideProps = createServerSideProps<AppAssistantPageProps>({
     const { isAppBlocksDevTunnelEnabled } = await import('~/server/services/app-blocks-flag');
     const canPreview = !!features?.appBlocksAuthor && (await isAppBlocksDevTunnelEnabled({ user }));
 
+    const { env } = await import('~/env/server');
     // No route CSP: a header CSP persists across the tab's client-side navigations and would block
     // payment and captcha frames on later pages.
-    return { props: { canPreview } };
+    return { props: { canPreview, sandboxUrl: env.APP_ASSISTANT_SANDBOX_URL ?? null } };
   },
 });
 
-export default function AppAssistantPage({ canPreview }: AppAssistantPageProps) {
+export default function AppAssistantPage({ canPreview, sandboxUrl }: AppAssistantPageProps) {
   return (
     <>
       <Meta title="App Assistant — Civitai Apps" deIndex />
@@ -41,7 +44,7 @@ export default function AppAssistantPage({ canPreview }: AppAssistantPageProps) 
         title="App Assistant"
         subtitle="Describe an app and the assistant builds it in your sandbox while you watch."
       >
-        <AppAssistantWorkspace canPreview={canPreview} />
+        <AppAssistantWorkspace canPreview={canPreview} sandboxUrl={sandboxUrl} />
       </AppsPageLayout>
     </>
   );

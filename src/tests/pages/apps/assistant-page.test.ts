@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { captured, devTunnelEnabled } = vi.hoisted(() => ({
+const { captured, devTunnelEnabled, serverEnv } = vi.hoisted(() => ({
+  serverEnv: { APP_ASSISTANT_SANDBOX_URL: undefined as string | undefined },
   captured: { fn: null as null | ((c: unknown) => Promise<unknown>) },
   devTunnelEnabled: vi.fn(async () => true),
 }));
@@ -17,6 +18,7 @@ vi.mock('~/server/services/app-blocks-flag', () => ({
 vi.mock('~/components/Apps/AppAssistant/AppAssistantWorkspace', () => ({
   AppAssistantWorkspace: () => null,
 }));
+vi.mock('~/env/server', () => ({ env: serverEnv }));
 vi.mock('~/components/Apps/AppsPageLayout', () => ({ AppsPageLayout: () => null }));
 vi.mock('~/components/Meta/Meta', () => ({ Meta: () => null }));
 
@@ -42,6 +44,7 @@ async function resolve(features: Record<string, boolean>, user: object | null = 
 
 beforeEach(() => {
   devTunnelEnabled.mockResolvedValue(true);
+  serverEnv.APP_ASSISTANT_SANDBOX_URL = undefined;
 });
 
 describe('/apps/assistant getServerSideProps', () => {
@@ -69,15 +72,15 @@ describe('/apps/assistant getServerSideProps', () => {
 
   it('renders without a route CSP, which would outlive the page in the tab', async () => {
     const { result, csp } = await resolve({ ...ON, appBlocksAuthor: true });
-    expect(result).toEqual({ props: { canPreview: true } });
+    expect(result).toEqual({ props: { canPreview: true, sandboxUrl: null } });
     expect(csp).toBeUndefined();
   });
 
   it('offers the preview only to an author with dev tunnels', async () => {
-    expect((await resolve(ON)).result).toEqual({ props: { canPreview: false } });
+    expect((await resolve(ON)).result).toEqual({ props: { canPreview: false, sandboxUrl: null } });
     devTunnelEnabled.mockResolvedValue(false);
     expect((await resolve({ ...ON, appBlocksAuthor: true })).result).toEqual({
-      props: { canPreview: false },
+      props: { canPreview: false, sandboxUrl: null },
     });
   });
 
@@ -85,5 +88,16 @@ describe('/apps/assistant getServerSideProps', () => {
     const features = (page.default as { features?: (f: object) => boolean }).features;
     expect(features?.(ON)).toBe(true);
     expect(features?.({ appBlocks: true })).toBe(false);
+  });
+
+  it('passes the sandbox service URL from the server env, read at request time', async () => {
+    serverEnv.APP_ASSISTANT_SANDBOX_URL = 'https://sandbox.example';
+    expect((await resolve(ON)).result).toEqual({
+      props: { canPreview: false, sandboxUrl: 'https://sandbox.example' },
+    });
+    serverEnv.APP_ASSISTANT_SANDBOX_URL = 'https://other-sandbox.example';
+    expect((await resolve(ON)).result).toMatchObject({
+      props: { sandboxUrl: 'https://other-sandbox.example' },
+    });
   });
 });
