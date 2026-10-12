@@ -41,6 +41,7 @@ import { Collection } from '~/components/Collection/Collection';
 import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { env } from '~/env/client';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
@@ -347,9 +348,10 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
     // articleBody intentionally omitted — Google reads the page body
     // directly for ranking. Embedding the full text in JSON-LD bloats
     // <head> on long articles without adding meaningful SEO signal.
-    image: article.coverImage?.url
-      ? getEdgeUrl(article.coverImage.url, { width: 1200 })
-      : undefined,
+    image:
+      article.coverImage?.url && getIsSafeBrowsingLevel(article.coverImage.nsfwLevel)
+        ? getEdgeUrl(article.coverImage.url, { width: 1200 })
+        : undefined,
     author:
       article.user.username && !article.user.deletedAt
         ? {

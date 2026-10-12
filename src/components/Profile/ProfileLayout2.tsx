@@ -27,6 +27,7 @@ import { BlockUserButton } from '~/components/HideUserButton/BlockUserButton';
 import type { UserWithCosmetics } from '~/server/selectors/user.selector';
 import { outerCardStyle } from '~/components/Buzz/CryptoDeposit/crypto-deposit.constants';
 import { isBlobUrl } from '~/utils/type-guards';
+import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import {
   milestoneOgEndpoint,
   parseMilestoneShareToken,
@@ -118,9 +119,12 @@ export function ProfileLayout2({ children }: { children: React.ReactNode }) {
     )}${following}. Download or generate online.`;
   }, [user?.username, user?.stats?.followerCountAllTime, overview]);
 
+  // An unsafe avatar names no image at all rather than falling back to `user.image`.
   const userMetaImage =
     user?.profilePicture && !isBlobUrl(user.profilePicture.url)
-      ? getEdgeUrl(user.profilePicture.url, { width: 1200 })
+      ? getIsSafeBrowsingLevel(user.profilePicture.nsfwLevel)
+        ? getEdgeUrl(user.profilePicture.url, { width: 1200 })
+        : undefined
       : user?.image && user.image.startsWith('http')
       ? user.image
       : undefined;

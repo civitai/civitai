@@ -9,6 +9,7 @@ import { makeTrpcProxy } from '../../../../test/trpcProxyStub';
 const mocks = vi.hoisted(() => ({
   query: {} as Record<string, string>,
   shareable: undefined as boolean | undefined,
+  profilePicture: null as { url: string; nsfwLevel: number; type: string } | null,
   metaProps: [] as Record<string, unknown>[],
 }));
 vi.mock('next/router', () => ({ useRouter: () => ({ query: mocks.query }) }));
@@ -35,7 +36,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
           id: 7,
           username: 'maker',
           image: 'https://example.test/avatar.png',
-          profilePicture: null,
+          profilePicture: mocks.profilePicture,
           stats: { followerCountAllTime: 1, thumbsUpCountAllTime: 1, downloadCountAllTime: 1 },
         },
       }),
@@ -47,6 +48,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
 
 import type * as Trpc from '~/utils/trpc';
 import { env } from '~/env/client';
+import { NsfwLevel } from '~/server/common/enums';
 import { ProfileLayout2 } from '~/components/Profile/ProfileLayout2';
 
 const act = (React as unknown as { act: typeof actType }).act;
@@ -87,6 +89,7 @@ function headFor(query: Record<string, string>, shareable: boolean | undefined) 
 afterEach(() => {
   act(() => root?.unmount());
   container?.remove();
+  mocks.profilePicture = null;
 });
 
 // Telegram previewed a shared tier link on civitai.com with the avatar, not the card. Model pages,
@@ -117,5 +120,25 @@ describe('profile head on a shared milestone link', () => {
     expect(head.ogEndpoint).toBeUndefined();
     expect(head.pageImage).toBe('https://example.test/avatar.png');
     expect(head.personImage).toBe('https://example.test/avatar.png');
+  });
+});
+
+// Crawlers and link unfurlers read JSON-LD without passing the page's rating gate.
+describe('profile head with an uploaded avatar', () => {
+  it('names a safe avatar as the page image', () => {
+    mocks.profilePicture = { url: 'avatar-key', nsfwLevel: NsfwLevel.PG, type: 'image' };
+    const head = headFor({}, undefined);
+    expect(head.pageImage).toContain('avatar-key');
+    expect(head.personImage).toContain('avatar-key');
+  });
+
+  it.each([
+    ['R', NsfwLevel.R],
+    ['unrated', 0],
+  ])('names no page image for a %s avatar', (_, nsfwLevel) => {
+    mocks.profilePicture = { url: 'avatar-key', nsfwLevel, type: 'image' };
+    const head = headFor({}, undefined);
+    expect(head.pageImage).toBeUndefined();
+    expect(head.personImage).toBeUndefined();
   });
 });
