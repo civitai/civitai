@@ -733,7 +733,8 @@ describe('getCrucibleTimeAdjustedMinVotes', () => {
   const at = (hours: number) => new Date(startAt.getTime() + hours * HOUR);
 
   it('asks less of a late entry than an early one', () => {
-    // Exposures 100h and 20h: expected 500 and 100 of 600 votes.
+    // Exposures 100h and 20h: expected 500 and 100 of 600 votes. The early entry's 375 is capped
+    // at the old bar, 75% of the 300 average.
     const bars = getCrucibleTimeAdjustedMinVotes(
       [
         { voteCount: 500, createdAt: at(0) },
@@ -741,7 +742,20 @@ describe('getCrucibleTimeAdjustedMinVotes', () => {
       ],
       { startAt, endAt }
     );
-    expect(bars).toEqual([375, 75]);
+    expect(bars).toEqual([225, 75]);
+  });
+
+  it('never asks more than the old bar of an entry that was live longer than the rest', () => {
+    const entries = [
+      { voteCount: 32, createdAt: at(0) },
+      { voteCount: 14, createdAt: at(90) },
+      { voteCount: 14, createdAt: at(90) },
+    ];
+    const oldBar = getCrucibleMinVotes({ totalVotes: 60, entryCount: 3 });
+    const bars = getCrucibleTimeAdjustedMinVotes(entries, { startAt, endAt });
+    // The early entry's share alone would be 38.
+    expect(bars[0]).toBe(oldBar);
+    expect(Math.max(...bars)).toBeLessThanOrEqual(oldBar);
   });
 
   it('floors a last-hour entry at the minimum', () => {
@@ -810,8 +824,9 @@ describe('getCrucibleTimeAdjustedMinVotes', () => {
       ],
       { startAt: null, endAt }
     );
-    // Exposures 100h and 50h: expected 133.33 and 66.67 of 200 votes, 75% of each.
-    expect(bars).toEqual([100, 50]);
+    // Exposures 100h and 50h: expected 133.33 and 66.67 of 200 votes, 75% of each is 100 and 50;
+    // the first is capped at the old bar, 75.
+    expect(bars).toEqual([75, 50]);
   });
 
   it('returns nothing for no entries', () => {
@@ -842,6 +857,18 @@ describe('getCrucibleLiveMinVotes', () => {
     const early = getCrucibleLiveMinVotes({ entries, startAt, endAt, now: at(50) });
     const late = getCrucibleLiveMinVotes({ entries, startAt, endAt, now: at(75) });
     expect(late).toBeLessThan(early);
+  });
+
+  it('never asks more than the old bar early in the run', () => {
+    // 10h in, 90h left would project 3600 votes, but the old bar is 75% of the 400 so far.
+    expect(
+      getCrucibleLiveMinVotes({
+        entries: [{ voteCount: 400, createdAt: at(0) }],
+        startAt,
+        endAt,
+        now: at(10),
+      })
+    ).toBe(getCrucibleMinVotes({ totalVotes: 400, entryCount: 1 }));
   });
 
   it('floors at the minimum when little time is left', () => {
