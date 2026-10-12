@@ -1,7 +1,7 @@
 import { sql } from 'kysely';
 import { REDIS_KEYS, type RedisKeyTemplateCache } from '@civitai/redis';
+import { convertLegacyModelRule } from '@civitai/moderation/model-rules-convert';
 import {
-  convertLegacyModelRule,
   isSemanticDefinition,
   parseMatchCursor,
   parseRuleMatches,
