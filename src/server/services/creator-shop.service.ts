@@ -2300,6 +2300,9 @@ export const takedownCosmeticShopItem = async ({
       continue;
     }
 
+    // A creator's own restock is never paid out, record or not.
+    if (purchase.userId === item.cosmetic?.createdById) continue;
+
     // Legacy rows (pre-migration): the split has to be re-derived from the item.
     const bluePaid = refund.refundedTransactions
       .filter((t) => t.accountType === 'blue')

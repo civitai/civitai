@@ -426,6 +426,22 @@ describe('takedownCosmeticShopItem', () => {
     expect(result).toMatchObject({ refunded: 1, owedBack: 0, clawedBack: 0, failures: [] });
   });
 
+  it('claws nothing back from a creator restock whose payout record never landed', async () => {
+    mocks.purchaseFindMany.mockResolvedValue([
+      { userId: 11, buzzTransactionId: 'restock-2', unitAmount: 1000, meta: null },
+    ]);
+
+    const result = await takedownCosmeticShopItem({
+      id: 42,
+      reason: 'IP infringement',
+      moderatorId: 999,
+    });
+
+    expect(mocks.refundMultiAccountTransaction).toHaveBeenCalledTimes(1);
+    expect(mocks.createBuzzTransaction).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ refunded: 1, owedBack: 0, clawedBack: 0, failures: [] });
+  });
+
   it('falls back to a reversing charge when a recorded payout has no transaction id', async () => {
     mocks.purchaseFindMany.mockResolvedValue([
       {
