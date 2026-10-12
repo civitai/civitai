@@ -43,6 +43,7 @@ import {
 } from '~/server/services/block-token-subject';
 import { effectiveBlockScopes } from '~/shared/constants/block-effective-scopes';
 import {
+  BUZZ_BUDGET_CAP,
   isKnownBlockScope,
   isPrivateRunAudience,
   type PrivateRunAudience,
@@ -1209,15 +1210,14 @@ export function enforceContextBinding(
 // Same instance id the page host mints under, so storage, rate-limit buckets and the
 // publisher-ban revocation sweep (`page_` prefix) line up whichever credential the block holds.
 const HUB_INSTANCE_PREFIX = 'page_';
-// Mirror of the mint's private per-gen clamp (block-tokens/index.ts BUZZ_BUDGET_DEFAULT / _CAP).
+// Mirror of the mint's private per-gen default (block-tokens/index.ts BUZZ_BUDGET_DEFAULT).
 const HUB_BUZZ_BUDGET_DEFAULT = 10;
-const HUB_BUZZ_BUDGET_CAP = 1000;
 
 function hubBuzzBudget(manifest: { page?: { buzzBudgetPerGen?: unknown } }): number {
   const raw = manifest.page?.buzzBudgetPerGen;
   const candidate =
     typeof raw === 'number' && Number.isInteger(raw) ? raw : HUB_BUZZ_BUDGET_DEFAULT;
-  return Math.min(Math.max(candidate, 0), HUB_BUZZ_BUDGET_CAP);
+  return Math.min(Math.max(candidate, 0), BUZZ_BUDGET_CAP);
 }
 
 /**

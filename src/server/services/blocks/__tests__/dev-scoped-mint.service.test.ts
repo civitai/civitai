@@ -14,7 +14,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
  *   - the SPEND ceiling is TWO required predicates: `ai:write:budgeted` survives
  *     only when `spendEntitled && spendRequested` (#3703 step 1),
  *   - `user:read:self` is force-granted, output deduped + sorted,
- *   - the budget clamps to the LOWER dev cap,
+ *   - the budget clamps to the dev cap,
  *   - the signed token is self-bound (userId), forced-SFW, dev:true, page ctx.
  */
 
@@ -364,11 +364,7 @@ describe('clampDevScopes — REVIEW_MINT_SCOPE_ALLOWLIST (mod review sandbox #28
       allowlist: REVIEW_MINT_SCOPE_ALLOWLIST,
     });
     // ONLY the render-only survivors (+ the unconditional user:read:self grant).
-    expect(granted).toEqual([
-      'collections:read:self',
-      'models:read:self',
-      'user:read:self',
-    ]);
+    expect(granted).toEqual(['collections:read:self', 'models:read:self', 'user:read:self']);
     // None of the withheld scopes can EVER reach the review JWT.
     for (const withheld of [
       'media:read:owned', // removed decorative scope — unknown → stripped
@@ -529,7 +525,7 @@ describe('resolveDevBuzzBudget', () => {
   it('returns undefined when ai:write:budgeted was not granted', () => {
     expect(resolveDevBuzzBudget(['user:read:self'])).toBeUndefined();
   });
-  it('clamps a requested budget to the LOWER dev cap', () => {
+  it('clamps a requested budget to the dev cap', () => {
     expect(resolveDevBuzzBudget(['ai:write:budgeted'], 100000)).toBe(DEV_BUZZ_BUDGET_CAP);
     expect(resolveDevBuzzBudget(['ai:write:budgeted'], 10)).toBe(10);
   });

@@ -603,6 +603,7 @@ import {
   PlatformInternalStepTypeError,
 } from '~/server/services/blocks/steps/orchestrator-denylist';
 import { REGISTERED_STEP_IDS } from '~/server/services/blocks/steps';
+import { resolveDevBuzzBudget } from '~/server/services/blocks/dev-scoped-mint.service';
 import { BLOCK_STEP_NAME } from '~/server/services/blocks/workflow.service';
 import { TRAINING_WORKFLOW_TAG } from '~/server/services/orchestrator/training/workflow-state';
 import {
@@ -11020,6 +11021,53 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
         const { store } = await submitAndPersist(31, 31);
         expect([...store.keys()][0]).toContain('wf_pt_1');
       });
+    });
+  });
+
+  // Every pre-approval token (CLI dev token, dev tunnel, private run, review
+  // run-for-real) carries the budget `resolveDevBuzzBudget` mints; dev and private-run
+  // tokens are exercised here, and this gate is where that number meets a real price. A 3D step is quoted at ~390, so a budget below that
+  // means such an app can run in production but can never be developed or reviewed.
+  // The budget is minted by the REAL clamp rather than restated, so the test follows
+  // the cap; 1300 is a manifest ask above it that is not a multiple of it.
+  describe('a pre-approval token can afford a 3D-priced step [REG]', () => {
+    const MANIFEST_BUDGET = 1300;
+    const mintedBudget = () =>
+      resolveDevBuzzBudget(['ai:write:budgeted'], undefined, MANIFEST_BUDGET);
+    // The explicit `step: undefined` is what the wire type's pass-through arm requires.
+    const stepBody = () => ({ ...ptBody(), step: undefined });
+    // Each token reserves on its own counter: a private run on its per-app key.
+    const TOKENS = [
+      ['dev', { dev: true }, /^system:blocks:buzz-cap:42:/],
+      [
+        'private-run',
+        { privateRun: true, privateRunAudience: 'owner' },
+        /^system:blocks:private-run-buzz-cap:42:/,
+      ],
+    ] as const;
+
+    it.each(TOKENS)('a %s token submits a step quoted at 390', async (_name, over, key) => {
+      mockVerifyBlockToken.mockResolvedValue(ptClaims({ buzzBudget: mintedBudget(), ...over }));
+      happyUser();
+      ptQuoting(390, 390);
+      const result = await caller().submitWorkflow({ blockToken: 'tok', body: stepBody() });
+      expect(result.snapshot.error).toBeUndefined();
+      expect(result.snapshot.workflowId).toBe('wf_pt_1');
+      expect(ptRealSubmits()).toHaveLength(1);
+      expect(mockSysRedis.incrBy).toHaveBeenCalledWith(expect.stringMatching(key), 390);
+    });
+
+    it.each(TOKENS)('a %s token is still refused a step quoted above 1000', async (_name, over) => {
+      mockVerifyBlockToken.mockResolvedValue(ptClaims({ buzzBudget: mintedBudget(), ...over }));
+      happyUser();
+      ptQuoting(1037, 1037);
+      const result = await caller().submitWorkflow({ blockToken: 'tok', body: stepBody() });
+      expect(result.snapshot).toMatchObject({
+        workflowId: 'failed',
+        status: 'failed',
+        error: 'insufficient buzz budget: step ceiling 1037 exceeds budget 1000',
+      });
+      expect(ptRealSubmits()).toHaveLength(0);
     });
   });
 
