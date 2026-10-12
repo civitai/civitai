@@ -92,8 +92,13 @@ so chat verdicts don't pair one to one with text scan's per-message ones.
   attributes prompt and config writes to the signed-in moderator.
 - The moderator app's text-scan lab drives those actions: Check (`/text-scan/check`) judges links, ids
   or text with the current prompts and, side by side, with a moderator's edits, which are kept only in
-  that moderator's browser; Versions (`/text-scan/prompts`) shows each prompt's history. It stores
-  nothing in the moderator database. Publishing edits needs the `textScan.prompt.publish` permission,
-  held by no one until granted on `/admin`; the pages are likewise unreachable until granted there.
+  that moderator's browser; Versions (`/text-scan/prompts`) shows each prompt's recent history (the
+  harness returns the newest 20 versions), compares any two of them, and links each to Check
+  (`?key=&from=<version id>`), which starts a draft from that version after confirming before it
+  replaces a different draft of the same prompt. A Restore button there publishes an earlier
+  version's text as a new version, with a required note; the text is read from the harness, not the
+  browser, and restoring the current text is refused. It stores nothing in the moderator database.
+  Publishing edits or restoring needs the `textScan.prompt.publish` permission, held by no one until
+  granted on `/admin`; the pages are likewise unreachable until granted there.
   `/text-scan` and `/text-scan/playground` redirect to Check.
 - Errors are logged to Axiom under `name: 'text-scan'`; every submit also logs a `submitted` event.
