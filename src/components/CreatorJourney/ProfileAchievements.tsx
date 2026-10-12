@@ -19,7 +19,7 @@ import { useEffect } from 'react';
 import type { ScoreTierSlug } from '~/shared/constants/creator-journey.constants';
 import {
   CREATOR_JOURNEY_HREF,
-  HIDDEN_MILESTONE_KEY_PREFIX,
+  isMaskedMilestoneKey,
   milestoneKeyOfShareToken,
   parseScoreTierSlug,
   SCORE_TIERS,
@@ -40,7 +40,10 @@ type Rung = {
   badgeUrl: string | null;
   threshold?: number;
   held?: Tier;
-  /** Below a held tier but not shown, e.g. its badge hidden from the profile: the score passed it. */
+  /**
+   * Below a held tier but not shown, e.g. its badge hidden from the profile: the score passed it.
+   * Drawn without its art, which the creator chose to hide.
+   */
   reached?: boolean;
 };
 
@@ -90,7 +93,7 @@ export function ladderRungs(held: Tier[], ladder: LadderTier[] | undefined): Run
   if (!ladder) return held.map((tier) => ({ ...tier, held: tier }));
   const unplaced = new Map(held.map((tier) => [tier.key, tier]));
   const rungs = ladder.map((tier, index): Rung => {
-    const masked = tier.key.startsWith(HIDDEN_MILESTONE_KEY_PREFIX);
+    const masked = isMaskedMilestoneKey(tier.key);
     // The ladder masks a hidden tier for everyone, its owner included; the owner's own copy is real.
     const slug = masked ? SCORE_TIERS[index]?.slug : undefined;
     const own = unplaced.get(slug ? scoreTierKey(slug) : tier.key);
@@ -123,7 +126,7 @@ export function milestoneCardId(token: string) {
 export const centredScrollLeft = (rung: HTMLElement, strip: HTMLElement) =>
   rung.offsetLeft - (strip.clientWidth - rung.offsetWidth) / 2;
 
-function LadderRung({
+function TierRungChip({
   rung,
   current,
   spotlightId,
@@ -147,6 +150,7 @@ function LadderRung({
         id={spotlightId}
         data-spotlight={spotlightId ? true : undefined}
         aria-label={`${rung.name}: ${status}`}
+        aria-current={current || undefined}
         className={clsx(
           'flex w-[72px] shrink-0 flex-col items-center gap-1 rounded-md px-0.5 py-1.5',
           // Inset: the strip clips anything drawn outside a rung.
@@ -159,7 +163,7 @@ function LadderRung({
       >
         <TierBadge
           name={rung.name}
-          badgeUrl={rung.badgeUrl}
+          badgeUrl={rung.reached ? null : rung.badgeUrl}
           state={lit ? 'earned' : 'locked'}
           size={48}
         />
@@ -258,7 +262,7 @@ export function TierLadderBand({
           className="relative flex min-w-0 flex-1 gap-0.5 overflow-x-auto md:justify-between md:pr-8"
         >
           {ladderRungs(tiers, ladder?.tiers).map((rung) => (
-            <LadderRung
+            <TierRungChip
               key={rung.key}
               rung={rung}
               current={rung.key === highest.key}
@@ -291,8 +295,7 @@ export function TierLadderBand({
 function NoTierYet() {
   const { data: ladder } = trpc.creatorJourney.getLadder.useQuery();
   const first = ladder?.tiers[0];
-  const firstShown =
-    first && !first.key.startsWith(HIDDEN_MILESTONE_KEY_PREFIX) ? first : undefined;
+  const firstShown = first && !isMaskedMilestoneKey(first.key) ? first : undefined;
   return (
     <div className="flex items-center gap-3 rounded-md border border-dashed border-gray-3 p-3 dark:border-dark-4">
       <TierBadge name="?" state="locked" size={40} />
