@@ -562,6 +562,13 @@ describe('getPlaceableEventContentPage', () => {
     expect(articles.nextCursor).toBe(72);
   });
 
+  it('points a first page with more at the next one', async () => {
+    dbMock.dbRead.image.findMany.mockResolvedValueOnce(ids(25));
+    dbMock.dbRead.model.findMany.mockResolvedValueOnce(ids(25));
+    expect((await page({ entityType: 'Image' })).nextCursor).toBe(77);
+    expect((await page({ entityType: 'Model' })).nextCursor).toBe(24);
+  });
+
   // A full page of exactly 24 is the last one: only a 25th row means more.
   it('ends on a page of exactly 24', async () => {
     dbMock.dbRead.image.findMany.mockResolvedValueOnce(ids(24));
