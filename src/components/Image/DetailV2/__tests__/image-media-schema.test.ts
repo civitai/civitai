@@ -21,7 +21,12 @@ describe('image detail media schema', () => {
     const video = schemaFor('video', level);
     expect(video).toMatchObject({ '@type': 'VideoObject' });
     expect(video?.contentUrl).toMatch(/media-key.*\.mp4$/);
-    expect(video?.thumbnailUrl).toContain('media-key');
+    expect(video?.thumbnailUrl).toMatch(/media-key.*\.jpeg$/);
+    expect(video?.creator).toEqual({
+      '@type': 'Person',
+      name: 'maker',
+      url: 'https://civitai.com/user/maker',
+    });
 
     const image = schemaFor('image', level);
     expect(image).toMatchObject({ '@type': 'ImageObject' });
