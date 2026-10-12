@@ -125,8 +125,8 @@ function readRepeatInput(input: unknown): RepeatInput | null {
 
 /** The refusal for a `repeat` step `readRepeatInput` or the nesting bound turns away. */
 export const REPEAT_SHAPE_ERROR =
-  `a repeat step needs exactly { for, template } with a template "$type", keys spelled in ` +
-  `lower case, nested at most ${REPEAT_NESTING_MAX} deep`;
+  `a repeat step needs exactly { for, template } with a template "$type", those keys ` +
+  `spelled exactly, nested at most ${REPEAT_NESTING_MAX} deep`;
 
 /**
  * Every `$type` a step can run — its own and, for a `repeat`, its template's.

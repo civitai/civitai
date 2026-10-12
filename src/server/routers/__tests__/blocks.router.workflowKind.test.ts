@@ -488,7 +488,7 @@ describe("kind:'workflow' — refusals a block can branch on (estimate AND submi
       expect(snapshot.errorCode).toBe('workflow_ref_invalid');
       expect(snapshot.error).toBe(
         'workflow step 0: a repeat step needs exactly { for, template } with a template "$type", ' +
-          'keys spelled in lower case, nested at most 4 deep'
+          'those keys spelled exactly, nested at most 4 deep'
       );
       expect(h.submitWorkflow).not.toHaveBeenCalled();
     }
@@ -1165,11 +1165,12 @@ describe("pass-through arm (kind:'step') — the denylist follows a `repeat` tem
     await expect(estimate(recased)).rejects.toMatchObject({
       code: 'BAD_REQUEST',
       message:
-        'a repeat step needs exactly { for, template } with a template "$type", keys spelled in lower case, nested at most 4 deep',
+        'a repeat step needs exactly { for, template } with a template "$type", those keys spelled exactly, nested at most 4 deep',
     });
     await expect(submit(recased)).rejects.toMatchObject({
       code: 'BAD_REQUEST',
-      message: expect.stringContaining('a repeat step needs exactly { for, template }'),
+      message:
+        'a repeat step needs exactly { for, template } with a template "$type", those keys spelled exactly, nested at most 4 deep',
     });
     expect(h.submitWorkflow).not.toHaveBeenCalled();
   });

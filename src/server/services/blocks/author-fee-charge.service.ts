@@ -24,7 +24,7 @@ import type { BlockAuthorFeeComputation, BlockAuthorFeeConfig } from './author-f
 import { blockGenerationCoarseType } from './generation-type';
 
 /**
- * The `workflowLabel` both ESTIMATE call sites pass; the two gating sites pass
+ * The `workflowLabel` every ESTIMATE call site passes; the gating sites pass
  * the block's external id instead. It is what `surface` on
  * `blockAuthorFeeQuotedCounter` is derived from.
  *
@@ -37,7 +37,7 @@ import { blockGenerationCoarseType } from './generation-type';
  * unbounded estimate population silently moved onto the `gating` series. A
  * shared import cannot drift that way; a sentence about a test can.
  *
- * The GATING side needs no equivalent: both gating sites pass
+ * The GATING side needs no equivalent: every gating site passes
  * `blockExternalId`, which `composeBlockExternalId` /
  * `mintServerBlockExternalId` always prefix with `blk`/`bls`, so a gating caller
  * cannot produce this value by construction.
