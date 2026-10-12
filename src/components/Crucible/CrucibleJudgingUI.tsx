@@ -303,8 +303,8 @@ export function CrucibleJudgingUI({
   );
   const hydratedImages = useHydratedImageReactions(pairImages, { entity: 'image' });
   const currentUser = useCurrentUser();
-  // Same key as the hook's own lookup, so this shares its request. A click before it lands would
-  // toggle-delete a reaction the judge already gave.
+  // Must match the hook's lookup (same input, same staleTime) so it is one request. Until it
+  // resolves a click would toggle-delete a reaction the judge already gave.
   const myReactions = trpc.reaction.getMyImageReactions.useQuery(
     { imageIds: pairImages.map((x) => x.id).sort((a, b) => a - b) },
     { enabled: !!currentUser && pairImages.length > 0, staleTime: 60_000 }

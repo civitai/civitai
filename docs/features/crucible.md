@@ -70,7 +70,7 @@ Three boards rank crucible activity over the last 30 days, refreshed nightly:
 - Judges never see their own entries, and never see the same pair twice.
 - Pairs favour the entries this judge has voted on least, then those with the fewest votes overall, so new entries get ranked quickly without one late entry turning up in every pair a judge sees.
 - New entries' ratings move faster until they have enough votes.
-- Judges can react to each entry while judging. Counts are hidden, and reactions are ordinary image reactions.
+- Judges can react to each entry (Like, Heart, Laugh or Cry) from a compact pill on the entry. Neither counts nor reactors are shown on the judge page or the crucible pages, the same as contest collections. The reactions are ordinary image reactions: Buzz rewards and notifications fire as usual, and counts show normally on other surfaces.
 - Judges can skip a pair. Skipped entries stay out for the rest of the visit (up to the last 20) and come back only once nothing else is left to judge.
 - On video crucibles with a minimum view time, only real playback counts. Skipping ahead or pausing does not add to it. A vote on an under-watched pair is rejected, and the judge keeps that pair.
 - A block hides the crucible both ways: a creator who blocked someone, and anyone the creator blocked, can't see each other's crucibles in lists or on their pages, enter, judge or follow them. Moderators are exempt.
