@@ -10,6 +10,7 @@ import type { DevTunnelFrame } from '~/server/services/blocks/dev-tunnel-frame.s
 
 export type DevTunnelBlockHostProps = Omit<DevTunnelFrame, 'iframeSrc' | 'host'> & {
   iframeSrc: string;
+  fit: 'viewport' | 'fill';
   /** Shown instead of the app when its dev token cannot be minted. */
   tokenErrorFallback: ReactNode;
 };
@@ -25,6 +26,7 @@ export function DevTunnelBlockHost({
   sandbox,
   trustTier,
   scopes,
+  fit,
   tokenErrorFallback,
 }: DevTunnelBlockHostProps) {
   const currentUser = useCurrentUser();
@@ -132,6 +134,7 @@ export function DevTunnelBlockHost({
       // The chrome's "Recently run" menu links to `/apps/run/<blockId>`, which 404s unless the
       // viewer has BOTH flags; see `PageBlockHostProps.canOpenPage`.
       canOpenPage={!!(features.appBlocks && features.appBlocksPages)}
+      fit={fit}
     />
   );
 }

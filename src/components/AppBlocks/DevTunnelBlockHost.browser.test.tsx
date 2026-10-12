@@ -81,6 +81,7 @@ describe('/apps/dev/[blockId] client', () => {
       token: 't',
       tokenError: false,
       canOpenPage: true,
+      fit: 'viewport',
     });
   });
 

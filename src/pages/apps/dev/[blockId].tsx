@@ -134,6 +134,7 @@ export default function DevTunnelPage({ iframeSrc, host, ...app }: DevTunnelFram
           <DevTunnelBlockHost
             {...app}
             iframeSrc={iframeSrc}
+            fit="viewport"
             tokenErrorFallback={
               // Owner-specific copy: the public host's generic "Couldn't authenticate
               // this app" would mislead here.
