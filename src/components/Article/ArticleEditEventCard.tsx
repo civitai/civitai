@@ -46,22 +46,34 @@ function ArticleHatActions({
   );
   const { unequip, isLoading: removing } = useEquipContentDecoration();
   if (!hatLabel || isLoading || !hats) return null;
-  if (!coverImage)
-    return (
-      <Text size="xs" c="gray.4">
-        Add a cover image to put on a hat.
-      </Text>
-    );
 
-  const openPicker = () =>
-    openEventHatPicker({
-      props: { entityType: CosmeticEntity.Article, entityId: articleId, image: coverImage, event },
-    });
   const state = editorHatState(hats, { entityType: CosmeticEntity.Article, entityId: articleId });
+  // The picker previews the hat on the cover, so it needs one; taking a hat off does not.
+  const openPicker =
+    coverImage &&
+    (() =>
+      openEventHatPicker({
+        props: {
+          entityType: CosmeticEntity.Article,
+          entityId: articleId,
+          image: coverImage,
+          event,
+        },
+      }));
 
-  if (state.kind === 'join')
-    return <EventHatButton onClick={openPicker}>Join a team</EventHatButton>;
-  if (state.kind === 'add') return <EventHatButton onClick={openPicker}>{hatLabel}</EventHatButton>;
+  if (state.kind !== 'worn') {
+    if (!openPicker)
+      return (
+        <Text size="xs" c="gray.4">
+          Add a cover image to put on a hat.
+        </Text>
+      );
+    return (
+      <EventHatButton onClick={openPicker}>
+        {state.kind === 'join' ? 'Join a team' : hatLabel}
+      </EventHatButton>
+    );
+  }
 
   const { hat } = state;
   const data = hat.data as EventDecorationData;
@@ -96,9 +108,11 @@ function ArticleHatActions({
         </div>
       </div>
       <Group grow gap="xs">
-        <Button size="compact-sm" variant="default" onClick={openPicker}>
-          Swap hat
-        </Button>
+        {openPicker && (
+          <Button size="compact-sm" variant="default" onClick={openPicker}>
+            Swap hat
+          </Button>
+        )}
         <Button size="compact-sm" variant="default" loading={removing} onClick={takeOff}>
           Take off
         </Button>

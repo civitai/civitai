@@ -11,12 +11,16 @@ import { makeTrpcProxy } from '../../../../test/trpcProxyStub';
 const act = (React as unknown as { act: typeof actType }).act;
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-const h = vi.hoisted(() => ({ pathname: '/articles', viewerId: 1 as number | undefined }));
+const h = vi.hoisted(() => ({
+  pathname: '/articles',
+  viewerId: 1 as number | undefined,
+  isModerator: false,
+}));
 vi.mock('next/router', () => ({
   useRouter: () => ({ pathname: h.pathname, asPath: '/articles/7', push: vi.fn() }),
 }));
 vi.mock('~/hooks/useCurrentUser', () => ({
-  useCurrentUser: () => (h.viewerId ? { id: h.viewerId, isModerator: false } : null),
+  useCurrentUser: () => (h.viewerId ? { id: h.viewerId, isModerator: h.isModerator } : null),
 }));
 vi.mock('~/providers/FeatureFlagsProvider', () => ({ useFeatureFlags: () => ({}) }));
 vi.mock('~/utils/trpc', async (importOriginal) => ({
@@ -39,7 +43,8 @@ vi.mock('@mantine/core', async (importOriginal) => {
   return { ...actual, Menu };
 });
 vi.mock('~/hooks/useRescanArticle', () => ({ useRescanArticle: () => ({}) }));
-// The items under test stand in as markers: their own gating is tested with them.
+// The items stand in as markers. The hat item's own event gate is tested in
+// post-edit-event-card.render.test.ts ('image menu Add Party Hat').
 vi.mock('~/components/Decorations/AddEventDecorationMenuItem', () => ({
   AddEventDecorationMenuItem: (p: { entityType: string; entityId: number }) =>
     React.createElement('div', { 'data-testid': `hat-item:${p.entityType}:${p.entityId}` }),
@@ -70,6 +75,7 @@ afterEach(() => {
 beforeEach(() => {
   h.pathname = '/articles';
   h.viewerId = 1;
+  h.isModerator = false;
 });
 
 function openMenu(article: Article = ARTICLE) {
@@ -99,6 +105,16 @@ describe('article menu hat item', () => {
 
   it('offers the owner both on a card', () => {
     expect(openMenu()).toEqual(['frame-item', 'hat-item:Article:7']);
+  });
+
+  it("offers neither to a moderator on someone else's article", () => {
+    h.pathname = '/articles/[id]/[[...slug]]';
+    h.viewerId = 2;
+    h.isModerator = true;
+    expect(openMenu()).toEqual([]);
+    act(() => root?.unmount());
+    h.pathname = '/articles';
+    expect(openMenu()).toEqual([]);
   });
 
   it('offers neither to someone else, nor for an article without a cover', () => {

@@ -160,10 +160,9 @@ describe('article editor event card', () => {
     h.banners = [BIRTHDAY];
     const el = card();
     expect(text(el)).toContain('Put a party hat on this article.');
-    // Asked once per render, always for this event.
-    expect([...new Set(h.hatsInput.map((i) => JSON.stringify(i)))]).toEqual([
-      '{"event":"birthday2026"}',
-    ]);
+    // Asked on each render, always for this event.
+    expect(h.hatsInput.length).toBeGreaterThan(0);
+    expect(h.hatsInput.filter((i) => JSON.stringify(i) !== '{"event":"birthday2026"}')).toEqual([]);
     expect(button(el, 'Put on a Party Hat')).toBeUndefined();
     act(() => button(el, 'Join a team')!.click());
     expect(h.openPicker.mock.calls).toEqual([PICKER_CALL]);
@@ -197,6 +196,41 @@ describe('article editor event card', () => {
       [{ equippedToType: 'Article', equippedToId: ARTICLE_ID, cosmeticId: 3 }],
     ]);
     expect(h.invalidateHats.mock.calls).toEqual([[{ event: 'birthday2026' }]]);
+  });
+
+  it('keeps the hat on this article and the error with the hook when taking it off fails', async () => {
+    h.banners = [BIRTHDAY];
+    h.hats = [hat(3, { entityType: 'Article', entityId: ARTICLE_ID })];
+    h.unequip.mockRejectedValueOnce(new Error('nope'));
+    const el = card();
+    await act(async () => button(el, 'Take off')!.click());
+    expect(h.unequip).toHaveBeenCalledTimes(1);
+    expect(h.invalidateHats).not.toHaveBeenCalled();
+    expect(el.querySelector('[data-testid="worn-hat"]')).not.toBeNull();
+  });
+
+  it('lets a hat come off an article whose cover was removed, with nothing to swap to', () => {
+    h.banners = [BIRTHDAY];
+    h.hats = [hat(3, { entityType: 'Article', entityId: ARTICLE_ID })];
+    const el = card({ coverImage: undefined });
+    expect(el.querySelector('[data-testid="worn-hat"]')).not.toBeNull();
+    expect(button(el, 'Take off')).toBeDefined();
+    expect(button(el, 'Swap hat')).toBeUndefined();
+  });
+
+  it('asks for no hats and offers nothing for an event whose hats cannot go on articles', () => {
+    h.banners = [
+      {
+        ...BIRTHDAY,
+        id: 'event:no-article-hats',
+        promo: { ...BIRTHDAY.promo!, event: 'no-article-hats' },
+      },
+    ];
+    h.hats = [hat(1)];
+    const el = card();
+    expect(text(el)).toContain('Put a party hat on this article.');
+    expect(h.hatsInput).toEqual([]);
+    expect(el.querySelectorAll('button:not([aria-label^="Hide"])').length).toBe(0);
   });
 
   it('shows the draft note only while unpublished', () => {

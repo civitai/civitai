@@ -18,6 +18,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import * as z from 'zod';
 
 import { ArticleEditEventCard } from '~/components/Article/ArticleEditEventCard';
+import { articleEditEventCard } from '~/components/Article/article-edit-event-card.utils';
 import { ArticleScanStatus } from '~/components/Article/ArticleScanStatus';
 import { BackButton } from '~/components/BackButton/BackButton';
 import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
@@ -162,6 +163,7 @@ export function ArticleUpsertForm({ article }: Props) {
   }, [currentUser?.isModerator, userNsfwLevel]);
 
   const [publishing, setPublishing] = useState(false);
+  const eventCard = articleEditEventCard(article, currentUser?.id);
 
   const { data, isLoading: loadingCategories } = trpc.tag.getAll.useQuery({
     categories: true,
@@ -387,13 +389,7 @@ export function ArticleUpsertForm({ article }: Props) {
               }}
               className="hidden @sm:flex"
             />
-            {article && currentUser?.id === article.userId && (
-              <ArticleEditEventCard
-                articleId={article.id}
-                coverImage={article.coverImage}
-                showDraftNote={article.status !== ArticleStatus.Published}
-              />
-            )}
+            {eventCard && <ArticleEditEventCard {...eventCard} />}
             <InputSelect
               name="userNsfwLevel"
               data={browsingLevelSelectOptions}
