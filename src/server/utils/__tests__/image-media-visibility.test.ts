@@ -43,7 +43,7 @@ const viewers: Record<string, Viewer> = {
   'a moderator on the SFW domain': { canViewNsfw: false, user: { id: 5, isModerator: true } },
 };
 
-// The media each viewer receives, by rating: what `Gated` shows as the page.
+// Rating levels whose media each viewer receives.
 const expected: Record<string, number[]> = {
   'signed out on the SFW domain': [NsfwLevel.PG],
   'signed out on the mature domain': [NsfwLevel.PG],

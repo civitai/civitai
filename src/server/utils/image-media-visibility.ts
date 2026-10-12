@@ -14,18 +14,14 @@ type MediaFields = {
 };
 
 type ViewerExemptions = {
-  /** The viewer manages a collection judging this image (see `managesImageCollection`). */
+  /** The viewer manages the collection the image's post was submitted to (contest judges). */
   managesCollection?: boolean;
 };
 
 /**
- * Whether a single-image response may carry the media itself: the domain cap for the request, on
- * the image's own rating, with the owner, moderators and collection managers always allowed.
- *
- * Close to `Gated`'s page state, but not the same: `Gated` also honours a contest's forced
- * level, lets a rating through on any one allowed bit, and still redirects owners, moderators and
- * managers on the SFW domain. The image page gates on the image's own rating when `url` comes
- * back null, so it never shows a frame the server left empty, except for a mixed rating.
+ * Whether a single-image response may carry the media: the request's domain cap on the image's own
+ * rating, always allowed for the owner, moderators and collection managers. Not identical to
+ * `Gated`: it ignores a contest's forced level and withholds mixed ratings.
  */
 export function canViewImageMedia(
   ctx: Pick<Context, 'user' | 'features' | 'req'>,
@@ -35,7 +31,7 @@ export function canViewImageMedia(
   if (ctx.user && (ctx.user.isModerator || ctx.user.id === image.user.id)) return true;
   if (managesCollection) return true;
   const cap = requestDomainBrowsingLevelCap(ctx);
-  // Every bit of the rating inside the cap: unrated (0) and mixed ratings fail closed.
+  // Under a cap, every bit of the rating must be inside it; unrated (0) and mixed ratings fail closed.
   return cap === undefined || (image.nsfwLevel !== 0 && Flags.hasFlag(cap, image.nsfwLevel));
 }
 
@@ -49,7 +45,7 @@ export function withViewerMedia<T extends MediaFields>(
   exemptions?: ViewerExemptions
 ): Omit<T, 'url'> & { url: string | null } {
   if (canViewImageMedia(ctx, image, exemptions)) {
-    // A signed-out answer is edge-cached by URL alone; a crawler's must not reach anyone else.
+    // Signed-out answers are edge-cached by URL alone; a crawler's must not be served to others.
     const verifiedBot = parseVerifiedBotHeader(ctx.req?.headers[VERIFIED_BOT_HEADER]);
     if (!ctx.user && verifiedBot !== null && ctx.cache) {
       ctx.cache.edgeTTL = 0;
@@ -64,18 +60,15 @@ export function withViewerMedia<T extends MediaFields>(
 }
 
 /**
- * Whether the user holds MANAGE on a collection judging this image: the collection its post was
- * submitted to (the test `getImage` uses to show a manager an unreviewed entry), or a contest
- * collection holding the image itself. Other collections don't count: anyone can add an image
- * to a collection of their own.
+ * Whether the user holds MANAGE on the collection the image's post was submitted to. Only the
+ * post's author chooses that collection; membership of a collection does not count, since anyone
+ * can create one, of any mode, and add any image to it.
  */
-export async function managesImageCollection({
-  imageId,
+export async function managesPostCollection({
   postId,
   userId,
 }: {
-  imageId: number;
-  postId: number | null;
+  postId: number;
   userId: number;
 }) {
   const rows = await dbRead.$queryRaw<{ managed: boolean }[]>(Prisma.sql`
@@ -83,14 +76,6 @@ export async function managesImageCollection({
       SELECT 1 FROM "Post" p
       JOIN "CollectionContributor" cc ON cc."collectionId" = p."collectionId"
       WHERE p.id = ${postId}
-        AND cc."userId" = ${userId}
-        AND cc."permissions" && ARRAY['MANAGE']::"CollectionContributorPermission"[]
-    ) OR EXISTS (
-      SELECT 1 FROM "CollectionItem" ci
-      JOIN "Collection" c ON c.id = ci."collectionId"
-      JOIN "CollectionContributor" cc ON cc."collectionId" = ci."collectionId"
-      WHERE ci."imageId" = ${imageId}
-        AND c.mode = 'Contest'
         AND cc."userId" = ${userId}
         AND cc."permissions" && ARRAY['MANAGE']::"CollectionContributorPermission"[]
     ) AS managed
