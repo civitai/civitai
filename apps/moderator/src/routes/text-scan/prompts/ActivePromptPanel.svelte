@@ -109,8 +109,8 @@
                 <a href="/text-scan/check?key={promptKey}&from={version.id}" class={LINK_CLASS}
                   >Edit in Check</a
                 >
-                {#if canRestore && version.id !== active?.id}
-                  <RestoreDialog {promptKey} versionId={version.id} />
+                {#if canRestore && active && version.id !== active.id}
+                  <RestoreDialog {promptKey} versionId={version.id} activeId={active.id} />
                 {/if}
               </div>
               {#if previous}

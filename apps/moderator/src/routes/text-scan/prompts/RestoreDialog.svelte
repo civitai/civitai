@@ -9,7 +9,11 @@
   import { promptKeyName } from '$lib/text-scan-lab/labels';
   import type { PromptKey } from '$lib/text-scan-lab/types';
 
-  let { promptKey, versionId }: { promptKey: PromptKey; versionId: number } = $props();
+  let {
+    promptKey,
+    versionId,
+    activeId,
+  }: { promptKey: PromptKey; versionId: number; activeId: number } = $props();
 
   let open = $state(false);
 
@@ -37,6 +41,7 @@
     <form method="POST" action="?/restore" use:enhance={restore.enhance} class="space-y-3">
       <input type="hidden" name="key" value={promptKey} />
       <input type="hidden" name="id" value={versionId} />
+      <input type="hidden" name="activeId" value={activeId} />
       <div>
         <Label for="restore-note-{versionId}" class="text-xs text-dark-2">
           Note (recorded on the new version)

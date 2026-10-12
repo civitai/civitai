@@ -41,7 +41,7 @@ const prompts = (activeId: number) => ({
   history: [version(3, 'TEXT 3'), version(2, 'TEXT 2'), version(1, 'TEXT 1')],
 });
 
-const fields = { key: 'base', id: '2', note: 'Restore #2' };
+const fields = { key: 'base', id: '2', activeId: '3', note: 'Restore #2' };
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -88,9 +88,20 @@ describe('restore', () => {
     expect(harness.putPrompt).toHaveBeenCalledExactlyOnceWith('base', 'TEXT 2', 'Restore #2');
   });
 
+  it('returns 409 when the page was loaded before the current version changed', async () => {
+    expect(await restore({ ...fields, activeId: '2' })).toMatchObject({ status: 409 });
+    expect(harness.putPrompt).not.toHaveBeenCalled();
+  });
+
   it('returns 409 when the current version moved after it was read', async () => {
     harness.getPrompts.mockResolvedValueOnce(prompts(3)).mockResolvedValueOnce(prompts(4));
     expect(await restore(fields)).toMatchObject({ status: 409 });
+    expect(harness.putPrompt).not.toHaveBeenCalled();
+  });
+
+  it('requires the version the page showed as current', async () => {
+    const { activeId: _omit, ...without } = fields;
+    expect(await restore(without)).toMatchObject({ status: 400 });
     expect(harness.putPrompt).not.toHaveBeenCalled();
   });
 

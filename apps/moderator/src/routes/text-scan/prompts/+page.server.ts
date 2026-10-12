@@ -37,6 +37,8 @@ export const load: PageServerLoad = async ({ url }) => {
 const restoreSchema = z.object({
   key: z.enum(PROMPT_KEYS),
   id: z.coerce.number().int().positive(),
+  /** The version the moderator saw as current; publishing refuses when it has moved on. */
+  activeId: z.coerce.number().int().positive(),
   note: z.string().trim().min(1, 'A note is required.').max(2000),
 });
 
@@ -62,7 +64,7 @@ export const actions: Actions = {
 
     return publishChanges({
       prompts: { [input.key]: version.content },
-      activeIds: { [input.key]: active?.id ?? null },
+      activeIds: { [input.key]: input.activeId },
       note: input.note,
     });
   }),
