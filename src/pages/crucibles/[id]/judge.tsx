@@ -9,6 +9,7 @@ import {
   Popover,
   Text,
   Title,
+  Tooltip,
 } from '@mantine/core';
 import { useReducedMotion } from '@mantine/hooks';
 import { keepPreviousData } from '@tanstack/react-query';
@@ -51,11 +52,15 @@ import { CrucibleJudgingUI } from '~/components/Crucible/CrucibleJudgingUI';
 import { useJudgeSkipList } from '~/components/Crucible/judge-skip-list';
 import { CrucibleJudgingBriefing } from '~/components/Crucible/CrucibleJudgingBriefing';
 import { hasSeenBriefing, markBriefingSeen } from '~/components/Crucible/judging-briefing';
+import { getPairProgress } from '~/components/Crucible/judging-progress';
 import { JUDGING_RULES } from '~/components/Crucible/judging-rules';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import type { JudgingPairData, WatchedMs } from '~/components/Crucible/CrucibleJudgingUI';
-import { CRUCIBLE_JUDGE_SCORE_REQUIRED_MESSAGE } from '~/shared/constants/crucible.constants';
+import {
+  CRUCIBLE_JUDGE_SCORE_REQUIRED_MESSAGE,
+  CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY,
+} from '~/shared/constants/crucible.constants';
 import { CrucibleStatus } from '~/shared/utils/prisma/enums';
 import { getCrucibleUrl, isCrucibleSfw } from '~/utils/crucible-helpers';
 import { numberWithCommas } from '~/utils/number-helpers';
@@ -616,7 +621,8 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
                       totalPairsRated={(judgeStats?.totalPairsRated ?? 0) + sessionVotes}
                       percentileRank={judgeStats?.percentileRank}
                       judgedPairs={progress?.judgedPairs}
-                      remainingPairs={progress?.remainingPairs}
+                      totalPairs={progress?.totalPairs}
+                      votesUsedUp={progress?.votesUsedUp ?? false}
                     />
                   }
                   footerEnd={
@@ -754,7 +760,8 @@ type JudgingSessionStatsProps = {
   totalPairsRated: number;
   percentileRank?: number | null;
   judgedPairs?: number;
-  remainingPairs?: number;
+  totalPairs?: number;
+  votesUsedUp: boolean;
 };
 
 function JudgingSessionStats({
@@ -762,12 +769,14 @@ function JudgingSessionStats({
   totalPairsRated,
   percentileRank,
   judgedPairs,
-  remainingPairs,
+  totalPairs: totalPairsProp,
+  votesUsedUp,
 }: JudgingSessionStatsProps) {
   const motionOn = !useReducedMotion(true);
-  const totalPairs =
-    judgedPairs !== undefined && remainingPairs !== undefined ? judgedPairs + remainingPairs : null;
-  const percent = totalPairs ? Math.min(100, ((judgedPairs ?? 0) / totalPairs) * 100) : 0;
+  const pairProgress =
+    judgedPairs !== undefined && totalPairsProp !== undefined
+      ? getPairProgress({ judgedPairs, totalPairs: totalPairsProp, votesUsedUp })
+      : null;
 
   return (
     <div className="flex w-full min-w-0 flex-col gap-2">
@@ -783,29 +792,44 @@ function JudgingSessionStats({
           />
         )}
       </div>
-      {totalPairs !== null && judgedPairs !== undefined && remainingPairs !== undefined && (
+      {pairProgress && judgedPairs !== undefined && (
         <div className="flex min-w-0 flex-col gap-1">
           <div className="flex min-w-0 items-center justify-between gap-2 text-xs">
-            <span className="truncate text-[#909296]">
-              {numberWithCommas(judgedPairs)} of {numberWithCommas(totalPairs)} pairs judged here
-            </span>
-            <span className="shrink-0 font-semibold text-green-400">
-              {numberWithCommas(remainingPairs)} to go
-            </span>
+            {pairProgress.finished ? (
+              <Tooltip
+                label={`You can vote on each entry up to ${CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY} times.`}
+                multiline
+                w={220}
+              >
+                <span className="truncate text-[#909296]">
+                  You&apos;ve judged every pair available to you
+                </span>
+              </Tooltip>
+            ) : (
+              <>
+                <span className="truncate text-[#909296]">
+                  {numberWithCommas(judgedPairs)} of {numberWithCommas(pairProgress.total)} pairs
+                  judged
+                </span>
+                <span className="shrink-0 font-semibold text-green-400">
+                  {numberWithCommas(pairProgress.toGo)} to go
+                </span>
+              </>
+            )}
           </div>
           <div
             className="h-1.5 w-full overflow-hidden rounded-full bg-[#373A40]"
             role="progressbar"
             aria-label="Pairs judged in this crucible"
             aria-valuemin={0}
-            aria-valuemax={totalPairs}
+            aria-valuemax={pairProgress.total}
             aria-valuenow={judgedPairs}
           >
             <LazyMotion features={loadMotion} strict>
               <MotionDiv
                 className="h-full rounded-full bg-gradient-to-r from-blue-500 to-green-500"
                 initial={false}
-                animate={{ width: `${percent}%` }}
+                animate={{ width: `${pairProgress.percent}%` }}
                 transition={
                   motionOn ? { type: 'spring', stiffness: 220, damping: 24 } : { duration: 0 }
                 }

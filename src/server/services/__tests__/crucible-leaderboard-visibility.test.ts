@@ -593,7 +593,12 @@ describe('crucible.getJudgingProgress', () => {
       crucibleId: CRUCIBLE_ID,
     });
 
-    expect(progress).toEqual({ remainingPairs: 2, judgedPairs: 1, votesUsedUp: false });
+    expect(progress).toEqual({
+      remainingPairs: 2,
+      judgedPairs: 1,
+      totalPairs: 3,
+      votesUsedUp: false,
+    });
     expect(lastRenderedSql()).toContain('ce."userId" !=');
   });
 
@@ -618,7 +623,7 @@ describe('crucible.getJudgingProgress', () => {
 
     expect(
       await caller(signedIn(STRANGER_ID)).getJudgingProgress({ crucibleId: CRUCIBLE_ID })
-    ).toEqual({ remainingPairs: 0, judgedPairs: 0, votesUsedUp: false });
+    ).toEqual({ remainingPairs: 0, judgedPairs: 0, totalPairs: 0, votesUsedUp: false });
   });
 
   // The judge page shows "you've used all your votes" only on votesUsedUp. Zero pairs from too few
@@ -633,12 +638,12 @@ describe('crucible.getJudgingProgress', () => {
     ]);
     expect(
       await caller(signedIn(STRANGER_ID)).getJudgingProgress({ crucibleId: CRUCIBLE_ID })
-    ).toEqual({ remainingPairs: 0, judgedPairs: 1, votesUsedUp: true });
+    ).toEqual({ remainingPairs: 0, judgedPairs: 1, totalPairs: 1, votesUsedUp: true });
 
     queryRaw.mockResolvedValue([{ crucibleId: CRUCIBLE_ID, id: 1 }]);
     expect(
       await caller(signedIn(STRANGER_ID)).getJudgingProgress({ crucibleId: CRUCIBLE_ID })
-    ).toEqual({ remainingPairs: 0, judgedPairs: 0, votesUsedUp: false });
+    ).toEqual({ remainingPairs: 0, judgedPairs: 0, totalPairs: 0, votesUsedUp: false });
   });
 });
 
