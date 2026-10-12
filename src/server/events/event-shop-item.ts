@@ -16,6 +16,7 @@ import { throwBadRequestError } from '~/server/utils/errorHandling';
 type ShopEvent = GatedEvent & {
   teams: readonly string[];
   getUserTeam: (userId: number, opts?: { strict?: boolean }) => Promise<string>;
+  settleBalancedTeam?: (userId: number) => Promise<string | undefined>;
 };
 
 type EventItemData = { event: string; team?: unknown };
@@ -84,7 +85,13 @@ export async function assertEventShopItemPurchasable({
 
   // Strict: a degraded lookup falls back to a computed team, which is wrong for
   // anyone assigned by hand, and they would pay for a colour that isn't theirs.
-  const team = await event.getUserTeam(userId, { strict: true }).catch((error) => {
+  // A listed buyer is placed before the check, the same way joining would place them, so a join racing
+  // this purchase cannot move them off the colour they are paying for.
+  const settled = async () => {
+    await event.settleBalancedTeam?.(userId);
+    return event.getUserTeam(userId, { strict: true });
+  };
+  const team = await settled().catch((error) => {
     logToAxiom({
       level: 'error',
       message: 'event-shop-item: team lookup failed',

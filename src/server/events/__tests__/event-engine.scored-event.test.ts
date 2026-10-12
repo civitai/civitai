@@ -681,9 +681,12 @@ describe('join balancing', () => {
     dbMock.dbWrite.$queryRaw.mockResolvedValueOnce([{ held: 1 }]);
     expect((await joinAs(7)).team).toBe(hashed);
     expect(redisMock.sysRedis.eval).not.toHaveBeenCalled();
-    const heldSql = (dbMock.dbWrite.$queryRaw.mock.calls[0][0] as string[]).join('?');
+    const [strings, ...values] = dbMock.dbWrite.$queryRaw.mock.calls[0] as [string[], ...unknown[]];
+    const heldSql = strings.join('?');
+    expect(heldSql).toContain(`c.data->>'event' = ?`);
     expect(heldSql).toContain(`c.data->>'team' IS NOT NULL`);
     expect(heldSql).not.toContain('claimKey');
+    expect(values).toEqual([7, BIRTHDAY_2026_EVENT]);
   });
 
   it('refuses to join when the balance list cannot be read', async () => {

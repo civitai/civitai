@@ -13,6 +13,7 @@ import {
   withSysReadDeadline,
 } from '~/server/redis/client';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
+import { placeListedJoiner } from '~/server/events/team-balance';
 import type { FeatureFlagKey } from '~/server/services/feature-flags.service';
 import type { EventPromoIcon } from '~/shared/constants/nav-banner.constants';
 
@@ -89,6 +90,23 @@ export function createEvent<T>(name: RedisKeyTemplateCache, definition: HolidayE
     const number = random.next();
     const index = Math.floor(number * definition.teams.length);
     return definition.teams[index];
+  }
+  // For an event with `join.balance`: places a listed user on a team now, unless they already hold one
+  // of the event's team cosmetics (joined or bought), whose team they keep. Every team-committing
+  // action calls it before reading the team, so a purchase and a join racing settle the same team.
+  // Returns the team placed on (or already assigned by hand), else undefined.
+  async function settleBalancedTeam(userId: number) {
+    if (!definition.join?.balance) return undefined;
+    const [held] = await dbWrite.$queryRaw<{ held: number }[]>`
+      SELECT 1 AS held FROM "UserCosmetic" uc
+      JOIN "Cosmetic" c ON c.id = uc."cosmeticId"
+      WHERE uc."userId" = ${userId}
+        AND c.data->>'event' = ${name}
+        AND c.data->>'team' IS NOT NULL
+      LIMIT 1
+    `;
+    if (held) return undefined;
+    return placeListedJoiner(name, userId, definition.teams);
   }
   // A join event finds its team cosmetic by data (event, team, design), so cosmetic names stay
   // display-only. Older events find it by the name "<cosmeticName> - <team>".
@@ -181,6 +199,7 @@ export function createEvent<T>(name: RedisKeyTemplateCache, definition: HolidayE
     clearUserCosmeticCache,
     getTeamCosmetic,
     getUserTeam,
+    settleBalancedTeam,
     getUserCosmeticId,
     getRewards,
     getDiscordRoles,

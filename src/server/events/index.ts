@@ -15,7 +15,6 @@ import { eventPointSeason, eventPointsWindow } from '~/server/events/points/keys
 import { isEventPointsEnabled } from '~/server/events/points/enabled';
 import { runEventPointsReferee } from '~/server/events/points/referee';
 import { syncEventHats } from '~/server/events/points/sync';
-import { placeListedJoiner } from '~/server/events/team-balance';
 import { pointTypesFor } from '~/server/events/points/types';
 import {
   getEventStandings,
@@ -548,20 +547,7 @@ export const eventEngine = {
     await this.assertPlayable(event, user, now);
     const userId = user.id;
 
-    // Balancing places only a user who holds none of the event's team-coloured cosmetics yet, joined or
-    // bought: one who does keeps that team, and is not counted toward a team's total.
-    let placed: string | undefined;
-    if (eventDef.join?.balance) {
-      const [held] = await dbWrite.$queryRaw<{ held: number }[]>`
-        SELECT 1 AS held FROM "UserCosmetic" uc
-        JOIN "Cosmetic" c ON c.id = uc."cosmeticId"
-        WHERE uc."userId" = ${userId}
-          AND c.data->>'event' = ${eventDef.name}
-          AND c.data->>'team' IS NOT NULL
-        LIMIT 1
-      `;
-      if (!held) placed = await placeListedJoiner(eventDef.name, userId, eventDef.teams);
-    }
+    const placed = await eventDef.settleBalancedTeam(userId);
     // Strict: a degraded manual-assignment read refuses the join rather than granting the computed
     // team's colour to someone assigned by hand.
     const team = placed ?? (await eventDef.getUserTeam(userId, { strict: true }));
