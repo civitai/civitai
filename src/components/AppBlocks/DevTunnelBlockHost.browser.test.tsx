@@ -60,12 +60,24 @@ describe('/apps/dev/[blockId] client', () => {
     renderWithProviders(<DevTunnelPage {...FRAME} />);
     await expect.element(page.getByTestId('page-block-host')).toBeInTheDocument();
     expect(m.useBlockToken).toHaveBeenCalled();
-    const install = m.useBlockToken.mock.calls[0][0] as {
-      manifest: { iframe: { src: string } };
-      blockInstanceId: string;
-    };
-    expect(install.manifest.iframe.src).toBe(FRAME.iframeSrc);
+    expect(m.useBlockToken.mock.calls[0][0]).toMatchObject({
+      blockInstanceId: 'page_apb_dev',
+      trustTier: 'unverified',
+      manifest: {
+        scopes: ['user:read:self'],
+        iframe: {
+          src: FRAME.iframeSrc,
+          minHeight: 200,
+          maxHeight: null,
+          resizable: true,
+          sandbox: 'allow-scripts allow-forms',
+        },
+      },
+    });
     expect(m.hostProps).toMatchObject({
+      sandbox: 'allow-scripts allow-forms',
+      trustTier: 'unverified',
+      declaredScopes: ['user:read:self'],
       surface: 'dev-tunnel',
       blockInstanceId: 'page_apb_dev',
       iframeSrc: FRAME.iframeSrc,
