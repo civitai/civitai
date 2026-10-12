@@ -5656,12 +5656,20 @@ export const getImage = async ({
     if (!withoutPost) {
       // Post gates sit in the WHERE, not the JOIN: an image outlives a deleted post (`Image.postId`
       // is ON DELETE SET NULL) and an inner join drops it before ownership is tested. Nothing on
-      // `Image` separates that from a never-posted upload, so only the owner may fetch a postless one.
+      // `Image` separates that from a never-posted upload, so a postless image is owner-only unless
+      // it is the cover of an article the viewer could read (getArticleById's non-owner rule).
       AND.push(
         Prisma.sql`(
           p."publishedAt" < now()
           OR p."userId" = ${userId}
           OR (i."postId" IS NULL AND i."userId" = ${userId})
+          OR (i."postId" IS NULL AND EXISTS (
+            SELECT 1 FROM "Article" a
+            WHERE a."coverId" = i.id
+              AND a.status = 'Published'
+              AND a."publishedAt" IS NOT NULL
+              AND a.ingestion = 'Scanned'
+          ))
         )`
       );
       AND.push(

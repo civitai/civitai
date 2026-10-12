@@ -99,7 +99,7 @@ describe('getImage postless authorization', () => {
     expect(sql).not.toMatch(/JOIN "Post" p ON p\.id = i\."postId" AND/);
   });
 
-  it('admits a postless image only to the viewer who owns it', async () => {
+  it('admits a never-posted image to the viewer who owns it', async () => {
     const sql = await captureQuery({ id: IMAGE_ID, userId: VIEWER });
 
     // Resolved, so binding the image id in place of the viewer fails here. Drop the `i."userId"`
@@ -121,6 +121,18 @@ describe('getImage postless authorization', () => {
     expect(sql).toContain(`p."publishedAt" < now() OR p."userId" = ${VIEWER}`);
   });
 
+  it('admits a postless image that is the cover of a visible article', async () => {
+    const sql = await captureQuery({ id: IMAGE_ID });
+
+    // Article covers are uploaded without a post, so `/images/<cover id>` 404'd for every reader
+    // but the author. The article clause mirrors getArticleById's non-owner visibility, and stays
+    // behind `i."postId" IS NULL` so an image in an unpublished post can't borrow it. Anchored on
+    // both ends so a conjunct appended to the branch can't hide beside a substring match.
+    expect(sql).toContain(
+      `OR (i."postId" IS NULL AND i."userId" = NULL) OR (i."postId" IS NULL AND EXISTS ( SELECT 1 FROM "Article" a WHERE a."coverId" = i.id AND a.status = 'Published' AND a."publishedAt" IS NOT NULL AND a.ingestion = 'Scanned' )) ) AND (i."postId" IS NULL OR p."availability"`
+    );
+  });
+
   it('binds NULL for an anonymous viewer, so every ownership branch fails closed', async () => {
     const sql = await captureQuery({ id: IMAGE_ID });
 
@@ -134,6 +146,8 @@ describe('getImage postless authorization', () => {
 
     expect(sql).not.toContain('JOIN "Post"');
     expect(sql).not.toContain('p."');
+    // The article-cover branch lives inside the post gate, so it is skipped here with the rest.
+    expect(sql).not.toContain('"Article" a');
   });
 
   it('leaves the moderator path ungated', async () => {
