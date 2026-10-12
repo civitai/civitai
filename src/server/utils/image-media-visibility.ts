@@ -127,11 +127,7 @@ export async function viewerCanSeeSourceMedia(
     WHERE ${Prisma.join(
       [
         Prisma.sql`i.id IN (${Prisma.join(sourceIds)})`,
-        ...imageVisibilityConditions({
-          userId: ctx.user?.id,
-          isModerator: ctx.user?.isModerator,
-          postGates: 'whenPosted',
-        }),
+        ...imageVisibilityConditions({ userId: ctx.user?.id, isModerator: ctx.user?.isModerator }),
       ],
       ' AND '
     )}

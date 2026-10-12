@@ -67,6 +67,11 @@ beforeAll(async () => {
     CREATE TABLE "CollectionContributor" (
       "collectionId" int, "userId" int, permissions "CollectionContributorPermission"[]
     );
+    CREATE TABLE "Bounty" (
+      id int PRIMARY KEY, "userId" int, availability "Availability" DEFAULT 'Public'
+    );
+    CREATE TABLE "BountyEntry" (id int PRIMARY KEY, "bountyId" int NOT NULL, "userId" int);
+    CREATE TABLE "ImageConnection" ("imageId" int, "entityId" int, "entityType" text);
   `);
   const raw = pgliteRaw(db);
   (dbMock.dbRead.$queryRaw as unknown as ReturnType<typeof vi.fn>).mockImplementation(
@@ -78,7 +83,9 @@ beforeAll(async () => {
 });
 
 beforeEach(async () => {
-  await db.exec(`TRUNCATE "Image", "Post", "CollectionContributor", "Article";`);
+  await db.exec(
+    `TRUNCATE "Image", "Post", "CollectionContributor", "Article", "Bounty", "BountyEntry", "ImageConnection";`
+  );
   dbMock.dbRead.image.findUnique.mockResolvedValue({
     id: 1,
     type: 'image',
@@ -158,16 +165,23 @@ describe('generation.getGenerationData for an image', () => {
     expect(data.remixOf?.url).toBe('image-own-url');
   });
 
-  it('withholds the source of a PG edit made from an R image, but not the edit itself', async () => {
+  it.each([
+    ['withholds the source of a PG edit made from an R image', 4, false],
+    ['keeps the source of a PG edit made from a PG image', 1, true],
+  ])('%s, but not the edit itself', async (_label, sourceLevel, kept) => {
     await seed(PUBLISHED, 1);
-    await db.exec(`INSERT INTO "Image" (id, "userId", "nsfwLevel") VALUES (2, ${STRANGER}, 4)`);
+    // The source sits in its owner's published post, so only its rating decides.
+    await db.exec(`
+      INSERT INTO "Post" (id, "userId", "publishedAt", availability) VALUES (2, ${STRANGER}, ${PUBLISHED});
+      INSERT INTO "Image" (id, "userId", "postId", "nsfwLevel") VALUES (2, ${STRANGER}, 2, ${sourceLevel});
+    `);
     const row = await dbMock.dbRead.image.findUnique({ where: { id: 1 } } as never);
     dbMock.dbRead.image.findUnique.mockResolvedValue({
       ...(row as object),
       meta: { ...(row as { meta: object }).meta, extra: { sourceImageIds: [2] } },
     } as never);
     const data = await fetchAs(undefined, false);
-    expect(JSON.stringify(data)).not.toContain(SOURCE);
+    expect(JSON.stringify(data).includes(SOURCE)).toBe(kept);
     expect(data.remixOf?.url).toBe('image-own-url');
     // Its owner made it from that source.
     expect(JSON.stringify(await fetchAs(OWNER, false))).toContain(SOURCE);
