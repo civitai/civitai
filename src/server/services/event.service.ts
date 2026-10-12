@@ -25,6 +25,7 @@ import { redis, REDIS_KEYS, REDIS_SUB_KEYS, sysRedis } from '~/server/redis/clie
 import { hSetWithTTL } from '~/server/redis/atomic';
 import type {
   EventInput,
+  PlaceableContentPageInput,
   RosterOptInInput,
   TeamRosterInput,
   TeamScoreHistoryInput,
@@ -628,57 +629,112 @@ export async function getMyEventHats({
   }
 }
 
-// The caller's own content a hat of this event can go on, newest first, per allowed type.
+type PlaceableUser = { id: number; isModerator?: boolean };
+const PLACEABLE_TYPES: CosmeticEntity[] = [
+  CosmeticEntity.Image,
+  CosmeticEntity.Model,
+  CosmeticEntity.Article,
+];
+
+// The caller's own content a hat of this event can go on, newest first, per allowed type. Served to
+// clients from before the picker's per-type tabs, which read getPlaceableEventContentPage.
 export async function getPlaceableEventContent({
   event,
   user,
-}: EventInput & { user: { id: number; isModerator?: boolean } }) {
+}: EventInput & { user: PlaceableUser }) {
   try {
     await eventEngine.assertReadable(event, user);
-    const definition = getEventDecorationDefinition(event);
-    if (!definition) return [];
-    const types = new Set<CosmeticEntity>(definition.entityTypes);
-    const [images, models, articles] = await Promise.all([
-      types.has(CosmeticEntity.Image)
-        ? dbRead.image.findMany({
-            where: {
-              userId: user.id,
-              ingestion: ImageIngestionStatus.Scanned,
-              post: { publishedAt: { not: null } },
-            },
-            select: { id: true },
-            orderBy: { id: 'desc' },
-            take: PLACEABLE_PER_TYPE,
-          })
-        : [],
-      types.has(CosmeticEntity.Model)
-        ? dbRead.model.findMany({
-            where: { userId: user.id, status: ModelStatus.Published },
-            select: { id: true },
-            orderBy: { lastVersionAt: 'desc' },
-            take: PLACEABLE_PER_TYPE,
-          })
-        : [],
-      types.has(CosmeticEntity.Article)
-        ? dbRead.article.findMany({
-            where: { userId: user.id, status: ArticleStatus.Published },
-            select: { id: true },
-            orderBy: { publishedAt: 'desc' },
-            take: PLACEABLE_PER_TYPE,
-          })
-        : [],
-    ]);
-    return getPlaceableEntities([
-      ...images.map((x) => ({ entityType: CosmeticEntity.Image, entityId: x.id })),
-      ...models.map((x) => ({ entityType: CosmeticEntity.Model, entityId: x.id })),
-      ...articles.map((x) => ({ entityType: CosmeticEntity.Article, entityId: x.id })),
-    ]);
+    const types = getEventDecorationDefinition(event)?.entityTypes ?? [];
+    const ids = await Promise.all(
+      PLACEABLE_TYPES.filter((t) => types.includes(t)).map((entityType) =>
+        placeableIds(entityType, user.id, undefined, PLACEABLE_PER_TYPE)
+      )
+    );
+    return getPlaceableEntities(ids.flatMap((x) => x.entities));
+  } catch (error) {
+    throw getTRPCErrorFromUnknown(error);
+  }
+}
+
+// One page of the caller's own content of one type that a hat of this event can go on.
+export async function getPlaceableEventContentPage({
+  event,
+  entityType,
+  cursor,
+  user,
+}: PlaceableContentPageInput & { user: PlaceableUser }) {
+  try {
+    await eventEngine.assertReadable(event, user);
+    const types = getEventDecorationDefinition(event)?.entityTypes ?? [];
+    if (!types.includes(entityType) || !PLACEABLE_TYPES.includes(entityType))
+      return { items: [], nextCursor: null };
+    const { entities, nextCursor } = await placeableIds(
+      entityType,
+      user.id,
+      cursor,
+      PLACEABLE_PER_TYPE
+    );
+    return { items: await getPlaceableEntities(entities), nextCursor };
   } catch (error) {
     throw getTRPCErrorFromUnknown(error);
   }
 }
 
 const PLACEABLE_PER_TYPE = 24;
+
+// Published, scanned content only: equipping does not check publish state, so this is where a draft
+// is kept out. Images page by id (indexed with userId); a creator's models and articles are read
+// whole by userId and sorted either way, so they page by offset.
+async function placeableIds(
+  entityType: CosmeticEntity,
+  userId: number,
+  cursor: number | undefined,
+  take: number
+) {
+  let ids: number[];
+  if (entityType === CosmeticEntity.Image) {
+    const rows = await dbRead.image.findMany({
+      where: {
+        userId,
+        ingestion: ImageIngestionStatus.Scanned,
+        post: { publishedAt: { not: null } },
+        ...(cursor !== undefined && { id: { lt: cursor } }),
+      },
+      select: { id: true },
+      orderBy: { id: 'desc' },
+      take: take + 1,
+    });
+    ids = rows.map((r) => r.id);
+  } else if (entityType === CosmeticEntity.Model) {
+    const rows = await dbRead.model.findMany({
+      where: { userId, status: ModelStatus.Published },
+      select: { id: true },
+      orderBy: [{ lastVersionAt: 'desc' }, { id: 'desc' }],
+      skip: cursor ?? 0,
+      take: take + 1,
+    });
+    ids = rows.map((r) => r.id);
+  } else {
+    const rows = await dbRead.article.findMany({
+      where: { userId, status: ArticleStatus.Published },
+      select: { id: true },
+      orderBy: [{ publishedAt: 'desc' }, { id: 'desc' }],
+      skip: cursor ?? 0,
+      take: take + 1,
+    });
+    ids = rows.map((r) => r.id);
+  }
+  const page = ids.slice(0, take);
+  const more = ids.length > take;
+  return {
+    entities: page.map((entityId) => ({ entityType, entityId })),
+    nextCursor: !more
+      ? null
+      : entityType === CosmeticEntity.Image
+      ? page[page.length - 1]
+      : (cursor ?? 0) + take,
+  };
+}
 
 // Title and cover image for each entity, in the order given. An entity with no usable cover (still
 // scanning, or removed) is kept with a null image, so a worn hat never disappears from the list.
@@ -689,7 +745,10 @@ async function getPlaceableEntities(entities: { entityType: CosmeticEntity; enti
   const [covers, models, articles] = await Promise.all([
     getEntityCoverImage({ entities }),
     modelIds.length
-      ? dbRead.model.findMany({ where: { id: { in: modelIds } }, select: { id: true, name: true } })
+      ? dbRead.model.findMany({
+          where: { id: { in: modelIds } },
+          select: { id: true, name: true, type: true },
+        })
       : [],
     articleIds.length
       ? dbRead.article.findMany({
@@ -700,13 +759,20 @@ async function getPlaceableEntities(entities: { entityType: CosmeticEntity; enti
   ]);
   return entities.map(({ entityType, entityId }) => {
     const image = covers.find((c) => c.entityType === entityType && c.entityId === entityId);
+    const model = entityType === 'Model' ? models.find((m) => m.id === entityId) : undefined;
     const title =
       entityType === 'Model'
-        ? models.find((m) => m.id === entityId)?.name
+        ? model?.name
         : entityType === 'Article'
         ? articles.find((a) => a.id === entityId)?.title
         : undefined;
-    return { entityType, entityId, title: title ?? null, image: image ?? null };
+    return {
+      entityType,
+      entityId,
+      title: title ?? null,
+      modelType: model?.type ?? null,
+      image: image ?? null,
+    };
   });
 }
 

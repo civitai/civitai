@@ -20,17 +20,40 @@ import { makeTrpcProxy } from '../../../../../test/trpcProxyStub';
 const act = (React as unknown as { act: typeof actType }).act;
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-let placeable: unknown[] = [];
+let placeable: ({ entityType: string } & Record<string, unknown>)[] = [];
 let placeableLoading = false;
-const { equip } = vi.hoisted(() => ({ equip: vi.fn() }));
+// The types with another page to load.
+let placeableMore: string[] = [];
+// Several pages for a type, in place of the single page `placeable` gives it.
+let placeablePages: Record<string, unknown[][]> = {};
+// Every infinite query the modal opens: its input and its options.
+const placeableCalls: {
+  input: { event: string; entityType: string };
+  opts: {
+    enabled: boolean;
+    getNextPageParam: (page: { items: unknown[]; nextCursor: number | null }) => unknown;
+  };
+}[] = [];
+const { equip, fetchNextPage } = vi.hoisted(() => ({ equip: vi.fn(), fetchNextPage: vi.fn() }));
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof Trpc>()),
   trpc: makeTrpcProxy({
-    'event.getPlaceableContent': {
-      useQuery: () => ({
-        data: placeableLoading ? undefined : placeable,
-        isLoading: placeableLoading,
-      }),
+    // One tab's pages: the fixture's items of the type asked for.
+    'event.getPlaceableContentPage': {
+      useInfiniteQuery: (input: { event: string; entityType: string }, opts: never) => {
+        placeableCalls.push({ input, opts });
+        const { entityType } = input;
+        const pages = placeablePages[entityType] ?? [
+          placeable.filter((p) => p.entityType === entityType),
+        ];
+        return {
+          data: placeableLoading ? undefined : { pages: pages.map((items) => ({ items })) },
+          isLoading: placeableLoading,
+          hasNextPage: placeableMore.includes(entityType),
+          isFetchingNextPage: false,
+          fetchNextPage: () => fetchNextPage(entityType),
+        };
+      },
     },
   }),
 }));
@@ -134,31 +157,173 @@ const hat = (over: Partial<MyHat> = {}) =>
     ...over,
   } as MyHat);
 
-describe('PlaceHatModal older posts', () => {
-  const modal = () =>
+describe('PlaceHatModal tabs', () => {
+  const modal = (over: Partial<MyHat> = {}) =>
     render(
-      React.createElement(PlaceHatModal, { event: 'birthday2026', hat: hat(), myHats: [hat()] })
+      React.createElement(PlaceHatModal, {
+        event: 'birthday2026',
+        hat: hat(over),
+        myHats: [hat(over)],
+      })
     );
+  const tabLabels = (page: HTMLElement) =>
+    [...page.querySelectorAll('.mantine-SegmentedControl-label')].map((l) => l.textContent);
+  const pickTab = (page: HTMLElement, label: RegExp) => {
+    const el = [...page.querySelectorAll('.mantine-SegmentedControl-label')].find((l) =>
+      label.test(l.textContent ?? '')
+    ) as HTMLElement;
+    act(() => el.click());
+  };
+  const tileIds = (page: HTMLElement) =>
+    [...page.querySelectorAll('button[data-tile]'), ...page.querySelectorAll('div[data-tile]')]
+      .map((b) => b.getAttribute('data-tile'))
+      .sort();
   afterEach(() => {
     placeableLoading = false;
+    placeableMore = [];
+    placeablePages = {};
+    placeableCalls.length = 0;
+    fetchNextPage.mockClear();
   });
 
-  // Only the newest posts are listed: say where an older one takes a hat, in the menu's own words.
-  it('points to the menu item on each post for older posts', () => {
-    placeable = [{ entityType: 'Image', entityId: 500, title: null, image: null }];
-    expect(modal().querySelector('[data-testid="older-posts-hint"]')?.textContent).toBe(
-      'Looking for an older post? Find it on your profile and use Add Party Hat from the ⋮ menu on its card.'
+  // Each tab asks for this event's content of its own type; the next page starts at the server's
+  // cursor, and a null cursor means there is none.
+  it('asks for each type of this event, paging on the server cursor', () => {
+    placeable = [];
+    modal();
+    const last = placeableCalls.slice(-3);
+    expect(last.map((c) => [c.input.event, c.input.entityType, c.opts.enabled])).toEqual([
+      ['birthday2026', 'Image', true],
+      ['birthday2026', 'Model', true],
+      ['birthday2026', 'Article', true],
+    ]);
+    const next = last[1].opts.getNextPageParam;
+    expect(next({ items: [], nextCursor: 24 })).toBe(24);
+    expect(next({ items: [], nextCursor: null })).toBeUndefined();
+  });
+
+  // A hat with nowhere to go fetches nothing at all.
+  it('fetches nothing for an event whose hat has no types', () => {
+    placeable = [];
+    const page = render(
+      React.createElement(PlaceHatModal, { event: 'no-such-event', hat: hat(), myHats: [hat()] })
+    );
+    expect(placeableCalls.map((c) => [c.input.event, c.opts.enabled])).toEqual([
+      ['no-such-event', false],
+      ['no-such-event', false],
+      ['no-such-event', false],
+    ]);
+    expect(page.textContent).toContain('Nothing you publish can wear this hat.');
+  });
+
+  // An offset page can repeat a model published between two loads: it is listed once.
+  it('lists a model repeated across two pages once', () => {
+    const m = (entityId: number) => ({
+      entityType: 'Model',
+      entityId,
+      title: `M${entityId}`,
+      image: null,
+    });
+    placeablePages = {
+      Model: [
+        [m(7), m(8)],
+        [m(8), m(9)],
+      ],
+    };
+    const page = modal();
+    pickTab(page, /^Models/);
+    expect(tileIds(page)).toEqual(['Model:7', 'Model:8', 'Model:9']);
+    expect(tabLabels(page)[1]).toBe('Models 3');
+  });
+
+  // One tab per type the hat can go on, each with its own count; "+" while it has more to load.
+  it('labels each type with its own count', () => {
+    placeable = [
+      { entityType: 'Image', entityId: 500, title: null, image: null },
+      { entityType: 'Image', entityId: 501, title: null, image: null },
+      { entityType: 'Model', entityId: 7, title: 'My LoRA', modelType: 'LORA', image: null },
+    ] as never;
+    placeableMore = ['Model'];
+    expect(tabLabels(modal())).toEqual(['Images 2', 'Models 1+', 'Articles 0']);
+  });
+
+  // The grid holds one type at a time: images and models no longer share it.
+  it('lists only the open tab, and switches on a click', () => {
+    placeable = [
+      { entityType: 'Image', entityId: 500, title: null, image: null },
+      { entityType: 'Model', entityId: 7, title: 'My LoRA', modelType: 'LORA', image: null },
+      { entityType: 'Article', entityId: 9, title: 'Notes', image: null },
+    ] as never;
+    const page = modal();
+    expect(tileIds(page)).toEqual(['Image:500']);
+    pickTab(page, /^Models/);
+    expect(tileIds(page)).toEqual(['Model:7']);
+    pickTab(page, /^Articles/);
+    expect(tileIds(page)).toEqual(['Article:9']);
+  });
+
+  // A model shows its type and an article says it is one, on every card, cover or not.
+  it('badges models with their type and articles as articles', () => {
+    placeable = [
+      { entityType: 'Image', entityId: 500, title: null, image: null },
+      { entityType: 'Model', entityId: 7, title: 'My LoRA', modelType: 'LORA', image: null },
+      { entityType: 'Article', entityId: 9, title: 'Notes', image: null },
+    ] as never;
+    const page = modal();
+    const types = () =>
+      [...page.querySelectorAll('[data-testid="placeable-type"]')].map((b) => b.textContent);
+    expect(types()).toEqual([]);
+    pickTab(page, /^Models/);
+    expect(types()).toEqual(['LoRA']);
+    pickTab(page, /^Articles/);
+    expect(types()).toEqual(['Article']);
+  });
+
+  it("opens on the type the hat is on now, even when it isn't the first", () => {
+    placeable = [
+      { entityType: 'Image', entityId: 500, title: null, image: null },
+      { entityType: 'Article', entityId: 9, title: 'Notes', image: null },
+    ] as never;
+    const placedOn = { entityType: 'Article', entityId: 9 } as MyHat['placedOn'];
+    expect(tileIds(modal({ placedOn }))).toEqual(['Article:9']);
+  });
+
+  it('says what to make on a tab with nothing in it, and links to making one', () => {
+    placeable = [{ entityType: 'Image', entityId: 500, title: null, image: null }] as never;
+    const page = modal();
+    expect(page.querySelector('[data-testid="placeable-empty"]')).toBeNull();
+    pickTab(page, /^Models/);
+    const empty = page.querySelector('[data-testid="placeable-empty"]')!;
+    expect(empty.textContent).toContain("You haven't published a model yet.");
+    expect(empty.querySelector('a')?.getAttribute('href')).toBe('/models/create');
+    pickTab(page, /^Articles/);
+    expect(page.querySelector('[data-testid="placeable-empty"] a')?.getAttribute('href')).toBe(
+      '/articles/create'
     );
   });
 
-  it('says it with nothing listed too', () => {
-    placeable = [];
-    expect(modal().querySelector('[data-testid="older-posts-hint"]')).not.toBeNull();
+  // Paging is per tab: Show more loads the open tab's next page and no other.
+  it('shows more of the open tab only', () => {
+    placeable = [
+      { entityType: 'Image', entityId: 500, title: null, image: null },
+      { entityType: 'Model', entityId: 7, title: 'My LoRA', image: null },
+    ] as never;
+    placeableMore = ['Model'];
+    const page = modal();
+    const showMore = () =>
+      [...page.querySelectorAll('button')].find((b) => b.textContent === 'Show more');
+    expect(showMore()).toBeUndefined();
+    pickTab(page, /^Models/);
+    act(() => showMore()!.click());
+    expect(fetchNextPage.mock.calls).toEqual([['Model']]);
   });
 
-  it('waits until the list has loaded', () => {
+  it('shows a loader, not an empty state, until the tab has loaded', () => {
     placeableLoading = true;
-    expect(modal().querySelector('[data-testid="older-posts-hint"]')).toBeNull();
+    placeable = [];
+    const page = modal();
+    expect(page.querySelector('.mantine-Loader-root')).not.toBeNull();
+    expect(page.querySelector('[data-testid="placeable-empty"]')).toBeNull();
   });
 });
 
@@ -167,15 +332,15 @@ describe('PlaceHatModal tiles', () => {
   it('labels a candidate only with a real title', () => {
     placeable = [
       { entityType: 'Image', entityId: 500, title: null, image: null },
-      { entityType: 'Model', entityId: 7, title: 'My LoRA', image: null },
-    ];
+      { entityType: 'Image', entityId: 501, title: 'Sunset', image: null },
+    ] as never;
     const modal = render(
       React.createElement(PlaceHatModal, { event: 'birthday2026', hat: hat(), myHats: [hat()] })
     );
-    const labels = [...modal.querySelectorAll('button')].map((b) =>
+    const labels = [...modal.querySelectorAll('button[data-tile]')].map((b) =>
       [...b.querySelectorAll('p')].map((p) => p.textContent)
     );
-    expect(labels).toEqual([[], ['My LoRA']]);
+    expect(labels).toEqual([[], ['Sunset']]);
   });
 
   // Four to a row in a modal, its cards are smaller than Your hats': it asks for less picture.

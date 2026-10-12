@@ -5,6 +5,7 @@ import type { EventInput } from '~/server/schema/event.schema';
 import {
   eventCosmeticScoresSchema,
   eventSchema,
+  placeableContentPageSchema,
   rosterOptInSchema,
   teamRosterSchema,
   teamScoreHistorySchema,
@@ -30,6 +31,7 @@ import {
   getEventHatCatalog,
   getMyEventHats,
   getPlaceableEventContent,
+  getPlaceableEventContentPage,
   getWornEventHat,
   getTeamRoster,
   getMyRosterStatus,
@@ -178,6 +180,10 @@ export const eventRouter = router({
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(eventSchema)
     .query(({ ctx, input }) => getPlaceableEventContent({ user: ctx.user, ...input })),
+  getPlaceableContentPage: protectedProcedure
+    .meta({ requiredScope: TokenScope.MediaRead })
+    .input(placeableContentPageSchema)
+    .query(({ ctx, input }) => getPlaceableEventContentPage({ user: ctx.user, ...input })),
   // Marks live point topics as on screen, so the pusher sends them (events/points/watch.ts). Called on
   // view and every 30s while in view; no Postgres on this path. A page refreshing its sections makes
   // about 6 a minute, plus one per section scrolled into view and one per 50 hats; anonymous viewers

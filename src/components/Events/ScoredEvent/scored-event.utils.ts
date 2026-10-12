@@ -155,3 +155,31 @@ export function filmLength(seconds: number) {
   const whole = Math.round(seconds);
   return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, '0')}`;
 }
+
+export const PLACEABLE_TABS = ['Image', 'Model', 'Article'] as const;
+export type PlaceableTab = (typeof PLACEABLE_TABS)[number];
+export type PlaceableTabState = { count: number; more: boolean; loaded: boolean };
+
+/**
+ * The picker's opening tab: where the hat is now, else the first type with anything in it once
+ * every tab has loaded, else the first type the hat can go on.
+ */
+export function defaultPlaceableTab(
+  tabs: readonly PlaceableTab[],
+  state: Partial<Record<PlaceableTab, PlaceableTabState>>,
+  placedOn?: string | null
+): PlaceableTab | undefined {
+  const current = tabs.find((t) => t === placedOn);
+  if (current) return current;
+  if (tabs.every((t) => state[t]?.loaded)) {
+    const filled = tabs.find((t) => (state[t]?.count ?? 0) > 0);
+    if (filled) return filled;
+  }
+  return tabs[0];
+}
+
+/** "24+" while more can be loaded, "3" when that is all of them, nothing until the first page. */
+export function placeableTabCount(state?: PlaceableTabState) {
+  if (!state?.loaded) return '';
+  return `${state.count}${state.more ? '+' : ''}`;
+}

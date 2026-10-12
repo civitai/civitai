@@ -14,6 +14,7 @@ const { service } = vi.hoisted(() => ({
     getViewerEventAccess: vi.fn(async () => 'open'),
     getMyEventHats: vi.fn(async () => []),
     getPlaceableEventContent: vi.fn(async () => []),
+    getPlaceableEventContentPage: vi.fn(async () => ({ items: [], nextCursor: null })),
     getEventHatCatalog: vi.fn(async () => []),
     getWornEventHat: vi.fn(async () => null),
   },
@@ -89,6 +90,21 @@ describe('scored-event route access', () => {
       user: { id: 7 },
       event: 'birthday2026',
     });
+  });
+
+  // One tab of the picker: the caller's own content, so signed in only. (Never edge-cached either,
+  // but edgeCacheIt is a no-op outside prod, so a test here could not see it.)
+  it('serves getPlaceableContentPage to the signed-in caller only', async () => {
+    // A fresh object per call: the procedure's middleware writes onto its input.
+    const input = () => ({ event: 'birthday2026', entityType: 'Model' as const });
+    await expect(callerFor(undefined).getPlaceableContentPage(input())).rejects.toThrow(
+      expect.objectContaining({ code: 'UNAUTHORIZED' })
+    );
+    expect(service.getPlaceableEventContentPage).not.toHaveBeenCalled();
+    await callerFor({ id: 7 }).getPlaceableContentPage(input());
+    expect(service.getPlaceableEventContentPage).toHaveBeenCalledWith(
+      expect.objectContaining({ user: { id: 7 }, ...input() })
+    );
   });
 
   it('serves standings and per-cosmetic scores to a signed-out caller', async () => {
