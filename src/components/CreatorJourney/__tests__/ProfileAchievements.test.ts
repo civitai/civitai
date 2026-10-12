@@ -288,8 +288,8 @@ describe('achievements tab', () => {
       // The leading N is the badge's fallback hexagon: no art in this fixture.
       'NCreator Score tierNovaEarned before launch'
     );
-    const current = [...strip.children].filter((rung) =>
-      rung.getAttribute('aria-current') === 'true'
+    const current = [...strip.children].filter(
+      (rung) => rung.getAttribute('aria-current') === 'true'
     );
     expect(current.map((rung) => rung.getAttribute('aria-label'))).toEqual([
       'Nova: Earned before launch',
