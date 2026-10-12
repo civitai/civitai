@@ -81,6 +81,7 @@ function headFor(query: Record<string, string>, shareable: boolean | undefined) 
   const props = mocks.metaProps.at(-1) as { ogEndpoint?: string; schema?: Schema };
   return {
     ogEndpoint: props.ogEndpoint,
+    hasSchema: !!props.schema,
     pageImage: props.schema?.primaryImageOfPage.contentUrl,
     personImage: props.schema?.mainEntity.image,
   };
@@ -116,10 +117,11 @@ describe('profile head on a shared milestone link', () => {
     ['no milestone in the link', {}, undefined],
     ['a milestone whose card will not render', { milestone: 'supernova' }, false],
   ])('keeps the avatar for %s', (_, query, shareable) => {
+    mocks.profilePicture = { url: 'avatar-key', nsfwLevel: NsfwLevel.PG, type: 'image' };
     const head = headFor(query, shareable);
     expect(head.ogEndpoint).toBeUndefined();
-    expect(head.pageImage).toBe('https://example.test/avatar.png');
-    expect(head.personImage).toBe('https://example.test/avatar.png');
+    expect(head.pageImage).toContain('avatar-key');
+    expect(head.personImage).toContain('avatar-key');
   });
 });
 
@@ -138,6 +140,13 @@ describe('profile head with an uploaded avatar', () => {
   ])('names no page image for a %s avatar', (_, nsfwLevel) => {
     mocks.profilePicture = { url: 'avatar-key', nsfwLevel, type: 'image' };
     const head = headFor({}, undefined);
+    expect(head.pageImage).toBeUndefined();
+    expect(head.personImage).toBeUndefined();
+  });
+
+  it('names no page image from the unrated account image when there is no uploaded avatar', () => {
+    const head = headFor({}, undefined);
+    expect(head.hasSchema).toBe(true);
     expect(head.pageImage).toBeUndefined();
     expect(head.personImage).toBeUndefined();
   });

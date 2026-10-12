@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { safeSchemaImageUrl } from '~/components/Meta/safe-schema-image';
+import { profileSchemaImageUrl, safeSchemaImageUrl } from '~/components/Meta/safe-schema-image';
 import { NsfwLevel } from '~/server/common/enums';
 
 describe('safeSchemaImageUrl', () => {
@@ -26,6 +26,28 @@ describe('safeSchemaImageUrl', () => {
   it('names nothing without an image', () => {
     expect(safeSchemaImageUrl(null)).toBeUndefined();
     expect(safeSchemaImageUrl({ url: null, nsfwLevel: NsfwLevel.PG })).toBeUndefined();
+  });
+});
+
+describe('profileSchemaImageUrl', () => {
+  it('names a safe-rated avatar at 1200 wide', () => {
+    const url = profileSchemaImageUrl({ url: 'avatar-key', nsfwLevel: NsfwLevel.PG });
+    expect(url).toContain('avatar-key');
+    expect(url).toContain('width=1200');
+  });
+
+  it.each([
+    ['R', NsfwLevel.R],
+    ['unrated', 0],
+  ])('names no %s avatar', (_, nsfwLevel) => {
+    expect(profileSchemaImageUrl({ url: 'avatar-key', nsfwLevel })).toBeUndefined();
+  });
+
+  it('names nothing for a local blob preview or no avatar', () => {
+    expect(
+      profileSchemaImageUrl({ url: 'blob:https://civitai.com/x', nsfwLevel: NsfwLevel.PG })
+    ).toBeUndefined();
+    expect(profileSchemaImageUrl(null)).toBeUndefined();
   });
 });
 
