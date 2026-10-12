@@ -2552,6 +2552,23 @@ export function countUnjudgedRemainingPairs(entryCount: number, maxVotesPerEntry
   );
 }
 
+/**
+ * The most pairs this judge can reach in a crucible, for a progress total. Depends only on how many
+ * entries they can see, never on how they voted, so a vote can't shrink it the way it shrinks
+ * `countRemainingPairs`. Clamped to the pairs already judged so "judged of total" never overflows.
+ */
+export function countTotalPairs({
+  entryCount,
+  judgedPairs,
+  maxVotesPerEntry,
+}: {
+  entryCount: number;
+  judgedPairs: number;
+  maxVotesPerEntry: number;
+}) {
+  return Math.max(judgedPairs, countUnjudgedRemainingPairs(entryCount, maxVotesPerEntry));
+}
+
 /** Pairs this judge voted on where both entries are still visible to them. */
 export function countJudgedPairs({
   entryIds,
@@ -2572,6 +2589,7 @@ export function countJudgedPairs({
 export type JudgingPairCount = {
   remainingPairs: number;
   judgedPairs: number;
+  totalPairs: number;
   visibleEntries: number;
   judged: boolean;
 };
@@ -2626,6 +2644,7 @@ export async function countJudgingPairs({
 
   for (const { id: crucibleId, judgeEntryVotes, votedPairKeys } of counted) {
     const visible = entryIds.get(crucibleId) ?? [];
+    const judgedPairs = countJudgedPairs({ entryIds: visible, votedPairKeys });
     counts.set(crucibleId, {
       remainingPairs: countRemainingPairs({
         entryIds: visible,
@@ -2633,7 +2652,12 @@ export async function countJudgingPairs({
         votedPairKeys,
         maxVotesPerEntry: CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY,
       }),
-      judgedPairs: countJudgedPairs({ entryIds: visible, votedPairKeys }),
+      judgedPairs,
+      totalPairs: countTotalPairs({
+        entryCount: visible.length,
+        judgedPairs,
+        maxVotesPerEntry: CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY,
+      }),
       visibleEntries: visible.length,
       judged: votedPairKeys.length > 0,
     });
@@ -2675,7 +2699,7 @@ export const getJudgingProgress = async ({
   )
     throw throwNotFoundError('Crucible not found');
   if (crucible.status !== CrucibleStatus.Active || (crucible.endAt && crucible.endAt <= new Date()))
-    return { remainingPairs: 0, judgedPairs: 0, votesUsedUp: false };
+    return { remainingPairs: 0, judgedPairs: 0, totalPairs: 0, votesUsedUp: false };
 
   const viewerLevel = getEffectiveBrowsingLevel({
     isGreen,
@@ -2691,6 +2715,7 @@ export const getJudgingProgress = async ({
   return {
     remainingPairs,
     judgedPairs: counted?.judgedPairs ?? 0,
+    totalPairs: counted?.totalPairs ?? 0,
     votesUsedUp: remainingPairs === 0 && (counted?.visibleEntries ?? 0) >= 2,
   };
 };
