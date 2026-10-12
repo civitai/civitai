@@ -61,7 +61,6 @@ const isNumbers = (value: unknown, length: number): value is number[] =>
   value.length === length &&
   value.every((x) => typeof x === 'number' && Number.isFinite(x));
 
-/** The art's visible pixels, when its fit gives a box with some area. */
 function getArtBounds(fit?: EventDecorationFit) {
   return isNumbers(fit?.bounds, 4) && fit.bounds[2] > fit.bounds[0] && fit.bounds[3] > fit.bounds[1]
     ? (fit.bounds as [number, number, number, number])
@@ -69,16 +68,13 @@ function getArtBounds(fit?: EventDecorationFit) {
 }
 
 /**
- * A hat's preview in a square, by its visible pixels rather than its canvas: every hat covers the
- * same area, so a flat one is not dwarfed by a tall one, and none reaches past `HAT_PREVIEW.max`
- * of the square on either side. The square-root of the area is `HAT_PREVIEW.area` of the side.
+ * A hat preview is sized by its visible art, not its canvas, so a flat hat is not dwarfed by a tall
+ * one. `area` is the square-root of the art's area as a share of the square's side; `max` caps
+ * the art's width and height.
  */
 export const HAT_PREVIEW = { area: 0.62, max: 0.8 };
 
-/**
- * The image's box in a square preview, each as a share of the square's side, with the art's
- * visible middle on the square's middle. `undefined` when the fit does not say where the art is.
- */
+/** The image's box as shares of the square's side, art centred; `undefined` without bounds. */
 export function getHatPreviewBox(fit?: EventDecorationFit) {
   const bounds = getArtBounds(fit);
   if (!bounds) return undefined;

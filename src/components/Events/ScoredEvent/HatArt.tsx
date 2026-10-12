@@ -6,8 +6,8 @@ import type { EventDecorationFit } from '~/shared/constants/event-decoration.con
 const pct = (share: number) => `${share * 100}%`;
 
 /**
- * A hat centred on a glow of its team's colour, in a square. Given the hat's fit, the hat is sized
- * by its visible art, so hats of different shapes look alike in size; without one, by its canvas.
+ * A hat on a glow of its team's colour, in a square: sized by its visible art given a fit, else by
+ * its canvas.
  */
 export function HatArt({
   url,
@@ -28,8 +28,8 @@ export function HatArt({
     <div
       className={clsx(
         'relative grid aspect-square w-full place-items-center rounded-md bg-gray-1 dark:bg-dark-7',
-        // The image box is the whole canvas, well past the art; it must not cover or catch
-        // clicks for the tiles around it.
+        // The image box is the whole canvas, past the art; clip it so it can't cover the
+        // neighbouring tiles.
         box && 'overflow-hidden',
         className
       )}

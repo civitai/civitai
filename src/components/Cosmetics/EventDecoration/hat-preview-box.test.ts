@@ -5,15 +5,15 @@ import {
 } from '~/components/Cosmetics/EventDecoration/event-decoration-placement';
 import type { EventDecorationFit } from '~/shared/constants/event-decoration.constants';
 
-// Bounds of prod birthday hats (128x160 files), the flattest and tallest of one shop tier.
+// Bounds copied from prod birthday hats (128x160 files).
 const TINY_UFO: EventDecorationFit = { canvas: [128, 160], bounds: [10, 83, 118, 152] };
 const CHEETAH_BEANIE: EventDecorationFit = { canvas: [128, 160], bounds: [0, 22, 128, 152] };
 const STRAW_HAT: EventDecorationFit = { canvas: [128, 160], bounds: [0, 73, 128, 152] };
 const CIVBOT_RIDER: EventDecorationFit = { canvas: [128, 160], bounds: [16, 9, 112, 152] };
-// Drawn off the middle of their files.
+// Art off-centre in its file.
 const SCAVENGER_HOOD: EventDecorationFit = { canvas: [128, 160], bounds: [0, 39, 102, 152] };
 const MORNING_MUG: EventDecorationFit = { canvas: [128, 160], bounds: [24, 23, 128, 152] };
-// Shapes no hat has yet, past where the even area alone would leave the square.
+// Extreme shapes where the area rule alone would overflow the square.
 const SLAB: EventDecorationFit = { canvas: [128, 160], bounds: [0, 140, 128, 152] };
 const POLE: EventDecorationFit = { canvas: [128, 160], bounds: [60, 0, 68, 152] };
 const LARGE_FILE: EventDecorationFit = { canvas: [384, 384], bounds: [58, 1, 326, 383] };
@@ -41,7 +41,6 @@ describe('a hat preview sized by its art', () => {
     const beanie = visible(CHEETAH_BEANIE);
     expect(Math.sqrt(area(ufo))).toBeCloseTo(HAT_PREVIEW.area, 9);
     expect(Math.sqrt(area(beanie))).toBeCloseTo(HAT_PREVIEW.area, 9);
-    // So the UFO is drawn larger than the beanie, not the same scale.
     expect(ufo.scale / beanie.scale).toBeCloseTo(Math.sqrt((128 * 130) / (108 * 69)), 9);
   });
 
@@ -64,7 +63,6 @@ describe('a hat preview sized by its art', () => {
     expect(v.bottom).toBeLessThanOrEqual(1 - margin + 1e-9);
     expect((v.left + v.right) / 2).toBeCloseTo(0.5, 9);
     expect((v.top + v.bottom) / 2).toBeCloseTo(0.5, 9);
-    // In proportion: the image box keeps the file's own shape.
     expect(v.box.height / v.box.width).toBeCloseTo(fit.canvas![1] / fit.canvas![0], 9);
   });
 

@@ -6,11 +6,6 @@ import type { act as actType } from 'react-dom/test-utils';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { EventDecorationFit } from '~/shared/constants/event-decoration.constants';
 
-/**
- * The shop tile hands the hat's fit to HatArt, and HatArt draws the real image by it. The
- * geometry is pinned in hat-preview-box.test.ts; this pins what reaches the <img>.
- */
-
 const act = (React as unknown as { act: typeof actType }).act;
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -47,14 +42,14 @@ function render(element: React.ReactElement) {
 
 describe('a hat preview drawn by its fit', () => {
   it('is not held to the source width EdgeImage sets inline', () => {
-    // Tiny UFO's canvas is 0.92 of the square: on a tile wider than ~209px a 192px cap squashes it.
+    // The canvas is wider than `width` on a large tile, so the inline max-width would squash it.
     const { img } = render(React.createElement(HatArt, { url: 'u', width: 192, fit: TINY_UFO }));
     expect(img.style.maxWidth).toBe('none');
     expect(parseFloat(img.style.width)).toBeGreaterThan(90);
   });
 
   it('keeps its canvas inside the square, off the tiles around it', () => {
-    // Tiny UFO's canvas starts a third of the square above it.
+    // The canvas overhangs the square's top, so it must be clipped.
     const { img, square } = render(React.createElement(HatArt, { url: 'u', fit: TINY_UFO }));
     expect(parseFloat(img.style.top)).toBeLessThan(0);
     expect(square.className.split(' ')).toContain('overflow-hidden');
