@@ -85,9 +85,13 @@ describe('a hat preview sized by its art', () => {
     expect(getHatPreviewBox(fit as EventDecorationFit | undefined)).toBeUndefined();
   });
 
-  it('reads a canvas with no size as the 128x160 convention, not as an invisible hat', () => {
-    const box = getHatPreviewBox({ canvas: [0, 0], bounds: TINY_UFO.bounds });
-    expect(box).toEqual(getHatPreviewBox({ bounds: TINY_UFO.bounds }));
-    expect(box!.width).toBeGreaterThan(0);
-  });
+  it.each([[[0, 0]], [[128, 0]], [[0, 160]], [[128, -5]]] as [number, number][][])(
+    'reads canvas %j as the 128x160 convention, not as an invisible hat',
+    (canvas) => {
+      const box = getHatPreviewBox({ canvas, bounds: TINY_UFO.bounds });
+      expect(box).toEqual(getHatPreviewBox({ bounds: TINY_UFO.bounds }));
+      expect(box!.width).toBeGreaterThan(0);
+      expect(box!.height).toBeGreaterThan(0);
+    }
+  );
 });
