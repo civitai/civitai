@@ -1,5 +1,7 @@
 import type { Prisma } from '@prisma/client';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { managesPostCollection } from '~/server/utils/image-media-visibility';
 
 /**
  * `managesPostCollection` hands an above-cap image's media to whoever it answers true for, so its
@@ -7,10 +9,7 @@ import { describe, expect, it, vi } from 'vitest';
  * image's owner, and nothing else. A collection merely holding the image must not count.
  */
 
-const { queryRaw } = vi.hoisted(() => ({ queryRaw: vi.fn() }));
-vi.mock('~/server/db/client', () => ({ dbRead: { $queryRaw: queryRaw } }));
-
-const { managesPostCollection } = await import('~/server/utils/image-media-visibility');
+const queryRaw = dbMock.dbRead.$queryRaw;
 
 const normalise = (sql: Prisma.Sql) => sql.sql.replace(/\s+/g, ' ').trim();
 
