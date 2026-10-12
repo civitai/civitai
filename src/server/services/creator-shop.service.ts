@@ -2300,9 +2300,6 @@ export const takedownCosmeticShopItem = async ({
       continue;
     }
 
-    // A creator's own restock is never paid out, record or not.
-    if (purchase.userId === item.cosmetic?.createdById) continue;
-
     // Legacy rows (pre-migration): the split has to be re-derived from the item.
     const bluePaid = refund.refundedTransactions
       .filter((t) => t.accountType === 'blue')
@@ -2318,10 +2315,12 @@ export const takedownCosmeticShopItem = async ({
     if (creatorId) {
       // Without a payout record there's no way to tell whether another creator's
       // storefront or the platform took the seller share, so a resellable item
-      // only claws back what the creator is certain to have received.
-      recipients = [
-        { userId: creatorId, amount: meta.sellableByOthers ? creatorAmount : creatorPool },
-      ];
+      // only claws back what the creator is certain to have received. A
+      // creator's own restock paid them nothing.
+      recipients =
+        purchase.userId === item.cosmetic?.createdById
+          ? []
+          : [{ userId: creatorId, amount: meta.sellableByOthers ? creatorAmount : creatorPool }];
       if (meta.sellableByOthers) unrecoveredResellerShare += sellerAmount;
     } else {
       const paidToUserIds = meta.paidToUserIds ?? [];

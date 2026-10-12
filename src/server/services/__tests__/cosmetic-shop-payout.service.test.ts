@@ -843,6 +843,23 @@ describe('purchaseCosmeticShopItem creator restocking their own sticker', () => 
     expect(mocks.createMultiTx).not.toHaveBeenCalled();
   });
 
+  it("still pays another creator's storefront its share when the creator restocks there", async () => {
+    ownSticker();
+    mocks.resaleFindUnique.mockResolvedValue({ sellerShare: 20 });
+
+    await purchaseCosmeticShopItem({
+      userId: BUYER_ID,
+      shopItemId: SHOP_ITEM_ID,
+      viaShopUserId: RESELLER_ID,
+      stickersEnabled: true,
+    });
+
+    const { sellerAmount } = computeCreatorShopSplit(PRICE, 20);
+    expect(sellCalls()).toEqual([
+      expect.objectContaining({ toAccountId: RESELLER_ID, amount: sellerAmount }),
+    ]);
+  });
+
   it('refuses a creator whose own sticker grant is unlimited', async () => {
     ownSticker();
     mocks.userCosmeticFindFirst.mockResolvedValue({ claimKey: 'creator-shop' });
