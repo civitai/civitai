@@ -202,6 +202,15 @@ describe('Discord roles leg without PKCE', () => {
     expect(deleted).toContain('oauth_no_pkce');
   });
 
+  it('sends no code_verifier on the roles leg even if a stray verifier cookie is present', async () => {
+    await callback(
+      { code: 'c-1', state: 'st-1' },
+      { ...rolesJar, oauth_verifier: 'stale' },
+      { id: 7 }
+    ).run();
+    expect(h.exchangeCode.mock.calls[0][1]).toMatchObject({ codeVerifier: undefined });
+  });
+
   it('still refuses a mismatched state on the roles leg', async () => {
     const thrown = await callback({ code: 'c-1', state: 'st-OTHER' }, rolesJar, { id: 7 }).run();
     expect(isHttpError(thrown) && thrown.status).toBe(400);
