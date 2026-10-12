@@ -16,7 +16,7 @@ import { throwBadRequestError } from '~/server/utils/errorHandling';
 type ShopEvent = GatedEvent & {
   teams: readonly string[];
   getUserTeam: (userId: number, opts?: { strict?: boolean }) => Promise<string>;
-  settleBalancedTeam?: (userId: number) => Promise<string | undefined>;
+  settleBalancedTeam: (userId: number) => Promise<string | undefined>;
 };
 
 type EventItemData = { event: string; team?: unknown };
@@ -88,7 +88,7 @@ export async function assertEventShopItemPurchasable({
   // A listed buyer is placed before the check, the same way joining would place them, so a join racing
   // this purchase cannot move them off the colour they are paying for.
   const settled = async () => {
-    await event.settleBalancedTeam?.(userId);
+    await event.settleBalancedTeam(userId);
     return event.getUserTeam(userId, { strict: true });
   };
   const team = await settled().catch((error) => {

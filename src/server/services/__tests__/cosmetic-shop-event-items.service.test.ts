@@ -225,11 +225,15 @@ describe('buying an event-gated item (team hat)', () => {
   // A join racing this purchase must not move the buyer off the colour they pay for: the buyer's team
   // is settled (a listed buyer placed, team-balance.ts) before it is read.
   it('settles a balanced team before reading it', async () => {
-    await purchase();
-    expect(mocks.settleBalancedTeam).toHaveBeenCalledWith(BUYER_ID);
-    expect(mocks.settleBalancedTeam.mock.invocationCallOrder[0]).toBeLessThan(
-      mocks.getUserTeam.mock.invocationCallOrder[0]
-    );
+    let settle!: () => void;
+    mocks.settleBalancedTeam.mockReturnValue(new Promise<void>((r) => (settle = r)));
+    const bought = purchase();
+    await vi.waitFor(() => expect(mocks.settleBalancedTeam).toHaveBeenCalledWith(BUYER_ID));
+    // Still placing: the team must not have been read yet.
+    expect(mocks.getUserTeam).not.toHaveBeenCalled();
+    settle();
+    await bought;
+    expect(mocks.getUserTeam).toHaveBeenCalledTimes(1);
   });
 
   it('refuses, before any charge, when the team cannot be settled', async () => {
