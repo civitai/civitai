@@ -133,6 +133,9 @@ const setupCrucible = ({
   elos = { 1: 1600, 2: 1550, 3: 1400 } as Record<number, number>,
   voteCounts = {} as Record<number, number>,
   ingestion = CrucibleIngestionStatus.Scanned,
+  timeAdjustedPlacement = false,
+  startAt = null as Date | null,
+  endAt = new Date(Date.now() - 1000),
 } = {}) => {
   findUnique.mockResolvedValue({
     id: 1,
@@ -146,7 +149,9 @@ const setupCrucible = ({
     seededPrizePool,
     seedTransactionId: null,
     prizePositions: { '1': 50, '2': 30, '3': 20 },
-    endAt: new Date(Date.now() - 1000),
+    startAt,
+    endAt,
+    timeAdjustedPlacement,
     nsfwLevel: 1,
     _count: { entries: entries.length },
   });
@@ -720,6 +725,57 @@ describe('finalizeCrucible — minimum votes to place', () => {
       [2, 112],
       [3, 0],
     ]);
+  });
+
+  describe('when the bar follows the time each entry was live', () => {
+    const HOUR = 3_600_000;
+    const endAt = new Date(Date.now() - 1000);
+    const startAt = new Date(endAt.getTime() - 100 * HOUR);
+    // Entry 3 is live for the last 10 of 100 hours.
+    const lateEntries = [
+      dbEntry(1, 10, startAt.getTime()),
+      dbEntry(2, 11, startAt.getTime()),
+      dbEntry(3, 12, endAt.getTime() - 10 * HOUR),
+    ];
+    const run = (timeAdjustedPlacement: boolean) => {
+      setupCrucible({
+        entries: lateEntries,
+        elos: { 1: 1550, 2: 1520, 3: 1500 },
+        voteCounts: { 1: 500, 2: 500, 3: 40 },
+        timeAdjustedPlacement,
+        startAt,
+        endAt,
+      });
+      return finalizeCrucible(1);
+    };
+
+    it('places a late entry that collected the votes expected for its time', async () => {
+      // Expects 1040 × 10/210 ≈ 50 votes, so 38 is enough; the old bar would ask for 260.
+      const result = await run(true);
+
+      expect(result.finalEntries.find((e) => e.entryId === 3)?.position).toBe(3);
+    });
+
+    it('keeps the old bar for a crucible that predates the rule', async () => {
+      const result = await run(false);
+
+      expect(result.finalEntries.find((e) => e.entryId === 3)?.position).toBeNull();
+    });
+
+    it('still leaves a late entry unplaced when it is under its own bar', async () => {
+      setupCrucible({
+        entries: lateEntries,
+        elos: { 1: 1550, 2: 1520, 3: 1500 },
+        voteCounts: { 1: 500, 2: 500, 3: 10 },
+        timeAdjustedPlacement: true,
+        startAt,
+        endAt,
+      });
+
+      const result = await finalizeCrucible(1);
+
+      expect(result.finalEntries.find((e) => e.entryId === 3)?.position).toBeNull();
+    });
   });
 
   it('writes a null position for the unplaced entry', async () => {
