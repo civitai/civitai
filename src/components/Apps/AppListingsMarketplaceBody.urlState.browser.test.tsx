@@ -51,6 +51,7 @@ function makeCard(id: string, name: string, kind: 'onsite' | 'offsite' = 'onsite
     recommend: { recommendedCount: 0, notRecommendedCount: 0, recommendPct: null },
     reviewCount: 0,
     openCount: kind === 'onsite' ? 0 : null,
+    restrictedAudience: null,
     kindData:
       kind === 'onsite'
         ? {

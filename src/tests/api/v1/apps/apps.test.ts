@@ -468,3 +468,31 @@ describe('GET /api/v1/apps/{slug} — sourceRepoUrl parity', () => {
     expect(body).not.toHaveProperty('sourceRepoUrl');
   });
 });
+
+describe('🔴 the viewer-scoped `restrictedAudience` never crosses the public REST boundary', () => {
+  // The service always reads these endpoints as an anonymous, floor-`public` viewer, so the
+  // field could only ever be `null` here — and serving it would change a hand-documented
+  // contract for nothing. Fed a NON-null value on purpose: a handler that forgot to strip it
+  // would publish exactly that, and a `null` input could not tell "stripped" from "passed
+  // through".
+  it('list: every item is served WITHOUT the key, and the rest of the card is untouched', async () => {
+    mockList.mockResolvedValueOnce({
+      items: [{ ...card('a'), restrictedAudience: 'testers' }],
+      nextCursor: undefined,
+    });
+    const { req, res } = createMocks();
+    await (listHandler as unknown as Handler)(req, res, undefined);
+    const [item] = (res._json() as { items: Record<string, unknown>[] }).items;
+    expect(item).not.toHaveProperty('restrictedAudience');
+    expect(item).toEqual(card('a'));
+  });
+
+  it('detail: served WITHOUT the key, and the rest of the detail is untouched', async () => {
+    mockDetail.mockResolvedValueOnce({ ...detail('a'), restrictedAudience: 'moderators' });
+    const { req, res } = createMocks({ query: { slug: 'a' } });
+    await (detailHandler as unknown as Handler)(req, res, MOD);
+    expect(res._status()).toBe(200);
+    expect(res._json()).not.toHaveProperty('restrictedAudience');
+    expect(res._json()).toEqual(detail('a'));
+  });
+});

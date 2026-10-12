@@ -4,11 +4,13 @@ import { page } from 'vitest/browser';
 import { renderWithProviders } from '../../../../test/component-setup';
 import {
   chooseFiles,
+  makeFilesExpireAfterFirstRead,
   makeSlowFilesStall,
   makeUnreadableFilesFail,
 } from '../../../../test/unreadable-files';
 import type * as ApplicationError from '~/utils/application-error';
 import type * as DeviceHelpers from '~/utils/device-helpers';
+import type * as TransmitterStore from '~/store/post-image-transmitter.store';
 
 /**
  * The post editor (and every other MediaDropzone) must not hand on a file the photo picker made
@@ -20,6 +22,7 @@ import type * as DeviceHelpers from '~/utils/device-helpers';
 
 const mocks = vi.hoisted(() => ({
   reportApplicationError: vi.fn(),
+  getDropData: vi.fn(),
   /** Android unless a test says otherwise: the Files fallback is offered only there. */
   android: true,
 }));
@@ -27,6 +30,11 @@ const mocks = vi.hoisted(() => ({
 vi.mock('~/utils/device-helpers', async (orig) => ({
   ...(await orig<typeof DeviceHelpers>()),
   isAndroidDevice: () => mocks.android,
+}));
+
+vi.mock('~/store/post-image-transmitter.store', async (orig) => ({
+  ...(await orig<typeof TransmitterStore>()),
+  mediaDropzoneData: { getData: mocks.getDropData, setData: vi.fn(), getAllData: vi.fn() },
 }));
 
 vi.mock('~/utils/application-error', async (orig) => ({
@@ -39,7 +47,7 @@ import { MediaDropzone } from '~/components/Image/ImageDropzone/MediaDropzone';
 // eslint-disable-next-line import/first
 import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/shared/constants/mime-types';
 // eslint-disable-next-line import/first
-import { UNREADABLE_PROBE_TIMEOUT_MS } from '~/utils/unreadable-pick';
+import { isPickSnapshot, UNREADABLE_PROBE_TIMEOUT_MS } from '~/utils/unreadable-pick';
 
 const PICK_MESSAGE =
   "Your phone's photo picker gave us a file we can't open. Choose it from Files instead.";
@@ -273,5 +281,137 @@ describe('MediaDropzone — a pick the photo picker made unreadable', () => {
     await vi.waitFor(() => expect(onDrop).toHaveBeenCalledTimes(1));
     expect(page.getByText(PICK_MESSAGE).elements()).toHaveLength(0);
     expect(reports()).toEqual([]);
+  });
+});
+
+/**
+ * A photo-picker File can read fine at the pick and turn unreadable seconds later, so an image is
+ * handed on as an in-memory copy taken at the pick. A dropped file the consumer later fails to read
+ * gets the same fallback as an unreadable pick.
+ */
+describe('MediaDropzone — a picked file that turns unreadable after the pick', () => {
+  const onDrop = vi.fn();
+  let expiry: ReturnType<typeof makeFilesExpireAfterFirstRead> | undefined;
+
+  beforeEach(() => {
+    onDrop.mockReset();
+    mocks.android = true;
+    mocks.reportApplicationError.mockReset().mockResolvedValue(undefined);
+  });
+  afterEach(() => {
+    expiry?.restore();
+    expiry = undefined;
+  });
+
+  test('an image is handed on as a copy that still reads after the original stops reading', async () => {
+    expiry = makeFilesExpireAfterFirstRead();
+    const photo = expiry.expiringFile(
+      new File(['photo bytes'], 'photo-0.jpg', { type: 'image/jpeg' })
+    );
+    renderWithProviders(
+      <div data-testid="media">
+        <MediaDropzone onDrop={onDrop} accept={[...IMAGE_MIME_TYPE, ...VIDEO_MIME_TYPE]} />
+      </div>
+    );
+    await chooseFiles(dropzoneInput(), [photo]);
+
+    await vi.waitFor(() => expect(onDrop).toHaveBeenCalledTimes(1));
+    const [{ file }] = onDrop.mock.calls[0][0] as { file: File }[];
+    expect([file.name, file.type]).toEqual(['photo-0.jpg', 'image/jpeg']);
+    // The consumer gets the copy itself, which is how the post editor tells it from the device's own.
+    expect(isPickSnapshot(file)).toBe(true);
+    expect(await file.text()).toBe('photo bytes');
+    expect(reports()).toEqual([]);
+  });
+
+  test('files the consumer could not read are offered the Files fallback, which hands on new ones', async () => {
+    renderWithProviders(
+      <div data-testid="media">
+        <MediaDropzone onDrop={onDrop} accept={IMAGE_MIME_TYPE} unreadablePicks={1} />
+      </div>
+    );
+
+    await expect.element(page.getByText(PICK_MESSAGE, { exact: true })).toBeVisible();
+    await chooseFiles(filesFallbackInput(), [imageFile('photo-1.jpg')]);
+    await vi.waitFor(() => expect(onDrop).toHaveBeenCalledTimes(1));
+    expect(onDrop.mock.calls[0][0].map(({ file }: { file: File }) => file.name)).toEqual([
+      'photo-1.jpg',
+    ]);
+  });
+});
+
+/** Only as many files as the consumer can take are read: each one read is copied into memory. */
+describe('MediaDropzone — a pick over the limit', () => {
+  const onDrop = vi.fn();
+  beforeEach(() => {
+    onDrop.mockReset();
+    mocks.reportApplicationError.mockReset().mockResolvedValue(undefined);
+  });
+
+  test('only the files within pickLimit are read and handed on', async () => {
+    const files = [0, 1, 2].map((i) => imageFile(`photo-${i}.jpg`));
+    const fullReads = files.map((file) => vi.spyOn(file, 'arrayBuffer'));
+    renderWithProviders(
+      <div data-testid="media">
+        <MediaDropzone onDrop={onDrop} accept={IMAGE_MIME_TYPE} pickLimit={2} />
+      </div>
+    );
+    await chooseFiles(dropzoneInput(), files);
+
+    await vi.waitFor(() => expect(onDrop).toHaveBeenCalledTimes(1));
+    expect(onDrop.mock.calls[0][0].map(({ file }: { file: File }) => file.name)).toEqual([
+      'photo-0.jpg',
+      'photo-1.jpg',
+    ]);
+    expect(fullReads.map((read) => read.mock.calls.length)).toEqual([1, 1, 0]);
+  });
+
+  test('with no room left, nothing is read or handed on', async () => {
+    const file = imageFile('photo-0.jpg');
+    const fullRead = vi.spyOn(file, 'arrayBuffer');
+    renderWithProviders(
+      <div data-testid="media">
+        <MediaDropzone onDrop={onDrop} accept={IMAGE_MIME_TYPE} pickLimit={0} />
+      </div>
+    );
+    await chooseFiles(dropzoneInput(), [file]);
+    await new Promise((r) => setTimeout(r, 300));
+    expect(onDrop).not.toHaveBeenCalled();
+    expect(fullRead).not.toHaveBeenCalled();
+  });
+});
+
+/** A url dropped on the dropzone is fetched into memory: it is no device file a picker can revoke. */
+describe('MediaDropzone — a dropped url', () => {
+  const onDrop = vi.fn();
+  beforeEach(() => {
+    onDrop.mockReset();
+    mocks.getDropData.mockReset();
+  });
+
+  test('is handed on marked as held in memory', async () => {
+    const fetched = new File(['bytes'], 'image.jpeg', { type: 'image/jpeg' });
+    mocks.getDropData.mockResolvedValue({ file: fetched, data: { prompt: 'x' } });
+    renderWithProviders(
+      <div data-testid="media">
+        <MediaDropzone onDrop={onDrop} accept={IMAGE_MIME_TYPE} />
+      </div>
+    );
+    const zone = await vi.waitFor(() => {
+      const el = document.querySelector<HTMLElement>(
+        '[data-testid="media"] .mantine-Dropzone-root'
+      );
+      if (!el) throw new Error('dropzone not found');
+      return el;
+    });
+    const transfer = new DataTransfer();
+    transfer.setData('text/uri-list', 'https://example.test/image.jpeg');
+    zone.dispatchEvent(new DragEvent('drop', { dataTransfer: transfer, bubbles: true }));
+
+    await vi.waitFor(() => expect(onDrop).toHaveBeenCalledTimes(1));
+    const [{ file, meta }] = onDrop.mock.calls[0][0] as { file: File; meta: unknown }[];
+    expect(file).toBe(fetched);
+    expect(meta).toEqual({ prompt: 'x' });
+    expect(isPickSnapshot(file)).toBe(true);
   });
 });

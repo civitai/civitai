@@ -2,7 +2,7 @@
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { LINK_CLASS, dateTime } from '$lib/format';
   import { userLookupUrl } from '$lib/entity-url';
-  import { feedbackStatusBadgeClass, splitContext } from '$lib/feedback';
+  import { feedbackAreaLabel, feedbackStatusBadgeClass, splitContext } from '$lib/feedback';
   import FeedbackDetail from '../FeedbackDetail.svelte';
   import type { ActionData, PageData } from './$types';
 
@@ -22,7 +22,7 @@
 <header class="page-header">
   <h1>Report #{data.row.id}</h1>
   <p class="text-dark-2">
-    <Badge variant="outline">{data.row.area}</Badge>
+    <Badge variant="outline">{feedbackAreaLabel(data.row.area)}</Badge>
     · {dateTime(data.row.createdAt)}
     ·
     {#if data.row.username}

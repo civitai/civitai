@@ -320,6 +320,19 @@ export type AppBlock = {
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
 };
+export type AppBlockBuildAttempt = {
+  id: Generated<number>;
+  publish_request_id: string | null;
+  slug: string;
+  sha: string;
+  run_id: string | null;
+  mode: string;
+  status: string;
+  failed_step: string | null;
+  failed_reason: string | null;
+  failure_class: string | null;
+  created_at: Generated<Timestamp>;
+};
 export type AppBlockPublishRequest = {
   id: string;
   app_block_id: string | null;
@@ -646,6 +659,10 @@ export type AppSubListingParent = {
   parent_listing_id: string;
   enabled: Generated<boolean>;
   max_per_author: Generated<number>;
+  /**
+   * The https URL an off-site parent's store cards open, with one `{id}` (manual-apply column).
+   */
+  link_template: string | null;
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
 };
@@ -2495,6 +2512,28 @@ export type CosmeticShopItemCosmetic = {
   index: Generated<number>;
   floorAmount: number;
 };
+export type CosmeticShopPurchaseClaim = {
+  /**
+   * The charge's external transaction id prefix (UserCosmeticShopPurchases.buzzTransactionId once paid).
+   */
+  transactionId: string;
+  userId: number;
+  shopItemId: number;
+  /**
+   * What this claim charges. A retry of a pending claim charges this, not the current price.
+   */
+  amount: number;
+  /**
+   * pending | refunding | refunded | paid (text + CHECK, not an enum).
+   */
+  status: string;
+  /**
+   * Requests that have charged under this claim: 1 for the one that created it, +1 per resume.
+   */
+  attempts: Generated<number>;
+  createdAt: Generated<Timestamp>;
+  updatedAt: Generated<Timestamp>;
+};
 export type CosmeticShopSection = {
   id: Generated<number>;
   addedById: number | null;
@@ -2526,6 +2565,10 @@ export type CreatorMilestone = {
   track: string;
   threshold: number | null;
   hidden: Generated<boolean>;
+  /**
+   * A special (hidden, not score or activity) milestone left off the journey page's special list until earned. Honoured there only.
+   */
+  unlisted: Generated<boolean>;
   hint: string | null;
   name: string;
   description: string | null;
@@ -2744,6 +2787,37 @@ export type EntityModeration = {
   createdAt: Generated<Timestamp>;
   updatedAt: Timestamp;
 };
+export type EventCosmeticPlacement = {
+  id: Generated<string>;
+  event: string;
+  userId: number;
+  cosmeticId: number;
+  claimKey: string;
+  team: string;
+  entityType: CosmeticEntity;
+  entityId: number;
+  entityOwnerId: number | null;
+  startedAt: Generated<Timestamp>;
+  endedAt: Timestamp | null;
+  updatedAt: Generated<Timestamp>;
+};
+export type EventCosmeticScoreDaily = {
+  event: string;
+  day: Timestamp;
+  userId: number;
+  cosmeticId: number;
+  claimKey: string;
+  team: string;
+  impressions: Generated<number>;
+  anonImpressions: Generated<number>;
+  reactions: Generated<number>;
+  comments: Generated<number>;
+  stickers: Generated<number>;
+  remixes: Generated<number>;
+  modelLikes: Generated<number>;
+  points: Generated<number>;
+  updatedAt: Generated<Timestamp>;
+};
 export type FeaturedModelVersion = {
   id: Generated<number>;
   modelVersionId: number;
@@ -2766,6 +2840,36 @@ export type Feedback = {
   handledById: number | null;
   handledAt: Timestamp | null;
   bugId: number | null;
+  /**
+   * The `app-block` area only: the `Feedback_app_columns_check` CHECK requires this and the seven app
+   * columns below (appBlockVersion, appBlockSha, ownerStatus, ownerStatusAt, ownerStatusById,
+   * ownerFlaggedAt, hiddenFromOwnerAt) to be NULL unless `area` is 'app-block'; it requires nothing of
+   * an app-block row. Always the PARENT listing, never a shadow revision. SetNull, not Cascade:
+   * deleting a listing must not destroy the report for moderators.
+   */
+  appListingId: string | null;
+  /**
+   * The block version live when the feedback was sent, stamped server-side. NULL for off-site apps.
+   */
+  appBlockVersion: string | null;
+  appBlockSha: string | null;
+  /**
+   * Owner (developer) status, SEPARATE from the moderator `status` / `triageNote` / `handledBy`
+   * columns above so an owner can never move moderator triage. NULL = new to the developer; otherwise
+   * one of FEEDBACK_OWNER_STATUSES (CHECK `Feedback_ownerStatus_check`).
+   */
+  ownerStatus: string | null;
+  ownerStatusAt: Timestamp | null;
+  ownerStatusById: number | null;
+  /**
+   * The owner flagged this report as abusive, for moderators.
+   */
+  ownerFlaggedAt: Timestamp | null;
+  /**
+   * A moderator hid this report from the developer. Which moderator is recorded by the
+   * append-only ModActivity row written on each hide/unhide, not by a column here.
+   */
+  hiddenFromOwnerAt: Timestamp | null;
 };
 export type File = {
   id: Generated<number>;
@@ -2776,6 +2880,28 @@ export type File = {
   entityId: number;
   entityType: string;
   metadata: unknown | null;
+};
+export type GameFrameGame = {
+  id: Generated<number>;
+  slug: string;
+  title: string;
+  userId: number | null;
+  official: Generated<boolean>;
+  visibility: string;
+  url: string;
+  coverUrl: string | null;
+  stateAt: Timestamp | null;
+  createdAt: Generated<Timestamp>;
+  updatedAt: Timestamp;
+};
+export type GameFrameGameReport = {
+  gameFrameGameId: number;
+  reportId: number;
+};
+export type GameFrameReportReceipt = {
+  gfReportId: string;
+  reportId: number;
+  createdAt: Generated<Timestamp>;
 };
 export type GenerationBaseModel = {
   baseModel: string;
@@ -4215,6 +4341,27 @@ export type ResourceInsight = {
   createdAt: Generated<Timestamp>;
   stale: Generated<boolean>;
 };
+export type ResourceIntentCoocSnapshot = {
+  id: string;
+  kind: string;
+  status: Generated<string>;
+  contentHash: string | null;
+  specHash: string;
+  trainStart: Timestamp;
+  trainEnd: Timestamp;
+  seed: number;
+  pinnedUntil: Timestamp | null;
+  builtAt: Generated<Timestamp>;
+  trainCreatedAtMin: Timestamp | null;
+  trainCreatedAtMax: Timestamp | null;
+  idsTried: number | null;
+  trainRows: number | null;
+  vocab: number | null;
+  models: number | null;
+  keptPairs: number | null;
+  payload: Buffer | null;
+  trainImageIds: Buffer | null;
+};
 export type ResourceOverride = {
   hash: string;
   modelVersionId: number;
@@ -4561,6 +4708,7 @@ export type Thread = {
   model3dId: number | null;
   model3dReviewId: number | null;
   appListingId: number | null;
+  crucibleId: number | null;
   metadata: Generated<unknown>;
   commentCount: Generated<number>;
 };
@@ -5002,6 +5150,7 @@ export type DB = {
   AnswerReaction: AnswerReaction;
   AnswerVote: AnswerVote;
   ApiKey: ApiKey;
+  app_block_build_attempts: AppBlockBuildAttempt;
   app_block_publish_requests: AppBlockPublishRequest;
   app_blocks: AppBlock;
   app_collaborators: AppCollaborator;
@@ -5122,6 +5271,7 @@ export type DB = {
   Cosmetic: Cosmetic;
   CosmeticShopItem: CosmeticShopItem;
   CosmeticShopItemCosmetic: CosmeticShopItemCosmetic;
+  CosmeticShopPurchaseClaim: CosmeticShopPurchaseClaim;
   CosmeticShopSection: CosmeticShopSection;
   CosmeticShopSectionItem: CosmeticShopSectionItem;
   CoveredCheckpoint: CoveredCheckpoint;
@@ -5146,9 +5296,14 @@ export type DB = {
   EntityMetric: EntityMetric;
   EntityMetricImage: EntityMetricImage;
   EntityModeration: EntityModeration;
+  EventCosmeticPlacement: EventCosmeticPlacement;
+  EventCosmeticScoreDaily: EventCosmeticScoreDaily;
   FeaturedModelVersion: FeaturedModelVersion;
   Feedback: Feedback;
   File: File;
+  GameFrameGame: GameFrameGame;
+  GameFrameGameReport: GameFrameGameReport;
+  GameFrameReportReceipt: GameFrameReportReceipt;
   GenerationBaseModel: GenerationBaseModel;
   GenerationCoverage: GenerationCoverage;
   GenerationPreset: GenerationPreset;
@@ -5257,6 +5412,7 @@ export type DB = {
   Report: Report;
   ReportAutomated: ReportAutomated;
   ResourceInsight: ResourceInsight;
+  ResourceIntentCoocSnapshot: ResourceIntentCoocSnapshot;
   ResourceOverride: ResourceOverride;
   ResourceReview: ResourceReview;
   ResourceReviewHelper: ResourceReviewHelper;

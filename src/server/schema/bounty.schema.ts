@@ -8,7 +8,7 @@ import {
 import dayjs from '~/shared/utils/dayjs';
 import * as z from 'zod';
 import { constants } from '~/server/common/constants';
-import { imageGenerationSchema, imageSchema } from '~/server/schema/image.schema';
+import { imageGenerationSchema, imageReferenceInputSchema } from '~/server/schema/image.schema';
 import { BountySort, BountyStatus } from '../common/enums';
 import { infiniteQuerySchema } from './base.schema';
 import { baseFileSchema } from './file.schema';
@@ -88,7 +88,11 @@ export const createBountyInputSchema = z.object({
   ownRights: z.boolean().optional(),
   files: z.array(baseFileSchema).optional(),
   images: z
-    .array(imageSchema.extend({ meta: imageGenerationSchema.omit({ comfy: true }).nullish() }))
+    .array(
+      imageReferenceInputSchema.extend({
+        meta: imageGenerationSchema.omit({ comfy: true }).nullish(),
+      })
+    )
     .min(1, 'At least one example image must be uploaded'),
   buzzType: z.enum(['green', 'yellow']).default('yellow'),
 });

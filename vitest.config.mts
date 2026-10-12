@@ -64,7 +64,7 @@ const componentGroupOrderPlugin = {
 
 // Same both-belts reasoning one project down, for the setting whose failure is a SIGSEGV rather than
 // an empty run. `unit-native`'s static `pool: 'forks'` loses to a CLI `--pool=threads`, which is the
-// one flag someone experimenting on `unit` will reach for — and the six sharp files would follow it
+// one flag someone experimenting on `unit` will reach for — and the sharp files would follow it
 // onto a thread pool and crash AFTER printing a green summary. `configureVitest` runs after
 // `resolveProjects(cliOptions)`, and `getFilePoolName` reads `project.config.pool` when each
 // specification is created, so re-asserting here outranks the flag.
@@ -170,6 +170,8 @@ const sharpExecutingTestFiles = [
   'src/server/services/blocks/__tests__/offsite-listing.service.test.ts',
   'src/server/utils/__tests__/listing-asset-exif-fixture.test.ts',
   'src/server/utils/__tests__/stored-image-probe.test.ts',
+  'src/server/utils/__tests__/og-image-helpers.test.ts',
+  'src/tests/api/og.milestone.test.ts',
 ];
 
 // Shared by `unit` and `unit-native`, which differ ONLY in pool and in which files they claim.
@@ -446,8 +448,8 @@ const browserTestShell = () => ({
 });
 
 // Four Vitest projects sharing one config/runner:
-//  - `unit`        = the node-env suite, minus the six sharp-executing files.
-//  - `unit-native` = those six files, on `forks`, for the reason above.
+//  - `unit`        = the node-env suite, minus the sharp-executing files.
+//  - `unit-native` = those files, on `forks`, for the reason above.
 //  - `component`   = browser-mode (real Chromium via Playwright) for React
 //                  components/widgets. Distinct `.browser.test.tsx` glob so the
 //                  unit project never boots a browser (its include is `.test.ts`
@@ -513,7 +515,7 @@ export default defineConfig({
           // decides whether a run counts as a pass, so it needs a suite of its
           // own rather than a one-off manual check.
           include: ['src/**/*.test.ts', 'scripts/**/*.test.ts'],
-          // The six sharp files are excluded rather than merely routed elsewhere, so that
+          // The sharp files are excluded rather than merely routed elsewhere, so that
           // `--project unit <a sharp file>` reports "No test files found" instead of running it
           // on `threads` and segfaulting. A legible empty run beats an exit code with no failing
           // test — which is what the crash looks like from the outside.
@@ -528,7 +530,7 @@ export default defineConfig({
           name: 'unit-native',
           include: sharpExecutingTestFiles,
           // Pinned, not inherited: `unit` may be pointed at `threads` for an experiment, and these
-          // six must not follow it there. Every process-based pool survives the sharp teardown
+          // files must not follow it there. Every process-based pool survives the sharp teardown
           // (`forks` and `vmForks` both measured clean); every thread-based one races and loses.
           // Declared here AND re-asserted by `nativePoolPlugin`, for the reason given at its
           // definition: a static value alone loses to a CLI `--pool`, and a plugin alone is

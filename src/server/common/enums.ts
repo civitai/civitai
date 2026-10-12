@@ -190,6 +190,9 @@ export enum SignalMessages {
   ReferralTokenExpiringSoon = 'referral:token-expiring-soon',
   ScannerPolicyTestProgress = 'scanner-policy:test-progress',
   ContestScoreRunUpdate = 'contest-score:run-update',
+  EventPointsHat = 'event-points:hat',
+  EventPointsTeams = 'event-points:teams',
+  EventPointsOwner = 'event-points:owner',
 }
 
 export enum BountySort {
@@ -452,6 +455,7 @@ export enum SignalTopic {
   NewOrderPlayer = 'new-order-player', // with :playerId
   NewOrderQueue = 'new-order-queue', // with :queueId
   Metric = 'metrics', // with :entityType:entityId
+  EventPoints = 'event-points', // with :event:hat:topicId, :event:owner:topicId, or :event:teams
   ContestScore = 'contest-score', // with :collectionId
 }
 

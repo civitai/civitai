@@ -120,6 +120,7 @@ export const cosmeticShopRouter = router({
         stickersEnabled: ctx.features.stickers,
         packsEnabled: ctx.features.cosmeticPacks,
         userId: ctx.user.id,
+        isModerator: ctx.user.isModerator,
         buzzType,
       });
     }),

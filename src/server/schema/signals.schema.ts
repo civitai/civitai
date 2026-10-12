@@ -10,8 +10,8 @@ export const getSignalsAccessTokenResponse = z.object({
   // returns `{ accessToken: undefined }` instead of a hard 500. The client
   // (useSignalsWorker) reads `data?.accessToken` and only opens the SignalR
   // connection when it's present, so a missing token degrades to no-live-updates
-  // (until the tab remounts — it does not auto-recover; see SIGNALS_UNAVAILABLE
-  // in signals.service.ts) — never a thrown request.
+  // until a backed-off re-fetch gets a real one (see SIGNALS_UNAVAILABLE in
+  // signals.service.ts) — never a thrown request.
   accessToken: z.string().optional(),
 });
 

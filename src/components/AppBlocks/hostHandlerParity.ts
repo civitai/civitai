@@ -61,6 +61,13 @@ export type HostFile = 'IframeHost.tsx' | 'PageBlockHost.tsx' | 'InlineHost.tsx'
  *
  * Keep one-line rationales human-readable — they ARE the documentation a future
  * maintainer reads when the parity test fails.
+ *
+ * The per-host column is also read at RUNTIME: when a host has no handler for a
+ * type, `unhandledOutcomeFor` (`bridgeTelemetry.ts`) reports
+ * `outcome="not_applicable"` where the column holds a rationale string and
+ * `outcome="no_handler"` where it holds `'required'` (or the type is absent). So
+ * flipping an entry between the two moves its unhandled traffic between those
+ * series on `civitai_app_block_bridge_messages_total`.
  */
 export type HostReq = 'required' | string; // string = N/A reason
 
@@ -168,12 +175,10 @@ export const INVENTORY = {
   TRACK_EVENT: {
     request: false,
     reply: '',
-    // N/A (both real hosts): TRACK_EVENT is fire-and-forget analytics and is
-    // currently NOT bridged by EITHER host (no host-side analytics sink wired).
-    // Unhandled ⇒ silently dropped, never a hang. If a sink is added, flip the
-    // relevant host(s) to 'required' here so coverage is enforced.
-    IframeHost: 'analytics fire-and-forget; no host-side sink wired (dropped, never hangs)',
-    PageBlockHost: 'analytics fire-and-forget; no host-side sink wired (dropped, never hangs)',
+    // Forwarded to /api/track/block-event by `blockEventBeacon.ts`; identity comes from
+    // host props, never the payload.
+    IframeHost: 'required',
+    PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
   },
   // REQUEST_SIGN_IN / REQUEST_CONSENT are AHEAD of the published SDK dist union
@@ -240,6 +245,19 @@ export const INVENTORY = {
   ESTIMATE_WORKFLOW: {
     request: true,
     reply: 'ESTIMATE_RESULT',
+    IframeHost: 'required',
+    PageBlockHost: 'required',
+    InlineHost: INLINE_STUB,
+  },
+  // The batch twin of ESTIMATE_WORKFLOW: a list of bodies in, one snapshot per
+  // body plus a run total out. Estimate only — nothing is submitted. Both live
+  // hosts forward it to `blocks.estimateWorkflowBatch` (decision + reply live in
+  // `estimateBatchGate.ts`). Its reply is in the `{ requestId, error }` family, so
+  // a host with no handler NACKs it through the shared dispatcher. REQUEST-style;
+  // ahead of the published SDK dist union (the SDK pair lands in the SDK repo).
+  ESTIMATE_WORKFLOW_BATCH: {
+    request: true,
+    reply: 'ESTIMATE_BATCH_RESULT',
     IframeHost: 'required',
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
@@ -409,6 +427,9 @@ export const INVENTORY = {
   // block→host REQUEST types + their replies). OPEN_IMAGE_UPLOAD's TYPE is unchanged
   // — async mode only adds an OPTIONAL `asyncScan` payload field — so no new entry
   // is needed here. Do NOT "add" IMAGE_SCAN_RESOLVED to this map.
+  //
+  // The `bytes` variant (an app's own image, no picker) is the same type and the same reply, so
+  // it needs no entry either.
   OPEN_IMAGE_UPLOAD: {
     request: true,
     reply: 'IMAGE_UPLOAD_RESULT',
@@ -568,8 +589,9 @@ export const INVENTORY = {
   },
   // Host download bridge (Batch-D item 1) — the host fetches an image in its
   // UNSANDBOXED top frame + triggers the browser download (a sandboxed block has
-  // no `allow-downloads`). Two variants: an origin-allowlisted OWN-output `url`,
-  // or a cross-user `imageId` routed through the gated per-viewer read. PAGE-ONLY
+  // no `allow-downloads`). Three variants: an origin-allowlisted OWN-output `url`,
+  // a cross-user `imageId` routed through the gated per-viewer read, or block-made
+  // `bytes` classified by content (image / JSON / text only). PAGE-ONLY
   // affordance today (the paid-output apps — gen-matrix / custom-generators /
   // model-benchmarking — are all page apps), so N/A for the model host, mirroring
   // the GET_IMAGES_BY_IDS / PUBLISH_GENERATION_OUTPUTS page-only exemption.

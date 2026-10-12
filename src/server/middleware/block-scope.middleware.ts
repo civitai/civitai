@@ -43,6 +43,7 @@ import {
 } from '~/server/services/block-token-subject';
 import { effectiveBlockScopes } from '~/shared/constants/block-effective-scopes';
 import {
+  BUZZ_BUDGET_CAP,
   isKnownBlockScope,
   isPrivateRunAudience,
   type PrivateRunAudience,
@@ -692,14 +693,18 @@ function rememberWarnedOrigin(origin: string) {
   return true;
 }
 
+// `Retry-After` is not a CORS-safelisted response header; a cross-origin block can't read a
+// 429's wait unless it is exposed.
+const BLOCK_CORS_EXPOSE_HEADERS = 'Retry-After';
+
 /**
  * Sets block-CORS headers when the origin is in the allowlist (union of
  * `BLOCK_ALLOWED_ORIGINS` env CSV + every approved OauthClient's
  * `allowedOrigins[]` — W11 dynamic-lookup landed 2026-05-30).
  *
- * Returns true ONLY when we've fully handled the request (block-origin preflight).
+ * Returns `'handled'` ONLY when we've fully handled the request (block-origin preflight).
  * In every other case — including OPTIONS from origins we don't recognize —
- * returns false so the caller falls through to the wrapped handler's own
+ * returns `'fallthrough'` so the caller falls through to the wrapped handler's own
  * CORS path. This preserves the pre-PR behavior of routes like
  * /api/v1/models/[id] (which set ACAO: * in PublicEndpoint) for browser
  * integrations doing CORS preflight from origins outside our allowlist.
@@ -723,6 +728,7 @@ async function setBlockCors(
     // be "*", and we want that flexibility on the wrapped handler's path.
     res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Expose-Headers', BLOCK_CORS_EXPOSE_HEADERS);
     if (req.method === 'OPTIONS') {
       res.status(204).end();
       return 'handled';
@@ -742,6 +748,7 @@ async function setBlockCors(
     res.setHeader('Vary', 'Origin');
     res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Expose-Headers', BLOCK_CORS_EXPOSE_HEADERS);
     if (req.method === 'OPTIONS') {
       res.status(204).end();
       return 'handled';
@@ -1203,15 +1210,14 @@ export function enforceContextBinding(
 // Same instance id the page host mints under, so storage, rate-limit buckets and the
 // publisher-ban revocation sweep (`page_` prefix) line up whichever credential the block holds.
 const HUB_INSTANCE_PREFIX = 'page_';
-// Mirror of the mint's private per-gen clamp (block-tokens/index.ts BUZZ_BUDGET_DEFAULT / _CAP).
+// Mirror of the mint's private per-gen default (block-tokens/index.ts BUZZ_BUDGET_DEFAULT).
 const HUB_BUZZ_BUDGET_DEFAULT = 10;
-const HUB_BUZZ_BUDGET_CAP = 1000;
 
 function hubBuzzBudget(manifest: { page?: { buzzBudgetPerGen?: unknown } }): number {
   const raw = manifest.page?.buzzBudgetPerGen;
   const candidate =
     typeof raw === 'number' && Number.isInteger(raw) ? raw : HUB_BUZZ_BUDGET_DEFAULT;
-  return Math.min(Math.max(candidate, 0), HUB_BUZZ_BUDGET_CAP);
+  return Math.min(Math.max(candidate, 0), BUZZ_BUDGET_CAP);
 }
 
 /**

@@ -100,6 +100,7 @@ const BUCKET_BY_FN: Readonly<Record<string, string>> = Object.freeze({
   checkBlockPostAppRateLimit: 'post-app',
   checkBlockPollRateLimit: 'poll',
   checkBlockTrainingDatasetRateLimit: 'training-dataset',
+  checkBlockEstimateCellsRateLimit: 'estimate-cells',
 });
 
 type Decision = {
@@ -121,11 +122,14 @@ type Decision = {
  * "this guarantees a ceiling". They are cost ceilings, not security controls; what bounds AUTHORITY
  * on these procedures is the guard, the viewer/app scope assertions and the consent scopes.
  *
- * ⚠️ AND `weight` IS 1 EVERYWHERE EXCEPT PUBLISH. `checkBlockPublishRateLimit` is charged by IMAGE
- * COUNT because its cost is per-image (fetch + S3 upload + scan); everything else charges one token
- * per call because the call is the unit. `createPostFromApp` charges BOTH — `post`/`post-app` by
- * the post, `publish` by the images it adopts — so a post cannot be used to bypass the image
- * ceiling.
+ * ⚠️ AND `weight` IS 1 EXCEPT WHERE THE COST IS PER ITEM. `checkBlockPublishRateLimit` is charged by
+ * IMAGE COUNT because its cost is per-image (fetch + S3 upload + scan), `training-dataset` likewise,
+ * and `estimate-cells` is charged by CELL COUNT because each cell is an orchestrator whatif; the
+ * rest charge one token per call because the call is the unit. `createPostFromApp` charges BOTH —
+ * `post`/`post-app` by the post, `publish` by the images it adopts — so a post cannot be used to
+ * bypass the image ceiling. `estimateWorkflowBatch` charges BOTH for the mirror-image reason: the
+ * call takes one `catalog` token and the cells take `estimate-cells`, so a batch cannot be used to
+ * multiply cost quotes past a ceiling.
  */
 const RATE_LIMIT_DECISION_LEDGER: Readonly<Record<string, Decision>> = Object.freeze({
   cancelAppWorkflow: {
@@ -142,11 +146,15 @@ const RATE_LIMIT_DECISION_LEDGER: Readonly<Record<string, Decision>> = Object.fr
   },
   createPostFromApp: {
     buckets: ['post', 'post-app', 'publish'],
-    why: 'Public-feed write with reward exposure. Per-instance AND per-app post buckets, plus the image-weighted publish bucket for the images it adopts. Not catalog — unlike its previewPostFromApp sibling, this one materialises rows.',
+    why: 'Public-feed write with reward exposure. Per-(instance, viewer) AND per-app post buckets, plus the image-weighted publish bucket for the images it adopts. Not catalog — unlike its previewPostFromApp sibling, this one materialises rows.',
   },
   estimateWorkflow: {
     buckets: ['catalog'],
     why: 'An orchestrator whatif submit plus version/checkpoint/entitlement reads, with no spend attached to bound it. Charged ABOVE the kind branch so all three branches are covered.',
+  },
+  estimateWorkflowBatch: {
+    buckets: ['catalog', 'estimate-cells'],
+    why: 'The batch twin of estimateWorkflow. ONE catalog token per call, like a single estimate, plus the cell-WEIGHTED estimate-cells bucket, keyed per install like catalog so the bound does not grow with viewers: each cell is still an orchestrator whatif, so the call alone would let the cell cap multiply cost quotes for the price of one request.',
   },
   getImagesByIds: {
     buckets: ['catalog'],
@@ -183,6 +191,10 @@ const RATE_LIMIT_DECISION_LEDGER: Readonly<Record<string, Decision>> = Object.fr
   prepareTrainingDataset: {
     buckets: ['training-dataset'],
     why: 'Image-WEIGHTED (each image is a server-side fetch + orchestrator import) on its OWN bucket keyed per (install, viewer): a page app install id is shared by every viewer, so the publish bucket would let one viewer’s dataset starve the others and the app’s publishing.',
+  },
+  persistAppUploadImage: {
+    buckets: ['publish'],
+    why: 'The server half of OPEN_IMAGE_UPLOAD { bytes }: each persist creates a real, scanned Image row, so it takes one token from the per-install publish bucket that publishGenerationOutputs also draws on, before the row is created.',
   },
   previewTrainingQuote: {
     buckets: ['catalog'],

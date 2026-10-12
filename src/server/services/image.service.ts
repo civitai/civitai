@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import type { EventViewer } from '~/server/events/event-access';
 import { TRPCError } from '@trpc/server';
 import {
   assertMediaPresentForPublish,
@@ -49,6 +50,16 @@ import {
   nsfwRestrictedBaseModels,
 } from '~/server/common/constants';
 import { imageReviewedSql, KNIGHTS_VOTE_NSFW_LEVEL_REASON } from '~/server/common/image-visibility';
+import {
+  assertImageVisibleToViewer,
+  imageVisibilityConditions,
+} from '~/server/services/image-visibility.service';
+import {
+  type MediaViewer,
+  viewerCanSeeImageMedia,
+  viewerCanSeeSourceMedia,
+  withoutMediaReferences,
+} from '~/server/utils/image-media-visibility';
 import {
   BlockedReason,
   ImageSort,
@@ -103,6 +114,8 @@ import { getNewCreatorUserIds } from '~/server/services/new-creators.service';
 import { imageOnSiteSql, isImageMetaOnSite } from '~/server/utils/image-onsite';
 import { stripImageForInfiniteWire } from '~/server/utils/image-infinite-wire';
 import { deriveUnmatchedResources } from '~/server/utils/unmatched-resources';
+import { pickClientImageColumns } from '~/server/utils/image-columns';
+import { getEntityOwnerId } from '~/server/services/entity-owner.service';
 import {
   getBaseModelFromResources,
   getUserFollows,
@@ -141,8 +154,8 @@ import type {
   ImageModerationBlockSchema,
   ImageModerationSchema,
   ImageModerationUnblockSchema,
+  ImageReferenceInput,
   ImageSchema,
-  ImageUploadProps,
   IngestImageInput,
   RemoveImageResourceSchema,
   ReportCsamImagesInput,
@@ -162,7 +175,10 @@ import type {
   MetricsImageFilterableAttribute,
   MetricsImageSortableAttribute,
 } from '~/server/search-index/metrics-images.search-index';
-import type { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
+import type {
+  ContentDecorationCosmetic,
+  EventDecorationCosmetic,
+} from '~/server/selectors/cosmetic.selector';
 import type { ImageResourceHelperModel } from '~/server/selectors/image.selector';
 import {
   imageSelect,
@@ -181,11 +197,10 @@ import {
   getCollectionIdsForImages,
 } from '~/server/services/collection-media-index';
 import { enforceBlockedBrowsingTags } from '~/server/services/blocked-browsing-tags.service';
-import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 import {
-  getVisibleModel3DIdForPost,
-  getVisibleModel3DIds,
-} from '~/server/services/model3d.service';
+  getCosmeticsForEntity,
+  getEventDecorationsForEntity,
+} from '~/server/services/cosmetic.service';
 import { addImageToQueue } from '~/server/services/games/new-order.service';
 import { upsertImageFlag } from '~/server/services/image-flag.service';
 import {
@@ -229,6 +244,10 @@ import {
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
+import {
+  stripBlockProvenanceMetadata,
+  type BlockProvenanceMetadataKey,
+} from '~/shared/utils/block-provenance-metadata';
 import type {
   CollectionItemRejectionReason,
   DomainColor,
@@ -240,6 +259,7 @@ import type {
 import {
   Availability,
   BlockImageReason,
+  CosmeticEntity,
   CollectionItemStatus,
   CollectionMode,
   AppealStatus,
@@ -299,6 +319,9 @@ import {
   storedSourceImageIds,
 } from '~/server/services/orchestrator/remix-provenance';
 import { probeCreatedImageMedia } from '~/server/utils/created-image-media-probe';
+
+// Lazy: a static import here closes the image.service import cycle (no-image-service-import-cycle).
+const model3dService = () => import('~/server/services/model3d.service');
 
 const {
   cacheHitRequestsTotal,
@@ -1581,6 +1604,9 @@ type GetAllImagesRaw = {
 
 type GetAllImagesInput = GetInfiniteImagesOutput & {
   user?: SessionUser;
+  // Who sees event decorations before launch (see getEventDecorationsForEntity). Set only by
+  // routes whose response is never cached for another viewer.
+  eventDecorationViewer?: EventViewer;
   // Request color, used to pick which "new & upcoming" board backs `newCreators`.
   domain?: DomainColor;
   // Server-only: not in the tRPC schema, so a client cannot set or lift it.
@@ -1725,6 +1751,8 @@ const getAllImagesUncaptured = async (
     userId?: number;
     /** Rethrow a statement timeout instead of answering it with an empty page. */
     throwOnStatementTimeout?: boolean;
+    /** `false`: the per-image caches serve hits but don't write misses back. */
+    cacheWriteBack?: boolean;
   }
 ) => {
   // Fail loud rather than serve unfiltered. This path has no way to express a
@@ -1800,6 +1828,7 @@ const getAllImagesUncaptured = async (
     poiOnly,
     minorOnly,
     pendingReviewOnly,
+    cacheWriteBack,
   } = input;
   let { browsingLevel, userId: targetUserId, ids } = input;
   let { dbTarget = 'read' } = input;
@@ -2571,10 +2600,13 @@ const getAllImagesUncaptured = async (
     imageMetrics,
     imageMeta,
     imageResources,
+    eventDecorations,
   ] = await withSpan('image:getAllImages:parallelFetch', () =>
     Promise.all([
       userId ? getUserReactionsForImages({ imageIds, userId }) : undefined,
-      include?.includes('tagIds') ? tagIdsForImagesCache.fetch(imageIds) : undefined,
+      include?.includes('tagIds')
+        ? tagIdsForImagesCache.fetch(imageIds, { writeBack: cacheWriteBack })
+        : undefined,
       include?.includes('tags') ? getImageTagsForImages(imageIds) : undefined,
       include?.includes('tags') && userId
         ? dbRead.tagsOnImageVote.findMany({
@@ -2589,7 +2621,17 @@ const getAllImagesUncaptured = async (
       getThumbnailsForImages(videoIds),
       getImageMetricsObject(rawImages),
       include?.includes('metaSelect') ? getMetaForImages(imageIds) : undefined,
-      includeBaseModel ? imageResourcesCache.fetch(imageIds) : undefined,
+      includeBaseModel
+        ? imageResourcesCache.fetch(imageIds, { writeBack: cacheWriteBack })
+        : undefined,
+      // Not behind `include: ['cosmetics']`: every surface that shows the image (the model page
+      // carousel asks for no includes) must show the hat it is scored for. Empty between events.
+      getEventDecorationsForEntity({
+        ids: imageIds,
+        entity: 'Image',
+        writeBack: cacheWriteBack,
+        viewer: input.eventDecorationViewer,
+      }),
     ])
   );
 
@@ -2604,7 +2646,9 @@ const getAllImagesUncaptured = async (
     ...new Set(rawImages.map((i) => i.model3dId).filter((id): id is number => id != null)),
   ];
   const visibleModel3DIds = rawModel3dIds.length
-    ? await getVisibleModel3DIds({ model3dIds: rawModel3dIds, userId, isModerator })
+    ? await (
+        await model3dService()
+      ).getVisibleModel3DIds({ model3dIds: rawModel3dIds, userId, isModerator })
     : undefined;
 
   const images = withSpan('image:getAllImages:transform', () => {
@@ -2652,7 +2696,8 @@ const getAllImagesUncaptured = async (
         baseModel?: string | null; // TODO - remove
         availability?: Availability;
         nsfwLevel: NsfwLevel;
-        cosmetic?: WithClaimKey<ContentDecorationCosmetic> | null;
+        cosmetic?: ContentDecorationCosmetic | null;
+        eventDecoration?: EventDecorationCosmetic | null;
         metadata: ImageMetadata | VideoMetadata | null;
         onSite: boolean;
         modelVersionIds?: number[];
@@ -2715,6 +2760,7 @@ const getAllImagesUncaptured = async (
         tags: tagsByImageId?.get(i.id),
         tagIds: tagIdsVar?.[i.id]?.tags,
         cosmetic: cosmetics?.[i.id] ?? null,
+        eventDecoration: eventDecorations?.[i.id] ?? null,
         thumbnailUrl: thumbnail?.url,
         judgeScore,
       };
@@ -3137,6 +3183,7 @@ export const getAllImagesIndex = async (
     imageMetrics,
     tagIdsVar,
     tagsVar,
+    imageEventDecorations,
   ] = await withSpan('image:getAllImagesIndex:parallelFetch', async () =>
     Promise.all([
       // These enrichment fetches are independent (each takes pre-computed
@@ -3164,6 +3211,12 @@ export const getAllImagesIndex = async (
       // and Meilisearch tagIds may be stale, so always fetch from the authoritative cache.
       include?.includes('tagIds') ? tagIdsForImagesCache.fetch(imageIds) : undefined,
       include?.includes('tags') ? getImageTagsForImages(imageIds) : undefined,
+      // Unconditional for the same reason as in getAllImages.
+      getEventDecorationsForEntity({
+        ids: imageIds,
+        entity: 'Image',
+        viewer: input.eventDecorationViewer,
+      }),
     ])
   );
 
@@ -3188,7 +3241,9 @@ export const getAllImagesIndex = async (
     ),
   ];
   const visibleIndexModel3DIds = rawIndexModel3dIds.length
-    ? await getVisibleModel3DIds({
+    ? await (
+        await model3dService()
+      ).getVisibleModel3DIds({
         model3dIds: rawIndexModel3dIds,
         userId: currentUserId,
         isModerator: user?.isModerator,
@@ -3247,6 +3302,7 @@ export const getAllImagesIndex = async (
         stats: toImageV2Stats(metrics),
         reactions,
         cosmetic: imageCosmetics?.[sr.id] ?? null,
+        eventDecoration: imageEventDecorations?.[sr.id] ?? null,
         // TODO fix below
         availability: Availability.Public,
         tags: tagsByImageId?.get(sr.id) ?? [],
@@ -5583,50 +5639,8 @@ export const getImage = async ({
   id,
   userId,
   isModerator,
-  withoutPost,
 }: GetImageInput & { userId?: number; isModerator?: boolean }) => {
-  const AND = [Prisma.sql`i.id = ${id}`];
-  if (!isModerator) {
-    AND.push(
-      Prisma.sql`(${Prisma.join(
-        [
-          Prisma.sql`i."needsReview" IS NULL AND ${imageReviewedSql()}`,
-          withoutPost
-            ? null
-            : Prisma.sql`
-              p."collectionId" IS NOT NULL AND EXISTS (
-                SELECT 1 FROM "CollectionContributor" cc
-                WHERE cc."collectionId" = p."collectionId"
-                  AND cc."userId" = ${userId}
-                  AND cc."permissions" && ARRAY['MANAGE']::"CollectionContributorPermission"[]
-              )`,
-          Prisma.sql`i."userId" = ${userId}`,
-        ].filter(isDefined),
-        ' OR '
-      )})`
-    );
-
-    if (!withoutPost) {
-      // Post gates sit in the WHERE, not the JOIN: an image outlives a deleted post (`Image.postId`
-      // is ON DELETE SET NULL) and an inner join drops it before ownership is tested. Nothing on
-      // `Image` separates that from a never-posted upload, so only the owner may fetch a postless one.
-      AND.push(
-        Prisma.sql`(
-          p."publishedAt" < now()
-          OR p."userId" = ${userId}
-          OR (i."postId" IS NULL AND i."userId" = ${userId})
-        )`
-      );
-      AND.push(
-        Prisma.sql`(i."postId" IS NULL OR p."availability" != 'Private' OR p."userId" = ${userId})`
-      );
-    }
-
-    // A Blocked-level rating is a ToS removal (or a pending-Blocked verdict awaiting
-    // mod review) — never serve it by direct id to anyone but the owner. Feeds already
-    // drop it via the browsingLevel mask; single-image fetch had no equivalent gate.
-    AND.push(Prisma.sql`(i."nsfwLevel" != ${NsfwLevel.Blocked} OR i."userId" = ${userId})`);
-  }
+  const AND = [Prisma.sql`i.id = ${id}`, ...imageVisibilityConditions({ userId, isModerator })];
 
   const rawImages = await dbRead.$queryRaw<GetImageRaw[]>`
     SELECT
@@ -5673,14 +5687,8 @@ export const getImage = async ({
       u.image as "userImage",
       u."deletedAt",
       u."profilePictureId",
-      ${
-        !withoutPost
-          ? Prisma.sql`
-            COALESCE(p."availability", 'Public') "availability",
-            GREATEST(p."publishedAt", i."scannedAt", i."createdAt") "publishedAt",
-          `
-          : Prisma.sql`'Public' "availability",`
-      }
+      COALESCE(p."availability", 'Public') "availability",
+      GREATEST(p."publishedAt", i."scannedAt", i."createdAt") "publishedAt",
       (
         SELECT jsonb_agg(reaction)
         FROM "ImageReaction"
@@ -5689,7 +5697,7 @@ export const getImage = async ({
       ) reactions
     FROM "Image" i
     JOIN "User" u ON u.id = i."userId"
-    ${Prisma.raw(withoutPost ? '' : `LEFT JOIN "Post" p ON p.id = i."postId"`)}
+    LEFT JOIN "Post" p ON p.id = i."postId"
     WHERE ${Prisma.join(AND, ' AND ')}
   `;
   if (!rawImages.length) throw throwNotFoundError(`No image with id ${id}`);
@@ -5715,7 +5723,9 @@ export const getImage = async ({
   // so a hidden draft/deleted Model3D yields null here too. Null when the post
   // isn't linked, isn't visible, or there's no postId at all.
   const model3dId = firstRawImage.postId
-    ? await getVisibleModel3DIdForPost({ postId: firstRawImage.postId, userId, isModerator })
+    ? await (
+        await model3dService()
+      ).getVisibleModel3DIdForPost({ postId: firstRawImage.postId, userId, isModerator })
     : null;
 
   const image = {
@@ -6446,11 +6456,39 @@ export const getImagesByEntity = async ({
   return attachTagsToImages(images, tagsVar);
 };
 
+/** Refuses unless `postId` belongs to `userId`. */
+export type AssertPostOwnedBy = (args: { postId: number; userId: number }) => Promise<void>;
+
+/**
+ * An image may only be written into a post owned by the image's own user. The returned check
+ * looks each (post, user) pair up once and reuses that answer for later calls, including calls
+ * made while the first lookup is still in flight.
+ *
+ * Create one per request — a handler adding several images to one post shares it across them —
+ * and never hold one beyond that request.
+ */
+export function createPostOwnerCheck(): AssertPostOwnedBy {
+  const checks = new Map<string, Promise<void>>();
+  return ({ postId, userId }) => {
+    const key = `${postId}:${userId}`;
+    let check = checks.get(key);
+    if (!check) {
+      check = getEntityOwnerId('Post', postId, dbWrite).then((ownerId) => {
+        if (ownerId !== userId) throw throwAuthorizationError();
+      });
+      checks.set(key, check);
+    }
+    return check;
+  };
+}
+
 export async function createImage({
   toolIds,
   techniqueIds,
   skipIngestion,
   verifiedSourceImageIds,
+  blockProvenance,
+  assertPostOwnedBy = createPostOwnerCheck(),
   ...image
 }: ImageSchema & {
   userId: number;
@@ -6461,7 +6499,22 @@ export async function createImage({
    * here, so a new image path can't grant itself provenance by accident.
    */
   verifiedSourceImageIds?: number[] | null;
+  /**
+   * The App Blocks app that produced this image, verified by the caller. The only way a
+   * row gets a `BLOCK_PROVENANCE_METADATA_KEYS` entry: any copy in `metadata` is dropped.
+   */
+  blockProvenance?: { key: BlockProvenanceMetadataKey; appId: string } | null;
+  /**
+   * The request's post-owner check, from {@link createPostOwnerCheck}. A caller adding several
+   * images to one post passes one so the post is looked up once; without it, each call checks.
+   */
+  assertPostOwnedBy?: AssertPostOwnedBy;
 }) {
+  if (blockProvenance && !blockProvenance.appId) {
+    throw new Error('createImage: blockProvenance requires an appId');
+  }
+  if (image.postId != null) await assertPostOwnedBy({ postId: image.postId, userId: image.userId });
+
   /**
    * 🔴 THE ROW MUST NOT OUTLIVE ITS MEDIA — so ask the store before writing it.
    *
@@ -6627,9 +6680,16 @@ export async function createImage({
     image.meta as Record<string, unknown> | null | undefined,
     verifiedSourceImageIds
   );
+  const metadata = stripBlockProvenanceMetadata(image.metadata);
   const result = await dbWrite.image.create({
     data: {
-      ...image,
+      ...pickClientImageColumns(image),
+      userId: image.userId,
+      postId: image.postId,
+      index: image.index,
+      metadata: blockProvenance
+        ? { ...metadata, [blockProvenance.key]: blockProvenance.appId }
+        : metadata,
       meta: (meta as Prisma.JsonObject) ?? Prisma.JsonNull,
       generationProcess: meta ? getImageGenerationProcess(meta as ImageMetaProps) : null,
       tools: !!toolIds?.length
@@ -6713,7 +6773,7 @@ export const createEntityImages = async ({
   tx?: Prisma.TransactionClient;
   entityId?: number;
   entityType?: string;
-  images: ImageUploadProps[];
+  images: ImageReferenceInput[];
   userId: number;
 }) => {
   const dbClient = tx ?? dbWrite;
@@ -6724,7 +6784,7 @@ export const createEntityImages = async ({
 
   await dbClient.image.createMany({
     data: images.map((image) => ({
-      ...image,
+      ...pickClientImageColumns(image),
       // Same strip as `createImage`: nothing that reaches an Image row keeps a
       // provenance claim it didn't prove. These rows have no post, so they can't
       // reach a remix gallery today — but the invariant is "no unproven claim on
@@ -6733,6 +6793,7 @@ export const createEntityImages = async ({
         (sanitizeProvenance(image?.meta as Record<string, unknown> | null | undefined) as
           | Prisma.JsonObject
           | undefined) ?? Prisma.JsonNull,
+      metadata: stripBlockProvenanceMetadata(image.metadata),
       userId,
       resources: undefined,
     })),
@@ -6795,11 +6856,18 @@ type GetEntityImageRaw = {
   minor?: boolean;
 };
 
+const isCosmeticEntity = (value: string): value is CosmeticEntity =>
+  (Object.values(CosmeticEntity) as string[]).includes(value);
+
 export const getEntityCoverImage = async ({
   entities,
   include,
+  eventDecorationViewer,
 }: GetEntitiesCoverImage & {
   include?: ['tags'];
+  // Who sees event decorations before launch (see getEventDecorationsForEntity). Pass one only
+  // where the result is never cached for someone else.
+  eventDecorationViewer?: EventViewer;
 }) => {
   if (entities.length === 0) {
     return [];
@@ -6864,7 +6932,8 @@ export const getEntityCoverImage = async ({
             i.id as "imageId",
             mv.index "order1",
             p.id "order2",
-            i.index "order3"
+            i.index "order3",
+            0 "coverRank"
           FROM entities e
           JOIN "Model" m ON e."entityId" = m.id
           JOIN "ModelVersion" mv ON m.id = mv."modelId"
@@ -6891,7 +6960,8 @@ export const getEntityCoverImage = async ({
             i.id as "imageId",
             mv.index "order1",
             p.id "order2",
-            i.index "order3"
+            i.index "order3",
+            0 "coverRank"
           FROM entities e
           JOIN "ModelVersion" mv ON e."entityId" = mv."id"
           JOIN "Post" p ON mv.id = p."modelVersionId"
@@ -6915,7 +6985,8 @@ export const getEntityCoverImage = async ({
             e."entityId" AS "imageId",
             0 "order1",
             0 "order2",
-            0 "order3"
+            0 "order3",
+            0 "coverRank"
         FROM entities e
         WHERE e."entityType" = 'Image'
 
@@ -6928,7 +6999,8 @@ export const getEntityCoverImage = async ({
               i.id AS "imageId",
               0 "order1",
 	          0 "order2",
-	          0 "order3"
+	          0 "order3",
+	          0 "coverRank"
           FROM entities e
           JOIN "Article" a ON a.id = e."entityId"
           JOIN "Image" i ON a."coverId" = i.id
@@ -6947,7 +7019,8 @@ export const getEntityCoverImage = async ({
               i.id AS "imageId",
               i."postId" "order1",
 	          i.index "order2",
-	          0 "order3"
+	          0 "order3",
+	          0 "coverRank"
           FROM entities e
           JOIN "Post" p ON p.id = e."entityId"
           LEFT JOIN "ModelVersion" mv ON p."modelVersionId" = mv.id
@@ -6999,7 +7072,8 @@ export const getEntityCoverImage = async ({
               i.id AS "imageId",
               0 "order1",
               0 "order2",
-              0 "order3"
+              0 "order3",
+              1 "coverRank"
           FROM entities e
           JOIN "ImageConnection" ic ON ic."entityId" = e."entityId" AND ic."entityType" = e."entityType"
           JOIN "Image" i ON i.id = ic."imageId"
@@ -7009,12 +7083,15 @@ export const getEntityCoverImage = async ({
         ) t
     ) t
     JOIN "Image" i ON i.id = t."imageId"
-    WHERE i."ingestion" = 'Scanned' AND i."needsReview" IS NULL`;
+    WHERE i."ingestion" = 'Scanned' AND i."needsReview" IS NULL
+    -- An Article draws a row from its own branch (the cover) and one from CONNECTIONS (a
+    -- content image). A UNION has no order of its own, so without this the lower image id
+    -- came first and a content image could replace the cover. The connection is a fallback.
+    ORDER BY t."coverRank"`;
 
   // Index once instead of scanning `imagesRaw` per entity. `set` is guarded so the
-  // first row for a key wins, matching what `.find()` returned: an entity can still
-  // draw rows from two branches at once (an Article has both a cover image and
-  // content-image connections), and this must not silently switch which one is kept.
+  // first row for a key wins: rows arrive ordered by "coverRank", so an entity's own
+  // cover beats a connected image.
   const imagesByEntity = new Map<string, GetEntityImageRaw>();
   for (const image of imagesRaw) {
     const key = `${image.entityId}:${image.entityType}`;
@@ -7031,11 +7108,34 @@ export const getEntityCoverImage = async ({
     tagsVar = await getImageTagsForImages(imageIds);
   }
 
-  const cosmetics = await getCosmeticsForEntity({ ids: images.map((i) => i.id), entity: 'Image' });
+  const imageIds = images.map((i) => i.id);
+  // The hat is the covered entity's own, as on that entity's feed card: a Model wears the
+  // Model's hat, not whatever its cover image wears. An Image entity is its own cover.
+  const decoratedIds = new Map<CosmeticEntity, number[]>();
+  for (const { entityType, entityId } of images) {
+    if (!isCosmeticEntity(entityType)) continue;
+    decoratedIds.set(entityType, [...(decoratedIds.get(entityType) ?? []), entityId]);
+  }
+  const [cosmetics, eventDecorations] = await Promise.all([
+    getCosmeticsForEntity({ ids: imageIds, entity: 'Image' }),
+    Promise.all(
+      [...decoratedIds].map(async ([entity, ids]) => ({
+        entity,
+        decorations: await getEventDecorationsForEntity({
+          ids,
+          entity,
+          viewer: eventDecorationViewer,
+        }),
+      }))
+    ),
+  ]);
+  const eventDecorationOf = (entityType: string, entityId: number) =>
+    eventDecorations.find((x) => x.entity === entityType)?.decorations[entityId] ?? null;
 
   return attachTagsToImages(images, tagsVar).map((i) => ({
     ...i,
     cosmetic: cosmetics[i.id],
+    eventDecoration: eventDecorationOf(i.entityType, i.entityId),
   }));
 };
 
@@ -7049,7 +7149,7 @@ export const updateEntityImages = async ({
   tx?: Prisma.TransactionClient;
   entityId: number;
   entityType: string;
-  images: ImageUploadProps[];
+  images: ImageReferenceInput[];
   userId: number;
 }) => {
   const dbClient = tx ?? dbWrite;
@@ -7075,7 +7175,13 @@ export const updateEntityImages = async ({
     (x) => !!x.id && !connections.find((c) => c.imageId === x.id)
   );
 
-  const links = [...newLinkedImages.map((i) => i.id)];
+  const linkIds = newLinkedImages.map((i) => i.id).filter(isDefined);
+  if (linkIds.length > 0) {
+    const owned = await dbClient.image.count({ where: { id: { in: linkIds }, userId } });
+    if (owned !== new Set(linkIds).size) throw throwAuthorizationError();
+  }
+
+  const links = [...linkIds];
   let imageRecords: {
     id: number;
     url: string;
@@ -7087,11 +7193,12 @@ export const updateEntityImages = async ({
   if (newImages.length > 0) {
     await dbClient.image.createMany({
       data: newImages.map((image) => ({
-        ...image,
+        ...pickClientImageColumns(image),
         meta:
           (sanitizeProvenance(image?.meta as Record<string, unknown> | null | undefined) as
             | Prisma.JsonObject
             | undefined) ?? Prisma.JsonNull,
+        metadata: stripBlockProvenanceMetadata(image.metadata),
         userId,
         resources: undefined,
       })),
@@ -7281,9 +7388,11 @@ export async function updateImageNsfwLevel({
 }) {
   if (!nsfwLevel) throw throwBadRequestError();
   if (isModerator) {
-    const image = await dbRead.image.findUnique({
+    // Primary: `nsfwLevel` is the level this write replaces, and the listing re-derive below
+    // decides whether a rating may come down from it — a lagging replica would misreport it.
+    const image = await dbWrite.image.findUnique({
       where: { id },
-      select: { metadata: true, postId: true },
+      select: { metadata: true, postId: true, nsfwLevel: true },
     });
     if (!image) throw throwNotFoundError('Image not found');
 
@@ -7311,6 +7420,18 @@ export async function updateImageNsfwLevel({
       entityId: id,
       activity: activity ?? 'setNsfwLevel',
     });
+    // Knights consensus locks through this branch too, but it is a vote, not a moderator's
+    // decision, so it does not move a store listing's rating.
+    if (activity !== 'setNsfwLevelKono') {
+      const { reDeriveListingRatingsForModeratedImage } = await import(
+        '~/server/services/blocks/app-listing-rating-rederive.service'
+      );
+      await reDeriveListingRatingsForModeratedImage({
+        imageId: id,
+        previousNsfwLevel: image.nsfwLevel,
+        actorUserId: userId,
+      });
+    }
   } else {
     // Track potential content leaking
     // If the image is currently PG and the new level is R or higher, and the image isn't from the original user, increment the counter
@@ -7771,7 +7892,18 @@ export function purgeImageGenerationDataCache(id: number) {
 
 const strengthTypes: ModelType[] = ['TextualInversion', 'LORA', 'DoRA', 'LoCon'];
 
-export async function getImageGenerationData({ id }: { id: number }) {
+/**
+ * Generation data for one image, for a viewer `assertImageVisibleToViewer` admits, without media
+ * links when the viewer may not see the image's media.
+ */
+export async function getImageGenerationData({ id, viewer }: { id: number; viewer: MediaViewer }) {
+  const visible = await assertImageVisibleToViewer({
+    id,
+    userId: viewer.user?.id,
+    isModerator: viewer.user?.isModerator,
+  });
+  const showMedia = await viewerCanSeeImageMedia(viewer, visible);
+
   const image = await dbRead.image.findUnique({
     where: { id },
     select: {
@@ -7827,7 +7959,17 @@ export async function getImageGenerationData({ id }: { id: number }) {
 
   const parsedMeta = imageMetaOutput.safeParse(image.meta);
   const data = parsedMeta.success ? parsedMeta.data : {};
-  const { 'Clip skip': legacyClipSkip, clipSkip = legacyClipSkip, external, ...rest } = data;
+  // Read before media references are withheld, which drops the graph.
+  const isComfy = !!data.comfy;
+  const {
+    'Clip skip': legacyClipSkip,
+    clipSkip = legacyClipSkip,
+    external,
+    ...rest
+  } = showMedia &&
+  (await viewerCanSeeSourceMedia(viewer, { id, userId: visible.userId }, image.meta))
+    ? data
+    : withoutMediaReferences(data);
   const meta =
     parsedMeta.success && !image.hideMeta ? removeEmpty({ ...rest, clipSkip }) : undefined;
 
@@ -7840,14 +7982,14 @@ export async function getImageGenerationData({ id }: { id: number }) {
       process = meta.process ?? meta.type;
     }
 
-    if (meta.comfy) {
+    if (isComfy) {
       hasControlNet = !!meta.controlNets?.length;
     } else {
       hasControlNet = Object.keys(meta).some((x) => x.toLowerCase().startsWith('controlnet'));
     }
 
     if (!process) {
-      if (meta.comfy) process = 'comfy';
+      if (isComfy) process = 'comfy';
       else if (image.generationProcess === 'txt2imgHiRes') process = 'txt2img + Hi-Res';
       else process = image.generationProcess;
 
@@ -8155,10 +8297,10 @@ export async function setVideoThumbnail({
     throw throwAuthorizationError("You don't have permission to set the thumbnail for this video.");
   if (image.type !== MediaType.video) throw throwBadRequestError('This is not a video.');
 
-  let thumbnailId = customThumbnail?.id;
+  let thumbnailId: number | undefined;
   if (customThumbnail) {
     const thumbnail = await createImage({
-      ...customThumbnail,
+      ...pickClientImageColumns(customThumbnail),
       userId: image.userId,
       metadata: { parentId: image.id },
     });

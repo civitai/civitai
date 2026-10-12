@@ -5,6 +5,7 @@
 import { REDIS_KEYS, type RedisKeyTemplateCache } from '@civitai/redis';
 import type { NotificationCategory } from '@civitai/notifications';
 import { getRedis } from './clients/redis';
+import { health } from './health';
 import { redisErrorsTotal } from './metrics';
 
 const NOTIFICATION_CACHE_TIME = 60 * 60 * 24 * 7; // one week
@@ -27,15 +28,18 @@ function userKey(userId: number) {
 }
 
 /**
- * Count-and-rethrow wrapper for redis cache ops. Behavior is unchanged — an error still propagates to the
- * caller exactly as before (callers that already `.catch()` keep degrading to no-op) — this only makes an
- * otherwise-silent redis failure scrapeable via `notifications_redis_errors_total{operation}`.
+ * Count-and-rethrow wrapper for redis cache ops. An error still propagates to the caller (callers that
+ * `.catch()` degrade to no-op); this makes it scrapeable via `notifications_redis_errors_total{operation}`
+ * and feeds each outcome to the /health redis check.
  */
 async function withRedisErrorCount<T>(operation: string, fn: () => Promise<T>): Promise<T> {
   try {
-    return await fn();
+    const result = await fn();
+    health.recordRedisSuccess();
+    return result;
   } catch (err) {
     redisErrorsTotal.inc({ operation });
+    health.recordRedisFailure();
     throw err;
   }
 }

@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { INVENTORY, type HostFile } from './hostHandlerParity';
+import { BRIDGE_BUDGET_EXEMPT_TYPES } from './usePostMessage';
 import { stripSourceComments } from './stripSourceComments';
 
 /**
@@ -113,10 +114,24 @@ describe('App Blocks host↔SDK handler parity (gotcha-#73 "spins forever" guard
             expect(typeof req).toBe('string');
             expect((req as string).length).toBeGreaterThan(10);
           });
+          // The other direction: an entry left N/A for a type the host handles takes that handler
+          // out of the 'required' guard above, so its removal would go unnoticed.
+          it(`registers no handler for exempted '${type}'`, () => {
+            expect(
+              handlesMessage(HOST_SRC[host], type),
+              `${host} registers onMessage('${type}') but INVENTORY declares it N/A`
+            ).toBe(false);
+          });
         }
       }
     });
   }
+
+  it('only fire-and-forget messages skip the shared inbound budget', () => {
+    // Exempt types also skip requestId dedup, which only a fire-and-forget type can afford.
+    expect(BRIDGE_BUDGET_EXEMPT_TYPES.size).toBeGreaterThan(0);
+    for (const type of BRIDGE_BUDGET_EXEMPT_TYPES) expect(INVENTORY[type].request).toBe(false);
+  });
 
   it('every REQUEST-style message is handled by PageBlockHost (the page hang surface)', () => {
     // Focused invariant: REQUEST-style messages are the ones that HANG when

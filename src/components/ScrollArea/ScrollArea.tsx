@@ -2,7 +2,7 @@ import type { BoxProps } from '@mantine/core';
 import { Box, ThemeIcon, useMantineTheme } from '@mantine/core';
 import { IconRefresh } from '@tabler/icons-react';
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { IntersectionObserverProvider } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 import { ScrollAreaContext, useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
 import { isMobileDevice } from '~/hooks/useIsMobile';
@@ -23,9 +23,13 @@ export function ScrollArea({
   useEffect(() => {
     setIsMobile(isMobileDevice());
   }, []);
+  // Stable, because every feed card reads this context to find its impression
+  // root: a fresh object would re-render all of them, through their memo, each
+  // time this component renders.
+  const context = useMemo(() => ({ ref: scrollRef }), [scrollRef]);
 
   return (
-    <ScrollAreaContext.Provider value={{ ref: scrollRef }}>
+    <ScrollAreaContext.Provider value={context}>
       <IntersectionObserverProvider id={props.id ?? key} options={intersectionObserverOptions}>
         <Box
           ref={scrollRef}

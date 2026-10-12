@@ -33,6 +33,8 @@ const reportCategories = [
     icon: IconFlag,
     tooltip:
       'Points deducted for images this user posted that were removed for Terms of Service violations',
+    ownerLabel: 'Removed content',
+    ownerTooltip: creatorScorePenalty,
   },
   {
     key: 'reportsActioned' as const,
@@ -40,17 +42,22 @@ const reportCategories = [
     color: 'green',
     icon: IconShieldCheck,
     tooltip: 'Points earned for reports this user filed that moderators actioned',
+    ownerLabel: creatorScoreSources.reportsActioned.label,
+    ownerTooltip: creatorScoreSources.reportsActioned.earnedBy,
   },
 ];
 
 export function UserScoreDisplay({
   scores,
   showReports = false,
+  owner = false,
   flat = false,
   abbreviate = true,
 }: {
   scores: Scores | null | undefined;
   showReports?: boolean;
+  /** The creator looking at their own score: the reports block speaks to them, not about them. */
+  owner?: boolean;
   /** Drop the panel chrome when the caller already provides it. */
   flat?: boolean;
   abbreviate?: boolean;
@@ -148,7 +155,14 @@ export function UserScoreDisplay({
                           style={{ cursor: 'help' }}
                         />
                       </Tooltip>
-                      <Text size="sm">{label}</Text>
+                      <Text size="sm">
+                        {label}{' '}
+                        <Text span size="sm" c="dimmed" className="tabular-nums">
+                          {abbreviate
+                            ? abbreviateNumber(categoryValues[index], { decimals: 1 })
+                            : Math.round(categoryValues[index]).toLocaleString()}
+                        </Text>
+                      </Text>
                     </Group>
                   );
                 })}
@@ -201,10 +215,16 @@ export function UserScoreDisplay({
           <>
             <Divider label="Reports" labelPosition="left" />
             <Stack gap="sm">
-              {reportCategories.map(({ key, label, color, icon: Icon, tooltip }) => {
+              {reportCategories.map((category) => {
+                const { key, color, icon: Icon } = category;
                 const value = scores[key] ?? 0;
                 return (
-                  <ScoreRow key={key} icon={<Icon size={16} />} label={label} tooltip={tooltip}>
+                  <ScoreRow
+                    key={key}
+                    icon={<Icon size={16} />}
+                    label={owner ? category.ownerLabel : category.label}
+                    tooltip={owner ? category.ownerTooltip : category.tooltip}
+                  >
                     <Text size="sm" fw={600} c={color}>
                       {Math.round(value).toLocaleString()} pts
                     </Text>
@@ -240,7 +260,7 @@ function ScoreRow({
   return (
     <Group gap="sm" wrap="nowrap">
       <div style={{ flexShrink: 0 }}>{icon}</div>
-      <Text size="sm" w={70}>
+      <Text size="sm" miw={70}>
         {label}
       </Text>
       <Tooltip label={tooltip} multiline w={220} withArrow>

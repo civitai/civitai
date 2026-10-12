@@ -1,6 +1,9 @@
-// Bump with any tab ↔ worker protocol change. It names the SharedWorker and versions its URL, and a
-// tab that gets a different version back is talking to a stale script (e.g. mid rolling deploy).
-export const SIGNALS_WORKER_VERSION = '2.2';
+// Bump with any tab ↔ worker protocol change, and with any change to how the worker talks to the hub.
+// It names the SharedWorker and versions its URL, and a tab that gets a different version back is
+// talking to a stale script (e.g. mid rolling deploy). A SharedWorker outlives the deploy that loaded
+// it for as long as any tab still holds it, so without a bump new tabs would keep joining the old
+// script — 2.3 replaced a fixed 5s hub retry, so joining 2.2 would keep that.
+export const SIGNALS_WORKER_VERSION = '2.3';
 
 // Tabs heartbeat on this interval; the worker treats a port silent for PORT_STALE_AFTER_MS as a tab
 // that died without `beforeunload`. Hidden tabs throttle timers to ~1/min, so keep a wide margin.
@@ -54,6 +57,8 @@ export type SignalWorkerStatus = {
   hubState: string | null;
   connectionId: string | null;
   connectedUserId: number | null;
+  /** Hub `start()` failures since the last connect, and when the next attempt is due. Absent before 2.3. */
+  connectRetry?: { failures: number; nextAttemptAt: number | null };
   portCount: number;
   registeredEvents: string[];
   /** Topics any tab wants subscribed → whether as `subscribeNotify`. */

@@ -359,8 +359,9 @@ export type RecordSpendAttributionInput = {
    * numbers — so the distinction has to be made by the CALLER, which reads
    * `cost.base` off the raw orchestrator submit response. It is not reachable
    * from the block-facing snapshot: `BlockWorkflowSnapshot.cost` is
-   * deliberately `{ total }` only, and widening that wire shape would publish
-   * the platform's cost breakdown to every third-party app.
+   * `{ total, authorFee? }`, which itemises only the author's own fee and never
+   * the base; no further breakdown field without a new decision (see the
+   * disclosure boundary on its `authorFee`).
    *
    * Used ONLY by the dark author-fee OBSERVATION below. It is never persisted:
    * omit it, or pass null, and the observation records a `base-unavailable` skip
@@ -379,9 +380,9 @@ export type RecordSpendAttributionInput = {
    * folded into `base-unavailable` — see `BLOCK_AUTHOR_FEE_PRICE_IS_CAP`.
    *
    * Like `baseGenerationBuzz` this is read off the RAW orchestrator submit
-   * response, never off `BlockWorkflowSnapshot` (whose `cost` is deliberately
-   * `{ total }` only). Omit it, or pass null/false, and the price is treated as
-   * final. Never persisted.
+   * response, never off `BlockWorkflowSnapshot` (whose `cost` is
+   * `{ total, authorFee? }` and never carries it). Omit it, or pass
+   * null/false, and the price is treated as final. Never persisted.
    */
   generationPriceIsCap?: boolean | null;
   /**

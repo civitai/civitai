@@ -5,6 +5,7 @@ import { generateSecretHash } from '@civitai/auth/secret-hash';
 import { db } from '$lib/server/db/db';
 import { checkOAuthRateLimit } from '$lib/server/oauth/rate-limit';
 import { parseBody } from '$lib/server/oauth/http';
+import { carriesClientCredentialsOnlyScope } from '$lib/server/oauth/scope';
 import { getClientIp } from '$lib/server/auth/request';
 
 // POST /api/auth/oauth/introspect — RFC 7662 token introspection.
@@ -16,8 +17,8 @@ import { getClientIp } from '$lib/server/auth/request';
 //
 // NOT a public endpoint. The caller must be a CONFIDENTIAL client AND on the
 // OAUTH_INTROSPECTION_CLIENT_IDS allowlist; every other outcome is 401 invalid_client. Any token
-// miss — unknown, expired, wrong type, absent, or owned by a disabled account — is 200
-// {active:false}, never a distinguishing error.
+// miss — unknown, expired, wrong type, absent, owned by a disabled account, or a single-purpose
+// client-credentials token — is 200 {active:false}, never a distinguishing error.
 
 const NO_STORE = { 'Cache-Control': 'no-store' };
 
@@ -115,7 +116,10 @@ export const POST: RequestHandler = async ({ request }) => {
     .where('User.bannedAt', 'is', null)
     .executeTakeFirst();
 
-  if (!row) return json({ active: false }, { headers: NO_STORE });
+  // A client-credentials token is single-purpose, so it reads as inactive like an unknown one.
+  if (!row || carriesClientCredentialsOnlyScope(row.tokenScope)) {
+    return json({ active: false }, { headers: NO_STORE });
+  }
 
   return json(
     {

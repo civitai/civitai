@@ -1,21 +1,32 @@
+import { BuzzApiError } from '@civitai/buzz';
+import { TRPCError } from '@trpc/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { CosmeticType } from '~/shared/utils/prisma/enums';
 import { isConsumableCosmeticType } from '~/server/schema/creator-shop.schema';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import {
+  installShopPurchaseClaimFake,
+  shopPurchaseClaimFake,
+} from '~/test-utils/shopPurchaseClaimFake';
+
+let claims = shopPurchaseClaimFake();
 dbMock.dbWrite.$transaction.mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) =>
-  fn({
-    $executeRaw: (...a: unknown[]) => executeRaw(...a),
-    userCosmetic: {
-      findMany: (...a: unknown[]) => ownedFindMany(...a),
-      createMany: (...a: unknown[]) => createManyUserCosmetic(...a),
-    },
-    userCosmeticShopPurchases: { create: (...a: unknown[]) => purchaseCreate(...a) },
-    userCosmeticShopPurchaseCosmetic: {
-      createMany: (...a: unknown[]) => createManyComponents(...a),
-    },
-    cosmeticShopItem: { update: vi.fn() },
-  })
+  claims.rollbackOnThrow(() =>
+    fn({
+      cosmeticShopPurchaseClaim: claims.txDelegate,
+      $executeRaw: (...a: unknown[]) => executeRaw(...a),
+      userCosmetic: {
+        findMany: (...a: unknown[]) => ownedFindMany(...a),
+        createMany: (...a: unknown[]) => createManyUserCosmetic(...a),
+      },
+      userCosmeticShopPurchases: { create: (...a: unknown[]) => purchaseCreate(...a) },
+      userCosmeticShopPurchaseCosmetic: {
+        createMany: (...a: unknown[]) => createManyComponents(...a),
+      },
+      cosmeticShopItem: { update: vi.fn() },
+    })
+  )
 );
 
 /**
@@ -335,6 +346,7 @@ const SHAPES: Shape[] = [
 
 beforeEach(() => {
   vi.clearAllMocks();
+  claims = installShopPurchaseClaimFake();
   ownedFindMany.mockResolvedValue([]);
   // Distinct per call, as the real service returns: a takedown reverses payouts
   // by refunding each recorded transaction id, so a regression recording one id
@@ -779,9 +791,17 @@ describe('purchaseCosmeticPack — when the grant fails', () => {
     }),
   ];
 
-  it('refunds, retries the refund, and logs when the write transaction throws', async () => {
+  // A refund is sent once; a failed one is not retried from here but left to
+  // reconciliation, reported as "state unknown" with nothing paid out.
+  it('refunds once and reports state unknown when the refund fails, paying nobody', async () => {
     purchaseCreate.mockRejectedValue(new Error('write failed'));
-    refund.mockRejectedValueOnce(new Error('buzz down')).mockResolvedValue({});
+    refund.mockRejectedValue(
+      new TRPCError({
+        code: 'INTERNAL_SERVER_ERROR',
+        message: 'buzz down',
+        cause: new BuzzApiError(503, 'Service Unavailable'),
+      })
+    );
     await expect(
       purchaseCosmeticPack({
         userId: BUYER,
@@ -789,8 +809,23 @@ describe('purchaseCosmeticPack — when the grant fails', () => {
         members,
         stickersEnabled: true,
       })
-    ).rejects.toThrow();
-    expect(refund.mock.calls.length).toBeGreaterThan(1);
+    ).rejects.toMatchObject({ code: 'INTERNAL_SERVER_ERROR' });
+    expect(refund).toHaveBeenCalledTimes(1);
+    expect(pay).not.toHaveBeenCalled();
+  });
+
+  it('refunds the whole charge and refuses when the write transaction throws', async () => {
+    purchaseCreate.mockRejectedValue(new Error('write failed'));
+    refund.mockResolvedValue({ totalRefunded: 6300 });
+    await expect(
+      purchaseCosmeticPack({
+        userId: BUYER,
+        shopItem: shopItem(6300, members.length),
+        members,
+        stickersEnabled: true,
+      })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(refund).toHaveBeenCalledTimes(1);
     expect(pay).not.toHaveBeenCalled();
   });
 

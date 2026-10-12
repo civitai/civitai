@@ -6,7 +6,7 @@ import {
   infiniteQuerySchema,
   userPreferencesSchema,
 } from '~/server/schema/base.schema';
-import { imageSchema } from '~/server/schema/image.schema';
+import { imageInputSchema, imageReferenceInputSchema } from '~/server/schema/image.schema';
 import { tagSchema } from '~/server/schema/tag.schema';
 import { baseModels } from '~/shared/constants/basemodel.constants';
 import { SELECTABLE_REJECTION_REASONS } from '~/shared/constants/collection-rejection.constants';
@@ -229,7 +229,7 @@ export const upsertCollectionInput = z
     id: z.number().optional(),
     name: z.string().max(30).nonempty(),
     description: z.string().max(300).nullish(),
-    image: imageSchema.nullish(),
+    image: imageReferenceInputSchema.nullish(),
     imageId: z.number().optional(),
     nsfw: z.boolean().optional(),
     read: z.enum(CollectionReadConfiguration).optional(),
@@ -300,7 +300,7 @@ export const updateCollectionItemsStatusInput = z
 export type AddSimpleImagePostInput = z.infer<typeof addSimpleImagePostInput>;
 export const addSimpleImagePostInput = z.object({
   collectionId: z.number(),
-  images: z.array(imageSchema).min(1, 'At least one image must be uploaded'),
+  images: z.array(imageInputSchema).min(1, 'At least one image must be uploaded'),
 });
 
 export type GetAllCollectionsInfiniteSchema = z.infer<typeof getAllCollectionsInfiniteSchema>;

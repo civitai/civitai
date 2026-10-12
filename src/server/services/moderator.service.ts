@@ -90,6 +90,12 @@ type PlacementModActivity = {
   activity: 'removePlacement';
 };
 
+/** A moderator hid an `app-block` report from the app's developer, or unhid it. */
+type FeedbackModActivity = {
+  entityType: 'feedback';
+  activity: 'hideFromOwner' | 'unhideFromOwner';
+};
+
 type ModActivity = {
   entityId?: number | number[];
 } & (
@@ -103,6 +109,7 @@ type ModActivity = {
   | UserModActivity
   | ComicProjectModActivity
   | PlacementModActivity
+  | FeedbackModActivity
 );
 
 // `ON CONFLICT DO NOTHING` carries NO conflict target on purpose: a targetless clause is valid whether or

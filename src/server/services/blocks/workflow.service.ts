@@ -104,12 +104,10 @@ export function snapshotFromWorkflow(
      * will incur that the orchestrator's own cost does not include — today only
      * the App Blocks per-generation AUTHOR FEE, on the two ESTIMATE arms.
      *
-     * 🔴 IT WIDENS THE NUMBER, NEVER THE WIRE SHAPE. `cost` stays `{ total }`:
-     * adding an itemised `authorFee` field would publish a cost breakdown to
-     * every third-party app, which is the thing this projection deliberately
-     * does not do, and it would also be INERT — an itemised field discloses
-     * nothing until each third-party author writes a renderer for it, whereas a
-     * corrected total is read by every app that already displays a price.
+     * `cost.total` includes it, and the same amount is reported beside it as
+     * `cost.authorFee`. Passing this argument at all — `0` included — is what
+     * makes `authorFee` appear: `0` tells the block "no fee on this request",
+     * while omitting the argument leaves the total un-itemised.
      *
      * 🔴 AND IT IS AN ESTIMATE-ONLY ARGUMENT. A SUBMIT must not pass it: there
      * the orchestrator's realized `cost.total` is the generation's own price and
@@ -240,12 +238,16 @@ export function snapshotFromWorkflow(
   // with nothing objecting. (`isInteger` implies `isFinite`, which is why that
   // leg is gone rather than kept alongside.)
   const additional = extra?.additionalCostBuzz;
+  // What actually goes into the total: 0 for an addend the guard above rejects.
+  const addedAuthorFee =
+    additional === undefined
+      ? undefined
+      : typeof additional === 'number' && Number.isInteger(additional) && additional > 0
+      ? additional
+      : 0;
   const total =
-    typeof orchestratorTotal === 'number' &&
-    typeof additional === 'number' &&
-    Number.isInteger(additional) &&
-    additional > 0
-      ? orchestratorTotal + additional
+    typeof orchestratorTotal === 'number' && addedAuthorFee !== undefined
+      ? orchestratorTotal + addedAuthorFee
       : orchestratorTotal;
   const spentAccountType = primaryDebitedAccountType(workflow.transactions);
   // #3520 — prefer the CALLER-SUPPLIED record (the submit/estimate reply, where
@@ -273,7 +275,9 @@ export function snapshotFromWorkflow(
     // (the request is correlated by requestId, not workflowId).
     workflowId: workflow.id ?? 'whatif',
     status,
-    ...(typeof total === 'number' ? { cost: { total } } : {}),
+    ...(typeof total === 'number'
+      ? { cost: { total, ...(addedAuthorFee !== undefined ? { authorFee: addedAuthorFee } : {}) } }
+      : {}),
     ...(imageUrls.length > 0 ? { imageUrls } : {}),
     // See the field's own doc in `schema/blocks/workflow.schema`.
     ...(stepOutputs.length > 0 ? { stepOutputs } : {}),

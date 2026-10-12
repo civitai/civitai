@@ -126,22 +126,44 @@ const reportedPlacementFilter = ({
   };
 };
 
-const validateReportCreation = async ({
-  userId,
+/**
+ * Game reports are all filed against one game, and most of Game Frame's reasons share
+ * `TOSViolation`. Without the violation in the match, a "Child abuse and exploitation" report folds
+ * into an earlier "Hate or harassment" one, and the queue shows the moderator the hate label.
+ */
+const reportedViolationFilter = ({
+  reportType,
+  reason,
+  details,
+}: {
+  reportType: ReportEntity;
+  reason: ReportReason;
+  details?: MixedObject;
+}) => {
+  if (reportType !== ReportEntity.GameFrameGame || reason !== ReportReason.TOSViolation) return {};
+  const violation = (details as { violation?: unknown } | undefined)?.violation;
+  if (typeof violation !== 'string' || !violation)
+    throw throwBadRequestError('report: a game TOS report must name its violation');
+  return { details: { path: ['violation'], equals: violation } };
+};
+
+/** The existing report a new one on this entity would be folded into, if any. */
+export const findReportToFoldInto = ({
   reportType,
   entityReportId,
   reason,
   details,
+  tx,
 }: {
-  userId: number;
   reportType: ReportEntity;
   entityReportId: number;
   reason: ReportReason;
   details?: MixedObject;
-}): Promise<Report | null> => {
-  // Look if there's already a report for this type with the same reason
+  tx?: Prisma.TransactionClient;
+}) => {
+  const db = tx ?? dbWrite;
   const entityIdField = reportType === ReportEntity.User ? 'userId' : `${reportType}Id`;
-  const existingReport = await dbWrite.report.findFirst({
+  return db.report.findFirst({
     where: {
       reason,
       [reportType]: { [entityIdField]: entityReportId },
@@ -153,8 +175,34 @@ const validateReportCreation = async ({
       // a different one does not. Every other reason is unaffected — the
       // predicate is only added when there is a placement to add it for.
       ...reportedPlacementFilter({ reason, details }),
+      ...reportedViolationFilter({ reportType, reason, details }),
     },
     orderBy: { id: 'desc' },
+  });
+};
+
+const validateReportCreation = async ({
+  userId,
+  reportType,
+  entityReportId,
+  reason,
+  details,
+  tx,
+}: {
+  userId: number;
+  reportType: ReportEntity;
+  entityReportId: number;
+  reason: ReportReason;
+  details?: MixedObject;
+  tx?: Prisma.TransactionClient;
+}): Promise<Report | null> => {
+  const db = tx ?? dbWrite;
+  const existingReport = await findReportToFoldInto({
+    reportType,
+    entityReportId,
+    reason,
+    details,
+    tx,
   });
 
   if (!existingReport) return null;
@@ -168,7 +216,7 @@ const validateReportCreation = async ({
   // if alsoReportedBy count is greater than previouslyReviewedCount * 2,
   // then set the status to pending and reset the previouslyReviewedCount
   if (previouslyReviewedCount > 0 && alsoReportedBy.length >= previouslyReviewedCount * 2) {
-    const updatedReport = await dbWrite.report.update({
+    const updatedReport = await db.report.update({
       where: { id },
       data: {
         status: ReportStatus.Pending,
@@ -181,7 +229,7 @@ const validateReportCreation = async ({
     return updatedReport;
   }
 
-  const updatedReport = await dbWrite.report.update({
+  const updatedReport = await db.report.update({
     where: { id },
     data: {
       alsoReportedBy: [...alsoReportedBy, userId],
@@ -211,6 +259,7 @@ const reportTypeNameMap: Record<ReportEntity, string> = {
   [ReportEntity.Model3DReview]: 'model3dReview',
   [ReportEntity.Announcement]: 'announcement',
   [ReportEntity.Crucible]: 'crucible',
+  [ReportEntity.GameFrameGame]: 'gameFrameGame',
 };
 
 const reportTypeConnectionMap = {
@@ -232,13 +281,23 @@ const reportTypeConnectionMap = {
   [ReportEntity.Model3DReview]: 'model3dReviewId',
   [ReportEntity.Announcement]: 'announcementId',
   [ReportEntity.Crucible]: 'crucibleId',
+  [ReportEntity.GameFrameGame]: 'gameFrameGameId',
 } as const;
 
 const statusOverrides: Partial<Record<ReportReason, ReportStatus>> = {
   [ReportReason.NSFW]: ReportStatus.Actioned,
 };
 
-type CreateReportProps = CreateReportInput & { userId: number; isModerator?: boolean };
+type CreateReportProps = CreateReportInput & {
+  userId: number;
+  isModerator?: boolean;
+  /**
+   * Fold and create on the caller's transaction instead of opening one. The Game Frame endpoint
+   * needs its idempotency receipt committed atomically with the report, or a resend after a crash
+   * re-appends the reporter to `alsoReportedBy` and pays them twice.
+   */
+  tx?: Prisma.TransactionClient;
+};
 /**
  * A sticker report names the placement it is about, and the placement has to be
  * on the thing being reported.
@@ -281,6 +340,7 @@ export const createReport = async ({
   id,
   isModerator,
   type,
+  tx: callerTx,
   ...data
 }: CreateReportProps) => {
   // Add report type to details for notifications
@@ -324,7 +384,7 @@ export const createReport = async ({
 
   // Nothing automated acts on a crucible's mature-content report, unlike an image's or a model's
   // tag votes, so it goes to a moderator like any other reason: deduped, and left Pending.
-  const awaitsModerator = type === ReportEntity.Crucible;
+  const awaitsModerator = type === ReportEntity.Crucible || type === ReportEntity.GameFrameGame;
   const validReport =
     (data.reason !== ReportReason.NSFW || awaitsModerator) && data.reason !== ReportReason.Automated
       ? await validateReportCreation({
@@ -333,6 +393,7 @@ export const createReport = async ({
           entityReportId: id,
           reason: data.reason,
           details: data.details as MixedObject,
+          tx: callerTx,
         })
       : null;
   if (validReport) return validReport;
@@ -358,7 +419,7 @@ export const createReport = async ({
 
   let recomputeArticleNsfwLevelId: number | null = null;
 
-  const createdReport = await dbWrite.$transaction(async (tx) => {
+  const writeReport = async (tx: Prisma.TransactionClient) => {
     // create the report
     const createdReport = await tx.report.create({
       data: {
@@ -491,7 +552,10 @@ export const createReport = async ({
     }
 
     return createdReport;
-  });
+  };
+  const createdReport = callerTx
+    ? await writeReport(callerTx)
+    : await dbWrite.$transaction(writeReport);
 
   // Runs after the tx commits so the subquery in updateArticleNsfwLevels
   // picks up the newly-Actioned NSFW report we just inserted.

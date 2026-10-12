@@ -5,7 +5,13 @@ import { createClient, createCluster, createSentinel } from 'redis';
 import { RESP_TYPES } from 'redis';
 import slugify from 'slugify';
 import { loadRedisEnv, type RedisConfig } from './env';
-import { withCommandDeadline } from './deadline';
+import { withCommandDeadline, withTimeout } from './deadline';
+import {
+  createClusterReconnectStrategy,
+  pickRediscoverStartNode,
+  reconnectDelayMs,
+  createThrottle,
+} from './cluster-reconnect';
 import { withClusterRoutingRetry } from './cluster-routing-retry';
 import { ClusterSelfHealWatchdog } from './cluster-selfheal';
 import type { ClusterSelfHealTrigger } from './cluster-selfheal';
@@ -288,41 +294,58 @@ const clusterRefreshIntervals = new Map<string, ReturnType<typeof setInterval>>(
  * before the retry. Intentional: node-redis single-flights rediscover, so a best-effort nudge +
  * backoff is the right shape; returning the promise here would change the retry timing/blast radius.
  */
-function triggerTopologyRediscovery(clusterClient: any, reason: string) {
+export function triggerTopologyRediscovery(clusterClient: any, reason: string) {
   try {
-    if (!clusterClient._slots?.rediscover) {
+    const self = clusterClient?._self ?? clusterClient;
+    const slots = self?._slots;
+    if (!slots?.rediscover) {
+      return;
+    }
+
+    // node-redis's rediscover(startWith) reads `startWith.options` unconditionally — calling it
+    // with no argument threw "Cannot read properties of undefined (reading 'options')" on every
+    // call whenever no master client existed. Always hand it a real start node: a READY master,
+    // else the next seed node in rotation.
+    const startWith = pickRediscoverStartNode(
+      slots.masters,
+      self._options?.rootNodes,
+      rediscoverSeedCursor++
+    );
+    if (!startWith) {
+      log(`Topology rediscovery skipped (no master and no seed node): ${reason}`);
       return;
     }
 
     log(`Triggering topology rediscovery: ${reason}`);
-
-    // rediscover() requires a client instance with .options property
-    // Try to get a master client from the cluster to pass to rediscover
-    const masters = clusterClient._slots.masters;
-    if (masters && masters.length > 0) {
-      // Use the first available master client
-      const masterClient = masters[0]?.client;
-      if (masterClient) {
-        clusterClient._slots.rediscover(masterClient).catch((err: Error) => {
-          log(`Topology rediscovery failed: ${err.message}`);
-        });
-        return;
-      }
-    }
-
-    // Fallback: try calling without argument (may fail but worth trying)
-    clusterClient._slots.rediscover().catch((err: Error) => {
-      log(`Topology rediscovery failed (no master client): ${err.message}`);
+    slots.rediscover(startWith).catch((err: Error) => {
+      log(`Topology rediscovery failed: ${err.message}`);
     });
   } catch (err) {
-    // Silently ignore if rediscover is not available
     log(`Topology rediscovery error: ${err instanceof Error ? err.message : err}`);
   }
 }
 
+// Rotates the seed node a rediscover starts from when no master client is ready.
+let rediscoverSeedCursor = 0;
+
+/** Throttle for error-driven rediscovers: at most one per this many ms, per cluster client. */
+const CLUSTER_ERROR_REDISCOVER_MIN_INTERVAL_MS = 1000;
+/**
+ * Upper bound on each await inside a self-heal reconnect. The cluster `connect()` eagerly connects
+ * every node in the slot map and awaits them all, so a single unreachable address used to leave
+ * it — and the watchdog's single-flight `reconnecting` flag — pending forever.
+ */
+export const SELFHEAL_RECONNECT_STEP_TIMEOUT_MS = 10_000;
+
 // Hold the watchdog interval so it can be cleared on client close (mirrors
 // clusterRefreshIntervals). Module-scoped: one cluster client per process.
 let clusterSelfHealInterval: ReturnType<typeof setInterval> | undefined;
+let clusterSelfHealWatchdog: ClusterSelfHealWatchdog | undefined;
+
+/** Test seam: the cluster self-heal watchdog this process started (undefined until connect). */
+export function __getClusterSelfHealWatchdog(): ClusterSelfHealWatchdog | undefined {
+  return clusterSelfHealWatchdog;
+}
 
 // Same, for the sys (sysRedis / Sentinel) self-heal watchdog. Module-scoped + guarded so the
 // watchdog interval is started exactly once per process regardless of how many sys base
@@ -382,16 +405,18 @@ export function resolvePeriodicRefresh(refreshIntervalMs: number): {
  * connection gets exactly one fresh periodic-rediscover interval.
  *
  * Any teardown error is non-fatal: connect() is still attempted, and the watchdog re-arms
- * after the cooldown regardless.
+ * after the cooldown regardless. Every await is bounded by `stepTimeoutMs`, so the returned
+ * promise always settles — a reconnect whose connect() cannot finish rejects instead of hanging.
  *
- * @param reSetupFailover re-runs setupEnhancedFailover() after connect() resolves, so the
- *   periodic `_slots.rediscover()` interval (and node-error/disconnect rediscovery) is
- *   re-established post-heal exactly once (FIX #3). Injected by getBaseClient (the closure
- *   lives there); optional so unit tests can drive the function without it.
+ * @param reSetupFailover re-runs setupEnhancedFailover() once connect() has settled OR failed, so
+ *   the periodic `_slots.rediscover()` interval is re-established post-heal exactly once (FIX #3)
+ *   even when the reconnect itself did not complete. Injected by getBaseClient (the closure lives
+ *   there); optional so unit tests can drive the function without it.
  */
-async function forceClusterReconnect(
+export async function forceClusterReconnect(
   clusterClient: any,
-  reSetupFailover?: () => Promise<void>
+  reSetupFailover?: () => Promise<void>,
+  stepTimeoutMs: number = SELFHEAL_RECONNECT_STEP_TIMEOUT_MS
 ): Promise<void> {
   // FIX #3: clear the existing topology-refresh interval BEFORE the destroy(). destroy()
   // bypasses the wrapped close() that would otherwise clear it, so without this the old
@@ -400,6 +425,33 @@ async function forceClusterReconnect(
   // reSetupFailover keeps it at exactly one.
   clearClusterRefreshInterval('cache');
 
+  try {
+    await reconnectClusterBounded(clusterClient, stepTimeoutMs);
+  } finally {
+    // Re-arm the periodic refresh whether or not connect() succeeded. It used to run only after a
+    // SUCCESSFUL connect(), and the interval was already cleared above, so a connect() that never
+    // settled (an unreachable node in the slot map) left the client with no periodic rediscover
+    // for the rest of the process. Bounded too: it awaits the app's feature-flag resolver.
+    if (reSetupFailover) {
+      try {
+        await withTimeout(
+          reSetupFailover(),
+          stepTimeoutMs,
+          `re-setup failover did not settle within ${stepTimeoutMs}ms`
+        );
+      } catch (err) {
+        log(
+          `Cluster self-heal: re-setup failover after reconnect failed: ${
+            err instanceof Error ? err.message : String(err)
+          }`
+        );
+      }
+    }
+  }
+}
+
+/** The destroy → connect half of forceClusterReconnect. Rejects if connect() fails or times out. */
+async function reconnectClusterBounded(clusterClient: any, stepTimeoutMs: number): Promise<void> {
   try {
     if (typeof clusterClient.destroy === 'function') {
       // destroy() rejects in-flight commands immediately (flushAll(DisconnectsClientError))
@@ -430,23 +482,15 @@ async function forceClusterReconnect(
   // letting it decay over the next few ticks.
   resetClusterInflight();
 
-  await clusterClient.connect();
-
-  // FIX #3: re-establish enhanced failover (incl. the periodic-rediscover interval) on the
-  // freshly-connected client. setupEnhancedFailover clears any prior interval for this client
-  // kind first, so combined with the clear above this yields exactly ONE interval (honoring
-  // the REDIS_CLUSTER_REFRESH_INTERVAL disable sentinel). Non-fatal if it throws.
-  if (reSetupFailover) {
-    try {
-      await reSetupFailover();
-    } catch (err) {
-      log(
-        `Cluster self-heal: re-setup failover after reconnect failed: ${
-          err instanceof Error ? err.message : String(err)
-        }`
-      );
-    }
-  }
+  // Bounded: connect() eagerly connects every node in the slot map and awaits them all, so one
+  // unreachable address kept it (and the watchdog's single-flight `reconnecting`) pending
+  // forever. On timeout connect() keeps running in the background — it still completes the
+  // reconnect if the node comes back — but the watchdog is free to re-arm after its cooldown.
+  await withTimeout(
+    clusterClient.connect(),
+    stepTimeoutMs,
+    `connect() did not settle within ${stepTimeoutMs}ms`
+  );
 }
 
 /** Clear (and forget) the topology-refresh interval for a client kind, if scheduled. */
@@ -498,6 +542,7 @@ function startClusterSelfHeal(
     }
   );
 
+  clusterSelfHealWatchdog = watchdog;
   if (!config.clusterSelfHealEnabled) {
     log('Cluster self-heal watchdog DISABLED (REDIS_CLUSTER_SELFHEAL_ENABLED=false)');
     return watchdog;
@@ -526,6 +571,9 @@ function startClusterSelfHeal(
   );
   return watchdog;
 }
+
+/** Sys clients whose reconnect is waiting on a teardown that outlived the step timeout. */
+const lateSysReconnects = new WeakSet<object>();
 
 /**
  * Force a FULL reconnect of the sysRedis client(s) — the mirror of forceClusterReconnect for
@@ -560,21 +608,41 @@ function startClusterSelfHeal(
  * Exported (like resolvePeriodicRefresh) so the sentinel destroy→connect correctness can be
  * unit-tested directly without booting a real client.
  */
-export async function forceSysReconnect(sysClients: any[]): Promise<void> {
+export async function forceSysReconnect(
+  sysClients: any[],
+  stepTimeoutMs: number = SELFHEAL_RECONNECT_STEP_TIMEOUT_MS
+): Promise<void> {
   // Reset the local inflight counter up front — destroy() rejects every in-flight command, so
   // their done() closures fire as the rejections settle and EACH floored-decrements toward 0.
   // The reset just snaps the watchdog's sampled value clean at the trigger instant.
   resetSysInflight();
 
+  // Every await below is bounded by stepTimeoutMs, so this always settles within a known time and
+  // the watchdog's single-flight `reconnecting` flag always clears. Unbounded, a sentinel destroy()
+  // first waits out any discovery already running, and connect() retries discovery up to
+  // maxCommandRediscovers (16) times a second apart before giving up — at least 16s, plus any
+  // connect timeouts along the way, while the master is unreachable.
   for (const client of sysClients) {
     if (!client) continue;
+    if (lateSysReconnects.has(client)) {
+      // An earlier heal's teardown of this client has not finished; its reconnect is already
+      // chained onto it. A second destroy() would wait on the same in-progress discovery and
+      // only queue another connect() behind it. If that teardown never settles (the discovery
+      // it waits on cannot finish), this client stays skipped — a second destroy() would hang
+      // on the same thing, so nothing is lost.
+      log('Sys self-heal: skipping a client whose previous teardown is still running');
+      continue;
+    }
+    // The awaitable teardown, if the client has one, and whether it has settled.
+    let teardown: Promise<unknown> | undefined;
+    let teardownSettled = false;
     try {
       if (typeof client.destroy === 'function') {
         // RedisSentinel.destroy() returns the async #internal.destroy() promise (rejects in-flight
         // commands + tears sockets down); await it so connect() runs on a fully-destroyed client.
-        await client.destroy();
+        teardown = Promise.resolve(client.destroy());
       } else if (typeof client.disconnect === 'function') {
-        await client.disconnect();
+        teardown = Promise.resolve(client.disconnect());
       } else if (typeof client.close === 'function') {
         // Last resort only: close() can HANG on the wedged queue (see WHY above). Bound it so a
         // hang can't pin reconnecting=true forever; fall through to connect() regardless.
@@ -583,6 +651,17 @@ export async function forceSysReconnect(sysClients: any[]): Promise<void> {
           new Promise<void>((resolve) => setTimeout(resolve, 2000)),
         ]);
       }
+      if (teardown) {
+        teardown.then(
+          () => (teardownSettled = true),
+          () => (teardownSettled = true)
+        );
+        await withTimeout(
+          teardown,
+          stepTimeoutMs,
+          `teardown did not settle within ${stepTimeoutMs}ms`
+        );
+      }
     } catch (err) {
       log(
         `Sys self-heal: teardown threw (continuing to reconnect): ${
@@ -590,8 +669,40 @@ export async function forceSysReconnect(sysClients: any[]): Promise<void> {
         }`
       );
     }
+    if (teardown && !teardownSettled) {
+      // The teardown is still running. A sentinel destroy() first waits for any discovery in
+      // progress and only then closes the client, so connect() now would be refused ("already
+      // attempting to open") and the late-finishing destroy() would then leave the client CLOSED
+      // for good — every sys command failing at once, too fast for the sys watchdog's inflight
+      // trigger to ever see. Reconnect when the teardown finishes instead, in the background.
+      const pending = teardown;
+      lateSysReconnects.add(client);
+      // The guard covers the pending TEARDOWN only, and is released the moment it settles — not
+      // after connect(). RedisSentinel (5.8.3, reserveClient) takes a reserved lease from a pool of
+      // masterPoolSize (2) on every connect() and destroy() never returns it, so from a client's
+      // second reconnect on, connect() can wait forever on that pool even though the client works;
+      // holding the guard across connect() would skip this client in every later heal.
+      void pending
+        .catch(() => undefined)
+        .finally(() => lateSysReconnects.delete(client))
+        .then(() => client.connect())
+        .then(
+          () => log('Sys self-heal: reconnected after a late teardown'),
+          (err: unknown) =>
+            log(
+              `Sys self-heal: reconnect after a late teardown failed: ${
+                err instanceof Error ? err.message : String(err)
+              }`
+            )
+        );
+      continue;
+    }
     try {
-      await client.connect();
+      await withTimeout(
+        Promise.resolve(client.connect()),
+        stepTimeoutMs,
+        `connect() did not settle within ${stepTimeoutMs}ms`
+      );
     } catch (err) {
       // Non-fatal: node-redis keeps retrying the connection in the background via its
       // reconnectStrategy, and the watchdog re-arms after the cooldown.
@@ -608,10 +719,14 @@ export async function forceSysReconnect(sysClients: any[]): Promise<void> {
  * Start the sys (sysRedis / Sentinel) self-heal watchdog — the mirror of startClusterSelfHeal for
  * the OTHER node-redis client. REUSES the generic ClusterSelfHealWatchdog (it's client-agnostic:
  * a config + injected getInflight/reconnect/onReconnect). The DEADLINE-hit trigger is left OFF
- * (deadlineHitThreshold 0, no getDeadlineHits dep) because the sys client has no per-command
- * deadline — the incident wedge climbs inflight monotonically (no sawtooth), so the sustained-
- * inflight path is exactly the right and only trigger. REDIS_SYS_SELFHEAL_ENABLED=false disables
- * it entirely. Started once per process (guarded by sysSelfHealInterval).
+ * (deadlineHitThreshold 0, no getDeadlineHits dep) — the incident wedge climbs inflight
+ * monotonically, so the sustained-inflight path is the only trigger. 🔴 That only holds while the
+ * sys per-command backstop (REDIS_SYS_COMMAND_TIMEOUT_MS) is LONGER than the sustained window and
+ * the in-flight cap is ABOVE the inflight threshold: a shorter deadline drains inflight into a
+ * sawtooth before the window fills (exactly how the cluster watchdog went blind), and a lower cap
+ * keeps inflight under the threshold. env.ts refuses both configurations.
+ * REDIS_SYS_SELFHEAL_ENABLED=false disables it entirely. Started once per process (guarded by
+ * sysSelfHealInterval).
  */
 function startSysSelfHeal(sysClients: any[]): ClusterSelfHealWatchdog {
   const watchdog = new ClusterSelfHealWatchdog(
@@ -620,14 +735,15 @@ function startSysSelfHeal(sysClients: any[]): ClusterSelfHealWatchdog {
       inflightThreshold: config.sysSelfHealInflightThreshold,
       sustainedMs: config.sysSelfHealSustainedMs,
       cooldownMs: config.sysSelfHealCooldownMs,
-      // Sys has no command deadline → no sawtooth/deadline-hit path. Disable that trigger.
+      // No slow-settle recording on sys (see instrumentCommands) → no deadline-hit path.
       deadlineHitThreshold: 0,
       deadlineHitWindowMs: 0,
       reconnectJitterMs: config.sysSelfHealReconnectJitterMs,
+      label: 'Sys',
     },
     {
       getInflight: () => getSysInflight(),
-      // getDeadlineHits intentionally omitted (deadline trigger inert for the sys client).
+      // getDeadlineHits intentionally omitted (deadline-hit trigger inert for the sys client).
       reconnect: () => forceSysReconnect(sysClients),
       log,
       onReconnect: (inflightAtTrigger: number, trigger: ClusterSelfHealTrigger) => {
@@ -907,6 +1023,10 @@ export interface InstrumentCommandsOptions {
   routingRetryMax?: number;
   routingRetryBackoffMs?: number;
   routingRetryBackoffMaxMs?: number;
+  /** Sys client: per-command wall-clock backstop (ms). <= 0 disables. */
+  sysDeadlineMs?: number;
+  /** Sys client: reject new commands while this many are already in flight. <= 0 disables. */
+  sysInflightCap?: number;
 }
 
 /**
@@ -950,7 +1070,23 @@ export function instrumentCommands(
     opts.routingRetryBackoffMs ?? config?.clusterRoutingRetryBackoffMs ?? 0;
   const routingRetryBackoffMaxMs =
     opts.routingRetryBackoffMaxMs ?? config?.clusterRoutingRetryBackoffMaxMs ?? 0;
+  // Sys client bounds. node-redis's own commandsQueueMaxLength never sees the commands that wait
+  // INSIDE RedisSentinel (for a master lease or a rediscovery), which is where they piled up
+  // without limit when the sys master moved; this wrapper sees every command. What the cap counts
+  // is callers still waiting: once the backstop reaps a command its caller is released, but the
+  // command itself may stay parked inside RedisSentinel until it reconnects. So during a long
+  // stall the cap bounds the RATE at which parked work grows (about cap per backstop), and the
+  // sys self-heal reconnect is what clears it.
+  const sysDeadlineMs =
+    clientLabel === 'sys' ? opts.sysDeadlineMs ?? config?.sysCommandTimeoutMs ?? 0 : 0;
+  const sysInflightCap =
+    clientLabel === 'sys' ? opts.sysInflightCap ?? config?.sysCommandsQueueMaxLength ?? 0 : 0;
   self[methodName] = function (this: any, ...args: any[]) {
+    if (sysInflightCap > 0 && getSysInflight() >= sysInflightCap) {
+      return Promise.reject(
+        new Error(`sysRedis in-flight cap reached (${sysInflightCap}); command rejected`)
+      );
+    }
     // Capture the metric handles ONCE per command so inc/dec stay balanced even if the app's
     // prom module loads mid-flight (a dec without its inc would drive the gauge negative).
     const metrics = getRedisMetrics();
@@ -1010,7 +1146,7 @@ export function instrumentCommands(
     // node selection, INSIDE the single inflight inc/dec + deadline accounting: the retried
     // attempts are SEQUENTIAL (await), never overlapping, so this is ONE inflight unit regardless
     // of retries (no double-count, done() fires exactly once). The sys client (wrapWithDeadline=
-    // false) is left exactly as before — no routing guard, no deadline. Default-on; the
+    // false) gets no routing guard. Default-on; the
     // REDIS_CLUSTER_ROUTING_RETRY_ENABLED=false kill-switch passes runOnce() straight through.
     // The `rediscover` hook is a FIRE-AND-FORGET nudge: triggerTopologyRediscovery returns
     // undefined (it does not await the rediscover promise), so the guard's backoff — not this call —
@@ -1028,15 +1164,20 @@ export function instrumentCommands(
       : runOnce();
 
     // Bound the cluster command so a never-settling `_execute` still reaches done()
-    // (gauge dec'd, handler unparked). No-op when the deadline env is 0/disabled or for
-    // the sys client (wrapWithDeadline=false). withCommandDeadline reaps the late
+    // (gauge dec'd, handler unparked). No-op when the deadline env is 0/disabled. The sys
+    // client gets its own, longer backstop (REDIS_SYS_COMMAND_TIMEOUT_MS — longer than the sys
+    // watchdog's sustained window, see env.ts). withCommandDeadline reaps the late
     // rejection of the orphaned command so it can't surface as an unhandledRejection.
     // Layered OUTSIDE the routing retry so the 15s deadline bounds the WHOLE retried sequence
     // (the bounded ~50ms+150ms backoff is well inside it). The self-heal wedge signal is NO
     // LONGER sourced from this deadline's reap (onTimeout) — done() records it from the observed
     // settle duration instead (see the recordClusterCommandSettle call above), so the trigger
     // fires whether or not the deadline actually reaps the command (2026-07-06 fix).
-    const settled = wrapWithDeadline ? withCommandDeadline(executed, deadlineMs) : executed;
+    const settled = wrapWithDeadline
+      ? withCommandDeadline(executed, deadlineMs)
+      : sysDeadlineMs > 0
+      ? withTimeout(executed, sysDeadlineMs, `sysRedis command timed out after ${sysDeadlineMs}ms`)
+      : executed;
     return settled.finally(done);
   };
 }
@@ -1065,12 +1206,42 @@ function getBaseClient(type: 'cache' | 'system') {
   const commandsQueueMaxLength =
     isSystem && config.sysCommandsQueueMaxLength > 0 ? config.sysCommandsQueueMaxLength : undefined;
 
+  // System redis is single-node, OR — when REDIS_SYS_SENTINELS is set — a Sentinel-discovered
+  // HA topology. Cache redis is cluster or single-node based on REDIS_CLUSTER.
+  const isCluster = type === 'cache' && config.cluster;
+  const isSysSentinel = type === 'system' && !!config.sysSentinels;
+
+  // Cluster only: recover from a node changing address (see ./cluster-reconnect). Late-bound to
+  // the cluster client, which is created below with this strategy in its node defaults.
+  // REDIS_CLUSTER_ERROR_REDISCOVER_ENABLED=false is the off switch: the strategy is then just the
+  // backoff, exactly as before.
+  let clusterForRediscover: any;
+  const errorRediscover =
+    isCluster && config.clusterErrorRediscoverEnabled
+      ? createThrottle(CLUSTER_ERROR_REDISCOVER_MIN_INTERVAL_MS, (reason) => {
+          if (clusterForRediscover) triggerTopologyRediscovery(clusterForRediscover, reason);
+        })
+      : undefined;
+
   // Shared configuration
   const socketConfig = {
-    reconnectStrategy(retries: number) {
-      log(`Redis reconnecting, retry ${retries}`);
-      return Math.min(retries * 100, 3000);
-    },
+    reconnectStrategy: isCluster
+      ? createClusterReconnectStrategy({
+          onTopologyChangeSignal: errorRediscover
+            ? (cause) =>
+                errorRediscover(
+                  `node connection error: ${
+                    (cause as { code?: string })?.code ??
+                    (cause instanceof Error ? cause.message : String(cause))
+                  }`
+                )
+            : undefined,
+          log,
+        })
+      : (retries: number) => {
+          log(`Redis reconnecting, retry ${retries}`);
+          return reconnectDelayMs(retries);
+        },
     connectTimeout: config.timeout,
     // Socket-level inactivity guard (node-redis -> net.Socket.setTimeout): an IDLE timer reset
     // by any read/write. On a SILENT half-open the in-flight command is parked and blocks every
@@ -1097,11 +1268,6 @@ function getBaseClient(type: 'cache' | 'system') {
   log(
     `Redis ping interval (${type}) = ${pingInterval}ms (REDIS_PING_INTERVAL_MS=${config.pingIntervalMs}, socketTimeout=${socketTimeoutMs}ms)`
   );
-
-  // System redis is single-node, OR — when REDIS_SYS_SENTINELS is set — a Sentinel-discovered
-  // HA topology. Cache redis is cluster or single-node based on REDIS_CLUSTER.
-  const isCluster = type === 'cache' && config.cluster;
-  const isSysSentinel = type === 'system' && !!config.sysSentinels;
 
   const baseClient = isSysSentinel
     ? createSentinel({
@@ -1223,41 +1389,14 @@ function getBaseClient(type: 'cache' | 'system') {
       }`
     );
 
-    // Helper to check the injected app policy before triggering rediscovery
-    const maybeRediscover = async (reason: string) => {
-      if (await isEnhancedFailoverEnabled(fliptContext)) {
-        triggerTopologyRediscovery(baseClient, reason);
-      }
-    };
-
-    // Triggered when a specific node encounters an error
-    baseClient.on('node-error', (err: Error, node: any) => {
-      const nodeAddr = node?.address || node?.url || 'unknown';
-      log(`Redis node error [${nodeAddr}]: ${err.message}`);
-      // Trigger topology rediscovery when a node fails (if feature enabled)
-      maybeRediscover(`node-error on ${nodeAddr}`);
-    });
-
-    // Triggered when a node disconnects
-    // This is critical for detecting failovers where the old master goes down
-    baseClient.on('node-disconnect', (node: any) => {
-      const nodeAddr = node?.address || node?.url || 'unknown';
-      log(`Redis node disconnected: ${nodeAddr}`);
-      // Trigger topology rediscovery to find the new master (if feature enabled)
-      maybeRediscover(`node-disconnect on ${nodeAddr}`);
-    });
-
-    // Triggered when a node reconnects
-    baseClient.on('node-connect', (node: any) => {
-      const nodeAddr = node?.address || node?.url || 'unknown';
-      log(`Redis node connected: ${nodeAddr}`);
-    });
-
-    // Triggered when a node is ready
-    baseClient.on('node-ready', (node: any) => {
-      const nodeAddr = node?.address || node?.url || 'unknown';
-      log(`Redis node ready: ${nodeAddr}`);
-    });
+    // Node-failure rediscovery. node-redis 5 emits no per-node events on the cluster client (the
+    // `node-error` / `node-disconnect` listeners that used to sit here never fired: node clients
+    // are created with their own `.on('error', console.error)`). The working hook is the
+    // per-node reconnect strategy in socketConfig above, which needs the client to rediscover on.
+    // NOT gated on the enhanced-failover flag: it only acts on node connection failures, is
+    // throttled to one rediscover a second, and the flag-gated listeners it replaces were inert.
+    // It has its own off switch, REDIS_CLUSTER_ERROR_REDISCOVER_ENABLED.
+    clusterForRediscover = baseClient;
 
     // Set up periodic topology refresh after client is ready and feature flag is checked
     // This ensures we don't rely solely on MOVED/ASK errors for discovery
@@ -1279,7 +1418,7 @@ function getBaseClient(type: 'cache' | 'system') {
         // REDIS_CLUSTER_REFRESH_INTERVAL (the standing 30s default is unchanged when unset):
         //   * a LARGER value lengthens the interval;
         //   * 0 (or any value <= 0) is the DISABLE SENTINEL — no periodic rediscover is
-        //     scheduled at all (event-driven rediscovery on node-error/node-disconnect still
+        //     scheduled at all (rediscovery on node connection errors, ./cluster-reconnect, still
         //     runs). This lets the infra side run the "lengthen / disable the periodic
         //     rediscover" experiment (it is the most plausible SEED of the inflight-leak wedge:
         //     a periodic rediscover racing an in-flight write) as a pure env change, no deploy.
@@ -2678,6 +2817,10 @@ const REDIS_KEYS_UNPREFIXED = {
       CACHE: 'packed:holiday2024',
     },
   },
+  BIRTHDAY: {
+    // Must equal BIRTHDAY_2026_EVENT; birthday2026.event.ts fails to compile otherwise.
+    '2026': { BASE: 'birthday2026' },
+  },
   BEEHIIV: {
     NEWSLETTER: 'newsletter',
   },
@@ -2771,7 +2914,14 @@ export const REDIS_SUB_KEYS = {
     PARTNERS: 'partners', // sys
     ADD_ROLE: 'add-role', // sys
     MANUAL_ASSIGNMENTS: 'manual-assignments', //sys
+    // Join-time team balancing (src/server/events/team-balance.ts).
+    TEAM_BALANCE_LIST: 'team-balance-list', // sys
+    TEAM_BALANCE_TOTALS: 'team-balance-totals', // sys
+    TEAM_BALANCE_ASSIGNED: 'team-balance-assigned', // sys
     DISCORD_ROLES: 'discord-roles', // sys
+    POINTS: 'points', // sys
+    ROSTER: 'roster', // sys
+    WINNER: 'winner', // sys
   },
   QUEUES: {
     MERGING: 'merging', // sys

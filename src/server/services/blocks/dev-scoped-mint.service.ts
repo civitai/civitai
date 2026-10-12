@@ -1,5 +1,6 @@
 import {
   BLOCK_SPEND_SCOPE,
+  BUZZ_BUDGET_CAP,
   isKnownBlockScope,
   validateBlockScopesAgainstOauthClient,
 } from '~/shared/constants/block-scope.constants';
@@ -65,10 +66,11 @@ import type { PrivateRunAudience } from '~/shared/constants/block-scope.constant
  * `recordSpendAttribution`'s `oauthClient.findUnique` MISSES (no forged attribution).
  */
 
-// A LOWER dev budget cap than the prod 1000. The dev spends their OWN Buzz and the
-// per-user daily cumulative cap is untouched; this just bounds a single submit's
-// reservation.
-export const DEV_BUZZ_BUDGET_CAP = 250;
+// Not lower than the install-token cap: a lower one makes any job priced between the
+// two (a 3D step quotes ~390) runnable in production yet impossible to develop, run
+// privately or exercise in review. Total spend on these tokens is bounded by the
+// aggregate caps (per-user daily, dev session, private-run, review).
+export const DEV_BUZZ_BUDGET_CAP = BUZZ_BUDGET_CAP;
 export const DEV_BUZZ_BUDGET_DEFAULT = 50;
 
 // Forced SFW — the dev mint NEVER reads the request host. localhost / the dev

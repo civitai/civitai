@@ -209,6 +209,15 @@ beforeEach(() => {
       clientId: 'civitai-link-desktop',
       expiresAt: EXPIRES_AT,
     },
+    // A client-credentials catalog token: single-purpose, so it reads as inactive here.
+    {
+      key: generateSecretHash('civitai_catalog'),
+      type: 'Access',
+      userId: 77,
+      tokenScope: TokenScope.UserRead | TokenScope.AppStoreCatalogWrite,
+      clientId: 'game-frame',
+      expiresAt: EXPIRES_AT,
+    },
     {
       key: generateSecretHash('civitai_orphan'),
       type: 'Access',
@@ -283,6 +292,7 @@ describe('introspect — inactive tokens all answer 200 {active:false}', () => {
     ['an expired access token', 'civitai_expired'],
     ['a refresh token (wrong type)', 'civitai_refresh'],
     ['an unknown token', 'civitai_nope'],
+    ['a client-credentials token (single-purpose)', 'civitai_catalog'],
     ['a missing token parameter', ''],
   ])('%s', async (_label, token) => {
     const res = await post({ token, client_id: CALLER, client_secret: CALLER_SECRET });

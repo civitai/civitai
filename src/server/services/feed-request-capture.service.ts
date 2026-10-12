@@ -1,5 +1,6 @@
 import { trace } from '@opentelemetry/api';
 import { clickhouse } from '~/server/clickhouse/client';
+import { formatClickhouseDateTime64 } from '~/server/clickhouse/datetime';
 import { logToAxiom } from '~/server/logging/client';
 import { registerCounterWithLabels } from '~/server/prom/client';
 import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
@@ -212,10 +213,6 @@ const uintArray = (a: unknown) =>
     : [];
 const stringArray = (a: unknown) => (Array.isArray(a) ? a.map(String) : []);
 const str = (v: unknown) => (v == null ? '' : String(v));
-
-export function formatClickhouseDateTime64(epochMs: number) {
-  return new Date(epochMs).toISOString().slice(0, 23).replace('T', ' ');
-}
 
 export function buildFeedRequestRow(
   input: CapturableSearchInput,

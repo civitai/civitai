@@ -1,4 +1,5 @@
 import type { Context } from '~/server/createContext';
+import { parseVerifiedBotHeader, VERIFIED_BOT_HEADER } from '~/server/utils/bot-detection/header';
 import { resolveBrowsingSettingsAddons } from '~/shared/constants/browsing-settings-addons';
 import {
   allBrowsingLevelsFlag,
@@ -107,6 +108,17 @@ export const domainBrowsingLevelCap = ({
   isAuthorized: boolean;
   canViewNsfw: boolean;
 }) => (!isAuthorized ? publicBrowsingLevelsFlag : !canViewNsfw ? sfwBrowsingLevelsFlag : undefined);
+
+/**
+ * `domainBrowsingLevelCap` for a request. A verified search crawler counts as signed in
+ * where mature content is allowed (the `Gated` paywall bypass) and as signed out elsewhere.
+ */
+export function requestDomainBrowsingLevelCap(ctx: Pick<Context, 'user' | 'features' | 'req'>) {
+  const canViewNsfw = !!ctx.features.canViewNsfw;
+  const verifiedBot = parseVerifiedBotHeader(ctx.req?.headers[VERIFIED_BOT_HEADER]);
+  const isAuthorized = !!ctx.user || (verifiedBot !== null && canViewNsfw);
+  return domainBrowsingLevelCap({ isAuthorized, canViewNsfw });
+}
 
 /** A requested level held to a cap. Unset, or with nothing in common with it, becomes the cap. */
 export const clampToDomainCap = (requested: number | undefined, cap: number) =>

@@ -127,7 +127,7 @@ export const submitExternalListingSchema = z
     // so bounding at Full could reject a valid subset. The per-client subset check still
     // lives in the service (it needs the client's `allowedScopes`).
     // OPTIONAL + IGNORED by the service. The listing's requested scopes are
-    // AUTO-DERIVED server-side from the client's CURRENT `allowedScopes` at submit
+    // AUTO-DERIVED server-side from the client's CURRENT consentable scopes at submit
     // time (server-authoritative snapshot — a form-supplied mask is never trusted).
     // Still bounded here (int/nonnegative/≤ALL_SCOPES) so a provided value can't
     // overflow int4, but the stored value comes from the client, not this field.

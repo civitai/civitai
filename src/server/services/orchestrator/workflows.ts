@@ -18,6 +18,7 @@ import {
   handleError,
   refreshBlob,
 } from '@civitai/client';
+import { TRPCError } from '@trpc/server';
 import type * as z from 'zod';
 import { isDev, isProd } from '~/env/other';
 import { logToAxiom, safeError } from '~/server/logging/client';
@@ -43,7 +44,10 @@ import {
   withSpan,
 } from '~/server/utils/otel-helpers';
 import { refreshableBlobId } from '~/shared/orchestrator/blob-url';
-import { annotateOrchestratorSubmitFailure } from '~/server/services/orchestrator/submit-failure';
+import {
+  annotateOrchestratorMissingBlob,
+  annotateOrchestratorSubmitFailure,
+} from '~/server/services/orchestrator/submit-failure';
 import {
   isUpstreamNetworkError,
   isUpstreamServerOrNetworkError,
@@ -892,15 +896,25 @@ export async function refreshBlobUrlsInBody(
 
   await Promise.all(
     [...refsByBlobId].map(async ([blobId, group]) => {
+      // Set only when the orchestrator ANSWERED that the blob is gone — the same
+      // signals `refreshBlobsService` treats as 'gone'. A throw (network, timeout)
+      // or any other answer leaves it unset: that says nothing about the blob.
+      let missing = false;
       try {
-        const { data } = await refreshBlob({ client, path: { blobId } });
-        if (!data?.url) throw new Error('Refresh endpoint returned no URL data');
+        const { data, response } = await refreshBlob({ client, path: { blobId } });
+        if (!data?.url) {
+          missing = response?.status === 404 || !!data?.blockedReason || data?.available === false;
+          throw new Error('Refresh endpoint returned no URL data');
+        }
         for (const ref of group) ref.apply(data.url);
       } catch (error) {
         logToAxiom({ type: 'error', name: 'blob-refresh-failed', blobId, error: safeError(error) });
-        throw throwBadRequestError(
-          `Failed to refresh image URL for blob: ${blobId}. Please try uploading the image again.`
-        );
+        const refusal = new TRPCError({
+          code: 'BAD_REQUEST',
+          message: `Failed to refresh image URL for blob: ${blobId}. Please try uploading the image again.`,
+        });
+        if (missing) annotateOrchestratorMissingBlob(refusal);
+        throw refusal;
       }
     })
   );

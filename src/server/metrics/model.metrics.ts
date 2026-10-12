@@ -9,7 +9,7 @@ import type { MetricProcessorRunContext } from '~/server/metrics/base.metrics';
 import { createMetricProcessor } from '~/server/metrics/base.metrics';
 import { executeRefresh } from '~/server/metrics/metric-helpers';
 import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
-import { modelsSearchIndex } from '~/server/search-index';
+import { modelsSearchIndex } from '~/server/search-index/models.search-index';
 import { bustFetchThroughCache } from '~/server/utils/cache-helpers';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { allInjectableResourceIds } from '~/shared/constants/generation.constants';

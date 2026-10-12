@@ -31,8 +31,8 @@ All scoped to `locals.user.id`. **No monetization writes on this page.**
 
 - **Earnings summary** — ClickHouse via `@civitai/clickhouse`, from **daily aggregates / materialized views**, never
   the buzz service (too slow) ([plan §7.6](../creator-studio-plan.md#76-clickhouse-analytics--materialized-views)):
-  recent-window total + split by `source` — `orchestration.resourceCompensations` covers **comp / licenseFee only**
-  (tips + access/cosmetic come from other tables — see [earnings.md](earnings.md) / A5).
+  recent-window total + split by `source` — `orchestration.resourceCompensations` covers **comp / licenseFee / tip** (tip
+  since 2026-10-08; access/cosmetic come from other tables — see [earnings.md](earnings.md) / A5).
 - **⚠ Owner-keyed rollup dependency** — those tables are keyed by `modelVersionId`, **not** the creator's `userId`, so
   a per-creator total and the "top-earning models" widget need the **owner-keyed earnings rollup** MV
   ([plan §7.6 gap #1](../creator-studio-plan.md#76-clickhouse-analytics--materialized-views)). Until it lands, the

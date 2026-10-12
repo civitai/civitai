@@ -263,6 +263,33 @@ describe('PageBlockHost workflow bridge (W10 money-path wiring)', () => {
     replies.stop();
   });
 
+  // Invariant guard (the host has always forwarded the snapshot whole): no field
+  // whitelist drops `cost.authorFee` on the way to the iframe. `0` is its own
+  // case because a truthiness filter would drop exactly that one.
+  test.each([
+    ['a fee', { total: 49, authorFee: 37 }],
+    ['no fee (0 is a value, not an absence)', { total: 12, authorFee: 0 }],
+  ])('ESTIMATE_RESULT carries cost.authorFee to the iframe — %s', async (_label, cost) => {
+    const snapshot = { workflowId: 'wf_fee', status: 'pending', cost };
+    mocks.estimate.mockResolvedValue({ snapshot });
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+
+    postFromBlock('ESTIMATE_WORKFLOW', { requestId: 'rq_fee', body: { prompt: 'cat' } });
+
+    await vi.waitFor(() => {
+      const r = replies.last('ESTIMATE_RESULT');
+      if (!r) throw new Error('no reply yet');
+      const posted = (r.payload as { snapshot: { cost: { total: number; authorFee?: number } } })
+        .snapshot.cost;
+      expect(Object.keys(posted).sort()).toEqual(['authorFee', 'total']);
+      expect(posted.total).toBe(cost.total);
+      expect(posted.authorFee).toBe(cost.authorFee);
+    });
+    replies.stop();
+  });
+
   test('ESTIMATE_WORKFLOW error path posts a failureSnapshot-shaped ESTIMATE_RESULT (no hang)', async () => {
     mocks.estimate.mockRejectedValue(new Error('insufficient buzz'));
     renderWithProviders(<PageBlockHost {...baseProps} />);

@@ -2259,8 +2259,10 @@ export const takedownCosmeticShopItem = async ({
     // Sales made since the payout-recording migration carry exactly who was paid
     // what, in which color — reverse those verbatim, refunding the payout
     // transaction itself where its id was recorded.
+    // An empty list is a record too: a creator restocking their own sticker is
+    // paid nothing, and must not be charged back a re-derived share.
     const recordedPayouts = (purchase.meta as CosmeticPurchaseMeta | null)?.payouts;
-    if (recordedPayouts?.length) {
+    if (recordedPayouts) {
       for (const payout of recordedPayouts) {
         if (payout.amount <= 0) continue;
         if (payout.transactionId)
@@ -2313,10 +2315,12 @@ export const takedownCosmeticShopItem = async ({
     if (creatorId) {
       // Without a payout record there's no way to tell whether another creator's
       // storefront or the platform took the seller share, so a resellable item
-      // only claws back what the creator is certain to have received.
-      recipients = [
-        { userId: creatorId, amount: meta.sellableByOthers ? creatorAmount : creatorPool },
-      ];
+      // only claws back what the creator is certain to have received. A
+      // creator's own restock paid them nothing.
+      recipients =
+        purchase.userId === item.cosmetic?.createdById
+          ? []
+          : [{ userId: creatorId, amount: meta.sellableByOthers ? creatorAmount : creatorPool }];
       if (meta.sellableByOthers) unrecoveredResellerShare += sellerAmount;
     } else {
       const paidToUserIds = meta.paidToUserIds ?? [];

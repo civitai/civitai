@@ -3,6 +3,7 @@ import { ClickHouseClient, createClient } from '@clickhouse/client'
 import pLimit from 'p-limit'
 import { config } from '@/config'
 import { logger } from '@/utils/logger'
+import { createGuardedPgPool } from '@/utils/pg-pool-guard'
 import { eventHandlers } from '@/handlers'
 import { mapOperation, getTableFromTopic, MetricEvent, CacheUpdate, FeedUpdate, Operation, KafkaOffsetMeta } from '@/types/events'
 import { MetricEventBatcher } from '@/services/metric-event-batcher'
@@ -57,10 +58,15 @@ export class EventProcessor {
     const concurrency = maxConcurrency || config.app.workerPoolSize || 10
     this.limiter = pLimit(concurrency)
 
-    this.pgPool = new Pool({
-      connectionString: config.postgres.connectionString,
-      max: config.cache.pgPoolMaxConnections
-    })
+    this.pgPool = createGuardedPgPool(
+      {
+        connectionString: config.postgres.connectionString,
+        max: config.cache.pgPoolMaxConnections
+      },
+      'event-processor',
+      // Not `{ err }`: pg-pool sets `err.client`, and pino would serialize the whole Client.
+      (message, err) => logger.error({ error: { name: err.name, message: err.message, stack: err.stack } }, message)
+    )
 
     this.chClient = createClient({
       host: config.clickhouse.url

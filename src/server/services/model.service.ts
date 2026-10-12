@@ -1,4 +1,5 @@
 import { isGenerationEligible } from '@civitai/shared/generation-eligibility';
+import type { EventViewer } from '~/server/events/event-access';
 import {
   coverageColumn,
   coveragePair,
@@ -99,7 +100,7 @@ import {
   modelsSearchIndex,
 } from '~/server/search-index';
 import type { ModelSearchIndexRecord } from '~/server/search-index/models.search-index';
-import type { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
+import type { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
 import { associatedResourceSelect } from '~/server/selectors/model.selector';
 import { modelFileSelect } from '~/server/selectors/modelFile.selector';
 import { simpleUserSelect, userWithCosmeticsSelect } from '~/server/selectors/user.selector';
@@ -117,7 +118,10 @@ import {
   enqueueCollectionRebuild,
   getCollectionIdsForModelCascade,
 } from '~/server/services/collection-media-index';
-import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
+import {
+  getCosmeticsForEntity,
+  getEventDecorationsForEntity,
+} from '~/server/services/cosmetic.service';
 import type { ImagesForModelVersions } from '~/server/services/image.service';
 import {
   getImagesForModelVersion,
@@ -126,6 +130,7 @@ import {
 } from '~/server/services/image.service';
 import { getFilesForModelVersionCache } from '~/server/services/model-file.service';
 import { buildRepublishImageIndexTouch } from '~/server/services/model-republish-image-index.sql';
+import { recordStatusAtDelete } from '~/server/services/model-status-at-delete';
 import {
   expandBlurbs,
   getReferencedBlurbIds,
@@ -305,7 +310,7 @@ type ModelRaw = {
     flags: number;
   }[];
   userId: number;
-  cosmetic?: WithClaimKey<ContentDecorationCosmetic> | null;
+  cosmetic?: ContentDecorationCosmetic | null;
   availability?: Availability;
 };
 
@@ -351,6 +356,7 @@ export const getModelsRaw = async ({
   domain,
   ignoreBrowsingAddons,
   _forceBaseModelMetrics,
+  eventDecorationViewer,
 }: {
   input: Omit<GetAllModelsOutput, 'limit' | 'page'> & {
     take?: number;
@@ -369,6 +375,9 @@ export const getModelsRaw = async ({
   ignoreBrowsingAddons?: boolean;
   /** For testing only: force the ModelBaseModelMetric query path regardless of feature flag */
   _forceBaseModelMetrics?: boolean;
+  // Who sees event decorations before launch (see getEventDecorationsForEntity). Set only by
+  // routes whose response is never cached for another viewer.
+  eventDecorationViewer?: EventViewer;
 }) => {
   // Ahead of every early empty return below, including the Meilisearch no-hits one: the point of
   // throwing rather than falling back is that the misuse is legible, and an empty page hides it.
@@ -1135,19 +1144,33 @@ export const getModelsRaw = async ({
   const userIds = [...new Set(models.map((m) => m.userId))];
   const modelIds = models.map((m) => m.id);
 
-  const [userBasicData, profilePictures, userCosmetics, modelData, cosmetics, paidAccessGates] =
-    await withSpan('model:getAll:parallelFetch', () =>
-      Promise.all([
-        userBasicCache.fetch(userIds),
-        getProfilePicturesForUsers(userIds),
-        getCosmeticsForUsers(userIds),
-        dataForModelsCache.fetch(modelIds),
-        includeCosmetics
-          ? getCosmeticsForEntity({ ids: modelIds, entity: 'Model' })
-          : ({} as Record<string, WithClaimKey<ContentDecorationCosmetic>>),
-        getModelPaidAccessGates(modelIds),
-      ])
-    );
+  const [
+    userBasicData,
+    profilePictures,
+    userCosmetics,
+    modelData,
+    cosmetics,
+    paidAccessGates,
+    eventDecorations,
+  ] = await withSpan('model:getAll:parallelFetch', () =>
+    Promise.all([
+      userBasicCache.fetch(userIds),
+      getProfilePicturesForUsers(userIds),
+      getCosmeticsForUsers(userIds),
+      dataForModelsCache.fetch(modelIds),
+      includeCosmetics
+        ? getCosmeticsForEntity({ ids: modelIds, entity: 'Model' })
+        : ({} as Record<number, ContentDecorationCosmetic>),
+      getModelPaidAccessGates(modelIds),
+      includeCosmetics
+        ? getEventDecorationsForEntity({
+            ids: modelIds,
+            entity: 'Model',
+            viewer: eventDecorationViewer,
+          })
+        : undefined,
+    ])
+  );
   for (const model of models) {
     const gate = paidAccessGates.get(model.id);
     model.earlyAccessDeadline = gate?.earlyAccessDeadline ?? null;
@@ -1243,6 +1266,7 @@ export const getModelsRaw = async ({
               cosmetics: userCosmetics[model.userId] ?? [],
             },
             cosmetic: cosmetics[model.id] ?? null,
+            eventDecoration: eventDecorations?.[model.id] ?? null,
             metricPrivacy: getMetaMetricPrivacy(meta),
           };
         })
@@ -1548,9 +1572,13 @@ export const getModelsWithImagesAndModelVersions = async ({
   // skipped and raw metrics are emitted (pre-#3266 visibility).
   metricPrivacyEnabled = true,
   domain,
+  eventDecorationViewer,
 }: {
   input: GetAllModelsOutput;
   user?: SessionUser;
+  // Who sees event decorations before launch (see getEventDecorationsForEntity). Set only by
+  // routes whose response is never cached for another viewer.
+  eventDecorationViewer?: EventViewer;
   imagesPerModel?: number;
   biasImageSlice?: boolean;
   metricPrivacyEnabled?: boolean;
@@ -1577,6 +1605,7 @@ export const getModelsWithImagesAndModelVersions = async ({
     user,
     domain,
     include: ['cosmetics'],
+    eventDecorationViewer,
   });
 
   const modelVersionIds = items
@@ -1852,12 +1881,14 @@ export const deleteModelById = async ({
   }
 
   const deletedModel = await dbWrite.$transaction(async (tx) => {
+    // Re-deleting a deleted model keeps the first delete's actor: the creator score reads `deletedBy`,
+    // and an owner must not be able to overwrite a moderator's.
+    const firstDelete = (await recordStatusAtDelete(tx, id)) > 0;
     const model = await tx.model.update({
       where: { id },
       data: {
-        deletedAt: new Date(),
+        ...(firstDelete ? { deletedAt: new Date(), deletedBy: userId } : {}),
         status: ModelStatus.Deleted,
-        deletedBy: userId,
         modelVersions: {
           updateMany: {
             where: { status: { in: [ModelStatus.Published, ModelStatus.Scheduled] } },

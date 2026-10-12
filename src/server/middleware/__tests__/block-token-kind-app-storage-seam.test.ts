@@ -10,7 +10,7 @@ import { verifyBlockToken } from '../block-scope.middleware';
 import { BlockTokenService } from '~/server/services/block-token.service';
 
 /**
- * THE SEAM `BlockManifestValidator` now refuses at submit time, pinned so the refusal is
+ * THE SEAM `BlockManifestValidator` now refuses, pinned so the refusal is
  * not the only place the reason is written down.
  *
  * `withBlockScope` accepts BOTH token kinds — a block JWS goes to `verifyBlockToken`, an

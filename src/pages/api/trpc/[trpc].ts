@@ -103,7 +103,7 @@ const trpcHandler = createNextApiHandler({
       if (shouldSkipBatchCapLog(req, error)) return error;
 
       // Uninformative 404s. `image.getGenerationData` answers NOT_FOUND only when the image id
-      // does not exist (an image without generation metadata still returns normally). Most of
+      // does not exist or `image.get` would not show it to this viewer (an image without generation metadata still returns normally). Most of
       // that volume comes from clients calling the procedure directly to enumerate ids, and at
       // that rate its lines were most of this route's Axiom ingest, each paying
       // JSON.stringify(input) + an ingest for a line that says nothing the 404 doesn't.

@@ -25,7 +25,7 @@ vi.mock('~/server/services/text-scan/harness', async (importOriginal) => ({
   runTextScanHarnessAction: vi.fn(async () => ({ kind: 'json', body: { ok: true } })),
 }));
 
-const { default: handler, config, needsFullScope } = await import('~/pages/api/mod/text-scan');
+const { default: handler, config } = await import('~/pages/api/mod/text-scan');
 const { runTextScanHarnessAction } = await import('~/server/services/text-scan/harness');
 const { getSessionFromBearerToken } = await import('~/server/auth/bearer-token');
 
@@ -174,16 +174,19 @@ describe('mod/text-scan', () => {
     ).toEqual({ csv: '"a","b"' });
   });
 
-  describe('actions that need full scope', () => {
+  describe('API keys', () => {
     const MOD_USER = { id: MOD, isModerator: true, bannedAt: null, permissions: [] };
     const asApiKey = (tokenScope: number) => {
       vi.mocked(getSessionFromBearerToken).mockResolvedValueOnce({
         user: MOD_USER,
+        apiKeyId: 1,
+        apiKeyType: 'User',
+        subject: { type: 'apiKey', id: 1 },
         tokenScope,
       } as never);
       return { authorization: 'Bearer key' };
     };
-    const textActions = [
+    const actions = [
       { action: 'composeEntities', entityType: 'Post', entityIds: [1] },
       { action: 'sampleShadow', entityType: 'Post', label: 'nsfw' },
       { action: 'scanEntity', entityType: 'Post', entityId: 1 },
@@ -191,24 +194,6 @@ describe('mod/text-scan', () => {
       { action: 'putPrompt', key: 'base', content: 'BASE PROMPT', note: 'n' },
       { action: 'putConfig', config: { thinking: true } },
       { action: 'putModes', entityType: 'Post', rollout: { shadow: 100 } },
-    ];
-
-    it.each(textActions)('$action refuses a narrowly-scoped API key', async (body) => {
-      const res = await call(body, {}, asApiKey(TokenScope.UserRead | TokenScope.ModelsRead));
-      expect(res.status).toBe(403);
-      expect(runTextScanHarnessAction).not.toHaveBeenCalled();
-    });
-
-    it.each(textActions)('$action serves a full-scope API key', async (body) => {
-      expect((await call(body, {}, asApiKey(TokenScope.Full))).status).toBe(200);
-      expect(runTextScanHarnessAction).toHaveBeenCalledTimes(1);
-    });
-
-    it.each(textActions)('$action serves a session', async (body) => {
-      expect((await call(body)).status).toBe(200);
-    });
-
-    it.each([
       { action: 'getPrompts' },
       { action: 'quoteEntities', entityType: 'Post', entityIds: [1] },
       {
@@ -216,15 +201,21 @@ describe('mod/text-scan', () => {
         entityType: 'Comment',
         texts: [{ key: 'a', fields: [{ heading: 'Comment', text: 'x' }] }],
       },
-    ])('$action serves a narrowly-scoped API key', async (body) => {
-      expect((await call(body, {}, asApiKey(TokenScope.UserRead))).status).toBe(200);
+    ];
+
+    it.each(actions)('$action refuses a reduced-scope personal API key', async (body) => {
+      const res = await call(body, {}, asApiKey(TokenScope.UserRead | TokenScope.ModelsRead));
+      expect(res.status).toBe(403);
+      expect(runTextScanHarnessAction).not.toHaveBeenCalled();
     });
 
-    it('fails closed: an action not on the narrow-scope list, such as a new one, needs full scope', () => {
-      expect(needsFullScope('someNewAction')).toBe(true);
-      expect(needsFullScope('composeEntities')).toBe(true);
-      expect(needsFullScope('putPrompt')).toBe(true);
-      expect(needsFullScope('scanTexts')).toBe(false);
+    it.each(actions)('$action serves a full-scope personal API key', async (body) => {
+      expect((await call(body, {}, asApiKey(TokenScope.Full))).status).toBe(200);
+      expect(runTextScanHarnessAction).toHaveBeenCalledTimes(1);
+    });
+
+    it.each(actions)('$action serves a session', async (body) => {
+      expect((await call(body)).status).toBe(200);
     });
   });
 });

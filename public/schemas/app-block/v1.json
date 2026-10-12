@@ -37,7 +37,7 @@
     },
     "repository": {
       "type": "string",
-      "description": "Optional PUBLIC SOURCE-REPOSITORY link for an open-source app, rendered as a `Source` row on the app's `/apps` store DETAIL page (never on a store grid card). Manifest-governed: it flows to the store listing on moderator-approve and is re-synced from the manifest on every subsequent approved version; remove the key and the link is cleared. This is NOT your app's internal Civitai repository — it is a link you publish. Must be an `https://` URL, carrying no embedded credentials and no port, whose host is EXACTLY one of github.com, gitlab.com or codeberg.org (an exact-host allowlist — `www.github.com`, `gist.github.com` and `raw.githubusercontent.com` are all rejected), and whose path is exactly `/<owner>/<repo>`, the repository ROOT (a deep link such as `/owner/repo/tree/main` is rejected). A trailing `/` or `.git`, a query string and a fragment are accepted and STRIPPED — the stored value is normalised to `https://<host>/<owner>/<repo>`. Capped at 200 characters, kept in lockstep with MAX_REPOSITORY_URL_LENGTH in src/server/schema/blocks/external-app.schema.ts (a drift-guard test enforces equality, and enforces that this description names exactly the hosts REPOSITORY_HOST_ALLOWLIST contains). NOTE: as with `tagline`, the server measures the TRIMMED string while this maxLength counts the raw one, so the LENGTH bound here is never looser than the server's. The `pattern`, however, is a coarse SHAPE check and NOT the whole rule, so unlike `tagline` this field CAN pass local validation and still be rejected at submit. The server additionally requires each of the two path segments to begin with an ASCII letter or digit and to contain only letters, digits, `.`, `-` and `_`, and it strips a trailing `.git` BEFORE applying that test. Values such as a repository segment that is only `.git`, one starting with a dash, one containing a percent-escape, and one containing a non-ASCII character all match this pattern and are refused by the server. The pattern is deliberately left coarse rather than tightened: the CLI and the starter templates byte-mirror this file, and a stricter regex would be a compatibility change for every vendored copy. Treat passing local validation as necessary, not sufficient — `validateRepositoryUrl` in src/server/schema/blocks/external-app.schema.ts is authoritative.",
+      "description": "Optional PUBLIC SOURCE-REPOSITORY link for an open-source app, rendered as a `Source` row on the app's `/apps` store DETAIL page (never on a store grid card). Manifest-governed: it flows to the store listing on moderator-approve and is re-synced from the manifest on every subsequent approved version; remove the key and the link is cleared. This is NOT your app's internal Civitai repository — it is a link you publish. Must be an `https://` URL, carrying no embedded credentials and no port, whose host is EXACTLY one of github.com, gitlab.com or codeberg.org (an exact-host allowlist — `www.github.com`, `gist.github.com` and `raw.githubusercontent.com` are all rejected), and whose path is exactly `/<owner>/<repo>`, the repository ROOT (a deep link such as `/owner/repo/tree/main` is rejected). A trailing `/` or `.git`, a query string and a fragment are accepted and STRIPPED — the stored value is normalised to `https://<host>/<owner>/<repo>`. Capped at 200 characters, kept in lockstep with MAX_REPOSITORY_URL_LENGTH in src/server/schema/blocks/external-app.schema.ts (a drift-guard test enforces equality, and enforces that this description names exactly the hosts REPOSITORY_HOST_ALLOWLIST contains). NOTE: as with `tagline`, the server measures the TRIMMED string while this maxLength counts the raw one, so the LENGTH bound here is never looser than the server's. The `pattern`, however, is a coarse SHAPE check and NOT the whole rule, so unlike `tagline` this field CAN pass local validation and still be rejected by the server's manifest validation. The server additionally requires each of the two path segments to begin with an ASCII letter or digit and to contain only letters, digits, `.`, `-` and `_`, and it strips a trailing `.git` BEFORE applying that test. Values such as a repository segment that is only `.git`, one starting with a dash, one containing a percent-escape, and one containing a non-ASCII character all match this pattern and are refused by the server. The pattern is deliberately left coarse rather than tightened: the CLI and the starter templates byte-mirror this file, and a stricter regex would be a compatibility change for every vendored copy. Treat passing local validation as necessary, not sufficient — `validateRepositoryUrl` in src/server/schema/blocks/external-app.schema.ts is authoritative.",
       "minLength": 1,
       "maxLength": 200,
       "pattern": "^https://(github\\.com|gitlab\\.com|codeberg\\.org)/[^/]+/[^/]+/?$"
@@ -72,7 +72,7 @@
     },
     "auth": {
       "type": "string",
-      "description": "Which credential the host hands the block: \"block-token\" (default when omitted) is the block-scoped JWT; \"oauth\" asks for an opaque OAuth access token for the block's own OauthClient, which ordinary /api/v1 routes accept as a viewer bearer. Minting it is gated on a server flag that is not generally enabled, and also requires a signed-in viewer and a declared \"user:read:self\" scope; when any of those is unmet the host hands back a block JWT instead of failing, so branch on the token kind the host reports rather than on this field. An OAuth token is refused by the postMessage bridge procedures, which verify a block JWT only, and declaring \"oauth\" alongside any \"apps:storage:*\" scope is refused at submit time.",
+      "description": "Which credential the host hands the block: \"block-token\" (default when omitted) is the block-scoped JWT; \"oauth\" asks for an opaque OAuth access token for the block's own OauthClient, which ordinary /api/v1 routes accept as a viewer bearer. Minting it is gated on a server flag that is not generally enabled, and also requires a signed-in viewer and a declared \"user:read:self\" scope; when any of those is unmet the host hands back a block JWT instead of failing, so branch on the token kind the host reports rather than on this field. An OAuth token is refused by the postMessage bridge procedures, which verify a block JWT only, and a manifest declaring \"oauth\" alongside any \"apps:storage:*\" scope is rejected by manifest validation.",
       "enum": ["block-token", "oauth"]
     },
     "trustTier": {
@@ -253,7 +253,7 @@
           },
           "priceBuzz": {
             "type": "integer",
-            "description": "Price in whole Buzz. Buzz has no sub-unit, so this must be a whole number, and the minimum is 2 rather than 1 because the app owner's 70% share is floored — a 1 Buzz item would earn its owner nothing, permanently. Capped so a single purchase can never drain an account; a viewer also has a daily ceiling across every app they have installed, so a purchase can be refused with a clean 4xx even at a legal price. Both bounds are kept in lockstep with BLOCK_GOOD_MIN_PRICE_BUZZ / BLOCK_GOOD_MAX_PRICE_BUZZ in src/shared/constants/block-goods.constants.ts by a drift-guard test. \u26a0\ufe0f THE MAXIMUM HERE IS THE WIDEST ANY KIND MAY CHARGE, NOT THE LIMIT FOR YOUR GOOD: a good with kind \"app_unlock\" is capped at 5000 Buzz by the platform validator, which this schema deliberately does not restate (it declares that validator authoritative). See the `kind` description. A value above that validates offline and is rejected at submit.",
+            "description": "Price in whole Buzz. Buzz has no sub-unit, so this must be a whole number, and the minimum is 2 rather than 1 because the app owner's 70% share is floored — a 1 Buzz item would earn its owner nothing, permanently. Capped so a single purchase can never drain an account; a viewer also has a daily ceiling across every app they have installed, so a purchase can be refused with a clean 4xx even at a legal price. Both bounds are kept in lockstep with BLOCK_GOOD_MIN_PRICE_BUZZ / BLOCK_GOOD_MAX_PRICE_BUZZ in src/shared/constants/block-goods.constants.ts by a drift-guard test. \u26a0\ufe0f THE MAXIMUM HERE IS THE WIDEST ANY KIND MAY CHARGE, NOT THE LIMIT FOR YOUR GOOD: a good with kind \"app_unlock\" is capped at 5000 Buzz by the platform validator, which this schema deliberately does not restate (it declares that validator authoritative). See the `kind` description. A value above that validates offline and is rejected by the server's manifest validation.",
             "minimum": 2,
             "maximum": 50000
           },
@@ -271,6 +271,104 @@
           "payload": {
             "type": "object",
             "description": "Optional OPAQUE payload copied verbatim onto the entitlement at purchase and handed back to your app unchanged. The platform never reads or interprets it. It is manifest-sourced rather than client-supplied precisely so that what an entitlement carries is something a moderator saw. Must serialize to at most 2048 bytes."
+          }
+        }
+      }
+    },
+    "analytics": {
+      "type": "object",
+      "description": "Optional CUSTOM EVENTS declaration. `events` names every event your app may send with `useBlockAnalytics().track(name, properties)` and the properties each event may carry. Manifest-governed and REVIEW-GATED: the declaration a moderator approves is the only one the platform will accept events against, so a reviewer can see what your app tracks. Properties are typed `enum` (a declared list of string values), `number` or `boolean` ONLY — free-text strings are deliberately not supported, so a string that is not one of an enum's declared values will never be recorded. That is what keeps prompts, emails and usernames out of string properties (a `number` property is not range-limited, so do not use one to carry an identifier). Owners will see aggregates only, never individual events. The platform's manifest validator is authoritative.",
+      "additionalProperties": false,
+      "properties": {
+        "events": {
+          "type": "object",
+          "description": "Map of event name → declaration. At most 50 events. An event name is lowercase snake_case: a letter, then up to 63 of a-z, 0-9 or _.",
+          "maxProperties": 50,
+          "additionalProperties": false,
+          "patternProperties": {
+            "^[a-z][a-z0-9_]{0,63}$": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "description": {
+                  "type": "string",
+                  "description": "Optional human-readable meaning of the event, shown to reviewers and in your analytics.",
+                  "maxLength": 200
+                },
+                "properties": {
+                  "type": "object",
+                  "description": "Map of property name → declaration. At most 10 properties per event. A property name follows the same rule as an event name.",
+                  "maxProperties": 10,
+                  "additionalProperties": false,
+                  "patternProperties": {
+                    "^[a-z][a-z0-9_]{0,63}$": {
+                      "type": "object",
+                      "allOf": [
+                        {
+                          "$comment": "Checked FIRST, before the oneOf below, so a wrong type is reported as such rather than as a missing `values`.",
+                          "required": ["type"],
+                          "properties": {
+                            "type": {
+                              "description": "The property's type. There is no free-text string type: declare an enum.",
+                              "enum": ["enum", "number", "boolean"]
+                            }
+                          }
+                        },
+                        {
+                          "oneOf": [
+                            {
+                              "type": "object",
+                              "description": "A string drawn from a declared list. A string outside `values` will not be recorded.",
+                              "additionalProperties": false,
+                              "required": ["type", "values"],
+                              "properties": {
+                                "type": {
+                                  "const": "enum"
+                                },
+                                "values": {
+                                  "type": "array",
+                                  "description": "The allowed values: 1 to 50 distinct non-empty strings of at most 64 characters (Unicode code points) each.",
+                                  "minItems": 1,
+                                  "maxItems": 50,
+                                  "uniqueItems": true,
+                                  "items": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 64
+                                  }
+                                }
+                              }
+                            },
+                            {
+                              "type": "object",
+                              "description": "A number.",
+                              "additionalProperties": false,
+                              "required": ["type"],
+                              "properties": {
+                                "type": {
+                                  "const": "number"
+                                }
+                              }
+                            },
+                            {
+                              "type": "object",
+                              "description": "A boolean.",
+                              "additionalProperties": false,
+                              "required": ["type"],
+                              "properties": {
+                                "type": {
+                                  "const": "boolean"
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
           }
         }
       }

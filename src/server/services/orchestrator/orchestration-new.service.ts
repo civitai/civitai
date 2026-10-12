@@ -115,7 +115,7 @@ import { Availability } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 import { getResourceResidency } from '~/server/services/resource-residency.service';
 import { WORKFLOW_TAGS, VID_QUANTITY_BY_TIER } from '~/shared/constants/generation.constants';
-import { includesPoi } from '~/utils/metadata/audit';
+import { includesPoi, isBlankAuditInput } from '~/utils/metadata/audit';
 import { BlocklistType } from '~/server/common/enums';
 import { stripBenignPhrases } from '~/server/services/blocklist.service';
 import { normalizeText } from '~/utils/normalize-text';
@@ -140,7 +140,7 @@ import { substitutionsFromNotes } from '~/shared/generation/model-substitution';
 import { generationHub } from '~/shared/form-graph/generation/hub.graph';
 import { reconcileSelectors } from '~/shared/form-graph/generation/reconcile';
 import { createComfyInput, resourcesToImageMetadataResources } from './handlers/comfy-input';
-import { extractStepErrors, sanitizeProviderError } from './provider-errors';
+import { sanitizeStepErrors } from './provider-errors';
 import { resolveSourceImageIds, signProvenance, unionSourceImageIds } from './remix-provenance';
 import { removeEmpty } from '~/utils/object-helpers';
 
@@ -1847,15 +1847,19 @@ export async function generateFromGraph({
     prompt,
   });
 
-  // Audit prompt before generation
-  if (prompt?.trim()) {
-    const negativePrompt = 'negativePrompt' in data ? (data.negativePrompt as string) : undefined;
+  // Audit prompt before generation. An image-input family may submit an empty prompt beside a
+  // negative prompt, so the gate is `isBlankAuditInput` — the same both-fields-empty rule
+  // `auditPromptServer` applies — not the prompt alone.
+  const negativePrompt =
+    'negativePrompt' in data ? (data.negativePrompt as string | undefined) : undefined;
+  if (!isBlankAuditInput(prompt, negativePrompt)) {
+    const promptText = prompt ?? '';
     const inputVideo = (
       'video' in data ? (data.video as { url?: string } | null | undefined) : undefined
     )?.url;
     try {
       await auditPromptServer({
-        prompt,
+        prompt: promptText,
         negativePrompt,
         userId,
         isGreen: !!isGreen,
@@ -1883,7 +1887,7 @@ export async function generateFromGraph({
       createXGuardModerationRequest({
         mode: 'prompt',
         entityType: 'prompt',
-        positivePrompt: prompt,
+        positivePrompt: promptText,
         negativePrompt,
         userId,
         recordForReview: true,
@@ -2927,7 +2931,7 @@ export function formatStepOutputs(
   const engine =
     (params.engine as string | undefined) ??
     (step as { input?: { engine?: string } }).input?.engine;
-  const errors = extractStepErrors(step).map((msg) => sanitizeProviderError(msg, engine));
+  const errors = sanitizeStepErrors(step, engine);
 
   return { output, errors };
 }

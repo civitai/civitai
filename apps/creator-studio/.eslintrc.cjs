@@ -16,6 +16,13 @@ module.exports = {
   extends: ['eslint:recommended', 'plugin:@typescript-eslint/recommended', 'plugin:svelte/recommended'],
   overrides: [
     {
+      // `new Pool` / `new pg.Pool` in app code — see eslint-no-direct-pg-pool.cjs at the repo root.
+      // App code only: the scripts outside src/ are short-lived.
+      files: ['src/**/*.ts', 'src/**/*.svelte'],
+      excludedFiles: ['**/*.test.ts', '**/__tests__/**'],
+      rules: { ...require('../../eslint-no-direct-pg-pool.cjs') },
+    },
+    {
       files: ['*.svelte'],
       parser: 'svelte-eslint-parser',
       parserOptions: { parser: '@typescript-eslint/parser' },

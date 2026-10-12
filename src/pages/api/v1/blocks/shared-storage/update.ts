@@ -28,8 +28,8 @@ import {
  * A thin adapter over `updateSharedRow`, the SAME function
  * `trpc.apps.shared.update` calls, so all of it holds verbatim on both surfaces:
  * the write-scope + min-trust gate in `resolveSharedContext(_, 'update')`, the
- * ANON REFUSAL (401), the APPEND daily rate-limit bucket (deliberately shared
- * with append, so repeated edits cannot become an unbounded write), the full
+ * ANON REFUSAL (401), the write budget it shares with append (so repeated edits
+ * cannot become an unbounded write), the full
  * blocking content-safety belt on the NEW title/body, the whole-value byte cap
  * and the per-app quota re-checked on the byte DELTA.
  *

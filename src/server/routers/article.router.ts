@@ -67,7 +67,13 @@ export const articleRouter = router({
     .meta({ requiredScope: TokenScope.ArticlesRead })
     .input(getInfiniteArticlesSchema)
     .query(({ input, ctx }) =>
-      getArticles({ ...input, sessionUser: ctx?.user, include: ['cosmetics'] })
+      getArticles({
+        ...input,
+        sessionUser: ctx?.user,
+        include: ['cosmetics'],
+        // Uncached per viewer, so a flagged viewer may see decorations before launch.
+        eventDecorationViewer: ctx?.user,
+      })
     ),
   getCivitaiNews: publicProcedure
     .meta({ requiredScope: TokenScope.ArticlesRead })

@@ -24,6 +24,7 @@ import {
   getUserCrucibleStatsHandler,
   submitEntryHandler,
   submitVoteHandler,
+  toggleCrucibleFollowHandler,
 } from '~/server/controllers/crucible.controller';
 import { rateLimit } from '~/server/middleware.trpc';
 import {
@@ -51,10 +52,7 @@ import {
   submitVoteSchema,
   toggleCrucibleFollowSchema,
 } from '~/server/schema/crucible.schema';
-import {
-  getFollowedCrucibleIds,
-  toggleCrucibleFollow,
-} from '~/server/services/crucible-engagement.service';
+import { getFollowedCrucibleIds } from '~/server/services/crucible-engagement.service';
 import {
   guardedProcedure,
   isFlagProtected,
@@ -196,9 +194,7 @@ export const crucibleRouter = router({
   toggleFollow: guardedProcedure
     .use(isFlagProtected('crucible'))
     .input(toggleCrucibleFollowSchema)
-    .mutation(({ input, ctx }) =>
-      toggleCrucibleFollow({ ...input, userId: ctx.user.id, isModerator: ctx.user.isModerator })
-    ),
+    .mutation(toggleCrucibleFollowHandler),
 
   getFollowedIds: protectedProcedure
     .use(isFlagProtected('crucible'))

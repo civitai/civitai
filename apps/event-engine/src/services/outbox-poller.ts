@@ -78,6 +78,13 @@ export class OutboxPoller {
     // duration, and self-healing — Postgres drops the lock automatically if this
     // pod dies, so another pod takes over on its next tick. Other pods skip.
     const leader = await this.pool.connect()
+    // A drop of THIS connection releases the lock server-side, so another pod may start sweeping.
+    // The pool guard keeps the drop from exiting the process, so stop claiming batches here instead.
+    let leaderLost: Error | null = null
+    const onLeaderError = (err: Error) => {
+      leaderLost = err
+    }
+    leader.on('error', onLeaderError)
     try {
       const lock = await leader.query('SELECT pg_try_advisory_lock($1, $2) AS acquired', [
         OUTBOX_POLLER_LOCK_CLASSID,
@@ -93,6 +100,10 @@ export class OutboxPoller {
         // burning the whole retry budget in a single drain.
         let cursor = '0'
         for (;;) {
+          if (leaderLost) {
+            logger.warn('Outbox poller: lost the advisory-lock connection; ending this sweep')
+            break
+          }
           const { processed, nextCursor } = await this.sweepBatch(cursor)
           if (processed === 0) break
           cursor = nextCursor as string
@@ -109,7 +120,9 @@ export class OutboxPoller {
           .catch((err) => logger.warn({ err }, 'Outbox poller: advisory unlock failed'))
       }
     } finally {
-      leader.release()
+      leader.removeListener('error', onLeaderError)
+      // Passing the error makes the pool destroy the client rather than reuse it.
+      leader.release(leaderLost ?? undefined)
       this.sweeping = false
     }
   }
