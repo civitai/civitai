@@ -278,4 +278,12 @@ describe('getAppAssistantPreview', () => {
       'no-tunnel'
     );
   });
+
+  it('reports a live tunnel whose host is not resolvable yet as preparing, not as missing', async () => {
+    featuresMock.mockReturnValue({ ...ON, appBlocksAuthor: true });
+    resolveFrameMock.mockResolvedValue({ ...frame, iframeSrc: null, dnsPending: true });
+    expect(await getAppAssistantPreview({ user: user(), blockId: 'my-app' })).toEqual({
+      status: 'preparing',
+    });
+  });
 });

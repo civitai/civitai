@@ -1,5 +1,7 @@
 import { Alert, Box, Code, Stack, Text, Title } from '@mantine/core';
+import { useRouter } from 'next/router';
 import { DevTunnelBlockHost } from '~/components/AppBlocks/DevTunnelBlockHost';
+import { DevTunnelDnsGate } from '~/components/AppBlocks/DevTunnelDnsGate';
 import { Meta } from '~/components/Meta/Meta';
 import type { DevTunnelFrame } from '~/server/services/blocks/dev-tunnel-frame.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
@@ -110,13 +112,22 @@ export const getServerSideProps = createServerSideProps<DevTunnelFrame>({
   },
 });
 
-export default function DevTunnelPage({ iframeSrc, host, ...app }: DevTunnelFrame) {
+export default function DevTunnelPage({ iframeSrc, host, dnsPending, ...app }: DevTunnelFrame) {
   const { appName, blockId } = app;
+  const router = useRouter();
   return (
     <>
       <Meta title={`${appName} — Dev tunnel — Civitai Apps`} deIndex />
       <Box style={{ width: '100%' }}>
-        {!iframeSrc ? (
+        {dnsPending ? (
+          <Box style={{ height: '60vh' }}>
+            {/* Re-running the server props is what mints the entry URL once the host resolves. */}
+            <DevTunnelDnsGate
+              blockId={blockId}
+              onSettled={() => void router.replace(router.asPath, undefined, { scroll: false })}
+            />
+          </Box>
+        ) : !iframeSrc ? (
           <Stack p="md" gap="sm" style={{ maxWidth: 720, margin: '0 auto' }}>
             <Title order={3}>No active dev tunnel</Title>
             <Text size="sm">

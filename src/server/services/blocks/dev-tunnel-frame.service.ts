@@ -2,6 +2,7 @@ import { env } from '~/env/server';
 import { isAppBlocksDevTunnelUnsubmittedSpendEnabled } from '~/server/services/app-blocks-flag';
 import { BlockRegistry } from '~/server/services/block-registry.service';
 import { getActiveDevTunnel } from '~/server/services/blocks/dev-tunnel.service';
+import { isDevTunnelHostPublished } from '~/server/services/blocks/dev-tunnel-dns.service';
 import {
   isValidDevHost,
   signDevTunnelAccessToken,
@@ -18,9 +19,17 @@ export interface DevTunnelFrame {
   sandbox: string;
   scopes: string[];
   bootSkeleton: boolean;
-  /** `https://<dev-host>/?dev=<entry token>`, set only while a tunnel with a valid host is active. */
+  /**
+   * `https://<dev-host>/?dev=<entry token>`, set only while a tunnel with a valid host is active
+   * and that host's DNS record is published.
+   */
   iframeSrc: string | null;
   host: string | null;
+  /**
+   * A tunnel is live but its host's DNS record is not published yet. `iframeSrc` is withheld:
+   * a browser that resolves the host now caches the miss and cannot load it for a long while.
+   */
+  dnsPending: boolean;
 }
 
 /**
@@ -45,12 +54,16 @@ export async function resolveDevTunnelFrame(
 
   let iframeSrc: string | null = null;
   let host: string | null = null;
+  let dnsPending = false;
   if (tunnel && isValidDevHost(tunnel.host, env.APPS_DOMAIN)) {
     host = tunnel.host;
-    // A fresh short-TTL, author-bound entry token on every render, so the live iframe never serves a
-    // stale one; the apps-domain edge verifies it on the ENTRY document (T3).
-    const token = signDevTunnelAccessToken({ userId: user.id, host });
-    iframeSrc = `https://${host}/?dev=${encodeURIComponent(token)}`;
+    dnsPending = !(await isDevTunnelHostPublished(host));
+    if (!dnsPending) {
+      // A fresh short-TTL, author-bound entry token on every render, so the live iframe never
+      // serves a stale one; the apps-domain edge verifies it on the ENTRY document (T3).
+      const token = signDevTunnelAccessToken({ userId: user.id, host });
+      iframeSrc = `https://${host}/?dev=${encodeURIComponent(token)}`;
+    }
   }
 
   return {
@@ -64,5 +77,6 @@ export async function resolveDevTunnelFrame(
     bootSkeleton: app.bootSkeleton,
     iframeSrc,
     host,
+    dnsPending,
   };
 }
