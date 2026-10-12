@@ -7,6 +7,7 @@ import {
   createPkce,
   buildAuthorizeUrl,
   isStubProviderEnabled,
+  usesPkce,
 } from '$lib/server/auth/providers';
 import { readReturnUrl, readSync } from '$lib/server/auth/redirect';
 import { checkRateLimit } from '$lib/server/auth/rate-limit';
@@ -43,9 +44,22 @@ export const GET: RequestHandler = async ({ params, url, cookies, locals, reques
   const returnUrl = readReturnUrl(url);
   const sync = readSync(url);
 
+  // `roles=true` opts into the provider's incremental scope (Discord Linked Roles — role_connections.write).
+  // The actual scope is server-defined (provider.incrementalScope); this is just the boolean intent. Used by
+  // the /discord/link-role flow, which sends it alongside link=true.
+  const incremental = url.searchParams.get('roles') === 'true';
+  const pkce = usesPkce(provider, incremental);
+
   const opts = { path: '/', httpOnly: true, secure: !dev, sameSite: 'lax' as const, maxAge: 600 };
   cookies.set('oauth_state', state, opts);
-  cookies.set('oauth_verifier', codeVerifier, opts);
+  // The callback reads the no-PKCE leg from this server-set cookie, never from the callback query.
+  if (pkce) {
+    cookies.set('oauth_verifier', codeVerifier, opts);
+    cookies.delete('oauth_no_pkce', { path: '/' });
+  } else {
+    cookies.set('oauth_no_pkce', '1', opts);
+    cookies.delete('oauth_verifier', { path: '/' });
+  }
   cookies.set('oauth_return', returnUrl, opts);
   if (sync) cookies.set('oauth_sync', sync, opts);
   else cookies.delete('oauth_sync', { path: '/' });
@@ -55,11 +69,6 @@ export const GET: RequestHandler = async ({ params, url, cookies, locals, reques
   // `prompt` (e.g. select_account) is forwarded straight to the provider — it only affects the consent screen,
   // so it needs no round-trip cookie like returnUrl/sync/link do.
   const prompt = url.searchParams.get('prompt');
-
-  // `roles=true` opts into the provider's incremental scope (Discord Linked Roles — role_connections.write).
-  // The actual scope is server-defined (provider.incrementalScope); this is just the boolean intent. Used by
-  // the /discord/link-role flow, which sends it alongside link=true.
-  const incremental = url.searchParams.get('roles') === 'true';
 
   redirect(
     302,

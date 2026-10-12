@@ -34,6 +34,9 @@ interface ProviderDef {
    *  now incremental — only the /discord/link-role flow asks for it. Server-defined (not a raw query value) so
    *  a client can't inject arbitrary scopes. */
   incrementalScope?: string;
+  /** Send no PKCE on the incremental leg: Discord rejects `role_connections.write` with `invalid_scope` when the
+   *  authorize request carries a code_challenge. */
+  incrementalSkipsPkce?: boolean;
   /** Reddit wants HTTP Basic auth on the token endpoint + a User-Agent. */
   basicAuthTokenRequest?: boolean;
   userAgent?: string;
@@ -57,6 +60,7 @@ const PROVIDERS: Record<ProviderId, ProviderDef> = {
     // it, so a login no longer fails with `invalid_scope` when the Discord app has no Linked Roles config.
     scope: 'identify email',
     incrementalScope: 'role_connections.write',
+    incrementalSkipsPkce: true,
     clientId: () => env.DISCORD_CLIENT_ID,
     clientSecret: () => env.DISCORD_CLIENT_SECRET,
     mapProfile: (p) => ({
@@ -250,6 +254,11 @@ export function createPkce() {
   return { codeVerifier, codeChallenge };
 }
 
+/** Whether this authorize leg uses PKCE. Only an incremental-scope leg of a flagged provider skips it. */
+export function usesPkce(provider: ProviderDef, incremental?: boolean): boolean {
+  return !(incremental && provider.incrementalScope && provider.incrementalSkipsPkce);
+}
+
 export function buildAuthorizeUrl(
   provider: ProviderDef,
   opts: {
@@ -272,8 +281,10 @@ export function buildAuthorizeUrl(
       : provider.scope;
   url.searchParams.set('scope', scope);
   url.searchParams.set('state', opts.state);
-  url.searchParams.set('code_challenge', opts.codeChallenge);
-  url.searchParams.set('code_challenge_method', 'S256');
+  if (usesPkce(provider, opts.incremental)) {
+    url.searchParams.set('code_challenge', opts.codeChallenge);
+    url.searchParams.set('code_challenge_method', 'S256');
+  }
   if (provider.id === 'reddit') url.searchParams.set('duration', 'temporary');
   // Forward an OIDC `prompt` (e.g. `select_account`) so the "add another account" flow can pick a DIFFERENT
   // identity on the provider instead of silently reusing the current provider session. Only Google honors
@@ -284,14 +295,14 @@ export function buildAuthorizeUrl(
 
 export async function exchangeCode(
   provider: ProviderDef,
-  opts: { code: string; redirectUri: string; codeVerifier: string }
+  opts: { code: string; redirectUri: string; codeVerifier?: string }
 ): Promise<{ accessToken: string; scope: string | null }> {
   const body = new URLSearchParams({
     grant_type: 'authorization_code',
     code: opts.code,
     redirect_uri: opts.redirectUri,
-    code_verifier: opts.codeVerifier,
   });
+  if (opts.codeVerifier) body.set('code_verifier', opts.codeVerifier);
   const headers: Record<string, string> = {
     'content-type': 'application/x-www-form-urlencoded',
     accept: 'application/json',

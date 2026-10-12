@@ -11,7 +11,12 @@ const h = vi.hoisted(() => ({
 }));
 
 vi.mock('$lib/server/auth/providers', () => ({
-  getProvider: (id: string) => (id === 'discord' ? { id: 'discord' } : undefined),
+  getProvider: (id: string) =>
+    id === 'discord'
+      ? { id: 'discord', incrementalSkipsPkce: true }
+      : id === 'github'
+      ? { id: 'github' }
+      : undefined,
   exchangeCode: h.exchangeCode,
   fetchProfile: h.fetchProfile,
   isStubProviderEnabled: () => false,
@@ -44,9 +49,10 @@ const LANDING = 'https://civitai.com/discord/link-role';
 function callback(
   query: Record<string, string>,
   jar: Record<string, string>,
-  user?: { id: number }
+  user?: { id: number },
+  provider = 'discord'
 ) {
-  const url = new URL('https://auth.civitai.com/login/discord/callback');
+  const url = new URL(`https://auth.civitai.com/login/${provider}/callback`);
   for (const [k, v] of Object.entries(query)) url.searchParams.set(k, v);
   const deleted: string[] = [];
   const cookies = {
@@ -56,7 +62,7 @@ function callback(
   };
   const run = async () => {
     try {
-      await GET({ params: { provider: 'discord' }, url, cookies, locals: { user } } as never);
+      await GET({ params: { provider }, url, cookies, locals: { user } } as never);
     } catch (e) {
       return e;
     }
@@ -174,6 +180,54 @@ describe('state check on a code callback', () => {
       expect(isRedirect(thrown) && thrown.location).toBe(`${LANDING}?error=OAuthCallback`);
       expect(h.exchangeCode).not.toHaveBeenCalled();
       expect(h.linkAccountToUser).not.toHaveBeenCalled();
+    }
+  );
+});
+
+describe('Discord roles leg without PKCE', () => {
+  const rolesJar = {
+    oauth_state: 'st-1',
+    oauth_no_pkce: '1',
+    oauth_return: LANDING,
+    oauth_link: '1',
+  };
+
+  it('links without a verifier and sends no code_verifier on the exchange', async () => {
+    const { run, deleted } = callback({ code: 'c-1', state: 'st-1' }, rolesJar, { id: 7 });
+    const thrown = await run();
+    expect(isRedirect(thrown) && thrown.location).toBe(LANDING);
+    expect(h.exchangeCode).toHaveBeenCalledTimes(1);
+    expect(h.exchangeCode.mock.calls[0][1]).toMatchObject({ code: 'c-1', codeVerifier: undefined });
+    expect(h.linkAccountToUser).toHaveBeenCalledTimes(1);
+    expect(deleted).toContain('oauth_no_pkce');
+  });
+
+  it('still refuses a mismatched state on the roles leg', async () => {
+    const thrown = await callback({ code: 'c-1', state: 'st-OTHER' }, rolesJar, { id: 7 }).run();
+    expect(isHttpError(thrown) && thrown.status).toBe(400);
+    expect(h.exchangeCode).not.toHaveBeenCalled();
+  });
+
+  it('a PKCE login leg still sends its verifier', async () => {
+    await callback({ code: 'c-1', state: 'st-1' }, linkJar, { id: 7 }).run();
+    expect(h.exchangeCode.mock.calls[0][1]).toMatchObject({ codeVerifier: 'ver-1' });
+  });
+
+  it.each([
+    ['not a link flow', { oauth_state: 'st-1', oauth_no_pkce: '1', oauth_return: '/' }, 'discord'],
+    ['a provider without the flag', rolesJar, 'github'],
+  ] as const)(
+    'ignores the no-PKCE marker for %s, so a missing verifier still fails',
+    async (_, jar, provider) => {
+      const thrown = await callback(
+        { code: 'c-1', state: 'st-1' },
+        jar as Record<string, string>,
+        { id: 7 },
+        provider
+      ).run();
+      expect(isHttpError(thrown) && thrown.status).toBe(400);
+      expect(h.exchangeCode).not.toHaveBeenCalled();
+      expect(h.logToAxiom.mock.calls[0]?.[0]).toMatchObject({ reason: 'no_cookie' });
     }
   );
 });
