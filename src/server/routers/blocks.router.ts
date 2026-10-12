@@ -124,8 +124,8 @@ import {
   withdrawRequestSchema,
 } from '~/server/schema/blocks/publish-request.schema';
 import {
-  BLOCK_QUOTE_GRANT_ID_REGEX,
   BLOCK_TRAINING_QUOTE_ID_REGEX,
+  blockQuoteGrantConsentInputSchema,
   blockEstimateBatchInputSchema,
   blockTrainingDatasetItemsSchema,
   blockWorkflowBodySchema,
@@ -6044,32 +6044,25 @@ export const blocksRouter = router({
    * that exact quote; the submit refuses a quote no one confirmed.
    *
    * Both are bound to a signed-in browser session whose user is the token subject
-   * (API-key and OAuth-token requests refused), and both dispatch on the quote's
-   * kind from its server-minted prefix (`tq_` training, `sq_` step) — see
-   * `previewQuoteGrantFor` / `consentQuoteGrantFor`.
+   * (API-key and OAuth-token requests refused).
+   *
+   * 🔴 THE CALLER NAMES THE KIND, AND THE ID MUST BE OF THAT KIND
+   * (`blockQuoteGrantConsentInputSchema`). The kind is never inferred from the id: a
+   * host showing the STEP dialog must not be able to confirm a TRAINING quote the
+   * block handed it, behind a dialog that shows none of the training details.
    */
   previewQuoteGrant: guardedProcedure
     .meta({ blockApiKeys: true })
-    .input(
-      z.object({
-        blockToken: z.string().min(1),
-        quoteId: z.string().regex(BLOCK_QUOTE_GRANT_ID_REGEX),
-      })
-    )
+    .input(blockQuoteGrantConsentInputSchema)
     .mutation(async ({ ctx, input }) => {
-      return previewQuoteGrantFor(quoteGrantKindOf(input.quoteId), ctx, ctx.user.id, input);
+      return previewQuoteGrantFor(input.kind, ctx, ctx.user.id, input);
     }),
 
   consentQuoteGrant: guardedProcedure
     .meta({ blockApiKeys: true })
-    .input(
-      z.object({
-        blockToken: z.string().min(1),
-        quoteId: z.string().regex(BLOCK_QUOTE_GRANT_ID_REGEX),
-      })
-    )
+    .input(blockQuoteGrantConsentInputSchema)
     .mutation(async ({ ctx, input }) => {
-      return consentQuoteGrantFor(quoteGrantKindOf(input.quoteId), ctx, ctx.user.id, input);
+      return consentQuoteGrantFor(input.kind, ctx, ctx.user.id, input);
     }),
 
   /**
@@ -12476,11 +12469,6 @@ const QUOTED_GRANT_COPY = {
       'the job could not be confirmed — it may be running; check your generations before retrying',
   },
 } as const satisfies Record<BlockQuoteGrantKind, Record<string, string>>;
-
-/** The kind a quote id names, from its server-minted prefix. */
-function quoteGrantKindOf(quoteId: string): BlockQuoteGrantKind {
-  return quoteId.startsWith('tq_') ? 'training' : 'step';
-}
 
 /**
  * THE token rule for every viewer-confirmed quote, both kinds, and every phase that

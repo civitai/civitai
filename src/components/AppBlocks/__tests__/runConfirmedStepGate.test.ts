@@ -59,6 +59,8 @@ describe('resolveRunConfirmedStepRequest', () => {
     ['a registry step (no $type)', { kind: 'step', step: 'convert-image', quoteId: QUOTE_ID }],
     ['no quoteId', { ...BODY, quoteId: undefined }],
     ['an empty quoteId', { ...BODY, quoteId: '' }],
+    ['a TRAINING quote id', { ...BODY, quoteId: `tq_${'a'.repeat(32)}` }],
+    ['a malformed step quote id', { ...BODY, quoteId: 'sq_short' }],
   ])('refuses %s as invalid', (_l, body) => {
     expect(resolveRunConfirmedStepRequest({ raw: { requestId: 'r', body }, ...OK })).toEqual({
       kind: 'refuse',

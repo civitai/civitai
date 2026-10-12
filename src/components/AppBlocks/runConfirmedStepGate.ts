@@ -89,6 +89,9 @@ export const RUN_CONFIRMED_STEP_HOST_ERRORS = [
 
 export type RunConfirmedStepHostError = (typeof RUN_CONFIRMED_STEP_HOST_ERRORS)[number];
 
+/** The shape of a confirmed-STEP quote id (mirrors the server's `BLOCK_STEP_QUOTE_ID_REGEX`). */
+const CONFIRMED_STEP_QUOTE_ID_SHAPE = /^sq_[a-f0-9]{32}$/;
+
 export type RunConfirmedStepGateDecision =
   | { kind: 'drop' }
   | { kind: 'refuse'; requestId: string; error: RunConfirmedStepHostError }
@@ -114,11 +117,13 @@ export function resolveRunConfirmedStepRequest(
     return { kind: 'refuse', requestId, error: 'invalid confirmed step request' };
   }
   const b = body as Record<string, unknown>;
+  // The quote must be a STEP quote by shape: this dialog must never be asked to confirm
+  // another kind's quote. The server binds the kind too (`blocks.previewQuoteGrant`).
   if (
     b.kind !== 'step' ||
     typeof b.$type !== 'string' ||
     typeof b.quoteId !== 'string' ||
-    b.quoteId.length === 0
+    !CONFIRMED_STEP_QUOTE_ID_SHAPE.test(b.quoteId)
   ) {
     return { kind: 'refuse', requestId, error: 'invalid confirmed step request' };
   }
@@ -126,6 +131,20 @@ export function resolveRunConfirmedStepRequest(
 }
 
 const buzz = (n: number) => n.toLocaleString('en-US');
+
+/**
+ * The notice the HOST shows when a confirmed job's outcome is unknown. A confirmed step
+ * is its own run each time it is confirmed, so trying again starts — and charges — a
+ * second job if the first one did start. The block is told the same thing by code
+ * (`submission-unconfirmed`), but the viewer is the one who would confirm again, so
+ * the host says it in its own chrome.
+ */
+export const CONFIRMED_STEP_UNCONFIRMED_NOTICE = {
+  title: 'We could not confirm this job',
+  body:
+    'The job may already be running, and you may have been charged for it. Check your ' +
+    'generations before trying again — confirming again starts a new job.',
+} as const;
 
 export type ConfirmedStepConsentCopy = {
   title: string;

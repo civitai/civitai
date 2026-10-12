@@ -78,3 +78,13 @@ export function ConfirmedStepDailyLimitBody({
     </Stack>
   );
 }
+
+/** The BODY of a plain host notice about a confirmed step (e.g. an unconfirmed outcome). */
+export function ConfirmedStepNoticeBody({ text, onClose }: { text: string; onClose: () => void }) {
+  return (
+    <Stack gap="sm" data-testid="block-confirmed-step-notice">
+      <Text size="sm">{text}</Text>
+      <Button onClick={onClose}>Close</Button>
+    </Stack>
+  );
+}

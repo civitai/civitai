@@ -678,8 +678,24 @@ export type PassThroughStepBody = z.infer<typeof blockPassThroughStepBodySchema>
 export const BLOCK_TRAINING_DATASET_ID_REGEX = /^tds_[a-f0-9]{32}$/;
 /** Opaque handle to a server-stored training quote. */
 export const BLOCK_TRAINING_QUOTE_ID_REGEX = /^tq_[a-f0-9]{32}$/;
-/** Either kind of viewer-confirmed quote id (`tq_` training, `sq_` step). */
-export const BLOCK_QUOTE_GRANT_ID_REGEX = /^(?:tq|sq)_[a-f0-9]{32}$/;
+/**
+ * Input of the shared consent pair (`blocks.previewQuoteGrant` /
+ * `blocks.consentQuoteGrant`). The caller states the KIND it is confirming and the
+ * quote id must be of that kind — a discriminated union, so a training id sent as a
+ * step (or the reverse) is refused at the input rather than dispatched by its prefix.
+ */
+export const blockQuoteGrantConsentInputSchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('training'),
+    blockToken: z.string().min(1),
+    quoteId: z.string().regex(BLOCK_TRAINING_QUOTE_ID_REGEX),
+  }),
+  z.object({
+    kind: z.literal('step'),
+    blockToken: z.string().min(1),
+    quoteId: z.string().regex(BLOCK_STEP_QUOTE_ID_REGEX),
+  }),
+]);
 /** Max sample prompts on a training run. */
 export const BLOCK_TRAINING_SAMPLE_PROMPTS_MAX = 6;
 /** Max characters of one sample prompt. */

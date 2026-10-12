@@ -282,7 +282,7 @@ async function estimate(b: Record<string, unknown> = body()) {
   return (await caller().estimateWorkflow({ blockToken: 't', body: b as never })) as EstimateReply;
 }
 async function consent(quoteId: string, sessionUserId = VIEWER) {
-  return caller(sessionUserId).consentQuoteGrant({ blockToken: 't', quoteId });
+  return caller(sessionUserId).consentQuoteGrant({ kind: 'step', blockToken: 't', quoteId });
 }
 type SubmitReply = {
   submissionUnconfirmed?: true;
@@ -443,10 +443,18 @@ describe('CONSENT — session-only, and only the quote’s own subject', () => {
   it('requires a signed-in session (the block, holding only its token, cannot call it)', async () => {
     const { snapshot } = await estimate();
     await expect(
-      caller(undefined).consentQuoteGrant({ blockToken: 't', quoteId: snapshot.stepQuote!.quoteId })
+      caller(undefined).consentQuoteGrant({
+        kind: 'step',
+        blockToken: 't',
+        quoteId: snapshot.stepQuote!.quoteId,
+      })
     ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
     await expect(
-      caller(undefined).previewQuoteGrant({ blockToken: 't', quoteId: snapshot.stepQuote!.quoteId })
+      caller(undefined).previewQuoteGrant({
+        kind: 'step',
+        blockToken: 't',
+        quoteId: snapshot.stepQuote!.quoteId,
+      })
     ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
   });
 
@@ -459,25 +467,44 @@ describe('CONSENT — session-only, and only the quote’s own subject', () => {
     );
   });
 
-  it('a training-shaped id is dispatched to the TRAINING kind — it can never name a step quote', async () => {
-    // Same hex, other prefix: the step record exists, but a `tq_` id goes to the
-    // training kind (whose own flag is off here) and never reads the step store.
+  it('🔴 the caller names the kind and the id must be OF that kind — never inferred from the id', async () => {
+    // Same hex, other prefix. A step dialog must not be able to confirm a training
+    // quote (or the reverse): both mismatches are refused at the input, and the step
+    // record is untouched.
     seedQuote(SEEDED, { consentedBy: null });
-    await expect(consent(`tq_${'1'.repeat(32)}`)).rejects.toMatchObject({
-      code: 'FORBIDDEN',
-      message: 'training from apps is not enabled',
-    });
+    const tq = `tq_${'1'.repeat(32)}`;
+    await expect(
+      caller(VIEWER).consentQuoteGrant({ kind: 'step', blockToken: 't', quoteId: tq } as never)
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    await expect(
+      caller(VIEWER).previewQuoteGrant({ kind: 'step', blockToken: 't', quoteId: tq } as never)
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    await expect(
+      caller(VIEWER).consentQuoteGrant({
+        kind: 'training',
+        blockToken: 't',
+        quoteId: SEEDED,
+      } as never)
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    await expect(
+      caller(VIEWER).consentQuoteGrant({ blockToken: 't', quoteId: SEEDED } as never)
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
     expect(JSON.parse(store.get(`system:blocks:step-quote:${SEEDED}`) as string).consentedBy).toBe(
       null
     );
-    await expect(consent('sq_nope')).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    // Positive control: the right kind for the id confirms it.
+    await expect(consent(SEEDED)).resolves.toMatchObject({ consented: true });
   });
 
   it('records the confirmation; the preview shows only server-resolved values', async () => {
     const { snapshot } = await estimate();
     const quoteId = snapshot.stepQuote!.quoteId;
     h.buzzAccounts.mockImplementation(async () => ({ blue: 40, green: 900, yellow: 0 }));
-    const preview = await caller(VIEWER).previewQuoteGrant({ blockToken: 't', quoteId });
+    const preview = await caller(VIEWER).previewQuoteGrant({
+      kind: 'step',
+      blockToken: 't',
+      quoteId,
+    });
     expect(preview).toMatchObject({
       quoteId,
       total: PRICE,
@@ -499,7 +526,9 @@ describe('CONSENT — session-only, and only the quote’s own subject', () => {
     const { snapshot } = await estimate();
     const quoteId = snapshot.stepQuote!.quoteId;
     // Nothing spent yet: 1500 left, a 1040 job fits.
-    expect(await caller(VIEWER).previewQuoteGrant({ blockToken: 't', quoteId })).toMatchObject({
+    expect(
+      await caller(VIEWER).previewQuoteGrant({ kind: 'step', blockToken: 't', quoteId })
+    ).toMatchObject({
       dailyLimit: { limit: 1500, spentToday: 0, remaining: 1500 },
       exceedsDailyLimit: false,
     });
@@ -507,7 +536,9 @@ describe('CONSENT — session-only, and only the quote’s own subject', () => {
     const [limitKey] = keysWith('system:blocks:consent-budget');
     expect(limitKey).toBeUndefined();
     store.set(`system:blocks:consent-budget:${VIEWER}:apb_test:${dayKey()}`, '600');
-    expect(await caller(VIEWER).previewQuoteGrant({ blockToken: 't', quoteId })).toMatchObject({
+    expect(
+      await caller(VIEWER).previewQuoteGrant({ kind: 'step', blockToken: 't', quoteId })
+    ).toMatchObject({
       dailyLimit: { limit: 1500, spentToday: 600, remaining: 900 },
       exceedsDailyLimit: true,
     });
@@ -710,7 +741,7 @@ describe('SUBMIT refusals — each with its own error, nothing charged', () => {
       message: 'confirmed steps from apps are not enabled',
     });
     await expect(
-      caller(VIEWER).previewQuoteGrant({ blockToken: 't', quoteId: SEEDED })
+      caller(VIEWER).previewQuoteGrant({ kind: 'step', blockToken: 't', quoteId: SEEDED })
     ).rejects.toThrow('confirmed steps from apps are not enabled');
     await expect(consent(SEEDED)).rejects.toThrow('confirmed steps from apps are not enabled');
     expect(h.submitWorkflow).not.toHaveBeenCalled();
@@ -762,7 +793,11 @@ describe('the viewer’s DAILY LIMIT — never overridden by the confirm', () =>
       setDailyLimit(1500);
       store.set(`system:blocks:consent-budget:${VIEWER}:apb_test:${dayKey()}`, String(spent));
       const quoteId = await confirmedQuote();
-      const preview = await caller(VIEWER).previewQuoteGrant({ blockToken: 't', quoteId });
+      const preview = await caller(VIEWER).previewQuoteGrant({
+        kind: 'step',
+        blockToken: 't',
+        quoteId,
+      });
       expect(preview.exceedsDailyLimit).toBe(refused);
       const r = await submit(body({ quoteId }));
       expect(r.snapshot.errorCode).toBe(refused ? 'daily-limit-exceeded' : undefined);
@@ -893,6 +928,16 @@ describe('a PRIVATE RUN — the one token rule shared with training', () => {
     // Reserved against the private-run counter, not the viewer's daily one.
     expect(counter('system:blocks:buzz-cap')).toBe(0);
     expect(counter('system:blocks:private-run-buzz-cap')).toBe(PRICE);
+    // The private-run marker reaches BOTH audit rows, so the run stays out of the
+    // delisted app owner's analytics.
+    await vi.waitFor(() => expect(h.recordSpendAttribution).toHaveBeenCalledTimes(1));
+    expect(h.recordSpendAttribution).toHaveBeenCalledWith(
+      expect.objectContaining({ privateRun: true, workflowId })
+    );
+    await vi.waitFor(() => expect(h.recordScopeInvocation).toHaveBeenCalledTimes(1));
+    expect(h.recordScopeInvocation).toHaveBeenCalledWith(
+      expect.objectContaining({ privateRun: true, dev: false })
+    );
   });
 
   it('…and a job above the private-run cap is refused by that cap', async () => {
@@ -935,7 +980,12 @@ describe('orchestrator submit failures — the training contract', () => {
     expect(h.recordSpendAttribution).not.toHaveBeenCalled();
   });
 
-  it('an ambiguous failure is UNCONFIRMED and keeps every reservation', async () => {
+  // 🔴 A DELIBERATE TRADE, pinned so it is not mistaken for an oversight: a step is keyed
+  // on its quote, so after an unconfirmed submit there is NO orchestrator-side dedupe
+  // for a retry — the spent quote cannot be reused, and a fresh estimate + confirm is a
+  // NEW job with a new id. (Training keeps run-keyed dedupe.) That is why the reply
+  // tells the viewer to check before retrying.
+  it('an ambiguous failure is UNCONFIRMED, keeps every reservation, and a re-confirmed retry is a NEW job', async () => {
     const quoteId = await confirmedQuote();
     h.submitWorkflow.mockImplementation(async (args: { query?: { whatif?: boolean } }) => {
       if (args.query?.whatif) return { cost: { total: PRICE } };
@@ -951,6 +1001,14 @@ describe('orchestrator submit failures — the training contract', () => {
     expect(h.persistSettle).not.toHaveBeenCalled();
     // The quote is spent and the claim released: a retry needs a new estimate.
     await expect(submit(body({ quoteId }))).rejects.toThrow('step quote not found');
+    // …and that retry is submitted under a DIFFERENT externalId.
+    installOrchestrator();
+    const retryQuote = await confirmedQuote();
+    await submit(body({ quoteId: retryQuote }));
+    const ids = realSubmits().map(
+      (c) => (c[0] as { body: { externalId: string } }).body.externalId
+    );
+    expect(ids).toEqual([`blc${quoteId.slice(3)}`, `blc${retryQuote.slice(3)}`]);
   });
 
   it('a first-attempt orchestrator 4xx is definite: refunded and rethrown', async () => {

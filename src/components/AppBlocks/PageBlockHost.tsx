@@ -67,12 +67,17 @@ import { TrainingConsentBody } from './TrainingConsentBody';
 import {
   buildConfirmedStepConsentCopy,
   buildConfirmedStepDailyLimitCopy,
+  CONFIRMED_STEP_UNCONFIRMED_NOTICE,
   confirmedStepReplyFromResult,
   isDailyLimitRefusal,
   resolveRunConfirmedStepRequest,
   type ConfirmedStepQuotePreview,
 } from './runConfirmedStepGate';
-import { ConfirmedStepConsentBody, ConfirmedStepDailyLimitBody } from './ConfirmedStepConsentBody';
+import {
+  ConfirmedStepConsentBody,
+  ConfirmedStepDailyLimitBody,
+  ConfirmedStepNoticeBody,
+} from './ConfirmedStepConsentBody';
 import AlertDialog from '~/components/Dialog/Common/AlertDialog';
 import GuardedConfirmDialog from './GuardedConfirmDialog';
 import { CONFIRMED_STEP_DAILY_LIMIT_ERROR_CODE } from '~/shared/constants/block-scope.constants';
@@ -4774,6 +4779,23 @@ export function PageBlockHost({
         },
       });
     };
+    const showUnconfirmedNotice = (requestId: string) => {
+      dialogStore.trigger({
+        id: `block-confirmed-step-unconfirmed-${requestId}`,
+        component: AlertDialog,
+        props: {
+          type: 'info',
+          title: CONFIRMED_STEP_UNCONFIRMED_NOTICE.title,
+          size: 'md',
+          children: ({ handleClose }: { handleClose: () => void }) => (
+            <ConfirmedStepNoticeBody
+              text={CONFIRMED_STEP_UNCONFIRMED_NOTICE.body}
+              onClose={handleClose}
+            />
+          ),
+        },
+      });
+    };
     const off = onMessage<unknown>('RUN_CONFIRMED_STEP', (raw) => {
       const gate = resolveRunConfirmedStepRequest({
         raw,
@@ -4800,6 +4822,8 @@ export function PageBlockHost({
         let preview: ConfirmedStepQuotePreview;
         try {
           preview = (await trpcUtils.client.blocks.previewQuoteGrant.mutate({
+            // The KIND is stated, never inferred: this dialog confirms step quotes only.
+            kind: 'step',
             blockToken: token,
             quoteId,
           })) as ConfirmedStepQuotePreview;
@@ -4843,6 +4867,7 @@ export function PageBlockHost({
               settlement.markConsented();
               try {
                 await trpcUtils.client.blocks.consentQuoteGrant.mutate({
+                  kind: 'step',
                   blockToken: token,
                   quoteId,
                 });
@@ -4856,10 +4881,20 @@ export function PageBlockHost({
                   });
                 } catch (err) {
                   // Never resent: the quote is spent once.
-                  settlement.reply(trainingSubmitReplyFromError(err));
+                  const failed = trainingSubmitReplyFromError(err);
+                  settlement.reply(failed);
+                  if ('error' in failed && failed.error === 'submission-unconfirmed') {
+                    showUnconfirmedNotice(requestId);
+                  }
                   return;
                 }
-                settlement.reply(confirmedStepReplyFromResult(result));
+                const reply = confirmedStepReplyFromResult(result);
+                settlement.reply(reply);
+                // The outcome is unknown and a retry would be a new, separately charged
+                // job: say so in host chrome, not only to the block.
+                if ('error' in reply && reply.error === 'submission-unconfirmed') {
+                  showUnconfirmedNotice(requestId);
+                }
                 // The day's spend moved between preview and submit: tell the viewer
                 // the same thing the preview would have.
                 if (isDailyLimitRefusal(result.snapshot)) {

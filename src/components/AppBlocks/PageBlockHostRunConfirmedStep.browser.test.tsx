@@ -160,6 +160,28 @@ const CONFIRM = 'Run for 1,040 Buzz';
 const confirmButton = () => page.getByRole('button', { name: CONFIRM });
 // The confirm is disabled for ~1s after it appears; give the assertion room past it.
 const ARMED = { timeout: 4000 };
+/**
+ * The confirm button's `disabled` state at the INSTANT it enters the DOM, captured by a
+ * MutationObserver armed before the request is posted. Race-free: the initial state
+ * clears on its own after the delay, so polling for it afterwards could miss it on a
+ * slow machine; this records it in the same task the button is inserted.
+ */
+function captureConfirmAtInsert(name: string) {
+  let disabledAtInsert: boolean | null = null;
+  const find = () =>
+    Array.from(document.querySelectorAll('button')).find((b) => b.textContent?.trim() === name);
+  const observer = new MutationObserver(() => {
+    if (disabledAtInsert !== null) return;
+    const button = find();
+    if (button) disabledAtInsert = button.disabled;
+  });
+  observer.observe(document.body, { childList: true, subtree: true });
+  return {
+    read: () => disabledAtInsert,
+    stop: () => observer.disconnect(),
+  };
+}
+
 function setVisibility(state: 'visible' | 'hidden') {
   Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => state });
   document.dispatchEvent(new Event('visibilitychange'));
@@ -190,13 +212,21 @@ describe('PageBlockHost RUN_CONFIRMED_STEP (consent-gated over-budget step)', ()
       .toHaveTextContent('This job costs 1,040 Buzz, charged when it starts.');
     expect(consentMutate).not.toHaveBeenCalled();
     expect(submitMutate).not.toHaveBeenCalled();
-    expect(previewMutate).toHaveBeenCalledWith({ blockToken: 'tok_abc', quoteId: QUOTE_ID });
+    expect(previewMutate).toHaveBeenCalledWith({
+      kind: 'step',
+      blockToken: 'tok_abc',
+      quoteId: QUOTE_ID,
+    });
 
     await expect.element(confirmBtn, ARMED).toBeEnabled();
     await confirmBtn.click();
 
     expect(await reply(replies)).toEqual({ requestId: 'rq_1', snapshot: SNAPSHOT });
-    expect(consentMutate).toHaveBeenCalledWith({ blockToken: 'tok_abc', quoteId: QUOTE_ID });
+    expect(consentMutate).toHaveBeenCalledWith({
+      kind: 'step',
+      blockToken: 'tok_abc',
+      quoteId: QUOTE_ID,
+    });
     expect(submitMutate).toHaveBeenCalledWith({ blockToken: 'tok_abc', body: BODY });
     expect(consentMutate.mock.invocationCallOrder[0]).toBeLessThan(
       submitMutate.mock.invocationCallOrder[0]
@@ -388,12 +418,12 @@ describe('PageBlockHost RUN_CONFIRMED_STEP (consent-gated over-budget step)', ()
   test('Confirm is disabled when the dialog appears, then enabled after the delay', async () => {
     await mount();
     await driveToReady();
+    const atInsert = captureConfirmAtInsert(CONFIRM);
     postFromBlock('RUN_CONFIRMED_STEP', { requestId: 'rq_g1', body: BODY });
     await expect.element(confirmButton()).toBeInTheDocument();
-    await expect.element(confirmButton()).toBeDisabled();
-    // A click while it is disabled does nothing.
-    (confirmButton().element() as HTMLButtonElement).click();
-    expect(consentMutate).not.toHaveBeenCalled();
+    atInsert.stop();
+    // Disabled in the very task it was inserted — not polled for afterwards.
+    expect(atInsert.read()).toBe(true);
     // Cancel is never delayed.
     await expect.element(page.getByRole('button', { name: 'Cancel' })).toBeEnabled();
     await expect.element(confirmButton(), ARMED).toBeEnabled();
@@ -447,6 +477,57 @@ describe('PageBlockHost RUN_CONFIRMED_STEP (consent-gated over-budget step)', ()
     expect(await reply(replies)).toEqual({ requestId: 'rq_11', error: 'submission-unconfirmed' });
     expect(submitMutate).toHaveBeenCalledTimes(1);
     expect(replies.of('CONFIRMED_STEP_RESULT')).toHaveLength(1);
+    // The VIEWER is told in host chrome, not only the block: a retry is a new job.
+    await expect
+      .element(page.getByTestId('block-confirmed-step-notice'))
+      .toHaveTextContent(
+        'The job may already be running, and you may have been charged for it. Check your generations before trying again — confirming again starts a new job.'
+      );
+    replies.stop();
+  });
+
+  test('a submit the SERVER could not confirm also shows the host notice', async () => {
+    submitMutate.mockResolvedValueOnce({
+      snapshot: { workflowId: 'failed', status: 'failed', error: 'could not be confirmed' },
+      submissionUnconfirmed: true,
+    });
+    await mount();
+    await driveToReady();
+    const replies = listenForReply();
+    postFromBlock('RUN_CONFIRMED_STEP', { requestId: 'rq_15', body: BODY });
+    await expect.element(confirmButton(), ARMED).toBeEnabled();
+    await confirmButton().click();
+    expect(await reply(replies)).toEqual({ requestId: 'rq_15', error: 'submission-unconfirmed' });
+    await expect.element(page.getByTestId('block-confirmed-step-notice')).toBeInTheDocument();
+    replies.stop();
+  });
+
+  test('control: an ordinary success shows no notice', async () => {
+    await mount();
+    await driveToReady();
+    const replies = listenForReply();
+    postFromBlock('RUN_CONFIRMED_STEP', { requestId: 'rq_16', body: BODY });
+    await expect.element(confirmButton(), ARMED).toBeEnabled();
+    await confirmButton().click();
+    expect(await reply(replies)).toEqual({ requestId: 'rq_16', snapshot: SNAPSHOT });
+    expect(page.getByTestId('block-confirmed-step-notice').elements()).toHaveLength(0);
+    replies.stop();
+  });
+
+  test('🔴 a TRAINING quote id is refused by this dialog — no preview, nothing confirmed', async () => {
+    await mount();
+    await driveToReady();
+    const replies = listenForReply();
+    postFromBlock('RUN_CONFIRMED_STEP', {
+      requestId: 'rq_17',
+      body: { ...BODY, quoteId: `tq_${'a'.repeat(32)}` },
+    });
+    expect(await reply(replies)).toEqual({
+      requestId: 'rq_17',
+      error: 'invalid confirmed step request',
+    });
+    expect(previewMutate).not.toHaveBeenCalled();
+    expect(consentMutate).not.toHaveBeenCalled();
     replies.stop();
   });
 });

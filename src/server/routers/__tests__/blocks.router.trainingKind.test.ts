@@ -1503,6 +1503,15 @@ describe('training on the shared confirmed-quote path', () => {
     expect(snapshot.workflowId).toBe(workflowId);
     expect(counter('system:blocks:buzz-cap')).toBe(0);
     expect(counter('system:blocks:private-run-buzz-cap')).toBe(1200);
+    // The private-run marker reaches BOTH audit rows.
+    await vi.waitFor(() => expect(h.recordSpendAttribution).toHaveBeenCalledTimes(1));
+    expect(h.recordSpendAttribution).toHaveBeenCalledWith(
+      expect.objectContaining({ privateRun: true, workflowId })
+    );
+    await vi.waitFor(() => expect(h.recordScopeInvocation).toHaveBeenCalledTimes(1));
+    expect(h.recordScopeInvocation).toHaveBeenCalledWith(
+      expect.objectContaining({ privateRun: true, dev: false })
+    );
   });
 
   it('a private run above the private-run cap is refused by that cap', async () => {
@@ -1563,12 +1572,16 @@ describe('training on the shared confirmed-quote path', () => {
   it('the generic consent pair serves a training quote exactly as the training-named one does', async () => {
     const { snapshot } = (await estimate()) as { snapshot: { trainingQuote: { quoteId: string } } };
     const quoteId = snapshot.trainingQuote.quoteId;
-    const viaGeneric = await caller(VIEWER).previewQuoteGrant({ blockToken: 't', quoteId });
+    const viaGeneric = await caller(VIEWER).previewQuoteGrant({
+      kind: 'training',
+      blockToken: 't',
+      quoteId,
+    });
     const viaNamed = await caller(VIEWER).previewTrainingQuote({ blockToken: 't', quoteId });
     expect(viaGeneric).toEqual(viaNamed);
     expect(viaGeneric).toMatchObject({ modelName: 'SDXL', thumbnails: ['t1', 't2'] });
     await expect(
-      caller(VIEWER).consentQuoteGrant({ blockToken: 't', quoteId })
+      caller(VIEWER).consentQuoteGrant({ kind: 'training', blockToken: 't', quoteId })
     ).resolves.toMatchObject({ consented: true, total: 1200 });
     const { snapshot: run } = (await submit(body({ quoteId }))) as {
       snapshot: { workflowId: string };

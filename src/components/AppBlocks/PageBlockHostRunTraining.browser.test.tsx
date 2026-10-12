@@ -128,6 +128,28 @@ async function driveToReady() {
   });
 }
 
+/**
+ * The confirm button's `disabled` state at the INSTANT it enters the DOM, captured by a
+ * MutationObserver armed before the request is posted. Race-free: the initial state
+ * clears on its own after the delay, so polling for it afterwards could miss it on a
+ * slow machine; this records it in the same task the button is inserted.
+ */
+function captureConfirmAtInsert(name: string) {
+  let disabledAtInsert: boolean | null = null;
+  const find = () =>
+    Array.from(document.querySelectorAll('button')).find((b) => b.textContent?.trim() === name);
+  const observer = new MutationObserver(() => {
+    if (disabledAtInsert !== null) return;
+    const button = find();
+    if (button) disabledAtInsert = button.disabled;
+  });
+  observer.observe(document.body, { childList: true, subtree: true });
+  return {
+    read: () => disabledAtInsert,
+    stop: () => observer.disconnect(),
+  };
+}
+
 const QUOTE_ID = `tq_${'a'.repeat(32)}`;
 // The block's own body. `displayPrice` is a block-chosen number the host must
 // never render — the strict wire schema would also reject it at the server.
@@ -249,11 +271,13 @@ describe('PageBlockHost RUN_TRAINING (consent-gated training run)', () => {
     // a button that spends Buzz gives the viewer a moment to read first.
     await mount();
     await driveToReady();
+    const atInsert = captureConfirmAtInsert('Train for 1,234 Buzz');
     postFromBlock('RUN_TRAINING', { requestId: 'rq_g1', body: BODY });
     const confirmBtn = page.getByRole('button', { name: 'Train for 1,234 Buzz' });
     await expect.element(confirmBtn).toBeInTheDocument();
-    await expect.element(confirmBtn).toBeDisabled();
-    (confirmBtn.element() as HTMLButtonElement).click();
+    atInsert.stop();
+    // Disabled in the very task it was inserted — not polled for afterwards.
+    expect(atInsert.read()).toBe(true);
     expect(consentMutate).not.toHaveBeenCalled();
     await expect.element(confirmBtn, { timeout: 4000 }).toBeEnabled();
 
