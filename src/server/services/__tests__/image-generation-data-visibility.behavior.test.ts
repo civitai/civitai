@@ -577,7 +577,7 @@ describe('getImageGenerationData source media', () => {
   });
 });
 
-/** `getImage`'s two modes over the same rows, so the extraction is pinned by behaviour too. */
+/** `getImage`'s visibility conditions over the same rows, so the extraction is pinned by behaviour too. */
 describe('imageVisibilityConditions for image.get', () => {
   async function visibleTo(viewer: Viewer) {
     const raw = pgliteRaw(db);
@@ -590,7 +590,7 @@ describe('imageVisibilityConditions for image.get', () => {
     return rows.length === 1;
   }
 
-  it('hides a postless image from everyone but its owner by default', async () => {
+  it('hides a postless image from everyone but its owner', async () => {
     await seed({ post: null });
     expect(await visibleTo(ANON)).toBe(false);
     expect(await visibleTo(OTHER)).toBe(false);
@@ -598,7 +598,7 @@ describe('imageVisibilityConditions for image.get', () => {
     expect(await visibleTo(MOD)).toBe(true);
   });
 
-  it('admits a postless cover of a readable article by default', async () => {
+  it('admits a postless cover of a readable article', async () => {
     await seed({ post: null });
     await db.exec(`INSERT INTO "Article" VALUES (1, 1, 'Published', now(), 'Scanned')`);
     expect(await visibleTo(ANON)).toBe(true);
