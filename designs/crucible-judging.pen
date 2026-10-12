@@ -8048,9 +8048,9 @@
       "y": -140,
       "name": "Reaction/Button",
       "reusable": true,
-      "width": 44,
-      "height": 40,
-      "cornerRadius": 20,
+      "width": 32,
+      "height": 28,
+      "cornerRadius": 14,
       "justifyContent": "center",
       "alignItems": "center",
       "children": [
@@ -8061,7 +8061,7 @@
           "fill": "$color-white",
           "content": "👍",
           "fontFamily": "Inter",
-          "fontSize": 20,
+          "fontSize": 15,
           "fontWeight": "normal"
         }
       ]
@@ -8074,11 +8074,10 @@
       "name": "Reaction/Bar",
       "reusable": true,
       "fill": "#101113CC",
-      "cornerRadius": 24,
+      "cornerRadius": 18,
       "stroke": "#FFFFFF1F",
       "strokeWidth": 1,
-      "gap": 2,
-      "padding": 4,
+      "padding": 3,
       "alignItems": "center",
       "children": [
         {
@@ -8542,8 +8541,8 @@
                       "type": "ref",
                       "ref": "lvlxB",
                       "name": "Reactions",
-                      "x": 484,
-                      "y": 522,
+                      "x": 544,
+                      "y": 540,
                       "descendants": {
                         "L0YbZl": {
                           "id": "u5g2E",
@@ -8641,8 +8640,8 @@
                       "type": "ref",
                       "ref": "lvlxB",
                       "name": "Reactions",
-                      "x": 484,
-                      "y": 522
+                      "x": 544,
+                      "y": 540
                     }
                   ]
                 }
@@ -9395,7 +9394,7 @@
               "fill": "$text-dimmed",
               "textGrowth": "fixed-width",
               "width": "fill_container",
-              "content": "• Bottom-right of each entry, 14px inset. The key hint stays top-left and the +1 stays bottom-centre, so nothing overlaps.",
+              "content": "• Bottom-right of each entry, 10px inset. The key hint stays top-left and the +1 stays bottom-centre.",
               "fontFamily": "$font-body",
               "fontSize": 14,
               "fontWeight": "normal"
@@ -9407,7 +9406,7 @@
               "fill": "$text-dimmed",
               "textGrowth": "fixed-width",
               "width": "fill_container",
-              "content": "• 44×40 hit targets with 2px gaps inside a 4px-padded pill, so the buttons aren't cramped.",
+              "content": "• Compact 32×28 targets inside a 3px-padded pill (~136×34), so it covers as little of the entry as possible.",
               "fontFamily": "$font-body",
               "fontSize": 14,
               "fontWeight": "normal"
