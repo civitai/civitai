@@ -87,7 +87,7 @@ import { REGISTERED_STEP_IDS } from './steps';
 // column; that is the honest record of what the app actually submitted.
 //
 // 🔴 AND IT CANNOT BE BOUNDED AGAINST A KNOWN SET. There is no vendored `$type`
-// catalog in this repo — only the 15-entry `PLATFORM_INTERNAL_STEP_TYPES`
+// catalog in this repo — only the `PLATFORM_INTERNAL_STEP_TYPES`
 // denylist and the 2-entry step registry — and the live mapping gained three
 // types in six weeks, so a membership test here would either need a catalog
 // nobody maintains or would degrade every new upstream type to a bare `step`.

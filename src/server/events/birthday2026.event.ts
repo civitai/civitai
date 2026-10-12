@@ -120,7 +120,7 @@ export const birthday2026 = createEvent(name, {
   teams: BIRTHDAY_2026_TEAMS,
   // Display name only; the join cosmetic is found by data (event, team, design).
   cosmeticName: 'Party Cap',
-  join: { claimKey: 'claimed', design: 'basic' },
+  join: { claimKey: 'claimed', design: 'basic', balance: true },
   badgePrefix: 'Birthday 2026',
   scoring: {
     capPerActorPerOwnerPerDay: 50,
