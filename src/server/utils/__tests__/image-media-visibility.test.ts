@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { NsfwLevel } from '~/server/common/enums';
 import { VERIFIED_BOT_HEADER } from '~/server/utils/bot-detection/header';
-import { withoutMediaReferences, withViewerMedia } from '~/server/utils/image-media-visibility';
+import {
+  viewerCanSeeImageMedia,
+  withoutMedia,
+  withoutMediaReferences,
+} from '~/server/utils/image-media-visibility';
 
 const OWNER_ID = 7;
 
@@ -17,7 +21,7 @@ function ctxFor({ user, canViewNsfw, bot }: Viewer) {
     features: { canViewNsfw },
     req: { headers: bot ? { [VERIFIED_BOT_HEADER]: bot } : {} },
     cache: { edgeTTL: 60, browserTTL: 60, staleWhileRevalidate: 30, skip: false },
-  } as never as Parameters<typeof withViewerMedia>[0];
+  } as never as Parameters<typeof viewerCanSeeImageMedia>[0];
 }
 
 function imageAt(nsfwLevel: number) {
@@ -85,25 +89,43 @@ const expected: Record<string, number[]> = {
 
 const LEVELS = [0, NsfwLevel.PG, NsfwLevel.PG13, NsfwLevel.R, NsfwLevel.X, NsfwLevel.XXX];
 
-describe('withViewerMedia', () => {
-  it.each(Object.keys(viewers))('gives %s exactly the media its gate shows', (name) => {
-    const received = LEVELS.filter(
-      (level) => withViewerMedia(ctxFor(viewers[name]), imageAt(level)).url === 'media-key'
-    );
+// What `getImageHandler` returns. A postless image, so no collection lookup reaches the database.
+async function withViewerMedia(
+  ctx: Parameters<typeof viewerCanSeeImageMedia>[0],
+  image: ReturnType<typeof imageAt>
+) {
+  const canSee = await viewerCanSeeImageMedia(ctx, {
+    nsfwLevel: image.nsfwLevel,
+    userId: image.user.id,
+    postId: null,
+  });
+  return canSee ? image : withoutMedia(image);
+}
+
+describe('image.get media for a viewer', () => {
+  it.each(Object.keys(viewers))('gives %s exactly the media its gate shows', async (name) => {
+    const received: number[] = [];
+    for (const level of LEVELS)
+      if ((await withViewerMedia(ctxFor(viewers[name]), imageAt(level))).url === 'media-key')
+        received.push(level);
     expect(received).toEqual(expected[name]);
   });
 
-  it('withholds a mixed rating unless every part of it is allowed', () => {
+  it('withholds a mixed rating unless every part of it is allowed', async () => {
     const mixed = imageAt(NsfwLevel.PG | NsfwLevel.R);
-    expect(withViewerMedia(ctxFor(viewers['signed out on the SFW domain']), mixed).url).toBeNull();
-    expect(withViewerMedia(ctxFor(viewers['signed in on the SFW domain']), mixed).url).toBeNull();
-    expect(withViewerMedia(ctxFor(viewers['signed in on the mature domain']), mixed).url).toBe(
-      'media-key'
-    );
+    expect(
+      (await withViewerMedia(ctxFor(viewers['signed out on the SFW domain']), mixed)).url
+    ).toBeNull();
+    expect(
+      (await withViewerMedia(ctxFor(viewers['signed in on the SFW domain']), mixed)).url
+    ).toBeNull();
+    expect(
+      (await withViewerMedia(ctxFor(viewers['signed in on the mature domain']), mixed)).url
+    ).toBe('media-key');
   });
 
-  it('keeps what the gate card needs and drops external video ids when withholding', () => {
-    const out = withViewerMedia(
+  it('keeps what the gate card needs and drops external video ids when withholding', async () => {
+    const out = await withViewerMedia(
       ctxFor(viewers['signed out on the SFW domain']),
       imageAt(NsfwLevel.R)
     );
@@ -117,23 +139,25 @@ describe('withViewerMedia', () => {
     });
   });
 
-  it('returns a viewer who may see the media the image unchanged', () => {
+  it('returns a viewer who may see the media the image unchanged', async () => {
     const image = imageAt(NsfwLevel.R);
-    expect(withViewerMedia(ctxFor(viewers['signed in on the mature domain']), image)).toBe(image);
+    expect(await withViewerMedia(ctxFor(viewers['signed in on the mature domain']), image)).toBe(
+      image
+    );
   });
 
-  it('keeps a crawler-only answer out of the shared signed-out edge cache', () => {
+  it('keeps a crawler-only answer out of the shared signed-out edge cache', async () => {
     const crawler = ctxFor(viewers['a crawler on the mature domain']);
-    withViewerMedia(crawler, imageAt(NsfwLevel.R));
+    await withViewerMedia(crawler, imageAt(NsfwLevel.R));
     expect(crawler.cache).toMatchObject({ edgeTTL: 0, browserTTL: 0, staleWhileRevalidate: 0 });
 
     // Signed-in answers are never edge-cached; a header on one changes nothing.
     const signedInCrawler = ctxFor({ canViewNsfw: true, user: signedIn, bot: 'googlebot' });
-    withViewerMedia(signedInCrawler, imageAt(NsfwLevel.R));
+    await withViewerMedia(signedInCrawler, imageAt(NsfwLevel.R));
     expect(signedInCrawler.cache).toMatchObject({ edgeTTL: 60, browserTTL: 60 });
 
     const human = ctxFor(viewers['signed out on the mature domain']);
-    withViewerMedia(human, imageAt(NsfwLevel.PG));
+    await withViewerMedia(human, imageAt(NsfwLevel.PG));
     expect(human.cache).toMatchObject({ edgeTTL: 60, browserTTL: 60 });
   });
 });

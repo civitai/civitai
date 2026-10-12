@@ -24,7 +24,8 @@ export function imageVisibilityConditions({
   return [
     Prisma.sql`(
       i."needsReview" IS NULL AND ${imageReviewedSql()}
-      OR p."collectionId" IS NOT NULL AND EXISTS (
+      -- A manager of the collection the image owner's own post was submitted to.
+      OR p."collectionId" IS NOT NULL AND p."userId" = i."userId" AND EXISTS (
         SELECT 1 FROM "CollectionContributor" cc
         WHERE cc."collectionId" = p."collectionId"
           AND cc."userId" = ${userId}

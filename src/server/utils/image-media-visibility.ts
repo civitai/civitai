@@ -1,9 +1,12 @@
 import { Prisma } from '@prisma/client';
+import { NsfwLevel } from '~/server/common/enums';
 import type { Context } from '~/server/createContext';
 import { dbRead } from '~/server/db/client';
 import type { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
 import { parseVerifiedBotHeader, VERIFIED_BOT_HEADER } from '~/server/utils/bot-detection/header';
 import { requestDomainBrowsingLevelCap } from '~/server/utils/browsing-level';
+import { storedSourceImageIds } from '~/server/utils/source-image-ids';
+import { imageVisibilityConditions } from '~/server/services/image-visibility.service';
 import { Flags } from '~/shared/utils/flags';
 
 type MediaFields = {
@@ -13,23 +16,17 @@ type MediaFields = {
   user: { id: number };
 };
 
-type ViewerExemptions = {
-  /** The viewer manages the collection the image's post was submitted to (e.g. contest judges). */
-  managesCollection?: boolean;
-};
-
 /**
  * Whether a single-image response may carry the media: the request's domain cap on the image's own
- * rating, always allowed for the owner, moderators and collection managers. Not identical to
- * `Gated`: it ignores a contest's forced level and withholds mixed ratings.
+ * rating, always allowed for the owner and moderators (`viewerCanSeeImageMedia` adds collection
+ * managers). Not identical to `Gated`: it ignores a contest's forced level and withholds mixed
+ * ratings.
  */
 export function canViewImageMedia(
   ctx: Pick<Context, 'user' | 'features' | 'req'>,
-  image: Pick<MediaFields, 'nsfwLevel' | 'user'>,
-  { managesCollection }: ViewerExemptions = {}
+  image: Pick<MediaFields, 'nsfwLevel' | 'user'>
 ) {
   if (ctx.user && (ctx.user.isModerator || ctx.user.id === image.user.id)) return true;
-  if (managesCollection) return true;
   const cap = requestDomainBrowsingLevelCap(ctx);
   // Under a cap, every bit of the rating must be inside it; unrated (0) and mixed ratings fail closed.
   return cap === undefined || (image.nsfwLevel !== 0 && Flags.hasFlag(cap, image.nsfwLevel));
@@ -47,19 +44,8 @@ function keepCrawlerAnswerOutOfEdgeCache(
   }
 }
 
-/**
- * The image as this viewer may receive it: with `url` null and external video ids dropped when
- * the viewer can't see the media. The blur hash, dimensions and rating stay for the gate card.
- */
-export function withViewerMedia<T extends MediaFields>(
-  ctx: Pick<Context, 'user' | 'features' | 'req' | 'cache'>,
-  image: T,
-  exemptions?: ViewerExemptions
-): Omit<T, 'url'> & { url: string | null } {
-  if (canViewImageMedia(ctx, image, exemptions)) {
-    keepCrawlerAnswerOutOfEdgeCache(ctx);
-    return image;
-  }
+/** The image with `url` null and external video ids dropped; blur hash, size and rating stay. */
+export function withoutMedia<T extends MediaFields>(image: T): Omit<T, 'url'> & { url: null } {
   if (!image.metadata) return { ...image, url: null };
   const { youtubeVideoId, vimeoVideoId, ...metadata } = image.metadata as VideoMetadata;
   return { ...image, url: null, metadata };
@@ -116,6 +102,56 @@ export async function viewerCanSeeImageMedia(
       })));
   if (canSee) keepCrawlerAnswerOutOfEdgeCache(ctx);
   return canSee;
+}
+
+/**
+ * Whether the viewer may see the media an image was generated from, judged by each recorded
+ * source on its own (`meta.extra.sourceImageIds`): an edit can be rated below its source. A
+ * source the viewer could not open (`image.get`'s rules), that is gone, or that is rated Blocked
+ * counts as unseen except by its owner and moderators. The
+ * image's owner made it from those sources and is not asked again. Sources the meta does not
+ * record (uploads) can only be judged by the image's own rating.
+ */
+export async function viewerCanSeeSourceMedia(
+  ctx: MediaViewer,
+  image: { id: number; userId: number },
+  meta: unknown
+) {
+  if (ctx.user && (ctx.user.isModerator || ctx.user.id === image.userId)) return true;
+  const sourceIds = [...new Set(storedSourceImageIds(meta) ?? [])].filter((id) => id !== image.id);
+  if (!sourceIds.length) return true;
+  const sources = await dbRead.$queryRaw<{ nsfwLevel: number; userId: number }[]>(Prisma.sql`
+    SELECT i."nsfwLevel", i."userId"
+    FROM "Image" i
+    LEFT JOIN "Post" p ON p.id = i."postId"
+    WHERE ${Prisma.join(
+      [
+        Prisma.sql`i.id IN (${Prisma.join(sourceIds)})`,
+        ...imageVisibilityConditions({
+          userId: ctx.user?.id,
+          isModerator: ctx.user?.isModerator,
+          postGates: 'whenPosted',
+        }),
+      ],
+      ' AND '
+    )}
+  `);
+  if (sources.length < sourceIds.length) return false;
+  if (ctx.user) {
+    // image.get's other half: a source's owner may have blocked the viewer. Imported here, as in
+    // assertImageVisibleToViewer: user.service sits in the image.service import cycle.
+    const { amIBlockedByUser } = await import('~/server/services/user.service');
+    const viewerId = ctx.user.id;
+    const owners = [...new Set(sources.map((source) => source.userId))];
+    for (const targetUserId of owners)
+      if (await amIBlockedByUser({ userId: viewerId, targetUserId })) return false;
+  }
+  return sources.every(
+    ({ nsfwLevel, userId }) =>
+      ctx.user?.id === userId ||
+      (nsfwLevel !== NsfwLevel.Blocked &&
+        canViewImageMedia(ctx, { nsfwLevel, user: { id: userId } }))
+  );
 }
 
 const BARE_URL = /^\s*(https?:\/\/|\/\/|data:)\S*\s*$/i;

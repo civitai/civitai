@@ -1,8 +1,9 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { NsfwLevel } from '~/server/common/enums';
 import type * as ImageService from '~/server/services/image.service';
 import type * as UserService from '~/server/services/user.service';
-import type * as MediaVisibility from '~/server/utils/image-media-visibility';
+import type { Prisma } from '@prisma/client';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 import { VERIFIED_BOT_HEADER } from '~/server/utils/bot-detection/header';
 
 /**
@@ -26,12 +27,16 @@ vi.mock('~/server/services/user.service', async (importOriginal) => ({
   ...(await importOriginal<typeof UserService>()),
   amIBlockedByUser: blocked,
 }));
-vi.mock('~/server/utils/image-media-visibility', async (importOriginal) => ({
-  ...(await importOriginal<typeof MediaVisibility>()),
-  managesPostCollection: manages,
-}));
 
 const { getImageHandler } = await import('~/server/controllers/image.controller');
+
+// `managesPostCollection` asks the database; answer from `manages`, by the values it binds.
+beforeEach(() => {
+  dbMock.dbRead.$queryRaw.mockImplementation((async (sql: Prisma.Sql) => {
+    const [postId, imageOwnerId, userId] = sql.values as number[];
+    return [{ managed: await manages({ postId, imageOwnerId, userId }) }];
+  }) as never);
+});
 
 type HandlerCtx = Parameters<typeof getImageHandler>[0]['ctx'];
 const OWNER_ID = 7;

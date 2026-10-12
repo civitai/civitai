@@ -244,6 +244,18 @@ describe('getImageGenerationData visibility', () => {
     expect(await sees(OTHER)).toBe(false);
   });
 
+  it("does not serve it to a manager when the post's author does not own the image", async () => {
+    // Another user's unreviewed image in OWNER's post: OWNER chose the collection, not its owner.
+    await seed({
+      image: { '"needsReview"': `'minor'`, '"userId"': String(VIEWER) },
+      post: { '"collectionId"': '7' },
+    });
+    await db.exec(
+      `INSERT INTO "CollectionContributor" VALUES (7, ${MANAGER}, ARRAY['MANAGE']::"CollectionContributorPermission"[])`
+    );
+    expect(await sees({ userId: MANAGER })).toBe(false);
+  });
+
   it('is not found for a viewer the owner has blocked', async () => {
     await seed({});
     vi.mocked(amIBlockedByUser).mockResolvedValue(true);
@@ -381,6 +393,146 @@ describe('getImageGenerationData media links', () => {
   it('leaves the cache alone for an ordinary signed-out answer', async () => {
     const { ctx } = await fetchFor(ANON, {});
     expect(ctx.cache).toEqual({ edgeTTL: 60, browserTTL: 60, staleWhileRevalidate: 30 });
+  });
+});
+
+describe('getImageGenerationData source media', () => {
+  const SOURCE = 'https://orchestration-new.civitai.com/source.png';
+  const SOURCE_OWNER = 40;
+
+  function mockMeta(sourceImageIds: number[]) {
+    dbMock.dbRead.image.findUnique.mockResolvedValue({
+      hideMeta: false,
+      generationProcess: null,
+      meta: {
+        prompt: 'an edit',
+        workflow: 'img2img:edit',
+        images: [{ url: SOURCE, width: 512, height: 512 }],
+        extra: { sourceImageIds },
+      },
+      type: 'image',
+      tools: [],
+      techniques: [],
+    } as never);
+  }
+
+  /** A PG output (id 1) made from a source (id 2) rated `level`. */
+  async function seedEdit(level: number) {
+    await seed({});
+    await db.exec(
+      `INSERT INTO "Image" (id, "userId", "nsfwLevel") VALUES (2, ${SOURCE_OWNER}, ${level})`
+    );
+    mockMeta([2]);
+  }
+
+  async function linksFor(viewer: Viewer, options?: Parameters<typeof ctxFor>[1]) {
+    const data = await getImageGenerationData({ id: 1, viewer: ctxFor(viewer, options) });
+    expect(data.meta?.prompt).toBe('an edit');
+    return JSON.stringify(data).includes(SOURCE);
+  }
+
+  it.each([
+    ['signed out, SFW domain', ANON, { canViewNsfw: false }],
+    ['signed out, mature domain', ANON, {}],
+    ['signed in, SFW domain', OTHER, { canViewNsfw: false }],
+  ] as const)('withholds an R source from a viewer %s', async (_label, viewer, options) => {
+    await seedEdit(4);
+    expect(await linksFor(viewer, options)).toBe(false);
+  });
+
+  it.each([
+    ['signed in on the mature domain', OTHER, {}],
+    ["the output's owner", SELF, { canViewNsfw: false }],
+    ["the source's owner", { userId: SOURCE_OWNER }, { canViewNsfw: false }],
+    ['a moderator', MOD, { canViewNsfw: false }],
+  ] as const)('keeps an R source for %s', async (_label, viewer, options) => {
+    await seedEdit(4);
+    expect(await linksFor(viewer, options)).toBe(true);
+  });
+
+  it('keeps a PG source for a signed-out viewer', async () => {
+    await seedEdit(1);
+    expect(await linksFor(ANON, { canViewNsfw: false })).toBe(true);
+  });
+
+  it('withholds a source rated Blocked even where nothing is capped', async () => {
+    await seedEdit(32);
+    expect(await linksFor(OTHER, {})).toBe(false);
+    expect(await linksFor({ userId: SOURCE_OWNER }, {})).toBe(true);
+  });
+
+  it('withholds a source that no longer exists', async () => {
+    await seed({});
+    mockMeta([99]);
+    expect(await linksFor(OTHER, {})).toBe(false);
+  });
+
+  it('withholds a source the viewer could not open', async () => {
+    await seedEdit(1);
+    await db.exec(`UPDATE "Image" SET "needsReview" = 'minor' WHERE id = 2`);
+    expect(await linksFor(OTHER, {})).toBe(false);
+    expect(await linksFor({ userId: SOURCE_OWNER }, {})).toBe(true);
+    await db.exec(`
+      UPDATE "Image" SET "needsReview" = NULL, "postId" = 2 WHERE id = 2;
+      INSERT INTO "Post" (id, "userId", "publishedAt") VALUES (2, ${SOURCE_OWNER}, NULL);
+    `);
+    expect(await linksFor(OTHER, {})).toBe(false);
+  });
+
+  it('withholds a source whose owner has blocked the viewer', async () => {
+    await seedEdit(1);
+    vi.mocked(amIBlockedByUser).mockImplementation(
+      async ({ targetUserId }) => targetUserId === SOURCE_OWNER
+    );
+    expect(await linksFor(OTHER, {})).toBe(false);
+    expect(amIBlockedByUser).toHaveBeenCalledWith({ userId: VIEWER, targetUserId: SOURCE_OWNER });
+  });
+
+  it('withholds when any one source is above the cap', async () => {
+    await seedEdit(1);
+    await db.exec(`INSERT INTO "Image" (id, "userId", "nsfwLevel") VALUES (3, ${SOURCE_OWNER}, 4)`);
+    mockMeta([2, 3]);
+    expect(await linksFor(ANON, { canViewNsfw: false })).toBe(false);
+  });
+
+  it('counts a source listed twice once', async () => {
+    await seedEdit(1);
+    mockMeta([2, 2]);
+    expect(await linksFor(ANON, { canViewNsfw: false })).toBe(true);
+  });
+
+  it('withholds an unrated source under a cap', async () => {
+    await seedEdit(0);
+    expect(await linksFor(ANON, { canViewNsfw: false })).toBe(false);
+  });
+
+  it('keeps a Blocked or missing source for a moderator', async () => {
+    await seedEdit(32);
+    mockMeta([2, 99]);
+    expect(await linksFor(MOD, { canViewNsfw: false })).toBe(true);
+  });
+
+  it('reads the sources even when another extra field does not parse', async () => {
+    await seedEdit(4);
+    dbMock.dbRead.image.findUnique.mockResolvedValue({
+      hideMeta: false,
+      generationProcess: null,
+      meta: {
+        prompt: 'an edit',
+        images: [{ url: SOURCE, width: 512, height: 512 }],
+        extra: { sourceImageIds: [2], remixOfId: 'not-a-number' },
+      },
+      type: 'image',
+      tools: [],
+      techniques: [],
+    } as never);
+    expect(await linksFor(ANON, { canViewNsfw: false })).toBe(false);
+  });
+
+  it('ignores the image listed as its own source', async () => {
+    await seed({});
+    mockMeta([1]);
+    expect(await linksFor(ANON, { canViewNsfw: false })).toBe(true);
   });
 });
 
