@@ -565,7 +565,7 @@ export async function getScoreMultipliers(): Promise<ScoreMultipliers> {
   return DEFAULT_SCORE_MULTIPLIERS;
 }
 
-function getScores(ctx: Context, category: ScoreCategory) {
+function getScores(ctx: Pick<Context, 'pg' | 'jobContext' | 'setScore'>, category: ScoreCategory) {
   return templateHandler(async (sql) => {
     const query = await ctx.pg.cancellableQuery<{ userId: number; score: number }>(sql);
     ctx.jobContext.on('cancel', query.cancel);
