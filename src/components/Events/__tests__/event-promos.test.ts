@@ -64,7 +64,6 @@ describe('event entry points, from the gated answer', () => {
         editorCopy: false,
         articleEditor: false,
         modelEditor: false,
-        modelEditor: false,
       });
   });
 

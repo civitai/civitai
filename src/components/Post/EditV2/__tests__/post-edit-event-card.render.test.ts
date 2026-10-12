@@ -174,6 +174,7 @@ describe('post editor event card', () => {
     expect(el.querySelector('[data-testid="post-edit-event-card"]')).toBeNull();
     expect(text(el)).toContain('Put a party hat on this model.');
     expect(h.hatsAsked.length).toBeGreaterThan(0);
+    expect(h.hatsAsked.filter((i) => JSON.stringify(i) !== '{"event":"birthday2026"}')).toEqual([]);
 
     act(() => button(el, 'Put on a Party Hat')!.click());
     act(() => button(el, 'or hat the cover image instead')!.click());
@@ -208,6 +209,7 @@ describe('post editor event card', () => {
       card({ modelId: MODEL_ID }).querySelector('[data-testid="post-edit-event-card"]')
     ).not.toBeNull();
     act(() => root?.unmount());
+    host?.remove();
     h.banners = [BIRTHDAY];
     const el = card();
     expect(el.querySelector('[data-testid="post-edit-event-card"]')).not.toBeNull();
@@ -279,8 +281,10 @@ describe('menu item reading the worn hat from the viewer', () => {
 
   it('offers to take off the hat the viewer has on this model, and refreshes their hats', async () => {
     h.access = 'preview';
+    // Decoys: an image with the model's number, and another model.
     h.hats = [
       { cosmeticId: 2, placedOn: { entityType: 'Image', entityId: MODEL_ID } },
+      { cosmeticId: 4, placedOn: { entityType: 'Model', entityId: MODEL_ID + 1 } },
       { cosmeticId: 3, placedOn: { entityType: 'Model', entityId: MODEL_ID } },
     ];
     const el = item({ findWornHat: true });
@@ -290,6 +294,16 @@ describe('menu item reading the worn hat from the viewer', () => {
     ]);
     expect(h.invalidateHats.mock.calls).toEqual([[{ event: 'birthday2026' }]]);
     expect(h.openPicker).not.toHaveBeenCalled();
+  });
+
+  it('leaves their hats as they were when taking it off fails', async () => {
+    h.access = 'preview';
+    h.hats = [{ cosmeticId: 3, placedOn: { entityType: 'Model', entityId: MODEL_ID } }];
+    h.unequip.mockRejectedValueOnce(new Error('nope'));
+    const el = item({ findWornHat: true });
+    await act(async () => button(el, 'Remove Party Hat')!.click());
+    expect(h.unequip).toHaveBeenCalledTimes(1);
+    expect(h.invalidateHats).not.toHaveBeenCalled();
   });
 
   it('offers to add one when none of their hats is on it', () => {

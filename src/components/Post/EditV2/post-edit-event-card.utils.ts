@@ -10,7 +10,7 @@ export function postEditEventCard<TImage extends { id: number }>({
   publishedAt,
   unpublishedByParent,
   addedImages,
-  parentModelId,
+  ownModelId,
   now = new Date(),
 }: {
   ownerId?: number;
@@ -19,14 +19,15 @@ export function postEditEventCard<TImage extends { id: number }>({
   publishedAt?: Date | null;
   unpublishedByParent: boolean;
   addedImages: TImage[];
-  parentModelId?: number | null;
+  /** The model the post belongs to, when its owner owns it too. */
+  ownModelId: number | null;
   now?: Date;
 }) {
   if (!viewerId || ownerId !== viewerId || collectionId) return undefined;
   const live = !!publishedAt && publishedAt.getTime() <= now.getTime();
   return {
     coverImage: addedImages[0] as TImage | undefined,
-    modelId: parentModelId ?? undefined,
+    modelId: ownModelId ?? undefined,
     // A scheduled post earns nothing until it goes live; one held by its parent cannot be published here.
     showDraftNote: !live && !unpublishedByParent,
   };
