@@ -1,8 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
+import type * as ConfusableFold from '~/server/utils/confusable-fold';
 
 const { foldSpy } = vi.hoisted(() => ({ foldSpy: vi.fn() }));
 vi.mock('~/server/utils/confusable-fold', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('~/server/utils/confusable-fold')>();
+  const actual = await importOriginal<typeof ConfusableFold>();
   return {
     ...actual,
     foldConfusables: (value: string) => {
