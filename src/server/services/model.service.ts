@@ -3360,6 +3360,7 @@ export const publishModelById = async ({
   if (enforceModelRules) {
     const hold = await checkModelRulesLiteralHold({
       modelId: id,
+      // Publishing without versions makes none public; the loader adds the already-public ones.
       versionIds: versionIds ?? [],
       meta,
     });
@@ -3374,15 +3375,26 @@ export const publishModelById = async ({
 
   const model = await dbWrite.$transaction(
     async (tx) => {
-      const model = await tx.model.update({
-        where: { id },
-        data: {
-          status,
-          meta: isEmpty(meta) ? Prisma.JsonNull : meta,
-          deletedAt: null,
-        },
-        select: publishedModelSelect,
-      });
+      // A held model must not be overwritten by a publish that raced the hold. Moderators and
+      // internal callers don't enforce rules and may republish a held model.
+      const model = await tx.model
+        .update({
+          where: {
+            id,
+            ...(enforceModelRules ? { status: { notIn: constants.modPublishOnlyStatuses } } : {}),
+          },
+          data: {
+            status,
+            meta: isEmpty(meta) ? Prisma.JsonNull : meta,
+            deletedAt: null,
+          },
+          select: publishedModelSelect,
+        })
+        .catch((error) => {
+          if (enforceModelRules && error?.code === 'P2025')
+            throw throwAuthorizationError('You are not authorized to publish this model');
+          throw error;
+        });
 
       // Anti-bump guard: publishedAt is immutable once a model has gone
       // public. Allowed transitions: NULL (Draft) -> set, or future

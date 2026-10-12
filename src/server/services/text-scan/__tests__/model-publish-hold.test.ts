@@ -161,6 +161,32 @@ describe('publishModelById — Model rules literal hold', () => {
     expect(result).toMatchObject({ status: 'Published' });
   });
 
+  it('checks the already-public versions only when no versions are passed', async () => {
+    await publish({ enforceModelRules: true, versionIds: undefined });
+    expect(checkModelRulesLiteralHold).toHaveBeenCalledWith(
+      expect.objectContaining({ versionIds: [] })
+    );
+  });
+
+  it('refuses to overwrite a hold that landed after the caller checked', async () => {
+    mockTx.model.update.mockRejectedValue(Object.assign(new Error('none'), { code: 'P2025' }));
+
+    await expect(publish({ enforceModelRules: true })).rejects.toThrow(/not authorized/);
+
+    expect(mockTx.model.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: MODEL_ID, status: { notIn: ['UnpublishedViolation', 'Deleted'] } },
+      })
+    );
+  });
+
+  it('lets a moderator or internal caller republish a held model', async () => {
+    await publish();
+    expect(mockTx.model.update).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: MODEL_ID } })
+    );
+  });
+
   it('does not check at all unless the caller asks (moderators, internal callers)', async () => {
     checkModelRulesLiteralHold.mockResolvedValue(HOLD);
     await publish();
