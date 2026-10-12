@@ -747,6 +747,8 @@ describe('denominator — one ClickHouse row per scanned write', () => {
       }),
       'block-audit'
     );
+    // ...the error's message (which quotes the leaf) is not logged...
+    expect(JSON.stringify(mockLog.mock.calls)).not.toContain(TEXT);
     // ...and the denominator row still lands.
     expect(insertsInto(SCANS)).toHaveLength(1);
   });

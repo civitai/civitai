@@ -480,7 +480,9 @@ describe('incrementSharedCounter — counter-key moderation', () => {
     expect(chRows(SCANS_TABLE)).toEqual([
       expect.objectContaining({ surface: 'counter', mode: 'enforce', blocked: 1, leafCount: 1 }),
     ]);
-    expect(JSON.stringify(chRows(SCANS_TABLE))).not.toContain('playcount');
+    const serialized = JSON.stringify(chRows(SCANS_TABLE));
+    for (const text of [BAD_KEY, 'playcount', '13 year old girl'])
+      expect(serialized).not.toContain(text);
   });
 
   it('both flags on behave as ENFORCE: a flagged key is refused, and scanned once', async () => {
