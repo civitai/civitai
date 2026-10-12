@@ -463,10 +463,13 @@ export const BLOCK_BUZZ_CAP_PER_DAY = 50_000;
 export const BUZZ_BUDGET_CAP = 1000;
 
 /**
- * The machine-readable code a CONFIRMED pass-through step is refused with when the job
- * would exceed what remains of the viewer's own opted-in daily Buzz limit for the app
- * (`app_user_scope_grants.buzz_budget_per_day`). The confirm can never override that
- * limit; the viewer raises it on the app activity page (`/apps/activity`).
+ * The machine-readable code a viewer-confirmed job (a confirmed pass-through step or a
+ * training run) is refused with when it would exceed what remains of the viewer's own
+ * opted-in daily Buzz limit for the app (`app_user_scope_grants.buzz_budget_per_day`).
+ * The confirm can never override that limit where it is checked; the viewer raises it on
+ * the app activity page (`/apps/activity`). Where it is checked: the submit, on an
+ * ordinary page token; the step host's preview, on any token (the only check on a
+ * private run); a training private run is not checked against it at all.
  *
  * Shared because three places must agree on the string: the server's failed-snapshot
  * `errorCode`, the host's `CONFIRMED_STEP_RESULT` error, and the SDK that branches on it.

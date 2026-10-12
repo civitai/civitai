@@ -200,8 +200,9 @@ export function isPlatformInternalStepType(stepType: string): boolean {
 
 /**
  * THE one case fold for comparing a caller-supplied `$type` against a server-owned
- * list. Every such comparison goes through this, so two lists cannot disagree about
- * what "the same step type" means.
+ * list. The comparisons that use it: `isPlatformInternalStepType` (the denylist) and
+ * `isTrainingStepTypeIgnoringCase` (every training check on a caller-supplied `$type`,
+ * listed there), so two lists cannot disagree about what "the same step type" means.
  */
 export function foldStepTypeCase(stepType: string): string {
   return stepType.toLowerCase();
@@ -217,11 +218,16 @@ const TRAINING_STEP_TYPE_LOOKUP: ReadonlySet<string> = new Set(
  * reason: how the orchestrator matches `$type` case is not knowable from here, so a
  * refusal keyed on this must hold for either answer.
  *
- * 🔴 FOR REFUSING A SUBMITTED `$type` ONLY. `isTrainingStepType` (exact) stays the
- * predicate for everything else — reading a step the orchestrator RETURNED, whose
- * `$type` is its own canonical spelling, and the type guard that narrows to
- * `TrainingStepType`. Folding there would be wrong: it would treat a value as a
- * canonical type name that is not one.
+ * 🔴 EVERY TRAINING CHECK ON A CALLER-SUPPLIED `$type` USES THIS. The sites, all in
+ * `blocks.router`:
+ *   - `assertNotTrainingStepType` — a training type is never a confirmed step;
+ *   - `refuseUnquotedTraining` — an unquoted training step is refused;
+ *   - `buildPassThroughWorkflowTags` — a training step carries `TRAINING_WORKFLOW_TAG`.
+ *
+ * `isTrainingStepType` (exact) is kept ONLY where the `$type` was read off a workflow
+ * the orchestrator RETURNED, and as the type guard narrowing to `TrainingStepType`:
+ *   - `splitPassThroughStep` (`steps/output.ts`) — splitting a returned step's output;
+ *   - `hasBlockTrainingStep` (`workflow.service.ts`) — finding a returned training step.
  */
 export function isTrainingStepTypeIgnoringCase(stepType: string): boolean {
   return TRAINING_STEP_TYPE_LOOKUP.has(foldStepTypeCase(stepType));

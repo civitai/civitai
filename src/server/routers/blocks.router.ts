@@ -231,7 +231,6 @@ import {
   containsAirReference,
   estimateStepBuzz,
   getStep,
-  isTrainingStepType,
   planStepSpend,
   resolveStepVariant,
 } from '~/server/services/blocks/steps';
@@ -10465,7 +10464,9 @@ function refuseUnquotedTraining(
   stepType: string,
   quote: PassThroughQuote
 ): { snapshot: BlockWorkflowSnapshot } | null {
-  if (quote.quotedBuzz !== null || !isTrainingStepType(stepType)) return null;
+  // The CALLER-supplied `$type`, so matched case-insensitively (see
+  // `isTrainingStepTypeIgnoringCase`).
+  if (quote.quotedBuzz !== null || !isTrainingStepTypeIgnoringCase(stepType)) return null;
   return {
     snapshot: { workflowId: 'failed', status: 'failed', ...unquotedTrainingRefusal(quote.failure) },
   };
@@ -12704,9 +12705,11 @@ async function previewQuoteGrantFor(
   // TRAINING: fail-open. The limit fields are an additive extra its dialog does not
   // use, and before they existed the training preview made no limit read at all; a
   // failed read yields "unknown" (`null` / `false`) and the preview still succeeds. On
-  // an ordinary token the submit still enforces the limit. On a training PRIVATE run
-  // there is then no daily-limit check — which is how training private runs behaved
-  // before this read was added, bounded by the private-run cap.
+  // an ordinary token the submit still enforces the limit. A training PRIVATE run NEVER
+  // gets a daily-limit check, whether or not this read succeeds: the submit has no
+  // consent leg there and the training host does not act on `exceedsDailyLimit`. That
+  // is how training private runs behaved before this read existed; the private-run cap
+  // bounds them.
   let limit: Awaited<ReturnType<typeof readConsentDailyLimit>>;
   try {
     limit = await readConsentDailyLimit(auth.userId, claims.appBlockId, quote.total);
@@ -13928,7 +13931,9 @@ function buildWorkflowTags(
  */
 function buildPassThroughWorkflowTags(claims: BlockClaims, stepType: string): string[] {
   const tags = buildWorkflowTags(claims, PASS_THROUGH_ENGINE_LABEL, 'step');
-  return isTrainingStepType(stepType) ? [...tags, TRAINING_WORKFLOW_TAG] : tags;
+  // The CALLER-supplied `$type`, so matched case-insensitively (see
+  // `isTrainingStepTypeIgnoringCase`).
+  return isTrainingStepTypeIgnoringCase(stepType) ? [...tags, TRAINING_WORKFLOW_TAG] : tags;
 }
 
 /**

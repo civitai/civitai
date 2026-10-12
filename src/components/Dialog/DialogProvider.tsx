@@ -10,8 +10,6 @@ type DialogState = {
   target?: string | HTMLElement;
   focused?: 'true';
   closeOnEscape?: boolean;
-  /** The store id of the dialog this context belongs to. */
-  dialogId?: string | number | symbol;
 };
 
 const DialogContext = createContext<DialogState>({
@@ -19,6 +17,16 @@ const DialogContext = createContext<DialogState>({
   onClose: () => undefined,
 });
 export const useDialogContext = () => useContext(DialogContext);
+
+/**
+ * The store id of the dialog a component is rendered in (`undefined` outside one).
+ *
+ * 🔴 A SEPARATE CONTEXT, NOT A FIELD ON `DialogContext`. Most dialogs spread
+ * `useDialogContext()` straight into Mantine's `<Modal>`, which forwards unknown props
+ * to the DOM — an id there would land as a stray attribute on every modal.
+ */
+const DialogIdContext = createContext<Dialog['id'] | undefined>(undefined);
+export const useDialogId = () => useContext(DialogIdContext);
 
 const DialogProviderInner = ({ dialog, index }: { dialog: Dialog; index: number }) => {
   const [opened, setOpened] = useState(false);
@@ -45,10 +53,11 @@ const DialogProviderInner = ({ dialog, index }: { dialog: Dialog; index: number 
         zIndex: 300 + index,
         target: dialog.target,
         closeOnEscape: isTopLevel,
-        dialogId: dialog.id,
       }}
     >
-      <Dialog {...dialog.props} />
+      <DialogIdContext.Provider value={dialog.id}>
+        <Dialog {...dialog.props} />
+      </DialogIdContext.Provider>
     </DialogContext.Provider>
   );
 };

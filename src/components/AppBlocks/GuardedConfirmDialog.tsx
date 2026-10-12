@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
-import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { useDialogId } from '~/components/Dialog/DialogProvider';
 import { useIsTopDialog } from '~/components/Dialog/dialogStore';
 
 /** How long a spend confirm stays disabled after it appears, or after the page regains focus. */
@@ -63,7 +63,7 @@ export function useConfirmArmDelay(delayMs: number = CONFIRM_ARM_DELAY_MS, activ
  * underneath closes or a further one opens on top.
  */
 export default function GuardedConfirmDialog(props: React.ComponentProps<typeof ConfirmDialog>) {
-  const { dialogId } = useDialogContext();
+  const dialogId = useDialogId();
   const isTopMost = useIsTopDialog(dialogId);
   const armed = useConfirmArmDelay(CONFIRM_ARM_DELAY_MS, isTopMost);
   return <ConfirmDialog {...props} confirmProps={{ ...props.confirmProps, disabled: !armed }} />;

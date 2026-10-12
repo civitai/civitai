@@ -530,6 +530,56 @@ describe("a TRAINING step type is never a confirmed step — use kind:'training'
   });
 });
 
+describe('caller-supplied step types are matched case-insensitively everywhere', () => {
+  // The ORDINARY (unconfirmed) pass-through arm, within the per-call budget.
+  const cheap = (over: Record<string, unknown> = {}) => body({ maxBuzz: 200, ...over });
+
+  it.each(['Training', 'TRAINING', 'ImageResourceTraining', 'imageresourcetraining'])(
+    'an unquoted training step spelled "%s" is refused, as the exact spelling is',
+    async ($type) => {
+      h.submitWorkflow.mockImplementation(async () => {
+        throw new Error('orchestrator down');
+      });
+      const r = await submit(cheap({ $type }));
+      expect(r.snapshot).toMatchObject({
+        workflowId: 'failed',
+        status: 'failed',
+        error: 'Training needs a price quote and none could be obtained; try again.',
+        errorCode: 'training-quote-unavailable',
+      });
+      // Only the price check reached the orchestrator — nothing was submitted for real.
+      expect(realSubmits()).toHaveLength(0);
+    }
+  );
+
+  it('control: an unquoted NON-training step is not refused that way', async () => {
+    h.submitWorkflow.mockImplementation(async (args: { query?: { whatif?: boolean } }) => {
+      if (args.query?.whatif) throw new Error('orchestrator down');
+      return { id: workflowId, status: 'scheduled', cost: { total: 200 }, steps: [] };
+    });
+    const r = await submit(cheap({ $type: 'polyGen' }));
+    expect(r.snapshot.errorCode).toBeUndefined();
+    expect(realSubmits()).toHaveLength(1);
+  });
+
+  it.each(['training', 'Training', 'IMAGERESOURCETRAINING'])(
+    'a training step spelled "%s" carries the training workflow tag',
+    async ($type) => {
+      whatifPrice = { total: 150 };
+      await submit(cheap({ $type }));
+      const tags = (realSubmits()[0][0] as { body: { tags: string[] } }).body.tags;
+      expect(tags).toContain('training');
+    }
+  );
+
+  it('control: a non-training step does not', async () => {
+    whatifPrice = { total: 150 };
+    await submit(cheap({ $type: 'polyGen' }));
+    const tags = (realSubmits()[0][0] as { body: { tags: string[] } }).body.tags;
+    expect(tags).not.toContain('training');
+  });
+});
+
 describe('a BATCH estimate never stores a quote', () => {
   it('over-budget fixed-price cells store 0 records and carry no stepQuote', async () => {
     const out = await caller().estimateWorkflowBatch({

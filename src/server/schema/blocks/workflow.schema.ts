@@ -931,9 +931,11 @@ export type BlockWorkflowSnapshot = {
    * OPTIONAL + additive: set only on the refusals that define a code, absent
    * everywhere else. Treat an unknown value as opaque — codes may be added.
    *
-   * `'daily-limit-exceeded'` — a CONFIRMED pass-through step that would exceed what
-   * remains of the viewer's own opted-in daily Buzz limit for this app. Never
-   * overridable by the confirm; the viewer raises the limit themselves.
+   * `'daily-limit-exceeded'` — a viewer-confirmed job (a confirmed pass-through step or
+   * a `kind:'training'` run) that would exceed what remains of the viewer's own opted-in
+   * daily Buzz limit for this app. Never overridable by the confirm; the viewer raises
+   * the limit themselves. Returned by the submit for an ordinary page token only: a
+   * private run reserves against its own cap and makes no daily-limit check at submit.
    */
   errorCode?: TrainingQuoteErrorCode | typeof CONFIRMED_STEP_DAILY_LIMIT_ERROR_CODE;
   // The buzz account that primarily funded this generation (the accountType of

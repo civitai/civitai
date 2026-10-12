@@ -523,6 +523,19 @@ describe('PageBlockHost RUN_CONFIRMED_STEP (consent-gated over-budget step)', ()
     return (at as unknown as number) - since;
   }
 
+  test('a dialog-store modal carries no stray dialog-id attribute', async () => {
+    await mount();
+    openFiller('plain');
+    await expect.element(page.getByText('filler plain').first()).toBeInTheDocument();
+    // Dialogs spread their dialog context into Mantine's Modal, which forwards unknown
+    // props to the DOM; the dialog's store id must not be in that context.
+    expect(document.querySelectorAll('[dialogid], [dialogId]')).toHaveLength(0);
+    // Positive control: the selector does find an attribute when one is there.
+    document.body.setAttribute('dialogid', 'probe');
+    expect(document.querySelectorAll('[dialogid]')).toHaveLength(1);
+    document.body.removeAttribute('dialogid');
+  });
+
   test('a dialog UNDERNEATH closing does not stop the confirm in front from arming', async () => {
     await mount();
     await driveToReady();

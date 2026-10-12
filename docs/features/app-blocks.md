@@ -624,8 +624,12 @@ reserved, when the balance can be read). Training charges no author fee.
 
 If the viewer set a daily Buzz limit for the app and the run would exceed what remains of
 it, the submit returns a failed snapshot with `errorCode: 'daily-limit-exceeded'` (the same
-code a confirmed step uses). Training and confirmed steps share one confirmation and submit
-path on the server; see "Confirmed steps" below.
+code a confirmed step uses). That holds for an ordinary viewer's page token. On an owner's
+private run the submit reserves against the private-run cap instead and makes no daily-limit
+check, and the training host does not check the limit before the confirm either — so a
+training private run is bounded by the private-run cap, not by the viewer's daily limit.
+Training and confirmed steps share one confirmation and submit path on the server; see
+"Confirmed steps" below.
 
 ### Confirmed steps (one pass-through job above the per-call budget)
 
