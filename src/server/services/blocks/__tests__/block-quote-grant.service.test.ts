@@ -86,13 +86,17 @@ describe('the step quote record', () => {
     }) as never);
     const q = await storeStepQuote(fields);
     // Read between the claim and the consent write: the read still sees it…
+    let claimed: unknown = null;
     redisMock.sysRedis.get.mockImplementationOnce((async (k: string) => {
       const v = kv.get(k) ?? null;
-      expect(await claimStepQuote(q.quoteId)).not.toBeNull();
+      claimed = await claimStepQuote(q.quoteId);
       return v;
     }) as never);
     // …but the claim landed first, so the XX write must not recreate the key.
     expect(await recordStepQuoteConsent(q.quoteId, binding, 42)).toBeNull();
+    // Positive controls: the interleaving really happened (one read, a real claim).
+    expect(redisMock.sysRedis.get).toHaveBeenCalledTimes(1);
+    expect(claimed).toMatchObject({ quoteId: q.quoteId, total: 1040 });
     expect(kv.has(`system:blocks:step-quote:${q.quoteId}`)).toBe(false);
   });
 

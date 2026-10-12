@@ -828,7 +828,26 @@ describe('a submit billed ABOVE the confirmed price is detected', () => {
     );
   });
 
-  it('control: a submit billed at (or below) the confirmed price logs nothing', async () => {
+  // 🔴 Compared against what the viewer is CHARGED (the requote), not the stored
+  // quote total, and only in the ABOVE direction: a requote of 1017 billed at 1030 is
+  // over the charge yet under the confirmed 1040 (must log); billed at 1000 or exactly
+  // 1017 it must not.
+  it.each([
+    [1030, true],
+    [1017, false],
+    [1000, false],
+  ])('a 1017 requote billed at %i logs an overcharge: %s', async (billed, logs) => {
+    const quoteId = await confirmedQuote();
+    whatifPrice = { total: 1017 };
+    chargedPrice = billed;
+    await submit(body({ quoteId }));
+    const logged = loggingMock.logToAxiom.mock.calls.some(
+      (c) => (c[0] as { name?: string }).name === 'block-confirmed-step-overcharge'
+    );
+    expect(logged).toBe(logs);
+  });
+
+  it('control: a submit billed exactly at the confirmed price logs nothing', async () => {
     const quoteId = await confirmedQuote();
     await submit(body({ quoteId }));
     expect(loggingMock.logToAxiom).not.toHaveBeenCalledWith(
