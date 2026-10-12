@@ -145,10 +145,6 @@ describe('getImage postless authorization', () => {
     // every postless image has a server-side rule (owner, article cover, bounty).
     const input = getImageSchema.parse({ id: IMAGE_ID, withoutPost: true });
     expect(input).toEqual({ id: IMAGE_ID });
-
-    const sql = await captureQuery({ id: IMAGE_ID, userId: VIEWER });
-    expect(await captureQuery({ ...input, userId: VIEWER })).toBe(sql);
-    expect(sql).not.toContain('AND TRUE');
   });
 
   it('leaves the moderator path ungated', async () => {

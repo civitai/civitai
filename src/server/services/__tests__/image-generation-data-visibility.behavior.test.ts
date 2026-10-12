@@ -665,6 +665,28 @@ describe('imageVisibilityConditions for image.get', () => {
     expect(await visibleTo(ANON)).toBe(false);
   });
 
+  it.each([
+    ['a Private bounty, beside a Public one', 4, false],
+    ['a Public bounty, beside a Private one', 9, true],
+  ])("follows the entry's own bounty when it is %s", async (_label, bountyId, shown) => {
+    await seed({ post: null });
+    await db.exec(`INSERT INTO "Bounty" VALUES (4, ${MANAGER}, 'Private'), (9, ${MANAGER}, 'Public');
+      INSERT INTO "BountyEntry" VALUES (8, ${bountyId}, ${OWNER});
+      INSERT INTO "ImageConnection" VALUES (1, 8, 'BountyEntry')`);
+    expect(await visibleTo(ANON)).toBe(shown);
+  });
+
+  it('on a Private bounty, does not show an entry image to an entry owner who did not upload it', async () => {
+    // The entry page itself is closed to everyone but the bounty owner (assertBountyVisible).
+    const ENTRY_OWNER = 40;
+    await seed({ post: null });
+    await db.exec(`INSERT INTO "Bounty" VALUES (4, ${MANAGER}, 'Private');
+      INSERT INTO "BountyEntry" VALUES (8, 4, ${ENTRY_OWNER});
+      INSERT INTO "ImageConnection" VALUES (1, 8, 'BountyEntry')`);
+    expect(await visibleTo({ userId: ENTRY_OWNER })).toBe(false);
+    expect(await visibleTo({ userId: MANAGER })).toBe(true);
+  });
+
   it("does not admit a postless image through another image's bounty", async () => {
     await seed({ post: null });
     await db.exec(`INSERT INTO "Image" (id, "userId") VALUES (2, ${OWNER});
