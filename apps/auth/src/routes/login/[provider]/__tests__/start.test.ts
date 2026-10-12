@@ -5,6 +5,7 @@ vi.mock('$lib/server/auth/rate-limit', () => ({ checkRateLimit: async () => true
 vi.mock('$lib/server/auth/request', () => ({ getClientIp: () => '203.0.113.9' }));
 
 import { GET } from '../+server';
+import { NO_PKCE_COOKIE } from '$lib/server/auth/providers';
 
 function start(query: Record<string, string>) {
   const url = new URL('https://auth.civitai.com/login/discord');
@@ -48,7 +49,7 @@ describe('/login/discord start', () => {
     expect(authorize.searchParams.get('state')).toBe(set.get('oauth_state'));
     expect(set.has('oauth_verifier')).toBe(false);
     expect(deleted).toContain('oauth_verifier');
-    expect(set.get('oauth_no_pkce')).toBe('1');
+    expect(set.get(NO_PKCE_COOKIE)).toBe('discord');
   });
 
   it('login leg: PKCE challenge + verifier cookie, and clears any no-PKCE marker', async () => {
@@ -57,14 +58,18 @@ describe('/login/discord start', () => {
     expect(authorize.searchParams.get('code_challenge_method')).toBe('S256');
     expect(authorize.searchParams.get('code_challenge')).toBeTruthy();
     expect(set.get('oauth_verifier')).toBeTruthy();
-    expect(set.has('oauth_no_pkce')).toBe(false);
-    expect(deleted).toContain('oauth_no_pkce');
+    expect(set.has(NO_PKCE_COOKIE)).toBe(false);
+    expect(deleted).toContain(NO_PKCE_COOKIE);
   });
 
-  it('a plain link (no roles) keeps PKCE', async () => {
-    const { run, set } = start({ link: 'true' });
+  it.each([
+    ['a plain link (no roles)', { link: 'true' }],
+    ['roles without link', { roles: 'true' }],
+  ])('%s keeps PKCE', async (_, query) => {
+    const { run, set } = start(query);
     const authorize = await run();
     expect(authorize.searchParams.get('code_challenge')).toBeTruthy();
     expect(set.get('oauth_verifier')).toBeTruthy();
+    expect(set.has(NO_PKCE_COOKIE)).toBe(false);
   });
 });

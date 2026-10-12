@@ -10,7 +10,8 @@ const h = vi.hoisted(() => ({
   logToAxiom: vi.fn<(data: Record<string, unknown>) => Promise<void>>(async () => undefined),
 }));
 
-vi.mock('$lib/server/auth/providers', () => ({
+vi.mock('$lib/server/auth/providers', async (importOriginal) => ({
+  NO_PKCE_COOKIE: (await importOriginal<{ NO_PKCE_COOKIE: string }>()).NO_PKCE_COOKIE,
   getProvider: (id: string) =>
     id === 'discord'
       ? { id: 'discord', incrementalSkipsPkce: true }
@@ -43,6 +44,7 @@ vi.mock('$lib/server/metrics', () => ({
 vi.mock('$lib/server/axiom', () => ({ logToAxiom: h.logToAxiom }));
 
 import { GET } from '../+server';
+import { NO_PKCE_COOKIE } from '$lib/server/auth/providers';
 
 const LANDING = 'https://civitai.com/discord/link-role';
 
@@ -187,7 +189,7 @@ describe('state check on a code callback', () => {
 describe('Discord roles leg without PKCE', () => {
   const rolesJar = {
     oauth_state: 'st-1',
-    oauth_no_pkce: '1',
+    [NO_PKCE_COOKIE]: 'discord',
     oauth_return: LANDING,
     oauth_link: '1',
   };
@@ -199,7 +201,7 @@ describe('Discord roles leg without PKCE', () => {
     expect(h.exchangeCode).toHaveBeenCalledTimes(1);
     expect(h.exchangeCode.mock.calls[0][1]).toMatchObject({ code: 'c-1', codeVerifier: undefined });
     expect(h.linkAccountToUser).toHaveBeenCalledTimes(1);
-    expect(deleted).toContain('oauth_no_pkce');
+    expect(deleted).toContain(NO_PKCE_COOKIE);
   });
 
   it('sends no code_verifier on the roles leg even if a stray verifier cookie is present', async () => {
@@ -223,8 +225,13 @@ describe('Discord roles leg without PKCE', () => {
   });
 
   it.each([
-    ['not a link flow', { oauth_state: 'st-1', oauth_no_pkce: '1', oauth_return: '/' }, 'discord'],
+    [
+      'not a link flow',
+      { oauth_state: 'st-1', [NO_PKCE_COOKIE]: 'discord', oauth_return: '/' },
+      'discord',
+    ],
     ['a provider without the flag', rolesJar, 'github'],
+    ['a marker naming another provider', { ...rolesJar, [NO_PKCE_COOKIE]: 'github' }, 'discord'],
   ] as const)(
     'ignores the no-PKCE marker for %s, so a missing verifier still fails',
     async (_, jar, provider) => {

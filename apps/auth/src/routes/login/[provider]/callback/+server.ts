@@ -7,6 +7,7 @@ import {
   exchangeCode,
   fetchProfile,
   isStubProviderEnabled,
+  NO_PKCE_COOKIE,
 } from '$lib/server/auth/providers';
 import {
   findOrCreateUser,
@@ -39,10 +40,8 @@ export const GET: RequestHandler = async ({ params, url, cookies, locals }) => {
   const returnUrl = cookies.get('oauth_return') ?? '/';
   const sync = cookies.get('oauth_sync') ?? null;
   const linkIntent = cookies.get('oauth_link') === '1';
-  // Only the start route sets this, and only for the incremental (Linked Roles) link leg of a provider that
-  // rejects PKCE there; on any other flow it is ignored and the verifier stays required.
   const noPkce =
-    cookies.get('oauth_no_pkce') === '1' && linkIntent && !!provider.incrementalSkipsPkce;
+    cookies.get(NO_PKCE_COOKIE) === provider.id && linkIntent && !!provider.incrementalSkipsPkce;
 
   // Clear flow cookies regardless of outcome.
   for (const name of [
@@ -51,7 +50,7 @@ export const GET: RequestHandler = async ({ params, url, cookies, locals }) => {
     'oauth_return',
     'oauth_sync',
     'oauth_link',
-    'oauth_no_pkce',
+    NO_PKCE_COOKIE,
   ]) {
     cookies.delete(name, { path: '/' });
   }
@@ -70,13 +69,10 @@ export const GET: RequestHandler = async ({ params, url, cookies, locals }) => {
     redirect(302, loginRetry(url.origin, errorCode, returnUrl));
   }
 
-  if (!code || !state || !savedState || state !== savedState || (!verifier && !noPkce)) {
+  const missingVerifier = !verifier && !noPkce;
+  if (!code || !state || !savedState || state !== savedState || missingVerifier) {
     const reason =
-      !code || !state
-        ? 'no_code'
-        : !savedState || (!verifier && !noPkce)
-        ? 'no_cookie'
-        : 'state_mismatch';
+      !code || !state ? 'no_code' : !savedState || missingVerifier ? 'no_cookie' : 'state_mismatch';
     logCallbackFailure(provider.id, reason, linkIntent);
     error(400, 'Invalid OAuth state');
   }

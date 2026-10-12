@@ -8,12 +8,13 @@ import {
   buildAuthorizeUrl,
   isStubProviderEnabled,
   usesPkce,
+  NO_PKCE_COOKIE,
 } from '$lib/server/auth/providers';
 import { readReturnUrl, readSync } from '$lib/server/auth/redirect';
 import { checkRateLimit } from '$lib/server/auth/rate-limit';
 import { getClientIp } from '$lib/server/auth/request';
 
-// Start the upstream OAuth flow: stash state/PKCE-verifier + the returnUrl/sync we must honor
+// Start the upstream OAuth flow: stash state (and the PKCE verifier, when the leg uses PKCE) + the returnUrl/sync we must honor
 // after login, in short-lived cookies, then redirect to the provider's consent screen.
 // `?link=true` is the account-LINKING intent (the "Connect <provider>" flow): it requires an active session
 // and tells the callback to attach the provider to the CURRENT user instead of logging in / creating one.
@@ -48,16 +49,15 @@ export const GET: RequestHandler = async ({ params, url, cookies, locals, reques
   // The actual scope is server-defined (provider.incrementalScope); this is just the boolean intent. Used by
   // the /discord/link-role flow, which sends it alongside link=true.
   const incremental = url.searchParams.get('roles') === 'true';
-  const pkce = usesPkce(provider, incremental);
+  const pkce = usesPkce(provider, { incremental, link });
 
   const opts = { path: '/', httpOnly: true, secure: !dev, sameSite: 'lax' as const, maxAge: 600 };
   cookies.set('oauth_state', state, opts);
-  // The callback reads the no-PKCE leg from this server-set cookie, never from the callback query.
   if (pkce) {
     cookies.set('oauth_verifier', codeVerifier, opts);
-    cookies.delete('oauth_no_pkce', { path: '/' });
+    cookies.delete(NO_PKCE_COOKIE, { path: '/' });
   } else {
-    cookies.set('oauth_no_pkce', '1', opts);
+    cookies.set(NO_PKCE_COOKIE, provider.id, opts);
     cookies.delete('oauth_verifier', { path: '/' });
   }
   cookies.set('oauth_return', returnUrl, opts);
@@ -72,6 +72,12 @@ export const GET: RequestHandler = async ({ params, url, cookies, locals, reques
 
   redirect(
     302,
-    buildAuthorizeUrl(provider, { redirectUri, state, codeChallenge, prompt, incremental })
+    buildAuthorizeUrl(provider, {
+      redirectUri,
+      state,
+      codeChallenge: pkce ? codeChallenge : null,
+      prompt,
+      incremental,
+    })
   );
 };

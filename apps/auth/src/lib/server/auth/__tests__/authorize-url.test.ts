@@ -71,31 +71,29 @@ describe('buildAuthorizeUrl', () => {
     ).toBe(false);
   });
 
-  it('omits PKCE on the incremental leg of a provider that rejects it there (Discord roles)', () => {
-    const discord = def({ incrementalSkipsPkce: true });
-    const roles = new URL(buildAuthorizeUrl(discord, { ...baseOpts, incremental: true }));
+  it('omits PKCE params when no code challenge is given', () => {
+    const roles = new URL(
+      buildAuthorizeUrl(def(), { ...baseOpts, codeChallenge: null, incremental: true })
+    );
     expect(roles.searchParams.get('scope')).toBe('identify email role_connections.write');
     expect(roles.searchParams.has('code_challenge')).toBe(false);
     expect(roles.searchParams.has('code_challenge_method')).toBe(false);
     expect(roles.searchParams.get('state')).toBe('state-abc');
-
-    const login = new URL(buildAuthorizeUrl(discord, baseOpts));
-    expect(login.searchParams.get('code_challenge')).toBe('challenge-xyz');
-    expect(login.searchParams.get('code_challenge_method')).toBe('S256');
   });
 
-  it('keeps PKCE on an incremental leg for a provider without the flag', () => {
-    const url = new URL(buildAuthorizeUrl(def(), { ...baseOpts, incremental: true }));
-    expect(url.searchParams.get('code_challenge')).toBe('challenge-xyz');
-  });
-
-  it('usesPkce is false only for the flagged provider on the incremental leg', () => {
-    expect(usesPkce(def({ incrementalSkipsPkce: true }), true)).toBe(false);
-    expect(usesPkce(def({ incrementalSkipsPkce: true }), false)).toBe(true);
-    expect(usesPkce(def(), true)).toBe(true);
-    expect(usesPkce(def({ incrementalSkipsPkce: true, incrementalScope: undefined }), true)).toBe(
-      true
-    );
+  it('usesPkce is false only for the incremental LINK leg of a flagged provider', () => {
+    const discord = def({ incrementalSkipsPkce: true });
+    expect(usesPkce(discord, { incremental: true, link: true })).toBe(false);
+    expect(usesPkce(discord, { incremental: true, link: false })).toBe(true);
+    expect(usesPkce(discord, { incremental: false, link: true })).toBe(true);
+    expect(usesPkce(discord, {})).toBe(true);
+    expect(usesPkce(def(), { incremental: true, link: true })).toBe(true);
+    expect(
+      usesPkce(def({ incrementalSkipsPkce: true, incrementalScope: undefined }), {
+        incremental: true,
+        link: true,
+      })
+    ).toBe(true);
   });
 
   it('adds duration=temporary only for reddit', () => {
