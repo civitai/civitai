@@ -21,13 +21,11 @@ import { AppLayout } from '~/components/AppLayout/AppLayout';
 import { ProfileNavigation } from '~/components/Profile/ProfileNavigation';
 import { ProfileHeader } from '~/components/Profile/ProfileHeader';
 import { usePathname } from 'next/navigation';
-import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { profileSchemaImageUrl } from '~/components/Meta/safe-schema-image';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { BlockUserButton } from '~/components/HideUserButton/BlockUserButton';
 import type { UserWithCosmetics } from '~/server/selectors/user.selector';
 import { outerCardStyle } from '~/components/Buzz/CryptoDeposit/crypto-deposit.constants';
-import { isBlobUrl } from '~/utils/type-guards';
-import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import {
   milestoneOgEndpoint,
   parseMilestoneShareToken,
@@ -119,15 +117,7 @@ export function ProfileLayout2({ children }: { children: React.ReactNode }) {
     )}${following}. Download or generate online.`;
   }, [user?.username, user?.stats?.followerCountAllTime, overview]);
 
-  // An unsafe avatar names no image at all rather than falling back to `user.image`.
-  const userMetaImage =
-    user?.profilePicture && !isBlobUrl(user.profilePicture.url)
-      ? getIsSafeBrowsingLevel(user.profilePicture.nsfwLevel)
-        ? getEdgeUrl(user.profilePicture.url, { width: 1200 })
-        : undefined
-      : user?.image && user.image.startsWith('http')
-      ? user.image
-      : undefined;
+  const userMetaImage = profileSchemaImageUrl(user?.profilePicture);
   const ogEndpoint = user ? milestoneOgEndpoint(user.id, milestone, milestoneShareable) : undefined;
   // A shared milestone link previews its card. Telegram takes the JSON-LD page image over og:image
   // (the profile link previewed the avatar there), so the schema names the card as well.
