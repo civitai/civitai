@@ -37,7 +37,7 @@ import { createImage } from '~/server/services/image.service';
 import {
   A1111_PARAMETERS,
   pngWithTextChunks,
-} from '~/server/services/blocks/__tests__/png-text-chunk.fixture';
+} from '~/server/services/blocks/__tests__/embedded-meta-images.fixture';
 
 const KEY = '33333333-3333-4333-8333-333333333333';
 const CALLER = 42;

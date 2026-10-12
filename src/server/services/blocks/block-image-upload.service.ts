@@ -60,7 +60,8 @@ export async function persistBlockUploadImage(opts: {
     subject: 'block images',
   });
   // An app's bytes never pass the browser-side parse + audit an on-site upload gets, so the
-  // server runs them. A viewer-picked block upload still stores no meta.
+  // server runs them. A viewer-picked block upload still stores no meta. The stored prompt
+  // reaches the scan like any upload's, so it can make `gateBlockUploadImage` refuse the image.
   let meta: ImageMetaProps | undefined;
   if (uploadedByAppId) {
     const { readEmbeddedImageMeta } = await import('~/server/services/blocks/embedded-image-meta');

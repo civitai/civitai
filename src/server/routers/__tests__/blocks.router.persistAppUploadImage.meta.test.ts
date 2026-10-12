@@ -1,7 +1,12 @@
 import { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type * as SessionClient from '~/server/auth/session-client';
+import type * as AppBlocksFlag from '~/server/services/app-blocks-flag';
+import type * as BlockBridgeAuth from '~/server/services/blocks/block-bridge-auth.service';
 import type * as OrchestratorService from '~/server/services/orchestrator/orchestrator.service';
+import type * as BlockCatalogRateLimit from '~/server/utils/block-catalog-rate-limit';
+import type * as Metadata from '~/utils/metadata';
 import type * as S3Utils from '~/utils/s3-utils';
 
 /**
@@ -19,7 +24,9 @@ const {
   mockGetSessionUser,
   mockCheckPublishRate,
   mockS3Send,
+  parserOverride,
 } = vi.hoisted(() => ({
+  parserOverride: { throws: false },
   mockAuthorizeBlockBridgeToken: vi.fn(),
   mockParseSubjectUserId: vi.fn(),
   mockIsAppBlocksEnabled: vi.fn(),
@@ -29,27 +36,35 @@ const {
   mockS3Send: vi.fn(),
 }));
 
-vi.mock('~/server/services/blocks/block-bridge-auth.service', () => ({
+vi.mock('~/server/services/blocks/block-bridge-auth.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof BlockBridgeAuth>()),
   authorizeBlockBridgeToken: (...a: unknown[]) => mockAuthorizeBlockBridgeToken(...a),
 }));
 vi.mock('~/server/middleware/block-scope.middleware', async (importOriginal) => {
   const actual = (await importOriginal()) as Record<string, unknown>;
   return { ...actual, parseSubjectUserId: (...a: unknown[]) => mockParseSubjectUserId(...a) };
 });
-vi.mock('~/server/services/app-blocks-flag', () => ({
+vi.mock('~/server/services/app-blocks-flag', async (importOriginal) => ({
+  ...(await importOriginal<typeof AppBlocksFlag>()),
   isAppBlocksEnabled: (...a: unknown[]) => mockIsAppBlocksEnabled(...a),
-  isAppBlocksAuthorEnabled: vi.fn(),
   isAppBlocksPostCreationEnabled: (...a: unknown[]) => mockIsAppBlocksPostCreationEnabled(...a),
 }));
-vi.mock('~/server/auth/session-client', () => ({
+vi.mock('~/server/auth/session-client', async (importOriginal) => ({
+  ...(await importOriginal<typeof SessionClient>()),
   sessionClient: { getSessionUserById: (...a: unknown[]) => mockGetSessionUser(...a) },
 }));
-vi.mock('~/server/utils/block-catalog-rate-limit', () => ({
-  checkBlockCatalogRateLimit: vi.fn(),
-  checkBlockPostRateLimit: vi.fn(),
-  checkBlockPostAppRateLimit: vi.fn(),
+vi.mock('~/server/utils/block-catalog-rate-limit', async (importOriginal) => ({
+  ...(await importOriginal<typeof BlockCatalogRateLimit>()),
   checkBlockPublishRateLimit: (...a: unknown[]) => mockCheckPublishRate(...a),
 }));
+vi.mock('~/utils/metadata', async (importOriginal) => {
+  const actual = await importOriginal<typeof Metadata>();
+  return {
+    ...actual,
+    getMetadata: (file: Parameters<typeof actual.getMetadata>[0]) =>
+      parserOverride.throws ? Promise.reject(new Error('hostile chunk')) : actual.getMetadata(file),
+  };
+});
 // Same import-chain shim the sibling blocks.router suites use: `rateLimit`
 // transitively evaluates a top-level `Prisma.validator(...)`, which cannot run here.
 vi.mock('~/server/middleware.trpc', async () => {
@@ -76,8 +91,9 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { blocksRouter } from '../blocks.router';
 import {
   A1111_PARAMETERS,
+  COMFY_PROMPT_GRAPH,
   pngWithTextChunks,
-} from '~/server/services/blocks/__tests__/png-text-chunk.fixture';
+} from '~/server/services/blocks/__tests__/embedded-meta-images.fixture';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 const VIEWER_ID = 42;
@@ -122,6 +138,7 @@ function writtenRow() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  parserOverride.throws = false;
   mockAuthorizeBlockBridgeToken.mockResolvedValue({
     sub: `user:${VIEWER_ID}`,
     scopes: ['posts:write:self'],
@@ -171,7 +188,27 @@ describe('blocks.persistAppUploadImage → Image.meta from the uploaded file', (
     expect('blockPublishedAppId' in (row.meta as object)).toBe(false);
   });
 
-  it('a malformed generation chunk still uploads, with no meta', async () => {
+  it('stores a ComfyUI `prompt` graph chunk as meta', async () => {
+    storeHolds(await pngWithTextChunks({ prompt: COMFY_PROMPT_GRAPH }));
+
+    await call();
+    expect(writtenRow().meta).toMatchObject({
+      prompt: 'a lighthouse at dusk',
+      seed: 7654321,
+      steps: 20,
+    });
+  });
+
+  it('a parser that throws on the file still uploads, with no meta', async () => {
+    storeHolds(await pngWithTextChunks({ parameters: A1111_PARAMETERS }));
+    parserOverride.throws = true;
+
+    await expect(call()).resolves.toEqual({ imageId: IMAGE_ID });
+    expect(writtenRow().meta).toBe(Prisma.JsonNull);
+  });
+
+  // Invariant guard: origin/main never read meta, so this holds there too.
+  it('a truncated generation chunk still uploads, with no meta', async () => {
     storeHolds(await pngWithTextChunks({ prompt: '{"3":{"class_type":"KSampler","inputs":' }));
 
     await expect(call()).resolves.toEqual({ imageId: IMAGE_ID });
