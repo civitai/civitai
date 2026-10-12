@@ -8,7 +8,6 @@ import {
   LegacyRuleError,
   MATCH_MODES,
   ModelRuleNotFoundError,
-  convertLegacyModelRules,
   createModelRule,
   getModelRuleMatches,
   listModelRules,
@@ -42,7 +41,7 @@ export const load: PageServerLoad = async ({ url }) => {
       cursor: query.cursor,
       limit: PAGE_SIZE,
     });
-    return { ...base, rules: null, legacyCount: 0, total: 0, matches };
+    return { ...base, rules: null, total: 0, matches };
   }
 
   const all = await listModelRules();
@@ -54,7 +53,6 @@ export const load: PageServerLoad = async ({ url }) => {
   return {
     ...base,
     rules,
-    legacyCount: all.filter((r) => r.legacy).length,
     total: all.length,
     matches: null,
   };
@@ -104,15 +102,5 @@ export const actions: Actions = {
       if (error instanceof ModelRuleNotFoundError) return fail(404, { error: error.message });
       throw error;
     }
-  }),
-
-  convert: requiresGrant('textScan.modelRules.edit', async ({ locals }) => {
-    const result = await convertLegacyModelRules(locals.user.id);
-    if (result.count === 0) return fail(409, { error: 'No regex rules left to convert.' });
-    return {
-      success: true,
-      message: `Converted ${result.count} regex ${result.count === 1 ? 'rule' : 'rules'}.`,
-      cacheWarning: result.cacheStale ? STALE : null,
-    };
   }),
 };

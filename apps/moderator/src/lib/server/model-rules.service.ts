@@ -92,7 +92,7 @@ export class ModelRuleNotFoundError extends Error {
 
 export class LegacyRuleError extends Error {
   constructor() {
-    super('This rule still uses regex. Convert the regex rules before editing it.');
+    super('This rule still uses regex and cannot be edited until it is converted.');
     this.name = 'LegacyRuleError';
   }
 }
@@ -216,59 +216,6 @@ export async function setModelRuleEnabled(
     activity: enabled ? 'enable' : 'disable',
   });
   return { cacheStale };
-}
-
-/**
- * Idempotent: a second run finds nothing to convert. A rule the conversion cannot carry faithfully
- * (flagged, or an `Approve` rule, which meant "leave these alone") arrives disabled, so it acts on
- * nothing until a person rewrites it.
- */
-export async function convertLegacyModelRules(
-  userId: number
-): Promise<WriteResult & { count: number }> {
-  const count = await dbWrite.transaction().execute(async (trx) => {
-    const rows = await trx
-      .selectFrom('ModerationRule')
-      .select(['id', 'definition', 'reason', 'action'])
-      .where('entityType', '=', 'Model')
-      .forUpdate()
-      .execute();
-
-    let converted = 0;
-    for (const row of rows) {
-      if (isSemanticDefinition(row.definition)) continue;
-      const conversion = convertLegacyModelRule(row.definition, row.reason);
-      const needsAttention = !!conversion.needsAttention || row.action === 'Approve';
-      const definition = semanticModelRuleSchema.parse({
-        ...conversion,
-        ...(needsAttention ? { needsAttention: true } : {}),
-        updatedById: userId,
-      });
-      await trx
-        .updateTable('ModerationRule')
-        .set({
-          definition,
-          action: 'Block',
-          updatedAt: new Date(),
-          ...(needsAttention ? { enabled: false } : {}),
-        })
-        .where('id', '=', row.id)
-        .where('entityType', '=', 'Model')
-        .executeTakeFirstOrThrow();
-      converted++;
-    }
-    return converted;
-  });
-
-  if (count === 0) return { count: 0, cacheStale: false };
-  const cacheStale = !(await bustCache());
-  await recordModActivity({
-    userId,
-    entityType: ACTIVITY_ENTITY,
-    entityId: null,
-    activity: `convert-regex:${count}`,
-  });
-  return { count, cacheStale };
 }
 
 export const MATCH_MODES = ['all', 'shadow', 'active'] as const;

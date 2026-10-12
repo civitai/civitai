@@ -1,10 +1,8 @@
 <script lang="ts">
   import { page } from '$app/state';
-  import { Button } from '@civitai/ui/components/ui/button/index.js';
-  import { enhance } from '$app/forms';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
   import LinkTabs from '$lib/components/LinkTabs.svelte';
-  import { LINK_CLASS, plural } from '$lib/format';
+  import { LINK_CLASS } from '$lib/format';
   import MatchesTab from './MatchesTab.svelte';
   import RulesTab from './RulesTab.svelte';
   import type { ActionData, PageData } from './$types';
@@ -16,7 +14,6 @@
     { value: 'rules', label: 'Rules', href: '?tab=rules' },
     { value: 'matches', label: 'Matches', href: '?tab=matches' },
   ];
-  let converting = $state(false);
   let editorOpen = $state(false);
 </script>
 
@@ -42,36 +39,6 @@
 {/if}
 
 {#if data.rules}
-  {#if data.legacyCount > 0}
-    <section
-      class="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-500/40 bg-amber-500/10 p-4"
-    >
-      <p class="text-sm text-amber-200">
-        {plural(data.legacyCount, 'rule')} still {data.legacyCount === 1 ? 'uses' : 'use'} regex.
-        Converting rewrites them in place as plain-language rules and keeps the regex for reference.
-      </p>
-      {#if canEdit}
-        <form
-          method="POST"
-          action="?/convert"
-          use:enhance={() => {
-            converting = true;
-            return async ({ update }) => {
-              try {
-                await update();
-              } finally {
-                converting = false;
-              }
-            };
-          }}
-        >
-          <Button type="submit" disabled={converting}>
-            Convert {plural(data.legacyCount, 'rule')}
-          </Button>
-        </form>
-      {/if}
-    </section>
-  {/if}
   <RulesTab
     rules={data.rules}
     total={data.total}

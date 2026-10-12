@@ -153,7 +153,7 @@
                     size="sm"
                     variant="outline"
                     disabled={rule.legacy}
-                    title={rule.legacy ? 'Convert the regex rules first' : undefined}
+                    title={rule.legacy ? 'Still regex; awaiting the one-off conversion' : undefined}
                     onclick={() => (editingId = rule.id)}
                   >
                     Edit
