@@ -67,6 +67,11 @@ beforeAll(async () => {
     CREATE TABLE "CollectionContributor" (
       "collectionId" int, "userId" int, permissions "CollectionContributorPermission"[]
     );
+    CREATE TABLE "Bounty" (
+      id int PRIMARY KEY, "userId" int, availability "Availability" DEFAULT 'Public'
+    );
+    CREATE TABLE "BountyEntry" (id int PRIMARY KEY, "bountyId" int NOT NULL, "userId" int);
+    CREATE TABLE "ImageConnection" ("imageId" int, "entityId" int, "entityType" text);
   `);
   const raw = pgliteRaw(db);
   (dbMock.dbRead.$queryRaw as unknown as ReturnType<typeof vi.fn>).mockImplementation(
@@ -78,7 +83,9 @@ beforeAll(async () => {
 });
 
 beforeEach(async () => {
-  await db.exec(`TRUNCATE "Image", "Post", "CollectionContributor", "Article";`);
+  await db.exec(
+    `TRUNCATE "Image", "Post", "CollectionContributor", "Article", "Bounty", "BountyEntry", "ImageConnection";`
+  );
   dbMock.dbRead.image.findUnique.mockResolvedValue({
     id: 1,
     type: 'image',
