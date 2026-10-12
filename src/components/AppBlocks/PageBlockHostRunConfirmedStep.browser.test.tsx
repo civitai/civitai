@@ -510,6 +510,10 @@ describe('PageBlockHost RUN_CONFIRMED_STEP (consent-gated over-budget step)', ()
     await expect.element(confirmButton(), ARMED).toBeEnabled();
     await confirmButton().click();
     expect(await reply(replies)).toEqual({ requestId: 'rq_16', snapshot: SNAPSHOT });
+    // Wait for the dialog stack to SETTLE EMPTY — the confirm closes after the reply,
+    // and a notice (which would open after the reply too) would keep it non-empty. An
+    // immediate absence check would run before either could happen.
+    await vi.waitFor(() => expect(useDialogStore.getState().dialogs).toHaveLength(0));
     expect(page.getByTestId('block-confirmed-step-notice').elements()).toHaveLength(0);
     replies.stop();
   });
