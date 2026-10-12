@@ -193,24 +193,35 @@ describe('deleteModelById — soft delete', () => {
     expect(mockCollectionsQueueUpdate).not.toHaveBeenCalled();
   });
 
-  // The creator score reads statusAtDelete; recorded after the update it would always read 'Deleted'.
-  it('records the status at delete for this model before writing Deleted', async () => {
+  // The creator score reads statusAtDelete; recorded after the update it would always read 'Deleted',
+  // and recorded outside the transaction it would survive a rolled-back delete.
+  it('records the status at delete for this model, in the transaction, before writing Deleted', async () => {
     const order: string[] = [];
-    mockDbWrite.$executeRaw.mockImplementation((async (
-      strings: TemplateStringsArray,
-      ...values: unknown[]
-    ) => {
-      if (strings.join('?').includes("'statusAtDelete'")) order.push(`record:${values.join(',')}`);
-      return 1;
-    }) as never);
-    mockDbWrite.model.update.mockImplementation((async () => {
-      order.push('delete');
-      return { id: MODEL_ID, userId: OWNER_ID, nsfwLevel: 1, modelVersions: [{ id: VERSION_ID }] };
-    }) as never);
+    const tx = {
+      $executeRaw: vi.fn(async (strings: TemplateStringsArray, ...values: unknown[]) => {
+        if (strings.join('?').includes("'statusAtDelete'"))
+          order.push(`record:${values.join(',')}`);
+        return 1;
+      }),
+      model: {
+        update: vi.fn(async () => {
+          order.push('delete');
+          return {
+            id: MODEL_ID,
+            userId: OWNER_ID,
+            nsfwLevel: 1,
+            modelVersions: [{ id: VERSION_ID }],
+          };
+        }),
+      },
+    };
+    mockDbWrite.$transaction.mockImplementationOnce((async (fn: (t: typeof tx) => unknown) =>
+      fn(tx)) as never);
 
     await deleteModelById({ id: MODEL_ID, userId: OWNER_ID } as any);
 
     expect(order).toEqual([`record:${MODEL_ID}`, 'delete']);
+    expect(mockDbWrite.$executeRaw).not.toHaveBeenCalled();
   });
 });
 

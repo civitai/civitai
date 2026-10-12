@@ -39,6 +39,11 @@ type ModelRow = {
   deletedAt?: string | null;
   /** When the ModelMetric row last changed; defaults to before the checkpoint. */
   metricUpdatedAt?: string;
+  /**
+   * The status mirrored onto the ModelMetric row; defaults to Published whatever the model's own
+   * status, so a rule that read the mirror instead of `Model.status` would count every model.
+   */
+  metricStatus?: string;
 };
 
 async function addModel(
@@ -66,7 +71,7 @@ async function addModel(
     [
       id,
       userId,
-      row.status,
+      row.metricStatus ?? 'Published',
       metrics.downloads,
       metrics.reviews,
       metrics.generations,
@@ -100,8 +105,9 @@ async function scores() {
   return result;
 }
 
+/** Whether the subject model counted; any score other than exactly with or without it fails. */
 const counts = (userId: number, all: Map<number, number>) => {
-  expect(all.has(userId)).toBe(true);
+  expect([ANCHOR, ANCHOR + SUBJECT]).toContain(all.get(userId));
   return all.get(userId) === ANCHOR + SUBJECT;
 };
 
@@ -144,6 +150,19 @@ describe('which statuses count', () => {
   ])('%s counts: %s', async (status, expected) => {
     await owner(1, { status });
     expect(counts(1, await scores())).toBe(expected);
+  });
+
+  it('reads the model status, not the copy on the metric row', async () => {
+    await owner(1, { status: 'Published', metricStatus: 'UnpublishedViolation' });
+    expect(counts(1, await scores())).toBe(true);
+  });
+
+  it('counts a live model whose meta still carries an old takedown', async () => {
+    await owner(1, {
+      status: 'Published',
+      meta: { unpublishedBy: MODERATOR, unpublishedReason: 'other' },
+    });
+    expect(counts(1, await scores())).toBe(true);
   });
 });
 
