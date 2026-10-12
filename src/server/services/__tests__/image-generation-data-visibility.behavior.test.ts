@@ -59,6 +59,11 @@ beforeAll(async () => {
     CREATE TABLE "CollectionContributor" (
       "collectionId" int, "userId" int, permissions "CollectionContributorPermission"[]
     );
+    CREATE TABLE "Bounty" (
+      id int PRIMARY KEY, "userId" int, availability "Availability" DEFAULT 'Public'
+    );
+    CREATE TABLE "BountyEntry" (id int PRIMARY KEY, "bountyId" int NOT NULL, "userId" int);
+    CREATE TABLE "ImageConnection" ("imageId" int, "entityId" int, "entityType" text);
   `);
   const raw = pgliteRaw(db);
   // Tagged-template calls, and `managesPostCollection`'s single prebuilt `Prisma.sql` argument.
@@ -71,7 +76,9 @@ beforeAll(async () => {
 });
 
 beforeEach(async () => {
-  await db.exec(`TRUNCATE "Image", "Post", "CollectionContributor", "Article";`);
+  await db.exec(
+    `TRUNCATE "Image", "Post", "CollectionContributor", "Article", "Bounty", "BountyEntry", "ImageConnection";`
+  );
   vi.mocked(amIBlockedByUser).mockReset().mockResolvedValue(false);
   vi.spyOn(imageResourcesCache, 'fetch').mockResolvedValue({});
   dbMock.dbRead.image.findUnique.mockResolvedValue({
@@ -587,6 +594,65 @@ describe('imageVisibilityConditions for image.get', () => {
       expect(await visibleTo(OTHER, postGates)).toBe(false);
       expect(await visibleTo(SELF, postGates)).toBe(true);
     }
+  });
+
+  // A bounty's images follow the bounty page (canViewBounty): shown unless the bounty is Private,
+  // whose owner still sees them. An entry's images follow the entry's bounty.
+  describe.each([
+    ['a bounty', `INSERT INTO "ImageConnection" VALUES (1, 4, 'Bounty')`],
+    [
+      'an entry on a bounty',
+      `INSERT INTO "BountyEntry" VALUES (8, 4, ${OWNER});
+        INSERT INTO "ImageConnection" VALUES (1, 8, 'BountyEntry')`,
+    ],
+  ])('a postless image of %s', (_label, connect) => {
+    const BOUNTY_OWNER = { userId: MANAGER };
+
+    beforeEach(async () => {
+      await seed({ post: null });
+      await db.exec(`INSERT INTO "Bounty" VALUES (4, ${MANAGER}, 'Public'); ${connect}`);
+    });
+
+    it.each(['Public', 'Unsearchable'])('is shown to everyone on a %s bounty', async (level) => {
+      await db.exec(`UPDATE "Bounty" SET availability = '${level}'`);
+      for (const postGates of ['always', 'whenPosted'] as const) {
+        expect(await visibleTo(ANON, postGates)).toBe(true);
+        expect(await visibleTo(OTHER, postGates)).toBe(true);
+      }
+    });
+
+    it('on a Private bounty, is shown only to the bounty owner and the image owner', async () => {
+      await db.exec(`UPDATE "Bounty" SET availability = 'Private'`);
+      expect(await visibleTo(ANON, 'always')).toBe(false);
+      expect(await visibleTo(OTHER, 'always')).toBe(false);
+      expect(await visibleTo(BOUNTY_OWNER, 'always')).toBe(true);
+      expect(await visibleTo(SELF, 'always')).toBe(true);
+    });
+
+    it('keeps the review and Blocked checks', async () => {
+      await db.exec(`UPDATE "Image" SET "needsReview" = 'minor'`);
+      expect(await visibleTo(ANON, 'always')).toBe(false);
+      await db.exec(`UPDATE "Image" SET "needsReview" = NULL, "nsfwLevel" = 32`);
+      expect(await visibleTo(ANON, 'always')).toBe(false);
+      expect(await visibleTo(SELF, 'always')).toBe(true);
+    });
+  });
+
+  it('matches a bounty connection on its entity type, not its id alone', async () => {
+    // Entry 4 exists and bounty 4 is Private, so only a type-blind join would admit this image
+    // through the Public bounty 9 that entry 4 belongs to.
+    await seed({ post: null });
+    await db.exec(`INSERT INTO "Bounty" VALUES (4, ${MANAGER}, 'Private'), (9, ${MANAGER}, 'Public');
+      INSERT INTO "BountyEntry" VALUES (4, 9, ${OWNER});
+      INSERT INTO "ImageConnection" VALUES (1, 4, 'Bounty')`);
+    expect(await visibleTo(ANON, 'always')).toBe(false);
+  });
+
+  it('does not let an image in an unpublished post borrow a bounty', async () => {
+    await seed({ post: { '"publishedAt"': 'NULL' } });
+    await db.exec(`INSERT INTO "Bounty" VALUES (4, ${MANAGER}, 'Public');
+      INSERT INTO "ImageConnection" VALUES (1, 4, 'Bounty')`);
+    expect(await visibleTo(OTHER, 'always')).toBe(false);
   });
 
   it('keeps the review and Blocked checks without the post', async () => {
