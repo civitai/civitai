@@ -298,6 +298,10 @@ describe('achievements tab', () => {
       ['Nova', '100,000+'],
       ['Legend', '10,000,000+'],
     ]);
+    const greyed = [...el.querySelectorAll('[data-tier-ladder] > button')].map((rung) =>
+      rung.firstElementChild?.className.split(' ').includes('grayscale')
+    );
+    expect(greyed).toEqual([false, false, false, true]);
     expect(grids(el)).toHaveLength(1);
   });
 
