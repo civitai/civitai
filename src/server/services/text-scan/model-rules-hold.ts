@@ -10,22 +10,19 @@ export type ModelRulesLiteralHold = { ruleIds: number[]; textHash: string };
 
 /**
  * The literal rule hits that must stop a model from going public, or null. Only `active` mode
- * holds, and moderators are never checked. `versionIds` are the versions this publish makes public,
+ * holds; callers decide who is checked (moderators never are). `versionIds` are the versions this publish makes public,
  * so the hash equals the one the post-publish scan computes and a moderator's clearance applies to it.
  * A failing check lets the publish through: the LLM scan that follows is the backstop.
  */
 export async function checkModelRulesLiteralHold({
   modelId,
   versionIds,
-  isModerator,
   meta,
 }: {
   modelId: number;
   versionIds: number[];
-  isModerator?: boolean;
   meta?: ModelMeta | null;
 }): Promise<ModelRulesLiteralHold | null> {
-  if (isModerator) return null;
   try {
     if ((await getTextScanMode('ModelRules', modelId)) !== 'active') return null;
     const rules = await getModelRulesForPrompt();

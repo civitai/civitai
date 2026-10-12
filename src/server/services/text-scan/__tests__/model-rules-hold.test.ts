@@ -19,7 +19,7 @@ const subject = (name: string) => ({
   fields: [{ heading: 'Name', text: name }],
 });
 const RULES = [{ id: 3, subject: 'Example Franchise', description: '', aliases: ['Hero One'] }];
-const base = { modelId: 7, versionIds: [11], isModerator: false };
+const base = { modelId: 7, versionIds: [11] };
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -47,11 +47,6 @@ describe('checkModelRulesLiteralHold', () => {
     expect(loadModelScanSubjects).not.toHaveBeenCalled();
   });
 
-  it('never checks a moderator', async () => {
-    await expect(checkModelRulesLiteralHold({ ...base, isModerator: true })).resolves.toBeNull();
-    expect(getTextScanMode).not.toHaveBeenCalled();
-  });
-
   it('passes text that matches no rule', async () => {
     loadModelScanSubjects.mockResolvedValue(new Map([[7, subject('Plain LoRA')]]));
     await expect(checkModelRulesLiteralHold(base)).resolves.toBeNull();
@@ -66,6 +61,26 @@ describe('checkModelRulesLiteralHold', () => {
     await expect(checkModelRulesLiteralHold({ ...base, meta: cleared })).resolves.toMatchObject({
       ruleIds: [3],
     });
+  });
+
+  it('reports only the rules left once a moderator cleared some for this text', async () => {
+    loadModelScanSubjects.mockResolvedValue(new Map([[7, subject('Hero One and Other Name')]]));
+    getModelRulesForPrompt.mockResolvedValue([
+      ...RULES,
+      { id: 4, subject: 'Other Name', description: '', aliases: [] },
+    ]);
+    const textHash = textScanTextHash(subject('Hero One and Other Name'));
+    const meta = { modelRulesCleared: { ruleIds: [3], textHash } };
+    await expect(checkModelRulesLiteralHold({ ...base, meta })).resolves.toEqual({
+      ruleIds: [4],
+      textHash,
+    });
+  });
+
+  it('does nothing when there are no rules', async () => {
+    getModelRulesForPrompt.mockResolvedValue([]);
+    await expect(checkModelRulesLiteralHold(base)).resolves.toBeNull();
+    expect(loadModelScanSubjects).not.toHaveBeenCalled();
   });
 
   it('lets the publish through when the check itself fails', async () => {
