@@ -329,10 +329,9 @@ const REVIEW_NACK_MESSAGE = 'not available in review preview';
 // `forbidden` is the in-set code: review preview genuinely is a permission
 // context, and it is the closest member semantically.
 //
-// The annotation is the GUARD — `WildcardPackErrorCode` is the repo's local
-// mirror of the SDK's `BlockWildcardPackErrorCode` (see wildcardPackParse.ts,
-// which explains why it is a mirror), so tsc rejects any future edit that swaps
-// in a non-member string.
+// The annotation is the GUARD — `WildcardPackErrorCode` is the SDK's
+// `BlockWildcardPackErrorCode` (aliased in wildcardPackParse.ts), so tsc rejects
+// any future edit that swaps in a non-member string.
 const WILDCARD_REVIEW_NACK_CODE: WildcardPackErrorCode = 'forbidden';
 
 /**

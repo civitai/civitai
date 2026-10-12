@@ -7,8 +7,8 @@ import { renderWithProviders } from '../../../test/component-setup';
 // `importOriginal` generic below be written without an inline `import()` type,
 // which the repo's `consistent-type-imports` rule forbids.
 import type * as MantineNotifications from '@mantine/notifications';
-// Type-only too (erased, so it cannot defeat vi.mock hoisting) — the repo's local
-// mirror of the SDK's `BlockWildcardPackErrorCode` union, used below so the
+// Type-only too (erased, so it cannot defeat vi.mock hoisting) — the repo's alias
+// of the SDK's `BlockWildcardPackErrorCode` union, used below so the
 // permitted-code list in this file cannot silently drift from the union.
 import type { WildcardPackErrorCode } from '~/components/AppBlocks/wildcardPackParse';
 

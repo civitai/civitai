@@ -186,8 +186,6 @@ export const INVENTORY = {
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
   },
-  // REQUEST_SIGN_IN / REQUEST_CONSENT are in the PUBLISHED SDK dist union, so
-  // the compile-time gate requires them here.
   REQUEST_SIGN_IN: {
     request: false,
     reply: '',
@@ -257,8 +255,7 @@ export const INVENTORY = {
   // body plus a run total out. Estimate only — nothing is submitted. Both live
   // hosts forward it to `blocks.estimateWorkflowBatch` (decision + reply live in
   // `estimateBatchGate.ts`). Its reply is in the `{ requestId, error }` family, so
-  // a host with no handler NACKs it through the shared dispatcher. REQUEST-style;
-  // in the PUBLISHED SDK dist union as of app-sdk 0.65.1.
+  // a host with no handler NACKs it through the shared dispatcher. REQUEST-style.
   ESTIMATE_WORKFLOW_BATCH: {
     request: true,
     reply: 'ESTIMATE_BATCH_RESULT',
@@ -273,8 +270,6 @@ export const INVENTORY = {
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
   },
-  // CANCEL_WORKFLOW is in the PUBLISHED SDK dist union, so the compile-time gate
-  // requires it here.
   CANCEL_WORKFLOW: {
     request: true,
     reply: 'WORKFLOW_CANCELED',
@@ -293,8 +288,7 @@ export const INVENTORY = {
   // the viewer's generation queue: read (image results) + cancel one, both scoped
   // to `app-block:<appId>` server-side (host-forced tag on read; fail-closed
   // ownership+tag guard on cancel — the block never sees the user's personal
-  // gens). In the PUBLISHED SDK dist union as of app-sdk 0.65.1, so the compile-time
-  // gate requires both. PAGE-ONLY affordance today (a full-page generator app;
+  // gens). PAGE-ONLY affordance today (a full-page generator app;
   // model-slot apps are deferred + will get the page host too), so N/A for the
   // model host — mirrors the buzz self-read / OPEN_RESOURCE_PICKER placement.
   QUERY_APP_WORKFLOWS: {
@@ -352,8 +346,7 @@ export const INVENTORY = {
   // movement, so the REST route is the DEFAULT surface and both stay (see the
   // "Direction" note under Routes in docs/features/app-blocks.md, and
   // civitai/civitai-app-starters#437).
-  // In the PUBLISHED SDK dist union as of app-sdk 0.65.1, so the compile-time
-  // gate requires it. PAGE-ONLY affordance today (a page block reading its viewer; model-
+  // PAGE-ONLY affordance today (a page block reading its viewer; model-
   // slot apps are deferred + will get page-host too), so N/A for the model host
   // — mirrors the buzz self-read dashboard bridges.
   GET_VIEWER: {
@@ -365,8 +358,7 @@ export const INVENTORY = {
   },
   // Buzz self-read dashboard bridges (ledger / all-pool balances / per-model
   // earnings) — host-mediated via the `buzz:read:self`-gated `blocks.getMyBuzz*`
-  // MUTATIONS. In the PUBLISHED SDK dist union as of app-sdk 0.65.1, so the
-  // compile-time gate requires all three.
+  // MUTATIONS.
   // PAGE-ONLY affordance (a Buzz-dashboard page app; model-slot apps are
   // deferred + will get page-host too), so N/A for the model host — mirrors
   // OPEN_RESOURCE_PICKER / OPEN_IMAGE_UPLOAD.
@@ -400,12 +392,10 @@ export const INVENTORY = {
   },
   // The page-surface resource picker (Checkpoint + LoRA allowlist) — the wider
   // generalization of OPEN_CHECKPOINT_PICKER, opened as host chrome so the iframe
-  // only ever learns the ONE resource the user picked. Now PUBLISHED in the SDK
-  // dist union (was ahead-of-published under app-sdk 0.6), so the compile-time
-  // gate requires it here. IframeHost (model slot) intentionally handles only the
-  // narrower OPEN_CHECKPOINT_PICKER — the wider resource picker is a page-only
-  // affordance (see the PageBlockHost handler's Design-1 rationale), so it's N/A
-  // for the model host.
+  // only ever learns the ONE resource the user picked. IframeHost (model slot)
+  // intentionally handles only the narrower OPEN_CHECKPOINT_PICKER — the wider
+  // resource picker is a page-only affordance (see the PageBlockHost handler's
+  // Design-1 rationale), so it's N/A for the model host.
   OPEN_RESOURCE_PICKER: {
     request: true,
     reply: 'RESOURCE_PICKER_RESULT',
@@ -418,9 +408,7 @@ export const INVENTORY = {
   // asks the host to let the user upload an image (the app decides what it is for).
   // Host-chrome upload (like OPEN_RESOURCE_PICKER): the page host opens its own
   // upload modal, runs civitai's session-authed upload → REAL scan → server-side
-  // SFW + moderation-flag gate, and returns ONLY a moderated image id. In the
-  // PUBLISHED SDK dist union as of app-sdk 0.65.1, so the compile-time gate
-  // requires it.
+  // SFW + moderation-flag gate, and returns ONLY a moderated image id.
   // A page-only affordance today, so N/A for the model host.
   //
   // NOTE (async cosmetic-image scan): the non-blocking mode's scan VERDICT rides a
@@ -493,8 +481,7 @@ export const INVENTORY = {
   // voting/requests app is a PAGE app (entity=none) so PageBlockHost is the
   // primary target, but the shared datastore is a per-APP surface an app's
   // model-slot block could also read, so BOTH real hosts wire it (matching the
-  // per-user APP_STORAGE_* placement). In the PUBLISHED SDK dist union as of app-sdk 0.65.1
-  // (as APP_STORAGE_* are), so the compile-time gate requires every SHARED_* key.
+  // per-user APP_STORAGE_* placement).
   SHARED_LIST: {
     request: true,
     reply: 'SHARED_LIST_RESULT',
@@ -564,8 +551,7 @@ export const INVENTORY = {
   // Single-row fetch-by-key (Batch-D item 6) — the deep-link companion to
   // SHARED_LIST's paged read. Same REQUEST-style hang class + same both-host
   // placement as its SHARED_* siblings (the shared datastore is a per-APP surface
-  // a model-slot block can also read). In the PUBLISHED SDK dist union as of app-sdk 0.65.1,
-  // like its SHARED_* siblings.
+  // a model-slot block can also read).
   SHARED_GET: {
     request: true,
     reply: 'SHARED_GET_RESULT',
@@ -578,7 +564,7 @@ export const INVENTORY = {
   // host placement as SHARED_WITHDRAW (its reply is the SHARED_WITHDRAW-style
   // `{ ok, error? }`: the validator accepts an error reply with or without `ok`,
   // and the hosts send `ok: false` because it is the clearer signal, not because
-  // omitting it would hang). In the PUBLISHED SDK dist union as of app-sdk 0.65.1.
+  // omitting it would hang).
   SHARED_REPORT: {
     request: true,
     reply: 'SHARED_REPORT_RESULT',
@@ -594,7 +580,6 @@ export const INVENTORY = {
   // affordance today (the paid-output apps — gen-matrix / custom-generators /
   // model-benchmarking — are all page apps), so N/A for the model host, mirroring
   // the GET_IMAGES_BY_IDS / PUBLISH_GENERATION_OUTPUTS page-only exemption.
-  // In the PUBLISHED SDK dist union as of app-sdk 0.65.1.
   SAVE_IMAGE: {
     request: true,
     reply: 'SAVE_IMAGE_RESULT',
@@ -606,8 +591,7 @@ export const INVENTORY = {
   // ── Wildcard-pack import (W13, page-host bridge) ───────────────────────────
   // A page block asks the HOST to resolve + fetch + unzip + parse a wildcard
   // pack's list files, as the logged-in user (the host holds the real session).
-  // REQUEST-style ⇒ an unhandled one HANGS the block. In the PUBLISHED SDK dist
-  // union as of app-sdk 0.65.1, so the compile-time gate requires it.
+  // REQUEST-style ⇒ an unhandled one HANGS the block.
   //
   // PAGE-ONLY affordance: the resolve+parse runs against the viewer's real
   // session + browsing-level ceiling and is a full-page import flow. The model
@@ -644,8 +628,7 @@ export const INVENTORY = {
   // BOTH real hosts: unlike the page-only affordances above, a collection follow
   // is a plain on-site bookmark with no page-sized surface behind it — a model-
   // slot block showing a collection has exactly the same reason to offer it.
-  // REQUEST-style ⇒ an unhandled one HANGS the block. In the PUBLISHED SDK dist
-  // union as of app-sdk 0.65.1, so the compile-time gate requires it.
+  // REQUEST-style ⇒ an unhandled one HANGS the block.
   SET_COLLECTION_FOLLOW: {
     request: true,
     reply: 'COLLECTION_FOLLOW_RESULT',
@@ -676,8 +659,7 @@ export const INVENTORY = {
   // The preview confers NOTHING — the write re-runs every guard.
   //
   // REQUEST-style ⇒ an unhandled one HANGS the block to its 10-minute human
-  // timeout. In the PUBLISHED SDK dist union as of app-sdk 0.65.1, so the
-  // compile-time gate requires it.
+  // timeout.
   CREATE_POST_FROM_APP: {
     request: true,
     reply: 'CREATE_POST_RESULT',
@@ -695,8 +677,7 @@ export const INVENTORY = {
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
   },
-  // Start a confirmed `kind:'training'` run — see `runTrainingGate.ts`. REQUEST-style;
-  // in the PUBLISHED SDK dist union as of app-sdk 0.65.1.
+  // Start a confirmed `kind:'training'` run — see `runTrainingGate.ts`. REQUEST-style.
   RUN_TRAINING: {
     request: true,
     reply: 'TRAINING_RESULT',
@@ -707,8 +688,7 @@ export const INVENTORY = {
   },
   // Prepare the dataset a `kind:'training'` body names — see
   // `prepareTrainingDatasetGate.ts`. The host calls `blocks.prepareTrainingDataset`
-  // with the page token, which the block's own origin cannot reach. REQUEST-style;
-  // in the PUBLISHED SDK dist union as of app-sdk 0.65.1.
+  // with the page token, which the block's own origin cannot reach. REQUEST-style.
   PREPARE_TRAINING_DATASET: {
     request: true,
     reply: 'TRAINING_DATASET_RESULT',
