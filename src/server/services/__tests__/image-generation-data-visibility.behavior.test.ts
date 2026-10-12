@@ -447,11 +447,12 @@ describe('getImageGenerationData source media', () => {
     } as never);
   }
 
-  /** A PG output (id 1) made from a source (id 2) rated `level`. */
+  /** A PG output (id 1) made from a source (id 2, in its owner's published post 2) rated `level`. */
   async function seedEdit(level: number) {
     await seed({});
     await db.exec(
-      `INSERT INTO "Image" (id, "userId", "nsfwLevel") VALUES (2, ${SOURCE_OWNER}, ${level})`
+      `INSERT INTO "Image" (id, "userId", "nsfwLevel", "postId") VALUES (2, ${SOURCE_OWNER}, ${level}, 2);
+        INSERT INTO "Post" (id, "userId", "publishedAt") VALUES (2, ${SOURCE_OWNER}, now() - interval '1 day')`
     );
     mockMeta([2]);
   }
@@ -492,6 +493,13 @@ describe('getImageGenerationData source media', () => {
     expect(await linksFor({ userId: SOURCE_OWNER }, {})).toBe(true);
   });
 
+  it('withholds a postless source from everyone but its owner, as image.get does', async () => {
+    await seedEdit(1);
+    await db.exec(`UPDATE "Image" SET "postId" = NULL WHERE id = 2`);
+    expect(await linksFor(OTHER, {})).toBe(false);
+    expect(await linksFor({ userId: SOURCE_OWNER }, {})).toBe(true);
+  });
+
   it('withholds a source that no longer exists', async () => {
     await seed({});
     mockMeta([99]);
@@ -504,8 +512,8 @@ describe('getImageGenerationData source media', () => {
     expect(await linksFor(OTHER, {})).toBe(false);
     expect(await linksFor({ userId: SOURCE_OWNER }, {})).toBe(true);
     await db.exec(`
-      UPDATE "Image" SET "needsReview" = NULL, "postId" = 2 WHERE id = 2;
-      INSERT INTO "Post" (id, "userId", "publishedAt") VALUES (2, ${SOURCE_OWNER}, NULL);
+      UPDATE "Image" SET "needsReview" = NULL WHERE id = 2;
+      UPDATE "Post" SET "publishedAt" = NULL WHERE id = 2;
     `);
     expect(await linksFor(OTHER, {})).toBe(false);
   });
@@ -521,7 +529,9 @@ describe('getImageGenerationData source media', () => {
 
   it('withholds when any one source is above the cap', async () => {
     await seedEdit(1);
-    await db.exec(`INSERT INTO "Image" (id, "userId", "nsfwLevel") VALUES (3, ${SOURCE_OWNER}, 4)`);
+    await db.exec(
+      `INSERT INTO "Image" (id, "userId", "nsfwLevel", "postId") VALUES (3, ${SOURCE_OWNER}, 4, 2)`
+    );
     mockMeta([2, 3]);
     expect(await linksFor(ANON, { canViewNsfw: false })).toBe(false);
   });
