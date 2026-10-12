@@ -197,6 +197,43 @@ describe('canonicalJson — exact, or it throws', () => {
     expect((thrown as Error).message).toBe(message);
   });
 
+  // A sparse array's empty slots are skipped by `map`/`join`, so each of these used to
+  // hash like a shorter array. Holes at the start, middle and end; none equals `[]` or
+  // `[null]`, and the plain neighbours they would have collided with still hash.
+  it.each([
+    // eslint-disable-next-line no-sparse-arrays
+    ['a hole at the start', { v: [, 11, 12] }, 'body.v[0] is an empty array slot'],
+    // eslint-disable-next-line no-sparse-arrays
+    ['a hole in the middle', { v: [13, , 14] }, 'body.v[1] is an empty array slot'],
+    [
+      'a hole at the end',
+      { v: Object.assign([15, 16], { length: 3 }) },
+      'body.v[2] is an empty array slot',
+    ],
+    ['an array that is only a hole', { v: new Array(1) }, 'body.v[0] is an empty array slot'],
+  ])('refuses %s, naming the slot', (_l, value, message) => {
+    let thrown: unknown;
+    try {
+      canonicalJson(value);
+    } catch (e) {
+      thrown = e;
+    }
+    expect(isNonJsonQuotedBodyError(thrown)).toBe(true);
+    expect((thrown as Error).message).toBe(message);
+  });
+
+  it('control: the dense arrays a sparse one could have been mistaken for all hash, and differ', () => {
+    const forms = [[], [null], [11, 12], [13, 14], [15, 16]].map((v) => canonicalJson({ v }));
+    expect(forms).toEqual([
+      '{"v":[]}',
+      '{"v":[null]}',
+      '{"v":[11,12]}',
+      '{"v":[13,14]}',
+      '{"v":[15,16]}',
+    ]);
+    expect(new Set(forms).size).toBe(forms.length);
+  });
+
   it('the values that used to collide no longer produce a hash at all', () => {
     const hash = (input: Record<string, unknown>) =>
       hashPassThroughStepBody({ kind: 'step', $type: 'polyGen', input, maxBuzz: 1 } as never);

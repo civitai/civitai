@@ -1,7 +1,8 @@
 import { describe, expect, test, vi, beforeEach } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 import { DialogProvider } from '~/components/Dialog/DialogProvider';
-import { useDialogStore } from '~/components/Dialog/dialogStore';
+import AlertDialog from '~/components/Dialog/Common/AlertDialog';
+import { dialogStore, useDialogStore } from '~/components/Dialog/dialogStore';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
 import type * as TrpcMod from '~/utils/trpc';
@@ -497,6 +498,70 @@ describe('PageBlockHost RUN_CONFIRMED_STEP (consent-gated over-budget step)', ()
     // It waited (at least) the whole delay from the moment it was uncovered. A slow
     // machine only makes this larger; 50 ms covers timer rounding.
     expect((enabledAt as unknown as number) - uncoveredAt).toBeGreaterThanOrEqual(950);
+    expect(consentMutate).not.toHaveBeenCalled();
+  });
+
+  // ── "In front" means the LAST dialog in the stack, not a dialog count ───────
+  const openFiller = (id: string) =>
+    dialogStore.trigger({
+      id,
+      component: AlertDialog,
+      props: { type: 'info', title: `Filler ${id}`, children: `filler ${id}` },
+    });
+  /** When `button` next becomes enabled, measured from `since`. */
+  async function enabledAfter(button: HTMLButtonElement, since: number) {
+    let at: number | null = button.disabled ? null : performance.now();
+    const observer = new MutationObserver(() => {
+      if (at === null && !button.disabled) at = performance.now();
+    });
+    observer.observe(button, { attributes: true, attributeFilter: ['disabled', 'data-disabled'] });
+    try {
+      await vi.waitFor(() => expect(at).not.toBeNull(), ARMED);
+    } finally {
+      observer.disconnect();
+    }
+    return (at as unknown as number) - since;
+  }
+
+  test('a dialog UNDERNEATH closing does not stop the confirm in front from arming', async () => {
+    await mount();
+    await driveToReady();
+    openFiller('under-1');
+    postFromBlock('RUN_CONFIRMED_STEP', { requestId: 'rq_t1', body: BODY });
+    await expect.element(confirmButton()).toBeInTheDocument();
+    // The dialog below goes away while the confirm is still counting down.
+    useDialogStore.getState().closeById('under-1');
+    await expect.element(confirmButton(), ARMED).toBeEnabled();
+    // …and it stays armed: nothing about being in front changed.
+    await new Promise((r) => setTimeout(r, 300));
+    expect((confirmButton().element() as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  test('a confirm in the MIDDLE of three stays disabled, even when the one below it closes', async () => {
+    await mount();
+    await driveToReady();
+    openFiller('under-2');
+    postFromBlock('RUN_CONFIRMED_STEP', { requestId: 'rq_t2', body: BODY });
+    await expect.element(confirmButton()).toBeInTheDocument();
+    openFiller('over-2');
+    await vi.waitFor(() => expect(useDialogStore.getState().dialogs).toHaveLength(3));
+    const button = confirmButton().element() as HTMLButtonElement;
+
+    // Covered: well past the delay, still disabled.
+    await new Promise((r) => setTimeout(r, 1500));
+    expect(button.disabled).toBe(true);
+
+    // The dialog BELOW closes. The stack is back to the size it had when the confirm
+    // opened, but the confirm is still covered — it must not arm.
+    useDialogStore.getState().closeById('under-2');
+    await vi.waitFor(() => expect(useDialogStore.getState().dialogs).toHaveLength(2));
+    await new Promise((r) => setTimeout(r, 1500));
+    expect(button.disabled).toBe(true);
+
+    // The dialog ABOVE closes: now it is in front, and waits the whole delay.
+    useDialogStore.getState().closeById('over-2');
+    const waited = await enabledAfter(button, performance.now());
+    expect(waited).toBeGreaterThanOrEqual(950);
     expect(consentMutate).not.toHaveBeenCalled();
   });
 

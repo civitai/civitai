@@ -238,6 +238,7 @@ import {
 import { TRAINING_WORKFLOW_TAG } from '~/server/services/orchestrator/training/workflow-state';
 import {
   assertStepTypeAllowed,
+  isTrainingStepTypeIgnoringCase,
   PlatformInternalStepTypeError,
 } from '~/server/services/blocks/steps/orchestrator-denylist';
 // APP-FACING generation type for the spend-attribution row, resolved from the
@@ -12638,8 +12639,9 @@ async function readConsentDailyLimit(
  *
  * Shared fields: `quoteId`, `total`, `expiresAt`, `shortfall` (Buzz the viewer is short
  * by; `null` when the balance could not be read), and the viewer's own daily limit
- * (`dailyLimit`, `exceedsDailyLimit` — the submit refuses such a job whatever the
- * viewer clicks). The kind adds what its dialog shows: the dataset for training, the
+ * (`dailyLimit`, `exceedsDailyLimit` — on an ordinary page token the submit refuses
+ * such a job too, whatever the viewer clicks; on a private run this read is the only
+ * check, see the note at the read below). The kind adds what its dialog shows: the dataset for training, the
  * `$type` for a step.
  */
 async function previewQuoteGrantFor(
@@ -12686,12 +12688,25 @@ async function previewQuoteGrantFor(
   } catch {
     shortfall = null;
   }
-  // 🔴 PER KIND, DELIBERATELY. For a STEP this is NOT fail-open: its dialog shows the
-  // limit and refuses on it, so a limit it cannot read must not be shown as "no limit"
-  // — the preview fails. For TRAINING the limit fields are an additive extra its dialog
-  // does not use, and the training preview never depended on this read; a failed read
-  // there yields "unknown" (`null` / `false`) and the preview still succeeds. Either
-  // way the SUBMIT enforces the limit on its own reservation.
+  // 🔴 PER KIND, DELIBERATELY — AND DO NOT RELAX THE STEP SIDE.
+  //
+  // STEP: fail-CLOSED. Its dialog shows the limit and refuses on it, so a limit it
+  // cannot read must not be shown as "no limit" — the preview fails.
+  //
+  // 🔴 ON A PRIVATE RUN THIS READ IS THE ONLY DAILY-LIMIT CHECK THERE IS. The submit
+  // enforces the limit through its reservation's consent leg, and
+  // `reserveBlockBuzzSpendForClaims` returns `consent: null` for a private-run token
+  // (it reserves against the private-run cap instead). So for an ordinary page token
+  // the submit backs this read up; for a private run nothing does. An earlier version
+  // of this comment said "either way the submit enforces the limit" — that was false
+  // for private runs.
+  //
+  // TRAINING: fail-open. The limit fields are an additive extra its dialog does not
+  // use, and before they existed the training preview made no limit read at all; a
+  // failed read yields "unknown" (`null` / `false`) and the preview still succeeds. On
+  // an ordinary token the submit still enforces the limit. On a training PRIVATE run
+  // there is then no daily-limit check — which is how training private runs behaved
+  // before this read was added, bounded by the private-run cap.
   let limit: Awaited<ReturnType<typeof readConsentDailyLimit>>;
   try {
     limit = await readConsentDailyLimit(auth.userId, claims.appBlockId, quote.total);
@@ -12730,7 +12745,8 @@ async function previewQuoteGrantFor(
  * which the block (holding nothing but its token) cannot present — that is the control;
  * the host dialog before it is the consent surface. It does not extend the quote's
  * life, and a confirmed quote is still single-use, still re-quoted at submit and still
- * bound by every cap, the viewer's daily limit included.
+ * bound by every cap the submit reserves against (on an ordinary page token that
+ * includes the viewer's daily limit; a private run reserves against its own cap).
  */
 async function consentQuoteGrantFor(
   kind: BlockQuoteGrantKind,
@@ -12976,7 +12992,9 @@ async function submitConfirmedQuoteWorkflow(opts: {
 
   // 🔴 THE VIEWER'S OWN DAILY LIMIT — never overridden by the confirm, and refused with
   // a machine-readable code (both kinds) so a host can name the limit and where to
-  // raise it rather than show a generic failure.
+  // raise it rather than show a generic failure. This fires only where the reservation
+  // HAS a consent leg: a private-run token has none (`consent: null`), so there the
+  // step preview's fail-closed read is the only daily-limit check.
   if (consentBudgetExceeded(reservation)) {
     await refundBlockBuzzReservation(reservation, jobBuzz);
     await releaseGenIdempotency(genClaimKey);
@@ -13280,7 +13298,9 @@ async function submitConfirmedQuoteWorkflow(opts: {
 //   - ANY pass-through `$type` (the platform denylist still applies), up to
 //     `BLOCK_CONFIRMED_STEP_MAX_BUZZ_PER_JOB`.
 //   - The token rule is `quotedGrantTokenGate`'s, shared with training.
-//   - The viewer's own opted-in DAILY LIMIT binds and the confirm never overrides it.
+//   - The viewer's own opted-in DAILY LIMIT binds and the confirm never overrides it:
+//     at the submit's reservation on an ordinary page token, and at the preview (the
+//     only check on a private run, which reserves against its own cap instead).
 
 /**
  * The refusal per `blockConfirmedStepCeiling` reason — one message per reason. A
@@ -13322,18 +13342,23 @@ const CONFIRMED_STEP_TRAINING_TYPE_MESSAGE =
   "a training step type cannot run as a confirmed step — use kind:'training'";
 
 /**
- * A training `$type` (`training`, `imageResourceTraining`) is never a confirmed step.
+ * A training `$type` (`training`, `imageResourceTraining`) is never a CONFIRMED step.
  *
- * 🔴 WITHOUT THIS THE STEP PATH IS A SECOND, UNGUARDED DOOR TO TRAINING: a
- * `{kind:'step', $type:'training', …}` body with a fixed price would get a step quote
- * and run under the STEP flag — skipping everything `kind:'training'` exists to do
- * (the server-prepared dataset bound to the viewer, the caption and prompt audit, run
- * resolution against the training service's own gates, and the training flag).
- * Checked at BOTH the grant and the submit; the canonical predicate is
- * `isTrainingStepType`, the same one the unquoted arm refuses on.
+ * A confirmed quote is what lets a job cost more than the per-call budget. For training
+ * that grant belongs to `kind:'training'`, which is what binds the server-prepared
+ * dataset to the viewer, audits the captions and prompts, resolves the run against the
+ * training service's own gates and checks the training flag. A training `$type` granted
+ * a STEP quote would run above the budget, under the step flag, with none of that.
+ *
+ * ⚠️ WHAT THIS DOES NOT CHANGE: a training `$type` priced WITHIN the per-call budget
+ * still runs through the ordinary pass-through arm, exactly as it did before confirmed
+ * steps existed. This only keeps the ABOVE-budget grant on the training kind.
+ *
+ * Checked at BOTH the grant and the submit. Step types are matched case-insensitively,
+ * consistent with the denylist (`isTrainingStepTypeIgnoringCase`).
  */
 function assertNotTrainingStepType(stepType: string): void {
-  if (isTrainingStepType(stepType)) {
+  if (isTrainingStepTypeIgnoringCase(stepType)) {
     throw new TRPCError({ code: 'BAD_REQUEST', message: CONFIRMED_STEP_TRAINING_TYPE_MESSAGE });
   }
 }

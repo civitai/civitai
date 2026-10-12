@@ -1,3 +1,5 @@
+import { TRAINING_STEP_TYPES } from './output';
+
 /**
  * PLATFORM-INTERNAL ORCHESTRATOR STEP TYPES — the denylist for App Blocks.
  *
@@ -148,7 +150,7 @@ export const PLATFORM_INTERNAL_STEP_TYPES: readonly string[] = Object.freeze([
  * only looked as though it did.
  */
 const PLATFORM_INTERNAL_LOOKUP = new Set<string>(
-  PLATFORM_INTERNAL_STEP_TYPES.map((t) => t.toLowerCase())
+  PLATFORM_INTERNAL_STEP_TYPES.map(foldStepTypeCase)
 );
 
 /**
@@ -193,7 +195,36 @@ export class PlatformInternalStepTypeError extends Error {
  * an entry whose lowercasing could collide with a legitimate type.
  */
 export function isPlatformInternalStepType(stepType: string): boolean {
-  return PLATFORM_INTERNAL_LOOKUP.has(stepType.toLowerCase());
+  return PLATFORM_INTERNAL_LOOKUP.has(foldStepTypeCase(stepType));
+}
+
+/**
+ * THE one case fold for comparing a caller-supplied `$type` against a server-owned
+ * list. Every such comparison goes through this, so two lists cannot disagree about
+ * what "the same step type" means.
+ */
+export function foldStepTypeCase(stepType: string): string {
+  return stepType.toLowerCase();
+}
+
+const TRAINING_STEP_TYPE_LOOKUP: ReadonlySet<string> = new Set(
+  TRAINING_STEP_TYPES.map(foldStepTypeCase)
+);
+
+/**
+ * True when a CALLER-SUPPLIED `$type` names a training step type, matched
+ * case-insensitively — consistent with `isPlatformInternalStepType`, and for the same
+ * reason: how the orchestrator matches `$type` case is not knowable from here, so a
+ * refusal keyed on this must hold for either answer.
+ *
+ * 🔴 FOR REFUSING A SUBMITTED `$type` ONLY. `isTrainingStepType` (exact) stays the
+ * predicate for everything else — reading a step the orchestrator RETURNED, whose
+ * `$type` is its own canonical spelling, and the type guard that narrows to
+ * `TrainingStepType`. Folding there would be wrong: it would treat a value as a
+ * canonical type name that is not one.
+ */
+export function isTrainingStepTypeIgnoringCase(stepType: string): boolean {
+  return TRAINING_STEP_TYPE_LOOKUP.has(foldStepTypeCase(stepType));
 }
 
 /**

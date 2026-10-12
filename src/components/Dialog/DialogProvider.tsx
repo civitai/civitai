@@ -10,6 +10,8 @@ type DialogState = {
   target?: string | HTMLElement;
   focused?: 'true';
   closeOnEscape?: boolean;
+  /** The store id of the dialog this context belongs to. */
+  dialogId?: string | number | symbol;
 };
 
 const DialogContext = createContext<DialogState>({
@@ -43,6 +45,7 @@ const DialogProviderInner = ({ dialog, index }: { dialog: Dialog; index: number 
         zIndex: 300 + index,
         target: dialog.target,
         closeOnEscape: isTopLevel,
+        dialogId: dialog.id,
       }}
     >
       <Dialog {...dialog.props} />

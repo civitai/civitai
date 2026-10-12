@@ -95,7 +95,7 @@ function describeNonJson(value: unknown): string {
  * 🔴 EXACT, OR IT THROWS. Only plain JSON is accepted — plain objects, arrays, strings,
  * FINITE numbers, booleans and `null`. Anything else (`Date`, `Map`, `Set`, a class
  * instance, `BigInt`, a symbol or function, `NaN`/`Infinity`, an `undefined` array
- * element) throws `NonJsonQuotedBodyError` rather than being squeezed into a string two
+ * element, an empty slot in a sparse array) throws `NonJsonQuotedBodyError` rather than being squeezed into a string two
  * different values could share: a `Date` and a `Map` both have no own enumerable keys,
  * so a looser form hashed every one of them as `{}` and a quote confirmed for one such
  * body matched any other. A body is bound exactly, or it is not quotable.
@@ -112,7 +112,14 @@ export function canonicalJson(value: unknown, path = 'body'): string {
     return JSON.stringify(value);
   }
   if (Array.isArray(value)) {
-    return `[${value.map((entry, i) => canonicalJson(entry, `${path}[${i}]`)).join(',')}]`;
+    // BY INDEX, not `map`: `map` and `join` skip a hole, so a sparse array would hash as
+    // if its empty slots were not there (`[ , ]` like `[]`).
+    const entries: string[] = [];
+    for (let i = 0; i < value.length; i += 1) {
+      if (!(i in value)) throw new NonJsonQuotedBodyError(`${path}[${i}]`, 'an empty array slot');
+      entries.push(canonicalJson(value[i], `${path}[${i}]`));
+    }
+    return `[${entries.join(',')}]`;
   }
   if (typeof value === 'object') {
     const proto = Object.getPrototypeOf(value) as unknown;

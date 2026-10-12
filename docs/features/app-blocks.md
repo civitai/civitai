@@ -672,7 +672,9 @@ same page host, so the owner sees the same confirm.
    offering a confirm, links to `/apps/activity` (where the limit is raised or removed), and
    replies `daily-limit-exceeded`. The submit enforces the same limit and returns a failed
    snapshot with `errorCode: 'daily-limit-exceeded'`. A viewer with no limit set (the
-   default) is unaffected.
+   default) is unaffected. On an owner's private run the submit reserves against the
+   private-run cap instead of the daily counters, so there the host's check before the
+   confirm is the only daily-limit check.
 
 A quote is single-use, bound to the viewer, app, install and exact body, expires after 15
 minutes, and is re-priced at submit; a higher re-price, or one that is no longer fixed, is

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
-import { useIsLevelFocused } from '~/components/Dialog/dialogStore';
+import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { useIsTopDialog } from '~/components/Dialog/dialogStore';
 
 /** How long a spend confirm stays disabled after it appears, or after the page regains focus. */
 export const CONFIRM_ARM_DELAY_MS = 1000;
@@ -55,13 +56,15 @@ export function useConfirmArmDelay(delayMs: number = CONFIRM_ARM_DELAY_MS, activ
  * run, a confirmed step): identical, except the confirm button is disabled until
  * `useConfirmArmDelay` arms it. Cancel, the close button and Escape are never delayed.
  *
- * The delay runs only while this is the top-most dialog (`useIsLevelFocused`, the same
- * signal `DialogProvider` uses for Escape): every open dialog is mounted at once, so one
- * opened underneath another would otherwise finish its wait while covered and be
- * confirmable the instant it is uncovered.
+ * The delay runs only while this is the top-most dialog — the LAST entry in the dialog
+ * store (`useIsTopDialog`). Every open dialog is mounted at once, so one that is covered
+ * by another would otherwise finish its wait unseen and be confirmable the instant it
+ * is uncovered. It is an identity check, not a count: it stays right when a dialog
+ * underneath closes or a further one opens on top.
  */
 export default function GuardedConfirmDialog(props: React.ComponentProps<typeof ConfirmDialog>) {
-  const isTopMost = useIsLevelFocused();
+  const { dialogId } = useDialogContext();
+  const isTopMost = useIsTopDialog(dialogId);
   const armed = useConfirmArmDelay(CONFIRM_ARM_DELAY_MS, isTopMost);
   return <ConfirmDialog {...props} confirmProps={{ ...props.confirmProps, disabled: !armed }} />;
 }

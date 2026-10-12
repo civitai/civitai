@@ -475,6 +475,49 @@ describe("a TRAINING step type is never a confirmed step — use kind:'training'
     }
   );
 
+  // Step types are matched case-insensitively, consistent with the denylist.
+  const CASED = [
+    'Training',
+    'TRAINING',
+    'IMAGERESOURCETRAINING',
+    'imageresourcetraining',
+    'ImageResourceTraining',
+  ];
+
+  it.each(CASED)('the estimate refuses $type "%s" whatever its case', async ($type) => {
+    whatifPrice = { total: 4000 };
+    await expect(estimate(body({ $type }))).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: TRAINING_TYPE_ERROR,
+    });
+    expect(keysWith(QUOTE_PREFIX)).toEqual([]);
+  });
+
+  it.each(CASED)(
+    'a confirmed submit for $type "%s" is refused whatever its case',
+    async ($type) => {
+      whatifPrice = { total: 4000 };
+      seedQuote(SEEDED, {
+        total: 4000,
+        stepType: $type,
+        bodyHash: hashPassThroughStepBody(blockPassThroughStepBodySchema.parse(body({ $type }))),
+      });
+      await expect(submit(body({ $type, quoteId: SEEDED }))).rejects.toMatchObject({
+        code: 'BAD_REQUEST',
+        message: TRAINING_TYPE_ERROR,
+      });
+      expect(h.submitWorkflow).not.toHaveBeenCalled();
+      expect(keysWith(QUOTE_PREFIX)).toHaveLength(1);
+    }
+  );
+
+  it('control: a type that merely CONTAINS a training name is not refused', async () => {
+    whatifPrice = { total: 4000 };
+    expect((await estimate(body({ $type: 'trainingPreview' }))).snapshot.stepQuote?.total).toBe(
+      4000
+    );
+  });
+
   it('control: with the flag off the training-type estimate is exactly what it was', async () => {
     h.confirmedStepFlag.mockImplementation(async () => false);
     whatifPrice = { total: 4000 };
@@ -524,6 +567,12 @@ describe('the quote binds the EXACT body — non-JSON input is refused, not hash
       'an undefined array element',
       { engine: 'meshy', list: [4, undefined] },
       'body.input.list[1] is undefined',
+    ],
+    [
+      'a sparse array (an empty slot)',
+      // eslint-disable-next-line no-sparse-arrays
+      { engine: 'meshy', sparse: [6, , 7] },
+      'body.input.sparse[1] is an empty array slot',
     ],
     [
       'a nested class instance',
