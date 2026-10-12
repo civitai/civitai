@@ -1,29 +1,9 @@
 import type { FC, Ref } from 'react';
 import { useEffect, useRef, useState } from 'react';
 import { Alert, Center, Loader } from '@mantine/core';
-import type { ChatTool } from '@civitai/components-chat/civitai-chat';
+import type { ChatMcpServer, ChatTool, CivitaiChat } from '@civitai/components-chat/civitai-chat';
 import type { AssistantTokenProvider } from '~/components/Apps/AppAssistant/assistantToken';
 import classes from './AppAssistant.module.scss';
-
-/**
- * An MCP server whose tools join the assistant's.
- * TODO(@civitai/components-chat 0.4.0): delete this and `ChatElement`'s `mcpServers` in favour of
- * the package's own types once the dependency is bumped to the release that ships the property.
- */
-export interface ChatMcpServer {
-  id: string;
-  url: string;
-  /** Required: an entry without one is skipped. */
-  token: () => string | Promise<string>;
-  label?: string;
-}
-
-type ChatElement = HTMLElement & {
-  app?: unknown;
-  tools?: Record<string, ChatTool>;
-  instructions?: string | (() => string | undefined);
-  mcpServers?: ChatMcpServer[];
-};
 
 const ChatTag = 'civitai-chat' as unknown as FC<{
   ref: Ref<HTMLElement>;
@@ -35,7 +15,7 @@ export interface AppAssistantChatProps {
   tokens: AssistantTokenProvider;
   tools: Record<string, ChatTool>;
   instructions: () => string;
-  /** Pass a stable array: a new array reconnects the servers. */
+  /** Connections are kept while each entry's `id` and `url` stay the same. */
   mcpServers: ChatMcpServer[];
 }
 
@@ -66,7 +46,7 @@ export function AppAssistantChat({
       });
       if (cancelled || !ref.current) return;
       // Set after upgrade: a property assigned before would shadow the element's accessor.
-      (ref.current as ChatElement).app = app;
+      (ref.current as CivitaiChat).app = app;
       setReady(true);
     })().catch(() => {
       if (!cancelled) setError('The assistant could not start. Reload the page to try again.');
@@ -78,14 +58,14 @@ export function AppAssistantChat({
 
   useEffect(() => {
     if (!ready || !ref.current) return;
-    const el = ref.current as ChatElement;
+    const el = ref.current as CivitaiChat;
     el.tools = tools;
     el.instructions = instructions;
   }, [ready, tools, instructions]);
 
   useEffect(() => {
     if (!ready || !ref.current) return;
-    (ref.current as ChatElement).mcpServers = mcpServers;
+    (ref.current as CivitaiChat).mcpServers = mcpServers;
   }, [ready, mcpServers]);
 
   if (error)
