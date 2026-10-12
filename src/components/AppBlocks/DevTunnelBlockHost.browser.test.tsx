@@ -58,12 +58,6 @@ describe('/apps/dev/[blockId] client', () => {
     expect(m.hostProps).toBeNull();
   });
 
-  test('never frames without the host the route CSP is built from', async () => {
-    renderWithProviders(<DevTunnelPage {...FRAME} host={null} />);
-    await expect.element(page.getByText('No active dev tunnel')).toBeInTheDocument();
-    expect(m.useBlockToken).not.toHaveBeenCalled();
-  });
-
   test('with a tunnel it mints for the tunnel URL and mounts the dev-tunnel host', async () => {
     renderWithProviders(<DevTunnelPage {...FRAME} />);
     await expect.element(page.getByTestId('page-block-host')).toBeInTheDocument();

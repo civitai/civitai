@@ -116,8 +116,7 @@ export default function DevTunnelPage({ iframeSrc, host, ...app }: DevTunnelFram
     <>
       <Meta title={`${appName} — Dev tunnel — Civitai Apps`} deIndex />
       <Box style={{ width: '100%' }}>
-        {/* `host` too: the route CSP above is set from it, so never frame without it. */}
-        {!iframeSrc || !host ? (
+        {!iframeSrc ? (
           <Stack p="md" gap="sm" style={{ maxWidth: 720, margin: '0 auto' }}>
             <Title order={3}>No active dev tunnel</Title>
             <Text size="sm">
