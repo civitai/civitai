@@ -82,7 +82,10 @@ export const HAT_PREVIEW = { area: 0.62, max: 0.8 };
 export function getHatPreviewBox(fit?: EventDecorationFit) {
   const bounds = getArtBounds(fit);
   if (!bounds) return undefined;
-  const [canvasW, canvasH] = isNumbers(fit?.canvas, 2) ? fit.canvas : DEFAULT_CANVAS;
+  const [canvasW, canvasH] =
+    isNumbers(fit?.canvas, 2) && fit.canvas[0] > 0 && fit.canvas[1] > 0
+      ? fit.canvas
+      : DEFAULT_CANVAS;
   const [left, top, right, bottom] = bounds;
   const [artW, artH] = [right - left, bottom - top];
   const scale = Math.min(

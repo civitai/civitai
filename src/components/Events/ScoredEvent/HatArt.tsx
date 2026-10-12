@@ -28,6 +28,9 @@ export function HatArt({
     <div
       className={clsx(
         'relative grid aspect-square w-full place-items-center rounded-md bg-gray-1 dark:bg-dark-7',
+        // The image box is the whole canvas, well past the art; it must not cover or catch
+        // clicks for the tiles around it.
+        box && 'overflow-hidden',
         className
       )}
       style={
@@ -41,13 +44,12 @@ export function HatArt({
       <EdgeMedia
         src={url}
         width={width}
-        className={clsx(
-          'drop-shadow-[0_6px_10px_rgba(0,0,0,0.35)]',
-          box ? 'absolute max-w-none' : 'w-3/5'
-        )}
+        className={clsx('drop-shadow-[0_6px_10px_rgba(0,0,0,0.35)]', box ? 'absolute' : 'w-3/5')}
         style={
           box
             ? {
+                // EdgeImage caps the image at its source width inline; a flat hat is wider.
+                maxWidth: 'none',
                 width: pct(box.width),
                 height: pct(box.height),
                 left: pct(box.left),

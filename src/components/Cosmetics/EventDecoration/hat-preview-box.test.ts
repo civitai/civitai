@@ -41,8 +41,6 @@ describe('a hat preview sized by its art', () => {
     const beanie = visible(CHEETAH_BEANIE);
     expect(Math.sqrt(area(ufo))).toBeCloseTo(HAT_PREVIEW.area, 9);
     expect(Math.sqrt(area(beanie))).toBeCloseTo(HAT_PREVIEW.area, 9);
-    // Drawn by canvas, the beanie covered 2.2x the UFO's area.
-    expect(area(beanie) / area(ufo)).toBeCloseTo(1, 9);
     // So the UFO is drawn larger than the beanie, not the same scale.
     expect(ufo.scale / beanie.scale).toBeCloseTo(Math.sqrt((128 * 130) / (108 * 69)), 9);
   });
@@ -85,5 +83,11 @@ describe('a hat preview sized by its art', () => {
     ['a fit that is not an object', 'large'],
   ])('leaves the canvas sizing to the caller for %s', (_, fit) => {
     expect(getHatPreviewBox(fit as EventDecorationFit | undefined)).toBeUndefined();
+  });
+
+  it('reads a canvas with no size as the 128x160 convention, not as an invisible hat', () => {
+    const box = getHatPreviewBox({ canvas: [0, 0], bounds: TINY_UFO.bounds });
+    expect(box).toEqual(getHatPreviewBox({ bounds: TINY_UFO.bounds }));
+    expect(box!.width).toBeGreaterThan(0);
   });
 });
