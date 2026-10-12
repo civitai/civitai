@@ -163,9 +163,13 @@ export function elementBackend(host: StudioElementHost): StudioBackend {
     epochArchive: (workflowId) => call((client) => orch.createEpochArchive(client, workflowId)),
     deleteTraining: (workflowId) => call((client) => train.deleteTraining(client, workflowId)),
 
-    continueQuote: (workflowId, fromEpoch, addEpochs) =>
+    continueQuote: (workflowId, fromEpoch, addEpochs, currencies) =>
       call((client) =>
-        train.continueTrainingWhatIf(client, { workflowId, fromEpoch, addEpochs }, submitOpts())
+        train.continueTrainingWhatIf(
+          client,
+          { workflowId, fromEpoch, addEpochs, currencies },
+          submitOpts()
+        )
       ),
 
     continueRun: (workflowId, fromEpoch, addEpochs, currencies) =>
