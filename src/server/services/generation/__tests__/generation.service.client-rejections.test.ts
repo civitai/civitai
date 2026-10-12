@@ -62,6 +62,7 @@ vi.mock('~/server/services/image-visibility.service', () => ({
 vi.mock('~/server/utils/image-media-visibility', async (importOriginal) => ({
   ...(await importOriginal<typeof ImageMediaVisibility>()),
   viewerCanSeeImageMedia: vi.fn(async () => true),
+  viewerCanSeeSourceMedia: vi.fn(async () => true),
 }));
 vi.mock('~/server/services/generation/version-generation-state.service', () => ({
   getVisibleSystemWildcardSetIdsByVersionId: vi.fn(),

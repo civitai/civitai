@@ -32,6 +32,7 @@ import { assertImageVisibleToViewer } from '~/server/services/image-visibility.s
 import {
   type MediaViewer,
   viewerCanSeeImageMedia,
+  viewerCanSeeSourceMedia,
   withoutMediaReferences,
 } from '~/server/utils/image-media-visibility';
 import type { ModelFileCached } from '~/server/services/model-file.service';
@@ -500,7 +501,10 @@ async function getMediaGenerationData({
   };
 
   const rawMeta = (media.meta ?? {}) as ImageMetaProps;
-  const storedMeta = showMedia ? rawMeta : withoutMediaReferences(rawMeta);
+  const showSourceMedia =
+    showMedia &&
+    (await viewerCanSeeSourceMedia(mediaViewer, { id, userId: visible.userId }, rawMeta));
+  const storedMeta = showSourceMedia ? rawMeta : withoutMediaReferences(rawMeta);
   const canSeeHiddenPrompt = !!user && (user.isModerator || user.id === media.userId);
   const initialMeta =
     media.hideMeta && !canSeeHiddenPrompt ? stripHiddenPrompt(storedMeta) : storedMeta;

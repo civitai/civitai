@@ -55,11 +55,7 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { getRequestBoardDomainColor } from '~/server/utils/server-domain';
-import {
-  canViewImageMedia,
-  managesPostCollection,
-  withViewerMedia,
-} from '~/server/utils/image-media-visibility';
+import { viewerCanSeeImageMedia, withoutMedia } from '~/server/utils/image-media-visibility';
 import { getNsfwLevelDeprecatedReverseMapping } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
 import {
@@ -761,17 +757,12 @@ export const getImageHandler = async ({ input, ctx }: { input: GetImageInput; ct
       if (blocked) throw throwNotFoundError();
     }
 
-    const managesCollection =
-      !!ctx.user &&
-      !!result.postId &&
-      !canViewImageMedia(ctx, result) &&
-      (await managesPostCollection({
-        postId: result.postId,
-        imageOwnerId: result.user.id,
-        userId: ctx.user.id,
-      }));
-
-    return withViewerMedia(ctx, result, { managesCollection });
+    const canSeeMedia = await viewerCanSeeImageMedia(ctx, {
+      nsfwLevel: result.nsfwLevel,
+      userId: result.user.id,
+      postId: result.postId ?? null,
+    });
+    return canSeeMedia ? result : withoutMedia(result);
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

@@ -57,6 +57,7 @@ import {
 import {
   type MediaViewer,
   viewerCanSeeImageMedia,
+  viewerCanSeeSourceMedia,
   withoutMediaReferences,
 } from '~/server/utils/image-media-visibility';
 import {
@@ -7974,7 +7975,9 @@ export async function getImageGenerationData({ id, viewer }: { id: number; viewe
     clipSkip = legacyClipSkip,
     external,
     ...rest
-  } = showMedia ? data : withoutMediaReferences(data);
+  } = showMedia && (await viewerCanSeeSourceMedia(viewer, { id, userId: visible.userId }, data))
+    ? data
+    : withoutMediaReferences(data);
   const meta =
     parsedMeta.success && !image.hideMeta ? removeEmpty({ ...rest, clipSkip }) : undefined;
 

@@ -158,6 +158,21 @@ describe('generation.getGenerationData for an image', () => {
     expect(data.remixOf?.url).toBe('image-own-url');
   });
 
+  it('withholds the source of a PG edit made from an R image, but not the edit itself', async () => {
+    await seed(PUBLISHED, 1);
+    await db.exec(`INSERT INTO "Image" (id, "userId", "nsfwLevel") VALUES (2, ${STRANGER}, 4)`);
+    const row = await dbMock.dbRead.image.findUnique({ where: { id: 1 } } as never);
+    dbMock.dbRead.image.findUnique.mockResolvedValue({
+      ...(row as object),
+      meta: { ...(row as { meta: object }).meta, extra: { sourceImageIds: [2] } },
+    } as never);
+    const data = await fetchAs(undefined, false);
+    expect(JSON.stringify(data)).not.toContain(SOURCE);
+    expect(data.remixOf?.url).toBe('image-own-url');
+    // Its owner made it from that source.
+    expect(JSON.stringify(await fetchAs(OWNER, false))).toContain(SOURCE);
+  });
+
   it('keeps them for a signed-in viewer on the mature domain', async () => {
     await seed(PUBLISHED, 4);
     const data = await fetchAs(STRANGER, true);
