@@ -7,14 +7,22 @@ import type { ReviewReactions } from '~/shared/utils/prisma/enums';
 
 const JUDGE_REACTIONS: ReviewReactions[] = ['Like', 'Heart', 'Laugh', 'Cry'];
 
-type JudgeReactionBarProps = {
+export type JudgeReactionBarProps = {
   imageId: number;
   reactions: { userId: number; reaction: ReviewReactions }[];
   side: string;
+  /** Until the viewer's own reactions are known a click could delete one, so the bar is read-only. */
+  reactionsLoaded: boolean;
   className?: string;
 };
 
-export function JudgeReactionBar({ imageId, reactions, side, className }: JudgeReactionBarProps) {
+export function JudgeReactionBar({
+  imageId,
+  reactions,
+  side,
+  reactionsLoaded,
+  className,
+}: JudgeReactionBarProps) {
   const currentUser = useCurrentUser();
 
   return (
@@ -37,7 +45,7 @@ export function JudgeReactionBar({ imageId, reactions, side, className }: JudgeR
           userReaction={reactions.find(
             (x) => x.userId === currentUser?.id && x.reaction === reaction
           )}
-          readonly={!currentUser || currentUser.muted}
+          readonly={!currentUser || currentUser.muted || !reactionsLoaded}
         >
           {(props) => <JudgeReactionPill {...props} />}
         </ReactionButton>
@@ -50,27 +58,33 @@ function JudgeReactionPill({
   hasReacted,
   reaction,
   canClick,
+  count: _count,
+  countUnknown: _countUnknown,
+  className,
   ...buttonProps
 }: {
   hasReacted: boolean;
   reaction: ReviewReactions;
   canClick: boolean;
+  count: number;
+  countUnknown: boolean;
 } & React.ComponentPropsWithoutRef<'button'>) {
   return (
     <Tooltip label={reaction} withinPortal position="top" openDelay={150}>
       <button
+        {...buttonProps}
         type="button"
         aria-label={`${reaction} reaction`}
         aria-pressed={hasReacted}
-        aria-disabled={!canClick || undefined}
+        disabled={!canClick}
         className={clsx(
           'flex h-10 w-11 items-center justify-center rounded-[20px] text-xl leading-none',
           'border-0 bg-transparent p-0 transition-colors hover:bg-white/10',
           'focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-white',
           'aria-pressed:bg-[#1971C240] aria-pressed:ring-1 aria-pressed:ring-inset aria-pressed:ring-[#228BE6]',
-          canClick ? 'cursor-pointer' : 'cursor-default'
+          canClick ? 'cursor-pointer' : 'cursor-default',
+          className
         )}
-        {...buttonProps}
       >
         {constants.availableReactions[reaction]}
       </button>
