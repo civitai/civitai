@@ -6,6 +6,7 @@ import type { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema'
 import { parseVerifiedBotHeader, VERIFIED_BOT_HEADER } from '~/server/utils/bot-detection/header';
 import { requestDomainBrowsingLevelCap } from '~/server/utils/browsing-level';
 import { storedSourceImageIds } from '~/server/utils/source-image-ids';
+import { imageVisibilityConditions } from '~/server/services/image-visibility.service';
 import { Flags } from '~/shared/utils/flags';
 
 type MediaFields = {
@@ -105,8 +106,9 @@ export async function viewerCanSeeImageMedia(
 
 /**
  * Whether the viewer may see the media an image was generated from, judged by each recorded
- * source's own rating (`meta.extra.sourceImageIds`): an edit can be rated below its source. A
- * source that is gone or rated Blocked counts as unseen except by its owner and moderators. The
+ * source on its own (`meta.extra.sourceImageIds`): an edit can be rated below its source. A
+ * source the viewer could not open (`image.get`'s rules), that is gone, or that is rated Blocked
+ * counts as unseen except by its owner and moderators. The
  * image's owner made it from those sources and is not asked again. Sources the meta does not
  * record (uploads) can only be judged by the image's own rating.
  */
@@ -119,7 +121,20 @@ export async function viewerCanSeeSourceMedia(
   const sourceIds = [...new Set(storedSourceImageIds(meta) ?? [])].filter((id) => id !== image.id);
   if (!sourceIds.length) return true;
   const sources = await dbRead.$queryRaw<{ nsfwLevel: number; userId: number }[]>(Prisma.sql`
-    SELECT "nsfwLevel", "userId" FROM "Image" WHERE id IN (${Prisma.join(sourceIds)})
+    SELECT i."nsfwLevel", i."userId"
+    FROM "Image" i
+    LEFT JOIN "Post" p ON p.id = i."postId"
+    WHERE ${Prisma.join(
+      [
+        Prisma.sql`i.id IN (${Prisma.join(sourceIds)})`,
+        ...imageVisibilityConditions({
+          userId: ctx.user?.id,
+          isModerator: ctx.user?.isModerator,
+          postGates: 'whenPosted',
+        }),
+      ],
+      ' AND '
+    )}
   `);
   if (sources.length < sourceIds.length) return false;
   return sources.every(

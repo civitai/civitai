@@ -7975,7 +7975,8 @@ export async function getImageGenerationData({ id, viewer }: { id: number; viewe
     clipSkip = legacyClipSkip,
     external,
     ...rest
-  } = showMedia && (await viewerCanSeeSourceMedia(viewer, { id, userId: visible.userId }, data))
+  } = showMedia &&
+  (await viewerCanSeeSourceMedia(viewer, { id, userId: visible.userId }, image.meta))
     ? data
     : withoutMediaReferences(data);
   const meta =

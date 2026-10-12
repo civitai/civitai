@@ -467,6 +467,59 @@ describe('getImageGenerationData source media', () => {
     expect(await linksFor(OTHER, {})).toBe(false);
   });
 
+  it('withholds a source the viewer could not open', async () => {
+    await seedEdit(1);
+    await db.exec(`UPDATE "Image" SET "needsReview" = 'minor' WHERE id = 2`);
+    expect(await linksFor(OTHER, {})).toBe(false);
+    expect(await linksFor({ userId: SOURCE_OWNER }, {})).toBe(true);
+    await db.exec(`
+      UPDATE "Image" SET "needsReview" = NULL, "postId" = 2 WHERE id = 2;
+      INSERT INTO "Post" (id, "userId", "publishedAt") VALUES (2, ${SOURCE_OWNER}, NULL);
+    `);
+    expect(await linksFor(OTHER, {})).toBe(false);
+  });
+
+  it('withholds when any one source is above the cap', async () => {
+    await seedEdit(1);
+    await db.exec(`INSERT INTO "Image" (id, "userId", "nsfwLevel") VALUES (3, ${SOURCE_OWNER}, 4)`);
+    mockMeta([2, 3]);
+    expect(await linksFor(ANON, { canViewNsfw: false })).toBe(false);
+  });
+
+  it('counts a source listed twice once', async () => {
+    await seedEdit(1);
+    mockMeta([2, 2]);
+    expect(await linksFor(ANON, { canViewNsfw: false })).toBe(true);
+  });
+
+  it('withholds an unrated source under a cap', async () => {
+    await seedEdit(0);
+    expect(await linksFor(ANON, { canViewNsfw: false })).toBe(false);
+  });
+
+  it('keeps a Blocked or missing source for a moderator', async () => {
+    await seedEdit(32);
+    mockMeta([2, 99]);
+    expect(await linksFor(MOD, { canViewNsfw: false })).toBe(true);
+  });
+
+  it('reads the sources even when another extra field does not parse', async () => {
+    await seedEdit(4);
+    dbMock.dbRead.image.findUnique.mockResolvedValue({
+      hideMeta: false,
+      generationProcess: null,
+      meta: {
+        prompt: 'an edit',
+        images: [{ url: SOURCE, width: 512, height: 512 }],
+        extra: { sourceImageIds: [2], remixOfId: 'not-a-number' },
+      },
+      type: 'image',
+      tools: [],
+      techniques: [],
+    } as never);
+    expect(await linksFor(ANON, { canViewNsfw: false })).toBe(false);
+  });
+
   it('ignores the image listed as its own source', async () => {
     await seed({});
     mockMeta([1]);
