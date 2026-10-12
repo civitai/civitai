@@ -436,9 +436,9 @@ export function sharedDataHitRows(
  * 🔴 NO USER TEXT IN ANY COLUMN, IN EITHER MODE — an id, platform values and counts only. No row
  * key, no path, no leaf, no matched term. The same fields as the `...-moderation-scan` log event.
  */
-function sharedDataScanRow(scan: SharedTextScan, ctx: SharedDataScanContext, now: Date) {
+function sharedDataScanRow(scan: SharedTextScan, ctx: SharedDataScanContext) {
   return {
-    time: formatClickhouseDateTime64(now),
+    time: formatClickhouseDateTime64(new Date()),
     appBlockId: ctx.appBlockId,
     surface: ctx.surface,
     mode: ctx.mode,
@@ -506,8 +506,6 @@ export async function recordSharedDataScan(
 
   const client = clickhouse;
   if (!client) return;
-  // One instant for both tables, so a write's hit rows and its denominator row carry the same time.
-  const now = new Date();
   // `rows` is a thunk, built INSIDE the try: a throw while building rows must be logged and
   // swallowed like a failed insert — the enforce caller does not await or catch this function.
   const insert = async (table: string, rows: () => unknown[]) => {
@@ -531,9 +529,9 @@ export async function recordSharedDataScan(
   };
   await Promise.all([
     scan.hits.length
-      ? insert(SHARED_DATA_HITS_TABLE, () => sharedDataHitRows(scan, ctx, now))
+      ? insert(SHARED_DATA_HITS_TABLE, () => sharedDataHitRows(scan, ctx))
       : null,
-    insert(SHARED_DATA_SCANS_TABLE, () => [sharedDataScanRow(scan, ctx, now)]),
+    insert(SHARED_DATA_SCANS_TABLE, () => [sharedDataScanRow(scan, ctx)]),
   ]);
 }
 

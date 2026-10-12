@@ -1,6 +1,5 @@
 import { createHash } from 'node:crypto';
 import type * as FliptClientModule from '~/server/flipt/client';
-import type * as ClickhouseDatetimeModule from '~/server/clickhouse/datetime';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { BlockedContentHit } from '~/server/services/blocklist.service';
@@ -34,13 +33,6 @@ vi.mock('~/server/flipt/client', async (importOriginal) => ({
   isFlipt: (flag: string, entityId?: string, context?: unknown) =>
     mockIsFlipt(flag, entityId, context),
 }));
-// The real formatter, spied: lets a test see WHICH instant each row's time was built from.
-const mockFormatTime = vi.hoisted(() => vi.fn<(at: number | Date) => string>());
-vi.mock('~/server/clickhouse/datetime', async (importOriginal) => {
-  const real = await importOriginal<typeof ClickhouseDatetimeModule>();
-  mockFormatTime.mockImplementation(real.formatClickhouseDateTime64);
-  return { ...real, formatClickhouseDateTime64: mockFormatTime };
-});
 const clickhouseBox = vi.hoisted(() => ({ client: undefined as unknown }));
 vi.mock('~/server/clickhouse/client', () => ({
   get clickhouse() {
@@ -702,23 +694,6 @@ describe('denominator — one ClickHouse row per scanned write', () => {
         overflowKind: '',
       },
     ]);
-  });
-
-  it('a scan WITH hits inserts one denominator row plus the hit rows, at the same time', async () => {
-    const scan = richScan();
-    await recordSharedDataScan(scan, ctx);
-    expect(mockInsert).toHaveBeenCalledTimes(2);
-    const [hits] = insertsInto(SHARED_DATA_HITS_TABLE);
-    const [scans] = insertsInto(SCANS);
-    expect(hits.values).toHaveLength(21);
-    expect(scans.values).toHaveLength(1);
-    const time = (scans.values[0] as { time: string }).time;
-    for (const row of hits.values as Array<{ time: string }>) expect(row.time).toBe(time);
-    // Two `new Date()`s almost always land in the same millisecond, so equal strings alone cannot
-    // fail. What makes the times equal by construction is ONE Date object behind both tables.
-    const instants = new Set(mockFormatTime.mock.calls.map(([at]) => at));
-    expect(mockFormatTime).toHaveBeenCalledTimes(2);
-    expect(instants.size).toBe(1);
   });
 
   it('a throw while BUILDING rows is logged and swallowed like a failed insert', async () => {

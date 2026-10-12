@@ -87,7 +87,7 @@ TTL toStartOfDay(time) + INTERVAL 30 DAY
 SETTINGS ttl_only_drop_parts = 1;
 
 -- Hits by category over the last day (divide by the scanned-write count in
--- `appBlocksSharedDataScans` for a rate — joined examples are in that table's migration):
+-- `appBlocksSharedDataScans` over the same day for a rate):
 --
 --   SELECT category, mode, count(), uniqExact(leafSha256) FROM appBlocksSharedDataHits
 --   WHERE time > now() - INTERVAL 1 DAY GROUP BY 1, 2 ORDER BY 3 DESC;
