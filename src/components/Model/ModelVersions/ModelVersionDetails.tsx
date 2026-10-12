@@ -341,6 +341,15 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
     });
   };
 
+  const notifyIfHeld = (held: boolean) => {
+    if (!held) return;
+    showSuccessNotification({
+      title: 'Submitted for review',
+      message: 'A moderator will review it before it goes live.',
+      autoClose: 6000,
+    });
+  };
+
   // Handler for republishing a private model while keeping it private
   const handleRepublishPrivateModel = async () => {
     try {
@@ -352,13 +361,15 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
           user?.isModerator
             ? model.modelVersions.map(({ id }) => id)
             : [version.id];
-        await publishModelMutation.mutateAsync({
+        const result = await publishModelMutation.mutateAsync({
           id: model.id,
           versionIds,
         });
+        notifyIfHeld(result.status === ModelStatus.UnpublishedViolation);
       } else {
         // Just republish the version and its posts
-        await publishVersionMutation.mutateAsync({ id: version.id });
+        const result = await publishVersionMutation.mutateAsync({ id: version.id });
+        notifyIfHeld(result.held);
       }
       await queryUtils.model.getById.invalidate({ id: model.id });
     } catch (e) {
@@ -424,14 +435,19 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
           model.status === ModelStatus.UnpublishedViolation && user?.isModerator
             ? model.modelVersions.map(({ id }) => id)
             : [version.id];
-        await publishModelMutation.mutateAsync({
+        const result = await publishModelMutation.mutateAsync({
           id: model.id,
           publishedAt: publishDate,
           versionIds,
         });
+        notifyIfHeld(result.status === ModelStatus.UnpublishedViolation);
       } else {
         // Just publish the version and its posts
-        await publishVersionMutation.mutateAsync({ id: version.id, publishedAt: publishDate });
+        const result = await publishVersionMutation.mutateAsync({
+          id: version.id,
+          publishedAt: publishDate,
+        });
+        notifyIfHeld(result.held);
       }
 
       await queryUtils.model.getById.invalidate({ id: model.id });

@@ -47,15 +47,17 @@ again.
 Beside the model, a deterministic literal check compares the same text with each rule's `subject` and
 `aliases`. Both sides are normalized the same way (case, accents, look-alike and invisible
 characters, punctuation and separators), and a term matches only as a whole word or phrase; very
-short terms are ignored. It follows the `ModelRules` mode and never runs for moderators:
+short terms are ignored. Each field (name, description, each version's name, description and trained
+words) is matched on its own, so a phrase never matches across two fields. It follows the `ModelRules` mode and never runs for moderators:
 
 - **active** — a publish, schedule or Private to Public change by a non-moderator whose text
   matches is held instead of going live: the model ends `UnpublishedViolation` with `needsReview`
   and the same notice, and is never published first. A new version published on an already public
   model that matches takes the model down the same way. The held text is the text the post-publish
   scan will read, so a moderator's republish clears those rules for it and edited text is checked
-  again. If the check itself fails, the publish goes through and the model scan is the backstop. A
-  model held while Private stays private; a moderator republishes it first, then makes it public.
+  again. If the check or the hold itself fails, it is logged, the publish goes through and the model
+  scan is the backstop. The owner sees a neutral "Submitted for review" message instead of
+  "published". A model held while Private stays private; a moderator republishes it first, then makes it public.
 - **shadow** — nothing is held. Each scan stores the rules the text names literally next to the
   model's verdict, so the two can be compared. The same record is kept in active mode.
 - **off**, or the Flipt switch off — the check does not run and no rules are loaded for it.

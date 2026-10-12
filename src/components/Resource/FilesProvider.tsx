@@ -318,10 +318,15 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
   };
 
   const publishModelMutation = trpc.model.publish.useMutation({
-    async onSuccess(_, variables) {
+    async onSuccess(result, variables) {
       hideNotification('publishing-version');
       const modelId = variables.id;
       const modelVersionId = variables.versionIds?.[0];
+      if (result.status === ModelStatus.UnpublishedViolation) {
+        showSubmittedForReviewNotification();
+        await queryUtils.model.getById.invalidate({ id: modelId });
+        return;
+      }
       showPublishedNotification(modelId, modelVersionId);
     },
     onError(error) {
@@ -335,7 +340,13 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
   const publishVersionMutation = trpc.modelVersion.publish.useMutation({
     async onSuccess(results) {
       hideNotification('publishing-version');
-      if (results) showPublishedNotification(results.modelId, results.id);
+      if (!results) return;
+      if (results.held) {
+        showSubmittedForReviewNotification();
+        await queryUtils.model.getById.invalidate({ id: results.modelId });
+        return;
+      }
+      showPublishedNotification(results.modelId, results.id);
     },
     onError(error) {
       hideNotification('publishing-version');
@@ -345,6 +356,13 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
       });
     },
   });
+
+  const showSubmittedForReviewNotification = () =>
+    showSuccessNotification({
+      title: 'Submitted for review',
+      message: 'A moderator will review it before it goes live.',
+      autoClose: 6000,
+    });
 
   const showPublishedNotification = async (modelId: number, modelVersionId?: number) => {
     const pubNotificationId = `version-published-${modelVersionId}`;
