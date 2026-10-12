@@ -230,7 +230,20 @@ export function AppAssistantWorkspace({ canPreview }: { canPreview: boolean }) {
   if (access.error)
     return (
       <Alert color="red" variant="light">
-        {access.error instanceof Error ? access.error.message : 'App Assistant is unavailable.'}
+        <Group justify="space-between" wrap="nowrap" gap="sm">
+          <Text size="sm">
+            {access.error instanceof Error ? access.error.message : 'App Assistant is unavailable.'}
+          </Text>
+          <Button
+            size="compact-sm"
+            variant="light"
+            color="red"
+            loading={access.isFetching}
+            onClick={() => void access.refetch()}
+          >
+            Retry
+          </Button>
+        </Group>
       </Alert>
     );
 

@@ -290,3 +290,31 @@ describe('AppAssistantWorkspace header actions', () => {
     expect(document.querySelector('[role="dialog"]')).toBeNull();
   });
 });
+
+describe('AppAssistantWorkspace access failure', () => {
+  test('a failed access check offers Retry, which recovers without a reload', async () => {
+    m.getToken
+      .mockRejectedValueOnce(new AssistantTokenError('Could not start a session', 503))
+      .mockResolvedValue('sandbox-token');
+    await page.viewport(1440, 900);
+    renderWithProviders(<AppAssistantWorkspace canPreview />);
+    const retry = page.getByRole('button', { name: 'Retry' });
+    await expect.element(retry).toBeInTheDocument();
+    expect(m.getToken).toHaveBeenCalledTimes(1);
+    await retry.click();
+    await expect.element(page.getByTestId('chat')).toBeInTheDocument();
+  });
+
+  test('a consent refusal shows the turn-on card, not Retry', async () => {
+    m.getToken.mockRejectedValue(
+      new AssistantTokenError('Turn on App Assistant', 403, 'consent_required')
+    );
+    await page.viewport(1440, 900);
+    renderWithProviders(<AppAssistantWorkspace canPreview />);
+    await expect
+      .element(page.getByRole('button', { name: 'Turn on App Assistant' }))
+      .toBeInTheDocument();
+    expect(document.body.textContent).not.toContain('Retry');
+    expect(m.getToken).toHaveBeenCalledTimes(1);
+  });
+});
