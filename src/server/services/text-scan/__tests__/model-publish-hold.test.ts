@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import type * as Logging from '~/server/logging/client';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 const { mockTx, checkModelRulesLiteralHold, holdModelForLiteralRules } = vi.hoisted(() => ({
   checkModelRulesLiteralHold: vi.fn(),
@@ -86,14 +86,10 @@ vi.mock('~/server/utils/cache-helpers', () => ({
 vi.mock('~/utils/s3-utils', () => ({ deleteModelFileObjects: vi.fn() }));
 vi.mock('~/utils/storage-resolver', () => ({ deregisterFileLocationsBatch: vi.fn() }));
 
-vi.mock('~/server/logging/client', async (importOriginal) => ({
-  ...(await importOriginal<typeof Logging>()),
-  logToAxiom: vi.fn(),
-}));
 vi.mock('~/server/services/text-scan/model-rules-hold', () => ({ checkModelRulesLiteralHold }));
 vi.mock('~/server/services/text-scan/actions/model-rules', () => ({ holdModelForLiteralRules }));
 
-import { logToAxiom } from '~/server/logging/client';
+const logToAxiom = loggingMock.logToAxiom;
 import { publishModelById, publishPrivateModel } from '~/server/services/model.service';
 
 const MODEL_ID = 42;

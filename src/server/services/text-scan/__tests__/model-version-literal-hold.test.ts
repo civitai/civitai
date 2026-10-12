@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type * as Logging from '~/server/logging/client';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 const {
   mockGetVersionById,
@@ -12,7 +12,6 @@ const {
   mockProcessEngagement,
   mockScan,
   mockTrack,
-  mockLog,
 } = vi.hoisted(() => ({
   mockGetVersionById: vi.fn(),
   mockPublishModelVersionById: vi.fn(),
@@ -23,7 +22,6 @@ const {
   mockProcessEngagement: vi.fn(),
   mockScan: vi.fn(),
   mockTrack: vi.fn(),
-  mockLog: vi.fn(),
 }));
 
 vi.mock('~/server/services/model-version.service', () => ({
@@ -37,10 +35,6 @@ vi.mock('~/server/services/training.service', () => ({}));
 vi.mock('~/server/redis/caches', () => ({ dataForModelsCache: { refresh: mockRefresh } }));
 vi.mock('~/server/events', () => ({ eventEngine: { processEngagement: mockProcessEngagement } }));
 vi.mock('~/server/services/text-scan/submit', () => ({ scanEntityInBackground: mockScan }));
-vi.mock('~/server/logging/client', async (importOriginal) => ({
-  ...(await importOriginal<typeof Logging>()),
-  logToAxiom: mockLog,
-}));
 vi.mock('~/server/services/text-scan/model-rules-hold', () => ({ checkModelRulesLiteralHold }));
 vi.mock('~/server/services/text-scan/actions/model-rules', () => ({
   unpublishLiveModelForLiteralRules,
@@ -48,6 +42,7 @@ vi.mock('~/server/services/text-scan/actions/model-rules', () => ({
 
 import { publishModelVersionHandler } from '~/server/controllers/model-version.controller';
 
+const mockLog = loggingMock.logToAxiom;
 const VERSION_ID = 100;
 const MODEL_ID = 42;
 const HOLD = { ruleIds: [3], textHash: 'h1' };
