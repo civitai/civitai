@@ -16,7 +16,7 @@ const mocks = vi.hoisted(() => ({
     | { shareable: string[]; hiddenOnProfile: string[]; secret: string[] }
     | undefined,
   myShareEnabled: [] as boolean[],
-  ladderTiers: [] as { key: string; threshold: number }[],
+  ladderTiers: [] as { key: string; name: string; threshold: number; hint: null; badgeUrl: null }[],
 }));
 vi.mock('~/hooks/useCurrentUser', async (importOriginal) => ({
   ...(await importOriginal<typeof CurrentUser>()),
@@ -49,9 +49,10 @@ import type * as Trpc from '~/utils/trpc';
 import {
   AchievementCard,
   BADGE_CARD_GRID,
+  ladderRungs,
   ProfileAchievementsList,
-  ProfileTierCard,
   SECRET_ACHIEVEMENT_LABEL,
+  TierLadderBand,
 } from '~/components/CreatorJourney/ProfileAchievements';
 
 const act = (React as unknown as { act: typeof actType }).act;
@@ -145,13 +146,13 @@ describe('profile achievement cards', () => {
   });
 });
 
-describe('profile tier card', () => {
+describe('profile tier band', () => {
   const tier = { key: 'score:star', name: 'Star', badgeUrl: null, achievedAt: EARNED };
   const OWN_SCORE = 824228;
 
   it('shows the owner their own score', () => {
     mocks.viewer = { id: OWNER, meta: { scores: { total: OWN_SCORE } } };
-    const card = mount(React.createElement(ProfileTierCard, { tier, userId: OWNER }));
+    const card = mount(React.createElement(TierLadderBand, { tiers: [tier], userId: OWNER }));
     expect(card.textContent).toContain('Only you see this');
     expect(card.textContent).toContain('824,228');
   });
@@ -160,14 +161,17 @@ describe('profile tier card', () => {
   // would read as the owner's number.
   it('says a tier granted at launch was earned before launch', () => {
     const card = mount(
-      React.createElement(ProfileTierCard, { tier: { ...tier, achievedAt: null }, userId: OWNER })
+      React.createElement(TierLadderBand, {
+        tiers: [{ ...tier, achievedAt: null }],
+        userId: OWNER,
+      })
     );
     expect(card.textContent).toContain('Earned before launch');
   });
 
   it('shows a visitor the tier and no score line', () => {
     mocks.viewer = { id: OWNER + 1, meta: { scores: { total: OWN_SCORE } } };
-    const card = mount(React.createElement(ProfileTierCard, { tier, userId: OWNER }));
+    const card = mount(React.createElement(TierLadderBand, { tiers: [tier], userId: OWNER }));
     expect(card.textContent).toContain('Star');
     expect(card.textContent).not.toContain('Only you see this');
     expect(card.textContent).not.toContain('824,228');
@@ -183,7 +187,7 @@ describe('profile tier card', () => {
   it('offers the owner a share link to the tier card when it renders', () => {
     mocks.viewer = { id: OWNER, username: 'maker', meta: { scores: { total: OWN_SCORE } } };
     mocks.myShare = { shareable: ['score:star'], hiddenOnProfile: [], secret: [] };
-    const card = mount(React.createElement(ProfileTierCard, { tier, userId: OWNER }));
+    const card = mount(React.createElement(TierLadderBand, { tiers: [tier], userId: OWNER }));
     expect(shareLinks(card)).toEqual([
       {
         url: '/user/maker?milestone=star',
@@ -198,7 +202,7 @@ describe('profile tier card', () => {
     mocks.viewer = { id: OWNER, username: 'maker', meta: { scores: { total: OWN_SCORE } } };
     mocks.myShare = { shareable: ['score:nova'], hiddenOnProfile: ['score:star'], secret: [] };
     expect(
-      shareLinks(mount(React.createElement(ProfileTierCard, { tier, userId: OWNER })))
+      shareLinks(mount(React.createElement(TierLadderBand, { tiers: [tier], userId: OWNER })))
     ).toEqual([]);
   });
 
@@ -206,7 +210,9 @@ describe('profile tier card', () => {
   it('keeps a secret tier secret in the share text', () => {
     mocks.viewer = { id: OWNER, username: 'maker', meta: { scores: { total: OWN_SCORE } } };
     mocks.myShare = { shareable: ['score:star'], hiddenOnProfile: [], secret: ['score:star'] };
-    const [link] = shareLinks(mount(React.createElement(ProfileTierCard, { tier, userId: OWNER })));
+    const [link] = shareLinks(
+      mount(React.createElement(TierLadderBand, { tiers: [tier], userId: OWNER }))
+    );
     expect(link.title).toBe('I unlocked a secret achievement on Civitai');
   });
 
@@ -214,7 +220,7 @@ describe('profile tier card', () => {
   it('never offers a visitor the share link, nor asks the server', () => {
     mocks.viewer = { id: OWNER + 1, username: 'visitor', meta: { scores: { total: 0 } } };
     mocks.myShare = { shareable: ['score:star'], hiddenOnProfile: [], secret: [] };
-    const card = mount(React.createElement(ProfileTierCard, { tier, userId: OWNER }));
+    const card = mount(React.createElement(TierLadderBand, { tiers: [tier], userId: OWNER }));
     expect(shareLinks(card)).toEqual([]);
     expect(mocks.myShareEnabled.length).toBeGreaterThan(0);
     expect(mocks.myShareEnabled.every((enabled) => !enabled)).toBe(true);
@@ -253,40 +259,55 @@ describe('achievements tab', () => {
       .flatMap((grid) => [...grid.children] as HTMLElement[])
       .find((card) => [...card.querySelectorAll('*')].some((node) => node.textContent === name));
 
-  // Ellie's review (2026-10-09): the tier list was bare badges; it reads like the journey page now.
-  it('heads the tab with the highest tier, then a card per tier with its threshold and date', () => {
+  const ladder = (...tiers: [string, string, number][]) =>
+    tiers.map(([key, name, threshold]) => ({ key, name, threshold, hint: null, badgeUrl: null }));
+  const rungs = (el: HTMLElement) =>
+    [...el.querySelectorAll<HTMLElement>('[data-tier-ladder] > button')].map((rung) =>
+      rung.getAttribute('aria-label')
+    );
+
+  // Justin's pick (2026-10-12): the tier as one band holding the whole ladder, not a tile beside a grid.
+  it('heads the tab with the highest tier and every tier on the ladder, held ones dated', () => {
     mocks.viewer = { id: OWNER + 1, meta: { scores: { total: 1 } } };
-    // The ladder masks a hidden tier's key but not its threshold, in ladder order: Nova's real
-    // number is in the list, third, under another key. Matching by key keeps it off the card.
-    mocks.ladderTiers = [
-      { key: 'score:spark', threshold: 100 },
-      { key: 'score:blaze', threshold: 10000 },
-      { key: 'hidden:tier-2', threshold: 500000 },
-    ];
+    mocks.ladderTiers = ladder(
+      ['score:spark', 'Spark', 100],
+      ['score:blaze', 'Blaze', 10000],
+      ['score:nova', 'Nova', 100000],
+      ['score:legend', 'Legend', 10000000]
+    );
     const el = mount(React.createElement(ProfileAchievementsList, { data, userId: OWNER }));
 
-    const hero = [...el.querySelectorAll<HTMLElement>('div')].find(
-      (div) => div.className === 'md:self-start'
-    );
-    expect(hero?.textContent).toContain('Creator Score tier');
-    expect(hero?.textContent).toContain('Nova');
+    const band = el.querySelector<HTMLElement>('[data-tier-ladder]')?.parentElement;
+    expect(band?.textContent).toContain('Creator Score tier');
+    expect(band?.textContent).toContain('Earned before launch');
     // A visitor's own session score must never read as the owner's.
     expect(el.textContent).not.toContain('Only you see this');
-    const names = [...grids(el)[0].children].map(
-      (card) =>
-        ['Nova', 'Blaze', 'Spark'].find((name) =>
-          [...card.querySelectorAll('*')].some((node) => node.textContent === name)
-        ) ?? ''
+    expect(rungs(el)).toEqual([
+      'Spark: Earned before launch',
+      'Blaze: Earned Sep 28, 2026',
+      'Nova: Earned before launch',
+      'Legend: Not reached yet',
+    ]);
+    const rungText = [...el.querySelectorAll('[data-tier-ladder] > button')].map((rung) =>
+      [...rung.querySelectorAll('p')].map((line) => line.textContent)
     );
-    // Dated first, then launch grants highest first.
-    expect(names).toEqual(['Blaze', 'Nova', 'Spark']);
     // A floor, not the creator's score (lead's call, 2026-10-09).
-    expect(cardOf(el, 'Blaze')?.textContent).toContain('10,000+Creator Score');
-    expect(cardOf(el, 'Blaze')?.textContent).toContain('Earned Sep 28, 2026');
-    expect(cardOf(el, 'Spark')?.textContent).toContain('100+Creator Score');
-    // A backfilled tier has no observed date, like the journey page.
-    expect(cardOf(el, 'Spark')?.textContent).toMatch(/Earned before launch$/);
-    expect(cardOf(el, 'Nova')?.textContent).not.toMatch(/\d/);
+    expect(rungText).toEqual([
+      ['Spark', '100+'],
+      ['Blaze', '10,000+'],
+      ['Nova', '100,000+'],
+      ['Legend', '10,000,000+'],
+    ]);
+    expect(grids(el)).toHaveLength(1);
+  });
+
+  it('shows the held tiers on the ladder while the public ladder loads', () => {
+    const el = mount(React.createElement(ProfileAchievementsList, { data, userId: OWNER }));
+    expect(rungs(el)).toEqual([
+      'Spark: Earned before launch',
+      'Blaze: Earned Sep 28, 2026',
+      'Nova: Earned before launch',
+    ]);
   });
 
   it('orders each track dated first, then launch grants by metal', () => {
@@ -361,7 +382,10 @@ describe('achievements tab', () => {
       const spotlit = [...el.querySelectorAll<HTMLElement>('[data-spotlight]')];
       expect(spotlit.map((node) => node.id)).toEqual(['tier-blaze']);
       expect(spotlit[0].textContent).toContain('Blaze');
-      expect(spotlit[0].className).toContain('ring-2');
+      expect(spotlit[0].parentElement?.hasAttribute('data-tier-ladder')).toBe(true);
+      expect(spotlit[0].className.split(' ')).toEqual(
+        expect.arrayContaining(['ring-2', 'ring-inset', 'scroll-mt-24'])
+      );
       await nextFrame();
       expect(scrolled).toEqual([spotlit[0]]);
     } finally {
@@ -466,7 +490,11 @@ describe('achievements tab', () => {
   // must fill it, with the card's own radius. Pinned by class (component tests load no stylesheet).
   it('rings the card with a wrapper its card fills, at the card radius', () => {
     const el = mount(
-      React.createElement(ProfileAchievementsList, { data, userId: OWNER, spotlight: 'blaze' })
+      React.createElement(ProfileAchievementsList, {
+        data,
+        userId: OWNER,
+        spotlight: 'create:models-25',
+      })
     );
     const ring = el.querySelector<HTMLElement>('[data-spotlight]');
     const classes = ring?.className.split(' ') ?? [];
@@ -549,12 +577,126 @@ describe('achievements tab', () => {
     expect(el.querySelectorAll('[data-spotlight]')).toHaveLength(0);
   });
 
-  // The width itself is a stylesheet fact the test environment cannot measure; what is pinned here
-  // is that tiers and achievements share the one card grid.
-  it('puts tier cards and achievement cards on the same card grid', () => {
-    mocks.viewer = null;
-    const el = mount(React.createElement(ProfileAchievementsList, { data, userId: OWNER }));
-    expect(grids(el)).toHaveLength(2);
-    expect(grids(el)[1].textContent).toContain('25 Models');
+  // On a phone the ladder scrolls sideways: a shared tier's rung must be centred in the strip, or the
+  // page scrolls to a band whose ringed rung is off-screen. No stylesheet here, so layout is stubbed.
+  it("centres a shared tier's rung in the ladder strip before scrolling the page", async () => {
+    const calls: string[] = [];
+    const strips: { el: Element; left: number | undefined }[] = [];
+    const originalScroll = Element.prototype.scrollIntoView;
+    const originalScrollTo = HTMLElement.prototype.scrollTo;
+    Element.prototype.scrollIntoView = function () {
+      calls.push('page');
+    };
+    HTMLElement.prototype.scrollTo = function (
+      this: HTMLElement,
+      options?: ScrollToOptions | number
+    ) {
+      calls.push('strip');
+      strips.push({ el: this, left: typeof options === 'object' ? options.left : undefined });
+    } as typeof HTMLElement.prototype.scrollTo;
+    try {
+      const el = mount(
+        React.createElement(ProfileAchievementsList, { data, userId: OWNER, spotlight: 'nova' })
+      );
+      const rung = el.querySelector<HTMLElement>('[data-spotlight]') as HTMLElement;
+      const strip = el.querySelector<HTMLElement>('[data-tier-ladder]') as HTMLElement;
+      Object.defineProperty(rung, 'offsetLeft', { value: 400 });
+      Object.defineProperty(rung, 'offsetWidth', { value: 64 });
+      Object.defineProperty(strip, 'clientWidth', { value: 300 });
+      await nextFrame();
+      expect(calls).toEqual(['strip', 'page']);
+      expect(strips).toEqual([{ el: strip, left: 400 - (300 - 64) / 2 }]);
+    } finally {
+      Element.prototype.scrollIntoView = originalScroll;
+      HTMLElement.prototype.scrollTo = originalScrollTo;
+    }
+  });
+
+  it('moves no strip for an achievement a shared link named', async () => {
+    const strips: Element[] = [];
+    const originalScroll = Element.prototype.scrollIntoView;
+    const originalScrollTo = HTMLElement.prototype.scrollTo;
+    Element.prototype.scrollIntoView = function () {};
+    HTMLElement.prototype.scrollTo = function (this: HTMLElement) {
+      strips.push(this);
+    } as typeof HTMLElement.prototype.scrollTo;
+    try {
+      mount(
+        React.createElement(ProfileAchievementsList, {
+          data,
+          userId: OWNER,
+          spotlight: 'create:models-25',
+        })
+      );
+      await nextFrame();
+      expect(strips).toEqual([]);
+    } finally {
+      Element.prototype.scrollIntoView = originalScroll;
+      HTMLElement.prototype.scrollTo = originalScrollTo;
+    }
+  });
+
+  it('nudges an owner with no tier toward the first, and shows a visitor nothing', () => {
+    mocks.ladderTiers = ladder(['score:spark', 'Spark', 500], ['score:kindle', 'Kindle', 1000]);
+    const noTiers = { ...data, tiers: [] };
+    mocks.viewer = { id: OWNER, meta: { scores: { total: 1 } } };
+    const own = mount(
+      React.createElement(ProfileAchievementsList, { data: noTiers, userId: OWNER })
+    );
+    expect(own.textContent).toContain('No Creator Score tier yet. Spark unlocks at 500.');
+    expect(own.querySelector('[data-tier-ladder]')).toBeNull();
+    act(() => root?.unmount());
+    container?.remove();
+    mocks.viewer = { id: OWNER + 1, meta: { scores: { total: 1 } } };
+    const visitor = mount(
+      React.createElement(ProfileAchievementsList, { data: noTiers, userId: OWNER })
+    );
+    expect(visitor.textContent).not.toContain('Creator Score tier');
+    expect(visitor.textContent).not.toContain('No Creator Score tier yet');
+  });
+});
+
+describe('ladder rungs', () => {
+  const held = (key: string, name: string) => ({
+    key,
+    name,
+    badgeUrl: 'own-art',
+    achievedAt: null,
+  });
+  const rung = (key: string, name: string, threshold: number) => ({
+    key,
+    name,
+    threshold,
+    hint: null,
+    badgeUrl: 'ladder-art',
+  });
+
+  // The ladder masks a hidden tier's key and name for everyone. Its owner holds the real tier; a
+  // visitor is never sent it, so the slot stays masked and shows no number.
+  it("fills a masked slot with the owner's own hidden tier, and shows no threshold for it", () => {
+    const ladder = [
+      rung('score:spark', 'Spark', 500),
+      rung('hidden:tier-1', '???', 1000),
+      rung('hidden:tier-2', '???', 5000),
+    ];
+    const result = ladderRungs(
+      [held('score:spark', 'Spark'), held('score:kindle', 'Kindle')],
+      ladder
+    );
+    expect(result.map((r) => [r.key, r.name, r.threshold, !!r.held])).toEqual([
+      ['score:spark', 'Spark', 500, true],
+      ['score:kindle', 'Kindle', undefined, true],
+      ['hidden:tier-2', '???', undefined, false],
+    ]);
+    expect(result[1].badgeUrl).toBe('own-art');
+  });
+
+  it('keeps a held tier the ladder does not list, after the ladder', () => {
+    const result = ladderRungs(
+      [held('score:spark', 'Spark'), held('score:mythic', 'Mythic')],
+      [rung('score:spark', 'Spark', 500)]
+    );
+    expect(result.map((r) => r.key)).toEqual(['score:spark', 'score:mythic']);
+    expect(result.every((r) => r.held)).toBe(true);
   });
 });
