@@ -208,7 +208,11 @@ describe('PlaceHatModal tabs', () => {
     const page = render(
       React.createElement(PlaceHatModal, { event: 'no-such-event', hat: hat(), myHats: [hat()] })
     );
-    expect(placeableCalls.map((c) => c.opts.enabled)).toEqual([false, false, false]);
+    expect(placeableCalls.map((c) => [c.input.event, c.opts.enabled])).toEqual([
+      ['no-such-event', false],
+      ['no-such-event', false],
+      ['no-such-event', false],
+    ]);
     expect(page.textContent).toContain('Nothing you publish can wear this hat.');
   });
 
