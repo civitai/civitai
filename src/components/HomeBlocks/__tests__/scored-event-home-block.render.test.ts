@@ -377,7 +377,7 @@ describe('Your hats', () => {
 
   it('follows the team totals and its hats live while the block is on screen', () => {
     joinAs('Pink');
-    h.standings = { ...STANDINGS, teamsTopicId: 'teams' };
+    h.standings = { ...STANDINGS, teamsTopicId: 'teams', liveTotals: true };
     h.hats = [placed(1, 1), placed(2, 1)];
     block();
     expect(h.teamsLive.at(-1)).toEqual(['birthday2026', 'teams', true]);
@@ -388,7 +388,7 @@ describe('Your hats', () => {
 
   it('follows nothing off screen', () => {
     joinAs('Pink');
-    h.standings = { ...STANDINGS, teamsTopicId: 'teams' };
+    h.standings = { ...STANDINGS, teamsTopicId: 'teams', liveTotals: true };
     h.hats = [placed(1, 1)];
     h.inView = false;
     block();
@@ -396,9 +396,18 @@ describe('Your hats', () => {
     expect(h.hatsLive.at(-1)?.inView).toBe(false);
   });
 
+  it('follows nothing while the scoring engine is switched off', () => {
+    joinAs('Pink');
+    h.standings = { ...STANDINGS, teamsTopicId: 'teams', liveTotals: false };
+    h.hats = [placed(1, 1)];
+    block();
+    expect(h.teamsLive.at(-1)?.[2]).toBe(false);
+    expect(h.hatsLive.at(-1)?.inView).toBe(false);
+  });
+
   it('follows nothing behind the collapsed bar', () => {
     joinAs('Pink');
-    h.standings = { ...STANDINGS, teamsTopicId: 'teams' };
+    h.standings = { ...STANDINGS, teamsTopicId: 'teams', liveTotals: true };
     h.hats = [placed(1, 1)];
     block(true);
     expect(h.teamsLive.at(-1)?.[2]).toBe(false);

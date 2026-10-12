@@ -94,9 +94,11 @@ export function ScoredEventHomeBlock({
   const copy = scoredEventHomeBlockCopy(data, promo?.homeBlock);
   const view = scoredEventHomeBlockView({ data, standings, team, hats });
   // A member's points move live while the full block is on screen, as on the event page; frozen
-  // once ended, so the winner it names is the settled one.
+  // once ended, so the winner it names is the settled one. `liveTotals` is off
+  // while the scoring engine's kill switch is off, which also stops the block following anything,
+  // without a release.
   const { ref: liveRef, inView } = useInView();
-  const live = inView && !collapsed && view.state === 'joined';
+  const live = inView && !collapsed && view.state === 'joined' && !!standings?.liveTotals;
   useEventTeamsLivePoints(event, standings?.teamsTopicId, live);
   const eventHref = `/events/${event}`;
   const colors = data.teams.map((t) => teamColor(t)).filter((c): c is string => !!c);
