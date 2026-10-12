@@ -40,6 +40,7 @@ vi.mock('~/env/server', () => ({
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: {} }));
 
 import { getImage } from '../image.service';
+import { getImageSchema } from '~/server/schema/image.schema';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
 const VIEWER = 71806;
@@ -139,21 +140,15 @@ describe('getImage postless authorization', () => {
     expect(sql).toContain('i."postId" IS NULL AND i."userId" = NULL');
   });
 
-  it('keeps the post gates for an image with a post when the caller sends withoutPost', async () => {
-    // `withoutPost` is a client-supplied field on a public procedure (the article lightbox and the
-    // bounty viewer send it). It may only relax the rule for a postless image.
-    const sql = await captureQuery({ id: IMAGE_ID, userId: VIEWER, withoutPost: true });
+  it('ignores a withoutPost sent by an old client', async () => {
+    // `image.get` is public, so callers can send any input. Visibility must not depend on it:
+    // every postless image has a server-side rule (owner, article cover, bounty).
+    const input = getImageSchema.parse({ id: IMAGE_ID, withoutPost: true });
+    expect(input).toEqual({ id: IMAGE_ID });
 
-    expect(sql).toContain('LEFT JOIN "Post" p ON p.id = i."postId"');
-    expect(sql).toContain(`p."publishedAt" < now() OR p."userId" = ${VIEWER}`);
-    expect(sql).toContain(
-      `(i."postId" IS NULL OR p."availability" != 'Private' OR p."userId" = ${VIEWER})`
-    );
-    expect(sql).toContain('OR (i."postId" IS NULL AND TRUE)');
-    expect(sql).not.toContain(`i."postId" IS NULL AND i."userId" = ${VIEWER}`);
-    // The payload reads the post too, rather than a literal 'Public'.
-    expect(sql).toContain(`COALESCE(p."availability", 'Public') "availability"`);
-    expect(sql).not.toContain(`'Public' "availability"`);
+    const sql = await captureQuery({ id: IMAGE_ID, userId: VIEWER });
+    expect(await captureQuery({ ...input, userId: VIEWER })).toBe(sql);
+    expect(sql).not.toContain('AND TRUE');
   });
 
   it('leaves the moderator path ungated', async () => {

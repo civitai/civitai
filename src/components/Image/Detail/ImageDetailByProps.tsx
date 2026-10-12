@@ -85,7 +85,7 @@ export function ImageDetailByProps({
   image?: ImageProps | null;
 } & Partial<ImageGuardConnect>) {
   const { data = null, isLoading } = trpc.image.get.useQuery(
-    { id: imageId, withoutPost: true },
+    { id: imageId },
     { enabled: !!imageId }
   );
 

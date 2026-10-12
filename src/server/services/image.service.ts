@@ -5640,16 +5640,8 @@ export const getImage = async ({
   id,
   userId,
   isModerator,
-  withoutPost,
 }: GetImageInput & { userId?: number; isModerator?: boolean }) => {
-  const AND = [
-    Prisma.sql`i.id = ${id}`,
-    ...imageVisibilityConditions({
-      userId,
-      isModerator,
-      postGates: withoutPost ? 'whenPosted' : 'always',
-    }),
-  ];
+  const AND = [Prisma.sql`i.id = ${id}`, ...imageVisibilityConditions({ userId, isModerator })];
 
   const rawImages = await dbRead.$queryRaw<GetImageRaw[]>`
     SELECT

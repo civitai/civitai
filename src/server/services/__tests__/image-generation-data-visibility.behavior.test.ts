@@ -188,8 +188,32 @@ describe('getImageGenerationData visibility', () => {
     expect(await sees(OTHER)).toBe(true);
   });
 
-  it('serves a postless image to everyone, as image.get does for images outside a post', async () => {
+  it('serves a postless image only to its owner unless something shows it publicly', async () => {
     await seed({ post: null });
+    expect(await sees(ANON)).toBe(false);
+    expect(await sees(OTHER)).toBe(false);
+    expect(await sees(SELF)).toBe(true);
+  });
+
+  it.each([
+    [
+      'the cover of a published article',
+      `INSERT INTO "Article" VALUES (1, 1, 'Published', now(), 'Scanned')`,
+    ],
+    [
+      'an image of a Public bounty',
+      `INSERT INTO "Bounty" VALUES (4, ${MANAGER}, 'Public');
+        INSERT INTO "ImageConnection" VALUES (1, 4, 'Bounty')`,
+    ],
+    [
+      'an image of an entry on a Public bounty',
+      `INSERT INTO "Bounty" VALUES (4, ${MANAGER}, 'Public');
+        INSERT INTO "BountyEntry" VALUES (8, 4, ${OWNER});
+        INSERT INTO "ImageConnection" VALUES (1, 8, 'BountyEntry')`,
+    ],
+  ])('serves a postless image that is %s to everyone', async (_label, shown) => {
+    await seed({ post: null });
+    await db.exec(shown);
     expect(await sees(ANON)).toBe(true);
     expect(await sees(OTHER)).toBe(true);
   });
@@ -545,10 +569,10 @@ describe('getImageGenerationData source media', () => {
 
 /** `getImage`'s two modes over the same rows, so the extraction is pinned by behaviour too. */
 describe('imageVisibilityConditions for image.get', () => {
-  async function visibleTo(viewer: Viewer, postGates: 'always' | 'whenPosted') {
+  async function visibleTo(viewer: Viewer) {
     const raw = pgliteRaw(db);
     const where = Prisma.join(
-      [Prisma.sql`i.id = 1`, ...imageVisibilityConditions({ ...viewer, postGates })],
+      [Prisma.sql`i.id = 1`, ...imageVisibilityConditions(viewer)],
       ' AND '
     );
     const rows =
@@ -558,42 +582,34 @@ describe('imageVisibilityConditions for image.get', () => {
 
   it('hides a postless image from everyone but its owner by default', async () => {
     await seed({ post: null });
-    expect(await visibleTo(ANON, 'always')).toBe(false);
-    expect(await visibleTo(OTHER, 'always')).toBe(false);
-    expect(await visibleTo(SELF, 'always')).toBe(true);
-    expect(await visibleTo(MOD, 'always')).toBe(true);
-  });
-
-  it('admits a postless image to anyone without the post', async () => {
-    await seed({ post: null });
-    expect(await visibleTo(ANON, 'whenPosted')).toBe(true);
+    expect(await visibleTo(ANON)).toBe(false);
+    expect(await visibleTo(OTHER)).toBe(false);
+    expect(await visibleTo(SELF)).toBe(true);
+    expect(await visibleTo(MOD)).toBe(true);
   });
 
   it('admits a postless cover of a readable article by default', async () => {
     await seed({ post: null });
     await db.exec(`INSERT INTO "Article" VALUES (1, 1, 'Published', now(), 'Scanned')`);
-    expect(await visibleTo(ANON, 'always')).toBe(true);
+    expect(await visibleTo(ANON)).toBe(true);
     await db.exec(`UPDATE "Article" SET status = 'Draft'`);
-    expect(await visibleTo(ANON, 'always')).toBe(false);
+    expect(await visibleTo(ANON)).toBe(false);
   });
 
   it('does not let an image in an unpublished post borrow an article cover', async () => {
     await seed({ post: { '"publishedAt"': 'NULL' } });
     await db.exec(`INSERT INTO "Article" VALUES (1, 1, 'Published', now(), 'Scanned')`);
-    for (const postGates of ['always', 'whenPosted'] as const)
-      expect(await visibleTo(OTHER, postGates)).toBe(false);
+    expect(await visibleTo(OTHER)).toBe(false);
   });
 
   it.each([
     ['an unpublished post', { '"publishedAt"': 'NULL' }],
     ['a Private post', { availability: `'Private'` }],
-  ])('applies the post checks to an image in %s even without the post', async (_label, post) => {
+  ])('applies the post checks to an image in %s', async (_label, post) => {
     await seed({ post });
-    for (const postGates of ['always', 'whenPosted'] as const) {
-      expect(await visibleTo(ANON, postGates)).toBe(false);
-      expect(await visibleTo(OTHER, postGates)).toBe(false);
-      expect(await visibleTo(SELF, postGates)).toBe(true);
-    }
+    expect(await visibleTo(ANON)).toBe(false);
+    expect(await visibleTo(OTHER)).toBe(false);
+    expect(await visibleTo(SELF)).toBe(true);
   });
 
   // A bounty's images follow the bounty page (canViewBounty): shown unless the bounty is Private,
@@ -615,26 +631,24 @@ describe('imageVisibilityConditions for image.get', () => {
 
     it.each(['Public', 'Unsearchable'])('is shown to everyone on a %s bounty', async (level) => {
       await db.exec(`UPDATE "Bounty" SET availability = '${level}'`);
-      for (const postGates of ['always', 'whenPosted'] as const) {
-        expect(await visibleTo(ANON, postGates)).toBe(true);
-        expect(await visibleTo(OTHER, postGates)).toBe(true);
-      }
+      expect(await visibleTo(ANON)).toBe(true);
+      expect(await visibleTo(OTHER)).toBe(true);
     });
 
     it('on a Private bounty, is shown only to the bounty owner and the image owner', async () => {
       await db.exec(`UPDATE "Bounty" SET availability = 'Private'`);
-      expect(await visibleTo(ANON, 'always')).toBe(false);
-      expect(await visibleTo(OTHER, 'always')).toBe(false);
-      expect(await visibleTo(BOUNTY_OWNER, 'always')).toBe(true);
-      expect(await visibleTo(SELF, 'always')).toBe(true);
+      expect(await visibleTo(ANON)).toBe(false);
+      expect(await visibleTo(OTHER)).toBe(false);
+      expect(await visibleTo(BOUNTY_OWNER)).toBe(true);
+      expect(await visibleTo(SELF)).toBe(true);
     });
 
     it('keeps the review and Blocked checks', async () => {
       await db.exec(`UPDATE "Image" SET "needsReview" = 'minor'`);
-      expect(await visibleTo(ANON, 'always')).toBe(false);
+      expect(await visibleTo(ANON)).toBe(false);
       await db.exec(`UPDATE "Image" SET "needsReview" = NULL, "nsfwLevel" = 32`);
-      expect(await visibleTo(ANON, 'always')).toBe(false);
-      expect(await visibleTo(SELF, 'always')).toBe(true);
+      expect(await visibleTo(ANON)).toBe(false);
+      expect(await visibleTo(SELF)).toBe(true);
     });
   });
 
@@ -648,7 +662,7 @@ describe('imageVisibilityConditions for image.get', () => {
     await db.exec(`INSERT INTO "Bounty" VALUES (4, ${MANAGER}, 'Private'), (9, ${MANAGER}, 'Public');
       INSERT INTO "BountyEntry" VALUES (4, 9, ${OWNER});
       INSERT INTO "ImageConnection" VALUES ${connection}`);
-    expect(await visibleTo(ANON, 'always')).toBe(false);
+    expect(await visibleTo(ANON)).toBe(false);
   });
 
   it("does not admit a postless image through another image's bounty", async () => {
@@ -657,21 +671,21 @@ describe('imageVisibilityConditions for image.get', () => {
       INSERT INTO "Bounty" VALUES (4, ${MANAGER}, 'Public');
       INSERT INTO "BountyEntry" VALUES (8, 4, ${OWNER});
       INSERT INTO "ImageConnection" VALUES (2, 4, 'Bounty'), (2, 8, 'BountyEntry')`);
-    expect(await visibleTo(ANON, 'always')).toBe(false);
+    expect(await visibleTo(ANON)).toBe(false);
   });
 
   it('does not let an image in an unpublished post borrow a bounty', async () => {
     await seed({ post: { '"publishedAt"': 'NULL' } });
     await db.exec(`INSERT INTO "Bounty" VALUES (4, ${MANAGER}, 'Public');
       INSERT INTO "ImageConnection" VALUES (1, 4, 'Bounty')`);
-    expect(await visibleTo(OTHER, 'always')).toBe(false);
+    expect(await visibleTo(OTHER)).toBe(false);
   });
 
-  it('keeps the review and Blocked checks without the post', async () => {
+  it('keeps the review and Blocked checks on a postless image', async () => {
     await seed({ image: { '"needsReview"': `'minor'` }, post: null });
-    expect(await visibleTo(ANON, 'whenPosted')).toBe(false);
+    expect(await visibleTo(ANON)).toBe(false);
     await db.exec(`UPDATE "Image" SET "needsReview" = NULL, "nsfwLevel" = 32`);
-    expect(await visibleTo(ANON, 'whenPosted')).toBe(false);
-    expect(await visibleTo(SELF, 'whenPosted')).toBe(true);
+    expect(await visibleTo(ANON)).toBe(false);
+    expect(await visibleTo(SELF)).toBe(true);
   });
 });

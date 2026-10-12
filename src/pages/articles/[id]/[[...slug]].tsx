@@ -496,7 +496,11 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
               onComplete={() => queryUtils.article.getById.invalidate({ id: article.id })}
             />
           )}
-          <OwnerRatingControls entityType="Article" entityId={article.id} isOwner={!!isActualOwner} />
+          <OwnerRatingControls
+            entityType="Article"
+            entityId={article.id}
+            isOwner={!!isActualOwner}
+          />
           {article.status === ArticleStatus.Published && (
             <FirstPublishCard
               entityType="article"
@@ -528,7 +532,7 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
                         <>
                           <RoutedDialogLink
                             name="imageDetail"
-                            state={{ imageId: image.id, withoutPost: true }}
+                            state={{ imageId: image.id }}
                             className="block size-full cursor-pointer"
                           >
                             <Center className="size-full">

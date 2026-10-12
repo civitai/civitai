@@ -7,18 +7,15 @@ import { throwNotFoundError } from '~/server/utils/errorHandling';
 /**
  * Who may fetch a single image by id, as SQL over `"Image" i` with `"Post" p` LEFT JOINed on
  * `i."postId"`. Moderators see everything. An image with a post needs it published and not
- * Private (or the viewer to own it). A postless image, with `postGates`:
- * - `'always'`: the owner's, the cover of a readable article, or an image of a viewable bounty.
- * - `'whenPosted'`: anyone's (`image.get` with `withoutPost`, for images shown outside a post).
+ * Private (or the viewer to own it). A postless image needs the viewer to own it, or to be the
+ * cover of a readable article, or an image of a viewable bounty.
  */
 export function imageVisibilityConditions({
   userId,
   isModerator,
-  postGates,
 }: {
   userId?: number;
   isModerator?: boolean;
-  postGates: 'always' | 'whenPosted';
 }) {
   if (isModerator) return [];
   return [
@@ -41,9 +38,7 @@ export function imageVisibilityConditions({
     Prisma.sql`(
       p."publishedAt" < now()
       OR p."userId" = ${userId}
-      OR (i."postId" IS NULL AND ${
-        postGates === 'whenPosted' ? Prisma.sql`TRUE` : Prisma.sql`i."userId" = ${userId}`
-      })
+      OR (i."postId" IS NULL AND i."userId" = ${userId})
       OR (i."postId" IS NULL AND EXISTS (
         SELECT 1 FROM "Article" a
         WHERE a."coverId" = i.id
@@ -79,8 +74,7 @@ export function imageVisibilityConditions({
 
 /**
  * The image's owner, rating and post, or NOT_FOUND unless the viewer may see its generation data:
- * `image.get`'s visibility conditions with its `withoutPost` rules (generation data is shown for
- * images outside a post too), plus its handler's owner block check.
+ * `image.get`'s visibility conditions plus its handler's owner block check.
  */
 export async function assertImageVisibleToViewer({
   id,
@@ -98,10 +92,7 @@ export async function assertImageVisibleToViewer({
     FROM "Image" i
     LEFT JOIN "Post" p ON p.id = i."postId"
     WHERE ${Prisma.join(
-      [
-        Prisma.sql`i.id = ${id}`,
-        ...imageVisibilityConditions({ userId, isModerator, postGates: 'whenPosted' }),
-      ],
+      [Prisma.sql`i.id = ${id}`, ...imageVisibilityConditions({ userId, isModerator })],
       ' AND '
     )}
   `;
