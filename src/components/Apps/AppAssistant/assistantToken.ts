@@ -97,6 +97,8 @@ export function createAssistantTokenProvider({
       return shared(purpose, 'GET');
     },
     enable() {
+      // Tokens minted before a revoke were deleted with the consent.
+      cached.clear();
       return shared('chat', 'POST');
     },
   };

@@ -79,11 +79,11 @@ function EnableCard({
 }
 
 export function AppAssistantWorkspace({ canPreview }: { canPreview: boolean }) {
-  // A revoke under connected apps surfaces as `consent_required` on the next mint; re-checking access
-  // then puts the turn-on card back instead of leaving every call failing.
-  const recheckAccess = useRef<() => void>(() => undefined);
+  // A revoke under connected apps surfaces as `consent_required` on the next mint, for every purpose
+  // (the consent row is gone); show the turn-on card rather than leaving every call failing.
+  const [revoked, setRevoked] = useState(false);
   const tokens = useMemo(
-    () => createAssistantTokenProvider({ onConsentRequired: () => recheckAccess.current() }),
+    () => createAssistantTokenProvider({ onConsentRequired: () => setRevoked(true) }),
     []
   );
   const sandboxUrl = env.NEXT_PUBLIC_APP_ASSISTANT_SANDBOX_URL;
@@ -95,20 +95,22 @@ export function AppAssistantWorkspace({ canPreview }: { canPreview: boolean }) {
     retry: false,
     staleTime: Infinity,
   });
-  recheckAccess.current = () => void access.refetch();
   const enable = useMutation({
     mutationFn: () => tokens.enable(),
-    onSuccess: () => access.refetch(),
+    onSuccess: () => {
+      setRevoked(false);
+      void access.refetch();
+    },
   });
   const sandboxClient = useMemo(
     () =>
-      sandboxUrl && access.isSuccess
+      sandboxUrl && access.isSuccess && !revoked
         ? createSandboxClient({
             baseUrl: sandboxUrl,
             getToken: (opts) => tokens.getToken({ ...opts, purpose: 'sandbox' }),
           })
         : null,
-    [sandboxUrl, tokens, access.isSuccess]
+    [sandboxUrl, tokens, access.isSuccess, revoked]
   );
   const sandboxes = useSandboxes(sandboxClient);
 
@@ -213,7 +215,10 @@ export function AppAssistantWorkspace({ canPreview }: { canPreview: boolean }) {
         <Loader size="sm" />
       </Center>
     );
-  if (access.error instanceof AssistantTokenError && access.error.code === 'consent_required')
+  if (
+    revoked ||
+    (access.error instanceof AssistantTokenError && access.error.code === 'consent_required')
+  )
     return (
       <EnableCard
         onEnable={() => enable.mutate()}

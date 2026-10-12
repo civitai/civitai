@@ -117,17 +117,52 @@ describe('createAssistantTokenProvider', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
+  it('a callback that asks for a token again joins the refused request instead of looping', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () =>
+      refused(403, { error: 'Turn on App Assistant', code: 'consent_required' })
+    );
+    let reentered: Promise<string> | undefined;
+    const provider = createAssistantTokenProvider({
+      fetchImpl: fetchMock,
+      now: () => NOW,
+      onConsentRequired: () => {
+        reentered ??= provider.getToken({ refresh: true });
+      },
+    });
+    await expect(provider.getToken()).rejects.toMatchObject({ code: 'consent_required' });
+    await expect(reentered).rejects.toMatchObject({ code: 'consent_required' });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('enable() drops tokens minted before it, which a revoke deleted', async () => {
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(minted('old-sandbox', 3_600_000))
+      .mockResolvedValueOnce(minted('chat', 3_600_000))
+      .mockResolvedValueOnce(minted('new-sandbox', 3_600_000));
+    const provider = createAssistantTokenProvider({ fetchImpl: fetchMock, now: () => NOW });
+    expect(await provider.getToken({ purpose: 'sandbox' })).toBe('old-sandbox');
+    await provider.enable();
+    expect(await provider.getToken({ purpose: 'sandbox' })).toBe('new-sandbox');
+  });
+
   it('retries after a failed mint instead of keeping the failure', async () => {
     const fetchMock = vi
       .fn<typeof fetch>()
       .mockResolvedValueOnce(new Response('oops', { status: 503 }))
       .mockResolvedValueOnce(minted('t1', 3_600_000));
-    const provider = createAssistantTokenProvider({ fetchImpl: fetchMock, now: () => NOW });
+    const onConsentRequired = vi.fn();
+    const provider = createAssistantTokenProvider({
+      fetchImpl: fetchMock,
+      now: () => NOW,
+      onConsentRequired,
+    });
     await expect(provider.getToken()).rejects.toMatchObject({
       status: 503,
       message: 'Could not start an App Assistant session',
     });
     expect(await provider.getToken()).toBe('t1');
+    expect(onConsentRequired).not.toHaveBeenCalled();
   });
 
   it('does not reuse a token whose expiry it cannot read', async () => {
@@ -146,9 +181,16 @@ describe('createAssistantTokenProvider', () => {
     const fetchMock = vi
       .fn<typeof fetch>()
       .mockResolvedValue(refused(403, { error: 'App Assistant is not available on this account' }));
-    const provider = createAssistantTokenProvider({ fetchImpl: fetchMock, now: () => NOW });
+    const onConsentRequired = vi.fn();
+    const provider = createAssistantTokenProvider({
+      fetchImpl: fetchMock,
+      now: () => NOW,
+      onConsentRequired,
+    });
     await expect(provider.getToken()).rejects.toEqual(
       new AssistantTokenError('App Assistant is not available on this account', 403)
     );
+    // A banned or unflagged account is not a revoke.
+    expect(onConsentRequired).not.toHaveBeenCalled();
   });
 });

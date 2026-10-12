@@ -2,7 +2,7 @@ import type { DevTunnelFrame } from '~/server/services/blocks/dev-tunnel-frame.s
 
 export type PreviewFrame = DevTunnelFrame & { iframeSrc: string };
 
-/** The preview pane's frame for `blockId`, with a freshly signed, single-use entry URL. */
+/** The preview pane's frame for `blockId`, with a freshly signed, short-lived entry URL. */
 export async function fetchPreviewFrame(
   blockId: string,
   fetchImpl: typeof fetch = (...args) => fetch(...args)

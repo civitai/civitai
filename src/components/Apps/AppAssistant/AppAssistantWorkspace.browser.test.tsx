@@ -233,5 +233,11 @@ describe('AppAssistantWorkspace revoke', () => {
       .element(page.getByRole('button', { name: 'Turn on App Assistant' }))
       .toBeInTheDocument();
     expect(document.querySelector('[data-testid="chat"]')).toBeNull();
+
+    // Turning it back on brings the workspace back.
+    m.getToken.mockResolvedValue('sandbox-token');
+    await page.getByRole('button', { name: 'Turn on App Assistant' }).click();
+    expect(m.enable).toHaveBeenCalledTimes(1);
+    await expect.element(page.getByTestId('chat')).toBeInTheDocument();
   });
 });

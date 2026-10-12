@@ -234,7 +234,8 @@ describe('the minted credential is still returned to an allowed caller', () => {
 
   it('returns the token from apps/assistant/token', async () => {
     hubSession.current = { user: USER };
-    expect((await call(routes[2])).body).toEqual({
+    const assistant = routes.find((r) => r.path === '/api/apps/assistant/token')!;
+    expect((await call(assistant)).body).toEqual({
       token: 'minted-assistant-token',
       expiresAt: '2099-01-01T00:00:00Z',
     });
@@ -242,12 +243,13 @@ describe('the minted credential is still returned to an allowed caller', () => {
 });
 
 describe('apps/assistant/token POST (turn the assistant on), through the real AuthedEndpoint', () => {
+  const assistant = routes.find((r) => r.path === '/api/apps/assistant/token')!;
   beforeEach(() => {
     hubSession.current = { user: USER };
   });
 
   it('accepts a JSON POST from a browser session and writes consent', async () => {
-    const { status } = await call(routes[2], {
+    const { status } = await call(assistant, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
     });
@@ -256,7 +258,7 @@ describe('apps/assistant/token POST (turn the assistant on), through the real Au
   });
 
   it('refuses a POST that is not JSON (a cross-origin form) without writing anything', async () => {
-    const { status } = await call(routes[2], {
+    const { status } = await call(assistant, {
       method: 'POST',
       headers: { 'content-type': 'application/x-www-form-urlencoded' },
     });
@@ -265,12 +267,12 @@ describe('apps/assistant/token POST (turn the assistant on), through the real Au
   });
 
   it('allows only GET and POST', async () => {
-    expect((await call(routes[2], { method: 'PUT' })).status).toBe(405);
+    expect((await call(assistant, { method: 'PUT' })).status).toBe(405);
     expect(enableAppAssistant).not.toHaveBeenCalled();
   });
 
   it('a GET never writes consent', async () => {
-    await call(routes[2]);
+    await call(assistant);
     expect(enableAppAssistant).not.toHaveBeenCalled();
   });
 });

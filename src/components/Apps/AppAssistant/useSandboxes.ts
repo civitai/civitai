@@ -4,6 +4,12 @@ import type { Sandbox, SandboxClient } from '~/components/Apps/AppAssistant/sand
 
 const SANDBOXES_KEY = ['app-assistant', 'sandboxes'] as const;
 
+/** Retrying cannot fix a revoked assistant; the page shows its turn-on card instead. */
+export function shouldRetrySandboxList(failureCount: number, error: unknown): boolean {
+  if (error instanceof AssistantTokenError && error.code === 'consent_required') return false;
+  return failureCount < 3;
+}
+
 /** The caller's sandboxes, polled quickly while one is starting. */
 export function useSandboxes(client: SandboxClient | null) {
   const queryClient = useQueryClient();
@@ -13,9 +19,7 @@ export function useSandboxes(client: SandboxClient | null) {
     queryKey: SANDBOXES_KEY,
     queryFn: () => (client as SandboxClient).list(),
     enabled: !!client,
-    // Retrying cannot fix a revoked assistant; the page shows its turn-on card instead.
-    retry: (count, error) =>
-      !(error instanceof AssistantTokenError && error.code === 'consent_required') && count < 3,
+    retry: shouldRetrySandboxList,
     refetchInterval: (query) =>
       (query.state.data as Sandbox[] | undefined)?.some((s) => s.state === 'starting')
         ? 3_000

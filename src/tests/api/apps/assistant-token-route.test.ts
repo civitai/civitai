@@ -99,11 +99,14 @@ describe('/api/apps/assistant/token', () => {
     expect(mint).toHaveBeenCalledWith(7, 'chat');
   });
 
-  it('POST without JSON is refused before anything is written', async () => {
-    expect((await call('POST', {}, { 'content-type': 'text/plain' })).status).toBe(415);
-    expect(enable).not.toHaveBeenCalled();
-    expect(mint).not.toHaveBeenCalled();
-  });
+  it.each([[{ 'content-type': 'text/plain' }], [{}]])(
+    'POST without JSON (%j) is refused before anything is written',
+    async (headers) => {
+      expect((await call('POST', {}, headers)).status).toBe(415);
+      expect(enable).not.toHaveBeenCalled();
+      expect(mint).not.toHaveBeenCalled();
+    }
+  );
 
   it('a refused caller gets the refusal and nothing is written or minted', async () => {
     refusal.mockResolvedValue({
