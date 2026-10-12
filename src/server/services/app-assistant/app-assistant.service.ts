@@ -12,7 +12,10 @@ import type { DevTunnelFrame } from '~/server/services/blocks/dev-tunnel-frame.s
 import { resolveDevTunnelFrame } from '~/server/services/blocks/dev-tunnel-frame.service';
 import { writeOauthConsent } from '~/server/services/blocks/oauth-consent-sync.service';
 import { getFeatureFlagsAsync } from '~/server/services/feature-flags.service';
-import { APP_ASSISTANT_DAILY_BUZZ_CAP } from '~/shared/constants/app-assistant.constants';
+import {
+  APP_ASSISTANT_DAILY_BUZZ_CAP,
+  APP_ASSISTANT_SCOPES,
+} from '~/shared/constants/app-assistant.constants';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { canAccessAppAssistant } from '~/shared/utils/app-blocks-access';
 import { Flags } from '~/shared/utils/flags';
@@ -29,9 +32,6 @@ export const APP_ASSISTANT_CLIENT_PREFIX = 'appassist-';
 export function appAssistantClientId(userId: number): string {
   return `${APP_ASSISTANT_CLIENT_PREFIX}${userId}`;
 }
-
-/** `<civitai-chat>` refuses to start without `ai:write:budgeted`; every OAuth token also carries `UserRead`. */
-export const APP_ASSISTANT_SCOPES = ['ai:write:budgeted'] as const;
 
 /**
  * Who a token is for. The chat spends Buzz; the hosted sandbox service only needs to know who the

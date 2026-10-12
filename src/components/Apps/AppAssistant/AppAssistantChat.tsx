@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Alert, Center, Loader } from '@mantine/core';
 import type { ChatMcpServer, ChatTool, CivitaiChat } from '@civitai/components-chat/civitai-chat';
 import type { AssistantTokenProvider } from '~/components/Apps/AppAssistant/assistantToken';
+import { appAssistantHoldsScopes } from '~/shared/constants/app-assistant.constants';
 import classes from './AppAssistant.module.scss';
 
 const ChatTag = 'civitai-chat' as unknown as FC<{
@@ -41,8 +42,7 @@ export function AppAssistantChat({
       const app = await initialize({
         token: () => tokens.getToken(),
         refresh: () => tokens.getToken({ refresh: true }),
-        // The chat mounts only after the user has turned App Assistant on, so the grant is theirs.
-        requestGrants: () => true,
+        requestGrants: (scopes) => appAssistantHoldsScopes(scopes),
       });
       if (cancelled || !ref.current) return;
       // Set after upgrade: a property assigned before would shadow the element's accessor.
