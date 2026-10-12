@@ -1,5 +1,6 @@
 import { convertLegacyModelRule } from '@civitai/moderation/model-rules-convert';
 import { isSemanticDefinition, semanticModelRuleSchema } from '@civitai/moderation/model-rules';
+import type { Prisma } from '@prisma/client';
 import { dbWrite } from '~/server/db/client';
 import { REDIS_KEYS } from '~/server/redis/client';
 import { bustFetchThroughCache } from '~/server/utils/cache-helpers';
@@ -42,7 +43,11 @@ export async function convertLegacyModelRules() {
     const { definition, flagged } = plan(row);
     await dbWrite.moderationRule.update({
       where: { id: row.id, entityType: EntityType.Model },
-      data: { definition, action: 'Block', ...(flagged ? { enabled: false } : {}) },
+      data: {
+        definition: definition as Prisma.InputJsonObject,
+        action: 'Block',
+        ...(flagged ? { enabled: false } : {}),
+      },
     });
     if (flagged) flaggedCount++;
   }
