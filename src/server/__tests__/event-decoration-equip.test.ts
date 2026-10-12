@@ -318,7 +318,33 @@ describe('an event decoration on an image outside a post', () => {
       where: { id: IMAGE },
       select: { postId: true },
     });
+    expect(dbMock.dbRead.image.findUnique).not.toHaveBeenCalled();
     expect(db.article.findUnique).not.toHaveBeenCalled();
+    expect(db.$executeRaw).toHaveBeenCalledTimes(1);
+  });
+
+  // Checked after ownership, so a refusal says nothing about someone else's image.
+  it("refuses someone else's image as not theirs, before looking for an article", async () => {
+    db.userCosmetic.findFirst.mockResolvedValue(hatRow());
+    db.image.findUnique.mockResolvedValue({ userId: OWNER + 1, postId: null });
+
+    await expect(equipHat()).rejects.toThrow(/your own content/);
+    expect(db.article.findUnique).not.toHaveBeenCalled();
+  });
+
+  it('is not asked of a hat going on an article', async () => {
+    db.userCosmetic.findFirst.mockResolvedValue(hatRow());
+    postless();
+    db.article.findUnique.mockResolvedValue({ userId: OWNER, id: 36 });
+
+    await equipCosmeticToEntity({
+      userId: OWNER,
+      cosmeticId: 1,
+      claimKey: 'tx-1',
+      equippedToId: 36,
+      equippedToType: 'Article',
+    });
+    expect(db.image.findUnique).not.toHaveBeenCalled();
     expect(db.$executeRaw).toHaveBeenCalledTimes(1);
   });
 
