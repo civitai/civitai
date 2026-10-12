@@ -1,9 +1,8 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { NsfwLevel } from '~/server/common/enums';
 import type * as ImageService from '~/server/services/image.service';
 import type * as UserService from '~/server/services/user.service';
 import type { Prisma } from '@prisma/client';
-import { beforeEach } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { VERIFIED_BOT_HEADER } from '~/server/utils/bot-detection/header';
 
