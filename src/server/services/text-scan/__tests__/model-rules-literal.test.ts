@@ -35,6 +35,7 @@ describe('findLiteralModelRuleHits', () => {
 
   it('folds diacritics on both sides', () => {
     expect(findLiteralModelRuleHits('Jané Doe', [rule(1, 'Jane Doe')])).toEqual([1]);
+    expect(findLiteralModelRuleHits('Jané Doering', [rule(1, 'Jane Doe')])).toEqual([]);
     expect(findLiteralModelRuleHits('Jane Doe', [rule(1, 'Jané Doe')])).toEqual([1]);
   });
 

@@ -114,6 +114,7 @@ beforeEach(() => {
     id: MODEL_ID,
     status: 'UnpublishedViolation',
   });
+  dbMock.dbWrite.model.findUnique.mockResolvedValue({ status: 'Draft' });
   dbMock.dbWrite.post.findMany.mockResolvedValue([]);
   dbMock.dbWrite.image.findMany.mockResolvedValue([]);
   dbMock.dbWrite.$executeRaw.mockResolvedValue(0);
@@ -153,6 +154,17 @@ describe('publishModelById — Model rules literal hold', () => {
     expect(logToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({ name: 'text-scan', type: 'error', entityId: MODEL_ID })
     );
+  });
+
+  it('reports the hold when the hold action throws after writing the held status', async () => {
+    checkModelRulesLiteralHold.mockResolvedValue(HOLD);
+    holdModelForLiteralRules.mockRejectedValue(new Error('notice failed'));
+    dbMock.dbWrite.model.findUnique.mockResolvedValue({ status: 'UnpublishedViolation' });
+
+    const result = await publish({ enforceModelRules: true });
+
+    expect(dbMock.dbWrite.$transaction).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ status: 'UnpublishedViolation' });
   });
 
   it('publishes when there is no hit', async () => {

@@ -3337,7 +3337,12 @@ async function tryHoldModelForLiteralRules(args: Parameters<typeof holdModelForL
       entityId: args.modelId,
       error: error instanceof Error ? error.message : error,
     });
-    return false;
+    // The hold can fail after it has already written the held status; publishing on would then
+    // trip the held-model guard and report "not authorized" for a model that is in review.
+    const current = await dbWrite.model
+      .findUnique({ where: { id: args.modelId }, select: { status: true } })
+      .catch(() => null);
+    return current?.status === ModelStatus.UnpublishedViolation;
   }
 }
 
