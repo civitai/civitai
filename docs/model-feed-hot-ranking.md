@@ -4,15 +4,41 @@ A proposal to replace the model feed's default time window with a Reddit-style *
 models first, with newer ones favoured, and no hard cutoff that can empty a page. `period` stays as an
 optional narrowing the user applies on purpose.
 
-Status: **implemented** in `feat/model-feed-hot-ranking`, not yet merged. Two migrations are applied
-by hand, in order, **before** the code ships: `20261010120000_model_hot_score` (§11) and
-`20261011120000_model_hot_score_generator_cap` (§14), the second then needing the
-`/api/admin/temp/backfill-unique-generators` pass. Both were applied to production on 2026-10-08.
+Status: **implemented** in `feat/model-feed-hot-ranking`, not yet merged. Four migrations are applied
+by hand, **in order**. The first three must go in before the code ships, because the deploy names
+their columns in an INSERT list unconditionally — `bulkInsertMetrics` for `ModelMetric`, the upsert in
+`basemodel.metrics.ts` for `ModelBaseModelMetric` — so a missing column takes down the whole metrics
+job, not just the new signal. The fourth needs no deploy at all:
+
+| Migration | What it adds | Backfill | Applied to prod |
+| --- | --- | --- | --- |
+| `20261010120000_model_hot_score` (§11) | the score, its index, the mirror | in-file `CALL` | 2026-10-08 |
+| `20261011120000_model_hot_score_generator_cap` (§14) | `uniqueGeneratorCount`, the cap | `/api/admin/temp/backfill-unique-generators` | 2026-10-08 |
+| `20261012120000_base_model_metric_hot_score` (§15) | per-base-model scoring | `/api/admin/temp/backfill-base-model-hot-score` | 2026-10-12 |
+| `20261013120000_model_hot_score_generator_floor` (§16) | the first generator earns nothing | in-file `CALL` | 2026-10-12 |
+
+The last one carries an ordering constraint in the opposite direction from the others: it must go
+**after** both generator backfills, because it makes `uniqueGeneratorCount = 0` mean "no generation
+credit" rather than "not computed yet".
 
 **Later sections correct earlier ones.** §13 supersedes the divisors in §2; §10 supersedes the
-per-base-model conclusions in §6 and §7; §14 adds the generation cap, so the formula in §2 is no
-longer the whole story. Where an earlier section states a design as current fact and a later one
-reversed it, the later one wins.
+per-base-model conclusions in §6 and §7; §14 adds the generation cap and §16 then puts a floor under
+it, so the formula in §2 is three revisions out of date; §15 replaces the mirrored per-base-model
+score described in §7, §10, §11 and §12 (Trap 3) with a per-slice one, and drops
+`trg_model_metric_hot_score_fanout`. Where an earlier section states a design as current fact and a
+later one reversed it, the later one wins.
+
+The formula as it now stands:
+
+```
+engagement = thumbsUpCount
+           + downloadCount / 6.4
+           + least(generationCount / 4.1, greatest(uniqueGeneratorCount - 1, 0) * 100)
+hotScore   = round((log10(1 + engagement) + publishedAt_epoch / 2592000) * 10000)
+```
+
+computed per model on `ModelMetric` and per (model, base model) slice on `ModelBaseModelMetric`,
+where `publishedAt` is the slice's earliest published version.
 
 Follows from the tag-page soft-404 work in [seo-improvements.md](seo-improvements.md) (§1) and the
 stop-gap in `e60d745f97`.
@@ -784,7 +810,8 @@ values until their counts next changed.
 
 ### Left on dev
 
-Two columns, one trigger, three indexes and the `ModelBaseModelMetric` column. To remove:
+Two columns, one trigger, three indexes and the `ModelBaseModelMetric` column. To remove — the
+second half applies only if dev also has `20261012120000`, and `IF EXISTS` makes it harmless if not:
 
 ```sql
 DROP INDEX CONCURRENTLY "ModelMetric_hot_bare";
@@ -794,7 +821,12 @@ DROP TRIGGER trg_model_metric_hot_score ON "ModelMetric";
 DROP FUNCTION public.model_metric_hot_score();
 ALTER TABLE "ModelMetric" DROP COLUMN "hotScore", DROP COLUMN "publishedAt",
                            DROP COLUMN "uniqueGeneratorCount";
-ALTER TABLE "ModelBaseModelMetric" DROP COLUMN "hotScore";
+DROP TRIGGER IF EXISTS trg_base_model_metric_hot_score ON "ModelBaseModelMetric";
+DROP FUNCTION IF EXISTS public.base_model_metric_hot_score();
+ALTER TABLE "ModelBaseModelMetric" DROP COLUMN "hotScore",
+    DROP COLUMN IF EXISTS "generationCount",
+    DROP COLUMN IF EXISTS "uniqueGeneratorCount",
+    DROP COLUMN IF EXISTS "publishedAt";
 ```
 
 Left in place so the numbers can be re-checked.
@@ -1073,7 +1105,7 @@ to `ModelMetric`.
 
 ### Choosing the constant
 
-`generation term = least(generationCount / 4.1, uniqueGeneratorCount * 100)`
+`generation term = least(generationCount / 4.1, uniqueGeneratorCount * 100)` (floored in §16)
 
 Generations per unique generator, over models with 100+ generations, merged properly: median **44**,
 p90 **460**, max **25,444**. Simulated over the 400 strongest candidates:
@@ -1109,8 +1141,8 @@ The migration changes no score on its own. Then drive
 
 **Done when the top-100 single-generator check returns 0** — not when every model has a count. A
 published model with generations but no row in the ClickHouse generator view keeps
-`uniqueGeneratorCount = 0` for good and stays uncapped, so the migration's `not_computed` figure
-never reaches 0. On the 2026-10-08 production run that residue was 1,118 models, none of which rank
+`uniqueGeneratorCount = 0` for good, so the migration's `not_computed` figure never reaches 0. (As of
+§16 that 0 earns no generation credit rather than staying uncapped.) On the 2026-10-08 production run that residue was 1,118 models, none of which rank
 anywhere near the feed — the best sat at rank 9,354 and none were in the top 1,000. Their breakdown
 (98% absent from the generator view, which the generation-count view does know about) is a
 ClickHouse coverage gap, not a backfill failure.
@@ -1154,3 +1186,238 @@ What actually changed the mix is population, not penalty: Illustrious has 24,448
 H3's 843, so lifting a huge population slightly displaces a small one from a fixed 100 slots. Fixing
 this properly means per-ecosystem divisors — the same machinery §13 rejected — and it should be
 weighed against the fact that the per-model effect is a single day.
+
+## 15. Per-base-model scoring (2026-10-12)
+
+Migration `20261012120000`. A moderator reported that a model's position in a *filtered* feed did not
+match its presence in that ecosystem: filter to Anima and models whose Anima slice was small
+outranked models whose every download was Anima. One of them led the feed.
+
+`ModelBaseModelMetric."hotScore"` was a **copy** of the whole-model score, added as a deliberate
+simplification in `20261010120000`. So every filtered feed credited a model for engagement it earned
+somewhere else, and the more ecosystems a model spanned the more it borrowed.
+
+### What the slice score needed
+
+`thumbsUpCount` and `downloadCount` were already per base model on that table. Three columns were
+not, and all three are needed before a row can leave the mirror:
+
+| Column | Source | Why it could not already be there |
+| --- | --- | --- |
+| `generationCount` | `SUM(ModelVersionMetric)` | plain SQL aggregate, just never selected per slice |
+| `publishedAt` | `MIN(ModelVersion."publishedAt")` for the slice | the model's own date is the wrong date (below) |
+| `uniqueGeneratorCount` | ClickHouse `uniqMerge`, grouped by (model, base model) | Postgres cannot read the view |
+
+**The time term is the earliest published version FOR THAT BASE MODEL.** The model's first publish
+date would make a brand-new Anima version on a two-year-old model read as two years old in the Anima
+feed — the complaint inverted. The newest version's date would re-open the version-spam incentive
+§13 closes, inside every filtered feed. The earliest version for that base model gets both right: a
+model's first Anima version is new in the Anima feed and still old in the Illustrious feed, and a
+second Anima version later refreshes nothing.
+
+`uniqueGeneratorCount` arrives last, so it is what gates the switch. NULL means "not measured" and
+the trigger keeps mirroring; a row flips to its own score only with all three in hand, never on a
+partial formula. The three are therefore written in **one** UPDATE.
+
+### The fan-out trigger had never fired
+
+`20261010120000` added `trg_model_metric_hot_score_fanout` as `AFTER UPDATE OF "hotScore"` to push the
+whole-model score down to the base-model rows. `UPDATE OF` fires on the columns in the statement's
+SET list, **not** on columns a BEFORE trigger subsequently changed — and nothing ever SETs
+`hotScore`, because a BEFORE trigger computes it. It never ran.
+
+It did not matter, because the pull side reads `ModelMetric."hotScore"` whenever a base-model row is
+written and the metrics job writes those rows continuously. Dropped rather than repaired: once rows
+compute their own score, a push from the whole-model score is exactly what must not happen.
+
+### NULL is not zero
+
+The first backfill pass left `uniqueGeneratorCount` NULL wherever ClickHouse returned no row — which
+is what it does for a slice **nobody has generated with**. That is a known zero, not an unknown, and
+NULL pinned those slices on the mirror for good.
+
+It concentrated the bug exactly where it was visible. Measured slices get corrected *downward* to
+their own engagement, so unmeasured ones float up:
+
+| | Measured |
+| --- | ---: |
+| whole table | 79% |
+| rows at the top of a filtered feed | **28%** |
+
+Both writers now default to 0 for every slice their ClickHouse lookup covered, before the real counts
+overwrite it. NULL survives only where the lookup never ran. 165,328 slices changed meaning.
+
+### Backfill and verification (production, 2026-10-12)
+
+`/api/admin/temp/backfill-base-model-hot-score`, 804,955 models in 27 resumable pages, 844,282 slices
+seen, 244,583 rows written, no failed page. Throughput ~830 models/sec, so a 30,000-model page is a
+~36s request — the endpoint is paged because the ingress cuts long ones, not because the work is slow.
+
+| Check | Result |
+| --- | ---: |
+| slice rows measured | 815,818 of 820,075 (**99.5%**) |
+| rows now diverging from the whole-model score | **211,708** |
+| measured at the top of a filtered feed | 28% → **93.8%** |
+
+The 4,279 still unmeasured are unmeasur*able* by this path and stay mirrored, correctly: 3,597 have
+no published version for that slice at all, 681 have one with no `ModelVersionMetric` row to
+aggregate, and 1 was published while the backfill was already past its id.
+
+The moderator's four models, before → after: the two borrowing most of their engagement fell out of
+the top 20 (to #54 and #374); the two whose every download was Anima held or rose (#11 → #19,
+#8 → **#5**). Top-100 retention across nine feeds ran 51%–87%, so the lists still move.
+
+One prediction here was wrong and worth recording. The expected new leader was the pure-Anima model
+at #3; the actual leader was a model absent from the before-table entirely — published 2025, first
+Anima version 2026-09-08, and the largest Anima slice in the feed by a factor of four. Under the
+mirror its whole-model publish date buried it. That is the case the migration header argues for, and
+predicting from the before-table alone missed it.
+
+---
+
+## 16. The generator floor (2026-10-12)
+
+Migration `20261013120000`. §14's cap bounds one person at 100 like-equivalents, which was calibrated
+against the whole-model feed. §15 then gave every filtered feed its own score, and a filtered feed is
+a much smaller field. The cap was now being compared against the wrong bar.
+
+### The bar, per feed
+
+Engagement (`thumbsUp + downloads/6.4 + capped generation term`) actually needed to reach the top of
+each filtered feed:
+
+| Feed | top-10 median | to reach #10 |
+| --- | ---: | ---: |
+| Illustrious | 212 | 584 |
+| Krea 2 | 298 | 450 |
+| Qwen 2.1 | 223 | 249 |
+| Anima | 174 | 248 |
+| MiniMax H3 | 203 | 199 |
+| SDXL 1.0 | 18 | **47** |
+| Pony | 21 | **39** |
+| NoobAI | 14 | **22** |
+| Flux.1 D | 9 | **9** |
+
+In the quiet ecosystems one generator's allowance is 2–11× the entire bar. The §14 check
+(`uniqueGeneratorCount <= 1` with 500+ generations in a top 100) read **0** on the whole-model feed —
+after the tail re-run described below — and **5** across the filtered ones — all in SDXL 1.0 and NoobAI, the thinnest feeds, every one of
+them a single generator with 800–2,100 generations and 0–7 likes.
+
+### Discount, not a gate
+
+`generation term = least(generationCount / 4.1, greatest(uniqueGeneratorCount - 1, 0) * 100)`
+
+The `greatest` is load-bearing, not defensive: without it a count of 0 gives -100 and the generation
+term would *subtract* from engagement.
+
+A gate ("ignore generations until N people have generated") has a cliff at N where one extra
+generator is a step change. Discounting the first is monotonic and continuous, identical to a gate at
+the `uniqueGeneratorCount = 1` case that matters, and re-tunes nothing — the constant is unchanged, so
+a model whose generations are spread across real users is nowhere near its cap and does not move.
+
+The cost is nearly zero because single-generator models are almost all tiny. Models with generations,
+by distinct generators:
+
+| `uniqueGeneratorCount` | Models | Median generations |
+| --- | ---: | ---: |
+| 0 | 1,461 | 4 |
+| 1 | 58,803 | 6 |
+| 2 | 45,929 | 16 |
+| 3–4 | 67,761 | 34 |
+| 5–9 | 99,868 | 89 |
+| 10–49 | 187,649 | 422 |
+| 50+ | 114,113 | 4,345 |
+
+The 58,803 single-generator models lose a term worth ~1.5 like-equivalents at the median. What the
+floor actually removes is the 1,614 of them running 410+ generations on one account.
+
+### Simulated before applying
+
+Whole-model top 100: **97 of 100 unchanged**. The three that leave have two generators each running
+~400 generations with 7–11 likes, and fall to #180/#223/#267. The three that replace them have
+85–122 likes and 1,174–2,837 downloads, and move up by 1–3 places.
+
+The filtered feeds show the effect landing exactly where the problem was:
+
+| Feed | top 100 kept | top 10 changed |
+| --- | ---: | ---: |
+| Anima | 100 | 0 |
+| Qwen 2.1 | 100 | 0 |
+| MiniMax H3 | 100 | 2 |
+| Krea 2 | 99 | 0 |
+| Illustrious | 95 | 0 |
+| NoobAI | 94 | 8 |
+| Flux.1 D | 93 | 4 |
+| Pony | 83 | 6 |
+| SDXL 1.0 | **80** | **10** |
+
+The busy feeds barely move; the thin ones turn over. The new SDXL 1.0 top 10 is led by models with 9,
+13, 23 and 29 distinct generators, and no single-generator model survives in it — so the slots were
+refilled, not emptied.
+
+### `uniqueGeneratorCount = 0` changes meaning
+
+§14 made 0 deliberately inert, because 0 meant "not computed yet" while its backfill ran. That left
+the signal uncapped for every model the backfill had not reached — including every model published
+*after* it, since nothing maintained the column until the deploy. That is why the whole-model check
+read 5 again before this work: all five were published after the 8 October backfill. A re-run of
+`/api/admin/temp/backfill-unique-generators` over the recent tail (21,509 models, 1s) returned it
+to 0.
+
+The floor makes 0 earn 0, which closes that hole permanently — and makes the migration order
+load-bearing in the other direction: **it must not be applied before both generator backfills have
+run**, or it strips the generation term from every model whose count is not yet computed.
+
+### Rollout
+
+The migration itself needs no deploy: the formula exists only as two trigger functions, and the
+constants appear nowhere in TypeScript. The code half is §15's writer change — covered slices default
+to 0 rather than NULL — and that ships with the branch. Apply without `--single-transaction`: the file
+CALLs a procedure that COMMITs per batch.
+
+Replacing a function does not touch a stored score, so the file rescores. The predicate is exact
+rather than conservative: only rows where the *new* cap binds can change, because where it does not
+bind the term is `generationCount / 4.1` under both formulas. That is **103,882** of 960,714
+`ModelMetric` rows and **81,219** of 904,604 `ModelBaseModelMetric` rows — a tenth of each table, not
+a rewrite. A third pass refreshes the unmeasured slices still mirroring a score the first pass
+superseded.
+
+### Applied and verified (production, 2026-10-12)
+
+Both trigger functions carry the floor, the rescore procedure dropped itself, and **0** rows in
+either table still hold a score the old formula would have produced. The SDXL 1.0 top 10 came out
+identical to the simulation above, model for model and in the same order; the single-generator model
+that held rank 2 is now rank 30, and the slots it vacated went to models with 4–29 distinct
+generators.
+
+Two things the checks turned up that the plan did not predict:
+
+**The verification query cannot read 0, and that is the query's fault.** One `ModelMetric` row came
+back one unit off. Its `publishedAt` is in the future and its status is `Scheduled` — the formula
+clamps a future date to `NOW()`, so the score moves with the clock, and a verification query that
+recomputes the formula will always disagree with a score the trigger wrote minutes earlier. One
+`hotScore` unit is ~259 seconds. Scheduled rows are also filtered out of the feed. Compare against a
+tolerance, or exclude non-`Published` rows.
+
+**The top-100 check flags legitimate rows now, as designed.** It reads 9 across all base models
+rather than 0, and 8 of the 9 have `uniqueGeneratorCount = 0` with 163–1,228 likes and up to 20,867
+downloads. They match the predicate because it tests `<= 1`, but their generation term is now zero, so
+they are ranked purely on likes and downloads and there is nothing to fix. The ninth is the SDXL 1.0
+sockpuppet at its new rank 30. This is why the migration footer says "0 or near it" rather than 0.
+
+### What the 0-earns-nothing change costs
+
+The ClickHouse coverage gap — models with generations but no row in the generator view — now earns no
+generation credit at all, where before it was uncapped:
+
+| | Count | With 500+ generations |
+| --- | ---: | ---: |
+| `ModelMetric` rows, `uniqueGeneratorCount = 0` with generations | 1,472 | **77** |
+| `ModelBaseModelMetric` slices, same | 1,275 | **85** |
+
+So the exposure is ~80 rows in each table that lose a signal they have genuinely earned, against the
+1,614 single-generator models the floor is there to stop. The error runs toward under-crediting, which
+is the safe direction for a ranking signal, and the affected rows keep their likes and downloads — one
+of them still leads its filtered feed on those alone. Closing the gap properly means finding why those
+versions have generation rows but no generator rows, which is ClickHouse-side work and not tracked
+here.

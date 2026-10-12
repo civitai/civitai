@@ -1,5 +1,8 @@
 -- Hot sort for the model feed: a stored popularity score that favours newer models.
 --
+-- As first written; the generation term is now capped and floored by the number of
+-- distinct generators (docs/model-feed-hot-ranking.md §16).
+--
 --   engagement = thumbsUpCount + downloadCount / 6.4 + generationCount / 4.1
 --   hotScore   = round((log10(1 + engagement) + publishedAt_epoch / 2592000) * 10000)
 --
@@ -10,17 +13,17 @@
 -- 🔴 APPLY THIS FILE BEFORE DEPLOYING THE CODE, and apply it WITHOUT
 -- --single-transaction: it contains CALL with internal COMMITs and two
 -- CREATE INDEX CONCURRENTLY, neither of which can run inside a transaction block.
+-- Ahead of the deploy is safe because Prisma selects explicit column lists, so a client
+-- that predates the columns ignores them, and getModelsRaw is raw SQL that never does
+-- SELECT *.
 --
 -- 🔴 DO NOT RE-RUN THIS FILE ONCE 20261011120000 IS APPLIED. It redefines
--- model_metric_hot_score() and its trigger WITHOUT the generation cap, and its backfill
--- defaults to force := true, so it would rescore every row uncapped and drop
--- "uniqueGeneratorCount" from the trigger's UPDATE OF list. If you must re-run it,
--- apply 20261011120000 again afterwards.
+-- model_metric_hot_score() and base_model_metric_hot_score() WITHOUT the generator cap or
+-- floor, recreates the fan-out trigger that 20261012120000 drops, and its backfill
+-- defaults to force := true, so it would rescore every row uncapped. If you must re-run
+-- it, apply 20261011120000, 20261012120000 and 20261013120000 again afterwards, in order.
 --
--- On its own it is re-runnable: every object is CREATE OR REPLACE or IF NOT EXISTS.
 -- Pass force := false only to resume an interrupted first run.
--- Prisma selects explicit column lists, so a client that predates the columns ignores
--- them, and getModelsRaw is raw SQL that never does SELECT *.
 --
 -- Three properties that are load-bearing, each one a trap we hit on dev:
 --
@@ -39,7 +42,8 @@ ALTER TABLE "ModelMetric"
   ADD COLUMN IF NOT EXISTS "publishedAt" TIMESTAMP(3),
   ADD COLUMN IF NOT EXISTS "hotScore" INTEGER;
 
--- Mirrored, not recomputed: the same model-level score, so the base-model feed can be
+-- Mirrored here, and made computed per slice by 20261012120000: the same model-level
+-- score, so the base-model feed can be
 -- served by a (baseModel, hotScore) index the way mbmm_feed_highest_rated serves
 -- Highest Rated. Without this, a base-model-filtered Hot query drives from ModelMetric
 -- and walks the index hunting for matches, which costs most for a mid-sized base model

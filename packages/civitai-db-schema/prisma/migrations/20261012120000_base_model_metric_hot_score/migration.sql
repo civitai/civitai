@@ -13,6 +13,8 @@
 --
 --   least(generationCount / 4.1, uniqueGeneratorCount * 100)
 --
+-- As first written; see 20261013120000 for the floor that replaced it.
+--
 -- THE TIME TERM IS THE EARLIEST PUBLISHED VERSION FOR THAT BASE MODEL, not the model's
 -- first publish and not its newest version. That is the only choice here that is not
 -- forced:
@@ -34,6 +36,11 @@
 -- then the trigger mirrors the whole-model score, which is exactly today's behaviour.
 --
 -- The backfill writes all three together: /api/admin/temp/backfill-base-model-hot-score.
+--
+-- 🔴 DO NOT RE-RUN THIS FILE ONCE 20261013120000 IS APPLIED. It redefines
+-- base_model_metric_hot_score() without the generator floor, so every filtered-feed row
+-- written afterwards is scored unfloored, and it restores the treatment of 0 as inert. If
+-- you must re-run it, apply 20261013120000 again afterwards.
 --
 -- Ordinary DDL, transaction-safe. Like 20261011120000 and unlike 20261010120000 it wants
 -- a SHORT lock_timeout, because ADD COLUMN takes a brief ACCESS EXCLUSIVE lock on a table
@@ -91,6 +98,7 @@ BEGIN
                 -- 20261011120000. Deliberately identical, so a model's rank does not jump
                 -- when a filter is applied.
                 + NEW."downloadCount" / 6.4
+                -- Superseded by 20261013120000.
                 + CASE
                       WHEN NEW."uniqueGeneratorCount" > 0
                           THEN least(

@@ -11,14 +11,16 @@
 --
 --   generation term = least(generationCount / 4.1, uniqueGeneratorCount * 100)
 --
+-- As first written. 20261013120000 puts a floor under it: (uniqueGeneratorCount - 1).
+--
 -- 100 like-equivalents per generator is 410 generations each, chosen to sit above
 -- the legitimate per-generator rate and well below the inflated one. Measurements
 -- behind the constant, and what tighter caps cost:
 -- docs/model-feed-hot-ranking.md.
 --
 -- 🔴 APPLY THIS FILE, THEN RUN THE BACKFILL. It cannot change a score on its own:
--- "uniqueGeneratorCount" starts at 0 and the cap is deliberately inert at 0, because
--- 0 means "not computed yet", not "nobody generated". The source is a ClickHouse
+-- "uniqueGeneratorCount" starts at 0 and the cap was deliberately inert at 0 (superseded
+-- by 20261013120000), because 0 meant "not computed yet", not "nobody generated". The source is a ClickHouse
 -- materialized view that Postgres cannot read, so the column is populated by
 -- /api/admin/temp/backfill-unique-generators, and every row that writes recomputes
 -- its own score through the trigger below.
@@ -28,6 +30,12 @@
 -- builds its INSERT column list from every key in that array unconditionally. Deploy
 -- the code against a database without this column and every model-metrics batch
 -- throws, taking down the whole job rather than just the new signal.
+--
+-- 🔴 DO NOT RE-RUN THIS FILE ONCE 20261013120000 IS APPLIED. That file puts a floor under
+-- the cap — the first generator earns nothing — and reverses the "0 is inert" decision
+-- below, because 0 is now a maintained count rather than a backfill placeholder. This
+-- file would silently restore the unfloored formula and the inert 0. If you must re-run
+-- it, apply 20261013120000 again afterwards.
 --
 -- Unlike 20261010120000, this file is ordinary DDL: three statements, no CALL and no
 -- CREATE INDEX CONCURRENTLY, so it is transaction-safe and wants the OPPOSITE lock
@@ -60,10 +68,7 @@ BEGIN
                 + NEW."thumbsUpCount"
                 -- Divisors and the clamp below: see 20261010120000.
                 + NEW."downloadCount" / 6.4
-                -- 0 is "not computed yet", so the cap stays inert rather than zeroing
-                -- the generation term for every model between this file and the
-                -- backfill. Models with no generator-view row keep 0 for good and stay
-                -- uncapped; the footer's top-100 check is what bounds that exposure.
+                -- 0 = not computed yet: inert until 20261013120000 (see header).
                 + CASE
                       WHEN NEW."uniqueGeneratorCount" > 0
                           THEN least(
@@ -98,13 +103,17 @@ CREATE OR REPLACE TRIGGER trg_model_metric_hot_score
 
 -- Verification -----------------------------------------------------------------
 --
+-- Valid only before 20261013120000: afterwards a count of 0 earns nothing and the cap
+-- binds at (count - 1) * 100, so both queries below describe a formula that is no longer
+-- live.
+--
 -- Straight after this file: not_computed should equal with_generations and capped
 -- should be 0 — nothing has changed yet.
 --
 -- After the backfill, not_computed does NOT reach 0 and is not meant to. A model with
 -- generations but no row in the ClickHouse generator view keeps a count of 0 for good,
--- and stays uncapped. Those models rank far below the feed; the achievable check is the
--- second query, and it is the one that says the backfill is done.
+-- and (before 20261013120000) stays uncapped. Those models rank far below the feed; the
+-- achievable check is the second query, and it is the one that says the backfill is done.
 --
 --   SELECT count(*) FILTER (WHERE "generationCount" > 0) AS with_generations,
 --          count(*) FILTER (WHERE "generationCount" > 0

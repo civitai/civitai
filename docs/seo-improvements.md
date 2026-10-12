@@ -19,7 +19,7 @@ Last updated 2026-09-17.
 | --- | --- |
 | `4fa44ae5f8` | Site-wide `Organization` / `WebSite` schema, breadcrumbs on detail pages ([§2](#2-entity-and-structured-data-foundation)) |
 | `9b7b5dcc6c` | Fix: site schema crashed client-side navigation when `_app` props were absent |
-| `e60d745f97` | Tag pages retry at AllTime when the default period filter finds nothing ([§1](#1-tag-pages-generating-soft-404s)) |
+| `e60d745f97` | Tag pages retry at AllTime when the default period filter finds nothing ([§1](#1-tag-pages-generating-soft-404s)) — superseded and removed by the Hot sort |
 | `5549de7353` | Green tag pages count and list safe models only; mature-only tags noindexed on green ([§1](#1-tag-pages-generating-soft-404s)) |
 | `9b9daf8876` | Search-shaped titles and descriptions for seven ecosystem pages; Krea 2 and SD 1.5 copy corrected ([§3](#3-answer-pages--the-ecosystem-hubs)) |
 | `cbc3124738` | Video detail pages deindexed on every domain ([§5](#5-video-detail-pages--deindexed-everywhere)) |
@@ -97,9 +97,10 @@ server-side — was dropped: a sort needs no per-surface default and cannot retu
 Design, measurements and the zero-downtime rollout:
 [model-feed-hot-ranking.md](model-feed-hot-ranking.md).
 
-**Closing condition:** the code ships — both migrations are already applied in production
-(hot-ranking §11, §14) — and a soft-404 re-export shows the `/tag/*` count falling without the head
-tags losing impressions.
+**Closing condition:** the code ships — migrations `20261010120000` through `20261012120000` are
+applied in production (hot-ranking §11, §14, §15), and `20261013120000` (§16) is written but not yet
+applied — and a soft-404 re-export shows the `/tag/*` count falling without the head tags losing
+impressions.
 
 ### Considered and deferred: a minimum-model threshold for indexing
 
@@ -365,5 +366,6 @@ Google is already declining. The bottleneck is what a page *says*, not how many 
 
 ### Filter redesign as an SEO fix
 
-A time-decayed "hot" sort and a sparse filter store were explored and set aside on 2026-09-16. The
-tag-page symptom is handled by §1; the filter system's own problems are product work, not SEO work.
+A sparse filter store was explored and set aside on 2026-09-16 (the time-decayed "hot" sort set aside
+the same day was later built; see §1). The tag-page symptom is handled by §1; the filter system's own
+problems are product work, not SEO work.

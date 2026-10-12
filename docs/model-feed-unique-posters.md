@@ -201,6 +201,13 @@ its keep if deletes have to decrement exactly — see §5.4.
    one image each from many throwaway accounts, and it is *cheaper* than the attack it replaces.
    Likely needs a floor on which accounts count (age, or some prior activity). Needs its own look
    before this ships; the 1/8 weight limits the payoff but does not remove it.
+
+   The generation signal now has a floor of its own —
+   `20261013120000_model_hot_score_generator_floor`, the first distinct generator earning nothing
+   (hot-ranking doc §16). It is a cheaper shape than account screening: it needs no account
+   attributes, and the discount falls on the signal rather than on a judgement about who counts.
+   Whether it transfers here depends on whether one poster's images are worth as little as one
+   generator's generations, which is not measured.
 3. **Declared vs detected resources.** `ImageResourceNew.detected` distinguishes a resource the
    poster declared from one inferred from metadata. Unclear which should count.
 4. **Deletes and unpublishes.** Decrementing is not a simple `DELETE` — a poster may have other
