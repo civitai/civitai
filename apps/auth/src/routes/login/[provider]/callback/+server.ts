@@ -7,6 +7,7 @@ import {
   exchangeCode,
   fetchProfile,
   isStubProviderEnabled,
+  NO_PKCE_COOKIE,
 } from '$lib/server/auth/providers';
 import {
   findOrCreateUser,
@@ -39,6 +40,8 @@ export const GET: RequestHandler = async ({ params, url, cookies, locals }) => {
   const returnUrl = cookies.get('oauth_return') ?? '/';
   const sync = cookies.get('oauth_sync') ?? null;
   const linkIntent = cookies.get('oauth_link') === '1';
+  const noPkce =
+    cookies.get(NO_PKCE_COOKIE) === provider.id && linkIntent && !!provider.incrementalSkipsPkce;
 
   // Clear flow cookies regardless of outcome.
   for (const name of [
@@ -47,6 +50,7 @@ export const GET: RequestHandler = async ({ params, url, cookies, locals }) => {
     'oauth_return',
     'oauth_sync',
     'oauth_link',
+    NO_PKCE_COOKIE,
   ]) {
     cookies.delete(name, { path: '/' });
   }
@@ -65,9 +69,10 @@ export const GET: RequestHandler = async ({ params, url, cookies, locals }) => {
     redirect(302, loginRetry(url.origin, errorCode, returnUrl));
   }
 
-  if (!code || !state || !savedState || state !== savedState || !verifier) {
+  const missingVerifier = !verifier && !noPkce;
+  if (!code || !state || !savedState || state !== savedState || missingVerifier) {
     const reason =
-      !code || !state ? 'no_code' : !savedState || !verifier ? 'no_cookie' : 'state_mismatch';
+      !code || !state ? 'no_code' : !savedState || missingVerifier ? 'no_cookie' : 'state_mismatch';
     logCallbackFailure(provider.id, reason, linkIntent);
     error(400, 'Invalid OAuth state');
   }
@@ -76,7 +81,7 @@ export const GET: RequestHandler = async ({ params, url, cookies, locals }) => {
   const { accessToken, scope } = await exchangeCode(provider, {
     code,
     redirectUri,
-    codeVerifier: verifier,
+    codeVerifier: noPkce ? undefined : verifier,
   });
   const profile = await fetchProfile(provider, accessToken);
   // Normalize BEFORE anything reads it: `findOrCreateUser` both looks up and STORES this string,
