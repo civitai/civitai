@@ -10,6 +10,9 @@ const TINY_UFO: EventDecorationFit = { canvas: [128, 160], bounds: [10, 83, 118,
 const CHEETAH_BEANIE: EventDecorationFit = { canvas: [128, 160], bounds: [0, 22, 128, 152] };
 const STRAW_HAT: EventDecorationFit = { canvas: [128, 160], bounds: [0, 73, 128, 152] };
 const CIVBOT_RIDER: EventDecorationFit = { canvas: [128, 160], bounds: [16, 9, 112, 152] };
+// Drawn off the middle of their files.
+const SCAVENGER_HOOD: EventDecorationFit = { canvas: [128, 160], bounds: [0, 39, 102, 152] };
+const MORNING_MUG: EventDecorationFit = { canvas: [128, 160], bounds: [24, 23, 128, 152] };
 // Shapes no hat has yet, past where the even area alone would leave the square.
 const SLAB: EventDecorationFit = { canvas: [128, 160], bounds: [0, 140, 128, 152] };
 const POLE: EventDecorationFit = { canvas: [128, 160], bounds: [60, 0, 68, 152] };
@@ -49,6 +52,8 @@ describe('a hat preview sized by its art', () => {
     ['Cheetah Propeller Beanie', CHEETAH_BEANIE],
     ['Straw Hat', STRAW_HAT],
     ['CivBot Rider', CIVBOT_RIDER],
+    ['Scavenger Hood', SCAVENGER_HOOD],
+    ['Morning Mug', MORNING_MUG],
     ['a slab', SLAB],
     ['a pole', POLE],
     ['a larger file', LARGE_FILE],
