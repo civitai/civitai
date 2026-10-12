@@ -7,12 +7,19 @@
   import { promptKeyName } from '$lib/text-scan-lab/labels';
   import type { PromptKey } from '$lib/text-scan-lab/types';
   import DiffView from '$lib/components/text-scan-lab/DiffView.svelte';
+  import RestoreDialog from './RestoreDialog.svelte';
 
   let {
     promptKey,
     prompts,
     authors,
-  }: { promptKey: PromptKey; prompts: LabPrompts; authors: Record<number, string> } = $props();
+    canRestore,
+  }: {
+    promptKey: PromptKey;
+    prompts: LabPrompts;
+    authors: Record<number, string>;
+    canRestore: boolean;
+  } = $props();
 
   const active = $derived(prompts.active[promptKey]);
   const history = $derived([...(prompts.history ?? [])].sort((a, b) => b.id - a.id));
@@ -98,11 +105,14 @@
               <p class="mt-1 text-xs text-dark-2">{version.note}</p>
             {/if}
             <Collapsible.Content class="mt-2">
-              <p class="mb-2 text-xs">
+              <div class="mb-2 flex items-center gap-2 text-xs">
                 <a href="/text-scan/check?key={promptKey}&from={version.id}" class={LINK_CLASS}
                   >Edit in Check</a
                 >
-              </p>
+                {#if canRestore && version.id !== active?.id}
+                  <RestoreDialog {promptKey} versionId={version.id} />
+                {/if}
+              </div>
               {#if previous}
                 <p class="mb-1 text-xs text-dark-2">Changes from the version of {when(previous.createdAt)}</p>
                 <DiffView before={previous.content} after={version.content} />

@@ -36,7 +36,12 @@
 </nav>
 
 {#if data.prompts.ok}
-  <ActivePromptPanel promptKey={data.key} prompts={data.prompts.value} authors={data.authors} />
+  <ActivePromptPanel
+    promptKey={data.key}
+    prompts={data.prompts.value}
+    authors={data.authors}
+    canRestore={!!data.grants['textScan.prompt.publish']}
+  />
 {:else}
   <section class="rounded-xl border border-dark-4 bg-dark-6 p-5">
     <p class="text-sm text-red-300">{data.prompts.error}</p>
