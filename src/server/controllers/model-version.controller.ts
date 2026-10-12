@@ -105,6 +105,8 @@ import { env } from '~/env/server';
 import { getWorkflow } from '~/server/services/orchestrator/workflows';
 import { assertTrainingSourcePublishable } from '~/server/services/orchestrator/training/publish-from-workflow';
 import { updateTrainingWorkflowRecords } from '~/server/services/training.service';
+import { unpublishLiveModelForLiteralRules } from '~/server/services/text-scan/actions/model-rules';
+import { checkModelRulesLiteralHold } from '~/server/services/text-scan/model-rules-hold';
 import { scanEntityInBackground } from '~/server/services/text-scan/submit';
 import { getAllowedAccountTypes } from '~/server/utils/buzz-helpers';
 import { isDefined } from '~/utils/type-guards';
@@ -827,7 +829,9 @@ export const publishModelVersionHandler = async ({
         status: true,
         modelId: true,
         baseModel: true,
-        model: { select: { userId: true, nsfw: true, status: true, meta: true } },
+        model: {
+          select: { userId: true, nsfw: true, status: true, availability: true, meta: true },
+        },
       },
     });
 
@@ -865,7 +869,22 @@ export const publishModelVersionHandler = async ({
       version.status !== ModelStatus.Draft && version.status !== ModelStatus.Scheduled;
     const { needsReview, unpublishedReason, unpublishedAt, unpublishedBy, customMessage, ...meta } =
       versionMeta || {};
+    // A model that is not public yet is held at its own publish; this is for one already live.
+    const modelIsLive =
+      (version.model.status === ModelStatus.Published ||
+        version.model.status === ModelStatus.Scheduled) &&
+      version.model.availability !== Availability.Private;
+    const literalHold =
+      modelIsLive && !ctx.user.isModerator
+        ? await checkModelRulesLiteralHold({
+            modelId: version.modelId,
+            versionIds: [input.id],
+            meta: version.model.meta as ModelMeta | null,
+          })
+        : null;
     const updatedVersion = await publishModelVersionById({ ...input, meta, republishing });
+    if (literalHold)
+      await unpublishLiveModelForLiteralRules({ modelId: version.modelId, ...literalHold });
     if (!ctx.user.isModerator)
       scanEntityInBackground({ entityType: 'ModelRules', entityId: updatedVersion.modelId });
 

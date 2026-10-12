@@ -29,7 +29,23 @@ export async function applyModelRulesTextScan({
   const ruleIds = matched.map((m) => m.ruleId).filter((id) => !cleared.includes(id));
   if (!ruleIds.length) return;
 
-  const modelRules = { ruleIds, workflowId, textHash, at: new Date().toISOString() };
+  await claimAndUnpublishForModelRules({
+    entityId,
+    meta,
+    modelRules: { ruleIds, workflowId, textHash, at: new Date().toISOString() },
+  });
+}
+
+async function claimAndUnpublishForModelRules({
+  entityId,
+  meta,
+  modelRules,
+}: {
+  entityId: number;
+  meta: ModelMeta;
+  modelRules: NonNullable<ModelMeta['modelRules']>;
+}) {
+  const { workflowId } = modelRules;
   // Claimed in one statement so a model the owner unpublished or deleted since the scan, or a second
   // delivery of the same callback, is never taken down (or notified) again.
   const claimed = await dbWrite.$executeRaw`
@@ -70,6 +86,16 @@ async function unpublishForModelRules({
   await bustPublicModelResponseCache(entityId);
 }
 
+function literalModelRules(ruleIds: number[], textHash: string) {
+  return {
+    ruleIds,
+    workflowId: `literal:${textHash}`,
+    textHash,
+    at: new Date().toISOString(),
+    source: 'literal' as const,
+  };
+}
+
 /**
  * A literal match found before the model went public. It is taken straight to review instead of
  * being published first, so no claim on a public row is needed.
@@ -85,14 +111,30 @@ export async function holdModelForLiteralRules({
   textHash: string;
   meta?: ModelMeta;
 }) {
-  const modelRules = {
-    ruleIds,
-    workflowId: `literal:${textHash}`,
-    textHash,
-    at: new Date().toISOString(),
-    source: 'literal' as const,
-  };
-  await unpublishForModelRules({ entityId: modelId, meta: meta ?? {}, modelRules });
+  await unpublishForModelRules({
+    entityId: modelId,
+    meta: meta ?? {},
+    modelRules: literalModelRules(ruleIds, textHash),
+  });
+}
+
+/** A literal match found as a version was added to a model that is already public. */
+export async function unpublishLiveModelForLiteralRules({
+  modelId,
+  ruleIds,
+  textHash,
+}: {
+  modelId: number;
+  ruleIds: number[];
+  textHash: string;
+}) {
+  const model = await dbWrite.model.findUnique({ where: { id: modelId }, select: { meta: true } });
+  if (!model) return;
+  await claimAndUnpublishForModelRules({
+    entityId: modelId,
+    meta: (model.meta ?? {}) as ModelMeta,
+    modelRules: literalModelRules(ruleIds, textHash),
+  });
 }
 
 /** What a moderator approves by republishing a model these rules unpublished. */
