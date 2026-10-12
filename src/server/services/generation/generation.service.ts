@@ -499,9 +499,8 @@ async function getMediaGenerationData({
     createdAt: media.createdAt,
   };
 
-  const storedMeta = (
-    showMedia ? media.meta ?? {} : withoutMediaReferences(media.meta ?? {})
-  ) as ImageMetaProps;
+  const rawMeta = (media.meta ?? {}) as ImageMetaProps;
+  const storedMeta = showMedia ? rawMeta : withoutMediaReferences(rawMeta);
   const canSeeHiddenPrompt = !!user && (user.isModerator || user.id === media.userId);
   const initialMeta =
     media.hideMeta && !canSeeHiddenPrompt ? stripHiddenPrompt(storedMeta) : storedMeta;

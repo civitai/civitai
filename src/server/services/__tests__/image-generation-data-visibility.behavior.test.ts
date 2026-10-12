@@ -261,22 +261,34 @@ describe('getImageGenerationData media links', () => {
   const SOURCE = 'https://orchestration-new.civitai.com/source.png';
   const HOMEPAGE = 'https://example.com/tool';
   const PROMPT = 'a prompt, see https://civitai.com/posts/1 for more';
+  // Every shape a source image is recorded in, each with a marker the assertions look for.
+  const MEDIA_META = {
+    prompt: PROMPT,
+    images: [{ url: SOURCE, width: 512, height: 512 }],
+    controlNets: [`${SOURCE}?controlnet`],
+    video: { url: `${SOURCE}?video` },
+    styleReferences: [{ image: { URL: 'image-key-without-a-scheme' }, strength: 1 }],
+    mask: '  data:image/png;base64,AAAA  ',
+    thumbnail: '//image.civitai.com/protocol-relative.png',
+    comfy: JSON.stringify({ prompt: { '1': { inputs: { image: `${SOURCE}?comfy` } } } }),
+    external: { source: { name: 'Tool', homepage: HOMEPAGE } },
+  };
+  const MARKERS = [SOURCE, HOMEPAGE, 'image-key-without', 'data:image', 'protocol-relative'];
 
-  beforeEach(async () => {
+  function mockImageRow(overrides: Record<string, unknown> = {}) {
     dbMock.dbRead.image.findUnique.mockResolvedValue({
       hideMeta: false,
       generationProcess: null,
-      meta: {
-        prompt: PROMPT,
-        images: [{ url: SOURCE, width: 512, height: 512 }],
-        video: { url: SOURCE },
-        styleReferences: [{ image: { url: 'image-key-without-a-scheme' } }],
-        external: { source: { name: 'Tool', homepage: HOMEPAGE } },
-      },
+      meta: MEDIA_META,
       type: 'image',
       tools: [],
       techniques: [],
+      ...overrides,
     } as never);
+  }
+
+  beforeEach(async () => {
+    mockImageRow();
     // An R-rated image in a published post that was submitted to collection 7.
     await seed({ image: { '"nsfwLevel"': '4' }, post: { '"collectionId"': '7' } });
     await db.exec(
@@ -290,8 +302,7 @@ describe('getImageGenerationData media links', () => {
     return { data, json: JSON.stringify(data), ctx };
   }
 
-  const withheld = (json: string) =>
-    !json.includes(SOURCE) && !json.includes(HOMEPAGE) && !json.includes('image-key-without');
+  const leaked = (json: string) => MARKERS.filter((marker) => json.includes(marker));
 
   it.each([
     ['signed out, SFW domain', ANON, { canViewNsfw: false }],
@@ -300,12 +311,15 @@ describe('getImageGenerationData media links', () => {
     ['a crawler on the SFW domain', ANON, { canViewNsfw: false, crawler: true }],
   ] as const)('withholds them from a viewer %s', async (_label, viewer, options) => {
     const { data, json } = await fetchFor(viewer, options);
-    expect(withheld(json)).toBe(true);
-    // The rest of the generation data stays, including links inside the prompt text.
-    expect(data.meta?.prompt).toBe(PROMPT);
-    expect((data.meta as { styleReferences?: unknown[] })?.styleReferences).toEqual([
-      { image: {} },
-    ]);
+    expect(leaked(json)).toEqual([]);
+    // The rest stays: links inside the prompt text, and what is left of an entry beside its image.
+    const meta = data.meta as Record<string, unknown>;
+    expect(meta.prompt).toBe(PROMPT);
+    expect(meta.styleReferences).toEqual([{ strength: 1 }]);
+    // Entries that lose their link go whole, not as an input with no source.
+    expect(meta.images ?? []).toEqual([]);
+    expect(meta).not.toHaveProperty('video');
+    expect(meta).not.toHaveProperty('comfy');
   });
 
   it.each([
@@ -315,26 +329,51 @@ describe('getImageGenerationData media links', () => {
     ["a manager of the post's collection, SFW domain", { userId: MANAGER }, { canViewNsfw: false }],
   ] as const)('keeps them for %s', async (_label, viewer, options) => {
     const { json } = await fetchFor(viewer, options);
-    expect(json).toContain(SOURCE);
-    expect(json).toContain(HOMEPAGE);
-    expect(json).toContain('image-key-without');
+    expect(leaked(json)).toEqual(MARKERS);
   });
+
+  it.each([
+    [2, true],
+    [0, false],
+    [2 | 4, false],
+  ])(
+    'a signed-in viewer on the SFW domain, image rated %i: links kept is %s',
+    async (level, kept) => {
+      await db.exec(`UPDATE "Image" SET "nsfwLevel" = ${level}`);
+      const { json } = await fetchFor(OTHER, { canViewNsfw: false });
+      expect(leaked(json)).toEqual(kept ? MARKERS : []);
+    }
+  );
 
   it('keeps them for a signed-out viewer of a PG image', async () => {
     await db.exec(`UPDATE "Image" SET "nsfwLevel" = 1`);
     const { json } = await fetchFor(ANON, { canViewNsfw: false });
-    expect(json).toContain(SOURCE);
+    expect(leaked(json)).toEqual(MARKERS);
   });
 
-  it('keeps them for a crawler on the mature domain, out of the shared cache', async () => {
+  it('withholds them on a video the same way', async () => {
+    mockImageRow({ type: 'video' });
+    const { json } = await fetchFor(ANON, { canViewNsfw: false });
+    expect(leaked(json)).toEqual([]);
+  });
+
+  it('withholds external links when the rest of the meta is hidden', async () => {
+    mockImageRow({ hideMeta: true });
+    const { data, json } = await fetchFor(ANON, { canViewNsfw: false });
+    expect(data.meta).toBeUndefined();
+    expect(leaked(json)).toEqual([]);
+    expect(data.external).toEqual({ source: { name: 'Tool' } });
+  });
+
+  it('keeps them for a crawler on the mature domain, out of every shared cache', async () => {
     const { json, ctx } = await fetchFor(ANON, { crawler: true });
     expect(json).toContain(SOURCE);
-    expect(ctx.cache.edgeTTL).toBe(0);
+    expect(ctx.cache).toEqual({ edgeTTL: 0, browserTTL: 0, staleWhileRevalidate: 0 });
   });
 
   it('leaves the cache alone for an ordinary signed-out answer', async () => {
     const { ctx } = await fetchFor(ANON, {});
-    expect(ctx.cache.edgeTTL).toBe(60);
+    expect(ctx.cache).toEqual({ edgeTTL: 60, browserTTL: 60, staleWhileRevalidate: 30 });
   });
 });
 

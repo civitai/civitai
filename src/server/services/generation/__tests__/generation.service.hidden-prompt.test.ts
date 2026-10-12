@@ -205,6 +205,7 @@ describe('getGenerationData - image visibility', () => {
       user: otherUser as SessionUser,
       mediaViewer: {} as never,
     });
+    expect(assertImageVisibleToViewer).toHaveBeenCalledTimes(1);
     expect(assertImageVisibleToViewer).toHaveBeenCalledWith({
       id: 1,
       userId: otherUser.id,
@@ -258,6 +259,7 @@ describe('getGenerationData - source media', () => {
     mockImage(sourceMeta, false);
     vi.mocked(viewerCanSeeImageMedia).mockResolvedValue(true);
     await fetchData();
+    expect(viewerCanSeeImageMedia).toHaveBeenCalledTimes(1);
     expect(viewerCanSeeImageMedia).toHaveBeenCalledWith(mediaViewer, {
       userId: OWNER_ID,
       nsfwLevel: 4,

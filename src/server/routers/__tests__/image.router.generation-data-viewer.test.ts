@@ -27,16 +27,21 @@ vi.mock('~/server/services/image.service', async (importOriginal) => ({
 import { imageRouter } from '../image.router';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
+// Sentinels, so the test sees the request's own objects reach the service, not look-alikes.
+const features = { canViewNsfw: true };
+const req = { headers: {} };
+const cache = { edgeTTL: 0 };
+
 function callerFor(user: { id: number; isModerator?: boolean } | undefined) {
   return imageRouter.createCaller({
     user,
     acceptableOrigin: true,
     tokenScope: TokenScope.Full,
     apiKeyId: null,
-    req: { headers: {} },
+    req,
     res: { setHeader: () => undefined },
-    cache: { edgeTTL: 0 },
-    features: {},
+    cache,
+    features,
     track: { action: vi.fn(() => Promise.resolve(true)) },
   } as never);
 }
@@ -48,7 +53,7 @@ beforeEach(() => {
 describe('image.getGenerationData viewer', () => {
   const viewerOf = () => {
     const [args] = mockGetImageGenerationData.mock.calls[0] as [
-      { id: number; viewer: { user?: unknown; features?: unknown; req?: unknown } }
+      { id: number; viewer: { user?: unknown; features?: unknown; req?: unknown; cache?: unknown } }
     ];
     return args;
   };
@@ -58,8 +63,10 @@ describe('image.getGenerationData viewer', () => {
     const { id, viewer } = viewerOf();
     expect(id).toBe(3);
     expect(viewer.user).toEqual({ id: 7 });
-    expect(viewer.features).toBeDefined();
-    expect(viewer.req).toBeDefined();
+    expect(viewer.features).toBe(features);
+    expect(viewer.req).toBe(req);
+    expect(viewer.cache).toBe(cache);
+    expect(mockGetImageGenerationData).toHaveBeenCalledTimes(1);
   });
 
   it('passes the moderator flag', async () => {

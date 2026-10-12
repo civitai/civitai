@@ -2,7 +2,6 @@ import { Prisma } from '@prisma/client';
 import { NsfwLevel } from '~/server/common/enums';
 import { imageReviewedSql } from '~/server/common/image-visibility';
 import { dbRead } from '~/server/db/client';
-import { amIBlockedByUser } from '~/server/services/user.service';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
 import { isDefined } from '~/utils/type-guards';
 
@@ -109,6 +108,8 @@ export async function assertImageVisibleToViewer({
   `;
   if (!visible) throw throwNotFoundError();
   if (userId && !isModerator) {
+    // Imported here: user.service sits in the image.service import cycle.
+    const { amIBlockedByUser } = await import('~/server/services/user.service');
     const blocked = await amIBlockedByUser({ userId, targetUserId: visible.userId });
     if (blocked) throw throwNotFoundError();
   }

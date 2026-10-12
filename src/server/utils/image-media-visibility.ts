@@ -36,7 +36,9 @@ export function canViewImageMedia(
 }
 
 /** Signed-out answers are edge-cached by URL alone; a crawler's must not be served to others. */
-function keepCrawlerAnswerOutOfEdgeCache(ctx: Pick<Context, 'user' | 'req' | 'cache'>) {
+function keepCrawlerAnswerOutOfEdgeCache(
+  ctx: Pick<Context, 'user' | 'req'> & Partial<Pick<Context, 'cache'>>
+) {
   const verifiedBot = parseVerifiedBotHeader(ctx.req?.headers[VERIFIED_BOT_HEADER]);
   if (!ctx.user && verifiedBot !== null && ctx.cache) {
     ctx.cache.edgeTTL = 0;
@@ -116,25 +118,37 @@ export async function viewerCanSeeImageMedia(
   return canSee;
 }
 
-const BARE_URL = /^\s*(https?:\/\/|data:)\S*\s*$/i;
+const BARE_URL = /^\s*(https?:\/\/|\/\/|data:)\S*\s*$/i;
 const isMediaReference = (key: string, value: unknown) =>
   typeof value === 'string' && (key.toLowerCase() === 'url' || BARE_URL.test(value));
+// Workflow graphs, usually stored as JSON text, carry their input media inside node values.
+const WORKFLOW_KEYS = new Set(['comfy', 'workflow']);
+const REMOVED = Symbol('removed');
+
+function strip(value: unknown, key: string): unknown {
+  if (isMediaReference(key, value) || WORKFLOW_KEYS.has(key)) return REMOVED;
+  if (Array.isArray(value))
+    return value.map((item) => strip(item, '')).filter((item) => item !== REMOVED);
+  if (value && typeof value === 'object') {
+    const entries = Object.entries(value);
+    // An image entry that loses its link goes whole, rather than as an input with no source.
+    if (entries.some(([k, item]) => k.toLowerCase() === 'url' && isMediaReference(k, item)))
+      return REMOVED;
+    return stripEntries(entries);
+  }
+  return value;
+}
+
+const stripEntries = (entries: [string, unknown][]) =>
+  Object.fromEntries(
+    entries.map(([k, item]) => [k, strip(item, k)]).filter(([, item]) => item !== REMOVED)
+  );
 
 /**
- * Generation meta for a viewer who may not see the image's media: every `url` field and every
- * string that is only a link, at any depth, removed. Source images (img2img, img2vid, ControlNet,
- * style references) are recorded that way.
+ * Generation meta for a viewer who may not see the image's media: every entry holding a `url`,
+ * every string that is only a link, and workflow graphs, at any depth. Source images (img2img,
+ * img2vid, ControlNet, style references) are recorded that way.
  */
-export function withoutMediaReferences<T>(value: T): T {
-  if (Array.isArray(value))
-    return value
-      .filter((item) => !isMediaReference('', item))
-      .map((item) => withoutMediaReferences(item)) as T;
-  if (value && typeof value === 'object')
-    return Object.fromEntries(
-      Object.entries(value)
-        .filter(([key, item]) => !isMediaReference(key, item))
-        .map(([key, item]) => [key, withoutMediaReferences(item)])
-    ) as T;
-  return value;
+export function withoutMediaReferences<T extends object>(meta: T): T {
+  return stripEntries(Object.entries(meta)) as T;
 }
