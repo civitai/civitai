@@ -840,6 +840,38 @@ describe("kind:'workflow' SUBMIT — the money path", () => {
     expect(h.persistSettle).toHaveBeenCalledWith(expect.objectContaining({ ceiling: 86 }));
   });
 
+  it('🔴 a SELF-DEALING author: no fee charged, and attribution gets the same inputs as every other path', async () => {
+    // The viewer owns the app: the fee quote declines, so nothing is reserved for
+    // a fee — but the attribution row still OBSERVES the fee on the billed base.
+    dbMock.dbRead.oauthClient.findUnique.mockResolvedValue({ id: 'app_test', userId: VIEWER });
+    whatifCost = { total: 86, base: 80 };
+    realizedCost = { total: 86, base: 80 };
+    expect((await estimate()).snapshot.cost).toEqual({ total: 86, authorFee: 0 });
+    await submit();
+    expect(counter(USER_CAP)).toBe(86);
+    expect(h.chargeAuthorFee).toHaveBeenCalledWith(
+      expect.objectContaining({ reservedAuthorFeeBuzz: 0, baseGenerationBuzz: 80 })
+    );
+    await vi.waitFor(() => expect(h.recordSpendAttribution).toHaveBeenCalledTimes(1));
+    // Exactly the input set the registered-step path passes: the billed base and
+    // cap flag, and no fee ceiling — so the observed fee is computed on 80, not 0.
+    expect(h.recordSpendAttribution).toHaveBeenCalledWith({
+      userId: VIEWER,
+      buzzAmount: 86,
+      buzzType: 'blue',
+      workflowId: WORKFLOW_ID,
+      appId: 'app_test',
+      appBlockId: 'apb_test',
+      blockInstanceId: 'page_apb_test',
+      privateRun: false,
+      modelId: null,
+      sharedContentKey: null,
+      generationType: 'workflow',
+      baseGenerationBuzz: 80,
+      generationPriceIsCap: false,
+    });
+  });
+
   it('prices the fee off the whatif `cost.base`, never `cost.total`', async () => {
     // total 12 and base 100 disagree: a fee on `total` would be the flat 1.
     whatifCost = { total: 12, base: 100 };
@@ -1047,11 +1079,40 @@ describe("kind:'workflow' SUBMIT — the money path", () => {
       expect(realSubmits()).toHaveLength(0);
       expect(counter(USER_CAP)).toBe(0);
       expect(h.reserveAppSpend).not.toHaveBeenCalled();
-      expect(idemKeys()).toEqual([]);
     }
   );
 
-  it('🔴 a nested repeat counts 3 × 5 = 15 generations against the velocity ceiling', async () => {
+  it('🔴 the unpriced-repeat refusal takes the idempotency claim and RELEASES it', async () => {
+    whatifCost = undefined;
+    const sets = redisMock.sysRedis.set.mock.calls.length;
+    const { snapshot } = await submit(
+      body({
+        arguments: { images: [{ url: 'a' }] },
+        steps: [
+          {
+            $type: 'repeat',
+            input: {
+              for: { $ref: '$arguments', path: 'images', as: 'image' },
+              template: { $type: 'wdTagging', input: {} },
+            },
+          },
+        ],
+      }),
+      'idem-key-0020'
+    );
+    expect(snapshot.errorCode).toBe('workflow_repeat_unbounded');
+    // The claim was taken…
+    expect(
+      redisMock.sysRedis.set.mock.calls
+        .slice(sets)
+        .some(([key]) => String(key).endsWith(':apb_test:idem-key-0020'))
+    ).toBe(true);
+    // …and released, so a retry with the same key can run once a quote exists.
+    expect(idemKeys()).toEqual([]);
+    expect(realSubmits()).toHaveLength(0);
+  });
+
+  it('🔴 a nested repeat counts 3 × 5 = 15 generations against the velocity ceiling (+2 plain steps)', async () => {
     whatifCost = { total: 70, base: 70 };
     realizedCost = { total: 70, base: 70 };
     await submit(
@@ -1072,11 +1133,12 @@ describe("kind:'workflow' SUBMIT — the money path", () => {
             },
           },
           { $type: 'echo', input: {} },
+          { $type: 'echo', input: {} },
         ],
       })
     );
-    // 15 from the loop + 1 for the plain step; 70 + fee 3 (5% of 70).
-    expect(h.reserveAppSpend).toHaveBeenCalledWith('apb_test', 73, { units: 16 });
+    // 15 from the loop + 2 plain steps; 70 + fee 3 (5% of 70).
+    expect(h.reserveAppSpend).toHaveBeenCalledWith('apb_test', 73, { units: 17 });
   });
 
   it('with a quote, a `repeat` input is forwarded as the same object, unstamped', async () => {

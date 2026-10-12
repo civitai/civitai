@@ -693,23 +693,6 @@ describe('recordSpendAttribution — the author-fee log ledger', () => {
     });
   });
 
-  it('🔴 holds the recorded fee to the charge ceiling: 5% of 640 is 32, recorded 13', async () => {
-    // The billed base moved up after the quote; the charge is min(reserved, realized).
-    mockIsFlipt.mockResolvedValue(true);
-    await recordSpendAttribution(
-      fakeInput({ generationType: 'workflow', baseGenerationBuzz: 640, authorFeeCeilingBuzz: 13 })
-    );
-    expect(loggedPayload()).toMatchObject({ authorFeeBuzz: 13, authorFeeBaseBuzz: 640 });
-  });
-
-  it('a ceiling above the computed fee changes nothing', async () => {
-    mockIsFlipt.mockResolvedValue(true);
-    await recordSpendAttribution(
-      fakeInput({ generationType: 'workflow', baseGenerationBuzz: 640, authorFeeCeilingBuzz: 50 })
-    );
-    expect(loggedPayload()).toMatchObject({ authorFeeBuzz: 32 });
-  });
-
   it('flag ON, a chat-completion at the SAME base: fee 0, source `type`', async () => {
     // The seeded platform override, observed end-to-end through the service.
     mockIsFlipt.mockResolvedValue(true);

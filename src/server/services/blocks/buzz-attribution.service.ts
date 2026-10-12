@@ -386,12 +386,6 @@ export type RecordSpendAttributionInput = {
    */
   generationPriceIsCap?: boolean | null;
   /**
-   * The most author fee the submit could charge (`reservedAuthorFeeBuzz`). The
-   * charge is `min(reserved, realized)`, so the recorded `authorFeeBuzz` is held
-   * to the same ceiling and matches what was debited. Omitted → uncapped.
-   */
-  authorFeeCeilingBuzz?: number | null;
-  /**
    * PRIVATE RUN of a delisted / suspended app — from the verified token's
    * `privateRun` claim. 🔴 When true, **NO ROW IS WRITTEN AT ALL**: the function
    * returns `{ written: false, row: null }` before the row is built.
@@ -988,11 +982,7 @@ export async function recordSpendAttribution(
         //                             in slice 3, when an author can type a
         //                             number; add it back then.
         authorFeeSkipped: authorFee.observed ? null : authorFee.reason,
-        authorFeeBuzz: authorFee.observed
-          ? typeof input.authorFeeCeilingBuzz === 'number'
-            ? Math.min(authorFee.computation.feeBuzz, input.authorFeeCeilingBuzz)
-            : authorFee.computation.feeBuzz
-          : null,
+        authorFeeBuzz: authorFee.observed ? authorFee.computation.feeBuzz : null,
         authorFeeBaseBuzz: authorFee.observed ? authorFee.computation.baseGenerationBuzz : null,
         authorFeeParamsSource: authorFee.observed ? authorFee.computation.source : null,
       },

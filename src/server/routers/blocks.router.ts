@@ -12554,8 +12554,8 @@ function multiStepCallerText(body: MultiStepWorkflowBody): string {
  * the submit will reserve — so the number shown is the number reserved.
  *
  * With no quote it shows the ceiling, which is what the submit reserves then. A
- * workflow running a training `$type` is refused instead, on both paths
- * (`refuseUnquotedTraining`).
+ * workflow running a training `$type` or a `repeat` is refused instead, on both
+ * paths (`refuseUnpricedMultiStep`).
  */
 async function estimateMultiStepWorkflow(opts: {
   ctx: Context;
@@ -13044,8 +13044,6 @@ async function submitMultiStepWorkflow(opts: {
         generationType: workflowGenerationType,
         baseGenerationBuzz: realizedBaseCost,
         generationPriceIsCap: realizedPriceIsCap,
-        // The charge is held to the reserved fee; the recorded fee is too.
-        authorFeeCeilingBuzz: reservedAuthorFeeBuzz,
       });
     })().catch(() => {
       /* best-effort: a failed attribution write never breaks submit */
