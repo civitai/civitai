@@ -19,11 +19,14 @@ import type { BlockGatedImage } from '~/server/services/blocks/block-gated-image
  * NOT under `src/pages/**` — Next would treat that as a route.)
  *
  * 🔴 WHY A VENDORED COPY RATHER THAN THE INSTALLED PACKAGE. The obvious guard —
- * `import type { BlockGatedImage } from '@civitai/app-sdk/blocks'` — cannot be
- * written today: the PUBLISHED `@civitai/app-sdk` this repo depends on (0.14.0)
- * does not export `BlockGatedImage` at all; the type exists only in the
- * `civitai-app-starters` SOURCE. Importing it would make this file a permanent
- * compile error, and a permanently-red gate is worse than no gate. So the SDK's
+ * `import type { BlockGatedImage } from '@civitai/app-sdk/blocks'` — could not
+ * be written when this module landed: the PUBLISHED `@civitai/app-sdk` this repo
+ * depended on (0.14.0) did not export `BlockGatedImage` at all; the type existed
+ * only in the `civitai-app-starters` SOURCE. Importing it would have made this file a
+ * permanent compile error, and a permanently-red gate is worse than no gate.
+ * ⚠️ The installed dist (0.65.1) DOES export `BlockGatedImage`, so that guard is
+ * now writable; this file has not been converted and still compares against the
+ * vendored copy, with everything below describing that arrangement. So the SDK's
  * declaration is VENDORED below, byte-for-byte, and the compiler compares the
  * two structurally. The same one-directional-vs-published trade-off
  * `hostHandlerParity.ts` documents: the inventory here may be AHEAD of the

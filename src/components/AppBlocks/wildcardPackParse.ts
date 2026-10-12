@@ -81,9 +81,10 @@ export function resolveGetWildcardPackRequest(raw: unknown): GetWildcardPackRequ
 
 // The CLOSED set WILDCARD_PACK_RESULT.error is validated against block-side —
 // this is the local mirror of the SDK's `BlockWildcardPackErrorCode`. The mirror
-// exists because the pinned @civitai/app-sdk dist does not export the wildcard
-// union yet (it predates the bridge); keep the two in step. Consumers SWITCH on
-// the code, so this is an enum, not free text — a reply carrying anything outside
+// was written because the then-pinned @civitai/app-sdk dist (0.14.0) predates the
+// bridge; the installed 0.65.1 dist exports the same five members, but nothing
+// binds the two yet, so keep them in step by hand. Consumers SWITCH on the code,
+// so this is an enum, not free text — a reply carrying anything outside
 // this set is rejected by `isValidWildcardPackResult` and dropped by the
 // transport, leaving the block's pending request unsettled.
 export type WildcardPackErrorCode =

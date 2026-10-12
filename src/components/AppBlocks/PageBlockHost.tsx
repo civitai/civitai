@@ -330,9 +330,9 @@ const REVIEW_NACK_MESSAGE = 'not available in review preview';
 // context, and it is the closest member semantically.
 //
 // The annotation is the GUARD — `WildcardPackErrorCode` is the repo's local
-// mirror of the SDK's `BlockWildcardPackErrorCode` (see wildcardPackParse.ts;
-// the pinned @civitai/app-sdk dist does not export the wildcard union yet), so
-// tsc rejects any future edit that swaps in a non-member string.
+// mirror of the SDK's `BlockWildcardPackErrorCode` (see wildcardPackParse.ts,
+// which explains why it is a mirror), so tsc rejects any future edit that swaps
+// in a non-member string.
 const WILDCARD_REVIEW_NACK_CODE: WildcardPackErrorCode = 'forbidden';
 
 /**

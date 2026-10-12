@@ -17,7 +17,8 @@ import { stripSourceComments } from './stripSourceComments';
  *     becomes a TypeScript error in civitai's Tekton typecheck / `next build`.
  *     That is the ONE manual step this runtime test cannot catch. (It is
  *     one-directional: INVENTORY may carry forward-looking entries ahead of the
- *     published dist — e.g. CANCEL_WORKFLOW / REQUEST_SIGN_IN / REQUEST_CONSENT.)
+ *     published dist. It reads the INSTALLED dist, so it is only as current as
+ *     the `@civitai/app-sdk` range in `package.json`.)
  *
  *  2. RUNTIME (this file): for each `'required'` INVENTORY entry, grep the host
  *     SOURCE for an `onMessage('<TYPE>', …)` registration and FAIL if missing.
