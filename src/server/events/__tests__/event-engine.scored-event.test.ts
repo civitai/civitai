@@ -618,6 +618,7 @@ describe('join balancing', () => {
   afterEach(() => {
     redisMock.sysRedis.eval.mockReset();
     redisMock.sysRedis.hGetAll.mockReset();
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([]);
   });
 
   it('places a listed user on the team whose listed joiners are predicted to earn least', async () => {
@@ -665,6 +666,24 @@ describe('join balancing', () => {
     expect(redisMock.sysRedis.eval).not.toHaveBeenCalled();
     expect(lua.hash(keys.manual)).toBeUndefined();
     expect(lua.hash(keys.totals)?.Blue).toBe('0');
+  });
+
+  // A team hat bought before joining (any claimKey, any design) settles the team: placing the buyer
+  // elsewhere would leave a paid hat scoring for a team they are no longer on. Do not narrow this
+  // check to the join cap.
+  it('does not place a listed user who already holds a team hat they bought', async () => {
+    const hashed = await birthday2026.getUserTeam(7);
+    const lightest = BIRTHDAY_2026_TEAMS.find((t) => t !== hashed) as string;
+    lua.setHash(
+      keys.totals,
+      Object.fromEntries(BIRTHDAY_2026_TEAMS.map((t) => [t, t === lightest ? '0' : '1000']))
+    );
+    dbMock.dbWrite.$queryRaw.mockResolvedValueOnce([{ held: 1 }]);
+    expect((await joinAs(7)).team).toBe(hashed);
+    expect(redisMock.sysRedis.eval).not.toHaveBeenCalled();
+    const heldSql = (dbMock.dbWrite.$queryRaw.mock.calls[0][0] as string[]).join('?');
+    expect(heldSql).toContain(`c.data->>'team' IS NOT NULL`);
+    expect(heldSql).not.toContain('claimKey');
   });
 
   it('refuses to join when the balance list cannot be read', async () => {
