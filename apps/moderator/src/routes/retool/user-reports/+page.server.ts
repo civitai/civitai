@@ -10,6 +10,9 @@ import { reportModerationActions } from '$lib/server/report-actions';
 import { parseReportQueueFilters, reportQueueFilterSchema } from '$lib/server/report-queue-filters';
 import { ingestionErrorLevelSet } from '@civitai/shared';
 import { loadAccountHistory } from '$lib/server/account-history';
+import { getReportedAccountDetails } from '$lib/server/user-lookup.service';
+import { getReportedAccountModels } from '$lib/server/reported-account.service';
+import { SUSPECT_TABS } from './tabs';
 
 // `user` opens the drill-down for one suspect, in the URL so a moderator can hand a colleague the exact
 // queue position they are looking at.
@@ -35,6 +38,9 @@ const endOfDayParam = imageDateParam.transform((d) =>
 const querySchema = z
   .object({
     user: z.coerce.number().int().positive().max(MAX_INT4).optional().catch(undefined),
+    // Which view of the open account. Details first: most user reports are Spam, and the evidence for
+    // spam is the profile and what the account posts — the image grid alone showed none of it.
+    tab: z.enum(SUSPECT_TABS).catch('details'),
     page: z.coerce.number().int().positive().max(10_000).catch(1),
     imgPage: z.coerce.number().int().positive().max(10_000).catch(1),
     tos: boolParam,
@@ -65,13 +71,15 @@ const PER_PAGE = 50;
 export const load: PageServerLoad = async ({ url, locals }) => {
   const parsed = parseQuery(url, querySchema);
   const queue = parseReportQueueFilters(url, parsed);
-  const { user, page, imgPage, tos, noPrompt, levels, from, to, prompt, negativePrompt } = parsed;
+  const { user, tab, page, imgPage, tos, noPrompt, levels, from, to, prompt, negativePrompt } = parsed;
 
   const filters = { tosOnly: tos, noPrompt, levels, from, to, prompt, negativePrompt };
   // Reaching the queue is an investigation permission; acting on a report or an account is not.
   const canAct = canAccess(locals.user, '/users');
 
-  const [reports, history, suspect, accountHistory] = await Promise.all([
+  // Each tab loads only its own data. The image grid and the account history are the two heavy reads,
+  // and a moderator settling a spam report from the profile never opens either.
+  const [reports, history, details, suspect, models, accountHistory] = await Promise.all([
     // The SAME query `/reports/user` runs. A parallel one diverged from the sidebar's counts on which
     // reasons it excluded, so the badge and this heading disagreed about one queue.
     getReports({
@@ -86,10 +94,12 @@ export const load: PageServerLoad = async ({ url, locals }) => {
       to: queue.to,
     }),
     getReportHistory(ReportEntity.User),
-    user ? getSuspectImages(user, filters, { page: imgPage }) : null,
+    user ? getReportedAccountDetails(user) : null,
+    user && tab === 'images' ? getSuspectImages(user, filters, { page: imgPage }) : null,
+    user && tab === 'models' ? getReportedAccountModels(user) : null,
     // Retool's top-left was three tabs — ModActivity / Reports / UserReport History — and the whole
     // point of this screen is not leaving it.
-    user ? loadAccountHistory(user, locals.user.username ?? null) : null,
+    user && tab === 'activity' ? loadAccountHistory(user, locals.user.username ?? null) : null,
   ]);
 
   // The report row carries the suspect's id but not their state; hydrate through the shared helper
@@ -109,7 +119,10 @@ export const load: PageServerLoad = async ({ url, locals }) => {
     history: history.items.map((h) => ({ ...h, suspect: suspects.get(h.entityId ?? 0) ?? null })),
     historyTruncated: history.truncated,
     suspectId: user ?? null,
+    tab,
+    details,
     suspect,
+    models,
     filters: {
       tos,
       noPrompt,

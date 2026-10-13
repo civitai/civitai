@@ -82,12 +82,15 @@
         </p>
       {/if}
 
-    {#if data.suspectId && data.suspect && data.accountHistory}
+    {#if data.suspectId && data.details}
       <!-- Keyed so an open strike or notify form cannot survive moving to a different suspect. -->
       {#key data.suspectId}
         <SuspectPanel
           suspectId={data.suspectId}
+          tab={data.tab}
+          details={data.details}
           suspect={data.suspect}
+          models={data.models}
           filters={data.filters}
           accountHistory={data.accountHistory}
           canAct={data.canAct}
@@ -98,6 +101,15 @@
           imageResult={form && 'imageResult' in form ? (form.imageResult ?? null) : null}
         />
       {/key}
+      {:else if data.suspectId}
+        <!-- A report outlives the account it is about. Without this the panel would be empty and read
+             as a failed load. -->
+        <section class="rounded-xl border border-dashed border-dark-4 p-5">
+          <p class="text-sm text-dark-2">
+            Account #{data.suspectId} no longer exists. The report can still be actioned or unactioned
+            from the queue.
+          </p>
+        </section>
       {:else}
         <section class="rounded-xl border border-dashed border-dark-4 p-5">
           <p class="text-sm text-dark-2">

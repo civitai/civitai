@@ -23,6 +23,7 @@ export type UserSummary = {
    *  flag, so testing the timestamp badges accounts as muted that every other surface shows as not. */
   muted: boolean | null;
   deletedAt: Date | null;
+  isModerator: boolean | null;
 };
 
 // Rows from ClickHouse and from aggregate queries carry user ids and no names; four places were each
@@ -34,13 +35,19 @@ export async function usersByIds(ids: number[]): Promise<Map<number, UserSummary
 
   const rows = await dbRead
     .selectFrom('User')
-    .select(['id', 'username', 'bannedAt', 'muted', 'deletedAt'])
+    .select(['id', 'username', 'bannedAt', 'muted', 'deletedAt', 'isModerator'])
     .where('id', 'in', unique)
     .execute();
   return new Map(
     rows.map((r) => [
       r.id,
-      { username: r.username, bannedAt: r.bannedAt, muted: r.muted, deletedAt: r.deletedAt },
+      {
+        username: r.username,
+        bannedAt: r.bannedAt,
+        muted: r.muted,
+        deletedAt: r.deletedAt,
+        isModerator: r.isModerator,
+      },
     ])
   );
 }

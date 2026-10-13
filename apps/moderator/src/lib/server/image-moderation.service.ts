@@ -10,6 +10,7 @@ import {
   refundAppealFee,
   notifyAppealResolved,
   emailAppealResolution,
+  trackImageRestore,
 } from './image-moderation-effects';
 import { invalidateThumbnails, thumbnailParentId } from './thumbnail-cache';
 import { NsfwLevel } from '@civitai/shared';
@@ -74,7 +75,7 @@ export async function acceptImage({
 }): Promise<ClosedAppeal | undefined> {
   const img = await dbRead
     .selectFrom('Image')
-    .select(['needsReview', 'pHash', 'postId'])
+    .select(['needsReview', 'pHash', 'postId', 'ingestion', 'blockedFor'])
     .where('id', '=', imageId)
     .executeTakeFirst();
   if (!img) return;
@@ -137,6 +138,11 @@ export async function acceptImage({
     await recompute(imageId);
     syncSearchIndex({ entityType: 'image', entityId: imageId, action: 'update' });
   }
+
+  // Only a moderator removal is logged as one, so only its undoing is a restore. A scanner block
+  // (`AiNotVerified` in the POI queue) has no removal event to pair with.
+  if (img.ingestion === 'Blocked' && img.blockedFor === BLOCKED_REASON_MODERATED)
+    await trackImageRestore({ imageId, actorUserId: userId });
 
   await recordModActivity({ userId, entityType: 'image', entityId: imageId, activity: 'review' });
 
@@ -452,6 +458,7 @@ export async function resolveImageAppeal({
     if (restored) await resetBlockedNsfwLevel(imageId);
     await recompute(imageId);
     syncSearchIndex({ entityType: 'image', entityId: imageId, action: 'update' });
+    if (restored) await trackImageRestore({ imageId, actorUserId: userId });
   } else {
     await dbWrite
       .updateTable('Image')

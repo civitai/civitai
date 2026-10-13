@@ -20,6 +20,7 @@
     card,
     compact = false,
     lookupLink = false,
+    openReports = true,
     actions,
     class: className,
   }: {
@@ -30,6 +31,9 @@
     compact?: boolean;
     /** Off on User Lookup itself, where the card already sits on the account's page. */
     lookupLink?: boolean;
+    /** Off on the user-report queue, which IS the account's open reports: there the banner said "1 open
+     *  report against this account" over that report, and linked to the page it was already on. */
+    openReports?: boolean;
     actions?: Snippet;
     class?: string;
   } = $props();
@@ -171,7 +175,7 @@
 
   <!-- A report nobody has ruled on changes what everything else about the account means, so it sits
        in the card wherever the card is. -->
-  {#if identity.openReportCount > 0}
+  {#if openReports && identity.openReportCount > 0}
     <div
       class="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-200"
       role="status"
@@ -188,6 +192,11 @@
         Work this account's reports
       </a>
     </div>
+  {:else if identity.openReportModerators}
+    <!-- The count is redundant beside the queue; a colleague already on the account is not. -->
+    <p class="mt-3 text-sm text-amber-200" role="status">
+      <Badge variant="outline">open report filed by {identity.openReportModerators}</Badge>
+    </p>
   {/if}
 </div>
 
