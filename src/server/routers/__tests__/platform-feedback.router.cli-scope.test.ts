@@ -174,6 +174,7 @@ describe('platformFeedback token-scope gate', () => {
     it('refuses a muted account', async () => {
       await expect(call(sessionCtx({ ...user, muted: true }), proc)).rejects.toMatchObject({
         code: 'FORBIDDEN',
+        message: 'You cannot perform this action because your account has been restricted',
       });
       expectNoServiceCalls();
     });
@@ -181,7 +182,10 @@ describe('platformFeedback token-scope gate', () => {
     it('refuses an account that has not finished onboarding', async () => {
       await expect(
         call(sessionCtx({ ...user, onboarding: 0 as OnboardingSteps }), proc)
-      ).rejects.toThrow();
+      ).rejects.toMatchObject({
+        code: 'FORBIDDEN',
+        message: 'You must complete the onboarding process before performing this action',
+      });
       expectNoServiceCalls();
     });
 
@@ -198,13 +202,21 @@ describe('platformFeedback token-scope gate', () => {
  * unwired. What is observable is what the router hands it, captured at import.
  */
 describe('platformFeedback rate limits', () => {
-  type Limit = { limit: number; period: number };
+  type Limit = { limit: number; period: number; errorMessage?: string };
 
   it('create is limited to 10 an hour and 40 a day, on its own bucket', () => {
     const [limits, condition, options] = rateLimitCalls[0] as [Limit[], unknown, unknown];
-    expect(limits.map(({ limit, period }) => [limit, period])).toEqual([
-      [10, 3600],
-      [40, 86400],
+    expect(limits).toEqual([
+      {
+        limit: 10,
+        period: 3600,
+        errorMessage: 'You have sent a lot of platform feedback. Try again later.',
+      },
+      {
+        limit: 40,
+        period: 86400,
+        errorMessage: 'You have sent a lot of platform feedback. Try again later.',
+      },
     ]);
     // No condition (which could skip the limiter) and no shared key (which would spend another
     // procedure's quota): the bucket is this procedure's own path.
@@ -215,7 +227,7 @@ describe('platformFeedback rate limits', () => {
   it('getStatus is limited to 60 a minute', () => {
     expect(rateLimitCalls).toHaveLength(2);
     const [limits, condition, options] = rateLimitCalls[1] as [Limit, unknown, unknown];
-    expect([limits.limit, limits.period]).toEqual([60, 60]);
+    expect(limits).toEqual({ limit: 60, period: 60 });
     expect(condition).toBeUndefined();
     expect(options).toBeUndefined();
   });

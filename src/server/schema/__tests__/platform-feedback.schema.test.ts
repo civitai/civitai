@@ -77,6 +77,22 @@ describe('platform feedback report schema', () => {
     expect(platformFeedbackReportSchema.safeParse({ about: 'docs' }).success).toBe(false);
   });
 
+  // Hand-typed: these lists are the contract the CLI is written against.
+  it.each(['cli', 'sdk', 'docs', 'review', 'sandbox', 'scopes', 'mcp', 'other'])(
+    'accepts about: %s',
+    (about) => {
+      expect(parseReport({ about }).data?.about).toBe(about);
+    }
+  );
+
+  it.each(['bug', 'confusing', 'missing', 'request'])('accepts kind: %s', (kind) => {
+    expect(parseReport({ kind }).data?.kind).toBe(kind);
+  });
+
+  it.each(['civitai-cli', 'civitai-mcp', 'other'])('accepts client.name: %s', (name) => {
+    expect(parseReport({ client: { name, version: '1.0.0' } }).data?.client.name).toBe(name);
+  });
+
   it.each([
     ['about', { about: 'billing' }],
     ['kind', { kind: 'praise' }],
@@ -134,6 +150,42 @@ describe('platform feedback report schema', () => {
     expect(parseReport({ exitCode }).success).toBe(false);
   });
 
+  it.each([404.5, '404'])('rejects a non-integer httpStatus (%s)', (httpStatus) => {
+    expect(parseReport({ httpStatus }).success).toBe(false);
+  });
+
+  // Postgres stores neither a NUL nor an unpaired surrogate, so they are refused here instead of
+  // failing the write. A whole emoji (a PAIRED surrogate) is the control.
+  const UNSTORABLE = [
+    ['a NUL', 'std\u0000err'],
+    ['a lone high surrogate', 'cut \uD83D'],
+    ['a lone low surrogate', '\uDE00 cut'],
+  ] as const;
+  const TEXT_FIELDS = ['agent', 'os', 'arch', 'command', 'errorExcerpt', 'appSlug'] as const;
+
+  it.each(TEXT_FIELDS)('%s: accepts an emoji and refuses unstorable text', (field) => {
+    expect(parseReport({ [field]: 'ok \u{1F600}' }).success).toBe(true);
+    for (const [, value] of UNSTORABLE) {
+      const result = parseReport({ [field]: value });
+      expect(result.error?.issues.map((i) => [i.path, i.message])).toEqual([
+        [[field], 'Contains a character that cannot be stored.'],
+      ]);
+    }
+  });
+
+  it.each(UNSTORABLE)('refuses %s in sdk entries, docUrl and the message', (_label, value) => {
+    expect(parseReport({ sdk: [{ name: value, version: '1' }] }).success).toBe(false);
+    expect(parseReport({ sdk: [{ name: 'n', version: value }] }).success).toBe(false);
+    expect(parseReport({ docUrl: `https://developer.civitai.com/${value}` }).success).toBe(false);
+    const message = createPlatformFeedbackSchema.safeParse({
+      message: value,
+      report: minimalReport,
+    });
+    expect(message.error?.issues.map((i) => [i.path, i.message])).toEqual([
+      [['message'], 'Contains a character that cannot be stored.'],
+    ]);
+  });
+
   it.each(['Submit.refused', '-leading-dash', 'has space', 'slash/inside', ''])(
     'rejects a ref outside the key shape (%j)',
     (ref) => {
@@ -181,12 +233,15 @@ describe('platform feedback getStatus schema', () => {
     expect(getPlatformFeedbackStatusSchema.safeParse({ refs: refs(51) }).success).toBe(false);
   });
 
-  it('accepts the longest ref create can mint and rejects a longer string', () => {
-    const longest = '2147483647-0a1b2c3d';
-    expect(getPlatformFeedbackStatusSchema.safeParse({ refs: [longest] }).success).toBe(true);
-    expect(getPlatformFeedbackStatusSchema.safeParse({ refs: [`${longest}0`] }).success).toBe(
-      false
-    );
-    expect(getPlatformFeedbackStatusSchema.safeParse({ refs: [''] }).success).toBe(false);
+  // The shape is the service's to judge (a malformed ref answers found:false); the schema only
+  // caps the size of the input.
+  it('accepts any string up to 80 characters as a ref, and rejects a longer one', () => {
+    const parse = (ref: unknown) => getPlatformFeedbackStatusSchema.safeParse({ refs: [ref] });
+    expect(parse('2147483647-0a1b2c3d').success).toBe(true);
+    expect(parse('not a ref').success).toBe(true);
+    expect(parse('').success).toBe(true);
+    expect(parse('r'.repeat(80)).success).toBe(true);
+    expect(parse('r'.repeat(81)).success).toBe(false);
+    expect(parse(7).success).toBe(false);
   });
 });

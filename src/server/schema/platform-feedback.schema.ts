@@ -18,14 +18,23 @@ export type PlatformFeedbackClient = (typeof PLATFORM_FEEDBACK_CLIENTS)[number];
 export const PLATFORM_FEEDBACK_DOC_URL_PREFIX = 'https://developer.civitai.com/';
 export const PLATFORM_FEEDBACK_REFS_MAX = 50;
 
-/** The longest ref `create` can mint: a 10-digit int4 id, a dash and 8 hex characters. */
-const PLATFORM_FEEDBACK_REF_MAX_LENGTH = 19;
-
 const version = z
   .string()
   .min(1)
   .max(32)
   .regex(/^[0-9A-Za-z.+-]+$/);
+
+export const PLATFORM_FEEDBACK_UNSTORABLE_TEXT = 'Contains a character that cannot be stored.';
+
+// A NUL or an unpaired surrogate. Postgres accepts neither in `text` or `jsonb`, so one in a
+// captured error excerpt would otherwise fail the write as a 500.
+const UNSTORABLE = /\u0000|[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+
+const text = (max: number) =>
+  z
+    .string()
+    .max(max)
+    .refine((value) => !UNSTORABLE.test(value), PLATFORM_FEEDBACK_UNSTORABLE_TEXT);
 
 /**
  * The only part of a stored `apps-platform` context that comes from the client. `z.object` strips
@@ -44,37 +53,39 @@ export const platformFeedbackReportSchema = z.object({
     .regex(/^[a-z0-9][a-z0-9._-]{0,79}$/)
     .optional(),
   client: z.object({ name: z.enum(PLATFORM_FEEDBACK_CLIENTS), version }),
-  agent: z.string().max(40).optional(),
-  os: z.string().max(16).optional(),
-  arch: z.string().max(16).optional(),
-  command: z.string().max(120).optional(),
+  agent: text(40).optional(),
+  os: text(16).optional(),
+  arch: text(16).optional(),
+  command: text(120).optional(),
   exitCode: z.number().int().min(0).max(255).optional(),
   httpStatus: z.number().int().min(100).max(599).optional(),
   sdk: z
-    .array(z.object({ name: z.string().max(40), version: z.string().max(32) }))
+    .array(z.object({ name: text(40), version: text(32) }))
     .max(4)
     .optional(),
-  docUrl: z.string().max(300).startsWith(PLATFORM_FEEDBACK_DOC_URL_PREFIX).optional(),
-  errorExcerpt: z.string().max(500).optional(),
-  appSlug: z.string().max(64).optional(),
+  docUrl: text(300).startsWith(PLATFORM_FEEDBACK_DOC_URL_PREFIX).optional(),
+  errorExcerpt: text(500).optional(),
+  appSlug: text(64).optional(),
 });
 export type PlatformFeedbackReport = z.infer<typeof platformFeedbackReportSchema>;
 
 export const createPlatformFeedbackSchema = z.object({
-  message: z.string().trim().min(1).max(FEEDBACK_MESSAGE_MAX_LENGTH),
+  message: z
+    .string()
+    .trim()
+    .min(1)
+    .max(FEEDBACK_MESSAGE_MAX_LENGTH)
+    .refine((value) => !UNSTORABLE.test(value), PLATFORM_FEEDBACK_UNSTORABLE_TEXT),
   report: platformFeedbackReportSchema,
 });
 export type CreatePlatformFeedbackInput = z.infer<typeof createPlatformFeedbackSchema>;
 
 /**
- * Refs are bounded by length only. A ref that is malformed, unknown or carries the wrong suffix
- * all answer `found: false`, so the response does not say which.
+ * A ref's shape is deliberately not validated here: malformed, unknown and wrong-suffix refs all
+ * answer `found: false`, so the response does not say which. The length bound only caps the input.
  */
 export const getPlatformFeedbackStatusSchema = z.object({
-  refs: z
-    .array(z.string().min(1).max(PLATFORM_FEEDBACK_REF_MAX_LENGTH))
-    .min(1)
-    .max(PLATFORM_FEEDBACK_REFS_MAX),
+  refs: z.array(z.string().max(80)).min(1).max(PLATFORM_FEEDBACK_REFS_MAX),
 });
 export type GetPlatformFeedbackStatusInput = z.infer<typeof getPlatformFeedbackStatusSchema>;
 

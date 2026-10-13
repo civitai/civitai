@@ -20,12 +20,9 @@ import { APPS_PLATFORM_FEEDBACK_AREA } from '~/shared/constants/feedback.constan
 import type { SessionUser } from '~/types/session';
 
 /**
- * Developer-platform feedback (`Feedback.area = 'apps-platform'`), sent by coding agents with an
- * API token. One row per fingerprint: a repeat of a known report is counted on the existing row
- * instead of stored again, and the sender gets back a ref it can later ask the status of.
- *
- * The stored context is `{ report, server }`. `report` is the parsed client input; `server` is
- * composed here and never read from the client.
+ * Developer-platform feedback (`Feedback.area = 'apps-platform'`). The stored context is
+ * `{ report, server }`: `report` is the parsed client input, `server` is composed here and never
+ * read from the client.
  */
 
 export const PLATFORM_FEEDBACK_REPORTER_IDS_MAX = 50;
@@ -79,7 +76,7 @@ function parseRef(ref: string) {
   return id <= INT4_MAX ? { id } : null;
 }
 
-/** `1.4`, `v1.4.0` and `1.4.0-rc.1+build` parse; anything else is null. */
+/** Short forms (`2`, `1.4`) are padded because `semver.valid` only accepts three parts. */
 function parseVersion(version: string) {
   const padded = /^v?\d+(\.\d+)?$/.test(version)
     ? `${version}${version.includes('.') ? '.0' : '.0.0'}`
@@ -120,7 +117,7 @@ function readbackStatus(status: string, hasFixedVersion: boolean): PlatformFeedb
 
 function toReadback(status: string, state: PlatformFeedbackServerState) {
   const fixedIn = state.resolution?.fixedIn ?? null;
-  const note = state.resolution?.publicNote?.slice(0, PUBLIC_NOTE_MAX_LENGTH) ?? null;
+  const note = state.resolution?.publicNote?.slice(0, PUBLIC_NOTE_MAX_LENGTH) || null;
   return {
     status: readbackStatus(status, !!fixedIn?.version),
     fixedIn: fixedIn ? { component: fixedIn.component, version: fixedIn.version } : null,
@@ -137,7 +134,19 @@ async function assertCollecting(user: SessionUser) {
 
 type ExistingRow = { id: number; status: string; server: unknown };
 
-/** The transaction client, cut to what this module sends: raw statements only. */
+/**
+ * `context.server` without the two fields only moderators read. Every read here selects this, so
+ * reporter ids and sample text never leave the database on a path that answers a reporter.
+ */
+const SERVER_STATE = Prisma.sql`CASE WHEN jsonb_typeof(f."context"->'server') = 'object' THEN (f."context"->'server') - 'reporterIds' - 'samples' END`;
+
+/**
+ * The first 300 UTF-16 units, minus a surrogate pair the cut split: a lone surrogate is not valid
+ * JSON to Postgres, and would fail the statement for every later repeat of the report.
+ */
+const sampleText = (message: string) =>
+  message.slice(0, PLATFORM_FEEDBACK_SAMPLE_TEXT_MAX_LENGTH).replace(/[\uD800-\uDBFF]$/, '');
+
 type RawTx = Pick<Prisma.TransactionClient, '$queryRaw' | '$executeRaw' | '$executeRawUnsafe'>;
 
 async function insertReport(
@@ -199,7 +208,7 @@ async function countRepeat(
 ) {
   const sample = JSON.stringify({
     userId,
-    text: message.slice(0, PLATFORM_FEEDBACK_SAMPLE_TEXT_MAX_LENGTH),
+    text: sampleText(message),
     clientVersion: report.client.version,
   });
   const [row] = await tx.$queryRaw<Array<{ server: unknown }>>(Prisma.sql`
@@ -213,7 +222,7 @@ async function countRepeat(
              'lastSeenAt', ${now}::text
            )
         || CASE
-             WHEN COALESCE(f."context"->'server'->'reporterIds', '[]'::jsonb) @> to_jsonb(${userId}::int)
+             WHEN f."context"->'server'->'reporterIds' @> to_jsonb(${userId}::int)
                THEN '{}'::jsonb
              ELSE jsonb_build_object(
                'reporters', COALESCE((f."context"->'server'->>'reporters')::int, 0) + 1,
@@ -233,7 +242,7 @@ async function countRepeat(
            END
     )
     WHERE f."id" = ${id}::int
-    RETURNING f."context"->'server' AS "server"
+    RETURNING ${SERVER_STATE} AS "server"
   `);
   return parseServerState(row.server);
 }
@@ -263,7 +272,7 @@ export async function createPlatformFeedback({
     );
 
     const [existing] = await tx.$queryRaw<ExistingRow[]>(Prisma.sql`
-      SELECT f."id", f."status", f."context"->'server' AS "server"
+      SELECT f."id", f."status", ${SERVER_STATE} AS "server"
       FROM "Feedback" f
       WHERE f."area" = ${APPS_PLATFORM_FEEDBACK_AREA}
         AND f."context"->'server'->>'fingerprint' = ${fingerprint}
@@ -325,10 +334,10 @@ export async function getPlatformFeedbackStatus({
   const ids = [...new Set(parsed.flatMap((p) => (p.parsed ? [p.parsed.id] : [])))];
 
   // The primary: a sender asks about a ref it was handed a moment ago, and a lagging replica
-  // would answer that it does not exist. Bounded to 50 primary-key lookups per call.
+  // would answer that it does not exist.
   const rows = ids.length
     ? await dbWrite.$queryRaw<StatusRow[]>(Prisma.sql`
-        SELECT f."id", f."status", f."context"->'server' AS "server",
+        SELECT f."id", f."status", ${SERVER_STATE} AS "server",
                (EXTRACT(EPOCH FROM f."handledAt") * 1000)::float8 AS "handledAtMs"
         FROM "Feedback" f
         WHERE f."id" IN (${Prisma.join(ids)})
@@ -340,8 +349,10 @@ export async function getPlatformFeedbackStatus({
   return parsed.map(({ ref, parsed: target }) => {
     const row = target ? byId.get(target.id) : undefined;
     const state = row ? parseServerState(row.server) : undefined;
-    // The suffix is what makes a ref unguessable from its id: without the match, counting up
-    // through ids would read out every report's status.
+    // Without the suffix match, counting up through ids would read out every report. The suffix
+    // is not a secret for a report keyed on `report.ref` (it derives from about + ref), which is
+    // fine only while this returns nothing `create` does not already return to a sender of that
+    // key. Check that before adding a field.
     if (!target || !row || !state || toRef(row.id, state.fingerprint) !== ref)
       return { ref, found: false as const };
 

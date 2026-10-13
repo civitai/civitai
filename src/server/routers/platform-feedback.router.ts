@@ -10,8 +10,7 @@ import {
 import { guardedProcedureAllowUnverifiedEmail, router } from '~/server/trpc';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
-// The bit the CLI's other app-management calls carry, so the token an agent already holds works
-// here. It is opt-in, so a token holding only ordinary scopes stays refused.
+// `AppBlocksSubmit` is opt-in, so a token holding only ordinary scopes stays refused.
 const agentTokenScope = { requiredScope: TokenScope.AppBlocksSubmit } as const;
 
 const HOUR = 60 * 60;
@@ -24,10 +23,7 @@ export const PLATFORM_FEEDBACK_CREATE_RATE_LIMITS = [
 }));
 export const PLATFORM_FEEDBACK_STATUS_RATE_LIMIT = { limit: 60, period: 60 };
 
-/**
- * Feedback about the developer platform (`Feedback.area = 'apps-platform'`), for coding agents.
- * The generic `feedback.create` refuses this area, so every row is written here.
- */
+/** The generic `feedback.create` refuses the `apps-platform` area, so every row is written here. */
 export const platformFeedbackRouter = router({
   create: guardedProcedureAllowUnverifiedEmail
     .meta(agentTokenScope)

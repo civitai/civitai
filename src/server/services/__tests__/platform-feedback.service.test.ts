@@ -83,13 +83,26 @@ type StoredRow = {
 let pg: PGlite;
 /** Every statement the service sent, in order, as [text, values]. */
 let statements: Array<[string, unknown[]]>;
+/** The rows each of those statements returned, in the same order. */
+let returned: Array<Array<Record<string, unknown>>>;
 let alice: number;
 let bob: number;
 
 const run = async (target: PGlite | Transaction, text: string, values: unknown[] = []) => {
   statements.push([text, values]);
-  return target.query(text, values);
+  const result = await target.query<Record<string, unknown>>(text, values);
+  returned.push(result.rows);
+  return result;
 };
+
+const resetLog = () => {
+  statements = [];
+  returned = [];
+};
+
+/** The keys of the `server` object a statement handed back to the service. */
+const serverKeys = (rows: Array<Record<string, unknown>>) =>
+  rows.map((row) => Object.keys(row.server as object).sort());
 
 const clientOver = (target: PGlite | Transaction) => ({
   $queryRaw: async (q: Prisma.Sql) => (await run(target, q.text, q.values)).rows,
@@ -126,12 +139,13 @@ const status = (...refs: string[]) =>
 beforeEach(async () => {
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(new Date(T0));
-  statements = [];
+  resetLog();
   pg = await freshAppFeedbackDb();
   alice = await seedUser(pg, 'alice');
   bob = await seedUser(pg, 'bob');
   mocks.isFeedbackAreaEnabled.mockReset().mockResolvedValue(true);
   dbMock.dbWrite.$transaction.mockClear();
+  dbMock.dbRead.$queryRaw.mockClear();
   dbMock.dbWrite.$transaction.mockImplementation(((fn: (tx: unknown) => Promise<unknown>) =>
     pg.transaction((tx) => fn(clientOver(tx)))) as never);
   dbMock.dbWrite.$queryRaw.mockImplementation(clientOver(pg).$queryRaw as never);
@@ -223,6 +237,15 @@ describe('createPlatformFeedback — first report', () => {
     expect(await countRows(pg, 'Feedback')).toBe(3);
   });
 
+  it('does not count a row from another area as the same report', async () => {
+    await seedFeedback(pg, {
+      userId: alice,
+      area: 'site-bug-report',
+      context: { server: { fingerprint: FP_CLI_REF, reporters: 9, reports: 9 } },
+    });
+    await expect(send(bob)).resolves.toMatchObject({ ref: '2-ccb33a3a', duplicate: false });
+  });
+
   it('takes the fingerprint lock before it reads or writes the table', async () => {
     await send(alice);
     expect(statements.slice(0, 2)).toEqual([
@@ -303,6 +326,53 @@ describe('createPlatformFeedback — a repeat of an open report', () => {
     expect(row.context.server.samples.map((s) => s.text)).toEqual(['x'.repeat(300)]);
   });
 
+  // The cut lands between the two halves of the emoji. Postgres rejects a lone surrogate in
+  // jsonb, so without dropping the half this send fails rather than storing a sample.
+  it('drops a surrogate pair the 300-character cut would split', async () => {
+    await send(alice);
+    await expect(send(bob, `${'x'.repeat(299)}\u{1F600}TAIL`)).resolves.toMatchObject({
+      reporters: 2,
+    });
+    const [row] = await storedRows();
+    expect(row.context.server.samples.map((s) => s.text)).toEqual(['x'.repeat(299)]);
+  });
+
+  it('counts a repeat on a row whose server state holds only a fingerprint', async () => {
+    await seedFeedback(pg, {
+      userId: alice,
+      area: 'apps-platform',
+      context: { server: { fingerprint: FP_CLI_REF } },
+    });
+    vi.setSystemTime(new Date(T1));
+    await expect(send(bob, SECOND_MESSAGE)).resolves.toMatchObject({
+      ref: '1-ccb33a3a',
+      duplicate: true,
+      reporters: 1,
+      reports: 1,
+    });
+    const [row] = await storedRows();
+    expect(row.context.server).toEqual({
+      fingerprint: FP_CLI_REF,
+      reporters: 1,
+      reports: 1,
+      reporterIds: [2],
+      lastSeenAt: T1,
+      samples: [{ userId: 2, text: SECOND_MESSAGE, clientVersion: '2.3.4' }],
+    });
+  });
+
+  it('reads the row back without reporter ids or samples', async () => {
+    await send(alice);
+    await send(bob, SECOND_MESSAGE);
+    resetLog();
+    await send(5001, 'a third reporter');
+    // [SET, lock, find, update]: the two that read the row.
+    expect(serverKeys([...returned[2], ...returned[3]])).toEqual([
+      ['fingerprint', 'firstSeenAt', 'lastSeenAt', 'reporters', 'reports'],
+      ['fingerprint', 'firstSeenAt', 'lastSeenAt', 'reporters', 'reports'],
+    ]);
+  });
+
   it('reports the status a moderator moved the row to', async () => {
     const { ref } = await send(alice);
     await setStatus(1, 'reviewed');
@@ -367,6 +437,21 @@ describe('createPlatformFeedback — a repeat of a closed report', () => {
     expect(await countRows(pg, 'Feedback')).toBe(1);
   });
 
+  it('clips an over-long public note to 300 characters, on both procedures', async () => {
+    const { ref } = await send(alice);
+    await setStatus(1, 'dismissed');
+    await setResolution(1, { publicNote: `${'N'.repeat(300)}OVER` });
+    expect((await send(bob)).note).toBe('N'.repeat(300));
+    expect((await status(ref))[0]).toMatchObject({ note: 'N'.repeat(300) });
+  });
+
+  it('reads an empty public note as no note', async () => {
+    const { ref } = await send(alice);
+    await setResolution(1, { publicNote: '' });
+    expect((await send(bob)).note).toBeNull();
+    expect((await status(ref))[0]).toMatchObject({ note: null });
+  });
+
   const fixedInCli = { fixedIn: { component: 'cli', version: '2.4.0' }, publicNote: PUBLIC_NOTE };
 
   async function actioned(resolution: Record<string, unknown>) {
@@ -376,7 +461,7 @@ describe('createPlatformFeedback — a repeat of a closed report', () => {
   }
 
   // `2.10.0` is the row a string comparison gets wrong: it sorts before `2.4.0`.
-  it.each(['2.4.0', '2.10.0', '3.0.0-beta.1', 'v2.4.1', '2.5'])(
+  it.each(['2.4.0', '2.10.0', '3.0.0-beta.1', 'v2.4.1', '2.5', '3', 'v3'])(
     'actioned: a reporter already on the fix (%s) opens a regression row',
     async (version) => {
       await actioned(fixedInCli);
@@ -429,6 +514,7 @@ describe('createPlatformFeedback — a repeat of a closed report', () => {
 
   it.each([
     ['older', '2.3.9'],
+    ['older bare major', '2'],
     ['a prerelease of the fix', '2.4.0-rc.1'],
     ['unparseable', '2.x-nightly'],
     ['unparseable with a numeric prefix', '2.4.0.1'],
@@ -445,6 +531,46 @@ describe('createPlatformFeedback — a repeat of a closed report', () => {
       reports: 2,
     });
     expect(await countRows(pg, 'Feedback')).toBe(1);
+  });
+
+  // A fix version is only a claim about the row once a moderator has closed it as fixed.
+  it.each([
+    ['new', 'received'],
+    ['reviewed', 'acknowledged'],
+    ['dismissed', 'not_planned'],
+  ])('%s: a fix version on the row does not open a regression row', async (stored, readback) => {
+    await send(alice);
+    await setStatus(1, stored);
+    await setResolution(1, fixedInCli);
+    await expect(send(bob, SECOND_MESSAGE, '2.5.0')).resolves.toMatchObject({
+      ref: '1-ccb33a3a',
+      duplicate: true,
+      status: readback,
+    });
+    expect(await countRows(pg, 'Feedback')).toBe(1);
+  });
+
+  it('actioned: a two-part fix version is compared as its .0 release', async () => {
+    await actioned({ fixedIn: { component: 'cli', version: '2.4' } });
+    await expect(send(bob, SECOND_MESSAGE, '2.3.9')).resolves.toMatchObject({
+      ref: '1-ccb33a3a',
+      status: 'fixed',
+      fixedIn: { component: 'cli', version: '2.4' },
+    });
+    await expect(send(bob, SECOND_MESSAGE, '2.4.0')).resolves.toMatchObject({
+      ref: '2-ccb33a3a',
+      duplicate: false,
+    });
+  });
+
+  it('actioned: an "other" client is never compared, even against an "other" fix', async () => {
+    await actioned({ fixedIn: { component: 'other', version: '1.0.0' } });
+    await expect(
+      create(bob, {
+        message: SECOND_MESSAGE,
+        report: { ...cliReport(), client: { name: 'other', version: '9.9.9' } },
+      })
+    ).resolves.toMatchObject({ ref: '1-ccb33a3a', duplicate: true, status: 'fixed' });
   });
 
   it('actioned: an unparseable fix version never opens a regression row', async () => {
@@ -542,14 +668,18 @@ describe('getPlatformFeedbackStatus', () => {
       expect(wire).not.toContain(secret);
   });
 
-  it('never selects the message or the triage note', async () => {
+  it('reads only the public part of the row, in one query on the primary', async () => {
     await fullRow();
-    statements = [];
+    resetLog();
     await status('1-ccb33a3a');
-    expect(statements).toHaveLength(1);
-    const [text, values] = statements[0];
-    expect(text).not.toMatch(/"message"|"triageNote"|"userId"|SELECT \*/);
-    expect(values).toEqual([1, 'apps-platform']);
+    expect(statements.map(([, values]) => values)).toEqual([[1, 'apps-platform']]);
+    expect(returned[0].map((row) => Object.keys(row).sort())).toEqual([
+      ['handledAtMs', 'id', 'server', 'status'],
+    ]);
+    expect(serverKeys(returned[0])).toEqual([
+      ['fingerprint', 'firstSeenAt', 'lastSeenAt', 'reporters', 'reports', 'resolution'],
+    ]);
+    expect(dbMock.dbRead.$queryRaw).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -582,6 +712,88 @@ describe('getPlatformFeedbackStatus', () => {
     vi.setSystemTime(new Date(T1));
     await send(alice);
     expect(await status('1-ccb33a3a')).toMatchObject([{ firstSeenAt: T0, updatedAt: T1 }]);
+  });
+
+  // Each row makes a different one of the three timestamps the latest.
+  it.each([
+    ['the last send', '2026-10-01T10:30:00.000', '2026-10-01T11:00:00.000Z', T2],
+    [
+      'the resolution',
+      '2026-10-05T08:00:00.000',
+      '2026-10-09T09:09:09.000Z',
+      '2026-10-09T09:09:09.000Z',
+    ],
+    ['the resolution, never handled', null, '2026-10-09T09:09:09.000Z', '2026-10-09T09:09:09.000Z'],
+    [
+      'the triage',
+      '2026-10-12T07:07:07.000',
+      '2026-10-09T09:09:09.000Z',
+      '2026-10-12T07:07:07.000Z',
+    ],
+  ])('updatedAt is %s when that is latest', async (_label, handledAt, resolvedAt, expected) => {
+    await send(alice);
+    await pg.query('UPDATE "Feedback" SET "handledAt" = $1::timestamp WHERE "id" = 1', [handledAt]);
+    await setResolution(1, { at: resolvedAt });
+    vi.setSystemTime(new Date(T2));
+    await send(alice);
+    expect(await status('1-ccb33a3a')).toMatchObject([{ firstSeenAt: T0, updatedAt: expected }]);
+  });
+
+  it.each([
+    ['no server state', {}],
+    ['a null server', { server: null }],
+    ['an array server', { server: [FP_CLI_REF] }],
+    ['a string server', { server: FP_CLI_REF }],
+    ['a non-string fingerprint', { server: { fingerprint: 12345678 } }],
+  ])(
+    'answers found:false for a row with %s, and still answers the rest',
+    async (_label, context) => {
+      const broken = await seedFeedback(pg, { userId: alice, area: 'apps-platform', context });
+      expect(broken).toBe(1);
+      await send(bob);
+      expect(await status('1-ccb33a3a', '1-12345678', '1-', '2-ccb33a3a')).toMatchObject([
+        { ref: '1-ccb33a3a', found: false },
+        { ref: '1-12345678', found: false },
+        { ref: '1-', found: false },
+        { ref: '2-ccb33a3a', found: true },
+      ]);
+    }
+  );
+
+  it('reads a malformed counter or resolution as absent instead of failing', async () => {
+    await send(alice);
+    await send(bob);
+    await setStatus(1, 'actioned');
+    await pg.query(
+      `UPDATE "Feedback" SET "context" = jsonb_set(jsonb_set("context", '{server,reporters}', '"many"'), '{server,resolution}', $1::jsonb) WHERE "id" = 1`,
+      [JSON.stringify({ fixedIn: '2.4.0', publicNote: 7, at: 5 })]
+    );
+    expect(await status('1-ccb33a3a')).toEqual([
+      {
+        ref: '1-ccb33a3a',
+        found: true,
+        status: 'addressed',
+        fixedIn: null,
+        note: null,
+        reporters: 1,
+        firstSeenAt: T0,
+        updatedAt: T0,
+      },
+    ]);
+  });
+
+  it('looks up the largest id a ref can hold, and no larger', async () => {
+    await send(alice);
+    resetLog();
+    expect(await status('2147483647-ccb33a3a')).toEqual([
+      { ref: '2147483647-ccb33a3a', found: false },
+    ]);
+    expect(statements.map(([, values]) => values)).toEqual([[2147483647, 'apps-platform']]);
+    resetLog();
+    expect(await status('2147483648-ccb33a3a')).toEqual([
+      { ref: '2147483648-ccb33a3a', found: false },
+    ]);
+    expect(statements).toEqual([]);
   });
 
   it('answers found:false, and nothing else, for a ref whose suffix does not match', async () => {
@@ -621,15 +833,6 @@ describe('getPlatformFeedbackStatus', () => {
     ]);
   });
 
-  it('create does not count a row from another area as the same report', async () => {
-    await seedFeedback(pg, {
-      userId: alice,
-      area: 'site-bug-report',
-      context: { server: { fingerprint: FP_CLI_REF, reporters: 9, reports: 9 } },
-    });
-    await expect(send(bob)).resolves.toMatchObject({ ref: '2-ccb33a3a', duplicate: false });
-  });
-
   it('answers each ref in the order asked, repeats included', async () => {
     await send(alice);
     await create(bob, { message: 'sdk too', report: { ...cliReport(), about: 'sdk' } });
@@ -663,7 +866,7 @@ describe('the area flag', () => {
 
   it('getStatus refuses with the area off, before any query', async () => {
     await send(alice);
-    statements = [];
+    resetLog();
     mocks.isFeedbackAreaEnabled.mockResolvedValue(false);
     await expect(status('1-ccb33a3a')).rejects.toMatchObject(REFUSAL);
     expect(statements).toEqual([]);
