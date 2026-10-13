@@ -1,29 +1,26 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
-  chQuery: vi.fn(),
   storedScores: vi.fn(),
   applyUserScoreUpdates: vi.fn(),
   countRemovalsByOwner: vi.fn(),
-  getImagesApprovedOnAppealSince: vi.fn(),
-  getRemovedImageOwners: vi.fn(),
+  getOwnersWithReversalsSince: vi.fn(),
 }));
 
 vi.mock('~/server/clickhouse/client', async (importOriginal) => ({
   ...(await importOriginal<typeof ClickhouseClient>()),
-  clickhouse: { $query: mocks.chQuery },
+  clickhouse: {},
 }));
-vi.mock('~/server/db/pgDb', async () => {
-  const { createPgDbMock } = await import('~/test-utils/pgDbMock');
-  return createPgDbMock({
-    pgDbRead: {
-      cancellableQuery: async (_sql: string, [ids]: [number[]]) => ({
-        result: async () => mocks.storedScores(ids),
-        cancel: async () => undefined,
-      }),
-    },
-  });
-});
+vi.mock('~/server/db/pgDb', () => ({
+  pgDbRead: {
+    cancellableQuery: async (_sql: string, [ids]: [number[]]) => ({
+      result: async () => mocks.storedScores(ids),
+      cancel: async () => undefined,
+    }),
+  },
+  pgDbReadLong: {},
+  pgDbWrite: {},
+}));
 vi.mock('~/server/jobs/update-user-score', async (importOriginal) => ({
   ...(await importOriginal<typeof UpdateUserScore>()),
   applyUserScoreUpdates: mocks.applyUserScoreUpdates,
@@ -32,8 +29,7 @@ vi.mock('~/server/jobs/update-user-score', async (importOriginal) => ({
 vi.mock('~/server/services/creator-removals.service', async (importOriginal) => ({
   ...(await importOriginal<typeof CreatorRemovals>()),
   countRemovalsByOwner: mocks.countRemovalsByOwner,
-  getImagesApprovedOnAppealSince: mocks.getImagesApprovedOnAppealSince,
-  getRemovedImageOwners: mocks.getRemovedImageOwners,
+  getOwnersWithReversalsSince: mocks.getOwnersWithReversalsSince,
 }));
 
 import type * as ClickhouseClient from '~/server/clickhouse/client';
@@ -68,9 +64,7 @@ const STORED = { 1: -3000, 2: -1000, 3: -2000 } as Record<number, number>;
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mocks.getImagesApprovedOnAppealSince.mockResolvedValue([10, 20]);
-  mocks.getRemovedImageOwners.mockResolvedValue([1, 2]);
-  mocks.chQuery.mockResolvedValue([{ ownerId: 3 }]);
+  mocks.getOwnersWithReversalsSince.mockResolvedValue([1, 2, 3]);
   mocks.countRemovalsByOwner.mockResolvedValue(
     new Map([
       [1, 2],
@@ -92,12 +86,11 @@ describe('recompute-reversed-removals', () => {
     expect(mocks.applyUserScoreUpdates).not.toHaveBeenCalled();
   });
 
-  it('re-scores every owner with a reversed removal, from appeals and restore events', async () => {
+  it('re-scores every owner with a reversal ever, not only since the nightly checkpoint', async () => {
     await call({});
 
-    expect(mocks.getImagesApprovedOnAppealSince).toHaveBeenCalledWith(new Date(0));
-    expect(mocks.getRemovedImageOwners).toHaveBeenCalledWith(expect.anything(), [10, 20]);
-    expect(mocks.countRemovalsByOwner.mock.lastCall![1].sort()).toEqual([1, 2, 3]);
+    expect(mocks.getOwnersWithReversalsSince).toHaveBeenCalledWith(expect.anything(), new Date(0));
+    expect(mocks.countRemovalsByOwner).toHaveBeenCalledWith(expect.anything(), [1, 2, 3]);
   });
 
   it('writes only the owners whose score changes', async () => {

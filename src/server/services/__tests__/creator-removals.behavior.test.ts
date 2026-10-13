@@ -18,12 +18,16 @@ const toPglite = ((...a: Parameters<Raw['queryRaw']>) =>
 dbMock.dbRead.$queryRaw.mockImplementation(toPglite);
 dbMock.dbWrite.$queryRaw.mockImplementation(toPglite);
 
-const { getMyRemovedImages } = await import('~/server/services/creator-removed-images.service');
+const { getMyRemovedImages, REMOVED_IMAGES_LIMIT } = await import(
+  '~/server/services/creator-removed-images.service'
+);
 const { getReportAgainstScore } = await import('~/server/jobs/update-user-score');
 const { removalsQuery } = await import('~/server/services/creator-removals.service');
 
 const OWNER = 42;
-const OTHER = 43; // whose only removal was reversed since the last run
+const OTHER = 43; // whose only removal was reversed on appeal since the last run
+const RESTORED_OWNER = 44; // whose only removal a restore event reversed since the last run
+const SETTLED = 45; // whose removal was reversed on appeal before the last run, nothing since
 const REMOVED_AT = 1_700_000_000;
 const LAST_RUN = REMOVED_AT + 86_400;
 const at = (seconds: number) =>
@@ -40,6 +44,7 @@ const removals = [
   { ownerId: OWNER, imageId: STILL_REMOVED, removedAt: REMOVED_AT },
   { ownerId: OWNER, imageId: REJECTED, removedAt: REMOVED_AT },
   { ownerId: OTHER, imageId: 5, removedAt: REMOVED_AT },
+  { ownerId: SETTLED, imageId: 6, removedAt: REMOVED_AT },
 ];
 const ownRemovals = removals.filter((r) => r.ownerId === OWNER);
 
@@ -71,12 +76,14 @@ beforeEach(async () => {
       (${STILL_REMOVED}, ${OWNER}, 'moderated'),
       (${REJECTED}, ${OWNER}, 'moderated'),
       (${REMOVED_AGAIN}, ${OWNER}, 'moderated'),
-      (5, ${OTHER}, NULL);
+      (5, ${OTHER}, NULL),
+      (6, ${SETTLED}, NULL);
     INSERT INTO "Appeal" ("userId", "entityType", "entityId", status, "resolvedAt") VALUES
       (${OWNER}, 'Image', ${RESTORED}, 'Approved', '${at(REMOVED_AT + 3600)}'),
       (${OWNER}, 'Image', ${REJECTED}, 'Rejected', '${at(REMOVED_AT + 3600)}'),
       (${OWNER}, 'Image', ${REMOVED_AGAIN}, 'Approved', '${at(REMOVED_AT + 3600)}'),
-      (${OTHER}, 'Image', 5, 'Approved', '${at(LAST_RUN + 60)}');
+      (${OTHER}, 'Image', 5, 'Approved', '${at(LAST_RUN + 60)}'),
+      (${SETTLED}, 'Image', 6, 'Approved', '${at(REMOVED_AT + 3600)}');
   `);
   holder.chQuery.mockReset();
   holder.chQuery.mockResolvedValue({ json: async () => ownRemovals });
@@ -89,32 +96,69 @@ describe('the removed-images list', () => {
     expect(result.items.map((i) => i.imageId)).toEqual([REMOVED_AGAIN, STILL_REMOVED, REJECTED]);
     expect(result.total).toBe(3);
   });
+
+  it('still says it stopped at the limit when an appeal reversed one of those rows', async () => {
+    const full = [
+      ...ownRemovals,
+      ...Array.from({ length: REMOVED_IMAGES_LIMIT - ownRemovals.length }, (_, i) => ({
+        ownerId: OWNER,
+        imageId: 1000 + i,
+        removedAt: REMOVED_AT,
+      })),
+    ];
+    holder.chQuery.mockResolvedValue({ json: async () => full });
+
+    const result = await getMyRemovedImages(OWNER);
+
+    expect(result.items.map((i) => i.imageId)).not.toContain(RESTORED);
+    expect(result.truncated).toBe(true);
+  });
 });
 
+const flat = (sql: string) => sql.replace(/\s+/g, ' ').trim();
+// The ClickHouse SQL as it must read; the fake answers only these, so a changed query fails.
+const REMOVALS_SQL = (owners: string) =>
+  flat(`SELECT ownerId, imageId, toUnixTimestamp(maxIf(time, type = 'DeleteTOS')) AS removedAt
+    FROM images WHERE type IN ('DeleteTOS', 'Restore') AND ownerId IN (${owners})
+    GROUP BY ownerId, imageId
+    HAVING maxIf(time, type = 'DeleteTOS') > maxIf(time, type = 'Restore')`);
+const REMOVED_SINCE_SQL = flat(
+  `SELECT DISTINCT ownerId FROM images WHERE type = 'DeleteTOS' AND time > ?`
+);
+const RESTORED_SINCE_SQL = flat(
+  `SELECT DISTINCT ownerId FROM images WHERE type = 'Restore' AND time > ?`
+);
+const OWNERS_OF_SQL = (ids: string) =>
+  flat(`SELECT DISTINCT ownerId FROM images WHERE type = 'DeleteTOS' AND imageId IN (${ids})`);
+
 /**
- * Stands in for ClickHouse: OWNER has an event since the last run, and `removalsQuery` is answered from
- * `removals` (its restore-event half is not modelled; the text pin below covers it).
+ * Stands in for ClickHouse, which this suite cannot run: OWNER has a removal since the last run and
+ * RESTORED_OWNER a restore event, whose removal the real query then drops (so `removals` has none).
  */
 function fakeClickhouse() {
-  const $query = vi.fn(async (query: TemplateStringsArray | string) => {
-    const sql = typeof query === 'string' ? query : query.join('?');
-    if (sql === removalsQuery(sql.match(/AND (ownerId IN \([\d,]+\))/)?.[1] ?? '')) {
-      const owners = sql
-        .match(/ownerId IN \(([\d,]+)\)/)![1]
-        .split(',')
-        .map(Number);
-      return removals.filter((r) => owners.includes(r.ownerId));
+  const $query = vi.fn(async (query: TemplateStringsArray | string, ...values: unknown[]) => {
+    // Interpolates as the real client does, with each date checked and shown as `?`.
+    const text =
+      typeof query === 'string'
+        ? query
+        : query.reduce((acc, part, i) => {
+            if (i === 0) return part;
+            const value = values[i - 1];
+            if (value instanceof Date) expect(value).toEqual(new Date(LAST_RUN * 1000));
+            return acc + (value instanceof Date ? '?' : String(value)) + part;
+          }, '');
+    const sql = flat(text);
+    const owners = sql.match(/ownerId IN \(([\d,]+)\)/)?.[1];
+    if (owners && sql === REMOVALS_SQL(owners))
+      return removals.filter((r) => owners.split(',').map(Number).includes(r.ownerId));
+    const ids = sql.match(/imageId IN \(([\d,]+)\)/)?.[1];
+    if (ids && sql === OWNERS_OF_SQL(ids)) {
+      const asked = ids.split(',').map(Number);
+      const found = removals.filter((r) => asked.includes(r.imageId)).map((r) => r.ownerId);
+      return [...new Set(found)].map((ownerId) => ({ ownerId }));
     }
-    if (sql.includes('imageId IN (')) {
-      const ids = sql
-        .match(/imageId IN \(([\d,]+)\)/)![1]
-        .split(',')
-        .map(Number);
-      return [
-        ...new Set(removals.filter((r) => ids.includes(r.imageId)).map((r) => r.ownerId)),
-      ].map((ownerId) => ({ ownerId }));
-    }
-    if (sql.includes('time > ?')) return [{ ownerId: OWNER }];
+    if (sql === REMOVED_SINCE_SQL) return [{ ownerId: OWNER }];
+    if (sql === RESTORED_SINCE_SQL) return [{ ownerId: RESTORED_OWNER }];
     throw new Error(`unexpected query: ${sql}`);
   });
   return { $query };
@@ -144,15 +188,32 @@ describe('the Removed content score', () => {
     expect((await scoreRun()).get(OTHER)).toBe(0);
   });
 
+  it('re-scores, to zero, an owner with a restore event since the last run', async () => {
+    expect((await scoreRun()).get(RESTORED_OWNER)).toBe(0);
+  });
+
+  it('re-scores only owners with a removal or a reversal since the last run', async () => {
+    expect([...(await scoreRun()).keys()].sort()).toEqual([OWNER, OTHER, RESTORED_OWNER]);
+  });
+
+  it('reads approvals since the last run from the primary, not a lagging replica', async () => {
+    dbMock.dbWrite.$queryRaw.mockClear();
+    dbMock.dbRead.$queryRaw.mockClear();
+    await scoreRun();
+
+    const approvalReads = (mock: { mock: { calls: unknown[][] } }) =>
+      mock.mock.calls.filter((c) => (c[0] as string[]).join('?').includes('"resolvedAt" > ?'));
+    expect(approvalReads(dbMock.dbWrite.$queryRaw)).toHaveLength(1);
+    expect(approvalReads(dbMock.dbRead.$queryRaw)).toHaveLength(0);
+  });
+
   it('matches the list for the same owner', async () => {
     const listed = await getMyRemovedImages(OWNER);
 
     expect(Math.abs((await scoreRun()).get(OWNER)!)).toBe(listed.total * 1000);
   });
 
-  it('drops a removal a later restore event reversed, in ClickHouse', () => {
-    expect(removalsQuery('x')).toContain(
-      "HAVING maxIf(time, type = 'DeleteTOS') > maxIf(time, type = 'Restore')"
-    );
+  it('reads removals through the SQL the fake answers, restore half included', () => {
+    expect(flat(removalsQuery('ownerId IN (1)'))).toBe(REMOVALS_SQL('1'));
   });
 });

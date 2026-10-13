@@ -3,7 +3,7 @@ import { clickhouse } from '~/server/clickhouse/client';
 import { dbRead } from '~/server/db/client';
 import { excludedRecord } from '~/server/jobs/appeal-decision-records';
 import {
-  type Removal,
+  type CreatorRemoval,
   removalsQuery,
   withoutAppealReversed,
 } from '~/server/services/creator-removals.service';
@@ -42,7 +42,7 @@ async function getRemovalEvents(userId: number) {
       abort_signal: controller.signal,
       clickhouse_settings: { max_execution_time: CLICKHOUSE_TIMEOUT_SECONDS },
     });
-    return (await response.json()) as Removal[];
+    return (await response.json()) as CreatorRemoval[];
   } finally {
     clearTimeout(timer);
   }

@@ -1,18 +1,17 @@
 import { chunk } from 'lodash-es';
 import type { CustomClickHouseClient } from '~/server/clickhouse/client';
-import { dbRead } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
 import {
   REMOVAL_RESTORED_EVENT,
   REPORTS_AGAINST_EVENT,
 } from '~/shared/constants/creator-journey.constants';
 
 /**
- * The one definition of a removal that counts toward a creator's "Removed content": an image's latest
- * removal, unless a restore event or an approved image appeal came after it. The score job and the
- * member's removed-images list both read it, so the list keeps matching the score.
+ * The one definition of a counted removal: an image's latest removal, unless a restore event or an
+ * approved image appeal came after it. The score job and the removed-images list both read it.
  */
 
-export type Removal = { ownerId: number; imageId: number; removedAt: number };
+export type CreatorRemoval = { ownerId: number; imageId: number; removedAt: number };
 
 /**
  * ClickHouse half: one row per image of the owners `ownerFilter` selects, with its latest removal in
@@ -29,7 +28,7 @@ export const removalsQuery = (ownerFilter: string) => `
 const BATCH = 10_000;
 
 /** Postgres half: drops each removal an image appeal approved after it. */
-export async function withoutAppealReversed<T extends Removal>(removals: T[]) {
+export async function withoutAppealReversed<T extends CreatorRemoval>(removals: T[]) {
   const reversed = new Set<number>();
   for (const batch of chunk(removals, BATCH)) {
     const rows = await dbRead.$queryRaw<{ imageId: number }[]>`
@@ -52,26 +51,32 @@ export async function withoutAppealReversed<T extends Removal>(removals: T[]) {
 export async function countRemovalsByOwner(ch: CustomClickHouseClient, ownerIds: number[]) {
   const counts = new Map<number, number>();
   for (const owners of chunk(ownerIds, 1000)) {
-    const rows = await ch.$query<Removal>(removalsQuery(`ownerId IN (${owners.join(',')})`));
+    const rows = await ch.$query<CreatorRemoval>(removalsQuery(`ownerId IN (${owners.join(',')})`));
     for (const { ownerId } of await withoutAppealReversed(rows))
       counts.set(Number(ownerId), (counts.get(Number(ownerId)) ?? 0) + 1);
   }
   return counts;
 }
 
-/** Images with an image appeal approved since `since`; their owners need re-scoring. */
-export async function getImagesApprovedOnAppealSince(since: Date) {
-  const rows = await dbRead.$queryRaw<{ imageId: number }[]>`
+export const reportsAgainstScore = (count: number | undefined, multiplier: number) =>
+  count ? count * multiplier : 0;
+
+/** Owners with a removal reversed since `since`, by a restore event or an approved image appeal. */
+export async function getOwnersWithReversalsSince(ch: CustomClickHouseClient, since: Date) {
+  // The writer: an approval the replica has not seen yet would fall behind the job's next checkpoint.
+  const approved = await dbWrite.$queryRaw<{ imageId: number }[]>`
     SELECT DISTINCT "entityId" AS "imageId" FROM "Appeal"
     WHERE "entityType" = 'Image' AND status = 'Approved' AND "resolvedAt" > ${since}
   `;
-  return rows.map((r) => Number(r.imageId));
-}
-
-/** Owners with a removal of any of these images. */
-export async function getRemovedImageOwners(ch: CustomClickHouseClient, imageIds: number[]) {
-  const owners = new Set<number>();
-  for (const ids of chunk(imageIds, BATCH)) {
+  const restored = await ch.$query<{ ownerId: number }>`
+    SELECT DISTINCT ownerId FROM images
+    WHERE type = '${REMOVAL_RESTORED_EVENT}' AND time > ${since}
+  `;
+  const owners = new Set(restored.map((r) => Number(r.ownerId)));
+  for (const ids of chunk(
+    approved.map((r) => Number(r.imageId)),
+    BATCH
+  )) {
     const rows = await ch.$query<{ ownerId: number }>(`
       SELECT DISTINCT ownerId FROM images
       WHERE type = '${REPORTS_AGAINST_EVENT}' AND imageId IN (${ids.join(',')})
