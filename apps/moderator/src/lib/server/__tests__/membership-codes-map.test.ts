@@ -20,7 +20,16 @@ const row = vi.hoisted(() => ({
 vi.mock('$lib/server/db', async () => {
   const { capturingDb } = await import('../../../test/capture-sql');
   const db = capturingDb([], [row]);
-  return { dbRead: db, dbWrite: db };
+  // dbRead throws: the list must read the primary, or a just-revoked code shows as open.
+  const replica = new Proxy(
+    {},
+    {
+      get: () => {
+        throw new Error('membership codes must be read from the primary');
+      },
+    }
+  );
+  return { dbRead: replica, dbWrite: db };
 });
 
 const { listSupportMembershipCodes } = await import('../membership-code.service');

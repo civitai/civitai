@@ -1170,7 +1170,7 @@ const MAY_HAVE_COMPLETED =
  * the account history for one deletion, not a deduped one.
  */
 const MINT_MAY_HAVE_COMPLETED =
-  'Could not confirm the code was minted. Check the account’s mod activity before minting again.';
+  'Could not confirm the code was minted. Wait a minute, then check this account’s code list before minting again.';
 
 // MEMBERSHIP CODE (support make-good). The endpoint records the ModActivity row inside the same
 // transaction as the code, and its daily cap counts those rows — so no `logAction` here.

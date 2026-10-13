@@ -14,7 +14,16 @@ const capturedParams = vi.hoisted(() => [] as unknown[][]);
 vi.mock('$lib/server/db', async () => {
   const { capturingDb } = await import('../../../test/capture-sql');
   const db = capturingDb(captured, [], capturedParams);
-  return { dbRead: db, dbWrite: db };
+  // dbRead throws: the list must read the primary, or a just-revoked code shows as open.
+  const replica = new Proxy(
+    {},
+    {
+      get: () => {
+        throw new Error('membership codes must be read from the primary');
+      },
+    }
+  );
+  return { dbRead: replica, dbWrite: db };
 });
 
 const { listSupportMembershipCodes } = await import('../membership-code.service');
@@ -63,10 +72,22 @@ describe('membershipCodeStatus', () => {
 
   it.each([
     ['open', base, 'open'],
-    ['redeemed wins over everything', { ...base, redeemedAt: '2026-10-01T00:00:00.000Z' }, 'redeemed'],
-    ['revoked', { ...base, revokedAt: '2026-10-12T00:00:00.000Z', expiresAt: '2026-10-12T00:00:00.000Z' }, 'revoked'],
+    [
+      'redeemed wins over everything',
+      { ...base, redeemedAt: '2026-10-01T00:00:00.000Z' },
+      'redeemed',
+    ],
+    [
+      'revoked',
+      { ...base, revokedAt: '2026-10-12T00:00:00.000Z', expiresAt: '2026-10-12T00:00:00.000Z' },
+      'revoked',
+    ],
     ['expired', { ...base, expiresAt: '2026-10-12T00:00:00.000Z' }, 'expired'],
-    ['expiring exactly now counts as expired', { ...base, expiresAt: now.toISOString() }, 'expired'],
+    [
+      'expiring exactly now counts as expired',
+      { ...base, expiresAt: now.toISOString() },
+      'expired',
+    ],
   ])('%s', (_l, row, expected) => {
     expect(membershipCodeStatus(row, now)).toBe(expected);
   });

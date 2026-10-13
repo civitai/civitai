@@ -12,6 +12,8 @@ export const MEMBERSHIP_CODE_TIER_LABELS: Record<MembershipCodeTier, string> = {
 };
 
 export const MEMBERSHIP_CODE_MAX_MONTHS = 6;
+export const MEMBERSHIP_CODE_EXPIRY_DAYS = 30;
+export const MEMBERSHIP_CODE_DAILY_CAP = 10;
 
 export type MintedMembershipCode = {
   code: string;

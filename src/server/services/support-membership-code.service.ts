@@ -26,6 +26,8 @@ export {
 /** ModActivity prefix. The daily cap counts it, so renaming it resets every moderator's count. */
 const ACTIVITY_PREFIX = 'mintMembershipCode:';
 const REVOKED_EXPIRY = new Date(0);
+/** Advisory-lock class ('MC'), registered in free-placement.service.test.ts's lock ledger. */
+const MINT_LOCK_CLASS = 0x4d430001;
 
 const CODE_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
 const codePart = () =>
@@ -87,7 +89,7 @@ export async function mintSupportMembershipCode({
   return dbWrite.$transaction(async (tx) => {
     // Serialises one moderator's mints so two concurrent requests cannot both pass the cap.
     // Both arguments int4: Prisma binds a JS number as int8, and there is no (int4, int8) overload.
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('support-membership-code'), ${moderatorId}::int)`;
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(${MINT_LOCK_CLASS}::int, ${moderatorId}::int)`;
 
     const minted = await tx.modActivity.count({
       where: {

@@ -10,6 +10,8 @@
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
   import { dateTime } from '$lib/format';
   import {
+    MEMBERSHIP_CODE_DAILY_CAP,
+    MEMBERSHIP_CODE_EXPIRY_DAYS,
     MEMBERSHIP_CODE_MAX_MONTHS,
     MEMBERSHIP_CODE_TIER_LABELS,
     MEMBERSHIP_CODE_TIERS,
@@ -62,9 +64,8 @@
       copyState = 'idle';
       revoke.error = null;
     },
-    // Disarm after every answer, failures included: a "may have minted" warning must not sit above a
-    // live confirm button.
-    // Refetch after every answer: a "may have minted" failure must show whether the code landed.
+    // After every answer, failures included: disarm, so a "may have minted" warning never sits above a
+    // live confirm button, and refetch the list.
     onSettled: () => {
       confirming = false;
       version += 1;
@@ -96,7 +97,8 @@
   <p class="mb-3 text-xs text-dark-2">
     Mints one redeem code that only this account can redeem. Codes are Civitai memberships (yellow
     Buzz, claimed monthly by the customer), last up to {MEMBERSHIP_CODE_MAX_MONTHS} months, and expire
-    unredeemed after 30 days. At most 10 per moderator per day.
+    unredeemed after {MEMBERSHIP_CODE_EXPIRY_DAYS} days. At most {MEMBERSHIP_CODE_DAILY_CAP} per moderator
+    per day.
   </p>
 
   {#if form.error}

@@ -218,10 +218,8 @@ describe('daily cap per moderator', () => {
     ];
     // The exact text: the `::int` is load-bearing. Prisma binds a JS number as int8 and Postgres has
     // no pg_advisory_xact_lock(int4, int8) — without the cast every mint fails at this line.
-    expect(strings.join('?')).toBe(
-      "SELECT pg_advisory_xact_lock(hashtext('support-membership-code'), ?::int)"
-    );
-    expect(values).toEqual([MODERATOR]);
+    expect(strings.join('?')).toBe('SELECT pg_advisory_xact_lock(?::int, ?::int)');
+    expect(values).toEqual([0x4d430001, MODERATOR]);
   });
 });
 
