@@ -171,18 +171,28 @@ export default function BlockImagePickerModal({
 }
 
 type GridSelection = {
-  dropPostedPicks: () => void;
   browsingLevel: number;
   selected: BlockPickedImageInfo[];
   atMax: boolean;
   onToggle: (image: BlockPickedImageInfo) => void;
 };
 
-function SourceGrid({ source, ...selection }: GridSelection & { source: BlockImagePickerSource }) {
-  return source === 'posted' ? <PostedGrid {...selection} /> : <GeneratedGrid {...selection} />;
+function SourceGrid({
+  source,
+  dropPostedPicks,
+  ...selection
+}: GridSelection & { source: BlockImagePickerSource; dropPostedPicks: () => void }) {
+  return source === 'posted' ? (
+    <PostedGrid dropPostedPicks={dropPostedPicks} {...selection} />
+  ) : (
+    <GeneratedGrid {...selection} />
+  );
 }
 
-function PostedGrid({ dropPostedPicks, ...selection }: GridSelection) {
+function PostedGrid({
+  dropPostedPicks,
+  ...selection
+}: GridSelection & { dropPostedPicks: () => void }) {
   const { data, isLoading, isError, isFetching, hasNextPage, fetchNextPage, refetch } =
     trpc.blockImagePicker.getPosted.useInfiniteQuery(
       {},
@@ -231,7 +241,7 @@ function PostedGrid({ dropPostedPicks, ...selection }: GridSelection) {
   );
 }
 
-function GeneratedGrid({ dropPostedPicks: _unused, ...selection }: GridSelection) {
+function GeneratedGrid(selection: GridSelection) {
   const { browsingLevel } = selection;
   const { data, isFetching, isFetchingNextPage, isError, hasNextPage, fetchNextPage, refetch } =
     useGetTextToImageRequests(
