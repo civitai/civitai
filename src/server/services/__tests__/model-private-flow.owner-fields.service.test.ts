@@ -273,6 +273,20 @@ describe('privateModelFromTraining — moderation-owned meta', () => {
       cannotPromote: true,
     });
   });
+
+  // The form hides these keys from moderators too, so their save never echoes them back.
+  it('keeps the hidden moderation-owned keys a moderator cannot see', async () => {
+    mockStored({ meta: STORED_MODERATION_META });
+
+    await privateFromTraining({ user: moderator, meta: { declinedReason: 'by mod' } as never });
+
+    const meta = writtenMeta();
+    expect(meta.minorFlagSnapshot).toEqual(STORED_MODERATION_META.minorFlagSnapshot);
+    expect(meta.textScanFlags).toEqual(STORED_MODERATION_META.textScanFlags);
+    expect(meta.textModeration).toEqual(STORED_MODERATION_META.textModeration);
+    expect(meta.declinedReason).toBe('by mod');
+    expect(meta).not.toHaveProperty('takenDownAt');
+  });
 });
 
 describe('privateModelFromTraining — publish gates', () => {

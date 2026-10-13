@@ -5250,10 +5250,13 @@ export const privateModelFromTraining = async ({
       data: {
         ...data,
         meta: {
+          // This write replaces meta wholesale. A moderator's form never holds the hidden
+          // moderation-owned keys, so they are carried under the moderator's input.
+          ...(user.isModerator
+            ? pickModerationOwnedMeta(storedMeta, { includeFlowKeys: false })
+            : {}),
           ...(stripServerOwnedMeta(stripModerationOwnedMeta(meta as ModelMeta, user.isModerator)) ??
             {}),
-          // This write replaces meta wholesale, so the stored server-owned keys, and for a
-          // non-moderator the moderation-owned ones, are carried over.
           ...pickServerOwnedMeta(storedMeta),
           ...(user.isModerator ? {} : pickModerationOwnedMeta(storedMeta)),
           // Makes it so these models cannot go into auctions or be promoted

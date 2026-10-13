@@ -180,8 +180,14 @@ export function pickServerOwnedMeta(meta: ModelMeta | null | undefined): ModelMe
 }
 
 /** The moderation-owned and moderation-flow keys of a stored meta, for a wholesale meta write by a non-moderator. */
-export function pickModerationOwnedMeta(meta: ModelMeta | null | undefined): ModelMeta {
-  return pickKeys(meta, [...MODERATION_OWNED_META_KEYS, ...MODERATION_FLOW_META_KEYS]);
+export function pickModerationOwnedMeta(
+  meta: ModelMeta | null | undefined,
+  { includeFlowKeys = true }: { includeFlowKeys?: boolean } = {}
+): ModelMeta {
+  return pickKeys(meta, [
+    ...MODERATION_OWNED_META_KEYS,
+    ...(includeFlowKeys ? MODERATION_FLOW_META_KEYS : []),
+  ]);
 }
 
 export function filterModelMetaForClient(meta: ModelMeta, isModerator?: boolean): ModelMeta {
