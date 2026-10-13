@@ -165,6 +165,44 @@ describe('restoreModelRuleVersion', () => {
     ]);
   });
 
+  it('never brings back needsAttention from an old version', async () => {
+    answers.history = [{ id: 1 }];
+    answers.version = [{ ...OLD, definition: { ...OLD.definition, needsAttention: true } }];
+    await restoreModelRuleVersion(7, 2, 5);
+    const update = captured.findIndex((s) => s.startsWith('update "ModerationRule"'));
+    const written = [params[update], params[versionInserts()[0]]].flatMap((p) => p);
+    const definitions = written.filter(
+      (v) => typeof v === 'object' && v !== null && 'subject' in v
+    );
+    expect(definitions).toHaveLength(2);
+    for (const d of definitions) {
+      expect(d).toMatchObject({ subject: 'Older subject' });
+      expect(d).not.toHaveProperty('needsAttention');
+    }
+  });
+
+  it('records the pre-restore state first when the rule has no history', async () => {
+    answers.history = [];
+    answers.version = [OLD];
+    await restoreModelRuleVersion(7, 2, 5);
+    const insert = versionInserts()[0];
+    expect(params[insert]).toEqual([
+      7,
+      SEMANTIC,
+      true,
+      'Block',
+      null,
+      42,
+      UPDATED,
+      7,
+      expect.objectContaining({ subject: 'Older subject', updatedById: 5 }),
+      false,
+      'Block',
+      'old note',
+      5,
+    ]);
+  });
+
   it('refuses a version of another rule', async () => {
     answers.version = [];
     await expect(restoreModelRuleVersion(7, 2, 5)).rejects.toBeInstanceOf(
@@ -182,6 +220,7 @@ describe('restoreModelRuleVersion', () => {
   it('refuses a regex version', async () => {
     answers.version = [{ definition: { match: 'x' }, enabled: true, reason: null }];
     await expect(restoreModelRuleVersion(7, 2, 5)).rejects.toBeInstanceOf(RestoreRefusedError);
+    expect(captured.some((s) => s.startsWith('update') || s.startsWith('insert'))).toBe(false);
   });
 });
 
