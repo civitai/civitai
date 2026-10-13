@@ -146,6 +146,14 @@ describe('deletePost orphan de-indexing', () => {
     });
   });
 
+  it('returns the ids of the images it deleted, and only those', async () => {
+    primeQueries([OWNER_IMAGE, FOREIGN_IMAGE]);
+
+    const result = await deletePost({ id: POST_ID });
+
+    expect(result?.deletedImageIds).toEqual([OWNER_IMAGE.id]);
+  });
+
   it('deletes only the poster-owned image, and never the foreign one', async () => {
     primeQueries([OWNER_IMAGE, FOREIGN_IMAGE]);
 

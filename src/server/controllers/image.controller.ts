@@ -60,11 +60,13 @@ import { getNsfwLevelDeprecatedReverseMapping } from '~/shared/constants/browsin
 import { Flags } from '~/shared/utils/flags';
 import {
   BlockImageReason,
+  EntityType,
   NewOrderRankType,
   ReportReason,
   ReportStatus,
 } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
+import { closeAppealsDeletedByOwner } from '~/server/services/report.service';
 import type {
   GetEntitiesCoverImage,
   GetImageInput,
@@ -146,6 +148,12 @@ export const deleteImageHandler = async ({
     const image = await deleteImageById(input);
 
     if (image) {
+      // The deleter, not the content's owner: a moderator delete must not close the owner's appeal.
+      await closeAppealsDeletedByOwner({
+        entityType: EntityType.Image,
+        entityIds: [input.id],
+        ownerId: ctx.user.id,
+      });
       await ctx.track.images([
         {
           type: 'Delete',

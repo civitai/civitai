@@ -45,7 +45,7 @@ vi.mock('~/server/clickhouse/client', async (importOriginal) => ({
   },
 }));
 
-import { voidOrphanedAppeals } from '~/server/services/report.service';
+import { closeAppealsDeletedByOwner, voidOrphanedAppeals } from '~/server/services/report.service';
 
 const FILED = '2026-09-01 00:00:00';
 
@@ -74,6 +74,7 @@ beforeAll(async () => {
   holder.db = new PGlite();
   await holder.db.exec(`
     CREATE TYPE "AppealStatus" AS ENUM ('Pending', 'Approved', 'Rejected', 'Void');
+    CREATE TYPE "EntityType" AS ENUM ('Image', 'Model');
     CREATE TABLE "User" (id int PRIMARY KEY, "deletedAt" timestamp(3));
     CREATE TABLE "Image" (id int PRIMARY KEY, "userId" int NOT NULL, "blockedFor" text);
     CREATE TABLE "Model" (id int PRIMARY KEY);
@@ -83,7 +84,7 @@ beforeAll(async () => {
     CREATE TABLE "Appeal" (
       id int PRIMARY KEY,
       "userId" int NOT NULL,
-      "entityType" text NOT NULL,
+      "entityType" "EntityType" NOT NULL,
       "entityId" int NOT NULL,
       status "AppealStatus" NOT NULL,
       "createdAt" timestamp(3) NOT NULL,
@@ -134,7 +135,7 @@ beforeEach(async () => {
     await holder.db.query(
       `INSERT INTO "Appeal" (id, "userId", "entityType", "entityId", status, "createdAt", "updatedAt",
          "entityRemovedAt", "buzzTransactionId")
-       VALUES ($1, $2, $3, $4, $5::"AppealStatus", $6, $6, $7, $8)`,
+       VALUES ($1, $2, $3::"EntityType", $4, $5::"AppealStatus", $6, $6, $7, $8)`,
       [id, userId, entityType, entityId, status, FILED, removedAt, fee]
     );
 });
@@ -260,5 +261,47 @@ describe('voidOrphanedAppeals against Postgres', () => {
 
     expect(second).toMatchObject({ closedQuietly: 0, closedOwnerDeleted: 0, routedForReview: 0 });
     expect(await appeals()).toEqual(first);
+  });
+});
+
+describe('closeAppealsDeletedByOwner against Postgres', () => {
+  it("closes only the deleting owner's Pending appeals on exactly the deleted entities", async () => {
+    await holder.db.exec(`
+      INSERT INTO "Appeal" (id, "userId", "entityType", "entityId", status, "createdAt", "updatedAt",
+        "buzzTransactionId") VALUES
+        (101, 40, 'Image', 7001, 'Pending', '2026-09-01', '2026-09-01', 'appeal-40-1'),
+        (102, 40, 'Image', 7002, 'Rejected', '2026-09-01', '2026-09-01', NULL),
+        (103, 41, 'Image', 7001, 'Pending', '2026-09-01', '2026-09-01', NULL),
+        (104, 40, 'Model', 7001, 'Pending', '2026-09-01', '2026-09-01', NULL),
+        (105, 40, 'Image', 7003, 'Pending', '2026-09-01', '2026-09-01', NULL),
+        (106, 21, 'Image', 7004, 'Pending', '2026-09-01', '2026-09-01', 'appeal-21-1');
+      -- The sweep routed it between the delete and this close: the owner still deleted it.
+      INSERT INTO "Appeal" (id, "userId", "entityType", "entityId", status, "createdAt", "updatedAt",
+        "entityRemovedAt") VALUES (107, 40, 'Image', 7005, 'Pending', '2026-09-01', '2026-09-01', now());
+    `);
+
+    await closeAppealsDeletedByOwner({
+      entityType: 'Image',
+      entityIds: [7001, 7002, 7005],
+      ownerId: 40,
+    });
+    // User 21 is a defensive close (fixture): refunded, not told.
+    await closeAppealsDeletedByOwner({ entityType: 'Image', entityIds: [7004], ownerId: 21 });
+
+    const rows = await appeals();
+    expect(rows.get(101)).toMatchObject({ status: 'Void', resolvedReason: 'deleted-by-owner' });
+    expect(rows.get(101)!.resolvedAt).not.toBeNull();
+    expect(rows.get(102)).toMatchObject({ status: 'Rejected', resolvedReason: null });
+    for (const id of [103, 104, 105]) expect(rows.get(id)).toMatchObject({ status: 'Pending' });
+    expect(rows.get(106)).toMatchObject({ status: 'Void', resolvedReason: 'deleted-by-owner' });
+    expect(rows.get(107)).toMatchObject({ status: 'Void', resolvedReason: 'deleted-by-owner' });
+    expect(refundedPrefixes()).toEqual(['appeal-21-1', 'appeal-40-1']);
+    const notices = vi
+      .mocked(holder.notify)
+      .mock.calls.map((c) => c[0] as { key: string; details: { refunded: boolean } });
+    expect(notices.map((n) => [n.key, n.details.refunded]).sort()).toEqual([
+      ['entity-appeal-content-removed:101:closed-owner-deleted', true],
+      ['entity-appeal-content-removed:107:closed-owner-deleted', false],
+    ]);
   });
 });
