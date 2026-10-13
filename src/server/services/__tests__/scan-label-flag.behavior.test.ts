@@ -152,6 +152,13 @@ describe('recordScanLabelFlag', () => {
     ]);
   });
 
+  it('keeps the earliest flag time when a later flag arrives', async () => {
+    await flag();
+    await flag({ workflowId: 'wf-2', flaggedAt: new Date('2026-10-14T12:00:00Z') });
+
+    expect((await items())[0].firstFlaggedAt).toEqual(new Date('2026-10-13T12:00:00Z'));
+  });
+
   it('does not reopen an item moderators already decided', async () => {
     await flag();
     await holder.db.exec(
