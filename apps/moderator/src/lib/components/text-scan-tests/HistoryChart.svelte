@@ -1,5 +1,14 @@
 <script lang="ts">
   import { Button } from '@civitai/ui/components/ui/button/index.js';
+  import { CHART_PALETTE_SIZE } from '@civitai/ui/components/ui/chart/chart-colors.js';
+  import {
+    Table,
+    TableBody,
+    TableCell,
+    TableHead,
+    TableHeader,
+    TableRow,
+  } from '@civitai/ui/components/ui/table/index.js';
   import { dateTime } from '$lib/format';
   import type { HistoryPoint } from '$lib/server/text-scan-tests/reports';
   import { LABEL_NAMES } from '$lib/text-scan-lab/labels';
@@ -8,15 +17,9 @@
 
   let { points }: { points: HistoryPoint[] } = $props();
 
-  // Validated for the dark surface with the dataviz skill's validate_palette.js; re-run it before
-  // changing a colour or the order.
-  const SERIES: Record<LabLabel, string> = {
-    nsfw: '#3987e5',
-    poi: '#d95926',
-    minor: '#199e70',
-    scam: '#c98500',
-    modelRules: '#d55181',
-  };
+  const SERIES = Object.fromEntries(
+    LABEL_ORDER.map((label, i) => [label, `var(--chart-${(i % CHART_PALETTE_SIZE) + 1})`])
+  ) as Record<LabLabel, string>;
   const W = 640;
   const H = 220;
   const PAD = { left: 44, right: 120, top: 12, bottom: 12 };
@@ -68,33 +71,35 @@
   {#if !points.length}
     <p class="mt-2 text-sm text-dark-2">No finished baseline yet.</p>
   {:else if asTable}
-    <div class="mt-3 overflow-x-auto">
-      <table class="w-full text-left text-sm">
-        <thead class="text-xs text-dark-2">
-          <tr>
-            <th class="py-1 pr-3 font-medium">Finished</th>
-            <th class="pr-3 font-medium">Versions</th>
+    <div class="mt-3">
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>Finished</TableHead>
+            <TableHead>Versions</TableHead>
             {#each labels as label (label)}
-              <th class="pr-3 font-medium">{LABEL_NAMES[label]}</th>
+              <TableHead>{LABEL_NAMES[label]}</TableHead>
             {/each}
-          </tr>
-        </thead>
-        <tbody>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
           {#each points as p (p.runId)}
-            <tr class="border-t border-dark-4 text-dark-0">
-              <td class="py-1 pr-3">{dateTime(p.finishedAt)}</td>
-              <td class="pr-3 font-mono text-xs">{versions(p)}</td>
-              {#each labels as label (label)}<td class="pr-3">{pct(p.passRates[label])}</td>{/each}
-            </tr>
+            <TableRow class="text-dark-0">
+              <TableCell>{dateTime(p.finishedAt)}</TableCell>
+              <TableCell class="font-mono text-xs">{versions(p)}</TableCell>
+              {#each labels as label (label)}
+                <TableCell>{pct(p.passRates[label])}</TableCell>
+              {/each}
+            </TableRow>
           {/each}
-        </tbody>
-      </table>
+        </TableBody>
+      </Table>
     </div>
   {:else}
     <ul class="mt-3 flex flex-wrap gap-4 text-xs text-dark-0">
       {#each labels as label (label)}
         <li class="flex items-center gap-1">
-          <span class="inline-block h-0.5 w-4" style="background:{SERIES[label]}"></span>
+          <span class="inline-block h-0.5 w-4" style:background={SERIES[label]}></span>
           {LABEL_NAMES[label]}
         </li>
       {/each}
@@ -133,7 +138,7 @@
           <polyline
             points={line(label)}
             fill="none"
-            stroke={SERIES[label]}
+            style:stroke={SERIES[label]}
             stroke-width="2"
             stroke-linejoin="round"
           />
@@ -144,7 +149,7 @@
                 cx={x(i)}
                 cy={y(rate)}
                 r="4"
-                fill={SERIES[label]}
+                style:fill={SERIES[label]}
                 class="stroke-dark-6"
                 stroke-width="2"
               />

@@ -118,38 +118,43 @@
       {#if draftsError}
         <p class="text-sm text-amber-300">{draftsError}</p>
       {/if}
-      <RunDialog
-        setId={o.set.id}
-        {prompts}
-        {rules}
-        label={hasDraft ? 'Run with my draft' : 'Run baseline'}
-        disabled={!!draftsError || o.active.length > 0}
-        onstarted={() => version++}
-      />
+      {#if overview.failed}
+        <p class="text-xs text-amber-300">Could not refresh this set; showing the last reading.</p>
+      {/if}
+      {#key o.set.id}
+        <RunDialog
+          setId={o.set.id}
+          {prompts}
+          {rules}
+          label={hasDraft ? 'Run with my draft' : 'Run baseline'}
+          disabled={!!draftsError || o.active.length > 0}
+          onstarted={() => version++}
+        />
+      {/key}
       {#each o.active as run (run.id)}
         <RunProgress {run} canCancel={run.runBy === userId || canEdit} onchanged={() => version++} />
       {/each}
-      {#if o.recent.length}
-        <div>
-          <h3 class="text-xs font-semibold uppercase tracking-wide text-dark-2">Recent runs</h3>
-          <ul class="mt-2 space-y-1">
-            {#each o.recent as run (run.id)}
-              <li class="text-sm">
-                <a href="/text-scan/test-sets/{o.set.id}/runs/{run.id}" class={LINK_CLASS}>
-                  #{run.id} {RUN_KIND_NAMES[run.kind]} · {run.status}
-                </a>
-                <span class="text-xs text-dark-2">
-                  {dateTime(run.finishedAt)}{#if run.totals?.length} · {scores(run.totals)}{/if}
-                </span>
-              </li>
-            {/each}
-          </ul>
-        </div>
-      {/if}
+      <div>
+        <h3 class="text-xs font-semibold uppercase tracking-wide text-dark-2">Recent runs</h3>
+        <ul class="mt-2 space-y-1">
+          {#each o.recent as run (run.id)}
+            <li class="text-sm">
+              <a href="/text-scan/test-sets/{o.set.id}/runs/{run.id}" class={LINK_CLASS}>
+                #{run.id} {RUN_KIND_NAMES[run.kind]} · {run.status}
+              </a>
+              <span class="text-xs text-dark-2">
+                {dateTime(run.finishedAt)}{#if run.totals?.length} · {scores(run.totals)}{/if}
+              </span>
+            </li>
+          {:else}
+            <li class="text-sm text-dark-2">No finished runs yet.</li>
+          {/each}
+        </ul>
+      </div>
     {:else if overview.failed}
       <p class="text-sm text-red-300">Could not load this set.</p>
     {:else}
-      <p class="text-sm text-dark-2">Loading…</p>
+      <p class="text-sm text-dark-2">Loading this set…</p>
     {/if}
   {/if}
 </section>

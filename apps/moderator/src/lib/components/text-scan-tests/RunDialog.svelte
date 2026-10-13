@@ -27,7 +27,7 @@
 
   const BASELINE_NOTE: Record<Quote['baseline'], (draft: boolean) => string> = {
     reuse: () => 'The baseline is up to date, so only your draft is scanned.',
-    'top-up': () => 'The baseline is scanned only for the cases added since it ran.',
+    'top-up': () => 'The baseline is scanned only for the cases added or changed since it ran.',
     new: (draft) =>
       draft
         ? 'There is no up-to-date baseline, so the live prompts are scanned too.'

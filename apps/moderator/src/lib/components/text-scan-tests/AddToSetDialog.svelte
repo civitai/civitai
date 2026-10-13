@@ -51,7 +51,7 @@
   const ready = $derived(setChoice !== '' && (setChoice !== NEW || newSetName.trim() !== ''));
 
   function start() {
-    expected = JSON.parse(JSON.stringify(prefill)) as Expected;
+    expected = $state.snapshot(prefill) as Expected;
     note = '';
     newSetName = '';
     setChoice = '';
@@ -93,10 +93,7 @@
 
       <div>
         <span class="text-xs text-dark-2" id="{idPrefix}-set">Test set</span>
-        {#await sets}
-          <p class="mt-1 text-sm text-dark-2">Loading test sets…</p>
-        {:then loaded}
-          {@const options = loaded?.sets ?? []}
+        {#snippet picker(options: SetOption[])}
           <Select.Root type="single" bind:value={setChoice}>
             <Select.Trigger class="mt-1 w-full" aria-labelledby="{idPrefix}-set">
               {setChoice === NEW
@@ -110,8 +107,16 @@
               <Select.Item value={NEW}>New set…</Select.Item>
             </Select.Content>
           </Select.Root>
+        {/snippet}
+        {#await sets}
+          <p class="mt-1 text-sm text-dark-2">Loading test sets…</p>
+        {:then loaded}
+          {@render picker(loaded?.sets ?? [])}
         {:catch}
-          <p class="mt-1 text-sm text-red-300">Could not load the test sets.</p>
+          <p class="mt-1 text-sm text-red-300">
+            Could not load the test sets. You can still save to a new one.
+          </p>
+          {@render picker([])}
         {/await}
         {#if setChoice === NEW}
           <Input

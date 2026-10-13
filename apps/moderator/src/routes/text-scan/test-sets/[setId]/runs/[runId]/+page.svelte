@@ -37,7 +37,11 @@
     if (active && status && !isActiveRun(status)) void invalidateAll();
   });
 
-  const rerun = new FormState({ reset: false, reload: true, onSuccess: null });
+  // One per run, so a refusal shown for one run is gone on the next.
+  const rerun = $derived.by(() => {
+    void report.run.id;
+    return new FormState({ reset: false, reload: true, onSuccess: null });
+  });
   const errorCount = $derived(
     report.cases.filter((c) => (c.draft ?? c.baseline)?.result?.status === 'error').length
   );
@@ -58,7 +62,7 @@
   <h1 class="text-xl font-semibold text-white">{title}</h1>
   <p class="text-xs text-dark-2">
     {report.run.status} · started {dateTime(report.run.startedAt ?? report.run.createdAt)}
-    {#if report.run.finishedAt}· finished {dateTime(report.run.finishedAt)}{/if}
+    {#if report.run.finishedAt && !active}· finished {dateTime(report.run.finishedAt)}{/if}
     · versions <span class="font-mono">{versions}</span>
     {#if report.run.overriddenKeys.length}· draft of {report.run.overriddenKeys.join(', ')}{/if}
     {#if report.run.ruleOverrides}· {plural(report.run.ruleOverrides, 'edited rule')}{/if}
@@ -77,49 +81,60 @@
   {#if report.run.failure}<p class="mt-2 text-sm text-red-300">{report.run.failure}</p>{/if}
 </div>
 
-<div class="space-y-6">
-  {#if active && progress.value}
-    <RunProgress
-      run={progress.value}
-      canCancel={report.run.runBy === data.userId || data.canEdit}
-      onchanged={() => tick++}
+{#key report.run.id}
+  <div class="space-y-6">
+    {#if active}
+      {#if progress.value}
+        <RunProgress
+          run={progress.value}
+          canCancel={report.run.runBy === data.userId || data.canEdit}
+          onchanged={() => tick++}
+        />
+      {:else if !progress.failed}
+        <p class="text-sm text-dark-2">Loading progress…</p>
+      {/if}
+      {#if progress.failed}
+        <p class="text-xs text-amber-300">
+          Could not refresh the progress{progress.value ? '; this is the last reading' : ''}.
+        </p>
+      {/if}
+    {/if}
+
+    <RunSummaryTable
+      summary={report.summary}
+      hasBaseline={report.counts.baseline !== null}
+      hasDraft={report.counts.draft !== null}
     />
-  {/if}
 
-  <RunSummaryTable
-    summary={report.summary}
-    hasBaseline={report.counts.baseline !== null}
-    hasDraft={report.counts.draft !== null}
-  />
+    {#if open && !active && errorCount}
+      <form
+        method="POST"
+        action="?/rerunErrors"
+        use:enhance={rerun.enhance}
+        class="flex items-center gap-3"
+      >
+        <input type="hidden" name="setId" value={report.set.id} />
+        <input type="hidden" name="runId" value={report.run.id} />
+        <Button type="submit" size="sm" variant="outline" disabled={rerun.submitting}>
+          Re-run {plural(errorCount, 'error')}
+        </Button>
+        <span class="text-xs text-dark-2">Errors are never scored as misses.</span>
+      </form>
+      {#if rerun.error}<p class="text-sm text-red-300">{rerun.error}</p>{/if}
+    {/if}
 
-  {#if open && !active && errorCount}
-    <form
-      method="POST"
-      action="?/rerunErrors"
-      use:enhance={rerun.enhance}
-      class="flex items-center gap-3"
-    >
-      <input type="hidden" name="setId" value={report.set.id} />
-      <input type="hidden" name="runId" value={report.run.id} />
-      <Button type="submit" size="sm" variant="outline" disabled={rerun.submitting}>
-        Re-run {plural(errorCount, 'error')}
-      </Button>
-      <span class="text-xs text-dark-2">Errors are never scored as misses.</span>
-    </form>
-    {#if rerun.error}<p class="text-sm text-red-300">{rerun.error}</p>{/if}
-  {/if}
-
-  <section class="space-y-3">
-    <h2 class="text-sm font-semibold text-white">Cases, changed first</h2>
-    {#each report.cases as row (row.caseId)}
-      <CaseOutcomeRow
-        {row}
-        canEdit={data.canEdit && open}
-        ruleSubjects={data.ruleSubjects}
-        setId={report.set.id}
-      />
-    {:else}
-      <p class="text-sm text-dark-2">This run has no cases.</p>
-    {/each}
-  </section>
-</div>
+    <section class="space-y-3">
+      <h2 class="text-sm font-semibold text-white">Cases, changed first</h2>
+      {#each report.cases as row (row.caseId)}
+        <CaseOutcomeRow
+          {row}
+          canEdit={data.canEdit && open}
+          ruleSubjects={data.ruleSubjects}
+          setId={report.set.id}
+        />
+      {:else}
+        <p class="text-sm text-dark-2">This run has no cases.</p>
+      {/each}
+    </section>
+  </div>
+{/key}
