@@ -4,11 +4,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as Effects from '../image-moderation-effects';
 import { pgliteDialect } from './abuse-detection-pglite.harness';
 
-/**
- * Approving an appeal must restore the image as fully as accepting it does: a rating-locked Blocked
- * level is reset, and the pHash leaves the blocklist.
- */
-
 const { dbHandle, chQuery, chInsert } = vi.hoisted(() => ({
   dbHandle: { current: null as unknown },
   chQuery: vi.fn(),
@@ -40,7 +35,7 @@ vi.mock('../clickhouse', () => ({ getClickhouse: () => ({ query: chQuery, insert
 
 const { acceptImage, resolveImageAppeal } = await import('../image-moderation.service');
 
-// The recompute stand-in keeps the real function's skip: locked, still-blocked rows are left alone.
+// The stand-in keeps the real function's skip of nsfwLevelLocked rows; without it the reset assertions pass vacuously.
 const SCHEMA = `
 CREATE TABLE "Image" (
   "id" INTEGER PRIMARY KEY,

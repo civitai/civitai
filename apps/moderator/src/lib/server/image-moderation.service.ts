@@ -40,8 +40,8 @@ const recompute = async (imageId: number) => {
   await invalidateThumbnails(imageId);
 };
 
-// update_nsfw_levels_new skips nsfwLevelLocked rows, so without this a rating-locked Blocked image would
-// stay hidden after unblock. Clear the lock + zero the level so the next recompute restores the real one.
+// update_nsfw_levels_new skips nsfwLevelLocked rows, so a locked Blocked image would stay hidden after
+// unblock. Zeroes the level and drops the lock; the caller must run recompute afterwards.
 const resetBlockedNsfwLevel = (imageId: number) =>
   dbWrite
     .updateTable('Image')
@@ -433,9 +433,9 @@ export async function resolveImageAppeal({
     .where('id', '=', imageId)
     .executeTakeFirst();
 
+  let restored = false;
   // An appeal verdict never reaches an image under the moderator-only review flag; that flag's own
   // queue decides it.
-  let restored = false;
   if (status === 'Approved') {
     const { numUpdatedRows } = await dbWrite
       .updateTable('Image')
