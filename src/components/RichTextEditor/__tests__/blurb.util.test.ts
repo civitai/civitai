@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import type { BlurbItem } from '~/components/RichTextEditor/blurb.util';
 import { blurbPreview, insertBlurb, matchBlurbs } from '~/components/RichTextEditor/blurb.util';
 import { BlurbNode } from '~/shared/tiptap/blurb.node';
+import { getBlurbText } from '~/utils/html-sanitize-helpers';
 
 function makeBlurb(overrides: Partial<BlurbItem> & Pick<BlurbItem, 'id' | 'name'>): BlurbItem {
   return {
@@ -22,6 +23,24 @@ describe('blurbPreview', () => {
 
   it('returns an empty string for empty content', () => {
     expect(blurbPreview('')).toBe('');
+  });
+});
+
+describe('getBlurbText', () => {
+  it('🔴 counts an encoded entity as the one character it renders', () => {
+    const text = getBlurbText('<p>a &amp; b</p>');
+    expect(text).toBe('a & b');
+    expect(text).toHaveLength(5);
+  });
+
+  it('🔴 adds no space for inline formatting inside a word', () => {
+    expect(getBlurbText('<p>foo<strong>bar</strong><span style="color:red">!</span></p>')).toBe(
+      'foobar!'
+    );
+  });
+
+  it('separates blocks and line breaks with one space', () => {
+    expect(getBlurbText('<p>a</p><p>b<br />c</p><ul><li><p>d</p></li></ul>')).toBe('a b c d');
   });
 });
 
