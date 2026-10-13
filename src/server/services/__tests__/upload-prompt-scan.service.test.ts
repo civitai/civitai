@@ -1,9 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { mockRequest, mockIsFlipt, mockRecordFlag } = vi.hoisted(() => ({
+const { mockRequest, mockIsFlipt, mockRecordFlag, mockHasFlag } = vi.hoisted(() => ({
   mockRequest: vi.fn(),
   mockIsFlipt: vi.fn(),
   mockRecordFlag: vi.fn(),
+  mockHasFlag: vi.fn(),
 }));
 vi.mock('~/server/services/orchestrator/orchestrator.service', () => ({
   createXGuardModerationRequest: mockRequest,
@@ -14,6 +15,7 @@ vi.mock('~/server/flipt/client', () => ({
 }));
 vi.mock('~/server/services/scan-label-flag.service', () => ({
   recordScanLabelFlag: mockRecordFlag,
+  hasScanLabelFlag: mockHasFlag,
 }));
 import {
   decideUploadPromptVerdict,
@@ -95,6 +97,7 @@ describe('labelUploadPrompt', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockIsFlipt.mockResolvedValue(true);
+    mockHasFlag.mockResolvedValue(false);
   });
 
   const label = () =>
@@ -122,6 +125,7 @@ describe('labelUploadPrompt', () => {
       workflowId: 'xg-1',
       flaggedAt: expect.any(Date),
       snapshot: { results: [{ label: 'young', score: 0.8, threshold: 0.5, triggered: true }] },
+      oncePerImage: true,
     });
   });
 
@@ -139,6 +143,23 @@ describe('labelUploadPrompt', () => {
     await label();
 
     expect(mockRecordFlag).not.toHaveBeenCalled();
+  });
+
+  it('does not scan an image that already has a prompt label', async () => {
+    mockHasFlag.mockResolvedValue(true);
+
+    await label();
+
+    expect(mockHasFlag).toHaveBeenCalledWith(1, 'xguard-prompt');
+    expect(mockRequest).not.toHaveBeenCalled();
+  });
+
+  it('does not scan when it cannot tell whether a label exists', async () => {
+    mockHasFlag.mockRejectedValue(new Error('relation does not exist'));
+
+    await label();
+
+    expect(mockRequest).not.toHaveBeenCalled();
   });
 
   it('does not scan while the label queue writer is off', async () => {

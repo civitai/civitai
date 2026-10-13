@@ -347,11 +347,14 @@ export async function processImageScanningWorkflow({
     log: IMAGE_SCANNING_LOG,
   });
 
-  // The image scan never sees the prompt. Last, so its wait delays nothing above.
+  // The image scan never sees the prompt. Not awaited: the scan waits on the orchestrator, and the
+  // orchestrator re-sends a webhook that is slow to answer.
   const { prompt, negativePrompt } = (image.meta ?? {}) as {
     prompt?: string;
     negativePrompt?: string;
   };
   if (prompt?.trim() && orchestratorNsfwLevelMap[scan.nsfwLevel] >= orchestratorNsfwLevelMap.r)
-    await labelUploadPrompt({ imageId, userId: image.userId, prompt, negativePrompt });
+    void labelUploadPrompt({ imageId, userId: image.userId, prompt, negativePrompt }).catch(
+      () => null
+    );
 }
