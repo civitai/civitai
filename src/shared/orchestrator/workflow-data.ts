@@ -35,16 +35,14 @@ export const defaultWorkflowCost: WorkflowCost = {
 export interface WorkflowDataOptions {
   domain: Record<ColorDomain, boolean>;
   nsfwEnabled: boolean;
-  /** Hold available-but-unrated outputs back as `pendingRating` instead of showing them. */
   holdUnrated?: boolean;
 }
 
 export const PENDING_RATING = 'pendingRating';
 
 /**
- * An image or video the orchestrator reports as available before it has rated it. Workflows reach
- * `succeeded` with such outputs, and every mature gate keys on the rating. Audio is never rated,
- * and a 3D mesh's rating is derived server side from its preview images, so neither counts.
+ * An image or video reported available before it is rated. Audio is never rated, and a 3D mesh
+ * takes its rating from its preview images, so neither counts.
  */
 export function isUnratedOutput(
   output: Pick<NormalizedWorkflowStepOutput, 'type' | 'available' | 'nsfwLevel' | 'blockedReason'>
@@ -114,7 +112,6 @@ export class WorkflowData {
   get displayOutput() {
     return this.steps.flatMap((s) => s.displayOutput);
   }
-  /** All outputs held until they are rated, across all steps. */
   get pendingRatingOutput() {
     return this.steps.flatMap((s) => s.pendingRatingOutput);
   }
@@ -274,7 +271,6 @@ export class StepData {
     if (this.suppressOutput) return [];
     return this.output.filter((x) => x.displayable);
   }
-  /** Outputs that have landed but are held until the orchestrator rates them. */
   get pendingRatingOutput(): Array<ImageBlob | VideoBlob | AudioBlob | Model3DBlob> {
     if (this.suppressOutput) return [];
     return this.output.filter((x) => x.pendingRating && !x.hidden);
@@ -288,7 +284,7 @@ export class StepData {
     if (this.status && orchestratorCompletedStatuses.includes(this.status)) return 0;
     return this.output.filter((x) => !x.available && !x.blockedReason).length;
   }
-  /** Count of outputs with a blockedReason, not counting those only waiting on a rating. */
+  /** Count of outputs with a blockedReason. */
   get blockedCount(): number {
     return this.blockedReasons.length;
   }
@@ -378,7 +374,8 @@ export abstract class BlobData {
     if (data.blockedReason === 'none') this.blockedReason = null;
 
     if (!this.blockedReason) {
-      // A block rather than a flag, so every `!blockedReason` check downstream fails closed.
+      // Stored as a blockedReason so every `!blockedReason` check downstream treats the output as
+      // not yet shown.
       if (holdUnrated && isUnratedOutput(data)) {
         this.blockedReason = PENDING_RATING;
       } else if (isPrivateGeneration && isPrivateMature(data.nsfwLevel)) {

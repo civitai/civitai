@@ -1,12 +1,16 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { QueryClient } from '@tanstack/react-query';
+import { getQueryKey } from '@trpc/react-query';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   UNRATED_REFETCH_INTERVAL_MS,
   UNRATED_REFETCH_MAX_ATTEMPTS,
   createUnratedRefetchScheduler,
+  readCachedGeneratorWorkflows,
   selectUnratedRefetch,
 } from '~/components/ImageGeneration/utils/unratedOutputRefetch';
+import { trpc } from '~/utils/trpc';
 
 const workflow = (id: string, output: Array<Record<string, unknown>>) => ({
   id,
@@ -64,7 +68,6 @@ describe('selectUnratedRefetch', () => {
     ]);
   });
 
-  // Attempts are per output, so a new unrated output is not starved by an older one's budget.
   it('keeps re-fetching for a fresh output after another one gave up', () => {
     const spent = new Map([['a', UNRATED_REFETCH_MAX_ATTEMPTS]]);
     const { workflowIds, blobIds } = selectUnratedRefetch(
@@ -94,7 +97,6 @@ describe('createUnratedRefetchScheduler', () => {
     vi.useRealTimers();
   });
 
-  // A cache whose output is never rated: the worst case, and the one the cap exists for.
   const neverRated = () => {
     const refetch = vi.fn<(ids: string[]) => Promise<void>>(async () => undefined);
     const schedule = createUnratedRefetchScheduler({
@@ -107,7 +109,7 @@ describe('createUnratedRefetchScheduler', () => {
   it('re-reads every interval and stops at the attempt cap', async () => {
     const { refetch, schedule } = neverRated();
     schedule();
-    // Twice the budget in time, so a missing cap shows as a count past it.
+    // 2x the budget: a missing cap shows as a count past it.
     await vi.advanceTimersByTimeAsync(
       UNRATED_REFETCH_INTERVAL_MS * UNRATED_REFETCH_MAX_ATTEMPTS * 2
     );
@@ -167,6 +169,28 @@ describe('createUnratedRefetchScheduler', () => {
     expect(refetch).toHaveBeenCalledTimes(1);
   });
 
+  it('keeps one re-read per interval when asked again while one is in flight', async () => {
+    let release: () => void = () => undefined;
+    const refetch = vi.fn<(ids: string[]) => Promise<void>>(
+      () => new Promise<void>((resolve) => (release = resolve))
+    );
+    const schedule = createUnratedRefetchScheduler({
+      readWorkflows: () => [workflow('wf-1', [image('a')])],
+      refetch,
+    });
+    schedule();
+    await vi.advanceTimersByTimeAsync(UNRATED_REFETCH_INTERVAL_MS);
+    expect(refetch).toHaveBeenCalledTimes(1);
+
+    schedule();
+    release();
+    await vi.advanceTimersByTimeAsync(UNRATED_REFETCH_INTERVAL_MS - 1);
+    expect(refetch).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(refetch).toHaveBeenCalledTimes(2);
+  });
+
   it('does nothing when nothing is waiting on a rating', async () => {
     const refetch = vi.fn<(ids: string[]) => Promise<void>>(async () => undefined);
     const schedule = createUnratedRefetchScheduler({
@@ -181,7 +205,27 @@ describe('createUnratedRefetchScheduler', () => {
   });
 });
 
-// The hold is opt-in per caller, so the generator's own list is the call that must opt in.
+describe('readCachedGeneratorWorkflows', () => {
+  it('reads every page of every cached generator list', () => {
+    const client = new QueryClient();
+    const queryKey = getQueryKey(trpc.orchestrator.queryGeneratedImages);
+    const page = (...ids: string[]) => ({ items: ids.map((id) => workflow(id, [])) });
+    client.setQueryData([...queryKey, { input: { ascending: false } }], {
+      pages: [page('a', 'b'), page('c')],
+    });
+    client.setQueryData([...queryKey, { input: { ascending: true } }], {
+      pages: [page('d')],
+    });
+    client.setQueryData(['somethingElse'], { pages: [page('x')] });
+
+    expect(
+      readCachedGeneratorWorkflows(client)
+        .map((x) => x.id)
+        .sort()
+    ).toEqual(['a', 'b', 'c', 'd']);
+  });
+});
+
 describe('generator list opts into the hold', () => {
   it('builds WorkflowData with holdUnrated', () => {
     const source = readFileSync(

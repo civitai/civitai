@@ -2,11 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { WorkflowData } from '~/shared/orchestrator/workflow-data';
 
-/**
- * The orchestrator can report an output as available before it has rated it. Every mature gate
- * (`canUpgrade`, `enableNsfw`, `siteRestricted`) keys on the rating, so an unrated output must be
- * held back until the rating lands rather than shown as an ordinary result.
- */
+/** An output reported available before it is rated must stay out of the displayable lists until the rating lands. */
 const blob = (overrides: Record<string, unknown> = {}) => ({
   type: 'image' as const,
   id: 'blob-1',
@@ -47,8 +43,6 @@ describe('WorkflowData unrated outputs', () => {
     expect(wf.succeededOutput).toEqual([]);
   });
 
-  // Positive control: the same fixture with a rating reaches the lists, so the empty lists above
-  // come from the missing rating and not from something else in the fixture.
   it('shows the same output once it carries a rating', () => {
     const wf = build([blob({ nsfwLevel: 'pg' })]);
 

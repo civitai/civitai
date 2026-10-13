@@ -1,3 +1,4 @@
+import type { QueryClient } from '@tanstack/react-query';
 import { getQueryKey } from '@trpc/react-query';
 import type { InfiniteTextToImageRequests } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { updateWorkflowsStatus } from '~/components/ImageGeneration/utils/useGenerationSignalUpdate';
@@ -5,10 +6,7 @@ import { queryClient, trpc } from '~/utils/trpc';
 import { isUnratedOutput } from '~/shared/orchestrator/workflow-data';
 import type { NormalizedWorkflowStepOutput } from '~/server/services/orchestrator/orchestration-new.service';
 
-/**
- * A workflow often reaches `succeeded` a few seconds before its last output is rated, and no step
- * event follows the rating, so the generator re-reads the workflow itself.
- */
+// No step event follows the rating of a finished workflow, so the generator re-reads it on a timer.
 export const UNRATED_REFETCH_INTERVAL_MS = 2000;
 export const UNRATED_REFETCH_MAX_ATTEMPTS = 6;
 
@@ -17,7 +15,6 @@ type CachedWorkflow = {
   steps: Array<{ output?: Array<Partial<NormalizedWorkflowStepOutput>> }>;
 };
 
-/** Which workflows to re-read for a missing rating, and the outputs that re-read is spent on. */
 export function selectUnratedRefetch(
   workflows: CachedWorkflow[],
   attempts: ReadonlyMap<string, number>
@@ -58,7 +55,6 @@ export function createUnratedRefetchScheduler({
     schedule();
   }
 
-  /** Re-reads cached workflows that still hold an unrated output, until rated or out of attempts. */
   function schedule() {
     if (timer) return;
     if (!selectUnratedRefetch(readWorkflows(), attempts).workflowIds.length) return;
@@ -68,12 +64,17 @@ export function createUnratedRefetchScheduler({
   return schedule;
 }
 
+/** Every workflow in every cached generator list, across filters and pages. */
+export function readCachedGeneratorWorkflows(
+  client: Pick<QueryClient, 'getQueriesData'> = queryClient
+) {
+  const queryKey = getQueryKey(trpc.orchestrator.queryGeneratedImages);
+  return client
+    .getQueriesData<InfiniteTextToImageRequests>({ queryKey, exact: false })
+    .flatMap(([, data]) => data?.pages.flatMap((page) => page.items) ?? []) as CachedWorkflow[];
+}
+
 export const scheduleUnratedRefetch = createUnratedRefetchScheduler({
-  readWorkflows: () => {
-    const queryKey = getQueryKey(trpc.orchestrator.queryGeneratedImages);
-    return queryClient
-      .getQueriesData<InfiniteTextToImageRequests>({ queryKey, exact: false })
-      .flatMap(([, data]) => data?.pages.flatMap((page) => page.items) ?? []) as CachedWorkflow[];
-  },
+  readWorkflows: () => readCachedGeneratorWorkflows(),
   refetch: updateWorkflowsStatus,
 });

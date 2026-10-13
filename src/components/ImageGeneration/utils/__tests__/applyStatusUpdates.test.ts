@@ -40,8 +40,6 @@ describe('applyStatusUpdates', () => {
     expect(COMPLETE_STATUSES).not.toContain(RUNNING);
   });
 
-  // The workflow finished before its last output was rated. The refetch that carries the rating
-  // arrives after the cached card is already terminal, and must still land.
   it('writes a rated output onto a workflow that already finished', () => {
     const data = cache(FINISHED, [unrated]);
     applyStatusUpdates(data, [update(FINISHED, [rated])]);
