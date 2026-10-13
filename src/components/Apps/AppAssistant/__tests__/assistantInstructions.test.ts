@@ -28,6 +28,19 @@ describe('buildAssistantInstructions', () => {
     expect(text).not.toMatch(/(?<!sandbox__)\b(tunnel_key|tunnel_connect|run_command)\b/);
   });
 
+  it('scaffolds through npx, because a sandbox cannot install the CLI globally', () => {
+    const text = buildAssistantInstructions({
+      sandbox: running,
+      canPreview: true,
+      previewHost: null,
+    });
+    // The whole sentence: a reworded scaffold step must be re-read here.
+    expect(text).toContain(
+      'Building: scaffold a page App Block with npx -y @civitai/cli@latest app create <blockId>, and keep its blockId and scopes in block.manifest.json. Do not use npm install -g: the sandbox has no global install rights. Run any other CLI command the same way, as npx -y @civitai/cli@latest <command>. The first run fetches the CLI and npm install can take minutes; give sandbox__run_command a long timeout_ms.'
+    );
+    expect(text).not.toMatch(/npm install -g @civitai\/cli/);
+  });
+
   it('names the running preview host', () => {
     const text = buildAssistantInstructions({
       sandbox: running,
