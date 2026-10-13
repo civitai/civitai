@@ -53,8 +53,9 @@ const dns = vi.hoisted(() => {
     }
     async resolve4(name: string) {
       this.log('A', name);
-      if (!this.servers) return state.nsAddresses[name] ?? [];
-      return state.a[this.servers[0]]();
+      if (this.servers) return state.a[this.servers[0]]();
+      if (!state.nsAddresses[name]) throw noData();
+      return state.nsAddresses[name];
     }
     async resolveCname(name: string) {
       this.log('CNAME', name);
@@ -128,9 +129,10 @@ describe('isDevTunnelHostPublished', () => {
     expect(warn).not.toHaveBeenCalled();
   });
 
-  it('is not ready on an answer that carries no address', async () => {
+  it('is not ready on an answer that carries no address and no alias', async () => {
     nameservers(async () => []);
     expect(await isDevTunnelHostPublished(HOST)).toBe(false);
+    expect(warn).not.toHaveBeenCalled();
   });
 
   it.each(['ETIMEOUT', 'ECONNREFUSED', 'ESERVFAIL'])(
@@ -139,11 +141,22 @@ describe('isDevTunnelHostPublished', () => {
       nameservers(fails(code));
       await expect(isDevTunnelHostPublished(HOST)).resolves.toBe(false);
       expect(warnings()).toEqual([
-        expect.objectContaining({ event: 'app-blocks.dev-tunnel.dns-ready.error', code }),
-        expect.objectContaining({ event: 'app-blocks.dev-tunnel.dns-ready.error', code }),
+        { event: 'app-blocks.dev-tunnel.dns-ready.error', code, error: `query ${code}` },
       ]);
     }
   );
+
+  it('logs a failing check once per window, not once per query', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    nameservers(fails('ETIMEOUT'));
+    await isDevTunnelHostPublished(HOST);
+    vi.advanceTimersByTime(14_999);
+    await isDevTunnelHostPublished(HOST);
+    expect(warnings()).toHaveLength(1);
+    vi.advanceTimersByTime(2);
+    await isDevTunnelHostPublished(HOST);
+    expect(warnings()).toHaveLength(2);
+  });
 
   it('is not ready while one nameserver has the record and another does not', async () => {
     nameservers(address, fails('ENOTFOUND'));
@@ -158,11 +171,23 @@ describe('isDevTunnelHostPublished', () => {
     expect(warnings()).toHaveLength(1);
   });
 
-  it('counts an alias as published when the name has no address of its own', async () => {
-    nameservers(fails('ENODATA'));
+  // Measured against real nameservers: an address query for an alias succeeds with no addresses.
+  // The ENODATA spelling is kept for resolvers that report it that way.
+  it.each<[string, Answer]>([
+    ['an empty answer', async () => []],
+    ['ENODATA', fails('ENODATA')],
+  ])('counts an alias as published when the address query gives %s', async (_label, a) => {
+    nameservers(a);
     const alias: Answer = async () => ['edge.example.net'];
     dns.state.cname = { [FIRST]: alias, [SECOND]: alias };
     expect(await isDevTunnelHostPublished(HOST)).toBe(true);
+    expect(hostQueries().map((q) => q.type)).toEqual(['A', 'A', 'CNAME', 'CNAME']);
+  });
+
+  it('is not ready when both the address and the alias query come back empty', async () => {
+    nameservers(async () => []);
+    dns.state.cname = { [FIRST]: async () => [], [SECOND]: async () => [] };
+    expect(await isDevTunnelHostPublished(HOST)).toBe(false);
   });
 
   it('is not ready for a name that exists with neither an address nor an alias', async () => {

@@ -7,7 +7,7 @@ import { renderWithProviders } from '../../../test/component-setup';
 const m = vi.hoisted(() => ({
   useBlockToken: vi.fn<(...args: unknown[]) => Record<string, unknown>>(),
   hostProps: null as null | Record<string, unknown>,
-  gate: null as null | { blockId: string; onSettled: () => void },
+  gate: null as null | { blockId: string; onSettled: () => unknown },
 }));
 
 vi.mock('~/server/utils/server-side-helpers', () => ({
@@ -59,6 +59,8 @@ beforeEach(() => {
   m.gate = null;
   vi.mocked(router.reload).mockClear();
   vi.mocked(router.replace).mockClear();
+  // The scaffold's shared `next/router` mock.
+  (router as { asPath: string }).asPath = '/apps/dev/my-app';
 });
 
 describe('/apps/dev/[blockId] client', () => {
@@ -118,6 +120,7 @@ describe('/apps/dev/[blockId] client', () => {
     expect(m.useBlockToken).not.toHaveBeenCalled();
     expect(page.getByText('No active dev tunnel').query()).toBeNull();
     expect(m.gate!.blockId).toBe('my-app');
+    expect(router.replace).not.toHaveBeenCalled();
     expect(router.reload).not.toHaveBeenCalled();
   });
 
@@ -127,12 +130,37 @@ describe('/apps/dev/[blockId] client', () => {
     expect(m.hostProps).toBeNull();
   });
 
-  test('reloads the document when the gate settles, rather than transitioning client-side', async () => {
+  test('re-runs its server props, in place, when the gate settles, and hands the gate that promise', async () => {
+    const transition = Promise.resolve(true);
+    vi.mocked(router.replace).mockReturnValue(transition);
     await renderWithProviders(<DevTunnelPage {...PENDING} />);
     await expect.element(page.getByTestId('dns-gate')).toBeInTheDocument();
-    m.gate!.onSettled();
-    expect(router.reload).toHaveBeenCalledTimes(1);
-    expect(router.replace).not.toHaveBeenCalled();
+    expect(m.gate!.onSettled()).toBe(transition);
+    expect(router.replace).toHaveBeenCalledExactlyOnceWith('/apps/dev/my-app', undefined, {
+      scroll: false,
+    });
+    expect(router.reload).not.toHaveBeenCalled();
+  });
+
+  test('re-fetched props for a different host reload the document instead of framing it', async () => {
+    const screen = await renderWithProviders(<DevTunnelPage {...PENDING} />);
+    await expect.element(page.getByTestId('dns-gate')).toBeInTheDocument();
+
+    // The tunnel restarted while the page waited: a new host, which this document's CSP forbids.
+    const other = 'dev-fedcba9876543210.apps.example';
+    await screen.rerender(
+      <DevTunnelPage {...FRAME} host={other} iframeSrc={`https://${other}/?dev=t`} />
+    );
+    await vi.waitFor(() => expect(router.reload).toHaveBeenCalledTimes(1));
+    expect(m.hostProps, 'a host this document may not frame was mounted').toBeNull();
+  });
+
+  test('re-fetched props for the same host mount it without a reload', async () => {
+    const screen = await renderWithProviders(<DevTunnelPage {...PENDING} />);
+    await expect.element(page.getByTestId('dns-gate')).toBeInTheDocument();
+    await screen.rerender(<DevTunnelPage {...FRAME} />);
+    await expect.element(page.getByTestId('page-block-host')).toBeInTheDocument();
+    expect(router.reload).not.toHaveBeenCalled();
   });
 
   test('a resolvable tunnel never shows the gate', async () => {

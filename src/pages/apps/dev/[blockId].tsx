@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { Alert, Box, Code, Stack, Text, Title } from '@mantine/core';
 import { useRouter } from 'next/router';
 import { DevTunnelBlockHost } from '~/components/AppBlocks/DevTunnelBlockHost';
@@ -115,15 +116,25 @@ export const getServerSideProps = createServerSideProps<DevTunnelFrame>({
 export default function DevTunnelPage({ iframeSrc, host, dnsPending, ...app }: DevTunnelFrame) {
   const { appName, blockId } = app;
   const router = useRouter();
+  // This document's CSP allows framing only the host it was served with. Props re-fetched after
+  // the tunnel restarted name a new host, which only a fresh document can frame.
+  const [servedHost] = useState(host);
+  const hostChanged = !!servedHost && !!host && host !== servedHost;
+  useEffect(() => {
+    if (hostChanged) router.reload();
+  }, [hostChanged, router]);
+
   return (
     <>
       <Meta title={`${appName} — Dev tunnel — Civitai Apps`} deIndex />
       <Box style={{ width: '100%' }}>
-        {dnsPending ? (
+        {hostChanged ? null : dnsPending ? (
           <Box style={{ height: '60vh' }}>
-            {/* A full reload, not a client-side transition: the tunnel may have restarted on a new
-                host, and only a fresh document carries a CSP that allows framing it. */}
-            <DevTunnelDnsGate blockId={blockId} onSettled={() => router.reload()} />
+            <DevTunnelDnsGate
+              blockId={blockId}
+              // Re-runs the server props, which sign the entry URL once the host resolves.
+              onSettled={() => router.replace(router.asPath, undefined, { scroll: false })}
+            />
           </Box>
         ) : !iframeSrc ? (
           <Stack p="md" gap="sm" style={{ maxWidth: 720, margin: '0 auto' }}>

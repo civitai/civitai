@@ -10,7 +10,7 @@ export interface DevTunnelDnsGateProps {
   blockId: string;
   /**
    * The host resolves, or the tunnel is gone. Polling pauses until the returned promise settles;
-   * if the gate is still mounted then, it polls again and may call this again.
+   * if the gate is still mounted one poll interval later, it polls again and may call this again.
    */
   onSettled: () => unknown;
   pollMs?: number;
@@ -53,15 +53,20 @@ export function DevTunnelDnsGate({
   useEffect(() => {
     if (!settled) return;
     let mounted = true;
+    let resume: ReturnType<typeof setTimeout> | undefined;
     setSettling(true);
     void Promise.resolve()
       .then(() => onSettledRef.current())
       .catch(() => undefined)
-      .finally(() => mounted && setSettling(false));
+      .finally(() => {
+        // Still here, so the owner was not ready after all: wait a full interval, not zero.
+        if (mounted) resume = setTimeout(() => setSettling(false), pollMs);
+      });
     return () => {
       mounted = false;
+      clearTimeout(resume);
     };
-  }, [settled, dataUpdatedAt]);
+  }, [settled, dataUpdatedAt, pollMs]);
 
   if (timedOut)
     return (

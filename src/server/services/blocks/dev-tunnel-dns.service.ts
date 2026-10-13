@@ -9,6 +9,8 @@ const MAX_SERVERS = 2;
 const SERVERS_TTL_MS = 10 * 60_000;
 /** How long a failed nameserver discovery is remembered, so an outage is not paid per request. */
 const SERVERS_RETRY_MS = 15_000;
+/** At most one log line per window: a broken check fails on every poll of every waiting page. */
+const WARN_EVERY_MS = 15_000;
 
 // One try per query: the caller polls, so a retry here only delays the answer.
 const newResolver = () => new Resolver({ timeout: QUERY_TIMEOUT_MS, tries: 1 });
@@ -36,11 +38,20 @@ async function discoverServers(domain: string): Promise<string[]> {
   return [];
 }
 
+let lastWarnedAt = 0;
+function warnCheckFailed(detail: { code?: string; error?: string }) {
+  if (Date.now() - lastWarnedAt < WARN_EVERY_MS) return;
+  lastWarnedAt = Date.now();
+  // eslint-disable-next-line no-console
+  console.warn(JSON.stringify({ event: 'app-blocks.dev-tunnel.dns-ready.error', ...detail }));
+}
+
 let serversCache: { domain: string; servers: Promise<string[]>; expiresAt: number } | null = null;
 
-/** TEST-ONLY: forget the cached nameserver addresses. */
+/** TEST-ONLY: forget the cached nameserver addresses and the log throttle. */
 export function __resetDevTunnelDnsServersForTest(): void {
   serversCache = null;
+  lastWarnedAt = 0;
 }
 
 function authoritativeServers(domain: string): Promise<string[]> {
@@ -55,13 +66,7 @@ function authoritativeServers(domain: string): Promise<string[]> {
   void entry.servers.then((servers) => {
     if (servers.length) return;
     entry.expiresAt = Date.now() + SERVERS_RETRY_MS;
-    // eslint-disable-next-line no-console
-    console.warn(
-      JSON.stringify({
-        event: 'app-blocks.dev-tunnel.dns-ready.error',
-        error: 'no authoritative nameserver found',
-      })
-    );
+    warnCheckFailed({ error: 'no authoritative nameserver found' });
   });
   return entry.servers;
 }
@@ -71,24 +76,20 @@ async function serverHasName(server: string, name: string): Promise<boolean | nu
   const resolver = newResolver();
   resolver.setServers([server]);
   try {
-    try {
-      return (await resolver.resolve4(name)).length > 0;
-    } catch (error) {
-      // The name exists with no address of its own: count an alias as published.
+    const addresses = await resolver.resolve4(name).catch((error) => {
       if (errorCode(error) !== 'ENODATA') throw error;
-      return (await resolver.resolveCname(name)).length > 0;
-    }
+      return [];
+    });
+    if (addresses.length) return true;
+    // An alias answers an address query with no addresses, so it needs asking for by type.
+    return (await resolver.resolveCname(name)).length > 0;
   } catch (error) {
     const code = errorCode(error);
     if (code === 'ENOTFOUND' || code === 'ENODATA') return false;
-    // eslint-disable-next-line no-console
-    console.warn(
-      JSON.stringify({
-        event: 'app-blocks.dev-tunnel.dns-ready.error',
-        code: typeof code === 'string' ? code : undefined,
-        error: (error as Error)?.message,
-      })
-    );
+    warnCheckFailed({
+      code: typeof code === 'string' ? code : undefined,
+      error: (error as Error)?.message,
+    });
     return null;
   }
 }
