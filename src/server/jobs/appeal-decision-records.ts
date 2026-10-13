@@ -176,15 +176,14 @@ const pendingCopy = (r: Prisma.Sql) =>
  */
 export const appealTrainingHeld = (i: Prisma.Sql) => {
   const h = Prisma.raw('h');
+  const copyable = Prisma.sql`NOT ${neverCopy(Prisma.sql`h."removalLabel"`)}`;
   return Prisma.sql`EXISTS (
     SELECT 1 FROM "AppealDecisionRecord" h
     WHERE h."imageId" = ${i}.id
       AND ${pendingCopy(h)}
       AND CASE
         WHEN h."removalLabel" IS NULL THEN h."decidedAt" > now() - ${UNLABELLED_HOLD}
-        ELSE h."decidedAt" > now() - ${COPY_WINDOW} AND NOT ${neverCopy(
-    Prisma.sql`h."removalLabel"`
-  )}
+        ELSE h."decidedAt" > now() - ${COPY_WINDOW} AND ${copyable}
       END
       AND NOT ${excludedRecord(h)}
   )`;
