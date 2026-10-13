@@ -39,8 +39,8 @@ import { blurbPreview } from '~/components/RichTextEditor/blurb.util';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { MAX_BLURB_LENGTH } from '~/server/schema/blurb.schema';
 import { MAX_BLURBS_PER_USER } from '~/shared/constants/blurb.constants';
+import { getBlurbText } from '~/utils/html-sanitize-helpers';
 import { showErrorNotification } from '~/utils/notifications';
-import { removeTags } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
 const COLLAPSED_ROW_COUNT = 8;
@@ -321,7 +321,8 @@ function BlurbForm({
   const [content, setContent] = useState(blurb?.content ?? '');
   const onDelete = useDeleteBlurb(blurb, onCancel);
   // Must measure the same way as the server cap in `blurbContentSchema`, or the counter lies.
-  const textLength = removeTags(content).length;
+  const text = getBlurbText(content);
+  const textLength = text.length;
   const overLimit = textLength > MAX_BLURB_LENGTH;
 
   const createMutation = trpc.blurb.create.useMutation({
@@ -351,7 +352,7 @@ function BlurbForm({
   });
 
   const pending = createMutation.isPending || updateMutation.isPending;
-  const canSubmit = !overLimit && !!removeTags(content) && (!!blurb || !!name.trim());
+  const canSubmit = !overLimit && !!text.trim() && (!!blurb || !!name.trim());
 
   const submit = () => {
     if (!canSubmit) return;

@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { createBlurbInputSchema, MAX_BLURB_LENGTH } from '~/server/schema/blurb.schema';
+import {
+  createBlurbInputSchema,
+  MAX_BLURB_HTML_LENGTH,
+  MAX_BLURB_LENGTH,
+} from '~/server/schema/blurb.schema';
 
 const parse = (content: string) => createBlurbInputSchema.safeParse({ name: 'footer', content });
 
@@ -34,15 +38,59 @@ describe('blurbContentSchema — the length cap', () => {
   });
 });
 
+describe('blurbContentSchema — entities count as the character they render', () => {
+  // Unwrapped so the stored `&amp;` run stays within the markup backstop at the cap.
+  it('🔴 accepts the cap in encoded ampersands', () => {
+    expect(parse('&amp;'.repeat(MAX_BLURB_LENGTH)).success).toBe(true);
+  });
+
+  it('rejects one ampersand past the cap with the text-limit message', () => {
+    const result = parse('&amp;'.repeat(MAX_BLURB_LENGTH + 1));
+    expect(result.success).toBe(false);
+    expect(result.error?.issues[0].message).toBe(
+      `Snippets are limited to ${MAX_BLURB_LENGTH} characters.`
+    );
+  });
+});
+
+describe('blurbContentSchema — the markup backstop', () => {
+  it('🔴 rejects text under the cap whose markup is past the backstop', () => {
+    const html = `<p>${'<span style="color:red">x</span>'.repeat(MAX_BLURB_LENGTH / 2)}</p>`;
+    const result = parse(html);
+    expect(result.success).toBe(false);
+    expect(result.error?.issues[0].message).toBe('Snippet formatting is too large.');
+  });
+
+  it('accepts a realistic multi-paragraph snippet', () => {
+    const html = Array.from(
+      { length: 40 },
+      (_, i) =>
+        `<h2>Section ${i}</h2><p>Some <strong>bold</strong> and <a href="https://example.com/${i}">a link</a>.</p>`
+    ).join('');
+    expect(html.length).toBeLessThan(MAX_BLURB_HTML_LENGTH);
+    expect(parse(html).success).toBe(true);
+  });
+
+  it('🔴 drops tags nested past 20 levels and keeps their text', () => {
+    const html = `${'<strong>'.repeat(30)}deep${'</strong>'.repeat(30)}`;
+    const content = parse(html).data?.content ?? '';
+    expect(content.match(/<strong>/g)).toHaveLength(20);
+    expect(content).toBe(`${'<strong>'.repeat(20)}deep${'</strong>'.repeat(20)}`);
+  });
+});
+
 describe('blurbContentSchema — empty content', () => {
-  it.each(['', '<p></p>', '<p>   </p><p><strong></strong></p>'])(
-    '🔴 rejects %j as empty',
-    (input) => {
-      const result = parse(input);
-      expect(result.success).toBe(false);
-      expect(result.error?.issues[0].message).toBe('Snippet cannot be empty.');
-    }
-  );
+  it.each([
+    '',
+    '<p></p>',
+    '<p>   </p><p><strong></strong></p>',
+    '<p>&nbsp;</p>',
+    '<p>&nbsp; &nbsp;</p>',
+  ])('🔴 rejects %j as empty', (input) => {
+    const result = parse(input);
+    expect(result.success).toBe(false);
+    expect(result.error?.issues[0].message).toBe('Snippet cannot be empty.');
+  });
 
   it('🔴 strips empty elements before storing', () => {
     expect(parse('<p>a</p><p></p><p><em></em></p><p>b</p>').data?.content).toBe('<p>a</p><p>b</p>');
