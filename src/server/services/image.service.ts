@@ -6879,10 +6879,15 @@ export const getEntityCoverImage = async ({
   }
 
   const viewerId = viewer?.id ?? null;
+  // Owner matches are gated on this rather than on viewerId, so a placeholder id can never make a
+  // signed-out viewer the owner of a model held by a system account (userId -1).
+  const signedIn = typeof viewer?.id === 'number' && viewer.id > 0;
   const isModerator = !!viewer?.isModerator;
-  const imageVisible = isModerator
-    ? Prisma.sql`TRUE`
-    : Prisma.join(imageVisibilityConditions({ userId: viewer?.id }), ' AND ');
+  // TRUE keeps Prisma.join non-empty: the helper returns no conditions for moderators.
+  const imageVisible = Prisma.join(
+    [Prisma.sql`TRUE`, ...imageVisibilityConditions({ userId: viewer?.id, isModerator })],
+    ' AND '
+  );
 
   // Returns 1 cover image for:
   // Models, Images, Bounties, BountyEntries, Article and Post.
@@ -6960,7 +6965,7 @@ export const getEntityCoverImage = async ({
               AND (mv."publishedAt" IS NULL OR mv."publishedAt" <= now())
               AND p."publishedAt" < now() AND p.availability <> 'Private'
             )
-            OR m."userId" = ${viewerId} OR ${isModerator}::boolean
+            OR (${signedIn}::boolean AND m."userId" = ${viewerId}) OR ${isModerator}::boolean
           )
           AND i."ingestion" = 'Scanned'
           AND i."needsReview" IS NULL
@@ -6998,7 +7003,7 @@ export const getEntityCoverImage = async ({
               AND m.availability <> 'Private' AND mv.availability <> 'Private'
               AND p."publishedAt" < now() AND p.availability <> 'Private'
             )
-            OR m."userId" = ${viewerId} OR ${isModerator}::boolean
+            OR (${signedIn}::boolean AND m."userId" = ${viewerId}) OR ${isModerator}::boolean
           )
           AND i."ingestion" = 'Scanned'
           AND i."needsReview" IS NULL
@@ -7042,7 +7047,7 @@ export const getEntityCoverImage = async ({
           WHERE e."entityType" = 'Article'
           AND (
             (a.status = 'Published' AND a."publishedAt" IS NOT NULL AND a.ingestion = 'Scanned')
-            OR a."userId" = ${viewerId} OR ${isModerator}::boolean
+            OR (${signedIn}::boolean AND a."userId" = ${viewerId}) OR ${isModerator}::boolean
           )
               AND i."ingestion" = 'Scanned'
               AND i."needsReview" IS NULL
@@ -7066,7 +7071,7 @@ export const getEntityCoverImage = async ({
           WHERE e."entityType" = 'Post'
             AND (
               (p."publishedAt" < now() AND p.availability <> 'Private')
-              OR p."userId" = ${viewerId} OR ${isModerator}::boolean
+              OR (${signedIn}::boolean AND p."userId" = ${viewerId}) OR ${isModerator}::boolean
             )
             AND i."ingestion" = 'Scanned'
             AND i."needsReview" IS NULL
@@ -7133,14 +7138,14 @@ export const getEntityCoverImage = async ({
               -- canViewBounty
               OR (
                 e."entityType" IN ('Bounty', 'BountyEntry')
-                AND (b.availability <> 'Private' OR b."userId" = ${viewerId})
+                AND (b.availability <> 'Private' OR (${signedIn}::boolean AND b."userId" = ${viewerId}))
               )
               -- An article's content images, under the same rule as the ARTICLES branch.
               OR (
                 e."entityType" = 'Article'
                 AND (
                   (a.status = 'Published' AND a."publishedAt" IS NOT NULL AND a.ingestion = 'Scanned')
-                  OR a."userId" = ${viewerId}
+                  OR (${signedIn}::boolean AND a."userId" = ${viewerId})
                 )
               )
             )

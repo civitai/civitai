@@ -324,6 +324,7 @@ describe('getMyEventHats', () => {
       [31, 'claimed'],
       [32, 'txn-9'],
     ]);
+    expect(covers).toHaveBeenCalledTimes(1);
     expect(covers).toHaveBeenCalledWith(expect.objectContaining({ viewer: user }));
     // Points and counts live; the signed-out views (10) only the snapshot has.
     expect(hats[0]).toMatchObject({
@@ -505,6 +506,7 @@ describe('getPlaceableEventContent', () => {
       ['Article', 3, 'Lighting notes', 103],
     ]);
     // The caller's own drafts and private items keep their covers in the picker.
+    expect(covers).toHaveBeenCalledTimes(1);
     expect(covers).toHaveBeenCalledWith(expect.objectContaining({ viewer: user }));
   });
 });
@@ -540,6 +542,8 @@ describe('getPlaceableEventContentPage', () => {
     expect(result.items.map((i) => i.entityId)).toEqual(ids(24).map((x) => x.id));
     // The 25th row only says there is more; the next page starts below the last one shown.
     expect(result.nextCursor).toBe(77);
+    expect(covers).toHaveBeenCalledTimes(1);
+    expect(covers).toHaveBeenCalledWith(expect.objectContaining({ viewer: user }));
   });
 
   it('pages models and articles by offset in a fixed order', async () => {

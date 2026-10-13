@@ -160,6 +160,35 @@ beforeAll(async () => {
     INSERT INTO "Image" (id, "postId", "userId") VALUES
       (731, 721, ${OWNER}), (732, 722, ${OWNER}), (733, 723, 50), (734, 724, ${OWNER});
 
+    -- Version 714 of public model 701 is Published with a future publishedAt.
+    INSERT INTO "ModelVersion" (id, "modelId", status, "publishedAt") VALUES
+      (714, 701, 'Published', now() + interval '1 day');
+    INSERT INTO "Post" (id, "userId", "modelVersionId", "publishedAt") VALUES
+      (725, ${OWNER}, 714, now() - interval '1 day');
+    INSERT INTO "Image" (id, "postId") VALUES (735, 725);
+
+    -- Models owned by userId -1, whose versions take covers from other users' posts:
+    -- 901 holds a draft version, 902 a published one.
+    INSERT INTO "Model" (id, "userId", status) VALUES (901, -1, 'Published'), (902, -1, 'Published');
+    INSERT INTO "ModelVersion" (id, "modelId", status) VALUES (911, 901, 'Draft'), (912, 902, 'Published');
+    INSERT INTO "Post" (id, "userId", "modelVersionId", "publishedAt") VALUES
+      (921, 50, 911, now() - interval '1 day'), (922, 50, 912, now() - interval '1 day');
+    INSERT INTO "Image" (id, "postId", "userId") VALUES (931, 921, 50), (932, 922, 50);
+
+    -- Neither Public nor Private: Unsearchable model 951, EarlyAccess version 962 (on model 952),
+    -- Unsearchable post 974, Unsearchable bounty 5.
+    INSERT INTO "Model" (id, status, availability) VALUES
+      (951, 'Published', 'Unsearchable'), (952, 'Published', 'Public');
+    INSERT INTO "ModelVersion" (id, "modelId", status, availability) VALUES
+      (961, 951, 'Published', 'Public'), (962, 952, 'Published', 'EarlyAccess');
+    INSERT INTO "Post" (id, "modelVersionId", "publishedAt", availability) VALUES
+      (971, 961, now() - interval '1 day', 'Public'), (972, 962, now() - interval '1 day', 'Public'),
+      (974, null, now() - interval '1 day', 'Unsearchable');
+    INSERT INTO "Image" (id, "postId") VALUES (981, 971), (982, 972), (984, 974);
+    INSERT INTO "Bounty" VALUES (5, ${OWNER}, 'Unsearchable');
+    INSERT INTO "Image" (id) VALUES (105);
+    INSERT INTO "ImageConnection" VALUES (105, 5, 'Bounty');
+
     -- A connection under an entity type no rule covers.
     INSERT INTO "Image" (id) VALUES (801);
     INSERT INTO "ImageConnection" VALUES (801, 9, 'Collection');
@@ -199,6 +228,7 @@ const hidden: [string, string, number, number][] = [
   ['a Blocked article with content images only', 'Article', 307, 317],
   ['a published version whose only post is a draft', 'ModelVersion', 711, 731],
   ['a published version whose only post is Private', 'ModelVersion', 712, 732],
+  ['a Published version with a future publishedAt', 'ModelVersion', 714, 735],
 ];
 
 // [label, entityType, entityId, cover for anonymous/stranger, cover for owner/moderator]
@@ -219,6 +249,10 @@ const visible: [string, string, number, number][] = [
   ['a published article', 'Article', 301, 311],
   ['a public model', 'Model', 401, 431],
   ['a published version of a public model', 'ModelVersion', 411, 431],
+  ['an Unsearchable model', 'Model', 951, 981],
+  ['an EarlyAccess version', 'ModelVersion', 962, 982],
+  ['an Unsearchable post', 'Post', 974, 984],
+  ['an Unsearchable bounty', 'Bounty', 5, 105],
 ];
 
 describe('getEntityCoverImage respects the parent entity visibility', () => {
@@ -247,6 +281,17 @@ describe('getEntityCoverImage respects the parent entity visibility', () => {
     "takes a version's cover from the model owner's post for a %s viewer",
     async (who) => {
       expect(await coverOf('ModelVersion', 713, viewers[who])).toBe(734);
+    }
+  );
+
+  it('gives a signed-out viewer no cover for a hidden version of a userId -1 model', async () => {
+    expect(await coverOf('ModelVersion', 911, viewers.anonymous)).toBeNull();
+  });
+
+  it.each(Object.keys(viewers) as (keyof typeof viewers)[])(
+    "takes a userId -1 model's version cover from another user's post for a %s viewer",
+    async (who) => {
+      expect(await coverOf('ModelVersion', 912, viewers[who])).toBe(932);
     }
   );
 
