@@ -1,6 +1,9 @@
 import { Resolver } from 'node:dns/promises';
 import { env } from '~/env/server';
-import { getActiveDevTunnel } from '~/server/services/blocks/dev-tunnel.service';
+import {
+  DEV_TUNNEL_HARD_SECONDS,
+  getActiveDevTunnel,
+} from '~/server/services/blocks/dev-tunnel.service';
 import { isValidDevHost } from '~/server/services/blocks/dev-tunnel-session';
 
 const QUERY_TIMEOUT_MS = 1_500;
@@ -11,6 +14,9 @@ const SERVERS_TTL_MS = 10 * 60_000;
 const SERVERS_RETRY_MS = 15_000;
 /** One log line per failure kind per window: a broken check fails on every poll of every page. */
 const WARN_EVERY_MS = 15_000;
+const PUBLISHED_MEMO_MAX = 1_000;
+// A host is minted for one tunnel and never reused, so a positive answer holds for its whole life.
+const PUBLISHED_MEMO_TTL_MS = DEV_TUNNEL_HARD_SECONDS * 1000;
 
 // One try per query: the caller polls, so a retry here only delays the answer.
 const newResolver = () => new Resolver({ timeout: QUERY_TIMEOUT_MS, tries: 1 });
@@ -49,9 +55,30 @@ function warnCheckFailed(detail: { code?: string; error?: string }) {
 
 let serversCache: { domain: string; servers: Promise<string[]>; expiresAt: number } | null = null;
 
-/** TEST-ONLY: forget the cached nameserver addresses and the log throttle. */
+/** Host → when its positive answer stops being trusted. A negative is never stored. */
+const publishedUntil = new Map<string, number>();
+
+function rememberPublished(host: string) {
+  publishedUntil.delete(host);
+  publishedUntil.set(host, Date.now() + PUBLISHED_MEMO_TTL_MS);
+  if (publishedUntil.size > PUBLISHED_MEMO_MAX) {
+    const oldest = publishedUntil.keys().next().value;
+    if (oldest !== undefined) publishedUntil.delete(oldest);
+  }
+}
+
+function seenPublished(host: string): boolean {
+  const until = publishedUntil.get(host);
+  if (until === undefined) return false;
+  if (until > Date.now()) return true;
+  publishedUntil.delete(host);
+  return false;
+}
+
+/** TEST-ONLY: forget the cached nameserver addresses, the hosts seen published and the log throttle. */
 export function __resetDevTunnelDnsServersForTest(): void {
   serversCache = null;
+  publishedUntil.clear();
   lastWarnedAt.clear();
 }
 
@@ -100,7 +127,9 @@ async function serverHasName(server: string, name: string): Promise<boolean | nu
  * A recursive resolver (the system one included) caches a miss for the zone's negative TTL and
  * keeps answering "not there" after the record exists.
  *
- * Never throws. Ready means no nameserver that answered lacks the name, and at least one answered.
+ * Never throws. Ready means no nameserver that answered lacks the name, including when none could
+ * be asked: the check only narrows a race, so its worst case should be loading the host unchecked,
+ * as before the check existed, not holding every preview on nameservers being reachable.
  *
  * Without `APPS_DEV_TUNNEL_INGRESS_TARGET` this deployment publishes no record per tunnel, so
  * there is nothing to wait for and the answer is always `true`.
@@ -108,9 +137,12 @@ async function serverHasName(server: string, name: string): Promise<boolean | nu
 export async function isDevTunnelHostPublished(host: string): Promise<boolean> {
   if (!env.APPS_DEV_TUNNEL_INGRESS_TARGET) return true;
   if (!isValidDevHost(host, env.APPS_DOMAIN)) return false;
+  if (seenPublished(host)) return true;
   const servers = await authoritativeServers(env.APPS_DOMAIN);
   const answers = await Promise.all(servers.map((server) => serverHasName(server, absolute(host))));
-  return answers.includes(true) && !answers.includes(false);
+  if (answers.includes(false)) return false;
+  if (answers.includes(true)) rememberPublished(host);
+  return true;
 }
 
 export type DevTunnelDnsReadiness = { active: false } | { active: true; ready: boolean };
