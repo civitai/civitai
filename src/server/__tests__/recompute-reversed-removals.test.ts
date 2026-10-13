@@ -59,16 +59,18 @@ function call(query: Record<string, string>) {
   }));
 }
 
-// Owner 1 drops from three removals to two, owner 2 to none, owner 3 is already right.
-const STORED = { 1: -3000, 2: -1000, 3: -2000 } as Record<number, number>;
+// Owner 1 drops from three removals to two, owner 2 to none, owner 3 is already right, owner 4
+// has a stored score newer than its removal count (goes down).
+const STORED = { 1: -3000, 2: -1000, 3: -2000, 4: -1000 } as Record<number, number>;
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mocks.getOwnersWithReversalsSince.mockResolvedValue([1, 2, 3]);
+  mocks.getOwnersWithReversalsSince.mockResolvedValue([1, 2, 3, 4]);
   mocks.countRemovalsByOwner.mockResolvedValue(
     new Map([
       [1, 2],
       [3, 2],
+      [4, 3],
     ])
   );
   mocks.storedScores.mockImplementation((ids: number[]) =>
@@ -82,7 +84,14 @@ describe('recompute-reversed-removals', () => {
     const { status, body } = await call({});
 
     expect(status).toBe(200);
-    expect(body).toEqual({ dryRun: true, owners: 3, changed: 2 });
+    expect(body).toEqual({
+      dryRun: true,
+      direction: 'up',
+      owners: 4,
+      changed: 2,
+      up: 2,
+      down: 1,
+    });
     expect(mocks.applyUserScoreUpdates).not.toHaveBeenCalled();
   });
 
@@ -90,10 +99,10 @@ describe('recompute-reversed-removals', () => {
     await call({});
 
     expect(mocks.getOwnersWithReversalsSince).toHaveBeenCalledWith(expect.anything(), new Date(0));
-    expect(mocks.countRemovalsByOwner).toHaveBeenCalledWith(expect.anything(), [1, 2, 3]);
+    expect(mocks.countRemovalsByOwner).toHaveBeenCalledWith(expect.anything(), [1, 2, 3, 4]);
   });
 
-  it('writes only the owners whose score changes', async () => {
+  it('writes only increases by default and leaves a decrease owner untouched', async () => {
     const { body } = await call({ dryRun: 'false' });
 
     expect(mocks.applyUserScoreUpdates).toHaveBeenCalledTimes(1);
@@ -101,6 +110,45 @@ describe('recompute-reversed-removals', () => {
       ['1', { reportsAgainst: -2000 }],
       ['2', { reportsAgainst: 0 }],
     ]);
-    expect(body).toEqual({ dryRun: false, owners: 3, changed: 2, written: 2 });
+    expect(body).toEqual({
+      dryRun: false,
+      direction: 'up',
+      owners: 4,
+      changed: 2,
+      up: 2,
+      down: 1,
+      written: 2,
+    });
+  });
+
+  it('direction=all writes the decrease as well', async () => {
+    const { body } = await call({ dryRun: 'false', direction: 'all' });
+
+    expect(mocks.applyUserScoreUpdates.mock.lastCall![1]).toEqual([
+      ['1', { reportsAgainst: -2000 }],
+      ['2', { reportsAgainst: 0 }],
+      ['4', { reportsAgainst: -3000 }],
+    ]);
+    expect(body).toEqual({
+      dryRun: false,
+      direction: 'all',
+      owners: 4,
+      changed: 3,
+      up: 2,
+      down: 1,
+      written: 3,
+    });
+  });
+
+  it('dry run under direction=all counts the decrease in changed', async () => {
+    const { body } = await call({ direction: 'all' });
+
+    expect(body).toEqual({ dryRun: true, direction: 'all', owners: 4, changed: 3, up: 2, down: 1 });
+    expect(mocks.applyUserScoreUpdates).not.toHaveBeenCalled();
+  });
+
+  it('rejects an unknown direction', async () => {
+    await expect(call({ direction: 'down' })).rejects.toThrow();
+    expect(mocks.applyUserScoreUpdates).not.toHaveBeenCalled();
   });
 });
