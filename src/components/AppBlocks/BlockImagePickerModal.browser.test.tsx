@@ -24,7 +24,13 @@ const mocks = vi.hoisted(() => ({
   currentUser: { id: 1 } as { id: number } | null,
   /** PG + PG-13 unless a test widens it. */
   browsingLevel: 3,
+  levelSubscribers: new Set<() => void>(),
 }));
+
+function setLevel(level: number) {
+  mocks.browsingLevel = level;
+  mocks.levelSubscribers.forEach((notify) => notify());
+}
 
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => mocks.currentUser }));
 
@@ -38,10 +44,18 @@ vi.mock('~/providers/SessionProvider', async (orig) => ({
   }),
 }));
 
-vi.mock('~/components/BrowsingLevel/BrowsingLevelProvider', async (orig) => ({
-  ...(await orig<typeof BrowsingLevelProviderModule>()),
-  useViewerBrowsingLevelDebounced: () => mocks.browsingLevel,
-}));
+vi.mock('~/components/BrowsingLevel/BrowsingLevelProvider', async (orig) => {
+  const { useSyncExternalStore } = await import('react');
+  const subscribe = (notify: () => void) => {
+    mocks.levelSubscribers.add(notify);
+    return () => void mocks.levelSubscribers.delete(notify);
+  };
+  return {
+    ...(await orig<typeof BrowsingLevelProviderModule>()),
+    useViewerBrowsingLevelDebounced: () =>
+      useSyncExternalStore(subscribe, () => mocks.browsingLevel),
+  };
+});
 
 vi.mock('~/utils/auth-helpers', async (orig) => ({
   ...(await orig<typeof AuthHelpers>()),
@@ -270,18 +284,57 @@ describe('BlockImagePickerModal', () => {
     setGenerated([output('gen-a')]);
     const onResolved = openModal({ max: 5 });
 
-    await userEvent.click(tile('Posted image 1'));
     await userEvent.click(page.getByRole('tab', { name: 'Generated' }));
     await userEvent.click(tile('Generated image 1'));
+    await userEvent.click(page.getByRole('tab', { name: 'Posted' }));
+    await userEvent.click(tile('Posted image 1'));
     await expect
       .element(page.getByTestId('block-image-picker-count'))
       .toHaveTextContent('2 of 5 selected');
     await userEvent.click(confirmButton());
 
     expect(onResolved).toHaveBeenCalledWith([
+      { source: 'generated', url: blobUrl('gen-a'), width: 832, height: 1216, nsfwLevel: 1 },
       postedPick(1),
+    ]);
+  });
+
+  test('multi pick: leaving the posted tab drops its picks and keeps the generated ones', async () => {
+    setPosted([postedItem(1)]);
+    setGenerated([output('gen-a')]);
+    const onResolved = openModal({ sources: ['generated', 'posted'], max: 5 });
+    const count = page.getByTestId('block-image-picker-count');
+
+    await userEvent.click(tile('Generated image 1'));
+    await userEvent.click(page.getByRole('tab', { name: 'Posted' }));
+    await userEvent.click(tile('Posted image 1'));
+    await expect.element(count).toHaveTextContent('2 of 5 selected');
+
+    // The posted list is no longer on screen, so its pick cannot be confirmed from here.
+    await userEvent.click(page.getByRole('tab', { name: 'Generated' }));
+    await expect.element(count).toHaveTextContent('1 of 5 selected');
+    await expect.element(tile('Generated image 1')).toHaveAttribute('aria-pressed', 'true');
+    await userEvent.click(confirmButton());
+
+    expect(onResolved).toHaveBeenCalledWith([
       { source: 'generated', url: blobUrl('gen-a'), width: 832, height: 1216, nsfwLevel: 1 },
     ]);
+  });
+
+  test('generated: a level change starts the empty-page count again', async () => {
+    const fetchNextPage = vi.fn(async () => undefined);
+    setGenerated([output('mature', { nsfwLevel: 'r' })], { hasNextPage: true, fetchNextPage });
+
+    openModal({ sources: ['generated'] });
+    // Control: nothing is pickable at PG / PG-13, so the bound is reached.
+    await expect.element(page.getByText(LOAD_MORE_NOTE), { timeout: 8000 }).toBeInTheDocument();
+
+    // The viewer now browses at R: the output already loaded becomes pickable without a fetch.
+    setLevel(7);
+    await expect.element(tile('Generated image 1')).toBeInTheDocument();
+    // The count is cleared in an effect, one render after the image appears.
+    await expect.element(page.getByText(LOAD_MORE_NOTE)).not.toBeInTheDocument();
+    expect(page.getByRole('button', { name: 'Load more' }).query()).toBeNull();
   });
 
   test('generated: lists only rated image outputs at a level the viewer browses at', async () => {

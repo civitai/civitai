@@ -15,7 +15,7 @@ import {
 } from '@mantine/core';
 import { IconCheck } from '@tabler/icons-react';
 import clsx from 'clsx';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useViewerBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
@@ -84,6 +84,17 @@ export default function BlockImagePickerModal({
     void utils.blockImagePicker.getPosted.reset();
   }, [browsingLevel, utils]);
 
+  // A posted image can only be confirmed while it is in the posted list on screen.
+  const dropPostedPicks = useCallback(
+    () =>
+      setSelected((current) =>
+        current.some((pick) => pick.source === 'posted')
+          ? current.filter((pick) => pick.source !== 'posted')
+          : current
+      ),
+    []
+  );
+
   const multiple = max !== null;
   const atMax = multiple && selected.length >= max;
 
@@ -102,7 +113,7 @@ export default function BlockImagePickerModal({
   }
 
   const title = multiple && max > 1 ? `Choose up to ${max} images` : 'Choose an image';
-  const grid = { selected, atMax, onToggle: toggle, browsingLevel };
+  const grid = { selected, atMax, onToggle: toggle, browsingLevel, dropPostedPicks };
 
   return (
     <Modal {...dialog} withCloseButton size={800} title={title}>
@@ -160,6 +171,7 @@ export default function BlockImagePickerModal({
 }
 
 type GridSelection = {
+  dropPostedPicks: () => void;
   browsingLevel: number;
   selected: BlockPickedImageInfo[];
   atMax: boolean;
@@ -170,7 +182,7 @@ function SourceGrid({ source, ...selection }: GridSelection & { source: BlockIma
   return source === 'posted' ? <PostedGrid {...selection} /> : <GeneratedGrid {...selection} />;
 }
 
-function PostedGrid(selection: GridSelection) {
+function PostedGrid({ dropPostedPicks, ...selection }: GridSelection) {
   const { data, isLoading, isError, isFetching, hasNextPage, fetchNextPage, refetch } =
     trpc.blockImagePicker.getPosted.useInfiniteQuery(
       {},
@@ -195,13 +207,18 @@ function PostedGrid(selection: GridSelection) {
     [data]
   );
 
+  // The first page object survives loading further pages and is replaced when the list is reset,
+  // which a loading flag cannot be relied on to show: a reset that is answered at once never
+  // renders as loading.
+  const listKey = data?.pages[0];
+
+  // Runs when this list is replaced by another or leaves the screen, not when it gains a page.
+  useEffect(() => dropPostedPicks, [listKey, dropPostedPicks]);
+
   return (
     <PickGrid
       source="posted"
-      // The first page object survives loading further pages and is replaced when the list is
-      // reset, which a loading flag cannot be relied on to show: a reset that is answered at once
-      // never renders as loading.
-      listKey={data?.pages[0]}
+      listKey={listKey}
       images={images}
       loading={isLoading}
       failed={isError}
@@ -214,7 +231,7 @@ function PostedGrid(selection: GridSelection) {
   );
 }
 
-function GeneratedGrid(selection: GridSelection) {
+function GeneratedGrid({ dropPostedPicks: _unused, ...selection }: GridSelection) {
   const { browsingLevel } = selection;
   const { data, isFetching, isFetchingNextPage, isError, hasNextPage, fetchNextPage, refetch } =
     useGetTextToImageRequests(

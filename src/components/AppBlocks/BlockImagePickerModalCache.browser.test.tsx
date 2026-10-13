@@ -238,6 +238,53 @@ describe('BlockImagePickerModal posted list and the query cache', () => {
     }
   );
 
+  test('an image picked before the settings save landed cannot be confirmed after it', async () => {
+    mocks.fetchPosted.mockResolvedValue({ items: [MATURE] });
+    let saved: (value: unknown) => void = () => undefined;
+    mocks.saveSettings.mockReturnValue(new Promise((resolve) => (saved = resolve)));
+    const settings = mountAppWithSettings();
+
+    const onResolved = openPicker();
+    await expect.element(firstTile()).toBeInTheDocument();
+    settings.set?.({ showNsfw: false });
+    setLevel(1);
+    await vi.waitFor(() => expect(mocks.fetchPosted).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(mocks.saveSettings).toHaveBeenCalledTimes(1), { timeout: 4000 });
+
+    // The server still answered at the old level, so the image is back, and the viewer picks it.
+    await userEvent.click(firstTile());
+    await expect.element(firstTile()).toHaveAttribute('aria-pressed', 'true');
+    await expect.element(confirmButton()).toBeEnabled();
+
+    mocks.fetchPosted.mockResolvedValue({ items: [SFW] });
+    saved(undefined);
+    await vi.waitFor(() => expect(mocks.fetchPosted).toHaveBeenCalledTimes(3));
+
+    // The list on screen is the new one; nothing in it is selected and nothing can be confirmed.
+    await expect.element(firstTile()).toHaveAttribute('aria-pressed', 'false');
+    await expect.element(confirmButton()).toBeDisabled();
+    expect(onResolved).not.toHaveBeenCalled();
+  });
+
+  test('loading a further page keeps the selection', async () => {
+    mocks.fetchPosted.mockImplementation(async (cursor: unknown) =>
+      cursor === undefined ? { items: [MATURE], nextCursor: 7 } : { items: [SFW] }
+    );
+    mountApp();
+
+    const onResolved = openPicker();
+    await userEvent.click(firstTile());
+    // The second page arrives by itself.
+    await expect
+      .element(page.getByRole('button', { name: 'Posted image 2', exact: true }), { timeout: 8000 })
+      .toBeInTheDocument();
+    expect(mocks.fetchPosted).toHaveBeenCalledTimes(2);
+
+    await expect.element(firstTile()).toHaveAttribute('aria-pressed', 'true');
+    await userEvent.click(confirmButton());
+    expect(onResolved).toHaveBeenCalledWith([pickOf(MATURE)]);
+  });
+
   test('a reset list starts its empty-page count again', async () => {
     let cursor = 100;
     mocks.fetchPosted.mockImplementation(async () => ({ items: [], nextCursor: cursor++ }));
