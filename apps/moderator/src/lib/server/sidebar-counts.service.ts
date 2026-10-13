@@ -71,7 +71,6 @@ async function fetchCounts(): Promise<SidebarCounts> {
     // `countNewFeedback`). Wrapping it in a 3-second race would add a timer and a nullable to buy
     // nothing.
     countNewFeedback(),
-    // Rides Appeal_status_idx: Pending is a few hundred rows.
     countRemovedAppeals(),
   ]);
   return {

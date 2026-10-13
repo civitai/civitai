@@ -35,7 +35,7 @@ export function isAppealableModel3D(model: { status: Model3DStatus }) {
   return model.status === Model3DStatus.Unpublished || model.status === Model3DStatus.Deleted;
 }
 
-// The moderator app sends the `closed-owner-deleted` and `reviewed-*` outcomes too, spelled out there.
+// apps/moderator also sends closed-owner-deleted and reviewed-*; it mirrors these strings.
 export type OrphanedAppealOutcome =
   | 'under-review'
   | 'closed-owner-deleted'

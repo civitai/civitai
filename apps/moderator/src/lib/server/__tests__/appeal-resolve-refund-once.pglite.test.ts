@@ -68,7 +68,8 @@ CREATE TABLE "Appeal" (
   "resolvedMessage" TEXT,
   "resolvedReason" TEXT,
   "internalNotes" TEXT,
-  "buzzTransactionId" TEXT
+  "buzzTransactionId" TEXT,
+  "entityRemovedAt" TIMESTAMP(3)
 );
 CREATE FUNCTION update_nsfw_levels_new(ids INTEGER[]) RETURNS VOID LANGUAGE SQL AS $$ SELECT $$;
 `;
@@ -221,5 +222,22 @@ describe('resolving one appeal twice at once', () => {
       blockedFor: 'moderated',
       ingestion: null,
     });
+  });
+
+  // Its content is gone, so the removed-appeals page owns it; a queue card loaded before the delete must
+  // not decide it with the image-queue notice.
+  it('leaves an appeal whose content was removed to its own page', async () => {
+    await db.query(`UPDATE "Appeal" SET "entityRemovedAt" = now()`);
+
+    const closed = await resolveImageAppeal({
+      imageId: IMAGE_ID,
+      status: 'Approved',
+      resolvedReason: 'false-positive',
+      userId: 2,
+    });
+
+    expect(closed).toBeUndefined();
+    expect(await appealStatuses()).toEqual(['Pending']);
+    expect(refundAppealFee).not.toHaveBeenCalled();
   });
 });

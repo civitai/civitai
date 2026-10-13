@@ -14,7 +14,8 @@ vi.mock('../clickhouse', () => ({ getClickhouse: () => ({}) }));
 const { refundAppealFee } = await import('../image-moderation-effects');
 
 const FEE = 'appeal-7-1790000000000-abcd1234';
-const refund = () => refundAppealFee({ id: 9, buzzTransactionId: FEE, entityId: 41 });
+const refund = () =>
+  refundAppealFee({ id: 9, buzzTransactionId: FEE, entityType: 'Image', entityId: 41 });
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -46,14 +47,15 @@ describe('refundAppealFee', () => {
     );
   });
 
-  // Callers tell the user whether the fee came back.
   it('reports whether a refund was made', async () => {
     expect(await refund()).toBe(true);
 
     refundMultiTransaction.mockRejectedValueOnce(new Error('buzz down'));
     expect(await refund()).toBe(false);
 
-    expect(await refundAppealFee({ id: 9, buzzTransactionId: null, entityId: 41 })).toBe(false);
+    expect(
+      await refundAppealFee({ id: 9, buzzTransactionId: null, entityType: 'Image', entityId: 41 })
+    ).toBe(false);
   });
 
   it('names the appealed entity type in the refund', async () => {

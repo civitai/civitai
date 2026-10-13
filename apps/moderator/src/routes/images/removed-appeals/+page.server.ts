@@ -42,7 +42,7 @@ export const actions: Actions = {
       moderatorId: locals.user.id,
     });
     if (!closed) return fail(409, { error: ALREADY_DECIDED, appealId });
-    return { success: true, appealId };
+    return { success: true, appealId, refundFailed: closed.refundFailed };
   },
 
   ownerDeleted: async ({ request, locals }) => {
@@ -56,6 +56,6 @@ export const actions: Actions = {
       moderatorId: locals.user.id,
     });
     if (!closed) return fail(409, { error: ALREADY_DECIDED, appealId });
-    return { success: true, appealId };
+    return { success: true, appealId, refundFailed: closed.refundFailed };
   },
 };

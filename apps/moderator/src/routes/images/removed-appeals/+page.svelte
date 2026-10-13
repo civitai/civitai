@@ -3,6 +3,7 @@
   import { SvelteMap } from 'svelte/reactivity';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
+  import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
   import { cn } from '@civitai/ui/utils.js';
   import type { ResolutionVerdict } from '@civitai/shared/resolution-reasons';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
@@ -18,6 +19,11 @@
   let { data, form }: { data: PageData; form: ActionData } = $props();
 
   const CHOICES = appealRulingChoices();
+  // A refusal is shown on its row: the list holds up to a hundred appeals.
+  const failure = $derived(form as { error?: string; appealId?: number } | null);
+  const rowError = $derived(
+    failure?.error && failure.appealId ? { appealId: failure.appealId, error: failure.error } : null
+  );
   const acted = new SvelteMap<number, string>();
   const messages = new SvelteMap<number, string>();
   const drafts = new SvelteMap<number, RulingDraft<Verdict>>();
@@ -28,10 +34,10 @@
 
   // A refused verdict must undo its mark, or a moderator believes they ruled on an appeal that
   // is still open.
-  const submit = (appealId: number, verdict: string) =>
+  const submit = (appealId: number, verdict: string | (() => string)) =>
     optimisticEnhancer(
       () => {
-        acted.set(appealId, verdict);
+        acted.set(appealId, typeof verdict === 'function' ? verdict() : verdict);
         return () => acted.delete(appealId);
       },
       { reload: true }
@@ -47,8 +53,15 @@
   the verdict decides the refund and what the user is told.
 </p>
 
-{#if form && 'error' in form && form.error}
+{#if form && 'error' in form && form.error && !rowError}
   <ErrorAlert class="mb-4" message={form.error} />
+{/if}
+
+{#if form && 'refundFailed' in form && form.refundFailed}
+  <ErrorAlert
+    class="mb-4"
+    message={`Appeal #${form.appealId} is closed, but its fee could not be refunded. Refund it by hand.`}
+  />
 {/if}
 
 {#if data.hasMore}
@@ -99,23 +112,29 @@
           <p class="mt-2 text-xs text-dark-2">No moderation record for this {row.entityType}.</p>
         {/if}
 
+        {#if rowError?.appealId === row.id}
+          <ErrorAlert class="mt-2" message={rowError.error} />
+        {/if}
+
         <div class="mt-3 flex flex-col gap-1.5">
           {#if verdict}
             <span class="text-sm text-dark-2">{verdict}</span>
           {:else}
-            <textarea
+            <Textarea
               placeholder="Message to the user (optional)"
               value={messages.get(row.id) ?? ''}
               oninput={(e) => messages.set(row.id, e.currentTarget.value)}
-              rows="2"
+              rows={2}
               maxlength={1000}
-              class="w-full resize-none rounded border border-dark-4 bg-dark-6 px-2 py-1 text-xs"
-            ></textarea>
+              class="resize-none text-xs"
+            />
             <RulingForm
               subject="appeal"
               choices={CHOICES}
               action="?/resolve"
-              enhancer={submit(row.id, 'Appeal resolved')}
+              enhancer={submit(row.id, () =>
+                drafts.get(row.id)?.verdict === 'Approved' ? 'Appeal approved' : 'Appeal rejected'
+              )}
               idPrefix="removed-appeal-{row.id}"
               size="xs"
               bind:draft={() => drafts.get(row.id) ?? emptyRulingDraft<Verdict>(),

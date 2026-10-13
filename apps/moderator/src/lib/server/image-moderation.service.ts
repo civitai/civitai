@@ -301,14 +301,18 @@ function closePendingAppeal(
     internalNotes?: string;
   }
 ) {
-  return dbWrite
-    .updateTable('Appeal')
-    .set(decision)
-    .where('entityType', '=', 'Image')
-    .where('entityId', '=', imageId)
-    .where('status', '=', 'Pending')
-    .returning(['id', 'userId', 'buzzTransactionId'])
-    .executeTakeFirst();
+  return (
+    dbWrite
+      .updateTable('Appeal')
+      .set(decision)
+      .where('entityType', '=', 'Image')
+      .where('entityId', '=', imageId)
+      .where('status', '=', 'Pending')
+      // A removed-content appeal belongs to its own page, whose notice says the content is gone.
+      .where('entityRemovedAt', 'is', null)
+      .returning(['id', 'userId', 'buzzTransactionId'])
+      .executeTakeFirst()
+  );
 }
 
 export type ClosedAppeal = NonNullable<Awaited<ReturnType<typeof closePendingAppeal>>>;
@@ -324,6 +328,7 @@ async function runAppealCascade(
     await refundAppealFee({
       id: appeal.id,
       buzzTransactionId: appeal.buzzTransactionId,
+      entityType: 'Image',
       entityId: imageId,
     });
   await notifyAppealResolved({

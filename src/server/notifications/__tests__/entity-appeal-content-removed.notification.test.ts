@@ -22,6 +22,14 @@ describe('entity-appeal-content-removed — prepareMessage', () => {
     expect(m!.url).toBeUndefined();
   });
 
+  // A sender can ship an outcome before this copy does (the moderator app releases separately); it
+  // must not tell a user whose appeal was just decided that it is still open.
+  it('falls back to a neutral notice for an outcome it does not know', () => {
+    expect(prepare({ ...base, outcome: 'something-new', refunded: true })!.message).toBe(
+      'There is an update on your appeal about a removed image.'
+    );
+  });
+
   it('mentions the refund on an owner-deleted close only when one was made', () => {
     expect(prepare({ ...base, outcome: 'closed-owner-deleted', refunded: true })!.message).toBe(
       'Your appeal was closed because you deleted the image. Your appeal fee has been refunded.'

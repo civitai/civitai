@@ -93,10 +93,13 @@ export const reportNotifications = createNotificationProcessor({
           return {
             message: `We reviewed your appeal: the removal of your ${entity} stands.${note}`,
           };
-        default:
+        case 'under-review':
           return {
             message: `The ${entity} you appealed was removed before a moderator could review it. Your appeal is still open and will be reviewed; we'll let you know the outcome.`,
           };
+        // Senders release separately; an outcome this copy predates must not claim the appeal is open.
+        default:
+          return { message: `There is an update on your appeal about a removed ${entity}.` };
       }
     },
   },

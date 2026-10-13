@@ -4,15 +4,12 @@ import { refundAppealFee } from './image-moderation-effects';
 import { recordModActivity } from './mod-activity';
 import { getNotifications } from './notifications';
 
-/**
- * Appeals the main app's orphan sweep kept open after their image or model was deleted. The entity
- * queues are driven from the entity row, so this list is the only place they can be decided.
- */
+/** Pending appeals whose entity was deleted before review; no entity-driven queue shows them. */
 
 export type RemovedAppealDecision = 'Approved' | 'Rejected' | 'OwnerDeleted';
 
-// Spelled as in the main app's `OrphanedAppealOutcome` / `OrphanedAppealReason`; this app does not
-// import from `src/`. The main app's notification copy reads these outcomes.
+// Duplicated from the main app's OrphanedAppealOutcome / OrphanedAppealReason
+// (src/shared/utils/appeal.ts), whose notification copy reads them; keep in sync.
 const OUTCOME = {
   Approved: 'reviewed-approved',
   Rejected: 'reviewed-rejected',
@@ -76,7 +73,7 @@ export async function getRemovedAppeals({ limit }: { limit: number }) {
 }
 
 /**
- * Decides one removed-before-review appeal. False when it is no longer Pending (another moderator
+ * Decides one removed-before-review appeal. Null when it is no longer Pending (another moderator
  * decided it) or is not a removed one (its entity's own queue owns it).
  */
 export async function resolveRemovedAppeal({
@@ -93,8 +90,7 @@ export async function resolveRemovedAppeal({
   internalNotes?: string;
   resolvedMessage?: string;
   moderatorId: number;
-}): Promise<boolean> {
-  // One statement claims and reads it, so two moderators deciding at once refund and notify once.
+}): Promise<{ refunded: boolean; refundFailed: boolean } | null> {
   const appeal = await dbWrite
     .updateTable('Appeal')
     .set({
@@ -110,10 +106,11 @@ export async function resolveRemovedAppeal({
     .where('entityRemovedAt', 'is not', null)
     .returning(['id', 'userId', 'entityType', 'entityId', 'buzzTransactionId'])
     .executeTakeFirst();
-  if (!appeal) return false;
+  if (!appeal) return null;
 
+  const owesRefund = decision !== 'Rejected' && appeal.buzzTransactionId != null;
   const refunded =
-    decision !== 'Rejected' &&
+    owesRefund &&
     (await refundAppealFee({
       id: appeal.id,
       buzzTransactionId: appeal.buzzTransactionId,
@@ -127,8 +124,7 @@ export async function resolveRemovedAppeal({
       userId: appeal.userId,
       type: 'entity-appeal-content-removed',
       category: NotificationCategory.Other,
-      // The worker drops a repeated key, so the outcome is part of it: the sweep already sent
-      // this appeal's "under-review" notice.
+      // The worker drops a repeated key; the sweep already sent this appeal's "under-review" notice.
       key: `entity-appeal-content-removed:${appeal.id}:${outcome}`,
       details: {
         entityType: appeal.entityType,
@@ -148,5 +144,5 @@ export async function resolveRemovedAppeal({
     entityId: appeal.entityId,
     activity: 'resolveAppeal',
   });
-  return true;
+  return { refunded, refundFailed: owesRefund && !refunded };
 }

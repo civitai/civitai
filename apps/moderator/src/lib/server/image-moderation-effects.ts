@@ -358,13 +358,11 @@ const isAppealPrefix = (prefix: string) => prefix.startsWith('appeal-');
 export async function refundAppealFee(appeal: {
   id: number;
   buzzTransactionId: string | null;
-  entityType?: string;
+  entityType: string;
   entityId: number;
 }): Promise<boolean> {
   if (!appeal.buzzTransactionId) return false;
-  const description = `Refunded appeal ${appeal.id} for ${appeal.entityType ?? 'Image'} ${
-    appeal.entityId
-  }`;
+  const description = `Refunded appeal ${appeal.id} for ${appeal.entityType} ${appeal.entityId}`;
   try {
     if (isAppealPrefix(appeal.buzzTransactionId))
       // A timed-out refund may still land, so only a request that never reached Buzz is retried.

@@ -3,11 +3,6 @@ import { Kysely } from 'kysely';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { pgliteDialect } from './abuse-detection-pglite.harness';
 
-/**
- * Appeals whose content was removed before review never reach the entity-driven queue. This page is
- * their only reviewer, so the list and every verdict run against a real Postgres.
- */
-
 const { dbHandle, refundAppealFee, createNotification, recordModActivity } = vi.hoisted(() => ({
   dbHandle: { current: null as unknown },
   refundAppealFee: vi.fn(async (_appeal: unknown) => true),
@@ -157,7 +152,7 @@ describe('resolveRemovedAppeal', () => {
       moderatorId: MOD,
     });
 
-    expect(closed).toBe(true);
+    expect(closed).toEqual({ refunded: true, refundFailed: false });
     expect(await appeal(11)).toMatchObject({
       status: 'Approved',
       resolvedBy: MOD,
@@ -212,6 +207,8 @@ describe('resolveRemovedAppeal', () => {
   });
 
   it('closes as owner-deleted: Void with the owner reason, refunded, told', async () => {
+    await db.query(`UPDATE "Appeal" SET "buzzTransactionId" = 'appeal-2-1' WHERE "id" = 12`);
+
     await resolveRemovedAppeal({ appealId: 12, decision: 'OwnerDeleted', moderatorId: MOD });
 
     expect(await appeal(12)).toMatchObject({
@@ -243,6 +240,22 @@ describe('resolveRemovedAppeal', () => {
     expect(notices()[0]).toMatchObject({ details: { refunded: false } });
   });
 
+  it('tells the moderator when a fee could not be refunded', async () => {
+    refundAppealFee.mockResolvedValue(false);
+
+    expect(
+      await resolveRemovedAppeal({ appealId: 12, decision: 'OwnerDeleted', moderatorId: MOD })
+    ).toEqual({ refunded: false, refundFailed: false });
+    expect(
+      await resolveRemovedAppeal({
+        appealId: 11,
+        decision: 'Approved',
+        resolvedReason: 'false-positive',
+        moderatorId: MOD,
+      })
+    ).toEqual({ refunded: false, refundFailed: true });
+  });
+
   it('refuses an appeal still in the entity queue, or already decided', async () => {
     for (const appealId of [13, 14]) {
       const closed = await resolveRemovedAppeal({
@@ -251,7 +264,7 @@ describe('resolveRemovedAppeal', () => {
         resolvedReason: 'false-positive',
         moderatorId: MOD,
       });
-      expect(closed).toBe(false);
+      expect(closed).toBeNull();
     }
 
     expect(await appeal(13)).toMatchObject({ status: 'Pending', resolvedBy: null });
