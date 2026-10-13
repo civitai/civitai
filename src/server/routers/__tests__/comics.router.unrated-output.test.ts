@@ -7,9 +7,8 @@ import type * as S3Utils from '~/utils/s3-utils';
 import type * as StorageResolver from '~/server/services/storage-resolver';
 
 /**
- * The orchestrator can report a panel's workflow as succeeded before it has rated the output. The
- * panel routes must wait for the rating rather than treat the unrated output as clean: a panel
- * marked Ready, or a candidate saved as clean, is never re-checked.
+ * The orchestrator can report a workflow succeeded before rating its outputs. Ready and saved
+ * candidates are never re-checked, so these routes must wait for the rating.
  */
 
 const mocks = vi.hoisted(() => ({
@@ -144,6 +143,9 @@ const writes = () =>
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // The poll catches and logs any throw, then returns the panel unchanged: the same result as the
+  // hold. Every case asserts nothing was logged, so a broken fixture cannot pass as a held output.
+  vi.spyOn(console, 'error').mockImplementation(() => undefined);
   vi.stubGlobal(
     'fetch',
     vi.fn(async () => new Response(new Uint8Array([1, 2, 3]), { status: 200 }))
@@ -170,6 +172,8 @@ describe('comics.pollPanelStatus - an output that has not been rated yet', () =>
     expect(writes()).toEqual([]);
     expect(fetch).not.toHaveBeenCalled();
     expect(mocks.createImage).not.toHaveBeenCalled();
+    expect(mocks.formatGenerationResponse2).toHaveBeenCalledTimes(1);
+    expect(console.error).not.toHaveBeenCalled();
   });
 
   it('completes the same panel once the output is rated', async () => {
@@ -191,6 +195,8 @@ describe('comics.pollPanelStatus - an output that has not been rated yet', () =>
     expect(result.status).toBe('Generating');
     expect(writes()).toEqual([]);
     expect(fetch).not.toHaveBeenCalled();
+    expect(mocks.formatGenerationResponse2).toHaveBeenCalledTimes(1);
+    expect(console.error).not.toHaveBeenCalled();
   });
 
   it('saves the candidates once every output is rated', async () => {
@@ -215,6 +221,23 @@ describe('comics.unlockPanelGeneration - an output that has not been rated yet',
     expect(result.status).toBe('Generating');
     expect(fetch).not.toHaveBeenCalled();
     expect(mocks.createImage).not.toHaveBeenCalled();
+    expect(mocks.updateWorkflow).toHaveBeenCalledWith(
+      expect.objectContaining({ workflowId: 'wf-1', allowMatureContent: true })
+    );
+    const [data] = writes();
+    expect(data.status).toBe('Generating');
+    expect(data.metadata).not.toHaveProperty('blockedReason');
+  });
+
+  it('completes a single-image panel when the unlocked output is rated', async () => {
+    givenPanel({ status: 'RequireUnlock', metadata: { quantity: 1, blockedReason: 'canUpgrade' } });
+    givenWorkflow([output('b1', { nsfwLevel: 'pg' })]);
+
+    const result = await caller().unlockPanelGeneration({ panelId: PANEL_ID });
+
+    expect(result.status).toBe('Ready');
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(mocks.createImage).toHaveBeenCalledTimes(1);
   });
 
   it('keeps an unrated candidate locked instead of saving it as clean', async () => {
@@ -237,6 +260,8 @@ describe('comics.unlockPanelGeneration - an output that has not been rated yet',
       .candidateImages;
     expect(candidates[0]).toHaveProperty('key');
     expect(candidates[1]).toMatchObject({ requiresUnlock: true });
+    expect(candidates[1]).not.toHaveProperty('key');
     expect(fetch).toHaveBeenCalledTimes(1);
+    expect(mocks.s3Send).toHaveBeenCalledTimes(1);
   });
 });

@@ -3476,8 +3476,8 @@ export const comicsRouter = router({
         const rawOutputs = firstStep?.output ?? [];
         const imageUrl = rawOutputs[0]?.url ?? null;
 
-        // The workflow can succeed before its outputs are rated, and the gates below key on the
-        // rating. Write nothing until it lands; the client polls again.
+        // Succeeded can precede the rating; hold the panel until it lands, since Ready is never
+        // re-checked.
         if (workflow.status === 'succeeded' && rawOutputs.some((o) => o.pendingRating)) {
           return {
             id: panel.id,
