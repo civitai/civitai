@@ -5,6 +5,8 @@ import { page, userEvent } from 'vitest/browser';
 import { renderWithProviders } from '../../../test/component-setup';
 import { makeTrpcProxy } from '../../../test/trpcProxyStub';
 import type * as BrowsingLevelProviderModule from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import type * as CivitaiSessionProviderModule from '~/components/CivitaiWrapped/CivitaiSessionProvider';
+import type * as DomainColorModule from '~/hooks/useDomainColor';
 import type * as SessionProviderModule from '~/providers/SessionProvider';
 import type * as Trpc from '~/utils/trpc';
 
@@ -20,6 +22,18 @@ import type * as Trpc from '~/utils/trpc';
 
 const mocks = vi.hoisted(() => ({
   fetchPosted: vi.fn(),
+  saveSettings: vi.fn(),
+  session: {
+    type: 'authed',
+    settings: {
+      showNsfw: true,
+      blurNsfw: false,
+      browsingLevel: 31,
+      disableHidden: false,
+      allowAds: false,
+      autoplayGifs: true,
+    },
+  },
   level: 31,
   levelSubscribers: new Set<() => void>(),
 }));
@@ -48,8 +62,18 @@ vi.mock('~/components/BrowsingLevel/BrowsingLevelProvider', async (orig) => {
   };
 });
 
+vi.mock('~/components/CivitaiWrapped/CivitaiSessionProvider', async (orig) => ({
+  ...(await orig<typeof CivitaiSessionProviderModule>()),
+  useCivitaiSessionContext: () => mocks.session,
+}));
+
+vi.mock('~/hooks/useDomainColor', async (orig) => ({
+  ...(await orig<typeof DomainColorModule>()),
+  useDomainColor: () => 'blue',
+}));
+
 vi.mock('~/utils/trpc', async (orig) => {
-  const { useInfiniteQuery, useQueryClient } = await import('@tanstack/react-query');
+  const { useInfiniteQuery, useMutation, useQueryClient } = await import('@tanstack/react-query');
   const POSTED_KEY = ['blockImagePicker', 'getPosted'];
   return {
     ...(await orig<typeof Trpc>()),
@@ -67,6 +91,12 @@ vi.mock('~/utils/trpc', async (orig) => {
               ...options,
             }),
         },
+        // The real provider's own mutation options (its `onSuccess`) run on a real mutation;
+        // only the request is replaced.
+        'user.updateContentSettings': {
+          useMutation: (options: Record<string, unknown>) =>
+            useMutation({ mutationFn: (input: unknown) => mocks.saveSettings(input), ...options }),
+        },
       },
       {
         useUtils: () => {
@@ -75,6 +105,7 @@ vi.mock('~/utils/trpc', async (orig) => {
             blockImagePicker: {
               getPosted: { reset: () => queryClient.resetQueries({ queryKey: POSTED_KEY }) },
             },
+            user: { getSettings: { cancel: () => undefined, setData: () => undefined } },
           };
         },
       }
@@ -88,6 +119,8 @@ import BlockImagePickerModal from '~/components/AppBlocks/BlockImagePickerModal'
 import { DialogProvider } from '~/components/Dialog/DialogProvider';
 // eslint-disable-next-line import/first
 import { dialogStore, useDialogStore } from '~/components/Dialog/dialogStore';
+// eslint-disable-next-line import/first
+import { BrowserSettingsProvider, useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 
 const CDN = 'https://image.civitai.com/acct';
 
@@ -134,11 +167,92 @@ const tiles = () => page.getByRole('button', { name: /^Posted image / });
 const firstTile = () => page.getByRole('button', { name: 'Posted image 1', exact: true });
 const confirmButton = () => page.getByRole('button', { name: /^Use / });
 
+/** Mounts the real settings provider around the dialogs and hands back its store's setter. */
+function mountAppWithSettings() {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false, staleTime: Infinity } },
+  });
+  const settings: { set?: (state: { showNsfw?: boolean; browsingLevel?: number }) => void } = {};
+  function CaptureSettings() {
+    settings.set = useBrowsingSettings((state) => state.setState);
+    return null;
+  }
+  renderWithProviders(
+    <QueryClientProvider client={queryClient}>
+      <BrowserSettingsProvider>
+        <CaptureSettings />
+        <DialogProvider />
+      </BrowserSettingsProvider>
+    </QueryClientProvider>
+  );
+  return settings;
+}
+
+const LOAD_MORE_NOTE = 'No usable images found in the most recent pages.';
+
 describe('BlockImagePickerModal posted list and the query cache', () => {
   beforeEach(() => {
     useDialogStore.getState().closeAll();
     mocks.fetchPosted.mockReset();
+    mocks.saveSettings.mockReset();
     mocks.level = 31;
+  });
+
+  test.each([
+    ['mature content turned off', { showNsfw: false }],
+    ['the browsing level narrowed', { browsingLevel: 1 }],
+  ])(
+    'a list fetched before the settings save landed is replaced when it lands: %s',
+    async (_name, change) => {
+      // The server keeps answering at the OLD level until the save has gone through.
+      mocks.fetchPosted.mockResolvedValue({ items: [MATURE] });
+      let saved: (value: unknown) => void = () => undefined;
+      mocks.saveSettings.mockReturnValue(new Promise((resolve) => (saved = resolve)));
+      const settings = mountAppWithSettings();
+
+      const onResolved = openPicker();
+      await expect.element(firstTile()).toBeInTheDocument();
+
+      // The viewer changes the setting. The page's level flips at once; the save is delayed.
+      settings.set?.(change);
+      setLevel(1);
+      await vi.waitFor(() => expect(mocks.fetchPosted).toHaveBeenCalledTimes(2));
+      await vi.waitFor(() => expect(mocks.saveSettings).toHaveBeenCalledTimes(1), {
+        timeout: 4000,
+      });
+      expect(mocks.saveSettings).toHaveBeenCalledWith(change);
+      // Control: the refetch at the flip was answered at the old level, so the image is back.
+      await expect.element(firstTile()).toBeInTheDocument();
+      expect(mocks.fetchPosted).toHaveBeenCalledTimes(2);
+
+      // The save lands; from here the server answers at the new level. No click, no reopen.
+      mocks.fetchPosted.mockResolvedValue({ items: [SFW] });
+      saved(undefined);
+      await vi.waitFor(() => expect(mocks.fetchPosted).toHaveBeenCalledTimes(3));
+
+      await expect.element(firstTile()).toBeInTheDocument();
+      expect(tiles().elements()).toHaveLength(1);
+      await userEvent.click(firstTile());
+      await userEvent.click(confirmButton());
+      expect(onResolved).toHaveBeenCalledWith([pickOf(SFW)]);
+    }
+  );
+
+  test('a reset list starts its empty-page count again', async () => {
+    let cursor = 100;
+    mocks.fetchPosted.mockImplementation(async () => ({ items: [], nextCursor: cursor++ }));
+    mountApp();
+
+    openPicker();
+    // Control: the first list is all empty pages, so the bound is reached.
+    await expect.element(page.getByText(LOAD_MORE_NOTE), { timeout: 8000 }).toBeInTheDocument();
+
+    mocks.fetchPosted.mockImplementation(async () => ({ items: [SFW], nextCursor: cursor++ }));
+    setLevel(1);
+
+    await expect.element(firstTile()).toBeInTheDocument();
+    expect(page.getByText(LOAD_MORE_NOTE).query()).toBeNull();
+    expect(page.getByRole('button', { name: 'Load more' }).query()).toBeNull();
   });
 
   test('a reopened picker lists what the server returns now, not the pages of the last open', async () => {

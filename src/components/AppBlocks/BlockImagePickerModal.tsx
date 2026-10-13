@@ -77,7 +77,9 @@ export default function BlockImagePickerModal({
   useEffect(() => {
     if (listedAtLevel.current === browsingLevel) return;
     listedAtLevel.current = browsingLevel;
-    // Everything listed or selected so far was allowed at the previous level.
+    // Everything listed or selected so far was allowed at the previous level. The server may not
+    // know the new level yet (the setting is saved after a delay), so this clears the list at once
+    // and `BrowserSettingsProvider` resets it again when the save has landed.
     setSelected([]);
     void utils.blockImagePicker.getPosted.reset();
   }, [browsingLevel, utils]);
@@ -196,6 +198,10 @@ function PostedGrid(selection: GridSelection) {
   return (
     <PickGrid
       source="posted"
+      // The first page object survives loading further pages and is replaced when the list is
+      // reset, which a loading flag cannot be relied on to show: a reset that is answered at once
+      // never renders as loading.
+      listKey={data?.pages[0]}
       images={images}
       loading={isLoading}
       failed={isError}
@@ -230,6 +236,7 @@ function GeneratedGrid(selection: GridSelection) {
   return (
     <PickGrid
       source="generated"
+      listKey={selection.browsingLevel}
       images={images}
       loading={isFetching && !isFetchingNextPage && data.length === 0}
       failed={isError}
@@ -244,6 +251,7 @@ function GeneratedGrid(selection: GridSelection) {
 
 function PickGrid({
   source,
+  listKey,
   images,
   loading,
   failed,
@@ -256,6 +264,8 @@ function PickGrid({
   onToggle,
 }: GridSelection & {
   source: BlockImagePickerSource;
+  /** Changes when the list is replaced by a different one, not when it gains a page. */
+  listKey: unknown;
   images: PickableImage[];
   loading: boolean;
   failed: boolean;
@@ -288,6 +298,12 @@ function PickGrid({
     else if (!failed) setEmptyStreak((streak) => streak + 1);
     setLoad(null);
   }, [load, fetching, failed, images.length]);
+
+  // A different list: what the previous one's pages held says nothing about it.
+  useEffect(() => {
+    setEmptyStreak(0);
+    setLoad(null);
+  }, [listKey]);
 
   if (loading) {
     return (

@@ -413,11 +413,16 @@ describe('BlockImagePickerModal', () => {
   });
 
   test('keeps loading by itself while each page adds an image', async () => {
-    const items = [postedItem(1)];
-    const fetchNextPage = setPosted(items, { hasNextPage: true });
+    // As the real query does, the first page keeps its identity while later pages arrive.
+    const pages = [{ items: [postedItem(1)] }];
+    const fetchNextPage = setPosted([], { hasNextPage: true, data: { pages } });
     fetchNextPage.mockImplementation(async () => {
-      items.push(postedItem(items.length + 1));
-      setPosted([...items], { hasNextPage: items.length < 6, fetchNextPage });
+      pages.push({ items: [postedItem(pages.length + 1)] });
+      setPosted([], {
+        hasNextPage: pages.length < 6,
+        fetchNextPage,
+        data: { pages: [...pages] },
+      });
       mocks.postedSubscribers.forEach((rerender) => rerender());
     });
 
@@ -448,9 +453,11 @@ describe('BlockImagePickerModal', () => {
 
   test('an image loaded by Retry clears the empty-page count, so loading carries on by itself', async () => {
     const items: unknown[] = [];
-    const fetchNextPage = setPosted(items, { hasNextPage: true });
+    // As the real query does, the first page keeps its identity while later pages arrive.
+    const pages: Array<{ items: unknown[] }> = [{ items: [] }];
+    const fetchNextPage = setPosted([], { hasNextPage: true, data: { pages } });
     const answer = (over: Record<string, unknown>) => {
-      setPosted([...items], { hasNextPage: true, fetchNextPage, ...over });
+      setPosted([], { hasNextPage: true, fetchNextPage, data: { pages: [...pages] }, ...over });
       mocks.postedSubscribers.forEach((rerender) => rerender());
     };
     fetchNextPage.mockImplementation(async () => {
@@ -459,6 +466,7 @@ describe('BlockImagePickerModal', () => {
       if (call <= 3) return;
       if (call === 4) return answer({ isError: true });
       items.push(postedItem(items.length + 1));
+      pages.push({ items: [items[items.length - 1]] });
       answer({ hasNextPage: items.length < 3 });
     });
 
@@ -483,9 +491,11 @@ describe('BlockImagePickerModal', () => {
 
   test('a failed page does not count as an empty one', async () => {
     const items: unknown[] = [];
-    const fetchNextPage = setPosted(items, { hasNextPage: true });
+    // As the real query does, the first page keeps its identity while later pages arrive.
+    const pages: Array<{ items: unknown[] }> = [{ items: [] }];
+    const fetchNextPage = setPosted([], { hasNextPage: true, data: { pages } });
     const answer = (over: Record<string, unknown>) => {
-      setPosted([...items], { hasNextPage: true, fetchNextPage, ...over });
+      setPosted([], { hasNextPage: true, fetchNextPage, data: { pages: [...pages] }, ...over });
       mocks.postedSubscribers.forEach((rerender) => rerender());
     };
     fetchNextPage.mockImplementation(async () => {
@@ -496,6 +506,7 @@ describe('BlockImagePickerModal', () => {
       if (call === 2) return answer({ isError: true });
       if (call === 3) return answer({ isError: false });
       items.push(postedItem(1));
+      pages.push({ items: [items[0]] });
       answer({ hasNextPage: false });
     });
 
