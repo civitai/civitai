@@ -251,6 +251,17 @@ describe('what it writes', () => {
     });
   });
 
+  it('draws each code from a cryptographic source, not Math.random', async () => {
+    const random = vi.spyOn(Math, 'random').mockReturnValue(0);
+    try {
+      const first = await mintSupportMembershipCode(valid());
+      const second = await mintSupportMembershipCode(valid());
+      expect(second.code).not.toBe(first.code);
+    } finally {
+      random.mockRestore();
+    }
+  });
+
   it('records the ModActivity row through the transaction client, against the target user', async () => {
     await mintSupportMembershipCode(valid());
     expect(trackModActivity).toHaveBeenCalledTimes(1);

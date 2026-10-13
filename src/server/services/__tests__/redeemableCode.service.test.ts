@@ -284,6 +284,23 @@ describe('redeemableCode.service', () => {
       });
     });
 
+    it('draws codes from a cryptographic source, not Math.random', async () => {
+      const random = vi.spyOn(Math, 'random').mockReturnValue(0);
+      mockDbWrite.redeemableCode.createMany.mockResolvedValue({ count: 5 });
+
+      try {
+        const codes = await createRedeemableCodes({
+          unitValue: 5000,
+          type: RedeemableCodeType.Buzz,
+          quantity: 5,
+        });
+
+        expect(new Set(codes).size).toBe(5);
+      } finally {
+        random.mockRestore();
+      }
+    });
+
     it('should throw error when priceId does not exist', async () => {
       mockDbWrite.price.findUnique.mockResolvedValue(null);
 

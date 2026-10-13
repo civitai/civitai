@@ -21,6 +21,7 @@ import { throwDbCustomError, withRetries } from '~/server/utils/errorHandling';
 import { refreshSession } from '~/server/auth/session-invalidation';
 import { PaymentProvider, RedeemableCodeType } from '~/shared/utils/prisma/enums';
 import { generateToken } from '~/utils/string-helpers';
+import { generateRedeemCode } from '~/server/utils/redeem-code';
 import {
   deliverMonthlyCosmetics,
   syncFreshdeskMembership,
@@ -224,9 +225,7 @@ export async function createRedeemableCodes({
   }
 
   const codes = Array.from({ length: quantity }, () => {
-    const code = `${type === RedeemableCodeType.Buzz ? 'CS' : 'MB'}-${generateToken(
-      4
-    )}-${generateToken(4)}`.toUpperCase();
+    const code = generateRedeemCode(type === RedeemableCodeType.Buzz ? 'CS' : 'MB');
     return { code, unitValue, expiresAt, type, priceId };
   });
 
