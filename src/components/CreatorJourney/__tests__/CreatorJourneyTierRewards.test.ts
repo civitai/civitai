@@ -57,6 +57,7 @@ const journey = ({
     })),
     activity: { milestones: [], closestNext: null },
     secrets: [],
+    share: { shareable: [], hiddenOnProfile: [] },
   } as unknown as Journey);
 
 let root: Root | undefined;
@@ -125,6 +126,34 @@ describe('tier rewards on the ladder', () => {
       checked: false,
       locked: true,
     });
+  });
+
+  // Past the last tier each score is its own rung, so these three rows sit on three rungs.
+  it('links Creator Studio once across a run of rungs that would each link it', () => {
+    const unlock = (key: string, minScore: number, label: string) => ({
+      ...SUPERNOVA_BAND_UNLOCK,
+      key,
+      minScore,
+      label,
+    });
+    const rendered = items({
+      total: 0,
+      earnedKeys: [],
+      unlocks: [
+        unlock('monetize-pricing:20000000', 20_000_000, 'Price higher'),
+        unlock('early-access-days:30000000', 30_000_000, 'Longer early access'),
+        unlock('early-access-quantity:40000000', 40_000_000, 'More early access'),
+      ],
+    });
+    expect(
+      ['Price higher', 'Longer early access', 'More early access'].every((label) =>
+        [...rendered.keys()].some((text) => text.startsWith(label))
+      )
+    ).toBe(true);
+    const studioLinks = [...(container?.querySelectorAll('li a') ?? [])].filter((a) =>
+      a.getAttribute('href')?.endsWith('/models')
+    );
+    expect(studioLinks.map((a) => a.textContent)).toEqual(['Price higher']);
   });
 
   // The badge is granted by a nightly job, so a score past the threshold has not earned the rewards yet.

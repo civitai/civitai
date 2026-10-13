@@ -17,6 +17,7 @@ import {
   Title,
   useMantineTheme,
 } from '@mantine/core';
+import { useMarkEventVisited } from '~/components/AppLayout/AppHeader/useEventMenuItems';
 import { IconBolt, IconBulb, IconChevronRight } from '@tabler/icons-react';
 import type { ChartOptions } from 'chart.js';
 import {
@@ -121,6 +122,7 @@ export default function EventPageDetails({
 }: InferGetServerSidePropsType<typeof getServerSideProps>) {
   const theme = useMantineTheme();
   const inputRef = useRef<HTMLInputElement>(null);
+  useMarkEventVisited(event);
 
   const {
     eventData,

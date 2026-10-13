@@ -14,11 +14,15 @@ const { service } = vi.hoisted(() => ({
     getViewerEventAccess: vi.fn(async () => 'open'),
     getMyEventHats: vi.fn(async () => []),
     getPlaceableEventContent: vi.fn(async () => []),
+    getPlaceableEventContentPage: vi.fn(async () => ({ items: [], nextCursor: null })),
     getEventHatCatalog: vi.fn(async () => []),
+    getWornEventHat: vi.fn(async () => null),
   },
 }));
 
 vi.mock('~/server/services/event.service', () => service);
+const watch = vi.hoisted(() => ({ markEventPointsWatched: vi.fn(async () => ({ marked: 0 })) }));
+vi.mock('~/server/events/points/watch.service', () => watch);
 
 const { eventRouter } = await import('~/server/routers/event.router');
 
@@ -39,6 +43,17 @@ function callerFor(user: { id: number } | undefined) {
 beforeEach(() => vi.clearAllMocks());
 
 describe('scored-event route access', () => {
+  // The preview's ids are accepted only from a caller the preview lets in, so the caller must reach
+  // the check: signed in, as themself; signed out, as nobody.
+  it('hands watchPoints the caller, or nobody when signed out', async () => {
+    await callerFor({ id: 7 }).watchPoints({ event: 'birthday2026', topics: ['teams'] });
+    await callerFor(undefined).watchPoints({ event: 'birthday2026', topics: ['teams'] });
+    const calls = watch.markEventPointsWatched.mock.calls as unknown as [object, unknown][];
+    expect(calls.map(([, viewer]) => viewer)).toEqual([{ id: 7 }, undefined]);
+    for (const [input] of calls)
+      expect(input).toMatchObject({ event: 'birthday2026', topics: ['teams'] });
+  });
+
   it('refuses getMyCosmeticScores to a signed-out caller without reading anything', async () => {
     await expect(
       callerFor(undefined).getMyCosmeticScores({ event: 'birthday2026' })
@@ -75,6 +90,21 @@ describe('scored-event route access', () => {
       user: { id: 7 },
       event: 'birthday2026',
     });
+  });
+
+  // One tab of the picker: the caller's own content, so signed in only. (Never edge-cached either,
+  // but edgeCacheIt is a no-op outside prod, so a test here could not see it.)
+  it('serves getPlaceableContentPage to the signed-in caller only', async () => {
+    // A fresh object per call: the procedure's middleware writes onto its input.
+    const input = () => ({ event: 'birthday2026', entityType: 'Model' as const });
+    await expect(callerFor(undefined).getPlaceableContentPage(input())).rejects.toThrow(
+      expect.objectContaining({ code: 'UNAUTHORIZED' })
+    );
+    expect(service.getPlaceableEventContentPage).not.toHaveBeenCalled();
+    await callerFor({ id: 7 }).getPlaceableContentPage(input());
+    expect(service.getPlaceableEventContentPage).toHaveBeenCalledWith(
+      expect.objectContaining({ user: { id: 7 }, ...input() })
+    );
   });
 
   it('serves standings and per-cosmetic scores to a signed-out caller', async () => {
@@ -121,5 +151,33 @@ describe('scored-event route access', () => {
       "That event doesn't exist"
     );
     expect(service.getEventHatCatalog).not.toHaveBeenCalled();
+  });
+
+  // The public reads that hand out topic ids: in the preview, only a viewer the gate lets in may get
+  // the keyed ones, so the gate must stand in front of each.
+  it('refuses getStandings and getWornHat for an event the viewer cannot read', async () => {
+    service.getViewerEventAccess.mockResolvedValue('closed');
+    try {
+      const anon = callerFor(undefined);
+      await expect(anon.getStandings({ event: 'birthday2026' })).rejects.toThrow(
+        "That event doesn't exist"
+      );
+      await expect(
+        anon.getWornHat({ event: 'birthday2026', entityType: 'Image', entityId: 5 })
+      ).rejects.toThrow("That event doesn't exist");
+      expect(service.getEventStandings).not.toHaveBeenCalled();
+      expect(service.getWornEventHat).not.toHaveBeenCalled();
+    } finally {
+      service.getViewerEventAccess.mockResolvedValue('open');
+    }
+    // The control: let in, both reach the service.
+    await callerFor(undefined).getStandings({ event: 'birthday2026' });
+    await callerFor(undefined).getWornHat({
+      event: 'birthday2026',
+      entityType: 'Image',
+      entityId: 5,
+    });
+    expect(service.getEventStandings).toHaveBeenCalledTimes(1);
+    expect(service.getWornEventHat).toHaveBeenCalledTimes(1);
   });
 });

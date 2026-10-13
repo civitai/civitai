@@ -9,6 +9,7 @@ import {
 } from '~/shared/constants/feedback.constants';
 import { isPageSlot } from '~/shared/constants/slot-registry';
 import { sanitizeAppChromeName } from './appChromeName';
+import type { BlockHostSurface } from './blockInitFragmentGate';
 
 /**
  * Pure decisions behind the chrome's "Send feedback to developer" entry and modal. They live
@@ -50,20 +51,47 @@ export function resolveAppFeedbackRequest({
 }
 
 /**
- * The request to ask eligibility for, or `null` when the item must not mount at all. Both terms
- * only ever hide: a signed-out viewer is refused by the procedure, and without store access the
- * server's store scope is `none`, which admits no listing kind.
+ * Which host surfaces offer "Send feedback to developer". The server stamps every report with the
+ * listing's PUBLISHED version and sha, so the button belongs only where the published app is what
+ * is running:
+ *
+ * - `dev-tunnel` runs the author's unpublished local code, and its viewer is by construction an
+ *   owner or collaborator — exactly the people the server now admits — so a report there would be
+ *   filed against a version that never ran.
+ * - `review-preview` runs a pending version under moderation, with the same mis-attribution.
+ * - `private-run` serves the published code of a delisted or suspended app; the server's own
+ *   status check decides whether it may take feedback.
+ *
+ * A total `Record`, so a new `BlockHostSurface` member is a compile error here until someone
+ * decides.
+ */
+export const APP_FEEDBACK_HOST_SURFACES: Record<BlockHostSurface, boolean> = {
+  'model-slot': true,
+  'page-run': true,
+  'private-run': true,
+  'dev-tunnel': false,
+  'review-preview': false,
+};
+
+/**
+ * The request to ask eligibility for, or `null` when the button must not mount at all. Every term
+ * only ever hides: a signed-out viewer is refused by the procedure, without store access the
+ * server's store scope is `none`, which admits no listing kind, and a host surface that is not in
+ * {@link APP_FEEDBACK_HOST_SURFACES} (or was not named) offers no feedback at all.
  */
 export function appFeedbackEntryRequest({
   isSignedIn,
   hasStoreAccess,
+  hostSurface,
   request,
 }: {
   isSignedIn: boolean;
   hasStoreAccess: boolean;
+  hostSurface: BlockHostSurface | undefined;
   request: AppFeedbackRequest | null;
 }): AppFeedbackRequest | null {
   if (!isSignedIn || !hasStoreAccess) return null;
+  if (!hostSurface || !APP_FEEDBACK_HOST_SURFACES[hostSurface]) return null;
   return request;
 }
 

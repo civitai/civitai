@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
+  coverRequestWidth,
+  defaultPlaceableTab,
   describeEntityTypes,
   minutesUntilMovable,
+  placeableTabCount,
   teamPositionsOverTime,
 } from '~/components/Events/ScoredEvent/scored-event.utils';
 
@@ -89,5 +92,81 @@ describe('minutesUntilMovable', () => {
   // A browser clock that jumps backwards after the fetch must not add to the server's count.
   it('never shows more than the server reported', () => {
     expect(minutesUntilMovable(10 * MINUTE, -5 * MINUTE)).toBe(10);
+  });
+});
+
+describe('coverRequestWidth', () => {
+  const meta = (width: unknown, height: unknown) => ({ metadata: { width, height } });
+
+  it('asks for the card width when the picture is no wider than the 4:5 card', () => {
+    expect(coverRequestWidth(meta(800, 1000), 450)).toBe(450);
+    expect(coverRequestWidth(meta(600, 1200), 450)).toBe(450);
+  });
+
+  // A 2:1 cover at 450 wide comes back 225 tall and is stretched to fill a 562px-tall card.
+  it('asks for enough width that a wide cover still fills the height', () => {
+    expect(coverRequestWidth(meta(1000, 1000), 450)).toBe(563);
+    expect(coverRequestWidth(meta(1600, 1000), 450)).toBe(900);
+    expect(coverRequestWidth(meta(2000, 1000), 320)).toBe(800);
+  });
+
+  it('stops at the cap however wide the picture', () => {
+    expect(coverRequestWidth(meta(2000, 1000), 450)).toBe(1125);
+    expect(coverRequestWidth(meta(4000, 1000), 450)).toBe(1200);
+  });
+
+  // About 6% of covers have no size in their metadata but do on the image row.
+  it("takes the image row's own size first, then the metadata's", () => {
+    expect(coverRequestWidth({ width: 2000, height: 1000, metadata: null }, 450)).toBe(1125);
+    expect(
+      coverRequestWidth({ width: 2000, height: 1000, metadata: { width: 800, height: 1000 } }, 450)
+    ).toBe(1125);
+    expect(coverRequestWidth({ width: null, height: null, ...meta(2000, 1000) }, 450)).toBe(1125);
+  });
+
+  it('does not stretch a video, which is transcoded at the width asked for', () => {
+    expect(coverRequestWidth({ type: 'video', ...meta(1920, 1080) }, 450)).toBe(450);
+    expect(coverRequestWidth({ type: 'image', ...meta(1920, 1080) }, 450)).toBe(1000);
+  });
+
+  it('falls back to the old fixed width without a usable size', () => {
+    expect(coverRequestWidth({ metadata: null }, 450)).toBe(320);
+    expect(coverRequestWidth({}, 450)).toBe(320);
+    expect(coverRequestWidth(meta(2000, 0), 450)).toBe(320);
+    expect(coverRequestWidth(meta(0, 1000), 450)).toBe(320);
+    expect(coverRequestWidth(meta('2000', 1000), 450)).toBe(320);
+  });
+});
+
+describe('defaultPlaceableTab', () => {
+  const tabs = ['Image', 'Model', 'Article'] as const;
+  const loaded = (count: number) => ({ count, more: false, loaded: true });
+
+  it('opens where the hat is now, before anything has loaded', () => {
+    expect(defaultPlaceableTab(tabs, {}, 'Article')).toBe('Article');
+  });
+
+  it('opens on the first type with content once every tab has loaded', () => {
+    const state = { Image: loaded(0), Model: loaded(0), Article: loaded(2) };
+    expect(defaultPlaceableTab(tabs, state, null)).toBe('Article');
+  });
+
+  // Not before: a slow images tab would otherwise open on models, then jump.
+  it('stays on the first type while any tab is still loading', () => {
+    const state = { Image: { count: 0, more: false, loaded: false }, Model: loaded(3) };
+    expect(defaultPlaceableTab(tabs, state, null)).toBe('Image');
+  });
+
+  it('ignores a placement on a type the hat cannot go on', () => {
+    expect(defaultPlaceableTab(['Image', 'Model'], {}, 'Article')).toBe('Image');
+  });
+});
+
+describe('placeableTabCount', () => {
+  it('reads "24+" while there is more, the count when that is all, nothing before loading', () => {
+    expect(placeableTabCount({ count: 24, more: true, loaded: true })).toBe('24+');
+    expect(placeableTabCount({ count: 3, more: false, loaded: true })).toBe('3');
+    expect(placeableTabCount({ count: 0, more: false, loaded: false })).toBe('');
+    expect(placeableTabCount(undefined)).toBe('');
   });
 });

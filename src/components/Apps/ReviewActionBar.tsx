@@ -1,6 +1,7 @@
 import { Box, Button, Group, Stack, Textarea } from '@mantine/core';
 import { IconCheck, IconX } from '@tabler/icons-react';
 import { useEffect, useState } from 'react';
+import { OnsiteApproveRatingWarning } from '~/components/Apps/ListingRatingNotices';
 import {
   ReasonGatedField,
   ReasonGatedSubmitButton,
@@ -159,6 +160,12 @@ export function ReviewActionBar({
       </Stack>
     ) : (
       <Stack gap="xs">
+        {request.approveRating && (
+          <OnsiteApproveRatingWarning
+            listingId={request.approveRating.listingId}
+            declaredRating={request.approveRating.declared}
+          />
+        )}
         <Textarea
           label="Approval notes (optional)"
           autosize

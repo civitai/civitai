@@ -24,6 +24,8 @@ import { describe, expect, it, vi } from 'vitest';
 
 // Collapse the heavy sibling-service graph — the arms under test are pure control
 // flow, but importing generation.service pulls in DB / search-index / image infra.
+import type * as ImageMediaVisibility from '~/server/utils/image-media-visibility';
+
 vi.mock('~/server/redis/client', () => {
   const make = (): any => new Proxy(() => 'k', { get: () => make() });
   const keyProxy = make();
@@ -53,6 +55,15 @@ vi.mock('~/server/services/model-version.service', () => ({
   bustMvCache: vi.fn(),
 }));
 vi.mock('~/server/services/image.service', () => ({ imagesForModelVersionsCache: {} }));
+// Visibility is covered by image-generation-data-visibility.behavior.test.ts.
+vi.mock('~/server/services/image-visibility.service', () => ({
+  assertImageVisibleToViewer: vi.fn(async () => ({ userId: 555, nsfwLevel: 1, postId: null })),
+}));
+vi.mock('~/server/utils/image-media-visibility', async (importOriginal) => ({
+  ...(await importOriginal<typeof ImageMediaVisibility>()),
+  viewerCanSeeImageMedia: vi.fn(async () => true),
+  viewerCanSeeSourceMedia: vi.fn(async () => true),
+}));
 vi.mock('~/server/services/generation/version-generation-state.service', () => ({
   getVisibleSystemWildcardSetIdsByVersionId: vi.fn(),
 }));

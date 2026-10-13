@@ -27,8 +27,10 @@ const CALL_SITES: [file: string, expected: string][] = [
     "eventDecorationOn={{ entityType: 'Image', entityId: data.id }}",
   ],
   [
+    // A Showcase card wears the hat of what it stands for; getGenericCardWornOn is pinned in
+    // generic-image-card-worn-on.test.ts.
     'src/components/Cards/GenericImageCard.tsx',
-    "eventDecorationOn={{ entityType: 'Image', entityId: image.id }}",
+    'eventDecorationOn={getGenericCardWornOn(image.id, entityType, entityId)}',
   ],
   [
     'src/components/Image/Infinite/ImagesCard.tsx',
@@ -40,7 +42,7 @@ const CALL_SITES: [file: string, expected: string][] = [
   ],
   [
     'src/components/Image/AsPosts/ImagesAsPostsCard.tsx',
-    "eventDecorationOn={hatted && { entityType: 'Image', entityId: hatted.id }}",
+    "wornOn={{ entityType: 'Image', entityId: image.id }}",
   ],
   [
     'src/components/Model/ModelCarousel/ModelCarousel.tsx',
@@ -53,6 +55,7 @@ const NO_CONTENT = [
   'src/components/Cosmetics/EventDecoration/HatFitEditor.tsx',
   'src/components/Modals/CardDecorationModal.tsx',
   'src/components/Events/ScoredEvent/EventContentThumb.tsx',
+  'src/components/Shop/CosmeticSample.tsx',
 ];
 // Draw the hat for a card. These pass the content on; MasonryCard has none to pass (its one hatted
 // caller is the try-on preview).
@@ -109,12 +112,5 @@ describe('worn hat call sites', () => {
     expect(read('src/server/events/birthday2026.event.ts').replace(/\r\n/g, '\n')).toContain(
       `createEvent(name, {\n  title: ${JSON.stringify(title)},`
     );
-  });
-
-  // The post card wears the hat of the first image that has one; the content must be that image.
-  it('ImagesAsPostsCard names the image whose hat it draws', () => {
-    const source = read('src/components/Image/AsPosts/ImagesAsPostsCard.tsx');
-    expect(source).toContain('data.images.find((i) => isDefined(i.eventDecoration))');
-    expect(source).toContain('const eventDecoration = hatted?.eventDecoration?.data;');
   });
 });

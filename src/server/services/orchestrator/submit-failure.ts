@@ -29,6 +29,25 @@ export function getOrchestratorSubmitFailure(err: unknown): OrchestratorSubmitFa
   return (err as { [SUBMIT_FAILURE]?: OrchestratorSubmitFailure })[SUBMIT_FAILURE];
 }
 
+const MISSING_BLOB = Symbol('orchestrator.submitMissingBlob');
+
+/**
+ * Marks the error `submitWorkflow` throws when refreshing a blob URL in the body got an
+ * ANSWER saying the blob itself is gone (a 404, or a blob reported blocked or
+ * unavailable) — as opposed to a refresh that failed in transit and may succeed on a
+ * retry. Same non-enumerable symbol shape as above, so the error's code, message and
+ * serialisation are unchanged for every caller.
+ */
+export function annotateOrchestratorMissingBlob(err: unknown): void {
+  if (err === null || typeof err !== 'object' || !Object.isExtensible(err)) return;
+  Object.defineProperty(err, MISSING_BLOB, { value: true, enumerable: false, configurable: true });
+}
+
+export function isOrchestratorMissingBlob(err: unknown): boolean {
+  if (err === null || typeof err !== 'object') return false;
+  return (err as { [MISSING_BLOB]?: boolean })[MISSING_BLOB] === true;
+}
+
 /**
  * True only when a submit failure proves the orchestrator created no workflow: a 4xx
  * received by the FIRST attempt. A later attempt runs only after an earlier one hit a

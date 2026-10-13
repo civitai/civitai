@@ -31,7 +31,6 @@ import { articleDetailSelect } from '~/server/selectors/article.selector';
 import type {
   ContentDecorationCosmetic,
   EventDecorationCosmetic,
-  WithClaimKey,
 } from '~/server/selectors/cosmetic.selector';
 import { imageSelect, profileImageSelect } from '~/server/selectors/image.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
@@ -136,7 +135,7 @@ type ArticleRaw = {
       source: CosmeticSource;
     };
   }[];
-  cosmetic?: WithClaimKey<ContentDecorationCosmetic> | null;
+  cosmetic?: ContentDecorationCosmetic | null;
 };
 
 const getArticleStatsObject = async (data: { id: number }[]) => {
@@ -607,8 +606,8 @@ export const getArticles = async ({
       nextCursor,
       items: items as Array<
         Omit<(typeof items)[number], 'cosmetic' | 'eventDecoration'> & {
-          cosmetic?: WithClaimKey<ContentDecorationCosmetic> | null;
-          eventDecoration?: WithClaimKey<EventDecorationCosmetic> | null;
+          cosmetic?: ContentDecorationCosmetic | null;
+          eventDecoration?: EventDecorationCosmetic | null;
         }
       >,
     };

@@ -20,7 +20,6 @@ export default function ImageDetailModal({
   hideReactions,
   filters,
   collectionId,
-  withoutPost,
 }: {
   imageId: number;
   filters?: Record<string, unknown>;
@@ -29,7 +28,6 @@ export default function ImageDetailModal({
   hideReactionCount?: boolean;
   hideReactions?: boolean;
   collectionId?: number;
-  withoutPost?: boolean;
 }) {
   const dialog = useDialogContext();
   const { query } = useBrowserRouter();
@@ -85,7 +83,6 @@ export default function ImageDetailModal({
         hideReactionCount={hideReactionCount}
         hideReactions={hideReactions}
         collectionId={collectionId}
-        withoutPost={withoutPost}
       >
         <ImageDetail2 />
       </ImageDetailProvider>

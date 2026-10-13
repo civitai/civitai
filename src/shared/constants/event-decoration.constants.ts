@@ -1,6 +1,6 @@
+import type { FeatureFlagKey } from '~/server/services/feature-flags.service';
 import { CosmeticEntity } from '~/shared/utils/prisma/enums';
 import {
-  BIRTHDAY_2026_ENDS_AT,
   BIRTHDAY_2026_EVENT,
   BIRTHDAY_2026_PREVIEW_FROM,
   BIRTHDAY_2026_STARTS_AT,
@@ -22,10 +22,10 @@ export type EventDecorationDefinition = {
   /** The button from a worn decoration to its event's page. */
   eventLinkLabel: string;
   startsAt: Date;
-  /** Exclusive. */
-  endsAt: Date;
   /** Flagged users may wear it from here; whether a viewer may is the server's call. */
   previewFrom?: Date;
+  /** The event's own `featureFlag`, the one that lets a viewer into its preview. */
+  featureFlag?: FeatureFlagKey;
   /** What it can be worn on. */
   entityTypes: readonly CosmeticEntity[];
   /** How soon one decoration may be placed again after it was last placed. */
@@ -39,8 +39,8 @@ export const EVENT_DECORATION_DEFINITIONS: readonly EventDecorationDefinition[] 
     eventTitle: "Civitai's 4th Birthday",
     eventLinkLabel: 'See the birthday event',
     startsAt: BIRTHDAY_2026_STARTS_AT,
-    endsAt: BIRTHDAY_2026_ENDS_AT,
     previewFrom: BIRTHDAY_2026_PREVIEW_FROM,
+    featureFlag: 'birthday2026',
     entityTypes: [CosmeticEntity.Image, CosmeticEntity.Model, CosmeticEntity.Article],
     moveCooldownMs: 10 * 60 * 1000,
   },
@@ -107,16 +107,31 @@ export function getEventDecorationDefinition(event: string) {
 }
 
 /**
- * Whether someone could wear this event's decorations now: its window, preview included. Who
- * actually may is the server's call (src/server/events/event-access.ts).
+ * Whether someone could wear this event's decorations now: from its preview or start, with no end,
+ * because decorations are kept after their event. Who actually may is the server's call
+ * (src/server/events/event-access.ts).
  */
-export function isEventDecorationInWindow(definition: EventDecorationDefinition, now = new Date()) {
-  return now >= (definition.previewFrom ?? definition.startsAt) && now < definition.endsAt;
+export function isEventDecorationReleased(definition: EventDecorationDefinition, now = new Date()) {
+  return now >= (definition.previewFrom ?? definition.startsAt);
 }
 
 /** The event, if any, whose decorations someone could wear on this entity type now. */
-export function getEventDecorationInWindow(entityType: CosmeticEntity, now = new Date()) {
+export function getReleasedEventDecoration(entityType: CosmeticEntity, now = new Date()) {
   return EVENT_DECORATION_DEFINITIONS.find(
-    (x) => isEventDecorationInWindow(x, now) && x.entityTypes.includes(entityType)
+    (x) => isEventDecorationReleased(x, now) && x.entityTypes.includes(entityType)
+  );
+}
+
+/**
+ * The decoration on this entity type that is in its preview now: released to flagged viewers, not
+ * yet to everyone. From `startsAt` a shared, viewer-less read carries it, so nothing needs this.
+ */
+export function getPreviewEventDecoration(entityType: CosmeticEntity, now = new Date()) {
+  return EVENT_DECORATION_DEFINITIONS.find(
+    (x) =>
+      !!x.previewFrom &&
+      now >= x.previewFrom &&
+      now < x.startsAt &&
+      x.entityTypes.includes(entityType)
   );
 }

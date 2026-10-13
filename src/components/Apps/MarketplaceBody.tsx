@@ -491,10 +491,11 @@ function MarketplaceEmptyState({
               two-doors layout it removed.
             • BETTER LANDING. Whoever presses this has, by definition, an empty store in
               front of them. If they have no apps either, `/apps/build` state B is
-              "ship your first app" — quickstart plus a create button — rather than a bare
-              type picker. If they DO have apps, state C is their workbench. Both are
-              strictly more useful than the mode selector, and state B's primary button is
-              `/apps/submit` anyway, so nothing is more than one click further away.
+              "ship your first app" — the coding-agent prompt first, the manual CLI setup
+              collapsed beneath it, and a secondary create button — rather than a bare type
+              picker. If they DO have apps, state C is their workbench. Both are strictly more
+              useful than the mode selector, and state B's create button is `/apps/submit`
+              anyway, so nothing is more than one click further away.
             • MEASURABLE. The funnel events live on `/apps/build`; a direct jump to the
               submit wizard is a create-flow entry nothing counts.
         */}

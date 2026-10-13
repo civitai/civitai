@@ -397,11 +397,25 @@ describe('POST /api/v1/blocks/workflows/poll', () => {
     expect(mockPoll).toHaveBeenLastCalledWith({ blockToken: BEARER, workflowId: POLL_WORKFLOW_ID });
   });
 
-  it('rejects a waitSeconds above the wire bound without delegating', async () => {
-    const { req, res } = createMocks({ body: { workflowId: POLL_WORKFLOW_ID, waitSeconds: 61 } });
-    await (pollHandler as any)(req, res);
-    expect(res._status()).toBe(400);
-    expect(mockPoll).not.toHaveBeenCalled();
+  it('never refuses a waitSeconds: numbers are delegated as sent, anything else as no key', async () => {
+    mockPoll.mockResolvedValue({
+      snapshot: { workflowId: POLL_WORKFLOW_ID, status: 'processing' },
+    });
+
+    const large = createMocks({ body: { workflowId: POLL_WORKFLOW_ID, waitSeconds: 61 } });
+    await (pollHandler as any)(large.req, large.res);
+    expect(large.res._status()).toBe(200);
+    expect(mockPoll).toHaveBeenLastCalledWith({
+      blockToken: BEARER,
+      workflowId: POLL_WORKFLOW_ID,
+      waitSeconds: 61,
+    });
+
+    // JSON has no NaN/Infinity; a REST client serialising one sends null.
+    const asNull = createMocks({ body: { workflowId: POLL_WORKFLOW_ID, waitSeconds: null } });
+    await (pollHandler as any)(asNull.req, asNull.res);
+    expect(asNull.res._status()).toBe(200);
+    expect(mockPoll).toHaveBeenLastCalledWith({ blockToken: BEARER, workflowId: POLL_WORKFLOW_ID });
   });
 
   /**

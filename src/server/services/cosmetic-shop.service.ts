@@ -89,6 +89,7 @@ import {
   MediaType,
   MetricTimeframe,
 } from '~/shared/utils/prisma/enums';
+import { syncEventRosterMember } from '~/server/events/points/roster-sync';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 
 /**
@@ -823,29 +824,30 @@ export const getShopSectionsWithItems = async ({
       placement: 'asc',
     },
   });
-  // Event items (team hats) are filtered here rather than in the query: the
-  // viewer's team comes from the event, not the database.
   const eventItemVisible = createEventShopItemVisibility({ userId, isModerator });
-  // The event page's shelf is the viewer's own colour, moderators included.
-  const shown =
-    isModerator && !event
-      ? sections
-      : await Promise.all(
-          sections.map(async (section) => {
-            const visible = await Promise.all(
-              section.items.map((item) => eventItemVisible(item.shopItem.cosmetic?.data))
-            );
-            return { ...section, items: section.items.filter((_, i) => visible[i]) };
-          })
-        );
+  // Event items (team hats) are sold only on their event's page (Justin, 2026-10-09), never in the
+  // shop or its homepage blocks, moderators included. They stay in a published section because the
+  // event page's shelf and hat catalog read them from there.
   const visibleSections = event
-    ? shown
-        .filter((s) => !(s.meta as CosmeticShopSectionMeta | null)?.communityHub)
-        .map((s) => ({
-          ...s,
-          items: s.items.filter((item) => isItemOfEvent(item.shopItem.cosmetic?.data, event)),
-        }))
-    : shown;
+    ? await Promise.all(
+        sections
+          .filter((s) => !(s.meta as CosmeticShopSectionMeta | null)?.communityHub)
+          .map(async (section) => {
+            const items = section.items.filter((item) =>
+              isItemOfEvent(item.shopItem.cosmetic?.data, event)
+            );
+            // Filtered here rather than in the query: the viewer's team comes from the event, not
+            // the database. The shelf is the viewer's own colour, moderators included.
+            const visible = await Promise.all(
+              items.map((item) => eventItemVisible(item.shopItem.cosmetic?.data))
+            );
+            return { ...section, items: items.filter((_, i) => visible[i]) };
+          })
+      )
+    : sections.map((section) => ({
+        ...section,
+        items: section.items.filter((item) => !isEventShopItemData(item.shopItem.cosmetic?.data)),
+      }));
   const sold = await getSoldCounts(
     visibleSections.flatMap((s) => s.items.map((i) => i.shopItem.id))
   );
@@ -1031,8 +1033,12 @@ export const purchaseCosmeticShopItem = async ({
         throw throwBadRequestError(`This ${noun} is not available`);
       }
 
-      // Creators can't buy their own cosmetic — they're granted it on approval.
-      if (shopItem.cosmetic.createdById === userId) {
+      // A sticker grant is a finite batch, so its creator may restock; any other
+      // cosmetic is theirs from approval.
+      if (
+        shopItem.cosmetic.createdById === userId &&
+        shopItem.cosmetic.type !== CosmeticType.Sticker
+      ) {
         throw throwBadRequestError('You already own this cosmetic');
       }
 
@@ -1294,6 +1300,10 @@ export const purchaseCosmeticShopItem = async ({
     });
 
     await refreshOwnedStickerCache([userId]);
+    // An event hat counts on its owner's team roster, if they are listed.
+    const hatEvent = (singleCosmetic.data as { event?: unknown } | null)?.event;
+    if (typeof hatEvent === 'string')
+      void syncEventRosterMember(userId, { event: hatEvent, onlyIfListed: true });
 
     try {
       await withRetries(async () => {
@@ -1366,6 +1376,9 @@ export const purchaseCosmeticShopItem = async ({
           } else {
             recipients = [{ userId: creatorId, amount: creatorPool }];
           }
+          // Never pay the buyer their own money back (same rule as
+          // `purchaseStickerUses`); a reseller who made the sale is still paid.
+          if (creatorId === userId) recipients = recipients.filter((r) => r.userId !== userId);
         } else {
           recipients = (meta?.paidToUserIds ?? []).map((uid) => ({
             userId: uid,

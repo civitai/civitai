@@ -178,20 +178,22 @@ export function ArticleContextMenu({ article, ...props }: Props) {
         {currentUser && (isOwner || isModerator) && (
           <>
             {isOwner && article.coverImage && !atDetailsPage && (
-              <>
-                <AddArtFrameMenuItem
-                  entityType={CosmeticEntity.Article}
-                  entityId={article.id}
-                  image={article.coverImage}
-                  currentCosmetic={article.cosmetic}
-                />
-                <AddEventDecorationMenuItem
-                  entityType={CosmeticEntity.Article}
-                  entityId={article.id}
-                  image={article.coverImage}
-                  currentCosmetic={article.eventDecoration}
-                />
-              </>
+              <AddArtFrameMenuItem
+                entityType={CosmeticEntity.Article}
+                entityId={article.id}
+                image={article.coverImage}
+                currentCosmetic={article.cosmetic}
+              />
+            )}
+            {/* On the article's own page too: otherwise its cover image is the nearest thing to hat. */}
+            {isOwner && article.coverImage && (
+              <AddEventDecorationMenuItem
+                entityType={CosmeticEntity.Article}
+                entityId={article.id}
+                image={article.coverImage}
+                currentCosmetic={article.eventDecoration}
+                findWornHat={atDetailsPage}
+              />
             )}
             <Menu.Item
               color="red"

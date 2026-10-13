@@ -35,7 +35,6 @@ import type { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema'
 import type {
   ContentDecorationCosmetic,
   EventDecorationCosmetic,
-  WithClaimKey,
 } from '~/server/selectors/cosmetic.selector';
 import { isEventDecorationData } from '~/shared/constants/event-decoration.constants';
 import type { ProfileImage } from '~/server/selectors/image.selector';
@@ -48,6 +47,7 @@ import {
 import type { EntityAccessDataType } from '~/server/services/common.service';
 import type { CachedObject } from '~/server/utils/cache-helpers';
 import { createCachedObject } from '~/server/utils/cache-helpers';
+import { getImageTagRows } from '~/server/redis/image-tag-rows';
 import { L1_CACHE_BYTE_BUDGETS } from '~/server/redis/l1-cache-budget';
 import type { UserMultiplierRow, UserMultipliers } from '~/server/redis/user-multipliers';
 import { foldUserMultipliers } from '~/server/redis/user-multipliers';
@@ -103,14 +103,7 @@ export const tagIdsForImagesCache = createCachedObject<{
     const imageIds = Array.isArray(imageId) ? imageId : [imageId];
     const db = fromWrite ? dbWrite : dbRead;
 
-    const imageTags = await db.tagsOnImageDetails.findMany({
-      where: { imageId: { in: imageIds }, disabled: false },
-      select: {
-        imageId: true,
-        source: true,
-        tagId: true,
-      },
-    });
+    const imageTags = await getImageTagRows(db, imageIds);
 
     const tagIds = imageTags.map((t) => t.tagId);
     const tags = await tagCache.fetch(tagIds);
@@ -282,20 +275,19 @@ export const profilePictureCache = createCachedObject<ProfileImage>({
 type EntityCosmeticLookupRaw = {
   equippedToId: number;
   cosmeticId: number;
-  claimKey: string;
   userData: Prisma.JsonValue;
 };
 export const cosmeticEntityCaches = Object.fromEntries(
   Object.values(CosmeticEntity).map((entity) => [
     entity as CosmeticEntity,
-    createCachedObject<WithClaimKey<ContentDecorationCosmetic>>({
+    createCachedObject<ContentDecorationCosmetic>({
       key: `${REDIS_KEYS.CACHES.COSMETICS}:${entity}`,
       idKey: 'equippedToId',
       cacheNotFound: false,
       staleWhileRevalidate: false,
       lookupFn: async (ids) => {
         const entityCosmetics = await dbWrite.$queryRaw<EntityCosmeticLookupRaw[]>`
-          SELECT uc."cosmeticId", uc."equippedToId", uc."claimKey", uc."data" as "userData"
+          SELECT uc."cosmeticId", uc."equippedToId", uc."data" as "userData"
           FROM "UserCosmetic" uc
           JOIN "Cosmetic" c ON c.id = uc."cosmeticId"
           WHERE uc."equippedToId" IN (${Prisma.join(ids as number[])})
@@ -306,7 +298,7 @@ export const cosmeticEntityCaches = Object.fromEntries(
           entityCosmetics.map((x) => [
             x.equippedToId,
             // Hack here so we can fix it in the appendFn
-            x as any as WithClaimKey<ContentDecorationCosmetic>,
+            x as any as ContentDecorationCosmetic,
           ])
         );
       },
@@ -336,19 +328,23 @@ export const cosmeticEntityCaches = Object.fromEntries(
       ttl: CacheTTL.day,
     }),
   ])
-) as Record<CosmeticEntity, CachedObject<WithClaimKey<ContentDecorationCosmetic>>>;
+) as Record<CosmeticEntity, CachedObject<ContentDecorationCosmetic>>;
 
 type EntityEventDecorationLookupRaw = {
   equippedToId: number;
   cosmeticId: number;
-  claimKey: string;
+  userId: number;
 };
+// userId is the wearer's, for the hat popover; getEventDecorationsForEntity leaves it out of what
+// it sends.
+type WornEventDecoration = EventDecorationCosmetic & { userId: number };
 /** The event decoration each entity wears, cached apart from its frame so neither displaces the other. */
 export const eventDecorationEntityCaches = Object.fromEntries(
   Object.values(CosmeticEntity).map((entity) => [
     entity as CosmeticEntity,
-    createCachedObject<WithClaimKey<EventDecorationCosmetic>>({
-      key: `${REDIS_KEYS.CACHES.COSMETICS}:event:${entity}`,
+    createCachedObject<WornEventDecoration>({
+      // v2: entries carry userId.
+      key: `${REDIS_KEYS.CACHES.COSMETICS}:event:v2:${entity}`,
       idKey: 'equippedToId',
       // Read on every image feed page while an event runs, and almost no entity wears one, so
       // misses are cached too. Equip, unequip and revoke refresh, which overwrites a cached miss.
@@ -356,7 +352,7 @@ export const eventDecorationEntityCaches = Object.fromEntries(
       staleWhileRevalidate: false,
       lookupFn: async (ids) => {
         const rows = await dbWrite.$queryRaw<EntityEventDecorationLookupRaw[]>`
-          SELECT uc."cosmeticId", uc."equippedToId", uc."claimKey"
+          SELECT uc."cosmeticId", uc."equippedToId", uc."userId"
           FROM "UserCosmetic" uc
           JOIN "Cosmetic" c ON c.id = uc."cosmeticId"
           WHERE uc."equippedToId" IN (${Prisma.join(ids as number[])})
@@ -364,7 +360,7 @@ export const eventDecorationEntityCaches = Object.fromEntries(
             AND jsonb_typeof(c.data->'event') = 'string';
         `;
         const cosmetics = await cosmeticCache.fetch([...new Set(rows.map((x) => x.cosmeticId))]);
-        const result: Record<number, WithClaimKey<EventDecorationCosmetic>> = {};
+        const result: Record<number, WornEventDecoration> = {};
         for (const row of rows) {
           const cosmetic = cosmetics[row.cosmeticId];
           if (!cosmetic || !isEventDecorationData(cosmetic.data)) continue;
@@ -374,9 +370,9 @@ export const eventDecorationEntityCaches = Object.fromEntries(
             type: cosmetic.type,
             source: cosmetic.source,
             data: cosmetic.data,
-            claimKey: row.claimKey,
             equippedToId: row.equippedToId,
             equippedToType: entity as CosmeticEntity,
+            userId: row.userId,
           };
         }
         return result;
@@ -384,7 +380,50 @@ export const eventDecorationEntityCaches = Object.fromEntries(
       ttl: CacheTTL.day,
     }),
   ])
-) as Record<CosmeticEntity, CachedObject<WithClaimKey<EventDecorationCosmetic>>>;
+) as Record<CosmeticEntity, CachedObject<WornEventDecoration>>;
+
+// Content anyone may see, for the hat popover, which is the same for every viewer: only public ids
+// are returned, so a miss reads as not public. No stale serving, so a take-down shows within the TTL.
+// The same rules as reviewedImageWhere and the published-model checks elsewhere; change them together.
+const publicContentCache = (
+  entity: 'Image' | 'Model' | 'Article',
+  lookup: (ids: number[]) => Promise<{ id: number }[]>
+) =>
+  createCachedObject<{ id: number }>({
+    key: `${REDIS_KEYS.CACHES.COSMETICS}:event-public:${entity}`,
+    idKey: 'id',
+    ttl: 5 * 60,
+    notFoundTtl: 5 * 60,
+    staleWhileRevalidate: false,
+    lookupFn: async (ids) => Object.fromEntries((await lookup(ids)).map((row) => [row.id, row])),
+  });
+export const publicContentCaches: Partial<Record<CosmeticEntity, CachedObject<{ id: number }>>> = {
+  Image: publicContentCache(
+    'Image',
+    (ids) => dbRead.$queryRaw`
+      SELECT i.id FROM "Image" i JOIN "Post" p ON p.id = i."postId"
+      WHERE i.id IN (${Prisma.join(ids)}) AND p."publishedAt" <= now()
+        AND p.availability <> 'Private' AND NOT p."tosViolation"
+        AND i.ingestion = 'Scanned' AND i."needsReview" IS NULL AND NOT i."tosViolation"
+    `
+  ),
+  Model: publicContentCache(
+    'Model',
+    (ids) => dbRead.$queryRaw`
+      SELECT m.id FROM "Model" m
+      WHERE m.id IN (${Prisma.join(ids)}) AND m.status = 'Published'
+        AND m.availability <> 'Private' AND NOT m."tosViolation"
+    `
+  ),
+  Article: publicContentCache(
+    'Article',
+    (ids) => dbRead.$queryRaw`
+      SELECT a.id FROM "Article" a
+      WHERE a.id IN (${Prisma.join(ids)}) AND a.status = 'Published'
+        AND a.ingestion = 'Scanned' AND a.availability <> 'Private' AND NOT a."tosViolation"
+    `
+  ),
+};
 
 type CachedUserMultiplier = UserMultipliers;
 export const userMultipliersCache = createCachedObject<CachedUserMultiplier>({

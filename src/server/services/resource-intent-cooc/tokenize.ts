@@ -4,8 +4,11 @@
  * `src/server/services/__tests__/resource-intent-cooc.tokenize.seam.test.ts` compares every
  * function here with the screen's own source.
  *
- * 🔴 KEEP THIS MODULE A LEAF (no imports): the request path will load it, and must not pull in the
- * builder or the DB graph with it.
+ * The request path loads this module (`resource-intent.service.ts` imports it for the POOL_MERGE
+ * arm). It has no imports. That was meant to keep the builder and the DB graph off the request
+ * path, but it no longer does: the same service imports `spec.ts` (which imports `build.ts`) and
+ * `holder.ts` (which imports `store.ts` and the DB client). No current reason to keep this module
+ * import-free is known.
  */
 
 /** NFKD, strip combining marks, lowercase, every run of non-letter/non-digit → one space. */

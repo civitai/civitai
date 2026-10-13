@@ -23,8 +23,13 @@ const { equip, placeable } = vi.hoisted(() => ({
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof TrpcModule>()),
   trpc: makeTrpcProxy({
-    'event.getPlaceableContent': {
-      useQuery: () => ({ data: placeable, isLoading: false, isError: false }),
+    'event.getPlaceableContentPage': {
+      useInfiniteQuery: ({ entityType }: { entityType: string }) => ({
+        data: { pages: [{ items: placeable.filter((p) => p.entityType === entityType) }] },
+        isLoading: false,
+        isError: false,
+        hasNextPage: false,
+      }),
     },
   }),
 }));

@@ -45,6 +45,26 @@ vi.mock('~/utils/notifications', async (importOriginal) => ({
   showErrorNotification: notify,
 }));
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => viewer.current }));
+// The live points subscription needs the app's SignalProvider; record what the popover mounts.
+const livePoints = vi.hoisted(() => vi.fn());
+vi.mock('~/components/Events/ScoredEvent/event-points-live', () => ({
+  WornHatLivePoints: (props: unknown) => {
+    livePoints(props);
+    return null;
+  },
+}));
+// Formats as the real one does (Intl compact, so 1.2K), without its digit columns.
+vi.mock('~/components/Metrics/AnimatedCount', () => ({
+  AnimatedCount: ({ value, abbreviate = true }: { value: number; abbreviate?: boolean }) =>
+    React.createElement(
+      'span',
+      null,
+      new Intl.NumberFormat(
+        'en-US',
+        abbreviate ? { notation: 'compact', maximumFractionDigits: 1 } : {}
+      ).format(value)
+    ),
+}));
 vi.mock('~/components/EdgeMedia/EdgeMedia', () => ({
   EdgeMedia: () => null,
   EdgeMedia2: () => null,
@@ -66,6 +86,7 @@ const WORN = {
   team: 'Blue',
   url: 'u',
   owner: { id: 9, username: 'civbot', image: null },
+  topicId: 'a1b2c3d4e5f60718',
   points: 1234,
   impressions: 56789,
   reactions: 12,
@@ -84,6 +105,7 @@ beforeEach(() => {
   myHats.fetch.mockReset();
   dialogs.trigger.mockReset();
   notify.mockReset();
+  livePoints.mockReset();
 });
 afterEach(() => {
   act(() => root?.unmount());
@@ -125,6 +147,8 @@ const hatButton = () =>
   document.querySelector<HTMLButtonElement>('button[data-event-decoration="hat"]')!;
 const popover = () => document.querySelector<HTMLElement>('[data-testid="worn-hat-popover"]');
 const clickHat = () => act(() => hatButton().click());
+const moveButton = () =>
+  [...popover()!.querySelectorAll('button')].find((b) => b.textContent === 'Move');
 const enabledFlags = () =>
   wornHat.useQuery.mock.calls.map(([, opts]) => (opts as { enabled: boolean }).enabled);
 
@@ -144,17 +168,32 @@ describe('a hatted feed card', () => {
     expect(opts).toEqual({ enabled: true });
 
     const dropdown = popover()!;
-    expect(dropdown.textContent).toContain("Civitai's 4th Birthday · Team hat");
+    // No eyebrow naming the event: the button below already does (Justin, 2026-10-09).
+    expect(dropdown.textContent).not.toContain('Team hat');
+    expect(dropdown.textContent).toMatch(/^Party Cap/);
     expect(dropdown.textContent).toContain('Party Cap');
     expect(dropdown.textContent).toContain('Worn by');
     expect(dropdown.querySelector('[data-testid="wearer"]')?.textContent).toBe('civbot');
-    expect(dropdown.textContent).toContain('1.2k');
+    expect(dropdown.textContent).toContain('1.2K');
     expect(dropdown.textContent).toContain('56.8k');
     expect(dropdown.textContent).toContain("Scores for Team Blue while it's worn");
     const link = [...dropdown.querySelectorAll('a')].find((a) =>
       a.textContent?.includes('See the birthday event')
     );
     expect(link?.getAttribute('href')).toBe('/events/birthday2026');
+  });
+
+  // A feed of hatted cards must not listen for every hat: only an open popover follows its total.
+  it('follows the hat total live only while the popover is open', () => {
+    renderCard();
+    expect(livePoints.mock.calls).toEqual([]);
+    clickHat();
+    expect(livePoints.mock.calls.at(-1)![0]).toEqual({
+      event: 'birthday2026',
+      entityType: 'Image',
+      entityId: 5,
+      topicId: 'a1b2c3d4e5f60718',
+    });
   });
 
   it('keeps the confetti, and the click never reaches the card or anything above it', () => {
@@ -196,7 +235,7 @@ describe('a hatted feed card', () => {
     clickHat();
     expect(popover()!.textContent).not.toContain('Worn by');
     expect(popover()!.textContent).not.toContain('Your hat');
-    expect(popover()!.textContent).toContain('1.2k');
+    expect(popover()!.textContent).toContain('1.2K');
   });
 
   // A click leaves focus on the hat, outside the dropdown that handles Escape itself.
@@ -303,7 +342,8 @@ describe('a hatted feed card', () => {
     clickHat();
     expect(popover()!.textContent).toContain('Worn by');
     expect(popover()!.textContent).not.toContain('Your hat');
-    expect(popover()!.textContent).not.toContain('Move it');
+    expect(moveButton()).toBeUndefined();
+    expect(popover()!.textContent).not.toMatch(/\bMove\b/);
   });
 
   it("calls the viewer's own hat theirs and offers to move it", () => {
@@ -311,7 +351,7 @@ describe('a hatted feed card', () => {
     renderCard();
     clickHat();
     expect(popover()!.textContent).toContain('Your hat');
-    expect(popover()!.textContent).toContain('Move it');
+    expect(moveButton()).toBeDefined();
     expect(popover()!.textContent).not.toContain('Worn by');
   });
 
@@ -337,7 +377,7 @@ describe('a hatted feed card', () => {
     renderCard();
     clickHat();
     await act(async () => {
-      [...popover()!.querySelectorAll('button')].find((b) => b.textContent === 'Move it')!.click();
+      moveButton()!.click();
     });
     expect(myHats.fetch).toHaveBeenCalledWith({ event: 'birthday2026' });
     expect(dialogs.trigger).toHaveBeenCalledTimes(1);
@@ -356,7 +396,7 @@ describe('a hatted feed card', () => {
     renderCard();
     clickHat();
     await act(async () => {
-      [...popover()!.querySelectorAll('button')].find((b) => b.textContent === 'Move it')!.click();
+      moveButton()!.click();
     });
     expect(dialogs.trigger).not.toHaveBeenCalled();
     expect(notify).toHaveBeenCalledTimes(1);
@@ -368,6 +408,7 @@ describe('a hatted feed card', () => {
     clickHat();
     expect(popover()!.textContent).toContain('Stats unavailable');
     expect(popover()!.textContent).toContain('See the birthday event');
+    expect(popover()!.textContent).not.toContain('Team hat');
   });
 
   it('says there is nothing to show when the hat is not there now', () => {
@@ -385,6 +426,8 @@ describe('a hatted feed card', () => {
     clickHat();
     expect(popover()!.querySelector('.mantine-Skeleton-root')).not.toBeNull();
     expect(popover()!.textContent).not.toContain('Stats unavailable');
+    // No event eyebrow above the skeleton either.
+    expect(popover()!.textContent).not.toContain('Team hat');
   });
 });
 
@@ -408,5 +451,140 @@ describe('a hat not worn on content', () => {
     });
     expect(outerKeyDown).toHaveBeenCalledTimes(1);
     expect(hatButton().getAttribute('data-mantine-stop-propagation')).toBeNull();
+  });
+});
+
+// The Ellie review (2026-10-09): the arrow points at the hat, the points stand apart from the four
+// ways that make them up, each way has its icon, and moving your hat is a badge.
+describe('the popover layout', () => {
+  const stats = () => popover()!.querySelector<HTMLElement>('[data-testid="hat-stats"]')!;
+  // Each way's figure, then a visible label of icon and word; and which icon, in which colour.
+  const ways = () =>
+    [...stats().querySelectorAll<HTMLElement>('[data-way]')].map((w) => {
+      const [figure, label] = [...w.children];
+      const icon = label.querySelector('svg')!;
+      return [
+        w.dataset.way,
+        figure.textContent,
+        label.textContent,
+        `${icon.getAttribute('class')?.match(/tabler-icon-([\w-]+)/)?.[1]} ${icon.getAttribute(
+          'stroke'
+        )}`,
+        // The popover has room for the words: no tooltip stands in for them.
+        w.title,
+      ];
+    });
+
+  it('shows the points on their own, then views, reactions, comments and remixes', () => {
+    renderCard();
+    clickHat();
+    expect(stats().querySelector('[data-testid="hat-stat-points"]')?.textContent).toBe(
+      '1.2Kpoints'
+    );
+    // Comments and remixes score from scoring v2 on: until the server sends them, a dash, not a 0.
+    expect(ways()).toEqual([
+      ['views', '56.8k', 'views', 'eye var(--mantine-color-blue-5)', ''],
+      ['reactions', '12', 'reactions', 'heart var(--mantine-color-pink-5)', ''],
+      ['comments', '–', 'comments', 'message-circle var(--mantine-color-green-5)', ''],
+      ['remixes', '–', 'remixes', 'hierarchy var(--mantine-color-violet-5)', ''],
+    ]);
+  });
+
+  // Two copies of one design on one owner, and the hat map no longer says which: no points to show.
+  it('shows the hat and its wearer but no stats when the server cannot tell which copy it is', () => {
+    wornHat.result = { data: { ...WORN, topicId: null }, isLoading: false, isError: false };
+    renderCard();
+    clickHat();
+    expect(popover()!.querySelector('[data-testid="hat-stats"]')).toBeNull();
+    expect(popover()!.querySelector('[data-testid="wearer"]')?.textContent).toBe('civbot');
+    expect(livePoints).not.toHaveBeenCalled();
+  });
+
+  it('shows comments and remixes once the server counts them', () => {
+    wornHat.result = {
+      data: { ...WORN, comments: 3, remixes: 0 },
+      isLoading: false,
+      isError: false,
+    };
+    renderCard();
+    clickHat();
+    expect(
+      ways()
+        .slice(2)
+        .map(([way, figure]) => [way, figure])
+    ).toEqual([
+      ['comments', '3'],
+      ['remixes', '0'],
+    ]);
+  });
+
+  // Justin, 2026-10-09: the points tile is at least square, as wide as the 2x2 beside it is tall,
+  // and the popover keeps one decimal (123.5k) where a card rounds.
+  it('keeps the points tile at least square, with a decimal in each way', () => {
+    wornHat.result = {
+      data: { ...WORN, impressions: 123_456 },
+      isLoading: false,
+      isError: false,
+    };
+    renderCard();
+    clickHat();
+    const points = stats().querySelector<HTMLElement>('[data-testid="hat-stat-points"]')!;
+    const cells = [...stats().querySelectorAll<HTMLElement>('[data-way]')];
+    // Two 40px cells and a 6px gap: 86px.
+    expect(cells.every((c) => c.className.split(' ').includes('h-10'))).toBe(true);
+    expect(points.className.split(' ')).toContain('min-w-[86px]');
+    expect(cells[0].textContent).toBe('123.5kviews');
+  });
+
+  it("colours the points in the hat's team colour", () => {
+    renderCard();
+    clickHat();
+    const figure = stats().querySelector<HTMLElement>('[data-testid="hat-stat-points"] p')!;
+    // Team Blue's colour, as the team badge beside the name shows it.
+    expect(figure.style.color).toBe('#228be6');
+  });
+
+  it('labels your hat, and offers the move, as badges', () => {
+    viewer.current = { id: 9 };
+    renderCard();
+    clickHat();
+    const badges = [...popover()!.querySelectorAll('.mantine-Badge-root')].map((b) => [
+      b.tagName,
+      b.textContent,
+    ]);
+    expect(badges).toEqual([
+      ['DIV', 'Blue'],
+      ['DIV', 'Your hat'],
+      ['BUTTON', 'Move'],
+    ]);
+  });
+
+  // Mantine pins the arrow 5px from the dropdown's start edge unless told to follow the target.
+  it('points its arrow at the hat, not at the corner of the dropdown', () => {
+    renderCard();
+    clickHat();
+    const arrow = popover()!.querySelector<HTMLElement>('.mantine-Popover-arrow');
+    expect(arrow).not.toBeNull();
+    // Centred, Mantine positions the arrow from the measured target (`arrowX`), which happy-dom
+    // cannot measure, so `left` is unset. Pinned to the side it is a fixed offset ('5px' by default,
+    // or whatever `arrowOffset` says). Real centring is only visible in a browser.
+    expect([arrow!.style.left, arrow!.style.width]).toEqual(['', '10px']);
+  });
+});
+
+// Positive control for the arrow arm: the same popover without `arrowPosition="center"` does pin it
+// at 5px in this environment, so that arm can fail.
+describe('a start-aligned popover left at its default arrow', () => {
+  it('pins the arrow 5px in', async () => {
+    const { Popover } = await import('@mantine/core');
+    render(
+      React.createElement(
+        Popover,
+        { opened: true, position: 'bottom-start', withArrow: true },
+        React.createElement(Popover.Target, null, React.createElement('button', null, 'hat')),
+        React.createElement(Popover.Dropdown, { 'data-testid': 'worn-hat-popover' }, 'x')
+      )
+    );
+    expect(popover()!.querySelector<HTMLElement>('.mantine-Popover-arrow')!.style.left).toBe('5px');
   });
 });

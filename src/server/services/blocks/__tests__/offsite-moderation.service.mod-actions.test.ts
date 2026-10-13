@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as AppListingRating from '~/server/services/blocks/app-listing-rating';
 import { TRPCError } from '@trpc/server';
 
 import { NsfwLevel } from '~/server/common/enums';
@@ -131,6 +132,16 @@ const { mockRead, mockWrite, mockNotify, mockLogToAxiom, ids } = vi.hoisted(() =
 });
 
 vi.mock('~/server/db/client', () => ({ dbRead: mockRead, dbWrite: mockWrite }));
+
+// The post-commit history write is a seam: these suites pin what each go-live HANDS it;
+// `app-listing-rating.test.ts` pins that it writes one event only when the value changed.
+const { recordRatingChange } = vi.hoisted(() => ({
+  recordRatingChange: vi.fn(async (..._a: unknown[]): Promise<void> => undefined),
+}));
+vi.mock('~/server/services/blocks/app-listing-rating', async (importOriginal) => ({
+  ...(await importOriginal<typeof AppListingRating>()),
+  recordListingRatingChangeAfterCommit: (...a: unknown[]) => recordRatingChange(...a),
+}));
 // The on-site relist / owner-republish drift warn is a dynamic import of this module.
 vi.mock('~/server/logging/client', () => ({ logToAxiom: mockLogToAxiom }));
 vi.mock('~/server/utils/app-block-ids', () => ({
@@ -2064,6 +2075,15 @@ describe('republishOwnListing — go-live RATING FLOOR (uniform, both kinds)', (
     });
     await republishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER });
     expect(flipData()).toEqual({ status: 'approved', contentRating: 'r' });
+    // Handed an unchanged pair, which the recorder writes nothing for.
+    expect(recordRatingChange).toHaveBeenCalledTimes(1);
+    expect(recordRatingChange).toHaveBeenCalledWith({
+      appListingId: APP_ID,
+      slug: SLUG,
+      before: 'r',
+      after: 'r',
+      actorUserId: OWNER,
+    });
   });
 
   it.each(KINDS)('%s: media ABOVE declared → rating RAISED to the derived value', async (kind) => {
@@ -2076,6 +2096,14 @@ describe('republishOwnListing — go-live RATING FLOOR (uniform, both kinds)', (
     });
     await republishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER });
     expect(flipData()).toEqual({ status: 'approved', contentRating: 'x' });
+    expect(recordRatingChange).toHaveBeenCalledTimes(1);
+    expect(recordRatingChange).toHaveBeenCalledWith({
+      appListingId: APP_ID,
+      slug: SLUG,
+      before: 'g',
+      after: 'x',
+      actorUserId: OWNER,
+    });
     // 🔴 The derive is scoped to THIS listing. Asserted over EVERY screenshot read, not
     // via `toHaveBeenCalledWith` — the scan gate makes the same call with the same id
     // one step earlier, so a "was it ever called with APP_ID" matcher is satisfied by

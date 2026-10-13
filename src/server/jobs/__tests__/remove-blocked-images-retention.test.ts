@@ -168,6 +168,16 @@ vi.mock('~/env/server', () => ({ env: mockEnv }));
 
 import { purgeHoldGuard, removeBlockedImages } from '~/server/jobs/image-ingestion';
 
+const TRAINING_ENV = {
+  APPEAL_TRAINING_B2_BUCKET: 'training',
+  APPEAL_TRAINING_B2_ACCESS_KEY: 'a',
+  APPEAL_TRAINING_B2_SECRET_KEY: 's',
+  S3_IMAGE_B2_ENDPOINT: 'https://b2.example',
+  S3_IMAGE_B2_ACCESS_KEY: 'ia',
+  S3_IMAGE_B2_SECRET_KEY: 'is',
+  APPEAL_OWNER_HASH_KEY: 'o',
+};
+
 const ctx = {} as Parameters<typeof removeBlockedImages.run>[0];
 async function runJob() {
   return (await removeBlockedImages.run(ctx).result) as Partial<{
@@ -211,6 +221,7 @@ beforeEach(() => {
     { userId: STRANDED_USER, oldestReport: OLD_REPORT }
   );
   mockEnv.DATABASE_IS_PROD = true;
+  for (const key of Object.keys(TRAINING_ENV)) delete (mockEnv as Record<string, unknown>)[key];
   mockDbRead.jobQueue.findMany.mockClear();
   mockDbRead.$queryRaw.mockClear();
   mockDbWrite.$queryRaw.mockClear();
@@ -425,8 +436,17 @@ describe('remove-blocked-images retention clock', () => {
     await runJob();
 
     const onlyWhere = deleteOptions()?.onlyWhere as { sql: string; values: unknown[] } | undefined;
-    expect(onlyWhere?.sql).toBe(purgeHoldGuard([]).sql);
+    expect(onlyWhere?.sql).toBe(purgeHoldGuard([], { holdForTrainingCopy: false }).sql);
     expect(onlyWhere?.values).toEqual([[STRANDED_USER]]);
+  });
+
+  it('adds the training-copy hold only when the copy job is configured', async () => {
+    Object.assign(mockEnv, TRAINING_ENV);
+    await runJob();
+
+    const onlyWhere = deleteOptions()?.onlyWhere as { sql: string } | undefined;
+    expect(onlyWhere?.sql).toBe(purgeHoldGuard([], { holdForTrainingCopy: true }).sql);
+    expect(onlyWhere?.sql).not.toBe(purgeHoldGuard([], { holdForTrainingCopy: false }).sql);
   });
 
   it('guards the non-retracting delete as well as the takedown one', async () => {
@@ -438,7 +458,7 @@ describe('remove-blocked-images retention clock', () => {
     );
     expect(guards).toHaveLength(2);
     for (const guard of guards) {
-      expect(guard?.sql).toBe(purgeHoldGuard([]).sql);
+      expect(guard?.sql).toBe(purgeHoldGuard([], { holdForTrainingCopy: false }).sql);
       expect(guard?.values).toEqual([[STRANDED_USER]]);
     }
   });

@@ -60,8 +60,17 @@ vi.mock('~/components/Countdown/Countdown', () => ({ Countdown: () => null }));
 vi.mock('~/components/LoginRedirect/LoginRedirect', () => ({
   LoginRedirect: ({ children }: { children: React.ReactNode }) => children,
 }));
+// Formats as the real one does, without its digit columns, so the text reads as on screen.
 vi.mock('~/components/Metrics/AnimatedCount', () => ({
-  AnimatedCount: ({ value }: { value: number }) => React.createElement('span', null, value),
+  AnimatedCount: ({ value, abbreviate = true }: { value: number; abbreviate?: boolean }) =>
+    React.createElement(
+      'span',
+      null,
+      new Intl.NumberFormat(
+        'en-US',
+        abbreviate ? { notation: 'compact', maximumFractionDigits: 1 } : {}
+      ).format(value)
+    ),
 }));
 
 const { MyEventHats } = await import('~/components/Events/ScoredEvent/MyEventHats');
@@ -120,15 +129,72 @@ describe('Your hats cards', () => {
       })
     );
 
-  it('groups the three numbers in one strip, points first in the team colour', () => {
+  // The popover's layout (Ellie review, 2026-10-09): points on their own in the team colour, beside
+  // the four ways that make them up. A card has no room for the words, so each way is its icon
+  // and number, with the word kept for screen readers and the tooltip.
+  it('shows the points on their own in the team colour, then the four ways as icon and number', () => {
     const card = cards([hat({ placedOn: placed })]).querySelector('[data-testid="my-hat"]')!;
-    const strip = card.querySelector('[data-testid="hat-stats"]')!;
-    expect([...strip.children].map((s) => s.textContent)).toEqual([
-      '1.5kpoints',
-      '12views',
-      '3reactions',
+    const stats = card.querySelector('[data-testid="hat-stats"]')!;
+    const points = stats.querySelector<HTMLElement>('[data-testid="hat-stat-points"]')!;
+    // Formatted by AnimatedCount, as reaction counts and the hero's figures are.
+    expect(points.textContent).toBe('1.5Kpoints');
+    expect((points.firstElementChild as HTMLElement).style.color).toBe('#339af0');
+    expect(
+      [...stats.querySelectorAll<HTMLElement>('[data-way]')].map((w) => [
+        w.title,
+        w.firstElementChild?.tagName.toLowerCase(),
+        w.textContent,
+      ])
+    ).toEqual([
+      ['views', 'svg', '12views'],
+      ['reactions', 'svg', '3reactions'],
+      // Counted from scoring v2 on; a dash until then, never a 0 the post may not have.
+      ['comments', 'svg', '–comments'],
+      ['remixes', 'svg', '–remixes'],
     ]);
-    expect((strip.children[0].firstElementChild as HTMLElement).style.color).toBe('#339af0');
+  });
+
+  // The counts are live like the points (event-points-live.tsx), so nothing says they trail them.
+  it('carries no hourly note under the four ways', () => {
+    const card = cards([hat({ placedOn: placed })]).querySelector('[data-testid="my-hat"]')!;
+    const stats = card.querySelector<HTMLElement>('[data-testid="hat-stats"]')!;
+    expect(stats.querySelector('[data-way="views"]')).not.toBeNull();
+    expect(stats.textContent).not.toMatch(/hourly/i);
+  });
+
+  // Justin, 2026-10-09: on a phone the numbers were cut off. A narrow card stacks the points above
+  // the 2x2, side by side only from 13rem, and its cells show whole thousands.
+  it('stacks the points above the four ways on a narrow card, with whole thousands', () => {
+    const card = cards([
+      hat({ placedOn: placed, impressions: 123_456, reactions: 98_765 }),
+    ]).querySelector('[data-testid="my-hat"]')!;
+    const stats = card.querySelector<HTMLElement>('[data-testid="hat-stats"]')!;
+    expect(stats.parentElement!.className).toBe('@container');
+    expect(stats.className.split(' ')).toEqual(
+      expect.arrayContaining([
+        'flex',
+        'flex-col',
+        '@[13rem]:grid',
+        '@[13rem]:grid-cols-[auto_minmax(0,1fr)]',
+      ])
+    );
+    expect(
+      [...stats.querySelectorAll<HTMLElement>('[data-way]')].slice(0, 2).map((w) => w.textContent)
+    ).toEqual(['123kviews', '99kreactions']);
+  });
+
+  // Justin, 2026-10-09: the points tile is at least square, as wide as the 2x2 beside it is tall.
+  it('keeps the points tile at least as wide as the 2x2 is tall', () => {
+    const stats = cards([hat({ placedOn: placed })]).querySelector<HTMLElement>(
+      '[data-testid="hat-stats"]'
+    )!;
+    const points = stats.querySelector<HTMLElement>('[data-testid="hat-stat-points"]')!;
+    const cells = [...stats.querySelectorAll<HTMLElement>('[data-way]')];
+    // Two 28px cells and a 6px gap: 62px.
+    expect(cells.every((c) => c.className.split(' ').includes('h-7'))).toBe(true);
+    expect(points.className.split(' ')).toEqual(
+      expect.arrayContaining(['@[13rem]:min-w-[62px]', '@[13rem]:flex-col'])
+    );
   });
 
   it('puts Move on the picture of a worn hat, not under the card', () => {
@@ -137,7 +203,9 @@ describe('Your hats cards', () => {
     const picture = card.querySelector('[data-testid="thumb"]')!.parentElement!;
     expect(picture.contains(move)).toBe(true);
     expect(move.className).toContain('absolute');
-    expect(card.textContent).toContain('On your image');
+    // No line saying what it's on: the picture shows it (Justin, 2026-10-09).
+    expect(card.textContent).toContain('Party Cap - Blue');
+    expect(card.textContent).not.toMatch(/\bOn\b|Not on anything/);
   });
 
   it('shows an unworn hat on its own art, with Place it on the picture', () => {
@@ -146,13 +214,28 @@ describe('Your hats cards', () => {
     expect(srcs(card)).toEqual(['hat-art']);
     const place = [...card.querySelectorAll('button')].find((b) => b.textContent === 'Place it')!;
     expect(place.parentElement!.contains(card.querySelector('img'))).toBe(true);
-    expect(card.textContent).toContain('Not on anything yet');
+    expect(card.textContent).toContain('Party Cap - Blue');
+    expect(card.textContent).not.toMatch(/\bOn\b|Not on anything/);
   });
 
-  it('offers no action once the event has ended, on worn or unworn hats', () => {
+  // Justin and Ellie, 2026-10-09: hats are kept after the event, so they can still be moved and
+  // placed; only buying another is gone.
+  it('still offers Move and Place it once the event has ended, but not another hat', () => {
     const el = cards([hat({ placedOn: placed }), hat({ cosmeticId: 32 })], true);
     expect(el.querySelectorAll('[data-testid="my-hat"]')).toHaveLength(2);
-    expect(el.querySelectorAll('button')).toHaveLength(0);
+    expect([...el.querySelectorAll('button')].map((b) => b.textContent)).toEqual([
+      'Move',
+      'Place it',
+    ]);
+    expect(el.querySelector('[data-testid="get-another-hat"]')).toBeNull();
+  });
+
+  it('keeps the move cooldown once the event has ended', () => {
+    const el = cards([hat({ placedOn: placed, moveCooldownLeftMs: 5 * 60 * 1000 })], true);
+    const move = el.querySelector<HTMLButtonElement>('button')!;
+    expect(move.textContent).toBe('Move');
+    expect(move.disabled).toBe(true);
+    expect(el.textContent).toContain('Can move in 5 min');
   });
 
   // Rows of equal height, so the card is a hat card's size even alone on its row.

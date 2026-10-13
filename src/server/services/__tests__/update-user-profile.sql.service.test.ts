@@ -120,6 +120,7 @@ beforeEach(() => {
     meta: {},
     settings: {},
     publicSettings: {},
+    cosmetics: [],
     profile: { userId: 1, message: null, coverImage: null },
   });
   mockDb.user.findUnique.mockResolvedValue({ id: 1 });
@@ -192,5 +193,29 @@ describe('updateUserProfile — the creator-card stats preferences statement', (
     await updateUserProfile({ userId: USER_ID });
 
     expect(statements).toHaveLength(0);
+  });
+});
+
+describe('updateUserProfile — a new cover image', () => {
+  it('creates the cover row from client columns only', async () => {
+    await updateUserProfile({
+      userId: USER_ID,
+      coverImage: {
+        url: '3f6c2b91-0d84-4a15-9e70-c2b8a4d15e33',
+        type: 'image',
+        width: 640,
+        postId: 9_001,
+        index: 2,
+      } as never,
+    });
+
+    const { coverImage } = (tx.userProfile.update.mock.calls[0] as any[])[0].data;
+    expect(coverImage.connectOrCreate.create).toMatchObject({
+      url: '3f6c2b91-0d84-4a15-9e70-c2b8a4d15e33',
+      width: 640,
+      userId: USER_ID,
+    });
+    expect(coverImage.connectOrCreate.create).not.toHaveProperty('postId');
+    expect(coverImage.connectOrCreate.create).not.toHaveProperty('index');
   });
 });

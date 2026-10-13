@@ -1075,6 +1075,30 @@ describe('🔴 the listing-completeness advisory has a home', () => {
       .element(page.getByText('Replace the blocked cover before it can publish'))
       .toBeInTheDocument();
   });
+
+  test('a live listing hidden by its rating says so, under a heading that is not "Recommended"', async () => {
+    const label =
+      'Rated R — hidden on civitai.com (visible on civitai.red). You declared G; a listing is rated at least as high as its most mature store image — check its images';
+    renderWithProviders(
+      <MyAppsBodyView
+        rows={[
+          row({
+            appListingId: 'apl_hidden',
+            status: 'approved',
+            problems: [{ code: 'hidden-mature-rating', label, severity: 'advisory' }],
+          }),
+        ]}
+      />
+    );
+    const holder = page.getByTestId('apps-mine-problems-apl_hidden');
+    await expect.element(holder).toBeInTheDocument();
+    const indicator = holder.element().querySelector('[data-testid="apps-submission-problems"]');
+    expect(indicator).not.toBeNull();
+    await userEvent.hover(indicator as HTMLElement);
+    await expect.element(page.getByText(label)).toBeInTheDocument();
+    await expect.element(page.getByText('Heads up', { exact: true })).toBeInTheDocument();
+    expect(page.getByText('Recommended', { exact: true }).elements()).toHaveLength(0);
+  });
 });
 
 /* ------------------------------------------------------------------ *

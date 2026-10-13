@@ -8,6 +8,7 @@ import {
 } from '~/shared/constants/browsingLevel.constants';
 import { PLACEMENT_SURFACES } from '~/shared/utils/placement';
 import type * as MetricHelpers from '~/server/utils/metric-helpers';
+import type * as Hooks from '~/server/events/points/hooks';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
@@ -49,6 +50,13 @@ vi.mock('~/server/services/placement-escrow.service', () => ({
 
 const assertCanPlace = vi.fn(async () => undefined);
 vi.mock('~/server/services/placement-moderation.service', () => ({ assertCanPlace }));
+// The event points hook, so a takedown can be seen handing its id over. The hook's own
+// behaviour is tested in src/server/events/points/__tests__/hooks.test.ts.
+const onPlacementsTakenDown = vi.fn(async (..._a: unknown[]) => undefined);
+vi.mock('~/server/events/points/hooks', async (importOriginal) => ({
+  ...(await importOriginal<typeof Hooks>()),
+  onPlacementsTakenDown,
+}));
 
 // Stubbed rather than spread from the original: the real module loads
 // `base.reward`, which pulls the buzz service and its whole import graph into a
@@ -150,8 +158,6 @@ primePlacementUpdate();
 const placementUpdateMany = dbMock.dbWrite.placement.updateMany;
 placementUpdateMany.mockResolvedValue({ count: 1 });
 
-dbMock.dbRead.user.findUnique.mockResolvedValue({ username: 'someone' });
-
 const {
   createRemixGallerySubmission,
   actOnRemixGallerySubmission,
@@ -214,10 +220,13 @@ const goodSubmission: SubmissionFixture = {
 
 const openSpace = {
   ownerId: OWNER,
+  ownerUsername: 'host-owner',
   mode: 'review' as const,
   setPrice: PRICE,
   price: PRICE,
   cap: 1000,
+  declineFee: 210,
+  declineFeeRate: 0.3,
   freeSlots: 2,
   freeSlotsRemaining: 1,
   settings: {},
@@ -1108,6 +1117,7 @@ describe('owner actions', () => {
     });
 
     expect(placementUpdateMany).toHaveBeenCalled();
+    expect(onPlacementsTakenDown).toHaveBeenCalledWith([PLACEMENT]);
   });
 
   it('lets a moderator take down a locked entry', async () => {

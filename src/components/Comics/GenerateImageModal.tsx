@@ -119,12 +119,17 @@ export function GenerateImageModal({
         setSelectedIdx(0);
         setIsGenerating(false);
         activeWorkflowId.current = null;
-      } else if (result.status === 'failed') {
+      } else if (result.status === 'failed' || result.status === 'siteRestricted') {
         setIsGenerating(false);
         activeWorkflowId.current = null;
         showErrorNotification({
           title: 'Generation failed',
-          error: new Error('The image generator returned an error. Please try again.'),
+          error: new Error(
+            ('errorMessage' in result && result.errorMessage) ||
+              (result.status === 'siteRestricted'
+                ? 'This image was rated mature and is not available on this site.'
+                : 'The image generator returned an error. Please try again.')
+          ),
         });
       }
       // If still processing, the next interval tick (or signal) will retry.

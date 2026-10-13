@@ -24,13 +24,16 @@ export const birthday2026 = createEvent(name, {
     headline: 'Civitai turns 4.',
     headlineAccent: 'Pick up a hat.',
     heroImage: '4a5e404d-ece2-4cca-bbab-cb5a7b0d8d9d',
-    dates: 'Nov 11 to Nov 25',
+    homeImage: '15d5d13d-42ad-4d93-9bbe-a50179a5240e',
+    // The 42-second cut. Its duration is the file's own (mvhd 42411 / 1000); re-read it on a new cut.
+    heroVideo: { id: 'ecd5aeef-b4d5-497d-bdd7-51750c302122', title: 'Hats On', duration: 42.411 },
+    dates: 'Nov 1 to Nov 30',
     summary:
-      'Four colour teams. Put party hats on your images, models and articles, and every view and reaction they get scores for your team.',
+      'Four color teams. Put party hats on your images, models and articles. Views, reactions, comments, stickers, accepted remixes and model likes from signed-in members all score for your team.',
     steps: [
       {
         title: 'Join',
-        body: 'You land on one of four teams at random and get a free Party Cap in your colour. Your team is yours for the whole event.',
+        body: 'You land on one of four teams at random and get a free Party Cap in your color. Your team is yours for the whole event.',
       },
       {
         title: 'Hat your best work',
@@ -38,12 +41,12 @@ export const birthday2026 = createEvent(name, {
       },
       {
         title: 'Score for your team',
-        body: 'While your content wears a hat, its views and reactions count for your team. More hats on more content means more chances to score.',
+        body: "While your content wears a hat, its views, reactions, comments, stickers, accepted remixes and model likes from signed-in members count for your team. Hats keep earning while you're away, so there's nothing to do daily.",
       },
     ],
     prize: {
       title: 'Birthday 2026 Champion badge',
-      body: 'An animated badge in the winning colour, for every member of the winning team whose hats earned points.',
+      body: 'An animated badge in the winning color, for every member of the winning team whose hats earned points.',
     },
     prizeBadge: {
       Yellow: {
@@ -66,20 +69,53 @@ export const birthday2026 = createEvent(name, {
     faq: [
       {
         question: 'What happens to my hats when the event ends?',
-        answer: 'They come off your content and stop scoring.',
+        answer:
+          "You keep them. They stay on your content and you can still move them, they just stop scoring and aren't sold any more.",
+      },
+      {
+        question: 'Do I keep hats bought during the tester and mod preview?',
+        answer: 'Yes.',
+      },
+      {
+        question: 'Do I need to do anything every day?',
+        answer:
+          "No. A hat keeps earning while it's on your content, whether or not you visit. Place it once and it scores for your team while you're away.",
       },
       {
         question: 'Can I change teams?',
         answer: 'No. Teams are assigned at random when you join and stay fixed.',
       },
+      {
+        question: "Won't the biggest creators make it unfair?",
+        answer:
+          "We've thought about that. Teams are still random, but we make sure the most active creators are spread evenly across all four teams, so no team starts out stacked.",
+      },
     ],
   },
   banner: {
     accent: 'Pick up a hat.',
-    text: 'Four colour teams, Nov 11 to Nov 25. Hat your best work and score for your team.',
+    text: 'Four color teams, Nov 1 to Nov 30. Hat your best work and score for your team.',
     cta: 'Join a team',
     // The hero art's backdrop, so the strip runs on seamlessly to the left of the image.
     background: '#1c1a30',
+  },
+  promo: {
+    postEditor: {
+      body: 'Put a party hat on an image in this post. Its views and reactions score for your team.',
+      draftNote: 'Scores once people can see it.',
+    },
+    articleEditor: {
+      body: 'Put a party hat on this article. Its views, reactions and comments score for your team.',
+      draftNote: 'Scores once it is published.',
+    },
+    modelEditor: {
+      body: 'Put a party hat on this model. Its views and likes score for your team.',
+      draftNote: 'Scores once it is published.',
+    },
+    homeBlock: {
+      eyebrow: "Civitai's 4th Birthday",
+      cta: 'See the event',
+    },
   },
   // Copies: consumers must never be able to mutate the shared constants.
   startDate: new Date(BIRTHDAY_2026_STARTS_AT.getTime()),
@@ -90,15 +126,19 @@ export const birthday2026 = createEvent(name, {
   teams: BIRTHDAY_2026_TEAMS,
   // Display name only; the join cosmetic is found by data (event, team, design).
   cosmeticName: 'Party Cap',
-  join: { claimKey: 'claimed', design: 'basic' },
+  join: { claimKey: 'claimed', design: 'basic', balance: true },
   badgePrefix: 'Birthday 2026',
   scoring: {
-    reactionWeight: 10,
-    anonFloor: 10,
-    anonRatio: 1,
-    botSessionEntityLimit: 1500,
+    capPerActorPerOwnerPerDay: 50,
+    types: {
+      view: { weight: 1, once: 'day', entities: ['Image', 'Model', 'Article'] },
+      reaction: { weight: 5, once: 'event', entities: ['Image', 'Article'] },
+      comment: { weight: 5, once: 'event', entities: ['Image', 'Article'] },
+      sticker: { weight: 10, once: 'event', entities: ['Image'] },
+      remix: { weight: 25, once: 'event', entities: ['Image'] },
+      modelLike: { weight: 5, once: 'event', entities: ['Model'] },
+    },
     newAccountDays: 7,
-    viewerOwnerDailyCap: 50,
     finalizeAfterMs: 24 * 60 * 60 * 1000,
   },
 });

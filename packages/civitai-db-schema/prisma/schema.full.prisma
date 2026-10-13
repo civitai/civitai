@@ -578,6 +578,7 @@ model User {
   issuedStrikes               UserStrike[]                    @relation("strikeIssuedBy")
   voidedStrikes               UserStrike[]                    @relation("strikeVoidedBy")
   generationPresets           GenerationPreset[]
+  postPresets                 PostPreset[]
   generationSizePresets       GenerationSizePreset[]
   ownedWildcardSets           WildcardSet[]                   @relation("WildcardSetOwner")
   blurbs                      Blurb[]
@@ -3514,6 +3515,8 @@ model AppSubListingParent {
   parentListing   AppListing @relation("AppSubListingParentSwitch", fields: [parentListingId], references: [id], onDelete: Cascade)
   enabled         Boolean    @default(false)
   maxPerAuthor    Int        @default(20) @map("max_per_author")
+  /// The https URL an off-site parent's store cards open, with one `{id}` (manual-apply column).
+  linkTemplate    String?    @map("link_template")
   createdAt       DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt       DateTime   @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
@@ -4821,6 +4824,8 @@ model Thread {
   // is the same DB (main civitai nvme0), so this is a plain FK, not a cross-DB bridge.
   appListingId     Int?            @unique
   appListing       AppListing?     @relation("AppListingThread", fields: [appListingId], references: [serialId], onDelete: SetNull)
+  crucibleId       Int?            @unique
+  crucible         Crucible?       @relation(fields: [crucibleId], references: [id], onDelete: SetNull)
 
   metadata     Json @default("{}") // unused
   commentCount Int  @default(0)
@@ -5183,6 +5188,10 @@ model EventCosmeticScoreDaily {
   impressions     Int      @default(0)
   anonImpressions Int      @default(0)
   reactions       Int      @default(0)
+  comments        Int      @default(0)
+  stickers        Int      @default(0)
+  remixes         Int      @default(0)
+  modelLikes      Int      @default(0)
   points          Int      @default(0)
   updatedAt       DateTime @default(now()) @db.Timestamptz(3)
 
@@ -5196,6 +5205,8 @@ model CreatorMilestone {
   track        String
   threshold    Int?
   hidden       Boolean                @default(false)
+  /// A special (hidden, not score or activity) milestone left off the journey page's special list until earned. Honoured there only.
+  unlisted     Boolean                @default(false)
   hint         String?
   name         String
   description  String?
@@ -6756,10 +6767,45 @@ model Appeal {
   resolvedReason    String?
   internalNotes     String?
   buzzTransactionId String?
+  entityRemovedAt   DateTime?
 
   @@index([entityType, entityId, userId])
   @@index([userId])
   @@index([status])
+}
+
+/// Written only by the `appeal_decision_record` trigger on "Appeal"; never insert from app code.
+/// Enriched and pruned by the `appeal-decision-records` job.
+model AppealDecisionRecord {
+  id                       BigInt    @id @default(autoincrement())
+  appealId                 Int       @unique
+  imageId                  Int
+  imageUrl                 String
+  pHash                    BigInt?
+  promptHash               String?
+  nsfwLevel                Int
+  nsfwLevelLocked          Boolean
+  nsfwLevelReason          String?
+  aiNsfwLevel              Int?
+  blockedFor               String?
+  decision                 String
+  resolvedReason           String?
+  decidedAt                DateTime  @db.Timestamptz(3)
+  removalLabel             String?
+  removalNsfw              String?
+  restoredLevel            Int?
+  trainingLabelCorrectedAt DateTime? @db.Timestamptz(3)
+  trainingCopyState        String?
+  trainingObjectKey        String?
+  ownerHash                String?
+  createdAt                DateTime  @default(now()) @db.Timestamptz(3)
+
+  @@index([imageId])
+}
+
+model AppealTrainingObjectDeletion {
+  key       String   @id
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
 }
 
 enum AuctionType {
@@ -8543,6 +8589,18 @@ model UserStrike {
   @@index([createdAt])
 }
 
+model PostPreset {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name      String   @db.Citext
+  data      Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, name])
+}
+
 model GenerationPreset {
   id          Int      @id @default(autoincrement())
   userId      Int
@@ -9394,10 +9452,14 @@ model Crucible {
   scannedAt         DateTime?
   // The scan found the text adult: list surfaces show it only to viewers who browse R or above.
   textNsfw          Boolean        @default(false)
+  // Placement bar scaled to the time each entry was live. Rows from before it keep the old bar
+  // (the migration backfills false); new rows default to true.
+  timeAdjustedPlacement Boolean    @default(true)
 
   entries     CrucibleEntry[]
   reports     CrucibleReport[]
   engagements CrucibleEngagement[]
+  thread      Thread?
 
   @@index([userId], type: Hash)
   @@index([status])

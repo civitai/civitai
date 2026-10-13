@@ -209,7 +209,7 @@ describe('publishModelById — Model rules literal hold', () => {
 
 describe('publishPrivateModel — Model rules literal hold', () => {
   beforeEach(() => {
-    dbMock.dbRead.model.findUnique.mockResolvedValue({
+    dbMock.dbWrite.model.findUnique.mockResolvedValue({
       id: MODEL_ID,
       userId: 7,
       availability: 'Private',

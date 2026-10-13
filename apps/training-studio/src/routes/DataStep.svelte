@@ -6,6 +6,7 @@
   import {
     IconSparkles,
     IconArchive,
+    IconDownload,
     IconRepeat,
     IconUpload,
     IconPhoto,
@@ -39,6 +40,7 @@
   import { runAutoLabel, type AutoLabelResult } from '$lib/autolabel';
   import { isAbort, uploadFile, UploadError } from '$lib/upload';
   import { trainingBlobKey } from '$lib/train-core';
+  import { buildDatasetZip, saveBlob, uniqueBaseNames } from '$lib/dataset-zip';
   import {
     blobAirFromUrl,
     captionTriggerHit,
@@ -52,6 +54,7 @@
     parseLabel,
     runCard,
     splitTags,
+    startLabelPass,
     tagsHaveTrigger,
     type DatasetFilter,
     type Img,
@@ -207,7 +210,7 @@
   const labelingActive = $derived(images.some((i) => i.labeling));
   // Uploaded images with no label, not already being labeled, and not already auto-label-attempted —
   // what an auto-label run targets. Excluding attempted ones stops the button re-offering a model that
-  // returned nothing (a failed step clears the flag, so genuine failures stay retryable).
+  // returned nothing (failed steps go to the editor's Re-run).
   const unlabeled = $derived(
     images.filter((i) => isTrainable(i) && !isLabeled(i) && !i.labeling && !i.labelTried && !!i.blobUrl)
   );
@@ -459,6 +462,68 @@
     }
   }
 
+  // Uploads keep their File; blob-backed items (generations, a reused dataset) only have URLs, and a
+  // reused item's previewUrl is the local object URL its hydration already fetched.
+  async function imgBytes(img: Img): Promise<Blob> {
+    if (img.file) return img.file;
+    for (const url of [img.previewUrl, img.blobUrl]) {
+      if (!url) continue;
+      const res = await fetch(url).catch(() => null);
+      if (res?.ok) return res.blob();
+    }
+    throw new Error(`${img.name} unavailable`);
+  }
+
+  // Exports the current labels so a dataset can be tagged across sessions: nothing in this step
+  // persists, and the run page's Download only exists after Start.
+  let exporting = $state(false);
+  let exportNotice = $state('');
+  async function exportZip() {
+    if (exporting) return;
+    // A tile still uploading or that failed to upload keeps its File and labels — the work this exists
+    // to save. Blocked ones failed the scan and stay out.
+    const items = images.filter((i) => i.status !== 'blocked');
+    const blocked = images.length - items.length;
+    if (items.length === 0) return;
+    exporting = true;
+    exportNotice = '';
+    try {
+      const splitExt = (name: string) => {
+        const dot = name.lastIndexOf('.');
+        const ext = dot > 0 ? name.slice(dot + 1).toLowerCase() : '';
+        return mediaOfExt(ext) ? { base: name.slice(0, dot), ext } : { base: name, ext: undefined };
+      };
+      const named = items.map((img) => splitExt(img.name));
+      const bases = uniqueBaseNames(named.map((n) => n.base));
+      const { blob, failed } = await buildDatasetZip(
+        items.map((img, i) => {
+          const airExt = img.blobId ? extOfAir(img.blobId) : undefined;
+          return {
+            base: bases[i]!,
+            ext: named[i]!.ext ?? (airExt && mediaOfExt(airExt) ? airExt : undefined),
+            caption: labelString(img, labelMode),
+            load: () => imgBytes(img),
+          };
+        })
+      );
+      if (!blob) {
+        exportNotice = "Couldn't fetch any of the files — nothing to download.";
+        return;
+      }
+      saveBlob(blob, 'training-dataset.zip');
+      const plural = (n: number) => `${n} file${n === 1 ? '' : 's'}`;
+      exportNotice = [
+        failed > 0 && `${plural(failed)} couldn't be fetched`,
+        blocked > 0 && `${plural(blocked)} blocked by the scan`,
+      ]
+        .filter(Boolean)
+        .join(' and ');
+      if (exportNotice) exportNotice += ' — left out of the zip.';
+    } finally {
+      exporting = false;
+    }
+  }
+
   // Upload zip-imported files, seeding each with its caption (and marking it label-tried so a captioned
   // image isn't re-labeled). Mirrors addFiles, plus the caption seed.
   async function addImported(entries: { file: File; caption: string }[]) {
@@ -521,9 +586,8 @@
     try {
       while (unlabeled.length > 0) {
         const targets = unlabeled;
-        const items = targets.map((t) => ({ key: String(t.id), mediaUrl: t.blobUrl! }));
-        labelRun = { total: targets.length, done: 0, keys: new Set(items.map((i) => i.key)) };
-        for (const t of targets) patch(t.id, { labeling: true });
+        const { byKey, items } = startLabelPass(targets);
+        labelRun = { total: targets.length, done: 0, keys: new Set(byKey.keys()) };
         // A result that resolves between abort and delivery must be dropped — post-switch it
         // would write an OLD-mode label into a freshly reset tile and mark it done.
         await runAutoLabel(
@@ -531,7 +595,8 @@
           media,
           items,
           (r) => {
-            if (!controller.signal.aborted) applyLabel(r);
+            const img = byKey.get(r.key);
+            if (img && !controller.signal.aborted) applyLabel(img, r);
           },
           controller.signal
         );
@@ -540,6 +605,7 @@
         if (autoLabel !== 'auto') break;
       }
     } catch (err) {
+      // labelTried stays set: these tiles may already be submitted (and charged) — Re-run is the retry.
       if (!isAbort(err)) for (const i of images) if (i.labeling) patch(i.id, { labeling: false });
     } finally {
       // Only release the slot/progress if they're still OURS — an aborted drain's finally runs
@@ -552,9 +618,7 @@
     }
   }
 
-  function applyLabel(r: AutoLabelResult) {
-    const img = images.find((x) => String(x.id) === r.key);
-    if (!img) return;
+  function applyLabel(img: Img, r: AutoLabelResult) {
     img.labeling = false;
     img.labelTried = true; // attempted (any outcome) — the drain labels each image once; failures go manual
     if (labelRun?.keys.has(r.key)) labelRun.done += 1; // count only this pass's own targets
@@ -665,8 +729,9 @@
     if (!img || !img.blobUrl || img.labeling) return;
     patch(id, { labeling: true, labelTried: false, tags: [], caption: '' });
     try {
-      const item = [{ key: String(id), mediaUrl: img.blobUrl }];
-      await runAutoLabel(labelMode, media, item, applyLabel, new AbortController().signal);
+      // Not a drain-pass index, so the drain's progress counter never counts it.
+      const item = [{ key: 'relabel', mediaUrl: img.blobUrl }];
+      await runAutoLabel(labelMode, media, item, (r) => applyLabel(img, r), new AbortController().signal);
     } catch (err) {
       if (!isAbort(err)) patch(id, { labeling: false });
     }
@@ -774,10 +839,22 @@
     <Button variant="outline" onclick={() => zipInput.click()} disabled={importing}>
       <IconArchive size={15} stroke={2} class="mr-1.5 inline" />{importing ? 'Importing…' : 'Import .zip'}
     </Button>
+    <Button
+      variant="outline"
+      onclick={exportZip}
+      disabled={exporting || images.every((i) => i.status === 'blocked')}
+      title="Download your {media} files with their {noun} as same-named .txt files"
+    >
+      <IconDownload size={15} stroke={2} class="mr-1.5 inline" />{exporting ? 'Zipping…' : 'Download .zip'}
+    </Button>
     <Button variant="outline" onclick={() => (reuseOpen = true)}>
       <IconRepeat size={15} stroke={2} class="mr-1.5 inline" />Reuse a dataset
     </Button>
   </div>
+
+  {#if exportNotice}
+    <p class="text-sm text-amber-400" role="status">{exportNotice}</p>
+  {/if}
 
   {#if dupNotice.count > 0}
     <Alert.Root class="flex items-start justify-between gap-3 border-dark-4 bg-dark-6 text-dark-2">

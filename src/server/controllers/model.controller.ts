@@ -2517,9 +2517,10 @@ export const publishPrivateModelHandler = async ({
       callerId: userId,
     });
 
-    const { versionIds, held } = await publishPrivateModel(input, {
-      enforceModelRules: !ctx.user.isModerator,
-    });
+    const { versionIds, held } = await publishPrivateModel(
+      { ...input, isModerator: ctx.user.isModerator },
+      { enforceModelRules: !ctx.user.isModerator }
+    );
     // The hold refreshed the caches itself and nothing went public, so no publish side effects.
     if (held) return { held };
     await dataForModelsCache.refresh(input.modelId);

@@ -200,16 +200,17 @@ export type BlockScopeString = keyof typeof BLOCK_SCOPE_TO_OAUTH_BIT;
  * as a block JWS:
  *
  *   - `apps:storage:read` / `apps:storage:write`  → `resolveStorageContext`
- *     (`server/services/apps/app-storage.service.ts`) — `verifyBlockToken(blockToken)`.
+ *     (`server/services/apps/app-storage.service.ts`), through `resolveBlockToken`
+ *     (`server/services/blocks/block-bridge-auth.service.ts`), which calls `verifyBlockToken`.
  *   - `apps:storage:shared:read` / `…:shared:write` → `resolveSharedContext`
- *     (`server/routers/apps-shared.router.ts`) — `verifyBlockToken(blockToken)`, reached
+ *     (`server/routers/apps-shared.router.ts`), through the same `resolveBlockToken`, reached
  *     from eleven `/api/v1/blocks/shared-storage/*` routes that each pass `bearer(req)`
  *     back down after the middleware already verified it.
  *
  * `verifyBlockToken` requires a JWS with a `kid` it can pin, deliberately and strictly.
  * An `auth: "oauth"` app is minted an OPAQUE OAuth access token instead of a block JWT
  * (`/api/v1/block-tokens`, `mintOauthAppToken`), so that bearer is not a JWS and every
- * app-storage op 401s. `BlockManifestValidator` refuses the combination at submit time
+ * app-storage op 401s. `BlockManifestValidator` refuses the combination
  * for exactly this reason — see `oauthAppStorageConflictError`.
  *
  * DERIVED from the scope vocabulary above by prefix, never re-typed, so a fifth
@@ -220,9 +221,11 @@ export type BlockScopeString = keyof typeof BLOCK_SCOPE_TO_OAUTH_BIT;
  * because a new storage scope DOES read middleware-resolved claims, update the ledger and
  * this docblock in the same commit.
  *
- * The eleven routes and the four `verifyBlockToken` call sites have their OWN ledgers in
- * `src/server/middleware/__tests__/block-token-kind-app-storage-seam.test.ts`. When the
- * first of those empties out, this family stops needing the manifest refusal at all.
+ * The eleven routes and the two `verifyBlockToken` call sites have their OWN ledgers in
+ * `src/server/middleware/__tests__/block-token-kind-app-storage-seam.test.ts`; the callers of
+ * `resolveBlockToken` are ledgered in
+ * `src/server/services/__tests__/no-unguarded-block-rest-token.test.ts`. When the first of
+ * those empties out, this family stops needing the manifest refusal at all.
  */
 export const APP_STORAGE_SCOPE_PREFIX = 'apps:storage:';
 export const APP_STORAGE_SCOPES: readonly string[] = Object.keys(BLOCK_SCOPE_TO_OAUTH_BIT).filter(
@@ -449,6 +452,37 @@ export const PRIVATE_RUN_BUZZ_CAP = 2500;
 export const BLOCK_BUZZ_CAP_PER_DAY = 50_000;
 
 /**
+ * The most a block token's per-call `buzzBudget` claim may be, for an install token
+ * and a pre-approval (dev / private-run / review) token alike. It bounds one
+ * generation only; total spend is bounded by `BLOCK_BUZZ_CAP_PER_DAY`,
+ * `PRIVATE_RUN_BUZZ_CAP`, `REVIEW_RUN_FOR_REAL_BUZZ_CAP`, the dev-tunnel session
+ * cap and the per-app caps.
+ *
+ * The two exceptions are jobs whose exact price the VIEWER confirmed in host chrome —
+ * a `kind:'training'` run and a confirmed pass-through step. Those are charged against
+ * that confirmed quote, under their own per-job ceilings, not against this claim
+ * (`blockTrainingRunCeiling` / `blockConfirmedStepCeiling` in block-scope.middleware).
+ */
+export const BUZZ_BUDGET_CAP = 1000;
+
+/**
+ * The machine-readable code a viewer-confirmed job (a confirmed pass-through step or a
+ * training run) is refused with when it would exceed what remains of the viewer's own
+ * opted-in daily Buzz limit for the app (`app_user_scope_grants.buzz_budget_per_day`).
+ * The confirm can never override that limit where it is checked; the viewer raises it on
+ * the app activity page (`/apps/activity`). Where it is checked: the submit, on an
+ * ordinary page token; the step host's preview, on any token (the only check on a
+ * private run); a training private run is not checked against it at all.
+ *
+ * Shared because three places must agree on the string: the server's failed-snapshot
+ * `errorCode`, the host's `CONFIRMED_STEP_RESULT` error, and the SDK that branches on it.
+ */
+export const CONFIRMED_STEP_DAILY_LIMIT_ERROR_CODE = 'daily-limit-exceeded' as const;
+
+/** Where a viewer sets, raises or removes their per-app daily Buzz limit. */
+export const APP_DAILY_LIMIT_SETTINGS_PATH = '/apps/activity';
+
+/**
  * Bounds for a user-set per-app consent budget
  * (`app_user_scope_grants.buzz_budget_per_day`). MIN is 1 rather than 0: a
  * budget of zero would be a way to consent to `ai:write:budgeted` and
@@ -600,9 +634,9 @@ export const BLOCK_CONSENT_BUDGET_HIGH_CEILING_PER_DAY = 180;
  * ⚠️ A closed upper bound DOES exist, contrary to what an earlier revision of
  * this docblock asserted: every path gates the reservation against the token's
  * per-call budget, which `resolveBuzzBudget` clamps at `BUZZ_BUDGET_CAP` = 1000.
- * It is simply not renderable — it is per-app, ~4× the largest reservation any
- * path can actually take (INLINE_MAX_BUZZ = 250; 180 for recipes), and alarming
- * rather than informative. Do not "correct" the copy by naming it.
+ * It is simply not renderable — it is per-app, far above what most paths reserve
+ * (INLINE_MAX_BUZZ = 250; 180 for recipes; a quoted step can reach the cap itself),
+ * and alarming rather than informative. Do not "correct" the copy by naming it.
  *
  * What IS true on every consent-bearing path, and all this sentence claims:
  * the reservation is taken up front, before the run, and the request is refused

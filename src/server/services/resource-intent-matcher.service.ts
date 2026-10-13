@@ -17,6 +17,15 @@ import {
   type ResourceIntentStyleFamily,
 } from '~/server/schema/resource-intent.schema';
 import {
+  CHECKPOINT_LIST_MODELS,
+  type CheckpointArm,
+} from '~/server/services/resource-intent-checkpoint';
+import {
+  POOL_MERGE_BASE_MODELS,
+  poolMergeModelIds,
+  POOL_MERGE_COOC_LIST_MODELS,
+} from '~/server/services/resource-intent-pool-merge';
+import {
   loadResourceInsights,
   RESOURCE_INSIGHT_MIN_DEMOTE_CONFIDENCE,
   RESOURCE_INSIGHT_MIN_PROMOTE_CONFIDENCE,
@@ -303,9 +312,7 @@ async function searchShortlistModels(
   filter: string | null,
   poolCap: number
 ): Promise<ModelSearchIndexRecord[]> {
-  const client = searchClient;
-  if (!client) return [];
-  const request: SearchParams = {
+  return searchModelIndex({
     filter: filter ?? undefined,
     // 🔴 Popularity ONLY: no role filter and no quality key — see this module's header.
     sort: ['metrics.thumbsUpCount:desc'],
@@ -313,7 +320,12 @@ async function searchShortlistModels(
     // zero versions (the coverage and baseModel filters are nested-array matches), so the
     // pool can be narrower than `poolCap`.
     limit: poolCap,
-  };
+  });
+}
+
+async function searchModelIndex(request: SearchParams): Promise<ModelSearchIndexRecord[]> {
+  const client = searchClient;
+  if (!client) return [];
   try {
     const results = await withMeiliResourceSelect(
       (searchSignal) =>
@@ -359,13 +371,11 @@ type ResourceIntentSeed = {
   pool: ResourceIntentShortlistEntry[];
 };
 
-/** The candidate pool before any label is read, and the response cap it is later cut to. */
-async function seedResourceIntentPool(
+/** The seed's gates as a search filter, shared by both arms. */
+function seedFilter(
   criteria: Pick<ResourceIntentCriteria, 'modelTypes' | 'baseModel'>,
-  opts: { browsingLevel: number; coverage: ResourceIntentCoverage; cap: number }
-): Promise<ResourceIntentSeed> {
-  const cap = clampResourceIntentCap(opts.cap);
-  const poolCap = clampResourceIntentCap(cap * RERANK_POOL_MULTIPLIER);
+  opts: { browsingLevel: number; coverage: ResourceIntentCoverage }
+): Pick<ResourceIntentSeed, 'filter' | 'baseModels'> {
   const baseModels = criteria.baseModel ? [criteria.baseModel] : null;
   const filter = buildResourceIntentFilter({
     modelTypes: criteria.modelTypes,
@@ -373,6 +383,17 @@ async function seedResourceIntentPool(
     browsingLevel: opts.browsingLevel,
     coverage: opts.coverage,
   });
+  return { filter, baseModels };
+}
+
+/** The candidate pool before any label is read, and the response cap it is later cut to. */
+async function seedResourceIntentPool(
+  criteria: Pick<ResourceIntentCriteria, 'modelTypes' | 'baseModel'>,
+  opts: { browsingLevel: number; coverage: ResourceIntentCoverage; cap: number }
+): Promise<ResourceIntentSeed> {
+  const cap = clampResourceIntentCap(opts.cap);
+  const poolCap = clampResourceIntentCap(cap * RERANK_POOL_MULTIPLIER);
+  const { filter, baseModels } = seedFilter(criteria, opts);
   const hits = await searchShortlistModels(filter, poolCap);
   const pool = expandShortlist(hits, { baseModels, coverage: opts.coverage, cap: poolCap });
   return { cap, poolCap, filter, baseModels, pool };
@@ -381,19 +402,16 @@ async function seedResourceIntentPool(
 /**
  * The hybrid's fill, built exactly as the screen built its BASE pool: one
  * `RESOURCE_INTENT_BASE_DEEP_PAGE_LIMIT`-document page under the seed's filter and sort,
- * one version per model, the first `poolCap` models in popularity order. Always its own
+ * one version per model, the first `width` models in popularity order. Always its own
  * query, so it does not rely on the seed page being a prefix of it.
  */
 async function seedBasePool(
-  seed: ResourceIntentSeed,
-  coverage: ResourceIntentCoverage
+  seed: Pick<ResourceIntentSeed, 'filter' | 'baseModels'>,
+  coverage: ResourceIntentCoverage,
+  width: number
 ): Promise<ResourceIntentShortlistEntry[]> {
   const deep = await searchShortlistModels(seed.filter, RESOURCE_INTENT_BASE_DEEP_PAGE_LIMIT);
-  return expandOneVersionPerModel(deep, {
-    baseModels: seed.baseModels,
-    coverage,
-    cap: seed.poolCap,
-  });
+  return expandOneVersionPerModel(deep, { baseModels: seed.baseModels, coverage, cap: width });
 }
 
 /**
@@ -453,7 +471,7 @@ export async function findResourceIntentCandidates(
   const seed = await seedResourceIntentPool(criteria, opts);
   const { cap, pool } = seed;
   const [basePool, insightRead] = await Promise.all([
-    seedBasePool(seed, opts.coverage),
+    seedBasePool(seed, opts.coverage, seed.poolCap),
     loadResourceInsights(pool.map((entry) => entry.versionId)).then(
       (insights) => ({ insights }),
       // Settled here, not in a try: the base pool must not wait on (or fail with) the label read.
@@ -507,4 +525,86 @@ export async function findResourceIntentCandidates(
     pool,
     basePool,
   };
+}
+
+/**
+ * Ranked candidate models through the seed's gates, as both screens gated them: the seed's filter
+ * AND `id IN candidates`, one page as wide as the candidate list and unsorted, re-sorted by
+ * candidate rank, one version per model. No candidates ⇒ no query.
+ */
+async function gateRankedCandidates(
+  cands: readonly number[],
+  seed: Pick<ResourceIntentSeed, 'filter' | 'baseModels'>,
+  coverage: ResourceIntentCoverage
+): Promise<ResourceIntentShortlistEntry[]> {
+  if (!cands.length) return [];
+  const hits = await searchModelIndex({
+    filter: and(seed.filter, inArray('id', cands)) ?? undefined,
+    limit: cands.length,
+  });
+  const candRank = new Map(cands.map((id, i) => [id, i]));
+  const docs = [...hits].sort((x, y) => (candRank.get(x.id) ?? 1e9) - (candRank.get(y.id) ?? 1e9));
+  return expandOneVersionPerModel(docs, {
+    baseModels: seed.baseModels,
+    coverage,
+    cap: cands.length,
+  });
+}
+
+/**
+ * Checkpoint mode's list for one arm (see `resource-intent-checkpoint.ts`), `min(cap, 50)` models
+ * under the checkpoint gate for `baseModel`:
+ * - `attach_bm`: `attachCandidates` (the snapshot's ranked attachment counts) through
+ *   `gateRankedCandidates`;
+ * - `base_bm`, and `attach_bm` with no snapshot (`attachCandidates: null`): `seedBasePool`'s
+ *   popularity page.
+ */
+export async function findCheckpointCandidates(opts: {
+  arm: CheckpointArm;
+  baseModel: string;
+  attachCandidates: readonly number[] | null;
+  browsingLevel: number;
+  coverage: ResourceIntentCoverage;
+  cap: number;
+}): Promise<ResourceIntentShortlistEntry[]> {
+  const width = Math.min(clampResourceIntentCap(opts.cap), CHECKPOINT_LIST_MODELS);
+  const seed = seedFilter({ modelTypes: ['Checkpoint'], baseModel: opts.baseModel }, opts);
+  if (opts.arm === 'attach_bm' && opts.attachCandidates) {
+    const gated = await gateRankedCandidates(opts.attachCandidates, seed, opts.coverage);
+    return gated.slice(0, width);
+  }
+  return seedBasePool(seed, opts.coverage, width);
+}
+
+/**
+ * The POOL_MERGE arm's list, exactly as the co-occurrence screen gated and merged it.
+ *
+ * Co-occurrence: the candidates (best first) through `gateRankedCandidates`. BASE: `seedBasePool`'s
+ * page, one version per model, `POOL_MERGE_BASE_MODELS` wide.
+ */
+export async function findPoolMergeCandidates(
+  criteria: ResourceIntentCriteria,
+  opts: {
+    browsingLevel: number;
+    coverage: ResourceIntentCoverage;
+    cap: number;
+    coocCandidates: readonly number[];
+  }
+): Promise<{ entries: ResourceIntentShortlistEntry[]; coocGated: number }> {
+  if (criteria.role === 'none') return { entries: [], coocGated: 0 };
+  const cap = clampResourceIntentCap(opts.cap);
+  const seed = seedFilter(criteria, opts);
+  const [basePool, gated] = await Promise.all([
+    seedBasePool(seed, opts.coverage, POOL_MERGE_BASE_MODELS),
+    gateRankedCandidates(opts.coocCandidates, seed, opts.coverage),
+  ]);
+  const coocList = gated.slice(0, POOL_MERGE_COOC_LIST_MODELS);
+  // A model on both lists expands from the same document through the same gates: same version.
+  const byModel = new Map([...basePool, ...coocList].map((e) => [e.modelId, e]));
+  const entries = poolMergeModelIds(
+    coocList.map((e) => e.modelId),
+    basePool.map((e) => e.modelId),
+    cap
+  ).map((id) => byModel.get(id) as ResourceIntentShortlistEntry);
+  return { entries, coocGated: gated.length };
 }

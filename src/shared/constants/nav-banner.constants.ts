@@ -18,6 +18,29 @@ export type NavBanner = {
   background?: string;
   dismissible: boolean;
   priority: number;
+  // Optional so a page rendered before this field existed still reads the answer.
+  promo?: EventPromo;
+};
+
+export const EVENT_PROMO_ICONS = ['confetti', 'trophy', 'sparkles'] as const;
+export type EventPromoIcon = (typeof EVENT_PROMO_ICONS)[number];
+
+export type EditorCardPromo = { title: string; body: string; draftNote?: string; image?: string };
+
+/**
+ * An event's entry points beyond its strip. Never filtered by the strip's dismissal: it is how a
+ * viewer who closed the strip gets back to the event.
+ */
+export type EventPromo = {
+  event: string;
+  menuLabel: string;
+  menuIcon: EventPromoIcon;
+  // Only for events with a team roster page.
+  teamHref?: string;
+  postEditor?: EditorCardPromo;
+  articleEditor?: EditorCardPromo;
+  modelEditor?: EditorCardPromo;
+  homeBlock?: { eyebrow?: string; title: string; body?: string; cta?: string };
 };
 
 export const NAV_BANNERS_DISMISSED_COOKIE = 'nav-banners-dismissed';

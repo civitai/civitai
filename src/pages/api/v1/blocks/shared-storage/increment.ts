@@ -9,10 +9,9 @@ import {
   withBlockScope,
   type BlockScopedNextApiRequest,
 } from '~/server/middleware/block-scope.middleware';
-import {
-  assertValidCounterKey,
-  incrementSharedCounter,
-} from '~/server/routers/apps-shared.router';
+import { assertValidCounterKey, incrementSharedCounter } from '~/server/routers/apps-shared.router';
+import { sendRestRateLimited } from '~/server/utils/endpoint-helpers';
+import { rateLimitMetaOf } from '~/server/utils/rate-limit-error';
 
 /**
  * POST /api/v1/blocks/shared-storage/increment  body `{ key }`
@@ -78,6 +77,11 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
     // resolveSharedContext / the increment throw TRPCError (sub-trust → FORBIDDEN,
     // rate-limit → TOO_MANY_REQUESTS, disabled flag → FORBIDDEN, etc.).
     const trpcError = error as TRPCError;
+    const rateLimit = rateLimitMetaOf(error);
+    if (rateLimit) {
+      sendRestRateLimited(res, trpcError.message, rateLimit);
+      return;
+    }
     const statusCode =
       typeof trpcError?.code === 'string' ? getHTTPStatusCodeFromError(trpcError) : 500;
     res.status(statusCode).json({ error: trpcError?.message ?? 'Failed to increment counter' });

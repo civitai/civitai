@@ -375,8 +375,19 @@ export class Tracker {
     }
   }
 
-  private async resolveSession() {
-    if (!this.sessionResolved && this.req && this.res) {
+  private sessionPending: Promise<void> | undefined;
+
+  // One session lookup per request however many track() calls, and getSession(), start before it
+  // lands: they share the pending lookup. A failed lookup clears it, so the next call retries.
+  private resolveSession() {
+    if (this.sessionResolved || !this.req || !this.res) return Promise.resolve();
+    return (this.sessionPending ??= this.fetchSession().finally(() => {
+      this.sessionPending = undefined;
+    }));
+  }
+
+  private async fetchSession() {
+    if (this.req && this.res) {
       try {
         await getServerAuthSession({ req: this.req, res: this.res }).then((session) => {
           this.session = session;
@@ -398,6 +409,12 @@ export class Tracker {
         );
       }
     }
+  }
+
+  // The request's session, resolved once and shared with every track() call on this Tracker.
+  public async getSession() {
+    await this.resolveSession();
+    return this.session;
   }
 
   constructor(

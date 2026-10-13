@@ -2,7 +2,11 @@ import { clickhouse } from '~/server/clickhouse/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import type { FirstPublishCardInput } from '~/server/schema/creator-journey.schema';
-import { FIRST_PUBLISH_CARD_DAYS } from '~/shared/constants/creator-journey.constants';
+import {
+  FIRST_PUBLISH_CARD_DAYS,
+  HIDDEN_MILESTONE_KEY_PREFIX,
+  milestoneKeyOfShareToken,
+} from '~/shared/constants/creator-journey.constants';
 import { ArticleStatus, ModelStatus } from '~/shared/utils/prisma/enums';
 import { getCreatorScoreUnlocks } from '~/server/services/creator-score-unlocks.service';
 import type { CreatorScoreTier } from '~/shared/utils/creator-score-unlocks';
@@ -52,7 +56,7 @@ export function maskUnearnedMilestone<T extends MilestoneDefinition>(
   // Keys can name the milestone, so a masked one is keyed by its place in the list it is shown in.
   return {
     ...milestone,
-    key: `hidden:${slot}`,
+    key: `${HIDDEN_MILESTONE_KEY_PREFIX}${slot}`,
     name: '???',
     description: null,
   };
@@ -116,7 +120,10 @@ const activityMeasures = new Map(
 
 export type ActivityValues = Record<ActivityMeasure, number>;
 
-type PostgresActivityValues = Omit<ActivityValues, 'votes'>;
+type PostgresActivityValues = Omit<ActivityValues, 'votes'> & { crucibleWins: number };
+
+/** The Compete track's wins, split by where they were won. */
+export type WinBreakdown = { challenges: number; crucibles: number };
 
 const CLICKHOUSE_COUNT_TIMEOUT_SECONDS = 5;
 
@@ -150,7 +157,9 @@ async function getClickhouseCount(query: string, column: string, userId: number,
   }
 }
 
-async function getActivityValues(userId: number): Promise<ActivityValues> {
+async function getActivityValues(
+  userId: number
+): Promise<{ values: ActivityValues; winBreakdown: WinBreakdown }> {
   const [[row], votes, ledgerWins] = await Promise.all([
     dbRead.$queryRawUnsafe<PostgresActivityValues[]>(activityValuesSql, userId),
     getClickhouseCount(judgeVoteCountSql, 'votes', userId, 'creator-journey-judge-votes'),
@@ -164,8 +173,14 @@ async function getActivityValues(userId: number): Promise<ActivityValues> {
     reactions: 0,
     revenue: 0,
     wins: 0,
+    crucibleWins: 0,
   };
-  return { ...values, votes, wins: values.wins + ledgerWins };
+  const { crucibleWins, ...counts } = values;
+  return {
+    values: { ...counts, votes, wins: counts.wins + ledgerWins },
+    // Ledger wins are all daily-challenge prizes.
+    winBreakdown: { challenges: counts.wins - crucibleWins + ledgerWins, crucibles: crucibleWins },
+  };
 }
 
 /**
@@ -213,15 +228,21 @@ export function buildActivityProgress(
   return { milestones, closestNext };
 }
 
+const secretSelect = { ...withArt, unlisted: true } as const;
+
 /**
  * Hidden milestones outside the score and activity sections. An unearned one shows its hint and
- * nothing that would tell it apart from the others.
+ * nothing that would tell it apart from the others. An unlisted one is left out until earned, so it
+ * is neither a tile nor counted; it goes before numbering so the slot keys keep no gap where it was.
  */
 export function buildSecretMilestones(
-  definitions: DefinitionWithArt[],
+  definitions: (DefinitionWithArt & { unlisted: boolean })[],
   held: Map<string, Date | null>
 ) {
-  return definitions.map((definition, index) => {
+  const listed = definitions.filter(
+    (definition) => !definition.unlisted || held.has(definition.key)
+  );
+  return listed.map((definition, index) => {
     const earned = held.has(definition.key);
     const visible = maskUnearnedMilestone(definition, earned, `secret-${index}`);
     return {
@@ -265,7 +286,7 @@ export async function getCreatorJourney(userId: number) {
         track: { not: 'score' },
         key: { notIn: [...activityMeasures.keys()] },
       },
-      select: withArt,
+      select: secretSelect,
       orderBy: [{ sortOrder: 'asc' }, { key: 'asc' }],
     }),
   ]);
@@ -276,7 +297,10 @@ export async function getCreatorJourney(userId: number) {
   );
   const earnedKeys = new Set(observedAt.keys());
   const tiers = tierDefinitions.map((tier, index) => toTier(tier, earnedKeys.has(tier.key), index));
-  const activity = buildActivityProgress(activityDefinitions, observedAt, activityValues);
+  const activity = {
+    ...buildActivityProgress(activityDefinitions, observedAt, activityValues.values),
+    winBreakdown: activityValues.winBreakdown,
+  };
   const secrets = buildSecretMilestones(secretDefinitions, observedAt);
   const badgeUrlByKey = new Map(
     [...tiers, ...activity.milestones, ...secrets].map((m) => [m.key, m.badgeUrl ?? null])
@@ -298,6 +322,7 @@ export async function getCreatorJourney(userId: number) {
       threshold: milestone.threshold,
       name: milestone.name,
       description: milestone.description,
+      hint: milestone.hidden ? milestone.hint : null,
       badgeUrl: badgeUrlByKey.get(milestone.key) ?? null,
       achievedAt: observedAt.get(milestone.key) ?? null,
     })),
@@ -342,9 +367,11 @@ export async function getLegendStatus(userId: number, source?: ShowcaseSource) {
 export async function getProfileAchievements({
   userId,
   viewerId,
+  spotlight,
 }: {
   userId: number;
   viewerId?: number;
+  spotlight?: string;
 }) {
   const [user, rows] = await Promise.all([
     dbRead.user.findUnique({
@@ -364,6 +391,7 @@ export async function getProfileAchievements({
             hidden: true,
             name: true,
             description: true,
+            hint: true,
             cosmeticId: true,
             cosmetic: { select: { data: true } },
           },
@@ -376,6 +404,7 @@ export async function getProfileAchievements({
 
   const privacy = user.profile?.privacySettings as PrivacySettingsSchema | null | undefined;
   const isOwner = viewerId === userId;
+  const spotlightKey = spotlight ? milestoneKeyOfShareToken(spotlight) : undefined;
   const shown = rows.filter((row) => isBadgeShownOnProfile(privacy, row.milestone.cosmeticId));
   // A hidden tier is a secret like any other, so a visitor sees it with the secret achievements.
   const isTier = (milestone: (typeof rows)[number]['milestone']) =>
@@ -402,8 +431,11 @@ export async function getProfileAchievements({
         track: milestone.hidden ? 'secret' : milestone.track,
         name: secret ? null : milestone.name,
         description: secret ? null : milestone.description,
+        hint: milestone.hidden && !secret ? milestone.hint : null,
         badgeUrl: badgeArtUrl(milestone.cosmetic),
         achievedAt: achievedAtIsObserved(row) ? row.achievedAt : null,
+        // The secret a shared link named, so the tab can ring it without its key.
+        spotlit: secret && milestone.key === spotlightKey,
       };
     });
 

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import {
@@ -10,18 +10,33 @@ import {
 } from '~/shared/constants/birthday2026.constants';
 import { EVENT_DECORATION_DEFINITIONS } from '~/shared/constants/event-decoration.constants';
 import { testerFlag } from '~/test-utils/testerFlagFake';
+import { teamBalanceKeys } from '~/server/events/team-balance';
+import { createLuaRedis, type LuaRedis } from '~/server/utils/__tests__/redis-lua-harness';
 
-const { mockCreateNotification, mockRefresh, mockScoring } = vi.hoisted(() => ({
-  mockCreateNotification: vi.fn(),
-  mockRefresh: vi.fn<(type: string, ids: number[]) => Promise<undefined>>(async () => undefined),
-  mockScoring: {
-    getEventStandings: vi.fn(),
-    getTeamScoreHistory: vi.fn(),
-    runCosmeticPlacementScoring: vi.fn(),
-    unequipEventCosmetics: vi.fn(),
-  },
+const { mockCreateNotification, mockRefresh, mockScoring, mockReferee, mockSync } = vi.hoisted(
+  () => ({
+    mockCreateNotification: vi.fn(),
+    mockRefresh: vi.fn<(type: string, ids: number[]) => Promise<undefined>>(async () => undefined),
+    mockScoring: {
+      getEventStandings: vi.fn(),
+      getTeamScoreHistory: vi.fn(),
+      hasStandingsSnapshot: vi.fn<(event: unknown) => Promise<boolean>>(async () => false),
+      refreshStandings: vi.fn(),
+    },
+    mockReferee: { runEventPointsReferee: vi.fn() },
+    mockSync: { syncEventHats: vi.fn() },
+  })
+);
+const killSwitch = vi.hoisted(() => ({ on: true }));
+
+// The engine's kill switch is on unless a test turns it off.
+vi.mock('~/server/events/points/enabled', () => ({
+  isEventPointsEnabled: async () => killSwitch.on,
+  isEventPointsEnabledSync: () => killSwitch.on,
+  onEventPointsSwitchOn: () => () => undefined,
 }));
-
+// The engine's self-heal runs the reconcile and settle: tested in self-heal.test.ts, not here.
+vi.mock('~/server/events/points/self-heal', () => ({ healEventPoints: vi.fn() }));
 vi.mock('~/server/services/notification.service', () => ({
   createNotification: mockCreateNotification,
 }));
@@ -43,6 +58,8 @@ vi.mock('~/server/services/buzz.service', () => ({
 vi.mock('~/server/services/user.service', () => ({ updateLeaderboardRank: vi.fn() }));
 vi.mock('~/server/integrations/discord', () => ({ discord: {} }));
 vi.mock('~/server/events/scoring/cosmetic-placement.service', () => mockScoring);
+vi.mock('~/server/events/points/referee', () => mockReferee);
+vi.mock('~/server/events/points/sync', () => mockSync);
 vi.mock('~/server/flipt/tester-segment', async () => {
   return (await import('~/test-utils/testerFlagFake')).testerFlagModule;
 });
@@ -51,6 +68,13 @@ const { events, eventEngine, getActiveEvents } = await import('~/server/events/i
 const { birthday2026 } = await import('~/server/events/birthday2026.event');
 
 const HOUR = 60 * 60 * 1000;
+let redisStore: Record<string, string> = {};
+// The options each key was last set with, so expiries are checked, not assumed.
+let redisSetOptions: Record<string, unknown> = {};
+const MARKER_TTL = { EX: 30 * 24 * 60 * 60 };
+// The winner record lives in sysRedis.
+let sysStore: Record<string, string> = {};
+let sysSetOptions: Record<string, unknown> = {};
 const DEPLOY_DAY = new Date('2026-10-09T12:00:00.000Z');
 // Cosmetic ids as the COSMETICS.IDS hash caches them: by name for the holiday events, by
 // event:design:team for join events (which look the cosmetic up by data, never by name).
@@ -67,13 +91,31 @@ const cosmeticIds: Record<string, string> = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  killSwitch.on = true;
   // Launched unless a test says otherwise; who the flag lets in is pinned in event-access.test.ts.
   testerFlag.reset({ public: true });
   redisMock.redis.hGet.mockImplementation(
     async (_key: string, name: string) => cosmeticIds[name] ?? null
   );
-  redisMock.redis.get.mockResolvedValue(null);
-  mockScoring.getEventStandings.mockResolvedValue({
+  redisStore = {};
+  redisSetOptions = {};
+  redisMock.redis.get.mockImplementation(async (key: string) => redisStore[key] ?? null);
+  redisMock.redis.set.mockImplementation(async (key: string, value: string, options?: unknown) => {
+    redisStore[key] = value;
+    redisSetOptions[key] = options;
+    return 'OK';
+  });
+  sysStore = {};
+  sysSetOptions = {};
+  redisMock.sysRedis.get.mockImplementation(async (key: string) => sysStore[key] ?? null);
+  redisMock.sysRedis.set.mockImplementation(
+    async (key: string, value: string, options?: unknown) => {
+      sysStore[key] = value;
+      sysSetOptions[key] = options;
+      return 'OK';
+    }
+  );
+  const standings = {
     teams: [
       { team: 'Pink', score: 30, rank: 1 },
       { team: 'Yellow', score: 20, rank: 2 },
@@ -83,12 +125,12 @@ beforeEach(() => {
     topCosmetics: [],
     topUsers: {},
     updatedAt: new Date(),
-  });
-  mockScoring.unequipEventCosmetics.mockResolvedValue([
-    { entityType: 'Image', entityId: 5 },
-    { entityType: 'Model', entityId: 6 },
-  ]);
-  mockScoring.runCosmeticPlacementScoring.mockResolvedValue({ synced: 0, scored: [] });
+  };
+  mockScoring.getEventStandings.mockResolvedValue(standings);
+  mockScoring.refreshStandings.mockResolvedValue(standings);
+  mockReferee.runEventPointsReferee.mockResolvedValue({ season: 'live', rows: 0, changed: 0 });
+  mockScoring.hasStandingsSnapshot.mockResolvedValue(false);
+  mockSync.syncEventHats.mockResolvedValue([]);
   dbMock.dbWrite.$executeRaw.mockResolvedValue(1);
 });
 
@@ -98,7 +140,6 @@ function anyWrite() {
     dbMock.dbWrite.$executeRaw.mock.calls.length,
     dbMock.dbWrite.$executeRawUnsafe.mock.calls.length,
     dbMock.dbWrite.$queryRaw.mock.calls.length,
-    mockScoring.unequipEventCosmetics.mock.calls.length,
     mockCreateNotification.mock.calls.length,
   ];
 }
@@ -227,7 +268,7 @@ describe('end-of-event cleanup', () => {
     await eventEngine.dailyReset(DEPLOY_DAY);
     await eventEngine.updateLeaderboard(DEPLOY_DAY);
 
-    expect(anyWrite()).toEqual([0, 0, 0, 0, 0, 0]);
+    expect(anyWrite()).toEqual([0, 0, 0, 0, 0]);
     expect(redisMock.redis.set).not.toHaveBeenCalled();
   });
 
@@ -241,13 +282,16 @@ describe('end-of-event cleanup', () => {
   });
 
   it('does nothing for holiday2024 on any day after its grace window, including birthday cleanup day', async () => {
-    const birthdayCleanup = new Date(BIRTHDAY_2026_ENDS_AT.getTime() + 16 * HOUR);
+    const birthdayCleanup = new Date(BIRTHDAY_2026_ENDS_AT.getTime() + 40 * HOUR);
+    sysStore[`event:${BIRTHDAY_2026_EVENT}:winner`] = 'Pink';
     await eventEngine.dailyReset(birthdayCleanup);
 
     expect(dbMock.dbWrite.userCosmetic.updateMany).not.toHaveBeenCalled();
     expect(mockCreateNotification).not.toHaveBeenCalled();
-    // ...while the birthday event itself was cleaned up (positive control for this run).
-    expect(mockScoring.unequipEventCosmetics).toHaveBeenCalledWith(BIRTHDAY_2026_EVENT);
+    // ...while the birthday event itself was cleaned up on this same run (positive control).
+    expect(redisMock.redis.set.mock.calls.map(([key]) => key)).toEqual([
+      `eventCleanup:${BIRTHDAY_2026_EVENT}`,
+    ]);
   });
 
   it('positive control: holiday2024 cleanup does run inside its own grace window, with real cosmetic ids', async () => {
@@ -260,88 +304,208 @@ describe('end-of-event cleanup', () => {
       where: { cosmeticId: { in: [11, 12, 13, 14] } },
       data: { equippedAt: null },
     });
+    // An unscored event's cleanup still flags its own winner: Yellow, first of four tied at zero.
+    const flagged = dbMock.dbWrite.$executeRaw.mock.calls.filter(([sql]) =>
+      (sql as TemplateStringsArray).join('?').includes('{winner}')
+    );
+    expect(flagged.map(([, id]) => id)).toEqual([11]);
   });
 
-  const firstReset = new Date(BIRTHDAY_2026_ENDS_AT.getTime() + 16 * HOUR); // Nov 27 00:00Z
-  const secondReset = new Date(BIRTHDAY_2026_ENDS_AT.getTime() + 40 * HOUR); // Nov 28 00:00Z
+  const firstReset = new Date(BIRTHDAY_2026_ENDS_AT.getTime() + 16 * HOUR);
+  const secondReset = new Date(BIRTHDAY_2026_ENDS_AT.getTime() + 40 * HOUR);
   const winnerUpdates = () =>
     dbMock.dbWrite.$executeRaw.mock.calls.filter(([sql]) =>
       (sql as TemplateStringsArray).join('?').includes('{winner}')
     );
   const setKeys = () => redisMock.redis.set.mock.calls.map(([key]) => key);
 
-  it('phase 1: takes cosmetics off content at the first reset after the end, but decides no winner', async () => {
+  // Justin and Ellie, 2026-10-09: hats are kept after the event. The end-of-event reset used to take
+  // every hat off content; it must not. See event-decoration-equip.test.ts for wearing them after.
+  it('leaves cosmetics on content after the end, and decides no winner while scoring takes late data', async () => {
     await eventEngine.dailyReset(firstReset);
 
-    expect(mockScoring.unequipEventCosmetics).toHaveBeenCalledTimes(1);
-    expect(mockRefresh).toHaveBeenCalledTimes(2);
-    expect(mockRefresh).toHaveBeenCalledWith('Image', [5]);
-    expect(mockRefresh).toHaveBeenCalledWith('Model', [6]);
-    // The last day is still being rescored with late data, so the winner waits.
-    expect(winnerUpdates()).toHaveLength(0);
-    expect(setKeys()).toEqual([`eventCleanup:${BIRTHDAY_2026_EVENT}:unequip`]);
+    expect(anyWrite()).toEqual([0, 0, 0, 0, 0]);
+    expect(mockRefresh).not.toHaveBeenCalled();
+    expect(redisMock.redis.set).not.toHaveBeenCalled();
   });
 
-  it('phase 2: flags the winner once scoring has finished, without unequipping again', async () => {
-    redisMock.redis.get.mockImplementation(async (key: string) =>
-      key === `eventCleanup:${BIRTHDAY_2026_EVENT}:unequip` ? 'true' : null
-    );
-    await eventEngine.dailyReset(secondReset);
+  const close = BIRTHDAY_2026_ENDS_AT.getTime() + birthday2026.scoring!.finalizeAfterMs;
+  const winnerMarker = `event:${BIRTHDAY_2026_EVENT}:winner`;
+  // The referee reports a run final once it settles the whole finalize window.
+  const finalRun = () =>
+    mockReferee.runEventPointsReferee.mockResolvedValueOnce({
+      season: 'live',
+      rows: 0,
+      changed: 0,
+      final: true,
+    });
 
-    expect(mockScoring.unequipEventCosmetics).not.toHaveBeenCalled();
+  it('names no winner while switched off, though it still snapshots, and names it once back on', async () => {
+    killSwitch.on = false;
+    finalRun();
+    await eventEngine.updateLeaderboard(new Date(close + HOUR));
+    expect(mockScoring.refreshStandings).toHaveBeenCalledTimes(1);
+    expect(winnerUpdates()).toHaveLength(0);
+    expect(sysStore[winnerMarker]).toBeUndefined();
+
+    killSwitch.on = true;
+    await eventEngine.updateLeaderboard(new Date(close + 2 * HOUR));
+    expect(sysStore[winnerMarker]).toBe('Pink');
+  });
+
+  it('names the winner on the first run that settles the whole finalize window', async () => {
+    await eventEngine.updateLeaderboard(new Date(close));
+    expect(winnerUpdates()).toHaveLength(0);
+    expect(sysStore[winnerMarker]).toBeUndefined();
+
+    finalRun();
+    await eventEngine.updateLeaderboard(new Date(close + HOUR));
     const [update] = winnerUpdates();
     expect(update?.[1]).toBe(23); // Pink won
     expect((update?.[0] as TemplateStringsArray).join('?')).toContain("'true'::jsonb");
-    expect(setKeys()).toEqual([`eventCleanup:${BIRTHDAY_2026_EVENT}`]);
+    expect(sysStore[winnerMarker]).toBe('Pink');
+    // Outlives the 7-day grace window, so later runs keep seeing it and stop.
+    expect(sysSetOptions[winnerMarker]).toEqual(MARKER_TTL);
   });
 
-  it('does not mark cleanup done when the unequip fails, so the next reset retries', async () => {
-    mockScoring.unequipEventCosmetics.mockRejectedValue(new Error('db down'));
-    await expect(eventEngine.dailyReset(secondReset)).rejects.toThrow('db down');
-    expect(redisMock.redis.set).not.toHaveBeenCalled();
-    expect(winnerUpdates()).toHaveLength(0);
+  // The winner is read from the standings this run computed on the primary, never the stored
+  // snapshot a failed or earlier run left.
+  it('names the winner from the standings the final run computed, not the cached snapshot', async () => {
+    mockScoring.refreshStandings.mockResolvedValue({
+      teams: [
+        { team: 'Blue', score: 40, rank: 1 },
+        { team: 'Pink', score: 30, rank: 2 },
+      ],
+      topCosmetics: [],
+      topUsers: {},
+      updatedAt: new Date(),
+    });
+    finalRun();
+    await eventEngine.updateLeaderboard(new Date(close + HOUR));
+    expect(winnerUpdates().map(([, id]) => id)).toEqual([22]);
+    expect(sysStore[winnerMarker]).toBe('Blue');
   });
 
-  it('refreshes caches in chunks of 1000 ids', async () => {
-    mockScoring.unequipEventCosmetics.mockResolvedValue(
-      Array.from({ length: 2500 }, (_, i) => ({ entityType: 'Image', entityId: i + 1 }))
-    );
-    await eventEngine.dailyReset(firstReset);
-    expect(mockRefresh.mock.calls.map(([, ids]) => ids.length)).toEqual([1000, 1000, 500]);
-    expect(mockRefresh.mock.calls.flatMap(([, ids]) => ids)).toHaveLength(2500);
-  });
-
-  it('decides the winner exactly when scoring stops, not a moment before', async () => {
-    const finalize = birthday2026.scoring!.finalizeAfterMs;
-    const unequipped = async (key: string) =>
-      key === `eventCleanup:${BIRTHDAY_2026_EVENT}:unequip` ? 'true' : null;
-    redisMock.redis.get.mockImplementation(unequipped);
-
-    await eventEngine.dailyReset(new Date(BIRTHDAY_2026_ENDS_AT.getTime() + finalize - 1));
-    expect(winnerUpdates()).toHaveLength(0);
-    await eventEngine.dailyReset(new Date(BIRTHDAY_2026_ENDS_AT.getTime() + finalize));
+  it('keeps settling past the window until a run is final, then stops', async () => {
+    await eventEngine.updateLeaderboard(new Date(close + HOUR));
+    await eventEngine.updateLeaderboard(new Date(close + 2 * HOUR));
+    expect(mockReferee.runEventPointsReferee).toHaveBeenCalledTimes(2);
+    finalRun();
+    await eventEngine.updateLeaderboard(new Date(close + 3 * HOUR));
+    await eventEngine.updateLeaderboard(new Date(close + 4 * HOUR));
+    expect(mockReferee.runEventPointsReferee).toHaveBeenCalledTimes(3);
     expect(winnerUpdates()).toHaveLength(1);
-
-    // ...and the hourly scoring runs up to that same instant and no further: the two cut-offs are one.
-    await eventEngine.updateLeaderboard(new Date(BIRTHDAY_2026_ENDS_AT.getTime() + finalize));
-    await eventEngine.updateLeaderboard(new Date(BIRTHDAY_2026_ENDS_AT.getTime() + finalize + 1));
-    expect(mockScoring.runCosmeticPlacementScoring).toHaveBeenCalledTimes(1);
   });
 
-  it('does not mark cleanup done when flagging the winner fails', async () => {
-    redisMock.redis.get.mockImplementation(async (key: string) =>
-      key === `eventCleanup:${BIRTHDAY_2026_EVENT}:unequip` ? 'true' : null
-    );
-    dbMock.dbWrite.$executeRaw.mockRejectedValue(new Error('db down'));
-    await expect(eventEngine.dailyReset(secondReset)).rejects.toThrow('db down');
+  it('names no winner when the final run cannot compute its standings, and the next run does', async () => {
+    mockScoring.refreshStandings.mockRejectedValueOnce(new Error('db down'));
+    finalRun();
+    await expect(eventEngine.updateLeaderboard(new Date(close + HOUR))).rejects.toThrow('db down');
+    expect(winnerUpdates()).toHaveLength(0);
+    expect(sysStore[winnerMarker]).toBeUndefined();
+    finalRun();
+    await eventEngine.updateLeaderboard(new Date(close + 2 * HOUR));
+    expect(winnerUpdates()).toHaveLength(1);
+  });
+
+  it('names no winner from a failed run, and the next run tries again', async () => {
+    mockReferee.runEventPointsReferee.mockRejectedValueOnce(new Error('clickhouse down'));
+    await eventEngine.updateLeaderboard(new Date(close + HOUR));
+    expect(winnerUpdates()).toHaveLength(0);
+    finalRun();
+    await eventEngine.updateLeaderboard(new Date(close + 2 * HOUR));
+    expect(winnerUpdates()).toHaveLength(1);
+  });
+
+  it('names no winner while the engine is switched off, and does once it is back on', async () => {
+    killSwitch.on = false;
+    finalRun();
+    await eventEngine.updateLeaderboard(new Date(close + HOUR));
+    expect(mockReferee.runEventPointsReferee).not.toHaveBeenCalled();
+    expect(winnerUpdates()).toHaveLength(0);
+
+    killSwitch.on = true;
+    await eventEngine.updateLeaderboard(new Date(close + 2 * HOUR));
+    expect(winnerUpdates().map(([, id]) => id)).toEqual([23]);
+  });
+
+  it('ends scoring on a final run with no first-place team, naming no winner', async () => {
+    mockScoring.refreshStandings.mockResolvedValue({
+      teams: [],
+      topCosmetics: [],
+      topUsers: {},
+      updatedAt: new Date(),
+    });
+    finalRun();
+    await eventEngine.updateLeaderboard(new Date(close + HOUR));
+    await eventEngine.updateLeaderboard(new Date(close + 2 * HOUR));
+    expect(mockReferee.runEventPointsReferee).toHaveBeenCalledTimes(1);
+    expect(winnerUpdates()).toHaveLength(0);
+    expect(sysSetOptions[winnerMarker]).toEqual(MARKER_TTL);
+
+    // ...and the cleanup, as before, has no winner to clean up with.
+    await eventEngine.dailyReset(secondReset);
     expect(setKeys()).not.toContain(`eventCleanup:${BIRTHDAY_2026_EVENT}`);
+  });
+
+  it('does not mark the winner named when flagging it fails', async () => {
+    dbMock.dbWrite.$executeRaw.mockRejectedValue(new Error('db down'));
+    finalRun();
+    await expect(eventEngine.updateLeaderboard(new Date(close + HOUR))).rejects.toThrow('db down');
+    expect(sysStore[winnerMarker]).toBeUndefined();
+  });
+
+  it('cleans up only once the winner is named, with the recorded winner, without flagging it again', async () => {
+    const onCleanup = vi.fn(async () => undefined);
+    const def = birthday2026 as { onCleanup?: unknown };
+    def.onCleanup = onCleanup;
+    try {
+      await eventEngine.dailyReset(secondReset);
+      expect(setKeys()).toEqual([]);
+
+      // Blue is not first in the standings: the record, not the standings, decides.
+      sysStore[winnerMarker] = 'Blue';
+      await eventEngine.dailyReset(secondReset);
+      expect(onCleanup).toHaveBeenCalledWith(
+        expect.objectContaining({ winner: 'Blue', winnerCosmeticId: 22 })
+      );
+      expect(winnerUpdates()).toHaveLength(0);
+      const cleanupMarker = `eventCleanup:${BIRTHDAY_2026_EVENT}`;
+      expect(setKeys()).toEqual([cleanupMarker]);
+      expect(redisSetOptions[cleanupMarker]).toEqual(MARKER_TTL);
+    } finally {
+      delete def.onCleanup;
+    }
+  });
+
+  it('waits to clean up while the engine is switched off', async () => {
+    sysStore[winnerMarker] = 'Pink';
+    killSwitch.on = false;
+    await eventEngine.dailyReset(secondReset);
+    expect(setKeys()).toEqual([]);
   });
 
   it('does not clean up twice', async () => {
     redisMock.redis.get.mockResolvedValue('true');
     await eventEngine.dailyReset(secondReset);
-    expect(mockScoring.unequipEventCosmetics).not.toHaveBeenCalled();
     expect(winnerUpdates()).toHaveLength(0);
+    expect(setKeys()).toEqual([]);
+  });
+});
+
+describe('scored team reads', () => {
+  it('hands the degraded callback to the settled standings read', async () => {
+    const onDegraded = vi.fn();
+    await eventEngine.getTeamScores(BIRTHDAY_2026_EVENT, 'open', { onDegraded });
+    await eventEngine.getTeamScoreHistory({ event: BIRTHDAY_2026_EVENT }, 'open', { onDegraded });
+    expect(mockScoring.getEventStandings).toHaveBeenCalledWith(
+      expect.objectContaining({ name: BIRTHDAY_2026_EVENT }),
+      { onDegraded }
+    );
+    expect(mockScoring.getTeamScoreHistory).toHaveBeenCalledWith(
+      expect.objectContaining({ name: BIRTHDAY_2026_EVENT }),
+      { onDegraded }
+    );
   });
 });
 
@@ -356,8 +520,8 @@ describe('scored event is inert before it starts', () => {
     testerFlag.reset({ public: false });
     await eventEngine.updateLeaderboard(beforePreview);
     await eventEngine.dailyReset(beforePreview);
-    expect(mockScoring.runCosmeticPlacementScoring).not.toHaveBeenCalled();
-    expect(anyWrite()).toEqual([0, 0, 0, 0, 0, 0]);
+    expect(mockReferee.runEventPointsReferee).not.toHaveBeenCalled();
+    expect(anyWrite()).toEqual([0, 0, 0, 0, 0]);
   });
 
   it('reads as nonexistent to the public', async () => {
@@ -378,11 +542,12 @@ describe('scored event is inert before it starts', () => {
     ).toBe(BIRTHDAY_2026_EVENT);
   });
 
-  it('scores from start until finalizeAfterMs past the end, then stops', async () => {
+  it('scores from the start until the winner is named, then stops', async () => {
     await eventEngine.updateLeaderboard(BIRTHDAY_2026_STARTS_AT);
     await eventEngine.updateLeaderboard(new Date(BIRTHDAY_2026_ENDS_AT.getTime() + 23 * HOUR));
+    sysStore[`event:${BIRTHDAY_2026_EVENT}:winner`] = 'Pink';
     await eventEngine.updateLeaderboard(new Date(BIRTHDAY_2026_ENDS_AT.getTime() + 25 * HOUR));
-    expect(mockScoring.runCosmeticPlacementScoring).toHaveBeenCalledTimes(2);
+    expect(mockReferee.runEventPointsReferee).toHaveBeenCalledTimes(2);
     // Never the Buzz-bank leaderboard path.
     expect(dbMock.dbWrite.$executeRawUnsafe).not.toHaveBeenCalled();
   });
@@ -434,25 +599,207 @@ describe('join team lookup', () => {
   });
 });
 
+// Join-time team balancing: the placement script runs for real (team-balance.test.ts pins it alone).
+describe('join balancing', () => {
+  const keys = teamBalanceKeys(BIRTHDAY_2026_EVENT);
+  const joinAs = (id: number) =>
+    eventEngine.join(BIRTHDAY_2026_EVENT, { id }, BIRTHDAY_2026_STARTS_AT);
+  let lua: LuaRedis;
+
+  beforeEach(() => {
+    lua = createLuaRedis(0);
+    redisMock.sysRedis.eval.mockImplementation(lua.eval);
+    redisMock.sysRedis.hGetAll.mockImplementation(async (key: string) => lua.hash(key) ?? {});
+    lua.setHash(keys.list, { '7': '500', '8': '400', '9': '300', '10': '200' });
+    // Not joined yet: no team cosmetic held.
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([]);
+  });
+  // clearAllMocks keeps implementations, and later describes expect the default sysRedis.
+  afterEach(() => {
+    redisMock.sysRedis.eval.mockReset();
+    redisMock.sysRedis.hGetAll.mockReset();
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([]);
+  });
+
+  it('places a listed user on the team whose listed joiners are predicted to earn least', async () => {
+    lua.setHash(keys.totals, { Yellow: '900', Blue: '200', Pink: '700', Green: '400' });
+    expect(await joinAs(7)).toEqual({ team: 'Blue', cosmeticId: 22, joined: true });
+    expect(dbMock.dbWrite.$executeRaw.mock.calls[0][2]).toBe(22);
+    expect(lua.hash(keys.totals)?.Blue).toBe('700');
+    expect(lua.hash(keys.manual)).toEqual({ '7': 'Blue' });
+    // Later reads of the user's team agree with the join.
+    expect(await birthday2026.getUserTeam(7)).toBe('Blue');
+  });
+
+  it('leaves an unlisted user on the hashed team, writing no placement', async () => {
+    const hashed = await birthday2026.getUserTeam(99);
+    // The lightest team is one the hash did not pick, so landing on it would be the balancer.
+    const lightest = BIRTHDAY_2026_TEAMS.find((t) => t !== hashed) as string;
+    lua.setHash(
+      keys.totals,
+      Object.fromEntries(BIRTHDAY_2026_TEAMS.map((t) => [t, t === lightest ? '0' : '1000']))
+    );
+    expect((await joinAs(99)).team).toBe(hashed);
+    expect(lua.hash(keys.manual)).toBeUndefined();
+    expect(lua.hash(keys.totals)?.[lightest]).toBe('0');
+  });
+
+  it('splits listed users joining at once across the teams', async () => {
+    const joined = await Promise.all([7, 8, 9, 10].map(joinAs));
+    expect(joined.map((j) => j.team).sort()).toEqual([...BIRTHDAY_2026_TEAMS].sort());
+    const totals = Object.values(lua.hash(keys.totals) ?? {}).map(Number);
+    expect(totals.sort((a, b) => a - b)).toEqual([200, 300, 400, 500]);
+  });
+
+  it('keeps a manual assignment made before the user joined', async () => {
+    lua.setHash(keys.manual, { '7': 'Green' });
+    expect((await joinAs(7)).team).toBe('Green');
+    expect(lua.hash(keys.totals)).toBeUndefined();
+  });
+
+  // Already holding Yellow's cosmetic, the user keeps Yellow and is not counted toward any team.
+  it('does not place a listed user who already joined', async () => {
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([{ cosmeticId: 21 }]);
+    dbMock.dbWrite.$executeRaw.mockResolvedValue(0);
+    lua.setHash(keys.totals, { Yellow: '900', Blue: '0', Pink: '900', Green: '900' });
+    expect(await joinAs(7)).toEqual({ team: 'Yellow', cosmeticId: 21, joined: false });
+    expect(redisMock.sysRedis.eval).not.toHaveBeenCalled();
+    expect(lua.hash(keys.manual)).toBeUndefined();
+    expect(lua.hash(keys.totals)?.Blue).toBe('0');
+  });
+
+  // A team hat bought before joining (any claimKey, any design) settles the team: placing the buyer
+  // elsewhere would leave a paid hat scoring for a team they are no longer on. Do not narrow this
+  // check to the join cap.
+  it('does not place a listed user who already holds a team hat they bought', async () => {
+    const hashed = await birthday2026.getUserTeam(7);
+    const lightest = BIRTHDAY_2026_TEAMS.find((t) => t !== hashed) as string;
+    lua.setHash(
+      keys.totals,
+      Object.fromEntries(BIRTHDAY_2026_TEAMS.map((t) => [t, t === lightest ? '0' : '1000']))
+    );
+    dbMock.dbWrite.$queryRaw.mockResolvedValueOnce([{ held: 1 }]);
+    expect((await joinAs(7)).team).toBe(hashed);
+    expect(redisMock.sysRedis.eval).not.toHaveBeenCalled();
+    const [strings, ...values] = dbMock.dbWrite.$queryRaw.mock.calls[0] as [string[], ...unknown[]];
+    const heldSql = strings.join('?');
+    expect(heldSql).toContain(`c.data->>'event' = ?`);
+    expect(heldSql).toContain(`c.data->>'team' IS NOT NULL`);
+    expect(heldSql).not.toContain('claimKey');
+    expect(values).toEqual([7, BIRTHDAY_2026_EVENT]);
+  });
+
+  it('refuses to join when the balance list cannot be read', async () => {
+    redisMock.sysRedis.eval.mockRejectedValue(new Error('ECONNREFUSED'));
+    await expect(joinAs(7)).rejects.toThrow('ECONNREFUSED');
+    expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
+  });
+});
+
 // The hourly job hands the scorer the window and audience the access rule decided (event-access.ts
 // pins the rule itself; this pins that the engine passes it on).
 describe('scoring behind the flag', () => {
   const PREVIEW = new Date(BIRTHDAY_2026_PREVIEW_FROM.getTime() + 24 * HOUR);
   const DURING = new Date(BIRTHDAY_2026_STARTS_AT.getTime() + 24 * HOUR);
-  const scoredWith = () => mockScoring.runCosmeticPlacementScoring.mock.calls.map(([e]) => e);
+  const settled = () =>
+    mockReferee.runEventPointsReferee.mock.calls.map(([e, season]) => ({ name: e.name, season }));
+  const standingsFrom = () =>
+    mockScoring.refreshStandings.mock.calls.map(([e]) => (e as { scoreFrom: Date }).scoreFrom);
 
-  it('scores the preview for flagged owners only, ending at the launch day', async () => {
+  // Which owners' hats earn in the preview is the hat sync's job (it applies the flag); this pins that
+  // the preview is settled as its own season, with standings read from the preview's start.
+  it('settles the preview as its own season, syncing hats first', async () => {
     testerFlag.reset({ public: false });
     await eventEngine.updateLeaderboard(PREVIEW);
-    expect(scoredWith()).toEqual([
-      expect.objectContaining({
-        name: BIRTHDAY_2026_EVENT,
-        startDate: BIRTHDAY_2026_PREVIEW_FROM,
-        endDate: new Date('2026-11-11T00:00:00.000Z'),
-        scoreFrom: BIRTHDAY_2026_PREVIEW_FROM,
-        audienceFlag: 'birthday-2026',
-      }),
+    expect(mockSync.syncEventHats).toHaveBeenCalledWith(PREVIEW);
+    expect(settled()).toEqual([{ name: BIRTHDAY_2026_EVENT, season: 'preview' }]);
+    expect(standingsFrom()).toEqual([BIRTHDAY_2026_PREVIEW_FROM]);
+  });
+
+  // Standings are rebuilt right after the referee writes the snapshot: a replica may not have it yet.
+  it('syncs hats before settling, then rebuilds standings from the primary', async () => {
+    await eventEngine.updateLeaderboard(DURING);
+    const [synced] = mockSync.syncEventHats.mock.invocationCallOrder;
+    const [refereed] = mockReferee.runEventPointsReferee.mock.invocationCallOrder;
+    const [refreshed] = mockScoring.refreshStandings.mock.invocationCallOrder;
+    expect(synced).toBeLessThan(refereed);
+    expect(refereed).toBeLessThan(refreshed);
+    expect(mockScoring.refreshStandings.mock.calls[0][1]).toBe(dbMock.dbWrite);
+  });
+
+  // Off, a scored event settles nothing (no hat sync, no referee, so no ClickHouse read and no push)
+  // and must not fall through to the old donor leaderboard. It only snapshots the durable table, so
+  // the pages show the last settled numbers.
+  it('settles nothing while the engine is switched off, but still snapshots the standings', async () => {
+    killSwitch.on = false;
+    await eventEngine.updateLeaderboard(DURING);
+    expect(mockSync.syncEventHats).not.toHaveBeenCalled();
+    expect(mockReferee.runEventPointsReferee).not.toHaveBeenCalled();
+    expect(mockScoring.refreshStandings.mock.calls).toEqual([
+      [expect.objectContaining({ name: BIRTHDAY_2026_EVENT }), dbMock.dbWrite],
     ]);
+    expect(standingsFrom()).toEqual([BIRTHDAY_2026_STARTS_AT]);
+    expect(anyWrite()).toEqual([0, 0, 0, 0, 0]);
+
+    killSwitch.on = true;
+    await eventEngine.updateLeaderboard(DURING);
+    expect(mockReferee.runEventPointsReferee).toHaveBeenCalledTimes(1);
+  });
+
+  // Nothing more can settle while off once the window has closed: one snapshot there is enough.
+  it('snapshots once past the window while switched off, then stops', async () => {
+    killSwitch.on = false;
+    const past = new Date(
+      BIRTHDAY_2026_ENDS_AT.getTime() + birthday2026.scoring!.finalizeAfterMs + 1
+    );
+    await eventEngine.updateLeaderboard(past);
+    expect(mockScoring.refreshStandings).toHaveBeenCalledTimes(1);
+    mockScoring.hasStandingsSnapshot.mockResolvedValueOnce(true);
+    await eventEngine.updateLeaderboard(past);
+    expect(mockScoring.refreshStandings).toHaveBeenCalledTimes(1);
+    expect(mockScoring.hasStandingsSnapshot.mock.calls.at(-1)?.[0]).toMatchObject({
+      name: BIRTHDAY_2026_EVENT,
+      scoreFrom: BIRTHDAY_2026_STARTS_AT,
+    });
+    // During the season the snapshot is refreshed every run, stored or not.
+    mockScoring.hasStandingsSnapshot.mockResolvedValue(true);
+    await eventEngine.updateLeaderboard(DURING);
+    expect(mockScoring.refreshStandings).toHaveBeenCalledTimes(2);
+    // Switched on, past the window it keeps settling until a run is final, stored snapshot or not.
+    killSwitch.on = true;
+    await eventEngine.updateLeaderboard(past);
+    expect(mockReferee.runEventPointsReferee).toHaveBeenCalledTimes(1);
+    expect(mockScoring.refreshStandings).toHaveBeenCalledTimes(3);
+  });
+
+  it('snapshots the preview from its own start while switched off, and nothing outside the window', async () => {
+    killSwitch.on = false;
+    testerFlag.reset({ public: false });
+    await eventEngine.updateLeaderboard(PREVIEW);
+    expect(standingsFrom()).toEqual([BIRTHDAY_2026_PREVIEW_FROM]);
+    const finalize = birthday2026.scoring!.finalizeAfterMs;
+    await eventEngine.updateLeaderboard(new Date(BIRTHDAY_2026_PREVIEW_FROM.getTime() - 1));
+    // Past the window once a winner is on record, nothing runs at all.
+    sysStore[`event:${BIRTHDAY_2026_EVENT}:winner`] = 'Pink';
+    await eventEngine.updateLeaderboard(new Date(BIRTHDAY_2026_ENDS_AT.getTime() + finalize + 1));
+    expect(mockScoring.refreshStandings).toHaveBeenCalledTimes(1);
+    expect(mockSync.syncEventHats).not.toHaveBeenCalled();
+    expect(mockReferee.runEventPointsReferee).not.toHaveBeenCalled();
+  });
+
+  it('still refreshes the standings when the referee fails', async () => {
+    const { logToAxiom } = await import('~/server/logging/client');
+    mockReferee.runEventPointsReferee.mockRejectedValueOnce(new Error('clickhouse down'));
+    await eventEngine.updateLeaderboard(DURING);
+    expect(mockScoring.refreshStandings).toHaveBeenCalledTimes(1);
+    // ...and the failure is reported, not swallowed.
+    expect(logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'error',
+        name: 'event-points-referee',
+        message: 'clickhouse down',
+      })
+    );
   });
 
   it('scores everyone from the start, base on or off', async () => {
@@ -460,15 +807,11 @@ describe('scoring behind the flag', () => {
       testerFlag.reset({ public: isPublic });
       await eventEngine.updateLeaderboard(DURING);
     }
-    expect(scoredWith()).toEqual([
-      expect.objectContaining({
-        startDate: BIRTHDAY_2026_STARTS_AT,
-        endDate: BIRTHDAY_2026_ENDS_AT,
-        scoreFrom: BIRTHDAY_2026_STARTS_AT,
-        audienceFlag: undefined,
-      }),
-      expect.objectContaining({ audienceFlag: undefined, startDate: BIRTHDAY_2026_STARTS_AT }),
+    expect(settled()).toEqual([
+      { name: BIRTHDAY_2026_EVENT, season: 'live' },
+      { name: BIRTHDAY_2026_EVENT, season: 'live' },
     ]);
+    expect(standingsFrom()).toEqual([BIRTHDAY_2026_STARTS_AT, BIRTHDAY_2026_STARTS_AT]);
   });
 
   it('lets a tester join during the preview, and nobody else', async () => {
@@ -502,7 +845,18 @@ describe('getEventData: what the scored-event page reads', () => {
       headline: 'Civitai turns 4.',
       headlineAccent: 'Pick up a hat.',
       heroImage: '4a5e404d-ece2-4cca-bbab-cb5a7b0d8d9d',
-      dates: 'Nov 11 to Nov 25',
+      heroVideo: { id: 'ecd5aeef-b4d5-497d-bdd7-51750c302122', title: 'Hats On', duration: 42.411 },
+      dates: 'Nov 1 to Nov 30',
     });
+  });
+
+  // Justin, 2026-10-09: the event runs for all of November, 2026-11-01 00:00 UTC through
+  // 2026-11-30 23:59 UTC. ENDS_AT is exclusive, so it is the first instant of December, and every
+  // date the page and banner state by hand has to say the same.
+  it('runs for all of November in UTC, and says so on the page and the banner', () => {
+    expect(BIRTHDAY_2026_STARTS_AT.toISOString()).toBe('2026-11-01T00:00:00.000Z');
+    expect(BIRTHDAY_2026_ENDS_AT.toISOString()).toBe('2026-12-01T00:00:00.000Z');
+    expect(birthday2026.page?.dates).toBe('Nov 1 to Nov 30');
+    expect(birthday2026.banner?.text).toContain('Four color teams, Nov 1 to Nov 30.');
   });
 });

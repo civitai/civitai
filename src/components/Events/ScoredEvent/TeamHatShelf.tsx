@@ -61,7 +61,7 @@ export function TeamHatShelf({ event, team }: { event: string; team: string }) {
         icon={IconShoppingBag}
         title={`Team ${team} hats`}
         color={teamColor(team)}
-        subtitle="Every design in your colour. Pick one to preview and buy it."
+        subtitle="Every design in your color. Pick one to preview and buy it."
       >
         <Group gap="sm">
           {leavesAt && (

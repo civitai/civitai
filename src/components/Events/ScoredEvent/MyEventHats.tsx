@@ -6,6 +6,7 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import { EventSectionHeading } from '~/components/Events/ScoredEvent/EventSectionHeading';
 import { EventContentThumb } from '~/components/Events/ScoredEvent/EventContentThumb';
 import { HatArt } from '~/components/Events/ScoredEvent/HatArt';
+import { HatStats } from '~/components/Events/ScoredEvent/HatStats';
 import PlaceHatModal from '~/components/Events/ScoredEvent/PlaceHatModal';
 import {
   EVENT_CARD_SURFACE,
@@ -13,7 +14,7 @@ import {
 } from '~/components/Events/ScoredEvent/scored-event.utils';
 import type { CosmeticEntity } from '~/shared/utils/prisma/enums';
 import type { RouterOutput } from '~/types/router';
-import { abbreviateNumber, numberWithCommas } from '~/utils/number-helpers';
+import { numberWithCommas } from '~/utils/number-helpers';
 
 type MyHat = RouterOutput['event']['getMyHats'][number];
 
@@ -111,48 +112,33 @@ export function MyEventHats({
                     />
                   </div>
                 )}
-                {!ended && (
-                  <Button
-                    size="compact-xs"
-                    radius="xl"
-                    variant={hat.placedOn ? 'default' : 'filled'}
-                    leftSection={
-                      hat.placedOn ? <IconArrowsMove size={14} /> : <IconHanger size={14} />
-                    }
-                    disabled={minutesLeft > 0}
-                    onClick={() => openPicker(hat)}
-                    className={
-                      hat.placedOn
-                        ? 'absolute right-2 top-2 shadow-md'
-                        : 'absolute bottom-3 left-1/2 -translate-x-1/2 shadow-md'
-                    }
-                  >
-                    {hat.placedOn ? 'Move' : 'Place it'}
-                  </Button>
-                )}
+                {/* Hats are kept after the event, so they can still be moved then. */}
+                <Button
+                  size="compact-xs"
+                  radius="xl"
+                  variant={hat.placedOn ? 'default' : 'filled'}
+                  leftSection={
+                    hat.placedOn ? <IconArrowsMove size={14} /> : <IconHanger size={14} />
+                  }
+                  disabled={minutesLeft > 0}
+                  onClick={() => openPicker(hat)}
+                  className={
+                    hat.placedOn
+                      ? 'absolute right-2 top-2 shadow-md'
+                      : 'absolute bottom-3 left-1/2 -translate-x-1/2 shadow-md'
+                  }
+                >
+                  {hat.placedOn ? 'Move' : 'Place it'}
+                </Button>
               </div>
               <Stack gap={8} p="sm" className="flex-1">
-                <Stack gap={0} className="min-w-0">
-                  <Text fw={700} size="sm" truncate>
-                    {hat.name}
-                  </Text>
-                  <Text size="xs" c="dimmed" truncate>
-                    {hat.placedOn
-                      ? `On ${
-                          hat.placedOn.title ?? `your ${hat.placedOn.entityType.toLowerCase()}`
-                        }`
-                      : 'Not on anything yet'}
-                  </Text>
-                </Stack>
-                <div
-                  className="mt-auto grid grid-cols-3 rounded-md bg-gray-0 py-1.5 dark:bg-dark-5"
-                  data-testid="hat-stats"
-                >
-                  <HatStat value={abbreviateNumber(hat.points)} label="points" color={teamColor} />
-                  <HatStat value={abbreviateNumber(hat.impressions)} label="views" />
-                  <HatStat value={abbreviateNumber(hat.reactions)} label="reactions" />
+                <Text fw={700} size="sm" truncate>
+                  {hat.name}
+                </Text>
+                <div className="mt-auto">
+                  <HatStats stats={hat} color={teamColor} compact />
                 </div>
-                {!ended && minutesLeft > 0 && (
+                {minutesLeft > 0 && (
                   <Text size="xs" c="dimmed">
                     <IconClock size={12} className="inline align-[-1px]" /> Can move in{' '}
                     {minutesLeft} min
@@ -178,19 +164,6 @@ export function MyEventHats({
           </a>
         )}
       </SimpleGrid>
-    </Stack>
-  );
-}
-
-function HatStat({ value, label, color }: { value: string; label: string; color?: string }) {
-  return (
-    <Stack gap={0} align="center" className="min-w-0">
-      <Text fw={800} size="sm" c={color} className="tabular-nums" lh={1.3}>
-        {value}
-      </Text>
-      <Text size="xs" c="dimmed" lh={1.2}>
-        {label}
-      </Text>
     </Stack>
   );
 }

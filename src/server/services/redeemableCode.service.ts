@@ -21,11 +21,13 @@ import { throwDbCustomError, withRetries } from '~/server/utils/errorHandling';
 import { refreshSession } from '~/server/auth/session-invalidation';
 import { PaymentProvider, RedeemableCodeType } from '~/shared/utils/prisma/enums';
 import { generateToken } from '~/utils/string-helpers';
+import { generateRedeemCode } from '~/server/utils/redeem-code';
 import {
   deliverMonthlyCosmetics,
   syncFreshdeskMembership,
   supersedeBuzzMembershipForPaidSubscription,
 } from '~/server/services/subscriptions.service';
+import { isSupportCodeRedeemableBy } from '~/server/services/support-membership-code.constants';
 import { invalidateSubscriptionCaches, getPrepaidTokens } from '~/server/utils/subscription.utils';
 import type { GiftNotice } from '~/server/schema/redeemableCode.schema';
 import { dbRead } from '~/server/db/client';
@@ -223,9 +225,7 @@ export async function createRedeemableCodes({
   }
 
   const codes = Array.from({ length: quantity }, () => {
-    const code = `${type === RedeemableCodeType.Buzz ? 'CS' : 'MB'}-${generateToken(
-      4
-    )}-${generateToken(4)}`.toUpperCase();
+    const code = generateRedeemCode(type === RedeemableCodeType.Buzz ? 'CS' : 'MB');
     return { code, unitValue, expiresAt, type, priceId };
   });
 
@@ -264,10 +264,13 @@ export async function consumeRedeemableCode({
         },
       },
       redeemedAt: true,
+      metadata: true,
     },
   });
 
-  if (!codeRecord) {
+  // A support code redeemed by anyone but its customer answers exactly as an unknown code does, so the
+  // refusal confirms nothing about the code to whoever is holding it.
+  if (!codeRecord || !isSupportCodeRedeemableBy(codeRecord.metadata, userId)) {
     throw new Error('Code does not exist or has been redeemed');
   }
 
@@ -287,8 +290,11 @@ export async function consumeRedeemableCode({
     const buzzValue = convertCodeValueToBuzz(codeRecord.type, codeRecord.unitValue, tierName);
     const giftNotices = await getMatchingGiftNotices(buzzValue);
 
+    // `metadata` was read only for the binding check; it carries internal notes (a support reason,
+    // the minting moderator, a purchaser's order id) and goes back to the browser otherwise.
+    const { metadata: _internal, ...publicRecord } = codeRecord;
     return {
-      ...codeRecord,
+      ...publicRecord,
       giftNotices,
     }; // Already redeemed by this user, return the record with gift notices.
   }

@@ -252,7 +252,7 @@ describe('POST /api/v1/block-tokens — dev-tunnel OWNED non-approved mint', () 
     expect(arg.blockInstanceId).toBe('page_apb_real');
     expect(arg.dev).toBe(true);
     expect(arg.domain).toBeNull();
-    // Budget from the manifest page.buzzBudgetPerGen (75), clamped to the dev cap (250).
+    // Budget from the manifest page.buzzBudgetPerGen (75), clamped to the dev cap (1000).
     expect(arg.buzzBudget).toBe(75);
     // Ownership resolve was called with the real id + caller + write db.
     expect(mockBlockRegistry.resolveOwnedNonApprovedPageBlock).toHaveBeenCalledWith(

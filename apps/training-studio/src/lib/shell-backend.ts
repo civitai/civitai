@@ -124,12 +124,14 @@ export const shellBackend: StudioBackend = {
     if (!res.ok) throw new Error(await messageOf(res, `Could not delete (${res.status})`));
   },
 
-  continueQuote: async (workflowId, fromEpoch, addEpochs) => {
-    const res = await fetch(
-      `/api/continue-training?id=${encodeURIComponent(
-        workflowId
-      )}&fromEpoch=${fromEpoch}&addEpochs=${addEpochs}`
-    );
+  continueQuote: async (workflowId, fromEpoch, addEpochs, currencies) => {
+    const params = new URLSearchParams({
+      id: workflowId,
+      fromEpoch: String(fromEpoch),
+      addEpochs: String(addEpochs),
+    });
+    for (const currency of currencies) params.append('currencies', currency);
+    const res = await fetch(`/api/continue-training?${params}`);
     if (!res.ok) throw new Error(await res.text().catch(() => 'Could not price the continuation.'));
     return (await res.json()) as { cost: number | null; steps?: number };
   },

@@ -21,6 +21,7 @@ import {
 import { SpotlightBorderCard } from '~/components/SpotlightCard/SpotlightBorderCard';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { AnimatedCount } from '~/components/Metrics/AnimatedCount';
 import type { RouterOutput } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
 import { abbreviateNumber, numberWithCommas } from '~/utils/number-helpers';
@@ -33,10 +34,13 @@ export function TeamStandings({
   standings,
   myTeam,
   startDate,
+  preview,
 }: {
   standings: Standings;
   myTeam?: string;
   startDate: Date;
+  /** Testers are playing before the start: the preview is scoring already. */
+  preview?: boolean;
 }) {
   const teamColor = useTeamColor();
   const [mode, setMode] = useState<'points' | 'position'>('points');
@@ -102,7 +106,8 @@ export function TeamStandings({
         color={myTeam && teamColor(myTeam)}
         subtitle={
           <>
-            Updated hourly · last update{' '}
+            {standings.liveTotals ? 'Points live · graph updated hourly' : 'Updated hourly'} · last
+            update{' '}
             {standings.updatedAt.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
           </>
         }
@@ -139,8 +144,8 @@ export function TeamStandings({
                         Team {t.team}
                         {mine && ' · you'}
                       </Text>
-                      <Text fw={800} className="tabular-nums">
-                        {numberWithCommas(t.score)}
+                      <Text fw={800} className="tabular-nums" data-testid="team-score">
+                        <AnimatedCount value={t.score} abbreviate={false} resetKey={t.team} />
                       </Text>
                     </Group>
                     <Progress
@@ -186,6 +191,8 @@ export function TeamStandings({
         ) : (
           <ChartPending
             startDate={startDate}
+            // With the engine switched off the preview is not scoring, whatever its dates say.
+            preview={preview && !!standings.liveTotals}
             colors={standings.teams.map((t) => teamColor(t.team))}
           />
         )}
@@ -203,8 +210,18 @@ const SKETCH = [
   '0,88 20,86 40,84 60,80 80,78 100,74',
 ];
 
-function ChartPending({ startDate, colors }: { startDate: Date; colors: (string | undefined)[] }) {
+function ChartPending({
+  startDate,
+  preview,
+  colors,
+}: {
+  startDate: Date;
+  preview?: boolean;
+  colors: (string | undefined)[];
+}) {
   const upcoming = startDate > new Date();
+  // Event dates are UTC midnights: formatted locally, the start reads a day early west of UTC.
+  const starts = formatDate(startDate, 'MMM D', true);
   return (
     <div
       className="relative flex min-h-[240px] flex-col items-center justify-center gap-3 overflow-hidden rounded-xl border border-dashed border-gray-4 bg-gray-0 p-6 text-center dark:border-dark-3 dark:bg-dark-7"
@@ -236,12 +253,11 @@ function ChartPending({ startDate, colors }: { startDate: Date; colors: (string 
           {upcoming ? "Competition hasn't started yet" : 'The graph is on its way'}
         </Text>
         <Text size="sm" c="dimmed">
-          {upcoming
-            ? `There will be a graph of every team's points here. Scoring starts ${formatDate(
-                startDate,
-                'MMM D'
-              )}.`
-            : 'It draws its first point after the first hour of scoring.'}
+          {!upcoming
+            ? 'It draws its first point after the first hour of scoring.'
+            : preview
+            ? `The preview is scoring now and draws its first point after the first hour. The competition starts ${starts}.`
+            : `There will be a graph of every team's points here. Scoring starts ${starts}.`}
         </Text>
       </Stack>
     </div>
@@ -261,27 +277,30 @@ export function TopHats({ standings }: { standings: Standings }) {
         color="orange"
         subtitle="The hats that have earned the most points so far."
       />
-      <Paper withBorder radius="md">
-        <Stack gap={0}>
-          {top.map((c, i) => {
-            const cosmetic = standings.cosmetics[c.cosmeticId];
-            return (
-              <Group
-                key={`${c.userId}:${c.cosmeticId}:${c.claimKey}`}
-                gap="md"
-                px="md"
-                py="sm"
-                wrap="nowrap"
-                className="border-0 border-b border-solid border-gray-2 last:border-b-0 dark:border-dark-4"
-              >
-                <Text fw={700} c="dimmed" w={20} ta="right">
+      {/* Card rows like the standings'. Two columns on a wide page, filled down: 1 to 5, then 6 to 10. */}
+      <div
+        className="grid gap-2 @md:grid-flow-col @md:grid-cols-2 @md:grid-rows-5 @md:gap-x-3"
+        data-testid="top-hats"
+      >
+        {top.map((c, i) => {
+          const cosmetic = standings.cosmetics[c.cosmeticId];
+          return (
+            <Paper
+              // The standings group by team too, so one hat could appear twice; rank keeps keys unique.
+              key={`${c.topicId}:${i}`}
+              withBorder
+              radius="md"
+              className={EVENT_CARD_SURFACE}
+            >
+              <Group gap="sm" px="sm" py={10} wrap="nowrap">
+                <Text fw={800} fz={18} w={24} ta="center">
                   {i + 1}
                 </Text>
                 <div className="w-8 shrink-0">
                   {cosmetic?.url && <EdgeMedia src={cosmetic.url} width={64} alt="" />}
                 </div>
                 <Stack gap={0} className="min-w-0 flex-1">
-                  <Text fw={600} truncate>
+                  <Text fw={600} size="sm" truncate>
                     {cosmetic?.name ?? 'Hat'}
                   </Text>
                   <UserAvatar
@@ -292,14 +311,14 @@ export function TopHats({ standings }: { standings: Standings }) {
                     linkToProfile
                   />
                 </Stack>
-                <Text fw={700} c={teamColor(c.team)} className="tabular-nums">
-                  {numberWithCommas(c.points)}
+                <Text fw={800} c={teamColor(c.team)} className="tabular-nums">
+                  <AnimatedCount value={c.points} abbreviate={false} resetKey={c.topicId} />
                 </Text>
               </Group>
-            );
-          })}
-        </Stack>
-      </Paper>
+            </Paper>
+          );
+        })}
+      </div>
     </Stack>
   );
 }

@@ -64,6 +64,7 @@ import { messageAppOwnerSchema } from '~/server/schema/blocks/app-moderator-mess
 import {
   listSubListingQueueSchema,
   moderateSubListingSchema,
+  withdrawMyCatalogSubListingSchema,
 } from '~/server/schema/blocks/app-sub-listing.schema';
 import { rateLimit } from '~/server/middleware.trpc';
 import {
@@ -72,6 +73,8 @@ import {
 } from '~/server/prom/store-scope.metrics';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { narrowStoreScope } from '~/shared/utils/store-visibility-scope';
+// TYPE-only: the service itself stays a lazy `await import()` in every proc below.
+import type { ListingViewer } from '~/server/services/blocks/app-listing.service';
 import {
   isListingAudienceFloor,
   type ListingAudienceFloor,
@@ -390,6 +393,17 @@ function applyStoreGates(
     rawFloor as string | undefined
   );
   return { scope: narrowStoreScope(rawScope), floor: applyAudienceFloor(ctx) };
+}
+
+/**
+ * The viewer the store reads use for the viewer-scoped `restrictedAudience` field. Read
+ * from the server-stamped session only — `isModerator` is the same flag
+ * `resolveViewerAudienceFloor` trusts.
+ */
+function listingViewerFromCtx(ctx: {
+  user?: { id: number; isModerator?: boolean | null };
+}): ListingViewer {
+  return { userId: ctx.user?.id ?? null, isModerator: ctx.user?.isModerator === true };
 }
 
 /** Map a `SubListingError` (duck-typed, so the service stays a lazy import) to TRPC. */
@@ -1169,7 +1183,7 @@ export const appListingsRouter = router({
    * seat-only caller who owns nothing. Same gate the collaborator router composes.
    *
    * CLI-reachable (`listingMediaCliScope`): THE read behind `civitai app doctor`. It is
-   * the only surface carrying `problems[]` (the 8-code completeness advisory) plus
+   * the only surface carrying `problems[]` (the listing-problems advisory) plus
    * `lastModerationAction`, so without the meta the CLI's OAuth token 403s on the one
    * proc that can tell an author what is wrong with their listing. The set it returns is
    * resolved from ownership ∪ accepted seats in the service; the meta admits a credential,
@@ -1828,6 +1842,36 @@ export const appListingsRouter = router({
     return { count: await countSubListingQueue() };
   }),
 
+  /**
+   * The signed-in user's own catalog items: what off-site platforms listed under their name
+   * (account settings). Not behind the `app-store-sub-listings` flag, which gates only the store
+   * grid; the platforms sync and moderators review without it.
+   */
+  listMyCatalogSubListings: protectedProcedure.query(async ({ ctx }) => {
+    const { listMyCatalogSubListings } = await import(
+      '~/server/services/blocks/app-sub-listing.service'
+    );
+    try {
+      return await listMyCatalogSubListings(ctx.user.id);
+    } catch (err) {
+      throw mapSubListingError(err);
+    }
+  }),
+
+  /** Withdraw one of the caller's own catalog items. Someone else's item is NOT_FOUND. */
+  withdrawMyCatalogSubListing: protectedProcedure
+    .input(withdrawMyCatalogSubListingSchema)
+    .mutation(async ({ ctx, input }) => {
+      const { withdrawMyCatalogSubListing } = await import(
+        '~/server/services/blocks/app-sub-listing.service'
+      );
+      try {
+        return await withdrawMyCatalogSubListing({ userId: ctx.user.id, id: input.id });
+      } catch (err) {
+        throw mapSubListingError(err);
+      }
+    }),
+
   /** MOD: approve / hide / restore / approve-edit / reject-edit. Stamps `moderated_by_id`. */
   moderateSubListing: moderatorProcedure
     .input(moderateSubListingSchema)
@@ -1899,6 +1943,7 @@ export const appListingsRouter = router({
         redCapable: isRedCapableRequest(ctx),
         scope,
         floor,
+        viewer: listingViewerFromCtx(ctx),
         // Opt-in AND flag: a `ListingCard`-only caller (the related rail) must never receive a
         // `SubListingCard` just because the viewer has the flag.
         includeSubListings:
@@ -2018,6 +2063,7 @@ export const appListingsRouter = router({
         redCapable: isRedCapableRequest(ctx),
         scope,
         floor,
+        viewer: listingViewerFromCtx(ctx),
       });
       if (!detail) throw throwNotFoundError('Listing not found');
       return detail;

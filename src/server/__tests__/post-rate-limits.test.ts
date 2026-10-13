@@ -48,7 +48,11 @@ vi.mock('~/env/client', () => ({
 }));
 
 import { rateLimit } from '~/server/middleware.trpc';
-import { isDailyPostLimitMessage, postRateLimits } from '~/server/schema/post.schema';
+import {
+  getDailyPostLimit,
+  isDailyPostLimitMessage,
+  postRateLimits,
+} from '~/server/schema/post.schema';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 
 const mockHGet = redisMock.redis.packed.hGet;
@@ -193,5 +197,38 @@ describe('postRateLimits new-account clamp', () => {
     const createdAt = new Date(startOfToday.getTime() - 1);
     const next = await attemptWith(user({ tier: 'free', createdAt }), 3, 10 * 60 * 1000);
     expect(next).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * `getDailyPostLimit` is the batch scheduler's copy of the cap. It must say the same number the
+ * middleware enforces, so each tier is checked against the middleware itself rather than the tier
+ * table — a table edit that misses one side shows up here.
+ */
+describe('getDailyPostLimit', () => {
+  const cases = [
+    { score: 0, tier: 'free', limit: 20 },
+    { score: 0, tier: 'bronze', limit: 40 },
+    { score: 999, tier: 'free', limit: 20 },
+    { score: 1000, tier: 'free', limit: 60 },
+    { score: 1000, tier: 'gold', limit: 120 },
+    { score: 5000, tier: 'free', limit: 150 },
+    { score: 5000, tier: 'silver', limit: 300 },
+    { score: 50_000, tier: 'founder', limit: 300 },
+  ];
+
+  it.each(cases)('score $score, tier $tier → $limit', async ({ score, tier, limit }) => {
+    const sessionUser = user({ score, tier });
+    expect(getDailyPostLimit(sessionUser)).toBe(limit);
+    // The middleware admits `limit` prior attempts and refuses `limit + 1`.
+    const admitted = await attemptWith(sessionUser, limit, 2 * HOUR);
+    expect(admitted).toHaveBeenCalledTimes(1);
+    await expect(attemptWith(sessionUser, limit + 1, 2 * HOUR)).rejects.toThrow(
+      /reached today's limit/
+    );
+  });
+
+  it('treats a missing score as the base tier', () => {
+    expect(getDailyPostLimit(user({ meta: {} as SessionUser['meta'], tier: 'free' }))).toBe(20);
   });
 });

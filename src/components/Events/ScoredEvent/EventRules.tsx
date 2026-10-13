@@ -3,8 +3,8 @@ import {
   IconCheck,
   IconConfetti,
   IconEye,
+  IconBan,
   IconHanger,
-  IconHeart,
   IconMessageQuestion,
   IconScale,
   IconTrophy,
@@ -15,13 +15,23 @@ import type { ReactNode } from 'react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { useTeamColor } from '~/components/Events/events.utils';
 import { EventSectionHeading } from '~/components/Events/ScoredEvent/EventSectionHeading';
+import { SCORE_WAYS } from '~/components/Events/ScoredEvent/HatStats';
 import { PrizeBadge } from '~/components/Events/ScoredEvent/PrizeBadge';
-import { describeEntityTypes } from '~/components/Events/ScoredEvent/scored-event.utils';
+import {
+  describeEntityTypes,
+  joinWithAnd,
+} from '~/components/Events/ScoredEvent/scored-event.utils';
+import type { EventPointType } from '~/server/events/points/types';
 import type { RouterOutput } from '~/types/router';
 
 type EventData = RouterOutput['event']['getData'];
 
 const STEP_ICONS = [IconUsersGroup, IconHanger, IconConfetti];
+const ARTICLE_SCORE_WORDS: Partial<Record<EventPointType, string>> = {
+  view: 'views',
+  reaction: 'reactions',
+  comment: 'comments',
+};
 // The hero's surface, so the section reads as part of the same page. Nothing here is clickable,
 // so no card takes a hover state.
 const CARD =
@@ -32,6 +42,9 @@ export function EventRules({ data }: { data: EventData }) {
   const { page, rules, decoration } = data;
   if (!page) return null;
   const wearsOn = decoration ? describeEntityTypes(decoration.entityTypes) : 'your posts';
+  const articleScores = decoration?.entityTypes.includes('Article')
+    ? joinWithAnd((rules?.articleScores ?? []).flatMap((t) => ARTICLE_SCORE_WORDS[t] ?? []))
+    : '';
   const cooldownMin = decoration ? Math.round(decoration.moveCooldownMs / 60_000) : 0;
   // Each step takes the next team's colour, as the hero's headline does.
   const colors = data.teams.map((t) => teamColor(t)).filter((c): c is string => !!c);
@@ -79,31 +92,26 @@ export function EventRules({ data }: { data: EventData }) {
         <SimpleGrid cols={{ base: 1, md: 2 }} spacing="sm">
           <RuleCard icon={IconEye} title="How points add up">
             <div className="grid grid-cols-3 gap-2" data-testid="event-points">
-              <PointTile value="1" label="per view in a feed" />
-              <PointTile
-                value={String(rules.reactionWeight)}
-                label="per reaction"
-                icon={<IconHeart size={16} />}
-              />
-              <PointTile value="0" label="for your own views and reactions" />
+              {pointTiles(rules).map((tile) => (
+                <PointTile key={tile.label} {...tile} />
+              ))}
             </div>
             <Text size="xs" c="dimmed">
-              Hats go on your own {wearsOn}. Models score views only: reactions aren&apos;t counted
-              for models.
+              Hats go on your own {wearsOn}. {articleScores && `Articles score ${articleScores}. `}
+              {rules.modelLikeWeight === undefined
+                ? "Models score views only: reactions aren't counted for models."
+                : 'Models score views and thumbs-up reviews.'}
             </Text>
           </RuleCard>
           <RuleCard icon={IconScale} title="Keeping it fair">
             <Stack component="ul" gap={8} className="m-0 list-none p-0">
               <FairRule>
-                One person counts for at most {rules.viewerOwnerDailyCap} of a creator&apos;s posts
-                a day.
+                One person can earn a creator at most {rules.pointsCapPerDay} points a day.
               </FairRule>
               <FairRule>
                 Accounts made in the {rules.newAccountDays} days before the event don&apos;t count.
               </FairRule>
-              <FairRule>
-                Signed-out views count, up to a fair share. Bot-like browsing doesn&apos;t.
-              </FairRule>
+              <FairRule>Only signed-in people&apos;s views and reactions count.</FairRule>
               {cooldownMin > 0 && (
                 <FairRule>
                   A hat can move again {cooldownMin} {cooldownMin === 1 ? 'minute' : 'minutes'}{' '}
@@ -212,14 +220,34 @@ function RuleCard({
   );
 }
 
-function PointTile({ value, label, icon }: { value: string; label: string; icon?: ReactNode }) {
+// A tile shows once the event's rules carry its weight.
+type Rules = NonNullable<EventData['rules']>;
+type PointTileProps = { value: number; label: string; icon: Icon; color: string };
+
+/** One tile per way to score, from the weights the scoring job applies. Views are always 1. */
+function pointTiles(rules: Rules): PointTileProps[] {
+  const way = (key: keyof typeof SCORE_WAYS, value: number | undefined, label: string) =>
+    value === undefined ? [] : [{ value, label, ...SCORE_WAYS[key] }];
+  return [
+    ...way('views', 1, 'per view in a feed'),
+    ...way('reactions', rules.reactionWeight, 'per reaction'),
+    ...way('comments', rules.commentWeight, 'per comment'),
+    ...way('stickers', rules.stickerWeight, 'per sticker'),
+    ...way('remixes', rules.remixWeight, 'per remix'),
+    { value: 0, label: 'for your own views and reactions', icon: IconBan, color: 'gray' },
+  ];
+}
+
+function PointTile({ value, label, icon: TileIcon, color }: PointTileProps) {
   return (
-    <Stack gap={2} className="rounded-lg bg-gray-0 px-3 py-2 dark:bg-dark-5">
-      <Group gap={4} wrap="nowrap">
+    <Stack gap={4} className="rounded-lg bg-gray-0 px-3 py-2 dark:bg-dark-5">
+      <Group gap={8} wrap="nowrap">
+        <ThemeIcon size={26} radius="xl" variant="light" color={color} className="shrink-0">
+          <TileIcon size={15} />
+        </ThemeIcon>
         <Text fw={900} className="text-3xl tabular-nums leading-none">
           {value}
         </Text>
-        {icon}
       </Group>
       <Text size="xs" c="dimmed" lh={1.3}>
         {label}

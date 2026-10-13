@@ -3,12 +3,15 @@ import clsx from 'clsx';
 import { earnedLabel, Hexagon } from '~/components/CreatorJourney/CreatorAchievements';
 import { accentVar, TierBadge } from '~/components/CreatorJourney/tier-badge';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import { HIDDEN_ACHIEVEMENT_PLACEHOLDER } from '~/shared/constants/creator-journey.constants';
+import {
+  HIDDEN_ACHIEVEMENT_PLACEHOLDER,
+  SPECIAL_ACCENT,
+} from '~/shared/constants/creator-journey.constants';
 import type { RouterOutput } from '~/types/router';
 
 type Secret = RouterOutput['creatorJourney']['getMine']['secrets'][number];
 
-export const SECRET_ACCENT = '#7950f2';
+export const SECRET_ACCENT = SPECIAL_ACCENT;
 
 export function CreatorSecrets({ secrets }: { secrets: Secret[] }) {
   if (secrets.length === 0) return null;
@@ -18,13 +21,13 @@ export function CreatorSecrets({ secrets }: { secrets: Secret[] }) {
     <Stack gap="sm" style={accentVar(SECRET_ACCENT)}>
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <Title order={2} size="h3">
-          Hidden Achievements
+          Special Achievements
         </Title>
         <Text size="sm" c="dimmed" className="tabular-nums">
           {found} of {secrets.length} found
         </Text>
       </div>
-      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
         {secrets.map((secret) => (
           <SecretTile key={secret.key} secret={secret} />
         ))}
@@ -53,7 +56,8 @@ function SecretTile({ secret }: { secret: Secret }) {
           src={HIDDEN_ACHIEVEMENT_PLACEHOLDER}
           alt=""
           width={144}
-          className="size-[52px] shrink-0 object-contain"
+          // The placeholder art is drawn about a tenth narrower than a regular hexagon.
+          className="size-[52px] shrink-0 scale-x-110 object-contain"
           optimized
         />
       )}
@@ -61,7 +65,12 @@ function SecretTile({ secret }: { secret: Secret }) {
         <Text size="sm" fw={700} truncate>
           {secret.name}
         </Text>
-        {secret.earned ? (
+        {secret.hint && (
+          <Text size="xs" c="dimmed" fs="italic">
+            {secret.hint}
+          </Text>
+        )}
+        {secret.earned && (
           <>
             {secret.description && (
               <Text size="xs" c="dimmed">
@@ -72,12 +81,6 @@ function SecretTile({ secret }: { secret: Secret }) {
               {earnedLabel(secret.achievedAt)}
             </Text>
           </>
-        ) : (
-          secret.hint && (
-            <Text size="xs" c="dimmed" fs="italic">
-              {secret.hint}
-            </Text>
-          )
         )}
       </div>
     </div>

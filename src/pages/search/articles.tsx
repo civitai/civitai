@@ -9,6 +9,7 @@ import {
 } from '~/components/Search/CustomSearchComponents';
 import { SearchHeader } from '~/components/Search/SearchHeader';
 import { ArticleCard } from '~/components/Cards/ArticleCard';
+import { useSearchEventDecorations } from '~/components/Decorations/useSearchEventDecorations';
 import { IconCloudOff } from '@tabler/icons-react';
 import { TimeoutLoader } from '~/components/Search/TimeoutLoader';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
@@ -73,6 +74,7 @@ export function ArticlesHitList() {
     type: 'articles',
     data: hits,
   });
+  const decorated = useSearchEventDecorations(hits, items, { entity: 'Article' });
 
   if (hits.length === 0) {
     const NotFound = (
@@ -141,7 +143,7 @@ export function ArticlesHitList() {
         <Text c="dimmed">{hiddenCount} articles have been hidden due to your settings.</Text>
       )}{' '}
       <MasonryGridVirtual
-        data={items}
+        data={decorated}
         render={ArticleCard}
         itemId={(x) => x.id}
         empty={<NoContent />}

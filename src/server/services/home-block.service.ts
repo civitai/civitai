@@ -26,6 +26,12 @@ import {
   bustSystemHomeBlockCaches,
   getHomeBlockCached,
 } from '~/server/services/home-block-cache.service';
+import {
+  assertValidHomeBlockFeatureFlag,
+  canViewHomeBlock,
+  filterViewableHomeBlocks,
+} from '~/server/services/home-block-access';
+import type { EventViewer } from '~/server/events/event-access';
 import { getLeaderboardsWithResults } from '~/server/services/leaderboard.service';
 import type { GetModelsWithImagesAndModelVersions } from '~/server/services/model.service';
 import {
@@ -81,17 +87,29 @@ const homeBlockSelect = {
   index: true,
 } as const;
 
-export const getHomeBlocks = async ({
-  userId,
-  ownedOnly,
-  ids,
-  includeSource = false,
-}: {
+type GetHomeBlocksArgs = {
   userId?: number;
   ownedOnly?: boolean;
   ids?: number[];
   includeSource?: boolean;
-}) => {
+};
+
+// Gated per viewer AFTER every read, including the shared permanent-block cache, which must keep
+// holding rows unfiltered: a filtered list under a shared key would serve one viewer's set to all.
+export const getHomeBlocks = async ({
+  viewer,
+  ...args
+}: GetHomeBlocksArgs & { viewer: EventViewer }) => {
+  const rows = await getUngatedHomeBlocks(args);
+  return filterViewableHomeBlocks<(typeof rows)[number]>(rows, viewer);
+};
+
+const getUngatedHomeBlocks = async ({
+  userId,
+  ownedOnly,
+  ids,
+  includeSource = false,
+}: GetHomeBlocksArgs) => {
   const hasCustomHomeBlocks = await userHasCustomHomeBlocks(userId);
 
   if (ownedOnly && !userId) {
@@ -166,31 +184,36 @@ export const getSystemHomeBlocks = async ({ input }: { input: GetSystemHomeBlock
     },
   });
 
-  return homeBlocks.map((homeBlock) => ({
-    ...homeBlock,
-    metadata: homeBlock.metadata as HomeBlockMetaSchema,
-  }));
+  // Resolved, because the gate reads the flag from a sourced row's source.
+  return Promise.all(
+    homeBlocks.map(async (homeBlock) => ({
+      ...homeBlock,
+      metadata: homeBlock.sourceId
+        ? await resolveHomeBlockMetadata(homeBlock)
+        : (homeBlock.metadata as HomeBlockMetaSchema),
+    }))
+  );
 };
 
 export const getHomeBlockById = async ({
   id,
   domain,
+  viewer,
 }: GetHomeBlockByIdInputSchema & {
-  // Accepted and deliberately NOT read. The body destructures `id` and `domain` only.
-  //
-  // Keep it that way, for two independent reasons — the first is the one that binds:
+  // Read ONLY to refuse a gated row before the shared read, never to shape the body.
   //
   // 1. The result is stored in a SHARED Redis entry with no user segment. This path goes
   //    through `getHomeBlockCached` (`~/server/services/home-block-cache.service.ts`),
   //    whose key is built from the block's type, its identifier and the domain only.
-  //    Personalizing the result off `user` would therefore write one caller's body under
+  //    Personalizing the result off the viewer would therefore write one caller's body under
   //    a key every other caller reads — a cross-user leak that exists even with
   //    `edgeCacheIt` removed from the procedure entirely, because the leak is in the
   //    server-side cache, not in the response headers.
   //
   // 2. `homeBlock.getHomeBlock` is additionally edge-cached, so a personalized body would
-  //    also be served from the edge to every other caller of the same URL.
-  user?: SessionUser;
+  //    also be served from the edge to every other caller of the same URL. A gated row's
+  //    200 is kept off the edge by the controller (`isHomeBlockGated`).
+  viewer: EventViewer;
 }) => {
   const homeBlockFindArgs = {
     select: {
@@ -213,13 +236,11 @@ export const getHomeBlockById = async ({
     return null;
   }
 
-  return getHomeBlockCached(
-    {
-      ...homeBlock,
-      metadata: homeBlock.metadata as HomeBlockMetaSchema,
-    },
-    domain
-  );
+  const row = { ...homeBlock, metadata: homeBlock.metadata as HomeBlockMetaSchema };
+  const metadata = await resolveHomeBlockMetadata(row);
+  if (!(await canViewHomeBlock({ type: row.type, metadata }, viewer))) return null;
+
+  return getHomeBlockCached(row, domain, metadata);
 };
 
 // `moreHref` is carried from the block's own metadata, not from the board row, so
@@ -739,8 +760,10 @@ export const upsertHomeBlock = async ({
 }: {
   input: UpsertHomeBlockInput & { userId: number; isModerator?: boolean };
 }) => {
-  const { userId, isModerator, id, metadata, type, sourceId } = input;
+  const { userId, isModerator, id, type, sourceId } = input;
   let { index } = input;
+  const metadata = { ...input.metadata };
+  if (!isModerator) delete metadata.featureFlag;
 
   if (id) {
     const homeBlock = await dbRead.homeBlock.findUnique({
@@ -1055,6 +1078,7 @@ export async function createHomeBlockAdmin({
   index?: number;
   permanent?: boolean;
 }) {
+  assertValidHomeBlockFeatureFlag(metadata);
   const created = await dbWrite.homeBlock.create({
     data: {
       userId: SYSTEM_HOMEBLOCK_USER_ID,
@@ -1087,6 +1111,7 @@ export async function updateHomeBlockAdmin({
   sourceId?: number | null;
 }) {
   await assertSystemHomeBlock(id);
+  assertValidHomeBlockFeatureFlag(metadata);
   const data: Prisma.HomeBlockUncheckedUpdateInput = {};
   if (metadata !== undefined) data.metadata = metadata;
   if (index !== undefined) data.index = index;
@@ -1140,8 +1165,10 @@ export async function reorderHomeBlocksAdmin({ orderedIds }: { orderedIds: numbe
 
 export const setHomeBlocksOrder = async ({
   input,
+  viewer,
 }: {
   input: SetHomeBlocksOrderInputSchema & { userId: number };
+  viewer: EventViewer;
 }) => {
   const { userId, homeBlocks } = input;
   if (homeBlocks.find((homeBlock) => homeBlock.userId !== -1 && homeBlock.userId !== userId)) {
@@ -1171,14 +1198,20 @@ export const setHomeBlocksOrder = async ({
   // with clones of permanent blocks, so for those absence means "never offered", not "removed".
   // Sweeping them would delete the last row of a user who kept only a permanent block, and this
   // app reads "no rows" as "never customized", which hands that user the full default homepage.
-  const homeBlocksToRemove = await dbRead.homeBlock.findMany({
-    select: { id: true },
-    where: {
-      userId,
-      id: { not: { in: homeBlockIds } },
-      OR: [{ sourceId: null }, { source: { permanent: false } }],
-    },
-  });
+  // A row gated from this viewer was never offered either, so it is kept for when they can see it.
+  const homeBlocksToRemove = await filterViewableHomeBlocks(
+    await resolveMetadataForAll(
+      await dbRead.homeBlock.findMany({
+        select: { id: true, type: true, metadata: true, sourceId: true },
+        where: {
+          userId,
+          id: { not: { in: homeBlockIds } },
+          OR: [{ sourceId: null }, { source: { permanent: false } }],
+        },
+      })
+    ),
+    viewer
+  );
 
   // if we have items to remove, add a deleteMany mutation to the transaction
   if (homeBlocksToRemove.length) {

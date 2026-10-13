@@ -62,7 +62,6 @@ export type AppFeedbackRefusal =
   | 'flag_off'
   | 'not_found'
   | 'scope'
-  | 'self'
   | 'not_approved'
   | 'blocked';
 
@@ -101,7 +100,7 @@ export async function resolveAppFeedbackTarget(
 
   if (user.muted) return refuse('muted');
   // First of the IO checks: it needs no listing, and while the area is dark it spares every
-  // chrome dropdown the listing reads below.
+  // chrome mount (the feedback button asks on mount) the listing reads below.
   if (!(await isFeedbackAreaEnabled({ area: APP_BLOCK_FEEDBACK_AREA, user })))
     return refuse('flag_off');
 
@@ -123,12 +122,16 @@ export async function resolveAppFeedbackTarget(
   ]);
   if (!listing) return refuse('not_found');
 
-  // Before the owner/status checks, so a caller whose store scope hides this kind cannot tell
-  // "yours", "not approved" and "does not exist" apart.
+  // Before the status and block checks. Every refusal after it reads as NOT_FOUND today
+  // (`refusalError`); keeping scope ahead of them means a distinguishable refusal added later
+  // still tells a caller whose store scope hides this kind nothing about the listing.
   const scope = narrowStoreScope(rawScope);
   if (!scopeAdmitsListingKind(scope, access.kind as StoreListingKind)) return refuse('scope');
 
-  if (access.role !== null) return refuse('self');
+  // 🔴 `access.role` is DELIBERATELY not consulted. Operator decision, 2026-10-11: the owner and
+  // accepted collaborators may send feedback like anyone else; it lands in their own inbox.
+  // Pinned by the "admits the canonical owner" / "admits an accepted collaborator" tests.
+  //
   // 🔴 `status` ONLY — the per-listing `visibility` level (private / moderators / testers) is
   // DELIBERATELY not consulted. Operator decision, 2026-10-08: an approved app that is unlisted
   // or tester-only is still runnable by slug, and the people running it are exactly the ones
@@ -167,7 +170,6 @@ export async function getAppFeedbackEligibility(user: SessionUser, target: AppFe
 }
 
 export const APP_FEEDBACK_NOT_FOUND_MESSAGE = 'App not found';
-export const APP_FEEDBACK_SELF_MESSAGE = 'You cannot send feedback to your own app';
 export const APP_FEEDBACK_FLAG_OFF_MESSAGE = 'Feedback is not being collected here right now.';
 export const APP_FEEDBACK_MUTED_MESSAGE = 'Your account cannot send feedback right now';
 export const APP_FEEDBACK_CAP_MESSAGE =
@@ -183,8 +185,6 @@ function refusalError(reason: AppFeedbackRefusal): TRPCError {
       return new TRPCError({ code: 'FORBIDDEN', message: APP_FEEDBACK_MUTED_MESSAGE });
     case 'flag_off':
       return new TRPCError({ code: 'FORBIDDEN', message: APP_FEEDBACK_FLAG_OFF_MESSAGE });
-    case 'self':
-      return new TRPCError({ code: 'FORBIDDEN', message: APP_FEEDBACK_SELF_MESSAGE });
     case 'not_found':
     case 'scope':
     case 'not_approved':
@@ -472,7 +472,7 @@ export async function setAppFeedbackOwnerStatus({
   });
   if (count === 0) throw new TRPCError({ code: 'CONFLICT', message: APP_FEEDBACK_STALE_MESSAGE });
   if (isReporterNotifiedOwnerStatus(input.ownerStatus))
-    await notifyReporterOfOwnerStatus(seatListingId, input.id, input.ownerStatus);
+    await notifyReporterOfOwnerStatus(seatListingId, input.id, input.ownerStatus, userId);
   return { id: input.id, ownerStatus: input.ownerStatus };
 }
 
@@ -481,18 +481,23 @@ export async function setAppFeedbackOwnerStatus({
  * the UPDATE commits: a failure is logged and never fails the status change. Re-read on the
  * primary under `ownerVisibleWhere` plus the status just written, so a row hidden, or moved to
  * another status, since the write sends nothing.
+ *
+ * Nothing is sent when the reporter IS the person who set the status: an owner or collaborator may
+ * file feedback on their own app, and closing your own row is not news to you. A different member
+ * of the app's team closing it still notifies the reporter.
  */
 async function notifyReporterOfOwnerStatus(
   seatListingId: string,
   feedbackId: number,
-  ownerStatus: FeedbackOwnerStatus
+  ownerStatus: FeedbackOwnerStatus,
+  actorUserId: number
 ) {
   try {
     const row = await dbWrite.feedback.findFirst({
       where: { ...ownerVisibleWhere(seatListingId), id: feedbackId, ownerStatus },
       select: { userId: true, appListing: { select: { name: true, slug: true } } },
     });
-    if (!row) return;
+    if (!row || row.userId === actorUserId) return;
     await notifyAppFeedbackReporter({
       userId: row.userId,
       key: appFeedbackStatusKey(feedbackId, ownerStatus),

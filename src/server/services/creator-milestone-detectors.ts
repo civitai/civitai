@@ -79,6 +79,7 @@ export const shopSalesSource = `SELECT c."createdById" AS "userId", p."purchased
     FROM "UserCosmeticShopPurchases" p
     JOIN "Cosmetic" c ON c.id = p."cosmeticId"
     WHERE NOT p.refunded AND c."createdById" IS NOT NULL
+      AND p."userId" IS DISTINCT FROM c."createdById"
     UNION ALL
     SELECT i."addedById", p."purchasedAt", p."buzzTransactionId",
       greatest(p."unitAmount" - coalesce((
@@ -136,6 +137,7 @@ export const competeWinsSource = `SELECT cw."userId", cw."createdAt" AS at, 'cha
       AND CASE WHEN jsonb_typeof(c."prizePositions" -> p.place) = 'number'
         THEN floor((c."prizePositions" ->> p.place)::numeric * c."prizePool" / 100) >= 1
         ELSE false END
+      -- Must match getEntrantCounts in crucible.service.ts; crucible-entrant-count.test.ts pins both.
       AND (SELECT count(DISTINCT e."userId") FROM "CrucibleEntry" e
         WHERE e."crucibleId" = c.id AND e."userId" <> c."userId") >= ${COMPETE_MIN_ENTRANTS}`;
 
@@ -146,10 +148,8 @@ const userMetricSource = `SELECT um."userId", ${USER_METRICS.map((m) => `um."${m
 export const activityValuesSql = `SELECT
     (SELECT count(*) FROM (${publishedSources.model}) s WHERE s."userId" = $1)::int AS models,
     (SELECT count(*) FROM (${publishedSources.article}) s WHERE s."userId" = $1)::int AS articles,
-    -- GROUP BY keeps the planner off the max() rewrite, which walks the whole downloads index for a
-    -- heavy uploader with no public model (1.5s on prod).
-    coalesce((SELECT max(s."downloadCount") FROM (${modelDownloadsSource}) s
-      WHERE s."userId" = $1 GROUP BY s."userId"), 0)::int AS downloads,
+    least(coalesce((SELECT sum(s."downloadCount") FROM (${modelDownloadsSource}) s
+      WHERE s."userId" = $1), 0), 2147483647)::int AS downloads,
     coalesce((SELECT s."followerCount" FROM (${userMetricSource}) s
       WHERE s."userId" = $1), 0)::int AS followers,
     coalesce((SELECT s."reactionCount" FROM (${userMetricSource}) s
@@ -158,7 +158,12 @@ export const activityValuesSql = `SELECT
     least(coalesce((SELECT sum(s.amount) FROM (${shopSalesSource}) s WHERE s."userId" = $1), 0),
       2147483647)::int AS revenue,
     -- Wins in Postgres only; the page adds the ledger's.
-    (SELECT count(*) FROM (${competeWinsSource}) s WHERE s."userId" = $1)::int AS wins`;
+    w.wins, w."crucibleWins"
+  FROM (
+    SELECT count(*)::int AS wins,
+      (count(*) FILTER (WHERE s.contest LIKE 'crucible:%'))::int AS "crucibleWins"
+    FROM (${competeWinsSource}) s WHERE s."userId" = $1
+  ) w`;
 
 function detectorSql(entry: ActivityEntry): SqlDetectorGroup['sql'] {
   switch (entry.detector) {
@@ -178,12 +183,12 @@ function detectorSql(entry: ActivityEntry): SqlDetectorGroup['sql'] {
       return ({ keys, users }) => `
         SELECT d."userId", m.key AS "milestoneKey", NULL::timestamp AS "achievedAt"
         FROM (
-          SELECT s."userId", max(s."downloadCount") AS top
+          SELECT s."userId", sum(s."downloadCount") AS total
           FROM (${modelDownloadsSource}) s
           WHERE (${users}::int[] IS NULL OR s."userId" = ANY(${users}::int[]))
           GROUP BY s."userId"
         ) d
-        JOIN "CreatorMilestone" m ON m.key = ANY(${keys}::text[]) AND d.top >= m.threshold
+        JOIN "CreatorMilestone" m ON m.key = ANY(${keys}::text[]) AND d.total >= m.threshold
         WHERE ${notHeld('d."userId"')}`;
     case 'userMetric':
       return ({ keys, users }) => `

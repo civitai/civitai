@@ -132,16 +132,13 @@ import {
   getModelVersionEarlyAccessRefundRequirement,
   refundModelEarlyAccessPurchases,
 } from '~/server/services/model-early-access-refund.service';
-import type {
-  ModelType,
-  ModelVersionEngagementType,
-  TrainingStatus,
-} from '~/shared/utils/prisma/enums';
+import type { ModelType, ModelVersionEngagementType } from '~/shared/utils/prisma/enums';
 import {
   Availability,
   CommercialUse,
   ModelStatus,
   ModelUsageControl,
+  TrainingStatus,
 } from '~/shared/utils/prisma/enums';
 import type { LicensingFeeSettlementCurrency, LicensingFeeType } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
@@ -505,6 +502,24 @@ function toMonetizationAuditShape(
     : null;
 }
 
+// Denied and Paused are moderation decisions: an owner can neither set them nor move a version out
+// of them. Every other transition, replay included, is the training wizard's to make.
+const MODERATOR_ONLY_TRAINING_STATUSES: (TrainingStatus | null)[] = [
+  TrainingStatus.Denied,
+  TrainingStatus.Paused,
+];
+function assertOwnerTrainingStatusChange(
+  stored: TrainingStatus | null,
+  next: TrainingStatus | null | undefined
+) {
+  if (next === undefined || next === stored) return;
+  if (
+    MODERATOR_ONLY_TRAINING_STATUSES.includes(stored) ||
+    MODERATOR_ONLY_TRAINING_STATUSES.includes(next)
+  )
+    throw throwBadRequestError("A version's training status can't be changed here.");
+}
+
 export const upsertModelVersion = async ({
   id,
   monetization,
@@ -656,6 +671,9 @@ export const upsertModelVersion = async ({
     }
   }
 
+  // Publishing goes through modelVersion.publish, which enforces what this route would skip.
+  if (!isModerator && (!id || templateId)) data.status = ModelStatus.Draft;
+
   // Check if trying to publish a model version when model is marked as cannotPublish
   const modelMeta = model.meta as ModelMeta | null;
   if (modelMeta?.cannotPublish && data.status === ModelStatus.Published) {
@@ -797,6 +815,7 @@ export const upsertModelVersion = async ({
       select: {
         id: true,
         status: true,
+        trainingStatus: true,
         description: true,
         trainedWords: true,
         publishedAt: true,
@@ -862,6 +881,21 @@ export const upsertModelVersion = async ({
       throw throwBadRequestError(
         'Use the unpublish action to take a published version down — it settles any refunds owed to buyers.'
       );
+    }
+
+    // Any other move is a publish or a takedown laundered into Draft, which modelVersion.publish then
+    // accepts. The form and the review handlers replay the stored status, which is not a change.
+    if (!isModerator && data.status !== undefined && data.status !== existingVersion.status) {
+      throw throwBadRequestError(
+        "Use the publish or unpublish action to change a version's status."
+      );
+    }
+
+    if (!isModerator) {
+      if (data.modelId !== undefined && data.modelId !== existingVersion.model.id) {
+        throw throwBadRequestError('A version cannot be moved to another model.');
+      }
+      assertOwnerTrainingStatusChange(existingVersion.trainingStatus, data.trainingStatus);
     }
 
     const mergedMeta =

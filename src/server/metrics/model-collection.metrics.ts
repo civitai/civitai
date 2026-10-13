@@ -4,7 +4,7 @@ import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import type { MetricProcessorRunContext } from '~/server/metrics/base.metrics';
 import { createMetricProcessor } from '~/server/metrics/base.metrics';
 import { executeRefresh, getEntityMetricTasks } from '~/server/metrics/metric-helpers';
-import { modelsSearchIndex } from '~/server/search-index';
+import { modelsSearchIndex } from '~/server/search-index/models.search-index';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { createLogger } from '~/utils/logging';
 

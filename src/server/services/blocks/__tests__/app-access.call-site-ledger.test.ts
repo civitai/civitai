@@ -321,6 +321,14 @@ const GATE_LEDGER: Record<string, string> = {
     '(b) the isSelfPurchase / isSelfSpend business-logic branch for revenue share. No ' +
     'caller is being authorised. 🔴 The stamp is deliberately never rewritten by an ' +
     'ownership transfer — see the money-invariance decision.',
+  'src/server/services/blocks/known-app-blocks.service.ts':
+    'NOT a gate — listed so the population stays closed. getApprovedAppBlockAnalytics ' +
+    'reads `app.userId` so the custom-events ingest can LABEL a row `isOwner` (team) when ' +
+    'the viewer is the app owner OR an ACCEPTED collaborator; nobody is authorised or ' +
+    'refused by it. Collaborators come from listApprovedAppBlockSeatHolders in ' +
+    'app-access.service, which shares APP_BLOCK_SEAT_LISTING_WHERE and the ACCEPTED ' +
+    'filter with resolveAccessibleAppBlockIds; app-block-team.seam.test.ts pins that the ' +
+    'two agree. Widening the label only changed rows written after it shipped.',
   'src/server/services/blocks/publish-request.service.ts':
     'NOT a caller-identity gate: both sites STAMP the owner (the approve path minting ' +
     'the listing via mapAppBlockToListing, and the backfill attributing a synthetic ' +

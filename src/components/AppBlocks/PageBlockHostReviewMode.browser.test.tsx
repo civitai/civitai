@@ -7,8 +7,8 @@ import { renderWithProviders } from '../../../test/component-setup';
 // `importOriginal` generic below be written without an inline `import()` type,
 // which the repo's `consistent-type-imports` rule forbids.
 import type * as MantineNotifications from '@mantine/notifications';
-// Type-only too (erased, so it cannot defeat vi.mock hoisting) — the repo's local
-// mirror of the SDK's `BlockWildcardPackErrorCode` union, used below so the
+// Type-only too (erased, so it cannot defeat vi.mock hoisting) — the repo's alias
+// of the SDK's `BlockWildcardPackErrorCode` union, used below so the
 // permitted-code list in this file cannot silently drift from the union.
 import type { WildcardPackErrorCode } from '~/components/AppBlocks/wildcardPackParse';
 
@@ -16,13 +16,18 @@ import type { WildcardPackErrorCode } from '~/components/AppBlocks/wildcardPackP
  * MOD REVIEW SANDBOX (#2831) — PageBlockHost `reviewMode` read-only gate.
  *
  * The review preview runs UNAPPROVED, untrusted code with the mod's session. This
- * suite drives the REAL postMessage bridge and proves, for each class of handler:
- *   - reviewMode: every side-effecting / money / private / cross-user message
- *     replies with a KNOWN-SHAPE, fail-fast NACK (never a hang) AND never reaches
- *     the underlying tRPC mutation;
- *   - reviewMode: a render-safe read (GET_VIEWER) still works (mutation reached);
- *   - the NON-reviewMode (prod) path is UNCHANGED — the same message reaches the
- *     mutation;
+ * suite drives the REAL postMessage bridge.
+ *
+ * The review gate on every FORWARDED handler (workflows, subqueue, buzz, viewer,
+ * images, private + shared storage) — the NACK shape in render-only review, the
+ * real call under run-for-real, the shared writes that stay NACKed in both, and
+ * the reads that stay live — is pinned per type in `test/bridgeForwardMatrix.ts`
+ * (`review` / `reviewRunForReal` rows, run by
+ * `PageBlockHostForwardMatrix.browser.test.tsx`). This file keeps the handlers
+ * that are NOT plain forwards:
+ *   - OPEN_BUZZ_PURCHASE and GET_WILDCARD_PACK NACK without opening chrome or
+ *     reaching the session-authed resolve; the prod wildcard path is unchanged;
+ *   - REQUEST_CONSENT gives the mod a bounded, mode-specific notice, never a modal;
  *   - the opaque-origin handshake: at trustTier='unverified' the iframe sandbox
  *     drops allow-same-origin and BLOCK_INIT (carrying the review token) still
  *     reaches BLOCK_READY (the path unverified prod blocks already use).
@@ -228,75 +233,6 @@ beforeEach(() => {
 });
 
 describe('PageBlockHost reviewMode — side-effecting handlers fail-fast NACK, never reach the mutation', () => {
-  test('SUBMIT_WORKFLOW → failed snapshot, submitWorkflow NOT called', async () => {
-    renderWithProviders(<PageBlockHost {...baseProps} reviewMode onConsentGranted={vi.fn()} />);
-    await driveToReady();
-    const l = listenForReply();
-
-    postFromBlock('SUBMIT_WORKFLOW', { requestId: 'r1', body: { anything: true } });
-
-    await vi.waitFor(() => expect(l.last('WORKFLOW_SUBMITTED')).toBeTruthy());
-    const reply = l.last('WORKFLOW_SUBMITTED')!.payload as {
-      requestId: string;
-      snapshot: { status: string; error: string; workflowId: string };
-    };
-    expect(reply.requestId).toBe('r1');
-    expect(reply.snapshot.status).toBe('failed');
-    expect(reply.snapshot.error).toBe('not available in review preview');
-    expect(mocks.submit).not.toHaveBeenCalled();
-    l.stop();
-  });
-
-  test('GET_BUZZ_BALANCE → error reply, getMyBuzzBalance NOT called', async () => {
-    renderWithProviders(<PageBlockHost {...baseProps} reviewMode onConsentGranted={vi.fn()} />);
-    await driveToReady();
-    const l = listenForReply();
-
-    postFromBlock('GET_BUZZ_BALANCE', { requestId: 'b1' });
-
-    await vi.waitFor(() => expect(l.last('BUZZ_BALANCE_RESULT')).toBeTruthy());
-    const reply = l.last('BUZZ_BALANCE_RESULT')!.payload as { requestId: string; error: string };
-    expect(reply.requestId).toBe('b1');
-    expect(reply.error).toBe('not available in review preview');
-    expect(mocks.buzzBalance).not.toHaveBeenCalled();
-    l.stop();
-  });
-
-  test('APP_STORAGE_SET → ok:false error reply, storage.set NOT called', async () => {
-    renderWithProviders(<PageBlockHost {...baseProps} reviewMode onConsentGranted={vi.fn()} />);
-    await driveToReady();
-    const l = listenForReply();
-
-    postFromBlock('APP_STORAGE_SET', { requestId: 's1', key: 'k', value: 'v' });
-
-    await vi.waitFor(() => expect(l.last('APP_STORAGE_SET_RESULT')).toBeTruthy());
-    const reply = l.last('APP_STORAGE_SET_RESULT')!.payload as {
-      requestId: string;
-      ok: boolean;
-      error: string;
-    };
-    expect(reply.requestId).toBe('s1');
-    expect(reply.ok).toBe(false);
-    expect(reply.error).toBe('not available in review preview');
-    expect(mocks.storageSet).not.toHaveBeenCalled();
-    l.stop();
-  });
-
-  test('SHARED_APPEND (cross-user write) → error reply, shared.append NOT called', async () => {
-    renderWithProviders(<PageBlockHost {...baseProps} reviewMode onConsentGranted={vi.fn()} />);
-    await driveToReady();
-    const l = listenForReply();
-
-    postFromBlock('SHARED_APPEND', { requestId: 'sa1', value: { title: 'x' } });
-
-    await vi.waitFor(() => expect(l.last('SHARED_APPEND_RESULT')).toBeTruthy());
-    const reply = l.last('SHARED_APPEND_RESULT')!.payload as { requestId: string; error: string };
-    expect(reply.requestId).toBe('sa1');
-    expect(reply.error).toBe('not available in review preview');
-    expect(mocks.sharedAppend).not.toHaveBeenCalled();
-    l.stop();
-  });
-
   test('OPEN_BUZZ_PURCHASE → purchased:false, never opens the Buy-Buzz dialog', async () => {
     renderWithProviders(<PageBlockHost {...baseProps} reviewMode onConsentGranted={vi.fn()} />);
     await driveToReady();
@@ -337,18 +273,6 @@ describe('PageBlockHost reviewMode — side-effecting handlers fail-fast NACK, n
     expect(reply.error).toBe('forbidden');
     // The mod's session-authed download entitlement is NEVER exercised in review.
     expect(mocks.wildcard).not.toHaveBeenCalled();
-    l.stop();
-  });
-
-  test('render-safe GET_VIEWER STILL works in reviewMode (mutation reached)', async () => {
-    renderWithProviders(<PageBlockHost {...baseProps} reviewMode onConsentGranted={vi.fn()} />);
-    await driveToReady();
-    const l = listenForReply();
-
-    postFromBlock('GET_VIEWER', { requestId: 'v1' });
-
-    await vi.waitFor(() => expect(mocks.viewer).toHaveBeenCalledTimes(1));
-    await vi.waitFor(() => expect(l.last('VIEWER_RESULT')).toBeTruthy());
     l.stop();
   });
 });
@@ -585,83 +509,7 @@ describe('PageBlockHost reviewMode — REQUEST_CONSENT gives the mod feedback, n
   });
 });
 
-describe('PageBlockHost reviewMode + reviewRunForReal — side-effects run the REAL mutation', () => {
-  // The mod opted in (consent-gated) to run the unapproved app for real against
-  // their OWN account. The self-bound / money-in / own-Buzz / per-user-storage
-  // handlers now reach the mutation (the token carries the scopes + budget) —
-  // proving reviewRunForReal flips the NACK. CROSS-USER writes stay NACKed below.
-  test('SUBMIT_WORKFLOW reaches submitWorkflow (no NACK)', async () => {
-    renderWithProviders(
-      <PageBlockHost {...baseProps} reviewMode reviewRunForReal onConsentGranted={vi.fn()} />
-    );
-    await driveToReady();
-
-    postFromBlock('SUBMIT_WORKFLOW', { requestId: 'rfr1', body: { ok: true } });
-
-    await vi.waitFor(() => expect(mocks.submit).toHaveBeenCalledTimes(1));
-  });
-
-  test('GET_BUZZ_BALANCE reaches getMyBuzzBalance (own, self-bound)', async () => {
-    renderWithProviders(
-      <PageBlockHost {...baseProps} reviewMode reviewRunForReal onConsentGranted={vi.fn()} />
-    );
-    await driveToReady();
-
-    postFromBlock('GET_BUZZ_BALANCE', { requestId: 'rfrb1' });
-
-    await vi.waitFor(() => expect(mocks.buzzBalance).toHaveBeenCalledTimes(1));
-  });
-
-  test('APP_STORAGE_SET reaches storage.set (per-user, own)', async () => {
-    renderWithProviders(
-      <PageBlockHost {...baseProps} reviewMode reviewRunForReal onConsentGranted={vi.fn()} />
-    );
-    await driveToReady();
-
-    postFromBlock('APP_STORAGE_SET', { requestId: 'rfrs1', key: 'k', value: 'v' });
-
-    await vi.waitFor(() => expect(mocks.storageSet).toHaveBeenCalledTimes(1));
-  });
-
-  test('SHARED_APPEND (cross-user write) STILL NACKs even in run-for-real, shared.append NOT called', async () => {
-    renderWithProviders(
-      <PageBlockHost {...baseProps} reviewMode reviewRunForReal onConsentGranted={vi.fn()} />
-    );
-    await driveToReady();
-    const l = listenForReply();
-
-    postFromBlock('SHARED_APPEND', { requestId: 'rfrsa1', value: { title: 'x' } });
-
-    await vi.waitFor(() => expect(l.last('SHARED_APPEND_RESULT')).toBeTruthy());
-    const reply = l.last('SHARED_APPEND_RESULT')!.payload as { requestId: string; error: string };
-    expect(reply.error).toBe('not available in review preview');
-    expect(mocks.sharedAppend).not.toHaveBeenCalled();
-    l.stop();
-  });
-
-  test('render-safe GET_VIEWER still works in run-for-real (read stays live in BOTH sub-modes)', async () => {
-    renderWithProviders(
-      <PageBlockHost {...baseProps} reviewMode reviewRunForReal onConsentGranted={vi.fn()} />
-    );
-    await driveToReady();
-
-    postFromBlock('GET_VIEWER', { requestId: 'rfrv1' });
-
-    await vi.waitFor(() => expect(mocks.viewer).toHaveBeenCalledTimes(1));
-  });
-});
-
 describe('PageBlockHost reviewMode — the NON-reviewMode (prod) path is unchanged', () => {
-  test('without reviewMode, SUBMIT_WORKFLOW reaches submitWorkflow', async () => {
-    renderWithProviders(<PageBlockHost {...baseProps} onConsentGranted={vi.fn()} />);
-    await driveToReady();
-
-    postFromBlock('SUBMIT_WORKFLOW', { requestId: 'r2', body: { ok: true } });
-
-    // The prod path forwards to the mutation exactly as before (no NACK).
-    await vi.waitFor(() => expect(mocks.submit).toHaveBeenCalledTimes(1));
-  });
-
   test('without reviewMode, GET_WILDCARD_PACK reaches resolveWildcardPack', async () => {
     renderWithProviders(<PageBlockHost {...baseProps} onConsentGranted={vi.fn()} />);
     await driveToReady();

@@ -1,4 +1,6 @@
+import type { EdgeUrlProps } from '~/client-utils/edge-url';
 import type { CosmeticEntity } from '~/shared/utils/prisma/enums';
+import { MediaType } from '~/shared/utils/prisma/enums';
 
 export type TeamHistory = { team: string; scores: { date: Date; score: number }[] };
 
@@ -38,9 +40,12 @@ const ENTITY_NOUNS: Record<string, string> = {
 
 /** "images, models and articles" for the types an event's decoration can be worn on. */
 export function describeEntityTypes(types: readonly CosmeticEntity[]) {
-  const nouns = types.map((t) => ENTITY_NOUNS[t] ?? t.toLowerCase());
-  if (nouns.length <= 1) return nouns.join('');
-  return `${nouns.slice(0, -1).join(', ')} and ${nouns[nouns.length - 1]}`;
+  return joinWithAnd(types.map((t) => ENTITY_NOUNS[t] ?? t.toLowerCase()));
+}
+
+export function joinWithAnd(words: readonly string[]) {
+  if (words.length <= 1) return words.join('');
+  return `${words.slice(0, -1).join(', ')} and ${words[words.length - 1]}`;
 }
 
 /**
@@ -52,8 +57,49 @@ export function minutesUntilMovable(cooldownLeftMs: number, elapsedMs: number) {
   return Math.max(0, Math.ceil((cooldownLeftMs - Math.max(0, elapsedMs)) / 60_000));
 }
 
+const COVER_ASPECT = 4 / 5;
+const COVER_MAX_WIDTH = 1200;
+const COVER_FALLBACK_WIDTH = 320;
+
+function sizeOf(width: unknown, height: unknown) {
+  return typeof width === 'number' && typeof height === 'number' && width > 0 && height > 0
+    ? { width, height }
+    : undefined;
+}
+
+/**
+ * The width to ask the image CDN for so a picture still fills a 4:5 card `boxWidth` px wide after
+ * `object-cover` crops it. The CDN keeps the source's shape, so a source wider than the card comes
+ * back too short at the card's width and is stretched to fill the height: ask for that much more
+ * width. The size is the image row's own, else its metadata's; with neither, the old fixed 320.
+ * A video is transcoded at the width asked for, so it is not stretched: the extra width would cost
+ * far more there than on a still.
+ */
+export function coverRequestWidth(
+  image: {
+    type?: unknown;
+    width?: unknown;
+    height?: unknown;
+    metadata?: { width?: unknown; height?: unknown } | null;
+  },
+  boxWidth: number
+) {
+  if (image.type === MediaType.video) return boxWidth;
+  const size =
+    sizeOf(image.width, image.height) ?? sizeOf(image.metadata?.width, image.metadata?.height);
+  if (!size) return COVER_FALLBACK_WIDTH;
+  const stretch = Math.max(1, size.width / size.height / COVER_ASPECT);
+  return Math.min(COVER_MAX_WIDTH, Math.round(boxWidth * stretch));
+}
+
 /** The page's card surface (shop tiles, hat cards, standings rows): a step lighter than the page. */
 export const EVENT_CARD_SURFACE = 'bg-white dark:bg-dark-6';
+
+/** The event film as uploaded: the file whose length `heroVideo.duration` states. */
+export const HERO_VIDEO_OPTIONS = {
+  type: MediaType.video,
+  original: true,
+} satisfies Omit<EdgeUrlProps, 'src'>;
 
 export type ScoredSection = 'standings' | 'hats' | 'shop' | 'topHats' | 'rules';
 
@@ -71,4 +117,69 @@ export function scoredSectionOrder({
   if (ended) return ['standings', 'topHats', 'hats'];
   if (joined) return ['hats', 'standings', 'shop', 'topHats', 'rules'];
   return ['rules', 'shop', 'standings', 'topHats'];
+}
+
+type Settling = { endDate: Date; finalAt?: Date };
+
+/**
+ * Ended, but not yet settled: scores take late data until `finalAt`, and the standings snapshot is
+ * hourly, so the result is final only once a snapshot taken after `finalAt` is in.
+ */
+export function isFinalizing(
+  data: Settling,
+  standings: { updatedAt: Date } | undefined,
+  now: Date
+) {
+  return (
+    data.endDate < now &&
+    !!data.finalAt &&
+    (now < data.finalAt || (!!standings && standings.updatedAt < data.finalAt))
+  );
+}
+
+/**
+ * The rank-1 team once the result is settled. Ranks are unique, so a tie on points still has one
+ * winner, and nothing may announce a result the prize payout contradicts.
+ */
+export function settledWinner(
+  data: Settling,
+  standings: { updatedAt: Date; teams: { team: string; rank: number }[] } | undefined,
+  now: Date
+) {
+  if (data.endDate >= now || isFinalizing(data, standings, now)) return undefined;
+  return standings?.teams.find((t) => t.rank === 1)?.team;
+}
+
+// "0:42", "1:24". The shared formatDuration pads a minute-less length to "00:42".
+export function filmLength(seconds: number) {
+  const whole = Math.round(seconds);
+  return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, '0')}`;
+}
+
+export const PLACEABLE_TABS = ['Image', 'Model', 'Article'] as const;
+export type PlaceableTab = (typeof PLACEABLE_TABS)[number];
+export type PlaceableTabState = { count: number; more: boolean; loaded: boolean };
+
+/**
+ * The picker's opening tab: where the hat is now, else the first type with anything in it once
+ * every tab has loaded, else the first type the hat can go on.
+ */
+export function defaultPlaceableTab(
+  tabs: readonly PlaceableTab[],
+  state: Partial<Record<PlaceableTab, PlaceableTabState>>,
+  placedOn?: string | null
+): PlaceableTab | undefined {
+  const current = tabs.find((t) => t === placedOn);
+  if (current) return current;
+  if (tabs.every((t) => state[t]?.loaded)) {
+    const filled = tabs.find((t) => (state[t]?.count ?? 0) > 0);
+    if (filled) return filled;
+  }
+  return tabs[0];
+}
+
+/** "24+" while more can be loaded, "3" when that is all of them, nothing until the first page. */
+export function placeableTabCount(state?: PlaceableTabState) {
+  if (!state?.loaded) return '';
+  return `${state.count}${state.more ? '+' : ''}`;
 }

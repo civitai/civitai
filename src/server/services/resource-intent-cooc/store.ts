@@ -1,7 +1,9 @@
 import { createHash } from 'crypto';
 import { Prisma } from '@prisma/client';
 
-import { COOC_MAX_PAYLOAD_BYTES, deserializeCoocCounts, type CoocCounts } from './build';
+import { COOC_MAX_PAYLOAD_BYTES, deserializeCoocPayload, type CoocCounts } from './build';
+import { logToAxiom } from '~/server/logging/client';
+import { decodeCheckpointAttachSection, type CheckpointAttachSection } from './checkpoint-attach';
 
 /**
  * `ResourceIntentCoocSnapshot` storage: the build lifecycle (begin → ready | failed | duplicate),
@@ -9,10 +11,11 @@ import { COOC_MAX_PAYLOAD_BYTES, deserializeCoocCounts, type CoocCounts } from '
  *
  * Raw SQL so the tests run the migration's real CHECKs and partial unique index.
  *
- * Nothing on the request path reads this yet. When serving lands, its contract when no snapshot
- * can be served is the operator's: "Return BASE's top 50, still fully gated, with
- * `coocFallback: true`, a 60 s cache and a logged reason. Users get a usable list. In study mode
- * the request fails closed regardless."
+ * The request path reads this on the POOL_MERGE arm: `holder.ts` calls `latestReadySnapshotId` and
+ * `loadCoocSnapshot` (production, polled) and `loadCoocSnapshot` (study, by hash). When no snapshot
+ * can be served, the contract is the operator's, implemented by the service: "Return BASE's top
+ * 50, still fully gated, with `coocFallback: true`, a 60 s cache and a logged reason. Users get a
+ * usable list. In study mode the request fails closed regardless."
  */
 
 export type CoocSql = {
@@ -67,9 +70,16 @@ export type CoocSnapshotMeta = {
   keptPairs: number | null;
 };
 
-export class CoocSnapshotHashMismatchError extends Error {}
+/**
+ * The stored snapshot itself cannot be served: reading the same row again returns the same bytes
+ * and fails the same way, so only a different snapshot can fix it.
+ */
+export class CoocSnapshotUnservableError extends Error {}
+export class CoocSnapshotHashMismatchError extends CoocSnapshotUnservableError {}
 export class CoocSnapshotExpiredError extends Error {}
-export class CoocSnapshotKindMismatchError extends Error {}
+export class CoocSnapshotKindMismatchError extends CoocSnapshotUnservableError {}
+/** The payload's hash matched but it did not decode: too large, unknown format, or invalid counts. */
+export class CoocSnapshotCorruptError extends CoocSnapshotUnservableError {}
 export class CoocStudyDuplicateError extends Error {}
 
 /**
@@ -204,15 +214,59 @@ const META_COLUMNS = Prisma.raw(
 );
 
 /**
+ * Whether a decode failed for lack of memory: Node's Buffer allocation, V8's ArrayBuffer
+ * allocation, or brotli/zlib failing to allocate its state. Matched by code or message, not by
+ * class: a corrupt payload also throws RangeError (msgpackr reading past the end of its data).
+ * An allocation failure of any other shape is treated as a corrupt payload.
+ */
+function isAllocationFailure(e: unknown): boolean {
+  if (!(e instanceof Error)) return false;
+  const code = (e as { code?: unknown }).code;
+  return (
+    code === 'ERR_MEMORY_ALLOCATION_FAILED' ||
+    code === 'ERR_ZLIB_INITIALIZATION_FAILED' ||
+    (typeof code === 'string' && code.startsWith('ERR__ERROR_ALLOC_')) ||
+    (e instanceof RangeError && e.message === 'Array buffer allocation failed')
+  );
+}
+
+function decodeSectionOrNull(contentHash: string, raw: unknown): CheckpointAttachSection | null {
+  if (raw === undefined) return null;
+  try {
+    return decodeCheckpointAttachSection(raw);
+  } catch (e) {
+    logToAxiom(
+      {
+        type: 'resource-intent-checkpoint-section-invalid',
+        contentHash,
+        error: e instanceof Error ? e.message : String(e),
+      },
+      'temp-search'
+    ).catch(() => undefined);
+    return null;
+  }
+}
+
+/**
  * Load a ready snapshot by content hash, refusing bytes whose hash does not match, a row of another
- * kind than the caller asked for, and a study snapshot whose pin has passed (even if retention has
- * not yet run).
+ * kind than the caller asked for, a payload that does not decode (`CoocSnapshotCorruptError`), and
+ * a study snapshot whose pin has passed (even if retention has not yet run). An allocation failure
+ * while decoding is rethrown as it is, not as `CoocSnapshotCorruptError`.
+ *
+ * `checkpoints` is the payload's checkpoint-attachment section, or `null` for a snapshot without
+ * one (built before it existed, or with the section-writer flag off) — or one whose section does
+ * not decode: that only takes checkpoint mode to its fallback (`spec_mismatch`), and never the
+ * co-occurrence counts POOL_MERGE serves.
  */
 export async function loadCoocSnapshot(
   sql: CoocSql,
   contentHash: string,
   opts: { kind: CoocSnapshotKind; now: Date }
-): Promise<{ meta: CoocSnapshotMeta; counts: CoocCounts }> {
+): Promise<{
+  meta: CoocSnapshotMeta;
+  counts: CoocCounts;
+  checkpoints: CheckpointAttachSection | null;
+}> {
   const now = opts.now;
   const [row] = await sql.query<CoocSnapshotMeta & { payload: Uint8Array }>(Prisma.sql`
     SELECT ${META_COLUMNS}, "payload" FROM ${T}
@@ -230,7 +284,20 @@ export async function loadCoocSnapshot(
     );
   if (meta.kind === 'study' && (!meta.pinnedUntil || meta.pinnedUntil.getTime() <= now.getTime()))
     throw new CoocSnapshotExpiredError(`cooc study snapshot ${contentHash}: pin has passed`);
-  return { meta, counts: await deserializeCoocCounts(payload) };
+  let counts: CoocCounts;
+  let checkpoints: CheckpointAttachSection | null;
+  try {
+    const decoded = await deserializeCoocPayload(payload);
+    counts = decoded.counts;
+    checkpoints = decodeSectionOrNull(contentHash, decoded.checkpointSection);
+  } catch (e) {
+    // Out of memory, not bad bytes: a later read of the same row can pass, so not unservable.
+    if (isAllocationFailure(e)) throw e;
+    throw new CoocSnapshotCorruptError(
+      `cooc snapshot ${contentHash}: ${e instanceof Error ? e.message : String(e)}`
+    );
+  }
+  return { meta, counts, checkpoints };
 }
 
 /**

@@ -30,8 +30,7 @@ export function useNavBannersDismissed() {
   const local = useDismissedStore((s) => s.dismissed);
   const dismissed = local ?? seeded ?? [];
 
-  const dismiss = (id: string) => {
-    const next = addNavBannerDismissed(useDismissedStore.getState().dismissed ?? dismissed, id);
+  const save = (next: string[]) => {
     useDismissedStore.setState({ dismissed: next });
     setCookie(NAV_BANNERS_DISMISSED_COOKIE, JSON.stringify(next), {
       maxAge: COOKIE_MAX_AGE_SECONDS,
@@ -39,6 +38,16 @@ export function useNavBannersDismissed() {
       sameSite: 'lax',
     });
   };
+  const current = () => useDismissedStore.getState().dismissed ?? dismissed;
+  // `replaces` drops an entry this one supersedes, so one item never holds two of the capped slots.
+  const dismiss = (id: string, replaces?: string) =>
+    save(
+      addNavBannerDismissed(
+        current().filter((x) => x !== replaces),
+        id
+      )
+    );
+  const restore = (...ids: string[]) => save(current().filter((x) => !ids.includes(x)));
 
-  return { dismissed, dismiss };
+  return { dismissed, dismiss, restore };
 }

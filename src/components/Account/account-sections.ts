@@ -182,6 +182,7 @@ export const legacyAnchorSections: Record<string, string> = {
   accounts: 'security',
   'api-keys': 'security',
   [CREATOR_SCORE_ANCHOR]: 'profile',
+  'creator-controls': 'creator',
   'manage-subscription': 'billing',
   'notification-settings': 'notifications',
   'payment-methods': 'billing',

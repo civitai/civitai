@@ -631,7 +631,7 @@ describe('POST /api/v1/blocks/dev-token', () => {
     const { req, res } = authPost({ appBlockId: 'apb_abc', buzzBudget: 100000 });
     await handler(req as never, res as never);
     expect(res._getStatusCode()).toBe(200);
-    expect(mockSign.mock.calls[0][0].buzzBudget).toBe(250); // DEV_BUZZ_BUDGET_CAP
+    expect(mockSign.mock.calls[0][0].buzzBudget).toBe(1000); // DEV_BUZZ_BUDGET_CAP
   });
 
   // Fix 2 (dogfood follow-up): the dev-token default budget now comes from the
@@ -648,7 +648,7 @@ describe('POST /api/v1/blocks/dev-token', () => {
     expect(mockSign.mock.calls[0][0].buzzBudget).toBe(180);
   });
 
-  it('clamps an over-cap manifest budget to the dev cap (manifest 5000 → 250)', async () => {
+  it('clamps an over-cap manifest budget to the dev cap (manifest 5000 → 1000)', async () => {
     mockGetSession.mockResolvedValueOnce(MOD_SESSION);
     mockAppBlockFindUnique.mockResolvedValueOnce(
       pageApp({ manifest: { page: { title: 'X', buzzBudgetPerGen: 5000 } } })
@@ -656,7 +656,7 @@ describe('POST /api/v1/blocks/dev-token', () => {
     const { req, res } = authPost({ appBlockId: 'apb_abc' });
     await handler(req as never, res as never);
     expect(res._getStatusCode()).toBe(200);
-    expect(mockSign.mock.calls[0][0].buzzBudget).toBe(250); // DEV_BUZZ_BUDGET_CAP
+    expect(mockSign.mock.calls[0][0].buzzBudget).toBe(1000); // DEV_BUZZ_BUDGET_CAP
   });
 
   it('an EXPLICIT requested budget still wins over the manifest default', async () => {
@@ -1028,7 +1028,7 @@ describe('POST /api/v1/blocks/dev-token', () => {
       const { req, res } = authPost({ slug: 'my-pending-app', buzzBudget: 100000 });
       await handler(req as never, res as never);
       expect(res._getStatusCode()).toBe(200);
-      expect(mockSign.mock.calls[0][0].buzzBudget).toBe(250);
+      expect(mockSign.mock.calls[0][0].buzzBudget).toBe(1000);
     });
 
     it('forced SFW + self-bound sub hold on the pending path', async () => {
@@ -1274,7 +1274,7 @@ describe('POST /api/v1/blocks/dev-token', () => {
       });
       await handler(req as never, res as never);
       expect(res._getStatusCode()).toBe(200);
-      expect(mockSign.mock.calls[0][0].buzzBudget).toBe(250);
+      expect(mockSign.mock.calls[0][0].buzzBudget).toBe(1000);
     });
 
     it('forced SFW + self-bound sub hold on the no-row path', async () => {

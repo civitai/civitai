@@ -26,6 +26,7 @@ import { env } from '~/env/client';
 import { showErrorNotification } from '~/utils/notifications';
 import { removeEmpty } from '~/utils/object-helpers';
 import { TRPC_MAX_BATCH_SIZE } from '~/shared/constants/trpc.constants';
+import { BLOCK_TOKEN_QUERY_PROCEDURES } from '~/shared/constants/block-token-transport.constants';
 
 type RequestHeaders = {
   'x-client-date': string;
@@ -124,9 +125,20 @@ export function isLargeQuery(op: { type: string; input: unknown }) {
 }
 
 /**
- * Terminating link: large queries go out as POST (body-carried input, not
- * edge-cacheable), everything else stays a normal GET so the `responseMeta`
- * Cache-Control headers in `[trpc].ts` can still edge-cache them.
+ * Whether a query must leave the browser as POST: either its input is too large for a GET URL
+ * (`isLargeQuery`), or its procedure is in `BLOCK_TOKEN_QUERY_PROCEDURES` — its input carries a
+ * block token, a bearer credential, and a GET would put it in the request URL. Those also never
+ * batch (see `shouldBatch`). Same set the server keys its `no-store` header on.
+ */
+export function shouldSendQueryAsPost(op: { type: string; path: string; input: unknown }) {
+  if (op.type !== 'query') return false;
+  return BLOCK_TOKEN_QUERY_PROCEDURES.has(op.path) || isLargeQuery(op);
+}
+
+/**
+ * Terminating link: large queries and `BLOCK_TOKEN_QUERY_PROCEDURES` go out as POST
+ * (body-carried input, not edge-cacheable), everything else stays a normal GET so the
+ * `responseMeta` Cache-Control headers in `[trpc].ts` can still edge-cache them.
  */
 function httpLinkWithLargeQuerySupport({
   url,
@@ -136,7 +148,7 @@ function httpLinkWithLargeQuerySupport({
   headers: ReturnType<typeof getHeaders>;
 }): TRPCLink<AppRouter> {
   return splitLink({
-    condition: isLargeQuery,
+    condition: shouldSendQueryAsPost,
     true: httpLink({ transformer: clientTransformer, url, methodOverride: 'POST', headers }),
     false: httpLink({ transformer: clientTransformer, url, headers }),
   });
@@ -216,12 +228,14 @@ export const CACHEABLE_PROCEDURES: ReadonlySet<string> = new Set([
   'article.getCivitaiNews',
   'bug.getLatest',
   'changelog.getLatest',
+  'cosmetic.getEventDecorationsForSearch',
   'event.getCosmeticScores',
   'event.getDonors',
   'event.getHatCatalog',
   'event.getPartners',
   'event.getRewards',
   'event.getStandings',
+  'event.getTeamRoster',
   'event.getTeamScoreHistory',
   'event.getTeamScores',
   'event.getWornHat',
@@ -290,6 +304,8 @@ export const NEVER_BATCH_PROCEDURES: ReadonlySet<string> = new Set([
  *  - we're in an authenticated browser (see `isAuthedBrowser` — anon stays cacheable),
  *  - the procedure is NOT edge-cacheable for authed sessions (see `CACHEABLE_PROCEDURES`),
  *  - the procedure is NOT excluded for a non-caching reason (see `NEVER_BATCH_PROCEDURES`),
+ *  - the procedure is NOT a block-token query (see `BLOCK_TOKEN_QUERY_PROCEDURES` — the batch link sends
+ *    queries as GET, which would put a block token in the URL),
  *  - the caller didn't opt out via `context.skipBatch === true`,
  *  - its encoded input fits the batch link's URL cap (`isTooLargeToBatch` — otherwise it
  *    would trip "Input is too big for a single dispatch"; excluded ops fall to the
@@ -307,6 +323,7 @@ export function shouldBatch(op: {
     isAuthedBrowser() &&
     !CACHEABLE_PROCEDURES.has(op.path) &&
     !NEVER_BATCH_PROCEDURES.has(op.path) &&
+    !BLOCK_TOKEN_QUERY_PROCEDURES.has(op.path) &&
     op.context.skipBatch !== true &&
     !isTooLargeToBatch(op)
   );

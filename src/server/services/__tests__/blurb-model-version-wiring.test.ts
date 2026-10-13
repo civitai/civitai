@@ -93,7 +93,7 @@ const storedVersion = {
   usageControl: 'Download',
   flags: 0,
   licensingFee: null,
-  model: { meta: {} },
+  model: { id: MODEL_ID, meta: {} },
   monetization: null,
 };
 

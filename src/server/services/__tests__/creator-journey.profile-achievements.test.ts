@@ -16,6 +16,7 @@ type Row = {
   hidden?: boolean;
   name: string;
   description?: string | null;
+  hint?: string | null;
   cosmeticId?: number | null;
   observed?: boolean;
 };
@@ -30,6 +31,7 @@ const row = ({ observed = true, ...m }: Row) => {
       threshold: null,
       hidden: false,
       description: null,
+      hint: null,
       cosmeticId: null,
       ...m,
       // Real art is a CDN id that does not name the milestone.
@@ -44,6 +46,7 @@ const SECRET = row({
   hidden: true,
   name: 'Night Owl',
   description: 'Publish between 2am and 4am',
+  hint: 'Burn the midnight oil',
   cosmeticId: 3001,
 });
 const SUPERNOVA = row({
@@ -66,6 +69,8 @@ const MODELS = row({
   track: 'create',
   threshold: 25,
   name: '25 Models',
+  // Only a special keeps its hint once earned; this one must not reach any viewer.
+  hint: 'Keep publishing',
   cosmeticId: 2900,
 });
 
@@ -85,7 +90,7 @@ describe('getProfileAchievements', () => {
   beforeEach(() => given([SUPERNOVA, MODELS, SECRET, SPARK]));
 
   // ollie + Justin (card 2026-10-09-001502, default d): hidden achievements are secrets, so a public
-  // profile shows an earned one as its art and "Secret achievement", never what it is. If you are
+  // profile shows an earned one as its art and "Special achievement", never what it is. If you are
   // about to show the name to visitors, that is a product decision to reopen, not a cleanup.
   it('never sends a visitor the name, description or key of an earned hidden achievement', async () => {
     const result = await getProfileAchievements({ userId: OWNER, viewerId: VISITOR });
@@ -95,13 +100,16 @@ describe('getProfileAchievements', () => {
       track: 'secret',
       name: null,
       description: null,
+      hint: null,
       badgeUrl: 'art-3001',
       achievedAt: OBSERVED,
+      spotlit: false,
     });
     const payload = JSON.stringify(result);
     expect(payload).not.toContain('Night Owl');
     expect(payload).not.toContain('2am');
     expect(payload).not.toContain('night-owl');
+    expect(payload).not.toContain('midnight oil');
   });
 
   it('masks it for a signed-out visitor too', async () => {
@@ -115,7 +123,81 @@ describe('getProfileAchievements', () => {
       key: 'hidden:night-owl',
       name: 'Night Owl',
       description: 'Publish between 2am and 4am',
+      // Justin (2026-10-10): an earned special keeps its hint above the description.
+      hint: 'Burn the midnight oil',
     });
+    expect(result.achievements.find((a) => a.key === 'create:models-25')?.hint).toBeNull();
+  });
+
+  // A visitor who opened a shared special's link gets that card marked, so the tab can ring it. Its
+  // key stays masked, and nothing else about it, or about any other secret, changes.
+  it('marks the secret a shared link named, and only that one, without its key', async () => {
+    const other = row({
+      key: 'hidden:early-bird',
+      track: 'hidden',
+      hidden: true,
+      name: 'Early Bird',
+      cosmeticId: 3002,
+    });
+    given([MODELS, SECRET, other]);
+    const result = await getProfileAchievements({
+      userId: OWNER,
+      viewerId: VISITOR,
+      spotlight: 'hidden:night-owl',
+    });
+    expect(result.achievements).toEqual([
+      expect.objectContaining({ key: 'create:models-25', spotlit: false }),
+      {
+        key: 'secret:1',
+        track: 'secret',
+        name: null,
+        description: null,
+        hint: null,
+        badgeUrl: 'art-3001',
+        achievedAt: OBSERVED,
+        spotlit: true,
+      },
+      expect.objectContaining({ key: 'secret:2', name: null, spotlit: false }),
+    ]);
+    const payload = JSON.stringify(result);
+    expect(payload).not.toContain('night-owl');
+    expect(payload).not.toContain('Night Owl');
+    expect(payload).not.toContain('2am');
+    expect(payload).not.toContain('midnight oil');
+    expect(payload).not.toContain('early-bird');
+  });
+
+  // A hidden tier is linked by its slug, which names its key through the tier list.
+  it('marks a hidden tier a shared link named by its slug', async () => {
+    const hiddenTier = row({
+      key: 'score:legend',
+      track: 'score',
+      threshold: 5000000,
+      hidden: true,
+      name: 'Legend',
+      cosmeticId: 4000,
+    });
+    given([MODELS, hiddenTier]);
+    const result = await getProfileAchievements({
+      userId: OWNER,
+      viewerId: VISITOR,
+      spotlight: 'legend',
+    });
+    expect(result.tiers).toEqual([]);
+    expect(result.achievements.map((a) => [a.key, a.name, a.spotlit])).toEqual([
+      ['create:models-25', '25 Models', false],
+      ['secret:1', null, true],
+    ]);
+  });
+
+  it('marks nothing for a link naming a secret the creator does not hold', async () => {
+    const plain = await getProfileAchievements({ userId: OWNER, viewerId: VISITOR });
+    const guessed = await getProfileAchievements({
+      userId: OWNER,
+      viewerId: VISITOR,
+      spotlight: 'hidden:night-owk',
+    });
+    expect(guessed).toEqual(plain);
   });
 
   it('lists held tiers lowest first and keeps them out of the achievements', async () => {
@@ -140,8 +222,10 @@ describe('getProfileAchievements', () => {
         'achievedAt',
         'badgeUrl',
         'description',
+        'hint',
         'key',
         'name',
+        'spotlit',
         'track',
       ]);
   });
@@ -164,6 +248,7 @@ describe('getProfileAchievements', () => {
           hidden: true,
           name: true,
           description: true,
+          hint: true,
           cosmeticId: true,
           cosmetic: { select: { data: true } },
         },

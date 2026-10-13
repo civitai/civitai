@@ -14,10 +14,9 @@ import { testerFlag } from '~/test-utils/testerFlagFake';
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
 /**
- * The join grant and the end-of-event unequip, executed as written against an in-process Postgres
- * that also carries the placement trigger. Both are money-adjacent (a hat is a scored slot), and
- * their correctness lives in the SQL (NOT EXISTS, the RETURNING of pre-update values), which a
- * mocked client cannot see.
+ * The join grant, executed as written against an in-process Postgres that also carries the
+ * placement trigger. It is money-adjacent (a hat is a scored slot), and its correctness lives in the
+ * SQL (NOT EXISTS), which a mocked client cannot see.
  */
 
 vi.mock('~/server/redis/caches', () => ({
@@ -35,9 +34,6 @@ vi.mock('~/server/flipt/tester-segment', async () => {
 });
 
 const { eventEngine } = await import('~/server/events/index');
-const { unequipEventCosmetics } = await import(
-  '~/server/events/scoring/cosmetic-placement.service'
-);
 
 const MIGRATION = path.resolve(
   __dirname,
@@ -142,35 +138,5 @@ describe('join grant', () => {
       [HATS.Blue, 'claimed'],
       [HATS.Blue, 'txn-1'],
     ]);
-  });
-});
-
-describe('end-of-event unequip', () => {
-  it("clears only this event's placed cosmetics, reports where they were, and closes their intervals", async () => {
-    await db.pg.exec(`
-      INSERT INTO "UserCosmetic" ("userId", "cosmeticId", "claimKey", "equippedToId", "equippedToType", "equippedAt") VALUES
-        (7, ${HATS.Blue}, 'claimed', 1, 'Image', now()),
-        (7, ${HATS.Blue}, 'txn-1', 4, 'Model', now()),
-        (7, ${HATS.Blue}, 'txn-2', NULL, NULL, NULL),
-        (7, ${FRAME}, 'claimed', 2, 'Image', now()),
-        (8, ${OTHER_EVENT_HAT}, 'claimed', 3, 'Image', now());
-    `);
-
-    const entities = await unequipEventCosmetics(BIRTHDAY_2026_EVENT);
-
-    expect(
-      entities.map((e) => [e.entityType, e.entityId]).sort((a, b) => Number(a[1]) - Number(b[1]))
-    ).toEqual([
-      ['Image', 1],
-      ['Model', 4],
-    ]);
-    const left = await db.pg.query<{ cosmeticId: number; equippedToId: number | null }>(
-      `SELECT "cosmeticId", "equippedToId" FROM "UserCosmetic" WHERE "equippedToId" IS NOT NULL ORDER BY "cosmeticId"`
-    );
-    expect(left.rows.map((r) => r.cosmeticId)).toEqual([FRAME, OTHER_EVENT_HAT]);
-    const open = await db.pg.query<{ event: string }>(
-      `SELECT event FROM "EventCosmeticPlacement" WHERE "endedAt" IS NULL ORDER BY event`
-    );
-    expect(open.rows.map((r) => r.event)).toEqual(['another']);
   });
 });

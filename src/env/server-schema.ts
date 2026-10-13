@@ -951,6 +951,13 @@ export const serverSchema = z
     S3_IMAGE_B2_BUCKET: z.string().optional(),
     S3_IMAGE_B2_REGION: z.string().optional(),
 
+    // Appeal training copies; endpoint and region come from S3_IMAGE_B2_*. Any unset: no copies, no holds.
+    APPEAL_TRAINING_B2_BUCKET: z.string().optional(),
+    APPEAL_TRAINING_B2_ACCESS_KEY: z.string().optional(),
+    APPEAL_TRAINING_B2_SECRET_KEY: z.string().optional(),
+    // Stored copies are matched through it: do not rotate or unset it while copies exist.
+    APPEAL_OWNER_HASH_KEY: z.string().optional(),
+
     // Storage resolver internal API (for registering B2 uploads)
     STORAGE_RESOLVER_INTERNAL_URL: z.string().optional(),
     STORAGE_RESOLVER_INTERNAL_TOKEN: z.string().optional(),
@@ -1052,6 +1059,9 @@ export const serverSchema = z
     APPS_TEKTON_REVIEW_TRIGGER_URL: z.string().url().optional(),
     APPS_KUBE_NAMESPACE: z.string().default('civitai-apps'),
     APPS_DOMAIN: z.string().default('civit.ai'),
+    // App Assistant's hosted sandbox service, which the browser calls. Server-side so it is read per
+    // request and set per environment; a NEXT_PUBLIC_ var would be frozen into the client at build.
+    APP_ASSISTANT_SANDBOX_URL: z.url().optional(),
     // How long the review-build callback waits for a freshly-deployed review
     // preview's PUBLIC host to become reachable before giving up and marking the
     // preview failed. The dominant lag is the per-host DNS record's creation +

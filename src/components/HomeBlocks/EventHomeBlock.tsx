@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { Button, Card, Center, Group, Loader, Stack, Text } from '@mantine/core';
 import Image from 'next/image';
 import Link from 'next/link';
@@ -5,18 +6,73 @@ import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { HolidayFrame } from '~/components/Decorations/HolidayFrame';
 import { Lightbulb } from '~/components/Decorations/Lightbulb';
 import { useQueryEvent } from '~/components/Events/events.utils';
+import { useNavBannersDismissed } from '~/components/AppLayout/NavAnnouncementSlot/nav-banners-dismissed';
 import { HomeBlockWrapper } from '~/components/HomeBlocks/HomeBlockWrapper';
+import {
+  eventHomeBlockCollapseId,
+  eventHomeBlockDismissId,
+  eventHomeBlockDisplay,
+} from '~/components/HomeBlocks/scored-event-home-block.utils';
+import { ScoredEventHomeBlock } from '~/components/HomeBlocks/ScoredEventHomeBlock';
+import { useInView } from '~/hooks/useInView';
 import type { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { abbreviateNumber } from '~/utils/number-helpers';
+import { trpc } from '~/utils/trpc';
 
 export function EventHomeBlock({ showAds, ...props }: Props) {
-  if (!props.metadata.event) return null;
+  const event = props.metadata.event;
+  const { dismissed, dismiss, restore } = useNavBannersDismissed();
+  if (!event) return null;
+  const display = eventHomeBlockDisplay(event, dismissed);
+  if (display === 'hidden') return null;
+  const collapsed = display === 'collapsed';
 
   return (
-    <HomeBlockWrapper py={32}>
-      <EventHomeBlockContent {...props} />
+    <HomeBlockWrapper py={collapsed ? 16 : 32}>
+      <EventHomeBlockBody
+        event={event}
+        metadata={props.metadata}
+        collapsed={collapsed}
+        onClose={() =>
+          collapsed
+            ? dismiss(eventHomeBlockDismissId(event), eventHomeBlockCollapseId(event))
+            : dismiss(eventHomeBlockCollapseId(event))
+        }
+        onExpand={() => restore(eventHomeBlockCollapseId(event))}
+      />
     </HomeBlockWrapper>
+  );
+}
+
+// Nothing is fetched until the block first scrolls into view.
+function EventHomeBlockBody({
+  event,
+  metadata,
+  ...controls
+}: {
+  event: string;
+  metadata: HomeBlockMetaSchema;
+  collapsed: boolean;
+  onClose: () => void;
+  onExpand: () => void;
+}) {
+  const { ref, inView } = useInView();
+  const [seen, setSeen] = useState(false);
+  useEffect(() => {
+    if (inView) setSeen(true);
+  }, [inView]);
+  const { data } = trpc.event.getData.useQuery({ event }, { enabled: seen });
+
+  return (
+    // Held at the size it will take, so the block does not push the page when it arrives.
+    <div ref={ref} className={data ? undefined : controls.collapsed ? 'min-h-14' : 'min-h-[212px]'}>
+      {data?.scored ? (
+        <ScoredEventHomeBlock event={event} data={data} {...controls} />
+      ) : data ? (
+        <EventHomeBlockContent metadata={metadata} />
+      ) : null}
+    </div>
   );
 }
 

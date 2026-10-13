@@ -37,6 +37,7 @@ const production = (over: Partial<Parameters<typeof buildCoocSnapshot>[0]> = {})
   seed: SEED,
   pinnedUntil: null,
   dryRun: false,
+  checkpointSection: false,
   now: NOW,
   ...over,
 });

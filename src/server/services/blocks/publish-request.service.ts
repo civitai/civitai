@@ -1,4 +1,5 @@
 import { appDisplayName } from '~/shared/utils/app-display-name';
+import { sniffImageFormat } from '~/shared/utils/image-magic-bytes';
 import { reviewUserChipSelect } from '~/server/selectors/review-user-chip.selector';
 import { GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import type { Prisma } from '@prisma/client';
@@ -38,6 +39,7 @@ import { isMarketplaceCategory } from '~/server/services/blocks/marketplace-cate
 // AppBlock→AppListing mapper consumes (see the (3b) auto-create block in
 // approveRequest). The mapper VALUE itself is dynamically imported at use.
 import type { SourceAppBlock } from '~/server/services/blocks/app-listing-mapper';
+import { recordListingRatingChangeAfterCommit } from '~/server/services/blocks/app-listing-rating';
 // Pure util (no env/Prisma) — folds a blockId to the appsDb schema slug. Used by
 // the (3c) storage-provision-on-approve block; matches the admin backfill's
 // derivation exactly. The provisioner VALUE is dynamically imported at use so
@@ -392,21 +394,17 @@ export function detectImageType(
   buf: Buffer,
   claimedExt: ScreenshotExtension
 ): ScreenshotExtension | null {
-  const isPng =
-    buf.length >= 8 &&
-    buf[0] === 0x89 &&
-    buf[1] === 0x50 &&
-    buf[2] === 0x4e &&
-    buf[3] === 0x47 &&
-    buf[4] === 0x0d &&
-    buf[5] === 0x0a &&
-    buf[6] === 0x1a &&
-    buf[7] === 0x0a;
-  const isJpeg = buf.length >= 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff;
-  const isWebp =
-    buf.length >= 12 &&
-    buf.toString('ascii', 0, 4) === 'RIFF' &&
-    buf.toString('ascii', 8, 12) === 'WEBP';
+  // Shared sniffer ({@link sniffImageFormat}) under this caller's rules: full 8-byte PNG
+  // signature, no GIF, no minimum length beyond each signature's own. The WebP markers ignore the
+  // high bit only because this function's original `toString('ascii')` comparison did.
+  const format = sniffImageFormat(buf, {
+    formats: ['png', 'jpeg', 'webp'],
+    pngSignature: 'full',
+    webpFourCcIgnoresHighBit: true,
+  });
+  const isPng = format === 'png';
+  const isJpeg = format === 'jpeg';
+  const isWebp = format === 'webp';
 
   // The bytes must match the claimed extension's family. `.jpg`/`.jpeg` are the
   // same format → both require the JPEG signature and normalise to `jpg`.
@@ -2004,10 +2002,23 @@ type ListingJoinSubject = {
   slug: string;
   appBlockId: string | null;
   submittedBy: { id: number } | null;
+  manifest?: unknown;
 };
 
-/** A slug-resolved listing, reduced to what the ownership test and the projection read. */
+/**
+ * {@link ListingQueueFacts} plus the joined listing's id and, when approving the request
+ * re-rates a listing from its imagery, which listing and from what declared rating.
+ */
+type RequestListingFacts = ListingQueueFacts & {
+  appListingId: string | null;
+  approveRating: { listingId: string; declared: string | null } | null;
+};
+
+/** A slug-resolved listing, reduced to what {@link listingFactsForRequests} reads. */
 type JoinedListing = {
+  id: string;
+  status: string;
+  contentRating: string | null;
   slug: string;
   kind: string;
   appBlockId: string | null;
@@ -2076,9 +2087,45 @@ function listingBelongsToRequest(listing: JoinedListing, req: ListingJoinSubject
   return listing.userId === req.submittedBy?.id;
 }
 
+/** The rating a manifest declares; an app that declares none is approved as `g`. */
+function manifestRatingOrDefault(manifest: unknown): string {
+  const rating = (manifest as { contentRating?: unknown } | null)?.contentRating;
+  return typeof rating === 'string' ? rating : 'g';
+}
+
 /**
- * The store-listing facts a moderator queue shows beside a CODE request — lifetime plays
- * and the listing's media — for a whole page of requests.
+ * The pre-approval draft listing a FIRST approve of `slug` transitions in place and rates
+ * from the request's manifest (`approveRequest`, 3b-transition). Owner-scoped: a draft
+ * another user holds on the same slug is never adopted.
+ */
+export function draftTransitionWhere(args: { slug: string; submittedByUserId: number }) {
+  return {
+    slug: args.slug,
+    kind: 'onsite',
+    appBlockId: null,
+    status: 'draft',
+    userId: args.submittedByUserId,
+  } satisfies Prisma.AppListingWhereInput;
+}
+
+/**
+ * The reset-to-pending listing an approve of `appBlockId` restores to `approved` and rates
+ * from the rating it already carries (`approveRequest`, 3b-reset) — only while no listing
+ * request of its own is pending, since that queue then owns the listing's review.
+ */
+export function resetRestoreWhere(appBlockId: string) {
+  return {
+    appBlockId,
+    kind: 'onsite',
+    status: 'pending',
+    publishRequests: { none: { status: 'pending' } },
+  } satisfies Prisma.AppListingWhereInput;
+}
+
+/**
+ * The store-listing facts a moderator queue shows beside a CODE request — lifetime plays,
+ * the listing's media, its id and whether approving re-rates it — for a whole page of
+ * requests.
  *
  * 🔴 RESOLVED BY `AppListing.slug`, NOT `appBlockId`, because that FK is NULL while an
  * app's first request is pending and an id-keyed join would blank exactly the rows a
@@ -2089,21 +2136,30 @@ function listingBelongsToRequest(listing: JoinedListing, req: ListingJoinSubject
  * `rev-<ulid>` slug, so it can never match an app slug. The `revisionOfId: null` term is
  * belt only.
  *
- * 🔴 A FIXED NUMBER OF QUERIES FOR THE WHOLE PAGE, never one per row — one parent plus one
- * per relation, since Prisma loads each separately. Keyed on the REQUEST id rather than the
+ * 🔴 A FIXED NUMBER OF QUERIES FOR THE WHOLE PAGE, never one per row: the slug join (one
+ * parent plus one per relation, since Prisma loads each separately) and one query each
+ * for the draft-transition and reset-restore lookups. Keyed on the REQUEST id rather than the
  * slug: two decided requests can share a slug while disagreeing about which listing is
  * theirs, so a slug-keyed result cannot hold both verdicts.
  */
 async function listingFactsForRequests(
   requests: ListingJoinSubject[]
-): Promise<(requestId: string) => ListingQueueFacts> {
+): Promise<(requestId: string) => RequestListingFacts> {
   const { NO_LISTING_QUEUE_FACTS, listingQueueFacts } = await import('./app-listing.service');
+  const noListing: RequestListingFacts = {
+    ...NO_LISTING_QUEUE_FACTS,
+    appListingId: null,
+    approveRating: null,
+  };
   const slugs = [...new Set(requests.map((r) => r.slug))];
-  if (slugs.length === 0) return () => NO_LISTING_QUEUE_FACTS;
+  if (slugs.length === 0) return () => noListing;
   const { dbRead } = await import('~/server/db/client');
   const rows = (await dbRead.appListing.findMany({
     where: { slug: { in: slugs }, kind: 'onsite', revisionOfId: null },
     select: {
+      id: true,
+      status: true,
+      contentRating: true,
       slug: true,
       kind: true,
       appBlockId: true,
@@ -2114,15 +2170,53 @@ async function listingFactsForRequests(
     },
   })) as JoinedListing[];
 
+  // Whether an approve re-rates a listing is answered with approveRequest's OWN `where`
+  // builders, so this warning and that write cannot disagree about which listing it is.
+  const draftWheres = requests.flatMap((r) =>
+    r.submittedBy
+      ? [draftTransitionWhere({ slug: r.slug, submittedByUserId: r.submittedBy.id })]
+      : []
+  );
+  const resetWheres = requests.flatMap((r) =>
+    r.appBlockId ? [resetRestoreWhere(r.appBlockId)] : []
+  );
+  const [drafts, resets] = await Promise.all([
+    draftWheres.length
+      ? dbRead.appListing.findMany({
+          where: { OR: draftWheres },
+          select: { id: true, slug: true, userId: true },
+        })
+      : [],
+    resetWheres.length
+      ? dbRead.appListing.findMany({
+          where: { OR: resetWheres },
+          select: { id: true, appBlockId: true, contentRating: true },
+        })
+      : [],
+  ]);
+  const approveRatingFor = (req: ListingJoinSubject): RequestListingFacts['approveRating'] => {
+    const draft = (drafts as { id: string; slug: string; userId: number }[]).find(
+      (d) => d.slug === req.slug && d.userId === req.submittedBy?.id
+    );
+    if (draft) return { listingId: draft.id, declared: manifestRatingOrDefault(req.manifest) };
+    const reset = (
+      resets as { id: string; appBlockId: string | null; contentRating: string | null }[]
+    ).find((l) => req.appBlockId != null && l.appBlockId === req.appBlockId);
+    return reset ? { listingId: reset.id, declared: reset.contentRating } : null;
+  };
+
   const bySlug = new Map(rows.map((r) => [r.slug, r]));
-  const out = new Map<string, ListingQueueFacts>();
+  const out = new Map<string, RequestListingFacts>();
   for (const req of requests) {
     const listing = bySlug.get(req.slug);
-    if (listing && listingBelongsToRequest(listing, req)) {
-      out.set(req.id, listingQueueFacts(listing));
-    }
+    const belongs = listing && listingBelongsToRequest(listing, req);
+    out.set(req.id, {
+      ...(belongs ? listingQueueFacts(listing) : NO_LISTING_QUEUE_FACTS),
+      appListingId: belongs ? listing.id : null,
+      approveRating: approveRatingFor(req),
+    });
   }
-  return (requestId: string) => out.get(requestId) ?? NO_LISTING_QUEUE_FACTS;
+  return (requestId: string) => out.get(requestId) ?? noListing;
 }
 
 /**
@@ -2444,8 +2538,7 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
   // `approvedScopes = []` ⟹ its dev token is read-only + cannot spend. Writing
   // `approvedScopes` anywhere OUTSIDE this approval flow would break that safety.
   const manifestScopes = Array.isArray(manifest.scopes) ? (manifest.scopes as string[]) : [];
-  const manifestContentRating =
-    typeof manifest.contentRating === 'string' ? manifest.contentRating : 'g';
+  const manifestContentRating = manifestRatingOrDefault(manifest);
   const manifestRenderMode =
     typeof manifest.renderMode === 'string' ? manifest.renderMode : 'iframe';
   // W13 category-on-approve: the OPTIONAL marketplace `category` the manifest
@@ -2840,14 +2933,12 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
     // `AppListing.userId`). A foreign same-slug draft does NOT match here and falls
     // through to the legacy create path below.
     let handledByDraftTransition = false;
+    // Shared with the moderator's pre-approve warning (`listingFactsForRequests`).
     const draftListing = await dbWrite.appListing.findFirst({
-      where: {
+      where: draftTransitionWhere({
         slug: request.slug,
-        kind: 'onsite',
-        appBlockId: null,
-        status: 'draft',
-        userId: request.submittedByUserId,
-      },
+        submittedByUserId: request.submittedByUserId,
+      }),
       select: { id: true },
     });
     if (draftListing) {
@@ -2909,7 +3000,15 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
             }),
           },
         });
-        if (transitioned.count === 0) {
+        if (transitioned.count > 0) {
+          await recordListingRatingChangeAfterCommit({
+            appListingId: draftListing.id,
+            slug: request.slug,
+            before: abForTransition.contentRating,
+            after: flooredRating,
+            actorUserId: params.reviewerUserId,
+          });
+        } else {
           // eslint-disable-next-line no-console
           console.warn(
             `[approveRequest] draft→approved transition matched 0 rows (slug=${request.slug}, appBlockId=${appBlockId}); ` +
@@ -3124,12 +3223,8 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
     // Scoped through the relation (= `appListingId`), NOT by slug: a pending SHADOW media
     // revision denormalizes the parent slug but targets a different row and is a
     // legitimate concurrent review that must not block a reset restore.
-    const resetListingWhere = {
-      appBlockId,
-      kind: 'onsite',
-      status: 'pending',
-      publishRequests: { none: { status: 'pending' } },
-    } satisfies Prisma.AppListingWhereInput;
+    // Shared with the moderator's pre-approve warning (`listingFactsForRequests`).
+    const resetListingWhere = resetRestoreWhere(appBlockId);
     const resetListing = await dbWrite.appListing.findFirst({
       where: resetListingWhere,
       select: { id: true, contentRating: true },
@@ -3183,6 +3278,15 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
         where: { id: appBlockId, status: 'suspended' },
         data: { status: 'approved' },
       });
+      if (resetListing) {
+        await recordListingRatingChangeAfterCommit({
+          appListingId: resetListing.id,
+          slug: request.slug,
+          before: resetListing.contentRating,
+          after: flooredRating,
+          actorUserId: params.reviewerUserId,
+        });
+      }
     }
   } catch (err) {
     // eslint-disable-next-line no-console

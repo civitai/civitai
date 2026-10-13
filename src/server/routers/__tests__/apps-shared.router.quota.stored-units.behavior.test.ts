@@ -163,7 +163,7 @@ vi.mock('~/server/services/block-revocation.service', () => ({
   },
 }));
 vi.mock('~/server/utils/shared-storage-rate-limit', () => ({
-  checkSharedAppendRateLimit: async () => ({ allowed: true }),
+  reserveSharedWrite: async () => ({ allowed: true, release: async () => undefined }),
   checkSharedVoteRateLimit: async () => ({ allowed: true }),
   checkSharedReportRateLimit: async () => ({ allowed: true }),
   checkSharedWithdrawRateLimit: async () => ({ allowed: true }),
@@ -172,6 +172,7 @@ vi.mock('~/server/utils/shared-storage-rate-limit', () => ({
 // only its redis-backed deps, exactly as the fixture suite does.
 vi.mock('~/server/services/blocklist.service', () => ({
   throwOnBlockedUserContent: async () => undefined,
+  getBlocklistData: async () => [],
 }));
 vi.mock('~/server/services/orchestrator/promptAuditing', () => ({
   auditPromptServer: async () => undefined,
@@ -459,7 +460,7 @@ describe('shared-storage quota arithmetic vs the bytes Postgres stores', () => {
    *
    * No other control stands in the way: the row population never moves (these are all
    * updates, so neither APP_ROW_LIMIT nor SHARED_KV_PER_USER_ROW_CAP is consulted),
-   * and the rate limiter is the same daily bucket an honest editor uses. The app byte
+   * and the rate limiter is the same write budget an honest editor uses. The app byte
    * ceiling is the only thing between this and 3.0 MB of unbudgeted storage per
    * write.
    *

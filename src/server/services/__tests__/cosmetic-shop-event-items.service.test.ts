@@ -18,6 +18,7 @@ const { mocks } = vi.hoisted(() => {
     getBlockedPairIds: vi.fn(),
     sectionFindMany: vi.fn(),
     getUserTeam: vi.fn(),
+    settleBalancedTeam: vi.fn(),
   };
   return { mocks };
 });
@@ -37,6 +38,8 @@ vi.mock('~/server/events', async () => {
         teams: [...c.BIRTHDAY_2026_TEAMS],
         getUserTeam: (userId: number, opts?: { strict?: boolean }) =>
           mocks.getUserTeam(userId, opts) as Promise<string>,
+        settleBalancedTeam: (userId: number) =>
+          mocks.settleBalancedTeam(userId) as Promise<string | undefined>,
       },
     ],
   };
@@ -207,7 +210,7 @@ describe('buying an event-gated item (team hat)', () => {
   it("refuses another team's colour before any charge", async () => {
     mocks.getUserTeam.mockResolvedValue(BLUE_TEAM);
 
-    await expect(purchase()).rejects.toThrow("You can only buy this in your own team's colour");
+    await expect(purchase()).rejects.toThrow("You can only buy this in your own team's color");
     expect(mocks.createMultiTx).not.toHaveBeenCalled();
   });
 
@@ -217,6 +220,27 @@ describe('buying an event-gated item (team hat)', () => {
   it('asks for the strict team lookup', async () => {
     await purchase();
     expect(mocks.getUserTeam).toHaveBeenCalledWith(BUYER_ID, { strict: true });
+  });
+
+  // A join racing this purchase must not move the buyer off the colour they pay for: the buyer's team
+  // is settled (a listed buyer placed, team-balance.ts) before it is read.
+  it('settles a balanced team before reading it', async () => {
+    let settle!: () => void;
+    mocks.settleBalancedTeam.mockReturnValue(new Promise<void>((r) => (settle = r)));
+    const bought = purchase();
+    await vi.waitFor(() => expect(mocks.settleBalancedTeam).toHaveBeenCalledWith(BUYER_ID));
+    // Still placing: the team must not have been read yet.
+    expect(mocks.getUserTeam).not.toHaveBeenCalled();
+    settle();
+    await bought;
+    expect(mocks.getUserTeam).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses, before any charge, when the team cannot be settled', async () => {
+    mocks.settleBalancedTeam.mockRejectedValue(new Error('sysRedis down'));
+
+    await expect(purchase()).rejects.toThrow("We couldn't confirm your team. Please try again.");
+    expect(mocks.createMultiTx).not.toHaveBeenCalled();
   });
 
   it('refuses, before any charge, when the team lookup fails', async () => {
@@ -455,41 +479,42 @@ describe('the shop lists event-gated items per viewer', () => {
     ]);
   });
 
-  it("a signed-in viewer sees only their own team's colour, and a section left empty disappears", async () => {
-    expect(await listedIds({ userId: BUYER_ID })).toEqual([
-      { section: 10, items: [PINK, ORDINARY, TEAMLESS] },
+  // Justin, 2026-10-09: hats are bought only on the event page. The shop (and the homepage blocks
+  // that read it) lists no event item to anyone, moderators included, while the event runs or
+  // after. The items stay in a published section: the event page's shelf reads them from there.
+  it.each([
+    ['a signed-in viewer', { userId: BUYER_ID }],
+    ['an anonymous viewer', {}],
+    ['a moderator', { userId: BUYER_ID, isModerator: true }],
+  ])(
+    'the full shop lists %s no event items, and drops the sections they emptied',
+    async (_, args) => {
+      expect(await listedIds(args)).toEqual([{ section: 10, items: [ORDINARY] }]);
+      expect(mocks.getUserTeam).not.toHaveBeenCalled();
+    }
+  );
+
+  // The event page's shelf: only that event's items, still per viewer, empty sections dropped.
+  it("asked for one event, lists a signed-in viewer only their own team's colour", async () => {
+    expect(await listedIds({ userId: BUYER_ID, event: BIRTHDAY_2026_EVENT })).toEqual([
+      { section: 10, items: [PINK, TEAMLESS] },
     ]);
     // One team lookup per event per request, not one per item.
     expect(mocks.getUserTeam).toHaveBeenCalledTimes(1);
+    expect(await listedIds({ event: UNREGISTERED_EVENT })).toEqual([]);
   });
 
-  it('an anonymous viewer sees every colour, but not items of an unregistered event', async () => {
-    expect(await listedIds({})).toEqual([
-      { section: 10, items: [PINK, BLUE, ORDINARY, TEAMLESS] },
+  it('asked for one event, lists an anonymous viewer every colour', async () => {
+    expect(await listedIds({ event: BIRTHDAY_2026_EVENT })).toEqual([
+      { section: 10, items: [PINK, BLUE, TEAMLESS] },
       { section: 20, items: [BLUE + 10] },
     ]);
     expect(mocks.getUserTeam).not.toHaveBeenCalled();
   });
 
-  it('hides event items once the event has ended, and the sections they emptied', async () => {
+  it('asked for one event, lists nothing once the event has ended', async () => {
     vi.setSystemTime(AFTER_EVENT);
-
-    expect(await listedIds({})).toEqual([{ section: 10, items: [ORDINARY] }]);
-  });
-
-  it('a moderator sees everything unfiltered', async () => {
-    expect(await listedIds({ userId: BUYER_ID, isModerator: true })).toEqual([
-      { section: 10, items: [PINK, BLUE, UNKNOWN_EVENT, ORDINARY, TEAMLESS] },
-      { section: 20, items: [BLUE + 10] },
-    ]);
-  });
-
-  // The event page's shelf: only that event's items, still per viewer, empty sections dropped.
-  it("asked for one event, lists only that event's items the viewer may see", async () => {
-    expect(await listedIds({ userId: BUYER_ID, event: BIRTHDAY_2026_EVENT })).toEqual([
-      { section: 10, items: [PINK, TEAMLESS] },
-    ]);
-    expect(await listedIds({ event: UNREGISTERED_EVENT })).toEqual([]);
+    expect(await listedIds({ event: BIRTHDAY_2026_EVENT })).toEqual([]);
   });
 
   // A community-hub section is kept in the shop even when empty (its feed is queried separately),
@@ -509,10 +534,7 @@ describe('the shop lists event-gated items per viewer', () => {
     expect(await listedIds({ userId: BUYER_ID, event: BIRTHDAY_2026_EVENT })).toEqual([
       { section: 10, items: [PINK] },
     ]);
-    expect(await listedIds({ userId: BUYER_ID })).toEqual([
-      { section: 10, items: [PINK] },
-      { section: 30, items: [] },
-    ]);
+    expect(await listedIds({ userId: BUYER_ID })).toEqual([{ section: 30, items: [] }]);
   });
 });
 
@@ -565,21 +587,11 @@ describe('before launch, behind the flag', () => {
     expect(await listedIds({ userId: BUYER_ID, event: BIRTHDAY_2026_EVENT })).toEqual([]);
   });
 
-  // The full shop is unchanged for moderators: every item, every colour, nothing filtered.
-  it('without an event, still lists a moderator every item during the preview', async () => {
-    testerFlag.reset({ testers: [] });
-    mocks.sectionFindMany.mockResolvedValue([
-      section(10, [listedItem(PINK, hatData(PINK_TEAM)), listedItem(BLUE, hatData(BLUE_TEAM))]),
-    ]);
-    expect(await listedIds({ userId: BUYER_ID, isModerator: true })).toEqual([
-      { section: 10, items: [PINK, BLUE] },
-    ]);
-  });
-
-  it('lists the hats to a tester and to nobody else, signed out included', async () => {
+  it('asked for one event, lists the hats to a tester and to nobody else, signed out included', async () => {
     testerFlag.reset({ testers: [BUYER_ID] });
-    expect(await listedIds({ userId: BUYER_ID })).toEqual([{ section: 10, items: [PINK] }]);
-    expect(await listedIds({ userId: BUYER_ID + 1 })).toEqual([]);
-    expect(await listedIds({})).toEqual([]);
+    const shelf = (userId?: number) => listedIds({ userId, event: BIRTHDAY_2026_EVENT });
+    expect(await shelf(BUYER_ID)).toEqual([{ section: 10, items: [PINK] }]);
+    expect(await shelf(BUYER_ID + 1)).toEqual([]);
+    expect(await shelf()).toEqual([]);
   });
 });

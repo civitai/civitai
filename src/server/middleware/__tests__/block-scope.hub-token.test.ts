@@ -228,6 +228,53 @@ describe('withBlockScope with a hub-issued OAuth token', () => {
     });
   });
 
+  it('carries an approved block’s under-cap buzzBudgetPerGen through unchanged', async () => {
+    sessionMock.mockResolvedValue({
+      user: { id: USER_ID },
+      apiKeyId: 99,
+      subject: { type: 'oauth', id: CLIENT_ID },
+    });
+    dbMock.dbRead.appBlock.findFirst.mockResolvedValue({
+      id: APP_BLOCK_ID,
+      blockId: BLOCK_ID,
+      manifest: { scopes: ['ai:write:budgeted', SCOPE], page: { buzzBudgetPerGen: 75 } },
+      approvedScopes: ['ai:write:budgeted', SCOPE],
+    });
+    dbMock.dbRead.appUserScopeGrant.findUnique.mockResolvedValue({
+      grantedScopes: ['ai:write:budgeted', SCOPE],
+      revokedAt: null,
+    });
+
+    const { res, claims } = await drive('civ_oauth_access_token');
+
+    expect(res.statusCode).toBe(200);
+    expect(claims?.buzzBudget).toBe(75);
+  });
+
+  it('clamps an approved block’s over-cap buzzBudgetPerGen to the per-call cap', async () => {
+    sessionMock.mockResolvedValue({
+      user: { id: USER_ID },
+      apiKeyId: 99,
+      subject: { type: 'oauth', id: CLIENT_ID },
+    });
+    dbMock.dbRead.appBlock.findFirst.mockResolvedValue({
+      id: APP_BLOCK_ID,
+      blockId: BLOCK_ID,
+      manifest: { scopes: ['ai:write:budgeted', SCOPE], page: { buzzBudgetPerGen: 1301 } },
+      approvedScopes: ['ai:write:budgeted', SCOPE],
+    });
+    dbMock.dbRead.appUserScopeGrant.findUnique.mockResolvedValue({
+      grantedScopes: ['ai:write:budgeted', SCOPE],
+      revokedAt: null,
+    });
+
+    const { res, claims } = await drive('civ_oauth_access_token');
+
+    expect(res.statusCode).toBe(200);
+    expect(claims?.scopes).toContain('ai:write:budgeted');
+    expect(claims?.buzzBudget).toBe(1000);
+  });
+
   it('still accepts a block JWT on the unchanged path', async () => {
     const { token } = await BlockTokenService.sign({
       userId: USER_ID,

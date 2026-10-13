@@ -140,7 +140,7 @@ import { substitutionsFromNotes } from '~/shared/generation/model-substitution';
 import { generationHub } from '~/shared/form-graph/generation/hub.graph';
 import { reconcileSelectors } from '~/shared/form-graph/generation/reconcile';
 import { createComfyInput, resourcesToImageMetadataResources } from './handlers/comfy-input';
-import { extractStepErrors, sanitizeProviderError } from './provider-errors';
+import { sanitizeStepErrors } from './provider-errors';
 import { resolveSourceImageIds, signProvenance, unionSourceImageIds } from './remix-provenance';
 import { removeEmpty } from '~/utils/object-helpers';
 
@@ -2931,7 +2931,7 @@ export function formatStepOutputs(
   const engine =
     (params.engine as string | undefined) ??
     (step as { input?: { engine?: string } }).input?.engine;
-  const errors = extractStepErrors(step).map((msg) => sanitizeProviderError(msg, engine));
+  const errors = sanitizeStepErrors(step, engine);
 
   return { output, errors };
 }

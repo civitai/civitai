@@ -109,7 +109,7 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
   const user = session.user as SessionUser;
 
   // 1b. Token-type gate — accept EITHER a personal API key OR a scoped OAuth
-  // token. `getSessionFromBearerToken` (src/server/auth/bearer-token.ts:42-58)
+  // token. `getSessionFromBearerToken` (src/server/auth/bearer-token.ts)
   // sets `subject = { type: 'oauth', id: clientId }` IFF the resolved `ApiKey`
   // row has a non-null `clientId` (minted for an OAuth client a user
   // authorized), and `{ type: 'apiKey', id }` for a user-type personal-access

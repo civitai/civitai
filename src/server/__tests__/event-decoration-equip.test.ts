@@ -7,6 +7,7 @@ import {
   BIRTHDAY_2026_STARTS_AT,
 } from '~/shared/constants/birthday2026.constants';
 import { testerFlag } from '~/test-utils/testerFlagFake';
+import type * as HatSync from '~/server/events/points/sync';
 
 const db = dbMock.dbWrite;
 const entityCache = () => ({ refresh: vi.fn(), fetch: vi.fn().mockResolvedValue({}) });
@@ -36,18 +37,31 @@ vi.mock('~/server/search-index', () => ({
   imagesMetricsSearchIndex: { queueUpdate: vi.fn() },
 }));
 vi.mock('~/server/services/image.service', () => ({ queueImageSearchIndexUpdate: vi.fn() }));
+const hatSync = vi.hoisted(() => ({ owner: vi.fn(), owners: vi.fn() }));
+vi.mock('~/server/events/points/sync', async (importOriginal) => ({
+  ...(await importOriginal<typeof HatSync>()),
+  syncOwnerEventHats: hatSync.owner,
+  syncOwnersEventHats: hatSync.owners,
+}));
 vi.mock('~/server/flipt/tester-segment', async () => {
   return (await import('~/test-utils/testerFlagFake')).testerFlagModule;
 });
 
 const {
   equipCosmeticToEntity,
+  assertImageCanWearEventDecoration,
+  getCosmeticsForEntity,
   getEventDecorationsForEntity,
   revokeCosmeticsFromUsers,
+  unassignCosmetic,
   unequipCosmetic,
 } = await import('~/server/services/cosmetic.service');
+const { equipCosmeticSchema, unequipCosmeticSchema } = await import(
+  '~/server/schema/cosmetic.schema'
+);
 
 const OWNER = 7;
+const POST = 900;
 const IMAGE = 501;
 const DURING = new Date(BIRTHDAY_2026_STARTS_AT.getTime() + 24 * 60 * 60 * 1000);
 
@@ -90,7 +104,7 @@ beforeEach(() => {
     caches.frame[entity] = entityCache();
     caches.event[entity] = entityCache();
   }
-  db.image.findUnique.mockResolvedValue({ userId: OWNER });
+  db.image.findUnique.mockResolvedValue({ userId: OWNER, postId: POST });
   // clearAllMocks keeps resolved values; a lookup one test set must not answer the next.
   for (const lookup of [db.model.findUnique, db.article.findUnique, db.post.findUnique])
     lookup.mockReset().mockResolvedValue(null);
@@ -169,12 +183,10 @@ describe('placing an event decoration', () => {
     await expectRefused(/your own content/);
   });
 
-  it('is refused before the event starts and after it ends', async () => {
+  it('is refused before the event starts', async () => {
     db.userCosmetic.findFirst.mockResolvedValue(hatRow());
     vi.setSystemTime(new Date(BIRTHDAY_2026_STARTS_AT.getTime() - 1));
-    await expectRefused(/while its event is running/);
-    vi.setSystemTime(BIRTHDAY_2026_ENDS_AT);
-    await expectRefused(/while its event is running/);
+    await expectRefused(/isn't available right now/);
   });
 
   it('is refused on a content type its event does not allow', async () => {
@@ -266,6 +278,125 @@ describe('placing an event decoration', () => {
       equippedToId: IMAGE,
       equippedToType: 'Image',
       equippedAt: BIRTHDAY_2026_ENDS_AT,
+    });
+  });
+});
+
+// An image outside a post (an article cover, a profile picture) is in no feed and its page 404s
+// for everyone else, so a hat there scores almost nothing. Testers put hats on article covers
+// expecting the article to wear them.
+describe('an event decoration on an image outside a post', () => {
+  const postless = () => db.image.findUnique.mockResolvedValue({ userId: OWNER, postId: null });
+
+  // The refusal follows the event: its own decoration's name, and the article only where it can go.
+  it("names another event's decoration, and leaves articles out for one that cannot wear them", async () => {
+    postless();
+    db.article.findUnique.mockResolvedValue({ id: 36 });
+    await expect(
+      assertImageCanWearEventDecoration(IMAGE, {
+        label: 'Snow Crown',
+        entityTypes: ['Image', 'Article'],
+      })
+    ).rejects.toThrow(
+      /Put the hat on the article instead: Add Snow Crown in the article's ⋯ menu\.$/
+    );
+
+    db.article.findUnique.mockClear();
+    await expect(
+      assertImageCanWearEventDecoration(IMAGE, {
+        label: 'Snow Crown',
+        entityTypes: ['Image', 'Model'],
+      })
+    ).rejects.toThrow(/^Hats can only go on images that are in a post\.$/);
+    expect(db.article.findUnique).not.toHaveBeenCalled();
+  });
+
+  it('is refused on an article cover, pointing at the article', async () => {
+    db.userCosmetic.findFirst.mockResolvedValue(hatRow());
+    postless();
+    db.article.findUnique.mockResolvedValue({ id: 36 });
+
+    // Names the event's own decoration and the menu item that puts it on the article.
+    await expect(equipHat()).rejects.toThrow(
+      /^This image is your article's cover, which isn't shown on its own\. Put the hat on the article instead: Add Party Hat in the article's ⋯ menu\.$/
+    );
+    expect(db.article.findUnique).toHaveBeenCalledWith({
+      where: { coverId: IMAGE },
+      select: { id: true },
+    });
+    expect(db.$executeRaw).not.toHaveBeenCalled();
+    expect(db.userCosmetic.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('is refused on any other image without a post', async () => {
+    db.userCosmetic.findFirst.mockResolvedValue(hatRow());
+    postless();
+
+    await expect(equipHat()).rejects.toThrow(/^Hats can only go on images that are in a post\.$/);
+    expect(db.$executeRaw).not.toHaveBeenCalled();
+    expect(db.userCosmetic.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('reads the post from the primary', async () => {
+    db.userCosmetic.findFirst.mockResolvedValue(hatRow());
+    await equipHat();
+    expect(db.image.findUnique).toHaveBeenCalledWith({
+      where: { id: IMAGE },
+      select: { postId: true },
+    });
+    expect(dbMock.dbRead.image.findUnique).not.toHaveBeenCalled();
+    expect(db.article.findUnique).not.toHaveBeenCalled();
+    expect(db.$executeRaw).toHaveBeenCalledTimes(1);
+  });
+
+  // Checked after ownership, so a refusal says nothing about someone else's image.
+  it("refuses someone else's image as not theirs, before looking for an article", async () => {
+    db.userCosmetic.findFirst.mockResolvedValue(hatRow());
+    db.image.findUnique.mockResolvedValue({ userId: OWNER + 1, postId: null });
+
+    await expect(equipHat()).rejects.toThrow(/your own content/);
+    expect(db.article.findUnique).not.toHaveBeenCalled();
+  });
+
+  it('is not asked of a hat going on an article', async () => {
+    db.userCosmetic.findFirst.mockResolvedValue(hatRow());
+    postless();
+    db.article.findUnique.mockResolvedValue({ userId: OWNER, id: 36 });
+
+    await equipCosmeticToEntity({
+      userId: OWNER,
+      cosmeticId: 1,
+      claimKey: 'tx-1',
+      equippedToId: 36,
+      equippedToType: 'Article',
+    });
+    expect(db.image.findUnique).not.toHaveBeenCalled();
+    expect(db.$executeRaw).toHaveBeenCalledTimes(1);
+  });
+
+  it('still lets a frame go on it', async () => {
+    db.userCosmetic.findFirst.mockResolvedValue(frameRow());
+    postless();
+    await equipHat();
+    expect(db.userCosmetic.updateMany.mock.calls.at(-1)![0].data).toMatchObject({
+      equippedToId: IMAGE,
+      equippedToType: 'Image',
+    });
+  });
+
+  it('still lets a hat already on it come off', async () => {
+    postless();
+    await unequipCosmetic({
+      userId: OWNER,
+      cosmeticId: 1,
+      claimKey: 'tx-1',
+      equippedToId: IMAGE,
+      equippedToType: 'Image',
+    });
+    expect(db.userCosmetic.updateMany.mock.calls[0][0].data).toEqual({
+      equippedToId: null,
+      equippedToType: null,
+      equippedAt: null,
     });
   });
 });
@@ -371,6 +502,49 @@ describe('taking a decoration off refreshes the event decoration cache too', () 
   });
 });
 
+// Feeds do not carry a hat's claimKey, so the owner's "Remove" menu item sends none.
+describe('unequip without a claim key', () => {
+  it('takes off only what this owner wears on that entity', async () => {
+    await unequipCosmetic({
+      userId: OWNER,
+      cosmeticId: 1,
+      equippedToId: IMAGE,
+      equippedToType: 'Image',
+    });
+    expect(db.userCosmetic.updateMany).toHaveBeenCalledWith({
+      where: { cosmeticId: 1, equippedToId: IMAGE, equippedToType: 'Image', userId: OWNER },
+      data: { equippedToId: null, equippedToType: null, equippedAt: null },
+    });
+  });
+
+  it('still narrows to the claim key when one is sent', async () => {
+    await unequipCosmetic({
+      userId: OWNER,
+      cosmeticId: 1,
+      claimKey: 'tx-1',
+      equippedToId: IMAGE,
+      equippedToType: 'Image',
+    });
+    expect(db.userCosmetic.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          cosmeticId: 1,
+          equippedToId: IMAGE,
+          equippedToType: 'Image',
+          userId: OWNER,
+          claimKey: 'tx-1',
+        },
+      })
+    );
+  });
+
+  it('is accepted by the unequip input and still refused by equip', () => {
+    const input = { cosmeticId: 1, equippedToId: IMAGE, equippedToType: 'Image' };
+    expect(unequipCosmeticSchema.safeParse(input).success).toBe(true);
+    expect(equipCosmeticSchema.safeParse(input).success).toBe(false);
+  });
+});
+
 describe('getEventDecorationsForEntity', () => {
   it('reads the cache while an event lets that type wear one', async () => {
     caches.event.Image.fetch.mockResolvedValue({ [IMAGE]: { id: 1, data: HAT } });
@@ -379,14 +553,34 @@ describe('getEventDecorationsForEntity', () => {
     });
   });
 
+  // Feed responses attach these objects as they are, so the claimKey must not survive even when
+  // an entry cached before it was dropped still carries one.
+  it('returns what a card renders and never the claim key', async () => {
+    const rendered = {
+      id: 1,
+      name: 'Party Hat',
+      type: 'ContentDecoration',
+      source: 'Event',
+      data: HAT,
+      equippedToId: IMAGE,
+      equippedToType: 'Image',
+    };
+    caches.event.Image.fetch.mockResolvedValue({
+      [IMAGE]: { ...rendered, claimKey: 'tx-claim-8841' },
+    });
+    const result = await getEventDecorationsForEntity({ ids: [IMAGE], entity: 'Image' });
+    expect(JSON.stringify(result)).not.toContain('tx-claim-8841');
+    expect(result).toStrictEqual({ [IMAGE]: rendered });
+  });
+
   it('passes the write-back choice through to the cache', async () => {
     await getEventDecorationsForEntity({ ids: [IMAGE], entity: 'Image', writeBack: false });
     expect(caches.event.Image.fetch).toHaveBeenCalledWith([IMAGE], { writeBack: false });
   });
 
-  it('skips the read between events and for types no event allows', async () => {
+  it('skips the read before any event is released and for types no event allows', async () => {
     await getEventDecorationsForEntity({ ids: [9], entity: 'Post' });
-    vi.setSystemTime(BIRTHDAY_2026_ENDS_AT);
+    vi.setSystemTime(new Date(BIRTHDAY_2026_PREVIEW_FROM.getTime() - 1));
     await getEventDecorationsForEntity({ ids: [IMAGE], entity: 'Image' });
     expect(caches.event.Post.fetch).not.toHaveBeenCalled();
     expect(caches.event.Image.fetch).not.toHaveBeenCalled();
@@ -395,6 +589,19 @@ describe('getEventDecorationsForEntity', () => {
 
 // Justin, 2026-10-09: the whole event runs for testers and moderators before launch, behind the
 // `birthday2026` flag, and nobody else sees any of it. See event-access.test.ts for the rule.
+// Feed responses attach a frame as it is, and frame entries are cached for a day.
+describe('getCosmeticsForEntity', () => {
+  it('drops the claim key from frames cached before it was dropped', async () => {
+    const rendered = { id: 4, data: FRAME, equippedToId: IMAGE };
+    caches.frame.Image.fetch.mockResolvedValue({
+      [IMAGE]: { ...rendered, claimKey: 'tx-claim-5512' },
+    });
+    const result = await getCosmeticsForEntity({ ids: [IMAGE], entity: 'Image' });
+    expect(JSON.stringify(result)).not.toContain('tx-claim-5512');
+    expect(result).toStrictEqual({ [IMAGE]: rendered });
+  });
+});
+
 describe('behind the flag before launch', () => {
   const PREVIEW = new Date(BIRTHDAY_2026_PREVIEW_FROM.getTime() + 24 * 60 * 60 * 1000);
   beforeEach(() => {
@@ -410,9 +617,9 @@ describe('behind the flag before launch', () => {
 
   it('refuses everyone else during the preview, and the tester once it is armed', async () => {
     testerFlag.reset({ testers: [] });
-    await expect(equipHat()).rejects.toThrow(/while its event is running/);
+    await expect(equipHat()).rejects.toThrow(/isn't available right now/);
     testerFlag.reset({ public: true, testers: [OWNER] });
-    await expect(equipHat()).rejects.toThrow(/while its event is running/);
+    await expect(equipHat()).rejects.toThrow(/isn't available right now/);
     expect(db.$executeRaw).not.toHaveBeenCalled();
   });
 
@@ -444,5 +651,146 @@ describe('behind the flag before launch', () => {
         viewer: { id: OWNER },
       })
     ).toEqual({ [IMAGE]: { id: 1, data: HAT } });
+  });
+});
+
+// Justin and Ellie, 2026-10-09: hats are kept after the event, like the frames and decorations of
+// past birthdays. They stop scoring and stop being sold; they do not come off content. If you are
+// about to make an ended event take its hats away again, that reverses a product decision.
+describe('hats are kept after the event ends', () => {
+  const AFTER = [
+    ['the moment it ends', BIRTHDAY_2026_ENDS_AT],
+    ['a year later', new Date(BIRTHDAY_2026_ENDS_AT.getTime() + 365 * 24 * 60 * 60 * 1000)],
+  ] as const;
+
+  it.each(AFTER)('can still be placed %s', async (_, at) => {
+    vi.setSystemTime(at);
+    db.userCosmetic.findFirst.mockResolvedValue(hatRow());
+    await equipHat();
+    expect(db.$executeRaw).toHaveBeenCalled();
+  });
+
+  it.each(AFTER)('are still shown on content %s', async (_, at) => {
+    vi.setSystemTime(at);
+    caches.event.Image.fetch.mockResolvedValue({ [IMAGE]: { id: 1, data: HAT } });
+    expect(await getEventDecorationsForEntity({ ids: [IMAGE], entity: 'Image' })).toEqual({
+      [IMAGE]: { id: 1, data: HAT },
+    });
+  });
+
+  it('are hidden, and cannot be placed, once the flag is off', async () => {
+    vi.setSystemTime(BIRTHDAY_2026_ENDS_AT);
+    testerFlag.reset({ testers: [] });
+    caches.event.Image.fetch.mockResolvedValue({ [IMAGE]: { id: 1, data: HAT } });
+    expect(
+      await getEventDecorationsForEntity({ ids: [IMAGE], entity: 'Image', viewer: { id: OWNER } })
+    ).toEqual({});
+    db.userCosmetic.findFirst.mockResolvedValue(hatRow());
+    await expect(equipHat()).rejects.toThrow(/isn't available right now/);
+  });
+});
+
+// The live hat map is written in the same request (sync.behavior.test.ts runs what these calls do).
+describe('a hat placement change writes through to the live hat map', () => {
+  it('on equip, for the content it went on, after the placement is written', async () => {
+    db.userCosmetic.findFirst.mockResolvedValue(hatRow());
+    await equipHat();
+    expect(hatSync.owner.mock.calls).toEqual([[OWNER, [{ entityType: 'Image', entityId: IMAGE }]]]);
+    expect(hatSync.owner.mock.invocationCallOrder[0]).toBeGreaterThan(
+      Math.max(
+        db.$executeRaw.mock.invocationCallOrder.at(-1)!,
+        ...db.userCosmetic.updateMany.mock.invocationCallOrder
+      )
+    );
+  });
+
+  it('on a move, for the content it left too', async () => {
+    db.userCosmetic.findFirst.mockResolvedValue({
+      ...hatRow(),
+      equippedToId: 777,
+      equippedToType: 'Image',
+    });
+    await equipHat();
+    expect(hatSync.owner.mock.calls).toEqual([
+      [
+        OWNER,
+        [
+          { entityType: 'Image', entityId: IMAGE },
+          { entityType: 'Image', entityId: 777 },
+        ],
+      ],
+    ]);
+  });
+
+  it('not when a frame is equipped: it cannot move a hat', async () => {
+    db.userCosmetic.findFirst.mockResolvedValue(frameRow());
+    await equipHat();
+    expect(hatSync.owner).not.toHaveBeenCalled();
+  });
+
+  it('on unequip, only when something came off', async () => {
+    const unequip = () =>
+      unequipCosmetic({
+        userId: OWNER,
+        cosmeticId: 1,
+        claimKey: 'tx-1',
+        equippedToId: IMAGE,
+        equippedToType: 'Image',
+      });
+    db.userCosmetic.updateMany.mockResolvedValueOnce({ count: 0 });
+    await unequip();
+    expect(hatSync.owner).not.toHaveBeenCalled();
+    await unequip();
+    expect(hatSync.owner.mock.calls).toEqual([[OWNER, [{ entityType: 'Image', entityId: IMAGE }]]]);
+    expect(hatSync.owner.mock.invocationCallOrder[0]).toBeGreaterThan(
+      db.userCosmetic.updateMany.mock.invocationCallOrder.at(-1)!
+    );
+  });
+
+  const heldHats = [
+    { userId: OWNER, equippedToId: IMAGE, equippedToType: 'Image', cosmetic: { data: HAT } },
+    { userId: 8, equippedToId: 9, equippedToType: 'Model', cosmetic: { data: HAT } },
+    // A frame never earns, so it never reaches the hat map.
+    { userId: 8, equippedToId: 10, equippedToType: 'Image', cosmetic: { data: FRAME } },
+  ];
+  const removedHats = [
+    [
+      [
+        { userId: OWNER, entityType: 'Image', entityId: IMAGE },
+        { userId: 8, entityType: 'Model', entityId: 9 },
+      ],
+    ],
+  ];
+
+  it('on revoke, for every holder’s event hats, after the delete', async () => {
+    db.userCosmetic.findMany.mockResolvedValue(heldHats);
+    db.userCosmetic.deleteMany.mockResolvedValue({ count: 3 });
+    await revokeCosmeticsFromUsers({ userIds: [OWNER, 8], cosmeticIds: [1] });
+    expect(hatSync.owners.mock.calls).toEqual(removedHats);
+    expect(hatSync.owners.mock.invocationCallOrder[0]).toBeGreaterThan(
+      db.userCosmetic.deleteMany.mock.invocationCallOrder[0]
+    );
+  });
+
+  it('not on a revoke of cosmetics that are not event hats', async () => {
+    db.userCosmetic.findMany.mockResolvedValue([heldHats[2]]);
+    db.userCosmetic.deleteMany.mockResolvedValue({ count: 1 });
+    await revokeCosmeticsFromUsers({ userIds: [8], cosmeticIds: [1] });
+    expect(hatSync.owners).not.toHaveBeenCalled();
+  });
+
+  it('on a moderator unassign, for the event hats it deleted, after the delete', async () => {
+    db.userCosmetic.findMany.mockResolvedValue(heldHats);
+    db.userCosmetic.deleteMany.mockResolvedValue({ count: 3 });
+    await unassignCosmetic({ cosmeticId: 1, userIds: [OWNER, 8] });
+    expect(db.userCosmetic.findMany.mock.calls[0][0].where).toEqual({
+      cosmeticId: 1,
+      userId: { in: [OWNER, 8] },
+      equippedToId: { not: null },
+    });
+    expect(hatSync.owners.mock.calls).toEqual(removedHats);
+    expect(hatSync.owners.mock.invocationCallOrder[0]).toBeGreaterThan(
+      db.userCosmetic.deleteMany.mock.invocationCallOrder[0]
+    );
   });
 });

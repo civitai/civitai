@@ -68,6 +68,12 @@ vi.mock('~/server/search-index', () => ({
   imagesSearchIndex: { queueUpdate: vi.fn() },
   modelsSearchIndex: { queueUpdate: mockModelsQueueUpdate },
 }));
+vi.mock('~/server/search-index/collections.search-index', () => ({
+  collectionsSearchIndex: { queueUpdate: mockCollectionsQueueUpdate },
+}));
+vi.mock('~/server/search-index/models.search-index', () => ({
+  modelsSearchIndex: { queueUpdate: mockModelsQueueUpdate },
+}));
 vi.mock('~/server/services/auction.service', () => ({
   deleteBidsForModel: mockDeleteBidsForModel,
   getLastAuctionReset: vi.fn(),
@@ -185,6 +191,53 @@ describe('deleteModelById — soft delete', () => {
     await deleteModelById({ id: MODEL_ID, userId: OWNER_ID } as any);
 
     expect(mockCollectionsQueueUpdate).not.toHaveBeenCalled();
+  });
+
+  /** Runs deleteModelById on a transaction of its own; `recorded` is what the status record reports. */
+  async function deleteInTx(recorded: number) {
+    const order: string[] = [];
+    const tx = {
+      $executeRaw: vi.fn(async (strings: TemplateStringsArray, ...values: unknown[]) => {
+        if (strings.join('?').includes("'statusAtDelete'"))
+          order.push(`record:${values.join(',')}`);
+        return recorded;
+      }),
+      model: {
+        update: vi.fn(async () => {
+          order.push('delete');
+          return {
+            id: MODEL_ID,
+            userId: OWNER_ID,
+            nsfwLevel: 1,
+            modelVersions: [{ id: VERSION_ID }],
+          };
+        }),
+      },
+    };
+    mockDbWrite.$transaction.mockImplementationOnce((async (fn: (t: typeof tx) => unknown) =>
+      fn(tx)) as never);
+    await deleteModelById({ id: MODEL_ID, userId: OWNER_ID } as any);
+    const [[{ data }]] = tx.model.update.mock.calls as unknown as [[{ data: object }]];
+    return { order, data };
+  }
+
+  // The creator score reads statusAtDelete; recorded after the update it would always read 'Deleted',
+  // and recorded outside the transaction it would survive a rolled-back delete.
+  it('records the status at delete for this model, in the transaction, before writing Deleted', async () => {
+    const { order, data } = await deleteInTx(1);
+
+    expect(order).toEqual([`record:${MODEL_ID}`, 'delete']);
+    expect(mockDbWrite.$executeRaw).not.toHaveBeenCalled();
+    expect(data).toMatchObject({ status: 'Deleted', deletedBy: OWNER_ID });
+  });
+
+  // The score reads deletedBy, so a second delete by the owner must not replace a moderator's.
+  it('keeps the first actor and time when the model was already deleted', async () => {
+    const { data } = await deleteInTx(0);
+
+    expect(data).toMatchObject({ status: 'Deleted' });
+    expect(data).not.toHaveProperty('deletedBy');
+    expect(data).not.toHaveProperty('deletedAt');
   });
 });
 

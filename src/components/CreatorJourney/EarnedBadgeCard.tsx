@@ -21,6 +21,8 @@ export type EarnedBadge = {
   track: string;
   threshold?: number | null;
   description: string | null;
+  /** A special achievement's hint, kept above its description once earned. */
+  hint?: string | null;
   achievedAt: Date | null;
 };
 
@@ -29,10 +31,13 @@ export function EarnedBadgeCard({
   badge,
   accent,
   action,
+  thresholdAsFloor,
 }: {
   badge: EarnedBadge;
   accent?: string;
   action?: ReactNode;
+  /** Show a tier's threshold as "10,000+": on a profile, which anyone can view, it must read as a floor, not a score. */
+  thresholdAsFloor?: boolean;
 }) {
   accent ??= tierAccents[badge.key] ?? DEFAULT_ACCENT;
 
@@ -60,6 +65,7 @@ export function EarnedBadgeCard({
             <IconTrendingUp size={16} className="shrink-0 text-[var(--cj-accent)]" />
             <Text fw={700} className="tabular-nums">
               {numberWithCommas(badge.threshold)}
+              {thresholdAsFloor && '+'}
             </Text>
           </div>
           <Text size="xs" c="dimmed" tt="uppercase" fw={600} className="tracking-wide">
@@ -67,11 +73,18 @@ export function EarnedBadgeCard({
           </Text>
         </div>
       ) : (
-        badge.description && (
-          <Text size="xs" c="dimmed">
-            {badge.description}
-          </Text>
-        )
+        <>
+          {badge.hint && (
+            <Text size="xs" c="dimmed" fs="italic">
+              {badge.hint}
+            </Text>
+          )}
+          {badge.description && (
+            <Text size="xs" c="dimmed">
+              {badge.description}
+            </Text>
+          )}
+        </>
       )}
       <div className="mt-auto flex w-full flex-col items-center gap-2">
         <SpotlightDivider />

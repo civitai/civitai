@@ -474,6 +474,40 @@ export async function resolveAppBlockApprovalVerdict(
   }
 }
 
+/** What the STRICT read answers. `approved` carries the row's own id — the storage quota key. */
+export type StrictAppBlockApproval =
+  | { verdict: 'approved'; appBlockId: string }
+  | { verdict: 'not_found' }
+  | { verdict: 'not_approved' };
+
+/**
+ * THE STRICT READ — the backing row must exist AND say `approved`, with NO exemption of any
+ * kind. Used by the `strict` approval policies of `resolveBlockToken`
+ * (`block-bridge-auth.service.ts`), i.e. by the two storage resolvers — the only callers
+ * today, though no ledger enumerates this function's callers.
+ *
+ * 🔴 NOT A SECOND COPY OF THE PREDICATE ABOVE, AND NOT TO BE FOLDED INTO IT. The predicate
+ * exempts a run-for-real review token, a private run, a token with no backing row and an
+ * owner with a live dev tunnel; storage exempts none of those here (per-user storage
+ * exempts only `reviewRunForReal`, and does so BEFORE calling this — see the
+ * `strict+reviewPreview` policy). It also reads a WIDER row — `id` as well as `status` —
+ * because both storage paths key their quota on the row's id. It lives in this module so
+ * the `(appId, blockId)` read stays in one file, not so the two rules converge.
+ *
+ * Like the predicate, a read that THROWS propagates.
+ */
+export async function resolveStrictAppBlockApproval(
+  claims: BlockTokenClaims
+): Promise<StrictAppBlockApproval> {
+  const block = await dbRead.appBlock.findUnique({
+    where: { appId_blockId: { appId: claims.appId, blockId: claims.blockId } },
+    select: { id: true, status: true },
+  });
+  if (!block) return { verdict: 'not_found' };
+  if (block.status !== 'approved') return { verdict: 'not_approved' };
+  return { verdict: 'approved', appBlockId: block.id };
+}
+
 /**
  * THE REST POLICY over that verdict: identical, plus a fail-closed `lookup_failed` for a
  * read that threw. `withBlockScope` maps the result onto status codes, and the mapping is

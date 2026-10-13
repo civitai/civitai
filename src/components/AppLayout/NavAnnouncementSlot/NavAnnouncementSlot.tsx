@@ -2,6 +2,7 @@ import { IconX } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { RewardsBonusBanner } from '~/components/Buzz/RewardsBonusBanner';
 import { EdgeImage } from '~/components/EdgeMedia/EdgeImage';
+import { dismissHint } from '~/components/Events/event-promos';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import {
   useNavBannersDismissed,
@@ -9,6 +10,7 @@ import {
 } from '~/components/AppLayout/NavAnnouncementSlot/nav-banners-dismissed';
 import { NAV_BANNERS_STALE_TIME } from '~/providers/AppProvider';
 import type { NavBanner } from '~/shared/constants/nav-banner.constants';
+import { showInfoNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
 const DEFAULT_BACKGROUND = '#1a1b1e';
@@ -27,7 +29,7 @@ export function NavAnnouncementSlot() {
   );
 }
 
-function EventNavBanners() {
+export function EventNavBanners() {
   const { data = [] } = trpc.event.getNavBanners.useQuery(undefined, {
     staleTime: NAV_BANNERS_STALE_TIME,
   });
@@ -36,7 +38,21 @@ function EventNavBanners() {
   return (
     <>
       {visibleNavBanners(data, dismissed).map((banner) => (
-        <NavBannerStrip key={banner.id} banner={banner} onDismiss={() => dismiss(banner.id)} />
+        <NavBannerStrip
+          key={banner.id}
+          banner={banner}
+          onDismiss={() => {
+            dismiss(banner.id);
+            const hint = dismissHint(banner, data);
+            if (hint)
+              showInfoNotification({
+                id: `${banner.id}:dismissed`,
+                title: 'Hidden',
+                message: hint,
+                autoClose: 6000,
+              });
+          }}
+        />
       ))}
     </>
   );

@@ -1,11 +1,23 @@
 import { Stack, Text, Title } from '@mantine/core';
 import clsx from 'clsx';
+import { useEffect, useState } from 'react';
 import { LinkedText } from '~/components/CreatorJourney/journey-links';
-import { accentVar, HEXAGON, TierBadge } from '~/components/CreatorJourney/tier-badge';
+import {
+  accentVar,
+  HEXAGON,
+  HEXAGON_ASPECT,
+  TierBadge,
+} from '~/components/CreatorJourney/tier-badge';
 import {
   SpotlightBorderCard,
   SpotlightDivider,
 } from '~/components/SpotlightCard/SpotlightBorderCard';
+import {
+  ACHIEVEMENT_TRACK_STYLES,
+  CREATOR_MILESTONE_GRANT_CRON,
+  isMaskedMilestoneKey,
+  nextDailyCronRun,
+} from '~/shared/constants/creator-journey.constants';
 import type { RouterOutput } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
 import { abbreviateNumber, numberWithCommas } from '~/utils/number-helpers';
@@ -13,18 +25,18 @@ import { abbreviateNumber, numberWithCommas } from '~/utils/number-helpers';
 type Activity = RouterOutput['creatorJourney']['getMine']['activity'];
 type Milestone = Activity['milestones'][number];
 type Measure = Milestone['measure'];
+type WinBreakdown = Activity['winBreakdown'];
 
 export const achievementTracks = [
-  { key: 'create', title: 'Create', accent: '#12b886', measures: ['models', 'articles'] },
+  { key: 'create', ...ACHIEVEMENT_TRACK_STYLES.create, measures: ['models', 'articles'] },
   {
     key: 'reach',
-    title: 'Reach',
-    accent: '#f59f00',
+    ...ACHIEVEMENT_TRACK_STYLES.reach,
     measures: ['downloads', 'followers', 'reactions'],
   },
-  { key: 'earn', title: 'Earn', accent: '#7950f2', measures: ['revenue'] },
-  { key: 'community', title: 'Community', accent: '#228be6', measures: ['votes'] },
-  { key: 'compete', title: 'Compete', accent: '#fa5252', measures: ['wins'] },
+  { key: 'earn', ...ACHIEVEMENT_TRACK_STYLES.earn, measures: ['revenue'] },
+  { key: 'community', ...ACHIEVEMENT_TRACK_STYLES.community, measures: ['votes'] },
+  { key: 'compete', ...ACHIEVEMENT_TRACK_STYLES.compete, measures: ['wins'] },
 ] as const satisfies ReadonlyArray<{
   key: string;
   title: string;
@@ -44,8 +56,8 @@ const measureCopy: Record<
   },
   downloads: {
     label: 'Downloads',
-    current: (n) => `top model ${numberWithCommas(n)}`,
-    unit: 'downloads on one model',
+    current: (n) => `${numberWithCommas(n)} total`,
+    unit: 'downloads',
   },
   followers: { label: 'Followers', current: (n) => numberWithCommas(n), unit: 'followers' },
   reactions: { label: 'Reactions', current: (n) => numberWithCommas(n), unit: 'reactions' },
@@ -78,7 +90,8 @@ const accentOf = (measure: Measure) =>
     ?.accent ?? achievementTracks[0].accent;
 
 export function earnedLabel(achievedAt: Date | null) {
-  return achievedAt ? `Earned ${formatDate(achievedAt)}` : 'Earned';
+  // Undated means granted at launch to someone already past the bar: no real date was observed.
+  return achievedAt ? `Earned ${formatDate(achievedAt)}` : 'Earned before launch';
 }
 
 export function CreatorAchievements({
@@ -89,7 +102,8 @@ export function CreatorAchievements({
   username?: string;
 }) {
   if (activity.milestones.length === 0) return null;
-  const { closestNext } = activity;
+  // With every unearned rung passed there is no next target, so the card shows one waiting instead.
+  const closestNext = activity.closestNext ?? activity.milestones.find(isPending);
 
   return (
     <Stack gap="sm">
@@ -110,6 +124,7 @@ export function CreatorAchievements({
               milestones={activity.milestones.filter((m) => m.measure === measure)}
               next={nextOf(activity.milestones, measure)}
               href={measureHref(measure, username)}
+              winBreakdown={measure === 'wins' ? activity.winBreakdown : undefined}
             />
           ))}
         </Stack>
@@ -122,10 +137,33 @@ function nextOf(milestones: Milestone[], measure: Measure) {
   return milestones.find((m) => m.measure === measure && !m.earned && m.current < m.threshold);
 }
 
+/** A masked hidden rung, which never shows progress, so it cannot say it was passed. */
+const isMasked = (milestone: Milestone) => isMaskedMilestoneKey(milestone.key);
+
+/** Passed but not granted until the nightly job runs. */
+function isPending(milestone: Milestone) {
+  return !milestone.earned && milestone.current >= milestone.threshold && !isMasked(milestone);
+}
+
+/** The next nightly grant in the viewer's time zone, set after mount so SSR and hydration agree. */
+function useNextGrantTime() {
+  const [time, setTime] = useState<string>();
+  useEffect(() => {
+    setTime(formatDate(nextDailyCronRun(CREATOR_MILESTONE_GRANT_CRON, new Date()), 'h:mm A'));
+  }, []);
+  return time;
+}
+
+function PendingLabel() {
+  const time = useNextGrantTime();
+  return <>{time ? `Unlocks at the next update, ${time}` : 'Unlocks at the next update'}</>;
+}
+
 function ClosestNext({ milestone }: { milestone: Milestone }) {
   const accent = accentOf(milestone.measure);
   const copy = measureCopy[milestone.measure];
   const remaining = milestone.threshold - milestone.current;
+  const pending = isPending(milestone);
 
   return (
     <SpotlightBorderCard
@@ -133,7 +171,7 @@ function ClosestNext({ milestone }: { milestone: Milestone }) {
       style={accentVar(accent)}
       faceClassName="flex items-center gap-4 p-4"
     >
-      <MilestoneBadge milestone={milestone} state="progress" size={72} />
+      <MilestoneBadge milestone={milestone} state={pending ? 'pending' : 'progress'} size={72} />
       <div className="flex min-w-0 flex-1 flex-col gap-1.5">
         <Text size="xs" tt="uppercase" fw={700} className="tracking-wider text-[var(--cj-accent)]">
           Closest next
@@ -146,7 +184,15 @@ function ClosestNext({ milestone }: { milestone: Milestone }) {
         </Text>
         <ProgressBar current={milestone.current} threshold={milestone.threshold} />
         <Text size="sm" c="dimmed">
-          {numberWithCommas(remaining)} more for <b>{milestone.name}</b>.
+          {pending ? (
+            <>
+              <b>{milestone.name}</b>: <PendingLabel />
+            </>
+          ) : (
+            <>
+              {numberWithCommas(remaining)} more for <b>{milestone.name}</b>.
+            </>
+          )}
         </Text>
       </div>
     </SpotlightBorderCard>
@@ -158,31 +204,42 @@ function MeasureRow({
   milestones,
   next,
   href,
+  winBreakdown,
 }: {
   measure: Measure;
   milestones: Milestone[];
   next: Milestone | undefined;
   href?: string;
+  winBreakdown?: WinBreakdown;
 }) {
   if (milestones.length === 0) return null;
   const copy = measureCopy[measure];
 
+  // The label sits above the tiles so a five-rung ladder fits on one row.
   return (
-    <div className="grid grid-cols-1 gap-2 sm:grid-cols-[96px_1fr] sm:gap-3">
-      <div className="sm:pt-2">
+    <div className="flex flex-col gap-1.5">
+      <div className="flex flex-wrap items-baseline gap-x-2">
         <Text size="sm" fw={600}>
           {href ? <LinkedText text={copy.label} links={[{ href }]} /> : copy.label}
         </Text>
         <Text size="xs" c="dimmed" className="tabular-nums">
-          {copy.current(milestones[0].current)}
+          {winBreakdown ? describeWins(winBreakdown) : copy.current(milestones[0].current)}
         </Text>
       </div>
-      <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-5">
         {milestones.map((milestone) => (
           <MilestoneTile
             key={milestone.key}
             milestone={milestone}
-            state={milestone.earned ? 'earned' : milestone === next ? 'progress' : 'locked'}
+            state={
+              milestone.earned
+                ? 'earned'
+                : isPending(milestone)
+                ? 'pending'
+                : milestone === next
+                ? 'progress'
+                : 'locked'
+            }
           />
         ))}
       </div>
@@ -190,7 +247,13 @@ function MeasureRow({
   );
 }
 
-type TileState = 'earned' | 'progress' | 'locked';
+const plural = (n: number, word: string) => `${numberWithCommas(n)} ${word}${n === 1 ? '' : 's'}`;
+
+export function describeWins({ challenges, crucibles }: WinBreakdown) {
+  return `${plural(challenges, 'challenge win')} · ${plural(crucibles, 'Crucible win')}`;
+}
+
+type TileState = 'earned' | 'progress' | 'pending' | 'locked';
 
 function MilestoneTile({ milestone, state }: { milestone: Milestone; state: TileState }) {
   const copy = measureCopy[milestone.measure];
@@ -207,15 +270,20 @@ function MilestoneTile({ milestone, state }: { milestone: Milestone; state: Tile
     >
       <MilestoneBadge milestone={milestone} state={state} size={48} />
       <div className="flex min-w-0 flex-1 flex-col gap-1">
-        <Text size="sm" fw={700} truncate>
+        {/* Five tiles share a row, so a long name wraps rather than losing its end. */}
+        <Text size="sm" fw={700} lineClamp={2}>
           {milestone.name}
         </Text>
         <Text size="xs" c="dimmed" className="tabular-nums">
-          {state === 'earned'
-            ? earnedLabel(milestone.achievedAt)
-            : state === 'progress'
-            ? `${numberWithCommas(milestone.current)} / ${numberWithCommas(milestone.threshold)}`
-            : `${numberWithCommas(milestone.threshold)} ${copy.unit}`}
+          {state === 'earned' ? (
+            earnedLabel(milestone.achievedAt)
+          ) : state === 'pending' ? (
+            <PendingLabel />
+          ) : !isMasked(milestone) ? (
+            `${numberWithCommas(milestone.current)} / ${numberWithCommas(milestone.threshold)}`
+          ) : (
+            `${numberWithCommas(milestone.threshold)} ${copy.unit}`
+          )}
         </Text>
         {state === 'progress' && (
           <ProgressBar current={milestone.current} threshold={milestone.threshold} thin />
@@ -252,10 +320,12 @@ export function Hexagon({ label, state, size }: { label: string; state: TileStat
       aria-hidden
       className={clsx(
         'flex shrink-0 items-center justify-center font-extrabold',
-        state === 'locked' && 'bg-gray-3 text-gray-6 dark:bg-dark-4 dark:text-dark-2'
+        (state === 'locked' || state === 'pending') &&
+          'bg-gray-3 text-gray-6 dark:bg-dark-4 dark:text-dark-2'
       )}
       style={{
-        width: size,
+        // A regular pointy-top hexagon is √3/2 as wide as it is tall, like the badge art.
+        width: Math.round(size * HEXAGON_ASPECT),
         height: size,
         clipPath: HEXAGON,
         fontSize: size * 0.32,

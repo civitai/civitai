@@ -1,0 +1,172 @@
+import { describe, expect, it, vi } from 'vitest';
+import type { Sandbox } from '~/components/Apps/AppAssistant/sandboxClient';
+import {
+  SandboxApiError,
+  createSandboxClient,
+  isSandboxServiceUrl,
+} from '~/components/Apps/AppAssistant/sandboxClient';
+
+const BASE = 'https://sandbox.example';
+const SANDBOX: Sandbox = {
+  name: 'sbx-0123456789ab',
+  app: 'my-app',
+  state: 'running',
+  mcpUrl: `${BASE}/s/sbx-0123456789ab/mcp`,
+  createdAt: '2026-10-01T00:00:00.000Z',
+  lastActivityAt: '2026-10-11T00:00:00.000Z',
+  expiresAt: '2026-10-25T00:00:00.000Z',
+};
+
+const json = (status: number, body: unknown) =>
+  new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+
+function setup(...responses: Response[]) {
+  const fetchMock = vi.fn<typeof fetch>();
+  for (const r of responses) fetchMock.mockResolvedValueOnce(r);
+  const getToken = vi.fn(async (opts?: { refresh?: boolean }) =>
+    opts?.refresh ? 'fresh-token' : 'cached-token'
+  );
+  const client = createSandboxClient({ baseUrl: `${BASE}/`, getToken, fetch: fetchMock });
+  const call = (i: number) => {
+    const [url, init] = fetchMock.mock.calls[i];
+    return {
+      url,
+      method: init?.method,
+      headers: init?.headers as Record<string, string>,
+      body: init?.body,
+    };
+  };
+  return { client, fetchMock, getToken, call };
+}
+
+describe('createSandboxClient', () => {
+  it('lists with the bearer token attached', async () => {
+    const { client, call } = setup(json(200, { sandboxes: [SANDBOX] }));
+    expect(await client.list()).toEqual([SANDBOX]);
+    expect(call(0)).toMatchObject({
+      url: `${BASE}/v1/sandboxes`,
+      method: 'GET',
+      headers: { authorization: 'Bearer cached-token' },
+    });
+  });
+
+  it('opens by app key, telling a create (201) from a find or resume (200)', async () => {
+    const { client, call } = setup(json(201, SANDBOX), json(200, SANDBOX));
+    expect(await client.open('my-app')).toEqual({ sandbox: SANDBOX, created: true });
+    expect(await client.open('my-app')).toEqual({ sandbox: SANDBOX, created: false });
+    expect(call(0)).toMatchObject({
+      url: `${BASE}/v1/sandboxes`,
+      method: 'POST',
+      body: JSON.stringify({ app: 'my-app' }),
+      headers: { authorization: 'Bearer cached-token', 'content-type': 'application/json' },
+    });
+  });
+
+  it('gets, suspends and deletes one sandbox by name', async () => {
+    const { client, call } = setup(
+      json(200, SANDBOX),
+      json(200, { ...SANDBOX, state: 'suspended' }),
+      json(200, { name: SANDBOX.name, deleted: true })
+    );
+    await client.get(SANDBOX.name);
+    expect((await client.suspend(SANDBOX.name)).state).toBe('suspended');
+    await client.remove(SANDBOX.name);
+    for (const i of [0, 1, 2]) expect(call(i).headers.authorization).toBe('Bearer cached-token');
+    expect([call(0), call(1), call(2)].map((c) => `${c.method} ${c.url}`)).toEqual([
+      `GET ${BASE}/v1/sandboxes/${SANDBOX.name}`,
+      `POST ${BASE}/v1/sandboxes/${SANDBOX.name}/suspend`,
+      `DELETE ${BASE}/v1/sandboxes/${SANDBOX.name}`,
+    ]);
+  });
+
+  it('maps a cap 409 to "limit" and keeps the service message naming the running sandbox', async () => {
+    const message =
+      'running-sandbox limit (1) reached: sbx-aaaaaaaaaaaa (app "other") is running; suspend it first';
+    const { client } = setup(
+      json(409, { error: message }),
+      json(409, { error: 'sandbox limit (3) reached; delete one first' })
+    );
+    await expect(client.open('my-app')).rejects.toMatchObject({
+      status: 409,
+      kind: 'limit',
+      message,
+    });
+    await expect(client.open('my-app')).rejects.toMatchObject({ kind: 'limit' });
+  });
+
+  it('maps a concurrent-change 409 to "conflict", not "limit"', async () => {
+    const { client } = setup(json(409, { error: 'the sandbox changed concurrently; retry' }));
+    await expect(client.suspend(SANDBOX.name)).rejects.toMatchObject({ kind: 'conflict' });
+  });
+
+  it('retries a 401 once with a refreshed token, then surfaces a second 401', async () => {
+    const { client, call, fetchMock } = setup(
+      json(401, { error: 'unauthorized' }),
+      json(200, { sandboxes: [] }),
+      json(401, { error: 'unauthorized' }),
+      json(401, { error: 'unauthorized' })
+    );
+    await client.list();
+    expect(call(1).headers.authorization).toBe('Bearer fresh-token');
+    await expect(client.list()).rejects.toMatchObject({ kind: 'unauthorized' });
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+  });
+
+  it.each([
+    [400, 'bad_request'],
+    [413, 'bad_request'],
+    [403, 'forbidden'],
+    [404, 'not_found'],
+    [429, 'rate_limited'],
+    [503, 'unavailable'],
+  ] as const)('maps %i to "%s"', async (status, kind) => {
+    const { client } = setup(json(status, { error: 'nope' }));
+    await expect(client.get(SANDBOX.name)).rejects.toMatchObject({ status, kind, message: 'nope' });
+  });
+
+  it('resends the body when a create is retried after a 401', async () => {
+    const { client, call } = setup(json(401, {}), json(201, SANDBOX));
+    await client.open('my-app');
+    expect(call(1).body).toBe(JSON.stringify({ app: 'my-app' }));
+    expect(call(1).headers.authorization).toBe('Bearer fresh-token');
+  });
+
+  it('reads a malformed list as empty', async () => {
+    const { client } = setup(json(200, { sandboxes: 'nope' }));
+    expect(await client.list()).toEqual([]);
+  });
+
+  it('turns a non-JSON gateway error into "unavailable"', async () => {
+    const { client } = setup(new Response('Bad Gateway', { status: 502 }));
+    await expect(client.list()).rejects.toMatchObject({ status: 502, kind: 'unavailable' });
+  });
+
+  it.each([['../v1/sandboxes'], ['sbx-aaa/../x'], ['a?x'], ['SBX-AAA'], ['sbx-aaa%2f..']])(
+    'refuses %j as a sandbox name without sending anything',
+    async (name) => {
+      const { client, fetchMock } = setup();
+      await expect(client.remove(name)).rejects.toBeInstanceOf(SandboxApiError);
+      await expect(client.get(name)).rejects.toBeInstanceOf(SandboxApiError);
+      expect(fetchMock).not.toHaveBeenCalled();
+    }
+  );
+});
+
+describe('isSandboxServiceUrl (who may receive the token)', () => {
+  it.each([
+    [`${BASE}/s/sbx-0123456789ab/mcp`, true],
+    [`${BASE}:443/s/x/mcp`, true],
+    ['http://sandbox.example/s/x/mcp', false],
+    ['https://sandbox.example:8443/s/x/mcp', false],
+    ['https://sandbox.example.evil.example/s/x/mcp', false],
+    ['https://sandbox.example@evil.example/s/x/mcp', false],
+    ['https://evil.example/?u=https://sandbox.example', false],
+    ['not a url', false],
+  ])('%s → %s', (url, ok) => {
+    expect(isSandboxServiceUrl(url, BASE)).toBe(ok);
+  });
+
+  it('refuses everything when the configured base cannot be parsed', () => {
+    expect(isSandboxServiceUrl(`${BASE}/s/x/mcp`, 'not a url')).toBe(false);
+  });
+});

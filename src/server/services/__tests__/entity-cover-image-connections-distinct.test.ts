@@ -135,7 +135,13 @@ function outerFilter(sql: string) {
   // assertion below a statement about an empty string.
   expect(start, 'the outer UNION join is gone -- re-anchor this slice').toBeGreaterThan(-1);
 
-  return sql.slice(start).replace(/\s+/g, ' ').trim();
+  return sql
+    .slice(start)
+    .split('\n')
+    .map((line) => line.replace(/--.*$/, ''))
+    .join('\n')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 /**
@@ -218,7 +224,7 @@ describe('getEntityCoverImage bounds the CONNECTIONS branch to one row per entit
     expect(branch).toBe(
       'SELECT * FROM ( ' +
         'SELECT DISTINCT ON (e."entityId", e."entityType") ' +
-        'e."entityId", e."entityType", i.id AS "imageId", 0 "order1", 0 "order2", 0 "order3" ' +
+        'e."entityId", e."entityType", i.id AS "imageId", 0 "order1", 0 "order2", 0 "order3", 1 "coverRank" ' +
         'FROM entities e ' +
         'JOIN "ImageConnection" ic ON ic."entityId" = e."entityId" AND ic."entityType" = e."entityType" ' +
         'JOIN "Image" i ON i.id = ic."imageId" ' +
@@ -293,7 +299,8 @@ describe('getEntityCoverImage bounds the CONNECTIONS branch to one row per entit
       'the outer eligibility filter is gone, so the IMAGES branch can serve unscanned or needs-review images'
     ).toBe(
       'JOIN "Image" i ON i.id = t."imageId" ' +
-        `WHERE i."ingestion" = 'Scanned' AND i."needsReview" IS NULL`
+        `WHERE i."ingestion" = 'Scanned' AND i."needsReview" IS NULL ` +
+        'ORDER BY t."coverRank"'
     );
   });
 });

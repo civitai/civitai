@@ -24,11 +24,12 @@ import {
  * `withBlockScope` (REST) and `authorizeBlockBridgeToken` (tRPC) — which then STRIP the revoked
  * scopes from the verified claims.
  *
- * ⚠️ "BOTH token seams" WAS WRONG AS A COUNT: there are FOUR `verifyBlockToken` call sites, and
- * this repo ledgers them as four (`src/shared/constants/block-scope.constants.ts`). The other
- * two — `resolveSharedContext` (`apps-shared.router.ts`) and `resolveStorageContext`
- * (`apps/app-storage.service.ts`) — re-verify the raw bearer themselves and do NOT apply
- * revocations. That is harmless because each authorizes only `apps:storage:*` /
+ * ⚠️ "BOTH token seams" WAS WRONG AS A COUNT: FOUR seams verify a block token. `withBlockScope`
+ * calls `verifyBlockToken` itself; the other three go through `resolveBlockToken`
+ * (`block-bridge-auth.service.ts`), which calls it once for all of them. Of those three, the
+ * bridge asks for the strip (`consent: 'strip'`); the other two — `resolveSharedContext`
+ * (`apps-shared.router.ts`) and `resolveStorageContext` (`apps/app-storage.service.ts`) —
+ * re-verify the raw bearer with `consent: 'exempt-only'` and do NOT apply revocations. That is harmless because each authorizes only `apps:storage:*` /
  * `apps:storage:shared:*`, every one of which is consent-exempt, so no marker can ever name a
  * scope they check. It is harmless by a PROPERTY, not by construction, so it is asserted:
  * `src/server/services/__tests__/no-unguarded-block-rest-token.test.ts` ledgers which seams

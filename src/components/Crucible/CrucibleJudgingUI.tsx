@@ -21,8 +21,15 @@ import {
 import clsx from 'clsx';
 import { LazyMotion } from 'motion/react';
 import { div as MotionDiv, span as MotionSpan } from 'motion/react-m';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import {
+  JudgeReactionBar,
+  type JudgeReactionBarProps,
+} from '~/components/Crucible/JudgeReactionBar';
+import { useHydratedImageReactions } from '~/components/Reaction/useHydratedImageReactions';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { trpc } from '~/utils/trpc';
 import type { RouterOutput } from '~/types/router';
 import { MediaType } from '~/shared/utils/prisma/enums';
 import {
@@ -287,6 +294,22 @@ export function CrucibleJudgingUI({
     ['INPUT', 'TEXTAREA', 'SELECT', 'VIDEO']
   );
 
+  const pairImages = useMemo(
+    () =>
+      pair
+        ? [pair.left, pair.right].map(({ image }) => ({ id: image.id, reactions: [] as never[] }))
+        : [],
+    [pair]
+  );
+  const hydratedImages = useHydratedImageReactions(pairImages, { entity: 'image' });
+  const currentUser = useCurrentUser();
+  // Must match the hook's lookup (same input, same staleTime) so it is one request. Until it
+  // resolves a click would toggle-delete a reaction the judge already gave.
+  const myReactions = trpc.reaction.getMyImageReactions.useQuery(
+    { imageIds: pairImages.map((x) => x.id).sort((a, b) => a - b) },
+    { enabled: !!currentUser && pairImages.length > 0, staleTime: 60_000 }
+  );
+
   // Loading state
   if (isLoading && !pair) {
     return <CrucibleJudgingUISkeleton />;
@@ -300,6 +323,8 @@ export function CrucibleJudgingUI({
   const slot = (side: Side) => (
     <ImageCard
       entry={pair?.[side] ?? null}
+      reactions={hydratedImages.find((x) => x.id === pair?.[side].image.id)?.reactions}
+      reactionsLoaded={myReactions.isSuccess}
       position={side}
       isSelected={selectedSide === side}
       dimmed={selectedSide != null && selectedSide !== side}
@@ -415,6 +440,8 @@ const emptyWatched = { left: 0, right: 0 };
 
 type ImageCardProps = {
   entry: JudgingEntry | null;
+  reactions?: JudgeReactionBarProps['reactions'];
+  reactionsLoaded: boolean;
   position: Side;
   isSelected: boolean;
   dimmed: boolean;
@@ -447,6 +474,8 @@ type ImageCardProps = {
  */
 function ImageCard({
   entry,
+  reactions,
+  reactionsLoaded,
   position,
   isSelected,
   dimmed,
@@ -621,6 +650,15 @@ function ImageCard({
         >
           {hotkeyLabel}
         </span>
+
+        <JudgeReactionBar
+          imageId={entry.image.id}
+          reactions={reactions ?? []}
+          reactionsLoaded={reactionsLoaded}
+          side={position}
+          // Native video controls own the bottom edge, so the pill sits above them.
+          className={clsx('absolute right-2.5 z-10', isVideo ? 'bottom-[60px]' : 'bottom-2.5')}
+        />
 
         {plusOneId != null && (
           <MotionSpan

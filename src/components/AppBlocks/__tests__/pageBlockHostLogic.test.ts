@@ -17,15 +17,20 @@ import {
   resolveCheckpointPickerRequest,
   resolveImageUploadRequest,
   resolveNavigateRequest,
+  resolveResourcePickerMultiple,
   resolveResourcePickerRequest,
   resolveReviewConsentNotice,
   toHostGateStatus,
   PAGE_RESOURCE_PICKER_TYPES,
+  PAGE_RESOURCE_PICKER_MULTI_MAX,
+  PAGE_RESOURCE_PICKER_MULTI_TYPES,
+  capPickedResources,
   type PageHostStatus,
 } from '../pageBlockHostLogic';
 // The production surface→deep-link-base record, imported rather than retyped so a
 // new surface (or a changed base) cannot leave the NAVIGATE suite below untested.
 import { BLOCK_HOST_DEEP_LINK_BASE, BLOCK_HOST_SITE_NAVIGATION } from '../blockInitFragmentGate';
+import { MAX_ADDITIONAL_RESOURCES } from '~/server/schema/blocks/workflow.schema';
 
 /**
  * W10 PageBlockHost pure logic.
@@ -432,6 +437,147 @@ describe('resolveResourcePickerRequest (OPEN_RESOURCE_PICKER — type allowlist 
         'resourceType',
       ]);
     }
+  });
+});
+
+describe('resolveResourcePickerMultiple (OPEN_RESOURCE_PICKER `multiple: { max }`)', () => {
+  it('a request WITHOUT `multiple` is a single pick — for every allowlisted type', () => {
+    for (const resourceType of PAGE_RESOURCE_PICKER_TYPES) {
+      expect(resolveResourcePickerMultiple({ requestId: 'r', resourceType }, resourceType)).toEqual(
+        { kind: 'single' }
+      );
+    }
+    // null is "not asked for", same as an absent key.
+    expect(
+      resolveResourcePickerMultiple(
+        { requestId: 'r', resourceType: 'LORA', multiple: null },
+        'LORA'
+      )
+    ).toEqual({ kind: 'single' });
+  });
+
+  it('accepts multiple.max 1..5 verbatim for a LoRA-family type', () => {
+    const seen = [1, 2, 3, 4, 5].map((max) =>
+      resolveResourcePickerMultiple(
+        { requestId: 'r', resourceType: 'LORA', multiple: { max } },
+        'LORA'
+      )
+    );
+    expect(seen).toEqual([
+      { kind: 'multiple', max: 1 },
+      { kind: 'multiple', max: 2 },
+      { kind: 'multiple', max: 3 },
+      { kind: 'multiple', max: 4 },
+      { kind: 'multiple', max: 5 },
+    ]);
+  });
+
+  it('accepts every LoRA-family type (LORA, LoCon, DoRA)', () => {
+    expect([...PAGE_RESOURCE_PICKER_MULTI_TYPES].sort()).toEqual(['DoRA', 'LORA', 'LoCon']);
+    for (const resourceType of ['LORA', 'LoCon', 'DoRA'] as const) {
+      expect(
+        resolveResourcePickerMultiple(
+          { requestId: 'r', resourceType, multiple: { max: 3 } },
+          resourceType
+        )
+      ).toEqual({ kind: 'multiple', max: 3 });
+    }
+  });
+
+  it('CLAMPS a max above the cap to 5 (6, 9 and 1000 all become 5)', () => {
+    for (const max of [6, 9, 1000]) {
+      expect(
+        resolveResourcePickerMultiple(
+          { requestId: 'r', resourceType: 'LORA', multiple: { max } },
+          'LORA'
+        )
+      ).toEqual({ kind: 'multiple', max: 5 });
+    }
+  });
+
+  it('the cap is 5 and equals the page body cap on additionalResources', () => {
+    expect(PAGE_RESOURCE_PICKER_MULTI_MAX).toBe(5);
+    expect(PAGE_RESOURCE_PICKER_MULTI_MAX).toBe(MAX_ADDITIONAL_RESOURCES);
+  });
+
+  it('REFUSES `multiple` with a Checkpoint — never treated as a single pick', () => {
+    expect(
+      resolveResourcePickerMultiple(
+        { requestId: 'r', resourceType: 'Checkpoint', multiple: { max: 2 } },
+        'Checkpoint'
+      )
+    ).toEqual({
+      kind: 'refused',
+      reason:
+        'OPEN_RESOURCE_PICKER: multiple is only supported for LoRA-family resource types, not Checkpoint.',
+    });
+  });
+
+  it('REFUSES a `multiple` that is not { max: <integer >= 1> }', () => {
+    const bad: unknown[] = [
+      { max: 0 },
+      { max: -1 },
+      { max: 2.5 },
+      { max: Number.NaN },
+      { max: Number.POSITIVE_INFINITY },
+      { max: '3' },
+      {},
+      true,
+      3,
+      'yes',
+      [3],
+    ];
+    for (const multiple of bad) {
+      expect(
+        resolveResourcePickerMultiple({ requestId: 'r', resourceType: 'LORA', multiple }, 'LORA'),
+        JSON.stringify(multiple)
+      ).toEqual({
+        kind: 'refused',
+        reason: 'OPEN_RESOURCE_PICKER: multiple.max must be a whole number of at least 1.',
+      });
+    }
+  });
+
+  // Invariant guard (green before and after this change): `multiple` is read by
+  // its OWN resolver, so the closed request shape gains no key from it.
+  it('resolveResourcePickerRequest is unchanged by a `multiple` key', () => {
+    expect(
+      resolveResourcePickerRequest({
+        requestId: 'r1',
+        resourceType: 'LORA',
+        baseModelGroup: 'SDXL',
+        multiple: { max: 3 },
+      })
+    ).toEqual({ requestId: 'r1', resourceType: 'LORA', baseModelGroup: 'SDXL' });
+  });
+});
+
+describe('capPickedResources (multi-select reply belt)', () => {
+  it('keeps pick order', () => {
+    expect(capPickedResources([{ id: 30 }, { id: 10 }, { id: 20 }], 5)).toEqual([
+      { id: 30 },
+      { id: 10 },
+      { id: 20 },
+    ]);
+  });
+
+  it('never returns more than max, keeping the FIRST picks', () => {
+    expect(capPickedResources([{ id: 4 }, { id: 3 }, { id: 2 }, { id: 1 }], 2)).toEqual([
+      { id: 4 },
+      { id: 3 },
+    ]);
+  });
+
+  it('collapses a repeated resource onto its first occurrence', () => {
+    expect(capPickedResources([{ id: 7 }, { id: 8 }, { id: 7 }, { id: 9 }], 3)).toEqual([
+      { id: 7 },
+      { id: 8 },
+      { id: 9 },
+    ]);
+  });
+
+  it('an empty batch stays empty', () => {
+    expect(capPickedResources([], 5)).toEqual([]);
   });
 });
 

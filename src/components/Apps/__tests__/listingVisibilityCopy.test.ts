@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  visibilityBadgeFor,
   visibilityCeilingReason,
   visibilityLevelDescription,
   visibilityLevelLabel,
@@ -164,6 +165,47 @@ describe('visibilityPostApprovalPrompt — finding F11', () => {
     expect(visibilityPostApprovalPrompt(null, 'approved')).toBeNull();
     for (const status of ['draft', 'pending', ...INELIGIBLE]) {
       expect(visibilityPostApprovalPrompt('moderators', status)).toBeNull();
+    }
+  });
+});
+
+describe('visibilityBadgeFor — the store badge for a RESTRICTED audience', () => {
+  // 🔴 LITERAL expectations for all five inputs. The tooltip strings are spelled out too,
+  // rather than read back through `visibilityLevelDescription`, so a mutant that wires the
+  // wrong level's description into a badge goes red here instead of agreeing with itself.
+  it.each([
+    [null, null],
+    ['public', null],
+    ['testers', { label: 'Testers only', tooltip: 'Visible to users with app testing enabled.' }],
+    [
+      'moderators',
+      { label: 'Moderators only', tooltip: 'Visible in the store to moderators only.' },
+    ],
+    [
+      'private',
+      {
+        label: 'Unlisted',
+        tooltip:
+          'Not listed in the store or search. Anyone who already has the link can still open it.',
+      },
+    ],
+  ] as const)('%s → %j', (input, expected) => {
+    expect(visibilityBadgeFor(input)).toEqual(expected);
+  });
+
+  it('🔴 `private` is badged "Unlisted", NEVER "Private"', () => {
+    // The level's own selector label is "Private"; on a listing that word would claim an
+    // access control the run route does not enforce. Pinned separately from the table so
+    // the reason travels with the assertion.
+    expect(visibilityBadgeFor('private')?.label).toBe('Unlisted');
+    expect(visibilityBadgeFor('private')?.label).not.toBe(visibilityLevelLabel('private'));
+  });
+
+  it('every RESTRICTED level in the enum gets a badge; only `public` gets none', () => {
+    // Enum-driven, so a new restricted level that the switch forgot fails here.
+    for (const level of APP_LISTING_VISIBILITIES) {
+      if (level === 'public') expect(visibilityBadgeFor(level)).toBeNull();
+      else expect(visibilityBadgeFor(level)?.label).toBeTruthy();
     }
   });
 });

@@ -50,7 +50,7 @@ const page = {
     { question: 'What happens after?', answer: 'You keep them.' },
   ],
 };
-const rules = { reactionWeight: 10, viewerOwnerDailyCap: 50, newAccountDays: 7 };
+const rules = { reactionWeight: 10, pointsCapPerDay: 50, newAccountDays: 7 };
 const decoration = { entityTypes: ['Image'], moveCooldownMs: 10 * 60_000 };
 
 function render(over: Record<string, unknown> = {}) {
@@ -97,13 +97,66 @@ describe('How it works', () => {
     ]);
   });
 
+  // Ellie review (2026-10-09): the coloured icon first, then the number, the words under them.
+  it('leads each tile with its icon, then the number, with the words underneath', () => {
+    const tiles = render().querySelector('[data-testid="event-points"]')!;
+    const shape = [...tiles.children].map((t) => {
+      const [top, words] = [...t.children];
+      const [icon, figure] = [...top.children];
+      return [
+        icon.className.includes('mantine-ThemeIcon-root'),
+        figure.textContent,
+        words.textContent,
+      ];
+    });
+    expect(shape).toEqual([
+      [true, '1', 'per view in a feed'],
+      [true, '10', 'per reaction'],
+      [true, '0', 'for your own views and reactions'],
+    ]);
+  });
+
+  // Scoring v2 adds its weights to the rules; each becomes a tile with no change here.
+  it('adds a tile for each way to score the rules carry a weight for', () => {
+    const tiles = render({
+      rules: { ...rules, reactionWeight: 5, commentWeight: 5, stickerWeight: 10, remixWeight: 25 },
+    }).querySelector('[data-testid="event-points"]')!;
+    expect([...tiles.children].map((t) => t.textContent)).toEqual([
+      '1per view in a feed',
+      '5per reaction',
+      '5per comment',
+      '10per sticker',
+      '25per remix',
+      '0for your own views and reactions',
+    ]);
+    // Each way wears the icon and colour it has in the popover and on the hat cards (SCORE_WAYS).
+    expect(
+      [...tiles.children].map((t) => {
+        const icon = t.querySelector<HTMLElement>('.mantine-ThemeIcon-root')!;
+        return `${
+          icon
+            .querySelector('svg')
+            ?.getAttribute('class')
+            ?.match(/tabler-icon-([\w-]+)/)?.[1]
+        } ${icon.style.getPropertyValue('--ti-color')}`;
+      })
+    ).toEqual([
+      'eye var(--mantine-color-blue-light-color)',
+      'heart var(--mantine-color-pink-light-color)',
+      'message-circle var(--mantine-color-green-light-color)',
+      'sticker var(--mantine-color-yellow-light-color)',
+      'hierarchy var(--mantine-color-violet-light-color)',
+      'ban var(--mantine-color-gray-light-color)',
+    ]);
+  });
+
   it('lists the fairness rules with the event numbers, the cooldown only when there is one', () => {
     const fair = (el: HTMLElement) =>
       [...el.querySelectorAll('ul > li')].map((li) => li.textContent);
     const expected = [
-      "One person counts for at most 50 of a creator's posts a day.",
+      'One person can earn a creator at most 50 points a day.',
       "Accounts made in the 7 days before the event don't count.",
-      "Signed-out views count, up to a fair share. Bot-like browsing doesn't.",
+      "Only signed-in people's views and reactions count.",
       'A hat can move again 10 minutes after it was placed.',
       "Buzz spent doesn't score. Only attention does.",
     ];
@@ -118,6 +171,45 @@ describe('How it works', () => {
     expect(fair(render({ decoration: { ...decoration, moveCooldownMs: 60_000 } }))).toContain(
       'A hat can move again 1 minute after it was placed.'
     );
+  });
+
+  // Model thumbs-up reviews score once the rules carry their weight; until then models score views.
+  it('says what models score, from whether the rules weigh a thumbs-up', () => {
+    const note = (el: HTMLElement) =>
+      el.querySelector('[data-testid="event-points"]')?.nextElementSibling?.textContent;
+    expect(note(render())).toBe(
+      "Hats go on your own images. Models score views only: reactions aren't counted for models."
+    );
+    act(() => root?.unmount());
+    host?.remove();
+    expect(note(render({ rules: { ...rules, modelLikeWeight: 5 } }))).toBe(
+      'Hats go on your own images. Models score views and thumbs-up reviews.'
+    );
+  });
+
+  it('says what articles score, from the types that score articles', () => {
+    const note = (el: HTMLElement) =>
+      el.querySelector('[data-testid="event-points"]')?.nextElementSibling?.textContent;
+    const withArticles = { ...decoration, entityTypes: ['Image', 'Article'] };
+    expect(
+      note(
+        render({
+          decoration: withArticles,
+          rules: { ...rules, modelLikeWeight: 5, articleScores: ['view', 'reaction', 'comment'] },
+        })
+      )
+    ).toBe(
+      'Hats go on your own images and articles. Articles score views, reactions and comments. Models score views and thumbs-up reviews.'
+    );
+    act(() => root?.unmount());
+    host?.remove();
+    // Nothing to say when hats can't go on articles, or nothing scores them.
+    expect(note(render({ rules: { ...rules, articleScores: ['view'] } }))).not.toContain(
+      'Articles'
+    );
+    act(() => root?.unmount());
+    host?.remove();
+    expect(note(render({ decoration: withArticles, rules }))).not.toContain('Articles score');
   });
 
   it('puts the prize on its own banner', () => {

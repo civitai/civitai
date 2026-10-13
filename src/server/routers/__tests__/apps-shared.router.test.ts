@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as FliptClientModule from '~/server/flipt/client';
 import { TRPCError } from '@trpc/server';
 
@@ -21,7 +21,8 @@ const {
   mockPool,
   mockClient,
   mockGetSessionUser,
-  mockCheckAppendRl,
+  mockReserveWrite,
+  mockReleaseWrite,
   mockCheckVoteRl,
   mockCheckReportRl,
   mockCheckWithdrawRl,
@@ -81,7 +82,10 @@ const {
     mockPool,
     mockClient,
     mockGetSessionUser: vi.fn(),
-    mockCheckAppendRl: vi.fn<RateLimitFn>(async () => ({ allowed: true })),
+    // The write budget, in the fixed-window shape the sibling buckets use; the factory below
+    // turns `{ allowed: true }` into a reservation whose release is `mockReleaseWrite`.
+    mockReserveWrite: vi.fn<RateLimitFn>(async () => ({ allowed: true })),
+    mockReleaseWrite: vi.fn<(opts: { rejected: boolean }) => Promise<void>>(async () => undefined),
     mockCheckVoteRl: vi.fn<RateLimitFn>(async () => ({ allowed: true })),
     mockCheckReportRl: vi.fn<RateLimitFn>(async () => ({ allowed: true })),
     mockCheckWithdrawRl: vi.fn<RateLimitFn>(async () => ({ allowed: true })),
@@ -139,8 +143,10 @@ vi.mock('~/server/db/appsDb', () => ({ requireAppsDb: () => mockPool }));
 // second shape, and it accounted for 8 of this file's remaining type errors. Each
 // forward below declares what its real callee is actually called with.
 vi.mock('~/server/utils/shared-storage-rate-limit', () => ({
-  checkSharedAppendRateLimit: (userId: number, appBlockId: string) =>
-    mockCheckAppendRl(userId, appBlockId),
+  reserveSharedWrite: async (userId: number, appBlockId: string) => {
+    const r = await mockReserveWrite(userId, appBlockId);
+    return r.allowed ? { allowed: true, release: mockReleaseWrite } : r;
+  },
   checkSharedVoteRateLimit: (userId: number, appBlockId: string) =>
     mockCheckVoteRl(userId, appBlockId),
   checkSharedReportRateLimit: (userId: number, appBlockId: string) =>
@@ -152,6 +158,7 @@ vi.mock('~/server/utils/shared-storage-rate-limit', () => ({
 vi.mock('~/server/services/blocklist.service', () => ({
   throwOnBlockedUserContent: (content: unknown, options?: unknown) =>
     mockThrowOnBlockedUserContent(content, options),
+  getBlocklistData: async () => [],
   findBlockedUserContent: (values: unknown, opts?: unknown) => mockFindBlocked(values, opts),
   stripBenignPhrases: async (text: string) => text,
 }));
@@ -164,6 +171,17 @@ vi.mock('~/server/flipt/client', async (importOriginal) => ({
 vi.mock('~/server/clickhouse/client', () => ({
   clickhouse: { insert: (args: { table: string; values: unknown[] }) => mockChInsert(args) },
 }));
+/**
+ * The rows the recorder inserted into one ClickHouse table, or undefined before it has. Read by
+ * TABLE, never by call position: a scanned write inserts into two tables (the hit list and the
+ * per-write denominator), concurrently.
+ */
+const HITS_TABLE = 'appBlocksSharedDataHits';
+const SCANS_TABLE = 'appBlocksSharedDataScans';
+const chRows = (table: string) =>
+  mockChInsert.mock.calls.find(([args]) => args.table === table)?.[0].values as
+    | Array<Record<string, unknown>>
+    | undefined;
 vi.mock('~/server/services/orchestrator/promptAuditing', () => ({
   auditPromptServer: (args: unknown) => mockAuditPromptServer(args),
 }));
@@ -190,6 +208,7 @@ import {
   appendSharedRow,
   appsModRouter,
   appsSharedRouter,
+  incrementSharedCounter,
   reportSharedRow,
   unvoteSharedRow,
   updateSharedRow,
@@ -264,7 +283,7 @@ beforeEach(() => {
   mockDbRead.account.count.mockResolvedValue(0);
   mockPool.query.mockResolvedValue({ rows: [], rowCount: 0 });
   mockClient.query.mockResolvedValue({ rows: [], rowCount: 0 });
-  mockCheckAppendRl.mockResolvedValue({ allowed: true });
+  mockReserveWrite.mockResolvedValue({ allowed: true });
   mockCheckVoteRl.mockResolvedValue({ allowed: true });
   mockCheckReportRl.mockResolvedValue({ allowed: true });
   mockCheckWithdrawRl.mockResolvedValue({ allowed: true });
@@ -932,9 +951,9 @@ describe('FIX 1 abuse observability (alert emits)', () => {
 });
 
 describe('H4 rate limits', () => {
-  it('append over the daily cap → TOO_MANY_REQUESTS', async () => {
+  it('append over the write budget → TOO_MANY_REQUESTS', async () => {
     mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
-    mockCheckAppendRl.mockResolvedValueOnce({ allowed: false, retryAfterSeconds: 60 });
+    mockReserveWrite.mockResolvedValueOnce({ allowed: false, retryAfterSeconds: 60 });
     await expect(
       caller().append({ blockToken: 't', value: { title: 'idea' } })
     ).rejects.toMatchObject({ code: 'TOO_MANY_REQUESTS' });
@@ -975,7 +994,7 @@ describe('H4 rate limits', () => {
     await caller().withdraw({ blockToken: 't', key: 'k' });
     // Keyed on (subject user, appBlockId) exactly like every sibling bucket.
     expect(mockCheckWithdrawRl).toHaveBeenCalledWith(42, 'apb_test');
-    expect(mockCheckAppendRl).not.toHaveBeenCalled();
+    expect(mockReserveWrite).not.toHaveBeenCalled();
     expect(mockCheckVoteRl).not.toHaveBeenCalled();
   });
 
@@ -2167,13 +2186,13 @@ describe('apps.shared.update (author-scoped in-place edit)', () => {
     ).rejects.toMatchObject({ code: 'NOT_FOUND' });
   });
 
-  it('shares append’s daily rate-limit bucket (over cap → TOO_MANY_REQUESTS, no row lookup)', async () => {
+  it('shares append’s write budget (refused → TOO_MANY_REQUESTS, no row lookup)', async () => {
     mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
-    mockCheckAppendRl.mockResolvedValueOnce({ allowed: false, retryAfterSeconds: 60 });
+    mockReserveWrite.mockResolvedValueOnce({ allowed: false, retryAfterSeconds: 60 });
     await expect(
       caller().update({ blockToken: 't', key: 'ROW-KEY-1', value: { title: 'x' } })
     ).rejects.toMatchObject({ code: 'TOO_MANY_REQUESTS' });
-    expect(mockCheckAppendRl).toHaveBeenCalledTimes(1);
+    expect(mockReserveWrite).toHaveBeenCalledTimes(1);
     expect(mockPool.query).not.toHaveBeenCalled();
     expect(mockPool.connect).not.toHaveBeenCalled();
   });
@@ -2249,15 +2268,15 @@ describe('REST entry shape — the six exported write functions carry the full l
     name: string;
     call: () => Promise<unknown>;
     /** The bucket this op MUST spend, and the two it must not. */
-    bucket: () => typeof mockCheckAppendRl;
-    otherBuckets: () => Array<typeof mockCheckAppendRl>;
+    bucket: () => typeof mockReserveWrite;
+    otherBuckets: () => Array<typeof mockReserveWrite>;
     retryAfter: number;
     tooManyMessage: string;
   }> = [
     {
       name: 'appendSharedRow',
       call: () => appendSharedRow('tok_seam', VALUE),
-      bucket: () => mockCheckAppendRl,
+      bucket: () => mockReserveWrite,
       otherBuckets: () => [mockCheckVoteRl, mockCheckReportRl, mockCheckWithdrawRl],
       retryAfter: 11,
       tooManyMessage: 'Too many submissions — retry in 11s',
@@ -2265,7 +2284,7 @@ describe('REST entry shape — the six exported write functions carry the full l
     {
       name: 'updateSharedRow',
       call: () => updateSharedRow('tok_seam', KEY, VALUE),
-      bucket: () => mockCheckAppendRl,
+      bucket: () => mockReserveWrite,
       otherBuckets: () => [mockCheckVoteRl, mockCheckReportRl, mockCheckWithdrawRl],
       retryAfter: 13,
       tooManyMessage: 'Too many submissions — retry in 13s',
@@ -2274,7 +2293,7 @@ describe('REST entry shape — the six exported write functions carry the full l
       name: 'voteSharedRow',
       call: () => voteSharedRow('tok_seam', KEY),
       bucket: () => mockCheckVoteRl,
-      otherBuckets: () => [mockCheckAppendRl, mockCheckReportRl, mockCheckWithdrawRl],
+      otherBuckets: () => [mockReserveWrite, mockCheckReportRl, mockCheckWithdrawRl],
       retryAfter: 19,
       tooManyMessage: 'Too many votes — retry in 19s',
     },
@@ -2282,7 +2301,7 @@ describe('REST entry shape — the six exported write functions carry the full l
       name: 'unvoteSharedRow',
       call: () => unvoteSharedRow('tok_seam', KEY),
       bucket: () => mockCheckVoteRl,
-      otherBuckets: () => [mockCheckAppendRl, mockCheckReportRl, mockCheckWithdrawRl],
+      otherBuckets: () => [mockReserveWrite, mockCheckReportRl, mockCheckWithdrawRl],
       retryAfter: 23,
       tooManyMessage: 'Too many votes — retry in 23s',
     },
@@ -2290,7 +2309,7 @@ describe('REST entry shape — the six exported write functions carry the full l
       name: 'withdrawSharedRow',
       call: () => withdrawSharedRow('tok_seam', KEY),
       bucket: () => mockCheckWithdrawRl,
-      otherBuckets: () => [mockCheckAppendRl, mockCheckVoteRl, mockCheckReportRl],
+      otherBuckets: () => [mockReserveWrite, mockCheckVoteRl, mockCheckReportRl],
       retryAfter: 29,
       tooManyMessage: 'Too many withdrawals — retry in 29s',
     },
@@ -2298,7 +2317,7 @@ describe('REST entry shape — the six exported write functions carry the full l
       name: 'reportSharedRow',
       call: () => reportSharedRow('tok_seam', KEY, REASON),
       bucket: () => mockCheckReportRl,
-      otherBuckets: () => [mockCheckAppendRl, mockCheckVoteRl, mockCheckWithdrawRl],
+      otherBuckets: () => [mockReserveWrite, mockCheckVoteRl, mockCheckWithdrawRl],
       retryAfter: 31,
       tooManyMessage: 'Too many reports — retry in 31s',
     },
@@ -2526,8 +2545,8 @@ describe('shared `data` local moderation', () => {
 
     it('records the rejected hit with blocked=1, no row key (a create that never got one) and NO leaf text', async () => {
       await appendData({ x: MINOR }).catch(() => undefined);
-      await vi.waitFor(() => expect(mockChInsert).toHaveBeenCalled());
-      const rows = mockChInsert.mock.calls[0][0].values as Array<Record<string, unknown>>;
+      await vi.waitFor(() => expect(chRows(HITS_TABLE)).toBeDefined());
+      const rows = chRows(HITS_TABLE)!;
       expect(rows).toContainEqual(
         expect.objectContaining({
           category: 'minor',
@@ -2541,6 +2560,11 @@ describe('shared `data` local moderation', () => {
         })
       );
       expect(JSON.stringify(rows)).not.toContain(MINOR);
+      // ...and the write's denominator row, through the router, says it was rejected.
+      await vi.waitFor(() => expect(chRows(SCANS_TABLE)).toBeDefined());
+      expect(chRows(SCANS_TABLE)).toEqual([
+        expect.objectContaining({ surface: 'append', mode: 'enforce', blocked: 1, minor: 1 }),
+      ]);
     });
 
     it('🔴 REGRESSION: the scan reads the STORED form — a revived `URL` is scanned as the href it serialises to', async () => {
@@ -2575,6 +2599,12 @@ describe('shared `data` local moderation', () => {
         }),
         'block-audit'
       );
+      // The durable denominator: one ClickHouse row for the clean write, and no hit rows.
+      await vi.waitFor(() => expect(chRows(SCANS_TABLE)).toBeDefined());
+      expect(chRows(SCANS_TABLE)).toEqual([
+        expect.objectContaining({ mode: 'enforce', blocked: 0, leafCount: 3, hitCount: 0 }),
+      ]);
+      expect(chRows(HITS_TABLE)).toBeUndefined();
     });
 
     it('title/body still run first: a bad TITLE is refused by the title/body belt before `data` is read', async () => {
@@ -2602,8 +2632,8 @@ describe('shared `data` local moderation', () => {
         updateSharedRow('tok', 'ROW-KEY-1', { title: 'clean', data: { [MINOR]: 1 } })
       ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: 'Content flagged for review' });
       expect(mockPool.connect).not.toHaveBeenCalled();
-      await vi.waitFor(() => expect(mockChInsert).toHaveBeenCalled());
-      expect(mockChInsert.mock.calls[0][0].values).toContainEqual(
+      await vi.waitFor(() => expect(chRows(HITS_TABLE)).toBeDefined());
+      expect(chRows(HITS_TABLE)).toContainEqual(
         expect.objectContaining({
           // Enforce never stores the key verbatim (a counter-anchor row's key is user text); its
           // hash still joins the hit to the row.
@@ -2633,8 +2663,8 @@ describe('shared `data` local moderation', () => {
         key: expect.any(String),
       });
       expect(mockGetFliptBoolean).toHaveBeenCalledWith('user-content-pattern-enforce');
-      await vi.waitFor(() => expect(mockChInsert).toHaveBeenCalled());
-      expect(mockChInsert.mock.calls[0][0].values).toEqual([
+      await vi.waitFor(() => expect(chRows(HITS_TABLE)).toBeDefined());
+      expect(chRows(HITS_TABLE)).toEqual([
         expect.objectContaining({ category: 'pattern', blocked: 0, mode: 'enforce' }),
       ]);
       expect(reportReasons()).toEqual([]);
@@ -2724,8 +2754,8 @@ describe('shared `data` local moderation', () => {
     it('🔴 REGRESSION: a flagged term is RECORDED against the committed row — and the write is not refused', async () => {
       const out = await appendData({ x: MINOR, list: [{ [MINOR]: 1 }] });
       expect(insertedValue()).toBeDefined();
-      await vi.waitFor(() => expect(mockChInsert).toHaveBeenCalled());
-      const rows = mockChInsert.mock.calls[0][0].values as Array<Record<string, unknown>>;
+      await vi.waitFor(() => expect(chRows(HITS_TABLE)).toBeDefined());
+      const rows = chRows(HITS_TABLE)!;
       expect(rows).toContainEqual(
         expect.objectContaining({
           rowKey: out.key,
@@ -2740,11 +2770,22 @@ describe('shared `data` local moderation', () => {
       );
     });
 
+    it('a CLEAN shadow write still records its denominator row, after the write', async () => {
+      await expect(appendData({ label: 'a calm lake' })).resolves.toMatchObject({
+        key: expect.any(String),
+      });
+      await vi.waitFor(() => expect(chRows(SCANS_TABLE)).toBeDefined());
+      expect(chRows(SCANS_TABLE)).toEqual([
+        expect.objectContaining({ surface: 'append', mode: 'shadow', blocked: 0, hitCount: 0 }),
+      ]);
+      expect(chRows(HITS_TABLE)).toBeUndefined();
+    });
+
     it('🔴 REGRESSION: shadow scans the STORED form too — a revived `URL`’s href is recorded', async () => {
       const site = new URL('https://example.com/gallery/loli');
       await appendData({ site });
-      await vi.waitFor(() => expect(mockChInsert).toHaveBeenCalled());
-      const rows = mockChInsert.mock.calls[0][0].values as Array<Record<string, unknown>>;
+      await vi.waitFor(() => expect(chRows(HITS_TABLE)).toBeDefined());
+      const rows = chRows(HITS_TABLE)!;
       expect(rows).toContainEqual(
         expect.objectContaining({ mode: 'shadow', leafPath: 'site', leafText: site.href })
       );
@@ -2752,7 +2793,7 @@ describe('shared `data` local moderation', () => {
 
     it('INVARIANT GUARD: shadow has NO consequences — no Report row, no block alert, no extra belt call', async () => {
       await appendData({ x: MINOR, y: 'emma watson' });
-      await vi.waitFor(() => expect(mockChInsert).toHaveBeenCalled());
+      await vi.waitFor(() => expect(chRows(HITS_TABLE)).toBeDefined());
       await flushImmediates();
       expect(reportReasons()).toEqual([]);
       expect(eventNames()).not.toContain('app-blocks-shared-storage-legal-block');
@@ -2805,8 +2846,8 @@ describe('shared `data` local moderation', () => {
       await expect(
         updateSharedRow('tok', 'ROW-KEY-1', { title: 'clean', data: { x: MINOR } })
       ).resolves.toEqual({ ok: true });
-      await vi.waitFor(() => expect(mockChInsert).toHaveBeenCalled());
-      expect(mockChInsert.mock.calls[0][0].values).toContainEqual(
+      await vi.waitFor(() => expect(chRows(HITS_TABLE)).toBeDefined());
+      expect(chRows(HITS_TABLE)).toContainEqual(
         expect.objectContaining({
           rowKey: 'ROW-KEY-1',
           surface: 'update',
@@ -2837,8 +2878,8 @@ describe('shared `data` local moderation', () => {
       await expect(appendData(deepArray(33, 'x'))).resolves.toMatchObject({
         key: expect.any(String),
       });
-      await vi.waitFor(() => expect(mockChInsert).toHaveBeenCalled());
-      expect(mockChInsert.mock.calls[0][0].values).toEqual([
+      await vi.waitFor(() => expect(chRows(HITS_TABLE)).toBeDefined());
+      expect(chRows(HITS_TABLE)).toEqual([
         expect.objectContaining({ category: 'overflow', matched: 'depth', mode: 'shadow' }),
       ]);
     });
@@ -2862,4 +2903,92 @@ describe('shared `data` local moderation', () => {
       expect(mockFindBlocked).not.toHaveBeenCalled();
     });
   });
+});
+
+// civitai/civitai-app-starters#597: a refusal must carry its wait as data, not only as prose.
+describe('rate-limit refusals carry machine-readable retry metadata', () => {
+  // Not any production window. retryAt is derived at the throw site from the clock.
+  const RETRY_AFTER = 17;
+  const NOW = Date.parse('2031-04-05T06:07:08.000Z');
+  const RETRY_AT = '2031-04-05T06:07:25.000Z'; // NOW + RETRY_AFTER
+  const KEY = 'k-rl-417';
+  const VALUE = { title: 'rl title 433' };
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const OPS: Array<{
+    name: string;
+    call: () => Promise<unknown>;
+    bucket: () => typeof mockReserveWrite;
+    message: string;
+  }> = [
+    {
+      name: 'append',
+      call: () => appendSharedRow('tok_rl', VALUE),
+      bucket: () => mockReserveWrite,
+      message: 'Too many submissions — retry in 17s',
+    },
+    {
+      name: 'update',
+      call: () => updateSharedRow('tok_rl', KEY, VALUE),
+      bucket: () => mockReserveWrite,
+      message: 'Too many submissions — retry in 17s',
+    },
+    {
+      name: 'vote',
+      call: () => voteSharedRow('tok_rl', KEY),
+      bucket: () => mockCheckVoteRl,
+      message: 'Too many votes — retry in 17s',
+    },
+    {
+      name: 'unvote',
+      call: () => unvoteSharedRow('tok_rl', KEY),
+      bucket: () => mockCheckVoteRl,
+      message: 'Too many votes — retry in 17s',
+    },
+    {
+      name: 'withdraw',
+      call: () => withdrawSharedRow('tok_rl', KEY),
+      bucket: () => mockCheckWithdrawRl,
+      message: 'Too many withdrawals — retry in 17s',
+    },
+    {
+      name: 'report',
+      call: () => reportSharedRow('tok_rl', KEY),
+      bucket: () => mockCheckReportRl,
+      message: 'Too many reports — retry in 17s',
+    },
+    {
+      name: 'increment',
+      call: () => incrementSharedCounter('tok_rl', 'playcount:417'),
+      bucket: () => mockCheckVoteRl,
+      message: 'Too many increments — retry in 17s',
+    },
+  ];
+
+  it.each(OPS)(
+    '$name: TOO_MANY_REQUESTS with cause.rateLimit and the prose message unchanged',
+    async ({ call, bucket, message }) => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(NOW);
+      mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+      bucket().mockResolvedValueOnce({ allowed: false, retryAfterSeconds: RETRY_AFTER });
+
+      const err = await call().then(
+        () => undefined,
+        (e: unknown) => e
+      );
+
+      expect(err).toBeInstanceOf(TRPCError);
+      const trpcError = err as TRPCError;
+      expect(trpcError.code).toBe('TOO_MANY_REQUESTS');
+      expect(trpcError.message).toBe(message);
+      expect((trpcError.cause as { rateLimit?: unknown } | undefined)?.rateLimit).toEqual({
+        retryAfterSeconds: RETRY_AFTER,
+        retryAt: RETRY_AT,
+      });
+    }
+  );
 });

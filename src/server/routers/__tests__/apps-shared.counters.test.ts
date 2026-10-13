@@ -78,7 +78,7 @@ vi.mock('~/server/auth/session-client', () => ({
 }));
 vi.mock('~/server/db/appsDb', () => ({ requireAppsDb: () => mockPool }));
 vi.mock('~/server/utils/shared-storage-rate-limit', () => ({
-  checkSharedAppendRateLimit: vi.fn(async () => ({ allowed: true })),
+  reserveSharedWrite: vi.fn(async () => ({ allowed: true, release: async () => undefined })),
   checkSharedVoteRateLimit: (...a: unknown[]) => mockCheckVoteRl(...a),
 }));
 vi.mock('~/server/services/block-revocation.service', () => ({
@@ -95,6 +95,17 @@ vi.mock('~/server/flipt/client', async (importOriginal) => ({
 vi.mock('~/server/clickhouse/client', () => ({
   clickhouse: { insert: (args: { table: string; values: unknown[] }) => mockChInsert(args) },
 }));
+/**
+ * The rows the recorder inserted into one ClickHouse table, or undefined before it has. Read by
+ * TABLE, never by call position: a scanned write inserts into two tables (the hit list and the
+ * per-write denominator), concurrently.
+ */
+const HITS_TABLE = 'appBlocksSharedDataHits';
+const SCANS_TABLE = 'appBlocksSharedDataScans';
+const chRows = (table: string) =>
+  mockChInsert.mock.calls.find(([args]) => args.table === table)?.[0].values as
+    | Array<Record<string, unknown>>
+    | undefined;
 // Cut the shared-content-safety → blocklist/prompt-audit → @civitai/db import
 // chain (mirrors apps-shared.router.test.ts): the counter ops never touch the
 // content-safety belt, and these mocks keep the module graph free of the
@@ -102,6 +113,7 @@ vi.mock('~/server/clickhouse/client', () => ({
 vi.mock('~/server/services/blocklist.service', () => ({
   throwOnBlockedLinkDomain: vi.fn(async () => undefined),
   throwOnBlockedUserContent: vi.fn(),
+  getBlocklistData: async () => [],
   findBlockedUserContent: (values: unknown, opts?: unknown) => mockFindBlocked(values, opts),
   stripBenignPhrases: async (text: string) => text,
 }));
@@ -443,8 +455,8 @@ describe('incrementSharedCounter — counter-key moderation', () => {
     await expect(incrementSharedCounter('tok', BAD_KEY)).rejects.toMatchObject({
       code: 'BAD_REQUEST',
     });
-    await vi.waitFor(() => expect(mockChInsert).toHaveBeenCalled());
-    const rows = mockChInsert.mock.calls[0][0].values as Array<Record<string, unknown>>;
+    await vi.waitFor(() => expect(chRows(HITS_TABLE)).toBeDefined());
+    const rows = chRows(HITS_TABLE)!;
     expect(rows).toContainEqual(
       expect.objectContaining({
         rowKey: '',
@@ -463,6 +475,14 @@ describe('incrementSharedCounter — counter-key moderation', () => {
       )
     );
     expect(carrying).toEqual([]);
+    // The write's denominator row: the counter surface, rejected, and the key in no column.
+    await vi.waitFor(() => expect(chRows(SCANS_TABLE)).toBeDefined());
+    expect(chRows(SCANS_TABLE)).toEqual([
+      expect.objectContaining({ surface: 'counter', mode: 'enforce', blocked: 1, leafCount: 1 }),
+    ]);
+    const serialized = JSON.stringify(chRows(SCANS_TABLE));
+    for (const text of [BAD_KEY, 'playcount', '13 year old girl'])
+      expect(serialized).not.toContain(text);
   });
 
   it('both flags on behave as ENFORCE: a flagged key is refused, and scanned once', async () => {
@@ -534,8 +554,8 @@ describe('incrementSharedCounter — counter-key moderation', () => {
       key: BAD_KEY,
       count: 3,
     });
-    await vi.waitFor(() => expect(mockChInsert).toHaveBeenCalled());
-    expect(mockChInsert.mock.calls[0][0].values).toContainEqual(
+    await vi.waitFor(() => expect(chRows(HITS_TABLE)).toBeDefined());
+    expect(chRows(HITS_TABLE)).toContainEqual(
       expect.objectContaining({
         rowKey: BAD_KEY,
         surface: 'counter',

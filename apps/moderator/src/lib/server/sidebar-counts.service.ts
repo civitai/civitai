@@ -10,6 +10,7 @@ import { countModeratorArticles } from './articles.service';
 import { getRatingReviewCounts } from './rating-reviews.service';
 import { getReportCounts } from './reports.service';
 import { countNewFeedback } from './feedback.service';
+import { countRemovedAppeals } from './removed-appeals.service';
 
 export type SidebarCounts = Record<string, number>;
 
@@ -32,6 +33,7 @@ async function fetchCounts(): Promise<SidebarCounts> {
     stuckIngestion,
     ingestionErrors,
     feedbackNew,
+    removedAppeals,
   ] = await Promise.all([
     getImageReviewCounts(),
     // Bitmask predicates must match the TagsOnImageNew_needsReview_idx partial index (bit 9 set, bit 10 clear).
@@ -69,6 +71,7 @@ async function fetchCounts(): Promise<SidebarCounts> {
     // `countNewFeedback`). Wrapping it in a 3-second race would add a timer and a nullable to buy
     // nothing.
     countNewFeedback(),
+    countRemovedAppeals(),
   ]);
   return {
     ...modes,
@@ -80,6 +83,7 @@ async function fetchCounts(): Promise<SidebarCounts> {
     articles,
     ratingReviews: ratingReviews.Pending,
     feedbackNew,
+    removedAppeals,
     ...(stuckIngestion != null ? { stuckIngestion } : {}),
     ...(ingestionErrors != null ? { ingestionErrors } : {}),
   };
