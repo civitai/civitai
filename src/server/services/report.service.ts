@@ -991,7 +991,7 @@ async function getOwnerDeletedAppealIds(candidates: OrphanCandidate[]) {
 
 // Parallels the moderator app's `csamExcludedImageIds`; keep the report sources in step. Only
 // sources that outlive the image row count here: per-image report rows cascade away with it.
-async function getDefensiveCloseIds(candidates: OrphanCandidate[]) {
+async function getDefensiveCloseIds(candidates: ClaimedOrphan[]) {
   const imageIds = candidates
     .filter((a) => a.entityType === EntityType.Image)
     .map((a) => a.entityId);
@@ -1093,6 +1093,49 @@ export function notifyOrphanedAppeal(
 }
 
 /**
+ * Closes the pending appeals an owner filed on entities they just deleted, refunded and told, as
+ * the sweep would for an owner delete it can see. Called after the delete, so it never throws.
+ */
+export async function closeAppealsDeletedByOwner({
+  entityType,
+  entityIds,
+  ownerId,
+}: {
+  entityType: EntityType;
+  entityIds: number[];
+  ownerId: number;
+}) {
+  if (!entityIds.length) return;
+  try {
+    const closed = await dbWrite.$queryRaw<ClaimedOrphan[]>`
+      UPDATE "Appeal"
+      SET status = 'Void'::"AppealStatus", "resolvedReason" = ${OrphanedAppealReason.DeletedByOwner},
+        "resolvedAt" = now(), "updatedAt" = now()
+      WHERE "entityType" = ${entityType}::"EntityType" AND "entityId" = ANY(${entityIds})
+        AND "userId" = ${ownerId} AND status = 'Pending'::"AppealStatus"
+      RETURNING id, "userId", "entityType", "entityId", "buzzTransactionId"
+    `;
+    if (!closed.length) return;
+    const quiet = await getDefensiveCloseIds(closed);
+    for (const appeal of closed) {
+      const { refunded } = await refundOrphan(appeal);
+      if (!quiet.has(appeal.id))
+        await notifyOrphanedAppeal(appeal, 'closed-owner-deleted', refunded);
+    }
+  } catch (e) {
+    logToAxiom({
+      type: 'error',
+      name: 'close-appeals-deleted-by-owner',
+      message: 'Failed to close appeals on deleted content',
+      entityType,
+      entityIds,
+      ownerId,
+      error: (e as Error).message,
+    });
+  }
+}
+
+/**
  * Sorts appeals whose entity has been deleted; the moderator queue is driven from the entity row,
  * so it never shows them. An owner who deleted their own content gets the appeal closed and
  * refunded; anything else stays Pending, stamped `entityRemovedAt`, for review. Both are told.
@@ -1168,7 +1211,12 @@ export async function resolveEntityAppeal({
   // One statement claims the appeals: a concurrent resolution that already closed one gets nothing
   // back for it, so only one of them refunds.
   const appeals = await dbWrite.appeal.updateManyAndReturn({
-    where: { entityId: { in: ids }, status: AppealStatus.Pending, entityType },
+    where: {
+      entityId: { in: ids },
+      status: AppealStatus.Pending,
+      entityType,
+      entityRemovedAt: null,
+    },
     data: { status, resolvedBy: userId, resolvedMessage, internalNotes, resolvedAt: new Date() },
     select: {
       id: true,

@@ -37,6 +37,7 @@ import { updateEntityMetric } from '~/server/utils/metric-helpers';
 import { updateVimeoVideo } from '~/server/vimeo/client';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { CollectionMode, CollectionType, EntityType } from '~/shared/utils/prisma/enums';
+import { closeAppealsDeletedByOwner } from '~/server/services/report.service';
 import { isDefined } from '~/utils/type-guards';
 import { dbRead, dbWrite } from '../db/client';
 import { dbReadFallbackCounter } from '~/server/prom/client';
@@ -622,6 +623,12 @@ export const deletePostHandler = async ({
   try {
     const result = await deletePost({ ...input });
     if (result) {
+      // Keyed on the deleter: a moderator deleting the post closes no one else's appeal.
+      await closeAppealsDeletedByOwner({
+        entityType: EntityType.Image,
+        entityIds: result.deletedImageIds,
+        ownerId: ctx.user.id,
+      });
       await ctx.track.post({
         type: 'Delete',
         nsfw: !getIsSafeBrowsingLevel(result.nsfwLevel),

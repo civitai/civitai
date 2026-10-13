@@ -1138,7 +1138,7 @@ export const deletePost = async ({ id, isModerator }: GetByIdInput & { isModerat
   await bustCachesForPosts(id);
   await userImageVideoCountCaches.bust(imageOwnerIds);
 
-  return post;
+  return post ? { ...post, deletedImageIds } : post;
 };
 
 type PostQueryResult = { id: number; name: string; isCategory: boolean }[];
