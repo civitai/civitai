@@ -1,17 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type * as LoggingClient from '~/server/logging/client';
 import type * as CacheHelpers from '~/server/utils/cache-helpers';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 vi.mock('~/server/utils/cache-helpers', async (importOriginal) => ({
   ...(await importOriginal<typeof CacheHelpers>()),
   fetchThroughCache: vi.fn(async (_key: string, fn: () => Promise<unknown>) => fn()),
   bustFetchThroughCache: vi.fn(),
-}));
-
-vi.mock('~/server/logging/client', async (importOriginal) => ({
-  ...(await importOriginal<typeof LoggingClient>()),
-  logToAxiom: vi.fn(),
 }));
 
 const {
@@ -202,6 +197,9 @@ describe('naming the rules behind a Model rules unpublish', () => {
         { id: 9, subject: null },
       ],
     });
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'error', name: 'text-scan' })
+    );
   });
 
   it('skips the subject lookup when the unpublish was not the Model rules one', async () => {
