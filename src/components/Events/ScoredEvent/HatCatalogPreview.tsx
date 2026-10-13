@@ -31,7 +31,7 @@ export function HatCatalogPreview({
       <EventSectionHeading
         icon={IconHanger}
         title={`${designs.length} hats to collect`}
-        subtitle={`Every design comes in all ${teamCount} team colours. Join to shop for yours.`}
+        subtitle={`Every design comes in all ${teamCount} team colors. Join to shop for yours.`}
       />
       <SimpleGrid cols={{ base: 3, sm: 4, md: 6 }} spacing="sm" data-testid="hat-catalog">
         {designs.slice(0, SHOWN).map((d, i) => {
