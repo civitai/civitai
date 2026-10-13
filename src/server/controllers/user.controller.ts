@@ -1290,7 +1290,10 @@ export const getUserCosmeticsHandler = async ({
           : null
       )
       .filter(isDefined);
-    const coverImages = await getEntityCoverImage({ entities: inUseCosmeticEntities });
+    const coverImages = await getEntityCoverImage({
+      entities: inUseCosmeticEntities,
+      viewer: ctx.user,
+    });
 
     const cosmetics = user.cosmetics.reduce(
       (
