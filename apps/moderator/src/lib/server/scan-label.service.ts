@@ -324,3 +324,79 @@ export async function getOpenFlaggerVersions(db: Kysely<DB> = dbRead): Promise<s
     .execute();
   return rows.map((r) => r.flaggerVersion);
 }
+
+export type SweepResult = { blocked: number[]; failed: { itemId: number; error: string }[] };
+
+/**
+ * Block every image whose item has a block majority and has not been actioned. Reads stored state,
+ * not the vote that reached the majority, so a block missed by a failed or earlier run is still
+ * picked up by the next one.
+ */
+export async function applyMajorityBlocks(
+  {
+    requester,
+    ip,
+    userAgent,
+    limit = 10,
+  }: { requester?: number; ip?: string; userAgent?: string; limit?: number },
+  block: (args: BlockImageArgs) => Promise<void>
+): Promise<SweepResult> {
+  const pending = await dbWrite
+    .selectFrom('ScanLabelItem')
+    .select(['id', 'imageId'])
+    .where('blockVotes', '>=', BLOCK_MAJORITY)
+    .where('actionedAt', 'is', null)
+    .orderBy('id')
+    .limit(limit)
+    .execute();
+
+  const result: SweepResult = { blocked: [], failed: [] };
+  for (const item of pending) {
+    // Claimed before acting, so two sweeps running at once block an image only once.
+    const claimed = await dbWrite
+      .updateTable('ScanLabelItem')
+      .set({ actionedAt: new Date(), actionError: null })
+      .where('id', '=', item.id)
+      .where('actionedAt', 'is', null)
+      .executeTakeFirst();
+    if (!claimed.numUpdatedRows) continue;
+
+    const actor = await dbWrite
+      .selectFrom('ScanLabelVote')
+      .select('userId')
+      .where('itemId', '=', item.id)
+      .where('block', '=', true)
+      .orderBy('createdAt')
+      .orderBy('userId')
+      .offset(BLOCK_MAJORITY - 1)
+      .limit(1)
+      .executeTakeFirstOrThrow();
+    try {
+      await block({
+        imageId: item.imageId,
+        userId: actor.userId,
+        ...(actor.userId === requester && { ip, userAgent }),
+        violationDetails: 'Scan label majority',
+      });
+      result.blocked.push(item.id);
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      await dbWrite
+        .updateTable('ScanLabelItem')
+        .set({ actionedAt: null, actionError: message.slice(0, 500) })
+        .where('id', '=', item.id)
+        .execute();
+      console.error('scan label block failed', { itemId: item.id, error: message });
+      result.failed.push({ itemId: item.id, error: message });
+    }
+  }
+  return result;
+}
+
+export type BlockImageArgs = {
+  imageId: number;
+  userId: number;
+  ip?: string;
+  userAgent?: string;
+  violationDetails?: string;
+};

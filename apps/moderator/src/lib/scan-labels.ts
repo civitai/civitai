@@ -23,3 +23,24 @@ export const toFilters = (q: z.infer<typeof scanLabelFiltersSchema>): ScanLabelF
   day: q.day,
   flaggerVersion: q.version,
 });
+
+/**
+ * One moderator's UTC day against their quota. A day with no votes is a day off, never a miss, so
+ * days off need no bookkeeping; a day with some votes but fewer than the quota is a miss.
+ */
+export type QuotaStatus = 'met' | 'missed' | 'off' | 'unlisted';
+
+export function quotaStatus(votes: number, quota: number, onRoster: boolean): QuotaStatus {
+  if (!onRoster) return 'unlisted';
+  if (votes === 0) return 'off';
+  return votes >= quota ? 'met' : 'missed';
+}
+
+export type QuotaRow = {
+  userId: number;
+  username: string | null;
+  quota: number;
+  /** On the roster (`ScanLabelQuota.active`). Voters off the roster are listed but never "missed". */
+  onRoster: boolean;
+  days: { day: string; votes: number; status: QuotaStatus }[];
+};

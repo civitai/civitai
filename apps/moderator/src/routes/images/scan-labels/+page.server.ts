@@ -2,7 +2,10 @@ import { fail } from '@sveltejs/kit';
 import { z } from 'zod';
 import type { Actions, PageServerLoad } from './$types';
 import { parseForm, parseQuery } from '$lib/server/query';
+import { blockImage } from '$lib/server/image-moderation.service';
+import { getActorMeta } from '$lib/server/request-meta';
 import {
+  applyMajorityBlocks,
   castVote,
   claimNext,
   getCounters,
@@ -35,7 +38,8 @@ const REFUSAL: Record<'not-open' | 'already-voted' | 'full', string> = {
 };
 
 export const actions: Actions = {
-  vote: async ({ request, locals }) => {
+  vote: async (event) => {
+    const { request, locals } = event;
     const input = parseForm(voteSchema, await request.formData());
     if (typeof input === 'string') return fail(400, { error: input });
     const result = await castVote({
@@ -45,6 +49,12 @@ export const actions: Actions = {
       msOnItem: input.ms,
     });
     if (!result.ok) return fail(409, { error: REFUSAL[result.reason] });
+    // Every vote also retries any majority block still pending, so a failed one is not stranded.
+    // Its failures are logged and stored on the item; the voter's own vote has already landed.
+    await applyMajorityBlocks(
+      { requester: locals.user.id, ...getActorMeta(event) },
+      blockImage
+    ).catch((e) => console.error('scan label block sweep failed', e));
     return { voted: true };
   },
 };

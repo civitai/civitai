@@ -92,6 +92,9 @@ export const PERMISSIONS = [
   // Support tickets carry the requester's email, a different class of data from anything moderation
   // shows. Without this the email is never even selected — see `ticketSql`.
   { id: 'decisions.support.pii', label: 'See support-ticket requester emails on Decisions' },
+  // Reading the scan label metrics is the page grant; who is on the voting roster and their daily
+  // target is this.
+  { id: 'scan-label.quota.edit', label: 'Set scan label voters and their daily quotas' },
 ] as const satisfies readonly { id: string; label: string }[];
 
 export type Permission = (typeof PERMISSIONS)[number];
