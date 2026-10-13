@@ -43,8 +43,8 @@ const GATED_IMAGE_EDGE_WIDTH = 1200;
  * block can NEVER obtain the url for it.
  * Mirrors `@civitai/app-sdk/blocks`' `BlockGatedImage` — keep in lockstep. That
  * lockstep is ENFORCED, not merely asked for: the drift guard is
- * `src/server/services/blocks/blockGatedImageSdkParity.ts`, which vendors the
- * SDK declaration and fails the TYPECHECK (not a test run — it is deliberately
+ * `src/server/services/blocks/blockGatedImageSdkParity.ts`, which imports the
+ * installed SDK declaration and fails the TYPECHECK (not a test run — it is deliberately
  * not a `*.test.ts`, so it sits in the `tsc --noEmit` / `next build` graph) when
  * the two disagree.
  *

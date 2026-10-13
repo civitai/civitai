@@ -228,53 +228,26 @@ export const BLOCK_POST_APP_RATE_LIMIT_WINDOW_SECONDS = 3600;
 //     ┌─ HOLD STATUS — THE SINGLE STATEMENT. Everything below is evidence FOR this
 //     │  paragraph; none of it restates the status. Change it HERE and nowhere else.
 //     │
-//     │  THE BARRIER IS GONE. NOTHING IS THROUGH IT YET.
+//     │  THE BRIDGE FORWARDS THE HOLD. THE REST ROUTE ACCEPTS IT; NOTHING CALLS IT YET.
 //     │
-//     │  Gone: `/api/v1/blocks/workflows/poll` (#5068) takes `waitSeconds` off the wire
-//     │  and forwards it with no host in the path, so the host choke point does not
-//     │  apply to that transport.
-//     │  Not through: no shipped client calls that route yet, and over the BRIDGE the
-//     │  hosts still drop the field — so no hold reaches the server today.
-//     │  Therefore: the ~300-concurrent-hold figure below is what the FIRST REST
-//     │  adopter produces at the 15 s default, and the concurrency cap it calls for is
-//     │  still not implemented. Size for it; do not claim it is already happening.
-//     │
-//     │  ⚠️ THIS BLOCK EXISTS BECAUSE THE STATUS WAS PREVIOUSLY RESTATED SIX TIMES IN
-//     │  THIS COMMENT, IN SIX WORDINGS. Two successive rounds each corrected one copy
-//     │  and left the others, and the copies then contradicted each other ten lines
-//     │  apart ("NO HOLD REACHES THE SERVER TODAY" beside "IS NO LONGER TRUE", and
-//     │  "LIVE, not prospective" beside "nothing is holding today"). Both retracted.
-//     │  A status with six homes has six edit sites and no greppable anchor, which is
-//     │  how it re-arms. If you are about to restate it below, don't — amend this box.
+//     │  Bridge: both hosts forward a block's finite numeric `waitSeconds`, and any
+//     │  value that resolves to a whole second or more asks the orchestrator for a hold.
+//     │  REST: `/api/v1/blocks/workflows/poll` (#5068) takes the field off the wire with
+//     │  no host in the path; no shipped client calls that route yet.
+//     │  Concurrency: `acquireBlockPollHoldSlot` caps held polls per (install, viewer)
+//     │  at `MAX_BLOCK_POLL_CONCURRENT_HOLDS`; past it a poll is answered with no hold.
 //     └─
 //
-//     EVIDENCE — for the BRIDGE arm: neither host passes `waitSeconds` (zero occurrences
-//     of the identifier in `components/AppBlocks/`), and `@civitai/app-sdk`'s
-//     `POLL_WORKFLOW` payload type (0.14.0, the version this repo installs) carries
-//     `requestId` and `workflowId` only. The hosts are the choke point.
+//     EVIDENCE — for the BRIDGE arm: `PageBlockHost` and `IframeHost` pass the field
+//     into `blocks.pollWorkflow`, whose `resolveBlockPollWaitSeconds` decides the hold.
+//     Which blocks SEND it is a fact about another repo: `@civitai/blocks-react`'s `watch` defaults `waitSeconds` to 15
+//     (`DEFAULT_WATCH_WAIT_SECONDS`) from a loop that awaits each poll.
 //
-//     EVIDENCE — for the REST arm: `@civitai/blocks-react`'s `watch` defaults
-//     `waitSeconds` to 15 (`DEFAULT_WATCH_WAIT_SECONDS`, v0.57.1), and a whole-tree
-//     sweep of `civitai-app-starters` finds no reference to `/api/v1/blocks/workflows/*`
-//     outside prose.
+//     EVIDENCE — for the REST arm: a whole-tree sweep of `civitai-app-starters` found no
+//     reference to `/api/v1/blocks/workflows/*` outside prose.
 //
-//     ⚠️ THIS CANNOT GO RED ON ITS OWN — the evidence lives in another repo, so nothing
-//     in this tree asserts on it and the "not through it yet" half will go stale
-//     SILENTLY the day a block adopts the route. Re-check it rather than trusting it.
-//
-//     An earlier revision also got this WRONG by generalising from the app-sdk payload
-//     to "no shipped client takes that path". The round-0 audit reports that
-//     `@civitai/blocks-react` (0.53.1) DOES send `waitSeconds` from `pollOnce`, with
-//     `watch` defaulting it to 15 — and the server already accepts the field. That
-//     package is not installed in this repo, so it is recorded here as the audit's
-//     finding rather than as something measured at this call site. ✅ IT HOLDS, and this
-//     hedge is now RESOLVED rather than left standing beside the paragraph above that
-//     asserts it: `DEFAULT_WATCH_WAIT_SECONDS = 15` in
-//     `packages/civitai-blocks-react/src/hooks/useBuzzWorkflow.ts` (v0.57.1). So blocks
-//     ARE already asking and the bridge hosts ARE dropping it: over the BRIDGE the
-//     ~300-concurrent-hold figure below is one line in each host away. Over the REST
-//     twin the host is gone entirely and no line is needed — see the paragraph above
-//     for what that does and does not mean. Size for it rather than against it.
+//     ⚠️ THIS CANNOT GO RED ON ITS OWN — the sender-side evidence lives in another repo,
+//     so nothing in this tree asserts on it. Re-check it rather than trusting it.
 //   - the pathological shape the resolver warns about — `setInterval(poll, 2000)` against
 //     a 15 s hold, stacking ~7 concurrent requests per workflow — fits at ~5 concurrent
 //     workflows for one viewer.
@@ -284,10 +257,8 @@ export const BLOCK_POST_APP_RATE_LIMIT_WINDOW_SECONDS = 3600;
 //
 // ⚠️ THIS IS A RATE CEILING AND THE RESOURCE THAT ACTUALLY FAILS IS CONCURRENCY. With a
 // 15 s hold, 20/s sustained is ~300 simultaneously-held request slots per (install,
-// viewer) by Little's law, and `pollWorkflow` is a plain `publicProcedure` with no
-// bulkhead admission control. Nothing here caps concurrent holds; this bucket does not
-// pretend to. That is the number a GA reviewer should be looking at, and the control for
-// it is a concurrency cap, not a smaller rate.
+// viewer) by Little's law. This bucket does not cap that; the per-(install, viewer) hold
+// slots in `~/server/utils/block-poll-hold-slots` do, by answering without a hold.
 //
 // DELIBERATELY GENEROUS, because the two failure directions are not symmetric: a
 // too-tight poll ceiling degrades a generation the viewer already paid for, while a
@@ -524,8 +495,9 @@ export async function checkBlockPostRateLimit(
  *
  * Same fail-open posture as every sibling limiter. 🔴 But unlike them, the CALLER
  * must not turn a refusal into a throw: `pollWorkflow` returns a non-terminal
- * snapshot instead, because both hosts convert any throw from that mutation into a
- * `status: 'failed'` snapshot, which the SDK treats as terminal — so a thrown 429
+ * snapshot instead. The current hosts would turn a thrown TOO_MANY_REQUESTS into a
+ * non-terminal snapshot too, but an older host bundle still open in a browser turns
+ * any throw into a terminal `failed`, and the REST twin would answer 429 — either
  * ends the watch loop on a generation the viewer has already paid for. The reasoning
  * lives at the call site; this note exists so a second caller does not inherit the
  * fail-open posture and miss the return-don't-throw one.

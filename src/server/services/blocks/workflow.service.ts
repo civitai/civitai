@@ -1,4 +1,5 @@
 import { TRPCError } from '@trpc/server';
+import * as z from 'zod';
 import { coveragePair, nextCoverageEnabled } from '~/server/services/generation/coverage-source';
 import type { CustomComfyStepTemplate, Workflow, WorkflowStatus } from '@civitai/client';
 import type { AnyBlockRecipe, CustomComfyStepInput, ResolvedRecipeResources } from './recipes';
@@ -1546,6 +1547,13 @@ export function createBlockCustomComfyStep(
 export const MAX_BLOCK_POLL_WAIT_SECONDS = 15;
 
 /**
+ * Concurrent held polls per (install, viewer). The rate bucket alone allows ~300 at once by Little's
+ * law; past this cap a poll is answered without a hold, i.e. today's short poll, never refused. 4
+ * covers a viewer watching a few generations; a larger batch degrades to short polls.
+ */
+export const MAX_BLOCK_POLL_CONCURRENT_HOLDS = 4;
+
+/**
  * Normalize a caller-supplied `waitSeconds` into a value safe to hand the
  * orchestrator.
  *
@@ -1573,3 +1581,11 @@ export function resolveBlockPollWaitSeconds(waitSeconds?: number): number | unde
   if (floored <= 0) return undefined;
   return Math.min(floored, MAX_BLOCK_POLL_WAIT_SECONDS);
 }
+
+/**
+ * The wire schema for `waitSeconds` on `blocks.pollWorkflow` and its REST twin. It never rejects: a
+ * missing, `null`, non-number or non-finite value becomes `undefined`, and every finite number is
+ * left for `resolveBlockPollWaitSeconds` to floor and cap. A
+ * rejected poll reaches the block as a failed generation, which a tuning value must not cause.
+ */
+export const blockPollWaitSecondsInput = z.number().optional().catch(undefined);
