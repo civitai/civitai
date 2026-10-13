@@ -189,6 +189,16 @@ describe('platformFeedback token-scope gate', () => {
       expectNoServiceCalls();
     });
 
+    // The one thing that separates this rung from `guardedProcedure`.
+    it('answers an account that still owes an email verification', async () => {
+      const unverified = {
+        ...user,
+        emailVerified: null,
+        meta: { emailVerificationRequired: true },
+      };
+      await expect(call(sessionCtx(unverified), proc)).resolves.toEqual({ reached: true });
+    });
+
     it('refuses an anonymous caller', async () => {
       const anonymous = { ...(sessionCtx() as object), user: undefined } as never;
       await expect(call(anonymous, proc)).rejects.toMatchObject({ code: 'UNAUTHORIZED' });

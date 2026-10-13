@@ -337,6 +337,13 @@ describe('createPlatformFeedback — a repeat of an open report', () => {
     expect(row.context.server.samples.map((s) => s.text)).toEqual(['x'.repeat(299)]);
   });
 
+  it('keeps a whole surrogate pair that ends exactly at the cut', async () => {
+    await send(alice);
+    await send(bob, `${'x'.repeat(298)}\u{1F600}TAIL`);
+    const [row] = await storedRows();
+    expect(row.context.server.samples.map((s) => s.text)).toEqual([`${'x'.repeat(298)}\u{1F600}`]);
+  });
+
   it('counts a repeat on a row whose server state holds only a fingerprint', async () => {
     await seedFeedback(pg, {
       userId: alice,
@@ -760,14 +767,24 @@ describe('getPlatformFeedbackStatus', () => {
     }
   );
 
-  it('reads a malformed counter or resolution as absent instead of failing', async () => {
+  /** Overwrites keys of the stored server state with values this service would never write. */
+  const corrupt = (patch: Record<string, unknown>) =>
+    pg.query(
+      `UPDATE "Feedback" SET "context" = jsonb_set("context", '{server}', ("context"->'server') || $1::jsonb) WHERE "id" = 1`,
+      [JSON.stringify(patch)]
+    );
+
+  it('reads every malformed field as absent instead of failing', async () => {
     await send(alice);
     await send(bob);
     await setStatus(1, 'actioned');
-    await pg.query(
-      `UPDATE "Feedback" SET "context" = jsonb_set(jsonb_set("context", '{server,reporters}', '"many"'), '{server,resolution}', $1::jsonb) WHERE "id" = 1`,
-      [JSON.stringify({ fixedIn: '2.4.0', publicNote: 7, at: 5 })]
-    );
+    await corrupt({
+      reporters: 'many',
+      reports: 'many',
+      firstSeenAt: 5,
+      lastSeenAt: 5,
+      resolution: 'fixed in 2.4.0',
+    });
     expect(await status('1-ccb33a3a')).toEqual([
       {
         ref: '1-ccb33a3a',
@@ -776,10 +793,58 @@ describe('getPlatformFeedbackStatus', () => {
         fixedIn: null,
         note: null,
         reporters: 1,
-        firstSeenAt: T0,
-        updatedAt: T0,
+        firstSeenAt: null,
+        updatedAt: null,
       },
     ]);
+  });
+
+  // One bad field at a time: the rest of the resolution must still be read.
+  it.each([
+    [
+      'a non-string note',
+      { fixedIn: { component: 'cli', version: '2.4.0' }, publicNote: 7, at: T1 },
+      {
+        status: 'fixed',
+        fixedIn: { component: 'cli', version: '2.4.0' },
+        note: null,
+        updatedAt: T1,
+      },
+    ],
+    [
+      'a malformed fixedIn',
+      { fixedIn: '2.4.0', publicNote: PUBLIC_NOTE, at: T1 },
+      { status: 'addressed', fixedIn: null, note: PUBLIC_NOTE, updatedAt: T1 },
+    ],
+    [
+      'a non-string date',
+      { fixedIn: { component: 'cli', version: '2.4.0' }, publicNote: PUBLIC_NOTE, at: 5 },
+      {
+        status: 'fixed',
+        fixedIn: { component: 'cli', version: '2.4.0' },
+        note: PUBLIC_NOTE,
+        updatedAt: T0,
+      },
+    ],
+    [
+      'a date that does not parse',
+      {
+        fixedIn: { component: 'cli', version: '2.4.0' },
+        publicNote: PUBLIC_NOTE,
+        at: 'last tuesday',
+      },
+      {
+        status: 'fixed',
+        fixedIn: { component: 'cli', version: '2.4.0' },
+        note: PUBLIC_NOTE,
+        updatedAt: T0,
+      },
+    ],
+  ])('reads the rest of a resolution with %s', async (_label, resolution, expected) => {
+    await send(alice);
+    await setStatus(1, 'actioned');
+    await corrupt({ resolution });
+    expect(await status('1-ccb33a3a')).toMatchObject([{ found: true, ...expected }]);
   });
 
   it('looks up the largest id a ref can hold, and no larger', async () => {
@@ -836,7 +901,10 @@ describe('getPlatformFeedbackStatus', () => {
   it('answers each ref in the order asked, repeats included', async () => {
     await send(alice);
     await create(bob, { message: 'sdk too', report: { ...cliReport(), about: 'sdk' } });
+    resetLog();
     const result = await status('2-a66a5ec0', '9-00000000', '1-ccb33a3a', '2-a66a5ec0');
+    // Each id is looked up once however often it is asked for.
+    expect(statements.map(([, values]) => values)).toEqual([[2, 9, 1, 'apps-platform']]);
     expect(result.map((r) => [r.ref, r.found])).toEqual([
       ['2-a66a5ec0', true],
       ['9-00000000', false],

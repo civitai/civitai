@@ -350,9 +350,8 @@ export async function getPlatformFeedbackStatus({
     const row = target ? byId.get(target.id) : undefined;
     const state = row ? parseServerState(row.server) : undefined;
     // Without the suffix match, counting up through ids would read out every report. The suffix
-    // is not a secret for a report keyed on `report.ref` (it derives from about + ref), which is
-    // fine only while this returns nothing `create` does not already return to a sender of that
-    // key. Check that before adding a field.
+    // is not a secret for a report keyed on `report.ref` (it derives from about + ref), so anyone
+    // who knows the key can read such a row here: return aggregate status and timing only.
     if (!target || !row || !state || toRef(row.id, state.fingerprint) !== ref)
       return { ref, found: false as const };
 

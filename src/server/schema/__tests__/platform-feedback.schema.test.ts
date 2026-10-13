@@ -160,6 +160,8 @@ describe('platform feedback report schema', () => {
     ['a NUL', 'std\u0000err'],
     ['a lone high surrogate', 'cut \uD83D'],
     ['a lone low surrogate', '\uDE00 cut'],
+    ['a low surrogate after a whole pair', '\uD83D\uDE00\uDE00'],
+    ['a high surrogate before a whole pair', '\uD83D\uD83D\uDE00'],
   ] as const;
   const TEXT_FIELDS = ['agent', 'os', 'arch', 'command', 'errorExcerpt', 'appSlug'] as const;
 
