@@ -3,6 +3,7 @@ import path from 'path';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 
+import { resolveSpecifier as resolveRepoSpecifier } from '~/server/services/__tests__/import-graph.harness';
 import { BLOCK_TOKEN_QUERY_PROCEDURES } from '~/shared/constants/block-token-transport.constants';
 
 /**
@@ -15,7 +16,7 @@ import { BLOCK_TOKEN_QUERY_PROCEDURES } from '~/shared/constants/block-token-tra
  * The population: every `.query(` in `src/server/routers/**` whose builder chain has an
  * `.input(…)` carrying a `blockToken` field — written inline, or through a schema identifier,
  * followed transitively through same-file declarations AND named imports from repo modules
- * (`~/…` or relative). Several token schemas already live outside the routers (e.g.
+ * (`~/…`, relative, or a workspace package). Several token schemas already live outside the routers (e.g.
  * `buzz.schema.ts`); they feed mutations today, and following imports is what makes a future
  * `.query(` built on one of them visible here. A builder chain that starts at a pre-built
  * procedure constant (`const p = publicProcedure.input(schema)`; `x: p.query(…)`) is followed
@@ -28,7 +29,11 @@ import { BLOCK_TOKEN_QUERY_PROCEDURES } from '~/shared/constants/block-token-tra
  *
  * LIMITS, stated because they are open:
  *   - The field must be spelled `blockToken` — the repo-wide convention for block tokens.
- *   - Imports from packages (`zod`, `@civitai/…`) are not followed.
+ *   - External packages (`zod`, …) are not followed. Repo modules and workspace `@civitai/*`
+ *     packages are, through the shared resolver in `import-graph.harness.ts`.
+ *   - Declarations are indexed by name per module at ANY depth, so two same-named `const`s in one
+ *     file collapse to the last one; a schema root could resolve to the wrong declaration. Not
+ *     measured against the current corpus.
  *   - Identifiers NESTED inside a schema (a field's helper, an enum) are followed best-effort: one
  *     that does not resolve is skipped silently. A `blockToken` field reached only through such a
  *     helper would be missed.
@@ -54,16 +59,16 @@ type ModuleInfo = {
   imports: Map<string, { specifier: string; imported: string }>;
 };
 
-/** Resolve a repo-module specifier (`~/…` or relative) to a file, or null for a package. */
-function resolveSpecifier(fromFile: string, specifier: string): string | null {
-  let base: string;
-  if (specifier.startsWith('~/')) base = path.join(REPO_ROOT, 'src', specifier.slice(2));
-  else if (specifier.startsWith('.')) base = path.resolve(path.dirname(fromFile), specifier);
-  else return null;
-  for (const candidate of [`${base}.ts`, `${base}.tsx`, path.join(base, 'index.ts'), base]) {
-    if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) return candidate;
-  }
-  return base; // unresolvable repo module: the caller reports it
+/**
+ * Resolve an import to a file with the shared resolver (`import-graph.harness.ts`: tsconfig
+ * aliases, relative paths, workspace `@civitai/*` packages). Returns null for an external package.
+ * A repo-local specifier (`~/…` or relative) that does NOT resolve returns the specifier itself, so
+ * the caller can report it rather than score it as an external package.
+ */
+function resolveImport(fromFile: string, specifier: string): string | null {
+  const resolved = resolveRepoSpecifier(specifier, fromFile);
+  if (resolved) return resolved;
+  return specifier.startsWith('~/') || specifier.startsWith('.') ? specifier : null;
 }
 
 function parseModule(fileName: string, text: string): ModuleInfo {
@@ -147,8 +152,8 @@ function deriveTokenQueries(
     if (local) return { mod, node: local };
     const imp = mod.imports.get(name);
     if (!imp) return null;
-    const file = resolveSpecifier(mod.sf.fileName, imp.specifier);
-    if (file === null) return null; // a package import
+    const file = resolveImport(mod.sf.fileName, imp.specifier);
+    if (file === null) return null; // an external package import
     const target = loadModule(file);
     const node = target?.decls.get(imp.imported);
     if (!target || !node) {
@@ -340,6 +345,20 @@ describe('BLOCK_TOKEN_QUERY_PROCEDURES matches the routers', () => {
     const { unresolved: u } = deriveTokenQueries('src/server/routers/fixture.ts', src);
     expect(u).toEqual([
       'src/server/routers/fixture.ts: notDeclaredThere from ~/server/schema/buzz.schema',
+    ]);
+  });
+
+  it('CONTROL: an import from a repo module that does not resolve is reported, not dropped', () => {
+    // Distinct from the case above: there the module resolves and lacks the name; here the
+    // specifier itself resolves to no file, which must not be mistaken for an external package.
+    const src = `
+      import { someSchema } from '~/server/schema/no-such-module';
+      export const blocksRouter = router({
+        read: publicProcedure.input(someSchema).query(() => 1),
+      });`;
+    const { unresolved: u } = deriveTokenQueries('src/server/routers/fixture.ts', src);
+    expect(u).toEqual([
+      'src/server/routers/fixture.ts: someSchema from ~/server/schema/no-such-module',
     ]);
   });
 
