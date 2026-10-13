@@ -2506,7 +2506,10 @@ export const publishPrivateModelHandler = async ({
       callerId: userId,
     });
 
-    const { versionIds } = await publishPrivateModel(input);
+    const { versionIds } = await publishPrivateModel({
+      ...input,
+      isModerator: ctx.user.isModerator,
+    });
     await dataForModelsCache.refresh(input.modelId);
     await bustMvCache(versionIds, input.modelId);
     await modelsSearchIndex.queueUpdate([

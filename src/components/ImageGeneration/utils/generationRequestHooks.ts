@@ -3,7 +3,7 @@ import type { InfiniteData } from '@tanstack/react-query';
 import { getQueryKey } from '@trpc/react-query';
 import produce from 'immer';
 import { cloneDeep } from 'lodash-es';
-import { useMemo } from 'react';
+import { useEffect, useMemo } from 'react';
 import type * as z from 'zod';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFiltersContext } from '~/providers/FiltersProvider';
@@ -45,6 +45,7 @@ import { queryClient, trpc } from '~/utils/trpc';
 import { useAppContext } from '~/providers/AppProvider';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 import { registerSignalGroup } from '~/components/Signals/signals-registry.store';
+import { scheduleUnratedRefetch } from '~/components/ImageGeneration/utils/unratedOutputRefetch';
 
 export type InfiniteTextToImageRequests = InfiniteData<
   AsyncReturnType<typeof queryGeneratedImageWorkflows2>
@@ -140,10 +141,16 @@ export function useGetTextToImageRequests(
               return false;
             return true;
           })
-          .map((workflow) => new WorkflowData(workflow, { domain, nsfwEnabled }))
+          .map((workflow) => new WorkflowData(workflow, { domain, nsfwEnabled, holdUnrated: true }))
       ) ?? [],
     [data, nsfwEnabled, domain, markerTags]
   );
+
+  // Unconditional: the scheduler reads the raw cache, which includes outputs `flatData` hides
+  // (a 3D workflow's suppressed preview render, whose rating its mesh inherits).
+  useEffect(() => {
+    scheduleUnratedRefetch();
+  }, [flatData]);
 
   return { data: flatData, markerTags, ...rest };
 }

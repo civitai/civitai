@@ -6767,10 +6767,36 @@ model Appeal {
   resolvedReason    String?
   internalNotes     String?
   buzzTransactionId String?
+  entityRemovedAt   DateTime?
 
   @@index([entityType, entityId, userId])
   @@index([userId])
   @@index([status])
+}
+
+/// Written only by the `appeal_decision_record` trigger on "Appeal"; never insert from app code.
+/// Enriched and pruned by the `appeal-decision-records` job.
+model AppealDecisionRecord {
+  id                       BigInt    @id @default(autoincrement())
+  appealId                 Int       @unique
+  imageId                  Int
+  imageUrl                 String
+  pHash                    BigInt?
+  promptHash               String?
+  nsfwLevel                Int
+  nsfwLevelLocked          Boolean
+  nsfwLevelReason          String?
+  aiNsfwLevel              Int?
+  blockedFor               String?
+  decision                 String
+  resolvedReason           String?
+  decidedAt                DateTime  @db.Timestamptz(3)
+  removalLabel             String?
+  restoredLevel            Int?
+  trainingLabelCorrectedAt DateTime? @db.Timestamptz(3)
+  createdAt                DateTime  @default(now()) @db.Timestamptz(3)
+
+  @@index([imageId])
 }
 
 enum AuctionType {

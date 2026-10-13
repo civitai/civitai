@@ -610,6 +610,9 @@ function StepOutputs({
     .filter((img): img is ImageBlob | VideoBlob | AudioBlob => img.type !== 'model3d')
     .filter((img) => matchesMarkerTags(img, markerTags));
   const blockedReasons = step ? step.blockedReasons : request.blockedReasons;
+  const pendingRating = (step ? step.pendingRatingOutput : request.pendingRatingOutput).filter(
+    (img) => matchesMarkerTags(img, markerTags)
+  );
 
   const stepFailure = step
     ? step.errors?.join(',\n') ||
@@ -633,6 +636,18 @@ function StepOutputs({
             <GeneratedOutput key={image.id} image={image} />
           )
         )}
+        {pendingRating.map((image) => (
+          <TwCard
+            key={image.id}
+            className="items-center justify-center border"
+            style={{ aspectRatio: image.aspect ?? 1 }}
+          >
+            <Loader size={24} />
+            <Text c="dimmed" size="xs" align="center">
+              Rating
+            </Text>
+          </TwCard>
+        ))}
         <BlockedBlocks
           blockedReasons={blockedReasons.filter((r) => r !== 'siteRestricted')}
           workflowId={request.id}
