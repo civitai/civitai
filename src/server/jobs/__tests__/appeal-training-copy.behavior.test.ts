@@ -445,6 +445,27 @@ describe('copyRejectedForTraining', () => {
     expect(await tombstones()).toEqual(['1/u-101']);
   });
 
+  it('restarts the deletion grace for a key it copies again', async () => {
+    await record({ appealId: 1, imageId: 101 });
+    await holder.db.exec(`
+      INSERT INTO "AppealTrainingObjectDeletion" (key, "createdAt")
+      VALUES ('1/u-101', now() - interval '2 hours')
+    `);
+    const store = fakeStore();
+    let fresh: unknown[] = [];
+    store.copy.mockImplementationOnce(async () => {
+      fresh = (
+        await holder.db.query(
+          `SELECT key FROM "AppealTrainingObjectDeletion" WHERE "createdAt" > now() - interval '1 hour'`
+        )
+      ).rows;
+    });
+
+    await copyRejectedForTraining({ store, lookup: noLabels });
+
+    expect(fresh).toEqual([{ key: '1/u-101' }]);
+  });
+
   it('copies newer records while older ones wait for a label', async () => {
     await holder.db.exec(`
       INSERT INTO "AppealDecisionRecord" ("appealId", "imageId", "imageUrl", "nsfwLevel", "nsfwLevelLocked",

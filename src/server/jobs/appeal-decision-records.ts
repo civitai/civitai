@@ -369,7 +369,8 @@ export async function copyRejectedForTraining({
     try {
       // Queued first, so a copy that never gets attached to its record is still deleted.
       await dbWrite.$executeRaw`
-        INSERT INTO "AppealTrainingObjectDeletion" (key) VALUES (${key}) ON CONFLICT (key) DO NOTHING
+        INSERT INTO "AppealTrainingObjectDeletion" (key) VALUES (${key})
+        ON CONFLICT (key) DO UPDATE SET "createdAt" = now()
       `;
       await store.copy(imageUrl, key);
       // The record may have been swept or become ineligible while the copy ran.
