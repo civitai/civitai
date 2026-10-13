@@ -205,20 +205,28 @@ async function writeChunk(
   });
 }
 
+/** A reopened baseline that stops short is done again at its old finish, so history keeps it. */
 async function endRun(
   deps: WorkerDeps,
   runId: number,
   status: 'done' | 'cancelled' | 'failed',
   failure: string | null = null
 ): Promise<void> {
-  const totals = status === 'failed' ? null : JSON.stringify(await computeTotals(deps.db, runId));
+  const run = await deps.db
+    .selectFrom('text_scan_test_run')
+    .select(['kind', 'finished_at'])
+    .where('id', '=', String(runId))
+    .executeTakeFirstOrThrow();
+  const restore = status !== 'done' && run.kind === 'baseline' && run.finished_at !== null;
+  const final = restore ? 'done' : status;
+  const totals = final === 'failed' ? null : JSON.stringify(await computeTotals(deps.db, runId));
   await deps.db
     .updateTable('text_scan_test_run')
     .set({
-      status,
-      failure,
+      status: final,
+      failure: restore ? null : failure,
       totals,
-      finished_at: sql`now()`,
+      finished_at: restore ? run.finished_at : sql`now()`,
       lease_owner: null,
       heartbeat_at: null,
     })
@@ -244,17 +252,6 @@ async function rulesMoved(deps: WorkerDeps, run: RunRow): Promise<boolean> {
   return (await deps.liveRuleStateHash()) !== run.rule_state_hash;
 }
 
-async function hasScanned(db: Db, runId: number): Promise<boolean> {
-  const row = await db
-    .selectFrom('text_scan_test_result')
-    .select('case_id')
-    .where('run_id', '=', String(runId))
-    .where('status', 'in', ['ok', 'error'])
-    .limit(1)
-    .executeTakeFirst();
-  return !!row;
-}
-
 // claimRun stamps both with one `now()`, so equal means this claim is the run's first start.
 const firstStart = (run: RunRow) =>
   run.started_at !== null &&
@@ -272,7 +269,7 @@ async function drive(deps: WorkerDeps, run: RunRow, launch: boolean): Promise<vo
     rules: (run.rule_overrides as LabRuleOverride[] | null) ?? [],
   };
   // A first-request refusal fails only a fresh launch; anyone else's refused session just pauses.
-  let scannedAny = !(launch && firstStart(run)) || (await hasScanned(deps.db, runId));
+  let scannedAny = !(launch && firstStart(run));
 
   const prewiped = await wipedWithoutResult(deps.db, run);
   if (

@@ -271,6 +271,30 @@ describe('startRun', () => {
     expect(Number(draft.baseline_run_id)).toBe(baselineId);
   });
 
+  it('writes nothing when pricing the start fails', async () => {
+    await seedCases(2);
+    const { deps } = makeDeps();
+    const quote = await quoteRun(deps, setId, 'prompts', DRAFT);
+    deps.quoteTexts.mockRejectedValueOnce(new Error('synthetic pricing failure'));
+    await expect(
+      startRun(deps, { setId, workspace: 'prompts', draft: DRAFT, stamp: quote.stamp }, MOD)
+    ).rejects.toThrow('synthetic pricing failure');
+    expect(await runs()).toHaveLength(0);
+    expect(deps.launch).not.toHaveBeenCalled();
+  });
+
+  it('a cancelled queued top-up leaves the baseline done, at its old finish', async () => {
+    const finishedAt = new Date('2026-09-01T00:00:00Z');
+    const baselineId = await completeBaseline(await seedCases(2), { finishedAt });
+    await seedCase(db, setId);
+    const { deps } = makeDeps();
+    const quote = await quoteRun(deps, setId, 'prompts', null);
+    await startRun(deps, { setId, workspace: 'prompts', draft: null, stamp: quote.stamp }, MOD);
+    expect((await runs())[0]).toMatchObject({ status: 'queued', started_at: null });
+    await cancelRun(cancelDeps(), setId, baselineId, MOD, false);
+    expect((await runs())[0]).toMatchObject({ status: 'done', finished_at: finishedAt });
+  });
+
   it('refuses a start whose estimate is stale, writing nothing', async () => {
     await seedCases(2);
     const { deps } = makeDeps();
@@ -463,6 +487,36 @@ describe('rerunErrors', () => {
       status: 409,
       message: expect.stringMatching(/label:scam prompt changed/),
     });
+  });
+
+  it('refuses a stopped run that still has unscanned cases, deleting nothing', async () => {
+    const runId = await runWithErrors({ status: 'cancelled' });
+    await seedCase(db, setId);
+    const { deps } = makeDeps();
+    await expect(rerunErrors(deps, setId, runId, MOD)).rejects.toMatchObject({
+      status: 409,
+      message: expect.stringMatching(/not scanned/),
+    });
+    expect(await db.selectFrom('text_scan_test_result').selectAll().execute()).toHaveLength(3);
+    expect(deps.launch).not.toHaveBeenCalled();
+  });
+
+  it('re-runs a stopped run whose only gaps are its errors, as a fresh start', async () => {
+    const runId = await runWithErrors({ status: 'failed' });
+    await db
+      .updateTable('text_scan_test_run')
+      .set({ started_at: new Date('2026-09-01T00:00:00Z') })
+      .execute();
+    const { deps } = makeDeps();
+    await rerunErrors(deps, setId, runId, MOD);
+    expect((await runs())[0]).toMatchObject({ status: 'queued', started_at: null });
+  });
+
+  it('refuses an expired draft', async () => {
+    const runId = await runWithErrors({ kind: 'draft', expiresAt: new Date('2026-01-01') });
+    const { deps } = makeDeps();
+    await expect(rerunErrors(deps, setId, runId, MOD)).rejects.toMatchObject({ status: 409 });
+    expect(await db.selectFrom('text_scan_test_result').selectAll().execute()).toHaveLength(3);
   });
 
   it('refuses a run with no errors, and one still running', async () => {

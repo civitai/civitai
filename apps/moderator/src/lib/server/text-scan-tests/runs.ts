@@ -80,6 +80,9 @@ export type Started = { startId: string; runIds: number[]; runId: number };
 /** A typical chunk's wall time, for the estimate only. */
 const CHUNK_SECONDS = 20;
 
+/** A done baseline re-queued by a top-up or re-run keeps its finished_at until it finishes again. */
+const REOPENED = sql<boolean>`kind = 'baseline' AND finished_at IS NOT NULL`;
+
 const sha256 = (value: string) => createHash('sha256').update(value).digest('hex');
 const sortedKeys = <T>(record: Record<string, T>) =>
   Object.fromEntries(Object.entries(record).sort(([a], [b]) => a.localeCompare(b)));
@@ -355,6 +358,8 @@ export async function startRun(
       'The set, your draft or the live prompts changed since the estimate. Check the new estimate and confirm again.',
       409
     );
+  // Priced before anything is written, so the audited estimate is the server's, never the form's.
+  const { perCallBuzz } = await priceOf(deps, plan);
   const startId = randomUUID();
   const runIds = await deps.db.transaction().execute(async (trx) => {
     await guardStarts(trx, userId);
@@ -388,7 +393,8 @@ export async function startRun(
           max_case_id: common.max_case_id,
           case_total: plan.runnable,
           run_by: userId,
-          finished_at: null,
+          // Cleared so the worker reads the next claim as a first start: a refused launch then fails.
+          started_at: null,
           lease_owner: null,
           heartbeat_at: null,
         })
@@ -417,8 +423,6 @@ export async function startRun(
     }
     return ids;
   });
-  // Re-priced here so the audited estimate is the server's, never the form's.
-  const { perCallBuzz } = await priceOf(deps, plan);
   await record(deps.audit, {
     action: 'start',
     userId,
@@ -448,8 +452,8 @@ export async function cancelRun(
   const res = await db
     .updateTable('text_scan_test_run')
     .set({
-      status: sql`CASE WHEN status = 'queued' THEN 'cancelled' ELSE 'cancelling' END`,
-      finished_at: sql`CASE WHEN status = 'queued' THEN now() ELSE finished_at END`,
+      status: sql`CASE WHEN status <> 'queued' THEN 'cancelling' WHEN ${REOPENED} THEN 'done' ELSE 'cancelled' END`,
+      finished_at: sql`CASE WHEN status = 'queued' THEN coalesce(finished_at, now()) ELSE finished_at END`,
     })
     .where('start_id', '=', run.start_id)
     .where('status', 'in', [...CANCELLABLE_RUN_STATUSES])
@@ -475,6 +479,8 @@ export async function rerunErrors(
   const run = await getRun(deps.db, setId, runId);
   if (!['done', 'cancelled', 'failed'].includes(run.status))
     throw new TestSetError('This run has not finished yet.', 409);
+  if (run.expires_at && new Date(run.expires_at).getTime() < Date.now())
+    throw new TestSetError('This draft run has expired. Start a new run.', 409);
   const errors = await deps.db
     .selectFrom('text_scan_test_result')
     .select(sql<string>`count(*)`.as('n'))
@@ -482,8 +488,18 @@ export async function rerunErrors(
     .where('status', '=', 'error')
     .executeTakeFirstOrThrow();
   const errorCount = Number(errors.n);
-  if (run.status === 'done' && !errorCount)
-    throw new TestSetError('This run has no errors to re-run.', 400);
+  if (!errorCount) throw new TestSetError('This run has no errors to re-run.', 400);
+  const unscanned = await runnableCases(deps.db, setId)
+    .select(sql<string>`count(*)`.as('n'))
+    .where('c.id', '<=', run.max_case_id)
+    .where(noResultIn(run.id))
+    .executeTakeFirstOrThrow();
+  // The worker scans every case without a result, so the quoted error count would undercount.
+  if (Number(unscanned.n))
+    throw new TestSetError(
+      'This run stopped with cases not scanned, so a re-run would scan more than its errors. Start a new run.',
+      409
+    );
 
   const { prompts } = await liveStateFor(deps, []);
   const changed = Object.entries(run.prompt_ids as Record<string, number>)
@@ -518,7 +534,8 @@ export async function rerunErrors(
         start_id: startId,
         run_by: userId,
         failure: null,
-        finished_at: null,
+        started_at: null,
+        ...(run.kind === 'baseline' && run.status === 'done' ? {} : { finished_at: null }),
         lease_owner: null,
         heartbeat_at: null,
         error_count: 0,

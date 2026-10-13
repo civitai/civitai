@@ -25,6 +25,7 @@ const { callModEndpoint } = await import('../user-actions.service');
 const { LabHarnessError, scanTexts } = await import('../text-scan-lab/harness-client');
 const { PROMPT_MOVED, RULES_MOVED, claimRun, releaseOwnLeases, resumableRunIds, runWorker } =
   await import('../text-scan-tests/worker');
+const { baselineHistory } = await import('../text-scan-tests/reports');
 
 let db: Kysely<ModeratorDB>;
 let main: Kysely<MainDB>;
@@ -347,6 +348,68 @@ describe('cancellation and failures', () => {
     await runWorker({ ...deps(scan.fn), log }, runId);
     expect(log).toHaveBeenCalledWith('text-scan test run failed', { runId, error: '23514' });
     expect(await runRow(runId)).toMatchObject({ status: 'failed' });
+  });
+});
+
+describe('a topped-up baseline that does not finish', () => {
+  const finishedAt = new Date('2026-09-01T00:00:00Z');
+  // A done baseline over the first 8 cases, reopened for 4 cases added since.
+  async function reopenedBaseline() {
+    const ids = await seedCases(12);
+    const runId = await seedRun(db, setId, { status: 'queued', finishedAt, totals: [] });
+    await db
+      .insertInto('text_scan_test_result')
+      .values(
+        ids.slice(0, 8).map((id) => ({
+          run_id: String(runId),
+          case_id: String(id),
+          status: 'ok',
+          output: JSON.stringify({ scam: { detected: false } }),
+        }))
+      )
+      .execute();
+    return runId;
+  }
+  const expectRestored = async (runId: number, scored = 8) => {
+    expect(await runRow(runId)).toMatchObject({
+      status: 'done',
+      failure: null,
+      finished_at: finishedAt,
+      lease_owner: null,
+      totals: [expect.objectContaining({ label: 'scam', scored, passed: scored })],
+    });
+    expect((await baselineHistory(db, setId)).map((p) => p.runId)).toEqual([runId]);
+  };
+
+  it('is done again, at its old finish, when cancelled mid-scan', async () => {
+    const runId = await reopenedBaseline();
+    const scan = fakeScan(async (texts) => {
+      await db
+        .updateTable('text_scan_test_run')
+        .set({ status: 'cancelling' })
+        .where('id', '=', String(runId))
+        .execute();
+      return texts.map((t) => okResult(t.key));
+    });
+    await runWorker(deps(scan.fn), runId);
+    expect(await resultsOf(db, runId)).toHaveLength(12);
+    await expectRestored(runId, 12);
+  });
+
+  it('is done again, at its old finish, when a prompt moves mid-scan', async () => {
+    const runId = await reopenedBaseline();
+    const scan = fakeScan((texts) => texts.map((t) => okResult(t.key, { base: 1, scam: 3 })));
+    await runWorker(deps(scan.fn), runId);
+    await expectRestored(runId);
+  });
+
+  it('fails its launch, rather than pausing, when the first request is refused', async () => {
+    const runId = await reopenedBaseline();
+    const scan = fakeScan(() => {
+      throw new LabHarnessError('Text-scan scan returned 401.', false, true);
+    });
+    await runWorker(deps(scan.fn), runId, { launch: true });
+    await expectRestored(runId);
   });
 });
 
