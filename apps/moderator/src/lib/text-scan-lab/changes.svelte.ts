@@ -6,7 +6,7 @@ import {
   type CurrentPrompts,
 } from './changes';
 
-function browserStorage(): Storage | null {
+export function browserStorage(): Storage | null {
   try {
     return typeof localStorage === 'undefined' ? null : localStorage;
   } catch {

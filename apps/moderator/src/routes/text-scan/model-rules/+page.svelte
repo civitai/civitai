@@ -1,52 +1,38 @@
 <script lang="ts">
   import { page } from '$app/state';
-  import ErrorAlert from '$lib/components/ErrorAlert.svelte';
   import LinkTabs from '$lib/components/LinkTabs.svelte';
   import { LINK_CLASS } from '$lib/format';
   import { promptsHref } from '$lib/text-scan-lab/paths';
   import MatchesTab from './MatchesTab.svelte';
-  import RulesTab from './RulesTab.svelte';
-  import type { ActionData, PageData } from './$types';
+  import RulesWorkspace from './RulesWorkspace.svelte';
 
-  let { data, form }: { data: PageData; form: ActionData } = $props();
+  let { data } = $props();
 
   const canEdit = $derived(!!data.grants['textScan.modelRules.edit']);
   const TABS = [
     { value: 'rules', label: 'Rules', href: '?tab=rules' },
     { value: 'matches', label: 'Matches', href: '?tab=matches' },
   ];
-  let editorOpen = $state(false);
 </script>
 
 <svelte:head><title>Model rules · Text scan</title></svelte:head>
 
 <div class="mb-4 flex flex-wrap items-baseline justify-between gap-2">
   <h1 class="text-xl font-semibold text-white">Model rules</h1>
-  <p class="flex gap-4 text-sm">
-    <a href={promptsHref('label:modelRules')} class={LINK_CLASS}>Policy prompt on Prompts</a>
-  </p>
+  <a href={promptsHref('label:modelRules')} class={LINK_CLASS}>Policy prompt on Prompts</a>
 </div>
 
 <LinkTabs class="mb-4" items={TABS} active={data.query.tab} />
 
-{#if form?.error && !editorOpen}
-  <ErrorAlert class="mb-4" message={form.error} />
-{:else if form?.message}
-  <div class="mb-4 rounded-md border border-teal-500/30 bg-teal-500/10 p-2 text-sm text-teal-300">
-    {form.message}
-    {#if form.cacheWarning}<span class="text-amber-300">{form.cacheWarning}</span>{/if}
-  </div>
-{/if}
-
-{#if data.rules}
-  <RulesTab
+{#if data.rules && data.policy}
+  <RulesWorkspace
     rules={data.rules}
-    total={data.total}
+    policy={data.policy}
+    authors={data.authors}
     query={data.query}
     {canEdit}
+    userId={data.user?.id ?? 0}
     url={page.url}
-    {form}
-    bind:editorOpen
   />
 {:else if data.matches}
   <MatchesTab
