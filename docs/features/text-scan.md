@@ -36,8 +36,17 @@ matches.
 
 The rules are the enabled `ModerationRule` rows with `entityType = Model` and a `semantic`
 definition (`subject`, `description`, `aliases`). They are appended to the `label:modelRules` prompt
-as a numbered list at scan time, so the rule text lives only in the database. Moderators manage them
-on the moderator app's `/text-scan/model-rules` page, which also lists recent matches. Rules written
+as a numbered list at scan time, so the rule text lives only in the database. Moderators manage both
+the rules and that prompt on the moderator app's `/text-scan/model-rules` page: edits are drafts in
+the moderator's browser until saved, and every create, edit, enable/disable and restore of a rule
+writes a row to `ModerationRuleVersion` in the same transaction, so each rule has a history that can
+be compared and restored. A rule saved before that table existed gets its earlier state recorded on
+its next save. The page's Try panel judges a pasted link, id or text as `ModelRules` with the saved
+rules and, side by side, with the drafts (new rules carry negative ids that exist only in the lab);
+literal hits show there even when the model gives no answer. A literal hold at publish also writes
+the model's `ModelRules` scan row (no content hash, so the scan after a moderator's republish still
+runs); Matches marks it "held at publish", and the model page's moderator panel names the matched
+rules. The owner sees "being reviewed" without a review request. Rules written
 before the scan are regex; a one-off endpoint, `/api/admin/temp/convert-model-rules` (`count`, then
 `apply`), converts them in place once per environment. A rule that does not reduce to plain text, or
 was an Approve rule, ends disabled and flagged until a moderator rewrites it, and nothing in the
@@ -138,10 +147,18 @@ so chat verdicts don't pair one to one with text scan's per-message ones.
   attributed, audited moderator endpoint `/api/mod/text-scan` serves them. Like every moderator
   endpoint it takes a moderator's session or full-access personal API key. That endpoint also
   attributes prompt and config writes to the signed-in moderator.
-- The moderator app's text-scan lab drives those actions: Check (`/text-scan/check`) judges links, ids
-  or text with the current prompts and, side by side, with a moderator's edits, which are kept only in
-  that moderator's browser; Versions (`/text-scan/prompts`) shows each prompt's history. It stores
-  nothing in the moderator database. Publishing edits needs the `textScan.prompt.publish` permission,
-  held by no one until granted on `/admin`; the pages are likewise unreachable until granted there.
-  `/text-scan` and `/text-scan/playground` redirect to Check.
+- The moderator app's text-scan lab drives those actions from two workspaces with the same layout.
+  Prompts (`/text-scan/prompts`) lists every prompt key; a key's edits are a draft kept in that
+  moderator's browser, Save writes a new version in one step (a note is optional), and a save is
+  refused if someone saved a newer version after the draft started (`putPrompt`'s `baseId`, checked
+  inside the insert's transaction). History compares any two of the last 20 versions and restores one
+  as a new version, reading its text by id. Model rules (`/text-scan/model-rules`) does the same for
+  the `label:modelRules` prompt and for the rules. Both pages share a Try panel: paste text, links or
+  ids and see the current and the edited verdicts side by side, the system prompt each side sent, and
+  Model rules matches by rule subject with literal hits marked. The lab reads a model's text whatever
+  its visibility; it records nothing. Saving prompts needs `textScan.prompt.publish` on Prompts and
+  `textScan.modelRules.edit` on Model rules (which also covers the `label:modelRules` prompt there);
+  both are held by no one until granted on `/admin`, as are the pages. `/text-scan`, `/text-scan/check`
+  and `/text-scan/playground` redirect to Prompts; roles granted the old Check or Playground pages
+  are moved to Prompts by a one-off migration applied after the moderator deploy.
 - Errors are logged to Axiom under `name: 'text-scan'`; every submit also logs a `submitted` event.
