@@ -77,7 +77,7 @@ export const TokenScope = {
   // the first-party `civitai-cli` client, so `civitai app dev-tunnel` works over
   // the OAuth `civitai login` token instead of a Full personal API key). The
   // dev-tunnel tRPC procedures (blocks.router: startDevTunnel / stopDevTunnel /
-  // devTunnelStatus) gate on this bit via `.meta({ requiredScope })`. Like
+  // devTunnelStatus / devTunnelDnsReady) gate on this bit via `.meta({ requiredScope })`. Like
   // AppBlocksSubmit it is EXCLUDED from `Full` so it never widens an existing key.
   AppBlocksDevTunnel: 1 << 26, // 67108864
 

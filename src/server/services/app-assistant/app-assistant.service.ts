@@ -154,6 +154,7 @@ export async function mintAppAssistantToken(
 
 export type AppAssistantPreview =
   | { status: 'ok'; frame: DevTunnelFrame & { iframeSrc: string } }
+  | { status: 'preparing' }
   | { status: 'no-tunnel' }
   | { status: 'not-found' }
   | { status: 'forbidden'; error: string };
@@ -172,6 +173,7 @@ export async function getAppAssistantPreview({
     return { status: 'forbidden', error: 'Live preview is not available on this account' };
   const frame = await resolveDevTunnelFrame(user, blockId);
   if (!frame) return { status: 'not-found' };
+  if (frame.dnsPending) return { status: 'preparing' };
   if (!frame.iframeSrc) return { status: 'no-tunnel' };
   return { status: 'ok', frame: { ...frame, iframeSrc: frame.iframeSrc } };
 }

@@ -2314,6 +2314,26 @@ export const blocksRouter = router({
     }),
 
   /**
+   * APP DEV TUNNEL — whether the DNS record for the caller's active tunnel host is published
+   * yet. Takes a blockId, never a hostname: the host comes from the caller's own session record.
+   */
+  devTunnelDnsReady: appDeveloperProcedure
+    .meta({ requiredScope: TokenScope.AppBlocksDevTunnel })
+    .use(enforceAppBlocksFlag)
+    .input(z.object({ blockId: z.string().min(1).max(64) }))
+    .query(async ({ ctx, input }) => {
+      if (!ctx.user) throw throwAuthorizationError('Not authenticated');
+      const { isAppBlocksDevTunnelEnabled } = await import('~/server/services/app-blocks-flag');
+      if (!(await isAppBlocksDevTunnelEnabled({ user: ctx.user }))) {
+        throw new TRPCError({ code: 'FORBIDDEN', message: 'Dev tunnels are not available' });
+      }
+      const { getDevTunnelDnsReadiness } = await import(
+        '~/server/services/blocks/dev-tunnel-dns.service'
+      );
+      return getDevTunnelDnsReadiness(ctx.user.id, input.blockId);
+    }),
+
+  /**
    * Mod queue: paginated list of publish requests waiting for review,
    * oldest first. Powers /apps/review.
    */

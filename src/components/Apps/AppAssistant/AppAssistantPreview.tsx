@@ -2,6 +2,7 @@ import { Alert, Button, Center, Group, Loader, Stack, Text } from '@mantine/core
 import { IconRefresh } from '@tabler/icons-react';
 import { useQuery } from '@tanstack/react-query';
 import { DevTunnelBlockHost } from '~/components/AppBlocks/DevTunnelBlockHost';
+import { DevTunnelDnsGate } from '~/components/AppBlocks/DevTunnelDnsGate';
 import { fetchPreviewFrame } from '~/components/Apps/AppAssistant/previewFrame';
 import type { PreviewSession } from '~/components/Apps/AppAssistant/previewTools';
 
@@ -75,6 +76,8 @@ export function AppAssistantPreview({
               {frame.error instanceof Error ? frame.error.message : 'The preview is unavailable'}
             </Alert>
           </Stack>
+        ) : 'preparing' in frame.data ? (
+          <DevTunnelDnsGate blockId={session.blockId} onSettled={() => frame.refetch()} />
         ) : (
           <DevTunnelBlockHost
             // A fresh entry URL is a fresh mount, so the host re-runs its handshake.

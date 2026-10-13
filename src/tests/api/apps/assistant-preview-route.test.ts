@@ -68,6 +68,15 @@ describe('GET /api/apps/assistant/preview', () => {
     expect(preview).toHaveBeenCalledWith(expect.objectContaining({ blockId: 'my-app' }));
   });
 
+  it('answers a tunnel that is still coming online with no frame to mount', async () => {
+    preview.mockResolvedValue({ status: 'preparing' });
+    expect(await call({ blockId: 'my-app' })).toEqual({
+      status: 200,
+      body: { preparing: true },
+      cacheControl: 'no-store',
+    });
+  });
+
   it.each([
     [{ status: 'forbidden', error: 'Live preview is not available on this account' }, 403],
     [{ status: 'not-found' }, 404],

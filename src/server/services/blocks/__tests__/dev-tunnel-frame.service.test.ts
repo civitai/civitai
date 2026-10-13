@@ -2,7 +2,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as DevTunnelSession from '~/server/services/blocks/dev-tunnel-session';
 import type { SessionUser } from '~/types/session';
 
-const { resolveDev, activeTunnel, unsubmittedSpend, sign } = vi.hoisted(() => ({
+const { resolveDev, activeTunnel, unsubmittedSpend, sign, published } = vi.hoisted(() => ({
+  published: vi.fn<(host: string) => Promise<boolean>>(async () => true),
   resolveDev: vi.fn<(...args: unknown[]) => Promise<unknown>>(),
   activeTunnel: vi.fn<(...args: unknown[]) => Promise<unknown>>(),
   unsubmittedSpend: vi.fn(async () => false),
@@ -15,6 +16,9 @@ vi.mock('~/server/services/block-registry.service', () => ({
 }));
 vi.mock('~/server/services/blocks/dev-tunnel.service', () => ({
   getActiveDevTunnel: activeTunnel,
+}));
+vi.mock('~/server/services/blocks/dev-tunnel-dns.service', () => ({
+  isDevTunnelHostPublished: published,
 }));
 vi.mock('~/server/services/app-blocks-flag', () => ({
   isAppBlocksDevTunnelUnsubmittedSpendEnabled: unsubmittedSpend,
@@ -51,6 +55,7 @@ beforeEach(() => {
     grantedScopes: ['ai:write:budgeted', 'user:read:self'],
   });
   unsubmittedSpend.mockResolvedValue(true);
+  published.mockResolvedValue(true);
 });
 
 describe('resolveDevTunnelFrame', () => {
@@ -75,6 +80,25 @@ describe('resolveDevTunnelFrame', () => {
       bootSkeleton: false,
       host: HOST,
       iframeSrc: `https://${HOST}/?dev=signed.entry%2Btoken`,
+      dnsPending: false,
+    });
+    expect(published).toHaveBeenCalledExactlyOnceWith(HOST);
+  });
+
+  it("withholds the entry URL until the tunnel host's DNS record is published", async () => {
+    published.mockResolvedValue(false);
+    expect(await resolveDevTunnelFrame(USER, 'my-app')).toMatchObject({
+      host: HOST,
+      iframeSrc: null,
+      dnsPending: true,
+    });
+    // No entry token is minted for a host nothing may load yet: it would expire during the wait.
+    expect(sign).not.toHaveBeenCalled();
+
+    published.mockResolvedValue(true);
+    expect(await resolveDevTunnelFrame(USER, 'my-app')).toMatchObject({
+      iframeSrc: `https://${HOST}/?dev=signed.entry%2Btoken`,
+      dnsPending: false,
     });
   });
 
@@ -99,7 +123,9 @@ describe('resolveDevTunnelFrame', () => {
     expect(await resolveDevTunnelFrame(USER, 'my-app')).toMatchObject({
       host: null,
       iframeSrc: null,
+      dnsPending: false,
     });
+    expect(published).not.toHaveBeenCalled();
     expect(resolveDev).toHaveBeenCalledWith('my-app', 42, {
       sessionGrantedScopes: undefined,
       unsubmittedSpendAllowed: true,
@@ -115,7 +141,9 @@ describe('resolveDevTunnelFrame', () => {
     expect(await resolveDevTunnelFrame(USER, 'my-app')).toMatchObject({
       host: null,
       iframeSrc: null,
+      dnsPending: false,
     });
+    expect(published).not.toHaveBeenCalled();
     expect(sign).not.toHaveBeenCalled();
   });
 });
