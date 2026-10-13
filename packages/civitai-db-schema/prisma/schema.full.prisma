@@ -6792,11 +6792,20 @@ model AppealDecisionRecord {
   resolvedReason           String?
   decidedAt                DateTime  @db.Timestamptz(3)
   removalLabel             String?
+  removalNsfw              String?
   restoredLevel            Int?
   trainingLabelCorrectedAt DateTime? @db.Timestamptz(3)
+  trainingCopyState        String?
+  trainingObjectKey        String?
+  ownerHash                String?
   createdAt                DateTime  @default(now()) @db.Timestamptz(3)
 
   @@index([imageId])
+}
+
+model AppealTrainingObjectDeletion {
+  key       String   @id
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
 }
 
 enum AuctionType {

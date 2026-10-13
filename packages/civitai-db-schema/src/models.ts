@@ -4221,8 +4221,17 @@ export interface AppealDecisionRecord {
   resolvedReason: string | null;
   decidedAt: Date;
   removalLabel: string | null;
+  removalNsfw: string | null;
   restoredLevel: number | null;
   trainingLabelCorrectedAt: Date | null;
+  trainingCopyState: string | null;
+  trainingObjectKey: string | null;
+  ownerHash: string | null;
+  createdAt: Date;
+}
+
+export interface AppealTrainingObjectDeletion {
+  key: string;
   createdAt: Date;
 }
 

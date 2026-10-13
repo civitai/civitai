@@ -4,6 +4,7 @@ import path from 'path';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
+import type { Removal } from '~/server/jobs/appeal-decision-records';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
@@ -35,9 +36,14 @@ const {
   runAppealDecisionRecords,
 } = await import('~/server/jobs/appeal-decision-records');
 
-const MIGRATION = path.resolve(
-  __dirname,
-  '../../../../packages/civitai-db-schema/prisma/migrations/20261020120000_appeal_decision_record/migration.sql'
+const MIGRATIONS = [
+  '20261020120000_appeal_decision_record',
+  '20261021120000_appeal_decision_record_training_copy',
+].map((dir) =>
+  path.resolve(
+    __dirname,
+    `../../../../packages/civitai-db-schema/prisma/migrations/${dir}/migration.sql`
+  )
 );
 
 beforeAll(async () => {
@@ -74,7 +80,7 @@ beforeAll(async () => {
       url text, label text, "createdAt" timestamp, source text, reason text, old_label text
     );
   `);
-  await holder.db.exec(readFileSync(MIGRATION, 'utf8'));
+  for (const file of MIGRATIONS) await holder.db.exec(readFileSync(file, 'utf8'));
 });
 
 beforeEach(async () => {
@@ -179,7 +185,7 @@ describe('sweepExcludedRecords', () => {
       JSON.stringify([{ id: 101 }]),
     ]);
 
-    expect(await sweepExcludedRecords()).toEqual({ swept: 1, labels: 0, expired: 0 });
+    expect(await sweepExcludedRecords()).toEqual({ swept: 1, labels: 0, expired: 0, objects: 0 });
     expect(await recordIds()).toEqual([2]);
   });
 
@@ -216,7 +222,7 @@ describe('sweepExcludedRecords', () => {
       `UPDATE "Image" SET "needsReview" = 'poi', "blockedFor" = 'tos' WHERE id = 102`
     );
 
-    expect(await sweepExcludedRecords()).toEqual({ swept: 0, labels: 0, expired: 0 });
+    expect(await sweepExcludedRecords()).toEqual({ swept: 0, labels: 0, expired: 0, objects: 0 });
     expect(await recordIds()).toEqual([1, 2]);
   });
 
@@ -240,7 +246,7 @@ describe('sweepExcludedRecords', () => {
     await record({ appealId: 3, imageId: 103, daysAgo: 733 });
     await record({ appealId: 4, imageId: 104, daysAgo: 727 });
 
-    expect(await sweepExcludedRecords()).toEqual({ swept: 0, labels: 0, expired: 1 });
+    expect(await sweepExcludedRecords()).toEqual({ swept: 0, labels: 0, expired: 1, objects: 0 });
     expect(await recordIds()).toEqual([1, 2, 4]);
   });
 
@@ -252,7 +258,7 @@ describe('sweepExcludedRecords', () => {
     await label(106, 'R', 5, 'appeal');
     await holder.db.query(`INSERT INTO "CsamReport" ("userId") VALUES (9)`);
 
-    expect(await sweepExcludedRecords()).toEqual({ swept: 0, labels: 1, expired: 0 });
+    expect(await sweepExcludedRecords()).toEqual({ swept: 0, labels: 1, expired: 0, objects: 0 });
     expect(await allLabels()).toEqual([
       { url: 'u-105', label: 'Blocked', source: 'knight' },
       { url: 'u-106', label: 'R', source: 'appeal' },
@@ -272,7 +278,7 @@ describe('sweepExcludedRecords', () => {
     ]);
     await label(101, 'Blocked', 10);
 
-    expect(await sweepExcludedRecords()).toEqual({ swept: 0, labels: 0, expired: 0 });
+    expect(await sweepExcludedRecords()).toEqual({ swept: 0, labels: 0, expired: 0, objects: 0 });
     expect((await recordRestoredLevels()).restored).toBe(2);
   });
 
@@ -294,7 +300,9 @@ describe('fillRemovalLabels', () => {
     await record({ appealId: 5, imageId: 105, daysAgo: 29 });
     const lookup = vi.fn(
       async (ids: number[]) =>
-        new Map(ids.filter((id) => id !== 103).map((id) => [id, `label-${id}`]))
+        new Map(
+          ids.filter((id) => id !== 103).map((id) => [id, { label: `label-${id}`, nsfw: 'Soft' }])
+        )
     );
 
     expect(await fillRemovalLabels(lookup)).toBe(2);
@@ -307,10 +315,20 @@ describe('fillRemovalLabels', () => {
       [4, null],
       [5, 'label-105'],
     ]);
+    const ratings = await holder.db.query<{ appealId: number; removalNsfw: string | null }>(
+      `SELECT "appealId", "removalNsfw" FROM "AppealDecisionRecord" ORDER BY "appealId"`
+    );
+    expect(ratings.rows.map((r) => [r.appealId, r.removalNsfw])).toEqual([
+      [1, 'Soft'],
+      [2, null],
+      [3, null],
+      [4, null],
+      [5, 'Soft'],
+    ]);
   });
 
   it('skips the lookup when nothing is missing', async () => {
-    const lookup = vi.fn(async () => new Map<number, string>());
+    const lookup = vi.fn(async () => new Map<number, Removal>());
 
     expect(await fillRemovalLabels(lookup)).toBe(0);
     expect(lookup).not.toHaveBeenCalled();
@@ -319,10 +337,18 @@ describe('fillRemovalLabels', () => {
 
 describe('removalLabelsFromClickhouse', () => {
   it('asks for the latest DeleteTOS violation per image and maps the answer', async () => {
-    const $query = vi.fn(async () => [{ imageId: 5, label: 'spam' }]);
+    const $query = vi.fn(async () => [
+      { imageId: 5, label: 'spam', nsfw: 'Soft' },
+      { imageId: 6, label: 'poi', nsfw: '' },
+    ]);
     holder.ch = { $query };
 
-    expect(await removalLabelsFromClickhouse([5, 6])).toEqual(new Map([[5, 'spam']]));
+    expect(await removalLabelsFromClickhouse([5, 6])).toEqual(
+      new Map([
+        [5, { label: 'spam', nsfw: 'Soft' }],
+        [6, { label: 'poi', nsfw: null }],
+      ])
+    );
 
     const [strings, ...values] = $query.mock.calls[0] as unknown as [
       TemplateStringsArray,
@@ -330,7 +356,8 @@ describe('removalLabelsFromClickhouse', () => {
     ];
     const sql = strings.join('?');
     expect(sql).toContain("type = 'DeleteTOS'");
-    expect(sql).toContain("argMax(coalesce(nullIf(violationType, ''), tosReason), time)");
+    expect(sql).toContain("argMax(coalesce(nullIf(violationType, ''), tosReason), time) AS label");
+    expect(sql).toContain('argMax(toString(nsfw), time) AS nsfw');
     expect(values).toEqual([[5, 6]]);
   });
 
@@ -488,12 +515,15 @@ describe('the nightly run', () => {
     await label(101, 'Blocked', 10);
     await label(102, 'Blocked', 10);
     await holder.db.query(`INSERT INTO "CsamReport" ("userId") VALUES (8)`);
-    const lookup = vi.fn(async (ids: number[]) => new Map(ids.map((id) => [id, 'spam'])));
+    const lookup = vi.fn(
+      async (ids: number[]) => new Map(ids.map((id) => [id, { label: 'spam', nsfw: null }]))
+    );
 
     expect(await runAppealDecisionRecords(lookup)).toEqual({
       swept: 1,
       labels: 0,
       expired: 0,
+      objects: 0,
       labelled: 1,
       restored: 1,
       corrected: 1,

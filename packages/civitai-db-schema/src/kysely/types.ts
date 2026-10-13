@@ -434,8 +434,16 @@ export type AppealDecisionRecord = {
   resolvedReason: string | null;
   decidedAt: Timestamp;
   removalLabel: string | null;
+  removalNsfw: string | null;
   restoredLevel: number | null;
   trainingLabelCorrectedAt: Timestamp | null;
+  trainingCopyState: string | null;
+  trainingObjectKey: string | null;
+  ownerHash: string | null;
+  createdAt: Generated<Timestamp>;
+};
+export type AppealTrainingObjectDeletion = {
+  key: string;
   createdAt: Generated<Timestamp>;
 };
 export type AppListing = {
@@ -5159,6 +5167,7 @@ export type DB = {
   app_user_scope_grants: AppUserScopeGrant;
   Appeal: Appeal;
   AppealDecisionRecord: AppealDecisionRecord;
+  AppealTrainingObjectDeletion: AppealTrainingObjectDeletion;
   AppPageAccess: AppPageAccess;
   Article: Article;
   ArticleEngagement: ArticleEngagement;
