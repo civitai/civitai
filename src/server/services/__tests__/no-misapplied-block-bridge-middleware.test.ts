@@ -23,7 +23,10 @@ import {
  *
  * Out of reach:
  *   - A handler that hands `input` or `ctx` whole to something that reads the token or the
- *     session user off it, or that reads them through an alias of `ctx`.
+ *     session user off it, or that reads them through an alias (`const c = ctx; c.user`).
+ *   - Whether the handler USES the viewer for identity. "Names `blockViewer`" is met by any
+ *     identifier of that name; for `getMyViewer` the identity is pinned behaviourally, in
+ *     `blocks.router.bridgeViewerMiddleware.test.ts`.
  *   - A procedure added by object spread, or in another router file.
  *   - Whether the middleware's steps are right; `blocks.router.bridgeViewerMiddleware.test.ts`
  *     and the block-token characterisation suites drive them.
@@ -154,9 +157,21 @@ describe('the bridge auth-mechanism scan can actually see what it claims to', ()
     ['ctx.user', '\n      void ctx.user?.id;'],
     ["ctx['user']", "\n      void ctx['user'];"],
     ['const { user } = ctx', '\n      const { user } = ctx;\n      void user;'],
+    ['(ctx as T).user', '\n      void (ctx as { user?: unknown }).user;'],
+    ['ctx!.user', '\n      void ctx!.user;'],
+    ['(ctx).user', '\n      void (ctx).user;'],
   ])('a handler reading the session user as `%s` is seen', (_shape, statement) => {
     const auth = getMyViewerIn(spliceIntoHandler(real, '', statement));
     expect(auth?.handlerReadsSessionUser).toBe(true);
+  });
+
+  it('a handler reading it off its whole argument, as `opts.ctx.user`, is seen', () => {
+    const mutated = mutateGetMyViewer(
+      real,
+      HANDLER_OPENING,
+      '\n    .mutation(async (opts) => {\n      void opts.ctx.user;\n      const { claims, userId } = opts.ctx.blockViewer;'
+    );
+    expect(getMyViewerIn(mutated)?.handlerReadsSessionUser).toBe(true);
   });
 
   it('a handler destructuring the session user out of its argument is seen', () => {

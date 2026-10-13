@@ -7,6 +7,7 @@ import type * as AppBlocksFlag from '~/server/services/app-blocks-flag';
 import type * as BridgeAuth from '~/server/services/blocks/block-bridge-auth.service';
 import type * as TokenAccess from '~/server/services/blocks/block-token-access.service';
 import type * as ConsentRevocationModule from '~/server/services/blocks/consent-revocation.service';
+import type * as RuntimeMetrics from '~/server/metrics/app-block-runtime.metrics';
 import type * as CatalogRateLimit from '~/server/utils/block-catalog-rate-limit';
 
 /**
@@ -23,6 +24,7 @@ const h = vi.hoisted(() => ({
   getSessionUserById: vi.fn(),
   enabledFor: [] as number[],
   catalogLimit: vi.fn(),
+  recordRefusal: vi.fn(),
 }));
 
 vi.mock('~/server/services/blocks/block-bridge-auth.service', async (importOriginal) => {
@@ -64,6 +66,10 @@ vi.mock('~/server/auth/session-client', () => ({
 vi.mock('~/server/utils/block-catalog-rate-limit', async (importOriginal) => ({
   ...(await importOriginal<typeof CatalogRateLimit>()),
   checkBlockCatalogRateLimit: (...a: unknown[]) => h.catalogLimit(...a),
+}));
+vi.mock('~/server/metrics/app-block-runtime.metrics', async (importOriginal) => ({
+  ...(await importOriginal<typeof RuntimeMetrics>()),
+  recordBlockBridgeRateLimitRefusal: (...a: unknown[]) => h.recordRefusal(...a),
 }));
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -116,7 +122,7 @@ async function mint(over: { scopes?: string[]; anon?: boolean } = {}) {
     appId: 'app_mw',
     appBlockId: 'apb_mw',
     blockInstanceId: INSTANCE_ID,
-    scopes: over.scopes ?? ['user:read:self'],
+    scopes: over.scopes ?? ['user:read:self', 'buzz:read:self'],
     ctx: { modelId: MODEL_ID, slotId: 'model.sidebar_top' },
     maxBrowsingLevel: 1,
     buzzBudget: 100,
@@ -126,8 +132,9 @@ async function mint(over: { scopes?: string[]; anon?: boolean } = {}) {
 
 const check = vi.fn();
 
+// A different scope from `getMyViewer`'s, so the middleware has to read it from its options.
 const OPTIONS: BlockBridgeViewerOptions = {
-  scope: 'user:read:self',
+  scope: 'buzz:read:self',
   anonMessage: 'probe requires a viewer',
   rateLimit: {
     check: (viewer) => {
@@ -144,6 +151,7 @@ beforeEach(() => {
     .mockReset()
     .mockImplementation(async (id: number) => ({ ...USER, id, username: usernameOf(id) }));
   h.catalogLimit.mockReset().mockResolvedValue({ allowed: true });
+  h.recordRefusal.mockReset();
   check.mockReset().mockResolvedValue({ allowed: true });
   dbMock.dbRead.appBlock.findUnique.mockReset().mockResolvedValue({
     id: 'apb_row',
@@ -188,10 +196,20 @@ describe('authorizeBlockBridgeViewer', () => {
     expect(check.mock.calls).toEqual([[{ claims: viewer.claims, userId: SUBJECT_ID }]]);
   });
 
+  it("requires the scope its options name, not getMyViewer's", async () => {
+    await expect(run(await mint({ scopes: ['user:read:self'] }))).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      message: 'block lacks buzz:read:self scope',
+    });
+    await expect(run(await mint({ scopes: ['buzz:read:self'] }))).resolves.toMatchObject({
+      userId: SUBJECT_ID,
+    });
+  });
+
   it('checks the scope before the subject: an anonymous token without it gets the scope refusal', async () => {
     await expect(run(await mint({ anon: true, scopes: [] }))).rejects.toMatchObject({
       code: 'FORBIDDEN',
-      message: 'block lacks user:read:self scope',
+      message: 'block lacks buzz:read:self scope',
     });
     // Control: with the scope, the same anonymous token reaches the subject refusal.
     await expect(run(await mint({ anon: true }))).rejects.toMatchObject({
@@ -224,6 +242,16 @@ describe('blocks.getMyViewer on the middleware', () => {
     });
     expect(h.events).toEqual(['authorize', `kill-switch(${SUBJECT_ID})`]);
     expect(h.catalogLimit.mock.calls).toEqual([[INSTANCE_ID]]);
+  });
+
+  it('past the ceiling it refuses without counting the refusal or reading the primary', async () => {
+    h.catalogLimit.mockResolvedValue({ allowed: false });
+
+    await expect(
+      blocksRouter.createCaller(ctx() as never).getMyViewer({ blockToken: await mint() })
+    ).rejects.toMatchObject({ code: 'TOO_MANY_REQUESTS' });
+    expect(h.recordRefusal).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.user.findUnique).not.toHaveBeenCalled();
   });
 });
 

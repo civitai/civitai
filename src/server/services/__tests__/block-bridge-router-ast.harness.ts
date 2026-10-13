@@ -254,7 +254,12 @@ function mentions(nodes: readonly ts.Node[], test: (n: ts.Node) => boolean): boo
   return found;
 }
 
-const isCtx = (n: ts.Node): boolean => ts.isIdentifier(n) && n.text === 'ctx';
+/** `ctx` or `<anything>.ctx`, through parentheses, `as`, `satisfies` and `!`. */
+function isCtx(n: ts.Node): boolean {
+  const inner = ts.isExpression(n) ? unwrap(n) : n;
+  if (ts.isIdentifier(inner)) return inner.text === 'ctx';
+  return ts.isPropertyAccessExpression(inner) && inner.name.text === 'ctx';
+}
 
 /** `ctx.user`, `ctx['user']`, `({ ctx: { user } })` or `const { user } = ctx`. */
 function readsCtxUser(n: ts.Node): boolean {
