@@ -502,64 +502,23 @@ function toMonetizationAuditShape(
     : null;
 }
 
-// The training wizard's own transitions: it approves a finished (or failed) run's epoch and keeps a
-// draft Pending. Anything else — a Denied/Paused run going back to Approved or Pending — is a
-// moderator or training-service decision.
+// Denied and Paused are moderation decisions: an owner can neither set them nor move a version out
+// of them. Every other transition, replay included, is the training wizard's to make.
+const MODERATOR_ONLY_TRAINING_STATUSES: (TrainingStatus | null)[] = [
+  TrainingStatus.Denied,
+  TrainingStatus.Paused,
+];
 function assertOwnerTrainingStatusChange(
   stored: TrainingStatus | null,
   next: TrainingStatus | null | undefined
 ) {
   if (next === undefined || next === stored) return;
-  const approvesFinishedRun =
-    next === TrainingStatus.Approved &&
-    (stored === TrainingStatus.InReview || stored === TrainingStatus.Failed);
-  const keepsDraftPending =
-    next === TrainingStatus.Pending &&
-    (stored === null || stored === TrainingStatus.Failed || stored === TrainingStatus.Expired);
-  if (!approvesFinishedRun && !keepsDraftPending)
+  if (
+    MODERATOR_ONLY_TRAINING_STATUSES.includes(stored) ||
+    MODERATOR_ONLY_TRAINING_STATUSES.includes(next)
+  )
     throw throwBadRequestError("A version's training status can't be changed here.");
 }
-
-// Mirrors the comics rule: once published, early access can only shrink or end.
-async function assertPaidAccessNotIncreased(
-  versionId: number,
-  next: ModelVersionPaidAccessInputSchema | null | undefined
-) {
-  const gated = !!next && (!!next.permanent || (next.timeframeDays ?? 0) > 0);
-  if (!next || !gated) return;
-
-  const stored = await dbWrite.paidAccess.findUnique({
-    where: { entityType_entityId: { entityType: 'ModelVersion', entityId: versionId } },
-    select: { timeframeDays: true, terms: true, endsAt: true },
-  });
-  if (!stored) return;
-  // An ended gate is a tombstone: starting a window after publish is assertUserEarlyAccessLimits' call.
-  if (stored.endsAt != null && stored.endsAt <= new Date()) return;
-
-  const window = (days: number | null | undefined, permanent?: boolean) =>
-    permanent || days == null ? Infinity : days;
-  if (window(next.timeframeDays, next.permanent) > window(stored.timeframeDays))
-    throw throwBadRequestError('Cannot increase the early access timeframe after publishing.');
-
-  // Effective prices: an omitted generation price is the download price (bundled), and free is 0.
-  const effective = (terms: ModelVersionTerms) => ({
-    download: terms.download?.price ?? 0,
-    generation:
-      terms.generation && 'free' in terms.generation
-        ? 0
-        : (terms.generation ? generationPrice(terms) : terms.download?.price) ?? 0,
-  });
-  const before = effective((stored.terms ?? {}) as ModelVersionTerms);
-  const after = effective(next.terms as ModelVersionTerms);
-  if (after.download > before.download || after.generation > before.generation)
-    throw throwBadRequestError('Cannot increase the early access price after publishing.');
-}
-
-// Same test assertUserEarlyAccessLimits uses: a Scheduled version carries a FUTURE anchor, so only a
-// date that has passed counts. Unpublishing must not reset the guard.
-const hasBeenPublished = (v: { status: ModelStatus; initialPublishedAt: Date | null }) =>
-  v.status === ModelStatus.Published ||
-  (!!v.initialPublishedAt && v.initialPublishedAt <= new Date());
 
 export const upsertModelVersion = async ({
   id,
@@ -856,7 +815,6 @@ export const upsertModelVersion = async ({
       select: {
         id: true,
         status: true,
-        initialPublishedAt: true,
         trainingStatus: true,
         description: true,
         trainedWords: true,
@@ -938,8 +896,6 @@ export const upsertModelVersion = async ({
         throw throwBadRequestError('A version cannot be moved to another model.');
       }
       assertOwnerTrainingStatusChange(existingVersion.trainingStatus, data.trainingStatus);
-      if (hasBeenPublished(existingVersion))
-        await assertPaidAccessNotIncreased(id as number, paidAccess);
     }
 
     const mergedMeta =
@@ -1203,8 +1159,6 @@ export const updateModelVersionPaidAccess = async ({
       usageControl: true,
       modelId: true,
       meta: true,
-      status: true,
-      initialPublishedAt: true,
       model: { select: { userId: true } },
     },
   });
@@ -1231,8 +1185,6 @@ export const updateModelVersionPaidAccess = async ({
     ) as typeof paidAccess.terms;
 
   assertPaidAccessInput(paidAccess);
-  if (!isModerator && hasBeenPublished(existingVersion))
-    await assertPaidAccessNotIncreased(id, paidAccess);
 
   const rightsAffirmation = await resolveRightsAffirmation({
     userId: actorUserId ?? existingVersion.model.userId,

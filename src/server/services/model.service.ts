@@ -180,11 +180,14 @@ import {
 } from '~/server/utils/errorHandling';
 import { enforceLockedProperties } from '~/server/utils/locked-properties';
 import {
+  pickModerationOwnedMeta,
   pickServerOwnedMeta,
+  RESTORE_CANNOT_PROMOTE_KEY,
   type SERVER_OWNED_META_KEYS,
   stripMinorHashMeta,
   stripModerationOwnedMeta,
   stripServerOwnedMeta,
+  withPrivateCannotPromote,
 } from '~/server/utils/minor-flag-meta';
 import type { RuleDefinition } from '~/server/utils/mod-rules';
 import {
@@ -2717,9 +2720,11 @@ export const upsertModel = async (
   let meta = stripServerOwnedMeta(stripModerationOwnedMeta(input.meta, isModerator));
   if (serverMeta) meta = { ...(meta ?? {}), ...serverMeta };
 
+  // Primary, not the replica: ownership, the availability lock and the meta merge below all act on
+  // this row, and a lagging copy can show a stale availability or omit a just-written key.
   const beforeUpdate =
     id && !templateId
-      ? await dbRead.model.findUnique({
+      ? await dbWrite.model.findUnique({
           where: { id },
           select: {
             name: true,
@@ -2733,6 +2738,7 @@ export const upsertModel = async (
             gallerySettings: true,
             meta: true,
             availability: true,
+            status: true,
             mode: true,
             allowNoCredit: true,
             allowCommercialUse: true,
@@ -2817,6 +2823,9 @@ export const upsertModel = async (
   }
 
   if (!id || templateId) {
+    if (!isModerator && data.availability === Availability.Private)
+      throw throwBadRequestError('Private models are created from the private model flow.');
+
     const result = await dbWrite.$transaction(
       async (tx) => {
         const created = await tx.model.create({
@@ -2918,8 +2927,29 @@ export const upsertModel = async (
     const isOwner = beforeUpdate.userId === userId || isModerator;
     if (!isOwner) return null;
 
+    // Going public skips `publishPrivateModel`'s checks and going private skips the
+    // `maxPrivateModels` cap, so availability only changes through those flows.
+    if (!isModerator && data.availability && data.availability !== beforeUpdate.availability) {
+      throw throwBadRequestError(
+        beforeUpdate.availability === Availability.Private
+          ? 'A private model can only be made public by publishing it.'
+          : 'A model cannot be made private here. Use the private model flow.'
+      );
+    }
+
     const prevGallerySettings = beforeUpdate.gallerySettings as ModelGallerySettingsSchema;
     const prevMeta = beforeUpdate.meta as ModelMeta | null;
+    let mergedMeta: ModelMeta = { ...prevMeta, ...meta };
+    if (beforeUpdate.availability === Availability.Private) {
+      // `meta` only carries `cannotPromote` for a moderator. While private it is forced on, so the
+      // moderator's decision is what publish restores.
+      const sent = (meta as ModelMeta | undefined)?.cannotPromote;
+      const banned =
+        typeof sent === 'boolean'
+          ? sent
+          : (prevMeta as Record<string, unknown> | null)?.[RESTORE_CANNOT_PROMOTE_KEY] === true;
+      mergedMeta = withPrivateCannotPromote(mergedMeta, banned);
+    }
 
     let clearedLicensingSources: { id: number; licensingSourceVersionId: number }[] = [];
     let typeBeforeUpdate: ModelType | undefined;
@@ -2950,7 +2980,7 @@ export const upsertModel = async (
           where: { id },
           data: {
             ...data,
-            meta: { ...prevMeta, ...meta },
+            meta: mergedMeta,
             gallerySettings: {
               ...prevGallerySettings,
               level:
@@ -5125,6 +5155,23 @@ export const getPrivateModelCount = async ({ userId }: { userId: number }) => {
   });
 };
 
+/** Both steps of the private flow publish the model, so they honor the same moderation limits as `model.publish`. */
+function assertPrivateFlowPublishable({
+  status,
+  meta,
+  isModerator,
+}: {
+  status: ModelStatus;
+  meta: unknown;
+  isModerator?: boolean;
+}) {
+  if (isModerator) return;
+  if (constants.modPublishOnlyStatuses.includes(status))
+    throw throwAuthorizationError('You are not authorized to publish this model');
+  if ((meta as ModelMeta | null)?.cannotPublish)
+    throw throwBadRequestError('This model cannot be published due to moderation restrictions.');
+}
+
 export const privateModelFromTraining = async ({
   modelVersionIds,
   ...input
@@ -5133,12 +5180,15 @@ export const privateModelFromTraining = async ({
 }) => {
   const { id, tagsOnModels, user, templateId, bountyId, meta, status, ...data } = input;
 
-  const model = await dbRead.model.findUnique({
+  // Primary: the stored meta feeds a wholesale meta rewrite and the restore marker below.
+  const model = await dbWrite.model.findUnique({
     where: { id },
     select: {
       userId: true,
       lockedProperties: true,
       meta: true,
+      status: true,
+      availability: true,
     },
   });
 
@@ -5146,6 +5196,17 @@ export const privateModelFromTraining = async ({
 
   const isOwner = model.userId === user.id || user.isModerator;
   if (!isOwner) return null;
+
+  assertPrivateFlowPublishable({
+    status: model.status,
+    meta: model.meta,
+    isModerator: user.isModerator,
+  });
+
+  const storedMeta = model.meta as ModelMeta | null;
+  // A private model already had its cannotPromote forced on, so only a first entry can record a moderator's ban.
+  const restoreCannotPromote =
+    model.availability !== Availability.Private && storedMeta?.cannotPromote === true;
 
   enforceLockedProperties({
     data,
@@ -5204,11 +5265,18 @@ export const privateModelFromTraining = async ({
       data: {
         ...data,
         meta: {
-          ...(stripServerOwnedMeta(meta as ModelMeta) ?? {}),
-          // This write replaces meta wholesale, so the stored server-owned keys are carried over.
-          ...pickServerOwnedMeta(model.meta as ModelMeta | null),
+          // This write replaces meta wholesale. A moderator's form never holds the hidden
+          // moderation-owned keys, so they are carried under the moderator's input.
+          ...(user.isModerator
+            ? pickModerationOwnedMeta(storedMeta, { includeFlowKeys: false })
+            : {}),
+          ...(stripServerOwnedMeta(stripModerationOwnedMeta(meta as ModelMeta, user.isModerator)) ??
+            {}),
+          ...pickServerOwnedMeta(storedMeta),
+          ...(user.isModerator ? {} : pickModerationOwnedMeta(storedMeta)),
           // Makes it so these models cannot go into auctions or be promoted
           cannotPromote: true,
+          ...(restoreCannotPromote && { [RESTORE_CANNOT_PROMOTE_KEY]: true }),
         },
         availability: Availability.Private,
         status: ModelStatus.Published,
@@ -5283,13 +5351,17 @@ export const privateModelFromTraining = async ({
 export const publishPrivateModel = async ({
   modelId,
   publishVersions,
-}: PublishPrivateModelInput) => {
-  const model = await dbRead.model.findUnique({
+  isModerator,
+}: PublishPrivateModelInput & { isModerator?: boolean }) => {
+  // Primary: the stored meta decides the publish gates and the cannotPromote value restored.
+  const model = await dbWrite.model.findUnique({
     where: { id: modelId },
     select: { id: true, userId: true, availability: true, status: true, meta: true },
   });
 
   if (!model) throw throwNotFoundError('Model not found');
+
+  assertPrivateFlowPublishable({ status: model.status, meta: model.meta, isModerator });
 
   const versions = await dbRead.modelVersion.findMany({
     where: { modelId, status: ModelStatus.Published },
@@ -5325,6 +5397,11 @@ export const publishPrivateModel = async ({
       );
     }
   }
+
+  // Back to what a moderator had set before the private cycle forced cannotPromote on.
+  const { [RESTORE_CANNOT_PROMOTE_KEY]: restoreCannotPromote, ...storedMeta } = (model.meta ??
+    {}) as ModelMeta & Record<string, unknown>;
+  const publishedMeta = { ...storedMeta, cannotPromote: restoreCannotPromote === true };
 
   await dbWrite.$transaction(async (tx) => {
     // Availability + demotion to null flip unconditionally; the publish
@@ -5383,10 +5460,7 @@ export const publishPrivateModel = async ({
         status: publishVersions ? ModelStatus.Published : ModelStatus.Unpublished,
         // Same rationale as the ModelVersion write above.
         publishedAt: publishVersions ? undefined : null,
-        meta: {
-          ...((model.meta ?? {}) as ModelMeta),
-          cannotPromote: false,
-        },
+        meta: publishedMeta,
       },
       select: { id: true },
     });
@@ -5436,17 +5510,28 @@ export const toggleCannotPromote = async ({
 }) => {
   if (!isModerator) throw throwAuthorizationError();
 
-  const model = await getModel({ id, select: { id: true, meta: true } });
+  const model = await dbWrite.model.findUnique({
+    where: { id },
+    select: { id: true, meta: true, availability: true },
+  });
   if (!model) throw throwNotFoundError(`No model with id ${id}`);
 
   const modelMeta = model.meta as ModelMeta | null;
-  const currentCannotPromote = modelMeta?.cannotPromote ?? false;
+  const isPrivate = model.availability === Availability.Private;
+  // A private model has cannotPromote forced on, so the moderator's own decision is the marker.
+  const currentCannotPromote = isPrivate
+    ? (modelMeta as Record<string, unknown> | null)?.[RESTORE_CANNOT_PROMOTE_KEY] === true
+    : modelMeta?.cannotPromote ?? false;
   const cannotPromote = !currentCannotPromote;
 
   const updated = await dbWrite.model.update({
     where: { id },
     data: {
-      meta: modelMeta ? { ...modelMeta, cannotPromote } : { cannotPromote },
+      meta: isPrivate
+        ? withPrivateCannotPromote(modelMeta ?? {}, cannotPromote)
+        : modelMeta
+        ? { ...modelMeta, cannotPromote }
+        : { cannotPromote },
     },
     select: { id: true, meta: true },
   });

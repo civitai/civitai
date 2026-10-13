@@ -785,7 +785,16 @@ export function ModelUpsertForm({ id, model, children, onSubmit, modelVersionId 
 
                     dialogStore.trigger({
                       component: PrivateModelAutomaticSetup,
-                      props: { ...schema.parse(form.getValues()), modelVersionId },
+                      props: {
+                        ...schema.parse(form.getValues()),
+                        modelVersionId,
+                        // Nothing is stored until the dialog completes, so a dismissed one puts
+                        // the chip back on what the model actually is.
+                        onCancel: () => {
+                          form.setValue('availability', model?.availability ?? Availability.Public);
+                          form.setValue('sfwOnly', model?.sfwOnly ?? false);
+                        },
+                      },
                     });
 
                     return;
@@ -839,11 +848,16 @@ type Props = {
 
 export const PrivateModelAutomaticSetup = ({
   modelVersionId,
+  onCancel,
   ...form
-}: ModelUpsertSchema & { modelVersionId?: number }) => {
+}: ModelUpsertSchema & { modelVersionId?: number; onCancel?: () => void }) => {
   const dialog = useDialogContext();
   const utils = trpc.useUtils();
   const handleClose = dialog.onClose;
+  const handleDismiss = () => {
+    onCancel?.();
+    handleClose();
+  };
   const router = useRouter();
   const privateModelFromTrainingMutation = trpc.model.privateModelFromTraining.useMutation();
 
@@ -880,7 +894,7 @@ export const PrivateModelAutomaticSetup = ({
   };
 
   return (
-    <Modal {...dialog} size="lg" withCloseButton={false} radius="md">
+    <Modal {...dialog} onClose={handleDismiss} size="lg" withCloseButton={false} radius="md">
       <Group justify="space-between" mb="md">
         <Text size="lg" fw="bold">
           You are about to create a private model
@@ -896,7 +910,7 @@ export const PrivateModelAutomaticSetup = ({
         <Text fw="bold">Only PG (or SFW) content can be generated with private models.</Text>
         <Group ml="auto">
           <Button
-            onClick={handleClose}
+            onClick={handleDismiss}
             color="gray"
             disabled={privateModelFromTrainingMutation.isPending}
           >
