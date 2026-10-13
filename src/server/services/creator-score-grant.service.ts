@@ -30,23 +30,34 @@ const GRANT_LOCK_CLASS = 0x43530001;
 type RawClient = Pick<Prisma.TransactionClient, '$queryRawUnsafe'>;
 
 /**
+ * Taken first in every grant and revoke transaction, before anything writes. Two grants for one
+ * account each sum the ledger, and this makes the second wait for the first to commit so its sum
+ * includes the first's row. It must come before the ledger insert: that insert's foreign key takes
+ * KEY SHARE on this row, and two transactions holding that while each asked for the row would
+ * deadlock. NO KEY UPDATE is the level the score UPDATE takes anyway, and it does not block
+ * unrelated inserts that reference the user.
+ */
+export async function lockScoreRow(tx: RawClient, userId: number) {
+  await tx.$queryRawUnsafe(`SELECT id FROM "User" WHERE id = $1 FOR NO KEY UPDATE`, userId);
+}
+
+/**
  * Rewrites `User.meta.scores.staffAwarded` as the sum of the account's unrevoked grants and
  * recomputes `total` through the score job's own statement, so a grant and the nightly job can never
  * disagree on what the total is made of. Absolute rather than an increment: a revoke, a retry or a
- * hand-edited ledger row all converge on the ledger.
+ * hand-edited ledger row all converge on the ledger. The caller holds `lockScoreRow`.
  */
 export async function syncStaffAwarded(
   tx: RawClient,
   userId: number
 ): Promise<ScoreTotalTransition> {
-  // Two grants for one account each sum the ledger. The row lock makes the second wait for the
-  // first to commit, so its sum includes the first's row instead of overwriting it.
-  await tx.$queryRawUnsafe(`SELECT id FROM "User" WHERE id = $1 FOR UPDATE`, userId);
-  const [{ staffAwarded }] = await tx.$queryRawUnsafe<{ staffAwarded: number }[]>(
+  const [row] = await tx.$queryRawUnsafe<{ staffAwarded: unknown }[]>(
     `SELECT COALESCE(SUM(amount), 0)::int AS "staffAwarded"
      FROM "CreatorScoreGrant" WHERE "userId" = $1 AND "revokedAt" IS NULL`,
     userId
   );
+  // Number(): a driver can hand an integer back as a BigInt, which the score JSON cannot serialise.
+  const staffAwarded = Number(row?.staffAwarded ?? 0);
   const rows = await tx.$queryRawUnsafe<UserScoreUpdateRow[]>(
     userScoreUpdateSql([[String(userId), { staffAwarded }]])
   );
@@ -106,6 +117,7 @@ export async function grantCreatorScore({
     // Serialises one moderator's grants so two concurrent requests cannot both pass the cap.
     // Both arguments int4: Prisma binds a JS number as int8, and there is no (int4, int8) overload.
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(${GRANT_LOCK_CLASS}::int, ${moderatorId}::int)`;
+    await lockScoreRow(tx, userId);
 
     const granted = await tx.creatorScoreGrant.count({
       where: {
@@ -157,6 +169,7 @@ export async function revokeCreatorScoreGrant({
     );
 
   return dbWrite.$transaction(async (tx) => {
+    await lockScoreRow(tx, userId);
     const now = new Date();
     // Scoped to the account, so a grant cannot be revoked from another user's page; guarded on
     // still being active, so two revokes cannot both write an audit row.

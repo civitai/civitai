@@ -9,6 +9,7 @@ import { pgDbWrite } from '~/server/db/pgDb';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import type { CreatorScoreUnlock } from '~/shared/utils/creator-score-unlocks';
+import { CREATOR_SCORE_CATEGORIES } from '~/shared/utils/creator-score';
 import { REPORTS_AGAINST_EVENT } from '~/shared/constants/creator-journey.constants';
 import {
   countRemovalsByOwner,
@@ -507,6 +508,11 @@ export function toScoreTotalTransitions(rows: UserScoreUpdateRow[]): ScoreTotalT
   }));
 }
 
+const TOTAL_SQL = CREATOR_SCORE_CATEGORIES.map(
+  (category) =>
+    `COALESCE((s.scores->>'${category}')::numeric, (u.meta->'scores'->>'${category}')::numeric, 0)`
+).join(' + ');
+
 // Scores are numbers from our own queries, never user text, so inlining the JSON is safe.
 export function userScoreUpdateSql(records: [string, Partial<Record<ScoreCategory, number>>][]) {
   const dataJson = JSON.stringify(records.map(([id, scores]) => ({ id: +id, scores })));
@@ -514,13 +520,7 @@ export function userScoreUpdateSql(records: [string, Partial<Record<ScoreCategor
     WITH scores AS (SELECT * FROM jsonb_to_recordset('${dataJson}') AS x("id" int, "scores" jsonb))
     UPDATE "User" u
       SET meta = jsonb_set(COALESCE(u.meta, '{}'), '{scores}', COALESCE(u.meta->'scores', '{}') || s.scores || jsonb_build_object('total',
-          COALESCE((s.scores->>'models')::numeric, (u.meta->'scores'->>'models')::numeric, 0)
-          + COALESCE((s.scores->>'articles')::numeric, (u.meta->'scores'->>'articles')::numeric, 0)
-          + COALESCE((s.scores->>'images')::numeric, (u.meta->'scores'->>'images')::numeric, 0)
-          + COALESCE((s.scores->>'users')::numeric, (u.meta->'scores'->>'users')::numeric, 0)
-          + COALESCE((s.scores->>'reportsActioned')::numeric, (u.meta->'scores'->>'reportsActioned')::numeric, 0)
-          + COALESCE((s.scores->>'reportsAgainst')::numeric, (u.meta->'scores'->>'reportsAgainst')::numeric, 0)
-          + COALESCE((s.scores->>'staffAwarded')::numeric, (u.meta->'scores'->>'staffAwarded')::numeric, 0)
+          ${TOTAL_SQL}
         )
       )
     FROM scores s

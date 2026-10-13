@@ -4,6 +4,7 @@ import { PGlite } from '@electric-sql/pglite';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { applyUserScoreUpdates } from '~/server/jobs/update-user-score';
 import { syncStaffAwarded } from '~/server/services/creator-score-grant.service';
+import { creatorScoreCategorySumSql } from '~/shared/utils/creator-score';
 
 // Booting PGlite (WASM Postgres) can exceed the default hook timeout on a contended runner.
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
@@ -54,7 +55,8 @@ async function addGrant(amount: number, revoked = false) {
 }
 
 beforeAll(async () => {
-  holder.db = new PGlite();
+  // int8 as BigInt, as the Prisma driver returns it, so a sum the service fails to narrow throws here.
+  holder.db = new PGlite({ parsers: { 20: (value: string) => BigInt(value) } });
   await holder.db.exec(`CREATE TABLE "User" (id int PRIMARY KEY, meta jsonb)`);
   await holder.db.exec(readFileSync(MIGRATION, 'utf8'));
 });
@@ -101,6 +103,16 @@ describe('syncStaffAwarded', () => {
     await syncStaffAwarded(tx, CREATOR);
     await syncStaffAwarded(tx, CREATOR);
     expect(await scores(CREATOR)).toMatchObject({ staffAwarded: 300, total: 1500 });
+  });
+});
+
+describe('creatorScoreCategorySumSql', () => {
+  it('sums every category, staff awarded included, with an absent one as 0', async () => {
+    const [{ score }] = await q<{ score: string }>(
+      `SELECT ${creatorScoreCategorySumSql('m')} AS score FROM (SELECT $1::jsonb AS m) t`,
+      [{ scores: { models: 100, reportsAgainst: -30, staffAwarded: 400, total: 9999 } }]
+    );
+    expect(Number(score)).toBe(470);
   });
 });
 

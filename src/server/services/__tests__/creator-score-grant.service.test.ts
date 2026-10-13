@@ -62,15 +62,16 @@ beforeEach(() => {
       order.push('lock');
       return [];
     }),
-    // Answers the three statements of the score sync by what they are.
+    // Answers the row lock and the two statements of the score sync by what they are. The sum
+    // comes back as a BigInt, as a driver may return an integer.
     $queryRawUnsafe: vi.fn(async (sql: string) => {
-      if (sql.includes('FOR UPDATE')) {
+      if (sql.includes('FOR NO KEY UPDATE')) {
         order.push('rowLock');
         return [{ id: TARGET }];
       }
       if (sql.includes('SUM(amount)')) {
         order.push('sum');
-        return [{ staffAwarded: 250 }];
+        return [{ staffAwarded: BigInt(250) }];
       }
       order.push('score');
       return [{ userId: TARGET, oldTotal: '1000', newTotal: '1250' }];
@@ -187,7 +188,7 @@ describe('daily cap per moderator', () => {
     ];
     expect(strings.join('?')).toBe('SELECT pg_advisory_xact_lock(?::int, ?::int)');
     expect(values).toEqual([0x43530001, MODERATOR]);
-    expect(order.slice(0, 2)).toEqual(['lock', 'count']);
+    expect(order.slice(0, 3)).toEqual(['lock', 'rowLock', 'count']);
   });
 });
 
@@ -195,7 +196,17 @@ describe('what a grant writes', () => {
   it('writes the grant, its audit row and the new score in one transaction, in that order', async () => {
     const result = await grantCreatorScore(valid());
 
-    expect(order).toEqual(['lock', 'count', 'create', 'activity', 'rowLock', 'sum', 'score']);
+    // The target's row lock comes before the insert: the insert's foreign key takes KEY SHARE on
+    // that row, and locking it afterwards would deadlock two moderators granting to one account.
+    expect(order).toEqual(['lock', 'rowLock', 'count', 'create', 'activity', 'sum', 'score']);
+    expect(tx.$queryRawUnsafe.mock.calls[0]).toEqual([
+      'SELECT id FROM "User" WHERE id = $1 FOR NO KEY UPDATE',
+      TARGET,
+    ]);
+    expect(tx.$queryRawUnsafe.mock.calls[1][1]).toBe(TARGET);
+    expect(tx.$queryRawUnsafe.mock.calls[2][0]).toContain(
+      `[{"id":${TARGET},"scores":{"staffAwarded":250}}]`
+    );
     expect(tx.creatorScoreGrant.create).toHaveBeenCalledWith({
       data: { userId: TARGET, amount: 250, reason: 'Contest judge', grantedById: MODERATOR },
       select: { id: true, amount: true, createdAt: true },
@@ -247,7 +258,8 @@ describe('revoke', () => {
       { entityType: 'user', entityId: TARGET, activity: 'revokeCreatorScore:7' },
       tx
     );
-    expect(order).toEqual(['revoke', 'activity', 'rowLock', 'sum', 'score']);
+    expect(order).toEqual(['rowLock', 'revoke', 'activity', 'sum', 'score']);
+    expect(tx.$queryRawUnsafe.mock.calls[0][1]).toBe(TARGET);
     expect(result).toEqual({ id: 7, revokedAt: NOW, total: 1250 });
   });
 
@@ -258,7 +270,7 @@ describe('revoke', () => {
       code: 'NOT_FOUND',
     });
     expect(trackModActivity).not.toHaveBeenCalled();
-    expect(tx.$queryRawUnsafe).not.toHaveBeenCalled();
+    expect(order).toEqual(['rowLock']);
   });
 
   it('refuses an already-revoked grant (409) and rescores nothing', async () => {

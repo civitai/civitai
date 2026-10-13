@@ -26,9 +26,10 @@ describe('the Creator Score category list', () => {
     );
   });
 
-  it.each(CREATOR_SCORE_CATEGORIES)("getCreatorRequirements' GREATEST sums %s", (category) => {
+  // The sum itself is run against Postgres in creator-score-grant.behavior.test.ts.
+  it("getCreatorRequirements' GREATEST sums the shared list", () => {
     expect(read('src/server/services/creator-program.service.ts')).toContain(
-      `COALESCE((u.meta->'scores'->>'${category}')::numeric, 0)`
+      "${Prisma.raw(creatorScoreCategorySumSql('u.meta'))},"
     );
   });
 

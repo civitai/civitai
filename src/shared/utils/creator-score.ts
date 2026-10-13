@@ -25,8 +25,8 @@ export function creatorScoreFromSession(user: { meta?: unknown } | null | undefi
 
 /**
  * Every per-category score `User.meta.scores.total` sums. `staffAwarded` is written by the moderator
- * grant tool, the rest by the nightly score job. The job's total and `getCreatorRequirements` spell
- * this list out in SQL, and Creator Studio keeps its own copy; a parity test holds them to it.
+ * grant tool, the rest by the nightly score job. The job's total and `getCreatorRequirements` build
+ * their SQL from this list; Creator Studio keeps its own copy, held to it by a parity test.
  */
 export const CREATOR_SCORE_CATEGORIES = [
   'models',
@@ -37,6 +37,13 @@ export const CREATOR_SCORE_CATEGORIES = [
   'reportsAgainst',
   'staffAwarded',
 ] as const;
+
+/** SQL summing every category under `<meta>->'scores'`; an absent category reads as 0. */
+export function creatorScoreCategorySumSql(meta: string) {
+  return CREATOR_SCORE_CATEGORIES.map(
+    (category) => `COALESCE((${meta}->'scores'->>'${category}')::numeric, 0)`
+  ).join(' + ');
+}
 
 type UserMetaCategoryScores = {
   scores?: Partial<Record<(typeof CREATOR_SCORE_CATEGORIES)[number] | 'total', unknown>>;
