@@ -33,25 +33,41 @@ beforeAll(async () => {
       minor boolean NOT NULL DEFAULT false,
       poi boolean NOT NULL DEFAULT false
     );
-    CREATE TABLE "ScanLabelItem" (
-      id serial PRIMARY KEY,
-      "imageId" int NOT NULL UNIQUE REFERENCES "Image"(id) ON DELETE CASCADE,
-      lane text NOT NULL,
-      "firstFlaggedAt" timestamptz NOT NULL,
-      status text NOT NULL,
-      votes smallint NOT NULL DEFAULT 0,
-      outcome text
+    -- "ScanLabelItem" and "ScanLabelFlag" exactly as the scan-label-queue migration creates them.
+    CREATE TABLE IF NOT EXISTS "ScanLabelItem" (
+      "id"             SERIAL PRIMARY KEY,
+      "imageId"        INTEGER NOT NULL REFERENCES "Image"("id") ON DELETE CASCADE,
+      "lane"           TEXT NOT NULL DEFAULT 'flagged' CHECK ("lane" IN ('flagged', 'control')),
+      "firstFlaggedAt" TIMESTAMPTZ(3) NOT NULL,
+      "status"         TEXT NOT NULL DEFAULT 'open' CHECK ("status" IN ('open', 'decided', 'void')),
+      "voidReason"     TEXT,
+      "votes"          SMALLINT NOT NULL DEFAULT 0 CHECK ("votes" BETWEEN 0 AND 3),
+      "blockVotes"     SMALLINT NOT NULL DEFAULT 0 CHECK ("blockVotes" BETWEEN 0 AND "votes"),
+      "outcome"        TEXT CHECK ("outcome" IN ('block', 'clear')),
+      "unanimous"      BOOLEAN,
+      "decidedAt"      TIMESTAMPTZ(3),
+      "actionedAt"     TIMESTAMPTZ(3),
+      "actionError"    TEXT,
+      "createdAt"      TIMESTAMPTZ(3) NOT NULL DEFAULT now()
     );
-    CREATE TABLE "ScanLabelFlag" (
-      id serial PRIMARY KEY,
-      "itemId" int NOT NULL REFERENCES "ScanLabelItem"(id) ON DELETE CASCADE,
-      source text NOT NULL,
-      "flaggerVersion" text NOT NULL,
-      reason text,
-      "workflowId" text NOT NULL UNIQUE,
-      "flaggedAt" timestamptz NOT NULL,
-      snapshot jsonb NOT NULL
+
+    CREATE UNIQUE INDEX IF NOT EXISTS "ScanLabelItem_imageId_key" ON "ScanLabelItem" ("imageId");
+    CREATE INDEX IF NOT EXISTS "ScanLabelItem_queue_idx"
+      ON "ScanLabelItem" ("status", "votes" DESC, "firstFlaggedAt" DESC);
+
+    CREATE TABLE IF NOT EXISTS "ScanLabelFlag" (
+      "id"             SERIAL PRIMARY KEY,
+      "itemId"         INTEGER NOT NULL REFERENCES "ScanLabelItem"("id") ON DELETE CASCADE,
+      "source"         TEXT NOT NULL CHECK ("source" IN ('orchestrator-scan', 'xguard-prompt', 'control-sample')),
+      "flaggerVersion" TEXT NOT NULL,
+      "reason"         TEXT,
+      "workflowId"     TEXT NOT NULL,
+      "flaggedAt"      TIMESTAMPTZ(3) NOT NULL,
+      "snapshot"       JSONB,
+      "createdAt"      TIMESTAMPTZ(3) NOT NULL DEFAULT now()
     );
+
+    CREATE UNIQUE INDEX IF NOT EXISTS "ScanLabelFlag_workflowId_key" ON "ScanLabelFlag" ("workflowId");
   `);
 });
 
@@ -169,6 +185,19 @@ describe('recordScanLabelFlag', () => {
 
     expect((await items())[0].status).toBe('decided');
     expect(await flags()).toHaveLength(2);
+  });
+
+  it('leaves a control-lane item in its lane', async () => {
+    await holder.db.exec(
+      `INSERT INTO "ScanLabelItem" ("imageId", lane, "firstFlaggedAt") VALUES (${IMAGE}, 'control', now())`
+    );
+
+    await flag();
+
+    expect((await holder.db.query(`SELECT lane FROM "ScanLabelItem"`)).rows).toEqual([
+      { lane: 'control' },
+    ]);
+    expect(await flags()).toHaveLength(1);
   });
 
   it('writes nothing while the flag is off', async () => {
