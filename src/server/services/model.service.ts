@@ -140,10 +140,7 @@ import { submitModelTextModeration } from '~/server/services/model-moderation.ad
 import { summarizeTextScan } from '~/server/services/text-scan/moderator-summary';
 import { reassertModelPoiRestrictions } from '~/server/services/text-scan/actions/model-poi-minor';
 import type { holdModelForLiteralRules } from '~/server/services/text-scan/actions/model-rules';
-import {
-  getModelRuleSubjects,
-  modelRulesUnpublishDetail,
-} from '~/server/services/text-scan/model-rules';
+import { loadModelRulesUnpublishDetail } from '~/server/services/text-scan/model-rules';
 import { checkModelRulesLiteralHold } from '~/server/services/text-scan/model-rules-hold';
 import { legacyProfanityAutoNsfwApplies } from '~/server/services/text-scan/route';
 import { scanEntityInBackground, scanModelAndRules } from '~/server/services/text-scan/submit';
@@ -5147,7 +5144,7 @@ export async function getModelModerationDetail({ id }: { id: number }) {
   if (!model) throw throwNotFoundError(`No model with id ${id}`);
 
   const meta = (model.meta ?? {}) as ModelMeta;
-  const subjects = await getModelRuleSubjects(meta.modelRules?.ruleIds ?? []);
+  const modelRules = await loadModelRulesUnpublishDetail(meta);
   return {
     id: model.id,
     name: model.name,
@@ -5175,7 +5172,7 @@ export async function getModelModerationDetail({ id }: { id: number }) {
     unpublishedAt: meta.unpublishedAt ?? null,
     unpublishedBy: meta.unpublishedBy ?? null,
     unpublishedReason: meta.unpublishedReason ?? null,
-    modelRules: modelRulesUnpublishDetail(meta, subjects),
+    modelRules,
     takenDownAt: meta.takenDownAt ?? null,
     takenDownBy: meta.takenDownBy ?? null,
     needsReview: meta.needsReview ?? false,

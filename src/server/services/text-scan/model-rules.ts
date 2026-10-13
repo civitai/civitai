@@ -1,6 +1,7 @@
 import { semanticModelRuleSchema } from '@civitai/moderation/model-rules';
 import { CacheTTL } from '~/server/common/constants';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { logToAxiom } from '~/server/logging/client';
 import type { ModelMeta } from '~/server/schema/model.schema';
 import { REDIS_KEYS } from '~/server/redis/client';
 import { hashContent } from '~/server/services/entity-moderation.service';
@@ -187,4 +188,26 @@ export function modelRulesUnpublishDetail(
     source: taken.source === 'literal' ? 'literal' : 'model',
     rules: taken.ruleIds.map((id) => ({ id, subject: subjects.get(id) ?? null })),
   };
+}
+
+/** Best effort: a failed subject lookup names the rules by id rather than failing the moderator panel. */
+export async function loadModelRulesUnpublishDetail(
+  meta: Pick<ModelMeta, 'modelRules' | 'unpublishedReason' | 'customMessage'>
+): Promise<ModelRulesUnpublishDetail | null> {
+  const detail = modelRulesUnpublishDetail(meta, new Map());
+  if (!detail) return null;
+  try {
+    return modelRulesUnpublishDetail(
+      meta,
+      await getModelRuleSubjects(detail.rules.map((r) => r.id))
+    );
+  } catch (error) {
+    logToAxiom({
+      type: 'error',
+      name: 'text-scan',
+      message: 'Failed to load Model rule subjects for the moderation panel',
+      error,
+    });
+    return detail;
+  }
 }

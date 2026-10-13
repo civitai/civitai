@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as LoggingClient from '~/server/logging/client';
 import type * as CacheHelpers from '~/server/utils/cache-helpers';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
@@ -8,8 +9,14 @@ vi.mock('~/server/utils/cache-helpers', async (importOriginal) => ({
   bustFetchThroughCache: vi.fn(),
 }));
 
+vi.mock('~/server/logging/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof LoggingClient>()),
+  logToAxiom: vi.fn(),
+}));
+
 const {
   filterModelRuleMatches,
+  loadModelRulesUnpublishDetail,
   getModelRuleSnapshots,
   getModelRuleSubjects,
   MODEL_RULES_UNPUBLISH_MESSAGE,
@@ -184,5 +191,23 @@ describe('naming the rules behind a Model rules unpublish', () => {
       select: { id: true, definition: true },
     });
     expect(await getModelRuleSubjects([])).toEqual(new Map());
+  });
+
+  it('still names the rules by id when the subject lookup fails', async () => {
+    dbMock.dbRead.moderationRule.findMany.mockRejectedValue(new Error('db down'));
+    await expect(loadModelRulesUnpublishDetail(meta())).resolves.toEqual({
+      source: 'literal',
+      rules: [
+        { id: 446, subject: null },
+        { id: 9, subject: null },
+      ],
+    });
+  });
+
+  it('skips the subject lookup when the unpublish was not the Model rules one', async () => {
+    await expect(
+      loadModelRulesUnpublishDetail(meta({ customMessage: 'something else' }))
+    ).resolves.toBeNull();
+    expect(dbMock.dbRead.moderationRule.findMany).not.toHaveBeenCalled();
   });
 });
