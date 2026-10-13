@@ -1,6 +1,7 @@
 import { semanticModelRuleSchema } from '@civitai/moderation/model-rules';
 import { CacheTTL } from '~/server/common/constants';
-import { dbWrite } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
+import type { ModelMeta } from '~/server/schema/model.schema';
 import { REDIS_KEYS } from '~/server/redis/client';
 import { hashContent } from '~/server/services/entity-moderation.service';
 import { fetchThroughCache } from '~/server/utils/cache-helpers';
@@ -144,4 +145,46 @@ export function applyModelRuleOverrides(
   for (const edit of overrides)
     if (!liveIds.has(edit.id) && edit.enabled) merged.push(toRule(edit));
   return merged;
+}
+
+// Rendered to the owner by the unpublish notification for reason `other`; it must never name the rule.
+export const MODEL_RULES_UNPUBLISH_MESSAGE =
+  'This model was unpublished because it matched one of our content rules. A moderator will review it.';
+
+/** Subjects by id, enabled or not, so a moderator can read which rule acted even after it was disabled. */
+export async function getModelRuleSubjects(ids: number[]): Promise<Map<number, string>> {
+  if (!ids.length) return new Map();
+  const rows = await dbRead.moderationRule.findMany({
+    where: { id: { in: ids }, entityType: EntityType.Model },
+    select: { id: true, definition: true },
+  });
+  return new Map(
+    rows.flatMap((row) => {
+      const parsed = semanticModelRuleSchema.safeParse(row.definition);
+      return parsed.success ? [[row.id, parsed.data.subject] as const] : [];
+    })
+  );
+}
+
+export type ModelRulesUnpublishDetail = {
+  source: 'literal' | 'model';
+  rules: { id: number; subject: string | null }[];
+};
+
+/** For the moderator panel: the rules behind the current unpublish, when the Model rules unpublished it. */
+export function modelRulesUnpublishDetail(
+  meta: Pick<ModelMeta, 'modelRules' | 'unpublishedReason' | 'customMessage'>,
+  subjects: ReadonlyMap<number, string>
+): ModelRulesUnpublishDetail | null {
+  const taken = meta.modelRules;
+  if (
+    !taken?.ruleIds?.length ||
+    meta.unpublishedReason !== 'other' ||
+    meta.customMessage !== MODEL_RULES_UNPUBLISH_MESSAGE
+  )
+    return null;
+  return {
+    source: taken.source === 'literal' ? 'literal' : 'model',
+    rules: taken.ruleIds.map((id) => ({ id, subject: subjects.get(id) ?? null })),
+  };
 }

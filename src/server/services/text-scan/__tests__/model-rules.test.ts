@@ -11,6 +11,9 @@ vi.mock('~/server/utils/cache-helpers', async (importOriginal) => ({
 const {
   filterModelRuleMatches,
   getModelRuleSnapshots,
+  getModelRuleSubjects,
+  MODEL_RULES_UNPUBLISH_MESSAGE,
+  modelRulesUnpublishDetail,
   getModelRulesForPrompt,
   modelRulesFingerprint,
   renderModelRulesBlock,
@@ -128,5 +131,58 @@ describe('getModelRuleSnapshots', () => {
   it('skips the query for no ids', async () => {
     await expect(getModelRuleSnapshots([])).resolves.toEqual([]);
     expect(dbMock.dbWrite.moderationRule.findMany).not.toHaveBeenCalled();
+  });
+});
+
+describe('naming the rules behind a Model rules unpublish', () => {
+  const meta = (over: Record<string, unknown> = {}) => ({
+    unpublishedReason: 'other' as const,
+    customMessage: MODEL_RULES_UNPUBLISH_MESSAGE,
+    modelRules: {
+      ruleIds: [446, 9],
+      workflowId: 'literal:h:9,446',
+      textHash: 'h',
+      at: 'x',
+      source: 'literal' as const,
+    },
+    ...over,
+  });
+
+  it('lists the rules by subject, by id when a subject is unknown', () => {
+    expect(modelRulesUnpublishDetail(meta(), new Map([[446, 'Example']]))).toEqual({
+      source: 'literal',
+      rules: [
+        { id: 446, subject: 'Example' },
+        { id: 9, subject: null },
+      ],
+    });
+  });
+
+  it('calls an LLM match a scan match', () => {
+    const llm = meta({ modelRules: { ruleIds: [1], workflowId: 'wf', textHash: 'h', at: 'x' } });
+    expect(modelRulesUnpublishDetail(llm, new Map())?.source).toBe('model');
+  });
+
+  it('is null when the unpublish was not the Model rules one', () => {
+    expect(
+      modelRulesUnpublishDetail(meta({ customMessage: 'something else' }), new Map())
+    ).toBeNull();
+    expect(modelRulesUnpublishDetail({ unpublishedReason: 'other' }, new Map())).toBeNull();
+  });
+
+  it('reads subjects of Model rules in any enabled state, skipping regex rows', async () => {
+    dbMock.dbRead.moderationRule.findMany.mockResolvedValue([
+      {
+        id: 446,
+        definition: { type: 'semantic', subject: 'Example', description: '', aliases: [] },
+      },
+      { id: 9, definition: { match: 'x' } },
+    ]);
+    expect(await getModelRuleSubjects([446, 9])).toEqual(new Map([[446, 'Example']]));
+    expect(dbMock.dbRead.moderationRule.findMany).toHaveBeenCalledWith({
+      where: { id: { in: [446, 9] }, entityType: 'Model' },
+      select: { id: true, definition: true },
+    });
+    expect(await getModelRuleSubjects([])).toEqual(new Map());
   });
 });

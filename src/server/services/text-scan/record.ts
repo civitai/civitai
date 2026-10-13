@@ -138,3 +138,45 @@ export async function recordTextScanFailure({
   });
   return updated.count > 0;
 }
+
+/**
+ * A literal Model rules hold, recorded where the moderator app's Matches list reads. No content hash:
+ * the scan after a moderator's republish must never be skipped as "unchanged" because of this row.
+ */
+export async function recordModelRulesLiteralHold({
+  entityId,
+  workflowId,
+  textHash,
+  literalRuleIds,
+  snapshot,
+}: {
+  entityId: number;
+  workflowId: string;
+  textHash: string;
+  literalRuleIds: number[];
+  snapshot: ModelRuleSnapshot[];
+}) {
+  const result: TextScanResult = {
+    version: 1,
+    labels: {},
+    promptIds: {},
+    model: 'literal',
+    textHash,
+    meta: { heldAtPublish: true },
+    modelRules: { snapshot, literalRuleIds },
+  };
+  const data = {
+    workflowId,
+    contentHash: null,
+    status: EntityModerationStatus.Succeeded,
+    blocked: false,
+    triggeredLabels: [MODEL_RULES_LITERAL_LABEL],
+    nsfwLevel: null,
+    result: result as unknown as Prisma.InputJsonValue,
+  };
+  await dbWrite.entityModeration.upsert({
+    where: { entityType_entityId: { entityType: 'ModelRules', entityId } },
+    create: { entityType: 'ModelRules', entityId, ...data },
+    update: data,
+  });
+}

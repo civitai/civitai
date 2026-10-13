@@ -199,7 +199,9 @@ export function ModelModerationCard({
                           these policies return no matched terms. */}
                       <Text size="xs" c="dimmed">
                         {data.textModeration.labels
-                          .map((l) => `${l.label} ${l.score.toFixed(2)} / ${l.threshold.toFixed(2)}`)
+                          .map(
+                            (l) => `${l.label} ${l.score.toFixed(2)} / ${l.threshold.toFixed(2)}`
+                          )
                           .join(' · ')}
                       </Text>
                       {data.textModeration.matchedTerms.length > 0 && (
@@ -233,7 +235,17 @@ export function ModelModerationCard({
                   {data.unpublishedAt && (
                     <Text size="xs">
                       Unpublished {formatDate(data.unpublishedAt)}
-                      {data.unpublishedReason ? ` — ${data.unpublishedReason}` : ''}
+                      {data.modelRules
+                        ? ` — Model rules, ${
+                            data.modelRules.source === 'literal'
+                              ? 'named at publish'
+                              : 'matched by the scan'
+                          }: ${data.modelRules.rules
+                            .map((rule) => rule.subject ?? `rule ${rule.id}`)
+                            .join(', ')}`
+                        : data.unpublishedReason
+                        ? ` — ${data.unpublishedReason}`
+                        : ''}
                     </Text>
                   )}
                   {data.takenDownAt && (

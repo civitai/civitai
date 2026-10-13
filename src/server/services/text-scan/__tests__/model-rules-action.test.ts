@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import '~/__tests__/mocks/logging.mock';
 
 const { unpublishModelById, refreshModelData, bustPublicModelResponseCache } = vi.hoisted(() => ({
   unpublishModelById: vi.fn(),
@@ -250,5 +251,53 @@ describe('withModelRulesClearance', () => {
     });
     expect(withModelRulesClearance({ foo: 1 } as never, stored, false)).toEqual({ foo: 1 });
     expect(withModelRulesClearance({ foo: 1 } as never, {}, true)).toEqual({ foo: 1 });
+  });
+});
+
+describe('recording a literal hold where Matches reads', () => {
+  const holdRow = () => dbMock.dbWrite.entityModeration.upsert.mock.calls[0][0];
+
+  beforeEach(() => {
+    dbMock.dbWrite.moderationRule.findMany.mockResolvedValue([
+      { id: 3, definition: { type: 'semantic', subject: 'Example', description: '', aliases: [] } },
+    ]);
+  });
+
+  it('upserts the ModelRules row as a literal-only match held at publish, with no content hash', async () => {
+    await holdModelForLiteralRules({ modelId: 7, ruleIds: [3], textHash: 'h1' });
+
+    const { where, create, update } = holdRow();
+    expect(where).toEqual({ entityType_entityId: { entityType: 'ModelRules', entityId: 7 } });
+    expect(update).toMatchObject({
+      workflowId: 'literal:h1:3',
+      contentHash: null,
+      status: 'Succeeded',
+      triggeredLabels: ['modelRulesLiteral'],
+      result: {
+        version: 1,
+        textHash: 'h1',
+        meta: { heldAtPublish: true },
+        modelRules: {
+          literalRuleIds: [3],
+          snapshot: [expect.objectContaining({ id: 3, subject: 'Example' })],
+        },
+      },
+    });
+    expect(create).toMatchObject({ entityType: 'ModelRules', entityId: 7, ...update });
+  });
+
+  it('records a live takedown only when it happened', async () => {
+    dbMock.dbWrite.$executeRaw.mockResolvedValueOnce(1).mockResolvedValueOnce(0);
+    await unpublishLiveModelForLiteralRules({ modelId: 7, ruleIds: [3], textHash: 'h1' });
+    await unpublishLiveModelForLiteralRules({ modelId: 7, ruleIds: [3], textHash: 'h1' });
+    expect(dbMock.dbWrite.entityModeration.upsert).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the hold when the record fails', async () => {
+    dbMock.dbWrite.entityModeration.upsert.mockRejectedValueOnce(new Error('db down'));
+    await expect(
+      holdModelForLiteralRules({ modelId: 7, ruleIds: [3], textHash: 'h1' })
+    ).resolves.toBeUndefined();
+    expect(unpublishModelById).toHaveBeenCalledTimes(1);
   });
 });

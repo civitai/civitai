@@ -102,6 +102,9 @@
             </TableCell>
             <TableCell class="align-top">
               <Badge variant={row.mode === 'active' ? 'default' : 'secondary'}>{row.mode}</Badge>
+              {#if row.heldAtPublish}
+                <Badge variant="outline" class="ml-1">held at publish</Badge>
+              {/if}
             </TableCell>
             <TableCell class="whitespace-normal align-top">
               <ul class="flex flex-col gap-2">

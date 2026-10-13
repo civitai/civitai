@@ -143,3 +143,7 @@ export function parseMatchCursor(cursor: string | undefined) {
   const match = cursor?.match(/^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d{1,6})?)\|(\d+)$/);
   return match ? { updatedAt: match[1], id: Number(match[2]) } : undefined;
 }
+
+/** A row written by the publish-time literal hold rather than by a scan. */
+export const isHeldAtPublish = (result: unknown): boolean =>
+  isRecord(result) && isRecord(result.meta) && result.meta.heldAtPublish === true;

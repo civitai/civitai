@@ -3,6 +3,7 @@ import type { DB } from '@civitai/db-schema/kysely';
 import { REDIS_KEYS, type RedisKeyTemplateCache } from '@civitai/redis';
 import { convertLegacyModelRule } from '@civitai/moderation/model-rules-convert';
 import {
+  isHeldAtPublish,
   isSemanticDefinition,
   parseMatchCursor,
   parseRuleMatches,
@@ -410,6 +411,7 @@ export type ModelRuleMatchRow = {
   mode: 'shadow' | 'active';
   scannedAt: Date;
   matches: RuleMatch[];
+  heldAtPublish: boolean;
 };
 
 /**
@@ -477,6 +479,7 @@ export async function getModelRuleMatches({
       mode: r.entityType === 'ModelRules:shadow' ? 'shadow' : 'active',
       scannedAt: r.updatedAt,
       matches: parseRuleMatches(r.result),
+      heldAtPublish: isHeldAtPublish(r.result),
     })),
     nextCursor: page.nextCursor,
   };

@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
+  isHeldAtPublish,
   modelRuleFormSchema,
   parseAliases,
   parseMatchCursor,
@@ -137,5 +138,13 @@ describe('Matches list and its partial index', () => {
 
   it('filters by rule id on literal hits as well as model matches', () => {
     expect(service).toContain("{modelRules,literalRuleIds}'");
+  });
+});
+
+describe('isHeldAtPublish', () => {
+  it('is true only for a row the publish-time literal hold wrote', () => {
+    expect(isHeldAtPublish({ meta: { heldAtPublish: true } })).toBe(true);
+    expect(isHeldAtPublish({ meta: {} })).toBe(false);
+    expect(isHeldAtPublish(null)).toBe(false);
   });
 });

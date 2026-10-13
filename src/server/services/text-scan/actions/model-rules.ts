@@ -1,13 +1,17 @@
 import { constants } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
+import { logToAxiom } from '~/server/logging/client';
 import { dataForModelsCache } from '~/server/redis/caches';
 import type { ModelMeta } from '~/server/schema/model.schema';
 import { bustPublicModelResponseCache } from '~/server/services/model-version.service';
 import type { ApplyTextScanArgs } from '~/server/services/text-scan/actions/types';
+import {
+  MODEL_RULES_UNPUBLISH_MESSAGE,
+  getModelRuleSnapshots,
+} from '~/server/services/text-scan/model-rules';
+import { recordModelRulesLiteralHold } from '~/server/services/text-scan/record';
 
-// Rendered to the owner by the unpublish notification for reason `other`; it must never name the rule.
-export const MODEL_RULES_UNPUBLISH_MESSAGE =
-  'This model was unpublished because it matched one of our content rules. A moderator will review it.';
+export { MODEL_RULES_UNPUBLISH_MESSAGE };
 
 // Dynamic: model.service imports the model moderation adapter, which reaches this module.
 const loadModelService = () => import('~/server/services/model.service');
@@ -99,6 +103,28 @@ function literalModelRules(ruleIds: number[], textHash: string) {
   };
 }
 
+// Best effort: the hold has already happened, and a failed record only hides it from Matches.
+async function recordHold(modelId: number, modelRules: ReturnType<typeof literalModelRules>) {
+  try {
+    await recordModelRulesLiteralHold({
+      entityId: modelId,
+      workflowId: modelRules.workflowId,
+      textHash: modelRules.textHash,
+      literalRuleIds: modelRules.ruleIds,
+      snapshot: await getModelRuleSnapshots(modelRules.ruleIds),
+    });
+  } catch (error) {
+    logToAxiom({
+      name: 'text-scan',
+      type: 'error',
+      message: 'model rules literal hold not recorded',
+      entityType: 'ModelRules',
+      entityId: modelId,
+      error: error instanceof Error ? error.message : error,
+    });
+  }
+}
+
 /**
  * A literal match found before the model went public. It is taken straight to review instead of
  * being published first, so no claim on a public row is needed.
@@ -114,11 +140,9 @@ export async function holdModelForLiteralRules({
   textHash: string;
   meta?: ModelMeta;
 }) {
-  await unpublishForModelRules({
-    entityId: modelId,
-    meta: meta ?? {},
-    modelRules: literalModelRules(ruleIds, textHash),
-  });
+  const modelRules = literalModelRules(ruleIds, textHash);
+  await unpublishForModelRules({ entityId: modelId, meta: meta ?? {}, modelRules });
+  await recordHold(modelId, modelRules);
 }
 
 /** A literal match found as a version was added to a model that is already public. True when it was taken down. */
@@ -133,11 +157,14 @@ export async function unpublishLiveModelForLiteralRules({
 }): Promise<boolean> {
   const model = await dbWrite.model.findUnique({ where: { id: modelId }, select: { meta: true } });
   if (!model) return false;
-  return claimAndUnpublishForModelRules({
+  const modelRules = literalModelRules(ruleIds, textHash);
+  const taken = await claimAndUnpublishForModelRules({
     entityId: modelId,
     meta: (model.meta ?? {}) as ModelMeta,
-    modelRules: literalModelRules(ruleIds, textHash),
+    modelRules,
   });
+  if (taken) await recordHold(modelId, modelRules);
+  return taken;
 }
 
 /** What a moderator approves by republishing a model these rules unpublished. */
