@@ -1757,11 +1757,13 @@ export async function getRemixGalleryVisibility({
   });
 
   // The actual Buzz a decline would cost, not a percentage the reader has to
-  // apply themselves. Computed with the same helper the refund uses, from the
-  // same operator-set rate, so the number quoted before paying is the number
-  // charged — a hardcoded 30% would be a promise this layer cannot keep.
-  const declineFeeRate = (await getPlacementConfig()).declineFeeRate(SURFACE);
-  const declineFee = space.price == null ? null : declineFeeAmount(space.price, declineFeeRate);
+  // apply themselves — a hardcoded 30% would be a promise this layer cannot
+  // keep. `space.declineFee` is `declineFeeAmount` (the helper the refund uses)
+  // over this space's price, at the rate the space was resolved with. The hold
+  // does not reuse that rate: submit calls `holdPlacementEscrow` with none, and
+  // the escrow reads the config again at that moment, so an operator rate
+  // change between quote and submit makes the two differ.
+  const declineFee = space.price == null ? null : space.declineFee;
 
   return {
     open: space.mode !== 'off',
