@@ -182,7 +182,7 @@ describe('UserScoreDisplay helping moderation row', () => {
         })
       )
     );
-    expect(text).toContain('147.9K pts');
+    expect(text).toContain('147.9k pts');
     expect(text).toContain('Reports against');
   });
 
