@@ -90,9 +90,10 @@ beforeEach(async () => {
      VALUES ($1, 'appeal', 'moderated', 'Blocked', $2, 32, TRUE)`,
     [IMAGE_ID, PHASH]
   );
-  await db.query(`INSERT INTO "Appeal" ("userId", "entityType", "entityId") VALUES (7, 'Image', $1)`, [
-    IMAGE_ID,
-  ]);
+  await db.query(
+    `INSERT INTO "Appeal" ("userId", "entityType", "entityId") VALUES (7, 'Image', $1)`,
+    [IMAGE_ID]
+  );
   dbHandle.current = new Kysely({ dialect: pgliteDialect(db) });
 });
 
@@ -126,7 +127,11 @@ describe('approving an appeal on a rating-locked Blocked image', () => {
   it('resets the Blocked level so the recompute restores the real one', async () => {
     await approve();
 
-    expect(await imageRow()).toEqual({ ingestion: 'Scanned', nsfwLevel: 1, nsfwLevelLocked: false });
+    expect(await imageRow()).toEqual({
+      ingestion: 'Scanned',
+      nsfwLevel: 1,
+      nsfwLevelLocked: false,
+    });
   });
 
   it('takes the pHash off the blocklist', async () => {
@@ -163,7 +168,11 @@ describe('rejecting an appeal on a rating-locked Blocked image', () => {
       userId: 2,
     });
 
-    expect(await imageRow()).toEqual({ ingestion: 'Blocked', nsfwLevel: 32, nsfwLevelLocked: true });
+    expect(await imageRow()).toEqual({
+      ingestion: 'Blocked',
+      nsfwLevel: 32,
+      nsfwLevelLocked: true,
+    });
     expect(chInsert).not.toHaveBeenCalled();
   });
 });
@@ -178,7 +187,11 @@ describe('approving when the moderator-only review flag holds the image', () => 
 
     await approve();
 
-    expect(await imageRow()).toEqual({ ingestion: 'Blocked', nsfwLevel: 32, nsfwLevelLocked: true });
+    expect(await imageRow()).toEqual({
+      ingestion: 'Blocked',
+      nsfwLevel: 32,
+      nsfwLevelLocked: true,
+    });
     expect(chInsert).not.toHaveBeenCalled();
   });
 });
