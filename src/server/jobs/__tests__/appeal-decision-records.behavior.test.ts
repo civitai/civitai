@@ -13,14 +13,14 @@ const run = async (strings: TemplateStringsArray, ...values: unknown[]) => {
   const flat = Prisma.sql(strings, ...(values as never[]));
   return holder.db.query(flat.text, flat.values as unknown[]);
 };
-dbMock.dbWrite.$executeRaw.mockImplementation((async (
-  strings: TemplateStringsArray,
-  ...values: unknown[]
-) => (await run(strings, ...values)).affectedRows ?? 0) as never);
-dbMock.dbWrite.$queryRaw.mockImplementation((async (
-  strings: TemplateStringsArray,
-  ...values: unknown[]
-) => (await run(strings, ...values)).rows) as never);
+dbMock.dbWrite.$executeRaw.mockImplementation(
+  (async (strings: TemplateStringsArray, ...values: unknown[]) =>
+    (await run(strings, ...values)).affectedRows ?? 0) as never
+);
+dbMock.dbWrite.$queryRaw.mockImplementation(
+  (async (strings: TemplateStringsArray, ...values: unknown[]) =>
+    (await run(strings, ...values)).rows) as never
+);
 
 const { sweepExcludedRecords, fillRemovalLabels, recordRestoredLevels } = await import(
   '~/server/jobs/appeal-decision-records'
@@ -81,7 +81,14 @@ type Rec = {
   removalLabel?: string | null;
   daysAgo?: number;
 };
-const record = ({ appealId, imageId, ownerId = 7, decision = 'Approved', removalLabel = null, daysAgo = 1 }: Rec) =>
+const record = ({
+  appealId,
+  imageId,
+  ownerId = 7,
+  decision = 'Approved',
+  removalLabel = null,
+  daysAgo = 1,
+}: Rec) =>
   holder.db.query(
     `INSERT INTO "AppealDecisionRecord" ("appealId", "imageId", "ownerId", "imageUrl", "nsfwLevel",
        "nsfwLevelLocked", "decision", "decidedAt", "removalLabel", "createdAt")
@@ -89,10 +96,20 @@ const record = ({ appealId, imageId, ownerId = 7, decision = 'Approved', removal
        now() - make_interval(days => $6))`,
     [appealId, imageId, ownerId, `u-${imageId}`, decision, daysAgo, removalLabel]
   );
-const image = (id: number, over: { nsfwLevel?: number; ingestion?: string; needsReview?: string; userId?: number } = {}) =>
+const image = (
+  id: number,
+  over: { nsfwLevel?: number; ingestion?: string; needsReview?: string; userId?: number } = {}
+) =>
   holder.db.query(
     `INSERT INTO "Image" ("id", "userId", "url", "nsfwLevel", "ingestion", "needsReview") VALUES ($1, $2, $3, $4, $5, $6)`,
-    [id, over.userId ?? 7, `u-${id}`, over.nsfwLevel ?? 4, over.ingestion ?? 'Scanned', over.needsReview ?? null]
+    [
+      id,
+      over.userId ?? 7,
+      `u-${id}`,
+      over.nsfwLevel ?? 4,
+      over.ingestion ?? 'Scanned',
+      over.needsReview ?? null,
+    ]
   );
 const label = (imageId: number, value: string, minutesAgo: number) =>
   holder.db.query(
@@ -100,12 +117,19 @@ const label = (imageId: number, value: string, minutesAgo: number) =>
     [`u-${imageId}`, value, minutesAgo]
   );
 const recordIds = async () =>
-  (await holder.db.query<{ appealId: number }>(`SELECT "appealId" FROM "AppealDecisionRecord" ORDER BY "appealId"`)).rows.map(
-    (r) => r.appealId
-  );
+  (
+    await holder.db.query<{ appealId: number }>(
+      `SELECT "appealId" FROM "AppealDecisionRecord" ORDER BY "appealId"`
+    )
+  ).rows.map((r) => r.appealId);
 const rows = async () =>
   (
-    await holder.db.query<{ appealId: number; removalLabel: string | null; restoredLevel: number | null; corrected: boolean }>(
+    await holder.db.query<{
+      appealId: number;
+      removalLabel: string | null;
+      restoredLevel: number | null;
+      corrected: boolean;
+    }>(
       `SELECT "appealId", "removalLabel", "restoredLevel", ("trainingLabelCorrectedAt" IS NOT NULL) AS corrected
        FROM "AppealDecisionRecord" ORDER BY "appealId"`
     )
@@ -126,7 +150,9 @@ describe('sweepExcludedRecords', () => {
   });
 
   it('deletes a record whose image is later named in a CSAM report, and only that one', async () => {
-    await holder.db.query(`INSERT INTO "CsamReport" ("images") VALUES ($1)`, [JSON.stringify([{ id: 101 }])]);
+    await holder.db.query(`INSERT INTO "CsamReport" ("images") VALUES ($1)`, [
+      JSON.stringify([{ id: 101 }]),
+    ]);
 
     expect(await sweepExcludedRecords()).toBe(1);
     expect(await recordIds()).toEqual([2]);
@@ -157,10 +183,14 @@ describe('sweepExcludedRecords', () => {
 describe('fillRemovalLabels', () => {
   it('fills only missing labels, from the lookup, inside the window', async () => {
     await record({ appealId: 1, imageId: 101 });
-    await record({ appealId: 2, imageId: 102, removalLabel: 'kept' });
+    // An earlier appeal on the same image, already labelled: its label is not overwritten.
+    await record({ appealId: 2, imageId: 101, removalLabel: 'kept' });
     await record({ appealId: 3, imageId: 103 });
     await record({ appealId: 4, imageId: 104, daysAgo: 45 });
-    const lookup = vi.fn(async (ids: number[]) => new Map(ids.filter((id) => id !== 103).map((id) => [id, `label-${id}`])));
+    const lookup = vi.fn(
+      async (ids: number[]) =>
+        new Map(ids.filter((id) => id !== 103).map((id) => [id, `label-${id}`]))
+    );
 
     expect(await fillRemovalLabels(lookup)).toBe(1);
 
@@ -189,8 +219,12 @@ describe('recordRestoredLevels', () => {
 
     await recordRestoredLevels();
 
-    expect(await rows()).toEqual([{ appealId: 1, removalLabel: null, restoredLevel: 4, corrected: true }]);
-    expect(await labels()).toEqual([{ url: 'u-101', label: 'R', source: 'appeal', old_label: 'Blocked' }]);
+    expect(await rows()).toEqual([
+      { appealId: 1, removalLabel: null, restoredLevel: 4, corrected: true },
+    ]);
+    expect(await labels()).toEqual([
+      { url: 'u-101', label: 'R', source: 'appeal', old_label: 'Blocked' },
+    ]);
   });
 
   it('leaves the training labels alone when the latest one is not Blocked', async () => {
@@ -201,7 +235,9 @@ describe('recordRestoredLevels', () => {
 
     await recordRestoredLevels();
 
-    expect(await rows()).toEqual([{ appealId: 1, removalLabel: null, restoredLevel: 2, corrected: false }]);
+    expect(await rows()).toEqual([
+      { appealId: 1, removalLabel: null, restoredLevel: 2, corrected: false },
+    ]);
     expect(await labels()).toEqual([]);
   });
 
@@ -212,7 +248,9 @@ describe('recordRestoredLevels', () => {
 
     await recordRestoredLevels();
 
-    expect(await rows()).toEqual([{ appealId: 1, removalLabel: null, restoredLevel: null, corrected: false }]);
+    expect(await rows()).toEqual([
+      { appealId: 1, removalLabel: null, restoredLevel: null, corrected: false },
+    ]);
     expect(await labels()).toEqual([]);
   });
 
@@ -223,7 +261,9 @@ describe('recordRestoredLevels', () => {
 
     await recordRestoredLevels();
 
-    expect(await rows()).toEqual([{ appealId: 1, removalLabel: null, restoredLevel: null, corrected: false }]);
+    expect(await rows()).toEqual([
+      { appealId: 1, removalLabel: null, restoredLevel: null, corrected: false },
+    ]);
     expect(await labels()).toEqual([]);
   });
 
@@ -235,6 +275,8 @@ describe('recordRestoredLevels', () => {
     await recordRestoredLevels();
     await recordRestoredLevels();
 
-    expect(await labels()).toEqual([{ url: 'u-101', label: 'X', source: 'appeal', old_label: 'Blocked' }]);
+    expect(await labels()).toEqual([
+      { url: 'u-101', label: 'X', source: 'appeal', old_label: 'Blocked' },
+    ]);
   });
 });

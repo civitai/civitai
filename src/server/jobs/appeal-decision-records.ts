@@ -9,8 +9,9 @@ import { createJob } from './job';
  * or anything that reads the table, sees them.
  */
 
-const REMOVAL_LABEL_WINDOW_DAYS = 30;
-const RESTORED_LEVEL_WINDOW_DAYS = 90;
+// Inlined, not bound: Prisma binds numbers as int8 and make_interval only takes int4.
+const REMOVAL_LABEL_WINDOW = Prisma.raw(`make_interval(days => 30)`);
+const RESTORED_LEVEL_WINDOW = Prisma.raw(`make_interval(days => 90)`);
 const BATCH = 5000;
 
 /**
@@ -53,7 +54,7 @@ export async function fillRemovalLabels(lookup: RemovalLabelLookup = removalLabe
   const pending = await dbWrite.$queryRaw<{ imageId: number }[]>`
     SELECT DISTINCT "imageId" FROM "AppealDecisionRecord"
     WHERE "removalLabel" IS NULL
-      AND "createdAt" > now() - make_interval(days => ${REMOVAL_LABEL_WINDOW_DAYS})
+      AND "createdAt" > now() - ${REMOVAL_LABEL_WINDOW}
     ORDER BY "imageId"
     LIMIT ${BATCH}
   `;
@@ -65,7 +66,9 @@ export async function fillRemovalLabels(lookup: RemovalLabelLookup = removalLabe
   return dbWrite.$executeRaw`
     UPDATE "AppealDecisionRecord" r
     SET "removalLabel" = l.label
-    FROM unnest(${[...labels.keys()]}::int[], ${[...labels.values()]}::text[]) AS l("imageId", label)
+    FROM unnest(${[...labels.keys()]}::int[], ${[
+    ...labels.values(),
+  ]}::text[]) AS l("imageId", label)
     WHERE r."imageId" = l."imageId" AND r."removalLabel" IS NULL
   `;
 }
@@ -86,7 +89,7 @@ export async function recordRestoredLevels() {
       JOIN "Image" i ON i.id = r."imageId"
       WHERE r.decision = 'Approved'
         AND r."restoredLevel" IS NULL
-        AND r."decidedAt" > now() - make_interval(days => ${RESTORED_LEVEL_WINDOW_DAYS})
+        AND r."decidedAt" > now() - ${RESTORED_LEVEL_WINDOW}
         AND i.ingestion = 'Scanned'
         AND i."nsfwLevel" IN (1, 2, 4, 8, 16)
     ),
@@ -116,7 +119,7 @@ export async function recordRestoredLevels() {
     WHERE i.id = r."imageId"
       AND r.decision = 'Approved'
       AND r."restoredLevel" IS NULL
-      AND r."decidedAt" > now() - make_interval(days => ${RESTORED_LEVEL_WINDOW_DAYS})
+      AND r."decidedAt" > now() - ${RESTORED_LEVEL_WINDOW}
       AND i.ingestion = 'Scanned'
       AND i."nsfwLevel" IN (1, 2, 4, 8, 16)
   `;
