@@ -152,7 +152,7 @@ beforeEach(() => {
   ) => {
     const sql = strings.join('?');
     if (/FROM "Appeal" a/.test(sql)) return Promise.resolve(orphans);
-    if (/"ImageReport"/.test(sql))
+    if (/jsonb_array_elements/.test(sql))
       return Promise.resolve(
         (idsIn(values) ?? []).filter((id) => defensiveImageIds.includes(id)).map((id) => ({ id }))
       );
@@ -329,21 +329,18 @@ describe('voidOrphanedAppeals', () => {
     expect(refundedPrefixes()).toContain(defensive.buzzTransactionId);
     expect(notified(defensive.userId)).toEqual([]);
     expect(notified(deletedUser.userId)).toEqual([]);
-    expect(result).toMatchObject({ closedQuietly: 2 });
+    expect(result).toMatchObject({ closedQuietly: 2, refunded: 2, refundFailed: 0 });
   });
 
-  it('checks images against image reports only, and appellants against user reports', async () => {
-    // A model sharing the flagged image's id is not that image.
+  it('looks up only image appeals by image id', async () => {
+    // A model sharing the reported image's id is not that image.
     const modelSameId = orphan({ id: 6, userId: 60, entityType: EntityType.Model, entityId: 400 });
     orphans = [defensive, modelSameId];
 
     await voidOrphanedAppeals();
 
-    const imageQuery = rawCalls().find(({ sql }) => /"ImageReport"/.test(sql))!;
+    const imageQuery = rawCalls().find(({ sql }) => /jsonb_array_elements/.test(sql))!;
     expect(idsIn(imageQuery.values)).toEqual([defensive.entityId]);
-    expect(imageQuery.sql).toMatch(/AS c\(id\)/);
-    expect(imageQuery.sql).toMatch(/e->>'id'/);
-    expect(imageQuery.sql).toMatch(/ir\."imageId" = c\.id/);
     expect(idsIn(removedUpdate()!.values)).toEqual([modelSameId.id]);
   });
 

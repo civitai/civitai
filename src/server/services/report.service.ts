@@ -989,7 +989,8 @@ async function getOwnerDeletedAppealIds(candidates: OrphanCandidate[]) {
   }
 }
 
-// Same scope as the moderator app's `csamExcludedImageIds`.
+// Parallels the moderator app's `csamExcludedImageIds`; keep the report sources in step. Only
+// sources that outlive the image row count here: per-image report rows cascade away with it.
 async function getDefensiveCloseIds(candidates: OrphanCandidate[]) {
   const imageIds = candidates
     .filter((a) => a.entityType === EntityType.Image)
@@ -1005,10 +1006,6 @@ async function getDefensiveCloseIds(candidates: OrphanCandidate[]) {
             SELECT CASE jsonb_typeof(e) WHEN 'object' THEN e->>'id' ELSE e#>>'{}' END
             FROM "CsamReport" cr, jsonb_array_elements(cr.images) e
           )
-          OR EXISTS (
-            SELECT 1 FROM "ImageReport" ir JOIN "Report" r ON r.id = ir."reportId"
-            WHERE ir."imageId" = c.id AND r.reason = 'CSAM'
-          )
         `
       : [],
     dbWrite.$queryRaw<{ id: number }[]>`
@@ -1018,6 +1015,7 @@ async function getDefensiveCloseIds(candidates: OrphanCandidate[]) {
           SELECT 1 FROM "UserReport" ur JOIN "Report" r ON r.id = ur."reportId"
           WHERE ur."userId" = c.id AND r.reason = 'CSAM'
         )
+        OR EXISTS (SELECT 1 FROM "Image" o WHERE o."userId" = c.id AND o."blockedFor" = 'CSAM')
     `,
   ]);
   const imageSet = new Set(images.map((r) => r.id));
@@ -1087,7 +1085,8 @@ export function notifyOrphanedAppeal(
     userId: appeal.userId,
     type: 'entity-appeal-content-removed',
     category: NotificationCategory.Other,
-    // A repeated key is dropped, not updated: one notice per appeal per outcome.
+    // The worker drops a repeated key, so the outcome is part of it: a closing notice after
+    // "under-review" would never arrive.
     key: `entity-appeal-content-removed:${appeal.id}:${outcome}`,
     details: { entityType: appeal.entityType, entityId: appeal.entityId, outcome, refunded },
   });
