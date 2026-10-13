@@ -411,7 +411,7 @@ describe('insertTextScanPrompt with a base version', () => {
   it('lets only one of two saves from the same base through', async () => {
     const ids = [3];
     let held: Promise<void> | null = null;
-    let release = () => {};
+    let release = () => undefined;
     const tx = async (fn: unknown) => {
       try {
         return await (fn as (client: unknown) => Promise<unknown>)(dbMock.dbWrite);
