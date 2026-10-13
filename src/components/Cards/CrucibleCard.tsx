@@ -7,6 +7,7 @@ import cardClasses from '~/components/Cards/Cards.module.css';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
 import { CrucibleContextMenu } from '~/components/Crucible/CrucibleContextMenu';
+import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import type { CrucibleJudgingStatus } from '~/server/schema/crucible.schema';
 import { Currency, CrucibleStatus } from '~/shared/utils/prisma/enums';
@@ -167,14 +168,28 @@ export function CrucibleCard({ data }: { data: CrucibleCardData }) {
                 <DaysFromNow date={endAt} withoutSuffix /> left
               </Text>
             )}
-            <Text component="span" size="xs" fw={600} className="flex items-center gap-1">
-              <IconSwords size={14} />
-              {abbreviateNumber(entryCount)} {entryCount === 1 ? 'entry' : 'entries'}
-            </Text>
-            <Text component="span" size="xs" fw={600} className="flex items-center gap-1">
-              <IconUsers size={14} />
-              {abbreviateNumber(entrantCount)} {entrantCount === 1 ? 'entrant' : 'entrants'}
-            </Text>
+            <IconBadge
+              icon={<IconSwords size={14} />}
+              color="gray.0"
+              p={0}
+              size="lg"
+              variant="transparent"
+            >
+              <Text fw="bold" size="xs">
+                {abbreviateNumber(entryCount)} {entryCount === 1 ? 'entry' : 'entries'}
+              </Text>
+            </IconBadge>
+            <IconBadge
+              icon={<IconUsers size={14} />}
+              color="gray.0"
+              p={0}
+              size="lg"
+              variant="transparent"
+            >
+              <Text fw="bold" size="xs">
+                {abbreviateNumber(entrantCount)} {entrantCount === 1 ? 'entrant' : 'entrants'}
+              </Text>
+            </IconBadge>
           </div>
         </div>
       }

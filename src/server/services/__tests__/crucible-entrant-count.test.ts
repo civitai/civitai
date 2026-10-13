@@ -10,11 +10,25 @@ const { getCrucibleDetail, getEntrantCounts, withEntryCounts } = await import(
 );
 
 const squash = (sql: string) => sql.replace(/\s+/g, ' ').trim();
+// Joining with '?' is safe: no needle below spans a placeholder. Values are asserted separately.
 const sqlOf = (call: unknown[]) => squash((call[0] as string[]).join('?'));
+const valuesOf = (call: unknown[]) => call.slice(1);
 
-// The "10+ entrants" milestone and this count must stay the same number.
-const ENTRANT_EXPRESSION = 'count(DISTINCT e."userId")';
-const HOST_EXCLUSION = 'e."userId" <> c."userId"';
+const stripComments = (sql: string) =>
+  sql.replace(/--[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '');
+
+// Each side scopes to its crucible its own way; everything else in the predicate must be identical.
+const entrantPredicate = (sql: string, end: RegExp) => {
+  const clean = squash(stripComments(sql));
+  const select = clean.match(/count\(DISTINCT e\."userId"\)/)?.[0];
+  const from = clean.indexOf('WHERE', clean.indexOf('FROM "CrucibleEntry" e'));
+  const rest = clean.slice(from + 'WHERE'.length).split(end)[0];
+  const where = rest
+    .replace(/e\."crucibleId" = ANY\(\?::int\[\]\)/, '<scope>')
+    .replace(/e\."crucibleId" = c\.id/, '<scope>')
+    .trim();
+  return { select, where };
+};
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -39,19 +53,19 @@ describe('getEntrantCounts', () => {
 
     expect(queryRaw).toHaveBeenCalledTimes(1);
     const sql = sqlOf(queryRaw.mock.calls[0]);
-    expect(sql).toContain(ENTRANT_EXPRESSION);
+    expect(valuesOf(queryRaw.mock.calls[0])).toEqual([[1, 2, 3]]);
+    expect(sql).toContain('count(DISTINCT e."userId")');
     expect(sql).toContain('GROUP BY e."crucibleId"');
   });
 
-  it("uses the milestone's entrant definition: distinct users, host excluded", async () => {
+  it("uses the milestone's entrant definition: same expression and same filters", async () => {
     await getEntrantCounts([1]);
 
-    const sql = sqlOf(queryRaw.mock.calls[0]);
-    const milestone = squash(competeWinsSource);
-    for (const part of [ENTRANT_EXPRESSION, HOST_EXCLUSION]) {
-      expect(sql).toContain(part);
-      expect(milestone).toContain(part);
-    }
+    const mine = entrantPredicate(sqlOf(queryRaw.mock.calls[0]), /GROUP BY/);
+    const milestone = entrantPredicate(competeWinsSource, /\) >=/);
+
+    expect(mine.where).toContain('<scope>');
+    expect(mine).toEqual(milestone);
   });
 
   it('asks nothing for no crucibles', async () => {
@@ -67,6 +81,7 @@ describe('entrant count surfaces', () => {
 
     const rows = await withEntryCounts([{ id: 1 }, { id: 2 }]);
 
+    expect(valuesOf(queryRaw.mock.calls[0])).toEqual([[1, 2]]);
     expect(rows).toEqual([
       { id: 1, paidEntryCount: 0, entrantCount: 0 },
       { id: 2, paidEntryCount: 4, entrantCount: 3 },
@@ -85,5 +100,6 @@ describe('entrant count surfaces', () => {
     const detail = await getCrucibleDetail({ id: 1 });
 
     expect(detail?.entrantCount).toBe(2);
+    expect(valuesOf(queryRaw.mock.calls[0])).toEqual([[1]]);
   });
 });
