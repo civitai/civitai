@@ -101,7 +101,10 @@ import {
   useModelVersionPermission,
   useQueryModelVersionsEngagement,
 } from '~/components/Model/ModelVersions/model-version.utils';
-import { getModelVersionActionLayout } from '~/components/Model/ModelVersions/model-version-layout';
+import {
+  getModelVersionActionLayout,
+  showRequestReviewFor,
+} from '~/components/Model/ModelVersions/model-version-layout';
 import ModelVersionDonationGoal from '~/components/Model/ModelVersions/ModelVersionDonationGoal';
 import { ModelVersionSaleBanner } from '~/components/Model/ModelVersions/ModelVersionSaleBadge';
 import { ModelVersionEarlyAccessPurchase } from '~/components/Model/ModelVersions/ModelVersionEarlyAccessPurchase';
@@ -520,11 +523,17 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
       ? user?.isModerator
       : isOwnerOrMod);
   // Show request review for owners (non-mods) when model/version is unpublished due to violation
-  const showRequestReview =
-    isOwner &&
-    !user?.isModerator &&
-    (model.status === ModelStatus.UnpublishedViolation ||
-      version.status === ModelStatus.UnpublishedViolation);
+  const violation =
+    model.status === ModelStatus.UnpublishedViolation ||
+    version.status === ModelStatus.UnpublishedViolation;
+  // A hold for review is set on the model's meta, the version's own take-down on the version's.
+  const underReview = !!(model.meta?.needsReview || version.meta?.needsReview);
+  const showRequestReview = showRequestReviewFor({
+    isOwner: !!isOwner,
+    isModerator: !!user?.isModerator,
+    violation,
+    underReview,
+  });
   const deleted = !!model.deletedAt && model.status === ModelStatus.Deleted;
   const showEditButton = isOwnerOrMod && !deleted && !showRequestReview;
   const license = baseModelLicenses[version.baseModel];
@@ -1068,7 +1077,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
             </AlertWithIcon>
           )}
 
-          {version.status === ModelStatus.UnpublishedViolation && !version.meta?.needsReview && (
+          {version.status === ModelStatus.UnpublishedViolation && !underReview && (
             <ModelUnpublishedAlert
               reason={version.meta?.unpublishedReason}
               customMessage={version.meta?.customMessage}
@@ -1082,18 +1091,21 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
               icon={<IconLock />}
               title="Private Model"
             >
-              {model.status !== ModelStatus.UnpublishedViolation &&
-              version.status !== ModelStatus.UnpublishedViolation ? (
+              {!violation ? (
                 <Text>
                   Want to start earning Buzz?{' '}
                   <Anchor onClick={handlePublishPrivateModel}>Publish this model</Anchor>
+                </Text>
+              ) : underReview ? (
+                <Text>
+                  This model is private and is currently being reviewed by our moderators.
                 </Text>
               ) : (
                 <Text>This model is private and has been unpublished due to a violation.</Text>
               )}
             </AlertWithIcon>
           )}
-          {version.status === ModelStatus.UnpublishedViolation && version.meta?.needsReview && (
+          {version.status === ModelStatus.UnpublishedViolation && underReview && (
             <AlertWithIcon color="yellow" iconColor="yellow" icon={<IconExclamationMark />}>
               This version is currently being reviewed by our moderators. It will be visible to the
               community once it has been approved.
