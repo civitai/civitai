@@ -19,7 +19,7 @@ import {
   REMOVED_IMAGES_LIMIT,
 } from '~/server/services/creator-removed-images.service';
 import { REPORTS_AGAINST_EVENT } from '~/shared/constants/creator-journey.constants';
-import { AppealStatus } from '~/shared/utils/prisma/enums';
+import { AppealStatus, EntityType } from '~/shared/utils/prisma/enums';
 
 const USER = 42;
 
@@ -230,7 +230,7 @@ describe('getMyRemovedImages', () => {
     ]);
     expect(dbMock.dbRead.appeal.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: expect.objectContaining({ userId: USER, entityId: { in: [1, 2, 3, 4] } }),
+        where: { entityType: EntityType.Image, userId: USER, entityId: { in: [1, 2, 3, 4] } },
         orderBy: { id: 'desc' },
       })
     );
@@ -287,6 +287,16 @@ describe('getMyRemovedImages', () => {
         canAppeal: true,
       },
     ]);
+  });
+
+  it('checks string ids against the exclusion as numbers', async () => {
+    given({
+      events: [{ imageId: '7', removedAt: '1700000000' }],
+      states: [{ imageId: 7 }],
+      excludedImages: [7],
+    });
+
+    expect((await getMyRemovedImages(USER)).items).toEqual([]);
   });
 
   it('fails rather than answering an empty list when ClickHouse fails', async () => {

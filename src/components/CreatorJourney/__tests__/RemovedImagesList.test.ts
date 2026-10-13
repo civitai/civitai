@@ -12,6 +12,7 @@ vi.mock('~/components/Dialog/dialogStore', async (importOriginal) => ({
 
 import type * as DialogStore from '~/components/Dialog/dialogStore';
 import { RemovedImagesView } from '~/components/CreatorJourney/RemovedImagesList';
+import { AppealDialog } from '~/components/Dialog/Common/AppealDialog';
 import { EntityType } from '~/shared/utils/prisma/enums';
 
 const act = (React as unknown as { act: typeof actType }).act;
@@ -51,6 +52,7 @@ function render(removed: Removed) {
 }
 
 afterEach(() => {
+  trigger.mockClear();
   act(() => root?.unmount());
   container?.remove();
 });
@@ -86,7 +88,10 @@ describe('RemovedImagesView', () => {
     act(() => appeal?.click());
 
     expect(trigger).toHaveBeenCalledExactlyOnceWith(
-      expect.objectContaining({ props: { entityId: 11, entityType: EntityType.Image } })
+      expect.objectContaining({
+        component: AppealDialog,
+        props: { entityId: 11, entityType: EntityType.Image },
+      })
     );
   });
 
