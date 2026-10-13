@@ -183,6 +183,11 @@ const BLOCK_SCOPE_CONSTANTS = 'src/shared/constants/block-scope.constants.ts';
  * its own right. A `getMyBuzz*` shorthand gets that exactly backwards in both directions.
  */
 const GUARD_CALL_SITE_LEDGER = [
+  // The router's tRPC middleware for the viewer-bound bridge procedures. A procedure that
+  // `.use()`s it reaches the guard through it, so it is in the population ledger below
+  // but not here. Which procedures those are is pinned by
+  // `no-unledgered-block-bridge-auth-mechanism.test.ts`.
+  'authorizeBlockBridgeViewer',
   'authorizeBlockBuzzRead',
   // The router's own post-bridge preamble helper: `previewPostFromApp` and
   // `createPostFromApp` BOTH reach the guard through it (and through nothing
@@ -204,7 +209,6 @@ const GUARD_CALL_SITE_LEDGER = [
   'estimateWorkflowBatch',
   'getImagesByIds',
   'getMyBuzzBalance',
-  'getMyViewer',
   'listMyWorkflows',
   'pollWorkflow',
   'prepareTrainingDataset',
