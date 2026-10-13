@@ -6,8 +6,11 @@
   import type { ModelRuleVersionView } from '$lib/model-rule-versions';
   import RuleVersionCompare from './RuleVersionCompare.svelte';
 
-  let { ruleId = $bindable(null), canEdit }: { ruleId?: number | null; canEdit: boolean } =
-    $props();
+  let {
+    ruleId = $bindable(null),
+    subject = null,
+    canEdit,
+  }: { ruleId?: number | null; subject?: string | null; canEdit: boolean } = $props();
 
   let refresh = $state(0);
   const versions = $derived(
@@ -28,7 +31,7 @@
     class="overflow-y-auto p-5 data-[side=right]:w-full data-[side=right]:sm:max-w-3xl"
   >
     <Sheet.Header class="p-0">
-      <Sheet.Title class="text-white">History · rule {ruleId}</Sheet.Title>
+      <Sheet.Title class="text-white">History · {subject ?? `#${ruleId}`}</Sheet.Title>
       <Sheet.Description class="text-dark-2">
         Every save, enable, disable and restore. Restoring saves an old version as the rule's new
         version.

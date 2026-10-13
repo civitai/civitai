@@ -73,7 +73,6 @@
       toast.success(String(data?.message ?? 'Saved'));
       if (data?.cacheWarning) toast.warning(String(data.cacheWarning));
     },
-    // A partial save still wrote some rules: drop those drafts, keep the failed ones, show the rest.
     onSettled: (result) => {
       if (result.type !== 'failure') return;
       dropSaved(result.data);
@@ -163,4 +162,8 @@
   {/if}
 </section>
 
-<RuleHistoryDrawer bind:ruleId={historyRuleId} {canEdit} />
+<RuleHistoryDrawer
+  bind:ruleId={historyRuleId}
+  subject={historyRuleId === null ? null : reloaded(historyRuleId)?.subject ?? null}
+  {canEdit}
+/>

@@ -526,7 +526,6 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
   const violation =
     model.status === ModelStatus.UnpublishedViolation ||
     version.status === ModelStatus.UnpublishedViolation;
-  // A hold for review is set on the model's meta, the version's own take-down on the version's.
   const underReview = !!(model.meta?.needsReview || version.meta?.needsReview);
   const showRequestReview = showRequestReviewFor({
     isOwner: !!isOwner,
@@ -659,7 +658,6 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
               color="yellow"
               onClick={handleRequestReviewClick}
               loading={requestReviewMutation.isPending || requestVersionReviewMutation.isPending}
-              disabled={!!(model.meta?.needsReview || version.meta?.needsReview)}
               fullWidth
             >
               Request a Review
