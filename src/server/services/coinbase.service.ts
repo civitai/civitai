@@ -13,6 +13,7 @@ import { redeemableCodePurchaseEmail } from '~/server/email/templates/redeemable
 import { subscriptionProductMetadataSchema } from '~/server/schema/subscriptions.schema';
 import { createNotification } from '~/server/services/notification.service';
 import { NotificationCategory } from '~/server/common/enums';
+import { generateRedeemCode } from '~/server/utils/redeem-code';
 
 const log = async (data: MixedObject) => {
   await logToAxiom({ name: 'coinbase-service', type: 'error', ...data }).catch();
@@ -242,8 +243,7 @@ export const processCodeOrder = async (eventData: Coinbase.WebhookEventSchema['e
     // Create the code and tag it atomically
     const code = await dbWrite.$transaction(async (tx) => {
       const prefix = type === RedeemableCodeType.Buzz ? 'CS' : 'MB';
-      const { generateToken } = await import('~/utils/string-helpers');
-      const codeStr = `${prefix}-${generateToken(4)}-${generateToken(4)}`.toUpperCase();
+      const codeStr = generateRedeemCode(prefix);
 
       await tx.redeemableCode.create({
         data: {

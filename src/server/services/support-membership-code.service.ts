@@ -2,7 +2,7 @@ import dayjs from '~/shared/utils/dayjs';
 import { dbWrite } from '~/server/db/client';
 import type { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
 import { trackModActivity } from '~/server/services/moderator.service';
-import { randomInt } from 'crypto';
+import { generateRedeemCode } from '~/server/utils/redeem-code';
 import { Prisma } from '@prisma/client';
 import {
   SUPPORT_MEMBERSHIP_CODE_LIMITS,
@@ -28,15 +28,6 @@ const ACTIVITY_PREFIX = 'mintMembershipCode:';
 const REVOKED_EXPIRY = new Date(0);
 /** Advisory-lock class ('MC'), registered in free-placement.service.test.ts's lock ledger. */
 const MINT_LOCK_CLASS = 0x4d430001;
-
-const CODE_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-const codePart = () =>
-  Array.from({ length: 4 }, () => CODE_ALPHABET[randomInt(CODE_ALPHABET.length)]).join('');
-
-/** The `MB-XXXX-XXXX` shape every membership code has, drawn from a CSPRNG: the code is the credential. */
-export function generateMembershipCode() {
-  return `MB-${codePart()}-${codePart()}`;
-}
 
 /**
  * One Membership redeem code for a customer, minted by a moderator. The customer redeems it at
@@ -103,7 +94,7 @@ export async function mintSupportMembershipCode({
         `Daily limit of ${limits.dailyPerModerator} membership codes per moderator reached.`
       );
 
-    const code = generateMembershipCode();
+    const code = generateRedeemCode('MB');
     // UTC: a local-time day add drifts by an hour across a DST change.
     const expiresAt = dayjs.utc().add(limits.expiryDays, 'day').toDate();
     await tx.redeemableCode
