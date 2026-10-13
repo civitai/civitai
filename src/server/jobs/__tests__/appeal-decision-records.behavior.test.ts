@@ -35,9 +35,14 @@ const {
   runAppealDecisionRecords,
 } = await import('~/server/jobs/appeal-decision-records');
 
-const MIGRATION = path.resolve(
-  __dirname,
-  '../../../../packages/civitai-db-schema/prisma/migrations/20261020120000_appeal_decision_record/migration.sql'
+const MIGRATIONS = [
+  '20261020120000_appeal_decision_record',
+  '20261021120000_appeal_decision_record_training_copy',
+].map((dir) =>
+  path.resolve(
+    __dirname,
+    `../../../../packages/civitai-db-schema/prisma/migrations/${dir}/migration.sql`
+  )
 );
 
 beforeAll(async () => {
@@ -74,7 +79,7 @@ beforeAll(async () => {
       url text, label text, "createdAt" timestamp, source text, reason text, old_label text
     );
   `);
-  await holder.db.exec(readFileSync(MIGRATION, 'utf8'));
+  for (const file of MIGRATIONS) await holder.db.exec(readFileSync(file, 'utf8'));
 });
 
 beforeEach(async () => {
@@ -179,7 +184,7 @@ describe('sweepExcludedRecords', () => {
       JSON.stringify([{ id: 101 }]),
     ]);
 
-    expect(await sweepExcludedRecords()).toEqual({ swept: 1, labels: 0, expired: 0 });
+    expect(await sweepExcludedRecords()).toEqual({ swept: 1, labels: 0, expired: 0, objects: 0 });
     expect(await recordIds()).toEqual([2]);
   });
 
@@ -216,7 +221,7 @@ describe('sweepExcludedRecords', () => {
       `UPDATE "Image" SET "needsReview" = 'poi', "blockedFor" = 'tos' WHERE id = 102`
     );
 
-    expect(await sweepExcludedRecords()).toEqual({ swept: 0, labels: 0, expired: 0 });
+    expect(await sweepExcludedRecords()).toEqual({ swept: 0, labels: 0, expired: 0, objects: 0 });
     expect(await recordIds()).toEqual([1, 2]);
   });
 
@@ -240,7 +245,7 @@ describe('sweepExcludedRecords', () => {
     await record({ appealId: 3, imageId: 103, daysAgo: 733 });
     await record({ appealId: 4, imageId: 104, daysAgo: 727 });
 
-    expect(await sweepExcludedRecords()).toEqual({ swept: 0, labels: 0, expired: 1 });
+    expect(await sweepExcludedRecords()).toEqual({ swept: 0, labels: 0, expired: 1, objects: 0 });
     expect(await recordIds()).toEqual([1, 2, 4]);
   });
 
@@ -252,7 +257,7 @@ describe('sweepExcludedRecords', () => {
     await label(106, 'R', 5, 'appeal');
     await holder.db.query(`INSERT INTO "CsamReport" ("userId") VALUES (9)`);
 
-    expect(await sweepExcludedRecords()).toEqual({ swept: 0, labels: 1, expired: 0 });
+    expect(await sweepExcludedRecords()).toEqual({ swept: 0, labels: 1, expired: 0, objects: 0 });
     expect(await allLabels()).toEqual([
       { url: 'u-105', label: 'Blocked', source: 'knight' },
       { url: 'u-106', label: 'R', source: 'appeal' },
@@ -272,7 +277,7 @@ describe('sweepExcludedRecords', () => {
     ]);
     await label(101, 'Blocked', 10);
 
-    expect(await sweepExcludedRecords()).toEqual({ swept: 0, labels: 0, expired: 0 });
+    expect(await sweepExcludedRecords()).toEqual({ swept: 0, labels: 0, expired: 0, objects: 0 });
     expect((await recordRestoredLevels()).restored).toBe(2);
   });
 
@@ -494,6 +499,7 @@ describe('the nightly run', () => {
       swept: 1,
       labels: 0,
       expired: 0,
+      objects: 0,
       labelled: 1,
       restored: 1,
       corrected: 1,

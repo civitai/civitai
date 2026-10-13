@@ -951,6 +951,11 @@ export const serverSchema = z
     S3_IMAGE_B2_BUCKET: z.string().optional(),
     S3_IMAGE_B2_REGION: z.string().optional(),
 
+    // Appeal training bucket; endpoint and region come from S3_IMAGE_B2_*. Unset: no copies, no holds.
+    APPEAL_TRAINING_B2_BUCKET: z.string().optional(),
+    APPEAL_TRAINING_B2_ACCESS_KEY: z.string().optional(),
+    APPEAL_TRAINING_B2_SECRET_KEY: z.string().optional(),
+
     // Storage resolver internal API (for registering B2 uploads)
     STORAGE_RESOLVER_INTERNAL_URL: z.string().optional(),
     STORAGE_RESOLVER_INTERNAL_TOKEN: z.string().optional(),

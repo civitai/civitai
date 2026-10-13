@@ -436,6 +436,8 @@ export type AppealDecisionRecord = {
   removalLabel: string | null;
   restoredLevel: number | null;
   trainingLabelCorrectedAt: Timestamp | null;
+  trainingCopyState: string | null;
+  trainingObjectKey: string | null;
   createdAt: Generated<Timestamp>;
 };
 export type AppListing = {

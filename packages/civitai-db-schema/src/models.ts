@@ -4223,6 +4223,8 @@ export interface AppealDecisionRecord {
   removalLabel: string | null;
   restoredLevel: number | null;
   trainingLabelCorrectedAt: Date | null;
+  trainingCopyState: string | null;
+  trainingObjectKey: string | null;
   createdAt: Date;
 }
 

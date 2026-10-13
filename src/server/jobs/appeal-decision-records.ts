@@ -1,6 +1,15 @@
+import {
+  DeleteObjectsCommand,
+  GetObjectCommand,
+  PutObjectCommand,
+  S3Client,
+} from '@aws-sdk/client-s3';
 import { Prisma } from '@prisma/client';
+import { env } from '~/env/server';
 import { clickhouse } from '~/server/clickhouse/client';
 import { dbWrite } from '~/server/db/client';
+import { logToAxiom } from '~/server/logging/client';
+import { instrumentB2Client } from '~/server/prom/b2-put.metrics';
 import { createJob } from './job';
 
 /** Upkeep for "AppealDecisionRecord" (see the `appeal_decision_record` trigger migration). */
@@ -40,12 +49,14 @@ export const excludedRecord = (r: Prisma.Sql) => Prisma.sql`(
  * Deletes excluded records, the training labels this job wrote for any excluded image (with or without
  * a record), and expired records.
  */
-export async function sweepExcludedRecords() {
+export async function sweepExcludedRecords(store?: AppealTrainingStore | null) {
   const r = Prisma.raw('r');
-  const [{ swept, labels }] = await dbWrite.$queryRaw<{ swept: number; labels: number }[]>`
+  const [{ swept, labels, keys }] = await dbWrite.$queryRaw<
+    { swept: number; labels: number; keys: string[] }[]
+  >`
     WITH removed AS (
       DELETE FROM "AppealDecisionRecord" r WHERE ${excludedRecord(r)}
-      RETURNING r."imageUrl"
+      RETURNING r."imageUrl", r."trainingObjectKey"
     ),
     labels AS (
       DELETE FROM training_labels tl
@@ -58,12 +69,39 @@ export async function sweepExcludedRecords() {
         )
       RETURNING 1
     )
-    SELECT (SELECT count(*) FROM removed)::int AS swept, (SELECT count(*) FROM labels)::int AS labels
+    SELECT (SELECT count(*) FROM removed)::int AS swept, (SELECT count(*) FROM labels)::int AS labels,
+      ARRAY(SELECT "trainingObjectKey" FROM removed WHERE "trainingObjectKey" IS NOT NULL) AS keys
   `;
-  const expired = await dbWrite.$executeRaw`
+  const expiredRows = await dbWrite.$queryRaw<{ key: string | null }[]>`
     DELETE FROM "AppealDecisionRecord" WHERE "createdAt" < now() - ${RECORD_RETENTION}
+    RETURNING "trainingObjectKey" AS key
   `;
-  return { swept, labels, expired };
+  const objects = await removeTrainingObjects(store, keys, expiredRows);
+  return { swept, labels, expired: expiredRows.length, objects };
+}
+
+// Runs after the records are gone, so a bucket failure never keeps a record.
+async function removeTrainingObjects(
+  store: AppealTrainingStore | null | undefined,
+  sweptKeys: string[],
+  expiredRows: { key: string | null }[]
+) {
+  const keys = [...sweptKeys, ...expiredRows.flatMap((row) => (row.key ? [row.key] : []))];
+  if (!keys.length) return 0;
+  try {
+    store ??= await appealTrainingStoreFromEnv();
+    if (!store) throw new Error('training bucket not configured');
+    await store.remove(keys);
+    return keys.length;
+  } catch (e) {
+    logToAxiom({
+      type: 'error',
+      name: JOB_LOG_NAME,
+      message: 'Could not delete training objects for removed records',
+      details: { keys, error: (e as Error).message },
+    });
+    return 0;
+  }
 }
 
 export type RemovalLabelLookup = (imageIds: number[]) => Promise<Map<number, string>>;
@@ -92,9 +130,11 @@ export async function fillRemovalLabels(lookup: RemovalLabelLookup = removalLabe
   `;
   if (!pending.length) return 0;
 
-  const labels = await lookup(pending.map((p) => p.imageId));
-  if (!labels.size) return 0;
+  return storeRemovalLabels(await lookup(pending.map((p) => p.imageId)));
+}
 
+async function storeRemovalLabels(labels: Map<number, string>) {
+  if (!labels.size) return 0;
   return dbWrite.$executeRaw`
     UPDATE "AppealDecisionRecord" r
     SET "removalLabel" = l.label
@@ -102,6 +142,215 @@ export async function fillRemovalLabels(lookup: RemovalLabelLookup = removalLabe
     ...labels.values(),
   ]}::text[]) AS l("imageId", label)
     WHERE r."imageId" = l."imageId" AND r."removalLabel" IS NULL
+  `;
+}
+
+const JOB_LOG_NAME = 'appeal-training-copy';
+const COPY_WINDOW = Prisma.raw(`make_interval(hours => 24)`);
+const UNLABELLED_HOLD = Prisma.raw(`make_interval(hours => 1)`);
+const COPY_BATCH = 200;
+
+const NEVER_COPY_LABELS = [
+  'minor',
+  'animatedMinorNsfw',
+  'realisticMinorNsfw',
+  'realisticMinor',
+  'schoolNsfw',
+  'minorViolence',
+  'diaper',
+  'poi',
+  'realPerson',
+  'realPersonNsfw',
+  'non-ai',
+];
+
+const neverCopy = (label: Prisma.Sql) =>
+  Prisma.sql`(${label} = ANY(${NEVER_COPY_LABELS}::text[]) OR ${label} ILIKE '%minor%')`;
+
+const pendingCopy = (r: Prisma.Sql) =>
+  Prisma.sql`${r}.decision = 'Rejected' AND ${r}."trainingCopyState" IS NULL`;
+
+/**
+ * Keeps `remove-blocked-images` off an image until the copy job has had its chance. Only valid inside
+ * a statement where `i` names an "Image" row.
+ */
+export const appealTrainingHeld = (i: Prisma.Sql) => {
+  const h = Prisma.raw('h');
+  return Prisma.sql`EXISTS (
+    SELECT 1 FROM "AppealDecisionRecord" h
+    WHERE h."imageId" = ${i}.id
+      AND ${pendingCopy(h)}
+      AND CASE
+        WHEN h."removalLabel" IS NULL THEN h."decidedAt" > now() - ${UNLABELLED_HOLD}
+        ELSE h."decidedAt" > now() - ${COPY_WINDOW} AND NOT ${neverCopy(
+    Prisma.sql`h."removalLabel"`
+  )}
+      END
+      AND NOT ${excludedRecord(h)}
+  )`;
+};
+
+export type AppealTrainingStore = {
+  /** Copies the original stored under `imageUrl` and returns the training object's key. */
+  copy: (imageUrl: string) => Promise<string>;
+  remove: (keys: string[]) => Promise<void>;
+};
+
+export function createAppealTrainingStore({
+  source,
+  sourceBucket,
+  target,
+  targetBucket,
+}: {
+  source: S3Client;
+  sourceBucket: string;
+  target: S3Client;
+  targetBucket: string;
+}): AppealTrainingStore {
+  return {
+    async copy(imageUrl) {
+      const original = await source.send(
+        new GetObjectCommand({ Bucket: sourceBucket, Key: imageUrl })
+      );
+      await target.send(
+        new PutObjectCommand({
+          Bucket: targetBucket,
+          Key: imageUrl,
+          Body: original.Body,
+          ContentType: original.ContentType,
+          ContentLength: original.ContentLength,
+        })
+      );
+      return imageUrl;
+    },
+    async remove(keys) {
+      for (let i = 0; i < keys.length; i += 1000) {
+        const { Errors } = await target.send(
+          new DeleteObjectsCommand({
+            Bucket: targetBucket,
+            Delete: { Objects: keys.slice(i, i + 1000).map((Key) => ({ Key })), Quiet: true },
+          })
+        );
+        if (Errors?.length)
+          throw new Error(`delete failed: ${Errors.map((e) => e.Key).join(', ')}`);
+      }
+    },
+  };
+}
+
+function appealTrainingConfig() {
+  const bucket = env.APPEAL_TRAINING_B2_BUCKET;
+  const accessKeyId = env.APPEAL_TRAINING_B2_ACCESS_KEY;
+  const secretAccessKey = env.APPEAL_TRAINING_B2_SECRET_KEY;
+  if (!bucket || !accessKeyId || !secretAccessKey) return null;
+  const endpoint = env.S3_IMAGE_B2_ENDPOINT;
+  if (!endpoint || !env.S3_IMAGE_B2_ACCESS_KEY || !env.S3_IMAGE_B2_SECRET_KEY) return null;
+  return { bucket, accessKeyId, secretAccessKey, endpoint };
+}
+
+/** Whether the copy job can run; when it cannot, nothing is held for it. */
+export const isAppealTrainingConfigured = () => appealTrainingConfig() !== null;
+
+export async function appealTrainingStoreFromEnv(): Promise<AppealTrainingStore | null> {
+  const config = appealTrainingConfig();
+  if (!config) return null;
+  const { bucket, accessKeyId, secretAccessKey, endpoint } = config;
+  // Imported here: s3-utils reads upload env at load, which this module's importers need not have.
+  const { getImageUploadBackend } = await import('~/utils/s3-utils');
+  const { s3, bucket: sourceBucket } = await getImageUploadBackend();
+  return createAppealTrainingStore({
+    source: s3,
+    sourceBucket,
+    target: instrumentB2Client(
+      new S3Client({
+        credentials: { accessKeyId, secretAccessKey },
+        region: env.S3_IMAGE_B2_REGION ?? 'us-west-004',
+        endpoint,
+        forcePathStyle: true,
+      })
+    ),
+    targetBucket: bucket,
+  });
+}
+
+/**
+ * Copies the originals of rejected appeals into the training bucket before `remove-blocked-images`
+ * purges them. A record ends copied, skipped or failed; one with no removal label yet waits for it.
+ */
+export async function copyRejectedForTraining({
+  store,
+  lookup = removalLabelsFromClickhouse,
+}: { store?: AppealTrainingStore | null; lookup?: RemovalLabelLookup } = {}) {
+  if (store === undefined) store = await appealTrainingStoreFromEnv();
+  if (!store) {
+    logToAxiom({
+      type: 'warning',
+      name: JOB_LOG_NAME,
+      message: 'Training bucket not configured; nothing copied',
+    });
+    return { configured: false };
+  }
+
+  const r = Prisma.raw('r');
+  const unlabelled = await dbWrite.$queryRaw<{ imageId: number }[]>`
+    SELECT DISTINCT "imageId" FROM "AppealDecisionRecord" r
+    WHERE ${pendingCopy(r)} AND "removalLabel" IS NULL AND "decidedAt" > now() - ${COPY_WINDOW}
+    ORDER BY "imageId"
+    LIMIT ${COPY_BATCH}
+  `;
+  const labelled = unlabelled.length
+    ? await storeRemovalLabels(await lookup(unlabelled.map((u) => u.imageId)))
+    : 0;
+
+  const pending = await dbWrite.$queryRaw<
+    { appealId: number; imageUrl: string; action: 'copy' | 'skip' | 'wait' }[]
+  >`
+    SELECT r."appealId", r."imageUrl",
+      CASE
+        WHEN r."decidedAt" <= now() - ${COPY_WINDOW}
+          OR NOT EXISTS (SELECT 1 FROM "Image" ci WHERE ci.id = r."imageId")
+          OR ${excludedRecord(r)}
+          THEN 'skip'
+        WHEN r."removalLabel" IS NULL THEN 'wait'
+        WHEN ${neverCopy(Prisma.sql`r."removalLabel"`)} THEN 'skip'
+        ELSE 'copy'
+      END AS action
+    FROM "AppealDecisionRecord" r
+    WHERE ${pendingCopy(r)}
+    ORDER BY r."decidedAt"
+    LIMIT ${COPY_BATCH}
+  `;
+
+  const skipIds = pending.filter((p) => p.action === 'skip').map((p) => p.appealId);
+  if (skipIds.length) await setCopyState(skipIds, 'skipped');
+
+  let copied = 0;
+  let failed = 0;
+  for (const { appealId, imageUrl } of pending.filter((p) => p.action === 'copy')) {
+    try {
+      const key = await store.copy(imageUrl);
+      await setCopyState([appealId], 'copied', key);
+      copied++;
+    } catch (e) {
+      await setCopyState([appealId], 'failed');
+      failed++;
+      logToAxiom({
+        type: 'error',
+        name: JOB_LOG_NAME,
+        message: 'Training copy failed',
+        details: { appealId, error: (e as Error).message },
+      });
+    }
+  }
+
+  return { configured: true, labelled, copied, skipped: skipIds.length, failed };
+}
+
+function setCopyState(appealIds: number[], state: string, key: string | null = null) {
+  return dbWrite.$executeRaw`
+    UPDATE "AppealDecisionRecord"
+    SET "trainingCopyState" = ${state}, "trainingObjectKey" = ${key}
+    WHERE "appealId" = ANY(${appealIds}::int[]) AND "trainingCopyState" IS NULL
   `;
 }
 
@@ -162,12 +411,16 @@ export async function recordRestoredLevels() {
 }
 
 export async function runAppealDecisionRecords(lookup?: RemovalLabelLookup) {
-  const { swept, labels, expired } = await sweepExcludedRecords();
+  const { swept, labels, expired, objects } = await sweepExcludedRecords();
   const labelled = await fillRemovalLabels(lookup);
   const { restored, corrected } = await recordRestoredLevels();
-  return { swept, labels, expired, labelled, restored, corrected };
+  return { swept, labels, expired, objects, labelled, restored, corrected };
 }
 
 export const appealDecisionRecordsJob = createJob('appeal-decision-records', '40 4 * * *', () =>
   runAppealDecisionRecords()
+);
+
+export const appealTrainingCopyJob = createJob('appeal-training-copy', '*/10 * * * *', () =>
+  copyRejectedForTraining()
 );

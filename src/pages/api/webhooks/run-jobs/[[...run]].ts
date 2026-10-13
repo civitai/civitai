@@ -5,7 +5,10 @@ import { acquireJobLock, NOOP_LOCK, type JobLock } from '~/server/jobs/job-lock'
 import { addOnDemandRunStrategiesJob } from '~/server/jobs/add-on-demand-run-strategies';
 import { announcementDismissalCleanupJob } from '~/server/jobs/announcement-dismissal-cleanup';
 import { voidOrphanedAppealsJob } from '~/server/jobs/void-orphaned-appeals';
-import { appealDecisionRecordsJob } from '~/server/jobs/appeal-decision-records';
+import {
+  appealDecisionRecordsJob,
+  appealTrainingCopyJob,
+} from '~/server/jobs/appeal-decision-records';
 import { announcementMediaCheckJob } from '~/server/jobs/announcement-media-check';
 import { auditRemixSourcesJob } from '~/server/jobs/audit-remix-sources';
 import { blurbFanoutJob } from '~/server/jobs/blurb-fanout';
@@ -278,6 +281,7 @@ export const jobs: Job[] = [
   announcementDismissalCleanupJob,
   voidOrphanedAppealsJob,
   appealDecisionRecordsJob,
+  appealTrainingCopyJob,
   announcementMediaCheckJob,
   blurbFanoutJob,
   ...crucibleJobs,

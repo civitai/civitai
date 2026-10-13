@@ -6794,6 +6794,8 @@ model AppealDecisionRecord {
   removalLabel             String?
   restoredLevel            Int?
   trainingLabelCorrectedAt DateTime? @db.Timestamptz(3)
+  trainingCopyState        String?
+  trainingObjectKey        String?
   createdAt                DateTime  @default(now()) @db.Timestamptz(3)
 
   @@index([imageId])
