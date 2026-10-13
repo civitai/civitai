@@ -116,7 +116,7 @@ import { sanitizeAppSlug } from '~/server/utils/apps-slug';
  *   - The limiter CANNOT precede verification. It is keyed on `claims.blockInstanceId`,
  *     which only exists once the token has been verified — there is no earlier key to
  *     throttle on, so step 1 is a hard floor beneath it.
- *   - Moving it INTO this helper, between steps 1 and 2, would apply a 120-req/10s
+ *   - Moving it INTO this helper, between steps 1 and 2, would apply the catalog
  *     ceiling to EVERY bridge procedure rather than the ones that opted in —
  *     `pollWorkflow` and `submitWorkflow` among them. Those are deliberately not on the
  *     catalog bucket, and a polling proc is exactly the one a shared ceiling would start
@@ -134,7 +134,7 @@ import { sanitizeAppSlug } from '~/server/utils/apps-slug';
  *     the reorder would save is one Redis GET + one replica findUnique … roughly one
  *     op") — and the GET count is per the note above, not the one in this sentence. It is not roughly one op: on a session-cache miss it is a network round-trip.
  * The conclusion is unchanged, because it never rested on the cost: what decides it is the
- * availability argument above — a shared 120/10s ceiling would reach `pollWorkflow`. The
+ * availability argument above — a shared catalog ceiling would reach `pollWorkflow`. The
  * cost line only ever said the reorder was not worth making for its own sake, and a
  * larger saving on an over-limit request does not buy a ceiling on the polling procs.
  * So the order stands. If a bridge proc ever needs a cheaper refusal than this, the

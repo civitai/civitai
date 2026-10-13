@@ -59,7 +59,6 @@ import {
 } from '~/server/services/buzz.service';
 import { projectBlockBuzzTransaction } from '~/server/services/blocks/block-buzz-read.projection';
 import {
-  type AppBlockRateLimitBucket,
   recordBlockBridgeRateLimitRefusal,
   recordConfirmedQuoteOvercharge,
 } from '~/server/metrics/app-block-runtime.metrics';
@@ -763,23 +762,17 @@ export type BlockBridgeViewerOptions = {
   rateLimit: {
     /**
      * Charges the procedure's bucket; a refusal answers TOO_MANY_REQUESTS. Must be a limiter
-     * call written at the procedure: `no-unlimited-block-bridge-proc.test.ts` derives the
-     * bucket from the calls under the procedure node.
+     * call written at the procedure or in a module-scope function of this file that it calls:
+     * `no-unlimited-block-bridge-proc.test.ts` derives the bucket from those calls.
      */
     check: (viewer: BlockBridgeViewer) => Promise<{ allowed: boolean }>;
-    /**
-     * Whether a refusal is added to the bridge rate-limit refusal counter: the labels to
-     * count it under, or `'uncounted'`. Required, so each procedure states which.
-     */
-    recordRefusalAs: { procedure: string; bucket: AppBlockRateLimitBucket } | 'uncounted';
   };
 };
 
 /**
  * The authorization ladder for a bridge procedure that acts for the token's own viewer:
  * authorize the token, require the consent scope, refuse an anonymous subject, apply
- * the App Blocks kill-switch to that subject, then charge the procedure's rate limit —
- * counting a refusal only where the procedure asks for that.
+ * the App Blocks kill-switch to that subject, then charge the procedure's rate limit.
  *
  * Typed to take `{ blockToken: string }` as its input, so it only composes after an
  * `.input()` that declares one.
@@ -806,16 +799,24 @@ export function authorizeBlockBridgeViewer(
     const blockViewer = { claims, userId };
     const rate = await options.rateLimit.check(blockViewer);
     if (!rate.allowed) {
-      const { recordRefusalAs } = options.rateLimit;
-      if (recordRefusalAs !== 'uncounted') {
-        recordBlockBridgeRateLimitRefusal(recordRefusalAs.procedure, recordRefusalAs.bucket);
-      }
       throw new TRPCError({
         code: 'TOO_MANY_REQUESTS',
         message: 'Rate limit exceeded, please retry shortly.',
       });
     }
     return next({ ctx: { blockViewer } });
+  };
+}
+
+/** Middleware options for the buzz reads that share one refusal copy and count no refusals. */
+function buzzReadOptions(): BlockBridgeViewerOptions {
+  return {
+    scope: 'buzz:read:self',
+    anonMessage: 'buzz read requires an authenticated viewer',
+    rateLimit: {
+      // Bounds the buzz-service and ClickHouse reads behind these. Fail-open on a redis incident.
+      check: ({ claims }) => checkBlockCatalogRateLimit(claims.blockInstanceId),
+    },
   };
 }
 
@@ -7627,8 +7628,11 @@ export const blocksRouter = router({
         rateLimit: {
           // A balance read costs a buzz-service round trip per call. Fail-open on a redis
           // incident.
-          check: ({ claims }) => checkBlockCatalogRateLimit(claims.blockInstanceId),
-          recordRefusalAs: { procedure: 'getMyBuzzBalance', bucket: 'catalog' },
+          check: async ({ claims }) => {
+            const rate = await checkBlockCatalogRateLimit(claims.blockInstanceId);
+            if (!rate.allowed) recordBlockBridgeRateLimitRefusal('getMyBuzzBalance', 'catalog');
+            return rate;
+          },
         },
       })
     )
@@ -7650,7 +7654,7 @@ export const blocksRouter = router({
    * pool per call. MUTATION (not query) for the same reason as getMyBuzzBalance:
    * a .query leaks the bearer block token into the ?input= URL / logs / Referer.
    *
-   * CONSENT: requires the `buzz:read:self` scope (see authorizeBlockBridgeViewer) —
+   * CONSENT: requires the `buzz:read:self` scope (see buzzReadOptions) —
    * the ledger is more sensitive than the spendable-balance convenience read.
    *
    * Response rows carry the SECURITY-HARDENED projection
@@ -7662,16 +7666,7 @@ export const blocksRouter = router({
    */
   getMyBuzzTransactions: publicProcedure
     .input(getMyBuzzTransactionsInput)
-    .use(
-      authorizeBlockBridgeViewer({
-        scope: 'buzz:read:self',
-        anonMessage: 'buzz read requires an authenticated viewer',
-        rateLimit: {
-          check: ({ claims }) => checkBlockCatalogRateLimit(claims.blockInstanceId),
-          recordRefusalAs: 'uncounted',
-        },
-      })
-    )
+    .use(authorizeBlockBridgeViewer(buzzReadOptions()))
     .mutation(async ({ ctx, input }) => {
       const { userId } = ctx.blockViewer;
       const { accountType, type, cursor, start, end, limit } = input;
@@ -7695,16 +7690,7 @@ export const blocksRouter = router({
    */
   getMyBuzzAccounts: publicProcedure
     .input(getMyBuzzAccountsInput)
-    .use(
-      authorizeBlockBridgeViewer({
-        scope: 'buzz:read:self',
-        anonMessage: 'buzz read requires an authenticated viewer',
-        rateLimit: {
-          check: ({ claims }) => checkBlockCatalogRateLimit(claims.blockInstanceId),
-          recordRefusalAs: 'uncounted',
-        },
-      })
-    )
+    .use(authorizeBlockBridgeViewer(buzzReadOptions()))
     .mutation(async ({ ctx }) => {
       const { userId } = ctx.blockViewer;
       const accounts = await getUserBuzzAccount({
@@ -7723,17 +7709,7 @@ export const blocksRouter = router({
    */
   getMyDailyCompensation: publicProcedure
     .input(getMyDailyCompensationInput)
-    .use(
-      authorizeBlockBridgeViewer({
-        scope: 'buzz:read:self',
-        anonMessage: 'buzz read requires an authenticated viewer',
-        rateLimit: {
-          // Bounds the Postgres + ClickHouse fan-out below. Fail-open on a redis incident.
-          check: ({ claims }) => checkBlockCatalogRateLimit(claims.blockInstanceId),
-          recordRefusalAs: 'uncounted',
-        },
-      })
-    )
+    .use(authorizeBlockBridgeViewer(buzzReadOptions()))
     .mutation(async ({ ctx, input }) => {
       const { userId } = ctx.blockViewer;
       return getDailyCompensationRewardByUser({
@@ -7872,7 +7848,6 @@ export const blocksRouter = router({
           // Bounds a block hammering the PRIMARY: the ban/mute lookup below reads dbWrite.
           // Fail-open on a redis incident.
           check: ({ claims }) => checkBlockCatalogRateLimit(claims.blockInstanceId),
-          recordRefusalAs: 'uncounted',
         },
       })
     )

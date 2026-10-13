@@ -165,19 +165,19 @@ const RATE_LIMIT_DECISION_LEDGER: Readonly<Record<string, Decision>> = Object.fr
   },
   getMyBuzzAccounts: {
     buckets: ['catalog'],
-    why: 'Charged in the rateLimit.check it hands authorizeBlockBridgeViewer; the bucket is pre-existing.',
+    why: 'Charged in buzzReadOptions, the options it hands authorizeBlockBridgeViewer; the bucket is pre-existing.',
   },
   getMyBuzzBalance: {
     buckets: ['catalog'],
-    why: '#569 — it was the one unlimited Buzz read. Charged in the rateLimit.check it hands authorizeBlockBridgeViewer, and the one Buzz read whose refusals are counted.',
+    why: '#569 — it was the one unlimited Buzz read. Charged in the rateLimit.check it hands authorizeBlockBridgeViewer, which also counts its refusals.',
   },
   getMyBuzzTransactions: {
     buckets: ['catalog'],
-    why: 'Charged in the rateLimit.check it hands authorizeBlockBridgeViewer; the bucket is pre-existing.',
+    why: 'Charged in buzzReadOptions, the options it hands authorizeBlockBridgeViewer; the bucket is pre-existing.',
   },
   getMyDailyCompensation: {
     buckets: ['catalog'],
-    why: 'Charged in the rateLimit.check it hands authorizeBlockBridgeViewer; the bucket is pre-existing. The ClickHouse read behind it is the expensive half.',
+    why: 'Charged in buzzReadOptions, the options it hands authorizeBlockBridgeViewer; the bucket is pre-existing. The ClickHouse read behind it is the expensive half.',
   },
   getMyViewer: {
     buckets: ['catalog'],
@@ -266,13 +266,19 @@ const RATE_LIMIT_DECISION_LEDGER: Readonly<Record<string, Decision>> = Object.fr
  * record that they were seen.**
  */
 
-/**
- * `getMyBuzzBalance`'s limiter, as the router spells it inside the middleware options. The
- * line after it is unique to that procedure, which is what scopes the two controls below.
- */
-const GET_MY_BUZZ_BALANCE_COUNTER =
-  "\n          recordRefusalAs: { procedure: 'getMyBuzzBalance', bucket: 'catalog' },";
-const GET_MY_BUZZ_BALANCE_LIMITER = `check: ({ claims }) => checkBlockCatalogRateLimit(claims.blockInstanceId),${GET_MY_BUZZ_BALANCE_COUNTER}`;
+/** `getMyBuzzBalance`'s limiter call, as the router spells it. */
+const GET_MY_BUZZ_BALANCE_LIMITER = 'await checkBlockCatalogRateLimit(claims.blockInstanceId)';
+
+/** Replaces `getMyBuzzBalance`'s limiter call only: the first one from its declaration on. */
+function withoutBalanceLimiter(replacement: string): string {
+  const text = read(ROUTER);
+  const start = text.indexOf('\n  getMyBuzzBalance: publicProcedure');
+  expect(
+    start,
+    'getMyBuzzBalance is no longer declared the way this control expects'
+  ).toBeGreaterThan(-1);
+  return text.slice(0, start) + text.slice(start).replace(GET_MY_BUZZ_BALANCE_LIMITER, replacement);
+}
 
 /** `{ proc name → buckets it charges }` for every procedure that reaches the bridge guard. */
 function bridgeProcBuckets(text: string): Map<string, string[]> {
@@ -328,15 +334,12 @@ describe('the bridge rate-limit scan can actually see what it claims to', () => 
   it('POSITIVE CONTROL — a bucket that disappears is detected, not absorbed', () => {
     // The other direction: an entry claiming `catalog` whose limiter call was removed. Without
     // this, `buckets` would be a list nobody checks and the ledger would decay into prose.
-    const mutated = read(ROUTER).replace(
-      // ⚠️ AN EXACT LITERAL FROM THE ROUTER, AND THE COUPLING IS DELIBERATE. It goes stale the
-      // moment that site is edited — which it did, when the refusal counter was added — and the
-      // `expect(mutated).not.toEqual(read(ROUTER))` line below turns that into a LOUD failure
-      // rather than a mutation that silently applies to nothing and scores the guard GREEN for
-      // free. A stale mutation target is the classic way a control stops controlling.
-      GET_MY_BUZZ_BALANCE_LIMITER,
-      `check: async () => ({ allowed: true }),${GET_MY_BUZZ_BALANCE_COUNTER}`
-    );
+    // ⚠️ AN EXACT LITERAL FROM THE ROUTER, AND THE COUPLING IS DELIBERATE. It goes stale the
+    // moment that call is respelled, and the `expect(mutated).not.toEqual(read(ROUTER))` line
+    // below turns that into a LOUD failure rather than a mutation that silently applies to
+    // nothing and scores the guard GREEN for free. A stale mutation target is the classic way a
+    // control stops controlling.
+    const mutated = withoutBalanceLimiter('await Promise.resolve({ allowed: true })');
     expect(mutated).not.toEqual(read(ROUTER));
 
     expect(bridgeProcBuckets(mutated).get('getMyBuzzBalance')).toEqual([]);
@@ -346,19 +349,11 @@ describe('the bridge rate-limit scan can actually see what it claims to', () => 
   it('NEGATIVE CONTROL — a COMMENTED-OUT or STRING-QUOTED limiter is not a limiter', () => {
     // 🔴 The fail-OPEN hazard the sibling has hit six times, measured here rather than argued
     // away. Both shapes name the function with an argument list; neither is a call.
-    const mutated = read(ROUTER).replace(
-      // ⚠️ AN EXACT LITERAL FROM THE ROUTER, AND THE COUPLING IS DELIBERATE. It goes stale the
-      // moment that site is edited — which it did, when the refusal counter was added — and the
-      // `expect(mutated).not.toEqual(read(ROUTER))` line below turns that into a LOUD failure
-      // rather than a mutation that silently applies to nothing and scores the guard GREEN for
-      // free. A stale mutation target is the classic way a control stops controlling.
-      GET_MY_BUZZ_BALANCE_LIMITER,
-      `// check: ({ claims }) => checkBlockCatalogRateLimit(claims.blockInstanceId),
-          check: async () => {
+    // The same exact-literal target as the control above, stale-loud for the same reason.
+    const mutated = withoutBalanceLimiter(
+      `await Promise.resolve({ allowed: true }); // checkBlockCatalogRateLimit(claims.blockInstanceId)
             const note = 'checkBlockCatalogRateLimit(claims.blockInstanceId)';
-            void note;
-            return { allowed: true };
-          },${GET_MY_BUZZ_BALANCE_COUNTER}`
+            void note`
     );
     expect(mutated).not.toEqual(read(ROUTER));
 
@@ -373,16 +368,11 @@ describe('the bridge rate-limit scan can actually see what it claims to', () => 
   });
 
   it('sees a bucket reached THROUGH a router-local helper, not only a direct call', () => {
-    // The quote-grant procedures charge the catalog bucket inside `previewQuoteGrantFor` /
-    // `consentQuoteGrantFor` and never name a limiter themselves. A one-level-shallow walk would
-    // score all four as unlimited.
+    // The three buzz self-reads charge the catalog bucket inside `buzzReadOptions` and never
+    // name a limiter themselves. They reach the guard through a helper too, so a
+    // one-level-shallow walk would drop all three from the population.
     const procedures = routerProcedures(parse(read(ROUTER)));
-    for (const proc of [
-      'consentQuoteGrant',
-      'consentTrainingQuote',
-      'previewQuoteGrant',
-      'previewTrainingQuote',
-    ]) {
+    for (const proc of ['getMyBuzzAccounts', 'getMyBuzzTransactions', 'getMyDailyCompensation']) {
       // With no helpers to follow, the walk sees the procedure's own calls only.
       const own = reachable(procedures.get(proc) as never, new Map());
       expect(
