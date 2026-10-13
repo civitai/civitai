@@ -16,6 +16,7 @@
     () => (data.prompts.ok ? currentPromptsOf(data.prompts.value) : null)
   );
   const canSave = $derived(!!data.grants['textScan.prompt.publish'] && data.prompts.ok);
+  const canCapture = $derived(!!data.grants['textScan.testSets.edit']);
   const config = $derived(data.prompts.ok ? data.prompts.value.config : null);
 </script>
 
@@ -62,5 +63,7 @@
     only={null}
     draftsError={changes.blankError}
     onedit={(key) => goto(promptsHref(key), { noScroll: true, keepFocus: true })}
+    workspace="prompts"
+    {canCapture}
   />
 </div>

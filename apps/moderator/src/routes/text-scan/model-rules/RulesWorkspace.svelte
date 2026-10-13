@@ -18,6 +18,7 @@
     authors,
     query,
     canEdit,
+    canCapture,
     userId,
     url,
   }: {
@@ -26,6 +27,7 @@
     authors: Record<number, string>;
     query: PageData['query'];
     canEdit: boolean;
+    canCapture: boolean;
     userId: number;
     url: URL;
   } = $props();
@@ -58,5 +60,7 @@
     editedKeys={[MODEL_RULES_POLICY_KEY]}
     only="ModelRules"
     {draftsError}
+    workspace="modelRules"
+    {canCapture}
   />
 </div>

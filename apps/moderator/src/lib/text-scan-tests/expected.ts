@@ -6,6 +6,7 @@ import {
   type LabLabel,
   type NsfwLevelName,
 } from '../text-scan-lab/types';
+import type { Workspace } from './types';
 
 export const FLAG_LABELS = ['poi', 'minor', 'scam'] as const;
 export type FlagLabel = (typeof FLAG_LABELS)[number];
@@ -34,6 +35,9 @@ const level = z.enum(NSFW_LEVEL_NAMES, {
 });
 
 const sortedUnique = (ids: readonly number[]) => [...new Set(ids)].sort((a, b) => a - b);
+
+export const workspaceOf = (entityType: LabEntityType): Workspace =>
+  LAB_LABELS[entityType].includes('modelRules') ? 'modelRules' : 'prompts';
 
 export const expectedSchema = z.object({
   nsfw: z
@@ -72,7 +76,9 @@ export function expectedFromOutput(
   for (const label of labels) {
     if (label === 'modelRules') {
       if (matchedRuleIds)
-        expected.modelRules = { ruleIds: sortedUnique(matchedRuleIds.filter((id) => id > 0)) };
+        expected.modelRules = {
+          ruleIds: sortedUnique(matchedRuleIds.filter((id) => id > 0)).slice(0, MAX_EXPECTED_RULES),
+        };
       continue;
     }
     const verdict = output?.[label] as { level?: unknown; detected?: unknown } | undefined;

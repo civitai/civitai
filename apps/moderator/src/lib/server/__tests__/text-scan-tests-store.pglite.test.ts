@@ -150,6 +150,60 @@ describe('upsertCase', () => {
   });
 });
 
+describe('upsertCase workspace and uniqueness', () => {
+  it('takes only ModelRules cases into a Model rules set, and none into a Prompts set', async () => {
+    const prompts = await newSet('p');
+    const rules = await newSet('r', 'modelRules');
+    const ruleCase = {
+      entityType: 'ModelRules' as const,
+      expected: { modelRules: { ruleIds: [] } },
+    };
+    await expect(upsertCase(db, input(rules.id), MOD)).rejects.toMatchObject({ status: 400 });
+    await expect(upsertCase(db, input(prompts.id, ruleCase), MOD)).rejects.toMatchObject({
+      status: 400,
+    });
+    await expect(upsertCase(db, input(rules.id, ruleCase), MOD)).resolves.toMatchObject({
+      created: true,
+    });
+  });
+
+  it('keeps one row per free text even when two captures race', async () => {
+    const set = await newSet();
+    const free = { entityId: null, authorId: null };
+    const [a, b] = await Promise.all([
+      upsertCase(db, input(set.id, free), MOD),
+      upsertCase(db, input(set.id, { ...free, note: 'other' }), MOD),
+    ]);
+    expect(a.case.id).toBe(b.case.id);
+    expect([a.created, b.created].sort()).toEqual([false, true]);
+    expect(await listCases(db, set.id)).toHaveLength(1);
+  });
+
+  it('enforces free-text uniqueness in the schema itself', async () => {
+    const set = await newSet();
+    const insert = () =>
+      pg.query(
+        `INSERT INTO text_scan_test_case (set_id, entity_type, fields, text_hash, origin, added_by, updated_by)
+         VALUES ($1, 'CommentV2', '[]', 'h', 'try', 1, 1)`,
+        [set.id]
+      );
+    await insert();
+    await expect(insert()).rejects.toMatchObject({ code: '23505' });
+  });
+
+  it('reports a clash on another unique key as a 409, not a crash', async () => {
+    const set = await newSet();
+    await upsertCase(
+      db,
+      input(set.id, { entityId: null, sourceRef: 'k-1', origin: 'import' }),
+      MOD
+    );
+    await expect(
+      upsertCase(db, input(set.id, { entityId: 72, sourceRef: 'k-1', origin: 'import' }), MOD)
+    ).rejects.toMatchObject({ status: 409, name: 'TestSetError' });
+  });
+});
+
 describe('updateExpectation and removeCase', () => {
   it('cannot reach a case through another set', async () => {
     const a = await newSet('a');

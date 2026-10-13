@@ -9,6 +9,7 @@
   let { data } = $props();
 
   const canEdit = $derived(!!data.grants['textScan.modelRules.edit']);
+  const canCapture = $derived(!!data.grants['textScan.testSets.edit']);
   const TABS = [
     { value: 'rules', label: 'Rules', href: '?tab=rules' },
     { value: 'matches', label: 'Matches', href: '?tab=matches' },
@@ -31,6 +32,7 @@
     authors={data.authors}
     query={data.query}
     {canEdit}
+    {canCapture}
     userId={data.user?.id ?? 0}
     url={page.url}
   />
@@ -40,5 +42,6 @@
     query={data.query}
     civitaiUrl={data.civitaiUrl}
     url={page.url}
+    {canCapture}
   />
 {/if}

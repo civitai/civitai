@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { expectedFromOutput, parseExpected, scoredLabels } from './expected';
+import {
+  MAX_EXPECTED_RULES,
+  expectedFromOutput,
+  parseExpected,
+  scoredLabels,
+  workspaceOf,
+} from './expected';
 
 describe('parseExpected', () => {
   it('accepts a range and a range of one', () => {
@@ -69,5 +75,22 @@ describe('scoredLabels', () => {
       'nsfw',
       'scam',
     ]);
+  });
+});
+
+describe('capture prefill', () => {
+  it('caps the prefilled rules at what parseExpected accepts', () => {
+    const ids = Array.from({ length: MAX_EXPECTED_RULES + 50 }, (_, i) => i + 1);
+    const prefill = expectedFromOutput(null, ['modelRules'], ids);
+    expect(prefill.modelRules?.ruleIds).toHaveLength(MAX_EXPECTED_RULES);
+    expect(typeof parseExpected(prefill, 'ModelRules')).toBe('object');
+  });
+});
+
+describe('workspaceOf', () => {
+  it('puts ModelRules cases in Model rules and everything else in Prompts', () => {
+    expect(workspaceOf('ModelRules')).toBe('modelRules');
+    expect(workspaceOf('Model')).toBe('prompts');
+    expect(workspaceOf('CommentV2')).toBe('prompts');
   });
 });

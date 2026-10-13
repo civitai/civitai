@@ -1,8 +1,12 @@
 <script lang="ts">
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
+  import AddToSetDialog from '$lib/components/text-scan-tests/AddToSetDialog.svelte';
+  import { labRuleMatches } from '$lib/text-scan-lab/labels';
   import { itemChanged, type TryItem, type TrySide } from '$lib/text-scan-lab/try';
-  import type { LabLabel, PromptKey } from '$lib/text-scan-lab/types';
+  import type { LabEntityType, LabLabel, LabRule, PromptKey } from '$lib/text-scan-lab/types';
+  import { expectedFromOutput } from '$lib/text-scan-tests/expected';
+  import type { Workspace } from '$lib/text-scan-tests/types';
   import ScanDetails from './ScanDetails.svelte';
   import VerdictCard from './VerdictCard.svelte';
 
@@ -12,12 +16,14 @@
     current,
     edited,
     onedit,
+    capture,
   }: {
     item: TryItem;
     labels: readonly LabLabel[];
     current: TrySide;
     edited: TrySide | null;
     onedit: ((key: PromptKey) => void) | null;
+    capture: { workspace: Workspace; entityType: LabEntityType } | null;
   } = $props();
 
   const changed = $derived(itemChanged(item, labels));
@@ -31,6 +37,25 @@
         ]
       : [{ title: 'Current', result: item.current, rules: current.rules }]
   );
+
+  const currentMatches = $derived(labRuleMatches(item.current, current.rules));
+  const prefill = $derived(
+    expectedFromOutput(
+      item.current.ok ? item.current.output : null,
+      labels,
+      item.current.ok ? currentMatches.map((m) => m.ruleId) : null
+    )
+  );
+  const ruleChoices = $derived.by((): LabRule[] => {
+    const seen = new Map<number, string>();
+    const sides = [
+      ...currentMatches,
+      ...(item.edited ? labRuleMatches(item.edited, edited?.rules ?? null) : []),
+    ];
+    for (const m of sides)
+      if (m.ruleId > 0 && !seen.has(m.ruleId)) seen.set(m.ruleId, m.subject ?? `Rule ${m.ruleId}`);
+    return [...seen].map(([id, subject]) => ({ id, subject }));
+  });
 </script>
 
 <section class="rounded-xl border border-dark-4 bg-dark-6 p-5">
@@ -38,6 +63,20 @@
     <h3 class="text-sm font-semibold text-white">{item.title}</h3>
     {#if changed}
       <Badge variant="outline" class="border-amber-500/60 text-amber-300">Changed</Badge>
+    {/if}
+    {#if capture}
+      <span class="ml-auto">
+        <AddToSetDialog
+          workspace={capture.workspace}
+          entityType={capture.entityType}
+          {labels}
+          entityId={item.entityId}
+          fields={item.entityId === null ? item.fields : null}
+          origin="try"
+          {prefill}
+          {ruleChoices}
+        />
+      </span>
     {/if}
   </div>
 

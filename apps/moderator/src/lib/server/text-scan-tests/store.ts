@@ -6,8 +6,14 @@ import type {
 } from '../moderator-db/types';
 import { normaliseLabFields } from '../../text-scan-lab/compose';
 import { LAB_ENTITY_TYPES, type LabEntityType, type LabField } from '../../text-scan-lab/types';
-import { parseExpected, type Expected } from '../../text-scan-tests/expected';
-import type { CaseOrigin, TestCase, TestSet, Workspace } from '../../text-scan-tests/types';
+import { parseExpected, workspaceOf, type Expected } from '../../text-scan-tests/expected';
+import {
+  WORKSPACE_NAMES,
+  type CaseOrigin,
+  type TestCase,
+  type TestSet,
+  type Workspace,
+} from '../../text-scan-tests/types';
 import { hashLabFields } from './text-hash';
 
 export class TestSetError extends Error {
@@ -149,8 +155,15 @@ export async function upsertCase(
   input: CaseInput,
   userId: number
 ): Promise<{ case: TestCase; created: boolean }> {
-  await requireOpenSet(db, input.setId);
+  const set = await requireOpenSet(db, input.setId);
   const { fields, expected } = validCase(input);
+  if (workspaceOf(input.entityType) !== set.workspace)
+    throw new TestSetError(
+      `Test set "${set.name}" belongs to ${WORKSPACE_NAMES[set.workspace]}, which does not score ${
+        input.entityType
+      } cases.`,
+      400
+    );
   const values = {
     set_id: String(input.setId),
     entity_type: input.entityType,
@@ -176,41 +189,33 @@ export async function upsertCase(
     updated_at: sql<Date>`now()`,
   };
 
-  if (input.entityId === null && input.sourceRef === null) {
-    const existing = await db
-      .selectFrom('text_scan_test_case')
-      .select('id')
-      .where('set_id', '=', values.set_id)
-      .where('entity_type', '=', values.entity_type)
-      .where('entity_id', 'is', null)
-      .where('source_ref', 'is', null)
-      .where('text_hash', '=', values.text_hash)
-      .executeTakeFirst();
-    if (existing) {
-      const row = await db
-        .updateTable('text_scan_test_case')
-        .set(refresh)
-        .where('id', '=', existing.id)
-        .returningAll()
-        .executeTakeFirstOrThrow();
-      return { case: toTestCase(row), created: false };
-    }
+  const q = db
+    .insertInto('text_scan_test_case')
+    .values(values)
+    .onConflict((oc) =>
+      input.entityId !== null
+        ? oc.columns(['set_id', 'entity_type', 'entity_id']).doUpdateSet(refresh)
+        : input.sourceRef !== null
+        ? oc.columns(['set_id', 'source_ref']).doUpdateSet(refresh)
+        : oc
+            // The predicate must repeat text_scan_test_case_free_text_key's WHERE, or Postgres finds no index.
+            .columns(['set_id', 'entity_type', 'text_hash'])
+            .where('entity_id', 'is', null)
+            .where('source_ref', 'is', null)
+            .doUpdateSet(refresh)
+    );
+  try {
+    const row = await q
+      .returningAll()
+      // xmax is 0 only on a freshly inserted row version.
+      .returning(sql<boolean>`(xmax = 0)`.as('inserted'))
+      .executeTakeFirstOrThrow();
+    return { case: toTestCase(row), created: row.inserted };
+  } catch (e) {
+    if (isUniqueViolation(e))
+      throw new TestSetError('Another case in this set already uses that entity or source.', 409);
+    throw e;
   }
-
-  const target =
-    input.entityId !== null
-      ? (['set_id', 'entity_type', 'entity_id'] as const)
-      : input.sourceRef !== null
-      ? (['set_id', 'source_ref'] as const)
-      : null;
-  let q = db.insertInto('text_scan_test_case').values(values);
-  if (target) q = q.onConflict((oc) => oc.columns(target).doUpdateSet(refresh));
-  const row = await q
-    .returningAll()
-    // xmax is 0 only on a freshly inserted row version.
-    .returning(sql<boolean>`(xmax = 0)`.as('inserted'))
-    .executeTakeFirstOrThrow();
-  return { case: toTestCase(row), created: row.inserted };
 }
 
 export async function listCases(db: Db, setId: number): Promise<TestCase[]> {

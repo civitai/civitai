@@ -38,6 +38,10 @@ CREATE TABLE IF NOT EXISTS text_scan_test_case (
 );
 CREATE INDEX IF NOT EXISTS text_scan_test_case_set_idx ON text_scan_test_case (set_id);
 CREATE INDEX IF NOT EXISTS text_scan_test_case_entity_idx ON text_scan_test_case (entity_type, entity_id);
+-- A free text (no entity, no source ref) is keyed by its hash; upsertCase targets this predicate.
+CREATE UNIQUE INDEX IF NOT EXISTS text_scan_test_case_free_text_key
+  ON text_scan_test_case (set_id, entity_type, text_hash)
+  WHERE entity_id IS NULL AND source_ref IS NULL;
 
 -- One row per side: one prompt state over one set.
 CREATE TABLE IF NOT EXISTS text_scan_test_run (

@@ -6,6 +6,7 @@ import { PGlite } from '@electric-sql/pglite';
 import { Kysely } from 'kysely';
 import type { DB as MainDB } from '@civitai/db-schema/kysely';
 import type { DB as ModeratorDB } from '../moderator-db/types';
+import { hashLabFields } from '../text-scan-tests/text-hash';
 import { pgliteDialect } from './abuse-detection-pglite.harness';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -73,7 +74,7 @@ export async function seedCase(
       author_id: over.authorId ?? null,
       fields: over.fields === null ? null : JSON.stringify([{ heading: 'Comment', text }]),
       source_deleted_at: over.fields === null ? new Date() : null,
-      text_hash: `hash-${text}`,
+      text_hash: hashLabFields([{ heading: 'Comment', text }]),
       expected: JSON.stringify(over.expected ?? { scam: false }),
       origin: 'try',
       added_by: MOD,
