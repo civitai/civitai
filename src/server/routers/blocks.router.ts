@@ -1,5 +1,5 @@
 import { GLOBAL_SCOPE_ACTIVITY_OR } from '~/server/services/blocks/scope-activity-predicate';
-import { TRPCError, getTRPCErrorFromUnknown } from '@trpc/server';
+import { TRPCError, getTRPCErrorFromUnknown, type TRPCMiddlewareFunction } from '@trpc/server';
 import * as z from 'zod';
 import { BLOCK_ANALYTICS_NAME_RE } from '~/shared/constants/block-analytics.constants';
 import {
@@ -373,6 +373,7 @@ import {
   middleware,
   publicProcedure,
   router,
+  type TRPCMeta,
 } from '~/server/trpc';
 import { throwAuthorizationError, throwNotFoundError } from '~/server/utils/errorHandling';
 import type { SessionUser } from '~/types/session';
@@ -768,10 +769,11 @@ async function recordBlockPostInvocation(opts: {
  * STANDING HAZARD, and the reason this note is long: **this card exists because the
  * last gate added to this helper — the rate limit — did not reach that proc.** The
  * next one (a new consent scope, a second revocation check, a different bucket)
- * misses it the same way. Routing it through here, or parameterising that one
- * string, is the durable fix; it was not taken in #569 because that card's scope was
- * the rate-limit decision, and it is recorded here so the next reader inherits the
- * question rather than the stale answer.
+ * misses it the same way. The durable fix is to move this helper's three procedures
+ * and `getMyBuzzBalance` onto `authorizeBlockBridgeViewer`, whose `anonMessage`
+ * option carries the one differing string. (`getMyBuzzBalance` also counts its
+ * refusals, which the middleware does not do yet.) Until then the ladder exists in
+ * three places and a gate added to one does not reach the others.
  *
  * What still separates these three bridges from that proc is SENSITIVITY, not the
  * scope and no longer the limiter: the full ledger / all-pool balances incl. creator
@@ -828,6 +830,68 @@ async function authorizeBlockBuzzRead(
     });
   }
   return { userId, claims };
+}
+
+/** What `authorizeBlockBridgeViewer` puts on `ctx.blockViewer`. */
+export type BlockBridgeViewer = {
+  /** Verified claims, already narrowed by the consent strip. */
+  claims: BlockTokenClaims;
+  /** The token's own subject. Never client input, and not the session user. */
+  userId: number;
+};
+
+export type BlockBridgeViewerOptions = {
+  /** The consent scope the token must carry. Refused as `block lacks <scope> scope`. */
+  scope: 'user:read:self' | 'buzz:read:self' | typeof CONSENT_SPEND_SCOPE;
+  /** The UNAUTHORIZED message for an anonymous subject. Wire copy, different per procedure. */
+  anonMessage: string;
+  rateLimit: {
+    /**
+     * Charges the procedure's bucket; a refusal answers TOO_MANY_REQUESTS. Must be a limiter
+     * call written at the procedure: `no-unlimited-block-bridge-proc.test.ts` derives the
+     * bucket from the calls under the procedure node.
+     */
+    check: (viewer: BlockBridgeViewer) => Promise<{ allowed: boolean }>;
+  };
+};
+
+/**
+ * The authorization ladder for a bridge procedure that acts for the token's own viewer:
+ * authorize the token, require the consent scope, refuse an anonymous subject, apply
+ * the App Blocks kill-switch to that subject, then charge the procedure's rate limit.
+ *
+ * Typed to take `{ blockToken: string }` as its input, so it only composes after an
+ * `.input()` that declares one.
+ */
+export function authorizeBlockBridgeViewer(
+  options: BlockBridgeViewerOptions
+): TRPCMiddlewareFunction<
+  Context,
+  TRPCMeta,
+  object,
+  { blockViewer: BlockBridgeViewer },
+  { blockToken: string }
+> {
+  return async ({ input, next }) => {
+    const claims = await authorizeBlockBridgeToken(input.blockToken);
+    if (!claims.scopes.includes(options.scope)) {
+      throw new TRPCError({ code: 'FORBIDDEN', message: `block lacks ${options.scope} scope` });
+    }
+    const userId = parseSubjectUserId(claims.sub);
+    if (userId == null) {
+      throw new TRPCError({ code: 'UNAUTHORIZED', message: options.anonMessage });
+    }
+    await assertAppBlocksEnabledForTokenUser(userId);
+    const blockViewer = { claims, userId };
+    const rate = await options.rateLimit.check(blockViewer);
+    if (!rate.allowed) {
+      throw new TRPCError({
+        code: 'TOO_MANY_REQUESTS',
+        message: 'Rate limit exceeded, please retry shortly.',
+      });
+    }
+    return next({ ctx: { blockViewer } });
+  };
 }
 
 // ---- W10 page generation spend --------------------------------------------
@@ -7868,41 +7932,22 @@ export const blocksRouter = router({
    */
   getMyViewer: publicProcedure
     // Block-JWT-authed (no session for dev:live) — flag evaluated against the
-    // TOKEN subject below, not the `enforceAppBlocksFlag` middleware's ctx.user.
+    // TOKEN subject, not the `enforceAppBlocksFlag` middleware's ctx.user.
     // MUTATION for the bearer-token-in-URL reason above (see getMyBuzzBalance).
     .input(z.object({ blockToken: z.string().min(1) }))
-    .mutation(async ({ input }) => {
-      const claims = await authorizeBlockBridgeToken(input.blockToken);
-      // CONSENT: the least-privileged "viewer identity" scope (mirrors /blocks/me).
-      if (!claims.scopes.includes('user:read:self')) {
-        throw new TRPCError({ code: 'FORBIDDEN', message: 'block lacks user:read:self scope' });
-      }
-      // Derive the user from the SELF-BOUND token subject, never client input.
-      const userId = parseSubjectUserId(claims.sub);
-      if (userId == null) {
-        throw new TRPCError({
-          code: 'UNAUTHORIZED',
-          message: 'viewer read requires an authenticated viewer',
-        });
-      }
-      // The App-Blocks kill-switch, evaluated against the TOKEN subject. The
-      // `user:read:self` consent scope checked above is what authorizes the read
-      // itself; the author capability is deliberately no longer checked here.
-      await assertAppBlocksEnabledForTokenUser(userId);
-      // Per-instance rate limit (shared blocks limiter) — bounds a block
-      // hammering the PRIMARY (the ban/mute lookup below reads dbWrite). Runs
-      // BEFORE that primary read, which is the one worth bounding — but NOT
-      // before every db read: `authorizeBlockBridgeToken` above already spent a
-      // Redis GET and an indexed `appBlock.findUnique` on the REPLICA. The
-      // limiter is keyed on `claims.blockInstanceId`, so it cannot precede the
-      // verification that produces it. Fail-open on a redis incident.
-      const rate = await checkBlockCatalogRateLimit(claims.blockInstanceId);
-      if (!rate.allowed) {
-        throw new TRPCError({
-          code: 'TOO_MANY_REQUESTS',
-          message: 'Rate limit exceeded, please retry shortly.',
-        });
-      }
+    .use(
+      authorizeBlockBridgeViewer({
+        scope: 'user:read:self',
+        anonMessage: 'viewer read requires an authenticated viewer',
+        rateLimit: {
+          // Bounds a block hammering the PRIMARY: the ban/mute lookup below reads dbWrite.
+          // Fail-open on a redis incident.
+          check: ({ claims }) => checkBlockCatalogRateLimit(claims.blockInstanceId),
+        },
+      })
+    )
+    .mutation(async ({ ctx }) => {
+      const { claims, userId } = ctx.blockViewer;
       // dbWrite (NOT the replica) for the ban/mute/deleted lookup — mirrors
       // /blocks/me: reading the replica lets a banned-during-replication-lag
       // viewer surface to the block as active.
