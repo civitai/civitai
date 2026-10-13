@@ -277,13 +277,18 @@ export function AppFeedbackModal({
 
 /**
  * The phone rendering: the site's bottom sheet (`MobileMenuDrawer` — `Drawer position="bottom"`,
- * sized to its content, at the sheet z-index tier), with two changes for a form:
+ * sized to its content, at the sheet z-index tier), changed for a form typed into on a phone:
  *
  * - `inner`'s `bottom` is raised by the on-screen keyboard's height, so the textarea and Send stay
  *   above the keyboard. The content's `maxHeight` is therefore a share of that raised box rather
  *   than of the viewport (the wrapper's `90dvh` would run under the keyboard).
- * - The bottom safe-area inset is paid by the global `.mantine-Drawer-content` rule in
- *   `src/styles/globals.css`; neither this nor the wrapper sets the `content` slot's padding.
+ * - A lighter scrim ({@link APP_FEEDBACK_SHEET_SCRIM_OPACITY}).
+ * - Tighter header and body: the header drops Mantine's 60px minimum height and the body's sides
+ *   are 12px, because vertical room is what the keyboard takes. `MobileMenuDrawer` merges `styles`
+ *   per slot, so each slot set here restates the wrapper's values it keeps.
+ *
+ * Unchanged: the bottom safe-area inset is paid by the global `.mantine-Drawer-content` rule in
+ * `src/styles/globals.css`; neither this nor the wrapper sets the `content` slot's padding.
  */
 function AppFeedbackSheet({
   title,
@@ -305,6 +310,8 @@ function AppFeedbackSheet({
       styles={{
         inner: { bottom: keyboardInset },
         content: { height: 'auto', maxHeight: '90%' },
+        header: { padding: '8px 8px 8px 12px', minHeight: 0 },
+        body: { overflowY: 'auto', padding: '0 12px 12px' },
       }}
       data-testid="app-feedback-modal"
     >

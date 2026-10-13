@@ -254,6 +254,7 @@ const modal = () => page.getByTestId('app-feedback-modal');
 const messageBox = () => page.getByTestId('app-feedback-message');
 const sendButton = () => page.getByTestId('app-feedback-submit');
 const counter = () => page.getByTestId('app-feedback-counter');
+const scrim = () => document.querySelector('.mantine-Drawer-overlay') as HTMLElement;
 const SENT_MESSAGE =
   "Sent to the developer. You'll get a notification if they mark it resolved or won't fix.";
 /** The dialog's own box, desktop (Modal) or phone (Drawer) alike. */
@@ -768,6 +769,10 @@ describe('the phone bottom sheet (375×720)', () => {
     expect(Math.round(r.width)).toBe(375);
     // Sized to content: well short of the screen, so the app stays visible above it.
     expect(r.height).toBeLessThan(window.innerHeight * 0.75);
+    // Minimal chrome: the header is not held at Mantine's 60px minimum.
+    const header = document.querySelector<HTMLElement>('.mantine-Drawer-header');
+    expect(header).not.toBeNull();
+    expect(header!.getBoundingClientRect().height).toBeLessThan(60);
     // Everything the user needs is on screen.
     expect(rectOf(sendButton().element()).bottom).toBeLessThanOrEqual(window.innerHeight);
   });
@@ -796,11 +801,12 @@ describe('the phone bottom sheet (375×720)', () => {
     await userEvent.fill(messageBox().element() as HTMLElement, 'from my phone');
     await sendButton().click();
     await vi.waitFor(() => expect(mocks.createInputs).toHaveLength(1));
+    // Wait for the PENDING render, not just the request: the guard reads `isPending`.
+    await expect.element(messageBox()).toBeDisabled();
     await userEvent.keyboard('{Escape}');
-    const overlay = document.querySelector<HTMLElement>('.mantine-Drawer-overlay');
-    expect(overlay).not.toBeNull();
-    (overlay as HTMLElement).click();
-    await new Promise((r) => setTimeout(r, 300)); // past the Drawer's close transition
+    // A real tap above the sheet (hit-tested, so it must land on the scrim), not a DOM click.
+    await userEvent.click(page.elementLocator(scrim()), { position: { x: 10, y: 10 } });
+    await new Promise((r) => setTimeout(r, 300));
     await expect.element(modal()).toBeInTheDocument();
     expect(dialogContent()).not.toBeNull();
     expect(mocks.successes).toHaveLength(0);
@@ -811,7 +817,7 @@ describe('the phone bottom sheet (375×720)', () => {
   test('CONTROL — with nothing pending, a scrim tap does dismiss the sheet', async () => {
     await openFeedbackModal();
     await settledDialogRect();
-    (document.querySelector('.mantine-Drawer-overlay') as HTMLElement).click();
+    await userEvent.click(page.elementLocator(scrim()), { position: { x: 10, y: 10 } });
     await expect.element(modal()).not.toBeInTheDocument();
   });
 
