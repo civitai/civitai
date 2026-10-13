@@ -90,7 +90,6 @@ export class RuleDraftsState {
     this.#key = key;
   }
 
-  /** Re-reads storage, for an edit saved in another tab. */
   reload() {
     const stored = readStored(this.#store, this.#key);
     if (stored) this.#f.drafts = this.#overlay(stored, this.#unstored);
@@ -111,7 +110,6 @@ export class RuleDraftsState {
     return this.get(rule.id) ?? fieldsOf(rule);
   }
 
-  /** Someone saved the rule after this edit started. */
   isStale(rule: SavedRule): boolean {
     const draft = this.get(rule.id);
     return !!draft && draft.baseUpdatedAt !== null && draft.baseUpdatedAt !== isoOf(rule.updatedAt);
@@ -131,11 +129,7 @@ export class RuleDraftsState {
     this.#write({ [id]: { ...fields, baseUpdatedAt: null } });
   }
 
-  /**
-   * After this moderator's own write to `before` (a toggle) produced `after`: a draft that was current
-   * on `before` moves onto `after`, so the write does not read as someone else's save. A draft that was
-   * already stale stays stale.
-   */
+  /** Rebases a draft current on `before` onto `after` after this moderator's own toggle, so it does not read as someone else's save. */
   rebaseOwnWrite(before: SavedRule, after: SavedRule) {
     const draft = this.get(after.id);
     if (draft?.baseUpdatedAt === isoOf(before.updatedAt)) this.keepMine(after);
@@ -208,7 +202,6 @@ export class RuleDraftsState {
     });
   }
 
-  // Another tab may have saved since this one read: keep its other drafts, and this tab's patch.
   #write(patch: Record<string, RuleDraft | null>) {
     const stored = readStored(this.#store, this.#key);
     const unstored = { ...this.#unstored, ...patch };
@@ -218,7 +211,6 @@ export class RuleDraftsState {
       else this.#store?.removeItem(this.#key);
       this.#unstored = {};
     } catch {
-      // Kept in memory for this page only.
       this.#unstored = unstored;
     }
     this.#f.drafts = merged;

@@ -171,7 +171,6 @@ export const actions: Actions = {
         saved.push({ draftId, id: result.id });
         cacheStale ||= result.cacheStale;
       } catch (error) {
-        // One rule's unexpected failure must not hide that the rules before it were written.
         let message = 'An unexpected error stopped this rule; reload to check whether it saved.';
         try {
           message = ruleRefusal(error).error;

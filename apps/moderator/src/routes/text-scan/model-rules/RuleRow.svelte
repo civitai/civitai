@@ -63,8 +63,7 @@
       notify(data);
     },
   });
-  // The toggle bumps the rule's updatedAt; without a rebase the moderator's own open draft would read
-  // as written against someone else's save.
+  // Rebase: the toggle bumps updatedAt, which would flag the open draft as stale.
   let toggledFrom: ModelRuleView | null = null;
   const toggle = new FormState({
     reload: true,

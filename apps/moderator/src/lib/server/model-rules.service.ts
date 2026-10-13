@@ -138,10 +138,7 @@ type RuleState = Pick<LockedRule, 'definition' | 'enabled' | 'action' | 'reason'
 const editorOf = (rule: LockedRule) =>
   (isSemanticDefinition(rule.definition) && rule.definition.updatedById) || rule.createdById;
 
-/**
- * Appends `next` to the rule's history. A rule written before history was kept has none, so its
- * state before this write goes in first, attributed and dated as it was last written.
- */
+/** Appends `next` to the rule's history. A rule from before history was kept gets its prior state recorded first. */
 async function appendVersion(
   trx: Trx,
   ruleId: number,

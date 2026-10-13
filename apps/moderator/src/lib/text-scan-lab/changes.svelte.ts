@@ -19,11 +19,7 @@ export function createChanges(moderatorId: number): ChangesState {
   return new ChangesState(fields, browserStorage(), changesStorageKey(moderatorId));
 }
 
-/**
- * The drafts, kept in step with the page: restored once in the browser (so server and client render
- * the same first frame), reloaded when another tab saves, and pruned when a reload makes a draft live.
- * Call during component initialisation.
- */
+/** Call during component initialisation. Restored once in the browser so server and client render the same first frame. */
 export function createChangesSync(
   moderatorId: number,
   current: () => CurrentPrompts | null

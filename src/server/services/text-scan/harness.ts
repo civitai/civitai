@@ -517,8 +517,7 @@ function summarizeQuotes<T extends QuoteResult>(entityType: TextScanEntityType, 
   };
 }
 
-// The lab reads a model's text whatever its visibility, so a moderator can try a draft or private
-// model before it goes public. Production profiles stay public-only; nothing composed here is recorded.
+// Lab reads model text regardless of visibility; production profiles stay public-only.
 const LAB_LOADERS: Partial<Record<TextScanEntityType, TextScanProfile['load']>> = {
   ModelRules: (ids) => loadModelScanSubjects(ids),
 };
@@ -722,8 +721,7 @@ export async function runTextScanHarnessAction(
 ): Promise<TextScanHarnessResult> {
   switch (input.action) {
     case 'getPrompts': {
-      // Primary, not replica: the lab reloads straight after a save and would otherwise list the
-      // previous version as newest.
+      // Primary, not replica: the lab reloads straight after a save and would list the previous version as newest.
       const [active, config, modes, latestRows] = await Promise.all([
         getActiveTextScanPrompts(),
         getTextScanConfig(),

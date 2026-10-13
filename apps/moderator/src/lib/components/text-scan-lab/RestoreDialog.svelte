@@ -34,7 +34,6 @@
       toast.success('Restored as a new version');
       onrestored();
     },
-    // A refusal means the page is behind: reload so the next try carries the version now current.
     onSettled: (result) => {
       if (result.type === 'failure') void invalidateAll();
     },

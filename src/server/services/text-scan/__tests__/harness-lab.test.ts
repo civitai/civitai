@@ -6,7 +6,6 @@ import type * as PromptModule from '~/server/services/text-scan/prompt';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import '~/__tests__/mocks/logging.mock';
 
-// @civitai/client is mocked globally in src/__tests__/setup.ts (submitWorkflow is a vi.fn()).
 vi.mock('~/server/services/text-scan/profiles/index', () => ({}));
 vi.mock('~/server/services/text-scan/mode', async (importOriginal) => ({
   ...(await importOriginal<typeof ModeModule>()),

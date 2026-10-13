@@ -139,10 +139,7 @@ export async function recordTextScanFailure({
   return updated.count > 0;
 }
 
-/**
- * A literal Model rules hold, recorded where the moderator app's Matches list reads. No content hash:
- * the scan after a moderator's republish must never be skipped as "unchanged" because of this row.
- */
+/** Literal Model rules hold, recorded for the Matches list. No content hash, so the post-republish scan is never skipped as unchanged. */
 export async function recordModelRulesLiteralHold({
   entityId,
   workflowId,
@@ -174,6 +171,7 @@ export async function recordModelRulesLiteralHold({
     nsfwLevel: null,
     result: result as unknown as Prisma.InputJsonValue,
   };
+  // Replacing workflowId is deliberate: an in-flight scan's callback then matches no row and the hold stands.
   await dbWrite.entityModeration.upsert({
     where: { entityType_entityId: { entityType: 'ModelRules', entityId } },
     create: { entityType: 'ModelRules', entityId, ...data },

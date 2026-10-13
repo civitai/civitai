@@ -204,8 +204,6 @@ async function scanSubjects(
       : Promise.resolve(null),
   ]);
   if (current.status === 'rejected') throw current.reason;
-  // A refused edited run (say, a draft the harness will not take) still leaves the current
-  // verdicts worth showing; each item carries the refusal instead.
   let editedRun: LabRun | null = null;
   let refusal: string | null = null;
   if (edited.status === 'rejected') {

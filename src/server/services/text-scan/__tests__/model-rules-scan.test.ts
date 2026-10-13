@@ -150,8 +150,7 @@ describe('scanEntity — ModelRules stale verdict', () => {
 });
 
 describe('scanEntity — after a literal hold', () => {
-  // Regression pin: passes without the hold record. It guards that the hold row (null content hash)
-  // never makes the scan after a moderator republish dedupe as unchanged.
+  // Regression pin: the hold row (null content hash) must not make a post-republish scan dedupe as unchanged.
   it('scans the republished model: the hold row carries no content hash to match', async () => {
     em.findUnique.mockResolvedValue({
       status: 'Succeeded',

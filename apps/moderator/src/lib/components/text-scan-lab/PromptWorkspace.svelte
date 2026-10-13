@@ -56,7 +56,6 @@
       note = '';
       toast.success(`Saved ${promptKeyName(promptKey)}`);
     },
-    // A 409 means a newer version exists: reload it so the draft shows as written against an older one.
     onSettled: (result) => {
       if (result.type === 'failure' && result.status === 409) void invalidateAll();
     },

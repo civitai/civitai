@@ -162,8 +162,7 @@ export async function insertTextScanPrompt({
     baseId === undefined
       ? await dbWrite.textScanPrompt.create({ data, select })
       : await dbWrite.$transaction(async (tx) => {
-          // Serialises saves of one key: without it two saves from the same base both read it as
-          // newest and both insert.
+          // Serialises saves of one key, so two saves from the same base cannot both insert as newest.
           await tx.$queryRaw`SELECT 1 AS locked FROM pg_advisory_xact_lock(hashtext(${`TextScanPrompt:${key}`}))`;
           const newest = await tx.textScanPrompt.findFirst({
             where: { key },
