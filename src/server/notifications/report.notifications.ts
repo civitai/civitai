@@ -83,7 +83,7 @@ export const reportNotifications = createNotificationProcessor({
           return { message: `Your appeal was closed because you deleted the ${entity}.${refund}` };
         case 'closed-unreviewed':
           return {
-            message: `We couldn't review your appeal in time: the ${entity} was removed automatically before a moderator reached it, so your appeal was closed.${refund} You're welcome to upload it again.`,
+            message: `We couldn't review your appeal in time: the ${entity} was removed before a moderator reached it, so your appeal was closed.${refund} You're welcome to upload it again.`,
           };
         default:
           return {
