@@ -284,6 +284,11 @@ export async function scanEntity({
     await logMissingPrompts({ entityType, entityId, keys: e.keys });
     return { status: 'skipped', reason: 'missing-prompt' };
   }
+  // A profile with minChars 0 would otherwise submit an empty step.
+  if (!composed.text.trim()) {
+    await clearStaleVerdict({ entityType, entityId, mode, labels: profile.labels, subject });
+    return { status: 'skipped', reason: 'too-short' };
+  }
 
   // The whole text, not the segments: an edit anywhere rescans.
   const contentHash = textScanContentHash({

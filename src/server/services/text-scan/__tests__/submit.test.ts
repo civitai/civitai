@@ -307,6 +307,19 @@ describe('scanEntity', () => {
     expect(submitWorkflow).not.toHaveBeenCalled();
   });
 
+  it('skips text that composes to nothing even when the profile allows zero characters', async () => {
+    registerTextScanProfile({ entityType: 'Article', labels: ['nsfw'], minChars: 0, load });
+    load.mockResolvedValue(
+      new Map([[7, { fields: [{ heading: 'Body', text: '  ' }], declared: {} }]])
+    );
+    expect(await scanEntity({ entityType: 'Article', entityId: 7 })).toEqual({
+      status: 'skipped',
+      reason: 'too-short',
+    });
+    expect(em.upsert).not.toHaveBeenCalled();
+    expect(submitWorkflow).not.toHaveBeenCalled();
+  });
+
   const words = (count: number) =>
     Array.from({ length: count }, (_, i) => `w${String(i).padStart(4, '0')}`).join(' ');
   const LONG = {
@@ -377,7 +390,8 @@ describe('scanEntity', () => {
     expect(steps[0].input.messages[1].content).toBe('## Title\nHello world');
   });
 
-  it('hashes the full text, so an edit past the budget is rescanned', async () => {
+  it('hashes the full text, so an edit past the scanned text is rescanned', async () => {
+    vi.mocked(getTextScanConfig).mockResolvedValue({ ...CONFIG, maxSegments: 1 });
     load.mockResolvedValue(new Map([[7, LONG]]));
     await scanEntity({ entityType: 'Post', entityId: 7 });
     const edited = {
@@ -386,6 +400,8 @@ describe('scanEntity', () => {
     };
     load.mockResolvedValue(new Map([[7, edited]]));
     await scanEntity({ entityType: 'Post', entityId: 7 });
+    expect(sentBody(1).metadata).toMatchObject({ inputCut: true });
+    expect(sentBody(1).steps).toEqual(sentBody(0).steps);
     const [first, second] = em.upsert.mock.calls.map(([args]) => args.create.contentHash);
     expect(second).not.toBe(first);
   });
