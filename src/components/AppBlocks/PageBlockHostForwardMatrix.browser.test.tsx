@@ -145,8 +145,8 @@ describe('PageBlockHost forward-handler characterisation', () => {
     const covered = [...new Set(rows.map((r) => r.type))];
     expect(covered.sort()).toEqual(required.sort());
     expect(covered).toHaveLength(27);
-    // INVENTORY's `reply` is documentation-only (nothing enforces it); the matrix's
-    // REPLY_TYPE is what the rows assert against, so the two must agree.
+    // This loop is what enforces INVENTORY's `reply` for the forwarded types: it must equal
+    // the matrix's REPLY_TYPE, which is the reply type every row observes the host sending.
     for (const t of covered) {
       expect((INVENTORY as Record<string, { reply: string }>)[t].reply).toBe(REPLY_TYPE[t]);
     }

@@ -257,7 +257,7 @@ const SUBMIT = rowsFor('SUBMIT_WORKFLOW', 'blocks.submitWorkflow', { snapshot: S
     reply: { requestId: 'rq_1', snapshot: failed(RL_MESSAGE) },
   },
   {
-    // current behaviour; candidate fix D3 — four different fallback texts across families
+    // current behaviour; candidate fix D3 — three different fallback texts across families
     scenario: 'rpc rejects with a non-Error → generic workflow fallback text',
     hosts: BOTH,
     mode: 'default',
@@ -1365,6 +1365,17 @@ const S_DEL = rowsFor('APP_STORAGE_DELETE', 'apps.storage.delete', { deleted: tr
     invalidates: 'apps.storage',
   },
   {
+    // The valid row resolves `deleted: true`; this one `false`, so neither can be a constant.
+    scenario: 'deleted:false (key did not exist) is passed through, not a constant',
+    hosts: BOTH,
+    mode: 'default',
+    rpc: { resolves: { deleted: false } },
+    payload: { requestId: 'rq_1', key: 'nope' },
+    call: [{ blockToken: TOKEN, key: 'nope' }],
+    reply: { requestId: 'rq_1', ok: true, deleted: false },
+    invalidates: 'apps.storage',
+  },
+  {
     scenario: 'rpc rejects with Error → ok:false + deleted:false + error',
     hosts: BOTH,
     mode: 'default',
@@ -1627,6 +1638,15 @@ const ITEM_REPLY = {
   viewerVoted: true,
 };
 
+/**
+ * `viewerVoted` is OPTIONAL on a shared row (absent when the server has no viewer to vote).
+ * ITEM above always carries `true`, so on its own it cannot see a host that DEFAULTS the
+ * field (`?? false`); these fixtures omit it, and strict equality then pins the pass-through.
+ */
+const { viewerVoted: _vvItem, ...ITEM_NO_VOTE } = ITEM;
+const { viewerVoted: _vvReply, ...ITEM_REPLY_NO_VOTE_BASE } = ITEM_REPLY;
+const ITEM_REPLY_NO_VOTE = { ...ITEM_REPLY_NO_VOTE_BASE, viewerVoted: undefined };
+
 const SH_LIST = rowsFor('SHARED_LIST', 'apps.shared.list', { items: [ITEM], nextCursor: 'c2' }, [
   {
     scenario: 'valid: limit clamped to 100, mine:true forwarded, item mapped',
@@ -1635,6 +1655,30 @@ const SH_LIST = rowsFor('SHARED_LIST', 'apps.shared.list', { items: [ITEM], next
     payload: { requestId: 'rq_1', prefix: 'p', limit: 500, cursor: 'c1', mine: true },
     call: [{ blockToken: TOKEN, prefix: 'p', limit: 100, cursor: 'c1', mine: true }, READ_OPTS],
     reply: { requestId: 'rq_1', items: [ITEM_REPLY], nextCursor: 'c2' },
+  },
+  {
+    scenario: 'an item WITHOUT viewerVoted is passed through as undefined, not defaulted',
+    hosts: BOTH,
+    mode: 'default',
+    rpc: { resolves: { items: [ITEM_NO_VOTE], nextCursor: 'c2' } },
+    payload: { requestId: 'rq_1' },
+    call: [
+      { blockToken: TOKEN, prefix: undefined, limit: 50, cursor: undefined, mine: undefined },
+      READ_OPTS,
+    ],
+    reply: { requestId: 'rq_1', items: [ITEM_REPLY_NO_VOTE], nextCursor: 'c2' },
+  },
+  {
+    scenario: 'a result WITHOUT nextCursor replies nextCursor undefined, not defaulted',
+    hosts: BOTH,
+    mode: 'default',
+    rpc: { resolves: { items: [ITEM] } },
+    payload: { requestId: 'rq_1' },
+    call: [
+      { blockToken: TOKEN, prefix: undefined, limit: 50, cursor: undefined, mine: undefined },
+      READ_OPTS,
+    ],
+    reply: { requestId: 'rq_1', items: [ITEM_REPLY], nextCursor: undefined },
   },
   {
     scenario: 'mine:"true" (string) is NOT forwarded as true',
@@ -1719,6 +1763,15 @@ const SH_GET = rowsFor('SHARED_GET', 'apps.shared.get', { item: ITEM }, [
     payload: { requestId: 'rq_1', key: 'k1' },
     call: [{ blockToken: TOKEN, key: 'k1' }, READ_OPTS],
     reply: { requestId: 'rq_1', item: ITEM_REPLY },
+  },
+  {
+    scenario: 'an item WITHOUT viewerVoted is passed through as undefined, not defaulted',
+    hosts: BOTH,
+    mode: 'default',
+    rpc: { resolves: { item: ITEM_NO_VOTE } },
+    payload: { requestId: 'rq_1', key: 'k1' },
+    call: [{ blockToken: TOKEN, key: 'k1' }, READ_OPTS],
+    reply: { requestId: 'rq_1', item: ITEM_REPLY_NO_VOTE },
   },
   {
     scenario: 'missing row → item:null',
@@ -2143,6 +2196,19 @@ const SH_WITHDRAW = sharedWriteRows({
   errorPrefix: {},
   reviewPrefix: {},
   malformed: { scenario: 'no key → dropped silently', payload: {} },
+  // The valid row resolves `deleted: false`; this one resolves `deleted: true`, so a host
+  // that hardcoded either value is caught by one of the two.
+  extra: rowsFor('SHARED_WITHDRAW', 'apps.shared.withdraw', { ok: true, deleted: true }, [
+    {
+      scenario: 'deleted:true from the server is passed through (not a constant)',
+      hosts: BOTH,
+      mode: 'default',
+      payload: { requestId: 'rq_1', key: 'k1' },
+      call: [{ blockToken: TOKEN, key: 'k1' }],
+      reply: { requestId: 'rq_1', ok: true, deleted: true },
+      invalidates: 'apps.shared',
+    },
+  ]),
 });
 
 const SH_REPORT = sharedWriteRows({
