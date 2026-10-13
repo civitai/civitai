@@ -234,3 +234,61 @@ describe('segmentUserText', () => {
     expectCovers(body, '## Comment\n', result.segments);
   });
 });
+
+describe('segmentUserText over seeded random subjects', () => {
+  /** mulberry32: a fixed seed replays the same subjects on every run. */
+  function prng(seed: number) {
+    return () => {
+      seed = (seed + 0x6d2b79f5) | 0;
+      let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  it('stays within budget and maxSegments, covers what it scanned, and never splits a pair', () => {
+    const random = prng(5862);
+    const int = (min: number, max: number) => min + Math.floor(random() * (max - min + 1));
+    let next = 0;
+    // `t<n>x` tokens are unique and never a substring of one another.
+    const token = () => (random() < 0.1 ? `t${next++}\u{1F600}x` : `t${next++}x`);
+    const body = () => {
+      const parts: string[] = [];
+      for (let i = int(0, 400); i > 0; i--) {
+        const roll = random();
+        if (roll < 0.03) parts.push('ab\u{1F600}'.repeat(int(100, 900)));
+        else if (roll < 0.08) parts.push('\n\n');
+        else if (roll < 0.12) parts.push('\n');
+        else parts.push(token());
+      }
+      return parts.join(' ');
+    };
+
+    for (let run = 0; run < 300; run++) {
+      const budget = int(MIN_SEGMENT_CHARS, 4000);
+      const maxSegments = int(1, 20);
+      const fields = Array.from({ length: int(1, 6) }, () => ({
+        heading: random() < 0.15 ? 'H'.repeat(int(budget + 1, budget * 2)) : `F${int(0, 99)}`,
+        text: random() < 0.1 ? '   ' : body(),
+      }));
+      const s = subject(fields);
+      const result = segmentUserText(s, { budget, maxSegments });
+
+      expect(result.text).toBe(composeUserText(s));
+      expect(result.segments.length).toBeLessThanOrEqual(maxSegments);
+      for (const segment of result.segments) {
+        expect(segment.length).toBeLessThanOrEqual(budget);
+        expect(segment).not.toMatch(LONE_SURROGATE);
+      }
+      expect(result.scannedChars).toBeLessThanOrEqual(result.inputChars);
+      expect(result.inputCut).toBe(result.scannedChars < result.inputChars);
+      if (result.text.length <= budget) expect(result.segments).toEqual([result.text]);
+
+      const scanned = result.segments.join('\n');
+      for (const match of result.text.matchAll(/t\d+\u{1F600}?x/gu)) {
+        if (match.index + match[0].length > result.scannedChars) break;
+        expect(scanned).toContain(match[0]);
+      }
+    }
+  });
+});

@@ -59,6 +59,14 @@ function chooseCut(body: string, start: number, end: number, room: number) {
   return splitsSurrogatePair(body, end) ? end - 1 : end;
 }
 
+/** A heading too long to repeat would leave each piece of its field almost no room, or none. */
+function repeatablePrefix(prefix: string, limit: number) {
+  const cap = Math.floor(limit / 4);
+  if (prefix.length <= cap) return prefix;
+  const end = splitsSurrogatePair(prefix, cap - 1) ? cap - 2 : cap - 1;
+  return `${prefix.slice(0, end)}\n`;
+}
+
 function continuationStart(body: string, previousStart: number, cut: number, overlap: number) {
   let start = cut - overlap;
   const space = body.slice(start, cut).search(WHITESPACE);
@@ -120,13 +128,14 @@ export function segmentUserText(
       append(whole, block.start + whole.length);
       continue;
     }
-    if (current && roomAfter(block.prefix) < limit / 4 && closeOrStop()) break;
+    const prefix = repeatablePrefix(block.prefix, limit);
+    if (current && roomAfter(prefix) < limit / 4 && closeOrStop()) break;
     let start = 0;
     for (;;) {
-      const room = roomAfter(block.prefix);
+      const room = roomAfter(prefix);
       const end = Math.min(block.body.length, start + room);
       const cut = end === block.body.length ? end : chooseCut(block.body, start, end, room);
-      append(block.prefix + block.body.slice(start, cut), block.start + block.prefix.length + cut);
+      append(prefix + block.body.slice(start, cut), block.start + block.prefix.length + cut);
       if (cut === block.body.length) break;
       if (closeOrStop()) break scan;
       start = continuationStart(block.body, start, cut, overlap);
