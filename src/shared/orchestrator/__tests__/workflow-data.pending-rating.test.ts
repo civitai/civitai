@@ -15,14 +15,18 @@ const blob = (overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 });
 
-const build = (output: Array<Record<string, unknown>>, holdUnrated = true) =>
+const build = (
+  output: Array<Record<string, unknown>>,
+  holdUnrated = true,
+  stepMetadata: Record<string, unknown> = {}
+) =>
   new WorkflowData(
     {
       id: 'wf-1',
       status: 'succeeded',
       allowMatureContent: false,
       metadata: {},
-      steps: [{ $type: 'comfy', name: '$0', status: 'succeeded', metadata: {}, output }],
+      steps: [{ $type: 'comfy', name: '$0', status: 'succeeded', metadata: stepMetadata, output }],
     } as any,
     { domain: { green: false } as any, nsfwEnabled: true, holdUnrated }
   );
@@ -53,13 +57,36 @@ describe('WorkflowData unrated outputs', () => {
     expect(wf.steps[0].output[0].pendingRating).toBe(false);
   });
 
-  it('does not count a held output as blocked, processing or awaited', () => {
-    const wf = build([blob()]);
+  it('lists held outputs for the placeholder, and only those', () => {
+    const wf = build([blob({ id: 'held' }), blob({ id: 'rated', nsfwLevel: 'pg' })]);
 
-    expect(wf.blockedCount).toBe(0);
-    expect(wf.blockedReasons).toEqual([]);
-    expect(wf.processingCount).toBe(0);
-    expect(wf.awaitingOutput).toBe(false);
+    expect(wf.pendingRatingOutput.map((x) => x.id)).toEqual(['held']);
+    expect(wf.steps[0].pendingRatingOutput.map((x) => x.id)).toEqual(['held']);
+  });
+
+  it('gives no placeholder for a hidden output or a suppressed intermediate step', () => {
+    const hidden = build([blob()], true, { output: { 'blob-1': { hidden: true } } });
+    const suppressed = build([blob()], true, { suppressOutput: true });
+
+    expect(hidden.pendingRatingOutput).toEqual([]);
+    expect(suppressed.pendingRatingOutput).toEqual([]);
+    // Held all the same: suppression only decides whether a placeholder is drawn.
+    expect(suppressed.steps[0].output[0].pendingRating).toBe(true);
+  });
+
+  it('does not count a held output as blocked', () => {
+    const wf = build([blob({ id: 'held' }), blob({ id: 'nsfw', blockedReason: 'NSFWLevel' })]);
+
+    expect(wf.blockedCount).toBe(1);
+    expect(wf.blockedReasons).toEqual(['NSFWLevel']);
+  });
+
+  // The orchestrator writes 'none' for "no block"; it must not read as a block that skips the hold.
+  it("holds an unrated output whose blockedReason is 'none'", () => {
+    const wf = build([blob({ blockedReason: 'none' })]);
+
+    expect(wf.steps[0].output[0].pendingRating).toBe(true);
+    expect(wf.displayOutput).toEqual([]);
   });
 
   it('leaves outputs that are never rated alone', () => {

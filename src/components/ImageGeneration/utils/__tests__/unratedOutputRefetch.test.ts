@@ -1,6 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  UNRATED_REFETCH_INTERVAL_MS,
   UNRATED_REFETCH_MAX_ATTEMPTS,
+  createUnratedRefetchScheduler,
   selectUnratedRefetch,
 } from '~/components/ImageGeneration/utils/unratedOutputRefetch';
 
@@ -80,9 +84,113 @@ describe('selectUnratedRefetch', () => {
 
     expect(workflowIds).toEqual(['wf-1']);
   });
+});
 
-  it('has a bounded budget', () => {
-    expect(UNRATED_REFETCH_MAX_ATTEMPTS).toBeGreaterThan(0);
-    expect(UNRATED_REFETCH_MAX_ATTEMPTS).toBeLessThanOrEqual(6);
+describe('createUnratedRefetchScheduler', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  // A cache whose output is never rated: the worst case, and the one the cap exists for.
+  const neverRated = () => {
+    const refetch = vi.fn<(ids: string[]) => Promise<void>>(async () => undefined);
+    const schedule = createUnratedRefetchScheduler({
+      readWorkflows: () => [workflow('wf-1', [image('a')])],
+      refetch,
+    });
+    return { refetch, schedule };
+  };
+
+  it('re-reads every interval and stops at the attempt cap', async () => {
+    const { refetch, schedule } = neverRated();
+    schedule();
+    // Twice the budget in time, so a missing cap shows as a count past it.
+    await vi.advanceTimersByTimeAsync(
+      UNRATED_REFETCH_INTERVAL_MS * UNRATED_REFETCH_MAX_ATTEMPTS * 2
+    );
+
+    expect(refetch).toHaveBeenCalledTimes(UNRATED_REFETCH_MAX_ATTEMPTS);
+    expect(refetch).toHaveBeenLastCalledWith(['wf-1']);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('waits one interval before the first re-read', async () => {
+    const { refetch, schedule } = neverRated();
+    schedule();
+    await vi.advanceTimersByTimeAsync(UNRATED_REFETCH_INTERVAL_MS - 1);
+    expect(refetch).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(refetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('runs one timer however often it is asked', async () => {
+    const { refetch, schedule } = neverRated();
+    schedule();
+    schedule();
+    schedule();
+    await vi.advanceTimersByTimeAsync(UNRATED_REFETCH_INTERVAL_MS);
+
+    expect(refetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps going after a failed re-read', async () => {
+    const refetch = vi.fn<(ids: string[]) => Promise<void>>(async () => {
+      throw new Error('orchestrator down');
+    });
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const schedule = createUnratedRefetchScheduler({
+      readWorkflows: () => [workflow('wf-1', [image('a')])],
+      refetch,
+    });
+    schedule();
+    await vi.advanceTimersByTimeAsync(UNRATED_REFETCH_INTERVAL_MS * 2);
+
+    expect(refetch).toHaveBeenCalledTimes(2);
+    error.mockRestore();
+  });
+
+  it('stops once the rating lands', async () => {
+    let rated = false;
+    const refetch = vi.fn<(ids: string[]) => Promise<void>>(async () => {
+      rated = true;
+    });
+    const schedule = createUnratedRefetchScheduler({
+      readWorkflows: () => [workflow('wf-1', [image('a', rated ? { nsfwLevel: 'x' } : {})])],
+      refetch,
+    });
+    schedule();
+    await vi.advanceTimersByTimeAsync(UNRATED_REFETCH_INTERVAL_MS * 4);
+
+    expect(refetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('does nothing when nothing is waiting on a rating', async () => {
+    const refetch = vi.fn<(ids: string[]) => Promise<void>>(async () => undefined);
+    const schedule = createUnratedRefetchScheduler({
+      readWorkflows: () => [workflow('wf-1', [image('a', { nsfwLevel: 'pg' })])],
+      refetch,
+    });
+    schedule();
+    await vi.advanceTimersByTimeAsync(UNRATED_REFETCH_INTERVAL_MS * 4);
+
+    expect(refetch).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+});
+
+// The hold is opt-in per caller, so the generator's own list is the call that must opt in.
+describe('generator list opts into the hold', () => {
+  it('builds WorkflowData with holdUnrated', () => {
+    const source = readFileSync(
+      resolve(__dirname, '..', 'generationRequestHooks.ts'),
+      'utf8'
+    ).replace(/\s+/g, ' ');
+    const calls = source.match(/new WorkflowData\([^)]*\)/g) ?? [];
+
+    expect(calls.length).toBe(1);
+    expect(calls[0]).toMatch(/\{ domain, nsfwEnabled, holdUnrated: true \}/);
   });
 });

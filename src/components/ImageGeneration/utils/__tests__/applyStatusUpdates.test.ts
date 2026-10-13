@@ -59,6 +59,17 @@ describe('applyStatusUpdates', () => {
     expect(item.downloadPriority).toBe('normal');
   });
 
+  // `updateWorkflowsStatus` passes one list to every cached query holding the workflow.
+  it('leaves the update list whole for the next cached query', () => {
+    const updates = [update(FINISHED, [rated])];
+    const first = cache(FINISHED, [unrated]);
+    const second = cache(FINISHED, [unrated]);
+    applyStatusUpdates(first, updates);
+    applyStatusUpdates(second, updates);
+
+    expect(second.pages[0].items[0].steps[0].output).toEqual([rated]);
+  });
+
   it('still applies the whole update to a running workflow', () => {
     const data = cache(RUNNING, [unrated]);
     applyStatusUpdates(data, [update(FINISHED, [rated])]);

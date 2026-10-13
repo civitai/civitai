@@ -165,7 +165,7 @@ export async function updateWorkflowsStatus(workflowIds: string[]) {
 
   queryClient.setQueriesData({ queryKey, exact: false }, (state) =>
     produce(state, (old?: InfiniteTextToImageRequests) => {
-      if (old) applyStatusUpdates(old, [...updates]);
+      if (old) applyStatusUpdates(old, updates);
     })
   );
 }
@@ -173,8 +173,10 @@ export async function updateWorkflowsStatus(workflowIds: string[]) {
 /** Writes refetched workflows onto the cached pages in place — `data` is an immer draft. */
 export function applyStatusUpdates(
   data: InfiniteTextToImageRequests,
-  updates: NonNullable<WorkflowStatusUpdate>[]
+  allUpdates: NonNullable<WorkflowStatusUpdate>[]
 ) {
+  // Each cached query gets the whole list, so consume a copy.
+  const updates = [...allUpdates];
   outerLoop: for (const page of data.pages) {
     for (const item of page.items) {
       if (!updates.length) break outerLoop;

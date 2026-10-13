@@ -146,8 +146,10 @@ export function useGetTextToImageRequests(
     [data, nsfwEnabled, domain, markerTags]
   );
 
+  // Unconditional: the scheduler reads the raw cache, which includes outputs `flatData` hides
+  // (a 3D workflow's suppressed preview render, whose rating its mesh inherits).
   useEffect(() => {
-    if (flatData.some((workflow) => workflow.pendingRatingOutput.length)) scheduleUnratedRefetch();
+    scheduleUnratedRefetch();
   }, [flatData]);
 
   return { data: flatData, markerTags, ...rest };

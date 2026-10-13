@@ -37,30 +37,43 @@ export function selectUnratedRefetch(
   return { workflowIds: [...workflowIds], blobIds: [...blobIds] };
 }
 
-const attempts = new Map<string, number>();
-let timer: ReturnType<typeof setTimeout> | undefined;
+export function createUnratedRefetchScheduler({
+  readWorkflows,
+  refetch,
+}: {
+  readWorkflows: () => CachedWorkflow[];
+  refetch: (workflowIds: string[]) => Promise<unknown>;
+}) {
+  const attempts = new Map<string, number>();
+  let timer: ReturnType<typeof setTimeout> | undefined;
 
-function cachedWorkflows() {
-  const queryKey = getQueryKey(trpc.orchestrator.queryGeneratedImages);
-  return queryClient
-    .getQueriesData<InfiniteTextToImageRequests>({ queryKey, exact: false })
-    .flatMap(([, data]) => data?.pages.flatMap((page) => page.items) ?? []) as CachedWorkflow[];
+  async function run() {
+    timer = undefined;
+    const { workflowIds, blobIds } = selectUnratedRefetch(readWorkflows(), attempts);
+    if (!workflowIds.length) return;
+    for (const id of blobIds) attempts.set(id, (attempts.get(id) ?? 0) + 1);
+    await refetch(workflowIds).catch((error) =>
+      console.error('[generation] unrated output refetch failed', error)
+    );
+    schedule();
+  }
+
+  /** Re-reads cached workflows that still hold an unrated output, until rated or out of attempts. */
+  function schedule() {
+    if (timer) return;
+    if (!selectUnratedRefetch(readWorkflows(), attempts).workflowIds.length) return;
+    timer = setTimeout(run, UNRATED_REFETCH_INTERVAL_MS);
+  }
+
+  return schedule;
 }
 
-async function refetchUnrated() {
-  timer = undefined;
-  const { workflowIds, blobIds } = selectUnratedRefetch(cachedWorkflows(), attempts);
-  if (!workflowIds.length) return;
-  for (const id of blobIds) attempts.set(id, (attempts.get(id) ?? 0) + 1);
-  await updateWorkflowsStatus(workflowIds).catch((error) =>
-    console.error('[generation] unrated output refetch failed', error)
-  );
-  scheduleUnratedRefetch();
-}
-
-/** Re-reads cached workflows that still hold an unrated output, until rated or out of attempts. */
-export function scheduleUnratedRefetch() {
-  if (timer) return;
-  if (!selectUnratedRefetch(cachedWorkflows(), attempts).workflowIds.length) return;
-  timer = setTimeout(refetchUnrated, UNRATED_REFETCH_INTERVAL_MS);
-}
+export const scheduleUnratedRefetch = createUnratedRefetchScheduler({
+  readWorkflows: () => {
+    const queryKey = getQueryKey(trpc.orchestrator.queryGeneratedImages);
+    return queryClient
+      .getQueriesData<InfiniteTextToImageRequests>({ queryKey, exact: false })
+      .flatMap(([, data]) => data?.pages.flatMap((page) => page.items) ?? []) as CachedWorkflow[];
+  },
+  refetch: updateWorkflowsStatus,
+});

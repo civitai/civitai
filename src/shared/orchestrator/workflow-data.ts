@@ -43,8 +43,8 @@ export const PENDING_RATING = 'pendingRating';
 
 /**
  * An image or video the orchestrator reports as available before it has rated it. Workflows reach
- * `succeeded` with such outputs, and every mature gate keys on the rating. Audio and 3D outputs
- * are never rated here, so they never count.
+ * `succeeded` with such outputs, and every mature gate keys on the rating. Audio is never rated,
+ * and a 3D mesh's rating is derived server side from its preview images, so neither counts.
  */
 export function isUnratedOutput(
   output: Pick<NormalizedWorkflowStepOutput, 'type' | 'available' | 'nsfwLevel' | 'blockedReason'>

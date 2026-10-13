@@ -610,7 +610,9 @@ function StepOutputs({
     .filter((img): img is ImageBlob | VideoBlob | AudioBlob => img.type !== 'model3d')
     .filter((img) => matchesMarkerTags(img, markerTags));
   const blockedReasons = step ? step.blockedReasons : request.blockedReasons;
-  const pendingRating = step ? step.pendingRatingOutput : request.pendingRatingOutput;
+  const pendingRating = (step ? step.pendingRatingOutput : request.pendingRatingOutput).filter(
+    (img) => matchesMarkerTags(img, markerTags)
+  );
 
   const stepFailure = step
     ? step.errors?.join(',\n') ||
