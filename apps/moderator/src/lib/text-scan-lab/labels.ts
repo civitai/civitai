@@ -97,10 +97,22 @@ function describeModelRules(
   source: VerdictSource & { ok: true },
   rules: readonly LabRule[] | null
 ): Verdict {
-  if (!matchedList(source.output)) return couldNotJudge(`no ${LABEL_NAMES.modelRules} answer`);
+  const name = (m: RuleMatch) => m.subject ?? `#${m.ruleId}`;
+  if (!matchedList(source.output)) {
+    // Literal hits stand without the model, and a missing answer is exactly when they matter.
+    const literal = labRuleMatches(source, rules);
+    if (!literal.length)
+      return couldNotJudge(
+        source.output ? `no ${LABEL_NAMES.modelRules} answer` : source.parseError ?? 'no answer'
+      );
+    return {
+      headline: `Literal match: ${literal.map(name).join(', ')}`,
+      tone: 'flagged',
+      reason: `The model gave no ${LABEL_NAMES.modelRules} answer; these rules are named in the text.`,
+    };
+  }
   const matches = labRuleMatches(source, rules);
   if (!matches.length) return { headline: 'No rule matched', tone: 'clear' };
-  const name = (m: RuleMatch) => m.subject ?? `#${m.ruleId}`;
   const reason = matches.flatMap((m) => (m.reason ? [`${name(m)}: ${m.reason}`] : [])).join('\n');
   return {
     headline: `Matched ${matches.map(name).join(', ')}`,
@@ -115,8 +127,8 @@ export function describeVerdict(
   rules: readonly LabRule[] | null = null
 ): Verdict {
   if (!source.ok) return couldNotJudge(source.error);
-  if (!source.output) return couldNotJudge(source.parseError ?? 'no answer');
   if (label === 'modelRules') return describeModelRules(source, rules);
+  if (!source.output) return couldNotJudge(source.parseError ?? 'no answer');
   const v = source.output[label] as
     | { level?: unknown; detected?: unknown; names?: unknown; reason?: unknown }
     | undefined;

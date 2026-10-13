@@ -160,6 +160,31 @@ describe('model rules verdict', () => {
     expect(describeVerdict('modelRules', ok({})).tone).toBe('unknown');
   });
 
+  it('still shows literal hits when the model gave no answer', () => {
+    const subjects = [{ id: 5, subject: 'Named' }];
+    for (const output of [{}, { modelRules: {} }, null]) {
+      const verdict = describeVerdict(
+        'modelRules',
+        { ok: true, output, parseError: 'bad json', literalRuleIds: [5, 8] },
+        subjects
+      );
+      expect(verdict).toEqual({
+        headline: 'Literal match: Named, #8',
+        tone: 'flagged',
+        reason: 'The model gave no Model rules answer; these rules are named in the text.',
+      });
+    }
+  });
+
+  it('could not judge with neither a model answer nor a literal hit', () => {
+    expect(describeVerdict('modelRules', { ok: true, output: {}, literalRuleIds: [] }).tone).toBe(
+      'unknown'
+    );
+    expect(
+      describeVerdict('modelRules', { ok: true, output: null, parseError: 'bad json' }).tone
+    ).toBe('unknown');
+  });
+
   it('differs when the matched rules differ, not the reasons', () => {
     expect(
       verdictsDiffer(
