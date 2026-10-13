@@ -283,8 +283,9 @@ const QUOTE_SITE_LEDGER: Record<
       'generation price already falls back to the declared floor.',
   },
   // `kind:'workflow'` — ONE fee per workflow, on the whole workflow's `cost.base`.
-  // Both sites are optional-chained: this arm proceeds without a quote (reserved
-  // at its ceiling), and an absent whatIf prices no fee on either path.
+  // The submit is optional-chained: it proceeds without a quote (reserved at its
+  // ceiling), and an absent whatIf prices no fee. The estimate is not: with no
+  // quote it returns a failed snapshot before it reaches the fee.
   submitMultiStepWorkflow: {
     role: 'reserving',
     baseExpr: 'baseGenerationBuzz: whatIfResult?.cost?.base',
@@ -299,8 +300,8 @@ const QUOTE_SITE_LEDGER: Record<
   },
   estimateMultiStepWorkflow: {
     role: 'disclosing',
-    baseExpr: 'baseGenerationBuzz: whatIfResult?.cost?.base',
-    capExpr: 'priceIsCap: whatIfResult?.cost?.variable',
+    baseExpr: 'baseGenerationBuzz: whatIfResult.cost?.base',
+    capExpr: 'priceIsCap: whatIfResult.cost?.variable',
     typeExpr: 'generationType: workflowGenerationType',
     // The same call on the same body as the submit — one resolved value.
     typeDerivation: 'const workflowGenerationType = resolveBlockGenerationType(body);',

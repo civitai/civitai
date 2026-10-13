@@ -4,7 +4,10 @@ import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { REGISTERED_RECIPE_IDS } from '~/server/services/blocks/recipes';
 import { REGISTERED_STEP_IDS } from '~/server/services/blocks/steps';
 import type { BlockStepToolCall } from '~/server/services/blocks/steps';
-import type { TrainingQuoteErrorCode } from '~/server/services/blocks/pass-through-quote-failure';
+import type {
+  TrainingQuoteErrorCode,
+  WorkflowQuoteErrorCode,
+} from '~/server/services/blocks/pass-through-quote-failure';
 import type { CONFIRMED_STEP_DAILY_LIMIT_ERROR_CODE } from '~/shared/constants/block-scope.constants';
 import type { BlockWorkflowErrorCode } from '~/server/services/blocks/workflow-graph';
 import {
@@ -988,6 +991,12 @@ export type BlockWorkflowSnapshot = {
    * OPTIONAL + additive: set only on the refusals that define a code, absent
    * everywhere else. Treat an unknown value as opaque — codes may be added.
    *
+   * `workflow_quote_rejected` / `workflow_quote_unavailable` / `workflow_quote_unpriced`
+   * are ESTIMATE-only: a `kind: 'workflow'` estimate with no price quote is a failed
+   * snapshot with no `cost`. `rejected` means the orchestrator refused the body and a
+   * retry of the same body will not help; `unavailable` is transient; `unpriced` is
+   * an answer without a price. The SUBMIT of the same body defines no such refusal.
+   *
    * `'daily-limit-exceeded'` — a viewer-confirmed job (a confirmed pass-through step or
    * a `kind:'training'` run) that would exceed what remains of the viewer's own opted-in
    * daily Buzz limit for this app. Never overridable by the confirm; the viewer raises
@@ -996,6 +1005,7 @@ export type BlockWorkflowSnapshot = {
    */
   errorCode?:
     | TrainingQuoteErrorCode
+    | WorkflowQuoteErrorCode
     | BlockWorkflowErrorCode
     | typeof CONFIRMED_STEP_DAILY_LIMIT_ERROR_CODE;
   // The buzz account that primarily funded this generation (the accountType of

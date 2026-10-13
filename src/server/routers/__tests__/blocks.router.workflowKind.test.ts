@@ -261,6 +261,47 @@ const calls = (whatif: boolean) =>
 const realSubmits = () => calls(false);
 const whatifs = () => calls(true);
 
+/** What `submitWorkflow` throws for an orchestrator reply with this status. */
+function orchestratorError(status: number, message: string) {
+  const err = new TRPCError({
+    code: status >= 500 ? 'INTERNAL_SERVER_ERROR' : 'BAD_REQUEST',
+    message,
+  });
+  annotateOrchestratorSubmitFailure(err, { status, attempt: 1 });
+  return err;
+}
+const REJECTION_REASON = 'Step 2 references an output that step 1 does not produce.';
+const REJECTED_NO_REASON =
+  'the orchestrator rejected the request; check the step inputs and references ' +
+  '(retrying the same body will not help)';
+/** Each way a quote is missing, and the clause every refusal message ends with. */
+const QUOTE_FAILURES = [
+  {
+    name: 'a 400 with a safe reason',
+    arrange: () => void (whatifError = orchestratorError(400, REJECTION_REASON)),
+    errorCode: 'workflow_quote_rejected',
+    cause: `the orchestrator rejected the request: ${REJECTION_REASON}`,
+  },
+  {
+    name: 'a 400 whose reason is withheld',
+    arrange: () => void (whatifError = orchestratorError(400, 'Could not read s3://datasets/a')),
+    errorCode: 'workflow_quote_rejected',
+    cause: REJECTED_NO_REASON,
+  },
+  {
+    name: 'a 503',
+    arrange: () => void (whatifError = orchestratorError(503, 'upstream down')),
+    errorCode: 'workflow_quote_unavailable',
+    cause: 'none could be obtained; try again',
+  },
+  {
+    name: 'an answer with no total',
+    arrange: () => void (whatifCost = { base: 60 }),
+    errorCode: 'workflow_quote_unpriced',
+    cause: 'the orchestrator answered without one',
+  },
+] as const;
+
 function ctx() {
   return {
     acceptableOrigin: true,
@@ -365,17 +406,67 @@ describe("kind:'workflow' ESTIMATE", () => {
     expect(req.metadata).toBeUndefined();
   });
 
-  it('with NO quote shows the CEILING (budget × steps) and no fee', async () => {
-    whatifCost = undefined;
+  it.each(QUOTE_FAILURES)(
+    '🔴 with NO quote ($name) is a failed snapshot coded $errorCode, never the ceiling as a price',
+    async ({ arrange, errorCode, cause }) => {
+      arrange();
+      const { snapshot } = await estimate();
+      expect(snapshot).toEqual({
+        workflowId: 'failed',
+        status: 'failed',
+        errorCode,
+        error: `No price quote for this workflow: ${cause}`,
+      });
+      expect(whatifs()).toHaveLength(1);
+    }
+  );
+
+  it('a quote of ZERO is a price, not a missing quote', async () => {
+    whatifCost = { total: 0, base: 0 };
     const { snapshot } = await estimate();
-    expect(snapshot.cost).toEqual({ total: CEILING, authorFee: 0 });
-    expect(snapshot.status).toBe('pending');
+    expect(snapshot).toEqual({
+      workflowId: 'wf_estimate',
+      status: 'pending',
+      cost: { total: 0, authorFee: 0 },
+    });
   });
 
-  it('degrades to the ceiling when the orchestrator token cannot be minted', async () => {
+  it('a rejection may name an id the app sent, in a step input or in `arguments`, and no other', async () => {
+    const OWN_STEP_ID = 'AMXT0PQ4Z8K2N6W1R5V9C3J7H0B4D8F2';
+    const OWN_ARGUMENT_ID = 'KD83HF02JS91LQ47ZX65MN28CV30BT19';
+    const FOREIGN_ID = 'ZQ7L2M9X4C1V8B5N0K3J6H2G9F4D1S7A';
+    const b = body({
+      steps: [{ $type: 'echo', input: { blob: OWN_STEP_ID } }],
+      arguments: { other: OWN_ARGUMENT_ID },
+    });
+    for (const id of [OWN_STEP_ID, OWN_ARGUMENT_ID]) {
+      whatifError = orchestratorError(404, `The blob ${id} was not found.`);
+      expect((await estimate(b)).snapshot.error).toBe(
+        `No price quote for this workflow: the orchestrator rejected the request: The blob ${id} was not found.`
+      );
+    }
+    whatifError = orchestratorError(404, `The blob ${FOREIGN_ID} was not found.`);
+    expect((await estimate(b)).snapshot.error).toBe(
+      `No price quote for this workflow: ${REJECTED_NO_REASON}`
+    );
+  });
+
+  it('an orchestrator reply with no `cost` at all is unpriced too', async () => {
+    whatifCost = undefined;
+    const { snapshot } = await estimate();
+    expect(snapshot.errorCode).toBe('workflow_quote_unpriced');
+    expect(snapshot.cost).toBeUndefined();
+  });
+
+  it('a token that cannot be minted is unavailable, with no whatif sent', async () => {
     h.getOrchestratorToken.mockRejectedValueOnce(new Error('mint down'));
     const { snapshot } = await estimate();
-    expect(snapshot.cost).toEqual({ total: CEILING, authorFee: 0 });
+    expect(snapshot).toEqual({
+      workflowId: 'failed',
+      status: 'failed',
+      errorCode: 'workflow_quote_unavailable',
+      error: 'No price quote for this workflow: none could be obtained; try again',
+    });
     expect(whatifs()).toHaveLength(0);
   });
 
@@ -389,9 +480,12 @@ describe("kind:'workflow' ESTIMATE", () => {
         ],
       })
     );
-    expect(snapshot.status).toBe('failed');
-    expect(snapshot.errorCode).toBe('training-quote-unpriced');
-    expect(snapshot.cost).toBeUndefined();
+    expect(snapshot).toEqual({
+      workflowId: 'failed',
+      status: 'failed',
+      errorCode: 'training-quote-unpriced',
+      error: 'Training needs a price quote and the orchestrator answered without one.',
+    });
   });
 
   it('prices no fee on a cap-priced quote, and none when the fee flag is off', async () => {
@@ -1044,6 +1138,52 @@ describe("kind:'workflow' SUBMIT — the money path", () => {
     }
   });
 
+  it.each(QUOTE_FAILURES)(
+    '🔴 no quote ($name) does not refuse the submit: it proceeds at the ceiling the estimate will not show',
+    async ({ arrange, errorCode }) => {
+      arrange();
+      expect((await estimate()).snapshot).toMatchObject({ status: 'failed', errorCode });
+      realizedCost = { total: 20, base: 20 };
+      const { snapshot } = await submit();
+      expect(snapshot.workflowId).toBe(WORKFLOW_ID);
+      expect(snapshot.errorCode).toBeUndefined();
+      expect(counter(USER_CAP)).toBe(CEILING);
+      expect(h.reserveAppSpend).toHaveBeenCalledWith('apb_test', CEILING, { units: STEPS });
+    }
+  );
+
+  const repeatBody = () =>
+    body({
+      arguments: { images: [{ url: 'a' }] },
+      steps: [
+        { $type: 'echo', input: {} },
+        {
+          $type: 'repeat',
+          input: {
+            for: { $ref: '$arguments', path: 'images', as: 'image' },
+            template: { $type: 'wdTagging', input: {} },
+          },
+        },
+      ],
+    });
+  it.each(
+    paths.flatMap(([path, run]) => QUOTE_FAILURES.map((failure) => ({ path, run, ...failure })))
+  )(
+    '$path: the unpriced-`repeat` refusal names the cause ($name) and keeps its code',
+    async ({ run, arrange, cause }) => {
+      arrange();
+      const { snapshot } = await run(repeatBody());
+      expect(snapshot).toEqual({
+        workflowId: 'failed',
+        status: 'failed',
+        errorCode: 'workflow_repeat_unbounded',
+        error: `workflow step 1: a workflow with a repeat needs a price quote and ${cause}`,
+      });
+      expect(realSubmits()).toHaveLength(0);
+      expect(counter(USER_CAP)).toBe(0);
+    }
+  );
+
   it.each(paths)(
     '🔴 %s: an UNPRICED workflow with a `repeat` is refused before any reservation',
     async (_n, run) => {
@@ -1073,7 +1213,7 @@ describe("kind:'workflow' SUBMIT — the money path", () => {
           errorCode: 'workflow_repeat_unbounded',
           error: `workflow step ${
             steps.length - 1
-          }: a workflow with a repeat needs a price quote and none could be obtained; try again`,
+          }: a workflow with a repeat needs a price quote and the orchestrator answered without one`,
         });
       }
       expect(realSubmits()).toHaveLength(0);
@@ -1439,6 +1579,31 @@ describe("kind:'workflow' in a BATCH estimate", () => {
     // One whatif for the one cell that got as far as pricing.
     expect(whatifs()).toHaveLength(1);
     expect(realSubmits()).toHaveLength(0);
+  });
+
+  it('🔴 a cell the orchestrator will not quote fails on its own, coded, and is not summed', async () => {
+    const rejected = body({ steps: [{ $type: 'echo', input: { marker: 'rejected-cell' } }] });
+    h.submitWorkflow.mockImplementation(async (args: SubmitArgs) => {
+      if (args.body.steps.length === 1) throw orchestratorError(400, REJECTION_REASON);
+      return { id: 'whatif-id', status: 'scheduled', cost: whatifCost };
+    });
+    const result = await caller().estimateWorkflowBatch({
+      blockToken: 't',
+      bodies: [rejected, body()],
+    });
+    expect(result.snapshots[0]).toEqual({
+      workflowId: 'failed',
+      status: 'failed',
+      errorCode: 'workflow_quote_rejected',
+      error: `No price quote for this workflow: the orchestrator rejected the request: ${REJECTION_REASON}`,
+    });
+    expect(result.snapshots[1]).toEqual({
+      workflowId: 'wf_estimate',
+      status: 'pending',
+      cost: { total: QUOTE + FEE, authorFee: FEE },
+    });
+    expect(result.aggregate).toEqual({ total: QUOTE + FEE, pricedCells: 1, cellCount: 2 });
+    expect(whatifs()).toHaveLength(2);
   });
 });
 

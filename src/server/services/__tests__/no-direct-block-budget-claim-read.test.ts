@@ -364,12 +364,11 @@ describe('every submit gate is routed through one helper', () => {
     // (`blockTrainingRunCeiling`, `blockConfirmedStepCeiling`) grants anything. Both are
     // pinned to their owners in the tests below.
     //
-    // `kind:'workflow'` adds one of each: its submit gate prices the fee, and its
-    // estimate reads the helper only for the price it shows when the orchestrator
-    // returns no quote — where no fee can be priced.
+    // `kind:'workflow'` adds one fee-pricing site, its submit gate. Its estimate
+    // reads no budget: with no quote it shows no price.
     expect(pricing).toHaveLength(3);
-    expect(feeFree).toHaveLength(5);
-    expect(sites).toHaveLength(8);
+    expect(feeFree).toHaveLength(4);
+    expect(sites).toHaveLength(7);
   });
 
   it('the fee-pricing population agrees with the RESERVING fee call sites', () => {
@@ -516,8 +515,6 @@ describe('every submit gate is routed through one helper', () => {
         .sort(),
       'a fee-free submit gate is missing, or one gained a fee quote without flipping its flag'
     ).toEqual([
-      // Not a gate: the multi-step estimate's no-quote display (see above).
-      'estimateMultiStepWorkflow',
       'quotedGrantTokenGate',
       'submitCustomComfyWorkflow',
       'submitPassThroughStepWorkflow',

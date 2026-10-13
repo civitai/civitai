@@ -10381,7 +10381,7 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
       const REFUSAL = {
         workflowId: 'failed',
         status: 'failed',
-        error: 'Training needs a price quote and none could be obtained; try again.',
+        error: 'Training needs a price quote and the orchestrator answered without one.',
         errorCode: 'training-quote-unpriced',
       };
       const blockCapIncrs = () =>
@@ -10521,12 +10521,19 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
           blockToken: 'tok',
           body: ptBody({ $type: 'training' }),
         });
-        expect(result.snapshot).toEqual({ ...REFUSAL, errorCode: 'training-quote-unavailable' });
+        expect(result.snapshot).toEqual({
+          ...REFUSAL,
+          error: 'Training needs a price quote and none could be obtained; try again.',
+          errorCode: 'training-quote-unavailable',
+        });
         expect(mockSubmitWorkflow).not.toHaveBeenCalled();
       });
 
       describe('a quote that FAILS tells the block why', () => {
         const GENERIC = 'Training needs a price quote and none could be obtained; try again.';
+        const REJECTED_NO_REASON =
+          'Training needs a price quote and the orchestrator rejected the request; check the ' +
+          'step inputs and references (retrying the same body will not help).';
         /** A 32-character key the block itself submitted, and one it did not. */
         const OWN_KEY = 'AMXT0PQ4Z8K2N6W1R5V9C3J7H0B4D8F2';
         const FOREIGN_KEY = 'ZQ7L2M9X4C1V8B5N0K3J6H2G9F4D1S7A';
@@ -10588,12 +10595,12 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
           [
             'a rejection whose message carries a URL and a stack frame',
             UNSAFE,
-            { error: GENERIC, errorCode: 'training-quote-rejected' },
+            { error: REJECTED_NO_REASON, errorCode: 'training-quote-rejected' },
           ],
           [
             'a rejection naming an id the block did not send',
             FOREIGN_ID,
-            { error: GENERIC, errorCode: 'training-quote-rejected' },
+            { error: REJECTED_NO_REASON, errorCode: 'training-quote-rejected' },
           ],
           [
             'an unrecognised throw',
