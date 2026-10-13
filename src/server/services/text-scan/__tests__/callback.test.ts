@@ -762,4 +762,18 @@ describe('handleTextScanCallback with some segments unusable', () => {
     expect(adapter.applyTextScan).toHaveBeenCalledTimes(2);
     expect(row.triggeredLabels).toEqual(['minor']);
   });
+
+  it.each([
+    ['a pre-text-scan result', { result: { labels: ['nsfw'] }, triggeredLabels: [] }],
+    ['a pre-text-scan flag with no result', { result: null, triggeredLabels: ['nsfw'] }],
+    ['a blocked pre-text-scan row', { result: null, blocked: true }],
+  ])('leaves %s to a full verdict', async (_name, over) => {
+    findUnique.mockResolvedValue(stored(over) as any);
+    vi.mocked(getWorkflow).mockResolvedValue(
+      segmented([{ ...MINOR, nsfw: { level: 'x', reason: 'X.' } }, 'TRUNCATED'], LABELS) as any
+    );
+    await handleTextScanCallback({ workflowId: 'wf-1', status: 'succeeded' });
+    expect(updateMany).toHaveBeenCalledTimes(1);
+    expect(adapter.applyTextScan).not.toHaveBeenCalled();
+  });
 });

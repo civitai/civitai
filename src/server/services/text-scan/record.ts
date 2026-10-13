@@ -121,7 +121,10 @@ export async function recordTextScanFailure({
 
 type StoredRow = StoredTextScanVerdict & { result: TextScanResult | null };
 
-/** The row's current verdict, or null when `workflowId` no longer owns it. */
+/**
+ * The row's current verdict, or null when `workflowId` no longer owns it or the row holds a verdict
+ * from before text scan: writing a text-scan result over one would switch off its legacy floor.
+ */
 export async function readTextScanVerdict({
   entityType,
   entityId,
@@ -129,11 +132,18 @@ export async function readTextScanVerdict({
 }: RowKey & { workflowId: string }): Promise<StoredRow | null> {
   const row = await dbWrite.entityModeration.findUnique({
     where: { entityType_entityId: { entityType, entityId } },
-    select: { workflowId: true, nsfwLevel: true, triggeredLabels: true, result: true },
+    select: {
+      workflowId: true,
+      nsfwLevel: true,
+      triggeredLabels: true,
+      blocked: true,
+      result: true,
+    },
   });
   if (!row || row.workflowId !== workflowId) return null;
   const result = row.result as TextScanResult | null;
   const isTextScan = result?.version != null;
+  if (!isTextScan && (result != null || row.blocked || row.triggeredLabels.length)) return null;
   return {
     nsfwLevel: row.nsfwLevel,
     triggeredLabels: row.triggeredLabels,
