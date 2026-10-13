@@ -245,6 +245,8 @@ vi.mock('~/server/prom/client', () => ({
   // and register into it, and a stub that answered those with vi.fn() would let a suite assert
   // against a registry that never held anything.
   instrumentationRegistry: new promClient.Registry(),
+  // Called at module scope by ~/server/prom/ingestion-gauge-store, which /api/metrics imports.
+  setIngestionGaugeSharedStore: vi.fn(),
   // Re-exported from '@civitai/telemetry/client' rather than declared in
   // prom/client, so this module-replacing mock drops it. Every fail-soft call site
   // (`base.reward`, `image.service`, `runClickHouseRead`) calls `.inc()` on it WITHOUT

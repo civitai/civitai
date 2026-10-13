@@ -86,7 +86,8 @@ declare global {
 // so they must NOT hit Postgres on every /metrics scrape (~15s). The queries are served
 // from an in-process cache with a short TTL and refreshed lazily off the scrape path
 // (fire-and-forget) — a scrape only ever kicks a background refresh, never blocks on
-// it, and reads the last-known values.
+// it, and reads the last-known values. When a shared store is installed, a refresh reads the
+// fleet's result from it and at most one process per TTL runs the queries.
 //
 // DB SAFETY (backlog query): the Image table is enormous and Scanned dominates it, so an unfiltered
 // GROUP BY over `ingestion` would seq-scan the whole table. Instead each working state is counted
@@ -139,6 +140,63 @@ let scanQueueCache: { depth: number; oldestAgeSeconds: number } | null = null;
 let ingestionBacklogFetchedAt = 0;
 let ingestionBacklogInflight: Promise<void> | null = null;
 
+type IngestionGaugeSnapshot = {
+  computedAt: number;
+  backlog: IngestionBacklogRow[];
+  stuckPending: Record<string, number>;
+  scanQueue: { depth: number; oldestAgeSeconds: number };
+};
+
+// The values are the same in every process, so one process per TTL computes them and the rest
+// read its result. Covers both statements at their statement_timeout plus a margin: a holder that
+// dies is replaced once this lapses.
+const INGESTION_GAUGE_LOCK_MS = 2 * INGESTION_GAUGE_STATEMENT_TIMEOUT_MS + 5_000;
+// Long enough that a process booting during a refresh outage still gets last-known values; the
+// refreshed-timestamp gauge carries their real age.
+const INGESTION_GAUGE_SHARED_RETENTION_MS = 10 * 60_000;
+
+/** Fleet-wide store for the snapshot. Every call must be bounded: the refresh awaits them. */
+export type IngestionGaugeSharedStore = {
+  read(): Promise<string | null>;
+  tryLock(ttlMs: number): Promise<boolean>;
+  write(value: string, ttlMs: number): Promise<void>;
+};
+
+// On globalThis, not module scope: the gauges' collect() closes over whichever webpack graph's copy
+// of this module registered first, and the store is installed from the other one.
+type IngestionGaugeStoreGlobal = { __civitaiIngestionGaugeStore?: IngestionGaugeSharedStore };
+
+export function setIngestionGaugeSharedStore(store: IngestionGaugeSharedStore | undefined) {
+  (globalThis as IngestionGaugeStoreGlobal).__civitaiIngestionGaugeStore = store;
+}
+
+const isNumber = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
+
+// Checked field by field because collect() throws on a non-numeric value, which would fail the
+// whole scrape, and processes on different releases read each other's snapshots during a rollout.
+// A rejected value is treated as missing, so the next refresh replaces it.
+function parseIngestionGaugeSnapshot(raw: string | null): IngestionGaugeSnapshot | null {
+  if (!raw) return null;
+  let s: IngestionGaugeSnapshot;
+  try {
+    s = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  const valid =
+    isNumber(s?.computedAt) &&
+    Array.isArray(s.backlog) &&
+    s.backlog.every(
+      (r) => typeof r?.status === 'string' && isNumber(r.backlog) && isNumber(r.oldestAgeSeconds)
+    ) &&
+    typeof s.stuckPending === 'object' &&
+    s.stuckPending !== null &&
+    Object.values(s.stuckPending).every(isNumber) &&
+    isNumber(s.scanQueue?.depth) &&
+    isNumber(s.scanQueue.oldestAgeSeconds);
+  return valid ? s : null;
+}
+
 async function queryIngestionBacklog() {
   // SET LOCAL binds the statement_timeout to this backend for the txn only, so the
   // pool's default policy is untouched. Checkout is required for it to apply.
@@ -163,27 +221,71 @@ async function queryIngestionBacklog() {
   }
 }
 
+async function computeIngestionGaugeSnapshot(): Promise<IngestionGaugeSnapshot> {
+  const { backlog, queue } = await queryIngestionBacklog();
+  const computedAt = Date.now();
+  const pending = backlog.find((r) => r.status === 'Pending');
+  return {
+    computedAt,
+    backlog: backlog.map((r) => ({
+      status: r.status,
+      backlog: Number(r.backlog),
+      oldestAgeSeconds: r.oldest != null ? (computedAt - new Date(r.oldest).getTime()) / 1000 : 0,
+    })),
+    stuckPending: {
+      image: Number(pending?.stuck_image ?? 0),
+      video: Number(pending?.stuck_video ?? 0),
+      audio: Number(pending?.stuck_audio ?? 0),
+    },
+    scanQueue: {
+      depth: Number(queue?.depth ?? 0),
+      oldestAgeSeconds: Number(queue?.oldest_age ?? 0),
+    },
+  };
+}
+
+function applyIngestionGaugeSnapshot(snapshot: IngestionGaugeSnapshot) {
+  ingestionBacklogCache = snapshot.backlog;
+  stuckPendingCache = snapshot.stuckPending;
+  scanQueueCache = snapshot.scanQueue;
+  ingestionBacklogFetchedAt = snapshot.computedAt;
+}
+
+// A shared snapshot can be older than one this process computed itself while the store was down.
+function applySharedIngestionGaugeSnapshot(snapshot: IngestionGaugeSnapshot) {
+  if (snapshot.computedAt >= ingestionBacklogFetchedAt) applyIngestionGaugeSnapshot(snapshot);
+}
+
+async function refreshIngestionGaugeSnapshot() {
+  const store = (globalThis as IngestionGaugeStoreGlobal).__civitaiIngestionGaugeStore;
+  if (!store) return applyIngestionGaugeSnapshot(await computeIngestionGaugeSnapshot());
+
+  let shared: IngestionGaugeSnapshot | null = null;
+  let compute: boolean;
+  try {
+    shared = parseIngestionGaugeSnapshot(await store.read());
+    if (shared && Date.now() - shared.computedAt < INGESTION_GAUGE_TTL_MS)
+      return applySharedIngestionGaugeSnapshot(shared);
+    compute = await store.tryLock(INGESTION_GAUGE_LOCK_MS);
+  } catch {
+    // Store unreachable: compute in-process, as every process did before the store existed.
+    compute = true;
+  }
+  if (!compute) {
+    if (shared) applySharedIngestionGaugeSnapshot(shared);
+    return;
+  }
+
+  const snapshot = await computeIngestionGaugeSnapshot();
+  applyIngestionGaugeSnapshot(snapshot);
+  await store
+    .write(JSON.stringify(snapshot), INGESTION_GAUGE_SHARED_RETENTION_MS)
+    .catch(() => undefined);
+}
+
 function refreshIngestionBacklog() {
   if (ingestionBacklogInflight) return ingestionBacklogInflight;
-  ingestionBacklogInflight = queryIngestionBacklog()
-    .then(({ backlog, queue }) => {
-      ingestionBacklogCache = backlog.map((r) => ({
-        status: r.status,
-        backlog: Number(r.backlog),
-        oldestAgeSeconds: r.oldest != null ? (Date.now() - new Date(r.oldest).getTime()) / 1000 : 0,
-      }));
-      const pending = backlog.find((r) => r.status === 'Pending');
-      stuckPendingCache = {
-        image: Number(pending?.stuck_image ?? 0),
-        video: Number(pending?.stuck_video ?? 0),
-        audio: Number(pending?.stuck_audio ?? 0),
-      };
-      scanQueueCache = {
-        depth: Number(queue?.depth ?? 0),
-        oldestAgeSeconds: Number(queue?.oldest_age ?? 0),
-      };
-      ingestionBacklogFetchedAt = Date.now();
-    })
+  ingestionBacklogInflight = refreshIngestionGaugeSnapshot()
     .catch(() => {
       // Swallow (incl. statement_timeout): keep the last-known values so a transient
       // DB hiccup can't break the /metrics scrape. A stale gauge beats a 500.
@@ -195,6 +297,10 @@ function refreshIngestionBacklog() {
 }
 
 export const __refreshIngestionGaugesForTest = () => refreshIngestionBacklog();
+export const __ingestionGaugeStateForTest = () => ({
+  computedAt: ingestionBacklogFetchedAt,
+  backlog: ingestionBacklogCache,
+});
 
 function maybeRefreshIngestionBacklog() {
   if (Date.now() - ingestionBacklogFetchedAt > INGESTION_GAUGE_TTL_MS)
