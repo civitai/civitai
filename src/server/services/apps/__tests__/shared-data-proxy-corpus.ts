@@ -12,7 +12,11 @@
  * vocabulary, so they say nothing about slang, typos or other languages.
  */
 
-/** mulberry32: a tiny, well-known 32-bit PRNG. Plenty for fixture generation; not for crypto. */
+/**
+ * mulberry32, a 32-bit PRNG; not for crypto. A DELIBERATE local copy: the repo's other copies live
+ * in an unrelated service (`resource-intent-cooc/build.ts`) and an eval script, and importing either
+ * would couple this moderation fixture to them for six lines.
+ */
 export function seededRandom(seed: number): () => number {
   let a = seed >>> 0;
   return () => {

@@ -1,9 +1,11 @@
+import { createHash } from 'node:crypto';
 import { writeFileSync } from 'node:fs';
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { BlocklistType } from '~/server/common/enums';
 import { REDIS_KEYS } from '~/server/redis/client';
+import { newUlid } from '~/server/utils/app-block-ids';
 import {
   blockingHit,
   scanCounterKey,
@@ -48,6 +50,22 @@ import {
 const SEED = 20261012;
 const PER_KIND = 300;
 
+/** First 16 hex of sha256 over each kind's strings joined by `\n`, at `SEED` / `PER_KIND`. */
+const CORPUS_DIGESTS: Record<ProxyCorpusKind, string> = {
+  ulid: 'c155b94c91e5e0e5',
+  uuid: '8e215eff92d16bc7',
+  sha1_hex: '9f66c3726980891a',
+  sha256_hex: '4cf47acf4bba2eae',
+  numeric_id: '5cb6b205f4d62202',
+  counter_key: 'f5a7b9107d14ffe0',
+  platform_url: 'a3413955366f56fd',
+  model_name: '3e1b41f8f68f9c5d',
+  tag_word: '0982c14cb947bdc9',
+  english_title: '7cd1c96a2e62e905',
+  english_sentence: '5db589644469be21',
+  json_key: '001e90dc37f62c3f',
+};
+
 /**
  * The gate, per kind. A kind is either held to ZERO flagged strings, or declared a known NOISE
  * CLASS: then any number of its strings may be flagged, but only by the categories named.
@@ -60,8 +78,9 @@ const PER_KIND = 300;
  * kept with the moderation soak's private records.
  *
  * What the declaration still catches: any hit from a category outside the class (a link, pattern,
- * POI or overflow hit on an id is a new defect), and ANY flagged string in a zero kind. What it
- * cannot catch: a rise in the rate of an already-declared category on an identifier kind.
+ * POI or overflow hit on an id is a new defect), ANY flagged string in a zero kind, and — through
+ * `NOISE_TRIPWIRE` — a wholesale break that flags half of a noise kind. What it cannot catch: a
+ * rise in an already-declared category's rate that stays under that tripwire.
  */
 const IDENTIFIER_NOISE: ReadonlyArray<SharedDataHitCategory> = ['minor', 'audit_regex'];
 const GATE: Record<ProxyCorpusKind, 'zero' | ReadonlyArray<SharedDataHitCategory>> = {
@@ -79,10 +98,21 @@ const GATE: Record<ProxyCorpusKind, 'zero' | ReadonlyArray<SharedDataHitCategory
   json_key: 'zero',
 };
 
+/**
+ * A noise kind fails outright when at least this share of it is flagged. A structural tripwire for a
+ * detector that has started matching identifiers wholesale, NOT a measured rate or a tolerance.
+ */
+const NOISE_TRIPWIRE = 0.5;
+
 /** The flagged strings that BREAK a kind's gate — empty means the kind passes. */
-function gateViolations(kind: ProxyCorpusKind, flagged: FlaggedString[]): FlaggedString[] {
+function gateViolations(
+  kind: ProxyCorpusKind,
+  flagged: FlaggedString[],
+  n: number
+): FlaggedString[] {
   const gate = GATE[kind];
   if (gate === 'zero') return flagged;
+  if (flagged.length >= n * NOISE_TRIPWIRE) return flagged;
   return flagged.filter((f) => f.hits.some((h) => !gate.includes(h.category)));
 }
 
@@ -101,6 +131,12 @@ const FIXTURE_LINK_DOMAINS = [
   'short.invalid',
   'redirect.invalid',
   'click-here.test',
+  // NEAR-MISS DECOYS of the corpus's own hosts. Matching is exact on the host, so none may fire on
+  // a platform URL; a matcher broadened to substring/suffix/subdomain matching fires on every one,
+  // which is what gives the `platform_url` zero something to catch.
+  'notcivitai.com',
+  'civitai.com.example',
+  'civitai.green.test',
 ];
 const FIXTURE_PATTERNS = [
   'claim your free',
@@ -113,6 +149,11 @@ const FIXTURE_PATTERNS = [
   'add me on whatsapp',
   'work from home and earn',
   'click the link in my bio',
+  // NEAR-MISS DECOYS: each shares leading words or a token with corpus strings, but no corpus
+  // string contains the whole phrase. A matcher loosened to per-word or prefix matching fires.
+  'great work on the giveaway page',
+  'thanks for playing, now claim',
+  'workshop crypto airdrop',
 ];
 const FIXTURE_LISTS: Partial<Record<BlocklistType, string[]>> = {
   [BlocklistType.LinkDomain]: FIXTURE_LINK_DOMAINS,
@@ -242,12 +283,35 @@ describe('shared-data moderation — false positives on a benign proxy corpus', 
     );
   });
 
+  it('the corpus is PINNED: a generator or PRNG change cannot move it silently', () => {
+    // The private measurement is bound to exactly these strings. Changing a generator is fine —
+    // re-take the measurement and update the digest in the same change.
+    const digests = Object.fromEntries(
+      KINDS.map((kind) => [
+        kind,
+        createHash('sha256')
+          .update(generateKind(kind, SEED, PER_KIND).join('\n'))
+          .digest('hex')
+          .slice(0, 16),
+      ])
+    );
+    expect(digests).toEqual(CORPUS_DIGESTS);
+  });
+
+  it('INVARIANT GUARD: corpus ULIDs have the shape of a real `newUlid()`', () => {
+    // The ULID generator is a seeded copy of `newUlid`'s layout (that one reads the clock and real
+    // randomness), so tie the two together: same length, same alphabet.
+    const shape = /^[0-9A-HJKMNP-TV-Z]{26}$/;
+    expect(newUlid()).toMatch(shape);
+    for (const id of generateKind('ulid', SEED, PER_KIND)) expect(id).toMatch(shape);
+  });
+
   it.each(KINDS)('%s: nothing flagged outside its gate', (kind) => {
-    const { flagged } = results.get(kind)!;
+    const { n, flagged } = results.get(kind)!;
     // The violating strings are the assertion's subject, so a failure names each one and the
     // category that fired — never the matched term.
     expect(
-      gateViolations(kind, flagged).map((f) => [f.text, f.hits.map((h) => h.category)])
+      gateViolations(kind, flagged, n).map((f) => [f.text, f.hits.map((h) => h.category)])
     ).toEqual([]);
   });
 });
@@ -260,16 +324,23 @@ describe('the gate itself', () => {
   });
 
   it('a zero kind fails on ANY flagged string', () => {
-    expect(gateViolations('english_sentence', [flaggedBy('audit_regex')])).toHaveLength(1);
+    expect(gateViolations('english_sentence', [flaggedBy('audit_regex')], 300)).toHaveLength(1);
   });
 
   it('a noise kind passes its declared categories and fails on any other', () => {
-    expect(gateViolations('ulid', [flaggedBy('audit_regex'), flaggedBy('minor')])).toEqual([]);
+    const ok = [flaggedBy('audit_regex'), flaggedBy('minor')];
+    expect(gateViolations('ulid', ok, 300)).toEqual([]);
     for (const other of ['poi', 'link', 'pattern', 'overflow'] as const) {
-      expect(gateViolations('ulid', [flaggedBy(other)])).toHaveLength(1);
+      expect(gateViolations('ulid', [flaggedBy(other)], 300)).toHaveLength(1);
       // ...including alongside a declared one: the declaration never excuses a second category.
-      expect(gateViolations('ulid', [flaggedBy('audit_regex', other)])).toHaveLength(1);
+      expect(gateViolations('ulid', [flaggedBy('audit_regex', other)], 300)).toHaveLength(1);
     }
+  });
+
+  it('a noise kind fails at the tripwire even when every hit is a declared category', () => {
+    const declaredOnly = (count: number) => Array.from({ length: count }, () => flaggedBy('minor'));
+    expect(gateViolations('ulid', declaredOnly(149), 300)).toEqual([]);
+    expect(gateViolations('ulid', declaredOnly(150), 300)).toHaveLength(150);
   });
 });
 
@@ -283,9 +354,14 @@ describe('positive control — the same harness DOES count a hit, per detector c
     ['link', 'value', 'see https://prize-claim.example/now'],
     ['pattern', 'value', 'Claim your free reward today'],
     ['overflow', 'value', 'a'.repeat(20_001)],
-    // The other two surfaces, so a surface that silently scanned nothing would show here.
+    // The other two surfaces, each with an in-process detector AND a list-backed one, so a surface
+    // that silently skipped either half would show here.
     ['minor', 'key', '13 year old girl'],
+    ['audit_regex', 'key', 'fuck'],
+    ['link', 'key', 'https://prize-claim.example/now'],
     ['minor', 'counter', 'playcount:13 year old girl'],
+    ['audit_regex', 'counter', 'playcount:fuck'],
+    ['pattern', 'counter', 'votes:claim your free'],
   ];
 
   it.each(CONTROLS)(
