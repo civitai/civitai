@@ -1,4 +1,4 @@
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { dbWrite } from '~/server/db/client';
 import type { StoredTextScanVerdict } from '~/server/services/text-scan/merge';
 import type { PromptIds, TextScanOutcome, TextScanOutput } from '~/server/services/text-scan/types';
@@ -176,6 +176,24 @@ export async function recordTextScanRaise({
       triggeredLabels: [...new Set([...stored.triggeredLabels, ...outcome.triggeredLabels])],
       nsfwLevel: Math.max(stored.nsfwLevel ?? 0, outcome.nsfwLevel ?? 0) || stored.nsfwLevel,
       result: result as unknown as Prisma.InputJsonValue,
+    },
+  });
+  return updated.count > 0;
+}
+
+/** Puts back the verdict `recordTextScanRaise` replaced, so a later callback raises and acts again. */
+export async function revertTextScanRaise({
+  entityType,
+  entityId,
+  workflowId,
+  stored,
+}: RowKey & { workflowId: string; stored: StoredRow }) {
+  const updated = await dbWrite.entityModeration.updateMany({
+    where: { entityType, entityId, workflowId, status: EntityModerationStatus.Failed },
+    data: {
+      triggeredLabels: stored.triggeredLabels,
+      nsfwLevel: stored.nsfwLevel,
+      result: stored.result ? (stored.result as unknown as Prisma.InputJsonValue) : Prisma.DbNull,
     },
   });
   return updated.count > 0;

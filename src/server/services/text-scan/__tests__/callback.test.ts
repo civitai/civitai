@@ -581,6 +581,7 @@ describe('handleTextScanCallback with segments', () => {
 
 describe('handleTextScanCallback with some segments unusable', () => {
   const findUnique = dbMock.dbWrite.entityModeration.findUnique;
+  beforeEach(() => findUnique.mockReset());
   const LABELS = { labels: ['nsfw', 'minor'] };
   const CLEAN = {
     nsfw: { level: 'none', reason: 'clean' },
@@ -719,6 +720,46 @@ describe('handleTextScanCallback with some segments unusable', () => {
       handleTextScanCallback({ workflowId: 'wf-1', status: 'succeeded' })
     ).rejects.toThrow('db down');
     expect(adapter.applyFailure).toHaveBeenCalled();
-    expect(updateMany).toHaveBeenCalledTimes(2);
+    expect(updateMany).toHaveBeenCalledTimes(3);
+  });
+
+  /** One EntityModeration row the mocked updateMany writes to, guarded by its `where`. */
+  function fakeRow(initial: Record<string, unknown>) {
+    const row: Record<string, any> = { status: 'Pending', ...initial };
+    findUnique.mockImplementation((async () => ({ ...row })) as any);
+    vi.mocked(updateMany).mockImplementation((async ({ where, data }: any) => {
+      const { workflowId, status } = where;
+      const ownsRow =
+        typeof workflowId === 'object'
+          ? workflowId.in.includes(row.workflowId)
+          : workflowId === row.workflowId;
+      if (!ownsRow || (status && status !== row.status)) return { count: 0 };
+      for (const [key, value] of Object.entries(data)) {
+        if (key === 'retryCount') row.retryCount = (row.retryCount ?? 0) + 1;
+        else row[key] = value;
+      }
+      return { count: 1 };
+    }) as any);
+    return row;
+  }
+
+  it('reverts the raise when applying it throws, so the next callback raises and acts again', async () => {
+    const row = fakeRow(stored());
+    vi.mocked(getWorkflow).mockResolvedValue(segmented([MINOR, 'TRUNCATED'], LABELS) as any);
+    adapter.applyTextScan.mockRejectedValueOnce(new Error('db down'));
+    await expect(
+      handleTextScanCallback({ workflowId: 'wf-1', status: 'succeeded' })
+    ).rejects.toThrow('db down');
+    expect(row).toMatchObject({
+      status: 'Failed',
+      nsfwLevel: 1,
+      triggeredLabels: [],
+      result: stored().result,
+    });
+    expect(logged('applying the partial verdict failed')).toMatchObject({ reverted: true });
+
+    await handleTextScanCallback({ workflowId: 'wf-1', status: 'succeeded' });
+    expect(adapter.applyTextScan).toHaveBeenCalledTimes(2);
+    expect(row.triggeredLabels).toEqual(['minor']);
   });
 });

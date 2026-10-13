@@ -23,6 +23,7 @@ import {
   readTextScanVerdict,
   recordTextScanFailure,
   recordTextScanRaise,
+  revertTextScanRaise,
   recordTextScanSuccess,
 } from '~/server/services/text-scan/record';
 import type {
@@ -265,8 +266,16 @@ export async function handleTextScanCallback(event: { workflowId: string; status
         textHash: metadata.textHash ?? textScanTextHash(subject),
       });
     } catch (error) {
+      // Left raised, the next callback would find nothing stricter and never act on it.
+      const reverted = await revertTextScanRaise({
+        entityType: emEntityType,
+        entityId,
+        workflowId,
+        stored,
+      });
       await log('error', 'applying the partial verdict failed', {
         ...ctx,
+        reverted,
         error: (error as Error).message,
       });
       throw error;
