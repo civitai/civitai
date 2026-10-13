@@ -59,18 +59,24 @@ function call(query: Record<string, string>) {
   }));
 }
 
-// Owner 1 drops from three removals to two, owner 2 to none, owner 3 is already right, owner 4
-// has a stored score newer than its removal count (goes down).
-const STORED = { 1: -3000, 2: -1000, 3: -2000, 4: -1000 } as Record<number, number>;
+// Owner 1 drops from three removals to two, owner 2 to none, owner 3 is already right, owner 4's
+// stored score is behind its removal count (one stored, three counted), so its score falls.
+// Owner 5 has a null stored score and no removals (unchanged); owner 6 has a null stored score and
+// one removal (falls).
+const STORED = { 1: -3000, 2: -1000, 3: -2000, 4: -1000, 5: null, 6: null } as Record<
+  number,
+  number | null
+>;
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mocks.getOwnersWithReversalsSince.mockResolvedValue([1, 2, 3, 4]);
+  mocks.getOwnersWithReversalsSince.mockResolvedValue([1, 2, 3, 4, 5, 6]);
   mocks.countRemovalsByOwner.mockResolvedValue(
     new Map([
       [1, 2],
       [3, 2],
       [4, 3],
+      [6, 1],
     ])
   );
   mocks.storedScores.mockImplementation((ids: number[]) =>
@@ -87,10 +93,10 @@ describe('recompute-reversed-removals', () => {
     expect(body).toEqual({
       dryRun: true,
       direction: 'up',
-      owners: 4,
+      owners: 6,
       changed: 2,
       up: 2,
-      down: 1,
+      down: 2,
     });
     expect(mocks.applyUserScoreUpdates).not.toHaveBeenCalled();
   });
@@ -99,7 +105,7 @@ describe('recompute-reversed-removals', () => {
     await call({});
 
     expect(mocks.getOwnersWithReversalsSince).toHaveBeenCalledWith(expect.anything(), new Date(0));
-    expect(mocks.countRemovalsByOwner).toHaveBeenCalledWith(expect.anything(), [1, 2, 3, 4]);
+    expect(mocks.countRemovalsByOwner).toHaveBeenCalledWith(expect.anything(), [1, 2, 3, 4, 5, 6]);
   });
 
   it('writes only increases by default and leaves a decrease owner untouched', async () => {
@@ -113,10 +119,10 @@ describe('recompute-reversed-removals', () => {
     expect(body).toEqual({
       dryRun: false,
       direction: 'up',
-      owners: 4,
+      owners: 6,
       changed: 2,
       up: 2,
-      down: 1,
+      down: 2,
       written: 2,
     });
   });
@@ -128,27 +134,39 @@ describe('recompute-reversed-removals', () => {
       ['1', { reportsAgainst: -2000 }],
       ['2', { reportsAgainst: 0 }],
       ['4', { reportsAgainst: -3000 }],
+      ['6', { reportsAgainst: -1000 }],
     ]);
     expect(body).toEqual({
       dryRun: false,
       direction: 'all',
-      owners: 4,
-      changed: 3,
+      owners: 6,
+      changed: 4,
       up: 2,
-      down: 1,
-      written: 3,
+      down: 2,
+      written: 4,
     });
   });
 
   it('dry run under direction=all counts the decrease in changed', async () => {
     const { body } = await call({ direction: 'all' });
 
-    expect(body).toEqual({ dryRun: true, direction: 'all', owners: 4, changed: 3, up: 2, down: 1 });
+    expect(body).toEqual({ dryRun: true, direction: 'all', owners: 6, changed: 4, up: 2, down: 2 });
     expect(mocks.applyUserScoreUpdates).not.toHaveBeenCalled();
   });
 
-  it('rejects an unknown direction', async () => {
-    await expect(call({ direction: 'down' })).rejects.toThrow();
+  it('direction=up behaves as the default', async () => {
+    const { body } = await call({ dryRun: 'false', direction: 'up' });
+
+    expect(mocks.applyUserScoreUpdates.mock.lastCall![1]).toEqual([
+      ['1', { reportsAgainst: -2000 }],
+      ['2', { reportsAgainst: 0 }],
+    ]);
+    expect(body).toMatchObject({ direction: 'up', changed: 2, written: 2 });
+  });
+
+  it('rejects an unknown direction before reading or writing anything', async () => {
+    await expect(call({ direction: 'down' })).rejects.toThrow(/direction/);
+    expect(mocks.getOwnersWithReversalsSince).not.toHaveBeenCalled();
     expect(mocks.applyUserScoreUpdates).not.toHaveBeenCalled();
   });
 });

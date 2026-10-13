@@ -13,16 +13,17 @@ import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { booleanString } from '~/utils/zod-helpers';
 
 /**
- * One-off: re-score `reportsAgainst` for every owner with a removal later reversed (approved image
- * appeal or restore event). The nightly job only re-scores owners with something new since its last
+ * One-off: re-score `reportsAgainst` for owners with a removal later reversed (approved image
+ * appeal or restore event), writing only those whose score rises unless `direction=all`. The nightly job only re-scores owners with something new since its last
  * run, so earlier reversals still count against them.
  *
  * Grants nothing: run the silent tier backfill afterwards for anyone who crossed a tier.
  *
  *   GET /api/admin/temp/recompute-reversed-removals?token=$WEBHOOK_TOKEN              (dry run)
  *   GET /api/admin/temp/recompute-reversed-removals?token=$WEBHOOK_TOKEN&dryRun=false
- *   add &direction=all to also write owners whose score goes down (default: only increases)
  *   then GET /api/admin/temp/backfill-creator-milestones?token=$WEBHOOK_TOKEN&dryRun=false
+ *
+ *   &direction=all also writes owners whose score falls (default `up`: increases only)
  *
  * Safe to re-run.
  */
