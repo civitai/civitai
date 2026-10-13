@@ -129,6 +129,7 @@ function assertRemixGalleryEnabled(ctx: Context) {
  * everywhere except the one endpoint that turns it on.
  */
 function assertSurfaceEnabled(ctx: Context, surface: PlacementSurface) {
+  assertSurfaceRouted(surface);
   if (surface === 'remixGallery') return assertRemixGalleryEnabled(ctx);
   if (isPromotionSurface(surface)) return assertPromotionsEnabled(ctx);
   return assertPlacementEnabled(ctx);
@@ -136,7 +137,22 @@ function assertSurfaceEnabled(ctx: Context, surface: PlacementSurface) {
 
 /** Reads of a space are open for stickers and remixes; a promotion space is not. */
 function assertPromotionSurfaceReadable(ctx: Context, surface: PlacementSurface) {
+  assertSurfaceRouted(surface);
   if (isPromotionSurface(surface)) assertPromotionsEnabled(ctx);
+}
+
+/**
+ * Storylines are refused by every shared space endpoint, for everyone, until
+ * the storyline feature wires its own flag and its target check.
+ *
+ * Without this the surface would fall through to the sticker flags above, and
+ * a storyline space opens at price 0 by default: it is safe only once its
+ * creation path refuses a target that is not a storyline chapter. Until then
+ * nothing may configure or read one through these routes.
+ */
+function assertSurfaceRouted(surface: PlacementSurface) {
+  if (surface === 'storyline')
+    throw throwAuthorizationError('storylines: this is not available yet');
 }
 
 export const placementRouter = router({
