@@ -12,6 +12,7 @@ import {
   getProfileAchievements,
 } from '~/server/services/creator-journey.service';
 import { getCreatorShowcase } from '~/server/services/creator-showcase.service';
+import { getMyRemovedImages } from '~/server/services/creator-removed-images.service';
 import {
   getMilestoneShareStates,
   isMilestoneShareable,
@@ -53,6 +54,11 @@ export const creatorJourneyRouter = router({
       ]);
       return { ...journey, share };
     }),
+  // Takes no input: the list is only ever the caller's own.
+  getMyRemovedImages: protectedProcedure
+    .meta({ requiredScope: TokenScope.UserRead })
+    .use(isFlagProtected('creatorJourney'))
+    .query(({ ctx }) => getMyRemovedImages(ctx.user.id)),
   getMyShareStates: protectedProcedure
     .meta({ requiredScope: TokenScope.UserRead })
     .use(isFlagProtected('creatorJourney'))

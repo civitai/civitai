@@ -1,0 +1,230 @@
+import { readFileSync } from 'fs';
+import { join } from 'path';
+import { Prisma } from '@prisma/client';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const chQuery = vi.hoisted(() => vi.fn());
+vi.mock('~/server/clickhouse/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof ClickhouseClient>()),
+  clickhouse: { query: chQuery },
+}));
+
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import type * as ClickhouseClient from '~/server/clickhouse/client';
+import { excludedRecord } from '~/server/jobs/appeal-decision-records';
+import {
+  getMyRemovedImages,
+  REMOVAL_REASON,
+  REMOVALS_QUERY,
+} from '~/server/services/creator-removed-images.service';
+import { REPORTS_AGAINST_EVENT } from '~/shared/constants/creator-journey.constants';
+import { AppealStatus } from '~/shared/utils/prisma/enums';
+
+const USER = 42;
+
+type State = {
+  imageId: number;
+  excluded?: boolean;
+  owned?: boolean;
+  blockedFor?: string | null;
+  needsReview?: string | null;
+};
+
+const sqlOf = (args: unknown[]) => {
+  const [strings, ...values] = args as [TemplateStringsArray, ...unknown[]];
+  return Prisma.sql(strings, ...values);
+};
+
+function given({
+  events,
+  states,
+  excludedImages = [],
+  excludedOwners = [],
+}: {
+  events: { imageId: number; removedAt: number }[];
+  states: State[];
+  excludedImages?: number[];
+  excludedOwners?: number[];
+}) {
+  chQuery.mockResolvedValue({ json: async () => events });
+  dbMock.dbRead.$queryRaw.mockResolvedValue(
+    states.map((s) => ({
+      excluded: false,
+      owned: true,
+      blockedFor: 'moderated',
+      needsReview: null,
+      ...s,
+    })) as never
+  );
+  // The appeal flow's own exclusion lookup runs for real; these answer its two queries.
+  dbMock.dbWrite.$queryRaw.mockImplementation(((...args: unknown[]) => {
+    const sql = sqlOf(args).sql;
+    if (sql.includes('jsonb_array_elements'))
+      return Promise.resolve(excludedImages.map((id) => ({ id })));
+    if (sql.includes('"UserReport"')) return Promise.resolve(excludedOwners.map((id) => ({ id })));
+    throw new Error(`unexpected query: ${sql}`);
+  }) as never);
+}
+
+beforeEach(() => {
+  chQuery.mockReset();
+});
+
+describe('getMyRemovedImages', () => {
+  it('lists one row per removed image, as many as the Reports against count', async () => {
+    given({
+      events: [
+        { imageId: 3, removedAt: 1_700_000_300 },
+        { imageId: 2, removedAt: 1_700_000_200 },
+        { imageId: 1, removedAt: 1_700_000_100 },
+      ],
+      states: [{ imageId: 1 }, { imageId: 2 }, { imageId: 3 }],
+    });
+
+    const result = await getMyRemovedImages(USER);
+
+    expect(result.total).toBe(3);
+    expect(result.items.map((i) => i.imageId)).toEqual([3, 2, 1]);
+    expect(result.items[0]).toEqual({
+      removedAt: new Date(1_700_000_300_000),
+      reason: REMOVAL_REASON,
+      imageId: 3,
+      canAppeal: true,
+    });
+  });
+
+  it('reads the caller’s removals from the event the score counts, grouped per image', async () => {
+    given({ events: [], states: [] });
+
+    await getMyRemovedImages(USER);
+
+    expect(chQuery).toHaveBeenCalledWith(
+      expect.objectContaining({ query: REMOVALS_QUERY, query_params: { userId: USER } })
+    );
+    expect(REMOVALS_QUERY).toContain(`WHERE type = '${REPORTS_AGAINST_EVENT}' AND ownerId = {userId:Int32}`);
+    expect(REMOVALS_QUERY).toContain('GROUP BY imageId');
+    // The score job deducts per distinct image of the same event; both read the one constant.
+    const scoreJob = readFileSync(join(process.cwd(), 'src/server/jobs/update-user-score.ts'), 'utf8');
+    expect(scoreJob.match(/WHERE type = '\$\{REPORTS_AGAINST_EVENT\}'/g)).toHaveLength(2);
+    expect(scoreJob).toContain('uniq(imageId) as violations');
+    expect(scoreJob).not.toContain("'DeleteTOS'");
+  });
+
+  it('judges each removal with the appeal flow’s excludedRecord', async () => {
+    given({ events: [{ imageId: 1, removedAt: 1 }], states: [{ imageId: 1 }] });
+
+    await getMyRemovedImages(USER);
+
+    const query = sqlOf(dbMock.dbRead.$queryRaw.mock.lastCall!);
+    expect(query.sql).toContain(`${excludedRecord(Prisma.raw('r')).sql} AS excluded`);
+    expect(query.values).toContainEqual([1]);
+  });
+
+  it('leaves out a removal excludedRecord flags', async () => {
+    given({
+      events: [
+        { imageId: 2, removedAt: 2 },
+        { imageId: 1, removedAt: 1 },
+      ],
+      states: [{ imageId: 1 }, { imageId: 2, excluded: true }],
+    });
+
+    const result = await getMyRemovedImages(USER);
+
+    expect(result.items.map((i) => i.imageId)).toEqual([1]);
+    expect(result.total).toBe(1);
+  });
+
+  it('leaves out an image the appeal flow’s report lookup excludes', async () => {
+    given({
+      events: [
+        { imageId: 2, removedAt: 2 },
+        { imageId: 1, removedAt: 1 },
+      ],
+      states: [{ imageId: 1 }, { imageId: 2 }],
+      excludedImages: [2],
+    });
+
+    const result = await getMyRemovedImages(USER);
+
+    expect(result.items.map((i) => i.imageId)).toEqual([1]);
+    expect(result.total).toBe(1);
+  });
+
+  it('lists nothing for an owner the appeal flow excludes', async () => {
+    given({
+      events: [{ imageId: 1, removedAt: 1 }],
+      states: [{ imageId: 1 }],
+      excludedOwners: [USER],
+    });
+
+    expect(await getMyRemovedImages(USER)).toEqual({ total: 0, items: [] });
+  });
+
+  it('leaves out a removal it could not check', async () => {
+    given({
+      events: [
+        { imageId: 2, removedAt: 2 },
+        { imageId: 1, removedAt: 1 },
+      ],
+      states: [{ imageId: 1 }],
+    });
+
+    expect((await getMyRemovedImages(USER)).items.map((i) => i.imageId)).toEqual([1]);
+  });
+
+  it('gives a purged image only its date and reason', async () => {
+    given({
+      events: [{ imageId: 9, removedAt: 5 }],
+      states: [{ imageId: 9, owned: false, blockedFor: null }],
+    });
+
+    expect((await getMyRemovedImages(USER)).items).toEqual([
+      { removedAt: new Date(5000), reason: REMOVAL_REASON, imageId: null, canAppeal: false },
+    ]);
+  });
+
+  it('offers an appeal only where the appeal flow would accept one', async () => {
+    given({
+      events: [
+        { imageId: 1, removedAt: 4 },
+        { imageId: 2, removedAt: 3 },
+        { imageId: 3, removedAt: 2 },
+        { imageId: 4, removedAt: 1 },
+      ],
+      states: [
+        { imageId: 1 },
+        { imageId: 2 },
+        { imageId: 3, needsReview: 'appeal' },
+        { imageId: 4, blockedFor: null },
+      ],
+    });
+    dbMock.dbRead.appeal.findMany.mockResolvedValue([
+      { entityId: 2, status: AppealStatus.Rejected },
+      { entityId: 1, status: AppealStatus.Approved },
+    ] as never);
+
+    const result = await getMyRemovedImages(USER);
+
+    expect(result.items.map((i) => [i.imageId, i.canAppeal])).toEqual([
+      [1, true],
+      [2, false],
+      [3, false],
+      [4, false],
+    ]);
+    expect(dbMock.dbRead.appeal.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ userId: USER, entityId: { in: [1, 2, 3, 4] } }),
+      })
+    );
+  });
+
+  it('links an image only while the caller still owns it', async () => {
+    given({ events: [{ imageId: 1, removedAt: 1 }], states: [{ imageId: 1 }] });
+
+    await getMyRemovedImages(USER);
+
+    expect(sqlOf(dbMock.dbRead.$queryRaw.mock.lastCall!).sql).toContain('coalesce(i."userId" = ');
+    expect(sqlOf(dbMock.dbRead.$queryRaw.mock.lastCall!).values).toContain(USER);
+  });
+});
