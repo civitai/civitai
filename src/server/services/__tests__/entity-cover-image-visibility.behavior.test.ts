@@ -189,6 +189,25 @@ beforeAll(async () => {
     INSERT INTO "Image" (id) VALUES (105);
     INSERT INTO "ImageConnection" VALUES (105, 5, 'Bounty');
 
+    -- Hidden entities owned by the placeholder ids -1 and 0, one per owner clause.
+    INSERT INTO "Model" (id, "userId", status) VALUES
+      (1001, -1, 'Draft'), (1002, 0, 'Draft'), (1003, 0, 'Published');
+    INSERT INTO "ModelVersion" (id, "modelId", status) VALUES
+      (1011, 1001, 'Published'), (1012, 1002, 'Published'), (1013, 1003, 'Draft');
+    INSERT INTO "Post" (id, "userId", "modelVersionId", "publishedAt") VALUES
+      (1021, -1, 1011, now() - interval '1 day'), (1022, 0, 1012, now() - interval '1 day'),
+      (1023, 0, 1013, now() - interval '1 day'),
+      (1061, -1, null, null), (1062, 0, null, null);
+    INSERT INTO "Image" (id, "postId") VALUES
+      (1031, 1021), (1032, 1022), (1033, 1023), (1071, 1061), (1072, 1062);
+    INSERT INTO "Image" (id) VALUES (1051), (1052), (1053), (1054), (111), (112);
+    INSERT INTO "Article" (id, "coverId", "userId", status, "publishedAt") VALUES
+      (1041, 1051, -1, 'Draft', null), (1042, 1052, 0, 'Draft', null),
+      (1043, null, -1, 'Draft', null), (1044, null, 0, 'Draft', null);
+    INSERT INTO "Bounty" VALUES (11, -1, 'Private'), (12, 0, 'Private');
+    INSERT INTO "ImageConnection" VALUES
+      (1053, 1043, 'Article'), (1054, 1044, 'Article'), (111, 11, 'Bounty'), (112, 12, 'Bounty');
+
     -- A connection under an entity type no rule covers.
     INSERT INTO "Image" (id) VALUES (801);
     INSERT INTO "ImageConnection" VALUES (801, 9, 'Collection');
@@ -253,6 +272,24 @@ const visible: [string, string, number, number][] = [
   ['an EarlyAccess version', 'ModelVersion', 962, 982],
   ['an Unsearchable post', 'Post', 974, 984],
   ['an Unsearchable bounty', 'Bounty', 5, 105],
+  ['a version of an Unsearchable model', 'ModelVersion', 961, 981],
+  ['a model with an EarlyAccess version', 'Model', 952, 982],
+];
+
+// Hidden entities whose owner is a placeholder id; [label, entityType, entityId, image, ownerId].
+const placeholderOwned: [string, string, number, number, number][] = [
+  ['a draft model owned by -1', 'Model', 1001, 1031, -1],
+  ['a draft model owned by 0', 'Model', 1002, 1032, 0],
+  ['a draft version of a model owned by -1', 'ModelVersion', 911, 931, -1],
+  ['a draft version of a model owned by 0', 'ModelVersion', 1013, 1033, 0],
+  ['a draft article owned by -1', 'Article', 1041, 1051, -1],
+  ['a draft article owned by 0', 'Article', 1042, 1052, 0],
+  ['a draft post owned by -1', 'Post', 1061, 1071, -1],
+  ['a draft post owned by 0', 'Post', 1062, 1072, 0],
+  ['a Private bounty owned by -1', 'Bounty', 11, 111, -1],
+  ['a Private bounty owned by 0', 'Bounty', 12, 112, 0],
+  ['a draft article with content images only, owned by -1', 'Article', 1043, 1053, -1],
+  ['a draft article with content images only, owned by 0', 'Article', 1044, 1054, 0],
 ];
 
 describe('getEntityCoverImage respects the parent entity visibility', () => {
@@ -283,6 +320,16 @@ describe('getEntityCoverImage respects the parent entity visibility', () => {
       expect(await coverOf('ModelVersion', 713, viewers[who])).toBe(734);
     }
   );
+
+  // A viewer whose id is a placeholder is not signed in, so it owns nothing.
+  describe.each(placeholderOwned)('%s', (_, entityType, entityId, imageId, ownerId) => {
+    it(`has no cover for a viewer with the placeholder id ${ownerId}`, async () => {
+      expect(await coverOf(entityType, entityId, { id: ownerId })).toBeNull();
+    });
+    it('keeps its cover for a moderator', async () => {
+      expect(await coverOf(entityType, entityId, viewers.moderator)).toBe(imageId);
+    });
+  });
 
   it('gives a signed-out viewer no cover for a hidden version of a userId -1 model', async () => {
     expect(await coverOf('ModelVersion', 911, viewers.anonymous)).toBeNull();
