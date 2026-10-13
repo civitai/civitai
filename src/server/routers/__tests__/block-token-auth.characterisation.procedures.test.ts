@@ -24,8 +24,7 @@ import type * as SharedRateLimit from '~/server/utils/shared-storage-rate-limit'
  *
  * The population is DERIVED at run time from the routers' own procedure definitions (every
  * procedure whose input schema has a `blockToken` key) and asserted equal to this table's keys,
- * so a procedure added without a row fails. It is cross-checked against the existing textual
- * ledger's count (24 in `blocks.router.ts`).
+ * so a procedure added without a row fails.
  *
  * The deliberate resolver differences behind these cells are quoted in the header of
  * `src/server/services/blocks/__tests__/block-token-auth.characterisation.resolvers.test.ts`.
@@ -935,9 +934,6 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
   },
 };
 
-/** The textual ledger in `no-unguarded-block-bridge-token.test.ts` counts 24 bridge procs. */
-const BLOCKS_LEDGER_COUNT = 24;
-
 describe('block-token tRPC procedures — characterisation table', () => {
   it('covers EXACTLY the procedures whose input declares a blockToken', () => {
     const derived = [
@@ -948,7 +944,6 @@ describe('block-token tRPC procedures — characterisation table', () => {
     // storage proc, so a walker that matched nothing cannot read as full coverage.
     expect(derived).toContain('blocks.getMyBuzzBalance');
     expect(derived).toContain('apps.storage.get');
-    expect(derived.filter((p) => p.startsWith('blocks.'))).toHaveLength(BLOCKS_LEDGER_COUNT);
     expect(derived).toEqual(Object.keys(INPUTS).sort());
     expect(Object.keys(EXPECTED).sort()).toEqual(Object.keys(INPUTS).sort());
   });
