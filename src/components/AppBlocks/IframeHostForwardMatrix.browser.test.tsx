@@ -163,6 +163,10 @@ describe('IframeHost forward-handler characterisation', () => {
     const covered = [...new Set(rows.map((r) => r.type))];
     expect(covered.sort()).toEqual(required.sort());
     expect(covered).toHaveLength(20);
+    // INVENTORY's `reply` must agree with the reply type the rows assert against.
+    for (const t of covered) {
+      expect((INVENTORY as Record<string, { reply: string }>)[t].reply).toBe(REPLY_TYPE[t]);
+    }
     // Every IframeHost row is a default-mode row: the PBH-only modes cannot reach this host.
     expect(rows.every((r) => r.mode === 'default')).toBe(true);
   });

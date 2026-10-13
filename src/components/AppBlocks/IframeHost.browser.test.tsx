@@ -1,19 +1,12 @@
 import { describe, expect, test, vi, beforeEach } from 'vitest';
-import { TRPCClientError } from '@trpc/client';
 import { page } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
-import { trpcError } from '../../../test/fixtures/trpc-client-error';
-import {
-  RATE_LIMIT,
-  RATE_LIMIT_OPS,
-  rateLimitedClientError,
-} from '../../../test/fixtures/shared-storage-rate-limit';
 
-// Per-test-controllable balance mutation impl. `vi.mock` is hoisted, so the fn
-// must live in a hoisted block the factory can close over (mirrors
-// PageBlockHostWorkflow's `mocks.balance`). The other bridges stay inert
-// throwaway fns — only GET_BUZZ_BALANCE is behaviorally exercised here.
+// Inert per-procedure fns the mount needs. The forwarded bridges (workflows, buzz
+// balance, private + shared storage) are exercised on this host by
+// `IframeHostForwardMatrix.browser.test.tsx`; this file covers the block-render
+// beacon and the BLOCK_HELLO seam only.
 const mocks = vi.hoisted(() => ({
   estimate: vi.fn(),
   poll: vi.fn(),
@@ -182,26 +175,6 @@ function postFromBlock(type: string, payload?: unknown) {
   );
 }
 
-// Capture host→block replies. `send` posts onto the iframe's contentWindow, so
-// we listen there. Mirrors PageBlockHostWorkflow's helper, adapted to the model-
-// slot iframe testid.
-function listenForReply() {
-  const received: Array<{ type: string; payload: unknown }> = [];
-  const iframeEl = page.getByTestId('block-iframe').element() as HTMLIFrameElement;
-  const cw = iframeEl.contentWindow;
-  if (!cw) throw new Error('iframe contentWindow missing');
-  const handler = (e: MessageEvent) => {
-    const d = e.data as { type?: string; payload?: unknown } | null;
-    if (d && typeof d.type === 'string') received.push({ type: d.type, payload: d.payload });
-  };
-  cw.addEventListener('message', handler);
-  return {
-    received,
-    last: (type: string) => [...received].reverse().find((m) => m.type === type),
-    stop: () => cw.removeEventListener('message', handler),
-  };
-}
-
 const install: BlockInstall = {
   blockInstanceId: 'inst_test',
   blockId: 'my-model-app',
@@ -331,76 +304,6 @@ describe('IframeHost block render/impression (Analytics Phase 2, model.sidebar_t
   });
 });
 
-// ── Phase 3: per-account buzz — GET_BUZZ_BALANCE on the model-slot host ───────
-//
-// The model-slot IframeHost is the live production surface; its GET_BUZZ_BALANCE
-// handler is a COPY of PageBlockHost's but WITHOUT the explicit null-token guard,
-// because IframeHost's `token` is a non-null `string` (an empty token falls
-// through to the router's `z.string().min(1)` reject → the `catch` → error reply,
-// never a hang). This block pins that divergent branch — the PageBlockHost tests
-// don't cover it. We drive the same real postMessage bridge to BLOCK_READY, then
-// post GET_BUZZ_BALANCE and read the BUZZ_BALANCE_RESULT reply off the iframe.
-describe('IframeHost GET_BUZZ_BALANCE handler (Phase 3, model.sidebar_top)', () => {
-  beforeEach(() => {
-    mocks.balance.mockReset();
-  });
-
-  test('GET_BUZZ_BALANCE forwards the IframeHost token to getMyBuzzBalance and posts BUZZ_BALANCE_RESULT', async () => {
-    const balance = { blue: 1200, green: 300, yellow: 50 };
-    mocks.balance.mockResolvedValue(balance);
-    renderWithProviders(<IframeHost {...baseProps} />);
-    await driveToReady();
-    const replies = listenForReply();
-
-    postFromBlock('GET_BUZZ_BALANCE', { requestId: 'rq_bal' });
-
-    await vi.waitFor(() => {
-      // Forwarded the IframeHost `token` PROP as blockToken (the SELF-BOUND
-      // credential); the handler never trusts a client-supplied userId.
-      expect(mocks.balance).toHaveBeenCalledWith({ blockToken: 'tok_abc' });
-    });
-    await vi.waitFor(() => {
-      const r = replies.last('BUZZ_BALANCE_RESULT');
-      if (!r) throw new Error('no reply yet');
-      expect(r.payload).toEqual({ requestId: 'rq_bal', balance });
-    });
-    replies.stop();
-  });
-
-  test('GET_BUZZ_BALANCE error path posts an error-variant BUZZ_BALANCE_RESULT (no hang)', async () => {
-    mocks.balance.mockRejectedValue(new Error('invalid block token'));
-    renderWithProviders(<IframeHost {...baseProps} />);
-    await driveToReady();
-    const replies = listenForReply();
-
-    postFromBlock('GET_BUZZ_BALANCE', { requestId: 'rq_bal_err' });
-
-    await vi.waitFor(() => {
-      const r = replies.last('BUZZ_BALANCE_RESULT');
-      if (!r) throw new Error('no reply yet');
-      // error-carrying variant (no balance) so useBuzzBalance rejects instead of
-      // spinning to its timeout. This is the branch a `z.string().min(1)` router
-      // reject would land in for an empty token — proving no hang.
-      expect(r.payload).toEqual({ requestId: 'rq_bal_err', error: 'invalid block token' });
-      expect(r.payload).not.toHaveProperty('balance');
-    });
-    replies.stop();
-  });
-
-  test('GET_BUZZ_BALANCE with NO requestId is dropped (no mutation, no reply)', async () => {
-    renderWithProviders(<IframeHost {...baseProps} />);
-    await driveToReady();
-    const replies = listenForReply();
-
-    postFromBlock('GET_BUZZ_BALANCE', {}); // missing requestId
-
-    await new Promise((r) => setTimeout(r, 150));
-    expect(mocks.balance).not.toHaveBeenCalled();
-    expect(replies.last('BUZZ_BALANCE_RESULT')).toBeUndefined();
-    replies.stop();
-  });
-});
-
 /**
  * The readiness-announce SEAM on the model-slot host — the one link no pure
  * unit test can reach, because it is a claim about how the COMPONENT is wired
@@ -443,160 +346,5 @@ describe('IframeHost readiness announce (BLOCK_HELLO)', () => {
     await new Promise((r) => setTimeout(r, 150));
     expect(helloSpy).not.toHaveBeenCalled();
     helloSpy.mockRestore();
-  });
-});
-
-// Invariant guard: this host's ESTIMATE handler is a copy of PageBlockHost's, not
-// shared code, so the page-host test says nothing about `cost.authorFee` here.
-describe('IframeHost ESTIMATE_WORKFLOW → ESTIMATE_RESULT (model.sidebar_top)', () => {
-  beforeEach(() => {
-    mocks.estimate.mockReset();
-  });
-
-  test.each([
-    ['a fee', { total: 49, authorFee: 37 }],
-    ['no fee (0 is a value, not an absence)', { total: 12, authorFee: 0 }],
-  ])('cost.authorFee reaches the iframe — %s', async (_label, cost) => {
-    const snapshot = { workflowId: 'wf_fee', status: 'pending', cost };
-    mocks.estimate.mockResolvedValue({ snapshot });
-    renderWithProviders(<IframeHost {...baseProps} />);
-    await driveToReady();
-    const replies = listenForReply();
-
-    postFromBlock('ESTIMATE_WORKFLOW', { requestId: 'rq_fee', body: { prompt: 'cat' } });
-
-    await vi.waitFor(() => {
-      expect(mocks.estimate).toHaveBeenCalledWith({
-        blockToken: 'tok_abc',
-        body: { prompt: 'cat' },
-      });
-    });
-    await vi.waitFor(() => {
-      const r = replies.last('ESTIMATE_RESULT');
-      if (!r) throw new Error('no reply yet');
-      const posted = (r.payload as { snapshot: { cost: { total: number; authorFee?: number } } })
-        .snapshot.cost;
-      expect(Object.keys(posted).sort()).toEqual(['authorFee', 'total']);
-      expect(posted.total).toBe(cost.total);
-      expect(posted.authorFee).toBe(cost.authorFee);
-    });
-    replies.stop();
-  });
-});
-
-describe('IframeHost POLL_WORKFLOW waitSeconds forwarding (model.sidebar_top)', () => {
-  beforeEach(() => {
-    mocks.poll.mockReset();
-  });
-
-  test.each([
-    ['a whole number of seconds', { waitSeconds: 7 }, { waitSeconds: 7 }],
-    ['a value the server will cap (sent as-is)', { waitSeconds: 90 }, { waitSeconds: 90 }],
-    ['no waitSeconds', {}, {}],
-  ])(
-    'POLL_WORKFLOW with %s calls pollWorkflow with exactly the expected input',
-    async (_label, sent, expectedExtra) => {
-      const snapshot = { workflowId: 'wf_wait', status: 'processing' };
-      mocks.poll.mockResolvedValue({ snapshot });
-      renderWithProviders(<IframeHost {...baseProps} />);
-      await driveToReady();
-      const replies = listenForReply();
-
-      postFromBlock('POLL_WORKFLOW', { requestId: 'rq_wait', workflowId: 'wf_wait', ...sent });
-
-      await vi.waitFor(() => {
-        const r = replies.last('WORKFLOW_STATUS');
-        if (!r) throw new Error('no reply yet');
-        expect(r.payload).toEqual({ requestId: 'rq_wait', snapshot });
-      });
-      // toStrictEqual, not toHaveBeenCalledWith: an explicit `waitSeconds: undefined` must not
-      // pass as "omitted".
-      expect(mocks.poll.mock.calls).toStrictEqual([
-        [{ blockToken: 'tok_abc', workflowId: 'wf_wait', ...expectedExtra }],
-      ]);
-      replies.stop();
-    }
-  );
-});
-
-describe('IframeHost POLL_WORKFLOW failure replies (model.sidebar_top)', () => {
-  beforeEach(() => {
-    mocks.poll.mockReset();
-  });
-
-  test.each([
-    ['a network failure (no tRPC code)', 'processing', new TRPCClientError('Failed to fetch')],
-    ['SERVICE_UNAVAILABLE', 'processing', trpcError('SERVICE_UNAVAILABLE', 503, 'try again')],
-    ['NOT_FOUND', 'failed', trpcError('NOT_FOUND', 404, 'workflow not found')],
-    ['FORBIDDEN', 'failed', trpcError('FORBIDDEN', 403, 'not this app')],
-  ] as const)(
-    'POLL_WORKFLOW that rejects with %s replies with a %s snapshot',
-    async (_label, status, err) => {
-      mocks.poll.mockRejectedValue(err);
-      renderWithProviders(<IframeHost {...baseProps} />);
-      await driveToReady();
-      const replies = listenForReply();
-
-      postFromBlock('POLL_WORKFLOW', { requestId: 'rq_perr', workflowId: 'wf_perr' });
-
-      await vi.waitFor(() => {
-        const r = replies.last('WORKFLOW_STATUS');
-        if (!r) throw new Error('no reply yet');
-        expect(r.payload).toEqual({
-          requestId: 'rq_perr',
-          snapshot:
-            status === 'processing'
-              ? { workflowId: 'wf_perr', status: 'processing' }
-              : { workflowId: 'failed', status: 'failed', error: err.message },
-        });
-      });
-      replies.stop();
-    }
-  );
-});
-
-describe('IframeHost shared-storage rate-limit refusals (model.sidebar_top)', () => {
-  beforeEach(() => {
-    for (const { mock } of RATE_LIMIT_OPS) mocks[mock].mockReset();
-  });
-
-  test.each(RATE_LIMIT_OPS)(
-    '$type rate-limit refusal posts error + rateLimit (no hang)',
-    async ({ type, mock, payload, message, reply }) => {
-      mocks[mock].mockRejectedValue(rateLimitedClientError(message));
-      renderWithProviders(<IframeHost {...baseProps} />);
-      await driveToReady();
-      const replies = listenForReply();
-
-      postFromBlock(type, { requestId: `rq_rl_${type}`, ...payload });
-
-      await vi.waitFor(() => {
-        const r = replies.last(`${type}_RESULT`);
-        if (!r) throw new Error('no reply yet');
-        expect(r.payload).toEqual({
-          requestId: `rq_rl_${type}`,
-          ...reply,
-          error: message,
-          rateLimit: RATE_LIMIT,
-        });
-      });
-      replies.stop();
-    }
-  );
-
-  test('INVARIANT GUARD: a non-rate-limit refusal posts the error alone', async () => {
-    mocks.vote.mockRejectedValue(new Error('request not found'));
-    renderWithProviders(<IframeHost {...baseProps} />);
-    await driveToReady();
-    const replies = listenForReply();
-
-    postFromBlock('SHARED_VOTE', { requestId: 'rq_vote_err', key: 'missing' });
-
-    await vi.waitFor(() => {
-      const r = replies.last('SHARED_VOTE_RESULT');
-      if (!r) throw new Error('no reply yet');
-      expect(r.payload).toEqual({ requestId: 'rq_vote_err', error: 'request not found' });
-    });
-    replies.stop();
   });
 });

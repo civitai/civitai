@@ -1,5 +1,8 @@
+import { TRPCClientError } from '@trpc/client';
 import { expect, vi } from 'vitest';
 import type { BridgeRpcMock } from './bridgeRpcMock';
+import { trpcError } from './fixtures/trpc-client-error';
+import { RATE_LIMIT, rateLimitedClientError } from './fixtures/shared-storage-rate-limit';
 
 /**
  * CHARACTERISATION MATRIX for every FORWARDED App Blocks bridge handler, on both hosts.
@@ -11,7 +14,9 @@ import type { BridgeRpcMock } from './bridgeRpcMock';
  * a later consolidation must keep green, and it is valuable without one.
  *
  * Which host must serve a type comes from `hostHandlerParity.ts` INVENTORY ('required');
- * `bridgeForwardCharacterisation` in each test file asserts the row hosts agree with it.
+ * the first test in each `*HostForwardMatrix.browser.test.tsx` asserts that the types this
+ * table covers for that host are exactly INVENTORY's `required` set, and that INVENTORY's
+ * `reply` agrees with `REPLY_TYPE` below.
  *
  * Each row asserts, with STRICT equality (an `undefined`-valued key is not the same as an
  * absent one):
@@ -24,8 +29,21 @@ import type { BridgeRpcMock } from './bridgeRpcMock';
  *     `apps.*` invalidation happened on any other row.
  *
  * 🔴 A row marked `// current behaviour; candidate fix D<n>` pins something that looks
- * accidental. It is pinned ON PURPOSE: this suite changes no source. The list of D-numbers
- * and what each would change lives in the PR that added this file.
+ * accidental. Each is pinned current behaviour ON PURPOSE — whether to change it belongs to
+ * the host-handler table-refactor decision (ask an App Blocks owner), not to this suite:
+ *   D1  two spellings of the no-token reply: `block credential unavailable` (nack families)
+ *       vs `no block token` (subqueue / buzz / viewer / images).
+ *   D2  CANCEL_APP_WORKFLOW validates BEFORE the review gate, so a malformed review request
+ *       gets no reply (every other gated forward NACKs it).
+ *   D3  a non-Error rejection gets one of three fallback texts (`workflow request failed`,
+ *       `unknown`, `storage request failed`).
+ *   D4  a malformed payload WITH a requestId is dropped silently, so the block waits for its
+ *       SDK timeout — the one D-item with a user-facing effect.
+ *   D5  QUERY_APP_WORKFLOWS spreads a non-object `params` (a string becomes indexed keys).
+ *   D6  GET_IMAGES_BY_IDS drops an empty-string requestId; every other forward echoes it.
+ *   D7  a storage no-token reply omits the type's failure fields (`value:null`, `ok:false`,
+ *       `keys:[]`, zeroed quota, `item:null`) that its error and review replies carry.
+ *   D8  SHARED_WITHDRAW's error/review replies carry no `ok:false`; UPDATE/REPORT do.
  */
 
 export type Host = 'PageBlockHost' | 'IframeHost';
@@ -62,15 +80,25 @@ const PBH: readonly Host[] = ['PageBlockHost'];
 const boom = new Error('boom');
 /** A rejection that is not an Error at all — each family has its own fallback text. */
 const NOT_AN_ERROR = 'nope';
-function trpcError(message: string, data: Record<string, unknown>): Error {
-  return Object.assign(new Error(message), { data });
-}
-const RATE_LIMIT = { retryAfterSeconds: 30, retryAt: '2026-10-12T12:00:00.000Z' };
-const rateLimited = trpcError('rate limited', { code: 'TOO_MANY_REQUESTS', rateLimit: RATE_LIMIT });
-const rateLimitedMalformedMeta = trpcError('rate limited', {
-  code: 'TOO_MANY_REQUESTS',
-  rateLimit: { retryAfterSeconds: 0, retryAt: 'not a date' },
+/**
+ * A real `TRPCClientError` carrying `data.rateLimit`. Its prose (1849s) disagrees with the
+ * metadata (`RATE_LIMIT.retryAfterSeconds` = 17), so a host that parsed the message would fail.
+ */
+const RL_MESSAGE = 'Too many requests — retry in 1849s';
+const rateLimited = rateLimitedClientError(RL_MESSAGE);
+const rateLimitedMalformedMeta = TRPCClientError.from({
+  error: {
+    message: RL_MESSAGE,
+    code: -32029,
+    data: {
+      code: 'TOO_MANY_REQUESTS',
+      httpStatus: 429,
+      rateLimit: { retryAfterSeconds: 0, retryAt: 'not a date' },
+    },
+  },
 });
+/** A network failure: a TRPCClientError with no tRPC code at all. */
+const networkFailure = new TRPCClientError('Failed to fetch');
 
 const failed = (error: string) => ({ workflowId: 'failed', status: 'failed', error });
 
@@ -194,6 +222,15 @@ const SUBMIT = rowsFor('SUBMIT_WORKFLOW', 'blocks.submitWorkflow', { snapshot: S
     reply: { requestId: 'rq_1', snapshot: SNAP },
   },
   {
+    scenario: 'body.accountType rides through whole; spentAccountType reaches the block',
+    hosts: BOTH,
+    mode: 'default',
+    rpc: { resolves: { snapshot: { ...SNAP, spentAccountType: 'green' } } },
+    payload: { requestId: 'rq_1', body: { ...BODY, accountType: 'green' } },
+    call: [{ blockToken: TOKEN, body: { ...BODY, accountType: 'green' } }],
+    reply: { requestId: 'rq_1', snapshot: { ...SNAP, spentAccountType: 'green' } },
+  },
+  {
     scenario: 'a block-sent blockToken is ignored; the host token is forwarded',
     hosts: BOTH,
     mode: 'default',
@@ -217,7 +254,7 @@ const SUBMIT = rowsFor('SUBMIT_WORKFLOW', 'blocks.submitWorkflow', { snapshot: S
     rpc: { rejects: rateLimited },
     payload: { requestId: 'rq_1', body: BODY },
     call: [{ blockToken: TOKEN, body: BODY }],
-    reply: { requestId: 'rq_1', snapshot: failed('rate limited') },
+    reply: { requestId: 'rq_1', snapshot: failed(RL_MESSAGE) },
   },
   {
     // current behaviour; candidate fix D3 — four different fallback texts across families
@@ -290,6 +327,24 @@ const ESTIMATE = rowsFor('ESTIMATE_WORKFLOW', 'blocks.estimateWorkflow', { snaps
     reply: { requestId: 'rq_1', snapshot: SNAP },
   },
   {
+    scenario: 'cost.authorFee reaches the block (no field whitelist on the snapshot)',
+    hosts: BOTH,
+    mode: 'default',
+    rpc: { resolves: { snapshot: { ...SNAP, cost: { total: 49, authorFee: 37 } } } },
+    payload: { requestId: 'rq_1', body: BODY },
+    call: [{ blockToken: TOKEN, body: BODY }],
+    reply: { requestId: 'rq_1', snapshot: { ...SNAP, cost: { total: 49, authorFee: 37 } } },
+  },
+  {
+    scenario: 'cost.authorFee of 0 is a value, not an absence — it reaches the block',
+    hosts: BOTH,
+    mode: 'default',
+    rpc: { resolves: { snapshot: { ...SNAP, cost: { total: 12, authorFee: 0 } } } },
+    payload: { requestId: 'rq_1', body: BODY },
+    call: [{ blockToken: TOKEN, body: BODY }],
+    reply: { requestId: 'rq_1', snapshot: { ...SNAP, cost: { total: 12, authorFee: 0 } } },
+  },
+  {
     scenario: 'rpc rejects with Error → failure snapshot',
     hosts: BOTH,
     mode: 'default',
@@ -305,7 +360,7 @@ const ESTIMATE = rowsFor('ESTIMATE_WORKFLOW', 'blocks.estimateWorkflow', { snaps
     rpc: { rejects: rateLimited },
     payload: { requestId: 'rq_1', body: BODY },
     call: [{ blockToken: TOKEN, body: BODY }],
-    reply: { requestId: 'rq_1', snapshot: failed('rate limited') },
+    reply: { requestId: 'rq_1', snapshot: failed(RL_MESSAGE) },
   },
   {
     scenario: 'no requestId → dropped',
@@ -368,6 +423,14 @@ const POLL = rowsFor('POLL_WORKFLOW', 'blocks.pollWorkflow', { snapshot: POLL_SN
     reply: { requestId: 'rq_1', snapshot: POLL_SNAP },
   },
   {
+    scenario: 'waitSeconds above the server cap (90) is forwarded as-is — no host clamp',
+    hosts: BOTH,
+    mode: 'default',
+    payload: { requestId: 'rq_1', workflowId: 'wf_1', waitSeconds: 90 },
+    call: [{ blockToken: TOKEN, workflowId: 'wf_1', waitSeconds: 90 }],
+    reply: { requestId: 'rq_1', snapshot: POLL_SNAP },
+  },
+  {
     scenario: 'waitSeconds 0 is finite and forwarded',
     hosts: BOTH,
     mode: 'default',
@@ -400,6 +463,24 @@ const POLL = rowsFor('POLL_WORKFLOW', 'blocks.pollWorkflow', { snapshot: POLL_SN
     reply: { requestId: 'rq_1', snapshot: POLL_SNAP },
   },
   {
+    scenario: 'rpc rejects with a network TRPCClientError (no code) → "processing" placeholder',
+    hosts: BOTH,
+    mode: 'default',
+    rpc: { rejects: networkFailure },
+    payload: { requestId: 'rq_1', workflowId: 'wf_1' },
+    call: [{ blockToken: TOKEN, workflowId: 'wf_1' }],
+    reply: { requestId: 'rq_1', snapshot: { workflowId: 'wf_1', status: 'processing' } },
+  },
+  {
+    scenario: 'rpc rejects with tRPC FORBIDDEN → terminal failure snapshot',
+    hosts: BOTH,
+    mode: 'default',
+    rpc: { rejects: trpcError('FORBIDDEN', 403, 'not this app') },
+    payload: { requestId: 'rq_1', workflowId: 'wf_1' },
+    call: [{ blockToken: TOKEN, workflowId: 'wf_1' }],
+    reply: { requestId: 'rq_1', snapshot: failed('not this app') },
+  },
+  {
     scenario: 'rpc rejects with a code-less Error → "processing" placeholder, not failed',
     hosts: BOTH,
     mode: 'default',
@@ -412,7 +493,7 @@ const POLL = rowsFor('POLL_WORKFLOW', 'blocks.pollWorkflow', { snapshot: POLL_SN
     scenario: 'rpc rejects with tRPC SERVICE_UNAVAILABLE → "processing" placeholder',
     hosts: BOTH,
     mode: 'default',
-    rpc: { rejects: trpcError('upstream down', { code: 'SERVICE_UNAVAILABLE' }) },
+    rpc: { rejects: trpcError('SERVICE_UNAVAILABLE', 503, 'upstream down') },
     payload: { requestId: 'rq_1', workflowId: 'wf_1' },
     call: [{ blockToken: TOKEN, workflowId: 'wf_1' }],
     reply: { requestId: 'rq_1', snapshot: { workflowId: 'wf_1', status: 'processing' } },
@@ -421,7 +502,7 @@ const POLL = rowsFor('POLL_WORKFLOW', 'blocks.pollWorkflow', { snapshot: POLL_SN
     scenario: 'rpc rejects with tRPC NOT_FOUND → terminal failure snapshot',
     hosts: BOTH,
     mode: 'default',
-    rpc: { rejects: trpcError('workflow not found', { code: 'NOT_FOUND' }) },
+    rpc: { rejects: trpcError('NOT_FOUND', 404, 'workflow not found') },
     payload: { requestId: 'rq_1', workflowId: 'wf_1' },
     call: [{ blockToken: TOKEN, workflowId: 'wf_1' }],
     reply: { requestId: 'rq_1', snapshot: failed('workflow not found') },
@@ -512,7 +593,7 @@ const CANCEL = rowsFor('CANCEL_WORKFLOW', 'blocks.cancelWorkflow', { snapshot: C
     scenario: 'rpc rejects with tRPC SERVICE_UNAVAILABLE → terminal failure (no poll placeholder)',
     hosts: BOTH,
     mode: 'default',
-    rpc: { rejects: trpcError('upstream down', { code: 'SERVICE_UNAVAILABLE' }) },
+    rpc: { rejects: trpcError('SERVICE_UNAVAILABLE', 503, 'upstream down') },
     payload: { requestId: 'rq_1', workflowId: 'wf_1' },
     call: [{ blockToken: TOKEN, workflowId: 'wf_1' }],
     reply: { requestId: 'rq_1', snapshot: failed('upstream down') },
@@ -596,7 +677,7 @@ const QUERY_APP = rowsFor('QUERY_APP_WORKFLOWS', 'blocks.queryAppWorkflows', APP
     rpc: { rejects: rateLimited },
     payload: { requestId: 'rq_1', params: { limit: 10 } },
     call: [{ limit: 10, blockToken: TOKEN }],
-    reply: { requestId: 'rq_1', error: 'rate limited' },
+    reply: { requestId: 'rq_1', error: RL_MESSAGE },
   },
   {
     // current behaviour; candidate fix D3
@@ -687,7 +768,7 @@ const CANCEL_APP = rowsFor('CANCEL_APP_WORKFLOW', 'blocks.cancelAppWorkflow', { 
     scenario: 'rpc rejects with tRPC error → message only',
     hosts: PBH,
     mode: 'default',
-    rpc: { rejects: trpcError('not yours', { code: 'FORBIDDEN' }) },
+    rpc: { rejects: trpcError('FORBIDDEN', 403, 'not yours') },
     payload: { requestId: 'rq_1', workflowId: 'wf_1' },
     call: [{ blockToken: TOKEN, workflowId: 'wf_1' }],
     reply: { requestId: 'rq_1', error: 'not yours' },
@@ -773,7 +854,7 @@ const BUZZ_BALANCE = rowsFor('GET_BUZZ_BALANCE', 'blocks.getMyBuzzBalance', BALA
     scenario: 'rpc rejects with tRPC error → message only',
     hosts: BOTH,
     mode: 'default',
-    rpc: { rejects: trpcError('missing scope', { code: 'FORBIDDEN' }) },
+    rpc: { rejects: trpcError('FORBIDDEN', 403, 'missing scope') },
     payload: { requestId: 'rq_1' },
     call: [{ blockToken: TOKEN }],
     reply: { requestId: 'rq_1', error: 'missing scope' },
@@ -872,7 +953,7 @@ function buzzReadRows(
       scenario: 'rpc rejects with tRPC error → message only',
       hosts: PBH,
       mode: 'default',
-      rpc: { rejects: trpcError('missing scope', { code: 'FORBIDDEN' }) },
+      rpc: { rejects: trpcError('FORBIDDEN', 403, 'missing scope') },
       payload: { requestId: 'rq_1' },
       call: [{ blockToken: TOKEN }],
       reply: { requestId: 'rq_1', error: 'missing scope' },
@@ -956,7 +1037,7 @@ const VIEWER = rowsFor('GET_VIEWER', 'blocks.getMyViewer', VIEWER_RESULT, [
     scenario: 'rpc rejects with tRPC error → message only',
     hosts: PBH,
     mode: 'default',
-    rpc: { rejects: trpcError('missing scope', { code: 'FORBIDDEN' }) },
+    rpc: { rejects: trpcError('FORBIDDEN', 403, 'missing scope') },
     payload: { requestId: 'rq_1' },
     call: [{ blockToken: TOKEN }],
     reply: { requestId: 'rq_1', error: 'missing scope' },
@@ -1020,7 +1101,7 @@ const IMAGES = rowsFor('GET_IMAGES_BY_IDS', 'blocks.getImagesByIds', IMAGES_RESU
     scenario: 'rpc rejects with tRPC error → message only',
     hosts: PBH,
     mode: 'default',
-    rpc: { rejects: trpcError('too many ids', { code: 'BAD_REQUEST' }) },
+    rpc: { rejects: trpcError('BAD_REQUEST', 400, 'too many ids') },
     payload: { requestId: 'rq_1', imageIds: [3] },
     call: [{ blockToken: TOKEN, imageIds: [3] }],
     reply: { requestId: 'rq_1', error: 'too many ids' },
@@ -1110,7 +1191,7 @@ const S_GET = rowsFor('APP_STORAGE_GET', 'apps.storage.get', { value: { note: 'h
     scenario: 'rpc rejects with tRPC error → message only',
     hosts: BOTH,
     mode: 'default',
-    rpc: { rejects: trpcError('feature disabled', { code: 'FORBIDDEN' }) },
+    rpc: { rejects: trpcError('FORBIDDEN', 403, 'feature disabled') },
     payload: { requestId: 'rq_1', key: 'draft' },
     call: [{ blockToken: TOKEN, key: 'draft' }, READ_OPTS],
     reply: { requestId: 'rq_1', value: null, error: 'feature disabled' },
@@ -1216,7 +1297,7 @@ const S_SET = rowsFor('APP_STORAGE_SET', 'apps.storage.set', { sizeBytes: 17 }, 
     rpc: { rejects: rateLimited },
     payload: { requestId: 'rq_1', key: 'draft', value: 1 },
     call: [{ blockToken: TOKEN, key: 'draft', value: 1 }],
-    reply: { requestId: 'rq_1', ok: false, error: 'rate limited' },
+    reply: { requestId: 'rq_1', ok: false, error: RL_MESSAGE },
   },
   {
     scenario: 'no requestId → dropped',
@@ -1299,7 +1380,7 @@ const S_DEL = rowsFor('APP_STORAGE_DELETE', 'apps.storage.delete', { deleted: tr
     rpc: { rejects: rateLimited },
     payload: { requestId: 'rq_1', key: 'draft' },
     call: [{ blockToken: TOKEN, key: 'draft' }],
-    reply: { requestId: 'rq_1', ok: false, deleted: false, error: 'rate limited' },
+    reply: { requestId: 'rq_1', ok: false, deleted: false, error: RL_MESSAGE },
   },
   {
     scenario: 'no requestId → dropped',
@@ -1402,7 +1483,7 @@ const S_LIST = rowsFor('APP_STORAGE_LIST', 'apps.storage.list', LIST_RESULT, [
     rpc: { rejects: rateLimited },
     payload: { requestId: 'rq_1' },
     call: [{ blockToken: TOKEN, prefix: undefined, limit: 50, cursor: undefined }, READ_OPTS],
-    reply: { requestId: 'rq_1', keys: [], error: 'rate limited' },
+    reply: { requestId: 'rq_1', keys: [], error: RL_MESSAGE },
   },
   {
     scenario: 'no requestId → dropped',
@@ -1479,7 +1560,7 @@ const S_QUOTA = rowsFor('APP_STORAGE_QUOTA', 'apps.storage.getQuota', { ...QUOTA
       rowCount: 0,
       limitBytes: 0,
       limitRows: 0,
-      error: 'rate limited',
+      error: RL_MESSAGE,
     },
   },
   {
@@ -1588,7 +1669,7 @@ const SH_LIST = rowsFor('SHARED_LIST', 'apps.shared.list', { items: [ITEM], next
       { blockToken: TOKEN, prefix: undefined, limit: 50, cursor: undefined, mine: undefined },
       READ_OPTS,
     ],
-    reply: { requestId: 'rq_1', error: 'rate limited' },
+    reply: { requestId: 'rq_1', error: RL_MESSAGE },
   },
   {
     scenario: 'no requestId → dropped',
@@ -1664,7 +1745,7 @@ const SH_GET = rowsFor('SHARED_GET', 'apps.shared.get', { item: ITEM }, [
     rpc: { rejects: rateLimited },
     payload: { requestId: 'rq_1', key: 'k1' },
     call: [{ blockToken: TOKEN, key: 'k1' }, READ_OPTS],
-    reply: { requestId: 'rq_1', item: null, error: 'rate limited' },
+    reply: { requestId: 'rq_1', item: null, error: RL_MESSAGE },
   },
   {
     scenario: 'no requestId → dropped',
@@ -1747,7 +1828,7 @@ const SH_COUNT = rowsFor('SHARED_GET_COUNT', 'apps.shared.getCount', { count: 9,
     rpc: { rejects: rateLimited },
     payload: { requestId: 'rq_1', key: 'k1' },
     call: [{ blockToken: TOKEN, key: 'k1' }, READ_OPTS],
-    reply: { requestId: 'rq_1', error: 'rate limited' },
+    reply: { requestId: 'rq_1', error: RL_MESSAGE },
   },
   {
     scenario: 'no requestId → dropped',
@@ -1826,7 +1907,7 @@ const SH_COUNTS = rowsFor('SHARED_GET_COUNTS', 'apps.shared.getCounts', { counts
     rpc: { rejects: rateLimited },
     payload: { requestId: 'rq_1', keys: ['a'] },
     call: [{ blockToken: TOKEN, keys: ['a'] }, READ_OPTS],
-    reply: { requestId: 'rq_1', error: 'rate limited' },
+    reply: { requestId: 'rq_1', error: RL_MESSAGE },
   },
   {
     scenario: 'no requestId → dropped',
@@ -1922,7 +2003,7 @@ function sharedWriteRows(opts: {
         reply: {
           requestId: 'rq_1',
           ...opts.errorPrefix,
-          error: 'rate limited',
+          error: RL_MESSAGE,
           rateLimit: RATE_LIMIT,
         },
       },
@@ -1933,7 +2014,7 @@ function sharedWriteRows(opts: {
         rpc: { rejects: rateLimitedMalformedMeta },
         payload: { requestId: 'rq_1', ...payload },
         call: [{ blockToken: TOKEN, ...call }],
-        reply: { requestId: 'rq_1', ...opts.errorPrefix, error: 'rate limited' },
+        reply: { requestId: 'rq_1', ...opts.errorPrefix, error: RL_MESSAGE },
       },
       {
         scenario: 'no requestId → dropped',
@@ -2122,9 +2203,7 @@ export const ROWS: readonly MatrixRow[] = [
 ];
 
 export function rowName(row: MatrixRow): string {
-  return `${row.type} · ${row.mode} · ${row.scenario}${
-    row.candidateFix ? ` [current behaviour; candidate fix ${row.candidateFix}]` : ''
-  }`;
+  return `${row.type} · ${row.mode} · ${row.scenario}`;
 }
 
 // ── Runner ───────────────────────────────────────────────────────────────────────────────
