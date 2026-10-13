@@ -35,7 +35,7 @@ import {
 } from '~/shared/constants/browsingLevel.constants';
 import { getServerBrowsingLevel } from '~/server/utils/browsing-level';
 import {
-  BUZZ_BUDGET_CAP,
+  resolvePerCallBuzzBudget,
   isKnownBlockScope,
   validateBlockScopesAgainstOauthClient,
 } from '~/shared/constants/block-scope.constants';
@@ -184,8 +184,6 @@ const PAGE_INSTANCE_PREFIX = 'page_';
 // per-spend audit row lands in the nullable-appBlockId path. The dev instance id
 // is therefore `page_ephemeral-<slug>`.
 const EPHEMERAL_APP_ID_PREFIX = 'ephemeral-';
-
-const BUZZ_BUDGET_DEFAULT = 10;
 
 const PER_IP_RATE_LIMIT_WINDOW_SECONDS = 60;
 const PER_IP_RATE_LIMIT_MAX = 120;
@@ -350,17 +348,10 @@ function resolveBuzzBudget(
   publisherSettings: Record<string, unknown>
 ): number | null {
   if (!scopes.includes('ai:write:budgeted')) return null;
-  const raw = publisherSettings?.buzz_budget_per_gen;
-  // Defense-in-depth (audit should-fix): require an INTEGER, not merely a
-  // finite number. A fractional / Infinity / NaN / non-number value falls back
-  // to the platform default rather than flowing through to a fractional Buzz
-  // budget. This treats model slots and pages identically — both arrive here as
-  // `buzz_budget_per_gen` (the model path from install settings, the page path
-  // mapped from manifest `page.buzzBudgetPerGen`) and both clamp+gate the same
-  // way. A valid positive integer (the model-slot common case) is unchanged.
-  const candidate = typeof raw === 'number' && Number.isInteger(raw) ? raw : BUZZ_BUDGET_DEFAULT;
-  if (candidate <= 0) return 0; // sentinel — caller rejects with 422
-  return Math.min(candidate, BUZZ_BUDGET_CAP);
+  // Model slots and pages arrive here identically, as `buzz_budget_per_gen` (install
+  // settings, or mapped from manifest `page.buzzBudgetPerGen`). 0 is the sentinel the
+  // caller rejects with 422.
+  return resolvePerCallBuzzBudget(publisherSettings?.buzz_budget_per_gen);
 }
 
 type OauthMintOutcome =

@@ -227,8 +227,14 @@ const baseProps = {
  * from a genuine zero, so nothing is asserted until the channel has been proven
  * to carry traffic.
  */
-async function mountAndCaptureInit(context: ModelSlotContext) {
-  await renderWithProviders(<IframeHost {...baseProps} context={context} />);
+async function mountAndCaptureInit(context: ModelSlotContext, installOverride?: BlockInstall) {
+  await renderWithProviders(
+    <IframeHost
+      {...baseProps}
+      {...(installOverride ? { install: installOverride } : {})}
+      context={context}
+    />
+  );
   await vi.waitFor(() => {
     if (!iframeEl().contentWindow) throw new Error('not mounted yet');
   });
@@ -239,6 +245,35 @@ async function mountAndCaptureInit(context: ModelSlotContext) {
   const init = posts.last('BLOCK_INIT')!.payload as BlockInitPayload;
   return { posts, init };
 }
+
+describe('IframeHost BLOCK_INIT — token.buzzBudget resolves as the install mint does', () => {
+  // The host resolves this client-side; the install mint resolves the same setting server-side.
+  // 6301 overshoots the 5000 cap without being a multiple of it.
+  test.each([
+    ['undeclared', {}, 1000],
+    ['under the cap', { buzz_budget_per_gen: 137 }, 137],
+    ['at the cap', { buzz_budget_per_gen: 5000 }, 5000],
+    ['over the cap', { buzz_budget_per_gen: 6301 }, 5000],
+    ['a non-integer', { buzz_budget_per_gen: 12.5 }, 1000],
+  ])('a publisher budget, %s, reaches the block', async (_l, publisherSettings, shown) => {
+    const { posts, init } = await mountAndCaptureInit(signedInContext(), {
+      ...install,
+      publisherSettings,
+    });
+    expect(init.token.buzzBudget).toBe(shown);
+    posts.stop();
+  });
+
+  test('a non-positive publisher budget shows no budget at all', async () => {
+    const { posts, init } = await mountAndCaptureInit(signedInContext(), {
+      ...install,
+      publisherSettings: { buzz_budget_per_gen: -5 },
+    });
+    expect(init.token.scopes).toContain('ai:write:budgeted');
+    expect(init.token).not.toHaveProperty('buzzBudget');
+    posts.stop();
+  });
+});
 
 describe('IframeHost BLOCK_INIT — viewer.signedIn (v2)', () => {
   test('a signed-in viewer reaches the block with signedIn: true', async () => {

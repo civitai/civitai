@@ -49,6 +49,7 @@ import {
 import { BlockConsentNotice } from './BlockConsentNotice';
 import { openBlockConsentModal } from './openBlockConsentModal';
 import { hideBlock } from './hiddenBlocks';
+import { resolvePerCallBuzzBudget } from '~/shared/constants/block-scope.constants';
 import { isPageSlot } from '~/shared/constants/slot-registry';
 import { sanitizeAppChromeName } from './appChromeName';
 import { resolveChromeGeometry } from './chromeGeometry';
@@ -1490,23 +1491,13 @@ export function IframeHost({
     return declared.filter((s) => !withheld.has(s));
   }, [install.manifest.scopes, missingScopes]);
 
-  // Mirror the server's buzzBudget resolution (publisher's
-  // buzz_budget_per_gen → manifest default → 10, capped at 1000) so blocks
-  // can display the budget without a JWT decode. Only present when the token
-  // actually carries ai:write:budgeted (i.e. after consent); absent otherwise —
-  // a budget cap is meaningless without the spend scope it bounds.
-  //
-  // Must stay in lockstep with the server's `resolveBuzzBudget`
-  // (src/pages/api/v1/block-tokens/index.ts): require an INTEGER (not merely a
-  // finite number) so a fractional / Infinity / NaN value falls back to the
-  // default here exactly as the server mints it — otherwise the UI would show a
-  // per-gen budget the server never signed.
+  // Resolved by the function the page/install mint and the hub token use, so blocks
+  // can display the budget without a JWT decode. Only present when the token carries
+  // ai:write:budgeted (i.e. after consent).
   const buzzBudget = useMemo<number | undefined>(() => {
     if (!grantedScopes.includes('ai:write:budgeted')) return undefined;
-    const raw = install.publisherSettings?.buzz_budget_per_gen;
-    const candidate = typeof raw === 'number' && Number.isInteger(raw) ? raw : 10;
-    if (candidate <= 0) return undefined;
-    return Math.min(candidate, 1000);
+    const budget = resolvePerCallBuzzBudget(install.publisherSettings?.buzz_budget_per_gen);
+    return budget > 0 ? budget : undefined;
   }, [grantedScopes, install.publisherSettings]);
 
   // Effective Checkpoint after publisher-default ∪ viewer-override merge.

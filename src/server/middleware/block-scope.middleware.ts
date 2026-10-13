@@ -43,7 +43,7 @@ import {
 } from '~/server/services/block-token-subject';
 import { effectiveBlockScopes } from '~/shared/constants/block-effective-scopes';
 import {
-  BUZZ_BUDGET_CAP,
+  resolvePerCallBuzzBudget,
   isKnownBlockScope,
   isPrivateRunAudience,
   type PrivateRunAudience,
@@ -1296,16 +1296,6 @@ export function enforceContextBinding(
 // Same instance id the page host mints under, so storage, rate-limit buckets and the
 // publisher-ban revocation sweep (`page_` prefix) line up whichever credential the block holds.
 const HUB_INSTANCE_PREFIX = 'page_';
-// Mirror of the mint's private per-gen default (block-tokens/index.ts BUZZ_BUDGET_DEFAULT).
-const HUB_BUZZ_BUDGET_DEFAULT = 10;
-
-function hubBuzzBudget(manifest: { page?: { buzzBudgetPerGen?: unknown } }): number {
-  const raw = manifest.page?.buzzBudgetPerGen;
-  const candidate =
-    typeof raw === 'number' && Number.isInteger(raw) ? raw : HUB_BUZZ_BUDGET_DEFAULT;
-  return Math.min(Math.max(candidate, 0), BUZZ_BUDGET_CAP);
-}
-
 /**
  * Block claims for a hub-issued OAuth access token whose OauthClient owns an AppBlock.
  * Null for anything else — a personal API key is never elevated. Scopes are what the
@@ -1444,7 +1434,9 @@ async function resolveHubTokenClaims(
     blockInstanceId: `${HUB_INSTANCE_PREFIX}${block.id}`,
     ctx: { entityType: 'none' },
     scopes,
-    ...(scopes.includes('ai:write:budgeted') ? { buzzBudget: hubBuzzBudget(manifest) } : {}),
+    ...(scopes.includes('ai:write:budgeted')
+      ? { buzzBudget: resolvePerCallBuzzBudget(manifest.page?.buzzBudgetPerGen) }
+      : {}),
     ...(typeof domainColor === 'string' ? { domain: domainColor } : {}),
     maxBrowsingLevel,
   };

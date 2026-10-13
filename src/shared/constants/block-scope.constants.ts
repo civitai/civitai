@@ -454,16 +454,44 @@ export const BLOCK_BUZZ_CAP_PER_DAY = 50_000;
 /**
  * The most a block token's per-call `buzzBudget` claim may be, for an install token
  * and a pre-approval (dev / private-run / review) token alike. It bounds one
- * generation only; total spend is bounded by `BLOCK_BUZZ_CAP_PER_DAY`,
- * `PRIVATE_RUN_BUZZ_CAP`, `REVIEW_RUN_FOR_REAL_BUZZ_CAP`, the dev-tunnel session
- * cap and the per-app caps.
+ * generation only. A multi-step (`kind: 'workflow'`) call is bounded in TOTAL at this
+ * budget times its step count; no single step is held to the budget. Total spend is
+ * bounded by
+ * `BLOCK_BUZZ_CAP_PER_DAY`, `PRIVATE_RUN_BUZZ_CAP`, `REVIEW_RUN_FOR_REAL_BUZZ_CAP`,
+ * the dev-tunnel session cap and the per-app caps.
  *
  * The two exceptions are jobs whose exact price the VIEWER confirmed in host chrome —
  * a `kind:'training'` run and a confirmed pass-through step. Those are charged against
  * that confirmed quote, under their own per-job ceilings, not against this claim
  * (`blockTrainingRunCeiling` / `blockConfirmedStepCeiling` in block-scope.middleware).
+ *
+ * It is NOT bounded by the aggregate caps: it is above `PRIVATE_RUN_BUZZ_CAP`, so one
+ * call inside this budget can still be refused by the aggregate it reserves against.
+ * It equals the confirmed-step per-job ceiling, so a token at this cap is never offered
+ * a confirmed step — every price a confirm could cover already fits the budget.
  */
-export const BUZZ_BUDGET_CAP = 1000;
+export const BUZZ_BUDGET_CAP = 5000;
+
+/**
+ * The per-call budget a token gets when nothing declares one (manifest
+ * `page.buzzBudgetPerGen` for a page, `buzz_budget_per_gen` for a model slot), on
+ * every mint path. A viewer is never asked to confirm it, and raising it reaches every
+ * approved app that declares no budget at its next mint, with no re-review.
+ */
+export const BUZZ_BUDGET_DEFAULT = 1000;
+
+/**
+ * The per-call budget for a declared value — an install's `buzz_budget_per_gen` or a
+ * manifest's `page.buzzBudgetPerGen`. Anything but an integer takes the default; a
+ * non-positive integer is 0, which the mint refuses and every spend gate fails closed on.
+ * Shared by the page/install mint, the hub token and the host's client-side copy, which
+ * must show the budget the server signed.
+ */
+export function resolvePerCallBuzzBudget(declared: unknown): number {
+  const candidate =
+    typeof declared === 'number' && Number.isInteger(declared) ? declared : BUZZ_BUDGET_DEFAULT;
+  return candidate <= 0 ? 0 : Math.min(candidate, BUZZ_BUDGET_CAP);
+}
 
 /**
  * The machine-readable code a viewer-confirmed job (a confirmed pass-through step or a
@@ -625,15 +653,14 @@ export const BLOCK_CONSENT_BUDGET_HIGH_CEILING_PER_DAY = 180;
  *     `LOW === min(...)` holds for any number of ties);
  *   · the INLINE customComfy arm reserves an app-declared ceiling up to
  *     `INLINE_MAX_BUZZ` = 250, verbatim, un-dev-gated;
- *   · `textToImage` reserves its live whatIf quote, which can be far LOWER (the
- *     platform's own default per-generation budget is 10);
+ *   · `textToImage` reserves its live whatIf quote, which can be far LOWER;
  *   · a STEP reserves `max(declaredBuzz, quotedBuzz)`, and `chat-completion`'s
  *     declared 1 is documented in `blocks.router.ts` as "that floor, not a
  *     price" — measured several times the constant, rising with `maxTokens`.
  *
  * ⚠️ A closed upper bound DOES exist, contrary to what an earlier revision of
  * this docblock asserted: every path gates the reservation against the token's
- * per-call budget, which `resolveBuzzBudget` clamps at `BUZZ_BUDGET_CAP` = 1000.
+ * per-call budget, which every mint clamps at `BUZZ_BUDGET_CAP`.
  * It is simply not renderable — it is per-app, far above what most paths reserve
  * (INLINE_MAX_BUZZ = 250; 180 for recipes; a quoted step can reach the cap itself),
  * and alarming rather than informative. Do not "correct" the copy by naming it.

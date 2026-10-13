@@ -526,6 +526,23 @@ Civitai Buzz is split into spendable pools — **blue** (purchased), **green**
   `spentAccountType` — the `accountType` of the largest _realized_ debit — so a
   block can attribute spend after the fact (internal-only accounts are omitted).
 
+### The per-call budget
+
+Every token carrying `ai:write:budgeted` also carries `buzzBudget`, the most one
+single-step call may cost. A multi-step call (`kind: 'workflow'`, up to 8 steps) is bounded
+as a whole: its total price, author fee included, may not exceed the budget times its step
+count. That total is not divided per step, so one step may use more than the budget. The
+app declares it in its manifest (`page.buzzBudgetPerGen`); the mint clamps it to
+`BUZZ_BUDGET_CAP` (5,000 Buzz) and uses `BUZZ_BUDGET_DEFAULT` (1,000 Buzz) when the manifest
+declares none. Both live in `src/shared/constants/block-scope.constants.ts` and apply to
+install, hub, dev, review and private-run tokens alike. The viewer consents to the scope,
+not to this number, and is not asked again per call.
+
+It bounds one call only. The aggregate ceilings below and the review, private-run and
+dev-session caps are checked separately on every submit, and some are lower than the
+per-call cap: a call inside its budget is still refused when it would take the running
+total past the aggregate it reserves against.
+
 ### The user's per-app spend limit (consent budget)
 
 A viewer who grants `ai:write:budgeted` may also set a **daily Buzz limit for that
@@ -648,7 +665,9 @@ same page host, so the owner sees the same confirm.
    carries `snapshot.stepQuote: { quoteId, total, stepType, expiresAt }`. `total` is the
    price the viewer will confirm and be charged. No quote, a zero price or a variable price
    is never grantable: the viewer confirms what they are charged. Below the budget the
-   estimate is unchanged and the job runs as before.
+   estimate is unchanged and the job runs as before. An app whose budget is the 5,000
+   cap is therefore never offered a confirm: no price is both above its budget and
+   within the per-job limit.
 
    Three things to know as an author:
    - **Estimate it on its own.** Only the single `ESTIMATE_WORKFLOW` stores a confirmable

@@ -6,10 +6,15 @@ import {
   manifestWantsOauthToken,
   assertSensitiveScopesJustified,
   BLOCK_SCOPE_TO_OAUTH_BIT,
+  BUZZ_BUDGET_CAP,
+  BUZZ_BUDGET_DEFAULT,
   deriveOauthBitmaskFromBlockScopes,
   isAppBlockOauthClientId,
   isKnownBlockScope,
   isSensitiveBlockScope,
+  PRIVATE_RUN_BUZZ_CAP,
+  resolvePerCallBuzzBudget,
+  REVIEW_RUN_FOR_REAL_BUZZ_CAP,
   SENSITIVE_BLOCK_SCOPES,
   sensitiveScopeJustificationError,
   SKIP_OAUTH_CHECK,
@@ -17,6 +22,44 @@ import {
   validateBlockScopesAgainstOauthClient,
 } from '../block-scope.constants';
 import { TokenScope } from '../token-scope.constants';
+
+describe('the per-call Buzz budget', () => {
+  it('caps at 5000 and defaults to 1000', () => {
+    expect(BUZZ_BUDGET_CAP).toBe(5000);
+    expect(BUZZ_BUDGET_DEFAULT).toBe(1000);
+  });
+
+  // 6301 overshoots the cap without being a multiple of it, so a mutant that drops
+  // the clamp or hardcodes the cap both move an output.
+  it.each([
+    [137, 137],
+    [5000, 5000],
+    [5001, 5000],
+    [6301, 5000],
+  ])('a declared %i resolves to %i', (declared, resolved) => {
+    expect(resolvePerCallBuzzBudget(declared)).toBe(resolved);
+  });
+
+  it.each([[undefined], [null], ['200'], [12.5], [NaN], [Infinity]])(
+    'a declared %s is not an integer and takes the 1000 default',
+    (declared) => {
+      expect(resolvePerCallBuzzBudget(declared)).toBe(1000);
+    }
+  );
+
+  it.each([[0], [-5]])('a declared %i is refused as 0, never defaulted', (declared) => {
+    expect(resolvePerCallBuzzBudget(declared)).toBe(0);
+  });
+
+  // The per-call cap is deliberately not bounded by the aggregates: these record which
+  // side of each one it sits on, so moving any of them is a decision made here.
+  it('sits above the private-run aggregate and equals the review one', () => {
+    expect(PRIVATE_RUN_BUZZ_CAP).toBe(2500);
+    expect(REVIEW_RUN_FOR_REAL_BUZZ_CAP).toBe(5000);
+    expect(BUZZ_BUDGET_CAP).toBeGreaterThan(PRIVATE_RUN_BUZZ_CAP);
+    expect(BUZZ_BUDGET_CAP).toBe(REVIEW_RUN_FOR_REAL_BUZZ_CAP);
+  });
+});
 
 describe('block-scope.constants', () => {
   it('maps known scopes to the right bits', () => {
