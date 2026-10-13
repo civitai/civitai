@@ -26,6 +26,7 @@ import {
   syncFreshdeskMembership,
   supersedeBuzzMembershipForPaidSubscription,
 } from '~/server/services/subscriptions.service';
+import { isSupportCodeRedeemableBy } from '~/server/services/support-membership-code.constants';
 import { invalidateSubscriptionCaches, getPrepaidTokens } from '~/server/utils/subscription.utils';
 import type { GiftNotice } from '~/server/schema/redeemableCode.schema';
 import { dbRead } from '~/server/db/client';
@@ -264,10 +265,13 @@ export async function consumeRedeemableCode({
         },
       },
       redeemedAt: true,
+      metadata: true,
     },
   });
 
-  if (!codeRecord) {
+  // A support code redeemed by anyone but its customer answers exactly as an unknown code does, so the
+  // refusal confirms nothing about the code to whoever is holding it.
+  if (!codeRecord || !isSupportCodeRedeemableBy(codeRecord.metadata, userId)) {
     throw new Error('Code does not exist or has been redeemed');
   }
 
@@ -287,8 +291,11 @@ export async function consumeRedeemableCode({
     const buzzValue = convertCodeValueToBuzz(codeRecord.type, codeRecord.unitValue, tierName);
     const giftNotices = await getMatchingGiftNotices(buzzValue);
 
+    // `metadata` was read only for the binding check; it carries internal notes (a support reason,
+    // the minting moderator, a purchaser's order id) and goes back to the browser otherwise.
+    const { metadata: _internal, ...publicRecord } = codeRecord;
     return {
-      ...codeRecord,
+      ...publicRecord,
       giftNotices,
     }; // Already redeemed by this user, return the record with gift notices.
   }
