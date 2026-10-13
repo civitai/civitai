@@ -330,7 +330,7 @@ describe('upsertModelVersionHandler — a save that omits the stamp', () => {
 });
 
 describe('upsertModelVersionHandler — trainingStatus on create', () => {
-  it.each(['Approved', 'Submitted', 'Denied', 'InReview'])(
+  it.each(['Denied', 'Paused'])(
     'refuses a non-moderator creating a version as %s',
     async (trainingStatus) => {
       await expect(
@@ -341,8 +341,8 @@ describe('upsertModelVersionHandler — trainingStatus on create', () => {
     }
   );
 
-  it.each([['Pending'], [undefined], [null]])(
-    'lets a non-moderator create with %s (the wizard)',
+  it.each([['Pending'], ['Approved'], ['Submitted'], [undefined], [null]])(
+    'lets a non-moderator create with %s',
     async (trainingStatus) => {
       await call({ ...creating('LORA'), extraInput: { trainingStatus } });
 
@@ -350,10 +350,10 @@ describe('upsertModelVersionHandler — trainingStatus on create', () => {
     }
   );
 
-  it('lets a moderator create with any status', async () => {
+  it('lets a moderator create as Denied', async () => {
     await call({
       ...creating('LORA'),
-      extraInput: { trainingStatus: 'Approved' },
+      extraInput: { trainingStatus: 'Denied' },
       isModerator: true,
     });
 

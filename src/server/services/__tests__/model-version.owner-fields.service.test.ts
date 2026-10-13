@@ -91,33 +91,19 @@ vi.mock('~/server/services/monetization-rights.service', () => ({
   resolveRightsAffirmation: vi.fn(),
 }));
 
-import {
-  updateModelVersionPaidAccess,
-  upsertModelVersion,
-} from '~/server/services/model-version.service';
-import { writePaidAccessForModelVersion } from '~/server/services/paid-access.service';
+import { upsertModelVersion } from '~/server/services/model-version.service';
 
 const MODEL_ID = 42;
 const OTHER_MODEL_ID = 43;
 const OWNER_ID = 7;
 const VERSION_ID = 100;
 
-type StoredGate = {
-  timeframeDays: number | null;
-  terms: Record<string, unknown>;
-  endsAt?: Date | null;
-} | null;
-
 function seedExisting({
   status = ModelStatus.Draft,
   trainingStatus = null,
-  gate = null,
-  initialPublishedAt = null,
 }: {
-  initialPublishedAt?: Date | null;
   status?: ModelStatus;
   trainingStatus?: TrainingStatus | null;
-  gate?: StoredGate;
 } = {}) {
   dbMock.dbWrite.model.findUniqueOrThrow.mockResolvedValue({
     nsfw: false,
@@ -129,13 +115,11 @@ function seedExisting({
   dbMock.dbWrite.modelVersion.findUniqueOrThrow.mockResolvedValue({
     id: VERSION_ID,
     status,
-    initialPublishedAt,
     trainingStatus,
     meta: null,
     model: { id: MODEL_ID, userId: OWNER_ID, meta: null, availability: 'Public' },
     monetization: null,
   });
-  dbMock.dbWrite.paidAccess.findUnique.mockResolvedValue(gate && { endsAt: null, ...gate });
   mockTx.modelVersion.update.mockResolvedValue({ id: VERSION_ID, modelId: MODEL_ID });
 }
 
@@ -151,15 +135,17 @@ beforeEach(() => {
   );
 });
 
-describe('upsertModelVersion — trainingStatus is not owner-changeable', () => {
+describe('upsertModelVersion — Denied and Paused training status is moderator-only', () => {
   const refused = [
     [TrainingStatus.Denied, TrainingStatus.Approved],
     [TrainingStatus.Denied, TrainingStatus.Pending],
     [TrainingStatus.Paused, TrainingStatus.Approved],
     [TrainingStatus.Paused, TrainingStatus.Pending],
-    [TrainingStatus.Submitted, TrainingStatus.Pending],
-    [TrainingStatus.Processing, TrainingStatus.Approved],
-    [TrainingStatus.Approved, TrainingStatus.Pending],
+    [TrainingStatus.Denied, TrainingStatus.Submitted],
+    [TrainingStatus.Paused, TrainingStatus.Processing],
+    [TrainingStatus.Submitted, TrainingStatus.Denied],
+    [TrainingStatus.Approved, TrainingStatus.Paused],
+    [null, TrainingStatus.Denied],
   ] as const;
 
   it.each(refused)('refuses a non-moderator moving %s to %s', async (from, to) => {
@@ -178,8 +164,13 @@ describe('upsertModelVersion — trainingStatus is not owner-changeable', () => 
     [TrainingStatus.Pending, TrainingStatus.Pending],
     [null, TrainingStatus.Pending],
     [TrainingStatus.Denied, TrainingStatus.Denied],
+    [TrainingStatus.Paused, TrainingStatus.Paused],
+    [TrainingStatus.Submitted, TrainingStatus.Pending],
+    [TrainingStatus.Processing, TrainingStatus.Approved],
+    [TrainingStatus.Submitted, TrainingStatus.Approved],
+    [TrainingStatus.Approved, TrainingStatus.Pending],
     [TrainingStatus.Expired, TrainingStatus.Pending],
-  ] as const)('lets the wizard move %s to %s', async (from, to) => {
+  ] as const)('lets an owner move %s to %s', async (from, to) => {
     seedExisting({ trainingStatus: from });
 
     await edit({ trainingStatus: to });
@@ -201,237 +192,6 @@ describe('upsertModelVersion — trainingStatus is not owner-changeable', () => 
     await edit({ trainingStatus: TrainingStatus.Approved }, true);
 
     expect(written().trainingStatus).toBe(TrainingStatus.Approved);
-  });
-});
-
-describe('upsertModelVersion — early access cannot grow after publish', () => {
-  const timed = (timeframeDays: number, download = 500) => ({
-    timeframeDays,
-    terms: { download: { price: download } },
-  });
-  const input = (timeframeDays: number, download = 500, extra: Record<string, unknown> = {}) => ({
-    usageControl: 'Download',
-    paidAccess: { timeframeDays, terms: { download: { price: download } }, ...extra },
-  });
-
-  it('refuses a longer window', async () => {
-    seedExisting({ status: ModelStatus.Published, gate: timed(7) });
-
-    await expect(edit(input(14))).rejects.toThrowError(/increase.*timeframe/i);
-
-    expect(mockTx.modelVersion.update).not.toHaveBeenCalled();
-  });
-
-  it('refuses turning a timed window into a permanent gate', async () => {
-    seedExisting({ status: ModelStatus.Published, gate: timed(7) });
-
-    await expect(edit(input(0, 500, { permanent: true }))).rejects.toThrowError(
-      /increase.*timeframe/i
-    );
-  });
-
-  it('refuses a higher download price', async () => {
-    seedExisting({ status: ModelStatus.Published, gate: timed(7, 500) });
-
-    await expect(edit(input(7, 900))).rejects.toThrowError(/increase.*price/i);
-  });
-
-  it('refuses a higher generation price', async () => {
-    seedExisting({
-      status: ModelStatus.Published,
-      gate: { timeframeDays: 7, terms: { download: { price: 500 }, generation: { price: 100 } } },
-    });
-
-    await expect(
-      edit({
-        usageControl: 'Download',
-        paidAccess: {
-          timeframeDays: 7,
-          terms: { download: { price: 500 }, generation: { price: 200 } },
-        },
-      })
-    ).rejects.toThrowError(/increase.*price/i);
-  });
-
-  it('refuses adding a price tier the stored gate did not have', async () => {
-    seedExisting({
-      status: ModelStatus.Published,
-      gate: { timeframeDays: 7, terms: { generation: { free: true } } },
-    });
-
-    await expect(edit(input(7, 500))).rejects.toThrowError(/increase.*price/i);
-  });
-
-  it.each([
-    ['the same gate replayed', input(7, 500)],
-    ['a shorter window', input(3, 500)],
-    ['a lower price', input(7, 300)],
-    ['the gate cleared', { usageControl: 'Download', paidAccess: null }],
-    ['the gate omitted', { usageControl: 'Download' }],
-  ])('lets %s through', async (_label, body) => {
-    seedExisting({ status: ModelStatus.Published, gate: timed(7, 500) });
-
-    await edit(body);
-
-    expect(mockTx.modelVersion.update).toHaveBeenCalled();
-  });
-
-  it('lets a permanent gate be replayed or narrowed to a window', async () => {
-    seedExisting({
-      status: ModelStatus.Published,
-      gate: { timeframeDays: null, terms: { download: { price: 500 } } },
-    });
-
-    await edit(input(0, 500, { permanent: true }));
-    await edit(input(7, 500));
-
-    expect(mockTx.modelVersion.update).toHaveBeenCalledTimes(2);
-  });
-
-  it('does not restrict a version that is not published yet', async () => {
-    seedExisting({ status: ModelStatus.Draft, gate: timed(7, 500) });
-
-    await edit(input(30, 900));
-
-    expect(mockTx.modelVersion.update).toHaveBeenCalled();
-  });
-
-  const gen = (generation: unknown, download: number | null = 500) => ({
-    timeframeDays: 7,
-    terms: { ...(download == null ? {} : { download: { price: download } }), generation },
-  });
-  const body = (terms: Record<string, unknown>, extra: Record<string, unknown> = {}) => ({
-    usageControl: 'Download',
-    paidAccess: { timeframeDays: 7, terms, ...extra },
-  });
-
-  it('refuses switching to bundled generation when that raises the generation price', async () => {
-    seedExisting({ status: ModelStatus.Published, gate: gen({ price: 100 }) });
-
-    await expect(edit(body({ download: { price: 500 } }))).rejects.toThrowError(/increase.*price/i);
-  });
-
-  it('refuses turning free generation into bundled (paid) generation', async () => {
-    seedExisting({ status: ModelStatus.Published, gate: gen({ free: true }) });
-
-    await expect(edit(body({ download: { price: 500 } }))).rejects.toThrowError(/increase.*price/i);
-  });
-
-  it('lets a Download version become generation-only at the same effective price', async () => {
-    seedExisting({ status: ModelStatus.Published, gate: gen(undefined, 500) });
-
-    await edit(body({ generation: { price: 500 } }));
-
-    expect(mockTx.modelVersion.update).toHaveBeenCalled();
-  });
-
-  it('lets generation drop to a cheaper explicit price or to free', async () => {
-    seedExisting({ status: ModelStatus.Published, gate: gen(undefined, 500) });
-
-    await edit(body({ download: { price: 500 }, generation: { price: 200 } }));
-    await edit(body({ download: { price: 500 }, generation: { free: true } }));
-
-    expect(mockTx.modelVersion.update).toHaveBeenCalledTimes(2);
-  });
-
-  it('still guards a version that is Draft now but was published before', async () => {
-    seedExisting({
-      status: ModelStatus.Draft,
-      initialPublishedAt: new Date(Date.now() - 86_400_000),
-      gate: timed(7, 500),
-    });
-
-    await expect(edit(input(14))).rejects.toThrowError(/increase.*timeframe/i);
-  });
-
-  it('does not let an ended gate block a later write', async () => {
-    seedExisting({
-      status: ModelStatus.Published,
-      gate: { ...timed(7, 500), endsAt: new Date(Date.now() - 86_400_000) },
-    });
-
-    await edit(input(14, 900));
-
-    expect(mockTx.modelVersion.update).toHaveBeenCalled();
-  });
-
-  it('leaves a moderator free to increase it', async () => {
-    seedExisting({ status: ModelStatus.Published, gate: timed(7, 500) });
-
-    await edit(input(30, 900), true);
-
-    expect(mockTx.modelVersion.update).toHaveBeenCalled();
-  });
-});
-
-// The REST early-access endpoint writes the same gate without going through the upsert.
-describe('updateModelVersionPaidAccess — early access cannot grow after publish', () => {
-  const seed = (status: ModelStatus) => {
-    dbMock.dbWrite.modelVersion.findUniqueOrThrow.mockResolvedValue({
-      id: VERSION_ID,
-      baseModel: 'SDXL 1.0',
-      usageControl: 'Download',
-      modelId: MODEL_ID,
-      meta: null,
-      status,
-      initialPublishedAt: null,
-      model: { userId: OWNER_ID },
-    });
-    dbMock.dbWrite.paidAccess.findUnique.mockResolvedValue({
-      timeframeDays: 7,
-      terms: { download: { price: 500 } },
-      endsAt: null,
-    });
-  };
-  const update = (timeframeDays: number, price: number, isModerator = false) =>
-    updateModelVersionPaidAccess({
-      id: VERSION_ID,
-      paidAccess: { timeframeDays, terms: { download: { price } } },
-      isModerator,
-    } as never);
-
-  it.each([
-    ['a longer window', 14, 500, /increase.*timeframe/i],
-    ['a higher price', 7, 900, /increase.*price/i],
-  ] as const)('refuses %s on a published version', async (_label, days, price, error) => {
-    seed(ModelStatus.Published);
-
-    await expect(update(days, price)).rejects.toThrowError(error);
-
-    expect(writePaidAccessForModelVersion).not.toHaveBeenCalled();
-  });
-
-  it('lets a shorter window through', async () => {
-    seed(ModelStatus.Published);
-
-    await update(3, 500);
-
-    expect(writePaidAccessForModelVersion).toHaveBeenCalled();
-  });
-
-  it('guards an unpublished version that was published before', async () => {
-    seed(ModelStatus.Draft);
-    dbMock.dbWrite.modelVersion.findUniqueOrThrow.mockResolvedValue({
-      id: VERSION_ID,
-      baseModel: 'SDXL 1.0',
-      usageControl: 'Download',
-      modelId: MODEL_ID,
-      meta: null,
-      status: ModelStatus.Draft,
-      initialPublishedAt: new Date(Date.now() - 86_400_000),
-      model: { userId: OWNER_ID },
-    });
-
-    await expect(update(14, 500)).rejects.toThrowError(/increase.*timeframe/i);
-  });
-
-  it('does not restrict an unpublished version or a moderator', async () => {
-    seed(ModelStatus.Draft);
-    await update(30, 900);
-    seed(ModelStatus.Published);
-    await update(30, 900, true);
-
-    expect(writePaidAccessForModelVersion).toHaveBeenCalledTimes(2);
   });
 });
 
