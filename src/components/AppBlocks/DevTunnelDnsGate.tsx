@@ -9,18 +9,15 @@ export const DEV_TUNNEL_DNS_WAIT_MS = 3 * 60_000;
 export interface DevTunnelDnsGateProps {
   blockId: string;
   /**
-   * The wait is over: the host resolves, or the tunnel is gone. The owner re-fetches its frame,
-   * which is what replaces this gate; it may be called again while the gate stays mounted.
+   * The host resolves, or the tunnel is gone. Polling pauses until the returned promise settles;
+   * if the gate is still mounted then, it polls again and may call this again.
    */
-  onSettled: () => void;
+  onSettled: () => unknown;
   pollMs?: number;
   waitMs?: number;
 }
 
-/**
- * Stands in for a dev-tunnel frame whose host is not resolvable yet. It never renders the app:
- * the server withholds the entry URL until the host's DNS record is published.
- */
+/** Stands in for a dev-tunnel frame whose host is not resolvable yet. */
 export function DevTunnelDnsGate({
   blockId,
   onSettled,
@@ -28,12 +25,13 @@ export function DevTunnelDnsGate({
   waitMs = DEV_TUNNEL_DNS_WAIT_MS,
 }: DevTunnelDnsGateProps) {
   const [timedOut, setTimedOut] = useState(false);
+  const [settling, setSettling] = useState(false);
+  const polling = !timedOut && !settling;
   const { data, dataUpdatedAt } = trpc.blocks.devTunnelDnsReady.useQuery(
     { blockId },
     {
-      enabled: !timedOut,
-      refetchInterval: timedOut ? false : pollMs,
-      // The wait is usually spent in another tab.
+      enabled: polling,
+      refetchInterval: polling ? pollMs : false,
       refetchIntervalInBackground: true,
       refetchOnWindowFocus: false,
       retry: false,
@@ -51,8 +49,18 @@ export function DevTunnelDnsGate({
   const settled = !!data && (!data.active || data.ready);
   const onSettledRef = useRef(onSettled);
   onSettledRef.current = onSettled;
+  // Keyed on the poll result, not on `settling`: one call per answer, never two in flight.
   useEffect(() => {
-    if (settled) onSettledRef.current();
+    if (!settled) return;
+    let mounted = true;
+    setSettling(true);
+    void Promise.resolve()
+      .then(() => onSettledRef.current())
+      .catch(() => undefined)
+      .finally(() => mounted && setSettling(false));
+    return () => {
+      mounted = false;
+    };
   }, [settled, dataUpdatedAt]);
 
   if (timedOut)

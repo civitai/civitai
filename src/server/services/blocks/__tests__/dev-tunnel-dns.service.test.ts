@@ -1,176 +1,273 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as DnsPromises from 'node:dns/promises';
 import { setEnv } from '~/__tests__/mocks/env.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
-import type { DevTunnelDnsDeps } from '~/server/services/blocks/dev-tunnel-dns.service';
-import {
-  __resetDevTunnelDnsServersForTest,
-  getDevTunnelDnsReadiness,
-  isDevTunnelHostPublished,
-} from '~/server/services/blocks/dev-tunnel-dns.service';
 
 const DOMAIN = 'apps.example';
 const HOST = `dev-0123456789abcdef.${DOMAIN}`;
-// RFC 5737 documentation addresses.
+// RFC 5737 documentation addresses. Three nameservers, the first with two addresses, so the
+// "first two nameservers, one address each" selection differs from every simpler one.
+const NS_NAMES = ['ns1.dns.example', 'ns2.dns.example', 'ns3.dns.example'];
 const NS_ADDRESSES: Record<string, string[]> = {
-  'ns1.dns.example.': ['192.0.2.53'],
+  'ns1.dns.example.': ['192.0.2.53', '192.0.2.54'],
   'ns2.dns.example.': ['198.51.100.53'],
+  'ns3.dns.example.': ['203.0.113.53'],
 };
-const AUTHORITATIVE = ['192.0.2.53', '198.51.100.53'];
+const FIRST = '192.0.2.53';
+const SECOND = '198.51.100.53';
 
+type Answer = () => Promise<string[]>;
 const dnsError = (code: string) => Object.assign(new Error(`query ${code}`), { code });
+const fails = (code: string) => () => Promise.reject(dnsError(code));
+const address: Answer = async () => ['203.0.113.10'];
 
-/**
- * Injected resolver wiring. `systemLookups` records every name the two system-resolver functions
- * were asked for, which is how the tests show the tunnel host never reaches them.
- */
-function wiring(answer: {
-  a?: () => Promise<string[]>;
-  cname?: () => Promise<string[]>;
-  ns?: Record<string, string[]>;
-}) {
-  const systemLookups: string[] = [];
-  const resolver = {
-    setServers: vi.fn<(servers: readonly string[]) => void>(),
-    resolve4: vi.fn<(name: string) => Promise<string[]>>(
-      answer.a ?? (async () => ['203.0.113.10'])
-    ),
-    resolveCname: vi.fn<(name: string) => Promise<string[]>>(
-      answer.cname ?? (async () => Promise.reject(dnsError('ENODATA')))
-    ),
+const dns = vi.hoisted(() => {
+  const state = {
+    /** Zone → NS names, as the system resolver answers. */
+    zones: {} as Record<string, string[]>,
+    nsAddresses: {} as Record<string, string[]>,
+    /** Per authoritative server address: its A and CNAME answers for any name. */
+    a: {} as Record<string, () => Promise<string[]>>,
+    cname: {} as Record<string, () => Promise<string[]>>,
+    /** Every query made: `servers` is null on a resolver left on the system's own servers. */
+    queries: [] as { servers: string[] | null; type: string; name: string }[],
+    options: [] as unknown[],
+    moduleLevel: [] as string[],
   };
-  const zones = answer.ns ?? { [`${DOMAIN}.`]: Object.keys(NS_ADDRESSES) };
-  let clock = 1_000_000;
-  const deps = {
-    resolveNs: vi.fn(async (zone: string) => {
-      systemLookups.push(zone);
-      if (!zones[zone]) throw dnsError('ENODATA');
-      return zones[zone];
-    }),
-    resolveNsAddress: vi.fn(async (name: string) => {
-      systemLookups.push(name);
-      return NS_ADDRESSES[name] ?? [];
-    }),
-    createResolver: vi.fn(() => resolver),
-    now: () => clock,
-  } satisfies DevTunnelDnsDeps;
-  return { deps, resolver, systemLookups, advance: (ms: number) => (clock += ms) };
+  const noData = () => Object.assign(new Error('query ENODATA'), { code: 'ENODATA' });
+  class Resolver {
+    servers: string[] | null = null;
+    constructor(options?: unknown) {
+      state.options.push(options);
+    }
+    setServers(servers: string[]) {
+      this.servers = [...servers];
+    }
+    private log(type: string, name: string) {
+      state.queries.push({ servers: this.servers, type, name });
+    }
+    async resolveNs(name: string) {
+      this.log('NS', name);
+      if (this.servers || !state.zones[name]) throw noData();
+      return state.zones[name];
+    }
+    async resolve4(name: string) {
+      this.log('A', name);
+      if (!this.servers) return state.nsAddresses[name] ?? [];
+      return state.a[this.servers[0]]();
+    }
+    async resolveCname(name: string) {
+      this.log('CNAME', name);
+      const answer = this.servers && state.cname[this.servers[0]];
+      if (!answer) throw noData();
+      return answer();
+    }
+  }
+  return { state, Resolver };
+});
+
+// The module-level functions all go through the system resolver; none may ever be used.
+vi.mock('node:dns/promises', async (importOriginal) => {
+  const refuse = (fn: string) => async (name: string) => {
+    dns.state.moduleLevel.push(`${fn}(${name})`);
+    throw new Error(`${fn} uses the system resolver`);
+  };
+  return {
+    ...(await importOriginal<typeof DnsPromises>()),
+    Resolver: dns.Resolver,
+    lookup: refuse('lookup'),
+    resolve: refuse('resolve'),
+    resolve4: refuse('resolve4'),
+    resolveCname: refuse('resolveCname'),
+    resolveNs: refuse('resolveNs'),
+  };
+});
+
+const { __resetDevTunnelDnsServersForTest, getDevTunnelDnsReadiness, isDevTunnelHostPublished } =
+  await import('~/server/services/blocks/dev-tunnel-dns.service');
+
+/** The two nameservers that get asked answer `first` and `second` to an address query. */
+function nameservers(first: Answer, second: Answer = first) {
+  dns.state.a = { [FIRST]: first, [SECOND]: second };
 }
 
+const hostQueries = () => dns.state.queries.filter((q) => q.name.includes('dev-'));
+const systemQueries = () => dns.state.queries.filter((q) => q.servers === null);
+
 let warn: ReturnType<typeof vi.spyOn>;
+const warnings = () => warn.mock.calls.map(([line]) => JSON.parse(line as string));
 
 beforeEach(() => {
   __resetDevTunnelDnsServersForTest();
   setEnv({ APPS_DOMAIN: DOMAIN, APPS_DEV_TUNNEL_INGRESS_TARGET: '192.0.2.1' });
+  Object.assign(dns.state, {
+    zones: { [`${DOMAIN}.`]: NS_NAMES },
+    nsAddresses: NS_ADDRESSES,
+    cname: {},
+    queries: [],
+    options: [],
+    moduleLevel: [],
+  });
+  nameservers(address);
   warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
   warn.mockClear();
+});
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 describe('isDevTunnelHostPublished', () => {
   it('is ready once the authoritative nameservers answer with an address', async () => {
-    const { deps, resolver } = wiring({});
-    expect(await isDevTunnelHostPublished(HOST, deps)).toBe(true);
-    expect(resolver.resolve4).toHaveBeenCalledTimes(1);
+    expect(await isDevTunnelHostPublished(HOST)).toBe(true);
     expect(warn).not.toHaveBeenCalled();
   });
 
   it('is not ready on NXDOMAIN, quietly', async () => {
-    const { deps, resolver } = wiring({ a: () => Promise.reject(dnsError('ENOTFOUND')) });
-    expect(await isDevTunnelHostPublished(HOST, deps)).toBe(false);
-    expect(resolver.resolveCname).not.toHaveBeenCalled();
+    nameservers(fails('ENOTFOUND'));
+    expect(await isDevTunnelHostPublished(HOST)).toBe(false);
     expect(warn).not.toHaveBeenCalled();
   });
 
   it('is not ready on an answer that carries no address', async () => {
-    const { deps } = wiring({ a: async () => [] });
-    expect(await isDevTunnelHostPublished(HOST, deps)).toBe(false);
+    nameservers(async () => []);
+    expect(await isDevTunnelHostPublished(HOST)).toBe(false);
   });
 
   it.each(['ETIMEOUT', 'ECONNREFUSED', 'ESERVFAIL'])(
-    'is not ready, and does not throw, when the query fails with %s',
+    'is not ready, and does not throw, when every query fails with %s',
     async (code) => {
-      const { deps } = wiring({ a: () => Promise.reject(dnsError(code)) });
-      await expect(isDevTunnelHostPublished(HOST, deps)).resolves.toBe(false);
-      expect(warn).toHaveBeenCalledTimes(1);
-      expect(JSON.parse(warn.mock.calls[0][0] as string)).toMatchObject({
-        event: 'app-blocks.dev-tunnel.dns-ready.error',
-        code,
-      });
+      nameservers(fails(code));
+      await expect(isDevTunnelHostPublished(HOST)).resolves.toBe(false);
+      expect(warnings()).toEqual([
+        expect.objectContaining({ event: 'app-blocks.dev-tunnel.dns-ready.error', code }),
+        expect.objectContaining({ event: 'app-blocks.dev-tunnel.dns-ready.error', code }),
+      ]);
     }
   );
 
-  it('is not ready when the nameservers cannot be found, without querying anything', async () => {
-    const { deps, resolver } = wiring({ ns: {} });
-    await expect(isDevTunnelHostPublished(HOST, deps)).resolves.toBe(false);
-    expect(deps.createResolver).not.toHaveBeenCalled();
-    expect(resolver.resolve4).not.toHaveBeenCalled();
-    expect(warn).toHaveBeenCalledTimes(1);
+  it('is not ready while one nameserver has the record and another does not', async () => {
+    nameservers(address, fails('ENOTFOUND'));
+    expect(await isDevTunnelHostPublished(HOST)).toBe(false);
+    nameservers(fails('ENOTFOUND'), address);
+    expect(await isDevTunnelHostPublished(HOST)).toBe(false);
+  });
+
+  it('is ready on one positive answer when the other nameserver cannot be reached', async () => {
+    nameservers(fails('ETIMEOUT'), address);
+    expect(await isDevTunnelHostPublished(HOST)).toBe(true);
+    expect(warnings()).toHaveLength(1);
   });
 
   it('counts an alias as published when the name has no address of its own', async () => {
-    const { deps } = wiring({
-      a: () => Promise.reject(dnsError('ENODATA')),
-      cname: async () => ['edge.example.net'],
-    });
-    expect(await isDevTunnelHostPublished(HOST, deps)).toBe(true);
+    nameservers(fails('ENODATA'));
+    const alias: Answer = async () => ['edge.example.net'];
+    dns.state.cname = { [FIRST]: alias, [SECOND]: alias };
+    expect(await isDevTunnelHostPublished(HOST)).toBe(true);
   });
 
   it('is not ready for a name that exists with neither an address nor an alias', async () => {
-    const { deps } = wiring({ a: () => Promise.reject(dnsError('ENODATA')) });
-    expect(await isDevTunnelHostPublished(HOST, deps)).toBe(false);
+    nameservers(fails('ENODATA'));
+    expect(await isDevTunnelHostPublished(HOST)).toBe(false);
     expect(warn).not.toHaveBeenCalled();
   });
 
   it('asks only the authoritative nameservers about the host, never the system resolver', async () => {
-    const { deps, resolver, systemLookups } = wiring({});
-    await isDevTunnelHostPublished(HOST, deps);
+    await isDevTunnelHostPublished(HOST);
 
-    expect(resolver.setServers).toHaveBeenCalledExactlyOnceWith(AUTHORITATIVE);
-    expect(resolver.setServers.mock.invocationCallOrder[0]).toBeLessThan(
-      resolver.resolve4.mock.invocationCallOrder[0]
-    );
-    // Absolute, so the resolver cannot append a search domain to it.
-    expect(resolver.resolve4).toHaveBeenCalledExactlyOnceWith(`${HOST}.`);
-    // The system resolver saw the zone and its nameservers, and nothing else.
-    expect(systemLookups).toEqual([`${DOMAIN}.`, 'ns1.dns.example.', 'ns2.dns.example.']);
-    expect(systemLookups.some((name) => name.includes('dev-'))).toBe(false);
+    // One address for each of the first two nameservers, each asked on a resolver of its own,
+    // for the absolute name.
+    expect(hostQueries()).toEqual([
+      { servers: [FIRST], type: 'A', name: `${HOST}.` },
+      { servers: [SECOND], type: 'A', name: `${HOST}.` },
+    ]);
+    expect(systemQueries()).toEqual([
+      { servers: null, type: 'NS', name: `${DOMAIN}.` },
+      { servers: null, type: 'A', name: 'ns1.dns.example.' },
+      { servers: null, type: 'A', name: 'ns2.dns.example.' },
+    ]);
+    expect(dns.state.moduleLevel).toEqual([]);
+    // An unreachable nameserver costs one short timeout, not the resolver's defaults.
+    expect(dns.state.options).toHaveLength(3);
+    for (const options of dns.state.options) expect(options).toEqual({ timeout: 1_500, tries: 1 });
   });
 
   it('finds the nameservers of the enclosing zone when the apps domain is not a zone apex', async () => {
     setEnv({ APPS_DOMAIN: `preview.${DOMAIN}` });
-    const { deps, resolver, systemLookups } = wiring({
-      ns: { [`${DOMAIN}.`]: Object.keys(NS_ADDRESSES) },
-    });
-    expect(await isDevTunnelHostPublished(`dev-0123456789abcdef.preview.${DOMAIN}`, deps)).toBe(
-      true
-    );
-    expect(systemLookups.slice(0, 2)).toEqual([`preview.${DOMAIN}.`, `${DOMAIN}.`]);
-    expect(resolver.setServers).toHaveBeenCalledWith(AUTHORITATIVE);
+    expect(await isDevTunnelHostPublished(`dev-0123456789abcdef.preview.${DOMAIN}`)).toBe(true);
+    expect(systemQueries().slice(0, 2)).toEqual([
+      { servers: null, type: 'NS', name: `preview.${DOMAIN}.` },
+      { servers: null, type: 'NS', name: `${DOMAIN}.` },
+    ]);
+    expect(hostQueries().map((q) => q.servers)).toEqual([[FIRST], [SECOND]]);
   });
 
-  it('looks the nameservers up once, then again after the cache expires', async () => {
-    const { deps, advance } = wiring({});
-    await isDevTunnelHostPublished(HOST, deps);
-    await isDevTunnelHostPublished(HOST, deps);
-    expect(deps.resolveNs).toHaveBeenCalledTimes(1);
-    advance(10 * 60_000 + 1);
-    await isDevTunnelHostPublished(HOST, deps);
-    expect(deps.resolveNs).toHaveBeenCalledTimes(2);
+  it('skips a nameserver whose address cannot be found', async () => {
+    dns.state.nsAddresses = { 'ns2.dns.example.': [SECOND] };
+    expect(await isDevTunnelHostPublished(HOST)).toBe(true);
+    expect(hostQueries().map((q) => q.servers)).toEqual([[SECOND]]);
+  });
+
+  describe('nameserver discovery cache', () => {
+    const nsLookups = () => dns.state.queries.filter((q) => q.type === 'NS').length;
+
+    it('discovers once, then again after ten minutes', async () => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      await isDevTunnelHostPublished(HOST);
+      await isDevTunnelHostPublished(HOST);
+      expect(nsLookups()).toBe(1);
+      vi.advanceTimersByTime(10 * 60_000 - 1);
+      await isDevTunnelHostPublished(HOST);
+      expect(nsLookups()).toBe(1);
+      vi.advanceTimersByTime(2);
+      await isDevTunnelHostPublished(HOST);
+      expect(nsLookups()).toBe(2);
+    });
+
+    it('shares one discovery between concurrent checks', async () => {
+      await Promise.all([isDevTunnelHostPublished(HOST), isDevTunnelHostPublished(HOST)]);
+      expect(nsLookups()).toBe(1);
+    });
+
+    it('is not ready when no nameserver can be found, retries only after a short pause, and recovers', async () => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      dns.state.zones = {};
+      await expect(isDevTunnelHostPublished(HOST)).resolves.toBe(false);
+      await expect(isDevTunnelHostPublished(HOST)).resolves.toBe(false);
+      expect(nsLookups()).toBe(1);
+      expect(hostQueries()).toEqual([]);
+      expect(warnings()).toEqual([
+        {
+          event: 'app-blocks.dev-tunnel.dns-ready.error',
+          error: 'no authoritative nameserver found',
+        },
+      ]);
+
+      dns.state.zones = { [`${DOMAIN}.`]: NS_NAMES };
+      vi.advanceTimersByTime(14_999);
+      expect(await isDevTunnelHostPublished(HOST)).toBe(false);
+      vi.advanceTimersByTime(2);
+      expect(await isDevTunnelHostPublished(HOST)).toBe(true);
+    });
+
+    it('does not reuse one apps domain’s nameservers for another', async () => {
+      await isDevTunnelHostPublished(HOST);
+      setEnv({ APPS_DOMAIN: 'other.example' });
+      expect(await isDevTunnelHostPublished('dev-0123456789abcdef.other.example')).toBe(false);
+      expect(hostQueries().some((q) => q.name.includes('other.example'))).toBe(false);
+    });
   });
 
   it('refuses a name outside the dev-host shape without any lookup', async () => {
-    const { deps, systemLookups } = wiring({});
     for (const host of ['example.org', `my-app.${DOMAIN}`, `dev-0123456789abcdef.${DOMAIN}.evil`])
-      expect(await isDevTunnelHostPublished(host, deps)).toBe(false);
-    expect(systemLookups).toEqual([]);
-    expect(deps.createResolver).not.toHaveBeenCalled();
+      expect(await isDevTunnelHostPublished(host)).toBe(false);
+    expect(dns.state.queries).toEqual([]);
   });
 
   it('is always ready, with no lookup, where this deployment publishes no record per tunnel', async () => {
     setEnv({ APPS_DEV_TUNNEL_INGRESS_TARGET: undefined });
-    const { deps, systemLookups } = wiring({ a: () => Promise.reject(dnsError('ENOTFOUND')) });
-    expect(await isDevTunnelHostPublished(HOST, deps)).toBe(true);
-    expect(systemLookups).toEqual([]);
-    expect(deps.createResolver).not.toHaveBeenCalled();
+    nameservers(fails('ENOTFOUND'));
+    expect(await isDevTunnelHostPublished(HOST)).toBe(true);
+    expect(dns.state.queries).toEqual([]);
   });
 });
 
@@ -198,34 +295,22 @@ describe('getDevTunnelDnsReadiness', () => {
 
   it("reports the caller's own live tunnel", async () => {
     seed({ userId: OWNER, blockId: 'my-app' }, SESSION);
-    const ready = wiring({});
-    expect(await getDevTunnelDnsReadiness(OWNER, 'my-app', ready.deps)).toEqual({
-      active: true,
-      ready: true,
-    });
-    expect(ready.resolver.resolve4).toHaveBeenCalledWith(`${HOST}.`);
+    expect(await getDevTunnelDnsReadiness(OWNER, 'my-app')).toEqual({ active: true, ready: true });
+    expect(hostQueries().map((q) => q.name)).toEqual([`${HOST}.`, `${HOST}.`]);
 
-    __resetDevTunnelDnsServersForTest();
-    const pending = wiring({ a: () => Promise.reject(dnsError('ENOTFOUND')) });
-    expect(await getDevTunnelDnsReadiness(OWNER, 'my-app', pending.deps)).toEqual({
-      active: true,
-      ready: false,
-    });
+    nameservers(fails('ENOTFOUND'));
+    expect(await getDevTunnelDnsReadiness(OWNER, 'my-app')).toEqual({ active: true, ready: false });
   });
 
   it("refuses another user's tunnel for the same app, with no lookup", async () => {
     seed({ userId: OWNER, blockId: 'my-app' }, SESSION);
-    const { deps, systemLookups } = wiring({});
-    expect(await getDevTunnelDnsReadiness(999, 'my-app', deps)).toEqual({ active: false });
-    expect(systemLookups).toEqual([]);
-    expect(deps.createResolver).not.toHaveBeenCalled();
+    expect(await getDevTunnelDnsReadiness(999, 'my-app')).toEqual({ active: false });
+    expect(dns.state.queries).toEqual([]);
   });
 
   it('refuses a session that is not the caller’s even when their index points at it', async () => {
     seed({ userId: 999, blockId: 'my-app' }, SESSION);
-    const { deps, systemLookups } = wiring({});
-    expect(await getDevTunnelDnsReadiness(999, 'my-app', deps)).toEqual({ active: false });
-    expect(systemLookups).toEqual([]);
-    expect(deps.createResolver).not.toHaveBeenCalled();
+    expect(await getDevTunnelDnsReadiness(999, 'my-app')).toEqual({ active: false });
+    expect(dns.state.queries).toEqual([]);
   });
 });

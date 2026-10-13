@@ -217,21 +217,15 @@ describe('/apps/dev/[blockId] SSR resolver', () => {
     );
   });
 
-  it('active tunnel whose host is not published yet → no iframeSrc, dnsPending, and the CSP still names the host', async () => {
+  it('active tunnel whose host is not published yet → dnsPending, and no entry URL or token in the props', async () => {
     const resolver = await loadDevResolver();
     mockResolveDev.mockResolvedValue(DEV_APP);
     mockGetActiveTunnel.mockResolvedValue(activeTunnel('dev-0123456789abcdef.civit.ai'));
     mockHostPublished.mockResolvedValue(false);
-    const headers: Record<string, string> = {};
-    const res = await resolver(makeCtx({ user: AUTHOR, setHeader: (k, v) => (headers[k] = v) }));
+    const res = await resolver(makeCtx({ user: AUTHOR, setHeader: () => undefined }));
     expect(mockHostPublished).toHaveBeenCalledExactlyOnceWith('dev-0123456789abcdef.civit.ai');
     expect(res.props).toMatchObject({ iframeSrc: null, dnsPending: true });
     expect(JSON.stringify(res.props)).not.toContain('?dev=');
-    // The page reaches the frame by a client-side transition once the host resolves, which
-    // keeps THIS document's policy — so it has to allow the host already.
-    expect(headers['Content-Security-Policy']).toBe(
-      "frame-src https://dev-0123456789abcdef.civit.ai; frame-ancestors 'none'"
-    );
   });
 
   /**

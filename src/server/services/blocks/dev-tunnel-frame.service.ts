@@ -25,10 +25,7 @@ export interface DevTunnelFrame {
    */
   iframeSrc: string | null;
   host: string | null;
-  /**
-   * A tunnel is live but its host's DNS record is not published yet. `iframeSrc` is withheld:
-   * a browser that resolves the host now caches the miss and cannot load it for a long while.
-   */
+  /** The tunnel is live but its host's DNS record is not published yet; `iframeSrc` is withheld. */
   dnsPending: boolean;
 }
 

@@ -451,6 +451,16 @@ describe('dev-tunnel procs — AppBlocksDevTunnel scope gate', () => {
   });
 
   describe('devTunnelDnsReady', () => {
+    it.each([
+      ['Full personal key', FULL],
+      ['new CLI OAuth token (with DevTunnel bit)', NEW_CLI],
+    ])('%s passes the scope gate', async (_label, scope) => {
+      mockDnsReadiness.mockResolvedValue({ active: false });
+      const caller = blocksRouter.createCaller(tokenCtx(100, scope) as never);
+      expect(await caller.devTunnelDnsReady({ blockId: 'my-app' })).toEqual({ active: false });
+      expect(mockDnsReadiness).toHaveBeenCalledExactlyOnceWith(100, 'my-app');
+    });
+
     it('old CLI OAuth token (no DevTunnel bit) → FORBIDDEN at the scope gate', async () => {
       const caller = blocksRouter.createCaller(tokenCtx(100, OLD_CLI) as never);
       await expect(caller.devTunnelDnsReady({ blockId: 'my-app' })).rejects.toMatchObject({

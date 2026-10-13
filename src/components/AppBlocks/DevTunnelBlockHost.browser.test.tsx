@@ -51,16 +51,14 @@ const FRAME = {
   host: HOST,
   dnsPending: false,
 };
-/** What the server sends while the tunnel's host is not resolvable: no entry URL at all. */
 const PENDING = { ...FRAME, iframeSrc: null, dnsPending: true };
 
 beforeEach(() => {
   m.useBlockToken.mockReset().mockReturnValue({ token: 't', error: null });
   m.hostProps = null;
   m.gate = null;
+  vi.mocked(router.reload).mockClear();
   vi.mocked(router.replace).mockClear();
-  // The scaffold's shared `next/router` mock.
-  (router as { asPath: string }).asPath = '/apps/dev/my-app';
 });
 
 describe('/apps/dev/[blockId] client', () => {
@@ -120,16 +118,21 @@ describe('/apps/dev/[blockId] client', () => {
     expect(m.useBlockToken).not.toHaveBeenCalled();
     expect(page.getByText('No active dev tunnel').query()).toBeNull();
     expect(m.gate!.blockId).toBe('my-app');
-    expect(router.replace).not.toHaveBeenCalled();
+    expect(router.reload).not.toHaveBeenCalled();
   });
 
-  test('re-runs its server props, in place, when the gate settles', async () => {
+  test('branches on dnsPending itself: a pending frame is never mounted even if it carries a URL', async () => {
+    await renderWithProviders(<DevTunnelPage {...FRAME} dnsPending />);
+    await expect.element(page.getByTestId('dns-gate')).toBeInTheDocument();
+    expect(m.hostProps).toBeNull();
+  });
+
+  test('reloads the document when the gate settles, rather than transitioning client-side', async () => {
     await renderWithProviders(<DevTunnelPage {...PENDING} />);
     await expect.element(page.getByTestId('dns-gate')).toBeInTheDocument();
     m.gate!.onSettled();
-    expect(router.replace).toHaveBeenCalledExactlyOnceWith('/apps/dev/my-app', undefined, {
-      scroll: false,
-    });
+    expect(router.reload).toHaveBeenCalledTimes(1);
+    expect(router.replace).not.toHaveBeenCalled();
   });
 
   test('a resolvable tunnel never shows the gate', async () => {

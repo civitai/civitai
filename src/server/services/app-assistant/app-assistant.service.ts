@@ -154,7 +154,6 @@ export async function mintAppAssistantToken(
 
 export type AppAssistantPreview =
   | { status: 'ok'; frame: DevTunnelFrame & { iframeSrc: string } }
-  /** The tunnel is live but its host cannot be framed until its DNS record is published. */
   | { status: 'preparing' }
   | { status: 'no-tunnel' }
   | { status: 'not-found' }

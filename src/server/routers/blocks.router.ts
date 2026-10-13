@@ -2274,8 +2274,7 @@ export const blocksRouter = router({
 
   /**
    * APP DEV TUNNEL — whether the DNS record for the caller's active tunnel host is published
-   * yet. Polled by the pages that frame the tunnel. Takes a blockId, never a hostname: the host
-   * comes from the caller's own session record. Same gates as devTunnelStatus.
+   * yet. Takes a blockId, never a hostname: the host comes from the caller's own session record.
    */
   devTunnelDnsReady: appDeveloperProcedure
     .meta({ requiredScope: TokenScope.AppBlocksDevTunnel })

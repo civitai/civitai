@@ -121,11 +121,9 @@ export default function DevTunnelPage({ iframeSrc, host, dnsPending, ...app }: D
       <Box style={{ width: '100%' }}>
         {dnsPending ? (
           <Box style={{ height: '60vh' }}>
-            {/* Re-running the server props is what mints the entry URL once the host resolves. */}
-            <DevTunnelDnsGate
-              blockId={blockId}
-              onSettled={() => void router.replace(router.asPath, undefined, { scroll: false })}
-            />
+            {/* A full reload, not a client-side transition: the tunnel may have restarted on a new
+                host, and only a fresh document carries a CSP that allows framing it. */}
+            <DevTunnelDnsGate blockId={blockId} onSettled={() => router.reload()} />
           </Box>
         ) : !iframeSrc ? (
           <Stack p="md" gap="sm" style={{ maxWidth: 720, margin: '0 auto' }}>
