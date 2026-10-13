@@ -8,8 +8,15 @@ vi.mock('../user-actions.service', () => ({
 
 const { callModEndpoint, callModEndpointAs } = await import('../user-actions.service');
 const { restErrorReason } = await import('../rest-error-reason');
-const { LabHarnessError, StalePromptError, composeEntities, getPrompts, putPrompt, scanTexts } =
-  await import('../text-scan-lab/harness-client');
+const {
+  LabHarnessError,
+  StalePromptError,
+  composeEntities,
+  getPrompts,
+  putPrompt,
+  quoteTexts,
+  scanTexts,
+} = await import('../text-scan-lab/harness-client');
 
 const call = vi.mocked(callModEndpoint);
 const callAs = vi.mocked(callModEndpointAs);
@@ -521,5 +528,37 @@ describe('explicit credentials', () => {
       .mockResolvedValueOnce({ ok: false, status: 502, error: 'Text-scan scan returned 502.' });
     const run = await scanTexts('Model', texts(16));
     expect(run.authRefused).toBeUndefined();
+  });
+});
+
+describe('quoteTexts', () => {
+  const credential = 'civ-token=synthetic';
+
+  it('prices texts at concurrency 8 under the given credential, sending prompt overrides only when there are some', async () => {
+    callAs.mockResolvedValue({ ok: true, body: { count: 2, quoted: 2, maxCostTotal: 1 } });
+    expect(await quoteTexts('CommentV2', texts(2), undefined, credential)).toEqual({
+      count: 2,
+      quoted: 2,
+      maxCostTotal: 1,
+    });
+    expect(call).not.toHaveBeenCalled();
+    expect(callAs.mock.calls[0][0]).toBe(credential);
+    expect(callAs.mock.calls[0][2]).toEqual({
+      action: 'quoteTexts',
+      entityType: 'CommentV2',
+      texts: texts(2),
+      concurrency: 8,
+    });
+    await quoteTexts('CommentV2', texts(1), { 'label:scam': 'synthetic draft' }, credential);
+    expect(callAs.mock.calls[1][2]).toMatchObject({
+      promptOverrides: { 'label:scam': 'synthetic draft' },
+    });
+  });
+
+  it('throws LabHarnessError when the harness refuses', async () => {
+    callAs.mockResolvedValue({ ok: false, error: 'Text-scan quote returned 400.', status: 400 });
+    await expect(quoteTexts('CommentV2', texts(1), undefined, credential)).rejects.toBeInstanceOf(
+      LabHarnessError
+    );
   });
 });

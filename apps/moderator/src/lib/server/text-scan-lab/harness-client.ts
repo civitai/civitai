@@ -239,6 +239,28 @@ export async function scanTexts(
     ...(authRefused ? { authRefused: true as const } : {}),
   };
 }
+
+export type LabQuote = { count: number; quoted: number; maxCostTotal: number | null };
+
+/** Prices a sample without scanning it. `credential`: see `postHarness`. */
+export const quoteTexts = (
+  entityType: LabEntityType,
+  texts: LabText[],
+  prompts: Record<string, string> | undefined,
+  credential?: string
+) =>
+  callHarness<LabQuote>(
+    'quoteTexts',
+    {
+      entityType,
+      texts,
+      ...(prompts && Object.keys(prompts).length ? { promptOverrides: prompts } : {}),
+      concurrency: SCAN_CONCURRENCY,
+    },
+    'Text-scan quote',
+    credential
+  );
+
 export type LabComposedEntity =
   | {
       entityId: number;

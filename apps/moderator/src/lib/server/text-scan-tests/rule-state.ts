@@ -2,12 +2,13 @@ import { createHash } from 'node:crypto';
 import type { Kysely } from 'kysely';
 import type { DB as MainDB } from '@civitai/db-schema/kysely';
 
-// The one definition of a Model rules run's rule state: starting a run records this hash and the
-// worker compares against it, so both must come from here.
-export type RuleStateEntry = { id: number; versionId: number | null; enabled: boolean };
+import { canonicalRuleState, type RuleStateEntry } from '../../text-scan-tests/baseline';
 
-export const canonicalRuleState = (state: readonly RuleStateEntry[]) =>
-  JSON.stringify([...state].sort((a, b) => a.id - b.id).map((r) => [r.id, r.versionId, r.enabled]));
+export { canonicalRuleState, type RuleStateEntry };
+
+// The one definition of a Model rules run's rule state: starting a run records this hash and the
+// worker compares against it, so both must come from here. The pure canonical form lives in
+// baseline.ts, which the client bundle can reach; node:crypto cannot.
 
 export const ruleStateHash = (state: readonly RuleStateEntry[]) =>
   createHash('sha256').update(canonicalRuleState(state)).digest('hex');
