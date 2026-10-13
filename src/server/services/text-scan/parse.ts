@@ -49,11 +49,6 @@ const labelValidators: Record<TextScanLabel, z.ZodType> = {
   scam: z.object({ detected: z.boolean(), reason: z.string() }),
 };
 
-export function findChatCompletionStep(steps: unknown): ChatCompletionStepLike | undefined {
-  if (!Array.isArray(steps)) return undefined;
-  return (steps as ChatCompletionStepLike[]).find((s) => s?.$type === 'chatCompletion');
-}
-
 function tryParseJson(content: string): unknown {
   try {
     return JSON.parse(content.trim());
@@ -145,6 +140,8 @@ export function parseTextScanSteps(
   labels: TextScanLabel[],
   expected: number
 ): TextScanStepsResult {
+  if (!Number.isInteger(expected) || expected < 1)
+    return { ok: false, reason: 'malformed', detail: `invalid expected step count ${expected}` };
   const count = chatCompletionSteps(steps).length;
   if (count > expected)
     return {

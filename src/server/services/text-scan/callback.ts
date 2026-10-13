@@ -4,7 +4,8 @@ import { getModerationAdapter } from '~/server/services/moderation-adapters';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
 import { evaluateTextScan } from '~/server/services/text-scan/evaluate';
 import { getTextScanMode, textScanEmEntityType } from '~/server/services/text-scan/mode';
-import { findChatCompletionStep, parseTextScanStep } from '~/server/services/text-scan/parse';
+import { mergeTextScanOutputs, type FlaggedSegments } from '~/server/services/text-scan/merge';
+import { parseTextScanSteps } from '~/server/services/text-scan/parse';
 import { getTextScanProfile, isTextScanEntityType } from '~/server/services/text-scan/profiles';
 import '~/server/services/text-scan/profiles/index';
 import { textScanTextHash } from '~/server/services/text-scan/prompt';
@@ -23,6 +24,43 @@ function log(type: 'error' | 'warning' | 'info', message: string, extra: Record<
   return logToAxiom({ name: 'text-scan', type, message, ...extra });
 }
 
+type TextScanWorkflowMetadata = {
+  entityType?: string;
+  entityId?: number;
+  emEntityType?: string;
+  mode?: string;
+  externalId?: string;
+  labels?: TextScanLabel[];
+  promptIds?: PromptIds;
+  model?: string;
+  textHash?: string;
+  subjectMeta?: Record<string, unknown>;
+  inputChars?: number;
+  inputCut?: boolean;
+  segments?: number;
+  scannedChars?: number;
+};
+
+/** Workflows submitted before segmentation carry no `segments` and hold one step. */
+function expectedSegments({ segments }: TextScanWorkflowMetadata) {
+  return Number.isInteger(segments) && (segments as number) > 0 ? (segments as number) : 1;
+}
+
+function inputMeta(metadata: TextScanWorkflowMetadata, flaggedSegments: FlaggedSegments) {
+  if (metadata.inputChars === undefined) return undefined;
+  return {
+    inputChars: metadata.inputChars,
+    inputCut: metadata.inputCut ?? false,
+    ...(metadata.segments === undefined
+      ? {}
+      : {
+          segments: metadata.segments,
+          scannedChars: metadata.scannedChars ?? metadata.inputChars,
+        }),
+    ...(Object.keys(flaggedSegments).length ? { flaggedSegments } : {}),
+  };
+}
+
 export async function handleTextScanCallback(event: { workflowId: string; status: string }) {
   const { workflowId } = event;
   const { data } = await getWorkflow({
@@ -31,20 +69,7 @@ export async function handleTextScanCallback(event: { workflowId: string; status
   });
   if (!data) throw new Error(`could not find workflow: ${workflowId}`);
 
-  const metadata = (data.metadata ?? {}) as {
-    entityType?: string;
-    entityId?: number;
-    emEntityType?: string;
-    mode?: string;
-    externalId?: string;
-    labels?: TextScanLabel[];
-    promptIds?: PromptIds;
-    model?: string;
-    textHash?: string;
-    subjectMeta?: Record<string, unknown>;
-    inputChars?: number;
-    inputCut?: boolean;
-  };
+  const metadata = (data.metadata ?? {}) as TextScanWorkflowMetadata;
   const { entityType, entityId, mode } = metadata;
   if (
     !(data.tags ?? []).includes('text-scan') ||
@@ -102,7 +127,8 @@ export async function handleTextScanCallback(event: { workflowId: string; status
   if (!profile) return log('error', 'no profile registered', ctx);
   const labels = metadata.labels ?? profile.labels;
 
-  const parsed = parseTextScanStep(findChatCompletionStep(data.steps), labels);
+  const segments = expectedSegments(metadata);
+  const parsed = parseTextScanSteps(data.steps, labels, segments);
   if (!parsed.ok) {
     const recorded = await recordTextScanFailure({
       entityType: emEntityType,
@@ -116,6 +142,8 @@ export async function handleTextScanCallback(event: { workflowId: string; status
       ...ctx,
       reason: parsed.reason,
       detail: parsed.detail,
+      ...(parsed.segment === undefined ? {} : { segment: parsed.segment }),
+      segments,
     });
     await adapter?.applyFailure?.({ entityId, workflowId, status: 'failed' });
     return;
@@ -124,19 +152,18 @@ export async function handleTextScanCallback(event: { workflowId: string; status
   const subject = (await profile.load([entityId])).get(entityId);
   if (!subject) return log('info', 'entity gone before callback', ctx);
 
-  const outcome = evaluateTextScan(parsed.output, subject.declared, labels);
+  const { output, flaggedSegments } = mergeTextScanOutputs(parsed.outputs, labels);
+  const outcome = evaluateTextScan(output, subject.declared, labels);
   const subjectMeta = metadata.subjectMeta ?? subject.meta;
-  const meta =
-    metadata.inputChars === undefined
-      ? subjectMeta
-      : { ...subjectMeta, inputChars: metadata.inputChars, inputCut: metadata.inputCut ?? false };
+  const extra = inputMeta(metadata, flaggedSegments);
+  const meta = extra ? { ...subjectMeta, ...extra } : subjectMeta;
   const recorded = await recordTextScanSuccess({
     entityType: emEntityType,
     entityId,
     workflowId,
     marker,
     outcome,
-    output: parsed.output,
+    output,
     promptIds: metadata.promptIds ?? {},
     model: metadata.model ?? '',
     textHash: metadata.textHash,
@@ -158,7 +185,7 @@ export async function handleTextScanCallback(event: { workflowId: string; status
     poi: outcome.poi?.detected,
     minor: outcome.minor?.detected,
     scam: outcome.scam?.detected,
-    tags: outcome.triggeredLabels,
+    tags: [...outcome.triggeredLabels, ...(metadata.inputCut ? ['inputCut'] : [])],
     textHash: metadata.textHash,
   });
 

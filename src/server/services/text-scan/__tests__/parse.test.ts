@@ -169,4 +169,15 @@ describe('parseTextScanSteps', () => {
       segment: 1,
     });
   });
+
+  it.each([0, -1, 1.5, Number.NaN])(
+    'fails a bad expected count %s instead of passing nothing',
+    (n) => {
+      expect(parseTextScanSteps([segStep(0, verdict('none'))], ['nsfw'], n)).toMatchObject({
+        ok: false,
+        reason: 'malformed',
+      });
+      expect(parseTextScanSteps([], ['nsfw'], n)).toMatchObject({ ok: false, reason: 'malformed' });
+    }
+  );
 });

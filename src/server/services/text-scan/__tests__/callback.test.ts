@@ -393,3 +393,158 @@ describe('handleTextScanCallback', () => {
     expect(adapter.applyFailure).not.toHaveBeenCalled();
   });
 });
+
+const segmented = (outputs: unknown[], meta: Record<string, unknown> = {}) => ({
+  data: {
+    metadata: {
+      ...metadata,
+      inputChars: 2500,
+      inputCut: false,
+      segments: outputs.length,
+      scannedChars: 2500,
+      ...meta,
+    },
+    tags: TAGS,
+    steps: outputs.map((parsed, segment) => ({
+      $type: 'chatCompletion',
+      name: segment ? `textScan${segment}` : 'textScan',
+      metadata: { segment },
+      output:
+        parsed === 'TRUNCATED'
+          ? { choices: [{ message: { content: '{"nsfw":' }, finishReason: 'length' }] }
+          : {
+              choices: [{ message: { content: JSON.stringify(parsed) }, finishReason: 'stop' }],
+              parsed,
+            },
+    })),
+  },
+});
+
+describe('handleTextScanCallback with segments', () => {
+  it('merges every segment into one verdict and records the segment meta', async () => {
+    vi.mocked(getWorkflow).mockResolvedValue(
+      segmented([
+        { nsfw: { level: 'none', reason: 'clean' } },
+        { nsfw: { level: 'x', reason: 'Explicit.' } },
+      ]) as any
+    );
+    await handleTextScanCallback({ workflowId: 'wf-1', status: 'succeeded' });
+    const { data } = vi.mocked(updateMany).mock.calls[0][0];
+    expect(data).toMatchObject({ status: 'Succeeded', triggeredLabels: ['nsfw'], nsfwLevel: 8 });
+    expect(data.result).toMatchObject({
+      version: 1,
+      labels: { nsfw: { level: 'x', reason: 'Explicit.' } },
+      meta: {
+        inputChars: 2500,
+        inputCut: false,
+        segments: 2,
+        scannedChars: 2500,
+        flaggedSegments: { nsfw: [1] },
+      },
+    });
+    expect(adapter.applyTextScan).toHaveBeenCalledWith(
+      expect.objectContaining({ outcome: expect.objectContaining({ nsfwLevel: 8 }) })
+    );
+  });
+
+  it('fails the entity closed when one segment is unusable, naming the segment', async () => {
+    vi.mocked(getWorkflow).mockResolvedValue(
+      segmented([{ nsfw: { level: 'x', reason: 'Explicit.' } }, 'TRUNCATED']) as any
+    );
+    await handleTextScanCallback({ workflowId: 'wf-1', status: 'succeeded' });
+    expect(updateMany).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(updateMany).mock.calls[0][0].data).toMatchObject({ status: 'Failed' });
+    expect(adapter.applyFailure).toHaveBeenCalledWith(
+      expect.objectContaining({ entityId: 7, status: 'failed' })
+    );
+    expect(adapter.applyTextScan).not.toHaveBeenCalled();
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ reason: 'truncated', segment: 1, segments: 2 })
+    );
+  });
+
+  it('fails the entity closed, recording no verdict, when one segment lacks a label', async () => {
+    vi.mocked(getWorkflow).mockResolvedValue(
+      segmented([
+        { nsfw: { level: 'x', reason: 'Explicit.' } },
+        { scam: { detected: false, reason: 'No scam.' } },
+      ]) as any
+    );
+    await handleTextScanCallback({ workflowId: 'wf-1', status: 'succeeded' });
+    expect(updateMany).toHaveBeenCalledTimes(1);
+    const { data } = vi.mocked(updateMany).mock.calls[0][0];
+    expect(data).toMatchObject({ status: 'Failed' });
+    expect(data).not.toHaveProperty('result');
+    expect(data).not.toHaveProperty('nsfwLevel');
+    expect(adapter.applyTextScan).not.toHaveBeenCalled();
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ reason: 'missing_label', detail: 'nsfw', segment: 1 })
+    );
+  });
+
+  it('fails the entity closed when the workflow is missing a submitted step', async () => {
+    const wf = segmented([
+      { nsfw: { level: 'none', reason: 'a' } },
+      { nsfw: { level: 'none', reason: 'b' } },
+    ]);
+    wf.data.metadata.segments = 3;
+    vi.mocked(getWorkflow).mockResolvedValue(wf as any);
+    await handleTextScanCallback({ workflowId: 'wf-1', status: 'succeeded' });
+    expect(vi.mocked(updateMany).mock.calls[0][0].data).toMatchObject({ status: 'Failed' });
+    expect(adapter.applyFailure).toHaveBeenCalled();
+    expect(adapter.applyTextScan).not.toHaveBeenCalled();
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ reason: 'missing_segment', segment: 2 })
+    );
+  });
+
+  it('fails an extra step with no segment in the log', async () => {
+    vi.mocked(getWorkflow).mockResolvedValue(
+      segmented(
+        [{ nsfw: { level: 'none', reason: 'a' } }, { nsfw: { level: 'none', reason: 'b' } }],
+        { segments: 1 }
+      ) as any
+    );
+    await handleTextScanCallback({ workflowId: 'wf-1', status: 'succeeded' });
+    expect(vi.mocked(updateMany).mock.calls[0][0].data).toMatchObject({ status: 'Failed' });
+    const logged = vi
+      .mocked(loggingMock.logToAxiom)
+      .mock.calls.map(([event]) => event as Record<string, unknown>)
+      .find((event) => event.message === 'unusable output');
+    expect(logged).toMatchObject({ reason: 'malformed', segments: 1 });
+    expect(logged).not.toHaveProperty('segment');
+  });
+
+  it('ignores a stale callback from a superseded multi-step workflow', async () => {
+    updateMany.mockResolvedValue({ count: 0 });
+    vi.mocked(getWorkflow).mockResolvedValue(
+      segmented([
+        { nsfw: { level: 'x', reason: 'a' } },
+        { nsfw: { level: 'x', reason: 'b' } },
+      ]) as any
+    );
+    await handleTextScanCallback({ workflowId: 'wf-old', status: 'succeeded' });
+    expect(adapter.applyTextScan).not.toHaveBeenCalled();
+  });
+
+  it('tags the verdict log when part of the text was not scanned', async () => {
+    vi.mocked(getWorkflow).mockResolvedValue(
+      segmented([{ nsfw: { level: 'none', reason: 'a' } }], {
+        inputCut: true,
+        scannedChars: 1000,
+      }) as any
+    );
+    await handleTextScanCallback({ workflowId: 'wf-1', status: 'succeeded' });
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'scan-verdict', tags: 'inputCut' })
+    );
+    expect(vi.mocked(updateMany).mock.calls[0][0].data.result.meta).toMatchObject({
+      inputCut: true,
+      segments: 1,
+      scannedChars: 1000,
+    });
+    expect(vi.mocked(updateMany).mock.calls[0][0].data.result.meta).not.toHaveProperty(
+      'flaggedSegments'
+    );
+  });
+});

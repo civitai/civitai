@@ -45,4 +45,39 @@ describe('summarizeTextScan', () => {
     ).toBeNull();
     expect(summarizeTextScan(null)).toBeNull();
   });
+
+  it('surfaces a cut and a segmented scan from the result meta', () => {
+    const summary = summarizeTextScan({
+      status: 'Succeeded',
+      nsfwLevel: 1,
+      triggeredLabels: [],
+      result: {
+        version: 1,
+        labels: { nsfw: { level: 'none', reason: 'Clean.' } },
+        promptIds: { base: 1 },
+        model: 'm',
+        meta: { inputChars: 3_000_000, inputCut: true, segments: 10, scannedChars: 1_990_000 },
+      },
+      updatedAt: at,
+    });
+    expect(summary).toMatchObject({ inputCut: true, segments: 10 });
+  });
+
+  it('adds nothing for a one-segment row', () => {
+    const summary = summarizeTextScan({
+      status: 'Succeeded',
+      nsfwLevel: 1,
+      triggeredLabels: [],
+      result: {
+        version: 1,
+        labels: { nsfw: { level: 'none', reason: 'Clean.' } },
+        promptIds: { base: 1 },
+        model: 'm',
+        meta: { inputChars: 10, inputCut: false, segments: 1, scannedChars: 10 },
+      },
+      updatedAt: at,
+    });
+    expect(summary).not.toHaveProperty('inputCut');
+    expect(summary).not.toHaveProperty('segments');
+  });
 });
