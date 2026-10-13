@@ -11,7 +11,8 @@ import type * as CrucibleEloRedis from '~/server/redis/crucible-elo.redis';
 import type * as EloService from '~/server/services/crucible-elo.service';
 import type * as PostService from '~/server/services/post.service';
 import type * as PrizeService from '~/server/services/prize.service';
-import { loggingMock, dbMock } from '~/__tests__/mocks';
+import { loggingMock, dbMock, redisMock } from '~/__tests__/mocks';
+import { REDIS_KEYS } from '~/server/redis/client';
 
 // `~/server/db/client` and `~/server/redis/client` are registered globally by the setup file
 // and reset per test file — see docs/testing/shared-module-mocks.md.
@@ -382,6 +383,27 @@ describe('finalizeCrucible — completion', () => {
       'crucible-prize-1-2-2',
       'crucible-prize-1-3-3',
     ]);
+  });
+
+  it("busts each winner's cached Buzz Won once their prize is awarded", async () => {
+    setupCrucible({ entryFee: 100 });
+
+    await finalizeCrucible(1);
+
+    const busted = redisMock.redis.del.mock.calls.map(([key]) => key);
+    expect(busted).toEqual(
+      expect.arrayContaining([10, 11, 12].map((id) => `${REDIS_KEYS.CRUCIBLE.USER_BUZZ_WON}:${id}`))
+    );
+    expect(busted).not.toContain(`${REDIS_KEYS.CRUCIBLE.USER_BUZZ_WON}:4`);
+  });
+
+  it('busts nothing when awarding fails', async () => {
+    setupCrucible({ entryFee: 100 });
+    createPrizes.mockRejectedValue(new Error('db down'));
+
+    await expect(finalizeCrucible(1)).rejects.toThrow('db down');
+
+    expect(redisMock.redis.del).not.toHaveBeenCalled();
   });
 
   it('voids what it awarded, notifies nobody and logs when it lost the claim', async () => {
