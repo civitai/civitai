@@ -270,17 +270,16 @@ const QUOTE_SITE_LEDGER: Record<
   },
   estimateStepWorkflow: {
     role: 'disclosing',
-    baseExpr: 'baseGenerationBuzz: whatIfResult?.cost?.base',
-    capExpr: 'priceIsCap: whatIfResult?.cost?.variable',
+    baseExpr: 'baseGenerationBuzz: whatIfResult.cost?.base',
+    capExpr: 'priceIsCap: whatIfResult.cost?.variable',
     // Byte-identical to the submit's, and it has to be: the registered step id is
     // the fee's lookup key on this path, which is what makes `chat-completion`'s
     // 0/0 override apply to the disclosure exactly as it applies to the charge.
     typeExpr: 'generationType: step.id',
     typeDerivation: null,
     reason:
-      'registry-step ESTIMATE. Optional-chained because `quoteStepBuzz` returns null when the ' +
-      'orchestrator round-trip degrades; an absent whatIf prices no fee, exactly as the shown ' +
-      'generation price already falls back to the declared floor.',
+      'registry-step ESTIMATE. With no quote it returns a failed snapshot before the fee, so ' +
+      'the whatIf is always present here.',
   },
   // `kind:'workflow'` — ONE fee per workflow, on the whole workflow's `cost.base`.
   // The submit is optional-chained: it proceeds without a quote (reserved at its

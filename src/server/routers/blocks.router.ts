@@ -233,7 +233,7 @@ import {
 import { getRecipe, recipeCivitaiVersionIds } from '~/server/services/blocks/recipes';
 // App Blocks STEP-TYPE bridge (`kind: 'step'`) — RFC #3515 migration step 1.
 // The step registry is the code-reviewed trust root, exactly as the recipe
-// registry is. `estimateStepBuzz` / `planStepSpend` dispatch on the entry's
+// registry is. `planStepSpend` dispatches on the entry's
 // declared `billingMode` — this router contains NO per-step and NO per-mode
 // branch, which is what makes adding a capability additive.
 // `containsAirReference` is the SAME deep scan the registry's load-time clause 7
@@ -242,7 +242,6 @@ import { getRecipe, recipeCivitaiVersionIds } from '~/server/services/blocks/rec
 import {
   AIR_URN_PREFIX,
   containsAirReference,
-  estimateStepBuzz,
   getStep,
   planStepSpend,
   resolveStepVariant,
@@ -354,6 +353,7 @@ import {
   classifyQuoteFailure,
   quoteFailureCause,
   quoteFailureLogLevel,
+  unquotedStepEstimateRefusal,
   unquotedTrainingRefusal,
   unquotedWorkflowEstimateRefusal,
   type PassThroughQuoteFailure,
@@ -10365,9 +10365,8 @@ async function submitCustomComfyWorkflow(opts: {
 // builder, a declared BILLING MODE, and a declared MODERATION POSTURE.
 //
 // 🔴 THE DISPATCH RULE. These two handlers contain NO per-step branch and NO
-// per-billing-mode branch. Estimate reads `estimateStepBuzz(entry, params)` and
-// submit reads `planStepSpend(entry, params)`; both dispatch on the entry's
-// declared `billingMode` inside the registry module. Registering a capability
+// per-billing-mode branch. Both read `planStepSpend(entry, params)`, which
+// dispatches on the entry's declared `billingMode` inside the registry module. Registering a capability
 // touches one new file plus one registry line — never this router. If you find
 // yourself adding `if (step.id === …)` or `if (billingMode === …)` here, the
 // abstraction has been defeated and the RFC's whole premise with it.
@@ -10721,8 +10720,9 @@ function buildStepOrchestratorStep(
 }
 
 /**
- * STEP ESTIMATE. Quotes the ORCHESTRATOR, and falls back to the registry's
- * declared estimate only when no quote can be had.
+ * STEP ESTIMATE. Quotes the ORCHESTRATOR; with no quote it is a failed snapshot
+ * with no `cost` and an `errorCode` naming the cause (`step_quote_*`), never the
+ * declared estimate shown as a price.
  *
  * 🔴 THIS USED TO RETURN THE DECLARED CONSTANT AND NEVER ASK ANYONE, AND THAT
  * WAS THE BUG. `kind: 'step'` was the only branch of `estimateWorkflow` that did
@@ -10743,20 +10743,16 @@ function buildStepOrchestratorStep(
  * Real sends were being charged the live price while a published store listing
  * quoted the constant. Figures and derivation: the internal tracker.
  *
- * 🔴 THE FALLBACK IS THE DECLARED ESTIMATE, NOT A THROW, and that is deliberate.
- * An unquotable step is exactly today's behaviour, so this can only ever be more
- * accurate than what it replaces — it never turns a working estimate into an
- * error. The SUBMIT still fails closed on a missing quote (`recordStepPriceCheck
- * (step.id, 'absent')` + a recoverable failed snapshot), because that is the path
- * where the number bounds real money; an estimate binds nothing.
+ * The SUBMIT handles a missing quote its own way and is unchanged: a thrown quote
+ * propagates, and an answer without a price is a failed snapshot carrying the
+ * declared price as `cost` and no `errorCode`.
  *
  * Fail-closed on an out-of-bounds param (BAD_REQUEST via `parseStepParams`),
  * exactly as submit does — the same `.strict()` schema runs on both paths.
  *
  * 🔴 AND fail-closed on an out-of-set VARIANT, which it previously was not.
- * `estimateStepBuzz` resolves through `resolveStepVariant` before dispatching, so
- * a resolution outside the entry's declared `variants` throws here exactly as it
- * does on submit. Before that bound existed the two paths disagreed: for an entry
+ * `resolveStepVariant` throws on a resolution outside the entry's declared
+ * `variants` here exactly as it does on submit. Before that bound existed the two paths disagreed: for an entry
  * whose variant is its model, an out-of-set model returned HTTP 200 with
  * `cost: { total: undefined }` here while the submit threw — estimate/submit
  * drift on the surface whose entire job is to predict the submit.
@@ -10779,7 +10775,6 @@ async function estimateStepWorkflow(opts: {
   const step = resolveBlockStep(body);
   const params = parseStepParams(step, body.params);
   const variant = resolveStepVariant(step, params);
-  const declaredBuzz = estimateStepBuzz(step, params, variant);
 
   // ── BUILT HERE, OUTSIDE THE QUOTE'S CATCH, SO ITS REFUSALS PROPAGATE. ───────
   //
@@ -10799,12 +10794,24 @@ async function estimateStepWorkflow(opts: {
   const plan = planStepSpend(step, params, variant);
   const orchestratorStep = buildStepOrchestratorStep(step, params, plan);
 
-  const stepQuote = await quoteStepBuzz({ ctx, claims, step, orchestratorStep, userId });
-  const quotedBuzz = stepQuote?.quotedBuzz ?? null;
-  // `undefined` when the orchestrator round-trip degraded. The fee quote below
-  // reads it with `?.`, so an absent quote prices no fee — the same degradation
-  // the shown price already takes (it falls back to `declaredBuzz`).
-  const whatIfResult = stepQuote?.whatIfResult;
+  const stepQuote = await quoteStepBuzz({
+    ctx,
+    claims,
+    step,
+    orchestratorStep,
+    userId,
+    callerText: JSON.stringify(body.params),
+  });
+  if (stepQuote.quotedBuzz === null) {
+    return {
+      snapshot: {
+        workflowId: 'failed',
+        status: 'failed' as const,
+        ...unquotedStepEstimateRefusal(stepQuote.failure),
+      },
+    };
+  }
+  const { quotedBuzz, whatIfResult } = stepQuote;
 
   // 🔴 NEVER SHOW LESS THAN THE SUBMIT WILL RESERVE. The submit gates and
   // reserves `max(Math.ceil(plan.reserveBuzz), quotedBuzz)`, so an estimate that
@@ -10826,30 +10833,8 @@ async function estimateStepWorkflow(opts: {
   // So this computes the SAME expression the submit does. "The estimate is never
   // below what the submit reserves" is then a property of the code, not of an
   // invariant that holds only at canonical params.
-  //
-  // 🔴 `declaredBuzz` IS DELIBERATELY NOT A THIRD OPERAND — because it would
-  // OVER-display, not because it is inert.
-  //
-  // ⚠️ AN EARLIER VERSION OF THIS COMMENT SAID IT "can only differ upward from
-  // the submit floor" AND THAT NO MUTATION COULD KILL IT. Both were wrong, and
-  // the counterexample to the first ships in this repo: `fixture-split-floor-step`
-  // answers `estimateBuzz` 1 against a `priceForVariant` of 5, i.e. DOWNWARD.
-  // The direction is not fixed at all — `estimateBuzz` takes params and
-  // `priceForVariant` does not, so the two can diverge either way for a
-  // request, and only the canonical-params case is pinned by registry load.
-  //
-  // What is true, and is the actual reason: taking the max of all three would
-  // show `max(9, 5, 2) = 9` for an entry whose `estimateBuzz` answers 9 where
-  // `priceForVariant` is 5 — an 80% OVER-display against a submit that reserves
-  // 5. Over-display is the safe direction for a spend gate but it is still a
-  // wrong number quoted to a block, and the whole point of this change is that
-  // the estimate tells the truth. Flooring on the submit's own value alone is
-  // both necessary and sufficient for "never below what the submit reserves".
-  //
-  // It stays as the no-quote FALLBACK, where it is the entry's own declared
-  // display estimate and is what the block was shown before this change.
   const submitFloorBuzz = Math.ceil(plan.reserveBuzz);
-  const shownGenerationBuzz = Math.max(submitFloorBuzz, quotedBuzz ?? declaredBuzz);
+  const shownGenerationBuzz = Math.max(submitFloorBuzz, quotedBuzz);
 
   // ── 🔴 DISCLOSING QUOTE — the step arm's half of the same correction made on
   //    the txt2img estimate. See the long note at that site for why the payee
@@ -10869,8 +10854,8 @@ async function estimateStepWorkflow(opts: {
   // fee inside the `max` would let a large fee be swallowed by the floor and
   // under-display.
   const authorFeeQuote = await quoteBlockAuthorFee({
-    baseGenerationBuzz: whatIfResult?.cost?.base,
-    priceIsCap: whatIfResult?.cost?.variable,
+    baseGenerationBuzz: whatIfResult.cost?.base,
+    priceIsCap: whatIfResult.cost?.variable,
     generationType: step.id,
     appId: claims.appId,
     viewerUserId: userId,
@@ -10895,15 +10880,14 @@ async function estimateStepWorkflow(opts: {
 }
 
 /**
- * The orchestrator's live price for an ALREADY-BUILT step, or `null` if it could
- * not be had.
+ * The orchestrator's live price for an ALREADY-BUILT step, or a `null` price and
+ * why it could not be had.
  *
  * Takes the built step rather than building it, so the caller's deterministic
  * refusals stay outside this catch — see the note at the build site. What IS
- * swallowed here is the transient half: token mint and the orchestrator
- * round-trip. A quote failure must degrade an estimate to the pre-existing
- * declared number, never turn it into an error the block has no way to act on.
- * The SUBMIT path runs its own quote and does NOT swallow.
+ * caught here is token mint and the orchestrator round-trip, classified by
+ * `classifyQuoteFailure` so the estimate can tell the block which cause it was.
+ * The SUBMIT path runs its own quote and does NOT catch.
  *
  * 🔴 EVERY OUTCOME IS COUNTED, INCLUDING THE DEGRADED ONE. A silent fallback
  * would make "the block saw a live quote" and "the orchestrator was down and the
@@ -10930,11 +10914,13 @@ async function quoteStepBuzz(opts: {
   step: ReturnType<typeof resolveBlockStep>;
   orchestratorStep: ReturnType<typeof buildStepOrchestratorStep>;
   userId: number;
-}): Promise<{
-  quotedBuzz: number;
-  whatIfResult: Awaited<ReturnType<typeof submitWorkflow>>;
-} | null> {
-  const { ctx, claims, step, orchestratorStep, userId } = opts;
+  /** The caller's own submitted params, serialized — see `classifyQuoteFailure`. */
+  callerText: string;
+}): Promise<
+  | { quotedBuzz: number; whatIfResult: Awaited<ReturnType<typeof submitWorkflow>> }
+  | { quotedBuzz: null; failure: PassThroughQuoteFailure }
+> {
+  const { ctx, claims, step, orchestratorStep, userId, callerText } = opts;
   try {
     const { allowMatureContent, isGreen } = resolveBlockMaturity(claims);
     const token = await getOrchestratorToken(userId, ctx);
@@ -10952,7 +10938,7 @@ async function quoteStepBuzz(opts: {
     const total = quote.cost?.total;
     if (typeof total !== 'number' || !Number.isFinite(total)) {
       recordStepPriceCheck(step.id, 'estimate_absent');
-      return null;
+      return { quotedBuzz: null, failure: { kind: 'unpriced' } };
     }
     recordStepPriceCheck(step.id, 'estimate_quoted');
     // 🔴 THE WHOLE RESPONSE, NOT JUST THE ROUNDED TOTAL. The caller prices the
@@ -10962,9 +10948,9 @@ async function quoteStepBuzz(opts: {
     // a percentage of BASE, and `total` already carries per-resource licensing
     // fees, the lineage fee and tips (see `no-divergent-author-fee-base`).
     return { quotedBuzz: Math.ceil(total), whatIfResult: quote };
-  } catch {
+  } catch (e) {
     recordStepPriceCheck(step.id, 'estimate_absent');
-    return null;
+    return { quotedBuzz: null, failure: classifyQuoteFailure(e, callerText) };
   }
 }
 

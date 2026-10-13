@@ -6,6 +6,7 @@ import { REGISTERED_STEP_IDS } from '~/server/services/blocks/steps';
 import type { BlockStepToolCall } from '~/server/services/blocks/steps';
 import type {
   TrainingQuoteErrorCode,
+  StepQuoteErrorCode,
   WorkflowQuoteErrorCode,
 } from '~/server/services/blocks/pass-through-quote-failure';
 import type { CONFIRMED_STEP_DAILY_LIMIT_ERROR_CODE } from '~/shared/constants/block-scope.constants';
@@ -997,6 +998,10 @@ export type BlockWorkflowSnapshot = {
    * retry of the same body will not help; `unavailable` is transient; `unpriced` is
    * an answer without a price. The SUBMIT of the same body defines no such refusal.
    *
+   * `step_quote_rejected` / `step_quote_unavailable` / `step_quote_unpriced` mean the
+   * same for a registered-step (`kind: 'step'` with `step`) ESTIMATE. Its submit, with
+   * no quote, refuses with a failed snapshot that carries a `cost` and no code.
+   *
    * `'daily-limit-exceeded'` — a viewer-confirmed job (a confirmed pass-through step or
    * a `kind:'training'` run) that would exceed what remains of the viewer's own opted-in
    * daily Buzz limit for this app. Never overridable by the confirm; the viewer raises
@@ -1006,6 +1011,7 @@ export type BlockWorkflowSnapshot = {
   errorCode?:
     | TrainingQuoteErrorCode
     | WorkflowQuoteErrorCode
+    | StepQuoteErrorCode
     | BlockWorkflowErrorCode
     | typeof CONFIRMED_STEP_DAILY_LIMIT_ERROR_CODE;
   // The buzz account that primarily funded this generation (the accountType of

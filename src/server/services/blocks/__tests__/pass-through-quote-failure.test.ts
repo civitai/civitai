@@ -5,6 +5,7 @@ import {
   quoteFailureCause,
   quoteFailureLogLevel,
   safeQuoteReason,
+  unquotedStepEstimateRefusal,
   unquotedTrainingRefusal,
   unquotedWorkflowEstimateRefusal,
 } from '~/server/services/blocks/pass-through-quote-failure';
@@ -150,6 +151,34 @@ describe('what a block receives for a failed training quote', () => {
       error: 'Training needs a price quote and the orchestrator answered without one.',
       errorCode: 'training-quote-unpriced',
     });
+  });
+});
+
+describe('what a block receives for a registered-step estimate with no quote', () => {
+  it.each([
+    [
+      { kind: 'rejected', reason: 'Epochs must be between 1 and 20.' },
+      'step_quote_rejected',
+      'No price quote for this step: the orchestrator rejected the request: Epochs must be between 1 and 20.',
+    ],
+    [
+      { kind: 'rejected' },
+      'step_quote_rejected',
+      'No price quote for this step: the orchestrator rejected the request; check the step ' +
+        'inputs and references (retrying the same body will not help)',
+    ],
+    [
+      { kind: 'unavailable' },
+      'step_quote_unavailable',
+      'No price quote for this step: none could be obtained; try again',
+    ],
+    [
+      { kind: 'unpriced' },
+      'step_quote_unpriced',
+      'No price quote for this step: the orchestrator answered without one',
+    ],
+  ] as const)('%o → %s', (failure, errorCode, error) => {
+    expect(unquotedStepEstimateRefusal(failure)).toEqual({ error, errorCode });
   });
 });
 

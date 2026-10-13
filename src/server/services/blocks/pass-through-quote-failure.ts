@@ -44,6 +44,16 @@ export const WORKFLOW_QUOTE_ERROR_CODES = {
 export type WorkflowQuoteErrorCode =
   (typeof WORKFLOW_QUOTE_ERROR_CODES)[keyof typeof WORKFLOW_QUOTE_ERROR_CODES];
 
+/** A registered-step (`kind: 'step'`, `step`) ESTIMATE with no price to show. */
+export const STEP_QUOTE_ERROR_CODES = {
+  rejected: 'step_quote_rejected',
+  unavailable: 'step_quote_unavailable',
+  unpriced: 'step_quote_unpriced',
+} as const satisfies Record<PassThroughQuoteFailure['kind'], string>;
+
+export type StepQuoteErrorCode =
+  (typeof STEP_QUOTE_ERROR_CODES)[keyof typeof STEP_QUOTE_ERROR_CODES];
+
 // `orchestratorErrorMessage` joins the orchestrator's validation messages this way.
 const MESSAGE_SEPARATOR = ',\n';
 const MAX_MESSAGES = 5;
@@ -180,6 +190,17 @@ export function unquotedTrainingRefusal(failure: PassThroughQuoteFailure): {
         ? `Training needs a price quote and ${quoteFailureCause(failure)}.`
         : `Training could not be priced: ${reason}`,
     errorCode: TRAINING_QUOTE_ERROR_CODES[failure.kind],
+  };
+}
+
+/** The `error` / `errorCode` pair a block receives for a registered-step estimate with no quote. */
+export function unquotedStepEstimateRefusal(failure: PassThroughQuoteFailure): {
+  error: string;
+  errorCode: StepQuoteErrorCode;
+} {
+  return {
+    error: `No price quote for this step: ${quoteFailureCause(failure)}`,
+    errorCode: STEP_QUOTE_ERROR_CODES[failure.kind],
   };
 }
 
