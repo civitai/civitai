@@ -7,7 +7,8 @@ export type TextScanFailureReason =
   | 'refused'
   | 'truncated'
   | 'malformed'
-  | 'missing_label';
+  | 'missing_label'
+  | 'missing_segment';
 
 export type TextScanParseResult =
   | { ok: true; output: TextScanOutput }
@@ -15,6 +16,9 @@ export type TextScanParseResult =
 
 export type ChatCompletionStepLike = {
   $type?: string;
+  name?: string | null;
+  status?: string;
+  metadata?: Record<string, unknown> | null;
   output?: {
     choices?: Array<{
       message?: { content?: string | null };
@@ -98,4 +102,64 @@ export function parseTextScanStep(
     (output as Record<string, unknown>)[label] = result.data;
   }
   return { ok: true, output };
+}
+
+const STEP_NAME = /^textScan(\d*)$/;
+
+/** The segment a step scanned: its `metadata.segment`, else the number in its `textScanN` name. */
+export function segmentIndexOf(step: ChatCompletionStepLike): number | undefined {
+  const fromMetadata = step.metadata?.segment;
+  if (Number.isInteger(fromMetadata) && (fromMetadata as number) >= 0)
+    return fromMetadata as number;
+  const match = STEP_NAME.exec(step.name ?? '');
+  if (match) return match[1] ? Number(match[1]) : 0;
+  return undefined;
+}
+
+function chatCompletionSteps(steps: unknown): ChatCompletionStepLike[] {
+  if (!Array.isArray(steps)) return [];
+  return (steps as ChatCompletionStepLike[]).filter((s) => s?.$type === 'chatCompletion');
+}
+
+/** chatCompletion steps by segment; submission order when a step carries neither index. First wins. */
+export function textScanStepsBySegment(steps: unknown) {
+  const bySegment = new Map<number, ChatCompletionStepLike>();
+  chatCompletionSteps(steps).forEach((step, order) => {
+    const segment = segmentIndexOf(step) ?? order;
+    if (!bySegment.has(segment)) bySegment.set(segment, step);
+  });
+  return bySegment;
+}
+
+export type TextScanStepsResult =
+  | { ok: true; outputs: TextScanOutput[] }
+  | { ok: false; reason: TextScanFailureReason; detail?: string; segment?: number };
+
+/**
+ * All `expected` segments parsed, in segment order, or the first failure with its segment. Any
+ * missing, extra or unusable step fails the whole scan: a partial verdict would replace the
+ * stored one with less than the text justified.
+ */
+export function parseTextScanSteps(
+  steps: unknown,
+  labels: TextScanLabel[],
+  expected: number
+): TextScanStepsResult {
+  const count = chatCompletionSteps(steps).length;
+  if (count > expected)
+    return {
+      ok: false,
+      reason: 'malformed',
+      detail: `expected ${expected} chatCompletion steps, got ${count}`,
+    };
+  const bySegment = textScanStepsBySegment(steps);
+  const outputs: TextScanOutput[] = [];
+  for (let segment = 0; segment < expected; segment++) {
+    const step = bySegment.get(segment);
+    if (!step) return { ok: false, reason: 'missing_segment', segment };
+    const parsed = parseTextScanStep(step, labels);
+    if (!parsed.ok) return { ...parsed, segment };
+    outputs.push(parsed.output);
+  }
+  return { ok: true, outputs };
 }
