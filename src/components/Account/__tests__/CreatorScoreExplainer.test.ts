@@ -156,6 +156,36 @@ describe('UserScoreDisplay reports block', () => {
   });
 });
 
+// Tester (2026-10-13): the account card's bar summed to less than the headline because the
+// positive "Helping moderation" points were shown only to moderators.
+describe('UserScoreDisplay helping moderation row', () => {
+  const card = (props: Record<string, unknown>, reportsActioned: number) =>
+    visibleText(
+      render(
+        React.createElement(UserScoreDisplay, {
+          scores: { total: 147860, models: 10, reportsActioned },
+          abbreviate: false,
+          ...props,
+        })
+      )
+    );
+
+  it('shows a non-moderator their points, exact when not abbreviated', () => {
+    const text = card({}, 147850);
+    expect(text).toContain(creatorScoreSources.reportsActioned.label);
+    expect(text).toContain('147,850 pts');
+  });
+
+  it.each([0, undefined])('shows no row when reportsActioned is %s', (value) => {
+    expect(card({}, value as number)).not.toContain(creatorScoreSources.reportsActioned.label);
+  });
+
+  it('leaves the reports block to showReports, with no second row', () => {
+    const text = card({ showReports: true, owner: true }, 147850);
+    expect(text.split(creatorScoreSources.reportsActioned.label)).toHaveLength(2);
+  });
+});
+
 describe('StrikesCard', () => {
   it.each([
     ['settings pane', { flat: true }],
