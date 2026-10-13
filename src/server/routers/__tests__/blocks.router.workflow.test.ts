@@ -7930,25 +7930,147 @@ describe("step-type registry bridge (kind: 'step')", () => {
       expect(realSubmitCalls()).toHaveLength(0);
     });
 
-    it('falls back to the DECLARED estimate when the quote throws', async () => {
-      // 🔴 DEGRADE, NEVER ERROR. An unquotable step is exactly the pre-change
-      // behaviour, so this path can only be more accurate than what it replaced
-      // — it must not turn a working estimate into a failure the block cannot
-      // act on. (The SUBMIT still fails closed on a missing quote; that is the
-      // path where the number bounds real money.)
-      mockVerifyBlockToken.mockResolvedValue(stepClaims());
-      happyUser();
-      mockSubmitWorkflow.mockRejectedValue(new Error('orchestrator down'));
-      const result = await caller().estimateWorkflow({ blockToken: 'tok', body: stepBody() });
-      expect(result.snapshot.cost.total).toBe(STEP_PRICE);
-    });
+    // 🔴 NO QUOTE IS A FAILED, CODED ESTIMATE — never the declared price shown as
+    // one. Each cause gets its own code; only `unavailable` says "try again".
+    const OWN_ID = 'AMXT0PQ4Z8K2N6W1R5V9C3J7H0B4D8F2';
+    const FOREIGN_ID = 'ZQ7L2M9X4C1V8B5N0K3J6H2G9F4D1S7A';
+    const REJECTION_REASON = 'The output quality must be between 1 and 100.';
+    const REJECTED_NO_REASON =
+      'the orchestrator rejected the request; check the step inputs and references ' +
+      '(retrying the same body will not help)';
+    function stepQuoteError(status: number, message: string) {
+      const err = new TRPCError({
+        code: status >= 500 ? 'INTERNAL_SERVER_ERROR' : 'BAD_REQUEST',
+        message,
+      });
+      annotateOrchestratorSubmitFailure(err, { attempt: 1, status });
+      return err;
+    }
+    function quoteThrowing(make: () => unknown) {
+      mockSubmitWorkflow.mockImplementation(async (opts: { query?: { whatif?: boolean } }) => {
+        if (opts?.query?.whatif === true) throw make();
+        return { id: 'wf_step_1', status: 'processing', steps: [], cost: { total: 1 } };
+      });
+    }
+    const STEP_QUOTE_FAILURES = [
+      {
+        name: 'a 400 with a safe reason',
+        arrange: () => quoteThrowing(() => stepQuoteError(400, REJECTION_REASON)),
+        errorCode: 'step_quote_rejected',
+        cause: `the orchestrator rejected the request: ${REJECTION_REASON}`,
+        submitThrows: { code: 'BAD_REQUEST', message: REJECTION_REASON },
+      },
+      {
+        name: 'a 400 whose reason is withheld',
+        arrange: () => quoteThrowing(() => stepQuoteError(400, 'Could not read s3://datasets/a')),
+        errorCode: 'step_quote_rejected',
+        cause: REJECTED_NO_REASON,
+        submitThrows: { code: 'BAD_REQUEST', message: 'Could not read s3://datasets/a' },
+      },
+      {
+        name: 'a 503',
+        arrange: () => quoteThrowing(() => stepQuoteError(503, 'upstream down')),
+        errorCode: 'step_quote_unavailable',
+        cause: 'none could be obtained; try again',
+        submitThrows: { code: 'INTERNAL_SERVER_ERROR', message: 'upstream down' },
+      },
+      {
+        name: 'an answer with no total',
+        arrange: () => stepSubmitQuoting(null, 1),
+        errorCode: 'step_quote_unpriced',
+        cause: 'the orchestrator answered without one',
+        submitThrows: null,
+      },
+    ] as const;
 
-    it('falls back to the DECLARED estimate when the quote carries no numeric cost', async () => {
+    it.each(STEP_QUOTE_FAILURES)(
+      '🔴 with NO quote ($name) is a failed snapshot coded $errorCode, never the declared price',
+      async ({ arrange, errorCode, cause }) => {
+        mockVerifyBlockToken.mockResolvedValue(stepClaims());
+        happyUser();
+        arrange();
+        const result = await caller().estimateWorkflow({ blockToken: 'tok', body: stepBody() });
+        expect(result.snapshot).toEqual({
+          workflowId: 'failed',
+          status: 'failed',
+          errorCode,
+          error: `No price quote for this step: ${cause}`,
+        });
+        expect(realSubmitCalls()).toHaveLength(0);
+      }
+    );
+
+    it.each(STEP_QUOTE_FAILURES)(
+      '🔴 no quote ($name) leaves the SUBMIT as it was: it throws, or refuses at the declared price with no code',
+      async ({ arrange, submitThrows }) => {
+        mockVerifyBlockToken.mockResolvedValue(stepClaims());
+        happyUser();
+        arrange();
+        const submit = caller().submitWorkflow({ blockToken: 'tok', body: stepBody() });
+        if (submitThrows) {
+          await expect(submit).rejects.toMatchObject(submitThrows);
+        } else {
+          expect((await submit).snapshot).toEqual({
+            workflowId: 'failed',
+            status: 'failed',
+            cost: { total: STEP_PRICE },
+            error:
+              'generation temporarily unavailable: the orchestrator returned no price quote for ' +
+              'this step, so its cost could not be bounded before execution — please retry shortly',
+          });
+        }
+        expect(realSubmitCalls()).toHaveLength(0);
+        expect(mockReserveAppSpend).not.toHaveBeenCalled();
+      }
+    );
+
+    it('the unpriced SUBMIT refuses at the price it would reserve, not the display estimate', async () => {
+      // `fixture-high-estimate-step` reserves 5 and displays 9 for `{pricey: true}`.
       mockVerifyBlockToken.mockResolvedValue(stepClaims());
       happyUser();
       stepSubmitQuoting(null, 1);
+      const result = await caller().submitWorkflow({
+        blockToken: 'tok',
+        body: { kind: 'step' as const, step: HIGH_ESTIMATE_STEP_ID, params: { pricey: true } },
+      });
+      expect(result.snapshot).toMatchObject({ status: 'failed', cost: { total: 5 } });
+      expect(result.snapshot.errorCode).toBeUndefined();
+    });
+
+    it('a token that cannot be minted is unavailable, with no whatif sent', async () => {
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      mockGetOrchestratorToken.mockRejectedValueOnce(new Error('mint down'));
       const result = await caller().estimateWorkflow({ blockToken: 'tok', body: stepBody() });
-      expect(result.snapshot.cost.total).toBe(STEP_PRICE);
+      expect(result.snapshot).toMatchObject({
+        status: 'failed',
+        errorCode: 'step_quote_unavailable',
+      });
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+    });
+
+    it('a rejection may name an id the app sent in its params, and no other', async () => {
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      const body = stepBody({
+        params: { image: `https://image.civitai.com/${OWN_ID}.png`, output: { format: 'webp' } },
+      });
+      quoteThrowing(() => stepQuoteError(404, `The blob ${OWN_ID} was not found.`));
+      expect((await caller().estimateWorkflow({ blockToken: 'tok', body })).snapshot.error).toBe(
+        `No price quote for this step: the orchestrator rejected the request: The blob ${OWN_ID} was not found.`
+      );
+      quoteThrowing(() => stepQuoteError(404, `The blob ${FOREIGN_ID} was not found.`));
+      expect((await caller().estimateWorkflow({ blockToken: 'tok', body })).snapshot.error).toBe(
+        `No price quote for this step: ${REJECTED_NO_REASON}`
+      );
+    });
+
+    it('a quote of ZERO is a price, not a missing quote', async () => {
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      stepSubmitQuoting(0, 0);
+      const result = await caller().estimateWorkflow({ blockToken: 'tok', body: stepBody() });
+      expect(result.snapshot).toMatchObject({ workflowId: 'wf_estimate', status: 'pending' });
     });
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -8013,7 +8135,7 @@ describe("step-type registry bridge (kind: 'step')", () => {
     });
 
     it('floors on the SUBMIT’s declared value too, not only the estimate’s', async () => {
-      // 🔴 THE TWO FLOORS ARE DIFFERENT DERIVATIONS. `estimateStepBuzz` is
+      // 🔴 THE TWO FLOORS ARE DIFFERENT DERIVATIONS. The entry's `estimateBuzz` is
       // params-driven and un-ceiled (`step.estimateBuzz(params)`); the submit's
       // is variant-driven and ceiled (`Math.ceil(priceForVariant(variant))`).
       // Registry load ties them only at CANONICAL params and nothing re-checks
@@ -8033,15 +8155,9 @@ describe("step-type registry bridge (kind: 'step')", () => {
       expect(mockReserveAppSpend).toHaveBeenCalledWith('apb_test', 5);
     });
 
-    it('falls back to the entry’s DECLARED estimate, not to the floor, when no quote is had', async () => {
-      // 🔴 THE OPERAND NO MUTATION COULD KILL — until this fixture existed.
-      // `quotedBuzz ?? declaredBuzz` → `?? 0` (or `?? submitFloorBuzz`) survived
-      // the whole suite, and that was written up as "unreachable, and in the safe
-      // direction". BOTH claims were wrong. `fixture-high-estimate-step` answers
-      // `estimateBuzz` 9 against a `priceForVariant` of 5 for `{pricey: true}`,
-      // and it registers cleanly — so with the quote unavailable the fallback is
-      // 9 and the mutants show 5: a 44% UNDER-display, on the degraded path,
-      // which is exactly the direction this whole area exists to prevent.
+    it('with no quote shows NEITHER the declared estimate nor the submit floor', async () => {
+      // `fixture-high-estimate-step` answers `estimateBuzz` 9 against a
+      // `priceForVariant` of 5, so a fallback to either number would be visible.
       mockVerifyBlockToken.mockResolvedValue(stepClaims());
       happyUser();
       mockSubmitWorkflow.mockRejectedValue(new Error('orchestrator down'));
@@ -8049,7 +8165,12 @@ describe("step-type registry bridge (kind: 'step')", () => {
         blockToken: 'tok',
         body: { kind: 'step' as const, step: HIGH_ESTIMATE_STEP_ID, params: { pricey: true } },
       });
-      expect(estimate.snapshot.cost.total).toBe(9);
+      expect(estimate.snapshot).toEqual({
+        workflowId: 'failed',
+        status: 'failed',
+        errorCode: 'step_quote_unavailable',
+        error: 'No price quote for this step: none could be obtained; try again',
+      });
     });
 
     // 🔴 THE SECOND ESTIMATE CALL SITE. The guard above `blocks.estimateWorkflow`
@@ -11776,10 +11897,7 @@ describe('blocks workflow — author-fee price disclosure', () => {
       expect(result.snapshot.cost).toEqual({ total: 1 + EXPECTED_FEE, authorFee: EXPECTED_FEE });
     });
 
-    it('adds NOTHING when the orchestrator quote DEGRADES', async () => {
-      // No whatIf ⇒ no `cost.base` ⇒ no fee priced, and the shown generation
-      // price already falls back to the declared estimate. Degradation is
-      // correlated with the submit's, not bounded by it.
+    it('prices NO fee when the orchestrator quote fails: the estimate carries no cost', async () => {
       mockVerifyBlockToken.mockResolvedValue(stepClaims());
       happyUser();
       feeLive();
@@ -11787,7 +11905,8 @@ describe('blocks workflow — author-fee price disclosure', () => {
 
       const caller = blocksRouter.createCaller(fakeCtx() as never);
       const result = await caller.estimateWorkflow({ blockToken: 'tok', body: stepBody() });
-      expect(result.snapshot.cost).toEqual({ total: 1, authorFee: 0 });
+      expect(result.snapshot.status).toBe('failed');
+      expect(result.snapshot.cost).toBeUndefined();
     });
   });
 
@@ -12210,6 +12329,21 @@ describe('blocks.estimateWorkflowBatch', () => {
     // not start with 12.
     expect(result.snapshots.map((s) => s.cost?.total)).toEqual([12, 150, 31, 20]);
     expect(result.aggregate).toEqual({ total: 213, pricedCells: 4, cellCount: 4 });
+  });
+
+  it('🔴 a registry step cell with no quote fails on its own, coded, and is not summed', async () => {
+    const result = await caller().estimateWorkflowBatch({
+      blockToken: 'tok',
+      bodies: [step('cell-boom'), comfy('zimage-turbo')],
+    });
+    expect(result.snapshots[0]).toEqual({
+      workflowId: 'failed',
+      status: 'failed',
+      errorCode: 'step_quote_unavailable',
+      error: 'No price quote for this step: none could be obtained; try again',
+    });
+    expect(result.snapshots[1].cost).toEqual({ total: 20 });
+    expect(result.aggregate).toEqual({ total: 20, pricedCells: 1, cellCount: 2 });
   });
 
   it('prices each cell exactly as the SINGLE estimate prices that body', async () => {
