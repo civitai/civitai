@@ -191,6 +191,7 @@ export type ModEndpoint =
   | 'text-scan'
   | 'training-data/resolve'
   | 'user/delete'
+  | 'user/membership-code'
   | 'user/toggle-moderator'
   | 'user/unmute'
   | 'user/update-identity';
@@ -1166,6 +1167,42 @@ const MAY_HAVE_COMPLETED =
  * app at all. `ModActivity` is append-only in production, so a second call here is a second row in
  * the account history for one deletion, not a deduped one.
  */
+export const MEMBERSHIP_CODE_TIERS = ['bronze', 'silver', 'gold'] as const;
+export type MembershipCodeTier = (typeof MEMBERSHIP_CODE_TIERS)[number];
+/** Mirrors `SUPPORT_MEMBERSHIP_CODE_LIMITS.maxMonths` in the main app, which enforces it. */
+export const MEMBERSHIP_CODE_MAX_MONTHS = 6;
+
+const MINT_MAY_HAVE_COMPLETED =
+  'Could not confirm the code was minted. Check the account’s mod activity before minting again.';
+
+// MEMBERSHIP CODE (support make-good). The endpoint records the ModActivity row inside the same
+// transaction as the code, and its daily cap counts those rows — so no `logAction` here.
+export async function mintMembershipCode(input: {
+  userId: number;
+  tier: MembershipCodeTier;
+  months: number;
+  reason: string;
+}): Promise<{ ok: true; code: string; expiresAt: string } | { ok: false; error: string }> {
+  const result = await callModEndpoint(
+    'user/membership-code',
+    { userId: input.userId, tier: input.tier, months: input.months, reason: input.reason },
+    'Mint membership code'
+  );
+  if (!result.ok) {
+    // Not idempotent: a lost response (5xx, 408, or no answer after the request left) may have
+    // minted a code, and a blind retry mints a second one.
+    if (result.status !== undefined && (result.status >= 500 || result.status === 408))
+      return { ok: false, error: MINT_MAY_HAVE_COMPLETED };
+    if (result.status !== undefined || result.requestNeverSent)
+      return { ok: false, error: result.error };
+    return { ok: false, error: MINT_MAY_HAVE_COMPLETED };
+  }
+  const { code, expiresAt } = result.body;
+  if (typeof code !== 'string' || !code || typeof expiresAt !== 'string')
+    return { ok: false, error: MINT_MAY_HAVE_COMPLETED };
+  return { ok: true, code, expiresAt };
+}
+
 export async function deleteAccount(input: {
   userId: number;
   /** The account's current username. **REQUIRED by the endpoint for any account that has one** —

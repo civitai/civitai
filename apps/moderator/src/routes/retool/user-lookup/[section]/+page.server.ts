@@ -23,6 +23,9 @@ import {
   removeCosmetic,
   refundShopPurchase,
   sendBuzz,
+  mintMembershipCode,
+  MEMBERSHIP_CODE_MAX_MONTHS,
+  MEMBERSHIP_CODE_TIERS,
   setRewardsEligibility,
   clearProfileText,
   deleteAccount,
@@ -67,6 +70,8 @@ const socialsFail = (message: string) => fail(400, { scope: 'socials' as const, 
 const profileFail = (message: string) => fail(400, { scope: 'profile' as const, error: message });
 const contentFail = (message: string) => fail(400, { scope: 'content' as const, error: message });
 const buzzFail = (message: string) => fail(400, { scope: 'buzz' as const, error: message });
+const membershipCodeFail = (message: string) =>
+  fail(400, { scope: 'membershipCode' as const, error: message });
 const shopFail = (message: string) => fail(400, { scope: 'shop' as const, error: message });
 const cosmeticsFail = (message: string) =>
   fail(400, { scope: 'cosmetics' as const, error: message });
@@ -495,6 +500,31 @@ export const actions: Actions = {
         amount: input.amount,
         buzzType: input.buzzType,
         transactionType: input.transactionType,
+      },
+    };
+  }),
+
+  // Bounds are enforced again by the endpoint; these only turn a bad form into a readable refusal.
+  mintMembershipCode: requiresGrant('user.membership.code', async ({ request }) => {
+    const input = parseForm(
+      userIdSchema.extend({
+        tier: z.enum(MEMBERSHIP_CODE_TIERS),
+        months: z.coerce.number().int().min(1).max(MEMBERSHIP_CODE_MAX_MONTHS),
+        reason: z.string().trim().min(1).max(500),
+      }),
+      await request.formData()
+    );
+    if (typeof input === 'string') return membershipCodeFail(input);
+
+    const result = await mintMembershipCode(input);
+    if (!result.ok) return membershipCodeFail(result.error);
+    return {
+      success: true,
+      minted: {
+        code: result.code,
+        expiresAt: result.expiresAt,
+        tier: input.tier,
+        months: input.months,
       },
     };
   }),

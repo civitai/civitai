@@ -11,7 +11,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
  */
 
 const { trackModActivity } = vi.hoisted(() => ({
-  trackModActivity: vi.fn(async (..._a: unknown[]) => undefined),
+  trackModActivity: vi.fn<(...a: unknown[]) => Promise<undefined>>(async () => undefined),
 }));
 vi.mock('~/server/services/moderator.service', () => ({ trackModActivity }));
 
@@ -25,7 +25,7 @@ const TARGET = 8675309;
 const NOW = new Date('2026-10-13T12:00:00.000Z');
 
 type Tx = {
-  $queryRaw: ReturnType<typeof vi.fn>;
+  $executeRaw: ReturnType<typeof vi.fn>;
   modActivity: { count: ReturnType<typeof vi.fn> };
   redeemableCode: { create: ReturnType<typeof vi.fn> };
 };
@@ -45,7 +45,7 @@ beforeEach(() => {
   vi.setSystemTime(NOW);
   order = [];
   tx = {
-    $queryRaw: vi.fn(async () => {
+    $executeRaw: vi.fn(async () => {
       order.push('lock');
       return [];
     }),
@@ -174,6 +174,16 @@ describe('daily cap per moderator', () => {
     await mintSupportMembershipCode(valid());
     expect(order).toEqual(['lock', 'count', 'create']);
   });
+
+  it('the lock is keyed on the moderator, so two moderators never wait on each other', async () => {
+    await mintSupportMembershipCode(valid());
+    const [strings, ...values] = tx.$executeRaw.mock.calls[0] as [
+      TemplateStringsArray,
+      ...unknown[]
+    ];
+    expect(strings.join('?')).toContain('pg_advisory_xact_lock');
+    expect(values).toContain(MODERATOR);
+  });
 });
 
 describe('what it writes', () => {
@@ -193,7 +203,12 @@ describe('what it writes', () => {
         reason: 'Support ticket: gift ended early',
       },
     });
-    expect(result).toEqual({ code: data.code, expiresAt: data.expiresAt, tier: 'silver', months: 2 });
+    expect(result).toEqual({
+      code: data.code,
+      expiresAt: data.expiresAt,
+      tier: 'silver',
+      months: 2,
+    });
   });
 
   it('records the ModActivity row through the transaction client, against the target user', async () => {

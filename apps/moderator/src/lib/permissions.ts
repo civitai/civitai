@@ -46,6 +46,10 @@ export const PERMISSIONS = [
   // main app's `deleteUser`. That app checks this id by its literal (`ModeratorGrantId` in
   // `src/server/services/moderator-grants.ts`), so rename the two together.
   { id: 'user.deleteAccount', label: 'Delete an account on its owner’s behalf (erasure request)' },
+  // Money: a membership code is worth up to six months of a paid tier. Checked again by the main
+  // app's `/api/mod/user/membership-code` by this literal (`ModeratorGrantId`), so rename the two
+  // together.
+  { id: 'user.membership.code', label: 'Mint membership codes for a customer' },
   // The widest read in the app: everything an account generated on-site and in Comfy Cloud, published
   // or not, prompts included. Reaching User Lookup or the restriction queue is not consent to that.
   { id: 'user.generations.view', label: 'View a user’s generated media' },

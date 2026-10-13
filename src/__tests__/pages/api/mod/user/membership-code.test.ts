@@ -20,7 +20,7 @@ const { mockAudit, session, mint, hasModeratorGrant } = vi.hoisted(() => ({
       unknown
     >,
   },
-  mint: vi.fn(async (..._a: unknown[]) => ({
+  mint: vi.fn<(...a: unknown[]) => Promise<Record<string, unknown>>>(async () => ({
     code: 'MB-TEST-CODE',
     expiresAt: new Date('2026-11-12T12:00:00.000Z'),
     tier: 'silver',
@@ -54,6 +54,7 @@ vi.mock('~/server/utils/endpoint-helpers', () => ({
 }));
 vi.mock('~/server/services/support-membership-code.service', () => ({
   SUPPORT_MEMBERSHIP_CODE_LIMITS: { maxMonths: 6, dailyPerModerator: 10, expiryDays: 30 },
+  SUPPORT_MEMBERSHIP_CODE_TIERS: ['bronze', 'silver', 'gold'],
   mintSupportMembershipCode: (...a: unknown[]) => mint(...a),
 }));
 vi.mock('~/server/services/moderator-grants', () => ({
