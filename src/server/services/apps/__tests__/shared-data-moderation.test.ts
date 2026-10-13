@@ -389,6 +389,13 @@ describe('identifier-shaped leaves — the free-text audits skip the identifier'
     expect(value.hits.map((h) => h.category)).toEqual(['minor']);
   });
 
+  it('...and stays quiet on ordinary identifier leaves that carry the same number', async () => {
+    for (const key of ['13', 'plays:13', `votes:13:${ULID}`, ULID, `plays:${UUID}`]) {
+      const scan = await scanCounterKey(key);
+      expect([key, scan.hits]).toEqual([key, []]);
+    }
+  });
+
   it('INVARIANT GUARD: a leaf that only CONTAINS an identifier is read in full', async () => {
     await scanSharedData({ v: `my id is ${ULID}` });
     expect(freeTextReads()).toContain(`my id is ${ULID}`);
