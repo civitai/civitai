@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { branch, defFamily, defineGraph } from 'form-graph';
 import { checkpointDef } from '../checkpoint';
+import { BM, baseModelById } from '~/shared/constants/basemodel.constants';
 import { fourMegapixelCustomDimensionLimits } from '~/shared/constants/generation.constants';
 import { fitCustomDimensions } from '~/utils/aspect-ratio-helpers';
 import { SEED, aspectRatioDef, enumDef, imagesDef, workflowScoped } from '../defs';
@@ -60,6 +61,24 @@ const krea2VersionIdToVariant = new Map<number, Krea2Variant>([
 ]);
 
 export const isOfficialKrea2Version = (id: number) => krea2VersionIdToVariant.has(id);
+
+/** Community checkpoints fine-tuned from Turbo carry this base model; nothing else marks them. */
+export const KREA2_TURBO_BASE_MODEL = baseModelById.get(BM.Krea2Turbo)!.name;
+
+/**
+ * The official Turbo build, or a community checkpoint tagged as fine-tuned from it.
+ * An official version's id decides on its own: the handler routes the FAL tiers by id,
+ * so a stray tag must not move one onto the turbo branch.
+ */
+export function isKrea2TurboModel(model: unknown): boolean {
+  const id = modelIdOf(model);
+  if (id != null && isOfficialKrea2Version(id)) return id === krea2VersionIds.turbo;
+  return (
+    !!model &&
+    typeof model === 'object' &&
+    (model as { baseModel?: unknown }).baseModel === KREA2_TURBO_BASE_MODEL
+  );
+}
 
 /** Krea renders ~1MP area buckets. */
 const krea2AspectRatioDimensions: Record<string, { width: number; height: number }> = {
@@ -199,13 +218,14 @@ const styleReferencesDef = {
 type Krea2VariantExt = FamilyExt & { model?: unknown };
 
 // Unknown ids are community checkpoints. Only the comfy builds can load one
-// via `diffusionModel`, so they fall back off the FAL tiers — and to the
-// full-step build, since turbo's 15-step / cfg-2 ceilings can't drive an
-// undistilled model.
+// via `diffusionModel`, so they fall back off the FAL tiers — to turbo when the
+// checkpoint is a Turbo fine-tune, else to the full-step build, since turbo's
+// 15-step / cfg-2 ceilings can't drive an undistilled model.
 const variantOf = (ext: Krea2VariantExt): Krea2Variant => {
+  const turbo = isKrea2TurboModel(ext.model);
+  if (ext.workflow === 'img2img:edit') return turbo ? 'editTurbo' : 'editRaw';
+  if (turbo) return 'turbo';
   const id = modelIdOf(ext.model);
-  if (ext.workflow === 'img2img:edit')
-    return id === krea2VersionIds.turbo ? 'editTurbo' : 'editRaw';
   return (id != null ? krea2VersionIdToVariant.get(id) : undefined) ?? 'raw';
 };
 

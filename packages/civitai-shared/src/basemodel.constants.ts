@@ -2340,6 +2340,7 @@ export const BM = {
   Sonilo: 110,
   Ideogram45: 111,
   Flux3: 112,
+  Krea2Turbo: 113,
 } as const;
 
 // Guard against duplicate ids — `baseModelById` is keyed by id, so collisions
@@ -3096,6 +3097,14 @@ export const baseModelRecords: BaseModelRecord[] = [
     id: BM.Krea2,
     name: 'Krea 2',
     description: "Krea AI's in-house image generation model",
+    type: 'image',
+    ecosystemId: ECO.Krea2,
+    licenseId: 28,
+  },
+  {
+    id: BM.Krea2Turbo,
+    name: 'Krea 2 Turbo',
+    description: 'Krea 2 with Turbo distillation for reduced steps',
     type: 'image',
     ecosystemId: ECO.Krea2,
     licenseId: 28,
