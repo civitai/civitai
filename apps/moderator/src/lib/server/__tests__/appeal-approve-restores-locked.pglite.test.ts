@@ -61,7 +61,8 @@ CREATE TABLE "Appeal" (
   "resolvedMessage" TEXT,
   "resolvedReason" TEXT,
   "internalNotes" TEXT,
-  "buzzTransactionId" TEXT
+  "buzzTransactionId" TEXT,
+  "entityRemovedAt" TIMESTAMP(3)
 );
 CREATE FUNCTION update_nsfw_levels_new(ids INTEGER[]) RETURNS VOID LANGUAGE SQL AS $$
   UPDATE "Image" SET "nsfwLevel" = 1
