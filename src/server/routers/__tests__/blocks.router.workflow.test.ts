@@ -7958,28 +7958,28 @@ describe("step-type registry bridge (kind: 'step')", () => {
         arrange: () => quoteThrowing(() => stepQuoteError(400, REJECTION_REASON)),
         errorCode: 'step_quote_rejected',
         cause: `the orchestrator rejected the request: ${REJECTION_REASON}`,
-        submitThrows: true,
+        submitThrows: { code: 'BAD_REQUEST', message: REJECTION_REASON },
       },
       {
         name: 'a 400 whose reason is withheld',
         arrange: () => quoteThrowing(() => stepQuoteError(400, 'Could not read s3://datasets/a')),
         errorCode: 'step_quote_rejected',
         cause: REJECTED_NO_REASON,
-        submitThrows: true,
+        submitThrows: { code: 'BAD_REQUEST', message: 'Could not read s3://datasets/a' },
       },
       {
         name: 'a 503',
         arrange: () => quoteThrowing(() => stepQuoteError(503, 'upstream down')),
         errorCode: 'step_quote_unavailable',
         cause: 'none could be obtained; try again',
-        submitThrows: true,
+        submitThrows: { code: 'INTERNAL_SERVER_ERROR', message: 'upstream down' },
       },
       {
         name: 'an answer with no total',
         arrange: () => stepSubmitQuoting(null, 1),
         errorCode: 'step_quote_unpriced',
         cause: 'the orchestrator answered without one',
-        submitThrows: false,
+        submitThrows: null,
       },
     ] as const;
 
@@ -8008,7 +8008,7 @@ describe("step-type registry bridge (kind: 'step')", () => {
         arrange();
         const submit = caller().submitWorkflow({ blockToken: 'tok', body: stepBody() });
         if (submitThrows) {
-          await expect(submit).rejects.toBeInstanceOf(TRPCError);
+          await expect(submit).rejects.toMatchObject(submitThrows);
         } else {
           expect((await submit).snapshot).toEqual({
             workflowId: 'failed',
@@ -8023,6 +8023,19 @@ describe("step-type registry bridge (kind: 'step')", () => {
         expect(mockReserveAppSpend).not.toHaveBeenCalled();
       }
     );
+
+    it('the unpriced SUBMIT refuses at the price it would reserve, not the display estimate', async () => {
+      // `fixture-high-estimate-step` reserves 5 and displays 9 for `{pricey: true}`.
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      stepSubmitQuoting(null, 1);
+      const result = await caller().submitWorkflow({
+        blockToken: 'tok',
+        body: { kind: 'step' as const, step: HIGH_ESTIMATE_STEP_ID, params: { pricey: true } },
+      });
+      expect(result.snapshot).toMatchObject({ status: 'failed', cost: { total: 5 } });
+      expect(result.snapshot.errorCode).toBeUndefined();
+    });
 
     it('a token that cannot be minted is unavailable, with no whatif sent', async () => {
       mockVerifyBlockToken.mockResolvedValue(stepClaims());

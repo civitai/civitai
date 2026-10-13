@@ -840,10 +840,9 @@ interface BlockStepBase<P> {
    * canonical params of each variant (clause 5, and the price-equals-estimate
    * clause) and nothing re-checks at request time.
    *
-   * What estimate and submit DO share is the BOUND: `estimateStepBuzz` and
-   * `planStepSpend` both resolve through `resolveStepVariant` before dispatching
-   * to a billing-mode handler, so an out-of-set resolution fails identically on
-   * both. Before that they did not, and an entry whose variant is its model
+   * What estimate and submit DO share is the BOUND: both resolve through
+   * `resolveStepVariant` and then `planStepSpend`, so an out-of-set resolution
+   * fails identically on both. Before that they did not, and an entry whose variant is its model
    * would have answered an out-of-set model with HTTP 200 and
    * `cost: { total: undefined }` on estimate while the submit threw.
    *
@@ -1113,8 +1112,8 @@ export type AnyBlockStep = BlockStep<any>;
 // Spend planning — the money-path dispatch.
 //
 // 🔴 estimate / submit / settle dispatch on `billingMode`, NEVER on `kind` and
-// never on the step id. The router calls `planStepSpend` / `estimateStepBuzz`
-// and reads the returned plan; it contains no per-step and no per-mode branch.
+// never on the step id. The router calls `planStepSpend` and reads the returned
+// plan; it contains no per-step and no per-mode branch.
 // Adding a capability is register-an-entry; adding a MODE is add-a-handler
 // here — neither is router surgery. That is the whole point of the RFC.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1313,10 +1312,9 @@ function unimplementedMode(mode: StepBillingMode): BillingModeHandler {
 const billingModeHandlers: Record<StepBillingMode, BillingModeHandler> = {
   prepaidFixed: {
     // The display estimate is computed from the PARAMS — the variant is not an
-    // input to it, and this handler deliberately does not destructure one. What
-    // the bound buys this path is that `estimateStepBuzz` already threw on an
-    // out-of-set resolution before reaching here, so estimate can no longer
-    // answer 200 where submit throws.
+    // input to it, and this handler deliberately does not destructure one.
+    // `estimateStepBuzz` has no router caller since the estimate stopped showing
+    // a declared price; the registry tests still read it.
     estimateBuzz: ({ step, params }) => step.estimateBuzz(params),
     planSpend: ({ step, variant }) => {
       const entry = step as PrepaidFixedStep<unknown>;

@@ -9275,8 +9275,8 @@ async function estimateBlockWorkflowCell(
   }
   // App Blocks STEP-TYPE bridge (RFC #3515 migration step 1). A registered
   // step's cost now comes from a real `whatif` quote, with the declared
-  // billing mode as the FLOOR and the fallback — this used to read "not a
-  // whatIf", which was the defect, not the design. The textToImage path
+  // billing mode as the FLOOR — this used to read "not a whatIf", which was the
+  // defect, not the design. The textToImage path
   // below stays byte-identical (we only ADD a branch).
   if (input.body.kind === 'step') {
     return isPassThroughStepBody(input.body)
@@ -10789,8 +10789,8 @@ async function estimateStepWorkflow(opts: {
   // misleading `1` this change exists to stop showing.
   //
   // These throws are DETERMINISTIC — the same params refuse identically on both
-  // paths — so surfacing them is what makes the estimate honest. Only the
-  // orchestrator ROUND-TRIP, which is transient, is allowed to degrade.
+  // paths — so surfacing them is what makes the estimate honest. A failed
+  // orchestrator ROUND-TRIP becomes a coded `step_quote_*` snapshot instead.
   const plan = planStepSpend(step, params, variant);
   const orchestratorStep = buildStepOrchestratorStep(step, params, plan);
 
@@ -10818,10 +10818,10 @@ async function estimateStepWorkflow(opts: {
   // merely preferred the quote would under-display whenever the quote falls
   // below the floor — the one direction a block cannot defend against.
   //
-  // 🔴 THE FLOOR IS THE SUBMIT'S OWN, NOT `estimateStepBuzz`'s — they are
-  // DIFFERENT DERIVATIONS and only one of them binds. `estimateStepBuzz` is
-  // params-driven and un-ceiled (`step.estimateBuzz(params)`); the submit
-  // reserves `Math.ceil(plan.reserveBuzz)`, i.e. variant-driven and ceiled.
+  // 🔴 THE FLOOR IS THE SUBMIT'S OWN, NOT the entry's display estimate — they
+  // are DIFFERENT DERIVATIONS and only one of them binds. `step.estimateBuzz` is
+  // params-driven and un-ceiled; the submit reserves `Math.ceil(plan.reserveBuzz)`,
+  // i.e. variant-driven and ceiled.
   // Registry load asserts the two agree only at CANONICAL params
   // (`steps/index.ts` — `estimateBuzz(canonicalParamsFor(v)) === priceForVariant(v)`)
   // and nothing re-checks it at request time, so an entry whose `estimateBuzz`
@@ -10889,10 +10889,7 @@ async function estimateStepWorkflow(opts: {
  * `classifyQuoteFailure` so the estimate can tell the block which cause it was.
  * The SUBMIT path runs its own quote and does NOT catch.
  *
- * 🔴 EVERY OUTCOME IS COUNTED, INCLUDING THE DEGRADED ONE. A silent fallback
- * would make "the block saw a live quote" and "the orchestrator was down and the
- * block saw the floor again" indistinguishable in production — which is the same
- * shape of unmeasured assertion this whole change exists to remove. The pair is
+ * 🔴 EVERY OUTCOME IS COUNTED, INCLUDING THE FAILED ONE. The pair is
  * deliberate: `estimate_absent` alone is unreadable, because a flat zero cannot
  * be told apart from an estimate path that never runs. Read the ratio.
  *
