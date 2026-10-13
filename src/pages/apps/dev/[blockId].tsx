@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Alert, Box, Code, Stack, Text, Title } from '@mantine/core';
 import { useRouter } from 'next/router';
 import { DevTunnelBlockHost } from '~/components/AppBlocks/DevTunnelBlockHost';
@@ -113,16 +113,32 @@ export const getServerSideProps = createServerSideProps<DevTunnelFrame>({
   },
 });
 
+/**
+ * The host this document's CSP lets it frame. It is fixed when the document is loaded, so it is
+ * read from the document's own data, never from props, which client-side navigation replaces.
+ */
+function documentFrameHost(propsHost: string | null): string | null {
+  if (typeof window === 'undefined') return propsHost;
+  const doc = (window as { __NEXT_DATA__?: { page?: string; props?: { pageProps?: unknown } } })
+    .__NEXT_DATA__;
+  // Loaded as another page, the document carries no route-scoped CSP to conflict with.
+  if (doc?.page !== '/apps/dev/[blockId]') return null;
+  const host = (doc.props?.pageProps as { host?: unknown } | undefined)?.host;
+  return typeof host === 'string' ? host : null;
+}
+
 export default function DevTunnelPage({ iframeSrc, host, dnsPending, ...app }: DevTunnelFrame) {
   const { appName, blockId } = app;
   const router = useRouter();
-  // This document's CSP allows framing only the host it was served with. Props re-fetched after
-  // the tunnel restarted name a new host, which only a fresh document can frame.
-  const [servedHost] = useState(host);
+  // Props naming a host other than the one this document may frame (the tunnel restarted, or
+  // this page was reached client-side) need a fresh document to frame it.
+  const [servedHost] = useState(() => documentFrameHost(host));
   const hostChanged = !!servedHost && !!host && host !== servedHost;
+  const routerRef = useRef(router);
+  routerRef.current = router;
   useEffect(() => {
-    if (hostChanged) router.reload();
-  }, [hostChanged, router]);
+    if (hostChanged) routerRef.current.reload();
+  }, [hostChanged]);
 
   return (
     <>
@@ -131,6 +147,7 @@ export default function DevTunnelPage({ iframeSrc, host, dnsPending, ...app }: D
         {hostChanged ? null : dnsPending ? (
           <Box style={{ height: '60vh' }}>
             <DevTunnelDnsGate
+              key={blockId}
               blockId={blockId}
               // Re-runs the server props, which sign the entry URL once the host resolves.
               onSettled={() => router.replace(router.asPath, undefined, { scroll: false })}

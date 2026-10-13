@@ -49,6 +49,8 @@ export function DevTunnelDnsGate({
   const settled = !!data && (!data.active || data.ready);
   const onSettledRef = useRef(onSettled);
   onSettledRef.current = onSettled;
+  const pollMsRef = useRef(pollMs);
+  pollMsRef.current = pollMs;
   // Keyed on the poll result, not on `settling`: one call per answer, never two in flight.
   useEffect(() => {
     if (!settled) return;
@@ -60,13 +62,15 @@ export function DevTunnelDnsGate({
       .catch(() => undefined)
       .finally(() => {
         // Still here, so the owner was not ready after all: wait a full interval, not zero.
-        if (mounted) resume = setTimeout(() => setSettling(false), pollMs);
+        if (mounted) resume = setTimeout(() => setSettling(false), pollMsRef.current);
       });
     return () => {
       mounted = false;
       clearTimeout(resume);
+      // Otherwise a pause interrupted by a new answer or a new key would never end.
+      setSettling(false);
     };
-  }, [settled, dataUpdatedAt, pollMs]);
+  }, [settled, dataUpdatedAt]);
 
   if (timedOut)
     return (

@@ -38,9 +38,18 @@ const { AppAssistantPreview } = await import('~/components/Apps/AppAssistant/App
 
 const HOUR = 60 * 60_000;
 /** Short enough that a resumed poll arrives within a test, long enough to tell from zero. */
-const POLL = 30;
+const POLL = 150;
 const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const lastOptions = () => m.useQuery.mock.calls.at(-1)![1] as QueryOptions;
+/** Every `enabled` the gate has rendered with, so a pause too short to sample is still seen. */
+const enabledHistory = () => m.useQuery.mock.calls.map(([, o]) => (o as QueryOptions).enabled);
+const pausedThenResumed = () => {
+  const history = enabledHistory();
+  const paused = history.indexOf(false);
+  return paused >= 0 && history.indexOf(true, paused) > paused;
+};
+const timeoutsOf = (spy: { mock: { calls: unknown[][] } }, ms: number) =>
+  spy.mock.calls.filter(([, delay]) => delay === ms).length;
 /** One poll answer; a new `dataUpdatedAt` is what tells the gate it is a new answer. */
 function answer(data: Readiness) {
   m.data = data;
@@ -81,11 +90,20 @@ describe('DevTunnelDnsGate', () => {
   });
 
   test('arms a three-minute bound when given no other', async () => {
+    expect(DEV_TUNNEL_DNS_WAIT_MS).toBe(180_000);
     const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout');
+    // Control: with another bound, nothing arms a three-minute timer.
+    const control = await renderWithProviders(
+      <DevTunnelDnsGate blockId="my-app" onSettled={vi.fn()} waitMs={HOUR} />
+    );
+    await expect.element(page.getByText('Preparing the preview…')).toBeVisible();
+    expect(timeoutsOf(setTimeoutSpy, 180_000)).toBe(0);
+    expect(timeoutsOf(setTimeoutSpy, HOUR)).toBe(1);
+    await control.unmount();
+
     await renderWithProviders(<DevTunnelDnsGate blockId="my-app" onSettled={vi.fn()} />);
     await expect.element(page.getByText('Preparing the preview…')).toBeVisible();
-    expect(DEV_TUNNEL_DNS_WAIT_MS).toBe(180_000);
-    expect(setTimeoutSpy.mock.calls.map(([, ms]) => ms)).toContain(180_000);
+    expect(timeoutsOf(setTimeoutSpy, 180_000)).toBe(1);
   });
 
   test('does not settle while the record is pending, then settles once it is published', async () => {
@@ -119,10 +137,10 @@ describe('DevTunnelDnsGate', () => {
     await vi.waitFor(() => expect(onSettled).toHaveBeenCalledTimes(1));
 
     // Through the pause and out the other side, with a new callback on every render.
-    await vi.waitFor(() => expect(lastOptions().enabled).toBe(false));
     await screen.rerender(gate());
-    await vi.waitFor(() => expect(lastOptions().enabled).toBe(true));
+    await vi.waitFor(() => expect(pausedThenResumed()).toBe(true));
     await screen.rerender(gate());
+    await pause(50);
     expect(onSettled).toHaveBeenCalledTimes(1);
 
     // Still mounted when the next poll answers: its owner was not ready after all.
@@ -143,9 +161,10 @@ describe('DevTunnelDnsGate', () => {
       expect(lastOptions()).toMatchObject({ enabled: false, refetchInterval: false })
     );
 
-    // An interval too long to elapse, so "off" here can only end by resuming early.
+    // Polling resumes one full interval after the owner finishes: here, an hour.
+    const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout');
     finish();
-    await pause(100);
+    await vi.waitFor(() => expect(timeoutsOf(setTimeoutSpy, HOUR)).toBe(1));
     expect(lastOptions()).toMatchObject({ enabled: false, refetchInterval: false });
     expect(onSettled).toHaveBeenCalledTimes(1);
   });
@@ -165,11 +184,31 @@ describe('DevTunnelDnsGate', () => {
       <DevTunnelDnsGate blockId="my-app" onSettled={onSettled} pollMs={POLL} waitMs={HOUR} />
     );
     await vi.waitFor(() => expect(onSettled).toHaveBeenCalledTimes(1));
-    await vi.waitFor(() => expect(lastOptions().enabled).toBe(false));
-    await vi.waitFor(() =>
-      expect(lastOptions()).toMatchObject({ enabled: true, refetchInterval: POLL })
-    );
+    await vi.waitFor(() => expect(pausedThenResumed()).toBe(true));
+    expect(lastOptions()).toMatchObject({ enabled: true, refetchInterval: POLL });
     await expect.element(page.getByText('Preparing the preview…')).toBeVisible();
+  });
+
+  test('a new app while paused starts polling for it rather than staying paused', async () => {
+    const onSettled = vi.fn(() => new Promise<void>(() => undefined));
+    answer({ active: true, ready: true });
+    const screen = await renderWithProviders(
+      <DevTunnelDnsGate blockId="my-app" onSettled={onSettled} waitMs={HOUR} />
+    );
+    await vi.waitFor(() => expect(lastOptions().enabled).toBe(false));
+
+    // The owner never finishes, and the gate is now asked about another app with no answer yet.
+    m.data = undefined;
+    await screen.rerender(
+      <DevTunnelDnsGate blockId="other-app" onSettled={onSettled} waitMs={HOUR} />
+    );
+    await vi.waitFor(() =>
+      expect(lastOptions()).toMatchObject({
+        enabled: true,
+        refetchInterval: DEV_TUNNEL_DNS_POLL_MS,
+      })
+    );
+    expect(m.useQuery.mock.calls.at(-1)![0]).toEqual({ blockId: 'other-app' });
   });
 
   test('settles when the tunnel has gone, so the owner can show that instead of waiting', async () => {
@@ -229,7 +268,7 @@ describe('DevTunnelDnsGate on a real query', () => {
     expect(fetchReadiness).toHaveBeenCalledTimes(1);
 
     // Several intervals pass with the owner still busy.
-    await pause(POLL * 6);
+    await pause(POLL * 4);
     expect(fetchReadiness).toHaveBeenCalledTimes(1);
     expect(onSettled).toHaveBeenCalledTimes(1);
 
@@ -251,8 +290,10 @@ describe('DevTunnelDnsGate on a real query', () => {
     await expect
       .element(page.getByText('The preview is taking longer than usual to come online.'))
       .toBeVisible();
+    // A tick already in flight as the bound fell may still land; after that, nothing.
+    await pause(POLL * 2);
     const polls = fetchReadiness.mock.calls.length;
-    await pause(POLL * 6);
+    await pause(POLL * 4);
     expect(fetchReadiness).toHaveBeenCalledTimes(polls);
     expect(onSettled).not.toHaveBeenCalled();
   });

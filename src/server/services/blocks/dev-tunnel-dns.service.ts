@@ -9,7 +9,7 @@ const MAX_SERVERS = 2;
 const SERVERS_TTL_MS = 10 * 60_000;
 /** How long a failed nameserver discovery is remembered, so an outage is not paid per request. */
 const SERVERS_RETRY_MS = 15_000;
-/** At most one log line per window: a broken check fails on every poll of every waiting page. */
+/** One log line per failure kind per window: a broken check fails on every poll of every page. */
 const WARN_EVERY_MS = 15_000;
 
 // One try per query: the caller polls, so a retry here only delays the answer.
@@ -38,10 +38,11 @@ async function discoverServers(domain: string): Promise<string[]> {
   return [];
 }
 
-let lastWarnedAt = 0;
+const lastWarnedAt = new Map<string, number>();
 function warnCheckFailed(detail: { code?: string; error?: string }) {
-  if (Date.now() - lastWarnedAt < WARN_EVERY_MS) return;
-  lastWarnedAt = Date.now();
+  const kind = detail.code ?? detail.error ?? '';
+  if (Date.now() - (lastWarnedAt.get(kind) ?? 0) < WARN_EVERY_MS) return;
+  lastWarnedAt.set(kind, Date.now());
   // eslint-disable-next-line no-console
   console.warn(JSON.stringify({ event: 'app-blocks.dev-tunnel.dns-ready.error', ...detail }));
 }
@@ -51,7 +52,7 @@ let serversCache: { domain: string; servers: Promise<string[]>; expiresAt: numbe
 /** TEST-ONLY: forget the cached nameserver addresses and the log throttle. */
 export function __resetDevTunnelDnsServersForTest(): void {
   serversCache = null;
-  lastWarnedAt = 0;
+  lastWarnedAt.clear();
 }
 
 function authoritativeServers(domain: string): Promise<string[]> {

@@ -146,6 +146,12 @@ describe('isDevTunnelHostPublished', () => {
     }
   );
 
+  it('logs each kind of failure, even inside another kind’s window', async () => {
+    nameservers(fails('ETIMEOUT'), fails('ECONNREFUSED'));
+    await isDevTunnelHostPublished(HOST);
+    expect(warnings().map((w) => w.code)).toEqual(['ETIMEOUT', 'ECONNREFUSED']);
+  });
+
   it('logs a failing check once per window, not once per query', async () => {
     vi.useFakeTimers({ toFake: ['Date'] });
     nameservers(fails('ETIMEOUT'));

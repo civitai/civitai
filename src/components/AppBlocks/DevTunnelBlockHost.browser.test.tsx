@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import router from 'next/router';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
@@ -52,6 +52,12 @@ const FRAME = {
   dnsPending: false,
 };
 const PENDING = { ...FRAME, iframeSrc: null, dnsPending: true };
+const OTHER = 'dev-fedcba9876543210.apps.example';
+
+/** What the document was loaded with: Next's own data, which client-side navigation keeps. */
+function loadedAs(page: string, host: string | null) {
+  (window as { __NEXT_DATA__?: unknown }).__NEXT_DATA__ = { page, props: { pageProps: { host } } };
+}
 
 beforeEach(() => {
   m.useBlockToken.mockReset().mockReturnValue({ token: 't', error: null });
@@ -61,6 +67,10 @@ beforeEach(() => {
   vi.mocked(router.replace).mockClear();
   // The scaffold's shared `next/router` mock.
   (router as { asPath: string }).asPath = '/apps/dev/my-app';
+  loadedAs('/apps/dev/[blockId]', HOST);
+});
+afterEach(() => {
+  delete (window as { __NEXT_DATA__?: unknown }).__NEXT_DATA__;
 });
 
 describe('/apps/dev/[blockId] client', () => {
@@ -147,12 +157,45 @@ describe('/apps/dev/[blockId] client', () => {
     await expect.element(page.getByTestId('dns-gate')).toBeInTheDocument();
 
     // The tunnel restarted while the page waited: a new host, which this document's CSP forbids.
-    const other = 'dev-fedcba9876543210.apps.example';
     await screen.rerender(
-      <DevTunnelPage {...FRAME} host={other} iframeSrc={`https://${other}/?dev=t`} />
+      <DevTunnelPage {...FRAME} host={OTHER} iframeSrc={`https://${OTHER}/?dev=t`} />
     );
     await vi.waitFor(() => expect(router.reload).toHaveBeenCalledTimes(1));
     expect(m.hostProps, 'a host this document may not frame was mounted').toBeNull();
+  });
+
+  test('reached client-side with a host other than the one the document was loaded with, it reloads', async () => {
+    // Back to this page after the tunnel restarted elsewhere: the first props are already new.
+    await renderWithProviders(
+      <DevTunnelPage {...FRAME} host={OTHER} iframeSrc={`https://${OTHER}/?dev=t`} />
+    );
+    await vi.waitFor(() => expect(router.reload).toHaveBeenCalledTimes(1));
+    expect(m.hostProps, 'a host this document may not frame was mounted').toBeNull();
+  });
+
+  test('a document loaded as another page, or with no tunnel, frames a host without a reload', async () => {
+    // Another page's props, even one that happens to carry a `host`, say nothing about this CSP.
+    loadedAs('/apps', OTHER);
+    const first = await renderWithProviders(<DevTunnelPage {...FRAME} />);
+    await expect.element(page.getByTestId('page-block-host')).toBeInTheDocument();
+    await first.unmount();
+
+    loadedAs('/apps/dev/[blockId]', null);
+    m.hostProps = null;
+    const screen = await renderWithProviders(
+      <DevTunnelPage {...FRAME} iframeSrc={null} host={null} />
+    );
+    await expect.element(page.getByText('No active dev tunnel')).toBeInTheDocument();
+    await screen.rerender(<DevTunnelPage {...FRAME} />);
+    await expect.element(page.getByTestId('page-block-host')).toBeInTheDocument();
+    expect(router.reload).not.toHaveBeenCalled();
+  });
+
+  test('a new host that is still pending reloads rather than waiting under the old policy', async () => {
+    const screen = await renderWithProviders(<DevTunnelPage {...PENDING} />);
+    await expect.element(page.getByTestId('dns-gate')).toBeInTheDocument();
+    await screen.rerender(<DevTunnelPage {...PENDING} host={OTHER} />);
+    await vi.waitFor(() => expect(router.reload).toHaveBeenCalledTimes(1));
   });
 
   test('re-fetched props for the same host mount it without a reload', async () => {
