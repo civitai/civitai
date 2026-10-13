@@ -412,7 +412,7 @@ describe('finalizeCrucible — completion', () => {
 
   it('still completes the crucible when busting the cache fails', async () => {
     setupCrucible({ entryFee: 100 });
-    redisMock.redis.del.mockRejectedValue(new Error('redis down'));
+    redisMock.redis.del.mockRejectedValueOnce(new Error('redis down'));
 
     await expect(finalizeCrucible(1)).resolves.toBeDefined();
 
