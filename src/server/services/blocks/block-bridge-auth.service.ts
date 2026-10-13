@@ -103,37 +103,30 @@ import { sanitizeAppSlug } from '~/server/utils/apps-slug';
  * short-circuits ahead of the query. A dev token on a real, NOT-approved row
  * additionally pays a dev-tunnel lookup (two sysRedis GETs); no other token does.
  *
- * 🔴 AND THE ORDER THIS PUT THE RATE LIMITER IN. `checkBlockCatalogRateLimit` has five
- * call sites in `blocks.router.ts`, covering seven of the fifteen bridge procedures. Four
- * are in the procedure itself — `queryAppWorkflows`, `cancelAppWorkflow`, `getImagesByIds`
- * and `getMyViewer` — and the fifth is in the `authorizeBlockBuzzRead` helper, which
- * `getMyBuzzTransactions`, `getMyBuzzAccounts` and `getMyDailyCompensation` go through.
+ * 🔴 AND THE ORDER THIS PUT THE RATE LIMITER IN. Every `checkBlockCatalogRateLimit` call in
+ * `blocks.router.ts` — in a procedure body, in a router-local helper, or in the
+ * `rateLimit.check` a procedure hands `authorizeBlockBridgeViewer` — is keyed on the claims
+ * this helper returns, so it runs AFTER this helper. Which procedures charge that bucket is
+ * recorded by name in `RATE_LIMIT_DECISION_LEDGER`
+ * (`src/server/services/__tests__/no-unlimited-block-bridge-proc.test.ts`); read the
+ * population there, not from a count written here.
  *
- * ⚠️ NAMED, NOT WILDCARDED, AND THAT IS THE POINT. This said "the three `getMyBuzz*`
- * procs" until the round-2 audit, which is wrong in BOTH directions: `getMyDailyCompensation`
- * is behind the helper and is not a `getMyBuzz*` name, while `getMyBuzzBalance` IS one,
- * reaches this guard directly, and carries NO limiter of any kind. So a reader enumerating
- * the seven from that wildcard both missed a throttled proc and counted the one unthrottled
- * buzz read as throttled. `authorizeBlockBuzzRead`'s own docblock carries the
- * `getMyBuzzBalance` carve-out and explains why that proc cannot call the helper; this
- * cross-file sentence did not.
- *
- * All five sites run AFTER this helper, so an over-limit request has already paid the
- * Redis GET and the `findUnique` by the time the limiter refuses it. That is not free,
- * and it is not an oversight:
+ * So an over-limit request has already paid the Redis GET and the `findUnique` by the time
+ * the limiter refuses it. That is not free, and it is not an oversight:
  *   - The limiter CANNOT precede verification. It is keyed on `claims.blockInstanceId`,
  *     which only exists once the token has been verified — there is no earlier key to
  *     throttle on, so step 1 is a hard floor beneath it.
- *   - Moving it INTO this helper, between steps 1 and 2, would apply a 120-req/10s
- *     ceiling to EVERY bridge procedure rather than the seven that opted in —
+ *   - Moving it INTO this helper, between steps 1 and 2, would apply the catalog
+ *     ceiling to EVERY bridge procedure rather than the ones that opted in —
  *     `pollWorkflow` and `submitWorkflow` among them. Those are deliberately not on the
  *     catalog bucket, and a polling proc is exactly the one a shared ceiling would start
  *     refusing legitimately. That is an availability change, not a cleanup.
  *   - What the reorder would save, on requests ALREADY over the ceiling — the abusive
  *     tail, not the normal path — is this helper's Redis GET, its replica `findUnique`,
- *     AND everything the caller runs between this helper returning and the limiter. At
- *     all five sites that last part is `assertAppBlocksEnabledForTokenUser`, and it is the
- *     priciest of the three: it resolves the full `SessionUser` through
+ *     AND everything the caller runs between this helper returning and the limiter. On
+ *     the `authorizeBlockBridgeViewer` procedures that last part is
+ *     `assertAppBlocksEnabledForTokenUser`, and it is the priciest of the three: it
+ *     resolves the full `SessionUser` through
  *     `sessionClient.getSessionUserById` — a shared-cache read that falls through to an
  *     internal HTTP fetch against the auth hub on a miss — and then evaluates the
  *     App-Blocks flag (an in-process, cached Flipt eval).
@@ -141,7 +134,7 @@ import { sanitizeAppSlug } from '~/server/utils/apps-slug';
  *     the reorder would save is one Redis GET + one replica findUnique … roughly one
  *     op") — and the GET count is per the note above, not the one in this sentence. It is not roughly one op: on a session-cache miss it is a network round-trip.
  * The conclusion is unchanged, because it never rested on the cost: what decides it is the
- * availability argument above — a shared 120/10s ceiling would reach `pollWorkflow`. The
+ * availability argument above — a shared catalog ceiling would reach `pollWorkflow`. The
  * cost line only ever said the reorder was not worth making for its own sake, and a
  * larger saving on an over-limit request does not buy a ceiling on the polling procs.
  * So the order stands. If a bridge proc ever needs a cheaper refusal than this, the

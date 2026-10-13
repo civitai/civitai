@@ -518,7 +518,7 @@ describe('blocks.estimateWorkflowBatch — one catalog token, plus the cells buc
   });
 });
 
-describe('blocks.getMyBuzzBalance — the one buzz read outside the helper', () => {
+describe('blocks.getMyBuzzBalance', () => {
   it('REFUSES past the ceiling, with TOO_MANY_REQUESTS, before the buzz service call', async () => {
     mockCheckBlockCatalogRateLimit.mockResolvedValue(REFUSED);
 

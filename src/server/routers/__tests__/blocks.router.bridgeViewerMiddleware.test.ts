@@ -8,15 +8,17 @@ import type * as BridgeAuth from '~/server/services/blocks/block-bridge-auth.ser
 import type * as TokenAccess from '~/server/services/blocks/block-token-access.service';
 import type * as ConsentRevocationModule from '~/server/services/blocks/consent-revocation.service';
 import type * as RuntimeMetrics from '~/server/metrics/app-block-runtime.metrics';
+import type * as BuzzService from '~/server/services/buzz.service';
 import type * as CatalogRateLimit from '~/server/utils/block-catalog-rate-limit';
 
 /**
  * What the block-token characterisation suite cannot see about `authorizeBlockBridgeViewer`:
- * which identity reaches the limiter and the handler, the one step order no single-refusal
- * cell distinguishes, and what the middleware does when forced past its input type.
+ * which identity reaches the limiter, the handler and the buzz services, the one step order
+ * no single-refusal cell distinguishes, that `getMyBuzzBalance` counts its rate-limit
+ * refusals, and what the middleware does when forced past its input type.
  *
- * Every refusal code and message of `blocks.getMyViewer` is pinned there, per failure mode,
- * and is not repeated here.
+ * Every refusal code and message of the procedures on the middleware is pinned there, per
+ * failure mode, and is not repeated here.
  */
 
 const h = vi.hoisted(() => ({
@@ -25,6 +27,7 @@ const h = vi.hoisted(() => ({
   enabledFor: [] as number[],
   catalogLimit: vi.fn(),
   recordRefusal: vi.fn(),
+  buzz: vi.fn(),
 }));
 
 vi.mock('~/server/services/blocks/block-bridge-auth.service', async (importOriginal) => {
@@ -70,6 +73,15 @@ vi.mock('~/server/utils/block-catalog-rate-limit', async (importOriginal) => ({
 vi.mock('~/server/metrics/app-block-runtime.metrics', async (importOriginal) => ({
   ...(await importOriginal<typeof RuntimeMetrics>()),
   recordBlockBridgeRateLimitRefusal: (...a: unknown[]) => h.recordRefusal(...a),
+}));
+vi.mock('~/server/services/buzz.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof BuzzService>()),
+  getUserBuzzAccounts: (input: unknown) => h.buzz('getUserBuzzAccounts', input) ?? {},
+  getUserBuzzAccount: (input: unknown) => h.buzz('getUserBuzzAccount', input) ?? [],
+  getUserBuzzTransactions: (input: unknown) =>
+    h.buzz('getUserBuzzTransactions', input) ?? { cursor: null, transactions: [] },
+  getDailyCompensationRewardByUser: (input: unknown) =>
+    h.buzz('getDailyCompensationRewardByUser', input) ?? [],
 }));
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -152,6 +164,7 @@ beforeEach(() => {
     .mockImplementation(async (id: number) => ({ ...USER, id, username: usernameOf(id) }));
   h.catalogLimit.mockReset().mockResolvedValue({ allowed: true });
   h.recordRefusal.mockReset();
+  h.buzz.mockReset();
   check.mockReset().mockResolvedValue({ allowed: true });
   dbMock.dbRead.appBlock.findUnique.mockReset().mockResolvedValue({
     id: 'apb_row',
@@ -216,6 +229,50 @@ describe('authorizeBlockBridgeViewer', () => {
       code: 'UNAUTHORIZED',
       message: 'probe requires a viewer',
     });
+  });
+});
+
+describe('the buzz reads on the middleware', () => {
+  // Procedure, what its schema needs beside the token, the service it reads, the identity field.
+  const READS = [
+    ['getMyBuzzBalance', {}, 'getUserBuzzAccounts', 'userId'],
+    ['getMyBuzzTransactions', {}, 'getUserBuzzTransactions', 'accountId'],
+    ['getMyBuzzAccounts', {}, 'getUserBuzzAccount', 'accountId'],
+    [
+      'getMyDailyCompensation',
+      { date: new Date('2026-01-01T00:00:00Z') },
+      'getDailyCompensationRewardByUser',
+      'userId',
+    ],
+  ] as const;
+
+  async function read(proc: string, extra: object = {}) {
+    const caller = blocksRouter.createCaller(ctx() as never) as unknown as Record<
+      string,
+      (input: unknown) => Promise<unknown>
+    >;
+    return caller[proc]({ blockToken: await mint(), ...extra });
+  }
+
+  // The session user (7) is signed in and flag-enabled, so only the identity can differ.
+  it.each(READS)(
+    '%s reads the TOKEN SUBJECT, whoever is signed in',
+    async (proc, extra, service, identityField) => {
+      await read(proc, extra);
+
+      expect(h.buzz.mock.calls).toEqual([
+        [service, expect.objectContaining({ [identityField]: SUBJECT_ID })],
+      ]);
+    }
+  );
+
+  it('getMyBuzzBalance counts a refusal as itself on the catalog bucket, and only a refusal', async () => {
+    await read('getMyBuzzBalance');
+    expect(h.recordRefusal).not.toHaveBeenCalled();
+
+    h.catalogLimit.mockResolvedValue({ allowed: false });
+    await expect(read('getMyBuzzBalance')).rejects.toMatchObject({ code: 'TOO_MANY_REQUESTS' });
+    expect(h.recordRefusal.mock.calls).toEqual([['getMyBuzzBalance', 'catalog']]);
   });
 });
 

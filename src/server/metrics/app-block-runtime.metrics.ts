@@ -161,21 +161,15 @@ export type AppBlockEndpoint =
   // as a SET against an AST walk of `blocks.router.ts` — read it there, do not
   // re-count here.
   //
-  // MEASURED against that ledger (2026-09-24): of 17 bridge procedures, 14 are
-  // rate-limited and 11 of those charge `catalog`. Exactly FOUR call sites record
-  // a refusal — `pollWorkflow` (`poll`), `cancelWorkflow`, `estimateWorkflow` and
-  // `getMyBuzzBalance` (`catalog`). So **10 of 14 rate-limited procedures are
-  // silent, 8 of the 11 on `catalog`**: both app-subqueue procs, plus
-  // `previewPostFromApp`, `getImagesByIds`, `getMyViewer` and the three buzz
-  // self-reads that reach the limiter through `authorizeBlockBuzzRead`.
-  // `recordBlockBridgeRateLimitRefusal`'s OWN docblock says it is "called from the
-  // refusal branch of each limiter site", which is a third in-tree claim this
-  // count contradicts — 4 of 14, not each.
+  // WHO RECORDS, by name because the names can be grepped: `pollWorkflow` (`poll`),
+  // `cancelWorkflow`, `estimateWorkflow`, `estimateWorkflowBatch` and
+  // `getMyBuzzBalance`. Every other rate-limited bridge procedure sheds a request
+  // silently, and most of those charge `catalog` — both app-subqueue procs among
+  // them. `recordBlockBridgeRateLimitRefusal`'s OWN docblock says it is "called
+  // from the refusal branch of each limiter site", which this contradicts.
   //
-  // WHAT THAT MEANS FOR THE FILED FOLLOW-UP (civitai/civitai#5095): closing it
-  // delivers two of the eight. That is worth doing and does not make the
-  // `catalog` refusal series readable. Do not read this comment, or that issue,
-  // as saying the gap is shut.
+  // civitai/civitai#5095 tracks the silent `catalog` procedures. Do not read this
+  // comment as saying the gap is shut.
   | 'workflows_query'
   // The PER-VIEWER app-storage surface (`/api/v1/blocks/app-storage/{get,set,
   // delete,list,quota}`) — the v1 replacement for the postMessage APP_STORAGE_*

@@ -1,8 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
+  GUARD,
   ROUTER,
   bridgeProcAuth,
+  parse,
+  reachable,
   read,
+  routerProcedures,
   siblingInputLedger,
 } from './block-bridge-router-ast.harness';
 
@@ -64,9 +68,12 @@ const spliceIntoHandler = (text: string, before: string, after = '') =>
 describe('the bridge auth-mechanism scan can actually see what it claims to', () => {
   it('POSITIVE CONTROL — reads both mechanisms off the real router, a helper hop included', () => {
     expect(derived.get('getMyViewer')).toMatchObject({ middlewareUses: 1, inline: false });
-    expect(derived.get('getMyBuzzBalance')).toMatchObject({ middlewareUses: 0, inline: true });
-    // Reaches the guard through `authorizeBlockBuzzRead` and never names it.
-    expect(derived.get('getMyBuzzAccounts')).toMatchObject({ middlewareUses: 0, inline: true });
+    expect(derived.get('cancelWorkflow')).toMatchObject({ middlewareUses: 0, inline: true });
+    // Reaches the guard through `authorizeBlockPostRequest` and never names it: with no
+    // helpers to follow, the walk does not find the guard.
+    const previewPostFromApp = routerProcedures(parse(real)).get('previewPostFromApp');
+    expect(reachable(previewPostFromApp as never, new Map()).has(GUARD)).toBe(false);
+    expect(derived.get('previewPostFromApp')).toMatchObject({ middlewareUses: 0, inline: true });
   });
 
   it('a procedure that DROPS the middleware leaves the population — it has neither', () => {
