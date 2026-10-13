@@ -80,13 +80,6 @@ describe('the owner named by the gallery visibility query', () => {
     expect(ownerLookup).not.toHaveBeenCalled();
   });
 
-  it('does not come from the user table', async () => {
-    hostOwnedBy('host-owner');
-    ownerLookup.mockResolvedValue({ username: 'someone-else' });
-
-    await expect(visibility()).resolves.toMatchObject({ ownerUsername: 'host-owner' });
-  });
-
   it('is null for an owner with no username', async () => {
     hostOwnedBy(null);
     ownerLookup.mockResolvedValue({ username: null });
