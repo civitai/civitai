@@ -149,6 +149,12 @@ export function isAppFeedbackSubmitShortcut(event: {
 export const APP_FEEDBACK_SENT_MESSAGE =
   "Sent to the developer. You'll get a notification if they mark it resolved or won't fix.";
 
+/**
+ * How long the confirmation toast stays. Twice the app's 3s default: it is two sentences, and the
+ * second (when the sender will hear back) is said nowhere else.
+ */
+export const APP_FEEDBACK_SENT_TOAST_MS = 6000;
+
 export const APP_FEEDBACK_NOT_AVAILABLE_MESSAGE =
   "This app isn't accepting feedback from you right now.";
 export const APP_FEEDBACK_SIGNED_OUT_MESSAGE = 'Sign in to send feedback.';

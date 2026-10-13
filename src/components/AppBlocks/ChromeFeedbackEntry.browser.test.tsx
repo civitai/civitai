@@ -4,7 +4,7 @@ import { MantineProvider } from '@mantine/core';
 import '@mantine/core/styles.css';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import React from 'react';
-import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { beforeEach, describe, expect, onTestFinished, test, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 import { render } from 'vitest-browser-react';
 import type * as FeatureFlagsMod from '~/providers/FeatureFlagsProvider';
@@ -45,7 +45,8 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('~/utils/notifications', async (importOriginal) => ({
   ...(await importOriginal<typeof NotificationsMod>()),
-  showSuccessNotification: ({ message }: { message: unknown }) => mocks.successes.push(message),
+  showSuccessNotification: (toast: { message: unknown; autoClose?: unknown }) =>
+    mocks.successes.push({ message: toast.message, autoClose: toast.autoClose }),
 }));
 
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => mocks.user }));
@@ -264,8 +265,70 @@ const dialogContent = () =>
 /** Resolves once the modal has gone, with the toast as the only confirmation. */
 async function expectClosedWithToast() {
   await expect.element(modal()).not.toBeInTheDocument();
-  expect(mocks.successes).toEqual([SENT_MESSAGE]);
+  // 6s, not the helper's 3s default: two sentences, the second said nowhere else.
+  expect(mocks.successes).toEqual([{ message: SENT_MESSAGE, autoClose: 6000 }]);
   expect(page.getByText(SENT_MESSAGE).elements()).toHaveLength(0);
+}
+
+/**
+ * Chromium cannot open a real on-screen keyboard here, so `window.visualViewport` is replaced by
+ * a stand-in — the only input the dialog reads. It starts as "no keyboard" for the CURRENT
+ * viewport, so call it after `page.viewport(...)`. Restored when the test finishes.
+ */
+type FakeViewport = EventTarget & { height: number; offsetTop: number };
+const realViewport = Object.getOwnPropertyDescriptor(window, 'visualViewport');
+function installFakeViewport(): FakeViewport {
+  const fake: FakeViewport = Object.assign(new EventTarget(), {
+    height: window.innerHeight,
+    offsetTop: 0,
+  });
+  Object.defineProperty(window, 'visualViewport', { configurable: true, value: fake });
+  onTestFinished(() => {
+    if (realViewport) Object.defineProperty(window, 'visualViewport', realViewport);
+    else delete (window as { visualViewport?: unknown }).visualViewport;
+  });
+  return fake;
+}
+/** Show a keyboard `px` tall (0 hides it). Returns the y of the visible area's bottom edge. */
+function showKeyboard(fake: FakeViewport, px: number): number {
+  fake.height = window.innerHeight - px;
+  fake.dispatchEvent(new Event('resize'));
+  return fake.height;
+}
+/**
+ * Mantine's Textarea turns `autosize` off under test (it renders 2 rows, ~56px), so every
+ * geometry assertion would otherwise measure a shorter form than production's 4-row minimum and
+ * 10-row maximum. These are those two heights, forced.
+ */
+const TEXTAREA_4_ROWS_PX = 100;
+const TEXTAREA_10_ROWS_PX = 230;
+function forceTextareaHeight(px: number) {
+  const el = messageBox().element() as HTMLTextAreaElement;
+  el.style.height = `${px}px`;
+  el.style.minHeight = `${px}px`;
+  expect(Math.round(el.getBoundingClientRect().height)).toBe(px);
+}
+/**
+ * With the keyboard's top edge at `visibleBottom`: the whole dialog is inside the visible area,
+ * and Send is either visible already or can be scrolled into it inside the dialog.
+ */
+async function expectSendReachable(visibleBottom: number, { mustScroll }: { mustScroll: boolean }) {
+  const box = dialogContent() as HTMLElement;
+  await vi.waitFor(() => {
+    const r = box.getBoundingClientRect();
+    expect(r.top).toBeGreaterThanOrEqual(0);
+    expect(r.bottom).toBeLessThanOrEqual(visibleBottom + 1);
+  });
+  const scrolls = box.scrollHeight > box.clientHeight + 1;
+  expect(scrolls).toBe(mustScroll);
+  if (scrolls) {
+    expect(getComputedStyle(box).overflowY).toBe('auto');
+    box.scrollTop = box.scrollHeight;
+    expect(box.scrollTop).toBeGreaterThan(0);
+  }
+  const send = rectOf(sendButton().element());
+  expect(send.bottom).toBeLessThanOrEqual(visibleBottom);
+  expect(send.top).toBeGreaterThanOrEqual(box.getBoundingClientRect().top);
 }
 
 /** The alpha channel of a computed `rgb()`/`rgba()` colour (1 when it has none). */
@@ -607,6 +670,22 @@ describe('keyboard submit', () => {
     await vi.waitFor(() => expect(mocks.createInputs).toHaveLength(1));
   });
 
+  test('two Ctrl+Enter keydowns before the pending render send once', async () => {
+    await openFeedbackModal();
+    await userEvent.fill(messageBox().element() as HTMLElement, 'once only');
+    const box = messageBox().element() as HTMLTextAreaElement;
+    const keydown = () =>
+      box.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, bubbles: true })
+      );
+    // Same tick: React has not re-rendered between them, so neither the disabled textarea nor
+    // `isPending` stands in the second one's way.
+    keydown();
+    keydown();
+    await expectClosedWithToast();
+    expect(mocks.createInputs).toHaveLength(1);
+  });
+
   test('Ctrl+Enter on an empty message sends nothing', async () => {
     await openFeedbackModal();
     await vi.waitFor(() => expect(document.activeElement).toBe(messageBox().element()));
@@ -678,6 +757,19 @@ describe('submitting', () => {
       expect(mocks.successes).toHaveLength(0);
     });
   }
+});
+
+describe('after an inline error', () => {
+  test('the kept text can be sent again', async () => {
+    mocks.createResult = { kind: 'error', code: 'TOO_MANY_REQUESTS', message: 'Slow down' };
+    await openFeedbackModal();
+    await typeAndSend('second time lucky');
+    await expect.element(page.getByTestId('app-feedback-error')).toHaveTextContent('Slow down');
+    mocks.createResult = { kind: 'ok' };
+    await sendButton().click();
+    await expectClosedWithToast();
+    expect(mocks.createInputs).toHaveLength(2);
+  });
 });
 
 describe('alongside the review entry on the page host', () => {
@@ -850,37 +942,25 @@ describe('the phone bottom sheet (375×720)', () => {
   });
 
   describe('with the on-screen keyboard up', () => {
-    // Chromium cannot open a real keyboard here, so `window.visualViewport` is replaced by a
-    // stand-in whose height is set per test — the only input the sheet reads.
-    const own = Object.getOwnPropertyDescriptor(window, 'visualViewport');
-    let fake: EventTarget & { height: number; offsetTop: number };
-    beforeEach(() => {
-      fake = Object.assign(new EventTarget(), { height: 720, offsetTop: 0 });
-      Object.defineProperty(window, 'visualViewport', { configurable: true, value: fake });
-      return () => {
-        if (own) Object.defineProperty(window, 'visualViewport', own);
-        else delete (window as { visualViewport?: unknown }).visualViewport;
-      };
-    });
-
     test('the sheet rides above a 300px keyboard and drops back when it closes', async () => {
+      const fake = installFakeViewport();
       await openFeedbackModal();
+      forceTextareaHeight(TEXTAREA_4_ROWS_PX);
       // CONTROL: keyboard down, the sheet is on the bottom edge.
       expect(Math.abs(window.innerHeight - (await settledDialogRect()).bottom)).toBeLessThanOrEqual(
         1
       );
-      fake.height = 420;
-      fake.dispatchEvent(new Event('resize'));
+      const visible = showKeyboard(fake, 300);
+      expect(visible).toBe(420);
       await vi.waitFor(() =>
         expect(Math.abs(dialogContent()!.getBoundingClientRect().bottom - 420)).toBeLessThanOrEqual(
           1
         )
       );
-      // Send is above the keyboard, not under it.
-      expect(rectOf(sendButton().element()).bottom).toBeLessThanOrEqual(420);
+      // At the 4-row minimum everything fits above the keyboard with no scrolling.
+      await expectSendReachable(420, { mustScroll: false });
       expect(rectOf(messageBox().element()).top).toBeGreaterThanOrEqual(0);
-      fake.height = 720;
-      fake.dispatchEvent(new Event('resize'));
+      showKeyboard(fake, 0);
       await vi.waitFor(() =>
         expect(Math.abs(dialogContent()!.getBoundingClientRect().bottom - 720)).toBeLessThanOrEqual(
           1
@@ -888,7 +968,16 @@ describe('the phone bottom sheet (375×720)', () => {
       );
     });
 
+    test('a 10-row message over a 360px keyboard: the sheet scrolls and Send can be reached', async () => {
+      const fake = installFakeViewport();
+      await openFeedbackModal();
+      await settledDialogRect();
+      forceTextareaHeight(TEXTAREA_10_ROWS_PX);
+      await expectSendReachable(showKeyboard(fake, 360), { mustScroll: true });
+    });
+
     test('iOS pans the visual viewport: only the part below it counts as keyboard', async () => {
+      const fake = installFakeViewport();
       await openFeedbackModal();
       await settledDialogRect();
       fake.height = 420;
@@ -900,6 +989,46 @@ describe('the phone bottom sheet (375×720)', () => {
         )
       );
     });
+  });
+});
+
+describe('the wide dialog on a touch device (1024×768) with the on-screen keyboard up', () => {
+  // A tablet, or a phone held sideways, is wider than the `sm` rule, so it gets the Modal — which
+  // is bottom-anchored and would sit under the keyboard.
+  beforeEach(async () => {
+    await page.viewport(1024, 768);
+  });
+
+  test('the dialog rides above a 300px keyboard and returns to its 10dvh offset after', async () => {
+    const fake = installFakeViewport();
+    await openFeedbackModal();
+    forceTextareaHeight(TEXTAREA_4_ROWS_PX);
+    expect(dialogContent()?.classList.contains('mantine-Modal-content')).toBe(true);
+    // CONTROL: keyboard down, 10dvh (76.8px) above the bottom — i.e. under where a keyboard goes.
+    const resting = await settledDialogRect();
+    expect(Math.abs(window.innerHeight - resting.bottom - 76.8)).toBeLessThanOrEqual(1);
+    expect(resting.bottom).toBeGreaterThan(468);
+    const visible = showKeyboard(fake, 300);
+    expect(visible).toBe(468);
+    // An 8px gap above the keyboard.
+    await vi.waitFor(() =>
+      expect(Math.abs(dialogContent()!.getBoundingClientRect().bottom - 460)).toBeLessThanOrEqual(1)
+    );
+    await expectSendReachable(468, { mustScroll: false });
+    showKeyboard(fake, 0);
+    await vi.waitFor(() =>
+      expect(
+        Math.abs(window.innerHeight - dialogContent()!.getBoundingClientRect().bottom - 76.8)
+      ).toBeLessThanOrEqual(1)
+    );
+  });
+
+  test('a 10-row message over a 468px keyboard (300px visible): the dialog scrolls and Send can be reached', async () => {
+    const fake = installFakeViewport();
+    await openFeedbackModal();
+    await settledDialogRect();
+    forceTextareaHeight(TEXTAREA_10_ROWS_PX);
+    await expectSendReachable(showKeyboard(fake, 468), { mustScroll: true });
   });
 });
 

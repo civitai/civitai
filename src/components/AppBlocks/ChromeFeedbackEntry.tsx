@@ -11,7 +11,7 @@ import {
 } from '@mantine/core';
 import { IconMessage2 } from '@tabler/icons-react';
 import type { ReactNode } from 'react';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 
 import { MobileMenuDrawer } from '~/components/Drawer/MobileMenuDrawer';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -26,6 +26,7 @@ import type { AppFeedbackRequest } from './appFeedbackChrome';
 import type { BlockHostSurface } from './blockInitFragmentGate';
 import {
   APP_FEEDBACK_SENT_MESSAGE,
+  APP_FEEDBACK_SENT_TOAST_MS,
   appFeedbackCharacterCounter,
   appFeedbackEntryRequest,
   appFeedbackModalTitle,
@@ -163,6 +164,8 @@ export const APP_FEEDBACK_DESKTOP_BOTTOM_OFFSET = '10dvh';
  * behind the sheet while the user describes it; the sheet itself stays opaque.
  */
 export const APP_FEEDBACK_SHEET_SCRIM_OPACITY = 0.25;
+/** Desktop-width dialog with an on-screen keyboard up: the gap kept above the keyboard. */
+const APP_FEEDBACK_KEYBOARD_GAP_PX = 8;
 
 export function AppFeedbackModal({
   target,
@@ -173,8 +176,12 @@ export function AppFeedbackModal({
 }) {
   // Same viewport rule as `ReviewListingModal`: a modal IS the viewport.
   const isMobile = useIsMobile({ type: 'media' });
-  // Only the sheet needs it: the desktop dialog is not under an on-screen keyboard.
-  const keyboardInset = useVisualViewportBottomInset(isMobile);
+  // Both renderings sit at the bottom of the viewport, so both are under an on-screen keyboard:
+  // the wide one too, on a tablet or a phone held sideways. 0 when no keyboard is showing.
+  const keyboardInset = useVisualViewportBottomInset();
+  // Set in the same tick as the send, which `create.isPending` is not: it only turns true on the
+  // next render, so two keydowns or clicks delivered before that render would both get through.
+  const sending = useRef(false);
   const { request } = target;
   const [message, setMessage] = useState('');
   // Not `useFeedbackSubmission`: that hook attaches host-page diagnostics (session id, console
@@ -183,7 +190,10 @@ export function AppFeedbackModal({
     // A sent message needs no second screen: close and confirm with a toast. An error has no
     // such path — it renders inline below and the dialog stays open with the text kept.
     onSuccess: () => {
-      showSuccessNotification({ message: APP_FEEDBACK_SENT_MESSAGE });
+      showSuccessNotification({
+        message: APP_FEEDBACK_SENT_MESSAGE,
+        autoClose: APP_FEEDBACK_SENT_TOAST_MS,
+      });
       onClose();
     },
   });
@@ -191,8 +201,14 @@ export function AppFeedbackModal({
   const counter = appFeedbackCharacterCounter(message.length);
 
   const submit = () => {
-    if (!canSubmitAppFeedback(message) || create.isPending) return;
-    create.mutate(buildAppFeedbackCreateInput(request, message));
+    if (!canSubmitAppFeedback(message) || sending.current) return;
+    sending.current = true;
+    create.mutate(buildAppFeedbackCreateInput(request, message), {
+      // Released on an error so the kept text can be sent again; success closes the dialog.
+      onSettled: () => {
+        sending.current = false;
+      },
+    });
   };
   // Esc, the close button and the scrim all come through here; none may close mid-submit.
   const close = () => (create.isPending ? undefined : onClose());
@@ -267,7 +283,22 @@ export function AppFeedbackModal({
       yOffset={APP_FEEDBACK_DESKTOP_BOTTOM_OFFSET}
       // Bottom-anchored: Mantine's inner box is a flex row whose cross-axis alignment is the
       // dialog's vertical position (`centered` sets it to `center`, the default is the top).
-      styles={{ inner: { alignItems: 'flex-end' } }}
+      // With a keyboard up, that box ends at the keyboard's top edge instead of the viewport's,
+      // and the 10dvh offsets shrink to a small gap so the dialog keeps what height is left;
+      // its `maxHeight` is then the box's, and the dialog scrolls inside it.
+      styles={
+        keyboardInset > 0
+          ? {
+              inner: {
+                alignItems: 'flex-end',
+                bottom: keyboardInset,
+                paddingTop: `max(${APP_FEEDBACK_KEYBOARD_GAP_PX}px, var(--safe-area-inset-top, 0px))`,
+                paddingBottom: APP_FEEDBACK_KEYBOARD_GAP_PX,
+              },
+              content: { maxHeight: '100%' },
+            }
+          : { inner: { alignItems: 'flex-end' } }
+      }
       data-testid="app-feedback-modal"
     >
       {body}
@@ -284,8 +315,9 @@ export function AppFeedbackModal({
  *   than of the viewport (the wrapper's `90dvh` would run under the keyboard).
  * - A lighter scrim ({@link APP_FEEDBACK_SHEET_SCRIM_OPACITY}).
  * - Tighter header and body: the header drops Mantine's 60px minimum height and the body's sides
- *   are 12px, because vertical room is what the keyboard takes. `MobileMenuDrawer` merges `styles`
- *   per slot, so each slot set here restates the wrapper's values it keeps.
+ *   are 12px, because vertical room is what the keyboard takes. A slot passed to
+ *   `MobileMenuDrawer` replaces the wrapper's whole slot, so each one set here restates the
+ *   wrapper's values it keeps.
  *
  * Unchanged: the bottom safe-area inset is paid by the global `.mantine-Drawer-content` rule in
  * `src/styles/globals.css`; neither this nor the wrapper sets the `content` slot's padding.
