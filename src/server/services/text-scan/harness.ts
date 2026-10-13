@@ -4,17 +4,18 @@ import * as z from 'zod';
 import { dbRead } from '~/server/db/client';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
 import { evaluateTextScan } from '~/server/services/text-scan/evaluate';
-import { findChatCompletionStep, parseTextScanStep } from '~/server/services/text-scan/parse';
+import { mergeTextScanOutputs } from '~/server/services/text-scan/merge';
+import { parseTextScanSteps, textScanStepsBySegment } from '~/server/services/text-scan/parse';
 import type { ChatCompletionStepLike } from '~/server/services/text-scan/parse';
 import { readTextScanRollouts, textScanEmEntityType } from '~/server/services/text-scan/mode';
 import { getTextScanProfile, isTextScanEntityType } from '~/server/services/text-scan/profiles';
 import '~/server/services/text-scan/profiles/index';
 import {
   composeTextScanMessages,
-  composeUserMessage,
   getActiveTextScanPrompts,
   getTextScanConfig,
   insertTextScanPrompt,
+  MAX_SEGMENTS_LIMIT,
   MissingTextScanPromptError,
   setTextScanConfig,
   setTextScanRollout,
@@ -22,7 +23,8 @@ import {
   TEXT_SCAN_PROMPT_KEY,
 } from '~/server/services/text-scan/prompt';
 import type { TextScanResult } from '~/server/services/text-scan/record';
-import { buildTextScanStep, textScanContentHash } from '~/server/services/text-scan/submit';
+import { composeUserText, segmentUserText } from '~/server/services/text-scan/segment';
+import { buildTextScanSteps, textScanContentHash } from '~/server/services/text-scan/submit';
 import { TEXT_SCAN_LABELS } from '~/server/services/text-scan/types';
 import type {
   TextScanDeclared,
@@ -82,8 +84,8 @@ function refineTimeBudget(noun: string) {
 const textsWithinBudget = refineTimeBudget('texts');
 const entitiesWithinBudget = refineTimeBudget('entities');
 /**
- * Sized for real entities, which production composes in full and then truncates to `maxInputChars`:
- * a Model emits up to three fields per version. Mirrored by the moderator lab
+ * Sized for real entities, which production composes in full and then splits into segments of
+ * `maxInputChars`: a Model emits up to three fields per version. Mirrored by the moderator lab
  * (apps/moderator/src/lib/text-scan-lab/limits.ts), which checks each text before sending.
  */
 export const TEXT_SCAN_HARNESS_LIMITS = {
@@ -143,6 +145,7 @@ export const textScanHarnessSchema = z.discriminatedUnion('action', [
       .strictObject({
         model: z.string().min(1).optional(),
         maxInputChars: z.number().int().positive().optional(),
+        maxSegments: z.number().int().min(1).max(MAX_SEGMENTS_LIMIT).optional(),
         thinking: z.boolean().optional(),
       })
       .refine((c) => Object.keys(c).length > 0, 'empty config patch'),
@@ -257,7 +260,7 @@ type ComposeInput = {
   thinking?: boolean;
 };
 
-async function composeStep({ subject, profile, promptOverrides, model, thinking }: ComposeInput) {
+async function composeSteps({ subject, profile, promptOverrides, model, thinking }: ComposeInput) {
   const [config, active] = await Promise.all([getTextScanConfig(), getActiveTextScanPrompts()]);
   const prompts = { ...active };
   for (const [key, content] of Object.entries(promptOverrides ?? {}))
@@ -270,6 +273,7 @@ async function composeStep({ subject, profile, promptOverrides, model, thinking 
       labels: profile.labels,
       subject,
       maxInputChars: config.maxInputChars,
+      maxSegments: config.maxSegments,
     });
   } catch (e) {
     if (e instanceof MissingTextScanPromptError)
@@ -281,9 +285,9 @@ async function composeStep({ subject, profile, promptOverrides, model, thinking 
     ok: true as const,
     composed,
     thinking: useThinking,
-    step: buildTextScanStep({
+    steps: buildTextScanSteps({
       system: composed.system,
-      user: composed.user,
+      segments: composed.segments,
       model: model ?? config.model,
       labels: profile.labels,
       thinking: useThinking,
@@ -347,19 +351,21 @@ function unfinishedWorkflowError(
 }
 
 async function scanComposed(input: ComposeInput & { wait: number }) {
-  const ctx = await composeStep(input);
+  const ctx = await composeSteps(input);
   if (!ctx.ok) return ctx;
   const startedAt = Date.now();
   const { data, error } = await submitWorkflow({
     client: internalOrchestratorClient,
     query: { wait: input.wait },
-    body: { currencies: [], steps: [ctx.step] },
+    body: { currencies: [], steps: ctx.steps },
   });
   if (!data?.id) return { ok: false as const, error: workflowErrorText(error, 'no workflow id') };
 
   const workflow = data as { id: string; status?: string; steps?: unknown };
-  const step = findChatCompletionStep(workflow.steps);
-  const unfinished = unfinishedWorkflowError(workflow, step, input.wait);
+  const bySegment = textScanStepsBySegment(workflow.steps);
+  const stepList = [...bySegment.values()];
+  const failedStep = stepList.find((step) => step.status !== 'succeeded') ?? stepList[0];
+  const unfinished = unfinishedWorkflowError(workflow, failedStep, input.wait);
   if (unfinished)
     return {
       ok: false as const,
@@ -367,35 +373,55 @@ async function scanComposed(input: ComposeInput & { wait: number }) {
       workflowId: workflow.id,
       workflowStatus: workflow.status,
     };
-  const parse = parseTextScanStep(step, input.profile.labels);
+
+  const segmentInfo = {
+    segments: ctx.steps.length,
+    inputChars: ctx.composed.inputChars,
+    inputCut: ctx.composed.inputCut,
+  };
+  const parsed = parseTextScanSteps(workflow.steps, input.profile.labels, ctx.steps.length);
+  if (!parsed.ok)
+    return {
+      ok: true as const,
+      workflowId: data.id,
+      promptIds: ctx.composed.promptIds,
+      thinking: ctx.thinking,
+      parse: parsed,
+      outcome: null,
+      rawContent: bySegment.get(parsed.segment ?? 0)?.output?.choices?.[0]?.message?.content,
+      elapsedMs: Date.now() - startedAt,
+      ...segmentInfo,
+    };
+  const merged = mergeTextScanOutputs(parsed.outputs, input.profile.labels);
   return {
     ok: true as const,
     workflowId: data.id,
     promptIds: ctx.composed.promptIds,
     thinking: ctx.thinking,
-    parse,
-    outcome: parse.ok
-      ? evaluateTextScan(parse.output, input.subject.declared, input.profile.labels)
-      : null,
-    rawContent: parse.ok ? undefined : step?.output?.choices?.[0]?.message?.content,
+    parse: { ok: true as const, output: merged.output },
+    outcome: evaluateTextScan(merged.output, input.subject.declared, input.profile.labels),
+    flaggedSegments: merged.flaggedSegments,
     elapsedMs: Date.now() - startedAt,
+    ...segmentInfo,
   };
 }
 
 async function quoteComposed(input: ComposeInput) {
-  const ctx = await composeStep(input);
+  const ctx = await composeSteps(input);
   if (!ctx.ok) return ctx;
   const { data, error } = await submitWorkflow({
     client: internalOrchestratorClient,
     query: { whatif: true },
-    body: { currencies: [], steps: [ctx.step] },
+    body: { currencies: [], steps: ctx.steps },
   });
   const costTotal = data?.cost?.total;
   if (typeof costTotal !== 'number')
     return { ok: false as const, error: workflowErrorText(error, 'no cost in whatif response') };
+  const { system, segments } = ctx.composed;
   return {
     ok: true as const,
-    chars: ctx.composed.system.length + ctx.composed.user.length,
+    chars: segments.reduce((sum, segment) => sum + system.length + segment.length, 0),
+    segments: segments.length,
     costTotal,
   };
 }
@@ -465,10 +491,16 @@ async function composeEntities(entityType: TextScanEntityType, entityIds: number
     const subject = subjects.get(entityId);
     if (!subject) return { entityId, ok: false as const, error: 'entity not found' };
     if (isTooShort(subject, profile)) return { entityId, ok: false as const, error: 'too-short' };
+    const segmented = segmentUserText(subject, {
+      budget: config.maxInputChars,
+      maxSegments: config.maxSegments,
+    });
     return {
       entityId,
       ok: true as const,
-      text: composeUserMessage(subject, config.maxInputChars),
+      text: segmented.text,
+      segments: segmented.segments.map((segment) => ({ chars: segment.length })),
+      inputCut: segmented.inputCut,
       // An absent optional field loads as null text; callers take `fields` as non-blank strings.
       fields: subject.fields.flatMap(({ heading, text }) =>
         typeof text === 'string' && text.trim() ? [{ heading, text }] : []
@@ -535,7 +567,7 @@ async function sampleShadow(input: ShadowSampleInput) {
 
   const items = rows.map((row) => {
     const subject = subjects.get(row.entityId);
-    const text = subject ? composeUserMessage(subject, config.maxInputChars) : null;
+    const text = subject ? composeUserText(subject) : null;
     const verdict = row.result.labels[input.label];
     return {
       entityId: row.entityId,

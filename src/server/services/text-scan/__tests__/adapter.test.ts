@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as SubmitModule from '~/server/services/text-scan/submit';
 import type * as ModeModule from '~/server/services/text-scan/mode';
-import type * as PromptModule from '~/server/services/text-scan/prompt';
 
 vi.mock('~/server/services/text-scan/profiles/index', () => ({}));
 vi.mock('~/server/services/text-scan/submit', async (importOriginal) => ({
@@ -11,12 +10,6 @@ vi.mock('~/server/services/text-scan/submit', async (importOriginal) => ({
 vi.mock('~/server/services/text-scan/mode', async (importOriginal) => ({
   ...(await importOriginal<typeof ModeModule>()),
   getTextScanMode: vi.fn(),
-}));
-vi.mock('~/server/services/text-scan/prompt', async (importOriginal) => ({
-  ...(await importOriginal<typeof PromptModule>()),
-  getTextScanConfig: vi
-    .fn()
-    .mockResolvedValue({ model: 'm', maxInputChars: 1000, thinking: false }),
 }));
 
 const { createTextScanAdapter, createTextScanShadowAdapter, textScanShadowAdapters } = await import(

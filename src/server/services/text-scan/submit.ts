@@ -63,18 +63,25 @@ export type ScanEntityResult =
   | { status: 'submitted'; workflowId: string }
   | { status: 'failed' };
 
+/** Segment 0 keeps the pre-segmentation step name. */
+export function textScanStepName(segment: number) {
+  return segment === 0 ? 'textScan' : `textScan${segment}`;
+}
+
 export function buildTextScanStep({
   system,
   user,
   model,
   labels,
   thinking,
+  segment,
 }: {
   system: string;
   user: string;
   model: string;
   labels: TextScanLabel[];
   thinking: boolean;
+  segment?: number;
 }) {
   // The generated ChatCompletionMessage type declares only `role`; content is untyped upstream.
   const input: Record<string, unknown> = {
@@ -88,7 +95,33 @@ export function buildTextScanStep({
     chatTemplateKwargs: { enable_thinking: thinking },
     responseFormat: buildTextScanResponseFormat(labels),
   };
-  return { $type: 'chatCompletion', name: 'textScan', input } as ChatCompletionStepTemplate;
+  return {
+    $type: 'chatCompletion',
+    name: textScanStepName(segment ?? 0),
+    ...(segment === undefined ? {} : { metadata: { segment } }),
+    input,
+  } as ChatCompletionStepTemplate;
+}
+
+export function buildTextScanSteps({
+  system,
+  segments,
+  model,
+  labels,
+  thinking,
+}: {
+  system: string;
+  segments: string[];
+  model: string;
+  labels: TextScanLabel[];
+  thinking: boolean;
+}) {
+  // A one-segment scan stays byte-identical to the single-step workflow submitted before segments.
+  if (segments.length === 1)
+    return [buildTextScanStep({ system, user: segments[0], model, labels, thinking })];
+  return segments.map((user, segment) =>
+    buildTextScanStep({ system, user, model, labels, thinking, segment })
+  );
 }
 
 export function textScanContentHash({
@@ -244,6 +277,7 @@ export async function scanEntity({
       labels: profile.labels,
       subject,
       maxInputChars: config.maxInputChars,
+      maxSegments: config.maxSegments,
     });
   } catch (e) {
     if (!(e instanceof MissingTextScanPromptError)) throw e;
@@ -251,8 +285,9 @@ export async function scanEntity({
     return { status: 'skipped', reason: 'missing-prompt' };
   }
 
+  // The whole text, not the segments: an edit anywhere rescans.
   const contentHash = textScanContentHash({
-    user: composed.user,
+    user: composed.text,
     promptIds: composed.promptIds,
     model: config.model,
     thinking: config.thinking,
@@ -312,6 +347,8 @@ export async function scanEntity({
     textHash: textScanTextHash(subject),
     inputChars: composed.inputChars,
     inputCut: composed.inputCut,
+    segments: composed.segments.length,
+    scannedChars: composed.scannedChars,
     ...(subject.meta ? { subjectMeta: subject.meta } : {}),
   };
 
@@ -333,15 +370,13 @@ export async function scanEntity({
         tags: ['text-scan', entityType, mode],
         externalId,
         currencies: [],
-        steps: [
-          buildTextScanStep({
-            system: composed.system,
-            user: composed.user,
-            model: config.model,
-            labels: profile.labels,
-            thinking: config.thinking,
-          }),
-        ],
+        steps: buildTextScanSteps({
+          system: composed.system,
+          segments: composed.segments,
+          model: config.model,
+          labels: profile.labels,
+          thinking: config.thinking,
+        }),
         callbacks: [
           {
             url: textScanCallbackUrl(),
@@ -388,6 +423,7 @@ export async function scanEntity({
     entityId,
     mode,
     workflowId,
+    segments: composed.segments.length,
   }).catch(() => null);
   return { status: 'submitted', workflowId };
 }

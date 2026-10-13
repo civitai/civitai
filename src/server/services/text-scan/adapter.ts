@@ -5,11 +5,8 @@ import {
   textScanEmEntityType,
 } from '~/server/services/text-scan/mode';
 import { getTextScanProfile } from '~/server/services/text-scan/profiles';
-import {
-  composeUserMessage,
-  getTextScanConfig,
-  subjectTextLength,
-} from '~/server/services/text-scan/prompt';
+import { subjectTextLength } from '~/server/services/text-scan/prompt';
+import { composeUserText } from '~/server/services/text-scan/segment';
 import { scanEntity } from '~/server/services/text-scan/submit';
 import type { TextScanEntityType } from '~/server/services/text-scan/types';
 
@@ -43,13 +40,13 @@ export function createTextScanAdapter(
     resolveContent: async (ids) => {
       const profile = getTextScanProfile(entityType);
       if (!profile) return new Map();
-      const [subjects, config] = await Promise.all([profile.load(ids), getTextScanConfig()]);
+      const subjects = await profile.load(ids);
       const minChars = profile.minChars ?? 1;
       // Omitted ids take the retry cron's missing path (row deleted) instead of failing forever.
       return new Map(
         [...subjects]
           .filter(([, subject]) => subjectTextLength(subject) >= minChars)
-          .map(([id, subject]) => [id, composeUserMessage(subject, config.maxInputChars)])
+          .map(([id, subject]) => [id, composeUserText(subject)])
       );
     },
     submit: ({ entityId }) => submitViaTextScan(entityType, entityId),

@@ -23,7 +23,10 @@ vi.mock('~/server/services/text-scan/prompt', async (importOriginal) => ({
   getTextScanConfig: vi.fn(),
 }));
 
-const { scanEntity, textScanExternalId } = await import('~/server/services/text-scan/submit');
+const { scanEntity, textScanExternalId, textScanContentHash } = await import(
+  '~/server/services/text-scan/submit'
+);
+const { segmentUserText } = await import('~/server/services/text-scan/segment');
 const { registerTextScanProfile } = await import('~/server/services/text-scan/profiles');
 const { submitWorkflow } = await import('@civitai/client');
 const { getModerationAdapter } = await import('~/server/services/moderation-adapters');
@@ -36,7 +39,7 @@ const PROMPTS = {
   base: { id: 1, key: 'base', content: 'BASE PROMPT' },
   'label:nsfw': { id: 2, key: 'label:nsfw', content: 'NSFW DEF' },
 };
-const CONFIG = { model: 'air:test', maxInputChars: 1000, thinking: false };
+const CONFIG = { model: 'air:test', maxInputChars: 1000, maxSegments: 10, thinking: false };
 const load = vi.fn();
 registerTextScanProfile({ entityType: 'Post', labels: ['nsfw'], minChars: 5, load });
 
@@ -282,18 +285,122 @@ describe('scanEntity', () => {
     });
   });
 
-  it('carries inputChars and inputCut in the workflow metadata', async () => {
+  it('skips a subject whose every field is blank, so no empty step is submitted', async () => {
+    load.mockResolvedValue(
+      new Map([
+        [
+          7,
+          {
+            fields: [
+              { heading: 'Title', text: '   ' },
+              { heading: 'Body', text: null },
+            ],
+            declared: {},
+          },
+        ],
+      ])
+    );
+    expect(await scanEntity({ entityType: 'Post', entityId: 7 })).toEqual({
+      status: 'skipped',
+      reason: 'too-short',
+    });
+    expect(submitWorkflow).not.toHaveBeenCalled();
+  });
+
+  const words = (count: number) =>
+    Array.from({ length: count }, (_, i) => `w${String(i).padStart(4, '0')}`).join(' ');
+  const LONG = {
+    fields: [
+      { heading: 'Title', text: 'Hello world' },
+      { heading: 'Body', text: words(400) },
+    ],
+    declared: { nsfwLevel: 1 },
+  };
+  const sentBody = (call = 0) => vi.mocked(submitWorkflow).mock.calls[call][0].body!;
+
+  it('carries inputChars, inputCut, segments and scannedChars in the workflow metadata', async () => {
     await scanEntity({ entityType: 'Post', entityId: 7 });
-    expect(vi.mocked(submitWorkflow).mock.calls[0][0].body!.metadata).toMatchObject({
+    expect(sentBody().metadata).toMatchObject({
       inputChars: '## Title\nHello world'.length,
       inputCut: false,
+      segments: 1,
+      scannedChars: '## Title\nHello world'.length,
     });
-    vi.mocked(getTextScanConfig).mockResolvedValue({ ...CONFIG, maxInputChars: 5 });
+    load.mockResolvedValue(new Map([[7, LONG]]));
+    vi.mocked(getTextScanConfig).mockResolvedValue({ ...CONFIG, maxSegments: 1 });
     await scanEntity({ entityType: 'Post', entityId: 7 });
-    expect(vi.mocked(submitWorkflow).mock.calls[1][0].body!.metadata).toMatchObject({
-      inputChars: '## Title\nHello world'.length,
+    const expected = segmentUserText(LONG, { budget: 1000, maxSegments: 1 });
+    expect(sentBody(1).metadata).toMatchObject({
+      inputChars: expected.inputChars,
       inputCut: true,
+      segments: 1,
+      scannedChars: expected.scannedChars,
     });
+  });
+
+  it('submits one workflow whose steps are the segments, same system prompt in each', async () => {
+    load.mockResolvedValue(new Map([[7, LONG]]));
+    await scanEntity({ entityType: 'Post', entityId: 7 });
+    expect(submitWorkflow).toHaveBeenCalledTimes(1);
+    const expected = segmentUserText(LONG, { budget: 1000, maxSegments: 10 });
+    expect(expected.segments.length).toBeGreaterThanOrEqual(3);
+    const steps = sentBody().steps as any[];
+    expect(steps.map((s) => s.name)).toEqual(
+      expected.segments.map((_, i) => (i === 0 ? 'textScan' : `textScan${i}`))
+    );
+    expect(steps.map((s) => s.metadata)).toEqual(
+      expected.segments.map((_, segment) => ({ segment }))
+    );
+    expect(steps.map((s) => s.input.messages[1].content)).toEqual(expected.segments);
+    const systems = new Set(steps.map((s) => s.input.messages[0].content));
+    expect(systems.size).toBe(1);
+    expect(sentBody().metadata).toMatchObject({
+      segments: expected.segments.length,
+      inputCut: false,
+    });
+  });
+
+  it('keeps the contentHash of a text within the budget exactly as before', async () => {
+    await scanEntity({ entityType: 'Post', entityId: 7 });
+    expect(em.upsert.mock.calls[0][0].create.contentHash).toBe(
+      textScanContentHash({
+        user: '## Title\nHello world',
+        promptIds: { base: 1, nsfw: 2 },
+        model: 'air:test',
+        thinking: false,
+      })
+    );
+    const steps = sentBody().steps as any[];
+    expect(steps).toHaveLength(1);
+    expect(Object.keys(steps[0]).sort()).toEqual(['$type', 'input', 'name']);
+    expect(steps[0].name).toBe('textScan');
+    expect(steps[0].input.messages[1].content).toBe('## Title\nHello world');
+  });
+
+  it('hashes the full text, so an edit past the budget is rescanned', async () => {
+    load.mockResolvedValue(new Map([[7, LONG]]));
+    await scanEntity({ entityType: 'Post', entityId: 7 });
+    const edited = {
+      ...LONG,
+      fields: [LONG.fields[0], { heading: 'Body', text: `${words(400)} tail-edit` }],
+    };
+    load.mockResolvedValue(new Map([[7, edited]]));
+    await scanEntity({ entityType: 'Post', entityId: 7 });
+    const [first, second] = em.upsert.mock.calls.map(([args]) => args.create.contentHash);
+    expect(second).not.toBe(first);
+  });
+
+  it('a retry after a failed multi-segment scan resubmits every segment under a new externalId', async () => {
+    load.mockResolvedValue(new Map([[7, LONG]]));
+    await scanEntity({ entityType: 'Post', entityId: 7 });
+    const hash = em.upsert.mock.calls[0][0].create.contentHash;
+    em.findUnique.mockResolvedValueOnce(
+      row({ status: 'Failed', contentHash: hash, retryCount: 1, workflowId: 'wf-1' })
+    );
+    await scanEntity({ entityType: 'Post', entityId: 7, fromRetry: true });
+    expect(submitWorkflow).toHaveBeenCalledTimes(2);
+    expect((sentBody(1).steps as any[]).length).toBe((sentBody(0).steps as any[]).length);
+    expect(externalIdOf(1)).not.toBe(externalIdOf(0));
   });
 
   it('rescans unchanged content when forced, with a fresh externalId', async () => {
