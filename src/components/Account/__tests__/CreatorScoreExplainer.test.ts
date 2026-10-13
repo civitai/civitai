@@ -156,8 +156,6 @@ describe('UserScoreDisplay reports block', () => {
   });
 });
 
-// Tester (2026-10-13): the account card's bar summed to less than the headline because the
-// positive "Helping moderation" points were shown only to moderators.
 describe('UserScoreDisplay helping moderation row', () => {
   const card = (props: Record<string, unknown>, reportsActioned: number) =>
     visibleText(
