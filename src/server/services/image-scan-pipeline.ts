@@ -507,19 +507,15 @@ export type ScanOutcome = {
  *  - `blocked` (legacy mediaRating hard block, already written by the caller): only
  *    stamp provenance — re-auditing would recompute nsfwLevel/ingestion and silently
  *    un-block the image. A *prior* block is deliberately not sticky, so a moderator
- *    rescan can clear it. imageScanning never passes `blocked`.
+ *    rescan can clear it. imageScanning never passes `blocked`, so on that path only
+ *    `audit.blockedFor` and moderation rules re-block.
  *  - `audit.blockedFor` (prompt TOS/CSAM): block.
  *  - otherwise: Scanned, with moderation rules applied last so a rule Block/Hold
  *    takes precedence over the audit decision.
- * `scanFlagged` (imageScanning) holds the image for minor review after the audit and
- * moderation rules: it outranks a tag or new-user review, never a block or another review.
  */
-const YIELDS_TO_SCAN_REVIEW = new Set<string | null>([null, 'tag', 'newUser']);
-
 export async function resolveScanOutcome({
   image,
   blocked,
-  scanFlagged = false,
   pHash,
   workflowId,
   prompt,
@@ -528,8 +524,6 @@ export async function resolveScanOutcome({
 }: {
   image: ScanImage;
   blocked?: { reason: string | null };
-  /** The orchestrator refused the image under the rules it applies to generated images. */
-  scanFlagged?: boolean;
   pHash?: bigint;
   workflowId: string;
   prompt?: string;
@@ -615,16 +609,6 @@ export async function resolveScanOutcome({
         log,
       });
     }
-  }
-
-  // Reviewed rather than blocked: on uploads these rules flag far more than they should block.
-  if (
-    scanFlagged &&
-    toUpdate.ingestion !== ImageIngestionStatus.Blocked &&
-    YIELDS_TO_SCAN_REVIEW.has(reviewKey)
-  ) {
-    toUpdate.needsReview = 'minor';
-    reviewKey = 'minor';
   }
 
   // The appeal is the open decision on this image's block: a scan may tighten it, never lift it.

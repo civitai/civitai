@@ -15,10 +15,11 @@ const pipeline = vi.hoisted(() => ({
   resolveScanOutcome: vi.fn(),
   sendIngestionSignal: vi.fn(),
 }));
-const { mockRecordAudit, mockRemoveJobQueue, mockFanOut } = vi.hoisted(() => ({
+const { mockRecordAudit, mockRemoveJobQueue, mockFanOut, mockRecordFlag } = vi.hoisted(() => ({
   mockRecordAudit: vi.fn(),
   mockRemoveJobQueue: vi.fn(),
   mockFanOut: vi.fn(),
+  mockRecordFlag: vi.fn(),
 }));
 
 // The pipeline imports the whole ingestion stack, and its stages run for real in
@@ -34,6 +35,9 @@ vi.mock('~/server/services/job-queue.service', () => ({
   removeImageScanJobQueue: mockRemoveJobQueue,
 }));
 vi.mock('~/server/utils/webhook-debounce', () => ({ fanOutArticleImageUpdates: mockFanOut }));
+vi.mock('~/server/services/scan-label-flag.service', () => ({
+  recordScanLabelFlag: mockRecordFlag,
+}));
 
 import {
   IMAGE_SCANNING_LOG,
@@ -98,14 +102,51 @@ describe('processImageScanningWorkflow', () => {
     pipeline.readJobFailureReason.mockResolvedValue('Failed to create container');
   });
 
-  it('hands a scan the orchestrator refused to the outcome as flagged', async () => {
-    await deliver('succeeded', [
-      { ...scanStep, output: { ...scanStep.output, blockedReason: 'refused' } },
-      hashStep,
-    ]);
+  const refusedStep = { ...scanStep, output: { ...scanStep.output, blockedReason: 'refused' } };
 
-    expect(pipeline.resolveScanOutcome).toHaveBeenCalledTimes(1);
-    expect(pipeline.resolveScanOutcome.mock.calls[0][0].scanFlagged).toBe(true);
+  it('records a scan the orchestrator refused as a label for moderators', async () => {
+    await deliver('succeeded', [refusedStep, hashStep]);
+
+    expect(mockRecordFlag).toHaveBeenCalledTimes(1);
+    expect(mockRecordFlag).toHaveBeenCalledWith({
+      imageId: 7,
+      source: 'orchestrator-scan',
+      reason: 'refused',
+      workflowId: 'wf',
+      flaggedAt: expect.any(Date),
+      snapshot: expect.objectContaining({ nsfwLevel: 'pg13', tags: { solo: 0.9 } }),
+    });
+  });
+
+  it('records no label for a scan the orchestrator passed', async () => {
+    await deliver('succeeded', [scanStep, hashStep]);
+
+    expect(mockRecordFlag).not.toHaveBeenCalled();
+  });
+
+  it("decides a refused image's outcome exactly as it would without the refusal", async () => {
+    const decide = async (steps: unknown[]) => {
+      vi.clearAllMocks();
+      pipeline.loadImageForScan.mockResolvedValue(image);
+      pipeline.resolveScanOutcome.mockResolvedValue({
+        ingestion: 'Scanned',
+        blockedFor: null,
+        reviewKey: null,
+      });
+      await deliver('succeeded', steps);
+      return {
+        outcome: pipeline.resolveScanOutcome.mock.calls,
+        tags: pipeline.buildAndInsertScanTags.mock.calls,
+        sideEffects: pipeline.applyIngestionSideEffects.mock.calls,
+        signal: pipeline.sendIngestionSignal.mock.calls,
+      };
+    };
+
+    const passed = await decide([scanStep, hashStep]);
+    const refused = await decide([refusedStep, hashStep]);
+
+    expect(refused.outcome).toHaveLength(1);
+    expect(refused).toEqual(passed);
   });
 
   it('writes the scan through the shared pipeline without a hard block', async () => {
@@ -124,7 +165,6 @@ describe('processImageScanningWorkflow', () => {
     });
     expect(pipeline.resolveScanOutcome).toHaveBeenCalledWith({
       image,
-      scanFlagged: false,
       pHash: 10n,
       workflowId: 'wf',
       prompt: 'a prompt',

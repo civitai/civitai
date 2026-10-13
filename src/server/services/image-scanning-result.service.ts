@@ -20,6 +20,7 @@ import {
 import { removeImageScanJobQueue } from '~/server/services/job-queue.service';
 import { computePerceptualHash } from '~/server/services/orchestrator/orchestrator.service';
 import { recordImageScanningResult } from '~/server/services/scanner-audit.service';
+import { recordScanLabelFlag } from '~/server/services/scan-label-flag.service';
 import { fanOutArticleImageUpdates } from '~/server/utils/webhook-debounce';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 
@@ -146,6 +147,27 @@ export function parseImageScanningSteps(workflowSteps: unknown[], workflowId: st
   };
 }
 
+/** The scanner outputs a moderator label is later checked against; kept so they outlive the workflow. */
+export function scanLabelSnapshot(scan: ImageScanningResult) {
+  return {
+    nsfwLevel: scan.nsfwLevel,
+    csam: scan.csam,
+    minorDetected: scan.minorDetected,
+    ageDetections: scan.ageDetections.map(
+      ({ ageBand, under13Probability, under18Probability, oodProbability, domain }) => ({
+        ageBand,
+        under13Probability,
+        under18Probability,
+        oodProbability,
+        domain,
+      })
+    ),
+    tags: scan.tags,
+    aiRecognition: scan.aiRecognition,
+    animeRecognition: scan.animeRecognition,
+  };
+}
+
 export const IMAGE_SCANNING_LOG: ScanLog = {
   name: 'image-scanning-result',
   source: 'image-scanning-result.service',
@@ -257,7 +279,6 @@ export async function processImageScanningWorkflow({
     });
     outcome = await resolveScanOutcome({
       image,
-      scanFlagged: !!scan.blockedReason,
       pHash,
       workflowId,
       prompt,
@@ -305,6 +326,17 @@ export async function processImageScanningWorkflow({
       'webhooks'
     ).catch(() => null);
   }
+
+  // A label for moderators to verify, recorded after the verdict so it cannot change it.
+  if (scan.blockedReason)
+    await recordScanLabelFlag({
+      imageId,
+      source: 'orchestrator-scan',
+      reason: scan.blockedReason,
+      workflowId,
+      flaggedAt: completedAt ? new Date(completedAt) : new Date(),
+      snapshot: scanLabelSnapshot(scan),
+    });
 
   await sendIngestionSignal({
     imageId,

@@ -181,6 +181,10 @@ export enum FLIPT_FEATURE_FLAGS {
   // with the imageId and no context, so ramp by percentage or boolean; a segment matches nothing.
   IMAGE_INGESTION_IMAGE_SCANNING = 'image-ingestion-image-scanning',
 
+  // Records image-scan flags in the moderator label queue. DEFAULT-OFF: leave it off until the queue's
+  // tables exist. Labels only; it never changes an image's visibility. Evaluated with the imageId.
+  SCAN_LABEL_QUEUE_WRITER = 'scan-label-queue-writer',
+
   // Runs sync-generator-loaded-resources. DEFAULT-OFF: while off, ModelVersion.generatorLoaded
   // freezes at its last value — once a UI reads it, clear it if this stays off. Boolean only.
   SYNC_GENERATOR_LOADED_RESOURCES = 'sync-generator-loaded-resources',
