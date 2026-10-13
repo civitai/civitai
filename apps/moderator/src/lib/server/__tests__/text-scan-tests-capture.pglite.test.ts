@@ -73,7 +73,7 @@ describe('captureCase', () => {
     const first = await captureCase({ db, compose }, input, MOD);
     const again = await captureCase({ db, compose }, { ...input, expected: { scam: false } }, MOD);
     expect(compose).not.toHaveBeenCalled();
-    expect(again).toMatchObject({ caseId: first.caseId, created: false });
+    expect(again).toMatchObject({ caseId: first.caseId, created: false, rescore: true });
     expect(await listCases(db, setId)).toEqual([
       expect.objectContaining({
         fields: [{ heading: 'Comment', text: 'synthetic free text' }],

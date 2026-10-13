@@ -7,9 +7,9 @@ vi.mock('../user-actions.service', () => ({ callModEndpoint: vi.fn() }));
 
 const { LabHarnessError } = await import('../text-scan-lab/harness-client');
 const { updateExpectation } = await import('../text-scan-tests/store');
-const { baselineHistory, refreshSetTotals, runReport, setOverview } = await import(
-  '../text-scan-tests/reports'
-);
+const { wipeCases } = await import('../text-scan-tests/sources');
+const { refreshSetTotals } = await import('../text-scan-tests/totals');
+const { baselineHistory, runReport, setOverview } = await import('../text-scan-tests/reports');
 
 let db: Kysely<ModeratorDB>;
 let setId: number;
@@ -277,6 +277,27 @@ describe('runReport', () => {
     const other = await seedSet(db);
     const runId = await seedRun(db, other, { status: 'done' });
     await expect(runReport(db, setId, runId)).rejects.toMatchObject({ status: 404 });
+  });
+});
+
+describe('wiped cases', () => {
+  it('leaves a wiped verdict out of the totals and the report instead of failing it', async () => {
+    const kept = await seedCase(db, setId, { expected: { scam: true } });
+    const wiped = await seedCase(db, setId, { expected: { scam: true } });
+    const runId = await seedRun(db, setId, { status: 'done' });
+    await result(runId, kept, 'ok', scam(true));
+    await result(runId, wiped, 'ok', scam(true));
+    await wipeCases(db, [wiped]);
+    await refreshSetTotals(db, setId);
+
+    const [run] = await db.selectFrom('text_scan_test_run').select('totals').execute();
+    expect(run.totals).toEqual([expect.objectContaining({ label: 'scam', scored: 1, passed: 1 })]);
+    const report = await runReport(db, setId, runId);
+    expect(report.counts.baseline).toMatchObject({ scored: 1, passed: 1, missing: 1 });
+    expect(report.cases.find((c) => c.caseId === wiped)).toMatchObject({
+      wiped: true,
+      baseline: { score: { state: 'missing' } },
+    });
   });
 });
 

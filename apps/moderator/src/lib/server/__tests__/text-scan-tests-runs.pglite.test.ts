@@ -18,6 +18,7 @@ const { LabHarnessError } = await import('../text-scan-lab/harness-client');
 const { runsDeps } = await import('../text-scan-tests/deps');
 const { cancelRun, quoteRun, rerunErrors, startRun } = await import('../text-scan-tests/runs');
 const { ruleStateHash } = await import('../text-scan-tests/rule-state');
+const { upsertCase } = await import('../text-scan-tests/store');
 
 let pg: PGlite;
 let db: Kysely<ModeratorDB>;
@@ -150,6 +151,33 @@ describe('quoteRun', () => {
     expect(await quoteRun(deps, setId, 'prompts', DRAFT)).toMatchObject({
       calls: 4,
       baseline: 'top-up',
+    });
+  });
+
+  it('tops up a baseline whose case text changed when it was re-added', async () => {
+    const add = (text: string) =>
+      upsertCase(
+        db,
+        {
+          setId,
+          entityType: 'CommentV2',
+          entityId: 71,
+          authorId: null,
+          sourceRef: null,
+          fields: [{ heading: 'Comment', text }],
+          expected: { scam: false },
+          note: null,
+          origin: 'try',
+        },
+        MOD
+      );
+    const changed = await add('synthetic text one');
+    await completeBaseline([changed.case.id, ...(await seedCases(1))]);
+    await add('synthetic text two');
+    const { deps } = makeDeps();
+    expect(await quoteRun(deps, setId, 'prompts', null)).toMatchObject({
+      baseline: 'top-up',
+      calls: 1,
     });
   });
 

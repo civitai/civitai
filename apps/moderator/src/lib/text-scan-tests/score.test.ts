@@ -100,6 +100,10 @@ describe('scoreCase — flags and any labels', () => {
     expect(scoreCase({ scam: true }, undefined)).toEqual({ state: 'missing' });
     expect(scoreCase({}, flagged('scam', true))).toEqual({ state: 'unscored' });
   });
+
+  it('never scores an ok result whose verdict was wiped with its text', () => {
+    expect(scoreCase({ scam: true }, ok(null))).toEqual({ state: 'missing' });
+  });
 });
 
 describe('scoreCase — modelRules on the combined result', () => {

@@ -160,6 +160,70 @@ describe('upsertCase', () => {
   });
 });
 
+describe('re-adding a case', () => {
+  async function withResults() {
+    const set = await newSet();
+    const saved = await upsertCase(db, input(set.id, { note: 'synthetic note' }), MOD);
+    const caseId = String(saved.case.id);
+    const baseline = await seedRun(db, set.id, { status: 'done' });
+    const draft = await seedRun(db, set.id, {
+      kind: 'draft',
+      status: 'done',
+      expiresAt: new Date(Date.now() + 86_400_000),
+    });
+    const expired = await seedRun(db, set.id, {
+      kind: 'draft',
+      status: 'done',
+      expiresAt: new Date('2026-01-01'),
+    });
+    await db
+      .insertInto('text_scan_test_result')
+      .values(
+        [baseline, draft, expired].map((runId) => ({
+          run_id: String(runId),
+          case_id: caseId,
+          status: 'ok',
+          output: '{}',
+        }))
+      )
+      .execute();
+    return { set, expired };
+  }
+  const resultRuns = () =>
+    db
+      .selectFrom('text_scan_test_result')
+      .select('run_id')
+      .execute()
+      .then((rows) => rows.map((r) => Number(r.run_id)));
+
+  it('with new text drops its verdicts in baselines and live drafts, keeping its note', async () => {
+    const { set, expired } = await withResults();
+    const again = await upsertCase(
+      db,
+      input(set.id, { fields: [{ heading: 'Comment', text: 'synthetic text two' }] }),
+      MOD
+    );
+    expect(again).toMatchObject({ created: false, rescore: true });
+    expect(again.case.note).toBe('synthetic note');
+    expect(await resultRuns()).toEqual([expired]);
+  });
+
+  it('with the same text and a new expectation keeps its verdicts and asks for a rescore', async () => {
+    const { set } = await withResults();
+    const again = await upsertCase(db, input(set.id, { expected: { scam: false } }), MOD);
+    expect(again).toMatchObject({ created: false, rescore: true });
+    expect(await resultRuns()).toHaveLength(3);
+  });
+
+  it('unchanged needs no rescore', async () => {
+    const { set } = await withResults();
+    expect(await upsertCase(db, input(set.id), MOD)).toMatchObject({
+      created: false,
+      rescore: false,
+    });
+  });
+});
+
 describe('upsertCase workspace and uniqueness', () => {
   it('takes only ModelRules cases into a Model rules set, and none into a Prompts set', async () => {
     const prompts = await newSet('p');

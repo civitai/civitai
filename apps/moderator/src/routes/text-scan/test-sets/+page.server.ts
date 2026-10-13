@@ -9,6 +9,7 @@ import { composeEntities } from '$lib/server/text-scan-lab/harness-client';
 import { captureCase, captureSchema } from '$lib/server/text-scan-tests/capture';
 import { refusal, requireWorkspace } from '$lib/server/text-scan-tests/guard';
 import { createSet } from '$lib/server/text-scan-tests/store';
+import { refreshSetTotals } from '$lib/server/text-scan-tests/totals';
 import { promptsHref } from '$lib/text-scan-lab/paths';
 import { TEST_SET_LIMITS, WORKSPACES } from '$lib/text-scan-tests/types';
 
@@ -59,11 +60,8 @@ export const actions: Actions = {
     if (typeof input === 'string') return fail(400, { error: input });
     try {
       requireWorkspace(locals.user, input.workspace);
-      const saved = await captureCase(
-        { db: getModeratorDb(), compose: composeEntities },
-        input,
-        locals.user.id
-      );
+      const db = getModeratorDb();
+      const saved = await captureCase({ db, compose: composeEntities }, input, locals.user.id);
       if (saved.setCreated) await recordSetCreated(locals.user.id, saved.setId);
       await recordModActivity({
         userId: locals.user.id,
@@ -71,6 +69,7 @@ export const actions: Actions = {
         entityId: input.entityId ?? null,
         activity: 'textScan.testCase.add',
       });
+      if (saved.rescore) await refreshSetTotals(db, saved.setId);
       return { success: true, ...saved };
     } catch (e) {
       return refusal(e);

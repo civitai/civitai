@@ -12,7 +12,7 @@ import { requestCookie } from '$lib/server/user-actions.service';
 import type { Workspace } from '$lib/text-scan-tests/types';
 import { runsDeps } from './deps';
 import { idField as id, refusal, requireWorkspace } from './guard';
-import { refreshSetTotals } from './reports';
+import { refreshSetTotals } from './totals';
 import { cancelRun, quoteRun, rerunErrors, startRun, type DraftInput, type RunsDeps } from './runs';
 import {
   TestSetError,
@@ -118,13 +118,13 @@ export async function editCaseAction(event: RequestEvent) {
       input.note,
       userId
     );
-    await refreshSetTotals(db, input.setId);
     await recordModActivity({
       userId,
       entityType: updated.entityType,
       entityId: updated.entityId,
       activity: 'textScan.testCase.relabel',
     });
+    await refreshSetTotals(db, input.setId);
     return { success: true, caseId: updated.id };
   } catch (e) {
     return refusal(e);
@@ -141,13 +141,13 @@ export async function removeCaseAction(event: RequestEvent) {
     const existing = await getCase(db, input.setId, input.caseId);
     if (!existing) throw new TestSetError(`Test case ${input.caseId} not found in this set.`, 404);
     await removeCase(db, input.setId, input.caseId);
-    await refreshSetTotals(db, input.setId);
     await recordModActivity({
       userId,
       entityType: existing.entityType,
       entityId: existing.entityId,
       activity: 'textScan.testCase.remove',
     });
+    await refreshSetTotals(db, input.setId);
     return { success: true };
   } catch (e) {
     return refusal(e);

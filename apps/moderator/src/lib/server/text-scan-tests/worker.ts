@@ -12,14 +12,7 @@ import type {
   LabScanResult,
   LabText,
 } from '../../text-scan-lab/types';
-import type { Expected } from '../../text-scan-tests/expected';
-import {
-  scoreCase,
-  summarise,
-  verdictOf,
-  type LabelSummary,
-  type ResultStatus,
-} from '../../text-scan-tests/score';
+import { verdictOf, type ResultStatus } from '../../text-scan-tests/score';
 import {
   ACTIVE_RUN_STATUSES,
   TEST_SET_LIMITS,
@@ -28,6 +21,7 @@ import {
 } from '../../text-scan-tests/types';
 import { goneCaseIds, wipeCases } from './sources';
 import { noResultIn, runnableCases, wipedCases, type RunRow } from './store';
+import { computeTotals } from './totals';
 
 type Db = Kysely<ModeratorDB>;
 
@@ -209,24 +203,6 @@ async function writeChunk(
       .execute();
     return lease.status as RunStatus;
   });
-}
-
-export async function computeTotals(db: Db, runId: number): Promise<LabelSummary[]> {
-  const rows = await db
-    .selectFrom('text_scan_test_result as r')
-    .innerJoin('text_scan_test_case as c', 'c.id', 'r.case_id')
-    .select(['r.status', 'r.output', 'r.literal_rule_ids', 'c.expected'])
-    .where('r.run_id', '=', String(runId))
-    .execute();
-  return summarise(
-    rows.map((r) =>
-      scoreCase((r.expected ?? {}) as Expected, {
-        status: r.status as ResultStatus,
-        output: r.output,
-        literalRuleIds: (r.literal_rule_ids as number[] | null) ?? null,
-      })
-    )
-  );
 }
 
 async function endRun(

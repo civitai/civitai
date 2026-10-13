@@ -27,7 +27,6 @@ import {
 } from '../../text-scan-tests/types';
 import { asLive, latestBaseline, liveStateFor, setLabels, type RunsDeps } from './runs';
 import { TestSetError, getRun, requireSet, runnableCases, type RunRow } from './store';
-import { computeTotals } from './worker';
 
 type Db = Kysely<ModeratorDB>;
 
@@ -325,23 +324,6 @@ export async function runReport(db: Db, setId: number, runId: number): Promise<R
     },
     cases: orderFlippedFirst(cases),
   };
-}
-
-export async function refreshSetTotals(db: Db, setId: number): Promise<number> {
-  const runs = await db
-    .selectFrom('text_scan_test_run')
-    .select('id')
-    .where('set_id', '=', String(setId))
-    .where('status', 'in', ['done', 'cancelled'])
-    .where((eb) => eb.or([eb('expires_at', 'is', null), eb('expires_at', '>', sql<Date>`now()`)]))
-    .execute();
-  for (const r of runs)
-    await db
-      .updateTable('text_scan_test_run')
-      .set({ totals: JSON.stringify(await computeTotals(db, Number(r.id))) })
-      .where('id', '=', r.id)
-      .execute();
-  return runs.length;
 }
 
 export type CaseListRow = Omit<TestCase, 'fields'> & { preview: string | null };

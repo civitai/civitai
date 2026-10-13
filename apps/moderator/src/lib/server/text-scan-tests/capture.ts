@@ -47,7 +47,13 @@ export async function captureCase(
   deps: { db: Kysely<ModeratorDB>; compose: ComposeFn },
   input: CaptureInput,
   userId: number
-): Promise<{ setId: number; caseId: number; created: boolean; setCreated: boolean }> {
+): Promise<{
+  setId: number;
+  caseId: number;
+  created: boolean;
+  setCreated: boolean;
+  rescore: boolean;
+}> {
   // Checked before a new set is created, so these refusals leave no empty set behind.
   if (workspaceOf(input.entityType) !== input.workspace)
     throw new TestSetError(
@@ -103,5 +109,6 @@ export async function captureCase(
     caseId: saved.case.id,
     created: saved.created,
     setCreated: input.setId === undefined,
+    rescore: saved.rescore,
   };
 }

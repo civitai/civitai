@@ -190,12 +190,15 @@ function validCase(input: CaseInput) {
   return { fields, expected };
 }
 
-/** Upserts on the entity, else the source ref, else the text hash of a free text in this set. */
+/**
+ * Upserts on the entity, else the source ref, else the text hash of a free text in this set.
+ * `rescore`: an existing case changed text or expectation, so the set's cached totals are stale.
+ */
 export async function upsertCase(
   db: Db,
   input: CaseInput,
   userId: number
-): Promise<{ case: TestCase; created: boolean }> {
+): Promise<{ case: TestCase; created: boolean; rescore: boolean }> {
   const set = await requireOpenSet(db, input.setId);
   const { fields, expected } = validCase(input);
   if (workspaceOf(input.entityType) !== set.workspace)
@@ -224,34 +227,77 @@ export async function upsertCase(
     fields: values.fields,
     text_hash: values.text_hash,
     expected: values.expected,
-    note: values.note,
+    note: sql<string | null>`coalesce(excluded.note, text_scan_test_case.note)`,
     source_deleted_at: null,
     updated_by: userId,
     updated_at: sql<Date>`now()`,
   };
 
-  const q = db
-    .insertInto('text_scan_test_case')
-    .values(values)
-    .onConflict((oc) =>
-      input.entityId !== null
-        ? oc.columns(['set_id', 'entity_type', 'entity_id']).doUpdateSet(refresh)
-        : input.sourceRef !== null
-        ? oc.columns(['set_id', 'source_ref']).doUpdateSet(refresh)
-        : oc
-            // The predicate must repeat text_scan_test_case_free_text_key's WHERE, or Postgres finds no index.
-            .columns(['set_id', 'entity_type', 'text_hash'])
-            .where('entity_id', 'is', null)
-            .where('source_ref', 'is', null)
-            .doUpdateSet(refresh)
-    );
-  try {
-    const row = await q
+  const write = async (trx: Db) => {
+    const prior = await trx
+      .selectFrom('text_scan_test_case')
+      .select(['text_hash', 'expected'])
+      .where('set_id', '=', values.set_id)
+      .where((eb) =>
+        input.entityId !== null
+          ? eb.and([eb('entity_type', '=', input.entityType), eb('entity_id', '=', input.entityId)])
+          : input.sourceRef !== null
+          ? eb('source_ref', '=', input.sourceRef)
+          : eb.and([
+              eb('entity_type', '=', input.entityType),
+              eb('text_hash', '=', values.text_hash),
+              eb('entity_id', 'is', null),
+              eb('source_ref', 'is', null),
+            ])
+      )
+      .forUpdate()
+      .executeTakeFirst();
+    const row = await trx
+      .insertInto('text_scan_test_case')
+      .values(values)
+      .onConflict((oc) =>
+        input.entityId !== null
+          ? oc.columns(['set_id', 'entity_type', 'entity_id']).doUpdateSet(refresh)
+          : input.sourceRef !== null
+          ? oc.columns(['set_id', 'source_ref']).doUpdateSet(refresh)
+          : oc
+              // The predicate must repeat text_scan_test_case_free_text_key's WHERE, or Postgres finds no index.
+              .columns(['set_id', 'entity_type', 'text_hash'])
+              .where('entity_id', 'is', null)
+              .where('source_ref', 'is', null)
+              .doUpdateSet(refresh)
+      )
       .returningAll()
       // xmax is 0 only on a freshly inserted row version.
       .returning(sql<boolean>`(xmax = 0)`.as('inserted'))
       .executeTakeFirstOrThrow();
-    return { case: toTestCase(row), created: row.inserted };
+    const textChanged = !!prior && prior.text_hash !== row.text_hash;
+    // A verdict on the old text would pass for the new one: drop it so the baseline tops it up.
+    if (textChanged)
+      await trx
+        .deleteFrom('text_scan_test_result')
+        .where('case_id', '=', row.id)
+        .where(
+          'run_id',
+          'in',
+          trx
+            .selectFrom('text_scan_test_run')
+            .select('id')
+            .where('set_id', '=', values.set_id)
+            .where((eb) =>
+              eb.or([eb('expires_at', 'is', null), eb('expires_at', '>', sql<Date>`now()`)])
+            )
+        )
+        .execute();
+    return {
+      case: toTestCase(row),
+      created: row.inserted,
+      rescore:
+        !!prior && (textChanged || JSON.stringify(prior.expected) !== JSON.stringify(row.expected)),
+    };
+  };
+  try {
+    return db.isTransaction ? await write(db) : await db.transaction().execute(write);
   } catch (e) {
     if (isUniqueViolation(e))
       throw new TestSetError('Another case in this set already uses that entity or source.', 409);

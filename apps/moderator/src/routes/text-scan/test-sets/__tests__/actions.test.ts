@@ -18,6 +18,8 @@ vi.mock('$lib/server/text-scan-tests/capture', async (importOriginal) => ({
 }));
 const activity = vi.hoisted(() => ({ recordModActivity: vi.fn() }));
 vi.mock('$lib/server/mod-activity', () => activity);
+const totals = vi.hoisted(() => ({ refreshSetTotals: vi.fn(async () => 1) }));
+vi.mock('$lib/server/text-scan-tests/totals', () => totals);
 
 const { actions } = await import('../+page.server');
 
@@ -50,7 +52,13 @@ const FREE_TEXT = {
 beforeEach(() => {
   vi.clearAllMocks();
   access.canAccess.mockReturnValue(true);
-  capture.captureCase.mockResolvedValue({ setId: 3, caseId: 9, created: true, setCreated: false });
+  capture.captureCase.mockResolvedValue({
+    setId: 3,
+    caseId: 9,
+    created: true,
+    setCreated: false,
+    rescore: false,
+  });
 });
 
 describe('addCase', () => {
@@ -81,6 +89,20 @@ describe('addCase', () => {
       entityId: null,
       activity: 'textScan.testCase.add',
     });
+  });
+
+  it('rescores the set only when a re-add changed a case', async () => {
+    await post('addCase', FREE_TEXT);
+    expect(totals.refreshSetTotals).not.toHaveBeenCalled();
+    capture.captureCase.mockResolvedValueOnce({
+      setId: 3,
+      caseId: 9,
+      created: false,
+      setCreated: false,
+      rescore: true,
+    });
+    await post('addCase', FREE_TEXT);
+    expect(totals.refreshSetTotals).toHaveBeenCalledExactlyOnceWith({}, 3);
   });
 });
 

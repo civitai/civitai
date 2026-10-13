@@ -115,6 +115,8 @@ function rulesOutcome(
 export function scoreCase(expected: Expected, result: StoredResult | undefined): CaseScore {
   if (!result) return { state: 'missing' };
   if (result.status !== 'ok') return { state: result.status };
+  // An ok result is written with its output, so a null one was wiped with the case's text.
+  if (result.output == null) return { state: 'missing' };
   const { verdict } = verdictOf(result.output);
   const labels: LabelOutcome[] = [];
   if (expected.nsfw) labels.push(nsfwOutcome(expected.nsfw, verdict));

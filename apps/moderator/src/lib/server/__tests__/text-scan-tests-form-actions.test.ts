@@ -49,9 +49,10 @@ vi.mock('$lib/server/text-scan-tests/store', async (importOriginal) => ({
   ...(await importOriginal<typeof Store>()),
   ...store,
 }));
+const totals = vi.hoisted(() => ({ refreshSetTotals: vi.fn(async () => 1) }));
+vi.mock('$lib/server/text-scan-tests/totals', () => totals);
 const reports = vi.hoisted(() => ({
   setOverview: vi.fn(),
-  refreshSetTotals: vi.fn(async () => 1),
   toRunView: vi.fn((row: { id: string }) => ({ id: Number(row.id) })),
 }));
 vi.mock('$lib/server/text-scan-tests/reports', () => reports);
@@ -262,13 +263,31 @@ describe('case, set and re-run actions', () => {
       'looked again',
       1
     );
-    expect(reports.refreshSetTotals).toHaveBeenCalledWith({}, 3);
+    expect(totals.refreshSetTotals).toHaveBeenCalledWith({}, 3);
     expect(activity.recordModActivity).toHaveBeenCalledWith({
       userId: 1,
       entityType: 'CommentV2',
       entityId: 71,
       activity: 'textScan.testCase.relabel',
     });
+  });
+
+  it('records a relabel and a removal even when rescoring then fails', async () => {
+    const failure = new Error('synthetic rescore failure');
+    totals.refreshSetTotals.mockRejectedValueOnce(failure).mockRejectedValueOnce(failure);
+    const relabel = event({ setId: '3', caseId: '9', expected: JSON.stringify({ scam: false }) });
+    await expect(editCaseAction(relabel)).rejects.toThrow('synthetic rescore failure');
+    await expect(removeCaseAction(event({ setId: '3', caseId: '9' }))).rejects.toThrow(
+      'synthetic rescore failure'
+    );
+    for (const [n, name] of [
+      [1, 'textScan.testCase.relabel'],
+      [2, 'textScan.testCase.remove'],
+    ] as const)
+      expect(activity.recordModActivity).toHaveBeenNthCalledWith(
+        n,
+        expect.objectContaining({ activity: name })
+      );
   });
 
   it('refuses a malformed expectation before writing', async () => {
@@ -282,7 +301,7 @@ describe('case, set and re-run actions', () => {
       success: true,
     });
     expect(store.removeCase).toHaveBeenCalledWith({}, 3, 9);
-    expect(reports.refreshSetTotals).toHaveBeenCalledWith({}, 3);
+    expect(totals.refreshSetTotals).toHaveBeenCalledWith({}, 3);
     expect(activity.recordModActivity).toHaveBeenCalledWith(
       expect.objectContaining({ activity: 'textScan.testCase.remove', entityId: 71 })
     );
