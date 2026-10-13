@@ -35,7 +35,13 @@ export function isAppealableModel3D(model: { status: Model3DStatus }) {
   return model.status === Model3DStatus.Unpublished || model.status === Model3DStatus.Deleted;
 }
 
-export type OrphanedAppealOutcome = 'under-review' | 'closed-owner-deleted' | 'closed-unreviewed';
+// The moderator app sends the `closed-owner-deleted` and `reviewed-*` outcomes too, spelled out there.
+export type OrphanedAppealOutcome =
+  | 'under-review'
+  | 'closed-owner-deleted'
+  | 'closed-unreviewed'
+  | 'reviewed-approved'
+  | 'reviewed-rejected';
 
 export const OrphanedAppealReason = {
   DeletedByOwner: 'deleted-by-owner',

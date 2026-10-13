@@ -77,12 +77,21 @@ export const reportNotifications = createNotificationProcessor({
     prepareMessage: ({ details }) => {
       const entity = String(details.entityType).toLowerCase();
       const refund = details.refunded ? ' Your appeal fee has been refunded.' : '';
+      const note = details.resolvedMessage ? ` ${details.resolvedMessage}` : '';
       switch (details.outcome as OrphanedAppealOutcome) {
         case 'closed-owner-deleted':
           return { message: `Your appeal was closed because you deleted the ${entity}.${refund}` };
         case 'closed-unreviewed':
           return {
             message: `We couldn't review your appeal in time: the ${entity} was removed before a moderator reached it, so your appeal was closed.${refund} You're welcome to upload it again.`,
+          };
+        case 'reviewed-approved':
+          return {
+            message: `We reviewed your appeal: the ${entity} should not have been removed. It can't be restored, but you're welcome to upload it again.${refund}${note}`,
+          };
+        case 'reviewed-rejected':
+          return {
+            message: `We reviewed your appeal: the removal of your ${entity} stands.${note}`,
           };
         default:
           return {

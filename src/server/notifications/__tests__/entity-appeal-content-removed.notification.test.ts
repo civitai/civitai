@@ -43,4 +43,31 @@ describe('entity-appeal-content-removed — prepareMessage', () => {
       "We couldn't review your appeal in time: the model was removed before a moderator reached it, so your appeal was closed. Your appeal fee has been refunded. You're welcome to upload it again."
     );
   });
+
+  it('tells an upheld appellant the removal was a mistake that cannot be undone', () => {
+    const m = prepare({
+      ...base,
+      outcome: 'reviewed-approved',
+      refunded: true,
+      resolvedMessage: 'Sorry about that.',
+    });
+
+    expect(m!.message).toBe(
+      "We reviewed your appeal: the image should not have been removed. It can't be restored, but you're welcome to upload it again. Your appeal fee has been refunded. Sorry about that."
+    );
+  });
+
+  it('tells a rejected appellant the removal stands, with the moderator message if any', () => {
+    expect(prepare({ ...base, outcome: 'reviewed-rejected', refunded: false })!.message).toBe(
+      'We reviewed your appeal: the removal of your image stands.'
+    );
+    expect(
+      prepare({
+        ...base,
+        outcome: 'reviewed-rejected',
+        refunded: false,
+        resolvedMessage: 'It breaks the rules.',
+      })!.message
+    ).toBe('We reviewed your appeal: the removal of your image stands. It breaks the rules.');
+  });
 });

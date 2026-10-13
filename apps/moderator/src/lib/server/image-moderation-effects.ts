@@ -358,10 +358,13 @@ const isAppealPrefix = (prefix: string) => prefix.startsWith('appeal-');
 export async function refundAppealFee(appeal: {
   id: number;
   buzzTransactionId: string | null;
+  entityType?: string;
   entityId: number;
-}): Promise<void> {
-  if (!appeal.buzzTransactionId) return;
-  const description = `Refunded appeal ${appeal.id} for Image ${appeal.entityId}`;
+}): Promise<boolean> {
+  if (!appeal.buzzTransactionId) return false;
+  const description = `Refunded appeal ${appeal.id} for ${appeal.entityType ?? 'Image'} ${
+    appeal.entityId
+  }`;
   try {
     if (isAppealPrefix(appeal.buzzTransactionId))
       // A timed-out refund may still land, so only a request that never reached Buzz is retried.
@@ -370,6 +373,7 @@ export async function refundAppealFee(appeal: {
         { shouldRetry: isSafeToRetry }
       );
     else await getBuzz().refundTransaction(appeal.buzzTransactionId, { description });
+    return true;
   } catch (e) {
     // The appeal is already closed, so this is the only record that the fee is still owed.
     void logAxiomError(e, {
@@ -377,6 +381,7 @@ export async function refundAppealFee(appeal: {
       appealId: appeal.id,
       buzzTransactionId: appeal.buzzTransactionId,
     });
+    return false;
   }
 }
 

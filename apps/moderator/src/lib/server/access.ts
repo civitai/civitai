@@ -79,6 +79,11 @@ export const NAVIGATION: NavLink[] = [
       { path: '/images/remixSource', label: 'Remix Source', countKey: 'remixSource' },
       { path: '/images/reported', label: 'Reported', countKey: 'reported' },
       { path: '/images/appeals', label: 'Appeals', countKey: 'appeals' },
+      {
+        path: '/images/removed-appeals',
+        label: 'Appeals: Content Removed',
+        countKey: 'removedAppeals',
+      },
       { path: '/images/csam', label: 'CSAM', countKey: 'csam' },
       { path: '/images/tags', label: 'Image Tags', countKey: 'imageTags' },
       { path: '/images/ratings', label: 'Image Ratings', countKey: 'imageRatings' },

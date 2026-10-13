@@ -45,4 +45,23 @@ describe('refundAppealFee', () => {
       expect.objectContaining({ appealId: 9, buzzTransactionId: FEE })
     );
   });
+
+  // Callers tell the user whether the fee came back.
+  it('reports whether a refund was made', async () => {
+    expect(await refund()).toBe(true);
+
+    refundMultiTransaction.mockRejectedValueOnce(new Error('buzz down'));
+    expect(await refund()).toBe(false);
+
+    expect(await refundAppealFee({ id: 9, buzzTransactionId: null, entityId: 41 })).toBe(false);
+  });
+
+  it('names the appealed entity type in the refund', async () => {
+    await refundAppealFee({ id: 9, buzzTransactionId: FEE, entityType: 'Model', entityId: 41 });
+
+    expect(refundMultiTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({ description: 'Refunded appeal 9 for Model 41' }),
+      expect.anything()
+    );
+  });
 });
