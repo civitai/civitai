@@ -144,6 +144,10 @@ const RATE_LIMIT_DECISION_LEDGER: Readonly<Record<string, Decision>> = Object.fr
     buckets: ['catalog'],
     why: 'The session-bound confirmation of a training quote: one Redis read + write, reached only from a viewer click in host chrome. The read bucket, like its preview sibling.',
   },
+  consentQuoteGrant: {
+    buckets: ['catalog'],
+    why: 'The session-bound confirmation of a viewer-confirmed quote of either kind (training or confirmed step): one Redis read + write, reached only from a viewer click in host chrome. The read bucket; consentTrainingQuote is its training-named delegate.',
+  },
   createPostFromApp: {
     buckets: ['post', 'post-app', 'publish'],
     why: 'Public-feed write with reward exposure. Per-(instance, viewer) AND per-app post buckets, plus the image-weighted publish bucket for the images it adopts. Not catalog — unlike its previewPostFromApp sibling, this one materialises rows.',
@@ -195,6 +199,10 @@ const RATE_LIMIT_DECISION_LEDGER: Readonly<Record<string, Decision>> = Object.fr
   persistAppUploadImage: {
     buckets: ['publish'],
     why: 'The server half of OPEN_IMAGE_UPLOAD { bytes }: each persist creates a real, scanned Image row, so it takes one token from the per-install publish bucket that publishGenerationOutputs also draws on, before the row is created.',
+  },
+  previewQuoteGrant: {
+    buckets: ['catalog'],
+    why: 'The read-only half of the viewer-confirmed quote consent pair, either kind — a quote read, a Buzz balance read and the viewer’s daily-limit read (plus the dataset read for training); materialises nothing. previewTrainingQuote is its training-named delegate.',
   },
   previewTrainingQuote: {
     buckets: ['catalog'],

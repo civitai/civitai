@@ -28,6 +28,7 @@ import { getImagesLimit } from '~/shared/generation/images-limit';
 import { ModelType } from '~/shared/utils/prisma/enums';
 import { isSingletonSlotResource } from '~/shared/utils/resource.utils';
 import type {
+  BlockModel3dOutput,
   BlockPublishedModel,
   BlockSourceImage,
   BlockWorkflowBody,
@@ -130,6 +131,7 @@ export function snapshotFromWorkflow(
   const imageUrls: string[] = [];
   const stepOutputs: NonNullable<BlockWorkflowSnapshot['stepOutputs']> = [];
   const trainedEpochs: TrainedEpoch[] = [];
+  const model3dOutputs: BlockModel3dOutput[] = [];
   // `kind:'workflow'` only: which steps that submit named, read back from the
   // workflow's own metadata. `null` for every other kind.
   const submittedSteps = readBlockWorkflowSteps(workflow.metadata);
@@ -144,7 +146,11 @@ export function snapshotFromWorkflow(
       const extracted = isRepeatStepType(step.$type)
         ? EMPTY_STEP_EXTRACT
         : extractSnapshotStep(step, true);
-      if (!member.suppressOutput) imageUrls.push(...extracted.media);
+      if (!member.suppressOutput) {
+        imageUrls.push(...extracted.media);
+        // Labels only for urls that are in `imageUrls` — see the field's own doc.
+        model3dOutputs.push(...extracted.model3d);
+      }
       trainedEpochs.push(...extracted.trainedEpochs);
       const error = stepFailureReason(step);
       steps.push({
@@ -162,6 +168,8 @@ export function snapshotFromWorkflow(
     const extracted = extractSnapshotStep(step, step.name === BLOCK_STEP_NAME);
     imageUrls.push(...extracted.media);
     trainedEpochs.push(...extracted.trainedEpochs);
+    // ADDITIVE: the 3D models among those urls, labelled — `imageUrls` is unchanged.
+    model3dOutputs.push(...extracted.model3d);
     // A step with no output yet — the submit reply — would otherwise get an
     // entry saying nothing.
     if (extracted.rest !== undefined) {
@@ -235,6 +243,8 @@ export function snapshotFromWorkflow(
     ...(modelSubstitutions?.length ? { modelSubstitutions } : {}),
     ...(trainedEpochs.length > 0 ? { trainedEpochs } : {}),
     ...(publishedModel ? { publishedModel } : {}),
+    // See the field's own doc in `schema/blocks/workflow.schema`. Omitted when none.
+    ...(model3dOutputs.length > 0 ? { model3dOutputs } : {}),
     // See the field's own doc in `schema/blocks/workflow.schema`.
     ...(steps.length > 0 ? { steps } : {}),
   };
@@ -328,9 +338,11 @@ type SnapshotStepExtract = {
   /** A pass-through step's non-blob output; `undefined` for every other step. */
   rest?: unknown;
   trainedEpochs: TrainedEpoch[];
+  /** A pass-through step's 3D models, labelled; every url is also in `media`. */
+  model3d: BlockModel3dOutput[];
 };
 
-const EMPTY_STEP_EXTRACT: SnapshotStepExtract = { media: [], trainedEpochs: [] };
+const EMPTY_STEP_EXTRACT: SnapshotStepExtract = { media: [], trainedEpochs: [], model3d: [] };
 
 /**
  * What ONE orchestrator step contributes to a snapshot. `bridgeSubmitted` says
@@ -357,7 +369,7 @@ function extractSnapshotStep(
         media.push(blob.url);
       }
     }
-    return { media, trainedEpochs };
+    return { media, trainedEpochs, model3d: [] };
   }
   // A REGISTERED step type (`kind: 'step'`) declares its OWN output extraction
   // in its registry entry, because the output key is step-type-specific —
@@ -387,7 +399,7 @@ function extractSnapshotStep(
         media.push(entry.url);
       }
     }
-    return { media, trainedEpochs };
+    return { media, trainedEpochs, model3d: [] };
   }
   // 🔴 THE CONSTANT, NOT A RESTATED TRIPLE. The false branch of this test used
   // to `continue` — dropping the step silently — and now forwards the step's
@@ -417,13 +429,18 @@ function extractSnapshotStep(
     // per-viewer gated read already own; see `stepOutputs` in
     // `schema/blocks/workflow.schema`. A training checkpoint goes to NEITHER —
     // `splitPassThroughStep` drops it.
-    if (!bridgeSubmitted) return { media, trainedEpochs };
+    if (!bridgeSubmitted) return { media, trainedEpochs, model3d: [] };
     const split = splitPassThroughStep(
       step.$type,
       (step as unknown as { output?: unknown }).output
     );
     for (const m of split.media) media.push(m.url);
-    return { media, rest: split.rest, trainedEpochs: split.trainedEpochs };
+    return {
+      media,
+      rest: split.rest,
+      trainedEpochs: split.trainedEpochs,
+      model3d: split.model3d,
+    };
   }
   const stepOutput = (
     step as unknown as {
@@ -435,7 +452,7 @@ function extractSnapshotStep(
       media.push(img.url);
     }
   }
-  return { media, trainedEpochs };
+  return { media, trainedEpochs, model3d: [] };
 }
 
 /** True when the workflow carries a training step THIS bridge submitted. */
@@ -509,6 +526,8 @@ export function appBlockTag(appId: string): string {
  *           pass-through training run has a ready checkpoint.
  *   publishedModel: OPTIONAL, same value and rule as the snapshot field — see
  *           `BlockWorkflowSnapshot.publishedModel`. Absent on every other item.
+ *   model3dOutputs: OPTIONAL, same value and rule as the snapshot field — see
+ *           `BlockWorkflowSnapshot.model3dOutputs`. Every url is also in `images`.
  */
 export type AppWorkflowImage = {
   url: string;
@@ -524,6 +543,7 @@ export type AppWorkflow = {
   createdAt: string;
   trainedEpochs?: TrainedEpoch[];
   publishedModel?: BlockPublishedModel;
+  model3dOutputs?: BlockModel3dOutput[];
 };
 
 /**
@@ -534,6 +554,7 @@ export function projectAppWorkflow(workflow: Workflow): AppWorkflow {
   const status = ORCH_STATUS_MAP[workflow.status] ?? 'pending';
   const images: AppWorkflowImage[] = [];
   const trainedEpochs: TrainedEpoch[] = [];
+  const model3dOutputs: BlockModel3dOutput[] = [];
   // Mirrors `snapshotFromWorkflow`'s member-step handling.
   const submittedSteps = readBlockWorkflowSteps(workflow.metadata);
   for (const step of workflow.steps ?? []) {
@@ -626,6 +647,7 @@ export function projectAppWorkflow(workflow: Workflow): AppWorkflow {
         (step as unknown as { output?: unknown }).output
       );
       trainedEpochs.push(...split.trainedEpochs);
+      model3dOutputs.push(...split.model3d);
       for (const m of split.media) {
         images.push({
           url: m.url,
@@ -680,6 +702,7 @@ export function projectAppWorkflow(workflow: Workflow): AppWorkflow {
     createdAt: workflow.createdAt,
     ...(trainedEpochs.length > 0 ? { trainedEpochs } : {}),
     ...(publishedModel ? { publishedModel } : {}),
+    ...(model3dOutputs.length > 0 ? { model3dOutputs } : {}),
   };
 }
 

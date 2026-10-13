@@ -44,7 +44,8 @@ const EXEMPT: Record<string, { unguarded: number; reason: string }> = {
       "rather than getting a different answer to the same question; the `kind:'workflow'` arm " +
       "added a paid submit and prices through the pass-through arm's quote; the `kind:'training'` arm " +
       'added a whatIf quote here, while its PAID submit is guarded, because a training workflow ' +
-      'is the same shape the training form already checks). The paid ones SHOULD be guarded, ' +
+      'is the same shape the training form already checks; the confirmed pass-through step ' +
+      'shares that one guarded submit, so it adds no site here). The paid ones SHOULD be guarded, ' +
       'but blocks record spend through reserveBlockBuzzSpend rather than a generation/training ' +
       'buzzTransaction, so their workflow-id shape is not confirmed against the ledger the way ' +
       'the other paths are (1.16M rows, prefix == payer). Guarding on an unconfirmed id shape ' +

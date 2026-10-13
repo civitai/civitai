@@ -142,8 +142,8 @@ const LEDGER = [
     count: 6,
     why:
       'ARM A. Six submit paths write a spend-attribution row: txt2img, customComfy, ' +
-      'the registry-step bridge, the pass-through step, the multi-step workflow and the ' +
-      'training run. A path that omits the claim ' +
+      'the registry-step bridge, the pass-through step, the multi-step workflow and the shared ' +
+      'confirmed-quote path (training runs and confirmed steps). A path that omits the claim ' +
       "writes `tracked` for a private run, which lands in the suspended app's " +
       'owner-visible analytics as engagement.',
     /** A field every site in this population already carries — the extractor's control. */
@@ -177,8 +177,8 @@ const LEDGER = [
       'THE AUDIT-VISIBILITY ARM, which is NOT a money arm and is in this ledger for the ' +
       'seam, not the spend. Seven router paths write a `block_scope_invocations` row: the ' +
       'block-post writer, the txt2img submit, the registry-step submit, the custom-comfy ' +
-      'submit, the pass-through submit, the multi-step workflow submit and the training ' +
-      "submit. That row carries the app's REAL id and the " +
+      'submit, the pass-through submit, the multi-step workflow submit and the shared ' +
+      "confirmed-quote submit (training runs and confirmed steps). That row carries the app's REAL id and the " +
       "viewer's REAL user id, and `app-analytics.service.ts` aggregates it by " +
       '`appBlockId IN (ownedIds)` — so a path that omits the claim writes an UNMARKED row ' +
       "that appears in a delisted app owner's own analytics, which is exactly the signal " +

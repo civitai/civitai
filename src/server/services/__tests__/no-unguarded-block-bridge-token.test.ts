@@ -192,10 +192,12 @@ const GUARD_CALL_SITE_LEDGER = [
   // `blocks.router.ts`, so a preamble living in an imported service would read as
   // UNGUARDED.
   'authorizeBlockPostRequest',
-  // The training consent preamble: `previewTrainingQuote` and `consentTrainingQuote`
-  // reach the guard through it and nothing else — the same shape as the post
-  // preamble above, and router-local for the same reason.
-  'authorizeBlockTrainingConsentRequest',
+  // The viewer-confirmed quote consent preamble, shared by both kinds (training and the
+  // confirmed step): the generic pair `previewQuoteGrant` / `consentQuoteGrant` and the
+  // training-named delegates `previewTrainingQuote` / `consentTrainingQuote` all reach
+  // the guard through it and nothing else — the same shape as the post preamble above,
+  // and router-local for the same reason.
+  'authorizeQuotedGrantConsentRequest',
   'cancelAppWorkflow',
   'cancelWorkflow',
   'estimateWorkflow',
@@ -249,10 +251,14 @@ const BRIDGE_INPUT_LEDGER = [
   'persistAppUploadImage',
   // The `kind:'training'` bridge procs: the dataset primitive reaches the guard
   // directly; the two consent halves reach it via
-  // `authorizeBlockTrainingConsentRequest`, above.
+  // `authorizeQuotedGrantConsentRequest`, above.
   'prepareTrainingDataset',
   'previewTrainingQuote',
   'consentTrainingQuote',
+  // The generic consent pair for either quote kind, via
+  // `authorizeQuotedGrantConsentRequest`, above.
+  'previewQuoteGrant',
+  'consentQuoteGrant',
   'publishGenerationOutputs',
   'queryAppWorkflows',
   'submitWorkflow',
