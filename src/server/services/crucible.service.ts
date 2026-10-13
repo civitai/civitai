@@ -1084,9 +1084,34 @@ export async function getPaidEntryCounts(crucibleIds: number[], db: typeof dbRea
   return counts;
 }
 
-export async function withPaidEntryCount<T extends { id: number }>(rows: T[]) {
-  const counts = await getPaidEntryCounts(rows.map(({ id }) => id));
-  return rows.map((row) => ({ ...row, paidEntryCount: counts.get(row.id) ?? 0 }));
+/**
+ * Distinct entrants per crucible, host excluded. The same definition as the "10+ entrants"
+ * creator milestone (`competeWinsSource`): every entry row counts, whatever became of its media.
+ */
+export async function getEntrantCounts(crucibleIds: number[], db: typeof dbRead = dbRead) {
+  const counts = new Map(crucibleIds.map((id) => [id, 0]));
+  if (!crucibleIds.length) return counts;
+
+  const rows = await db.$queryRaw<{ crucibleId: number; entrants: number }[]>`
+    SELECT e."crucibleId", count(DISTINCT e."userId")::int AS entrants
+    FROM "CrucibleEntry" e
+    JOIN "Crucible" c ON c.id = e."crucibleId"
+    WHERE e."crucibleId" = ANY(${crucibleIds}::int[])
+      AND e."userId" <> c."userId"
+    GROUP BY e."crucibleId"
+  `;
+  for (const { crucibleId, entrants } of rows) counts.set(crucibleId, entrants);
+  return counts;
+}
+
+export async function withEntryCounts<T extends { id: number }>(rows: T[]) {
+  const ids = rows.map(({ id }) => id);
+  const [paid, entrants] = await Promise.all([getPaidEntryCounts(ids), getEntrantCounts(ids)]);
+  return rows.map((row) => ({
+    ...row,
+    paidEntryCount: paid.get(row.id) ?? 0,
+    entrantCount: entrants.get(row.id) ?? 0,
+  }));
 }
 
 export type CrucibleDetailEntry = Omit<CrucibleEntryRow, 'score' | 'position'> & {
@@ -1096,6 +1121,7 @@ export type CrucibleDetailEntry = Omit<CrucibleEntryRow, 'score' | 'position'> &
 
 export type CrucibleDetail = CrucibleDetailRow & {
   paidEntryCount: number;
+  entrantCount: number;
   /** The caller's own entries; everyone else's are paged through `getCrucibleEntries`. */
   viewerEntries: CrucibleEntryRow[];
   /** Entries whose image was deleted or withdrawn don't count, as in `submitEntry`'s limit. */
@@ -1152,21 +1178,24 @@ export const getCrucibleDetail = async ({
   if (!crucible || isCrucibleBlockedForViewer(crucible, { isModerator, blockedCreatorIds }))
     return null;
 
-  const [paidEntryCounts, { viewerEntries, viewerEntriesSoFar }] = await Promise.all([
-    getPaidEntryCounts([id]),
-    userId
-      ? dbRead.crucibleEntry
-          .findMany({
-            where: { crucibleId: id, userId },
-            select: crucibleEntrySelect,
-            orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
-          })
-          .then((entries) => ({
-            viewerEntries: entries.filter(hasEntryImage),
-            viewerEntriesSoFar: entries.length,
-          }))
-      : { viewerEntries: [], viewerEntriesSoFar: 0 },
-  ]);
+  const [paidEntryCounts, entrantCounts, { viewerEntries, viewerEntriesSoFar }] = await Promise.all(
+    [
+      getPaidEntryCounts([id]),
+      getEntrantCounts([id]),
+      userId
+        ? dbRead.crucibleEntry
+            .findMany({
+              where: { crucibleId: id, userId },
+              select: crucibleEntrySelect,
+              orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+            })
+            .then((entries) => ({
+              viewerEntries: entries.filter(hasEntryImage),
+              viewerEntriesSoFar: entries.length,
+            }))
+        : { viewerEntries: [], viewerEntriesSoFar: 0 },
+    ]
+  );
 
   const paidEntryCount = paidEntryCounts.get(id) ?? 0;
   const prizeWinners =
@@ -1191,6 +1220,7 @@ export const getCrucibleDetail = async ({
   return {
     ...crucible,
     paidEntryCount,
+    entrantCount: entrantCounts.get(id) ?? 0,
     viewerEntries,
     viewerEntryCount: viewerEntries.length,
     viewerEntriesSoFar,
@@ -5090,7 +5120,7 @@ export const getJudgingSuggestions = async ({
     .slice(0, limit);
   if (!ids.length) return [];
 
-  const suggestions = await withPaidEntryCount(
+  const suggestions = await withEntryCounts(
     await dbRead.crucible.findMany({
       where: { id: { in: ids } },
       select: crucibleListSelect,

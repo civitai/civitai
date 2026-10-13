@@ -85,6 +85,8 @@ Media entered from the submit dialog also stays off the entrant's profile, the p
 
 Showing a live leaderboard would bias judges, so scores and positions stay hidden until the crucible ends. Entrants can see only their own standing. Once the crucible is completed or cancelled, the full ranking is public.
 
+The crucible card and page show how many different people have entered next to the entry count. It is a bare number, never who, so judging stays blind. It is the same count the 10-entrant creator milestone uses: distinct users with an entry, the host excluded, entries since removed or withdrawn included.
+
 ## Notifications
 
 - **Creator:** new entries, and the end (with any seed refund).

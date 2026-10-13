@@ -1,5 +1,5 @@
 import { Badge, Skeleton, Text, Tooltip } from '@mantine/core';
-import { IconCheck, IconGavel, IconHourglass, IconUsers } from '@tabler/icons-react';
+import { IconCheck, IconGavel, IconHourglass, IconSwords, IconUsers } from '@tabler/icons-react';
 import clsx from 'clsx';
 import React, { useMemo } from 'react';
 import { AspectRatioImageCard } from '~/components/CardTemplates/AspectRatioImageCard';
@@ -49,6 +49,7 @@ type CrucibleCardData = {
     entries: number;
   };
   paidEntryCount: number;
+  entrantCount: number;
   judging?: CrucibleJudgingStatus;
 };
 
@@ -65,6 +66,7 @@ export function CrucibleCard({ data }: { data: CrucibleCardData }) {
     image,
     _count,
     paidEntryCount,
+    entrantCount,
     judging,
   } = data;
   const entryCount = _count.entries ?? 0;
@@ -166,8 +168,12 @@ export function CrucibleCard({ data }: { data: CrucibleCardData }) {
               </Text>
             )}
             <Text component="span" size="xs" fw={600} className="flex items-center gap-1">
-              <IconUsers size={14} />
+              <IconSwords size={14} />
               {abbreviateNumber(entryCount)} {entryCount === 1 ? 'entry' : 'entries'}
+            </Text>
+            <Text component="span" size="xs" fw={600} className="flex items-center gap-1">
+              <IconUsers size={14} />
+              {abbreviateNumber(entrantCount)} {entrantCount === 1 ? 'entrant' : 'entrants'}
             </Text>
           </div>
         </div>
