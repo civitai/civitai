@@ -4,10 +4,11 @@ import { MantineProvider } from '@mantine/core';
 import '@mantine/core/styles.css';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import React from 'react';
-import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { beforeEach, describe, expect, onTestFinished, test, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 import { render } from 'vitest-browser-react';
 import type * as FeatureFlagsMod from '~/providers/FeatureFlagsProvider';
+import type * as NotificationsMod from '~/utils/notifications';
 import type * as TrpcMod from '~/utils/trpc';
 import { makeTrpcProxy } from '../../../test/trpcProxyStub';
 
@@ -38,6 +39,14 @@ const mocks = vi.hoisted(() => ({
   createGate: null as Promise<void> | null,
   /** `getAppDetail`'s answer — read only by the ⋮ menu's review item. */
   detail: null as unknown,
+  /** Every `showSuccessNotification` message — the toast that replaces the old "sent" screen. */
+  successes: [] as unknown[],
+}));
+
+vi.mock('~/utils/notifications', async (importOriginal) => ({
+  ...(await importOriginal<typeof NotificationsMod>()),
+  showSuccessNotification: (toast: { message: unknown; autoClose?: unknown }) =>
+    mocks.successes.push({ message: toast.message, autoClose: toast.autoClose }),
 }));
 
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => mocks.user }));
@@ -69,8 +78,11 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
             }),
         },
         'appFeedback.create': {
-          useMutation: () =>
+          // The caller's options pass through, as the real hook's do: the modal's success path
+          // (close + toast) is an `onSuccess` option.
+          useMutation: (opts?: Record<string, unknown>) =>
             useMutation({
+              ...opts,
               mutationFn: async (input: unknown) => {
                 mocks.createInputs.push(input);
                 if (mocks.createGate) await mocks.createGate;
@@ -242,6 +254,114 @@ function expectStyledOneLineBar() {
 const modal = () => page.getByTestId('app-feedback-modal');
 const messageBox = () => page.getByTestId('app-feedback-message');
 const sendButton = () => page.getByTestId('app-feedback-submit');
+const counter = () => page.getByTestId('app-feedback-counter');
+const scrim = () => document.querySelector('.mantine-Drawer-overlay') as HTMLElement;
+const SENT_MESSAGE =
+  "Sent to the developer. You'll get a notification if they mark it resolved or won't fix.";
+/** The dialog's own box, desktop (Modal) or phone (Drawer) alike. */
+const dialogContent = () =>
+  document.querySelector<HTMLElement>('.mantine-Modal-content, .mantine-Drawer-content');
+
+/** Resolves once the modal has gone, with the toast as the only confirmation. */
+async function expectClosedWithToast() {
+  await expect.element(modal()).not.toBeInTheDocument();
+  // 6s, not the helper's 3s default: two sentences, the second said nowhere else.
+  expect(mocks.successes).toEqual([{ message: SENT_MESSAGE, autoClose: 6000 }]);
+  expect(page.getByText(SENT_MESSAGE).elements()).toHaveLength(0);
+}
+
+/**
+ * Chromium cannot open a real on-screen keyboard here, so `window.visualViewport` is replaced by
+ * a stand-in — the only input the dialog reads. It starts as "no keyboard" for the CURRENT
+ * viewport, so call it after `page.viewport(...)`. Restored when the test finishes.
+ */
+type FakeViewport = EventTarget & { height: number; offsetTop: number };
+const realViewport = Object.getOwnPropertyDescriptor(window, 'visualViewport');
+function installFakeViewport(): FakeViewport {
+  const fake: FakeViewport = Object.assign(new EventTarget(), {
+    height: window.innerHeight,
+    offsetTop: 0,
+  });
+  Object.defineProperty(window, 'visualViewport', { configurable: true, value: fake });
+  onTestFinished(() => {
+    if (realViewport) Object.defineProperty(window, 'visualViewport', realViewport);
+    else delete (window as { visualViewport?: unknown }).visualViewport;
+  });
+  return fake;
+}
+/** Show a keyboard `px` tall (0 hides it). Returns the y of the visible area's bottom edge. */
+function showKeyboard(fake: FakeViewport, px: number): number {
+  fake.height = window.innerHeight - px;
+  fake.dispatchEvent(new Event('resize'));
+  return fake.height;
+}
+/**
+ * Mantine's Textarea turns `autosize` off under test (it renders 2 rows, ~56px), so every
+ * geometry assertion would otherwise measure a shorter form than production's 4-row minimum and
+ * 10-row maximum. These are those two heights, forced.
+ */
+const TEXTAREA_4_ROWS_PX = 100;
+const TEXTAREA_10_ROWS_PX = 230;
+function forceTextareaHeight(px: number) {
+  const el = messageBox().element() as HTMLTextAreaElement;
+  el.style.height = `${px}px`;
+  el.style.minHeight = `${px}px`;
+  expect(Math.round(el.getBoundingClientRect().height)).toBe(px);
+}
+/**
+ * With the keyboard's top edge at `visibleBottom`: the whole dialog is inside the visible area,
+ * and Send is either visible already or can be scrolled into it inside the dialog.
+ */
+async function expectSendReachable(visibleBottom: number, { mustScroll }: { mustScroll: boolean }) {
+  const box = dialogContent() as HTMLElement;
+  await vi.waitFor(() => {
+    const r = box.getBoundingClientRect();
+    expect(r.top).toBeGreaterThanOrEqual(0);
+    expect(r.bottom).toBeLessThanOrEqual(visibleBottom + 1);
+  });
+  const scrolls = box.scrollHeight > box.clientHeight + 1;
+  expect(scrolls).toBe(mustScroll);
+  if (scrolls) {
+    expect(getComputedStyle(box).overflowY).toBe('auto');
+    box.scrollTop = box.scrollHeight;
+    expect(box.scrollTop).toBeGreaterThan(0);
+  }
+  const send = rectOf(sendButton().element());
+  expect(send.bottom).toBeLessThanOrEqual(visibleBottom);
+  expect(send.top).toBeGreaterThanOrEqual(box.getBoundingClientRect().top);
+}
+
+/** The alpha channel of a computed `rgb()`/`rgba()` colour (1 when it has none). */
+function alphaOf(color: string): number {
+  const parts = color
+    .match(/rgba?\(([^)]+)\)/)?.[1]
+    .split(',')
+    .map((x) => Number(x.trim()));
+  if (!parts || parts.length < 3) throw new Error(`not an rgb colour: ${color}`);
+  return parts.length === 4 ? parts[3] : 1;
+}
+
+/**
+ * Wait until the dialog box has stopped moving: Mantine animates both renderings in (the Modal
+ * pops, the Drawer slides up), and a rect read mid-transition is neither position.
+ */
+async function settledDialogRect(): Promise<DOMRect> {
+  let last = '';
+  let rect: DOMRect | null = null;
+  await vi.waitFor(
+    () => {
+      const el = dialogContent();
+      expect(el).not.toBeNull();
+      rect = (el as HTMLElement).getBoundingClientRect();
+      const key = [rect.top, rect.bottom, rect.left, rect.right].join(',');
+      const stable = key === last;
+      last = key;
+      expect(stable).toBe(true);
+    },
+    { interval: 100, timeout: 3000 }
+  );
+  return rect as unknown as DOMRect;
+}
 
 async function openFeedbackModal(props: Record<string, unknown> = PAGE_PROPS) {
   renderChrome(props);
@@ -268,6 +388,7 @@ beforeEach(async () => {
   mocks.createResult = { kind: 'ok' };
   mocks.createGate = null;
   mocks.detail = null;
+  mocks.successes = [];
   await page.viewport(1280, 900);
 });
 
@@ -423,25 +544,51 @@ describe('the bar button', () => {
 });
 
 describe('opening the modal', () => {
-  test('clicking the button opens the private-feedback modal titled for the app', async () => {
+  test('clicking the button opens the private-feedback modal titled for the app — no notice, no "sent with" line', async () => {
     await openFeedbackModal();
-    await expect
-      .element(page.getByTestId('app-feedback-private-notice'))
-      .toHaveTextContent(
-        "Private. Only this app's developer, their collaborators and Civitai moderators can read this. It won't appear on the app's page. They will see your username."
-      );
-    await expect
-      .element(page.getByTestId('app-feedback-sent-with'))
-      .toHaveTextContent('Sent with: app version 1.4.2. Nothing else is collected.');
     await expect
       .element(page.getByRole('dialog'))
       .toHaveAccessibleName("Send private feedback to Pixel Forge's developer");
+    await expect.element(messageBox()).toBeVisible();
+    // The removed copy, under any testid or wording it used to have.
+    const text = (page.getByRole('dialog').element() as HTMLElement).textContent ?? '';
+    expect(text).not.toContain('Private.');
+    expect(text).not.toContain('can read this');
+    expect(text).not.toContain('Sent with');
+    expect(text).not.toContain('Nothing else is collected');
+    expect(page.getByTestId('app-feedback-private-notice').elements()).toHaveLength(0);
+    expect(page.getByTestId('app-feedback-sent-with').elements()).toHaveLength(0);
+    // CONTROL: the same read does see the dialog's own copy.
+    expect(text).toContain('Your feedback');
     // The ⋮ menu was never involved.
     expect(menuTrigger().element().getAttribute('aria-expanded')).toBe('false');
-    // Desktop control for the 375px full-screen test below.
-    const content = document.querySelector('.mantine-Modal-content') as HTMLElement | null;
-    expect(content).not.toBeNull();
-    expect(content?.getAttribute('data-full-screen')).toBeNull();
+  });
+
+  test('desktop (1280×900): bottom-anchored 10dvh above the viewport bottom, centred horizontally, not full-screen', async () => {
+    await page.viewport(1280, 900);
+    await openFeedbackModal();
+    const r = await settledDialogRect();
+    expect(dialogContent()?.classList.contains('mantine-Modal-content')).toBe(true);
+    expect(dialogContent()?.getAttribute('data-full-screen')).toBeNull();
+    // 10dvh of 900 = 90: the dialog's bottom edge sits 90px above the viewport's.
+    expect(Math.abs(window.innerHeight - r.bottom - 90)).toBeLessThanOrEqual(1);
+    // …which is NOT where a centred dialog would be (control for the assertion above).
+    expect(Math.abs((r.top + r.bottom) / 2 - window.innerHeight / 2)).toBeGreaterThan(50);
+    // Width and horizontal centring unchanged: Mantine `size="md"` is 440px.
+    expect(Math.round(r.width)).toBe(440);
+    expect(Math.abs(r.left - (window.innerWidth - r.right))).toBeLessThanOrEqual(1);
+  });
+
+  test('desktop at a second height (1280×700): still 10dvh (70px) from the bottom', async () => {
+    await page.viewport(1280, 700);
+    await openFeedbackModal();
+    const r = await settledDialogRect();
+    expect(Math.abs(window.innerHeight - r.bottom - 70)).toBeLessThanOrEqual(1);
+  });
+
+  test('the textarea has focus on open (not the close button)', async () => {
+    await openFeedbackModal();
+    await vi.waitFor(() => expect(document.activeElement).toBe(messageBox().element()));
   });
 
   test('Send is disabled until there is text', async () => {
@@ -454,15 +601,106 @@ describe('opening the modal', () => {
   });
 });
 
+describe('the character counter', () => {
+  test('absent at 1,500 characters', async () => {
+    await openFeedbackModal();
+    await userEvent.fill(messageBox().element() as HTMLElement, 'a'.repeat(1500));
+    await vi.waitFor(() =>
+      expect((messageBox().element() as HTMLTextAreaElement).value).toHaveLength(1500)
+    );
+    expect(counter().elements()).toHaveLength(0);
+  });
+
+  test('shown past 1,500 as "1,850 / 2,000"', async () => {
+    await openFeedbackModal();
+    await userEvent.fill(messageBox().element() as HTMLElement, 'a'.repeat(1850));
+    await expect.element(counter()).toHaveTextContent('1,850 / 2,000');
+  });
+});
+
+describe('keyboard submit', () => {
+  test('Ctrl+Enter sends', async () => {
+    await openFeedbackModal();
+    await userEvent.fill(messageBox().element() as HTMLElement, 'quick note');
+    await userEvent.keyboard('{Control>}{Enter}{/Control}');
+    await expectClosedWithToast();
+    expect(mocks.createInputs).toStrictEqual([
+      { target: { slug: SLUG }, message: 'quick note', context: { surface: 'page' } },
+    ]);
+  });
+
+  test('⌘+Enter sends', async () => {
+    await openFeedbackModal();
+    await userEvent.fill(messageBox().element() as HTMLElement, 'mac note');
+    await userEvent.keyboard('{Meta>}{Enter}{/Meta}');
+    await expectClosedWithToast();
+    expect(mocks.createInputs).toHaveLength(1);
+  });
+
+  test('plain Enter is a newline, not a send', async () => {
+    await openFeedbackModal();
+    await userEvent.fill(messageBox().element() as HTMLElement, 'line one');
+    await userEvent.keyboard('{Enter}');
+    await vi.waitFor(() =>
+      expect((messageBox().element() as HTMLTextAreaElement).value).toBe('line one\n')
+    );
+    await new Promise((r) => setTimeout(r, 200));
+    expect(mocks.createInputs).toHaveLength(0);
+    await expect.element(modal()).toBeInTheDocument();
+    // CONTROL: the same box, same harness, sends on Ctrl+Enter.
+    await userEvent.keyboard('{Control>}{Enter}{/Control}');
+    await vi.waitFor(() => expect(mocks.createInputs).toHaveLength(1));
+  });
+
+  test('a Ctrl+Enter that commits an IME composition is not a send', async () => {
+    await openFeedbackModal();
+    await userEvent.fill(messageBox().element() as HTMLElement, '日本語');
+    const box = messageBox().element() as HTMLTextAreaElement;
+    const keydown = (init: KeyboardEventInit) =>
+      box.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, bubbles: true, ...init })
+      );
+    keydown({ isComposing: true });
+    // Safari's shape: composition already ended, keyCode 229 on the committing keydown.
+    keydown({ isComposing: false, keyCode: 229 });
+    await new Promise((r) => setTimeout(r, 200));
+    expect(mocks.createInputs).toHaveLength(0);
+    // CONTROL: the same synthetic event without the composition sends.
+    keydown({ isComposing: false });
+    await vi.waitFor(() => expect(mocks.createInputs).toHaveLength(1));
+  });
+
+  test('two Ctrl+Enter keydowns before the pending render send once', async () => {
+    await openFeedbackModal();
+    await userEvent.fill(messageBox().element() as HTMLElement, 'once only');
+    const box = messageBox().element() as HTMLTextAreaElement;
+    const keydown = () =>
+      box.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, bubbles: true })
+      );
+    // Same tick: React has not re-rendered between them, so neither the disabled textarea nor
+    // `isPending` stands in the second one's way.
+    keydown();
+    keydown();
+    await expectClosedWithToast();
+    expect(mocks.createInputs).toHaveLength(1);
+  });
+
+  test('Ctrl+Enter on an empty message sends nothing', async () => {
+    await openFeedbackModal();
+    await vi.waitFor(() => expect(document.activeElement).toBe(messageBox().element()));
+    await userEvent.keyboard('{Control>}{Enter}{/Control}');
+    await new Promise((r) => setTimeout(r, 200));
+    expect(mocks.createInputs).toHaveLength(0);
+    await expect.element(modal()).toBeInTheDocument();
+  });
+});
+
 describe('submitting', () => {
-  test('page host: sends exactly {target: slug, message, context: {surface: page}} and confirms', async () => {
+  test('page host: sends exactly {target: slug, message, context: {surface: page}}, closes and toasts', async () => {
     await openFeedbackModal();
     await typeAndSend('  the export button 404s  ');
-    await expect
-      .element(page.getByTestId('app-feedback-sent'))
-      .toHaveTextContent(
-        "Sent to the developer. You'll get a notification if they mark it resolved or won't fix."
-      );
+    await expectClosedWithToast();
     expect(mocks.createInputs).toStrictEqual([
       { target: { slug: SLUG }, message: 'the export button 404s', context: { surface: 'page' } },
     ]);
@@ -470,13 +708,8 @@ describe('submitting', () => {
 
   test('model slot: sends exactly {target: appBlockId, message, context: {surface: slot, modelId}}', async () => {
     await openFeedbackModal(SLOT_PROPS);
-    await expect
-      .element(page.getByTestId('app-feedback-sent-with'))
-      .toHaveTextContent(
-        'Sent with: app version 1.4.2 and the model you were viewing. Nothing else is collected.'
-      );
     await typeAndSend('love it');
-    await expect.element(page.getByTestId('app-feedback-sent')).toBeInTheDocument();
+    await expectClosedWithToast();
     expect(mocks.createInputs).toStrictEqual([
       {
         target: { appBlockId: APP_BLOCK_ID },
@@ -514,16 +747,29 @@ describe('submitting', () => {
   ];
 
   for (const [name, code, serverMessage, shown] of errorCases) {
-    test(`${name} (${code}): readable error, modal stays open, text kept`, async () => {
+    test(`${name} (${code}): readable error inline, modal stays open, text kept, no toast`, async () => {
       mocks.createResult = { kind: 'error', code, message: serverMessage };
       await openFeedbackModal();
       await typeAndSend('my feedback');
       await expect.element(page.getByTestId('app-feedback-error')).toHaveTextContent(shown);
       await expect.element(modal()).toBeInTheDocument();
       expect((messageBox().element() as HTMLTextAreaElement).value).toBe('my feedback');
-      expect(page.getByTestId('app-feedback-sent').elements()).toHaveLength(0);
+      expect(mocks.successes).toHaveLength(0);
     });
   }
+});
+
+describe('after an inline error', () => {
+  test('the kept text can be sent again', async () => {
+    mocks.createResult = { kind: 'error', code: 'TOO_MANY_REQUESTS', message: 'Slow down' };
+    await openFeedbackModal();
+    await typeAndSend('second time lucky');
+    await expect.element(page.getByTestId('app-feedback-error')).toHaveTextContent('Slow down');
+    mocks.createResult = { kind: 'ok' };
+    await sendButton().click();
+    await expectClosedWithToast();
+    expect(mocks.createInputs).toHaveLength(2);
+  });
 });
 
 describe('alongside the review entry on the page host', () => {
@@ -565,7 +811,7 @@ describe('a reused host (app A → app B without remount)', () => {
     await view.rerender(chrome('app-b'));
     await expect.element(modal()).toBeInTheDocument();
     await typeAndSend('about app A');
-    await expect.element(page.getByTestId('app-feedback-sent')).toBeInTheDocument();
+    await expectClosedWithToast();
     expect(mocks.createInputs).toStrictEqual([
       { target: { slug: 'app-a' }, message: 'about app A', context: { surface: 'page' } },
     ]);
@@ -592,14 +838,202 @@ describe('while a submit is pending', () => {
     await expect.element(modal()).toBeInTheDocument();
     expect(mocks.createInputs).toHaveLength(1);
 
+    expect(mocks.successes).toHaveLength(0);
+
     release();
-    await expect.element(page.getByTestId('app-feedback-sent')).toBeInTheDocument();
+    await expectClosedWithToast();
     expect(mocks.createInputs).toHaveLength(1);
   });
 });
 
+describe('the phone bottom sheet (375×720)', () => {
+  beforeEach(async () => {
+    await page.viewport(375, 720);
+  });
+
+  test('a Drawer pinned to the bottom edge, full width, sized to its content — not a full-screen modal', async () => {
+    await openFeedbackModal();
+    const r = await settledDialogRect();
+    expect(dialogContent()?.classList.contains('mantine-Drawer-content')).toBe(true);
+    expect(document.querySelector('.mantine-Modal-content')).toBeNull();
+    expect(Math.abs(window.innerHeight - r.bottom)).toBeLessThanOrEqual(1);
+    expect(Math.round(r.left)).toBe(0);
+    expect(Math.round(r.width)).toBe(375);
+    // Sized to content: well short of the screen, so the app stays visible above it.
+    expect(r.height).toBeLessThan(window.innerHeight * 0.75);
+    // Minimal chrome: the header is not held at Mantine's 60px minimum.
+    const header = document.querySelector<HTMLElement>('.mantine-Drawer-header');
+    expect(header).not.toBeNull();
+    expect(header!.getBoundingClientRect().height).toBeLessThan(60);
+    // Everything the user needs is on screen.
+    expect(rectOf(sendButton().element()).bottom).toBeLessThanOrEqual(window.innerHeight);
+  });
+
+  test('a lighter scrim (alpha 0.25) over an opaque sheet', async () => {
+    await openFeedbackModal();
+    await settledDialogRect();
+    const overlay = document.querySelector<HTMLElement>('.mantine-Drawer-overlay');
+    expect(overlay).not.toBeNull();
+    const overlayStyle = getComputedStyle(overlay as HTMLElement);
+    // The colour's alpha carries the lightness; the element itself is not faded on top of it.
+    expect(alphaOf(overlayStyle.backgroundColor)).toBeCloseTo(0.25, 2);
+    expect(Number(overlayStyle.opacity)).toBe(1);
+    const sheet = getComputedStyle(dialogContent() as HTMLElement);
+    expect(alphaOf(sheet.backgroundColor)).toBe(1);
+    expect(Number(sheet.opacity)).toBe(1);
+  });
+
+  test('while a send is pending, Esc and a scrim tap cannot dismiss the sheet', async () => {
+    let release: () => void = () => undefined;
+    mocks.createGate = new Promise<void>((r) => {
+      release = r;
+    });
+    await openFeedbackModal();
+    await settledDialogRect();
+    await userEvent.fill(messageBox().element() as HTMLElement, 'from my phone');
+    await sendButton().click();
+    await vi.waitFor(() => expect(mocks.createInputs).toHaveLength(1));
+    // Wait for the PENDING render, not just the request: the guard reads `isPending`.
+    await expect.element(messageBox()).toBeDisabled();
+    await userEvent.keyboard('{Escape}');
+    // A real tap above the sheet (hit-tested, so it must land on the scrim), not a DOM click.
+    await userEvent.click(page.elementLocator(scrim()), { position: { x: 10, y: 10 } });
+    await new Promise((r) => setTimeout(r, 300));
+    await expect.element(modal()).toBeInTheDocument();
+    expect(dialogContent()).not.toBeNull();
+    expect(mocks.successes).toHaveLength(0);
+    release();
+    await expectClosedWithToast();
+  });
+
+  test('CONTROL — with nothing pending, a scrim tap does dismiss the sheet', async () => {
+    await openFeedbackModal();
+    await settledDialogRect();
+    await userEvent.click(page.elementLocator(scrim()), { position: { x: 10, y: 10 } });
+    await expect.element(modal()).not.toBeInTheDocument();
+  });
+
+  test('the sheet sits above routed dialogs and the generation panel (z-index tier 400)', async () => {
+    await openFeedbackModal();
+    const inner = document.querySelector<HTMLElement>('.mantine-Drawer-inner');
+    expect(inner).not.toBeNull();
+    // `mobileMenuSheetZIndex`, via `MobileMenuDrawer`; Mantine's own default would be 200.
+    expect(getComputedStyle(inner as HTMLElement).zIndex).toBe('400');
+  });
+
+  test('the textarea has focus on open in the sheet too', async () => {
+    await openFeedbackModal();
+    await vi.waitFor(() => expect(document.activeElement).toBe(messageBox().element()));
+  });
+
+  test('success closes the sheet and toasts', async () => {
+    await openFeedbackModal();
+    await typeAndSend('from my phone');
+    await expectClosedWithToast();
+  });
+
+  test('an error stays inline in the sheet', async () => {
+    mocks.createResult = { kind: 'error', code: 'FORBIDDEN', message: 'Nope' };
+    await openFeedbackModal();
+    await typeAndSend('from my phone');
+    await expect.element(page.getByTestId('app-feedback-error')).toHaveTextContent('Nope');
+    await expect.element(modal()).toBeInTheDocument();
+    expect(mocks.successes).toHaveLength(0);
+  });
+
+  describe('with the on-screen keyboard up', () => {
+    test('the sheet rides above a 300px keyboard and drops back when it closes', async () => {
+      const fake = installFakeViewport();
+      await openFeedbackModal();
+      forceTextareaHeight(TEXTAREA_4_ROWS_PX);
+      // CONTROL: keyboard down, the sheet is on the bottom edge.
+      expect(Math.abs(window.innerHeight - (await settledDialogRect()).bottom)).toBeLessThanOrEqual(
+        1
+      );
+      const visible = showKeyboard(fake, 300);
+      expect(visible).toBe(420);
+      await vi.waitFor(() =>
+        expect(Math.abs(dialogContent()!.getBoundingClientRect().bottom - 420)).toBeLessThanOrEqual(
+          1
+        )
+      );
+      // At the 4-row minimum everything fits above the keyboard with no scrolling.
+      await expectSendReachable(420, { mustScroll: false });
+      expect(rectOf(messageBox().element()).top).toBeGreaterThanOrEqual(0);
+      showKeyboard(fake, 0);
+      await vi.waitFor(() =>
+        expect(Math.abs(dialogContent()!.getBoundingClientRect().bottom - 720)).toBeLessThanOrEqual(
+          1
+        )
+      );
+    });
+
+    test('a 10-row message over a 360px keyboard: the sheet scrolls and Send can be reached', async () => {
+      const fake = installFakeViewport();
+      await openFeedbackModal();
+      await settledDialogRect();
+      forceTextareaHeight(TEXTAREA_10_ROWS_PX);
+      await expectSendReachable(showKeyboard(fake, 360), { mustScroll: true });
+    });
+
+    test('iOS pans the visual viewport: only the part below it counts as keyboard', async () => {
+      const fake = installFakeViewport();
+      await openFeedbackModal();
+      await settledDialogRect();
+      fake.height = 420;
+      fake.offsetTop = 100;
+      fake.dispatchEvent(new Event('scroll'));
+      await vi.waitFor(() =>
+        expect(Math.abs(dialogContent()!.getBoundingClientRect().bottom - 520)).toBeLessThanOrEqual(
+          1
+        )
+      );
+    });
+  });
+});
+
+describe('the wide dialog on a touch device (1024×768) with the on-screen keyboard up', () => {
+  // A tablet, or a phone held sideways, is wider than the `sm` rule, so it gets the Modal — which
+  // is bottom-anchored and would sit under the keyboard.
+  beforeEach(async () => {
+    await page.viewport(1024, 768);
+  });
+
+  test('the dialog rides above a 300px keyboard and returns to its 10dvh offset after', async () => {
+    const fake = installFakeViewport();
+    await openFeedbackModal();
+    forceTextareaHeight(TEXTAREA_4_ROWS_PX);
+    expect(dialogContent()?.classList.contains('mantine-Modal-content')).toBe(true);
+    // CONTROL: keyboard down, 10dvh (76.8px) above the bottom — i.e. under where a keyboard goes.
+    const resting = await settledDialogRect();
+    expect(Math.abs(window.innerHeight - resting.bottom - 76.8)).toBeLessThanOrEqual(1);
+    expect(resting.bottom).toBeGreaterThan(468);
+    const visible = showKeyboard(fake, 300);
+    expect(visible).toBe(468);
+    // An 8px gap above the keyboard.
+    await vi.waitFor(() =>
+      expect(Math.abs(dialogContent()!.getBoundingClientRect().bottom - 460)).toBeLessThanOrEqual(1)
+    );
+    await expectSendReachable(468, { mustScroll: false });
+    showKeyboard(fake, 0);
+    await vi.waitFor(() =>
+      expect(
+        Math.abs(window.innerHeight - dialogContent()!.getBoundingClientRect().bottom - 76.8)
+      ).toBeLessThanOrEqual(1)
+    );
+  });
+
+  test('a 10-row message over a 468px keyboard (300px visible): the dialog scrolls and Send can be reached', async () => {
+    const fake = installFakeViewport();
+    await openFeedbackModal();
+    await settledDialogRect();
+    forceTextareaHeight(TEXTAREA_10_ROWS_PX);
+    await expectSendReachable(showKeyboard(fake, 468), { mustScroll: true });
+  });
+});
+
 describe('narrow bars', () => {
-  test('at 375px the compact shell has the button beside ⋮ (not in the sheet), and the modal is full-screen', async () => {
+  test('at 375px the compact shell has the button beside ⋮ (not in the sheet)', async () => {
     await page.viewport(375, 720);
     renderChrome();
     const root = page.getByTestId('app-block-chrome');
@@ -628,10 +1062,6 @@ describe('narrow bars', () => {
     expect(sheet.textContent).not.toContain('Send feedback to developer');
     await userEvent.keyboard('{Escape}');
     await expect.element(page.getByTestId('app-block-menu-dropdown')).not.toBeInTheDocument();
-    await feedbackButton().click();
-    await expect.element(modal()).toBeInTheDocument();
-    const content = document.querySelector('.mantine-Modal-content') as HTMLElement | null;
-    expect(content?.getAttribute('data-full-screen')).toBe('true');
   });
 
   test('a 320px model sidebar keeps the button in the one-line bar', async () => {

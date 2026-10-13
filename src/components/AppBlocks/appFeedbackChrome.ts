@@ -3,10 +3,7 @@ import type {
   AppFeedbackTarget,
   CreateAppFeedbackInput,
 } from '~/server/schema/app-feedback.schema';
-import {
-  APP_FEEDBACK_READERS,
-  FEEDBACK_MESSAGE_MAX_LENGTH,
-} from '~/shared/constants/feedback.constants';
+import { FEEDBACK_MESSAGE_MAX_LENGTH } from '~/shared/constants/feedback.constants';
 import { isPageSlot } from '~/shared/constants/slot-registry';
 import { sanitizeAppChromeName } from './appChromeName';
 import type { BlockHostSurface } from './blockInitFragmentGate';
@@ -108,13 +105,6 @@ export function canSubmitAppFeedback(message: string): boolean {
   return length > 0 && length <= FEEDBACK_MESSAGE_MAX_LENGTH;
 }
 
-/**
- * The send dialog's privacy notice, after its bold "Private." lead. Names the same readers as the
- * developer's inbox (one shared phrase), collaborators included, since an accepted collaborator
- * reads the inbox too.
- */
-export const APP_FEEDBACK_PRIVATE_NOTICE = `Only ${APP_FEEDBACK_READERS} can read this. It won't appear on the app's page. They will see your username.`;
-
 export function appFeedbackModalTitle(appName: string | null | undefined): string {
   const name = sanitizeAppChromeName(appName);
   return name
@@ -122,28 +112,48 @@ export function appFeedbackModalTitle(appName: string | null | undefined): strin
     : "Send private feedback to this app's developer";
 }
 
+/** Below this many characters the modal shows no counter; the limit is far off. */
+export const APP_FEEDBACK_COUNTER_THRESHOLD = 1500;
+
+const COUNT_FORMAT = new Intl.NumberFormat('en-US');
+
 /**
- * Must name everything stored about what the user was viewing (app version, model), or the
- * modal's "Nothing else is collected" is false. The stored `surface` (page vs model slot) is left
- * unnamed: it is where the modal itself was opened.
+ * The textarea's "1,850 / 2,000" counter, or `null` until the message passes
+ * {@link APP_FEEDBACK_COUNTER_THRESHOLD}. Counts the raw value, which is what the textarea's
+ * `maxLength` caps, so the counter reaches the limit exactly when typing stops.
  */
-export function appFeedbackSentWithLine(
-  appBlockVersion: string | null | undefined,
-  context: AppFeedbackContext
-): string {
-  const version = sanitizeAppChromeName(appBlockVersion);
-  const parts = [
-    version ? `app version ${version}` : null,
-    context.modelId != null ? 'the model you were viewing' : null,
-  ].filter((part): part is string => part !== null);
-  return parts.length
-    ? `Sent with: ${parts.join(' and ')}. Nothing else is collected.`
-    : 'Nothing else is collected with your message.';
+export function appFeedbackCharacterCounter(length: number): string | null {
+  if (length <= APP_FEEDBACK_COUNTER_THRESHOLD) return null;
+  return `${COUNT_FORMAT.format(length)} / ${COUNT_FORMAT.format(FEEDBACK_MESSAGE_MAX_LENGTH)}`;
+}
+
+/**
+ * Ctrl+Enter (⌘+Enter on a Mac) sends from the textarea. Plain Enter stays a newline, and an
+ * Enter that commits an IME composition is not a send: `isComposing` covers most browsers, and
+ * `keyCode` 229 covers Safari, which ends the composition before that keydown and so reports
+ * `isComposing: false` on it. Whether a send is allowed at all (text present, nothing pending)
+ * is the submit handler's own guard, not this predicate's.
+ */
+export function isAppFeedbackSubmitShortcut(event: {
+  key: string;
+  ctrlKey: boolean;
+  metaKey: boolean;
+  isComposing?: boolean;
+  keyCode?: number;
+}): boolean {
+  if (event.isComposing || event.keyCode === 229) return false;
+  return event.key === 'Enter' && (event.ctrlKey || event.metaKey);
 }
 
 /** The second sentence is held to the server's notified statuses by appFeedbackChrome.test.ts. */
 export const APP_FEEDBACK_SENT_MESSAGE =
   "Sent to the developer. You'll get a notification if they mark it resolved or won't fix.";
+
+/**
+ * How long the confirmation toast stays. Twice the app's 3s default: it is two sentences, and the
+ * second (when the sender will hear back) is said nowhere else.
+ */
+export const APP_FEEDBACK_SENT_TOAST_MS = 6000;
 
 export const APP_FEEDBACK_NOT_AVAILABLE_MESSAGE =
   "This app isn't accepting feedback from you right now.";
