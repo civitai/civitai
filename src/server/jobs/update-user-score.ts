@@ -9,7 +9,15 @@ import { pgDbWrite } from '~/server/db/pgDb';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import type { CreatorScoreUnlock } from '~/shared/utils/creator-score-unlocks';
-import { REPORTS_AGAINST_EVENT } from '~/shared/constants/creator-journey.constants';
+import {
+  REMOVAL_RESTORED_EVENT,
+  REPORTS_AGAINST_EVENT,
+} from '~/shared/constants/creator-journey.constants';
+import {
+  countRemovalsByOwner,
+  getImagesApprovedOnAppealSince,
+  getRemovedImageOwners,
+} from '~/server/services/creator-removals.service';
 import {
   buildCreatorScoreUnlocks,
   compiledCreatorScoreUnlockInputs,
@@ -368,27 +376,28 @@ async function getReportedActionedScore(ctx: Context) {
   `;
 }
 
-async function getReportAgainstScore(ctx: Context) {
-  const affected = await ctx.ch.$query<{ id: number; violations: number }>`
-    WITH affected AS (
-      SELECT DISTINCT
-        ownerId
-      FROM images
-      WHERE type = '${REPORTS_AGAINST_EVENT}'
-      AND time > ${ctx.lastUpdate}
-    )
-    SELECT
-      ownerId as id,
-      uniq(imageId) as violations
+// Absolute per owner, so every re-scored owner is set, including to 0 once nothing counts.
+export async function getReportAgainstScore(
+  ctx: Pick<Context, 'ch' | 'lastUpdate' | 'scoreMultipliers' | 'setScore'>
+) {
+  const approved = await getImagesApprovedOnAppealSince(ctx.lastUpdate);
+  const changed = await ctx.ch.$query<{ ownerId: number }>`
+    SELECT DISTINCT ownerId
     FROM images
-    WHERE type = '${REPORTS_AGAINST_EVENT}'
-    AND ownerId IN (SELECT ownerId FROM affected)
-    GROUP BY 1;
+    WHERE type IN ('${REPORTS_AGAINST_EVENT}', '${REMOVAL_RESTORED_EVENT}')
+    AND time > ${ctx.lastUpdate}
   `;
+  const owners = [
+    ...new Set([
+      ...changed.map((r) => Number(r.ownerId)),
+      ...(await getRemovedImageOwners(ctx.ch, approved)),
+    ]),
+  ];
 
-  for (const { id, violations } of affected) {
-    const score = violations * ctx.scoreMultipliers.reportsAgainst;
-    ctx.setScore(id, 'reportsAgainst', score);
+  const violations = await countRemovalsByOwner(ctx.ch, owners);
+  for (const id of owners) {
+    const count = violations.get(id);
+    ctx.setScore(id, 'reportsAgainst', count ? count * ctx.scoreMultipliers.reportsAgainst : 0);
   }
 }
 
