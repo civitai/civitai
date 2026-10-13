@@ -8,6 +8,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 import { render } from 'vitest-browser-react';
 import type * as FeatureFlagsMod from '~/providers/FeatureFlagsProvider';
+import type * as NotificationsMod from '~/utils/notifications';
 import type * as TrpcMod from '~/utils/trpc';
 import { makeTrpcProxy } from '../../../test/trpcProxyStub';
 
@@ -38,6 +39,13 @@ const mocks = vi.hoisted(() => ({
   createGate: null as Promise<void> | null,
   /** `getAppDetail`'s answer — read only by the ⋮ menu's review item. */
   detail: null as unknown,
+  /** Every `showSuccessNotification` message — the toast that replaces the old "sent" screen. */
+  successes: [] as unknown[],
+}));
+
+vi.mock('~/utils/notifications', async (importOriginal) => ({
+  ...(await importOriginal<typeof NotificationsMod>()),
+  showSuccessNotification: ({ message }: { message: unknown }) => mocks.successes.push(message),
 }));
 
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => mocks.user }));
@@ -69,8 +77,11 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
             }),
         },
         'appFeedback.create': {
-          useMutation: () =>
+          // The caller's options pass through, as the real hook's do: the modal's success path
+          // (close + toast) is an `onSuccess` option.
+          useMutation: (opts?: Record<string, unknown>) =>
             useMutation({
+              ...opts,
               mutationFn: async (input: unknown) => {
                 mocks.createInputs.push(input);
                 if (mocks.createGate) await mocks.createGate;
@@ -242,6 +253,51 @@ function expectStyledOneLineBar() {
 const modal = () => page.getByTestId('app-feedback-modal');
 const messageBox = () => page.getByTestId('app-feedback-message');
 const sendButton = () => page.getByTestId('app-feedback-submit');
+const counter = () => page.getByTestId('app-feedback-counter');
+const SENT_MESSAGE =
+  "Sent to the developer. You'll get a notification if they mark it resolved or won't fix.";
+/** The dialog's own box, desktop (Modal) or phone (Drawer) alike. */
+const dialogContent = () =>
+  document.querySelector<HTMLElement>('.mantine-Modal-content, .mantine-Drawer-content');
+
+/** Resolves once the modal has gone, with the toast as the only confirmation. */
+async function expectClosedWithToast() {
+  await expect.element(modal()).not.toBeInTheDocument();
+  expect(mocks.successes).toEqual([SENT_MESSAGE]);
+  expect(page.getByText(SENT_MESSAGE).elements()).toHaveLength(0);
+}
+
+/** The alpha channel of a computed `rgb()`/`rgba()` colour (1 when it has none). */
+function alphaOf(color: string): number {
+  const parts = color
+    .match(/rgba?\(([^)]+)\)/)?.[1]
+    .split(',')
+    .map((x) => Number(x.trim()));
+  if (!parts || parts.length < 3) throw new Error(`not an rgb colour: ${color}`);
+  return parts.length === 4 ? parts[3] : 1;
+}
+
+/**
+ * Wait until the dialog box has stopped moving: Mantine animates both renderings in (the Modal
+ * pops, the Drawer slides up), and a rect read mid-transition is neither position.
+ */
+async function settledDialogRect(): Promise<DOMRect> {
+  let last = '';
+  let rect: DOMRect | null = null;
+  await vi.waitFor(
+    () => {
+      const el = dialogContent();
+      expect(el).not.toBeNull();
+      rect = (el as HTMLElement).getBoundingClientRect();
+      const key = [rect.top, rect.bottom, rect.left, rect.right].join(',');
+      const stable = key === last;
+      last = key;
+      expect(stable).toBe(true);
+    },
+    { interval: 100, timeout: 3000 }
+  );
+  return rect as unknown as DOMRect;
+}
 
 async function openFeedbackModal(props: Record<string, unknown> = PAGE_PROPS) {
   renderChrome(props);
@@ -268,6 +324,7 @@ beforeEach(async () => {
   mocks.createResult = { kind: 'ok' };
   mocks.createGate = null;
   mocks.detail = null;
+  mocks.successes = [];
   await page.viewport(1280, 900);
 });
 
@@ -423,25 +480,51 @@ describe('the bar button', () => {
 });
 
 describe('opening the modal', () => {
-  test('clicking the button opens the private-feedback modal titled for the app', async () => {
+  test('clicking the button opens the private-feedback modal titled for the app — no notice, no "sent with" line', async () => {
     await openFeedbackModal();
-    await expect
-      .element(page.getByTestId('app-feedback-private-notice'))
-      .toHaveTextContent(
-        "Private. Only this app's developer, their collaborators and Civitai moderators can read this. It won't appear on the app's page. They will see your username."
-      );
-    await expect
-      .element(page.getByTestId('app-feedback-sent-with'))
-      .toHaveTextContent('Sent with: app version 1.4.2. Nothing else is collected.');
     await expect
       .element(page.getByRole('dialog'))
       .toHaveAccessibleName("Send private feedback to Pixel Forge's developer");
+    await expect.element(messageBox()).toBeVisible();
+    // The removed copy, under any testid or wording it used to have.
+    const text = (page.getByRole('dialog').element() as HTMLElement).textContent ?? '';
+    expect(text).not.toContain('Private.');
+    expect(text).not.toContain('can read this');
+    expect(text).not.toContain('Sent with');
+    expect(text).not.toContain('Nothing else is collected');
+    expect(page.getByTestId('app-feedback-private-notice').elements()).toHaveLength(0);
+    expect(page.getByTestId('app-feedback-sent-with').elements()).toHaveLength(0);
+    // CONTROL: the same read does see the dialog's own copy.
+    expect(text).toContain('Your feedback');
     // The ⋮ menu was never involved.
     expect(menuTrigger().element().getAttribute('aria-expanded')).toBe('false');
-    // Desktop control for the 375px full-screen test below.
-    const content = document.querySelector('.mantine-Modal-content') as HTMLElement | null;
-    expect(content).not.toBeNull();
-    expect(content?.getAttribute('data-full-screen')).toBeNull();
+  });
+
+  test('desktop (1280×900): bottom-anchored 10dvh above the viewport bottom, centred horizontally, not full-screen', async () => {
+    await page.viewport(1280, 900);
+    await openFeedbackModal();
+    const r = await settledDialogRect();
+    expect(dialogContent()?.classList.contains('mantine-Modal-content')).toBe(true);
+    expect(dialogContent()?.getAttribute('data-full-screen')).toBeNull();
+    // 10dvh of 900 = 90: the dialog's bottom edge sits 90px above the viewport's.
+    expect(Math.abs(window.innerHeight - r.bottom - 90)).toBeLessThanOrEqual(1);
+    // …which is NOT where a centred dialog would be (control for the assertion above).
+    expect(Math.abs((r.top + r.bottom) / 2 - window.innerHeight / 2)).toBeGreaterThan(50);
+    // Width and horizontal centring unchanged: Mantine `size="md"` is 440px.
+    expect(Math.round(r.width)).toBe(440);
+    expect(Math.abs(r.left - (window.innerWidth - r.right))).toBeLessThanOrEqual(1);
+  });
+
+  test('desktop at a second height (1280×700): still 10dvh (70px) from the bottom', async () => {
+    await page.viewport(1280, 700);
+    await openFeedbackModal();
+    const r = await settledDialogRect();
+    expect(Math.abs(window.innerHeight - r.bottom - 70)).toBeLessThanOrEqual(1);
+  });
+
+  test('the textarea has focus on open (not the close button)', async () => {
+    await openFeedbackModal();
+    await vi.waitFor(() => expect(document.activeElement).toBe(messageBox().element()));
   });
 
   test('Send is disabled until there is text', async () => {
@@ -454,15 +537,72 @@ describe('opening the modal', () => {
   });
 });
 
+describe('the character counter', () => {
+  test('absent at 1,500 characters', async () => {
+    await openFeedbackModal();
+    await userEvent.fill(messageBox().element() as HTMLElement, 'a'.repeat(1500));
+    await vi.waitFor(() =>
+      expect((messageBox().element() as HTMLTextAreaElement).value).toHaveLength(1500)
+    );
+    expect(counter().elements()).toHaveLength(0);
+  });
+
+  test('shown past 1,500 as "1,850 / 2,000"', async () => {
+    await openFeedbackModal();
+    await userEvent.fill(messageBox().element() as HTMLElement, 'a'.repeat(1850));
+    await expect.element(counter()).toHaveTextContent('1,850 / 2,000');
+  });
+});
+
+describe('keyboard submit', () => {
+  test('Ctrl+Enter sends', async () => {
+    await openFeedbackModal();
+    await userEvent.fill(messageBox().element() as HTMLElement, 'quick note');
+    await userEvent.keyboard('{Control>}{Enter}{/Control}');
+    await expectClosedWithToast();
+    expect(mocks.createInputs).toStrictEqual([
+      { target: { slug: SLUG }, message: 'quick note', context: { surface: 'page' } },
+    ]);
+  });
+
+  test('⌘+Enter sends', async () => {
+    await openFeedbackModal();
+    await userEvent.fill(messageBox().element() as HTMLElement, 'mac note');
+    await userEvent.keyboard('{Meta>}{Enter}{/Meta}');
+    await expectClosedWithToast();
+    expect(mocks.createInputs).toHaveLength(1);
+  });
+
+  test('plain Enter is a newline, not a send', async () => {
+    await openFeedbackModal();
+    await userEvent.fill(messageBox().element() as HTMLElement, 'line one');
+    await userEvent.keyboard('{Enter}');
+    await vi.waitFor(() =>
+      expect((messageBox().element() as HTMLTextAreaElement).value).toBe('line one\n')
+    );
+    await new Promise((r) => setTimeout(r, 200));
+    expect(mocks.createInputs).toHaveLength(0);
+    await expect.element(modal()).toBeInTheDocument();
+    // CONTROL: the same box, same harness, sends on Ctrl+Enter.
+    await userEvent.keyboard('{Control>}{Enter}{/Control}');
+    await vi.waitFor(() => expect(mocks.createInputs).toHaveLength(1));
+  });
+
+  test('Ctrl+Enter on an empty message sends nothing', async () => {
+    await openFeedbackModal();
+    await vi.waitFor(() => expect(document.activeElement).toBe(messageBox().element()));
+    await userEvent.keyboard('{Control>}{Enter}{/Control}');
+    await new Promise((r) => setTimeout(r, 200));
+    expect(mocks.createInputs).toHaveLength(0);
+    await expect.element(modal()).toBeInTheDocument();
+  });
+});
+
 describe('submitting', () => {
-  test('page host: sends exactly {target: slug, message, context: {surface: page}} and confirms', async () => {
+  test('page host: sends exactly {target: slug, message, context: {surface: page}}, closes and toasts', async () => {
     await openFeedbackModal();
     await typeAndSend('  the export button 404s  ');
-    await expect
-      .element(page.getByTestId('app-feedback-sent'))
-      .toHaveTextContent(
-        "Sent to the developer. You'll get a notification if they mark it resolved or won't fix."
-      );
+    await expectClosedWithToast();
     expect(mocks.createInputs).toStrictEqual([
       { target: { slug: SLUG }, message: 'the export button 404s', context: { surface: 'page' } },
     ]);
@@ -470,13 +610,8 @@ describe('submitting', () => {
 
   test('model slot: sends exactly {target: appBlockId, message, context: {surface: slot, modelId}}', async () => {
     await openFeedbackModal(SLOT_PROPS);
-    await expect
-      .element(page.getByTestId('app-feedback-sent-with'))
-      .toHaveTextContent(
-        'Sent with: app version 1.4.2 and the model you were viewing. Nothing else is collected.'
-      );
     await typeAndSend('love it');
-    await expect.element(page.getByTestId('app-feedback-sent')).toBeInTheDocument();
+    await expectClosedWithToast();
     expect(mocks.createInputs).toStrictEqual([
       {
         target: { appBlockId: APP_BLOCK_ID },
@@ -514,14 +649,14 @@ describe('submitting', () => {
   ];
 
   for (const [name, code, serverMessage, shown] of errorCases) {
-    test(`${name} (${code}): readable error, modal stays open, text kept`, async () => {
+    test(`${name} (${code}): readable error inline, modal stays open, text kept, no toast`, async () => {
       mocks.createResult = { kind: 'error', code, message: serverMessage };
       await openFeedbackModal();
       await typeAndSend('my feedback');
       await expect.element(page.getByTestId('app-feedback-error')).toHaveTextContent(shown);
       await expect.element(modal()).toBeInTheDocument();
       expect((messageBox().element() as HTMLTextAreaElement).value).toBe('my feedback');
-      expect(page.getByTestId('app-feedback-sent').elements()).toHaveLength(0);
+      expect(mocks.successes).toHaveLength(0);
     });
   }
 });
@@ -565,7 +700,7 @@ describe('a reused host (app A → app B without remount)', () => {
     await view.rerender(chrome('app-b'));
     await expect.element(modal()).toBeInTheDocument();
     await typeAndSend('about app A');
-    await expect.element(page.getByTestId('app-feedback-sent')).toBeInTheDocument();
+    await expectClosedWithToast();
     expect(mocks.createInputs).toStrictEqual([
       { target: { slug: 'app-a' }, message: 'about app A', context: { surface: 'page' } },
     ]);
@@ -592,14 +727,123 @@ describe('while a submit is pending', () => {
     await expect.element(modal()).toBeInTheDocument();
     expect(mocks.createInputs).toHaveLength(1);
 
+    expect(mocks.successes).toHaveLength(0);
+
     release();
-    await expect.element(page.getByTestId('app-feedback-sent')).toBeInTheDocument();
+    await expectClosedWithToast();
     expect(mocks.createInputs).toHaveLength(1);
   });
 });
 
+describe('the phone bottom sheet (375×720)', () => {
+  beforeEach(async () => {
+    await page.viewport(375, 720);
+  });
+
+  test('a Drawer pinned to the bottom edge, full width, sized to its content — not a full-screen modal', async () => {
+    await openFeedbackModal();
+    const r = await settledDialogRect();
+    expect(dialogContent()?.classList.contains('mantine-Drawer-content')).toBe(true);
+    expect(document.querySelector('.mantine-Modal-content')).toBeNull();
+    expect(Math.abs(window.innerHeight - r.bottom)).toBeLessThanOrEqual(1);
+    expect(Math.round(r.left)).toBe(0);
+    expect(Math.round(r.width)).toBe(375);
+    // Sized to content: well short of the screen, so the app stays visible above it.
+    expect(r.height).toBeLessThan(window.innerHeight * 0.75);
+    // Everything the user needs is on screen.
+    expect(rectOf(sendButton().element()).bottom).toBeLessThanOrEqual(window.innerHeight);
+  });
+
+  test('a lighter scrim (alpha 0.25) over an opaque sheet', async () => {
+    await openFeedbackModal();
+    await settledDialogRect();
+    const overlay = document.querySelector<HTMLElement>('.mantine-Drawer-overlay');
+    expect(overlay).not.toBeNull();
+    const overlayStyle = getComputedStyle(overlay as HTMLElement);
+    // The colour's alpha carries the lightness; the element itself is not faded on top of it.
+    expect(alphaOf(overlayStyle.backgroundColor)).toBeCloseTo(0.25, 2);
+    expect(Number(overlayStyle.opacity)).toBe(1);
+    const sheet = getComputedStyle(dialogContent() as HTMLElement);
+    expect(alphaOf(sheet.backgroundColor)).toBe(1);
+    expect(Number(sheet.opacity)).toBe(1);
+  });
+
+  test('the textarea has focus on open in the sheet too', async () => {
+    await openFeedbackModal();
+    await vi.waitFor(() => expect(document.activeElement).toBe(messageBox().element()));
+  });
+
+  test('success closes the sheet and toasts', async () => {
+    await openFeedbackModal();
+    await typeAndSend('from my phone');
+    await expectClosedWithToast();
+  });
+
+  test('an error stays inline in the sheet', async () => {
+    mocks.createResult = { kind: 'error', code: 'FORBIDDEN', message: 'Nope' };
+    await openFeedbackModal();
+    await typeAndSend('from my phone');
+    await expect.element(page.getByTestId('app-feedback-error')).toHaveTextContent('Nope');
+    await expect.element(modal()).toBeInTheDocument();
+    expect(mocks.successes).toHaveLength(0);
+  });
+
+  describe('with the on-screen keyboard up', () => {
+    // Chromium cannot open a real keyboard here, so `window.visualViewport` is replaced by a
+    // stand-in whose height is set per test — the only input the sheet reads.
+    const own = Object.getOwnPropertyDescriptor(window, 'visualViewport');
+    let fake: EventTarget & { height: number; offsetTop: number };
+    beforeEach(() => {
+      fake = Object.assign(new EventTarget(), { height: 720, offsetTop: 0 });
+      Object.defineProperty(window, 'visualViewport', { configurable: true, value: fake });
+      return () => {
+        if (own) Object.defineProperty(window, 'visualViewport', own);
+        else delete (window as { visualViewport?: unknown }).visualViewport;
+      };
+    });
+
+    test('the sheet rides above a 300px keyboard and drops back when it closes', async () => {
+      await openFeedbackModal();
+      // CONTROL: keyboard down, the sheet is on the bottom edge.
+      expect(Math.abs(window.innerHeight - (await settledDialogRect()).bottom)).toBeLessThanOrEqual(
+        1
+      );
+      fake.height = 420;
+      fake.dispatchEvent(new Event('resize'));
+      await vi.waitFor(() =>
+        expect(Math.abs(dialogContent()!.getBoundingClientRect().bottom - 420)).toBeLessThanOrEqual(
+          1
+        )
+      );
+      // Send is above the keyboard, not under it.
+      expect(rectOf(sendButton().element()).bottom).toBeLessThanOrEqual(420);
+      expect(rectOf(messageBox().element()).top).toBeGreaterThanOrEqual(0);
+      fake.height = 720;
+      fake.dispatchEvent(new Event('resize'));
+      await vi.waitFor(() =>
+        expect(Math.abs(dialogContent()!.getBoundingClientRect().bottom - 720)).toBeLessThanOrEqual(
+          1
+        )
+      );
+    });
+
+    test('iOS pans the visual viewport: only the part below it counts as keyboard', async () => {
+      await openFeedbackModal();
+      await settledDialogRect();
+      fake.height = 420;
+      fake.offsetTop = 100;
+      fake.dispatchEvent(new Event('scroll'));
+      await vi.waitFor(() =>
+        expect(Math.abs(dialogContent()!.getBoundingClientRect().bottom - 520)).toBeLessThanOrEqual(
+          1
+        )
+      );
+    });
+  });
+});
+
 describe('narrow bars', () => {
-  test('at 375px the compact shell has the button beside ⋮ (not in the sheet), and the modal is full-screen', async () => {
+  test('at 375px the compact shell has the button beside ⋮ (not in the sheet)', async () => {
     await page.viewport(375, 720);
     renderChrome();
     const root = page.getByTestId('app-block-chrome');
@@ -628,10 +872,6 @@ describe('narrow bars', () => {
     expect(sheet.textContent).not.toContain('Send feedback to developer');
     await userEvent.keyboard('{Escape}');
     await expect.element(page.getByTestId('app-block-menu-dropdown')).not.toBeInTheDocument();
-    await feedbackButton().click();
-    await expect.element(modal()).toBeInTheDocument();
-    const content = document.querySelector('.mantine-Modal-content') as HTMLElement | null;
-    expect(content?.getAttribute('data-full-screen')).toBe('true');
   });
 
   test('a 320px model sidebar keeps the button in the one-line bar', async () => {

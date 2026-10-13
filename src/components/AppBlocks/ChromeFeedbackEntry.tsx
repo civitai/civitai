@@ -2,6 +2,7 @@ import {
   ActionIcon,
   Alert,
   Button,
+  Drawer,
   Group,
   Modal,
   Stack,
@@ -9,26 +10,29 @@ import {
   Textarea,
   Tooltip,
 } from '@mantine/core';
-import { IconLock, IconMessage2 } from '@tabler/icons-react';
+import { IconMessage2 } from '@tabler/icons-react';
+import type { ReactNode } from 'react';
 import { useState } from 'react';
 
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsMobile } from '~/hooks/useIsMobile';
+import { useVisualViewportBottomInset } from '~/hooks/useVisualViewportBottomInset';
 import { useOptionalFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { FEEDBACK_MESSAGE_MAX_LENGTH } from '~/shared/constants/feedback.constants';
 import { hasAppsStoreAccess } from '~/shared/utils/app-blocks-access';
+import { showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import type { AppFeedbackRequest } from './appFeedbackChrome';
 import type { BlockHostSurface } from './blockInitFragmentGate';
 import {
   APP_FEEDBACK_SENT_MESSAGE,
-  APP_FEEDBACK_PRIVATE_NOTICE,
+  appFeedbackCharacterCounter,
   appFeedbackEntryRequest,
   appFeedbackModalTitle,
-  appFeedbackSentWithLine,
   appFeedbackSubmitErrorMessage,
   buildAppFeedbackCreateInput,
   canSubmitAppFeedback,
+  isAppFeedbackSubmitShortcut,
 } from './appFeedbackChrome';
 
 /**
@@ -149,6 +153,18 @@ function ChromeFeedbackButtonBody({
   );
 }
 
+/**
+ * Desktop: how far the dialog sits above the bottom of the viewport. It is anchored there rather
+ * than centred so it does not cover the middle of the app the feedback is about. Mantine applies
+ * the same offset at the top, which only caps the dialog's height.
+ */
+export const APP_FEEDBACK_DESKTOP_BOTTOM_OFFSET = '10dvh';
+/**
+ * Mobile: the bottom sheet's scrim. Lighter than Mantine's default 0.6 so the app stays readable
+ * behind the sheet while the user describes it; the sheet itself stays opaque.
+ */
+export const APP_FEEDBACK_SHEET_SCRIM_OPACITY = 0.25;
+
 export function AppFeedbackModal({
   target,
   onClose,
@@ -158,86 +174,143 @@ export function AppFeedbackModal({
 }) {
   // Same viewport rule as `ReviewListingModal`: a modal IS the viewport.
   const isMobile = useIsMobile({ type: 'media' });
+  // Only the sheet needs it: the desktop dialog is not under an on-screen keyboard.
+  const keyboardInset = useVisualViewportBottomInset(isMobile);
   const { request } = target;
   const [message, setMessage] = useState('');
   // Not `useFeedbackSubmission`: that hook attaches host-page diagnostics (session id, console
   // and network errors) to every submit, and none of that is collected for app feedback.
-  const create = trpc.appFeedback.create.useMutation();
-  const sent = create.isSuccess;
+  const create = trpc.appFeedback.create.useMutation({
+    // A sent message needs no second screen: close and confirm with a toast. An error has no
+    // such path — it renders inline below and the dialog stays open with the text kept.
+    onSuccess: () => {
+      showSuccessNotification({ message: APP_FEEDBACK_SENT_MESSAGE });
+      onClose();
+    },
+  });
   const errorMessage = create.error ? appFeedbackSubmitErrorMessage(create.error) : null;
+  const counter = appFeedbackCharacterCounter(message.length);
 
   const submit = () => {
     if (!canSubmitAppFeedback(message) || create.isPending) return;
     create.mutate(buildAppFeedbackCreateInput(request, message));
   };
+  // Esc, the close button and the scrim all come through here; none may close mid-submit.
+  const close = () => (create.isPending ? undefined : onClose());
+  const title = appFeedbackModalTitle(target.appName);
 
-  return (
+  const body = (
+    <Stack gap="sm">
+      <Stack gap={4}>
+        <Textarea
+          label="Your feedback"
+          placeholder="What's working, what's broken, what you'd like…"
+          value={message}
+          onChange={(e) => setMessage(e.currentTarget.value)}
+          onKeyDown={(e) => {
+            const shortcut = isAppFeedbackSubmitShortcut({
+              key: e.key,
+              ctrlKey: e.ctrlKey,
+              metaKey: e.metaKey,
+              isComposing: e.nativeEvent.isComposing,
+            });
+            if (!shortcut) return;
+            e.preventDefault();
+            submit();
+          }}
+          maxLength={FEEDBACK_MESSAGE_MAX_LENGTH}
+          autosize
+          minRows={4}
+          maxRows={10}
+          disabled={create.isPending}
+          // Mantine's focus trap focuses this on open instead of the header's close button.
+          data-autofocus
+          data-testid="app-feedback-message"
+        />
+        {counter && (
+          <Text size="xs" c="dimmed" ta="right" data-testid="app-feedback-counter">
+            {counter}
+          </Text>
+        )}
+      </Stack>
+      {errorMessage && (
+        <Alert color="red" variant="light" data-testid="app-feedback-error">
+          {errorMessage}
+        </Alert>
+      )}
+      <Group justify="flex-end">
+        <Button variant="default" onClick={onClose} disabled={create.isPending}>
+          Cancel
+        </Button>
+        <Button
+          onClick={submit}
+          loading={create.isPending}
+          disabled={!canSubmitAppFeedback(message)}
+          data-testid="app-feedback-submit"
+        >
+          Send
+        </Button>
+      </Group>
+    </Stack>
+  );
+
+  return isMobile ? (
+    <AppFeedbackSheet title={title} onClose={close} keyboardInset={keyboardInset}>
+      {body}
+    </AppFeedbackSheet>
+  ) : (
     <Modal
       opened
-      onClose={() => (create.isPending ? undefined : onClose())}
-      title={appFeedbackModalTitle(target.appName)}
+      onClose={close}
+      title={title}
       size="md"
-      centered
-      fullScreen={isMobile}
+      yOffset={APP_FEEDBACK_DESKTOP_BOTTOM_OFFSET}
+      // Bottom-anchored: Mantine's inner box is a flex row whose cross-axis alignment is the
+      // dialog's vertical position (`centered` sets it to `center`, the default is the top).
+      styles={{ inner: { alignItems: 'flex-end' } }}
       data-testid="app-feedback-modal"
     >
-      {sent ? (
-        <Stack gap="md" data-testid="app-feedback-sent">
-          <Text size="sm">{APP_FEEDBACK_SENT_MESSAGE}</Text>
-          <Group justify="flex-end">
-            <Button onClick={onClose}>Close</Button>
-          </Group>
-        </Stack>
-      ) : (
-        <Stack gap="md">
-          <Alert
-            color="blue"
-            variant="light"
-            icon={<IconLock size={16} />}
-            data-testid="app-feedback-private-notice"
-          >
-            <Text size="sm">
-              <Text span fw={700}>
-                Private.
-              </Text>{' '}
-              {APP_FEEDBACK_PRIVATE_NOTICE}
-            </Text>
-          </Alert>
-          <Textarea
-            label="Your feedback"
-            placeholder="What's working, what's broken, what you'd like…"
-            value={message}
-            onChange={(e) => setMessage(e.currentTarget.value)}
-            maxLength={FEEDBACK_MESSAGE_MAX_LENGTH}
-            autosize
-            minRows={4}
-            maxRows={10}
-            disabled={create.isPending}
-            data-testid="app-feedback-message"
-          />
-          <Text size="xs" c="dimmed" data-testid="app-feedback-sent-with">
-            {appFeedbackSentWithLine(target.appBlockVersion, request.context)}
-          </Text>
-          {errorMessage && (
-            <Alert color="red" variant="light" data-testid="app-feedback-error">
-              {errorMessage}
-            </Alert>
-          )}
-          <Group justify="flex-end">
-            <Button variant="default" onClick={onClose} disabled={create.isPending}>
-              Cancel
-            </Button>
-            <Button
-              onClick={submit}
-              loading={create.isPending}
-              disabled={!canSubmitAppFeedback(message)}
-              data-testid="app-feedback-submit"
-            >
-              Send
-            </Button>
-          </Group>
-        </Stack>
-      )}
+      {body}
     </Modal>
+  );
+}
+
+/**
+ * The phone rendering: the site's bottom-sheet idiom (`Drawer position="bottom"`, as in
+ * `ChromeSurface`), sized to its content.
+ *
+ * - The bottom safe-area inset is paid by the global `.mantine-Drawer-content` rule in
+ *   `src/styles/globals.css`, so the `content` slot's padding is deliberately not set here.
+ * - `inner`'s `bottom` is raised by the on-screen keyboard's height, so the textarea and Send stay
+ *   above the keyboard; the content's `maxHeight` is relative to that raised box.
+ */
+function AppFeedbackSheet({
+  title,
+  onClose,
+  keyboardInset,
+  children,
+}: {
+  title: string;
+  onClose: () => void;
+  keyboardInset: number;
+  children: ReactNode;
+}) {
+  return (
+    <Drawer
+      opened
+      onClose={onClose}
+      position="bottom"
+      title={title}
+      overlayProps={{ backgroundOpacity: APP_FEEDBACK_SHEET_SCRIM_OPACITY }}
+      styles={{
+        inner: { bottom: keyboardInset },
+        content: { height: 'auto', maxHeight: '90%' },
+        header: { paddingTop: 8, paddingBottom: 8, paddingInline: 12, minHeight: 0 },
+        body: { paddingInline: 12, paddingBottom: 12 },
+      }}
+      data-testid="app-feedback-modal"
+    >
+      {children}
+    </Drawer>
   );
 }
