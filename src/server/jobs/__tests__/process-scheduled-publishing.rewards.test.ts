@@ -10,6 +10,7 @@ const {
   mockQueueImageSearchIndexUpdate,
   mockRefreshImageVideoCounts,
   mockBustMvCache,
+  mockPublishDueArticles,
   jobDate,
 } = vi.hoisted(() => ({
   mockApply: vi.fn(),
@@ -20,6 +21,7 @@ const {
   mockQueueImageSearchIndexUpdate: vi.fn(),
   mockRefreshImageVideoCounts: vi.fn(),
   mockBustMvCache: vi.fn(async () => undefined),
+  mockPublishDueArticles: vi.fn(async () => undefined),
   jobDate: { lastRun: new Date(0) },
 }));
 
@@ -48,6 +50,9 @@ vi.mock('~/server/services/notification.service', () => ({
 }));
 vi.mock('~/server/services/nsfwLevels.service', () => ({
   updateComicNsfwLevels: vi.fn(async () => undefined),
+}));
+vi.mock('~/server/services/article-schedule.service', () => ({
+  publishDueScheduledArticles: mockPublishDueArticles,
 }));
 vi.mock('~/server/jobs/job', () => ({
   createJob: (_n: string, _c: string, fn: unknown) => fn,
@@ -420,5 +425,21 @@ describe('processScheduledPublishing :: model version cache busts', () => {
     expect(mockLogToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({ modelVersionId: 101, error: 'redis down' })
     );
+  });
+});
+
+describe('processScheduledPublishing :: scheduled articles', () => {
+  it('takes due articles live on every run', async () => {
+    await runJob();
+    expect(mockPublishDueArticles).toHaveBeenCalledExactlyOnceWith(expect.any(Date));
+  });
+
+  it('still records the run when the article go-live throws', async () => {
+    mockPublishDueArticles.mockRejectedValueOnce(new Error('article table locked'));
+    await runJob();
+    expect(mockLogToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'error', message: 'scheduled article go-live failed' })
+    );
+    expect(mockSetLastRun).toHaveBeenCalled();
   });
 });

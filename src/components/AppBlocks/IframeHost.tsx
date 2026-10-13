@@ -172,9 +172,11 @@ const HARD_HEIGHT_CEILING = 8_000;
  * a 0px iframe because we could not read the viewport is a worse outcome than
  * the over-tall iframe the clamp exists to prevent.
  *
- * `window.innerHeight` deliberately, not `visualViewport.height` — nothing else
- * in `src/` reads `visualViewport`, and the pinch-zoom/keyboard-inset precision
- * it would add buys nothing for a bound whose whole job is "roughly one screen".
+ * `window.innerHeight` deliberately, not `visualViewport.height` — the
+ * pinch-zoom/keyboard-inset precision it would add buys nothing for a bound
+ * whose whole job is "roughly one screen". (A keyboard inset is a real concern
+ * for a fixed sheet holding a text field; that is
+ * `useVisualViewportBottomInset`'s job, not this clamp's.)
  */
 function viewportHeightPx(): number | null {
   if (typeof window === 'undefined') return null;

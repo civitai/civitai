@@ -2224,6 +2224,10 @@ export const modelVersionGeneratedImagesOnTimeframe = async ({
         SUM(count) AS generations
       FROM orchestration.daily_resource_generation_counts
       WHERE createdDate >= ${date}
+        -- A legacy import left rows dated 2079 and 2120 carrying a version's whole
+        -- all-time total. Without the upper bound they answer every window, and the
+        -- chart gets a point in the next century.
+        AND createdDate <= today()
         AND modelVersionId IN (${modelVersions.map((x) => x.id)})
       GROUP BY modelVersionId, createdDate
       ORDER BY createdAt DESC, generations DESC;

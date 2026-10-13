@@ -1,7 +1,9 @@
 import type { ModerationAdapter } from '~/server/services/entity-moderation.service';
 import {
   getTextScanMode,
+  getTextScanWebSearchMode,
   TEXT_SCAN_ENTITY_TYPES,
+  TEXT_SCAN_WEB_SEARCH_ENTITY_TYPES,
   textScanEmEntityType,
 } from '~/server/services/text-scan/mode';
 import { getTextScanProfile } from '~/server/services/text-scan/profiles';
@@ -29,6 +31,31 @@ export function textScanShadowAdapters() {
       textScanEmEntityType(entityType, 'shadow'),
       createTextScanShadowAdapter(entityType),
     ])
+  );
+}
+
+/** Retry-cron adapters for the web-search rows; enabled only while the search mode matches. */
+export function textScanWebSearchAdapters() {
+  return Object.fromEntries(
+    TEXT_SCAN_WEB_SEARCH_ENTITY_TYPES.flatMap((entityType) =>
+      (['shadow', 'active'] as const).map((mode): [string, ModerationAdapter] => [
+        textScanEmEntityType(entityType, mode, 'web-search'),
+        {
+          ...createTextScanAdapter(entityType, {}),
+          submit: async ({ entityId }) => {
+            const result = await scanEntity({
+              entityType,
+              entityId,
+              fromRetry: true,
+              pass: 'web-search',
+            });
+            return result.status === 'submitted' ? { id: result.workflowId } : null;
+          },
+          isEnabled: async ({ entityId }) =>
+            (await getTextScanWebSearchMode(entityType, entityId)) === mode,
+        },
+      ])
+    )
   );
 }
 

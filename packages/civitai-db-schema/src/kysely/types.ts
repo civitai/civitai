@@ -754,6 +754,7 @@ export type Article = {
   cover: string | null;
   coverId: number | null;
   publishedAt: Timestamp | null;
+  scheduledAt: Timestamp | null;
   contentScannedAt: Timestamp | null;
   ingestion: Generated<ArticleIngestionStatus>;
   scanRequestedAt: Timestamp | null;

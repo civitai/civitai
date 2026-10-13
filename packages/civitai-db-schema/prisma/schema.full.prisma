@@ -5492,6 +5492,8 @@ model Article {
   coverId          Int?          @unique
   coverImage       Image?        @relation(fields: [coverId], references: [id], onDelete: SetNull)
   publishedAt      DateTime?
+  // Go-live time for a never-published Draft; publishedAt stays NULL until then.
+  scheduledAt      DateTime?
   contentScannedAt DateTime?              // Set when both image + text scans complete successfully
   ingestion        ArticleIngestionStatus @default(Pending)
   scanRequestedAt  DateTime?

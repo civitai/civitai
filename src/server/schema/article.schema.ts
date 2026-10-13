@@ -109,6 +109,8 @@ export const upsertArticleInput = z.object({
   userNsfwLevel: z.enum(NsfwLevel).default(NsfwLevel.PG),
   moderatorNsfwLevel: z.enum(NsfwLevel).nullish(),
   publishedAt: z.date().nullish(),
+  // A date schedules a never-published draft to go live then; null cancels; omitted leaves it.
+  scheduledAt: z.date().nullish(),
   attachments: z.array(baseFileSchema).optional(),
   lockedProperties: z.string().array().optional(),
   status: z.enum(ArticleStatus).optional(),

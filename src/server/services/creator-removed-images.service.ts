@@ -2,8 +2,12 @@ import { Prisma } from '@prisma/client';
 import { clickhouse } from '~/server/clickhouse/client';
 import { dbRead } from '~/server/db/client';
 import { excludedRecord } from '~/server/jobs/appeal-decision-records';
+import {
+  type CreatorRemoval,
+  removalsQuery,
+  withoutAppealReversed,
+} from '~/server/services/creator-removals.service';
 import { getAppealExcludedIds } from '~/server/services/report.service';
-import { REPORTS_AGAINST_EVENT } from '~/shared/constants/creator-journey.constants';
 import { getAppealRefusal, isAppealableImage } from '~/shared/utils/appeal';
 import { type AppealStatus, EntityType } from '~/shared/utils/prisma/enums';
 
@@ -20,13 +24,8 @@ export type RemovedImage = {
   canAppeal: boolean;
 };
 
-// Grouped per image to match the score job's `uniq(imageId)`.
-export const REMOVALS_QUERY = `
-  SELECT imageId, toUnixTimestamp(max(time)) AS removedAt
-  FROM images
-  WHERE type = '${REPORTS_AGAINST_EVENT}' AND ownerId = {userId:Int32}
-  GROUP BY imageId
-  ORDER BY max(time) DESC
+export const REMOVALS_QUERY = `${removalsQuery('ownerId = {userId:Int32}')}
+  ORDER BY removedAt DESC
   LIMIT ${REMOVED_IMAGES_LIMIT}
 `;
 
@@ -43,7 +42,7 @@ async function getRemovalEvents(userId: number) {
       abort_signal: controller.signal,
       clickhouse_settings: { max_execution_time: CLICKHOUSE_TIMEOUT_SECONDS },
     });
-    return (await response.json()) as { imageId: number; removedAt: number }[];
+    return (await response.json()) as CreatorRemoval[];
   } finally {
     clearTimeout(timer);
   }
@@ -89,7 +88,8 @@ async function getLatestAppeals(userId: number, imageIds: number[]) {
  * are left out, and `total` counts only what is listed.
  */
 export async function getMyRemovedImages(userId: number) {
-  const events = await getRemovalEvents(userId);
+  const fetched = await getRemovalEvents(userId);
+  const events = await withoutAppealReversed(fetched);
   const none = { total: 0, truncated: false, items: [] as RemovedImage[] };
   if (!events.length) return none;
 
@@ -121,5 +121,5 @@ export async function getMyRemovedImages(userId: number) {
       isAppealableImage(state) &&
       !getAppealRefusal(EntityType.Image, appeals.get(id)),
   }));
-  return { total: items.length, truncated: events.length >= REMOVED_IMAGES_LIMIT, items };
+  return { total: items.length, truncated: fetched.length >= REMOVED_IMAGES_LIMIT, items };
 }

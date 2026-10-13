@@ -11,6 +11,11 @@ import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import type { CreatorScoreUnlock } from '~/shared/utils/creator-score-unlocks';
 import { REPORTS_AGAINST_EVENT } from '~/shared/constants/creator-journey.constants';
 import {
+  countRemovalsByOwner,
+  getOwnersWithReversalsSince,
+  reportsAgainstScore,
+} from '~/server/services/creator-removals.service';
+import {
   buildCreatorScoreUnlocks,
   compiledCreatorScoreUnlockInputs,
   getCreatorScoreUnlocks,
@@ -368,26 +373,26 @@ async function getReportedActionedScore(ctx: Context) {
   `;
 }
 
-async function getReportAgainstScore(ctx: Context) {
-  const affected = await ctx.ch.$query<{ id: number; violations: number }>`
-    WITH affected AS (
-      SELECT DISTINCT
-        ownerId
-      FROM images
-      WHERE type = '${REPORTS_AGAINST_EVENT}'
-      AND time > ${ctx.lastUpdate}
-    )
-    SELECT
-      ownerId as id,
-      uniq(imageId) as violations
+// Absolute per owner, so every re-scored owner is set, including to 0 once nothing counts.
+export async function getReportAgainstScore(
+  ctx: Pick<Context, 'ch' | 'lastUpdate' | 'scoreMultipliers' | 'setScore'>
+) {
+  const removed = await ctx.ch.$query<{ ownerId: number }>`
+    SELECT DISTINCT ownerId
     FROM images
     WHERE type = '${REPORTS_AGAINST_EVENT}'
-    AND ownerId IN (SELECT ownerId FROM affected)
-    GROUP BY 1;
+    AND time > ${ctx.lastUpdate}
   `;
+  const owners = [
+    ...new Set([
+      ...removed.map((r) => Number(r.ownerId)),
+      ...(await getOwnersWithReversalsSince(ctx.ch, ctx.lastUpdate)),
+    ]),
+  ];
 
-  for (const { id, violations } of affected) {
-    const score = violations * ctx.scoreMultipliers.reportsAgainst;
+  const violations = await countRemovalsByOwner(ctx.ch, owners);
+  for (const id of owners) {
+    const score = reportsAgainstScore(violations.get(id), ctx.scoreMultipliers.reportsAgainst);
     ctx.setScore(id, 'reportsAgainst', score);
   }
 }

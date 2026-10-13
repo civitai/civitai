@@ -724,6 +724,10 @@ export async function getResourceGenerations(
     SELECT modelVersionId, sum(count) AS count
     FROM daily_resource_generation_counts
     WHERE createdDate >= subtractDays(toStartOfDay(now()), ${days})
+      -- Upper bound because a legacy import left rows dated 2079 and 2120 holding a
+      -- version's whole all-time total; they satisfy any open-ended window and would
+      -- make a farming check read a lifetime count as this week's.
+      AND createdDate <= today()
       AND modelVersionId IN (${ids})
     GROUP BY modelVersionId
     ORDER BY count DESC
