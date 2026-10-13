@@ -1760,8 +1760,9 @@ export async function getRemixGalleryVisibility({
   // apply themselves. Computed with the same helper the refund uses, from the
   // same operator-set rate, so the number quoted before paying is the number
   // charged — a hardcoded 30% would be a promise this layer cannot keep.
-  const declineFeeRate = (await getPlacementConfig()).declineFeeRate(SURFACE);
-  const declineFee = space.price == null ? null : declineFeeAmount(space.price, declineFeeRate);
+  // The space's rate is the one that sizes the hold.
+  const declineFee =
+    space.price == null ? null : declineFeeAmount(space.price, space.declineFeeRate);
 
   return {
     open: space.mode !== 'off',

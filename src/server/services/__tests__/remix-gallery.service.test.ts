@@ -226,6 +226,7 @@ const openSpace = {
   setPrice: PRICE,
   price: PRICE,
   cap: 1000,
+  declineFeeRate: 0.3,
   freeSlots: 2,
   freeSlotsRemaining: 1,
   settings: {},
