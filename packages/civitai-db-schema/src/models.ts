@@ -659,6 +659,7 @@ export interface User {
   issuedStrikes?: UserStrike[];
   voidedStrikes?: UserStrike[];
   generationPresets?: GenerationPreset[];
+  postPresets?: PostPreset[];
   generationSizePresets?: GenerationSizePreset[];
   ownedWildcardSets?: WildcardSet[];
   blurbs?: Blurb[];
@@ -4208,6 +4209,37 @@ export interface Appeal {
   resolvedReason: string | null;
   internalNotes: string | null;
   buzzTransactionId: string | null;
+  entityRemovedAt: Date | null;
+}
+
+export interface AppealDecisionRecord {
+  id: bigint;
+  appealId: number;
+  imageId: number;
+  imageUrl: string;
+  pHash: bigint | null;
+  promptHash: string | null;
+  nsfwLevel: number;
+  nsfwLevelLocked: boolean;
+  nsfwLevelReason: string | null;
+  aiNsfwLevel: number | null;
+  blockedFor: string | null;
+  decision: string;
+  resolvedReason: string | null;
+  decidedAt: Date;
+  removalLabel: string | null;
+  removalNsfw: string | null;
+  restoredLevel: number | null;
+  trainingLabelCorrectedAt: Date | null;
+  trainingCopyState: string | null;
+  trainingObjectKey: string | null;
+  ownerHash: string | null;
+  createdAt: Date;
+}
+
+export interface AppealTrainingObjectDeletion {
+  key: string;
+  createdAt: Date;
 }
 
 export interface AuctionBase {
@@ -5554,6 +5586,16 @@ export interface UserStrike {
   issuedByUser?: User | null;
 }
 
+export interface PostPreset {
+  id: number;
+  userId: number;
+  user?: User;
+  name: string;
+  data: JsonValue;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 export interface GenerationPreset {
   id: number;
   userId: number;
@@ -5989,6 +6031,7 @@ export interface Crucible {
   ingestion: CrucibleIngestionStatus;
   scannedAt: Date | null;
   textNsfw: boolean;
+  timeAdjustedPlacement: boolean;
   entries?: CrucibleEntry[];
   reports?: CrucibleReport[];
   engagements?: CrucibleEngagement[];

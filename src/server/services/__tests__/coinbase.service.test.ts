@@ -67,14 +67,6 @@ vi.mock('~/server/schema/subscriptions.schema', () => ({
   },
 }));
 
-vi.mock('~/utils/string-helpers', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('~/utils/string-helpers')>();
-  return {
-    ...actual,
-    generateToken: vi.fn(() => 'ABCD'),
-  };
-});
-
 // Import after mocks
 import {
   createBuzzOrder,
@@ -303,6 +295,27 @@ describe('coinbase.service', () => {
           userId: 42,
         }),
       });
+    });
+
+    it('draws each code from a cryptographic source, not Math.random', async () => {
+      const random = vi.spyOn(Math, 'random').mockReturnValue(0);
+      mockDbRead.redeemableCode.findFirst.mockResolvedValue(null);
+      mockDbRead.user.findUnique.mockResolvedValue({ email: 'user@test.com', username: 'tester' });
+      mockDbWrite.redeemableCode.create.mockResolvedValue({});
+      const order = (internalOrderId: string) =>
+        processCodeOrder(
+          makeEventData({ metadata: { internalOrderId, codeType: 'Buzz', codeUnitValue: 10000 } })
+        );
+
+      try {
+        const first = await order('code-42-1708862400000');
+        const second = await order('code-42-1708862400001');
+
+        expect(first.code).toMatch(/^CS-[A-Z0-9]{4}-[A-Z0-9]{4}$/);
+        expect(second.code).not.toBe(first.code);
+      } finally {
+        random.mockRestore();
+      }
     });
 
     it('should send email to the purchaser after code creation', async () => {

@@ -1,3 +1,5 @@
+import type { BlockGatedImage as SdkBlockGatedImage } from '@civitai/app-sdk/blocks';
+
 import type { BlockGatedImage } from '~/server/services/blocks/block-gated-images.service';
 
 /**
@@ -5,12 +7,9 @@ import type { BlockGatedImage } from '~/server/services/blocks/block-gated-image
  *
  * `BlockGatedImage` (`block-gated-images.service.ts`) is the shape
  * `blocks.getImagesByIds` puts on the wire, and `@civitai/app-sdk/blocks` carries
- * a COPY of it that deployed blocks compile against. That type's docstring has
- * said *"Mirrors `@civitai/app-sdk/blocks`' `BlockGatedImage` — keep in
- * lockstep"* since it was written, and NOTHING ENFORCED IT: the two drifted the
- * moment the server gained the `ratingPending` shape, and a drift here is not a
- * type error anywhere — it is a deployed block reading `undefined` off a field
- * its types promise is a `number`.
+ * a COPY of it that deployed blocks compile against. A drift between the two is
+ * not a type error anywhere else — it is a deployed block reading `undefined`
+ * off a field its types promise is a `number`.
  *
  * This is the NON-TEST module (NOT `*.test.ts`) for the same reason
  * `src/components/AppBlocks/hostHandlerParity.ts` is: the assertions below are
@@ -18,74 +17,13 @@ import type { BlockGatedImage } from '~/server/services/blocks/block-gated-image
  * `tsc --noEmit` / `next build` graph. A `*.test.ts` would not be. (It is also
  * NOT under `src/pages/**` — Next would treat that as a route.)
  *
- * 🔴 WHY A VENDORED COPY RATHER THAN THE INSTALLED PACKAGE. The obvious guard —
- * `import type { BlockGatedImage } from '@civitai/app-sdk/blocks'` — cannot be
- * written today: the PUBLISHED `@civitai/app-sdk` this repo depends on (0.14.0)
- * does not export `BlockGatedImage` at all; the type exists only in the
- * `civitai-app-starters` SOURCE. Importing it would make this file a permanent
- * compile error, and a permanently-red gate is worse than no gate. So the SDK's
- * declaration is VENDORED below, byte-for-byte, and the compiler compares the
- * two structurally. The same one-directional-vs-published trade-off
- * `hostHandlerParity.ts` documents: the inventory here may be AHEAD of the
- * published dist, and that is the normal state while an SDK co-requisite is in
- * review.
- *
- * 🔴 WHAT THIS BUYS AND WHAT IT DOES NOT. It makes it IMPOSSIBLE to change the
- * server's wire type without this file failing to compile — which is the review
- * trigger that did not exist before. It does NOT read the real SDK, so it cannot
- * tell you the vendored copy is stale; the human step it forces is "paste the
- * SDK's current declaration here, and if it disagrees, open the SDK PR".
- *
- * MAINTENANCE, when the wire type changes:
- *   1. open the co-requisite PR in `civitai/civitai-app-starters`
- *      (`packages/civitai-app-sdk/src/blocks/types.ts`),
- *   2. paste that PR's `BlockGatedImage` body into {@link SdkBlockGatedImage}
- *      below (renaming only the type, and inlining `ContentRating`),
- *   3. update {@link SDK_MIRROR_SOURCE} to the ref you copied from.
+ * It compares against the INSTALLED `@civitai/app-sdk` dist, so it catches a
+ * server-side change immediately and an SDK-side change on the next bump of the
+ * `@civitai/app-sdk` range in `package.json`. When the wire type changes, land
+ * the matching SDK change (`civitai/civitai-app-starters`,
+ * `packages/civitai-app-sdk/src/blocks/types.ts`), publish it, and bump the range
+ * in the same PR as the server change.
  */
-
-/**
- * WHERE the vendored declaration below was copied from. Update alongside it.
- * Not load-bearing at runtime — it is the provenance a reviewer needs to check
- * the paste.
- */
-export const SDK_MIRROR_SOURCE =
-  'civitai/civitai-app-starters — packages/civitai-app-sdk/src/blocks/types.ts (BlockGatedImage)';
-
-/**
- * The SDK's `ContentRating` (civitai/civitai-app-starters,
- * `packages/civitai-app-sdk/src/blocks/types.ts` — NOT a path in this repo),
- * inlined so this module needs nothing from the installed package. This repo's
- * `OffsiteRatingValue` must equal it — the `contentRating` field crosses the wire
- * typed as one and is read as the other.
- */
-type SdkContentRating = 'g' | 'pg' | 'pg13' | 'r' | 'x';
-
-/**
- * 🔴 VENDORED BYTE-COPY of `@civitai/app-sdk/blocks`' `BlockGatedImage`. The only
- * edits permitted relative to the SDK source are the type's NAME and inlining
- * `ContentRating` as {@link SdkContentRating}. Do not "tidy" it toward this
- * repo's spelling — the point is that a difference is a compile error.
- */
-type SdkBlockGatedImage =
-  | {
-      imageId: number;
-      status: 'visible';
-      /** Scanner-resolved NSFW-level bitmask value. ABSENT on a `ratingPending` entry. */
-      nsfwLevel?: number;
-      /** Off-site content rating (`'g'|'pg'|'pg13'|'r'|'x'`). ABSENT on a `ratingPending` entry. */
-      contentRating?: SdkContentRating;
-      /** Civitai-hosted image URL (only present for a viewer allowed to see it). */
-      url: string;
-      width: number | null;
-      height: number | null;
-      /** Present ONLY on the viewer's OWN image that nothing has rated yet. */
-      ratingPending?: true;
-    }
-  | {
-      imageId: number;
-      status: 'hidden';
-    };
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The gate. Each assertion below is a `const X: <computed type> = true`, so a

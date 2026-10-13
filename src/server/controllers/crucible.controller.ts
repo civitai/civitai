@@ -60,7 +60,7 @@ import {
   submitEntry,
   submitVote,
   withoutEntryScores,
-  withPaidEntryCount,
+  withEntryCounts,
 } from '~/server/services/crucible.service';
 
 /** Creators who blocked the viewer and creators the viewer blocked; empty for moderators. */
@@ -100,7 +100,7 @@ export const getInfiniteCruciblesHandler = async ({
     viewerId: ctx.user?.id,
     isGreen: !!ctx.features?.isGreen,
   });
-  return { items: await withPaidEntryCount(items), nextCursor };
+  return { items: await withEntryCounts(items), nextCursor };
 };
 
 export const getCrucibleByIdHandler = async ({

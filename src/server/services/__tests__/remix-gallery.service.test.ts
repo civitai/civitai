@@ -158,8 +158,6 @@ primePlacementUpdate();
 const placementUpdateMany = dbMock.dbWrite.placement.updateMany;
 placementUpdateMany.mockResolvedValue({ count: 1 });
 
-dbMock.dbRead.user.findUnique.mockResolvedValue({ username: 'someone' });
-
 const {
   createRemixGallerySubmission,
   actOnRemixGallerySubmission,
@@ -222,10 +220,13 @@ const goodSubmission: SubmissionFixture = {
 
 const openSpace = {
   ownerId: OWNER,
+  ownerUsername: 'host-owner',
   mode: 'review' as const,
   setPrice: PRICE,
   price: PRICE,
   cap: 1000,
+  declineFee: 210,
+  declineFeeRate: 0.3,
   freeSlots: 2,
   freeSlotsRemaining: 1,
   settings: {},

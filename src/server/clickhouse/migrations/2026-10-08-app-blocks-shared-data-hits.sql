@@ -43,7 +43,8 @@
 -- never longer. Enforce-mode rows (no text) expire on the same rolling TTL.
 --
 -- The per-write DENOMINATOR (writes scanned, leaves per write, counts per category, no text) is
--- NOT here — it is the `app-blocks-shared-data-moderation-scan` Axiom event, one per scanned write.
+-- NOT here — it is the ClickHouse table `appBlocksSharedDataScans`, one row per scanned write
+-- (2026-10-12-app-blocks-shared-data-scans.sql), on the same 30-day TTL as this table.
 
 CREATE TABLE IF NOT EXISTS default.appBlocksSharedDataHits
 (
@@ -85,7 +86,8 @@ ORDER BY (time, appBlockId)
 TTL toStartOfDay(time) + INTERVAL 30 DAY
 SETTINGS ttl_only_drop_parts = 1;
 
--- Hit rate by category over the last day, against the denominator in Axiom:
+-- Hits by category over the last day (divide by the scanned-write count in
+-- `appBlocksSharedDataScans` over the same day for a rate):
 --
 --   SELECT category, mode, count(), uniqExact(leafSha256) FROM appBlocksSharedDataHits
 --   WHERE time > now() - INTERVAL 1 DAY GROUP BY 1, 2 ORDER BY 3 DESC;

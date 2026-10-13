@@ -15,6 +15,7 @@ import type * as AttributionModule from '~/server/services/blocks/buzz-attributi
 import type * as AuthorFeeChargeModule from '~/server/services/blocks/author-fee-charge.service';
 import type * as RateLimitModule from '~/server/utils/block-catalog-rate-limit';
 import type * as ImageUploadModule from '~/server/services/orchestrator/imageUpload';
+import type * as MetricsModule from '~/server/metrics/app-block-runtime.metrics';
 
 /**
  * `kind:'training'` end-to-end through `blocksRouter`: dataset → estimate (quote) →
@@ -53,6 +54,12 @@ const h = vi.hoisted(() => ({
   getActiveDevTunnel: vi.fn(async (): Promise<unknown> => null),
   reserveDevSessionBuzz: vi.fn(),
   refundDevSessionBuzz: vi.fn(async () => undefined),
+  overcharge: vi.fn(),
+}));
+
+vi.mock('~/server/metrics/app-block-runtime.metrics', async (importOriginal) => ({
+  ...(await importOriginal<typeof MetricsModule>()),
+  recordConfirmedQuoteOvercharge: (...a: unknown[]) => h.overcharge(...a),
 }));
 
 vi.mock('~/server/services/blocks/block-bridge-auth.service', async (importOriginal) => ({
@@ -1472,4 +1479,152 @@ describe('training — the run generation is per BODY', () => {
     expect(runsExpire?.[1]).toBe(TRAINING_RUN_GENERATION_TTL_SECONDS);
     expect(TRAINING_RUN_GENERATION_TTL_SECONDS).toBe(172_800);
   });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The training kind now runs on the path it SHARES with the confirmed step
+// (`submitConfirmedQuoteWorkflow` and the one gate / consent pair). Everything above
+// is unchanged and still green on it; these pin what the shared path adds or
+// deliberately decides for training.
+describe('training on the shared confirmed-quote path', () => {
+  async function confirmedQuote() {
+    const { snapshot } = (await estimate()) as { snapshot: { trainingQuote: { quoteId: string } } };
+    await consent(snapshot.trainingQuote.quoteId);
+    return snapshot.trainingQuote.quoteId;
+  }
+  const dayKey = () => new Date().toISOString().slice(0, 10);
+
+  it('🔴 the token rule: an OWNER’s private run may train (it has the host confirm), under the private-run cap', async () => {
+    h.authorize.mockImplementation(async () =>
+      claims({ privateRun: true, privateRunAudience: 'owner' })
+    );
+    const quoteId = await confirmedQuote();
+    const { snapshot } = (await submit(body({ quoteId }))) as { snapshot: { workflowId: string } };
+    expect(snapshot.workflowId).toBe(workflowId);
+    expect(counter('system:blocks:buzz-cap')).toBe(0);
+    expect(counter('system:blocks:private-run-buzz-cap')).toBe(1200);
+    // The private-run marker reaches BOTH audit rows.
+    await vi.waitFor(() => expect(h.recordSpendAttribution).toHaveBeenCalledTimes(1));
+    expect(h.recordSpendAttribution).toHaveBeenCalledWith(
+      expect.objectContaining({ privateRun: true, workflowId })
+    );
+    await vi.waitFor(() => expect(h.recordScopeInvocation).toHaveBeenCalledTimes(1));
+    expect(h.recordScopeInvocation).toHaveBeenCalledWith(
+      expect.objectContaining({ privateRun: true, dev: false })
+    );
+  });
+
+  it('a private run above the private-run cap is refused by that cap', async () => {
+    h.authorize.mockImplementation(async () =>
+      claims({ privateRun: true, privateRunAudience: 'owner' })
+    );
+    whatifPrice = { total: 2501 };
+    const quoteId = await confirmedQuote();
+    const { snapshot } = (await submit(body({ quoteId }))) as { snapshot: { error: string } };
+    expect(snapshot.error).toBe(
+      'private run Buzz cap reached: this training run costs 2501, cap is 2500'
+    );
+    expect(realSubmits()).toHaveLength(0);
+  });
+
+  it('the daily-limit refusal keeps its wording and now carries the machine-readable code', async () => {
+    dbMock.dbWrite.appUserScopeGrant.findUnique.mockResolvedValue({
+      buzzBudgetPerDay: 1500,
+      revokedAt: null,
+    });
+    store.set(`system:blocks:consent-budget:${VIEWER}:apb_test:${dayKey()}`, '600');
+    const quoteId = await confirmedQuote();
+    const { snapshot } = (await submit(body({ quoteId }))) as {
+      snapshot: { status: string; error: string; errorCode?: string };
+    };
+    expect(snapshot.status).toBe('failed');
+    expect(snapshot.error).toBe(
+      'app Buzz limit reached: 600 already spent today by this app on your behalf, ' +
+        'this training run costs 1200, your limit for this app is 1500'
+    );
+    expect(snapshot.errorCode).toBe('daily-limit-exceeded');
+    expect(realSubmits()).toHaveLength(0);
+    expect(Number(store.get(`system:blocks:consent-budget:${VIEWER}:apb_test:${dayKey()}`))).toBe(
+      600
+    );
+  });
+
+  it('the preview also reports the viewer’s daily limit (additive)', async () => {
+    dbMock.dbWrite.appUserScopeGrant.findUnique.mockResolvedValue({
+      buzzBudgetPerDay: 1500,
+      revokedAt: null,
+    });
+    store.set(`system:blocks:consent-budget:${VIEWER}:apb_test:${dayKey()}`, '301');
+    const { snapshot } = (await estimate()) as { snapshot: { trainingQuote: { quoteId: string } } };
+    const preview = await caller(VIEWER).previewTrainingQuote({
+      blockToken: 't',
+      quoteId: snapshot.trainingQuote.quoteId,
+    });
+    // 1500 − 301 = 1199 left; the 1200 run does not fit.
+    expect(preview).toMatchObject({
+      total: 1200,
+      imageCount: 2,
+      dailyLimit: { limit: 1500, spentToday: 301, remaining: 1199 },
+      exceedsDailyLimit: true,
+    });
+  });
+
+  it('🔴 a failed daily-limit read does NOT fail the training preview (it never depended on it)', async () => {
+    const { snapshot } = (await estimate()) as { snapshot: { trainingQuote: { quoteId: string } } };
+    dbMock.dbWrite.appUserScopeGrant.findUnique.mockRejectedValue(new Error('db unavailable'));
+    const preview = await caller(VIEWER).previewTrainingQuote({
+      blockToken: 't',
+      quoteId: snapshot.trainingQuote.quoteId,
+    });
+    expect(preview).toMatchObject({
+      total: 1200,
+      imageCount: 2,
+      modelName: 'SDXL',
+      thumbnails: ['t1', 't2'],
+      dailyLimit: null,
+      exceedsDailyLimit: false,
+    });
+  });
+
+  it('the generic consent pair serves a training quote exactly as the training-named one does', async () => {
+    const { snapshot } = (await estimate()) as { snapshot: { trainingQuote: { quoteId: string } } };
+    const quoteId = snapshot.trainingQuote.quoteId;
+    const viaGeneric = await caller(VIEWER).previewQuoteGrant({
+      kind: 'training',
+      blockToken: 't',
+      quoteId,
+    });
+    const viaNamed = await caller(VIEWER).previewTrainingQuote({ blockToken: 't', quoteId });
+    expect(viaGeneric).toEqual(viaNamed);
+    expect(viaGeneric).toMatchObject({ modelName: 'SDXL', thumbnails: ['t1', 't2'] });
+    await expect(
+      caller(VIEWER).consentQuoteGrant({ kind: 'training', blockToken: 't', quoteId })
+    ).resolves.toMatchObject({ consented: true, total: 1200 });
+    const { snapshot: run } = (await submit(body({ quoteId }))) as {
+      snapshot: { workflowId: string };
+    };
+    expect(run.workflowId).toBe(workflowId);
+  });
+
+  it('a step-shaped quote id is refused by the training-named procedures at the input', async () => {
+    await expect(consent(`sq_${'1'.repeat(32)}`)).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+  });
+
+  it.each([
+    [1250, true],
+    [1200, false],
+    [1100, false],
+  ])(
+    'a 1200 run billed at %i counts an overcharge under kind=training: %s',
+    async (billed, over) => {
+      const quoteId = await confirmedQuote();
+      chargedPrice = billed;
+      await submit(body({ quoteId }));
+      expect(h.overcharge.mock.calls).toEqual(over ? [['training']] : []);
+      const logged = loggingMock.logToAxiom.mock.calls.some(
+        (c) => (c[0] as { name?: string }).name === 'block-confirmed-quote-overcharge'
+      );
+      expect(logged).toBe(over);
+    }
+  );
 });

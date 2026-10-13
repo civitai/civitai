@@ -1,0 +1,186 @@
+import { StrictMode } from 'react';
+import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { page, userEvent } from 'vitest/browser';
+import { makeTrpcProxy } from '../../../../test/trpcProxyStub';
+import { LOADABLE_IMAGE_DATA_URI, renderWithProviders } from '../../../../test/component-setup';
+import type * as TrpcModule from '~/utils/trpc';
+import type * as BrowsingLevelModule from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import type * as DialogStoreModule from '~/components/Dialog/dialogStore';
+import type { MediaUploadOnCompleteProps, UseMediaUploadProps } from '~/hooks/useMediaUpload';
+
+const POST_COUNT = 12;
+
+const mocks = vi.hoisted(() => ({
+  validateResult: {
+    ok: true,
+    issues: [] as { code: string; message: string; index?: number; day?: string }[],
+    dailyLimit: 100,
+    perDay: [] as { day: string; existing: number; incoming: number }[],
+  },
+  scheduleCalls: [] as { idempotencyKey?: string; posts: { publishedAt: Date }[] }[],
+}));
+
+vi.mock('~/providers/FeatureFlagsProvider', () => ({
+  useFeatureFlags: () => ({ batchPostScheduling: true, postPlanner: false }),
+}));
+vi.mock('~/hooks/useCurrentUser', () => ({
+  useCurrentUser: () => ({ id: 7, username: 'tester', muted: false, isModerator: false }),
+}));
+vi.mock('~/components/BrowsingLevel/BrowsingLevelProvider', async (importOriginal) => ({
+  ...(await importOriginal<typeof BrowsingLevelModule>()),
+  useBrowsingLevelDebounced: () => 1,
+}));
+// The confirm step is a registry dialog; the harness mounts no DialogProvider, so confirm inline.
+vi.mock('~/components/Dialog/dialogStore', async (importOriginal) => ({
+  ...(await importOriginal<typeof DialogStoreModule>()),
+  dialogStore: {
+    trigger: (args: { props?: { onConfirm?: () => void } }) => args.props?.onConfirm?.(),
+    closeById: () => undefined,
+  },
+}));
+// S3 never sees these tests: every dropped file completes as an uploaded image at once.
+vi.mock('~/hooks/useMediaUpload', () => ({
+  useMediaUpload: ({ onComplete }: UseMediaUploadProps<Record<string, unknown>>) => ({
+    canAdd: true,
+    error: undefined,
+    loading: false,
+    files: [],
+    progress: 0,
+    reset: () => undefined,
+    removeFile: () => undefined,
+    upload: async (data: { file: File }[]) => {
+      data.forEach(({ file }, index) =>
+        onComplete({
+          status: 'added',
+          url: `key-${file.name}`,
+          index,
+          name: file.name,
+          mimeType: file.type,
+          type: 'image',
+          objectUrl: LOADABLE_IMAGE_DATA_URI,
+          metadata: { width: 1, height: 1, hash: 'h', size: 1 },
+          meta: {},
+        } as MediaUploadOnCompleteProps)
+      );
+    },
+  }),
+}));
+vi.mock('~/utils/trpc', async (importOriginal) => ({
+  ...(await importOriginal<typeof TrpcModule>()),
+  trpc: makeTrpcProxy({
+    'post.validateBatchSchedule': {
+      useQuery: () => ({ data: mocks.validateResult, isFetching: false, isLoading: false }),
+    },
+    'post.scheduleBatch': {
+      useMutation: () => ({
+        isPending: false,
+        mutateAsync: async (input: { idempotencyKey?: string; posts: { publishedAt: Date }[] }) => {
+          mocks.scheduleCalls.push(input);
+          return {
+            created: input.posts.map((post, index) => ({
+              postId: index + 1,
+              publishedAt: post.publishedAt.toISOString(),
+            })),
+          };
+        },
+      }),
+    },
+  }),
+}));
+
+const { BatchComposer } = await import('./BatchComposer');
+
+function fileInput(): Promise<HTMLInputElement> {
+  return vi.waitFor(() => {
+    const el = document.querySelector<HTMLInputElement>('input[type="file"]');
+    if (!el) throw new Error('dropzone file input not found');
+    return el;
+  });
+}
+
+async function uploadPosts(count: number, opts: { strict?: boolean } = {}) {
+  await renderWithProviders(
+    opts.strict ? (
+      <StrictMode>
+        <BatchComposer />
+      </StrictMode>
+    ) : (
+      <BatchComposer />
+    )
+  );
+  const files = Array.from(
+    { length: count },
+    (_, i) => new File(['x'], `render-${i + 1}.png`, { type: 'image/png' })
+  );
+  await userEvent.upload(await fileInput(), files);
+  await expect
+    .element(page.getByTestId('batch-grouping-summary'))
+    .toHaveTextContent(`${count} posts`);
+}
+
+describe('BatchComposer', () => {
+  beforeEach(() => {
+    mocks.validateResult = { ok: true, issues: [], dailyLimit: 100, perDay: [] };
+    mocks.scheduleCalls = [];
+  });
+
+  test('preview times never land on the hour', async () => {
+    await uploadPosts(POST_COUNT);
+    await userEvent.click(page.getByRole('radio', { name: 'List' }));
+    await vi.waitFor(() => {
+      const cells = page.getByTestId('batch-preview-time').elements();
+      expect(cells).toHaveLength(POST_COUNT);
+      for (const cell of cells) expect(cell.textContent).not.toMatch(/:00 [AP]M$/);
+    });
+  });
+
+  test('Review stays disabled with the reason while the validator reports issues', async () => {
+    mocks.validateResult = {
+      ok: false,
+      issues: [{ code: 'cap', day: '2026-10-08', message: '2026-10-08 would have 7 posts' }],
+      dailyLimit: 6,
+      perDay: [],
+    };
+    await uploadPosts(POST_COUNT);
+    const review = page.getByTestId('batch-review-button');
+    await expect.element(review).toBeDisabled();
+    await expect
+      .element(page.getByTestId('batch-summary-rail'))
+      .toHaveTextContent('Fix 1 conflict to continue');
+    await expect
+      .element(page.getByTestId('batch-issues'))
+      .toHaveTextContent('2026-10-08 would have 7 posts');
+  });
+
+  test('schedules in chunks and reports the created count', async () => {
+    await uploadPosts(POST_COUNT);
+    const review = page.getByTestId('batch-review-button');
+    await expect.element(review).toBeEnabled();
+    await userEvent.click(review);
+
+    const schedule = page.getByTestId('batch-schedule-button');
+    await expect.element(schedule).toBeEnabled();
+    await userEvent.click(schedule);
+
+    await expect
+      .element(page.getByTestId('batch-success-summary'))
+      .toHaveTextContent(`${POST_COUNT} posts scheduled`);
+    expect(mocks.scheduleCalls.map((call) => call.posts.length)).toEqual([2, 2, 2, 2, 2, 2]);
+  });
+
+  test('submits each chunk once under StrictMode, with its own idempotency key', async () => {
+    await uploadPosts(POST_COUNT, { strict: true });
+    await userEvent.click(page.getByTestId('batch-review-button'));
+    const schedule = page.getByTestId('batch-schedule-button');
+    await expect.element(schedule).toBeEnabled();
+    await userEvent.click(schedule);
+
+    await expect
+      .element(page.getByTestId('batch-success-summary'))
+      .toHaveTextContent(`${POST_COUNT} posts scheduled`);
+    expect(mocks.scheduleCalls.map((call) => call.posts.length)).toEqual([2, 2, 2, 2, 2, 2]);
+    const keys = mocks.scheduleCalls.map((call) => call.idempotencyKey);
+    expect(new Set(keys).size).toBe(6);
+    expect(keys.every((key) => typeof key === 'string' && key.length > 0)).toBe(true);
+  });
+});

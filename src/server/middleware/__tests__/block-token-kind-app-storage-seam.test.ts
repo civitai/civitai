@@ -214,33 +214,43 @@ describe('block-token kind × app storage — the seam the manifest guard closes
     });
 
     /**
-     * The four `verifyBlockToken` call sites, because THREE of them are the seam and one is
-     * the legitimate kind-aware read. Named so a fifth cannot appear unnoticed:
+     * The two `verifyBlockToken` call sites, and the three tRPC resolvers that reach the
+     * second one through `resolveBlockToken`. Named so a new one cannot appear unnoticed:
      *   - `block-scope.middleware.ts`   — the ONE correct site: branches on token kind.
+     *   - `blocks/block-bridge-auth.service.ts` — `resolveBlockToken`, the single tRPC-side
+     *                                      verification, which understands ONE token kind.
+     *                                      Its three callers:
      *   - `apps-shared.router.ts`       — `resolveSharedContext`: shared storage, all 11
-     *                                      REST routes + the tRPC bridge.
+     *                                      REST routes + the tRPC bridge. THE SEAM: it is
+     *                                      handed the raw bearer and verifies it again.
      *   - `apps/app-storage.service.ts` — `resolveStorageContext`: per-user storage. NOTE
      *                                      there is no REST route for it at all, so an
      *                                      `auth: "oauth"` app has no path to it by any
      *                                      surface — the second half of why the manifest
      *                                      guard covers `apps:storage:read/write` too.
-     *   - `blocks/block-bridge-auth.service.ts` — the tRPC bridge gate for every OTHER
-     *                                      bridge procedure. Out of scope for the manifest
-     *                                      guard (it is not scope-specific), and recorded
-     *                                      here because an `auth: "oauth"` app is expected
-     *                                      to use REST, not the postMessage bridge.
+     *   - `blocks/block-bridge-auth.service.ts` itself — `authorizeBlockBridgeToken`, the
+     *                                      tRPC bridge gate for every OTHER bridge procedure.
+     *                                      Out of scope for the manifest guard (it is not
+     *                                      scope-specific), and recorded here because an
+     *                                      `auth: "oauth"` app is expected to use REST, not
+     *                                      the postMessage bridge.
+     * Until the three resolvers were consolidated, each called `verifyBlockToken` itself and
+     * this was one ledger of four files. 🔴 SO THIS LEDGER ALONE NO LONGER SHOWS THE SEAM: two
+     * files here does not mean the resolvers stopped re-verifying the raw bearer. Who calls
+     * `resolveBlockToken` is pinned — derived from the tree, both directions, with the policy
+     * each caller passes — by `pins the approval policy each resolveBlockToken caller passes`
+     * in `src/server/services/__tests__/no-unguarded-block-rest-token.test.ts`. Read the two
+     * together; that one is not repeated here.
      */
-    it('pins the verifyBlockToken call sites — EXACTLY these four, production code only', () => {
+    it('pins the verifyBlockToken call sites — EXACTLY these two, production code only', () => {
       const EXPECTED_CALL_SITES = [
         'server/middleware/block-scope.middleware.ts',
-        'server/routers/apps-shared.router.ts',
-        'server/services/apps/app-storage.service.ts',
         'server/services/blocks/block-bridge-auth.service.ts',
       ].sort();
 
       // 🔴 ENUMERATES the tree — it does not check the expected files one by one. A
-      // per-file `toContain` would claim to pin "the four call sites" while being blind to
-      // a FIFTH, which is the whole failure this ledger exists to catch.
+      // per-file `toContain` would claim to pin "the call sites" while being blind to a
+      // NEW one, which is the whole failure this ledger exists to catch.
       expect(productionFilesCalling('verifyBlockToken(')).toEqual(EXPECTED_CALL_SITES);
     });
 

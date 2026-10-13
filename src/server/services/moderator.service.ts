@@ -75,7 +75,12 @@ type UserModActivity = {
     // A moderator closed the account FOR its owner, which in practice means a data-subject erasure
     // request from someone who cannot sign in to do it themselves. Distinct from `removeContent`,
     // which strips what an account owns and leaves the account itself identifiable.
-    | 'deleteAccount';
+    | 'deleteAccount'
+    // Support minted a membership code for this account (`mintMembershipCode:<tier>:<months>`). The
+    // daily per-moderator cap counts these rows; the code itself lives on RedeemableCode, never here.
+    | `mintMembershipCode:${string}`
+    // Support withdrew an unredeemed code it minted (`revokeMembershipCode:<tier>:<months>`).
+    | `revokeMembershipCode:${string}`;
 };
 
 type ComicProjectModActivity = {

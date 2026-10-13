@@ -41,8 +41,11 @@ import { dbRead } from '~/server/db/client';
 import { requireAppsDb } from '~/server/db/appsDb';
 import { appSchemaIdent, sanitizeAppSlug } from '~/server/utils/apps-slug';
 import { newUlid } from '~/server/utils/app-block-ids';
-import { parseSubjectUserId, verifyBlockToken } from '~/server/middleware/block-scope.middleware';
-import { BlockRevocation } from '~/server/services/block-revocation.service';
+import { parseSubjectUserId } from '~/server/middleware/block-scope.middleware';
+import {
+  blockTokenRefusalError,
+  resolveBlockToken,
+} from '~/server/services/blocks/block-bridge-auth.service';
 import { logToAxiom } from '~/server/logging/client';
 import {
   escalateToServerFault,
@@ -273,52 +276,46 @@ export async function resolveSharedContext(
   blockToken: string,
   op: SharedOp
 ): Promise<SharedContext> {
-  const claims = await verifyBlockToken(blockToken);
-  if (!claims) throw new TRPCError({ code: 'UNAUTHORIZED', message: 'invalid block token' });
-
-  const slug = sanitizeAppSlug(claims.blockId);
-  if (!slug) {
-    throw new TRPCError({
-      code: 'INTERNAL_SERVER_ERROR',
-      message: 'block id is not a valid storage slug',
-    });
-  }
-
-  // 🔴 THE STRICTEST OF THE THREE RESOLVERS THAT READ THIS ROW, AND DELIBERATELY SO.
-  // The other two are `resolveAppBlockApprovalVerdict`
-  // (`~/server/services/blocks/block-approval.service`), the shared predicate for the REST
-  // middleware and the tRPC bridge, which exempts a run-for-real review token, a token
-  // with no backing row, and an owner with a live dev tunnel; and `resolveStorageContext`
-  // (`apps.router`), which exempts only the run-for-real review token. This one exempts
-  // NOTHING, because shared storage is cross-user, app-global state and the review mint
-  // never grants `apps:storage:shared:*` at all — so there is no case here to exempt, not
-  // a disagreement about what approval means. Do not "align" these three without deciding
-  // it; the reconciliation and its rationale are ledgered, and enforced on both growth and
-  // shrink, in `src/server/services/__tests__/no-unguarded-block-rest-token.test.ts`.
-  const block = await dbRead.appBlock.findUnique({
-    where: { appId_blockId: { appId: claims.appId, blockId: claims.blockId } },
-    select: { id: true, status: true },
+  const resolved = await resolveBlockToken(blockToken, {
+    // 🔴 APPROVAL FIRST, then revocation — the reverse of the bridge and per-user storage.
+    // For an instance that is both revoked and not approved this path answers
+    // `app block is not approved` where those two answer `block instance revoked`, and it
+    // pays the row read for a revoked instance. Long-standing and pinned by the
+    // characterisation tables; changing it is a decision, not a cleanup.
+    //
+    // Per-instance revocation is the missing containment leg (audit M-1): an uninstalled /
+    // toggled-off / publisher-banned instance can't keep writing until token expiry. (The
+    // ban leg is new as of clawgate #618 and lives in its OWN keyspace: install writes go
+    // through `revokeInstance` — `uninstallFromModel`, `toggleEnabled(false)` — and ban
+    // writes through `revokeInstanceForBan`, from `revokeBlockInstancesForPublisher`. Read
+    // `block-scope.middleware.ts` before reasoning about the ban path from here.) The
+    // subject-scoped ban leg is latent on THIS path today — it requires an `approved`
+    // AppBlock row and an ephemeral app has none.
+    order: 'approval-first',
+    // 🔴 THE STRICTEST OF THE THREE RESOLVERS THAT READ THIS ROW, AND DELIBERATELY SO.
+    // The other two are `resolveAppBlockApprovalVerdict`
+    // (`~/server/services/blocks/block-approval.service`), the shared predicate for the REST
+    // middleware and the tRPC bridge, which exempts a run-for-real review token, a token
+    // with no backing row, and an owner with a live dev tunnel; and `resolveStorageContext`
+    // (`apps/app-storage.service`), which exempts only the run-for-real review token. This one
+    // exempts NOTHING, because shared storage is cross-user, app-global state and the review
+    // mint never grants `apps:storage:shared:*` at all — so there is no case here to exempt,
+    // not a disagreement about what approval means. Do not "align" these three without
+    // deciding it; the reconciliation and its rationale are ledgered, and enforced on both
+    // growth and shrink, in `src/server/services/__tests__/no-unguarded-block-rest-token.test.ts`.
+    approval: 'strict',
+    // Every scope this resolver authorizes (`apps:storage:shared:*`) is consent-exempt, so no
+    // marker can name one; ledgered as an exempt-only seam in the same test file.
+    consent: 'exempt-only',
+    metrics: 'none',
+    slugCheck: true,
   });
-  if (!block) throw new TRPCError({ code: 'NOT_FOUND', message: 'app block not found' });
-  if (block.status !== 'approved') {
-    throw new TRPCError({ code: 'FORBIDDEN', message: 'app block is not approved' });
-  }
-
-  // Per-instance revocation — the missing containment leg (audit M-1). The REST
-  // `withBlockScope` path enforces this; the tRPC shared path must too, so an
-  // uninstalled / toggled-off / publisher-banned instance can't keep writing
-  // until token expiry. Mirrors block-scope.middleware's check. (The ban leg is new as
-  // of clawgate #618 and lives in its OWN keyspace: install writes go through
-  // `revokeInstance` — `uninstallFromModel`, `toggleEnabled(false)` — and ban writes
-  // through `revokeInstanceForBan`, from `revokeBlockInstancesForPublisher`. Read
-  // `block-scope.middleware.ts` before reasoning about the ban path from here.)
-
-  // `claims.sub` is passed for the same reason the two runtime guards pass it: the
-  // subject-scoped ban keyspace. Latent on THIS path today — it requires an `approved`
-  // AppBlock row and an ephemeral app has none — but the argument costs nothing and
-  // the alternative is a silent trap pointed at unsubmitted-app storage.
-  if (await BlockRevocation.isRevoked(claims.blockInstanceId, claims.sub)) {
-    throw new TRPCError({ code: 'FORBIDDEN', message: 'block instance revoked' });
+  if (!resolved.ok) throw blockTokenRefusalError(resolved.refusal);
+  const { claims, slug, approval } = resolved;
+  // Cannot happen under the options above (`slugCheck: true`, `approval: 'strict'`); the
+  // resolver's result is not narrowed by its options, so this states it instead of casting.
+  if (slug === null || approval.kind !== 'approved') {
+    throw new Error('app shared storage: token resolved without a storage slug or an approved row');
   }
 
   // Per-op scope assertion (re-checks the issuance contract at point of use).
@@ -399,7 +396,7 @@ export async function resolveSharedContext(
     subjectUser,
     slug,
     schema: appSchemaIdent(slug),
-    appBlockId: block.id,
+    appBlockId: approval.appBlockId,
     blockInstanceId: claims.blockInstanceId,
   };
 }

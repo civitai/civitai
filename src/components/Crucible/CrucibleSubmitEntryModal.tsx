@@ -534,7 +534,8 @@ export default function CrucibleSubmitEntryModal({
     !entriesClosed && isCrucibleFinalStretch({ startAt, endAt, percent: entryWarningPercent });
   const { data: minVotesToPlace } = trpc.crucible.getMinVotesToPlace.useQuery(
     { id: crucibleId },
-    { enabled: !!currentUser && inFinalStretch }
+    // The estimate shrinks as the run's time left does, so a cached one goes stale.
+    { enabled: !!currentUser && inFinalStretch, staleTime: 60 * 1000 }
   );
   const minVotes = inFinalStretch ? minVotesToPlace?.minVotes ?? 0 : 0;
 

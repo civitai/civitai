@@ -118,7 +118,7 @@ function IteratePage() {
 
   const handlePollStatus = useCallback(
     async (params: PollParams) => {
-      return utils.orchestrator.pollIterationStatus.fetch(params);
+      return utils.orchestrator.pollIterationStatus.fetch(params, { staleTime: 0, gcTime: 0 });
     },
     [utils]
   );

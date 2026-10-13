@@ -254,6 +254,9 @@ function createModelSaleCache() {
     key: `${REDIS_KEYS.CACHES.PAID_ACCESS}:ModelSales:v2`,
     idKey: 'modelId',
     ttl: CacheTTL.xs,
+    // Most entries are "no sale" markers. A new sale reaches the card through a bust, not this expiry,
+    // so this bounds only how late a badge shows when a bust is lost.
+    notFoundTtl: CacheTTL.md,
     staleWhileRevalidate: false,
     lookupFn: async (ids) => {
       const modelIds = (Array.isArray(ids) ? ids : [ids]).filter((id) => id != null);
@@ -689,7 +692,11 @@ export async function bustModelSaleCache(modelVersionIds: number[]) {
     where: { id: { in: modelVersionIds } },
     select: { modelId: true },
   });
-  const modelIds = [...new Set(rows.map((r) => r.modelId))];
+  await bustModelSaleCacheForModels([...new Set(rows.map((r) => r.modelId))]);
+}
+
+/** The same bust for a caller that already holds MODEL ids — no lookup. */
+export async function bustModelSaleCacheForModels(modelIds: number[]) {
   if (modelIds.length) await modelSaleCache().bust(modelIds);
 }
 

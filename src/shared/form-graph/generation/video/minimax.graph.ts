@@ -21,6 +21,7 @@ import {
   familyScope,
   makeTextBlock,
   modelIdOf,
+  perModelScope,
   versionModeOf,
   type FamilyExt,
 } from '../shared';
@@ -81,6 +82,14 @@ export const minimaxVariantOf = versionModeOf(
   } as Record<MinimaxVariant, number>,
   'api'
 );
+
+/** The orchestrator's lower duration bound per build; all four cap at 15. */
+const minimaxDurationMin: Record<MinimaxVariant, number> = {
+  api: 5,
+  comfy: 4,
+  max: 4,
+  heygen: 5,
+};
 
 const api = defineGraph<FamilyExt>();
 
@@ -176,7 +185,10 @@ export const minimax = defineGraph<FamilyExt>({ scope: familyScope })
         })
       : null
   )
-  .field('duration', sliderDef({ min: 4, max: 15, default: 6 }))
+  .field('duration', ({ model }) => ({
+    ...sliderDef({ min: minimaxDurationMin[minimaxVariantOf(model)], max: 15, default: 6 }),
+    scope: perModelScope({ model }),
+  }))
   .use(variants)
   .use(makeTextBlock({ negativePrompt: false, promptAlwaysRequired: true }));
 

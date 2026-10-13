@@ -288,8 +288,8 @@ describe('achievements tab', () => {
       // The leading N is the badge's fallback hexagon: no art in this fixture.
       'NCreator Score tierNovaEarned before launch'
     );
-    const current = [...strip.children].filter((rung) =>
-      rung.getAttribute('aria-current') === 'true'
+    const current = [...strip.children].filter(
+      (rung) => rung.getAttribute('aria-current') === 'true'
     );
     expect(current.map((rung) => rung.getAttribute('aria-label'))).toEqual([
       'Nova: Earned before launch',
@@ -856,9 +856,10 @@ describe('ladder rungs', () => {
     const [spark, blaze] = el.querySelectorAll<HTMLElement>('[data-tier-ladder] > button');
     expect(spark.getAttribute('aria-label')).toBe('Spark: Reached');
     expect(spark.firstElementChild?.className.split(' ')).not.toContain('grayscale');
-    // The creator hid this badge: the rung says the score passed it without drawing the art.
-    expect(spark.querySelector('img')).toBeNull();
-    expect(blaze.querySelector('img')).not.toBeNull();
+    // The creator hid this badge, but its art is the public ladder's: a reached rung draws it, not a
+    // lettered placeholder.
+    expect(spark.querySelector('img')?.getAttribute('src')).toMatch(/^spark-art\//);
+    expect(blaze.querySelector('img')?.getAttribute('src')).toMatch(/^own-art\//);
   });
 
   it('keeps a held tier the ladder does not list, after the ladder', () => {

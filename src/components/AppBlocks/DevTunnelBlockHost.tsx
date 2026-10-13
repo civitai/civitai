@@ -8,7 +8,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { BlockInstall, PageContext } from '~/components/AppBlocks/types';
 import type { DevTunnelFrame } from '~/server/services/blocks/dev-tunnel-frame.service';
 
-export type DevTunnelBlockHostProps = Omit<DevTunnelFrame, 'iframeSrc' | 'host'> & {
+export type DevTunnelBlockHostProps = Omit<DevTunnelFrame, 'iframeSrc' | 'host' | 'dnsPending'> & {
   iframeSrc: string;
   fit: 'viewport' | 'fill';
   /** Shown instead of the app when its dev token cannot be minted. */

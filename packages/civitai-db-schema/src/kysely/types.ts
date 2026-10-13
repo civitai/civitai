@@ -416,6 +416,35 @@ export type Appeal = {
   resolvedReason: string | null;
   internalNotes: string | null;
   buzzTransactionId: string | null;
+  entityRemovedAt: Timestamp | null;
+};
+export type AppealDecisionRecord = {
+  id: Generated<string>;
+  appealId: number;
+  imageId: number;
+  imageUrl: string;
+  pHash: string | null;
+  promptHash: string | null;
+  nsfwLevel: number;
+  nsfwLevelLocked: boolean;
+  nsfwLevelReason: string | null;
+  aiNsfwLevel: number | null;
+  blockedFor: string | null;
+  decision: string;
+  resolvedReason: string | null;
+  decidedAt: Timestamp;
+  removalLabel: string | null;
+  removalNsfw: string | null;
+  restoredLevel: number | null;
+  trainingLabelCorrectedAt: Timestamp | null;
+  trainingCopyState: string | null;
+  trainingObjectKey: string | null;
+  ownerHash: string | null;
+  createdAt: Generated<Timestamp>;
+};
+export type AppealTrainingObjectDeletion = {
+  key: string;
+  createdAt: Generated<Timestamp>;
 };
 export type AppListing = {
   id: string;
@@ -2615,6 +2644,7 @@ export type Crucible = {
   ingestion: Generated<CrucibleIngestionStatus>;
   scannedAt: Timestamp | null;
   textNsfw: Generated<boolean>;
+  timeAdjustedPlacement: Generated<boolean>;
 };
 export type CrucibleEngagement = {
   userId: number;
@@ -3997,6 +4027,14 @@ export type PostMetric = {
   updatedAt: Generated<Timestamp>;
   ageGroup: Generated<MetricTimeframe>;
 };
+export type PostPreset = {
+  id: Generated<number>;
+  userId: number;
+  name: string;
+  data: unknown;
+  createdAt: Generated<Timestamp>;
+  updatedAt: Timestamp;
+};
 export type PostReaction = {
   id: Generated<number>;
   postId: number;
@@ -5169,6 +5207,8 @@ export type DB = {
   app_sub_listings: AppSubListing;
   app_user_scope_grants: AppUserScopeGrant;
   Appeal: Appeal;
+  AppealDecisionRecord: AppealDecisionRecord;
+  AppealTrainingObjectDeletion: AppealTrainingObjectDeletion;
   AppPageAccess: AppPageAccess;
   Article: Article;
   ArticleEngagement: ArticleEngagement;
@@ -5385,6 +5425,7 @@ export type DB = {
   PostHelper: PostHelper;
   PostImageTag: PostImageTag;
   PostMetric: PostMetric;
+  PostPreset: PostPreset;
   PostReaction: PostReaction;
   PostReport: PostReport;
   PostResourceHelper: PostResourceHelper;

@@ -123,6 +123,7 @@ function hatScore(
     comments: counts?.comments ?? 0,
     stickers: counts?.stickers ?? 0,
     remixes: counts?.remixes ?? 0,
+    modelLikes: counts?.modelLikes ?? 0,
   };
 }
 

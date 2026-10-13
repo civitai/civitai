@@ -72,6 +72,7 @@ import { simpleUserSelect, userWithCosmeticsSelect } from '~/server/selectors/us
 import { deleteBidsForModel } from '~/server/services/auction.service';
 import { bustUserMetricPrivacyDefaultsCache } from '~/server/services/creator-membership.service';
 import { isCosmeticAvailable } from '~/server/services/cosmetic.service';
+import { bustModelSaleCacheForModels } from '~/server/services/paid-access.service';
 import {
   countPendingAccountDeletionImageRestores,
   disarmAccountDeletionImagePurge,
@@ -1347,6 +1348,20 @@ export const restoreUser = async ({ id, username, email, restoreModels }: Restor
   // row; mirror that here so the restored identity is visible immediately instead of serving the
   // stale "deleted" values until the cache expires.
   await deleteBasicDataForUser(id);
+  // The sale badge only counts a sale whose owner owns the model, so while these models sat at
+  // userId -1 the cache recorded "no sale" for them, and that marker outlives a short TTL. Best-effort:
+  // the restore has committed, so a failed bust is logged rather than failing it.
+  try {
+    await bustModelSaleCacheForModels(restoredModelIds);
+  } catch (error) {
+    logToAxiom({
+      name: 'restore-user-model-sale-cache',
+      type: 'error',
+      source: 'restoreUser',
+      userId: id,
+      message: (error as Error)?.message,
+    }).catch(() => null);
+  }
 
   return {
     id,

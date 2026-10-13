@@ -146,3 +146,6 @@ export function parseMilestoneShareId(raw: string) {
   const milestone = parseMilestoneShareToken(match[2]);
   return userId > 0 && userId <= 2_147_483_647 && milestone ? { userId, milestone } : null;
 }
+
+/** The ClickHouse image event the Creator Score deducts "Reports against" for, once per image. */
+export const REPORTS_AGAINST_EVENT = 'DeleteTOS';

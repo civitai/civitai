@@ -135,13 +135,7 @@ beforeEach(() => {
   reconcileBlurbReferences.mockResolvedValue(undefined);
   throwOnBlockedUserContent.mockResolvedValue(undefined);
   submitModelTextModeration.mockResolvedValue(undefined);
-  dbMock.dbRead.model.findUnique.mockResolvedValue(storedModel);
-  dbMock.dbWrite.model.findUnique.mockResolvedValue({
-    name: storedModel.name,
-    nsfw: false,
-    lockedProperties: [],
-    meta: null,
-  });
+  dbMock.dbWrite.model.findUnique.mockResolvedValue(storedModel);
   evaluateAutoNsfw.mockReturnValue(null);
   dbMock.dbWrite.model.update.mockResolvedValue({
     id: MODEL_ID,
@@ -234,7 +228,7 @@ describe('upsertModel — blurb expansion', () => {
   });
 
   it('stores the expanded html on a create too', async () => {
-    dbMock.dbRead.model.findUnique.mockResolvedValue(null);
+    dbMock.dbWrite.model.findUnique.mockResolvedValue(null);
 
     await upsert({ id: undefined });
 

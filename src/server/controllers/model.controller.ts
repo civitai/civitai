@@ -158,6 +158,7 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { getRequestBoardDomainColor } from '~/server/utils/server-domain';
+import { resolveRequestBrowsingLevels } from '~/server/utils/browsing-level';
 import { getPrimaryFile, selectLiveLinkedComponents } from '~/server/utils/model-helpers';
 import {
   GET_ALL_IMAGES_PER_MODEL,
@@ -606,6 +607,10 @@ export const getModelsInfiniteHandler = async ({
   ctx: Context;
 }) => {
   try {
+    // The input schema leaves `browsingLevel` optional with no default, so a signed-in
+    // caller who omits it where the domain caps nothing would otherwise reach the query
+    // with no level and get no rows.
+    resolveRequestBrowsingLevels(input, ctx);
     let loopCount = 0;
     let isPrivate = false;
     let nextCursor: string | bigint | undefined;
@@ -629,6 +634,8 @@ export const getModelsInfiniteHandler = async ({
         imagesPerModel,
         biasImageSlice: slim,
         metricPrivacyEnabled,
+        // model.getAll never edge-caches a signed-in response (skipEdgeCache).
+        eventDecorationViewer: ctx.user,
       });
       if (result.isPrivate) isPrivate = true;
       results.push(...result.items);
@@ -2472,7 +2479,10 @@ export const publishPrivateModelHandler = async ({
       callerId: userId,
     });
 
-    const { versionIds } = await publishPrivateModel(input);
+    const { versionIds } = await publishPrivateModel({
+      ...input,
+      isModerator: ctx.user.isModerator,
+    });
     await dataForModelsCache.refresh(input.modelId);
     await bustMvCache(versionIds, input.modelId);
     await modelsSearchIndex.queueUpdate([
