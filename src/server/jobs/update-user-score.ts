@@ -9,6 +9,7 @@ import { pgDbWrite } from '~/server/db/pgDb';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import type { CreatorScoreUnlock } from '~/shared/utils/creator-score-unlocks';
+import { REPORTS_AGAINST_EVENT } from '~/shared/constants/creator-journey.constants';
 import {
   buildCreatorScoreUnlocks,
   compiledCreatorScoreUnlockInputs,
@@ -373,14 +374,14 @@ async function getReportAgainstScore(ctx: Context) {
       SELECT DISTINCT
         ownerId
       FROM images
-      WHERE type = 'DeleteTOS'
+      WHERE type = '${REPORTS_AGAINST_EVENT}'
       AND time > ${ctx.lastUpdate}
     )
     SELECT
       ownerId as id,
       uniq(imageId) as violations
     FROM images
-    WHERE type = 'DeleteTOS'
+    WHERE type = '${REPORTS_AGAINST_EVENT}'
     AND ownerId IN (SELECT ownerId FROM affected)
     GROUP BY 1;
   `;

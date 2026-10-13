@@ -21,9 +21,9 @@ describe('Creator Journey flag gates', () => {
     );
     // One chunk per procedure, whatever kind of procedure it is or how it is written.
     const procedures = router.split(/^ {2}(?=\w+: \w+Procedure(?!\w))/m).slice(1);
-    expect(procedures).toHaveLength(8);
+    expect(procedures).toHaveLength(9);
     const gated = procedures.filter((procedure) => !procedure.startsWith(`${OWNER_FLAGGED}:`));
-    expect(gated).toHaveLength(7);
+    expect(gated).toHaveLength(8);
     for (const procedure of gated) {
       expect(procedure, procedure.split(':')[0]).toContain(
         ".use(isFlagProtected('creatorJourney'))"

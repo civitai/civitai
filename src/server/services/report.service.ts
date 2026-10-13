@@ -989,15 +989,14 @@ async function getOwnerDeletedAppealIds(candidates: OrphanCandidate[]) {
   }
 }
 
-// Parallels the moderator app's `csamExcludedImageIds`; keep the report sources in step. Only
-// sources that outlive the image row count here: per-image report rows cascade away with it.
-async function getDefensiveCloseIds(candidates: ClaimedOrphan[]) {
-  const imageIds = candidates
-    .filter((a) => a.entityType === EntityType.Image)
-    .map((a) => a.entityId);
-  const userIds = [...new Set(candidates.map((a) => a.userId))];
-  if (!userIds.length) return new Set<number>();
-
+// Keep in step with the moderator app's exclusion lookup.
+export async function getAppealExcludedIds({
+  imageIds,
+  userIds,
+}: {
+  imageIds: number[];
+  userIds: number[];
+}) {
   const [images, users] = await Promise.all([
     imageIds.length
       ? dbWrite.$queryRaw<{ id: number }[]>`
@@ -1018,8 +1017,17 @@ async function getDefensiveCloseIds(candidates: ClaimedOrphan[]) {
         OR EXISTS (SELECT 1 FROM "Image" o WHERE o."userId" = c.id AND o."blockedFor" = 'CSAM')
     `,
   ]);
-  const imageSet = new Set(images.map((r) => r.id));
-  const userSet = new Set(users.map((r) => r.id));
+  return { images: new Set(images.map((r) => r.id)), users: new Set(users.map((r) => r.id)) };
+}
+
+async function getDefensiveCloseIds(candidates: ClaimedOrphan[]) {
+  const imageIds = candidates
+    .filter((a) => a.entityType === EntityType.Image)
+    .map((a) => a.entityId);
+  const userIds = [...new Set(candidates.map((a) => a.userId))];
+  if (!userIds.length) return new Set<number>();
+
+  const { images: imageSet, users: userSet } = await getAppealExcludedIds({ imageIds, userIds });
   return new Set(
     candidates
       .filter(

@@ -21,6 +21,7 @@ import {
   UnhideToShareHint,
 } from '~/components/CreatorJourney/MilestoneShareButton';
 import { NextLink } from '~/components/NextLink/NextLink';
+import { RemovedImagesList } from '~/components/CreatorJourney/RemovedImagesList';
 import { tierRewards } from '~/components/CreatorJourney/tier-rewards';
 import type { BadgeState } from '~/components/CreatorJourney/tier-badge';
 import {
@@ -189,6 +190,7 @@ export function CreatorJourneyView({ journey, username }: { journey: Journey; us
           Where Your Score Comes From
         </Title>
         <UserScoreDisplay scores={journey.scores?.breakdown} abbreviate={false} showReports owner />
+        {(journey.scores?.breakdown?.reportsAgainst ?? 0) < 0 && <RemovedImagesList />}
         <ScoreExplainerToggle />
       </Stack>
 
