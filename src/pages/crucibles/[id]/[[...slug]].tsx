@@ -435,6 +435,7 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
             heroImage: crucible.heroImage,
             _count: crucible._count,
             paidEntryCount,
+            entrantCount: crucible.entrantCount,
           }}
         />
 

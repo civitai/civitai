@@ -137,6 +137,7 @@ export const competeWinsSource = `SELECT cw."userId", cw."createdAt" AS at, 'cha
       AND CASE WHEN jsonb_typeof(c."prizePositions" -> p.place) = 'number'
         THEN floor((c."prizePositions" ->> p.place)::numeric * c."prizePool" / 100) >= 1
         ELSE false END
+      -- Must match getEntrantCounts in crucible.service.ts; crucible-entrant-count.test.ts pins both.
       AND (SELECT count(DISTINCT e."userId") FROM "CrucibleEntry" e
         WHERE e."crucibleId" = c.id AND e."userId" <> c."userId") >= ${COMPETE_MIN_ENTRANTS}`;
 

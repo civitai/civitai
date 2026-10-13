@@ -472,7 +472,10 @@ describe('crucible.getById — prize winners', () => {
     const crucible = await caller(undefined).getById({ id: CRUCIBLE_ID });
 
     expect(crucible?.prizeWinners).toEqual([]);
-    expect(queryRaw).not.toHaveBeenCalled();
+    // The entrant count is the only raw query a running crucible makes; placings are never read.
+    const sqls = queryRaw.mock.calls.map(([strings]) => (strings as string[]).join('?'));
+    expect(sqls.some((sql) => sql.includes('count(DISTINCT e."userId")'))).toBe(true);
+    expect(sqls.filter((sql) => sql.includes('position IS NOT NULL'))).toEqual([]);
   });
 });
 
