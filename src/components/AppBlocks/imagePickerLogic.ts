@@ -1,7 +1,10 @@
 import { isCivitaiHostedImageUrl } from '~/server/schema/blocks/civitai-image-url';
 import type { PostedPickableImage } from '~/server/services/blocks/block-image-picker.logic';
-import { isWithinSfwImageCeiling } from '~/server/services/blocks/block-image-upload.logic';
-import { orchestratorNsfwLevelMap } from '~/shared/constants/browsingLevel.constants';
+import {
+  browsingLevels,
+  orchestratorNsfwLevelMap,
+} from '~/shared/constants/browsingLevel.constants';
+import { Flags } from '~/shared/utils/flags';
 
 /**
  * `OPEN_IMAGE_PICKER` → `IMAGE_PICKER_RESULT`: the decisions the page host makes about an untrusted
@@ -149,9 +152,17 @@ export function buildImagePickerReply(
   return { requestId, selectedImages: capPickedImages(picked, max).map(toWirePick) };
 }
 
-/** `null` for an image above the SFW ceiling, which the query should never have returned. */
+const isPixelSize = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isInteger(value) && value > 0;
+
+/**
+ * A posted image as a pick. Which images are listed is the server's decision
+ * (`postedPickableWhere`); `null` here only stops a pick that could not be used from being sent:
+ * one without a whole pixel size, or whose url is not on a Civitai image host.
+ */
 export function projectPostedPick(image: PostedPickableImage): BlockPickedImageInfo | null {
-  if (!isWithinSfwImageCeiling(image.nsfwLevel)) return null;
+  if (!isPixelSize(image.width) || !isPixelSize(image.height)) return null;
+  if (!isCivitaiHostedImageUrl(image.url)) return null;
   return {
     source: 'posted',
     url: image.url,
@@ -171,23 +182,35 @@ export type GeneratedPickCandidate = {
   nsfwLevel?: string | number | null;
 };
 
-const isPixelSize = (value: unknown): value is number =>
-  typeof value === 'number' && Number.isInteger(value) && value > 0;
+/**
+ * The level a generator rating names, or `undefined`. An own-property lookup: a rating string like
+ * `constructor` must not resolve through the prototype.
+ */
+export function ratingToLevel(rating: GeneratedPickCandidate['nsfwLevel']): number | undefined {
+  if (typeof rating === 'number') return rating;
+  if (typeof rating !== 'string') return undefined;
+  const key = rating.toLowerCase();
+  return Object.prototype.hasOwnProperty.call(orchestratorNsfwLevelMap, key)
+    ? orchestratorNsfwLevelMap[key]
+    : undefined;
+}
 
 /**
- * A generator output as a pick, or `null` when it may not be offered: not an image, unrated (the
- * rating is the only maturity signal an output has, so its absence fails closed), rated above the
- * SFW ceiling, without a size, or not on a Civitai image host.
+ * A generator output as a pick, or `null` when it may not be offered: not an image, without a
+ * rating that maps to one known level (the rating is the only maturity signal an output has, so an
+ * absent or unrecognised one fails closed), rated at a level `browsingLevel` does not include,
+ * without a size, or not on a Civitai image host.
  */
-export function projectGeneratedPick(output: GeneratedPickCandidate): BlockPickedImageInfo | null {
+export function projectGeneratedPick(
+  output: GeneratedPickCandidate,
+  browsingLevel: number
+): BlockPickedImageInfo | null {
   if (output.type !== 'image') return null;
-  const nsfwLevel =
-    typeof output.nsfwLevel === 'number'
-      ? output.nsfwLevel
-      : output.nsfwLevel
-      ? orchestratorNsfwLevelMap[output.nsfwLevel.toLowerCase()]
-      : undefined;
-  if (!nsfwLevel || !isWithinSfwImageCeiling(nsfwLevel)) return null;
+  const nsfwLevel = ratingToLevel(output.nsfwLevel);
+  if (nsfwLevel === undefined || !(browsingLevels as readonly number[]).includes(nsfwLevel)) {
+    return null;
+  }
+  if (!Flags.hasFlag(browsingLevel, nsfwLevel)) return null;
   if (!isPixelSize(output.width) || !isPixelSize(output.height)) return null;
   if (!isCivitaiHostedImageUrl(output.url)) return null;
   return {
@@ -198,3 +221,6 @@ export function projectGeneratedPick(output: GeneratedPickCandidate): BlockPicke
     nsfwLevel,
   };
 }
+
+/** Consecutive pages with nothing pickable after which a grid stops loading the next one itself. */
+export const MAX_EMPTY_AUTO_PAGES = 3;

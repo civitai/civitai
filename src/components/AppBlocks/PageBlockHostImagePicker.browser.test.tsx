@@ -124,7 +124,7 @@ const postedPick = (n: number): BlockPickedImageInfo => ({
   url: `https://image.civitai.com/acct/key-${n}/width=1200/key-${n}.jpeg`,
   width: 1200,
   height: 700 + n,
-  nsfwLevel: 1,
+  nsfwLevel: 8,
   imageId: 9000 + n,
 });
 
@@ -170,6 +170,9 @@ describe('PageBlockHost OPEN_IMAGE_PICKER', () => {
 
     await vi.waitFor(() => expect(replies.results()).toHaveLength(1));
     expect(replies.results()[0]).toEqual({ requestId: 'rq_single', selected: postedPick(1) });
+    // The pick is the only reply: closing after it does not add a dismissal.
+    await settle();
+    expect(replies.results()).toHaveLength(1);
     replies.stop();
   });
 
@@ -280,35 +283,6 @@ describe('PageBlockHost OPEN_IMAGE_PICKER', () => {
       { requestId: 'rq_early_many', selectedImages: [] },
     ]);
     expect(useDialogStore.getState().dialogs).toHaveLength(0);
-    replies.stop();
-  });
-
-  test('a pick is answered exactly once, however often the dialog reports closing', async () => {
-    await mountReady();
-    const replies = listenForReply();
-
-    openPicker('rq_once');
-    const dialog = lastDialog();
-    pickerProps().onResolved([postedPick(2)]);
-    dialog.options?.onClose?.();
-    dialog.options?.onClose?.();
-
-    await settle();
-    expect(replies.results()).toEqual([{ requestId: 'rq_once', selected: postedPick(2) }]);
-    replies.stop();
-  });
-
-  test('a dismissal is answered exactly once', async () => {
-    await mountReady();
-    const replies = listenForReply();
-
-    openPicker('rq_once_dismiss', { multiple: { max: 2 } });
-    const dialog = lastDialog();
-    dialog.options?.onClose?.();
-    dialog.options?.onClose?.();
-
-    await settle();
-    expect(replies.results()).toEqual([{ requestId: 'rq_once_dismiss', selectedImages: [] }]);
     replies.stop();
   });
 

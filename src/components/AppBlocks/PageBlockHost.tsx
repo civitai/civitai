@@ -4243,8 +4243,8 @@ export function PageBlockHost({
     // `status` deliberately absent — see the REQUEST_CONSENT deps note.
   }, [onMessage, send, readGateStatus, reviewMode, token, reportNoToken]);
 
-  // OPEN_IMAGE_PICKER → IMAGE_PICKER_RESULT. Every request carrying a requestId is answered exactly
-  // once: a silent return strands the block until its picker timeout.
+  // OPEN_IMAGE_PICKER → IMAGE_PICKER_RESULT. Every request carrying a requestId is answered: a
+  // silent return strands the block until its picker timeout.
   useEffect(() => {
     const off = onMessage<unknown>('OPEN_IMAGE_PICKER', (raw) => {
       const decision = resolveImagePickerRequest(raw);
@@ -4263,7 +4263,6 @@ export function PageBlockHost({
       }
 
       let picked: BlockPickedImageInfo[] = [];
-      let replied = false;
       dialogStore.trigger({
         id: `block-image-picker-${request.requestId}`,
         component: BlockImagePickerModal,
@@ -4275,11 +4274,7 @@ export function PageBlockHost({
           },
         },
         options: {
-          onClose: () => {
-            if (replied) return;
-            replied = true;
-            send('IMAGE_PICKER_RESULT', buildImagePickerReply(request, picked));
-          },
+          onClose: () => send('IMAGE_PICKER_RESULT', buildImagePickerReply(request, picked)),
         },
       });
     });

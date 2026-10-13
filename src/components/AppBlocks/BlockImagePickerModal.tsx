@@ -15,7 +15,8 @@ import {
 } from '@mantine/core';
 import { IconCheck } from '@tabler/icons-react';
 import clsx from 'clsx';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { useViewerBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { useGetTextToImageRequests } from '~/components/ImageGeneration/utils/generationRequestHooks';
@@ -25,6 +26,7 @@ import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
 import { trpc } from '~/utils/trpc';
 import {
   isSamePick,
+  MAX_EMPTY_AUTO_PAGES,
   projectGeneratedPick,
   projectPostedPick,
   togglePickedImage,
@@ -98,7 +100,7 @@ export default function BlockImagePickerModal({
       ) : (
         <Stack gap="md">
           <Text size="xs" c="dimmed">
-            Only safe-for-work images that have finished scanning are listed.
+            Your images that your content settings allow and that have finished scanning.
           </Text>
 
           {sources.length > 1 ? (
@@ -154,7 +156,7 @@ function SourceGrid({ source, ...selection }: GridSelection & { source: BlockIma
 }
 
 function PostedGrid(selection: GridSelection) {
-  const { data, isLoading, isError, isFetching, hasNextPage, fetchNextPage } =
+  const { data, isLoading, isError, isFetching, hasNextPage, fetchNextPage, refetch } =
     trpc.blockImagePicker.getPosted.useInfiniteQuery(
       {},
       { getNextPageParam: (lastPage) => lastPage.nextCursor }
@@ -177,16 +179,19 @@ function PostedGrid(selection: GridSelection) {
       images={images}
       loading={isLoading}
       failed={isError}
-      canLoadMore={!!hasNextPage && !isFetching}
+      fetching={isFetching}
       hasMore={!!hasNextPage}
       onLoadMore={fetchNextPage}
+      onRetry={data ? fetchNextPage : refetch}
       {...selection}
     />
   );
 }
 
 function GeneratedGrid(selection: GridSelection) {
-  const { data, isFetching, isFetchingNextPage, isError, hasNextPage, fetchNextPage } =
+  // The viewer's own level with the domain cap applied: what the server reads for the posted tab.
+  const browsingLevel = useViewerBrowsingLevelDebounced();
+  const { data, isFetching, isFetchingNextPage, isError, hasNextPage, fetchNextPage, refetch } =
     useGetTextToImageRequests(
       { tags: [WORKFLOW_TAGS.IMAGE] },
       { enabled: true, ignoreFilters: true }
@@ -196,22 +201,23 @@ function GeneratedGrid(selection: GridSelection) {
     () =>
       data.flatMap((workflow) =>
         workflow.succeededOutput.flatMap((output): PickableImage[] => {
-          const pick = projectGeneratedPick(output);
+          const pick = projectGeneratedPick(output, browsingLevel);
           return pick ? [{ thumbnail: output.url, pick }] : [];
         })
       ),
-    [data]
+    [data, browsingLevel]
   );
 
   return (
     <PickGrid
       source="generated"
       images={images}
-      loading={isFetching && !isFetchingNextPage && images.length === 0}
+      loading={isFetching && !isFetchingNextPage && data.length === 0}
       failed={isError}
-      canLoadMore={!!hasNextPage && !isFetching}
+      fetching={isFetching}
       hasMore={!!hasNextPage}
       onLoadMore={fetchNextPage}
+      onRetry={data.length > 0 ? fetchNextPage : refetch}
       {...selection}
     />
   );
@@ -222,9 +228,10 @@ function PickGrid({
   images,
   loading,
   failed,
-  canLoadMore,
+  fetching,
   hasMore,
   onLoadMore,
+  onRetry,
   selected,
   atMax,
   onToggle,
@@ -233,11 +240,36 @@ function PickGrid({
   images: PickableImage[];
   loading: boolean;
   failed: boolean;
-  canLoadMore: boolean;
+  fetching: boolean;
   /** More pages exist. A page can hold nothing pickable, so an empty grid is not the end. */
   hasMore: boolean;
   onLoadMore: () => unknown;
+  onRetry: () => unknown;
 }) {
+  // Pages in a row that added nothing pickable. An app can open this modal without a gesture, so
+  // loading the next page automatically has to stop somewhere for a library with nothing to offer.
+  const [emptyStreak, setEmptyStreak] = useState(0);
+  const [load, setLoad] = useState<{ before: number; settled: boolean } | null>(null);
+
+  async function loadMore() {
+    if (load) return;
+    setLoad({ before: images.length, settled: false });
+    try {
+      await onLoadMore();
+    } finally {
+      setLoad((current) => (current ? { ...current, settled: true } : current));
+    }
+  }
+
+  // Judged once the fetch has settled AND the query has reported it, so the page's own images are
+  // counted before it is called empty.
+  useEffect(() => {
+    if (!load?.settled || fetching) return;
+    const added = images.length > load.before;
+    setEmptyStreak((streak) => (added ? 0 : streak + 1));
+    setLoad(null);
+  }, [load, fetching, images.length]);
+
   if (loading) {
     return (
       <Center py="xl">
@@ -246,21 +278,15 @@ function PickGrid({
     );
   }
 
-  if (failed && images.length === 0) {
-    return (
-      <Alert color="red" variant="light">
-        Couldn&apos;t load your images. Close this and try again.
-      </Alert>
-    );
-  }
-
-  if (images.length === 0 && !hasMore) {
+  if (images.length === 0 && !hasMore && !failed) {
     return (
       <Text size="sm" c="dimmed" py="xl" ta="center">
         {EMPTY_MESSAGE[source]}
       </Text>
     );
   }
+
+  const autoLoad = hasMore && !failed && emptyStreak < MAX_EMPTY_AUTO_PAGES;
 
   return (
     <Box mah={440} style={{ overflowY: 'auto' }}>
@@ -299,13 +325,31 @@ function PickGrid({
           );
         })}
       </div>
-      {hasMore && (
-        <InViewLoader loadFn={onLoadMore} loadCondition={canLoadMore}>
+      {failed ? (
+        <Alert color="red" variant="light" mt="sm">
+          <Group justify="space-between" gap="xs">
+            <Text size="sm">Couldn&apos;t load your images.</Text>
+            <Button size="xs" variant="default" onClick={() => onRetry()} loading={fetching}>
+              Retry
+            </Button>
+          </Group>
+        </Alert>
+      ) : autoLoad ? (
+        <InViewLoader loadFn={loadMore} loadCondition={!fetching && !load}>
           <Center p="md">
             <Loader size="sm" />
           </Center>
         </InViewLoader>
-      )}
+      ) : hasMore ? (
+        <Stack gap="xs" align="center" p="md">
+          <Text size="sm" c="dimmed">
+            No usable images found in the most recent pages.
+          </Text>
+          <Button size="xs" variant="default" onClick={loadMore} loading={fetching || !!load}>
+            Load more
+          </Button>
+        </Stack>
+      ) : null}
     </Box>
   );
 }

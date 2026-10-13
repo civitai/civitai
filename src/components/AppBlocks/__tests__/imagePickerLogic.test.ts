@@ -8,6 +8,7 @@ import {
   IMAGE_PICKER_SOURCES_ERROR,
   projectGeneratedPick,
   projectPostedPick,
+  ratingToLevel,
   resolveImagePickerRequest,
   togglePickedImage,
   type BlockPickedImageInfo,
@@ -223,35 +224,67 @@ describe('projectPostedPick', () => {
     url: 'https://image.civitai.com/acct/a3c1f0de-0000-4000-8000-000000000091/width=800/a3c1f0de-0000-4000-8000-000000000091.jpeg',
     width: 800,
     height: 1417,
-    nsfwLevel: 2,
+    nsfwLevel: 8,
   };
 
-  it('projects a pickable row to the contract shape, without the storage key', () => {
+  it('projects a row to the contract shape, without the storage key', () => {
     expect(projectPostedPick(item)).toEqual({
       source: 'posted',
       url: item.url,
       width: 800,
       height: 1417,
-      nsfwLevel: 2,
+      nsfwLevel: 8,
       imageId: 91,
     });
   });
 
-  it('accepts every level within the SFW ceiling and nothing above it', () => {
-    for (const nsfwLevel of [0, 1, 2, 3]) {
-      expect(projectPostedPick({ ...item, nsfwLevel })).not.toBeNull();
+  it('does not send a url that is not an absolute Civitai-hosted https url', () => {
+    for (const url of [
+      '/a3c1f0de/width=800/a3c1f0de.jpeg',
+      'undefined/a3c1f0de/width=800/a3c1f0de.jpeg',
+      'http://image.civitai.com/acct/k/width=800/k.jpeg',
+      'https://cdn.example/acct/k/width=800/k.jpeg',
+      '',
+    ]) {
+      expect(projectPostedPick({ ...item, url })).toBeNull();
     }
-    for (const nsfwLevel of [4, 8, 16, 32, 5, 6, 34]) {
-      expect(projectPostedPick({ ...item, nsfwLevel })).toBeNull();
+  });
+
+  it('does not send a size below one pixel or a fractional one', () => {
+    for (const size of [0, -1, 0.4, 12.5, NaN]) {
+      expect(projectPostedPick({ ...item, width: size })).toBeNull();
+      expect(projectPostedPick({ ...item, height: size })).toBeNull();
+    }
+  });
+});
+
+describe('ratingToLevel', () => {
+  it('maps a known rating and passes a number through', () => {
+    expect(ratingToLevel('pg13')).toBe(2);
+    expect(ratingToLevel('X')).toBe(8);
+    expect(ratingToLevel(16)).toBe(16);
+  });
+
+  it('is undefined for an absent or unknown rating', () => {
+    for (const rating of [undefined, null, '', 'unrated']) {
+      expect(ratingToLevel(rating)).toBeUndefined();
+    }
+  });
+
+  it('does not resolve a name inherited from the object prototype', () => {
+    for (const rating of ['constructor', 'toString', '__proto__', 'hasOwnProperty', 'valueOf']) {
+      expect(ratingToLevel(rating)).toBeUndefined();
     }
   });
 });
 
 describe('projectGeneratedPick', () => {
+  const ALL = 31;
+  const SFW = 3;
   const output = { type: 'image', url: GENERATED_URL, width: 832, height: 1216, nsfwLevel: 'pg13' };
 
-  it('projects a rated SFW image output, with no imageId', () => {
-    const pick = projectGeneratedPick(output);
+  it('projects a rated image output, with no imageId', () => {
+    const pick = projectGeneratedPick(output, SFW);
     expect(pick).toEqual({
       source: 'generated',
       url: GENERATED_URL,
@@ -262,37 +295,65 @@ describe('projectGeneratedPick', () => {
     expect(pick).not.toHaveProperty('imageId');
   });
 
-  it('maps each SFW orchestrator rating, whatever its case', () => {
-    expect(projectGeneratedPick({ ...output, nsfwLevel: 'pg' })?.nsfwLevel).toBe(1);
-    expect(projectGeneratedPick({ ...output, nsfwLevel: 'PG' })?.nsfwLevel).toBe(1);
-    expect(projectGeneratedPick({ ...output, nsfwLevel: 'pg-13' })?.nsfwLevel).toBe(2);
-    expect(projectGeneratedPick({ ...output, nsfwLevel: 1 })?.nsfwLevel).toBe(1);
+  it('maps each orchestrator rating to its level, whatever its case', () => {
+    const level = (nsfwLevel: string | number) =>
+      projectGeneratedPick({ ...output, nsfwLevel }, ALL)?.nsfwLevel;
+    expect(level('pg')).toBe(1);
+    expect(level('PG')).toBe(1);
+    expect(level('pg-13')).toBe(2);
+    expect(level('r')).toBe(4);
+    expect(level('x')).toBe(8);
+    expect(level('XXX')).toBe(16);
+    expect(level(4)).toBe(4);
   });
 
-  it('does not offer an output with no rating', () => {
+  it("offers a level only when the viewer's browsing level includes it", () => {
+    const offered = (nsfwLevel: string, browsingLevel: number) =>
+      projectGeneratedPick({ ...output, nsfwLevel }, browsingLevel) !== null;
+    // PG + PG-13
+    expect(offered('pg', 3)).toBe(true);
+    expect(offered('r', 3)).toBe(false);
+    expect(offered('x', 3)).toBe(false);
+    // PG + PG-13 + R
+    expect(offered('r', 7)).toBe(true);
+    expect(offered('x', 7)).toBe(false);
+    // R + X only: a level below the range is not included either
+    expect(offered('x', 12)).toBe(true);
+    expect(offered('pg', 12)).toBe(false);
+    expect(offered('xxx', 31)).toBe(true);
+    expect(offered('pg', 0)).toBe(false);
+  });
+
+  it('does not offer an output with no rating, even at the widest browsing level', () => {
     for (const nsfwLevel of [undefined, null, '', 'unrated', 'na', 0]) {
-      expect(projectGeneratedPick({ ...output, nsfwLevel })).toBeNull();
+      expect(projectGeneratedPick({ ...output, nsfwLevel }, 63)).toBeNull();
     }
     const { nsfwLevel: _omitted, ...unrated } = output;
-    expect(projectGeneratedPick(unrated)).toBeNull();
+    expect(projectGeneratedPick(unrated, 63)).toBeNull();
   });
 
-  it('does not offer an output rated above the SFW ceiling', () => {
-    for (const nsfwLevel of ['r', 'x', 'xxx', 'R', 4, 8, 16, 32]) {
-      expect(projectGeneratedPick({ ...output, nsfwLevel })).toBeNull();
+  it('does not resolve a rating through the object prototype', () => {
+    for (const nsfwLevel of ['constructor', 'toString', '__proto__', 'hasOwnProperty', 'valueOf']) {
+      expect(projectGeneratedPick({ ...output, nsfwLevel }, 63)).toBeNull();
+    }
+  });
+
+  it('does not offer a numeric rating that is not exactly one known level', () => {
+    for (const nsfwLevel of [3, 5, 6, 32, 64, 33, 1.5, -1, NaN]) {
+      expect(projectGeneratedPick({ ...output, nsfwLevel }, 127)).toBeNull();
     }
   });
 
   it('offers images only', () => {
     for (const type of ['video', 'audio', 'model3d']) {
-      expect(projectGeneratedPick({ ...output, type })).toBeNull();
+      expect(projectGeneratedPick({ ...output, type }, ALL)).toBeNull();
     }
   });
 
   it('does not offer an output without a whole pixel size', () => {
     for (const size of [undefined, null, 0, -4, 12.5, NaN]) {
-      expect(projectGeneratedPick({ ...output, width: size })).toBeNull();
-      expect(projectGeneratedPick({ ...output, height: size })).toBeNull();
+      expect(projectGeneratedPick({ ...output, width: size }, ALL)).toBeNull();
+      expect(projectGeneratedPick({ ...output, height: size }, ALL)).toBeNull();
     }
   });
 
@@ -303,12 +364,12 @@ describe('projectGeneratedPick', () => {
       'https://evil.example/?x=orchestration.civitai.com',
       'blob:https://civitai.com/abc',
     ]) {
-      expect(projectGeneratedPick({ ...output, url })).toBeNull();
+      expect(projectGeneratedPick({ ...output, url }, ALL)).toBeNull();
     }
   });
 
   it('returns a url a generation sourceImage accepts', () => {
-    const pick = projectGeneratedPick(output);
+    const pick = projectGeneratedPick(output, ALL);
     expect(civitaiHostedImageUrlSchema.safeParse(pick?.url)).toEqual({
       success: true,
       data: GENERATED_URL,

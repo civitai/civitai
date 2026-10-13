@@ -4,6 +4,7 @@ import { page, userEvent } from 'vitest/browser';
 import { renderWithProviders } from '../../../test/component-setup';
 import { makeTrpcProxy } from '../../../test/trpcProxyStub';
 import type * as AuthHelpers from '~/utils/auth-helpers';
+import type * as BrowsingLevelProviderModule from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import type * as GenerationRequestHooks from '~/components/ImageGeneration/utils/generationRequestHooks';
 import type * as SessionProviderModule from '~/providers/SessionProvider';
 import type * as Trpc from '~/utils/trpc';
@@ -16,9 +17,13 @@ import type * as Trpc from '~/utils/trpc';
 
 const mocks = vi.hoisted(() => ({
   postedQuery: vi.fn(),
+  /** Re-renders the component reading the posted query, as a query observer would on new data. */
+  postedSubscribers: new Set<() => void>(),
   generatedQuery: vi.fn(),
   openLoginPopup: vi.fn(),
   currentUser: { id: 1 } as { id: number } | null,
+  /** PG + PG-13 unless a test widens it. */
+  browsingLevel: 3,
 }));
 
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => mocks.currentUser }));
@@ -33,17 +38,33 @@ vi.mock('~/providers/SessionProvider', async (orig) => ({
   }),
 }));
 
+vi.mock('~/components/BrowsingLevel/BrowsingLevelProvider', async (orig) => ({
+  ...(await orig<typeof BrowsingLevelProviderModule>()),
+  useViewerBrowsingLevelDebounced: () => mocks.browsingLevel,
+}));
+
 vi.mock('~/utils/auth-helpers', async (orig) => ({
   ...(await orig<typeof AuthHelpers>()),
   openLoginPopup: mocks.openLoginPopup,
 }));
 
-vi.mock('~/utils/trpc', async (orig) => ({
-  ...(await orig<typeof Trpc>()),
-  trpc: makeTrpcProxy({
-    'blockImagePicker.getPosted': { useInfiniteQuery: mocks.postedQuery },
-  }),
-}));
+vi.mock('~/utils/trpc', async (orig) => {
+  const { useEffect, useReducer } = await import('react');
+  const usePostedQuery = (...args: unknown[]) => {
+    const [, rerender] = useReducer((n: number) => n + 1, 0);
+    useEffect(() => {
+      mocks.postedSubscribers.add(rerender);
+      return () => void mocks.postedSubscribers.delete(rerender);
+    }, []);
+    return mocks.postedQuery(...args);
+  };
+  return {
+    ...(await orig<typeof Trpc>()),
+    trpc: makeTrpcProxy({
+      'blockImagePicker.getPosted': { useInfiniteQuery: usePostedQuery },
+    }),
+  };
+});
 
 vi.mock('~/components/ImageGeneration/utils/generationRequestHooks', async (orig) => ({
   ...(await orig<typeof GenerationRequestHooks>()),
@@ -93,7 +114,8 @@ const output = (name: string, over: Record<string, unknown> = {}) => ({
 });
 
 function setPosted(items: unknown[], over: Record<string, unknown> = {}) {
-  const fetchNextPage = vi.fn(async () => undefined);
+  const fetchNextPage = vi.fn(async (): Promise<unknown> => undefined);
+  const refetch = vi.fn(async () => undefined);
   mocks.postedQuery.mockReturnValue({
     data: { pages: [{ items }] },
     isLoading: false,
@@ -101,9 +123,10 @@ function setPosted(items: unknown[], over: Record<string, unknown> = {}) {
     isFetching: false,
     hasNextPage: false,
     fetchNextPage,
+    refetch,
     ...over,
   });
-  return fetchNextPage;
+  return Object.assign(fetchNextPage, { refetch });
 }
 
 function setGenerated(outputs: unknown[], over: Record<string, unknown> = {}) {
@@ -114,9 +137,13 @@ function setGenerated(outputs: unknown[], over: Record<string, unknown> = {}) {
     isError: false,
     hasNextPage: false,
     fetchNextPage: vi.fn(async () => undefined),
+    refetch: vi.fn(async () => undefined),
     ...over,
   });
 }
+
+const LOAD_MORE_NOTE = 'No usable images found in the most recent pages.';
+const settle = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function openModal(props: { sources?: BlockImagePickerSource[]; max?: number | null } = {}) {
   const onResolved = vi.fn();
@@ -141,6 +168,7 @@ describe('BlockImagePickerModal', () => {
   beforeEach(() => {
     useDialogStore.getState().closeAll();
     mocks.currentUser = { id: 1 };
+    mocks.browsingLevel = 3;
     mocks.openLoginPopup.mockReset();
     mocks.postedQuery.mockReset();
     mocks.generatedQuery.mockReset();
@@ -256,9 +284,10 @@ describe('BlockImagePickerModal', () => {
     ]);
   });
 
-  test('generated: lists only rated SFW image outputs, and a pick has no imageId', async () => {
+  test('generated: lists only rated image outputs at a level the viewer browses at', async () => {
     setGenerated([
       output('unrated', { nsfwLevel: undefined }),
+      output('prototype', { nsfwLevel: 'constructor' }),
       output('mature', { nsfwLevel: 'r' }),
       output('clip', { type: 'video' }),
       output('sfw', { nsfwLevel: 'pg13' }),
@@ -275,8 +304,38 @@ describe('BlockImagePickerModal', () => {
     ]);
   });
 
-  test('posted: an image above the SFW ceiling is not listed even if the server returned it', async () => {
-    setPosted([postedItem(1, { nsfwLevel: 8 }), postedItem(2)]);
+  test('generated: a mature output is listed for a viewer who browses at that level', async () => {
+    mocks.browsingLevel = 7;
+    setGenerated([
+      output('unrated', { nsfwLevel: undefined }),
+      output('mature', { nsfwLevel: 'r' }),
+      output('explicit', { nsfwLevel: 'x' }),
+      output('sfw', { nsfwLevel: 'pg13' }),
+    ]);
+    const onResolved = openModal({ sources: ['generated'], max: 5 });
+
+    await expect.element(tile('Generated image 2')).toBeInTheDocument();
+    expect(page.getByRole('button', { name: /^Generated image / }).elements()).toHaveLength(2);
+    await userEvent.click(tile('Generated image 1'));
+    await userEvent.click(confirmButton());
+
+    expect(onResolved).toHaveBeenCalledWith([
+      { source: 'generated', url: blobUrl('mature'), width: 832, height: 1216, nsfwLevel: 4 },
+    ]);
+  });
+
+  test('posted: lists what the server returned, whatever its level', async () => {
+    setPosted([postedItem(1, { nsfwLevel: 8 })]);
+    const onResolved = openModal({ sources: ['posted'] });
+
+    await userEvent.click(tile('Posted image 1'));
+    await userEvent.click(confirmButton());
+
+    expect(onResolved).toHaveBeenCalledWith([{ ...postedPick(1), nsfwLevel: 8 }]);
+  });
+
+  test('posted: an image whose url is not Civitai-hosted is not listed', async () => {
+    setPosted([postedItem(1, { url: '/key-1/width=1200/key-1.jpeg' }), postedItem(2)]);
     const onResolved = openModal({ sources: ['posted'] });
 
     await expect.element(tile('Posted image 1')).toBeInTheDocument();
@@ -315,6 +374,86 @@ describe('BlockImagePickerModal', () => {
 
     await vi.waitFor(() => expect(fetchNextPage).toHaveBeenCalled(), { timeout: 6000 });
     expect(page.getByText('None of your posted images can be used here yet.').query()).toBeNull();
+  });
+
+  test('stops loading by itself after 3 pages in a row add nothing, and offers a button', async () => {
+    const fetchNextPage = setPosted([], { hasNextPage: true });
+
+    openModal({ sources: ['posted'] });
+
+    const loadMore = page.getByRole('button', { name: 'Load more' });
+    await expect.element(loadMore, { timeout: 8000 }).toBeInTheDocument();
+    await expect.element(page.getByText(LOAD_MORE_NOTE)).toBeInTheDocument();
+    expect(fetchNextPage).toHaveBeenCalledTimes(3);
+
+    // Long enough for two more automatic loads, had the bound not held.
+    await settle(1300);
+    expect(fetchNextPage).toHaveBeenCalledTimes(3);
+
+    await userEvent.click(loadMore);
+    await vi.waitFor(() => expect(fetchNextPage).toHaveBeenCalledTimes(4));
+    await expect.element(loadMore).toBeInTheDocument();
+  });
+
+  test('the same bound holds on the generated tab', async () => {
+    const fetchNextPage = vi.fn(async () => undefined);
+    setGenerated([output('unrated', { nsfwLevel: undefined })], {
+      hasNextPage: true,
+      fetchNextPage,
+    });
+
+    openModal({ sources: ['generated'] });
+
+    await expect
+      .element(page.getByRole('button', { name: 'Load more' }), { timeout: 8000 })
+      .toBeInTheDocument();
+    expect(fetchNextPage).toHaveBeenCalledTimes(3);
+    await settle(1300);
+    expect(fetchNextPage).toHaveBeenCalledTimes(3);
+  });
+
+  test('keeps loading by itself while each page adds an image', async () => {
+    const items = [postedItem(1)];
+    const fetchNextPage = setPosted(items, { hasNextPage: true });
+    fetchNextPage.mockImplementation(async () => {
+      items.push(postedItem(items.length + 1));
+      setPosted([...items], { hasNextPage: items.length < 6, fetchNextPage });
+      mocks.postedSubscribers.forEach((rerender) => rerender());
+    });
+
+    openModal({ sources: ['posted'] });
+
+    // Five loads in a row, past the bound of three, because none of them was empty.
+    await expect.element(tile('Posted image 6'), { timeout: 10000 }).toBeInTheDocument();
+    expect(fetchNextPage).toHaveBeenCalledTimes(5);
+    expect(page.getByRole('button', { name: 'Load more' }).query()).toBeNull();
+  });
+
+  test('a failed page stops the automatic loading and offers a retry', async () => {
+    const fetchNextPage = setPosted([postedItem(1)], { hasNextPage: true, isError: true });
+
+    openModal({ sources: ['posted'] });
+
+    const retry = page.getByRole('button', { name: 'Retry' });
+    await expect.element(retry).toBeInTheDocument();
+    await expect.element(tile('Posted image 1')).toBeInTheDocument();
+    // Past the loader's start-up delay and two of its intervals.
+    await settle(2600);
+    expect(fetchNextPage).not.toHaveBeenCalled();
+
+    await userEvent.click(retry);
+    expect(fetchNextPage).toHaveBeenCalledTimes(1);
+    expect(fetchNextPage.refetch).not.toHaveBeenCalled();
+  });
+
+  test('a failed first load offers a retry that refetches', async () => {
+    const fetchNextPage = setPosted([], { data: undefined, isError: true });
+
+    openModal({ sources: ['posted'] });
+
+    await userEvent.click(page.getByRole('button', { name: 'Retry' }));
+    expect(fetchNextPage.refetch).toHaveBeenCalledTimes(1);
+    expect(fetchNextPage).not.toHaveBeenCalled();
   });
 
   test('cancel closes without resolving', async () => {
