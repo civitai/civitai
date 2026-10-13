@@ -211,6 +211,31 @@ describe('setPlacementSpace — the price guard', () => {
   });
 });
 
+/**
+ * The zero floor is a property of one surface, read from the table. These are
+ * the mutation-level halves of the table pin in `placement.test.ts`: the pin
+ * says what the floors are, these say `setPlacementSpace` acts on them per
+ * surface rather than on any one surface's value.
+ */
+describe('setPlacementSpace — a zero price', () => {
+  it('opens a storyline at zero', async () => {
+    await setPlacementSpace({ ...base, surface: 'storyline', mode: 'review', price: 0 });
+
+    expect(spaceUpsert).toHaveBeenCalledTimes(1);
+    expect(spaceUpsert.mock.calls[0][0].create).toMatchObject({ surface: 'storyline', price: 0 });
+  });
+
+  it.each(['sticker', 'remixGallery', 'galleryPromotion', 'modelPromotion'] as const)(
+    'still refuses zero on %s, whose price is its spam gate',
+    async (surface) => {
+      await expect(
+        setPlacementSpace({ ...base, surface, mode: 'review', price: 0 })
+      ).rejects.toThrow(/the lowest you can charge is 50 Buzz/);
+      expect(spaceUpsert).not.toHaveBeenCalled();
+    }
+  );
+});
+
 describe('resolvePlacementSpaceFor — free capacity', () => {
   // `dbRead`: the reservation feeds a display-only number on a public query, and
   // the claim re-counts under its own lock. Everything else in this resolver

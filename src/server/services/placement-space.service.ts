@@ -387,6 +387,10 @@ export async function setPlacementSpace({
   // floor would be unable to change their mode, or turn the surface off at all,
   // until they first raised a price they set legitimately. Refuses a move below
   // the floor; lets an existing one be carried.
+  //
+  // The floor is the surface's own. A storyline's is 0, so a creator may open
+  // one for free; every other surface keeps its floor, and a guard test fails if
+  // a zero floor spreads to a surface whose price is its only spam gate.
   const floor = PLACEMENT_SURFACES[surface].serverMinPrice;
   if (price != null && price < floor && price !== existing?.price)
     throw throwBadRequestError(`placement: the lowest you can charge is ${floor} Buzz`);

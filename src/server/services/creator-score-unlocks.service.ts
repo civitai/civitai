@@ -24,9 +24,21 @@ import type { PlacementPriceTier, PlacementSurface } from '~/shared/utils/placem
 import {
   PLACEMENT_FREE_SLOT_CAP_TIERS,
   PLACEMENT_PRICE_CAP_TIERS,
+  placementSurfaceAllowsZeroPrice,
   placementSurfaceLabel,
   placementSurfaces,
 } from '~/shared/utils/placement';
+
+/**
+ * The surfaces named on the public unlocks list.
+ *
+ * Storylines are left off until they launch: they are built behind a flag, and
+ * listing "higher price cap on storylines" would announce them early. Remove the
+ * exclusion as part of the rollout.
+ */
+export const UNLOCK_LISTED_PLACEMENT_SURFACES = placementSurfaces.filter(
+  (surface) => surface !== 'storyline'
+);
 
 export type CreatorScoreUnlockInputs = {
   saleMinScore: number;
@@ -146,7 +158,7 @@ export function buildCreatorScoreUnlocks(inputs: CreatorScoreUnlockInputs): Crea
       scoreKind: 'aggregate',
       source: 'keyValue',
     },
-    ...placementSurfaces.flatMap((surface) => [
+    ...UNLOCK_LISTED_PLACEMENT_SURFACES.flatMap((surface) => [
       ...inputs.placementPriceCapTiers(surface).map(
         ({ minScore }): CreatorScoreUnlock => ({
           key: `placement-price-cap:${surface}:${minScore}`,
@@ -157,7 +169,12 @@ export function buildCreatorScoreUnlocks(inputs: CreatorScoreUnlockInputs): Crea
           source: 'keyValue',
         })
       ),
-      ...inputs.placementFreeSlotTiers(surface).map(
+      // A surface that may be priced at zero has no free tier, so "more free
+      // placements" there would promise something that does not exist.
+      ...(placementSurfaceAllowsZeroPrice(surface)
+        ? []
+        : inputs.placementFreeSlotTiers(surface)
+      ).map(
         ({ minScore }): CreatorScoreUnlock => ({
           key: `placement-free-slots:${surface}:${minScore}`,
           minScore,
