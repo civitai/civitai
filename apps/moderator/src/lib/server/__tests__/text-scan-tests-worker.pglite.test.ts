@@ -306,7 +306,7 @@ describe('cancellation and failures', () => {
     const scan = fakeScan(() => {
       throw new LabHarnessError('Text-scan scan failed: no session to forward.');
     });
-    await runWorker(deps(scan.fn), runId);
+    await runWorker(deps(scan.fn), runId, { launch: true });
     expect(await runRow(runId)).toMatchObject({
       status: 'failed',
       failure: 'Text-scan scan failed: no session to forward.',
@@ -406,13 +406,72 @@ describe('auth refusals and live state', () => {
   it('fails a Model rules run when the rules change mid-run, writing none of that chunk', async () => {
     await seedCases(12);
     const runId = await seedRun(db, setId, { ruleStateHash: 'rules-v1' });
-    const hashes = ['rules-v1', 'rules-v2'];
+    const hashes = ['rules-v1', 'rules-v1', 'rules-v2'];
     let checks = 0;
-    const live = vi.fn(async () => hashes[Math.min(checks++, 1)]);
+    const live = vi.fn(async () => hashes[Math.min(checks++, 2)]);
     await runWorker(deps(fakeScan().fn, 'host-a:1:a', live), runId);
 
     expect(await runRow(runId)).toMatchObject({ status: 'failed', failure: RULES_MOVED });
     expect(await resultsOf(db, runId)).toHaveLength(8);
+  });
+
+  it('fails a Model rules run before its first scan when the rules already moved', async () => {
+    await seedCases(2);
+    const runId = await seedRun(db, setId, { ruleStateHash: 'rules-v1' });
+    const scan = fakeScan();
+    await runWorker(
+      deps(scan.fn, 'host-a:1:a', async () => 'rules-v2'),
+      runId
+    );
+    expect(scan.calls).toHaveLength(0);
+    expect(await runRow(runId)).toMatchObject({ status: 'failed', failure: RULES_MOVED });
+  });
+
+  it('fails a Model rules run before its first scan when the rules cannot be checked', async () => {
+    await seedCases(2);
+    const runId = await seedRun(db, setId, { ruleStateHash: 'rules-v1' });
+    const scan = fakeScan();
+    await runWorker(deps(scan.fn), runId);
+    expect(scan.calls).toHaveLength(0);
+    expect(await runRow(runId)).toMatchObject({ status: 'failed' });
+  });
+
+  const refusedSession = () =>
+    fakeScan(() => {
+      throw new LabHarnessError('Text-scan scan returned 401.', false, true);
+    });
+
+  it('pauses a queued run resumed by another viewer whose session is refused', async () => {
+    await seedCases(3);
+    const runId = await seedRun(db, setId);
+    await runWorker(deps(refusedSession().fn), runId);
+    expect(await resultsOf(db, runId)).toHaveLength(0);
+    expect(await runRow(runId)).toMatchObject({
+      status: 'running',
+      lease_owner: null,
+      failure: null,
+    });
+  });
+
+  it('pauses a previously started run with no rows, even when relaunched', async () => {
+    await seedCases(3);
+    const runId = await seedRun(db, setId, {
+      status: 'running',
+      leaseOwner: 'host-dead:1:d',
+      heartbeatAt: stale(),
+    });
+    await db
+      .updateTable('text_scan_test_run')
+      .set({ started_at: new Date(Date.now() - 60 * 60_000) })
+      .where('id', '=', String(runId))
+      .execute();
+    await runWorker(deps(refusedSession().fn), runId, { launch: true });
+    expect(await resultsOf(db, runId)).toHaveLength(0);
+    expect(await runRow(runId)).toMatchObject({
+      status: 'running',
+      lease_owner: null,
+      failure: null,
+    });
   });
 
   it('never checks rules for a run that recorded no rule state', async () => {

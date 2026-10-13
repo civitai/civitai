@@ -74,7 +74,7 @@ export type JsonResult =
       ok: false;
       error: string;
       requestNeverSent?: boolean;
-      /** There was no session cookie to forward; the request was never sent. */
+      /** No session to forward — no cookie, or no request in scope; the request was never sent. */
       noSession?: true;
       status?: number;
       /** The recovered text alone, without the action label, so a caller that overrides the message

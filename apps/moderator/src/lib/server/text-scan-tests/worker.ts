@@ -40,7 +40,7 @@ export type WorkerDeps = {
     overrides?: LabOverrides
   ) => Promise<LabRun>;
   workerId: string;
-  log: (event: string, data: Record<string, unknown>) => void;
+  log: (event: string, data: Record<string, unknown>, level?: 'info' | 'error') => void;
   /** The hash of the live Model rules, compared with a run's recorded `rule_state_hash`. */
   liveRuleStateHash?: () => Promise<string | null>;
 };
@@ -270,7 +270,7 @@ async function pauseRun(deps: WorkerDeps, runId: number): Promise<void> {
     .where('id', '=', String(runId))
     .where('lease_owner', '=', deps.workerId)
     .execute();
-  deps.log('text-scan test run paused', { runId, reason: 'session refused' });
+  deps.log('text-scan test run paused', { runId, reason: 'session refused' }, 'info');
 }
 
 async function rulesMoved(deps: WorkerDeps, run: RunRow): Promise<boolean> {
@@ -290,15 +290,24 @@ async function hasScanned(db: Db, runId: number): Promise<boolean> {
   return !!row;
 }
 
-async function drive(deps: WorkerDeps, run: RunRow): Promise<void> {
+// claimRun stamps both with one `now()`, so equal means this claim is the run's first start.
+const firstStart = (run: RunRow) =>
+  run.started_at !== null &&
+  run.heartbeat_at !== null &&
+  new Date(run.started_at).getTime() === new Date(run.heartbeat_at).getTime();
+
+/** `launch`: started by the moderator who launched it, under their own session. */
+async function drive(deps: WorkerDeps, run: RunRow, launch: boolean): Promise<void> {
   const runId = Number(run.id);
   if (run.status === 'cancelling') return endRun(deps, runId, 'cancelled');
+  if (await rulesMoved(deps, run)) return endRun(deps, runId, 'failed', RULES_MOVED);
   const recorded = run.prompt_ids as Record<string, number>;
   const overrides: LabOverrides = {
     prompts: (run.prompt_overrides as Record<string, string> | null) ?? undefined,
     rules: (run.rule_overrides as LabRuleOverride[] | null) ?? [],
   };
-  let scannedAny = await hasScanned(deps.db, runId);
+  // A first-request refusal fails only a fresh launch; anyone else's refused session just pauses.
+  let scannedAny = !(launch && firstStart(run)) || (await hasScanned(deps.db, runId));
 
   const prewiped = await wipedWithoutResult(deps.db, run);
   if (
@@ -359,7 +368,11 @@ async function drive(deps: WorkerDeps, run: RunRow): Promise<void> {
 const errorCode = (e: unknown) =>
   (e as { code?: unknown } | null)?.code ?? (e as Error | null)?.name ?? 'unknown';
 
-export async function runWorker(deps: WorkerDeps, runId: number): Promise<void> {
+export async function runWorker(
+  deps: WorkerDeps,
+  runId: number,
+  opts: { launch?: boolean } = {}
+): Promise<void> {
   let run: RunRow | null;
   try {
     run = await claimRun(deps, runId);
@@ -369,7 +382,7 @@ export async function runWorker(deps: WorkerDeps, runId: number): Promise<void> 
   }
   if (!run) return;
   try {
-    await drive(deps, run);
+    await drive(deps, run, opts.launch === true);
   } catch (e) {
     deps.log('text-scan test run failed', { runId, error: errorCode(e) });
     await endRun(deps, runId, 'failed', UNEXPECTED).catch(() => undefined);

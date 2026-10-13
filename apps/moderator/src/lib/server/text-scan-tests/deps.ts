@@ -22,8 +22,8 @@ export const workerDeps = (credential: string): WorkerDeps => ({
   main: dbRead,
   scanTexts: (entityType, texts, overrides) => scanTexts(entityType, texts, overrides, credential),
   workerId: WORKER_ID,
-  log: (event, data) =>
-    void logToAxiom({ type: 'error', name: 'text-scan', event, ...data }).catch(() => {}),
+  log: (event, data, level = 'error') =>
+    void logToAxiom({ type: level, name: 'text-scan', event, ...data }).catch(() => {}),
 });
 
 /**
@@ -31,9 +31,13 @@ export const workerDeps = (credential: string): WorkerDeps => ({
  * there is none; the run stays queued and resumes on a later view.
  */
 export function launchRun(runId: number): boolean {
+  return start(runId, true);
+}
+
+function start(runId: number, launch: boolean): boolean {
   const credential = requestCookie();
   if (!credential) return false;
-  void runWorker(workerDeps(credential), runId);
+  void runWorker(workerDeps(credential), runId, { launch });
   return true;
 }
 
@@ -41,7 +45,7 @@ export function launchRun(runId: number): boolean {
 export async function resumeRuns(viewer: Parameters<typeof canAccess>[0]): Promise<void> {
   const workspaces = WORKSPACES.filter((w) => canAccess(viewer, WORKSPACE_PATHS[w]));
   if (!workspaces.length) return;
-  for (const runId of await resumableRunIds(getModeratorDb(), workspaces)) launchRun(runId);
+  for (const runId of await resumableRunIds(getModeratorDb(), workspaces)) start(runId, false);
 }
 
 export const releaseLeasesAtBoot = () => releaseOwnLeases(getModeratorDb(), hostname());
