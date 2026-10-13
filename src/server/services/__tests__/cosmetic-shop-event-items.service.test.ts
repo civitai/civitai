@@ -210,7 +210,7 @@ describe('buying an event-gated item (team hat)', () => {
   it("refuses another team's colour before any charge", async () => {
     mocks.getUserTeam.mockResolvedValue(BLUE_TEAM);
 
-    await expect(purchase()).rejects.toThrow("You can only buy this in your own team's colour");
+    await expect(purchase()).rejects.toThrow("You can only buy this in your own team's color");
     expect(mocks.createMultiTx).not.toHaveBeenCalled();
   });
 

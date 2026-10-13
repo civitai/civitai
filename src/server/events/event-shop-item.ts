@@ -100,7 +100,7 @@ export async function assertEventShopItemPurchasable({
     throw throwBadRequestError("We couldn't confirm your team. Please try again.");
   });
   if (team !== data.team)
-    throw throwBadRequestError("You can only buy this in your own team's colour");
+    throw throwBadRequestError("You can only buy this in your own team's color");
 }
 
 /**
