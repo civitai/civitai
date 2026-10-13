@@ -24,6 +24,7 @@ const OTHER_PROVIDER_BRONZE = 'other-provider-bronze';
 const OTHER_PROVIDER_SILVER = 'other-provider-silver';
 const CIVITAI_BRONZE = 'civitai-bronze';
 const FOUNDER = 'founder';
+const RETIRED_BRONZE = 'retired-bronze'; // a lower tier that is no longer sold
 
 const SEP_BRONZE = 91;
 const SEP_SILVER = 92;
@@ -36,6 +37,8 @@ const PERMANENT_BADGE = 200;
 const NON_MEMBERSHIP_ITEM = 201; // not permanent, but not a Membership cosmetic either
 const UNDATED_PRODUCT_COSMETIC = 300; // carries a productId but no window, so it is not a monthly badge
 const GRANDFATHER = 400;
+const RETIRED_OCT_BRONZE = 105;
+const OPEN_ENDED_SILVER = 106; // dated start, no end
 
 const ONTIME = 1; // Silver, renewed mid-October
 const LATE = 2; // Bronze, period started Sep 28, invoice paid Oct 8
@@ -50,6 +53,12 @@ const CIVITAI_RENEWED = 10; // Civitai period that started this month
 const FOUNDER_MEMBER = 11; // active founder plus an active Bronze
 const TRIALING = 12; // trialing now, plus an old canceled subscription
 const CANCELING = 13; // canceled, cancelAt after the previous run
+const STALE_ACTIVE = 14; // row still says active, period ended, never set to cancel
+const NOT_STARTED = 15; // period starts after this run
+const FOUNDER_ONLY = 16; // active founder, no tier subscription
+const FOUNDER_CANCELED = 17; // canceled founder, active tier
+const PAST_DUE = 18; // renewal payment being retried, period current, plus an old canceled subscription
+const PAST_DUE_ENDED = 19; // past_due, period already ended, plus an old canceled subscription
 
 const NOW = new Date('2026-10-08T23:00:00Z');
 const LAST_DELIVERED = new Date('2026-10-07T23:00:00Z');
@@ -103,7 +112,8 @@ beforeAll(async () => {
       ('${OTHER_PROVIDER_BRONZE}', 'Paddle', true, '{"level": 1, "tier": "bronze"}'),
       ('${OTHER_PROVIDER_SILVER}', 'Paddle', true, '{"level": 2, "tier": "silver"}'),
       ('${CIVITAI_BRONZE}', 'Civitai', true, '{"level": 1, "tier": "bronze"}'),
-      ('${FOUNDER}', 'Stripe', false, '{"tier": "founder"}');
+      ('${FOUNDER}', 'Stripe', false, '{"tier": "founder"}'),
+      ('${RETIRED_BRONZE}', 'Stripe', false, '{"level": 1, "tier": "bronze"}');
   `);
 });
 
@@ -121,7 +131,9 @@ beforeEach(async () => {
       (${PERMANENT_BADGE}, 'Keepsake', 'Membership', true, NULL, NULL, NULL),
       (${NON_MEMBERSHIP_ITEM}, 'Event item', 'Event', false, NULL, NULL, NULL),
       (${UNDATED_PRODUCT_COSMETIC}, 'Nameplate', 'Membership', true, '${BRONZE}', NULL, NULL),
-      (${GRANDFATHER}, 'Grandfather Badge', 'Membership', true, NULL, NULL, NULL);
+      (${GRANDFATHER}, 'Grandfather Badge', 'Membership', true, NULL, NULL, NULL),
+      (${RETIRED_OCT_BRONZE}, 'Oct Bronze', 'Membership', false, '${RETIRED_BRONZE}', '2026-10-01 07:00', '2026-10-31 07:00'),
+      (${OPEN_ENDED_SILVER}, 'Silver forever', 'Membership', true, '${SILVER}', '2026-10-01 07:00', NULL);
     INSERT INTO "CustomerSubscription" VALUES
       ${sub('s-ontime', ONTIME, SILVER, 'active', '2026-10-05 10:00', '2026-11-05 10:00')},
       ${sub('s-late', LATE, BRONZE, 'active', '2026-09-28 12:00', '2026-10-28 12:00')},
@@ -198,6 +210,66 @@ beforeEach(async () => {
         '2026-09-08 00:00',
         '2026-10-08 00:00',
         '2026-10-08 10:00'
+      )},
+      ${sub('s-stale', STALE_ACTIVE, BRONZE, 'active', '2026-09-02 00:00', '2026-10-02 00:00')},
+      ${sub(
+        's-not-started',
+        NOT_STARTED,
+        BRONZE,
+        'active',
+        '2026-10-09 00:00',
+        '2026-11-09 00:00'
+      )},
+      ${sub(
+        's-founder-only',
+        FOUNDER_ONLY,
+        FOUNDER,
+        'active',
+        '2026-10-01 00:00',
+        '2026-11-01 00:00'
+      )},
+      ${sub(
+        's-founder-canceled',
+        FOUNDER_CANCELED,
+        FOUNDER,
+        'canceled',
+        '2025-01-01 00:00',
+        '2025-02-01 00:00'
+      )},
+      ${sub(
+        's-founder-canceled-tier',
+        FOUNDER_CANCELED,
+        OTHER_PROVIDER_BRONZE,
+        'active',
+        '2026-10-02 00:00',
+        '2026-11-02 00:00'
+      )},
+      ${sub('s-past-due', PAST_DUE, BRONZE, 'past_due', '2026-09-25 00:00', '2026-10-25 00:00')},
+      ${sub(
+        's-past-due-old',
+        PAST_DUE,
+        OTHER_PROVIDER_SILVER,
+        'canceled',
+        '2025-04-01',
+        '2025-05-01',
+        '2025-05-01'
+      )},
+      ${sub(
+        's-past-due-ended',
+        PAST_DUE_ENDED,
+        BRONZE,
+        'past_due',
+        '2026-09-05 00:00',
+        '2026-10-05 00:00'
+      )},
+      ${sub(
+        's-past-due-ended-old',
+        PAST_DUE_ENDED,
+        OTHER_PROVIDER_SILVER,
+        'canceled',
+        '2025-04-01',
+        '2025-05-01',
+        '2025-05-01'
       )};
     INSERT INTO "UserCosmetic" ("userId", "cosmeticId") VALUES
       (${RETURNING}, ${OCT_BRONZE}),
@@ -207,7 +279,9 @@ beforeEach(async () => {
       (${UNRENEWED}, ${SEP_BRONZE}),
       (${EXPIRED}, ${SEP_BRONZE}),
       (${TRIALING}, ${SEP_BRONZE}),
-      (${CANCELING}, ${SEP_BRONZE});
+      (${CANCELING}, ${SEP_BRONZE}),
+      (${PAST_DUE}, ${SEP_BRONZE}),
+      (${PAST_DUE_ENDED}, ${SEP_BRONZE});
   `);
 });
 
@@ -224,9 +298,9 @@ const run = (now = NOW, lastDelivered = LAST_DELIVERED) =>
 
 describe('deliverMembershipCosmetics', () => {
   describe('delivery', () => {
-    it("grants the month of the current period, for the member's tier and every lower tier of the same provider", async () => {
+    it("grants the month of the current period, for the member's tier and every lower tier still sold by the same provider", async () => {
       await run();
-      expect(await badgesOf(ONTIME)).toEqual([OCT_BRONZE, OCT_SILVER]);
+      expect(await badgesOf(ONTIME)).toEqual([OCT_BRONZE, OCT_SILVER, OPEN_ENDED_SILVER]);
     });
 
     it('grants the badge for the month a period started in, when payment lands in the next month', async () => {
@@ -237,6 +311,12 @@ describe('deliverMembershipCosmetics', () => {
     it('does not grant a month the current period did not start in', async () => {
       await run();
       expect(await badgesOf(UNRENEWED)).toEqual([SEP_BRONZE]);
+    });
+
+    it('grants nothing for a period that has ended or not yet started', async () => {
+      await run();
+      expect(await badgesOf(STALE_ACTIVE)).toEqual([]);
+      expect(await badgesOf(NOT_STARTED)).toEqual([]);
     });
 
     it('counts a period starting on the first before the badge opens as that month', async () => {
@@ -259,6 +339,8 @@ describe('deliverMembershipCosmetics', () => {
       await run();
       expect(await badgesOf(FOUNDER_MEMBER)).toEqual([OTHER_PROVIDER_OCT_BRONZE, GRANDFATHER]);
       expect(await badgesOf(ONTIME)).not.toContain(GRANDFATHER);
+      expect(await badgesOf(FOUNDER_ONLY)).toEqual([]);
+      expect(await badgesOf(FOUNDER_CANCELED)).toEqual([OTHER_PROVIDER_OCT_BRONZE]);
     });
 
     it('is idempotent, including on the following night', async () => {
@@ -268,7 +350,7 @@ describe('deliverMembershipCosmetics', () => {
       expect((await holder.db.query(`SELECT 1 FROM "UserCosmetic"`)).rows.length).toBe(after);
 
       await run(new Date('2026-10-09T23:00:00Z'), NOW);
-      expect(await badgesOf(ONTIME)).toEqual([OCT_BRONZE, OCT_SILVER]);
+      expect(await badgesOf(ONTIME)).toEqual([OCT_BRONZE, OCT_SILVER, OPEN_ENDED_SILVER]);
       expect(await badgesOf(LATE)).toEqual([SEP_BRONZE]);
     });
   });
@@ -282,6 +364,12 @@ describe('deliverMembershipCosmetics', () => {
     it('keeps the badges of a trialing member who also has an old canceled subscription', async () => {
       await run();
       expect(await badgesOf(TRIALING)).toEqual([SEP_BRONZE]);
+    });
+
+    it('keeps the badges of a past_due member whose period is current, but not once it has ended', async () => {
+      await run();
+      expect(await badgesOf(PAST_DUE)).toEqual([SEP_BRONZE]);
+      expect(await badgesOf(PAST_DUE_ENDED)).toEqual([]);
     });
 
     it('revokes non-permanent membership badges from a member with nothing active, and only those', async () => {

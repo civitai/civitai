@@ -50,12 +50,11 @@ export async function deliverMembershipCosmetics({
     JOIN "Cosmetic" c ON
       c."productId" = s."productId"
       -- Compare the period start, not job time: a late-paid September period is still owed
-      -- September's badge. Civitai memberships keep the current-month limit: their prepaid
-      -- periods can start long before the month being delivered, and deliverMonthlyCosmetics
-      -- owns their monthly badges.
+      -- September's badge. Civitai keeps the current-month limit because prepaid periods
+      -- can start long before the month being delivered.
       AND (s.provider <> 'Civitai' OR c."availableStart" >= date_trunc('month', ${lastDelivered}::timestamp))
-      -- Date granularity: availableStart carries a time of day, so a period that started earlier
-      -- that same day (e.g. a renewal at 00:30 on the 1st) failed a timestamp comparison forever.
+      -- Date granularity: availableStart carries a time of day, so a timestamp compare
+      -- misses a renewal earlier that day (e.g. 00:30 on the 1st).
       AND s."currentPeriodStart"::date >= c."availableStart"::date
       AND (c."availableEnd" IS NULL OR s."currentPeriodStart"::date <= c."availableEnd"::date)
     ON CONFLICT ("userId", "cosmeticId", "claimKey") DO NOTHING;
@@ -93,12 +92,13 @@ export async function deliverMembershipCosmetics({
       "userId"
       FROM "CustomerSubscription" cs
       WHERE "cancelAt" <= ${lastDelivered}
-        -- An old canceled subscription must not strip a member who is subscribed today.
+        -- An old canceled subscription must not strip a member who is subscribed today,
+        -- including one whose renewal payment is still being retried.
         AND NOT EXISTS (
           SELECT 1
           FROM "CustomerSubscription" acs
           WHERE acs."userId" = cs."userId"
-            AND acs.status IN ('active', 'trialing')
+            AND acs.status IN ('active', 'trialing', 'past_due')
             AND acs."currentPeriodEnd" >= ${now}::timestamp
         )
     )
