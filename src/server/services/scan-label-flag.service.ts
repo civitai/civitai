@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { dbWrite } from '~/server/db/client';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
@@ -21,6 +22,7 @@ export async function recordScanLabelFlag({
   workflowId,
   flaggedAt,
   snapshot,
+  oncePerImage = false,
 }: {
   imageId: number;
   source: ScanLabelSource;
@@ -28,6 +30,8 @@ export async function recordScanLabelFlag({
   workflowId: string;
   flaggedAt: Date;
   snapshot: Record<string, unknown>;
+  /** Skip the flag when the image already has one from this source, whatever its workflow. */
+  oncePerImage?: boolean;
 }) {
   try {
     if (!(await isFlipt(FLIPT_FEATURE_FLAGS.SCAN_LABEL_QUEUE_WRITER, String(imageId)))) return;
@@ -45,6 +49,13 @@ export async function recordScanLabelFlag({
       SELECT id, ${source}, ${SCAN_LABEL_FLAGGER_VERSIONS[source]}, ${reason}, ${workflowId},
         ${flaggedAt}, ${JSON.stringify(snapshot)}::jsonb
       FROM item
+      ${
+        oncePerImage
+          ? Prisma.sql`WHERE NOT EXISTS (
+              SELECT 1 FROM "ScanLabelFlag" f WHERE f."itemId" = item.id AND f.source = ${source}
+            )`
+          : Prisma.empty
+      }
       ON CONFLICT ("workflowId") DO NOTHING
     `;
   } catch (error) {
@@ -57,4 +68,16 @@ export async function recordScanLabelFlag({
       workflowId,
     }).catch(() => null);
   }
+}
+
+/** Whether the image already carries a flag from this source. */
+export async function hasScanLabelFlag(imageId: number, source: ScanLabelSource) {
+  const rows = await dbWrite.$queryRaw<{ found: number }[]>`
+    SELECT 1 AS found
+    FROM "ScanLabelFlag" f
+    JOIN "ScanLabelItem" i ON i.id = f."itemId"
+    WHERE i."imageId" = ${imageId} AND f.source = ${source}
+    LIMIT 1
+  `;
+  return rows.length > 0;
 }

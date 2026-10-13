@@ -9,7 +9,7 @@ import {
 } from '~/server/services/moderation-label-helpers';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { createXGuardModerationRequest } from '~/server/services/orchestrator/orchestrator.service';
-import { recordScanLabelFlag } from '~/server/services/scan-label-flag.service';
+import { hasScanLabelFlag, recordScanLabelFlag } from '~/server/services/scan-label-flag.service';
 
 /** The orchestrator's image scan never sees an upload's prompt, so ingestion labels it here. */
 export const UPLOAD_PROMPT_SCAN_LABELS = ['young'] as const;
@@ -109,7 +109,8 @@ export async function scanUploadPrompt({
 
 /**
  * Labels an NSFW upload whose prompt the scan flags, for moderators to verify. A label only: it
- * never changes the image. Scans nothing while the label queue writer is off.
+ * never changes the image. Scans nothing while the label queue writer is off, and nothing for an
+ * image that already has a prompt label, so a redelivered webhook does not scan twice.
  */
 export async function labelUploadPrompt({
   imageId,
@@ -124,7 +125,14 @@ export async function labelUploadPrompt({
 }) {
   try {
     if (!(await isFlipt(FLIPT_FEATURE_FLAGS.SCAN_LABEL_QUEUE_WRITER, String(imageId)))) return;
-  } catch {
+    if (await hasScanLabelFlag(imageId, 'xguard-prompt')) return;
+  } catch (error) {
+    logToAxiom({
+      name: 'upload-prompt-scan',
+      type: 'error',
+      message: error instanceof Error ? error.message : 'Unknown error',
+      imageId,
+    }).catch(() => null);
     return;
   }
   const scan = await scanUploadPrompt({ imageId, userId, prompt, negativePrompt });
@@ -148,5 +156,6 @@ export async function labelUploadPrompt({
     workflowId: scan.workflowId,
     flaggedAt: new Date(),
     snapshot: { results },
+    oncePerImage: true,
   });
 }

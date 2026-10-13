@@ -105,6 +105,7 @@ describe('processImageScanningWorkflow', () => {
     pipeline.markImageScanError.mockResolvedValue({ userId: 3, failureClass: 'unknown' });
     pipeline.extractFailedSteps.mockReturnValue(['scan']);
     pipeline.readJobFailureReason.mockResolvedValue('Failed to create container');
+    mockLabelPrompt.mockResolvedValue(undefined);
   });
 
   const refusedStep = { ...scanStep, output: { ...scanStep.output, blockedReason: 'refused' } };
@@ -140,6 +141,18 @@ describe('processImageScanningWorkflow', () => {
     expect(mockLabelPrompt.mock.invocationCallOrder[0]).toBeGreaterThan(
       pipeline.sendIngestionSignal.mock.invocationCallOrder[0]
     );
+  });
+
+  it('answers the webhook without waiting for the prompt scan', async () => {
+    mockLabelPrompt.mockReturnValue(new Promise(() => undefined));
+
+    const settled = await Promise.race([
+      deliver('succeeded', rated('x')).then(() => 'answered'),
+      new Promise((resolve) => setTimeout(() => resolve('waited on the scan'), 1_000)),
+    ]);
+
+    expect(mockLabelPrompt).toHaveBeenCalledTimes(1);
+    expect(settled).toBe('answered');
   });
 
   it("does not label a safe-for-work upload's prompt", async () => {
