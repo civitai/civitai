@@ -228,6 +228,16 @@ export async function listCases(db: Db, setId: number): Promise<TestCase[]> {
   return rows.map(toTestCase);
 }
 
+export async function getCase(db: Db, setId: number, caseId: number): Promise<TestCase | null> {
+  const row = await db
+    .selectFrom('text_scan_test_case')
+    .selectAll()
+    .where('set_id', '=', String(setId))
+    .where('id', '=', String(caseId))
+    .executeTakeFirst();
+  return row ? toTestCase(row) : null;
+}
+
 const caseNotFound = (caseId: number) =>
   new TestSetError(`Test case ${caseId} not found in this set.`, 404);
 

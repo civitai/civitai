@@ -6,6 +6,7 @@ import {
   TestSetError,
   archiveSet,
   createSet,
+  getCase,
   listCases,
   listSets,
   removeCase,
@@ -213,6 +214,8 @@ describe('updateExpectation and removeCase', () => {
       updateExpectation(db, b.id, c.id, { scam: false }, null, MOD)
     ).rejects.toMatchObject({ status: 404 });
     await expect(removeCase(db, b.id, c.id)).rejects.toMatchObject({ status: 404 });
+    expect(await getCase(db, b.id, c.id)).toBeNull();
+    expect(await getCase(db, a.id, c.id)).toMatchObject({ id: c.id, entityId: 71 });
   });
 
   it('relabels a case and records who did it', async () => {

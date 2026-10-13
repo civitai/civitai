@@ -27,20 +27,44 @@ vi.mock('$lib/server/access', async (importOriginal) => ({
   ...(await importOriginal<typeof Access>()),
   ...access,
 }));
-const runs = vi.hoisted(() => ({ quoteRun: vi.fn(), startRun: vi.fn(), cancelRun: vi.fn() }));
+const runs = vi.hoisted(() => ({
+  quoteRun: vi.fn(),
+  startRun: vi.fn(),
+  cancelRun: vi.fn(),
+  rerunErrors: vi.fn(),
+}));
 vi.mock('$lib/server/text-scan-tests/runs', async (importOriginal) => ({
   ...(await importOriginal<typeof Runs>()),
   ...runs,
 }));
-const store = vi.hoisted(() => ({ getSet: vi.fn() }));
+const store = vi.hoisted(() => ({
+  getSet: vi.fn(),
+  getCase: vi.fn(),
+  updateExpectation: vi.fn(),
+  removeCase: vi.fn(),
+  archiveSet: vi.fn(),
+}));
 vi.mock('$lib/server/text-scan-tests/store', async (importOriginal) => ({
   ...(await importOriginal<typeof Store>()),
   ...store,
 }));
-const reports = vi.hoisted(() => ({ setOverview: vi.fn() }));
+const reports = vi.hoisted(() => ({
+  setOverview: vi.fn(),
+  refreshSetTotals: vi.fn(async () => 1),
+}));
 vi.mock('$lib/server/text-scan-tests/reports', () => reports);
+const activity = vi.hoisted(() => ({ recordModActivity: vi.fn(async () => undefined) }));
+vi.mock('$lib/server/mod-activity', () => activity);
 
-const { cancelAction, quoteAction, startAction } = await import('../text-scan-tests/form-actions');
+const {
+  archiveSetAction,
+  cancelAction,
+  editCaseAction,
+  quoteAction,
+  removeCaseAction,
+  rerunAction,
+  startAction,
+} = await import('../text-scan-tests/form-actions');
 const { TestSetError } = await import('../text-scan-tests/store');
 const { GET } = await import('../../../routes/text-scan/test-sets/[setId]/overview/+server');
 
@@ -188,5 +212,101 @@ describe('overview endpoint', () => {
   it('401s without a session', async () => {
     session.requestCookie.mockReturnValue(null);
     await expect(call('3')).rejects.toMatchObject({ status: 401 });
+  });
+});
+
+describe('case, set and re-run actions', () => {
+  beforeEach(() => {
+    store.updateExpectation.mockResolvedValue({ id: 9, entityType: 'CommentV2', entityId: 71 });
+    store.getCase.mockResolvedValue({ id: 9, entityType: 'CommentV2', entityId: 71 });
+    runs.rerunErrors.mockResolvedValue({ startId: 'y', runIds: [6], runId: 6 });
+  });
+
+  it('relabels a case, rescores the set and records the entity, not the text', async () => {
+    const result = await editCaseAction(
+      event({
+        setId: '3',
+        caseId: '9',
+        expected: JSON.stringify({ scam: false }),
+        note: 'looked again',
+      })
+    );
+    expect(result).toMatchObject({ success: true });
+    expect(store.updateExpectation).toHaveBeenCalledWith(
+      {},
+      3,
+      9,
+      { scam: false },
+      'looked again',
+      1
+    );
+    expect(reports.refreshSetTotals).toHaveBeenCalledWith({}, 3);
+    expect(activity.recordModActivity).toHaveBeenCalledWith({
+      userId: 1,
+      entityType: 'CommentV2',
+      entityId: 71,
+      activity: 'textScan.testCase.relabel',
+    });
+  });
+
+  it('refuses a malformed expectation before writing', async () => {
+    const bad = event({ setId: '3', caseId: '9', expected: '{not json' });
+    expect(await editCaseAction(bad)).toMatchObject({ status: 400 });
+    expect(store.updateExpectation).not.toHaveBeenCalled();
+  });
+
+  it('removes a case, rescores the set and records it', async () => {
+    expect(await removeCaseAction(event({ setId: '3', caseId: '9' }))).toMatchObject({
+      success: true,
+    });
+    expect(store.removeCase).toHaveBeenCalledWith({}, 3, 9);
+    expect(reports.refreshSetTotals).toHaveBeenCalledWith({}, 3);
+    expect(activity.recordModActivity).toHaveBeenCalledWith(
+      expect.objectContaining({ activity: 'textScan.testCase.remove', entityId: 71 })
+    );
+  });
+
+  it('refuses to remove a case that is not in the set', async () => {
+    store.getCase.mockResolvedValueOnce(null);
+    expect(await removeCaseAction(event({ setId: '3', caseId: '9' }))).toMatchObject({
+      status: 404,
+    });
+    expect(store.removeCase).not.toHaveBeenCalled();
+    expect(activity.recordModActivity).not.toHaveBeenCalled();
+  });
+
+  it('archives a set and records it', async () => {
+    expect(await archiveSetAction(event({ setId: '3' }))).toMatchObject({ success: true });
+    expect(store.archiveSet).toHaveBeenCalledWith({}, 3);
+    expect(activity.recordModActivity).toHaveBeenCalledWith(
+      expect.objectContaining({ activity: 'textScan.testSet.archive', entityId: 3 })
+    );
+  });
+
+  it('refuses every set edit in a workspace the moderator cannot open', async () => {
+    access.canAccess.mockReturnValue(false);
+    const ref = { setId: '3', caseId: '9' };
+    expect(await editCaseAction(event({ ...ref, expected: '{}' }))).toMatchObject({ status: 403 });
+    expect(await removeCaseAction(event(ref))).toMatchObject({ status: 403 });
+    expect(await archiveSetAction(event({ setId: '3' }))).toMatchObject({ status: 403 });
+    expect(store.updateExpectation).not.toHaveBeenCalled();
+    expect(store.removeCase).not.toHaveBeenCalled();
+    expect(store.archiveSet).not.toHaveBeenCalled();
+  });
+
+  it('re-runs errors with the page grant alone, under the request session', async () => {
+    expect(await rerunAction(event({ setId: '3', runId: '6' }))).toMatchObject({
+      started: { runId: 6 },
+    });
+    expect(deps.runsDeps).toHaveBeenCalledWith('session=synthetic');
+    expect(runs.rerunErrors).toHaveBeenCalledWith(DEPS, 3, 6, 1);
+    // runs.ts writes the run audit; the action must not write a second one.
+    expect(activity.recordModActivity).not.toHaveBeenCalled();
+  });
+
+  it('refuses a re-run without a session to forward', async () => {
+    session.requestCookie.mockReturnValue(null);
+    expect(await rerunAction(event({ setId: '3', runId: '6' }))).toMatchObject({ status: 401 });
+    expect(runs.rerunErrors).not.toHaveBeenCalled();
   });
 });
