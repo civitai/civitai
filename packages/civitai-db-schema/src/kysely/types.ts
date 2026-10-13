@@ -4506,6 +4506,8 @@ export type ScanLabelItem = {
   unanimous: boolean | null;
   decidedAt: Timestamp | null;
   actionedAt: Timestamp | null;
+  actionStartedAt: Timestamp | null;
+  actionResult: string | null;
   actionError: string | null;
   createdAt: Generated<Timestamp>;
 };

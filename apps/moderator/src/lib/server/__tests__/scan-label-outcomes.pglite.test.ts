@@ -23,7 +23,7 @@ vi.mock('../db', () => ({
   },
 }));
 
-const { applyMajorityBlocks, castVote } = await import('../scan-label.service');
+const { ACTION_CLAIM_MS, applyMajorityBlocks, castVote } = await import('../scan-label.service');
 const { getQuotaReport, setQuota } = await import('../scan-label-metrics.service');
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -42,10 +42,13 @@ beforeEach(async () => {
   pg = await PGlite.create();
   await pg.exec(`
     CREATE TABLE "User" ("id" INTEGER PRIMARY KEY, "username" TEXT);
-    CREATE TABLE "Image" ("id" INTEGER PRIMARY KEY, "url" TEXT NOT NULL DEFAULT 'u', "pHash" BIGINT);
+    CREATE TABLE "Image" (
+      "id" INTEGER PRIMARY KEY, "url" TEXT NOT NULL DEFAULT 'u', "pHash" BIGINT,
+      "ingestion" TEXT NOT NULL DEFAULT 'Scanned'
+    );
   `);
   await pg.exec(migration('20261022130000_scan_label_queue'));
-  await pg.exec(migration('20261022140000_scan_label_export_view'));
+  await pg.exec(migration('20261022140000_scan_label_outcomes'));
   dbHandle.current = new Kysely<DB>({ dialect: pgliteDialect(pg) });
 });
 
@@ -78,12 +81,13 @@ describe('applyMajorityBlocks', () => {
     const it1 = await seedItem(1);
     const block = vi.fn(async () => undefined);
     await vote(it1, 11, true, '2026-10-13T10:00:00Z');
-    expect(await applyMajorityBlocks({}, block)).toEqual({ blocked: [], failed: [] });
+    expect(await applyMajorityBlocks({}, block)).toEqual({ blocked: [], skipped: [], failed: [] });
     await vote(it1, 12, false, '2026-10-13T10:01:00Z');
     await vote(it1, 13, true, '2026-10-13T10:02:00Z');
 
     expect(await applyMajorityBlocks({ requester: 13, ip: '1.2.3.4' }, block)).toEqual({
       blocked: [it1],
+      skipped: [],
       failed: [],
     });
     expect(block).toHaveBeenCalledExactlyOnceWith({
@@ -93,7 +97,49 @@ describe('applyMajorityBlocks', () => {
       userAgent: undefined,
       violationDetails: 'Scan label majority',
     });
+    expect(await item(it1)).toMatchObject({ actionResult: 'blocked', actionError: null });
     expect((await item(it1)).actionedAt).not.toBeNull();
+  });
+
+  it('does not block an image that is already blocked, so its owner is not notified twice', async () => {
+    const it1 = await seedItem(1);
+    await pg.query(`UPDATE "Image" SET "ingestion" = 'Blocked' WHERE id = 1`);
+    await vote(it1, 11, true);
+    await vote(it1, 12, true);
+    const block = vi.fn(async () => undefined);
+    expect(await applyMajorityBlocks({}, block)).toEqual({
+      blocked: [],
+      skipped: [{ itemId: it1, result: 'already-blocked' }],
+      failed: [],
+    });
+    expect(block).not.toHaveBeenCalled();
+    expect(await item(it1)).toMatchObject({ actionResult: 'already-blocked' });
+  });
+
+  it('takes over a claim left by a crashed sweep only once it is stale', async () => {
+    const it1 = await seedItem(1);
+    await vote(it1, 11, true);
+    await vote(it1, 12, true);
+    const crashedAt = new Date('2026-10-13T11:00:00Z');
+    await pg.query(`UPDATE "ScanLabelItem" SET "actionStartedAt" = $1 WHERE id = $2`, [
+      crashedAt,
+      it1,
+    ]);
+    const block = vi.fn(async () => undefined);
+    await applyMajorityBlocks({}, block, new Date(crashedAt.getTime() + ACTION_CLAIM_MS - 1));
+    expect(block).not.toHaveBeenCalled();
+    await applyMajorityBlocks({}, block, new Date(crashedAt.getTime() + ACTION_CLAIM_MS + 1));
+    expect(block).toHaveBeenCalledTimes(1);
+  });
+
+  it('never blocks a void item', async () => {
+    const it1 = await seedItem(1);
+    await vote(it1, 11, true);
+    await vote(it1, 12, true);
+    await pg.query(`UPDATE "ScanLabelItem" SET status = 'void' WHERE id = $1`, [it1]);
+    const block = vi.fn(async () => undefined);
+    await applyMajorityBlocks({}, block);
+    expect(block).not.toHaveBeenCalled();
   });
 
   it('never blocks the same image twice', async () => {
@@ -135,9 +181,14 @@ describe('applyMajorityBlocks', () => {
     });
     expect(await applyMajorityBlocks({}, failing)).toEqual({
       blocked: [],
+      skipped: [],
       failed: [{ itemId: it1, error: 'notifications down' }],
     });
-    expect(await item(it1)).toMatchObject({ actionedAt: null, actionError: 'notifications down' });
+    expect(await item(it1)).toMatchObject({
+      actionedAt: null,
+      actionStartedAt: null,
+      actionError: 'notifications down',
+    });
 
     const block = vi.fn(async () => undefined);
     expect((await applyMajorityBlocks({}, block)).blocked).toEqual([it1]);
@@ -160,10 +211,12 @@ describe('applyMajorityBlocks', () => {
 
 describe('quota', () => {
   it('treats a day with no votes as a day off and a short day as a miss', () => {
-    expect(quotaStatus(0, 50, true)).toBe('off');
-    expect(quotaStatus(49, 50, true)).toBe('missed');
-    expect(quotaStatus(50, 50, true)).toBe('met');
-    expect(quotaStatus(10, 50, false)).toBe('unlisted');
+    expect(quotaStatus(0, 50, true, true)).toBe('off');
+    expect(quotaStatus(49, 50, true, true)).toBe('missed');
+    expect(quotaStatus(50, 50, true, true)).toBe('met');
+    expect(quotaStatus(10, 50, false, true)).toBe('unlisted');
+    expect(quotaStatus(10, 50, true, false)).toBe('in-progress');
+    expect(quotaStatus(50, 50, true, false)).toBe('met');
   });
 
   it('reports each roster moderator per UTC day', async () => {
@@ -180,7 +233,7 @@ describe('quota', () => {
     for (let i = 50; i < 55; i++) await vote(ids[i], 1, false, '2026-10-13T00:00:00Z');
     for (let i = 0; i < 3; i++) await vote(ids[i], 3, false, '2026-10-12T10:00:00Z');
 
-    const report = await getQuotaReport('2026-10-12', '2026-10-13');
+    const report = await getQuotaReport('2026-10-13', 2, new Date('2026-10-14T01:00:00Z'));
     const byName = Object.fromEntries(report.map((r) => [r.username ?? '', r] as const));
     expect(byName.ana.days).toEqual([
       { day: '2026-10-12', votes: 50, status: 'met' },
@@ -189,12 +242,17 @@ describe('quota', () => {
     expect(byName.bo.days.map((d) => d.status)).toEqual(['off', 'off']);
     expect(byName.cy).toMatchObject({ onRoster: false });
     expect(byName.cy.days.map((d) => d.status)).toEqual(['unlisted', 'unlisted']);
+
+    const sameDay = await getQuotaReport('2026-10-13', 1, new Date('2026-10-13T12:00:00Z'));
+    expect(sameDay.find((r) => r.username === 'ana')!.days).toEqual([
+      { day: '2026-10-13', votes: 5, status: 'in-progress' },
+    ]);
   });
 
   it('drops a moderator taken off the roster unless they voted', async () => {
     await pg.exec(`INSERT INTO "User" VALUES (1, 'ana')`);
     await setQuota({ userId: 1, dailyVotes: 60, active: false, updatedBy: 9 });
-    expect(await getQuotaReport('2026-10-12', '2026-10-12')).toEqual([]);
+    expect(await getQuotaReport('2026-10-12', 1)).toEqual([]);
   });
 
   it('refuses a quota under the floor in the database too', async () => {

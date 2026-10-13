@@ -1,9 +1,9 @@
 import { z } from 'zod';
 import { defineWebhookEndpoint } from '$lib/server/api-endpoint';
 import { getQuotaReport } from '$lib/server/scan-label-metrics.service';
+import { DAY_MS, dayRange, isoDay } from '$lib/scan-labels';
 
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
-const yesterday = () => new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
 
 export const GET = defineWebhookEndpoint({
   summary: 'Scan label votes per moderator per UTC day, against each moderator’s daily quota.',
@@ -25,15 +25,13 @@ export const GET = defineWebhookEndpoint({
   returns:
     '{ from, to, moderators: [{ userId, username, quota, onRoster, days: [{ day, votes, status }] }], missed: [{ userId, username, day, votes, quota }] }',
   notes: [
-    'status: met, missed (some votes but fewer than the quota), off (no votes that day: a day off, not a miss), unlisted (voted but not on the roster).',
-    'Today is still in progress; ask for yesterday or earlier to judge a full day.',
+    'status: met, missed (some votes but fewer than the quota), off (no votes that day: a day off, not a miss), in-progress (today, quota not yet met), unlisted (voted but not on the roster).',
+    'Every day is judged against the CURRENT quota and roster, not the ones in force that day.',
   ],
   handler: async ({ day, days }) => {
-    const to = day ?? yesterday();
-    const from = new Date(Date.parse(`${to}T00:00:00Z`) - (days - 1) * 86_400_000)
-      .toISOString()
-      .slice(0, 10);
-    const moderators = await getQuotaReport(from, to);
+    const to = day ?? isoDay(new Date(Date.now() - DAY_MS));
+    const moderators = await getQuotaReport(to, days);
+    const from = dayRange(to, days)[0];
     const missed = moderators.flatMap((m) =>
       m.days
         .filter((d) => d.status === 'missed')

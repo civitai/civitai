@@ -3,7 +3,6 @@ import { z } from 'zod';
 import type { Actions, PageServerLoad } from './$types';
 import { requiresGrant } from '$lib/server/access';
 import { checkboxField, parseForm } from '$lib/server/query';
-import { utcDayStart } from '$lib/server/scan-label.service';
 import {
   getActionHealth,
   getDailyTotals,
@@ -12,16 +11,14 @@ import {
   getVersionStats,
   setQuota,
 } from '$lib/server/scan-label-metrics.service';
-import { DEFAULT_DAILY_QUOTA } from '$lib/scan-labels';
+import { DEFAULT_DAILY_QUOTA, isoDay } from '$lib/scan-labels';
 
 const WINDOW_DAYS = 14;
 
 export const load: PageServerLoad = async () => {
   const now = new Date();
-  const today = utcDayStart(now);
-  const from = new Date(today.getTime() - (WINDOW_DAYS - 1) * 86_400_000);
   const [quota, totals, versions, moderators, actions] = await Promise.all([
-    getQuotaReport(from.toISOString().slice(0, 10), today.toISOString().slice(0, 10)),
+    getQuotaReport(isoDay(now), WINDOW_DAYS, now),
     getDailyTotals(WINDOW_DAYS, now),
     getVersionStats(),
     getModeratorStats(WINDOW_DAYS, now),

@@ -6858,8 +6858,10 @@ model ScanLabelItem {
   outcome        String?
   unanimous      Boolean?
   decidedAt      DateTime? @db.Timestamptz(3)
-  actionedAt     DateTime? @db.Timestamptz(3)
-  actionError    String?
+  actionedAt      DateTime? @db.Timestamptz(3)
+  actionStartedAt DateTime? @db.Timestamptz(3)
+  actionResult    String?
+  actionError     String?
   createdAt      DateTime  @default(now()) @db.Timestamptz(3)
 }
 

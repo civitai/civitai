@@ -1,9 +1,14 @@
--- One row per decided scan label item: the label, plus what identifies the image and every flag on
--- it. Labels only; nothing here copies media. Rows disappear with the image (FK cascade).
+-- Majority-block bookkeeping and the label view.
 --
--- Apply any time after 20261022130000_scan_label_queue. CREATE OR REPLACE VIEW takes no lock on the
--- underlying tables beyond the catalog update.
+-- Apply any time after 20261022130000_scan_label_queue, and before the build that ships the
+-- majority-block sweep: it writes both new columns.
 
+ALTER TABLE "ScanLabelItem"
+  ADD COLUMN IF NOT EXISTS "actionStartedAt" TIMESTAMPTZ(3),
+  ADD COLUMN IF NOT EXISTS "actionResult" TEXT
+    CHECK ("actionResult" IN ('blocked', 'already-blocked', 'image-missing'));
+
+-- Rows disappear with the image (FK cascade); this is not a durable archive.
 CREATE OR REPLACE VIEW "ScanLabelExport" AS
 SELECT
   i."id"          AS "itemId",
@@ -17,6 +22,7 @@ SELECT
   i."unanimous",
   i."decidedAt",
   i."actionedAt",
+  i."actionResult",
   f."workflowIds",
   f."flaggerVersions",
   f."flags"

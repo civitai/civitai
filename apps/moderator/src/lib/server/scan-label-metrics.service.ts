@@ -1,22 +1,28 @@
 import { sql, type Kysely } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { dbRead, dbWrite } from './db';
-import { utcDayStart } from './scan-label.service';
-import { BLOCK_MAJORITY, DEFAULT_DAILY_QUOTA, quotaStatus, type QuotaRow } from '$lib/scan-labels';
+import {
+  BLOCK_MAJORITY,
+  DAY_MS,
+  dayBounds,
+  dayRange,
+  effectiveQuota,
+  isoDay,
+  quotaStatus,
+  utcDayStart,
+  type QuotaRow,
+} from '$lib/scan-labels';
 
-const DAY_MS = 86_400_000;
-const isoDay = (d: Date) => d.toISOString().slice(0, 10);
-
-/** Per-moderator votes for each UTC day from `fromDay` through `toDay`, inclusive. */
 export async function getQuotaReport(
-  fromDay: string,
-  toDay: string,
+  lastDay: string,
+  dayCount: number,
+  now: Date = new Date(),
   db: Kysely<DB> = dbRead
 ): Promise<QuotaRow[]> {
-  const start = new Date(`${fromDay}T00:00:00.000Z`);
-  const end = new Date(new Date(`${toDay}T00:00:00.000Z`).getTime() + DAY_MS);
-  const days: string[] = [];
-  for (let t = start.getTime(); t < end.getTime(); t += DAY_MS) days.push(isoDay(new Date(t)));
+  const days = dayRange(lastDay, dayCount);
+  const start = dayBounds(days[0]).start;
+  const end = dayBounds(lastDay).end;
+  const today = isoDay(now);
 
   const [roster, counts] = await Promise.all([
     db.selectFrom('ScanLabelQuota').select(['userId', 'dailyVotes', 'active']).execute(),
@@ -50,7 +56,7 @@ export async function getQuotaReport(
   return userIds
     .map((userId): QuotaRow => {
       const q = quotaOf.get(userId);
-      const quota = q?.dailyVotes ?? DEFAULT_DAILY_QUOTA;
+      const quota = effectiveQuota(q);
       const onRoster = !!q?.active;
       return {
         userId,
@@ -59,7 +65,7 @@ export async function getQuotaReport(
         onRoster,
         days: days.map((day) => {
           const votes = votesOf.get(userId)?.get(day) ?? 0;
-          return { day, votes, status: quotaStatus(votes, quota, onRoster) };
+          return { day, votes, status: quotaStatus(votes, quota, onRoster, day < today) };
         }),
       };
     })
@@ -167,7 +173,6 @@ export type ModeratorStats = {
   userId: number;
   username: string | null;
   votes: number;
-  /** Share of this moderator's votes on decided items that matched the final outcome. */
   agreement: number | null;
   medianMs: number | null;
 };
@@ -209,21 +214,27 @@ export async function getActionHealth(db: Kysely<DB> = dbRead) {
   const row = await db
     .selectFrom('ScanLabelItem')
     .select([
-      sql<string>`count(*) FILTER (WHERE "actionedAt" IS NOT NULL)`.as('blocked'),
+      sql<string>`count(*) FILTER (WHERE "actionResult" = 'blocked')`.as('blocked'),
+      sql<string>`count(*) FILTER (WHERE "actionResult" IN ('already-blocked', 'image-missing'))`.as(
+        'skipped'
+      ),
       sql<string>`count(*) FILTER (WHERE "blockVotes" >= ${BLOCK_MAJORITY} AND "actionedAt" IS NULL)`.as(
         'pending'
       ),
-      sql<string>`count(*) FILTER (WHERE "actionError" IS NOT NULL)`.as('failing'),
+      sql<string>`count(*) FILTER (WHERE "actionedAt" IS NULL AND "actionError" IS NOT NULL)`.as(
+        'failing'
+      ),
     ])
     .executeTakeFirstOrThrow();
   return {
     blocked: Number(row.blocked),
+    skipped: Number(row.skipped),
     pending: Number(row.pending),
     failing: Number(row.failing),
   };
 }
 
-/** Insert or update a moderator's quota. False when the user does not exist. */
+/** False when the user does not exist. */
 export async function setQuota({
   userId,
   dailyVotes,

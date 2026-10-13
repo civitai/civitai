@@ -4256,6 +4256,8 @@ export interface ScanLabelItem {
   unanimous: boolean | null;
   decidedAt: Date | null;
   actionedAt: Date | null;
+  actionStartedAt: Date | null;
+  actionResult: string | null;
   actionError: string | null;
   createdAt: Date;
 }

@@ -3,8 +3,10 @@ import type { DB } from '@civitai/db-schema/kysely';
 import { dbRead, dbWrite } from './db';
 import {
   BLOCK_MAJORITY,
-  DEFAULT_DAILY_QUOTA,
+  dayBounds,
+  effectiveQuota,
   LEASE_MS,
+  utcDayStart,
   VOTES_PER_ITEM,
   type ScanLabelFilters,
 } from '$lib/scan-labels';
@@ -32,14 +34,6 @@ export type VoteResult =
   | { ok: false; reason: 'not-open' | 'already-voted' | 'full' };
 
 type Db = Kysely<DB> | Transaction<DB>;
-
-const dayBounds = (day: string) => {
-  const start = new Date(`${day}T00:00:00.000Z`);
-  return { start, end: new Date(start.getTime() + 86_400_000) };
-};
-
-export const utcDayStart = (now: Date) =>
-  new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
 
 function openItems(db: Db, filters: ScanLabelFilters) {
   let q = db.selectFrom('ScanLabelItem as i').where('i.status', '=', 'open');
@@ -306,7 +300,7 @@ export async function getCounters(
   return {
     openInFilter: Number(open.n),
     myVotesToday: Number(mine.n),
-    myQuota: quota?.dailyVotes ?? DEFAULT_DAILY_QUOTA,
+    myQuota: effectiveQuota(quota),
     decidedToday: Number(decided.n),
   };
 }
@@ -325,13 +319,17 @@ export async function getOpenFlaggerVersions(db: Kysely<DB> = dbRead): Promise<s
   return rows.map((r) => r.flaggerVersion);
 }
 
-export type SweepResult = { blocked: number[]; failed: { itemId: number; error: string }[] };
+export type SweepResult = {
+  blocked: number[];
+  skipped: { itemId: number; result: 'already-blocked' | 'image-missing' }[];
+  failed: { itemId: number; error: string }[];
+};
 
-/**
- * Block every image whose item has a block majority and has not been actioned. Reads stored state,
- * not the vote that reached the majority, so a block missed by a failed or earlier run is still
- * picked up by the next one.
- */
+/** A claim older than this is presumed dead (a crash mid-block) and may be taken again. */
+export const ACTION_CLAIM_MS = 5 * 60_000;
+
+/** Reads stored state, not the triggering vote, so a failed or interrupted block is retried by the
+ *  next sweep. */
 export async function applyMajorityBlocks(
   {
     requester,
@@ -339,55 +337,88 @@ export async function applyMajorityBlocks(
     userAgent,
     limit = 10,
   }: { requester?: number; ip?: string; userAgent?: string; limit?: number },
-  block: (args: BlockImageArgs) => Promise<void>
+  block: (args: BlockImageArgs) => Promise<void>,
+  now: Date = new Date()
 ): Promise<SweepResult> {
+  const staleBefore = new Date(now.getTime() - ACTION_CLAIM_MS);
   const pending = await dbWrite
     .selectFrom('ScanLabelItem')
     .select(['id', 'imageId'])
     .where('blockVotes', '>=', BLOCK_MAJORITY)
+    .where('status', '!=', 'void')
     .where('actionedAt', 'is', null)
+    .where((eb) =>
+      eb.or([eb('actionStartedAt', 'is', null), eb('actionStartedAt', '<', staleBefore)])
+    )
+    // Items that keep failing go last, so they cannot starve newer majorities.
+    .orderBy(sql`"actionError" IS NOT NULL`)
     .orderBy('id')
     .limit(limit)
     .execute();
 
-  const result: SweepResult = { blocked: [], failed: [] };
+  const result: SweepResult = { blocked: [], skipped: [], failed: [] };
   for (const item of pending) {
-    // Claimed before acting, so two sweeps running at once block an image only once.
+    // Claim first: concurrent sweeps must not double-block.
     const claimed = await dbWrite
       .updateTable('ScanLabelItem')
-      .set({ actionedAt: new Date(), actionError: null })
+      .set({ actionStartedAt: now })
       .where('id', '=', item.id)
       .where('actionedAt', 'is', null)
+      .where((eb) =>
+        eb.or([eb('actionStartedAt', 'is', null), eb('actionStartedAt', '<', staleBefore)])
+      )
       .executeTakeFirst();
     if (!claimed.numUpdatedRows) continue;
 
-    const actor = await dbWrite
-      .selectFrom('ScanLabelVote')
-      .select('userId')
-      .where('itemId', '=', item.id)
-      .where('block', '=', true)
-      .orderBy('createdAt')
-      .orderBy('userId')
-      .offset(BLOCK_MAJORITY - 1)
-      .limit(1)
-      .executeTakeFirstOrThrow();
     try {
-      await block({
-        imageId: item.imageId,
-        userId: actor.userId,
-        ...(actor.userId === requester && { ip, userAgent }),
-        violationDetails: 'Scan label majority',
-      });
-      result.blocked.push(item.id);
-    } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
+      const image = await dbWrite
+        .selectFrom('Image')
+        .select('ingestion')
+        .where('id', '=', item.imageId)
+        .executeTakeFirst();
+      // Blocking an already-blocked image would notify its owner a second time.
+      const outcome = !image
+        ? ('image-missing' as const)
+        : image.ingestion === 'Blocked'
+        ? ('already-blocked' as const)
+        : ('blocked' as const);
+
+      if (outcome === 'blocked') {
+        const actor = await dbWrite
+          .selectFrom('ScanLabelVote')
+          .select('userId')
+          .where('itemId', '=', item.id)
+          .where('block', '=', true)
+          .orderBy('createdAt')
+          .orderBy('userId')
+          .offset(BLOCK_MAJORITY - 1)
+          .limit(1)
+          .executeTakeFirstOrThrow();
+        await block({
+          imageId: item.imageId,
+          userId: actor.userId,
+          ...(actor.userId === requester && { ip, userAgent }),
+          violationDetails: 'Scan label majority',
+        });
+        result.blocked.push(item.id);
+      } else {
+        result.skipped.push({ itemId: item.id, result: outcome });
+      }
       await dbWrite
         .updateTable('ScanLabelItem')
-        .set({ actionedAt: null, actionError: message.slice(0, 500) })
+        .set({ actionedAt: new Date(), actionResult: outcome, actionError: null })
         .where('id', '=', item.id)
         .execute();
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
       console.error('scan label block failed', { itemId: item.id, error: message });
       result.failed.push({ itemId: item.id, error: message });
+      await dbWrite
+        .updateTable('ScanLabelItem')
+        .set({ actionStartedAt: null, actionError: message.slice(0, 500) })
+        .where('id', '=', item.id)
+        .execute()
+        .catch(() => undefined);
     }
   }
   return result;

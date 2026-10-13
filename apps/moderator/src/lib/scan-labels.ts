@@ -24,23 +24,49 @@ export const toFilters = (q: z.infer<typeof scanLabelFiltersSchema>): ScanLabelF
   flaggerVersion: q.version,
 });
 
-/**
- * One moderator's UTC day against their quota. A day with no votes is a day off, never a miss, so
- * days off need no bookkeeping; a day with some votes but fewer than the quota is a miss.
- */
-export type QuotaStatus = 'met' | 'missed' | 'off' | 'unlisted';
+export const DAY_MS = 86_400_000;
 
-export function quotaStatus(votes: number, quota: number, onRoster: boolean): QuotaStatus {
+/** `YYYY-MM-DD` of a UTC instant. */
+export const isoDay = (d: Date) => d.toISOString().slice(0, 10);
+
+export const utcDayStart = (now: Date) =>
+  new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+
+/** `[start, end)` of a `YYYY-MM-DD` UTC day. */
+export const dayBounds = (day: string) => {
+  const start = new Date(`${day}T00:00:00.000Z`);
+  return { start, end: new Date(start.getTime() + DAY_MS) };
+};
+
+/** The `days` UTC days ending on `lastDay`, oldest first. */
+export const dayRange = (lastDay: string, days: number): string[] => {
+  const last = dayBounds(lastDay).start.getTime();
+  return Array.from({ length: days }, (_, i) => isoDay(new Date(last - (days - 1 - i) * DAY_MS)));
+};
+
+export const effectiveQuota = (row: { dailyVotes: number } | undefined) =>
+  row?.dailyVotes ?? DEFAULT_DAILY_QUOTA;
+
+/** Zero votes is a day off, not a miss: there is no leave bookkeeping. A day still in progress is
+ *  never a miss. Judged against the CURRENT quota and roster, not the ones in force that day. */
+export type QuotaStatus = 'met' | 'missed' | 'off' | 'in-progress' | 'unlisted';
+
+export function quotaStatus(
+  votes: number,
+  quota: number,
+  onRoster: boolean,
+  complete: boolean
+): QuotaStatus {
   if (!onRoster) return 'unlisted';
-  if (votes === 0) return 'off';
-  return votes >= quota ? 'met' : 'missed';
+  if (votes >= quota) return 'met';
+  if (!complete) return 'in-progress';
+  return votes === 0 ? 'off' : 'missed';
 }
 
 export type QuotaRow = {
   userId: number;
   username: string | null;
   quota: number;
-  /** On the roster (`ScanLabelQuota.active`). Voters off the roster are listed but never "missed". */
   onRoster: boolean;
   days: { day: string; votes: number; status: QuotaStatus }[];
 };

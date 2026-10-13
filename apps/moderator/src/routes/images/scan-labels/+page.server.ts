@@ -49,8 +49,8 @@ export const actions: Actions = {
       msOnItem: input.ms,
     });
     if (!result.ok) return fail(409, { error: REFUSAL[result.reason] });
-    // Every vote also retries any majority block still pending, so a failed one is not stranded.
-    // Its failures are logged and stored on the item; the voter's own vote has already landed.
+    // Retry pending majority blocks so a failed one is not stranded. Must not fail the vote, which
+    // has already landed.
     await applyMajorityBlocks(
       { requester: locals.user.id, ...getActorMeta(event) },
       blockImage
