@@ -339,8 +339,10 @@ import {
 } from '~/server/services/orchestrator/submit-failure';
 import {
   classifyQuoteFailure,
+  quoteFailureCause,
   quoteFailureLogLevel,
   unquotedTrainingRefusal,
+  unquotedWorkflowEstimateRefusal,
   type PassThroughQuoteFailure,
 } from '~/server/services/blocks/pass-through-quote-failure';
 import {
@@ -12543,8 +12545,8 @@ function refuseUnpricedMultiStep(
   if (index === -1) return null;
   return multiStepRefusal(
     'workflow_repeat_unbounded',
-    `workflow step ${index}: a workflow with a repeat needs a price quote and none could be ` +
-      'obtained; try again'
+    `workflow step ${index}: a workflow with a repeat needs a price quote and ` +
+      quoteFailureCause(quote.failure)
   );
 }
 
@@ -12565,9 +12567,13 @@ function multiStepCallerText(body: MultiStepWorkflowBody): string {
  * MULTI-STEP ESTIMATE. One `whatif` for the whole workflow, plus the author fee
  * the submit will reserve — so the number shown is the number reserved.
  *
- * With no quote it shows the ceiling, which is what the submit reserves then. A
- * workflow running a training `$type` or a `repeat` is refused instead, on both
- * paths (`refuseUnpricedMultiStep`).
+ * With no quote it is a failed snapshot with no `cost` and an `errorCode` naming
+ * the cause, never the spend ceiling shown as a price.
+ *
+ * 🔴 THE SUBMIT DIFFERS ON PURPOSE (owner decision): the same unquoted body still
+ * proceeds there, reserved at the ceiling — only a training `$type` or a `repeat`
+ * is refused on both paths (`refuseUnpricedMultiStep`). So a failed estimate does
+ * not predict a refused submit.
  */
 async function estimateMultiStepWorkflow(opts: {
   ctx: Context;
@@ -12580,8 +12586,8 @@ async function estimateMultiStepWorkflow(opts: {
   if ('refusal' in prepared) return prepared.refusal;
 
   const orchestratorSteps = buildMultiStepOrchestratorSteps(prepared.steps);
-  // Inside the estimate's degradation, outside the submit's — see the same line
-  // in `estimatePassThroughStepWorkflow`.
+  // A mint failure is a missing quote here (`unavailable`), not a throw as on the
+  // submit, which must not reserve anything it cannot send.
   const token = await getOrchestratorToken(userId, ctx).catch(() => null);
   let quote: PassThroughQuote = { quotedBuzz: null, failure: { kind: 'unavailable' } };
   if (token) {
@@ -12602,14 +12608,17 @@ async function estimateMultiStepWorkflow(opts: {
 
   const refusal = refuseUnpricedMultiStep(prepared.steps, quote);
   if (refusal) return refusal;
+  if (quote.quotedBuzz === null) {
+    const { errorCode, error } = unquotedWorkflowEstimateRefusal(quote.failure);
+    return multiStepRefusal(errorCode, error);
+  }
 
-  const whatIfResult = quote.quotedBuzz === null ? null : quote.whatIfResult;
+  const { whatIfResult } = quote;
   const workflowGenerationType = resolveBlockGenerationType(body);
   // DISCLOSING QUOTE — the same call the submit makes, on the same `cost.base`.
-  // An absent quote prices no fee, as on the registered-step estimate.
   const authorFeeQuote = await quoteBlockAuthorFee({
-    baseGenerationBuzz: whatIfResult?.cost?.base,
-    priceIsCap: whatIfResult?.cost?.variable,
+    baseGenerationBuzz: whatIfResult.cost?.base,
+    priceIsCap: whatIfResult.cost?.variable,
     generationType: workflowGenerationType,
     appId: claims.appId,
     viewerUserId: userId,
@@ -12620,15 +12629,7 @@ async function estimateMultiStepWorkflow(opts: {
   });
   // One local feeds both the sum and `cost.authorFee`, so they cannot disagree.
   const shownAuthorFeeBuzz = authorFeeQuote.charge ? authorFeeQuote.feeBuzz : 0;
-  // `pricesAuthorFee: false` — this read is only the no-quote display, and no fee
-  // can be priced without a quote, so the number it yields carries none.
-  const shownGenerationBuzz =
-    quote.quotedBuzz ??
-    multiStepWorkflowCeiling(
-      blockPerCallBudget(claims, { pricesAuthorFee: false }),
-      prepared.steps.length
-    );
-  const shownBuzz = shownGenerationBuzz + shownAuthorFeeBuzz;
+  const shownBuzz = quote.quotedBuzz + shownAuthorFeeBuzz;
 
   return {
     snapshot: {
