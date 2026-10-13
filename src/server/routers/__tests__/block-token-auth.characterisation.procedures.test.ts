@@ -7,6 +7,8 @@ import type * as ConsentRevocationModule from '~/server/services/blocks/consent-
 import type * as DevTunnelModule from '~/server/services/blocks/dev-tunnel.service';
 import type * as CatalogRateLimit from '~/server/utils/block-catalog-rate-limit';
 import type * as SharedRateLimit from '~/server/utils/shared-storage-rate-limit';
+import type * as BridgeAuth from '~/server/services/blocks/block-bridge-auth.service';
+import type * as TokenAccess from '~/server/services/blocks/block-token-access.service';
 
 /**
  * CHARACTERISATION — every tRPC procedure that takes a `blockToken`, today.
@@ -32,9 +34,11 @@ import type * as SharedRateLimit from '~/server/utils/shared-storage-rate-limit'
  * ## How to read a PASSED cell
  *
  * A cell the auth path did not refuse continues into the procedure body, whose answer depends
- * on services this file does not set up. Those are pinned as PASSED: the limiter calls made and
- * that the outcome is NOT a refusal code (UNAUTHORIZED / FORBIDDEN / TOO_MANY_REQUESTS /
- * SERVICE_UNAVAILABLE). Refusals are pinned verbatim.
+ * on services this file does not set up. Every cell records `reached` — the positive anchors it
+ * passed (bridge resolver resolved/threw, token-subject gate resolved/threw for WHICH user id,
+ * apps-db pool reached). Storage and shared calls that get past their resolver stop at an
+ * apps-db sentinel and are pinned verbatim. The remaining non-refusals are PASSED: limiter calls
+ * and `reached` pinned, and the code must not be a refusal code. Refusals are pinned verbatim.
  */
 
 const h = vi.hoisted(() => ({
@@ -45,16 +49,74 @@ const h = vi.hoisted(() => ({
   runFlag: { on: true },
   limiter: { deny: false },
   limiterCalls: [] as string[],
+  reached: [] as string[],
+  flagBase: { on: false },
+  sessionUserId: { id: 7 },
 }));
+
+/**
+ * Flags are evaluated FOR SOMEONE, so the mocks answer per user: `app-blocks-enabled` (and the
+ * per-feature run flags) are on for the session user AND the token subject; the shared-storage
+ * flag is on for the token subject only; a no-user (global) evaluation gets the base value, off.
+ * An evaluation handed the wrong identity — or none — therefore answers differently.
+ */
+function flagFor(ids: () => number[]) {
+  return async (opts?: { user?: { id?: number } }) =>
+    opts?.user ? opts.user.id != null && ids().includes(opts.user.id) : h.flagBase.on;
+}
 
 vi.mock('~/server/services/app-blocks-flag', async (importOriginal) => ({
   ...(await importOriginal<typeof AppBlocksFlag>()),
-  isAppBlocksEnabled: async () => h.runFlag.on,
-  isAppBlocksSharedStorageEnabled: async () => h.runFlag.on,
+  isAppBlocksEnabled: flagFor(() => (h.runFlag.on ? [7, 42] : [])),
+  isAppBlocksSharedStorageEnabled: flagFor(() => (h.runFlag.on ? [42] : [])),
   isAppBlocksAuthorEnabled: async () => false,
-  isAppBlocksPostCreationEnabled: async () => h.runFlag.on,
-  isAppBlocksTrainingKindEnabled: async () => h.runFlag.on,
-  isAppBlocksConfirmedStepEnabled: async () => h.runFlag.on,
+  isAppBlocksPostCreationEnabled: flagFor(() => (h.runFlag.on ? [7, 42] : [])),
+  isAppBlocksTrainingKindEnabled: flagFor(() => (h.runFlag.on ? [7, 42] : [])),
+  isAppBlocksConfirmedStepEnabled: flagFor(() => (h.runFlag.on ? [7, 42] : [])),
+}));
+/**
+ * POSITIVE ANCHORS. A cell that is not refused must say how far it got, not only what it did
+ * not answer. These pass-through spies record whether the bridge resolver and the token-subject
+ * gate RESOLVED or THREW, and the apps-db pool is replaced by a sentinel that records the visit
+ * and stops there — so a storage/shared call that got past its resolver reads
+ * `PAST_AUTH: reached the apps-db pool` rather than whatever an unconfigured database says.
+ */
+vi.mock('~/server/services/blocks/block-bridge-auth.service', async (importOriginal) => {
+  const real = await importOriginal<typeof BridgeAuth>();
+  return {
+    ...real,
+    authorizeBlockBridgeToken: async (t: string) => {
+      try {
+        const out = await real.authorizeBlockBridgeToken(t);
+        h.reached.push('bridge-auth:ok');
+        return out;
+      } catch (err) {
+        h.reached.push('bridge-auth:threw');
+        throw err;
+      }
+    },
+  };
+});
+vi.mock('~/server/services/blocks/block-token-access.service', async (importOriginal) => {
+  const real = await importOriginal<typeof TokenAccess>();
+  return {
+    ...real,
+    assertAppBlocksEnabledForTokenUser: async (userId: number) => {
+      try {
+        await real.assertAppBlocksEnabledForTokenUser(userId);
+        h.reached.push(`subject-gate:ok:${userId}`);
+      } catch (err) {
+        h.reached.push(`subject-gate:threw:${userId}`);
+        throw err;
+      }
+    },
+  };
+});
+vi.mock('~/server/db/appsDb', () => ({
+  requireAppsDb: () => {
+    h.reached.push('apps-db');
+    throw new Error('PAST_AUTH: reached the apps-db pool');
+  },
 }));
 vi.mock('~/server/services/block-revocation.service', () => ({
   BlockRevocation: { isRevoked: (...a: unknown[]) => h.isRevoked(...a) },
@@ -104,6 +166,7 @@ import { OnboardingSteps } from '~/server/common/enums';
 // ── fixture ──────────────────────────────────────────────────────────────────────────────
 
 const SUBJECT_ID = 42;
+const SESSION_USER_ID = 7;
 const SUBJECT = {
   id: SUBJECT_ID,
   username: 'char',
@@ -143,12 +206,28 @@ const PAGE_PROCS = new Set([
 ]);
 let currentPath = '';
 
+/**
+ * Procedures that require the signed-in SESSION to be the token subject. Their ordinary cells
+ * run with session = subject (otherwise every cell stops at that one refusal); the
+ * `session user is not the token subject` cell pins the refusal itself, on every procedure.
+ */
+const SESSION_BOUND = new Set([
+  'blocks.consentQuoteGrant',
+  'blocks.consentTrainingQuote',
+  'blocks.createPostFromApp',
+  'blocks.persistAppUploadImage',
+  'blocks.previewPostFromApp',
+  'blocks.previewQuoteGrant',
+  'blocks.previewTrainingQuote',
+  'blocks.publishGenerationOutputs',
+]);
+
 async function mint(over: { scopes?: string[]; anon?: boolean } = {}) {
   const { token } = await BlockTokenService.sign({
     userId: over.anon ? null : SUBJECT_ID,
     blockId: 'char-block',
     appId: 'app_char',
-    appBlockId: 'apb_char',
+    appBlockId: 'apb_claim',
     blockInstanceId: 'bki_char',
     scopes: over.scopes ?? ALL_SCOPES,
     ctx: PAGE_PROCS.has(currentPath)
@@ -215,7 +294,9 @@ const INPUTS: Record<string, Record<string, unknown>> = {
 function ctx() {
   return {
     acceptableOrigin: true,
-    user: { ...SUBJECT },
+    // The SESSION user is a different person from the token subject (42), so every limiter key
+    // and flag evaluation in the table says WHICH identity it used.
+    user: { ...SUBJECT, id: h.sessionUserId.id },
     apiKeyId: null,
     tokenScope: TokenScope.Full,
     req: { headers: {} } as never,
@@ -241,10 +322,13 @@ function procFn(path: string): (input: unknown) => Promise<unknown> {
 type Outcome = {
   result: { ok: true } | { error: string; code?: string; message: string };
   limiter: string[];
+  /** The positive anchors this call passed through, in order (see the spies above). */
+  reached: string[];
 };
 
 async function invoke(path: string, token: string): Promise<Outcome> {
   h.limiterCalls.length = 0;
+  h.reached.length = 0;
   let result: Outcome['result'];
   try {
     await procFn(path)({ blockToken: token, ...INPUTS[path] });
@@ -257,7 +341,7 @@ async function invoke(path: string, token: string): Promise<Outcome> {
       message: String(e?.message),
     };
   }
-  return { result, limiter: [...h.limiterCalls] };
+  return { result, limiter: [...h.limiterCalls], reached: [...h.reached] };
 }
 
 // ── population, derived from the routers themselves ──────────────────────────────────────
@@ -268,7 +352,14 @@ function hasBlockTokenKey(schema: unknown, depth = 0): boolean {
   const s = schema as {
     shape?: Record<string, unknown>;
     options?: unknown[];
-    def?: { innerType?: unknown; in?: unknown; schema?: unknown; options?: unknown[] };
+    def?: {
+      innerType?: unknown;
+      in?: unknown;
+      schema?: unknown;
+      options?: unknown[];
+      left?: unknown;
+      right?: unknown;
+    };
     _def?: { innerType?: unknown; schema?: unknown };
   };
   if (s.shape && typeof s.shape === 'object' && 'blockToken' in s.shape) return true;
@@ -278,6 +369,9 @@ function hasBlockTokenKey(schema: unknown, depth = 0): boolean {
     s.def?.innerType,
     s.def?.in,
     s.def?.schema,
+    // Intersections (`a.and(b)`): either side may carry the token.
+    s.def?.left,
+    s.def?.right,
     s._def?.innerType,
     s._def?.schema,
   ];
@@ -306,6 +400,8 @@ beforeEach(() => {
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(FROZEN_NOW);
   h.runFlag.on = true;
+  h.flagBase.on = false;
+  h.sessionUserId.id = SESSION_USER_ID;
   h.limiter.deny = false;
   h.limiterCalls.length = 0;
   h.isRevoked.mockReset().mockResolvedValue(false);
@@ -313,13 +409,18 @@ beforeEach(() => {
   h.getActiveDevTunnel.mockReset().mockResolvedValue(null);
   h.getSessionUserById.mockReset().mockResolvedValue({ ...SUBJECT });
   dbMock.dbRead.appBlock.findUnique.mockReset().mockResolvedValue({
-    id: 'apb_char',
+    id: 'apb_row',
     status: 'approved',
   });
   dbMock.dbRead.oauthClient.findUnique.mockReset().mockResolvedValue({ userId: SUBJECT_ID });
-  // The subject's own user row, for the procedures that look the viewer up after auth.
-  dbMock.dbRead.user.findUnique.mockReset().mockResolvedValue({ ...SUBJECT, deletedAt: null });
-  dbMock.dbWrite.user.findUnique.mockReset().mockResolvedValue({ ...SUBJECT, deletedAt: null });
+  // A user row for whichever id is asked for, for the procedures that look a viewer up.
+  const userRow = async (args?: { where?: { id?: number } }) => ({
+    ...SUBJECT,
+    id: args?.where?.id ?? SUBJECT_ID,
+    deletedAt: null,
+  });
+  dbMock.dbRead.user.findUnique.mockReset().mockImplementation(userRow);
+  dbMock.dbWrite.user.findUnique.mockReset().mockImplementation(userRow);
 });
 
 type CellName =
@@ -330,7 +431,8 @@ type CellName =
   | 'missing scope'
   | 'anonymous subject'
   | 'flag off'
-  | 'rate limited';
+  | 'rate limited'
+  | 'session user is not the token subject';
 
 const CELLS: Record<CellName, (path: string) => Promise<Outcome>> = {
   'valid token': async (p) => invoke(p, await mint()),
@@ -340,11 +442,16 @@ const CELLS: Record<CellName, (path: string) => Promise<Outcome>> = {
     return invoke(p, await mint());
   },
   'not approved': async (p) => {
-    dbMock.dbRead.appBlock.findUnique.mockResolvedValue({ id: 'apb_char', status: 'suspended' });
+    dbMock.dbRead.appBlock.findUnique.mockResolvedValue({ id: 'apb_row', status: 'suspended' });
     return invoke(p, await mint());
   },
   'missing scope': async (p) => invoke(p, await mint({ scopes: [] })),
-  'anonymous subject': async (p) => invoke(p, await mint({ anon: true })),
+  // Flags base-enabled (the GA shape), so a no-user flag evaluation for an anon subject admits
+  // it and the cell pins each procedure's OWN anonymous-viewer handling.
+  'anonymous subject': async (p) => {
+    h.flagBase.on = true;
+    return invoke(p, await mint({ anon: true }));
+  },
   'flag off': async (p) => {
     h.runFlag.on = false;
     return invoke(p, await mint());
@@ -353,30 +460,41 @@ const CELLS: Record<CellName, (path: string) => Promise<Outcome>> = {
     h.limiter.deny = true;
     return invoke(p, await mint());
   },
+  'session user is not the token subject': async (p) => {
+    h.sessionUserId.id = SESSION_USER_ID;
+    return invoke(p, await mint());
+  },
 };
 
 // ── expectations ─────────────────────────────────────────────────────────────────────────
 
 type Expect =
-  | { kind: 'ok'; limiter: string[] }
-  | { kind: 'error'; code: string; message: string; limiter: string[] }
-  | { kind: 'passed'; limiter: string[] };
+  | { kind: 'ok'; limiter: string[]; reached: string[] }
+  | { kind: 'error'; code: string; message: string; limiter: string[]; reached: string[] }
+  | { kind: 'passed'; limiter: string[]; reached: string[] };
 
 /** Resolved. */
-const OK = (limiter: string[]): Expect => ({ kind: 'ok', limiter });
-/** Refused with exactly this TRPCError code and message. */
-const E = (code: string, message: string, limiter: string[]): Expect => ({
+const OK = (limiter: string[], reached: string[]): Expect => ({ kind: 'ok', limiter, reached });
+/** Threw exactly this TRPCError code and message. */
+const E = (code: string, message: string, limiter: string[], reached: string[]): Expect => ({
   kind: 'error',
   code,
   message,
   limiter,
+  reached,
 });
 /**
- * Not refused by any auth step: the procedure body ran and answered with a non-refusal outcome
- * that depends on services this file does not configure. Pinned: the limiter calls, and that
- * the code is NOT one of `REFUSAL_CODES`.
+ * Not refused by any auth step: the procedure body ran past them and answered with an outcome
+ * that depends on services this file does not configure (a missing model version, a network
+ * call, an unstubbed client export). Pinned POSITIVELY by `reached` — the bridge resolver and
+ * the token-subject gate resolved, for the identity named — plus the limiter calls, and
+ * negatively by the code not being one of `REFUSAL_CODES`.
  */
-const PASSED = (limiter: string[]): Expect => ({ kind: 'passed', limiter });
+const PASSED = (limiter: string[], reached: string[]): Expect => ({
+  kind: 'passed',
+  limiter,
+  reached,
+});
 const REFUSAL_CODES = ['UNAUTHORIZED', 'FORBIDDEN', 'TOO_MANY_REQUESTS', 'SERVICE_UNAVAILABLE'];
 
 /**
@@ -403,534 +521,1285 @@ const REFUSAL_CODES = ['UNAUTHORIZED', 'FORBIDDEN', 'TOO_MANY_REQUESTS', 'SERVIC
  *     `listMyWorkflows`, `submitWorkflow` (whose fixture stops at its model-version lookup),
  *     `updateUserSettings`, the five `apps.storage.*` procedures or the four `apps.shared.*`
  *     reads.
+ *   - IDENTITIES ARE DISTINCT ON PURPOSE: session user 7, token subject 42, approval row
+ *     `apb_row`, token claim `apb_claim`. So the shared-storage buckets are visibly keyed on
+ *     (subject, ROW id), the bridge buckets on the token's instance id (and subject), and
+ *     `subject-gate:ok:42` shows the run-flag gate evaluated the SUBJECT, not the session.
+ *   - `session user is not the token subject`: eight bridge procedures (SESSION_BOUND) refuse
+ *     `this app session belongs to a different account` right after the bridge resolver and
+ *     before the subject gate; every other procedure ignores the session identity.
+ *   - `anonymous subject` runs with flags base-enabled (the GA shape), so it pins each
+ *     procedure's own anonymous handling rather than the flag.
  */
 const EXPECTED: Record<string, Record<CellName, Expect>> = {
   'blocks.cancelAppWorkflow': {
-    'valid token': E('FORBIDDEN', 'workflow is not in this app subqueue', [
-      'checkBlockCatalogRateLimit("bki_char")',
-    ]),
-    'garbage token': E('UNAUTHORIZED', 'invalid block token', []),
-    revoked: E('FORBIDDEN', 'block instance revoked', []),
-    'not approved': E('FORBIDDEN', 'app block is not approved', []),
-    'missing scope': E('FORBIDDEN', 'block lacks ai:write:budgeted scope', []),
-    'anonymous subject': E('UNAUTHORIZED', 'workflow cancel requires authenticated viewer', []),
-    'flag off': E('UNAUTHORIZED', 'Apps are not enabled', []),
-    'rate limited': E('TOO_MANY_REQUESTS', 'Rate limit exceeded, please retry shortly.', [
-      'checkBlockCatalogRateLimit("bki_char")',
-    ]),
+    'valid token': E(
+      'FORBIDDEN',
+      'workflow is not in this app subqueue',
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['bridge-auth:ok', 'subject-gate:ok:42']
+    ),
+    'garbage token': E('UNAUTHORIZED', 'invalid block token', [], ['bridge-auth:threw']),
+    revoked: E('FORBIDDEN', 'block instance revoked', [], ['bridge-auth:threw']),
+    'not approved': E('FORBIDDEN', 'app block is not approved', [], ['bridge-auth:threw']),
+    'missing scope': E('FORBIDDEN', 'block lacks ai:write:budgeted scope', [], ['bridge-auth:ok']),
+    'anonymous subject': E(
+      'UNAUTHORIZED',
+      'workflow cancel requires authenticated viewer',
+      [],
+      ['bridge-auth:ok']
+    ),
+    'flag off': E(
+      'UNAUTHORIZED',
+      'Apps are not enabled',
+      [],
+      ['bridge-auth:ok', 'subject-gate:threw:42']
+    ),
+    'rate limited': E(
+      'TOO_MANY_REQUESTS',
+      'Rate limit exceeded, please retry shortly.',
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['bridge-auth:ok', 'subject-gate:ok:42']
+    ),
+    'session user is not the token subject': E(
+      'FORBIDDEN',
+      'workflow is not in this app subqueue',
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['bridge-auth:ok', 'subject-gate:ok:42']
+    ),
   },
   'blocks.cancelWorkflow': {
-    'valid token': PASSED(['checkBlockCatalogRateLimit("bki_char")']),
-    'garbage token': E('UNAUTHORIZED', 'invalid block token', []),
-    revoked: E('FORBIDDEN', 'block instance revoked', []),
-    'not approved': E('FORBIDDEN', 'app block is not approved', []),
-    'missing scope': E('FORBIDDEN', 'block lacks ai:write:budgeted scope', []),
-    'anonymous subject': E('UNAUTHORIZED', 'workflow cancel requires authenticated viewer', []),
-    'flag off': E('UNAUTHORIZED', 'Apps are not enabled', []),
-    'rate limited': OK(['checkBlockCatalogRateLimit("bki_char")']),
+    'valid token': PASSED(
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['bridge-auth:ok', 'subject-gate:ok:42']
+    ),
+    'garbage token': E('UNAUTHORIZED', 'invalid block token', [], ['bridge-auth:threw']),
+    revoked: E('FORBIDDEN', 'block instance revoked', [], ['bridge-auth:threw']),
+    'not approved': E('FORBIDDEN', 'app block is not approved', [], ['bridge-auth:threw']),
+    'missing scope': E('FORBIDDEN', 'block lacks ai:write:budgeted scope', [], ['bridge-auth:ok']),
+    'anonymous subject': E(
+      'UNAUTHORIZED',
+      'workflow cancel requires authenticated viewer',
+      [],
+      ['bridge-auth:ok']
+    ),
+    'flag off': E(
+      'UNAUTHORIZED',
+      'Apps are not enabled',
+      [],
+      ['bridge-auth:ok', 'subject-gate:threw:42']
+    ),
+    'rate limited': OK(
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['bridge-auth:ok', 'subject-gate:ok:42']
+    ),
+    'session user is not the token subject': PASSED(
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['bridge-auth:ok', 'subject-gate:ok:42']
+    ),
   },
   'blocks.consentQuoteGrant': {
-    'valid token': PASSED(['checkBlockCatalogRateLimit("bki_char")']),
-    'garbage token': E('UNAUTHORIZED', 'invalid block token', []),
-    revoked: E('FORBIDDEN', 'block instance revoked', []),
-    'not approved': E('FORBIDDEN', 'app block is not approved', []),
-    'missing scope': E('FORBIDDEN', 'block lacks ai:write:budgeted scope', []),
-    'anonymous subject': E('UNAUTHORIZED', 'training requires an authenticated viewer', []),
-    'flag off': E('UNAUTHORIZED', 'Apps are not enabled', []),
-    'rate limited': E('TOO_MANY_REQUESTS', 'Rate limit exceeded, please retry shortly.', [
-      'checkBlockCatalogRateLimit("bki_char")',
-    ]),
+    'valid token': PASSED(
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['bridge-auth:ok', 'subject-gate:ok:42']
+    ),
+    'garbage token': E('UNAUTHORIZED', 'invalid block token', [], ['bridge-auth:threw']),
+    revoked: E('FORBIDDEN', 'block instance revoked', [], ['bridge-auth:threw']),
+    'not approved': E('FORBIDDEN', 'app block is not approved', [], ['bridge-auth:threw']),
+    'missing scope': E('FORBIDDEN', 'block lacks ai:write:budgeted scope', [], ['bridge-auth:ok']),
+    'anonymous subject': E(
+      'UNAUTHORIZED',
+      'training requires an authenticated viewer',
+      [],
+      ['bridge-auth:ok']
+    ),
+    'flag off': E(
+      'UNAUTHORIZED',
+      'Apps are not enabled',
+      [],
+      ['bridge-auth:ok', 'subject-gate:threw:42']
+    ),
+    'rate limited': E(
+      'TOO_MANY_REQUESTS',
+      'Rate limit exceeded, please retry shortly.',
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['bridge-auth:ok', 'subject-gate:ok:42']
+    ),
+    'session user is not the token subject': E(
+      'FORBIDDEN',
+      'this app session belongs to a different account; reload the page to continue',
+      [],
+      ['bridge-auth:ok']
+    ),
   },
   'blocks.consentTrainingQuote': {
-    'valid token': PASSED(['checkBlockCatalogRateLimit("bki_char")']),
-    'garbage token': E('UNAUTHORIZED', 'invalid block token', []),
-    revoked: E('FORBIDDEN', 'block instance revoked', []),
-    'not approved': E('FORBIDDEN', 'app block is not approved', []),
-    'missing scope': E('FORBIDDEN', 'block lacks ai:write:budgeted scope', []),
-    'anonymous subject': E('UNAUTHORIZED', 'training requires an authenticated viewer', []),
-    'flag off': E('UNAUTHORIZED', 'Apps are not enabled', []),
-    'rate limited': E('TOO_MANY_REQUESTS', 'Rate limit exceeded, please retry shortly.', [
-      'checkBlockCatalogRateLimit("bki_char")',
-    ]),
+    'valid token': PASSED(
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['bridge-auth:ok', 'subject-gate:ok:42']
+    ),
+    'garbage token': E('UNAUTHORIZED', 'invalid block token', [], ['bridge-auth:threw']),
+    revoked: E('FORBIDDEN', 'block instance revoked', [], ['bridge-auth:threw']),
+    'not approved': E('FORBIDDEN', 'app block is not approved', [], ['bridge-auth:threw']),
+    'missing scope': E('FORBIDDEN', 'block lacks ai:write:budgeted scope', [], ['bridge-auth:ok']),
+    'anonymous subject': E(
+      'UNAUTHORIZED',
+      'training requires an authenticated viewer',
+      [],
+      ['bridge-auth:ok']
+    ),
+    'flag off': E(
+      'UNAUTHORIZED',
+      'Apps are not enabled',
+      [],
+      ['bridge-auth:ok', 'subject-gate:threw:42']
+    ),
+    'rate limited': E(
+      'TOO_MANY_REQUESTS',
+      'Rate limit exceeded, please retry shortly.',
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['bridge-auth:ok', 'subject-gate:ok:42']
+    ),
+    'session user is not the token subject': E(
+      'FORBIDDEN',
+      'this app session belongs to a different account; reload the page to continue',
+      [],
+      ['bridge-auth:ok']
+    ),
   },
   'blocks.createPostFromApp': {
-    'valid token': PASSED([
-      'checkBlockPostRateLimit("bki_char", 42)',
-      'checkBlockPostAppRateLimit("app_char")',
-    ]),
-    'garbage token': E('UNAUTHORIZED', 'invalid block token', []),
-    revoked: E('FORBIDDEN', 'block instance revoked', []),
-    'not approved': E('FORBIDDEN', 'app block is not approved', []),
-    'missing scope': E('FORBIDDEN', 'block lacks posts:write:self scope', []),
-    'anonymous subject': E('UNAUTHORIZED', 'posting requires an authenticated viewer', []),
-    'flag off': E('UNAUTHORIZED', 'Apps are not enabled', []),
-    'rate limited': E('TOO_MANY_REQUESTS', 'Rate limit exceeded, please retry shortly.', [
-      'checkBlockPostRateLimit("bki_char", 42)',
-    ]),
+    'valid token': PASSED(
+      ['checkBlockPostRateLimit("bki_char", 42)', 'checkBlockPostAppRateLimit("app_char")'],
+      ['bridge-auth:ok', 'subject-gate:ok:42']
+    ),
+    'garbage token': E('UNAUTHORIZED', 'invalid block token', [], ['bridge-auth:threw']),
+    revoked: E('FORBIDDEN', 'block instance revoked', [], ['bridge-auth:threw']),
+    'not approved': E('FORBIDDEN', 'app block is not approved', [], ['bridge-auth:threw']),
+    'missing scope': E('FORBIDDEN', 'block lacks posts:write:self scope', [], ['bridge-auth:ok']),
+    'anonymous subject': E(
+      'UNAUTHORIZED',
+      'posting requires an authenticated viewer',
+      [],
+      ['bridge-auth:ok']
+    ),
+    'flag off': E(
+      'UNAUTHORIZED',
+      'Apps are not enabled',
+      [],
+      ['bridge-auth:ok', 'subject-gate:threw:42']
+    ),
+    'rate limited': E(
+      'TOO_MANY_REQUESTS',
+      'Rate limit exceeded, please retry shortly.',
+      ['checkBlockPostRateLimit("bki_char", 42)'],
+      ['bridge-auth:ok', 'subject-gate:ok:42']
+    ),
+    'session user is not the token subject': E(
+      'FORBIDDEN',
+      'this app session belongs to a different account; reload the page to continue',
+      [],
+      ['bridge-auth:ok']
+    ),
   },
   'blocks.estimateWorkflow': {
-    'valid token': PASSED(['checkBlockCatalogRateLimit("bki_char")']),
-    'garbage token': E('UNAUTHORIZED', 'invalid block token', []),
-    revoked: E('FORBIDDEN', 'block instance revoked', []),
-    'not approved': E('FORBIDDEN', 'app block is not approved', []),
-    'missing scope': E('FORBIDDEN', 'block lacks ai:write:budgeted scope', []),
-    'anonymous subject': E('UNAUTHORIZED', 'estimate requires authenticated viewer', [
-      'checkBlockCatalogRateLimit("bki_char")',
-    ]),
-    'flag off': E('UNAUTHORIZED', 'Apps are not enabled', [
-      'checkBlockCatalogRateLimit("bki_char")',
-    ]),
-    'rate limited': E('TOO_MANY_REQUESTS', 'Rate limit exceeded, please retry shortly.', [
-      'checkBlockCatalogRateLimit("bki_char")',
-    ]),
+    'valid token': PASSED(
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['bridge-auth:ok', 'subject-gate:ok:42']
+    ),
+    'garbage token': E('UNAUTHORIZED', 'invalid block token', [], ['bridge-auth:threw']),
+    revoked: E('FORBIDDEN', 'block instance revoked', [], ['bridge-auth:threw']),
+    'not approved': E('FORBIDDEN', 'app block is not approved', [], ['bridge-auth:threw']),
+    'missing scope': E('FORBIDDEN', 'block lacks ai:write:budgeted scope', [], ['bridge-auth:ok']),
+    'anonymous subject': E(
+      'UNAUTHORIZED',
+      'estimate requires authenticated viewer',
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['bridge-auth:ok']
+    ),
+    'flag off': E(
+      'UNAUTHORIZED',
+      'Apps are not enabled',
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['bridge-auth:ok', 'subject-gate:threw:42']
+    ),
+    'rate limited': E(
+      'TOO_MANY_REQUESTS',
+      'Rate limit exceeded, please retry shortly.',
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['bridge-auth:ok']
+    ),
+    'session user is not the token subject': PASSED(
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['bridge-auth:ok', 'subject-gate:ok:42']
+    ),
   },
   'blocks.estimateWorkflowBatch': {
-    'valid token': OK([
-      'checkBlockCatalogRateLimit("bki_char")',
-      'checkBlockEstimateCellsRateLimit("bki_char", 1)',
-    ]),
-    'garbage token': E('UNAUTHORIZED', 'invalid block token', []),
-    revoked: E('FORBIDDEN', 'block instance revoked', []),
-    'not approved': E('FORBIDDEN', 'app block is not approved', []),
-    'missing scope': E('FORBIDDEN', 'block lacks ai:write:budgeted scope', []),
-    'anonymous subject': E('UNAUTHORIZED', 'estimate requires authenticated viewer', [
-      'checkBlockCatalogRateLimit("bki_char")',
-    ]),
-    'flag off': OK([
-      'checkBlockCatalogRateLimit("bki_char")',
-      'checkBlockEstimateCellsRateLimit("bki_char", 1)',
-    ]),
-    'rate limited': E('TOO_MANY_REQUESTS', 'Rate limit exceeded, please retry shortly.', [
-      'checkBlockCatalogRateLimit("bki_char")',
-    ]),
+    'valid token': OK(
+      ['checkBlockCatalogRateLimit("bki_char")', 'checkBlockEstimateCellsRateLimit("bki_char", 1)'],
+      ['bridge-auth:ok', 'subject-gate:ok:42']
+    ),
+    'garbage token': E('UNAUTHORIZED', 'invalid block token', [], ['bridge-auth:threw']),
+    revoked: E('FORBIDDEN', 'block instance revoked', [], ['bridge-auth:threw']),
+    'not approved': E('FORBIDDEN', 'app block is not approved', [], ['bridge-auth:threw']),
+    'missing scope': E('FORBIDDEN', 'block lacks ai:write:budgeted scope', [], ['bridge-auth:ok']),
+    'anonymous subject': E(
+      'UNAUTHORIZED',
+      'estimate requires authenticated viewer',
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['bridge-auth:ok']
+    ),
+    'flag off': OK(
+      ['checkBlockCatalogRateLimit("bki_char")', 'checkBlockEstimateCellsRateLimit("bki_char", 1)'],
+      ['bridge-auth:ok', 'subject-gate:threw:42']
+    ),
+    'rate limited': E(
+      'TOO_MANY_REQUESTS',
+      'Rate limit exceeded, please retry shortly.',
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['bridge-auth:ok']
+    ),
+    'session user is not the token subject': OK(
+      ['checkBlockCatalogRateLimit("bki_char")', 'checkBlockEstimateCellsRateLimit("bki_char", 1)'],
+      ['bridge-auth:ok', 'subject-gate:ok:42']
+    ),
   },
   'blocks.getImagesByIds': {
-    'valid token': OK(['checkBlockCatalogRateLimit("bki_char")']),
-    'garbage token': E('UNAUTHORIZED', 'invalid block token', []),
-    revoked: E('FORBIDDEN', 'block instance revoked', []),
-    'not approved': E('FORBIDDEN', 'app block is not approved', []),
-    'missing scope': OK(['checkBlockCatalogRateLimit("bki_char")']),
-    'anonymous subject': E('UNAUTHORIZED', 'gated image read requires an authenticated viewer', [
-      'checkBlockCatalogRateLimit("bki_char")',
-    ]),
-    'flag off': E('UNAUTHORIZED', 'Apps are not enabled', [
-      'checkBlockCatalogRateLimit("bki_char")',
-    ]),
-    'rate limited': E('TOO_MANY_REQUESTS', 'Rate limit exceeded, please retry shortly.', [
-      'checkBlockCatalogRateLimit("bki_char")',
-    ]),
+    'valid token': OK(
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['bridge-auth:ok', 'subject-gate:ok:42']
+    ),
+    'garbage token': E('UNAUTHORIZED', 'invalid block token', [], ['bridge-auth:threw']),
+    revoked: E('FORBIDDEN', 'block instance revoked', [], ['bridge-auth:threw']),
+    'not approved': E('FORBIDDEN', 'app block is not approved', [], ['bridge-auth:threw']),
+    'missing scope': OK(
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['bridge-auth:ok', 'subject-gate:ok:42']
+    ),
+    'anonymous subject': E(
+      'UNAUTHORIZED',
+      'gated image read requires an authenticated viewer',
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['bridge-auth:ok']
+    ),
+    'flag off': E(
+      'UNAUTHORIZED',
+      'Apps are not enabled',
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['bridge-auth:ok', 'subject-gate:threw:42']
+    ),
+    'rate limited': E(
+      'TOO_MANY_REQUESTS',
+      'Rate limit exceeded, please retry shortly.',
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['bridge-auth:ok']
+    ),
+    'session user is not the token subject': OK(
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['bridge-auth:ok', 'subject-gate:ok:42']
+    ),
   },
   'blocks.getMyBuzzAccounts': {
-    'valid token': PASSED(['checkBlockCatalogRateLimit("bki_char")']),
-    'garbage token': E('UNAUTHORIZED', 'invalid block token', []),
-    revoked: E('FORBIDDEN', 'block instance revoked', []),
-    'not approved': E('FORBIDDEN', 'app block is not approved', []),
-    'missing scope': E('FORBIDDEN', 'block lacks buzz:read:self scope', []),
-    'anonymous subject': E('UNAUTHORIZED', 'buzz read requires an authenticated viewer', []),
-    'flag off': E('UNAUTHORIZED', 'Apps are not enabled', []),
-    'rate limited': E('TOO_MANY_REQUESTS', 'Rate limit exceeded, please retry shortly.', [
-      'checkBlockCatalogRateLimit("bki_char")',
-    ]),
+    'valid token': PASSED(
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['bridge-auth:ok', 'subject-gate:ok:42']
+    ),
+    'garbage token': E('UNAUTHORIZED', 'invalid block token', [], ['bridge-auth:threw']),
+    revoked: E('FORBIDDEN', 'block instance revoked', [], ['bridge-auth:threw']),
+    'not approved': E('FORBIDDEN', 'app block is not approved', [], ['bridge-auth:threw']),
+    'missing scope': E('FORBIDDEN', 'block lacks buzz:read:self scope', [], ['bridge-auth:ok']),
+    'anonymous subject': E(
+      'UNAUTHORIZED',
+      'buzz read requires an authenticated viewer',
+      [],
+      ['bridge-auth:ok']
+    ),
+    'flag off': E(
+      'UNAUTHORIZED',
+      'Apps are not enabled',
+      [],
+      ['bridge-auth:ok', 'subject-gate:threw:42']
+    ),
+    'rate limited': E(
+      'TOO_MANY_REQUESTS',
+      'Rate limit exceeded, please retry shortly.',
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['bridge-auth:ok', 'subject-gate:ok:42']
+    ),
+    'session user is not the token subject': PASSED(
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['bridge-auth:ok', 'subject-gate:ok:42']
+    ),
   },
   'blocks.getMyBuzzBalance': {
-    'valid token': PASSED(['checkBlockCatalogRateLimit("bki_char")']),
-    'garbage token': E('UNAUTHORIZED', 'invalid block token', []),
-    revoked: E('FORBIDDEN', 'block instance revoked', []),
-    'not approved': E('FORBIDDEN', 'app block is not approved', []),
-    'missing scope': E('FORBIDDEN', 'block lacks buzz:read:self scope', []),
-    'anonymous subject': E('UNAUTHORIZED', 'buzz balance requires an authenticated viewer', []),
-    'flag off': E('UNAUTHORIZED', 'Apps are not enabled', []),
-    'rate limited': E('TOO_MANY_REQUESTS', 'Rate limit exceeded, please retry shortly.', [
-      'checkBlockCatalogRateLimit("bki_char")',
-    ]),
+    'valid token': PASSED(
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['bridge-auth:ok', 'subject-gate:ok:42']
+    ),
+    'garbage token': E('UNAUTHORIZED', 'invalid block token', [], ['bridge-auth:threw']),
+    revoked: E('FORBIDDEN', 'block instance revoked', [], ['bridge-auth:threw']),
+    'not approved': E('FORBIDDEN', 'app block is not approved', [], ['bridge-auth:threw']),
+    'missing scope': E('FORBIDDEN', 'block lacks buzz:read:self scope', [], ['bridge-auth:ok']),
+    'anonymous subject': E(
+      'UNAUTHORIZED',
+      'buzz balance requires an authenticated viewer',
+      [],
+      ['bridge-auth:ok']
+    ),
+    'flag off': E(
+      'UNAUTHORIZED',
+      'Apps are not enabled',
+      [],
+      ['bridge-auth:ok', 'subject-gate:threw:42']
+    ),
+    'rate limited': E(
+      'TOO_MANY_REQUESTS',
+      'Rate limit exceeded, please retry shortly.',
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['bridge-auth:ok', 'subject-gate:ok:42']
+    ),
+    'session user is not the token subject': PASSED(
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['bridge-auth:ok', 'subject-gate:ok:42']
+    ),
   },
   'blocks.getMyBuzzTransactions': {
-    'valid token': PASSED(['checkBlockCatalogRateLimit("bki_char")']),
-    'garbage token': E('UNAUTHORIZED', 'invalid block token', []),
-    revoked: E('FORBIDDEN', 'block instance revoked', []),
-    'not approved': E('FORBIDDEN', 'app block is not approved', []),
-    'missing scope': E('FORBIDDEN', 'block lacks buzz:read:self scope', []),
-    'anonymous subject': E('UNAUTHORIZED', 'buzz read requires an authenticated viewer', []),
-    'flag off': E('UNAUTHORIZED', 'Apps are not enabled', []),
-    'rate limited': E('TOO_MANY_REQUESTS', 'Rate limit exceeded, please retry shortly.', [
-      'checkBlockCatalogRateLimit("bki_char")',
-    ]),
+    'valid token': PASSED(
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['bridge-auth:ok', 'subject-gate:ok:42']
+    ),
+    'garbage token': E('UNAUTHORIZED', 'invalid block token', [], ['bridge-auth:threw']),
+    revoked: E('FORBIDDEN', 'block instance revoked', [], ['bridge-auth:threw']),
+    'not approved': E('FORBIDDEN', 'app block is not approved', [], ['bridge-auth:threw']),
+    'missing scope': E('FORBIDDEN', 'block lacks buzz:read:self scope', [], ['bridge-auth:ok']),
+    'anonymous subject': E(
+      'UNAUTHORIZED',
+      'buzz read requires an authenticated viewer',
+      [],
+      ['bridge-auth:ok']
+    ),
+    'flag off': E(
+      'UNAUTHORIZED',
+      'Apps are not enabled',
+      [],
+      ['bridge-auth:ok', 'subject-gate:threw:42']
+    ),
+    'rate limited': E(
+      'TOO_MANY_REQUESTS',
+      'Rate limit exceeded, please retry shortly.',
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['bridge-auth:ok', 'subject-gate:ok:42']
+    ),
+    'session user is not the token subject': PASSED(
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['bridge-auth:ok', 'subject-gate:ok:42']
+    ),
   },
   'blocks.getMyDailyCompensation': {
-    'valid token': OK(['checkBlockCatalogRateLimit("bki_char")']),
-    'garbage token': E('UNAUTHORIZED', 'invalid block token', []),
-    revoked: E('FORBIDDEN', 'block instance revoked', []),
-    'not approved': E('FORBIDDEN', 'app block is not approved', []),
-    'missing scope': E('FORBIDDEN', 'block lacks buzz:read:self scope', []),
-    'anonymous subject': E('UNAUTHORIZED', 'buzz read requires an authenticated viewer', []),
-    'flag off': E('UNAUTHORIZED', 'Apps are not enabled', []),
-    'rate limited': E('TOO_MANY_REQUESTS', 'Rate limit exceeded, please retry shortly.', [
-      'checkBlockCatalogRateLimit("bki_char")',
-    ]),
+    'valid token': OK(
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['bridge-auth:ok', 'subject-gate:ok:42']
+    ),
+    'garbage token': E('UNAUTHORIZED', 'invalid block token', [], ['bridge-auth:threw']),
+    revoked: E('FORBIDDEN', 'block instance revoked', [], ['bridge-auth:threw']),
+    'not approved': E('FORBIDDEN', 'app block is not approved', [], ['bridge-auth:threw']),
+    'missing scope': E('FORBIDDEN', 'block lacks buzz:read:self scope', [], ['bridge-auth:ok']),
+    'anonymous subject': E(
+      'UNAUTHORIZED',
+      'buzz read requires an authenticated viewer',
+      [],
+      ['bridge-auth:ok']
+    ),
+    'flag off': E(
+      'UNAUTHORIZED',
+      'Apps are not enabled',
+      [],
+      ['bridge-auth:ok', 'subject-gate:threw:42']
+    ),
+    'rate limited': E(
+      'TOO_MANY_REQUESTS',
+      'Rate limit exceeded, please retry shortly.',
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['bridge-auth:ok', 'subject-gate:ok:42']
+    ),
+    'session user is not the token subject': OK(
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['bridge-auth:ok', 'subject-gate:ok:42']
+    ),
   },
   'blocks.getMyViewer': {
-    'valid token': OK(['checkBlockCatalogRateLimit("bki_char")']),
-    'garbage token': E('UNAUTHORIZED', 'invalid block token', []),
-    revoked: E('FORBIDDEN', 'block instance revoked', []),
-    'not approved': E('FORBIDDEN', 'app block is not approved', []),
-    'missing scope': E('FORBIDDEN', 'block lacks user:read:self scope', []),
-    'anonymous subject': E('UNAUTHORIZED', 'viewer read requires an authenticated viewer', []),
-    'flag off': E('UNAUTHORIZED', 'Apps are not enabled', []),
-    'rate limited': E('TOO_MANY_REQUESTS', 'Rate limit exceeded, please retry shortly.', [
-      'checkBlockCatalogRateLimit("bki_char")',
-    ]),
+    'valid token': OK(
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['bridge-auth:ok', 'subject-gate:ok:42']
+    ),
+    'garbage token': E('UNAUTHORIZED', 'invalid block token', [], ['bridge-auth:threw']),
+    revoked: E('FORBIDDEN', 'block instance revoked', [], ['bridge-auth:threw']),
+    'not approved': E('FORBIDDEN', 'app block is not approved', [], ['bridge-auth:threw']),
+    'missing scope': E('FORBIDDEN', 'block lacks user:read:self scope', [], ['bridge-auth:ok']),
+    'anonymous subject': E(
+      'UNAUTHORIZED',
+      'viewer read requires an authenticated viewer',
+      [],
+      ['bridge-auth:ok']
+    ),
+    'flag off': E(
+      'UNAUTHORIZED',
+      'Apps are not enabled',
+      [],
+      ['bridge-auth:ok', 'subject-gate:threw:42']
+    ),
+    'rate limited': E(
+      'TOO_MANY_REQUESTS',
+      'Rate limit exceeded, please retry shortly.',
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['bridge-auth:ok', 'subject-gate:ok:42']
+    ),
+    'session user is not the token subject': OK(
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['bridge-auth:ok', 'subject-gate:ok:42']
+    ),
   },
   'blocks.listMyWorkflows': {
-    'valid token': OK([]),
-    'garbage token': E('UNAUTHORIZED', 'invalid block token', []),
-    revoked: E('FORBIDDEN', 'block instance revoked', []),
-    'not approved': E('FORBIDDEN', 'app block is not approved', []),
-    'missing scope': E('FORBIDDEN', 'block lacks ai:write:budgeted scope', []),
-    'anonymous subject': E('UNAUTHORIZED', 'workflow list requires authenticated viewer', []),
-    'flag off': E('UNAUTHORIZED', 'Apps are not enabled', []),
-    'rate limited': OK([]),
+    'valid token': OK([], ['bridge-auth:ok', 'subject-gate:ok:42']),
+    'garbage token': E('UNAUTHORIZED', 'invalid block token', [], ['bridge-auth:threw']),
+    revoked: E('FORBIDDEN', 'block instance revoked', [], ['bridge-auth:threw']),
+    'not approved': E('FORBIDDEN', 'app block is not approved', [], ['bridge-auth:threw']),
+    'missing scope': E('FORBIDDEN', 'block lacks ai:write:budgeted scope', [], ['bridge-auth:ok']),
+    'anonymous subject': E(
+      'UNAUTHORIZED',
+      'workflow list requires authenticated viewer',
+      [],
+      ['bridge-auth:ok']
+    ),
+    'flag off': E(
+      'UNAUTHORIZED',
+      'Apps are not enabled',
+      [],
+      ['bridge-auth:ok', 'subject-gate:threw:42']
+    ),
+    'rate limited': OK([], ['bridge-auth:ok', 'subject-gate:ok:42']),
+    'session user is not the token subject': OK([], ['bridge-auth:ok', 'subject-gate:ok:42']),
   },
   'blocks.persistAppUploadImage': {
-    'valid token': PASSED(['checkBlockPublishRateLimit("bki_char", 1)']),
-    'garbage token': E('UNAUTHORIZED', 'invalid block token', []),
-    revoked: E('FORBIDDEN', 'block instance revoked', []),
-    'not approved': E('FORBIDDEN', 'app block is not approved', []),
-    'missing scope': E('FORBIDDEN', 'block lacks posts:write:self scope', []),
-    'anonymous subject': E('UNAUTHORIZED', 'posting requires an authenticated viewer', []),
-    'flag off': E('UNAUTHORIZED', 'Apps are not enabled', []),
-    'rate limited': E('TOO_MANY_REQUESTS', 'Rate limit exceeded, please retry shortly.', [
-      'checkBlockPublishRateLimit("bki_char", 1)',
-    ]),
+    'valid token': PASSED(
+      ['checkBlockPublishRateLimit("bki_char", 1)'],
+      ['bridge-auth:ok', 'subject-gate:ok:42']
+    ),
+    'garbage token': E('UNAUTHORIZED', 'invalid block token', [], ['bridge-auth:threw']),
+    revoked: E('FORBIDDEN', 'block instance revoked', [], ['bridge-auth:threw']),
+    'not approved': E('FORBIDDEN', 'app block is not approved', [], ['bridge-auth:threw']),
+    'missing scope': E('FORBIDDEN', 'block lacks posts:write:self scope', [], ['bridge-auth:ok']),
+    'anonymous subject': E(
+      'UNAUTHORIZED',
+      'posting requires an authenticated viewer',
+      [],
+      ['bridge-auth:ok']
+    ),
+    'flag off': E(
+      'UNAUTHORIZED',
+      'Apps are not enabled',
+      [],
+      ['bridge-auth:ok', 'subject-gate:threw:42']
+    ),
+    'rate limited': E(
+      'TOO_MANY_REQUESTS',
+      'Rate limit exceeded, please retry shortly.',
+      ['checkBlockPublishRateLimit("bki_char", 1)'],
+      ['bridge-auth:ok', 'subject-gate:ok:42']
+    ),
+    'session user is not the token subject': E(
+      'FORBIDDEN',
+      'this app session belongs to a different account; reload the page to continue',
+      [],
+      ['bridge-auth:ok']
+    ),
   },
   'blocks.pollWorkflow': {
-    'valid token': PASSED(['checkBlockPollRateLimit("bki_char", 42)']),
-    'garbage token': E('UNAUTHORIZED', 'invalid block token', []),
-    revoked: E('FORBIDDEN', 'block instance revoked', []),
-    'not approved': E('FORBIDDEN', 'app block is not approved', []),
-    'missing scope': E('FORBIDDEN', 'block lacks ai:write:budgeted scope', []),
-    'anonymous subject': E('UNAUTHORIZED', 'workflow poll requires authenticated viewer', []),
-    'flag off': E('UNAUTHORIZED', 'Apps are not enabled', []),
-    'rate limited': OK(['checkBlockPollRateLimit("bki_char", 42)']),
+    'valid token': PASSED(
+      ['checkBlockPollRateLimit("bki_char", 42)'],
+      ['bridge-auth:ok', 'subject-gate:ok:42']
+    ),
+    'garbage token': E('UNAUTHORIZED', 'invalid block token', [], ['bridge-auth:threw']),
+    revoked: E('FORBIDDEN', 'block instance revoked', [], ['bridge-auth:threw']),
+    'not approved': E('FORBIDDEN', 'app block is not approved', [], ['bridge-auth:threw']),
+    'missing scope': E('FORBIDDEN', 'block lacks ai:write:budgeted scope', [], ['bridge-auth:ok']),
+    'anonymous subject': E(
+      'UNAUTHORIZED',
+      'workflow poll requires authenticated viewer',
+      [],
+      ['bridge-auth:ok']
+    ),
+    'flag off': E(
+      'UNAUTHORIZED',
+      'Apps are not enabled',
+      [],
+      ['bridge-auth:ok', 'subject-gate:threw:42']
+    ),
+    'rate limited': OK(
+      ['checkBlockPollRateLimit("bki_char", 42)'],
+      ['bridge-auth:ok', 'subject-gate:ok:42']
+    ),
+    'session user is not the token subject': PASSED(
+      ['checkBlockPollRateLimit("bki_char", 42)'],
+      ['bridge-auth:ok', 'subject-gate:ok:42']
+    ),
   },
   'blocks.prepareTrainingDataset': {
-    'valid token': PASSED(['checkBlockTrainingDatasetRateLimit("bki_char", 42, 1)']),
-    'garbage token': E('UNAUTHORIZED', 'invalid block token', []),
-    revoked: E('FORBIDDEN', 'block instance revoked', []),
-    'not approved': E('FORBIDDEN', 'app block is not approved', []),
-    'missing scope': E('FORBIDDEN', 'block lacks ai:write:budgeted scope', []),
-    'anonymous subject': E('UNAUTHORIZED', 'training requires an authenticated viewer', []),
-    'flag off': E('UNAUTHORIZED', 'Apps are not enabled', []),
-    'rate limited': E('TOO_MANY_REQUESTS', 'Rate limit exceeded, please retry shortly.', [
-      'checkBlockTrainingDatasetRateLimit("bki_char", 42, 1)',
-    ]),
+    'valid token': PASSED(
+      ['checkBlockTrainingDatasetRateLimit("bki_char", 42, 1)'],
+      ['bridge-auth:ok', 'subject-gate:ok:42']
+    ),
+    'garbage token': E('UNAUTHORIZED', 'invalid block token', [], ['bridge-auth:threw']),
+    revoked: E('FORBIDDEN', 'block instance revoked', [], ['bridge-auth:threw']),
+    'not approved': E('FORBIDDEN', 'app block is not approved', [], ['bridge-auth:threw']),
+    'missing scope': E('FORBIDDEN', 'block lacks ai:write:budgeted scope', [], ['bridge-auth:ok']),
+    'anonymous subject': E(
+      'UNAUTHORIZED',
+      'training requires an authenticated viewer',
+      [],
+      ['bridge-auth:ok']
+    ),
+    'flag off': E(
+      'UNAUTHORIZED',
+      'Apps are not enabled',
+      [],
+      ['bridge-auth:ok', 'subject-gate:threw:42']
+    ),
+    'rate limited': E(
+      'TOO_MANY_REQUESTS',
+      'Rate limit exceeded, please retry shortly.',
+      ['checkBlockTrainingDatasetRateLimit("bki_char", 42, 1)'],
+      ['bridge-auth:ok', 'subject-gate:ok:42']
+    ),
+    'session user is not the token subject': PASSED(
+      ['checkBlockTrainingDatasetRateLimit("bki_char", 42, 1)'],
+      ['bridge-auth:ok', 'subject-gate:ok:42']
+    ),
   },
   'blocks.previewPostFromApp': {
-    'valid token': PASSED(['checkBlockCatalogRateLimit("bki_char")']),
-    'garbage token': E('UNAUTHORIZED', 'invalid block token', []),
-    revoked: E('FORBIDDEN', 'block instance revoked', []),
-    'not approved': E('FORBIDDEN', 'app block is not approved', []),
-    'missing scope': E('FORBIDDEN', 'block lacks posts:write:self scope', []),
-    'anonymous subject': E('UNAUTHORIZED', 'posting requires an authenticated viewer', []),
-    'flag off': E('UNAUTHORIZED', 'Apps are not enabled', []),
-    'rate limited': E('TOO_MANY_REQUESTS', 'Rate limit exceeded, please retry shortly.', [
-      'checkBlockCatalogRateLimit("bki_char")',
-    ]),
+    'valid token': PASSED(
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['bridge-auth:ok', 'subject-gate:ok:42']
+    ),
+    'garbage token': E('UNAUTHORIZED', 'invalid block token', [], ['bridge-auth:threw']),
+    revoked: E('FORBIDDEN', 'block instance revoked', [], ['bridge-auth:threw']),
+    'not approved': E('FORBIDDEN', 'app block is not approved', [], ['bridge-auth:threw']),
+    'missing scope': E('FORBIDDEN', 'block lacks posts:write:self scope', [], ['bridge-auth:ok']),
+    'anonymous subject': E(
+      'UNAUTHORIZED',
+      'posting requires an authenticated viewer',
+      [],
+      ['bridge-auth:ok']
+    ),
+    'flag off': E(
+      'UNAUTHORIZED',
+      'Apps are not enabled',
+      [],
+      ['bridge-auth:ok', 'subject-gate:threw:42']
+    ),
+    'rate limited': E(
+      'TOO_MANY_REQUESTS',
+      'Rate limit exceeded, please retry shortly.',
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['bridge-auth:ok', 'subject-gate:ok:42']
+    ),
+    'session user is not the token subject': E(
+      'FORBIDDEN',
+      'this app session belongs to a different account; reload the page to continue',
+      [],
+      ['bridge-auth:ok']
+    ),
   },
   'blocks.previewQuoteGrant': {
-    'valid token': PASSED(['checkBlockCatalogRateLimit("bki_char")']),
-    'garbage token': E('UNAUTHORIZED', 'invalid block token', []),
-    revoked: E('FORBIDDEN', 'block instance revoked', []),
-    'not approved': E('FORBIDDEN', 'app block is not approved', []),
-    'missing scope': E('FORBIDDEN', 'block lacks ai:write:budgeted scope', []),
-    'anonymous subject': E('UNAUTHORIZED', 'training requires an authenticated viewer', []),
-    'flag off': E('UNAUTHORIZED', 'Apps are not enabled', []),
-    'rate limited': E('TOO_MANY_REQUESTS', 'Rate limit exceeded, please retry shortly.', [
-      'checkBlockCatalogRateLimit("bki_char")',
-    ]),
+    'valid token': PASSED(
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['bridge-auth:ok', 'subject-gate:ok:42']
+    ),
+    'garbage token': E('UNAUTHORIZED', 'invalid block token', [], ['bridge-auth:threw']),
+    revoked: E('FORBIDDEN', 'block instance revoked', [], ['bridge-auth:threw']),
+    'not approved': E('FORBIDDEN', 'app block is not approved', [], ['bridge-auth:threw']),
+    'missing scope': E('FORBIDDEN', 'block lacks ai:write:budgeted scope', [], ['bridge-auth:ok']),
+    'anonymous subject': E(
+      'UNAUTHORIZED',
+      'training requires an authenticated viewer',
+      [],
+      ['bridge-auth:ok']
+    ),
+    'flag off': E(
+      'UNAUTHORIZED',
+      'Apps are not enabled',
+      [],
+      ['bridge-auth:ok', 'subject-gate:threw:42']
+    ),
+    'rate limited': E(
+      'TOO_MANY_REQUESTS',
+      'Rate limit exceeded, please retry shortly.',
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['bridge-auth:ok', 'subject-gate:ok:42']
+    ),
+    'session user is not the token subject': E(
+      'FORBIDDEN',
+      'this app session belongs to a different account; reload the page to continue',
+      [],
+      ['bridge-auth:ok']
+    ),
   },
   'blocks.previewTrainingQuote': {
-    'valid token': PASSED(['checkBlockCatalogRateLimit("bki_char")']),
-    'garbage token': E('UNAUTHORIZED', 'invalid block token', []),
-    revoked: E('FORBIDDEN', 'block instance revoked', []),
-    'not approved': E('FORBIDDEN', 'app block is not approved', []),
-    'missing scope': E('FORBIDDEN', 'block lacks ai:write:budgeted scope', []),
-    'anonymous subject': E('UNAUTHORIZED', 'training requires an authenticated viewer', []),
-    'flag off': E('UNAUTHORIZED', 'Apps are not enabled', []),
-    'rate limited': E('TOO_MANY_REQUESTS', 'Rate limit exceeded, please retry shortly.', [
-      'checkBlockCatalogRateLimit("bki_char")',
-    ]),
+    'valid token': PASSED(
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['bridge-auth:ok', 'subject-gate:ok:42']
+    ),
+    'garbage token': E('UNAUTHORIZED', 'invalid block token', [], ['bridge-auth:threw']),
+    revoked: E('FORBIDDEN', 'block instance revoked', [], ['bridge-auth:threw']),
+    'not approved': E('FORBIDDEN', 'app block is not approved', [], ['bridge-auth:threw']),
+    'missing scope': E('FORBIDDEN', 'block lacks ai:write:budgeted scope', [], ['bridge-auth:ok']),
+    'anonymous subject': E(
+      'UNAUTHORIZED',
+      'training requires an authenticated viewer',
+      [],
+      ['bridge-auth:ok']
+    ),
+    'flag off': E(
+      'UNAUTHORIZED',
+      'Apps are not enabled',
+      [],
+      ['bridge-auth:ok', 'subject-gate:threw:42']
+    ),
+    'rate limited': E(
+      'TOO_MANY_REQUESTS',
+      'Rate limit exceeded, please retry shortly.',
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['bridge-auth:ok', 'subject-gate:ok:42']
+    ),
+    'session user is not the token subject': E(
+      'FORBIDDEN',
+      'this app session belongs to a different account; reload the page to continue',
+      [],
+      ['bridge-auth:ok']
+    ),
   },
   'blocks.publishGenerationOutputs': {
-    'valid token': E('FORBIDDEN', 'workflow is not in this app subqueue', [
-      'checkBlockPublishRateLimit("bki_char", 1)',
-    ]),
-    'garbage token': E('UNAUTHORIZED', 'invalid block token', []),
-    revoked: E('FORBIDDEN', 'block instance revoked', []),
-    'not approved': E('FORBIDDEN', 'app block is not approved', []),
-    'missing scope': E('FORBIDDEN', 'block lacks ai:write:budgeted scope', []),
-    'anonymous subject': E('UNAUTHORIZED', 'publishing requires an authenticated viewer', []),
-    'flag off': E('UNAUTHORIZED', 'Apps are not enabled', []),
-    'rate limited': E('TOO_MANY_REQUESTS', 'Rate limit exceeded, please retry shortly.', [
-      'checkBlockPublishRateLimit("bki_char", 1)',
-    ]),
+    'valid token': E(
+      'FORBIDDEN',
+      'workflow is not in this app subqueue',
+      ['checkBlockPublishRateLimit("bki_char", 1)'],
+      ['bridge-auth:ok', 'subject-gate:ok:42']
+    ),
+    'garbage token': E('UNAUTHORIZED', 'invalid block token', [], ['bridge-auth:threw']),
+    revoked: E('FORBIDDEN', 'block instance revoked', [], ['bridge-auth:threw']),
+    'not approved': E('FORBIDDEN', 'app block is not approved', [], ['bridge-auth:threw']),
+    'missing scope': E('FORBIDDEN', 'block lacks ai:write:budgeted scope', [], ['bridge-auth:ok']),
+    'anonymous subject': E(
+      'UNAUTHORIZED',
+      'publishing requires an authenticated viewer',
+      [],
+      ['bridge-auth:ok']
+    ),
+    'flag off': E(
+      'UNAUTHORIZED',
+      'Apps are not enabled',
+      [],
+      ['bridge-auth:ok', 'subject-gate:threw:42']
+    ),
+    'rate limited': E(
+      'TOO_MANY_REQUESTS',
+      'Rate limit exceeded, please retry shortly.',
+      ['checkBlockPublishRateLimit("bki_char", 1)'],
+      ['bridge-auth:ok', 'subject-gate:ok:42']
+    ),
+    'session user is not the token subject': E(
+      'FORBIDDEN',
+      'this app session belongs to a different account; reload the page to continue',
+      [],
+      ['bridge-auth:ok']
+    ),
   },
   'blocks.queryAppWorkflows': {
-    'valid token': PASSED(['checkBlockCatalogRateLimit("bki_char")']),
-    'garbage token': E('UNAUTHORIZED', 'invalid block token', []),
-    revoked: E('FORBIDDEN', 'block instance revoked', []),
-    'not approved': E('FORBIDDEN', 'app block is not approved', []),
-    'missing scope': E('FORBIDDEN', 'block lacks ai:write:budgeted scope', []),
-    'anonymous subject': E('UNAUTHORIZED', 'workflow query requires authenticated viewer', []),
-    'flag off': E('UNAUTHORIZED', 'Apps are not enabled', []),
-    'rate limited': E('TOO_MANY_REQUESTS', 'Rate limit exceeded, please retry shortly.', [
-      'checkBlockCatalogRateLimit("bki_char")',
-    ]),
+    'valid token': PASSED(
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['bridge-auth:ok', 'subject-gate:ok:42']
+    ),
+    'garbage token': E('UNAUTHORIZED', 'invalid block token', [], ['bridge-auth:threw']),
+    revoked: E('FORBIDDEN', 'block instance revoked', [], ['bridge-auth:threw']),
+    'not approved': E('FORBIDDEN', 'app block is not approved', [], ['bridge-auth:threw']),
+    'missing scope': E('FORBIDDEN', 'block lacks ai:write:budgeted scope', [], ['bridge-auth:ok']),
+    'anonymous subject': E(
+      'UNAUTHORIZED',
+      'workflow query requires authenticated viewer',
+      [],
+      ['bridge-auth:ok']
+    ),
+    'flag off': E(
+      'UNAUTHORIZED',
+      'Apps are not enabled',
+      [],
+      ['bridge-auth:ok', 'subject-gate:threw:42']
+    ),
+    'rate limited': E(
+      'TOO_MANY_REQUESTS',
+      'Rate limit exceeded, please retry shortly.',
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['bridge-auth:ok', 'subject-gate:ok:42']
+    ),
+    'session user is not the token subject': PASSED(
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['bridge-auth:ok', 'subject-gate:ok:42']
+    ),
   },
   'blocks.submitWorkflow': {
-    'valid token': PASSED([]),
-    'garbage token': E('UNAUTHORIZED', 'invalid block token', []),
-    revoked: E('FORBIDDEN', 'block instance revoked', []),
-    'not approved': E('FORBIDDEN', 'app block is not approved', []),
-    'missing scope': E('FORBIDDEN', 'block lacks ai:write:budgeted scope', []),
-    'anonymous subject': E('UNAUTHORIZED', 'workflow submit requires authenticated viewer', []),
-    'flag off': E('UNAUTHORIZED', 'Apps are not enabled', []),
-    'rate limited': PASSED([]),
+    'valid token': PASSED([], ['bridge-auth:ok', 'subject-gate:ok:42']),
+    'garbage token': E('UNAUTHORIZED', 'invalid block token', [], ['bridge-auth:threw']),
+    revoked: E('FORBIDDEN', 'block instance revoked', [], ['bridge-auth:threw']),
+    'not approved': E('FORBIDDEN', 'app block is not approved', [], ['bridge-auth:threw']),
+    'missing scope': E('FORBIDDEN', 'block lacks ai:write:budgeted scope', [], ['bridge-auth:ok']),
+    'anonymous subject': E(
+      'UNAUTHORIZED',
+      'workflow submit requires authenticated viewer',
+      [],
+      ['bridge-auth:ok']
+    ),
+    'flag off': E(
+      'UNAUTHORIZED',
+      'Apps are not enabled',
+      [],
+      ['bridge-auth:ok', 'subject-gate:threw:42']
+    ),
+    'rate limited': PASSED([], ['bridge-auth:ok', 'subject-gate:ok:42']),
+    'session user is not the token subject': PASSED([], ['bridge-auth:ok', 'subject-gate:ok:42']),
   },
   'blocks.updateUserSettings': {
-    'valid token': E('FORBIDDEN', 'Apps authoring is not enabled for this account', []),
-    'garbage token': E('UNAUTHORIZED', 'invalid block token', []),
-    revoked: E('FORBIDDEN', 'block instance revoked', []),
-    'not approved': E('FORBIDDEN', 'app block is not approved', []),
-    'missing scope': E('FORBIDDEN', 'Apps authoring is not enabled for this account', []),
-    'anonymous subject': E('UNAUTHORIZED', 'anon viewers cannot persist block settings', []),
-    'flag off': E('UNAUTHORIZED', 'Apps are not enabled', []),
-    'rate limited': E('FORBIDDEN', 'Apps authoring is not enabled for this account', []),
+    'valid token': E(
+      'FORBIDDEN',
+      'Apps authoring is not enabled for this account',
+      [],
+      ['bridge-auth:ok', 'subject-gate:ok:42']
+    ),
+    'garbage token': E('UNAUTHORIZED', 'invalid block token', [], ['bridge-auth:threw']),
+    revoked: E('FORBIDDEN', 'block instance revoked', [], ['bridge-auth:threw']),
+    'not approved': E('FORBIDDEN', 'app block is not approved', [], ['bridge-auth:threw']),
+    'missing scope': E(
+      'FORBIDDEN',
+      'Apps authoring is not enabled for this account',
+      [],
+      ['bridge-auth:ok', 'subject-gate:ok:42']
+    ),
+    'anonymous subject': E(
+      'UNAUTHORIZED',
+      'anon viewers cannot persist block settings',
+      [],
+      ['bridge-auth:ok']
+    ),
+    'flag off': E(
+      'UNAUTHORIZED',
+      'Apps are not enabled',
+      [],
+      ['bridge-auth:ok', 'subject-gate:threw:42']
+    ),
+    'rate limited': E(
+      'FORBIDDEN',
+      'Apps authoring is not enabled for this account',
+      [],
+      ['bridge-auth:ok', 'subject-gate:ok:42']
+    ),
+    'session user is not the token subject': E(
+      'FORBIDDEN',
+      'Apps authoring is not enabled for this account',
+      [],
+      ['bridge-auth:ok', 'subject-gate:ok:42']
+    ),
   },
   'apps.storage.get': {
-    'valid token': PASSED([]),
-    'garbage token': E('UNAUTHORIZED', 'invalid block token', []),
-    revoked: E('FORBIDDEN', 'block instance revoked', []),
-    'not approved': E('FORBIDDEN', 'app block is not approved', []),
-    'missing scope': E('FORBIDDEN', 'storage get requires the apps:storage:read scope', []),
-    'anonymous subject': OK([]),
-    'flag off': E('UNAUTHORIZED', 'Apps access is not enabled for this browser session', []),
-    'rate limited': PASSED([]),
+    'valid token': E(
+      'INTERNAL_SERVER_ERROR',
+      'PAST_AUTH: reached the apps-db pool',
+      [],
+      ['apps-db']
+    ),
+    'garbage token': E('UNAUTHORIZED', 'invalid block token', [], []),
+    revoked: E('FORBIDDEN', 'block instance revoked', [], []),
+    'not approved': E('FORBIDDEN', 'app block is not approved', [], []),
+    'missing scope': E('FORBIDDEN', 'storage get requires the apps:storage:read scope', [], []),
+    'anonymous subject': OK([], []),
+    'flag off': E('UNAUTHORIZED', 'Apps access is not enabled for this browser session', [], []),
+    'rate limited': E(
+      'INTERNAL_SERVER_ERROR',
+      'PAST_AUTH: reached the apps-db pool',
+      [],
+      ['apps-db']
+    ),
+    'session user is not the token subject': E(
+      'INTERNAL_SERVER_ERROR',
+      'PAST_AUTH: reached the apps-db pool',
+      [],
+      ['apps-db']
+    ),
   },
   'apps.storage.set': {
-    'valid token': PASSED([]),
-    'garbage token': E('UNAUTHORIZED', 'invalid block token', []),
-    revoked: E('FORBIDDEN', 'block instance revoked', []),
-    'not approved': E('FORBIDDEN', 'app block is not approved', []),
-    'missing scope': E('FORBIDDEN', 'storage set requires the apps:storage:write scope', []),
-    'anonymous subject': E('UNAUTHORIZED', 'storage requires an authenticated viewer', []),
-    'flag off': E('UNAUTHORIZED', 'Apps access is not enabled for this browser session', []),
-    'rate limited': PASSED([]),
+    'valid token': E(
+      'INTERNAL_SERVER_ERROR',
+      'PAST_AUTH: reached the apps-db pool',
+      [],
+      ['apps-db']
+    ),
+    'garbage token': E('UNAUTHORIZED', 'invalid block token', [], []),
+    revoked: E('FORBIDDEN', 'block instance revoked', [], []),
+    'not approved': E('FORBIDDEN', 'app block is not approved', [], []),
+    'missing scope': E('FORBIDDEN', 'storage set requires the apps:storage:write scope', [], []),
+    'anonymous subject': E('UNAUTHORIZED', 'storage requires an authenticated viewer', [], []),
+    'flag off': E('UNAUTHORIZED', 'Apps access is not enabled for this browser session', [], []),
+    'rate limited': E(
+      'INTERNAL_SERVER_ERROR',
+      'PAST_AUTH: reached the apps-db pool',
+      [],
+      ['apps-db']
+    ),
+    'session user is not the token subject': E(
+      'INTERNAL_SERVER_ERROR',
+      'PAST_AUTH: reached the apps-db pool',
+      [],
+      ['apps-db']
+    ),
   },
   'apps.storage.delete': {
-    'valid token': PASSED([]),
-    'garbage token': E('UNAUTHORIZED', 'invalid block token', []),
-    revoked: E('FORBIDDEN', 'block instance revoked', []),
-    'not approved': E('FORBIDDEN', 'app block is not approved', []),
-    'missing scope': E('FORBIDDEN', 'storage delete requires the apps:storage:write scope', []),
-    'anonymous subject': E('UNAUTHORIZED', 'storage requires an authenticated viewer', []),
-    'flag off': E('UNAUTHORIZED', 'Apps access is not enabled for this browser session', []),
-    'rate limited': PASSED([]),
+    'valid token': E(
+      'INTERNAL_SERVER_ERROR',
+      'PAST_AUTH: reached the apps-db pool',
+      [],
+      ['apps-db']
+    ),
+    'garbage token': E('UNAUTHORIZED', 'invalid block token', [], []),
+    revoked: E('FORBIDDEN', 'block instance revoked', [], []),
+    'not approved': E('FORBIDDEN', 'app block is not approved', [], []),
+    'missing scope': E('FORBIDDEN', 'storage delete requires the apps:storage:write scope', [], []),
+    'anonymous subject': E('UNAUTHORIZED', 'storage requires an authenticated viewer', [], []),
+    'flag off': E('UNAUTHORIZED', 'Apps access is not enabled for this browser session', [], []),
+    'rate limited': E(
+      'INTERNAL_SERVER_ERROR',
+      'PAST_AUTH: reached the apps-db pool',
+      [],
+      ['apps-db']
+    ),
+    'session user is not the token subject': E(
+      'INTERNAL_SERVER_ERROR',
+      'PAST_AUTH: reached the apps-db pool',
+      [],
+      ['apps-db']
+    ),
   },
   'apps.storage.list': {
-    'valid token': PASSED([]),
-    'garbage token': E('UNAUTHORIZED', 'invalid block token', []),
-    revoked: E('FORBIDDEN', 'block instance revoked', []),
-    'not approved': E('FORBIDDEN', 'app block is not approved', []),
-    'missing scope': E('FORBIDDEN', 'storage list requires the apps:storage:read scope', []),
-    'anonymous subject': OK([]),
-    'flag off': E('UNAUTHORIZED', 'Apps access is not enabled for this browser session', []),
-    'rate limited': PASSED([]),
+    'valid token': E(
+      'INTERNAL_SERVER_ERROR',
+      'PAST_AUTH: reached the apps-db pool',
+      [],
+      ['apps-db']
+    ),
+    'garbage token': E('UNAUTHORIZED', 'invalid block token', [], []),
+    revoked: E('FORBIDDEN', 'block instance revoked', [], []),
+    'not approved': E('FORBIDDEN', 'app block is not approved', [], []),
+    'missing scope': E('FORBIDDEN', 'storage list requires the apps:storage:read scope', [], []),
+    'anonymous subject': OK([], []),
+    'flag off': E('UNAUTHORIZED', 'Apps access is not enabled for this browser session', [], []),
+    'rate limited': E(
+      'INTERNAL_SERVER_ERROR',
+      'PAST_AUTH: reached the apps-db pool',
+      [],
+      ['apps-db']
+    ),
+    'session user is not the token subject': E(
+      'INTERNAL_SERVER_ERROR',
+      'PAST_AUTH: reached the apps-db pool',
+      [],
+      ['apps-db']
+    ),
   },
   'apps.storage.getQuota': {
-    'valid token': PASSED([]),
-    'garbage token': E('UNAUTHORIZED', 'invalid block token', []),
-    revoked: E('FORBIDDEN', 'block instance revoked', []),
-    'not approved': E('FORBIDDEN', 'app block is not approved', []),
-    'missing scope': E('FORBIDDEN', 'storage getQuota requires the apps:storage:read scope', []),
-    'anonymous subject': OK([]),
-    'flag off': E('UNAUTHORIZED', 'Apps access is not enabled for this browser session', []),
-    'rate limited': PASSED([]),
+    'valid token': E(
+      'INTERNAL_SERVER_ERROR',
+      'PAST_AUTH: reached the apps-db pool',
+      [],
+      ['apps-db']
+    ),
+    'garbage token': E('UNAUTHORIZED', 'invalid block token', [], []),
+    revoked: E('FORBIDDEN', 'block instance revoked', [], []),
+    'not approved': E('FORBIDDEN', 'app block is not approved', [], []),
+    'missing scope': E(
+      'FORBIDDEN',
+      'storage getQuota requires the apps:storage:read scope',
+      [],
+      []
+    ),
+    'anonymous subject': OK([], []),
+    'flag off': E('UNAUTHORIZED', 'Apps access is not enabled for this browser session', [], []),
+    'rate limited': E(
+      'INTERNAL_SERVER_ERROR',
+      'PAST_AUTH: reached the apps-db pool',
+      [],
+      ['apps-db']
+    ),
+    'session user is not the token subject': E(
+      'INTERNAL_SERVER_ERROR',
+      'PAST_AUTH: reached the apps-db pool',
+      [],
+      ['apps-db']
+    ),
   },
   'apps.shared.list': {
-    'valid token': PASSED([]),
-    'garbage token': E('UNAUTHORIZED', 'invalid block token', []),
-    revoked: E('FORBIDDEN', 'block instance revoked', []),
-    'not approved': E('FORBIDDEN', 'app block is not approved', []),
+    'valid token': E(
+      'INTERNAL_SERVER_ERROR',
+      'PAST_AUTH: reached the apps-db pool',
+      [],
+      ['apps-db']
+    ),
+    'garbage token': E('UNAUTHORIZED', 'invalid block token', [], []),
+    revoked: E('FORBIDDEN', 'block instance revoked', [], []),
+    'not approved': E('FORBIDDEN', 'app block is not approved', [], []),
     'missing scope': E(
       'FORBIDDEN',
       'shared storage list requires the apps:storage:shared:read scope',
+      [],
       []
     ),
-    'anonymous subject': PASSED([]),
-    'flag off': E('FORBIDDEN', 'shared storage is not enabled', []),
-    'rate limited': PASSED([]),
+    'anonymous subject': E(
+      'INTERNAL_SERVER_ERROR',
+      'PAST_AUTH: reached the apps-db pool',
+      [],
+      ['apps-db']
+    ),
+    'flag off': E('FORBIDDEN', 'shared storage is not enabled', [], []),
+    'rate limited': E(
+      'INTERNAL_SERVER_ERROR',
+      'PAST_AUTH: reached the apps-db pool',
+      [],
+      ['apps-db']
+    ),
+    'session user is not the token subject': E(
+      'INTERNAL_SERVER_ERROR',
+      'PAST_AUTH: reached the apps-db pool',
+      [],
+      ['apps-db']
+    ),
   },
   'apps.shared.get': {
-    'valid token': PASSED([]),
-    'garbage token': E('UNAUTHORIZED', 'invalid block token', []),
-    revoked: E('FORBIDDEN', 'block instance revoked', []),
-    'not approved': E('FORBIDDEN', 'app block is not approved', []),
+    'valid token': E(
+      'INTERNAL_SERVER_ERROR',
+      'PAST_AUTH: reached the apps-db pool',
+      [],
+      ['apps-db']
+    ),
+    'garbage token': E('UNAUTHORIZED', 'invalid block token', [], []),
+    revoked: E('FORBIDDEN', 'block instance revoked', [], []),
+    'not approved': E('FORBIDDEN', 'app block is not approved', [], []),
     'missing scope': E(
       'FORBIDDEN',
       'shared storage get requires the apps:storage:shared:read scope',
+      [],
       []
     ),
-    'anonymous subject': PASSED([]),
-    'flag off': E('FORBIDDEN', 'shared storage is not enabled', []),
-    'rate limited': PASSED([]),
+    'anonymous subject': E(
+      'INTERNAL_SERVER_ERROR',
+      'PAST_AUTH: reached the apps-db pool',
+      [],
+      ['apps-db']
+    ),
+    'flag off': E('FORBIDDEN', 'shared storage is not enabled', [], []),
+    'rate limited': E(
+      'INTERNAL_SERVER_ERROR',
+      'PAST_AUTH: reached the apps-db pool',
+      [],
+      ['apps-db']
+    ),
+    'session user is not the token subject': E(
+      'INTERNAL_SERVER_ERROR',
+      'PAST_AUTH: reached the apps-db pool',
+      [],
+      ['apps-db']
+    ),
   },
   'apps.shared.getCount': {
-    'valid token': PASSED([]),
-    'garbage token': E('UNAUTHORIZED', 'invalid block token', []),
-    revoked: E('FORBIDDEN', 'block instance revoked', []),
-    'not approved': E('FORBIDDEN', 'app block is not approved', []),
+    'valid token': E(
+      'INTERNAL_SERVER_ERROR',
+      'PAST_AUTH: reached the apps-db pool',
+      [],
+      ['apps-db']
+    ),
+    'garbage token': E('UNAUTHORIZED', 'invalid block token', [], []),
+    revoked: E('FORBIDDEN', 'block instance revoked', [], []),
+    'not approved': E('FORBIDDEN', 'app block is not approved', [], []),
     'missing scope': E(
       'FORBIDDEN',
       'shared storage getCount requires the apps:storage:shared:read scope',
+      [],
       []
     ),
-    'anonymous subject': PASSED([]),
-    'flag off': E('FORBIDDEN', 'shared storage is not enabled', []),
-    'rate limited': PASSED([]),
+    'anonymous subject': E(
+      'INTERNAL_SERVER_ERROR',
+      'PAST_AUTH: reached the apps-db pool',
+      [],
+      ['apps-db']
+    ),
+    'flag off': E('FORBIDDEN', 'shared storage is not enabled', [], []),
+    'rate limited': E(
+      'INTERNAL_SERVER_ERROR',
+      'PAST_AUTH: reached the apps-db pool',
+      [],
+      ['apps-db']
+    ),
+    'session user is not the token subject': E(
+      'INTERNAL_SERVER_ERROR',
+      'PAST_AUTH: reached the apps-db pool',
+      [],
+      ['apps-db']
+    ),
   },
   'apps.shared.getCounts': {
-    'valid token': PASSED([]),
-    'garbage token': E('UNAUTHORIZED', 'invalid block token', []),
-    revoked: E('FORBIDDEN', 'block instance revoked', []),
-    'not approved': E('FORBIDDEN', 'app block is not approved', []),
+    'valid token': E(
+      'INTERNAL_SERVER_ERROR',
+      'PAST_AUTH: reached the apps-db pool',
+      [],
+      ['apps-db']
+    ),
+    'garbage token': E('UNAUTHORIZED', 'invalid block token', [], []),
+    revoked: E('FORBIDDEN', 'block instance revoked', [], []),
+    'not approved': E('FORBIDDEN', 'app block is not approved', [], []),
     'missing scope': E(
       'FORBIDDEN',
       'shared storage getCount requires the apps:storage:shared:read scope',
+      [],
       []
     ),
-    'anonymous subject': PASSED([]),
-    'flag off': E('FORBIDDEN', 'shared storage is not enabled', []),
-    'rate limited': PASSED([]),
+    'anonymous subject': E(
+      'INTERNAL_SERVER_ERROR',
+      'PAST_AUTH: reached the apps-db pool',
+      [],
+      ['apps-db']
+    ),
+    'flag off': E('FORBIDDEN', 'shared storage is not enabled', [], []),
+    'rate limited': E(
+      'INTERNAL_SERVER_ERROR',
+      'PAST_AUTH: reached the apps-db pool',
+      [],
+      ['apps-db']
+    ),
+    'session user is not the token subject': E(
+      'INTERNAL_SERVER_ERROR',
+      'PAST_AUTH: reached the apps-db pool',
+      [],
+      ['apps-db']
+    ),
   },
   'apps.shared.append': {
-    'valid token': PASSED(['reserveSharedWrite(42, "apb_char")']),
-    'garbage token': E('UNAUTHORIZED', 'invalid block token', []),
-    revoked: E('FORBIDDEN', 'block instance revoked', []),
-    'not approved': E('FORBIDDEN', 'app block is not approved', []),
+    'valid token': E(
+      'INTERNAL_SERVER_ERROR',
+      'PAST_AUTH: reached the apps-db pool',
+      ['reserveSharedWrite(42, "apb_row")'],
+      ['apps-db']
+    ),
+    'garbage token': E('UNAUTHORIZED', 'invalid block token', [], []),
+    revoked: E('FORBIDDEN', 'block instance revoked', [], []),
+    'not approved': E('FORBIDDEN', 'app block is not approved', [], []),
     'missing scope': E(
       'FORBIDDEN',
       'shared storage append requires the apps:storage:shared:write scope',
+      [],
       []
     ),
     'anonymous subject': E(
       'UNAUTHORIZED',
       'shared storage writes require an authenticated viewer',
+      [],
       []
     ),
-    'flag off': E('FORBIDDEN', 'shared storage is not enabled', []),
-    'rate limited': E('TOO_MANY_REQUESTS', 'Too many submissions — retry in 7s', [
-      'reserveSharedWrite(42, "apb_char")',
-    ]),
+    'flag off': E('FORBIDDEN', 'shared storage is not enabled', [], []),
+    'rate limited': E(
+      'TOO_MANY_REQUESTS',
+      'Too many submissions — retry in 7s',
+      ['reserveSharedWrite(42, "apb_row")'],
+      []
+    ),
+    'session user is not the token subject': E(
+      'INTERNAL_SERVER_ERROR',
+      'PAST_AUTH: reached the apps-db pool',
+      ['reserveSharedWrite(42, "apb_row")'],
+      ['apps-db']
+    ),
   },
   'apps.shared.update': {
-    'valid token': PASSED(['reserveSharedWrite(42, "apb_char")']),
-    'garbage token': E('UNAUTHORIZED', 'invalid block token', []),
-    revoked: E('FORBIDDEN', 'block instance revoked', []),
-    'not approved': E('FORBIDDEN', 'app block is not approved', []),
+    'valid token': E(
+      'INTERNAL_SERVER_ERROR',
+      'PAST_AUTH: reached the apps-db pool',
+      ['reserveSharedWrite(42, "apb_row")'],
+      ['apps-db']
+    ),
+    'garbage token': E('UNAUTHORIZED', 'invalid block token', [], []),
+    revoked: E('FORBIDDEN', 'block instance revoked', [], []),
+    'not approved': E('FORBIDDEN', 'app block is not approved', [], []),
     'missing scope': E(
       'FORBIDDEN',
       'shared storage update requires the apps:storage:shared:write scope',
+      [],
       []
     ),
     'anonymous subject': E(
       'UNAUTHORIZED',
       'shared storage writes require an authenticated viewer',
+      [],
       []
     ),
-    'flag off': E('FORBIDDEN', 'shared storage is not enabled', []),
-    'rate limited': E('TOO_MANY_REQUESTS', 'Too many submissions — retry in 7s', [
-      'reserveSharedWrite(42, "apb_char")',
-    ]),
+    'flag off': E('FORBIDDEN', 'shared storage is not enabled', [], []),
+    'rate limited': E(
+      'TOO_MANY_REQUESTS',
+      'Too many submissions — retry in 7s',
+      ['reserveSharedWrite(42, "apb_row")'],
+      []
+    ),
+    'session user is not the token subject': E(
+      'INTERNAL_SERVER_ERROR',
+      'PAST_AUTH: reached the apps-db pool',
+      ['reserveSharedWrite(42, "apb_row")'],
+      ['apps-db']
+    ),
   },
   'apps.shared.vote': {
-    'valid token': PASSED(['checkSharedVoteRateLimit(42, "apb_char")']),
-    'garbage token': E('UNAUTHORIZED', 'invalid block token', []),
-    revoked: E('FORBIDDEN', 'block instance revoked', []),
-    'not approved': E('FORBIDDEN', 'app block is not approved', []),
+    'valid token': E(
+      'INTERNAL_SERVER_ERROR',
+      'PAST_AUTH: reached the apps-db pool',
+      ['checkSharedVoteRateLimit(42, "apb_row")'],
+      ['apps-db']
+    ),
+    'garbage token': E('UNAUTHORIZED', 'invalid block token', [], []),
+    revoked: E('FORBIDDEN', 'block instance revoked', [], []),
+    'not approved': E('FORBIDDEN', 'app block is not approved', [], []),
     'missing scope': E(
       'FORBIDDEN',
       'shared storage vote requires the apps:storage:shared:write scope',
+      [],
       []
     ),
     'anonymous subject': E(
       'UNAUTHORIZED',
       'shared storage writes require an authenticated viewer',
+      [],
       []
     ),
-    'flag off': E('FORBIDDEN', 'shared storage is not enabled', []),
-    'rate limited': E('TOO_MANY_REQUESTS', 'Too many votes — retry in 7s', [
-      'checkSharedVoteRateLimit(42, "apb_char")',
-    ]),
+    'flag off': E('FORBIDDEN', 'shared storage is not enabled', [], []),
+    'rate limited': E(
+      'TOO_MANY_REQUESTS',
+      'Too many votes — retry in 7s',
+      ['checkSharedVoteRateLimit(42, "apb_row")'],
+      []
+    ),
+    'session user is not the token subject': E(
+      'INTERNAL_SERVER_ERROR',
+      'PAST_AUTH: reached the apps-db pool',
+      ['checkSharedVoteRateLimit(42, "apb_row")'],
+      ['apps-db']
+    ),
   },
   'apps.shared.unvote': {
-    'valid token': PASSED(['checkSharedVoteRateLimit(42, "apb_char")']),
-    'garbage token': E('UNAUTHORIZED', 'invalid block token', []),
-    revoked: E('FORBIDDEN', 'block instance revoked', []),
-    'not approved': E('FORBIDDEN', 'app block is not approved', []),
+    'valid token': E(
+      'INTERNAL_SERVER_ERROR',
+      'PAST_AUTH: reached the apps-db pool',
+      ['checkSharedVoteRateLimit(42, "apb_row")'],
+      ['apps-db']
+    ),
+    'garbage token': E('UNAUTHORIZED', 'invalid block token', [], []),
+    revoked: E('FORBIDDEN', 'block instance revoked', [], []),
+    'not approved': E('FORBIDDEN', 'app block is not approved', [], []),
     'missing scope': E(
       'FORBIDDEN',
       'shared storage unvote requires the apps:storage:shared:write scope',
+      [],
       []
     ),
     'anonymous subject': E(
       'UNAUTHORIZED',
       'shared storage writes require an authenticated viewer',
+      [],
       []
     ),
-    'flag off': E('FORBIDDEN', 'shared storage is not enabled', []),
-    'rate limited': E('TOO_MANY_REQUESTS', 'Too many votes — retry in 7s', [
-      'checkSharedVoteRateLimit(42, "apb_char")',
-    ]),
+    'flag off': E('FORBIDDEN', 'shared storage is not enabled', [], []),
+    'rate limited': E(
+      'TOO_MANY_REQUESTS',
+      'Too many votes — retry in 7s',
+      ['checkSharedVoteRateLimit(42, "apb_row")'],
+      []
+    ),
+    'session user is not the token subject': E(
+      'INTERNAL_SERVER_ERROR',
+      'PAST_AUTH: reached the apps-db pool',
+      ['checkSharedVoteRateLimit(42, "apb_row")'],
+      ['apps-db']
+    ),
   },
   'apps.shared.withdraw': {
-    'valid token': PASSED(['checkSharedWithdrawRateLimit(42, "apb_char")']),
-    'garbage token': E('UNAUTHORIZED', 'invalid block token', []),
-    revoked: E('FORBIDDEN', 'block instance revoked', []),
-    'not approved': E('FORBIDDEN', 'app block is not approved', []),
+    'valid token': E(
+      'INTERNAL_SERVER_ERROR',
+      'PAST_AUTH: reached the apps-db pool',
+      ['checkSharedWithdrawRateLimit(42, "apb_row")'],
+      ['apps-db']
+    ),
+    'garbage token': E('UNAUTHORIZED', 'invalid block token', [], []),
+    revoked: E('FORBIDDEN', 'block instance revoked', [], []),
+    'not approved': E('FORBIDDEN', 'app block is not approved', [], []),
     'missing scope': E(
       'FORBIDDEN',
       'shared storage withdraw requires the apps:storage:shared:write scope',
+      [],
       []
     ),
     'anonymous subject': E(
       'UNAUTHORIZED',
       'shared storage writes require an authenticated viewer',
+      [],
       []
     ),
-    'flag off': E('FORBIDDEN', 'shared storage is not enabled', []),
-    'rate limited': E('TOO_MANY_REQUESTS', 'Too many withdrawals — retry in 7s', [
-      'checkSharedWithdrawRateLimit(42, "apb_char")',
-    ]),
+    'flag off': E('FORBIDDEN', 'shared storage is not enabled', [], []),
+    'rate limited': E(
+      'TOO_MANY_REQUESTS',
+      'Too many withdrawals — retry in 7s',
+      ['checkSharedWithdrawRateLimit(42, "apb_row")'],
+      []
+    ),
+    'session user is not the token subject': E(
+      'INTERNAL_SERVER_ERROR',
+      'PAST_AUTH: reached the apps-db pool',
+      ['checkSharedWithdrawRateLimit(42, "apb_row")'],
+      ['apps-db']
+    ),
   },
   'apps.shared.report': {
-    'valid token': PASSED(['checkSharedReportRateLimit(42, "apb_char")']),
-    'garbage token': E('UNAUTHORIZED', 'invalid block token', []),
-    revoked: E('FORBIDDEN', 'block instance revoked', []),
-    'not approved': E('FORBIDDEN', 'app block is not approved', []),
+    'valid token': E(
+      'INTERNAL_SERVER_ERROR',
+      'PAST_AUTH: reached the apps-db pool',
+      ['checkSharedReportRateLimit(42, "apb_row")'],
+      ['apps-db']
+    ),
+    'garbage token': E('UNAUTHORIZED', 'invalid block token', [], []),
+    revoked: E('FORBIDDEN', 'block instance revoked', [], []),
+    'not approved': E('FORBIDDEN', 'app block is not approved', [], []),
     'missing scope': E(
       'FORBIDDEN',
       'shared storage report requires the apps:storage:shared:write scope',
+      [],
       []
     ),
     'anonymous subject': E(
       'UNAUTHORIZED',
       'shared storage writes require an authenticated viewer',
+      [],
       []
     ),
-    'flag off': E('FORBIDDEN', 'shared storage is not enabled', []),
-    'rate limited': E('TOO_MANY_REQUESTS', 'Too many reports — retry in 7s', [
-      'checkSharedReportRateLimit(42, "apb_char")',
-    ]),
+    'flag off': E('FORBIDDEN', 'shared storage is not enabled', [], []),
+    'rate limited': E(
+      'TOO_MANY_REQUESTS',
+      'Too many reports — retry in 7s',
+      ['checkSharedReportRateLimit(42, "apb_row")'],
+      []
+    ),
+    'session user is not the token subject': E(
+      'INTERNAL_SERVER_ERROR',
+      'PAST_AUTH: reached the apps-db pool',
+      ['checkSharedReportRateLimit(42, "apb_row")'],
+      ['apps-db']
+    ),
   },
 };
 
@@ -960,9 +1829,13 @@ describe('block-token tRPC procedures — characterisation table', () => {
         const want = EXPECTED[path]?.[cell];
         expect(want, 'no expectation for this cell').toBeDefined();
         currentPath = path;
+        h.sessionUserId.id = SESSION_BOUND.has(path) ? SUBJECT_ID : SESSION_USER_ID;
         const got = await CELLS[cell](path);
         expect(got.limiter, 'rate-limiter calls (name + bucket arguments, in order)').toEqual(
           want.limiter
+        );
+        expect(got.reached, 'auth anchors passed (resolver / subject gate / apps-db)').toEqual(
+          want.reached
         );
         if (want.kind === 'ok') {
           expect(got.result).toEqual({ ok: true });

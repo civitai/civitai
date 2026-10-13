@@ -58,8 +58,9 @@ import type * as WriteTrustModule from '~/server/services/blocks/block-write-tru
  * The bridge and per-user storage check revocation BEFORE the approval row; shared storage
  * reads the approval row FIRST and only then checks revocation. So for an instance that is
  * both revoked and not approved, bridge/storage answer `block instance revoked` and shared
- * answers `app block is not approved`. The `reads` field on every cell records how many
- * revocation reads and approval-row reads each path made, which pins the order on every row,
+ * answers `app block is not approved`. The `reads` field on every cell records every revocation,
+ * approval-row and publish-request read each path made, with its arguments, which pins the
+ * order — and the keys — on every row,
  * not only on the two that make it visible in the message.
  *
  * ## Mock seams
@@ -202,6 +203,12 @@ type World = {
   runFlag: boolean;
   authorFlag: boolean;
   sharedFlag: boolean;
+  /**
+   * What a flag evaluation WITHOUT a user answers (a global eval — the flag's base value). The
+   * three flags above apply ONLY to the token subject's own user id, so an evaluation handed
+   * the wrong user, or no user, gets this instead. Default off, as the flags ship today.
+   */
+  flagBase: boolean;
   publishRequest: { status: string } | null;
 };
 
@@ -218,6 +225,7 @@ function baseWorld(): World {
     runFlag: true,
     authorFlag: true,
     sharedFlag: true,
+    flagBase: false,
     publishRequest: { status: 'pending' },
   };
 }
@@ -245,9 +253,12 @@ function install(w: World) {
       : w.consent
   );
   h.getSessionUserById.mockImplementation(async () => w.subject);
-  h.isAppBlocksEnabled.mockImplementation(async () => w.runFlag);
-  h.isAppBlocksAuthorEnabled.mockImplementation(async () => w.authorFlag);
-  h.isAppBlocksSharedStorageEnabled.mockImplementation(async () => w.sharedFlag);
+  // Keyed on WHO the flag is evaluated for: on only for the token subject, base value otherwise.
+  const forSubject = (on: boolean) => async (opts?: { user?: { id?: number } }) =>
+    opts?.user ? opts.user.id === SUBJECT_ID && on : w.flagBase;
+  h.isAppBlocksEnabled.mockImplementation(forSubject(w.runFlag));
+  h.isAppBlocksAuthorEnabled.mockImplementation(forSubject(w.authorFlag));
+  h.isAppBlocksSharedStorageEnabled.mockImplementation(forSubject(w.sharedFlag));
   h.hasLinkedOAuthAccount.mockImplementation(async () => false);
   h.poolQuery.mockImplementation(async () => ({ rows: [{ value: 'stored-value' }] }));
   h.provisionReviewPreview.mockImplementation(async () => ({ schema: '"apprev_pubreq_char"' }));
@@ -259,8 +270,13 @@ type Thrown = { error: string; code?: string; message: string };
 type Cell = {
   /** What the call produced: `ok` (the success shape) or the error it threw. */
   result: { ok: unknown } | Thrown;
-  /** Revocation reads and approval-row reads made, in that order of fields. */
-  reads: { revocation: number; row: number };
+  /**
+   * Every revocation read (its ARGUMENTS: instance id, subject), every approval-row read (its
+   * `where`) and every publish-request read (its `where`), in call order. The arguments are
+   * the point: a revocation read that drops the subject disables the subject-scoped ban leg,
+   * and a row read keyed on the wrong id reads a different row, with no change in any message.
+   */
+  reads: { revocation: unknown[][]; row: unknown[]; publishRequest: unknown[] };
   /** Metric emissions the path made (spied emitters / the storage ops counter). */
   metrics: string[];
 };
@@ -299,8 +315,13 @@ async function observe(run: () => Promise<unknown>): Promise<Cell> {
   return {
     result,
     reads: {
-      revocation: h.isRevoked.mock.calls.length,
-      row: dbMock.dbRead.appBlock.findUnique.mock.calls.length,
+      revocation: h.isRevoked.mock.calls.map((c) => [...c]),
+      row: dbMock.dbRead.appBlock.findUnique.mock.calls.map(
+        (c) => (c[0] as { where: unknown }).where
+      ),
+      publishRequest: dbMock.dbWrite.appBlockPublishRequest.findUnique.mock.calls.map(
+        (c) => (c[0] as { where: unknown }).where
+      ),
     },
     metrics: metricsEmitted(),
   };
@@ -345,6 +366,7 @@ async function runStorage(token: string, op: Op) {
 function resetObservations() {
   h.isRevoked.mockClear();
   dbMock.dbRead.appBlock.findUnique.mockClear();
+  dbMock.dbWrite.appBlockPublishRequest.findUnique.mockClear();
   h.poolQuery.mockClear();
   h.recordBlockRevocationRefusal.mockClear();
   h.recordBlockConsentMarkerUnavailable.mockClear();
@@ -548,9 +570,22 @@ const SCENARIOS: Scenario[] = [
     world: (w) => void (w.claims = claims({ sub: 'anon' })),
   },
   {
-    name: 'anonymous subject — write',
+    name: 'anonymous subject — read, flags base-enabled (the GA shape)',
+    op: 'read',
+    world: (w) => {
+      w.claims = claims({ sub: 'anon' });
+      w.flagBase = true;
+    },
+  },
+  {
+    // Base-enabled so the shared flag (evaluated with no user for an anon subject) admits it
+    // and the WRITE refusal itself is what this row pins.
+    name: 'anonymous subject — write, flags base-enabled',
     op: 'write',
-    world: (w) => void (w.claims = claims({ sub: 'anon' })),
+    world: (w) => {
+      w.claims = claims({ sub: 'anon' });
+      w.flagBase = true;
+    },
   },
   {
     name: 'subject that will not hydrate',
@@ -594,16 +629,20 @@ async function cellsFor(s: Scenario): Promise<{ bridge: Cell; shared: Cell; stor
 }
 
 const T = (code: string, message: string): Thrown => ({ error: 'TRPCError', code, message });
-const R = (revocation: number, row: number) => ({ revocation, row });
+/** The revocation read every path makes for the default token: (instance id, subject) — verbatim. */
+const REV = ['bki_char', 'user:42'];
+/** The approval-row read every path makes for the default token: the `(appId, blockId)` unique. */
+const ROW = { appId_blockId: { appId: 'app_char', blockId: 'char-block' } };
 
 /**
  * THE TABLE. One row per failure mode, one cell per resolver. Each cell is the call's result
- * (success shape or the error it threw — class, tRPC code, message), the reads it made
- * (`R(revocation, approvalRow)`), and the metrics it emitted.
+ * (success shape or the error it threw — class, tRPC code, message), every read it made WITH
+ * ITS ARGUMENTS (`REV` / `ROW` are the default token's revocation and approval-row reads), and
+ * the metrics it emitted.
  *
  * Reading guide for the cells most likely to be "aligned" by accident:
  *   - `revoked AND …` rows: bridge/storage say `revoked`, shared says the approval answer —
- *     and shared's `R(0, 1)` shows it never reached the revocation read.
+ *     and shared's empty `revocation` list shows it never reached the revocation read.
  *   - `dev token, no approval row` / `review token`: the bridge ADMITS, shared and storage
  *     answer NOT_FOUND.
  *   - `reviewRunForReal WITHOUT dev`: the bridge's shared predicate requires the `dev` pair and
@@ -625,7 +664,7 @@ const EXPECTED: Record<string, { bridge: Cell; shared: Cell; storage: Cell }> = 
   'success — read': {
     bridge: {
       result: { ok: { scopes: ALL_SCOPES, buzzBudget: null } },
-      reads: R(1, 1),
+      reads: { revocation: [REV], row: [ROW], publishRequest: [] },
       metrics: [],
     },
     shared: {
@@ -639,7 +678,7 @@ const EXPECTED: Record<string, { bridge: Cell; shared: Cell; storage: Cell }> = 
           blockInstanceId: 'bki_char',
         },
       },
-      reads: R(1, 1),
+      reads: { revocation: [REV], row: [ROW], publishRequest: [] },
       metrics: [],
     },
     storage: {
@@ -649,257 +688,277 @@ const EXPECTED: Record<string, { bridge: Cell; shared: Cell; storage: Cell }> = 
           query: { schema: '"app_char_block"', params: ['bki_char', 42, 'k'] },
         },
       },
-      reads: R(1, 1),
+      reads: { revocation: [REV], row: [ROW], publishRequest: [] },
       metrics: ['storage_ops:get:ok'],
     },
   },
   'garbage token (real verifier)': {
     bridge: {
       result: T('UNAUTHORIZED', 'invalid block token'),
-      reads: R(0, 0),
+      reads: { revocation: [], row: [], publishRequest: [] },
       metrics: [],
     },
     shared: {
       result: T('UNAUTHORIZED', 'invalid block token'),
-      reads: R(0, 0),
+      reads: { revocation: [], row: [], publishRequest: [] },
       metrics: [],
     },
     storage: {
       result: T('UNAUTHORIZED', 'invalid block token'),
-      reads: R(0, 0),
+      reads: { revocation: [], row: [], publishRequest: [] },
       metrics: ['storage_ops:get:unauthorized'],
     },
   },
   'blockId that is not a valid storage slug': {
     bridge: {
       result: { ok: { scopes: ALL_SCOPES, buzzBudget: null } },
-      reads: R(1, 1),
+      reads: {
+        revocation: [REV],
+        row: [{ appId_blockId: { appId: 'app_char', blockId: '9!' } }],
+        publishRequest: [],
+      },
       metrics: [],
     },
     shared: {
       result: T('INTERNAL_SERVER_ERROR', 'block id is not a valid storage slug'),
-      reads: R(0, 0),
+      reads: { revocation: [], row: [], publishRequest: [] },
       metrics: [],
     },
     storage: {
       result: T('INTERNAL_SERVER_ERROR', 'block id is not a valid storage slug'),
-      reads: R(0, 0),
+      reads: { revocation: [], row: [], publishRequest: [] },
       metrics: ['storage_ops:get:error'],
     },
   },
   'revoked instance': {
     bridge: {
       result: T('FORBIDDEN', 'block instance revoked'),
-      reads: R(1, 0),
+      reads: { revocation: [REV], row: [], publishRequest: [] },
       metrics: ['revocation_refusal:bridge'],
     },
     shared: {
       result: T('FORBIDDEN', 'block instance revoked'),
-      reads: R(1, 1),
+      reads: { revocation: [REV], row: [ROW], publishRequest: [] },
       metrics: [],
     },
     storage: {
       result: T('FORBIDDEN', 'block instance revoked'),
-      reads: R(1, 0),
+      reads: { revocation: [REV], row: [], publishRequest: [] },
       metrics: ['storage_ops:get:unauthorized'],
     },
   },
   'no approval row (non-dev token)': {
     bridge: {
       result: T('NOT_FOUND', 'app block not found'),
-      reads: R(1, 1),
+      reads: { revocation: [REV], row: [ROW], publishRequest: [] },
       metrics: [],
     },
     shared: {
       result: T('NOT_FOUND', 'app block not found'),
-      reads: R(0, 1),
+      reads: { revocation: [], row: [ROW], publishRequest: [] },
       metrics: [],
     },
     storage: {
       result: T('NOT_FOUND', 'app block not found'),
-      reads: R(1, 1),
+      reads: { revocation: [REV], row: [ROW], publishRequest: [] },
       metrics: ['storage_ops:get:not_found'],
     },
   },
   'row not approved (non-dev token)': {
     bridge: {
       result: T('FORBIDDEN', 'app block is not approved'),
-      reads: R(1, 1),
+      reads: { revocation: [REV], row: [ROW], publishRequest: [] },
       metrics: [],
     },
     shared: {
       result: T('FORBIDDEN', 'app block is not approved'),
-      reads: R(0, 1),
+      reads: { revocation: [], row: [ROW], publishRequest: [] },
       metrics: [],
     },
     storage: {
       result: T('FORBIDDEN', 'app block is not approved'),
-      reads: R(1, 1),
+      reads: { revocation: [REV], row: [ROW], publishRequest: [] },
       metrics: ['storage_ops:get:unauthorized'],
     },
   },
   'revoked AND row not approved — which wins': {
     bridge: {
       result: T('FORBIDDEN', 'block instance revoked'),
-      reads: R(1, 0),
+      reads: { revocation: [REV], row: [], publishRequest: [] },
       metrics: ['revocation_refusal:bridge'],
     },
     shared: {
       result: T('FORBIDDEN', 'app block is not approved'),
-      reads: R(0, 1),
+      reads: { revocation: [], row: [ROW], publishRequest: [] },
       metrics: [],
     },
     storage: {
       result: T('FORBIDDEN', 'block instance revoked'),
-      reads: R(1, 0),
+      reads: { revocation: [REV], row: [], publishRequest: [] },
       metrics: ['storage_ops:get:unauthorized'],
     },
   },
   'revoked AND no approval row — which wins': {
     bridge: {
       result: T('FORBIDDEN', 'block instance revoked'),
-      reads: R(1, 0),
+      reads: { revocation: [REV], row: [], publishRequest: [] },
       metrics: ['revocation_refusal:bridge'],
     },
     shared: {
       result: T('NOT_FOUND', 'app block not found'),
-      reads: R(0, 1),
+      reads: { revocation: [], row: [ROW], publishRequest: [] },
       metrics: [],
     },
     storage: {
       result: T('FORBIDDEN', 'block instance revoked'),
-      reads: R(1, 0),
+      reads: { revocation: [REV], row: [], publishRequest: [] },
       metrics: ['storage_ops:get:unauthorized'],
     },
   },
   'approval-row read throws': {
     bridge: {
       result: { error: 'Error', message: 'replica unreachable' },
-      reads: R(1, 1),
+      reads: { revocation: [REV], row: [ROW], publishRequest: [] },
       metrics: [],
     },
     shared: {
       result: { error: 'Error', message: 'replica unreachable' },
-      reads: R(0, 1),
+      reads: { revocation: [], row: [ROW], publishRequest: [] },
       metrics: [],
     },
     storage: {
       result: { error: 'Error', message: 'replica unreachable' },
-      reads: R(1, 1),
+      reads: { revocation: [REV], row: [ROW], publishRequest: [] },
       metrics: ['storage_ops:get:error'],
     },
   },
   'dev token, no approval row': {
     bridge: {
       result: { ok: { scopes: ALL_SCOPES, buzzBudget: null } },
-      reads: R(1, 1),
+      reads: { revocation: [REV], row: [ROW], publishRequest: [] },
       metrics: [],
     },
     shared: {
       result: T('NOT_FOUND', 'app block not found'),
-      reads: R(0, 1),
+      reads: { revocation: [], row: [ROW], publishRequest: [] },
       metrics: [],
     },
     storage: {
       result: T('NOT_FOUND', 'app block not found'),
-      reads: R(1, 1),
+      reads: { revocation: [REV], row: [ROW], publishRequest: [] },
       metrics: ['storage_ops:get:not_found'],
     },
   },
   'dev token, owner, LIVE dev tunnel, row not approved': {
     bridge: {
       result: { ok: { scopes: ALL_SCOPES, buzzBudget: null } },
-      reads: R(1, 1),
+      reads: { revocation: [REV], row: [ROW], publishRequest: [] },
       metrics: [],
     },
     shared: {
       result: T('FORBIDDEN', 'app block is not approved'),
-      reads: R(0, 1),
+      reads: { revocation: [], row: [ROW], publishRequest: [] },
       metrics: [],
     },
     storage: {
       result: T('FORBIDDEN', 'app block is not approved'),
-      reads: R(1, 1),
+      reads: { revocation: [REV], row: [ROW], publishRequest: [] },
       metrics: ['storage_ops:get:unauthorized'],
     },
   },
   'dev token, owner, NO dev tunnel, row not approved': {
     bridge: {
       result: T('FORBIDDEN', 'app block is not approved'),
-      reads: R(1, 1),
+      reads: { revocation: [REV], row: [ROW], publishRequest: [] },
       metrics: [],
     },
     shared: {
       result: T('FORBIDDEN', 'app block is not approved'),
-      reads: R(0, 1),
+      reads: { revocation: [], row: [ROW], publishRequest: [] },
       metrics: [],
     },
     storage: {
       result: T('FORBIDDEN', 'app block is not approved'),
-      reads: R(1, 1),
+      reads: { revocation: [REV], row: [ROW], publishRequest: [] },
       metrics: ['storage_ops:get:unauthorized'],
     },
   },
   'dev token, NOT the owner, live tunnel, row not approved': {
     bridge: {
       result: T('FORBIDDEN', 'app block is not approved'),
-      reads: R(1, 1),
+      reads: { revocation: [REV], row: [ROW], publishRequest: [] },
       metrics: [],
     },
     shared: {
       result: T('FORBIDDEN', 'app block is not approved'),
-      reads: R(0, 1),
+      reads: { revocation: [], row: [ROW], publishRequest: [] },
       metrics: [],
     },
     storage: {
       result: T('FORBIDDEN', 'app block is not approved'),
-      reads: R(1, 1),
+      reads: { revocation: [REV], row: [ROW], publishRequest: [] },
       metrics: ['storage_ops:get:unauthorized'],
     },
   },
   'dev token, owner, dev-tunnel lookup throws, row not approved': {
     bridge: {
       result: T('FORBIDDEN', 'app block is not approved'),
-      reads: R(1, 1),
+      reads: { revocation: [REV], row: [ROW], publishRequest: [] },
       metrics: [],
     },
     shared: {
       result: T('FORBIDDEN', 'app block is not approved'),
-      reads: R(0, 1),
+      reads: { revocation: [], row: [ROW], publishRequest: [] },
       metrics: [],
     },
     storage: {
       result: T('FORBIDDEN', 'app block is not approved'),
-      reads: R(1, 1),
+      reads: { revocation: [REV], row: [ROW], publishRequest: [] },
       metrics: ['storage_ops:get:unauthorized'],
     },
   },
   'review token (dev, synthetic pending appId, no row)': {
     bridge: {
       result: { ok: { scopes: ALL_SCOPES, buzzBudget: null } },
-      reads: R(1, 1),
+      reads: {
+        revocation: [REV],
+        row: [{ appId_blockId: { appId: 'pending-01CHAR', blockId: 'char-block' } }],
+        publishRequest: [],
+      },
       metrics: [],
     },
     shared: {
       result: T('NOT_FOUND', 'app block not found'),
-      reads: R(0, 1),
+      reads: {
+        revocation: [],
+        row: [{ appId_blockId: { appId: 'pending-01CHAR', blockId: 'char-block' } }],
+        publishRequest: [],
+      },
       metrics: [],
     },
     storage: {
       result: T('NOT_FOUND', 'app block not found'),
-      reads: R(1, 1),
+      reads: {
+        revocation: [REV],
+        row: [{ appId_blockId: { appId: 'pending-01CHAR', blockId: 'char-block' } }],
+        publishRequest: [],
+      },
       metrics: ['storage_ops:get:not_found'],
     },
   },
   'review run-for-real token (dev + reviewRunForReal), request pending': {
     bridge: {
       result: { ok: { scopes: ALL_SCOPES, buzzBudget: null } },
-      reads: R(1, 0),
+      reads: { revocation: [REV], row: [], publishRequest: [] },
       metrics: [],
     },
     shared: {
       result: T('NOT_FOUND', 'app block not found'),
-      reads: R(0, 1),
+      reads: {
+        revocation: [],
+        row: [{ appId_blockId: { appId: 'pending-01CHAR', blockId: 'char-block' } }],
+        publishRequest: [],
+      },
       metrics: [],
     },
     storage: {
@@ -909,53 +968,61 @@ const EXPECTED: Record<string, { bridge: Cell; shared: Cell; storage: Cell }> = 
           query: { schema: '"apprev_pubreq_char"', params: ['bki_char', 42, 'k'] },
         },
       },
-      reads: R(1, 0),
+      reads: { revocation: [REV], row: [], publishRequest: [{ id: 'pubreq_01CHAR' }] },
       metrics: ['storage_ops:get:ok'],
     },
   },
   'review run-for-real token, request no longer pending': {
     bridge: {
       result: { ok: { scopes: ALL_SCOPES, buzzBudget: null } },
-      reads: R(1, 0),
+      reads: { revocation: [REV], row: [], publishRequest: [] },
       metrics: [],
     },
     shared: {
       result: T('NOT_FOUND', 'app block not found'),
-      reads: R(0, 1),
+      reads: {
+        revocation: [],
+        row: [{ appId_blockId: { appId: 'pending-01CHAR', blockId: 'char-block' } }],
+        publishRequest: [],
+      },
       metrics: [],
     },
     storage: {
       result: T('FORBIDDEN', 'review preview is no longer active for this request'),
-      reads: R(1, 0),
+      reads: { revocation: [REV], row: [], publishRequest: [{ id: 'pubreq_01CHAR' }] },
       metrics: ['storage_ops:get:unauthorized'],
     },
   },
   'review run-for-real token, author flag off': {
     bridge: {
       result: { ok: { scopes: ALL_SCOPES, buzzBudget: null } },
-      reads: R(1, 0),
+      reads: { revocation: [REV], row: [], publishRequest: [] },
       metrics: [],
     },
     shared: {
       result: T('NOT_FOUND', 'app block not found'),
-      reads: R(0, 1),
+      reads: {
+        revocation: [],
+        row: [{ appId_blockId: { appId: 'pending-01CHAR', blockId: 'char-block' } }],
+        publishRequest: [],
+      },
       metrics: [],
     },
     storage: {
       result: T('FORBIDDEN', 'Apps authoring is not enabled for this account'),
-      reads: R(1, 0),
+      reads: { revocation: [REV], row: [], publishRequest: [] },
       metrics: ['storage_ops:get:unauthorized'],
     },
   },
   'reviewRunForReal WITHOUT dev, row not approved': {
     bridge: {
       result: T('FORBIDDEN', 'app block is not approved'),
-      reads: R(1, 1),
+      reads: { revocation: [REV], row: [ROW], publishRequest: [] },
       metrics: [],
     },
     shared: {
       result: T('FORBIDDEN', 'app block is not approved'),
-      reads: R(0, 1),
+      reads: { revocation: [], row: [ROW], publishRequest: [] },
       metrics: [],
     },
     storage: {
@@ -965,58 +1032,58 @@ const EXPECTED: Record<string, { bridge: Cell; shared: Cell; storage: Cell }> = 
           query: { schema: '"apprev_pubreq_char"', params: ['bki_char', 42, 'k'] },
         },
       },
-      reads: R(1, 0),
+      reads: { revocation: [REV], row: [], publishRequest: [{ id: 'apb_claim' }] },
       metrics: ['storage_ops:get:ok'],
     },
   },
   'private-run token (owner audience), row not approved': {
     bridge: {
       result: { ok: { scopes: ALL_SCOPES, buzzBudget: null } },
-      reads: R(1, 0),
+      reads: { revocation: [REV], row: [], publishRequest: [] },
       metrics: [],
     },
     shared: {
       result: T('FORBIDDEN', 'app block is not approved'),
-      reads: R(0, 1),
+      reads: { revocation: [], row: [ROW], publishRequest: [] },
       metrics: [],
     },
     storage: {
       result: T('FORBIDDEN', 'app block is not approved'),
-      reads: R(1, 1),
+      reads: { revocation: [REV], row: [ROW], publishRequest: [] },
       metrics: ['storage_ops:get:unauthorized'],
     },
   },
   'private-run claim with NO audience, row not approved': {
     bridge: {
       result: T('FORBIDDEN', 'app block is not approved'),
-      reads: R(1, 1),
+      reads: { revocation: [REV], row: [ROW], publishRequest: [] },
       metrics: [],
     },
     shared: {
       result: T('FORBIDDEN', 'app block is not approved'),
-      reads: R(0, 1),
+      reads: { revocation: [], row: [ROW], publishRequest: [] },
       metrics: [],
     },
     storage: {
       result: T('FORBIDDEN', 'app block is not approved'),
-      reads: R(1, 1),
+      reads: { revocation: [REV], row: [ROW], publishRequest: [] },
       metrics: ['storage_ops:get:unauthorized'],
     },
   },
   'missing scope — read (token carries no scopes)': {
     bridge: {
       result: { ok: { scopes: [], buzzBudget: null } },
-      reads: R(1, 1),
+      reads: { revocation: [REV], row: [ROW], publishRequest: [] },
       metrics: [],
     },
     shared: {
       result: T('FORBIDDEN', 'shared storage get requires the apps:storage:shared:read scope'),
-      reads: R(1, 1),
+      reads: { revocation: [REV], row: [ROW], publishRequest: [] },
       metrics: [],
     },
     storage: {
       result: T('FORBIDDEN', 'storage get requires the apps:storage:read scope'),
-      reads: R(1, 1),
+      reads: { revocation: [REV], row: [ROW], publishRequest: [] },
       metrics: ['storage_ops:get:unauthorized'],
     },
   },
@@ -1028,17 +1095,17 @@ const EXPECTED: Record<string, { bridge: Cell; shared: Cell; storage: Cell }> = 
           buzzBudget: null,
         },
       },
-      reads: R(1, 1),
+      reads: { revocation: [REV], row: [ROW], publishRequest: [] },
       metrics: [],
     },
     shared: {
       result: T('FORBIDDEN', 'shared storage append requires the apps:storage:shared:write scope'),
-      reads: R(1, 1),
+      reads: { revocation: [REV], row: [ROW], publishRequest: [] },
       metrics: [],
     },
     storage: {
       result: T('FORBIDDEN', 'storage set requires the apps:storage:write scope'),
-      reads: R(1, 1),
+      reads: { revocation: [REV], row: [ROW], publishRequest: [] },
       metrics: ['storage_ops:set:unauthorized'],
     },
   },
@@ -1056,7 +1123,7 @@ const EXPECTED: Record<string, { bridge: Cell; shared: Cell; storage: Cell }> = 
           buzzBudget: null,
         },
       },
-      reads: R(1, 1),
+      reads: { revocation: [REV], row: [ROW], publishRequest: [] },
       metrics: ['consent_strip:bridge:buzz:read:self,posts:write:self'],
     },
     shared: {
@@ -1070,7 +1137,7 @@ const EXPECTED: Record<string, { bridge: Cell; shared: Cell; storage: Cell }> = 
           blockInstanceId: 'bki_char',
         },
       },
-      reads: R(1, 1),
+      reads: { revocation: [REV], row: [ROW], publishRequest: [] },
       metrics: [],
     },
     storage: {
@@ -1080,7 +1147,7 @@ const EXPECTED: Record<string, { bridge: Cell; shared: Cell; storage: Cell }> = 
           query: { schema: '"app_char_block"', params: ['bki_char', 42, 'k'] },
         },
       },
-      reads: R(1, 1),
+      reads: { revocation: [REV], row: [ROW], publishRequest: [] },
       metrics: ['storage_ops:get:ok'],
     },
   },
@@ -1090,7 +1157,7 @@ const EXPECTED: Record<string, { bridge: Cell; shared: Cell; storage: Cell }> = 
         'SERVICE_UNAVAILABLE',
         'permission state is temporarily unavailable — retry shortly'
       ),
-      reads: R(1, 1),
+      reads: { revocation: [REV], row: [ROW], publishRequest: [] },
       metrics: ['consent_marker_unavailable:bridge'],
     },
     shared: {
@@ -1104,7 +1171,7 @@ const EXPECTED: Record<string, { bridge: Cell; shared: Cell; storage: Cell }> = 
           blockInstanceId: 'bki_char',
         },
       },
-      reads: R(1, 1),
+      reads: { revocation: [REV], row: [ROW], publishRequest: [] },
       metrics: [],
     },
     storage: {
@@ -1114,14 +1181,31 @@ const EXPECTED: Record<string, { bridge: Cell; shared: Cell; storage: Cell }> = 
           query: { schema: '"app_char_block"', params: ['bki_char', 42, 'k'] },
         },
       },
-      reads: R(1, 1),
+      reads: { revocation: [REV], row: [ROW], publishRequest: [] },
       metrics: ['storage_ops:get:ok'],
     },
   },
   'anonymous subject — read': {
     bridge: {
       result: { ok: { scopes: ALL_SCOPES, buzzBudget: null } },
-      reads: R(1, 1),
+      reads: { revocation: [['bki_char', 'anon']], row: [ROW], publishRequest: [] },
+      metrics: [],
+    },
+    shared: {
+      result: T('FORBIDDEN', 'shared storage is not enabled'),
+      reads: { revocation: [['bki_char', 'anon']], row: [ROW], publishRequest: [] },
+      metrics: [],
+    },
+    storage: {
+      result: { ok: { value: { value: null }, query: null } },
+      reads: { revocation: [['bki_char', 'anon']], row: [ROW], publishRequest: [] },
+      metrics: ['storage_ops:get:ok'],
+    },
+  },
+  'anonymous subject — read, flags base-enabled (the GA shape)': {
+    bridge: {
+      result: { ok: { scopes: ALL_SCOPES, buzzBudget: null } },
+      reads: { revocation: [['bki_char', 'anon']], row: [ROW], publishRequest: [] },
       metrics: [],
     },
     shared: {
@@ -1135,97 +1219,97 @@ const EXPECTED: Record<string, { bridge: Cell; shared: Cell; storage: Cell }> = 
           blockInstanceId: 'bki_char',
         },
       },
-      reads: R(1, 1),
+      reads: { revocation: [['bki_char', 'anon']], row: [ROW], publishRequest: [] },
       metrics: [],
     },
     storage: {
       result: { ok: { value: { value: null }, query: null } },
-      reads: R(1, 1),
+      reads: { revocation: [['bki_char', 'anon']], row: [ROW], publishRequest: [] },
       metrics: ['storage_ops:get:ok'],
     },
   },
-  'anonymous subject — write': {
+  'anonymous subject — write, flags base-enabled': {
     bridge: {
       result: { ok: { scopes: ALL_SCOPES, buzzBudget: null } },
-      reads: R(1, 1),
+      reads: { revocation: [['bki_char', 'anon']], row: [ROW], publishRequest: [] },
       metrics: [],
     },
     shared: {
       result: T('UNAUTHORIZED', 'shared storage writes require an authenticated viewer'),
-      reads: R(1, 1),
+      reads: { revocation: [['bki_char', 'anon']], row: [ROW], publishRequest: [] },
       metrics: [],
     },
     storage: {
       result: T('UNAUTHORIZED', 'storage requires an authenticated viewer'),
-      reads: R(1, 1),
+      reads: { revocation: [['bki_char', 'anon']], row: [ROW], publishRequest: [] },
       metrics: ['storage_ops:set:unauthorized'],
     },
   },
   'subject that will not hydrate': {
     bridge: {
       result: { ok: { scopes: ALL_SCOPES, buzzBudget: null } },
-      reads: R(1, 1),
+      reads: { revocation: [REV], row: [ROW], publishRequest: [] },
       metrics: [],
     },
     shared: {
       result: T('FORBIDDEN', 'token subject could not be resolved'),
-      reads: R(1, 1),
+      reads: { revocation: [REV], row: [ROW], publishRequest: [] },
       metrics: [],
     },
     storage: {
       result: T('UNAUTHORIZED', 'block token subject could not be resolved'),
-      reads: R(1, 1),
+      reads: { revocation: [REV], row: [ROW], publishRequest: [] },
       metrics: ['storage_ops:get:unauthorized'],
     },
   },
   'malformed sub (only reachable past a mocked verifier)': {
     bridge: {
       result: { error: 'ForbiddenError', message: 'malformed sub claim' },
-      reads: R(0, 0),
+      reads: { revocation: [], row: [], publishRequest: [] },
       metrics: [],
     },
     shared: {
       result: T('FORBIDDEN', 'invalid token subject'),
-      reads: R(1, 1),
+      reads: { revocation: [['bki_char', 'user:abc']], row: [ROW], publishRequest: [] },
       metrics: [],
     },
     storage: {
       result: { error: 'ForbiddenError', message: 'malformed sub claim' },
-      reads: R(1, 1),
+      reads: { revocation: [['bki_char', 'user:abc']], row: [ROW], publishRequest: [] },
       metrics: ['storage_ops:get:error'],
     },
   },
   'flag off (run flag / shared-storage flag)': {
     bridge: {
       result: { ok: { scopes: ALL_SCOPES, buzzBudget: null } },
-      reads: R(1, 1),
+      reads: { revocation: [REV], row: [ROW], publishRequest: [] },
       metrics: [],
     },
     shared: {
       result: T('FORBIDDEN', 'shared storage is not enabled'),
-      reads: R(1, 1),
+      reads: { revocation: [REV], row: [ROW], publishRequest: [] },
       metrics: [],
     },
     storage: {
       result: T('UNAUTHORIZED', 'Apps are not enabled'),
-      reads: R(1, 1),
+      reads: { revocation: [REV], row: [ROW], publishRequest: [] },
       metrics: ['storage_ops:get:unauthorized'],
     },
   },
   'shared write by an untrusted (new) account': {
     bridge: {
       result: { ok: { scopes: ALL_SCOPES, buzzBudget: null } },
-      reads: R(1, 1),
+      reads: { revocation: [REV], row: [ROW], publishRequest: [] },
       metrics: [],
     },
     shared: {
       result: T('FORBIDDEN', 'Your account is too new to contribute'),
-      reads: R(1, 1),
+      reads: { revocation: [REV], row: [ROW], publishRequest: [] },
       metrics: [],
     },
     storage: {
       result: { error: 'Error', message: 'PAST_RESOLVER: reached the apps-db pool' },
-      reads: R(1, 1),
+      reads: { revocation: [REV], row: [ROW], publishRequest: [] },
       metrics: ['storage_ops:set:error'],
     },
   },
@@ -1242,7 +1326,8 @@ describe('block-token resolvers — characterisation table', () => {
 
   for (const s of SCENARIOS) {
     it(`${s.name} [${s.op}]`, async () => {
-      expect(await cellsFor(s)).toEqual(EXPECTED[s.name]);
+      const got = await cellsFor(s);
+      expect(got).toEqual(EXPECTED[s.name]);
     });
   }
 });
@@ -1278,7 +1363,9 @@ describe('assertAppBlocksEnabledForTokenUser — characterisation', () => {
   for (const c of cases) {
     it(c.name, async () => {
       h.getSessionUserById.mockResolvedValue(c.subject);
-      h.isAppBlocksEnabled.mockResolvedValue(c.flag);
+      h.isAppBlocksEnabled.mockImplementation(
+        async (opts?: { user?: { id?: number } }) => opts?.user?.id === SUBJECT_ID && c.flag
+      );
       let got: unknown;
       try {
         got = { ok: await assertAppBlocksEnabledForTokenUser(SUBJECT_ID) };

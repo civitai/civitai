@@ -16,6 +16,7 @@ import type * as SharedRateLimit from '~/server/utils/shared-storage-rate-limit'
 import type * as BlockGoodsService from '~/server/services/blocks/block-goods.service';
 import type * as FeatureFlagsService from '~/server/services/feature-flags.service';
 import type * as ScopeGrantService from '~/server/services/blocks/scope-grant.service';
+import type * as GenerationService from '~/server/services/generation/generation.service';
 
 /**
  * CHARACTERISATION — every REST route wrapped in `withBlockScope`, today.
@@ -49,10 +50,11 @@ import type * as ScopeGrantService from '~/server/services/blocks/scope-grant.se
  *
  * Once the middleware admits a request the wrapped handler runs, and what it answers past
  * its own auth checks depends on services this file does not set up (the cell's job is the
- * auth path, not the feature). Those cells are pinned as `admitted: true` plus the limiter
- * calls and the response's STATUS CLASS only — never a body produced by an unconfigured
- * downstream mock. Cells refused before or by the middleware, and handler-level auth refusals
- * (the handler's own 401/405, a second token verification, a 429), are pinned verbatim.
+ * auth path, not the feature). Every cell is pinned verbatim — status, body, admitted, limiter
+ * calls and `reached` (the apps-db sentinel and the generation-resources lookup) — EXCEPT a
+ * downstream artefact (a 500/502, or a 503 `ok:false` money-path answer from an unconfigured
+ * network call), which is PASSED: admitted, limiter calls and `reached` pinned, body not, and
+ * the status must not be a refusal.
  */
 
 const h = vi.hoisted(() => ({
@@ -65,13 +67,24 @@ const h = vi.hoisted(() => ({
   limiter: { deny: false },
   limiterCalls: [] as string[],
   grantedScopes: [] as string[],
+  reached: [] as string[],
+  flagBase: { on: false },
 }));
+
+/**
+ * Per-user flag answers: on for the token subject only, the base value (default off) for a
+ * no-user evaluation. A flag evaluated for the wrong identity — or none — answers differently.
+ */
+function subjectFlag() {
+  return async (opts?: { user?: { id?: number } }) =>
+    opts?.user ? opts.user.id === 42 : h.flagBase.on;
+}
 
 vi.mock('~/server/services/app-blocks-flag', async (importOriginal) => ({
   ...(await importOriginal<typeof AppBlocksFlag>()),
   isAppBlocksRuntimeEnabled: async () => h.runtimeFlag.on,
-  isAppBlocksEnabled: async () => true,
-  isAppBlocksSharedStorageEnabled: async () => true,
+  isAppBlocksEnabled: subjectFlag(),
+  isAppBlocksSharedStorageEnabled: subjectFlag(),
   // Pinned OFF so the one route that consults the authoring capability answers the same
   // way on every machine, rather than whatever the flag client resolves to locally.
   isAppBlocksAuthorEnabled: async () => false,
@@ -120,6 +133,24 @@ vi.mock('~/server/services/feature-flags.service', async (importOriginal) => {
     },
   };
 });
+/**
+ * POSITIVE ANCHORS for requests that get past auth: the apps-db pool is a sentinel that records
+ * the visit and stops there, and `getResourceData` (generation-resources' only downstream call,
+ * which otherwise waits ~15 s on an unreachable dependency) records its ids and answers empty.
+ */
+vi.mock('~/server/db/appsDb', () => ({
+  requireAppsDb: () => {
+    h.reached.push('apps-db');
+    throw new Error('PAST_AUTH: reached the apps-db pool');
+  },
+}));
+vi.mock('~/server/services/generation/generation.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof GenerationService>()),
+  getResourceData: async (ids: number[]) => {
+    h.reached.push(`getResourceData(${JSON.stringify(ids)})`);
+    return [];
+  },
+}));
 vi.mock('~/server/services/blocks/scope-grant.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ScopeGrantService>()),
   getGrantedScopes: async () => new Set(h.grantedScopes),
@@ -444,17 +475,27 @@ const TRUSTED_SUBJECT = {
   muted: false,
 };
 
-async function mint(over: { scopes: string[]; anon?: boolean; buzzBudget?: number }) {
+async function mint(over: {
+  scopes: string[];
+  anon?: boolean;
+  buzzBudget?: number;
+  dev?: boolean;
+  privateRun?: boolean;
+}) {
   const { token } = await BlockTokenService.sign({
     userId: over.anon ? null : SUBJECT_ID,
     blockId: 'char-block',
     appId: 'app_char',
-    appBlockId: 'apb_char',
+    // Distinct from the approval row's id (`apb_row`), so a cell can tell which one a bucket
+    // or a read was keyed on.
+    appBlockId: 'apb_claim',
     blockInstanceId: 'bki_char',
     scopes: over.scopes,
     ctx: { modelId: 7, slotId: 'model.sidebar_top' },
     maxBrowsingLevel: 1,
     ...(over.buzzBudget === undefined ? { buzzBudget: 100 } : { buzzBudget: over.buzzBudget }),
+    ...(over.dev ? { dev: true } : {}),
+    ...(over.privateRun ? { privateRun: true, privateRunAudience: 'owner' } : {}),
   } as Parameters<typeof BlockTokenService.sign>[0]);
   return token;
 }
@@ -517,7 +558,14 @@ function makeRes() {
   return res;
 }
 
-type Response = { status: number; body: unknown; admitted: boolean; limiter: string[] };
+type Response = {
+  status: number;
+  body: unknown;
+  admitted: boolean;
+  limiter: string[];
+  /** Positive anchors reached past auth (apps-db pool sentinel, generation-resources lookup). */
+  reached: string[];
+};
 
 async function call(
   file: string,
@@ -537,6 +585,7 @@ async function call(
   } as unknown as NextApiRequest & { blockClaims?: unknown };
   const res = makeRes();
   h.limiterCalls.length = 0;
+  h.reached.length = 0;
   try {
     await handler(req, res as unknown as NextApiResponse);
   } catch (err) {
@@ -545,6 +594,7 @@ async function call(
       body: { thrown: (err as Error)?.constructor?.name, message: (err as Error)?.message },
       admitted: req.blockClaims !== undefined,
       limiter: [...h.limiterCalls],
+      reached: [...h.reached],
     };
   }
   return {
@@ -552,6 +602,7 @@ async function call(
     body: res.body,
     admitted: req.blockClaims !== undefined,
     limiter: [...h.limiterCalls],
+    reached: [...h.reached],
   };
 }
 
@@ -573,13 +624,14 @@ beforeEach(() => {
   h.runtimeFlag.on = true;
   h.limiter.deny = false;
   h.limiterCalls.length = 0;
+  h.flagBase.on = false;
   h.isRevoked.mockReset().mockResolvedValue(false);
   h.consentLookup.mockReset().mockResolvedValue({ kind: 'none' });
   h.getActiveDevTunnel.mockReset().mockResolvedValue(null);
   h.getSessionUserById.mockReset().mockResolvedValue({ ...TRUSTED_SUBJECT });
   h.getSessionFromBearerToken.mockReset().mockResolvedValue(null);
   dbMock.dbRead.appBlock.findUnique.mockReset().mockResolvedValue({
-    id: 'apb_char',
+    id: 'apb_row',
     status: 'approved',
   });
   dbMock.dbRead.oauthClient.findUnique.mockReset().mockResolvedValue({ userId: SUBJECT_ID });
@@ -604,7 +656,14 @@ type CellName =
   | 'anonymous subject'
   | 'ai:write:budgeted without a positive buzzBudget'
   | 'rate limited'
-  | 'hub OAuth token';
+  | 'hub OAuth token'
+  | 'missing approval row'
+  | 'approval row read throws'
+  | 'consent revoked for the route scope'
+  | 'consent marker unavailable'
+  | 'consent marker unavailable AND not approved'
+  | 'dev token, no approval row'
+  | 'private-run token, row not approved';
 
 const CELLS: Record<CellName, (file: string) => Promise<Response>> = {
   'no bearer': (f) => call(f, {}),
@@ -621,12 +680,12 @@ const CELLS: Record<CellName, (file: string) => Promise<Response>> = {
     return call(f, { authorization: `Bearer ${await mint({ scopes: scopesFor(f) })}` });
   },
   'not approved': async (f) => {
-    dbMock.dbRead.appBlock.findUnique.mockResolvedValue({ id: 'apb_char', status: 'suspended' });
+    dbMock.dbRead.appBlock.findUnique.mockResolvedValue({ id: 'apb_row', status: 'suspended' });
     return call(f, { authorization: `Bearer ${await mint({ scopes: scopesFor(f) })}` });
   },
   'revoked AND not approved': async (f) => {
     h.isRevoked.mockResolvedValue(true);
-    dbMock.dbRead.appBlock.findUnique.mockResolvedValue({ id: 'apb_char', status: 'suspended' });
+    dbMock.dbRead.appBlock.findUnique.mockResolvedValue({ id: 'apb_row', status: 'suspended' });
     return call(f, { authorization: `Bearer ${await mint({ scopes: scopesFor(f) })}` });
   },
   'missing scope': async (f) => call(f, { authorization: `Bearer ${await mint({ scopes: [] })}` }),
@@ -634,8 +693,12 @@ const CELLS: Record<CellName, (file: string) => Promise<Response>> = {
     call(f, {
       authorization: `Bearer ${await mint({ scopes: [...scopesFor(f), 'made:up:scope'] })}`,
     }),
-  'anonymous subject': async (f) =>
-    call(f, { authorization: `Bearer ${await mint({ scopes: scopesFor(f), anon: true })}` }),
+  // Flags base-enabled (the GA shape) so an anon subject passes the flag and the cell pins the
+  // middleware's and the route's own anonymous handling.
+  'anonymous subject': async (f) => {
+    h.flagBase.on = true;
+    return call(f, { authorization: `Bearer ${await mint({ scopes: scopesFor(f), anon: true })}` });
+  },
   'ai:write:budgeted without a positive buzzBudget': async (f) =>
     call(f, { authorization: `Bearer ${await mint({ scopes: scopesFor(f), buzzBudget: 0 })}` }),
   'rate limited': async (f) => {
@@ -651,14 +714,61 @@ const CELLS: Record<CellName, (file: string) => Promise<Response>> = {
       apiKeyId: 5,
     });
     dbMock.dbRead.appBlock.findFirst.mockResolvedValue({
-      id: 'apb_char',
+      id: 'apb_hubrow',
       blockId: 'char-block',
       manifest: { scopes: scopesFor(f) },
       approvedScopes: scopesFor(f),
     });
     return call(f, { authorization: 'Bearer hub-oauth-access-token' });
   },
+  // ── the approval verdicts REST treats differently from the bridge ──
+  'missing approval row': async (f) => {
+    dbMock.dbRead.appBlock.findUnique.mockResolvedValue(null);
+    return call(f, { authorization: `Bearer ${await mint({ scopes: scopesFor(f) })}` });
+  },
+  'approval row read throws': async (f) => {
+    dbMock.dbRead.appBlock.findUnique.mockRejectedValue(new Error('replica unreachable'));
+    return call(f, { authorization: `Bearer ${await mint({ scopes: scopesFor(f) })}` });
+  },
+  // ── consent: the token also carries a consent-GATED scope, so the marker is consulted on
+  // every scoped route; whether the ROUTE's own scope is revokable decides the outcome ──
+  'consent revoked for the route scope': async (f) => {
+    h.consentLookup.mockResolvedValue({
+      kind: 'revoked',
+      scopes: new Set([...scopesFor(f), CONSENT_GATED]),
+    });
+    return call(f, { authorization: `Bearer ${await mint({ scopes: consentScopes(f) })}` });
+  },
+  'consent marker unavailable': async (f) => {
+    h.consentLookup.mockResolvedValue({ kind: 'unavailable' });
+    return call(f, { authorization: `Bearer ${await mint({ scopes: consentScopes(f) })}` });
+  },
+  // Pins REST's ORDER: the consent read is answered BEFORE the approval row.
+  'consent marker unavailable AND not approved': async (f) => {
+    h.consentLookup.mockResolvedValue({ kind: 'unavailable' });
+    dbMock.dbRead.appBlock.findUnique.mockResolvedValue({ id: 'apb_row', status: 'suspended' });
+    return call(f, { authorization: `Bearer ${await mint({ scopes: consentScopes(f) })}` });
+  },
+  // ── the exempt token populations ──
+  'dev token, no approval row': async (f) => {
+    dbMock.dbRead.appBlock.findUnique.mockResolvedValue(null);
+    return call(f, {
+      authorization: `Bearer ${await mint({ scopes: scopesFor(f), dev: true })}`,
+    });
+  },
+  'private-run token, row not approved': async (f) => {
+    dbMock.dbRead.appBlock.findUnique.mockResolvedValue({ id: 'apb_row', status: 'suspended' });
+    return call(f, {
+      authorization: `Bearer ${await mint({ scopes: scopesFor(f), privateRun: true })}`,
+    });
+  },
 };
+
+/** A consent-gated scope (not in the exempt set), carried so the marker is consulted. */
+const CONSENT_GATED = 'buzz:read:self';
+function consentScopes(file: string): string[] {
+  return [...new Set([...scopesFor(file), CONSENT_GATED])];
+}
 
 function scopesFor(file: string): string[] {
   const s = ROUTES[file].scope;
@@ -667,28 +777,31 @@ function scopesFor(file: string): string[] {
 
 // ── expectations ─────────────────────────────────────────────────────────────────────────
 
-/** A response pinned verbatim: status, body, whether the middleware admitted it, limiter calls. */
+/**
+ * A response pinned verbatim: status, body, whether the middleware admitted it, limiter calls,
+ * and the positive anchors reached.
+ */
 type Exact = { kind: 'exact' } & Response;
 /**
- * Auth did NOT refuse: the handler answered with something past its own auth checks (a 2xx, a
- * 400 on the feature's own validation, a 404 for an absent fixture row, or a 5xx from a
- * downstream service this file does not configure). Pinned: whether the middleware admitted
- * it, the limiter calls it made, and that the status is NOT one of the refusal statuses
- * (401/403/405/429) — so a change that starts refusing here goes red.
+ * The handler answered past auth with a DOWNSTREAM ARTEFACT — a 500/502, or a 503 `ok:false`
+ * money-path answer, produced by a network call or service this file does not configure. Its
+ * body is not pinned. Pinned instead: whether the middleware admitted it, the limiter calls,
+ * the positive anchors reached, and that the status is NOT a refusal (401/403/405/429).
  */
-type Passed = { kind: 'passed'; admitted: boolean; limiter: string[] };
+type Passed = { kind: 'passed'; admitted: boolean; limiter: string[]; reached: string[] };
 
-const X = (status: number, body: unknown, admitted: boolean, limiter: string[]): Exact => ({
-  kind: 'exact',
-  status,
-  body,
-  admitted,
-  limiter,
-});
-const PASSED = (admitted: boolean, limiter: string[]): Passed => ({
+const X = (
+  status: number,
+  body: unknown,
+  admitted: boolean,
+  limiter: string[],
+  reached: string[]
+): Exact => ({ kind: 'exact', status, body, admitted, limiter, reached });
+const PASSED = (admitted: boolean, limiter: string[], reached: string[]): Passed => ({
   kind: 'passed',
   admitted,
   limiter,
+  reached,
 });
 const REFUSAL_STATUSES = [401, 403, 405, 429];
 
@@ -712,721 +825,1630 @@ const REFUSAL_STATUSES = [401, 403, 405, 429];
  *     JWT (app-storage, shared-storage, workflows, user-checkpoint) then refuse it with their
  *     own `invalid block token`. The hub claims use the `page_<appBlockId>` instance id, which
  *     is why the limiter keys differ in that row.
+ *   - `missing approval row` / `dev token, no approval row`: the middleware SERVES (admitted —
+ *     REST's deliberate difference from the bridge); app-storage and shared-storage routes then
+ *     refuse in their own second resolver (`app block not found`).
+ *   - `approval row read throws`: 503 `app block status unavailable`, except on the five routes
+ *     declaring `onApprovalLookupFailure: 'serve'` (generation-resources, images, models, tools,
+ *     models/[id]), which are admitted.
+ *   - `consent …`: the token carries a consent-gated scope, so the marker is consulted on every
+ *     scoped route. A revoked/unavailable marker refuses only routes whose OWN scope is
+ *     revokable (403 `consent_revoked` / 503 `permission_state_unavailable`); routes whose
+ *     scope is consent-exempt are served with the gated scope stripped.
+ *   - `consent marker unavailable AND not approved`: the 503 wins on revokable-scope routes —
+ *     REST answers the consent read BEFORE the approval row (the bridge does the opposite).
+ *   - `private-run token, row not approved`: admitted by the middleware; the storage and shared
+ *     resolvers then refuse it (`app block is not approved`).
  *   - `rate limited`: the limiter is stubbed to refuse. `poll` and `cancel` answer a
  *     NON-TERMINAL 200 snapshot by design instead of a 429.
  */
 const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
   'src/pages/api/v1/blocks/app-storage/delete.ts': {
-    'no bearer': X(401, { error: 'Block token required' }, false, []),
-    'wrong method, no bearer': X(405, { error: 'Method not allowed' }, false, []),
-    'non-JWT bearer (OAuth tokens off)': X(401, { error: 'Block token required' }, false, []),
-    'runtime flag off, valid JWT': X(401, { error: 'Block token required' }, false, []),
-    'bad JWT': X(401, { error: 'invalid block token' }, false, []),
-    revoked: X(403, { error: 'block instance revoked', code: 'instance_revoked' }, false, []),
+    'no bearer': X(401, { error: 'Block token required' }, false, [], []),
+    'wrong method, no bearer': X(405, { error: 'Method not allowed' }, false, [], []),
+    'non-JWT bearer (OAuth tokens off)': X(401, { error: 'Block token required' }, false, [], []),
+    'runtime flag off, valid JWT': X(401, { error: 'Block token required' }, false, [], []),
+    'bad JWT': X(401, { error: 'invalid block token' }, false, [], []),
+    revoked: X(403, { error: 'block instance revoked', code: 'instance_revoked' }, false, [], []),
     'not approved': X(
       403,
       { error: 'app block is not approved', code: 'app_not_approved' },
       false,
+      [],
       []
     ),
     'revoked AND not approved': X(
       403,
       { error: 'block instance revoked', code: 'instance_revoked' },
       false,
+      [],
       []
     ),
     'missing scope': X(
       403,
       { error: 'missing required scope: apps:storage:write', code: 'insufficient_scope' },
       false,
+      [],
       []
     ),
     'token carries an unknown scope': X(
       403,
       { error: 'unknown scope: made:up:scope', code: 'context_binding' },
       false,
+      [],
       []
     ),
     'anonymous subject': X(
       403,
       { error: 'apps:storage:write requires authenticated subject', code: 'context_binding' },
       false,
+      [],
       []
     ),
-    'ai:write:budgeted without a positive buzzBudget': PASSED(true, []),
-    'rate limited': PASSED(true, []),
-    'hub OAuth token': X(401, { message: 'invalid block token' }, true, []),
+    'ai:write:budgeted without a positive buzzBudget': PASSED(true, [], ['apps-db']),
+    'rate limited': PASSED(true, [], ['apps-db']),
+    'hub OAuth token': X(401, { message: 'invalid block token' }, true, [], []),
+    'missing approval row': X(404, { message: 'app block not found' }, true, [], []),
+    'approval row read throws': X(503, { error: 'app block status unavailable' }, false, [], []),
+    'consent revoked for the route scope': PASSED(true, [], ['apps-db']),
+    'consent marker unavailable': PASSED(true, [], ['apps-db']),
+    'consent marker unavailable AND not approved': X(
+      403,
+      { error: 'app block is not approved', code: 'app_not_approved' },
+      false,
+      [],
+      []
+    ),
+    'dev token, no approval row': X(404, { message: 'app block not found' }, true, [], []),
+    'private-run token, row not approved': X(
+      403,
+      { message: 'app block is not approved' },
+      true,
+      [],
+      []
+    ),
   },
   'src/pages/api/v1/blocks/app-storage/get.ts': {
-    'no bearer': X(401, { error: 'Block token required' }, false, []),
-    'wrong method, no bearer': X(405, { error: 'Method not allowed' }, false, []),
-    'non-JWT bearer (OAuth tokens off)': X(401, { error: 'Block token required' }, false, []),
-    'runtime flag off, valid JWT': X(401, { error: 'Block token required' }, false, []),
-    'bad JWT': X(401, { error: 'invalid block token' }, false, []),
-    revoked: X(403, { error: 'block instance revoked', code: 'instance_revoked' }, false, []),
+    'no bearer': X(401, { error: 'Block token required' }, false, [], []),
+    'wrong method, no bearer': X(405, { error: 'Method not allowed' }, false, [], []),
+    'non-JWT bearer (OAuth tokens off)': X(401, { error: 'Block token required' }, false, [], []),
+    'runtime flag off, valid JWT': X(401, { error: 'Block token required' }, false, [], []),
+    'bad JWT': X(401, { error: 'invalid block token' }, false, [], []),
+    revoked: X(403, { error: 'block instance revoked', code: 'instance_revoked' }, false, [], []),
     'not approved': X(
       403,
       { error: 'app block is not approved', code: 'app_not_approved' },
       false,
+      [],
       []
     ),
     'revoked AND not approved': X(
       403,
       { error: 'block instance revoked', code: 'instance_revoked' },
       false,
+      [],
       []
     ),
     'missing scope': X(
       403,
       { error: 'missing required scope: apps:storage:read', code: 'insufficient_scope' },
       false,
+      [],
       []
     ),
     'token carries an unknown scope': X(
       403,
       { error: 'unknown scope: made:up:scope', code: 'context_binding' },
       false,
+      [],
       []
     ),
     'anonymous subject': X(
       403,
       { error: 'apps:storage:read requires authenticated subject', code: 'context_binding' },
       false,
+      [],
       []
     ),
-    'ai:write:budgeted without a positive buzzBudget': PASSED(true, []),
-    'rate limited': PASSED(true, []),
-    'hub OAuth token': X(401, { message: 'invalid block token' }, true, []),
+    'ai:write:budgeted without a positive buzzBudget': PASSED(true, [], ['apps-db']),
+    'rate limited': PASSED(true, [], ['apps-db']),
+    'hub OAuth token': X(401, { message: 'invalid block token' }, true, [], []),
+    'missing approval row': X(404, { message: 'app block not found' }, true, [], []),
+    'approval row read throws': X(503, { error: 'app block status unavailable' }, false, [], []),
+    'consent revoked for the route scope': PASSED(true, [], ['apps-db']),
+    'consent marker unavailable': PASSED(true, [], ['apps-db']),
+    'consent marker unavailable AND not approved': X(
+      403,
+      { error: 'app block is not approved', code: 'app_not_approved' },
+      false,
+      [],
+      []
+    ),
+    'dev token, no approval row': X(404, { message: 'app block not found' }, true, [], []),
+    'private-run token, row not approved': X(
+      403,
+      { message: 'app block is not approved' },
+      true,
+      [],
+      []
+    ),
   },
   'src/pages/api/v1/blocks/app-storage/list.ts': {
-    'no bearer': X(401, { error: 'Block token required' }, false, []),
-    'wrong method, no bearer': X(405, { error: 'Method not allowed' }, false, []),
-    'non-JWT bearer (OAuth tokens off)': X(401, { error: 'Block token required' }, false, []),
-    'runtime flag off, valid JWT': X(401, { error: 'Block token required' }, false, []),
-    'bad JWT': X(401, { error: 'invalid block token' }, false, []),
-    revoked: X(403, { error: 'block instance revoked', code: 'instance_revoked' }, false, []),
+    'no bearer': X(401, { error: 'Block token required' }, false, [], []),
+    'wrong method, no bearer': X(405, { error: 'Method not allowed' }, false, [], []),
+    'non-JWT bearer (OAuth tokens off)': X(401, { error: 'Block token required' }, false, [], []),
+    'runtime flag off, valid JWT': X(401, { error: 'Block token required' }, false, [], []),
+    'bad JWT': X(401, { error: 'invalid block token' }, false, [], []),
+    revoked: X(403, { error: 'block instance revoked', code: 'instance_revoked' }, false, [], []),
     'not approved': X(
       403,
       { error: 'app block is not approved', code: 'app_not_approved' },
       false,
+      [],
       []
     ),
     'revoked AND not approved': X(
       403,
       { error: 'block instance revoked', code: 'instance_revoked' },
       false,
+      [],
       []
     ),
     'missing scope': X(
       403,
       { error: 'missing required scope: apps:storage:read', code: 'insufficient_scope' },
       false,
+      [],
       []
     ),
     'token carries an unknown scope': X(
       403,
       { error: 'unknown scope: made:up:scope', code: 'context_binding' },
       false,
+      [],
       []
     ),
     'anonymous subject': X(
       403,
       { error: 'apps:storage:read requires authenticated subject', code: 'context_binding' },
       false,
+      [],
       []
     ),
-    'ai:write:budgeted without a positive buzzBudget': PASSED(true, []),
-    'rate limited': PASSED(true, []),
-    'hub OAuth token': X(401, { message: 'invalid block token' }, true, []),
+    'ai:write:budgeted without a positive buzzBudget': PASSED(true, [], ['apps-db']),
+    'rate limited': PASSED(true, [], ['apps-db']),
+    'hub OAuth token': X(401, { message: 'invalid block token' }, true, [], []),
+    'missing approval row': X(404, { message: 'app block not found' }, true, [], []),
+    'approval row read throws': X(503, { error: 'app block status unavailable' }, false, [], []),
+    'consent revoked for the route scope': PASSED(true, [], ['apps-db']),
+    'consent marker unavailable': PASSED(true, [], ['apps-db']),
+    'consent marker unavailable AND not approved': X(
+      403,
+      { error: 'app block is not approved', code: 'app_not_approved' },
+      false,
+      [],
+      []
+    ),
+    'dev token, no approval row': X(404, { message: 'app block not found' }, true, [], []),
+    'private-run token, row not approved': X(
+      403,
+      { message: 'app block is not approved' },
+      true,
+      [],
+      []
+    ),
   },
   'src/pages/api/v1/blocks/app-storage/quota.ts': {
-    'no bearer': X(401, { error: 'Block token required' }, false, []),
-    'wrong method, no bearer': X(405, { error: 'Method not allowed' }, false, []),
-    'non-JWT bearer (OAuth tokens off)': X(401, { error: 'Block token required' }, false, []),
-    'runtime flag off, valid JWT': X(401, { error: 'Block token required' }, false, []),
-    'bad JWT': X(401, { error: 'invalid block token' }, false, []),
-    revoked: X(403, { error: 'block instance revoked', code: 'instance_revoked' }, false, []),
+    'no bearer': X(401, { error: 'Block token required' }, false, [], []),
+    'wrong method, no bearer': X(405, { error: 'Method not allowed' }, false, [], []),
+    'non-JWT bearer (OAuth tokens off)': X(401, { error: 'Block token required' }, false, [], []),
+    'runtime flag off, valid JWT': X(401, { error: 'Block token required' }, false, [], []),
+    'bad JWT': X(401, { error: 'invalid block token' }, false, [], []),
+    revoked: X(403, { error: 'block instance revoked', code: 'instance_revoked' }, false, [], []),
     'not approved': X(
       403,
       { error: 'app block is not approved', code: 'app_not_approved' },
       false,
+      [],
       []
     ),
     'revoked AND not approved': X(
       403,
       { error: 'block instance revoked', code: 'instance_revoked' },
       false,
+      [],
       []
     ),
     'missing scope': X(
       403,
       { error: 'missing required scope: apps:storage:read', code: 'insufficient_scope' },
       false,
+      [],
       []
     ),
     'token carries an unknown scope': X(
       403,
       { error: 'unknown scope: made:up:scope', code: 'context_binding' },
       false,
+      [],
       []
     ),
     'anonymous subject': X(
       403,
       { error: 'apps:storage:read requires authenticated subject', code: 'context_binding' },
       false,
+      [],
       []
     ),
-    'ai:write:budgeted without a positive buzzBudget': PASSED(true, []),
-    'rate limited': PASSED(true, []),
-    'hub OAuth token': X(401, { message: 'invalid block token' }, true, []),
+    'ai:write:budgeted without a positive buzzBudget': PASSED(true, [], ['apps-db']),
+    'rate limited': PASSED(true, [], ['apps-db']),
+    'hub OAuth token': X(401, { message: 'invalid block token' }, true, [], []),
+    'missing approval row': X(404, { message: 'app block not found' }, true, [], []),
+    'approval row read throws': X(503, { error: 'app block status unavailable' }, false, [], []),
+    'consent revoked for the route scope': PASSED(true, [], ['apps-db']),
+    'consent marker unavailable': PASSED(true, [], ['apps-db']),
+    'consent marker unavailable AND not approved': X(
+      403,
+      { error: 'app block is not approved', code: 'app_not_approved' },
+      false,
+      [],
+      []
+    ),
+    'dev token, no approval row': X(404, { message: 'app block not found' }, true, [], []),
+    'private-run token, row not approved': X(
+      403,
+      { message: 'app block is not approved' },
+      true,
+      [],
+      []
+    ),
   },
   'src/pages/api/v1/blocks/app-storage/set.ts': {
-    'no bearer': X(401, { error: 'Block token required' }, false, []),
-    'wrong method, no bearer': X(405, { error: 'Method not allowed' }, false, []),
-    'non-JWT bearer (OAuth tokens off)': X(401, { error: 'Block token required' }, false, []),
-    'runtime flag off, valid JWT': X(401, { error: 'Block token required' }, false, []),
-    'bad JWT': X(401, { error: 'invalid block token' }, false, []),
-    revoked: X(403, { error: 'block instance revoked', code: 'instance_revoked' }, false, []),
+    'no bearer': X(401, { error: 'Block token required' }, false, [], []),
+    'wrong method, no bearer': X(405, { error: 'Method not allowed' }, false, [], []),
+    'non-JWT bearer (OAuth tokens off)': X(401, { error: 'Block token required' }, false, [], []),
+    'runtime flag off, valid JWT': X(401, { error: 'Block token required' }, false, [], []),
+    'bad JWT': X(401, { error: 'invalid block token' }, false, [], []),
+    revoked: X(403, { error: 'block instance revoked', code: 'instance_revoked' }, false, [], []),
     'not approved': X(
       403,
       { error: 'app block is not approved', code: 'app_not_approved' },
       false,
+      [],
       []
     ),
     'revoked AND not approved': X(
       403,
       { error: 'block instance revoked', code: 'instance_revoked' },
       false,
+      [],
       []
     ),
     'missing scope': X(
       403,
       { error: 'missing required scope: apps:storage:write', code: 'insufficient_scope' },
       false,
+      [],
       []
     ),
     'token carries an unknown scope': X(
       403,
       { error: 'unknown scope: made:up:scope', code: 'context_binding' },
       false,
+      [],
       []
     ),
     'anonymous subject': X(
       403,
       { error: 'apps:storage:write requires authenticated subject', code: 'context_binding' },
       false,
+      [],
       []
     ),
-    'ai:write:budgeted without a positive buzzBudget': PASSED(true, []),
-    'rate limited': PASSED(true, []),
-    'hub OAuth token': X(401, { message: 'invalid block token' }, true, []),
+    'ai:write:budgeted without a positive buzzBudget': PASSED(true, [], ['apps-db']),
+    'rate limited': PASSED(true, [], ['apps-db']),
+    'hub OAuth token': X(401, { message: 'invalid block token' }, true, [], []),
+    'missing approval row': X(404, { message: 'app block not found' }, true, [], []),
+    'approval row read throws': X(503, { error: 'app block status unavailable' }, false, [], []),
+    'consent revoked for the route scope': PASSED(true, [], ['apps-db']),
+    'consent marker unavailable': PASSED(true, [], ['apps-db']),
+    'consent marker unavailable AND not approved': X(
+      403,
+      { error: 'app block is not approved', code: 'app_not_approved' },
+      false,
+      [],
+      []
+    ),
+    'dev token, no approval row': X(404, { message: 'app block not found' }, true, [], []),
+    'private-run token, row not approved': X(
+      403,
+      { message: 'app block is not approved' },
+      true,
+      [],
+      []
+    ),
   },
   'src/pages/api/v1/blocks/buzz.ts': {
-    'no bearer': X(401, { error: 'Block token required' }, false, []),
-    'wrong method, no bearer': X(405, { error: 'Method not allowed' }, false, []),
-    'non-JWT bearer (OAuth tokens off)': X(401, { error: 'Block token required' }, false, []),
-    'runtime flag off, valid JWT': X(401, { error: 'Block token required' }, false, []),
-    'bad JWT': X(401, { error: 'invalid block token' }, false, []),
-    revoked: X(403, { error: 'block instance revoked', code: 'instance_revoked' }, false, []),
+    'no bearer': X(401, { error: 'Block token required' }, false, [], []),
+    'wrong method, no bearer': X(405, { error: 'Method not allowed' }, false, [], []),
+    'non-JWT bearer (OAuth tokens off)': X(401, { error: 'Block token required' }, false, [], []),
+    'runtime flag off, valid JWT': X(401, { error: 'Block token required' }, false, [], []),
+    'bad JWT': X(401, { error: 'invalid block token' }, false, [], []),
+    revoked: X(403, { error: 'block instance revoked', code: 'instance_revoked' }, false, [], []),
     'not approved': X(
       403,
       { error: 'app block is not approved', code: 'app_not_approved' },
       false,
+      [],
       []
     ),
     'revoked AND not approved': X(
       403,
       { error: 'block instance revoked', code: 'instance_revoked' },
       false,
+      [],
       []
     ),
     'missing scope': X(
       403,
       { error: 'missing required scope: buzz:read:self', code: 'insufficient_scope' },
       false,
+      [],
       []
     ),
     'token carries an unknown scope': X(
       403,
       { error: 'unknown scope: made:up:scope', code: 'context_binding' },
       false,
+      [],
       []
     ),
     'anonymous subject': X(
       403,
       { error: 'buzz:read:self requires authenticated subject', code: 'context_binding' },
       false,
+      [],
       []
     ),
-    'ai:write:budgeted without a positive buzzBudget': PASSED(true, []),
-    'rate limited': PASSED(true, []),
-    'hub OAuth token': PASSED(true, []),
+    'ai:write:budgeted without a positive buzzBudget': PASSED(true, [], []),
+    'rate limited': PASSED(true, [], []),
+    'hub OAuth token': PASSED(true, [], []),
+    'missing approval row': PASSED(true, [], []),
+    'approval row read throws': X(503, { error: 'app block status unavailable' }, false, [], []),
+    'consent revoked for the route scope': X(
+      403,
+      { error: 'consent revoked for scope: buzz:read:self', code: 'consent_revoked' },
+      false,
+      [],
+      []
+    ),
+    'consent marker unavailable': X(
+      503,
+      {
+        error: 'permission state is temporarily unavailable — retry shortly',
+        code: 'permission_state_unavailable',
+      },
+      false,
+      [],
+      []
+    ),
+    'consent marker unavailable AND not approved': X(
+      503,
+      {
+        error: 'permission state is temporarily unavailable — retry shortly',
+        code: 'permission_state_unavailable',
+      },
+      false,
+      [],
+      []
+    ),
+    'dev token, no approval row': PASSED(true, [], []),
+    'private-run token, row not approved': PASSED(true, [], []),
   },
   'src/pages/api/v1/blocks/collections/[id]/follow.ts': {
-    'no bearer': X(401, { error: 'Block token required' }, false, []),
-    'wrong method, no bearer': X(405, { error: 'Method not allowed' }, false, []),
-    'non-JWT bearer (OAuth tokens off)': X(401, { error: 'Block token required' }, false, []),
-    'runtime flag off, valid JWT': X(401, { error: 'Block token required' }, false, []),
-    'bad JWT': X(401, { error: 'invalid block token' }, false, []),
-    revoked: X(403, { error: 'block instance revoked', code: 'instance_revoked' }, false, []),
+    'no bearer': X(401, { error: 'Block token required' }, false, [], []),
+    'wrong method, no bearer': X(405, { error: 'Method not allowed' }, false, [], []),
+    'non-JWT bearer (OAuth tokens off)': X(401, { error: 'Block token required' }, false, [], []),
+    'runtime flag off, valid JWT': X(401, { error: 'Block token required' }, false, [], []),
+    'bad JWT': X(401, { error: 'invalid block token' }, false, [], []),
+    revoked: X(403, { error: 'block instance revoked', code: 'instance_revoked' }, false, [], []),
     'not approved': X(
       403,
       { error: 'app block is not approved', code: 'app_not_approved' },
       false,
+      [],
       []
     ),
     'revoked AND not approved': X(
       403,
       { error: 'block instance revoked', code: 'instance_revoked' },
       false,
+      [],
       []
     ),
     'missing scope': X(
       403,
       { error: 'missing required scope: collections:write:self', code: 'insufficient_scope' },
       false,
+      [],
       []
     ),
     'token carries an unknown scope': X(
       403,
       { error: 'unknown scope: made:up:scope', code: 'context_binding' },
       false,
+      [],
       []
     ),
     'anonymous subject': X(
       403,
       { error: 'collections:write:self requires authenticated subject', code: 'context_binding' },
       false,
+      [],
       []
     ),
     'ai:write:budgeted without a positive buzzBudget': X(
       401,
       { error: 'You do not have permission to add contributors to this collection.' },
       true,
+      [],
       []
     ),
     'rate limited': X(
       401,
       { error: 'You do not have permission to add contributors to this collection.' },
       true,
+      [],
       []
     ),
     'hub OAuth token': X(
       401,
       { error: 'You do not have permission to add contributors to this collection.' },
       true,
+      [],
+      []
+    ),
+    'missing approval row': X(
+      401,
+      { error: 'You do not have permission to add contributors to this collection.' },
+      true,
+      [],
+      []
+    ),
+    'approval row read throws': X(503, { error: 'app block status unavailable' }, false, [], []),
+    'consent revoked for the route scope': X(
+      401,
+      { error: 'You do not have permission to add contributors to this collection.' },
+      true,
+      [],
+      []
+    ),
+    'consent marker unavailable': X(
+      401,
+      { error: 'You do not have permission to add contributors to this collection.' },
+      true,
+      [],
+      []
+    ),
+    'consent marker unavailable AND not approved': X(
+      403,
+      { error: 'app block is not approved', code: 'app_not_approved' },
+      false,
+      [],
+      []
+    ),
+    'dev token, no approval row': X(
+      401,
+      { error: 'You do not have permission to add contributors to this collection.' },
+      true,
+      [],
+      []
+    ),
+    'private-run token, row not approved': X(
+      401,
+      { error: 'You do not have permission to add contributors to this collection.' },
+      true,
+      [],
       []
     ),
   },
   'src/pages/api/v1/blocks/collections/[id]/index.ts': {
-    'no bearer': X(401, { error: 'Block token required' }, false, []),
-    'wrong method, no bearer': X(405, { error: 'Method not allowed' }, false, []),
-    'non-JWT bearer (OAuth tokens off)': X(401, { error: 'Block token required' }, false, []),
-    'runtime flag off, valid JWT': X(401, { error: 'Block token required' }, false, []),
-    'bad JWT': X(401, { error: 'invalid block token' }, false, []),
-    revoked: X(403, { error: 'block instance revoked', code: 'instance_revoked' }, false, []),
+    'no bearer': X(401, { error: 'Block token required' }, false, [], []),
+    'wrong method, no bearer': X(405, { error: 'Method not allowed' }, false, [], []),
+    'non-JWT bearer (OAuth tokens off)': X(401, { error: 'Block token required' }, false, [], []),
+    'runtime flag off, valid JWT': X(401, { error: 'Block token required' }, false, [], []),
+    'bad JWT': X(401, { error: 'invalid block token' }, false, [], []),
+    revoked: X(403, { error: 'block instance revoked', code: 'instance_revoked' }, false, [], []),
     'not approved': X(
       403,
       { error: 'app block is not approved', code: 'app_not_approved' },
       false,
+      [],
       []
     ),
     'revoked AND not approved': X(
       403,
       { error: 'block instance revoked', code: 'instance_revoked' },
       false,
+      [],
       []
     ),
     'missing scope': X(
       403,
       { error: 'missing required scope: collections:read:self', code: 'insufficient_scope' },
       false,
+      [],
       []
     ),
     'token carries an unknown scope': X(
       403,
       { error: 'unknown scope: made:up:scope', code: 'context_binding' },
       false,
+      [],
       []
     ),
     'anonymous subject': X(
       403,
       { error: 'collections:read:self requires authenticated subject', code: 'context_binding' },
       false,
+      [],
       []
     ),
-    'ai:write:budgeted without a positive buzzBudget': PASSED(true, [
-      'checkBlockCatalogRateLimit("bki_char")',
-    ]),
-    'rate limited': X(429, { error: 'Rate limit exceeded, please retry shortly.' }, true, [
-      'checkBlockCatalogRateLimit("bki_char")',
-    ]),
-    'hub OAuth token': PASSED(true, ['checkBlockCatalogRateLimit("page_apb_char")']),
+    'ai:write:budgeted without a positive buzzBudget': X(
+      404,
+      { error: 'Collection not found' },
+      true,
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      []
+    ),
+    'rate limited': X(
+      429,
+      { error: 'Rate limit exceeded, please retry shortly.' },
+      true,
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      []
+    ),
+    'hub OAuth token': X(
+      404,
+      { error: 'Collection not found' },
+      true,
+      ['checkBlockCatalogRateLimit("page_apb_hubrow")'],
+      []
+    ),
+    'missing approval row': X(
+      404,
+      { error: 'Collection not found' },
+      true,
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      []
+    ),
+    'approval row read throws': X(503, { error: 'app block status unavailable' }, false, [], []),
+    'consent revoked for the route scope': X(
+      404,
+      { error: 'Collection not found' },
+      true,
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      []
+    ),
+    'consent marker unavailable': X(
+      404,
+      { error: 'Collection not found' },
+      true,
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      []
+    ),
+    'consent marker unavailable AND not approved': X(
+      403,
+      { error: 'app block is not approved', code: 'app_not_approved' },
+      false,
+      [],
+      []
+    ),
+    'dev token, no approval row': X(
+      404,
+      { error: 'Collection not found' },
+      true,
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      []
+    ),
+    'private-run token, row not approved': X(
+      404,
+      { error: 'Collection not found' },
+      true,
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      []
+    ),
   },
   'src/pages/api/v1/blocks/collections/index.ts': {
-    'no bearer': X(401, { error: 'Block token required' }, false, []),
-    'wrong method, no bearer': X(405, { error: 'Method not allowed' }, false, []),
-    'non-JWT bearer (OAuth tokens off)': X(401, { error: 'Block token required' }, false, []),
-    'runtime flag off, valid JWT': X(401, { error: 'Block token required' }, false, []),
-    'bad JWT': X(401, { error: 'invalid block token' }, false, []),
-    revoked: X(403, { error: 'block instance revoked', code: 'instance_revoked' }, false, []),
+    'no bearer': X(401, { error: 'Block token required' }, false, [], []),
+    'wrong method, no bearer': X(405, { error: 'Method not allowed' }, false, [], []),
+    'non-JWT bearer (OAuth tokens off)': X(401, { error: 'Block token required' }, false, [], []),
+    'runtime flag off, valid JWT': X(401, { error: 'Block token required' }, false, [], []),
+    'bad JWT': X(401, { error: 'invalid block token' }, false, [], []),
+    revoked: X(403, { error: 'block instance revoked', code: 'instance_revoked' }, false, [], []),
     'not approved': X(
       403,
       { error: 'app block is not approved', code: 'app_not_approved' },
       false,
+      [],
       []
     ),
     'revoked AND not approved': X(
       403,
       { error: 'block instance revoked', code: 'instance_revoked' },
       false,
+      [],
       []
     ),
     'missing scope': X(
       403,
       { error: 'missing required scope: collections:read:self', code: 'insufficient_scope' },
       false,
+      [],
       []
     ),
     'token carries an unknown scope': X(
       403,
       { error: 'unknown scope: made:up:scope', code: 'context_binding' },
       false,
+      [],
       []
     ),
     'anonymous subject': X(
       403,
       { error: 'collections:read:self requires authenticated subject', code: 'context_binding' },
       false,
+      [],
       []
     ),
-    'ai:write:budgeted without a positive buzzBudget': PASSED(true, [
-      'checkBlockCatalogRateLimit("bki_char")',
-    ]),
-    'rate limited': X(429, { error: 'Rate limit exceeded, please retry shortly.' }, true, [
-      'checkBlockCatalogRateLimit("bki_char")',
-    ]),
-    'hub OAuth token': PASSED(true, ['checkBlockCatalogRateLimit("page_apb_char")']),
+    'ai:write:budgeted without a positive buzzBudget': X(
+      200,
+      { items: [] },
+      true,
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      []
+    ),
+    'rate limited': X(
+      429,
+      { error: 'Rate limit exceeded, please retry shortly.' },
+      true,
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      []
+    ),
+    'hub OAuth token': X(
+      200,
+      { items: [] },
+      true,
+      ['checkBlockCatalogRateLimit("page_apb_hubrow")'],
+      []
+    ),
+    'missing approval row': X(
+      200,
+      { items: [] },
+      true,
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      []
+    ),
+    'approval row read throws': X(503, { error: 'app block status unavailable' }, false, [], []),
+    'consent revoked for the route scope': X(
+      200,
+      { items: [] },
+      true,
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      []
+    ),
+    'consent marker unavailable': X(
+      200,
+      { items: [] },
+      true,
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      []
+    ),
+    'consent marker unavailable AND not approved': X(
+      403,
+      { error: 'app block is not approved', code: 'app_not_approved' },
+      false,
+      [],
+      []
+    ),
+    'dev token, no approval row': X(
+      200,
+      { items: [] },
+      true,
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      []
+    ),
+    'private-run token, row not approved': X(
+      200,
+      { items: [] },
+      true,
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      []
+    ),
   },
   'src/pages/api/v1/blocks/entitlements.ts': {
-    'no bearer': X(401, { error: 'Block token required' }, false, []),
-    'wrong method, no bearer': X(405, { error: 'Method not allowed' }, false, []),
-    'non-JWT bearer (OAuth tokens off)': X(401, { error: 'Block token required' }, false, []),
-    'runtime flag off, valid JWT': X(401, { error: 'Block token required' }, false, []),
-    'bad JWT': X(401, { error: 'invalid block token' }, false, []),
-    revoked: X(403, { error: 'block instance revoked', code: 'instance_revoked' }, false, []),
+    'no bearer': X(401, { error: 'Block token required' }, false, [], []),
+    'wrong method, no bearer': X(405, { error: 'Method not allowed' }, false, [], []),
+    'non-JWT bearer (OAuth tokens off)': X(401, { error: 'Block token required' }, false, [], []),
+    'runtime flag off, valid JWT': X(401, { error: 'Block token required' }, false, [], []),
+    'bad JWT': X(401, { error: 'invalid block token' }, false, [], []),
+    revoked: X(403, { error: 'block instance revoked', code: 'instance_revoked' }, false, [], []),
     'not approved': X(
       403,
       { error: 'app block is not approved', code: 'app_not_approved' },
       false,
+      [],
       []
     ),
     'revoked AND not approved': X(
       403,
       { error: 'block instance revoked', code: 'instance_revoked' },
       false,
+      [],
       []
     ),
     'missing scope': X(
       403,
       { error: 'missing required scope: goods:read:self', code: 'insufficient_scope' },
       false,
+      [],
       []
     ),
     'token carries an unknown scope': X(
       403,
       { error: 'unknown scope: made:up:scope', code: 'context_binding' },
       false,
+      [],
       []
     ),
     'anonymous subject': X(
       403,
       { error: 'goods:read:self requires authenticated subject', code: 'context_binding' },
       false,
+      [],
       []
     ),
-    'ai:write:budgeted without a positive buzzBudget': PASSED(true, [
-      'checkBlockGoodReadRateLimit("bki_char", 42)',
-    ]),
-    'rate limited': X(429, { error: 'Rate limit exceeded, please retry shortly.' }, true, [
-      'checkBlockGoodReadRateLimit("bki_char", 42)',
-    ]),
-    'hub OAuth token': PASSED(true, ['checkBlockGoodReadRateLimit("page_apb_char", 42)']),
+    'ai:write:budgeted without a positive buzzBudget': X(
+      200,
+      { entitlements: [] },
+      true,
+      ['checkBlockGoodReadRateLimit("bki_char", 42)'],
+      []
+    ),
+    'rate limited': X(
+      429,
+      { error: 'Rate limit exceeded, please retry shortly.' },
+      true,
+      ['checkBlockGoodReadRateLimit("bki_char", 42)'],
+      []
+    ),
+    'hub OAuth token': X(
+      200,
+      { entitlements: [] },
+      true,
+      ['checkBlockGoodReadRateLimit("page_apb_hubrow", 42)'],
+      []
+    ),
+    'missing approval row': X(
+      200,
+      { entitlements: [] },
+      true,
+      ['checkBlockGoodReadRateLimit("bki_char", 42)'],
+      []
+    ),
+    'approval row read throws': X(503, { error: 'app block status unavailable' }, false, [], []),
+    'consent revoked for the route scope': X(
+      200,
+      { entitlements: [] },
+      true,
+      ['checkBlockGoodReadRateLimit("bki_char", 42)'],
+      []
+    ),
+    'consent marker unavailable': X(
+      200,
+      { entitlements: [] },
+      true,
+      ['checkBlockGoodReadRateLimit("bki_char", 42)'],
+      []
+    ),
+    'consent marker unavailable AND not approved': X(
+      403,
+      { error: 'app block is not approved', code: 'app_not_approved' },
+      false,
+      [],
+      []
+    ),
+    'dev token, no approval row': X(
+      200,
+      { entitlements: [] },
+      true,
+      ['checkBlockGoodReadRateLimit("bki_char", 42)'],
+      []
+    ),
+    'private-run token, row not approved': X(
+      200,
+      { entitlements: [] },
+      true,
+      ['checkBlockGoodReadRateLimit("bki_char", 42)'],
+      []
+    ),
   },
   'src/pages/api/v1/blocks/gated-images.ts': {
-    'no bearer': X(401, { error: 'Block token required' }, false, []),
-    'wrong method, no bearer': X(405, { error: 'Method not allowed' }, false, []),
-    'non-JWT bearer (OAuth tokens off)': X(401, { error: 'Block token required' }, false, []),
-    'runtime flag off, valid JWT': X(401, { error: 'Block token required' }, false, []),
-    'bad JWT': X(401, { error: 'invalid block token' }, false, []),
-    revoked: X(403, { error: 'block instance revoked', code: 'instance_revoked' }, false, []),
+    'no bearer': X(401, { error: 'Block token required' }, false, [], []),
+    'wrong method, no bearer': X(405, { error: 'Method not allowed' }, false, [], []),
+    'non-JWT bearer (OAuth tokens off)': X(401, { error: 'Block token required' }, false, [], []),
+    'runtime flag off, valid JWT': X(401, { error: 'Block token required' }, false, [], []),
+    'bad JWT': X(401, { error: 'invalid block token' }, false, [], []),
+    revoked: X(403, { error: 'block instance revoked', code: 'instance_revoked' }, false, [], []),
     'not approved': X(
       403,
       { error: 'app block is not approved', code: 'app_not_approved' },
       false,
+      [],
       []
     ),
     'revoked AND not approved': X(
       403,
       { error: 'block instance revoked', code: 'instance_revoked' },
       false,
+      [],
       []
     ),
-    'missing scope': PASSED(true, ['checkBlockCatalogRateLimit("bki_char")']),
-    'token carries an unknown scope': PASSED(true, ['checkBlockCatalogRateLimit("bki_char")']),
+    'missing scope': X(200, { images: [] }, true, ['checkBlockCatalogRateLimit("bki_char")'], []),
+    'token carries an unknown scope': X(
+      200,
+      { images: [] },
+      true,
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      []
+    ),
     'anonymous subject': X(
       401,
       { message: 'gated image read requires an authenticated viewer' },
       true,
-      ['checkBlockCatalogRateLimit("bki_char")']
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      []
     ),
-    'ai:write:budgeted without a positive buzzBudget': PASSED(true, [
-      'checkBlockCatalogRateLimit("bki_char")',
-    ]),
-    'rate limited': X(429, { error: 'Rate limit exceeded, please retry shortly.' }, true, [
-      'checkBlockCatalogRateLimit("bki_char")',
-    ]),
-    'hub OAuth token': PASSED(true, ['checkBlockCatalogRateLimit("page_apb_char")']),
+    'ai:write:budgeted without a positive buzzBudget': X(
+      200,
+      { images: [] },
+      true,
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      []
+    ),
+    'rate limited': X(
+      429,
+      { error: 'Rate limit exceeded, please retry shortly.' },
+      true,
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      []
+    ),
+    'hub OAuth token': X(
+      200,
+      { images: [] },
+      true,
+      ['checkBlockCatalogRateLimit("page_apb_hubrow")'],
+      []
+    ),
+    'missing approval row': X(
+      200,
+      { images: [] },
+      true,
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      []
+    ),
+    'approval row read throws': X(503, { error: 'app block status unavailable' }, false, [], []),
+    'consent revoked for the route scope': X(
+      200,
+      { images: [] },
+      true,
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      []
+    ),
+    'consent marker unavailable': X(
+      200,
+      { images: [] },
+      true,
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      []
+    ),
+    'consent marker unavailable AND not approved': X(
+      403,
+      { error: 'app block is not approved', code: 'app_not_approved' },
+      false,
+      [],
+      []
+    ),
+    'dev token, no approval row': X(
+      200,
+      { images: [] },
+      true,
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      []
+    ),
+    'private-run token, row not approved': X(
+      200,
+      { images: [] },
+      true,
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      []
+    ),
   },
   'src/pages/api/v1/blocks/generation-resources.ts': {
-    'no bearer': X(401, { error: 'Block token required' }, false, []),
-    'wrong method, no bearer': X(405, { error: 'Method not allowed' }, false, []),
-    'non-JWT bearer (OAuth tokens off)': X(401, { error: 'Block token required' }, false, []),
-    'runtime flag off, valid JWT': X(401, { error: 'Block token required' }, false, []),
-    'bad JWT': X(401, { error: 'invalid block token' }, false, []),
-    revoked: X(403, { error: 'block instance revoked', code: 'instance_revoked' }, false, []),
+    'no bearer': X(401, { error: 'Block token required' }, false, [], []),
+    'wrong method, no bearer': X(405, { error: 'Method not allowed' }, false, [], []),
+    'non-JWT bearer (OAuth tokens off)': X(401, { error: 'Block token required' }, false, [], []),
+    'runtime flag off, valid JWT': X(401, { error: 'Block token required' }, false, [], []),
+    'bad JWT': X(401, { error: 'invalid block token' }, false, [], []),
+    revoked: X(403, { error: 'block instance revoked', code: 'instance_revoked' }, false, [], []),
     'not approved': X(
       403,
       { error: 'app block is not approved', code: 'app_not_approved' },
       false,
+      [],
       []
     ),
     'revoked AND not approved': X(
       403,
       { error: 'block instance revoked', code: 'instance_revoked' },
       false,
+      [],
       []
     ),
-    'missing scope': PASSED(true, ['checkBlockCatalogRateLimit("bki_char")']),
-    'token carries an unknown scope': PASSED(true, ['checkBlockCatalogRateLimit("bki_char")']),
-    'anonymous subject': PASSED(true, ['checkBlockCatalogRateLimit("bki_char")']),
-    'ai:write:budgeted without a positive buzzBudget': PASSED(true, [
-      'checkBlockCatalogRateLimit("bki_char")',
-    ]),
-    'rate limited': X(429, { error: 'Rate limit exceeded, please retry shortly.' }, true, [
-      'checkBlockCatalogRateLimit("bki_char")',
-    ]),
-    'hub OAuth token': PASSED(true, ['checkBlockCatalogRateLimit("page_apb_char")']),
+    'missing scope': X(
+      200,
+      { items: [], maturity: { browsingLevel: 1, sfwOnly: true } },
+      true,
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['getResourceData([1])']
+    ),
+    'token carries an unknown scope': X(
+      200,
+      { items: [], maturity: { browsingLevel: 1, sfwOnly: true } },
+      true,
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['getResourceData([1])']
+    ),
+    'anonymous subject': X(
+      200,
+      { items: [], maturity: { browsingLevel: 1, sfwOnly: true } },
+      true,
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['getResourceData([1])']
+    ),
+    'ai:write:budgeted without a positive buzzBudget': X(
+      200,
+      { items: [], maturity: { browsingLevel: 1, sfwOnly: true } },
+      true,
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['getResourceData([1])']
+    ),
+    'rate limited': X(
+      429,
+      { error: 'Rate limit exceeded, please retry shortly.' },
+      true,
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      []
+    ),
+    'hub OAuth token': X(
+      200,
+      { items: [], maturity: { browsingLevel: 3, sfwOnly: true } },
+      true,
+      ['checkBlockCatalogRateLimit("page_apb_hubrow")'],
+      ['getResourceData([1])']
+    ),
+    'missing approval row': X(
+      200,
+      { items: [], maturity: { browsingLevel: 1, sfwOnly: true } },
+      true,
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['getResourceData([1])']
+    ),
+    'approval row read throws': X(
+      200,
+      { items: [], maturity: { browsingLevel: 1, sfwOnly: true } },
+      true,
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['getResourceData([1])']
+    ),
+    'consent revoked for the route scope': X(
+      200,
+      { items: [], maturity: { browsingLevel: 1, sfwOnly: true } },
+      true,
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['getResourceData([1])']
+    ),
+    'consent marker unavailable': X(
+      200,
+      { items: [], maturity: { browsingLevel: 1, sfwOnly: true } },
+      true,
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['getResourceData([1])']
+    ),
+    'consent marker unavailable AND not approved': X(
+      403,
+      { error: 'app block is not approved', code: 'app_not_approved' },
+      false,
+      [],
+      []
+    ),
+    'dev token, no approval row': X(
+      200,
+      { items: [], maturity: { browsingLevel: 1, sfwOnly: true } },
+      true,
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['getResourceData([1])']
+    ),
+    'private-run token, row not approved': X(
+      200,
+      { items: [], maturity: { browsingLevel: 1, sfwOnly: true } },
+      true,
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['getResourceData([1])']
+    ),
   },
   'src/pages/api/v1/blocks/goods/purchase.ts': {
-    'no bearer': X(401, { error: 'Block token required' }, false, []),
-    'wrong method, no bearer': X(405, { error: 'Method not allowed' }, false, []),
-    'non-JWT bearer (OAuth tokens off)': X(401, { error: 'Block token required' }, false, []),
-    'runtime flag off, valid JWT': X(401, { error: 'Block token required' }, false, []),
-    'bad JWT': X(401, { error: 'invalid block token' }, false, []),
-    revoked: X(403, { error: 'block instance revoked', code: 'instance_revoked' }, false, []),
+    'no bearer': X(401, { error: 'Block token required' }, false, [], []),
+    'wrong method, no bearer': X(405, { error: 'Method not allowed' }, false, [], []),
+    'non-JWT bearer (OAuth tokens off)': X(401, { error: 'Block token required' }, false, [], []),
+    'runtime flag off, valid JWT': X(401, { error: 'Block token required' }, false, [], []),
+    'bad JWT': X(401, { error: 'invalid block token' }, false, [], []),
+    revoked: X(403, { error: 'block instance revoked', code: 'instance_revoked' }, false, [], []),
     'not approved': X(
       403,
       { error: 'app block is not approved', code: 'app_not_approved' },
       false,
+      [],
       []
     ),
     'revoked AND not approved': X(
       403,
       { error: 'block instance revoked', code: 'instance_revoked' },
       false,
+      [],
       []
     ),
     'missing scope': X(
       403,
       { error: 'missing required scope: goods:purchase:self', code: 'insufficient_scope' },
       false,
+      [],
       []
     ),
     'token carries an unknown scope': X(
       403,
       { error: 'unknown scope: made:up:scope', code: 'context_binding' },
       false,
+      [],
       []
     ),
     'anonymous subject': X(
       403,
       { error: 'goods:purchase:self requires authenticated subject', code: 'context_binding' },
       false,
+      [],
       []
     ),
-    'ai:write:budgeted without a positive buzzBudget': PASSED(true, [
-      'checkBlockGoodRateLimit("bki_char", 42)',
-    ]),
-    'rate limited': X(429, { error: 'Too many purchases — please retry shortly.' }, true, [
-      'checkBlockGoodRateLimit("bki_char", 42)',
-    ]),
-    'hub OAuth token': PASSED(true, ['checkBlockGoodRateLimit("page_apb_char", 42)']),
+    'ai:write:budgeted without a positive buzzBudget': PASSED(
+      true,
+      ['checkBlockGoodRateLimit("bki_char", 42)'],
+      []
+    ),
+    'rate limited': X(
+      429,
+      { error: 'Too many purchases — please retry shortly.' },
+      true,
+      ['checkBlockGoodRateLimit("bki_char", 42)'],
+      []
+    ),
+    'hub OAuth token': PASSED(true, ['checkBlockGoodRateLimit("page_apb_hubrow", 42)'], []),
+    'missing approval row': PASSED(true, ['checkBlockGoodRateLimit("bki_char", 42)'], []),
+    'approval row read throws': X(503, { error: 'app block status unavailable' }, false, [], []),
+    'consent revoked for the route scope': X(
+      403,
+      { error: 'consent revoked for scope: goods:purchase:self', code: 'consent_revoked' },
+      false,
+      [],
+      []
+    ),
+    'consent marker unavailable': X(
+      503,
+      {
+        error: 'permission state is temporarily unavailable — retry shortly',
+        code: 'permission_state_unavailable',
+      },
+      false,
+      [],
+      []
+    ),
+    'consent marker unavailable AND not approved': X(
+      503,
+      {
+        error: 'permission state is temporarily unavailable — retry shortly',
+        code: 'permission_state_unavailable',
+      },
+      false,
+      [],
+      []
+    ),
+    'dev token, no approval row': PASSED(true, ['checkBlockGoodRateLimit("bki_char", 42)'], []),
+    'private-run token, row not approved': PASSED(
+      true,
+      ['checkBlockGoodRateLimit("bki_char", 42)'],
+      []
+    ),
   },
   'src/pages/api/v1/blocks/images.ts': {
-    'no bearer': X(401, { error: 'Block token required' }, false, []),
-    'wrong method, no bearer': X(405, { error: 'Method not allowed' }, false, []),
-    'non-JWT bearer (OAuth tokens off)': X(401, { error: 'Block token required' }, false, []),
-    'runtime flag off, valid JWT': X(401, { error: 'Block token required' }, false, []),
-    'bad JWT': X(401, { error: 'invalid block token' }, false, []),
-    revoked: X(403, { error: 'block instance revoked', code: 'instance_revoked' }, false, []),
+    'no bearer': X(401, { error: 'Block token required' }, false, [], []),
+    'wrong method, no bearer': X(405, { error: 'Method not allowed' }, false, [], []),
+    'non-JWT bearer (OAuth tokens off)': X(401, { error: 'Block token required' }, false, [], []),
+    'runtime flag off, valid JWT': X(401, { error: 'Block token required' }, false, [], []),
+    'bad JWT': X(401, { error: 'invalid block token' }, false, [], []),
+    revoked: X(403, { error: 'block instance revoked', code: 'instance_revoked' }, false, [], []),
     'not approved': X(
       403,
       { error: 'app block is not approved', code: 'app_not_approved' },
       false,
+      [],
       []
     ),
     'revoked AND not approved': X(
       403,
       { error: 'block instance revoked', code: 'instance_revoked' },
       false,
+      [],
       []
     ),
-    'missing scope': PASSED(true, ['checkBlockCatalogRateLimit("bki_char")']),
-    'token carries an unknown scope': PASSED(true, ['checkBlockCatalogRateLimit("bki_char")']),
-    'anonymous subject': PASSED(true, ['checkBlockCatalogRateLimit("bki_char")']),
-    'ai:write:budgeted without a positive buzzBudget': PASSED(true, [
-      'checkBlockCatalogRateLimit("bki_char")',
-    ]),
-    'rate limited': X(429, { error: 'Rate limit exceeded, please retry shortly.' }, true, [
-      'checkBlockCatalogRateLimit("bki_char")',
-    ]),
-    'hub OAuth token': PASSED(true, ['checkBlockCatalogRateLimit("page_apb_char")']),
+    'missing scope': PASSED(true, ['checkBlockCatalogRateLimit("bki_char")'], []),
+    'token carries an unknown scope': PASSED(true, ['checkBlockCatalogRateLimit("bki_char")'], []),
+    'anonymous subject': PASSED(true, ['checkBlockCatalogRateLimit("bki_char")'], []),
+    'ai:write:budgeted without a positive buzzBudget': PASSED(
+      true,
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      []
+    ),
+    'rate limited': X(
+      429,
+      { error: 'Rate limit exceeded, please retry shortly.' },
+      true,
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      []
+    ),
+    'hub OAuth token': PASSED(true, ['checkBlockCatalogRateLimit("page_apb_hubrow")'], []),
+    'missing approval row': PASSED(true, ['checkBlockCatalogRateLimit("bki_char")'], []),
+    'approval row read throws': PASSED(true, ['checkBlockCatalogRateLimit("bki_char")'], []),
+    'consent revoked for the route scope': PASSED(
+      true,
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      []
+    ),
+    'consent marker unavailable': PASSED(true, ['checkBlockCatalogRateLimit("bki_char")'], []),
+    'consent marker unavailable AND not approved': X(
+      403,
+      { error: 'app block is not approved', code: 'app_not_approved' },
+      false,
+      [],
+      []
+    ),
+    'dev token, no approval row': PASSED(true, ['checkBlockCatalogRateLimit("bki_char")'], []),
+    'private-run token, row not approved': PASSED(
+      true,
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      []
+    ),
   },
   'src/pages/api/v1/blocks/me.ts': {
-    'no bearer': X(401, { error: 'Block token required' }, false, []),
-    'wrong method, no bearer': X(405, { error: 'Method not allowed' }, false, []),
-    'non-JWT bearer (OAuth tokens off)': X(401, { error: 'Block token required' }, false, []),
-    'runtime flag off, valid JWT': X(401, { error: 'Block token required' }, false, []),
-    'bad JWT': X(401, { error: 'invalid block token' }, false, []),
-    revoked: X(403, { error: 'block instance revoked', code: 'instance_revoked' }, false, []),
+    'no bearer': X(401, { error: 'Block token required' }, false, [], []),
+    'wrong method, no bearer': X(405, { error: 'Method not allowed' }, false, [], []),
+    'non-JWT bearer (OAuth tokens off)': X(401, { error: 'Block token required' }, false, [], []),
+    'runtime flag off, valid JWT': X(401, { error: 'Block token required' }, false, [], []),
+    'bad JWT': X(401, { error: 'invalid block token' }, false, [], []),
+    revoked: X(403, { error: 'block instance revoked', code: 'instance_revoked' }, false, [], []),
     'not approved': X(
       403,
       { error: 'app block is not approved', code: 'app_not_approved' },
       false,
+      [],
       []
     ),
     'revoked AND not approved': X(
       403,
       { error: 'block instance revoked', code: 'instance_revoked' },
       false,
+      [],
       []
     ),
     'missing scope': X(
       403,
       { error: 'missing required scope: user:read:self', code: 'insufficient_scope' },
       false,
+      [],
       []
     ),
     'token carries an unknown scope': X(
       403,
       { error: 'unknown scope: made:up:scope', code: 'context_binding' },
       false,
+      [],
       []
     ),
     'anonymous subject': X(
       403,
       { error: 'user:read:self requires authenticated subject', code: 'context_binding' },
       false,
+      [],
       []
     ),
-    'ai:write:budgeted without a positive buzzBudget': PASSED(true, [
-      'checkBlockCatalogRateLimit("bki_char")',
-    ]),
-    'rate limited': X(429, { error: 'Rate limit exceeded, please retry shortly.' }, true, [
-      'checkBlockCatalogRateLimit("bki_char")',
-    ]),
-    'hub OAuth token': PASSED(true, ['checkBlockCatalogRateLimit("page_apb_char")']),
+    'ai:write:budgeted without a positive buzzBudget': X(
+      404,
+      { error: 'User not found' },
+      true,
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      []
+    ),
+    'rate limited': X(
+      429,
+      { error: 'Rate limit exceeded, please retry shortly.' },
+      true,
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      []
+    ),
+    'hub OAuth token': X(
+      404,
+      { error: 'User not found' },
+      true,
+      ['checkBlockCatalogRateLimit("page_apb_hubrow")'],
+      []
+    ),
+    'missing approval row': X(
+      404,
+      { error: 'User not found' },
+      true,
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      []
+    ),
+    'approval row read throws': X(503, { error: 'app block status unavailable' }, false, [], []),
+    'consent revoked for the route scope': X(
+      403,
+      { error: 'consent revoked for scope: user:read:self', code: 'consent_revoked' },
+      false,
+      [],
+      []
+    ),
+    'consent marker unavailable': X(
+      503,
+      {
+        error: 'permission state is temporarily unavailable — retry shortly',
+        code: 'permission_state_unavailable',
+      },
+      false,
+      [],
+      []
+    ),
+    'consent marker unavailable AND not approved': X(
+      503,
+      {
+        error: 'permission state is temporarily unavailable — retry shortly',
+        code: 'permission_state_unavailable',
+      },
+      false,
+      [],
+      []
+    ),
+    'dev token, no approval row': X(
+      404,
+      { error: 'User not found' },
+      true,
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      []
+    ),
+    'private-run token, row not approved': X(
+      404,
+      { error: 'User not found' },
+      true,
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      []
+    ),
   },
   'src/pages/api/v1/blocks/models.ts': {
-    'no bearer': X(401, { error: 'Block token required' }, false, []),
-    'wrong method, no bearer': X(405, { error: 'Method not allowed' }, false, []),
-    'non-JWT bearer (OAuth tokens off)': X(401, { error: 'Block token required' }, false, []),
-    'runtime flag off, valid JWT': X(401, { error: 'Block token required' }, false, []),
-    'bad JWT': X(401, { error: 'invalid block token' }, false, []),
-    revoked: X(403, { error: 'block instance revoked', code: 'instance_revoked' }, false, []),
+    'no bearer': X(401, { error: 'Block token required' }, false, [], []),
+    'wrong method, no bearer': X(405, { error: 'Method not allowed' }, false, [], []),
+    'non-JWT bearer (OAuth tokens off)': X(401, { error: 'Block token required' }, false, [], []),
+    'runtime flag off, valid JWT': X(401, { error: 'Block token required' }, false, [], []),
+    'bad JWT': X(401, { error: 'invalid block token' }, false, [], []),
+    revoked: X(403, { error: 'block instance revoked', code: 'instance_revoked' }, false, [], []),
     'not approved': X(
       403,
       { error: 'app block is not approved', code: 'app_not_approved' },
       false,
+      [],
       []
     ),
     'revoked AND not approved': X(
       403,
       { error: 'block instance revoked', code: 'instance_revoked' },
       false,
+      [],
       []
     ),
-    'missing scope': PASSED(true, ['checkBlockCatalogRateLimit("bki_char")']),
-    'token carries an unknown scope': PASSED(true, ['checkBlockCatalogRateLimit("bki_char")']),
-    'anonymous subject': PASSED(true, ['checkBlockCatalogRateLimit("bki_char")']),
-    'ai:write:budgeted without a positive buzzBudget': PASSED(true, [
-      'checkBlockCatalogRateLimit("bki_char")',
-    ]),
-    'rate limited': X(429, { error: 'Rate limit exceeded, please retry shortly.' }, true, [
-      'checkBlockCatalogRateLimit("bki_char")',
-    ]),
-    'hub OAuth token': PASSED(true, ['checkBlockCatalogRateLimit("page_apb_char")']),
+    'missing scope': PASSED(true, ['checkBlockCatalogRateLimit("bki_char")'], []),
+    'token carries an unknown scope': PASSED(true, ['checkBlockCatalogRateLimit("bki_char")'], []),
+    'anonymous subject': PASSED(true, ['checkBlockCatalogRateLimit("bki_char")'], []),
+    'ai:write:budgeted without a positive buzzBudget': PASSED(
+      true,
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      []
+    ),
+    'rate limited': X(
+      429,
+      { error: 'Rate limit exceeded, please retry shortly.' },
+      true,
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      []
+    ),
+    'hub OAuth token': PASSED(true, ['checkBlockCatalogRateLimit("page_apb_hubrow")'], []),
+    'missing approval row': PASSED(true, ['checkBlockCatalogRateLimit("bki_char")'], []),
+    'approval row read throws': PASSED(true, ['checkBlockCatalogRateLimit("bki_char")'], []),
+    'consent revoked for the route scope': PASSED(
+      true,
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      []
+    ),
+    'consent marker unavailable': PASSED(true, ['checkBlockCatalogRateLimit("bki_char")'], []),
+    'consent marker unavailable AND not approved': X(
+      403,
+      { error: 'app block is not approved', code: 'app_not_approved' },
+      false,
+      [],
+      []
+    ),
+    'dev token, no approval row': PASSED(true, ['checkBlockCatalogRateLimit("bki_char")'], []),
+    'private-run token, row not approved': PASSED(
+      true,
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      []
+    ),
   },
   'src/pages/api/v1/blocks/resource-intent.ts': {
-    'no bearer': X(401, { error: 'Block token required' }, false, []),
-    'wrong method, no bearer': X(405, { error: 'Method not allowed' }, false, []),
-    'non-JWT bearer (OAuth tokens off)': X(401, { error: 'Block token required' }, false, []),
-    'runtime flag off, valid JWT': X(401, { error: 'Block token required' }, false, []),
-    'bad JWT': X(401, { error: 'invalid block token' }, false, []),
-    revoked: X(403, { error: 'block instance revoked', code: 'instance_revoked' }, false, []),
+    'no bearer': X(401, { error: 'Block token required' }, false, [], []),
+    'wrong method, no bearer': X(405, { error: 'Method not allowed' }, false, [], []),
+    'non-JWT bearer (OAuth tokens off)': X(401, { error: 'Block token required' }, false, [], []),
+    'runtime flag off, valid JWT': X(401, { error: 'Block token required' }, false, [], []),
+    'bad JWT': X(401, { error: 'invalid block token' }, false, [], []),
+    revoked: X(403, { error: 'block instance revoked', code: 'instance_revoked' }, false, [], []),
     'not approved': X(
       403,
       { error: 'app block is not approved', code: 'app_not_approved' },
       false,
+      [],
       []
     ),
     'revoked AND not approved': X(
       403,
       { error: 'block instance revoked', code: 'instance_revoked' },
       false,
+      [],
       []
     ),
-    'missing scope': PASSED(true, ['checkBlockLLMRateLimit("bki_char")']),
-    'token carries an unknown scope': PASSED(true, ['checkBlockLLMRateLimit("bki_char")']),
-    'anonymous subject': PASSED(true, ['checkBlockLLMRateLimit("bki_char")']),
-    'ai:write:budgeted without a positive buzzBudget': PASSED(true, [
-      'checkBlockLLMRateLimit("bki_char")',
-    ]),
-    'rate limited': X(429, { error: 'Rate limit exceeded, please retry shortly.' }, true, [
-      'checkBlockLLMRateLimit("bki_char")',
-    ]),
-    'hub OAuth token': PASSED(true, ['checkBlockLLMRateLimit("page_apb_char")']),
+    'missing scope': X(
+      200,
+      {
+        degraded: true,
+        insightFallback: false,
+        intent: null,
+        criteria: null,
+        suggestions: [],
+        noneProbability: null,
+        model: 'jev-unavailable',
+        criteriaVersion: 2,
+        maturity: { browsingLevel: 1, sfwOnly: true },
+      },
+      true,
+      ['checkBlockLLMRateLimit("bki_char")'],
+      []
+    ),
+    'token carries an unknown scope': X(
+      200,
+      {
+        degraded: true,
+        insightFallback: false,
+        intent: null,
+        criteria: null,
+        suggestions: [],
+        noneProbability: null,
+        model: 'jev-unavailable',
+        criteriaVersion: 2,
+        maturity: { browsingLevel: 1, sfwOnly: true },
+      },
+      true,
+      ['checkBlockLLMRateLimit("bki_char")'],
+      []
+    ),
+    'anonymous subject': X(
+      200,
+      {
+        degraded: true,
+        insightFallback: false,
+        intent: null,
+        criteria: null,
+        suggestions: [],
+        noneProbability: null,
+        model: 'jev-unavailable',
+        criteriaVersion: 2,
+        maturity: { browsingLevel: 1, sfwOnly: true },
+      },
+      true,
+      ['checkBlockLLMRateLimit("bki_char")'],
+      []
+    ),
+    'ai:write:budgeted without a positive buzzBudget': X(
+      200,
+      {
+        degraded: true,
+        insightFallback: false,
+        intent: null,
+        criteria: null,
+        suggestions: [],
+        noneProbability: null,
+        model: 'jev-unavailable',
+        criteriaVersion: 2,
+        maturity: { browsingLevel: 1, sfwOnly: true },
+      },
+      true,
+      ['checkBlockLLMRateLimit("bki_char")'],
+      []
+    ),
+    'rate limited': X(
+      429,
+      { error: 'Rate limit exceeded, please retry shortly.' },
+      true,
+      ['checkBlockLLMRateLimit("bki_char")'],
+      []
+    ),
+    'hub OAuth token': X(
+      200,
+      {
+        degraded: true,
+        insightFallback: false,
+        intent: null,
+        criteria: null,
+        suggestions: [],
+        noneProbability: null,
+        model: 'jev-unavailable',
+        criteriaVersion: 2,
+        maturity: { browsingLevel: 3, sfwOnly: true },
+      },
+      true,
+      ['checkBlockLLMRateLimit("page_apb_hubrow")'],
+      []
+    ),
+    'missing approval row': X(
+      200,
+      {
+        degraded: true,
+        insightFallback: false,
+        intent: null,
+        criteria: null,
+        suggestions: [],
+        noneProbability: null,
+        model: 'jev-unavailable',
+        criteriaVersion: 2,
+        maturity: { browsingLevel: 1, sfwOnly: true },
+      },
+      true,
+      ['checkBlockLLMRateLimit("bki_char")'],
+      []
+    ),
+    'approval row read throws': X(503, { error: 'app block status unavailable' }, false, [], []),
+    'consent revoked for the route scope': X(
+      200,
+      {
+        degraded: true,
+        insightFallback: false,
+        intent: null,
+        criteria: null,
+        suggestions: [],
+        noneProbability: null,
+        model: 'jev-unavailable',
+        criteriaVersion: 2,
+        maturity: { browsingLevel: 1, sfwOnly: true },
+      },
+      true,
+      ['checkBlockLLMRateLimit("bki_char")'],
+      []
+    ),
+    'consent marker unavailable': X(
+      200,
+      {
+        degraded: true,
+        insightFallback: false,
+        intent: null,
+        criteria: null,
+        suggestions: [],
+        noneProbability: null,
+        model: 'jev-unavailable',
+        criteriaVersion: 2,
+        maturity: { browsingLevel: 1, sfwOnly: true },
+      },
+      true,
+      ['checkBlockLLMRateLimit("bki_char")'],
+      []
+    ),
+    'consent marker unavailable AND not approved': X(
+      403,
+      { error: 'app block is not approved', code: 'app_not_approved' },
+      false,
+      [],
+      []
+    ),
+    'dev token, no approval row': X(
+      200,
+      {
+        degraded: true,
+        insightFallback: false,
+        intent: null,
+        criteria: null,
+        suggestions: [],
+        noneProbability: null,
+        model: 'jev-unavailable',
+        criteriaVersion: 2,
+        maturity: { browsingLevel: 1, sfwOnly: true },
+      },
+      true,
+      ['checkBlockLLMRateLimit("bki_char")'],
+      []
+    ),
+    'private-run token, row not approved': X(
+      200,
+      {
+        degraded: true,
+        insightFallback: false,
+        intent: null,
+        criteria: null,
+        suggestions: [],
+        noneProbability: null,
+        model: 'jev-unavailable',
+        criteriaVersion: 2,
+        maturity: { browsingLevel: 1, sfwOnly: true },
+      },
+      true,
+      ['checkBlockLLMRateLimit("bki_char")'],
+      []
+    ),
   },
   'src/pages/api/v1/blocks/shared-storage/append.ts': {
-    'no bearer': X(401, { error: 'Block token required' }, false, []),
-    'wrong method, no bearer': X(405, { error: 'Method not allowed' }, false, []),
-    'non-JWT bearer (OAuth tokens off)': X(401, { error: 'Block token required' }, false, []),
-    'runtime flag off, valid JWT': X(401, { error: 'Block token required' }, false, []),
-    'bad JWT': X(401, { error: 'invalid block token' }, false, []),
-    revoked: X(403, { error: 'block instance revoked', code: 'instance_revoked' }, false, []),
+    'no bearer': X(401, { error: 'Block token required' }, false, [], []),
+    'wrong method, no bearer': X(405, { error: 'Method not allowed' }, false, [], []),
+    'non-JWT bearer (OAuth tokens off)': X(401, { error: 'Block token required' }, false, [], []),
+    'runtime flag off, valid JWT': X(401, { error: 'Block token required' }, false, [], []),
+    'bad JWT': X(401, { error: 'invalid block token' }, false, [], []),
+    revoked: X(403, { error: 'block instance revoked', code: 'instance_revoked' }, false, [], []),
     'not approved': X(
       403,
       { error: 'app block is not approved', code: 'app_not_approved' },
       false,
+      [],
       []
     ),
     'revoked AND not approved': X(
       403,
       { error: 'block instance revoked', code: 'instance_revoked' },
       false,
+      [],
       []
     ),
     'missing scope': X(
       403,
       { error: 'missing required scope: apps:storage:shared:write', code: 'insufficient_scope' },
       false,
+      [],
       []
     ),
     'token carries an unknown scope': X(
       403,
       { error: 'unknown scope: made:up:scope', code: 'context_binding' },
       false,
+      [],
       []
     ),
     'anonymous subject': X(
@@ -1436,11 +2458,14 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
         code: 'context_binding',
       },
       false,
+      [],
       []
     ),
-    'ai:write:budgeted without a positive buzzBudget': PASSED(true, [
-      'reserveSharedWrite(42, "apb_char")',
-    ]),
+    'ai:write:budgeted without a positive buzzBudget': PASSED(
+      true,
+      ['reserveSharedWrite(42, "apb_row")'],
+      ['apps-db']
+    ),
     'rate limited': X(
       429,
       {
@@ -1450,75 +2475,126 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
         rateLimit: { retryAfterSeconds: 7, retryAt: '2026-01-01T00:00:07.000Z' },
       },
       true,
-      ['reserveSharedWrite(42, "apb_char")']
+      ['reserveSharedWrite(42, "apb_row")'],
+      []
     ),
-    'hub OAuth token': X(401, { message: 'invalid block token' }, true, []),
+    'hub OAuth token': X(401, { message: 'invalid block token' }, true, [], []),
+    'missing approval row': X(404, { message: 'app block not found' }, true, [], []),
+    'approval row read throws': X(503, { error: 'app block status unavailable' }, false, [], []),
+    'consent revoked for the route scope': PASSED(
+      true,
+      ['reserveSharedWrite(42, "apb_row")'],
+      ['apps-db']
+    ),
+    'consent marker unavailable': PASSED(true, ['reserveSharedWrite(42, "apb_row")'], ['apps-db']),
+    'consent marker unavailable AND not approved': X(
+      403,
+      { error: 'app block is not approved', code: 'app_not_approved' },
+      false,
+      [],
+      []
+    ),
+    'dev token, no approval row': X(404, { message: 'app block not found' }, true, [], []),
+    'private-run token, row not approved': X(
+      403,
+      { message: 'app block is not approved' },
+      true,
+      [],
+      []
+    ),
   },
   'src/pages/api/v1/blocks/shared-storage/counts.ts': {
-    'no bearer': X(401, { error: 'Block token required' }, false, []),
-    'wrong method, no bearer': X(405, { error: 'Method not allowed' }, false, []),
-    'non-JWT bearer (OAuth tokens off)': X(401, { error: 'Block token required' }, false, []),
-    'runtime flag off, valid JWT': X(401, { error: 'Block token required' }, false, []),
-    'bad JWT': X(401, { error: 'invalid block token' }, false, []),
-    revoked: X(403, { error: 'block instance revoked', code: 'instance_revoked' }, false, []),
+    'no bearer': X(401, { error: 'Block token required' }, false, [], []),
+    'wrong method, no bearer': X(405, { error: 'Method not allowed' }, false, [], []),
+    'non-JWT bearer (OAuth tokens off)': X(401, { error: 'Block token required' }, false, [], []),
+    'runtime flag off, valid JWT': X(401, { error: 'Block token required' }, false, [], []),
+    'bad JWT': X(401, { error: 'invalid block token' }, false, [], []),
+    revoked: X(403, { error: 'block instance revoked', code: 'instance_revoked' }, false, [], []),
     'not approved': X(
       403,
       { error: 'app block is not approved', code: 'app_not_approved' },
       false,
+      [],
       []
     ),
     'revoked AND not approved': X(
       403,
       { error: 'block instance revoked', code: 'instance_revoked' },
       false,
+      [],
       []
     ),
     'missing scope': X(
       403,
       { error: 'missing required scope: apps:storage:shared:read', code: 'insufficient_scope' },
       false,
+      [],
       []
     ),
     'token carries an unknown scope': X(
       403,
       { error: 'unknown scope: made:up:scope', code: 'context_binding' },
       false,
+      [],
       []
     ),
-    'anonymous subject': PASSED(true, []),
-    'ai:write:budgeted without a positive buzzBudget': PASSED(true, []),
-    'rate limited': PASSED(true, []),
-    'hub OAuth token': X(401, { message: 'invalid block token' }, true, []),
+    'anonymous subject': PASSED(true, [], ['apps-db']),
+    'ai:write:budgeted without a positive buzzBudget': PASSED(true, [], ['apps-db']),
+    'rate limited': PASSED(true, [], ['apps-db']),
+    'hub OAuth token': X(401, { message: 'invalid block token' }, true, [], []),
+    'missing approval row': X(404, { message: 'app block not found' }, true, [], []),
+    'approval row read throws': X(503, { error: 'app block status unavailable' }, false, [], []),
+    'consent revoked for the route scope': PASSED(true, [], ['apps-db']),
+    'consent marker unavailable': PASSED(true, [], ['apps-db']),
+    'consent marker unavailable AND not approved': X(
+      403,
+      { error: 'app block is not approved', code: 'app_not_approved' },
+      false,
+      [],
+      []
+    ),
+    'dev token, no approval row': X(404, { message: 'app block not found' }, true, [], []),
+    'private-run token, row not approved': X(
+      403,
+      { message: 'app block is not approved' },
+      true,
+      [],
+      []
+    ),
   },
   'src/pages/api/v1/blocks/shared-storage/increment.ts': {
-    'no bearer': X(401, { error: 'Block token required' }, false, []),
-    'wrong method, no bearer': X(405, { error: 'Method not allowed' }, false, []),
-    'non-JWT bearer (OAuth tokens off)': X(401, { error: 'Block token required' }, false, []),
-    'runtime flag off, valid JWT': X(401, { error: 'Block token required' }, false, []),
-    'bad JWT': X(401, { error: 'invalid block token' }, false, []),
-    revoked: X(403, { error: 'block instance revoked', code: 'instance_revoked' }, false, []),
+    'no bearer': X(401, { error: 'Block token required' }, false, [], []),
+    'wrong method, no bearer': X(405, { error: 'Method not allowed' }, false, [], []),
+    'non-JWT bearer (OAuth tokens off)': X(401, { error: 'Block token required' }, false, [], []),
+    'runtime flag off, valid JWT': X(401, { error: 'Block token required' }, false, [], []),
+    'bad JWT': X(401, { error: 'invalid block token' }, false, [], []),
+    revoked: X(403, { error: 'block instance revoked', code: 'instance_revoked' }, false, [], []),
     'not approved': X(
       403,
       { error: 'app block is not approved', code: 'app_not_approved' },
       false,
+      [],
       []
     ),
     'revoked AND not approved': X(
       403,
       { error: 'block instance revoked', code: 'instance_revoked' },
       false,
+      [],
       []
     ),
     'missing scope': X(
       403,
       { error: 'missing required scope: apps:storage:shared:write', code: 'insufficient_scope' },
       false,
+      [],
       []
     ),
     'token carries an unknown scope': X(
       403,
       { error: 'unknown scope: made:up:scope', code: 'context_binding' },
       false,
+      [],
       []
     ),
     'anonymous subject': X(
@@ -1528,11 +2604,14 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
         code: 'context_binding',
       },
       false,
+      [],
       []
     ),
-    'ai:write:budgeted without a positive buzzBudget': PASSED(true, [
-      'checkSharedVoteRateLimit(42, "apb_char")',
-    ]),
+    'ai:write:budgeted without a positive buzzBudget': PASSED(
+      true,
+      ['checkSharedVoteRateLimit(42, "apb_row")'],
+      ['apps-db']
+    ),
     'rate limited': X(
       429,
       {
@@ -1542,111 +2621,189 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
         rateLimit: { retryAfterSeconds: 7, retryAt: '2026-01-01T00:00:07.000Z' },
       },
       true,
-      ['checkSharedVoteRateLimit(42, "apb_char")']
+      ['checkSharedVoteRateLimit(42, "apb_row")'],
+      []
     ),
-    'hub OAuth token': X(401, { error: 'invalid block token' }, true, []),
+    'hub OAuth token': X(401, { error: 'invalid block token' }, true, [], []),
+    'missing approval row': X(404, { error: 'app block not found' }, true, [], []),
+    'approval row read throws': X(503, { error: 'app block status unavailable' }, false, [], []),
+    'consent revoked for the route scope': PASSED(
+      true,
+      ['checkSharedVoteRateLimit(42, "apb_row")'],
+      ['apps-db']
+    ),
+    'consent marker unavailable': PASSED(
+      true,
+      ['checkSharedVoteRateLimit(42, "apb_row")'],
+      ['apps-db']
+    ),
+    'consent marker unavailable AND not approved': X(
+      403,
+      { error: 'app block is not approved', code: 'app_not_approved' },
+      false,
+      [],
+      []
+    ),
+    'dev token, no approval row': X(404, { error: 'app block not found' }, true, [], []),
+    'private-run token, row not approved': X(
+      403,
+      { error: 'app block is not approved' },
+      true,
+      [],
+      []
+    ),
   },
   'src/pages/api/v1/blocks/shared-storage/item.ts': {
-    'no bearer': X(401, { error: 'Block token required' }, false, []),
-    'wrong method, no bearer': X(405, { error: 'Method not allowed' }, false, []),
-    'non-JWT bearer (OAuth tokens off)': X(401, { error: 'Block token required' }, false, []),
-    'runtime flag off, valid JWT': X(401, { error: 'Block token required' }, false, []),
-    'bad JWT': X(401, { error: 'invalid block token' }, false, []),
-    revoked: X(403, { error: 'block instance revoked', code: 'instance_revoked' }, false, []),
+    'no bearer': X(401, { error: 'Block token required' }, false, [], []),
+    'wrong method, no bearer': X(405, { error: 'Method not allowed' }, false, [], []),
+    'non-JWT bearer (OAuth tokens off)': X(401, { error: 'Block token required' }, false, [], []),
+    'runtime flag off, valid JWT': X(401, { error: 'Block token required' }, false, [], []),
+    'bad JWT': X(401, { error: 'invalid block token' }, false, [], []),
+    revoked: X(403, { error: 'block instance revoked', code: 'instance_revoked' }, false, [], []),
     'not approved': X(
       403,
       { error: 'app block is not approved', code: 'app_not_approved' },
       false,
+      [],
       []
     ),
     'revoked AND not approved': X(
       403,
       { error: 'block instance revoked', code: 'instance_revoked' },
       false,
+      [],
       []
     ),
     'missing scope': X(
       403,
       { error: 'missing required scope: apps:storage:shared:read', code: 'insufficient_scope' },
       false,
+      [],
       []
     ),
     'token carries an unknown scope': X(
       403,
       { error: 'unknown scope: made:up:scope', code: 'context_binding' },
       false,
+      [],
       []
     ),
-    'anonymous subject': PASSED(true, []),
-    'ai:write:budgeted without a positive buzzBudget': PASSED(true, []),
-    'rate limited': PASSED(true, []),
-    'hub OAuth token': X(401, { message: 'invalid block token' }, true, []),
+    'anonymous subject': PASSED(true, [], ['apps-db']),
+    'ai:write:budgeted without a positive buzzBudget': PASSED(true, [], ['apps-db']),
+    'rate limited': PASSED(true, [], ['apps-db']),
+    'hub OAuth token': X(401, { message: 'invalid block token' }, true, [], []),
+    'missing approval row': X(404, { message: 'app block not found' }, true, [], []),
+    'approval row read throws': X(503, { error: 'app block status unavailable' }, false, [], []),
+    'consent revoked for the route scope': PASSED(true, [], ['apps-db']),
+    'consent marker unavailable': PASSED(true, [], ['apps-db']),
+    'consent marker unavailable AND not approved': X(
+      403,
+      { error: 'app block is not approved', code: 'app_not_approved' },
+      false,
+      [],
+      []
+    ),
+    'dev token, no approval row': X(404, { message: 'app block not found' }, true, [], []),
+    'private-run token, row not approved': X(
+      403,
+      { message: 'app block is not approved' },
+      true,
+      [],
+      []
+    ),
   },
   'src/pages/api/v1/blocks/shared-storage/list.ts': {
-    'no bearer': X(401, { error: 'Block token required' }, false, []),
-    'wrong method, no bearer': X(405, { error: 'Method not allowed' }, false, []),
-    'non-JWT bearer (OAuth tokens off)': X(401, { error: 'Block token required' }, false, []),
-    'runtime flag off, valid JWT': X(401, { error: 'Block token required' }, false, []),
-    'bad JWT': X(401, { error: 'invalid block token' }, false, []),
-    revoked: X(403, { error: 'block instance revoked', code: 'instance_revoked' }, false, []),
+    'no bearer': X(401, { error: 'Block token required' }, false, [], []),
+    'wrong method, no bearer': X(405, { error: 'Method not allowed' }, false, [], []),
+    'non-JWT bearer (OAuth tokens off)': X(401, { error: 'Block token required' }, false, [], []),
+    'runtime flag off, valid JWT': X(401, { error: 'Block token required' }, false, [], []),
+    'bad JWT': X(401, { error: 'invalid block token' }, false, [], []),
+    revoked: X(403, { error: 'block instance revoked', code: 'instance_revoked' }, false, [], []),
     'not approved': X(
       403,
       { error: 'app block is not approved', code: 'app_not_approved' },
       false,
+      [],
       []
     ),
     'revoked AND not approved': X(
       403,
       { error: 'block instance revoked', code: 'instance_revoked' },
       false,
+      [],
       []
     ),
     'missing scope': X(
       403,
       { error: 'missing required scope: apps:storage:shared:read', code: 'insufficient_scope' },
       false,
+      [],
       []
     ),
     'token carries an unknown scope': X(
       403,
       { error: 'unknown scope: made:up:scope', code: 'context_binding' },
       false,
+      [],
       []
     ),
-    'anonymous subject': PASSED(true, []),
-    'ai:write:budgeted without a positive buzzBudget': PASSED(true, []),
-    'rate limited': PASSED(true, []),
-    'hub OAuth token': X(401, { message: 'invalid block token' }, true, []),
+    'anonymous subject': PASSED(true, [], ['apps-db']),
+    'ai:write:budgeted without a positive buzzBudget': PASSED(true, [], ['apps-db']),
+    'rate limited': PASSED(true, [], ['apps-db']),
+    'hub OAuth token': X(401, { message: 'invalid block token' }, true, [], []),
+    'missing approval row': X(404, { message: 'app block not found' }, true, [], []),
+    'approval row read throws': X(503, { error: 'app block status unavailable' }, false, [], []),
+    'consent revoked for the route scope': PASSED(true, [], ['apps-db']),
+    'consent marker unavailable': PASSED(true, [], ['apps-db']),
+    'consent marker unavailable AND not approved': X(
+      403,
+      { error: 'app block is not approved', code: 'app_not_approved' },
+      false,
+      [],
+      []
+    ),
+    'dev token, no approval row': X(404, { message: 'app block not found' }, true, [], []),
+    'private-run token, row not approved': X(
+      403,
+      { message: 'app block is not approved' },
+      true,
+      [],
+      []
+    ),
   },
   'src/pages/api/v1/blocks/shared-storage/report.ts': {
-    'no bearer': X(401, { error: 'Block token required' }, false, []),
-    'wrong method, no bearer': X(405, { error: 'Method not allowed' }, false, []),
-    'non-JWT bearer (OAuth tokens off)': X(401, { error: 'Block token required' }, false, []),
-    'runtime flag off, valid JWT': X(401, { error: 'Block token required' }, false, []),
-    'bad JWT': X(401, { error: 'invalid block token' }, false, []),
-    revoked: X(403, { error: 'block instance revoked', code: 'instance_revoked' }, false, []),
+    'no bearer': X(401, { error: 'Block token required' }, false, [], []),
+    'wrong method, no bearer': X(405, { error: 'Method not allowed' }, false, [], []),
+    'non-JWT bearer (OAuth tokens off)': X(401, { error: 'Block token required' }, false, [], []),
+    'runtime flag off, valid JWT': X(401, { error: 'Block token required' }, false, [], []),
+    'bad JWT': X(401, { error: 'invalid block token' }, false, [], []),
+    revoked: X(403, { error: 'block instance revoked', code: 'instance_revoked' }, false, [], []),
     'not approved': X(
       403,
       { error: 'app block is not approved', code: 'app_not_approved' },
       false,
+      [],
       []
     ),
     'revoked AND not approved': X(
       403,
       { error: 'block instance revoked', code: 'instance_revoked' },
       false,
+      [],
       []
     ),
     'missing scope': X(
       403,
       { error: 'missing required scope: apps:storage:shared:write', code: 'insufficient_scope' },
       false,
+      [],
       []
     ),
     'token carries an unknown scope': X(
       403,
       { error: 'unknown scope: made:up:scope', code: 'context_binding' },
       false,
+      [],
       []
     ),
     'anonymous subject': X(
@@ -1656,11 +2813,14 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
         code: 'context_binding',
       },
       false,
+      [],
       []
     ),
-    'ai:write:budgeted without a positive buzzBudget': PASSED(true, [
-      'checkSharedReportRateLimit(42, "apb_char")',
-    ]),
+    'ai:write:budgeted without a positive buzzBudget': PASSED(
+      true,
+      ['checkSharedReportRateLimit(42, "apb_row")'],
+      ['apps-db']
+    ),
     'rate limited': X(
       429,
       {
@@ -1670,75 +2830,130 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
         rateLimit: { retryAfterSeconds: 7, retryAt: '2026-01-01T00:00:07.000Z' },
       },
       true,
-      ['checkSharedReportRateLimit(42, "apb_char")']
+      ['checkSharedReportRateLimit(42, "apb_row")'],
+      []
     ),
-    'hub OAuth token': X(401, { message: 'invalid block token' }, true, []),
+    'hub OAuth token': X(401, { message: 'invalid block token' }, true, [], []),
+    'missing approval row': X(404, { message: 'app block not found' }, true, [], []),
+    'approval row read throws': X(503, { error: 'app block status unavailable' }, false, [], []),
+    'consent revoked for the route scope': PASSED(
+      true,
+      ['checkSharedReportRateLimit(42, "apb_row")'],
+      ['apps-db']
+    ),
+    'consent marker unavailable': PASSED(
+      true,
+      ['checkSharedReportRateLimit(42, "apb_row")'],
+      ['apps-db']
+    ),
+    'consent marker unavailable AND not approved': X(
+      403,
+      { error: 'app block is not approved', code: 'app_not_approved' },
+      false,
+      [],
+      []
+    ),
+    'dev token, no approval row': X(404, { message: 'app block not found' }, true, [], []),
+    'private-run token, row not approved': X(
+      403,
+      { message: 'app block is not approved' },
+      true,
+      [],
+      []
+    ),
   },
   'src/pages/api/v1/blocks/shared-storage/top.ts': {
-    'no bearer': X(401, { error: 'Block token required' }, false, []),
-    'wrong method, no bearer': X(405, { error: 'Method not allowed' }, false, []),
-    'non-JWT bearer (OAuth tokens off)': X(401, { error: 'Block token required' }, false, []),
-    'runtime flag off, valid JWT': X(401, { error: 'Block token required' }, false, []),
-    'bad JWT': X(401, { error: 'invalid block token' }, false, []),
-    revoked: X(403, { error: 'block instance revoked', code: 'instance_revoked' }, false, []),
+    'no bearer': X(401, { error: 'Block token required' }, false, [], []),
+    'wrong method, no bearer': X(405, { error: 'Method not allowed' }, false, [], []),
+    'non-JWT bearer (OAuth tokens off)': X(401, { error: 'Block token required' }, false, [], []),
+    'runtime flag off, valid JWT': X(401, { error: 'Block token required' }, false, [], []),
+    'bad JWT': X(401, { error: 'invalid block token' }, false, [], []),
+    revoked: X(403, { error: 'block instance revoked', code: 'instance_revoked' }, false, [], []),
     'not approved': X(
       403,
       { error: 'app block is not approved', code: 'app_not_approved' },
       false,
+      [],
       []
     ),
     'revoked AND not approved': X(
       403,
       { error: 'block instance revoked', code: 'instance_revoked' },
       false,
+      [],
       []
     ),
     'missing scope': X(
       403,
       { error: 'missing required scope: apps:storage:shared:read', code: 'insufficient_scope' },
       false,
+      [],
       []
     ),
     'token carries an unknown scope': X(
       403,
       { error: 'unknown scope: made:up:scope', code: 'context_binding' },
       false,
+      [],
       []
     ),
-    'anonymous subject': PASSED(true, []),
-    'ai:write:budgeted without a positive buzzBudget': PASSED(true, []),
-    'rate limited': PASSED(true, []),
-    'hub OAuth token': X(401, { error: 'invalid block token' }, true, []),
+    'anonymous subject': PASSED(true, [], ['apps-db']),
+    'ai:write:budgeted without a positive buzzBudget': PASSED(true, [], ['apps-db']),
+    'rate limited': PASSED(true, [], ['apps-db']),
+    'hub OAuth token': X(401, { error: 'invalid block token' }, true, [], []),
+    'missing approval row': X(404, { error: 'app block not found' }, true, [], []),
+    'approval row read throws': X(503, { error: 'app block status unavailable' }, false, [], []),
+    'consent revoked for the route scope': PASSED(true, [], ['apps-db']),
+    'consent marker unavailable': PASSED(true, [], ['apps-db']),
+    'consent marker unavailable AND not approved': X(
+      403,
+      { error: 'app block is not approved', code: 'app_not_approved' },
+      false,
+      [],
+      []
+    ),
+    'dev token, no approval row': X(404, { error: 'app block not found' }, true, [], []),
+    'private-run token, row not approved': X(
+      403,
+      { error: 'app block is not approved' },
+      true,
+      [],
+      []
+    ),
   },
   'src/pages/api/v1/blocks/shared-storage/unvote.ts': {
-    'no bearer': X(401, { error: 'Block token required' }, false, []),
-    'wrong method, no bearer': X(405, { error: 'Method not allowed' }, false, []),
-    'non-JWT bearer (OAuth tokens off)': X(401, { error: 'Block token required' }, false, []),
-    'runtime flag off, valid JWT': X(401, { error: 'Block token required' }, false, []),
-    'bad JWT': X(401, { error: 'invalid block token' }, false, []),
-    revoked: X(403, { error: 'block instance revoked', code: 'instance_revoked' }, false, []),
+    'no bearer': X(401, { error: 'Block token required' }, false, [], []),
+    'wrong method, no bearer': X(405, { error: 'Method not allowed' }, false, [], []),
+    'non-JWT bearer (OAuth tokens off)': X(401, { error: 'Block token required' }, false, [], []),
+    'runtime flag off, valid JWT': X(401, { error: 'Block token required' }, false, [], []),
+    'bad JWT': X(401, { error: 'invalid block token' }, false, [], []),
+    revoked: X(403, { error: 'block instance revoked', code: 'instance_revoked' }, false, [], []),
     'not approved': X(
       403,
       { error: 'app block is not approved', code: 'app_not_approved' },
       false,
+      [],
       []
     ),
     'revoked AND not approved': X(
       403,
       { error: 'block instance revoked', code: 'instance_revoked' },
       false,
+      [],
       []
     ),
     'missing scope': X(
       403,
       { error: 'missing required scope: apps:storage:shared:write', code: 'insufficient_scope' },
       false,
+      [],
       []
     ),
     'token carries an unknown scope': X(
       403,
       { error: 'unknown scope: made:up:scope', code: 'context_binding' },
       false,
+      [],
       []
     ),
     'anonymous subject': X(
@@ -1748,11 +2963,14 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
         code: 'context_binding',
       },
       false,
+      [],
       []
     ),
-    'ai:write:budgeted without a positive buzzBudget': PASSED(true, [
-      'checkSharedVoteRateLimit(42, "apb_char")',
-    ]),
+    'ai:write:budgeted without a positive buzzBudget': PASSED(
+      true,
+      ['checkSharedVoteRateLimit(42, "apb_row")'],
+      ['apps-db']
+    ),
     'rate limited': X(
       429,
       {
@@ -1762,39 +2980,71 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
         rateLimit: { retryAfterSeconds: 7, retryAt: '2026-01-01T00:00:07.000Z' },
       },
       true,
-      ['checkSharedVoteRateLimit(42, "apb_char")']
+      ['checkSharedVoteRateLimit(42, "apb_row")'],
+      []
     ),
-    'hub OAuth token': X(401, { message: 'invalid block token' }, true, []),
+    'hub OAuth token': X(401, { message: 'invalid block token' }, true, [], []),
+    'missing approval row': X(404, { message: 'app block not found' }, true, [], []),
+    'approval row read throws': X(503, { error: 'app block status unavailable' }, false, [], []),
+    'consent revoked for the route scope': PASSED(
+      true,
+      ['checkSharedVoteRateLimit(42, "apb_row")'],
+      ['apps-db']
+    ),
+    'consent marker unavailable': PASSED(
+      true,
+      ['checkSharedVoteRateLimit(42, "apb_row")'],
+      ['apps-db']
+    ),
+    'consent marker unavailable AND not approved': X(
+      403,
+      { error: 'app block is not approved', code: 'app_not_approved' },
+      false,
+      [],
+      []
+    ),
+    'dev token, no approval row': X(404, { message: 'app block not found' }, true, [], []),
+    'private-run token, row not approved': X(
+      403,
+      { message: 'app block is not approved' },
+      true,
+      [],
+      []
+    ),
   },
   'src/pages/api/v1/blocks/shared-storage/update.ts': {
-    'no bearer': X(401, { error: 'Block token required' }, false, []),
-    'wrong method, no bearer': X(405, { error: 'Method not allowed' }, false, []),
-    'non-JWT bearer (OAuth tokens off)': X(401, { error: 'Block token required' }, false, []),
-    'runtime flag off, valid JWT': X(401, { error: 'Block token required' }, false, []),
-    'bad JWT': X(401, { error: 'invalid block token' }, false, []),
-    revoked: X(403, { error: 'block instance revoked', code: 'instance_revoked' }, false, []),
+    'no bearer': X(401, { error: 'Block token required' }, false, [], []),
+    'wrong method, no bearer': X(405, { error: 'Method not allowed' }, false, [], []),
+    'non-JWT bearer (OAuth tokens off)': X(401, { error: 'Block token required' }, false, [], []),
+    'runtime flag off, valid JWT': X(401, { error: 'Block token required' }, false, [], []),
+    'bad JWT': X(401, { error: 'invalid block token' }, false, [], []),
+    revoked: X(403, { error: 'block instance revoked', code: 'instance_revoked' }, false, [], []),
     'not approved': X(
       403,
       { error: 'app block is not approved', code: 'app_not_approved' },
       false,
+      [],
       []
     ),
     'revoked AND not approved': X(
       403,
       { error: 'block instance revoked', code: 'instance_revoked' },
       false,
+      [],
       []
     ),
     'missing scope': X(
       403,
       { error: 'missing required scope: apps:storage:shared:write', code: 'insufficient_scope' },
       false,
+      [],
       []
     ),
     'token carries an unknown scope': X(
       403,
       { error: 'unknown scope: made:up:scope', code: 'context_binding' },
       false,
+      [],
       []
     ),
     'anonymous subject': X(
@@ -1804,11 +3054,14 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
         code: 'context_binding',
       },
       false,
+      [],
       []
     ),
-    'ai:write:budgeted without a positive buzzBudget': PASSED(true, [
-      'reserveSharedWrite(42, "apb_char")',
-    ]),
+    'ai:write:budgeted without a positive buzzBudget': PASSED(
+      true,
+      ['reserveSharedWrite(42, "apb_row")'],
+      ['apps-db']
+    ),
     'rate limited': X(
       429,
       {
@@ -1818,39 +3071,67 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
         rateLimit: { retryAfterSeconds: 7, retryAt: '2026-01-01T00:00:07.000Z' },
       },
       true,
-      ['reserveSharedWrite(42, "apb_char")']
+      ['reserveSharedWrite(42, "apb_row")'],
+      []
     ),
-    'hub OAuth token': X(401, { message: 'invalid block token' }, true, []),
+    'hub OAuth token': X(401, { message: 'invalid block token' }, true, [], []),
+    'missing approval row': X(404, { message: 'app block not found' }, true, [], []),
+    'approval row read throws': X(503, { error: 'app block status unavailable' }, false, [], []),
+    'consent revoked for the route scope': PASSED(
+      true,
+      ['reserveSharedWrite(42, "apb_row")'],
+      ['apps-db']
+    ),
+    'consent marker unavailable': PASSED(true, ['reserveSharedWrite(42, "apb_row")'], ['apps-db']),
+    'consent marker unavailable AND not approved': X(
+      403,
+      { error: 'app block is not approved', code: 'app_not_approved' },
+      false,
+      [],
+      []
+    ),
+    'dev token, no approval row': X(404, { message: 'app block not found' }, true, [], []),
+    'private-run token, row not approved': X(
+      403,
+      { message: 'app block is not approved' },
+      true,
+      [],
+      []
+    ),
   },
   'src/pages/api/v1/blocks/shared-storage/vote.ts': {
-    'no bearer': X(401, { error: 'Block token required' }, false, []),
-    'wrong method, no bearer': X(405, { error: 'Method not allowed' }, false, []),
-    'non-JWT bearer (OAuth tokens off)': X(401, { error: 'Block token required' }, false, []),
-    'runtime flag off, valid JWT': X(401, { error: 'Block token required' }, false, []),
-    'bad JWT': X(401, { error: 'invalid block token' }, false, []),
-    revoked: X(403, { error: 'block instance revoked', code: 'instance_revoked' }, false, []),
+    'no bearer': X(401, { error: 'Block token required' }, false, [], []),
+    'wrong method, no bearer': X(405, { error: 'Method not allowed' }, false, [], []),
+    'non-JWT bearer (OAuth tokens off)': X(401, { error: 'Block token required' }, false, [], []),
+    'runtime flag off, valid JWT': X(401, { error: 'Block token required' }, false, [], []),
+    'bad JWT': X(401, { error: 'invalid block token' }, false, [], []),
+    revoked: X(403, { error: 'block instance revoked', code: 'instance_revoked' }, false, [], []),
     'not approved': X(
       403,
       { error: 'app block is not approved', code: 'app_not_approved' },
       false,
+      [],
       []
     ),
     'revoked AND not approved': X(
       403,
       { error: 'block instance revoked', code: 'instance_revoked' },
       false,
+      [],
       []
     ),
     'missing scope': X(
       403,
       { error: 'missing required scope: apps:storage:shared:write', code: 'insufficient_scope' },
       false,
+      [],
       []
     ),
     'token carries an unknown scope': X(
       403,
       { error: 'unknown scope: made:up:scope', code: 'context_binding' },
       false,
+      [],
       []
     ),
     'anonymous subject': X(
@@ -1860,11 +3141,14 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
         code: 'context_binding',
       },
       false,
+      [],
       []
     ),
-    'ai:write:budgeted without a positive buzzBudget': PASSED(true, [
-      'checkSharedVoteRateLimit(42, "apb_char")',
-    ]),
+    'ai:write:budgeted without a positive buzzBudget': PASSED(
+      true,
+      ['checkSharedVoteRateLimit(42, "apb_row")'],
+      ['apps-db']
+    ),
     'rate limited': X(
       429,
       {
@@ -1874,39 +3158,71 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
         rateLimit: { retryAfterSeconds: 7, retryAt: '2026-01-01T00:00:07.000Z' },
       },
       true,
-      ['checkSharedVoteRateLimit(42, "apb_char")']
+      ['checkSharedVoteRateLimit(42, "apb_row")'],
+      []
     ),
-    'hub OAuth token': X(401, { message: 'invalid block token' }, true, []),
+    'hub OAuth token': X(401, { message: 'invalid block token' }, true, [], []),
+    'missing approval row': X(404, { message: 'app block not found' }, true, [], []),
+    'approval row read throws': X(503, { error: 'app block status unavailable' }, false, [], []),
+    'consent revoked for the route scope': PASSED(
+      true,
+      ['checkSharedVoteRateLimit(42, "apb_row")'],
+      ['apps-db']
+    ),
+    'consent marker unavailable': PASSED(
+      true,
+      ['checkSharedVoteRateLimit(42, "apb_row")'],
+      ['apps-db']
+    ),
+    'consent marker unavailable AND not approved': X(
+      403,
+      { error: 'app block is not approved', code: 'app_not_approved' },
+      false,
+      [],
+      []
+    ),
+    'dev token, no approval row': X(404, { message: 'app block not found' }, true, [], []),
+    'private-run token, row not approved': X(
+      403,
+      { message: 'app block is not approved' },
+      true,
+      [],
+      []
+    ),
   },
   'src/pages/api/v1/blocks/shared-storage/withdraw.ts': {
-    'no bearer': X(401, { error: 'Block token required' }, false, []),
-    'wrong method, no bearer': X(405, { error: 'Method not allowed' }, false, []),
-    'non-JWT bearer (OAuth tokens off)': X(401, { error: 'Block token required' }, false, []),
-    'runtime flag off, valid JWT': X(401, { error: 'Block token required' }, false, []),
-    'bad JWT': X(401, { error: 'invalid block token' }, false, []),
-    revoked: X(403, { error: 'block instance revoked', code: 'instance_revoked' }, false, []),
+    'no bearer': X(401, { error: 'Block token required' }, false, [], []),
+    'wrong method, no bearer': X(405, { error: 'Method not allowed' }, false, [], []),
+    'non-JWT bearer (OAuth tokens off)': X(401, { error: 'Block token required' }, false, [], []),
+    'runtime flag off, valid JWT': X(401, { error: 'Block token required' }, false, [], []),
+    'bad JWT': X(401, { error: 'invalid block token' }, false, [], []),
+    revoked: X(403, { error: 'block instance revoked', code: 'instance_revoked' }, false, [], []),
     'not approved': X(
       403,
       { error: 'app block is not approved', code: 'app_not_approved' },
       false,
+      [],
       []
     ),
     'revoked AND not approved': X(
       403,
       { error: 'block instance revoked', code: 'instance_revoked' },
       false,
+      [],
       []
     ),
     'missing scope': X(
       403,
       { error: 'missing required scope: apps:storage:shared:write', code: 'insufficient_scope' },
       false,
+      [],
       []
     ),
     'token carries an unknown scope': X(
       403,
       { error: 'unknown scope: made:up:scope', code: 'context_binding' },
       false,
+      [],
       []
     ),
     'anonymous subject': X(
@@ -1916,11 +3232,14 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
         code: 'context_binding',
       },
       false,
+      [],
       []
     ),
-    'ai:write:budgeted without a positive buzzBudget': PASSED(true, [
-      'checkSharedWithdrawRateLimit(42, "apb_char")',
-    ]),
+    'ai:write:budgeted without a positive buzzBudget': PASSED(
+      true,
+      ['checkSharedWithdrawRateLimit(42, "apb_row")'],
+      ['apps-db']
+    ),
     'rate limited': X(
       429,
       {
@@ -1930,574 +3249,1180 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
         rateLimit: { retryAfterSeconds: 7, retryAt: '2026-01-01T00:00:07.000Z' },
       },
       true,
-      ['checkSharedWithdrawRateLimit(42, "apb_char")']
+      ['checkSharedWithdrawRateLimit(42, "apb_row")'],
+      []
     ),
-    'hub OAuth token': X(401, { message: 'invalid block token' }, true, []),
+    'hub OAuth token': X(401, { message: 'invalid block token' }, true, [], []),
+    'missing approval row': X(404, { message: 'app block not found' }, true, [], []),
+    'approval row read throws': X(503, { error: 'app block status unavailable' }, false, [], []),
+    'consent revoked for the route scope': PASSED(
+      true,
+      ['checkSharedWithdrawRateLimit(42, "apb_row")'],
+      ['apps-db']
+    ),
+    'consent marker unavailable': PASSED(
+      true,
+      ['checkSharedWithdrawRateLimit(42, "apb_row")'],
+      ['apps-db']
+    ),
+    'consent marker unavailable AND not approved': X(
+      403,
+      { error: 'app block is not approved', code: 'app_not_approved' },
+      false,
+      [],
+      []
+    ),
+    'dev token, no approval row': X(404, { message: 'app block not found' }, true, [], []),
+    'private-run token, row not approved': X(
+      403,
+      { message: 'app block is not approved' },
+      true,
+      [],
+      []
+    ),
   },
   'src/pages/api/v1/blocks/sub-listings/mine.ts': {
-    'no bearer': X(401, { error: 'Block token required' }, false, []),
-    'wrong method, no bearer': X(405, { error: 'Method not allowed' }, false, []),
-    'non-JWT bearer (OAuth tokens off)': X(401, { error: 'Block token required' }, false, []),
-    'runtime flag off, valid JWT': X(401, { error: 'Block token required' }, false, []),
-    'bad JWT': X(401, { error: 'invalid block token' }, false, []),
-    revoked: X(403, { error: 'block instance revoked', code: 'instance_revoked' }, false, []),
+    'no bearer': X(401, { error: 'Block token required' }, false, [], []),
+    'wrong method, no bearer': X(405, { error: 'Method not allowed' }, false, [], []),
+    'non-JWT bearer (OAuth tokens off)': X(401, { error: 'Block token required' }, false, [], []),
+    'runtime flag off, valid JWT': X(401, { error: 'Block token required' }, false, [], []),
+    'bad JWT': X(401, { error: 'invalid block token' }, false, [], []),
+    revoked: X(403, { error: 'block instance revoked', code: 'instance_revoked' }, false, [], []),
     'not approved': X(
       403,
       { error: 'app block is not approved', code: 'app_not_approved' },
       false,
+      [],
       []
     ),
     'revoked AND not approved': X(
       403,
       { error: 'block instance revoked', code: 'instance_revoked' },
       false,
+      [],
       []
     ),
     'missing scope': X(
       403,
       { error: 'missing required scope: apps:store:items:write', code: 'insufficient_scope' },
       false,
+      [],
       []
     ),
     'token carries an unknown scope': X(
       403,
       { error: 'unknown scope: made:up:scope', code: 'context_binding' },
       false,
+      [],
       []
     ),
     'anonymous subject': X(
       403,
       { error: 'apps:store:items:write requires authenticated subject', code: 'context_binding' },
       false,
+      [],
       []
     ),
-    'ai:write:budgeted without a positive buzzBudget': PASSED(true, []),
-    'rate limited': PASSED(true, []),
-    'hub OAuth token': PASSED(true, []),
+    'ai:write:budgeted without a positive buzzBudget': X(200, { items: [] }, true, [], []),
+    'rate limited': X(200, { items: [] }, true, [], []),
+    'hub OAuth token': X(200, { items: [] }, true, [], []),
+    'missing approval row': X(200, { items: [] }, true, [], []),
+    'approval row read throws': X(503, { error: 'app block status unavailable' }, false, [], []),
+    'consent revoked for the route scope': X(200, { items: [] }, true, [], []),
+    'consent marker unavailable': X(200, { items: [] }, true, [], []),
+    'consent marker unavailable AND not approved': X(
+      403,
+      { error: 'app block is not approved', code: 'app_not_approved' },
+      false,
+      [],
+      []
+    ),
+    'dev token, no approval row': X(200, { items: [] }, true, [], []),
+    'private-run token, row not approved': X(200, { items: [] }, true, [], []),
   },
   'src/pages/api/v1/blocks/sub-listings/upsert.ts': {
-    'no bearer': X(401, { error: 'Block token required' }, false, []),
-    'wrong method, no bearer': X(405, { error: 'Method not allowed' }, false, []),
-    'non-JWT bearer (OAuth tokens off)': X(401, { error: 'Block token required' }, false, []),
-    'runtime flag off, valid JWT': X(401, { error: 'Block token required' }, false, []),
-    'bad JWT': X(401, { error: 'invalid block token' }, false, []),
-    revoked: X(403, { error: 'block instance revoked', code: 'instance_revoked' }, false, []),
+    'no bearer': X(401, { error: 'Block token required' }, false, [], []),
+    'wrong method, no bearer': X(405, { error: 'Method not allowed' }, false, [], []),
+    'non-JWT bearer (OAuth tokens off)': X(401, { error: 'Block token required' }, false, [], []),
+    'runtime flag off, valid JWT': X(401, { error: 'Block token required' }, false, [], []),
+    'bad JWT': X(401, { error: 'invalid block token' }, false, [], []),
+    revoked: X(403, { error: 'block instance revoked', code: 'instance_revoked' }, false, [], []),
     'not approved': X(
       403,
       { error: 'app block is not approved', code: 'app_not_approved' },
       false,
+      [],
       []
     ),
     'revoked AND not approved': X(
       403,
       { error: 'block instance revoked', code: 'instance_revoked' },
       false,
+      [],
       []
     ),
     'missing scope': X(
       403,
       { error: 'missing required scope: apps:store:items:write', code: 'insufficient_scope' },
       false,
+      [],
       []
     ),
     'token carries an unknown scope': X(
       403,
       { error: 'unknown scope: made:up:scope', code: 'context_binding' },
       false,
+      [],
       []
     ),
     'anonymous subject': X(
       403,
       { error: 'apps:store:items:write requires authenticated subject', code: 'context_binding' },
       false,
+      [],
       []
     ),
-    'ai:write:budgeted without a positive buzzBudget': PASSED(true, []),
-    'rate limited': PASSED(true, []),
-    'hub OAuth token': PASSED(true, []),
+    'ai:write:budgeted without a positive buzzBudget': X(
+      400,
+      { error: 'Invalid request body', code: 'invalid_body' },
+      true,
+      [],
+      []
+    ),
+    'rate limited': X(400, { error: 'Invalid request body', code: 'invalid_body' }, true, [], []),
+    'hub OAuth token': X(
+      400,
+      { error: 'Invalid request body', code: 'invalid_body' },
+      true,
+      [],
+      []
+    ),
+    'missing approval row': X(
+      400,
+      { error: 'Invalid request body', code: 'invalid_body' },
+      true,
+      [],
+      []
+    ),
+    'approval row read throws': X(503, { error: 'app block status unavailable' }, false, [], []),
+    'consent revoked for the route scope': X(
+      400,
+      { error: 'Invalid request body', code: 'invalid_body' },
+      true,
+      [],
+      []
+    ),
+    'consent marker unavailable': X(
+      400,
+      { error: 'Invalid request body', code: 'invalid_body' },
+      true,
+      [],
+      []
+    ),
+    'consent marker unavailable AND not approved': X(
+      403,
+      { error: 'app block is not approved', code: 'app_not_approved' },
+      false,
+      [],
+      []
+    ),
+    'dev token, no approval row': X(
+      400,
+      { error: 'Invalid request body', code: 'invalid_body' },
+      true,
+      [],
+      []
+    ),
+    'private-run token, row not approved': X(
+      400,
+      { error: 'Invalid request body', code: 'invalid_body' },
+      true,
+      [],
+      []
+    ),
   },
   'src/pages/api/v1/blocks/sub-listings/withdraw.ts': {
-    'no bearer': X(401, { error: 'Block token required' }, false, []),
-    'wrong method, no bearer': X(405, { error: 'Method not allowed' }, false, []),
-    'non-JWT bearer (OAuth tokens off)': X(401, { error: 'Block token required' }, false, []),
-    'runtime flag off, valid JWT': X(401, { error: 'Block token required' }, false, []),
-    'bad JWT': X(401, { error: 'invalid block token' }, false, []),
-    revoked: X(403, { error: 'block instance revoked', code: 'instance_revoked' }, false, []),
+    'no bearer': X(401, { error: 'Block token required' }, false, [], []),
+    'wrong method, no bearer': X(405, { error: 'Method not allowed' }, false, [], []),
+    'non-JWT bearer (OAuth tokens off)': X(401, { error: 'Block token required' }, false, [], []),
+    'runtime flag off, valid JWT': X(401, { error: 'Block token required' }, false, [], []),
+    'bad JWT': X(401, { error: 'invalid block token' }, false, [], []),
+    revoked: X(403, { error: 'block instance revoked', code: 'instance_revoked' }, false, [], []),
     'not approved': X(
       403,
       { error: 'app block is not approved', code: 'app_not_approved' },
       false,
+      [],
       []
     ),
     'revoked AND not approved': X(
       403,
       { error: 'block instance revoked', code: 'instance_revoked' },
       false,
+      [],
       []
     ),
     'missing scope': X(
       403,
       { error: 'missing required scope: apps:store:items:write', code: 'insufficient_scope' },
       false,
+      [],
       []
     ),
     'token carries an unknown scope': X(
       403,
       { error: 'unknown scope: made:up:scope', code: 'context_binding' },
       false,
+      [],
       []
     ),
     'anonymous subject': X(
       403,
       { error: 'apps:store:items:write requires authenticated subject', code: 'context_binding' },
       false,
+      [],
       []
     ),
-    'ai:write:budgeted without a positive buzzBudget': PASSED(true, []),
-    'rate limited': PASSED(true, []),
-    'hub OAuth token': PASSED(true, []),
+    'ai:write:budgeted without a positive buzzBudget': X(
+      400,
+      { error: 'Invalid request body', code: 'invalid_body' },
+      true,
+      [],
+      []
+    ),
+    'rate limited': X(400, { error: 'Invalid request body', code: 'invalid_body' }, true, [], []),
+    'hub OAuth token': X(
+      400,
+      { error: 'Invalid request body', code: 'invalid_body' },
+      true,
+      [],
+      []
+    ),
+    'missing approval row': X(
+      400,
+      { error: 'Invalid request body', code: 'invalid_body' },
+      true,
+      [],
+      []
+    ),
+    'approval row read throws': X(503, { error: 'app block status unavailable' }, false, [], []),
+    'consent revoked for the route scope': X(
+      400,
+      { error: 'Invalid request body', code: 'invalid_body' },
+      true,
+      [],
+      []
+    ),
+    'consent marker unavailable': X(
+      400,
+      { error: 'Invalid request body', code: 'invalid_body' },
+      true,
+      [],
+      []
+    ),
+    'consent marker unavailable AND not approved': X(
+      403,
+      { error: 'app block is not approved', code: 'app_not_approved' },
+      false,
+      [],
+      []
+    ),
+    'dev token, no approval row': X(
+      400,
+      { error: 'Invalid request body', code: 'invalid_body' },
+      true,
+      [],
+      []
+    ),
+    'private-run token, row not approved': X(
+      400,
+      { error: 'Invalid request body', code: 'invalid_body' },
+      true,
+      [],
+      []
+    ),
   },
   'src/pages/api/v1/blocks/tip-allowance.ts': {
-    'no bearer': X(401, { error: 'Block token required' }, false, []),
-    'wrong method, no bearer': X(405, { error: 'Method not allowed' }, false, []),
-    'non-JWT bearer (OAuth tokens off)': X(401, { error: 'Block token required' }, false, []),
-    'runtime flag off, valid JWT': X(401, { error: 'Block token required' }, false, []),
-    'bad JWT': X(401, { error: 'invalid block token' }, false, []),
-    revoked: X(403, { error: 'block instance revoked', code: 'instance_revoked' }, false, []),
+    'no bearer': X(401, { error: 'Block token required' }, false, [], []),
+    'wrong method, no bearer': X(405, { error: 'Method not allowed' }, false, [], []),
+    'non-JWT bearer (OAuth tokens off)': X(401, { error: 'Block token required' }, false, [], []),
+    'runtime flag off, valid JWT': X(401, { error: 'Block token required' }, false, [], []),
+    'bad JWT': X(401, { error: 'invalid block token' }, false, [], []),
+    revoked: X(403, { error: 'block instance revoked', code: 'instance_revoked' }, false, [], []),
     'not approved': X(
       403,
       { error: 'app block is not approved', code: 'app_not_approved' },
       false,
+      [],
       []
     ),
     'revoked AND not approved': X(
       403,
       { error: 'block instance revoked', code: 'instance_revoked' },
       false,
+      [],
       []
     ),
     'missing scope': X(
       403,
       { error: 'missing required scope: social:tip:self', code: 'insufficient_scope' },
       false,
+      [],
       []
     ),
     'token carries an unknown scope': X(
       403,
       { error: 'unknown scope: made:up:scope', code: 'context_binding' },
       false,
+      [],
       []
     ),
     'anonymous subject': X(
       403,
       { error: 'social:tip:self requires authenticated subject', code: 'context_binding' },
       false,
+      [],
       []
     ),
-    'ai:write:budgeted without a positive buzzBudget': PASSED(true, [
-      'checkBlockCatalogRateLimit("bki_char")',
-    ]),
-    'rate limited': X(429, { error: 'Rate limit exceeded, please retry shortly.' }, true, [
-      'checkBlockCatalogRateLimit("bki_char")',
-    ]),
-    'hub OAuth token': PASSED(true, ['checkBlockCatalogRateLimit("page_apb_char")']),
+    'ai:write:budgeted without a positive buzzBudget': X(
+      200,
+      { cap: 25000, spent: 0, remaining: 25000 },
+      true,
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      []
+    ),
+    'rate limited': X(
+      429,
+      { error: 'Rate limit exceeded, please retry shortly.' },
+      true,
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      []
+    ),
+    'hub OAuth token': X(
+      200,
+      { cap: 25000, spent: 0, remaining: 25000 },
+      true,
+      ['checkBlockCatalogRateLimit("page_apb_hubrow")'],
+      []
+    ),
+    'missing approval row': X(
+      200,
+      { cap: 25000, spent: 0, remaining: 25000 },
+      true,
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      []
+    ),
+    'approval row read throws': X(503, { error: 'app block status unavailable' }, false, [], []),
+    'consent revoked for the route scope': X(
+      403,
+      { error: 'consent revoked for scope: social:tip:self', code: 'consent_revoked' },
+      false,
+      [],
+      []
+    ),
+    'consent marker unavailable': X(
+      503,
+      {
+        error: 'permission state is temporarily unavailable — retry shortly',
+        code: 'permission_state_unavailable',
+      },
+      false,
+      [],
+      []
+    ),
+    'consent marker unavailable AND not approved': X(
+      503,
+      {
+        error: 'permission state is temporarily unavailable — retry shortly',
+        code: 'permission_state_unavailable',
+      },
+      false,
+      [],
+      []
+    ),
+    'dev token, no approval row': X(
+      200,
+      { cap: 25000, spent: 0, remaining: 25000 },
+      true,
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      []
+    ),
+    'private-run token, row not approved': X(
+      200,
+      { cap: 25000, spent: 0, remaining: 25000 },
+      true,
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      []
+    ),
   },
   'src/pages/api/v1/blocks/tip.ts': {
-    'no bearer': X(401, { error: 'Block token required' }, false, []),
-    'wrong method, no bearer': X(405, { error: 'Method not allowed' }, false, []),
-    'non-JWT bearer (OAuth tokens off)': X(401, { error: 'Block token required' }, false, []),
-    'runtime flag off, valid JWT': X(401, { error: 'Block token required' }, false, []),
-    'bad JWT': X(401, { error: 'invalid block token' }, false, []),
-    revoked: X(403, { error: 'block instance revoked', code: 'instance_revoked' }, false, []),
+    'no bearer': X(401, { error: 'Block token required' }, false, [], []),
+    'wrong method, no bearer': X(405, { error: 'Method not allowed' }, false, [], []),
+    'non-JWT bearer (OAuth tokens off)': X(401, { error: 'Block token required' }, false, [], []),
+    'runtime flag off, valid JWT': X(401, { error: 'Block token required' }, false, [], []),
+    'bad JWT': X(401, { error: 'invalid block token' }, false, [], []),
+    revoked: X(403, { error: 'block instance revoked', code: 'instance_revoked' }, false, [], []),
     'not approved': X(
       403,
       { error: 'app block is not approved', code: 'app_not_approved' },
       false,
+      [],
       []
     ),
     'revoked AND not approved': X(
       403,
       { error: 'block instance revoked', code: 'instance_revoked' },
       false,
+      [],
       []
     ),
     'missing scope': X(
       403,
       { error: 'missing required scope: social:tip:self', code: 'insufficient_scope' },
       false,
+      [],
       []
     ),
     'token carries an unknown scope': X(
       403,
       { error: 'unknown scope: made:up:scope', code: 'context_binding' },
       false,
+      [],
       []
     ),
     'anonymous subject': X(
       403,
       { error: 'social:tip:self requires authenticated subject', code: 'context_binding' },
       false,
+      [],
       []
     ),
-    'ai:write:budgeted without a positive buzzBudget': PASSED(true, [
-      'checkBlockTipRateLimit("bki_char")',
-    ]),
-    'rate limited': X(429, { error: 'Too many tips — please retry shortly.' }, true, [
-      'checkBlockTipRateLimit("bki_char")',
-    ]),
-    'hub OAuth token': PASSED(true, ['checkBlockTipRateLimit("page_apb_char")']),
+    'ai:write:budgeted without a positive buzzBudget': PASSED(
+      true,
+      ['checkBlockTipRateLimit("bki_char")'],
+      []
+    ),
+    'rate limited': X(
+      429,
+      { error: 'Too many tips — please retry shortly.' },
+      true,
+      ['checkBlockTipRateLimit("bki_char")'],
+      []
+    ),
+    'hub OAuth token': PASSED(true, ['checkBlockTipRateLimit("page_apb_hubrow")'], []),
+    'missing approval row': PASSED(true, ['checkBlockTipRateLimit("bki_char")'], []),
+    'approval row read throws': X(503, { error: 'app block status unavailable' }, false, [], []),
+    'consent revoked for the route scope': X(
+      403,
+      { error: 'consent revoked for scope: social:tip:self', code: 'consent_revoked' },
+      false,
+      [],
+      []
+    ),
+    'consent marker unavailable': X(
+      503,
+      {
+        error: 'permission state is temporarily unavailable — retry shortly',
+        code: 'permission_state_unavailable',
+      },
+      false,
+      [],
+      []
+    ),
+    'consent marker unavailable AND not approved': X(
+      503,
+      {
+        error: 'permission state is temporarily unavailable — retry shortly',
+        code: 'permission_state_unavailable',
+      },
+      false,
+      [],
+      []
+    ),
+    'dev token, no approval row': PASSED(true, ['checkBlockTipRateLimit("bki_char")'], []),
+    'private-run token, row not approved': PASSED(true, ['checkBlockTipRateLimit("bki_char")'], []),
   },
   'src/pages/api/v1/blocks/tools.ts': {
-    'no bearer': X(401, { error: 'Block token required' }, false, []),
-    'wrong method, no bearer': X(401, { error: 'Block token required' }, false, []),
-    'non-JWT bearer (OAuth tokens off)': X(401, { error: 'Block token required' }, false, []),
-    'runtime flag off, valid JWT': X(401, { error: 'Block token required' }, false, []),
-    'bad JWT': X(401, { error: 'invalid block token' }, false, []),
-    revoked: X(403, { error: 'block instance revoked', code: 'instance_revoked' }, false, []),
+    'no bearer': X(401, { error: 'Block token required' }, false, [], []),
+    'wrong method, no bearer': X(401, { error: 'Block token required' }, false, [], []),
+    'non-JWT bearer (OAuth tokens off)': X(401, { error: 'Block token required' }, false, [], []),
+    'runtime flag off, valid JWT': X(401, { error: 'Block token required' }, false, [], []),
+    'bad JWT': X(401, { error: 'invalid block token' }, false, [], []),
+    revoked: X(403, { error: 'block instance revoked', code: 'instance_revoked' }, false, [], []),
     'not approved': X(
       403,
       { error: 'app block is not approved', code: 'app_not_approved' },
       false,
+      [],
       []
     ),
     'revoked AND not approved': X(
       403,
       { error: 'block instance revoked', code: 'instance_revoked' },
       false,
+      [],
       []
     ),
-    'missing scope': PASSED(true, ['checkBlockCatalogRateLimit("bki_char")']),
-    'token carries an unknown scope': PASSED(true, ['checkBlockCatalogRateLimit("bki_char")']),
-    'anonymous subject': PASSED(true, ['checkBlockCatalogRateLimit("bki_char")']),
-    'ai:write:budgeted without a positive buzzBudget': PASSED(true, [
-      'checkBlockCatalogRateLimit("bki_char")',
-    ]),
-    'rate limited': X(429, { error: 'Rate limit exceeded, please retry shortly.' }, true, [
-      'checkBlockCatalogRateLimit("bki_char")',
-    ]),
-    'hub OAuth token': PASSED(true, ['checkBlockCatalogRateLimit("page_apb_char")']),
+    'missing scope': PASSED(true, ['checkBlockCatalogRateLimit("bki_char")'], []),
+    'token carries an unknown scope': PASSED(true, ['checkBlockCatalogRateLimit("bki_char")'], []),
+    'anonymous subject': PASSED(true, ['checkBlockCatalogRateLimit("bki_char")'], []),
+    'ai:write:budgeted without a positive buzzBudget': PASSED(
+      true,
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      []
+    ),
+    'rate limited': X(
+      429,
+      { error: 'Rate limit exceeded, please retry shortly.' },
+      true,
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      []
+    ),
+    'hub OAuth token': PASSED(true, ['checkBlockCatalogRateLimit("page_apb_hubrow")'], []),
+    'missing approval row': PASSED(true, ['checkBlockCatalogRateLimit("bki_char")'], []),
+    'approval row read throws': PASSED(true, ['checkBlockCatalogRateLimit("bki_char")'], []),
+    'consent revoked for the route scope': PASSED(
+      true,
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      []
+    ),
+    'consent marker unavailable': PASSED(true, ['checkBlockCatalogRateLimit("bki_char")'], []),
+    'consent marker unavailable AND not approved': X(
+      403,
+      { error: 'app block is not approved', code: 'app_not_approved' },
+      false,
+      [],
+      []
+    ),
+    'dev token, no approval row': PASSED(true, ['checkBlockCatalogRateLimit("bki_char")'], []),
+    'private-run token, row not approved': PASSED(
+      true,
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      []
+    ),
   },
   'src/pages/api/v1/blocks/user-checkpoint/set.ts': {
-    'no bearer': X(401, { error: 'Block token required' }, false, []),
-    'wrong method, no bearer': X(405, { error: 'Method not allowed' }, false, []),
-    'non-JWT bearer (OAuth tokens off)': X(401, { error: 'Block token required' }, false, []),
-    'runtime flag off, valid JWT': X(401, { error: 'Block token required' }, false, []),
-    'bad JWT': X(401, { error: 'invalid block token' }, false, []),
-    revoked: X(403, { error: 'block instance revoked', code: 'instance_revoked' }, false, []),
+    'no bearer': X(401, { error: 'Block token required' }, false, [], []),
+    'wrong method, no bearer': X(405, { error: 'Method not allowed' }, false, [], []),
+    'non-JWT bearer (OAuth tokens off)': X(401, { error: 'Block token required' }, false, [], []),
+    'runtime flag off, valid JWT': X(401, { error: 'Block token required' }, false, [], []),
+    'bad JWT': X(401, { error: 'invalid block token' }, false, [], []),
+    revoked: X(403, { error: 'block instance revoked', code: 'instance_revoked' }, false, [], []),
     'not approved': X(
       403,
       { error: 'app block is not approved', code: 'app_not_approved' },
       false,
+      [],
       []
     ),
     'revoked AND not approved': X(
       403,
       { error: 'block instance revoked', code: 'instance_revoked' },
       false,
+      [],
       []
     ),
     'missing scope': X(
       403,
       { message: 'Apps authoring is not enabled for this account' },
       true,
+      [],
       []
     ),
     'token carries an unknown scope': X(
       403,
       { message: 'Apps authoring is not enabled for this account' },
       true,
+      [],
       []
     ),
     'anonymous subject': X(
       401,
       { message: 'anon viewers cannot persist block settings' },
       true,
+      [],
       []
     ),
     'ai:write:budgeted without a positive buzzBudget': X(
       403,
       { message: 'Apps authoring is not enabled for this account' },
       true,
+      [],
       []
     ),
-    'rate limited': X(403, { message: 'Apps authoring is not enabled for this account' }, true, []),
-    'hub OAuth token': X(401, { message: 'invalid block token' }, true, []),
+    'rate limited': X(
+      403,
+      { message: 'Apps authoring is not enabled for this account' },
+      true,
+      [],
+      []
+    ),
+    'hub OAuth token': X(401, { message: 'invalid block token' }, true, [], []),
+    'missing approval row': X(404, { message: 'app block not found' }, true, [], []),
+    'approval row read throws': X(503, { error: 'app block status unavailable' }, false, [], []),
+    'consent revoked for the route scope': X(
+      403,
+      { message: 'Apps authoring is not enabled for this account' },
+      true,
+      [],
+      []
+    ),
+    'consent marker unavailable': X(
+      503,
+      { message: 'permission state is temporarily unavailable — retry shortly' },
+      true,
+      [],
+      []
+    ),
+    'consent marker unavailable AND not approved': X(
+      403,
+      { error: 'app block is not approved', code: 'app_not_approved' },
+      false,
+      [],
+      []
+    ),
+    'dev token, no approval row': X(
+      403,
+      { message: 'Apps authoring is not enabled for this account' },
+      true,
+      [],
+      []
+    ),
+    'private-run token, row not approved': X(
+      403,
+      { message: 'Apps authoring is not enabled for this account' },
+      true,
+      [],
+      []
+    ),
   },
   'src/pages/api/v1/blocks/workflows/cancel.ts': {
-    'no bearer': X(401, { error: 'Block token required' }, false, []),
-    'wrong method, no bearer': X(405, { error: 'Method not allowed' }, false, []),
-    'non-JWT bearer (OAuth tokens off)': X(401, { error: 'Block token required' }, false, []),
-    'runtime flag off, valid JWT': X(401, { error: 'Block token required' }, false, []),
-    'bad JWT': X(401, { error: 'invalid block token' }, false, []),
-    revoked: X(403, { error: 'block instance revoked', code: 'instance_revoked' }, false, []),
+    'no bearer': X(401, { error: 'Block token required' }, false, [], []),
+    'wrong method, no bearer': X(405, { error: 'Method not allowed' }, false, [], []),
+    'non-JWT bearer (OAuth tokens off)': X(401, { error: 'Block token required' }, false, [], []),
+    'runtime flag off, valid JWT': X(401, { error: 'Block token required' }, false, [], []),
+    'bad JWT': X(401, { error: 'invalid block token' }, false, [], []),
+    revoked: X(403, { error: 'block instance revoked', code: 'instance_revoked' }, false, [], []),
     'not approved': X(
       403,
       { error: 'app block is not approved', code: 'app_not_approved' },
       false,
+      [],
       []
     ),
     'revoked AND not approved': X(
       403,
       { error: 'block instance revoked', code: 'instance_revoked' },
       false,
+      [],
       []
     ),
     'missing scope': X(
       403,
       { error: 'missing required scope: ai:write:budgeted', code: 'insufficient_scope' },
       false,
+      [],
       []
     ),
     'token carries an unknown scope': X(
       403,
       { error: 'unknown scope: made:up:scope', code: 'context_binding' },
       false,
+      [],
       []
     ),
     'anonymous subject': X(
       401,
       { message: 'workflow cancel requires authenticated viewer' },
       true,
+      [],
       []
     ),
     'ai:write:budgeted without a positive buzzBudget': X(
       403,
       { error: 'ai:write:budgeted requires positive buzzBudget claim', code: 'context_binding' },
       false,
+      [],
       []
     ),
-    'rate limited': X(200, { snapshot: { workflowId: 'wf_1', status: 'processing' } }, true, [
-      'checkBlockCatalogRateLimit("bki_char")',
-    ]),
-    'hub OAuth token': X(401, { message: 'invalid block token' }, true, []),
+    'rate limited': X(
+      200,
+      { snapshot: { workflowId: 'wf_1', status: 'processing' } },
+      true,
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      []
+    ),
+    'hub OAuth token': X(401, { message: 'invalid block token' }, true, [], []),
+    'missing approval row': X(404, { message: 'app block not found' }, true, [], []),
+    'approval row read throws': X(503, { error: 'app block status unavailable' }, false, [], []),
+    'consent revoked for the route scope': X(
+      403,
+      { error: 'consent revoked for scope: ai:write:budgeted', code: 'consent_revoked' },
+      false,
+      [],
+      []
+    ),
+    'consent marker unavailable': X(
+      503,
+      {
+        error: 'permission state is temporarily unavailable — retry shortly',
+        code: 'permission_state_unavailable',
+      },
+      false,
+      [],
+      []
+    ),
+    'consent marker unavailable AND not approved': X(
+      503,
+      {
+        error: 'permission state is temporarily unavailable — retry shortly',
+        code: 'permission_state_unavailable',
+      },
+      false,
+      [],
+      []
+    ),
+    'dev token, no approval row': PASSED(true, ['checkBlockCatalogRateLimit("bki_char")'], []),
+    'private-run token, row not approved': PASSED(
+      true,
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      []
+    ),
   },
   'src/pages/api/v1/blocks/workflows/estimate.ts': {
-    'no bearer': X(401, { error: 'Block token required' }, false, []),
-    'wrong method, no bearer': X(405, { error: 'Method not allowed' }, false, []),
-    'non-JWT bearer (OAuth tokens off)': X(401, { error: 'Block token required' }, false, []),
-    'runtime flag off, valid JWT': X(401, { error: 'Block token required' }, false, []),
-    'bad JWT': X(401, { error: 'invalid block token' }, false, []),
-    revoked: X(403, { error: 'block instance revoked', code: 'instance_revoked' }, false, []),
+    'no bearer': X(401, { error: 'Block token required' }, false, [], []),
+    'wrong method, no bearer': X(405, { error: 'Method not allowed' }, false, [], []),
+    'non-JWT bearer (OAuth tokens off)': X(401, { error: 'Block token required' }, false, [], []),
+    'runtime flag off, valid JWT': X(401, { error: 'Block token required' }, false, [], []),
+    'bad JWT': X(401, { error: 'invalid block token' }, false, [], []),
+    revoked: X(403, { error: 'block instance revoked', code: 'instance_revoked' }, false, [], []),
     'not approved': X(
       403,
       { error: 'app block is not approved', code: 'app_not_approved' },
       false,
+      [],
       []
     ),
     'revoked AND not approved': X(
       403,
       { error: 'block instance revoked', code: 'instance_revoked' },
       false,
+      [],
       []
     ),
     'missing scope': X(
       403,
       { error: 'missing required scope: ai:write:budgeted', code: 'insufficient_scope' },
       false,
+      [],
       []
     ),
     'token carries an unknown scope': X(
       403,
       { error: 'unknown scope: made:up:scope', code: 'context_binding' },
       false,
+      [],
       []
     ),
-    'anonymous subject': X(401, { message: 'estimate requires authenticated viewer' }, true, [
-      'checkBlockCatalogRateLimit("bki_char")',
-    ]),
+    'anonymous subject': X(
+      401,
+      { message: 'estimate requires authenticated viewer' },
+      true,
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      []
+    ),
     'ai:write:budgeted without a positive buzzBudget': X(
       403,
       { error: 'ai:write:budgeted requires positive buzzBudget claim', code: 'context_binding' },
       false,
+      [],
       []
     ),
-    'rate limited': X(429, { message: 'Rate limit exceeded, please retry shortly.' }, true, [
-      'checkBlockCatalogRateLimit("bki_char")',
-    ]),
-    'hub OAuth token': X(401, { message: 'invalid block token' }, true, []),
+    'rate limited': X(
+      429,
+      { message: 'Rate limit exceeded, please retry shortly.' },
+      true,
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      []
+    ),
+    'hub OAuth token': X(401, { message: 'invalid block token' }, true, [], []),
+    'missing approval row': X(404, { message: 'app block not found' }, true, [], []),
+    'approval row read throws': X(503, { error: 'app block status unavailable' }, false, [], []),
+    'consent revoked for the route scope': X(
+      403,
+      { error: 'consent revoked for scope: ai:write:budgeted', code: 'consent_revoked' },
+      false,
+      [],
+      []
+    ),
+    'consent marker unavailable': X(
+      503,
+      {
+        error: 'permission state is temporarily unavailable — retry shortly',
+        code: 'permission_state_unavailable',
+      },
+      false,
+      [],
+      []
+    ),
+    'consent marker unavailable AND not approved': X(
+      503,
+      {
+        error: 'permission state is temporarily unavailable — retry shortly',
+        code: 'permission_state_unavailable',
+      },
+      false,
+      [],
+      []
+    ),
+    'dev token, no approval row': X(
+      404,
+      { message: 'model version not found' },
+      true,
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      []
+    ),
+    'private-run token, row not approved': X(
+      404,
+      { message: 'model version not found' },
+      true,
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      []
+    ),
   },
   'src/pages/api/v1/blocks/workflows/poll.ts': {
-    'no bearer': X(401, { error: 'Block token required' }, false, []),
-    'wrong method, no bearer': X(405, { error: 'Method not allowed' }, false, []),
-    'non-JWT bearer (OAuth tokens off)': X(401, { error: 'Block token required' }, false, []),
-    'runtime flag off, valid JWT': X(401, { error: 'Block token required' }, false, []),
-    'bad JWT': X(401, { error: 'invalid block token' }, false, []),
-    revoked: X(403, { error: 'block instance revoked', code: 'instance_revoked' }, false, []),
+    'no bearer': X(401, { error: 'Block token required' }, false, [], []),
+    'wrong method, no bearer': X(405, { error: 'Method not allowed' }, false, [], []),
+    'non-JWT bearer (OAuth tokens off)': X(401, { error: 'Block token required' }, false, [], []),
+    'runtime flag off, valid JWT': X(401, { error: 'Block token required' }, false, [], []),
+    'bad JWT': X(401, { error: 'invalid block token' }, false, [], []),
+    revoked: X(403, { error: 'block instance revoked', code: 'instance_revoked' }, false, [], []),
     'not approved': X(
       403,
       { error: 'app block is not approved', code: 'app_not_approved' },
       false,
+      [],
       []
     ),
     'revoked AND not approved': X(
       403,
       { error: 'block instance revoked', code: 'instance_revoked' },
       false,
+      [],
       []
     ),
     'missing scope': X(
       403,
       { error: 'missing required scope: ai:write:budgeted', code: 'insufficient_scope' },
       false,
+      [],
       []
     ),
     'token carries an unknown scope': X(
       403,
       { error: 'unknown scope: made:up:scope', code: 'context_binding' },
       false,
+      [],
       []
     ),
     'anonymous subject': X(
       401,
       { message: 'workflow poll requires authenticated viewer' },
       true,
+      [],
       []
     ),
     'ai:write:budgeted without a positive buzzBudget': X(
       403,
       { error: 'ai:write:budgeted requires positive buzzBudget claim', code: 'context_binding' },
       false,
+      [],
       []
     ),
-    'rate limited': X(200, { snapshot: { workflowId: 'wf_1', status: 'processing' } }, true, [
-      'checkBlockPollRateLimit("bki_char", 42)',
-    ]),
-    'hub OAuth token': X(401, { message: 'invalid block token' }, true, []),
+    'rate limited': X(
+      200,
+      { snapshot: { workflowId: 'wf_1', status: 'processing' } },
+      true,
+      ['checkBlockPollRateLimit("bki_char", 42)'],
+      []
+    ),
+    'hub OAuth token': X(401, { message: 'invalid block token' }, true, [], []),
+    'missing approval row': X(404, { message: 'app block not found' }, true, [], []),
+    'approval row read throws': X(503, { error: 'app block status unavailable' }, false, [], []),
+    'consent revoked for the route scope': X(
+      403,
+      { error: 'consent revoked for scope: ai:write:budgeted', code: 'consent_revoked' },
+      false,
+      [],
+      []
+    ),
+    'consent marker unavailable': X(
+      503,
+      {
+        error: 'permission state is temporarily unavailable — retry shortly',
+        code: 'permission_state_unavailable',
+      },
+      false,
+      [],
+      []
+    ),
+    'consent marker unavailable AND not approved': X(
+      503,
+      {
+        error: 'permission state is temporarily unavailable — retry shortly',
+        code: 'permission_state_unavailable',
+      },
+      false,
+      [],
+      []
+    ),
+    'dev token, no approval row': PASSED(true, ['checkBlockPollRateLimit("bki_char", 42)'], []),
+    'private-run token, row not approved': PASSED(
+      true,
+      ['checkBlockPollRateLimit("bki_char", 42)'],
+      []
+    ),
   },
   'src/pages/api/v1/blocks/workflows/query.ts': {
-    'no bearer': X(401, { error: 'Block token required' }, false, []),
-    'wrong method, no bearer': X(405, { error: 'Method not allowed' }, false, []),
-    'non-JWT bearer (OAuth tokens off)': X(401, { error: 'Block token required' }, false, []),
-    'runtime flag off, valid JWT': X(401, { error: 'Block token required' }, false, []),
-    'bad JWT': X(401, { error: 'invalid block token' }, false, []),
-    revoked: X(403, { error: 'block instance revoked', code: 'instance_revoked' }, false, []),
+    'no bearer': X(401, { error: 'Block token required' }, false, [], []),
+    'wrong method, no bearer': X(405, { error: 'Method not allowed' }, false, [], []),
+    'non-JWT bearer (OAuth tokens off)': X(401, { error: 'Block token required' }, false, [], []),
+    'runtime flag off, valid JWT': X(401, { error: 'Block token required' }, false, [], []),
+    'bad JWT': X(401, { error: 'invalid block token' }, false, [], []),
+    revoked: X(403, { error: 'block instance revoked', code: 'instance_revoked' }, false, [], []),
     'not approved': X(
       403,
       { error: 'app block is not approved', code: 'app_not_approved' },
       false,
+      [],
       []
     ),
     'revoked AND not approved': X(
       403,
       { error: 'block instance revoked', code: 'instance_revoked' },
       false,
+      [],
       []
     ),
     'missing scope': X(
       403,
       { error: 'missing required scope: ai:write:budgeted', code: 'insufficient_scope' },
       false,
+      [],
       []
     ),
     'token carries an unknown scope': X(
       403,
       { error: 'unknown scope: made:up:scope', code: 'context_binding' },
       false,
+      [],
       []
     ),
     'anonymous subject': X(
       401,
       { message: 'workflow query requires authenticated viewer' },
       true,
+      [],
       []
     ),
     'ai:write:budgeted without a positive buzzBudget': X(
       403,
       { error: 'ai:write:budgeted requires positive buzzBudget claim', code: 'context_binding' },
       false,
+      [],
       []
     ),
-    'rate limited': X(429, { message: 'Rate limit exceeded, please retry shortly.' }, true, [
-      'checkBlockCatalogRateLimit("bki_char")',
-    ]),
-    'hub OAuth token': X(401, { message: 'invalid block token' }, true, []),
+    'rate limited': X(
+      429,
+      { message: 'Rate limit exceeded, please retry shortly.' },
+      true,
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      []
+    ),
+    'hub OAuth token': X(401, { message: 'invalid block token' }, true, [], []),
+    'missing approval row': X(404, { message: 'app block not found' }, true, [], []),
+    'approval row read throws': X(503, { error: 'app block status unavailable' }, false, [], []),
+    'consent revoked for the route scope': X(
+      403,
+      { error: 'consent revoked for scope: ai:write:budgeted', code: 'consent_revoked' },
+      false,
+      [],
+      []
+    ),
+    'consent marker unavailable': X(
+      503,
+      {
+        error: 'permission state is temporarily unavailable — retry shortly',
+        code: 'permission_state_unavailable',
+      },
+      false,
+      [],
+      []
+    ),
+    'consent marker unavailable AND not approved': X(
+      503,
+      {
+        error: 'permission state is temporarily unavailable — retry shortly',
+        code: 'permission_state_unavailable',
+      },
+      false,
+      [],
+      []
+    ),
+    'dev token, no approval row': PASSED(true, ['checkBlockCatalogRateLimit("bki_char")'], []),
+    'private-run token, row not approved': PASSED(
+      true,
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      []
+    ),
   },
   'src/pages/api/v1/blocks/workflows/submit.ts': {
-    'no bearer': X(401, { error: 'Block token required' }, false, []),
-    'wrong method, no bearer': X(405, { error: 'Method not allowed' }, false, []),
-    'non-JWT bearer (OAuth tokens off)': X(401, { error: 'Block token required' }, false, []),
-    'runtime flag off, valid JWT': X(401, { error: 'Block token required' }, false, []),
-    'bad JWT': X(401, { error: 'invalid block token' }, false, []),
-    revoked: X(403, { error: 'block instance revoked', code: 'instance_revoked' }, false, []),
+    'no bearer': X(401, { error: 'Block token required' }, false, [], []),
+    'wrong method, no bearer': X(405, { error: 'Method not allowed' }, false, [], []),
+    'non-JWT bearer (OAuth tokens off)': X(401, { error: 'Block token required' }, false, [], []),
+    'runtime flag off, valid JWT': X(401, { error: 'Block token required' }, false, [], []),
+    'bad JWT': X(401, { error: 'invalid block token' }, false, [], []),
+    revoked: X(403, { error: 'block instance revoked', code: 'instance_revoked' }, false, [], []),
     'not approved': X(
       403,
       { error: 'app block is not approved', code: 'app_not_approved' },
       false,
+      [],
       []
     ),
     'revoked AND not approved': X(
       403,
       { error: 'block instance revoked', code: 'instance_revoked' },
       false,
+      [],
       []
     ),
     'missing scope': X(
       403,
       { error: 'missing required scope: ai:write:budgeted', code: 'insufficient_scope' },
       false,
+      [],
       []
     ),
     'token carries an unknown scope': X(
       403,
       { error: 'unknown scope: made:up:scope', code: 'context_binding' },
       false,
+      [],
       []
     ),
     'anonymous subject': X(
       401,
       { message: 'workflow submit requires authenticated viewer' },
       true,
+      [],
       []
     ),
     'ai:write:budgeted without a positive buzzBudget': X(
       403,
       { error: 'ai:write:budgeted requires positive buzzBudget claim', code: 'context_binding' },
       false,
+      [],
       []
     ),
-    'rate limited': PASSED(true, []),
-    'hub OAuth token': X(401, { message: 'invalid block token' }, true, []),
+    'rate limited': X(404, { message: 'model version not found' }, true, [], []),
+    'hub OAuth token': X(401, { message: 'invalid block token' }, true, [], []),
+    'missing approval row': X(404, { message: 'app block not found' }, true, [], []),
+    'approval row read throws': X(503, { error: 'app block status unavailable' }, false, [], []),
+    'consent revoked for the route scope': X(
+      403,
+      { error: 'consent revoked for scope: ai:write:budgeted', code: 'consent_revoked' },
+      false,
+      [],
+      []
+    ),
+    'consent marker unavailable': X(
+      503,
+      {
+        error: 'permission state is temporarily unavailable — retry shortly',
+        code: 'permission_state_unavailable',
+      },
+      false,
+      [],
+      []
+    ),
+    'consent marker unavailable AND not approved': X(
+      503,
+      {
+        error: 'permission state is temporarily unavailable — retry shortly',
+        code: 'permission_state_unavailable',
+      },
+      false,
+      [],
+      []
+    ),
+    'dev token, no approval row': X(404, { message: 'model version not found' }, true, [], []),
+    'private-run token, row not approved': X(
+      404,
+      { message: 'model version not found' },
+      true,
+      [],
+      []
+    ),
   },
   'src/pages/api/v1/models/[id].ts': {
-    'no bearer': PASSED(false, []),
-    'wrong method, no bearer': PASSED(false, []),
-    'non-JWT bearer (OAuth tokens off)': PASSED(false, []),
-    'runtime flag off, valid JWT': PASSED(false, []),
-    'bad JWT': X(401, { error: 'invalid block token' }, false, []),
-    revoked: X(403, { error: 'block instance revoked', code: 'instance_revoked' }, false, []),
+    'no bearer': PASSED(false, [], []),
+    'wrong method, no bearer': PASSED(false, [], []),
+    'non-JWT bearer (OAuth tokens off)': PASSED(false, [], []),
+    'runtime flag off, valid JWT': PASSED(false, [], []),
+    'bad JWT': X(401, { error: 'invalid block token' }, false, [], []),
+    revoked: X(403, { error: 'block instance revoked', code: 'instance_revoked' }, false, [], []),
     'not approved': X(
       403,
       { error: 'app block is not approved', code: 'app_not_approved' },
       false,
+      [],
       []
     ),
     'revoked AND not approved': X(
       403,
       { error: 'block instance revoked', code: 'instance_revoked' },
       false,
+      [],
       []
     ),
     'missing scope': X(
       403,
       { error: 'missing required scope: models:read:self', code: 'insufficient_scope' },
       false,
+      [],
       []
     ),
     'token carries an unknown scope': X(
       403,
       { error: 'unknown scope: made:up:scope', code: 'context_binding' },
       false,
+      [],
       []
     ),
-    'anonymous subject': PASSED(true, []),
-    'ai:write:budgeted without a positive buzzBudget': PASSED(true, []),
-    'rate limited': PASSED(true, []),
+    'anonymous subject': PASSED(true, [], []),
+    'ai:write:budgeted without a positive buzzBudget': PASSED(true, [], []),
+    'rate limited': PASSED(true, [], []),
     'hub OAuth token': X(
       403,
       { error: 'models:read:self bound to different modelId', code: 'context_binding' },
       false,
+      [],
       []
     ),
+    'missing approval row': PASSED(true, [], []),
+    'approval row read throws': PASSED(true, [], []),
+    'consent revoked for the route scope': PASSED(true, [], []),
+    'consent marker unavailable': PASSED(true, [], []),
+    'consent marker unavailable AND not approved': X(
+      403,
+      { error: 'app block is not approved', code: 'app_not_approved' },
+      false,
+      [],
+      []
+    ),
+    'dev token, no approval row': PASSED(true, [], []),
+    'private-run token, row not approved': PASSED(true, [], []),
   },
 };
 
@@ -2541,9 +4466,10 @@ describe('withBlockScope REST routes — characterisation table', () => {
           const { kind: _kind, ...exact } = want;
           expect(got).toEqual(exact);
         } else {
-          expect({ admitted: got.admitted, limiter: got.limiter }).toEqual({
+          expect({ admitted: got.admitted, limiter: got.limiter, reached: got.reached }).toEqual({
             admitted: want.admitted,
             limiter: want.limiter,
+            reached: want.reached,
           });
           expect(
             REFUSAL_STATUSES,
