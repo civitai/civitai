@@ -83,6 +83,7 @@ beforeAll(async () => {
     );
     CREATE TABLE "AppealDecisionRecord" (
       "imageId" int NOT NULL,
+      "imageUrl" text,
       "blockedFor" text,
       decision text NOT NULL,
       "decidedAt" timestamptz NOT NULL DEFAULT now(),

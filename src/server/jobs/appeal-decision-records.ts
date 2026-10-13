@@ -6,6 +6,7 @@ import {
 } from '@aws-sdk/client-s3';
 import { Prisma } from '@prisma/client';
 import { env } from '~/env/server';
+import { ViolationType } from '~/server/common/enums';
 import { clickhouse } from '~/server/clickhouse/client';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
@@ -45,9 +46,18 @@ export const excludedRecord = (r: Prisma.Sql) => Prisma.sql`(
   )
 )`;
 
+/** Also excludes a record whose stored object is shared with an excluded image. */
+const ineligibleRecord = (r: Prisma.Sql) => {
+  const so = Prisma.raw('so');
+  return Prisma.sql`(
+    ${excludedRecord(r)}
+    OR EXISTS (SELECT 1 FROM "Image" so WHERE so.url = ${r}."imageUrl" AND ${excludedImageRow(so)})
+  )`;
+};
+
 /**
- * Deletes excluded records, the training labels this job wrote for any excluded image (with or without
- * a record), and expired records.
+ * Deletes ineligible records, the training labels this job wrote for any excluded image (with or
+ * without a record), and expired records, then their training objects.
  */
 export async function sweepExcludedRecords(store?: AppealTrainingStore | null) {
   const r = Prisma.raw('r');
@@ -55,7 +65,7 @@ export async function sweepExcludedRecords(store?: AppealTrainingStore | null) {
     { swept: number; labels: number; keys: string[] }[]
   >`
     WITH removed AS (
-      DELETE FROM "AppealDecisionRecord" r WHERE ${excludedRecord(r)}
+      DELETE FROM "AppealDecisionRecord" r WHERE ${ineligibleRecord(r)}
       RETURNING r."imageUrl", r."trainingObjectKey"
     ),
     labels AS (
@@ -76,30 +86,44 @@ export async function sweepExcludedRecords(store?: AppealTrainingStore | null) {
     DELETE FROM "AppealDecisionRecord" WHERE "createdAt" < now() - ${RECORD_RETENTION}
     RETURNING "trainingObjectKey" AS key
   `;
-  const objects = await removeTrainingObjects(store, keys, expiredRows);
+  const retries = await dbWrite.$queryRaw<{ key: string }[]>`
+    SELECT key FROM "AppealTrainingObjectDeletion"
+  `;
+  const objects = await discardTrainingObjects(store, [
+    ...keys,
+    ...expiredRows.flatMap((row) => (row.key ? [row.key] : [])),
+    ...retries.map((row) => row.key),
+  ]);
   return { swept, labels, expired: expiredRows.length, objects };
 }
 
-// Runs after the records are gone, so a bucket failure never keeps a record.
-async function removeTrainingObjects(
+/** Deletes training objects; keys it could not delete are kept for the next sweep to retry. */
+async function discardTrainingObjects(
   store: AppealTrainingStore | null | undefined,
-  sweptKeys: string[],
-  expiredRows: { key: string | null }[]
+  keys: string[]
 ) {
-  const keys = [...sweptKeys, ...expiredRows.flatMap((row) => (row.key ? [row.key] : []))];
+  keys = [...new Set(keys)];
   if (!keys.length) return 0;
   try {
     store ??= await appealTrainingStoreFromEnv();
     if (!store) throw new Error('training bucket not configured');
     await store.remove(keys);
+    await dbWrite.$executeRaw`
+      DELETE FROM "AppealTrainingObjectDeletion" WHERE key = ANY(${keys}::text[])
+    `;
     return keys.length;
   } catch (e) {
     logToAxiom({
       type: 'error',
       name: JOB_LOG_NAME,
-      message: 'Could not delete training objects for removed records',
+      message: 'Could not delete training objects; queued for retry',
       details: { keys, error: (e as Error).message },
     });
+    await dbWrite.$executeRaw`
+      INSERT INTO "AppealTrainingObjectDeletion" (key)
+      SELECT unnest(${keys}::text[])
+      ON CONFLICT (key) DO NOTHING
+    `;
     return 0;
   }
 }
@@ -121,7 +145,7 @@ export const removalLabelsFromClickhouse: RemovalLabelLookup = async (imageIds) 
   return new Map(rows.map((row) => [row.imageId, { label: row.label, nsfw: row.nsfw || null }]));
 };
 
-/** Rows without a removal label are retried each night for a while; ClickHouse can lag the decision. */
+/** Rows without a removal label are retried for a while; ClickHouse can lag the decision. */
 export async function fillRemovalLabels(lookup: RemovalLabelLookup = removalLabelsFromClickhouse) {
   const pending = await dbWrite.$queryRaw<{ imageId: number }[]>`
     SELECT DISTINCT "imageId" FROM "AppealDecisionRecord"
@@ -153,51 +177,46 @@ const COPY_WINDOW = Prisma.raw(`make_interval(hours => 24)`);
 const UNLABELLED_HOLD = Prisma.raw(`make_interval(hours => 1)`);
 const COPY_BATCH = 200;
 
-const NEVER_COPY_LABELS = [
-  'minor',
-  'animatedMinorNsfw',
-  'realisticMinorNsfw',
-  'realisticMinor',
-  'schoolNsfw',
-  'minorViolence',
-  'diaper',
-  'realPersonNsfw',
-  'non-ai',
+const COPY_LABELS: string[] = [
+  ViolationType.Bestiality,
+  ViolationType.SexualViolence,
+  ViolationType.MindAlteredNsfw,
+  ViolationType.FecalMatter,
+  ViolationType.Gore,
+  ViolationType.Anorexia,
+  ViolationType.BodilyFluids,
+  ViolationType.Incest,
+  ViolationType.Hate,
+  ViolationType.Spam,
 ];
-const RATED_COPY_LABELS = ['poi', 'realPerson'];
+const RATED_COPY_LABELS: string[] = [ViolationType.RealPerson, 'poi'];
 
-// NULL-safe: an unknown rating counts as never-copy.
-const neverCopy = (r: Prisma.Sql) => Prisma.sql`(
-  ${r}."removalLabel" = ANY(${NEVER_COPY_LABELS}::text[])
-  OR ${r}."removalLabel" ILIKE '%minor%'
+// Anything not listed, or with an unknown rating, is not copied.
+const copyableRecord = (r: Prisma.Sql) => Prisma.sql`coalesce(
+  ${r}."removalLabel" = ANY(${COPY_LABELS}::text[])
   OR (
     ${r}."removalLabel" = ANY(${RATED_COPY_LABELS}::text[])
-    AND NOT coalesce(
-      ${r}."removalNsfw" IN ('None', 'Soft') AND coalesce(${r}."aiNsfwLevel", 0) IN (0, 1, 2),
-      false
-    )
-  )
+    AND ${r}."removalNsfw" IN ('None', 'Soft')
+    AND coalesce(${r}."aiNsfwLevel", 0) IN (0, 1, 2)
+  ),
+  false
 )`;
 
 const pendingCopy = (r: Prisma.Sql) =>
   Prisma.sql`${r}.decision = 'Rejected' AND ${r}."trainingCopyState" IS NULL`;
 
-/**
- * Keeps `remove-blocked-images` off an image until the copy job has had its chance. Only valid inside
- * a statement where `i` names an "Image" row.
- */
+/** Holds an image against `remove-blocked-images` while its training copy is pending. `i` must name an "Image" row. */
 export const appealTrainingHeld = (i: Prisma.Sql) => {
   const h = Prisma.raw('h');
-  const copyable = Prisma.sql`NOT ${neverCopy(h)}`;
   return Prisma.sql`EXISTS (
     SELECT 1 FROM "AppealDecisionRecord" h
     WHERE h."imageId" = ${i}.id
       AND ${pendingCopy(h)}
       AND CASE
         WHEN h."removalLabel" IS NULL THEN h."decidedAt" > now() - ${UNLABELLED_HOLD}
-        ELSE h."decidedAt" > now() - ${COPY_WINDOW} AND ${copyable}
+        ELSE h."decidedAt" > now() - ${COPY_WINDOW} AND ${copyableRecord(h)}
       END
-      AND NOT ${excludedRecord(h)}
+      AND NOT ${ineligibleRecord(h)}
   )`;
 };
 
@@ -223,13 +242,13 @@ export function createAppealTrainingStore({
       const original = await source.send(
         new GetObjectCommand({ Bucket: sourceBucket, Key: imageUrl })
       );
+      if (!original.Body) throw new Error('original has no body');
       await target.send(
         new PutObjectCommand({
           Bucket: targetBucket,
           Key: imageUrl,
-          Body: original.Body,
+          Body: await original.Body.transformToByteArray(),
           ContentType: original.ContentType,
-          ContentLength: original.ContentLength,
         })
       );
       return imageUrl;
@@ -284,10 +303,7 @@ export async function appealTrainingStoreFromEnv(): Promise<AppealTrainingStore 
   });
 }
 
-/**
- * Copies the originals of rejected appeals into the training bucket before `remove-blocked-images`
- * purges them. A record ends copied, skipped or failed; one with no removal label yet waits for it.
- */
+/** Runs before `remove-blocked-images` purges the originals; see `appealTrainingHeld`. */
 export async function copyRejectedForTraining({
   store,
   lookup = removalLabelsFromClickhouse,
@@ -320,11 +336,11 @@ export async function copyRejectedForTraining({
       CASE
         WHEN r."decidedAt" <= now() - ${COPY_WINDOW}
           OR NOT EXISTS (SELECT 1 FROM "Image" ci WHERE ci.id = r."imageId")
-          OR ${excludedRecord(r)}
+          OR ${ineligibleRecord(r)}
           THEN 'skip'
         WHEN r."removalLabel" IS NULL THEN 'wait'
-        WHEN ${neverCopy(r)} THEN 'skip'
-        ELSE 'copy'
+        WHEN ${copyableRecord(r)} THEN 'copy'
+        ELSE 'skip'
       END AS action
     FROM "AppealDecisionRecord" r
     WHERE ${pendingCopy(r)}
@@ -336,14 +352,20 @@ export async function copyRejectedForTraining({
   if (skipIds.length) await setCopyState(skipIds, 'skipped');
 
   let copied = 0;
+  let discarded = 0;
   let failed = 0;
   for (const { appealId, imageUrl } of pending.filter((p) => p.action === 'copy')) {
+    let key: string | null = null;
     try {
-      const key = await store.copy(imageUrl);
-      await setCopyState([appealId], 'copied', key);
-      copied++;
+      key = await store.copy(imageUrl);
+      // The record may have been swept or become ineligible while the copy ran.
+      if (await markCopied(appealId, key)) copied++;
+      else if (!(await isRecordedKey(key))) {
+        await discardTrainingObjects(store, [key]);
+        discarded++;
+      }
     } catch (e) {
-      await setCopyState([appealId], 'failed');
+      await setCopyState([appealId], 'failed', key);
       failed++;
       logToAxiom({
         type: 'error',
@@ -354,7 +376,7 @@ export async function copyRejectedForTraining({
     }
   }
 
-  return { configured: true, labelled, copied, skipped: skipIds.length, failed };
+  return { configured: true, labelled, copied, discarded, skipped: skipIds.length, failed };
 }
 
 function setCopyState(appealIds: number[], state: string, key: string | null = null) {
@@ -363,6 +385,24 @@ function setCopyState(appealIds: number[], state: string, key: string | null = n
     SET "trainingCopyState" = ${state}, "trainingObjectKey" = ${key}
     WHERE "appealId" = ANY(${appealIds}::int[]) AND "trainingCopyState" IS NULL
   `;
+}
+
+async function isRecordedKey(key: string) {
+  const rows = await dbWrite.$queryRaw<unknown[]>`
+    SELECT 1 FROM "AppealDecisionRecord" WHERE "trainingObjectKey" = ${key} LIMIT 1
+  `;
+  return rows.length > 0;
+}
+
+async function markCopied(appealId: number, key: string) {
+  const r = Prisma.raw('r');
+  const updated = await dbWrite.$executeRaw`
+    UPDATE "AppealDecisionRecord" r
+    SET "trainingCopyState" = 'copied', "trainingObjectKey" = ${key}
+    WHERE r."appealId" = ${appealId} AND r."trainingCopyState" IS NULL
+      AND NOT ${ineligibleRecord(r)}
+  `;
+  return updated > 0;
 }
 
 // The spellings `training_labels` already uses, which differ from the browsing-level labels.

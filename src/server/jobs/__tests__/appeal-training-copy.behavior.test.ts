@@ -1,4 +1,5 @@
 import { PGlite } from '@electric-sql/pglite';
+import { S3Client } from '@aws-sdk/client-s3';
 import { Prisma } from '@prisma/client';
 import { readFileSync } from 'fs';
 import path from 'path';
@@ -82,7 +83,8 @@ beforeEach(async () => {
   vi.mocked(loggingMock.logToAxiom).mockClear();
   noLabels.mockClear();
   await holder.db.exec(
-    `TRUNCATE "AppealDecisionRecord", "Image", "CsamReport", training_labels RESTART IDENTITY`
+    `TRUNCATE "AppealDecisionRecord", "AppealTrainingObjectDeletion", "Image", "CsamReport",
+       training_labels RESTART IDENTITY`
   );
 });
 
@@ -154,6 +156,41 @@ const fakeStore = () => ({
   remove: vi.fn<(keys: string[]) => Promise<void>>(async () => undefined),
 });
 const noLabels = vi.fn(async () => new Map<number, Removal>());
+const tombstones = async () =>
+  (
+    await holder.db.query<{ key: string }>(
+      'SELECT key FROM "AppealTrainingObjectDeletion" ORDER BY key'
+    )
+  ).rows.map((row) => row.key);
+
+const COPIED_LABELS = [
+  'bestiality',
+  'sexualViolence',
+  'mindAlteredNsfw',
+  'fecalMatter',
+  'gore',
+  'anorexia',
+  'bodilyFluids',
+  'incest',
+  'hate',
+  'spam',
+];
+const SKIPPED_LABELS = [
+  'minor',
+  'animatedMinorNsfw',
+  'realisticMinorNsfw',
+  'realisticMinor',
+  'schoolNsfw',
+  'minorViolence',
+  'diaper',
+  'realPersonNsfw',
+  'non-ai',
+  'other',
+  'tag',
+  'manual',
+  'Duplicate images',
+  'someNewLabel',
+];
 
 describe('copyRejectedForTraining', () => {
   it('copies a rejected image with a copyable label and records the object key', async () => {
@@ -168,18 +205,17 @@ describe('copyRejectedForTraining', () => {
     ]);
   });
 
-  it.each([
-    'minor',
-    'animatedMinorNsfw',
-    'realisticMinorNsfw',
-    'realisticMinor',
-    'schoolNsfw',
-    'minorViolence',
-    'diaper',
-    'realPersonNsfw',
-    'non-ai',
-    'someNewMinorLabel',
-  ])('skips, and never copies, a record labelled %s', async (removalLabel) => {
+  it.each(COPIED_LABELS)('copies a record labelled %s', async (removalLabel) => {
+    await record({ appealId: 1, imageId: 101, removalLabel });
+    const store = fakeStore();
+
+    await copyRejectedForTraining({ store, lookup: noLabels });
+
+    expect(store.copy).toHaveBeenCalledExactlyOnceWith('u-101');
+    expect((await states())[0].state).toBe('copied');
+  });
+
+  it.each(SKIPPED_LABELS)('skips, and never copies, a record labelled %s', async (removalLabel) => {
     await record({ appealId: 1, imageId: 101, removalLabel });
     const store = fakeStore();
 
@@ -228,6 +264,75 @@ describe('copyRejectedForTraining', () => {
 
     expect(store.copy).not.toHaveBeenCalled();
     expect((await states())[0].state).toBe('skipped');
+  });
+
+  it('skips a record whose stored object an excluded image shares', async () => {
+    await record({ appealId: 1, imageId: 101 });
+    await holder.db.exec(
+      `INSERT INTO "Image" ("id", "userId", "url", "needsReview") VALUES (201, 8, 'u-101', 'csam')`
+    );
+    const store = fakeStore();
+
+    await copyRejectedForTraining({ store, lookup: noLabels });
+
+    expect(store.copy).not.toHaveBeenCalled();
+    expect((await states())[0].state).toBe('skipped');
+  });
+
+  it('deletes the copy when the record is swept while the copy runs', async () => {
+    await record({ appealId: 1, imageId: 101 });
+    const store = fakeStore();
+    store.copy.mockImplementationOnce(async (imageUrl: string) => {
+      await holder.db.exec('DELETE FROM "AppealDecisionRecord"');
+      return `copied/${imageUrl}`;
+    });
+
+    await copyRejectedForTraining({ store, lookup: noLabels });
+
+    expect(store.remove).toHaveBeenCalledExactlyOnceWith(['copied/u-101']);
+  });
+
+  it('deletes the copy and leaves the record pending when it becomes excluded mid-copy', async () => {
+    await record({ appealId: 1, imageId: 101 });
+    const store = fakeStore();
+    store.copy.mockImplementationOnce(async (imageUrl: string) => {
+      await holder.db.exec('INSERT INTO "CsamReport" ("userId") VALUES (7)');
+      return `copied/${imageUrl}`;
+    });
+
+    await copyRejectedForTraining({ store, lookup: noLabels });
+
+    expect(store.remove).toHaveBeenCalledExactlyOnceWith(['copied/u-101']);
+    expect(await states()).toEqual([{ appealId: 1, removalLabel: 'spam', state: null, key: null }]);
+  });
+
+  it('keeps a copy another run already recorded', async () => {
+    await record({ appealId: 1, imageId: 101 });
+    const store = fakeStore();
+    store.copy.mockImplementationOnce(async (imageUrl: string) => {
+      await holder.db.exec(
+        `UPDATE "AppealDecisionRecord" SET "trainingCopyState" = 'copied', "trainingObjectKey" = 'copied/u-101'`
+      );
+      return `copied/${imageUrl}`;
+    });
+
+    await copyRejectedForTraining({ store, lookup: noLabels });
+
+    expect(store.remove).not.toHaveBeenCalled();
+  });
+
+  it('queues the copy for deletion when deleting it fails', async () => {
+    await record({ appealId: 1, imageId: 101 });
+    const store = fakeStore();
+    store.copy.mockImplementationOnce(async (imageUrl: string) => {
+      await holder.db.exec('DELETE FROM "AppealDecisionRecord"');
+      return `copied/${imageUrl}`;
+    });
+    store.remove.mockRejectedValueOnce(new Error('denied'));
+
+    await copyRejectedForTraining({ store, lookup: noLabels });
+
+    expect(await tombstones()).toEqual(['copied/u-101']);
   });
 
   it('skips a record whose image is already gone', async () => {
@@ -358,6 +463,21 @@ describe('appealTrainingHeld', () => {
     expect(await held()).toEqual([101]);
   });
 
+  it.each(SKIPPED_LABELS)('never holds a record labelled %s', async (removalLabel) => {
+    await record({ appealId: 1, imageId: 101, removalLabel });
+
+    expect(await held()).toEqual([]);
+  });
+
+  it('never holds a record whose stored object an excluded image shares', async () => {
+    await record({ appealId: 1, imageId: 101 });
+    await holder.db.exec(
+      `INSERT INTO "Image" ("id", "userId", "url", "blockedFor") VALUES (201, 8, 'u-101', 'CSAM')`
+    );
+
+    expect(await held()).toEqual([]);
+  });
+
   it('never holds a record the copy would skip', async () => {
     await record({ appealId: 1, imageId: 101, removalLabel: 'realisticMinorNsfw' });
     await record({ appealId: 2, imageId: 102, removalLabel: 'poi', removalNsfw: 'X' });
@@ -425,6 +545,42 @@ describe('sweepExcludedRecords and the training bucket', () => {
     );
   });
 
+  it('deletes a record whose stored object an excluded image shares, and its copy', async () => {
+    await record({ appealId: 1, imageId: 101, state: 'copied', key: 'k-101' });
+    await record({ appealId: 2, imageId: 102, state: 'copied', key: 'k-102' });
+    await holder.db.exec(`INSERT INTO "CsamReport" ("images") VALUES ('[{"id": 201}]')`);
+    await holder.db.exec(`INSERT INTO "Image" ("id", "userId", "url") VALUES (201, 8, 'u-101')`);
+    const store = fakeStore();
+
+    expect((await sweepExcludedRecords(store)).swept).toBe(1);
+    expect((await states()).map((row) => row.appealId)).toEqual([2]);
+    expect(store.remove).toHaveBeenCalledExactlyOnceWith(['k-101']);
+  });
+
+  it('retries a failed object delete on the next sweep', async () => {
+    await record({ appealId: 1, imageId: 101, state: 'copied', key: 'k-101' });
+    await holder.db.exec(`INSERT INTO "CsamReport" ("images") VALUES ('[{"id": 101}]')`);
+    const store = fakeStore();
+    store.remove.mockRejectedValueOnce(new Error('denied'));
+
+    await sweepExcludedRecords(store);
+    expect(await tombstones()).toEqual(['k-101']);
+
+    expect((await sweepExcludedRecords(store)).objects).toBe(1);
+    expect(store.remove).toHaveBeenLastCalledWith(['k-101']);
+    expect(await tombstones()).toEqual([]);
+  });
+
+  it('queues the objects when the training bucket is not configured', async () => {
+    await record({ appealId: 1, imageId: 101, state: 'copied', key: 'k-101' });
+    await holder.db.exec(`INSERT INTO "CsamReport" ("images") VALUES ('[{"id": 101}]')`);
+
+    await sweepExcludedRecords(null);
+
+    expect(await states()).toEqual([]);
+    expect(await tombstones()).toEqual(['k-101']);
+  });
+
   it('does not call the bucket when nothing swept had an object', async () => {
     await record({ appealId: 1, imageId: 101, state: 'skipped' });
     await holder.db.exec(`INSERT INTO "CsamReport" ("images") VALUES ('[{"id": 101}]')`);
@@ -437,7 +593,8 @@ describe('sweepExcludedRecords and the training bucket', () => {
 
 describe('createAppealTrainingStore', () => {
   const clients = () => {
-    const body = { transformToByteArray: vi.fn() };
+    const bytes = new Uint8Array([1, 2, 3]);
+    const body = { transformToByteArray: vi.fn(async () => bytes) };
     const source = {
       send: vi.fn<(cmd: { input: unknown }) => Promise<unknown>>(async () => ({
         Body: body,
@@ -446,11 +603,11 @@ describe('createAppealTrainingStore', () => {
       })),
     };
     const target = { send: vi.fn<(cmd: { input: unknown }) => Promise<unknown>>(async () => ({})) };
-    return { body, source, target };
+    return { bytes, source, target };
   };
 
   it('reads the original from the image bucket and writes it under the same key', async () => {
-    const { body, source, target } = clients();
+    const { bytes, source, target } = clients();
     const store = createAppealTrainingStore({
       source: source as never,
       sourceBucket: 'images',
@@ -469,9 +626,8 @@ describe('createAppealTrainingStore', () => {
         {
           Bucket: 'training',
           Key: 'abc-uuid',
-          Body: body,
+          Body: bytes,
           ContentType: 'image/jpeg',
-          ContentLength: 3,
         },
       ],
     ]);
@@ -508,9 +664,55 @@ describe('appealTrainingStoreFromEnv', () => {
     S3_IMAGE_B2_ACCESS_KEY: 'ia',
     S3_IMAGE_B2_SECRET_KEY: 'is',
   };
+  const extra = { S3_IMAGE_B2_BUCKET: 'images', S3_IMAGE_B2_REGION: 'eu-central-003' };
+
+  it('reads with the image key and writes with the training key, to the training bucket', async () => {
+    setEnv({ ...full, ...extra });
+    const sent: unknown[] = [];
+    const send = vi
+      .spyOn(S3Client.prototype, 'send')
+      .mockImplementation(async function (this: S3Client, command: { input: unknown }) {
+        const { accessKeyId, secretAccessKey } = await this.config.credentials();
+        const { hostname } = await this.config.endpoint!();
+        sent.push([
+          command.constructor.name,
+          command.input,
+          accessKeyId,
+          secretAccessKey,
+          hostname,
+          await this.config.region(),
+        ]);
+        return { Body: { transformToByteArray: async () => new Uint8Array([1]) } };
+      } as never);
+
+    try {
+      await (await appealTrainingStoreFromEnv())!.copy('k');
+    } finally {
+      send.mockRestore();
+    }
+
+    expect(sent).toEqual([
+      [
+        'GetObjectCommand',
+        { Bucket: 'images', Key: 'k' },
+        'ia',
+        'is',
+        'b2.example',
+        'eu-central-003',
+      ],
+      [
+        'PutObjectCommand',
+        { Bucket: 'training', Key: 'k', Body: new Uint8Array([1]), ContentType: undefined },
+        'a',
+        's',
+        'b2.example',
+        'eu-central-003',
+      ],
+    ]);
+  });
 
   it('is configured only when every value is set', async () => {
-    setEnv(full);
+    setEnv({ ...full, ...extra });
     expect(await appealTrainingStoreFromEnv()).not.toBeNull();
 
     for (const key of Object.keys(full)) {

@@ -555,8 +555,7 @@ export const MODERATOR_TAKEDOWN_ACTIVITIES = ['review', 'bulkRemove'] as const;
  * The job's holds, re-checked by the DELETE itself. They are read once at the start of a run that
  * can take its full lock to finish, so a hold placed mid-run would otherwise not stop it.
  * `reportHoldExpiredUserIds` are the owners this run already decided to purge despite an open
- * report, past `CSAM_HOLD_MAX_DAYS`. `holdForTrainingCopy` adds the appeal training-copy hold.
- * Only valid on a statement over an unaliased "Image".
+ * report, past `CSAM_HOLD_MAX_DAYS`. Only valid on a statement over an unaliased "Image".
  */
 export function purgeHoldGuard(
   reportHoldExpiredUserIds: number[],

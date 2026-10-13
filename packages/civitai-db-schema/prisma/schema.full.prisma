@@ -6802,6 +6802,11 @@ model AppealDecisionRecord {
   @@index([imageId])
 }
 
+model AppealTrainingObjectDeletion {
+  key       String   @id
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+}
+
 enum AuctionType {
   Model
   Image

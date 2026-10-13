@@ -441,6 +441,10 @@ export type AppealDecisionRecord = {
   trainingObjectKey: string | null;
   createdAt: Generated<Timestamp>;
 };
+export type AppealTrainingObjectDeletion = {
+  key: string;
+  createdAt: Generated<Timestamp>;
+};
 export type AppListing = {
   id: string;
   serial_id: Generated<number>;
@@ -5162,6 +5166,7 @@ export type DB = {
   app_user_scope_grants: AppUserScopeGrant;
   Appeal: Appeal;
   AppealDecisionRecord: AppealDecisionRecord;
+  AppealTrainingObjectDeletion: AppealTrainingObjectDeletion;
   AppPageAccess: AppPageAccess;
   Article: Article;
   ArticleEngagement: ArticleEngagement;

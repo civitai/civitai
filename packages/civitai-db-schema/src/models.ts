@@ -4229,6 +4229,11 @@ export interface AppealDecisionRecord {
   createdAt: Date;
 }
 
+export interface AppealTrainingObjectDeletion {
+  key: string;
+  createdAt: Date;
+}
+
 export interface AuctionBase {
   id: number;
   type: AuctionType;
