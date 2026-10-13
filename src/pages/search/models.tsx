@@ -11,6 +11,7 @@ import {
 } from '~/components/Search/CustomSearchComponents';
 import { useEffect, useState } from 'react';
 import { ModelCard } from '~/components/Cards/ModelCard';
+import { useSearchEventDecorations } from '~/components/Decorations/useSearchEventDecorations';
 import { ModelCardContextProvider, useModelSaleBadges } from '~/components/Cards/ModelCardContext';
 import { SearchHeader } from '~/components/Search/SearchHeader';
 import { TimeoutLoader } from '~/components/Search/TimeoutLoader';
@@ -159,6 +160,7 @@ export function ModelsHitList() {
   // Must stay above every early return below — a hook called after one changes the hook
   // count between the loading and loaded renders (React error #310).
   const salesByModelId = useModelSaleBadges((items as { id: number }[]).map((x) => x.id));
+  const decorated = useSearchEventDecorations(hits, items as { id: number }[], { entity: 'Model' });
 
   if (hits.length === 0) {
     const NotFound = (
@@ -225,7 +227,7 @@ export function ModelsHitList() {
         salesByModelId={salesByModelId}
       >
         <MasonryGrid
-          data={items as any}
+          data={decorated as any}
           render={ModelCard}
           itemId={(x) => x.id}
           empty={<NoContent />}

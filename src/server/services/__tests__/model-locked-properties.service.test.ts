@@ -149,7 +149,7 @@ const storedModel = {
 };
 
 function mockStored(overrides: Partial<typeof storedModel> = {}) {
-  mockDbRead.model.findUnique.mockResolvedValue({ ...storedModel, ...overrides });
+  mockDbWrite.model.findUnique.mockResolvedValue({ ...storedModel, ...overrides });
 }
 
 const baseInput = {
@@ -299,13 +299,13 @@ describe('upsertModel — non-moderator lock enforcement', () => {
 
     const data = createData();
     expect(data).not.toHaveProperty('lockedProperties');
-    expect(mockDbRead.model.findUnique).not.toHaveBeenCalled();
+    expect(mockDbWrite.model.findUnique).not.toHaveBeenCalled();
   });
 
   it('selects lockedProperties on the stored-row lookup — the field the whole fix depends on', async () => {
     await upsert({ id: MODEL_ID, userId: OWNER_ID, name: 'Renamed Model' });
 
-    expect(mockDbRead.model.findUnique).toHaveBeenCalledWith(
+    expect(mockDbWrite.model.findUnique).toHaveBeenCalledWith(
       expect.objectContaining({ select: expect.objectContaining({ lockedProperties: true }) })
     );
   });
@@ -322,7 +322,7 @@ describe('upsertModel — ownership guard', () => {
   });
 
   it('returns null and writes nothing when the model does not exist', async () => {
-    mockDbRead.model.findUnique.mockResolvedValue(null);
+    mockDbWrite.model.findUnique.mockResolvedValue(null);
 
     const result = await upsert({ id: MODEL_ID, userId: OWNER_ID, minor: false });
 
@@ -462,7 +462,7 @@ describe('privateModelFromTraining — lock enforcement', () => {
   it('reads the stored locks from the DB row', async () => {
     await privateFromTraining({ user: owner, lockedProperties: [] });
 
-    expect(mockDbRead.model.findUnique).toHaveBeenCalledWith(
+    expect(mockDbWrite.model.findUnique).toHaveBeenCalledWith(
       expect.objectContaining({ select: expect.objectContaining({ lockedProperties: true }) })
     );
   });
@@ -534,6 +534,31 @@ describe('upsertModel — moderator', () => {
     const data = updateData();
     expect(data.minor).toBe(false);
     expect(data.lockedProperties).toEqual([]);
+  });
+});
+
+// Publishing runs through model.publish; a create that kept the client's status would skip every
+// check that endpoint enforces.
+describe('upsertModel — status on create', () => {
+  it.each(Object.values(ModelStatus).filter((status) => status !== ModelStatus.Draft))(
+    'stores Draft when a non-moderator creates with %s',
+    async (status) => {
+      await upsert({ userId: OWNER_ID, status });
+
+      expect(createData().status).toBe(ModelStatus.Draft);
+    }
+  );
+
+  it('stores Draft for a templated create too', async () => {
+    await upsert({ id: MODEL_ID, templateId: MODEL_ID, userId: OWNER_ID, status: 'Published' });
+
+    expect(createData().status).toBe(ModelStatus.Draft);
+  });
+
+  it('keeps a moderator-supplied status', async () => {
+    await upsert({ userId: MODERATOR_ID, isModerator: true, status: ModelStatus.Published });
+
+    expect(createData().status).toBe(ModelStatus.Published);
   });
 });
 

@@ -456,7 +456,7 @@ describe('selectChromeRecentApps — the app-chrome "Recently run" menu', () => 
    *
    * SCOPE — deliberately narrow: this scans only the two chrome-bearing hosts,
    * not every `canOpenPage` consumer. `AppBlockCard`, `AppListingCard`,
-   * `AppListingDetailBody`, `MySubmissionsList`, `MarketplaceBody` and
+   * `AppListingDetailBody`, `MarketplaceBody` and
    * `RecentlyOpenedApps` also take the prop and are all fail-closed and wired
    * today, but they still pass the one-flag `!!features.appBlocksPages` form, so
    * a single uniform assertion across the whole population would be wrong right

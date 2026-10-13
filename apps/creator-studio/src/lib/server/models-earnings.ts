@@ -3,6 +3,7 @@ import { dbRead } from '$lib/server/db';
 import { createCache } from '$lib/server/cache';
 import { rangeTtlSeconds } from '$lib/date-range';
 import { currencyMeta } from '$lib/earnings';
+import { PERFORMANCE_CHANNELS, type PerformanceChannel } from '$lib/analytics/earning-channels';
 import { IMPRESSION_ENTITY } from '$lib/server/view-entities';
 import {
   accessKindExpression,
@@ -22,10 +23,12 @@ import {
 // getModelPerformance / getModelVersionAnalytics, left undefined by getModelEarnings.
 export type ModelCurrencyTotal = { currency: string; total: number; prev?: number };
 
-// deliver-creator-compensation buckets on exactly this rule: licenseFee mints its own transaction and
-// EVERY other source merges into one compensation payout. Match its `!== 'licenseFee'` rather than naming
-// known sources, so a new or one-off source value lands in a total instead of vanishing from the split.
-const payoutChannel = (source: string) => (source === 'licenseFee' ? 'licenseFee' : 'compensation');
+// The main app's creator dashboard splits on exactly this rule (getDailyCompensationRewardByUser): licenseFee
+// and tip each get their own channel and EVERY other source is compensation. Name only those two, so a new or
+// one-off source such as `compensation_recovered_20260507` lands in a total instead of vanishing from the split.
+// The payout job still pays tips inside the compensation transaction; this split is display only.
+export const payoutChannel = (source: string): 'licenseFee' | 'tip' | 'compensation' =>
+  source === 'licenseFee' || source === 'tip' ? source : 'compensation';
 export type ModelEarning = {
   modelVersionId: number;
   versionName: string | null;
@@ -46,16 +49,7 @@ export type ModelEarning = {
 // `orchestration.daily_resource_generation_counts` (the live, full-volume table; the `default.*` MV copy
 // undercounts ~200x); downloads from `default.daily_downloads`. Both carry garbage future-dated rows, so the
 // window is capped at today().
-// The five ways a model earns, as separate columns on /analytics/models. `licenseFee` + `compensation`
-// come from resourceCompensations; the other three are buyer-funded and only exist in buzzTransactions.
-export const PERFORMANCE_CHANNELS = [
-  'licenseFee',
-  'compensation',
-  'earlyAccess',
-  'permanentAccess',
-  'donation',
-] as const;
-export type PerformanceChannel = (typeof PERFORMANCE_CHANNELS)[number];
+export type { PerformanceChannel };
 
 // `prev` is carried per currency, not just per channel, so the currency filter chips can recompute a
 // correct delta for the selected subset instead of showing a delta for the unfiltered total.
@@ -545,7 +539,7 @@ async function fetchModelPerformance({
 export const getModelPerformance = createCache({
   // Keys derive from the args, not the payload shape, so a stored value outlives a change to what this
   // returns. Bump the suffix whenever the returned shape OR the numbers in it change.
-  name: 'models:performance:v4',
+  name: 'models:performance:v5',
   fetch: fetchModelPerformance,
   ttlSeconds: ({ from, to }) => rangeTtlSeconds({ from, to }),
 }).get;
@@ -755,7 +749,7 @@ async function fetchModelVersionAnalytics({
 }
 
 export const getModelVersionAnalytics = createCache({
-  name: 'analytics:model-versions:v4',
+  name: 'analytics:model-versions:v5',
   fetch: fetchModelVersionAnalytics,
   ttlSeconds: ({ from, to }) => rangeTtlSeconds({ from, to }),
 }).get;

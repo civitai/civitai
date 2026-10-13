@@ -1,8 +1,7 @@
 /**
- * Pure helpers for the App Blocks build/deploy lifecycle shown on
- * `/apps/my-submissions` (Phase 2). Extracted from the page so the
- * staleness + poll-cadence logic — the part that churned across two
- * audit-fix passes — is unit-testable without React.
+ * Pure helpers for the App Blocks build/deploy lifecycle, shown to an app's team on
+ * the listing's History tab and to moderators on the review queue. Kept free of
+ * React so the staleness + poll-cadence logic is unit-testable on its own.
  */
 
 import {
@@ -96,6 +95,31 @@ export function isAwaitingDeployState(s: DeployLifecycleRow, now: number = Date.
   const reviewed = toMs(s.reviewedAt);
   if (reviewed == null) return false;
   return now - reviewed <= DEPLOY_PENDING_GRACE_MS;
+}
+
+/**
+ * How long an in-flight build has been in its current state, from its last recorded
+ * transition — `null` when there is no usable timestamp (or it is in the future, which
+ * only clock skew produces). Drives the "Building · 2m 10s" text.
+ */
+export function deployElapsedMs(
+  s: Pick<DeployLifecycleRow, 'deployUpdatedAt'>,
+  now: number = Date.now()
+): number | null {
+  const updated = toMs(s.deployUpdatedAt);
+  if (updated == null || updated > now) return null;
+  return now - updated;
+}
+
+/** `45s`, `2m 10s`, `1h 5m` — whole units, largest first, at most two of them. */
+export function formatElapsed(ms: number): string {
+  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  if (minutes > 0) return `${minutes}m ${seconds}s`;
+  return `${seconds}s`;
 }
 
 /** The deploy projection a moderator-queue row carries (see `unifiedReviewRow`). */

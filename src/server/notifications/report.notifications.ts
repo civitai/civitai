@@ -1,6 +1,7 @@
 import { NotificationCategory } from '~/server/common/enums';
 import { createNotificationProcessor } from '~/server/notifications/base.notifications';
 import { EntityType } from '~/shared/utils/prisma/enums';
+import type { OrphanedAppealOutcome } from '~/shared/utils/appeal';
 
 const entityUrlMap: Partial<{ [k in EntityType]?: string }> = {
   [EntityType.Image]: '/images',
@@ -68,5 +69,38 @@ export const reportNotifications = createNotificationProcessor({
       }`,
       url: `${entityUrlMap[details.entityType as EntityType]}/${details.entityId}`,
     }),
+  },
+  'entity-appeal-content-removed': {
+    displayName: 'Appealed content removed',
+    category: NotificationCategory.Other,
+    toggleable: false,
+    prepareMessage: ({ details }) => {
+      const entity = String(details.entityType).toLowerCase();
+      const refund = details.refunded ? ' Your appeal fee has been refunded.' : '';
+      const note = details.resolvedMessage ? ` ${details.resolvedMessage}` : '';
+      switch (details.outcome as OrphanedAppealOutcome) {
+        case 'closed-owner-deleted':
+          return { message: `Your appeal was closed because you deleted the ${entity}.${refund}` };
+        case 'closed-unreviewed':
+          return {
+            message: `We couldn't review your appeal in time: the ${entity} was removed before a moderator reached it, so your appeal was closed.${refund} You're welcome to upload it again.`,
+          };
+        case 'reviewed-approved':
+          return {
+            message: `We reviewed your appeal: the ${entity} should not have been removed. It can't be restored, but you're welcome to upload it again.${refund}${note}`,
+          };
+        case 'reviewed-rejected':
+          return {
+            message: `We reviewed your appeal: the removal of your ${entity} stands.${note}`,
+          };
+        case 'under-review':
+          return {
+            message: `The ${entity} you appealed was removed before a moderator could review it. Your appeal is still open and will be reviewed; we'll let you know the outcome.`,
+          };
+        // Senders release separately; an outcome this copy predates must not claim the appeal is open.
+        default:
+          return { message: `There is an update on your appeal about a removed ${entity}.` };
+      }
+    },
   },
 });

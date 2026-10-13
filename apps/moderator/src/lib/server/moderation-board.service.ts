@@ -1,4 +1,5 @@
 import { sql } from '@civitai/db/kysely';
+import { DIRECTIONAL_ACTIVITIES } from '$lib/mod-activity';
 import type { task_enum_0648e184 } from './moderator-db/enums';
 import { createCache } from './cache';
 import { dbRead } from './db';
@@ -79,10 +80,6 @@ const MOD_ACTIVITY_LABELS: Record<string, string> = {
 /** Membership is named, not inferred from the `:` — a colon is the separator every parameterised
  *  activity uses, so `buzz:send:yellow:…` read as a flag write too. */
 const FLAG_ACTIVITIES = new Set(['minor', 'poi', 'spamWhitelist', 'deservedMute']);
-
-/** Activities whose second segment is a verb rather than a value, a count or an id — `buzz:send` and
- *  `buzz:deduct` are two decisions and must not share a row. */
-const DIRECTIONAL_ACTIVITIES = new Set(['buzz', 'comments', 'reviews']);
 
 /** Anything unmapped is humanised rather than enumerated — the log gains values from the main app
  *  without passing through here. */

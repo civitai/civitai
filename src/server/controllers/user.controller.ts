@@ -4,6 +4,7 @@ import { env } from '~/env/server';
 import { clickhouse } from '~/server/clickhouse/client';
 import { purgeCache } from '~/server/cloudflare/client';
 import { isAllowedAvatarUrl } from '~/server/utils/image-scan-url';
+import { pickClientImageColumns } from '~/server/utils/image-columns';
 import { constants } from '~/server/common/constants';
 import {
   OnboardingComplete,
@@ -157,6 +158,7 @@ import {
 } from '../services/image.service';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import { queueScamScan } from '~/server/services/text-scan/scam-scan-queue';
+import { stripBlockProvenanceMetadata } from '~/shared/utils/block-provenance-metadata';
 
 export const getAllUsersHandler = async ({
   input,
@@ -670,9 +672,9 @@ export const updateUserHandler = async ({
         profilePicture: newPicture
           ? {
               create: {
-                ...newPicture,
+                ...pickClientImageColumns(newPicture),
                 metadata: {
-                  ...newPicture.metadata,
+                  ...stripBlockProvenanceMetadata(newPicture.metadata),
                   profilePicture: true,
                   userId: id,
                   username,
@@ -1148,7 +1150,7 @@ export const getLeaderboardHandler = async ({ input }: { input: GetAllSchema }) 
           },
         },
         cosmetics: {
-          where: { equippedAt: { not: null } },
+          where: { equippedAt: { not: null }, equippedToId: null },
           select: {
             cosmetic: {
               select: {
@@ -1311,6 +1313,8 @@ export const getUserCosmeticsHandler = async ({
           obtainedAt,
           claimKey,
           inUse: !!equippedToId,
+          equippedToId,
+          equippedToType,
           entityImage: coverImages.find(
             (x) => x.entityId === equippedToId && x.entityType === equippedToType
           ),

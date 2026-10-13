@@ -30,6 +30,7 @@ const h = vi.hoisted(() => ({
   liveNow: vi.fn(),
   follows: vi.fn(),
   addons: vi.fn(),
+  navBanners: vi.fn(),
   session: vi.fn(),
 }));
 
@@ -72,6 +73,8 @@ vi.mock('~/server/services/announcement.service', async (importOriginal) => ({
   ...(await importOriginal<typeof AnnouncementService>()),
   getCurrentAnnouncements: h.announcements,
 }));
+// Its only export. Loading the real module pulls the whole event engine into this graph.
+vi.mock('~/server/services/nav-banner.service', () => ({ getNavBanners: h.navBanners }));
 vi.mock('~/server/services/content.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ContentService>()),
   getTosMeta: vi.fn(async () => undefined),
@@ -109,6 +112,7 @@ describe('/api/user/settings read deadlines', () => {
     h.liveNow.mockResolvedValue(true);
     h.follows.mockResolvedValue([7]);
     h.addons.mockResolvedValue([{ id: 'a' }]);
+    h.navBanners.mockResolvedValue([{ id: 'event:e1' }]);
   });
   afterEach(() => {
     vi.useRealTimers();
@@ -124,6 +128,7 @@ describe('/api/user/settings read deadlines', () => {
     expect(body.settings).toEqual({ showNsfw: true });
     expect(body.announcements).toEqual([{ id: 1 }]);
     expect(body.liveNow).toBe(true);
+    expect(body.navBanners).toEqual([{ id: 'event:e1' }]);
   });
 
   it('still answers when a dependency never replies, and seeds the SAFE settings default', async () => {
@@ -179,5 +184,53 @@ describe('/api/user/settings read deadlines', () => {
     expect(body.liveNow).toBe(false);
     // The member that did reply is unaffected.
     expect(body.settings).toEqual({ showNsfw: true });
+  });
+});
+
+describe('/api/user/settings nav banners', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    h.session.mockResolvedValue(null);
+    h.contentSettings.mockResolvedValue({ showNsfw: true });
+    h.announcements.mockResolvedValue([]);
+    h.liveNow.mockResolvedValue(false);
+    h.follows.mockResolvedValue([]);
+    h.addons.mockResolvedValue([]);
+    h.navBanners.mockResolvedValue([]);
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.clearAllMocks();
+  });
+
+  it('degrades to undefined when they never resolve, so the client fetches them itself', async () => {
+    h.navBanners.mockReturnValue(new Promise(() => undefined));
+    const { json } = invoke();
+    await vi.runAllTimersAsync();
+
+    expect(json).toHaveBeenCalled();
+    const body = json.mock.calls[0][0];
+    expect(body.navBanners).toBeUndefined();
+    expect(body.settings).toEqual({ showNsfw: true });
+  });
+
+  // This route answers a signed-out caller with a PUBLIC shared-cache header, so the signed-out
+  // body must be the same for every signed-out caller. Banners are resolved from the session alone;
+  // the dismissed cookie is applied on the client. Passing anything from the request here (cookies,
+  // headers) is how one viewer's answer would reach another.
+  it('resolves them from the session user alone, never the request', async () => {
+    h.session.mockResolvedValue({ user: { id: 42, isModerator: true } });
+    const { done } = invoke();
+    await vi.runAllTimersAsync();
+    await done;
+    expect(h.navBanners).toHaveBeenCalledTimes(1);
+    expect(h.navBanners.mock.calls[0]).toEqual([{ viewer: { id: 42, isModerator: true } }]);
+  });
+
+  it('resolves them as signed out when there is no session', async () => {
+    const { done } = invoke();
+    await vi.runAllTimersAsync();
+    await done;
+    expect(h.navBanners.mock.calls[0]).toEqual([{ viewer: undefined }]);
   });
 });

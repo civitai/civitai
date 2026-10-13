@@ -47,15 +47,27 @@ export type MeasuredUploadedImage = {
  */
 export async function measureUploadedImage(
   key: string,
-  { maxBytes, subject }: { maxBytes: number; subject: string }
+  opts: { maxBytes: number; subject: string }
 ): Promise<MeasuredUploadedImage> {
-  const { probeStoredImage, StoredImageProbeError } = await import(
+  return (await measureUploadedImageWithBytes(key, opts)).measured;
+}
+
+/**
+ * {@link measureUploadedImage}, also returning the stored bytes the values were measured from,
+ * so a caller can read embedded data out of the same object rather than re-reading the key.
+ */
+export async function measureUploadedImageWithBytes(
+  key: string,
+  { maxBytes, subject }: { maxBytes: number; subject: string }
+): Promise<{ measured: MeasuredUploadedImage; bytes: Buffer }> {
+  const { probeStoredImageWithBytes, StoredImageProbeError } = await import(
     '~/server/utils/stored-image-probe'
   );
 
   let probe;
+  let bytes: Buffer;
   try {
-    probe = await probeStoredImage(key, { maxBytes });
+    ({ probe, bytes } = await probeStoredImageWithBytes(key, { maxBytes }));
   } catch (err) {
     if (!(err instanceof StoredImageProbeError)) throw err;
     if (err.reason === 'store-unavailable') {
@@ -83,10 +95,13 @@ export async function measureUploadedImage(
     });
   }
   return {
-    width: probe.width,
-    height: probe.height,
-    mimeType,
-    sizeBytes: probe.sizeBytes,
-    etag: probe.etag,
+    measured: {
+      width: probe.width,
+      height: probe.height,
+      mimeType,
+      sizeBytes: probe.sizeBytes,
+      etag: probe.etag,
+    },
+    bytes,
   };
 }

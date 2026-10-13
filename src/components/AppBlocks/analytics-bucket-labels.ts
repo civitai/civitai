@@ -170,6 +170,7 @@ const WRITE_SCOPE_LABELS = new Map<string, string>([
   ['social:tip:self', 'Tips'],
   ['posts:write:self', 'Posts published to a profile'],
   ['goods:purchase:self', 'Item purchases'],
+  ['apps:store:items:write', 'App Store item listings'],
   // Not a scope — the middleware's literal placeholder for a route that requires only a
   // valid block token and no particular scope (`opts.requiredScope ?? '(any-token)'`).
   // It appears verbatim in the data, so it needs a row label.

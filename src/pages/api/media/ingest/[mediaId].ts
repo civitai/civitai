@@ -2,6 +2,7 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import { env } from '~/env/server';
 import { matchesConfiguredSecret } from '~/server/utils/configured-secret';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
+import { requireFullScopeSession } from '~/server/utils/require-full-scope-session';
 import { dbRead } from '~/server/db/client';
 import { createImageIngestionRequest } from '~/server/services/orchestrator/orchestrator.service';
 import { ImageIngestionUrlBlockedError } from '~/server/utils/image-scan-url';
@@ -19,7 +20,7 @@ export { redactKnownValues as redactSecrets };
  * Re-ingests an image/video through the orchestrator. Intended as a debugging
  * tool for moderators and orchestrator devs.
  *
- * Auth: pass `?token=$WEBHOOK_TOKEN` OR be signed in as a moderator.
+ * Auth: pass `?token=$WEBHOOK_TOKEN`, or a moderator's browser session or full-scope personal API key.
  *
  * On orchestrator failure, returns `{ error, status, body }` so the caller can
  * inspect the exact request body that was submitted.
@@ -36,6 +37,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     if (!session?.user?.isModerator || session.user.bannedAt) {
       return res.status(401).json({ error: 'Unauthorized' });
     }
+    if (!requireFullScopeSession(req, res)) return;
   }
 
   const mediaId = Number(req.query.mediaId);

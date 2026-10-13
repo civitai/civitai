@@ -43,8 +43,9 @@
   import { getEdgeUrl } from '$lib/media/edge-url';
   import type { LayoutData } from './$types';
   import type { NavLink } from '$lib/server/access';
-  import { isNavLinkActive, isPathActive, navHref } from '$lib/nav-links';
+  import { isNavLinkActive, isPathActive } from '$lib/nav-links';
   import { sidebarCounts, refreshSidebarCounts } from '$lib/sidebar-counts.svelte';
+  import UserCardPopover from '$lib/components/user-card/UserCardPopover.svelte';
 
   let { data, children }: { data: LayoutData; children: import('svelte').Snippet } = $props();
 
@@ -57,11 +58,10 @@
     '/articles': IconArticle,
     '/models': IconBox,
     '/audit': IconListSearch,
-    '/users': IconUsers,
     '/admin': IconShieldLock,
     '/page-visits': IconChartBar,
   };
-  const groupIcons: Record<string, typeof IconPhoto> = { Images: IconPhoto };
+  const groupIcons: Record<string, typeof IconPhoto> = { Images: IconPhoto, Users: IconUsers };
   const iconFor = (item: NavLink) =>
     (item.path ? icons[item.path] : groupIcons[item.label]) ?? IconCircle;
 
@@ -161,7 +161,7 @@
                       </CollapsibleTrigger>
                       <CollapsibleContent>
                         <SidebarMenuSub>
-                          {#each item.children as childLink (navHref(childLink) ?? childLink.label)}
+                          {#each item.children as childLink (childLink.path ?? childLink.label)}
                             {@const cnt = countFor(childLink.countKey)}
                             <SidebarMenuSubItem>
                               <SidebarMenuSubButton
@@ -171,7 +171,7 @@
                                   <a
                                     href={childLink.external
                                       ? `${data.civitaiUrl}${childLink.path}`
-                                      : navHref(childLink)}
+                                      : childLink.path}
                                     target={childLink.external ? '_blank' : undefined}
                                     rel={childLink.external ? 'noreferrer' : undefined}
                                     {...props}
@@ -262,6 +262,8 @@
 <!-- Success confirmations: a write that changes nothing on screen (a publish toggle, a saved banner)
      otherwise gives the operator no signal that it landed. -->
 <Toaster position="bottom-right" />
+
+{#if data.canSeeUserCard}<UserCardPopover />{/if}
 
 <style>
   .nav-progress-bar {

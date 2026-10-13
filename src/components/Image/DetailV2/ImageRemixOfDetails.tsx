@@ -95,7 +95,8 @@ export const ImageRemixOfDetails = ({ imageId }: { imageId: number }) => {
   // exactly one source, max and average both 1. And 0.1% of images carry it at
   // all, so 999 detail views in 1000 fan out to nothing.
   const queries = trpc.useQueries((t) => remixOfIds.map((id) => t.image.get({ id })));
-  const sources = queries.map((query) => query.data).filter((data) => !!data);
+  // A source whose media this viewer may not receive comes back with a null `url`.
+  const sources = queries.flatMap(({ data }) => (data?.url ? [{ ...data, url: data.url }] : []));
   const isLoading = queries.some((query) => query.isLoading);
 
   // Deliberately WITHOUT `allowLowerLevels`, which the pre-2025 version of this

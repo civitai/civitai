@@ -34,6 +34,8 @@ const noticeHtml = String(
   .replace(/<th>/g, `<th style="${cell}">`)
   .replace(/<td>/g, `<td style="${cell}">`)
   .replace(/<img /g, '<img style="max-width: 100%; height: auto;" ')
+  // Margin rather than padding: Outlook ignores list padding, and client defaults indent ~40px.
+  .replace(/<(ul|ol)>/g, (_, tag: string) => `<${tag} style="margin: 8px 0 8px 20px; padding: 0;">`)
   .replace(/<h2>/g, '<h2 style="font-size: 18px; margin: 24px 0 8px;">');
 
 export function getBankingChangeNoticeHtml(username: string) {

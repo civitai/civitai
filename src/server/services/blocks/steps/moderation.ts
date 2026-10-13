@@ -241,7 +241,8 @@ const moderationPostureHandlers: Record<StepModerationPosture, StepModerationPha
 
         // 🔴 FAIL CLOSED ON "NOTHING TO AUDIT", per request.
         //
-        // `auditPromptServer` RETURNS EARLY on an empty prompt. Passing it one would
+        // `auditPromptServer` audits no prompt text on an empty prompt (it returns early
+        // unless a negative prompt is present). Passing it one would
         // therefore be a declared moderation posture that runs, audits nothing, and
         // reports success — indistinguishable from a clean audit at every call site.
         // The registry's load-time probe proves the entry produces text for its

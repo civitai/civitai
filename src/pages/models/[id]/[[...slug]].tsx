@@ -113,6 +113,7 @@ import { FirstPublishCard } from '~/components/CreatorJourney/FirstPublishCard';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { AddToShowcaseMenuItem } from '~/components/Profile/AddToShowcaseMenuItem';
+import { AddEventDecorationMenuItem } from '~/components/Decorations/AddEventDecorationMenuItem';
 import { useToggleFavoriteMutation } from '~/components/ResourceReview/resourceReview.utils';
 import { GenerateButton } from '~/components/RunStrategy/GenerateButton';
 import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
@@ -145,6 +146,7 @@ import { ModelModifier } from '~/shared/utils/prisma/enums';
 import {
   Availability,
   CollectionType,
+  CosmeticEntity,
   ModelStatus,
   ModelType,
   UserHubSourceType,
@@ -1163,6 +1165,15 @@ export default function ModelDetailsV2({
                             entityId={model.id}
                           />
                         )}
+                        {/* The model itself, so its showcase images are not the nearest thing to hat. */}
+                        {isCreator && versionImages[0] && (
+                          <AddEventDecorationMenuItem
+                            entityType={CosmeticEntity.Model}
+                            entityId={model.id}
+                            image={versionImages[0]}
+                            findWornHat
+                          />
+                        )}
                         {(!currentUser || !isOwner || isModerator) && (
                           <LoginRedirect reason="report-model">
                             <Menu.Item
@@ -1183,7 +1194,7 @@ export default function ModelDetailsV2({
                             <Menu.Label>Moderation</Menu.Label>
                             <HideUserButton as="menu-item" userId={model.user.id} />
                             <BlockUserButton as="menu-item" userId={model.user.id} />
-                            <HideModelButton as="menu-item" modelId={model.id} />
+                            <HideModelButton as="menu-item" model={model} />
                             <Menu.Item
                               leftSection={<IconTagOff size={14} stroke={1.5} />}
                               onClick={() =>

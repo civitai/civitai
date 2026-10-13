@@ -25,6 +25,7 @@ import { sendMessagesToCollaborators } from '~/server/services/entity-collaborat
 import { readPostAppChip } from '~/server/services/blocks/post-app-chip.service';
 import { publishModel3D } from '~/server/services/model3d.service';
 import { amIBlockedByUser } from '~/server/services/user.service';
+import { createPostOwnerCheck } from '~/server/services/image.service';
 import {
   handleLogError,
   throwAuthorizationError,
@@ -36,6 +37,7 @@ import { updateEntityMetric } from '~/server/utils/metric-helpers';
 import { updateVimeoVideo } from '~/server/vimeo/client';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { CollectionMode, CollectionType, EntityType } from '~/shared/utils/prisma/enums';
+import { closeAppealsDeletedByOwner } from '~/server/services/report.service';
 import { isDefined } from '~/utils/type-guards';
 import { dbRead, dbWrite } from '../db/client';
 import { dbReadFallbackCounter } from '~/server/prom/client';
@@ -173,8 +175,16 @@ export const createPostWithImagesHandler = async ({
     // 2) Attach each image in order.
     const sortedImages = [...images].sort((a, b) => a.index - b.index);
     const attachedImageIds: number[] = [];
+    // createImage's own primary-DB post-owner check runs once per request per post;
+    // addPostImage keeps its existing per-image check.
+    const assertPostOwnedBy = createPostOwnerCheck();
     for (const image of sortedImages) {
-      const attached = await addPostImage({ ...image, postId: post.id, user: ctx.user });
+      const attached = await addPostImage({
+        ...image,
+        postId: post.id,
+        user: ctx.user,
+        assertPostOwnedBy,
+      });
       attachedImageIds.push(attached.id);
     }
 
@@ -613,6 +623,12 @@ export const deletePostHandler = async ({
   try {
     const result = await deletePost({ ...input });
     if (result) {
+      // The deleter, not the content's owner: a moderator delete must not close the owner's appeal.
+      await closeAppealsDeletedByOwner({
+        entityType: EntityType.Image,
+        entityIds: result.deletedImageIds,
+        ownerId: ctx.user.id,
+      });
       await ctx.track.post({
         type: 'Delete',
         nsfw: !getIsSafeBrowsingLevel(result.nsfwLevel),

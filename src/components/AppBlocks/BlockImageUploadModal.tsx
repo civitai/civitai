@@ -1,12 +1,28 @@
-import { Alert, Badge, Button, FileInput, Group, Image, Loader, Modal, Stack, Text } from '@mantine/core';
+import {
+  Alert,
+  Badge,
+  Button,
+  FileInput,
+  Group,
+  Image,
+  Loader,
+  Modal,
+  Stack,
+  Text,
+} from '@mantine/core';
 import { IconAlertTriangle, IconCheck, IconPhoto, IconUpload } from '@tabler/icons-react';
 import { useEffect, useRef, useState } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { UnreadablePickAlert } from '~/components/ImageUpload/UnreadablePickAlert';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 import { nextPollDelay } from '~/components/Apps/assetPolling';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { constants } from '~/server/common/constants';
 import type { OffsiteRatingValue } from '~/shared/constants/browsingLevel.constants';
+import { IMAGE_MIME_TYPE } from '~/shared/constants/mime-types';
+import { IMAGE_PREP_ERROR, ImagePrepError, prepStage } from '~/shared/utils/canvas-utils';
 import { trpc } from '~/utils/trpc';
+import { reportUnreadablePick, snapshotPick } from '~/utils/unreadable-pick';
 
 /**
  * App Blocks (Phase-2a PR-C) — the host modal behind PageBlockHost's
@@ -74,6 +90,7 @@ export default function BlockImageUploadModal({
   const [status, setStatus] = useState<UploadStatus>('idle');
   const [message, setMessage] = useState<string | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [unreadablePick, setUnreadablePick] = useState(false);
 
   const persistMutation = trpc.blockImageUpload.persist.useMutation();
   const gateMutation = trpc.blockImageUpload.gate.useMutation();
@@ -92,6 +109,8 @@ export default function BlockImageUploadModal({
   }
   useEffect(() => {
     return () => {
+      // eslint-disable-next-line react-hooks/exhaustive-deps -- the live epoch counter, not a DOM node
+      epochRef.current++;
       clearTimer();
       if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current);
     };
@@ -138,18 +157,36 @@ export default function BlockImageUploadModal({
     timerRef.current = setTimeout(() => void pollGate(imageId, attempt + 1, epoch), delayMs);
   }
 
-  async function handleFile(file: File | null) {
-    if (!file) return;
+  function showPreview(file: File | null) {
+    if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current);
+    objectUrlRef.current = file ? URL.createObjectURL(file) : null;
+    setPreviewUrl(objectUrlRef.current);
+  }
+
+  async function handleFile(picked: File | null) {
+    if (!picked) return;
     clearTimer();
     const epoch = ++epochRef.current;
-    if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current);
-    const localPreview = URL.createObjectURL(file);
-    objectUrlRef.current = localPreview;
-    setPreviewUrl(localPreview);
     setStatus('uploading');
     setMessage(null);
+    setUnreadablePick(false);
+
+    // A photo-picker File can be unreadable, or turn unreadable after its first read (#5746), so
+    // every stage, the preview included, reads an in-memory copy taken now.
+    const { file, error } = await snapshotPick(picked, {
+      maxBytes: constants.mediaUpload.maxImageFileSize,
+    });
+    if (epoch !== epochRef.current) return;
+    if (error) {
+      reportUnreadablePick(picked, 'app-block-display-upload');
+      showPreview(null);
+      setStatus('idle');
+      setUnreadablePick(true);
+      return;
+    }
+    showPreview(file);
     try {
-      const { width, height } = await readImageDimensions(file);
+      const { width, height } = await prepStage('decode', () => readImageDimensions(file));
       const uploaded = await uploadToCF(file);
       if (epoch !== epochRef.current) return;
       const { imageId } = await persistMutation.mutateAsync({
@@ -177,7 +214,7 @@ export default function BlockImageUploadModal({
       if (epoch !== epochRef.current) return;
       clearTimer();
       setStatus('error');
-      setMessage((err as Error).message);
+      setMessage(err instanceof ImagePrepError ? IMAGE_PREP_ERROR : (err as Error).message);
     }
   }
 
@@ -188,8 +225,8 @@ export default function BlockImageUploadModal({
       <Stack gap="md">
         <Alert color="blue" variant="light" icon={<IconPhoto size={16} />}>
           <Text size="sm">
-            This image is <strong>public</strong>, so it&apos;s scanned and must be
-            safe-for-work. Upload a PNG, JPEG or WebP.
+            This image is <strong>public</strong>, so it&apos;s scanned and must be safe-for-work.
+            Upload a PNG, JPEG or WebP.
           </Text>
         </Alert>
 
@@ -211,7 +248,7 @@ export default function BlockImageUploadModal({
         <FileInput
           label="Image"
           placeholder="Select an image"
-          accept="image/png,image/jpeg,image/webp"
+          accept={IMAGE_MIME_TYPE.join(',')}
           clearable
           disabled={busy}
           leftSection={<IconUpload size={16} />}
@@ -219,6 +256,14 @@ export default function BlockImageUploadModal({
           onChange={(f: File | null) => void handleFile(f)}
           data-testid="block-image-upload-file-input"
         />
+
+        {unreadablePick && (
+          <UnreadablePickAlert
+            accept={IMAGE_MIME_TYPE}
+            disabled={busy}
+            onFiles={([file]) => void handleFile(file)}
+          />
+        )}
 
         {message && (
           <Text size="xs" c={status === 'error' ? 'red' : 'dimmed'}>

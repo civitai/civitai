@@ -6,7 +6,6 @@ import { getMetadata } from '~/utils/metadata';
 import { auditMetaData } from '~/utils/metadata/audit';
 
 export const preprocessImage = async (file: File, options?: { allowAnimatedWebP?: boolean }) => {
-  const objectUrl = URL.createObjectURL(file);
   const img = await createImageElement(file);
   const meta = await getMetadata(file);
 
@@ -16,8 +15,9 @@ export const preprocessImage = async (file: File, options?: { allowAnimatedWebP?
     );
   }
 
+  // Made once every read has succeeded, so a file that fails leaves no url holding its bytes.
   return {
-    objectUrl,
+    objectUrl: URL.createObjectURL(file),
     metadata: {
       size: file.size,
       width: img.width,

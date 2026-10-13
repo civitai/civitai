@@ -1,12 +1,14 @@
-import { IconLock } from '@tabler/icons-react';
+import { IconClock, IconLock } from '@tabler/icons-react';
 import clsx from 'clsx';
 import type { CSSProperties } from 'react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { SCORE_TIERS, scoreTierKey } from '~/shared/constants/creator-journey.constants';
 
-export type BadgeState = 'earned' | 'next' | 'locked';
+/** `pending`: passed, waiting for the nightly grant. */
+export type BadgeState = 'earned' | 'next' | 'pending' | 'locked';
 
 export const HEXAGON = 'polygon(50% 0, 100% 25%, 100% 75%, 50% 100%, 0 75%, 0 25%)';
+export const HEXAGON_ASPECT = Math.sqrt(3) / 2;
 export const DEFAULT_ACCENT = '#f59f00';
 
 export const tierAccents: Record<string, string> = Object.fromEntries(
@@ -37,6 +39,7 @@ export function TierBadge({
         'relative flex shrink-0 items-center justify-center transition-all',
         state === 'locked' && 'opacity-40 grayscale',
         state === 'next' && 'opacity-80 grayscale-[60%]',
+        state === 'pending' && 'grayscale',
         className
       )}
       style={{
@@ -73,7 +76,11 @@ export function TierBadge({
             fluid ? 'size-4' : 'size-5'
           )}
         >
-          <IconLock size={fluid ? 10 : 12} />
+          {state === 'pending' ? (
+            <IconClock size={fluid ? 10 : 12} />
+          ) : (
+            <IconLock size={fluid ? 10 : 12} />
+          )}
         </span>
       )}
     </div>

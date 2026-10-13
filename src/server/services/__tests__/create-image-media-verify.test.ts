@@ -50,6 +50,8 @@ describe('createImage — media existence probe (observe-only)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     dbMock.dbWrite.image.create.mockResolvedValue({ id: CREATED_ID } as never);
+    // `createImage` writes into a post only when the post is the image owner's.
+    dbMock.dbWrite.post.findUnique.mockResolvedValue({ userId: USER_ID } as never);
   });
 
   it('probes the row url before writing the row', async () => {

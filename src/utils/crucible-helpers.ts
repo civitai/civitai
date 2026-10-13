@@ -1,3 +1,4 @@
+import type { CrucibleJudgingStatus } from '~/server/schema/crucible.schema';
 import type { MediaType } from '~/shared/utils/prisma/enums';
 import { CrucibleIngestionStatus, CrucibleStatus } from '~/shared/utils/prisma/enums';
 import { getBaseModelConfig } from '~/shared/constants/basemodel.constants';
@@ -9,6 +10,7 @@ import {
   allBrowsingLevelsFlag,
   browsingLevelLabels,
   getIsSafeBrowsingLevel,
+  nsfwLevelColors,
   parseBitwiseBrowsingLevel,
 } from '~/shared/constants/browsingLevel.constants';
 import { slugit } from '~/utils/string-helpers';
@@ -27,6 +29,27 @@ export const toCrucibleBuzzType = (value: string): 'green' | 'yellow' =>
 
 /** How a prize is displayed. It is paid in whichever Buzz the winner picks when claiming. */
 export const CRUCIBLE_PRIZE_BUZZ_TYPE = 'yellow' as const;
+
+/**
+ * A crucible's allowed levels as one range ("PG–XXX"), keyed to the highest for its colour. `null`
+ * when a level in between is missing, since a range would claim it.
+ */
+export function getContentLevelRange(nsfwLevel: number) {
+  const levels = parseBitwiseBrowsingLevel(nsfwLevel).filter((level) => level in nsfwLevelColors);
+  if (!levels.length) return null;
+  const lowest = levels[0];
+  const highest = levels[levels.length - 1];
+  // Levels are single bits, so an unbroken run is exactly highest*2 - lowest.
+  if (levels.reduce((sum, level) => sum + level, 0) !== highest * 2 - lowest) return null;
+  const label = (level: number) => browsingLevelLabels[level as keyof typeof browsingLevelLabels];
+  return {
+    label: lowest === highest ? label(lowest) : `${label(lowest)}–${label(highest)}`,
+    level: highest,
+  };
+}
+
+/** Shown where a crucible's description is expected; a blank description is stored as NULL. */
+export const CRUCIBLE_NO_DESCRIPTION = 'No description provided';
 
 /** An entrant pays in the currency of the site they enter on. */
 export const getCrucibleEntryBuzzType = (isGreen: boolean): 'green' | 'yellow' =>
@@ -84,7 +107,7 @@ export function getCrucibleTransactionDescription(text: string, crucible: Crucib
 
 const ENDING_SOON_MS = 24 * 60 * 60 * 1000;
 
-const STATUS_BADGES: Record<CrucibleStatus, { label: string; color: string }> = {
+export const CRUCIBLE_STATUS_BADGES: Record<CrucibleStatus, { label: string; color: string }> = {
   [CrucibleStatus.Pending]: { label: 'Upcoming', color: 'blue' },
   [CrucibleStatus.Active]: { label: 'Active', color: 'green' },
   [CrucibleStatus.Completed]: { label: 'Completed', color: 'gray' },
@@ -106,7 +129,7 @@ export function getCrucibleStatusBadge(
     if (msLeft <= ENDING_SOON_MS && isCrucibleFinalStretch({ startAt, endAt, now }))
       return { label: 'Ending soon', color: 'orange' };
   }
-  return STATUS_BADGES[status];
+  return CRUCIBLE_STATUS_BADGES[status];
 }
 
 /**
@@ -386,6 +409,83 @@ export function getCrucibleMinVotes({
   return Math.ceil((totalVotes * CRUCIBLE_MIN_VOTES_PERCENT) / (entryCount * 100));
 }
 
+/** The fewest votes the time-adjusted bar asks for, unless the old bar is lower. */
+export const CRUCIBLE_MIN_VOTES_FLOOR = 25;
+
+type TimedVoteEntry = { voteCount: number; createdAt: Date };
+
+/** Milliseconds an entry is live between `from` and `to`, never before the crucible started. */
+function getLiveMs(createdAt: Date, startAt: Date | null, to: Date) {
+  const liveFrom = Math.max(createdAt.getTime(), startAt?.getTime() ?? 0);
+  return Math.max(0, to.getTime() - liveFrom);
+}
+
+/** 75% of the votes an entry expects, never below the floor and never above the old bar. */
+function getTimeAdjustedBar({
+  totalVotes,
+  entryCount,
+  liveMs,
+  totalLiveMs,
+}: {
+  totalVotes: number;
+  entryCount: number;
+  liveMs: number;
+  totalLiveMs: number;
+}) {
+  const oldBar = getCrucibleMinVotes({ totalVotes, entryCount });
+  if (totalLiveMs <= 0) return oldBar;
+  // Integer arithmetic so an exact 75% stays exact, as in getCrucibleMinVotes.
+  const share = Math.ceil(
+    (totalVotes * CRUCIBLE_MIN_VOTES_PERCENT * liveMs) / (100 * totalLiveMs)
+  );
+  return Math.min(Math.max(share, CRUCIBLE_MIN_VOTES_FLOOR), oldBar);
+}
+
+/**
+ * Votes each entry needs to place when the bar follows the time it was live: a share of the votes
+ * an entry expects given how long it ran, so late entries aren't judged against the full run.
+ * Same order as `entries`. Without any live time it falls back to getCrucibleMinVotes.
+ */
+export function getCrucibleTimeAdjustedMinVotes(
+  entries: TimedVoteEntry[],
+  { startAt, endAt }: { startAt: Date | null; endAt: Date }
+) {
+  const totalVotes = entries.reduce((sum, entry) => sum + entry.voteCount, 0);
+  const liveMs = entries.map((entry) => getLiveMs(entry.createdAt, startAt, endAt));
+  const totalLiveMs = liveMs.reduce((sum, ms) => sum + ms, 0);
+  return liveMs.map((ms) =>
+    getTimeAdjustedBar({ totalVotes, entryCount: entries.length, liveMs: ms, totalLiveMs })
+  );
+}
+
+/**
+ * Votes an entry submitted `now` needs to place, from the vote rate so far projected over the time
+ * left. Falls back to getCrucibleMinVotes before any entry has been live.
+ */
+export function getCrucibleLiveMinVotes({
+  entries,
+  startAt,
+  endAt,
+  now,
+}: {
+  entries: TimedVoteEntry[];
+  startAt: Date | null;
+  endAt: Date;
+  now: Date;
+}) {
+  const totalVotes = entries.reduce((sum, entry) => sum + entry.voteCount, 0);
+  const totalLiveMs = entries.reduce(
+    (sum, entry) => sum + getLiveMs(entry.createdAt, startAt, now),
+    0
+  );
+  return getTimeAdjustedBar({
+    totalVotes,
+    entryCount: entries.length,
+    liveMs: Math.max(0, endAt.getTime() - now.getTime()),
+    totalLiveMs,
+  });
+}
+
 /**
  * The last `percent` of a crucible's run, when a new entry may not collect enough votes to place.
  * Defaults to the warning share a crucible gets unless its creator picks another.
@@ -495,4 +595,16 @@ export function getCrucibleRatings(nsfwLevel: number): string[] {
 
 export function getCrucibleRatingLabel(nsfwLevel: number): string {
   return getCrucibleRatings(nsfwLevel).join(' / ');
+}
+
+export type CrucibleJudgingBadge = { kind: 'available' | 'caughtUp'; label: string };
+
+/** Only for crucibles the viewer has judged: on any other, every pair is still open. */
+export function getCrucibleJudgingBadge(
+  judging: Pick<CrucibleJudgingStatus, 'judged' | 'available' | 'votesUsedUp'> | undefined
+): CrucibleJudgingBadge | null {
+  if (!judging?.judged) return null;
+  if (judging.available) return { kind: 'available', label: 'You have pairs to judge here' };
+  if (judging.votesUsedUp) return { kind: 'caughtUp', label: "You're caught up here" };
+  return null;
 }

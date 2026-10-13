@@ -148,7 +148,7 @@ function upsert(input: Partial<ModelUpsertInput> & { userId: number; isModerator
 beforeEach(() => {
   vi.clearAllMocks();
   mockEvaluateContent.mockReturnValue(cleanEvaluation);
-  mockDbRead.model.findUnique.mockResolvedValue(storedModel);
+  mockDbWrite.model.findUnique.mockResolvedValue(storedModel);
   mockDbWrite.modelVersion.findMany.mockResolvedValue([]);
   mockDbWrite.$queryRaw.mockResolvedValue([]);
 });
@@ -346,7 +346,7 @@ describe('upsertModel — server-owned meta keys are not writable through client
   it.each([false, true])(
     'keeps the stored values when client meta (isModerator=%s) blanks or redirects them',
     async (isModerator) => {
-      mockDbRead.model.findUnique.mockResolvedValue({ ...storedModel, meta: stored });
+      mockDbWrite.model.findUnique.mockResolvedValue({ ...storedModel, meta: stored });
       mockUpdateReturning('PERSISTED Name', 'PERSISTED description');
 
       await upsert({

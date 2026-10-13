@@ -52,8 +52,64 @@ export const WATCHLIST = [
     why: 'The one Flipt client, and with it the one wasm engine, the one 60s config poller and the one pair of eval caches. This module is emitted TWICE in the production server build (measured: `[flipt] eval cache TTL:` appears 2x on every pod — 488 lines across 244 pod streams — against one `[instrumentation] Running in nodejs runtime`). The caches are mutated by every flag evaluation on the request path and READ by the collect() callbacks of `civitai_app_flipt_eval_cache_*` in `src/server/metrics/flipt-eval-cache.metrics.ts`, so reader and writer can land in different graphs — the same shape that left the bulkhead gauges reading empty state for 74 days. Here the failure is worse than a zero: an unpinned copy makes the eval-cache metrics report ONE of two caches, and the bias has a direction. Rotations are superlinear in per-instance key space, so one key space split across two caches at the same ceiling rotates far less than one cache holding all of it — the split reads as "TTL-bound" and sends the reader to the knob that changes nothing, which is the exact inert change those metrics exist to prevent. Vitest cannot see this (it loads each module once), so this gate is the only check that can.',
   },
   {
+    rule: 'SHARED_STATE',
+    module: 'src/server/meilisearch/client.ts',
+    globalKey: '__civitaiMeiliWrapperState',
+    why: 'The one object holding the per-backend p-limit limiters and circuit breakers behind withMeili(). This module is emitted TWICE in the production server build, once per Turbopack runtime (`chunks/` for API routes, `chunks/ssr/` for page SSR; measured on a production pod: `meili_call_active` appears in exactly one chunk under each). prom-client is externalized, so both copies share one registry, and the copy that evaluates SECOND reassigns the collect() of `civitai_app_meili_call_active`/`_call_queue_depth`/`_circuit_state` to a closure over its own state. With private state those gauges read the SSR copy, which is idle on the API pods that carry the traffic. They read 0 on every pod for 15 days, through a brownout that tripped the circuit ~108k times. A copy without the pin also gets its own concurrency cap and its own circuit, so the per-backend limits apply per copy rather than per process. Vitest cannot see this (it loads each module once) except where a test forces two copies, as `src/server/meilisearch/__tests__/client-gauges.dual-graph.test.ts` does.',
+  },
+  // The connection shims below share one shape: the production server evaluates each once per
+  // bundler module graph in ONE Node process, so a copy that builds its clients in module scope
+  // instead of adopting the `globalThis` one opens a second, third, ... set of connections against
+  // the same backend. Nothing errors; it shows up only as connection count and pool pressure.
+  // Before these were pinned in production, that is exactly what every emitted copy did.
+  {
+    rule: 'SHARED_STATE',
+    module: 'src/server/db/client.ts',
+    globalKey: '__civitaiPrismaClients',
+    why: 'The one pair of Prisma clients (dbRead/dbWrite) and their connection pools. A copy that builds its own opens another pool set against the primary and the replica per emitted copy, and its slow-query sink and connection metrics describe a pool that serves only that copy.',
+  },
+  {
+    rule: 'SHARED_STATE',
+    module: 'src/server/redis/client.ts',
+    globalKey: '__civitaiRedisClients',
+    why: 'The one cache + system Redis client set. Beyond the extra connections, `@civitai/redis` registers its sys self-heal watchdog for the FIRST sys client only, on the stated invariant that the app builds exactly one (see the SINGLE-SINGLETON INVARIANT note in `packages/civitai-redis/src/client.ts`) — an unpinned copy builds a second sys client that the watchdog may never reconnect.',
+  },
+  {
+    rule: 'SHARED_STATE',
+    module: 'src/server/clickhouse/client.ts',
+    globalKey: 'globalClickhouse',
+    why: 'The one ClickHouse client and its HTTP agent. An unpinned copy opens its own connection set per emitted copy and buffers its own tracker writes.',
+  },
+  {
+    // One entry for the three primary pools: they are built together in one block, and a rule
+    // carries one globalKey (see the bulkhead entry). `globalPgWrite` is the pool every path
+    // builds, including the replica == primary alias case.
+    rule: 'SHARED_STATE',
+    module: 'src/server/db/pgDb.ts',
+    globalKey: 'globalPgWrite',
+    why: 'The one set of raw pg pools (write, read, read-long). An unpinned copy opens its own three pools per emitted copy, and the pool gauges/acquire histogram can then describe a pool set that serves almost nothing (the instrumentation graph wins metric registration).',
+  },
+  {
+    rule: 'SHARED_STATE',
+    module: 'src/server/db/datapacketDb.ts',
+    globalKey: 'globalDatapacketDbRead',
+    why: 'The one read pool for the datapacket database. An unpinned copy opens another pool per emitted copy.',
+  },
+  {
+    rule: 'SHARED_STATE',
+    module: 'src/server/db/appsDb.ts',
+    globalKey: 'globalAppsDb',
+    why: 'The one pool for the apps database. An unpinned copy opens another pool per emitted copy.',
+  },
+  {
     rule: 'SINGLETON',
     module: 'packages/civitai-telemetry/src/otel-logs.ts',
     why: 'Holds the memoized OTel Logger and the bridge counters in module scope, and is loaded only from the instrumentation entry, which is also what registers the LoggerProvider. A second copy would be a second bridge that never sees that registration — and whose counters register into a registry nothing scrapes.',
+  },
+  {
+    rule: 'SHARED_STATE',
+    module: 'src/server/signals/wrapper.ts',
+    globalKey: '__civitaiSignalsWrapperState',
+    why: 'The one object holding the per-lane p-limit limiters and queue counters and the shared circuit breaker behind withSignals(). This module is emitted as one runtime module PER Turbopack runtime (measured on a local production build: one module id under `chunks/`, carried by 21 chunks, and one under `chunks/ssr/`, carried by 21), so one process evaluates it twice. A copy with private state gets its own concurrency cap, its own queue bound and its own circuit — the per-lane limits apply per copy, not per process, and a backend outage tripped through one copy never fails calls made through the other — and the collect()-based gauges `civitai_app_signals_call_active`/`_call_queue_depth`/`_circuit_state` read whichever copy owns the hook. Vitest cannot see this (it loads each module once) except where a test forces two copies, as `src/server/signals/__tests__/wrapper-gauges.dual-graph.test.ts` does.',
   },
 ];

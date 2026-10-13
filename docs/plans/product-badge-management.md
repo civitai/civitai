@@ -23,7 +23,7 @@ Zod schemas:
 ### 2. `src/server/services/product-badge.service.ts`
 Service functions:
 - `getProductsWithBadges()` - queries `Product` table joined with latest `Cosmetic` (type=Badge) per product. Returns product id, name, provider, tier, and current badge data (url, animated, availableStart/End)
-- `upsertProductBadge()` - creates or updates a `Cosmetic` record with type=Badge, source=Membership, permanentUnlock=false, the given productId(s), data={url, animated}, and availability dates. When assigning to multiple products, creates one cosmetic per product (since `productId` is a single field on the Cosmetic model)
+- `upsertProductBadge()` - creates or updates a `Cosmetic` record with type=Badge, source=Membership, permanentUnlock=true (the nightly revoke only deletes non-permanent Membership cosmetics), the given productId(s), data={url, animated}, and availability dates. When assigning to multiple products, creates one cosmetic per product (since `productId` is a single field on the Cosmetic model)
 
 ### 3. `src/server/routers/product-badge.router.ts`
 tRPC router with moderator-only procedures:

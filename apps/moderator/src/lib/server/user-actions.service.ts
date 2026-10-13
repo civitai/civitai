@@ -1,4 +1,5 @@
 import { env } from '$env/dynamic/private';
+import type { MembershipCodeTier } from '$lib/membership-code';
 import { civitaiAppUrl } from './civitai-url';
 import { getRequestEvent } from '$app/server';
 import { sql } from '@civitai/db/kysely';
@@ -191,6 +192,8 @@ export type ModEndpoint =
   | 'text-scan'
   | 'training-data/resolve'
   | 'user/delete'
+  | 'user/membership-code'
+  | 'user/membership-code-revoke'
   | 'user/toggle-moderator'
   | 'user/unmute'
   | 'user/update-identity';
@@ -756,6 +759,8 @@ export async function resolveRestriction(input: {
   userRestrictionId: number;
   status: 'Overturned' | 'Upheld';
   resolvedMessage?: string;
+  resolvedReason: string;
+  internalNotes?: string;
   userId: number;
   moderatorId: number;
 }): Promise<ActionResult> {
@@ -764,7 +769,9 @@ export async function resolveRestriction(input: {
     {
       userRestrictionId: input.userRestrictionId,
       status: input.status,
+      resolvedReason: input.resolvedReason,
       ...(input.resolvedMessage ? { resolvedMessage: input.resolvedMessage } : {}),
+      ...(input.internalNotes ? { internalNotes: input.internalNotes } : {}),
     },
     'Restriction ruling'
   );
@@ -1162,6 +1169,57 @@ const MAY_HAVE_COMPLETED =
  * app at all. `ModActivity` is append-only in production, so a second call here is a second row in
  * the account history for one deletion, not a deduped one.
  */
+const MINT_MAY_HAVE_COMPLETED =
+  'Could not confirm the code was minted. Wait a minute, then check this account’s code list before minting again.';
+
+// MEMBERSHIP CODE (support make-good). The endpoint records the ModActivity row inside the same
+// transaction as the code, and its daily cap counts those rows — so no `logAction` here.
+export async function mintMembershipCode(input: {
+  userId: number;
+  tier: MembershipCodeTier;
+  months: number;
+  reason: string;
+}): Promise<{ ok: true; code: string; expiresAt: string } | { ok: false; error: string }> {
+  const result = await callModEndpoint(
+    'user/membership-code',
+    { userId: input.userId, tier: input.tier, months: input.months, reason: input.reason },
+    'Mint membership code'
+  );
+  if (!result.ok) {
+    // Not idempotent: a lost response (5xx, 408, or no answer after the request left) may have
+    // minted a code, and a blind retry mints a second one.
+    if (result.status !== undefined && (result.status >= 500 || result.status === 408))
+      return { ok: false, error: MINT_MAY_HAVE_COMPLETED };
+    if (result.status !== undefined || result.requestNeverSent)
+      return { ok: false, error: result.error };
+    return { ok: false, error: MINT_MAY_HAVE_COMPLETED };
+  }
+  const { code, expiresAt } = result.body;
+  if (typeof code !== 'string' || !code || typeof expiresAt !== 'string')
+    return { ok: false, error: MINT_MAY_HAVE_COMPLETED };
+  return { ok: true, code, expiresAt };
+}
+
+const REVOKE_MAY_HAVE_COMPLETED =
+  'Could not confirm the revoke. Refresh the code list before trying again.';
+
+export async function revokeMembershipCode(input: {
+  userId: number;
+  code: string;
+}): Promise<ActionResult> {
+  const result = await callModEndpoint(
+    'user/membership-code-revoke',
+    { userId: input.userId, code: input.code },
+    'Revoke membership code'
+  );
+  if (result.ok) return { ok: true };
+  if (result.status !== undefined && (result.status >= 500 || result.status === 408))
+    return { ok: false, error: REVOKE_MAY_HAVE_COMPLETED };
+  if (result.status !== undefined || result.requestNeverSent)
+    return { ok: false, error: result.error };
+  return { ok: false, error: REVOKE_MAY_HAVE_COMPLETED };
+}
+
 export async function deleteAccount(input: {
   userId: number;
   /** The account's current username. **REQUIRED by the endpoint for any account that has one** —

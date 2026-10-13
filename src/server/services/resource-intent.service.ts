@@ -8,7 +8,7 @@ import {
   RESOURCE_INTENT_DEFAULT_LIMIT,
   RESOURCE_INTENT_SPEC_HASH,
   QUESTION_SPEC_VERSION,
-  STAGE3_MAX_RANKED,
+  RESOURCE_INTENT_HYBRID_HEAD_MODELS,
   resourceIntentResponseSchema,
   type ResourceIntentInput,
   type ResourceIntentResponse,
@@ -16,24 +16,55 @@ import {
 } from '~/server/schema/resource-intent.schema';
 import { projectSafeGenerationResource } from '~/server/schema/blocks/generation-resource-projection';
 import { REDIS_KEYS, redis } from '~/server/redis/client';
-import { askJev, JEV_TIMEOUT_MS, JevError, type JevChoiceQuestion } from '~/server/services/ai/jev';
+import { askJev, JEV_TIMEOUT_MS, JevError } from '~/server/services/ai/jev';
 import { getResourceData } from '~/server/services/generation/generation.service';
 import {
+  CHECKPOINT_LIST_MODELS,
+  RESOURCE_INTENT_CHECKPOINT_SPEC_HASH,
+  type CheckpointArm,
+} from '~/server/services/resource-intent-checkpoint';
+import {
+  findCheckpointCandidates,
+  findPoolMergeCandidates,
   findResourceIntentCandidates,
   type ResourceIntentCoverage,
   type ResourceIntentShortlistEntry,
 } from '~/server/services/resource-intent-matcher.service';
+import { CHECKPOINT_ATTACH_BUILD_HASH } from '~/server/services/resource-intent-cooc/checkpoint-attach';
+import {
+  coocSnapshotHolder,
+  coocStudySnapshots,
+  type CoocFallbackReason,
+  type CoocServing,
+  type ServedCooc,
+} from '~/server/services/resource-intent-cooc/holder';
+import { rankCooc } from '~/server/services/resource-intent-cooc/score';
+import {
+  RESOURCE_INTENT_COOC_SPEC,
+  RESOURCE_INTENT_COOC_SPEC_HASH,
+} from '~/server/services/resource-intent-cooc/spec';
+import { coocQueryTokens } from '~/server/services/resource-intent-cooc/tokenize';
+import { RESOURCE_INTENT_POOL_MERGE_SPEC_HASH } from '~/server/services/resource-intent-pool-merge';
 import { coverageAudience } from '~/server/services/generation/coverage-source';
 import {
   buildResourceIntentStage1Request,
   compileCriteria,
   parseResourceIntentStage1Answers,
 } from '~/server/services/resource-intent-stage1';
+import {
+  buildStage3Question,
+  buildStage3State,
+  combineStage3Answers,
+  mergeHybrid,
+  RESOURCE_INTENT_STAGE3_SPEC_HASH,
+  stage3Orders,
+} from '~/server/services/resource-intent-stage3';
 import { resourceExceedsCatalogCeiling } from '~/server/utils/block-catalog-maturity';
 
 /**
  * Resource-intent primitive — cache → Jev stage 1 (intent/criteria) →
- * deterministic matcher → Jev stage 3 (Choice over the shortlist) → suggestions.
+ * deterministic matcher → Jev stage 3 (two Choice calls over the shortlist,
+ * averaged) → HYBRID_10 merge with the matcher's `basePool` → suggestions.
  *
  * Fail-closed, with ONE documented exception. A Jev error in any stage, a
  * stage-3 parse error, a hydration error, and a matcher error OTHER than the
@@ -49,15 +80,20 @@ import { resourceExceedsCatalogCeiling } from '~/server/utils/block-catalog-matu
  * writing a new one. If you are about to reword it a fourth time: enumerate the
  * `catch` sites, do not generalise over them, and note the enumeration above
  * names the DEGRADING ones only — several other catches here swallow without
- * touching the degraded contract. Jev
- * output can only reorder/drop within the gate-passing shortlist; every gate
- * (availability, maturity, coverage, baseModel, celebrity) is applied in
- * deterministic code BEFORE Jev ranks, and the stage-3 option list contains
- * exactly the shortlisted keys, so an unknown version can never be added.
+ * touching the degraded contract. Jev output only orders the stage-3 head. Every
+ * suggestion, head or `basePool` fill, passed every gate (availability, maturity,
+ * coverage, baseModel, celebrity) in deterministic code, and the stage-3 options are
+ * positional keys into the shortlist, so Jev can never add a version.
  *
- * `none` is a first-class answer: when stage 1's role argmax is `none` (or
- * stage 3 picks `none`), the response carries empty suggestions without being
- * degraded — the model judged the prompt needs no resource.
+ * `none` is a first-class answer at stage 1: when the role argmax is `none`, the
+ * response carries empty suggestions without being degraded — the model judged the
+ * prompt needs no resource. Stage 3's `none` is reported (`noneProbability`)
+ * and never empties the list: the arm screen measured that rule costing hit@10.
+ *
+ * Suggestions are `mergeHybrid`'s HYBRID_10 list (`resource-intent-stage3.ts`), or, on the
+ * POOL_MERGE arm (`ctx.poolMerge` / study mode), the co-occurrence list merged with the same
+ * popularity pool (`findPoolMergeCandidates`), with no stage 3. With no servable production
+ * snapshot that arm serves the popularity pool alone, flagged `coocFallback`, for 60 s.
  *
  * A label-read failure is NOT a degrade: the matcher falls back to the seed (popularity)
  * order and reports it, and the response carries `insightFallback: true`
@@ -89,9 +125,10 @@ const DEGRADED_CACHE_TTL_SECONDS = 60;
  *
  * Why not just reuse `DEGRADED_CACHE_TTL_SECONDS`: the two paths look alike on
  * response QUALITY and are asymmetric on RETRY COST, which is what a TTL actually
- * buys. The label read sits BETWEEN the two Jev round trips, so an
+ * buys. The label read sits BETWEEN stage 1 and stage 3, so an
  * `insightFallback` miss has already paid stage 1 and goes on to pay stage 3 in
- * full — two BILLED vendor calls, plus the Meilisearch query and hydration. The
+ * full — three BILLED vendor calls, plus two Meilisearch queries (the seed page and `basePool`'s
+ * 500-document page) and hydration. The
  * dominant degraded case is stage-1 Jev throwing, which costs ONE call and that
  * one abandoned, with no stage 3, no search and no hydration. The benefit axis
  * inverts too: a degraded response is useless, so retrying it fast is worth
@@ -115,6 +152,45 @@ const DEGRADED_CACHE_TTL_SECONDS = 60;
  * recomputable window rises by the same factor.
  */
 const INSIGHT_FALLBACK_CACHE_TTL_SECONDS = 60;
+
+/** A POOL_MERGE response served without a snapshot is retried as soon as one may have loaded. */
+const COOC_FALLBACK_CACHE_TTL_SECONDS = 60;
+
+/**
+ * The cache lifetime of a response, for both modes (checkpoint responses never carry
+ * `insightFallback`, so the ladder is the same for them).
+ *
+ * Read off the RESPONSE, not the locals, so what is cached and what sets
+ * its lifetime are the same two fields — including on a path that rebuilt
+ * the response object. `degraded` is checked first because a degraded
+ * response carries no suggestions whatever the label read did.
+ * 🔴 THIS PRECEDENCE IS NOT PINNED BY ANY TEST, and while both constants
+ * are 60 the swap is a SEMANTIC NO-OP — the two orderings agree on all
+ * four (degraded, insightFallback) states, so no test anywhere can kill
+ * it, and none covers the `degraded && insightFallback` state where the
+ * order would start to matter. That overlap state IS reachable: a failed
+ * label read followed by a later-stage failure produces it. So the moment
+ * you give the two paths different values this ordering becomes
+ * behaviourally load-bearing with no guard on it — pin it in the same
+ * change that diverges them. (Same class as the promote/demote constant
+ * swap the F1 test docstring discloses. The earlier mutation sweep on
+ * this branch did not cover it; its own wording scoped itself to a re-run
+ * after the fixes, so the gap is in what was swept, not in the claim.)
+ */
+function responseCacheTtl(response: ResourceIntentResponse): number {
+  return response.degraded
+    ? DEGRADED_CACHE_TTL_SECONDS
+    : response.insightFallback
+    ? INSIGHT_FALLBACK_CACHE_TTL_SECONDS
+    : response.coocFallback
+    ? COOC_FALLBACK_CACHE_TTL_SECONDS
+    : CACHE_TTL_SECONDS;
+}
+
+export type ResourceIntentArm = 'hybrid_10' | 'pool_merge';
+
+/** The snapshot term of a POOL_MERGE cache key when no snapshot is served. */
+export const COOC_FALLBACK_SNAPSHOT_KEY = 'fallback';
 
 const DEGRADED_MODEL = 'jev-unavailable';
 
@@ -170,59 +246,29 @@ export function resourceIntentCacheKey(input: {
   baseModel?: string;
   browsingLevel: number;
   cap: number;
+  /** POOL_MERGE only; the HYBRID_10 key is unchanged by this arm's existence. */
+  poolMerge?: { snapshot: string };
 }) {
-  const hash = createHash('sha256')
-    .update(
-      [
-        input.prompt,
-        input.baseModel ?? '',
-        String(input.browsingLevel),
-        String(input.cap),
-        RESOURCE_INTENT_SPEC_HASH,
-      ].join('|')
-    )
-    .digest('hex');
+  const terms = [
+    input.prompt,
+    input.baseModel ?? '',
+    String(input.browsingLevel),
+    String(input.cap),
+    RESOURCE_INTENT_SPEC_HASH,
+    RESOURCE_INTENT_STAGE3_SPEC_HASH,
+  ];
+  if (input.poolMerge) {
+    terms.push(
+      'pool_merge',
+      input.poolMerge.snapshot,
+      RESOURCE_INTENT_COOC_SPEC_HASH,
+      RESOURCE_INTENT_POOL_MERGE_SPEC_HASH
+    );
+  }
+  const hash = createHash('sha256').update(terms.join('|')).digest('hex');
   // `as const` keeps the template-literal type: the redis client is typed over
   // the registered REDIS_KEYS templates and rejects a plain `string`.
   return `${REDIS_KEYS.CACHES.JEV_RESOURCE_INTENT}:${hash}` as const;
-}
-
-export function buildStage3Question(shortlist: ResourceIntentShortlistEntry[]): JevChoiceQuestion {
-  // Jev Choice caps at 255 options and `none` always rides along, so the ranked
-  // list leaves it room (the default shortlist of 50 never hits this).
-  const ranked = shortlist.slice(0, STAGE3_MAX_RANKED);
-  return {
-    id: 'resourceVersion',
-    type: 'choice',
-    prompt: [
-      'Given the prompt, which of these community resources (if any) fits best? Reply with the option key of the best match, or "none" if no listed resource fits.',
-      ...ranked.map(
-        (entry, i) =>
-          `${i}: ${entry.modelName} — ${entry.versionName} (${entry.modelType}, ${entry.baseModel})`
-      ),
-    ].join('\n'),
-    options: [...ranked.map((_, i) => String(i)), 'none'],
-  };
-}
-
-/**
- * Tiebreaks on the incoming index, so an indifferent distribution preserves the
- * matcher's order. `applyInsightRanking` tiebreaks the same way on the seed
- * order; the two stages together are what makes the whole pipeline's order
- * deterministic, so changing either tiebreak in isolation breaks that claim for
- * one stage only.
- */
-function reorderShortlistByDistribution(
-  shortlist: ResourceIntentShortlistEntry[],
-  distribution: Record<string, number>
-): ResourceIntentShortlistEntry[] {
-  return shortlist
-    .map((entry, index) => ({ entry, index, probability: distribution[String(index)] ?? 0 }))
-    .sort((a, b) => {
-      if (a.probability !== b.probability) return b.probability - a.probability;
-      return a.index - b.index;
-    })
-    .map(({ entry }) => entry);
 }
 
 async function hydrateSuggestions(
@@ -273,6 +319,7 @@ type ShadowEvent = {
   baseModel: string;
   browsingLevel: number;
   specHash: string;
+  stage3SpecHash: string;
   specVersion: number;
   criteriaVersion: number;
   model: string;
@@ -289,6 +336,25 @@ type ShadowEvent = {
   shortlistCount: number;
   suggestionIds: number[];
   noneProbability: number;
+  stage1NoneProbability: number | null;
+  stage3NoneProbability: number | null;
+} & Partial<PoolMergeShadow> &
+  Partial<CheckpointShadow>;
+
+/** Sent on POOL_MERGE and checkpoint rows only; a HYBRID_10 row reads the columns' defaults. */
+type PoolMergeShadow = {
+  arm: ResourceIntentArm | CheckpointArm;
+  coocSnapshotHash: string;
+  coocSpecHash: string;
+  poolMergeSpecHash: string;
+  coocFallback: 0 | 1;
+  coocFallbackReason: string;
+};
+
+/** Sent on checkpoint rows only (`2026-10-11-resource-intent-shadow-checkpoint.sql`). */
+type CheckpointShadow = {
+  kind: 'checkpoint';
+  checkpointSpecHash: string;
 };
 
 async function writeShadowEvent(event: ShadowEvent): Promise<void> {
@@ -315,29 +381,99 @@ async function writeShadowEvent(event: ShadowEvent): Promise<void> {
   }
 }
 
+function degradedResponse(
+  insightFallback: boolean,
+  armFields: Pick<ResourceIntentResponse, 'coocFallback' | 'kind' | 'checkpointArm'>,
+  model: string = DEGRADED_MODEL
+): ResourceIntentResponse {
+  return {
+    degraded: true,
+    insightFallback,
+    ...armFields,
+    intent: null,
+    criteria: null,
+    suggestions: [],
+    noneProbability: null,
+    model,
+    criteriaVersion: RESOURCE_INTENT_CRITERIA_VERSION,
+  };
+}
+
+function logDegraded(degradedReason: string, error: unknown, model: string) {
+  logToAxiom(
+    {
+      type: 'resource-intent-degraded',
+      degradedReason,
+      error: error instanceof Error ? error.message : String(error),
+      model,
+    },
+    'temp-search'
+  ).catch(() => undefined);
+}
+
+export type ResourceIntentContext = {
+  browsingLevel: number;
+  /** Overrides the anon coverageAudience lookup (tests; special tRPC callers). */
+  coverage?: ResourceIntentCoverage;
+  /** Clock for the shadow-event timestamp and the study pin check; injectable for tests. */
+  now?: () => Date;
+  /** Serve the co-occurrence POOL_MERGE list (flag `resourceIntentPoolMerge`). Add-on mode only. */
+  poolMerge?: boolean;
+  /**
+   * STUDY MODE: serve POOL_MERGE (add-on mode) or ATTACH_BM (checkpoint mode) from this pinned
+   * study snapshot (its content hash). Fails closed — `degraded: true` — if the snapshot cannot
+   * be served, and never falls back. Ignored on the `base_bm` arm, which reads no snapshot.
+   */
+  coocSnapshotId?: string;
+  /** Checkpoint mode's arm; `attach_bm` (the served arm) when absent. The study sets `base_bm`. */
+  checkpointArm?: CheckpointArm;
+};
+
 export async function getResourceIntent(
   input: ResourceIntentInput,
-  ctx: {
-    browsingLevel: number;
-    /** Overrides the anon coverageAudience lookup (tests; special tRPC callers). */
-    coverage?: ResourceIntentCoverage;
-    /** Shadow-event timestamp; injectable for tests. */
-    now?: () => Date;
-  }
+  ctx: ResourceIntentContext
 ): Promise<ResourceIntentResponse> {
+  if (input.kind === 'checkpoint') return getCheckpointIntent(input, ctx);
   const startedAt = Date.now();
   // Resolved BEFORE the cache read: `cap` is part of the cache key, so it cannot
   // be computed on the miss path only.
   const cap = resolveSuggestionLimit(input.limit);
+  const study = ctx.coocSnapshotId !== undefined;
+  const arm: ResourceIntentArm = ctx.poolMerge || study ? 'pool_merge' : 'hybrid_10';
+
+  // The snapshot is part of the POOL_MERGE cache key, so it is resolved before the cache read.
+  let cooc: ServedCooc | null = null;
+  let coocServing: CoocServing | null = null;
+  let studyFailure: { error: unknown } | null = null;
+  if (study) {
+    try {
+      cooc = await coocStudySnapshots().get(ctx.coocSnapshotId!, (ctx.now ?? (() => new Date()))());
+    } catch (error) {
+      studyFailure = { error };
+    }
+  } else if (arm === 'pool_merge') {
+    coocServing = await coocSnapshotHolder().resolve();
+    cooc = coocServing.snapshot;
+  }
+  const coocFallback = arm === 'pool_merge' && !study && !cooc;
+
   const cacheInput = {
     prompt: input.prompt,
     baseModel: input.baseModel,
     browsingLevel: ctx.browsingLevel,
     cap,
+    ...(arm === 'pool_merge' && {
+      poolMerge: {
+        snapshot: study ? ctx.coocSnapshotId! : cooc?.contentHash ?? COOC_FALLBACK_SNAPSHOT_KEY,
+      },
+    }),
   };
+  // Spread only on this arm, so a HYBRID_10 response is unchanged.
+  const armFields = arm === 'pool_merge' ? { coocFallback } : {};
 
   let stage1Model = DEGRADED_MODEL;
   let shortlistCount = 0;
+  let stage3NoneProbability: number | null = null;
   // Tracked outside the try so the degraded response below carries it too: if the
   // label read failed and THEN stage 3 failed, the fact that the ordering never ran
   // still describes this computation. (A degrade already takes a short TTL, so this
@@ -347,19 +483,28 @@ export async function getResourceIntent(
   let response: ResourceIntentResponse | undefined;
   let cachedHit = false;
 
+  if (studyFailure) {
+    // Fails closed without the cache: an expired pin must not keep serving a cached list.
+    degradedReason = 'cooc_study_snapshot';
+    response = degradedResponse(false, armFields);
+    logDegraded(degradedReason, studyFailure.error, stage1Model);
+  }
+
   // The flag gate happens BEFORE this function (and before this cache read) in
   // every caller — by the time we are here the feature is enabled.
-  try {
-    const cached = await redis.packed.get<unknown>(resourceIntentCacheKey(cacheInput));
-    if (cached != null) {
-      const parsed = resourceIntentResponseSchema.safeParse(cached);
-      if (parsed.success) {
-        response = parsed.data;
-        cachedHit = true;
+  if (!response) {
+    try {
+      const cached = await redis.packed.get<unknown>(resourceIntentCacheKey(cacheInput));
+      if (cached != null) {
+        const parsed = resourceIntentResponseSchema.safeParse(cached);
+        if (parsed.success) {
+          response = parsed.data;
+          cachedHit = true;
+        }
       }
+    } catch {
+      // A cache read failure is a miss, never an error.
     }
-  } catch {
-    // A cache read failure is a miss, never an error.
   }
 
   if (!response) {
@@ -380,12 +525,26 @@ export async function getResourceIntent(
       const criteria = compileCriteria(intent, baseModel);
 
       let suggestions: ResourceIntentSuggestion[] = [];
-      let noneProbability: number | null = intent.role.distribution['none'] ?? null;
+      const stage1NoneProbability = intent.role.distribution['none'] ?? null;
 
-      if (criteria.role === 'none') {
-        // First-class none: the model judged the prompt needs no resource.
-        suggestions = [];
-      } else {
+      if (criteria.role !== 'none' && arm === 'pool_merge') {
+        const coocCandidates = cooc
+          ? rankCooc(
+              cooc.scores,
+              coocQueryTokens(input.prompt),
+              criteria.modelTypes,
+              RESOURCE_INTENT_COOC_SPEC.topK
+            ).map((c) => c.modelId)
+          : [];
+        const merged = await findPoolMergeCandidates(criteria, {
+          browsingLevel: ctx.browsingLevel,
+          coverage,
+          cap,
+          coocCandidates,
+        });
+        shortlistCount = merged.entries.length;
+        suggestions = await hydrateSuggestions(merged.entries, ctx.browsingLevel);
+      } else if (criteria.role !== 'none') {
         const matched = await findResourceIntentCandidates(criteria, {
           browsingLevel: ctx.browsingLevel,
           coverage,
@@ -394,57 +553,58 @@ export async function getResourceIntent(
         const shortlist = matched.entries;
         insightFallback = matched.insightFallback;
         shortlistCount = shortlist.length;
+        let head: ResourceIntentShortlistEntry[] = [];
         if (shortlist.length > 0) {
-          const stage3 = await askJev(
-            { state: { prompt: input.prompt }, questions: [buildStage3Question(shortlist)] },
-            { timeoutMs: JEV_TIMEOUT_MS }
+          const orders = stage3Orders(shortlist, matched.pool);
+          const state = buildStage3State(input.prompt, criteria);
+          const stage3 = await Promise.all(
+            orders.map((order) =>
+              askJev(
+                { state, questions: [buildStage3Question(order.map((i) => shortlist[i]))] },
+                { timeoutMs: JEV_TIMEOUT_MS }
+              )
+            )
           );
-          const stage3Answer = stage3.answers[0];
-          if (stage3Answer?.type !== 'choice') {
-            degradedReason = 'jev_stage3_shape';
-            throw new Error('stage-3 answer did not match the question spec');
-          }
-          noneProbability = stage3Answer.distribution['none'] ?? 0;
-          if (stage3Answer.value === 'none') {
-            // Stage 3's argmax says nothing on the shortlist fits.
-            suggestions = [];
-          } else {
-            const ordered = reorderShortlistByDistribution(shortlist, stage3Answer.distribution);
-            suggestions = await hydrateSuggestions(ordered, ctx.browsingLevel);
-          }
+          const distributions = stage3.map(({ answers: [answer] }) => {
+            if (answer?.type !== 'choice') {
+              degradedReason = 'jev_stage3_shape';
+              throw new Error('stage-3 answer did not match the question spec');
+            }
+            return answer.distribution;
+          });
+          const combined = combineStage3Answers(shortlist.length, orders, distributions);
+          stage3NoneProbability = combined.noneProbability;
+          head = combined.order.map((i) => shortlist[i]);
         }
+        const ranked = mergeHybrid(
+          head,
+          matched.basePool,
+          Math.min(RESOURCE_INTENT_HYBRID_HEAD_MODELS, cap),
+          cap
+        );
+        suggestions = await hydrateSuggestions(ranked, ctx.browsingLevel);
       }
 
       response = {
         degraded: false,
         insightFallback,
+        ...armFields,
         intent,
         criteria,
         suggestions,
-        noneProbability,
+        noneProbability: stage3NoneProbability ?? stage1NoneProbability,
         model: stage1.model,
         criteriaVersion: RESOURCE_INTENT_CRITERIA_VERSION,
       };
     } catch (error) {
       degradedReason =
         degradedReason ?? (error instanceof JevError ? `jev_${error.kind}` : 'jev_error');
-      response = {
-        degraded: true,
-        insightFallback,
-        intent: null,
-        criteria: null,
-        suggestions: [],
-        noneProbability: null,
-        model: DEGRADED_MODEL,
-        criteriaVersion: RESOURCE_INTENT_CRITERIA_VERSION,
-      };
+      response = degradedResponse(insightFallback, armFields);
+      logDegraded(degradedReason, error, stage1Model);
+    }
+    if (coocFallback) {
       logToAxiom(
-        {
-          type: 'resource-intent-degraded',
-          degradedReason,
-          error: error instanceof Error ? error.message : String(error),
-          model: stage1Model,
-        },
+        { type: 'resource-intent-cooc-fallback', reason: coocServing?.fallbackReason ?? '' },
         'temp-search'
       ).catch(() => undefined);
     }
@@ -460,35 +620,15 @@ export async function getResourceIntent(
     response = { ...response, suggestions: response.suggestions.slice(0, cap) };
   }
 
-  if (!cachedHit) {
+  if (!cachedHit && !studyFailure) {
     try {
       await redis.packed.set(resourceIntentCacheKey(cacheInput), response, {
-        // Read off the RESPONSE, not the locals, so what is cached and what sets
-        // its lifetime are the same two fields — including on a path that rebuilt
-        // the response object. `degraded` is checked first because a degraded
-        // response carries no suggestions whatever the label read did.
-        // 🔴 THIS PRECEDENCE IS NOT PINNED BY ANY TEST, and while both constants
-        // are 60 the swap is a SEMANTIC NO-OP — the two orderings agree on all
-        // four (degraded, insightFallback) states, so no test anywhere can kill
-        // it, and none covers the `degraded && insightFallback` state where the
-        // order would start to matter. That overlap state IS reachable: a failed
-        // label read followed by a later-stage failure produces it. So the moment
-        // you give the two paths different values this ordering becomes
-        // behaviourally load-bearing with no guard on it — pin it in the same
-        // change that diverges them. (Same class as the promote/demote constant
-        // swap the F1 test docstring discloses. The earlier mutation sweep on
-        // this branch did not cover it; its own wording scoped itself to a re-run
-        // after the fixes, so the gap is in what was swept, not in the claim.)
-        EX: response.degraded
-          ? DEGRADED_CACHE_TTL_SECONDS
-          : response.insightFallback
-          ? INSIGHT_FALLBACK_CACHE_TTL_SECONDS
-          : CACHE_TTL_SECONDS,
+        EX: responseCacheTtl(response),
       });
     } catch {
       // A cache write failure never fails the request.
     }
-  } else {
+  } else if (cachedHit) {
     // The matcher never ran, so the shortlist size is unknown; the hydrated
     // post-gate count is recorded instead of a misleading zero.
     shortlistCount = response.suggestions.length;
@@ -514,6 +654,7 @@ export async function getResourceIntent(
       baseModel: input.baseModel ?? '',
       browsingLevel: ctx.browsingLevel,
       specHash: RESOURCE_INTENT_SPEC_HASH,
+      stage3SpecHash: RESOURCE_INTENT_STAGE3_SPEC_HASH,
       specVersion: QUESTION_SPEC_VERSION,
       criteriaVersion: RESOURCE_INTENT_CRITERIA_VERSION,
       model: response?.model ?? DEGRADED_MODEL,
@@ -529,8 +670,249 @@ export async function getResourceIntent(
       shortlistCount,
       suggestionIds: (response?.suggestions ?? []).map((suggestion) => suggestion.versionId),
       noneProbability: response?.noneProbability ?? 0,
+      stage1NoneProbability: answer?.role.distribution['none'] ?? null,
+      // Not cached, so a cache hit records NULL here: this column describes stage 3 as
+      // run by THIS request.
+      stage3NoneProbability: response?.degraded ? null : stage3NoneProbability,
+      ...(arm === 'pool_merge' && {
+        arm,
+        coocSnapshotHash: study ? ctx.coocSnapshotId! : cooc?.contentHash ?? '',
+        coocSpecHash: RESOURCE_INTENT_COOC_SPEC_HASH,
+        poolMergeSpecHash: RESOURCE_INTENT_POOL_MERGE_SPEC_HASH,
+        coocFallback: coocFallback ? 1 : 0,
+        coocFallbackReason: coocServing?.fallbackReason ?? '',
+      }),
     });
   })();
 
   return response;
+}
+
+/** The `model` of an undegraded checkpoint-mode response: no vendor model produced it. */
+export const CHECKPOINT_MODEL = 'none';
+/**
+ * The `model` of a degraded checkpoint-mode response. Not the add-on path's `'jev-unavailable'`:
+ * no vendor call is made in this mode, so its degrades must not read as vendor failures.
+ */
+export const CHECKPOINT_DEGRADED_MODEL = 'checkpoint-unavailable';
+
+/**
+ * Checkpoint mode's cache key. The prompt is NOT a term: neither arm reads it, so keying on it
+ * would only split identical lists. Coverage IS a term (the add-on key leaves it out): it is
+ * resolved before the cache read here, and with no prompt in the key one entry serves every
+ * request for an ecosystem, so a coverage change must not wait out the TTL. The width is the
+ * served one, `min(cap, 50)`. The last term is always `RESOURCE_INTENT_CHECKPOINT_SPEC_HASH`, so no
+ * add-on key (whose last term is a stage spec hash) can equal one of these.
+ */
+export function checkpointIntentCacheKey(input: {
+  arm: CheckpointArm;
+  baseModel: string;
+  browsingLevel: number;
+  width: number;
+  coverage: ResourceIntentCoverage;
+  /** `attach_bm` only: the snapshot's content hash, or `COOC_FALLBACK_SNAPSHOT_KEY`. */
+  snapshot?: string;
+}) {
+  const terms = [
+    'checkpoint',
+    input.arm,
+    input.baseModel,
+    String(input.browsingLevel),
+    String(input.width),
+    `next:${input.coverage.next}`,
+    `member:${input.coverage.member}`,
+  ];
+  if (input.arm === 'attach_bm') {
+    terms.push(
+      input.snapshot ?? COOC_FALLBACK_SNAPSHOT_KEY,
+      RESOURCE_INTENT_COOC_SPEC_HASH,
+      CHECKPOINT_ATTACH_BUILD_HASH
+    );
+  }
+  terms.push(RESOURCE_INTENT_CHECKPOINT_SPEC_HASH);
+  const hash = createHash('sha256').update(terms.join('|')).digest('hex');
+  return `${REDIS_KEYS.CACHES.JEV_RESOURCE_INTENT}:${hash}` as const;
+}
+
+/**
+ * `kind: 'checkpoint'`: no stage 1, no stage 3, no vendor call. The list is the arm's
+ * (`findCheckpointCandidates`), hydrated and re-gated like every other list.
+ *
+ * - `attach_bm` with no servable snapshot section serves BASE_BM's list instead, flagged
+ *   `coocFallback` with the holder's reason, for 60 s — the POOL_MERGE fallback contract. A
+ *   snapshot with no checkpoint section (built before it existed, or with the section-writer flag
+ *   off) or one under another section build hash reports `spec_mismatch`.
+ * - Study mode (`ctx.coocSnapshotId`, `attach_bm`) fails closed, uncached, like POOL_MERGE's.
+ * - A search or hydration failure degrades (`degraded: true`, empty suggestions, `intent` and
+ *   `criteria` `null`, as every degraded response). This mode's degrades, the study fail-closed
+ *   included, report `model: 'checkpoint-unavailable'` (`CHECKPOINT_DEGRADED_MODEL`), never the
+ *   add-on path's vendor label.
+ */
+async function getCheckpointIntent(
+  input: ResourceIntentInput,
+  ctx: ResourceIntentContext
+): Promise<ResourceIntentResponse> {
+  const startedAt = Date.now();
+  const baseModel = input.baseModel;
+  // The input schema requires it; this guards a caller that skipped the schema.
+  if (!baseModel) throw new Error("baseModel is required when kind is 'checkpoint'");
+  const cap = resolveSuggestionLimit(input.limit);
+  const width = Math.min(cap, CHECKPOINT_LIST_MODELS);
+  const arm: CheckpointArm = ctx.checkpointArm ?? 'attach_bm';
+  const study = arm === 'attach_bm' && ctx.coocSnapshotId !== undefined;
+  const now = ctx.now ?? (() => new Date());
+
+  let served: ServedCooc | null = null;
+  let fallbackReason: CoocFallbackReason | null = null;
+  let studyFailure: { error: unknown } | null = null;
+  if (study) {
+    try {
+      served = await coocStudySnapshots().get(ctx.coocSnapshotId!, now());
+      if (!served.checkpoints)
+        throw new Error(`study snapshot ${ctx.coocSnapshotId} has no servable checkpoint section`);
+    } catch (error) {
+      studyFailure = { error };
+    }
+  } else if (arm === 'attach_bm') {
+    const serving: CoocServing = await coocSnapshotHolder().resolve();
+    served = serving.snapshot;
+    if (!served) fallbackReason = serving.fallbackReason;
+    else if (!served.checkpoints) fallbackReason = 'spec_mismatch';
+  }
+  const attach = served?.checkpoints ?? null;
+  const coocFallback = arm === 'attach_bm' && !study && !attach;
+  const snapshotHash = study ? ctx.coocSnapshotId! : attach ? served!.contentHash : '';
+  const armFields = {
+    kind: 'checkpoint' as const,
+    checkpointArm: arm,
+    ...(arm === 'attach_bm' && { coocFallback }),
+  };
+
+  let degradedReason: string | null = null;
+  let response: ResourceIntentResponse | undefined;
+  let cachedHit = false;
+  let shortlistCount = 0;
+  let cacheKey: ReturnType<typeof checkpointIntentCacheKey> | null = null;
+
+  if (studyFailure) {
+    // Fails closed without the cache, as POOL_MERGE's study mode does.
+    degradedReason = 'cooc_study_snapshot';
+    response = degradedResponse(false, armFields, CHECKPOINT_DEGRADED_MODEL);
+    logDegraded(degradedReason, studyFailure.error, CHECKPOINT_DEGRADED_MODEL);
+  } else {
+    try {
+      // Before the cache read: it is part of this mode's key.
+      const coverage = ctx.coverage ?? (await coverageAudience(undefined));
+      cacheKey = checkpointIntentCacheKey({
+        arm,
+        baseModel,
+        browsingLevel: ctx.browsingLevel,
+        width,
+        coverage,
+        ...(arm === 'attach_bm' && {
+          snapshot: attach ? snapshotHash : COOC_FALLBACK_SNAPSHOT_KEY,
+        }),
+      });
+      try {
+        const cached = await redis.packed.get<unknown>(cacheKey);
+        if (cached != null) {
+          const parsed = resourceIntentResponseSchema.safeParse(cached);
+          if (parsed.success) {
+            response = parsed.data;
+            cachedHit = true;
+          }
+        }
+      } catch {
+        // A cache read failure is a miss, never an error.
+      }
+      if (!response) {
+        const entries = await findCheckpointCandidates({
+          arm,
+          baseModel,
+          attachCandidates: attach ? attach.candidates.get(baseModel) ?? [] : null,
+          browsingLevel: ctx.browsingLevel,
+          coverage,
+          cap,
+        });
+        shortlistCount = entries.length;
+        response = {
+          degraded: false,
+          insightFallback: false,
+          ...armFields,
+          intent: null,
+          criteria: null,
+          suggestions: await hydrateSuggestions(entries, ctx.browsingLevel),
+          noneProbability: null,
+          model: CHECKPOINT_MODEL,
+          criteriaVersion: RESOURCE_INTENT_CRITERIA_VERSION,
+        };
+      }
+    } catch (error) {
+      degradedReason = 'checkpoint_error';
+      response = degradedResponse(false, armFields, CHECKPOINT_DEGRADED_MODEL);
+      logDegraded(degradedReason, error, CHECKPOINT_DEGRADED_MODEL);
+    }
+    if (coocFallback && !cachedHit) {
+      logToAxiom(
+        { type: 'resource-intent-cooc-fallback', reason: fallbackReason ?? '', kind: 'checkpoint' },
+        'temp-search'
+      ).catch(() => undefined);
+    }
+  }
+
+  // The served list is already at most `width` wide; this holds the contract for a cached entry.
+  if (response.suggestions.length > cap) {
+    response = { ...response, suggestions: response.suggestions.slice(0, cap) };
+  }
+
+  if (cacheKey && !cachedHit) {
+    try {
+      await redis.packed.set(cacheKey, response, { EX: responseCacheTtl(response) });
+    } catch {
+      // A cache write failure never fails the request.
+    }
+  } else if (cachedHit) {
+    shortlistCount = response.suggestions.length;
+    if (response.degraded) degradedReason = 'cached_degrade';
+  }
+
+  const final = response;
+  void writeShadowEvent({
+    time: clickhouseDateTime64(now()),
+    promptHash: createHash('sha256').update(input.prompt).digest('hex'),
+    promptLength: input.prompt.length,
+    baseModel,
+    browsingLevel: ctx.browsingLevel,
+    // No question spec ran: blank, and specVersion 0 keeps these rows out of the spec-pinned
+    // role-mix query.
+    specHash: '',
+    stage3SpecHash: '',
+    specVersion: 0,
+    criteriaVersion: RESOURCE_INTENT_CRITERIA_VERSION,
+    model: final.model,
+    degraded: final.degraded ? 1 : 0,
+    degradedReason: degradedReason ?? '',
+    latencyMs: Date.now() - startedAt,
+    role: '',
+    styleFamily: '',
+    contentType: '',
+    specificity: 0,
+    needsResource: 0,
+    injectionPresent: 0,
+    shortlistCount,
+    suggestionIds: final.suggestions.map((suggestion) => suggestion.versionId),
+    noneProbability: 0,
+    stage1NoneProbability: null,
+    stage3NoneProbability: null,
+    arm,
+    coocSnapshotHash: snapshotHash,
+    coocSpecHash: arm === 'attach_bm' ? RESOURCE_INTENT_COOC_SPEC_HASH : '',
+    poolMergeSpecHash: '',
+    coocFallback: coocFallback ? 1 : 0,
+    coocFallbackReason: fallbackReason ?? '',
+    kind: 'checkpoint',
+    checkpointSpecHash: RESOURCE_INTENT_CHECKPOINT_SPEC_HASH,
+  });
+
+  return final;
 }

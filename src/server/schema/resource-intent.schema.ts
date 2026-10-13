@@ -6,6 +6,8 @@ import * as z from 'zod';
 // site. A second copy here would let `STAGE3_MAX_RANKED` derive from a stale
 // value the day the vendor's limit moves.
 import { JEV_MAX_CHOICE_OPTIONS, type JevQuestionSpec } from '~/server/services/ai/jev';
+import { CHECKPOINT_ARMS } from '~/server/services/resource-intent-checkpoint';
+import { baseModels } from '~/shared/constants/basemodel.constants';
 import { ModelType } from '~/shared/utils/prisma/enums';
 
 /**
@@ -23,14 +25,17 @@ export const QUESTION_SPEC_VERSION = 1;
 // the ResourceInsight labels; a v1 shadow row was produced without that axis.
 export const RESOURCE_INTENT_CRITERIA_VERSION = 2;
 
-// The number of shortlist entries stage 3 can actually rank: the vendor's
-// option budget minus the `none` fallback. `RESOURCE_INTENT_MAX_SHORTLIST`
-// remains the response/limit cap — a 255-entry shortlist ships, its last
-// entry simply is not ranked by Jev (it sorts last by probability).
+// The shortlist entries stage 3 can rank: the vendor's option budget minus `none`.
 export const STAGE3_MAX_RANKED = JEV_MAX_CHOICE_OPTIONS - 1;
 // Stage 2 hard cap on shortlisted versions (brief §3); the endpoint default is 50.
 export const RESOURCE_INTENT_MAX_SHORTLIST = 255;
 export const RESOURCE_INTENT_DEFAULT_LIMIT = 50;
+
+// HYBRID_10, the shape the offline arm screen measured: stage 3's first 10 distinct
+// models, then the popularity pool (one version per model) fills to the cap.
+export const RESOURCE_INTENT_HYBRID_HEAD_MODELS = 10;
+// Page depth the screen built that popularity pool from.
+export const RESOURCE_INTENT_BASE_DEEP_PAGE_LIMIT = 500;
 
 export const RESOURCE_INTENT_MAX_PROMPT_LENGTH = 6000;
 
@@ -149,6 +154,12 @@ export const RESOURCE_INTENT_QUESTIONS = [
   },
 ] as const satisfies readonly JevQuestionSpec[];
 
+/** Stage 3's wording (R4c, as screened). Hashed by `RESOURCE_INTENT_STAGE3_SPEC_HASH`, not `RESOURCE_INTENT_SPEC_HASH`. */
+export const RESOURCE_INTENT_STAGE3_INSTRUCTIONS =
+  'The `prompt` is an image-generation prompt. `role` is the kind of add-on resource it needs and `styleFamily` is its visual style family. Which ONE of the listed community resources best fits this prompt for that role? Choose "none" if no listed resource fits.';
+export const RESOURCE_INTENT_STAGE3_NONE_DESCRIPTION =
+  'None of the listed resources fits: each is the wrong character, subject, style or purpose for this prompt.';
+
 export const RESOURCE_INTENT_SPEC_HASH = createHash('sha256')
   .update(JSON.stringify(RESOURCE_INTENT_QUESTIONS))
   .digest('hex');
@@ -177,11 +188,45 @@ const contentTypeSchema = z.enum(contentTypeOptions);
 
 const distributionShape = z.record(z.string(), z.number().min(0).max(1));
 
-export const resourceIntentInputSchema = z.object({
-  prompt: z.string().min(1).max(RESOURCE_INTENT_MAX_PROMPT_LENGTH),
-  baseModel: z.string().min(1).optional(),
-  limit: z.number().int().min(1).max(RESOURCE_INTENT_MAX_SHORTLIST).optional(),
-});
+/**
+ * `kind`: `'addon'` (the default, and what an absent `kind` means) asks for add-on resources;
+ * `'checkpoint'` asks for checkpoints, needs `baseModel` (the caller's ecosystem, one of the known
+ * base-model names), makes no vendor call and does not read the prompt for ranking
+ * (`resource-intent-checkpoint.ts`). The block route accepts `'checkpoint'` only behind
+ * `resourceIntentCheckpoint`.
+ */
+export const RESOURCE_INTENT_KINDS = ['addon', 'checkpoint'] as const;
+/**
+ * Every known base-model name: the set `modelVersionUpsertSchema` accepts for a version's
+ * `baseModel`, so it covers every value a checkpoint can carry.
+ */
+const knownBaseModels = new Set(baseModels);
+
+export const resourceIntentInputSchema = z
+  .object({
+    prompt: z.string().min(1).max(RESOURCE_INTENT_MAX_PROMPT_LENGTH),
+    baseModel: z.string().min(1).optional(),
+    limit: z.number().int().min(1).max(RESOURCE_INTENT_MAX_SHORTLIST).optional(),
+    kind: z.enum(RESOURCE_INTENT_KINDS).optional(),
+  })
+  .superRefine((input, ctx) => {
+    if (input.kind !== 'checkpoint') return;
+    if (!input.baseModel) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['baseModel'],
+        message: "baseModel is required when kind is 'checkpoint'",
+      });
+    } else if (!knownBaseModels.has(input.baseModel)) {
+      // The baseModel is the only caller-chosen term of this mode's cache key (the prompt is not
+      // one), so only known names are admitted; the add-on path is left exactly as it was.
+      ctx.addIssue({
+        code: 'custom',
+        path: ['baseModel'],
+        message: "baseModel must be a known base model when kind is 'checkpoint'",
+      });
+    }
+  });
 
 export type ResourceIntentInput = z.infer<typeof resourceIntentInputSchema>;
 
@@ -251,10 +296,12 @@ export const resourceIntentResponseSchema = z.strictObject({
    * hydration throws.
    *
    * 🔴 Deliberately NOT folded into `degraded`. `degraded` means the vendor path
-   * failed, and the invariants built on it — "fail closed, fail empty" in the
+   * failed (in checkpoint mode, which has none, the search or hydration), and the
+   * invariants built on it — "fail closed, fail empty" in the
    * contract doc's hard rule 2, so `suggestions: []`, `intent`/`criteria` `null`,
-   * `model: 'jev-unavailable'` — all hold together. A label-read failure produces
-   * a complete, gate-passing response with a real intent and real suggestions, so
+   * `model: 'jev-unavailable'` (`'checkpoint-unavailable'` in checkpoint mode) —
+   * all hold together. A label-read failure produces a complete, gate-passing
+   * response with a real intent and real suggestions, so
    * marking it `degraded` would break that invariant for every consumer.
    *
    * It would also corrupt both shadow queries that read the flag, in opposite
@@ -280,13 +327,27 @@ export const resourceIntentResponseSchema = z.strictObject({
    * field is added: during a rolling deploy or a Flagger canary both builds share
    * one Redis key space, so old pods reject every new blob AND new pods reject
    * every old one, i.e. a 100% miss rate on both sides for the rollout window, at
-   * up to two vendor round trips per miss. Free for THIS field only because the
+   * up to three vendor calls per miss. Free for THIS field only because the
    * route is dark behind `resourceIntentJev`.
    */
   insightFallback: z.boolean(),
+  /**
+   * POOL_MERGE arm only (absent on the HYBRID_10 arm): no co-occurrence snapshot could be served,
+   * so the list is BASE's popularity top `min(cap, 50)`, through the same gates. Not `degraded`,
+   * for the reason `insightFallback` is not.
+   */
+  coocFallback: z.boolean().optional(),
+  /**
+   * Checkpoint mode only (absent on add-on responses): `kind: 'checkpoint'` and the arm that
+   * produced the list. There is no stage 1 in this mode, so `intent`, `criteria` and
+   * `noneProbability` are `null`; `coocFallback` rides on the `attach_bm` arm only.
+   */
+  kind: z.literal('checkpoint').optional(),
+  checkpointArm: z.enum(CHECKPOINT_ARMS).optional(),
   intent: resourceIntentAnswerSchema.nullable(),
   criteria: resourceIntentCriteriaSchema.nullable(),
   suggestions: z.array(z.custom<ResourceIntentSuggestion>(() => true)),
+  /** Stage 3's averaged `none` mass when stage 3 ran, else stage 1's `role.none`. Never empties `suggestions`. */
   noneProbability: z.number().min(0).max(1).nullable(),
   model: z.string(),
   criteriaVersion: z.literal(RESOURCE_INTENT_CRITERIA_VERSION),

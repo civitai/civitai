@@ -1,5 +1,6 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
+import { RESTRICTION_PAGES } from '$lib/restriction-types';
 import { requireIdParam } from '$lib/server/api-guard';
 import { getBanContentPreview } from '$lib/server/user-actions.service';
 
@@ -10,7 +11,7 @@ export const GET: RequestHandler = async ({ params, locals }) => {
   const userId = requireIdParam(
     locals,
     params.userId,
-    ['/audit/generator-restrictions', '/audit/training-models', '/retool/user-lookup', '/users'],
+    [...RESTRICTION_PAGES, '/audit/training-models', '/retool/user-lookup', '/users'],
     'userId'
   );
 

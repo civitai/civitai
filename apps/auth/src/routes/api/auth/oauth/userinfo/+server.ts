@@ -3,7 +3,7 @@ import { TokenScope } from '@civitai/auth/token-scope';
 import { generateSecretHash } from '@civitai/auth/secret-hash';
 import { db } from '$lib/server/db/db';
 import { getOrProduceSessionUser } from '$lib/server/auth/session-producer';
-import { hasScope } from '$lib/server/oauth/scope';
+import { carriesClientCredentialsOnlyScope, hasScope } from '$lib/server/oauth/scope';
 import { setWildcardCors } from '$lib/server/oauth/http';
 
 // GET /api/auth/oauth/userinfo — OIDC UserInfo (OIDC Core §5.1). Ported from
@@ -23,7 +23,10 @@ export const GET: RequestHandler = async ({ request }) => {
 
   const auth = request.headers.get('authorization');
   if (!auth?.startsWith('Bearer ')) {
-    return json({ error: 'invalid_token', error_description: 'Missing bearer token' }, { status: 401, headers });
+    return json(
+      { error: 'invalid_token', error_description: 'Missing bearer token' },
+      { status: 401, headers }
+    );
   }
 
   const hash = generateSecretHash(auth.slice(7));
@@ -36,8 +39,12 @@ export const GET: RequestHandler = async ({ request }) => {
     .where((eb) => eb.or([eb('expiresAt', '>=', now), eb('expiresAt', 'is', null)]))
     .executeTakeFirst();
 
-  if (!apiKey) {
-    return json({ error: 'invalid_token', error_description: 'Invalid or expired token' }, { status: 401, headers });
+  // A client-credentials token is single-purpose: it identifies no user here.
+  if (!apiKey || carriesClientCredentialsOnlyScope(apiKey.tokenScope)) {
+    return json(
+      { error: 'invalid_token', error_description: 'Invalid or expired token' },
+      { status: 401, headers }
+    );
   }
 
   // Requires UserRead (fail-safe: deny if the bit is missing).
@@ -50,7 +57,10 @@ export const GET: RequestHandler = async ({ request }) => {
 
   const user = await getOrProduceSessionUser(apiKey.userId).catch(() => null);
   if (!user) {
-    return json({ error: 'invalid_token', error_description: 'Invalid or expired token' }, { status: 401, headers });
+    return json(
+      { error: 'invalid_token', error_description: 'Invalid or expired token' },
+      { status: 401, headers }
+    );
   }
 
   // Role-related claims. `roles` are the generic UserRole grants (e.g. "tester"); moderator/tier come from the

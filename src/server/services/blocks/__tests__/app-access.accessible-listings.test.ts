@@ -517,7 +517,7 @@ describe('getAppListingAuthoringContext', () => {
       it(`🔴 now ADMITS a \`${status}\` listing — the narrowing moved to the TAB SET`, async () => {
         // 🔴 THE REVERSAL, and the reason it is safe is NOT in this file. What this asserts
         // is only that the context resolves; that the resolved context yields at most
-        // Publishing + History — and NEVER Collaborators — is
+        // Publishing, History, Feedback — and NEVER Collaborators — is
         // `appListingEditorTabs.test.ts`, and that the seat-grant procs refuse independently
         // of any tab is `app-collaborator.seat-grant-status.test.ts`. Reading this case as
         // "removed listings are editable again" is exactly the misreading to avoid.

@@ -13,6 +13,7 @@ import {
   getPrizePlaceColor,
   getPrizePlaceLimit,
   restrictContentLevelsToBuzzType,
+  toCrucibleSubmitValues,
   type CrucibleEditSource,
 } from '~/components/Crucible/crucible-create-form';
 import { NsfwLevel } from '~/server/common/enums';
@@ -262,6 +263,20 @@ describe('getCrucibleCostBreakdown', () => {
   );
 });
 
+describe('toCrucibleSubmitValues', () => {
+  it.each(['', '   '])('omits a blank description (%j)', (description) => {
+    expect(
+      toCrucibleSubmitValues({ ...crucibleCreateDefaultValues, description }).description
+    ).toBeUndefined();
+  });
+
+  it('trims the description', () => {
+    expect(
+      toCrucibleSubmitValues({ ...crucibleCreateDefaultValues, description: ' Neon ' }).description
+    ).toBe('Neon');
+  });
+});
+
 describe('crucible edit', () => {
   const cover = { url: '4e7a1c2e-8f3b-4d5a-9c6e-2b1f0a9d8e7c', width: 1600, height: 900 };
   const crucible: CrucibleEditSource = {
@@ -387,7 +402,7 @@ describe('crucible edit', () => {
       values: { ...initial, description: '', entryFee: 500, nsfwLevel: NsfwLevel.PG13 },
       editableFields,
     });
-    expect(changes).toEqual({ description: 'No description provided' });
+    expect(changes).toEqual({ description: null });
   });
 
   it("sends content levels only when they're editable", () => {

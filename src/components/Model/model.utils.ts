@@ -25,6 +25,7 @@ import {
   ModelType,
 } from '~/shared/utils/prisma/enums';
 import { getQueryErrorMessage } from '~/utils/errorHandling';
+import { isViewerUsername } from '~/utils/is-viewer';
 import { showErrorNotification } from '~/utils/notifications';
 import { removeEmpty } from '~/utils/object-helpers';
 import { postgresSlugify } from '~/utils/string-helpers';
@@ -138,8 +139,7 @@ export const useQueryModels = (
   const browsingSettingsAddons = useBrowsingSettingsAddons();
   const excludedTagIds = [
     ...(_filters.excludedTagIds ?? []),
-    ...(_filters.username &&
-    _filters.username?.toLowerCase() === currentUser?.username?.toLowerCase()
+    ...(isViewerUsername(currentUser, _filters.username)
       ? []
       : browsingSettingsAddons.settings.excludedTagIds ?? []),
   ];

@@ -4,7 +4,7 @@ import { getTestRsaKeyPair } from './rsa-test-key';
 import { dbMock } from './mocks/db.mock';
 import { redisMock } from './mocks/redis.mock';
 import { loggingMock } from './mocks/logging.mock';
-import { env, setEnvDefaults } from './mocks/env.mock';
+import { env, loadSchemaDefaults, setEnvDefaults } from './mocks/env.mock';
 import { resetSharedMocks } from './mocks';
 
 // Canonical shared-module mocks. Registered here, for every test file, rather than per
@@ -157,7 +157,10 @@ process.env.NOTIFICATION_DB_REPLICA_URL ??= 'postgres://user:pass@localhost:5432
 // One `env` object for the worker, reads layered defaults-then-per-file-overrides. A test
 // declares what it needs with `setEnv({ … })` instead of replacing the whole module — which
 // is what made 109 files each re-enumerate the defaults and drop the ones they forgot.
-vi.mock('~/env/server', () => ({ env }));
+vi.mock('~/env/server', async () => {
+  await loadSchemaDefaults();
+  return { env };
+});
 
 // Prevent prom/client from initializing real DB pools at module load.
 // A metric-shaped stub covering every prom-client surface our code touches
@@ -242,6 +245,8 @@ vi.mock('~/server/prom/client', () => ({
   // and register into it, and a stub that answered those with vi.fn() would let a suite assert
   // against a registry that never held anything.
   instrumentationRegistry: new promClient.Registry(),
+  // Called at module scope by ~/server/prom/ingestion-gauge-store, which /api/metrics imports.
+  setIngestionGaugeSharedStore: vi.fn(),
   // Re-exported from '@civitai/telemetry/client' rather than declared in
   // prom/client, so this module-replacing mock drops it. Every fail-soft call site
   // (`base.reward`, `image.service`, `runClickHouseRead`) calls `.inc()` on it WITHOUT
@@ -265,6 +270,8 @@ vi.mock('~/server/prom/client', () => ({
   imagesFeedWithoutIndexCounter: promMetricStub(),
   creatorCompCreatorsPaidCounter: promMetricStub(),
   creatorCompAmountPaidCounter: promMetricStub(),
+  generationTipCreatorsPaidCounter: promMetricStub(),
+  generationTipAmountPaidCounter: promMetricStub(),
   licenseFeeCreatorsPaidCounter: promMetricStub(),
   licenseFeeAmountPaidCounter: promMetricStub(),
   userUpdateCounter: promMetricStub(),

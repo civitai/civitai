@@ -266,6 +266,7 @@ describe('findResourceIntentCandidates', () => {
       insightFallback: false,
       promotableVersions: 0,
       pool: [],
+      basePool: [],
     });
     expect(searchWithSignal).not.toHaveBeenCalled();
   });
@@ -283,6 +284,7 @@ describe('findResourceIntentCandidates', () => {
       insightFallback: false,
       promotableVersions: 0,
       pool: [],
+      basePool: [],
     });
     expect(searchWithSignal).not.toHaveBeenCalled();
   });
@@ -681,6 +683,7 @@ describe('findResourceIntentCandidates — the labels change the response', () =
       insightFallback: false,
       promotableVersions: 0,
       pool: [],
+      basePool: [],
     });
     expect(dbMock.dbRead.resourceInsight.findMany).not.toHaveBeenCalled();
   });
@@ -858,5 +861,135 @@ describe('findResourceIntentCandidates — the labels change the response', () =
     expect(
       (await findResourceIntentCandidates(criteria, opts)).entries.map((e) => e.versionId)
     ).toEqual([20802, 10701]);
+  });
+});
+
+describe('findResourceIntentCandidates — basePool, the hybrid fill', () => {
+  const criteria = {
+    criteriaVersion: 2,
+    specHash: 'abc',
+    role: 'style' as const,
+    styleFamily: 'anime_manga' as const,
+    modelTypes: ['LORA'] as never,
+    baseModel: 'SDXL 1.0',
+  };
+
+  /** Model `id` with versions; `ok: false` versions are on another base model (gate fails). */
+  const hit = (id: number, versions: { id: number; ok: boolean }[]) =>
+    shortlistHit({
+      id,
+      metrics: { thumbsUpCount: 10_000 - id },
+      versions: versions.map((v) => ({
+        id: v.id,
+        name: `v${v.id}`,
+        baseModel: v.ok ? 'SDXL 1.0' : 'Pony',
+        canGenerate: true,
+      })),
+    });
+
+  /** Serves `corpus` in order, honouring each request's `limit`. */
+  const serve = (corpus: unknown[]) =>
+    searchWithSignal.mockImplementation(async (_index, _q, params: { limit: number }) => ({
+      hits: corpus.slice(0, params.limit),
+      estimatedTotalHits: corpus.length,
+    }));
+  const limits = () => searchWithSignal.mock.calls.map((c) => (c[2] as { limit: number }).limit);
+
+  it('takes the FIRST gate-passing version of each model, skips models with none, in seed order', async () => {
+    serve([
+      hit(1, [
+        { id: 11, ok: false },
+        { id: 12, ok: true },
+        { id: 13, ok: true },
+      ]),
+      hit(2, [{ id: 21, ok: false }]),
+      hit(3, [{ id: 31, ok: true }]),
+    ]);
+    const result = await findResourceIntentCandidates(criteria, {
+      browsingLevel: 3,
+      coverage: COVERAGE,
+      cap: 50,
+    });
+    expect(result.basePool.map((e) => [e.modelId, e.versionId])).toEqual([
+      [1, 12],
+      [3, 31],
+    ]);
+    // Its own 500-document page, every time — even when the seed page already held every match.
+    expect(limits()).toEqual([100, 500]);
+  });
+
+  it('takes the first 2 × cap models of its own page, even when the seed page would do', async () => {
+    serve(Array.from({ length: 300 }, (_, i) => hit(i + 1, [{ id: 1000 + i, ok: true }])));
+    const result = await findResourceIntentCandidates(criteria, {
+      browsingLevel: 3,
+      coverage: COVERAGE,
+      cap: 5,
+    });
+    expect(result.basePool.map((e) => e.modelId)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+    expect(limits()).toEqual([10, 500]);
+  });
+
+  it('🔴 reaches past the seed page, under the seed page filter and sort', async () => {
+    // Seed page = 10 docs (cap 5 × 2), of which only models 3 and 7 pass the gate; the
+    // other passing models sit deeper. The 500-document page must reach them, in order.
+    const passing = new Set([3, 7, 12, 15, 40, 41]);
+    serve(
+      Array.from({ length: 600 }, (_, i) => hit(i + 1, [{ id: 1000 + i, ok: passing.has(i + 1) }]))
+    );
+    const result = await findResourceIntentCandidates(criteria, {
+      browsingLevel: 3,
+      coverage: COVERAGE,
+      cap: 5,
+    });
+    expect(result.basePool.map((e) => e.modelId)).toEqual([3, 7, 12, 15, 40, 41]);
+    expect(limits()).toEqual([10, 500]);
+    const [seedArgs, deepArgs] = searchWithSignal.mock.calls.map((c) => c[2] as object);
+    expect({ ...deepArgs, limit: 10 }).toEqual(seedArgs);
+    // The SHORTLIST still comes from the seed page alone.
+    expect(result.pool.map((e) => e.modelId)).toEqual([3, 7]);
+  });
+
+  it('🔴 follows its OWN page when the two pages order tied documents differently', async () => {
+    // Nothing guarantees Meilisearch orders tied documents the same at limit 10 and 500,
+    // so the fake does not: the seed page leads 2, 1; the 500-document page 1, 2.
+    const docs = Array.from({ length: 30 }, (_, i) => hit(i + 1, [{ id: 1000 + i, ok: true }]));
+    // A real tie: models 1 and 2 share a score, so both orders are valid sorts.
+    (docs[1] as unknown as { metrics: { thumbsUpCount: number } }).metrics.thumbsUpCount = 9_999;
+    const seedOrder = [docs[1], docs[0], ...docs.slice(2)];
+    searchWithSignal.mockImplementation(async (_index, _q, params: { limit: number }) => ({
+      hits: (params.limit === 500 ? docs : seedOrder).slice(0, params.limit),
+      estimatedTotalHits: docs.length,
+    }));
+    const result = await findResourceIntentCandidates(criteria, {
+      browsingLevel: 3,
+      coverage: COVERAGE,
+      cap: 5,
+    });
+    expect(result.basePool.map((e) => e.modelId)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+    expect(result.pool.map((e) => e.modelId)).toEqual([2, 1, 3, 4, 5, 6, 7, 8, 9, 10]);
+  });
+
+  it('a failing deep page fails the call like any other search failure (the service degrades)', async () => {
+    const corpus = Array.from({ length: 600 }, (_, i) =>
+      hit(i + 1, [{ id: 1000 + i, ok: i === 2 }])
+    );
+    searchWithSignal
+      .mockResolvedValueOnce({ hits: corpus.slice(0, 10), estimatedTotalHits: 600 })
+      .mockRejectedValueOnce(new Error('meili down'));
+    await expect(
+      findResourceIntentCandidates(criteria, { browsingLevel: 3, coverage: COVERAGE, cap: 5 })
+    ).rejects.toThrow('meili down');
+  });
+
+  it('is returned on a label-read fallback too', async () => {
+    serve([hit(1, [{ id: 11, ok: true }])]);
+    dbMock.dbRead.resourceInsight.findMany.mockRejectedValue(new Error('relation missing'));
+    const result = await findResourceIntentCandidates(criteria, {
+      browsingLevel: 3,
+      coverage: COVERAGE,
+      cap: 50,
+    });
+    expect(result.insightFallback).toBe(true);
+    expect(result.basePool.map((e) => e.versionId)).toEqual([11]);
   });
 });

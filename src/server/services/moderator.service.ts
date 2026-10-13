@@ -75,7 +75,12 @@ type UserModActivity = {
     // A moderator closed the account FOR its owner, which in practice means a data-subject erasure
     // request from someone who cannot sign in to do it themselves. Distinct from `removeContent`,
     // which strips what an account owns and leaves the account itself identifiable.
-    | 'deleteAccount';
+    | 'deleteAccount'
+    // Support minted a membership code for this account (`mintMembershipCode:<tier>:<months>`). The
+    // daily per-moderator cap counts these rows; the code itself lives on RedeemableCode, never here.
+    | `mintMembershipCode:${string}`
+    // Support withdrew an unredeemed code it minted (`revokeMembershipCode:<tier>:<months>`).
+    | `revokeMembershipCode:${string}`;
 };
 
 type ComicProjectModActivity = {
@@ -88,6 +93,12 @@ type ComicProjectModActivity = {
 type PlacementModActivity = {
   entityType: 'placement';
   activity: 'removePlacement';
+};
+
+/** A moderator hid an `app-block` report from the app's developer, or unhid it. */
+type FeedbackModActivity = {
+  entityType: 'feedback';
+  activity: 'hideFromOwner' | 'unhideFromOwner';
 };
 
 type ModActivity = {
@@ -103,6 +114,7 @@ type ModActivity = {
   | UserModActivity
   | ComicProjectModActivity
   | PlacementModActivity
+  | FeedbackModActivity
 );
 
 // `ON CONFLICT DO NOTHING` carries NO conflict target on purpose: a targetless clause is valid whether or

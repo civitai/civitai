@@ -1,3 +1,4 @@
+import type { EventViewer } from '~/server/events/event-access';
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import type { ManipulateType } from 'dayjs';
@@ -27,7 +28,10 @@ import { isNotTag, isTag } from '~/server/schema/tag.schema';
 import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { articlesSearchIndex } from '~/server/search-index';
 import { articleDetailSelect } from '~/server/selectors/article.selector';
-import type { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
+import type {
+  ContentDecorationCosmetic,
+  EventDecorationCosmetic,
+} from '~/server/selectors/cosmetic.selector';
 import { imageSelect, profileImageSelect } from '~/server/selectors/image.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { deriveArticleIngestionState } from '~/server/services/article-ingestion.helpers';
@@ -41,7 +45,10 @@ import {
   getAvailableCollectionItemsFilterForUser,
   getUserCollectionPermissionsById,
 } from '~/server/services/collection.service';
-import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
+import {
+  getCosmeticsForEntity,
+  getEventDecorationsForEntity,
+} from '~/server/services/cosmetic.service';
 import { resolveCoverImageId } from '~/server/services/cover-image.service';
 import {
   deleteImageById,
@@ -128,7 +135,7 @@ type ArticleRaw = {
       source: CosmeticSource;
     };
   }[];
-  cosmetic?: WithClaimKey<ContentDecorationCosmetic> | null;
+  cosmetic?: ContentDecorationCosmetic | null;
 };
 
 const getArticleStatsObject = async (data: { id: number }[]) => {
@@ -178,9 +185,13 @@ export const getArticles = async ({
   browsingLevel,
   include,
   forceHidePrivate,
+  eventDecorationViewer,
 }: GetInfiniteArticlesSchema & {
   sessionUser?: { id: number; isModerator?: boolean; username?: string };
   include?: Array<'cosmetics'>;
+  // Who sees event decorations before launch (see getEventDecorationsForEntity). Set only by
+  // routes whose response is never cached for another viewer.
+  eventDecorationViewer?: EventViewer;
   // When true, `availability = Private` articles are ALWAYS dropped, even when a
   // `username`/`collectionId`/etc. filter is set (which normally expands the result
   // set to include the caller's private articles). Used by the public REST surface
@@ -523,9 +534,16 @@ export const getArticles = async ({
       : [];
 
     const articleCategories = await getCategoryTags('article');
-    const cosmetics = includeCosmetics
-      ? await getCosmeticsForEntity({ ids: articles.map((x) => x.id), entity: 'Article' })
-      : {};
+    const [cosmetics, eventDecorations] = includeCosmetics
+      ? await Promise.all([
+          getCosmeticsForEntity({ ids: articles.map((x) => x.id), entity: 'Article' }),
+          getEventDecorationsForEntity({
+            ids: articles.map((x) => x.id),
+            entity: 'Article',
+            viewer: eventDecorationViewer,
+          }),
+        ])
+      : [{}, {}];
 
     // Fetch article stats separately
     const articleStats = await getArticleStatsObject(articles);
@@ -580,14 +598,16 @@ export const getArticles = async ({
               }
             : undefined,
           cosmetic: cosmetics[article.id] ?? null,
+          eventDecoration: eventDecorations[article.id] ?? null,
         };
       });
 
     return {
       nextCursor,
       items: items as Array<
-        Omit<(typeof items)[number], 'cosmetic'> & {
-          cosmetic?: WithClaimKey<ContentDecorationCosmetic> | null;
+        Omit<(typeof items)[number], 'cosmetic' | 'eventDecoration'> & {
+          cosmetic?: ContentDecorationCosmetic | null;
+          eventDecoration?: EventDecorationCosmetic | null;
         }
       >,
     };

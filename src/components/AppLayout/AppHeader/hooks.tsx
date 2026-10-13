@@ -37,6 +37,7 @@ import dynamic from 'next/dynamic';
 import { useRouter } from 'next/router';
 import { appsNavVisibility } from '~/components/AppLayout/AppHeader/appsNavVisibility';
 import { dialogStore } from '~/components/Dialog/dialogStore';
+import { useEventMenuItems } from '~/components/AppLayout/AppHeader/useEventMenuItems';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useQueryNotificationsCount } from '~/components/Notifications/notifications.utils';
 import { PLACEMENT_QUEUE_URL } from '~/components/Placement/queue-routes';
@@ -61,6 +62,7 @@ export type UserMenuItem = {
   currency?: boolean;
   redirectReason?: LoginRedirectReason;
   newUntil?: Date;
+  isNew?: boolean;
   /**
    * A count rendered as a filled badge after the label. Zero and undefined both
    * render nothing — a badge that says "0" reads as a broken badge, not as an
@@ -104,6 +106,10 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
   // `staleTime: Infinity`. Reading it here adds no round trip.
   const { pendingPlacements, pendingCollectionReviews } = useQueryNotificationsCount();
 
+  const eventItems = useEventMenuItems(
+    theme.colors.grape[getPrimaryShade(theme, colorScheme ?? 'dark')]
+  );
+
   return [
     {
       visible: !!currentUser,
@@ -114,6 +120,8 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           color: theme.colors.blue[getPrimaryShade(theme, colorScheme ?? 'dark')],
           label: 'Your Profile',
         },
+        // Stays after the event's strip is dismissed: the way back to the event.
+        ...eventItems,
         {
           href: `/user/${currentUser?.username as string}/shop`,
           // Only Creator Program members qualify to run a shop.
@@ -323,6 +331,7 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
     {
       visible: !currentUser,
       items: [
+        ...eventItems,
         {
           href: '/leaderboard/overall',
           icon: IconCrown,

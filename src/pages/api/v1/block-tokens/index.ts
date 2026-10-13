@@ -16,6 +16,7 @@ export const config = {
   },
 };
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
+import { requireFullScopeSession } from '~/server/utils/require-full-scope-session';
 import { getTrustedClientIp } from '~/server/utils/client-ip';
 import { BlockRegistry } from '~/server/services/block-registry.service';
 import { BlockTokenService } from '~/server/services/block-token.service';
@@ -34,6 +35,7 @@ import {
 } from '~/shared/constants/browsingLevel.constants';
 import { getServerBrowsingLevel } from '~/server/utils/browsing-level';
 import {
+  BUZZ_BUDGET_CAP,
   isKnownBlockScope,
   validateBlockScopesAgainstOauthClient,
 } from '~/shared/constants/block-scope.constants';
@@ -111,6 +113,9 @@ function resolveEffectiveBrowsingLevel(args: {
  * authenticated subject (buzz:read:self, social:tip:self, user:read:self)
  * are rejected downstream by the block-scope middleware.
  *
+ * A bearer credential must be a full-access personal API key
+ * (`requireFullScopeSession`); any other bearer credential gets 403.
+ *
  * CSRF posture: SAME-ORIGIN ONLY with EXACT host equality. The host page on
  * civitai.com fetches the token here and passes it into the iframe via
  * BLOCK_INIT — the iframe at blocks.civitai.com never calls this endpoint
@@ -181,7 +186,6 @@ const PAGE_INSTANCE_PREFIX = 'page_';
 const EPHEMERAL_APP_ID_PREFIX = 'ephemeral-';
 
 const BUZZ_BUDGET_DEFAULT = 10;
-const BUZZ_BUDGET_CAP = 1000;
 
 const PER_IP_RATE_LIMIT_WINDOW_SECONDS = 60;
 const PER_IP_RATE_LIMIT_MAX = 120;
@@ -1119,6 +1123,7 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
   }
 
   const session = await getServerAuthSession({ req, res });
+  if (!requireFullScopeSession(req, res)) return;
   const userId = session?.user?.id ?? null;
 
   // Graduation gate: who may mint a block token is governed by the `appBlocks`

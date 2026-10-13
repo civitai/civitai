@@ -121,6 +121,7 @@ export const crucibleEntrySelect = Prisma.validator<Prisma.CrucibleEntrySelect>(
       nsfwLevel: true,
       width: true,
       height: true,
+      hash: true,
     },
   },
 });

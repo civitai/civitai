@@ -1154,6 +1154,7 @@ export const UserRestrictionStatus = {
   Pending: 'Pending',
   Upheld: 'Upheld',
   Overturned: 'Overturned',
+  AccountDeleted: 'AccountDeleted',
 } as const;
 
 export type UserRestrictionStatus =

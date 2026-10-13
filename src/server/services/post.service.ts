@@ -27,7 +27,7 @@ import type { GetByIdInput } from '~/server/schema/base.schema';
 import type { CollectionMetadataSchema } from '~/server/schema/collection.schema';
 import type { ImageMetaProps, ImageSchema, IngestImageInput } from '~/server/schema/image.schema';
 import { externalMetaSchema } from '~/server/schema/image.schema';
-import type { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
+import type { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
 import type { PostImageEditProps, PostImageEditSelect } from '~/server/selectors/post.selector';
 import { editPostImageSelect, postSelect } from '~/server/selectors/post.selector';
 import { simpleTagSelect } from '~/server/selectors/tag.selector';
@@ -70,6 +70,7 @@ import {
   purgeResizeCache,
   queueImageSearchIndexUpdate,
 } from '~/server/services/image.service';
+import type { AssertPostOwnedBy } from '~/server/services/image.service';
 import { bustImageDeliveryMetadataCache } from '~/server/services/image-delivery.service';
 import { findOrCreateTagsByName, getVotableImageTags } from '~/server/services/tag.service';
 import { getTechniqueForWorkflow } from '~/server/services/technique.service';
@@ -144,7 +145,7 @@ type GetAllPostsRaw = {
     cryCount: number;
     collectedCount: number;
   } | null;
-  cosmetic?: WithClaimKey<ContentDecorationCosmetic> | null;
+  cosmetic?: ContentDecorationCosmetic | null;
 };
 export type PostsInfiniteModel = AsyncReturnType<typeof getPostsInfinite>['items'][0];
 
@@ -709,9 +710,35 @@ export const getPostEditDetail = async ({ id, user }: GetByIdInput & { user: Ses
     collectionItemExists = !!collectionItem;
   }
 
+  const ownModelId = await getOwnModelId({
+    modelVersionId: post.modelVersionId,
+    postOwnerId: post.user.id,
+  });
+
   // Unpublish context is already attached by getPostDetail above.
-  return { ...post, collectionTagId, images, collectionItemExists };
+  return { ...post, collectionTagId, images, collectionItemExists, ownModelId };
 };
+
+/**
+ * The model a post belongs to, when the post's owner also owns the model: the editor's event card
+ * then hats the model. A review post on someone else's model gets null.
+ */
+export async function getOwnModelId({
+  modelVersionId,
+  postOwnerId,
+  db = dbRead,
+}: {
+  modelVersionId: number | null;
+  postOwnerId: number;
+  db?: typeof dbRead | typeof dbWrite;
+}) {
+  if (!modelVersionId) return null;
+  const version = await db.modelVersion.findUnique({
+    where: { id: modelVersionId },
+    select: { model: { select: { id: true, userId: true } } },
+  });
+  return version?.model.userId === postOwnerId ? version.model.id : null;
+}
 
 export type PostUnpublishContext = {
   // True when the post carries a `prevPublishedAt` stash — i.e. it was
@@ -901,6 +928,11 @@ export const createPost = async ({
     unpublishedAt: null,
     unpublishedBy: null,
     parentModelId: null,
+    ownModelId: await getOwnModelId({
+      modelVersionId: data.modelVersionId ?? null,
+      postOwnerId: userId,
+      db: dbWrite,
+    }),
   };
 };
 
@@ -1106,7 +1138,7 @@ export const deletePost = async ({ id, isModerator }: GetByIdInput & { isModerat
   await bustCachesForPosts(id);
   await userImageVideoCountCaches.bust(imageOwnerIds);
 
-  return post;
+  return post ? { ...post, deletedImageIds } : post;
 };
 
 type PostQueryResult = { id: number; name: string; isCategory: boolean }[];
@@ -1243,8 +1275,15 @@ export const addPostImage = async ({
   meta,
   user,
   externalDetailsUrl,
+  assertPostOwnedBy,
   ...props
-}: ImageSchema & { user: SessionUser; postId: number; generationWorkflowId?: string }) => {
+}: ImageSchema & {
+  user: SessionUser;
+  postId: number;
+  generationWorkflowId?: string;
+  /** Shared across a request that adds several images to one post; see `createPostOwnerCheck`. */
+  assertPostOwnedBy?: AssertPostOwnedBy;
+}) => {
   const externalData = await parseExternalMetadata(externalDetailsUrl, user.id);
   if (externalData) {
     meta = { ...meta, external: externalData };
@@ -1339,6 +1378,7 @@ export const addPostImage = async ({
     ...imageProps,
     meta,
     verifiedSourceImageIds,
+    assertPostOwnedBy,
     userId: user.id,
     toolIds: toolId ? [toolId] : undefined,
     techniqueIds: techniqueId ? [techniqueId] : undefined,

@@ -238,6 +238,35 @@ describe('POST /api/track/block-message — the bridge outcome counter', () => {
     expect((await bridgeCounterValue(labels)) - before).toBe(1);
   });
 
+  it('accepts `not_applicable` and counts it apart from `no_handler`', async () => {
+    // The outcome the dispatcher reports for a type the parity INVENTORY declares
+    // N/A on that host. The schema enum rejects WHOLESALE, so an outcome the
+    // client sends and this route does not know would 400 the entire batch — the
+    // client change would be inert and take the batch's other rows with it.
+    const na = {
+      app_block_id: 'apb_test',
+      type: 'RESIZE_IFRAME',
+      host: 'PageBlockHost',
+      outcome: 'not_applicable',
+    };
+    const gap = { ...na, outcome: 'no_handler' };
+    const naBefore = await bridgeCounterValue(na);
+    const gapBefore = await bridgeCounterValue(gap);
+    const res = await post({
+      events: [
+        event({
+          type: 'RESIZE_IFRAME',
+          host: 'PageBlockHost',
+          outcome: 'not_applicable',
+          count: 4,
+        }),
+      ],
+    });
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect((await bridgeCounterValue(na)) - naBefore).toBe(4);
+    expect((await bridgeCounterValue(gap)) - gapBefore).toBe(0);
+  });
+
   it('rejects an unknown host or outcome at the schema, before any label is minted', async () => {
     for (const bad of [{ host: 'SomeOtherHost' }, { outcome: 'exploded' }]) {
       const res = await post({ events: [event(bad)] });

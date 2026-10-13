@@ -76,6 +76,7 @@ export const mentionNotifications = createNotificationProcessor({
                 root."bountyId",
                 root."bountyEntryId",
                 root."challengeId",
+                root."crucibleId",
                 root."model3dId",
                 root."comicProjectId",
                 t."imageId",
@@ -88,6 +89,7 @@ export const mentionNotifications = createNotificationProcessor({
                 t."bountyId",
                 t."bountyEntryId",
                 t."challengeId",
+                t."crucibleId",
                 t."model3dId",
                 t."comicProjectId"
              ),
@@ -102,6 +104,7 @@ export const mentionNotifications = createNotificationProcessor({
               WHEN COALESCE(root."bountyId", t."bountyId") IS NOT NULL THEN 'bounty'
               WHEN COALESCE(root."bountyEntryId", t."bountyEntryId") IS NOT NULL THEN 'bountyEntry'
               WHEN COALESCE(root."challengeId", t."challengeId") IS NOT NULL THEN 'challenge'
+              WHEN COALESCE(root."crucibleId", t."crucibleId") IS NOT NULL THEN 'crucible'
               WHEN COALESCE(root."model3dId", t."model3dId") IS NOT NULL THEN 'model3d'
               WHEN COALESCE(root."comicProjectId", t."comicProjectId") IS NOT NULL THEN 'comicProject'
               -- App-store listings are SLUG-addressed, so this arm keys on the JOINED slug
@@ -121,6 +124,7 @@ export const mentionNotifications = createNotificationProcessor({
                 t."bountyId",
                 t."bountyEntryId",
                 t."challengeId",
+                t."crucibleId",
                 t."model3dId",
                 t."commentId"
              ),
@@ -135,6 +139,7 @@ export const mentionNotifications = createNotificationProcessor({
                 WHEN t."bountyId" IS NOT NULL THEN 'bounty'
                 WHEN t."bountyEntryId" IS NOT NULL THEN 'bountyEntry'
                 WHEN t."challengeId" IS NOT NULL THEN 'challenge'
+                WHEN t."crucibleId" IS NOT NULL THEN 'crucible'
                 WHEN t."model3dId" IS NOT NULL THEN 'model3d'
                 ELSE 'comment'
               END,

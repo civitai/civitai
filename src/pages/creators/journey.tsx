@@ -22,7 +22,7 @@ export default function CreatorJourneyPage() {
   return (
     <>
       <Meta title="Your Creator Journey | Civitai" deIndex />
-      <Container size="md" pt={0} pb="xl">
+      <Container size="xl" pt={0} pb="xl">
         <CreatorJourney />
       </Container>
     </>

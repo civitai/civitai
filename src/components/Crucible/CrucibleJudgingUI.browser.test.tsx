@@ -1,8 +1,10 @@
 import { useState, type ComponentProps } from 'react';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
+import type * as TrpcMod from '~/utils/trpc';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+import { makeTrpcProxy } from '../../../test/trpcProxyStub';
 
 /**
  * EdgeMedia is stubbed: headless Chromium cannot decode most clips, and a codec is not what is
@@ -67,7 +69,47 @@ vi.mock('~/components/EdgeMedia/EdgeMedia', async () => {
   };
 });
 
+const reactionToggle = vi.hoisted(() => vi.fn());
+const myReactions = vi.hoisted(() => new Map<number, string[]>());
+const reactionEnv = vi.hoisted(() => ({
+  viewer: { id: 7 } as { id: number; muted?: boolean } | null,
+  togglePending: false,
+  lookupLoaded: true,
+}));
+
+vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => reactionEnv.viewer }));
+vi.mock('~/providers/FeatureFlagsProvider', () => ({ useFeatureFlags: () => ({}) }));
+vi.mock('~/utils/trpc', async (importOriginal) => ({
+  ...(await importOriginal<typeof TrpcMod>()),
+  trpc: makeTrpcProxy(
+    {
+      'reaction.toggle': {
+        useMutation: () => ({ mutate: reactionToggle, isPending: reactionEnv.togglePending }),
+      },
+      'reaction.getMyImageReactions': {
+        useQuery: () => ({ isSuccess: reactionEnv.lookupLoaded }),
+      },
+    },
+    {
+      useQueries: (
+        build: (t: {
+          reaction: {
+            getMyImageReactions: (input: { imageIds: number[] }) => { imageIds: number[] };
+          };
+        }) => { imageIds: number[] }[]
+      ) =>
+        build({ reaction: { getMyImageReactions: (input) => input } }).map(({ imageIds }) => ({
+          data: Object.fromEntries(
+            imageIds.filter((id) => myReactions.has(id)).map((id) => [id, myReactions.get(id)])
+          ),
+          dataUpdatedAt: 1,
+        })),
+    }
+  ),
+}));
+
 const { CrucibleJudgingUI } = await import('~/components/Crucible/CrucibleJudgingUI');
+const { CrucibleJudgingBriefing } = await import('~/components/Crucible/CrucibleJudgingBriefing');
 
 const srcOf = (id: number) => `0000000${id}-0000-4000-8000-000000000000`;
 
@@ -102,11 +144,11 @@ const advance = async (side: 0 | 1, clicks: number) => {
 const card = (side: 'left' | 'right') =>
   document.querySelector<HTMLElement>(`[aria-label="Vote for ${side} video"]`);
 
-// Anchored on the CARD's aria-label, not on the button's text. The text is "Vote" or
-// "Watch Ns more" depending on the very gate under test, so a text matcher made the button vanish
-// exactly when an assertion needed it — and every `toBeUndefined` then passed vacuously.
+// Anchored on the button's side, not on its text. The text is "Vote" or "Watch Ns more"
+// depending on the very gate under test, so a text matcher made the button vanish exactly when an
+// assertion needed it — and every `toBeUndefined` then passed vacuously.
 const voteButton = (side: 'left' | 'right') =>
-  card(side)?.querySelector<HTMLButtonElement>('[data-testid="judge-vote"]') ?? null;
+  document.querySelector<HTMLButtonElement>(`[data-testid="judge-vote"][data-side="${side}"]`);
 
 const mediaStatus = (side: 'left' | 'right') =>
   card(side)?.querySelector<HTMLElement>('[data-media-status]')?.dataset.mediaStatus;
@@ -218,11 +260,24 @@ for (const type of [
 // registration order, so this still runs BEFORE unmount — unchanged from the per-describe form.
 afterEach(() => vi.restoreAllMocks());
 
+let previousIsAuthed: typeof window.isAuthed;
+
 beforeEach(() => {
   playheads.clear();
   clipDurations.clear();
   mediaOutcome.clear();
   lastVideoProps.clear();
+  myReactions.clear();
+  reactionToggle.mockClear();
+  reactionEnv.viewer = { id: 7 };
+  reactionEnv.togglePending = false;
+  reactionEnv.lookupLoaded = true;
+  previousIsAuthed = window.isAuthed;
+  window.isAuthed = true;
+});
+
+afterEach(() => {
+  window.isAuthed = previousIsAuthed;
 });
 
 describe('CrucibleJudgingUI — minimum view time', () => {
@@ -313,9 +368,7 @@ describe('CrucibleJudgingUI — minimum view time', () => {
 });
 
 const skipPairButton = () =>
-  [...document.querySelectorAll<HTMLButtonElement>('button')].find((b) =>
-    b.textContent?.includes('Skip Pair')
-  );
+  document.querySelector<HTMLButtonElement>('[data-testid="judge-skip"]');
 
 describe('CrucibleJudgingUI — clip already judged this session', () => {
   const pairWithWatch = (left: number, right: number) =>
@@ -409,6 +462,63 @@ describe('CrucibleJudgingUI — repeated clicks', () => {
     await pastFeedbackDelay();
 
     expect(onVote).toHaveBeenCalledTimes(1);
+  });
+
+  test('two clicks on an image inside the feedback delay cast one vote', async () => {
+    const onVote = vi.fn();
+    renderWithProviders(
+      <CrucibleJudgingUI
+        pair={{ left: entry(1, 'image'), right: entry(2, 'image') } as never}
+        onVote={onVote}
+        onSkip={vi.fn()}
+      />
+    );
+    const imageCard = () =>
+      document.querySelector<HTMLElement>('[aria-label="Vote for left image"]');
+    await vi.waitFor(() => expect(voteButton('left')!.disabled).toBe(false));
+
+    imageCard()!.click();
+    imageCard()!.click();
+    await pastFeedbackDelay();
+
+    expect(onVote).toHaveBeenCalledTimes(1);
+    expect(onVote.mock.calls[0][0]).toBe(1);
+  });
+
+  test('onVoteCast reports the chosen side before the vote lands', async () => {
+    const onVote = vi.fn();
+    const onVoteCast = vi.fn();
+    renderWithProviders(
+      <CrucibleJudgingUI
+        pair={pairOf(1, 2)}
+        onVote={onVote}
+        onVoteCast={onVoteCast}
+        onSkip={vi.fn()}
+      />
+    );
+    await expectBothCardsRendered();
+
+    voteButton('right')!.click();
+
+    expect(onVoteCast).toHaveBeenCalledTimes(1);
+    expect(onVoteCast).toHaveBeenCalledWith('right');
+    expect(onVote).not.toHaveBeenCalled();
+    await vi.waitFor(() => expect(onVote).toHaveBeenCalledTimes(1));
+    expect(onVoteCast).toHaveBeenCalledTimes(1);
+  });
+
+  test('a click on a video does not vote; the vote button still does', async () => {
+    const onVote = vi.fn();
+    renderWithProviders(<CrucibleJudgingUI pair={pairOf(1, 2)} onVote={onVote} onSkip={vi.fn()} />);
+    await expectBothCardsRendered();
+    expect(voteButton('left')!.disabled, 'precondition: voting is open').toBe(false);
+
+    video('left').click();
+    await pastFeedbackDelay();
+    expect(onVote).not.toHaveBeenCalled();
+
+    voteButton('left')!.click();
+    await vi.waitFor(() => expect(onVote).toHaveBeenCalledTimes(1));
   });
 
   test('takes the next vote once the first has landed', async () => {
@@ -826,6 +936,79 @@ describe('CrucibleJudgingUI — sequenced preview', () => {
   });
 });
 
+describe('CrucibleJudgingUI — paused under the briefing', () => {
+  function PausedHarness({
+    initiallyPaused,
+    minViewSeconds = 3,
+  }: {
+    initiallyPaused: boolean;
+    minViewSeconds?: number;
+  }) {
+    const [paused, setPaused] = useState(initiallyPaused);
+    return (
+      <>
+        <button type="button" data-testid="toggle-paused" onClick={() => setPaused((p) => !p)}>
+          toggle
+        </button>
+        <CrucibleJudgingUI
+          pair={pairOf(1, 2)}
+          minViewSeconds={minViewSeconds}
+          paused={paused}
+          onVote={vi.fn()}
+          onSkip={vi.fn()}
+        />
+      </>
+    );
+  }
+  const togglePaused = () =>
+    document.querySelector<HTMLButtonElement>('[data-testid="toggle-paused"]')!.click();
+
+  test('plays nothing and counts no playback until unpaused, then starts on the left', async () => {
+    const play = vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue(undefined);
+    vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => undefined);
+    renderWithProviders(<PausedHarness initiallyPaused />);
+    await expectBothCardsRendered();
+
+    // Enough playback to clear the rule, were it counted.
+    await advance(0, 4);
+    await afterPassiveEffects();
+    expect(label('left')).toMatch(/^Watch 3s more/);
+    expect(sidesCalledOn(play)).toEqual([]);
+
+    togglePaused();
+
+    await vi.waitFor(() => expect(sidesCalledOn(play)).toEqual(['left']));
+    await advance(0, 4);
+    await vi.waitFor(() => expect(label('left')).toMatch(/^Vote/));
+  });
+
+  test('pausing stops the autoplaying clip', async () => {
+    const play = vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue(undefined);
+    const pause = vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => undefined);
+    renderWithProviders(<PausedHarness initiallyPaused={false} />);
+    await expectBothCardsRendered();
+    await vi.waitFor(() => expect(sidesCalledOn(play)).toEqual(['left']));
+    pause.mockClear();
+
+    togglePaused();
+
+    await vi.waitFor(() => expect(sidesCalledOn(pause)).toContain('left'));
+  });
+
+  test('pausing also stops a clip the judge started, outside any sequence', async () => {
+    // No rule, so no sequence: the only pause comes from `paused` itself.
+    const pause = vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => undefined);
+    renderWithProviders(<PausedHarness initiallyPaused={false} minViewSeconds={0} />);
+    await expectBothCardsRendered();
+    await afterPassiveEffects();
+    pause.mockClear();
+
+    togglePaused();
+
+    await vi.waitFor(() => expect(sidesCalledOn(pause)).toEqual(['left', 'right']));
+  });
+});
+
 describe('CrucibleJudgingUI — hotkeys', () => {
   const press = (key: string, code: string, repeat: boolean) =>
     document.documentElement.dispatchEvent(
@@ -861,6 +1044,93 @@ describe('CrucibleJudgingUI — hotkeys', () => {
   });
 });
 
+describe('CrucibleJudgingUI — keys the arena does not own', () => {
+  const pressOn = (target: Element, key: string, code: string) => {
+    const event = new KeyboardEvent('keydown', { key, code, bubbles: true, cancelable: true });
+    target.dispatchEvent(event);
+    return event;
+  };
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 400));
+  const briefing = () => document.querySelector('[role="dialog"]');
+
+  function BriefingHarness({ onVote, onSkip }: { onVote: OnVote; onSkip: () => void }) {
+    const [open, setOpen] = useState(true);
+    return (
+      <>
+        <div data-judge-chrome>
+          <button type="button" data-testid="chrome-button">
+            Rules
+          </button>
+        </div>
+        <CrucibleJudgingUI pair={pairOf(1, 2)} onVote={onVote} onSkip={onSkip} />
+        {open && (
+          <CrucibleJudgingBriefing
+            name="Test crucible"
+            theme=""
+            image={null}
+            contentType={'video' as never}
+            nsfwLevel={1}
+            browsingLevel={1}
+            onDismiss={() => setOpen(false)}
+          />
+        )}
+      </>
+    );
+  }
+
+  test('an arrow key behind the briefing casts the vote and closes the briefing', async () => {
+    const onVote = vi.fn();
+    renderWithProviders(<BriefingHarness onVote={onVote} onSkip={vi.fn()} />);
+    await expectBothCardsRendered();
+    expect(briefing()).toBeTruthy();
+
+    pressOn(document.documentElement, 'ArrowLeft', 'ArrowLeft');
+
+    await vi.waitFor(() => expect(briefing()).toBeNull());
+    await vi.waitFor(() => expect(onVote).toHaveBeenCalledTimes(1));
+    expect(onVote.mock.calls[0][0]).toBe(1);
+  });
+
+  test('the briefing focuses its start button and is modal', async () => {
+    renderWithProviders(<BriefingHarness onVote={vi.fn()} onSkip={vi.fn()} />);
+    await vi.waitFor(() => expect(briefing()).toBeTruthy());
+
+    expect(briefing()!.getAttribute('aria-modal')).toBe('true');
+    await vi.waitFor(() => expect(document.activeElement?.textContent).toBe('Start judging'));
+  });
+
+  test('Space on the focused start button closes the briefing without skipping', async () => {
+    const onSkip = vi.fn();
+    renderWithProviders(<BriefingHarness onVote={vi.fn()} onSkip={onSkip} />);
+    await expectBothCardsRendered();
+    await vi.waitFor(() => expect(document.activeElement?.textContent).toBe('Start judging'));
+
+    const event = pressOn(document.activeElement!, ' ', 'Space');
+
+    await vi.waitFor(() => expect(briefing()).toBeNull());
+    await settle();
+    expect(onSkip).not.toHaveBeenCalled();
+    expect(event.defaultPrevented).toBe(false);
+  });
+
+  test('Space on a page header control is left to that control', async () => {
+    const onSkip = vi.fn();
+    renderWithProviders(<BriefingHarness onVote={vi.fn()} onSkip={onSkip} />);
+    await expectBothCardsRendered();
+    const chromeButton = document.querySelector('[data-testid="chrome-button"]')!;
+
+    const event = pressOn(chromeButton, ' ', 'Space');
+    await settle();
+
+    expect(onSkip).not.toHaveBeenCalled();
+    expect(event.defaultPrevented).toBe(false);
+
+    // Negative control: the same press with focus nowhere in particular still skips.
+    pressOn(document.body, ' ', 'Space');
+    await vi.waitFor(() => expect(onSkip).toHaveBeenCalledTimes(1));
+  });
+});
+
 type OnVote = ComponentProps<typeof CrucibleJudgingUI>['onVote'];
 
 function PairSwitchingHarness({ onVote }: { onVote: OnVote }) {
@@ -879,3 +1149,152 @@ function PairSwitchingHarness({ onVote }: { onVote: OnVote }) {
     </>
   );
 }
+
+describe('CrucibleJudgingUI — reactions', () => {
+  const pastFeedbackDelay = () => new Promise((resolve) => setTimeout(resolve, 400));
+  // A fresh image id per test: the reactions store is module-level and cannot be reset from here.
+  let nextEntry = 100;
+  let rightImageId = 0;
+  const reactionBar = (side: 'left' | 'right') =>
+    document.querySelector<HTMLElement>(`[data-testid="judge-reactions"][data-side="${side}"]`);
+  const reactionButton = (side: 'left' | 'right', reaction: string) =>
+    reactionBar(side)?.querySelector<HTMLButtonElement>(`[aria-label="${reaction} reaction"]`);
+  const pressKey = (key: string, code: string) =>
+    document.documentElement.dispatchEvent(
+      new KeyboardEvent('keydown', { key, code, bubbles: true })
+    );
+
+  const renderPair = async (onVote = vi.fn(), onSkip = vi.fn()) => {
+    const left = nextEntry++;
+    const right = nextEntry++;
+    rightImageId = right * 10;
+    const ui = () => (
+      <CrucibleJudgingUI
+        pair={{ left: entry(left, 'image'), right: entry(right, 'image') } as never}
+        onVote={onVote}
+        onSkip={onSkip}
+      />
+    );
+    const view = await renderWithProviders(ui());
+    await vi.waitFor(() => expect(reactionButton('left', 'Like')).toBeTruthy());
+    await vi.waitFor(() => expect(voteButton('left')!.disabled).toBe(false));
+    await pastFeedbackDelay();
+    return { onVote, onSkip, rerender: () => view.rerender(ui()) };
+  };
+
+  test('the vote and skip keys do act on this pair (control for the tests below)', async () => {
+    const { onVote, onSkip } = await renderPair();
+
+    pressKey('1', 'Digit1');
+    await vi.waitFor(() => expect(onVote).toHaveBeenCalledTimes(1));
+    await pastFeedbackDelay();
+    pressKey(' ', 'Space');
+
+    await vi.waitFor(() => expect(onSkip).toHaveBeenCalledTimes(1));
+  });
+
+  test('clicking a reaction reacts to the image and does not vote or skip', async () => {
+    const { onVote, onSkip } = await renderPair();
+
+    reactionButton('right', 'Heart')!.click();
+    await pastFeedbackDelay();
+
+    expect(reactionToggle).toHaveBeenCalledTimes(1);
+    expect(reactionToggle).toHaveBeenCalledWith({
+      entityId: rightImageId,
+      entityType: 'image',
+      reaction: 'Heart',
+    });
+    expect(onVote).not.toHaveBeenCalled();
+    expect(onSkip).not.toHaveBeenCalled();
+  });
+
+  test('Enter and Space on a reaction button neither vote nor skip', async () => {
+    const { onVote, onSkip } = await renderPair();
+
+    for (const key of ['Enter', ' ', '1', 'ArrowRight']) {
+      reactionButton('left', 'Like')!.dispatchEvent(
+        new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true })
+      );
+    }
+    await pastFeedbackDelay();
+
+    expect(onVote).not.toHaveBeenCalled();
+    expect(onSkip).not.toHaveBeenCalled();
+  });
+
+  test('shows no reaction counts, even for an image that has reactions', async () => {
+    myReactions.set(nextEntry * 10, ['Like', 'Cry']);
+    await renderPair();
+
+    for (const side of ['left', 'right'] as const) {
+      expect(reactionBar(side)!.textContent).not.toMatch(/\d/);
+      expect(reactionBar(side)!.innerHTML).not.toMatch(/count/i);
+    }
+  });
+
+  test("shows the judge's own earlier reaction as active", async () => {
+    myReactions.set(nextEntry * 10, ['Laugh']);
+    await renderPair();
+
+    await vi.waitFor(() =>
+      expect(reactionButton('left', 'Laugh')!.getAttribute('aria-pressed')).toBe('true')
+    );
+    expect(reactionButton('left', 'Like')!.getAttribute('aria-pressed')).toBe('false');
+    expect(reactionButton('right', 'Laugh')!.getAttribute('aria-pressed')).toBe('false');
+  });
+
+  test('offers the same four reactions on every entry', async () => {
+    await renderPair();
+
+    for (const side of ['left', 'right'] as const) {
+      expect(
+        [...reactionBar(side)!.querySelectorAll('button')].map((b) => b.getAttribute('aria-label'))
+      ).toEqual(['Like reaction', 'Heart reaction', 'Laugh reaction', 'Cry reaction']);
+    }
+  });
+
+  describe.each([
+    ['signed out', () => (reactionEnv.viewer = null)],
+    ['muted', () => (reactionEnv.viewer = { id: 7, muted: true })],
+    ['a toggle is already in flight', () => (reactionEnv.togglePending = true)],
+    ['own reactions have not loaded', () => (reactionEnv.lookupLoaded = false)],
+  ])('when %s', (_name, setup) => {
+    test('a reaction click does nothing: no toggle, no vote, no skip', async () => {
+      setup();
+      const { onVote, onSkip } = await renderPair();
+
+      for (const side of ['left', 'right'] as const) {
+        const button = reactionButton(side, 'Like')!;
+        expect(button.disabled).toBe(true);
+        button.click();
+      }
+      await pastFeedbackDelay();
+
+      expect(reactionToggle).not.toHaveBeenCalled();
+      expect(onVote).not.toHaveBeenCalled();
+      expect(onSkip).not.toHaveBeenCalled();
+    });
+  });
+
+  test('pills turn interactive once own reactions have loaded', async () => {
+    reactionEnv.lookupLoaded = false;
+    const { rerender } = await renderPair();
+    expect(reactionButton('left', 'Like')!.disabled).toBe(true);
+
+    reactionEnv.lookupLoaded = true;
+    rerender();
+
+    await vi.waitFor(() => expect(reactionButton('left', 'Like')!.disabled).toBe(false));
+    reactionButton('left', 'Like')!.click();
+    expect(reactionToggle).toHaveBeenCalledTimes(1);
+  });
+
+  test('the pill carries no stray DOM attributes from the shared reaction button', async () => {
+    await renderPair();
+
+    for (const attr of ['count', 'countunknown', 'hasreacted', 'cantclick']) {
+      expect(reactionBar('left')!.querySelector(`[${attr}]`)).toBeNull();
+    }
+  });
+});

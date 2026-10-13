@@ -242,22 +242,24 @@ describe('findResourceIntentCandidates — the seed reaches the shortlist', () =
     baseModel: BASE_MODEL,
   };
 
-  it('🔴 issues exactly one page: the gate filter alone, sorted by popularity alone', async () => {
+  it('🔴 issues exactly two pages, each the gate filter alone, sorted by popularity alone', async () => {
     await findResourceIntentCandidates(criteria, { browsingLevel: 3, coverage: COVERAGE, cap: 5 });
     const calls = seedCalls();
-    expect(calls).toHaveLength(1);
-    expect(calls[0].filter).toBe(
-      buildResourceIntentFilter({
-        modelTypes: ['LORA'],
-        baseModels: [BASE_MODEL],
-        browsingLevel: 3,
-        coverage: COVERAGE,
-      })
-    );
-    expect(String(calls[0].filter)).not.toContain('insight.');
-    expect(calls[0].sort).toEqual(['metrics.thumbsUpCount:desc']);
+    // The seed page, then the hybrid fill's own 500-document page.
+    expect(calls).toHaveLength(2);
+    const gates = buildResourceIntentFilter({
+      modelTypes: ['LORA'],
+      baseModels: [BASE_MODEL],
+      browsingLevel: 3,
+      coverage: COVERAGE,
+    });
+    for (const call of calls) {
+      expect(call.filter).toBe(gates);
+      expect(String(call.filter)).not.toContain('insight.');
+      expect(call.sort).toEqual(['metrics.thumbsUpCount:desc']);
+    }
     // cap 5 -> a pool of 10.
-    expect(calls[0].limit).toBe(10);
+    expect(calls.map((c) => c.limit)).toEqual([10, 500]);
   });
 
   it('the page takes the clamped pool width at the maximum cap', async () => {
@@ -266,8 +268,8 @@ describe('findResourceIntentCandidates — the seed reaches the shortlist', () =
       coverage: COVERAGE,
       cap: RESOURCE_INTENT_MAX_SHORTLIST,
     });
-    // 2 x 255 would be 510; the clamp holds the page to the shortlist maximum.
-    expect(seedCalls().map((c) => c.limit)).toEqual([RESOURCE_INTENT_MAX_SHORTLIST]);
+    // 2 x 255 would be 510; the clamp holds the seed page to the shortlist maximum.
+    expect(seedCalls().map((c) => c.limit)).toEqual([RESOURCE_INTENT_MAX_SHORTLIST, 500]);
   });
 
   // 🔴 REGRESSION — the M3 v2 failure. Fourteen `clothing` matches would fill the 10-wide
@@ -296,9 +298,11 @@ describe('findResourceIntentCandidates — the seed reaches the shortlist', () =
       550000, 550001, 550002, 550003, 550004, 550005, 550006, 550007, 550008, 550009,
     ]);
     const calls = seedCalls();
-    expect(calls).toHaveLength(1);
-    expect(String(calls[0].filter)).not.toContain('insight.role');
-    expect(calls[0].sort).toEqual(['metrics.thumbsUpCount:desc']);
+    expect(calls).toHaveLength(2);
+    for (const call of calls) {
+      expect(String(call.filter)).not.toContain('insight.role');
+      expect(call.sort).toEqual(['metrics.thumbsUpCount:desc']);
+    }
     expect(insightFallback).toBe(false);
     expect(entries.map((e) => e.versionId)).toEqual([550000, 550001, 550002, 550003, 550004]);
   });

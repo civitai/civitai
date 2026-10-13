@@ -15,12 +15,14 @@ import {
   Text,
   ThemeIcon,
   Title,
+  Tooltip,
   UnstyledButton,
 } from '@mantine/core';
 import {
   IconApps,
   IconArrowLeft,
   IconDownload,
+  IconEyeOff,
   IconFlask,
   IconInfoCircle,
   IconPlugConnected,
@@ -59,6 +61,7 @@ import {
 import { RelatedListings } from '~/components/Apps/RelatedListings';
 import { TruncatedText } from '~/components/Apps/AppListingTruncate';
 import { ListingCollaboratorByline } from '~/components/Apps/ListingCollaboratorByline';
+import { visibilityBadgeFor } from '~/components/Apps/listingVisibilityCopy';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { AppListingComments } from '~/components/Apps/AppListingComments';
 import { AppListingDescription } from '~/components/Apps/AppListingDescription';
@@ -935,6 +938,7 @@ export function AppListingDetailBody({
     !preview && primaryAction.mode === 'open' && !primaryAction.external && primaryAction.href
       ? primaryAction.href
       : null;
+  const visibilityBadge = visibilityBadgeFor(detail.restrictedAudience);
 
   return (
     <Stack gap="lg">
@@ -1005,6 +1009,23 @@ export function AppListingDetailBody({
                   >
                     Beta
                   </Badge>
+                )}
+                {/* RESTRICTED VISIBILITY — beside Beta, in the identity block, for the same
+                    reason Beta is here: preview renders this block. `restrictedAudience` is
+                    already viewer-scoped server-side; `visibilityBadgeFor` owns the copy. */}
+                {visibilityBadge && (
+                  <Tooltip label={visibilityBadge.tooltip} withArrow multiline w={240}>
+                    <Badge
+                      color="gray"
+                      variant="light"
+                      size="sm"
+                      leftSection={<IconEyeOff size={12} aria-hidden />}
+                      style={{ flexShrink: 0, cursor: 'help' }}
+                      data-testid="apps-listing-detail-visibility"
+                    >
+                      {visibilityBadge.label}
+                    </Badge>
+                  </Tooltip>
                 )}
               </Group>
               {detail.tagline && (

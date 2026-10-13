@@ -22,6 +22,7 @@ import {
   CRUCIBLE_MIN_VIEW_SECONDS_OPTIONS,
   CRUCIBLE_MAX_SEEDED_PRIZE_POOL,
   CRUCIBLE_MAX_ALLOWED_BASE_MODELS,
+  CRUCIBLE_JUDGING_SUGGESTION_CANDIDATES,
   CRUCIBLE_MAX_ALLOWED_RESOURCES,
   CRUCIBLE_MAX_START_LEAD_DAYS,
   CRUCIBLE_NAME_MAX_LENGTH,
@@ -128,9 +129,17 @@ const prizePositionsSchema = z
     'Prize percentages must add up to exactly 100%'
   );
 
+// Blank stores NULL; an absent key leaves the stored description unchanged on update.
+const crucibleDescriptionSchema = z
+  .string()
+  .trim()
+  .max(CRUCIBLE_DESCRIPTION_MAX_LENGTH)
+  .nullish()
+  .transform((value) => (value === undefined ? undefined : value || null));
+
 export const createCrucibleInputBaseSchema = z.object({
   name: z.string().trim().nonempty().max(CRUCIBLE_NAME_MAX_LENGTH),
-  description: z.string().nonempty().max(CRUCIBLE_DESCRIPTION_MAX_LENGTH),
+  description: crucibleDescriptionSchema,
   coverImage: crucibleImageSchema,
   heroImage: crucibleImageSchema.optional(),
   nsfwLevel: z.number().int().positive().max(allBrowsingLevelsFlag),
@@ -310,11 +319,29 @@ export const getJudgingProgressSchema = z.object({
   browsingLevel: z.number().int().min(0).optional(),
 });
 
+export type CrucibleJudgingStatus = {
+  crucibleId: number;
+  judged: boolean;
+  available: boolean;
+  votesUsedUp: boolean;
+};
+
+export type GetJudgingStatusesSchema = z.infer<typeof getJudgingStatusesSchema>;
+export const getJudgingStatusesSchema = z.object({
+  crucibleIds: z.array(z.number().int()).min(1).max(100),
+  browsingLevel: z.number().int().min(0).optional(),
+});
+
 export const getJudgingPairSchema = z.object({
   crucibleId: z.number(),
-  // Entry IDs to exclude from pair selection (e.g., recently skipped entries)
-  // These entries won't appear in the returned pair
+  // Superseded by `skippedPairs`; still read from clients loaded before it shipped.
   excludeEntryIds: z.array(z.number()).max(50).optional(),
+  // Recently skipped pairs, oldest first. Their entries are avoided while anything else is left,
+  // and the pairs themselves for as long as another pair is left.
+  skippedPairs: z
+    .array(z.tuple([z.number().int(), z.number().int()]))
+    .max(25)
+    .optional(),
   browsingLevel: z.number().int().min(0).optional(),
   judgingSessionId: judgingSessionIdSchema,
 });
@@ -325,7 +352,7 @@ export type UpdateCrucibleSchema = z.infer<typeof updateCrucibleSchema>;
 export const updateCrucibleSchema = z.object({
   id: z.number(),
   name: z.string().trim().nonempty().max(CRUCIBLE_NAME_MAX_LENGTH).optional(),
-  description: z.string().nonempty().max(CRUCIBLE_DESCRIPTION_MAX_LENGTH).optional(),
+  description: crucibleDescriptionSchema,
   coverImage: crucibleImageSchema.optional(),
   heroImage: crucibleImageSchema.nullish(),
   nsfwLevel: z.number().int().positive().max(allBrowsingLevelsFlag).optional(),
@@ -388,18 +415,28 @@ export const removeCrucibleEntrySchema = z.object({
   entryId: z.number(),
 });
 
+export type WithdrawCrucibleEntrySchema = z.infer<typeof withdrawCrucibleEntrySchema>;
+export const withdrawCrucibleEntrySchema = removeCrucibleEntrySchema;
+
 // Schema for user crucible stats (no input needed - uses authenticated user)
 export type GetUserCrucibleStatsSchema = z.infer<typeof getUserCrucibleStatsSchema>;
 export const getUserCrucibleStatsSchema = z.object({});
 
 // User crucible stats response type
 export type UserCrucibleStats = {
-  totalCrucibles: number;
+  /** Crucibles entered while running or ended; cancelled ones are left out. */
+  cruciblesEntered: number;
+  /** Ended crucibles entered: the denominator of the win rate. */
+  cruciblesEnded: number;
+  /** Ended crucibles in which the user took a prize of more than 0 Buzz. */
+  cruciblesWon: number;
+  /** Gross prize Buzz, including prizes awarded but not yet claimed. */
   buzzWon: number;
-  bestPlacement: number | null;
+  /** Best rank among creators, with how many creators placed in that crucible. */
+  bestFinish: { position: number; fieldSize: number } | null;
   /** Average finish as the top percent of the field; null until enough crucibles count. */
   avgFinishTopPercent: number | null;
-  prizesWon: number;
+  votesCast: number;
 };
 
 // Schema for getting user's active crucibles (no input needed - uses authenticated user)
@@ -448,7 +485,7 @@ export const getJudgeStatsSchema = z.object({
 export type GetJudgingSuggestionsSchema = z.infer<typeof getJudgingSuggestionsSchema>;
 export const getJudgingSuggestionsSchema = baseQuerySchema.extend({
   excludeCrucibleId: z.number().optional(),
-  limit: z.number().int().min(1).max(12).default(4),
+  limit: z.number().int().min(1).max(CRUCIBLE_JUDGING_SUGGESTION_CANDIDATES).default(4),
 });
 
 // Judge stats response type

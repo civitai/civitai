@@ -4,7 +4,11 @@ import { pgDbReadLong, pgDbWrite } from '~/server/db/pgDb';
 import type { ActivityWatermarkStore } from '~/server/services/creator-milestone-activity.service';
 import { runActivityGroup } from '~/server/services/creator-milestone-activity.service';
 import type { MilestoneDetectorGroup } from '~/server/services/creator-milestone-detectors';
-import { activityDetectorGroups } from '~/server/services/creator-milestone-detectors';
+import {
+  activityDetectorGroups,
+  competeWinGroups,
+  judgeVoteGroups,
+} from '~/server/services/creator-milestone-detectors';
 import type { QueryClickhouse } from '~/server/services/creator-milestone-stored';
 import {
   loadStoredMilestoneGroups,
@@ -15,6 +19,7 @@ import {
   creatorJourneyAudienceAmong,
 } from '~/server/services/creator-journey-flag.service';
 import { logToAxiom } from '~/server/logging/client';
+import { CREATOR_MILESTONE_GRANT_CRON } from '~/shared/constants/creator-journey.constants';
 import { createLogger } from '~/utils/logging';
 import { createJob } from './job';
 
@@ -109,7 +114,7 @@ async function storedGroups(): Promise<MilestoneDetectorGroup[]> {
 // Activity milestones. Score tiers are granted inside update-user-score, the only place scores change.
 export const grantCreatorMilestones = createJob(
   'grant-creator-milestones',
-  '20 1 * * *',
+  CREATOR_MILESTONE_GRANT_CRON,
   async (jobContext) => {
     const gated = CREATOR_JOURNEY_GRANTS_REQUIRE_FLAG;
     const results: Record<string, unknown> = {};
@@ -118,11 +123,19 @@ export const grantCreatorMilestones = createJob(
       creatorJourneyAudienceAmong(pgDbReadLong, userIds)
     );
 
-    const groups = [...activityDetectorGroups(), ...(await storedGroups())];
+    const stored = await storedGroups();
+    // Judge votes and wins are also found row by row, so a group's shape cannot say it came from a row.
+    const storedIds = new Set(stored.map((group) => group.id));
+    const groups = [
+      ...activityDetectorGroups(),
+      ...judgeVoteGroups(queryClickhouse),
+      ...competeWinGroups(queryClickhouse),
+      ...stored,
+    ];
     for (const group of groups) {
       jobContext.checkIfCanceled();
       const startedAt = Date.now();
-      const stored = 'candidates' in group ? group.keys[0] : null;
+      const storedKey = storedIds.has(group.id) ? group.keys[0] : null;
       try {
         results[group.id] = await runActivityGroup(group, {
           readPg: pgDbReadLong,
@@ -132,8 +145,8 @@ export const grantCreatorMilestones = createJob(
           audienceAmong,
           checkIfCanceled: () => jobContext.checkIfCanceled(),
         });
-        if (stored)
-          reportStored({ milestoneKey: stored, outcome: 'ran', ms: Date.now() - startedAt });
+        if (storedKey)
+          reportStored({ milestoneKey: storedKey, outcome: 'ran', ms: Date.now() - startedAt });
       } catch (e) {
         // Its watermark stays put, so the next run picks up from the last complete one.
         if (e instanceof StoredMilestoneSkip) {

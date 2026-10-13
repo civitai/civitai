@@ -132,12 +132,16 @@ export type PlacementPriceRange = {
  * capacity they may offer. D and E must not each reimplement the score-and-tier
  * scaling, and nothing may persist the result — the caps move the moment a
  * membership lapses or a score is recomputed.
+ *
+ * Pass `config` only when it was read for this same call. One held across
+ * requests would price placements against a stale row.
  */
 export async function placementPriceRange(
   userId: number,
-  surface: PlacementSurface
+  surface: PlacementSurface,
+  config?: PlacementConfig
 ): Promise<PlacementPriceRange> {
-  const [scoreRow, capTier, config] = await Promise.all([
+  const [scoreRow, capTier, resolvedConfig] = await Promise.all([
     // Cast through `numeric`: `::int` raises on a fractional stored total rather
     // than truncating it. Text that isn't a number at all still raises.
     dbRead.$queryRaw<{ score: number | null }[]>`
@@ -149,7 +153,7 @@ export async function placementPriceRange(
     // for, while the UI showed them the free cap. Every other monetization cap
     // in the app resolves through this helper.
     getCapTier(userId),
-    getPlacementConfig(),
+    config ?? getPlacementConfig(),
   ]);
 
   // `total` already nets penalties — `reportsAgainst` is stored negative — so a
@@ -159,8 +163,8 @@ export async function placementPriceRange(
 
   return {
     min: PLACEMENT_SURFACES[surface].serverMinPrice,
-    max: placementPriceCap(score, tier, config.priceCapTiers(surface)),
-    freeSlotCap: placementFreeSlotCap(score, tier, config.freeSlotTiers(surface)),
+    max: placementPriceCap(score, tier, resolvedConfig.priceCapTiers(surface)),
+    freeSlotCap: placementFreeSlotCap(score, tier, resolvedConfig.freeSlotTiers(surface)),
     score,
     tier,
   };

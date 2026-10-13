@@ -19,6 +19,8 @@ type DetectorParams = {
   modelDownloads: Record<string, never>;
   userMetric: { metric: (typeof USER_METRICS)[number] };
   shopRevenue: Record<string, never>;
+  judgeVotes: Record<string, never>;
+  competeWins: Record<string, never>;
 };
 
 export type MilestoneDetector = keyof DetectorParams;
@@ -36,6 +38,8 @@ export type MilestoneRegistryEntry = {
 const SCORE_TIERS_LAUNCHED_AT = new Date('2026-10-06T00:00:00Z');
 const ACTIVITY_LAUNCHED_AT = new Date('2026-10-07T00:00:00Z');
 const SHOP_LAUNCHED_AT = new Date('2026-10-08T00:00:00Z');
+const JUDGE_LAUNCHED_AT = new Date('2026-10-09T00:00:00Z');
+const COMPETE_LAUNCHED_AT = new Date('2026-10-10T00:00:00Z');
 
 const scoreTier = (): MilestoneRegistryEntry => ({
   detector: 'scoreSnapshot',
@@ -49,7 +53,8 @@ const published = (entity: (typeof PUBLISHED_ENTITIES)[number]): MilestoneRegist
   launchedAt: ACTIVITY_LAUNCHED_AT,
 });
 
-// The per-model download notification already marks these moments, so the badge arrives quietly.
+// Quiet at launch by product decision. Announcing it later starts a new watermark, so that first run
+// grants silently instead of notifying everyone already past a tier.
 const downloads = (): MilestoneRegistryEntry => ({
   detector: 'modelDownloads',
   params: {},
@@ -69,6 +74,18 @@ const shopRevenue = (): MilestoneRegistryEntry => ({
   launchedAt: SHOP_LAUNCHED_AT,
 });
 
+const judgeVotes = (): MilestoneRegistryEntry => ({
+  detector: 'judgeVotes',
+  params: {},
+  launchedAt: JUDGE_LAUNCHED_AT,
+});
+
+const competeWins = (): MilestoneRegistryEntry => ({
+  detector: 'competeWins',
+  params: {},
+  launchedAt: COMPETE_LAUNCHED_AT,
+});
+
 export const creatorMilestoneRegistry: Record<string, MilestoneRegistryEntry> = {
   ...Object.fromEntries(SCORE_TIERS.map((tier) => [scoreTierKey(tier.slug), scoreTier()])),
 
@@ -76,17 +93,24 @@ export const creatorMilestoneRegistry: Record<string, MilestoneRegistryEntry> = 
   'create:models-5': published('model'),
   'create:models-25': published('model'),
   'create:models-100': published('model'),
+  'create:models-500': published('model'),
   'create:articles-1': published('article'),
   'create:articles-5': published('article'),
   'create:articles-25': published('article'),
+  'create:articles-50': published('article'),
+  'create:articles-100': published('article'),
 
   'reach:downloads-100': downloads(),
   'reach:downloads-1000': downloads(),
   'reach:downloads-10000': downloads(),
   'reach:downloads-100000': downloads(),
+  'reach:downloads-1000000': downloads(),
   'reach:followers-100': userMetric('followerCount'),
+  'reach:followers-500': userMetric('followerCount'),
   'reach:followers-1000': userMetric('followerCount'),
+  'reach:followers-5000': userMetric('followerCount'),
   'reach:followers-10000': userMetric('followerCount'),
+  'reach:reactions-100': userMetric('reactionCount'),
   'reach:reactions-1000': userMetric('reactionCount'),
   'reach:reactions-10000': userMetric('reactionCount'),
   'reach:reactions-100000': userMetric('reactionCount'),
@@ -97,6 +121,18 @@ export const creatorMilestoneRegistry: Record<string, MilestoneRegistryEntry> = 
   'earn:shop-sales-500000': shopRevenue(),
   'earn:shop-sales-1000000': shopRevenue(),
   'earn:shop-sales-2000000': shopRevenue(),
+
+  'community:crucible-votes-500': judgeVotes(),
+  'community:crucible-votes-1000': judgeVotes(),
+  'community:crucible-votes-5000': judgeVotes(),
+  'community:crucible-votes-10000': judgeVotes(),
+  'community:crucible-votes-25000': judgeVotes(),
+
+  'compete:wins-1': competeWins(),
+  'compete:wins-5': competeWins(),
+  'compete:wins-10': competeWins(),
+  'compete:wins-25': competeWins(),
+  'compete:wins-100': competeWins(),
 };
 
 export type ActivityMeasure =
@@ -105,7 +141,9 @@ export type ActivityMeasure =
   | 'downloads'
   | 'followers'
   | 'reactions'
-  | 'revenue';
+  | 'revenue'
+  | 'votes'
+  | 'wins';
 
 export const publishedEntityMeasures = {
   model: 'models',
@@ -130,6 +168,10 @@ export function activityMeasureOf(entry: MilestoneRegistryEntry): ActivityMeasur
       return userMetricMeasures[entry.params.metric];
     case 'shopRevenue':
       return 'revenue';
+    case 'judgeVotes':
+      return 'votes';
+    case 'competeWins':
+      return 'wins';
   }
 }
 
@@ -147,4 +189,29 @@ export function isMilestoneAnnounced(
 ) {
   const definition = registry[milestoneKey];
   return !!definition && !definition.silent && achievedAt >= definition.launchedAt;
+}
+
+/** Each activity ladder's thresholds, low to high, keyed by the key less its `-<threshold>`. */
+const activityLadders = (() => {
+  const ladders = new Map<string, number[]>();
+  for (const [key, entry] of Object.entries(creatorMilestoneRegistry)) {
+    if (entry.detector === 'scoreSnapshot') continue;
+    const split = key.lastIndexOf('-');
+    const ladder = ladders.get(key.slice(0, split)) ?? [];
+    ladder.push(Number(key.slice(split + 1)));
+    ladders.set(key.slice(0, split), ladder);
+  }
+  for (const ladder of ladders.values()) ladder.sort((a, b) => a - b);
+  return ladders;
+})();
+
+/**
+ * An activity milestone's rung on its own ladder, 0 (wood) up to 4 (diamond), so badges from
+ * different tracks compare by metal. Null for score tiers and keys the registry does not know.
+ */
+export function milestoneRung(key: string) {
+  const split = key.lastIndexOf('-');
+  if (split < 0) return null;
+  const index = activityLadders.get(key.slice(0, split))?.indexOf(Number(key.slice(split + 1)));
+  return index === undefined || index < 0 ? null : index;
 }

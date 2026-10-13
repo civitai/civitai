@@ -31,6 +31,8 @@ export type GenerationResourceBase = {
   isOwnedByUser?: boolean;
   /** Whether this resource is private (Private availability, or unpublished with epoch details) (computed by server) */
   isPrivate?: boolean;
+  /** Whether this resource's owner can receive a creator-tip share (computed by server) */
+  tipsEnabled?: boolean;
   /**
    * Stamped by `getResourceData` for `Wildcards`-type ModelVersions. The
    * resolved `WildcardSet.id` corresponding to this ModelVersion — present

@@ -40,6 +40,7 @@ vi.mock('~/env/server', () => ({
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: {} }));
 
 import { getImage } from '../image.service';
+import { getImageSchema } from '~/server/schema/image.schema';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
 const VIEWER = 71806;
@@ -99,7 +100,7 @@ describe('getImage postless authorization', () => {
     expect(sql).not.toMatch(/JOIN "Post" p ON p\.id = i\."postId" AND/);
   });
 
-  it('admits a postless image only to the viewer who owns it', async () => {
+  it('admits a never-posted image to the viewer who owns it', async () => {
     const sql = await captureQuery({ id: IMAGE_ID, userId: VIEWER });
 
     // Resolved, so binding the image id in place of the viewer fails here. Drop the `i."userId"`
@@ -121,19 +122,29 @@ describe('getImage postless authorization', () => {
     expect(sql).toContain(`p."publishedAt" < now() OR p."userId" = ${VIEWER}`);
   });
 
+  it('admits a postless image that is the cover of a visible article', async () => {
+    const sql = await captureQuery({ id: IMAGE_ID });
+
+    // Article covers are uploaded without a post, so `/images/<cover id>` 404'd for every reader
+    // but the author. The article clause mirrors getArticleById's non-owner visibility, and stays
+    // behind `i."postId" IS NULL` so an image in an unpublished post can't borrow it. Anchored on
+    // both ends so a conjunct appended to the branch can't hide beside a substring match.
+    expect(sql).toContain(
+      `OR (i."postId" IS NULL AND i."userId" = NULL) OR (i."postId" IS NULL AND EXISTS ( SELECT 1 FROM "Article" a WHERE a."coverId" = i.id AND a.status = 'Published' AND a."publishedAt" IS NOT NULL AND a.ingestion = 'Scanned' )) OR (i."postId" IS NULL AND ( EXISTS (`
+    );
+  });
+
   it('binds NULL for an anonymous viewer, so every ownership branch fails closed', async () => {
     const sql = await captureQuery({ id: IMAGE_ID });
 
     expect(sql).toContain('i."postId" IS NULL AND i."userId" = NULL');
   });
 
-  it('emits no Post reference when the caller opts out of the post', async () => {
-    // `withoutPost` is a client-supplied field on a public procedure, and the article lightbox
-    // sends it. Emitting the post gates without the join is `missing FROM-clause entry for "p"`.
-    const sql = await captureQuery({ id: IMAGE_ID, userId: VIEWER, withoutPost: true });
-
-    expect(sql).not.toContain('JOIN "Post"');
-    expect(sql).not.toContain('p."');
+  it('ignores a withoutPost sent by an old client', async () => {
+    // `image.get` is public, so callers can send any input. Visibility must not depend on it:
+    // every postless image has a server-side rule (owner, article cover, bounty).
+    const input = getImageSchema.parse({ id: IMAGE_ID, withoutPost: true });
+    expect(input).toEqual({ id: IMAGE_ID });
   });
 
   it('leaves the moderator path ungated', async () => {

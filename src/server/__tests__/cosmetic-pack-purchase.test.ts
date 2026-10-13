@@ -81,6 +81,16 @@ describe('assertPackPurchasable', () => {
     await expect(call([member(), foreign()])).resolves.toBeUndefined();
   });
 
+  // Event items (team hats) are checked per buyer at the single purchase: event
+  // window, team colour, paid Buzz. A pack grants members past all of that.
+  it('refuses a pack containing an event-gated member', async () => {
+    const hat = foreign({
+      type: CosmeticType.ContentDecoration,
+      data: { type: 'hat', event: 'any-event', team: 'any-team' },
+    });
+    await expect(call([member(), hat])).rejects.toThrow(/This pack is not available/);
+  });
+
   it('refuses when a member resolved to no published listing', async () => {
     // getPackMembers drops those, so the count is how the caller finds out.
     await expect(call([member()], { memberCount: 2 })).rejects.toThrow(/no longer available/i);

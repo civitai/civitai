@@ -5,6 +5,8 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { resetEnv, setEnv } from '~/__tests__/mocks/env.mock';
 import { logToAxiom, markServerFaultLogged } from '~/server/logging/client';
+// Namespace import so this file still collects on a tree without the counter export.
+import * as httpErrors from '~/server/prom/http-errors';
 import {
   __resetTrpcBatchMetricsForTest,
   isTrpcBatchOverCap,
@@ -12,6 +14,7 @@ import {
 import { getTrpcMaxBatchSize } from '~/server/trpc/batch-cap';
 import { getClientSafeError } from '~/server/trpc/client-safe-error';
 import { TRPC_MAX_BATCH_SIZE } from '~/shared/constants/trpc.constants';
+import client from 'prom-client';
 
 /**
  * BEHAVIOURAL coverage for the wiring inside `src/pages/api/trpc/[trpc].ts`.
@@ -37,6 +40,7 @@ type CapturedOptions = {
   maxBatchSize?: number;
   allowMethodOverride?: boolean;
   onError?: (opts: Record<string, unknown>) => unknown;
+  responseMeta?: (opts: Record<string, unknown>) => { headers?: Record<string, string> };
 };
 
 const h = vi.hoisted(() => ({
@@ -191,6 +195,71 @@ describe('src/pages/api/trpc/[trpc].ts wiring', () => {
   });
 
   // -------------------------------------------------------------------------
+  // Allowlisted-404 skip: image.getGenerationData NOT_FOUND is counted, not logged
+  // -------------------------------------------------------------------------
+
+  const GEN_DATA = 'image.getGenerationData';
+
+  const callOnErrorAt = (path: string, error: TRPCError) =>
+    h.options?.onError?.({
+      error,
+      type: 'query',
+      path,
+      input: { id: 1 },
+      ctx: {},
+      req: request(2),
+    });
+
+  /** The skipped case's counter value, read off the real module (http-errors is not mocked). */
+  const unloggedCount = async (path: string, code: string) => {
+    // Absent counter reads as 0 so the [invariant] controls below fail only on their own
+    // assertions; the skip case still needs a real +1, so a missing counter cannot pass it.
+    const counter = httpErrors.trpcUnloggedClientErrorCounter as
+      | typeof httpErrors.trpcUnloggedClientErrorCounter
+      | undefined;
+    if (!counter) return 0;
+    const metric = await counter.get();
+    const values = metric.values as { value: number; labels: Record<string, string | number> }[];
+    return values.find((v) => v.labels.path === path && v.labels.code === code)?.value ?? 0;
+  };
+
+  it('does NOT ingest a NOT_FOUND from image.getGenerationData, and counts it instead', async () => {
+    const before = await unloggedCount(GEN_DATA, 'NOT_FOUND');
+
+    await callOnErrorAt(GEN_DATA, new TRPCError({ code: 'NOT_FOUND', message: 'none' }));
+
+    expect(vi.mocked(logToAxiom)).not.toHaveBeenCalled();
+    expect(await unloggedCount(GEN_DATA, 'NOT_FOUND')).toBe(before + 1);
+  });
+
+  it('[invariant] POSITIVE CONTROL: a NOT_FOUND from any other procedure IS still ingested', async () => {
+    // Same code, same input shape, one variable changed (the path). Without this, "not called"
+    // above is indistinguishable from an onError that never reaches the ingest at all.
+    const before = await unloggedCount(GEN_DATA, 'NOT_FOUND');
+
+    await callOnErrorAt('image.get', new TRPCError({ code: 'NOT_FOUND', message: 'none' }));
+
+    expect(vi.mocked(logToAxiom)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(logToAxiom)).toHaveBeenCalledWith(
+      expect.objectContaining({ path: 'image.get' }),
+      'civitai-prod'
+    );
+    expect(await unloggedCount(GEN_DATA, 'NOT_FOUND')).toBe(before);
+  });
+
+  it.each(['INTERNAL_SERVER_ERROR', 'BAD_REQUEST'] as const)(
+    '[invariant] still ingests %s from image.getGenerationData (the skip is NOT_FOUND only)',
+    async (code) => {
+      await callOnErrorAt(GEN_DATA, new TRPCError({ code, message: 'boom' }));
+      expect(vi.mocked(logToAxiom)).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(logToAxiom)).toHaveBeenCalledWith(
+        expect.objectContaining({ path: GEN_DATA }),
+        'civitai-prod'
+      );
+    }
+  );
+
+  // -------------------------------------------------------------------------
   // A masked error's ref reaches the log line
   // -------------------------------------------------------------------------
 
@@ -230,5 +299,216 @@ describe('src/pages/api/trpc/[trpc].ts wiring', () => {
     await callOnError(request(2), error);
 
     expect(vi.mocked(logToAxiom)).not.toHaveBeenCalled();
+  });
+
+  // -------------------------------------------------------------------------
+  // Block-token queries: never publicly cacheable, token redacted from logs, GETs counted
+  // -------------------------------------------------------------------------
+  //
+  // The paths are spelled out here rather than imported from the shared constant, so these
+  // assertions do not depend on that module existing (they must FAIL, not fail to collect, on a
+  // tree without the fix) and so a path silently dropped from the constant reads as a failure.
+
+  const BLOCK_TOKEN_QUERIES = [
+    'apps.shared.get',
+    'apps.shared.getCount',
+    'apps.shared.getCounts',
+    'apps.shared.list',
+    'apps.storage.get',
+    'apps.storage.getQuota',
+    'apps.storage.list',
+    'blocks.listMyWorkflows',
+  ] as const;
+
+  const TOKEN = 'header.payload.signature-test-token';
+
+  /** The cache `createContext` seeds for a SESSIONLESS caller — the publicly cacheable case. */
+  const sessionlessCache = () => ({
+    browserTTL: 60,
+    edgeTTL: 60,
+    staleWhileRevalidate: 30,
+    canCache: true,
+    skip: false,
+  });
+
+  const callResponseMeta = (paths: string[], errors: unknown[] = []) => {
+    const removeHeader = vi.fn();
+    const meta = h.options?.responseMeta?.({
+      ctx: { cache: sessionlessCache(), res: { removeHeader } },
+      type: 'query',
+      errors,
+      paths,
+      info: { calls: paths.map((path) => ({ path })) },
+      data: [],
+      eagerGeneration: false,
+    });
+    return { headers: meta?.headers ?? {}, removeHeader };
+  };
+
+  it.each(BLOCK_TOKEN_QUERIES)(
+    'responseMeta: a sessionless error-free %s gets no-store, never a public header',
+    (path) => {
+      const { headers, removeHeader } = callResponseMeta([path]);
+      expect(headers['Cache-Control']).toBe('no-store');
+      expect(headers['Cache-Tag']).toBeUndefined();
+      expect(removeHeader).not.toHaveBeenCalled();
+    }
+  );
+
+  it('responseMeta: a block-token query that errored still gets no-store', () => {
+    const { headers } = callResponseMeta(
+      ['apps.storage.get'],
+      [new TRPCError({ code: 'NOT_FOUND', message: 'none' })]
+    );
+    expect(headers['Cache-Control']).toBe('no-store');
+  });
+
+  it('responseMeta: a batch mixing a block-token query with a public one is no-store', () => {
+    const { headers } = callResponseMeta(['model.getAll', 'apps.shared.list']);
+    expect(headers['Cache-Control']).toBe('no-store');
+  });
+
+  it('POSITIVE CONTROL: responseMeta keeps the public header for an ordinary sessionless query', () => {
+    // Same cache, same shape, one variable changed (the path). Without this, "no-store" above is
+    // indistinguishable from a responseMeta that stopped emitting public headers altogether.
+    const { headers, removeHeader } = callResponseMeta(['model.getAll']);
+    expect(headers['Cache-Control']).toBe(
+      'public, max-age=60, s-maxage=60, stale-while-revalidate=30'
+    );
+    expect(removeHeader).toHaveBeenCalledWith('Set-Cookie');
+  });
+
+  /** The single `input` string the route handed `logToAxiom`. */
+  const loggedInput = () => {
+    expect(vi.mocked(logToAxiom)).toHaveBeenCalledTimes(1);
+    const [payload] = vi.mocked(logToAxiom).mock.calls[0] as [Record<string, unknown>];
+    return payload.input as string | undefined;
+  };
+
+  it.each(['NOT_FOUND', 'BAD_REQUEST', 'INTERNAL_SERVER_ERROR'] as const)(
+    'onError: a %s on a token-bearing input logs blockToken redacted, key kept',
+    async (code) => {
+      await h.options?.onError?.({
+        error: new TRPCError({ code, message: 'boom' }),
+        type: 'query',
+        path: 'apps.storage.get',
+        input: { blockToken: TOKEN, key: 'k' },
+        ctx: {},
+        req: request(2),
+      });
+      const input = loggedInput();
+      expect(input).toBeDefined();
+      expect(input).not.toContain(TOKEN);
+      expect(JSON.parse(input as string)).toEqual({ blockToken: '[redacted]', key: 'k' });
+    }
+  );
+
+  it('onError: redaction does not mutate the input object tRPC handed the procedure', async () => {
+    const original = { blockToken: TOKEN, nested: { blockToken: TOKEN } };
+    await h.options?.onError?.({
+      error: new TRPCError({ code: 'NOT_FOUND', message: 'none' }),
+      type: 'query',
+      path: 'apps.storage.get',
+      input: original,
+      ctx: {},
+      req: request(2),
+    });
+    expect(loggedInput()).not.toContain(TOKEN);
+    expect(original).toEqual({ blockToken: TOKEN, nested: { blockToken: TOKEN } });
+  });
+
+  it('onError: a token nested in a mutation input is redacted too', async () => {
+    await h.options?.onError?.({
+      error: new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'boom' }),
+      type: 'mutation',
+      path: 'blocks.submitWorkflow',
+      input: { blockToken: TOKEN, steps: [{ inner: { blockToken: TOKEN } }] },
+      ctx: {},
+      req: request(2),
+    });
+    const input = loggedInput();
+    expect(input).not.toContain(TOKEN);
+    expect(JSON.parse(input as string)).toEqual({
+      blockToken: '[redacted]',
+      steps: [{ inner: { blockToken: '[redacted]' } }],
+    });
+  });
+
+  it('POSITIVE CONTROL: onError logs an input without a token verbatim', async () => {
+    await h.options?.onError?.({
+      error: new TRPCError({ code: 'NOT_FOUND', message: 'none' }),
+      type: 'query',
+      path: 'image.get',
+      input: { id: 1, note: TOKEN },
+      ctx: {},
+      req: request(2),
+    });
+    // A field that merely CONTAINS token-like text is not a `blockToken` field: left as-is, so
+    // the redaction is keyed on the field, not on a pattern that could eat unrelated input.
+    expect(JSON.parse(loggedInput() as string)).toEqual({ id: 1, note: TOKEN });
+  });
+
+  /** Read the GET counter off the default registry by NAME (absent on a tree without it ⇒ 0). */
+  const getCount = async (path: string) => {
+    const metric = client.register.getSingleMetric('civitai_app_block_token_get_requests_total');
+    if (!metric) return 0;
+    const { values } = await metric.get();
+    return values.find((v) => v.labels.path === path)?.value ?? 0;
+  };
+
+  const tokenRequest = (method: string, trpc: string, input?: string) =>
+    ({
+      method,
+      headers: {},
+      query: { trpc, ...(input === undefined ? {} : { input }) },
+    } as unknown as NextApiRequest);
+
+  const TOKEN_INPUT = JSON.stringify({ json: { blockToken: TOKEN, key: 'k' } });
+
+  it('counter: every block-token procedure is published (seeded) once the route loads', async () => {
+    // Seeding is what makes "no GETs" read as 0 instead of an absent series — the signal the
+    // later GET refusal is gated on. Set equality: a seed loop that skipped any path, or none,
+    // fails here (other tests in this file increment only three of the eight).
+    const metric = client.register.getSingleMetric('civitai_app_block_token_get_requests_total');
+    expect(metric).toBeDefined();
+    const { values } = await (metric as NonNullable<typeof metric>).get();
+    expect(values.map((v) => v.labels.path).sort()).toEqual([...BLOCK_TOKEN_QUERIES]);
+  });
+
+  it('counter: a GET carrying a block token increments its procedure', async () => {
+    const before = await getCount('apps.storage.get');
+    await route(tokenRequest('GET', 'apps.storage.get', TOKEN_INPUT), res);
+    expect(await getCount('apps.storage.get')).toBe(before + 1);
+  });
+
+  it('counter: a POST to the same procedure does not increment', async () => {
+    // The current client sends these as POST (input in the body, so `req.query.input` is absent
+    // in production). The query input is set here anyway, so this case varies ONLY the method.
+    const before = await getCount('apps.storage.get');
+    await route(tokenRequest('POST', 'apps.storage.get', TOKEN_INPUT), res);
+    expect(await getCount('apps.storage.get')).toBe(before);
+  });
+
+  it('counter: a batched GET counts only its block-token calls', async () => {
+    const beforeList = await getCount('apps.shared.list');
+    const beforeWorkflows = await getCount('blocks.listMyWorkflows');
+    const input = JSON.stringify({
+      0: { json: { limit: 1 } },
+      1: { json: { blockToken: TOKEN } },
+      2: { json: { blockToken: TOKEN } },
+    });
+    await route(
+      tokenRequest('GET', 'model.getAll,apps.shared.list,blocks.listMyWorkflows', input),
+      res
+    );
+    expect(await getCount('apps.shared.list')).toBe(beforeList + 1);
+    expect(await getCount('blocks.listMyWorkflows')).toBe(beforeWorkflows + 1);
+    expect(await getCount('model.getAll')).toBe(0);
+  });
+
+  it('counter: a GET to a block-token procedure with no token in the URL does not increment', async () => {
+    const before = await getCount('apps.storage.getQuota');
+    await route(tokenRequest('GET', 'apps.storage.getQuota', JSON.stringify({ json: {} })), res);
+    expect(await getCount('apps.storage.getQuota')).toBe(before);
   });
 });

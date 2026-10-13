@@ -17,6 +17,7 @@ import {
 } from '~/shared/utils/prisma/enums';
 import { logToAxiom, safeError } from '~/server/logging/client';
 import { resolveDownloadUrl } from '~/utils/delivery-worker';
+import type { ResolveAttribution } from '~/utils/resolve-attribution';
 import type { NameableFile, NameableModel, NameableVersion } from '~/utils/model-file-naming';
 import { resolveModelFileName } from '~/utils/model-file-naming';
 import { removeEmpty } from '~/utils/object-helpers';
@@ -161,6 +162,7 @@ export const getFileForModelVersion = async ({
   noAuth,
   fileId,
   direct,
+  attribution,
 }: {
   modelVersionId: number;
   type?: ModelFileType;
@@ -182,6 +184,11 @@ export const getFileForModelVersion = async ({
    * this flag is read after all of them.
    */
   direct?: boolean;
+  /**
+   * Which code path and actor this resolve is for, forwarded to the storage
+   * resolver for attribution only. Required so every caller names itself.
+   */
+  attribution: ResolveAttribution;
 }): Promise<ModelVersionFileResult> => {
   const modelVersion = await dbRead.modelVersion.findFirst({
     // `model: { is: {} }` requires the (required) `model` relation to exist.
@@ -362,7 +369,10 @@ export const getFileForModelVersion = async ({
     versionFiles,
   });
   try {
-    const { url } = await resolveDownloadUrl(file.id, file.url, filename, { direct });
+    const { url } = await resolveDownloadUrl(file.id, file.url, filename, {
+      direct,
+      ...attribution,
+    });
     return {
       status: 'success',
       url,

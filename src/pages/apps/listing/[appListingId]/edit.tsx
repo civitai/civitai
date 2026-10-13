@@ -3,6 +3,7 @@ import {
   IconArrowLeft,
   IconCoin,
   IconHistory,
+  IconMessage2,
   IconPhoto,
   IconRocket,
   IconSettings,
@@ -13,6 +14,7 @@ import { useRouter } from 'next/router';
 
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { AppCollaboratorsPanel } from '~/components/Apps/AppCollaboratorsPanel';
+import { AppFeedbackInboxPanel } from '~/components/Apps/AppFeedbackInboxPanel';
 import { AppEarningsPanel } from '~/components/Apps/AppEarningsPanel';
 import type { EditorTab } from '~/components/Apps/appListingEditorTabs';
 import {
@@ -93,6 +95,7 @@ const TAB_ICONS: Record<EditorTab, typeof IconSettings> = {
   collaborators: IconUsers,
   publishing: IconRocket,
   history: IconHistory,
+  feedback: IconMessage2,
 };
 
 /**
@@ -142,12 +145,25 @@ export default function AppListingEditPage() {
     { enabled: !!features.appBlocks && !!appListingId, retry: false }
   );
   const context = data as AuthoringContext | undefined;
+  // Whether the Feedback tab exists at all: only once the listing has a row its owner may see.
+  // Fetched beside the context rather than folded into it, so the authoring context stays free
+  // of the Feedback table; same seat authz as the inbox list. Awaited before the tab set is
+  // derived so a `?tab=feedback` deep link resolves on the first render instead of mounting the
+  // default panel first. An error (no access, or the column not migrated here) hides the tab.
+  // `gcTime: 0`: the global `staleTime: Infinity` would otherwise let a `false` cached on an earlier
+  // visit survive the first report arriving, so the `/apps/build` "N new feedback" badge (fetched
+  // fresh) would link here and `?tab=feedback` would fall back. Dropping the entry on unmount makes
+  // every visit wait for a fresh answer, exactly like the first load; the query is one EXISTS.
+  const feedbackPresence = trpc.appFeedback.hasAnyForListing.useQuery(
+    { appListingId },
+    { enabled: !!features.appBlocks && !!appListingId, retry: false, gcTime: 0 }
+  );
 
   if (!features.appBlocks) return <NotFound />;
   // FORBIDDEN (no role) / NOT_FOUND both settle to NotFound (retry:false).
   if (error) return <NotFound />;
 
-  if (isLoading || !context) {
+  if (isLoading || !context || feedbackPresence.isLoading) {
     return (
       <AppsPageLayout measure={APPS_PAGE_MEASURES['/apps/listing/[appListingId]/edit']}>
         <Center py="xl">
@@ -162,7 +178,8 @@ export default function AppListingEditPage() {
     appBlockId: context.appBlockId,
     role: context.role,
     // 🔴 THE SECURITY INPUT. A non-authorable listing (`removed`/`rejected`) collapses the
-    // set to at most Publishing + History — no Details, and above all no Collaborators.
+    // set to at most Publishing + History (+ Feedback once it has rows) — no Details, and above
+    // all no Collaborators.
     // See `editorTabsFor`; the page must never hardcode a tab past this derivation.
     status: context.status,
     // 🔴 THE SECOND HALF OF THAT INPUT, and without it `status` cannot answer the question.
@@ -174,6 +191,7 @@ export default function AppListingEditPage() {
     // actual verb. Same field the Publishing tab already branches on, two panels down.
     lastModerationAction: context.lastModerationAction,
     capabilities: context.capabilities,
+    hasFeedback: feedbackPresence.data?.hasAny === true,
   });
   const tab = resolveEditorTab(router.query.tab, tabs);
 
@@ -309,6 +327,12 @@ export default function AppListingEditPage() {
             {tabs.includes('history') ? (
               <Tabs.Panel value="history" pt="md" data-testid="apps-edit-panel-history">
                 <ListingHistoryPanel appListingId={context.appListingId} />
+              </Tabs.Panel>
+            ) : null}
+
+            {tabs.includes('feedback') ? (
+              <Tabs.Panel value="feedback" pt="md" data-testid="apps-edit-panel-feedback">
+                <AppFeedbackInboxPanel appListingId={context.appListingId} />
               </Tabs.Panel>
             ) : null}
 

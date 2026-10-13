@@ -377,7 +377,12 @@ describe('referencedTarget parses compare.ts output', () => {
   });
 
   it('resolves targets that are real model tables, not fragments', () => {
-    const tables = new Set(catalog.tables);
+    // Schema tables count too: a relation to a table created after the snapshot was captured
+    // is a real target, not a fragment.
+    const tables = new Set([
+      ...catalog.tables,
+      ...parsePrismaSchema(schemaSource).models.map((m) => m.table),
+    ]);
     const targets = new Set(missingFks.map((f) => referencedTarget(f) as string));
     expect(targets.size).toBeGreaterThan(1);
     // Every parsed target should name a real table; a regex that grabbed the wrong span

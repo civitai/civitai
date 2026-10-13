@@ -10,8 +10,13 @@ import { imageIngestCronCounter, imageIngestCronQueueDepth } from '~/server/prom
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { EntityType, JobQueueType } from '~/shared/utils/prisma/enums';
 import { getImageScanRetryLimit } from '~/server/services/image-scan-failure';
+import { CSAM_HOLD_MAX_DAYS } from '~/server/services/image-appeal-flag';
 import { BLOCKED_IMAGE_RETENTION_DAYS } from '@civitai/shared/job-queue';
 import { decreaseDate } from '~/utils/date-helpers';
+import {
+  appealTrainingHeld,
+  isAppealTrainingConfigured,
+} from '~/server/jobs/appeal-decision-records';
 
 const IMAGE_SCANNING_ERROR_DELAY = 60 * 1; // 1 hour
 const IMAGE_SCANNING_RETRY_LIMIT = 9;
@@ -502,12 +507,6 @@ export async function sendImagesForScanBulk(
   return { sent, failed };
 }
 
-// Ceiling on the CSAM hold below, measured from the REPORT, not from the block: the
-// send/archive pipeline has no retry limit and no dead-letter, so a report nobody finishes
-// would otherwise hold a user's blocked media forever. Clocking it from the block instead
-// would silently shrink each report's budget by however old the block already was.
-const CSAM_HOLD_MAX_DAYS = 30;
-
 /**
  * 🔴 The POSITIVE signal that a human moderator took THIS ONE IMAGE down. It is the only thing
  * that unlocks blob retraction in `remove-blocked-images` — see the long note at the split for why
@@ -558,7 +557,10 @@ export const MODERATOR_TAKEDOWN_ACTIVITIES = ['review', 'bulkRemove'] as const;
  * `reportHoldExpiredUserIds` are the owners this run already decided to purge despite an open
  * report, past `CSAM_HOLD_MAX_DAYS`. Only valid on a statement over an unaliased "Image".
  */
-export function purgeHoldGuard(reportHoldExpiredUserIds: number[]) {
+export function purgeHoldGuard(
+  reportHoldExpiredUserIds: number[],
+  { holdForTrainingCopy }: { holdForTrainingCopy: boolean }
+) {
   return Prisma.sql`
     "Image".ingestion = 'Blocked'::"ImageIngestionStatus"
     AND "Image"."needsReview" IS DISTINCT FROM 'appeal'
@@ -571,6 +573,11 @@ export function purgeHoldGuard(reportHoldExpiredUserIds: number[]) {
           AND (c."reportSentAt" IS NULL OR c."archivedAt" IS NULL)
       )
     )
+    ${
+      holdForTrainingCopy
+        ? Prisma.sql`AND NOT ${appealTrainingHeld(Prisma.raw('"Image"'))}`
+        : Prisma.empty
+    }
   `;
 }
 
@@ -853,7 +860,9 @@ export const removeBlockedImages = createJob(
     };
     const takedowns = takedownCandidateIds.filter(isTakedown);
     const deletedWithoutRetraction = takedownCandidateIds.filter((id) => !isTakedown(id));
-    const onlyWhere = purgeHoldGuard(expiredUserIds);
+    const onlyWhere = purgeHoldGuard(expiredUserIds, {
+      holdForTrainingCopy: isAppealTrainingConfigured(),
+    });
     const deleted: number[] = [];
     if (takedowns.length > 0) {
       const rows = await deleteImages(takedowns, true, { retractPublicBlobs: true, onlyWhere });

@@ -384,6 +384,15 @@ const featureFlags = createFeatureFlags({
   // Creator Studio composer. Both apps must read the key `creator-announcements`
   // verbatim — a flag only one side honours ships the half-visible state.
   creatorAnnouncements: { availability: ['mod'], fliptKey: 'creator-announcements' },
+  // The post planner (docs/batch-scheduling-planner-element.md): the `post.*` planner procedures,
+  // their REST twins and both hosts. Creator Studio reads the same Flipt key.
+  postPlanner: { availability: ['mod'], fliptKey: 'post-planner', displayName: 'Post planner' },
+  batchPostScheduling: {
+    availability: ['mod'],
+    fliptKey: 'batch-post-scheduling',
+    displayName: 'Batch post scheduling',
+  },
+  postPresets: { availability: ['mod'], fliptKey: 'post-presets', displayName: 'Post presets' },
   // Gates CREATING stickers, seeing them in shops, and the picker. Deliberately
   // does NOT gate rendering — a sticker already in a comment or DM must render
   // for everyone, or flipping this off orphans content that is already out there.
@@ -415,6 +424,11 @@ const featureFlags = createFeatureFlags({
   // The journey page, its entry points and the tier pointer in score refusals, plus tier badge grants
   // and their notifications (see creator-journey-flag.service.ts for the off-session evaluation).
   creatorJourney: { availability: ['mod'], fliptKey: 'creator-journey' },
+  // Civitai's 4th Birthday (Team Hats). Only the Flipt key is used, by the event engine's access
+  // rule (src/server/events/event-access.ts), which adds the preview and launch windows. Do not gate
+  // UI on `features.birthday2026`: it knows nothing of the dates, the preview or arming. Ask
+  // `event.getAccess` (usePlayableEventDecoration) instead.
+  birthday2026: { availability: ['mod'], fliptKey: 'birthday-2026' },
   // The three entry points below are gated SEPARATELY from `remixGallery` so they
   // can be released one at a time, and each one is checked TOGETHER with it
   // rather than instead of it. `remixGallery` gates the submit mutation, so a
@@ -662,6 +676,16 @@ const featureFlags = createFeatureFlags({
   // only on-switch + kill-switch. (Mirrors the `hiddenPrefsCompact` /
   // `genTabDeferView` `availability: []` precedent.)
   appBlocksAgenticReview: { availability: [], fliptKey: 'app-blocks-agentic-review' },
+  // App Assistant (`/apps/assistant`); read only through `canAccessAppAssistant`. `[]` rather than
+  // `['mod']` for the `appBlocksAgenticReview` reason: client and server agree while the flag is absent.
+  appAssistant: { availability: [], fliptKey: 'app-assistant' },
+  // App Store sub-listings — RESPONSE-SHAPE flag for the store grid: when on for the viewer AND
+  // the caller sets `includeSubListings`, `appListings.listAvailable` mixes approved sub-listing
+  // cards into the page. `[]` so it is dark for everyone, mods included, until the Flipt flag
+  // exists. Writes are NOT gated on it (they are gated by the parent's
+  // `app_sub_listing_parents` row), so items can queue for moderation while the store side is
+  // dark.
+  appStoreSubListings: { availability: [], fliptKey: 'app-store-sub-listings' },
   // 🔴 THE PRIVATE-RUN SURFACE HAS NO ENTRY HERE, DELIBERATELY — do not "complete the
   // set" by adding one. Its gate is the server accessor `isAppBlocksPrivateRunEnabled`
   // (`app-blocks-flag.ts`), which reads the `app-blocks-private-run-enabled` Flipt key
@@ -748,6 +772,12 @@ const featureFlags = createFeatureFlags({
   // cohort is opened. isFliptSync answers false for an unknown flag or an
   // unreachable Flipt, so an absent flag is deny-by-default.
   resourceIntentJev: { availability: [], fliptKey: 'resource-intent-jev' },
+  // Serves the co-occurrence POOL_MERGE list instead of HYBRID_10. Read only behind
+  // `resourceIntentJev`, so it changes nothing while that is off. Dark like it.
+  resourceIntentPoolMerge: { availability: [], fliptKey: 'resource-intent-pool-merge' },
+  // Admits `kind: 'checkpoint'` (ATTACH_BM checkpoint lists). Read only behind
+  // `resourceIntentJev`, so it changes nothing while that is off. Dark like it.
+  resourceIntentCheckpoint: { availability: [], fliptKey: 'resource-intent-checkpoint' },
 });
 
 export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];

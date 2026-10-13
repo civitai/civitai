@@ -29,6 +29,7 @@ import { Availability, ModelFileVisibility } from '~/shared/utils/prisma/enums';
 import { stringifyAIR } from '~/shared/utils/air';
 import { Flags } from '~/shared/utils/flags';
 import { UserFlag } from '~/shared/constants/user-flags.constants';
+import { isCreatorTipEligible } from '~/shared/utils/creator-tip';
 import { isEvictable } from '~/shared/constants/model-version-flags.constants';
 
 export const schema = z.object({
@@ -479,11 +480,16 @@ export default MixedAuthEndpoint(async function handler(
     });
   }
 
-  // A version charging its own fee earns through that channel instead of tips + creator comp. The
+  // A version charging its own fee earns through that channel instead of creator comp. The
   // lineage fee (hasSourceRule) settles to a different creator, so it doesn't opt THIS one out.
   const payoutEnabled =
     !Flags.hasFlag(modelVersion.userFlags, UserFlag.DisablePayout) &&
     !(modelVersion.licensingFee != null && modelVersion.licensingFee > 0);
+  // Independent of the fee: a fee creator still gets their share of the creator tip.
+  const tipsEnabled = isCreatorTipEligible({
+    ownerId: modelVersion.modelUserId,
+    ownerFlags: modelVersion.userFlags,
+  });
 
   const data = {
     air,
@@ -503,7 +509,8 @@ export default MixedAuthEndpoint(async function handler(
     canGenerate,
     isFeatured,
     isPromoted: modelVersion.isPromoted,
-    evictable: isEvictable(modelVersion.versionFlags),
+    // Computed, not written to the flag, so the pin lifts by itself when the promotion ends.
+    evictable: !modelVersion.isPromoted && isEvictable(modelVersion.versionFlags),
     requireAuth: modelVersion.requireAuth,
     checkPermission: modelVersion.checkPermission,
     earlyAccessEndsAt: modelVersion.checkPermission ? modelVersion.earlyAccessEndsAt : undefined,
@@ -513,6 +520,7 @@ export default MixedAuthEndpoint(async function handler(
     sfwOnly: modelVersion.sfwOnly,
     fees,
     payoutEnabled,
+    tipsEnabled,
   };
   res.status(200).json(data);
 });

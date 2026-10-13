@@ -809,6 +809,52 @@ describe('resolveUserRestriction — ruling scope', () => {
     );
   });
 
+  it('records the ruling reason and the internal note on the row, and tells the user neither', async () => {
+    const id = fileRestriction('generation');
+
+    await resolveUserRestriction({
+      userRestrictionId: id,
+      status: UserRestrictionStatus.Overturned,
+      resolvedMessage: 'Access restored.',
+      resolvedReason: 'word-match',
+      internalNotes: 'matched inside a character name',
+      moderatorId: MOD_ID,
+    });
+
+    expect(store.restrictions[0]).toMatchObject({
+      resolvedReason: 'word-match',
+      internalNotes: 'matched inside a character name',
+    });
+    expect(createNotification).toHaveBeenCalledExactlyOnceWith({
+      type: 'generation-restriction-overturned',
+      key: `generation-restriction-overturned:${USER_ID}:${id}`,
+      category: 'System',
+      userId: USER_ID,
+      details: { resolvedMessage: 'Access restored.' },
+    });
+  });
+
+  // Without a message the note is the only free text in the call, which is where a fallback would reach for it.
+  it('does not fall back to the internal note when there is no user message', async () => {
+    const id = fileRestriction('generation');
+
+    await resolveUserRestriction({
+      userRestrictionId: id,
+      status: UserRestrictionStatus.Upheld,
+      resolvedReason: 'other',
+      internalNotes: 'second account of a banned user',
+      moderatorId: MOD_ID,
+    });
+
+    expect(createNotification).toHaveBeenCalledExactlyOnceWith({
+      type: 'generation-restriction-upheld',
+      key: `generation-restriction-upheld:${USER_ID}:${id}`,
+      category: 'System',
+      userId: USER_ID,
+      details: { resolvedMessage: '' },
+    });
+  });
+
   // The refusal precedes the already-resolved check, so a row this path cannot rule on reports the
   // reason it cannot rather than an argument about its status.
   it('refuses an unwired type before it argues about the status', async () => {

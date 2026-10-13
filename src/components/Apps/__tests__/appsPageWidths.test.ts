@@ -973,6 +973,7 @@ describe('every /apps page on disk is classified', () => {
         // sub-nav row. So the set SHRANK by two — which is exactly the direction this
         // ledger exists to make visible, and the reason it is a `toEqual` and not a floor.
         '/apps/activity',
+        '/apps/assistant',
         '/apps/build',
         '/apps/invites',
         '/apps/listing/[appListingId]/edit',
@@ -983,7 +984,7 @@ describe('every /apps page on disk is classified', () => {
         '/apps/store-preview/[slug]',
         '/apps/submit',
       ]);
-      expect(RENDERING_ROUTES).toHaveLength(12);
+      expect(RENDERING_ROUTES).toHaveLength(13);
     });
 
     test('every RETURN of every page renders the layout (AST, not text)', () => {

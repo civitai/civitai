@@ -75,6 +75,7 @@ vi.mock('~/server/services/feed-primary.service', async (importOriginal) => {
 });
 
 import { getAllImagesIndex } from '../image.service';
+import { getNewCreatorUserIds } from '~/server/services/new-creators.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
 const request = () =>
@@ -165,6 +166,19 @@ describe('getAllImagesIndex with feed-service-primary', () => {
     expect(fetchFeedPrimary).toHaveBeenCalledWith(
       expect.stringContaining('userIds=11%2C12'),
       expect.anything()
+    );
+  });
+
+  // The home block's follower cap rides on the input. If a route drops it, that route serves the
+  // uncapped board and the 1k+ creators come back to the homepage shelf.
+  it('resolves the follower-capped board when the caller asks for one', async () => {
+    primaryOn.mockReturnValue(true);
+    newCreatorIds.mockReturnValue([11, 12]);
+    fetchFeedPrimary.mockResolvedValue({ status: 200, ms: 3, ids: [], nextCursor: undefined });
+    await getAllImagesIndex({ ...request(), newCreators: true, newCreatorsMaxFollowers: 500 });
+    expect(vi.mocked(getNewCreatorUserIds)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(getNewCreatorUserIds)).toHaveBeenCalledWith(
+      expect.objectContaining({ entity: 'images', maxFollowers: 500 })
     );
   });
 

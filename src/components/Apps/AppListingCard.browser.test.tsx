@@ -82,6 +82,13 @@ const mocks = vi.hoisted(() => ({
   delistMutate: vi.fn(),
   resetOffsiteMutate: vi.fn(),
   resetOnsiteMutate: vi.fn(),
+  // The owner "Visibility" item's lazy read. Every `useQuery` call is recorded with its
+  // `enabled`, so a test can show the read is OFF until the item is clicked. The stub
+  // returns data only when enabled, matching React Query's behaviour for a disabled query.
+  authoringCalls: [] as { input: unknown; enabled: boolean | undefined }[],
+  authoringContext: null as null | Record<string, unknown>,
+  setVisibilityMutate: vi.fn(),
+  setVisibilityAsModMutate: vi.fn(),
 }));
 
 vi.mock('~/hooks/useCurrentUser', () => ({
@@ -105,7 +112,7 @@ vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
 /**
  * 🔴 tRPC IS REACHED ONLY THROUGH THE `⋮` MENU'S MODALS, AND ONLY AFTER IT IS OPENED.
  *
- * The card itself makes no request. The shared `AppListingActionsMenu` mounts its four
+ * The card itself makes no request. The shared `AppListingActionsMenu` mounts its
  * modals lazily — the first time the menu opens — so a test that never opens it needs
  * none of this. It is mocked anyway because several tests below DO open the menu, and
  * because a suite that would explode the moment someone adds such a test is a trap.
@@ -168,12 +175,31 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
           isPending: false,
         }),
       },
+      // 🔴 THE TWO VISIBILITY PICKERS' HOOKS. Both modals mount (lazily) the first time an
+      // owner's or moderator's menu opens, so a missing key here throws AT MOUNT and fails
+      // every test that opens the menu — not just the visibility ones.
+      getAuthoringContext: {
+        useQuery: (input: unknown, opts?: { enabled?: boolean }) => {
+          mocks.authoringCalls.push({ input, enabled: opts?.enabled });
+          return opts?.enabled
+            ? { data: mocks.authoringContext ?? undefined, isError: false }
+            : { data: undefined, isError: false };
+        },
+      },
+      setListingVisibility: {
+        useMutation: () => ({ mutate: mocks.setVisibilityMutate, isPending: false }),
+      },
+      setListingVisibilityAsModerator: {
+        useMutation: () => ({ mutate: mocks.setVisibilityAsModMutate, isPending: false }),
+      },
     },
     useUtils: () => ({
       appListings: {
         getMyReview: { invalidate: async () => undefined },
         listReviews: { invalidate: async () => undefined },
         getAppDetail: { invalidate: async () => undefined },
+        getAuthoringContext: { invalidate: async () => undefined },
+        listMine: { invalidate: async () => undefined },
       },
     }),
   },
@@ -185,6 +211,10 @@ const { AppListingCard } = await import('./AppListingCard');
 beforeEach(() => {
   mocks.currentUser = null;
   mocks.features = { appBlocks: true, appListings: true, appBlocksPages: false };
+  mocks.authoringCalls = [];
+  mocks.authoringContext = null;
+  mocks.setVisibilityMutate.mockClear();
+  mocks.setVisibilityAsModMutate.mockClear();
 });
 
 /** A signed-in moderator who is NOT the fixture's owner (`base().creator.id === 5`). */
@@ -240,6 +270,7 @@ function base(over: Partial<ListingCard>): ListingCard {
     recommend: { recommendedCount: 0, notRecommendedCount: 0, recommendPct: null },
     reviewCount: 0,
     openCount: 0,
+    restrictedAudience: null,
     kindData: {
       kind: 'onsite',
       appBlockId: 'blk-1',
@@ -722,8 +753,9 @@ describe('AppListingCard', () => {
    * NARROWING OF THE CLAIM, NOT A SUBSTITUTION OF CONVENIENCE. This suite used to
    * measure two cards' `a[href^="/user/"]` chips. The store card no longer renders
    * an author chip at all, and the recommend rollup left the meta block in the same
-   * change — so the only content still positioned by the title's height is the two
-   * conditional badges and the tagline. The action row and the stats line below it
+   * change — so the only content still positioned by the title's height is the
+   * conditional badge row (Beta / restricted-visibility / owner Incomplete) and the
+   * tagline. The action row and the stats line below it
    * are bottom-pinned by `mt="auto"`, so measuring THEM would pass with the
    * reservation deleted and would be a guard on nothing. The tagline is the
    * shallowest thing the reservation still moves, so it is what this measures.
@@ -1098,6 +1130,108 @@ describe('AppListingCard', () => {
     renderWithProviders(<AppListingCard card={base({})} canOpenPage preview />);
     await expect.element(page.getByText('My App')).toBeInTheDocument();
     expect(page.getByTestId('apps-listing-card-actions-menu').elements()).toHaveLength(0);
+  });
+
+  // ── Visibility items ─────────────────────────────────────────────────────────
+
+  test('the OWNER gets a Visibility item; a moderator who is not the owner does not', async () => {
+    mocks.currentUser = OWNER;
+    renderWithProviders(<AppListingCard card={base({})} canOpenPage />);
+    await openCardMenu();
+    await expect.element(page.getByTestId('apps-listing-owner-visibility')).toBeInTheDocument();
+    await expect
+      .element(page.getByTestId('apps-listing-owner-visibility'))
+      .toHaveTextContent('Visibility');
+    // Not a moderator, so no moderator copy of the control.
+    expect(page.getByTestId('apps-listing-mod-visibility').elements()).toHaveLength(0);
+  });
+
+  test('a MODERATOR (not the owner) gets "Set visibility" and NOT the owner item', async () => {
+    mocks.currentUser = MODERATOR;
+    renderWithProviders(<AppListingCard card={base({})} canOpenPage />);
+    await openCardMenu();
+    const item = page.getByTestId('apps-listing-mod-visibility');
+    await expect.element(item).toBeInTheDocument();
+    await expect.element(item).toHaveTextContent('Set visibility');
+    expect(page.getByTestId('apps-listing-owner-visibility').elements()).toHaveLength(0);
+  });
+
+  test('an OWNER who is also a MODERATOR gets "Visibility" and NOT "Set visibility" — the other mod items stay', async () => {
+    mocks.currentUser = { ...OWNER, isModerator: true };
+    renderWithProviders(<AppListingCard card={base({})} canOpenPage />);
+    await openCardMenu();
+    await expect
+      .element(page.getByTestId('apps-listing-owner-visibility'))
+      .toHaveTextContent('Visibility');
+    // The rest of the moderator section is present, so the absence below is about
+    // set-visibility alone and not a missing moderator section.
+    await expect.element(page.getByTestId('apps-listing-mod-message-owner')).toBeInTheDocument();
+    await expect.element(page.getByTestId('apps-listing-hide-menu-item')).toBeInTheDocument();
+    await expect.element(page.getByTestId('apps-listing-unpublish-menu-item')).toBeInTheDocument();
+    await expect.element(page.getByTestId('apps-listing-mod-manage')).toBeInTheDocument();
+    expect(page.getByTestId('apps-listing-mod-visibility').elements()).toHaveLength(0);
+    expect(document.body.textContent).not.toContain('Set visibility');
+  });
+
+  test('🔴 the owner picker’s read is OFF until the item is clicked, then loads that listing', async () => {
+    mocks.currentUser = OWNER;
+    mocks.authoringContext = {
+      status: 'approved',
+      role: 'owner',
+      lastModerationAction: null,
+      visibility: 'testers',
+      visibilityAvailable: true,
+    };
+    renderWithProviders(<AppListingCard card={base({})} canOpenPage />);
+    await openCardMenu();
+    await expect.element(page.getByTestId('apps-listing-owner-visibility')).toBeInTheDocument();
+    // Mounted with the menu, but never enabled: opening the menu requests nothing.
+    expect(mocks.authoringCalls.length).toBeGreaterThan(0);
+    expect(mocks.authoringCalls.every((c) => c.enabled === false)).toBe(true);
+
+    await page.getByTestId('apps-listing-owner-visibility').click();
+    // The REAL `ListingVisibilityModal`, fed from the fetched context.
+    await expect
+      .element(page.getByTestId('apps-listing-owner-visibility-save').first())
+      .toBeInTheDocument();
+    expect(mocks.authoringCalls.some((c) => c.enabled === true)).toBe(true);
+    expect(mocks.authoringCalls.filter((c) => c.enabled).map((c) => c.input)).toContainEqual({
+      appListingId: 'l1',
+    });
+  });
+
+  test('🔴 an INELIGIBLE fetched row gets an explanation, not the picker', async () => {
+    // `rejected` carries no settable level (`showVisibility` is false), which no store
+    // surface would normally render — the point is that the fetched status decides.
+    mocks.currentUser = OWNER;
+    mocks.authoringContext = {
+      status: 'rejected',
+      role: 'owner',
+      lastModerationAction: null,
+      visibility: null,
+      visibilityAvailable: true,
+    };
+    renderWithProviders(<AppListingCard card={base({})} canOpenPage />);
+    await openCardMenu();
+    await page.getByTestId('apps-listing-owner-visibility').click();
+    await expect
+      .element(page.getByTestId('apps-listing-owner-visibility-unavailable').first())
+      .toBeInTheDocument();
+    expect(
+      document.querySelectorAll('[data-testid="apps-listing-owner-visibility-save"]')
+    ).toHaveLength(0);
+  });
+
+  test('the moderator item opens the moderator picker for this listing', async () => {
+    mocks.currentUser = MODERATOR;
+    renderWithProviders(<AppListingCard card={base({})} canOpenPage />);
+    await openCardMenu();
+    await page.getByTestId('apps-listing-mod-visibility').click();
+    // The REAL `ModListingVisibilityModal` — its reason field and title.
+    await expect
+      .element(page.getByTestId('apps-mod-visibility-reason').first())
+      .toBeInTheDocument();
+    expect(document.body.textContent).toContain('Set visibility for my-app');
   });
 
   test('🔴 EXACTLY ONE Edit affordance in the accessibility tree', async () => {
@@ -2032,5 +2166,76 @@ describe('AppListingCard — the beta badge', () => {
     renderWithProviders(<AppListingCard card={card as never} canOpenPage />);
     await expect.element(page.getByTestId('apps-listing-card-beta')).toBeInTheDocument();
     expect(document.body.textContent).not.toContain('this must never render on a card');
+  });
+});
+
+/**
+ * The RESTRICTED-VISIBILITY badge ("Testers only" / "Moderators only" / "Unlisted").
+ *
+ * The label/tooltip decisions are pinned in the BLOCKING unit tier
+ * (`__tests__/listingVisibilityCopy.test.ts` → `visibilityBadgeFor`); this suite pins only
+ * that the card renders what that function returns, where, and that it does not add a
+ * stacked row to the meta block. Absences are read off `querySelector` / `textContent`
+ * (the `.not.toBeInTheDocument()` matcher is inert here — civitai/civitai#4197), each
+ * after a positive control.
+ */
+describe('AppListingCard — the restricted-visibility badge', () => {
+  test.each([
+    ['testers', 'Testers only'],
+    ['moderators', 'Moderators only'],
+    ['private', 'Unlisted'],
+  ] as const)('restrictedAudience=%s renders "%s"', async (restrictedAudience, label) => {
+    renderWithProviders(<AppListingCard card={base({ restrictedAudience })} canOpenPage />);
+    const badge = page.getByTestId('apps-listing-card-visibility');
+    await expect.element(badge).toBeInTheDocument();
+    expect(badge.element().textContent).toBe(label);
+  });
+
+  test('renders NO badge when restrictedAudience is null', async () => {
+    renderWithProviders(<AppListingCard card={base({ restrictedAudience: null })} canOpenPage />);
+    await expect.element(page.getByText('My App')).toBeInTheDocument();
+    expect(document.querySelector('[data-testid="apps-listing-card-visibility"]')).toBeNull();
+    for (const label of ['Testers only', 'Moderators only', 'Unlisted']) {
+      expect(document.body.textContent).not.toContain(label);
+    }
+  });
+
+  test('🔴 shares ONE line with the Beta badge — the meta block grows no stacked row', async () => {
+    renderWithProviders(
+      <Sized width={494} card={base({ isBeta: true, restrictedAudience: 'testers' })} />
+    );
+    const beta = page.getByTestId('apps-listing-card-beta');
+    const vis = page.getByTestId('apps-listing-card-visibility');
+    await expect.element(beta).toBeInTheDocument();
+    await expect.element(vis).toBeInTheDocument();
+    // Same wrapping row element, and the same visual line at a width with room for both.
+    const row = page.getByTestId('apps-listing-card-badges').element();
+    expect(beta.element().closest('[data-testid="apps-listing-card-badges"]')).toBe(row);
+    expect(vis.element().closest('[data-testid="apps-listing-card-badges"]')).toBe(row);
+    expect(sameLine(beta.element(), vis.element()), 'Beta and the visibility badge wrapped').toBe(
+      true
+    );
+  });
+
+  test('🔴 adding the visibility badge beside Beta does not move the TAGLINE', async () => {
+    // The relationship the title reservation protects is "the tagline sits at one y". A
+    // second badge stacked as its own row would push it down by a badge height; in the
+    // shared row it must not move at all.
+    renderWithProviders(
+      <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start' }}>
+        <Sized width={494} card={base({ slug: 'one', name: 'One', isBeta: true })} />
+        <Sized
+          width={494}
+          card={base({ slug: 'two', name: 'Two', isBeta: true, restrictedAudience: 'moderators' })}
+        />
+      </div>
+    );
+    await expect.element(page.getByTestId('apps-listing-card-visibility')).toBeInTheDocument();
+    const taglines = Array.from(document.querySelectorAll('p, div')).filter(
+      (el) => el.children.length === 0 && el.textContent === 'A handy app'
+    );
+    expect(taglines, 'expected one tagline per card').toHaveLength(2);
+    const [a, b] = taglines.map((el) => el.getBoundingClientRect().top);
+    expect(Math.abs(a - b), 'the visibility badge pushed the tagline down').toBeLessThan(1);
   });
 });

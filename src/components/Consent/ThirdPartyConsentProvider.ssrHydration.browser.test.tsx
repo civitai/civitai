@@ -43,23 +43,12 @@ import type { ConsentDecision } from '~/components/Consent/consent.utils';
  * that the fix costs nothing at hydration.
  */
 
-// 🔴 SIBLING FILE, SAME STUB. `ThirdPartyConsentProvider.browser.test.tsx` stubs
-// the SAME four ambient queries. `AppProvider` has accreted them one at a time, so a fifth must
-// be added to BOTH. This is a comment rather than a shared module because the failure is LOUD:
-// an unstubbed query is a `TypeError` naming the missing property during render, not a silent
-// zero, and the duplicate is eight lines of fixture with no logic in it.
-// Only the ambient queries `AppProvider` fires. Spread of the real module, not a wholesale
-// replacement (`local-rules/no-wholesale-module-mock`).
+// The suite measures no tRPC query, so every procedure `AppProvider` fires (and any it gains later)
+// answers through `makeTrpcProxy`'s inert hooks rather than a hand-kept list. Spread of the real
+// module, not a wholesale replacement (`local-rules/no-wholesale-module-mock`).
 vi.mock('~/utils/trpc', async (importOriginal) => {
-  const seeded = () => ({ data: undefined, isInitialLoading: false });
-  return {
-    ...(await importOriginal<typeof TrpcMod>()),
-    trpc: {
-      user: { getSettings: { useQuery: seeded }, getFollowingUsers: { useQuery: seeded } },
-      system: { getLiveNow: { useQuery: seeded } },
-      chat: { getUserSettings: { useQuery: seeded } },
-    },
-  };
+  const { makeTrpcProxy } = await import('../../../test/trpcProxyStub');
+  return { ...(await importOriginal<typeof TrpcMod>()), trpc: makeTrpcProxy() };
 });
 
 const { AppProvider } = await import('~/providers/AppProvider');

@@ -377,6 +377,13 @@ Things worth knowing before you rely on it:
   the whole run. A live waiter that has been streaming from the start is unaffected.
 - **The exit code is `exitCodeFor`'s, in both waiters.** `test wait` and `pnpm run test:unit:run`
   read the same rule, so a run killed by a signal reports 1 from either, never a shell 255.
+- **With the result cache on, editing anything every test imports reruns the whole suite, in every
+  tree.** Every unit test inherits `src/__tests__/setup.ts`'s import graph. On 2026-10-07, 32 files
+  were in all 19,197 cache records: setup.ts, `src/__tests__/mocks/*`, `src/env/server*.ts` and the
+  `@civitai/redis` and `@civitai/db` clients among them. The most-edited were
+  `packages/civitai-redis/src/client.ts` (19 commits in two weeks) and `src/env/server-schema.ts`
+  (7). Expect a full run after touching one, and think twice before adding an import to setup.ts
+  or a shared mock. `pnpm-lock.yaml`, `vitest.config.mts` and `tsconfig.json` do the same.
 
 ## Session Object
 
