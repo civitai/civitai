@@ -15,13 +15,12 @@ vi.mock('~/server/flipt/client', () => ({
 vi.mock('~/server/services/scan-label-flag.service', () => ({
   recordScanLabelFlag: mockRecordFlag,
 }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn(async () => undefined) }));
-
 import {
   decideUploadPromptVerdict,
   labelUploadPrompt,
   scanUploadPrompt,
 } from '~/server/services/upload-prompt-scan.service';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 const result = (over: Record<string, unknown> = {}) => ({
   label: 'young',
