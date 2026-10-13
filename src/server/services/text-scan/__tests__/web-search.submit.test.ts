@@ -225,6 +225,39 @@ describe('scanEntity with the web-search pass', () => {
     expect(keys).toEqual(['Model:shadow', 'Model:search-shadow']);
     expect(submitWorkflow).not.toHaveBeenCalled();
   });
+  it("clears composed-to-nothing text on the asked pass's row only", async () => {
+    modes('shadow', 'shadow');
+    registerTextScanProfile({
+      entityType: 'Model',
+      labels: ['nsfw', 'poi', 'minor'],
+      minChars: 0,
+      load,
+    });
+    try {
+      load.mockResolvedValue(
+        new Map([[7, { fields: [{ heading: 'Name', text: '  ' }], declared: {} }]])
+      );
+      em.findUnique.mockResolvedValue({
+        workflowId: 'wf-9',
+        status: 'Succeeded',
+        nsfwLevel: 1,
+        triggeredLabels: ['minor'],
+        result: { version: 1 },
+      } as any);
+      const cleared = () =>
+        vi.mocked(em.updateMany).mock.calls.map(([args]) => (args.where as any).entityType);
+
+      await scanEntity({ entityType: 'Model', entityId: 7, pass: 'web-search' });
+      expect(cleared()).toEqual(['Model:search-shadow']);
+      vi.mocked(em.updateMany).mockClear();
+      await scanEntity({ entityType: 'Model', entityId: 7, pass: 'main' });
+      expect(cleared()).toEqual(['Model:shadow']);
+      expect(submitWorkflow).not.toHaveBeenCalled();
+    } finally {
+      registerTextScanProfile({ entityType: 'Model', labels: ['nsfw', 'poi', 'minor'], load });
+    }
+  });
+
   it('segments both passes alike; only the search steps carry the tool', async () => {
     modes('active', 'active');
     const long = Array.from({ length: 400 }, (_, i) => `word${i}`).join(' ');

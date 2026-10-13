@@ -320,6 +320,42 @@ describe('scanEntity', () => {
     expect(submitWorkflow).not.toHaveBeenCalled();
   });
 
+  describe('when the text composes to nothing past a zero minChars', () => {
+    const raising = {
+      workflowId: 'wf-9',
+      status: 'Succeeded',
+      nsfwLevel: 8,
+      triggeredLabels: ['nsfw'],
+      result: { version: 1 },
+    };
+    beforeEach(() => {
+      registerTextScanProfile({ entityType: 'Article', labels: ['nsfw'], minChars: 0, load });
+      load.mockResolvedValue(
+        new Map([[7, { fields: [{ heading: 'Body', text: '   ' }], declared: {} }]])
+      );
+    });
+
+    it("clears a stale raising verdict on the current pass's row", async () => {
+      em.findUnique.mockResolvedValue(raising as any);
+      expect(await scanEntity({ entityType: 'Article', entityId: 7 })).toEqual({
+        status: 'skipped',
+        reason: 'too-short',
+      });
+      expect(em.updateMany).toHaveBeenCalledTimes(1);
+      const { where, data } = vi.mocked(em.updateMany).mock.calls[0][0] as any;
+      expect(where).toMatchObject({ entityType: 'Article:shadow', entityId: 7 });
+      expect(data).toMatchObject({ status: 'Succeeded', triggeredLabels: [], nsfwLevel: 1 });
+      expect(submitWorkflow).not.toHaveBeenCalled();
+    });
+
+    it('writes nothing over a clean verdict', async () => {
+      em.findUnique.mockResolvedValue({ ...raising, nsfwLevel: 1, triggeredLabels: [] } as any);
+      await scanEntity({ entityType: 'Article', entityId: 7 });
+      expect(em.updateMany).not.toHaveBeenCalled();
+      expect(em.upsert).not.toHaveBeenCalled();
+    });
+  });
+
   const words = (count: number) =>
     Array.from({ length: count }, (_, i) => `w${String(i).padStart(4, '0')}`).join(' ');
   const LONG = {
