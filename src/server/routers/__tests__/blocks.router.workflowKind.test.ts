@@ -421,6 +421,36 @@ describe("kind:'workflow' ESTIMATE", () => {
     }
   );
 
+  it('a quote of ZERO is a price, not a missing quote', async () => {
+    whatifCost = { total: 0, base: 0 };
+    const { snapshot } = await estimate();
+    expect(snapshot).toEqual({
+      workflowId: 'wf_estimate',
+      status: 'pending',
+      cost: { total: 0, authorFee: 0 },
+    });
+  });
+
+  it('a rejection may name an id the app sent, in a step input or in `arguments`, and no other', async () => {
+    const OWN_STEP_ID = 'AMXT0PQ4Z8K2N6W1R5V9C3J7H0B4D8F2';
+    const OWN_ARGUMENT_ID = 'KD83HF02JS91LQ47ZX65MN28CV30BT19';
+    const FOREIGN_ID = 'ZQ7L2M9X4C1V8B5N0K3J6H2G9F4D1S7A';
+    const b = body({
+      steps: [{ $type: 'echo', input: { blob: OWN_STEP_ID } }],
+      arguments: { other: OWN_ARGUMENT_ID },
+    });
+    for (const id of [OWN_STEP_ID, OWN_ARGUMENT_ID]) {
+      whatifError = orchestratorError(404, `The blob ${id} was not found.`);
+      expect((await estimate(b)).snapshot.error).toBe(
+        `No price quote for this workflow: the orchestrator rejected the request: The blob ${id} was not found.`
+      );
+    }
+    whatifError = orchestratorError(404, `The blob ${FOREIGN_ID} was not found.`);
+    expect((await estimate(b)).snapshot.error).toBe(
+      `No price quote for this workflow: ${REJECTED_NO_REASON}`
+    );
+  });
+
   it('an orchestrator reply with no `cost` at all is unpriced too', async () => {
     whatifCost = undefined;
     const { snapshot } = await estimate();
@@ -1108,19 +1138,19 @@ describe("kind:'workflow' SUBMIT — the money path", () => {
     }
   });
 
-  it('🔴 a REJECTED quote does not refuse the submit: it proceeds at the ceiling the estimate will not show', async () => {
-    whatifError = orchestratorError(400, REJECTION_REASON);
-    expect((await estimate()).snapshot).toMatchObject({
-      status: 'failed',
-      errorCode: 'workflow_quote_rejected',
-    });
-    realizedCost = { total: 20, base: 20 };
-    const { snapshot } = await submit();
-    expect(snapshot.workflowId).toBe(WORKFLOW_ID);
-    expect(snapshot.errorCode).toBeUndefined();
-    expect(counter(USER_CAP)).toBe(CEILING);
-    expect(h.reserveAppSpend).toHaveBeenCalledWith('apb_test', CEILING, { units: STEPS });
-  });
+  it.each(QUOTE_FAILURES)(
+    '🔴 no quote ($name) does not refuse the submit: it proceeds at the ceiling the estimate will not show',
+    async ({ arrange, errorCode }) => {
+      arrange();
+      expect((await estimate()).snapshot).toMatchObject({ status: 'failed', errorCode });
+      realizedCost = { total: 20, base: 20 };
+      const { snapshot } = await submit();
+      expect(snapshot.workflowId).toBe(WORKFLOW_ID);
+      expect(snapshot.errorCode).toBeUndefined();
+      expect(counter(USER_CAP)).toBe(CEILING);
+      expect(h.reserveAppSpend).toHaveBeenCalledWith('apb_test', CEILING, { units: STEPS });
+    }
+  );
 
   const repeatBody = () =>
     body({

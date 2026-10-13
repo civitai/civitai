@@ -11884,10 +11884,10 @@ type PassThroughQuote =
  *
  * 🔴 EVERY OUTCOME IS COUNTED, and it matters MORE here than on the registry arm
  * it borrows the counter from. There a missing quote fails the submit closed, so
- * the outage is loud; here both arms deliberately fall back to their ceiling
- * and proceed (a training `$type` excepted, see `refuseUnquotedTraining`) — so
- * without this pair, an orchestrator that stopped pricing would move every job
- * onto its ceiling with nothing anywhere moving. Read the ratio, not `estimate_absent` alone.
+ * the outage is loud; here both arms' SUBMITS proceed at their ceiling (a training
+ * `$type` or a `repeat` excepted) — so without this pair, an orchestrator that
+ * stopped pricing would move every submitted job onto its ceiling unnoticed. Read
+ * the ratio, not `estimate_absent` alone.
  *
  * 🔴 LABELLED WITH A CONSTANT, never the submitted `$type` — `step` is a metric
  * label and the `$type` set is open by construction on this arm. Same reasoning
@@ -12528,8 +12528,8 @@ function buildMultiStepWorkflowTags(
 }
 
 /**
- * The refusal for a workflow the orchestrator would not price, when it may not
- * proceed at its ceiling: one running a training step (see
+ * The refusal, on both the estimate and the submit, for an unpriced workflow the
+ * submit may not run at its ceiling: one running a training step (see
  * `refuseUnquotedTraining`), or one with a `repeat` at any depth. A step
  * `timeout` is a deadline from workflow creation shared by every child of a
  * `repeat`, so it cannot bound their spend.
