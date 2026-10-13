@@ -26,6 +26,7 @@ type Row = {
   ingestion: ArticleIngestionStatus;
   publishedAt: Date | null;
   scheduledAt: Date | null;
+  user: { bannedAt: Date | null; muted: boolean; deletedAt: Date | null };
 };
 
 type Where = Partial<Record<keyof Row, unknown>>;
@@ -57,8 +58,19 @@ const draft = (over: Partial<Row> & { id: number }): Row => ({
   ingestion: ArticleIngestionStatus.Scanned,
   publishedAt: null,
   scheduledAt: minutes(-1),
+  user: { bannedAt: null, muted: false, deletedAt: null },
   ...over,
 });
+
+// Runs `change` on the table after the job's read and before its writes.
+function changeAfterRead(change: () => void) {
+  const read = article.findMany.getMockImplementation()!;
+  article.findMany.mockImplementationOnce(async (args: never) => {
+    const rows = await read(args);
+    change();
+    return rows;
+  });
+}
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -177,15 +189,93 @@ describe('publishDueScheduledArticles', () => {
   it('leaves a row whose state changed after the read for the next run', async () => {
     table = [draft({ id: 1 })];
     // A cancel lands between the job's read and its write.
-    const realFindMany = article.findMany.getMockImplementation()!;
-    article.findMany.mockImplementationOnce(async (args: never) => {
-      const rows = await realFindMany(args);
-      table[0].scheduledAt = null;
-      return rows;
-    });
+    changeAfterRead(() => (table[0].scheduledAt = null));
 
     expect((await publishDueScheduledArticles(NOW)).published).toEqual([]);
     expect(table[0]).toMatchObject({ status: ArticleStatus.Draft, publishedAt: null });
     expect(mockProcessEngagement).not.toHaveBeenCalled();
+  });
+
+  it('does not publish an article whose scan was blocked after the read', async () => {
+    table = [draft({ id: 1 })];
+    changeAfterRead(() => (table[0].ingestion = ArticleIngestionStatus.Blocked));
+
+    expect((await publishDueScheduledArticles(NOW)).published).toEqual([]);
+    expect(table[0]).toMatchObject({ status: ArticleStatus.Draft, publishedAt: null });
+  });
+
+  it('does not publish an article that went live by hand after the read', async () => {
+    table = [draft({ id: 1 })];
+    const manual = minutes(-30);
+    changeAfterRead(() => Object.assign(table[0], { publishedAt: manual }));
+
+    expect((await publishDueScheduledArticles(NOW)).published).toEqual([]);
+    expect(table[0].publishedAt).toEqual(manual);
+  });
+
+  it('tells nobody about a failed article whose schedule was cancelled after the read', async () => {
+    table = [draft({ id: 1, ingestion: ArticleIngestionStatus.Blocked })];
+    changeAfterRead(() => (table[0].scheduledAt = null));
+
+    expect((await publishDueScheduledArticles(NOW)).failed).toEqual([]);
+    expect(mockCreateNotification).not.toHaveBeenCalled();
+  });
+
+  it('treats a scan error like a block', async () => {
+    table = [draft({ id: 1, ingestion: ArticleIngestionStatus.Error })];
+
+    expect((await publishDueScheduledArticles(NOW)).failed).toEqual([1]);
+    expect(table[0]).toMatchObject({ status: ArticleStatus.Draft, scheduledAt: null });
+  });
+
+  it('keys the failure notice on the schedule, so a later schedule is told again', async () => {
+    const scheduledAt = minutes(-3);
+    table = [draft({ id: 4, ingestion: ArticleIngestionStatus.Blocked, scheduledAt })];
+
+    await publishDueScheduledArticles(NOW);
+
+    expect(mockCreateNotification).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ key: `article-schedule-failed-4-${scheduledAt.getTime()}` })
+    );
+  });
+
+  it('refreshes the count cache for an article sent to Processing', async () => {
+    table = [draft({ id: 1, userId: 3, ingestion: ArticleIngestionStatus.Pending })];
+
+    await publishDueScheduledArticles(NOW);
+
+    expect(mockRefreshCount).toHaveBeenCalledExactlyOnceWith(3);
+  });
+
+  it("withdraws, without publishing or notifying, a banned or muted author's article", async () => {
+    table = [
+      draft({ id: 1, user: { bannedAt: minutes(-10), muted: false, deletedAt: null } }),
+      draft({ id: 2, user: { bannedAt: null, muted: true, deletedAt: null } }),
+    ];
+
+    expect(await publishDueScheduledArticles(NOW)).toEqual({
+      published: [],
+      processing: [],
+      failed: [],
+    });
+    for (const row of table)
+      expect(row).toMatchObject({
+        status: ArticleStatus.Draft,
+        publishedAt: null,
+        scheduledAt: null,
+      });
+    expect(mockProcessEngagement).not.toHaveBeenCalled();
+    expect(mockCreateNotification).not.toHaveBeenCalled();
+  });
+
+  it("keeps going when one article's side effects fail", async () => {
+    table = [draft({ id: 1, userId: 1 }), draft({ id: 2, userId: 2 })];
+    mockCreateNotification.mockRejectedValueOnce(new Error('notification service down'));
+
+    expect((await publishDueScheduledArticles(NOW)).published).toEqual([1, 2]);
+    expect(mockProcessEngagement).toHaveBeenCalledTimes(2);
+    expect(mockProcessEngagement).toHaveBeenLastCalledWith(
+      expect.objectContaining({ entityId: 2 })
+    );
   });
 });

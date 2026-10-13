@@ -20,6 +20,7 @@ import * as z from 'zod';
 import { ArticleEditEventCard } from '~/components/Article/ArticleEditEventCard';
 import { articleEditEventCard } from '~/components/Article/article-edit-event-card.utils';
 import { ArticleScanStatus } from '~/components/Article/ArticleScanStatus';
+import { getArticleScheduleSubmit } from '~/components/Article/article-schedule-submit';
 import { BackButton } from '~/components/BackButton/BackButton';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
@@ -190,16 +191,13 @@ export function ArticleUpsertForm({ article }: Props) {
     lockedProperties,
     isOfficial,
     content,
-    // The loaded article seeds these into the form; sending them back would re-submit the stored
-    // schedule on every save. The schedule only moves on an explicit intent.
-    scheduledAt: _storedScheduledAt,
-    publishedAt: _storedPublishedAt,
-    ...rest
+    ...values
   }: z.infer<typeof schema>) => {
-    const scheduledAt = scheduleIntentRef.current;
+    const { rest, scheduledAt, publishNow } = getArticleScheduleSubmit(values, {
+      publishing,
+      scheduleIntent: scheduleIntentRef.current,
+    });
     scheduleIntentRef.current = undefined;
-    // `publishing` is state and may still hold an earlier Publish click; a schedule submit is never one.
-    const publishNow = publishing && scheduledAt === undefined;
     const selectedCategory = data?.items.find((cat) => cat.id === categoryId);
     const tags =
       selectedTags && selectedCategory ? selectedTags.concat([selectedCategory]) : selectedTags;

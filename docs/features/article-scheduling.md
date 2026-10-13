@@ -15,7 +15,10 @@ Publish. Behind the `articleScheduling` flag (Flipt `article-scheduling`, fallba
     `publishedAt`, so they fire now and not at schedule time.
   - `Pending` / `Rescan`: Processing; the ingestion recompute publishes it when the scan settles.
   - `Blocked` / `Error`: the schedule is dropped, the article stays a Draft and the owner is told.
-- Each write re-checks the state it was decided on, so a cancel or edit racing the job wins.
+  - Author banned, muted or deleted since scheduling: the schedule is dropped, nothing is sent.
+- Each job write re-checks the state it was decided on, so a cancel or edit racing the job wins.
+  The editor's save is guarded the other way: a never-published draft is written only while it is
+  still one, so a save that read it just before go-live fails with "reload" instead of un-publishing it.
 - Only a never-published Draft can be scheduled: a republish keeps its original `publishedAt`, so a
   scheduled republish would surface at the old date. Same window as posts: 10 minutes to 3 months
   ahead, picked in the author's local time and stored as an instant.

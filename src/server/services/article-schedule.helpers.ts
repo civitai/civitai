@@ -28,16 +28,19 @@ export function getArticleScheduleError(
   return null;
 }
 
-export type ScheduledArticleGoLive = 'publish' | 'process' | 'fail';
+export type ScheduledArticleGoLive = 'publish' | 'process' | 'fail' | 'withdraw';
 
 /**
- * What a due scheduled article becomes, by its scan state: live now, Processing until the scan
- * settles (the ingestion recompute then publishes it, as it does a manual publish), or back to a
- * plain draft because an image or the text was blocked or failed to scan.
+ * What a due scheduled article becomes: live now, Processing until the scan settles (the ingestion
+ * recompute then publishes it, as it does a manual publish), back to a plain draft because an image
+ * or the text was blocked or failed to scan, or withdrawn because its author could no longer publish
+ * by hand. Standing was checked when the schedule was saved and can change before go-live.
  */
 export function getScheduledArticleGoLive(
-  ingestion: ArticleIngestionStatus
+  ingestion: ArticleIngestionStatus,
+  author: { bannedAt: Date | null; muted: boolean; deletedAt: Date | null }
 ): ScheduledArticleGoLive {
+  if (author.bannedAt || author.muted || author.deletedAt) return 'withdraw';
   switch (ingestion) {
     case ArticleIngestionStatus.Scanned:
       return 'publish';

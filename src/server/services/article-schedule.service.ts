@@ -23,7 +23,13 @@ const GO_LIVE_BATCH = 500;
 export async function publishDueScheduledArticles(now: Date) {
   const due = await dbWrite.article.findMany({
     where: { status: ArticleStatus.Draft, scheduledAt: { lte: now } },
-    select: { id: true, userId: true, ingestion: true, scheduledAt: true },
+    select: {
+      id: true,
+      userId: true,
+      ingestion: true,
+      scheduledAt: true,
+      user: { select: { bannedAt: true, muted: true, deletedAt: true } },
+    },
     orderBy: { scheduledAt: 'asc' },
     take: GO_LIVE_BATCH,
   });
@@ -33,7 +39,7 @@ export async function publishDueScheduledArticles(now: Date) {
   const failed: { id: number; userId: number; scheduledAt: Date | null }[] = [];
 
   for (const article of due) {
-    const outcome = getScheduledArticleGoLive(article.ingestion);
+    const outcome = getScheduledArticleGoLive(article.ingestion, article.user);
     const guard = {
       id: article.id,
       status: ArticleStatus.Draft,
@@ -62,7 +68,7 @@ export async function publishDueScheduledArticles(now: Date) {
         where: guard,
         data: { scheduledAt: null },
       });
-      if (count) failed.push(article);
+      if (count && outcome === 'fail') failed.push(article);
     }
   }
 

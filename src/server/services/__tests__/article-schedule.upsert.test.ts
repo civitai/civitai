@@ -13,17 +13,21 @@ vi.mock('~/server/services/blocklist.service', () => ({
 }));
 vi.mock('~/server/db/db-lag-helpers', async (importOriginal) => ({
   ...(await importOriginal<typeof DbLagHelpers>()),
-  preventReplicationLag: vi.fn(async () => {}),
+  preventReplicationLag: vi.fn(async () => undefined),
   getDbWithoutLag: vi.fn(async () => mockDbRead),
 }));
 vi.mock('~/server/redis/caches', async (importOriginal) => {
   const actual = await importOriginal<typeof RedisCaches>();
   return {
     ...actual,
-    userArticleCountCache: { ...actual.userArticleCountCache, refresh: vi.fn(async () => {}) },
+    userArticleCountCache: {
+      ...actual.userArticleCountCache,
+      refresh: vi.fn(async () => undefined),
+    },
   };
 });
 
+import { Prisma } from '@prisma/client';
 import { upsertArticle } from '~/server/services/article.service';
 import { ArticleStatus } from '~/shared/utils/prisma/enums';
 
@@ -142,5 +146,70 @@ describe('upsertArticle — scheduling', () => {
     expect(data.scheduledAt).toEqual(when);
     expect(data.status).toBe(ArticleStatus.Draft);
     expect(data.publishedAt).toBeUndefined();
+  });
+
+  it('clears the schedule when publishing now sends the article to Processing', async () => {
+    await upsert({ status: ArticleStatus.Processing });
+
+    expect(updateData().scheduledAt).toBeNull();
+  });
+
+  it('refuses to schedule an article with a blocked image, as it refuses to publish one', async () => {
+    mockDbRead.imageConnection.findMany.mockResolvedValue([
+      {
+        image: {
+          id: 1,
+          url: 'blocked.jpeg',
+          ingestion: 'Blocked',
+          blockedFor: 'policy',
+          nsfwLevelLocked: false,
+          scanJobs: null,
+        },
+      },
+    ]);
+
+    await expect(upsert({ scheduledAt: inHours(2), scanContent: true })).rejects.toThrow(
+      /image\(s\) blocked/
+    );
+    expect(mockDbWrite.article.update).not.toHaveBeenCalled();
+  });
+
+  it('schedules when the images are clean (control for the case above)', async () => {
+    mockDbRead.imageConnection.findMany.mockResolvedValue([]);
+
+    await upsert({ scheduledAt: inHours(2), scanContent: true });
+
+    expect(updateData().scheduledAt).toBeInstanceOf(Date);
+  });
+
+  it('writes a never-published draft only if it is still a never-published draft', async () => {
+    await upsert({ status: ArticleStatus.Draft });
+
+    expect(mockDbWrite.article.update.mock.calls[0][0].where).toEqual({
+      id: ARTICLE_ID,
+      status: ArticleStatus.Draft,
+      publishedAt: null,
+    });
+  });
+
+  it('writes a published article by id alone', async () => {
+    mockStored({ publishedAt: inHours(-48), status: ArticleStatus.Published });
+
+    await upsert({ status: ArticleStatus.Published });
+
+    expect(mockDbWrite.article.update.mock.calls[0][0].where).toEqual({ id: ARTICLE_ID });
+  });
+
+  it('says so when the draft went live while it was being edited', async () => {
+    mockDbWrite.article.update.mockRejectedValueOnce(
+      new Prisma.PrismaClientKnownRequestError('No record was found for an update.', {
+        code: 'P2025',
+        clientVersion: 'test',
+      })
+    );
+
+    await expect(upsert({ status: ArticleStatus.Draft })).rejects.toThrow(
+      /published while you were editing/
+    );
   });
 });

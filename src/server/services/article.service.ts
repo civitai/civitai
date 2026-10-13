@@ -851,6 +851,8 @@ export const upsertArticle = async ({
   metadata?: ArticleMetadata;
   scanContent?: boolean;
 }) => {
+  // Set only while the guarded draft write below is in flight, so its P2025 is told apart.
+  let writingNeverPublishedDraft = false;
   try {
     await throwOnBlockedUserContent([data.title, data.content], {
       isModerator,
@@ -1221,9 +1223,16 @@ export const upsertArticle = async ({
       publishedAt = article.publishedAt;
     }
 
+    // Status and publishedAt above were derived from a read. For a never-published draft the
+    // scheduled-publishing job may take it live in between; an unguarded write would put it back to a
+    // Draft with publishedAt NULL, and the next publish would fire the go-live side effects again.
+    writingNeverPublishedDraft = article.status === ArticleStatus.Draft && !article.publishedAt;
+    const updateWhere: Prisma.ArticleWhereUniqueInput = writingNeverPublishedDraft
+      ? { id, status: ArticleStatus.Draft, publishedAt: null }
+      : { id };
     const result = await dbWrite.$transaction(async (tx) => {
       const updated = await tx.article.update({
-        where: { id },
+        where: updateWhere,
         data: {
           ...data,
           ...(moderatorNsfwLevelBasis !== undefined ? { moderatorNsfwLevelBasis } : {}),
@@ -1291,6 +1300,7 @@ export const upsertArticle = async ({
 
       return updated;
     });
+    writingNeverPublishedDraft = false;
 
     if (!result) throw throwNotFoundError(`No article with id ${id}`);
 
@@ -1338,6 +1348,15 @@ export const upsertArticle = async ({
     return { ...result, hasModeratorOverride };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
+    // The guarded write matched nothing: the draft went live after it was read.
+    if (
+      writingNeverPublishedDraft &&
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === 'P2025'
+    )
+      throw throwBadRequestError(
+        'This article was published while you were editing it. Reload it and save again.'
+      );
     throw throwDbError(error);
   }
 };

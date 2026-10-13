@@ -8,6 +8,7 @@ import { ArticleIngestionStatus, ArticleStatus } from '~/shared/utils/prisma/enu
 const NOW = new Date('2026-10-20T16:00:00.000Z');
 const minutes = (n: number) => new Date(NOW.getTime() + n * 60_000);
 const neverPublished = { publishedAt: null, status: ArticleStatus.Draft };
+const inGoodStanding = { bannedAt: null, muted: false, deletedAt: null };
 
 describe('getArticleScheduleError', () => {
   it('accepts a never-published draft, and a new article, inside the window', () => {
@@ -49,11 +50,21 @@ describe('getScheduledArticleGoLive', () => {
     [ArticleIngestionStatus.Blocked, 'fail'],
     [ArticleIngestionStatus.Error, 'fail'],
   ] as const)('%s -> %s', (ingestion, outcome) => {
-    expect(getScheduledArticleGoLive(ingestion)).toBe(outcome);
+    expect(getScheduledArticleGoLive(ingestion, inGoodStanding)).toBe(outcome);
   });
 
   it('covers every ingestion state', () => {
     for (const ingestion of Object.values(ArticleIngestionStatus))
-      expect(['publish', 'process', 'fail']).toContain(getScheduledArticleGoLive(ingestion));
+      expect(['publish', 'process', 'fail']).toContain(
+        getScheduledArticleGoLive(ingestion, inGoodStanding)
+      );
+  });
+
+  it.each([
+    ['banned', { ...inGoodStanding, bannedAt: NOW }],
+    ['muted', { ...inGoodStanding, muted: true }],
+    ['deleted', { ...inGoodStanding, deletedAt: NOW }],
+  ])('withdraws a scanned article whose author is %s', (_label, author) => {
+    expect(getScheduledArticleGoLive(ArticleIngestionStatus.Scanned, author)).toBe('withdraw');
   });
 });
