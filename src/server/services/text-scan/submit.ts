@@ -141,19 +141,29 @@ export function textScanContentHash({
   model,
   thinking,
   variant,
+  segmentBudget,
 }: {
   user: string;
   promptIds: PromptIds;
   model: string;
   thinking: boolean;
   variant?: TextScanVariant;
+  segmentBudget?: { maxInputChars: number; maxSegments: number };
 }) {
   const ids = Object.keys(promptIds)
     .sort()
     .map((key) => `${key}=${promptIds[key]}`)
     .join(',');
   const tail = variant ? `\u0000${variant}` : '';
-  return hashContent(`${user}\u0000${ids}\u0000${model}\u0000thinking=${thinking}${tail}`);
+  // Only text over the budget is split, so only its hash may change with the budget: a shorter
+  // text keeps its hash and is not rescanned when the budget changes.
+  const segmenting =
+    segmentBudget && user.length > segmentBudget.maxInputChars
+      ? `\u0000segments=${segmentBudget.maxInputChars}x${segmentBudget.maxSegments}`
+      : '';
+  return hashContent(
+    `${user}\u0000${ids}\u0000${model}\u0000thinking=${thinking}${tail}${segmenting}`
+  );
 }
 
 export function textScanExternalId({
@@ -383,6 +393,7 @@ async function submitTextScanPass({
     model: config.model,
     thinking: config.thinking,
     variant,
+    segmentBudget: config,
   });
 
   const emEntityType = textScanEmEntityType(entityType, mode, variant);

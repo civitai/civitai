@@ -609,6 +609,7 @@ async function sampleShadow(input: ShadowSampleInput) {
               promptIds: row.result.promptIds,
               model: row.result.model,
               thinking: config.thinking,
+              segmentBudget: config,
             }) !== row.contentHash,
     };
   });

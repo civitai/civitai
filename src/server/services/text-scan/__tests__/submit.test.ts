@@ -406,6 +406,49 @@ describe('scanEntity', () => {
     expect(second).not.toBe(first);
   });
 
+  it('hashes the segment budget only for text over maxInputChars', async () => {
+    const hash = (user: string, maxInputChars: number, maxSegments: number) =>
+      textScanContentHash({
+        user,
+        promptIds: { base: 1 },
+        model: 'air:test',
+        thinking: false,
+        segmentBudget: { maxInputChars, maxSegments },
+      });
+    const plain = (user: string) =>
+      textScanContentHash({ user, promptIds: { base: 1 }, model: 'air:test', thinking: false });
+    const short = 'x'.repeat(1000);
+    expect(hash(short, 1000, 10)).toBe(plain(short));
+    expect(hash(short, 1000, 20)).toBe(hash(short, 1000, 10));
+    expect(hash(short, 2000, 10)).toBe(plain(short));
+
+    const long = 'x'.repeat(1001);
+    expect(hash(long, 1000, 10)).not.toBe(plain(long));
+    expect(hash(long, 1000, 20)).not.toBe(hash(long, 1000, 10));
+    expect(hash(long, 500, 10)).not.toBe(hash(long, 1000, 10));
+  });
+
+  it('rescans a long entity when maxSegments changes, but not a short one', async () => {
+    load.mockResolvedValue(new Map([[7, LONG]]));
+    await scanEntity({ entityType: 'Post', entityId: 7 });
+    vi.mocked(getTextScanConfig).mockResolvedValue({ ...CONFIG, maxSegments: 20 });
+    await scanEntity({ entityType: 'Post', entityId: 7 });
+    const [longBefore, longAfter] = em.upsert.mock.calls.map(([args]) => args.create.contentHash);
+    expect(longAfter).not.toBe(longBefore);
+
+    vi.mocked(getTextScanConfig).mockResolvedValue(CONFIG);
+    load.mockResolvedValue(
+      new Map([[7, { fields: [{ heading: 'Title', text: 'Hello world' }], declared: {} }]])
+    );
+    await scanEntity({ entityType: 'Post', entityId: 7 });
+    vi.mocked(getTextScanConfig).mockResolvedValue({ ...CONFIG, maxSegments: 20 });
+    await scanEntity({ entityType: 'Post', entityId: 7 });
+    const [, , shortBefore, shortAfter] = em.upsert.mock.calls.map(
+      ([args]) => args.create.contentHash
+    );
+    expect(shortAfter).toBe(shortBefore);
+  });
+
   it('a retry after a failed multi-segment scan resubmits every segment under a new externalId', async () => {
     load.mockResolvedValue(new Map([[7, LONG]]));
     await scanEntity({ entityType: 'Post', entityId: 7 });
