@@ -70,7 +70,6 @@ export const reportNotifications = createNotificationProcessor({
       url: `${entityUrlMap[details.entityType as EntityType]}/${details.entityId}`,
     }),
   },
-  // No url: the entity no longer exists.
   'entity-appeal-content-removed': {
     displayName: 'Appealed content removed',
     category: NotificationCategory.Other,

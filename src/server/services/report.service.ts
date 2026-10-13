@@ -989,18 +989,50 @@ async function getOwnerDeletedAppealIds(candidates: OrphanCandidate[]) {
   }
 }
 
-async function getFlaggedImageIds(imageIds: number[]) {
-  if (!imageIds.length) return new Set<number>();
-  const rows = await dbWrite.$queryRaw<{ id: number }[]>`
-    SELECT DISTINCT (e->>'id')::int AS id
-    FROM "CsamReport" c, jsonb_array_elements(c.images) e
-    WHERE jsonb_typeof(e) = 'object' AND (e->>'id')::int = ANY(${imageIds})
-  `;
-  return new Set(rows.map((r) => r.id));
+// Same scope as the moderator app's `csamExcludedImageIds`.
+async function getDefensiveCloseIds(candidates: OrphanCandidate[]) {
+  const imageIds = candidates
+    .filter((a) => a.entityType === EntityType.Image)
+    .map((a) => a.entityId);
+  const userIds = [...new Set(candidates.map((a) => a.userId))];
+  if (!userIds.length) return new Set<number>();
+
+  const [images, users] = await Promise.all([
+    imageIds.length
+      ? dbWrite.$queryRaw<{ id: number }[]>`
+          SELECT c.id FROM unnest(${imageIds}::int[]) AS c(id)
+          WHERE c.id::text IN (
+            SELECT CASE jsonb_typeof(e) WHEN 'object' THEN e->>'id' ELSE e#>>'{}' END
+            FROM "CsamReport" cr, jsonb_array_elements(cr.images) e
+          )
+          OR EXISTS (
+            SELECT 1 FROM "ImageReport" ir JOIN "Report" r ON r.id = ir."reportId"
+            WHERE ir."imageId" = c.id AND r.reason = 'CSAM'
+          )
+        `
+      : [],
+    dbWrite.$queryRaw<{ id: number }[]>`
+      SELECT c.id FROM unnest(${userIds}::int[]) AS c(id)
+      WHERE EXISTS (SELECT 1 FROM "CsamReport" cr WHERE cr."userId" = c.id)
+        OR EXISTS (
+          SELECT 1 FROM "UserReport" ur JOIN "Report" r ON r.id = ur."reportId"
+          WHERE ur."userId" = c.id AND r.reason = 'CSAM'
+        )
+    `,
+  ]);
+  const imageSet = new Set(images.map((r) => r.id));
+  const userSet = new Set(users.map((r) => r.id));
+  return new Set(
+    candidates
+      .filter(
+        (a) =>
+          userSet.has(a.userId) || (a.entityType === EntityType.Image && imageSet.has(a.entityId))
+      )
+      .map((a) => a.id)
+  );
 }
 
-// Each claim re-checks Pending and the stamp, so a moderator who resolved the appeal since the pick
-// wins, and only rows this statement moved are refunded or notified.
+// Re-checks Pending and the stamp so a moderator who resolved the appeal since the pick wins.
 function closeOrphans(ids: number[], reason: string | null) {
   if (!ids.length) return Promise.resolve([] as ClaimedOrphan[]);
   return dbWrite.$queryRaw<ClaimedOrphan[]>`
@@ -1055,8 +1087,8 @@ export function notifyOrphanedAppeal(
     userId: appeal.userId,
     type: 'entity-appeal-content-removed',
     category: NotificationCategory.Other,
-    // One per appeal: the notification service reuses the row for a repeated key.
-    key: `entity-appeal-content-removed:${appeal.id}`,
+    // A repeated key is dropped, not updated: one notice per appeal per outcome.
+    key: `entity-appeal-content-removed:${appeal.id}:${outcome}`,
     details: { entityType: appeal.entityType, entityId: appeal.entityId, outcome, refunded },
   });
 }
@@ -1065,7 +1097,7 @@ export function notifyOrphanedAppeal(
  * Sorts appeals whose entity has been deleted; the moderator queue is driven from the entity row,
  * so it never shows them. An owner who deleted their own content gets the appeal closed and
  * refunded; anything else stays Pending, stamped `entityRemovedAt`, for review. Both are told.
- * Flagged content and deleted accounts are closed without a notice.
+ * Some appeals are closed defensively without a notice.
  */
 export async function voidOrphanedAppeals({ limit = 1000 }: { limit?: number } = {}) {
   const candidates = await dbWrite.$queryRaw<OrphanCandidate[]>`
@@ -1082,11 +1114,8 @@ export async function voidOrphanedAppeals({ limit = 1000 }: { limit?: number } =
     LIMIT ${limit}
   `;
 
-  const flaggedImageIds = await getFlaggedImageIds(
-    candidates.filter((a) => a.entityType === EntityType.Image).map((a) => a.entityId)
-  );
-  const isQuiet = (a: OrphanCandidate) =>
-    a.userDeleted || (a.entityType === EntityType.Image && flaggedImageIds.has(a.entityId));
+  const defensiveIds = await getDefensiveCloseIds(candidates);
+  const isQuiet = (a: OrphanCandidate) => a.userDeleted || defensiveIds.has(a.id);
   const quiet = candidates.filter(isQuiet);
   const rest = candidates.filter((a) => !isQuiet(a));
   const ownerDeletedIds = (await getOwnerDeletedAppealIds(rest)) ?? new Set<number>();

@@ -19,7 +19,6 @@ describe('entity-appeal-content-removed — prepareMessage', () => {
     expect(m!.message).toBe(
       "The image you appealed was removed before a moderator could review it. Your appeal is still open and will be reviewed; we'll let you know the outcome."
     );
-    // The entity is gone, so there is nothing to link to.
     expect(m!.url).toBeUndefined();
   });
 

@@ -37,7 +37,6 @@ export function isAppealableModel3D(model: { status: Model3DStatus }) {
 
 export type OrphanedAppealOutcome = 'under-review' | 'closed-owner-deleted' | 'closed-unreviewed';
 
-// `Appeal.resolvedReason` on an appeal closed because its entity was deleted.
 export const OrphanedAppealReason = {
   DeletedByOwner: 'deleted-by-owner',
   RemovedBeforeReview: 'removed-before-review',
