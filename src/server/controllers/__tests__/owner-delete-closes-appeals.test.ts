@@ -5,7 +5,7 @@ import type * as PostService from '~/server/services/post.service';
 import type * as ReportService from '~/server/services/report.service';
 import type * as Caches from '~/server/redis/caches';
 
-/ A post delete emits no per-image event, so the sweep cannot attribute it to the owner.
+// A post delete emits no per-image event, so the sweep cannot attribute it to the owner.
 
 const { deleteImageByIdMock, deletePostMock, closeMock } = vi.hoisted(() => ({
   deleteImageByIdMock: vi.fn(),
