@@ -2,8 +2,10 @@ import { isNonProductionDatabase } from '~/env/database-target';
 import { setIngestionGaugeSharedStore, type IngestionGaugeSharedStore } from '~/server/prom/client';
 import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
 
-const SNAPSHOT_KEY = REDIS_SYS_KEYS.SYSTEM.IMAGE_INGESTION_GAUGES;
-const LOCK_KEY = `${SNAPSHOT_KEY}:lock` as const;
+// One snapshot (and lock) per version, so releases whose queries differ never share one.
+const snapshotKey = (version: string) =>
+  `${REDIS_SYS_KEYS.SYSTEM.IMAGE_INGESTION_GAUGES}:${version}` as const;
+const lockKey = (version: string) => `${snapshotKey(version)}:lock` as const;
 
 type StoreRedis = Pick<NonNullable<typeof sysRedis>, 'get' | 'set'>;
 
@@ -12,12 +14,13 @@ type StoreRedis = Pick<NonNullable<typeof sysRedis>, 'get' | 'set'>;
 // otherwise park it for minutes and stop this process refreshing at all.
 export function createIngestionGaugeStore(redis: StoreRedis): IngestionGaugeSharedStore {
   return {
-    read: () => withSysReadDeadline(redis.get(SNAPSHOT_KEY)),
-    tryLock: async (ttlMs) =>
-      (await withSysReadDeadline(redis.set<string>(LOCK_KEY, '1', { NX: true, PX: ttlMs }))) ===
-      'OK',
-    write: async (value, ttlMs) => {
-      await withSysReadDeadline(redis.set(SNAPSHOT_KEY, value, { PX: ttlMs }));
+    read: (version) => withSysReadDeadline(redis.get(snapshotKey(version))),
+    tryLock: async (version, ttlMs) =>
+      (await withSysReadDeadline(
+        redis.set<string>(lockKey(version), '1', { NX: true, PX: ttlMs })
+      )) === 'OK',
+    write: async (version, value, ttlMs) => {
+      await withSysReadDeadline(redis.set(snapshotKey(version), value, { PX: ttlMs }));
     },
   };
 }

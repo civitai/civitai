@@ -16,22 +16,28 @@ afterEach(() => {
 });
 
 describe('ingestion gauge store', () => {
-  it('reads and writes one sys key, and elects with SET NX PX on a lock key under it', async () => {
+  it('reads and writes one sys key per version, and elects with SET NX PX on a lock key under it', async () => {
     const r = redis();
     r.get.mockResolvedValue('{"computedAt":1}');
-    r.set.mockResolvedValueOnce('OK').mockResolvedValueOnce(null).mockResolvedValueOnce('OK');
+    r.set
+      .mockResolvedValueOnce('OK')
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce('OK')
+      .mockResolvedValueOnce('OK');
     const store = createIngestionGaugeStore(r as never);
 
-    expect(await store.read()).toBe('{"computedAt":1}');
-    expect(await store.tryLock(25_000)).toBe(true);
-    expect(await store.tryLock(25_000)).toBe(false);
-    await store.write('{"computedAt":2}', 600_000);
+    expect(await store.read('v1a')).toBe('{"computedAt":1}');
+    expect(await store.tryLock('v1a', 25_000)).toBe(true);
+    expect(await store.tryLock('v1a', 25_000)).toBe(false);
+    await store.write('v1a', '{"computedAt":2}', 600_000);
+    expect(await store.tryLock('v2b', 25_000)).toBe(true);
 
-    expect(r.get).toHaveBeenCalledWith('system:image-ingestion-gauges');
+    expect(r.get).toHaveBeenCalledWith('system:image-ingestion-gauges:v1a');
     expect(r.set.mock.calls).toEqual([
-      ['system:image-ingestion-gauges:lock', '1', { NX: true, PX: 25_000 }],
-      ['system:image-ingestion-gauges:lock', '1', { NX: true, PX: 25_000 }],
-      ['system:image-ingestion-gauges', '{"computedAt":2}', { PX: 600_000 }],
+      ['system:image-ingestion-gauges:v1a:lock', '1', { NX: true, PX: 25_000 }],
+      ['system:image-ingestion-gauges:v1a:lock', '1', { NX: true, PX: 25_000 }],
+      ['system:image-ingestion-gauges:v1a', '{"computedAt":2}', { PX: 600_000 }],
+      ['system:image-ingestion-gauges:v2b:lock', '1', { NX: true, PX: 25_000 }],
     ]);
   });
 
@@ -40,7 +46,7 @@ describe('ingestion gauge store', () => {
     const r = redis();
     r.get.mockReturnValue(new Promise(() => undefined));
     const outcome = createIngestionGaugeStore(r as never)
-      .read()
+      .read('v1a')
       .then(
         () => 'resolved',
         (e: Error) => `rejected: ${e.message}`

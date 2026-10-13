@@ -1,6 +1,7 @@
 // App shim for @civitai/telemetry. Re-exports the generic prom helpers + metric
 // definitions, and registers the DB pool-depth gauges here — they compose the db
 // pools + prom helpers, which is app-level glue, not infrastructure.
+import { createHash } from 'crypto';
 import client from 'prom-client';
 import {
   PROM_PREFIX,
@@ -124,6 +125,14 @@ const SCAN_QUEUE_SQL = `
   SELECT count(*) AS depth, EXTRACT(EPOCH FROM now() - min("createdAt"))::float8 AS oldest_age
     FROM "JobQueue" WHERE type='ImageScan'`;
 
+// Names the shared snapshot's key, so processes on releases whose queries differ (a new stuck
+// window, a new status) never serve each other's values: those pass the shape check but mean
+// something else. Bump the tag when IngestionGaugeSnapshot's fields change.
+const INGESTION_GAUGE_SNAPSHOT_VERSION = createHash('sha256')
+  .update(['snapshot-v1', INGESTION_BACKLOG_SQL, SCAN_QUEUE_SQL].join('\0'))
+  .digest('hex')
+  .slice(0, 12);
+
 type IngestionBacklogQueryRow = {
   status: string;
   backlog: string;
@@ -155,11 +164,14 @@ const INGESTION_GAUGE_LOCK_MS = 2 * INGESTION_GAUGE_STATEMENT_TIMEOUT_MS + 5_000
 // refreshed-timestamp gauge carries their real age.
 const INGESTION_GAUGE_SHARED_RETENTION_MS = 10 * 60_000;
 
-/** Fleet-wide store for the snapshot. Every call must be bounded: the refresh awaits them. */
+/**
+ * Fleet-wide store for the snapshot, one slot (and lock) per snapshot version. Every call must be
+ * bounded: the refresh awaits them.
+ */
 export type IngestionGaugeSharedStore = {
-  read(): Promise<string | null>;
-  tryLock(ttlMs: number): Promise<boolean>;
-  write(value: string, ttlMs: number): Promise<void>;
+  read(version: string): Promise<string | null>;
+  tryLock(version: string, ttlMs: number): Promise<boolean>;
+  write(version: string, value: string, ttlMs: number): Promise<void>;
 };
 
 // On globalThis, not module scope: the gauges' collect() closes over whichever webpack graph's copy
@@ -263,10 +275,10 @@ async function refreshIngestionGaugeSnapshot() {
   let shared: IngestionGaugeSnapshot | null = null;
   let compute: boolean;
   try {
-    shared = parseIngestionGaugeSnapshot(await store.read());
+    shared = parseIngestionGaugeSnapshot(await store.read(INGESTION_GAUGE_SNAPSHOT_VERSION));
     if (shared && Date.now() - shared.computedAt < INGESTION_GAUGE_TTL_MS)
       return applySharedIngestionGaugeSnapshot(shared);
-    compute = await store.tryLock(INGESTION_GAUGE_LOCK_MS);
+    compute = await store.tryLock(INGESTION_GAUGE_SNAPSHOT_VERSION, INGESTION_GAUGE_LOCK_MS);
   } catch {
     // Store unreachable: compute in-process, as every process did before the store existed.
     compute = true;
@@ -279,7 +291,11 @@ async function refreshIngestionGaugeSnapshot() {
   const snapshot = await computeIngestionGaugeSnapshot();
   applyIngestionGaugeSnapshot(snapshot);
   await store
-    .write(JSON.stringify(snapshot), INGESTION_GAUGE_SHARED_RETENTION_MS)
+    .write(
+      INGESTION_GAUGE_SNAPSHOT_VERSION,
+      JSON.stringify(snapshot),
+      INGESTION_GAUGE_SHARED_RETENTION_MS
+    )
     .catch(() => undefined);
 }
 
@@ -297,6 +313,7 @@ function refreshIngestionBacklog() {
 }
 
 export const __refreshIngestionGaugesForTest = () => refreshIngestionBacklog();
+export const __ingestionGaugeSnapshotVersionForTest = () => INGESTION_GAUGE_SNAPSHOT_VERSION;
 export const __ingestionGaugeStateForTest = () => ({
   computedAt: ingestionBacklogFetchedAt,
   backlog: ingestionBacklogCache,

@@ -36,6 +36,7 @@ vi.mock('~/server/db/datapacketDb', () => ({ datapacketDbRead: {} }));
 
 import type * as PromClient from '~/server/prom/client';
 import {
+  __ingestionGaugeSnapshotVersionForTest,
   __refreshIngestionGaugesForTest,
   instrumentationRegistry,
   setIngestionGaugeSharedStore,
@@ -187,29 +188,33 @@ const sharedSnapshot = (computedAt: number) => ({
   scanQueue: { depth: 41, oldestAgeSeconds: 99 },
 });
 
-// In-memory stand-in for the shared store. The lock is set-if-absent, so exactly one caller wins it;
-// every call yields first, so concurrent callers interleave the way separate processes would.
-function fakeStore(initial?: ReturnType<typeof sharedSnapshot>) {
+// In-memory stand-in for the shared store: one snapshot slot and one lock per version, like the real
+// keys. The lock is set-if-absent, so exactly one caller per version wins it; every call yields
+// first, so concurrent callers interleave the way separate processes would. `initial` is seeded under
+// the version this release's queries produce.
+function fakeStore(initial?: unknown) {
   const keys = new Map<string, string>();
-  if (initial) keys.set('snapshot', JSON.stringify(initial));
-  const calls = { tryLock: 0, won: 0, writes: [] as string[] };
+  if (initial)
+    keys.set(`snapshot:${__ingestionGaugeSnapshotVersionForTest()}`, JSON.stringify(initial));
+  const calls = { tryLock: 0, won: 0, writes: [] as string[], versions: new Set<string>() };
   const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
   const store: IngestionGaugeSharedStore = {
-    read: async () => {
+    read: async (version) => {
       await tick();
-      return keys.get('snapshot') ?? null;
+      calls.versions.add(version);
+      return keys.get(`snapshot:${version}`) ?? null;
     },
-    tryLock: async () => {
+    tryLock: async (version) => {
       await tick();
       calls.tryLock++;
-      if (keys.has('lock')) return false;
-      keys.set('lock', '1');
+      if (keys.has(`lock:${version}`)) return false;
+      keys.set(`lock:${version}`, '1');
       calls.won++;
       return true;
     },
-    write: async (value) => {
+    write: async (version, value) => {
       await tick();
-      keys.set('snapshot', value);
+      keys.set(`snapshot:${version}`, value);
       calls.writes.push(value);
     },
   };
@@ -301,24 +306,66 @@ describe('image-ingestion gauges shared across processes', () => {
     expect(await value('image_scan_queue_depth')).toBe(2);
   });
 
-  it('a fresh shared snapshot of the wrong shape is replaced, never served', async () => {
+  // One case per field the shape check covers; every other field stays valid, so each case reaches
+  // only its own check. Any of these applied would make collect() throw and fail the whole scrape.
+  // Each patch replaces one field of a valid snapshot (undefined drops it from the JSON).
+  it.each<[string, Record<string, unknown>]>([
+    ['stuckPending missing', { stuckPending: undefined }],
+    ['a stuck count that is not a number', { stuckPending: { image: '13', video: 17, audio: 19 } }],
+    ['backlog not an array', { backlog: { Pending: 777 } }],
+    [
+      'a backlog row whose count is a string',
+      { backlog: [{ status: 'Pending', backlog: '777', oldestAgeSeconds: 4321 }] },
+    ],
+    ['a backlog row without its age', { backlog: [{ status: 'Pending', backlog: 777 }] }],
+    ['a backlog row without its status', { backlog: [{ backlog: 777, oldestAgeSeconds: 4321 }] }],
+    ['a scan-queue depth that is a string', { scanQueue: { depth: '41', oldestAgeSeconds: 99 } }],
+    ['a scan queue without its age', { scanQueue: { depth: 41 } }],
+  ])(
+    'a fresh shared snapshot of the wrong shape (%s) is replaced, never served',
+    async (_, patch) => {
+      const now = freezeClock();
+      const { store, calls } = fakeStore({ ...sharedSnapshot(now - 5_000), ...patch });
+      const proc = await loadProcess();
+      proc.setIngestionGaugeSharedStore(store);
+
+      await proc.__refreshIngestionGaugesForTest();
+
+      expect(calls.won).toBe(1);
+      expect(holder.imageQueries).toBe(1);
+      expect(JSON.parse(calls.writes[0]).stuckPending).toEqual({ image: 2, video: 1, audio: 0 });
+      expect(await series('image_ingestion_stuck_pending')).toEqual([
+        ['audio', 0],
+        ['image', 2],
+        ['video', 1],
+      ]);
+      expect(await series('image_ingestion_backlog')).toContainEqual(['Pending', 5]);
+    }
+  );
+
+  it('a release whose queries differ never serves, or contends for, the other release’s snapshot', async () => {
     const now = freezeClock();
-    const { stuckPending: _dropped, ...partial } = sharedSnapshot(now - 5_000);
-    const { store, calls } = fakeStore(partial as ReturnType<typeof sharedSnapshot>);
-    const proc = await loadProcess();
-    proc.setIngestionGaugeSharedStore(store);
+    const { store, calls } = fakeStore(sharedSnapshot(now - 5_000));
+    vi.doMock('@civitai/shared/image-ingestion', async (importOriginal) => ({
+      ...(await importOriginal<object>()),
+      STUCK_PENDING_MINUTES: 30,
+    }));
+    try {
+      const proc = await loadProcess();
+      proc.setIngestionGaugeSharedStore(store);
 
-    await proc.__refreshIngestionGaugesForTest();
+      await proc.__refreshIngestionGaugesForTest();
 
-    expect(calls.won).toBe(1);
-    expect(holder.imageQueries).toBe(1);
-    expect(JSON.parse(calls.writes[0]).stuckPending).toEqual({ image: 2, video: 1, audio: 0 });
-    expect(await series('image_ingestion_stuck_pending')).toEqual([
-      ['audio', 0],
-      ['image', 2],
-      ['video', 1],
-    ]);
-    expect(await series('image_ingestion_backlog')).toContainEqual(['Pending', 5]);
+      expect(proc.__ingestionGaugeSnapshotVersionForTest()).not.toBe(
+        __ingestionGaugeSnapshotVersionForTest()
+      );
+      expect([...calls.versions]).toEqual([proc.__ingestionGaugeSnapshotVersionForTest()]);
+      expect(calls.won).toBe(1);
+      expect(holder.imageQueries).toBe(1);
+      expect(await series('image_ingestion_backlog')).toContainEqual(['Pending', 5]);
+    } finally {
+      vi.doUnmock('@civitai/shared/image-ingestion');
+    }
   });
 
   it('a process that lost the lock never replaces its own newer values with an older shared snapshot', async () => {
@@ -330,7 +377,7 @@ describe('image-ingestion gauges shared across processes', () => {
     expect(proc.__ingestionGaugeStateForTest().computedAt).toBe(now);
 
     const { store, calls } = fakeStore(sharedSnapshot(now - 60_000));
-    await store.tryLock(0);
+    await store.tryLock(__ingestionGaugeSnapshotVersionForTest(), 0);
     proc.setIngestionGaugeSharedStore(store);
     await proc.__refreshIngestionGaugesForTest();
 
