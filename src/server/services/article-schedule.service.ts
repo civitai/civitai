@@ -8,17 +8,12 @@ import { getScheduledArticleGoLive } from '~/server/services/article-schedule.he
 import { createNotification } from '~/server/services/notification.service';
 import { ArticleStatus } from '~/shared/utils/prisma/enums';
 
-// A minute's worth is a handful; the cap only bounds a backlog after an outage; the rest go next run.
+// Bounds a backlog after an outage; the rest go next run.
 const GO_LIVE_BATCH = 500;
 
 /**
- * Takes every scheduled article whose time has come live. Run each minute by
- * process-scheduled-publishing. The predicate is `scheduledAt <= now`, not a window, so a missed run
- * is caught up rather than dropped.
- *
- * Each row is written with a guarded update that re-checks the state it was decided on, so a cancel,
- * an edit or a scan settling between the read and the write leaves that row for the next run instead
- * of acting on stale state.
+ * `scheduledAt <= now`, not a window, so a missed run is caught up. Each write re-checks the state it
+ * was decided on, so a cancel, edit or scan settling since the read leaves the row for the next run.
  */
 export async function publishDueScheduledArticles(now: Date) {
   const due = await dbWrite.article.findMany({
@@ -57,7 +52,7 @@ export async function publishDueScheduledArticles(now: Date) {
       });
       if (count) published.push(article);
     } else if (outcome === 'process') {
-      // publishedAt stays NULL; recomputeArticleIngestion stamps it when the scan settles.
+      // publishedAt is stamped by recomputeArticleIngestion when the scan settles.
       const { count } = await dbWrite.article.updateMany({
         where: guard,
         data: { status: ArticleStatus.Processing, scheduledAt: null },

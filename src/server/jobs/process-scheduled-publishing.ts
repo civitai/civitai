@@ -410,8 +410,7 @@ export const processScheduledPublishing = createJob(
       );
     }
 
-    // Last and caught: it shares nothing with the model and post work above, so a fault here must
-    // not stop that from recording its run.
+    // Last and caught: an article fault must not stop the run being recorded.
     await publishDueScheduledArticles(now).catch((error) =>
       logToAxiom({
         name: 'process-scheduled-publishing',

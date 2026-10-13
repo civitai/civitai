@@ -2,8 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { getPostImageIds } from '~/server/services/post.service';
 
-// A scheduled post has a future publishedAt. "Not null" let any signed-in user list its image ids
-// before it went live; the bound has to be the clock.
+// A scheduled post has a future publishedAt; the bound must be the clock, not "not null".
 const NOW = new Date('2026-10-20T16:00:00.000Z');
 const findMany = dbMock.dbRead.image.findMany;
 const postFilter = () => findMany.mock.calls[0][0].where.post;

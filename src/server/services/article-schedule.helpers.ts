@@ -31,10 +31,8 @@ export function getArticleScheduleError(
 export type ScheduledArticleGoLive = 'publish' | 'process' | 'fail' | 'withdraw';
 
 /**
- * What a due scheduled article becomes: live now, Processing until the scan settles (the ingestion
- * recompute then publishes it, as it does a manual publish), back to a plain draft because an image
- * or the text was blocked or failed to scan, or withdrawn because its author could no longer publish
- * by hand. Standing was checked when the schedule was saved and can change before go-live.
+ * Author standing is re-checked here: it was validated when the schedule was saved and can change
+ * before go-live. 'process' leaves publishing to the ingestion recompute, as for a manual publish.
  */
 export function getScheduledArticleGoLive(
   ingestion: ArticleIngestionStatus,

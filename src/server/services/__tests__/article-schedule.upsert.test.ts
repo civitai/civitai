@@ -212,4 +212,18 @@ describe('upsertArticle — scheduling', () => {
       /published while you were editing/
     );
   });
+
+  it('does not blame a go-live for a failed write to an already-published article', async () => {
+    mockStored({ publishedAt: inHours(-48), status: ArticleStatus.Published });
+    mockDbWrite.article.update.mockRejectedValueOnce(
+      new Prisma.PrismaClientKnownRequestError('No record was found for an update.', {
+        code: 'P2025',
+        clientVersion: 'test',
+      })
+    );
+
+    const error = await upsert({ status: ArticleStatus.Published }).catch((e: Error) => e);
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).not.toMatch(/published while you were editing/);
+  });
 });

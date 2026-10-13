@@ -166,8 +166,7 @@ export function ArticleUpsertForm({ article }: Props) {
   }, [currentUser?.isModerator, userNsfwLevel]);
 
   const [publishing, setPublishing] = useState(false);
-  // What the next submit asks of the article's schedule: a date schedules it, null cancels it,
-  // undefined leaves it. A ref, not state: the schedule dialog sets it and submits in one tick.
+  // A ref, not state: the schedule dialog sets it and submits in the same tick.
   const scheduleIntentRef = useRef<Date | null | undefined>(undefined);
   const eventCard = articleEditEventCard(article, currentUser);
 

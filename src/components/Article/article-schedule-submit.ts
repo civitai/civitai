@@ -1,11 +1,7 @@
 /**
- * What one editor submit asks of the article's schedule.
- *
- * `scheduleIntent` is what the Schedule / Cancel controls set for this submit: a date schedules,
- * null cancels, undefined leaves the stored schedule alone. The form is seeded from the loaded
- * article, so its own `scheduledAt` and `publishedAt` are the stored values and are never sent
- * back; otherwise every save would re-submit the stored schedule. `publishing` is the editor's
- * state and may still hold an earlier Publish click, so a schedule submit never publishes.
+ * `scheduleIntent`: a date schedules, null cancels, undefined leaves it. The loaded article's own
+ * scheduledAt/publishedAt are dropped so a plain save doesn't re-send them. `publishing` can be a
+ * stale earlier Publish click, so a schedule submit never publishes.
  */
 export function getArticleScheduleSubmit<
   T extends { scheduledAt?: unknown; publishedAt?: unknown }

@@ -5492,8 +5492,7 @@ model Article {
   coverId          Int?          @unique
   coverImage       Image?        @relation(fields: [coverId], references: [id], onDelete: SetNull)
   publishedAt      DateTime?
-  // When a Draft goes live. publishedAt stays NULL until then, so every rule that hides
-  // drafts hides a scheduled article too; process-scheduled-publishing flips it.
+  // Go-live time for a never-published Draft; publishedAt stays NULL until then.
   scheduledAt      DateTime?
   contentScannedAt DateTime?              // Set when both image + text scans complete successfully
   ingestion        ArticleIngestionStatus @default(Pending)

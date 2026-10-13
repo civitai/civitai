@@ -906,9 +906,8 @@ export const upsertArticle = async ({
       isModerator,
     });
 
-    // Undefined leaves an article's schedule alone. Scheduling saves a plain Draft, so publishedAt
-    // stays NULL and every rule that hides drafts hides it until process-scheduled-publishing
-    // takes it live. Publishing now, or an explicit null, cancels it.
+    // Scheduling stays a plain Draft (publishedAt NULL). Publishing now, or an explicit null, clears
+    // the schedule.
     const scheduling = !!scheduledAt;
     let scheduledAtWrite: Date | null | undefined;
     if (scheduledAt) {
@@ -1223,9 +1222,8 @@ export const upsertArticle = async ({
       publishedAt = article.publishedAt;
     }
 
-    // Status and publishedAt above were derived from a read. For a never-published draft the
-    // scheduled-publishing job may take it live in between; an unguarded write would put it back to a
-    // Draft with publishedAt NULL, and the next publish would fire the go-live side effects again.
+    // Guarded: the job may have taken this draft live since the read, and an unguarded write would
+    // revert it to Draft and re-fire the go-live side effects on the next publish.
     writingNeverPublishedDraft = article.status === ArticleStatus.Draft && !article.publishedAt;
     const updateWhere: Prisma.ArticleWhereUniqueInput = writingNeverPublishedDraft
       ? { id, status: ArticleStatus.Draft, publishedAt: null }
@@ -1348,7 +1346,6 @@ export const upsertArticle = async ({
     return { ...result, hasModeratorOverride };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
-    // The guarded write matched nothing: the draft went live after it was read.
     if (
       writingNeverPublishedDraft &&
       error instanceof Prisma.PrismaClientKnownRequestError &&

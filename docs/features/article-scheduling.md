@@ -31,4 +31,4 @@ Publish. Behind the `articleScheduling` flag (Flipt `article-scheduling`, fallba
 | `src/server/services/article-schedule.helpers.ts`   | `getArticleScheduleError`, `getScheduledArticleGoLive` (pure)        |
 | `src/server/services/article-schedule.service.ts`   | `publishDueScheduledArticles`, run by `process-scheduled-publishing` |
 | `src/server/services/article.service.ts`            | `upsertArticle` takes `scheduledAt` (date schedules, null cancels)   |
-| `src/components/Article/ArticleUpsertForm.tsx`      | Schedule / Reschedule / Cancel schedule; reuses `SchedulePostModal`  |
+| `src/components/Article/ArticleUpsertForm.tsx`      | Schedule / Reschedule / Cancel schedule; `SchedulePostModal` with `entity="article"`|

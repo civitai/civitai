@@ -278,4 +278,14 @@ describe('publishDueScheduledArticles', () => {
       expect.objectContaining({ entityId: 2 })
     );
   });
+
+  // The fake returns whole rows and ignores `select`, so pin it: without `user` in the real read,
+  // the standing check throws on the first due article and nothing goes live.
+  it('reads the author standing it decides on', async () => {
+    await publishDueScheduledArticles(NOW);
+
+    expect(article.findMany.mock.calls[0][0].select.user).toEqual({
+      select: { bannedAt: true, muted: true, deletedAt: true },
+    });
+  });
 });
