@@ -7,6 +7,9 @@ import { createImage } from '~/server/services/image.service';
 import { registerMediaLocation } from '~/server/services/storage-resolver';
 import { orchestratorNsfwLevelMap } from '~/shared/constants/browsingLevel.constants';
 import { sanitizeStepErrors } from './provider-errors';
+import { formatGenerationResponse2 } from '~/server/services/orchestrator/orchestration-new.service';
+import { WorkflowData } from '~/shared/orchestrator/workflow-data';
+import { colorDomainNames, type ColorDomain } from '~/shared/constants/domain.constants';
 
 /**
  * Translate the orchestrator's string nsfwLevel ("pg", "pg13", "r", ...)
@@ -91,8 +94,24 @@ export async function pollIterationWorkflow({
 
   const steps = workflow.steps ?? [];
   const firstStep = steps[0] as any;
-  const rawImages: any[] = firstStep?.output?.images ?? firstStep?.output?.blobs ?? [];
-  const outputImages: string[] = rawImages.map((img) => img?.url).filter(Boolean) as string[];
+
+  // The orchestrator only reports its own blocks; the mature gates (canUpgrade, siteRestricted,
+  // enableNsfw) are derived by BlobData from the rating, the domain and the viewer's settings.
+  const [normalized] = await formatGenerationResponse2([workflow as any], ctx?.user);
+  const domainFlags = colorDomainNames.reduce(
+    (acc, c) => ({ ...acc, [c]: c === ctx?.domain }),
+    {} as Record<ColorDomain, boolean>
+  );
+  const wfData = new WorkflowData(normalized as any, {
+    domain: domainFlags,
+    nsfwEnabled: !!ctx?.user?.showNsfw,
+    holdUnrated: true,
+  });
+  const rawImages = (wfData.steps[0]?.output ?? []) as any[];
+  const outputImages: string[] = rawImages
+    .filter((img) => !img?.blockedReason)
+    .map((img) => img?.url)
+    .filter(Boolean) as string[];
 
   // Mirror the queue item's `errored` logic: any terminal status (succeeded /
   // failed / expired / canceled) where the worker finished without producing a
@@ -105,12 +124,18 @@ export async function pollIterationWorkflow({
   const workflowReachedTerminal =
     !!workflowStatus && TERMINAL_STATUSES.includes(workflowStatus as any);
 
-  // On the SFW domain, mature outputs come back with `available: false` and a
-  // `siteRestricted` blocked reason — the URL is suppressed. Hand off to a
+  const succeeded = workflowStatus === 'succeeded' || stepStatus === 'succeeded';
+
+  // Succeeded can precede the rating, and every gate below keys on it.
+  if (succeeded && rawImages.some((img) => img?.pendingRating)) {
+    return { status: 'processing' as const, imageUrl: null, images: [] };
+  }
+
+  // A mature output on the SFW domain is `siteRestricted`. Hand off to a
   // mature-content domain so the user can use the workflow they already paid
   // for.
   if (
-    (workflowStatus === 'succeeded' || stepStatus === 'succeeded') &&
+    succeeded &&
     outputImages.length === 0 &&
     rawImages.some((img) => img?.blockedReason === 'siteRestricted')
   ) {
@@ -215,6 +240,8 @@ function blockedReasonToMessage(blockedReason: string | undefined): string | und
       return 'Mature content was generated. Open the Generator queue to unlock it with yellow Buzz — your Buzz is held, not lost.';
     case 'membershipRequired':
       return 'This image requires a membership upgrade to view. Upgrade your membership to unlock it.';
+    case 'siteRestricted':
+      return 'This image was rated mature and is not available on this site. Open it on civitai.red to use it.';
     case 'enableNsfw':
       return 'This image was rated mature. Enable mature content in your settings to view it.';
     case 'NsfwLevel':
