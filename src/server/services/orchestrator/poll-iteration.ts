@@ -95,24 +95,6 @@ export async function pollIterationWorkflow({
   const steps = workflow.steps ?? [];
   const firstStep = steps[0] as any;
 
-  // The orchestrator only reports its own blocks; the mature gates (canUpgrade, siteRestricted,
-  // enableNsfw) are derived by BlobData from the rating, the domain and the viewer's settings.
-  const [normalized] = await formatGenerationResponse2([workflow as any], ctx?.user);
-  const domainFlags = colorDomainNames.reduce(
-    (acc, c) => ({ ...acc, [c]: c === ctx?.domain }),
-    {} as Record<ColorDomain, boolean>
-  );
-  const wfData = new WorkflowData(normalized as any, {
-    domain: domainFlags,
-    nsfwEnabled: !!ctx?.user?.showNsfw,
-    holdUnrated: true,
-  });
-  const rawImages = (wfData.steps[0]?.output ?? []) as any[];
-  const outputImages: string[] = rawImages
-    .filter((img) => !img?.blockedReason)
-    .map((img) => img?.url)
-    .filter(Boolean) as string[];
-
   // Mirror the queue item's `errored` logic: any terminal status (succeeded /
   // failed / expired / canceled) where the worker finished without producing a
   // usable blob is a hard failure, not a "still working". Without these
@@ -123,13 +105,33 @@ export async function pollIterationWorkflow({
   const stepReachedTerminal = !!stepStatus && TERMINAL_STATUSES.includes(stepStatus as any);
   const workflowReachedTerminal =
     !!workflowStatus && TERMINAL_STATUSES.includes(workflowStatus as any);
-
   const succeeded = workflowStatus === 'succeeded' || stepStatus === 'succeeded';
 
-  // Succeeded can precede the rating, and every gate below keys on it.
-  if (succeeded && rawImages.some((img) => img?.pendingRating)) {
-    return { status: 'processing' as const, imageUrl: null, images: [] };
+  // Raw orchestrator output carries only its own blocks; the mature gates are derived by BlobData
+  // from the rating, domain and viewer settings. Built only once succeeded: the formatter reads
+  // resources on every call, and the client polls on an interval.
+  let rawImages: any[] = firstStep?.output?.images ?? firstStep?.output?.blobs ?? [];
+  if (succeeded) {
+    const [normalized] = await formatGenerationResponse2([workflow as any], ctx?.user);
+    const domainFlags = colorDomainNames.reduce(
+      (acc, c) => ({ ...acc, [c]: c === ctx?.domain }),
+      {} as Record<ColorDomain, boolean>
+    );
+    const wfData = new WorkflowData(normalized as any, {
+      domain: domainFlags,
+      nsfwEnabled: !!ctx?.user?.showNsfw,
+      holdUnrated: true,
+    });
+    rawImages = wfData.steps[0]?.output ?? [];
+
+    // Succeeded can precede the rating, and every gate below keys on it.
+    if (rawImages.some((img) => img?.pendingRating))
+      return { status: 'processing' as const, imageUrl: null, images: [] };
   }
+  const outputImages: string[] = rawImages
+    .filter((img) => !img?.blockedReason)
+    .map((img) => img?.url)
+    .filter(Boolean) as string[];
 
   // A mature output on the SFW domain is `siteRestricted`. Hand off to a
   // mature-content domain so the user can use the workflow they already paid
@@ -147,9 +149,7 @@ export async function pollIterationWorkflow({
     };
   }
 
-  // Look for a non-siteRestricted blocked reason on the output. We surface a
-  // tailored failure message so the user knows whether the Buzz was refunded
-  // or is simply held pending an unlock action they can take in the queue.
+  // Any blocked reason on the output; `blockedReasonToMessage` turns it into the failure text.
   const blockedReason = rawImages.find((img) => img?.blockedReason)?.blockedReason as
     | string
     | undefined;
@@ -227,12 +227,7 @@ export async function pollIterationWorkflow({
   return { status: 'processing' as const, imageUrl: null, images: [] };
 }
 
-/**
- * Map an output's blockedReason to something useful for the iterative editor.
- * Mirrors the queue's blocked-reason cards but as plain text — the editor
- * doesn't yet have a full unlock-in-place UI, so we point users at the queue
- * for the actions that need to happen there.
- */
+/** Map an output's blockedReason to plain text for the iterative editor, which has no unlock-in-place UI. */
 function blockedReasonToMessage(blockedReason: string | undefined): string | undefined {
   if (!blockedReason) return undefined;
   switch (blockedReason) {

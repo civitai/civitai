@@ -4,14 +4,8 @@ import type * as ImageService from '~/server/services/image.service';
 import type * as S3Utils from '~/utils/s3-utils';
 import type * as StorageResolver from '~/server/services/storage-resolver';
 
-/**
- * Iteration results follow the same availability rules as the generator queue: an output is only
- * downloaded and handed back when the queue would show it.
- */
-
 const mocks = vi.hoisted(() => ({
   getWorkflow: vi.fn(),
-  formatGenerationResponse2: vi.fn(),
   createImage: vi.fn(async (..._a: unknown[]) => ({ id: 900 })),
   s3Send: vi.fn(async (..._a: unknown[]) => undefined),
 }));
@@ -20,10 +14,11 @@ vi.mock('~/server/orchestrator/get-orchestrator-token', () => ({
   getOrchestratorToken: async () => 'token',
 }));
 vi.mock('~/server/services/orchestrator/workflows', () => ({ getWorkflow: mocks.getWorkflow }));
-vi.mock('~/server/services/orchestrator/orchestration-new.service', async (importOriginal) => ({
-  ...(await importOriginal<typeof OrchestrationNew>()),
-  formatGenerationResponse2: mocks.formatGenerationResponse2,
-}));
+// The real formatter, spied: a hand-built normalized fixture could disagree with what it produces.
+vi.mock('~/server/services/orchestrator/orchestration-new.service', async (importOriginal) => {
+  const actual = await importOriginal<typeof OrchestrationNew>();
+  return { ...actual, formatGenerationResponse2: vi.fn(actual.formatGenerationResponse2) };
+});
 vi.mock('~/server/services/image.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ImageService>()),
   createImage: mocks.createImage,
@@ -42,6 +37,7 @@ vi.mock('~/server/services/storage-resolver', async (importOriginal) => ({
 }));
 
 import { pollIterationWorkflow } from '~/server/services/orchestrator/poll-iteration';
+import { formatGenerationResponse2 } from '~/server/services/orchestrator/orchestration-new.service';
 import { isMature } from '~/shared/constants/orchestrator.constants';
 
 // The global `@civitai/client` mock defines `NsfwLevel.X` as 'X' and leaves R/XXX undefined, so 'X'
@@ -50,26 +46,26 @@ const MATURE = 'X';
 const SAFE = 'pg';
 
 const output = (over: Record<string, unknown> = {}) => ({
-  type: 'image',
   id: 'b1',
   url: 'https://orchestrator.test/b1.jpeg',
   available: true,
   ...over,
 });
 
+// The raw shape iteration workflows have in production: an imageGen step with `output.images`.
 function givenWorkflow(
   outputs: Array<Record<string, unknown>>,
-  { allowMatureContent = false }: { allowMatureContent?: boolean } = {}
+  {
+    allowMatureContent = false,
+    status = 'succeeded',
+  }: { allowMatureContent?: boolean; status?: string } = {}
 ) {
-  const step = { $type: 'comfy', name: '$0', status: 'succeeded', metadata: {}, output: outputs };
   mocks.getWorkflow.mockResolvedValue({
     id: 'wf-1',
-    status: 'succeeded',
-    steps: [{ ...step, output: { images: outputs } }],
+    status,
+    allowMatureContent,
+    steps: [{ $type: 'imageGen', name: '$0', status, metadata: {}, output: { images: outputs } }],
   });
-  mocks.formatGenerationResponse2.mockResolvedValue([
-    { id: 'wf-1', status: 'succeeded', allowMatureContent, metadata: {}, steps: [step] },
-  ]);
 }
 
 const poll = ({ domain = 'red', showNsfw = true }: { domain?: string; showNsfw?: boolean } = {}) =>
@@ -103,8 +99,18 @@ describe('pollIterationWorkflow availability', () => {
     const result = await poll();
 
     expect(result.status).toBe('succeeded');
+    expect(result.images).toHaveLength(1);
     expect(mocks.createImage).toHaveBeenCalledTimes(1);
     expect(console.error).not.toHaveBeenCalled();
+  });
+
+  it('formats nothing while the workflow is still running', async () => {
+    givenWorkflow([], { status: 'processing' });
+
+    const result = await poll();
+
+    expect(result.status).toBe('processing');
+    expect(formatGenerationResponse2).not.toHaveBeenCalled();
   });
 
   it('withholds a mature result that still needs unlocking', async () => {
@@ -123,7 +129,7 @@ describe('pollIterationWorkflow availability', () => {
 
     const result = await poll({ domain: 'green' });
 
-    expect(result.status).toBe('siteRestricted');
+    expect(result).toMatchObject({ status: 'siteRestricted', workflowId: 'wf-1', images: [] });
     expect(mocks.createImage).not.toHaveBeenCalled();
   });
 
@@ -156,6 +162,7 @@ describe('pollIterationWorkflow availability', () => {
     const result = await poll();
 
     expect(result.status).toBe('succeeded');
+    expect(result.images).toHaveLength(1);
     expect(fetch).toHaveBeenCalledTimes(1);
     expect(fetch).toHaveBeenCalledWith('https://orchestrator.test/safe.jpeg');
   });
