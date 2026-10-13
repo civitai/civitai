@@ -5,7 +5,10 @@ import { challengeModerationAdapter } from '~/server/services/challenge-moderati
 import { crucibleModerationAdapter } from '~/server/services/crucible-moderation.adapter';
 import type { ModerationAdapter } from '~/server/services/entity-moderation.service';
 import { modelModerationAdapter } from '~/server/services/model-moderation.adapter';
-import { textScanShadowAdapters } from '~/server/services/text-scan/adapter';
+import {
+  textScanShadowAdapters,
+  textScanWebSearchAdapters,
+} from '~/server/services/text-scan/adapter';
 import {
   bountyEntryTextScanAdapter,
   collectionTextScanAdapter,
@@ -33,6 +36,7 @@ const moderationAdapters: Record<string, ModerationAdapter> = {
   Collection: collectionTextScanAdapter,
   Post: postTextScanAdapter,
   ...textScanShadowAdapters(),
+  ...textScanWebSearchAdapters(),
   ...scamModerationAdapters,
 };
 

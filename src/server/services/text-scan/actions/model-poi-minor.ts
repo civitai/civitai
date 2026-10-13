@@ -15,6 +15,7 @@ import {
   type TextScanFlagLabel,
 } from '~/server/services/text-scan/flag-snapshot';
 import type { ApplyTextScanArgs } from '~/server/services/text-scan/actions/types';
+import { textScanEmEntityType } from '~/server/services/text-scan/mode';
 import { diffEntityChanges } from '~/server/utils/entity-change-helpers';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import type { ModelStatus } from '~/shared/utils/prisma/enums';
@@ -24,6 +25,13 @@ export const POI_LOCKED_PROPERTIES = ['poi', 'nsfw', 'sfwOnly'];
 export type PoiMinorResult = { notified: boolean };
 
 const SYSTEM_USER_ID = constants.system.user.id;
+
+// The live rows that can act on poi/minor: the main pass, and the web-search pass once active.
+// The one whose workflow produced this verdict wins; 'Model' sorts first otherwise.
+const VERDICT_ROW_TYPES = [
+  textScanEmEntityType('Model', 'active'),
+  textScanEmEntityType('Model', 'active', 'web-search'),
+];
 
 // Dynamic: model.service imports the model moderation adapter, which imports this module.
 const loadModelService = () => import('~/server/services/model.service');
@@ -125,9 +133,11 @@ async function flagModelPoi({
             'poi', ${entry}::jsonb || jsonb_build_object(
               'at', now(),
               'promptIds', (SELECT em.result->'promptIds' FROM "EntityModeration" em
-                            WHERE em."entityType" = 'Model' AND em."entityId" = m.id),
+                            WHERE em."entityType" = ANY(${VERDICT_ROW_TYPES}::text[]) AND em."entityId" = m.id
+                            ORDER BY em."workflowId" = ${workflowId} DESC NULLS LAST, em."entityType" LIMIT 1),
               'model', (SELECT em.result->'model' FROM "EntityModeration" em
-                        WHERE em."entityType" = 'Model' AND em."entityId" = m.id),
+                        WHERE em."entityType" = ANY(${VERDICT_ROW_TYPES}::text[]) AND em."entityId" = m.id
+                        ORDER BY em."workflowId" = ${workflowId} DESC NULLS LAST, em."entityType" LIMIT 1),
               'prev', jsonb_build_object(
                 'nsfw', m.nsfw,
                 'sfwOnly', m."sfwOnly",
@@ -228,9 +238,11 @@ async function flagModelMinor({
         'minor', ${entry}::jsonb || jsonb_build_object(
           'at', now(),
           'promptIds', (SELECT em.result->'promptIds' FROM "EntityModeration" em
-                        WHERE em."entityType" = 'Model' AND em."entityId" = m.id),
+                        WHERE em."entityType" = ANY(${VERDICT_ROW_TYPES}::text[]) AND em."entityId" = m.id
+                        ORDER BY em."workflowId" = ${workflowId} DESC NULLS LAST, em."entityType" LIMIT 1),
           'model', (SELECT em.result->'model' FROM "EntityModeration" em
-                    WHERE em."entityType" = 'Model' AND em."entityId" = m.id)
+                    WHERE em."entityType" = ANY(${VERDICT_ROW_TYPES}::text[]) AND em."entityId" = m.id
+                    ORDER BY em."workflowId" = ${workflowId} DESC NULLS LAST, em."entityType" LIMIT 1)
         )
       )
     )
