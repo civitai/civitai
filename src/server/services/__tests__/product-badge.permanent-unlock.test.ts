@@ -30,8 +30,8 @@ beforeEach(() => {
 });
 
 describe('upsertProductBadge', () => {
-  // The nightly membership job revokes non-permanent Membership cosmetics from lapsed members,
-  // so a monthly badge created non-permanent is taken back from everyone who ever cancels.
+  // The nightly job deletes non-permanent Membership cosmetics from lapsed members, so false here
+  // would revoke past monthly badges on cancel.
   it('creates monthly membership badges as permanent unlocks, one per product', async () => {
     await upsertProductBadge({
       name: 'October Badge',

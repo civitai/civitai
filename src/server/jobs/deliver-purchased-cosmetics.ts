@@ -27,6 +27,7 @@ export async function deliverMembershipCosmetics({
       SELECT
         s."userId",
         COALESCE(pdl.id, s."productId") as "productId",
+        pd.provider,
         s."currentPeriodStart",
         s."currentPeriodEnd",
         s."createdAt"
@@ -48,12 +49,13 @@ export async function deliverMembershipCosmetics({
     FROM subscription_tiers s
     JOIN "Cosmetic" c ON
       c."productId" = s."productId"
-      -- Keyed on the period, not on when the job runs: a period that started in September but
-      -- only turned active in October (a late payment) is still owed September's badge.
-      -- Compare at date granularity: membership badges are authored with an 11:00 UTC
-      -- availableStart, so a period that started earlier that same day (e.g. a Stripe
-      -- renewal at 00:30 on the 1st) failed a timestamp comparison forever — this join
-      -- re-runs daily but currentPeriodStart never moves within the period.
+      -- Compare the period start, not job time: a late-paid September period is still owed
+      -- September's badge. Civitai memberships keep the current-month limit: their prepaid
+      -- periods can start long before the month being delivered, and deliverMonthlyCosmetics
+      -- owns their monthly badges.
+      AND (s.provider <> 'Civitai' OR c."availableStart" >= date_trunc('month', ${lastDelivered}::timestamp))
+      -- Date granularity: availableStart carries a time of day, so a period that started earlier
+      -- that same day (e.g. a renewal at 00:30 on the 1st) failed a timestamp comparison forever.
       AND s."currentPeriodStart"::date >= c."availableStart"::date
       AND (c."availableEnd" IS NULL OR s."currentPeriodStart"::date <= c."availableEnd"::date)
     ON CONFLICT ("userId", "cosmeticId", "claimKey") DO NOTHING;
