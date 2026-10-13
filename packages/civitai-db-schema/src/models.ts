@@ -3334,6 +3334,7 @@ export interface Article {
   coverId: number | null;
   coverImage?: Image | null;
   publishedAt: Date | null;
+  scheduledAt: Date | null;
   contentScannedAt: Date | null;
   ingestion: ArticleIngestionStatus;
   scanRequestedAt: Date | null;

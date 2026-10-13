@@ -9,6 +9,7 @@ import { dataForModelsCache, userImageVideoCountCaches } from '~/server/redis/ca
 import { firstDailyPostReward } from '~/server/rewards';
 import { getFirstDailyPostRewardedIds } from '~/server/rewards/active/firstDailyPost.reward';
 import { queueImageSearchIndexUpdate } from '~/server/services/image.service';
+import { publishDueScheduledArticles } from '~/server/services/article-schedule.service';
 import { modelsSearchIndex } from '~/server/search-index';
 import {
   bustMvCache,
@@ -408,6 +409,17 @@ export const processScheduledPublishing = createJob(
         processedModelIds.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
       );
     }
+
+    // Last and caught: it shares nothing with the model and post work above, so a fault here must
+    // not stop that from recording its run.
+    await publishDueScheduledArticles(now).catch((error) =>
+      logToAxiom({
+        name: 'process-scheduled-publishing',
+        type: 'error',
+        message: 'scheduled article go-live failed',
+        error: (error as Error)?.message,
+      }).catch(() => undefined)
+    );
 
     await setLastRun();
   }
