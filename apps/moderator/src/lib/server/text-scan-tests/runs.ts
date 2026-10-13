@@ -79,10 +79,13 @@ const sortedKeys = <T>(record: Record<string, T>) =>
   Object.fromEntries(Object.entries(record).sort(([a], [b]) => a.localeCompare(b)));
 
 /** The audit row records a write that already succeeded; a failure to write it never undoes that. */
-const record = (audit: RunAudit | undefined, event: RunAuditEvent) =>
-  void Promise.resolve()
-    .then(() => audit?.(event))
-    .catch(() => {});
+async function record(audit: RunAudit, event: RunAuditEvent) {
+  try {
+    await audit(event);
+  } catch (e) {
+    console.error('[text-scan-tests] failed to audit a run', { action: event.action, error: e });
+  }
+}
 
 export async function setLabels(db: Db, setId: number): Promise<LabLabel[]> {
   const rows = await db
@@ -285,6 +288,22 @@ async function planRun(
   };
 }
 
+/** A quote that fails costs 1 Buzz a call, the harness's floor. */
+async function priceOf(deps: RunsDeps, plan: Plan) {
+  try {
+    const quote = await deps.quoteTexts(
+      plan.sample.entityType,
+      plan.sample.texts,
+      plan.draft?.prompts as Record<string, string> | undefined
+    );
+    if (typeof quote.maxCostTotal === 'number')
+      return { perCallBuzz: quote.maxCostTotal, measured: true };
+  } catch (e) {
+    if (!(e instanceof LabHarnessError)) throw e;
+  }
+  return { perCallBuzz: 1, measured: false };
+}
+
 export async function quoteRun(
   deps: RunsDeps,
   setId: number,
@@ -292,21 +311,7 @@ export async function quoteRun(
   draft: DraftInput | null
 ): Promise<Quote> {
   const plan = await planRun(deps, setId, workspace, draft);
-  let perCallBuzz = 1;
-  let measured = false;
-  try {
-    const quote = await deps.quoteTexts(
-      plan.sample.entityType,
-      plan.sample.texts,
-      plan.draft?.prompts as Record<string, string> | undefined
-    );
-    if (typeof quote.maxCostTotal === 'number') {
-      perCallBuzz = quote.maxCostTotal;
-      measured = true;
-    }
-  } catch (e) {
-    if (!(e instanceof LabHarnessError)) throw e;
-  }
+  const { perCallBuzz, measured } = await priceOf(deps, plan);
   const longestSide = Math.max(
     plan.draft ? plan.runnable : 0,
     plan.mode === 'new' ? plan.runnable : plan.mode === 'top-up' ? plan.missing : 0
@@ -354,8 +359,6 @@ export async function startRun(
     workspace: Workspace;
     draft: DraftInput | null;
     stamp: string;
-    /** The estimate the moderator confirmed, carried into the audit trail. */
-    buzz?: number;
   },
   userId: number
 ): Promise<Started> {
@@ -427,26 +430,28 @@ export async function startRun(
     }
     return ids;
   });
-  record(deps.audit, {
+  // Re-priced here so the audited estimate is the server's, never the form's.
+  const { perCallBuzz } = await priceOf(deps, plan);
+  await record(deps.audit, {
     action: 'start',
     userId,
     setId: plan.set.id,
     runIds,
     calls: plan.calls,
-    ...(input.buzz === undefined ? {} : { buzz: input.buzz }),
+    buzz: Math.ceil(plan.calls * perCallBuzz),
   });
   for (const id of runIds) deps.launch(id);
   return { startId, runIds, runId: runIds[runIds.length - 1] };
 }
 
 export async function cancelRun(
-  db: Db,
+  deps: Pick<RunsDeps, 'db' | 'audit'>,
   setId: number,
   runId: number,
   userId: number,
-  canCancelAny: boolean,
-  audit?: RunAudit
+  canCancelAny: boolean
 ): Promise<number> {
+  const { db } = deps;
   const run = await db
     .selectFrom('text_scan_test_run')
     .select(['start_id', 'run_by'])
@@ -470,7 +475,12 @@ export async function cancelRun(
     .returning('id')
     .execute();
   if (!res.length) throw new TestSetError('This run is not in progress.', 409);
-  record(audit, { action: 'cancel', userId, setId, runIds: res.map((r) => Number(r.id)) });
+  await record(deps.audit, {
+    action: 'cancel',
+    userId,
+    setId,
+    runIds: res.map((r) => Number(r.id)),
+  });
   return res.length;
 }
 
@@ -490,15 +500,15 @@ export async function rerunErrors(
   if (!run) throw new TestSetError(`Run ${runId} not found in this set.`, 404);
   if (!['done', 'cancelled', 'failed'].includes(run.status))
     throw new TestSetError('This run has not finished yet.', 409);
-  if (run.status === 'done') {
-    const errors = await deps.db
-      .selectFrom('text_scan_test_result')
-      .select(sql<string>`count(*)`.as('n'))
-      .where('run_id', '=', run.id)
-      .where('status', '=', 'error')
-      .executeTakeFirstOrThrow();
-    if (!Number(errors.n)) throw new TestSetError('This run has no errors to re-run.', 400);
-  }
+  const errors = await deps.db
+    .selectFrom('text_scan_test_result')
+    .select(sql<string>`count(*)`.as('n'))
+    .where('run_id', '=', run.id)
+    .where('status', '=', 'error')
+    .executeTakeFirstOrThrow();
+  const errorCount = Number(errors.n);
+  if (run.status === 'done' && !errorCount)
+    throw new TestSetError('This run has no errors to re-run.', 400);
 
   const { prompts } = await liveStateFor(deps, []);
   const changed = Object.entries(run.prompt_ids as Record<string, number>)
@@ -543,7 +553,7 @@ export async function rerunErrors(
       .executeTakeFirst();
     if (!res.numUpdatedRows) throw new TestSetError('This run is already being re-run.', 409);
   });
-  record(deps.audit, { action: 'start', userId, setId, runIds: [runId] });
+  await record(deps.audit, { action: 'start', userId, setId, runIds: [runId], calls: errorCount });
   deps.launch(runId);
   return { startId, runIds: [runId], runId };
 }

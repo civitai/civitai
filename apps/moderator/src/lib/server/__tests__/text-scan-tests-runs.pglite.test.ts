@@ -4,9 +4,18 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DB as ModeratorDB } from '../moderator-db/types';
 import { MOD, freshTestSetsDb, seedCase, seedRun, seedSet } from './text-scan-tests-pglite.harness';
 
-vi.mock('../user-actions.service', () => ({ callModEndpoint: vi.fn() }));
+vi.mock('../user-actions.service', () => ({
+  callModEndpoint: vi.fn(),
+  callModEndpointAs: vi.fn(),
+  requestCookie: vi.fn(() => null),
+}));
+vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: {} }));
+vi.mock('$lib/server/moderator-db', () => ({ getModeratorDb: () => ({}) }));
+vi.mock('$lib/server/axiom', () => ({ logToAxiom: vi.fn(async () => undefined) }));
+vi.mock('$lib/server/mod-activity', () => ({ recordModActivity: vi.fn(async () => undefined) }));
 
 const { LabHarnessError } = await import('../text-scan-lab/harness-client');
+const { runsDeps } = await import('../text-scan-tests/deps');
 const { cancelRun, quoteRun, rerunErrors, ruleStateHash, startRun } = await import(
   '../text-scan-tests/runs'
 );
@@ -66,6 +75,7 @@ async function completeBaseline(caseIds: number[], over: Parameters<typeof seedR
   return runId;
 }
 
+const cancelDeps = () => ({ db, audit: vi.fn() });
 const runs = () => db.selectFrom('text_scan_test_run').selectAll().orderBy('id').execute();
 
 describe('quoteRun', () => {
@@ -280,7 +290,7 @@ describe('audit', () => {
     const quote = await quoteRun(deps, setId, 'prompts', DRAFT);
     const started = await startRun(
       deps,
-      { setId, workspace: 'prompts', draft: DRAFT, stamp: quote.stamp, buzz: quote.buzz },
+      { setId, workspace: 'prompts', draft: DRAFT, stamp: quote.stamp },
       MOD
     );
     expect(deps.audit).toHaveBeenCalledOnce();
@@ -292,6 +302,28 @@ describe('audit', () => {
       calls: quote.calls,
       buzz: quote.buzz,
     });
+  });
+
+  it('derives the estimate from a fresh server quote, not the caller', async () => {
+    await seedCases(2);
+    const { deps } = makeDeps();
+    deps.quoteTexts.mockResolvedValue({ count: 1, quoted: 1, maxCostTotal: 2.5 });
+    const quote = await quoteRun(deps, setId, 'prompts', DRAFT);
+    await startRun(deps, { setId, workspace: 'prompts', draft: DRAFT, stamp: quote.stamp }, MOD);
+    expect(deps.audit).toHaveBeenCalledWith(expect.objectContaining({ calls: 4, buzz: 10 }));
+  });
+
+  it('still records a start when the audit sink throws', async () => {
+    await seedCases(1);
+    const { deps } = makeDeps();
+    deps.audit.mockRejectedValue(new Error('sink down'));
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const quote = await quoteRun(deps, setId, 'prompts', DRAFT);
+    await expect(
+      startRun(deps, { setId, workspace: 'prompts', draft: DRAFT, stamp: quote.stamp }, MOD)
+    ).resolves.toBeDefined();
+    expect(spy).toHaveBeenCalled();
+    spy.mockRestore();
   });
 
   it('records nothing for a refused start', async () => {
@@ -308,7 +340,7 @@ describe('audit', () => {
     const a = await seedRun(db, setId, { status: 'running', startId: start });
     const b = await seedRun(db, setId, { status: 'queued', startId: start, kind: 'draft' });
     const audit = vi.fn();
-    await cancelRun(db, setId, b, MOD, false, audit);
+    await cancelRun({ db, audit }, setId, b, MOD, false);
     expect(audit).toHaveBeenCalledOnce();
     const event = audit.mock.calls[0][0];
     expect(event).toMatchObject({ action: 'cancel', userId: MOD, setId });
@@ -327,11 +359,10 @@ describe('audit', () => {
         error: 'synthetic failure',
       })
       .execute();
-    await db.updateTable('text_scan_test_run').set({ error_count: 1 }).execute();
     const { deps } = makeDeps();
     await rerunErrors(deps, setId, runId, MOD);
     expect(deps.audit).toHaveBeenCalledWith(
-      expect.objectContaining({ action: 'start', setId, runIds: [runId] })
+      expect.objectContaining({ action: 'start', setId, runIds: [runId], calls: 1 })
     );
   });
 });
@@ -341,7 +372,7 @@ describe('cancelRun', () => {
     const start = '00000000-0000-4000-8000-000000000002';
     const a = await seedRun(db, setId, { status: 'running', startId: start });
     const b = await seedRun(db, setId, { status: 'queued', startId: start, kind: 'draft' });
-    expect(await cancelRun(db, setId, b, MOD, false)).toBe(2);
+    expect(await cancelRun(cancelDeps(), setId, b, MOD, false)).toBe(2);
     const rows = await runs();
     expect(rows.find((r) => Number(r.id) === a)?.status).toBe('cancelling');
     expect(rows.find((r) => Number(r.id) === b)).toMatchObject({
@@ -352,13 +383,17 @@ describe('cancelRun', () => {
 
   it("refuses another moderator's run without the edit grant, and allows it with", async () => {
     const runId = await seedRun(db, setId, { status: 'running', runBy: 7 });
-    await expect(cancelRun(db, setId, runId, MOD, false)).rejects.toMatchObject({ status: 403 });
-    await expect(cancelRun(db, setId, runId, MOD, true)).resolves.toBe(1);
+    await expect(cancelRun(cancelDeps(), setId, runId, MOD, false)).rejects.toMatchObject({
+      status: 403,
+    });
+    await expect(cancelRun(cancelDeps(), setId, runId, MOD, true)).resolves.toBe(1);
   });
 
   it('refuses a run that is not in progress', async () => {
     const runId = await seedRun(db, setId, { status: 'done' });
-    await expect(cancelRun(db, setId, runId, MOD, false)).rejects.toMatchObject({ status: 409 });
+    await expect(cancelRun(cancelDeps(), setId, runId, MOD, false)).rejects.toMatchObject({
+      status: 409,
+    });
   });
 });
 
@@ -407,5 +442,13 @@ describe('rerunErrors', () => {
     const { deps } = makeDeps();
     await expect(rerunErrors(deps, setId, clean, MOD)).rejects.toMatchObject({ status: 400 });
     await expect(rerunErrors(deps, setId, running, MOD)).rejects.toMatchObject({ status: 409 });
+  });
+});
+
+describe('runsDeps', () => {
+  it('refuses to build without a session credential', () => {
+    expect(() => runsDeps(null)).toThrowError(expect.objectContaining({ status: 401 }));
+    expect(() => runsDeps('')).toThrowError(expect.objectContaining({ status: 401 }));
+    expect(runsDeps('civ-token=synthetic').audit).toBeTypeOf('function');
   });
 });
