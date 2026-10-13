@@ -60,6 +60,10 @@ import {
  *     paths is the behavioural suite, `blocks.router.bridgeRateLimits.test.ts`, which drives the
  *     real procedures with the bucket refused — including a `customComfy` body specifically
  *     because `estimateWorkflow` returns early for two of its three `kind` branches.
+ *   - A middleware procedure under `onRefused: 'defer'` whose handler never reads
+ *     `ctx.blockViewer.rateLimitRefused`: the limiter is called, so it reads as charging the
+ *     bucket here, and nothing is refused. Pinned in
+ *     `no-unledgered-block-bridge-auth-mechanism.test.ts` instead.
  *   - Whether the CEILING is right. No test can tell a generous limit from a useless one; the
  *     numbers and how they were chosen are argued at the constants in
  *     `src/server/utils/block-catalog-rate-limit.ts`, and every one of them is a starting value.

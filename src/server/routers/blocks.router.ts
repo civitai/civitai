@@ -770,10 +770,10 @@ async function recordBlockPostInvocation(opts: {
  * STANDING HAZARD, and the reason this note is long: **this card exists because the
  * last gate added to this helper — the rate limit — did not reach that proc.** The
  * next one (a new consent scope, a second revocation check, a different bucket)
- * misses it the same way. Routing it through here, or parameterising that one
- * string, is the durable fix; it was not taken in #569 because that card's scope was
- * the rate-limit decision, and it is recorded here so the next reader inherits the
- * question rather than the stale answer.
+ * misses it the same way. The durable fix is to move this helper's three procedures
+ * and `getMyBuzzBalance` onto `authorizeBlockBridgeViewer`, whose `anonMessage`
+ * option carries the one differing string. Until then the ladder exists in three
+ * places and a gate added to one does not reach the others.
  *
  * What still separates these three bridges from that proc is SENSITIVITY, not the
  * scope and no longer the limiter: the full ledger / all-pool balances incl. creator
@@ -850,16 +850,17 @@ export type BlockBridgeViewerOptions = {
   rateLimit:
     | {
         /**
-         * Charges the procedure's bucket. Written at the procedure, as a call to the limiter,
-         * so the bucket and its key stay readable there and
-         * `no-unlimited-block-bridge-proc.test.ts` keeps deriving them from the call.
+         * Charges the procedure's bucket. Must be a limiter call written at the procedure:
+         * `no-unlimited-block-bridge-proc.test.ts` derives the bucket from the calls under
+         * the procedure node.
          */
         check: (viewer: Pick<BlockBridgeViewer, 'claims' | 'userId'>) => Promise<{
           allowed: boolean;
         }>;
         /**
          * `throw` answers TOO_MANY_REQUESTS. `defer` continues with `rateLimitRefused: true`
-         * for a procedure whose refusal has to be a returned value rather than an error.
+         * for a procedure whose refusal has to be a returned value rather than an error; its
+         * handler must read that flag, or the limit refuses nothing.
          */
         onRefused: 'throw' | 'defer';
         /** Labels for the refusal counter, or `null` for a procedure that emits none. */
@@ -870,8 +871,8 @@ export type BlockBridgeViewerOptions = {
 };
 
 /**
- * The authorization ladder shared by the bridge procedures that act for the token's own
- * viewer: authorize the token, require the consent scope, refuse an anonymous subject, apply
+ * The authorization ladder for a bridge procedure that acts for the token's own viewer:
+ * authorize the token, require the consent scope, refuse an anonymous subject, apply
  * the App Blocks kill-switch to that subject, then charge the procedure's rate limit.
  *
  * Typed to take `{ blockToken: string }` as its input, so it only composes after an
@@ -7958,7 +7959,6 @@ export const blocksRouter = router({
     .input(z.object({ blockToken: z.string().min(1) }))
     .use(
       authorizeBlockBridgeViewer({
-        // The least-privileged "viewer identity" scope (mirrors /blocks/me).
         scope: 'user:read:self',
         anonMessage: 'viewer read requires an authenticated viewer',
         rateLimit: {

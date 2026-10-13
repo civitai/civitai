@@ -3,7 +3,7 @@ import { beforeAll, describe, expect, it } from 'vitest';
 
 import { setEnv } from '~/__tests__/mocks/env.mock';
 import { BLOCK_TOKEN_QUERY_PROCEDURES } from '~/shared/constants/block-token-transport.constants';
-import { hasBlockTokenKey } from './block-token-input.harness';
+import { classifyBlockTokenProcedures, hasBlockTokenKey } from './block-token-input.harness';
 
 /**
  * `BLOCK_TOKEN_QUERY_PROCEDURES` drives three things — POST-only routing in the browser link, a
@@ -77,14 +77,8 @@ describe('BLOCK_TOKEN_QUERY_PROCEDURES matches the routers (runtime walk)', () =
 
   /** Every query whose inputs carry `blockToken`, plus every query whose input is unreadable. */
   const derive = () => {
-    const tokenQueries: string[] = [];
-    const unreadable: string[] = [];
-    for (const [path, proc] of queries()) {
-      const results = proc._def.inputs.map((input) => hasBlockTokenKey(input));
-      if (results.includes(true)) tokenQueries.push(path);
-      else if (results.includes(null)) unreadable.push(path);
-    }
-    return { tokenQueries: tokenQueries.sort(), unreadable: unreadable.sort() };
+    const { takesToken, unreadable } = classifyBlockTokenProcedures(Object.fromEntries(queries()));
+    return { tokenQueries: takesToken, unreadable };
   };
 
   it('every lazy sub-router loaded (the walk is not missing a router)', () => {

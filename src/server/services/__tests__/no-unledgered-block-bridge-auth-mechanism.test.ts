@@ -22,9 +22,15 @@ import {
  * defect: the token would be authorized twice and the rate limit charged where the middleware
  * says, then again wherever the handler says.
  *
- * Out of reach: a middleware bound to a module-scope constant and passed as `.use(thatConstant)`
- * reads as NEITHER here and fails. Whether the middleware's steps are right is not a question
- * for this file; `blocks.router.bridgeViewerMiddleware.test.ts` drives them.
+ * A middleware bound to a module-scope constant and passed as `.use(thatConstant)` reads as
+ * NEITHER here and fails.
+ *
+ * Out of reach:
+ *   - A handler that hands `input` whole to something that reads the token off it.
+ *   - A procedure added by object spread, or in another router file.
+ *   - A procedure whose token-taking input the sibling's ledger does not list. The run-time
+ *     half of this check, over the real router's input schemas, is in
+ *     `blocks.router.bridgeViewerMiddleware.test.ts`, which also drives the middleware's steps.
  */
 
 type Mechanism = 'middleware' | 'inline';
@@ -62,10 +68,8 @@ function mechanismOf(auth: BridgeProcAuth): Mechanism | 'both' {
   return auth.middlewareUses > 0 ? 'middleware' : 'inline';
 }
 
-function mechanisms(text: string): Record<string, Mechanism | 'both'> {
-  return Object.fromEntries(
-    [...bridgeProcAuth(text)].map(([name, auth]) => [name, mechanismOf(auth)] as const).sort()
-  );
+function mechanisms(auth: Map<string, BridgeProcAuth>): Record<string, Mechanism | 'both'> {
+  return Object.fromEntries([...auth].map(([name, a]) => [name, mechanismOf(a)] as const));
 }
 
 /** `getMyViewer`'s middleware link, exactly as the router spells it. A stale target fails loudly. */
@@ -76,78 +80,123 @@ const GET_MY_VIEWER_USE =
 const HANDLER_OPENING =
   '\n    .mutation(async ({ ctx }) => {\n      const { claims, userId } = ctx.blockViewer;';
 
-function withoutGetMyViewerMiddleware(text: string): string {
+/** Rewrites `getMyViewer` only: the edit is applied to the text from its declaration on. */
+function mutateGetMyViewer(text: string, target: string | RegExp, replacement: string): string {
   const start = text.indexOf('\n  getMyViewer: publicProcedure');
   expect(start, 'getMyViewer is no longer declared the way this control expects').toBeGreaterThan(
     -1
   );
   const tail = text.slice(start);
-  const mutated = tail.replace(GET_MY_VIEWER_USE, '');
-  expect(mutated, 'the control removed nothing').not.toEqual(tail);
+  const mutated = tail.replace(target, replacement);
+  expect(mutated, 'the control changed nothing').not.toEqual(tail);
   return text.slice(0, start) + mutated;
 }
 
 const real = read(ROUTER);
 const derived = bridgeProcAuth(real);
+const realMechanisms = mechanisms(derived);
+// A function, so a router that no longer matches fails the controls and not the whole file.
+const withoutMiddleware = () => mutateGetMyViewer(real, GET_MY_VIEWER_USE, '');
+
+const getMyViewerIn = (text: string) => bridgeProcAuth(text).get('getMyViewer');
 
 describe('the bridge auth-mechanism scan can actually see what it claims to', () => {
   it('POSITIVE CONTROL — reads both mechanisms off the real router, a helper hop included', () => {
-    expect(mechanisms(real).getMyViewer).toBe('middleware');
-    expect(mechanisms(real).getMyBuzzBalance).toBe('inline');
+    expect(realMechanisms.getMyViewer).toBe('middleware');
+    expect(realMechanisms.getMyBuzzBalance).toBe('inline');
     // Reaches the guard through `authorizeBlockBuzzRead` and never names it.
-    expect(mechanisms(real).getMyBuzzAccounts).toBe('inline');
+    expect(realMechanisms.getMyBuzzAccounts).toBe('inline');
   });
 
   it('a procedure that DROPS the middleware leaves the population — it has neither', () => {
-    const mutated = mechanisms(withoutGetMyViewerMiddleware(real));
-    expect(mutated.getMyViewer).toBeUndefined();
-    expect(Object.keys(mutated).sort()).not.toEqual(siblingInputLedger());
+    const mutated = bridgeProcAuth(withoutMiddleware());
+    expect(mutated.has('getMyViewer')).toBe(false);
+    expect([...mutated.keys()].sort()).not.toEqual(siblingInputLedger());
   });
 
   it('sees the middleware in other call shapes — type arguments, a cast, a computed access', () => {
-    const mutated = withoutGetMyViewerMiddleware(real).replace(
-      HANDLER_OPENING,
-      `\n    ['use']((authorizeBlockBridgeViewer<never>(options as never)) as never)${HANDLER_OPENING}`
+    const auth = getMyViewerIn(
+      mutateGetMyViewer(
+        withoutMiddleware(),
+        HANDLER_OPENING,
+        `\n    ['use']((authorizeBlockBridgeViewer<never>(options as never)) as never)${HANDLER_OPENING}`
+      )
     );
-    expect(mutated).not.toEqual(withoutGetMyViewerMiddleware(real));
-    const auth = bridgeProcAuth(mutated).get('getMyViewer');
     expect(auth?.middlewareUses).toBe(1);
     expect(auth?.inputPrecedesUse).toBe(true);
   });
 
   it('NEGATIVE CONTROL — a commented-out or string-quoted `.use(…)` is not a use', () => {
-    const mutated = withoutGetMyViewerMiddleware(real).replace(
+    const mutated = mutateGetMyViewer(
+      withoutMiddleware(),
       HANDLER_OPENING,
       "\n    // .use(authorizeBlockBridgeViewer({ scope: 'user:read:self' }))\n    .mutation(async ({ ctx }) => {\n      const note = '.use(authorizeBlockBridgeViewer({}))';\n      void note;\n      const { claims, userId } = ctx.blockViewer;"
     );
-    expect(mutated).not.toEqual(withoutGetMyViewerMiddleware(real));
-    expect(bridgeProcAuth(mutated).has('getMyViewer')).toBe(false);
+    expect(getMyViewerIn(mutated)).toBeUndefined();
+  });
+
+  it('NEGATIVE CONTROL — a `.use(…)` built inside the handler is not applied to the procedure', () => {
+    const mutated = mutateGetMyViewer(
+      withoutMiddleware(),
+      HANDLER_OPENING,
+      `${HANDLER_OPENING}\n      void publicProcedure.input(z.object({ blockToken: z.string() })).use(authorizeBlockBridgeViewer(options));`
+    );
+    expect(getMyViewerIn(mutated)).toBeUndefined();
   });
 
   it('a handler that ALSO calls the guard reads as both', () => {
-    const mutated = real.replace(
+    const mutated = mutateGetMyViewer(
+      real,
       HANDLER_OPENING,
       '\n    .mutation(async ({ ctx, input }) => {\n      await authorizeBlockBridgeToken(input.blockToken);\n      const { claims, userId } = ctx.blockViewer;'
     );
-    expect(mutated).not.toEqual(real);
-    expect(mechanisms(mutated).getMyViewer).toBe('both');
-    expect(bridgeProcAuth(mutated).get('getMyViewer')?.blockTokenReads).toBe(1);
+    expect(mechanisms(bridgeProcAuth(mutated)).getMyViewer).toBe('both');
+    expect(getMyViewerIn(mutated)?.blockTokenReads).toBe(1);
+  });
+
+  it('counts a token read spelled as a string key', () => {
+    const mutated = mutateGetMyViewer(
+      real,
+      HANDLER_OPENING,
+      "\n    .mutation(async ({ ctx, input }) => {\n      void input['blockToken'];\n      const { claims, userId } = ctx.blockViewer;"
+    );
+    expect(getMyViewerIn(mutated)?.blockTokenReads).toBe(1);
   });
 
   it('a `.use(…)` ahead of `.input(…)` is seen as out of order', () => {
-    const mutated = withoutGetMyViewerMiddleware(real).replace(
+    const mutated = mutateGetMyViewer(
+      withoutMiddleware(),
       '\n  getMyViewer: publicProcedure',
       '\n  getMyViewer: publicProcedure\n    .use(authorizeBlockBridgeViewer(options))'
     );
-    expect(bridgeProcAuth(mutated).get('getMyViewer')?.inputPrecedesUse).toBe(false);
+    expect(getMyViewerIn(mutated)?.inputPrecedesUse).toBe(false);
+  });
+
+  it('a later `.use(…)` — one that could replace the viewer — is counted', () => {
+    const mutated = mutateGetMyViewer(
+      real,
+      HANDLER_OPENING,
+      `\n    .use(({ ctx, next }) => next({ ctx: { blockViewer: { ...ctx.blockViewer, userId: 0 } } }))${HANDLER_OPENING}`
+    );
+    expect(getMyViewerIn(mutated)?.usesAfterMiddleware).toBe(1);
+  });
+
+  it('a deferred refusal nobody reads is seen, and reading it clears it', () => {
+    const deferring = mutateGetMyViewer(real, "onRefused: 'throw',", "onRefused: 'defer',");
+    expect(getMyViewerIn(deferring)?.deferredRefusalUnread).toBe(true);
+
+    const reading = mutateGetMyViewer(
+      deferring,
+      HANDLER_OPENING,
+      `${HANDLER_OPENING}\n      if (ctx.blockViewer.rateLimitRefused) return null;`
+    );
+    expect(getMyViewerIn(reading)?.deferredRefusalUnread).toBe(false);
   });
 });
 
 describe('no bridge procedure without a ledgered auth mechanism', () => {
   it('ledgers EXACTLY how each procedure reaches the guard — both directions', () => {
-    expect(mechanisms(real)).toEqual(
-      Object.fromEntries(Object.entries(AUTH_MECHANISM_LEDGER).sort())
-    );
+    expect(realMechanisms).toEqual(AUTH_MECHANISM_LEDGER);
   });
 
   it('every procedure that TAKES a block token has one — none has neither', () => {
@@ -162,7 +211,7 @@ describe('no bridge procedure without a ledgered auth mechanism', () => {
     expect(queries.filter((name) => !derived.has(name))).toEqual([]);
   });
 
-  it('a middleware procedure uses it once, after `.input()`, and never touches the token itself', () => {
+  it('a middleware procedure uses it once, last, after `.input()`, and leaves the token alone', () => {
     const users = [...derived].filter(([, auth]) => auth.middlewareUses > 0);
     expect(users.map(([name]) => name)).toContain('getMyViewer');
     for (const [name, auth] of users) {
@@ -170,7 +219,9 @@ describe('no bridge procedure without a ledgered auth mechanism', () => {
         middlewareUses: 1,
         inline: false,
         inputPrecedesUse: true,
+        usesAfterMiddleware: 0,
         blockTokenReads: 0,
+        deferredRefusalUnread: false,
       });
     }
   });

@@ -62,10 +62,8 @@ export function routerProcedures(source: ts.SourceFile): Map<string, ts.Node> {
 /**
  * The set of function names CALLED anywhere under `node`.
  *
- * Reads `CallExpression` nodes off the AST, so a comment or a string literal naming a function can
- * never enter this set — the whole class `no-unguarded-block-bridge-token.test.ts` spends 400
- * lines of normalisation defending against. Both access forms are covered: `f(...)` and
- * `obj.f(...)`.
+ * Reads `CallExpression` nodes off the AST, so a comment or string literal naming a function
+ * never enters this set. Covers `f(...)` and `obj.f(...)`.
  */
 function callees(node: ts.Node): Set<string> {
   const names = new Set<string>();
@@ -147,13 +145,9 @@ export function siblingInputLedger(): string[] {
     start,
     `${SIBLING} no longer declares BRIDGE_INPUT_LEDGER — this cross-check is blind`
   ).toBeGreaterThan(-1);
-  // 🔴 BOUND THE END TO THE FIRST COLUMN-ZERO `]`, NOT TO THE NEXT `].sort()`. Searching for
-  // `].sort()` walks PAST this ledger when the sibling stops spelling it that way and lands on
-  // some later array hundreds of lines on — the slice then spans unrelated code and the regex
-  // below harvests ~90 "names". The carefully-worded failure message never fires, and whoever
-  // hits it is told the sibling ledger has 90 entries and goes looking in the wrong file. It
-  // still fails closed either way; the point is that it failed closed while REPORTING SOMETHING
-  // FALSE, which is worse than a blunt error.
+  // Bound the end at the first column-zero `]`, not the next `].sort()`: if the sibling stops
+  // spelling it that way the slice runs into a later array and reports a false entry count
+  // instead of a broken parse.
   const end = text.indexOf('\n]', start);
   expect(end, `${SIBLING}'s BRIDGE_INPUT_LEDGER is not a closed array literal`).toBeGreaterThan(
     start
@@ -176,14 +170,18 @@ export function siblingInputLedger(): string[] {
 export const VIEWER_MIDDLEWARE = 'authorizeBlockBridgeViewer';
 
 export type BridgeProcAuth = {
-  /** `.use(authorizeBlockBridgeViewer(…))` calls in the procedure's builder chain. */
+  /** `.use(authorizeBlockBridgeViewer(…))` links in the procedure's own builder chain. */
   middlewareUses: number;
   /** Reaches the guard from its own body or a router-local helper other than the middleware. */
   inline: boolean;
   /** Every middleware use has an `.input(…)` earlier in the chain. */
   inputPrecedesUse: boolean;
-  /** `blockToken` identifiers outside the `.input(…)` argument. */
+  /** `.use(…)` links AFTER the middleware, any of which could replace `ctx.blockViewer`. */
+  usesAfterMiddleware: number;
+  /** `blockToken`, as an identifier or a string key, outside the `.input(…)` argument. */
   blockTokenReads: number;
+  /** The middleware is asked to `defer` a refusal and nothing reads `rateLimitRefused`. */
+  deferredRefusalUnread: boolean;
 };
 
 /** Parentheses, `as`, `satisfies` and `!` wrap an expression without changing what it calls. */
@@ -236,10 +234,49 @@ function hasInputEarlierInChain(use: ts.CallExpression): boolean {
   return false;
 }
 
+/** The procedure's builder chain, terminator first: `.mutation(…)`, `.use(…)`, `.input(…)`, … */
+function chainLinks(initializer: ts.Node): ts.CallExpression[] {
+  const links: ts.CallExpression[] = [];
+  let link: ts.Node | null = ts.isExpression(initializer) ? unwrap(initializer) : null;
+  while (link != null && ts.isCallExpression(link)) {
+    links.push(link);
+    link = receiver(link);
+  }
+  return links;
+}
+
+function mentions(node: ts.Node, test: (n: ts.Node) => boolean): boolean {
+  let found = false;
+  const walk = (n: ts.Node): void => {
+    if (found) return;
+    if (test(n)) found = true;
+    else ts.forEachChild(n, walk);
+  };
+  walk(node);
+  return found;
+}
+
+function asksToDefer(use: ts.CallExpression): boolean {
+  return mentions(
+    use,
+    (n) =>
+      ts.isPropertyAssignment(n) &&
+      (ts.isIdentifier(n.name) || ts.isStringLiteralLike(n.name)) &&
+      n.name.text === 'onRefused' &&
+      !(ts.isStringLiteralLike(n.initializer) && n.initializer.text === 'throw')
+  );
+}
+
 function countBlockTokenReads(node: ts.Node): number {
   let count = 0;
   const walk = (n: ts.Node, inInputArg: boolean): void => {
-    if (ts.isIdentifier(n) && n.text === 'blockToken' && !inInputArg) count++;
+    if (
+      (ts.isIdentifier(n) || ts.isStringLiteralLike(n)) &&
+      n.text === 'blockToken' &&
+      !inInputArg
+    ) {
+      count++;
+    }
     if (ts.isCallExpression(n) && methodName(n) === 'input') {
       walk(n.expression, inInputArg);
       for (const arg of n.arguments) walk(arg, true);
@@ -266,19 +303,27 @@ export function bridgeProcAuth(text: string): Map<string, BridgeProcAuth> {
 
   const out = new Map<string, BridgeProcAuth>();
   for (const [name, node] of routerProcedures(source)) {
-    const uses: ts.CallExpression[] = [];
-    const collect = (n: ts.Node): void => {
-      if (isMiddlewareUse(n)) uses.push(n);
-      ts.forEachChild(n, collect);
-    };
-    collect(node);
+    // Chain links only: a `.use(…)` written anywhere else under the procedure is not applied
+    // to it.
+    const links = chainLinks(node);
+    const uses = links.filter(isMiddlewareUse);
     const inline = reachable(node, inlineHelpers).has(GUARD);
     if (uses.length === 0 && !inline) continue;
+    const lastUse = uses.length > 0 ? links.indexOf(uses[0]) : 0;
+    const terminator = links[0];
     out.set(name, {
       middlewareUses: uses.length,
       inline,
       inputPrecedesUse: uses.every(hasInputEarlierInChain),
+      usesAfterMiddleware: links
+        .slice(0, lastUse)
+        .filter((link) => methodName(link) === 'use' && !isMiddlewareUse(link)).length,
       blockTokenReads: countBlockTokenReads(node),
+      deferredRefusalUnread:
+        uses.some(asksToDefer) &&
+        !terminator.arguments.some((handler) =>
+          mentions(handler, (n) => ts.isIdentifier(n) && n.text === 'rateLimitRefused')
+        ),
     });
   }
   return out;

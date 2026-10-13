@@ -12,8 +12,8 @@ import type * as CatalogRateLimit from '~/server/utils/block-catalog-rate-limit'
 
 /**
  * `authorizeBlockBridgeViewer` — the tRPC middleware — driven two ways: through a probe
- * procedure, to pin each step and each option on its own, and through `blocks.getMyViewer`, the
- * one procedure that uses it. The token is really minted and the real `authorizeBlockBridgeToken`
+ * procedure, to pin each step and each option on its own, and through `blocks.getMyViewer`, a
+ * procedure that uses it. The token is really minted and the real `authorizeBlockBridgeToken`
  * runs, so the refusal codes and messages are the ones a block receives.
  *
  * `events` records the steps in the order they ran. An order assertion makes two steps refuse
@@ -89,12 +89,17 @@ import {
   read,
 } from '~/server/services/__tests__/block-bridge-router-ast.harness';
 import { publicProcedure, router } from '~/server/trpc';
-import { hasBlockTokenKey } from '~/shared/constants/__tests__/block-token-input.harness';
+import {
+  classifyBlockTokenProcedures,
+  type ProcedureWithInputs,
+} from '~/shared/constants/__tests__/block-token-input.harness';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 // Pairwise distinct, so an assertion says WHICH identity a step used.
 const SUBJECT_ID = 42;
 const SESSION_USER_ID = 7;
+const APP_OWNER_ID = 99;
+const MODEL_ID = 9001;
 const INSTANCE_ID = 'bki_mw';
 
 const USER = {
@@ -130,7 +135,7 @@ async function mint(over: { scopes?: string[]; anon?: boolean } = {}) {
     appBlockId: 'apb_mw',
     blockInstanceId: INSTANCE_ID,
     scopes: over.scopes ?? ['user:read:self', 'buzz:read:self', 'ai:write:budgeted'],
-    ctx: { modelId: 7, slotId: 'model.sidebar_top' },
+    ctx: { modelId: MODEL_ID, slotId: 'model.sidebar_top' },
     maxBrowsingLevel: 1,
     buzzBudget: 100,
   } as Parameters<typeof BlockTokenService.sign>[0]);
@@ -191,7 +196,7 @@ beforeEach(() => {
     id: 'apb_row',
     status: 'approved',
   });
-  dbMock.dbRead.oauthClient.findUnique.mockReset().mockResolvedValue({ userId: SUBJECT_ID });
+  dbMock.dbRead.oauthClient.findUnique.mockReset().mockResolvedValue({ userId: APP_OWNER_ID });
   dbMock.dbWrite.user.findUnique.mockReset().mockResolvedValue({
     id: SUBJECT_ID,
     username: 'viewer',
@@ -487,47 +492,35 @@ describe('blocks.getMyViewer — the procedure on the middleware', () => {
   });
 });
 
-describe('every procedure that takes a block token has an auth mechanism', () => {
-  type Procedure = { _def: { inputs: unknown[] } };
+describe('every blocksRouter procedure that takes a block token has an auth mechanism', () => {
   const procedures = (
-    blocksRouter as unknown as { _def: { procedures: Record<string, Procedure> } }
+    blocksRouter as unknown as { _def: { procedures: Record<string, ProcedureWithInputs> } }
   )._def.procedures;
-
-  function tokenProcedures(extra: Record<string, Procedure> = {}) {
-    const takesToken: string[] = [];
-    const unreadable: string[] = [];
-    for (const [name, proc] of Object.entries({ ...procedures, ...extra })) {
-      const results = proc._def.inputs.map((input) => hasBlockTokenKey(input));
-      if (results.includes(true)) takesToken.push(name);
-      else if (results.includes(null)) unreadable.push(name);
-    }
-    return { takesToken: takesToken.sort(), unreadable };
-  }
-
   const withMechanism = [...bridgeProcAuth(read(ROUTER)).keys()].sort();
 
   it('the runtime population equals the set the source scan found a mechanism for', () => {
-    const { takesToken, unreadable } = tokenProcedures();
+    const { takesToken, unreadable } = classifyBlockTokenProcedures(procedures);
     expect(unreadable).toEqual([]);
     expect(takesToken).toContain('getMyViewer');
     expect(takesToken).toContain('submitWorkflow');
     expect(takesToken).toEqual(withMechanism);
   });
 
-  it('CONTROL — a token-taking procedure with neither mechanism breaks that equality', () => {
+  it('CONTROL — a token-taking procedure with neither mechanism is the one left over', () => {
     const bare = publicProcedure
       .input(z.object({ blockToken: z.string().min(1) }))
-      .mutation(() => null) as unknown as Procedure;
-    const { takesToken } = tokenProcedures({ addedWithNeither: bare });
-    expect(takesToken).toContain('addedWithNeither');
-    expect(takesToken).not.toEqual(withMechanism);
+      .mutation(() => null) as unknown as ProcedureWithInputs;
+    const { takesToken } = classifyBlockTokenProcedures({ ...procedures, addedWithNeither: bare });
+    expect(takesToken.filter((name) => !withMechanism.includes(name))).toEqual([
+      'addedWithNeither',
+    ]);
   });
 });
 
 // `pnpm run typecheck` excludes `__tests__`, so it does not read the two directives below;
 // `tsc -p tsconfig.tests.json` does. The run-time halves are what this suite itself proves.
-describe('authorizeBlockBridgeViewer — only composes after a blockToken input', () => {
-  it('ahead of `.input()` it is a type error, and admits nothing if forced', async () => {
+describe('authorizeBlockBridgeViewer — forced past its input type, it admits nothing', () => {
+  it('ahead of `.input()`', async () => {
     const misordered = router({
       run: publicProcedure
         // @ts-expect-error — no input yet, so there is no token for the middleware to read.
@@ -539,7 +532,7 @@ describe('authorizeBlockBridgeViewer — only composes after a blockToken input'
     expect(h.events).toEqual([]);
   });
 
-  it('on an input with no blockToken it is a type error, and admits nothing if forced', async () => {
+  it('on an input with no blockToken', async () => {
     const tokenless = router({
       run: publicProcedure
         .input(z.object({ workflowId: z.string() }))

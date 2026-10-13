@@ -90,3 +90,23 @@ export function hasBlockTokenKey(schema: unknown, seen = new Set<unknown>()): bo
   }
   return null;
 }
+
+export type ProcedureWithInputs = { _def: { inputs: unknown[] } };
+
+/**
+ * Splits procedures into those whose input takes a `blockToken` and those whose input the walk
+ * could not read. An unreadable input is reported, never scored as token-free.
+ */
+export function classifyBlockTokenProcedures(procedures: Record<string, ProcedureWithInputs>): {
+  takesToken: string[];
+  unreadable: string[];
+} {
+  const takesToken: string[] = [];
+  const unreadable: string[] = [];
+  for (const [path, proc] of Object.entries(procedures)) {
+    const results = proc._def.inputs.map((input) => hasBlockTokenKey(input));
+    if (results.includes(true)) takesToken.push(path);
+    else if (results.includes(null)) unreadable.push(path);
+  }
+  return { takesToken: takesToken.sort(), unreadable: unreadable.sort() };
+}
