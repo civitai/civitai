@@ -284,39 +284,16 @@ describe('BlockImagePickerModal', () => {
     setGenerated([output('gen-a')]);
     const onResolved = openModal({ max: 5 });
 
+    await userEvent.click(tile('Posted image 1'));
     await userEvent.click(page.getByRole('tab', { name: 'Generated' }));
     await userEvent.click(tile('Generated image 1'));
-    await userEvent.click(page.getByRole('tab', { name: 'Posted' }));
-    await userEvent.click(tile('Posted image 1'));
     await expect
       .element(page.getByTestId('block-image-picker-count'))
       .toHaveTextContent('2 of 5 selected');
     await userEvent.click(confirmButton());
 
     expect(onResolved).toHaveBeenCalledWith([
-      { source: 'generated', url: blobUrl('gen-a'), width: 832, height: 1216, nsfwLevel: 1 },
       postedPick(1),
-    ]);
-  });
-
-  test('multi pick: leaving the posted tab drops its picks and keeps the generated ones', async () => {
-    setPosted([postedItem(1)]);
-    setGenerated([output('gen-a')]);
-    const onResolved = openModal({ sources: ['generated', 'posted'], max: 5 });
-    const count = page.getByTestId('block-image-picker-count');
-
-    await userEvent.click(tile('Generated image 1'));
-    await userEvent.click(page.getByRole('tab', { name: 'Posted' }));
-    await userEvent.click(tile('Posted image 1'));
-    await expect.element(count).toHaveTextContent('2 of 5 selected');
-
-    // The posted list is no longer on screen, so its pick cannot be confirmed from here.
-    await userEvent.click(page.getByRole('tab', { name: 'Generated' }));
-    await expect.element(count).toHaveTextContent('1 of 5 selected');
-    await expect.element(tile('Generated image 1')).toHaveAttribute('aria-pressed', 'true');
-    await userEvent.click(confirmButton());
-
-    expect(onResolved).toHaveBeenCalledWith([
       { source: 'generated', url: blobUrl('gen-a'), width: 832, height: 1216, nsfwLevel: 1 },
     ]);
   });

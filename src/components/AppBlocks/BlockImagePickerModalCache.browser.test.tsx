@@ -6,6 +6,7 @@ import { renderWithProviders } from '../../../test/component-setup';
 import { makeTrpcProxy } from '../../../test/trpcProxyStub';
 import type * as BrowsingLevelProviderModule from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import type * as CivitaiSessionProviderModule from '~/components/CivitaiWrapped/CivitaiSessionProvider';
+import type * as GenerationRequestHooks from '~/components/ImageGeneration/utils/generationRequestHooks';
 import type * as DomainColorModule from '~/hooks/useDomainColor';
 import type * as SessionProviderModule from '~/providers/SessionProvider';
 import type * as Trpc from '~/utils/trpc';
@@ -19,6 +20,14 @@ import type * as Trpc from '~/utils/trpc';
  * one level and shown at another is visible here. The posted procedure is answered by
  * `mocks.fetchPosted`; everything between the hook and the DOM is real.
  */
+
+const GENERATED_OUTPUT = vi.hoisted(() => ({
+  type: 'image',
+  url: 'https://orchestration.civitai.com/v2/consumer/blobs/gen-a.jpeg?sig=x',
+  width: 832,
+  height: 1216,
+  nsfwLevel: 'pg',
+}));
 
 const mocks = vi.hoisted(() => ({
   fetchPosted: vi.fn(),
@@ -65,6 +74,20 @@ vi.mock('~/components/BrowsingLevel/BrowsingLevelProvider', async (orig) => {
 vi.mock('~/components/CivitaiWrapped/CivitaiSessionProvider', async (orig) => ({
   ...(await orig<typeof CivitaiSessionProviderModule>()),
   useCivitaiSessionContext: () => mocks.session,
+}));
+
+// One rated output, so the generated tab has something to pick; that tab is not under test here.
+vi.mock('~/components/ImageGeneration/utils/generationRequestHooks', async (orig) => ({
+  ...(await orig<typeof GenerationRequestHooks>()),
+  useGetTextToImageRequests: () => ({
+    data: [{ succeededOutput: [GENERATED_OUTPUT] }],
+    isFetching: false,
+    isFetchingNextPage: false,
+    isError: false,
+    hasNextPage: false,
+    fetchNextPage: async () => undefined,
+    refetch: async () => undefined,
+  }),
 }));
 
 vi.mock('~/hooks/useDomainColor', async (orig) => ({
@@ -116,6 +139,8 @@ vi.mock('~/utils/trpc', async (orig) => {
 // eslint-disable-next-line import/first
 import BlockImagePickerModal from '~/components/AppBlocks/BlockImagePickerModal';
 // eslint-disable-next-line import/first
+import type { BlockImagePickerSource } from '~/components/AppBlocks/imagePickerLogic';
+// eslint-disable-next-line import/first
 import { DialogProvider } from '~/components/Dialog/DialogProvider';
 // eslint-disable-next-line import/first
 import { dialogStore, useDialogStore } from '~/components/Dialog/dialogStore';
@@ -153,12 +178,12 @@ function mountApp() {
   );
 }
 
-function openPicker() {
+function openPicker(props: { sources?: BlockImagePickerSource[]; max?: number | null } = {}) {
   const onResolved = vi.fn();
   dialogStore.trigger({
     id: `image-picker-cache-${Date.now()}-${Math.random()}`,
     component: BlockImagePickerModal,
-    props: { sources: ['posted'], max: null, onResolved },
+    props: { sources: props.sources ?? ['posted'], max: props.max ?? null, onResolved },
   });
   return onResolved;
 }
@@ -264,6 +289,30 @@ describe('BlockImagePickerModal posted list and the query cache', () => {
     await expect.element(firstTile()).toHaveAttribute('aria-pressed', 'false');
     await expect.element(confirmButton()).toBeDisabled();
     expect(onResolved).not.toHaveBeenCalled();
+  });
+
+  test('posted picks are kept across a switch to the other tab and back', async () => {
+    mocks.fetchPosted.mockImplementation(async () => ({ items: [MATURE] }));
+    mountApp();
+
+    const onResolved = openPicker({ sources: ['posted', 'generated'], max: 5 });
+    await userEvent.click(firstTile());
+    await userEvent.click(page.getByRole('tab', { name: 'Generated' }));
+    await userEvent.click(page.getByRole('button', { name: 'Generated image 1', exact: true }));
+    const count = page.getByTestId('block-image-picker-count');
+    await expect.element(count).toHaveTextContent('2 of 5 selected');
+
+    // Nothing is cached, so coming back fetches the posted list again: a new first page.
+    await userEvent.click(page.getByRole('tab', { name: 'Posted' }));
+    await vi.waitFor(() => expect(mocks.fetchPosted).toHaveBeenCalledTimes(2));
+    await expect.element(firstTile()).toHaveAttribute('aria-pressed', 'true');
+    await expect.element(count).toHaveTextContent('2 of 5 selected');
+
+    await userEvent.click(confirmButton());
+    expect(onResolved).toHaveBeenCalledWith([
+      pickOf(MATURE),
+      { source: 'generated', url: GENERATED_OUTPUT.url, width: 832, height: 1216, nsfwLevel: 1 },
+    ]);
   });
 
   test('loading a further page keeps the selection', async () => {

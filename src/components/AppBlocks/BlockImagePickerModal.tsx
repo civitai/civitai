@@ -84,7 +84,6 @@ export default function BlockImagePickerModal({
     void utils.blockImagePicker.getPosted.reset();
   }, [browsingLevel, utils]);
 
-  // A posted image can only be confirmed while it is in the posted list on screen.
   const dropPostedPicks = useCallback(
     () =>
       setSelected((current) =>
@@ -222,8 +221,14 @@ function PostedGrid({
   // renders as loading.
   const listKey = data?.pages[0];
 
-  // Runs when this list is replaced by another or leaves the screen, not when it gains a page.
-  useEffect(() => dropPostedPicks, [listKey, dropPostedPicks]);
+  // When the list on screen is replaced by another, picks made from the old one go with it. The
+  // first list after a mount replaces nothing: the tab was left and the picks were meant to stay.
+  const previousListKey = useRef(listKey);
+  useEffect(() => {
+    const previous = previousListKey.current;
+    previousListKey.current = listKey;
+    if (previous !== undefined && previous !== listKey) dropPostedPicks();
+  }, [listKey, dropPostedPicks]);
 
   return (
     <PickGrid
