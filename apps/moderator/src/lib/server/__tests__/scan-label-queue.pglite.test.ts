@@ -37,7 +37,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const MIGRATION = readFileSync(
   join(
     HERE,
-    '../../../../../../packages/civitai-db-schema/prisma/migrations/20261022120000_scan_label_queue/migration.sql'
+    '../../../../../../packages/civitai-db-schema/prisma/migrations/20261022130000_scan_label_queue/migration.sql'
   ),
   'utf8'
 );
@@ -82,11 +82,10 @@ async function seedItem(
   );
   // Prior votes come from moderators 900+, so they never collide with the test's own voters.
   for (let i = 0; i < votes; i++)
-    await pg.query(`INSERT INTO "ScanLabelVote" ("itemId", "userId", "block") VALUES ($1, $2, $3)`, [
-      itemId,
-      900 + i,
-      i < blockVotes,
-    ]);
+    await pg.query(
+      `INSERT INTO "ScanLabelVote" ("itemId", "userId", "block") VALUES ($1, $2, $3)`,
+      [itemId, 900 + i, i < blockVotes]
+    );
   return itemId;
 }
 
@@ -111,8 +110,10 @@ describe('claimNext order', () => {
 
   it('gives a moderator their live lease back instead of taking a second one', async () => {
     const a = await seedItem(1);
-    await seedItem(2);
+    const b = await seedItem(2);
     expect((await claimNext(1, {}, NOW))!.itemId).toBe(a);
+    // b is now partly voted, so a fresh claim would rank it first.
+    await castVote({ itemId: b, userId: 2, block: false, msOnItem: 1 }, NOW);
     expect((await claimNext(1, {}, later(1000)))!.itemId).toBe(a);
     const { rows } = await pg.query(`SELECT * FROM "ScanLabelClaim" WHERE "userId" = 1`);
     expect(rows).toHaveLength(1);
@@ -164,18 +165,25 @@ describe('vote slots', () => {
   it('accepts a vote on an expired lease while a slot is still free', async () => {
     const it1 = await seedItem(1);
     await claimNext(1, {}, NOW);
-    const r = await castVote({ itemId: it1, userId: 1, block: false, msOnItem: 10 }, later(LEASE_MS + 1));
+    const r = await castVote(
+      { itemId: it1, userId: 1, block: false, msOnItem: 10 },
+      later(LEASE_MS + 1)
+    );
     expect(r.ok).toBe(true);
   });
 
   it('counts one vote per moderator per item', async () => {
     const it1 = await seedItem(1);
     await claimNext(1, {}, NOW);
-    expect((await castVote({ itemId: it1, userId: 1, block: true, msOnItem: 5 }, NOW)).ok).toBe(true);
-    expect(await castVote({ itemId: it1, userId: 1, block: true, msOnItem: 5 }, later(10))).toEqual({
-      ok: false,
-      reason: 'already-voted',
-    });
+    expect((await castVote({ itemId: it1, userId: 1, block: true, msOnItem: 5 }, NOW)).ok).toBe(
+      true
+    );
+    expect(await castVote({ itemId: it1, userId: 1, block: true, msOnItem: 5 }, later(10))).toEqual(
+      {
+        ok: false,
+        reason: 'already-voted',
+      }
+    );
     expect(await item(it1)).toMatchObject({ votes: 1, blockVotes: 1, status: 'open' });
   });
 
@@ -231,9 +239,17 @@ describe('outcome', () => {
 
   it('a clear majority never signals a block', async () => {
     const it1 = await seedItem(1);
-    const results = [await voteAs(it1, 1, false), await voteAs(it1, 2, true), await voteAs(it1, 3, false)];
+    const results = [
+      await voteAs(it1, 1, false),
+      await voteAs(it1, 2, true),
+      await voteAs(it1, 3, false),
+    ];
     expect(results.some((r) => r.ok && r.reachedBlockMajority)).toBe(false);
-    expect(await item(it1)).toMatchObject({ outcome: 'clear', unanimous: false, status: 'decided' });
+    expect(await item(it1)).toMatchObject({
+      outcome: 'clear',
+      unanimous: false,
+      status: 'decided',
+    });
   });
 });
 
@@ -241,7 +257,10 @@ describe('counters', () => {
   it('counts my votes today against my quota', async () => {
     const a = await seedItem(1);
     const b = await seedItem(2);
-    await castVote({ itemId: a, userId: 1, block: false, msOnItem: 1 }, new Date('2026-10-12T23:00:00Z'));
+    await castVote(
+      { itemId: a, userId: 1, block: false, msOnItem: 1 },
+      new Date('2026-10-12T23:00:00Z')
+    );
     await castVote({ itemId: b, userId: 1, block: false, msOnItem: 1 }, NOW);
     await pg.query(`INSERT INTO "ScanLabelQuota" ("userId", "dailyVotes") VALUES (1, 80)`);
     expect(await getCounters(1, {}, NOW)).toEqual({

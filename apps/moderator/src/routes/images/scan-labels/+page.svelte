@@ -138,10 +138,24 @@
           class="grid grid-cols-2 gap-3"
         >
           <input type="hidden" name="itemId" value={data.card.itemId} />
-          <Button type="submit" name="block" value="1" variant="destructive" size="lg" disabled={submitting}>
+          <Button
+            type="submit"
+            name="block"
+            value="1"
+            variant="destructive"
+            size="lg"
+            disabled={submitting}
+          >
             Block <span class="ml-2 text-xs opacity-70">B</span>
           </Button>
-          <Button type="submit" name="block" value="0" variant="secondary" size="lg" disabled={submitting}>
+          <Button
+            type="submit"
+            name="block"
+            value="0"
+            variant="secondary"
+            size="lg"
+            disabled={submitting}
+          >
             Don’t block <span class="ml-2 text-xs opacity-70">N</span>
           </Button>
         </form>

@@ -6845,7 +6845,7 @@ model AppealTrainingObjectDeletion {
   createdAt DateTime @default(now()) @db.Timestamptz(3)
 }
 
-// Upload scan label queue. FKs and CHECK constraints live in migration 20261022120000_scan_label_queue.
+// Upload scan label queue. FKs and CHECK constraints live in migration 20261022130000_scan_label_queue.
 model ScanLabelItem {
   id             Int       @id @default(autoincrement())
   imageId        Int       @unique
