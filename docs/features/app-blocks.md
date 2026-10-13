@@ -381,8 +381,9 @@ read that file. As of this writing the families are:
 - **Workflows** (REQUEST-style, host-brokered via `blocks.submitWorkflow` /
   `estimateWorkflow` / `pollWorkflow`): `SUBMIT_WORKFLOW`, `ESTIMATE_WORKFLOW`,
   `POLL_WORKFLOW`, `CANCEL_WORKFLOW`, `PREPARE_TRAINING_DATASET` (→
-  `TRAINING_DATASET_RESULT`) and `RUN_TRAINING` (→ `TRAINING_RESULT`), the last two
-  page host only — see "Training runs".
+  `TRAINING_DATASET_RESULT`), `RUN_TRAINING` (→ `TRAINING_RESULT`) and
+  `RUN_CONFIRMED_STEP` (→ `CONFIRMED_STEP_RESULT`), the last three page host only — see
+  "Training runs" and "Confirmed steps".
 - **Buzz**: `OPEN_BUZZ_PURCHASE` (host-mediated purchase) and `GET_BUZZ_BALANCE`
   (per-account balance read — see below).
 - **Resource pickers** (host chrome so the iframe only learns the resources the
@@ -620,6 +621,84 @@ A confirmed run may cost more than the token's per-call budget, up to
 A quote is single-use, expires after 15 minutes, and is re-priced at submit; a higher
 re-price is refused, and so is a run the viewer's Buzz cannot cover (checked before anything is
 reserved, when the balance can be read). Training charges no author fee.
+
+If the viewer set a daily Buzz limit for the app and the run would exceed what remains of
+it, the submit returns a failed snapshot with `errorCode: 'daily-limit-exceeded'` (the same
+code a confirmed step uses). That holds for an ordinary viewer's page token. On an owner's
+private run the submit reserves against the private-run cap instead and makes no daily-limit
+check, and the training host does not check the limit before the confirm either — so a
+training private run is bounded by the private-run cap, not by the viewer's daily limit.
+Training and confirmed steps share one confirmation and submit path on the server; see
+"Confirmed steps" below.
+
+### Confirmed steps (one pass-through job above the per-call budget)
+
+A pass-through `kind: 'step'` job (`{ $type, input, maxBuzz }`) whose price exceeds the
+token's per-call budget is refused — unless the viewer confirms that exact price in host
+chrome. Behind its own fail-closed flag, `app-blocks-confirmed-step`. It is the training
+run's quote grant applied to any pass-through `$type` (the platform denylist still
+applies). Page tokens only, under the same rule as training: dev, dev-tunnel and
+review-sandbox tokens are refused, and so is an editor's read-only private run. The app
+owner's own private run is allowed, under the private-run Buzz cap — it renders in the
+same page host, so the owner sees the same confirm.
+
+1. **Estimate** — `ESTIMATE_WORKFLOW` with the pass-through body. When the orchestrator
+   quotes a **fixed** price (positive, not variable/metered) that is above the per-call
+   budget and at most `BLOCK_CONFIRMED_STEP_MAX_BUZZ_PER_JOB` (5,000 Buzz), the reply
+   carries `snapshot.stepQuote: { quoteId, total, stepType, expiresAt }`. `total` is the
+   price the viewer will confirm and be charged. No quote, a zero price or a variable price
+   is never grantable: the viewer confirms what they are charged. Below the budget the
+   estimate is unchanged and the job runs as before.
+
+   Three things to know as an author:
+   - **Estimate it on its own.** Only the single `ESTIMATE_WORKFLOW` stores a confirmable
+     quote. A batch estimate (`ESTIMATE_WORKFLOW_BATCH`) never persists anything, so its
+     cells never carry `stepQuote`; price the grid in a batch, then estimate the one body
+     you want to run.
+   - **Plain JSON input only.** The quote is bound to the exact body, so `input` must be
+     plain JSON — objects, arrays, strings, finite numbers, booleans and `null`. A `Date`,
+     `Map`, `Set` or similar is refused (`a confirmed step needs plain JSON input … —
+     body.input.<path> is a Date`), at the estimate and at the submit.
+   - **Not for training.** A training `$type` (`training`, `imageResourceTraining`) is
+     refused with `a training step type cannot run as a confirmed step — use
+     kind:'training'`. Training runs have their own kind, with its own dataset and checks.
+2. **Run** — `RUN_CONFIRMED_STEP { requestId, body: { …the same body, quoteId } }`. The host
+   reads the quote back from the server (`blocks.previewQuoteGrant`), shows the price, and on
+   the viewer's confirm records it through `blocks.consentQuoteGrant` (signed-in session
+   only) and then submits. A submit naming a quote nobody confirmed is refused, so a block
+   cannot start the job by calling `SUBMIT_WORKFLOW` itself. The reply is
+   `CONFIRMED_STEP_RESULT { requestId, snapshot }` or `{ requestId, error }`; the host's
+   own codes are `review-mode`, `block is not ready`, `sign in to run`,
+   `invalid confirmed step request`, `no block token`, `declined`, `daily-limit-exceeded`
+   and `submission-unconfirmed` (same meaning as on training).
+3. **The viewer's daily limit binds.** If the viewer set a daily Buzz limit for the app
+   and the job would exceed what remains of it today, the host explains that instead of
+   offering a confirm, links to `/apps/activity` (where the limit is raised or removed), and
+   replies `daily-limit-exceeded`. The submit enforces the same limit and returns a failed
+   snapshot with `errorCode: 'daily-limit-exceeded'`. A viewer with no limit set (the
+   default) is unaffected. On an owner's private run the submit reserves against the
+   private-run cap instead of the daily counters, so there the host's check before the
+   confirm is the only daily-limit check.
+
+A quote is single-use, bound to the viewer, app, install and exact body, expires after 15
+minutes, and is re-priced at submit; a higher re-price, or one that is no longer fixed, is
+refused. Every other ceiling above still applies, and the job charges no author fee.
+
+Each confirmation is its own run: the orchestrator id is derived from the confirmed quote,
+so confirming the same body twice starts two jobs. If a submit comes back
+`submission-unconfirmed`, the job may have started; a retry needs a new estimate and
+confirmation and would be a second job, so check the viewer's generations first.
+
+The confirm button of both spend confirms (training and confirmed step) stays disabled for
+about a second after the dialog appears, and again after the page regains focus or
+visibility, so the viewer has a moment to read it. If more than one such dialog is open,
+only the one in front counts down; the others start their wait when they come to the front.
+
+**3D outputs.** A step that produces 3D models (`polyGen`) still lists every model url in
+`imageUrls`; `model3dOutputs: [{ url, format, variant }]` says which is which — `format`
+is the model's own format (`glb`, `fbx`, …) and `variant` the output field it came from
+(`model`, `riggedFbxModel`, `basicAnimations.walkingModel`, …). The same field is on
+`QUERY_APP_WORKFLOWS` items.
 
 ## Publish / review / deploy lifecycle (no trust on push)
 

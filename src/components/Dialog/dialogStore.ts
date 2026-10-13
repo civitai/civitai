@@ -94,6 +94,18 @@ export function useIsLevelFocused() {
   return levelRef.current === level;
 }
 
+/**
+ * True when the dialog with this id is the LAST entry in the store — the one actually
+ * in front. Unlike `useIsLevelFocused` (which compares the dialog COUNT now with the
+ * count at mount), this stays correct when a dialog underneath closes or another opens
+ * on top afterwards. `undefined` (no dialog context) is never top-most.
+ */
+export function useIsTopDialog(id: string | number | symbol | undefined) {
+  return useDialogStore(
+    (store) => id !== undefined && store.dialogs[store.dialogs.length - 1]?.id === id
+  );
+}
+
 // used to track the modal stacking context (page modals).
 const useStackingContextStore = create<{
   stackingContext: number[];

@@ -2823,7 +2823,8 @@ export const upsertModel = async (
           select: { id: true, nsfwLevel: true, meta: true, availability: true },
           data: {
             ...data,
-            status,
+            // Publishing goes through model.publish, which enforces what a create would skip.
+            status: isModerator ? status : ModelStatus.Draft,
             gallerySettings,
             meta:
               bountyId || meta

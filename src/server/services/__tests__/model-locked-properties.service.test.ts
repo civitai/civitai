@@ -537,6 +537,31 @@ describe('upsertModel — moderator', () => {
   });
 });
 
+// Publishing runs through model.publish; a create that kept the client's status would skip every
+// check that endpoint enforces.
+describe('upsertModel — status on create', () => {
+  it.each(Object.values(ModelStatus).filter((status) => status !== ModelStatus.Draft))(
+    'stores Draft when a non-moderator creates with %s',
+    async (status) => {
+      await upsert({ userId: OWNER_ID, status });
+
+      expect(createData().status).toBe(ModelStatus.Draft);
+    }
+  );
+
+  it('stores Draft for a templated create too', async () => {
+    await upsert({ id: MODEL_ID, templateId: MODEL_ID, userId: OWNER_ID, status: 'Published' });
+
+    expect(createData().status).toBe(ModelStatus.Draft);
+  });
+
+  it('keeps a moderator-supplied status', async () => {
+    await upsert({ userId: MODERATOR_ID, isModerator: true, status: ModelStatus.Published });
+
+    expect(createData().status).toBe(ModelStatus.Published);
+  });
+});
+
 // privateModelFromTraining replaces meta wholesale, so it must carry the stored server-owned keys over
 // and ignore any the client sends — the publish paths read them.
 describe('privateModelFromTraining — server-owned meta keys', () => {

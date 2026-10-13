@@ -8,6 +8,7 @@ import type {
   TrainingQuoteErrorCode,
   WorkflowQuoteErrorCode,
 } from '~/server/services/blocks/pass-through-quote-failure';
+import type { CONFIRMED_STEP_DAILY_LIMIT_ERROR_CODE } from '~/shared/constants/block-scope.constants';
 import type { BlockWorkflowErrorCode } from '~/server/services/blocks/workflow-graph';
 import {
   civitaiHostedImageUrlSchema,
@@ -567,10 +568,15 @@ export const blockStepBodySchema = makeBlockStepBodySchema(REGISTERED_STEP_IDS);
 // assumes). Recorded here so it is a decision someone can revisit, not a
 // surprise. See the PR that added this arm.
 //
-// `maxBuzz` is the ONLY spend knob and it works exactly as the inline-comfy arm's
-// does: the server derives `stepTimeoutSeconds = maxBuzz` and stamps it as the
-// step timeout, so `maxBuzz === ceil(stepTimeoutSeconds)` cannot be violated —
-// there is only one number.
+// `maxBuzz` is the ONLY spend knob an app sets and it works exactly as the
+// inline-comfy arm's does: the server derives `stepTimeoutSeconds = maxBuzz` and
+// stamps it as the step timeout, so `maxBuzz === ceil(stepTimeoutSeconds)` cannot be
+// violated — there is only one number.
+//
+// The one exception is a CONFIRMED job (`quoteId`): a fixed orchestrator price above
+// the token's per-call budget that the viewer confirmed in host chrome. That job is
+// charged the confirmed price, not `maxBuzz` — see `submitConfirmedPassThroughStepWorkflow`
+// in blocks.router and `blockConfirmedStepCeiling` in block-scope.middleware.
 
 /**
  * Hard per-job Buzz ceiling a pass-through body may declare. The same number as
@@ -616,6 +622,13 @@ export const PASS_THROUGH_TYPE_MAX_CHARS = 64;
  */
 export const PASS_THROUGH_INPUT_BYTES_MAX = INLINE_GRAPH_BYTES_MAX;
 
+/**
+ * Opaque handle to a server-stored confirmed-STEP quote (`blocks.estimateWorkflow` on
+ * a pass-through body priced above the token's per-call budget). Disjoint from the
+ * training `tq_` shape, so neither kind's id can name the other's record.
+ */
+export const BLOCK_STEP_QUOTE_ID_REGEX = /^sq_[a-f0-9]{32}$/;
+
 const blockPassThroughStepShape = {
   kind: z.literal('step'),
   // The ARM discriminator. `z.undefined()` — NOT an absent key. See the
@@ -631,6 +644,11 @@ const blockPassThroughStepShape = {
   // draft claimed identity here and in `blocks.router`; measured false.)
   input: z.record(z.string(), z.unknown()),
   maxBuzz: z.number().int().min(1).max(PASS_THROUGH_MAX_BUZZ),
+  // Present on a CONFIRMED submit only — the viewer-confirmed fixed-price quote
+  // (`stepQuote.quoteId` on the estimate reply) this job is charged against in place
+  // of the per-call budget. Excluded from the body hash that binds a quote to its
+  // body. Absent, the arm is exactly the unconfirmed one described above.
+  quoteId: z.string().regex(BLOCK_STEP_QUOTE_ID_REGEX).optional(),
 };
 
 export const blockPassThroughStepBodySchema = z
@@ -640,6 +658,8 @@ export const blockPassThroughStepBodySchema = z
     path: ['input'],
     message: `step input exceeds the ${PASS_THROUGH_INPUT_BYTES_MAX}-byte limit`,
   });
+
+export type PassThroughStepBody = z.infer<typeof blockPassThroughStepBodySchema>;
 
 // ── App Blocks MULTI-STEP kind (`kind:'workflow'`) ────────────────────────────
 //
@@ -717,6 +737,24 @@ export type BlockMultiStepWorkflowBody = z.infer<typeof blockMultiStepWorkflowBo
 export const BLOCK_TRAINING_DATASET_ID_REGEX = /^tds_[a-f0-9]{32}$/;
 /** Opaque handle to a server-stored training quote. */
 export const BLOCK_TRAINING_QUOTE_ID_REGEX = /^tq_[a-f0-9]{32}$/;
+/**
+ * Input of the shared consent pair (`blocks.previewQuoteGrant` /
+ * `blocks.consentQuoteGrant`). The caller states the KIND it is confirming and the
+ * quote id must be of that kind — a discriminated union, so a training id sent as a
+ * step (or the reverse) is refused at the input rather than dispatched by its prefix.
+ */
+export const blockQuoteGrantConsentInputSchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('training'),
+    blockToken: z.string().min(1),
+    quoteId: z.string().regex(BLOCK_TRAINING_QUOTE_ID_REGEX),
+  }),
+  z.object({
+    kind: z.literal('step'),
+    blockToken: z.string().min(1),
+    quoteId: z.string().regex(BLOCK_STEP_QUOTE_ID_REGEX),
+  }),
+]);
 /** Max sample prompts on a training run. */
 export const BLOCK_TRAINING_SAMPLE_PROMPTS_MAX = 6;
 /** Max characters of one sample prompt. */
@@ -958,8 +996,18 @@ export type BlockWorkflowSnapshot = {
    * snapshot with no `cost`. `rejected` means the orchestrator refused the body and a
    * retry of the same body will not help; `unavailable` is transient; `unpriced` is
    * an answer without a price. The SUBMIT of the same body defines no such refusal.
+   *
+   * `'daily-limit-exceeded'` — a viewer-confirmed job (a confirmed pass-through step or
+   * a `kind:'training'` run) that would exceed what remains of the viewer's own opted-in
+   * daily Buzz limit for this app. Never overridable by the confirm; the viewer raises
+   * the limit themselves. Returned by the submit for an ordinary page token only: a
+   * private run reserves against its own cap and makes no daily-limit check at submit.
    */
-  errorCode?: TrainingQuoteErrorCode | WorkflowQuoteErrorCode | BlockWorkflowErrorCode;
+  errorCode?:
+    | TrainingQuoteErrorCode
+    | WorkflowQuoteErrorCode
+    | BlockWorkflowErrorCode
+    | typeof CONFIRMED_STEP_DAILY_LIMIT_ERROR_CODE;
   // The buzz account that primarily funded this generation (the accountType of
   // the largest realized debit). OPTIONAL + additive: existing consumers that
   // don't read it are unaffected. Only the account TYPE is surfaced — nothing
@@ -1298,6 +1346,27 @@ export type BlockWorkflowSnapshot = {
    */
   trainingQuote?: BlockTrainingQuote;
   /**
+   * The server-stored quote a pass-through `kind:'step'` ESTIMATE produced when the
+   * orchestrator quoted a FIXED price above the token's per-call budget (and within
+   * the per-job ceiling). The block passes `quoteId` back on `RUN_CONFIRMED_STEP`; the
+   * host shows the viewer this price (read back from the server, never from the
+   * block), and only a submit naming a viewer-confirmed quote may charge it. `total`
+   * is the exact price confirmed and charged — it may differ from `cost.total`, which
+   * stays what an UNCONFIRMED submit would reserve (`max(maxBuzz, quote)`). Present
+   * only on such an estimate reply. 🔴 WIRE CONTRACT: additive; mirrored by
+   * `@civitai/app-sdk` in its own repo.
+   */
+  stepQuote?: BlockStepQuote;
+  /**
+   * Labels for the 3D models (`Model3dBlob`, `type: 'model3d'`) a pass-through step
+   * produced. Every one of those urls is ALSO in `imageUrls`, unchanged — this only
+   * says which entry is which: `format` is the orchestrator blob's own `format`
+   * (`glb`, `fbx`, …) and `variant` is the output key path it was found at
+   * (`model`, `riggedFbxModel`, `basicAnimations.walkingModel`, …). OMITTED when the
+   * workflow produced none. 🔴 WIRE CONTRACT: additive; mirrored by `@civitai/app-sdk`.
+   */
+  model3dOutputs?: BlockModel3dOutput[];
+  /**
    * One entry per step of a `kind:'workflow'` submit, in the orchestrator's order.
    * The children a `repeat` step generates follow it, named `<repeat name>.<n>`.
    *
@@ -1330,6 +1399,16 @@ export type BlockWorkflowStepSnapshot = {
   output?: unknown;
   error?: string;
 };
+
+export type BlockStepQuote = {
+  quoteId: string;
+  total: number;
+  /** The orchestrator `$type` that was priced. */
+  stepType: string;
+  expiresAt: string;
+};
+
+export type BlockModel3dOutput = { url: string; format: string; variant: string };
 
 export type BlockTrainingQuote = {
   quoteId: string;

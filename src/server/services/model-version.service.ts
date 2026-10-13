@@ -132,16 +132,13 @@ import {
   getModelVersionEarlyAccessRefundRequirement,
   refundModelEarlyAccessPurchases,
 } from '~/server/services/model-early-access-refund.service';
-import type {
-  ModelType,
-  ModelVersionEngagementType,
-  TrainingStatus,
-} from '~/shared/utils/prisma/enums';
+import type { ModelType, ModelVersionEngagementType } from '~/shared/utils/prisma/enums';
 import {
   Availability,
   CommercialUse,
   ModelStatus,
   ModelUsageControl,
+  TrainingStatus,
 } from '~/shared/utils/prisma/enums';
 import type { LicensingFeeSettlementCurrency, LicensingFeeType } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
@@ -505,6 +502,65 @@ function toMonetizationAuditShape(
     : null;
 }
 
+// The training wizard's own transitions: it approves a finished (or failed) run's epoch and keeps a
+// draft Pending. Anything else — a Denied/Paused run going back to Approved or Pending — is a
+// moderator or training-service decision.
+function assertOwnerTrainingStatusChange(
+  stored: TrainingStatus | null,
+  next: TrainingStatus | null | undefined
+) {
+  if (next === undefined || next === stored) return;
+  const approvesFinishedRun =
+    next === TrainingStatus.Approved &&
+    (stored === TrainingStatus.InReview || stored === TrainingStatus.Failed);
+  const keepsDraftPending =
+    next === TrainingStatus.Pending &&
+    (stored === null || stored === TrainingStatus.Failed || stored === TrainingStatus.Expired);
+  if (!approvesFinishedRun && !keepsDraftPending)
+    throw throwBadRequestError("A version's training status can't be changed here.");
+}
+
+// Mirrors the comics rule: once published, early access can only shrink or end.
+async function assertPaidAccessNotIncreased(
+  versionId: number,
+  next: ModelVersionPaidAccessInputSchema | null | undefined
+) {
+  const gated = !!next && (!!next.permanent || (next.timeframeDays ?? 0) > 0);
+  if (!next || !gated) return;
+
+  const stored = await dbWrite.paidAccess.findUnique({
+    where: { entityType_entityId: { entityType: 'ModelVersion', entityId: versionId } },
+    select: { timeframeDays: true, terms: true, endsAt: true },
+  });
+  if (!stored) return;
+  // An ended gate is a tombstone: starting a window after publish is assertUserEarlyAccessLimits' call.
+  if (stored.endsAt != null && stored.endsAt <= new Date()) return;
+
+  const window = (days: number | null | undefined, permanent?: boolean) =>
+    permanent || days == null ? Infinity : days;
+  if (window(next.timeframeDays, next.permanent) > window(stored.timeframeDays))
+    throw throwBadRequestError('Cannot increase the early access timeframe after publishing.');
+
+  // Effective prices: an omitted generation price is the download price (bundled), and free is 0.
+  const effective = (terms: ModelVersionTerms) => ({
+    download: terms.download?.price ?? 0,
+    generation:
+      terms.generation && 'free' in terms.generation
+        ? 0
+        : (terms.generation ? generationPrice(terms) : terms.download?.price) ?? 0,
+  });
+  const before = effective((stored.terms ?? {}) as ModelVersionTerms);
+  const after = effective(next.terms as ModelVersionTerms);
+  if (after.download > before.download || after.generation > before.generation)
+    throw throwBadRequestError('Cannot increase the early access price after publishing.');
+}
+
+// Same test assertUserEarlyAccessLimits uses: a Scheduled version carries a FUTURE anchor, so only a
+// date that has passed counts. Unpublishing must not reset the guard.
+const hasBeenPublished = (v: { status: ModelStatus; initialPublishedAt: Date | null }) =>
+  v.status === ModelStatus.Published ||
+  (!!v.initialPublishedAt && v.initialPublishedAt <= new Date());
+
 export const upsertModelVersion = async ({
   id,
   monetization,
@@ -656,6 +712,9 @@ export const upsertModelVersion = async ({
     }
   }
 
+  // Publishing goes through modelVersion.publish, which enforces what this route would skip.
+  if (!isModerator && (!id || templateId)) data.status = ModelStatus.Draft;
+
   // Check if trying to publish a model version when model is marked as cannotPublish
   const modelMeta = model.meta as ModelMeta | null;
   if (modelMeta?.cannotPublish && data.status === ModelStatus.Published) {
@@ -797,6 +856,8 @@ export const upsertModelVersion = async ({
       select: {
         id: true,
         status: true,
+        initialPublishedAt: true,
+        trainingStatus: true,
         description: true,
         trainedWords: true,
         publishedAt: true,
@@ -862,6 +923,23 @@ export const upsertModelVersion = async ({
       throw throwBadRequestError(
         'Use the unpublish action to take a published version down — it settles any refunds owed to buyers.'
       );
+    }
+
+    // Any other move is a publish or a takedown laundered into Draft, which modelVersion.publish then
+    // accepts. The form and the review handlers replay the stored status, which is not a change.
+    if (!isModerator && data.status !== undefined && data.status !== existingVersion.status) {
+      throw throwBadRequestError(
+        "Use the publish or unpublish action to change a version's status."
+      );
+    }
+
+    if (!isModerator) {
+      if (data.modelId !== undefined && data.modelId !== existingVersion.model.id) {
+        throw throwBadRequestError('A version cannot be moved to another model.');
+      }
+      assertOwnerTrainingStatusChange(existingVersion.trainingStatus, data.trainingStatus);
+      if (hasBeenPublished(existingVersion))
+        await assertPaidAccessNotIncreased(id as number, paidAccess);
     }
 
     const mergedMeta =
@@ -1125,6 +1203,8 @@ export const updateModelVersionPaidAccess = async ({
       usageControl: true,
       modelId: true,
       meta: true,
+      status: true,
+      initialPublishedAt: true,
       model: { select: { userId: true } },
     },
   });
@@ -1151,6 +1231,8 @@ export const updateModelVersionPaidAccess = async ({
     ) as typeof paidAccess.terms;
 
   assertPaidAccessInput(paidAccess);
+  if (!isModerator && hasBeenPublished(existingVersion))
+    await assertPaidAccessNotIncreased(id, paidAccess);
 
   const rightsAffirmation = await resolveRightsAffirmation({
     userId: actorUserId ?? existingVersion.model.userId,

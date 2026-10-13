@@ -104,6 +104,26 @@ describe('snapshotFromWorkflow — kind:workflow', () => {
     expect(snapshot.steps?.[1].imageUrls).toEqual(['https://img/up.png']);
   });
 
+  it('labels the 3D models of a recorded step, and only for urls it publishes', () => {
+    const mesh = {
+      $type: 'polyGen',
+      name: 'mesh',
+      status: 'succeeded',
+      output: { model: blob('https://img/mesh.glb', { type: 'model3d', format: 'glb' }) },
+    };
+    const labels = [{ url: 'https://img/mesh.glb', format: 'glb', variant: 'model' }];
+
+    const shown = workflow([GEN, mesh], [{ name: 'gen' }, { name: 'mesh' }]);
+    expect(snapshotFromWorkflow(shown).imageUrls).toContain('https://img/mesh.glb');
+    expect(snapshotFromWorkflow(shown).model3dOutputs).toEqual(labels);
+    expect(projectAppWorkflow(shown).model3dOutputs).toEqual(labels);
+
+    // Suppressed: the url is in no image list, so no label names it either.
+    const hidden = workflow([GEN, mesh], [{ name: 'gen' }, { name: 'mesh', suppressOutput: true }]);
+    expect('model3dOutputs' in snapshotFromWorkflow(hidden)).toBe(false);
+    expect('model3dOutputs' in projectAppWorkflow(hidden)).toBe(false);
+  });
+
   it('omits top-level `imageUrls` when every step that has images suppressed them', () => {
     const snapshot = snapshotFromWorkflow(workflow([GEN], [{ name: 'gen', suppressOutput: true }]));
     expect('imageUrls' in snapshot).toBe(false);

@@ -336,9 +336,10 @@ describe('author fee — the spend-attribution seam', () => {
 
   it('there are exactly SIX spend-attribution call sites', () => {
     // textToImage, customComfy, the registry-step bridge, the pass-through step,
-    // the multi-step workflow, and the `kind:'training'` run. A new submit path is
-    // a deliberate decision about whether it charges an author fee, so it should
-    // land here rather than silently inherit a skip.
+    // the multi-step workflow, and the shared confirmed-quote path (`kind:'training'`
+    // runs and confirmed steps). A new submit path is a deliberate decision about
+    // whether it charges an author fee, so it should land here rather than silently
+    // inherit a skip.
     expect(sites).toHaveLength(6);
   });
 
@@ -498,16 +499,21 @@ const NO_FEE_PATHS: Record<string, { charges: number; reason: string; whatifAttr
         'POST-PAID, same as customComfy: it reserves the declared ceiling, which settles ' +
         'down, and nothing is reserved for a fee.',
     },
-    submitTrainingWorkflow: {
+    // The ONE submit path for every viewer-confirmed quote — `kind:'training'` runs and
+    // confirmed pass-through steps both reach it through their thin entry points
+    // (`submitTrainingWorkflow`, `submitConfirmedPassThroughStepWorkflow`).
+    submitConfirmedQuoteWorkflow: {
       charges: 0,
       whatifAttribution:
         'Same as the pass-through arm: no fee is charged, so only `recordSpendAttribution`’s ' +
         '(workflowId, appBlockId) idempotency is at stake. DEFENSIVE, NOT ACTIVE — the ' +
         'orchestrator stamps an id on every workflow it returns.',
       reason:
-        'ZERO-FEE BY DECISION. The viewer confirms ONE exact price for a training run before it ' +
-        'is charged, so a fee on top would charge more than they confirmed. The `training` ' +
-        'override in `BLOCK_AUTHOR_FEE_PLATFORM_CONFIG` prices any future caller at zero too.',
+        'ZERO-FEE BY DECISION, for both kinds it serves. The viewer confirms ONE exact price ' +
+        'before the job is charged, so a fee on top would charge more than they confirmed. The ' +
+        '`training` override in `BLOCK_AUTHOR_FEE_PLATFORM_CONFIG` prices a training caller at ' +
+        'zero too, and the confirmed step’s quote is the pass-through quote, which surfaces no ' +
+        '`cost.base` to price a fee from.',
     },
   };
 
@@ -550,7 +556,7 @@ describe('author fee — the viewer-charge seam', () => {
       'submitStepWorkflow',
       'submitPassThroughStepWorkflow',
       'submitMultiStepWorkflow',
-      'submitTrainingWorkflow',
+      'submitConfirmedQuoteWorkflow',
     ]);
   });
 
@@ -700,7 +706,7 @@ describe('author fee — the viewer-charge seam', () => {
     expect(Object.keys(NO_FEE_PATHS)).toEqual([
       'submitCustomComfyWorkflow',
       'submitPassThroughStepWorkflow',
-      'submitTrainingWorkflow',
+      'submitConfirmedQuoteWorkflow',
     ]);
 
     for (const [pathName, entry] of Object.entries(NO_FEE_PATHS)) {

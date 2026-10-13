@@ -127,8 +127,8 @@ const LEDGER = [
     count: 7,
     why:
       'The tRPC bridge paths: the block-post writer plus the six workflow-submit arms ' +
-      '(txt2img, registry step, custom comfy, pass-through, multi-step workflow, training). ' +
-      'These do NOT pass through the ' +
+      '(txt2img, registry step, custom comfy, pass-through, multi-step workflow, and the shared ' +
+      'confirmed-quote path that serves training runs and confirmed steps). These do NOT pass through the ' +
       'REST middleware, so the middleware site above does not cover them.',
   },
   {

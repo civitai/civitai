@@ -2172,6 +2172,12 @@ export const REDIS_SYS_KEYS = {
     TRAINING_DATASET: 'system:blocks:training-dataset',
     /** App Blocks `kind:'training'` quote; claimed exactly once (GETDEL) by the submit. */
     TRAINING_QUOTE: 'system:blocks:training-quote',
+    /**
+     * App Blocks confirmed pass-through STEP quote (a fixed price above the token's
+     * per-call budget); claimed exactly once (GETDEL) by the submit. See
+     * block-quote-grant.service.
+     */
+    STEP_QUOTE: 'system:blocks:step-quote',
   },
   DOWNLOAD: {
     LIMITS: 'download:limits',

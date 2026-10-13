@@ -416,6 +416,14 @@ export const APP_SPEND_CAP_REJECTION_REASONS = ['daily', 'velocity', 'unavailabl
 export type AppSpendCapRejectionReason = (typeof APP_SPEND_CAP_REJECTION_REASONS)[number];
 
 /**
+ * The viewer-confirmed quote kinds — `kind:'training'` and the confirmed pass-through
+ * step. The ONLY label of `civitai_app_block_confirmed_quote_overcharge_total`.
+ */
+export const APP_BLOCK_CONFIRMED_QUOTE_KINDS = ['training', 'step'] as const;
+
+export type AppBlockConfirmedQuoteKind = (typeof APP_BLOCK_CONFIRMED_QUOTE_KINDS)[number];
+
+/**
  * The NON-`ok` verdicts of `withBlockScope`'s approved-status gate. Kept as a code-owned
  * union (not a free string) so the `reason` label stays a bounded 4-series set.
  *
@@ -684,6 +692,7 @@ type Bundle = {
   customComfyWallclockSeconds: Histogram<string>;
   capLimitsDegradedTotal: Counter<string>;
   spendCapRejectionsTotal: Counter<string>;
+  confirmedQuoteOverchargeTotal: Counter<string>;
   restApprovalVerdictsTotal: Counter<string>;
   revocationRefusalsTotal: Counter<string>;
   consentRevocationRefusalsTotal: Counter<string>;
@@ -994,6 +1003,28 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
     'civitai_app_block_spend_cap_rejections_total',
     'App Block generation submits DENIED by the per-app aggregate spend/velocity cap, by reason (daily = the per-app daily Buzz ceiling would be exceeded; velocity = the per-app short-window gen ceiling was exceeded; unavailable = a Redis/limit-resolution error, fail-closed deny)',
     ['reason']
+  );
+
+  // ── Viewer-confirmed quote OVERCHARGES ───────────────────────────────────────
+  // One increment per DEFINITE submit of a viewer-confirmed quote (a training run or a
+  // confirmed pass-through step) that the orchestrator billed ABOVE the price the
+  // viewer confirmed. The re-quote and the real submit are separate orchestrator
+  // calls, so this cannot be prevented at submit — the charge has already happened —
+  // and the post-paid settle refund clamps at 0, so no cap counter shows it either.
+  // This series and the `block-confirmed-quote-overcharge` log line (which carries
+  // the app, step type, workflow and both amounts) are the only places it is visible.
+  //
+  // Expected to be ZERO. Any increase means a viewer was charged more than they
+  // agreed to: alert on `increase(...) > 0`.
+  //
+  // 🔴 `kind` IS THE ONLY LABEL. The pass-through `$type` is caller-supplied (an open
+  // set by construction on that arm), and app/user ids would grow with traffic; all of
+  // those ride the log line instead. Two series, total, forever.
+  const confirmedQuoteOverchargeTotal = getOrCreateCounter(
+    reg,
+    'civitai_app_block_confirmed_quote_overcharge_total',
+    'App Block submits of a viewer-CONFIRMED quote (kind=training: a training run; kind=step: a confirmed pass-through step) that the orchestrator billed ABOVE the price the viewer confirmed in host chrome. Expected zero; any increase is a viewer charged more than they agreed to. Detected after the charge (cannot be prevented at submit). Details (app, step type, workflow, both amounts) are on the block-confirmed-quote-overcharge log line.',
+    ['kind']
   );
 
   // ── REST approved-status GATE verdicts ───────────────────────────────────────
@@ -1351,6 +1382,7 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
     customComfyWallclockSeconds,
     capLimitsDegradedTotal,
     spendCapRejectionsTotal,
+    confirmedQuoteOverchargeTotal,
     restApprovalVerdictsTotal,
     revocationRefusalsTotal,
     consentRevocationRefusalsTotal,
@@ -1576,6 +1608,24 @@ export function recordAppSpendCapRejection(reason: AppSpendCapRejectionReason): 
     spendCapRejectionsTotal.inc({ reason });
   } catch {
     /* instrument-only — never let a metrics error touch the spend guardrail */
+  }
+}
+
+/**
+ * Fail-soft emit of one viewer-confirmed quote OVERCHARGE (see the counter). Called
+ * from the shared confirmed-quote submit after a definite submit billed above the
+ * confirmed price.
+ *
+ * 🔴 TOTAL, like every emitter here: the submit has already succeeded and been
+ * charged; a metrics error must not turn that into a 500 the block reads as "nothing
+ * happened".
+ */
+export function recordConfirmedQuoteOvercharge(kind: AppBlockConfirmedQuoteKind): void {
+  try {
+    const { confirmedQuoteOverchargeTotal } = ensureRegisterAppBlockRuntimeMetrics();
+    confirmedQuoteOverchargeTotal.inc({ kind });
+  } catch {
+    /* instrument-only — never let a metrics error touch a charged submit */
   }
 }
 

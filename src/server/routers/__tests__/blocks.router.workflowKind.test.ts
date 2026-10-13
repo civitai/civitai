@@ -1365,6 +1365,27 @@ describe("kind:'workflow' SUBMIT — the money path", () => {
     await submit();
     expect(realSubmits()[0].body.tags).not.toContain(TRAINING_WORKFLOW_TAG);
   });
+
+  it('matches a training step type case-insensitively, consistent with the denylist', async () => {
+    // Tagged when quoted…
+    whatifCost = { total: 20, base: 20 };
+    await submit(body({ steps: [{ $type: 'Training', input: {} }] }));
+    expect(realSubmits()[0].body.tags).toContain(TRAINING_WORKFLOW_TAG);
+    // …and refused when not.
+    h.submitWorkflow.mockClear();
+    whatifCost = undefined;
+    const { snapshot } = await submit(
+      body({
+        steps: [
+          { $type: 'echo', input: {} },
+          { $type: 'TRAINING', input: {} },
+        ],
+      })
+    );
+    expect(snapshot.status).toBe('failed');
+    expect(snapshot.errorCode).toBe('training-quote-unpriced');
+    expect(realSubmits()).toHaveLength(0);
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
