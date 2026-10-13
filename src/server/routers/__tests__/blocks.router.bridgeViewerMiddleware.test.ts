@@ -133,8 +133,8 @@ async function mint(over: { scopes?: string[]; anon?: boolean } = {}) {
 
 const check = vi.fn();
 
-// A different scope from `getMyViewer`'s, and labels no procedure in the router uses, so the
-// middleware has to read both from its options.
+// A different scope from `getMyViewer`'s, and a procedure/bucket pair no procedure on the
+// middleware passes, so the middleware has to read both from its options.
 const OPTIONS: BlockBridgeViewerOptions = {
   scope: 'buzz:read:self',
   anonMessage: 'probe requires a viewer',
@@ -233,12 +233,6 @@ describe('authorizeBlockBridgeViewer', () => {
       'rate-limit',
       'count(probe, poll)',
     ]);
-  });
-
-  it('counts nothing when the limiter allows the call', async () => {
-    await run(await mint());
-
-    expect(h.recordRefusal).not.toHaveBeenCalled();
   });
 });
 

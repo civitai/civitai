@@ -326,8 +326,7 @@ describe('the bridge rate-limit scan can actually see what it claims to', () => 
   });
 
   it('POSITIVE CONTROL — a bucket that disappears is detected, not absorbed', () => {
-    // The other direction: an entry claiming `catalog` whose limiter call was removed (here the
-    // `rateLimit.check` it hands the middleware is replaced by one that charges nothing). Without
+    // The other direction: an entry claiming `catalog` whose limiter call was removed. Without
     // this, `buckets` would be a list nobody checks and the ledger would decay into prose.
     const mutated = read(ROUTER).replace(
       // ⚠️ AN EXACT LITERAL FROM THE ROUTER, AND THE COUPLING IS DELIBERATE. It goes stale the

@@ -104,12 +104,12 @@ import { sanitizeAppSlug } from '~/server/utils/apps-slug';
  * additionally pays a dev-tunnel lookup (two sysRedis GETs); no other token does.
  *
  * 🔴 AND THE ORDER THIS PUT THE RATE LIMITER IN. Every `checkBlockCatalogRateLimit` call in
- * `blocks.router.ts` — in a procedure body, in a router-local preamble helper, or in the
+ * `blocks.router.ts` — in a procedure body, in a router-local helper, or in the
  * `rateLimit.check` a procedure hands `authorizeBlockBridgeViewer` — is keyed on the claims
  * this helper returns, so it runs AFTER this helper. Which procedures charge that bucket is
  * recorded by name in `RATE_LIMIT_DECISION_LEDGER`
  * (`src/server/services/__tests__/no-unlimited-block-bridge-proc.test.ts`); read the
- * population there, not from a count or a `getMyBuzz*` wildcard written here.
+ * population there, not from a count written here.
  *
  * So an over-limit request has already paid the Redis GET and the `findUnique` by the time
  * the limiter refuses it. That is not free, and it is not an oversight:

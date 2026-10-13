@@ -7579,8 +7579,7 @@ export const blocksRouter = router({
   /**
    * HOST-MEDIATED balance read for the token-bound viewer (money page blocks).
    * Returns the viewer's OWN spendable buzz balances so a page can render an
-   * account picker + "you have N buzz" without the page ever holding the
-   * `buzz:read:self` scope.
+   * account picker + "you have N buzz".
    *
    * NOTE: `buzz:read:self` is page-safe (PAGE_FORBIDDEN_SCOPES is empty — see
    * slot-registry.ts), and the richer self-reads (ledger / all-pool balances /

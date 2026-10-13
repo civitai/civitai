@@ -168,8 +168,8 @@ export type AppBlockEndpoint =
   // silent, 8 of the 11 on `catalog`**: both app-subqueue procs, plus
   // `previewPostFromApp`, `getImagesByIds`, `getMyViewer` and the three buzz
   // self-reads `getMyBuzzAccounts`, `getMyBuzzTransactions` and
-  // `getMyDailyCompensation` — the last four state it as `recordRefusalAs:
-  // 'uncounted'` on `authorizeBlockBridgeViewer`.
+  // `getMyDailyCompensation`. (On `authorizeBlockBridgeViewer` a procedure states
+  // which it is: `recordRefusalAs` is its labels, or `'uncounted'`.)
   // `recordBlockBridgeRateLimitRefusal`'s OWN docblock says it is "called from the
   // refusal branch of each limiter site", which is a third in-tree claim this
   // count contradicts — 4 of 14, not each.
