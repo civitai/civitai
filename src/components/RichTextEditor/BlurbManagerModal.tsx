@@ -320,11 +320,9 @@ function BlurbForm({
   const [name, setName] = useState(blurb?.name ?? '');
   const [content, setContent] = useState(blurb?.content ?? '');
   const onDelete = useDeleteBlurb(blurb, onCancel);
-  // The counter promises characters of TEXT, which is what a creator is writing; the cap the
-  // server enforces is on the sanitized HTML, which is never shorter. Blocking on both keeps the
-  // counter honest without letting markup smuggle a body past the cap.
+  // Must measure the same way as the server cap in `blurbContentSchema`, or the counter lies.
   const textLength = removeTags(content).length;
-  const overLimit = textLength > MAX_BLURB_LENGTH || content.length > MAX_BLURB_LENGTH;
+  const overLimit = textLength > MAX_BLURB_LENGTH;
 
   const createMutation = trpc.blurb.create.useMutation({
     onSuccess: async () => {
