@@ -304,7 +304,9 @@ describe('getJudgingSuggestions', () => {
     const suggestions = await getJudgingSuggestions({ userId: JUDGE, limit: 2 });
 
     expect(suggestions.map((c) => c.id)).toEqual([1, 2]);
-    expect(queryRaw).toHaveBeenCalledTimes(1);
+    // Only the candidates query; the card's batched entrant count is not an entry fetch.
+    const sqls = queryRaw.mock.calls.map(([strings]) => (strings as string[]).join('?'));
+    expect(sqls.filter((sql) => !sql.includes('count(DISTINCT e."userId")'))).toHaveLength(1);
   });
 
   it('caps the candidates query at 50, not at the requested limit', async () => {
