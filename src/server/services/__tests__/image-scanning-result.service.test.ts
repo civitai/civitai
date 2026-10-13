@@ -98,6 +98,16 @@ describe('processImageScanningWorkflow', () => {
     pipeline.readJobFailureReason.mockResolvedValue('Failed to create container');
   });
 
+  it('hands a scan the orchestrator refused to the outcome as a block', async () => {
+    await deliver('succeeded', [
+      { ...scanStep, output: { ...scanStep.output, blockedReason: 'refused' } },
+      hashStep,
+    ]);
+
+    expect(pipeline.resolveScanOutcome).toHaveBeenCalledTimes(1);
+    expect(pipeline.resolveScanOutcome.mock.calls[0][0].scanBlocked).toBe(true);
+  });
+
   it('writes the scan through the shared pipeline without a hard block', async () => {
     await deliver('succeeded', [scanStep, hashStep]);
 
@@ -114,6 +124,7 @@ describe('processImageScanningWorkflow', () => {
     });
     expect(pipeline.resolveScanOutcome).toHaveBeenCalledWith({
       image,
+      scanBlocked: false,
       pHash: 10n,
       workflowId: 'wf',
       prompt: 'a prompt',
@@ -294,6 +305,7 @@ describe('parseImageScanningSteps', () => {
       csam: false,
       ageDetections: [detection('21-24', false)],
       minorDetected: false,
+      blockedReason: null,
       aiRecognition: { label: 'AI', score: 0.9 },
       animeRecognition: { label: 'real', score: 0.7 },
       perceptualHash: '6F51B11C49611E0E',
@@ -303,6 +315,7 @@ describe('parseImageScanningSteps', () => {
   const riskyFrame = scanOutput({
     nsfwLevel: 'x',
     csam: true,
+    blockedReason: 'refused',
     aiRecognition: { label: 'AI', score: 0.9 },
     animeRecognition: { label: 'anime', score: 0.95 },
     tagging: { ran: true, tags: [{ tag: 'solo', category: 'general', score: 0.7 }] },
@@ -340,6 +353,7 @@ describe('parseImageScanningSteps', () => {
       tags: { solo: 0.7 },
       csam: true,
       minorDetected: true,
+      blockedReason: 'refused',
       aiRecognition: { label: 'AI', score: 0.9 },
       animeRecognition: { label: 'anime', score: 0.95 },
     });
@@ -347,6 +361,15 @@ describe('parseImageScanningSteps', () => {
     expect(scan.ageDetections).toEqual(
       expect.arrayContaining([detection('13-15', true), detection('21-24', false)])
     );
+  });
+
+  it('reads a refused scan, and an empty reason as a pass', () => {
+    const reasonOf = (blockedReason: unknown) =>
+      parseImageScanningSteps([parserScanStep(scanOutput({ blockedReason }))], 'wf').blockedReason;
+    expect(reasonOf('refused')).toBe('refused');
+    expect(reasonOf(null)).toBeNull();
+    expect(reasonOf(undefined)).toBeNull();
+    expect(reasonOf('')).toBeNull();
   });
 
   it('reports csam as absent only when no frame reported it', () => {

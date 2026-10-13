@@ -49,6 +49,8 @@ export type ImageScanningResult = {
   csam: boolean | null;
   ageDetections: ImageScanningJointAgeDetection[];
   minorDetected: boolean;
+  /** Set when the orchestrator refuses the image; null when it passes. */
+  blockedReason: string | null;
   aiRecognition?: Recognition;
   animeRecognition?: Recognition;
   perceptualHash?: string;
@@ -59,7 +61,10 @@ type RawStep = { $type?: string; name?: string; status?: string; output?: unknow
 // wdTagging only ever returned general tags; the other categories would write tags no image had before.
 const INGESTED_TAG_CATEGORIES = new Set(['general']);
 
-function readScan(output: ImageScanningOutput, workflowId: string): ImageScanningResult {
+// The client package predates this field.
+type ScanningOutput = ImageScanningOutput & { blockedReason?: string | null };
+
+function readScan(output: ScanningOutput, workflowId: string): ImageScanningResult {
   const { tagging, jointAgeClassification } = output;
   // An unmapped level ('na', or one added upstream) would write a rating with no NSFW level.
   // Not "invalid media…": classifyImageScanFailure reads that as permanent, and this is recoverable.
@@ -79,6 +84,7 @@ function readScan(output: ImageScanningOutput, workflowId: string): ImageScannin
     csam: output.csam ?? null,
     ageDetections: jointAgeClassification?.detections ?? [],
     minorDetected: !!jointAgeClassification?.minorDetected,
+    blockedReason: output.blockedReason || null,
     aiRecognition: output.aiRecognition,
     animeRecognition: output.animeRecognition,
   };
@@ -101,6 +107,7 @@ function combineFrames(frames: ImageScanningResult[]): ImageScanningResult {
       csam: acc.csam || frame.csam ? true : acc.csam ?? frame.csam,
       ageDetections: [...acc.ageDetections, ...frame.ageDetections],
       minorDetected: acc.minorDetected || frame.minorDetected,
+      blockedReason: acc.blockedReason ?? frame.blockedReason,
       aiRecognition: higher(acc.aiRecognition, frame.aiRecognition),
       animeRecognition: higher(acc.animeRecognition, frame.animeRecognition),
     };
@@ -121,7 +128,7 @@ export function parseImageScanningSteps(workflowSteps: unknown[], workflowId: st
   )?.hashes?.perceptual;
 
   const single = steps.find((step) => step.$type === 'imageScanning')?.output;
-  if (single) return { ...readScan(single as ImageScanningOutput, workflowId), perceptualHash };
+  if (single) return { ...readScan(single as ScanningOutput, workflowId), perceptualHash };
 
   const frames = (
     steps.find(
@@ -135,7 +142,7 @@ export function parseImageScanningSteps(workflowSteps: unknown[], workflowId: st
 
   return {
     ...combineFrames(
-      frames.map((frame) => readScan(frame.output as ImageScanningOutput, workflowId))
+      frames.map((frame) => readScan(frame.output as ScanningOutput, workflowId))
     ),
     perceptualHash,
   };
@@ -252,6 +259,7 @@ export async function processImageScanningWorkflow({
     });
     outcome = await resolveScanOutcome({
       image,
+      scanBlocked: !!scan.blockedReason,
       pHash,
       workflowId,
       prompt,

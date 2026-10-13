@@ -507,15 +507,17 @@ export type ScanOutcome = {
  *  - `blocked` (legacy mediaRating hard block, already written by the caller): only
  *    stamp provenance — re-auditing would recompute nsfwLevel/ingestion and silently
  *    un-block the image. A *prior* block is deliberately not sticky, so a moderator
- *    rescan can clear it. imageScanning never passes `blocked`, so on that path only
- *    `audit.blockedFor` and moderation rules re-block.
+ *    rescan can clear it. imageScanning never passes `blocked`.
  *  - `audit.blockedFor` (prompt TOS/CSAM): block.
  *  - otherwise: Scanned, with moderation rules applied last so a rule Block/Hold
  *    takes precedence over the audit decision.
+ * `scanBlocked` (imageScanning) blocks after the audit and moderation rules, so the
+ * image is still tagged and flagged and the block cannot be undone by a rule.
  */
 export async function resolveScanOutcome({
   image,
   blocked,
+  scanBlocked = false,
   pHash,
   workflowId,
   prompt,
@@ -524,6 +526,8 @@ export async function resolveScanOutcome({
 }: {
   image: ScanImage;
   blocked?: { reason: string | null };
+  /** The orchestrator refused the image under the rules it applies to generated images. */
+  scanBlocked?: boolean;
   pHash?: bigint;
   workflowId: string;
   prompt?: string;
@@ -609,6 +613,17 @@ export async function resolveScanOutcome({
         log,
       });
     }
+  }
+
+  // Same shape as a moderation-rule block, so the owner is told and can appeal it.
+  if (scanBlocked) {
+    toUpdate.ingestion = ImageIngestionStatus.Blocked;
+    toUpdate.nsfwLevel = NsfwLevel.Blocked;
+    toUpdate.blockedFor = BlockedReason.Moderated;
+    toUpdate.needsReview = null;
+    reviewKey = null;
+    if (modRule?.ingestion !== ImageIngestionStatus.Blocked)
+      await notifyImageAutoBlocked({ imageId: image.id, userId: image.userId, log });
   }
 
   // The appeal is the open decision on this image's block: a scan may tighten it, never lift it.
