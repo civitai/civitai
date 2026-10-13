@@ -296,7 +296,8 @@ With `sort: Hot, period: AllTime` as the default:
 
 - **An old model that's trending again won't rise.** Likes can't outrun the time term. A windowed
   score (engagement in the last N days, recomputed hourly) would catch that, at the cost of a
-  scheduled job and a score that shifts under paging. That was the earlier version of this proposal.
+  scheduled job and a score that shifts under paging. That was the earlier version of this proposal;
+  §17 measures the gap and designs it as a separate signal.
 - **A new version doesn't bump a model.** That's deliberate, since it's the flaw in today's feed. A
   deliberate "new version" boost would need its own rule.
 - **One more index** on a table that is already mostly index.
@@ -1421,3 +1422,102 @@ is the safe direction for a ranking signal, and the affected rows keep their lik
 of them still leads its filtered feed on those alone. Closing the gap properly means finding why those
 versions have generation rows but no generator rows, which is ClickHouse-side work and not tracked
 here.
+
+## 17. Trending is a different signal (2026-10-13)
+
+Not built. This section exists so the next person who asks "can Hot surface an old model that's
+popping off?" finds the measurement and the shape of the answer instead of re-deriving both.
+
+### What prompted it
+
+A tester looking at the SDXL 1.0 feed couldn't find the LoRAs behind the current or past daily
+challenges, and proposed that the age penalty should have a limit, since those models were published
+in 2024.
+
+They are not absent: the best World Morph SDXL slice sits at **rank 541** of that feed, about page 11.
+All of them published July–September 2024.
+
+### Capping the age term fails in both directions
+
+| Clamp the age term at | Best World Morph | Of the old top 100, displaced | New top 100 older than the clamp |
+| --- | ---: | ---: | ---: |
+| 12 months | 541 → 533 | 0 | 0 |
+| 6 months | 541 → **572** | 3 | 3 |
+| 3 months | 541 → 424 | **100** | **100** |
+
+A loose clamp does nothing, because it lifts *every* old model by the same amount: their order among
+themselves is unchanged and they are all still behind the recent cohort. Six months makes this one
+**worse**, because other old models gain more than it does. Three months replaces the entire top 100
+with pre-clamp models and the challenge LoRA still only reaches 424.
+
+The reason is engagement, not age. These are mid-tier for SDXL 1.0 — 163–442 likes, 801–2,445
+downloads — against an ecosystem whose all-time winners hold tens of thousands. Weakening the age term
+hands the feed to those winners, and the challenge LoRAs lose that comparison too. For the stated need
+(finding the models behind a challenge) the fix is a curated surface — the challenge's own collection,
+or a link from the challenge page — which works for every challenge including the 2023 ones.
+
+### The real limitation underneath
+
+Hot ranks a **stock**: lifetime engagement against a publish date that never moves. That is exactly
+what makes the score time-invariant and lets it live in a trigger with no scheduled job (§8). It also
+means no amount of present-day activity can lift a 2024 model, which is the gap §5 names.
+
+A resurgence signal ranks a **flow** — what happened this week. That is a different formula, not a
+constant to re-tune.
+
+### What windowed data exists
+
+Checked, because it bounds every design:
+
+- `ModelMetric` and `ModelVersionMetric` are keyed by id alone — **all-time counts, no timeframe
+  dimension**, unlike `UserMetric`, `PostMetric`, `TagMetric` and `CollectionMetric`. `ModelRank` has
+  no period columns either.
+- The only real time series is ClickHouse `daily_resource_generation_counts` and
+  `daily_resource_generation_user_counts` — daily granularity, **generations only**.
+
+So a generation-based trending signal is buildable with no new pipeline. Including downloads or likes
+needs net-new infrastructure: a daily snapshot of the all-time counters to diff against (one row per
+model per day, ~8 days retention, plus a job). That snapshot is the bulk of the work, not the formula.
+
+### The formula shape, and its two traps
+
+Raw velocity is not enough — the largest models have the most downloads every week, which rebuilds the
+"the same few models are always at the top" complaint the whole proposal started from. What surfaces a
+resurgence is **lift**: this week against the model's own baseline.
+
+```
+lift = recent_7d / (prior_28d / 4 + k)
+```
+
+A pure ratio is noise at the bottom: 3 downloads to 30 is 10× lift and means nothing. It needs an
+absolute floor on the recent window or a smoothed prior, and choosing that constant is most of the
+tuning.
+
+It is also **easier to game than Hot**. A burst is cheaper to manufacture than a lifetime total, and
+lift actively rewards small absolute numbers. The distinct-actor denominators are therefore day-one
+requirements rather than follow-ups: the generator floor (§16) and the unique-posters floor in
+[model-feed-unique-posters.md](model-feed-unique-posters.md) §5.
+
+And it costs the property Hot was designed around. The window moves, so every score changes daily even
+with no new engagement — that needs a cron. The recompute set is at least small: only models with
+activity in the window, a few thousand a day rather than all 960k.
+
+### A home block, not a sort
+
+The recommendation, if this gets built: a bounded section on a page — a `HomeBlockType`, the same shape
+as `FeaturedModelVersion` or `FeaturedCollections` — showing ~20 models, not a new entry in the
+`ModelSort` dropdown.
+
+- **No naming collision.** Every other sort option is a plain stock measure (`Highest Rated`,
+  `Most Downloaded`, `Newest`, …). "Hot" and "Trending" would be the only near-synonyms in the list,
+  and no label tells a user which one shows what is blowing up today. If it must be a sort, call it
+  **Rising** — "hot" is a state, "rising" is a direction, and that is the actual difference.
+- **No public-API surface.** `ModelSort` values are API contract and have to be documented and
+  supported indefinitely; a section adds none.
+- **No default-feed risk.** Hot is now the default. A flow signal needs a daily recompute, so a failed
+  job should degrade a section on a page rather than the feed everyone lands on.
+- **It matches the signal's own shape.** Lift is sharp at the top and meaningless at the bottom, so
+  "the 20 models picking up right now" is what it is good for; ordering 425,979 rows by it is not.
+
+Keep "Hot" named Hot either way: it is the Reddit meaning, it is accurate, and the testers have just
+learned it.
