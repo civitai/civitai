@@ -1093,8 +1093,8 @@ export function notifyOrphanedAppeal(
 }
 
 /**
- * Closes the pending appeals an owner filed on entities they just deleted, refunded and told, as
- * the sweep would for an owner delete it can see. Called after the delete, so it never throws.
+ * Closes the deleter's pending appeals on entities they just deleted, as the sweep does for an
+ * owner delete it can see. Best-effort: the delete already happened, so failures are logged, not thrown.
  */
 export async function closeAppealsDeletedByOwner({
   entityType,
@@ -1106,23 +1106,7 @@ export async function closeAppealsDeletedByOwner({
   ownerId: number;
 }) {
   if (!entityIds.length) return;
-  try {
-    const closed = await dbWrite.$queryRaw<ClaimedOrphan[]>`
-      UPDATE "Appeal"
-      SET status = 'Void'::"AppealStatus", "resolvedReason" = ${OrphanedAppealReason.DeletedByOwner},
-        "resolvedAt" = now(), "updatedAt" = now()
-      WHERE "entityType" = ${entityType}::"EntityType" AND "entityId" = ANY(${entityIds})
-        AND "userId" = ${ownerId} AND status = 'Pending'::"AppealStatus"
-      RETURNING id, "userId", "entityType", "entityId", "buzzTransactionId"
-    `;
-    if (!closed.length) return;
-    const quiet = await getDefensiveCloseIds(closed);
-    for (const appeal of closed) {
-      const { refunded } = await refundOrphan(appeal);
-      if (!quiet.has(appeal.id))
-        await notifyOrphanedAppeal(appeal, 'closed-owner-deleted', refunded);
-    }
-  } catch (e) {
+  const logFailure = (e: unknown, extra: Record<string, unknown>) =>
     logToAxiom({
       type: 'error',
       name: 'close-appeals-deleted-by-owner',
@@ -1130,9 +1114,42 @@ export async function closeAppealsDeletedByOwner({
       entityType,
       entityIds,
       ownerId,
+      ...extra,
       error: (e as Error).message,
     });
+
+  let closed: ClaimedOrphan[];
+  try {
+    // An appeal the sweep routed between the delete and now is still closed: the owner deleted it.
+    closed = await dbWrite.$queryRaw<ClaimedOrphan[]>`
+      UPDATE "Appeal"
+      SET status = 'Void'::"AppealStatus", "resolvedReason" = ${OrphanedAppealReason.DeletedByOwner},
+        "resolvedAt" = now(), "updatedAt" = now()
+      WHERE "entityType" = ${entityType}::"EntityType" AND "entityId" = ANY(${entityIds})
+        AND "userId" = ${ownerId} AND status = 'Pending'::"AppealStatus"
+      RETURNING id, "userId", "entityType", "entityId", "buzzTransactionId"
+    `;
+  } catch (e) {
+    logFailure(e, {});
+    return;
   }
+  if (!closed.length) return;
+
+  // Claimed and Void now, so never swept again: the refunds must not wait on anything that can fail.
+  const refunded = new Map<number, boolean>();
+  for (const appeal of closed) refunded.set(appeal.id, (await refundOrphan(appeal)).refunded);
+
+  let quiet: Set<number>;
+  try {
+    quiet = await getDefensiveCloseIds(closed);
+  } catch (e) {
+    // Unclassified, so no one is told.
+    logFailure(e, { appealIds: closed.map((a) => a.id) });
+    return;
+  }
+  for (const appeal of closed)
+    if (!quiet.has(appeal.id))
+      await notifyOrphanedAppeal(appeal, 'closed-owner-deleted', refunded.get(appeal.id));
 }
 
 /**

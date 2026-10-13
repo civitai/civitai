@@ -443,8 +443,7 @@ describe('getAppealCount', () => {
 });
 
 describe('resolveEntityAppeal', () => {
-  // Removed-content appeals are decided on the moderator app's page, with the notice for content
-  // that cannot be restored; a resolve by entity id must not claim one.
+  // Removed-content appeals are decided on the moderator app's page; a resolve by entity id must not claim one.
   it('does not claim an appeal whose content was removed', async () => {
     dbMock.dbWrite.appeal.updateManyAndReturn.mockResolvedValue([]);
 
@@ -514,7 +513,6 @@ describe('closeAppealsDeletedByOwner', () => {
     expect(dbMock.dbWrite.$queryRaw).not.toHaveBeenCalled();
   });
 
-  // The entity is already deleted: a failure here must not turn a completed delete into an error.
   it('never throws, and records the failure', async () => {
     dbMock.dbWrite.$queryRaw.mockRejectedValue(new Error('db down'));
 
@@ -523,6 +521,38 @@ describe('closeAppealsDeletedByOwner', () => {
     ).resolves.toBeUndefined();
     expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({ name: 'close-appeals-deleted-by-owner', error: 'db down' })
+    );
+  });
+});
+
+describe('closeAppealsDeletedByOwner when the defensive-close lookup fails', () => {
+  // The claim has committed: the refund must not depend on a later query, or the appeal is Void,
+  // unrefunded, and never swept again.
+  it('still refunds every claimed appeal, notifies no one, and logs the appeal ids', async () => {
+    const realFake = dbMock.dbWrite.$queryRaw.getMockImplementation()!;
+    dbMock.dbWrite.$queryRaw.mockImplementation(((
+      strings: TemplateStringsArray,
+      ...values: unknown[]
+    ) => {
+      const sql = strings.join('?');
+      if (/UPDATE "Appeal"/.test(sql)) return Promise.resolve(claim([[ownerDeleted.id]]));
+      if (/"CsamReport"/.test(sql)) return Promise.reject(new Error('lookup down'));
+      return realFake(strings, ...values);
+    }) as never);
+
+    await closeAppealsDeletedByOwner({
+      entityType: EntityType.Image,
+      entityIds: [100],
+      ownerId: 10,
+    });
+
+    expect(refundedPrefixes()).toEqual([ownerDeleted.buzzTransactionId]);
+    expect(mockCreateNotification).not.toHaveBeenCalled();
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'close-appeals-deleted-by-owner',
+        appealIds: [ownerDeleted.id],
+      })
     );
   });
 });

@@ -5,10 +5,7 @@ import type * as PostService from '~/server/services/post.service';
 import type * as ReportService from '~/server/services/report.service';
 import type * as Caches from '~/server/redis/caches';
 
-/**
- * An owner who deletes their own image or post has answered their appeal: it closes then, refunded
- * and told, instead of waiting for the sweep (which cannot see a post delete as the owner's).
- */
+/ A post delete emits no per-image event, so the sweep cannot attribute it to the owner.
 
 const { deleteImageByIdMock, deletePostMock, closeMock } = vi.hoisted(() => ({
   deleteImageByIdMock: vi.fn(),
@@ -49,12 +46,12 @@ beforeEach(() => {
 
 describe('deleteImageHandler', () => {
   it("closes the deleter's pending appeals on the deleted image", async () => {
-    // The image row names another owner: the close is keyed on the deleter, so a moderator's delete
-    // closes only the moderator's own appeals, which is none.
+    // The image row names another owner: ownerId must still be the deleter.
     deleteImageByIdMock.mockResolvedValue({ userId: 99, nsfwLevel: 1 });
 
     await deleteImageHandler({ input: { id: 55 }, ctx: ctx(7) });
 
+    expect(closeMock).toHaveBeenCalledTimes(1);
     expect(closeMock).toHaveBeenCalledWith({ entityType: 'Image', entityIds: [55], ownerId: 7 });
   });
 
@@ -73,6 +70,7 @@ describe('deletePostHandler', () => {
 
     await deletePostHandler({ input: { id: 3 }, ctx: ctx(8) });
 
+    expect(closeMock).toHaveBeenCalledTimes(1);
     expect(closeMock).toHaveBeenCalledWith({
       entityType: 'Image',
       entityIds: [10, 11],

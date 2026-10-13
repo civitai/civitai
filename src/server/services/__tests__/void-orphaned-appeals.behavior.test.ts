@@ -275,10 +275,17 @@ describe('closeAppealsDeletedByOwner against Postgres', () => {
         (104, 40, 'Model', 7001, 'Pending', '2026-09-01', '2026-09-01', NULL),
         (105, 40, 'Image', 7003, 'Pending', '2026-09-01', '2026-09-01', NULL),
         (106, 21, 'Image', 7004, 'Pending', '2026-09-01', '2026-09-01', 'appeal-21-1');
+      -- The sweep routed it between the delete and this close: the owner still deleted it.
+      INSERT INTO "Appeal" (id, "userId", "entityType", "entityId", status, "createdAt", "updatedAt",
+        "entityRemovedAt") VALUES (107, 40, 'Image', 7005, 'Pending', '2026-09-01', '2026-09-01', now());
     `);
 
-    await closeAppealsDeletedByOwner({ entityType: 'Image', entityIds: [7001, 7002], ownerId: 40 });
-    // User 21 has a report filed on them (fixture): their close is defensive, refunded but not told.
+    await closeAppealsDeletedByOwner({
+      entityType: 'Image',
+      entityIds: [7001, 7002, 7005],
+      ownerId: 40,
+    });
+    // User 21 is a defensive close (fixture): refunded, not told.
     await closeAppealsDeletedByOwner({ entityType: 'Image', entityIds: [7004], ownerId: 21 });
 
     const rows = await appeals();
@@ -287,7 +294,14 @@ describe('closeAppealsDeletedByOwner against Postgres', () => {
     expect(rows.get(102)).toMatchObject({ status: 'Rejected', resolvedReason: null });
     for (const id of [103, 104, 105]) expect(rows.get(id)).toMatchObject({ status: 'Pending' });
     expect(rows.get(106)).toMatchObject({ status: 'Void', resolvedReason: 'deleted-by-owner' });
+    expect(rows.get(107)).toMatchObject({ status: 'Void', resolvedReason: 'deleted-by-owner' });
     expect(refundedPrefixes()).toEqual(['appeal-21-1', 'appeal-40-1']);
-    expect(notifiedUsers()).toEqual([40]);
+    const notices = vi
+      .mocked(holder.notify)
+      .mock.calls.map((c) => c[0] as { key: string; details: { refunded: boolean } });
+    expect(notices.map((n) => [n.key, n.details.refunded]).sort()).toEqual([
+      ['entity-appeal-content-removed:101:closed-owner-deleted', true],
+      ['entity-appeal-content-removed:107:closed-owner-deleted', false],
+    ]);
   });
 });

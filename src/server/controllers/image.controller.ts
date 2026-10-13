@@ -148,7 +148,7 @@ export const deleteImageHandler = async ({
     const image = await deleteImageById(input);
 
     if (image) {
-      // Keyed on the deleter: a moderator deleting the image closes no one else's appeal.
+      // The deleter, not the content's owner: a moderator delete must not close the owner's appeal.
       await closeAppealsDeletedByOwner({
         entityType: EntityType.Image,
         entityIds: [input.id],

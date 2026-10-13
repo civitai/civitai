@@ -623,7 +623,7 @@ export const deletePostHandler = async ({
   try {
     const result = await deletePost({ ...input });
     if (result) {
-      // Keyed on the deleter: a moderator deleting the post closes no one else's appeal.
+      // The deleter, not the content's owner: a moderator delete must not close the owner's appeal.
       await closeAppealsDeletedByOwner({
         entityType: EntityType.Image,
         entityIds: result.deletedImageIds,

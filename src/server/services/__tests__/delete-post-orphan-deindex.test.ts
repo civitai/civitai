@@ -146,7 +146,6 @@ describe('deletePost orphan de-indexing', () => {
     });
   });
 
-  // The controller closes the poster's pending appeals on exactly these.
   it('returns the ids of the images it deleted, and only those', async () => {
     primeQueries([OWNER_IMAGE, FOREIGN_IMAGE]);
 
