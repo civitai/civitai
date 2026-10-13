@@ -122,6 +122,14 @@ describe('tierOf', () => {
     ).toBe('pending');
   });
 
+  it('treats a missing table as pending, never as blocking', () => {
+    // Same reasoning as a missing column: the table's absence IS the finding, so it can only
+    // mean the schema is ahead of the snapshot. Whether that should stay non-blocking is a
+    // policy call recorded in ClickUp 868ku7w6f; this pins the tier the gate ships with, so
+    // a change to it is a deliberate edit rather than a side effect.
+    expect(tierOf(finding({ kind: 'missing-table', columns: [] }), catalog)).toBe('pending');
+  });
+
   it('treats nullability and uniqueness as enforced', () => {
     expect(tierOf(finding({ kind: 'nullability' }), catalog)).toBe('enforced');
     expect(tierOf(finding({ kind: 'uniqueness' }), catalog)).toBe('enforced');
