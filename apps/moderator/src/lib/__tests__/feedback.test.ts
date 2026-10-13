@@ -121,6 +121,7 @@ describe('feedbackAreaOptions', () => {
     expect(feedbackAreaOptions([])).toEqual([
       'app-block',
       'apps-marketplace',
+      'apps-platform',
       'bitdex-image-feed',
       'site-bug-report',
     ]);
