@@ -4,18 +4,17 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
-const { mockIsFlipt, mockLog } = vi.hoisted(() => ({
+const { mockIsFlipt } = vi.hoisted(() => ({
   mockIsFlipt: vi.fn(),
-  mockLog: vi.fn(async () => undefined),
 }));
 vi.mock('~/server/flipt/client', () => ({
   FLIPT_FEATURE_FLAGS: { SCAN_LABEL_QUEUE_WRITER: 'scan-label-queue-writer' },
   isFlipt: mockIsFlipt,
 }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: mockLog }));
-
 import { recordScanLabelFlag } from '~/server/services/scan-label-flag.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+const mockLog = loggingMock.logToAxiom;
 
 const holder = vi.hoisted(() => ({ db: null as unknown as PGlite }));
 const IMAGE = 61;
