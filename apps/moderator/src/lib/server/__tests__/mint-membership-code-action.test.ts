@@ -27,7 +27,7 @@ vi.mock('$app/server', () => ({
   }),
 }));
 
-const { mintMembershipCode } = await import('../user-actions.service');
+const { mintMembershipCode, revokeMembershipCode } = await import('../user-actions.service');
 
 type Call = { url: string; init: RequestInit };
 let calls: Call[];
@@ -131,5 +131,44 @@ describe('mintMembershipCode', () => {
     respond = () => new Response(JSON.stringify({}), { status: 200 });
     const result = await mintMembershipCode(INPUT);
     expect(result.ok).toBe(false);
+  });
+});
+
+describe('revokeMembershipCode', () => {
+  const REVOKE = { userId: 8675309, code: 'MB-ABCD-EF12' };
+
+  it('posts the account and code to the revoke endpoint as the moderator', async () => {
+    respond = () =>
+      new Response(JSON.stringify({ code: 'MB-ABCD-EF12', revokedAt: '2026-10-13T12:00:00.000Z' }), {
+        status: 200,
+      });
+    const result = await revokeMembershipCode(REVOKE);
+    expect(result).toEqual({ ok: true });
+    expect(calls[0].url).toBe('https://civitai.com/api/mod/user/membership-code-revoke');
+    expect((calls[0].init.headers as Record<string, string>).cookie).toBe(
+      'civ-token=the-moderators-session'
+    );
+    expect(JSON.parse(String(calls[0].init.body))).toEqual(REVOKE);
+    expect(recordModActivity).not.toHaveBeenCalled();
+  });
+
+  it('carries a refusal (already redeemed) to the operator', async () => {
+    respond = () =>
+      new Response(
+        JSON.stringify({
+          error: 'That code has already been redeemed.',
+          message: 'That code has already been redeemed.',
+          code: 'CONFLICT',
+        }),
+        { status: 409 }
+      );
+    const result = await revokeMembershipCode(REVOKE);
+    expect(!result.ok && result.error).toContain('already been redeemed');
+  });
+
+  it('a lost response tells the operator to re-check the list rather than claiming failure', async () => {
+    respond = () => new Response('gateway', { status: 504 });
+    const result = await revokeMembershipCode(REVOKE);
+    expect(!result.ok && result.error).toMatch(/Could not confirm the revoke/);
   });
 });

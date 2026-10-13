@@ -19,7 +19,9 @@ vi.mock('~/server/services/moderator.service', () => ({ trackModActivity }));
 import {
   SUPPORT_MEMBERSHIP_CODE_LIMITS,
   mintSupportMembershipCode,
+  revokeSupportMembershipCode,
 } from '~/server/services/support-membership-code.service';
+import { isSupportCodeRedeemableBy } from '~/server/services/support-membership-code.constants';
 
 const MODERATOR = 990000007;
 const TARGET = 8675309;
@@ -28,10 +30,30 @@ const NOW = new Date('2026-10-13T12:00:00.000Z');
 type Tx = {
   $executeRaw: ReturnType<typeof vi.fn>;
   modActivity: { count: ReturnType<typeof vi.fn> };
-  redeemableCode: { create: ReturnType<typeof vi.fn> };
+  redeemableCode: {
+    create: ReturnType<typeof vi.fn>;
+    findFirst: ReturnType<typeof vi.fn>;
+    updateMany: ReturnType<typeof vi.fn>;
+  };
 };
 let tx: Tx;
 let order: string[];
+
+const CODE = 'MB-ABCD-EF12';
+const openCode = (over: Record<string, unknown> = {}) => ({
+  code: CODE,
+  unitValue: 2,
+  priceId: 'silver-monthly',
+  redeemedAt: null,
+  expiresAt: new Date('2026-11-01T00:00:00.000Z'),
+  metadata: {
+    source: 'moderator-membership-code',
+    mintedBy: 5,
+    forUserId: TARGET,
+    reason: 'r',
+  },
+  ...over,
+});
 
 const valid = () => ({
   forUserId: TARGET,
@@ -61,6 +83,8 @@ beforeEach(() => {
         order.push('create');
         return data;
       }),
+      findFirst: vi.fn(async () => openCode()),
+      updateMany: vi.fn(async () => ({ count: 1 })),
     },
   };
   dbMock.dbWrite.$transaction.mockImplementation(async (fn: unknown) =>
@@ -210,6 +234,9 @@ describe('what it writes', () => {
       type: 'Membership',
       unitValue: 2,
       priceId: 'silver-monthly',
+      // Pre-set to the customer: indexed (userId, createdAt) is how support lists their codes, and
+      // the code shows in the customer's own codes list.
+      userId: TARGET,
       expiresAt: new Date('2026-11-12T12:00:00.000Z'),
       metadata: {
         source: 'moderator-membership-code',
@@ -266,5 +293,88 @@ describe('what it writes', () => {
     await mintSupportMembershipCode(valid());
     const code = tx.redeemableCode.create.mock.calls[0][0].data.code as string;
     expect(JSON.stringify(trackModActivity.mock.calls)).not.toContain(code);
+  });
+});
+
+describe('isSupportCodeRedeemableBy', () => {
+  it.each([
+    ['its customer', { source: 'moderator-membership-code', forUserId: 1 }, 1, true],
+    ['someone else', { source: 'moderator-membership-code', forUserId: 1 }, 2, false],
+    ['anyone, when forUserId is missing', { source: 'moderator-membership-code' }, 1, false],
+    ['anyone, when forUserId is a string', { source: 'moderator-membership-code', forUserId: '1' }, 1, false],
+    ['anyone, for a non-support code', { orderId: 'o' }, 2, true],
+    ['anyone, for a code without metadata', null, 2, true],
+  ])('a support code is redeemable by %s', (_l, meta, userId, expected) => {
+    expect(isSupportCodeRedeemableBy(meta, userId)).toBe(expected);
+  });
+});
+
+describe('revokeSupportMembershipCode', () => {
+  const revoke = () =>
+    revokeSupportMembershipCode({ code: CODE, forUserId: TARGET, moderatorId: MODERATOR });
+
+  it('looks the code up through the transaction, scoped to the account on screen', async () => {
+    await revoke();
+    expect(tx.redeemableCode.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { code: CODE, userId: TARGET } })
+    );
+  });
+
+  it('expires an open code now and records who revoked it, guarded on still being unredeemed', async () => {
+    const result = await revoke();
+    expect(tx.redeemableCode.updateMany).toHaveBeenCalledWith({
+      where: { code: CODE, redeemedAt: null },
+      data: {
+        expiresAt: NOW,
+        metadata: {
+          source: 'moderator-membership-code',
+          mintedBy: 5,
+          forUserId: TARGET,
+          reason: 'r',
+          revokedBy: MODERATOR,
+          revokedAt: NOW.toISOString(),
+        },
+      },
+    });
+    expect(result).toEqual({ code: CODE, revokedAt: NOW });
+  });
+
+  it('audits it in the same transaction', async () => {
+    await revoke();
+    expect(trackModActivity).toHaveBeenCalledWith(
+      MODERATOR,
+      { entityType: 'user', entityId: TARGET, activity: 'revokeMembershipCode:silver:2' },
+      tx
+    );
+  });
+
+  it.each([
+    ['unknown, or another account's', null, 'NOT_FOUND'],
+    ['not a support code', openCode({ metadata: { orderId: 'o' } }), 'NOT_FOUND'],
+    ['already redeemed', openCode({ redeemedAt: new Date('2026-10-01') }), 'CONFLICT'],
+    [
+      'already revoked',
+      openCode({ metadata: { ...openCode().metadata, revokedAt: '2026-10-01T00:00:00.000Z' } }),
+      'CONFLICT',
+    ],
+    ['already expired', openCode({ expiresAt: new Date('2026-10-01') }), 'CONFLICT'],
+  ])('refuses a code that is %s, and changes nothing', async (_l, row, code) => {
+    tx.redeemableCode.findFirst.mockResolvedValue(row);
+    await expect(revoke()).rejects.toMatchObject({ code });
+    expect(tx.redeemableCode.updateMany).not.toHaveBeenCalled();
+    expect(trackModActivity).not.toHaveBeenCalled();
+  });
+
+  it('refuses when the code was redeemed between the read and the write', async () => {
+    tx.redeemableCode.updateMany.mockResolvedValue({ count: 0 });
+    await expect(revoke()).rejects.toMatchObject({ code: 'CONFLICT' });
+    expect(trackModActivity).not.toHaveBeenCalled();
+  });
+
+  it('does not count toward the daily mint cap', async () => {
+    await revoke();
+    expect(trackModActivity.mock.calls[0][1].activity.startsWith('mintMembershipCode:')).toBe(
+      false
+    );
   });
 });

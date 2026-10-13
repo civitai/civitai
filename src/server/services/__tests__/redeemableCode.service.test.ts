@@ -1179,6 +1179,20 @@ describe('redeemableCode.service', () => {
         expect(mockDbWrite.$transaction).toHaveBeenCalledTimes(1);
       });
 
+      it('never returns metadata (support reason, minter, order ids) to the redeemer', async () => {
+        const mockCode = createMockRedeemableCode({
+          metadata: supportMeta,
+          redeemedAt: new Date('2024-01-10'),
+          userId: 1,
+        });
+        mockDbWrite.redeemableCode.findUnique.mockResolvedValue(mockCode);
+        mockDbRead.keyValue.findUnique.mockResolvedValue(null);
+
+        const result = await consumeRedeemableCode({ code: 'MB-TEST-1234', userId: 1 });
+        expect(result).not.toHaveProperty('metadata');
+        expect(result).toMatchObject({ code: 'MB-TEST-1234' });
+      });
+
       it('asks the database for metadata, or the binding could never be read', async () => {
         const mockCode = createMockRedeemableCode({ metadata: supportMeta });
         mockDbWrite.redeemableCode.findUnique.mockResolvedValue(mockCode);
