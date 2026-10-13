@@ -42,7 +42,8 @@ function given({
   excludedImages = [],
   excludedOwners = [],
 }: {
-  events: { imageId: number; removedAt: number }[];
+  // JSONEachRow can return integers as strings.
+  events: { imageId: number | string; removedAt: number | string }[];
   states: State[];
   excludedImages?: number[];
   excludedOwners?: number[];
@@ -57,12 +58,14 @@ function given({
       ...s,
     })) as never
   );
-  // The appeal flow's own exclusion lookup runs for real; these answer its two queries.
+  // `getAppealExcludedIds` runs for real; these answer its two queries for the ids they are asked.
   dbMock.dbWrite.$queryRaw.mockImplementation(((...args: unknown[]) => {
-    const sql = sqlOf(args).sql;
-    if (sql.includes('jsonb_array_elements'))
-      return Promise.resolve(excludedImages.map((id) => ({ id })));
-    if (sql.includes('"UserReport"')) return Promise.resolve(excludedOwners.map((id) => ({ id })));
+    const { sql, values } = sqlOf(args);
+    const asked = (values[0] ?? []) as number[];
+    const answer = (ids: number[]) =>
+      Promise.resolve(ids.filter((id) => asked.includes(id)).map((id) => ({ id })));
+    if (sql.includes('jsonb_array_elements')) return answer(excludedImages);
+    if (sql.includes('"UserReport"')) return answer(excludedOwners);
     throw new Error(`unexpected query: ${sql}`);
   }) as never);
 }
@@ -107,6 +110,7 @@ describe('getMyRemovedImages', () => {
       `WHERE type = '${REPORTS_AGAINST_EVENT}' AND ownerId = {userId:Int32}`
     );
     expect(REMOVALS_QUERY).toMatch(/^\s*GROUP BY imageId$/m);
+    expect(REMOVALS_QUERY).toMatch(/^\s*ORDER BY max\(time\) DESC$/m);
     // The score job deducts per distinct image of the same event; both read the one constant.
     const scoreJob = readFileSync(
       join(process.cwd(), 'src/server/jobs/update-user-score.ts'),
@@ -198,17 +202,21 @@ describe('getMyRemovedImages', () => {
         { imageId: 2, removedAt: 3 },
         { imageId: 3, removedAt: 2 },
         { imageId: 4, removedAt: 1 },
+        { imageId: 5, removedAt: 0 },
       ],
       states: [
         { imageId: 1 },
         { imageId: 2 },
         { imageId: 3, needsReview: 'appeal' },
         { imageId: 4, blockedFor: null },
+        { imageId: 5, owned: false },
       ],
     });
+    // Newest first, as asked: image 1's later approval lifted the block its earlier rejection upheld.
     dbMock.dbRead.appeal.findMany.mockResolvedValue([
-      { entityId: 2, status: AppealStatus.Rejected },
       { entityId: 1, status: AppealStatus.Approved },
+      { entityId: 2, status: AppealStatus.Rejected },
+      { entityId: 1, status: AppealStatus.Rejected },
     ] as never);
 
     const result = await getMyRemovedImages(USER);
@@ -218,10 +226,12 @@ describe('getMyRemovedImages', () => {
       [2, false],
       [3, false],
       [4, false],
+      [null, false],
     ]);
     expect(dbMock.dbRead.appeal.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({ userId: USER, entityId: { in: [1, 2, 3, 4] } }),
+        orderBy: { id: 'desc' },
       })
     );
   });
@@ -247,5 +257,42 @@ describe('getMyRemovedImages', () => {
     expect(result.truncated).toBe(true);
     expect(REMOVALS_QUERY).toContain(`LIMIT ${REMOVED_IMAGES_LIMIT}
 `);
+  });
+
+  it('still says it stopped at the limit when some of those rows are left out', async () => {
+    const events = Array.from({ length: REMOVED_IMAGES_LIMIT }, (_, i) => ({
+      imageId: i + 1,
+      removedAt: 1,
+    }));
+    given({ events, states: events.map((e) => ({ imageId: e.imageId })), excludedImages: [1] });
+
+    const result = await getMyRemovedImages(USER);
+
+    expect(result.total).toBe(REMOVED_IMAGES_LIMIT - 1);
+    expect(result.truncated).toBe(true);
+  });
+
+  it('reads ids and times ClickHouse returns as strings', async () => {
+    given({
+      events: [{ imageId: '7', removedAt: '1700000000' }],
+      states: [{ imageId: 7 }],
+      excludedImages: [8],
+    });
+
+    expect((await getMyRemovedImages(USER)).items).toEqual([
+      {
+        removedAt: new Date(1_700_000_000_000),
+        reason: REMOVAL_REASON,
+        imageId: 7,
+        canAppeal: true,
+      },
+    ]);
+  });
+
+  it('fails rather than answering an empty list when ClickHouse fails', async () => {
+    given({ events: [], states: [] });
+    chQuery.mockRejectedValue(new Error('timeout'));
+
+    await expect(getMyRemovedImages(USER)).rejects.toThrow('timeout');
   });
 });

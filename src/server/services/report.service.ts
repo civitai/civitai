@@ -989,8 +989,7 @@ async function getOwnerDeletedAppealIds(candidates: OrphanCandidate[]) {
   }
 }
 
-// Parallels the moderator app's `csamExcludedImageIds`; keep the report sources in step. Only
-// sources that outlive the image row count here: per-image report rows cascade away with it.
+// Keep in step with the moderator app's exclusion lookup.
 export async function getAppealExcludedIds({
   imageIds,
   userIds,

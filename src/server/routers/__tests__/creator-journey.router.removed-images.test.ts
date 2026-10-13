@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { mockGetMyRemovedImages } = vi.hoisted(() => ({ mockGetMyRemovedImages: vi.fn() }));
 
-// Cuts, to keep the rest of the journey surface off the load path.
+// Mocked so importing the router does not pull in the services' ClickHouse and db clients.
 vi.mock('~/server/services/creator-removed-images.service', () => ({
   getMyRemovedImages: (...args: unknown[]) => mockGetMyRemovedImages(...args),
 }));
@@ -18,11 +18,11 @@ import { creatorJourneyRouter } from '../creator-journey.router';
 import type * as FeatureFlags from '~/server/services/feature-flags.service';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
-function callerFor(user: { id: number } | undefined) {
+function callerFor(user: { id: number } | undefined, tokenScope: number = TokenScope.Full) {
   return creatorJourneyRouter.createCaller({
     user,
     acceptableOrigin: true,
-    tokenScope: TokenScope.Full,
+    tokenScope,
     apiKeyId: null,
     req: { headers: {} },
     res: { setHeader: () => undefined },
@@ -34,7 +34,7 @@ function callerFor(user: { id: number } | undefined) {
 
 beforeEach(() => {
   mockGetMyRemovedImages.mockReset();
-  mockGetMyRemovedImages.mockResolvedValue({ total: 0, items: [] });
+  mockGetMyRemovedImages.mockResolvedValue({ total: 0, truncated: false, items: [] });
 });
 
 describe('creatorJourney.getMyRemovedImages', () => {
@@ -59,5 +59,13 @@ describe('creatorJourney.getMyRemovedImages', () => {
       code: 'UNAUTHORIZED',
     });
     expect(mockGetMyRemovedImages).not.toHaveBeenCalled();
+  });
+
+  it('needs the profile-read scope on a scoped token', async () => {
+    await expect(
+      callerFor({ id: 7 }, TokenScope.UserRead << 1).getMyRemovedImages()
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await callerFor({ id: 7 }, TokenScope.UserRead).getMyRemovedImages();
+    expect(mockGetMyRemovedImages).toHaveBeenCalledExactlyOnceWith(7);
   });
 });

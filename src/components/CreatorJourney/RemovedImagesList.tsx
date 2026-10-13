@@ -11,7 +11,7 @@ import { trpc } from '~/utils/trpc';
 
 type RemovedImages = RouterOutput['creatorJourney']['getMyRemovedImages'];
 
-/** Loads only when asked: the list can run to hundreds of rows. */
+/** Fetches only after the member asks: the list can be long. */
 export function RemovedImagesList() {
   const [open, setOpen] = useState(false);
   const { data, isLoading, isError } = trpc.creatorJourney.getMyRemovedImages.useQuery(undefined, {

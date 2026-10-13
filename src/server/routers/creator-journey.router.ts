@@ -54,7 +54,6 @@ export const creatorJourneyRouter = router({
       ]);
       return { ...journey, share };
     }),
-  // Takes no input: the list is only ever the caller's own.
   getMyRemovedImages: protectedProcedure
     .meta({ requiredScope: TokenScope.UserRead })
     .use(isFlagProtected('creatorJourney'))

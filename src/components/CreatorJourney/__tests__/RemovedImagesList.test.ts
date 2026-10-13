@@ -1,10 +1,18 @@
 // @vitest-environment happy-dom
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as React from 'react';
 import type { act as actType } from 'react-dom/test-utils';
 import { createRoot, type Root } from 'react-dom/client';
 import { MantineProvider } from '@mantine/core';
+const trigger = vi.hoisted(() => vi.fn());
+vi.mock('~/components/Dialog/dialogStore', async (importOriginal) => ({
+  ...(await importOriginal<typeof DialogStore>()),
+  dialogStore: { trigger },
+}));
+
+import type * as DialogStore from '~/components/Dialog/dialogStore';
 import { RemovedImagesView } from '~/components/CreatorJourney/RemovedImagesList';
+import { EntityType } from '~/shared/utils/prisma/enums';
 
 const act = (React as unknown as { act: typeof actType }).act;
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -55,7 +63,8 @@ describe('RemovedImagesView', () => {
       items: [
         row({ imageId: 11, canAppeal: true }),
         row({ imageId: 12 }),
-        row({ reason: 'Terms of Service violation' }),
+        // A purged row offers nothing, whatever the flag says.
+        row({ canAppeal: true }),
       ],
     });
 
@@ -66,6 +75,25 @@ describe('RemovedImagesView', () => {
     ]);
     expect(rows[2].text).toContain('Terms of Service violation');
     expect(container?.textContent).toContain('3 removed images.');
+  });
+
+  it('opens the appeal dialog for that image', () => {
+    render({ total: 1, truncated: false, items: [row({ imageId: 11, canAppeal: true })] });
+    const appeal = [...(container?.querySelectorAll('button') ?? [])].find(
+      (b) => b.textContent === 'Appeal'
+    );
+
+    act(() => appeal?.click());
+
+    expect(trigger).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ props: { entityId: 11, entityType: EntityType.Image } })
+    );
+  });
+
+  it('counts a single image in the singular', () => {
+    render({ total: 1, truncated: false, items: [row({})] });
+
+    expect(container?.textContent).toContain('1 removed image.');
   });
 
   it('says when it shows only the most recent', () => {

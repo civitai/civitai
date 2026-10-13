@@ -7,12 +7,8 @@ import { REPORTS_AGAINST_EVENT } from '~/shared/constants/creator-journey.consta
 import { getAppealRefusal, isAppealableImage } from '~/shared/utils/appeal';
 import { type AppealStatus, EntityType } from '~/shared/utils/prisma/enums';
 
-/**
- * The removal event does not record whether a moderator chose its violation or one was inferred, so
- * every row carries the wording each removal notification already used.
- */
+/** One fixed wording, matching the removal notification. */
 export const REMOVAL_REASON = 'Terms of Service violation';
-// The exclusion check costs about a millisecond and a half per image.
 export const REMOVED_IMAGES_LIMIT = 1000;
 const CLICKHOUSE_TIMEOUT_SECONDS = 10;
 
@@ -24,7 +20,7 @@ export type RemovedImage = {
   canAppeal: boolean;
 };
 
-// One row per image, as the Creator Score deducts once per image.
+// Grouped per image to match the score job's `uniq(imageId)`.
 export const REMOVALS_QUERY = `
   SELECT imageId, toUnixTimestamp(max(time)) AS removedAt
   FROM images
