@@ -18,10 +18,10 @@
   const labelKey = (label: LabLabel): PromptKey => `label:${label}`;
 
   const columns = $derived(
-    item.changed
+    item.edited
       ? [
           { title: 'Current', result: item.current },
-          { title: 'With my changes', result: item.changed },
+          { title: 'Edited', result: item.edited },
         ]
       : [{ title: 'Current', result: item.current }]
   );

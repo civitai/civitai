@@ -105,7 +105,7 @@
   <input type="hidden" name="lookupAs" value={lookupAs} />
   <input type="hidden" name="judgeAs" value={judgeAs} />
   <input type="hidden" name="profileAs" value={profileAs} />
-  <input type="hidden" name="overrides" value={overrides} />
+  <input type="hidden" name="prompts" value={overrides} />
 
   <Textarea
     name="input"

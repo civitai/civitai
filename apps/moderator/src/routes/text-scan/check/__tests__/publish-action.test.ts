@@ -59,8 +59,8 @@ describe('publish', () => {
   it('puts every changed key with the publish note', async () => {
     expect(await publish(twoKeys())).toEqual({ success: true, published: ['base', 'label:scam'] });
     expect(harness.putPrompt.mock.calls).toEqual([
-      ['base', 'BASE PROMPT', 'ship it'],
-      ['label:scam', 'SCAM DEF', 'ship it'],
+      ['base', 'BASE PROMPT', { note: 'ship it' }],
+      ['label:scam', 'SCAM DEF', { note: 'ship it' }],
     ]);
   });
 

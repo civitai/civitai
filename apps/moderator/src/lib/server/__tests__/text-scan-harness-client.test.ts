@@ -5,9 +5,8 @@ vi.mock('../user-actions.service', () => ({ callModEndpoint: vi.fn() }));
 
 const { callModEndpoint } = await import('../user-actions.service');
 const { restErrorReason } = await import('../rest-error-reason');
-const { LabHarnessError, composeEntities, getPrompts, scanTexts } = await import(
-  '../text-scan-lab/harness-client'
-);
+const { LabHarnessError, StalePromptError, composeEntities, getPrompts, putPrompt, scanTexts } =
+  await import('../text-scan-lab/harness-client');
 
 const call = vi.mocked(callModEndpoint);
 
@@ -41,7 +40,7 @@ describe('scanTexts', () => {
       },
     }));
 
-    const results = await scanTexts('Model', texts(20));
+    const { results } = await scanTexts('Model', texts(20));
 
     expect(call).toHaveBeenCalledTimes(3);
     expect(call.mock.calls.map(([, body]) => (body.texts as unknown[]).length)).toEqual([8, 8, 4]);
@@ -96,10 +95,10 @@ describe('scanTexts', () => {
       },
     });
 
-    const results = await scanTexts(
+    const { results } = await scanTexts(
       'Model',
       ['a', 'b', 'c', 'd'].map((key) => ({ key, fields: [{ heading: 'Name', text: key }] })),
-      { base: 'BASE PROMPT' }
+      { prompts: { base: 'BASE PROMPT' } }
     );
 
     expect(results).toEqual([
@@ -135,7 +134,7 @@ describe('scanTexts', () => {
       reason: 'promptOverrides.base: empty prompt',
     });
 
-    const scan = scanTexts('Model', texts(1), { base: ' ' });
+    const scan = scanTexts('Model', texts(1), { prompts: { base: ' ' } });
     await expect(scan).rejects.toBeInstanceOf(LabHarnessError);
     await expect(scan).rejects.toThrow('promptOverrides.base: empty prompt');
   });
@@ -163,7 +162,7 @@ describe('scanTexts', () => {
       .mockResolvedValueOnce({ ok: false, error: 'Text-scan scan returned 502.', status: 502 })
       .mockResolvedValueOnce(ok(4, 16));
 
-    const results = await scanTexts('Model', texts(20));
+    const { results } = await scanTexts('Model', texts(20));
 
     expect(call).toHaveBeenCalledTimes(3);
     expect(results.map((r) => r.key)).toEqual(texts(20).map((t) => t.key));
@@ -184,7 +183,7 @@ describe('scanTexts', () => {
       })
       .mockResolvedValueOnce({ ok: false, status: 401, error: 'Text-scan scan: sign in again' });
 
-    const results = await scanTexts('Model', texts(16));
+    const { results } = await scanTexts('Model', texts(16));
 
     expect(results.filter((r) => r.ok)).toHaveLength(8);
     expect(results[8]).toEqual({ key: 't8', ok: false, error: 'Text-scan scan: sign in again' });
@@ -207,7 +206,7 @@ describe('harness limits', () => {
       body: { results: (body.texts as Array<{ key: string }>).map(({ key }) => scannedOk(key)) },
     }));
 
-    const results = await scanTexts('Model', [
+    const { results } = await scanTexts('Model', [
       ...texts(2),
       huge('big'),
       manyFields('wide'),
@@ -261,7 +260,7 @@ describe('harness limits', () => {
         error: 'Invalid request: texts.1.fields: Too big',
       });
 
-    const results = await scanTexts('Model', texts(16));
+    const { results } = await scanTexts('Model', texts(16));
 
     expect(results[9]).toEqual({
       key: 't9',
@@ -388,5 +387,61 @@ describe('restErrorReason', () => {
     expect(restErrorReason({ error: 'Invalid request', issues }, 400)).toBe(
       'Invalid request: f.0: bad; f.1: bad; f.2: bad; f.3: bad; f.4: bad (+2 more)'
     );
+  });
+});
+
+describe('scanTexts — what a run sent', () => {
+  it('takes the system prompt and rule list from the first chunk that has them', async () => {
+    call.mockImplementation(async (_path, body) => ({
+      ok: true,
+      body: {
+        results: (body.texts as Array<{ key: string }>).map(({ key }) => ({
+          ...scannedOk(key),
+          literalRuleIds: [3],
+        })),
+        system: 'SYSTEM',
+        rules: [{ id: 3, subject: 'Example' }],
+      },
+    }));
+    const run = await scanTexts('ModelRules', texts(10));
+    expect(run.system).toBe('SYSTEM');
+    expect(run.rules).toEqual([{ id: 3, subject: 'Example' }]);
+    expect(run.results[0]).toMatchObject({ ok: true, literalRuleIds: [3] });
+  });
+
+  it('sends rule overrides only when there are some', async () => {
+    call.mockImplementation(async (_path, body) => ({
+      ok: true,
+      body: { results: (body.texts as Array<{ key: string }>).map(({ key }) => scannedOk(key)) },
+    }));
+    const rule = { id: -1, subject: 'New', description: '', aliases: [], enabled: true };
+    await scanTexts('ModelRules', texts(1), { rules: [rule] });
+    await scanTexts('ModelRules', texts(1), { rules: [] });
+    expect(call.mock.calls[0][1]).toMatchObject({ ruleOverrides: [rule] });
+    expect(call.mock.calls[1][1]).not.toHaveProperty('ruleOverrides');
+  });
+
+  it('reads a run without the new fields as having none', async () => {
+    call.mockResolvedValue({ ok: true, body: { results: [scannedOk('t0')] } });
+    expect(await scanTexts('Model', texts(1))).toMatchObject({ system: null, rules: null });
+  });
+});
+
+describe('putPrompt', () => {
+  it('sends a note only when there is one, and the base version as given', async () => {
+    call.mockResolvedValue({ ok: true, body: { id: 4, key: 'base' } });
+    await putPrompt('base', 'X', { baseId: null });
+    await putPrompt('base', 'X', { note: 'why', baseId: 3 });
+    expect(call.mock.calls.map((c) => c[1])).toEqual([
+      { action: 'putPrompt', key: 'base', content: 'X', baseId: null },
+      { action: 'putPrompt', key: 'base', content: 'X', note: 'why', baseId: 3 },
+    ]);
+  });
+
+  it('turns a 409 into StalePromptError and anything else into LabHarnessError', async () => {
+    call.mockResolvedValueOnce({ ok: false, status: 409, error: 'x: newer', reason: 'newer' });
+    await expect(putPrompt('base', 'X', { baseId: 3 })).rejects.toBeInstanceOf(StalePromptError);
+    call.mockResolvedValueOnce({ ok: false, status: 500, error: 'boom' });
+    await expect(putPrompt('base', 'X', { baseId: 3 })).rejects.toBeInstanceOf(LabHarnessError);
   });
 });

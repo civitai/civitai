@@ -3,30 +3,9 @@ import { z } from 'zod';
 import { jsonField } from '$lib/server/query';
 import { LabError } from './errors';
 import { LabHarnessError, getPrompts, putPrompt, type LabPrompts } from './harness-client';
-import { blankPromptKeys, describeBlankPrompts, promptKeyName } from '$lib/text-scan-lab/labels';
+import { promptChangesField, validatePromptChanges } from './try';
+import { promptKeyName } from '$lib/text-scan-lab/labels';
 import { PROMPT_KEYS, type PromptChanges, type PromptKey } from '$lib/text-scan-lab/types';
-
-const isPromptKey = (key: string): key is PromptKey =>
-  (PROMPT_KEYS as readonly string[]).includes(key);
-
-/** A changed key overrides its prompt, so a blank one would scan or publish an empty prompt: refused,
- *  never dropped. Unknown keys are refused first, so a blank one is never named as a prompt it is not. */
-export function validatePromptChanges(prompts: Record<string, unknown>): PromptChanges {
-  const unknownKeys = Object.keys(prompts).filter((k) => !isPromptKey(k));
-  if (unknownKeys.length)
-    throw new LabError(
-      `Unknown prompt key ${unknownKeys.join(', ')} — allowed: ${PROMPT_KEYS.join(', ')}.`,
-      400
-    );
-  const blank = blankPromptKeys(prompts);
-  if (blank.length) throw new LabError(describeBlankPrompts(blank), 400);
-  return prompts as PromptChanges;
-}
-
-export const promptChangesField = jsonField(
-  z.record(z.string(), z.unknown(), { error: 'Malformed prompts.' }),
-  'Malformed prompts.'
-);
 
 export const publishSchema = z.object({
   prompts: promptChangesField,
@@ -77,7 +56,7 @@ export async function publishChanges(input: z.infer<typeof publishSchema>) {
   const published: PromptKey[] = [];
   for (const key of keys) {
     try {
-      await putPrompt(key, changes[key]!, input.note);
+      await putPrompt(key, changes[key]!, { note: input.note });
       published.push(key);
     } catch (e) {
       const why = e instanceof LabHarnessError ? e.message : 'unexpected error';

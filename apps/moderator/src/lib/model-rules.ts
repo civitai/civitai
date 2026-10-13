@@ -25,17 +25,34 @@ export function parseAliases(raw: string): string[] {
   return out;
 }
 
+/** Mirrored by the main app's MODEL_RULE_OVERRIDE_LIMITS (src/server/services/text-scan/model-rules.ts). */
+export const MODEL_RULE_LIMITS = {
+  subjectChars: 200,
+  descriptionChars: 2000,
+  aliasChars: 200,
+  aliasesPerRule: 100,
+  rulesPerTry: 500,
+} as const;
+
 export const modelRuleFormSchema = z.object({
-  subject: z.string().trim().min(1, 'Subject is required.').max(200, 'Subject is too long.'),
-  description: z.string().trim().max(2000, 'Description is too long.').default(''),
+  subject: z
+    .string()
+    .trim()
+    .min(1, 'Subject is required.')
+    .max(MODEL_RULE_LIMITS.subjectChars, 'Subject is too long.'),
+  description: z
+    .string()
+    .trim()
+    .max(MODEL_RULE_LIMITS.descriptionChars, 'Description is too long.')
+    .default(''),
   aliases: z
     .string()
     .default('')
     .transform(parseAliases)
     .pipe(
       z
-        .array(z.string().max(200, 'An alias is too long.'))
-        .max(100, 'At most 100 aliases per rule.')
+        .array(z.string().max(MODEL_RULE_LIMITS.aliasChars, 'An alias is too long.'))
+        .max(MODEL_RULE_LIMITS.aliasesPerRule, 'At most 100 aliases per rule.')
     ),
   note: z.string().trim().max(2000, 'Note is too long.').default(''),
 });

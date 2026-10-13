@@ -72,6 +72,7 @@ export type LabScanResult =
       output: Record<string, unknown> | null;
       parseError?: string;
       rawContent?: string;
+      literalRuleIds?: number[];
       elapsedMs: number;
     }
   | { key: string; ok: false; error: string; workflowId?: string };
@@ -88,3 +89,20 @@ export type PromptKey = (typeof PROMPT_KEYS)[number];
 
 /** A moderator's unpublished changes: the prompt keys they edited and their text. */
 export type PromptChanges = Partial<Record<PromptKey, string>>;
+
+export const isPromptKey = (key: string): key is PromptKey =>
+  (PROMPT_KEYS as readonly string[]).includes(key);
+
+export const MODEL_RULES_POLICY_KEY = 'label:modelRules' satisfies PromptKey;
+
+/** A rule as a run's prompt listed it, so a match on an unsaved (negative-id) rule still has a name. */
+export type LabRule = { id: number; subject: string };
+
+/** A moderator's unsaved rule edit for a try: a negative id is a rule not saved yet. */
+export type LabRuleOverride = {
+  id: number;
+  subject: string;
+  description: string;
+  aliases: string[];
+  enabled: boolean;
+};
