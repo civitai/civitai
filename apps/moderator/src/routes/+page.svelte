@@ -30,6 +30,7 @@
   import { LINK_CLASS } from '$lib/format';
   import { SvelteMap } from 'svelte/reactivity';
   import NumberedPager from '$lib/components/NumberedPager.svelte';
+  import OwnerFlaggedMinorBadge from '$lib/components/minor-flags/OwnerFlaggedMinorBadge.svelte';
     import { sidebarCounts } from '$lib/sidebar-counts.svelte';
   import { URGENT_REPORT_COUNT, queueSeverityClass } from '$lib/queue-thresholds';
   import { FormState } from '$lib/form-state.svelte';
@@ -478,6 +479,9 @@
                     rule on. Dismiss it.
                   </p>
                 {/if}
+              {/if}
+              {#if row.ownerFlaggedMinor}
+                <OwnerFlaggedMinorBadge />
               {/if}
             </TableCell>
             <TableCell class="text-sm">{row.reason}</TableCell>

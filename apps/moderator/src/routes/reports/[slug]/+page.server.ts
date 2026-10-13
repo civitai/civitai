@@ -5,6 +5,7 @@ import {
   setReportStatus,
   updateReportNotes,
   getGameMirrors,
+  getOwnerFlaggedMinorModelIds,
   getReportedGame,
 } from '$lib/server/reports.service';
 import { getResolvedPostReportIds } from '$lib/server/moderation-board.service';
@@ -62,10 +63,9 @@ export const load: PageServerLoad = async ({ params, url }) => {
     reportedBy: reportedBy || undefined,
     reportId,
   });
-  const games =
-    type === 'gameFrameGame'
-      ? await getGameMirrors(data.items.flatMap((r) => (r.entityId != null ? [r.entityId] : [])))
-      : [];
+  const entityIds = data.items.flatMap((r) => (r.entityId != null ? [r.entityId] : []));
+  const games = type === 'gameFrameGame' ? await getGameMirrors(entityIds) : [];
+  const ownerFlaggedMinor = type === 'model' ? await getOwnerFlaggedMinorModelIds(entityIds) : [];
 
   // The default reason set is NOT echoed into the filter control: eight pre-ticked chips read as a
   // heavily-narrowed view when it is the ordinary one. The page says what it is hiding instead, and only
@@ -81,6 +81,7 @@ export const load: PageServerLoad = async ({ params, url }) => {
     hidingAutomated: !reportId && !url.searchParams.has('reason'),
     reportedBy,
     games,
+    ownerFlaggedMinor,
     ...data,
   };
 };
