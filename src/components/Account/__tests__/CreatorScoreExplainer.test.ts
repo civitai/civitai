@@ -174,6 +174,18 @@ describe('UserScoreDisplay helping moderation row', () => {
     expect(text).toContain('147,850 pts');
   });
 
+  it('abbreviates when the card does, and sits beside a reports-against row', () => {
+    const text = visibleText(
+      render(
+        React.createElement(UserScoreDisplay, {
+          scores: { total: 100, models: 10, reportsActioned: 147850, reportsAgainst: -500 },
+        })
+      )
+    );
+    expect(text).toContain('147.9K pts');
+    expect(text).toContain('Reports against');
+  });
+
   it.each([0, undefined])('shows no row when reportsActioned is %s', (value) => {
     expect(card({}, value as number)).not.toContain(creatorScoreSources.reportsActioned.label);
   });

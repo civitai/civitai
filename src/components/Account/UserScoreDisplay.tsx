@@ -176,10 +176,9 @@ export function UserScoreDisplay({
           )}
         </Stack>
 
-        {/* Non-moderators don't get the full Reports block, but a negative score
-            still needs a cause — surface the deduction as a distinct tinted penalty
-            callout (not a plain list row) so it reads as the thing pulling the score
-            down rather than another contributing category. */}
+        {/* Non-moderators don't get the full Reports block, so each report score that moves the
+            total shows as a tinted callout instead. Neither is in the bar above, which sums only
+            the content categories. */}
         {!showReports && reportsAgainstScore < 0 && (
           <ScoreCallout
             color="red"
