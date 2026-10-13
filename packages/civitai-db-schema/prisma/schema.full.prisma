@@ -595,6 +595,11 @@ model User {
   comicProjectEngagements    ComicProjectEngagement[]
   comicChapterReads          ComicChapterRead[]
 
+  // Storylines
+  storylines                 Storyline[]
+  storylineCollaborations    StorylineCollaborator[]
+  storylineEarlyAccess       StorylineEarlyAccessSignup?
+
   // App Blocks back-relations
   blockUserSettings          BlockUserSettings[]
   promotedPlatformBlocks     PlatformDefaultBlock[]          @relation("PlatformDefaultBlockPromoter")
@@ -1660,6 +1665,7 @@ model Report {
   bountyEntry    BountyEntryReport?
   chat           ChatReport?
   comicProject   ComicProjectReport?
+  storyline      StorylineReport?
   automated      ReportAutomated?
   model3d        Model3DReport?
   model3dReview  Model3DReviewReport?
@@ -1943,6 +1949,7 @@ model Post {
   tagVotes        TagsOnPostVote[]
   reports         PostReport[]
   collectionItems CollectionItem[]
+  storylineChapter StorylineChapter?
 
   @@index([modelVersionId])
   @@index([model3dId])
@@ -9310,6 +9317,136 @@ model PlacementSuspension {
   createdById Int?
 
   @@index([createdAt])
+}
+
+// =============================================================================
+// STORYLINES - branching stories where every chapter is a post
+// =============================================================================
+
+enum StorylineStatus {
+  Ongoing
+  Complete
+}
+
+/// A branching story. Every chapter is a post; readers choose how to continue at the end
+/// of a chapter, and other creators can add continuations.
+model Storyline {
+  id           Int             @id @default(autoincrement())
+  userId       Int
+  user         User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title        String          @db.VarChar(255)
+  status       StorylineStatus @default(Ongoing)
+  /// The highest rating a chapter may carry, as a single `NsfwLevel` flag from PG to XXX
+  /// (CHECK in the migration). Continuations above it cannot be added, and chapters above
+  /// it are never shown in this storyline.
+  maxNsfwLevel Int
+  /// Moderator takedown of the storyline as a whole. Individual chapters are taken down
+  /// through their posts.
+  tosViolation Boolean         @default(false)
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+
+  chapters      StorylineChapter[]
+  collaborators StorylineCollaborator[]
+  reports       StorylineReport[]
+
+  @@index([userId])
+}
+
+/// A chapter of a storyline: one post. The tree lives in `StorylineChapterEdge`, not
+/// here, so a chapter can gain a second parent (stories coming back together) without a
+/// change to this table.
+///
+/// The row outlives its post. Deleting the post nulls `postId` and the chapter becomes a
+/// tombstone: its children keep their edge to it and stay reachable.
+model StorylineChapter {
+  id          Int       @id @default(autoincrement())
+  storylineId Int
+  storyline   Storyline @relation(fields: [storylineId], references: [id], onDelete: Cascade)
+  /// One storyline per post. NULL once the post is deleted.
+  postId      Int?      @unique
+  post        Post?     @relation(fields: [postId], references: [id], onDelete: SetNull)
+  /// The chapter's author when it was added. Not a relation on purpose: a deleted
+  /// account must not cascade away a chapter other people's chapters hang from.
+  userId      Int
+  /// Distance from the first chapter, which is 0. A storyline has exactly one chapter
+  /// at depth 0 (enforced by a partial unique index in the migration).
+  depth       Int
+  /// The placement that added this chapter, when one did. Unique so replaying an
+  /// approval cannot add the chapter twice.
+  placementId Int?      @unique
+  createdAt   DateTime  @default(now())
+
+  parents  StorylineChapterEdge[] @relation("StorylineChapterEdgeChild")
+  children StorylineChapterEdge[] @relation("StorylineChapterEdgeParent")
+
+  /// Target of the edge foreign keys, which carry `storylineId` so an edge can never
+  /// join chapters from two storylines.
+  @@unique([id, storylineId])
+  @@index([storylineId])
+  @@index([userId])
+}
+
+/// Parent to child link between chapters. Forks happen only at the end of a chapter, so
+/// the edge carries no position within the parent.
+///
+/// v1 allows one parent per chapter: a unique index on `chapterId` in the migration.
+/// Dropping that index is the whole change needed for a chapter with several parents.
+model StorylineChapterEdge {
+  storylineId     Int
+  chapterId       Int
+  chapter         StorylineChapter @relation("StorylineChapterEdgeChild", fields: [chapterId, storylineId], references: [id, storylineId], onDelete: Cascade)
+  parentChapterId Int
+  /// NoAction, not Cascade: deleting a chapter row that still has children is refused
+  /// rather than silently cutting its subtree off from the root. Take a chapter down by
+  /// its post instead, which leaves a tombstone. The constraint is DEFERRABLE INITIALLY
+  /// DEFERRED in the migration (not expressible here), so it is checked at commit: deleting
+  /// the whole storyline works because the child-side cascade has removed these edges by
+  /// then. A violating write therefore fails at commit, not at the statement.
+  parentChapter   StorylineChapter @relation("StorylineChapterEdgeParent", fields: [parentChapterId, storylineId], references: [id, storylineId], onDelete: NoAction)
+  /// The storyline owner's main route out of the parent. At most one per parent (partial
+  /// unique index in the migration). Whether a non-canon child is "endorsed" or
+  /// "community" is not stored: it follows the current collaborator list, so endorsing
+  /// someone reorders their existing chapters too.
+  canon           Boolean          @default(false)
+  createdAt       DateTime         @default(now())
+
+  @@id([chapterId, parentChapterId])
+  @@index([parentChapterId])
+}
+
+/// Collaborators the storyline owner has endorsed. Their continuations skip review and
+/// are listed before everyone else's.
+model StorylineCollaborator {
+  storylineId Int
+  storyline   Storyline @relation(fields: [storylineId], references: [id], onDelete: Cascade)
+  userId      Int
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt   DateTime  @default(now())
+
+  @@id([storylineId, userId])
+  @@index([userId])
+}
+
+/// Early-access list for the "Create next section" tool, one row per user.
+model StorylineEarlyAccessSignup {
+  userId      Int      @id
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// Where they signed up from, for context only.
+  storylineId Int?
+  createdAt   DateTime @default(now())
+
+  @@index([createdAt])
+}
+
+model StorylineReport {
+  storylineId Int
+  storyline   Storyline @relation(fields: [storylineId], references: [id], onDelete: Cascade)
+  reportId    Int       @unique
+  report      Report    @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  @@id([reportId, storylineId])
+  @@index([storylineId], type: Hash)
 }
 
 enum UserHubSourceType {
