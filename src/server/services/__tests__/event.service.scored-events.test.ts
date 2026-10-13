@@ -324,6 +324,7 @@ describe('getMyEventHats', () => {
       [31, 'claimed'],
       [32, 'txn-9'],
     ]);
+    expect(covers).toHaveBeenCalledWith(expect.objectContaining({ viewer: user }));
     // Points and counts live; the signed-out views (10) only the snapshot has.
     expect(hats[0]).toMatchObject({
       points: 175,
@@ -503,6 +504,8 @@ describe('getPlaceableEventContent', () => {
       ['Model', 2, 'Velvet LoRA', null],
       ['Article', 3, 'Lighting notes', 103],
     ]);
+    // The caller's own drafts and private items keep their covers in the picker.
+    expect(covers).toHaveBeenCalledWith(expect.objectContaining({ viewer: user }));
   });
 });
 

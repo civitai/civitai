@@ -228,7 +228,17 @@ describe('getEntityCoverImage bounds the CONNECTIONS branch to one row per entit
         'FROM entities e ' +
         'JOIN "ImageConnection" ic ON ic."entityId" = e."entityId" AND ic."entityType" = e."entityType" ' +
         'JOIN "Image" i ON i.id = ic."imageId" ' +
+        `LEFT JOIN "BountyEntry" be ON e."entityType" = 'BountyEntry' AND be.id = e."entityId" ` +
+        'LEFT JOIN "Bounty" b ON b.id = CASE e."entityType" ' +
+        `WHEN 'Bounty' THEN e."entityId" WHEN 'BountyEntry' THEN be."bountyId" END ` +
+        `LEFT JOIN "Article" a ON e."entityType" = 'Article' AND a.id = e."entityId" ` +
         `WHERE i."ingestion" = 'Scanned' AND i."needsReview" IS NULL ` +
+        // The parent entity's visibility: canViewBounty, then the article rule.
+        `AND ( e."entityType" NOT IN ('Bounty', 'BountyEntry') ` +
+        `OR b.availability <> 'Private' OR b."userId" = ? OR ?::boolean ) ` +
+        `AND ( e."entityType" <> 'Article' ` +
+        `OR (a.status = 'Published' AND a."publishedAt" IS NOT NULL AND a.ingestion = 'Scanned') ` +
+        `OR a."userId" = ? OR ?::boolean ) ` +
         'ORDER BY e."entityId", e."entityType", i.id ' +
         ') t ) t'
     );
