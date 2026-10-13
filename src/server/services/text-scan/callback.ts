@@ -42,6 +42,8 @@ export async function handleTextScanCallback(event: { workflowId: string; status
     model?: string;
     textHash?: string;
     subjectMeta?: Record<string, unknown>;
+    inputChars?: number;
+    inputCut?: boolean;
   };
   const { entityType, entityId, mode } = metadata;
   if (
@@ -123,6 +125,11 @@ export async function handleTextScanCallback(event: { workflowId: string; status
   if (!subject) return log('info', 'entity gone before callback', ctx);
 
   const outcome = evaluateTextScan(parsed.output, subject.declared, labels);
+  const subjectMeta = metadata.subjectMeta ?? subject.meta;
+  const meta =
+    metadata.inputChars === undefined
+      ? subjectMeta
+      : { ...subjectMeta, inputChars: metadata.inputChars, inputCut: metadata.inputCut ?? false };
   const recorded = await recordTextScanSuccess({
     entityType: emEntityType,
     entityId,
@@ -133,7 +140,7 @@ export async function handleTextScanCallback(event: { workflowId: string; status
     promptIds: metadata.promptIds ?? {},
     model: metadata.model ?? '',
     textHash: metadata.textHash,
-    meta: metadata.subjectMeta ?? subject.meta,
+    meta,
   });
   if (!recorded) return log('warning', 'stale callback ignored', ctx);
 

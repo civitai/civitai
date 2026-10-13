@@ -40,7 +40,7 @@ const subject = {
   declared: {},
 };
 
-const DEFAULTS = { model: DEFAULT_TEXT_SCAN_MODEL, maxInputChars: 12000, thinking: false };
+const DEFAULTS = { model: DEFAULT_TEXT_SCAN_MODEL, maxInputChars: 200000, thinking: false };
 
 describe('composeTextScanMessages', () => {
   it('puts base then each requested label definition in the system message', () => {
@@ -108,6 +108,35 @@ describe('composeUserMessage', () => {
     expect(composeUserMessage(long, 100)).toHaveLength(100);
   });
 
+  it('reports the full composed length and whether the cap cut it', () => {
+    const body = (n: number) => ({ fields: [{ heading: 'B', text: 'x'.repeat(n) }], declared: {} });
+    const labels = ['scam'] as any;
+    const prompts = { base: { id: 1, content: 'b' }, 'label:scam': { id: 2, content: 's' } } as any;
+    const full = '## B\n'.length + 250000;
+    const big = composeTextScanMessages({
+      prompts,
+      labels,
+      subject: body(250000),
+      maxInputChars: 200000,
+    });
+    expect(big.user).toHaveLength(200000);
+    expect(big).toMatchObject({ inputChars: full, inputCut: true });
+    const fits = composeTextScanMessages({
+      prompts,
+      labels,
+      subject: body(100),
+      maxInputChars: 200000,
+    });
+    expect(fits).toMatchObject({ inputChars: '## B\n'.length + 100, inputCut: false });
+    const exact = composeTextScanMessages({
+      prompts,
+      labels,
+      subject: body(100),
+      maxInputChars: '## B\n'.length + 100,
+    });
+    expect(exact.inputCut).toBe(false);
+  });
+
   it('returns an empty string when every field is empty', () => {
     expect(composeUserMessage({ fields: [{ heading: 'A', text: '  ' }], declared: {} }, 100)).toBe(
       ''
@@ -153,7 +182,7 @@ describe('getTextScanConfig', () => {
 
   it('falls back to defaults on unparseable or invalid config', async () => {
     redisMock.sysRedis.get.mockResolvedValue('{not json');
-    expect((await getTextScanConfig()).maxInputChars).toBe(12000);
+    expect((await getTextScanConfig()).maxInputChars).toBe(200000);
     redisMock.sysRedis.get.mockResolvedValue(
       JSON.stringify({ maxInputChars: -1, model: '', thinking: 'yes' })
     );

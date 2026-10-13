@@ -17,6 +17,8 @@ single orchestrator `chatCompletion` step with a strict JSON schema; the verdict
 | Row retention                                                            | the `text-scan-retention` job                               |
 | Actions per label                                                        | `text-scan/actions/` and each entity's moderation adapter   |
 
+**Input cap.** An entity's fields are composed into one text and cut to `maxInputChars` (default 200,000 characters, overridable in the config above). Every result's `meta` records `inputChars` (full composed length) and `inputCut` (whether the cap cut it), so a scan that did not see the whole text can be told apart.
+
 ## Entities
 
 The scanned entities, and the fields and labels each scans, are the profiles in
