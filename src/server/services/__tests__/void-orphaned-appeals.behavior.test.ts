@@ -7,32 +7,38 @@ import type * as NotificationService from '~/server/services/notification.servic
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { clickhouse } from '~/server/clickhouse/client';
 
-/**
- * The orphan sweep's SQL run against a Postgres stand-in. Each fixture appeal differs from a
- * sorted neighbour in one field, so each expectation is a claim about one condition.
- */
+/** The orphan sweep's SQL run against PGlite, so precedence and filter mistakes in the queries fail a test. Buzz, notifications and ClickHouse are mocked. */
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
-const holder = vi.hoisted(() => ({ db: null as unknown as PGlite }));
+const holder = vi.hoisted(() => ({
+  refundMulti: vi.fn(),
+  notify: vi.fn(),
+  db: null as unknown as PGlite,
+  // Runs once, right after the candidate pick: a moderator acting between the pick and the claims.
+  afterPick: null as string | null,
+}));
 
 vi.mock('~/server/services/buzz.service', async (importOriginal) => ({
   ...(await importOriginal<typeof BuzzService>()),
-  refundMultiAccountTransaction: vi.fn().mockResolvedValue(undefined),
-  refundTransaction: vi.fn().mockResolvedValue(undefined),
+  refundMultiAccountTransaction: holder.refundMulti,
+  refundTransaction: vi.fn(),
 }));
 vi.mock('~/server/services/notification.service', async (importOriginal) => ({
   ...(await importOriginal<typeof NotificationService>()),
-  createNotification: vi.fn().mockResolvedValue(undefined),
+  createNotification: holder.notify,
 }));
-// The appellant of appeal 1 deleted image 1001 after filing.
+// Must match APPEALS rows 1 and 9: each appellant deleted the image after filing.
 vi.mock('~/server/clickhouse/client', async (importOriginal) => ({
   ...(await importOriginal<typeof ClickhouseClient>()),
   clickhouse: {
     $query: vi.fn((strings: TemplateStringsArray) =>
       Promise.resolve(
         /FROM images/.test(strings.join('?'))
-          ? [{ entityId: '1001', userId: '11', t: String(Date.UTC(2026, 8, 2) / 1000) }]
+          ? [
+              { entityId: '1001', userId: '11', t: String(Date.UTC(2026, 8, 2) / 1000) },
+              { entityId: '1009', userId: '19', t: String(Date.UTC(2026, 8, 2) / 1000) },
+            ]
           : []
       )
     ),
@@ -43,25 +49,25 @@ import { voidOrphanedAppeals } from '~/server/services/report.service';
 
 const FILED = '2026-09-01 00:00:00';
 
-// [appeal id, userId, entityType, entityId, status, entityRemovedAt]
-const APPEALS: [number, number, string, number, string, string | null][] = [
-  [1, 11, 'Image', 1001, 'Pending', null], // owner deleted it
-  [2, 12, 'Image', 1002, 'Pending', null], // removed: routed
-  [3, 13, 'Image', 1003, 'Pending', null], // image still exists
-  [4, 14, 'Image', 1004, 'Rejected', null], // decided
-  [5, 15, 'Model', 2005, 'Pending', null], // removed model: routed
-  [6, 16, 'Model', 2006, 'Pending', null], // model still exists
-  [7, 17, 'Model', 2007, 'Rejected', null], // decided model
-  [8, 18, 'Image', 1008, 'Pending', '2026-09-10 00:00:00'], // already routed
-  [9, 19, 'Image', 1009, 'Pending', null], // image in a report, object entry
-  [10, 20, 'Image', 1010, 'Pending', null], // image in a report, bare entry
-  [11, 21, 'Image', 1011, 'Pending', null], // appellant has a report filed on them
-  [12, 22, 'Image', 1012, 'Pending', null], // appellant reported, wrong reason
-  [13, 23, 'Image', 1013, 'Pending', null], // appellant reported, right reason
-  [14, 24, 'Image', 1014, 'Pending', null], // appellant has another image blocked for it
-  [15, 25, 'Image', 1015, 'Pending', null], // appellant's other image blocked for another reason
-  [16, 26, 'Image', 1016, 'Pending', null], // deleted account
-  [17, 27, 'Model', 1009, 'Pending', null], // model sharing a reported image's id
+// [appeal id, userId, entityType, entityId, status, entityRemovedAt, buzzTransactionId]
+const APPEALS: [number, number, string, number, string, string | null, string | null][] = [
+  [1, 11, 'Image', 1001, 'Pending', null, 'appeal-11-1'], // owner deleted it
+  [2, 12, 'Image', 1002, 'Pending', null, 'appeal-12-1'], // removed: routed
+  [3, 13, 'Image', 1003, 'Pending', null, null], // image still exists
+  [4, 14, 'Image', 1004, 'Rejected', null, null], // decided
+  [5, 15, 'Model', 2005, 'Pending', null, null], // removed model: routed
+  [6, 16, 'Model', 2006, 'Pending', null, null], // model still exists
+  [7, 17, 'Model', 2007, 'Rejected', null, null], // decided model
+  [8, 18, 'Image', 1008, 'Pending', '2026-09-10 00:00:00', null], // already routed
+  [9, 19, 'Image', 1009, 'Pending', null, 'appeal-19-1'], // in a report (object entry), also owner-deleted
+  [10, 20, 'Image', 1010, 'Pending', null, null], // image in a report, bare entry
+  [11, 21, 'Image', 1011, 'Pending', null, null], // appellant has a report filed on them
+  [12, 22, 'Image', 1012, 'Pending', null, null], // appellant reported, wrong reason
+  [13, 23, 'Image', 1013, 'Pending', null, 'appeal-23-1'], // appellant reported, right reason
+  [14, 24, 'Image', 1014, 'Pending', null, null], // appellant has another image blocked for it
+  [15, 25, 'Image', 1015, 'Pending', null, null], // appellant's other image blocked for another reason
+  [16, 26, 'Image', 1016, 'Pending', null, null], // deleted account
+  [17, 27, 'Model', 1009, 'Pending', null, null], // model sharing a reported image's id
 ];
 
 beforeAll(async () => {
@@ -94,11 +100,20 @@ beforeAll(async () => {
     ...values: unknown[]
   ) => {
     const flat = Prisma.sql(strings, ...(values as never[]));
-    return (await holder.db.query(flat.text, flat.values as unknown[])).rows;
+    const { rows } = await holder.db.query(flat.text, flat.values as unknown[]);
+    if (holder.afterPick && /FROM "Appeal" a/.test(flat.text)) {
+      await holder.db.exec(holder.afterPick);
+      holder.afterPick = null;
+    }
+    return rows;
   }) as never);
 });
 
 beforeEach(async () => {
+  vi.clearAllMocks();
+  holder.refundMulti.mockResolvedValue(undefined);
+  holder.notify.mockResolvedValue(undefined);
+  holder.afterPick = null;
   await holder.db.exec(`
     TRUNCATE "User", "Image", "Model", "Report", "UserReport", "CsamReport", "Appeal";
     INSERT INTO "User" (id, "deletedAt") SELECT g, NULL FROM generate_series(11, 27) g;
@@ -115,12 +130,12 @@ beforeEach(async () => {
       (2, NULL, '[1010]'),
       (3, 21, '[]');
   `);
-  for (const [id, userId, entityType, entityId, status, removedAt] of APPEALS)
+  for (const [id, userId, entityType, entityId, status, removedAt, fee] of APPEALS)
     await holder.db.query(
       `INSERT INTO "Appeal" (id, "userId", "entityType", "entityId", status, "createdAt", "updatedAt",
-         "entityRemovedAt")
-       VALUES ($1, $2, $3, $4, $5::"AppealStatus", $6, $6, $7)`,
-      [id, userId, entityType, entityId, status, FILED, removedAt]
+         "entityRemovedAt", "buzzTransactionId")
+       VALUES ($1, $2, $3, $4, $5::"AppealStatus", $6, $6, $7, $8)`,
+      [id, userId, entityType, entityId, status, FILED, removedAt, fee]
     );
 });
 
@@ -136,6 +151,19 @@ async function appeals() {
   );
   return new Map(rows.map((r) => [r.id, r]));
 }
+
+const refundedPrefixes = () =>
+  vi
+    .mocked(holder.refundMulti)
+    .mock.calls.map(
+      (c) => (c[0] as { externalTransactionIdPrefix: string }).externalTransactionIdPrefix
+    )
+    .sort();
+const notifiedUsers = () =>
+  vi
+    .mocked(holder.notify)
+    .mock.calls.map((c) => (c[0] as { userId: number }).userId)
+    .sort((a, b) => a - b);
 
 describe('voidOrphanedAppeals against Postgres', () => {
   it('sorts every orphan by the one condition that distinguishes it', async () => {
@@ -172,6 +200,10 @@ describe('voidOrphanedAppeals against Postgres', () => {
       .mocked(clickhouse!.$query)
       .mock.calls.find((c) => /FROM modelEvents/.test((c[0] as TemplateStringsArray).join('?')));
     expect([...(modelLookup?.[1] as number[])].sort()).toEqual([1009, 2005]);
+
+    // Routed fees stay held; the quiet group is refunded but never told.
+    expect(refundedPrefixes()).toEqual(['appeal-11-1', 'appeal-19-1', 'appeal-23-1']);
+    expect(notifiedUsers()).toEqual([11, 12, 15, 22, 25, 27]);
   });
 
   it('stamps closed appeals resolved and leaves routed ones unresolved', async () => {
@@ -181,9 +213,43 @@ describe('voidOrphanedAppeals against Postgres', () => {
 
     for (const id of [1, 9, 16]) expect(rows.get(id)!.resolvedAt).not.toBeNull();
     for (const id of [2, 5]) expect(rows.get(id)!.resolvedAt).toBeNull();
-    // The earlier stamp on an already-routed appeal is not moved.
     expect(rows.get(8)!.entityRemovedAt).toEqual(before);
     expect(before).not.toBeNull();
+  });
+
+  it('leaves alone every appeal decided or routed between the pick and the claims', async () => {
+    // One row per claim statement and guard: owner close and quiet close on status and on the
+    // stamp, and the review route on status and on the stamp.
+    holder.afterPick = `
+      UPDATE "Appeal" SET status = 'Approved' WHERE id = 1;
+      UPDATE "Appeal" SET "entityRemovedAt" = '2026-09-20 00:00:00' WHERE id = 9;
+      UPDATE "Appeal" SET status = 'Rejected' WHERE id = 13;
+      UPDATE "Appeal" SET status = 'Rejected' WHERE id = 2;
+      UPDATE "Appeal" SET "entityRemovedAt" = '2026-09-20 00:00:00' WHERE id = 12;
+    `;
+    const routedMeanwhile = async () =>
+      (await holder.db.query<{ at: Date }>(`SELECT '2026-09-20 00:00:00'::timestamp(3) AS at`))
+        .rows[0].at;
+
+    const result = await voidOrphanedAppeals();
+    const rows = await appeals();
+
+    expect(rows.get(1)).toMatchObject({
+      status: 'Approved',
+      resolvedAt: null,
+      resolvedReason: null,
+    });
+    expect(rows.get(9)).toMatchObject({ status: 'Pending', resolvedAt: null });
+    expect(rows.get(13)).toMatchObject({
+      status: 'Rejected',
+      resolvedAt: null,
+      resolvedReason: null,
+    });
+    expect(rows.get(2)).toMatchObject({ status: 'Rejected', entityRemovedAt: null });
+    expect(rows.get(12)!.entityRemovedAt).toEqual(await routedMeanwhile());
+    expect(refundedPrefixes()).toEqual([]);
+    expect(notifiedUsers()).toEqual([15, 25, 27]);
+    expect(result).toMatchObject({ closedQuietly: 4, closedOwnerDeleted: 0, routedForReview: 3 });
   });
 
   it('does nothing on a second run', async () => {
