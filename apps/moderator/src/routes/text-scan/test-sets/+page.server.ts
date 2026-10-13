@@ -13,7 +13,6 @@ import { refreshSetTotals } from '$lib/server/text-scan-tests/totals';
 import { promptsHref } from '$lib/text-scan-lab/paths';
 import { TEST_SET_LIMITS, WORKSPACES } from '$lib/text-scan-tests/types';
 
-// Sets are reached from the workspaces; this route only hosts their shared actions.
 export const load: PageServerLoad = () => {
   redirect(307, promptsHref());
 };

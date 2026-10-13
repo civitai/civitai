@@ -6,10 +6,7 @@ import { canonicalRuleState, type RuleStateEntry } from '../../text-scan-tests/b
 
 export { canonicalRuleState, type RuleStateEntry };
 
-// The one definition of a Model rules run's rule state: starting a run records this hash and the
-// worker compares against it, so both must come from here. The pure canonical form lives in
-// baseline.ts, which the client bundle can reach; node:crypto cannot.
-
+// Hashing lives here, not in baseline.ts: that file reaches the client bundle, and node:crypto cannot.
 export const ruleStateHash = (state: readonly RuleStateEntry[]) =>
   createHash('sha256').update(canonicalRuleState(state)).digest('hex');
 

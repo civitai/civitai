@@ -22,7 +22,7 @@ import {
 const WORKER_ID = newWorkerId();
 type Viewer = Parameters<typeof canAccess>[0];
 
-/** `credential`: the session cookie the worker's harness calls forward. Never log or store it. */
+/** `credential`: the session cookie the worker's harness calls forward. */
 export const workerDeps = (credential: string): WorkerDeps => ({
   db: getModeratorDb(),
   main: dbRead,
@@ -58,7 +58,7 @@ async function auditRun(event: RunAuditEvent) {
 
 /**
  * `credential`: the session cookie from `requestCookie()` at the call site; the harness quote
- * forwards it. Never log or store it. Without one nothing can be quoted or started.
+ * forwards it. Without one nothing can be quoted or started.
  */
 export function runsDeps(credential: string | null): RunsDeps {
   if (!credential)

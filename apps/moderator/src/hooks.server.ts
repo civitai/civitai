@@ -76,8 +76,8 @@ function logCredentialAttribution(
   }
 }
 
-// No scan can resume here: a scan forwards a moderator's session, and boot has none. Runs resume on the
-// next Test sets page load; releasing this host's dead leases lets that happen without the 5-minute wait.
+// Boot has no session, so no scan can resume here. Releasing this host's dead leases lets runs resume on
+// the next Test sets page load instead of after the lease goes stale.
 export const init: ServerInit = async () => {
   try {
     const { releaseLeasesAtBoot } = await import('$lib/server/text-scan-tests/deps');

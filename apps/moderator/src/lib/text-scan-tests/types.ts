@@ -42,7 +42,6 @@ export const isCancellable = (status: string) =>
   (CANCELLABLE_RUN_STATUSES as readonly string[]).includes(status);
 export type RunKind = 'baseline' | 'draft';
 export const RUN_KIND_NAMES: Record<RunKind, string> = { baseline: 'Baseline', draft: 'Draft' };
-/** How often an open page re-reads a run in progress. */
 export const RUN_POLL_MS = 4000;
 
 export const TEST_SET_LIMITS = {

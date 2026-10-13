@@ -2,7 +2,7 @@
   import * as AlertDialog from '@civitai/ui/components/ui/alert-dialog/index.js';
   import { Button, type ButtonSize } from '@civitai/ui/components/ui/button/index.js';
 
-  // Sits inside the form it submits; the dialog asks first, then submits that form.
+  // Place it inside the form it submits.
   let {
     label,
     title,

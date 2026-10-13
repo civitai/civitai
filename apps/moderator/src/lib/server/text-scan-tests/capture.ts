@@ -54,7 +54,6 @@ export async function captureCase(
   setCreated: boolean;
   rescore: boolean;
 }> {
-  // Checked before a new set is created, so these refusals leave no empty set behind.
   if (workspaceOf(input.entityType) !== input.workspace)
     throw new TestSetError(
       `${WORKSPACE_NAMES[input.workspace]} sets do not score ${input.entityType} cases.`,

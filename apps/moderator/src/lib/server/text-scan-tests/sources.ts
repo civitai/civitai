@@ -49,7 +49,7 @@ async function goneIds(main: Kysely<MainDB>, source: Source, ids: number[]): Pro
   return ids.filter((id) => !live.has(id));
 }
 
-/** Cases whose source row is gone, soft-deleted, or written by a deleted account. Primary-key lookups. */
+/** Cases whose source row is gone, soft-deleted, or written by a deleted account. */
 export async function goneCaseIds(
   main: Kysely<MainDB>,
   refs: readonly SourceRef[]

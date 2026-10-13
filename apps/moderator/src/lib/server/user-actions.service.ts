@@ -221,8 +221,7 @@ export const callModEndpoint = (
 ): Promise<JsonResult> =>
   postJson({ path: `/api/mod/${path}`, body, label, auth: 'session', timeoutMs });
 
-/** `callModEndpoint` for work that outlives its request: the cookie is read once with `requestCookie`
- *  while the request is in scope. Keep it in memory only — it is the moderator's session. */
+/** `callModEndpoint` for work that outlives its request, with a cookie read earlier by `requestCookie`. */
 export const callModEndpointAs = (
   cookie: string,
   path: ModEndpoint,
@@ -232,7 +231,10 @@ export const callModEndpointAs = (
 ): Promise<JsonResult> =>
   postJson({ path: `/api/mod/${path}`, body, label, auth: 'session', timeoutMs, cookie });
 
-/** The session cookie of the request being handled; null outside a request or without one. */
+/**
+ * The session cookie of the request being handled; null outside a request or without one.
+ * It is the moderator's session: keep it in memory only, never log or store it.
+ */
 export function requestCookie(): string | null {
   try {
     return getRequestEvent().request.headers.get('cookie') || null;

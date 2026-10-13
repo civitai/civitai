@@ -242,7 +242,7 @@ const previewOf = (fields: LabField[] | null) =>
         .slice(0, PREVIEW_CHARS)
     : null;
 
-/** A baseline can be gone (its set's cases were re-run elsewhere); anything else still throws. */
+/** Only a missing baseline reads as none; any other failure fails the report. */
 const gone = (e: unknown): null => {
   if (e instanceof TestSetError && e.status === 404) return null;
   throw e;

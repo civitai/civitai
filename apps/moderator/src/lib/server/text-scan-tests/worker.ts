@@ -235,7 +235,6 @@ async function endRun(
     .execute();
 }
 
-/** Keeps the run's status and rows; the next viewer with a session resumes it at once. */
 async function pauseRun(deps: WorkerDeps, runId: number): Promise<void> {
   await deps.db
     .updateTable('text_scan_test_run')
@@ -268,8 +267,7 @@ async function drive(deps: WorkerDeps, run: RunRow, launch: boolean): Promise<vo
     prompts: (run.prompt_overrides as Record<string, string> | null) ?? undefined,
     rules: (run.rule_overrides as LabRuleOverride[] | null) ?? [],
   };
-  // A first-request refusal fails only a fresh launch; anyone else's refused session just pauses.
-  let scannedAny = !(launch && firstStart(run));
+  let launchFirstRequest = launch && firstStart(run);
 
   const prewiped = await wipedWithoutResult(deps.db, run);
   if (
@@ -307,7 +305,7 @@ async function drive(deps: WorkerDeps, run: RunRow, launch: boolean): Promise<vo
         results = scanned.results;
       } catch (e) {
         if (!(e instanceof LabHarnessError)) throw e;
-        if (!scannedAny) return endRun(deps, runId, 'failed', e.message);
+        if (launchFirstRequest) return endRun(deps, runId, 'failed', e.message);
         if (e.authRefused) return pauseRun(deps, runId);
         results = live.map((c) => ({ key: String(c.id), ok: false as const, error: e.message }));
       }
@@ -316,7 +314,7 @@ async function drive(deps: WorkerDeps, run: RunRow, launch: boolean): Promise<vo
       if (await rulesMoved(deps, run)) return endRun(deps, runId, 'failed', RULES_MOVED);
       const byKey = new Map(results.map((r) => [r.key, r] as const));
       rows.push(...live.map((c) => toResultRow(c.id, byKey.get(String(c.id)))));
-      scannedAny = true;
+      launchFirstRequest = false;
     }
 
     const status = await writeChunk(deps, runId, rows);

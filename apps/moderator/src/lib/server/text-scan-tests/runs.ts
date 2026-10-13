@@ -77,7 +77,6 @@ export type Quote = {
 
 export type Started = { startId: string; runIds: number[]; runId: number };
 
-/** A typical chunk's wall time, for the estimate only. */
 const CHUNK_SECONDS = 20;
 
 /** A done baseline re-queued by a top-up or re-run keeps its finished_at until it finishes again. */
@@ -278,7 +277,7 @@ async function planRun(
   };
 }
 
-/** A quote that fails costs 1 Buzz a call, the harness's floor. */
+/** Fallback price when no quote is available. */
 async function priceOf(deps: RunsDeps, plan: Plan) {
   try {
     const quote = await deps.quoteTexts(
@@ -358,7 +357,7 @@ export async function startRun(
       'The set, your draft or the live prompts changed since the estimate. Check the new estimate and confirm again.',
       409
     );
-  // Priced before anything is written, so the audited estimate is the server's, never the form's.
+  // Before the transaction: a pricing failure must leave no queued run for a resume to claim.
   const { perCallBuzz } = await priceOf(deps, plan);
   const startId = randomUUID();
   const runIds = await deps.db.transaction().execute(async (trx) => {

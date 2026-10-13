@@ -357,7 +357,6 @@ export async function updateExpectation(
   return toTestCase(row);
 }
 
-/** Its results go with it (ON DELETE CASCADE). */
 export async function removeCase(db: Db, setId: number, caseId: number): Promise<void> {
   await requireOpenSet(db, setId);
   const res = await db

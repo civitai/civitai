@@ -86,7 +86,6 @@ function collector() {
   };
 }
 
-/** `{ cases: [{ entityType, entityId?, authorId?, fields, expected, note? }] }`; nsfw ranges are kept. */
 export function parseLabSeed(json: unknown): SeedParse | string {
   if (!isObject(json) || !Array.isArray(json.cases))
     return 'A lab-seed file is an object with a cases array.';
@@ -135,7 +134,6 @@ export function parseLabSeed(json: unknown): SeedParse | string {
   return { rows: out.rows, refused: out.refused };
 }
 
-/** `[{ key, entityType, fields, truth, entityId? }]`; `truth` is read through the map onto one flag label. */
 export function parseBench(
   json: unknown,
   label: FlagLabel,
@@ -214,7 +212,7 @@ export type ImportSummary = {
 const tally = (keys: string[]) =>
   keys.reduce<Record<string, number>>((acc, key) => ({ ...acc, [key]: (acc[key] ?? 0) + 1 }), {});
 
-/** Same validation as the app's addCase (upsertCase). One transaction; a refused row is counted by reason and the rest still land. */
+/** Validates as addCase does (upsertCase). */
 export async function importSeed(
   db: Kysely<ModeratorDB> | null,
   json: unknown,
@@ -242,7 +240,6 @@ export async function importSeed(
       .select(['id', 'workspace', 'archived_at'])
       .where('name', '=', opts.set)
       .executeTakeFirst();
-    // These messages never name the set: a set name can describe its data.
     if (existing && existing.workspace !== opts.workspace)
       throw new TestSetError('That set belongs to the other workspace.', 409);
     if (existing?.archived_at) throw new TestSetError('That set is archived.', 409);

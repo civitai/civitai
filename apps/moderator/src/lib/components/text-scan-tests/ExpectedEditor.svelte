@@ -11,7 +11,6 @@
   } from '$lib/text-scan-lab/types';
   import { levelRank, type Expected, type FlagLabel } from '$lib/text-scan-tests/expected';
 
-  // The server re-validates (parseExpected); this only keeps the choices sensible.
   let {
     labels,
     expected = $bindable(),
