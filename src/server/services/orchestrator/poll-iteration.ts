@@ -128,8 +128,10 @@ export async function pollIterationWorkflow({
     if (rawImages.some((img) => img?.pendingRating))
       return { status: 'processing' as const, imageUrl: null, images: [] };
   }
+  // The orchestrator writes 'none' for no block; WorkflowData already normalises it.
+  const blocked = (img: any) => !!img?.blockedReason && img.blockedReason !== 'none';
   const outputImages: string[] = rawImages
-    .filter((img) => !img?.blockedReason)
+    .filter((img) => !blocked(img))
     .map((img) => img?.url)
     .filter(Boolean) as string[];
 
@@ -150,9 +152,7 @@ export async function pollIterationWorkflow({
   }
 
   // Any blocked reason on the output; `blockedReasonToMessage` turns it into the failure text.
-  const blockedReason = rawImages.find((img) => img?.blockedReason)?.blockedReason as
-    | string
-    | undefined;
+  const blockedReason = rawImages.find(blocked)?.blockedReason as string | undefined;
 
   if (workflowStatus === 'succeeded' && outputImages.length > 0) {
     const imgWidth = width ?? 512;

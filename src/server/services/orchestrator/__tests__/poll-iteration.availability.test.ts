@@ -39,6 +39,7 @@ vi.mock('~/server/services/storage-resolver', async (importOriginal) => ({
 import { pollIterationWorkflow } from '~/server/services/orchestrator/poll-iteration';
 import { formatGenerationResponse2 } from '~/server/services/orchestrator/orchestration-new.service';
 import { isMature } from '~/shared/constants/orchestrator.constants';
+import { orchestratorNsfwLevelMap } from '~/shared/constants/browsingLevel.constants';
 
 // The global `@civitai/client` mock defines `NsfwLevel.X` as 'X' and leaves R/XXX undefined, so 'X'
 // is the one level `isMature` recognises under test.
@@ -99,8 +100,12 @@ describe('pollIterationWorkflow availability', () => {
     const result = await poll();
 
     expect(result.status).toBe('succeeded');
-    expect(result.images).toHaveLength(1);
+    expect(result.images).toEqual([
+      { url: expect.any(String), id: 900, nsfwLevel: orchestratorNsfwLevelMap[SAFE] },
+    ]);
+    expect(orchestratorNsfwLevelMap[SAFE]).toEqual(expect.any(Number));
     expect(mocks.createImage).toHaveBeenCalledTimes(1);
+    expect(formatGenerationResponse2).toHaveBeenCalledTimes(1);
     expect(console.error).not.toHaveBeenCalled();
   });
 
@@ -119,7 +124,7 @@ describe('pollIterationWorkflow availability', () => {
     const result = await poll();
 
     expect(result.status).toBe('failed');
-    expect(result.errorMessage).toMatch(/unlock/i);
+    expect(result.errorMessage).toMatch(/yellow Buzz/);
     expect(fetch).not.toHaveBeenCalled();
     expect(mocks.createImage).not.toHaveBeenCalled();
   });
@@ -163,6 +168,22 @@ describe('pollIterationWorkflow availability', () => {
 
     expect(result.status).toBe('succeeded');
     expect(result.images).toHaveLength(1);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(fetch).toHaveBeenCalledWith('https://orchestrator.test/safe.jpeg');
+  });
+
+  it('returns the shown results rather than handing off when only some are restricted', async () => {
+    givenWorkflow(
+      [
+        output({ id: 'safe', url: 'https://orchestrator.test/safe.jpeg', nsfwLevel: SAFE }),
+        output({ id: 'mature', url: 'https://orchestrator.test/mature.jpeg', nsfwLevel: MATURE }),
+      ],
+      { allowMatureContent: true }
+    );
+
+    const result = await poll({ domain: 'green' });
+
+    expect(result.status).toBe('succeeded');
     expect(fetch).toHaveBeenCalledTimes(1);
     expect(fetch).toHaveBeenCalledWith('https://orchestrator.test/safe.jpeg');
   });
