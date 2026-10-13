@@ -86,8 +86,13 @@ export async function sweepExcludedRecords(store?: AppealTrainingStore | null) {
     DELETE FROM "AppealDecisionRecord" WHERE "createdAt" < now() - ${RECORD_RETENTION}
     RETURNING "trainingObjectKey" AS key
   `;
+  // A key a record holds is not orphaned; a recent one may belong to a copy still running.
+  await dbWrite.$executeRaw`
+    DELETE FROM "AppealTrainingObjectDeletion" t
+    WHERE EXISTS (SELECT 1 FROM "AppealDecisionRecord" k WHERE k."trainingObjectKey" = t.key)
+  `;
   const retries = await dbWrite.$queryRaw<{ key: string }[]>`
-    SELECT key FROM "AppealTrainingObjectDeletion"
+    SELECT key FROM "AppealTrainingObjectDeletion" WHERE "createdAt" < now() - ${ORPHAN_GRACE}
   `;
   const objects = await discardTrainingObjects(store, [
     ...keys,
@@ -96,6 +101,10 @@ export async function sweepExcludedRecords(store?: AppealTrainingStore | null) {
   ]);
   return { swept, labels, expired: expiredRows.length, objects };
 }
+
+const forgetOrphanKey = (key: string) => dbWrite.$executeRaw`
+  DELETE FROM "AppealTrainingObjectDeletion" WHERE key = ${key}
+`;
 
 /** Deletes training objects; keys it could not delete are kept for the next sweep to retry. */
 async function discardTrainingObjects(
@@ -175,6 +184,7 @@ async function storeRemovalLabels(removals: Map<number, Removal>) {
 const JOB_LOG_NAME = 'appeal-training-copy';
 const COPY_WINDOW = Prisma.raw(`make_interval(hours => 24)`);
 const UNLABELLED_HOLD = Prisma.raw(`make_interval(hours => 1)`);
+const ORPHAN_GRACE = Prisma.raw(`make_interval(hours => 1)`);
 const COPY_BATCH = 200;
 
 const COPY_LABELS: string[] = [
@@ -221,8 +231,8 @@ export const appealTrainingHeld = (i: Prisma.Sql) => {
 };
 
 export type AppealTrainingStore = {
-  /** Copies the original stored under `imageUrl` and returns the training object's key. */
-  copy: (imageUrl: string) => Promise<string>;
+  /** Copies the original stored under `imageUrl` to `key` in the training bucket. */
+  copy: (imageUrl: string, key: string) => Promise<void>;
   remove: (keys: string[]) => Promise<void>;
 };
 
@@ -238,7 +248,7 @@ export function createAppealTrainingStore({
   targetBucket: string;
 }): AppealTrainingStore {
   return {
-    async copy(imageUrl) {
+    async copy(imageUrl, key) {
       const original = await source.send(
         new GetObjectCommand({ Bucket: sourceBucket, Key: imageUrl })
       );
@@ -246,12 +256,11 @@ export function createAppealTrainingStore({
       await target.send(
         new PutObjectCommand({
           Bucket: targetBucket,
-          Key: imageUrl,
+          Key: key,
           Body: await original.Body.transformToByteArray(),
           ContentType: original.ContentType,
         })
       );
-      return imageUrl;
     },
     async remove(keys) {
       for (let i = 0; i < keys.length; i += 1000) {
@@ -344,6 +353,7 @@ export async function copyRejectedForTraining({
       END AS action
     FROM "AppealDecisionRecord" r
     WHERE ${pendingCopy(r)}
+      AND NOT (r."removalLabel" IS NULL AND r."decidedAt" > now() - ${COPY_WINDOW})
     ORDER BY r."decidedAt"
     LIMIT ${COPY_BATCH}
   `;
@@ -355,17 +365,24 @@ export async function copyRejectedForTraining({
   let discarded = 0;
   let failed = 0;
   for (const { appealId, imageUrl } of pending.filter((p) => p.action === 'copy')) {
-    let key: string | null = null;
+    const key = `${appealId}/${imageUrl}`;
     try {
-      key = await store.copy(imageUrl);
+      // Queued first, so a copy that never gets attached to its record is still deleted.
+      await dbWrite.$executeRaw`
+        INSERT INTO "AppealTrainingObjectDeletion" (key) VALUES (${key}) ON CONFLICT (key) DO NOTHING
+      `;
+      await store.copy(imageUrl, key);
       // The record may have been swept or become ineligible while the copy ran.
-      if (await markCopied(appealId, key)) copied++;
-      else if (!(await isRecordedKey(key))) {
+      if (await markCopied(appealId, key)) {
+        await forgetOrphanKey(key);
+        copied++;
+      } else if (await isRecordedKey(key)) await forgetOrphanKey(key);
+      else {
         await discardTrainingObjects(store, [key]);
         discarded++;
       }
     } catch (e) {
-      await setCopyState([appealId], 'failed', key);
+      await setCopyState([appealId], 'failed');
       failed++;
       logToAxiom({
         type: 'error',

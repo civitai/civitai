@@ -152,7 +152,7 @@ const states = async () =>
   ).rows;
 
 const fakeStore = () => ({
-  copy: vi.fn(async (imageUrl: string) => `copied/${imageUrl}`),
+  copy: vi.fn<(imageUrl: string, key: string) => Promise<void>>(async () => undefined),
   remove: vi.fn<(keys: string[]) => Promise<void>>(async () => undefined),
 });
 const noLabels = vi.fn(async () => new Map<number, Removal>());
@@ -199,9 +199,11 @@ describe('copyRejectedForTraining', () => {
 
     await copyRejectedForTraining({ store, lookup: noLabels });
 
-    expect(store.copy).toHaveBeenCalledExactlyOnceWith('u-101');
+    expect(await tombstones()).toEqual([]);
+
+    expect(store.copy).toHaveBeenCalledExactlyOnceWith('u-101', '1/u-101');
     expect(await states()).toEqual([
-      { appealId: 1, removalLabel: 'spam', state: 'copied', key: 'copied/u-101' },
+      { appealId: 1, removalLabel: 'spam', state: 'copied', key: '1/u-101' },
     ]);
   });
 
@@ -211,7 +213,7 @@ describe('copyRejectedForTraining', () => {
 
     await copyRejectedForTraining({ store, lookup: noLabels });
 
-    expect(store.copy).toHaveBeenCalledExactlyOnceWith('u-101');
+    expect(store.copy).toHaveBeenCalledExactlyOnceWith('u-101', '1/u-101');
     expect((await states())[0].state).toBe('copied');
   });
 
@@ -282,38 +284,35 @@ describe('copyRejectedForTraining', () => {
   it('deletes the copy when the record is swept while the copy runs', async () => {
     await record({ appealId: 1, imageId: 101 });
     const store = fakeStore();
-    store.copy.mockImplementationOnce(async (imageUrl: string) => {
+    store.copy.mockImplementationOnce(async () => {
       await holder.db.exec('DELETE FROM "AppealDecisionRecord"');
-      return `copied/${imageUrl}`;
     });
 
     await copyRejectedForTraining({ store, lookup: noLabels });
 
-    expect(store.remove).toHaveBeenCalledExactlyOnceWith(['copied/u-101']);
+    expect(store.remove).toHaveBeenCalledExactlyOnceWith(['1/u-101']);
   });
 
   it('deletes the copy and leaves the record pending when it becomes excluded mid-copy', async () => {
     await record({ appealId: 1, imageId: 101 });
     const store = fakeStore();
-    store.copy.mockImplementationOnce(async (imageUrl: string) => {
+    store.copy.mockImplementationOnce(async () => {
       await holder.db.exec('INSERT INTO "CsamReport" ("userId") VALUES (7)');
-      return `copied/${imageUrl}`;
     });
 
     await copyRejectedForTraining({ store, lookup: noLabels });
 
-    expect(store.remove).toHaveBeenCalledExactlyOnceWith(['copied/u-101']);
+    expect(store.remove).toHaveBeenCalledExactlyOnceWith(['1/u-101']);
     expect(await states()).toEqual([{ appealId: 1, removalLabel: 'spam', state: null, key: null }]);
   });
 
   it('keeps a copy another run already recorded', async () => {
     await record({ appealId: 1, imageId: 101 });
     const store = fakeStore();
-    store.copy.mockImplementationOnce(async (imageUrl: string) => {
+    store.copy.mockImplementationOnce(async () => {
       await holder.db.exec(
-        `UPDATE "AppealDecisionRecord" SET "trainingCopyState" = 'copied', "trainingObjectKey" = 'copied/u-101'`
+        `UPDATE "AppealDecisionRecord" SET "trainingCopyState" = 'copied', "trainingObjectKey" = '1/u-101'`
       );
-      return `copied/${imageUrl}`;
     });
 
     await copyRejectedForTraining({ store, lookup: noLabels });
@@ -324,15 +323,14 @@ describe('copyRejectedForTraining', () => {
   it('queues the copy for deletion when deleting it fails', async () => {
     await record({ appealId: 1, imageId: 101 });
     const store = fakeStore();
-    store.copy.mockImplementationOnce(async (imageUrl: string) => {
+    store.copy.mockImplementationOnce(async () => {
       await holder.db.exec('DELETE FROM "AppealDecisionRecord"');
-      return `copied/${imageUrl}`;
     });
     store.remove.mockRejectedValueOnce(new Error('denied'));
 
     await copyRejectedForTraining({ store, lookup: noLabels });
 
-    expect(await tombstones()).toEqual(['copied/u-101']);
+    expect(await tombstones()).toEqual(['1/u-101']);
   });
 
   it('skips a record whose image is already gone', async () => {
@@ -362,11 +360,14 @@ describe('copyRejectedForTraining', () => {
     await copyRejectedForTraining({ store, lookup });
 
     expect(lookup).toHaveBeenCalledExactlyOnceWith([101, 102, 103]);
-    expect(store.copy.mock.calls).toEqual([['u-101'], ['u-103']]);
+    expect(store.copy.mock.calls).toEqual([
+      ['u-101', '1/u-101'],
+      ['u-103', '3/u-103'],
+    ]);
     expect(await states()).toEqual([
-      { appealId: 1, removalLabel: 'spam', state: 'copied', key: 'copied/u-101' },
+      { appealId: 1, removalLabel: 'spam', state: 'copied', key: '1/u-101' },
       { appealId: 2, removalLabel: 'realisticMinorNsfw', state: 'skipped', key: null },
-      { appealId: 3, removalLabel: 'poi', state: 'copied', key: 'copied/u-103' },
+      { appealId: 3, removalLabel: 'poi', state: 'copied', key: '3/u-103' },
     ]);
   });
 
@@ -389,8 +390,74 @@ describe('copyRejectedForTraining', () => {
 
     await copyRejectedForTraining({ store, lookup: noLabels });
 
-    expect(store.copy).toHaveBeenCalledExactlyOnceWith('u-101');
+    expect(store.copy).toHaveBeenCalledExactlyOnceWith('u-101', '1/u-101');
     expect((await states()).map((r) => r.state)).toEqual(['copied', 'skipped']);
+  });
+
+  it('reports what it did', async () => {
+    await record({ appealId: 1, imageId: 101, removalLabel: null, hoursAgo: 0.5 });
+    await record({ appealId: 2, imageId: 102, hoursAgo: 0.4 });
+    await record({ appealId: 3, imageId: 103, removalLabel: 'minor' });
+    await record({ appealId: 4, imageId: 104, hoursAgo: 0.3 });
+    await record({ appealId: 5, imageId: 105, hoursAgo: 0.2 });
+    const store = fakeStore();
+    store.copy.mockRejectedValueOnce(new Error('NoSuchKey'));
+    store.copy.mockResolvedValueOnce(undefined);
+    store.copy.mockImplementationOnce(async () => {
+      await holder.db.exec('DELETE FROM "AppealDecisionRecord" WHERE "appealId" = 4');
+    });
+    const lookup = vi.fn<RemovalLabelLookup>(
+      async () => new Map([[101, { label: 'spam', nsfw: null }]])
+    );
+
+    expect(await copyRejectedForTraining({ store, lookup })).toEqual({
+      configured: true,
+      labelled: 1,
+      copied: 2,
+      discarded: 1,
+      skipped: 1,
+      failed: 1,
+    });
+  });
+
+  it('queues the copy for deletion when recording it fails', async () => {
+    await record({ appealId: 1, imageId: 101 });
+    const store = fakeStore();
+    const original = dbMock.dbWrite.$executeRaw.getMockImplementation()!;
+    vi.mocked(dbMock.dbWrite.$executeRaw).mockImplementation(((
+      strings: TemplateStringsArray,
+      ...values: unknown[]
+    ) =>
+      strings.join('').includes(`"trainingCopyState" = 'copied'`)
+        ? Promise.reject(new Error('connection reset'))
+        : original(strings, ...values)) as never);
+
+    try {
+      await copyRejectedForTraining({ store, lookup: noLabels });
+    } finally {
+      vi.mocked(dbMock.dbWrite.$executeRaw).mockImplementation(original);
+    }
+
+    expect(store.copy).toHaveBeenCalledOnce();
+    expect(await states()).toEqual([
+      { appealId: 1, removalLabel: 'spam', state: 'failed', key: null },
+    ]);
+    expect(await tombstones()).toEqual(['1/u-101']);
+  });
+
+  it('copies newer records while older ones wait for a label', async () => {
+    await holder.db.exec(`
+      INSERT INTO "AppealDecisionRecord" ("appealId", "imageId", "imageUrl", "nsfwLevel", "nsfwLevelLocked",
+        "decision", "decidedAt")
+      SELECT g, g, 'w-' || g, 32, true, 'Rejected', now() - interval '2 hours'
+      FROM generate_series(1000, 1250) g;
+    `);
+    await record({ appealId: 1, imageId: 101 });
+    const store = fakeStore();
+
+    await copyRejectedForTraining({ store, lookup: noLabels });
+
+    expect(store.copy).toHaveBeenCalledExactlyOnceWith('u-101', '1/u-101');
   });
 
   it('marks a failed copy and carries on with the rest', async () => {
@@ -403,7 +470,7 @@ describe('copyRejectedForTraining', () => {
 
     expect((await states()).map((r) => [r.state, r.key])).toEqual([
       ['failed', null],
-      ['copied', 'copied/u-102'],
+      ['copied', '2/u-102'],
     ]);
     expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'error', name: 'appeal-training-copy' })
@@ -565,10 +632,75 @@ describe('sweepExcludedRecords and the training bucket', () => {
 
     await sweepExcludedRecords(store);
     expect(await tombstones()).toEqual(['k-101']);
+    await holder.db.exec(
+      `UPDATE "AppealTrainingObjectDeletion" SET "createdAt" = now() - interval '2 hours'`
+    );
 
     expect((await sweepExcludedRecords(store)).objects).toBe(1);
     expect(store.remove).toHaveBeenLastCalledWith(['k-101']);
     expect(await tombstones()).toEqual([]);
+  });
+
+  it('leaves a queued key alone for an hour, in case its copy is still running', async () => {
+    await holder.db.exec(`INSERT INTO "AppealTrainingObjectDeletion" (key) VALUES ('k-new')`);
+    const store = fakeStore();
+
+    expect((await sweepExcludedRecords(store)).objects).toBe(0);
+    expect(store.remove).not.toHaveBeenCalled();
+    expect(await tombstones()).toEqual(['k-new']);
+  });
+
+  it('drops a queued key a record holds, without deleting the object', async () => {
+    await record({ appealId: 1, imageId: 101, state: 'copied', key: 'k-101' });
+    await holder.db.exec(`INSERT INTO "AppealTrainingObjectDeletion" (key) VALUES ('k-101')`);
+    await holder.db.exec(
+      `UPDATE "AppealTrainingObjectDeletion" SET "createdAt" = now() - interval '2 hours'`
+    );
+    const store = fakeStore();
+
+    await sweepExcludedRecords(store);
+
+    expect(store.remove).not.toHaveBeenCalled();
+    expect(await tombstones()).toEqual([]);
+  });
+
+  it('keeps one queue entry for a key that fails twice, and deletes a key once', async () => {
+    await record({ appealId: 1, imageId: 101, state: 'copied', key: 'k-101' });
+    await holder.db.exec(`INSERT INTO "CsamReport" ("images") VALUES ('[{"id": 101}]')`);
+    const store = fakeStore();
+    store.remove.mockRejectedValue(new Error('denied'));
+    await sweepExcludedRecords(store);
+    await holder.db.exec(
+      `UPDATE "AppealTrainingObjectDeletion" SET "createdAt" = now() - interval '2 hours'`
+    );
+    await sweepExcludedRecords(store);
+    expect(await tombstones()).toEqual(['k-101']);
+
+    await record({ appealId: 2, imageId: 102, state: 'copied', key: 'k-101' });
+    await holder.db.exec(`UPDATE "Image" SET "needsReview" = 'csam' WHERE id = 102`);
+    await holder.db.exec(
+      `UPDATE "AppealTrainingObjectDeletion" SET "createdAt" = now() - interval '2 hours'`
+    );
+    store.remove.mockReset().mockResolvedValue(undefined);
+
+    await sweepExcludedRecords(store);
+
+    expect(store.remove).toHaveBeenCalledExactlyOnceWith(['k-101']);
+    expect(await tombstones()).toEqual([]);
+  });
+
+  it("deletes only the removed record's copy when two records share an image", async () => {
+    await record({ appealId: 1, imageId: 101, state: 'copied', key: '1/u-101' });
+    await record({ appealId: 2, imageId: 101, state: 'copied', key: '2/u-101' });
+    await holder.db.exec(
+      `UPDATE "AppealDecisionRecord" SET "createdAt" = now() - interval '3 years' WHERE "appealId" = 1`
+    );
+    const store = fakeStore();
+
+    await sweepExcludedRecords(store);
+
+    expect(store.remove).toHaveBeenCalledExactlyOnceWith(['1/u-101']);
+    expect((await states()).map((row) => [row.appealId, row.key])).toEqual([[2, '2/u-101']]);
   });
 
   it('queues the objects when the training bucket is not configured', async () => {
@@ -615,7 +747,7 @@ describe('createAppealTrainingStore', () => {
       targetBucket: 'training',
     });
 
-    expect(await store.copy('abc-uuid')).toBe('abc-uuid');
+    await store.copy('abc-uuid', 'k-1');
 
     expect(source.send.mock.calls.map(([c]) => [c.constructor.name, c.input])).toEqual([
       ['GetObjectCommand', { Bucket: 'images', Key: 'abc-uuid' }],
@@ -625,12 +757,59 @@ describe('createAppealTrainingStore', () => {
         'PutObjectCommand',
         {
           Bucket: 'training',
-          Key: 'abc-uuid',
+          Key: 'k-1',
           Body: bytes,
           ContentType: 'image/jpeg',
         },
       ],
     ]);
+  });
+
+  it('deletes in requests of at most 1000 keys, and throws on a failure in any of them', async () => {
+    const { source, target } = clients();
+    target.send
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({ Errors: [{ Key: 'k-1500' }] } as never)
+      .mockResolvedValueOnce({});
+    const store = createAppealTrainingStore({
+      source: source as never,
+      sourceBucket: 'images',
+      target: target as never,
+      targetBucket: 'training',
+    });
+    const keys = Array.from({ length: 2500 }, (_, i) => `k-${i}`);
+
+    await expect(store.remove(keys)).rejects.toThrow(/k-1500/);
+
+    const sent = target.send.mock.calls.map(
+      ([c]) => (c.input as { Delete: { Objects: { Key: string }[] } }).Delete.Objects
+    );
+    expect(sent.slice(0, 2).map((objects) => objects.length)).toEqual([1000, 1000]);
+    expect(
+      sent
+        .slice(0, 2)
+        .flat()
+        .map((o) => o.Key)
+    ).toEqual(keys.slice(0, 2000));
+  });
+
+  it('sends every key across requests', async () => {
+    const { source, target } = clients();
+    const store = createAppealTrainingStore({
+      source: source as never,
+      sourceBucket: 'images',
+      target: target as never,
+      targetBucket: 'training',
+    });
+    const keys = Array.from({ length: 2500 }, (_, i) => `k-${i}`);
+
+    await store.remove(keys);
+
+    const sent = target.send.mock.calls.map(
+      ([c]) => (c.input as { Delete: { Objects: { Key: string }[] } }).Delete.Objects
+    );
+    expect(sent.map((objects) => objects.length)).toEqual([1000, 1000, 500]);
+    expect(sent.flat().map((o) => o.Key)).toEqual(keys);
   });
 
   it('deletes from the training bucket only, and throws on a partial failure', async () => {
@@ -686,7 +865,7 @@ describe('appealTrainingStoreFromEnv', () => {
       } as never);
 
     try {
-      await (await appealTrainingStoreFromEnv())!.copy('k');
+      await (await appealTrainingStoreFromEnv())!.copy('k', '9/k');
     } finally {
       send.mockRestore();
     }
@@ -702,7 +881,7 @@ describe('appealTrainingStoreFromEnv', () => {
       ],
       [
         'PutObjectCommand',
-        { Bucket: 'training', Key: 'k', Body: new Uint8Array([1]), ContentType: undefined },
+        { Bucket: 'training', Key: '9/k', Body: new Uint8Array([1]), ContentType: undefined },
         'a',
         's',
         'b2.example',
