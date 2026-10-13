@@ -21,6 +21,7 @@ import { removeImageScanJobQueue } from '~/server/services/job-queue.service';
 import { computePerceptualHash } from '~/server/services/orchestrator/orchestrator.service';
 import { recordImageScanningResult } from '~/server/services/scanner-audit.service';
 import { recordScanLabelFlag } from '~/server/services/scan-label-flag.service';
+import { labelUploadPrompt } from '~/server/services/upload-prompt-scan.service';
 import { fanOutArticleImageUpdates } from '~/server/utils/webhook-debounce';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 
@@ -345,4 +346,12 @@ export async function processImageScanningWorkflow({
     blockedFor: outcome.blockedFor,
     log: IMAGE_SCANNING_LOG,
   });
+
+  // The image scan never sees the prompt. Last, so its wait delays nothing above.
+  const { prompt, negativePrompt } = (image.meta ?? {}) as {
+    prompt?: string;
+    negativePrompt?: string;
+  };
+  if (prompt?.trim() && orchestratorNsfwLevelMap[scan.nsfwLevel] >= orchestratorNsfwLevelMap.r)
+    await labelUploadPrompt({ imageId, userId: image.userId, prompt, negativePrompt });
 }
