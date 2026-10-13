@@ -68,11 +68,11 @@ const CORPUS_DIGESTS: Record<ProxyCorpusKind, string> = {
 
 /**
  * The gate, per kind. A kind is either held to ZERO flagged strings, or declared a known NOISE
- * CLASS: then any number of its strings may be flagged, but only by the categories named.
+ * CLASS: then its strings may be flagged, but only by the categories named and only below
+ * `NOISE_TRIPWIRE`.
  *
  * Identifier-shaped strings — random base32/hex runs, alone or inside a counter key — are a
- * reproducible noise class: random letter/digit runs can spell a listed word under the
- * leetspeak-aware matchers. They are declared rather than given a count because this repository
+ * reproducible noise class: random letter/digit runs produce incidental matches. They are declared rather than given a count because this repository
  * is public and a measured false-positive rate is not committed here (root `CLAUDE.md`,
  * "Security"). The measured per-kind counts for this seed are produced by the reporter below and
  * kept with the moderation soak's private records.
@@ -137,6 +137,8 @@ const FIXTURE_LINK_DOMAINS = [
   'notcivitai.com',
   'civitai.com.example',
   'civitai.green.test',
+  // ...and a PARENT of a corpus host, for the other broadening: suffix/subdomain matching.
+  'green',
 ];
 const FIXTURE_PATTERNS = [
   'claim your free',
