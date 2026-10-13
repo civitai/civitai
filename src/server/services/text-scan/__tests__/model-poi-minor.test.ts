@@ -151,6 +151,8 @@ describe('applyModelPoiMinor — the verdict row', () => {
       const text = sqlOf(call);
       expect(text).toContain('em."entityType" = ANY(');
       expect(text).toContain('ORDER BY em."workflowId" = ');
+      // A row with a NULL workflowId must not outrank the matching row.
+      expect(text).toContain(' DESC NULLS LAST, em."entityType"');
       const values = call.slice(1);
       expect(values).toContainEqual(['Model', 'Model:search']);
       expect(values).toContain('wf-1');

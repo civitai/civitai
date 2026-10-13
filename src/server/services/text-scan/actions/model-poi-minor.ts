@@ -134,10 +134,10 @@ async function flagModelPoi({
               'at', now(),
               'promptIds', (SELECT em.result->'promptIds' FROM "EntityModeration" em
                             WHERE em."entityType" = ANY(${VERDICT_ROW_TYPES}::text[]) AND em."entityId" = m.id
-                            ORDER BY em."workflowId" = ${workflowId} DESC, em."entityType" LIMIT 1),
+                            ORDER BY em."workflowId" = ${workflowId} DESC NULLS LAST, em."entityType" LIMIT 1),
               'model', (SELECT em.result->'model' FROM "EntityModeration" em
                         WHERE em."entityType" = ANY(${VERDICT_ROW_TYPES}::text[]) AND em."entityId" = m.id
-                        ORDER BY em."workflowId" = ${workflowId} DESC, em."entityType" LIMIT 1),
+                        ORDER BY em."workflowId" = ${workflowId} DESC NULLS LAST, em."entityType" LIMIT 1),
               'prev', jsonb_build_object(
                 'nsfw', m.nsfw,
                 'sfwOnly', m."sfwOnly",
@@ -239,10 +239,10 @@ async function flagModelMinor({
           'at', now(),
           'promptIds', (SELECT em.result->'promptIds' FROM "EntityModeration" em
                         WHERE em."entityType" = ANY(${VERDICT_ROW_TYPES}::text[]) AND em."entityId" = m.id
-                        ORDER BY em."workflowId" = ${workflowId} DESC, em."entityType" LIMIT 1),
+                        ORDER BY em."workflowId" = ${workflowId} DESC NULLS LAST, em."entityType" LIMIT 1),
           'model', (SELECT em.result->'model' FROM "EntityModeration" em
                     WHERE em."entityType" = ANY(${VERDICT_ROW_TYPES}::text[]) AND em."entityId" = m.id
-                    ORDER BY em."workflowId" = ${workflowId} DESC, em."entityType" LIMIT 1)
+                    ORDER BY em."workflowId" = ${workflowId} DESC NULLS LAST, em."entityType" LIMIT 1)
         )
       )
     )
