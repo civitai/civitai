@@ -7,27 +7,22 @@ import type * as AppBlocksFlag from '~/server/services/app-blocks-flag';
 import type * as BridgeAuth from '~/server/services/blocks/block-bridge-auth.service';
 import type * as TokenAccess from '~/server/services/blocks/block-token-access.service';
 import type * as ConsentRevocationModule from '~/server/services/blocks/consent-revocation.service';
-import type * as RuntimeMetrics from '~/server/metrics/app-block-runtime.metrics';
 import type * as CatalogRateLimit from '~/server/utils/block-catalog-rate-limit';
 
 /**
- * `authorizeBlockBridgeViewer` — the tRPC middleware — driven two ways: through a probe
- * procedure, to pin each step and each option on its own, and through `blocks.getMyViewer`, a
- * procedure that uses it. The token is really minted and the real `authorizeBlockBridgeToken`
- * runs, so the refusal codes and messages are the ones a block receives.
+ * What the block-token characterisation suite cannot see about `authorizeBlockBridgeViewer`:
+ * which identity reaches the limiter and the handler, the one step order no single-refusal
+ * cell distinguishes, and what the middleware does when forced past its input type.
  *
- * `events` records the steps in the order they ran. An order assertion makes two steps refuse
- * at once and names the one that must win.
+ * Every refusal code and message of `blocks.getMyViewer` is pinned there, per failure mode,
+ * and is not repeated here.
  */
 
 const h = vi.hoisted(() => ({
   events: [] as string[],
-  isRevoked: vi.fn(),
-  consentLookup: vi.fn(),
   getSessionUserById: vi.fn(),
   enabledFor: [] as number[],
   catalogLimit: vi.fn(),
-  recordRefusal: vi.fn(),
 }));
 
 vi.mock('~/server/services/blocks/block-bridge-auth.service', async (importOriginal) => {
@@ -35,7 +30,7 @@ vi.mock('~/server/services/blocks/block-bridge-auth.service', async (importOrigi
   return {
     ...real,
     authorizeBlockBridgeToken: async (token: string) => {
-      h.events.push(`authorize(${token === 'not-a-jwt' ? token : 'jwt'})`);
+      h.events.push('authorize');
       return real.authorizeBlockBridgeToken(token);
     },
   };
@@ -57,11 +52,11 @@ vi.mock('~/server/services/app-blocks-flag', async (importOriginal) => ({
     opts?.user?.id != null && h.enabledFor.includes(opts.user.id),
 }));
 vi.mock('~/server/services/block-revocation.service', () => ({
-  BlockRevocation: { isRevoked: (...a: unknown[]) => h.isRevoked(...a) },
+  BlockRevocation: { isRevoked: async () => false },
 }));
 vi.mock('~/server/services/blocks/consent-revocation.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ConsentRevocationModule>()),
-  ConsentRevocation: { lookup: (...a: unknown[]) => h.consentLookup(...a) },
+  ConsentRevocation: { lookup: async () => ({ kind: 'none' }) },
 }));
 vi.mock('~/server/auth/session-client', () => ({
   sessionClient: { getSessionUserById: (...a: unknown[]) => h.getSessionUserById(...a) },
@@ -69,10 +64,6 @@ vi.mock('~/server/auth/session-client', () => ({
 vi.mock('~/server/utils/block-catalog-rate-limit', async (importOriginal) => ({
   ...(await importOriginal<typeof CatalogRateLimit>()),
   checkBlockCatalogRateLimit: (...a: unknown[]) => h.catalogLimit(...a),
-}));
-vi.mock('~/server/metrics/app-block-runtime.metrics', async (importOriginal) => ({
-  ...(await importOriginal<typeof RuntimeMetrics>()),
-  recordBlockBridgeRateLimitRefusal: (...a: unknown[]) => h.recordRefusal(...a),
 }));
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -83,16 +74,7 @@ import {
   type BlockBridgeViewerOptions,
 } from '~/server/routers/blocks.router';
 import { BlockTokenService } from '~/server/services/block-token.service';
-import {
-  ROUTER,
-  bridgeProcAuth,
-  read,
-} from '~/server/services/__tests__/block-bridge-router-ast.harness';
 import { publicProcedure, router } from '~/server/trpc';
-import {
-  classifyBlockTokenProcedures,
-  type ProcedureWithInputs,
-} from '~/shared/constants/__tests__/block-token-input.harness';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 // Pairwise distinct, so an assertion says WHICH identity a step used.
@@ -103,7 +85,6 @@ const MODEL_ID = 9001;
 const INSTANCE_ID = 'bki_mw';
 
 const USER = {
-  username: 'viewer',
   isModerator: false,
   tier: 'free',
   onboarding: OnboardingSteps.Buzz | OnboardingSteps.TOS,
@@ -112,11 +93,12 @@ const USER = {
   bannedAt: null,
   muted: false,
 };
+const usernameOf = (id: number) => `user-${id}`;
 
-function ctx(sessionUserId = SESSION_USER_ID) {
+function ctx() {
   return {
     acceptableOrigin: true,
-    user: { ...USER, id: sessionUserId },
+    user: { ...USER, id: SESSION_USER_ID, username: usernameOf(SESSION_USER_ID) },
     apiKeyId: null,
     tokenScope: TokenScope.Full,
     req: { headers: {} } as never,
@@ -134,7 +116,7 @@ async function mint(over: { scopes?: string[]; anon?: boolean } = {}) {
     appId: 'app_mw',
     appBlockId: 'apb_mw',
     blockInstanceId: INSTANCE_ID,
-    scopes: over.scopes ?? ['user:read:self', 'buzz:read:self', 'ai:write:budgeted'],
+    scopes: over.scopes ?? ['user:read:self'],
     ctx: { modelId: MODEL_ID, slotId: 'model.sidebar_top' },
     maxBrowsingLevel: 1,
     buzzBudget: 100,
@@ -144,305 +126,88 @@ async function mint(over: { scopes?: string[]; anon?: boolean } = {}) {
 
 const check = vi.fn();
 
-type Limited = Extract<BlockBridgeViewerOptions['rateLimit'], { onRefused: unknown }>;
-
-const LIMITED: Limited = {
-  check: (viewer) => {
-    h.events.push('rate-limit');
-    return check(viewer);
-  },
-  onRefused: 'throw',
-  recordRefusalAs: null,
-};
-
-const THROWING: BlockBridgeViewerOptions = {
+const OPTIONS: BlockBridgeViewerOptions = {
   scope: 'user:read:self',
   anonMessage: 'probe requires a viewer',
-  rateLimit: LIMITED,
+  rateLimit: {
+    check: (viewer) => {
+      h.events.push('rate-limit');
+      return check(viewer);
+    },
+  },
 };
-
-function withRateLimit(over: Partial<Limited>): BlockBridgeViewerOptions {
-  return { ...THROWING, rateLimit: { ...LIMITED, ...over } };
-}
-
-/** A procedure that does nothing but run the middleware and hand back what it put on `ctx`. */
-function probe(options: BlockBridgeViewerOptions, sessionUserId?: number) {
-  const caller = router({
-    run: publicProcedure
-      .input(z.object({ blockToken: z.string().min(1) }))
-      .use(authorizeBlockBridgeViewer(options))
-      .mutation(({ ctx: { blockViewer } }) => {
-        h.events.push('handler');
-        return blockViewer;
-      }),
-  }).createCaller(ctx(sessionUserId) as never);
-  return (input: unknown) => caller.run(input as { blockToken: string });
-}
 
 beforeEach(() => {
   h.events.length = 0;
-  h.enabledFor = [SUBJECT_ID];
-  h.isRevoked.mockReset().mockResolvedValue(false);
-  h.consentLookup.mockReset().mockResolvedValue({ kind: 'none' });
+  h.enabledFor = [SUBJECT_ID, SESSION_USER_ID];
   h.getSessionUserById
     .mockReset()
-    .mockImplementation(async (id: number) =>
-      id === SUBJECT_ID || id === SESSION_USER_ID ? { ...USER, id } : null
-    );
+    .mockImplementation(async (id: number) => ({ ...USER, id, username: usernameOf(id) }));
   h.catalogLimit.mockReset().mockResolvedValue({ allowed: true });
-  h.recordRefusal.mockReset();
   check.mockReset().mockResolvedValue({ allowed: true });
   dbMock.dbRead.appBlock.findUnique.mockReset().mockResolvedValue({
     id: 'apb_row',
     status: 'approved',
   });
   dbMock.dbRead.oauthClient.findUnique.mockReset().mockResolvedValue({ userId: APP_OWNER_ID });
-  dbMock.dbWrite.user.findUnique.mockReset().mockResolvedValue({
-    id: SUBJECT_ID,
-    username: 'viewer',
-    bannedAt: null,
-    muted: false,
-    deletedAt: null,
-  });
+  // Answers for the id it is ASKED for, so a read keyed on the wrong identity returns that
+  // identity's row instead of the subject's.
+  dbMock.dbWrite.user.findUnique
+    .mockReset()
+    .mockImplementation(async (args: { where: { id: number } }) => ({
+      id: args.where.id,
+      username: usernameOf(args.where.id),
+      bannedAt: null,
+      muted: false,
+      deletedAt: null,
+    }));
 });
 
-describe('authorizeBlockBridgeViewer — the ladder', () => {
-  it('runs authorize → kill-switch → rate limit → handler, and hands the viewer over', async () => {
-    const viewer = await probe(THROWING)({ blockToken: await mint() });
+describe('authorizeBlockBridgeViewer', () => {
+  /** A procedure that only runs the middleware and hands back what it put on `ctx`. */
+  const probe = router({
+    run: publicProcedure
+      .input(z.object({ blockToken: z.string().min(1) }))
+      .use(authorizeBlockBridgeViewer(OPTIONS))
+      .mutation(({ ctx: { blockViewer } }) => {
+        h.events.push('handler');
+        return blockViewer;
+      }),
+  });
+  const run = (blockToken: string) => probe.createCaller(ctx() as never).run({ blockToken });
 
-    expect(h.events).toEqual([
-      'authorize(jwt)',
-      `kill-switch(${SUBJECT_ID})`,
-      'rate-limit',
-      'handler',
-    ]);
+  it('hands the token subject — not the session user — to the limiter and to the handler', async () => {
+    const viewer = await run(await mint());
+
+    expect(h.events).toEqual(['authorize', `kill-switch(${SUBJECT_ID})`, 'rate-limit', 'handler']);
     expect(viewer.userId).toBe(SUBJECT_ID);
-    expect(viewer.rateLimitRefused).toBe(false);
     expect(viewer.claims).toMatchObject({
       sub: `user:${SUBJECT_ID}`,
       blockInstanceId: INSTANCE_ID,
-      appBlockId: 'apb_mw',
-      buzzBudget: 100,
     });
-    expect(check).toHaveBeenCalledTimes(1);
-    expect(check).toHaveBeenCalledWith({ claims: viewer.claims, userId: SUBJECT_ID });
+    expect(check.mock.calls).toEqual([[{ claims: viewer.claims, userId: SUBJECT_ID }]]);
   });
 
-  it.each([[{}], [{ blockToken: '' }], [{ blockToken: 42 }]])(
-    'a missing or empty token is refused by the input schema, before the authorizer: %j',
-    async (input) => {
-      await expect(probe(THROWING)(input)).rejects.toMatchObject({ code: 'BAD_REQUEST' });
-      expect(h.events).toEqual([]);
-    }
-  );
-
-  it('an unverifiable token is UNAUTHORIZED `invalid block token`', async () => {
-    await expect(probe(THROWING)({ blockToken: 'not-a-jwt' })).rejects.toMatchObject({
-      code: 'UNAUTHORIZED',
-      message: 'invalid block token',
-    });
-    expect(h.events).toEqual(['authorize(not-a-jwt)']);
-  });
-
-  it('a revoked instance is FORBIDDEN `block instance revoked`', async () => {
-    h.isRevoked.mockResolvedValue(true);
-    await expect(probe(THROWING)({ blockToken: await mint() })).rejects.toMatchObject({
+  it('checks the scope before the subject: an anonymous token without it gets the scope refusal', async () => {
+    await expect(run(await mint({ anon: true, scopes: [] }))).rejects.toMatchObject({
       code: 'FORBIDDEN',
-      message: 'block instance revoked',
+      message: 'block lacks user:read:self scope',
     });
-    expect(h.events).toEqual(['authorize(jwt)']);
-  });
-
-  it('a non-approved app is FORBIDDEN `app block is not approved`', async () => {
-    dbMock.dbRead.appBlock.findUnique.mockResolvedValue({ id: 'apb_row', status: 'suspended' });
-    await expect(probe(THROWING)({ blockToken: await mint() })).rejects.toMatchObject({
-      code: 'FORBIDDEN',
-      message: 'app block is not approved',
-    });
-    expect(h.events).toEqual(['authorize(jwt)']);
-  });
-
-  it('a missing app row is NOT_FOUND `app block not found`', async () => {
-    dbMock.dbRead.appBlock.findUnique.mockResolvedValue(null);
-    await expect(probe(THROWING)({ blockToken: await mint() })).rejects.toMatchObject({
-      code: 'NOT_FOUND',
-      message: 'app block not found',
-    });
-  });
-
-  it.each([
-    ['user:read:self', 'block lacks user:read:self scope'],
-    ['buzz:read:self', 'block lacks buzz:read:self scope'],
-    ['ai:write:budgeted', 'block lacks ai:write:budgeted scope'],
-  ] as const)('a token without %s is FORBIDDEN `%s`', async (scope, message) => {
-    const others = ['user:read:self', 'buzz:read:self', 'ai:write:budgeted'].filter(
-      (s) => s !== scope
-    );
-    await expect(
-      probe({ ...THROWING, scope })({ blockToken: await mint({ scopes: others }) })
-    ).rejects.toMatchObject({ code: 'FORBIDDEN', message });
-    expect(h.events).toEqual(['authorize(jwt)']);
-
-    // Control: the same token passes a procedure that asks for a scope it does carry.
-    await expect(
-      probe({ ...THROWING, scope: others[0] as BlockBridgeViewerOptions['scope'] })({
-        blockToken: await mint({ scopes: others }),
-      })
-    ).resolves.toMatchObject({ userId: SUBJECT_ID });
-  });
-
-  it("an anonymous subject is UNAUTHORIZED with the procedure's own message", async () => {
-    const token = await mint({ anon: true });
-    await expect(probe(THROWING)({ blockToken: token })).rejects.toMatchObject({
+    // Control: with the scope, the same anonymous token reaches the subject refusal.
+    await expect(run(await mint({ anon: true }))).rejects.toMatchObject({
       code: 'UNAUTHORIZED',
       message: 'probe requires a viewer',
     });
-    await expect(
-      probe({ ...THROWING, anonMessage: 'a different procedure, a different message' })({
-        blockToken: token,
-      })
-    ).rejects.toMatchObject({
-      code: 'UNAUTHORIZED',
-      message: 'a different procedure, a different message',
-    });
-    expect(h.events).toEqual(['authorize(jwt)', 'authorize(jwt)']);
-  });
-
-  it('the kill-switch off for the subject is UNAUTHORIZED `Apps are not enabled`', async () => {
-    h.enabledFor = [];
-    await expect(probe(THROWING)({ blockToken: await mint() })).rejects.toMatchObject({
-      code: 'UNAUTHORIZED',
-      message: 'Apps are not enabled',
-    });
-    expect(h.events).toEqual(['authorize(jwt)', `kill-switch(${SUBJECT_ID})`]);
-  });
-
-  describe('the viewer is the token subject, never the session user', () => {
-    it('a session for someone else changes nothing — the subject is admitted and returned', async () => {
-      const viewer = await probe(THROWING, SESSION_USER_ID)({ blockToken: await mint() });
-      expect(viewer.userId).toBe(SUBJECT_ID);
-      expect(h.events).toContain(`kill-switch(${SUBJECT_ID})`);
-      expect(h.getSessionUserById).toHaveBeenCalledWith(SUBJECT_ID);
-      expect(h.getSessionUserById).not.toHaveBeenCalledWith(SESSION_USER_ID);
-    });
-
-    it('the session user having App Blocks does not admit a subject who does not', async () => {
-      h.enabledFor = [SESSION_USER_ID];
-      await expect(
-        probe(THROWING, SESSION_USER_ID)({ blockToken: await mint() })
-      ).rejects.toMatchObject({ code: 'UNAUTHORIZED', message: 'Apps are not enabled' });
-    });
   });
 });
 
-describe('authorizeBlockBridgeViewer — step order', () => {
-  it('the token is authorized before the scope is read: revoked wins over a missing scope', async () => {
-    h.isRevoked.mockResolvedValue(true);
-    await expect(probe(THROWING)({ blockToken: await mint({ scopes: [] }) })).rejects.toMatchObject(
-      { code: 'FORBIDDEN', message: 'block instance revoked' }
-    );
-  });
+describe('blocks.getMyViewer on the middleware', () => {
+  it('reads the TOKEN SUBJECT from the primary, whoever is signed in', async () => {
+    const result = await blocksRouter
+      .createCaller(ctx() as never)
+      .getMyViewer({ blockToken: await mint() });
 
-  it('scope before subject: an anonymous token without the scope gets the scope refusal', async () => {
-    await expect(
-      probe(THROWING)({ blockToken: await mint({ anon: true, scopes: [] }) })
-    ).rejects.toMatchObject({ code: 'FORBIDDEN', message: 'block lacks user:read:self scope' });
-  });
-
-  it('subject before kill-switch: an anonymous token never reaches it', async () => {
-    h.enabledFor = [];
-    await expect(probe(THROWING)({ blockToken: await mint({ anon: true }) })).rejects.toMatchObject(
-      {
-        code: 'UNAUTHORIZED',
-        message: 'probe requires a viewer',
-      }
-    );
-    expect(h.events).toEqual(['authorize(jwt)']);
-    expect(h.getSessionUserById).not.toHaveBeenCalled();
-  });
-
-  it('kill-switch before rate limit: a switched-off viewer is refused and charged nothing', async () => {
-    h.enabledFor = [];
-    check.mockResolvedValue({ allowed: false });
-    await expect(probe(THROWING)({ blockToken: await mint() })).rejects.toMatchObject({
-      code: 'UNAUTHORIZED',
-      message: 'Apps are not enabled',
-    });
-    expect(check).not.toHaveBeenCalled();
-    expect(h.events).toEqual(['authorize(jwt)', `kill-switch(${SUBJECT_ID})`]);
-  });
-});
-
-describe('authorizeBlockBridgeViewer — the rate-limit option', () => {
-  const REFUSED = {
-    code: 'TOO_MANY_REQUESTS',
-    message: 'Rate limit exceeded, please retry shortly.',
-  };
-
-  it('`throw` refuses with TOO_MANY_REQUESTS and never runs the handler', async () => {
-    check.mockResolvedValue({ allowed: false });
-    await expect(probe(THROWING)({ blockToken: await mint() })).rejects.toMatchObject(REFUSED);
-    expect(h.events).toEqual(['authorize(jwt)', `kill-switch(${SUBJECT_ID})`, 'rate-limit']);
-    expect(h.recordRefusal).not.toHaveBeenCalled();
-  });
-
-  it('`recordRefusalAs` labels the refusal counter, once, and only on a refusal', async () => {
-    const options = withRateLimit({ recordRefusalAs: ['someProcedure', 'poll'] });
-    await probe(options)({ blockToken: await mint() });
-    expect(h.recordRefusal).not.toHaveBeenCalled();
-
-    check.mockResolvedValue({ allowed: false });
-    await expect(probe(options)({ blockToken: await mint() })).rejects.toMatchObject(REFUSED);
-    expect(h.recordRefusal).toHaveBeenCalledTimes(1);
-    expect(h.recordRefusal).toHaveBeenCalledWith('someProcedure', 'poll');
-  });
-
-  it('`defer` does not throw: the handler runs and is told the limiter refused', async () => {
-    check.mockResolvedValue({ allowed: false });
-    const options = withRateLimit({
-      onRefused: 'defer',
-      recordRefusalAs: ['someProcedure', 'poll'],
-    });
-    const viewer = await probe(options)({ blockToken: await mint() });
-    expect(viewer.rateLimitRefused).toBe(true);
-    expect(viewer.userId).toBe(SUBJECT_ID);
-    expect(h.events).toEqual([
-      'authorize(jwt)',
-      `kill-switch(${SUBJECT_ID})`,
-      'rate-limit',
-      'handler',
-    ]);
-    expect(h.recordRefusal).toHaveBeenCalledWith('someProcedure', 'poll');
-  });
-
-  it('`defer` reports no refusal when the limiter allows', async () => {
-    const viewer = await probe(withRateLimit({ onRefused: 'defer' }))({ blockToken: await mint() });
-    expect(viewer.rateLimitRefused).toBe(false);
-  });
-
-  it('`none` charges nothing and still runs every step before it', async () => {
-    const viewer = await probe({ ...THROWING, rateLimit: { none: 'bounded by its input cap' } })({
-      blockToken: await mint(),
-    });
-    expect(viewer.rateLimitRefused).toBe(false);
-    expect(check).not.toHaveBeenCalled();
-    expect(h.events).toEqual(['authorize(jwt)', `kill-switch(${SUBJECT_ID})`, 'handler']);
-  });
-});
-
-describe('blocks.getMyViewer — the procedure on the middleware', () => {
-  const getMyViewer = (input: unknown, sessionUserId?: number) =>
-    blocksRouter.createCaller(ctx(sessionUserId) as never).getMyViewer(input as never);
-
-  it("returns the token subject's viewer and charges the catalog bucket for the install", async () => {
-    await expect(getMyViewer({ blockToken: await mint() })).resolves.toEqual({
-      id: SUBJECT_ID,
-      username: 'viewer',
-      status: 'active',
-      buzzBudget: 100,
-    });
-    expect(h.events).toEqual(['authorize(jwt)', `kill-switch(${SUBJECT_ID})`]);
-    expect(h.catalogLimit.mock.calls).toEqual([[INSTANCE_ID]]);
+    // The session user (7) is enabled and has a row too, so only the identity can differ.
     expect(dbMock.dbWrite.user.findUnique.mock.calls).toEqual([
       [
         {
@@ -451,69 +216,14 @@ describe('blocks.getMyViewer — the procedure on the middleware', () => {
         },
       ],
     ]);
-  });
-
-  it('refuses an unverifiable token before any read', async () => {
-    await expect(getMyViewer({ blockToken: 'not-a-jwt' })).rejects.toMatchObject({
-      code: 'UNAUTHORIZED',
-      message: 'invalid block token',
+    expect(result).toEqual({
+      id: SUBJECT_ID,
+      username: usernameOf(SUBJECT_ID),
+      status: 'active',
+      buzzBudget: 100,
     });
-    expect(h.catalogLimit).not.toHaveBeenCalled();
-    expect(dbMock.dbWrite.user.findUnique).not.toHaveBeenCalled();
-  });
-
-  it('requires `user:read:self`', async () => {
-    await expect(
-      getMyViewer({ blockToken: await mint({ scopes: ['buzz:read:self', 'ai:write:budgeted'] }) })
-    ).rejects.toMatchObject({ code: 'FORBIDDEN', message: 'block lacks user:read:self scope' });
-  });
-
-  it('refuses an anonymous subject with its own message', async () => {
-    await expect(getMyViewer({ blockToken: await mint({ anon: true }) })).rejects.toMatchObject({
-      code: 'UNAUTHORIZED',
-      message: 'viewer read requires an authenticated viewer',
-    });
-  });
-
-  it('past the ceiling: TOO_MANY_REQUESTS, no refusal counter, and no primary read', async () => {
-    h.catalogLimit.mockResolvedValue({ allowed: false });
-    await expect(getMyViewer({ blockToken: await mint() })).rejects.toMatchObject({
-      code: 'TOO_MANY_REQUESTS',
-      message: 'Rate limit exceeded, please retry shortly.',
-    });
-    expect(h.recordRefusal).not.toHaveBeenCalled();
-    expect(dbMock.dbWrite.user.findUnique).not.toHaveBeenCalled();
-  });
-
-  it('ignores the session: a different signed-in user still reads the subject', async () => {
-    await expect(getMyViewer({ blockToken: await mint() }, SESSION_USER_ID)).resolves.toMatchObject(
-      { id: SUBJECT_ID }
-    );
-  });
-});
-
-describe('every blocksRouter procedure that takes a block token has an auth mechanism', () => {
-  const procedures = (
-    blocksRouter as unknown as { _def: { procedures: Record<string, ProcedureWithInputs> } }
-  )._def.procedures;
-  const withMechanism = [...bridgeProcAuth(read(ROUTER)).keys()].sort();
-
-  it('the runtime population equals the set the source scan found a mechanism for', () => {
-    const { takesToken, unreadable } = classifyBlockTokenProcedures(procedures);
-    expect(unreadable).toEqual([]);
-    expect(takesToken).toContain('getMyViewer');
-    expect(takesToken).toContain('submitWorkflow');
-    expect(takesToken).toEqual(withMechanism);
-  });
-
-  it('CONTROL — a token-taking procedure with neither mechanism is the one left over', () => {
-    const bare = publicProcedure
-      .input(z.object({ blockToken: z.string().min(1) }))
-      .mutation(() => null) as unknown as ProcedureWithInputs;
-    const { takesToken } = classifyBlockTokenProcedures({ ...procedures, addedWithNeither: bare });
-    expect(takesToken.filter((name) => !withMechanism.includes(name))).toEqual([
-      'addedWithNeither',
-    ]);
+    expect(h.events).toEqual(['authorize', `kill-switch(${SUBJECT_ID})`]);
+    expect(h.catalogLimit.mock.calls).toEqual([[INSTANCE_ID]]);
   });
 });
 
@@ -524,7 +234,7 @@ describe('authorizeBlockBridgeViewer — forced past its input type, it admits n
     const misordered = router({
       run: publicProcedure
         // @ts-expect-error — no input yet, so there is no token for the middleware to read.
-        .use(authorizeBlockBridgeViewer(THROWING))
+        .use(authorizeBlockBridgeViewer(OPTIONS))
         .mutation(() => 'admitted'),
     }).createCaller(ctx() as never);
 
@@ -537,7 +247,7 @@ describe('authorizeBlockBridgeViewer — forced past its input type, it admits n
       run: publicProcedure
         .input(z.object({ workflowId: z.string() }))
         // @ts-expect-error — the input declares no `blockToken`.
-        .use(authorizeBlockBridgeViewer(THROWING))
+        .use(authorizeBlockBridgeViewer(OPTIONS))
         .mutation(() => 'admitted'),
     }).createCaller(ctx() as never);
 

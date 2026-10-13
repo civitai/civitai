@@ -183,10 +183,10 @@ const BLOCK_SCOPE_CONSTANTS = 'src/shared/constants/block-scope.constants.ts';
  * its own right. A `getMyBuzz*` shorthand gets that exactly backwards in both directions.
  */
 const GUARD_CALL_SITE_LEDGER = [
-  // The router's tRPC middleware FACTORY for the viewer-bound bridge procedures: calling it
-  // authorizes nothing until the result is `.use()`d. This file only sees a procedure name
-  // it; that it is applied in the procedure's own chain, and by which procedures, is pinned
-  // by `no-unledgered-block-bridge-auth-mechanism.test.ts`.
+  // The router's tRPC middleware FACTORY for the viewer-bound bridge procedures. Calling it
+  // authorizes nothing until the result is `.use()`d, and this file checks only that a
+  // procedure calls it. That the result is applied in the procedure's own chain is pinned by
+  // `no-misapplied-block-bridge-middleware.test.ts`.
   'authorizeBlockBridgeViewer',
   'authorizeBlockBuzzRead',
   // The router's own post-bridge preamble helper: `previewPostFromApp` and

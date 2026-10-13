@@ -61,7 +61,6 @@ import { projectBlockBuzzTransaction } from '~/server/services/blocks/block-buzz
 import {
   recordBlockBridgeRateLimitRefusal,
   recordConfirmedQuoteOvercharge,
-  type AppBlockRateLimitBucket,
 } from '~/server/metrics/app-block-runtime.metrics';
 import {
   checkBlockCatalogRateLimit,
@@ -772,8 +771,9 @@ async function recordBlockPostInvocation(opts: {
  * next one (a new consent scope, a second revocation check, a different bucket)
  * misses it the same way. The durable fix is to move this helper's three procedures
  * and `getMyBuzzBalance` onto `authorizeBlockBridgeViewer`, whose `anonMessage`
- * option carries the one differing string. Until then the ladder exists in three
- * places and a gate added to one does not reach the others.
+ * option carries the one differing string. (`getMyBuzzBalance` also counts its
+ * refusals, which the middleware does not do yet.) Until then the ladder exists in
+ * three places and a gate added to one does not reach the others.
  *
  * What still separates these three bridges from that proc is SENSITIVITY, not the
  * scope and no longer the limiter: the full ledger / all-pool balances incl. creator
@@ -838,8 +838,6 @@ export type BlockBridgeViewer = {
   claims: BlockTokenClaims;
   /** The token's own subject. Never client input, and not the session user. */
   userId: number;
-  /** True only under `onRefused: 'defer'` when the limiter said no; the procedure then answers. */
-  rateLimitRefused: boolean;
 };
 
 export type BlockBridgeViewerOptions = {
@@ -847,27 +845,14 @@ export type BlockBridgeViewerOptions = {
   scope: 'user:read:self' | 'buzz:read:self' | typeof CONSENT_SPEND_SCOPE;
   /** The UNAUTHORIZED message for an anonymous subject. Wire copy, different per procedure. */
   anonMessage: string;
-  rateLimit:
-    | {
-        /**
-         * Charges the procedure's bucket. Must be a limiter call written at the procedure:
-         * `no-unlimited-block-bridge-proc.test.ts` derives the bucket from the calls under
-         * the procedure node.
-         */
-        check: (viewer: Pick<BlockBridgeViewer, 'claims' | 'userId'>) => Promise<{
-          allowed: boolean;
-        }>;
-        /**
-         * `throw` answers TOO_MANY_REQUESTS. `defer` continues with `rateLimitRefused: true`
-         * for a procedure whose refusal has to be a returned value rather than an error; its
-         * handler must read that flag, or the limit refuses nothing.
-         */
-        onRefused: 'throw' | 'defer';
-        /** Labels for the refusal counter, or `null` for a procedure that emits none. */
-        recordRefusalAs: readonly [procedure: string, bucket: AppBlockRateLimitBucket] | null;
-      }
-    /** No limiter; the string says what bounds the procedure instead. */
-    | { none: string };
+  rateLimit: {
+    /**
+     * Charges the procedure's bucket; a refusal answers TOO_MANY_REQUESTS. Must be a limiter
+     * call written at the procedure: `no-unlimited-block-bridge-proc.test.ts` derives the
+     * bucket from the calls under the procedure node.
+     */
+    check: (viewer: BlockBridgeViewer) => Promise<{ allowed: boolean }>;
+  };
 };
 
 /**
@@ -897,22 +882,15 @@ export function authorizeBlockBridgeViewer(
       throw new TRPCError({ code: 'UNAUTHORIZED', message: options.anonMessage });
     }
     await assertAppBlocksEnabledForTokenUser(userId);
-    let rateLimitRefused = false;
-    if ('check' in options.rateLimit) {
-      const { check, onRefused, recordRefusalAs } = options.rateLimit;
-      const rate = await check({ claims, userId });
-      if (!rate.allowed) {
-        if (recordRefusalAs) recordBlockBridgeRateLimitRefusal(...recordRefusalAs);
-        if (onRefused === 'throw') {
-          throw new TRPCError({
-            code: 'TOO_MANY_REQUESTS',
-            message: 'Rate limit exceeded, please retry shortly.',
-          });
-        }
-        rateLimitRefused = true;
-      }
+    const blockViewer = { claims, userId };
+    const rate = await options.rateLimit.check(blockViewer);
+    if (!rate.allowed) {
+      throw new TRPCError({
+        code: 'TOO_MANY_REQUESTS',
+        message: 'Rate limit exceeded, please retry shortly.',
+      });
     }
-    return next({ ctx: { blockViewer: { claims, userId, rateLimitRefused } } });
+    return next({ ctx: { blockViewer } });
   };
 }
 
@@ -7965,8 +7943,6 @@ export const blocksRouter = router({
           // Bounds a block hammering the PRIMARY: the ban/mute lookup below reads dbWrite.
           // Fail-open on a redis incident.
           check: ({ claims }) => checkBlockCatalogRateLimit(claims.blockInstanceId),
-          onRefused: 'throw',
-          recordRefusalAs: null,
         },
       })
     )

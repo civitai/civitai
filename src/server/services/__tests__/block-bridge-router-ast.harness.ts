@@ -176,12 +176,17 @@ export type BridgeProcAuth = {
   inline: boolean;
   /** Every middleware use has an `.input(…)` earlier in the chain. */
   inputPrecedesUse: boolean;
-  /** `.use(…)` links AFTER the middleware, any of which could replace `ctx.blockViewer`. */
-  usesAfterMiddleware: number;
+  /**
+   * Chain links between the middleware and the terminal `.query`/`.mutation`. Any of them
+   * (`.use`, `.concat`, …) could replace `ctx.blockViewer`.
+   */
+  linksAfterMiddleware: number;
   /** `blockToken`, as an identifier or a string key, outside the `.input(…)` argument. */
   blockTokenReads: number;
-  /** The middleware is asked to `defer` a refusal and nothing reads `rateLimitRefused`. */
-  deferredRefusalUnread: boolean;
+  /** The handler names `blockViewer`. */
+  handlerReadsViewer: boolean;
+  /** The handler reads `ctx.user`, by property access or by destructuring `ctx`. */
+  handlerReadsSessionUser: boolean;
 };
 
 /** Parentheses, `as`, `satisfies` and `!` wrap an expression without changing what it calls. */
@@ -227,14 +232,7 @@ function isMiddlewareUse(node: ts.Node): node is ts.CallExpression {
   });
 }
 
-function hasInputEarlierInChain(use: ts.CallExpression): boolean {
-  for (let link = receiver(use); link != null && ts.isCallExpression(link); link = receiver(link)) {
-    if (methodName(link) === 'input') return true;
-  }
-  return false;
-}
-
-/** The procedure's builder chain, terminator first: `.mutation(…)`, `.use(…)`, `.input(…)`, … */
+/** The procedure's builder chain, terminal first: `.mutation(…)`, `.use(…)`, `.input(…)`, … */
 function chainLinks(initializer: ts.Node): ts.CallExpression[] {
   const links: ts.CallExpression[] = [];
   let link: ts.Node | null = ts.isExpression(initializer) ? unwrap(initializer) : null;
@@ -245,26 +243,38 @@ function chainLinks(initializer: ts.Node): ts.CallExpression[] {
   return links;
 }
 
-function mentions(node: ts.Node, test: (n: ts.Node) => boolean): boolean {
+function mentions(nodes: readonly ts.Node[], test: (n: ts.Node) => boolean): boolean {
   let found = false;
   const walk = (n: ts.Node): void => {
     if (found) return;
     if (test(n)) found = true;
     else ts.forEachChild(n, walk);
   };
-  walk(node);
+  nodes.forEach(walk);
   return found;
 }
 
-function asksToDefer(use: ts.CallExpression): boolean {
-  return mentions(
-    use,
-    (n) =>
-      ts.isPropertyAssignment(n) &&
-      (ts.isIdentifier(n.name) || ts.isStringLiteralLike(n.name)) &&
-      n.name.text === 'onRefused' &&
-      !(ts.isStringLiteralLike(n.initializer) && n.initializer.text === 'throw')
-  );
+const isCtx = (n: ts.Node): boolean => ts.isIdentifier(n) && n.text === 'ctx';
+
+/** `ctx.user`, `ctx['user']`, `({ ctx: { user } })` or `const { user } = ctx`. */
+function readsCtxUser(n: ts.Node): boolean {
+  if (ts.isPropertyAccessExpression(n)) return n.name.text === 'user' && isCtx(n.expression);
+  if (ts.isElementAccessExpression(n)) {
+    return (
+      isCtx(n.expression) &&
+      ts.isStringLiteralLike(n.argumentExpression) &&
+      n.argumentExpression.text === 'user'
+    );
+  }
+  if (!ts.isBindingElement(n)) return false;
+  const key = n.propertyName ?? n.name;
+  if (!(ts.isIdentifier(key) || ts.isStringLiteralLike(key)) || key.text !== 'user') return false;
+  const owner = n.parent.parent;
+  if (ts.isBindingElement(owner)) {
+    const ownerKey = owner.propertyName ?? owner.name;
+    return ts.isIdentifier(ownerKey) && ownerKey.text === 'ctx';
+  }
+  return ts.isVariableDeclaration(owner) && owner.initializer != null && isCtx(owner.initializer);
 }
 
 function countBlockTokenReads(node: ts.Node): number {
@@ -309,38 +319,18 @@ export function bridgeProcAuth(text: string): Map<string, BridgeProcAuth> {
     const uses = links.filter(isMiddlewareUse);
     const inline = reachable(node, inlineHelpers).has(GUARD);
     if (uses.length === 0 && !inline) continue;
-    const lastUse = uses.length > 0 ? links.indexOf(uses[0]) : 0;
-    const terminator = links[0];
+    const handler = links[0]?.arguments ?? [];
     out.set(name, {
       middlewareUses: uses.length,
       inline,
-      inputPrecedesUse: uses.every(hasInputEarlierInChain),
-      usesAfterMiddleware: links
-        .slice(0, lastUse)
-        .filter((link) => methodName(link) === 'use' && !isMiddlewareUse(link)).length,
+      inputPrecedesUse: uses.every((use) =>
+        links.slice(links.indexOf(use) + 1).some((link) => methodName(link) === 'input')
+      ),
+      linksAfterMiddleware: uses.length > 0 ? links.indexOf(uses[0]) - 1 : 0,
       blockTokenReads: countBlockTokenReads(node),
-      deferredRefusalUnread:
-        uses.some(asksToDefer) &&
-        !terminator.arguments.some((handler) =>
-          mentions(handler, (n) => ts.isIdentifier(n) && n.text === 'rateLimitRefused')
-        ),
+      handlerReadsViewer: mentions(handler, (n) => ts.isIdentifier(n) && n.text === 'blockViewer'),
+      handlerReadsSessionUser: mentions(handler, readsCtxUser),
     });
   }
   return out;
-}
-
-/** How many times the middleware's own body calls the guard. */
-export function guardCallsInMiddleware(text: string): number {
-  const middleware = routerHelpers(parse(text)).get(VIEWER_MIDDLEWARE);
-  if (middleware == null) return 0;
-  let count = 0;
-  const walk = (n: ts.Node): void => {
-    if (ts.isCallExpression(n)) {
-      const callee = unwrap(n.expression);
-      if (ts.isIdentifier(callee) && callee.text === GUARD) count++;
-    }
-    ts.forEachChild(n, walk);
-  };
-  walk(middleware);
-  return count;
 }
