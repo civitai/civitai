@@ -30,7 +30,8 @@ import { getModelsInfiniteHandler } from '~/server/controllers/model.controller'
 const ITEM = { id: 1 } as never;
 
 function ctx() {
-  return { user: undefined, cache: { canCache: true }, req: {}, features: {} };
+  // A real request always carries headers; the handler resolves the browsing level from them.
+  return { user: undefined, cache: { canCache: true }, req: { headers: {} }, features: {} };
 }
 
 function run(input: Record<string, unknown>) {
