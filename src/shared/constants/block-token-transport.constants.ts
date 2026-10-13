@@ -16,8 +16,8 @@
  * going flat.
  *
  * KEEP THIS COMPLETE. `src/shared/constants/__tests__/block-token-transport.constants.test.ts`
- * derives the population from the routers (every `.query(` whose input carries `blockToken`) and
- * fails in both directions if this set drifts from it.
+ * loads the real `appRouter` (every lazy sub-router included), finds every query whose zod input
+ * has a `blockToken` key, and fails in both directions if this set drifts from it.
  */
 export const BLOCK_TOKEN_QUERY_PROCEDURES: ReadonlySet<string> = new Set([
   'apps.shared.get',

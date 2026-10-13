@@ -125,24 +125,18 @@ export function isLargeQuery(op: { type: string; input: unknown }) {
 }
 
 /**
- * Query procedures that must ALWAYS go out as POST (and therefore never batched), whatever
- * their input size: their input carries a block token, a bearer credential, and a GET would put
- * it in the request URL. Same set the server keys its `no-store` header on — see
- * `~/shared/constants/block-token-transport.constants`.
- */
-export const POST_ONLY_QUERY_PROCEDURES: ReadonlySet<string> = BLOCK_TOKEN_QUERY_PROCEDURES;
-
-/**
  * Whether a query must leave the browser as POST: either its input is too large for a GET URL
- * (`isLargeQuery`), or its procedure is in `POST_ONLY_QUERY_PROCEDURES`.
+ * (`isLargeQuery`), or its procedure is in `BLOCK_TOKEN_QUERY_PROCEDURES` — its input carries a
+ * block token, a bearer credential, and a GET would put it in the request URL. Those also never
+ * batch (see `shouldBatch`). Same set the server keys its `no-store` header on.
  */
 export function shouldSendQueryAsPost(op: { type: string; path: string; input: unknown }) {
   if (op.type !== 'query') return false;
-  return POST_ONLY_QUERY_PROCEDURES.has(op.path) || isLargeQuery(op);
+  return BLOCK_TOKEN_QUERY_PROCEDURES.has(op.path) || isLargeQuery(op);
 }
 
 /**
- * Terminating link: large queries and `POST_ONLY_QUERY_PROCEDURES` go out as POST
+ * Terminating link: large queries and `BLOCK_TOKEN_QUERY_PROCEDURES` go out as POST
  * (body-carried input, not edge-cacheable), everything else stays a normal GET so the
  * `responseMeta` Cache-Control headers in `[trpc].ts` can still edge-cache them.
  */
@@ -310,7 +304,7 @@ export const NEVER_BATCH_PROCEDURES: ReadonlySet<string> = new Set([
  *  - we're in an authenticated browser (see `isAuthedBrowser` — anon stays cacheable),
  *  - the procedure is NOT edge-cacheable for authed sessions (see `CACHEABLE_PROCEDURES`),
  *  - the procedure is NOT excluded for a non-caching reason (see `NEVER_BATCH_PROCEDURES`),
- *  - the procedure is NOT POST-only (see `POST_ONLY_QUERY_PROCEDURES` — the batch link sends
+ *  - the procedure is NOT a block-token query (see `BLOCK_TOKEN_QUERY_PROCEDURES` — the batch link sends
  *    queries as GET, which would put a block token in the URL),
  *  - the caller didn't opt out via `context.skipBatch === true`,
  *  - its encoded input fits the batch link's URL cap (`isTooLargeToBatch` — otherwise it
@@ -329,7 +323,7 @@ export function shouldBatch(op: {
     isAuthedBrowser() &&
     !CACHEABLE_PROCEDURES.has(op.path) &&
     !NEVER_BATCH_PROCEDURES.has(op.path) &&
-    !POST_ONLY_QUERY_PROCEDURES.has(op.path) &&
+    !BLOCK_TOKEN_QUERY_PROCEDURES.has(op.path) &&
     op.context.skipBatch !== true &&
     !isTooLargeToBatch(op)
   );
