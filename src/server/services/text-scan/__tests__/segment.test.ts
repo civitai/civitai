@@ -292,3 +292,32 @@ describe('segmentUserText over seeded random subjects', () => {
     }
   });
 });
+
+describe('segmentUserText with a heading too long to repeat', () => {
+  const budget = 1000;
+  const opts = { budget, maxSegments: 20 };
+  const repeatedPrefix = (segment: string) => segment.slice(0, segment.indexOf('\n') + 1);
+
+  it('caps the repeated heading so each continuation still advances most of a budget', () => {
+    const body = words(1200);
+    const { segments } = segmentUserText(
+      subject([{ heading: 'H'.repeat(2 * budget), text: body }]),
+      opts
+    );
+    const prefix = repeatedPrefix(segments[0]);
+    expect(prefix.length).toBeGreaterThan(3);
+    expect(prefix.length).toBeLessThanOrEqual(budget / 4);
+    expectCovers(body, prefix, segments);
+    const starts = segments.map((segment) => body.indexOf(segment.slice(prefix.length)));
+    for (let i = 1; i < starts.length; i++)
+      expect(starts[i] - starts[i - 1]).toBeGreaterThanOrEqual(budget / 2);
+  });
+
+  it('cuts the capped heading before a surrogate pair, keeping its newline', () => {
+    const heading = `${'H'.repeat(245)}\u{1F600}${'H'.repeat(2 * budget)}`;
+    const { segments } = segmentUserText(subject([{ heading, text: words(1200) }]), opts);
+    const prefix = repeatedPrefix(segments[0]);
+    expect(prefix).toBe(`## ${'H'.repeat(245)}\n`);
+    for (const segment of segments) expect(segment).not.toMatch(LONE_SURROGATE);
+  });
+});

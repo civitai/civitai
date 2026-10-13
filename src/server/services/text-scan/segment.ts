@@ -67,7 +67,7 @@ function repeatablePrefix(prefix: string, limit: number) {
   return `${prefix.slice(0, end)}\n`;
 }
 
-function continuationStart(body: string, previousStart: number, cut: number, overlap: number) {
+function continuationStart(body: string, cut: number, overlap: number) {
   let start = cut - overlap;
   const space = body.slice(start, cut).search(WHITESPACE);
   if (space !== -1) {
@@ -75,7 +75,7 @@ function continuationStart(body: string, previousStart: number, cut: number, ove
     while (start < cut && WHITESPACE.test(body[start])) start++;
   }
   if (splitsSurrogatePair(body, start)) start++;
-  return Math.max(start, previousStart + 1);
+  return start;
 }
 
 /**
@@ -138,7 +138,7 @@ export function segmentUserText(
       append(prefix + block.body.slice(start, cut), block.start + block.prefix.length + cut);
       if (cut === block.body.length) break;
       if (closeOrStop()) break scan;
-      start = continuationStart(block.body, start, cut, overlap);
+      start = continuationStart(block.body, cut, overlap);
     }
   }
   if (current) segments.push(current);
