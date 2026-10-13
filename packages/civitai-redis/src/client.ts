@@ -2280,6 +2280,10 @@ export const REDIS_SYS_KEYS = {
     // Hash { repeatViewSeconds, sessionIdleSeconds }: the watch a judge owes a clip they already
     // voted on this judging session, and how long idle ends that session. Missing = defaults.
     CRUCIBLE_JUDGING: 'system:crucible-judging',
+    // Prefix for `:<version>`, a JSON snapshot of the image-ingestion gauges computed by one
+    // process per TTL for all of them; `:<version>:lock` elects that process. See
+    // src/server/prom/ingestion-gauge-store.ts.
+    IMAGE_INGESTION_GAUGES: 'system:image-ingestion-gauges',
   },
   INDEX_UPDATES: {
     IMAGE_METRIC: 'index-updates:image-metric',
