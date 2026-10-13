@@ -11,7 +11,8 @@ import type * as CrucibleEloRedis from '~/server/redis/crucible-elo.redis';
 import type * as EloService from '~/server/services/crucible-elo.service';
 import type * as PostService from '~/server/services/post.service';
 import type * as PrizeService from '~/server/services/prize.service';
-import { loggingMock, dbMock } from '~/__tests__/mocks';
+import { loggingMock, dbMock, redisMock } from '~/__tests__/mocks';
+import { REDIS_KEYS } from '~/server/redis/client';
 
 // `~/server/db/client` and `~/server/redis/client` are registered globally by the setup file
 // and reset per test file — see docs/testing/shared-module-mocks.md.
@@ -382,6 +383,49 @@ describe('finalizeCrucible — completion', () => {
       'crucible-prize-1-2-2',
       'crucible-prize-1-3-3',
     ]);
+  });
+
+  const buzzWonKey = (id: number) => `${REDIS_KEYS.CRUCIBLE.USER_BUZZ_WON}:${id}`;
+  // User 13 places 4th, below the three prizes; user 4 is the host.
+  const withUnplacedEntrant = () =>
+    setupCrucible({
+      entryFee: 100,
+      entries: [
+        dbEntry(1, 10, 1_000),
+        dbEntry(2, 11, 2_000),
+        dbEntry(3, 12, 3_000),
+        dbEntry(4, 13, 4_000),
+      ],
+      elos: { 1: 1600, 2: 1550, 3: 1400, 4: 1300 },
+    });
+
+  it("busts exactly the prize winners' cached Buzz Won, not other entrants or the host", async () => {
+    withUnplacedEntrant();
+
+    await finalizeCrucible(1);
+
+    expect(awarded().map((prize) => prize.userId)).toEqual([10, 11, 12]);
+    expect(redisMock.redis.del.mock.calls.map(([key]) => key).sort()).toEqual(
+      [10, 11, 12].map(buzzWonKey).sort()
+    );
+  });
+
+  it('still completes the crucible when busting the cache fails', async () => {
+    setupCrucible({ entryFee: 100 });
+    redisMock.redis.del.mockRejectedValueOnce(new Error('redis down'));
+
+    await expect(finalizeCrucible(1)).resolves.toBeDefined();
+
+    expect(claim).toHaveBeenCalled();
+  });
+
+  it('busts nothing when awarding fails', async () => {
+    setupCrucible({ entryFee: 100 });
+    createPrizes.mockRejectedValue(new Error('db down'));
+
+    await expect(finalizeCrucible(1)).rejects.toThrow('db down');
+
+    expect(redisMock.redis.del).not.toHaveBeenCalled();
   });
 
   it('voids what it awarded, notifies nobody and logs when it lost the claim', async () => {

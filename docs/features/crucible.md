@@ -55,7 +55,7 @@ Prizes are plain Buzz. A winner claims theirs from the link in their results not
 
 ## Your crucible stats
 
-The crucible welcome panel shows each entrant their Avg Finish and Prizes Won. Avg Finish is the mean placement percentile ("Top X%") over completed crucibles where they placed and at least 5 entrants placed, ranked by their best entry; crucibles where they did not place are left out, and it shows a dash until 3 crucibles count. Prizes Won counts only places that paid Buzz.
+The crucible welcome panel counts participation broadly and results narrowly. Crucibles Entered and Votes Cast cover every crucible you entered while it was running or after it ended (cancelled ones are left out) and all your judging votes. Buzz Won, Best Finish and Avg Finish come from ended crucibles only, so they read 0 or a dash until one ends. Buzz Won is gross prize Buzz, including prizes awarded at finalize and not yet claimed, with a "3 of 12 won" subline: crucibles where you took a prize that paid Buzz over ended crucibles you entered. Best Finish is your best rank among creators with how many creators placed ("#2 of 48"). Avg Finish is the mean placement percentile ("Top X%") over ended crucibles where you placed and at least 5 entrants placed, ranked by your best entry; crucibles where you did not place are left out, and it shows a dash until 3 crucibles count.
 
 ## Leaderboards
 
