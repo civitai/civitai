@@ -85,6 +85,7 @@ export const NAVIGATION: NavLink[] = [
         countKey: 'removedAppeals',
       },
       { path: '/images/csam', label: 'CSAM', countKey: 'csam' },
+      { path: '/images/scan-labels', label: 'Scan Labels' },
       { path: '/images/tags', label: 'Image Tags', countKey: 'imageTags' },
       { path: '/images/ratings', label: 'Image Ratings', countKey: 'imageRatings' },
       { path: '/images/downleveled', label: 'Downleveled' },
