@@ -364,7 +364,6 @@ async function resolveStorageContext(
   if (!resolved.ok) {
     // One literal emit site per refusal, NOT a lookup table: the metrics suite counts these
     // sites to prove every seeded outcome is reachable, and an indirection hides them from it.
-    // `consent_unavailable` cannot occur here (`consent: 'exempt-only'`), and the type says so.
     switch (resolved.refusal) {
       case 'invalid_token':
         countStorageOutcome(op, 'unauthorized');
@@ -381,12 +380,23 @@ async function resolveStorageContext(
       case 'not_approved':
         countStorageOutcome(op, 'unauthorized');
         break;
+      case 'consent_unavailable':
+        // Cannot happen (`consent: 'exempt-only'` reads no marker). A plain Error, so the
+        // caller's fault counter records it rather than a refusal nobody counted.
+        throw new Error('app storage: consent refusal from an exempt-only resolution');
       default:
         resolved.refusal satisfies never;
     }
     throw blockTokenRefusalError(resolved.refusal);
   }
   const { claims, slug, approval } = resolved;
+  // Cannot happen under the options above (`slugCheck: true`, a `strict` policy); the
+  // resolver's result is not narrowed by its options, so this states it instead of casting.
+  if (slug === null || approval.kind === 'admitted') {
+    throw new Error(
+      'app storage: token resolved without a storage slug or under the bridge policy'
+    );
+  }
 
   // The DECLARED-scope gate (A5 / design-gaps H4). Reads need apps:storage:read;
   // mutations need apps:storage:write. This runs for BOTH the approved and the

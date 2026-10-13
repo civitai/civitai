@@ -312,6 +312,11 @@ export async function resolveSharedContext(
   });
   if (!resolved.ok) throw blockTokenRefusalError(resolved.refusal);
   const { claims, slug, approval } = resolved;
+  // Cannot happen under the options above (`slugCheck: true`, `approval: 'strict'`); the
+  // resolver's result is not narrowed by its options, so this states it instead of casting.
+  if (slug === null || approval.kind !== 'approved') {
+    throw new Error('app shared storage: token resolved without a storage slug or an approved row');
+  }
 
   // Per-op scope assertion (re-checks the issuance contract at point of use).
   const requiredScope = READ_OPS.has(op) ? SHARED_READ_SCOPE : SHARED_WRITE_SCOPE;

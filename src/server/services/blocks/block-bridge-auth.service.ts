@@ -212,48 +212,41 @@ export type BlockTokenRefusal =
   | 'not_approved'
   | 'consent_unavailable';
 
-export interface ResolveBlockTokenOptions<
-  P extends BlockTokenApprovalPolicy,
-  C extends BlockTokenConsentMode,
-  S extends boolean
-> {
+export interface ResolveBlockTokenOptions {
   order: BlockTokenStepOrder;
-  approval: P;
-  consent: C;
+  approval: BlockTokenApprovalPolicy;
+  consent: BlockTokenConsentMode;
   metrics: BlockTokenMetrics;
   /** Refuse with `invalid_slug` when `claims.blockId` is not a usable storage slug. */
-  slugCheck: S;
+  slugCheck: boolean;
 }
 
-type BlockTokenApproval =
+/**
+ * `admitted` — the `bridge` policy let the token through (it carries no row id).
+ * `approved` — a `strict` policy read the row; `appBlockId` is the row's own id.
+ * `review_preview` — `strict+reviewPreview` answered a run-for-real review token.
+ */
+export type BlockTokenApproval =
   | { kind: 'admitted' }
   | { kind: 'approved'; appBlockId: string }
   | { kind: 'review_preview' };
 
-type ApprovalFor<P extends BlockTokenApprovalPolicy> = P extends 'bridge'
-  ? { kind: 'admitted' }
-  : P extends 'strict'
-  ? { kind: 'approved'; appBlockId: string }
-  : { kind: 'approved'; appBlockId: string } | { kind: 'review_preview' };
-
-export type BlockTokenResolution<
-  P extends BlockTokenApprovalPolicy,
-  C extends BlockTokenConsentMode,
-  S extends boolean
-> =
+/**
+ * ⚠️ DELIBERATELY NOT GENERIC over the options. The result is one plain union, so a caller
+ * checks what it needs (`slug` non-null, `approval.kind`) instead of trusting a narrowing the
+ * implementation could only assert — and so the function cannot be called with explicit type
+ * arguments, a spelling the caller ledgers (which look for the bare call) would not see.
+ */
+export type BlockTokenResolution =
   | {
       ok: true;
       /** The verified claims — NARROWED by the consent strip when `consent: 'strip'`. */
       claims: BlockTokenClaims;
-      slug: S extends true ? string : null;
-      approval: ApprovalFor<P>;
+      /** The storage slug when `slugCheck` is on; `null` when it is off. */
+      slug: string | null;
+      approval: BlockTokenApproval;
     }
-  | {
-      ok: false;
-      refusal: C extends 'strip'
-        ? BlockTokenRefusal
-        : Exclude<BlockTokenRefusal, 'consent_unavailable'>;
-    };
+  | { ok: false; refusal: BlockTokenRefusal };
 
 /**
  * Today's response for each refusal. One table, because the three entry points answer every
@@ -293,16 +286,11 @@ export function blockTokenRefusalError(refusal: BlockTokenRefusal): TRPCError {
  * result rather than throwing for a refusal, so each caller keeps its own mapping onto
  * responses and counters. A read that THROWS (the approval row, the verifier) propagates.
  */
-export async function resolveBlockToken<
-  P extends BlockTokenApprovalPolicy,
-  C extends BlockTokenConsentMode,
-  S extends boolean
->(
+export async function resolveBlockToken(
   blockToken: string,
-  options: ResolveBlockTokenOptions<P, C, S>
-): Promise<BlockTokenResolution<P, C, S>> {
-  type Resolution = BlockTokenResolution<P, C, S>;
-  const refuse = (refusal: BlockTokenRefusal) => ({ ok: false, refusal } as Resolution);
+  options: ResolveBlockTokenOptions
+): Promise<BlockTokenResolution> {
+  const refuse = (refusal: BlockTokenRefusal): BlockTokenResolution => ({ ok: false, refusal });
 
   const claims = await verifyBlockToken(blockToken);
   if (!claims) return refuse('invalid_token');
@@ -367,8 +355,12 @@ export async function resolveBlockToken<
     approval = outcome;
     if (await isRevoked()) return refuse('revoked');
   }
-  const resolved = (out: BlockTokenClaims) =>
-    ({ ok: true, claims: out, slug, approval } as Resolution);
+  const resolved = (out: BlockTokenClaims): BlockTokenResolution => ({
+    ok: true,
+    claims: out,
+    slug,
+    approval,
+  });
 
   // ── PER-SCOPE CONSENT REVOCATION, ON THE BRIDGE.
   //

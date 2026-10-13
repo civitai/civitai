@@ -235,8 +235,12 @@ describe('block-token kind × app storage — the seam the manifest guard closes
      *                                      `auth: "oauth"` app is expected to use REST, not
      *                                      the postMessage bridge.
      * Until the three resolvers were consolidated, each called `verifyBlockToken` itself and
-     * this was one ledger of four files; it is now two ledgers, and BOTH must hold — the
-     * first alone would read as "the seam closed" while every resolver still re-verifies.
+     * this was one ledger of four files. 🔴 SO THIS LEDGER ALONE NO LONGER SHOWS THE SEAM: two
+     * files here does not mean the resolvers stopped re-verifying the raw bearer. Who calls
+     * `resolveBlockToken` is pinned — derived from the tree, both directions, with the policy
+     * each caller passes — by `pins the approval policy each resolveBlockToken caller passes`
+     * in `src/server/services/__tests__/no-unguarded-block-rest-token.test.ts`. Read the two
+     * together; that one is not repeated here.
      */
     it('pins the verifyBlockToken call sites — EXACTLY these two, production code only', () => {
       const EXPECTED_CALL_SITES = [
@@ -248,15 +252,6 @@ describe('block-token kind × app storage — the seam the manifest guard closes
       // per-file `toContain` would claim to pin "the call sites" while being blind to a
       // NEW one, which is the whole failure this ledger exists to catch.
       expect(productionFilesCalling('verifyBlockToken(')).toEqual(EXPECTED_CALL_SITES);
-    });
-
-    it('pins the resolveBlockToken call sites — EXACTLY these three, production code only', () => {
-      const EXPECTED_RESOLVER_CALL_SITES = [
-        'server/routers/apps-shared.router.ts',
-        'server/services/apps/app-storage.service.ts',
-        'server/services/blocks/block-bridge-auth.service.ts',
-      ].sort();
-      expect(productionFilesCalling('resolveBlockToken(')).toEqual(EXPECTED_RESOLVER_CALL_SITES);
     });
 
     // POSITIVE CONTROL for the tree walker: a pattern that MUST be found, and one that must

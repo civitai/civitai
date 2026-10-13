@@ -1657,7 +1657,7 @@ describe('the approval predicate is not open-coded a second time', () => {
     // `verifyTokenCallers` skips the REST middleware as the DEFINER of `verifyBlockToken`; that
     // exclusion is about the OTHER function, so the file is added back here.
     const callers = [...verifyTokenCallers(), 'src/server/middleware/block-scope.middleware.ts']
-      .filter((rel) => /\bresolveBlockToken\s*\(/.test(stripNonCode(read(rel))))
+      .filter((rel) => RESOLVER_CALL_RE.test(stripNonCode(read(rel))))
       .sort();
     // Positive control: the walk finds the callers at all.
     expect(callers.length).toBeGreaterThan(2);
@@ -1830,7 +1830,14 @@ describe('the approval predicate is not open-coded a second time', () => {
    * alone now, it would lose the two storage seams and the exempt-only arm below would assert
    * nothing about them.
    */
-  const VERIFYING_CALL_RE = /\b(?:verifyBlockToken|resolveBlockToken)\s*\(/;
+  const VERIFYING_CALL_RE = /\b(?:verifyBlockToken|resolveBlockToken)\s*(?:<[^()]*>)?\s*\(/;
+
+  /**
+   * A call to the shared resolver. Explicit type arguments are tolerated between the name and
+   * the paren: the function is not generic, so `tsc` rejects that spelling, but a ledger that
+   * looked only for the bare call would not have seen it — and once did not.
+   */
+  const RESOLVER_CALL_RE = /\bresolveBlockToken\s*(?:<[^()]*>)?\s*\(/;
 
   /** A `resolveBlockToken` options object naming this consent mode, in a CODE position. */
   const consentOption = (rel: string, mode: 'strip' | 'exempt-only') =>
@@ -1846,6 +1853,11 @@ describe('the approval predicate is not open-coded a second time', () => {
     expect(VERIFYING_CALL_RE.test('const r = await resolveBlockToken(t, o);')).toBe(true);
     expect(VERIFYING_CALL_RE.test('const c = await verifyBlockToken(t);')).toBe(true);
     expect(VERIFYING_CALL_RE.test('import { resolveBlockToken } from "x";')).toBe(false);
+    // The explicit-type-argument spelling is a call too, to both matchers.
+    const typed = "await resolveBlockToken<'bridge', 'exempt-only', false>(t, o);";
+    expect(VERIFYING_CALL_RE.test(stripNonCode(typed))).toBe(true);
+    expect(RESOLVER_CALL_RE.test(stripNonCode(typed))).toBe(true);
+    expect(RESOLVER_CALL_RE.test('import { resolveBlockToken } from "x";')).toBe(false);
     // And it really is the union of the two ledgers — this is the GROWTH check the first version
     // claimed and could not perform.
     // The REST seam IS `block-scope.middleware.ts`, which is also the DEFINER and therefore
@@ -1879,7 +1891,7 @@ describe('the approval predicate is not open-coded a second time', () => {
       ).toMatch(/applyRevocations\s*\(/);
       // A seam that goes through the shared resolver must also ASK it to strip: the resolver
       // file contains `applyRevocations` whatever any one caller passes.
-      if (/\bresolveBlockToken\s*\(/.test(stripNonCode(read(rel)))) {
+      if (RESOLVER_CALL_RE.test(stripNonCode(read(rel)))) {
         // …and ONLY strip: a second call in this file asking for `exempt-only` would be a seam
         // that verifies without stripping, with no ledger entry of its own.
         expect(

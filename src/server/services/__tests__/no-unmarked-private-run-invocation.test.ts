@@ -742,6 +742,9 @@ describe('every block_scope_invocations writer carries the private-run marker', 
 
 describe('the storage path carries the VERIFIED claim, not just a local', () => {
   const source = read(STORAGE_CARRIER.file);
+  // A call to the shared resolver, tolerating explicit type arguments before the paren: `tsc`
+  // rejects that spelling (the function is not generic) but a bare-call matcher would miss it.
+  const RESOLVER_CALL_RE = /\bresolveBlockToken\s*(?:<[^()]*>)?\s*\(/;
 
   it('[REG] every return of the storage resolver derives privateRun from the verified claim', () => {
     // 🔴 THE ASSERTION THAT KILLS THE SURVIVING MUTANT. `resolveStorageContext` is the only
@@ -868,7 +871,7 @@ describe('the storage path carries the VERIFIED claim, not just a local', () => 
       expect(
         body,
         `${writer} must not resolve the token itself — the resolver already did`
-      ).not.toContain('resolveBlockToken(');
+      ).not.toMatch(RESOLVER_CALL_RE);
     }
   );
 
@@ -881,7 +884,7 @@ describe('the storage path carries the VERIFIED claim, not just a local', () => 
     // Since the consolidation that one verification is the module's single
     // `resolveBlockToken(` call; a direct `verifyBlockToken(` here would be a second one.
     expect(
-      source.split('resolveBlockToken(').length - 1,
+      source.match(new RegExp(RESOLVER_CALL_RE.source, 'g'))?.length ?? 0,
       'this module must verify the token exactly once, in resolveStorageContext'
     ).toBe(1);
     expect(
