@@ -13,10 +13,11 @@ import type * as CatalogRateLimit from '~/server/utils/block-catalog-rate-limit'
 /**
  * What the block-token characterisation suite cannot see about `authorizeBlockBridgeViewer`:
  * which identity reaches the limiter and the handler, the one step order no single-refusal
- * cell distinguishes, and what the middleware does when forced past its input type.
+ * cell distinguishes, which rate-limit refusals are counted, and what the middleware does
+ * when forced past its input type.
  *
- * Every refusal code and message of `blocks.getMyViewer` is pinned there, per failure mode,
- * and is not repeated here.
+ * Every refusal code and message of the procedures on the middleware is pinned there, per
+ * failure mode, and is not repeated here.
  */
 
 const h = vi.hoisted(() => ({
@@ -132,7 +133,8 @@ async function mint(over: { scopes?: string[]; anon?: boolean } = {}) {
 
 const check = vi.fn();
 
-// A different scope from `getMyViewer`'s, so the middleware has to read it from its options.
+// A different scope from `getMyViewer`'s, and labels no procedure in the router uses, so the
+// middleware has to read both from its options.
 const OPTIONS: BlockBridgeViewerOptions = {
   scope: 'buzz:read:self',
   anonMessage: 'probe requires a viewer',
@@ -141,6 +143,7 @@ const OPTIONS: BlockBridgeViewerOptions = {
       h.events.push('rate-limit');
       return check(viewer);
     },
+    recordRefusalAs: { procedure: 'probe', bucket: 'poll' },
   },
 };
 
@@ -151,7 +154,9 @@ beforeEach(() => {
     .mockReset()
     .mockImplementation(async (id: number) => ({ ...USER, id, username: usernameOf(id) }));
   h.catalogLimit.mockReset().mockResolvedValue({ allowed: true });
-  h.recordRefusal.mockReset();
+  h.recordRefusal.mockReset().mockImplementation((...labels: unknown[]) => {
+    h.events.push(`count(${labels.join(', ')})`);
+  });
   check.mockReset().mockResolvedValue({ allowed: true });
   dbMock.dbRead.appBlock.findUnique.mockReset().mockResolvedValue({
     id: 'apb_row',
@@ -217,6 +222,60 @@ describe('authorizeBlockBridgeViewer', () => {
       message: 'probe requires a viewer',
     });
   });
+
+  it('counts a refusal under the labels its options name, once the limiter has refused', async () => {
+    check.mockResolvedValue({ allowed: false });
+
+    await expect(run(await mint())).rejects.toMatchObject({ code: 'TOO_MANY_REQUESTS' });
+    expect(h.events).toEqual([
+      'authorize',
+      `kill-switch(${SUBJECT_ID})`,
+      'rate-limit',
+      'count(probe, poll)',
+    ]);
+  });
+
+  it('counts nothing when the limiter allows the call', async () => {
+    await run(await mint());
+
+    expect(h.recordRefusal).not.toHaveBeenCalled();
+  });
+});
+
+describe('which buzz reads count a rate-limit refusal', () => {
+  /** What each procedure's schema needs beside the token. */
+  const INPUT = {
+    getMyBuzzAccounts: {},
+    getMyBuzzBalance: {},
+    getMyBuzzTransactions: {},
+    getMyDailyCompensation: { date: new Date('2026-01-01T00:00:00Z') },
+  };
+
+  async function refuse(proc: keyof typeof INPUT) {
+    h.catalogLimit.mockResolvedValue({ allowed: false });
+    const caller = blocksRouter.createCaller(ctx() as never) as unknown as Record<
+      string,
+      (input: unknown) => Promise<unknown>
+    >;
+    await expect(caller[proc]({ blockToken: await mint(), ...INPUT[proc] })).rejects.toMatchObject({
+      code: 'TOO_MANY_REQUESTS',
+    });
+  }
+
+  it('getMyBuzzBalance does, as itself on the catalog bucket', async () => {
+    await refuse('getMyBuzzBalance');
+
+    expect(h.recordRefusal.mock.calls).toEqual([['getMyBuzzBalance', 'catalog']]);
+  });
+
+  it.each(['getMyBuzzAccounts', 'getMyBuzzTransactions', 'getMyDailyCompensation'] as const)(
+    '%s does not',
+    async (proc) => {
+      await refuse(proc);
+
+      expect(h.recordRefusal).not.toHaveBeenCalled();
+    }
+  );
 });
 
 describe('blocks.getMyViewer on the middleware', () => {

@@ -59,6 +59,7 @@ import {
 } from '~/server/services/buzz.service';
 import { projectBlockBuzzTransaction } from '~/server/services/blocks/block-buzz-read.projection';
 import {
+  type AppBlockRateLimitBucket,
   recordBlockBridgeRateLimitRefusal,
   recordConfirmedQuoteOvercharge,
 } from '~/server/metrics/app-block-runtime.metrics';
@@ -569,8 +570,8 @@ const confirmedImageCountInput = z.number().int().positive().max(100);
  * RATHER THAN AN IMPORT. `no-unguarded-block-bridge-token.test.ts` computes
  * reachability TEXTUALLY, inside `blocks.router.ts` only: a proc that delegates
  * to an imported helper which calls `authorizeBlockBridgeToken` reads as
- * UNGUARDED and fails. `authorizeBlockBuzzRead` is the existing precedent for
- * exactly this shape, and like it, this helper is itself ledgered as a call site.
+ * UNGUARDED and fails. `authorizeQuotedGrantConsentRequest` has exactly this
+ * shape, and like it, this helper is itself ledgered as a call site.
  *
  * Order, and why:
  *   1. `authorizeBlockBridgeToken` — validity, then instance revocation, then the
@@ -746,92 +747,6 @@ async function recordBlockPostInvocation(opts: {
   }
 }
 
-/**
- * Shared authorization gate for the buzz self-read bridges (`getMyBuzz*` below).
- * Verify token → require the `buzz:read:self` CONSENT scope → self-bind → kill-switch
- * → rate limit.
- *
- * ⚠️ `getMyBuzzBalance` IS NOT SCOPE-FREE ANY MORE — this docblock said it was until
- * the round-1 audit caught the contradiction with the one on `getMyBuzzBalance`
- * itself. That proc now performs the SAME `buzz:read:self` check inline.
- *
- * 🔴 AND THE SECOND HALF OF THAT REASON IS NOW GONE, WHICH IS WHY THIS PARAGRAPH
- * WAS REWRITTEN RATHER THAN LEFT (clawgate #569). It used to read "it cannot call
- * this helper: it is NOT rate-limited on `blockInstanceId` and its error copy
- * differs", and the first clause was true until #569 added exactly that limiter to
- * `getMyBuzzBalance`. Leaving it would have had this helper document a
- * justification for the duplicate that the duplicate no longer has — which is how a
- * duplicate gets re-justified by the next reader.
- *
- * WHAT IS LEFT OF THE DIFFERENCE, stated honestly because it is thin: ONE WORD in
- * ONE `UNAUTHORIZED` message (`'buzz balance requires…'` there vs `'buzz read
- * requires…'` here). The ladders are otherwise step-for-step identical. 🔴 THE
- * STANDING HAZARD, and the reason this note is long: **this card exists because the
- * last gate added to this helper — the rate limit — did not reach that proc.** The
- * next one (a new consent scope, a second revocation check, a different bucket)
- * misses it the same way. The durable fix is to move this helper's three procedures
- * and `getMyBuzzBalance` onto `authorizeBlockBridgeViewer`, whose `anonMessage`
- * option carries the one differing string. (`getMyBuzzBalance` also counts its
- * refusals, which the middleware does not do yet.) Until then the ladder exists in
- * three places and a gate added to one does not reach the others.
- *
- * What still separates these three bridges from that proc is SENSITIVITY, not the
- * scope and no longer the limiter: the full ledger / all-pool balances incl. creator
- * payout pools / per-model earnings, versus a spendable-balance read.
- *
- * Order (each step fail-closed, except where noted): `authorizeBlockBridgeToken`
- * — which is itself verify token → revocation (a Redis GET, fail-OPEN) → approved
- * status (an indexed `dbRead.appBlock.findUnique`, skipped for a `dev` token) —
- * then require the consent scope → self-bind the userId off `claims.sub` (never
- * client input) → App-Blocks kill-switch against the token subject → per-instance
- * rate limit, keyed on the stable `blockInstanceId`. Returns the self-bound
- * `userId` + verified `claims`.
- *
- * ⚠️ THE RATE LIMIT IS NOT FIRST, and this docblock claimed it ran "BEFORE any
- * db/ClickHouse work" until the revocation guard landed and made that false. Three
- * things are now spent before the limiter can refuse anything: a Redis GET and a replica
- * `findUnique` inside `authorizeBlockBridgeToken`, and then the full `SessionUser`
- * resolve in `assertAppBlocksEnabledForTokenUser` — a cached read that falls through to
- * an auth-hub fetch on a miss, i.e. the priciest of the three. The limiter cannot be
- * hoisted above any of them: it is keyed on `claims.blockInstanceId`, which does not
- * exist until the token is verified. What it still bounds is everything AFTER it — the
- * ClickHouse daily-compensation read and the buzz-service calls in the three procs
- * below, which are the expensive half. See `block-bridge-auth.service.ts` for why the
- * order was left as it is.
- *
- * The consent scope — not an authoring capability — is the authority here: the
- * author gate that used to follow the kill-switch is gone from every runtime
- * proc (see `assertViewerIsAppDeveloper`).
- */
-async function authorizeBlockBuzzRead(
-  blockToken: string
-): Promise<{ userId: number; claims: BlockTokenClaims }> {
-  const claims = await authorizeBlockBridgeToken(blockToken);
-  if (!claims.scopes.includes('buzz:read:self')) {
-    throw new TRPCError({ code: 'FORBIDDEN', message: 'block lacks buzz:read:self scope' });
-  }
-  const userId = parseSubjectUserId(claims.sub);
-  if (userId == null) {
-    throw new TRPCError({
-      code: 'UNAUTHORIZED',
-      message: 'buzz read requires an authenticated viewer',
-    });
-  }
-  await assertAppBlocksEnabledForTokenUser(userId);
-  // Per-instance rate limit (shared blocks limiter) — bounds a block hammering
-  // these private reads (esp. daily-compensation → ClickHouse) onto the origin.
-  // Runs before the buzz/ClickHouse service calls in the procs below, but AFTER
-  // the guard's own Redis GET + `appBlock.findUnique`. Fail-open on a redis incident.
-  const rate = await checkBlockCatalogRateLimit(claims.blockInstanceId);
-  if (!rate.allowed) {
-    throw new TRPCError({
-      code: 'TOO_MANY_REQUESTS',
-      message: 'Rate limit exceeded, please retry shortly.',
-    });
-  }
-  return { userId, claims };
-}
-
 /** What `authorizeBlockBridgeViewer` puts on `ctx.blockViewer`. */
 export type BlockBridgeViewer = {
   /** Verified claims, already narrowed by the consent strip. */
@@ -852,13 +767,19 @@ export type BlockBridgeViewerOptions = {
      * bucket from the calls under the procedure node.
      */
     check: (viewer: BlockBridgeViewer) => Promise<{ allowed: boolean }>;
+    /**
+     * Whether a refusal is added to the bridge rate-limit refusal counter: the labels to
+     * count it under, or `'uncounted'`. Required, so each procedure states which.
+     */
+    recordRefusalAs: { procedure: string; bucket: AppBlockRateLimitBucket } | 'uncounted';
   };
 };
 
 /**
  * The authorization ladder for a bridge procedure that acts for the token's own viewer:
  * authorize the token, require the consent scope, refuse an anonymous subject, apply
- * the App Blocks kill-switch to that subject, then charge the procedure's rate limit.
+ * the App Blocks kill-switch to that subject, then charge the procedure's rate limit —
+ * counting a refusal only where the procedure asks for that.
  *
  * Typed to take `{ blockToken: string }` as its input, so it only composes after an
  * `.input()` that declares one.
@@ -885,6 +806,10 @@ export function authorizeBlockBridgeViewer(
     const blockViewer = { claims, userId };
     const rate = await options.rateLimit.check(blockViewer);
     if (!rate.allowed) {
+      const { recordRefusalAs } = options.rateLimit;
+      if (recordRefusalAs !== 'uncounted') {
+        recordBlockBridgeRateLimitRefusal(recordRefusalAs.procedure, recordRefusalAs.bucket);
+      }
       throw new TRPCError({
         code: 'TOO_MANY_REQUESTS',
         message: 'Rate limit exceeded, please retry shortly.',
@@ -7660,8 +7585,7 @@ export const blocksRouter = router({
    * NOTE: `buzz:read:self` is page-safe (PAGE_FORBIDDEN_SCOPES is empty — see
    * slot-registry.ts), and the richer self-reads (ledger / all-pool balances /
    * per-model earnings) live on the sibling `getMyBuzz{Transactions,Accounts}` /
-   * `getMyDailyCompensation` bridges, which require that scope via
-   * `authorizeBlockBuzzRead`.
+   * `getMyDailyCompensation` bridges, which require that scope too.
    *
    * 🔴 THIS IS NO LONGER "the scope-free convenience path", AND THE CHANGE IS THE
    * POINT. It used to carry no scope check at all, relying on
@@ -7697,47 +7621,20 @@ export const blocksRouter = router({
     // is replayable within its TTL. Every block-token-authed proc in this router
     // is a mutation for exactly this reason (token in the POST body). Keep it so.
     .input(z.object({ blockToken: z.string().min(1) }))
-    .mutation(async ({ input }) => {
-      const claims = await authorizeBlockBridgeToken(input.blockToken);
-      // CONSENT gate — the user's own grant is what authorizes this read now that
-      // the author capability no longer gates the runtime. Checked BEFORE the
-      // subject is resolved, matching authorizeBlockBuzzRead's order.
-      if (!claims.scopes.includes('buzz:read:self')) {
-        throw new TRPCError({ code: 'FORBIDDEN', message: 'block lacks buzz:read:self scope' });
-      }
-      // Derive the user from the SELF-BOUND token subject, never client input.
-      const userId = parseSubjectUserId(claims.sub);
-      if (userId == null) {
-        throw new TRPCError({
-          code: 'UNAUTHORIZED',
-          message: 'buzz balance requires an authenticated viewer',
-        });
-      }
-      // The App-Blocks kill-switch, evaluated against the TOKEN subject. (The
-      // author capability is deliberately NOT checked — see the docblock.)
-      await assertAppBlocksEnabledForTokenUser(userId);
-      // 🔴 RATE LIMIT — the CATALOG bucket, weight 1, per `blockInstanceId`. This
-      // closes an asymmetry the helper's own docblock describes: the three sibling
-      // buzz self-reads (`getMyBuzzAccounts`, `getMyBuzzTransactions`,
-      // `getMyDailyCompensation`) reach this limiter through
-      // `authorizeBlockBuzzRead`, and this procedure is the one that does not go
-      // through the helper — so it was the single Buzz read on the bridge with no
-      // ceiling at all. The helper's note that these three carry the limit because
-      // they are the more SENSITIVE reads is about which data is exposed; it is
-      // not an argument about origin COST, which is what a limiter bounds, and a
-      // balance read still costs a buzz-service round trip per call.
-      //
-      // It stays inline rather than moving this procedure onto the helper: the
-      // helper's error copy differs, and routing through it would change this
-      // procedure's rejection messages. Fail-open on a redis incident.
-      const rate = await checkBlockCatalogRateLimit(claims.blockInstanceId);
-      if (!rate.allowed) {
-        recordBlockBridgeRateLimitRefusal('getMyBuzzBalance', 'catalog');
-        throw new TRPCError({
-          code: 'TOO_MANY_REQUESTS',
-          message: 'Rate limit exceeded, please retry shortly.',
-        });
-      }
+    .use(
+      authorizeBlockBridgeViewer({
+        scope: 'buzz:read:self',
+        anonMessage: 'buzz balance requires an authenticated viewer',
+        rateLimit: {
+          // A balance read costs a buzz-service round trip per call. Fail-open on a redis
+          // incident.
+          check: ({ claims }) => checkBlockCatalogRateLimit(claims.blockInstanceId),
+          recordRefusalAs: { procedure: 'getMyBuzzBalance', bucket: 'catalog' },
+        },
+      })
+    )
+    .mutation(async ({ ctx }) => {
+      const { userId } = ctx.blockViewer;
       // getUserBuzzAccounts returns every spend type; project to just the three
       // spendable types the UI needs (omit red / creator-program / cash).
       const accounts = await getUserBuzzAccounts({ userId });
@@ -7754,7 +7651,7 @@ export const blocksRouter = router({
    * pool per call. MUTATION (not query) for the same reason as getMyBuzzBalance:
    * a .query leaks the bearer block token into the ?input= URL / logs / Referer.
    *
-   * CONSENT: requires the `buzz:read:self` scope (see authorizeBlockBuzzRead) —
+   * CONSENT: requires the `buzz:read:self` scope (see authorizeBlockBridgeViewer) —
    * the ledger is more sensitive than the spendable-balance convenience read.
    *
    * Response rows carry the SECURITY-HARDENED projection
@@ -7766,8 +7663,18 @@ export const blocksRouter = router({
    */
   getMyBuzzTransactions: publicProcedure
     .input(getMyBuzzTransactionsInput)
-    .mutation(async ({ input }) => {
-      const { userId } = await authorizeBlockBuzzRead(input.blockToken);
+    .use(
+      authorizeBlockBridgeViewer({
+        scope: 'buzz:read:self',
+        anonMessage: 'buzz read requires an authenticated viewer',
+        rateLimit: {
+          check: ({ claims }) => checkBlockCatalogRateLimit(claims.blockInstanceId),
+          recordRefusalAs: 'uncounted',
+        },
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const { userId } = ctx.blockViewer;
       const { accountType, type, cursor, start, end, limit } = input;
       const { cursor: nextCursor, transactions } = await getUserBuzzTransactions({
         accountId: userId, // SELF-BOUND — never client input.
@@ -7787,26 +7694,49 @@ export const blocksRouter = router({
    * spendable types PLUS the creator payout pools the spendable-only
    * getMyBuzzBalance omits). MUTATION + `buzz:read:self` consent, self-bound.
    */
-  getMyBuzzAccounts: publicProcedure.input(getMyBuzzAccountsInput).mutation(async ({ input }) => {
-    const { userId } = await authorizeBlockBuzzRead(input.blockToken);
-    const accounts = await getUserBuzzAccount({
-      accountId: userId, // SELF-BOUND — never client input.
-      accountTypes: [...blockBuzzAccountTypes],
-    });
-    return { accounts: accounts.map(({ accountType, balance }) => ({ accountType, balance })) };
-  }),
+  getMyBuzzAccounts: publicProcedure
+    .input(getMyBuzzAccountsInput)
+    .use(
+      authorizeBlockBridgeViewer({
+        scope: 'buzz:read:self',
+        anonMessage: 'buzz read requires an authenticated viewer',
+        rateLimit: {
+          check: ({ claims }) => checkBlockCatalogRateLimit(claims.blockInstanceId),
+          recordRefusalAs: 'uncounted',
+        },
+      })
+    )
+    .mutation(async ({ ctx }) => {
+      const { userId } = ctx.blockViewer;
+      const accounts = await getUserBuzzAccount({
+        accountId: userId, // SELF-BOUND — never client input.
+        accountTypes: [...blockBuzzAccountTypes],
+      });
+      return { accounts: accounts.map(({ accountType, balance }) => ({ accountType, balance })) };
+    }),
 
   /**
    * HOST-MEDIATED per-modelVersion generation-compensation read for the
    * token-bound viewer (the month containing `date`). MUTATION + `buzz:read:self`
-   * consent, self-bound. Fans out to Postgres + ClickHouse — the rate limit in
-   * authorizeBlockBuzzRead runs first. Cash amounts stay in tenths-of-a-penny as
-   * the service returns them.
+   * consent, self-bound. Fans out to Postgres + ClickHouse — the middleware's rate
+   * limit runs first. Cash amounts stay in tenths-of-a-penny as the service returns
+   * them.
    */
   getMyDailyCompensation: publicProcedure
     .input(getMyDailyCompensationInput)
-    .mutation(async ({ input }) => {
-      const { userId } = await authorizeBlockBuzzRead(input.blockToken);
+    .use(
+      authorizeBlockBridgeViewer({
+        scope: 'buzz:read:self',
+        anonMessage: 'buzz read requires an authenticated viewer',
+        rateLimit: {
+          // Bounds the Postgres + ClickHouse fan-out below. Fail-open on a redis incident.
+          check: ({ claims }) => checkBlockCatalogRateLimit(claims.blockInstanceId),
+          recordRefusalAs: 'uncounted',
+        },
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const { userId } = ctx.blockViewer;
       return getDailyCompensationRewardByUser({
         userId, // SELF-BOUND — never client input.
         date: input.date,
@@ -7943,6 +7873,7 @@ export const blocksRouter = router({
           // Bounds a block hammering the PRIMARY: the ban/mute lookup below reads dbWrite.
           // Fail-open on a redis incident.
           check: ({ claims }) => checkBlockCatalogRateLimit(claims.blockInstanceId),
+          recordRefusalAs: 'uncounted',
         },
       })
     )

@@ -165,19 +165,19 @@ const RATE_LIMIT_DECISION_LEDGER: Readonly<Record<string, Decision>> = Object.fr
   },
   getMyBuzzAccounts: {
     buckets: ['catalog'],
-    why: 'Reaches the bucket through authorizeBlockBuzzRead; pre-existing.',
+    why: 'Charged in the rateLimit.check it hands authorizeBlockBridgeViewer; the bucket is pre-existing.',
   },
   getMyBuzzBalance: {
     buckets: ['catalog'],
-    why: '#569 — the one Buzz read that does NOT go through authorizeBlockBuzzRead, so it was the only unlimited one. Charged inline (the helper’s error copy differs).',
+    why: '#569 — it was the one unlimited Buzz read. Charged in the rateLimit.check it hands authorizeBlockBridgeViewer, and the one Buzz read whose refusals are counted.',
   },
   getMyBuzzTransactions: {
     buckets: ['catalog'],
-    why: 'Reaches the bucket through authorizeBlockBuzzRead; pre-existing.',
+    why: 'Charged in the rateLimit.check it hands authorizeBlockBridgeViewer; the bucket is pre-existing.',
   },
   getMyDailyCompensation: {
     buckets: ['catalog'],
-    why: 'Reaches the bucket through authorizeBlockBuzzRead; pre-existing. The ClickHouse read behind it is the expensive half.',
+    why: 'Charged in the rateLimit.check it hands authorizeBlockBridgeViewer; the bucket is pre-existing. The ClickHouse read behind it is the expensive half.',
   },
   getMyViewer: {
     buckets: ['catalog'],
@@ -266,6 +266,14 @@ const RATE_LIMIT_DECISION_LEDGER: Readonly<Record<string, Decision>> = Object.fr
  * record that they were seen.**
  */
 
+/**
+ * `getMyBuzzBalance`'s limiter, as the router spells it inside the middleware options. The
+ * line after it is unique to that procedure, which is what scopes the two controls below.
+ */
+const GET_MY_BUZZ_BALANCE_COUNTER =
+  "\n          recordRefusalAs: { procedure: 'getMyBuzzBalance', bucket: 'catalog' },";
+const GET_MY_BUZZ_BALANCE_LIMITER = `check: ({ claims }) => checkBlockCatalogRateLimit(claims.blockInstanceId),${GET_MY_BUZZ_BALANCE_COUNTER}`;
+
 /** `{ proc name → buckets it charges }` for every procedure that reaches the bridge guard. */
 function bridgeProcBuckets(text: string): Map<string, string[]> {
   const source = parse(text);
@@ -318,7 +326,8 @@ describe('the bridge rate-limit scan can actually see what it claims to', () => 
   });
 
   it('POSITIVE CONTROL — a bucket that disappears is detected, not absorbed', () => {
-    // The other direction: an entry claiming `catalog` whose limiter call was removed. Without
+    // The other direction: an entry claiming `catalog` whose limiter call was removed (here the
+    // `rateLimit.check` it hands the middleware is replaced by one that charges nothing). Without
     // this, `buckets` would be a list nobody checks and the ledger would decay into prose.
     const mutated = read(ROUTER).replace(
       // ⚠️ AN EXACT LITERAL FROM THE ROUTER, AND THE COUPLING IS DELIBERATE. It goes stale the
@@ -326,8 +335,8 @@ describe('the bridge rate-limit scan can actually see what it claims to', () => 
       // `expect(mutated).not.toEqual(read(ROUTER))` line below turns that into a LOUD failure
       // rather than a mutation that silently applies to nothing and scores the guard GREEN for
       // free. A stale mutation target is the classic way a control stops controlling.
-      "const rate = await checkBlockCatalogRateLimit(claims.blockInstanceId);\n      if (!rate.allowed) {\n        recordBlockBridgeRateLimitRefusal('getMyBuzzBalance', 'catalog');\n        throw new TRPCError({\n          code: 'TOO_MANY_REQUESTS',\n          message: 'Rate limit exceeded, please retry shortly.',\n        });\n      }\n      // getUserBuzzAccounts returns every spend type",
-      '// getUserBuzzAccounts returns every spend type'
+      GET_MY_BUZZ_BALANCE_LIMITER,
+      `check: async () => ({ allowed: true }),${GET_MY_BUZZ_BALANCE_COUNTER}`
     );
     expect(mutated).not.toEqual(read(ROUTER));
 
@@ -344,11 +353,13 @@ describe('the bridge rate-limit scan can actually see what it claims to', () => 
       // `expect(mutated).not.toEqual(read(ROUTER))` line below turns that into a LOUD failure
       // rather than a mutation that silently applies to nothing and scores the guard GREEN for
       // free. A stale mutation target is the classic way a control stops controlling.
-      "const rate = await checkBlockCatalogRateLimit(claims.blockInstanceId);\n      if (!rate.allowed) {\n        recordBlockBridgeRateLimitRefusal('getMyBuzzBalance', 'catalog');\n        throw new TRPCError({\n          code: 'TOO_MANY_REQUESTS',\n          message: 'Rate limit exceeded, please retry shortly.',\n        });\n      }\n      // getUserBuzzAccounts returns every spend type",
-      `// const rate = await checkBlockCatalogRateLimit(claims.blockInstanceId);
-      const note = 'checkBlockCatalogRateLimit(claims.blockInstanceId)';
-      void note;
-      // getUserBuzzAccounts returns every spend type`
+      GET_MY_BUZZ_BALANCE_LIMITER,
+      `// check: ({ claims }) => checkBlockCatalogRateLimit(claims.blockInstanceId),
+          check: async () => {
+            const note = 'checkBlockCatalogRateLimit(claims.blockInstanceId)';
+            void note;
+            return { allowed: true };
+          },${GET_MY_BUZZ_BALANCE_COUNTER}`
     );
     expect(mutated).not.toEqual(read(ROUTER));
 
@@ -363,9 +374,22 @@ describe('the bridge rate-limit scan can actually see what it claims to', () => 
   });
 
   it('sees a bucket reached THROUGH a router-local helper, not only a direct call', () => {
-    // The three buzz self-reads charge the catalog bucket via `authorizeBlockBuzzRead` and never
-    // name a limiter themselves. A one-level-shallow walk would score all three as unlimited.
-    for (const proc of ['getMyBuzzAccounts', 'getMyBuzzTransactions', 'getMyDailyCompensation']) {
+    // The quote-grant procedures charge the catalog bucket inside `previewQuoteGrantFor` /
+    // `consentQuoteGrantFor` and never name a limiter themselves. A one-level-shallow walk would
+    // score all four as unlimited.
+    const procedures = routerProcedures(parse(read(ROUTER)));
+    for (const proc of [
+      'consentQuoteGrant',
+      'consentTrainingQuote',
+      'previewQuoteGrant',
+      'previewTrainingQuote',
+    ]) {
+      // With no helpers to follow, the walk sees the procedure's own calls only.
+      const own = reachable(procedures.get(proc) as never, new Map());
+      expect(
+        [...own].filter((fn) => fn in BUCKET_BY_FN),
+        `${proc} names a limiter itself`
+      ).toEqual([]);
       expect(derived.get(proc), `${proc} should reach the catalog bucket via its helper`).toEqual([
         'catalog',
       ]);

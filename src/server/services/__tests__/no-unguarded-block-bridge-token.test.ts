@@ -173,14 +173,9 @@ const APPROVAL_PREDICATE = 'src/server/services/blocks/block-approval.service.ts
 const BLOCK_SCOPE_CONSTANTS = 'src/shared/constants/block-scope.constants.ts';
 
 /**
- * The bridge call sites, by owning procedure. `authorizeBlockBuzzRead` is the router's
- * own buzz self-read helper — it is a call SITE like any other, and the three procs behind
- * it (`getMyBuzzAccounts`, `getMyBuzzTransactions`, `getMyDailyCompensation`) reach the
- * guard through it, which is why they appear in the population ledger below but not here.
- *
- * ⚠️ Named rather than wildcarded: `getMyBuzzBalance` is a `getMyBuzz*` proc that does NOT
- * go through the helper — it calls the guard directly, which is why it is listed here in
- * its own right. A `getMyBuzz*` shorthand gets that exactly backwards in both directions.
+ * The bridge call sites, by owning procedure or router-local helper. A helper is a call
+ * SITE like any other, and the procedures behind it reach the guard through it, which is
+ * why they appear in the population ledger below but not here.
  */
 const GUARD_CALL_SITE_LEDGER = [
   // The router's tRPC middleware FACTORY for the viewer-bound bridge procedures. Calling it
@@ -188,11 +183,10 @@ const GUARD_CALL_SITE_LEDGER = [
   // procedure calls it. That the result is applied in the procedure's own chain is pinned by
   // `no-misapplied-block-bridge-middleware.test.ts`.
   'authorizeBlockBridgeViewer',
-  'authorizeBlockBuzzRead',
   // The router's own post-bridge preamble helper: `previewPostFromApp` and
   // `createPostFromApp` BOTH reach the guard through it (and through nothing
   // else), which is why they appear in the population ledger below but not here
-  // — the same shape as `authorizeBlockBuzzRead`. It is a router-local
+  // — the same shape as the consent preamble below. It is a router-local
   // `async function` on purpose: reachability is computed textually INSIDE
   // `blocks.router.ts`, so a preamble living in an imported service would read as
   // UNGUARDED.
@@ -208,7 +202,6 @@ const GUARD_CALL_SITE_LEDGER = [
   'estimateWorkflow',
   'estimateWorkflowBatch',
   'getImagesByIds',
-  'getMyBuzzBalance',
   'listMyWorkflows',
   'pollWorkflow',
   'prepareTrainingDataset',
@@ -1584,7 +1577,7 @@ function bridgeInputProcs(
 
 /**
  * Module-scope helpers in `source` that reach the guard, to a fixpoint — so a proc
- * delegating to a helper that delegates to `authorizeBlockBuzzRead` still counts.
+ * delegating to a helper that delegates to another guarded helper still counts.
  *
  * 🔴 READS `chunk.code`, NOT `chunk.text` (clawgate #589, finding 2). This and
  * `procsReachingGuard` below decide the file's CENTRAL question — does a proc that takes a

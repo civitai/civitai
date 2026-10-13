@@ -64,9 +64,9 @@ const spliceIntoHandler = (text: string, before: string, after = '') =>
 describe('the bridge auth-mechanism scan can actually see what it claims to', () => {
   it('POSITIVE CONTROL — reads both mechanisms off the real router, a helper hop included', () => {
     expect(derived.get('getMyViewer')).toMatchObject({ middlewareUses: 1, inline: false });
-    expect(derived.get('getMyBuzzBalance')).toMatchObject({ middlewareUses: 0, inline: true });
-    // Reaches the guard through `authorizeBlockBuzzRead` and never names it.
-    expect(derived.get('getMyBuzzAccounts')).toMatchObject({ middlewareUses: 0, inline: true });
+    expect(derived.get('cancelWorkflow')).toMatchObject({ middlewareUses: 0, inline: true });
+    // Reaches the guard through `authorizeBlockPostRequest` and never names it.
+    expect(derived.get('previewPostFromApp')).toMatchObject({ middlewareUses: 0, inline: true });
   });
 
   it('a procedure that DROPS the middleware leaves the population — it has neither', () => {
@@ -210,7 +210,14 @@ describe('bridge procedures authorize by one mechanism, and the middleware in on
 
   it('a middleware procedure uses it once, as the last link, after `.input()`; its handler reads the viewer it was given, not the token or the session user', () => {
     const users = [...derived].filter(([, auth]) => auth.middlewareUses > 0);
-    expect(users.map(([name]) => name)).toContain('getMyViewer');
+    // A literal set: a procedure moving onto the middleware, or off it, changes this line.
+    expect(users.map(([name]) => name).sort()).toEqual([
+      'getMyBuzzAccounts',
+      'getMyBuzzBalance',
+      'getMyBuzzTransactions',
+      'getMyDailyCompensation',
+      'getMyViewer',
+    ]);
     for (const [name, auth] of users) {
       expect(auth, name).toEqual({
         middlewareUses: 1,

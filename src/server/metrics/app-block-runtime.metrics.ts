@@ -167,7 +167,9 @@ export type AppBlockEndpoint =
   // `getMyBuzzBalance` (`catalog`). So **10 of 14 rate-limited procedures are
   // silent, 8 of the 11 on `catalog`**: both app-subqueue procs, plus
   // `previewPostFromApp`, `getImagesByIds`, `getMyViewer` and the three buzz
-  // self-reads that reach the limiter through `authorizeBlockBuzzRead`.
+  // self-reads `getMyBuzzAccounts`, `getMyBuzzTransactions` and
+  // `getMyDailyCompensation` — the last four state it as `recordRefusalAs:
+  // 'uncounted'` on `authorizeBlockBridgeViewer`.
   // `recordBlockBridgeRateLimitRefusal`'s OWN docblock says it is "called from the
   // refusal branch of each limiter site", which is a third in-tree claim this
   // count contradicts — 4 of 14, not each.
