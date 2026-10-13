@@ -159,6 +159,22 @@ export async function acceptImage({
   }
 }
 
+/**
+ * True when the image already carries this app's moderation block. A block from anywhere else (an
+ * account-deletion grace block, an automated reason) is weaker and reversible, so it does not count.
+ */
+export async function isModerationBlocked(imageId: number): Promise<boolean> {
+  const row = await dbWrite
+    .selectFrom('Image')
+    .select('id')
+    .where('id', '=', imageId)
+    .where('ingestion', '=', 'Blocked')
+    .where('blockedFor', '=', BLOCKED_REASON_MODERATED)
+    .where(sql<boolean>`("metadata" -> ${ACCOUNT_DELETION_PRIOR_INGESTION_KEY}::text) IS NULL`)
+    .executeTakeFirst();
+  return !!row;
+}
+
 export async function blockImage({
   imageId,
   userId,

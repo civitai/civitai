@@ -22,10 +22,10 @@ SELECT
   i."unanimous",
   i."decidedAt",
   i."actionedAt",
-  i."actionResult",
   f."workflowIds",
   f."flaggerVersions",
-  f."flags"
+  f."flags",
+  i."actionResult"
 FROM "ScanLabelItem" i
 JOIN "Image" img ON img."id" = i."imageId"
 CROSS JOIN LATERAL (

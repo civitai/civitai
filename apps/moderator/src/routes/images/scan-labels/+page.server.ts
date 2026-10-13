@@ -2,7 +2,7 @@ import { fail } from '@sveltejs/kit';
 import { z } from 'zod';
 import type { Actions, PageServerLoad } from './$types';
 import { parseForm, parseQuery } from '$lib/server/query';
-import { blockImage } from '$lib/server/image-moderation.service';
+import { blockImage, isModerationBlocked } from '$lib/server/image-moderation.service';
 import { getActorMeta } from '$lib/server/request-meta';
 import {
   applyMajorityBlocks,
@@ -53,7 +53,7 @@ export const actions: Actions = {
     // has already landed.
     await applyMajorityBlocks(
       { requester: locals.user.id, ...getActorMeta(event) },
-      blockImage
+      { block: blockImage, isModerationBlocked }
     ).catch((e) => console.error('scan label block sweep failed', e));
     return { voted: true };
   },

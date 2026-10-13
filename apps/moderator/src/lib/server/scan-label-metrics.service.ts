@@ -214,14 +214,16 @@ export async function getActionHealth(db: Kysely<DB> = dbRead) {
   const row = await db
     .selectFrom('ScanLabelItem')
     .select([
-      sql<string>`count(*) FILTER (WHERE "actionResult" = 'blocked')`.as('blocked'),
+      sql<string>`count(*) FILTER (WHERE "actionResult" = 'blocked' AND "actionedAt" IS NOT NULL)`.as(
+        'blocked'
+      ),
       sql<string>`count(*) FILTER (WHERE "actionResult" IN ('already-blocked', 'image-missing'))`.as(
         'skipped'
       ),
-      sql<string>`count(*) FILTER (WHERE "blockVotes" >= ${BLOCK_MAJORITY} AND "actionedAt" IS NULL)`.as(
+      sql<string>`count(*) FILTER (WHERE "blockVotes" >= ${BLOCK_MAJORITY} AND "actionedAt" IS NULL AND "status" <> 'void')`.as(
         'pending'
       ),
-      sql<string>`count(*) FILTER (WHERE "actionedAt" IS NULL AND "actionError" IS NOT NULL)`.as(
+      sql<string>`count(*) FILTER (WHERE "actionedAt" IS NULL AND "actionError" IS NOT NULL AND "status" <> 'void')`.as(
         'failing'
       ),
     ])

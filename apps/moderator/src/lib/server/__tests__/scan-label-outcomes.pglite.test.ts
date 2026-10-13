@@ -24,6 +24,10 @@ vi.mock('../db', () => ({
 }));
 
 const { ACTION_CLAIM_MS, applyMajorityBlocks, castVote } = await import('../scan-label.service');
+const { isModerationBlocked } = await import('../image-moderation.service');
+
+const noop = () => vi.fn(async (_args: unknown) => undefined);
+const deps = (block: (args: never) => Promise<void> = noop()) => ({ block, isModerationBlocked });
 const { getQuotaReport, setQuota } = await import('../scan-label-metrics.service');
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -44,7 +48,7 @@ beforeEach(async () => {
     CREATE TABLE "User" ("id" INTEGER PRIMARY KEY, "username" TEXT);
     CREATE TABLE "Image" (
       "id" INTEGER PRIMARY KEY, "url" TEXT NOT NULL DEFAULT 'u', "pHash" BIGINT,
-      "ingestion" TEXT NOT NULL DEFAULT 'Scanned'
+      "ingestion" TEXT NOT NULL DEFAULT 'Scanned', "blockedFor" TEXT, "metadata" JSONB
     );
   `);
   await pg.exec(migration('20261022130000_scan_label_queue'));
@@ -81,11 +85,15 @@ describe('applyMajorityBlocks', () => {
     const it1 = await seedItem(1);
     const block = vi.fn(async () => undefined);
     await vote(it1, 11, true, '2026-10-13T10:00:00Z');
-    expect(await applyMajorityBlocks({}, block)).toEqual({ blocked: [], skipped: [], failed: [] });
+    expect(await applyMajorityBlocks({}, deps(block))).toEqual({
+      blocked: [],
+      skipped: [],
+      failed: [],
+    });
     await vote(it1, 12, false, '2026-10-13T10:01:00Z');
     await vote(it1, 13, true, '2026-10-13T10:02:00Z');
 
-    expect(await applyMajorityBlocks({ requester: 13, ip: '1.2.3.4' }, block)).toEqual({
+    expect(await applyMajorityBlocks({ requester: 13, ip: '1.2.3.4' }, deps(block))).toEqual({
       blocked: [it1],
       skipped: [],
       failed: [],
@@ -103,17 +111,59 @@ describe('applyMajorityBlocks', () => {
 
   it('does not block an image that is already blocked, so its owner is not notified twice', async () => {
     const it1 = await seedItem(1);
-    await pg.query(`UPDATE "Image" SET "ingestion" = 'Blocked' WHERE id = 1`);
+    await pg.query(
+      `UPDATE "Image" SET "ingestion" = 'Blocked', "blockedFor" = 'moderated' WHERE id = 1`
+    );
     await vote(it1, 11, true);
     await vote(it1, 12, true);
     const block = vi.fn(async () => undefined);
-    expect(await applyMajorityBlocks({}, block)).toEqual({
+    expect(await applyMajorityBlocks({}, deps(block))).toEqual({
       blocked: [],
       skipped: [{ itemId: it1, result: 'already-blocked' }],
       failed: [],
     });
     expect(block).not.toHaveBeenCalled();
     expect(await item(it1)).toMatchObject({ actionResult: 'already-blocked' });
+  });
+
+  it('still blocks an image held only by a weaker block', async () => {
+    const graceBlocked = await seedItem(1);
+    const otherReason = await seedItem(2);
+    await pg.query(
+      `UPDATE "Image" SET "ingestion" = 'Blocked', "blockedFor" = 'moderated',
+         "metadata" = '{"accountDeletionPriorIngestion": "Scanned"}' WHERE id = 1`
+    );
+    await pg.query(
+      `UPDATE "Image" SET "ingestion" = 'Blocked', "blockedFor" = 'other' WHERE id = 2`
+    );
+    for (const it of [graceBlocked, otherReason]) {
+      await vote(it, 11, true);
+      await vote(it, 12, true);
+    }
+    const block = noop();
+    expect((await applyMajorityBlocks({}, deps(block))).blocked).toEqual([
+      graceBlocked,
+      otherReason,
+    ]);
+    expect(block).toHaveBeenCalledTimes(2);
+  });
+
+  it('retries its own half-finished block in full rather than taking it for someone else’s', async () => {
+    const it1 = await seedItem(1);
+    await vote(it1, 11, true);
+    await vote(it1, 12, true);
+    // The image row is blocked, then a side effect throws.
+    const halfway = vi.fn(async () => {
+      await pg.query(
+        `UPDATE "Image" SET "ingestion" = 'Blocked', "blockedFor" = 'moderated' WHERE id = 1`
+      );
+      throw new Error('mod activity insert failed');
+    });
+    expect((await applyMajorityBlocks({}, deps(halfway))).failed).toHaveLength(1);
+    const block = noop();
+    expect((await applyMajorityBlocks({}, deps(block))).blocked).toEqual([it1]);
+    expect(block).toHaveBeenCalledTimes(1);
+    expect(await item(it1)).toMatchObject({ actionResult: 'blocked' });
   });
 
   it('takes over a claim left by a crashed sweep only once it is stale', async () => {
@@ -126,9 +176,17 @@ describe('applyMajorityBlocks', () => {
       it1,
     ]);
     const block = vi.fn(async () => undefined);
-    await applyMajorityBlocks({}, block, new Date(crashedAt.getTime() + ACTION_CLAIM_MS - 1));
+    await applyMajorityBlocks(
+      {},
+      deps(block),
+      () => new Date(crashedAt.getTime() + ACTION_CLAIM_MS - 1)
+    );
     expect(block).not.toHaveBeenCalled();
-    await applyMajorityBlocks({}, block, new Date(crashedAt.getTime() + ACTION_CLAIM_MS + 1));
+    await applyMajorityBlocks(
+      {},
+      deps(block),
+      () => new Date(crashedAt.getTime() + ACTION_CLAIM_MS + 1)
+    );
     expect(block).toHaveBeenCalledTimes(1);
   });
 
@@ -138,7 +196,7 @@ describe('applyMajorityBlocks', () => {
     await vote(it1, 12, true);
     await pg.query(`UPDATE "ScanLabelItem" SET status = 'void' WHERE id = $1`, [it1]);
     const block = vi.fn(async () => undefined);
-    await applyMajorityBlocks({}, block);
+    await applyMajorityBlocks({}, deps(block));
     expect(block).not.toHaveBeenCalled();
   });
 
@@ -147,9 +205,9 @@ describe('applyMajorityBlocks', () => {
     await vote(it1, 11, true);
     await vote(it1, 12, true);
     const block = vi.fn(async () => undefined);
-    await applyMajorityBlocks({}, block);
+    await applyMajorityBlocks({}, deps(block));
     await vote(it1, 13, true);
-    await applyMajorityBlocks({}, block);
+    await applyMajorityBlocks({}, deps(block));
     expect(block).toHaveBeenCalledTimes(1);
   });
 
@@ -158,7 +216,7 @@ describe('applyMajorityBlocks', () => {
     await vote(it1, 11, true);
     await vote(it1, 12, true);
     const block = vi.fn(async () => undefined);
-    await Promise.all([applyMajorityBlocks({}, block), applyMajorityBlocks({}, block)]);
+    await Promise.all([applyMajorityBlocks({}, deps(block)), applyMajorityBlocks({}, deps(block))]);
     expect(block).toHaveBeenCalledTimes(1);
   });
 
@@ -168,7 +226,7 @@ describe('applyMajorityBlocks', () => {
     await vote(it1, 12, false);
     await vote(it1, 13, false);
     const block = vi.fn(async () => undefined);
-    await applyMajorityBlocks({}, block);
+    await applyMajorityBlocks({}, deps(block));
     expect(block).not.toHaveBeenCalled();
   });
 
@@ -179,7 +237,7 @@ describe('applyMajorityBlocks', () => {
     const failing = vi.fn(async () => {
       throw new Error('notifications down');
     });
-    expect(await applyMajorityBlocks({}, failing)).toEqual({
+    expect(await applyMajorityBlocks({}, deps(failing))).toEqual({
       blocked: [],
       skipped: [],
       failed: [{ itemId: it1, error: 'notifications down' }],
@@ -191,7 +249,7 @@ describe('applyMajorityBlocks', () => {
     });
 
     const block = vi.fn(async () => undefined);
-    expect((await applyMajorityBlocks({}, block)).blocked).toEqual([it1]);
+    expect((await applyMajorityBlocks({}, deps(block))).blocked).toEqual([it1]);
     expect(await item(it1)).toMatchObject({ actionError: null });
   });
 
@@ -200,7 +258,7 @@ describe('applyMajorityBlocks', () => {
     await vote(it1, 11, true);
     await vote(it1, 12, true);
     const block = vi.fn(async () => undefined);
-    await applyMajorityBlocks({ requester: 99, ip: '9.9.9.9', userAgent: 'x' }, block);
+    await applyMajorityBlocks({ requester: 99, ip: '9.9.9.9', userAgent: 'x' }, deps(block));
     expect(block).toHaveBeenCalledExactlyOnceWith({
       imageId: 1,
       userId: 12,

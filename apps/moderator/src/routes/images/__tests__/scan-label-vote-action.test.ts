@@ -2,14 +2,15 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 /** A vote runs the majority-block sweep with the real block path, and a refused vote does not. */
 
-const { castVote, applyMajorityBlocks, blockImage } = vi.hoisted(() => ({
+const { castVote, applyMajorityBlocks, blockImage, isModerationBlocked } = vi.hoisted(() => ({
   castVote: vi.fn(),
   applyMajorityBlocks: vi.fn(),
   blockImage: vi.fn(),
+  isModerationBlocked: vi.fn(),
 }));
 
 vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: {} }));
-vi.mock('$lib/server/image-moderation.service', () => ({ blockImage }));
+vi.mock('$lib/server/image-moderation.service', () => ({ blockImage, isModerationBlocked }));
 vi.mock('$lib/server/scan-label.service', () => ({
   castVote,
   applyMajorityBlocks,
@@ -40,7 +41,7 @@ beforeEach(() => {
 });
 
 describe('vote action', () => {
-  it('runs the sweep with blockImage after a recorded vote', async () => {
+  it('runs the sweep with the real block path after a recorded vote', async () => {
     castVote.mockResolvedValue({
       ok: true,
       votes: 2,
@@ -54,7 +55,7 @@ describe('vote action', () => {
     expect(castVote).toHaveBeenCalledWith({ itemId: 5, userId: 7, block: true, msOnItem: 900 });
     expect(applyMajorityBlocks).toHaveBeenCalledExactlyOnceWith(
       { requester: 7, ip: '1.2.3.4', userAgent: 'ua' },
-      blockImage
+      { block: blockImage, isModerationBlocked }
     );
   });
 
