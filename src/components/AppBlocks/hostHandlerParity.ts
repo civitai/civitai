@@ -58,8 +58,9 @@ export type HostFile = 'IframeHost.tsx' | 'PageBlockHost.tsx' | 'InlineHost.tsx'
  * gate below is intentionally ONE-DIRECTIONAL: every PUBLISHED SDK type must be
  * an INVENTORY key, but INVENTORY may carry extra ahead-of-published keys.
  *
- * As of the installed `@civitai/app-sdk@0.65.1` NO key is ahead: the published
- * union and this inventory hold the same 50 types. The gate reads the INSTALLED
+ * As of the installed `@civitai/app-sdk@0.65.1` ONE key is ahead:
+ * `RUN_CONFIRMED_STEP`. The published union's 50 types are all inventory keys.
+ * The gate reads the INSTALLED
  * dist, so it is only as current as the `@civitai/app-sdk` range in
  * `package.json` — a caret on a 0.x version admits patch releases only, and
  * every SDK minor needs an explicit bump before the gate can see its messages.
@@ -688,7 +689,7 @@ export const INVENTORY = {
   },
   // Run ONE confirmed pass-through step whose fixed price exceeds the per-call budget —
   // see `runConfirmedStepGate.ts`. REQUEST-style; ahead of the published SDK dist union
-  // (the SDK pair lands in the SDK repo), exactly like RUN_TRAINING.
+  // (the SDK pair lands in the SDK repo).
   RUN_CONFIRMED_STEP: {
     request: true,
     reply: 'CONFIRMED_STEP_RESULT',
@@ -725,7 +726,8 @@ type SdkBlockToParentType = BlockToParentMessageType;
 // graph (under `src`, not excluded; not a `*.test.ts` corner case).
 //
 // ONE-DIRECTIONAL by design: every PUBLISHED SDK type must be an INVENTORY key;
-// INVENTORY MAY carry extra ahead-of-published keys (none as of app-sdk 0.65.1).
+// INVENTORY MAY carry extra ahead-of-published keys (`RUN_CONFIRMED_STEP` as of
+// app-sdk 0.65.1).
 // We do NOT assert the reverse — that would delete real forward coverage every
 // time the published dist lags.
 //
