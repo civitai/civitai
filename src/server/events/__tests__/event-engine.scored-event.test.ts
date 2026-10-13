@@ -857,6 +857,6 @@ describe('getEventData: what the scored-event page reads', () => {
     expect(BIRTHDAY_2026_STARTS_AT.toISOString()).toBe('2026-11-01T00:00:00.000Z');
     expect(BIRTHDAY_2026_ENDS_AT.toISOString()).toBe('2026-12-01T00:00:00.000Z');
     expect(birthday2026.page?.dates).toBe('Nov 1 to Nov 30');
-    expect(birthday2026.banner?.text).toContain('Four colour teams, Nov 1 to Nov 30.');
+    expect(birthday2026.banner?.text).toContain('Four color teams, Nov 1 to Nov 30.');
   });
 });
