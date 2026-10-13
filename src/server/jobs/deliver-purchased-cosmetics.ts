@@ -48,12 +48,13 @@ export async function deliverMembershipCosmetics({
     FROM subscription_tiers s
     JOIN "Cosmetic" c ON
       c."productId" = s."productId"
-      AND c."availableStart" >= date_trunc('month', ${lastDelivered}::timestamp)
+      -- Keyed on the period, not on when the job runs: a period that started in September but
+      -- only turned active in October (a late payment) is still owed September's badge.
       -- Compare at date granularity: membership badges are authored with an 11:00 UTC
       -- availableStart, so a period that started earlier that same day (e.g. a Stripe
       -- renewal at 00:30 on the 1st) failed a timestamp comparison forever — this join
       -- re-runs daily but currentPeriodStart never moves within the period.
-      AND (c."availableStart" IS NULL OR s."currentPeriodStart"::date >= c."availableStart"::date)
+      AND s."currentPeriodStart"::date >= c."availableStart"::date
       AND (c."availableEnd" IS NULL OR s."currentPeriodStart"::date <= c."availableEnd"::date)
     ON CONFLICT ("userId", "cosmeticId", "claimKey") DO NOTHING;
   `;
@@ -90,6 +91,14 @@ export async function deliverMembershipCosmetics({
       "userId"
       FROM "CustomerSubscription" cs
       WHERE "cancelAt" <= ${lastDelivered}
+        -- An old canceled subscription must not strip a member who is subscribed today.
+        AND NOT EXISTS (
+          SELECT 1
+          FROM "CustomerSubscription" acs
+          WHERE acs."userId" = cs."userId"
+            AND acs.status IN ('active', 'trialing')
+            AND acs."currentPeriodEnd" >= ${now}::timestamp
+        )
     )
     DELETE FROM "UserCosmetic" uc
     WHERE EXISTS (
