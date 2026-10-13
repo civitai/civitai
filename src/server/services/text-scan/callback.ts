@@ -54,7 +54,7 @@ function inputMeta(metadata: TextScanWorkflowMetadata, flaggedSegments: FlaggedS
     ...(metadata.segments === undefined
       ? {}
       : {
-          segments: metadata.segments,
+          segments: expectedSegments(metadata),
           scannedChars: metadata.scannedChars ?? metadata.inputChars,
         }),
     ...(Object.keys(flaggedSegments).length ? { flaggedSegments } : {}),

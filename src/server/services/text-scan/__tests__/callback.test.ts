@@ -329,6 +329,36 @@ describe('handleTextScanCallback', () => {
     );
     await handleTextScanCallback({ workflowId: 'wf-old', status: 'succeeded' });
     expect(adapter.applyTextScan).not.toHaveBeenCalled();
+    expect(
+      vi
+        .mocked(loggingMock.logToAxiom)
+        .mock.calls.filter(([e]) => (e as { name?: string }).name === 'scan-verdict')
+    ).toHaveLength(0);
+  });
+
+  it('expects one step from a workflow without segments, so a second step is malformed', async () => {
+    const wf = segmented([
+      { nsfw: { level: 'none', reason: 'a' } },
+      { nsfw: { level: 'none', reason: 'b' } },
+    ]);
+    delete (wf.data.metadata as Record<string, unknown>).segments;
+    vi.mocked(getWorkflow).mockResolvedValue(wf as any);
+    await handleTextScanCallback({ workflowId: 'wf-1', status: 'succeeded' });
+    expect(vi.mocked(updateMany).mock.calls[0][0].data).toMatchObject({ status: 'Failed' });
+    expect(adapter.applyTextScan).not.toHaveBeenCalled();
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ reason: 'malformed', segments: 1 })
+    );
+  });
+
+  it('records the validated segment count when the metadata one is unusable', async () => {
+    vi.mocked(getWorkflow).mockResolvedValue(
+      segmented([{ nsfw: { level: 'none', reason: 'a' } }], { segments: 0 }) as any
+    );
+    await handleTextScanCallback({ workflowId: 'wf-1', status: 'succeeded' });
+    expect(vi.mocked(updateMany).mock.calls[0][0].data.result.meta).toMatchObject({
+      segments: 1,
+    });
   });
 
   it('turns an unusable output into a Failed row, logs the reason, and takes no action', async () => {
