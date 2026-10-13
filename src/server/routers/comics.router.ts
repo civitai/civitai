@@ -3470,10 +3470,22 @@ export const comicsRouter = router({
         const wfData = new WorkflowData(normalized as any, {
           domain: domainFlags,
           nsfwEnabled: !!ctx.user!.showNsfw,
+          holdUnrated: true,
         });
         const firstStep = wfData.steps[0];
         const rawOutputs = firstStep?.output ?? [];
         const imageUrl = rawOutputs[0]?.url ?? null;
+
+        // Succeeded can precede the rating; hold the panel until it lands, since Ready is never
+        // re-checked.
+        if (workflow.status === 'succeeded' && rawOutputs.some((o) => o.pendingRating)) {
+          return {
+            id: panel.id,
+            status: panel.status,
+            imageUrl: panel.imageUrl,
+            errorMessage: panel.errorMessage,
+          };
+        }
         // SFW-domain mature output: the orchestrator returns a blurred
         // preview URL alongside a `blockedReason` (e.g. `canUpgrade`,
         // `siteRestricted`). Persisting that URL as `panel.imageUrl` (or as
@@ -3962,6 +3974,7 @@ export const comicsRouter = router({
       const wfData = new WorkflowData(normalized as any, {
         domain: domainFlags,
         nsfwEnabled: !!ctx.user!.showNsfw,
+        holdUnrated: true,
       });
       const firstStep = wfData.steps[0];
       const outputs = firstStep?.output ?? [];
