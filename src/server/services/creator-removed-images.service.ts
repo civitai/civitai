@@ -12,7 +12,8 @@ import { type AppealStatus, EntityType } from '~/shared/utils/prisma/enums';
  * every row carries the wording each removal notification already used.
  */
 export const REMOVAL_REASON = 'Terms of Service violation';
-export const REMOVED_IMAGES_LIMIT = 5000;
+// The exclusion check costs about a millisecond and a half per image.
+export const REMOVED_IMAGES_LIMIT = 1000;
 const CLICKHOUSE_TIMEOUT_SECONDS = 10;
 
 export type RemovedImage = {
@@ -88,19 +89,20 @@ async function getLatestAppeals(userId: number, imageIds: number[]) {
 }
 
 /**
- * The member's own removed images, newest first. Removals the appeal flow excludes are left out, and
- * `total` counts only what is listed.
+ * The member's own removed images, newest first, up to the limit. Removals the appeal flow excludes
+ * are left out, and `total` counts only what is listed.
  */
 export async function getMyRemovedImages(userId: number) {
   const events = await getRemovalEvents(userId);
-  if (!events.length) return { total: 0, items: [] as RemovedImage[] };
+  const none = { total: 0, truncated: false, items: [] as RemovedImage[] };
+  if (!events.length) return none;
 
   const imageIds = events.map((e) => Number(e.imageId));
   const [states, excludedIds] = await Promise.all([
     getImageStates(userId, imageIds),
     getAppealExcludedIds({ imageIds, userIds: [userId] }),
   ]);
-  if (excludedIds.users.has(userId)) return { total: 0, items: [] as RemovedImage[] };
+  if (excludedIds.users.has(userId)) return none;
 
   const stateById = new Map(states.map((s) => [Number(s.imageId), s]));
   // An image with no state row is left out rather than shown unchecked.
@@ -123,5 +125,5 @@ export async function getMyRemovedImages(userId: number) {
       isAppealableImage(state) &&
       !getAppealRefusal(EntityType.Image, appeals.get(id)),
   }));
-  return { total: items.length, items };
+  return { total: items.length, truncated: events.length >= REMOVED_IMAGES_LIMIT, items };
 }

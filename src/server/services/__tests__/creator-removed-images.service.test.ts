@@ -16,6 +16,7 @@ import {
   getMyRemovedImages,
   REMOVAL_REASON,
   REMOVALS_QUERY,
+  REMOVED_IMAGES_LIMIT,
 } from '~/server/services/creator-removed-images.service';
 import { REPORTS_AGAINST_EVENT } from '~/shared/constants/creator-journey.constants';
 import { AppealStatus } from '~/shared/utils/prisma/enums';
@@ -84,6 +85,7 @@ describe('getMyRemovedImages', () => {
     const result = await getMyRemovedImages(USER);
 
     expect(result.total).toBe(3);
+    expect(result.truncated).toBe(false);
     expect(result.items.map((i) => i.imageId)).toEqual([3, 2, 1]);
     expect(result.items[0]).toEqual({
       removedAt: new Date(1_700_000_300_000),
@@ -101,10 +103,15 @@ describe('getMyRemovedImages', () => {
     expect(chQuery).toHaveBeenCalledWith(
       expect.objectContaining({ query: REMOVALS_QUERY, query_params: { userId: USER } })
     );
-    expect(REMOVALS_QUERY).toContain(`WHERE type = '${REPORTS_AGAINST_EVENT}' AND ownerId = {userId:Int32}`);
-    expect(REMOVALS_QUERY).toContain('GROUP BY imageId');
+    expect(REMOVALS_QUERY).toContain(
+      `WHERE type = '${REPORTS_AGAINST_EVENT}' AND ownerId = {userId:Int32}`
+    );
+    expect(REMOVALS_QUERY).toMatch(/^\s*GROUP BY imageId$/m);
     // The score job deducts per distinct image of the same event; both read the one constant.
-    const scoreJob = readFileSync(join(process.cwd(), 'src/server/jobs/update-user-score.ts'), 'utf8');
+    const scoreJob = readFileSync(
+      join(process.cwd(), 'src/server/jobs/update-user-score.ts'),
+      'utf8'
+    );
     expect(scoreJob.match(/WHERE type = '\$\{REPORTS_AGAINST_EVENT\}'/g)).toHaveLength(2);
     expect(scoreJob).toContain('uniq(imageId) as violations');
     expect(scoreJob).not.toContain("'DeleteTOS'");
@@ -158,7 +165,7 @@ describe('getMyRemovedImages', () => {
       excludedOwners: [USER],
     });
 
-    expect(await getMyRemovedImages(USER)).toEqual({ total: 0, items: [] });
+    expect(await getMyRemovedImages(USER)).toEqual({ total: 0, truncated: false, items: [] });
   });
 
   it('leaves out a removal it could not check', async () => {
@@ -226,5 +233,19 @@ describe('getMyRemovedImages', () => {
 
     expect(sqlOf(dbMock.dbRead.$queryRaw.mock.lastCall!).sql).toContain('coalesce(i."userId" = ');
     expect(sqlOf(dbMock.dbRead.$queryRaw.mock.lastCall!).values).toContain(USER);
+  });
+
+  it('says when the list stops at the limit', async () => {
+    const events = Array.from({ length: REMOVED_IMAGES_LIMIT }, (_, i) => ({
+      imageId: i + 1,
+      removedAt: 1,
+    }));
+    given({ events, states: events.map((e) => ({ imageId: e.imageId })) });
+
+    const result = await getMyRemovedImages(USER);
+
+    expect(result.truncated).toBe(true);
+    expect(REMOVALS_QUERY).toContain(`LIMIT ${REMOVED_IMAGES_LIMIT}
+`);
   });
 });
