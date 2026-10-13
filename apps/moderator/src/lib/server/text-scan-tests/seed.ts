@@ -37,7 +37,7 @@ const isEntityType = (v: unknown): v is LabEntityType =>
   (LAB_ENTITY_TYPES as readonly unknown[]).includes(v);
 
 export function parseTruthMap(raw: string): TruthMap | string {
-  const map: TruthMap = {};
+  const map: TruthMap = Object.create(null);
   for (const pair of raw.split(',').filter(Boolean)) {
     const [key, value] = pair.split('=');
     if (!key || (value !== 'yes' && value !== 'no' && value !== 'skip'))
@@ -172,7 +172,9 @@ export function parseBench(
       out.refuse('no text');
       continue;
     }
-    const outcome = truthMap[String(raw.truth)];
+    const outcome = Object.hasOwn(truthMap, String(raw.truth))
+      ? truthMap[String(raw.truth)]
+      : undefined;
     if (!outcome) {
       out.refuse('unmapped truth value');
       continue;

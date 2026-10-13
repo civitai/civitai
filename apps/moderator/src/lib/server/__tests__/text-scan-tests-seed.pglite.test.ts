@@ -1,4 +1,4 @@
-import type { Kysely } from 'kysely';
+import { sql, type Kysely } from 'kysely';
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { DB as ModeratorDB } from '../moderator-db/types';
 import { importSeed, parseBench, parseLabSeed, parseTruthMap } from '../text-scan-tests/seed';
@@ -79,6 +79,17 @@ describe('parsing', () => {
       { poi: true },
     ]);
     expect(parsed.refused).toEqual({ 'unknown entity type': 1, 'duplicate entity': 1 });
+  });
+
+  it('counts an inherited property name as an unmapped truth value', () => {
+    const rows = ['constructor', 'toString', '__proto__'].map((truth) => ({
+      ...BENCH[0],
+      key: truth,
+      truth,
+    }));
+    const parsed = parseBench(rows, 'scam', parseTruthMap('bad=yes') as never);
+    expect(typeof parsed !== 'string' && parsed.refused).toEqual({ 'unmapped truth value': 3 });
+    expect(parseTruthMap('__proto__=yes')).toEqual(JSON.parse('{"__proto__":"yes"}'));
   });
 
   it('maps bench truth through the map, skipping and refusing as told', () => {
@@ -165,5 +176,36 @@ describe('importSeed', () => {
       status: 409,
       message: 'That set is archived.',
     });
+  });
+
+  it('counts a row that collides on another unique key as conflicting and lands the rest', async () => {
+    await importSeed(db, [BENCH[0]], { ...opts, write: true });
+    // Same source ref as the stored case but a new entity id: the entity upsert finds no conflict, the source_ref key does.
+    const rows = [
+      { ...BENCH[0], entityId: 777 },
+      { ...BENCH[1], entityId: 778 },
+    ];
+    const summary = await importSeed(db, rows, { ...opts, write: true });
+    expect(summary.refused).toEqual({ 'conflicting case': 1 });
+    expect(summary.written).toEqual({ created: 1, updated: 0 });
+    const [set] = await listSets(db, 'prompts');
+    expect(await listCases(db, set.id)).toHaveLength(2);
+    const printed = JSON.stringify(summary);
+    for (const leak of [SECRET, 'k-1', '777', '778', opts.set]) expect(printed).not.toContain(leak);
+  });
+
+  it('rolls the whole import back on an error that is not a refusal', async () => {
+    await sql`
+      CREATE FUNCTION fail_on_entity() RETURNS trigger AS $$
+      BEGIN IF NEW.entity_id = 99 THEN RAISE EXCEPTION 'boom'; END IF; RETURN NEW; END $$ LANGUAGE plpgsql`.execute(
+      db
+    );
+    await sql`
+      CREATE TRIGGER fail_on_entity BEFORE INSERT ON text_scan_test_case
+        FOR EACH ROW EXECUTE FUNCTION fail_on_entity()`.execute(db);
+    const rows = [BENCH[0], { ...BENCH[1], entityId: 99 }];
+    await expect(importSeed(db, rows, { ...opts, write: true })).rejects.toBeDefined();
+    expect(await listSets(db, 'prompts')).toEqual([]);
+    expect(await db.selectFrom('text_scan_test_case').selectAll().execute()).toEqual([]);
   });
 });
