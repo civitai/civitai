@@ -3,6 +3,7 @@
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
   import LinkTabs from '$lib/components/LinkTabs.svelte';
   import { LINK_CLASS } from '$lib/format';
+  import { promptsHref } from '$lib/text-scan-lab/paths';
   import MatchesTab from './MatchesTab.svelte';
   import RulesTab from './RulesTab.svelte';
   import type { ActionData, PageData } from './$types';
@@ -22,8 +23,7 @@
 <div class="mb-4 flex flex-wrap items-baseline justify-between gap-2">
   <h1 class="text-xl font-semibold text-white">Model rules</h1>
   <p class="flex gap-4 text-sm">
-    <a href="/text-scan/check" class={LINK_CLASS}>Check a model against the rules</a>
-    <a href="/text-scan/prompts?key=label:modelRules" class={LINK_CLASS}>Instructions history</a>
+    <a href={promptsHref('label:modelRules')} class={LINK_CLASS}>Policy prompt on Prompts</a>
   </p>
 </div>
 

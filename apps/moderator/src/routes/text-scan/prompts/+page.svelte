@@ -1,18 +1,28 @@
 <script lang="ts">
-  import LinkTabs from '$lib/components/LinkTabs.svelte';
-  import { promptKeyName } from '$lib/text-scan-lab/labels';
-  import { PROMPT_KEYS } from '$lib/text-scan-lab/types';
-  import ActivePromptPanel from './ActivePromptPanel.svelte';
+  import { untrack } from 'svelte';
+  import { goto } from '$app/navigation';
+  import PromptWorkspace from '$lib/components/text-scan-lab/PromptWorkspace.svelte';
+  import TryPanel from '$lib/components/text-scan-lab/TryPanel.svelte';
+  import { denied } from '$lib/permissions';
+  import { currentPromptsOf } from '$lib/text-scan-lab/changes';
+  import { createChangesSync } from '$lib/text-scan-lab/changes.svelte';
+  import { promptsHref } from '$lib/text-scan-lab/paths';
+  import PromptKeyList from './PromptKeyList.svelte';
 
   let { data } = $props();
 
+  const changes = createChangesSync(
+    untrack(() => data.user?.id ?? 0),
+    () => (data.prompts.ok ? currentPromptsOf(data.prompts.value) : null)
+  );
+  const canSave = $derived(!!data.grants['textScan.prompt.publish'] && data.prompts.ok);
   const config = $derived(data.prompts.ok ? data.prompts.value.config : null);
 </script>
 
-<svelte:head><title>Versions · Text scan</title></svelte:head>
+<svelte:head><title>Prompts · Text scan</title></svelte:head>
 
 <div class="mb-4 flex flex-wrap items-baseline justify-between gap-2">
-  <h1 class="text-xl font-semibold text-white">Versions</h1>
+  <h1 class="text-xl font-semibold text-white">Prompts</h1>
   {#if config}
     <p class="text-xs text-dark-2">
       Model {config.model} · max input {config.maxInputChars.toLocaleString()} chars · thinking
@@ -21,16 +31,36 @@
   {/if}
 </div>
 
-<LinkTabs
-  class="mb-4"
-  active={data.key}
-  items={PROMPT_KEYS.map((key) => ({ value: key, label: promptKeyName(key), href: `?key=${key}` }))}
-/>
-
-{#if data.prompts.ok}
-  <ActivePromptPanel promptKey={data.key} prompts={data.prompts.value} authors={data.authors} />
-{:else}
-  <section class="rounded-xl border border-dark-4 bg-dark-6 p-5">
-    <p class="text-sm text-red-300">{data.prompts.error}</p>
-  </section>
-{/if}
+<div class="grid gap-4 lg:grid-cols-[13rem_minmax(0,1fr)_minmax(0,1fr)]">
+  <PromptKeyList
+    active={data.key}
+    {changes}
+    latest={data.prompts.ok ? (data.prompts.value.latest ?? {}) : {}}
+  />
+  {#if data.prompts.ok}
+    {#key data.key}
+      <PromptWorkspace
+        promptKey={data.key}
+        {changes}
+        prompts={data.prompts.value}
+        authors={data.authors}
+        {canSave}
+        saveAction="?/save"
+        restoreAction="?/restore"
+        saveHint={denied('textScan.prompt.publish')}
+      />
+    {/key}
+  {:else}
+    <section class="rounded-xl border border-dark-4 bg-dark-6 p-5">
+      <p class="text-sm text-red-300">{data.prompts.error}</p>
+    </section>
+  {/if}
+  <TryPanel
+    prompts={changes.json}
+    rules="[]"
+    editedKeys={changes.keys}
+    only={null}
+    draftsError={changes.blankError}
+    onedit={(key) => goto(promptsHref(key), { noScroll: true, keepFocus: true })}
+  />
+</div>

@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { parseCheckInput } from './input';
-import { editedPromptKeys, itemChanged, judgeCandidates, runIsStale, sourceTypeOf, type TryItem } from './try';
+import {
+  editedPromptKeys,
+  itemChanged,
+  judgeCandidates,
+  runIsStale,
+  sourceTypeOf,
+  type TryItem,
+} from './try';
 import { LAB_ENTITY_TYPES } from './types';
 
 const AS = { lookupAs: 'Article', profileAs: 'User' } as const;

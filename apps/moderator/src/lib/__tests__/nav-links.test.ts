@@ -7,6 +7,7 @@ import {
   navForUser,
   pageAccessState,
   PERMISSIONS,
+  resolvePermissions,
 } from '$lib/server/access';
 
 const at = (href: string) => new URL(href, 'https://mod.test');
@@ -116,16 +117,40 @@ describe('/admin grantable pages', () => {
 describe('the text-scan lab', () => {
   it('declares the text-scan lab permissions and pages', () => {
     const ids = PERMISSIONS.map((p) => p.id);
-    expect(ids).toContain('textScan.prompt.publish');
     expect(ids.filter((id) => id.startsWith('textScan.'))).toEqual([
       'textScan.prompt.publish',
       'textScan.modelRules.edit',
     ]);
     const group = NAVIGATION.find((n) => n.path === '/text-scan');
     expect(group?.children?.map((c) => [c.path, c.label])).toEqual([
-      ['/text-scan/check', 'Check'],
-      ['/text-scan/prompts', 'Versions'],
+      ['/text-scan/prompts', 'Prompts'],
       ['/text-scan/model-rules', 'Model rules'],
     ]);
+  });
+
+  it('opens Prompts, and the Check redirect, to a role that held only the retired Check grant', () => {
+    applyGrants({ '/text-scan/check': ['moderator:reviewer'] });
+    expect(canAccess(reviewer, '/text-scan/prompts')).toBe(true);
+    expect(canAccess(reviewer, '/text-scan/check')).toBe(true);
+    expect(canAccess(reviewer, '/text-scan/model-rules')).toBe(false);
+    expect(labelsUnder('Text Scan')).toEqual([['/text-scan/prompts', 'Prompts']]);
+  });
+
+  it('gives the retired Check grant no permission', () => {
+    applyGrants({ '/text-scan/check': ['moderator:reviewer'] });
+    expect(resolvePermissions(reviewer)['textScan.prompt.publish']).toBeUndefined();
+  });
+
+  it('keeps a direct Prompts grant beside the retired one', () => {
+    applyGrants({
+      '/text-scan/prompts': ['moderator:a'],
+      '/text-scan/check': ['moderator:b'],
+    });
+    expect(canAccess({ roles: ['moderator:a'] }, '/text-scan/prompts')).toBe(true);
+    expect(canAccess({ roles: ['moderator:b'] }, '/text-scan/prompts')).toBe(true);
+  });
+
+  it('does not offer the retired Check page on /admin', () => {
+    expect(pageAccessState().paths).not.toContain('/text-scan/check');
   });
 });

@@ -1,47 +1,9 @@
-import { fail } from '@sveltejs/kit';
-import type { Actions, PageServerLoad } from './$types';
-import { requiresGrant } from '$lib/server/access';
-import { parseForm } from '$lib/server/query';
-import { LabHarnessError, getPrompts } from '$lib/server/text-scan-lab/harness-client';
-import { publishChanges, publishSchema } from '$lib/server/text-scan-lab/publish';
-import { runTry } from '$lib/server/text-scan-lab/try';
-import { PROMPT_KEYS, type PromptKey } from '$lib/text-scan-lab/types';
+import { redirect } from '@sveltejs/kit';
+import type { PageServerLoad } from './$types';
+import { promptsHref } from '$lib/text-scan-lab/paths';
+import { isPromptKey } from '$lib/text-scan-lab/types';
 
-/** The current prompts: their text, and each version's id, which a publish checks is still current. */
-export type ActivePrompts =
-  | {
-      ok: true;
-      content: Partial<Record<PromptKey, string>>;
-      ids: Partial<Record<PromptKey, number>>;
-    }
-  | { ok: false; error: string };
-
-export const load: PageServerLoad = async () => {
-  const active = await getPrompts().then(
-    (p): ActivePrompts => {
-      const keys = PROMPT_KEYS.filter((k) => p.active[k]);
-      return {
-        ok: true,
-        content: Object.fromEntries(keys.map((k) => [k, p.active[k].content])),
-        ids: Object.fromEntries(keys.map((k) => [k, p.active[k].id])),
-      };
-    },
-    (e: unknown): ActivePrompts => ({
-      ok: false,
-      error: `Could not load the current prompts: ${
-        e instanceof LabHarnessError ? e.message : 'unexpected error'
-      }`,
-    })
-  );
-  return { active, wide: true };
-};
-
-export const actions: Actions = {
-  try: async ({ request }) => runTry(await request.formData()),
-
-  publish: requiresGrant('textScan.prompt.publish', async ({ request }) => {
-    const input = parseForm(publishSchema, await request.formData());
-    if (typeof input === 'string') return fail(400, { error: input });
-    return publishChanges(input);
-  }),
+export const load: PageServerLoad = ({ url }) => {
+  const key = url.searchParams.get('key');
+  redirect(307, promptsHref(key !== null && isPromptKey(key) ? key : undefined));
 };

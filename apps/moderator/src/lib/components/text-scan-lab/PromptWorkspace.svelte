@@ -156,7 +156,7 @@
 <PromptHistoryDrawer
   bind:open={historyOpen}
   {promptKey}
-  versions={prompts.history ?? []}
+  versions={(prompts.history ?? []).filter((v) => v.key === promptKey)}
   currentId={active?.id ?? null}
   {authors}
   {canSave}

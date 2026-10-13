@@ -115,13 +115,19 @@ describe('model rules verdict', () => {
       tone: 'flagged',
       reason: '#378: a\n#12: b',
     });
-    expect(describeVerdict('modelRules', matched, [{ id: 378, subject: 'Example' }])).toMatchObject({
-      headline: 'Matched Example, #12',
-    });
+    expect(describeVerdict('modelRules', matched, [{ id: 378, subject: 'Example' }])).toMatchObject(
+      {
+        headline: 'Matched Example, #12',
+      }
+    );
   });
 
   it('counts a literal-only hit as a match', () => {
-    const literal = { ok: true as const, output: { modelRules: { matched: [] } }, literalRuleIds: [5] };
+    const literal = {
+      ok: true as const,
+      output: { modelRules: { matched: [] } },
+      literalRuleIds: [5],
+    };
     expect(describeVerdict('modelRules', literal, [{ id: 5, subject: 'Named' }])).toMatchObject({
       headline: 'Matched Named',
       tone: 'flagged',
