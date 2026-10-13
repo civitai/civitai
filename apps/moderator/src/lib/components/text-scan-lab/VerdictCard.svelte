@@ -4,10 +4,12 @@
   import {
     LABEL_NAMES,
     describeVerdict,
+    labRuleMatches,
     verdictsDiffer,
     type VerdictTone,
   } from '$lib/text-scan-lab/labels';
-  import type { LabLabel, LabScanResult } from '$lib/text-scan-lab/types';
+  import type { LabLabel, LabRule, LabScanResult } from '$lib/text-scan-lab/types';
+  import RuleMatchList from './RuleMatchList.svelte';
 
   let {
     label,
@@ -15,7 +17,7 @@
     actions,
   }: {
     label: LabLabel;
-    columns: { title: string; result: LabScanResult }[];
+    columns: { title: string; result: LabScanResult; rules: LabRule[] | null }[];
     actions?: Snippet;
   } = $props();
 
@@ -45,7 +47,7 @@
   </div>
   <div class={cn('mt-2 grid gap-4', columns.length === 2 && 'sm:grid-cols-2')}>
     {#each columns as column (column.title)}
-      {@const verdict = describeVerdict(label, column.result)}
+      {@const verdict = describeVerdict(label, column.result, column.rules)}
       <div class="min-w-0">
         {#if columns.length > 1}
           <p class="text-xs text-dark-2">{column.title}</p>
@@ -53,7 +55,9 @@
         <p class={cn('whitespace-pre-wrap break-words font-semibold', TONE_CLASS[verdict.tone])}>
           {verdict.headline}
         </p>
-        {#if verdict.reason}
+        {#if label === 'modelRules'}
+          <RuleMatchList matches={labRuleMatches(column.result, column.rules)} />
+        {:else if verdict.reason}
           <p class="mt-1 whitespace-pre-wrap break-words text-sm text-dark-0">{verdict.reason}</p>
         {/if}
       </div>

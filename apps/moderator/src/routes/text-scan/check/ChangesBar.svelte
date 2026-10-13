@@ -3,7 +3,7 @@
   import { LINK_CLASS } from '$lib/format';
   import { promptKeyName } from '$lib/text-scan-lab/labels';
   import type { PromptKey } from '$lib/text-scan-lab/types';
-  import type { ChangesState } from './changes';
+  import type { ChangesState } from '$lib/text-scan-lab/changes';
   import PublishDialog from './PublishDialog.svelte';
 
   let {

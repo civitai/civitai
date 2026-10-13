@@ -1,12 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
   ChangesState,
+  currentPromptsOf,
   changesStorageKey,
   readChanges,
   writeChanges,
   type ChangesFields,
   type CurrentPrompts,
-} from '../changes';
+} from './changes';
 
 const KEY = changesStorageKey(7);
 
@@ -212,5 +213,19 @@ describe('two tabs', () => {
     a.drop(['base']);
     b.set('label:scam', 'FROM B');
     expect(Object.keys(stored(store))).toEqual(['label:scam']);
+  });
+});
+
+describe('currentPromptsOf', () => {
+  it('keeps every key the harness returned, with its text and version', () => {
+    expect(
+      currentPromptsOf({
+        active: {
+          base: { id: 1, content: 'B' },
+          'label:scam': { id: 6, content: 'S' },
+          'label:retired': { id: 9, content: 'R' },
+        },
+      })
+    ).toEqual({ content: { base: 'B', 'label:scam': 'S' }, ids: { base: 1, 'label:scam': 6 } });
   });
 });

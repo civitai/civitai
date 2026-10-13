@@ -13,6 +13,7 @@
   import CursorPager from '$lib/components/CursorPager.svelte';
   import LinkTabs from '$lib/components/LinkTabs.svelte';
   import { LINK_CLASS, dateTime } from '$lib/format';
+  import { matchSourceLabel, matchSourceVariant } from '$lib/model-rules';
   import { urlWith } from '$lib/url';
   import type { PageData } from './$types';
 
@@ -41,10 +42,6 @@
       href: urlWith(url, { mode: value === 'all' ? null : value, cursor: null }),
     }))
   );
-  const sourceLabel = (match: { llm: boolean; literal: boolean }) =>
-    !match.literal ? 'Model only' : match.llm ? 'Literal + model' : 'Literal only';
-  const sourceVariant = (match: { llm: boolean; literal: boolean }) =>
-    !match.literal ? 'secondary' : match.llm ? 'outline' : 'default';
   const filtered = $derived(query.mode !== 'all' || query.rule !== undefined);
 
   const nextHref = $derived(
@@ -114,8 +111,8 @@
                     <a href={urlWith(url, { rule: match.ruleId, cursor: null })} class="ml-1 text-xs {LINK_CLASS}">
                       rule {match.ruleId}
                     </a>
-                    <Badge variant={sourceVariant(match)} class="ml-1">
-                      {sourceLabel(match)}
+                    <Badge variant={matchSourceVariant(match)} class="ml-1">
+                      {matchSourceLabel(match)}
                     </Badge>
                     {#if match.reason}
                       <p class="mt-0.5 break-words text-sm text-dark-2">{match.reason}</p>

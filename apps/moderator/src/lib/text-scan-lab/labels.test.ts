@@ -4,6 +4,7 @@ import {
   blankPromptKeys,
   describeBlankPrompts,
   describeVerdict,
+  labRuleMatches,
   promptKeyName,
   verdictsDiffer,
 } from './labels';
@@ -104,16 +105,41 @@ describe('verdictsDiffer', () => {
 describe('model rules verdict', () => {
   const rules = (matched: unknown) => ok({ modelRules: { matched } });
 
-  it('names the matched rules and joins their reasons', () => {
-    expect(
-      describeVerdict(
-        'modelRules',
-        rules([
-          { ruleId: 378, reason: ' a ' },
-          { ruleId: 12, reason: 'b' },
-        ])
-      )
-    ).toEqual({ headline: 'Matched rule 378, 12', tone: 'flagged', reason: 'a\nb' });
+  it('names the matched rules by subject when the run listed them, else by id', () => {
+    const matched = rules([
+      { ruleId: 378, reason: ' a ' },
+      { ruleId: 12, reason: 'b' },
+    ]);
+    expect(describeVerdict('modelRules', matched)).toEqual({
+      headline: 'Matched #378, #12',
+      tone: 'flagged',
+      reason: '#378: a\n#12: b',
+    });
+    expect(describeVerdict('modelRules', matched, [{ id: 378, subject: 'Example' }])).toMatchObject({
+      headline: 'Matched Example, #12',
+    });
+  });
+
+  it('counts a literal-only hit as a match', () => {
+    const literal = { ok: true as const, output: { modelRules: { matched: [] } }, literalRuleIds: [5] };
+    expect(describeVerdict('modelRules', literal, [{ id: 5, subject: 'Named' }])).toMatchObject({
+      headline: 'Matched Named',
+      tone: 'flagged',
+    });
+    expect(labRuleMatches(literal, [{ id: 5, subject: 'Named' }])).toEqual([
+      { ruleId: 5, subject: 'Named', reason: null, llm: false, literal: true },
+    ]);
+  });
+
+  it('marks a rule matched both ways once, with the model reason', () => {
+    const both = {
+      ok: true as const,
+      output: { modelRules: { matched: [{ ruleId: -1, reason: 'variant spelling' }] } },
+      literalRuleIds: [-1],
+    };
+    expect(labRuleMatches(both, [{ id: -1, subject: 'New rule' }])).toEqual([
+      { ruleId: -1, subject: 'New rule', reason: 'variant spelling', llm: true, literal: true },
+    ]);
   });
 
   it('reads an empty match list as clear', () => {

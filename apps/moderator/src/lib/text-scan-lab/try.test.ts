@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { parseCheckInput } from './input';
-import { editedPromptKeys, judgeCandidates, sourceTypeOf } from './try';
+import { editedPromptKeys, itemChanged, judgeCandidates, runIsStale, sourceTypeOf, type TryItem } from './try';
 import { LAB_ENTITY_TYPES } from './types';
 
 const AS = { lookupAs: 'Article', profileAs: 'User' } as const;
@@ -49,5 +49,45 @@ describe('editedPromptKeys', () => {
     expect(editedPromptKeys({ base: 'B' }, [])).toEqual(['base']);
     expect(editedPromptKeys({}, [rule])).toEqual(['label:modelRules']);
     expect(editedPromptKeys({ 'label:modelRules': 'P' }, [rule])).toEqual(['label:modelRules']);
+  });
+});
+
+const scam = (detected: boolean) => ({
+  key: 'k',
+  ok: true as const,
+  workflowId: 'wf',
+  promptIds: {},
+  output: { scam: { detected, reason: '' } },
+  elapsedMs: 1,
+});
+const item = (current: boolean, edited: boolean | null): TryItem => ({
+  key: 'k',
+  title: 't',
+  fields: [],
+  entityId: null,
+  authorId: null,
+  current: scam(current),
+  edited: edited === null ? null : scam(edited),
+});
+
+describe('itemChanged', () => {
+  it('is true only when an edited verdict differs from the current one', () => {
+    expect(itemChanged(item(false, true), ['scam'])).toBe(true);
+    expect(itemChanged(item(false, false), ['scam'])).toBe(false);
+    expect(itemChanged(item(false, null), ['scam'])).toBe(false);
+  });
+
+  it('ignores labels the run did not judge', () => {
+    expect(itemChanged(item(false, true), ['poi'])).toBe(false);
+  });
+});
+
+describe('runIsStale', () => {
+  it('flags a run whose drafts changed after it was submitted, such as a save mid-run', () => {
+    const before = JSON.stringify({ base: 'draft' });
+    const afterSave = JSON.stringify({});
+    expect(runIsStale(before, afterSave)).toBe(true);
+    expect(runIsStale(before, before)).toBe(false);
+    expect(runIsStale(null, afterSave)).toBe(false);
   });
 });

@@ -1,4 +1,5 @@
-import type { LabEntityType, LabLabel, NsfwLevelName, PromptKey } from './types';
+import { mergeRuleMatches, type RuleMatch } from '$lib/model-rules';
+import type { LabEntityType, LabLabel, LabRule, NsfwLevelName, PromptKey } from './types';
 
 export const LABEL_NAMES: Record<LabLabel, string> = {
   nsfw: 'Rating',
@@ -64,7 +65,12 @@ export type VerdictTone = 'clear' | 'neutral' | 'flagged' | 'unknown';
 export type Verdict = { headline: string; tone: VerdictTone; reason?: string };
 
 export type VerdictSource =
-  | { ok: true; output: Record<string, unknown> | null; parseError?: string }
+  | {
+      ok: true;
+      output: Record<string, unknown> | null;
+      parseError?: string;
+      literalRuleIds?: number[];
+    }
   | { ok: false; error: string };
 
 const couldNotJudge = (why: string): Verdict => ({
@@ -72,30 +78,45 @@ const couldNotJudge = (why: string): Verdict => ({
   tone: 'unknown',
 });
 
-type RuleMatch = { ruleId: number; reason?: string };
+const matchedList = (output: Record<string, unknown> | null): unknown[] | null => {
+  const matched = (output?.modelRules as { matched?: unknown } | undefined)?.matched;
+  return Array.isArray(matched) ? matched : null;
+};
 
-function describeModelRules(raw: unknown): Verdict {
-  const matched = (raw as { matched?: unknown } | undefined)?.matched;
-  if (!Array.isArray(matched)) return couldNotJudge(`no ${LABEL_NAMES.modelRules} answer`);
-  const matches = matched.filter(
-    (m): m is RuleMatch => !!m && typeof m === 'object' && Number.isInteger((m as RuleMatch).ruleId)
-  );
+/** Every rule the model matched or the text names literally, by subject when the run listed it. */
+export function labRuleMatches(
+  source: VerdictSource,
+  rules: readonly LabRule[] | null
+): RuleMatch[] {
+  if (!source.ok) return [];
+  const subjects = new Map((rules ?? []).map((rule) => [rule.id, rule.subject] as const));
+  return mergeRuleMatches(matchedList(source.output) ?? [], source.literalRuleIds ?? [], subjects);
+}
+
+function describeModelRules(
+  source: VerdictSource & { ok: true },
+  rules: readonly LabRule[] | null
+): Verdict {
+  if (!matchedList(source.output)) return couldNotJudge(`no ${LABEL_NAMES.modelRules} answer`);
+  const matches = labRuleMatches(source, rules);
   if (!matches.length) return { headline: 'No rule matched', tone: 'clear' };
-  const reason = matches
-    .map((m) => (typeof m.reason === 'string' ? m.reason.trim() : ''))
-    .filter(Boolean)
-    .join('\n');
+  const name = (m: RuleMatch) => m.subject ?? `#${m.ruleId}`;
+  const reason = matches.flatMap((m) => (m.reason ? [`${name(m)}: ${m.reason}`] : [])).join('\n');
   return {
-    headline: `Matched rule ${matches.map((m) => m.ruleId).join(', ')}`,
+    headline: `Matched ${matches.map(name).join(', ')}`,
     tone: 'flagged',
     reason: reason || undefined,
   };
 }
 
-export function describeVerdict(label: LabLabel, source: VerdictSource): Verdict {
+export function describeVerdict(
+  label: LabLabel,
+  source: VerdictSource,
+  rules: readonly LabRule[] | null = null
+): Verdict {
   if (!source.ok) return couldNotJudge(source.error);
   if (!source.output) return couldNotJudge(source.parseError ?? 'no answer');
-  if (label === 'modelRules') return describeModelRules(source.output.modelRules);
+  if (label === 'modelRules') return describeModelRules(source, rules);
   const v = source.output[label] as
     | { level?: unknown; detected?: unknown; names?: unknown; reason?: unknown }
     | undefined;

@@ -1,5 +1,5 @@
-import { blankPromptKeys, describeBlankPrompts } from '$lib/text-scan-lab/labels';
-import { PROMPT_KEYS, type PromptChanges, type PromptKey } from '$lib/text-scan-lab/types';
+import { blankPromptKeys, describeBlankPrompts } from './labels';
+import { PROMPT_KEYS, type PromptChanges, type PromptKey } from './types';
 
 /**
  * A moderator's prompt changes live only in this browser, one entry per moderator so a shared browser
@@ -179,4 +179,14 @@ export class ChangesState {
     writeChanges(this.#store, this.#key, merged);
     this.#f.changes = merged;
   }
+}
+
+export function currentPromptsOf(prompts: {
+  active: Partial<Record<string, { id: number; content: string }>>;
+}): CurrentPrompts {
+  const keys = PROMPT_KEYS.filter((k) => prompts.active[k]);
+  return {
+    content: Object.fromEntries(keys.map((k) => [k, prompts.active[k]!.content])),
+    ids: Object.fromEntries(keys.map((k) => [k, prompts.active[k]!.id])),
+  };
 }

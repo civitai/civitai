@@ -1,4 +1,5 @@
 import type { CheckInput } from './input';
+import { verdictsDiffer } from './labels';
 import {
   LAB_ENTITY_TYPES,
   LAB_LABELS,
@@ -75,3 +76,10 @@ export const editedPromptKeys = (
   rules: readonly LabRuleOverride[]
 ): PromptKey[] =>
   PROMPT_KEYS.filter((key) => key in prompts || (key === 'label:modelRules' && rules.length > 0));
+
+export const itemChanged = (item: TryItem, labels: readonly LabLabel[]) =>
+  item.edited !== null && labels.some((label) => verdictsDiffer(label, item.current, item.edited!));
+
+/** A result shows the effect of the drafts it was run with; once they change (a save, an edit), it no longer does. */
+export const runIsStale = (ranWith: string | null, drafts: string) =>
+  ranWith !== null && ranWith !== drafts;

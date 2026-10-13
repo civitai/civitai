@@ -81,27 +81,13 @@ export type RuleMatch = {
   literal: boolean;
 };
 
-export function parseRuleMatches(result: unknown): RuleMatch[] {
-  if (!isRecord(result)) return [];
-  const labels = result.labels;
-  const matched =
-    isRecord(labels) && isRecord(labels.modelRules) && Array.isArray(labels.modelRules.matched)
-      ? labels.modelRules.matched
-      : [];
-  const stored = isRecord(result.modelRules) ? result.modelRules : null;
-  const snapshot = stored?.snapshot;
-  const subjects = new Map<number, string>();
-  if (Array.isArray(snapshot))
-    for (const s of snapshot)
-      if (isRecord(s) && typeof s.id === 'number' && typeof s.subject === 'string')
-        subjects.set(s.id, s.subject);
-  const literalIds = new Set(
-    Array.isArray(stored?.literalRuleIds)
-      ? stored.literalRuleIds.filter((id): id is number => typeof id === 'number')
-      : []
-  );
-
-  // First match per rule wins: the matches tab keys its rows by `ruleId`.
+/** One entry per rule: the model's first match for it, then literal-only hits. */
+export function mergeRuleMatches(
+  matched: readonly unknown[],
+  literalIds: Iterable<number>,
+  subjects: ReadonlyMap<number, string>
+): RuleMatch[] {
+  const literal = new Set(literalIds);
   const byRule = new Map<number, RuleMatch>();
   for (const m of matched) {
     if (!isRecord(m) || typeof m.ruleId !== 'number' || byRule.has(m.ruleId)) continue;
@@ -110,10 +96,10 @@ export function parseRuleMatches(result: unknown): RuleMatch[] {
       subject: subjects.get(m.ruleId) ?? null,
       reason: typeof m.reason === 'string' && m.reason.trim() ? m.reason.trim() : null,
       llm: true,
-      literal: literalIds.has(m.ruleId),
+      literal: literal.has(m.ruleId),
     });
   }
-  for (const ruleId of literalIds)
+  for (const ruleId of literal)
     if (!byRule.has(ruleId))
       byRule.set(ruleId, {
         ruleId,
@@ -124,6 +110,33 @@ export function parseRuleMatches(result: unknown): RuleMatch[] {
       });
   return [...byRule.values()];
 }
+
+export function parseRuleMatches(result: unknown): RuleMatch[] {
+  if (!isRecord(result)) return [];
+  const labels = result.labels;
+  const matched =
+    isRecord(labels) && isRecord(labels.modelRules) && Array.isArray(labels.modelRules.matched)
+      ? labels.modelRules.matched
+      : [];
+  const stored = isRecord(result.modelRules) ? result.modelRules : null;
+  const subjects = new Map<number, string>();
+  if (Array.isArray(stored?.snapshot))
+    for (const s of stored.snapshot)
+      if (isRecord(s) && typeof s.id === 'number' && typeof s.subject === 'string')
+        subjects.set(s.id, s.subject);
+  const literalIds = Array.isArray(stored?.literalRuleIds)
+    ? stored.literalRuleIds.filter((id): id is number => typeof id === 'number')
+    : [];
+  return mergeRuleMatches(matched, literalIds, subjects);
+}
+
+export const matchSourceLabel = (match: Pick<RuleMatch, 'llm' | 'literal'>) =>
+  !match.literal ? 'Model only' : match.llm ? 'Literal + model' : 'Literal only';
+
+export const matchSourceVariant = (
+  match: Pick<RuleMatch, 'llm' | 'literal'>
+): 'secondary' | 'outline' | 'default' =>
+  !match.literal ? 'secondary' : match.llm ? 'outline' : 'default';
 
 /** The cursor is a row's `updatedAt` as Postgres prints it plus its id: `YYYY-MM-DD HH:MM:SS(.ffffff)|id`. */
 export function parseMatchCursor(cursor: string | undefined) {

@@ -8,18 +8,30 @@
   import { plural } from '$lib/format';
   import { parseCheckInput, type CheckInput } from '$lib/text-scan-lab/input';
   import { ENTITY_TYPE_NAMES, LABEL_NAMES } from '$lib/text-scan-lab/labels';
-  import { LAB_ENTITY_TYPES, LAB_LABELS, type LabEntityType } from '$lib/text-scan-lab/types';
+  import { judgeCandidates, sourceTypeOf } from '$lib/text-scan-lab/try';
+  import {
+    LAB_ENTITY_TYPES,
+    LAB_LABELS,
+    type LabEntityType,
+    type PromptKey,
+  } from '$lib/text-scan-lab/types';
 
   let {
-    overrides,
-    overridesError,
+    prompts,
+    rules,
+    editedKeys,
+    only,
+    draftsError,
     onstart,
-    onchecked,
+    onresult,
   }: {
-    overrides: string;
-    overridesError: string | null;
+    prompts: string;
+    rules: string;
+    editedKeys: readonly PromptKey[];
+    only: 'ModelRules' | null;
+    draftsError: string | null;
     onstart: () => void;
-    onchecked: (result: Record<string, unknown>) => void;
+    onresult: (result: Record<string, unknown>) => void;
   } = $props();
 
   let raw = $state('');
@@ -28,27 +40,12 @@
   let profileAs = $state<'UserProfile' | 'User'>('UserProfile');
 
   const parsed = $derived(parseCheckInput(raw));
-  const blocked = $derived(
-    parsed.kind === 'empty' ||
-      parsed.kind === 'too-many-ids' ||
-      parsed.kind === 'refused' ||
-      overridesError !== null
+  const runnable = $derived(
+    parsed.kind !== 'empty' && parsed.kind !== 'too-many-ids' && parsed.kind !== 'refused'
   );
-  const judgedType = $derived.by((): LabEntityType | null => {
-    switch (parsed.kind) {
-      case 'ids':
-        return lookupAs;
-      case 'entity':
-        return parsed.entityType;
-      case 'user':
-        return profileAs;
-      case 'text':
-      case 'unknown-url':
-        return judgeAs;
-      default:
-        return null;
-    }
-  });
+  const source = $derived(sourceTypeOf(parsed, { lookupAs, profileAs }));
+  const candidates = $derived(only ? [only] : judgeCandidates(source, editedKeys));
+  const judged = $derived(candidates.includes(judgeAs) ? judgeAs : candidates[0]);
 
   const detected = (p: CheckInput): string | null => {
     switch (p.kind) {
@@ -64,13 +61,12 @@
         return null;
     }
   };
-
   const detectedText = $derived(detected(parsed));
 
   const form = new FormState({
     reset: false,
     onSubmit: () => onstart(),
-    onSuccess: (r) => r && onchecked(r),
+    onSuccess: (r) => r && onresult(r),
   });
 </script>
 
@@ -98,18 +94,20 @@
 
 <form
   method="POST"
-  action="?/check"
+  action="?/try"
   use:enhance={form.enhance}
   class="rounded-xl border border-dark-4 bg-dark-6 p-5"
 >
+  <h2 class="mb-3 text-sm font-semibold text-white">Try</h2>
   <input type="hidden" name="lookupAs" value={lookupAs} />
-  <input type="hidden" name="judgeAs" value={judgeAs} />
+  <input type="hidden" name="judgeAs" value={judged} />
   <input type="hidden" name="profileAs" value={profileAs} />
-  <input type="hidden" name="prompts" value={overrides} />
+  <input type="hidden" name="prompts" value={prompts} />
+  <input type="hidden" name="rules" value={rules} />
 
   <Textarea
     name="input"
-    aria-label="Link, id or text to check"
+    aria-label="Link, id or text to try"
     placeholder="Paste a Civitai link, an id, or some text"
     class="min-h-28"
     bind:value={raw}
@@ -119,7 +117,7 @@
     {#if detectedText}
       <p class="text-xs text-dark-2">{detectedText}</p>
     {/if}
-    {#if parsed.kind === 'ids'}
+    {#if !only && parsed.kind === 'ids'}
       {@render typeSelect(
         'lookup-as',
         'Look up as',
@@ -127,7 +125,7 @@
         (v) => (lookupAs = v as LabEntityType),
         LAB_ENTITY_TYPES
       )}
-    {:else if parsed.kind === 'user'}
+    {:else if !only && parsed.kind === 'user'}
       {@render typeSelect(
         'profile-as',
         'Look up as',
@@ -135,18 +133,20 @@
         (v) => (profileAs = v as 'UserProfile' | 'User'),
         ['UserProfile', 'User']
       )}
-    {:else if parsed.kind === 'text' || parsed.kind === 'unknown-url'}
+    {/if}
+    {#if runnable && candidates.length > 1}
       {@render typeSelect(
         'judge-as',
         'Judge as',
-        judgeAs,
+        judged,
         (v) => (judgeAs = v as LabEntityType),
-        LAB_ENTITY_TYPES
+        candidates
       )}
     {/if}
-    {#if judgedType}
+    {#if runnable}
       <p class="text-xs text-dark-2">
-        Checks {LAB_LABELS[judgedType].map((l) => LABEL_NAMES[l]).join(', ')}
+        Judged as {ENTITY_TYPE_NAMES[judged]} · checks
+        {LAB_LABELS[judged].map((l) => LABEL_NAMES[l]).join(', ')}
       </p>
     {/if}
   </div>
@@ -155,17 +155,17 @@
     <p class="mt-2 text-sm text-amber-300">{parsed.notice}</p>
   {:else if parsed.kind === 'too-many-ids'}
     <p class="mt-2 text-sm text-red-300">
-      {parsed.count} ids is more than the {parsed.max} one check can take.
+      {parsed.count} ids is more than the {parsed.max} one try can take.
     </p>
   {/if}
 
   <div class="mt-4 flex items-center gap-3 border-t border-dark-4 pt-4">
-    <Button type="submit" disabled={blocked || form.submitting}>
-      {form.submitting ? 'Checking…' : 'Check'}
+    <Button type="submit" disabled={!runnable || draftsError !== null || form.submitting}>
+      {form.submitting ? 'Running…' : 'Run'}
     </Button>
   </div>
-  {#if overridesError}
-    <p class="mt-3 text-sm text-red-300">{overridesError}</p>
+  {#if draftsError}
+    <p class="mt-3 text-sm text-red-300">{draftsError}</p>
   {/if}
   {#if form.error}
     <p class="mt-3 whitespace-pre-wrap text-sm text-red-300">{form.error}</p>

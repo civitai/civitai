@@ -7,8 +7,6 @@ import { publishChanges, publishSchema } from '$lib/server/text-scan-lab/publish
 import { runTry } from '$lib/server/text-scan-lab/try';
 import { PROMPT_KEYS, type PromptKey } from '$lib/text-scan-lab/types';
 
-export type { TryItem as CheckItemResult, TryResult as CheckResult } from '$lib/text-scan-lab/try';
-
 /** The current prompts: their text, and each version's id, which a publish checks is still current. */
 export type ActivePrompts =
   | {
@@ -39,7 +37,7 @@ export const load: PageServerLoad = async () => {
 };
 
 export const actions: Actions = {
-  check: async ({ request }) => runTry(await request.formData()),
+  try: async ({ request }) => runTry(await request.formData()),
 
   publish: requiresGrant('textScan.prompt.publish', async ({ request }) => {
     const input = parseForm(publishSchema, await request.formData());
