@@ -187,4 +187,70 @@ describe('handleTextScanCallback — web-search pass', () => {
     });
     expect(applyFailure).not.toHaveBeenCalled();
   });
+  describe('segmented workflows', () => {
+    const step = (segment: number, parsed: unknown) => ({
+      $type: 'chatCompletion',
+      name: segment === 0 ? 'textScan' : `textScan${segment}`,
+      metadata: { segment },
+      output: {
+        choices: [{ message: { content: JSON.stringify(parsed) }, finishReason: 'stop' }],
+        parsed,
+      },
+    });
+    const CLEAN = {
+      poi: { detected: false, names: [], reason: 'r' },
+      minor: { detected: false, reason: 'r' },
+    };
+    const segmented = (
+      meta: Record<string, unknown>,
+      outputs: unknown[],
+      segments = outputs.length
+    ) => ({
+      data: {
+        metadata: { ...meta, segments, inputChars: 3000, inputCut: false, scannedChars: 3000 },
+        tags: ['text-scan', 'Model', meta.mode, 'web-search'],
+        steps: outputs.map((parsed, i) => step(i, parsed)),
+      },
+    });
+
+    it('active search pass: a flag in any segment applies poi/minor', async () => {
+      vi.mocked(getWorkflow).mockResolvedValue(
+        segmented(searchMeta('active'), [CLEAN, FLAGGED, CLEAN]) as any
+      );
+      await handleTextScanCallback({ workflowId: 'wf-1', status: 'succeeded' });
+      expect(updateMany.mock.calls[0][0].where).toMatchObject({ entityType: 'Model:search' });
+      const [{ outcome }] = adapter.applyTextScan.mock.calls[0];
+      expect(outcome.poi.newlyDetected).toBe(true);
+      expect(outcome.minor.newlyDetected).toBe(true);
+    });
+
+    it('active search pass: a missing segment fails closed without applyFailure', async () => {
+      const applyFailure = vi.fn();
+      vi.mocked(getModerationAdapter).mockReturnValue({ ...adapter, applyFailure } as any);
+      vi.mocked(getWorkflow).mockResolvedValue(
+        segmented(searchMeta('active'), [FLAGGED, CLEAN], 3) as any
+      );
+      await handleTextScanCallback({ workflowId: 'wf-1', status: 'succeeded' });
+      expect(updateMany.mock.calls[0][0]).toMatchObject({
+        where: { entityType: 'Model:search', entityId: 7 },
+        data: { status: 'Failed' },
+      });
+      expect(adapter.applyTextScan).not.toHaveBeenCalled();
+      expect(applyFailure).not.toHaveBeenCalled();
+    });
+
+    it('main active pass: drops poi/minor from the merged verdict, keeps a later-segment nsfw', async () => {
+      const none = { nsfw: { level: 'none', reason: 'r' }, ...CLEAN };
+      vi.mocked(getWorkflow).mockResolvedValue(
+        segmented(mainMeta, [none, { nsfw: { level: 'x', reason: 'r' }, ...FLAGGED }]) as any
+      );
+      await handleTextScanCallback({ workflowId: 'wf-1', status: 'succeeded' });
+      expect(updateMany.mock.calls[0][0].data.triggeredLabels).toEqual(['nsfw', 'poi', 'minor']);
+      const [{ outcome }] = adapter.applyTextScan.mock.calls[0];
+      expect(outcome.nsfw.raised).toBe(true);
+      expect(outcome.poi).toBeUndefined();
+      expect(outcome.minor).toBeUndefined();
+      expect(outcome.triggeredLabels).toEqual(['nsfw']);
+    });
+  });
 });

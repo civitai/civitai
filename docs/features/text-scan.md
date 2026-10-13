@@ -81,8 +81,9 @@ never exceeds its main mode, and the `text-scan` kill switch turns both off.
   writes to `Model:search` and its `poi`/`minor` verdict goes through the Model adapter. `nsfw` only
   ever comes from the main scan, and neither scan clears a flag the other set.
 
-Both scans share the subject, input cap, prompt rows and dedupe rules; each row has its own retry
-adapter. Set it with the harness action `putWebSearchModes` on `/api/mod/text-scan`:
+Both scans share the subject, input cap, segmentation, prompt rows and dedupe rules; a long text
+splits into the same segments in both, every search-scan step carries the tool, and any failed segment
+fails that scan alone. Each row has its own retry adapter. Set it with the harness action `putWebSearchModes` on `/api/mod/text-scan`:
 
 ```json
 { "action": "putWebSearchModes", "entityType": "Model", "rollout": { "shadow": 10 } }
