@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock, redisMock } from '~/__tests__/mocks';
+import { REDIS_KEYS } from '~/server/redis/client';
 import { CrucibleStatus } from '~/shared/utils/prisma/enums';
 import type * as CacheHelpers from '~/server/utils/cache-helpers';
 
@@ -233,6 +234,15 @@ describe('getUserCrucibleStats — participation counts everything, results only
     expect(dbMock.dbRead.$queryRaw).toHaveBeenCalledTimes(1);
   });
 
+  it('counts an ended crucible once in the win-rate denominator however many entries', async () => {
+    dbMock.dbRead.crucibleEntry.findMany.mockResolvedValue([entry(1, 1, 1), entry(2, 1, 2)]);
+    dbMock.dbRead.$queryRaw.mockResolvedValue(placings(1, 1, 10));
+
+    const stats = await getUserCrucibleStats({ userId: USER_ID });
+
+    expect(stats).toMatchObject({ cruciblesEntered: 1, cruciblesEnded: 1 });
+  });
+
   it('counts a crucible once however many entries the user put in', async () => {
     dbMock.dbRead.crucibleEntry.findMany.mockResolvedValue([
       entry(1, 1, null, 1000, CrucibleStatus.Active),
@@ -249,6 +259,15 @@ describe('getUserCrucibleStats — best finish', () => {
   it('carries the size of the field it was won in, and prefers the better rank', async () => {
     dbMock.dbRead.crucibleEntry.findMany.mockResolvedValue([entry(1, 1, 2), entry(2, 2, 5)]);
     dbMock.dbRead.$queryRaw.mockResolvedValue([...placings(1, 2, 48), ...placings(2, 5, 6)]);
+
+    const stats = await getUserCrucibleStats({ userId: USER_ID });
+
+    expect(stats.bestFinish).toEqual({ position: 2, fieldSize: 48 });
+  });
+
+  it('prefers the bigger field when two finishes share a rank', async () => {
+    dbMock.dbRead.crucibleEntry.findMany.mockResolvedValue([entry(1, 1, 2), entry(2, 2, 2)]);
+    dbMock.dbRead.$queryRaw.mockResolvedValue([...placings(1, 2, 6), ...placings(2, 2, 48)]);
 
     const stats = await getUserCrucibleStats({ userId: USER_ID });
 
@@ -312,6 +331,16 @@ describe('getUserCrucibleStats — buzz won', () => {
     dbMock.dbRead.crucibleEntry.findMany.mockResolvedValue([]);
     return (await getUserCrucibleStats({ userId: USER_ID })).buzzWon;
   };
+
+  it("reads and caches under this user's own key", async () => {
+    await total();
+
+    expect(fetchThroughCache).toHaveBeenCalledWith(
+      `${REDIS_KEYS.CRUCIBLE.USER_BUZZ_WON}:${USER_ID}`,
+      expect.any(Function),
+      expect.anything()
+    );
+  });
 
   it("is the sum of the creator's unvoided crucible prizes, claimed or not", async () => {
     dbMock.dbRead.prize.aggregate.mockResolvedValue({ _sum: { amount: 800 } });

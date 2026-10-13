@@ -385,16 +385,38 @@ describe('finalizeCrucible — completion', () => {
     ]);
   });
 
-  it("busts each winner's cached Buzz Won once their prize is awarded", async () => {
-    setupCrucible({ entryFee: 100 });
+  const buzzWonKey = (id: number) => `${REDIS_KEYS.CRUCIBLE.USER_BUZZ_WON}:${id}`;
+  // User 13 places 4th, below the three prizes; user 4 is the host.
+  const withUnplacedEntrant = () =>
+    setupCrucible({
+      entryFee: 100,
+      entries: [
+        dbEntry(1, 10, 1_000),
+        dbEntry(2, 11, 2_000),
+        dbEntry(3, 12, 3_000),
+        dbEntry(4, 13, 4_000),
+      ],
+      elos: { 1: 1600, 2: 1550, 3: 1400, 4: 1300 },
+    });
+
+  it("busts exactly the prize winners' cached Buzz Won, not other entrants or the host", async () => {
+    withUnplacedEntrant();
 
     await finalizeCrucible(1);
 
-    const busted = redisMock.redis.del.mock.calls.map(([key]) => key);
-    expect(busted).toEqual(
-      expect.arrayContaining([10, 11, 12].map((id) => `${REDIS_KEYS.CRUCIBLE.USER_BUZZ_WON}:${id}`))
+    expect(awarded().map((prize) => prize.userId)).toEqual([10, 11, 12]);
+    expect(redisMock.redis.del.mock.calls.map(([key]) => key).sort()).toEqual(
+      [10, 11, 12].map(buzzWonKey).sort()
     );
-    expect(busted).not.toContain(`${REDIS_KEYS.CRUCIBLE.USER_BUZZ_WON}:4`);
+  });
+
+  it('still completes the crucible when busting the cache fails', async () => {
+    setupCrucible({ entryFee: 100 });
+    redisMock.redis.del.mockRejectedValue(new Error('redis down'));
+
+    await expect(finalizeCrucible(1)).resolves.toBeDefined();
+
+    expect(claim).toHaveBeenCalled();
   });
 
   it('busts nothing when awarding fails', async () => {

@@ -4576,7 +4576,10 @@ export const cancelCrucible = async ({
 const userBuzzWonKey = (userId: number) =>
   `${REDIS_KEYS.CRUCIBLE.USER_BUZZ_WON}:${userId}` as RedisKeyTemplateCache;
 
-/** Awarded prizes count toward Buzz Won before they are claimed, so finalize drops the cache. */
+/**
+ * Awarded prizes count toward Buzz Won before they are claimed, so finalize drops the cache.
+ * `redis.del` (forced refetch) is deliberate, not `bustFetchThroughCache` (stale-while-revalidate).
+ */
 const bustUserBuzzWon = (userIds: number[]) =>
   Promise.all([...new Set(userIds)].map((id) => redis.del(userBuzzWonKey(id)))).catch((error) =>
     log(`Failed to bust Buzz Won cache: ${error instanceof Error ? error.message : String(error)}`)
