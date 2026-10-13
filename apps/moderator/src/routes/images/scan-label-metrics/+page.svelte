@@ -16,9 +16,9 @@
   const share = (part: number, whole: number) =>
     whole ? `${Math.round((part / whole) * 100)}%` : '–';
   const quotaError = $derived(
-    form && 'error' in form && (form.scope === 'quota' || form.scope === 'denied') ? form.error : null
+    form && 'error' in form && (form.scope === 'quota' || form.scope === 'denied') ? form.error ?? null : null
   );
-  const quotaSaved = $derived(form && 'saved' in form ? form.saved : null);
+  const quotaSaved = $derived(form && 'saved' in form ? form.saved ?? null : null);
 </script>
 
 <div class="flex flex-col gap-4">

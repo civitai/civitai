@@ -181,7 +181,7 @@ describe('quota', () => {
     for (let i = 0; i < 3; i++) await vote(ids[i], 3, false, '2026-10-12T10:00:00Z');
 
     const report = await getQuotaReport('2026-10-12', '2026-10-13');
-    const byName = Object.fromEntries(report.map((r) => [r.username, r]));
+    const byName = Object.fromEntries(report.map((r) => [r.username ?? '', r] as const));
     expect(byName.ana.days).toEqual([
       { day: '2026-10-12', votes: 50, status: 'met' },
       { day: '2026-10-13', votes: 5, status: 'missed' },
