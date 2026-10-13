@@ -42,6 +42,7 @@
     getReportItemUrl,
     reportedPlacementId,
     reportDetail,
+    gameFrameReportImage,
   } from '$lib/reports';
   import type { ActionResult } from '@sveltejs/kit';
   import { FormState } from '$lib/form-state.svelte';
@@ -394,6 +395,23 @@
 
         {#if data.type === 'gameFrameGame'}
           {@const game = data.games.find((g) => g.id === selected.entityId)}
+          {@const reportedImage = gameFrameReportImage(selected.details)}
+          {#if reportedImage}
+            <div class="rounded-lg border p-3">
+              <p class="mb-2 text-sm">
+                This report is about one player's picture in a room of this game, not the game itself.
+                Civitai Games keeps the picture for 7 days after the report.
+              </p>
+              <a href={reportedImage} target="_blank" rel="noreferrer">
+                <img
+                  src={reportedImage}
+                  alt="Reported player upload"
+                  referrerpolicy="no-referrer"
+                  class="max-h-80 w-full rounded border bg-muted/40 object-contain"
+                />
+              </a>
+            </div>
+          {/if}
           <div class="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3">
             {#if game}
               <p class="mb-2 flex flex-wrap items-center gap-2 text-sm">
