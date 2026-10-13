@@ -11,7 +11,7 @@ entity's moderation adapter, which applies the action.
 | ------------------------------------------------------------------------ | ----------------------------------------------------------- |
 | Scan profiles (which fields, which labels, the entity's declared state)  | `src/server/services/text-scan/profiles/`                   |
 | Prompt storage (append-only table, cached; content is never in the repo) | `TextScanPrompt`, `text-scan/prompt.ts`                     |
-| Model and input-size config                                              | sysRedis `system:text-scan:config`                          |
+| Model, per-call size (maxInputChars) and segment-count (maxSegments) config | sysRedis `system:text-scan:config`                          |
 | Submit, dedup (`contentHash`), external id                               | `text-scan/submit.ts`                                       |
 | Callback                                                                 | `/api/webhooks/text-scan-result`                            |
 | Retry of failed scans                                                    | the `retry-failed-text-moderation` job (shared with XGuard) |
@@ -27,7 +27,8 @@ like a single call. At most `maxSegments` (default 10) segments are scanned. Any
 missing segment fails the whole scan, which the retry job then resubmits. Every result's `meta`
 records `inputChars`, `inputCut` (some text was past the last segment and was not scanned), `segments`
 and `scannedChars`. Both limits can be overridden in the config above. The dedup hash covers the whole
-text, so an edit anywhere rescans.
+text, so an edit anywhere rescans. Changing `maxSegments` or `maxInputChars` does not by itself
+rescan entities already scanned (the dedup hash covers the text, not the limits).
 
 ## Entities
 
@@ -108,4 +109,6 @@ so chat verdicts don't pair one to one with text scan's per-message ones.
   nothing in the moderator database. Publishing edits needs the `textScan.prompt.publish` permission,
   held by no one until granted on `/admin`; the pages are likewise unreachable until granted there.
   `/text-scan` and `/text-scan/playground` redirect to Check.
+  The lab accepts up to 600,000 characters per text, so a long text scans as up to three segments; its
+  quotes and results report the segment count.
 - Errors are logged to Axiom under `name: 'text-scan'`; every submit also logs a `submitted` event.
