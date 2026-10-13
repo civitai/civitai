@@ -7,7 +7,17 @@ import {
   getGameMirrors,
   getOwnerFlaggedMinorModelIds,
   getReportedGame,
+  getReportedModelId,
+  getReportedModelStates,
 } from '$lib/server/reports.service';
+import {
+  setReportedModelMinor,
+  setReportedModelSfwOnly,
+  takeDownReportedModel,
+  unpublishReportedModel,
+} from '$lib/server/model-moderation.service';
+import { isModelUnpublishReason, MINOR_UNPUBLISH_REASONS } from '$lib/model-unpublish-reasons';
+import { denied } from '$lib/permissions';
 import { getResolvedPostReportIds } from '$lib/server/moderation-board.service';
 import { removePlacement } from '$lib/server/user-actions.service';
 import { delistGame, delistReason } from '$lib/server/game-frame';
@@ -65,14 +75,23 @@ export const load: PageServerLoad = async ({ params, url }) => {
   });
   const entityIds = data.items.flatMap((r) => (r.entityId != null ? [r.entityId] : []));
   const games = type === 'gameFrameGame' ? await getGameMirrors(entityIds) : [];
-  const ownerFlaggedMinor = type === 'model' ? await getOwnerFlaggedMinorModelIds(entityIds) : [];
+  const [ownerFlaggedMinor, models] =
+    type === 'model'
+      ? await Promise.all([
+          getOwnerFlaggedMinorModelIds(entityIds),
+          getReportedModelStates(entityIds),
+        ])
+      : [[], []];
 
   // The default reason set is NOT echoed into the filter control: eight pre-ticked chips read as a
   // heavily-narrowed view when it is the ordinary one. The page says what it is hiding instead, and only
   // while it is hiding it — once reasons are chosen explicitly, the choice is the whole story.
   return {
     type,
-    wide: true,
+    // The model layout owns its height: the queue and the two detail columns each scroll on their own,
+    // sized against the viewport, which `wide` cannot do — its padding puts the page an unknown
+    // distance down. Every other type keeps the full-width table it had.
+    ...(type === 'model' ? { fullBleed: true } : { wide: true }),
     // A `?report=` view ran with no status/reason filter, so echoing the defaults would put chips
     // saying "Pending + Processing" above an Actioned row and a note about hiding Automated above an
     // Automated one — the operator reads that as the filters being broken.
@@ -82,6 +101,7 @@ export const load: PageServerLoad = async ({ params, url }) => {
     reportedBy,
     games,
     ownerFlaggedMinor,
+    models,
     ...data,
   };
 };
@@ -194,6 +214,69 @@ export const actions: Actions = {
     if (!result.ok)
       return fail(410, { error: `Delisted${forks}, but ${result.error}`, gone: true });
     return { success: true, delisted: `Delisted${forks}` };
+  },
+
+  /**
+   * Acts on the reported model through the main app, then sets the report Actioned (which pays the
+   * reporters) — the model page's moderator menu without the second tab, and without the trip back to
+   * close the report. Same order as `delistGame`: the report is only touched once the model call
+   * succeeded, so a refusal leaves it open to retry.
+   */
+  moderateModel: async ({ request, locals, params, getClientAddress }) => {
+    const type = reportEntityForSlug(params.slug);
+    if (type !== 'model' || !canAccess(locals.user, reportPath(type)))
+      return fail(403, { error: 'Not permitted.' });
+
+    const data = await request.formData();
+    const id = Number(data.get('id'));
+    if (!Number.isInteger(id) || id <= 0) return fail(400, { error: 'Invalid report.' });
+
+    const modelId = await getReportedModelId(id);
+    if (modelId == null) return fail(410, { error: 'That report no longer exists.', gone: true });
+
+    const action = String(data.get('modelAction'));
+    let result;
+    let done: string;
+    switch (action) {
+      case 'unpublish': {
+        const reason = String(data.get('reason') ?? '');
+        if (!isModelUnpublishReason(reason)) return fail(400, { error: 'Pick a reason.' });
+        const customMessage = String(data.get('customMessage') ?? '').trim() || undefined;
+        if (reason === 'other' && !customMessage)
+          return fail(400, { error: 'A message to the owner is required for "Other".' });
+        const alsoFlagMinor =
+          MINOR_UNPUBLISH_REASONS.has(reason) && data.get('alsoFlagMinor') === 'on';
+        result = await unpublishReportedModel({ modelId, reason, customMessage, alsoFlagMinor });
+        done = alsoFlagMinor ? 'Flagged as minor and unpublished' : 'Unpublished';
+        break;
+      }
+      case 'takeDown':
+        if (!locals.grants['model.takeDown']) return fail(403, { error: denied('model.takeDown') });
+        result = await takeDownReportedModel(modelId);
+        done = 'Taken down';
+        break;
+      case 'setSfwOnly':
+        result = await setReportedModelSfwOnly(modelId);
+        done = 'Set as SFW-only';
+        break;
+      case 'setMinor':
+        result = await setReportedModelMinor(modelId);
+        done = 'Flagged as minor';
+        break;
+      default:
+        return fail(400, { error: 'Unknown action.' });
+    }
+    if (!result.ok) return fail(400, { error: result.error });
+
+    const reported = await setReportStatus({
+      id,
+      status: ReportStatus.Actioned,
+      userId: locals.user.id,
+      ip: getClientAddress(),
+    });
+    // The model was changed either way, so say so — a bare "report gone" reads as nothing happened.
+    if (!reported.ok) return fail(410, { error: `${done}, but ${reported.error}`, gone: true });
+    return { success: true, moderated: `${done} model #${modelId}; report actioned` };
   },
 
   saveNotes: async ({ request }) => {
