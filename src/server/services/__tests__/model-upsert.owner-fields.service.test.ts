@@ -131,7 +131,7 @@ const storedModel = {
 };
 
 function mockStored(overrides: Partial<typeof storedModel> = {}) {
-  mockDbRead.model.findUnique.mockResolvedValue({ ...storedModel, ...overrides });
+  mockDbWrite.model.findUnique.mockResolvedValue({ ...storedModel, ...overrides });
 }
 
 const baseInput = {
@@ -292,6 +292,79 @@ describe('moderation-flow meta keys', () => {
     });
 
     expect(updateData().meta).toEqual({ ...STORED_FLOW_META, cannotPublish: false });
+  });
+});
+
+describe('stored snapshot', () => {
+  it('reads the stored row from the primary, never the replica', async () => {
+    await upsert({ id: MODEL_ID, userId: OWNER_ID });
+
+    expect(mockDbRead.model.findUnique).not.toHaveBeenCalled();
+    expect(mockDbWrite.model.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: MODEL_ID } })
+    );
+  });
+});
+
+describe('cannotPromote on a private model', () => {
+  const privateStored = (meta: Record<string, unknown>) =>
+    mockStored({ availability: Availability.Private, meta });
+
+  it('keeps cannotPromote forced on and records a moderator ban for publish', async () => {
+    privateStored({ cannotPromote: true });
+
+    await upsert({
+      id: MODEL_ID,
+      userId: MODERATOR_ID,
+      isModerator: true,
+      meta: { cannotPromote: true } as ModelUpsertInput['meta'],
+    });
+
+    expect(updateData().meta).toEqual({ cannotPromote: true, restoreCannotPromote: true });
+  });
+
+  it('keeps cannotPromote forced on and drops the marker on a moderator unban', async () => {
+    privateStored({ cannotPromote: true, restoreCannotPromote: true });
+
+    await upsert({
+      id: MODEL_ID,
+      userId: MODERATOR_ID,
+      isModerator: true,
+      meta: { cannotPromote: false } as ModelUpsertInput['meta'],
+    });
+
+    const meta = updateData().meta as Record<string, unknown>;
+    expect(meta.cannotPromote).toBe(true);
+    expect(meta).not.toHaveProperty('restoreCannotPromote');
+  });
+
+  it('leaves the marker alone when the moderator does not send cannotPromote', async () => {
+    privateStored({ cannotPromote: true, restoreCannotPromote: true });
+
+    await upsert({
+      id: MODEL_ID,
+      userId: MODERATOR_ID,
+      isModerator: true,
+      meta: { hideBuzz: true } as ModelUpsertInput['meta'],
+    });
+
+    expect(updateData().meta).toEqual({
+      cannotPromote: true,
+      restoreCannotPromote: true,
+      hideBuzz: true,
+    });
+  });
+
+  it('never lets the client author the marker', async () => {
+    privateStored({ cannotPromote: true });
+
+    await upsert({
+      id: MODEL_ID,
+      userId: OWNER_ID,
+      meta: { restoreCannotPromote: true } as ModelUpsertInput['meta'],
+    });
+
+    expect(updateData().meta).toEqual({ cannotPromote: true });
   });
 });
 

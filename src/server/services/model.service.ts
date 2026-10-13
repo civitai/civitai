@@ -187,6 +187,7 @@ import {
   stripMinorHashMeta,
   stripModerationOwnedMeta,
   stripServerOwnedMeta,
+  withPrivateCannotPromote,
 } from '~/server/utils/minor-flag-meta';
 import type { RuleDefinition } from '~/server/utils/mod-rules';
 import {
@@ -2719,9 +2720,11 @@ export const upsertModel = async (
   let meta = stripServerOwnedMeta(stripModerationOwnedMeta(input.meta, isModerator));
   if (serverMeta) meta = { ...(meta ?? {}), ...serverMeta };
 
+  // Primary, not the replica: ownership, the availability lock and the meta merge below all act on
+  // this row, and a lagging copy can show a stale availability or omit a just-written key.
   const beforeUpdate =
     id && !templateId
-      ? await dbRead.model.findUnique({
+      ? await dbWrite.model.findUnique({
           where: { id },
           select: {
             name: true,
@@ -2936,6 +2939,17 @@ export const upsertModel = async (
 
     const prevGallerySettings = beforeUpdate.gallerySettings as ModelGallerySettingsSchema;
     const prevMeta = beforeUpdate.meta as ModelMeta | null;
+    let mergedMeta: ModelMeta = { ...prevMeta, ...meta };
+    if (beforeUpdate.availability === Availability.Private) {
+      // `meta` only carries `cannotPromote` for a moderator. While private it is forced on, so the
+      // moderator's decision is what publish restores.
+      const sent = (meta as ModelMeta | undefined)?.cannotPromote;
+      const banned =
+        typeof sent === 'boolean'
+          ? sent
+          : (prevMeta as Record<string, unknown> | null)?.[RESTORE_CANNOT_PROMOTE_KEY] === true;
+      mergedMeta = withPrivateCannotPromote(mergedMeta, banned);
+    }
 
     let clearedLicensingSources: { id: number; licensingSourceVersionId: number }[] = [];
     let typeBeforeUpdate: ModelType | undefined;
@@ -2966,7 +2980,7 @@ export const upsertModel = async (
           where: { id },
           data: {
             ...data,
-            meta: { ...prevMeta, ...meta },
+            meta: mergedMeta,
             gallerySettings: {
               ...prevGallerySettings,
               level:
@@ -5166,7 +5180,8 @@ export const privateModelFromTraining = async ({
 }) => {
   const { id, tagsOnModels, user, templateId, bountyId, meta, status, ...data } = input;
 
-  const model = await dbRead.model.findUnique({
+  // Primary: the stored meta feeds a wholesale meta rewrite and the restore marker below.
+  const model = await dbWrite.model.findUnique({
     where: { id },
     select: {
       userId: true,
@@ -5338,7 +5353,8 @@ export const publishPrivateModel = async ({
   publishVersions,
   isModerator,
 }: PublishPrivateModelInput & { isModerator?: boolean }) => {
-  const model = await dbRead.model.findUnique({
+  // Primary: the stored meta decides the publish gates and the cannotPromote value restored.
+  const model = await dbWrite.model.findUnique({
     where: { id: modelId },
     select: { id: true, userId: true, availability: true, status: true, meta: true },
   });
@@ -5494,17 +5510,28 @@ export const toggleCannotPromote = async ({
 }) => {
   if (!isModerator) throw throwAuthorizationError();
 
-  const model = await getModel({ id, select: { id: true, meta: true } });
+  const model = await dbWrite.model.findUnique({
+    where: { id },
+    select: { id: true, meta: true, availability: true },
+  });
   if (!model) throw throwNotFoundError(`No model with id ${id}`);
 
   const modelMeta = model.meta as ModelMeta | null;
-  const currentCannotPromote = modelMeta?.cannotPromote ?? false;
+  const isPrivate = model.availability === Availability.Private;
+  // A private model has cannotPromote forced on, so the moderator's own decision is the marker.
+  const currentCannotPromote = isPrivate
+    ? (modelMeta as Record<string, unknown> | null)?.[RESTORE_CANNOT_PROMOTE_KEY] === true
+    : modelMeta?.cannotPromote ?? false;
   const cannotPromote = !currentCannotPromote;
 
   const updated = await dbWrite.model.update({
     where: { id },
     data: {
-      meta: modelMeta ? { ...modelMeta, cannotPromote } : { cannotPromote },
+      meta: isPrivate
+        ? withPrivateCannotPromote(modelMeta ?? {}, cannotPromote)
+        : modelMeta
+        ? { ...modelMeta, cannotPromote }
+        : { cannotPromote },
     },
     select: { id: true, meta: true },
   });

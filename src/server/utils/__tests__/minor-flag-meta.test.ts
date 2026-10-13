@@ -11,6 +11,7 @@ import {
   pickModerationOwnedMeta,
   pickServerOwnedMeta,
   stripServerOwnedMeta,
+  withPrivateCannotPromote,
 } from '~/server/utils/minor-flag-meta';
 import type { MinorFlagSnapshot, ModelMeta } from '~/server/schema/model.schema';
 
@@ -346,5 +347,24 @@ describe('resolveMinorFlagged — text-scan minor', () => {
     } as ModelMeta;
     expect(resolveMinorFlagged({ isOwner: true, minor: true, meta })).toBe(true);
     expect(resolveMinorFlagged({ isOwner: true, minor: false, meta })).toBe(false);
+  });
+});
+
+describe('withPrivateCannotPromote', () => {
+  it('forces cannotPromote on and records a ban in the marker', () => {
+    expect(withPrivateCannotPromote({ hideBuzz: true }, true)).toEqual({
+      hideBuzz: true,
+      cannotPromote: true,
+      restoreCannotPromote: true,
+    });
+  });
+
+  it('forces cannotPromote on and drops a stale marker when not banned', () => {
+    const result = withPrivateCannotPromote(
+      { cannotPromote: true, restoreCannotPromote: true },
+      false
+    );
+    expect(result).toEqual({ cannotPromote: true });
+    expect(result).not.toHaveProperty('restoreCannotPromote');
   });
 });

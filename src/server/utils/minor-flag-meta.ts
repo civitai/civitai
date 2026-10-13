@@ -143,6 +143,20 @@ export function stripModerationOwnedMeta<T extends ModelMeta | null | undefined>
 export const RESTORE_CANNOT_PROMOTE_KEY = 'restoreCannotPromote';
 
 /**
+ * Meta of a model that is Private after a moderator's `cannotPromote` decision: the flag stays forced
+ * on while private, and the decision is kept in the restore marker for `publishPrivateModel`.
+ * `banned: true` records it; `false` drops the marker so publish makes the model promotable.
+ */
+export function withPrivateCannotPromote<T extends object>(meta: T, banned: boolean): T {
+  const { [RESTORE_CANNOT_PROMOTE_KEY]: _marker, ...rest } = meta as Record<string, unknown>;
+  return {
+    ...rest,
+    cannotPromote: true,
+    ...(banned && { [RESTORE_CANNOT_PROMOTE_KEY]: true }),
+  } as T;
+}
+
+/**
  * Meta keys only server code may write, for everyone including moderators: no moderator flow writes
  * them through client meta. `trainingStudioWorkflowId` links a model to its training workflow and
  * `trainingStudioModerationApproved` records that the run passed the moderation check; the publish

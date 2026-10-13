@@ -101,7 +101,11 @@ vi.mock('~/server/services/text-scan/mode', async (importOriginal) => ({
   getTextScanMode: vi.fn(),
 }));
 
-import { privateModelFromTraining, publishPrivateModel } from '~/server/services/model.service';
+import {
+  privateModelFromTraining,
+  publishPrivateModel,
+  toggleCannotPromote,
+} from '~/server/services/model.service';
 import type { ModelUpsertInput } from '~/server/schema/model.schema';
 import { Availability, ModelStatus, ModelType, ModelUploadType } from '~/shared/utils/prisma/enums';
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -137,7 +141,7 @@ const storedModel = {
 };
 
 function mockStored(overrides: Partial<typeof storedModel> = {}) {
-  mockDbRead.model.findUnique.mockResolvedValue({ ...storedModel, ...overrides });
+  mockDbWrite.model.findUnique.mockResolvedValue({ ...storedModel, ...overrides });
 }
 
 const baseInput = {
@@ -357,9 +361,69 @@ describe('cannotPromote across a private cycle', () => {
   });
 });
 
+describe('privateModelFromTraining — stored snapshot', () => {
+  it('reads the stored row from the primary, never the replica', async () => {
+    await privateFromTraining({ user: owner });
+
+    expect(mockDbRead.model.findUnique).not.toHaveBeenCalled();
+    expect(mockDbWrite.model.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: MODEL_ID } })
+    );
+  });
+});
+
+describe('toggleCannotPromote on a private model', () => {
+  const toggle = () => toggleCannotPromote({ id: MODEL_ID, isModerator: true });
+  const mockPrivate = (meta: Record<string, unknown>) =>
+    mockDbWrite.model.findUnique.mockResolvedValue({
+      id: MODEL_ID,
+      availability: Availability.Private,
+      meta,
+    });
+
+  it('reads the stored row from the primary', async () => {
+    mockPrivate({ cannotPromote: true });
+
+    await toggle();
+
+    expect(mockDbRead.model.findUnique).not.toHaveBeenCalled();
+    expect(mockDbWrite.model.findUnique).toHaveBeenCalled();
+  });
+
+  it('records a ban for publish while keeping cannotPromote forced on', async () => {
+    mockPrivate({ cannotPromote: true });
+
+    await toggle();
+
+    expect(updateData().meta).toEqual({ cannotPromote: true, restoreCannotPromote: true });
+  });
+
+  it('drops the recorded ban on an unban while keeping cannotPromote forced on', async () => {
+    mockPrivate({ cannotPromote: true, restoreCannotPromote: true });
+
+    await toggle();
+
+    const meta = updateData().meta as Record<string, unknown>;
+    expect(meta.cannotPromote).toBe(true);
+    expect(meta).not.toHaveProperty('restoreCannotPromote');
+  });
+
+  it('still toggles a public model directly', async () => {
+    mockDbWrite.model.findUnique.mockResolvedValue({
+      id: MODEL_ID,
+      availability: Availability.Public,
+      meta: { cannotPromote: false },
+    });
+
+    await toggle();
+
+    expect(updateData().meta).toEqual({ cannotPromote: true });
+  });
+});
+
 describe('publishPrivateModel', () => {
   function mockPrivateModel(overrides: { status?: string; meta?: Record<string, unknown> | null }) {
-    mockDbRead.model.findUnique.mockResolvedValue({
+    mockDbWrite.model.findUnique.mockResolvedValue({
       id: MODEL_ID,
       userId: OWNER_ID,
       availability: Availability.Private,
@@ -383,6 +447,25 @@ describe('publishPrivateModel', () => {
     const meta = updateData().meta as Record<string, unknown>;
     expect(meta.cannotPromote).toBe(true);
     expect(meta).not.toHaveProperty('restoreCannotPromote');
+  });
+
+  it('reads the stored row from the primary, never the replica', async () => {
+    mockPrivateModel({});
+
+    await publish(false);
+
+    expect(mockDbRead.model.findUnique).not.toHaveBeenCalled();
+    expect(mockDbWrite.model.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: MODEL_ID } })
+    );
+  });
+
+  it('publishes with the moderator ban recorded while private', async () => {
+    mockPrivateModel({ meta: { cannotPromote: true, restoreCannotPromote: true } });
+
+    await publish(false);
+
+    expect((updateData().meta as Record<string, unknown>).cannotPromote).toBe(true);
   });
 
   it('makes the model promotable again when nothing was recorded', async () => {
