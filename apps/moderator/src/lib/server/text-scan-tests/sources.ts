@@ -93,3 +93,93 @@ export async function wipeCases(
   }
   return wiped;
 }
+
+/** Imported rows can carry an author but no entity id; those are gone once the author is. */
+async function goneAuthorCaseIds(
+  main: Kysely<MainDB>,
+  refs: readonly { caseId: number; authorId: number }[]
+): Promise<number[]> {
+  const byAuthor = new Map<number, number[]>();
+  for (const ref of refs)
+    byAuthor.set(ref.authorId, [...(byAuthor.get(ref.authorId) ?? []), ref.caseId]);
+  const gone: number[] = [];
+  for (const batch of chunk([...byAuthor.keys()], SOURCE_BATCH)) {
+    const { rows } = await sql<{ id: number; gone: boolean }>`
+      SELECT id, "deletedAt" IS NOT NULL AS gone FROM "User" WHERE id IN (${sql.join(batch)})
+    `.execute(main);
+    const live = new Set(rows.filter((r) => !r.gone).map((r) => Number(r.id)));
+    for (const id of batch) if (!live.has(id)) gone.push(...(byAuthor.get(id) ?? []));
+  }
+  return gone;
+}
+
+export async function purgeDeletedSources(
+  db: Kysely<ModeratorDB>,
+  main: Kysely<MainDB>
+): Promise<{ checked: number; wiped: number }> {
+  const cases = await db
+    .selectFrom('text_scan_test_case')
+    .select(['id', 'entity_type', 'entity_id', 'author_id'])
+    .where((eb) => eb.or([eb('entity_id', 'is not', null), eb('author_id', 'is not', null)]))
+    .where('fields', 'is not', null)
+    .execute();
+  const refs = cases.flatMap((c) =>
+    c.entity_id !== null
+      ? [
+          {
+            caseId: Number(c.id),
+            entityType: c.entity_type as LabEntityType,
+            entityId: c.entity_id,
+          },
+        ]
+      : []
+  );
+  const authorOnly = cases.flatMap((c) =>
+    c.entity_id === null && c.author_id !== null
+      ? [{ caseId: Number(c.id), authorId: c.author_id }]
+      : []
+  );
+  const gone = [...(await goneCaseIds(main, refs)), ...(await goneAuthorCaseIds(main, authorOnly))];
+  const wiped = await wipeCases(db, gone);
+  // Swept for every wiped case, not only those wiped now: a run can write a verdict while its case is wiped.
+  await db
+    .updateTable('text_scan_test_result')
+    .set({ output: null })
+    .where('output', 'is not', null)
+    .where(
+      'case_id',
+      'in',
+      db.selectFrom('text_scan_test_case').select('id').where('source_deleted_at', 'is not', null)
+    )
+    .execute();
+  return { checked: refs.length + authorOnly.length, wiped };
+}
+
+/** Draft results past `expires_at` go; the run row and its cached totals stay, as do all baselines. */
+export async function expireDraftResults(
+  db: Kysely<ModeratorDB>
+): Promise<{ runs: number; results: number }> {
+  const expired = await db
+    .selectFrom('text_scan_test_run as r')
+    .select('r.id')
+    .where('r.kind', '=', 'draft')
+    .where('r.expires_at', '<', sql<Date>`now()`)
+    .where(({ exists, selectFrom }) =>
+      exists(
+        selectFrom('text_scan_test_result as x')
+          .select('x.case_id')
+          .whereRef('x.run_id', '=', 'r.id')
+      )
+    )
+    .execute();
+  if (!expired.length) return { runs: 0, results: 0 };
+  const res = await db
+    .deleteFrom('text_scan_test_result')
+    .where(
+      'run_id',
+      'in',
+      expired.map((r) => r.id)
+    )
+    .executeTakeFirst();
+  return { runs: expired.length, results: Number(res.numDeletedRows) };
+}
