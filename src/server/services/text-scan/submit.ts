@@ -283,13 +283,14 @@ export async function scanEntity({
   }
 
   const [config, prompts] = await Promise.all([getTextScanConfig(), getActiveTextScanPrompts()]);
-  const ctx = { entityType, entityId, subject, config, prompts, force, fromRetry };
+  const ctx = { entityType, entityId, subject, config, prompts, force };
 
   const [first, ...rest] = passes;
-  const result = await submitTextScanPass({ ...ctx, pass: first });
+  const result = await submitTextScanPass({ ...ctx, fromRetry, pass: first });
   for (const pass of rest) {
+    // The retry cron judged only the main row stuck; the search row has its own adapter.
     // The main verdict is already submitted; a search-pass error must not report it as failed.
-    await submitTextScanPass({ ...ctx, pass }).catch((e) =>
+    await submitTextScanPass({ ...ctx, fromRetry: false, pass }).catch((e) =>
       logToAxiom({
         name: 'text-scan',
         type: 'error',

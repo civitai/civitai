@@ -178,6 +178,29 @@ describe('scanEntity with the web-search pass', () => {
     expect(bodies().map((b) => b.metadata.emEntityType)).toEqual(['Model:shadow']);
   });
 
+  it('a main-row retry does not bypass the in-flight window of the search pass', async () => {
+    modes('shadow', 'shadow');
+    await scanEntity({ entityType: 'Model', entityId: 7 });
+    const searchHash = vi.mocked(em.upsert).mock.calls[1][0].update.contentHash;
+    vi.clearAllMocks();
+    em.findUnique.mockImplementation((async ({ where }: any) =>
+      where.entityType_entityId.entityType === 'Model:search-shadow'
+        ? {
+            status: 'Pending',
+            contentHash: searchHash,
+            workflowId: 'wf-s',
+            retryCount: 0,
+            updatedAt: new Date(),
+          }
+        : null) as any);
+    vi.mocked(submitWorkflow).mockResolvedValue({ data: { id: 'wf-9' } } as any);
+    await scanEntity({ entityType: 'Model', entityId: 7, fromRetry: true });
+    expect(bodies().map((b) => b.metadata.emEntityType)).toEqual(['Model:shadow']);
+    vi.mocked(submitWorkflow).mockClear();
+    await scanEntity({ entityType: 'Model', entityId: 7, fromRetry: true, pass: 'web-search' });
+    expect(bodies().map((b) => b.metadata.emEntityType)).toEqual(['Model:search-shadow']);
+  });
+
   it('a failing search pass does not change the main result', async () => {
     modes('shadow', 'shadow');
     em.upsert.mockResolvedValueOnce({} as any).mockRejectedValueOnce(new Error('db down'));
