@@ -48,7 +48,7 @@ const splitsSurrogatePair = (text: string, index: number) =>
   isHighSurrogate(text.charCodeAt(index - 1)) &&
   isLowSurrogate(text.charCodeAt(index));
 
-/** Where a piece of `body` from `start` ends: the last paragraph, line or word break in its back half. */
+/** Prefers the last paragraph, line or word break in the back half of the room. */
 function chooseCut(body: string, start: number, end: number, room: number) {
   const floor = start + Math.floor(room / 2);
   const paragraph = body.lastIndexOf('\n\n', end - 2);
@@ -102,7 +102,7 @@ export function segmentUserText(
     current = current ? current + FIELD_SEPARATOR + piece : piece;
     scannedChars = endOffset;
   };
-  // Called only when more text needs a new segment, so reaching the ceiling here means a cut.
+  // Only called when more text remains, so hitting maxSegments here means text is cut.
   const closeOrStop = () => {
     if (current) segments.push(current);
     current = '';

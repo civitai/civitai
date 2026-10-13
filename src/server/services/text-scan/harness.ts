@@ -85,8 +85,7 @@ function refineTimeBudget(noun: string) {
 const textsWithinBudget = refineTimeBudget('texts');
 const entitiesWithinBudget = refineTimeBudget('entities');
 /**
- * Sized for real entities, including ones past the per-call budget (`maxInputChars`), which scan as
- * up to three segments here. Mirrored by the moderator lab
+ * Sized for real entities, up to three segments at maxInputChars; mirrored by the moderator lab
  * (apps/moderator/src/lib/text-scan-lab/limits.ts), which checks each text before sending.
  */
 export const TEXT_SCAN_HARNESS_LIMITS = {

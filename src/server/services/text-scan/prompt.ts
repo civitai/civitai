@@ -22,12 +22,12 @@ export const DEFAULT_TEXT_SCAN_MODEL =
   'urn:air:qwen3:repository:huggingface:gittensor-model-hub/Qwen3.8-27B-NVFP4-RTX5090@main.tar';
 const DEFAULT_MAX_INPUT_CHARS = 200000;
 const DEFAULT_MAX_SEGMENTS = 10;
-/** Every segment is a billed call; the ceiling keeps a mistyped override from billing without bound. */
+/** Each segment is a billed call; bounds a bad config override. */
 export const MAX_SEGMENTS_LIMIT = 20;
 
 export type TextScanConfig = {
   model: string;
-  /** The most composed text one call carries; longer text is split into segments this size. */
+  /** Per-call budget; longer text is split into segments of this size. */
   maxInputChars: number;
   /** The most calls one scan makes; text past them is not scanned and the result says so. */
   maxSegments: number;

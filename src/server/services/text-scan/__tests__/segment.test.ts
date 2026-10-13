@@ -15,8 +15,7 @@ const words = (count: number) =>
 const digits = Array.from({ length: 700 }, (_, i) => String(i)).join('');
 const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
 
-// Verbatim copy of #5856's composeFullText (prompt.ts:164-169). The dedup and appeal hashes depend
-// on composeUserText never drifting from it.
+// Verbatim copy of #5856's composeFullText; the dedup and appeal hashes depend on composeUserText matching it.
 const legacyCompose = (s: TextScanSubject) =>
   s.fields
     .filter((field) => field.text?.trim())

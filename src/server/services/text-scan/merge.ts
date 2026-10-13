@@ -1,7 +1,7 @@
 import { NSFW_LEVEL_NAMES } from '~/server/services/text-scan/types';
 import type { TextScanLabel, TextScanOutput } from '~/server/services/text-scan/types';
 
-/** Per label, the segments whose verdict raised it; empty for a one-segment scan. */
+/** Empty for a one-segment scan. */
 export type FlaggedSegments = Partial<Record<TextScanLabel, number[]>>;
 
 export type MergedTextScan = { output: TextScanOutput; flaggedSegments: FlaggedSegments };

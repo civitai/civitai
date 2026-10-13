@@ -116,7 +116,6 @@ export function buildTextScanSteps({
   labels: TextScanLabel[];
   thinking: boolean;
 }) {
-  // A one-segment scan stays byte-identical to the single-step workflow submitted before segments.
   if (segments.length === 1)
     return [buildTextScanStep({ system, user: segments[0], model, labels, thinking })];
   return segments.map((user, segment) =>
@@ -290,7 +289,6 @@ export async function scanEntity({
     return { status: 'skipped', reason: 'too-short' };
   }
 
-  // The whole text, not the segments: an edit anywhere rescans.
   const contentHash = textScanContentHash({
     user: composed.text,
     promptIds: composed.promptIds,

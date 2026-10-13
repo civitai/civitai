@@ -101,7 +101,6 @@ export function parseTextScanStep(
 
 const STEP_NAME = /^textScan(\d*)$/;
 
-/** The segment a step scanned: its `metadata.segment`, else the number in its `textScanN` name. */
 export function segmentIndexOf(step: ChatCompletionStepLike): number | undefined {
   const fromMetadata = step.metadata?.segment;
   if (Number.isInteger(fromMetadata) && (fromMetadata as number) >= 0)
@@ -116,7 +115,7 @@ function chatCompletionSteps(steps: unknown): ChatCompletionStepLike[] {
   return (steps as ChatCompletionStepLike[]).filter((s) => s?.$type === 'chatCompletion');
 }
 
-/** chatCompletion steps by segment; submission order when a step carries neither index. First wins. */
+/** First step wins when two share a segment. */
 export function textScanStepsBySegment(steps: unknown) {
   const bySegment = new Map<number, ChatCompletionStepLike>();
   chatCompletionSteps(steps).forEach((step, order) => {

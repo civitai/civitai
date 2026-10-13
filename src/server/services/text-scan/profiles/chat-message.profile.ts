@@ -67,7 +67,6 @@ async function loadChatWindow(newestId: number): Promise<TextScanSubject | undef
 
   return scamSubject(
     newest.userId,
-    // Newest first: the window cap above keeps the newest messages and drops the oldest.
     [{ heading: 'Messages, newest first', text: kept.map((m) => m.text).join('\n') }],
     {
       chatId: newest.chatId,
