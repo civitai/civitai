@@ -7,7 +7,7 @@ import type * as NotificationService from '~/server/services/notification.servic
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { clickhouse } from '~/server/clickhouse/client';
 
-/** The orphan sweep's SQL run against PGlite, so precedence and filter mistakes in the queries fail a test. Buzz, notifications and ClickHouse are mocked. */
+/** The orphan sweep's SQL run against PGlite, so precedence and filter mistakes in the queries fail a test. */
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
@@ -15,7 +15,7 @@ const holder = vi.hoisted(() => ({
   refundMulti: vi.fn(),
   notify: vi.fn(),
   db: null as unknown as PGlite,
-  // Runs once, right after the candidate pick: a moderator acting between the pick and the claims.
+  // SQL run once after the pick query, standing in for a moderator acting before the claims.
   afterPick: null as string | null,
 }));
 
@@ -218,8 +218,8 @@ describe('voidOrphanedAppeals against Postgres', () => {
   });
 
   it('leaves alone every appeal decided or routed between the pick and the claims', async () => {
-    // One row per claim statement and guard: owner close and quiet close on status and on the
-    // stamp, and the review route on status and on the stamp.
+    // Close and route each guard on status and on the stamp.
+    // Decided meanwhile: 1 (owner close), 13 (quiet close), 2 (route). Stamped meanwhile: 9 (quiet close), 12 (route).
     holder.afterPick = `
       UPDATE "Appeal" SET status = 'Approved' WHERE id = 1;
       UPDATE "Appeal" SET "entityRemovedAt" = '2026-09-20 00:00:00' WHERE id = 9;
