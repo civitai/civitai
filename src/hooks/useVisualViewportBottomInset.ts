@@ -1,6 +1,14 @@
 import { useEffect, useState } from 'react';
 
-type VisualViewportLike = { height: number; offsetTop: number };
+type VisualViewportLike = { height: number; offsetTop: number; scale?: number };
+
+/**
+ * Smaller gaps than this are not a keyboard: a collapsing URL bar or a scrollbar leaves a sliver
+ * between the two viewports. Well under the shortest real on-screen keyboard.
+ */
+export const KEYBOARD_INSET_MIN_PX = 100;
+/** Float tolerance around `scale === 1`. */
+const SCALE_TOLERANCE = 0.01;
 
 /**
  * How many CSS px of the layout viewport's bottom edge the visual viewport does not show —
@@ -9,16 +17,22 @@ type VisualViewportLike = { height: number; offsetTop: number };
  * shrinks only the VISUAL viewport: a `position: fixed; bottom: 0` sheet stays anchored to the
  * layout viewport and ends up underneath the keyboard.
  *
- * `0` whenever the numbers are unusable, so a missing or odd reading leaves the element where it
- * would have been without this.
+ * A shrunken visual viewport is not always a keyboard, so two readings count as none:
+ * - a pinch-zoomed page (`scale` not 1) — zooming shrinks the visual viewport by itself, and the
+ *   gap then changes with every pan;
+ * - a gap under {@link KEYBOARD_INSET_MIN_PX}.
+ *
+ * `0` as well whenever the numbers are unusable, so a missing or odd reading leaves the element
+ * where it would have been without this.
  */
 export function visualViewportBottomInset(
   layoutHeight: number,
   viewport: VisualViewportLike | null | undefined
 ): number {
   if (!viewport) return 0;
+  if (viewport.scale != null && Math.abs(viewport.scale - 1) > SCALE_TOLERANCE) return 0;
   const inset = layoutHeight - (viewport.height + viewport.offsetTop);
-  return Number.isFinite(inset) && inset > 0 ? Math.round(inset) : 0;
+  return Number.isFinite(inset) && inset >= KEYBOARD_INSET_MIN_PX ? Math.round(inset) : 0;
 }
 
 /**

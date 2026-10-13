@@ -177,7 +177,8 @@ export function AppFeedbackModal({
   // Same viewport rule as `ReviewListingModal`: a modal IS the viewport.
   const isMobile = useIsMobile({ type: 'media' });
   // Both renderings sit at the bottom of the viewport, so both are under an on-screen keyboard:
-  // the wide one too, on a tablet or a phone held sideways. 0 when no keyboard is showing.
+  // the wide one too, on a tablet or a phone held sideways. 0 with no keyboard, and also on a
+  // pinch-zoomed page or for a gap under 100px, which the hook does not count as a keyboard.
   const keyboardInset = useVisualViewportBottomInset();
   // Set in the same tick as the send, which `create.isPending` is not: it only turns true on the
   // next render, so two keydowns or clicks delivered before that render would both get through.
@@ -286,19 +287,19 @@ export function AppFeedbackModal({
       // With a keyboard up, that box ends at the keyboard's top edge instead of the viewport's,
       // and the 10dvh offsets shrink to a small gap so the dialog keeps what height is left;
       // its `maxHeight` is then the box's, and the dialog scrolls inside it.
-      styles={
-        keyboardInset > 0
-          ? {
-              inner: {
-                alignItems: 'flex-end',
-                bottom: keyboardInset,
-                paddingTop: `max(${APP_FEEDBACK_KEYBOARD_GAP_PX}px, var(--safe-area-inset-top, 0px))`,
-                paddingBottom: APP_FEEDBACK_KEYBOARD_GAP_PX,
-              },
-              content: { maxHeight: '100%' },
-            }
-          : { inner: { alignItems: 'flex-end' } }
-      }
+      // Written as a literal `styles={{ inner: { … } }}` on purpose: the safe-area sweep in
+      // `viewport-fit-cover.test.ts` reads that shape, and this padding must stay in its sight.
+      styles={{
+        inner: {
+          alignItems: 'flex-end',
+          ...(keyboardInset > 0 && {
+            bottom: keyboardInset,
+            paddingTop: `max(${APP_FEEDBACK_KEYBOARD_GAP_PX}px, var(--safe-area-inset-top, 0px))`,
+            paddingBottom: APP_FEEDBACK_KEYBOARD_GAP_PX,
+          }),
+        },
+        content: { maxHeight: keyboardInset > 0 ? '100%' : undefined },
+      }}
       data-testid="app-feedback-modal"
     >
       {body}
