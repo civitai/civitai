@@ -11,46 +11,59 @@ const RESTORED_LEVEL_WINDOW = Prisma.raw(`make_interval(days => 90)`);
 const RECORD_RETENTION = Prisma.raw(`make_interval(years => 2)`);
 const BATCH = 5000;
 
-// Written by this job; the sweep removes them with the record they came from.
+// Training labels this job appends; the sweep removes any whose image becomes excluded.
 const CORRECTION_SOURCE = 'appeal';
+
+const reportNamesImage = (imageId: Prisma.Sql) => Prisma.sql`EXISTS (
+  SELECT 1 FROM "CsamReport" c
+  WHERE c.images @> jsonb_build_array(jsonb_build_object('id', ${imageId}))
+)`;
+
+/** An excluded image, judged on its live row. */
+const excludedImageRow = (i: Prisma.Sql) => Prisma.sql`(
+  ${i}."needsReview" = 'csam'
+  OR ${i}."blockedFor" = 'CSAM'
+  OR ${i}."userId" IN (SELECT c."userId" FROM "CsamReport" c WHERE c."userId" IS NOT NULL)
+  OR ${reportNamesImage(Prisma.sql`${i}.id`)}
+)`;
 
 /** Must match the exclusion in the `appeal_decision_record` trigger; edit both together. */
 export const excludedRecord = (r: Prisma.Sql) => Prisma.sql`(
   ${r}."blockedFor" IS NOT DISTINCT FROM 'CSAM'
-  OR ${r}."imageId" IN (
-    SELECT (e->>'id')::int
-    FROM "CsamReport" c, jsonb_array_elements(c.images) e
-    WHERE jsonb_typeof(c.images) = 'array' AND jsonb_typeof(e->'id') = 'number'
-  )
+  OR ${reportNamesImage(Prisma.sql`${r}."imageId"`)}
   OR EXISTS (
-    SELECT 1 FROM "Image" ex
-    WHERE ex.id = ${r}."imageId"
-      AND (
-        ex."needsReview" = 'csam'
-        OR ex."blockedFor" = 'CSAM'
-        OR ex."userId" IN (SELECT c."userId" FROM "CsamReport" c WHERE c."userId" IS NOT NULL)
-      )
+    SELECT 1 FROM "Image" ex WHERE ex.id = ${r}."imageId" AND ${excludedImageRow(Prisma.raw('ex'))}
   )
 )`;
 
-/** Deletes excluded records, the training labels this job derived from them, and expired records. */
+/**
+ * Deletes excluded records, the training labels this job wrote for any excluded image (with or without
+ * a record), and expired records.
+ */
 export async function sweepExcludedRecords() {
   const r = Prisma.raw('r');
-  const [{ swept }] = await dbWrite.$queryRaw<{ swept: number }[]>`
+  const [{ swept, labels }] = await dbWrite.$queryRaw<{ swept: number; labels: number }[]>`
     WITH removed AS (
       DELETE FROM "AppealDecisionRecord" r WHERE ${excludedRecord(r)}
       RETURNING r."imageUrl"
     ),
     labels AS (
       DELETE FROM training_labels tl
-      WHERE tl.source = ${CORRECTION_SOURCE} AND tl.url IN (SELECT "imageUrl" FROM removed)
+      WHERE tl.source = ${CORRECTION_SOURCE}
+        AND (
+          tl.url IN (SELECT "imageUrl" FROM removed)
+          OR EXISTS (
+            SELECT 1 FROM "Image" li WHERE li.url = tl.url AND ${excludedImageRow(Prisma.raw('li'))}
+          )
+        )
+      RETURNING 1
     )
-    SELECT count(*)::int AS swept FROM removed
+    SELECT (SELECT count(*) FROM removed)::int AS swept, (SELECT count(*) FROM labels)::int AS labels
   `;
   const expired = await dbWrite.$executeRaw`
     DELETE FROM "AppealDecisionRecord" WHERE "createdAt" < now() - ${RECORD_RETENTION}
   `;
-  return { swept, expired };
+  return { swept, labels, expired };
 }
 
 export type RemovalLabelLookup = (imageIds: number[]) => Promise<Map<number, string>>;
@@ -149,10 +162,10 @@ export async function recordRestoredLevels() {
 }
 
 export async function runAppealDecisionRecords(lookup?: RemovalLabelLookup) {
-  const { swept, expired } = await sweepExcludedRecords();
+  const { swept, labels, expired } = await sweepExcludedRecords();
   const labelled = await fillRemovalLabels(lookup);
   const { restored, corrected } = await recordRestoredLevels();
-  return { swept, expired, labelled, restored, corrected };
+  return { swept, labels, expired, labelled, restored, corrected };
 }
 
 export const appealDecisionRecordsJob = createJob('appeal-decision-records', '40 4 * * *', () =>

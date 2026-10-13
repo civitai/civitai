@@ -101,7 +101,13 @@ const decide = (status: string, reason: string | null = 'misclassified') =>
 
 describe('a decided image appeal', () => {
   it('writes the image as it was at decision time', async () => {
-    await decide('Approved');
+    // A non-UTC session, so a decision time read in the session's zone would be off by hours.
+    await db.pg.exec(`SET TIME ZONE 'America/New_York'`);
+    try {
+      await decide('Approved');
+    } finally {
+      await db.pg.exec(`RESET TIME ZONE`);
+    }
 
     expect(await records()).toEqual([
       {
@@ -143,6 +149,13 @@ describe('a decided image appeal', () => {
 
   it('writes nothing for a void', async () => {
     await decide('Void', null);
+
+    expect(await records()).toEqual([]);
+  });
+
+  it('writes nothing when a voided appeal is later marked decided', async () => {
+    await decide('Void', null);
+    await db.pg.exec(`UPDATE "Appeal" SET "status" = 'Approved'`);
 
     expect(await records()).toEqual([]);
   });
@@ -192,8 +205,13 @@ describe('never blocks the decision', () => {
     await db.pg.exec(
       `ALTER TABLE "AppealDecisionRecord" ADD CONSTRAINT refuse_all CHECK (false) NOT VALID`
     );
+    const notices: string[] = [];
     try {
-      await decide('Approved');
+      await db.pg.query(
+        `UPDATE "Appeal" SET "status" = 'Approved', "resolvedAt" = $1 WHERE "status" = 'Pending'`,
+        [DECIDED_AT],
+        { onNotice: (n) => notices.push(n.message ?? '') }
+      );
     } finally {
       await db.pg.exec(`ALTER TABLE "AppealDecisionRecord" DROP CONSTRAINT refuse_all`);
     }
@@ -202,6 +220,10 @@ describe('never blocks the decision', () => {
       { status: 'Approved' },
     ]);
     expect(await records()).toEqual([]);
+    // The insert was attempted and its failure reported, not skipped.
+    expect(notices).toEqual([
+      expect.stringContaining('appeal_decision_record: appeal 1 not recorded'),
+    ]);
   });
 });
 

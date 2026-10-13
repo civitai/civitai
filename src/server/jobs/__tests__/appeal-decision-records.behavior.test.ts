@@ -91,6 +91,7 @@ type Rec = {
   removalLabel?: string | null;
   blockedFor?: string | null;
   daysAgo?: number;
+  decidedDaysAgo?: number;
 };
 const record = ({
   appealId,
@@ -99,13 +100,14 @@ const record = ({
   removalLabel = null,
   blockedFor = 'moderated',
   daysAgo = 1,
+  decidedDaysAgo = daysAgo,
 }: Rec) =>
   holder.db.query(
     `INSERT INTO "AppealDecisionRecord" ("appealId", "imageId", "imageUrl", "nsfwLevel",
        "nsfwLevelLocked", "blockedFor", "decision", "decidedAt", "removalLabel", "createdAt")
-     VALUES ($1, $2, $3, 32, true, $7, $4, now() - make_interval(days => $5), $6,
+     VALUES ($1, $2, $3, 32, true, $7, $4, now() - make_interval(days => $8), $6,
        now() - make_interval(days => $5))`,
-    [appealId, imageId, `u-${imageId}`, decision, daysAgo, removalLabel, blockedFor]
+    [appealId, imageId, `u-${imageId}`, decision, daysAgo, removalLabel, blockedFor, decidedDaysAgo]
   );
 const image = (
   id: number,
@@ -177,7 +179,7 @@ describe('sweepExcludedRecords', () => {
       JSON.stringify([{ id: 101 }]),
     ]);
 
-    expect(await sweepExcludedRecords()).toEqual({ swept: 1, expired: 0 });
+    expect(await sweepExcludedRecords()).toEqual({ swept: 1, labels: 0, expired: 0 });
     expect(await recordIds()).toEqual([2]);
   });
 
@@ -214,7 +216,7 @@ describe('sweepExcludedRecords', () => {
       `UPDATE "Image" SET "needsReview" = 'poi', "blockedFor" = 'tos' WHERE id = 102`
     );
 
-    expect(await sweepExcludedRecords()).toEqual({ swept: 0, expired: 0 });
+    expect(await sweepExcludedRecords()).toEqual({ swept: 0, labels: 0, expired: 0 });
     expect(await recordIds()).toEqual([1, 2]);
   });
 
@@ -234,11 +236,51 @@ describe('sweepExcludedRecords', () => {
     ]);
   });
 
-  it('deletes records past retention', async () => {
-    await record({ appealId: 3, imageId: 103, daysAgo: 800 });
+  it('deletes records past two years and keeps the ones just inside', async () => {
+    await record({ appealId: 3, imageId: 103, daysAgo: 733 });
+    await record({ appealId: 4, imageId: 104, daysAgo: 727 });
 
-    expect(await sweepExcludedRecords()).toEqual({ swept: 0, expired: 1 });
-    expect(await recordIds()).toEqual([1, 2]);
+    expect(await sweepExcludedRecords()).toEqual({ swept: 0, labels: 0, expired: 1 });
+    expect(await recordIds()).toEqual([1, 2, 4]);
+  });
+
+  it("removes this job's training labels for an excluded image that has no record", async () => {
+    await image(105, { userId: 9 });
+    await image(106, { userId: 10 });
+    await label(105, 'R', 5, 'appeal');
+    await label(105, 'Blocked', 50, 'knight');
+    await label(106, 'R', 5, 'appeal');
+    await holder.db.query(`INSERT INTO "CsamReport" ("userId") VALUES (9)`);
+
+    expect(await sweepExcludedRecords()).toEqual({ swept: 0, labels: 1, expired: 0 });
+    expect(await allLabels()).toEqual([
+      { url: 'u-105', label: 'Blocked', source: 'knight' },
+      { url: 'u-106', label: 'R', source: 'appeal' },
+    ]);
+  });
+
+  it.each([
+    ['an element without an id', [{ noid: 1 }]],
+    ['a string id', [{ id: '101' }]],
+    ['an object, not an array', { id: 101 }],
+    ['a json null', null],
+    ['a fractional id', [{ id: 101.5 }]],
+    ['an id beyond int4', [{ id: 5000000000 }]],
+  ])('neither throws nor excludes on a report holding %s', async (_, images) => {
+    await holder.db.query(`INSERT INTO "CsamReport" ("images") VALUES ($1::jsonb)`, [
+      JSON.stringify(images),
+    ]);
+    await label(101, 'Blocked', 10);
+
+    expect(await sweepExcludedRecords()).toEqual({ swept: 0, labels: 0, expired: 0 });
+    expect((await recordRestoredLevels()).restored).toBe(2);
+  });
+
+  it('matches an id written as 101.0, as the trigger does', async () => {
+    await holder.db.query(`INSERT INTO "CsamReport" ("images") VALUES ('[{"id": 101.0}]'::jsonb)`);
+
+    expect((await sweepExcludedRecords()).swept).toBe(1);
+    expect(await recordIds()).toEqual([2]);
   });
 });
 
@@ -248,20 +290,22 @@ describe('fillRemovalLabels', () => {
     // An earlier appeal on the same image, already labelled: its label is not overwritten.
     await record({ appealId: 2, imageId: 101, removalLabel: 'kept' });
     await record({ appealId: 3, imageId: 103 });
-    await record({ appealId: 4, imageId: 104, daysAgo: 45 });
+    await record({ appealId: 4, imageId: 104, daysAgo: 31 });
+    await record({ appealId: 5, imageId: 105, daysAgo: 29 });
     const lookup = vi.fn(
       async (ids: number[]) =>
         new Map(ids.filter((id) => id !== 103).map((id) => [id, `label-${id}`]))
     );
 
-    expect(await fillRemovalLabels(lookup)).toBe(1);
+    expect(await fillRemovalLabels(lookup)).toBe(2);
 
-    expect(lookup).toHaveBeenCalledWith([101, 103]);
+    expect(lookup).toHaveBeenCalledWith([101, 103, 105]);
     expect((await rows()).map((r) => [r.appealId, r.removalLabel])).toEqual([
       [1, 'label-101'],
       [2, 'kept'],
       [3, null],
       [4, null],
+      [5, 'label-105'],
     ]);
   });
 
@@ -357,9 +401,10 @@ describe('recordRestoredLevels', () => {
     ['still at the Blocked level', { nsfwLevel: 32 }, 1],
     ['unrated', { nsfwLevel: 0 }, 1],
     ['not scanned', { ingestion: 'Pending' }, 1],
-    ['decided outside the window', {}, 100],
+    ['decided outside the window', {}, 91],
   ])('waits while the image is %s', async (_, over, daysAgo) => {
-    await record({ appealId: 1, imageId: 101, daysAgo });
+    // Created recently in every case: the window is on the decision, not on the row.
+    await record({ appealId: 1, imageId: 101, daysAgo: 1, decidedDaysAgo: daysAgo });
     await image(101, { nsfwLevel: 4, ...over });
     await label(101, 'Blocked', 10);
 
@@ -393,6 +438,16 @@ describe('recordRestoredLevels', () => {
     await recordRestoredLevels();
 
     expect(await appealLabels()).toEqual([]);
+    expect(await rows()).toEqual([
+      { appealId: 1, removalLabel: null, restoredLevel: null, corrected: false },
+    ]);
+  });
+
+  it('restores an approval decided just inside the window', async () => {
+    await record({ appealId: 1, imageId: 101, daysAgo: 1, decidedDaysAgo: 89 });
+    await image(101, { nsfwLevel: 4 });
+
+    expect((await recordRestoredLevels()).restored).toBe(1);
   });
 
   it('writes one label for two approvals of the same image', async () => {
@@ -437,6 +492,7 @@ describe('the nightly run', () => {
 
     expect(await runAppealDecisionRecords(lookup)).toEqual({
       swept: 1,
+      labels: 0,
       expired: 0,
       labelled: 1,
       restored: 1,
