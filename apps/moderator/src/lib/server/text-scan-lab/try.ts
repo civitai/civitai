@@ -75,11 +75,17 @@ export const ruleOverridesField = jsonField(
           .array(
             z.string().trim().min(1).max(MODEL_RULE_LIMITS.aliasChars, 'An alias is too long.')
           )
-          .max(MODEL_RULE_LIMITS.aliasesPerRule, 'At most 100 aliases per rule.'),
+          .max(
+            MODEL_RULE_LIMITS.aliasesPerRule,
+            `At most ${MODEL_RULE_LIMITS.aliasesPerRule} aliases per rule.`
+          ),
         enabled: z.boolean(),
       })
     )
-    .max(MODEL_RULE_LIMITS.rulesPerTry, 'At most 500 edited rules can be tried at once.')
+    .max(
+      MODEL_RULE_LIMITS.rulesPerTry,
+      `At most ${MODEL_RULE_LIMITS.rulesPerTry} edited rules can be tried at once.`
+    )
     .refine(
       (rules) => new Set(rules.map((r) => r.id)).size === rules.length,
       'Two edited rules share an id; reload the page.'
@@ -186,13 +192,14 @@ async function scanSubjects(
   drafts: { prompts: PromptChanges; rules: LabRuleOverride[] }
 ): Promise<{ items: TryItem[]; current: TrySide; edited: TrySide | null }> {
   const texts: LabText[] = subjects.map(({ key, fields }) => ({ key, fields }));
-  const withDrafts = Object.keys(drafts.prompts).length > 0 || drafts.rules.length > 0;
+  const rules = entityType === 'ModelRules' ? drafts.rules : [];
+  const withDrafts = Object.keys(drafts.prompts).length > 0 || rules.length > 0;
   const [current, edited] = await Promise.allSettled([
     scanTexts(entityType, texts),
     withDrafts
       ? scanTexts(entityType, texts, {
           prompts: drafts.prompts as Record<string, string>,
-          rules: drafts.rules,
+          rules,
         })
       : Promise.resolve(null),
   ]);
@@ -225,7 +232,6 @@ async function scanSubjects(
   };
 }
 
-/** The Try action of both workspaces; `only` pins the judged type (the Model rules page). */
 export async function runTry(
   form: FormData,
   opts: { only?: 'ModelRules' } = {}

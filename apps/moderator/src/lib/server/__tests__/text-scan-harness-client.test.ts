@@ -444,4 +444,17 @@ describe('putPrompt', () => {
     call.mockResolvedValueOnce({ ok: false, status: 500, error: 'boom' });
     await expect(putPrompt('base', 'X', { baseId: 3 })).rejects.toBeInstanceOf(LabHarnessError);
   });
+
+  it('marks a 4xx or never-sent failure as refused, and a 5xx as not known', async () => {
+    const refusedOf = async () =>
+      putPrompt('base', 'X', { baseId: 3 }).catch(
+        (e: InstanceType<typeof LabHarnessError>) => e.refused
+      );
+    call.mockResolvedValueOnce({ ok: false, status: 400, error: 'bad' });
+    expect(await refusedOf()).toBe(true);
+    call.mockResolvedValueOnce({ ok: false, requestNeverSent: true, error: 'no session' });
+    expect(await refusedOf()).toBe(true);
+    call.mockResolvedValueOnce({ ok: false, status: 502, error: 'down' });
+    expect(await refusedOf()).toBe(false);
+  });
 });

@@ -20,12 +20,12 @@ const SCAN_WAIT_SECONDS = 60;
 const HARNESS_TIMEOUT_MS = 150_000;
 
 export class LabHarnessError extends LabError {
-  constructor(message: string) {
+  /** True when the request is known not to have taken effect: never sent, or refused with a 4xx. */
+  constructor(message: string, readonly refused = false) {
     super(message, 502);
   }
 }
 
-/** A save refused because a newer version of the key exists than the one the draft started from. */
 export class StalePromptError extends LabError {
   constructor(message: string) {
     super(message, 409);
@@ -86,6 +86,7 @@ export type LabPrompts = {
   active: Record<string, LabPrompt>;
   config: { model: string; maxInputChars: number; thinking: boolean };
   history?: LabPromptVersion[];
+  /** Absent from a main app older than the lab workspaces. */
   latest?: Record<string, LabPromptLatest>;
 };
 
@@ -110,7 +111,10 @@ export async function putPrompt(
   );
   if (result.ok) return result.body as { id: number; key: string };
   if (result.status === 409) throw new StalePromptError(result.reason ?? result.error);
-  throw new LabHarnessError(result.error);
+  const refused =
+    result.requestNeverSent === true ||
+    (result.status !== undefined && result.status >= 400 && result.status < 500);
+  throw new LabHarnessError(result.error, refused);
 }
 
 type HarnessScanResult =
@@ -147,7 +151,6 @@ function toLabScanResult(r: HarnessScanResult): LabScanResult {
 }
 
 export type LabOverrides = { prompts?: Record<string, string>; rules?: LabRuleOverride[] };
-/** One side's results, and what its prompt was: identical for every text in the run. */
 export type LabRun = { results: LabScanResult[]; system: string | null; rules: LabRule[] | null };
 
 /**

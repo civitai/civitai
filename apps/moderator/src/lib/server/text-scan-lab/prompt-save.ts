@@ -7,7 +7,7 @@ import { getVersion } from './version';
 
 const baseIdField = z
   .string({ error: 'Reload the page and save again.' })
-  .regex(/^\d*$/, 'Malformed base version.')
+  .regex(/^(?:[1-9]\d*)?$/, 'Malformed base version.')
   .transform((v) => (v === '' ? null : Number(v)));
 const noteField = z
   .string()
@@ -53,9 +53,11 @@ async function put(
     if (e instanceof StalePromptError) return stale(key);
     if (e instanceof LabHarnessError)
       return fail(502, {
-        error: `Saving ${promptKeyName(key)} failed (${
-          e.message
-        }); it may or may not have been saved — reload to check.`,
+        error: e.refused
+          ? `Saving ${promptKeyName(key)} failed (${e.message}); it was not saved.`
+          : `Saving ${promptKeyName(key)} failed (${
+              e.message
+            }); it may or may not have been saved — reload to check.`,
       });
     throw e;
   }

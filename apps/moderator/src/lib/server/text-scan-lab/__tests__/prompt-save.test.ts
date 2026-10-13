@@ -53,6 +53,11 @@ describe('saveSchema', () => {
     expect(saveSchema.safeParse({ key: 'base', content: 'X' }).success).toBe(false);
     expect(saveSchema.safeParse({ key: 'nope', content: 'X', baseId: '3' }).success).toBe(false);
   });
+
+  it('refuses base version 0', () => {
+    expect(saveSchema.safeParse({ key: 'base', content: 'X', baseId: '0' }).success).toBe(false);
+    expect(restoreSchema.safeParse({ key: 'base', id: '2', baseId: '0' }).success).toBe(false);
+  });
 });
 
 describe('savePrompt', () => {
@@ -74,6 +79,15 @@ describe('savePrompt', () => {
       status: 409,
       data: { stale: 'label:scam' },
     });
+  });
+
+  it('says a refused save was not saved', async () => {
+    harness.putPrompt.mockRejectedValue(new LabHarnessError('invalid request', true));
+    const res = await savePrompt({ key: 'base', content: 'X', baseId: 3, note: undefined });
+    expect(res).toMatchObject({ status: 502 });
+    const { error } = (res as { data: { error: string } }).data;
+    expect(error).toMatch(/was not saved/);
+    expect(error).not.toMatch(/may or may not/);
   });
 
   it('says a failed save may or may not have gone through', async () => {

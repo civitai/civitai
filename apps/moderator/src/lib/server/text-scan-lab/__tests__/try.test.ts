@@ -114,6 +114,43 @@ describe('runTry — refusals before any scan', () => {
   });
 });
 
+describe('runTry — more refusals', () => {
+  it("refuses links to different kinds of content with the parser's notice", async () => {
+    const res = await tryWith({
+      input: 'https://civitai.com/models/1 https://civitai.com/articles/2',
+    });
+    expect(res).toMatchObject({ status: 400 });
+    expect((res as { data: { error: string } }).data.error).toMatch(/different kinds/);
+    nothingCalled();
+  });
+
+  it('refuses a profile link whose user does not exist', async () => {
+    users.userIdByUsername.mockResolvedValue(null);
+    expect(await tryWith({ input: 'https://civitai.com/user/nobody' })).toMatchObject({
+      status: 400,
+    });
+    nothingCalled();
+  });
+
+  it('refuses when nothing could be loaded', async () => {
+    harness.composeEntities.mockResolvedValue([{ entityId: 8, ok: false, error: 'too-short' }]);
+    expect(await tryWith({ input: '8' })).toMatchObject({ status: 400 });
+    expect(harness.scanTexts).not.toHaveBeenCalled();
+  });
+
+  it('names an unknown key as unknown even when it and a known key are blank', async () => {
+    const res = await tryWith({
+      input: 'buy now',
+      prompts: JSON.stringify({ 'label:retired': '', 'label:scam': '' }),
+    });
+    expect(res).toMatchObject({ status: 400 });
+    const { error } = (res as { data: { error: string } }).data;
+    expect(error).toMatch(/^Unknown prompt key label:retired/);
+    expect(error).not.toContain('undefined');
+    nothingCalled();
+  });
+});
+
 describe('runTry — what gets scanned', () => {
   it('judges text as the chosen type under its default heading, with active prompts only', async () => {
     harness.scanTexts.mockImplementation(echoScan);
@@ -121,6 +158,7 @@ describe('runTry — what gets scanned', () => {
     expect(harness.scanTexts).toHaveBeenCalledWith('Comment', [
       { key: 'text', fields: [{ heading: 'Comment', text: 'buy now' }] },
     ]);
+    expect(harness.scanTexts).toHaveBeenCalledTimes(1);
     expect(harness.scanTexts.mock.calls[0]).toHaveLength(2);
     expect(res).toMatchObject({
       tried: true,
@@ -165,6 +203,38 @@ describe('runTry — what gets scanned', () => {
     expect(harness.composeEntities).toHaveBeenCalledWith('User', [42]);
   });
 
+  it('judges an unknown link as text and passes its notice on', async () => {
+    harness.scanTexts.mockImplementation(echoScan);
+    const res = await tryWith({ input: 'https://example.com/x' });
+    expect(harness.scanTexts).toHaveBeenCalledWith('CommentV2', expect.any(Array));
+    expect((res as { notice: string }).notice).toBeTruthy();
+  });
+
+  it('looks bare ids up as the chosen type', async () => {
+    composeAll();
+    harness.scanTexts.mockImplementation(echoScan);
+    await tryWith({ input: '7, 8', lookupAs: 'Article' });
+    expect(harness.composeEntities).toHaveBeenCalledWith('Article', [7, 8]);
+    expect(harness.scanTexts).toHaveBeenCalledWith('Article', expect.any(Array));
+  });
+
+  it('checks 50 ids at once', async () => {
+    composeAll();
+    harness.scanTexts.mockImplementation(echoScan);
+    const ids = Array.from({ length: 50 }, (_, i) => i + 1).join('\n');
+    const res = await tryWith({ input: ids });
+    expect((res as { items: unknown[] }).items).toHaveLength(50);
+  });
+
+  it('passes a per-item error through verbatim', async () => {
+    harness.scanTexts.mockResolvedValue(
+      run([{ key: 'text', ok: false, error: 'orchestrator: quota exceeded' }])
+    );
+    expect(await tryWith({ input: 'hello' })).toMatchObject({
+      items: [{ current: { ok: false, error: 'orchestrator: quota exceeded' } }],
+    });
+  });
+
   it('scans only composed entities and reports the rest verbatim', async () => {
     harness.composeEntities.mockResolvedValue([
       { entityId: 7, ok: true, fields: [{ heading: 'Name', text: 'x' }], text: '', userId: 70 },
@@ -188,6 +258,19 @@ describe('runTry — what gets scanned', () => {
 });
 
 describe('runTry — with drafts', () => {
+  it('ignores rule drafts unless the judged type is ModelRules', async () => {
+    composeAll();
+    harness.scanTexts.mockImplementation(echoScan);
+    const res = await tryWith({
+      input: '7',
+      lookupAs: 'Article',
+      rules: JSON.stringify([rule(-1)]),
+    });
+    expect(res).toMatchObject({ entityType: 'Article', edited: null });
+    expect(harness.scanTexts).toHaveBeenCalledTimes(1);
+    expect(harness.scanTexts.mock.calls[0]).toHaveLength(2);
+  });
+
   it('sends both kinds of draft to the edited run only', async () => {
     composeAll();
     harness.scanTexts.mockImplementation(

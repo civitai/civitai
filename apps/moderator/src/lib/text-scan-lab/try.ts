@@ -21,10 +21,8 @@ export type TrySubject = {
   authorId: number | null;
 };
 
-/** `edited` is the same text scanned with the drafts, when there are any. */
 export type TryItem = TrySubject & { current: LabScanResult; edited: LabScanResult | null };
 
-/** What one side's run sent: the system prompt, and the rules it listed. */
 export type TrySide = { system: string | null; rules: LabRule[] | null };
 
 export type TryResult = {
@@ -60,7 +58,6 @@ export function sourceTypeOf(
   }
 }
 
-/** The types this input can be judged as: those that use an edited label, else every possible one. */
 export function judgeCandidates(
   source: LabEntityType | null,
   edited: readonly PromptKey[]

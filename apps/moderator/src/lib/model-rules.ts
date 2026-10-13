@@ -52,7 +52,10 @@ export const modelRuleFormSchema = z.object({
     .pipe(
       z
         .array(z.string().max(MODEL_RULE_LIMITS.aliasChars, 'An alias is too long.'))
-        .max(MODEL_RULE_LIMITS.aliasesPerRule, 'At most 100 aliases per rule.')
+        .max(
+          MODEL_RULE_LIMITS.aliasesPerRule,
+          `At most ${MODEL_RULE_LIMITS.aliasesPerRule} aliases per rule.`
+        )
     ),
   note: z.string().trim().max(2000, 'Note is too long.').default(''),
 });
