@@ -28,6 +28,12 @@ export const creatorScoreSources = {
   },
 } as const;
 
+// Kept out of `creatorScoreSources`: the explainer lists those as ways to earn, and this is not one.
+export const creatorScoreStaffAwarded = {
+  label: 'Staff awarded',
+  earnedBy: 'Points awarded by the Civitai team',
+} as const;
+
 export const creatorScoreGrowsWhen = 'people use, react to, and follow your work';
 
 export const creatorScorePenalty = 'Images removed for breaking our rules take points away.';

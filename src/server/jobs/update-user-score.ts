@@ -415,15 +415,33 @@ export async function settleTierGrants(
 export async function persistScoreBatch(
   ctx: Pick<Context, 'pg' | 'jobContext' | 'tierUnlocks' | 'tierGrantErrors'>,
   records: [string, Partial<Record<ScoreCategory, number>>][],
-  { grantsRequireFlag = CREATOR_JOURNEY_GRANTS_REQUIRE_FLAG, now = new Date() } = {}
+  options: { grantsRequireFlag?: boolean; now?: Date } = {}
 ) {
   ctx.jobContext.checkIfCanceled();
   const onCancel = (cancel: () => Promise<void>) => ctx.jobContext.on('cancel', cancel);
   const transitions = await applyUserScoreUpdates(ctx.pg, records, onCancel);
   userUpdateCounter?.inc({ location: 'job:update-user-score' }, records.length);
+  await grantScoreTierCrossings(ctx, transitions, { ...options, onCancel });
+}
 
-  // Scores are already committed, so a failed grant must not fail the batch. The next run that
-  // touches these users grants silently, and the backfill endpoint reconciles everyone else.
+/**
+ * Tier grants, notifications and Legend alerts for totals already written. Scores are committed by
+ * then, so a failed grant is pushed onto `tierGrantErrors` rather than thrown: the next run that
+ * touches these users grants silently, and the backfill endpoint reconciles everyone else.
+ */
+export async function grantScoreTierCrossings(
+  ctx: Pick<Context, 'pg' | 'tierUnlocks' | 'tierGrantErrors'>,
+  transitions: ScoreTotalTransition[],
+  {
+    grantsRequireFlag = CREATOR_JOURNEY_GRANTS_REQUIRE_FLAG,
+    now = new Date(),
+    onCancel,
+  }: {
+    grantsRequireFlag?: boolean;
+    now?: Date;
+    onCancel?: (cancel: () => Promise<void>) => void;
+  } = {}
+) {
   let crossings: ScoreTierCrossing[];
   let audience: Set<number>;
   try {
@@ -458,10 +476,11 @@ export async function persistScoreBatch(
 
 // Persist per-category scores and recompute `total` for a batch of users in one
 // statement. `records` are `[userId, { category: score }]` entries; each total is
-// the sum of the six categories, taking the freshly-supplied value when present
-// and otherwise the user's previously-stored value. Shared by the cron job and
-// the image-score backfill. Returns each user's total before and after; `prev` is a self-join, so it
-// reads the pre-update row.
+// the sum of `CREATOR_SCORE_CATEGORIES`, taking the freshly-supplied value when present
+// and otherwise the user's previously-stored value, so a category this run did not
+// fetch (`staffAwarded` is never fetched) is carried forward. Shared by the cron job,
+// the backfills and the moderator grant tool. Returns each user's total before and
+// after; `prev` is a self-join, so it reads the pre-update row.
 export async function applyUserScoreUpdates(
   pg: AugmentedPool,
   records: [string, Partial<Record<ScoreCategory, number>>][],
@@ -469,12 +488,29 @@ export async function applyUserScoreUpdates(
 ): Promise<ScoreTotalTransition[]> {
   if (!records.length) return [];
 
+  const updateQuery = await pg.cancellableQuery<UserScoreUpdateRow>(userScoreUpdateSql(records));
+  onCancel?.(updateQuery.cancel);
+  return toScoreTotalTransitions(await updateQuery.result());
+}
+
+export type UserScoreUpdateRow = {
+  userId: number;
+  oldTotal: unknown;
+  newTotal: unknown;
+};
+
+export function toScoreTotalTransitions(rows: UserScoreUpdateRow[]): ScoreTotalTransition[] {
+  return rows.map((row) => ({
+    userId: row.userId,
+    oldTotal: row.oldTotal == null ? null : Number(row.oldTotal),
+    newTotal: Number(row.newTotal),
+  }));
+}
+
+// Scores are numbers from our own queries, never user text, so inlining the JSON is safe.
+export function userScoreUpdateSql(records: [string, Partial<Record<ScoreCategory, number>>][]) {
   const dataJson = JSON.stringify(records.map(([id, scores]) => ({ id: +id, scores })));
-  const updateQuery = await pg.cancellableQuery<{
-    userId: number;
-    oldTotal: string | null;
-    newTotal: string;
-  }>(`
+  return `
     WITH scores AS (SELECT * FROM jsonb_to_recordset('${dataJson}') AS x("id" int, "scores" jsonb))
     UPDATE "User" u
       SET meta = jsonb_set(COALESCE(u.meta, '{}'), '{scores}', COALESCE(u.meta->'scores', '{}') || s.scores || jsonb_build_object('total',
@@ -484,6 +520,7 @@ export async function applyUserScoreUpdates(
           + COALESCE((s.scores->>'users')::numeric, (u.meta->'scores'->>'users')::numeric, 0)
           + COALESCE((s.scores->>'reportsActioned')::numeric, (u.meta->'scores'->>'reportsActioned')::numeric, 0)
           + COALESCE((s.scores->>'reportsAgainst')::numeric, (u.meta->'scores'->>'reportsAgainst')::numeric, 0)
+          + COALESCE((s.scores->>'staffAwarded')::numeric, (u.meta->'scores'->>'staffAwarded')::numeric, 0)
         )
       )
     FROM scores s
@@ -493,14 +530,7 @@ export async function applyUserScoreUpdates(
       u.id AS "userId",
       (prev.meta->'scores'->>'total')::numeric AS "oldTotal",
       (u.meta->'scores'->>'total')::numeric AS "newTotal";
-  `);
-  onCancel?.(updateQuery.cancel);
-  const rows = await updateQuery.result();
-  return rows.map((row) => ({
-    userId: row.userId,
-    oldTotal: row.oldTotal == null ? null : Number(row.oldTotal),
-    newTotal: Number(row.newTotal),
-  }));
+  `;
 }
 
 // #region [helpers]
@@ -526,7 +556,8 @@ type ScoreMultipliers = {
   reportsActioned: number;
   reportsAgainst: number;
 };
-type ScoreCategory = keyof ScoreMultipliers | 'total';
+// `staffAwarded` has no multiplier and no fetcher: only the moderator grant tool writes it.
+export type ScoreCategory = keyof ScoreMultipliers | 'staffAwarded' | 'total';
 
 // The multipliers live in the `system:user-score-multipliers` key, stored both
 // in sysRedis (legacy/hot-override) and PG `KeyValue` (durable). Same key string

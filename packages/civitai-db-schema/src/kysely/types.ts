@@ -2609,6 +2609,17 @@ export type CreatorMilestoneCosmetic = {
   milestoneKey: string;
   cosmeticId: number;
 };
+export type CreatorScoreGrant = {
+  id: Generated<number>;
+  userId: number;
+  amount: number;
+  reason: string;
+  grantedById: number | null;
+  createdAt: Generated<Timestamp>;
+  revokedAt: Timestamp | null;
+  revokedById: number | null;
+  revokeReason: string | null;
+};
 export type Crucible = {
   id: Generated<number>;
   userId: number;
@@ -5366,6 +5377,7 @@ export type DB = {
   CreatorGalleryHiddenUser: CreatorGalleryHiddenUser;
   CreatorMilestone: CreatorMilestone;
   CreatorMilestoneCosmetic: CreatorMilestoneCosmetic;
+  CreatorScoreGrant: CreatorScoreGrant;
   Crucible: Crucible;
   CrucibleEngagement: CrucibleEngagement;
   CrucibleEntry: CrucibleEntry;

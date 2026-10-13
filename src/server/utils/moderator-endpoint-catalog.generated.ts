@@ -37,6 +37,9 @@ export const MODERATOR_ENDPOINT_MODULES: Record<string, () => Promise<unknown>> 
   '/api/mod/text-scan': () => import('~/pages/api/mod/text-scan'),
   '/api/mod/training-data/resolve': () => import('~/pages/api/mod/training-data/resolve'),
   '/api/mod/user/clear-profile': () => import('~/pages/api/mod/user/clear-profile'),
+  '/api/mod/user/creator-score-grant': () => import('~/pages/api/mod/user/creator-score-grant'),
+  '/api/mod/user/creator-score-grant-revoke': () =>
+    import('~/pages/api/mod/user/creator-score-grant-revoke'),
   '/api/mod/user/delete': () => import('~/pages/api/mod/user/delete'),
   '/api/mod/user/force-logout': () => import('~/pages/api/mod/user/force-logout'),
   '/api/mod/user/membership-code': () => import('~/pages/api/mod/user/membership-code'),

@@ -5265,6 +5265,23 @@ model CreatorMilestoneCosmetic {
   @@index([cosmeticId])
 }
 
+/// Creator Score a moderator awarded by hand. `User.meta.scores.staffAwarded` is the sum of the
+/// unrevoked rows, rewritten on every grant and revoke; the nightly score job never writes it.
+model CreatorScoreGrant {
+  id           Int       @id @default(autoincrement())
+  userId       Int
+  amount       Int
+  reason       String
+  grantedById  Int?
+  createdAt    DateTime  @default(now())
+  revokedAt    DateTime?
+  revokedById  Int?
+  revokeReason String?
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([grantedById, createdAt])
+}
+
 /// Badges are permanent by product decision: no revocation columns.
 model UserCreatorMilestone {
   userId       Int

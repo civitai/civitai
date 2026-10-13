@@ -3186,6 +3186,18 @@ export interface CreatorMilestoneCosmetic {
   cosmetic?: Cosmetic;
 }
 
+export interface CreatorScoreGrant {
+  id: number;
+  userId: number;
+  amount: number;
+  reason: string;
+  grantedById: number | null;
+  createdAt: Date;
+  revokedAt: Date | null;
+  revokedById: number | null;
+  revokeReason: string | null;
+}
+
 export interface UserCreatorMilestone {
   userId: number;
   user?: User;

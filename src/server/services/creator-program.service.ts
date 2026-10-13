@@ -266,7 +266,8 @@ export async function getCreatorRequirements(userId: number) {
       + COALESCE((u.meta->'scores'->>'images')::numeric, 0)
       + COALESCE((u.meta->'scores'->>'users')::numeric, 0)
       + COALESCE((u.meta->'scores'->>'reportsActioned')::numeric, 0)
-      + COALESCE((u.meta->'scores'->>'reportsAgainst')::numeric, 0),
+      + COALESCE((u.meta->'scores'->>'reportsAgainst')::numeric, 0)
+      + COALESCE((u.meta->'scores'->>'staffAwarded')::numeric, 0),
       COALESCE((meta->'scores'->'total')::numeric, 0)
     ) as score,
     (
