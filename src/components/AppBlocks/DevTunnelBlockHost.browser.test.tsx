@@ -188,6 +188,7 @@ describe('/apps/dev/[blockId] client', () => {
     await expect.element(page.getByText('No active dev tunnel')).toBeInTheDocument();
     await screen.rerender(<DevTunnelPage {...FRAME} />);
     await expect.element(page.getByTestId('page-block-host')).toBeInTheDocument();
+    expect(m.hostProps).not.toBeNull();
     expect(router.reload).not.toHaveBeenCalled();
   });
 
@@ -196,6 +197,7 @@ describe('/apps/dev/[blockId] client', () => {
     await expect.element(page.getByTestId('dns-gate')).toBeInTheDocument();
     await screen.rerender(<DevTunnelPage {...PENDING} host={OTHER} />);
     await vi.waitFor(() => expect(router.reload).toHaveBeenCalledTimes(1));
+    expect(page.getByTestId('dns-gate').query()).toBeNull();
   });
 
   test('re-fetched props for the same host mount it without a reload', async () => {

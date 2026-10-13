@@ -154,17 +154,19 @@ describe('DevTunnelDnsGate', () => {
     const onSettled = vi.fn(() => new Promise<void>((resolve) => (finish = resolve)));
     answer({ active: true, ready: true });
     await renderWithProviders(
-      <DevTunnelDnsGate blockId="my-app" onSettled={onSettled} pollMs={HOUR} waitMs={HOUR} />
+      <DevTunnelDnsGate blockId="my-app" onSettled={onSettled} pollMs={HOUR} waitMs={2 * HOUR} />
     );
     await vi.waitFor(() => expect(onSettled).toHaveBeenCalledTimes(1));
     await vi.waitFor(() =>
       expect(lastOptions()).toMatchObject({ enabled: false, refetchInterval: false })
     );
 
-    // Polling resumes one full interval after the owner finishes: here, an hour.
+    // Polling resumes one poll interval (an hour), not one wait bound, after the owner finishes.
+    // This is the test that owns the delay; the others only see that polling resumes.
     const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout');
     finish();
     await vi.waitFor(() => expect(timeoutsOf(setTimeoutSpy, HOUR)).toBe(1));
+    expect(timeoutsOf(setTimeoutSpy, 2 * HOUR)).toBe(0);
     expect(lastOptions()).toMatchObject({ enabled: false, refetchInterval: false });
     expect(onSettled).toHaveBeenCalledTimes(1);
   });
@@ -189,7 +191,7 @@ describe('DevTunnelDnsGate', () => {
     await expect.element(page.getByText('Preparing the preview…')).toBeVisible();
   });
 
-  test('a new app while paused starts polling for it rather than staying paused', async () => {
+  test('a new app while paused re-enables the query for it rather than staying paused', async () => {
     const onSettled = vi.fn(() => new Promise<void>(() => undefined));
     answer({ active: true, ready: true });
     const screen = await renderWithProviders(
