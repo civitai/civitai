@@ -692,7 +692,11 @@ export async function bustModelSaleCache(modelVersionIds: number[]) {
     where: { id: { in: modelVersionIds } },
     select: { modelId: true },
   });
-  const modelIds = [...new Set(rows.map((r) => r.modelId))];
+  await bustModelSaleCacheForModels([...new Set(rows.map((r) => r.modelId))]);
+}
+
+/** The same bust for a caller that already holds MODEL ids — no lookup. */
+export async function bustModelSaleCacheForModels(modelIds: number[]) {
   if (modelIds.length) await modelSaleCache().bust(modelIds);
 }
 
