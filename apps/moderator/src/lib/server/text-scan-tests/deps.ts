@@ -1,11 +1,12 @@
 import { hostname } from 'node:os';
 import { canAccess } from '$lib/server/access';
 import { logToAxiom } from '$lib/server/axiom';
-import { dbRead } from '$lib/server/db';
+import { dbRead, dbWrite } from '$lib/server/db';
 import { getModeratorDb } from '$lib/server/moderator-db';
 import { scanTexts } from '$lib/server/text-scan-lab/harness-client';
 import { requestCookie } from '$lib/server/user-actions.service';
 import { WORKSPACES, WORKSPACE_PATHS } from '$lib/text-scan-tests/types';
+import { liveRuleStateHash } from './rule-state';
 import {
   newWorkerId,
   releaseOwnLeases,
@@ -22,6 +23,7 @@ export const workerDeps = (credential: string): WorkerDeps => ({
   main: dbRead,
   scanTexts: (entityType, texts, overrides) => scanTexts(entityType, texts, overrides, credential),
   workerId: WORKER_ID,
+  liveRuleStateHash: () => liveRuleStateHash(dbWrite),
   log: (event, data, level = 'error') =>
     void logToAxiom({ type: level, name: 'text-scan', event, ...data }).catch(() => {}),
 });
