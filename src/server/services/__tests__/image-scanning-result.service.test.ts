@@ -15,12 +15,14 @@ const pipeline = vi.hoisted(() => ({
   resolveScanOutcome: vi.fn(),
   sendIngestionSignal: vi.fn(),
 }));
-const { mockRecordAudit, mockRemoveJobQueue, mockFanOut, mockRecordFlag } = vi.hoisted(() => ({
-  mockRecordAudit: vi.fn(),
-  mockRemoveJobQueue: vi.fn(),
-  mockFanOut: vi.fn(),
-  mockRecordFlag: vi.fn(),
-}));
+const { mockRecordAudit, mockRemoveJobQueue, mockFanOut, mockRecordFlag, mockLabelPrompt } =
+  vi.hoisted(() => ({
+    mockRecordAudit: vi.fn(),
+    mockRemoveJobQueue: vi.fn(),
+    mockFanOut: vi.fn(),
+    mockRecordFlag: vi.fn(),
+    mockLabelPrompt: vi.fn(),
+  }));
 
 // The pipeline imports the whole ingestion stack, and its stages run for real in
 // image-scan-result.test.ts, so this suite pins only what this service passes them.
@@ -37,6 +39,9 @@ vi.mock('~/server/services/job-queue.service', () => ({
 vi.mock('~/server/utils/webhook-debounce', () => ({ fanOutArticleImageUpdates: mockFanOut }));
 vi.mock('~/server/services/scan-label-flag.service', () => ({
   recordScanLabelFlag: mockRecordFlag,
+}));
+vi.mock('~/server/services/upload-prompt-scan.service', () => ({
+  labelUploadPrompt: mockLabelPrompt,
 }));
 
 import {
@@ -116,6 +121,39 @@ describe('processImageScanningWorkflow', () => {
       flaggedAt: expect.any(Date),
       snapshot: expect.objectContaining({ nsfwLevel: 'pg13', tags: { solo: 0.9 } }),
     });
+  });
+
+  const rated = (nsfwLevel: string) => [
+    { ...scanStep, output: { ...scanStep.output, nsfwLevel } },
+    hashStep,
+  ];
+
+  it("labels an NSFW upload's prompt after the outcome is signalled", async () => {
+    await deliver('succeeded', rated('x'));
+
+    expect(mockLabelPrompt).toHaveBeenCalledWith({
+      imageId: 7,
+      userId: 3,
+      prompt: 'a prompt',
+      negativePrompt: undefined,
+    });
+    expect(mockLabelPrompt.mock.invocationCallOrder[0]).toBeGreaterThan(
+      pipeline.sendIngestionSignal.mock.invocationCallOrder[0]
+    );
+  });
+
+  it("does not label a safe-for-work upload's prompt", async () => {
+    await deliver('succeeded', rated('pg13'));
+
+    expect(mockLabelPrompt).not.toHaveBeenCalled();
+  });
+
+  it('does not label an upload with no prompt', async () => {
+    pipeline.loadImageForScan.mockResolvedValue({ ...image, meta: { prompt: '  ' } });
+
+    await deliver('succeeded', rated('xxx'));
+
+    expect(mockLabelPrompt).not.toHaveBeenCalled();
   });
 
   it('records no label for a scan the orchestrator passed', async () => {
