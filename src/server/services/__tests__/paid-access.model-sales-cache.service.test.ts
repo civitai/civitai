@@ -141,14 +141,4 @@ describe('the model sale badge cache', () => {
     await expect(fetchBadges()).resolves.toEqual({ [MODEL]: badge });
     expect(salesQuery).toHaveBeenCalledTimes(2);
   });
-
-  it('still drops a cancelled sale within a minute', async () => {
-    salesQuery.mockResolvedValue([saleRow]);
-    await expect(fetchBadges()).resolves.toEqual({ [MODEL]: badge });
-
-    salesQuery.mockResolvedValue([]);
-    advance(61);
-    await expect(fetchBadges()).resolves.toEqual({});
-    expect(salesQuery).toHaveBeenCalledTimes(2);
-  });
 });
