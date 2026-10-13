@@ -175,6 +175,7 @@ const TRAINING_ENV = {
   S3_IMAGE_B2_ENDPOINT: 'https://b2.example',
   S3_IMAGE_B2_ACCESS_KEY: 'ia',
   S3_IMAGE_B2_SECRET_KEY: 'is',
+  APPEAL_OWNER_HASH_KEY: 'o',
 };
 
 const ctx = {} as Parameters<typeof removeBlockedImages.run>[0];

@@ -4226,6 +4226,7 @@ export interface AppealDecisionRecord {
   trainingLabelCorrectedAt: Date | null;
   trainingCopyState: string | null;
   trainingObjectKey: string | null;
+  ownerHash: string | null;
   createdAt: Date;
 }
 

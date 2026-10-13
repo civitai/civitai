@@ -6797,6 +6797,7 @@ model AppealDecisionRecord {
   trainingLabelCorrectedAt DateTime? @db.Timestamptz(3)
   trainingCopyState        String?
   trainingObjectKey        String?
+  ownerHash                String?
   createdAt                DateTime  @default(now()) @db.Timestamptz(3)
 
   @@index([imageId])

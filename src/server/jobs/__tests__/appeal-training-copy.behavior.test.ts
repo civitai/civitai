@@ -1,6 +1,7 @@
 import { PGlite } from '@electric-sql/pglite';
 import { S3Client } from '@aws-sdk/client-s3';
 import { Prisma } from '@prisma/client';
+import { createHash, createHmac } from 'crypto';
 import { readFileSync } from 'fs';
 import path from 'path';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -29,6 +30,7 @@ const {
   appealTrainingHeld,
   appealTrainingStoreFromEnv,
   copyRejectedForTraining,
+  isAppealTrainingConfigured,
   createAppealTrainingStore,
   sweepExcludedRecords,
 } = await import('~/server/jobs/appeal-decision-records');
@@ -79,7 +81,12 @@ beforeAll(async () => {
   for (const file of MIGRATIONS) await holder.db.exec(readFileSync(file, 'utf8'));
 });
 
+const OWNER_KEY = 'owner-key';
+const ownerHashOf = (userId: number) =>
+  createHmac('sha256', OWNER_KEY).update(String(userId)).digest('hex');
+
 beforeEach(async () => {
+  setEnv({ APPEAL_OWNER_HASH_KEY: OWNER_KEY });
   vi.mocked(loggingMock.logToAxiom).mockClear();
   noLabels.mockClear();
   await holder.db.exec(
@@ -510,6 +517,46 @@ describe('copyRejectedForTraining', () => {
     expect((await states()).map((r) => r.state)).toEqual([null, 'failed', 'copied']);
   });
 
+  it('records a keyed hash of the image owner with the copy', async () => {
+    await record({ appealId: 1, imageId: 101, userId: 9 });
+
+    await copyRejectedForTraining({ store: fakeStore(), lookup: noLabels });
+
+    const [row] = (
+      await holder.db.query<{ ownerHash: string }>('SELECT "ownerHash" FROM "AppealDecisionRecord"')
+    ).rows;
+    expect(row.ownerHash).toBe(ownerHashOf(9));
+    expect(row.ownerHash).not.toBe(createHash('sha256').update('9').digest('hex'));
+  });
+
+  it('fails a record whose image has no owner, without copying it', async () => {
+    await holder.db.exec('ALTER TABLE "Image" ALTER COLUMN "userId" DROP NOT NULL');
+    try {
+      await record({ appealId: 1, imageId: 101 });
+      await holder.db.exec('UPDATE "Image" SET "userId" = NULL');
+      const store = fakeStore();
+
+      await copyRejectedForTraining({ store, lookup: noLabels });
+
+      expect(store.copy).not.toHaveBeenCalled();
+      expect((await states())[0].state).toBe('failed');
+    } finally {
+      await holder.db.exec('DELETE FROM "Image"');
+      await holder.db.exec('ALTER TABLE "Image" ALTER COLUMN "userId" SET NOT NULL');
+    }
+  });
+
+  it('copies nothing without the owner hash key', async () => {
+    setEnv({ APPEAL_OWNER_HASH_KEY: undefined });
+    await record({ appealId: 1, imageId: 101 });
+    const store = fakeStore();
+
+    await copyRejectedForTraining({ store, lookup: noLabels });
+
+    expect(store.copy).not.toHaveBeenCalled();
+    expect((await states())[0].state).toBeNull();
+  });
+
   it('does nothing but warn when the training bucket is not configured', async () => {
     await record({ appealId: 1, imageId: 101, removalLabel: null });
     await record({ appealId: 2, imageId: 102, hoursAgo: 30 });
@@ -734,6 +781,25 @@ describe('sweepExcludedRecords and the training bucket', () => {
     expect(await tombstones()).toEqual(['k-101']);
   });
 
+  it('deletes a copied record, and its copy, when its owner is reported after the image is gone', async () => {
+    await record({ appealId: 1, imageId: 101, state: 'copied', key: 'k-101', withImage: false });
+    await record({ appealId: 2, imageId: 102, state: 'copied', key: 'k-102', withImage: false });
+    await holder.db.query(
+      'UPDATE "AppealDecisionRecord" SET "ownerHash" = $1 WHERE "appealId" = 1',
+      [ownerHashOf(9)]
+    );
+    await holder.db.query(
+      'UPDATE "AppealDecisionRecord" SET "ownerHash" = $1 WHERE "appealId" = 2',
+      [ownerHashOf(10)]
+    );
+    await holder.db.exec('INSERT INTO "CsamReport" ("userId") VALUES (9)');
+    const store = fakeStore();
+
+    expect((await sweepExcludedRecords(store)).swept).toBe(1);
+    expect((await states()).map((row) => row.appealId)).toEqual([2]);
+    expect(store.remove).toHaveBeenCalledExactlyOnceWith(['k-101']);
+  });
+
   it('does not call the bucket when nothing swept had an object', async () => {
     await record({ appealId: 1, imageId: 101, state: 'skipped' });
     await holder.db.exec(`INSERT INTO "CsamReport" ("images") VALUES ('[{"id": 101}]')`);
@@ -863,6 +929,7 @@ describe('appealTrainingStoreFromEnv', () => {
     S3_IMAGE_B2_ENDPOINT: 'https://b2.example',
     S3_IMAGE_B2_ACCESS_KEY: 'ia',
     S3_IMAGE_B2_SECRET_KEY: 'is',
+    APPEAL_OWNER_HASH_KEY: OWNER_KEY,
   };
   const extra = { S3_IMAGE_B2_BUCKET: 'images', S3_IMAGE_B2_REGION: 'eu-central-003' };
 
@@ -913,11 +980,19 @@ describe('appealTrainingStoreFromEnv', () => {
 
   it('is configured only when every value is set', async () => {
     setEnv({ ...full, ...extra });
+    expect(isAppealTrainingConfigured()).toBe(true);
     expect(await appealTrainingStoreFromEnv()).not.toBeNull();
 
     for (const key of Object.keys(full)) {
       setEnv({ ...full, [key]: undefined });
-      expect(await appealTrainingStoreFromEnv(), key).toBeNull();
+      expect(isAppealTrainingConfigured(), key).toBe(false);
+      if (key !== 'APPEAL_OWNER_HASH_KEY')
+        expect(await appealTrainingStoreFromEnv(), key).toBeNull();
     }
+  });
+
+  it('still deletes training objects without the owner hash key', async () => {
+    setEnv({ ...full, ...extra, APPEAL_OWNER_HASH_KEY: undefined });
+    expect(await appealTrainingStoreFromEnv()).not.toBeNull();
   });
 });

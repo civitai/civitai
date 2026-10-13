@@ -5,6 +5,7 @@ import {
   S3Client,
 } from '@aws-sdk/client-s3';
 import { Prisma } from '@prisma/client';
+import { createHmac } from 'crypto';
 import { env } from '~/env/server';
 import { ViolationType } from '~/server/common/enums';
 import { clickhouse } from '~/server/clickhouse/client';
@@ -61,11 +62,13 @@ const ineligibleRecord = (r: Prisma.Sql) => {
  */
 export async function sweepExcludedRecords(store?: AppealTrainingStore | null) {
   const r = Prisma.raw('r');
+  const reportedOwners = await reportedOwnerHashes();
   const [{ swept, labels, keys }] = await dbWrite.$queryRaw<
     { swept: number; labels: number; keys: string[] }[]
   >`
     WITH removed AS (
-      DELETE FROM "AppealDecisionRecord" r WHERE ${ineligibleRecord(r)}
+      DELETE FROM "AppealDecisionRecord" r
+      WHERE ${ineligibleRecord(r)} OR r."ownerHash" = ANY(${reportedOwners}::text[])
       RETURNING r."imageUrl", r."trainingObjectKey"
     ),
     labels AS (
@@ -105,6 +108,19 @@ export async function sweepExcludedRecords(store?: AppealTrainingStore | null) {
 const forgetOrphanKey = (key: string) => dbWrite.$executeRaw`
   DELETE FROM "AppealTrainingObjectDeletion" WHERE key = ${key}
 `;
+
+/** Keyed, so a record can be matched to a later report on its owner without storing who it is. */
+const ownerHash = (key: string, userId: number) =>
+  createHmac('sha256', key).update(String(userId)).digest('hex');
+
+async function reportedOwnerHashes() {
+  const key = env.APPEAL_OWNER_HASH_KEY;
+  if (!key) return [];
+  const owners = await dbWrite.$queryRaw<{ userId: number }[]>`
+    SELECT DISTINCT "userId" FROM "CsamReport" WHERE "userId" IS NOT NULL
+  `;
+  return owners.map((o) => ownerHash(key, o.userId));
+}
 
 /** Deletes training objects; keys it could not delete are kept for the next sweep to retry. */
 async function discardTrainingObjects(
@@ -288,7 +304,8 @@ function appealTrainingConfig() {
 }
 
 /** Whether the copy job can run; when it cannot, nothing is held for it. */
-export const isAppealTrainingConfigured = () => appealTrainingConfig() !== null;
+export const isAppealTrainingConfigured = () =>
+  appealTrainingConfig() !== null && !!env.APPEAL_OWNER_HASH_KEY;
 
 export async function appealTrainingStoreFromEnv(): Promise<AppealTrainingStore | null> {
   const config = appealTrainingConfig();
@@ -318,7 +335,8 @@ export async function copyRejectedForTraining({
   lookup = removalLabelsFromClickhouse,
 }: { store?: AppealTrainingStore | null; lookup?: RemovalLabelLookup } = {}) {
   if (store === undefined) store = await appealTrainingStoreFromEnv();
-  if (!store) {
+  const ownerKey = env.APPEAL_OWNER_HASH_KEY;
+  if (!store || !ownerKey) {
     logToAxiom({
       type: 'warning',
       name: JOB_LOG_NAME,
@@ -339,9 +357,14 @@ export async function copyRejectedForTraining({
     : 0;
 
   const pending = await dbWrite.$queryRaw<
-    { appealId: number; imageUrl: string; action: 'copy' | 'skip' | 'wait' }[]
+    {
+      appealId: number;
+      imageUrl: string;
+      ownerId: number | null;
+      action: 'copy' | 'skip' | 'wait';
+    }[]
   >`
-    SELECT r."appealId", r."imageUrl",
+    SELECT r."appealId", r."imageUrl", oi."userId" AS "ownerId",
       CASE
         WHEN r."decidedAt" <= now() - ${COPY_WINDOW}
           OR NOT EXISTS (SELECT 1 FROM "Image" ci WHERE ci.id = r."imageId")
@@ -352,6 +375,7 @@ export async function copyRejectedForTraining({
         ELSE 'skip'
       END AS action
     FROM "AppealDecisionRecord" r
+    LEFT JOIN "Image" oi ON oi.id = r."imageId"
     WHERE ${pendingCopy(r)}
       AND NOT (r."removalLabel" IS NULL AND r."decidedAt" > now() - ${COPY_WINDOW})
     ORDER BY r."decidedAt"
@@ -364,9 +388,10 @@ export async function copyRejectedForTraining({
   let copied = 0;
   let discarded = 0;
   let failed = 0;
-  for (const { appealId, imageUrl } of pending.filter((p) => p.action === 'copy')) {
+  for (const { appealId, imageUrl, ownerId } of pending.filter((p) => p.action === 'copy')) {
     const key = `${appealId}/${imageUrl}`;
     try {
+      if (ownerId === null) throw new Error('image owner unknown');
       // Queued first, so a copy that never gets attached to its record is still deleted.
       await dbWrite.$executeRaw`
         INSERT INTO "AppealTrainingObjectDeletion" (key) VALUES (${key})
@@ -374,7 +399,7 @@ export async function copyRejectedForTraining({
       `;
       await store.copy(imageUrl, key);
       // The record may have been swept or become ineligible while the copy ran.
-      if (await markCopied(appealId, key)) {
+      if (await markCopied(appealId, key, ownerHash(ownerKey, ownerId))) {
         await forgetOrphanKey(key);
         copied++;
       } else if (await isRecordedKey(key)) await forgetOrphanKey(key);
@@ -412,11 +437,11 @@ async function isRecordedKey(key: string) {
   return rows.length > 0;
 }
 
-async function markCopied(appealId: number, key: string) {
+async function markCopied(appealId: number, key: string, owner: string) {
   const r = Prisma.raw('r');
   const updated = await dbWrite.$executeRaw`
     UPDATE "AppealDecisionRecord" r
-    SET "trainingCopyState" = 'copied', "trainingObjectKey" = ${key}
+    SET "trainingCopyState" = 'copied', "trainingObjectKey" = ${key}, "ownerHash" = ${owner}
     WHERE r."appealId" = ${appealId} AND r."trainingCopyState" IS NULL
       AND NOT ${ineligibleRecord(r)}
   `;

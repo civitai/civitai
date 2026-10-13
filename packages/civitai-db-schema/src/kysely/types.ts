@@ -439,6 +439,7 @@ export type AppealDecisionRecord = {
   trainingLabelCorrectedAt: Timestamp | null;
   trainingCopyState: string | null;
   trainingObjectKey: string | null;
+  ownerHash: string | null;
   createdAt: Generated<Timestamp>;
 };
 export type AppealTrainingObjectDeletion = {
