@@ -4204,6 +4204,27 @@ export interface Appeal {
   buzzTransactionId: string | null;
 }
 
+export interface AppealDecisionRecord {
+  id: bigint;
+  appealId: number;
+  imageId: number;
+  imageUrl: string;
+  pHash: bigint | null;
+  promptHash: string | null;
+  nsfwLevel: number;
+  nsfwLevelLocked: boolean;
+  nsfwLevelReason: string | null;
+  aiNsfwLevel: number | null;
+  blockedFor: string | null;
+  decision: string;
+  resolvedReason: string | null;
+  decidedAt: Date;
+  removalLabel: string | null;
+  restoredLevel: number | null;
+  trainingLabelCorrectedAt: Date | null;
+  createdAt: Date;
+}
+
 export interface AuctionBase {
   id: number;
   type: AuctionType;
