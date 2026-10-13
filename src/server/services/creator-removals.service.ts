@@ -10,7 +10,6 @@ import {
  * The one definition of a counted removal: an image's latest removal, unless a restore event or an
  * approved image appeal came after it. The score job and the removed-images list both read it.
  */
-
 export type CreatorRemoval = { ownerId: number; imageId: number; removedAt: number };
 
 /**
@@ -28,10 +27,13 @@ export const removalsQuery = (ownerFilter: string) => `
 const BATCH = 10_000;
 
 /** Postgres half: drops each removal an image appeal approved after it. */
-export async function withoutAppealReversed<T extends CreatorRemoval>(removals: T[]) {
+export async function withoutAppealReversed<T extends CreatorRemoval>(
+  removals: T[],
+  db: typeof dbRead = dbRead
+) {
   const reversed = new Set<number>();
   for (const batch of chunk(removals, BATCH)) {
-    const rows = await dbRead.$queryRaw<{ imageId: number }[]>`
+    const rows = await db.$queryRaw<{ imageId: number }[]>`
       SELECT r."imageId"
       FROM unnest(${batch.map((r) => Number(r.imageId))}::int[], ${batch.map((r) =>
       Number(r.removedAt)
@@ -47,12 +49,15 @@ export async function withoutAppealReversed<T extends CreatorRemoval>(removals: 
   return removals.filter((r) => !reversed.has(Number(r.imageId)));
 }
 
-/** Counted removals per owner; an owner with none is absent. */
+/**
+ * Counted removals per owner; an owner with none is absent. Checks appeals on the primary, like
+ * `getOwnersWithReversalsSince`, so an owner re-scored for a new approval is scored with it.
+ */
 export async function countRemovalsByOwner(ch: CustomClickHouseClient, ownerIds: number[]) {
   const counts = new Map<number, number>();
   for (const owners of chunk(ownerIds, 1000)) {
     const rows = await ch.$query<CreatorRemoval>(removalsQuery(`ownerId IN (${owners.join(',')})`));
-    for (const { ownerId } of await withoutAppealReversed(rows))
+    for (const { ownerId } of await withoutAppealReversed(rows, dbWrite))
       counts.set(Number(ownerId), (counts.get(Number(ownerId)) ?? 0) + 1);
   }
   return counts;
@@ -63,7 +68,8 @@ export const reportsAgainstScore = (count: number | undefined, multiplier: numbe
 
 /** Owners with a removal reversed since `since`, by a restore event or an approved image appeal. */
 export async function getOwnersWithReversalsSince(ch: CustomClickHouseClient, since: Date) {
-  // The writer: an approval the replica has not seen yet would fall behind the job's next checkpoint.
+  // Primary, not the replica: an approval the replica has not seen yet would fall behind the job's
+  // next checkpoint.
   const approved = await dbWrite.$queryRaw<{ imageId: number }[]>`
     SELECT DISTINCT "entityId" AS "imageId" FROM "Appeal"
     WHERE "entityType" = 'Image' AND status = 'Approved' AND "resolvedAt" > ${since}

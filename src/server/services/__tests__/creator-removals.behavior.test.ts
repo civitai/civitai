@@ -196,15 +196,29 @@ describe('the Removed content score', () => {
     expect([...(await scoreRun()).keys()].sort()).toEqual([OWNER, OTHER, RESTORED_OWNER]);
   });
 
-  it('reads approvals since the last run from the primary, not a lagging replica', async () => {
+  it('reads approvals from the primary, not a lagging replica, to pick owners and to count', async () => {
     dbMock.dbWrite.$queryRaw.mockClear();
     dbMock.dbRead.$queryRaw.mockClear();
     await scoreRun();
 
-    const approvalReads = (mock: { mock: { calls: unknown[][] } }) =>
-      mock.mock.calls.filter((c) => (c[0] as string[]).join('?').includes('"resolvedAt" > ?'));
-    expect(approvalReads(dbMock.dbWrite.$queryRaw)).toHaveLength(1);
-    expect(approvalReads(dbMock.dbRead.$queryRaw)).toHaveLength(0);
+    const reads = (mock: { mock: { calls: unknown[][] } }, predicate: string) =>
+      mock.mock.calls.filter((c) => (c[0] as string[]).join('?').includes(predicate));
+    const picking = '"resolvedAt" > ?';
+    const counting = 'a."resolvedAt" > to_timestamp';
+    expect(reads(dbMock.dbWrite.$queryRaw, picking)).toHaveLength(1);
+    expect(reads(dbMock.dbWrite.$queryRaw, counting)).toHaveLength(1);
+    expect(reads(dbMock.dbRead.$queryRaw, picking)).toHaveLength(0);
+    expect(reads(dbMock.dbRead.$queryRaw, counting)).toHaveLength(0);
+  });
+
+  it('lets the member-facing list check appeals on the replica', async () => {
+    dbMock.dbWrite.$queryRaw.mockClear();
+    dbMock.dbRead.$queryRaw.mockClear();
+    await getMyRemovedImages(OWNER);
+
+    const counting = (c: unknown[]) => (c[0] as string[]).join('?').includes('to_timestamp');
+    expect(dbMock.dbRead.$queryRaw.mock.calls.filter(counting)).toHaveLength(1);
+    expect(dbMock.dbWrite.$queryRaw.mock.calls.filter(counting)).toHaveLength(0);
   });
 
   it('matches the list for the same owner', async () => {
