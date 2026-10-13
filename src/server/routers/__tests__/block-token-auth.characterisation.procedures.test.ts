@@ -52,6 +52,7 @@ const h = vi.hoisted(() => ({
   reached: [] as string[],
   flagBase: { on: false },
   sessionUserId: { id: 7 },
+  sessionFlag: { on: false },
 }));
 
 /**
@@ -67,7 +68,8 @@ function flagFor(ids: () => number[]) {
 
 vi.mock('~/server/services/app-blocks-flag', async (importOriginal) => ({
   ...(await importOriginal<typeof AppBlocksFlag>()),
-  isAppBlocksEnabled: flagFor(() => (h.runFlag.on ? [42] : [])),
+  // On for the session user (7) too ONLY in the session-flag-on cell.
+  isAppBlocksEnabled: flagFor(() => (h.runFlag.on ? (h.sessionFlag.on ? [42, 7] : [42]) : [])),
   isAppBlocksSharedStorageEnabled: flagFor(() => (h.runFlag.on ? [42] : [])),
   isAppBlocksAuthorEnabled: async () => false,
   isAppBlocksPostCreationEnabled: flagFor(() => (h.runFlag.on ? [42] : [])),
@@ -208,8 +210,8 @@ let currentPath = '';
 
 /**
  * Procedures that require the signed-in SESSION to be the token subject. Their ordinary cells
- * run with session = subject (otherwise every cell stops at that one refusal); the
- * `session user is not the token subject` cell pins the refusal itself, on every procedure.
+ * run with session = subject (otherwise every cell stops at that one refusal); the two
+ * `session user is not the token subject` cells pin the refusal itself, on every procedure.
  */
 const SESSION_BOUND = new Set([
   'blocks.consentQuoteGrant',
@@ -402,6 +404,7 @@ beforeEach(() => {
   h.runFlag.on = true;
   h.flagBase.on = false;
   h.sessionUserId.id = SESSION_USER_ID;
+  h.sessionFlag.on = false;
   h.limiter.deny = false;
   h.limiterCalls.length = 0;
   h.isRevoked.mockReset().mockResolvedValue(false);
@@ -439,7 +442,8 @@ type CellName =
   | 'anonymous subject'
   | 'flag off'
   | 'rate limited'
-  | 'session user is not the token subject';
+  | "session user is not the token subject (session user's run flag off)"
+  | "session user is not the token subject (session user's run flag on)";
 
 const CELLS: Record<CellName, (path: string) => Promise<Outcome>> = {
   'valid token': async (p) => invoke(p, await mint()),
@@ -467,8 +471,13 @@ const CELLS: Record<CellName, (path: string) => Promise<Outcome>> = {
     h.limiter.deny = true;
     return invoke(p, await mint());
   },
-  'session user is not the token subject': async (p) => {
+  "session user is not the token subject (session user's run flag off)": async (p) => {
     h.sessionUserId.id = SESSION_USER_ID;
+    return invoke(p, await mint());
+  }, // The session user HAS the run flag, and the token belongs to a different subject.
+  "session user is not the token subject (session user's run flag on)": async (p) => {
+    h.sessionUserId.id = SESSION_USER_ID;
+    h.sessionFlag.on = true;
     return invoke(p, await mint());
   },
 };
@@ -532,9 +541,15 @@ const REFUSAL_CODES = ['UNAUTHORIZED', 'FORBIDDEN', 'TOO_MANY_REQUESTS', 'SERVIC
  *     `apb_row`, token claim `apb_claim`. So the shared-storage buckets are visibly keyed on
  *     (subject, ROW id), the bridge buckets on the token's instance id (and subject), and
  *     `subject-gate:ok:42` shows the run-flag gate evaluated the SUBJECT, not the session.
- *   - `session user is not the token subject`: eight bridge procedures (SESSION_BOUND) refuse
- *     `this app session belongs to a different account` right after the bridge resolver and
- *     before the subject gate; every other procedure ignores the session identity.
+ *   - SESSION USER 7, TOKEN SUBJECT 42, in two cells that differ only in whether user 7 has the
+ *     run flag:
+ *       - the eight SESSION_BOUND bridge procedures refuse `this app session belongs to a
+ *         different account` in both, right after the bridge resolver;
+ *       - the five `apps.storage.*` procedures refuse `Apps access is not enabled for this
+ *         browser session` when user 7's flag is off, and when it is on they proceed AS THE
+ *         TOKEN SUBJECT (`hydrate:42`, apps-db reached): their procedure gate evaluates the
+ *         session user's flag and does not compare it with the subject;
+ *       - the other 26 procedures answer identically in both cells, the same as `valid token`.
  *   - `anonymous subject` runs with flags base-enabled (the GA shape), so it pins each
  *     procedure's own anonymous handling rather than the flag.
  */
@@ -568,7 +583,13 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       ['checkBlockCatalogRateLimit("bki_char")'],
       ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
     ),
-    'session user is not the token subject': E(
+    "session user is not the token subject (session user's run flag off)": E(
+      'FORBIDDEN',
+      'workflow is not in this app subqueue',
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
+    ),
+    "session user is not the token subject (session user's run flag on)": E(
       'FORBIDDEN',
       'workflow is not in this app subqueue',
       ['checkBlockCatalogRateLimit("bki_char")'],
@@ -600,7 +621,11 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       ['checkBlockCatalogRateLimit("bki_char")'],
       ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
     ),
-    'session user is not the token subject': PASSED(
+    "session user is not the token subject (session user's run flag off)": PASSED(
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
+    ),
+    "session user is not the token subject (session user's run flag on)": PASSED(
       ['checkBlockCatalogRateLimit("bki_char")'],
       ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
     ),
@@ -632,7 +657,13 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       ['checkBlockCatalogRateLimit("bki_char")'],
       ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
     ),
-    'session user is not the token subject': E(
+    "session user is not the token subject (session user's run flag off)": E(
+      'FORBIDDEN',
+      'this app session belongs to a different account; reload the page to continue',
+      [],
+      ['bridge-auth:ok']
+    ),
+    "session user is not the token subject (session user's run flag on)": E(
       'FORBIDDEN',
       'this app session belongs to a different account; reload the page to continue',
       [],
@@ -666,7 +697,13 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       ['checkBlockCatalogRateLimit("bki_char")'],
       ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
     ),
-    'session user is not the token subject': E(
+    "session user is not the token subject (session user's run flag off)": E(
+      'FORBIDDEN',
+      'this app session belongs to a different account; reload the page to continue',
+      [],
+      ['bridge-auth:ok']
+    ),
+    "session user is not the token subject (session user's run flag on)": E(
       'FORBIDDEN',
       'this app session belongs to a different account; reload the page to continue',
       [],
@@ -700,7 +737,13 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       ['checkBlockPostRateLimit("bki_char", 42)'],
       ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42', 'hydrate:42']
     ),
-    'session user is not the token subject': E(
+    "session user is not the token subject (session user's run flag off)": E(
+      'FORBIDDEN',
+      'this app session belongs to a different account; reload the page to continue',
+      [],
+      ['bridge-auth:ok']
+    ),
+    "session user is not the token subject (session user's run flag on)": E(
       'FORBIDDEN',
       'this app session belongs to a different account; reload the page to continue',
       [],
@@ -734,7 +777,11 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       ['checkBlockCatalogRateLimit("bki_char")'],
       ['bridge-auth:ok']
     ),
-    'session user is not the token subject': PASSED(
+    "session user is not the token subject (session user's run flag off)": PASSED(
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
+    ),
+    "session user is not the token subject (session user's run flag on)": PASSED(
       ['checkBlockCatalogRateLimit("bki_char")'],
       ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
     ),
@@ -764,7 +811,11 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       ['checkBlockCatalogRateLimit("bki_char")'],
       ['bridge-auth:ok']
     ),
-    'session user is not the token subject': OK(
+    "session user is not the token subject (session user's run flag off)": OK(
+      ['checkBlockCatalogRateLimit("bki_char")', 'checkBlockEstimateCellsRateLimit("bki_char", 1)'],
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
+    ),
+    "session user is not the token subject (session user's run flag on)": OK(
       ['checkBlockCatalogRateLimit("bki_char")', 'checkBlockEstimateCellsRateLimit("bki_char", 1)'],
       ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
     ),
@@ -799,7 +850,11 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       ['checkBlockCatalogRateLimit("bki_char")'],
       ['bridge-auth:ok']
     ),
-    'session user is not the token subject': OK(
+    "session user is not the token subject (session user's run flag off)": OK(
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
+    ),
+    "session user is not the token subject (session user's run flag on)": OK(
       ['checkBlockCatalogRateLimit("bki_char")'],
       ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
     ),
@@ -831,7 +886,11 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       ['checkBlockCatalogRateLimit("bki_char")'],
       ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
     ),
-    'session user is not the token subject': PASSED(
+    "session user is not the token subject (session user's run flag off)": PASSED(
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
+    ),
+    "session user is not the token subject (session user's run flag on)": PASSED(
       ['checkBlockCatalogRateLimit("bki_char")'],
       ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
     ),
@@ -863,7 +922,11 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       ['checkBlockCatalogRateLimit("bki_char")'],
       ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
     ),
-    'session user is not the token subject': PASSED(
+    "session user is not the token subject (session user's run flag off)": PASSED(
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
+    ),
+    "session user is not the token subject (session user's run flag on)": PASSED(
       ['checkBlockCatalogRateLimit("bki_char")'],
       ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
     ),
@@ -895,7 +958,11 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       ['checkBlockCatalogRateLimit("bki_char")'],
       ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
     ),
-    'session user is not the token subject': PASSED(
+    "session user is not the token subject (session user's run flag off)": PASSED(
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
+    ),
+    "session user is not the token subject (session user's run flag on)": PASSED(
       ['checkBlockCatalogRateLimit("bki_char")'],
       ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
     ),
@@ -927,7 +994,11 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       ['checkBlockCatalogRateLimit("bki_char")'],
       ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
     ),
-    'session user is not the token subject': OK(
+    "session user is not the token subject (session user's run flag off)": OK(
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
+    ),
+    "session user is not the token subject (session user's run flag on)": OK(
       ['checkBlockCatalogRateLimit("bki_char")'],
       ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
     ),
@@ -959,7 +1030,11 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       ['checkBlockCatalogRateLimit("bki_char")'],
       ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
     ),
-    'session user is not the token subject': OK(
+    "session user is not the token subject (session user's run flag off)": OK(
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
+    ),
+    "session user is not the token subject (session user's run flag on)": OK(
       ['checkBlockCatalogRateLimit("bki_char")'],
       ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
     ),
@@ -983,7 +1058,11 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       ['bridge-auth:ok', 'hydrate:42', 'subject-gate:threw:42']
     ),
     'rate limited': OK([], ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']),
-    'session user is not the token subject': OK(
+    "session user is not the token subject (session user's run flag off)": OK(
+      [],
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
+    ),
+    "session user is not the token subject (session user's run flag on)": OK(
       [],
       ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
     ),
@@ -1015,7 +1094,13 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       ['checkBlockPublishRateLimit("bki_char", 1)'],
       ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42', 'hydrate:42']
     ),
-    'session user is not the token subject': E(
+    "session user is not the token subject (session user's run flag off)": E(
+      'FORBIDDEN',
+      'this app session belongs to a different account; reload the page to continue',
+      [],
+      ['bridge-auth:ok']
+    ),
+    "session user is not the token subject (session user's run flag on)": E(
       'FORBIDDEN',
       'this app session belongs to a different account; reload the page to continue',
       [],
@@ -1047,7 +1132,11 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       ['checkBlockPollRateLimit("bki_char", 42)'],
       ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
     ),
-    'session user is not the token subject': PASSED(
+    "session user is not the token subject (session user's run flag off)": PASSED(
+      ['checkBlockPollRateLimit("bki_char", 42)'],
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
+    ),
+    "session user is not the token subject (session user's run flag on)": PASSED(
       ['checkBlockPollRateLimit("bki_char", 42)'],
       ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
     ),
@@ -1079,7 +1168,11 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       ['checkBlockTrainingDatasetRateLimit("bki_char", 42, 1)'],
       ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
     ),
-    'session user is not the token subject': PASSED(
+    "session user is not the token subject (session user's run flag off)": PASSED(
+      ['checkBlockTrainingDatasetRateLimit("bki_char", 42, 1)'],
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
+    ),
+    "session user is not the token subject (session user's run flag on)": PASSED(
       ['checkBlockTrainingDatasetRateLimit("bki_char", 42, 1)'],
       ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
     ),
@@ -1111,7 +1204,13 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       ['checkBlockCatalogRateLimit("bki_char")'],
       ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42', 'hydrate:42']
     ),
-    'session user is not the token subject': E(
+    "session user is not the token subject (session user's run flag off)": E(
+      'FORBIDDEN',
+      'this app session belongs to a different account; reload the page to continue',
+      [],
+      ['bridge-auth:ok']
+    ),
+    "session user is not the token subject (session user's run flag on)": E(
       'FORBIDDEN',
       'this app session belongs to a different account; reload the page to continue',
       [],
@@ -1145,7 +1244,13 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       ['checkBlockCatalogRateLimit("bki_char")'],
       ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
     ),
-    'session user is not the token subject': E(
+    "session user is not the token subject (session user's run flag off)": E(
+      'FORBIDDEN',
+      'this app session belongs to a different account; reload the page to continue',
+      [],
+      ['bridge-auth:ok']
+    ),
+    "session user is not the token subject (session user's run flag on)": E(
       'FORBIDDEN',
       'this app session belongs to a different account; reload the page to continue',
       [],
@@ -1179,7 +1284,13 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       ['checkBlockCatalogRateLimit("bki_char")'],
       ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
     ),
-    'session user is not the token subject': E(
+    "session user is not the token subject (session user's run flag off)": E(
+      'FORBIDDEN',
+      'this app session belongs to a different account; reload the page to continue',
+      [],
+      ['bridge-auth:ok']
+    ),
+    "session user is not the token subject (session user's run flag on)": E(
       'FORBIDDEN',
       'this app session belongs to a different account; reload the page to continue',
       [],
@@ -1215,7 +1326,13 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       ['checkBlockPublishRateLimit("bki_char", 1)'],
       ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
     ),
-    'session user is not the token subject': E(
+    "session user is not the token subject (session user's run flag off)": E(
+      'FORBIDDEN',
+      'this app session belongs to a different account; reload the page to continue',
+      [],
+      ['bridge-auth:ok']
+    ),
+    "session user is not the token subject (session user's run flag on)": E(
       'FORBIDDEN',
       'this app session belongs to a different account; reload the page to continue',
       [],
@@ -1249,7 +1366,11 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       ['checkBlockCatalogRateLimit("bki_char")'],
       ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
     ),
-    'session user is not the token subject': PASSED(
+    "session user is not the token subject (session user's run flag off)": PASSED(
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
+    ),
+    "session user is not the token subject (session user's run flag on)": PASSED(
       ['checkBlockCatalogRateLimit("bki_char")'],
       ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
     ),
@@ -1273,7 +1394,11 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       ['bridge-auth:ok', 'hydrate:42', 'subject-gate:threw:42']
     ),
     'rate limited': PASSED([], ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']),
-    'session user is not the token subject': PASSED(
+    "session user is not the token subject (session user's run flag off)": PASSED(
+      [],
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
+    ),
+    "session user is not the token subject (session user's run flag on)": PASSED(
       [],
       ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
     ),
@@ -1312,7 +1437,13 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       [],
       ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42', 'hydrate:42']
     ),
-    'session user is not the token subject': E(
+    "session user is not the token subject (session user's run flag off)": E(
+      'FORBIDDEN',
+      'Apps authoring is not enabled for this account',
+      [],
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42', 'hydrate:42']
+    ),
+    "session user is not the token subject (session user's run flag on)": E(
       'FORBIDDEN',
       'Apps authoring is not enabled for this account',
       [],
@@ -1338,11 +1469,17 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       [],
       ['hydrate:42', 'apps-db']
     ),
-    'session user is not the token subject': E(
+    "session user is not the token subject (session user's run flag off)": E(
       'UNAUTHORIZED',
       'Apps access is not enabled for this browser session',
       [],
       []
+    ),
+    "session user is not the token subject (session user's run flag on)": E(
+      'INTERNAL_SERVER_ERROR',
+      'PAST_AUTH: reached the apps-db pool',
+      [],
+      ['hydrate:42', 'apps-db']
     ),
   },
   'apps.storage.set': {
@@ -1364,11 +1501,17 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       [],
       ['hydrate:42', 'apps-db']
     ),
-    'session user is not the token subject': E(
+    "session user is not the token subject (session user's run flag off)": E(
       'UNAUTHORIZED',
       'Apps access is not enabled for this browser session',
       [],
       []
+    ),
+    "session user is not the token subject (session user's run flag on)": E(
+      'INTERNAL_SERVER_ERROR',
+      'PAST_AUTH: reached the apps-db pool',
+      [],
+      ['hydrate:42', 'apps-db']
     ),
   },
   'apps.storage.delete': {
@@ -1390,11 +1533,17 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       [],
       ['hydrate:42', 'apps-db']
     ),
-    'session user is not the token subject': E(
+    "session user is not the token subject (session user's run flag off)": E(
       'UNAUTHORIZED',
       'Apps access is not enabled for this browser session',
       [],
       []
+    ),
+    "session user is not the token subject (session user's run flag on)": E(
+      'INTERNAL_SERVER_ERROR',
+      'PAST_AUTH: reached the apps-db pool',
+      [],
+      ['hydrate:42', 'apps-db']
     ),
   },
   'apps.storage.list': {
@@ -1416,11 +1565,17 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       [],
       ['hydrate:42', 'apps-db']
     ),
-    'session user is not the token subject': E(
+    "session user is not the token subject (session user's run flag off)": E(
       'UNAUTHORIZED',
       'Apps access is not enabled for this browser session',
       [],
       []
+    ),
+    "session user is not the token subject (session user's run flag on)": E(
+      'INTERNAL_SERVER_ERROR',
+      'PAST_AUTH: reached the apps-db pool',
+      [],
+      ['hydrate:42', 'apps-db']
     ),
   },
   'apps.storage.getQuota': {
@@ -1447,11 +1602,17 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       [],
       ['hydrate:42', 'apps-db']
     ),
-    'session user is not the token subject': E(
+    "session user is not the token subject (session user's run flag off)": E(
       'UNAUTHORIZED',
       'Apps access is not enabled for this browser session',
       [],
       []
+    ),
+    "session user is not the token subject (session user's run flag on)": E(
+      'INTERNAL_SERVER_ERROR',
+      'PAST_AUTH: reached the apps-db pool',
+      [],
+      ['hydrate:42', 'apps-db']
     ),
   },
   'apps.shared.list': {
@@ -1483,7 +1644,13 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       [],
       ['hydrate:42', 'apps-db']
     ),
-    'session user is not the token subject': E(
+    "session user is not the token subject (session user's run flag off)": E(
+      'INTERNAL_SERVER_ERROR',
+      'PAST_AUTH: reached the apps-db pool',
+      [],
+      ['hydrate:42', 'apps-db']
+    ),
+    "session user is not the token subject (session user's run flag on)": E(
       'INTERNAL_SERVER_ERROR',
       'PAST_AUTH: reached the apps-db pool',
       [],
@@ -1519,7 +1686,13 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       [],
       ['hydrate:42', 'apps-db']
     ),
-    'session user is not the token subject': E(
+    "session user is not the token subject (session user's run flag off)": E(
+      'INTERNAL_SERVER_ERROR',
+      'PAST_AUTH: reached the apps-db pool',
+      [],
+      ['hydrate:42', 'apps-db']
+    ),
+    "session user is not the token subject (session user's run flag on)": E(
       'INTERNAL_SERVER_ERROR',
       'PAST_AUTH: reached the apps-db pool',
       [],
@@ -1555,7 +1728,13 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       [],
       ['hydrate:42', 'apps-db']
     ),
-    'session user is not the token subject': E(
+    "session user is not the token subject (session user's run flag off)": E(
+      'INTERNAL_SERVER_ERROR',
+      'PAST_AUTH: reached the apps-db pool',
+      [],
+      ['hydrate:42', 'apps-db']
+    ),
+    "session user is not the token subject (session user's run flag on)": E(
       'INTERNAL_SERVER_ERROR',
       'PAST_AUTH: reached the apps-db pool',
       [],
@@ -1591,7 +1770,13 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       [],
       ['hydrate:42', 'apps-db']
     ),
-    'session user is not the token subject': E(
+    "session user is not the token subject (session user's run flag off)": E(
+      'INTERNAL_SERVER_ERROR',
+      'PAST_AUTH: reached the apps-db pool',
+      [],
+      ['hydrate:42', 'apps-db']
+    ),
+    "session user is not the token subject (session user's run flag on)": E(
       'INTERNAL_SERVER_ERROR',
       'PAST_AUTH: reached the apps-db pool',
       [],
@@ -1627,7 +1812,13 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       ['reserveSharedWrite(42, "apb_row")'],
       ['hydrate:42']
     ),
-    'session user is not the token subject': E(
+    "session user is not the token subject (session user's run flag off)": E(
+      'INTERNAL_SERVER_ERROR',
+      'PAST_AUTH: reached the apps-db pool',
+      ['reserveSharedWrite(42, "apb_row")'],
+      ['hydrate:42', 'apps-db']
+    ),
+    "session user is not the token subject (session user's run flag on)": E(
       'INTERNAL_SERVER_ERROR',
       'PAST_AUTH: reached the apps-db pool',
       ['reserveSharedWrite(42, "apb_row")'],
@@ -1663,7 +1854,13 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       ['reserveSharedWrite(42, "apb_row")'],
       ['hydrate:42']
     ),
-    'session user is not the token subject': E(
+    "session user is not the token subject (session user's run flag off)": E(
+      'INTERNAL_SERVER_ERROR',
+      'PAST_AUTH: reached the apps-db pool',
+      ['reserveSharedWrite(42, "apb_row")'],
+      ['hydrate:42', 'apps-db']
+    ),
+    "session user is not the token subject (session user's run flag on)": E(
       'INTERNAL_SERVER_ERROR',
       'PAST_AUTH: reached the apps-db pool',
       ['reserveSharedWrite(42, "apb_row")'],
@@ -1699,7 +1896,13 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       ['checkSharedVoteRateLimit(42, "apb_row")'],
       ['hydrate:42']
     ),
-    'session user is not the token subject': E(
+    "session user is not the token subject (session user's run flag off)": E(
+      'INTERNAL_SERVER_ERROR',
+      'PAST_AUTH: reached the apps-db pool',
+      ['checkSharedVoteRateLimit(42, "apb_row")'],
+      ['hydrate:42', 'apps-db']
+    ),
+    "session user is not the token subject (session user's run flag on)": E(
       'INTERNAL_SERVER_ERROR',
       'PAST_AUTH: reached the apps-db pool',
       ['checkSharedVoteRateLimit(42, "apb_row")'],
@@ -1735,7 +1938,13 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       ['checkSharedVoteRateLimit(42, "apb_row")'],
       ['hydrate:42']
     ),
-    'session user is not the token subject': E(
+    "session user is not the token subject (session user's run flag off)": E(
+      'INTERNAL_SERVER_ERROR',
+      'PAST_AUTH: reached the apps-db pool',
+      ['checkSharedVoteRateLimit(42, "apb_row")'],
+      ['hydrate:42', 'apps-db']
+    ),
+    "session user is not the token subject (session user's run flag on)": E(
       'INTERNAL_SERVER_ERROR',
       'PAST_AUTH: reached the apps-db pool',
       ['checkSharedVoteRateLimit(42, "apb_row")'],
@@ -1771,7 +1980,13 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       ['checkSharedWithdrawRateLimit(42, "apb_row")'],
       ['hydrate:42']
     ),
-    'session user is not the token subject': E(
+    "session user is not the token subject (session user's run flag off)": E(
+      'INTERNAL_SERVER_ERROR',
+      'PAST_AUTH: reached the apps-db pool',
+      ['checkSharedWithdrawRateLimit(42, "apb_row")'],
+      ['hydrate:42', 'apps-db']
+    ),
+    "session user is not the token subject (session user's run flag on)": E(
       'INTERNAL_SERVER_ERROR',
       'PAST_AUTH: reached the apps-db pool',
       ['checkSharedWithdrawRateLimit(42, "apb_row")'],
@@ -1807,7 +2022,13 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       ['checkSharedReportRateLimit(42, "apb_row")'],
       ['hydrate:42']
     ),
-    'session user is not the token subject': E(
+    "session user is not the token subject (session user's run flag off)": E(
+      'INTERNAL_SERVER_ERROR',
+      'PAST_AUTH: reached the apps-db pool',
+      ['checkSharedReportRateLimit(42, "apb_row")'],
+      ['hydrate:42', 'apps-db']
+    ),
+    "session user is not the token subject (session user's run flag on)": E(
       'INTERNAL_SERVER_ERROR',
       'PAST_AUTH: reached the apps-db pool',
       ['checkSharedReportRateLimit(42, "apb_row")'],
