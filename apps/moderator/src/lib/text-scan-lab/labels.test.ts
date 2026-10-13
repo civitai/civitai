@@ -196,6 +196,28 @@ describe('model rules verdict', () => {
     expect(verdictsDiffer('modelRules', rules([{ ruleId: 1 }]), rules([{ ruleId: 2 }]))).toBe(true);
     expect(verdictsDiffer('modelRules', rules([{ ruleId: 1 }]), rules([]))).toBe(true);
   });
+
+  it('ignores the order the model listed its matches in', () => {
+    expect(
+      verdictsDiffer(
+        'modelRules',
+        rules([{ ruleId: 1 }, { ruleId: 2 }]),
+        rules([{ ruleId: 2 }, { ruleId: 1 }])
+      )
+    ).toBe(false);
+  });
+
+  it('differs when the model verdict on a literal hit flips', () => {
+    const literal = (matched: unknown[]) => ({
+      ok: true as const,
+      output: { modelRules: { matched } },
+      literalRuleIds: [1],
+    });
+    expect(verdictsDiffer('modelRules', literal([{ ruleId: 1 }]), literal([]))).toBe(true);
+    expect(verdictsDiffer('modelRules', literal([{ ruleId: 1 }]), literal([{ ruleId: 1 }]))).toBe(
+      false
+    );
+  });
 });
 
 describe('blank prompts', () => {

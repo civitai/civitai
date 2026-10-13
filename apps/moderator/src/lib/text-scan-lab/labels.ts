@@ -99,7 +99,6 @@ function describeModelRules(
 ): Verdict {
   const name = (m: RuleMatch) => m.subject ?? `#${m.ruleId}`;
   if (!matchedList(source.output)) {
-    // Literal hits stand without the model, and a missing answer is exactly when they matter.
     const literal = labRuleMatches(source, rules);
     if (!literal.length)
       return couldNotJudge(
@@ -150,13 +149,23 @@ export function describeVerdict(
   return { headline: `${phrase.yes}${names}`, tone: 'flagged', reason };
 }
 
+/** Keyed by rule id, not the headline: the model lists its matches in no fixed order. */
+function modelRulesSignature(source: VerdictSource): string {
+  const answered = source.ok && matchedList(source.output) ? 'answered' : 'unanswered';
+  const rules = labRuleMatches(source, null)
+    .map((m) => `${m.ruleId}:${m.llm ? 'llm' : ''}:${m.literal ? 'literal' : ''}`)
+    .sort();
+  return [answered, ...rules].join('|');
+}
+
 /** Whether two results give a different verdict on `label`: the rating, or the yes or no — never the
  *  reason or poi's names. Two results without a verdict do not differ. */
 export function verdictsDiffer(label: LabLabel, a: VerdictSource, b: VerdictSource): boolean {
   const verdictOf = (source: VerdictSource) => {
     const v = describeVerdict(label, source);
     if (v.tone === 'unknown') return null;
-    return label === 'nsfw' || label === 'modelRules' ? v.headline : v.tone;
+    if (label === 'modelRules') return modelRulesSignature(source);
+    return label === 'nsfw' ? v.headline : v.tone;
   };
   return verdictOf(a) !== verdictOf(b);
 }
