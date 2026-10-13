@@ -264,6 +264,15 @@ export const blockRenderSchema = z.object({
     })
     .optional()
     .catch(undefined),
+  // The SDK version and name the block reported on BLOCK_READY — prom only, stripped
+  // from the ClickHouse insert by `blockRenderTrackerPayload` like the fields above.
+  //
+  // 🔴 DELIBERATELY `unknown`, NOT A STRING RULE OR AN ENUM. A rule that can fail would
+  // 400 the whole beacon and lose the mount's impression over an informational field.
+  // The bounds are `sdkVersionLabel` and `sdkNameLabel` at the single read site, which
+  // map any value at all onto closed label sets.
+  sdkVersion: z.unknown().optional(),
+  sdkName: z.unknown().optional(),
 });
 
 /**

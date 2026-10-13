@@ -97,6 +97,7 @@ import {
 } from './imageUploadBytes';
 import { projectBlockInitMaturity, withSignedInFlag } from './projectBlockInit';
 import { createBlockEventRecorder } from './blockEventBeacon';
+import { type BlockReadySdk, hasBlockReadySdk, readBlockReadySdk } from './blockSdkVersion';
 import { sendBlockRender } from './sendBlockRender';
 import {
   computeLaunchTimings,
@@ -988,6 +989,9 @@ export function PageBlockHost({
   // 'ready' state could each still observe `current === 'loading'`. This ref
   // makes the per-mount emit deterministic regardless of ack timing.
   const blockRenderEmittedRef = useRef<boolean>(false);
+  // The SDK name and version the block reported in its BLOCK_READY ack, stashed for the
+  // `ok` beacon. Informational only: nothing reads it to decide readiness.
+  const readySdkRef = useRef<BlockReadySdk>({});
 
   // 🔴 A SEPARATE at-most-once latch for the MID-SESSION credential-loss beacon,
   // and it MUST NOT be `blockRenderEmittedRef`.
@@ -1654,13 +1658,17 @@ export function PageBlockHost({
 
   // BLOCK_READY → ready.
   useEffect(() => {
-    const off = onMessage<unknown>('BLOCK_READY', () => {
+    const off = onMessage<unknown>('BLOCK_READY', (raw) => {
       // Launch mark: stamped HERE, in the message handler, not in the beacon
       // effect. The beacon fires on the committed `status`, which is a React
       // commit later — timing it there would fold an arbitrary amount of React
       // scheduling into every sample.
       const marks = launchMarksRef.current;
       if (marks && marks.readyAt === null) marks.readyAt = nowMs();
+      // The last ack that reports an SDK wins, taken whole so the name and version
+      // always come from the same message.
+      const sdk = readBlockReadySdk(raw);
+      if (hasBlockReadySdk(sdk)) readySdkRef.current = sdk;
       setStatus((current) => (current === 'loading' ? 'ready' : current));
       // Block acked — stop re-posting BLOCK_INIT and cancel the readiness
       // timeout. Called UNCONDITIONALLY (not behind a "did this ack win the
@@ -1717,6 +1725,7 @@ export function PageBlockHost({
       blockInstanceId,
       slotId: 'app.page',
       ...(timings ? { timings } : {}),
+      ...readySdkRef.current,
     });
   }, [status, appBlockId, blockInstanceId]);
 

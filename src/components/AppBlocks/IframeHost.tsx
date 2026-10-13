@@ -55,6 +55,7 @@ import { resolveChromeGeometry } from './chromeGeometry';
 import type { ChromeGeometry } from './chromeGeometry';
 import { useResizeObserver } from '~/hooks/useResizeObserver';
 import { createBlockEventRecorder } from './blockEventBeacon';
+import { type BlockReadySdk, hasBlockReadySdk, readBlockReadySdk } from './blockSdkVersion';
 import { sendBlockRender } from './sendBlockRender';
 import { effectiveSandboxIsOpaque, intersectSandbox } from './sandbox';
 import {
@@ -1322,6 +1323,9 @@ export function IframeHost({
   // terminal state (BLOCK_READY only transitions FROM 'loading'), so the stashed
   // value is simply never read and the height is never applied.
   const pendingReadyHeightRef = useRef<unknown>(undefined);
+  // The SDK name and version the block reported in its BLOCK_READY ack, stashed for the
+  // `ok` beacon. Informational only: nothing reads it to decide readiness or height.
+  const readySdkRef = useRef<BlockReadySdk>({});
   // Run the loading→ready side effects (height + `ok` beacon) exactly once per
   // mount. Without this, an identity change of the `applyHeight` callback (its
   // deps are manifest min/max height) would re-run the effect while `status` is
@@ -1818,7 +1822,7 @@ export function IframeHost({
   useEffect(() => {
     const off = onMessage<unknown>('BLOCK_READY', (raw) => {
       // Validate the shape — payload comes from cross-origin iframe code and
-      // is functionally untyped. Reject anything that isn't {height?:number}.
+      // is functionally untyped. Read `height` only from an object that has one.
       // (`applyHeight` is the value guard: it drops anything non-finite/≤0 and
       // clamps to manifest min/max + HARD_HEIGHT_CEILING + the viewport
       // budget left over after the host chrome.)
@@ -1836,6 +1840,10 @@ export function IframeHost({
       // fails the shape guard) would reset the ref to `undefined` and LOSE a height
       // the old code applied, turning this fix into a regression in that direction.
       if (payload.height !== undefined) pendingReadyHeightRef.current = payload.height;
+      // Same rule for the reported SDK: the last ack that reports one wins, taken
+      // whole so the name and version always come from the same message.
+      const sdk = readBlockReadySdk(raw);
+      if (hasBlockReadySdk(sdk)) readySdkRef.current = sdk;
       setStatus((current) => (current === 'loading' ? 'ready' : current));
       // Block acked — stop re-posting BLOCK_INIT and cancel the readiness
       // timeout. Called UNCONDITIONALLY, not behind a "did this ack win the
@@ -1900,6 +1908,7 @@ export function IframeHost({
       appBlockId: install.appBlockId,
       blockInstanceId: install.blockInstanceId,
       slotId,
+      ...readySdkRef.current,
     });
   }, [status, applyHeight, install.appBlockId, install.blockInstanceId, slotId]);
 

@@ -40,6 +40,8 @@ import client, { type Counter, type Histogram, type Registry } from 'prom-client
 // server graph — so it costs this metrics module nothing at load time, and it is what keeps
 // `scope` a bounded label rather than a bounded-by-convention one.
 import { isKnownBlockScope } from '~/shared/constants/block-scope.constants';
+// Type only — the `host` label reuses the bridge counter's host names.
+import type { BridgeHost } from '~/components/AppBlocks/bridgeLabels';
 
 /**
  * Low-cardinality LOGICAL endpoint names for the block REST surface. Passed by
@@ -562,6 +564,16 @@ export function normalizeSlotId(slotId: string): string {
 }
 
 /**
+ * The host component a render beacon came from, derived from its slot: the page
+ * runner always reports `app.page`, every other slot is the in-page slot host. Two
+ * values whatever the client sends, and the same names the `host` label carries on
+ * `civitai_app_block_bridge_messages_total`.
+ */
+export function renderHostLabel(slotId: string): BridgeHost {
+  return slotId === 'app.page' ? 'PageBlockHost' : 'IframeHost';
+}
+
+/**
  * Resolve the strictly-bounded `error_class` render label. A successful render
  * (`result==='ok'`) is always 'none'; on error the client-sent errorClass is
  * kept only if it's in the known set, else 'other'. A raw/unbounded errorClass
@@ -681,6 +693,7 @@ type Bundle = {
   requestDurationSeconds: Histogram<string>;
   rendersTotal: Counter<string>;
   bridgeMessagesTotal: Counter<string>;
+  sdkReadyTotal: Counter<string>;
   customEventsTotal: Counter<string>;
   customComfyActualBuzz: Histogram<string>;
   customComfyWallclockSeconds: Histogram<string>;
@@ -886,8 +899,7 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
   // Cardinality: (A+1) x (49+1) x 2 x 7 = 35,700 at A=50 approved apps, where
   // `boundAppBlockIdLabel` adds exactly one extra value, 'other' (it returns the
   // id or 'other', nothing else — do not copy the '+2' the launch histograms use,
-  // which is wrong for the same reason). That is the largest App
-  // Block label set in this module and it is the one number to re-derive before
+  // which is wrong for the same reason). It is the one number to re-derive before
   // adding a label here. It is acceptable only because BOTH multiplicands are
   // hard-bounded by code-owned sets — `type` by `boundBridgeMessageType` against
   // the protocol INVENTORY, `host`/`outcome` by zod enums on the beacon body — so
@@ -902,6 +914,35 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
     'civitai_app_block_bridge_messages_total',
     "App Block host<-block postMessage bridge dispatch outcomes by app, message type, host, and outcome. handled = at least one registered handler was invoked (THE DENOMINATOR — read every other value as a ratio against it, never as a bare count); no_handler = this host registers no handler for a type the hostHandlerParity INVENTORY declares 'required' on this host, or a type the INVENTORY does not declare — the missing-bridge signal (a REQUEST-style one is NACKed where the protocol defines an error reply, within a per-second NACK budget; otherwise it hangs to its SDK timeout); not_applicable = this host registers no handler and the INVENTORY declares the type N/A for this host (e.g. a page-only message on IframeHost, RESIZE_IFRAME on the full-viewport PageBlockHost) — the declared design, answered on the wire exactly as no_handler is, and counted separately so it cannot bury a real no_handler; rate_limited = the 30 msg/sec inbound budget was exhausted; deduped = the same requestId arrived twice inside the 5s dedup window; no_token = a handler ran and refused because the block credential was falsy; validator_rejected = the BLOCK refused OUR reply at its own trust boundary and dropped it, so its request hangs to the SDK timeout — self-REPORTED by the block over BLOCK_MESSAGE_REJECTED, because this host cannot observe it (the SDK validator runs in the iframe after we have already replied, so we counted the same exchange `handled`), its `type` is the block->host REQUEST left hanging rather than the rejected *_RESULT reply — EXCEPT type='other', which is OVERLOADED on this outcome and reachable four ways: the SDK rejected a host PUSH (nothing hangs); the SDK could not attribute the reply to one of its pending requests; the block named a type this host's inventory does not declare, or named nothing; or the SDK clamped an undeclared requestType while a request genuinely DOES hang. So 'other' is the one value here you cannot read in EITHER direction — neither as 'a request is hanging' nor as 'nothing is hanging', and it is NOT undercounted — the SDK carries no emit budget, so magnitude on this outcome is unbounded exactly as it is for no_handler and deduped. READ A ZERO PER-APP, NEVER FLEET-WIDE: the emitter ships inside each block's own bundle, so for a given app_block_id a zero means 'no rejections' OR 'this app has not shipped a carrying @civitai/blocks-react', and the series cannot tell you which. Other apps reporting does NOT settle it — the counter goes non-zero the moment the first rebuilt app hits a rejection, so a non-zero total is not evidence any OTHER app's zero is health. `type` is clamped to the code-owned protocol inventory (unknown -> 'other') and `app_block_id` to the approved-app set (unknown -> 'other'); this beacon is public and browser-reachable, so neither is ever taken raw from the body. NOT comparable to civitai_app_block_renders_total, which fires once per MOUNT and is structurally blind to everything after BLOCK_READY",
     ['app_block_id', 'type', 'host', 'outcome']
+  );
+
+  // ── SDK name + version reported on BLOCK_READY ───────────────────────────────
+  //
+  // One increment per host mount that reached ready, taken from the mount's `ok`
+  // render beacon. Its use is reading which SDK versions are still running before
+  // an old bridge op is retired; join to `bridge_messages_total` on `app_block_id`
+  // for op-by-version rather than adding a version label there. Two packages send
+  // BLOCK_READY on independent version lines, so read `sdk_version` only together
+  // with `sdk`.
+  //
+  // Cardinality: (A+1) x 2 x 3 x 152 = 46,512 at A=50 approved apps. `app_block_id`
+  // is the approved set + 'other' (`boundAppBlockIdLabel`), `host` is
+  // `renderHostLabel` (2), `sdk` is `sdkNameLabel` (2 names + `unknown` = 3), and
+  // `sdk_version` is `sdkVersionLabel`: 1 major x 150 minors + `unknown` + `invalid`
+  // = 152 (`SDK_VERSION_LABEL_COUNT`). Both SDK values are reported by the block and
+  // the beacon is public, so each is a hard ceiling: the name is matched against a
+  // code-owned list and the version is built from range-checked integers, never from
+  // the reported string.
+  //
+  // 🔴 ONLY A SCRIPTED CLIENT CAN REACH THAT PRODUCT — a real app runs on one host,
+  // with one SDK, at one or two versions — but it is what such a client can make
+  // each pod retain, and every factor multiplies it. Do not add a label, and
+  // re-derive this number before raising a ceiling in `blockSdkVersion.ts`.
+  const sdkReadyTotal = getOrCreateCounter(
+    reg,
+    'civitai_app_block_sdk_ready_total',
+    "App Block host mounts that reached BLOCK_READY, by app, host, and the SDK name and version the block reported on that message. sdk is the package that sent it (blocks-react|sdk; unknown = not reported, or not one of those two) and the two packages version independently, so never compare sdk_version across sdk values. sdk_version is major.minor (patch dropped); unknown = the block sent no sdkVersion, which is every block built on an SDK that predates the field, so unknown is NOT one version; invalid = the block sent something that is not a plain major.minor.patch inside the code-owned range, including a real version above the range ceiling. Informational: the value is self-reported by the block and never affects readiness. One increment per mount, from the mount's ok render beacon, so it shares that beacon's loss modes; a page loaded before the host learned to forward these fields also reads unknown",
+    ['app_block_id', 'host', 'sdk', 'sdk_version']
   );
 
   // ── customComfy per-engine runtime/cost (App Blocks `customComfy` bridge) ────
@@ -1374,6 +1415,7 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
     requestDurationSeconds,
     rendersTotal,
     bridgeMessagesTotal,
+    sdkReadyTotal,
     customEventsTotal,
     customComfyActualBuzz,
     customComfyWallclockSeconds,

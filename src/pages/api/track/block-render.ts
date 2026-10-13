@@ -1,4 +1,5 @@
 import { isDev } from '~/env/other';
+import { sdkNameLabel, sdkVersionLabel } from '~/components/AppBlocks/blockSdkVersion';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 import { Tracker } from '~/server/clickhouse/client';
 import {
@@ -6,6 +7,7 @@ import {
   normalizeErrorClass,
   normalizeSlotId,
   observeAppBlockLaunch,
+  renderHostLabel,
 } from '~/server/metrics/app-block-runtime.metrics';
 import { logToAxiom } from '~/server/logging/client';
 import { boundAppBlockIdLabel } from '~/server/services/blocks/known-app-blocks.service';
@@ -82,7 +84,7 @@ export default PublicEndpoint(
     const result = blockRenderSchema.safeParse(parsed);
     if (!result.success) return res.status(400).send('invalid input');
 
-    // `status`/`errorClass`/`secondary`/`timings` drive prom ONLY — none is
+    // `status`/`errorClass`/`secondary`/`timings`/`sdkVersion`/`sdkName` drive prom ONLY — none is
     // forwarded to the ClickHouse insert (the `blockRenders` table is
     // provisioned out-of-repo by the tracker service; adding columns is out of
     // scope here). `blockRenderTrackerPayload` is the shared ALLOWLIST that
@@ -92,7 +94,7 @@ export default PublicEndpoint(
     // 🔴 `secondary` ALSO GATES THE CH INSERT ENTIRELY (see below). Every beacon
     // increments the prom counter, but only a mount's FIRST beacon writes a
     // `blockRenders` row — that table counts IMPRESSIONS, one per host mount.
-    const { status, errorClass, secondary, timings } = result.data;
+    const { status, errorClass, secondary, timings, sdkVersion, sdkName } = result.data;
 
     // Per-app render/impression outcome (additive + dark). `result` ∈ ok|error.
     // ALL labels are BOUNDED even though the beacon body is client-supplied and
@@ -137,7 +139,7 @@ export default PublicEndpoint(
         ).catch(() => undefined);
       }
 
-      const { rendersTotal } = ensureRegisterAppBlockRuntimeMetrics();
+      const { rendersTotal, sdkReadyTotal } = ensureRegisterAppBlockRuntimeMetrics();
       rendersTotal.inc({
         app_block_id: appBlockIdLabel,
         slot_id: normalizeSlotId(result.data.slotId),
@@ -158,7 +160,23 @@ export default PublicEndpoint(
       //     reported minutes after a launch that already succeeded.
       // The client also only attaches `timings` on the success path; this is the
       // server-side half of the same rule, because the body is client-supplied.
-      if (status === 'ok' && !secondary) observeAppBlockLaunch(appBlockIdLabel, timings);
+      if (status === 'ok' && !secondary) {
+        // ── SDK NAME + VERSION ──────────────────────────────────────────────
+        // Same gate as the launch histograms: only a mount's `ok` beacon saw a
+        // BLOCK_READY, so only it can carry what that message reported. Every such
+        // beacon counts, including one that reported nothing (`unknown`).
+        //
+        // 🔴 `sdkNameLabel` AND `sdkVersionLabel` ARE THE BOUNDS on `sdk` and
+        // `sdk_version`. Both body fields are `unknown` and client-supplied; never
+        // pass either to a label directly.
+        sdkReadyTotal.inc({
+          app_block_id: appBlockIdLabel,
+          host: renderHostLabel(result.data.slotId),
+          sdk: sdkNameLabel(sdkName),
+          sdk_version: sdkVersionLabel(sdkVersion),
+        });
+        observeAppBlockLaunch(appBlockIdLabel, timings);
+      }
     } catch {
       // swallow — observability must not affect the response
     }

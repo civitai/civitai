@@ -1,3 +1,4 @@
+import type { SdkName } from './blockSdkVersion';
 import type { LaunchTimingsPayload } from './launchTimings';
 
 // App Blocks Analytics Phase 2 — block render/impression beacon (client side).
@@ -94,6 +95,14 @@ export type BlockRenderBeaconInput = {
   // a TAO-gated frame-fetch phase that was designed and then dropped; see the
   // DEFERRED note in launchTimings.ts.)
   timings?: LaunchTimingsPayload;
+  // The SDK version and name the block reported on BLOCK_READY, as returned by
+  // `readBlockReadySdk`. Attach ONLY on the `ok` beacon, and omit a field the block did
+  // not report. They drive the `sdk_version` and `sdk` labels of
+  // `civitai_app_block_sdk_ready_total`; the server re-derives both labels
+  // (`sdkVersionLabel`, `sdkNameLabel`), and like the fields above they never reach
+  // ClickHouse.
+  sdkVersion?: string;
+  sdkName?: SdkName;
 };
 
 export function sendBlockRender(input: BlockRenderBeaconInput) {

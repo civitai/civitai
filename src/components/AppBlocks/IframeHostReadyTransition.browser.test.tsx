@@ -487,6 +487,117 @@ describe('IframeHost ready transition — emit-once / apply-once semantics', () 
   });
 });
 
+describe('IframeHost ready transition — the SDK version reported on BLOCK_READY', () => {
+  const IDS = { appBlockId: 'apb_test', blockInstanceId: 'inst_test', slotId: 'model.sidebar_top' };
+
+  test('the reported sdkVersion and sdkName ride the one ok beacon, and the height is applied as before', async () => {
+    renderWithProviders(<IframeHost {...baseProps} />);
+    await driveToReady({ height: 640, sdkVersion: '0.73.0', sdkName: 'blocks-react' });
+    await vi.waitFor(() => expect(okBeacons()).toHaveLength(1));
+    expect(okBeacons()[0]).toEqual({ ...IDS, sdkVersion: '0.73.0', sdkName: 'blocks-react' });
+    await vi.waitFor(() => expect(appliedHeight()).toBe(640));
+    expect(errorBeacons()).toHaveLength(0);
+  });
+
+  test('a payload carrying ONLY sdkVersion still reports it (it does not depend on a height key)', async () => {
+    renderWithProviders(<IframeHost {...baseProps} />);
+    await driveToReady({ sdkVersion: '0.73.0' });
+    await vi.waitFor(() => expect(okBeacons()).toHaveLength(1));
+    expect(okBeacons()[0]).toEqual({ ...IDS, sdkVersion: '0.73.0' });
+    expect(appliedHeight()).toBe(MIN_HEIGHT);
+  });
+
+  test('duplicate acks — in one batch and again after the ready commit — report the version exactly once', async () => {
+    renderWithProviders(<IframeHost {...baseProps} />);
+    await waitForMount();
+
+    postFromBlock('BLOCK_READY', { height: 300, sdkVersion: '0.73.0' });
+    postFromBlock('BLOCK_READY', { height: 300, sdkVersion: '0.73.0' });
+    postFromBlock('BLOCK_READY', { height: 300, sdkVersion: '0.73.0' });
+    await vi.waitFor(() => {
+      expect(iframeEl().getAttribute('data-block-ready')).toBe('true');
+    });
+    await vi.waitFor(() => expect(okBeacons()).toHaveLength(1));
+
+    // A late re-ack, even one reporting a different SDK, sends nothing more.
+    postFromBlock('BLOCK_READY', { height: 300, sdkVersion: '0.74.0', sdkName: 'sdk' });
+    await sleep(120);
+    expect(beaconBodies()).toHaveLength(1);
+    expect(okBeacons()[0]).toEqual({ ...IDS, sdkVersion: '0.73.0' });
+  });
+
+  test('a payload WITHOUT sdkVersion sends the beacon it always sent — no sdkVersion key at all', async () => {
+    renderWithProviders(<IframeHost {...baseProps} />);
+    await driveToReady({ height: 512 });
+    await vi.waitFor(() => expect(okBeacons()).toHaveLength(1));
+    expect(okBeacons()[0]).toEqual(IDS);
+    expect(Object.keys(okBeacons()[0])).not.toContain('sdkVersion');
+    await vi.waitFor(() => expect(appliedHeight()).toBe(512));
+  });
+
+  // The value crosses an iframe boundary. Whatever it is, the block must still reach
+  // ready, its height must still be applied, and nothing but the fixed `invalid`
+  // sentinel may reach the beacon body.
+  test.each([
+    ['a number', 73 as unknown],
+    ['null', null as unknown],
+    ['an object', { major: 0, minor: 73 } as unknown],
+    ['an array', ['0.73.0'] as unknown],
+    ['a prerelease', '0.73.0-beta.1' as unknown],
+    ['a v prefix', 'v0.73.0' as unknown],
+    ['a huge number', '0.99999999999999999999.0' as unknown],
+    ['a control character', '0.73.0\u0000' as unknown],
+    ['a very long string', 'x'.repeat(200_000) as unknown],
+  ])(
+    'a hostile sdkVersion (%s) does not change readiness or height, and is reported as `invalid`',
+    async (_label, sdkVersion) => {
+      renderWithProviders(<IframeHost {...baseProps} />);
+      await driveToReady({ height: 640, sdkVersion });
+      await vi.waitFor(() => expect(okBeacons()).toHaveLength(1));
+      expect(okBeacons()[0]).toEqual({ ...IDS, sdkVersion: 'invalid' });
+      await vi.waitFor(() => expect(appliedHeight()).toBe(640));
+      expect(errorBeacons()).toHaveLength(0);
+    }
+  );
+
+  test.each([
+    ['a number', 1 as unknown],
+    ['null', null as unknown],
+    ['an object', { name: 'sdk' } as unknown],
+    ['another case', 'SDK' as unknown],
+    ['the scoped package name', '@civitai/sdk' as unknown],
+    ['a very long string', 's'.repeat(200_000) as unknown],
+  ])(
+    'a hostile sdkName (%s) does not change readiness or height, and never reaches the beacon',
+    async (_label, sdkName) => {
+      renderWithProviders(<IframeHost {...baseProps} />);
+      await driveToReady({ height: 640, sdkVersion: '0.73.0', sdkName });
+      await vi.waitFor(() => expect(okBeacons()).toHaveLength(1));
+      expect(okBeacons()[0]).toEqual({ ...IDS, sdkVersion: '0.73.0' });
+      await vi.waitFor(() => expect(appliedHeight()).toBe(640));
+      expect(errorBeacons()).toHaveLength(0);
+    }
+  );
+
+  test('an ack reporting nothing does not erase the SDK an earlier ack in the same batch reported', async () => {
+    renderWithProviders(<IframeHost {...baseProps} />);
+    await waitForMount();
+    postFromBlock('BLOCK_READY', { height: 300, sdkVersion: '0.11.0', sdkName: 'sdk' });
+    postFromBlock('BLOCK_READY', { height: 300 });
+    await vi.waitFor(() => expect(okBeacons()).toHaveLength(1));
+    expect(okBeacons()[0]).toEqual({ ...IDS, sdkVersion: '0.11.0', sdkName: 'sdk' });
+  });
+
+  test("the last reporting ack wins whole — a name is never paired with another ack's version", async () => {
+    renderWithProviders(<IframeHost {...baseProps} />);
+    await waitForMount();
+    postFromBlock('BLOCK_READY', { height: 300, sdkVersion: '0.11.0', sdkName: 'sdk' });
+    postFromBlock('BLOCK_READY', { height: 300, sdkVersion: '0.73.0' });
+    await vi.waitFor(() => expect(okBeacons()).toHaveLength(1));
+    expect(okBeacons()[0]).toEqual({ ...IDS, sdkVersion: '0.73.0' });
+  });
+});
+
 describe('IframeHost ready transition — untrusted height payload', () => {
   test('an ack with NO height leaves the iframe at the manifest minHeight and still completes the handshake', async () => {
     renderWithProviders(<IframeHost {...baseProps} />);

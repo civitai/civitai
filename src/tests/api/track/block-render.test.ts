@@ -896,3 +896,239 @@ describe('POST /api/track/block-render — launch-latency histograms', () => {
     expect(mockLogToAxiom).not.toHaveBeenCalled();
   });
 });
+
+// --- SDK name + version reported on BLOCK_READY --------------------------------------
+const SDK_READY = 'civitai_app_block_sdk_ready_total';
+
+type CounterValues = { values: Array<{ labels: Record<string, string>; value: number }> };
+
+async function sdkReadyValues(): Promise<CounterValues['values']> {
+  const metric = client.register.getSingleMetric(SDK_READY);
+  if (!metric) return [];
+  return (await (metric as unknown as { get(): Promise<CounterValues> }).get()).values;
+}
+
+async function sdkReadyValue(
+  appBlockId: string,
+  host: string,
+  sdkVersion: string,
+  sdk = 'unknown'
+) {
+  const match = (await sdkReadyValues()).find(
+    (v) =>
+      v.labels.app_block_id === appBlockId &&
+      v.labels.host === host &&
+      v.labels.sdk === sdk &&
+      v.labels.sdk_version === sdkVersion
+  );
+  return match?.value ?? 0;
+}
+
+async function sdkReadyTotal() {
+  return (await sdkReadyValues()).reduce((sum, v) => sum + v.value, 0);
+}
+
+describe('POST /api/track/block-render — civitai_app_block_sdk_ready_total counter', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    devStore.isDev = false;
+    sessionStore.session = null;
+  });
+
+  async function post(body: unknown) {
+    const handler = (await import('~/pages/api/track/block-render')).default;
+    const res = makeRes();
+    await handler(makeReq({ origin: 'https://civitai.com', body }) as any, res);
+    return res;
+  }
+
+  it('counts an `ok` beacon under the reported version reduced to major.minor', async () => {
+    const before = await sdkReadyValue('apb_test', 'PageBlockHost', '0.73');
+    const beforeTotal = await sdkReadyTotal();
+
+    const res = await post({ ...validInput, sdkVersion: '0.73.4' });
+
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(await sdkReadyValue('apb_test', 'PageBlockHost', '0.73')).toBe(before + 1);
+    // Exactly one series moved, by exactly one.
+    expect(await sdkReadyTotal()).toBe(beforeTotal + 1);
+  });
+
+  it('labels `sdk` with the reported package name, independently of the version', async () => {
+    const beforeReact = await sdkReadyValue('apb_test', 'PageBlockHost', '0.73', 'blocks-react');
+    const beforeSdk = await sdkReadyValue('apb_test', 'PageBlockHost', '0.11', 'sdk');
+    const beforeNameOnly = await sdkReadyValue('apb_test', 'PageBlockHost', 'unknown', 'sdk');
+    const beforeTotal = await sdkReadyTotal();
+
+    await post({ ...validInput, sdkVersion: '0.73.4', sdkName: 'blocks-react' });
+    await post({ ...validInput, sdkVersion: '0.11.0', sdkName: 'sdk' });
+    await post({ ...validInput, sdkName: 'sdk' });
+
+    expect(await sdkReadyValue('apb_test', 'PageBlockHost', '0.73', 'blocks-react')).toBe(
+      beforeReact + 1
+    );
+    expect(await sdkReadyValue('apb_test', 'PageBlockHost', '0.11', 'sdk')).toBe(beforeSdk + 1);
+    expect(await sdkReadyValue('apb_test', 'PageBlockHost', 'unknown', 'sdk')).toBe(
+      beforeNameOnly + 1
+    );
+    expect(await sdkReadyTotal()).toBe(beforeTotal + 3);
+  });
+
+  it.each<[string, unknown]>([
+    ['a different case', 'SDK'],
+    ['the scoped package name', '@civitai/blocks-react'],
+    ['a third package', 'app-sdk'],
+    ['trailing whitespace', 'sdk '],
+    ['a control character', 'sdk\u0000'],
+    ['a very long string', 's'.repeat(200_000)],
+    ['a number', 1],
+    ['a boolean', true],
+    ['null', null],
+    ['an object', { name: 'sdk' }],
+    ['an array', ['sdk']],
+    ['a prototype key', 'constructor'],
+    ['a label-injection attempt', 'sdk",host="x'],
+  ])(
+    '🔴 files an sdkName that is %s under sdk=`unknown` and still records the impression',
+    async (_name, sdkName) => {
+      const before = await sdkReadyValue('apb_test', 'PageBlockHost', '0.73', 'unknown');
+      const beforeTotal = await sdkReadyTotal();
+      const beforeRender = await renderCounterValue('apb_test', 'app.page', 'ok', 'none');
+
+      const res = await post({ ...validInput, sdkVersion: '0.73.0', sdkName });
+
+      expect(res.status).toHaveBeenCalledWith(200);
+      expect(await sdkReadyValue('apb_test', 'PageBlockHost', '0.73', 'unknown')).toBe(before + 1);
+      expect(await sdkReadyTotal()).toBe(beforeTotal + 1);
+      expect(await renderCounterValue('apb_test', 'app.page', 'ok', 'none')).toBe(beforeRender + 1);
+      expect(mockBlockRender.mock.calls[0][0]).toEqual({ ...validInput, isAnon: true });
+    }
+  );
+
+  it('counts a beacon with NO sdkVersion as `unknown` and leaves everything else as it was', async () => {
+    const before = await sdkReadyValue('apb_test', 'PageBlockHost', 'unknown');
+    const beforeRender = await renderCounterValue('apb_test', 'app.page', 'ok', 'none');
+
+    const res = await post(validInput);
+
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(await sdkReadyValue('apb_test', 'PageBlockHost', 'unknown')).toBe(before + 1);
+    expect(await renderCounterValue('apb_test', 'app.page', 'ok', 'none')).toBe(beforeRender + 1);
+    expect(mockBlockRender).toHaveBeenCalledTimes(1);
+    expect(mockBlockRender.mock.calls[0][0]).toEqual({ ...validInput, isAnon: true });
+  });
+
+  it('labels the slot host `IframeHost` for every slot other than app.page', async () => {
+    const before = await sdkReadyValue('apb_test', 'IframeHost', '0.73');
+    const beforeJunkSlot = await sdkReadyValue('apb_test', 'IframeHost', '0.2');
+
+    await post({ ...validInput, slotId: 'model.sidebar_top', sdkVersion: '0.73.0' });
+    // An unrecognised slot cannot mint a third host value.
+    await post({ ...validInput, slotId: 'totally.unknown.slot', sdkVersion: '0.2.3' });
+
+    expect(await sdkReadyValue('apb_test', 'IframeHost', '0.73')).toBe(before + 1);
+    expect(await sdkReadyValue('apb_test', 'IframeHost', '0.2')).toBe(beforeJunkSlot + 1);
+    for (const v of await sdkReadyValues())
+      expect(['IframeHost', 'PageBlockHost']).toContain(v.labels.host);
+  });
+
+  it('clamps an unknown app_block_id to `other`', async () => {
+    const before = await sdkReadyValue('other', 'PageBlockHost', '0.73');
+    await post({ ...validInput, appBlockId: 'apb_not_approved', sdkVersion: '0.73.0' });
+    expect(await sdkReadyValue('other', 'PageBlockHost', '0.73')).toBe(before + 1);
+  });
+
+  // 🔴 The body is client-supplied and the route is public. Whatever arrives in
+  // `sdkVersion`, the beacon must still succeed, the impression must still be
+  // recorded, and the only label it may land on is `invalid`.
+  it.each<[string, unknown]>([
+    ['a very long string', 'a'.repeat(200_000)],
+    ['a long digit run', '9'.repeat(5_000)],
+    ['a prerelease suffix', '0.73.0-beta.1'],
+    ['a build suffix', '0.73.0+build'],
+    ['a v prefix', 'v0.73.0'],
+    ['a huge minor', '0.99999999999.0'],
+    ['a minor above the ceiling', '0.150.0'],
+    ['a major above the ceiling', '1.0.0'],
+    ['a number', 73],
+    ['a boolean', true],
+    ['null', null],
+    ['an object', { major: 0, minor: 73 }],
+    ['an array', ['0.73.0']],
+    ['a control character', '0.73.0\u0000'],
+    ['a newline', '0.73.0\n'],
+    ['an already-reduced label', '0.73'],
+    ['a label-injection attempt', '0.73",host="x'],
+  ])('🔴 files %s under `invalid` and still records the impression', async (_name, sdkVersion) => {
+    const beforeInvalid = await sdkReadyValue('apb_test', 'PageBlockHost', 'invalid');
+    const beforeTotal = await sdkReadyTotal();
+    const beforeRender = await renderCounterValue('apb_test', 'app.page', 'ok', 'none');
+
+    const res = await post({ ...validInput, sdkVersion });
+
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(await sdkReadyValue('apb_test', 'PageBlockHost', 'invalid')).toBe(beforeInvalid + 1);
+    expect(await sdkReadyTotal()).toBe(beforeTotal + 1);
+    expect(await renderCounterValue('apb_test', 'app.page', 'ok', 'none')).toBe(beforeRender + 1);
+    // The field never reaches the ClickHouse insert.
+    expect(mockBlockRender.mock.calls[0][0]).toEqual({ ...validInput, isAnon: true });
+  });
+
+  it('🔴 a flood of distinct versions and names cannot create more than 152 sdk_version values or a fourth sdk value', async () => {
+    // One beacon with neither field, so `unknown` is present whatever ran before.
+    await post(validInput);
+    // Overshoots both ceilings (majors 0-3, minors 0-399) on one app and one host,
+    // each under a name the bound must fold into `unknown`.
+    for (let major = 0; major <= 3; major++)
+      for (let minor = 0; minor <= 399; minor++)
+        await post({
+          ...validInput,
+          sdkVersion: `${major}.${minor}.0`,
+          sdkName: `pkg-${major}-${minor}`,
+        });
+
+    const all = await sdkReadyValues();
+    // 1,600 distinct names minted no `sdk` value of their own.
+    for (const v of all) expect(['blocks-react', 'sdk', 'unknown']).toContain(v.labels.sdk);
+    const versions = new Set(
+      all
+        .filter(
+          (v) =>
+            v.labels.app_block_id === 'apb_test' &&
+            v.labels.host === 'PageBlockHost' &&
+            v.labels.sdk === 'unknown'
+        )
+        .map((v) => v.labels.sdk_version)
+    );
+    // 150 in-range versions + `invalid` + `unknown`.
+    expect(versions.size).toBe(152);
+    expect(versions.has('0.149')).toBe(true);
+    expect(versions.has('0.150')).toBe(false);
+    expect(versions.has('1.0')).toBe(false);
+  });
+
+  it('does NOT count an `error` beacon, even one that carries an sdkVersion', async () => {
+    const beforeTotal = await sdkReadyTotal();
+    await post({
+      ...validInput,
+      status: 'error',
+      errorClass: 'timeout',
+      sdkVersion: '0.73.0',
+      sdkName: 'sdk',
+    });
+    expect(await sdkReadyTotal()).toBe(beforeTotal);
+  });
+
+  it('does NOT count a `secondary` beacon', async () => {
+    const beforeTotal = await sdkReadyTotal();
+    await post({ ...validInput, secondary: true, sdkVersion: '0.73.0', sdkName: 'sdk' });
+    await post({
+      ...validInput,
+      status: 'error',
+      errorClass: 'token_lost_midsession',
+      secondary: true,
+      sdkVersion: '0.73.0',
+    });
+    expect(await sdkReadyTotal()).toBe(beforeTotal);
+  });
+});

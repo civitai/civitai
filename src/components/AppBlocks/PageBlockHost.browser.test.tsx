@@ -1272,9 +1272,9 @@ describe('PageBlockHost block render/impression (Analytics Phase 2)', () => {
     );
     expect(typeof body.timings.totalMs).toBe('number');
     expect(body.timings.totalMs).toBeGreaterThan(0);
-    // 🔴 NO STRINGS ON THE WIRE — this is the real invariant, and it is what
-    // keeps a public, client-controlled beacon body from touching prom label
-    // cardinality. Every label this payload feeds is CODE-OWNED: the server maps
+    // 🔴 NO STRINGS IN `timings` — this is the real invariant, and it is what
+    // keeps that client-controlled object from touching prom label
+    // cardinality. Every label it feeds is CODE-OWNED: the server maps
     // named numeric fields onto its own `phase` literals and the `hello` boolean
     // onto `yes`/`no`, so no value here can ever BE a label value.
     //
@@ -1357,6 +1357,111 @@ describe('PageBlockHost block render/impression (Analytics Phase 2)', () => {
     // The new mount emitted a 2nd, independent impression → total 2.
     await vi.waitFor(() => expect(beaconCalls()).toHaveLength(2));
   });
+
+  // ── The SDK version reported on BLOCK_READY ────────────────────────────────
+  const beaconBody = (i = 0) =>
+    JSON.parse(String((beaconCalls()[i][1] as RequestInit).body)) as Record<string, unknown>;
+
+  /** `driveToReady`, but acking with a payload. */
+  async function driveToReadyWith(payload: unknown) {
+    await pollFor('iframe mount', () => !!iframeElQuery()?.contentWindow);
+    await pollFor('BLOCK_READY ack', () => {
+      postFromBlock('BLOCK_READY', payload);
+      return iframeElQuery()?.getAttribute('data-block-ready') === 'true';
+    });
+  }
+
+  test('the reported sdkVersion and sdkName ride the one ok beacon', async () => {
+    renderWithProviders(<PageBlockHost {...baseProps} onConsentGranted={vi.fn()} />);
+    await driveToReadyWith({ height: 640, sdkVersion: '0.73.0', sdkName: 'blocks-react' });
+    await vi.waitFor(() => expect(beaconCalls()).toHaveLength(1));
+
+    expect(beaconBody().sdkVersion).toBe('0.73.0');
+    expect(beaconBody().sdkName).toBe('blocks-react');
+    expect(Object.keys(beaconBody()).sort()).toEqual(
+      ['appBlockId', 'blockInstanceId', 'sdkName', 'sdkVersion', 'slotId', 'timings'].sort()
+    );
+  });
+
+  test('duplicate acks report the version exactly once', async () => {
+    renderWithProviders(<PageBlockHost {...baseProps} onConsentGranted={vi.fn()} />);
+    await driveToReadyWith({ sdkVersion: '0.73.0' });
+    await vi.waitFor(() => expect(beaconCalls()).toHaveLength(1));
+
+    postFromBlock('BLOCK_READY', { sdkVersion: '0.73.0' });
+    postFromBlock('BLOCK_READY', { sdkVersion: '0.74.0', sdkName: 'sdk' });
+    await new Promise((r) => setTimeout(r, 150));
+
+    expect(beaconCalls()).toHaveLength(1);
+    expect(beaconBody().sdkVersion).toBe('0.73.0');
+    expect(beaconBody()).not.toHaveProperty('sdkName');
+  });
+
+  test('an ack reporting nothing does not erase the SDK an earlier ack in the same batch reported', async () => {
+    renderWithProviders(<PageBlockHost {...baseProps} onConsentGranted={vi.fn()} />);
+    await pollFor('iframe mount', () => !!iframeElQuery()?.contentWindow);
+    postFromBlock('BLOCK_READY', { sdkVersion: '0.11.0', sdkName: 'sdk' });
+    postFromBlock('BLOCK_READY', {});
+    await vi.waitFor(() => expect(beaconCalls()).toHaveLength(1));
+    expect(beaconBody().sdkVersion).toBe('0.11.0');
+    expect(beaconBody().sdkName).toBe('sdk');
+  });
+
+  test("the last reporting ack wins whole — a name is never paired with another ack's version", async () => {
+    renderWithProviders(<PageBlockHost {...baseProps} onConsentGranted={vi.fn()} />);
+    await pollFor('iframe mount', () => !!iframeElQuery()?.contentWindow);
+    postFromBlock('BLOCK_READY', { sdkVersion: '0.11.0', sdkName: 'sdk' });
+    postFromBlock('BLOCK_READY', { sdkVersion: '0.73.0' });
+    await vi.waitFor(() => expect(beaconCalls()).toHaveLength(1));
+    expect(beaconBody().sdkVersion).toBe('0.73.0');
+    expect(beaconBody()).not.toHaveProperty('sdkName');
+  });
+
+  test('a payload WITHOUT sdkVersion sends no sdkVersion key', async () => {
+    renderWithProviders(<PageBlockHost {...baseProps} onConsentGranted={vi.fn()} />);
+    await driveToReadyWith({ height: 640 });
+    await vi.waitFor(() => expect(beaconCalls()).toHaveLength(1));
+    expect(Object.keys(beaconBody()).sort()).toEqual(
+      ['appBlockId', 'blockInstanceId', 'slotId', 'timings'].sort()
+    );
+  });
+
+  test.each([
+    ['a number', 73 as unknown],
+    ['null', null as unknown],
+    ['an object', { major: 0, minor: 73 } as unknown],
+    ['a prerelease', '0.73.0-beta.1' as unknown],
+    ['a huge number', '0.99999999999999999999.0' as unknown],
+    ['a control character', '0.73.0\u0000' as unknown],
+    ['a very long string', 'x'.repeat(200_000) as unknown],
+  ])(
+    'a hostile sdkVersion (%s) does not stop the block reaching ready, and is reported as `invalid`',
+    async (_label, sdkVersion) => {
+      renderWithProviders(<PageBlockHost {...baseProps} onConsentGranted={vi.fn()} />);
+      await driveToReadyWith({ sdkVersion });
+      expect(fallbackElQuery()).toBeNull();
+      await vi.waitFor(() => expect(beaconCalls()).toHaveLength(1));
+      expect(beaconBody().sdkVersion).toBe('invalid');
+    }
+  );
+
+  test.each([
+    ['a number', 1 as unknown],
+    ['null', null as unknown],
+    ['an object', { name: 'sdk' } as unknown],
+    ['another case', 'SDK' as unknown],
+    ['a very long string', 's'.repeat(200_000) as unknown],
+  ])(
+    'a hostile sdkName (%s) does not stop the block reaching ready, and never reaches the beacon',
+    async (_label, sdkName) => {
+      renderWithProviders(<PageBlockHost {...baseProps} onConsentGranted={vi.fn()} />);
+      await driveToReadyWith({ sdkVersion: '0.73.0', sdkName });
+      expect(fallbackElQuery()).toBeNull();
+      await vi.waitFor(() => expect(beaconCalls()).toHaveLength(1));
+      expect(beaconBody().sdkVersion).toBe('0.73.0');
+      expect(beaconBody()).not.toHaveProperty('sdkName');
+    }
+  );
 });
 
 /**
