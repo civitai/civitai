@@ -417,6 +417,27 @@ export type Appeal = {
   internalNotes: string | null;
   buzzTransactionId: string | null;
 };
+export type AppealDecisionRecord = {
+  id: Generated<string>;
+  appealId: number;
+  imageId: number;
+  ownerId: number;
+  imageUrl: string;
+  pHash: string | null;
+  promptHash: string | null;
+  nsfwLevel: number;
+  nsfwLevelLocked: boolean;
+  nsfwLevelReason: string | null;
+  aiNsfwLevel: number | null;
+  blockedFor: string | null;
+  decision: string;
+  resolvedReason: string | null;
+  decidedAt: Timestamp;
+  removalLabel: string | null;
+  restoredLevel: number | null;
+  trainingLabelCorrectedAt: Timestamp | null;
+  createdAt: Generated<Timestamp>;
+};
 export type AppListing = {
   id: string;
   serial_id: Generated<number>;
@@ -5137,6 +5158,7 @@ export type DB = {
   app_sub_listings: AppSubListing;
   app_user_scope_grants: AppUserScopeGrant;
   Appeal: Appeal;
+  AppealDecisionRecord: AppealDecisionRecord;
   AppPageAccess: AppPageAccess;
   Article: Article;
   ArticleEngagement: ArticleEngagement;
