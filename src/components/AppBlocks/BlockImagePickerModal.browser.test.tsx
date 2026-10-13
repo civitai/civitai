@@ -446,6 +446,69 @@ describe('BlockImagePickerModal', () => {
     expect(fetchNextPage.refetch).not.toHaveBeenCalled();
   });
 
+  test('an image loaded by Retry clears the empty-page count, so loading carries on by itself', async () => {
+    const items: unknown[] = [];
+    const fetchNextPage = setPosted(items, { hasNextPage: true });
+    const answer = (over: Record<string, unknown>) => {
+      setPosted([...items], { hasNextPage: true, fetchNextPage, ...over });
+      mocks.postedSubscribers.forEach((rerender) => rerender());
+    };
+    fetchNextPage.mockImplementation(async () => {
+      const call = fetchNextPage.mock.calls.length;
+      // Three empty pages (the bound), a failed page, then pages with an image each.
+      if (call <= 3) return;
+      if (call === 4) return answer({ isError: true });
+      items.push(postedItem(items.length + 1));
+      answer({ hasNextPage: items.length < 3 });
+    });
+
+    openModal({ sources: ['posted'] });
+
+    // The bound is reached, so the fourth page is asked for by hand, and fails.
+    const loadMore = page.getByRole('button', { name: 'Load more' });
+    await expect.element(loadMore, { timeout: 8000 }).toBeInTheDocument();
+    await userEvent.click(loadMore);
+    const retry = page.getByRole('button', { name: 'Retry' });
+    await expect.element(retry).toBeInTheDocument();
+    expect(fetchNextPage).toHaveBeenCalledTimes(4);
+
+    await userEvent.click(retry);
+    await expect.element(tile('Posted image 1')).toBeInTheDocument();
+    expect(page.getByText(LOAD_MORE_NOTE).query()).toBeNull();
+    expect(page.getByRole('button', { name: 'Load more' }).query()).toBeNull();
+    // ...and the next pages load without a click.
+    await expect.element(tile('Posted image 3'), { timeout: 8000 }).toBeInTheDocument();
+    expect(page.getByText(LOAD_MORE_NOTE).query()).toBeNull();
+  });
+
+  test('a failed page does not count as an empty one', async () => {
+    const items: unknown[] = [];
+    const fetchNextPage = setPosted(items, { hasNextPage: true });
+    const answer = (over: Record<string, unknown>) => {
+      setPosted([...items], { hasNextPage: true, fetchNextPage, ...over });
+      mocks.postedSubscribers.forEach((rerender) => rerender());
+    };
+    fetchNextPage.mockImplementation(async () => {
+      const call = fetchNextPage.mock.calls.length;
+      // One empty page, a failed page, an empty retry: two empty pages in all, under the bound of
+      // three, so the page after them is still loaded without a click.
+      if (call === 1) return;
+      if (call === 2) return answer({ isError: true });
+      if (call === 3) return answer({ isError: false });
+      items.push(postedItem(1));
+      answer({ hasNextPage: false });
+    });
+
+    openModal({ sources: ['posted'] });
+
+    const retry = page.getByRole('button', { name: 'Retry' });
+    await expect.element(retry, { timeout: 8000 }).toBeInTheDocument();
+    await userEvent.click(retry);
+
+    await expect.element(tile('Posted image 1'), { timeout: 8000 }).toBeInTheDocument();
+    expect(fetchNextPage).toHaveBeenCalledTimes(4);
+  });
+
   test('a failed first load offers a retry that refetches', async () => {
     const fetchNextPage = setPosted([], { data: undefined, isError: true });
 

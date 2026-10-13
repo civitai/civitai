@@ -15,7 +15,7 @@ import {
 } from '@mantine/core';
 import { IconCheck } from '@tabler/icons-react';
 import clsx from 'clsx';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useViewerBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
@@ -70,6 +70,18 @@ export default function BlockImagePickerModal({
   const [source, setSource] = useState<BlockImagePickerSource>(sources[0]);
   const [selected, setSelected] = useState<BlockPickedImageInfo[]>([]);
 
+  // The viewer's own level with the domain cap applied: what the server reads for the posted tab.
+  const browsingLevel = useViewerBrowsingLevelDebounced();
+  const utils = trpc.useUtils();
+  const listedAtLevel = useRef(browsingLevel);
+  useEffect(() => {
+    if (listedAtLevel.current === browsingLevel) return;
+    listedAtLevel.current = browsingLevel;
+    // Everything listed or selected so far was allowed at the previous level.
+    setSelected([]);
+    void utils.blockImagePicker.getPosted.reset();
+  }, [browsingLevel, utils]);
+
   const multiple = max !== null;
   const atMax = multiple && selected.length >= max;
 
@@ -88,7 +100,7 @@ export default function BlockImagePickerModal({
   }
 
   const title = multiple && max > 1 ? `Choose up to ${max} images` : 'Choose an image';
-  const grid = { selected, atMax, onToggle: toggle };
+  const grid = { selected, atMax, onToggle: toggle, browsingLevel };
 
   return (
     <Modal {...dialog} withCloseButton size={800} title={title}>
@@ -146,6 +158,7 @@ export default function BlockImagePickerModal({
 }
 
 type GridSelection = {
+  browsingLevel: number;
   selected: BlockPickedImageInfo[];
   atMax: boolean;
   onToggle: (image: BlockPickedImageInfo) => void;
@@ -159,7 +172,14 @@ function PostedGrid(selection: GridSelection) {
   const { data, isLoading, isError, isFetching, hasNextPage, fetchNextPage, refetch } =
     trpc.blockImagePicker.getPosted.useInfiniteQuery(
       {},
-      { getNextPageParam: (lastPage) => lastPage.nextCursor }
+      {
+        getNextPageParam: (lastPage) => lastPage.nextCursor,
+        // The server filters by the viewer's browsing level, which is not part of the query key.
+        // The app caches queries forever by default, so without these a reopened picker would list
+        // what an earlier level allowed.
+        gcTime: 0,
+        staleTime: 0,
+      }
     );
 
   const images = useMemo(
@@ -189,8 +209,7 @@ function PostedGrid(selection: GridSelection) {
 }
 
 function GeneratedGrid(selection: GridSelection) {
-  // The viewer's own level with the domain cap applied: what the server reads for the posted tab.
-  const browsingLevel = useViewerBrowsingLevelDebounced();
+  const { browsingLevel } = selection;
   const { data, isFetching, isFetchingNextPage, isError, hasNextPage, fetchNextPage, refetch } =
     useGetTextToImageRequests(
       { tags: [WORKFLOW_TAGS.IMAGE] },
@@ -251,24 +270,24 @@ function PickGrid({
   const [emptyStreak, setEmptyStreak] = useState(0);
   const [load, setLoad] = useState<{ before: number; settled: boolean } | null>(null);
 
-  async function loadMore() {
+  async function fetchPage(fetch: () => unknown) {
     if (load) return;
     setLoad({ before: images.length, settled: false });
     try {
-      await onLoadMore();
+      await fetch();
     } finally {
       setLoad((current) => (current ? { ...current, settled: true } : current));
     }
   }
 
   // Judged once the fetch has settled AND the query has reported it, so the page's own images are
-  // counted before it is called empty.
+  // counted before it is called empty. A page that failed is neither: it told us nothing.
   useEffect(() => {
     if (!load?.settled || fetching) return;
-    const added = images.length > load.before;
-    setEmptyStreak((streak) => (added ? 0 : streak + 1));
+    if (images.length > load.before) setEmptyStreak(0);
+    else if (!failed) setEmptyStreak((streak) => streak + 1);
     setLoad(null);
-  }, [load, fetching, images.length]);
+  }, [load, fetching, failed, images.length]);
 
   if (loading) {
     return (
@@ -329,13 +348,18 @@ function PickGrid({
         <Alert color="red" variant="light" mt="sm">
           <Group justify="space-between" gap="xs">
             <Text size="sm">Couldn&apos;t load your images.</Text>
-            <Button size="xs" variant="default" onClick={() => onRetry()} loading={fetching}>
+            <Button
+              size="xs"
+              variant="default"
+              onClick={() => fetchPage(onRetry)}
+              loading={fetching || !!load}
+            >
               Retry
             </Button>
           </Group>
         </Alert>
       ) : autoLoad ? (
-        <InViewLoader loadFn={loadMore} loadCondition={!fetching && !load}>
+        <InViewLoader loadFn={() => fetchPage(onLoadMore)} loadCondition={!fetching && !load}>
           <Center p="md">
             <Loader size="sm" />
           </Center>
@@ -345,7 +369,12 @@ function PickGrid({
           <Text size="sm" c="dimmed">
             No usable images found in the most recent pages.
           </Text>
-          <Button size="xs" variant="default" onClick={loadMore} loading={fetching || !!load}>
+          <Button
+            size="xs"
+            variant="default"
+            onClick={() => fetchPage(onLoadMore)}
+            loading={fetching || !!load}
+          >
             Load more
           </Button>
         </Stack>

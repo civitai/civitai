@@ -21,7 +21,7 @@ export const IMAGE_PICKER_MULTIPLE_MAX = 20;
 export type BlockPickedImageInfo = {
   source: BlockImagePickerSource;
   url: string;
-  /** Pixel size of the image at `url`. */
+  /** Pixel size the image at `url` is requested at; see `postedPickRendition` for posted picks. */
   width: number;
   height: number;
   nsfwLevel: number;
