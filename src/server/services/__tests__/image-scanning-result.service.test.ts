@@ -98,14 +98,14 @@ describe('processImageScanningWorkflow', () => {
     pipeline.readJobFailureReason.mockResolvedValue('Failed to create container');
   });
 
-  it('hands a scan the orchestrator refused to the outcome as a block', async () => {
+  it('hands a scan the orchestrator refused to the outcome as flagged', async () => {
     await deliver('succeeded', [
       { ...scanStep, output: { ...scanStep.output, blockedReason: 'refused' } },
       hashStep,
     ]);
 
     expect(pipeline.resolveScanOutcome).toHaveBeenCalledTimes(1);
-    expect(pipeline.resolveScanOutcome.mock.calls[0][0].scanBlocked).toBe(true);
+    expect(pipeline.resolveScanOutcome.mock.calls[0][0].scanFlagged).toBe(true);
   });
 
   it('writes the scan through the shared pipeline without a hard block', async () => {
@@ -124,7 +124,7 @@ describe('processImageScanningWorkflow', () => {
     });
     expect(pipeline.resolveScanOutcome).toHaveBeenCalledWith({
       image,
-      scanBlocked: false,
+      scanFlagged: false,
       pHash: 10n,
       workflowId: 'wf',
       prompt: 'a prompt',

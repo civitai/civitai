@@ -33,12 +33,11 @@ vi.mock('../../../../event-engine-common/feeds', () => ({ ImagesFeed: class {} }
 vi.mock('../../../../event-engine-common/services/cache', () => ({ CacheService: class {} }));
 
 import { resolveScanOutcome, type ScanImage } from '../image-scan-pipeline';
-import { includesInappropriate } from '~/utils/metadata/audit';
+import { auditMetaData, includesInappropriate } from '~/utils/metadata/audit';
 import { createNotification } from '~/server/services/notification.service';
-import { isAppealableImage } from '~/shared/utils/appeal';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
-const holder = vi.hoisted(() => ({ db: null as unknown as PGlite }));
+const holder = vi.hoisted(() => ({ db: null as unknown as PGlite, newUser: false }));
 const IMAGE = 51;
 
 beforeAll(async () => {
@@ -73,6 +72,8 @@ beforeAll(async () => {
 beforeEach(async () => {
   vi.clearAllMocks();
   vi.mocked(includesInappropriate).mockReturnValue(false);
+  vi.mocked(auditMetaData).mockReturnValue({ success: true } as never);
+  holder.newUser = false;
   dbMock.dbWrite.$executeRaw.mockImplementation((async (
     strings: TemplateStringsArray,
     ...values: unknown[]
@@ -94,7 +95,7 @@ beforeEach(async () => {
     const text = strings.join('');
     if (text.includes('TagsOnImageDetails'))
       return [{ id: 10, name: 'tag', type: 'Label', nsfwLevel: 16, confidence: 90 }];
-    if (text.includes('is_new_user')) return [{ isNewUser: false }];
+    if (text.includes('is_new_user')) return [{ isNewUser: holder.newUser }];
     return [{ poi: false, minor: false, hasResource: false }];
   }) as never);
   await holder.db.exec(`
@@ -118,7 +119,7 @@ const imageRow = async () =>
     )
   ).rows[0];
 
-const scan = async (scanBlocked: boolean, over: Partial<ScanImage> = {}) => {
+const scan = async (scanFlagged: boolean, over: Partial<ScanImage> = {}) => {
   const row = await imageRow();
   return resolveScanOutcome({
     image: {
@@ -134,35 +135,48 @@ const scan = async (scanBlocked: boolean, over: Partial<ScanImage> = {}) => {
       ...row,
       ...over,
     } as unknown as ScanImage,
-    scanBlocked,
+    scanFlagged,
     workflowId: 'wf',
     prompt: 'a prompt',
   });
 };
 
 describe('an upload the orchestrator refused', () => {
-  it('is blocked as a moderation block its owner can appeal, and the owner is told', async () => {
+  it('is held for minor review, not blocked, and nobody is notified', async () => {
     const outcome = await scan(true);
 
-    expect(outcome).toMatchObject({ ingestion: 'Blocked', blockedFor: 'moderated' });
-    const row = await imageRow();
-    expect(row).toEqual({
-      ingestion: 'Blocked',
-      blockedFor: 'moderated',
-      nsfwLevel: 32,
-      needsReview: null,
+    expect(outcome).toMatchObject({ ingestion: 'Scanned', blockedFor: null, reviewKey: 'minor' });
+    expect(await imageRow()).toEqual({
+      ingestion: 'Scanned',
+      blockedFor: null,
+      nsfwLevel: 16,
+      needsReview: 'minor',
     });
-    expect(isAppealableImage(row)).toBe(true);
-    expect(createNotification).toHaveBeenCalledTimes(1);
-    expect(createNotification).toHaveBeenCalledWith(
-      expect.objectContaining({ userId: 2, key: `image-block:${IMAGE}` })
-    );
+    expect(createNotification).not.toHaveBeenCalled();
   });
 
-  it('is blocked over a rating a moderator locked', async () => {
-    await scan(true, { nsfwLevelLocked: true, nsfwLevel: 1 } as Partial<ScanImage>);
+  it('outranks a new-user review', async () => {
+    holder.newUser = true;
 
-    expect((await imageRow()).nsfwLevel).toBe(32);
+    await scan(true);
+
+    expect((await imageRow()).needsReview).toBe('minor');
+  });
+
+  it('leaves a real-person review in its own queue', async () => {
+    vi.mocked(includesInappropriate).mockReturnValue('poi' as never);
+
+    await scan(true);
+
+    expect((await imageRow()).needsReview).toBe('poi');
+  });
+
+  it('leaves an image the prompt audit blocked blocked', async () => {
+    vi.mocked(auditMetaData).mockReturnValue({ success: false, blockedFor: ['prompt'] } as never);
+
+    await scan(true);
+
+    expect(await imageRow()).toMatchObject({ ingestion: 'Blocked', needsReview: null });
   });
 
   it('stays in the CSAM review it is already in', async () => {
@@ -170,7 +184,7 @@ describe('an upload the orchestrator refused', () => {
 
     await scan(true);
 
-    expect(await imageRow()).toMatchObject({ ingestion: 'Blocked', needsReview: 'csam' });
+    expect((await imageRow()).needsReview).toBe('csam');
   });
 
   it('stays in the appeals queue when its owner already appealed', async () => {
@@ -181,12 +195,12 @@ describe('an upload the orchestrator refused', () => {
 
     await scan(true);
 
-    expect(await imageRow()).toMatchObject({ ingestion: 'Blocked', needsReview: 'appeal' });
+    expect((await imageRow()).needsReview).toBe('appeal');
   });
 });
 
 describe('an upload the orchestrator passed', () => {
-  it('is scanned, not blocked, and nobody is notified', async () => {
+  it('is scanned with no review', async () => {
     const outcome = await scan(false);
 
     expect(outcome.ingestion).toBe('Scanned');
@@ -196,7 +210,6 @@ describe('an upload the orchestrator passed', () => {
       nsfwLevel: 16,
       needsReview: null,
     });
-    expect(createNotification).not.toHaveBeenCalled();
   });
 
   it('still goes to minor review when the existing checks send it there', async () => {
@@ -205,5 +218,13 @@ describe('an upload the orchestrator passed', () => {
     await scan(false);
 
     expect(await imageRow()).toMatchObject({ ingestion: 'Scanned', needsReview: 'minor' });
+  });
+
+  it('still goes to new-user review', async () => {
+    holder.newUser = true;
+
+    await scan(false);
+
+    expect((await imageRow()).needsReview).toBe('newUser');
   });
 });

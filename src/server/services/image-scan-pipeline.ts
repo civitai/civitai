@@ -511,13 +511,15 @@ export type ScanOutcome = {
  *  - `audit.blockedFor` (prompt TOS/CSAM): block.
  *  - otherwise: Scanned, with moderation rules applied last so a rule Block/Hold
  *    takes precedence over the audit decision.
- * `scanBlocked` (imageScanning) blocks after the audit and moderation rules, so the
- * image is still tagged and flagged and the block cannot be undone by a rule.
+ * `scanFlagged` (imageScanning) holds the image for minor review after the audit and
+ * moderation rules: it outranks a tag or new-user review, never a block or another review.
  */
+const YIELDS_TO_SCAN_REVIEW = new Set<string | null>([null, 'tag', 'newUser']);
+
 export async function resolveScanOutcome({
   image,
   blocked,
-  scanBlocked = false,
+  scanFlagged = false,
   pHash,
   workflowId,
   prompt,
@@ -527,7 +529,7 @@ export async function resolveScanOutcome({
   image: ScanImage;
   blocked?: { reason: string | null };
   /** The orchestrator refused the image under the rules it applies to generated images. */
-  scanBlocked?: boolean;
+  scanFlagged?: boolean;
   pHash?: bigint;
   workflowId: string;
   prompt?: string;
@@ -615,15 +617,14 @@ export async function resolveScanOutcome({
     }
   }
 
-  // Same shape as a moderation-rule block, so the owner is told and can appeal it.
-  if (scanBlocked) {
-    toUpdate.ingestion = ImageIngestionStatus.Blocked;
-    toUpdate.nsfwLevel = NsfwLevel.Blocked;
-    toUpdate.blockedFor = BlockedReason.Moderated;
-    toUpdate.needsReview = null;
-    reviewKey = null;
-    if (modRule?.ingestion !== ImageIngestionStatus.Blocked)
-      await notifyImageAutoBlocked({ imageId: image.id, userId: image.userId, log });
+  // Reviewed rather than blocked: on uploads these rules flag far more than they should block.
+  if (
+    scanFlagged &&
+    toUpdate.ingestion !== ImageIngestionStatus.Blocked &&
+    YIELDS_TO_SCAN_REVIEW.has(reviewKey)
+  ) {
+    toUpdate.needsReview = 'minor';
+    reviewKey = 'minor';
   }
 
   // The appeal is the open decision on this image's block: a scan may tighten it, never lift it.

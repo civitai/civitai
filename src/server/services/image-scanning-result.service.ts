@@ -257,7 +257,7 @@ export async function processImageScanningWorkflow({
     });
     outcome = await resolveScanOutcome({
       image,
-      scanBlocked: !!scan.blockedReason,
+      scanFlagged: !!scan.blockedReason,
       pHash,
       workflowId,
       prompt,
