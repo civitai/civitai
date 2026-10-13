@@ -20,7 +20,11 @@ import type {
   TextScanSubject,
 } from '~/server/services/text-scan/types';
 import { bustFetchThroughCache, fetchThroughCache } from '~/server/utils/cache-helpers';
-import { throwAuthorizationError, throwBadRequestError } from '~/server/utils/errorHandling';
+import {
+  throwAuthorizationError,
+  throwBadRequestError,
+  throwConflictError,
+} from '~/server/utils/errorHandling';
 
 export const DEFAULT_TEXT_SCAN_MODEL =
   'urn:air:qwen3:repository:huggingface:gittensor-model-hub/Qwen3.8-27B-NVFP4-RTX5090@main.tar';
@@ -140,18 +144,38 @@ export async function insertTextScanPrompt({
   content,
   note,
   createdById,
+  baseId,
 }: {
   key: string;
   content: string;
   note?: string;
   createdById: number;
+  /** The version the edit started from; null when there was none. Given, the insert happens only
+   *  while it is still the newest version of `key`. */
+  baseId?: number | null;
 }) {
   if (!TEXT_SCAN_PROMPT_KEY.test(key)) throwBadRequestError(`Invalid text-scan prompt key: ${key}`);
   await assertActiveModerator(createdById);
-  const row = await dbWrite.textScanPrompt.create({
-    data: { key, content, note, createdById },
-    select: { id: true, key: true },
-  });
+  const data = { key, content, note, createdById };
+  const select = { id: true, key: true } as const;
+  const row =
+    baseId === undefined
+      ? await dbWrite.textScanPrompt.create({ data, select })
+      : await dbWrite.$transaction(async (tx) => {
+          // Serialises saves of one key: without it two saves from the same base both read it as
+          // newest and both insert.
+          await tx.$queryRaw`SELECT 1 AS locked FROM pg_advisory_xact_lock(hashtext(${`TextScanPrompt:${key}`}))`;
+          const newest = await tx.textScanPrompt.findFirst({
+            where: { key },
+            orderBy: { id: 'desc' },
+            select: { id: true },
+          });
+          if ((newest?.id ?? null) !== baseId)
+            throwConflictError(
+              `A newer version of ${key} (#${newest?.id}) was saved after this edit started.`
+            );
+          return tx.textScanPrompt.create({ data, select });
+        });
   await bustFetchThroughCache(REDIS_KEYS.CACHES.TEXT_SCAN_PROMPTS);
   return row;
 }

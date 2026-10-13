@@ -98,3 +98,50 @@ export function filterModelRuleMatches<T extends { ruleId: number }>(
   }
   return { kept, dropped };
 }
+
+/** Mirrors the moderator app's rule form limits. */
+export const MODEL_RULE_OVERRIDE_LIMITS = {
+  rules: 500,
+  subjectChars: 200,
+  descriptionChars: 2000,
+  aliasChars: 200,
+  aliasesPerRule: 100,
+} as const;
+
+/** A lab-only edit of a rule: a positive id replaces that rule, a negative id is a new, unsaved one. */
+export type ModelRuleOverride = {
+  id: number;
+  subject: string;
+  description: string;
+  aliases: string[];
+  enabled: boolean;
+};
+
+export function applyModelRuleOverrides(
+  live: ModelRuleForPrompt[],
+  overrides: ModelRuleOverride[] | undefined
+): ModelRuleForPrompt[] {
+  if (!overrides?.length) return live;
+  const toRule = ({
+    id,
+    subject,
+    description,
+    aliases,
+  }: ModelRuleOverride): ModelRuleForPrompt => ({
+    id,
+    subject,
+    description,
+    aliases,
+    updatedAt: 0,
+  });
+  const byId = new Map(overrides.map((o) => [o.id, o]));
+  const merged = live.flatMap((rule) => {
+    const edit = byId.get(rule.id);
+    if (!edit) return [rule];
+    return edit.enabled ? [toRule(edit)] : [];
+  });
+  const liveIds = new Set(live.map((rule) => rule.id));
+  for (const edit of overrides)
+    if (!liveIds.has(edit.id) && edit.enabled) merged.push(toRule(edit));
+  return merged;
+}

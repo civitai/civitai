@@ -1,13 +1,20 @@
 import { submitWorkflow } from '@civitai/client';
 import pLimit from 'p-limit';
 import * as z from 'zod';
-import { dbRead } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
 import { evaluateTextScan } from '~/server/services/text-scan/evaluate';
 import { findChatCompletionStep, parseTextScanStep } from '~/server/services/text-scan/parse';
 import type { ChatCompletionStepLike } from '~/server/services/text-scan/parse';
 import { readTextScanRollouts, textScanEmEntityType } from '~/server/services/text-scan/mode';
-import { getModelRulesForPrompt } from '~/server/services/text-scan/model-rules';
+import {
+  applyModelRuleOverrides,
+  getModelRulesForPrompt,
+  MODEL_RULE_OVERRIDE_LIMITS,
+  type ModelRuleOverride,
+} from '~/server/services/text-scan/model-rules';
+import { findLiteralHitsInSubject } from '~/server/services/text-scan/model-rules-literal';
+import { loadModelScanSubjects } from '~/server/services/text-scan/profiles/model.profile';
 import { getTextScanProfile, isTextScanEntityType } from '~/server/services/text-scan/profiles';
 import '~/server/services/text-scan/profiles/index';
 import {
@@ -54,6 +61,28 @@ export const isTextScanHarnessAction = (action: unknown) =>
 
 const promptContent = z.string().refine((s) => s.trim().length > 0, 'empty prompt');
 const promptOverrides = z.record(z.string().regex(TEXT_SCAN_PROMPT_KEY), promptContent).optional();
+
+const ruleOverrides = z
+  .array(
+    z.object({
+      id: z
+        .number()
+        .int()
+        .refine((id) => id !== 0, 'rule id 0 is not a rule'),
+      subject: z.string().trim().min(1).max(MODEL_RULE_OVERRIDE_LIMITS.subjectChars),
+      description: z.string().trim().max(MODEL_RULE_OVERRIDE_LIMITS.descriptionChars),
+      aliases: z
+        .array(z.string().trim().min(1).max(MODEL_RULE_OVERRIDE_LIMITS.aliasChars))
+        .max(MODEL_RULE_OVERRIDE_LIMITS.aliasesPerRule),
+      enabled: z.boolean(),
+    })
+  )
+  .max(MODEL_RULE_OVERRIDE_LIMITS.rules)
+  .refine(
+    (rules) => new Set(rules.map((rule) => rule.id)).size === rules.length,
+    'duplicate rule id in ruleOverrides'
+  )
+  .optional();
 const entityType = z
   .string()
   .refine(isTextScanEntityType, 'unknown text-scan entity type')
@@ -134,7 +163,12 @@ export const textScanHarnessSchema = z.discriminatedUnion('action', [
     action: z.literal('putPrompt'),
     key: z.string().regex(TEXT_SCAN_PROMPT_KEY),
     content: promptContent,
-    note: z.string().min(1),
+    note: z
+      .string()
+      .max(2000)
+      .optional()
+      .transform((note) => note?.trim() || undefined),
+    baseId: z.number().int().positive().nullable().optional(),
     createdById: moderatorId.optional(),
   }),
   z.object({
@@ -166,6 +200,7 @@ export const textScanHarnessSchema = z.discriminatedUnion('action', [
     entityType,
     entityId: z.number().int().positive(),
     promptOverrides,
+    ruleOverrides,
     model: z.string().min(1).optional(),
     thinking: z.boolean().optional(),
     wait: waitSecondsSchema,
@@ -214,6 +249,7 @@ export const textScanHarnessSchema = z.discriminatedUnion('action', [
       entityType,
       texts,
       promptOverrides,
+      ruleOverrides,
       model: z.string().min(1).optional(),
       thinking: z.boolean().optional(),
       concurrency: z.number().int().min(1).max(8).default(3),
@@ -254,16 +290,25 @@ type ComposeInput = {
   subject: TextScanSubject;
   profile: TextScanProfile;
   promptOverrides?: Record<string, string>;
+  ruleOverrides?: ModelRuleOverride[];
   model?: string;
   thinking?: boolean;
 };
 
-async function composeStep({ subject, profile, promptOverrides, model, thinking }: ComposeInput) {
-  const [config, active, modelRules] = await Promise.all([
+async function composeStep({
+  subject,
+  profile,
+  promptOverrides,
+  ruleOverrides,
+  model,
+  thinking,
+}: ComposeInput) {
+  const [config, active, liveRules] = await Promise.all([
     getTextScanConfig(),
     getActiveTextScanPrompts(),
     profile.labels.includes('modelRules') ? getModelRulesForPrompt() : undefined,
   ]);
+  const modelRules = liveRules && applyModelRuleOverrides(liveRules, ruleOverrides);
   const prompts = { ...active };
   for (const [key, content] of Object.entries(promptOverrides ?? {}))
     prompts[key] = { id: 0, key, content };
@@ -286,6 +331,7 @@ async function composeStep({ subject, profile, promptOverrides, model, thinking 
   return {
     ok: true as const,
     composed,
+    modelRules,
     thinking: useThinking,
     step: buildTextScanStep({
       system: composed.system,
@@ -385,6 +431,13 @@ async function scanComposed(input: ComposeInput & { wait: number }) {
       : null,
     rawContent: parse.ok ? undefined : step?.output?.choices?.[0]?.message?.content,
     elapsedMs: Date.now() - startedAt,
+    system: ctx.composed.system,
+    ...(ctx.modelRules
+      ? {
+          rules: ctx.modelRules.map(({ id, subject }) => ({ id, subject })),
+          literalRuleIds: findLiteralHitsInSubject(input.subject, ctx.modelRules),
+        }
+      : {}),
   };
 }
 
@@ -464,9 +517,37 @@ function summarizeQuotes<T extends QuoteResult>(entityType: TextScanEntityType, 
   };
 }
 
+// The lab reads a model's text whatever its visibility, so a moderator can try a draft or private
+// model before it goes public. Production profiles stay public-only; nothing composed here is recorded.
+const LAB_LOADERS: Partial<Record<TextScanEntityType, TextScanProfile['load']>> = {
+  ModelRules: (ids) => loadModelScanSubjects(ids),
+};
+
+/** Up to 50 results share one system prompt and rule list, so a request carries them once. */
+function hoistSharedPrompt<T extends object>(results: T[]) {
+  const shared: { system: string | null; rules: { id: number; subject: string }[] | null } = {
+    system: null,
+    rules: null,
+  };
+  const slim: Omit<T, 'system' | 'rules'>[] = [];
+  for (const result of results) {
+    const { system, rules, ...rest } = result as T & {
+      system?: string;
+      rules?: { id: number; subject: string }[];
+    };
+    if (system !== undefined && shared.system === null) {
+      shared.system = system;
+      shared.rules = rules ?? null;
+    }
+    slim.push(rest as Omit<T, 'system' | 'rules'>);
+  }
+  return { ...shared, results: slim };
+}
+
 async function composeEntities(entityType: TextScanEntityType, entityIds: number[]) {
   const profile = requireProfile(entityType);
-  const [subjects, config] = await Promise.all([profile.load(entityIds), getTextScanConfig()]);
+  const load = LAB_LOADERS[entityType] ?? profile.load;
+  const [subjects, config] = await Promise.all([load(entityIds), getTextScanConfig()]);
   const results = entityIds.map((entityId) => {
     const subject = subjects.get(entityId);
     if (!subject) return { entityId, ok: false as const, error: 'entity not found' };
@@ -641,27 +722,37 @@ export async function runTextScanHarnessAction(
 ): Promise<TextScanHarnessResult> {
   switch (input.action) {
     case 'getPrompts': {
-      const [active, config, modes] = await Promise.all([
+      // Primary, not replica: the lab reloads straight after a save and would otherwise list the
+      // previous version as newest.
+      const [active, config, modes, latestRows] = await Promise.all([
         getActiveTextScanPrompts(),
         getTextScanConfig(),
         readTextScanRollouts(),
+        dbWrite.$queryRaw<
+          { key: string; id: number; createdAt: Date; createdById: number | null }[]
+        >`
+          SELECT DISTINCT ON ("key") "key", id, "createdAt", "createdById"
+          FROM "TextScanPrompt"
+          ORDER BY "key", id DESC
+        `,
       ]);
       const history = input.history
-        ? await dbRead.textScanPrompt.findMany({
+        ? await dbWrite.textScanPrompt.findMany({
             where: { key: input.history },
             orderBy: { id: 'desc' },
             take: input.limit,
           })
         : undefined;
-      return { kind: 'json', body: { active, config, modes, history } };
+      const latest = Object.fromEntries(latestRows.map(({ key, ...row }) => [key, row]));
+      return { kind: 'json', body: { active, config, modes, history, latest } };
     }
 
     case 'putPrompt': {
-      const { key, content, note } = input;
+      const { key, content, note, baseId } = input;
       const createdById = requireModeratorId(actor.moderatorId ?? input.createdById);
       return {
         kind: 'json',
-        body: await insertTextScanPrompt({ key, content, note, createdById }),
+        body: await insertTextScanPrompt({ key, content, note, createdById, baseId }),
       };
     }
 
@@ -738,7 +829,10 @@ export async function runTextScanHarnessAction(
           })
         )
       );
-      return { kind: 'json', body: summarizeScans(input.entityType, results) };
+      return {
+        kind: 'json',
+        body: { ...summarizeScans(input.entityType, results), ...hoistSharedPrompt(results) },
+      };
     }
 
     case 'quoteTexts': {

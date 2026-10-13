@@ -357,3 +357,87 @@ describe('composeTextScanMessages — modelRules', () => {
     expect(composed.system).not.toContain('### Rules');
   });
 });
+
+describe('insertTextScanPrompt with a base version', () => {
+  const save = (baseId: number | null) =>
+    insertTextScanPrompt({ key: 'base', content: 'B', createdById: 5, baseId });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    dbMock.dbRead.user.findFirst.mockResolvedValue({ id: 5 });
+  });
+
+  it('takes the per-key lock, reads the newest version, then inserts', async () => {
+    const order: string[] = [];
+    dbMock.dbWrite.$queryRaw.mockImplementationOnce(async () => {
+      order.push('lock');
+      return [{ locked: 1 }];
+    });
+    dbMock.dbWrite.textScanPrompt.findFirst.mockImplementationOnce(async () => {
+      order.push('read');
+      return { id: 3 };
+    });
+    dbMock.dbWrite.textScanPrompt.create.mockImplementationOnce(async () => {
+      order.push('insert');
+      return { id: 4, key: 'base' };
+    });
+    await expect(save(3)).resolves.toEqual({ id: 4, key: 'base' });
+    expect(order).toEqual(['lock', 'read', 'insert']);
+    expect(dbMock.dbWrite.textScanPrompt.findFirst).toHaveBeenCalledWith({
+      where: { key: 'base' },
+      orderBy: { id: 'desc' },
+      select: { id: true },
+    });
+    expect(bustFetchThroughCache).toHaveBeenCalled();
+  });
+
+  it('refuses with CONFLICT when a newer version exists, and inserts nothing', async () => {
+    dbMock.dbWrite.textScanPrompt.findFirst.mockResolvedValueOnce({ id: 4 });
+    await expect(save(3)).rejects.toMatchObject({ code: 'CONFLICT' });
+    expect(dbMock.dbWrite.textScanPrompt.create).not.toHaveBeenCalled();
+    expect(bustFetchThroughCache).not.toHaveBeenCalled();
+  });
+
+  it('reads a null base as "no version yet"', async () => {
+    dbMock.dbWrite.textScanPrompt.findFirst.mockResolvedValueOnce(null);
+    dbMock.dbWrite.textScanPrompt.create.mockResolvedValueOnce({ id: 1, key: 'base' });
+    await expect(save(null)).resolves.toEqual({ id: 1, key: 'base' });
+    dbMock.dbWrite.textScanPrompt.findFirst.mockResolvedValueOnce({ id: 1 });
+    await expect(save(null)).rejects.toMatchObject({ code: 'CONFLICT' });
+  });
+
+  it('lets only one of two saves from the same base through', async () => {
+    const ids = [3];
+    let held: Promise<void> | null = null;
+    let release = () => {};
+    const tx = async (fn: unknown) => {
+      try {
+        return await (fn as (client: unknown) => Promise<unknown>)(dbMock.dbWrite);
+      } finally {
+        const done = release;
+        held = null;
+        done();
+      }
+    };
+    const lock = async () => {
+      while (held) await held;
+      held = new Promise<void>((resolve) => (release = resolve));
+      return [{ locked: 1 }];
+    };
+    dbMock.dbWrite.$transaction.mockImplementationOnce(tx).mockImplementationOnce(tx);
+    dbMock.dbWrite.$queryRaw.mockImplementationOnce(lock).mockImplementationOnce(lock);
+    dbMock.dbWrite.textScanPrompt.findFirst.mockImplementation(async () => ({
+      id: Math.max(...ids),
+    }));
+    dbMock.dbWrite.textScanPrompt.create.mockImplementation(async () => {
+      const id = Math.max(...ids) + 1;
+      ids.push(id);
+      return { id, key: 'base' };
+    });
+
+    const results = await Promise.allSettled([save(3), save(3)]);
+
+    expect(results.map((r) => r.status).sort()).toEqual(['fulfilled', 'rejected']);
+    expect(ids).toEqual([3, 4]);
+  });
+});
