@@ -1746,16 +1746,6 @@ export async function getRemixGalleryVisibility({
         })
       : null;
 
-  // The owner's name and cut, so the submit button can say where the money goes
-  // without the copy asserting it. The shares are operator-tunable at runtime,
-  // so a string compiled against today's split is a claim about money that can
-  // quietly stop being true — the same reason `ResolvedPlacementSpace` carries
-  // `ownerShare` at all.
-  const owner = await dbRead.user.findUnique({
-    where: { id: space.ownerId },
-    select: { username: true },
-  });
-
   // The actual Buzz a decline would cost, not a percentage the reader has to
   // apply themselves. Computed with the same helper the refund uses, from the
   // same operator-set rate, so the number quoted before paying is the number
@@ -1769,7 +1759,9 @@ export async function getRemixGalleryVisibility({
     render: space.mode !== 'off' || hasEntries,
     price: space.price,
     ownerId: space.ownerId,
-    ownerUsername: owner?.username ?? null,
+    // The owner's name and cut, so the submit button can say where the money goes
+    // without the copy asserting it.
+    ownerUsername: space.ownerUsername,
     ownerShare: space.ownerShare,
     // What the creator accepts is theirs to publish — it is a setting on their
     // own image, the same standing as `price`.
