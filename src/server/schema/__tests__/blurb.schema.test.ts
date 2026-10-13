@@ -45,14 +45,18 @@ describe('blurbContentSchema — empty content', () => {
   );
 
   it('🔴 strips empty elements before storing', () => {
-    expect(parse('<p>a</p><p></p><p><em></em></p><p>b</p>').data?.content).toBe(
-      '<p>a</p><p>b</p>'
-    );
+    expect(parse('<p>a</p><p></p><p><em></em></p><p>b</p>').data?.content).toBe('<p>a</p><p>b</p>');
     expect(parse('<ul><li></li><li>x</li></ul>').data?.content).toBe('<ul><li>x</li></ul>');
   });
 
   it('keeps line breaks', () => {
     expect(parse('<p>a<br />b</p>').data?.content).toBe('<p>a<br />b</p>');
+  });
+
+  it('🔴 keeps a formatted space between words', () => {
+    expect(parse('<p>foo<strong> </strong>bar</p>').data?.content).toBe(
+      '<p>foo<strong> </strong>bar</p>'
+    );
   });
 });
 
