@@ -36,7 +36,7 @@ import type * as TokenAccess from '~/server/services/blocks/block-token-access.s
  * A cell the auth path did not refuse continues into the procedure body, whose answer depends
  * on services this file does not set up. Every cell records `reached` — the positive anchors it
  * passed (bridge resolver resolved/threw, token-subject gate resolved/threw for WHICH user id,
- * apps-db pool reached). Storage and shared calls that get past their resolver stop at an
+ * every session hydration by the user id asked for, apps-db pool reached). Storage and shared calls that get past their resolver stop at an
  * apps-db sentinel and are pinned verbatim. The remaining non-refusals are PASSED: limiter calls
  * and `reached` pinned, and the code must not be a refusal code. Refusals are pinned verbatim.
  */
@@ -55,9 +55,9 @@ const h = vi.hoisted(() => ({
 }));
 
 /**
- * Flags are evaluated FOR SOMEONE, so the mocks answer per user: `app-blocks-enabled` (and the
- * per-feature run flags) are on for the session user AND the token subject; the shared-storage
- * flag is on for the token subject only; a no-user (global) evaluation gets the base value, off.
+ * Flags are evaluated FOR SOMEONE, so the mocks answer per user: every flag is on for the token
+ * subject (42) only — never for the session user (7) — and a no-user (global) evaluation gets the
+ * base value, off.
  * An evaluation handed the wrong identity — or none — therefore answers differently.
  */
 function flagFor(ids: () => number[]) {
@@ -67,12 +67,12 @@ function flagFor(ids: () => number[]) {
 
 vi.mock('~/server/services/app-blocks-flag', async (importOriginal) => ({
   ...(await importOriginal<typeof AppBlocksFlag>()),
-  isAppBlocksEnabled: flagFor(() => (h.runFlag.on ? [7, 42] : [])),
+  isAppBlocksEnabled: flagFor(() => (h.runFlag.on ? [42] : [])),
   isAppBlocksSharedStorageEnabled: flagFor(() => (h.runFlag.on ? [42] : [])),
   isAppBlocksAuthorEnabled: async () => false,
-  isAppBlocksPostCreationEnabled: flagFor(() => (h.runFlag.on ? [7, 42] : [])),
-  isAppBlocksTrainingKindEnabled: flagFor(() => (h.runFlag.on ? [7, 42] : [])),
-  isAppBlocksConfirmedStepEnabled: flagFor(() => (h.runFlag.on ? [7, 42] : [])),
+  isAppBlocksPostCreationEnabled: flagFor(() => (h.runFlag.on ? [42] : [])),
+  isAppBlocksTrainingKindEnabled: flagFor(() => (h.runFlag.on ? [42] : [])),
+  isAppBlocksConfirmedStepEnabled: flagFor(() => (h.runFlag.on ? [42] : [])),
 }));
 /**
  * POSITIVE ANCHORS. A cell that is not refused must say how far it got, not only what it did
@@ -407,7 +407,14 @@ beforeEach(() => {
   h.isRevoked.mockReset().mockResolvedValue(false);
   h.consentLookup.mockReset().mockResolvedValue({ kind: 'none' });
   h.getActiveDevTunnel.mockReset().mockResolvedValue(null);
-  h.getSessionUserById.mockReset().mockResolvedValue({ ...SUBJECT });
+  // Answers only for the id asked for, and records it: the subject (42) and the session user (7)
+  // exist, any other id is unknown.
+  h.getSessionUserById.mockReset().mockImplementation(async (id: number) => {
+    h.reached.push(`hydrate:${id}`);
+    if (id === SUBJECT_ID) return { ...SUBJECT };
+    if (id === SESSION_USER_ID) return { ...SUBJECT, id: SESSION_USER_ID };
+    return null;
+  });
   dbMock.dbRead.appBlock.findUnique.mockReset().mockResolvedValue({
     id: 'apb_row',
     status: 'approved',
@@ -537,7 +544,7 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       'FORBIDDEN',
       'workflow is not in this app subqueue',
       ['checkBlockCatalogRateLimit("bki_char")'],
-      ['bridge-auth:ok', 'subject-gate:ok:42']
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
     ),
     'garbage token': E('UNAUTHORIZED', 'invalid block token', [], ['bridge-auth:threw']),
     revoked: E('FORBIDDEN', 'block instance revoked', [], ['bridge-auth:threw']),
@@ -553,25 +560,25 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       'UNAUTHORIZED',
       'Apps are not enabled',
       [],
-      ['bridge-auth:ok', 'subject-gate:threw:42']
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:threw:42']
     ),
     'rate limited': E(
       'TOO_MANY_REQUESTS',
       'Rate limit exceeded, please retry shortly.',
       ['checkBlockCatalogRateLimit("bki_char")'],
-      ['bridge-auth:ok', 'subject-gate:ok:42']
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
     ),
     'session user is not the token subject': E(
       'FORBIDDEN',
       'workflow is not in this app subqueue',
       ['checkBlockCatalogRateLimit("bki_char")'],
-      ['bridge-auth:ok', 'subject-gate:ok:42']
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
     ),
   },
   'blocks.cancelWorkflow': {
     'valid token': PASSED(
       ['checkBlockCatalogRateLimit("bki_char")'],
-      ['bridge-auth:ok', 'subject-gate:ok:42']
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
     ),
     'garbage token': E('UNAUTHORIZED', 'invalid block token', [], ['bridge-auth:threw']),
     revoked: E('FORBIDDEN', 'block instance revoked', [], ['bridge-auth:threw']),
@@ -587,21 +594,21 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       'UNAUTHORIZED',
       'Apps are not enabled',
       [],
-      ['bridge-auth:ok', 'subject-gate:threw:42']
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:threw:42']
     ),
     'rate limited': OK(
       ['checkBlockCatalogRateLimit("bki_char")'],
-      ['bridge-auth:ok', 'subject-gate:ok:42']
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
     ),
     'session user is not the token subject': PASSED(
       ['checkBlockCatalogRateLimit("bki_char")'],
-      ['bridge-auth:ok', 'subject-gate:ok:42']
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
     ),
   },
   'blocks.consentQuoteGrant': {
     'valid token': PASSED(
       ['checkBlockCatalogRateLimit("bki_char")'],
-      ['bridge-auth:ok', 'subject-gate:ok:42']
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
     ),
     'garbage token': E('UNAUTHORIZED', 'invalid block token', [], ['bridge-auth:threw']),
     revoked: E('FORBIDDEN', 'block instance revoked', [], ['bridge-auth:threw']),
@@ -617,13 +624,13 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       'UNAUTHORIZED',
       'Apps are not enabled',
       [],
-      ['bridge-auth:ok', 'subject-gate:threw:42']
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:threw:42']
     ),
     'rate limited': E(
       'TOO_MANY_REQUESTS',
       'Rate limit exceeded, please retry shortly.',
       ['checkBlockCatalogRateLimit("bki_char")'],
-      ['bridge-auth:ok', 'subject-gate:ok:42']
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
     ),
     'session user is not the token subject': E(
       'FORBIDDEN',
@@ -635,7 +642,7 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
   'blocks.consentTrainingQuote': {
     'valid token': PASSED(
       ['checkBlockCatalogRateLimit("bki_char")'],
-      ['bridge-auth:ok', 'subject-gate:ok:42']
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
     ),
     'garbage token': E('UNAUTHORIZED', 'invalid block token', [], ['bridge-auth:threw']),
     revoked: E('FORBIDDEN', 'block instance revoked', [], ['bridge-auth:threw']),
@@ -651,13 +658,13 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       'UNAUTHORIZED',
       'Apps are not enabled',
       [],
-      ['bridge-auth:ok', 'subject-gate:threw:42']
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:threw:42']
     ),
     'rate limited': E(
       'TOO_MANY_REQUESTS',
       'Rate limit exceeded, please retry shortly.',
       ['checkBlockCatalogRateLimit("bki_char")'],
-      ['bridge-auth:ok', 'subject-gate:ok:42']
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
     ),
     'session user is not the token subject': E(
       'FORBIDDEN',
@@ -669,7 +676,7 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
   'blocks.createPostFromApp': {
     'valid token': PASSED(
       ['checkBlockPostRateLimit("bki_char", 42)', 'checkBlockPostAppRateLimit("app_char")'],
-      ['bridge-auth:ok', 'subject-gate:ok:42']
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42', 'hydrate:42']
     ),
     'garbage token': E('UNAUTHORIZED', 'invalid block token', [], ['bridge-auth:threw']),
     revoked: E('FORBIDDEN', 'block instance revoked', [], ['bridge-auth:threw']),
@@ -685,13 +692,13 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       'UNAUTHORIZED',
       'Apps are not enabled',
       [],
-      ['bridge-auth:ok', 'subject-gate:threw:42']
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:threw:42']
     ),
     'rate limited': E(
       'TOO_MANY_REQUESTS',
       'Rate limit exceeded, please retry shortly.',
       ['checkBlockPostRateLimit("bki_char", 42)'],
-      ['bridge-auth:ok', 'subject-gate:ok:42']
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42', 'hydrate:42']
     ),
     'session user is not the token subject': E(
       'FORBIDDEN',
@@ -703,7 +710,7 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
   'blocks.estimateWorkflow': {
     'valid token': PASSED(
       ['checkBlockCatalogRateLimit("bki_char")'],
-      ['bridge-auth:ok', 'subject-gate:ok:42']
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
     ),
     'garbage token': E('UNAUTHORIZED', 'invalid block token', [], ['bridge-auth:threw']),
     revoked: E('FORBIDDEN', 'block instance revoked', [], ['bridge-auth:threw']),
@@ -719,7 +726,7 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       'UNAUTHORIZED',
       'Apps are not enabled',
       ['checkBlockCatalogRateLimit("bki_char")'],
-      ['bridge-auth:ok', 'subject-gate:threw:42']
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:threw:42']
     ),
     'rate limited': E(
       'TOO_MANY_REQUESTS',
@@ -729,13 +736,13 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
     ),
     'session user is not the token subject': PASSED(
       ['checkBlockCatalogRateLimit("bki_char")'],
-      ['bridge-auth:ok', 'subject-gate:ok:42']
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
     ),
   },
   'blocks.estimateWorkflowBatch': {
     'valid token': OK(
       ['checkBlockCatalogRateLimit("bki_char")', 'checkBlockEstimateCellsRateLimit("bki_char", 1)'],
-      ['bridge-auth:ok', 'subject-gate:ok:42']
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
     ),
     'garbage token': E('UNAUTHORIZED', 'invalid block token', [], ['bridge-auth:threw']),
     revoked: E('FORBIDDEN', 'block instance revoked', [], ['bridge-auth:threw']),
@@ -749,7 +756,7 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
     ),
     'flag off': OK(
       ['checkBlockCatalogRateLimit("bki_char")', 'checkBlockEstimateCellsRateLimit("bki_char", 1)'],
-      ['bridge-auth:ok', 'subject-gate:threw:42']
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:threw:42']
     ),
     'rate limited': E(
       'TOO_MANY_REQUESTS',
@@ -759,20 +766,20 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
     ),
     'session user is not the token subject': OK(
       ['checkBlockCatalogRateLimit("bki_char")', 'checkBlockEstimateCellsRateLimit("bki_char", 1)'],
-      ['bridge-auth:ok', 'subject-gate:ok:42']
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
     ),
   },
   'blocks.getImagesByIds': {
     'valid token': OK(
       ['checkBlockCatalogRateLimit("bki_char")'],
-      ['bridge-auth:ok', 'subject-gate:ok:42']
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
     ),
     'garbage token': E('UNAUTHORIZED', 'invalid block token', [], ['bridge-auth:threw']),
     revoked: E('FORBIDDEN', 'block instance revoked', [], ['bridge-auth:threw']),
     'not approved': E('FORBIDDEN', 'app block is not approved', [], ['bridge-auth:threw']),
     'missing scope': OK(
       ['checkBlockCatalogRateLimit("bki_char")'],
-      ['bridge-auth:ok', 'subject-gate:ok:42']
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
     ),
     'anonymous subject': E(
       'UNAUTHORIZED',
@@ -784,7 +791,7 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       'UNAUTHORIZED',
       'Apps are not enabled',
       ['checkBlockCatalogRateLimit("bki_char")'],
-      ['bridge-auth:ok', 'subject-gate:threw:42']
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:threw:42']
     ),
     'rate limited': E(
       'TOO_MANY_REQUESTS',
@@ -794,13 +801,13 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
     ),
     'session user is not the token subject': OK(
       ['checkBlockCatalogRateLimit("bki_char")'],
-      ['bridge-auth:ok', 'subject-gate:ok:42']
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
     ),
   },
   'blocks.getMyBuzzAccounts': {
     'valid token': PASSED(
       ['checkBlockCatalogRateLimit("bki_char")'],
-      ['bridge-auth:ok', 'subject-gate:ok:42']
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
     ),
     'garbage token': E('UNAUTHORIZED', 'invalid block token', [], ['bridge-auth:threw']),
     revoked: E('FORBIDDEN', 'block instance revoked', [], ['bridge-auth:threw']),
@@ -816,23 +823,23 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       'UNAUTHORIZED',
       'Apps are not enabled',
       [],
-      ['bridge-auth:ok', 'subject-gate:threw:42']
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:threw:42']
     ),
     'rate limited': E(
       'TOO_MANY_REQUESTS',
       'Rate limit exceeded, please retry shortly.',
       ['checkBlockCatalogRateLimit("bki_char")'],
-      ['bridge-auth:ok', 'subject-gate:ok:42']
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
     ),
     'session user is not the token subject': PASSED(
       ['checkBlockCatalogRateLimit("bki_char")'],
-      ['bridge-auth:ok', 'subject-gate:ok:42']
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
     ),
   },
   'blocks.getMyBuzzBalance': {
     'valid token': PASSED(
       ['checkBlockCatalogRateLimit("bki_char")'],
-      ['bridge-auth:ok', 'subject-gate:ok:42']
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
     ),
     'garbage token': E('UNAUTHORIZED', 'invalid block token', [], ['bridge-auth:threw']),
     revoked: E('FORBIDDEN', 'block instance revoked', [], ['bridge-auth:threw']),
@@ -848,23 +855,23 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       'UNAUTHORIZED',
       'Apps are not enabled',
       [],
-      ['bridge-auth:ok', 'subject-gate:threw:42']
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:threw:42']
     ),
     'rate limited': E(
       'TOO_MANY_REQUESTS',
       'Rate limit exceeded, please retry shortly.',
       ['checkBlockCatalogRateLimit("bki_char")'],
-      ['bridge-auth:ok', 'subject-gate:ok:42']
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
     ),
     'session user is not the token subject': PASSED(
       ['checkBlockCatalogRateLimit("bki_char")'],
-      ['bridge-auth:ok', 'subject-gate:ok:42']
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
     ),
   },
   'blocks.getMyBuzzTransactions': {
     'valid token': PASSED(
       ['checkBlockCatalogRateLimit("bki_char")'],
-      ['bridge-auth:ok', 'subject-gate:ok:42']
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
     ),
     'garbage token': E('UNAUTHORIZED', 'invalid block token', [], ['bridge-auth:threw']),
     revoked: E('FORBIDDEN', 'block instance revoked', [], ['bridge-auth:threw']),
@@ -880,23 +887,23 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       'UNAUTHORIZED',
       'Apps are not enabled',
       [],
-      ['bridge-auth:ok', 'subject-gate:threw:42']
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:threw:42']
     ),
     'rate limited': E(
       'TOO_MANY_REQUESTS',
       'Rate limit exceeded, please retry shortly.',
       ['checkBlockCatalogRateLimit("bki_char")'],
-      ['bridge-auth:ok', 'subject-gate:ok:42']
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
     ),
     'session user is not the token subject': PASSED(
       ['checkBlockCatalogRateLimit("bki_char")'],
-      ['bridge-auth:ok', 'subject-gate:ok:42']
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
     ),
   },
   'blocks.getMyDailyCompensation': {
     'valid token': OK(
       ['checkBlockCatalogRateLimit("bki_char")'],
-      ['bridge-auth:ok', 'subject-gate:ok:42']
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
     ),
     'garbage token': E('UNAUTHORIZED', 'invalid block token', [], ['bridge-auth:threw']),
     revoked: E('FORBIDDEN', 'block instance revoked', [], ['bridge-auth:threw']),
@@ -912,23 +919,23 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       'UNAUTHORIZED',
       'Apps are not enabled',
       [],
-      ['bridge-auth:ok', 'subject-gate:threw:42']
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:threw:42']
     ),
     'rate limited': E(
       'TOO_MANY_REQUESTS',
       'Rate limit exceeded, please retry shortly.',
       ['checkBlockCatalogRateLimit("bki_char")'],
-      ['bridge-auth:ok', 'subject-gate:ok:42']
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
     ),
     'session user is not the token subject': OK(
       ['checkBlockCatalogRateLimit("bki_char")'],
-      ['bridge-auth:ok', 'subject-gate:ok:42']
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
     ),
   },
   'blocks.getMyViewer': {
     'valid token': OK(
       ['checkBlockCatalogRateLimit("bki_char")'],
-      ['bridge-auth:ok', 'subject-gate:ok:42']
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
     ),
     'garbage token': E('UNAUTHORIZED', 'invalid block token', [], ['bridge-auth:threw']),
     revoked: E('FORBIDDEN', 'block instance revoked', [], ['bridge-auth:threw']),
@@ -944,21 +951,21 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       'UNAUTHORIZED',
       'Apps are not enabled',
       [],
-      ['bridge-auth:ok', 'subject-gate:threw:42']
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:threw:42']
     ),
     'rate limited': E(
       'TOO_MANY_REQUESTS',
       'Rate limit exceeded, please retry shortly.',
       ['checkBlockCatalogRateLimit("bki_char")'],
-      ['bridge-auth:ok', 'subject-gate:ok:42']
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
     ),
     'session user is not the token subject': OK(
       ['checkBlockCatalogRateLimit("bki_char")'],
-      ['bridge-auth:ok', 'subject-gate:ok:42']
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
     ),
   },
   'blocks.listMyWorkflows': {
-    'valid token': OK([], ['bridge-auth:ok', 'subject-gate:ok:42']),
+    'valid token': OK([], ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']),
     'garbage token': E('UNAUTHORIZED', 'invalid block token', [], ['bridge-auth:threw']),
     revoked: E('FORBIDDEN', 'block instance revoked', [], ['bridge-auth:threw']),
     'not approved': E('FORBIDDEN', 'app block is not approved', [], ['bridge-auth:threw']),
@@ -973,15 +980,18 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       'UNAUTHORIZED',
       'Apps are not enabled',
       [],
-      ['bridge-auth:ok', 'subject-gate:threw:42']
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:threw:42']
     ),
-    'rate limited': OK([], ['bridge-auth:ok', 'subject-gate:ok:42']),
-    'session user is not the token subject': OK([], ['bridge-auth:ok', 'subject-gate:ok:42']),
+    'rate limited': OK([], ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']),
+    'session user is not the token subject': OK(
+      [],
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
+    ),
   },
   'blocks.persistAppUploadImage': {
     'valid token': PASSED(
       ['checkBlockPublishRateLimit("bki_char", 1)'],
-      ['bridge-auth:ok', 'subject-gate:ok:42']
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42', 'hydrate:42']
     ),
     'garbage token': E('UNAUTHORIZED', 'invalid block token', [], ['bridge-auth:threw']),
     revoked: E('FORBIDDEN', 'block instance revoked', [], ['bridge-auth:threw']),
@@ -997,13 +1007,13 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       'UNAUTHORIZED',
       'Apps are not enabled',
       [],
-      ['bridge-auth:ok', 'subject-gate:threw:42']
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:threw:42']
     ),
     'rate limited': E(
       'TOO_MANY_REQUESTS',
       'Rate limit exceeded, please retry shortly.',
       ['checkBlockPublishRateLimit("bki_char", 1)'],
-      ['bridge-auth:ok', 'subject-gate:ok:42']
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42', 'hydrate:42']
     ),
     'session user is not the token subject': E(
       'FORBIDDEN',
@@ -1015,7 +1025,7 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
   'blocks.pollWorkflow': {
     'valid token': PASSED(
       ['checkBlockPollRateLimit("bki_char", 42)'],
-      ['bridge-auth:ok', 'subject-gate:ok:42']
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
     ),
     'garbage token': E('UNAUTHORIZED', 'invalid block token', [], ['bridge-auth:threw']),
     revoked: E('FORBIDDEN', 'block instance revoked', [], ['bridge-auth:threw']),
@@ -1031,21 +1041,21 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       'UNAUTHORIZED',
       'Apps are not enabled',
       [],
-      ['bridge-auth:ok', 'subject-gate:threw:42']
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:threw:42']
     ),
     'rate limited': OK(
       ['checkBlockPollRateLimit("bki_char", 42)'],
-      ['bridge-auth:ok', 'subject-gate:ok:42']
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
     ),
     'session user is not the token subject': PASSED(
       ['checkBlockPollRateLimit("bki_char", 42)'],
-      ['bridge-auth:ok', 'subject-gate:ok:42']
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
     ),
   },
   'blocks.prepareTrainingDataset': {
     'valid token': PASSED(
       ['checkBlockTrainingDatasetRateLimit("bki_char", 42, 1)'],
-      ['bridge-auth:ok', 'subject-gate:ok:42']
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
     ),
     'garbage token': E('UNAUTHORIZED', 'invalid block token', [], ['bridge-auth:threw']),
     revoked: E('FORBIDDEN', 'block instance revoked', [], ['bridge-auth:threw']),
@@ -1061,23 +1071,23 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       'UNAUTHORIZED',
       'Apps are not enabled',
       [],
-      ['bridge-auth:ok', 'subject-gate:threw:42']
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:threw:42']
     ),
     'rate limited': E(
       'TOO_MANY_REQUESTS',
       'Rate limit exceeded, please retry shortly.',
       ['checkBlockTrainingDatasetRateLimit("bki_char", 42, 1)'],
-      ['bridge-auth:ok', 'subject-gate:ok:42']
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
     ),
     'session user is not the token subject': PASSED(
       ['checkBlockTrainingDatasetRateLimit("bki_char", 42, 1)'],
-      ['bridge-auth:ok', 'subject-gate:ok:42']
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
     ),
   },
   'blocks.previewPostFromApp': {
     'valid token': PASSED(
       ['checkBlockCatalogRateLimit("bki_char")'],
-      ['bridge-auth:ok', 'subject-gate:ok:42']
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42', 'hydrate:42']
     ),
     'garbage token': E('UNAUTHORIZED', 'invalid block token', [], ['bridge-auth:threw']),
     revoked: E('FORBIDDEN', 'block instance revoked', [], ['bridge-auth:threw']),
@@ -1093,13 +1103,13 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       'UNAUTHORIZED',
       'Apps are not enabled',
       [],
-      ['bridge-auth:ok', 'subject-gate:threw:42']
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:threw:42']
     ),
     'rate limited': E(
       'TOO_MANY_REQUESTS',
       'Rate limit exceeded, please retry shortly.',
       ['checkBlockCatalogRateLimit("bki_char")'],
-      ['bridge-auth:ok', 'subject-gate:ok:42']
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42', 'hydrate:42']
     ),
     'session user is not the token subject': E(
       'FORBIDDEN',
@@ -1111,7 +1121,7 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
   'blocks.previewQuoteGrant': {
     'valid token': PASSED(
       ['checkBlockCatalogRateLimit("bki_char")'],
-      ['bridge-auth:ok', 'subject-gate:ok:42']
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
     ),
     'garbage token': E('UNAUTHORIZED', 'invalid block token', [], ['bridge-auth:threw']),
     revoked: E('FORBIDDEN', 'block instance revoked', [], ['bridge-auth:threw']),
@@ -1127,13 +1137,13 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       'UNAUTHORIZED',
       'Apps are not enabled',
       [],
-      ['bridge-auth:ok', 'subject-gate:threw:42']
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:threw:42']
     ),
     'rate limited': E(
       'TOO_MANY_REQUESTS',
       'Rate limit exceeded, please retry shortly.',
       ['checkBlockCatalogRateLimit("bki_char")'],
-      ['bridge-auth:ok', 'subject-gate:ok:42']
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
     ),
     'session user is not the token subject': E(
       'FORBIDDEN',
@@ -1145,7 +1155,7 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
   'blocks.previewTrainingQuote': {
     'valid token': PASSED(
       ['checkBlockCatalogRateLimit("bki_char")'],
-      ['bridge-auth:ok', 'subject-gate:ok:42']
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
     ),
     'garbage token': E('UNAUTHORIZED', 'invalid block token', [], ['bridge-auth:threw']),
     revoked: E('FORBIDDEN', 'block instance revoked', [], ['bridge-auth:threw']),
@@ -1161,13 +1171,13 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       'UNAUTHORIZED',
       'Apps are not enabled',
       [],
-      ['bridge-auth:ok', 'subject-gate:threw:42']
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:threw:42']
     ),
     'rate limited': E(
       'TOO_MANY_REQUESTS',
       'Rate limit exceeded, please retry shortly.',
       ['checkBlockCatalogRateLimit("bki_char")'],
-      ['bridge-auth:ok', 'subject-gate:ok:42']
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
     ),
     'session user is not the token subject': E(
       'FORBIDDEN',
@@ -1181,7 +1191,7 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       'FORBIDDEN',
       'workflow is not in this app subqueue',
       ['checkBlockPublishRateLimit("bki_char", 1)'],
-      ['bridge-auth:ok', 'subject-gate:ok:42']
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
     ),
     'garbage token': E('UNAUTHORIZED', 'invalid block token', [], ['bridge-auth:threw']),
     revoked: E('FORBIDDEN', 'block instance revoked', [], ['bridge-auth:threw']),
@@ -1197,13 +1207,13 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       'UNAUTHORIZED',
       'Apps are not enabled',
       [],
-      ['bridge-auth:ok', 'subject-gate:threw:42']
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:threw:42']
     ),
     'rate limited': E(
       'TOO_MANY_REQUESTS',
       'Rate limit exceeded, please retry shortly.',
       ['checkBlockPublishRateLimit("bki_char", 1)'],
-      ['bridge-auth:ok', 'subject-gate:ok:42']
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
     ),
     'session user is not the token subject': E(
       'FORBIDDEN',
@@ -1215,7 +1225,7 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
   'blocks.queryAppWorkflows': {
     'valid token': PASSED(
       ['checkBlockCatalogRateLimit("bki_char")'],
-      ['bridge-auth:ok', 'subject-gate:ok:42']
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
     ),
     'garbage token': E('UNAUTHORIZED', 'invalid block token', [], ['bridge-auth:threw']),
     revoked: E('FORBIDDEN', 'block instance revoked', [], ['bridge-auth:threw']),
@@ -1231,21 +1241,21 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       'UNAUTHORIZED',
       'Apps are not enabled',
       [],
-      ['bridge-auth:ok', 'subject-gate:threw:42']
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:threw:42']
     ),
     'rate limited': E(
       'TOO_MANY_REQUESTS',
       'Rate limit exceeded, please retry shortly.',
       ['checkBlockCatalogRateLimit("bki_char")'],
-      ['bridge-auth:ok', 'subject-gate:ok:42']
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
     ),
     'session user is not the token subject': PASSED(
       ['checkBlockCatalogRateLimit("bki_char")'],
-      ['bridge-auth:ok', 'subject-gate:ok:42']
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
     ),
   },
   'blocks.submitWorkflow': {
-    'valid token': PASSED([], ['bridge-auth:ok', 'subject-gate:ok:42']),
+    'valid token': PASSED([], ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']),
     'garbage token': E('UNAUTHORIZED', 'invalid block token', [], ['bridge-auth:threw']),
     revoked: E('FORBIDDEN', 'block instance revoked', [], ['bridge-auth:threw']),
     'not approved': E('FORBIDDEN', 'app block is not approved', [], ['bridge-auth:threw']),
@@ -1260,17 +1270,20 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       'UNAUTHORIZED',
       'Apps are not enabled',
       [],
-      ['bridge-auth:ok', 'subject-gate:threw:42']
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:threw:42']
     ),
-    'rate limited': PASSED([], ['bridge-auth:ok', 'subject-gate:ok:42']),
-    'session user is not the token subject': PASSED([], ['bridge-auth:ok', 'subject-gate:ok:42']),
+    'rate limited': PASSED([], ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']),
+    'session user is not the token subject': PASSED(
+      [],
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
+    ),
   },
   'blocks.updateUserSettings': {
     'valid token': E(
       'FORBIDDEN',
       'Apps authoring is not enabled for this account',
       [],
-      ['bridge-auth:ok', 'subject-gate:ok:42']
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42', 'hydrate:42']
     ),
     'garbage token': E('UNAUTHORIZED', 'invalid block token', [], ['bridge-auth:threw']),
     revoked: E('FORBIDDEN', 'block instance revoked', [], ['bridge-auth:threw']),
@@ -1279,7 +1292,7 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       'FORBIDDEN',
       'Apps authoring is not enabled for this account',
       [],
-      ['bridge-auth:ok', 'subject-gate:ok:42']
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42', 'hydrate:42']
     ),
     'anonymous subject': E(
       'UNAUTHORIZED',
@@ -1291,19 +1304,19 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       'UNAUTHORIZED',
       'Apps are not enabled',
       [],
-      ['bridge-auth:ok', 'subject-gate:threw:42']
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:threw:42']
     ),
     'rate limited': E(
       'FORBIDDEN',
       'Apps authoring is not enabled for this account',
       [],
-      ['bridge-auth:ok', 'subject-gate:ok:42']
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42', 'hydrate:42']
     ),
     'session user is not the token subject': E(
       'FORBIDDEN',
       'Apps authoring is not enabled for this account',
       [],
-      ['bridge-auth:ok', 'subject-gate:ok:42']
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42', 'hydrate:42']
     ),
   },
   'apps.storage.get': {
@@ -1311,7 +1324,7 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       'INTERNAL_SERVER_ERROR',
       'PAST_AUTH: reached the apps-db pool',
       [],
-      ['apps-db']
+      ['hydrate:42', 'apps-db']
     ),
     'garbage token': E('UNAUTHORIZED', 'invalid block token', [], []),
     revoked: E('FORBIDDEN', 'block instance revoked', [], []),
@@ -1323,13 +1336,13 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       'INTERNAL_SERVER_ERROR',
       'PAST_AUTH: reached the apps-db pool',
       [],
-      ['apps-db']
+      ['hydrate:42', 'apps-db']
     ),
     'session user is not the token subject': E(
-      'INTERNAL_SERVER_ERROR',
-      'PAST_AUTH: reached the apps-db pool',
+      'UNAUTHORIZED',
+      'Apps access is not enabled for this browser session',
       [],
-      ['apps-db']
+      []
     ),
   },
   'apps.storage.set': {
@@ -1337,7 +1350,7 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       'INTERNAL_SERVER_ERROR',
       'PAST_AUTH: reached the apps-db pool',
       [],
-      ['apps-db']
+      ['hydrate:42', 'apps-db']
     ),
     'garbage token': E('UNAUTHORIZED', 'invalid block token', [], []),
     revoked: E('FORBIDDEN', 'block instance revoked', [], []),
@@ -1349,13 +1362,13 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       'INTERNAL_SERVER_ERROR',
       'PAST_AUTH: reached the apps-db pool',
       [],
-      ['apps-db']
+      ['hydrate:42', 'apps-db']
     ),
     'session user is not the token subject': E(
-      'INTERNAL_SERVER_ERROR',
-      'PAST_AUTH: reached the apps-db pool',
+      'UNAUTHORIZED',
+      'Apps access is not enabled for this browser session',
       [],
-      ['apps-db']
+      []
     ),
   },
   'apps.storage.delete': {
@@ -1363,7 +1376,7 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       'INTERNAL_SERVER_ERROR',
       'PAST_AUTH: reached the apps-db pool',
       [],
-      ['apps-db']
+      ['hydrate:42', 'apps-db']
     ),
     'garbage token': E('UNAUTHORIZED', 'invalid block token', [], []),
     revoked: E('FORBIDDEN', 'block instance revoked', [], []),
@@ -1375,13 +1388,13 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       'INTERNAL_SERVER_ERROR',
       'PAST_AUTH: reached the apps-db pool',
       [],
-      ['apps-db']
+      ['hydrate:42', 'apps-db']
     ),
     'session user is not the token subject': E(
-      'INTERNAL_SERVER_ERROR',
-      'PAST_AUTH: reached the apps-db pool',
+      'UNAUTHORIZED',
+      'Apps access is not enabled for this browser session',
       [],
-      ['apps-db']
+      []
     ),
   },
   'apps.storage.list': {
@@ -1389,7 +1402,7 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       'INTERNAL_SERVER_ERROR',
       'PAST_AUTH: reached the apps-db pool',
       [],
-      ['apps-db']
+      ['hydrate:42', 'apps-db']
     ),
     'garbage token': E('UNAUTHORIZED', 'invalid block token', [], []),
     revoked: E('FORBIDDEN', 'block instance revoked', [], []),
@@ -1401,13 +1414,13 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       'INTERNAL_SERVER_ERROR',
       'PAST_AUTH: reached the apps-db pool',
       [],
-      ['apps-db']
+      ['hydrate:42', 'apps-db']
     ),
     'session user is not the token subject': E(
-      'INTERNAL_SERVER_ERROR',
-      'PAST_AUTH: reached the apps-db pool',
+      'UNAUTHORIZED',
+      'Apps access is not enabled for this browser session',
       [],
-      ['apps-db']
+      []
     ),
   },
   'apps.storage.getQuota': {
@@ -1415,7 +1428,7 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       'INTERNAL_SERVER_ERROR',
       'PAST_AUTH: reached the apps-db pool',
       [],
-      ['apps-db']
+      ['hydrate:42', 'apps-db']
     ),
     'garbage token': E('UNAUTHORIZED', 'invalid block token', [], []),
     revoked: E('FORBIDDEN', 'block instance revoked', [], []),
@@ -1432,13 +1445,13 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       'INTERNAL_SERVER_ERROR',
       'PAST_AUTH: reached the apps-db pool',
       [],
-      ['apps-db']
+      ['hydrate:42', 'apps-db']
     ),
     'session user is not the token subject': E(
-      'INTERNAL_SERVER_ERROR',
-      'PAST_AUTH: reached the apps-db pool',
+      'UNAUTHORIZED',
+      'Apps access is not enabled for this browser session',
       [],
-      ['apps-db']
+      []
     ),
   },
   'apps.shared.list': {
@@ -1446,7 +1459,7 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       'INTERNAL_SERVER_ERROR',
       'PAST_AUTH: reached the apps-db pool',
       [],
-      ['apps-db']
+      ['hydrate:42', 'apps-db']
     ),
     'garbage token': E('UNAUTHORIZED', 'invalid block token', [], []),
     revoked: E('FORBIDDEN', 'block instance revoked', [], []),
@@ -1463,18 +1476,18 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       [],
       ['apps-db']
     ),
-    'flag off': E('FORBIDDEN', 'shared storage is not enabled', [], []),
+    'flag off': E('FORBIDDEN', 'shared storage is not enabled', [], ['hydrate:42']),
     'rate limited': E(
       'INTERNAL_SERVER_ERROR',
       'PAST_AUTH: reached the apps-db pool',
       [],
-      ['apps-db']
+      ['hydrate:42', 'apps-db']
     ),
     'session user is not the token subject': E(
       'INTERNAL_SERVER_ERROR',
       'PAST_AUTH: reached the apps-db pool',
       [],
-      ['apps-db']
+      ['hydrate:42', 'apps-db']
     ),
   },
   'apps.shared.get': {
@@ -1482,7 +1495,7 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       'INTERNAL_SERVER_ERROR',
       'PAST_AUTH: reached the apps-db pool',
       [],
-      ['apps-db']
+      ['hydrate:42', 'apps-db']
     ),
     'garbage token': E('UNAUTHORIZED', 'invalid block token', [], []),
     revoked: E('FORBIDDEN', 'block instance revoked', [], []),
@@ -1499,18 +1512,18 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       [],
       ['apps-db']
     ),
-    'flag off': E('FORBIDDEN', 'shared storage is not enabled', [], []),
+    'flag off': E('FORBIDDEN', 'shared storage is not enabled', [], ['hydrate:42']),
     'rate limited': E(
       'INTERNAL_SERVER_ERROR',
       'PAST_AUTH: reached the apps-db pool',
       [],
-      ['apps-db']
+      ['hydrate:42', 'apps-db']
     ),
     'session user is not the token subject': E(
       'INTERNAL_SERVER_ERROR',
       'PAST_AUTH: reached the apps-db pool',
       [],
-      ['apps-db']
+      ['hydrate:42', 'apps-db']
     ),
   },
   'apps.shared.getCount': {
@@ -1518,7 +1531,7 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       'INTERNAL_SERVER_ERROR',
       'PAST_AUTH: reached the apps-db pool',
       [],
-      ['apps-db']
+      ['hydrate:42', 'apps-db']
     ),
     'garbage token': E('UNAUTHORIZED', 'invalid block token', [], []),
     revoked: E('FORBIDDEN', 'block instance revoked', [], []),
@@ -1535,18 +1548,18 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       [],
       ['apps-db']
     ),
-    'flag off': E('FORBIDDEN', 'shared storage is not enabled', [], []),
+    'flag off': E('FORBIDDEN', 'shared storage is not enabled', [], ['hydrate:42']),
     'rate limited': E(
       'INTERNAL_SERVER_ERROR',
       'PAST_AUTH: reached the apps-db pool',
       [],
-      ['apps-db']
+      ['hydrate:42', 'apps-db']
     ),
     'session user is not the token subject': E(
       'INTERNAL_SERVER_ERROR',
       'PAST_AUTH: reached the apps-db pool',
       [],
-      ['apps-db']
+      ['hydrate:42', 'apps-db']
     ),
   },
   'apps.shared.getCounts': {
@@ -1554,7 +1567,7 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       'INTERNAL_SERVER_ERROR',
       'PAST_AUTH: reached the apps-db pool',
       [],
-      ['apps-db']
+      ['hydrate:42', 'apps-db']
     ),
     'garbage token': E('UNAUTHORIZED', 'invalid block token', [], []),
     revoked: E('FORBIDDEN', 'block instance revoked', [], []),
@@ -1571,18 +1584,18 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       [],
       ['apps-db']
     ),
-    'flag off': E('FORBIDDEN', 'shared storage is not enabled', [], []),
+    'flag off': E('FORBIDDEN', 'shared storage is not enabled', [], ['hydrate:42']),
     'rate limited': E(
       'INTERNAL_SERVER_ERROR',
       'PAST_AUTH: reached the apps-db pool',
       [],
-      ['apps-db']
+      ['hydrate:42', 'apps-db']
     ),
     'session user is not the token subject': E(
       'INTERNAL_SERVER_ERROR',
       'PAST_AUTH: reached the apps-db pool',
       [],
-      ['apps-db']
+      ['hydrate:42', 'apps-db']
     ),
   },
   'apps.shared.append': {
@@ -1590,7 +1603,7 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       'INTERNAL_SERVER_ERROR',
       'PAST_AUTH: reached the apps-db pool',
       ['reserveSharedWrite(42, "apb_row")'],
-      ['apps-db']
+      ['hydrate:42', 'apps-db']
     ),
     'garbage token': E('UNAUTHORIZED', 'invalid block token', [], []),
     revoked: E('FORBIDDEN', 'block instance revoked', [], []),
@@ -1607,18 +1620,18 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       [],
       []
     ),
-    'flag off': E('FORBIDDEN', 'shared storage is not enabled', [], []),
+    'flag off': E('FORBIDDEN', 'shared storage is not enabled', [], ['hydrate:42']),
     'rate limited': E(
       'TOO_MANY_REQUESTS',
       'Too many submissions — retry in 7s',
       ['reserveSharedWrite(42, "apb_row")'],
-      []
+      ['hydrate:42']
     ),
     'session user is not the token subject': E(
       'INTERNAL_SERVER_ERROR',
       'PAST_AUTH: reached the apps-db pool',
       ['reserveSharedWrite(42, "apb_row")'],
-      ['apps-db']
+      ['hydrate:42', 'apps-db']
     ),
   },
   'apps.shared.update': {
@@ -1626,7 +1639,7 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       'INTERNAL_SERVER_ERROR',
       'PAST_AUTH: reached the apps-db pool',
       ['reserveSharedWrite(42, "apb_row")'],
-      ['apps-db']
+      ['hydrate:42', 'apps-db']
     ),
     'garbage token': E('UNAUTHORIZED', 'invalid block token', [], []),
     revoked: E('FORBIDDEN', 'block instance revoked', [], []),
@@ -1643,18 +1656,18 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       [],
       []
     ),
-    'flag off': E('FORBIDDEN', 'shared storage is not enabled', [], []),
+    'flag off': E('FORBIDDEN', 'shared storage is not enabled', [], ['hydrate:42']),
     'rate limited': E(
       'TOO_MANY_REQUESTS',
       'Too many submissions — retry in 7s',
       ['reserveSharedWrite(42, "apb_row")'],
-      []
+      ['hydrate:42']
     ),
     'session user is not the token subject': E(
       'INTERNAL_SERVER_ERROR',
       'PAST_AUTH: reached the apps-db pool',
       ['reserveSharedWrite(42, "apb_row")'],
-      ['apps-db']
+      ['hydrate:42', 'apps-db']
     ),
   },
   'apps.shared.vote': {
@@ -1662,7 +1675,7 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       'INTERNAL_SERVER_ERROR',
       'PAST_AUTH: reached the apps-db pool',
       ['checkSharedVoteRateLimit(42, "apb_row")'],
-      ['apps-db']
+      ['hydrate:42', 'apps-db']
     ),
     'garbage token': E('UNAUTHORIZED', 'invalid block token', [], []),
     revoked: E('FORBIDDEN', 'block instance revoked', [], []),
@@ -1679,18 +1692,18 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       [],
       []
     ),
-    'flag off': E('FORBIDDEN', 'shared storage is not enabled', [], []),
+    'flag off': E('FORBIDDEN', 'shared storage is not enabled', [], ['hydrate:42']),
     'rate limited': E(
       'TOO_MANY_REQUESTS',
       'Too many votes — retry in 7s',
       ['checkSharedVoteRateLimit(42, "apb_row")'],
-      []
+      ['hydrate:42']
     ),
     'session user is not the token subject': E(
       'INTERNAL_SERVER_ERROR',
       'PAST_AUTH: reached the apps-db pool',
       ['checkSharedVoteRateLimit(42, "apb_row")'],
-      ['apps-db']
+      ['hydrate:42', 'apps-db']
     ),
   },
   'apps.shared.unvote': {
@@ -1698,7 +1711,7 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       'INTERNAL_SERVER_ERROR',
       'PAST_AUTH: reached the apps-db pool',
       ['checkSharedVoteRateLimit(42, "apb_row")'],
-      ['apps-db']
+      ['hydrate:42', 'apps-db']
     ),
     'garbage token': E('UNAUTHORIZED', 'invalid block token', [], []),
     revoked: E('FORBIDDEN', 'block instance revoked', [], []),
@@ -1715,18 +1728,18 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       [],
       []
     ),
-    'flag off': E('FORBIDDEN', 'shared storage is not enabled', [], []),
+    'flag off': E('FORBIDDEN', 'shared storage is not enabled', [], ['hydrate:42']),
     'rate limited': E(
       'TOO_MANY_REQUESTS',
       'Too many votes — retry in 7s',
       ['checkSharedVoteRateLimit(42, "apb_row")'],
-      []
+      ['hydrate:42']
     ),
     'session user is not the token subject': E(
       'INTERNAL_SERVER_ERROR',
       'PAST_AUTH: reached the apps-db pool',
       ['checkSharedVoteRateLimit(42, "apb_row")'],
-      ['apps-db']
+      ['hydrate:42', 'apps-db']
     ),
   },
   'apps.shared.withdraw': {
@@ -1734,7 +1747,7 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       'INTERNAL_SERVER_ERROR',
       'PAST_AUTH: reached the apps-db pool',
       ['checkSharedWithdrawRateLimit(42, "apb_row")'],
-      ['apps-db']
+      ['hydrate:42', 'apps-db']
     ),
     'garbage token': E('UNAUTHORIZED', 'invalid block token', [], []),
     revoked: E('FORBIDDEN', 'block instance revoked', [], []),
@@ -1751,18 +1764,18 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       [],
       []
     ),
-    'flag off': E('FORBIDDEN', 'shared storage is not enabled', [], []),
+    'flag off': E('FORBIDDEN', 'shared storage is not enabled', [], ['hydrate:42']),
     'rate limited': E(
       'TOO_MANY_REQUESTS',
       'Too many withdrawals — retry in 7s',
       ['checkSharedWithdrawRateLimit(42, "apb_row")'],
-      []
+      ['hydrate:42']
     ),
     'session user is not the token subject': E(
       'INTERNAL_SERVER_ERROR',
       'PAST_AUTH: reached the apps-db pool',
       ['checkSharedWithdrawRateLimit(42, "apb_row")'],
-      ['apps-db']
+      ['hydrate:42', 'apps-db']
     ),
   },
   'apps.shared.report': {
@@ -1770,7 +1783,7 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       'INTERNAL_SERVER_ERROR',
       'PAST_AUTH: reached the apps-db pool',
       ['checkSharedReportRateLimit(42, "apb_row")'],
-      ['apps-db']
+      ['hydrate:42', 'apps-db']
     ),
     'garbage token': E('UNAUTHORIZED', 'invalid block token', [], []),
     revoked: E('FORBIDDEN', 'block instance revoked', [], []),
@@ -1787,18 +1800,18 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       [],
       []
     ),
-    'flag off': E('FORBIDDEN', 'shared storage is not enabled', [], []),
+    'flag off': E('FORBIDDEN', 'shared storage is not enabled', [], ['hydrate:42']),
     'rate limited': E(
       'TOO_MANY_REQUESTS',
       'Too many reports — retry in 7s',
       ['checkSharedReportRateLimit(42, "apb_row")'],
-      []
+      ['hydrate:42']
     ),
     'session user is not the token subject': E(
       'INTERNAL_SERVER_ERROR',
       'PAST_AUTH: reached the apps-db pool',
       ['checkSharedReportRateLimit(42, "apb_row")'],
-      ['apps-db']
+      ['hydrate:42', 'apps-db']
     ),
   },
 };
@@ -1829,7 +1842,13 @@ describe('block-token tRPC procedures — characterisation table', () => {
         const want = EXPECTED[path]?.[cell];
         expect(want, 'no expectation for this cell').toBeDefined();
         currentPath = path;
-        h.sessionUserId.id = SESSION_BOUND.has(path) ? SUBJECT_ID : SESSION_USER_ID;
+        // `apps.storage.*` also run with session = subject: their procedure middleware evaluates
+        // the run flag for the SESSION user, which (flags being subject-only) would otherwise
+        // refuse every cell; their `session user is not the token subject` cell pins that.
+        h.sessionUserId.id =
+          SESSION_BOUND.has(path) || path.startsWith('apps.storage.')
+            ? SUBJECT_ID
+            : SESSION_USER_ID;
         const got = await CELLS[cell](path);
         expect(got.limiter, 'rate-limiter calls (name + bucket arguments, in order)').toEqual(
           want.limiter
