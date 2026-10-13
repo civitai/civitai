@@ -1,8 +1,9 @@
 # Text Scan
 
-One mechanism for scanning user-written text with an LLM and acting on the result. Each scan is a
-single orchestrator `chatCompletion` step with a strict JSON schema; the verdict is recorded on
-`EntityModeration` and handed to the entity's moderation adapter, which applies the action.
+One mechanism for scanning user-written text with an LLM and acting on the result. A scan is one
+orchestrator workflow of `chatCompletion` steps with a strict JSON schema: one step for most texts,
+one per segment for long ones. The verdict is recorded on `EntityModeration` and handed to the
+entity's moderation adapter, which applies the action.
 
 ## Pieces
 
@@ -17,7 +18,16 @@ single orchestrator `chatCompletion` step with a strict JSON schema; the verdict
 | Row retention                                                            | the `text-scan-retention` job                               |
 | Actions per label                                                        | `text-scan/actions/` and each entity's moderation adapter   |
 
-**Input cap.** An entity's fields are composed into one text and cut to `maxInputChars` (default 200,000 characters, overridable in the config above). Every result's `meta` records `inputChars` (full composed length) and `inputCut` (whether the cap cut it), so a scan that did not see the whole text can be told apart.
+**Long input.** An entity's fields are composed into one text. Text up to `maxInputChars` (default
+200,000 characters) is scanned whole in one call. Longer text is split into segments of at most that
+size, between fields first and then at paragraph, line or word breaks; each continuation repeats its
+field heading and re-reads the end of the previous piece. All segments run as steps of one workflow,
+and their verdicts merge: the highest nsfw level, and a flag if any segment raised it. Each step bills
+like a single call. At most `maxSegments` (default 10) segments are scanned. Any failed, refused or
+missing segment fails the whole scan, which the retry job then resubmits. Every result's `meta`
+records `inputChars`, `inputCut` (some text was past the last segment and was not scanned), `segments`
+and `scannedChars`. Both limits can be overridden in the config above. The dedup hash covers the whole
+text, so an edit anywhere rescans.
 
 ## Entities
 
