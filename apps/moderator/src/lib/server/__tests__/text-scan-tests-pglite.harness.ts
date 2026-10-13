@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -82,3 +83,64 @@ export async function seedCase(
     .executeTakeFirstOrThrow();
   return Number(row.id);
 }
+
+export const PROMPT_IDS = { base: 1, scam: 2 };
+
+export async function seedRun(
+  db: Kysely<ModeratorDB>,
+  setId: number,
+  over: {
+    kind?: 'baseline' | 'draft';
+    status?: string;
+    startId?: string;
+    baselineRunId?: number | null;
+    maxCaseId?: number;
+    promptIds?: Record<string, number>;
+    promptOverrides?: Record<string, string> | null;
+    ruleOverrides?: unknown[] | null;
+    ruleStateHash?: string | null;
+    model?: string;
+    thinking?: boolean;
+    leaseOwner?: string | null;
+    heartbeatAt?: Date | null;
+    runBy?: number;
+    finishedAt?: Date | null;
+    totals?: unknown;
+    expiresAt?: Date | null;
+  } = {}
+): Promise<number> {
+  const draft = over.kind === 'draft';
+  const row = await db
+    .insertInto('text_scan_test_run')
+    .values({
+      set_id: String(setId),
+      kind: over.kind ?? 'baseline',
+      start_id: over.startId ?? randomUUID(),
+      baseline_run_id: over.baselineRunId == null ? null : String(over.baselineRunId),
+      max_case_id: String(over.maxCaseId ?? 2_000_000_000),
+      prompt_ids: JSON.stringify(over.promptIds ?? PROMPT_IDS),
+      prompt_overrides: draft && over.promptOverrides ? JSON.stringify(over.promptOverrides) : null,
+      rule_overrides: draft && over.ruleOverrides ? JSON.stringify(over.ruleOverrides) : null,
+      rule_state_hash: over.ruleStateHash ?? null,
+      model: over.model ?? 'model-a',
+      thinking: over.thinking ?? false,
+      status: over.status ?? 'queued',
+      lease_owner: over.leaseOwner ?? null,
+      heartbeat_at: over.heartbeatAt ?? null,
+      run_by: over.runBy ?? MOD,
+      finished_at: over.finishedAt ?? null,
+      totals: over.totals === undefined ? null : JSON.stringify(over.totals),
+      expires_at: draft ? over.expiresAt ?? null : null,
+    })
+    .returning('id')
+    .executeTakeFirstOrThrow();
+  return Number(row.id);
+}
+
+export const resultsOf = (db: Kysely<ModeratorDB>, runId: number) =>
+  db
+    .selectFrom('text_scan_test_result')
+    .selectAll()
+    .where('run_id', '=', String(runId))
+    .orderBy('case_id')
+    .execute();
