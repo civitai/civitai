@@ -3,11 +3,13 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import type { DB as ModeratorDB } from '../moderator-db/types';
 import { importSeed, parseBench, parseLabSeed, parseTruthMap } from '../text-scan-tests/seed';
 import { listCases, listSets } from '../text-scan-tests/store';
-import { freshTestSetsDb } from './text-scan-tests-pglite.harness';
+import { useTestSetsDb } from './text-scan-tests-pglite.harness';
 
 let db: Kysely<ModeratorDB>;
+const sets = useTestSetsDb();
+
 beforeEach(async () => {
-  ({ db } = await freshTestSetsDb());
+  ({ db } = sets);
 });
 
 const SECRET = 'synthetic fixture sentence';

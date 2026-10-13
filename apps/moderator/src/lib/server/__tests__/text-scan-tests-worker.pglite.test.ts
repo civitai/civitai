@@ -7,8 +7,8 @@ import type { LabScanResult, LabText } from '$lib/text-scan-lab/types';
 import {
   MOD,
   PROMPT_IDS,
-  freshMainDb,
-  freshTestSetsDb,
+  useMainDb,
+  useTestSetsDb,
   resultsOf,
   seedCase,
   seedRun,
@@ -30,10 +30,13 @@ let db: Kysely<ModeratorDB>;
 let main: Kysely<MainDB>;
 let setId: number;
 
+const sets = useTestSetsDb();
+const mains = useMainDb();
+
 beforeEach(async () => {
   vi.clearAllMocks();
-  ({ db } = await freshTestSetsDb());
-  ({ main } = await freshMainDb());
+  ({ db } = sets);
+  ({ main } = mains);
   setId = await seedSet(db);
 });
 

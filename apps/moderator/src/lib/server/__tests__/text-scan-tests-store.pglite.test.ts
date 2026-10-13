@@ -14,13 +14,15 @@ import {
   upsertCase,
   type CaseInput,
 } from '../text-scan-tests/store';
-import { MOD, TEST_SETS_SCHEMA, freshTestSetsDb } from './text-scan-tests-pglite.harness';
+import { MOD, TEST_SETS_SCHEMA, useTestSetsDb } from './text-scan-tests-pglite.harness';
 
 let pg: PGlite;
 let db: Kysely<ModeratorDB>;
 
+const sets = useTestSetsDb();
+
 beforeEach(async () => {
-  ({ pg, db } = await freshTestSetsDb());
+  ({ pg, db } = sets);
 });
 
 const input = (setId: number, over: Partial<CaseInput> = {}): CaseInput => ({

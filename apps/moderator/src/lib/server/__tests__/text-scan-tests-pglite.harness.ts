@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PGlite } from '@electric-sql/pglite';
 import { Kysely } from 'kysely';
+import { afterAll, beforeAll, beforeEach } from 'vitest';
 import type { DB as MainDB } from '@civitai/db-schema/kysely';
 import type { DB as ModeratorDB } from '../moderator-db/types';
 import { hashLabFields } from '../text-scan-tests/text-hash';
@@ -15,11 +16,11 @@ export const TEST_SETS_SCHEMA = readFileSync(
   'utf8'
 );
 
-export async function freshTestSetsDb(): Promise<{ pg: PGlite; db: Kysely<ModeratorDB> }> {
-  const pg = await PGlite.create();
-  await pg.exec(TEST_SETS_SCHEMA);
-  return { pg, db: new Kysely<ModeratorDB>({ dialect: pgliteDialect(pg) }) };
-}
+// Empties every table between tests, so one instance can serve a whole file.
+const TRUNCATE_ALL = `DO $$ DECLARE t text; BEGIN
+  SELECT string_agg(format('%I', tablename), ', ') INTO t FROM pg_tables WHERE schemaname = 'public';
+  IF t IS NOT NULL THEN EXECUTE 'TRUNCATE ' || t || ' RESTART IDENTITY CASCADE'; END IF;
+END $$;`;
 
 // Only the main-database columns the deletion check reads.
 const MAIN_STUB = `
@@ -28,10 +29,48 @@ const MAIN_STUB = `
   CREATE TABLE "CommentV2" (id integer PRIMARY KEY, "userId" integer);
 `;
 
-export async function freshMainDb(): Promise<{ pg: PGlite; main: Kysely<MainDB> }> {
-  const pg = await PGlite.create();
-  await pg.exec(MAIN_STUB);
-  return { pg, main: new Kysely<MainDB>({ dialect: pgliteDialect(pg) }) };
+function usePglite(schema: string): { pg: PGlite } {
+  const handle = {} as { pg: PGlite };
+  // One instance per file: PGlite takes seconds to boot, which times out a per-test hook when
+  // files run in parallel.
+  beforeAll(async () => {
+    handle.pg = await PGlite.create();
+    await handle.pg.exec(schema);
+  }, 60_000);
+  beforeEach(() => handle.pg.exec(TRUNCATE_ALL));
+  afterAll(() => handle.pg?.close());
+  return handle;
+}
+
+/** Call at file scope; read `db` in tests or a later `beforeEach`. Every table is empty per test. */
+export function useTestSetsDb(): { readonly pg: PGlite; readonly db: Kysely<ModeratorDB> } {
+  const handle = usePglite(TEST_SETS_SCHEMA);
+  let db: Kysely<ModeratorDB> | undefined;
+  return {
+    get pg() {
+      return handle.pg;
+    },
+    get db() {
+      return (db ??= new Kysely<ModeratorDB>({ dialect: pgliteDialect(handle.pg) }));
+    },
+  };
+}
+
+/** The main-database stub, plus `extraSchema`; as `useTestSetsDb`. */
+export function useMainDb(extraSchema = ''): {
+  readonly pg: PGlite;
+  readonly main: Kysely<MainDB>;
+} {
+  const handle = usePglite(MAIN_STUB + extraSchema);
+  let main: Kysely<MainDB> | undefined;
+  return {
+    get pg() {
+      return handle.pg;
+    },
+    get main() {
+      return (main ??= new Kysely<MainDB>({ dialect: pgliteDialect(handle.pg) }));
+    },
+  };
 }
 
 export const MOD = 990001;

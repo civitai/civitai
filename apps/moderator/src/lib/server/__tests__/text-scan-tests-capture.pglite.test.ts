@@ -2,7 +2,7 @@ import type { Kysely } from 'kysely';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DB as ModeratorDB } from '../moderator-db/types';
 import type { CaptureInput } from '../text-scan-tests/capture';
-import { MOD, freshTestSetsDb, seedSet } from './text-scan-tests-pglite.harness';
+import { MOD, useTestSetsDb, seedSet } from './text-scan-tests-pglite.harness';
 
 vi.mock('../user-actions.service', () => ({ callModEndpoint: vi.fn() }));
 // $lib/server/query reaches the main-app DB client through users.service.
@@ -20,8 +20,10 @@ const { listCases, listSets } = await import('../text-scan-tests/store');
 let db: Kysely<ModeratorDB>;
 const compose = vi.fn();
 
+const sets = useTestSetsDb();
+
 beforeEach(async () => {
-  ({ db } = await freshTestSetsDb());
+  ({ db } = sets);
   compose.mockReset();
   compose.mockResolvedValue([
     {

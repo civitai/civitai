@@ -1,7 +1,7 @@
 import type { Kysely } from 'kysely';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DB as ModeratorDB } from '../moderator-db/types';
-import { MOD, freshTestSetsDb, seedCase, seedRun, seedSet } from './text-scan-tests-pglite.harness';
+import { MOD, useTestSetsDb, seedCase, seedRun, seedSet } from './text-scan-tests-pglite.harness';
 
 vi.mock('../user-actions.service', () => ({ callModEndpoint: vi.fn() }));
 
@@ -33,8 +33,10 @@ function makeDeps() {
   };
 }
 
+const sets = useTestSetsDb();
+
 beforeEach(async () => {
-  ({ db } = await freshTestSetsDb());
+  ({ db } = sets);
   setId = await seedSet(db);
 });
 

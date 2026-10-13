@@ -4,8 +4,8 @@ import type { DB as MainDB } from '@civitai/db-schema/kysely';
 import type { DB as ModeratorDB } from '../moderator-db/types';
 import { expireDraftResults, purgeDeletedSources } from '../text-scan-tests/sources';
 import {
-  freshMainDb,
-  freshTestSetsDb,
+  useMainDb,
+  useTestSetsDb,
   resultsOf,
   seedCase,
   seedRun,
@@ -16,9 +16,12 @@ let db: Kysely<ModeratorDB>;
 let main: Kysely<MainDB>;
 let setId: number;
 
+const sets = useTestSetsDb();
+const mains = useMainDb();
+
 beforeEach(async () => {
-  ({ db } = await freshTestSetsDb());
-  ({ main } = await freshMainDb());
+  ({ db } = sets);
+  ({ main } = mains);
   setId = await seedSet(db);
 });
 

@@ -5,8 +5,8 @@ import type { DB as ModeratorDB } from '../moderator-db/types';
 import type { LabText } from '$lib/text-scan-lab/types';
 import {
   PROMPT_IDS,
-  freshMainDb,
-  freshTestSetsDb,
+  useMainDb,
+  useTestSetsDb,
   seedCase,
   seedRun,
   seedSet,
@@ -44,12 +44,13 @@ const RULES_STUB = `
 let db: Kysely<ModeratorDB>;
 let main: Kysely<MainDB>;
 
+const sets = useTestSetsDb();
+const mains = useMainDb(RULES_STUB);
+
 beforeEach(async () => {
-  ({ db } = await freshTestSetsDb());
-  const fresh = await freshMainDb();
-  main = fresh.main;
-  await fresh.pg.exec(RULES_STUB);
-  await fresh.pg.exec(`
+  ({ db } = sets);
+  ({ main } = mains);
+  await mains.pg.exec(`
     INSERT INTO "ModerationRule" VALUES (1, 'Model', true), (2, 'Model', false), (3, 'Image', true);
     INSERT INTO "ModerationRuleVersion" VALUES (10, 1), (11, 1), (20, 2), (30, 3);
   `);
