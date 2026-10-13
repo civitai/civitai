@@ -3,7 +3,11 @@ import path from 'path';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 
-import { resolveSpecifier as resolveRepoSpecifier } from '~/server/services/__tests__/import-graph.harness';
+import {
+  ALIASES,
+  resolveSpecifier as resolveRepoSpecifier,
+  WORKSPACE_PACKAGES,
+} from '~/server/services/__tests__/import-graph.harness';
 import { BLOCK_TOKEN_QUERY_PROCEDURES } from '~/shared/constants/block-token-transport.constants';
 
 /**
@@ -60,15 +64,31 @@ type ModuleInfo = {
 };
 
 /**
+ * Whether a specifier names a module INSIDE the repo: relative, a tsconfig alias, or a workspace
+ * package. Read off the same tables the shared resolver uses, so the two cannot disagree about
+ * what counts as local.
+ */
+function isRepoSpecifier(specifier: string): boolean {
+  if (specifier.startsWith('.')) return true;
+  const aliased = ALIASES.some(([pattern]) =>
+    pattern.endsWith('/*') ? specifier.startsWith(pattern.slice(0, -1)) : specifier === pattern
+  );
+  return (
+    aliased ||
+    WORKSPACE_PACKAGES.some((pkg) => specifier === pkg.name || specifier.startsWith(`${pkg.name}/`))
+  );
+}
+
+/**
  * Resolve an import to a file with the shared resolver (`import-graph.harness.ts`: tsconfig
  * aliases, relative paths, workspace `@civitai/*` packages). Returns null for an external package.
- * A repo-local specifier (`~/…` or relative) that does NOT resolve returns the specifier itself, so
- * the caller can report it rather than score it as an external package.
+ * A repo specifier (see `isRepoSpecifier`) that does NOT resolve returns the specifier itself, so
+ * the caller reports it rather than scoring it as an external package.
  */
 function resolveImport(fromFile: string, specifier: string): string | null {
   const resolved = resolveRepoSpecifier(specifier, fromFile);
   if (resolved) return resolved;
-  return specifier.startsWith('~/') || specifier.startsWith('.') ? specifier : null;
+  return isRepoSpecifier(specifier) ? specifier : null;
 }
 
 function parseModule(fileName: string, text: string): ModuleInfo {
@@ -359,6 +379,22 @@ describe('BLOCK_TOKEN_QUERY_PROCEDURES matches the routers', () => {
     const { unresolved: u } = deriveTokenQueries('src/server/routers/fixture.ts', src);
     expect(u).toEqual([
       'src/server/routers/fixture.ts: someSchema from ~/server/schema/no-such-module',
+    ]);
+  });
+
+  it('CONTROL: an unresolvable WORKSPACE-package import is reported, an external one is not', () => {
+    // `@civitai/buzz` is deliberately a package with NO tsconfig alias, so only the
+    // workspace-package table can classify it as local.
+    const src = `
+      import { someSchema } from '@civitai/buzz/no-such-subpath';
+      import { z } from 'zod';
+      export const blocksRouter = router({
+        read: publicProcedure.input(someSchema).query(() => 1),
+        external: publicProcedure.input(z).query(() => 1),
+      });`;
+    const { unresolved: u } = deriveTokenQueries('src/server/routers/fixture.ts', src);
+    expect(u).toEqual([
+      'src/server/routers/fixture.ts: someSchema from @civitai/buzz/no-such-subpath',
     ]);
   });
 
