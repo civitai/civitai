@@ -208,6 +208,13 @@ beforeAll(async () => {
     INSERT INTO "ImageConnection" VALUES
       (1053, 1043, 'Article'), (1054, 1044, 'Article'), (111, 11, 'Bounty'), (112, 12, 'Bounty');
 
+    -- Public model 953 whose only version 963 has only an Unsearchable post.
+    INSERT INTO "Model" (id, status) VALUES (953, 'Published');
+    INSERT INTO "ModelVersion" (id, "modelId", status) VALUES (963, 953, 'Published');
+    INSERT INTO "Post" (id, "modelVersionId", "publishedAt", availability) VALUES
+      (975, 963, now() - interval '1 day', 'Unsearchable');
+    INSERT INTO "Image" (id, "postId") VALUES (985, 975);
+
     -- A connection under an entity type no rule covers.
     INSERT INTO "Image" (id) VALUES (801);
     INSERT INTO "ImageConnection" VALUES (801, 9, 'Collection');
@@ -274,6 +281,8 @@ const visible: [string, string, number, number][] = [
   ['an Unsearchable bounty', 'Bounty', 5, 105],
   ['a version of an Unsearchable model', 'ModelVersion', 961, 981],
   ['a model with an EarlyAccess version', 'Model', 952, 982],
+  ['a model whose only post is Unsearchable', 'Model', 953, 985],
+  ['a version whose only post is Unsearchable', 'ModelVersion', 963, 985],
 ];
 
 // Hidden entities whose owner is a placeholder id; [label, entityType, entityId, image, ownerId].
