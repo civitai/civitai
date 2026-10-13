@@ -96,6 +96,37 @@ describe('mintMembershipCode', () => {
     expect(!result.ok && result.error).toContain('Daily limit of 10 codes reached.');
   });
 
+  // Not idempotent: any answer that does not prove the request was refused or never sent must say a
+  // code may exist, or the operator mints a second one.
+  const MAY = /Could not confirm the code was minted/;
+
+  it.each([500, 502, 504, 408])('a %s may have minted, and says so', async (status) => {
+    respond = () => new Response(JSON.stringify({ error: 'x', message: 'x' }), { status });
+    const result = await mintMembershipCode(INPUT);
+    expect(!result.ok && result.error).toMatch(MAY);
+  });
+
+  it('a dropped socket after sending may have minted, and says so', async () => {
+    vi.stubGlobal('fetch', () =>
+      Promise.reject(
+        Object.assign(new TypeError('fetch failed'), { cause: { code: 'UND_ERR_SOCKET' } })
+      )
+    );
+    const result = await mintMembershipCode(INPUT);
+    expect(!result.ok && result.error).toMatch(MAY);
+  });
+
+  it('control: a request that never left (ECONNREFUSED) is a plain failure', async () => {
+    vi.stubGlobal('fetch', () =>
+      Promise.reject(
+        Object.assign(new TypeError('fetch failed'), { cause: { code: 'ECONNREFUSED' } })
+      )
+    );
+    const result = await mintMembershipCode(INPUT);
+    expect(result.ok).toBe(false);
+    expect(!result.ok && result.error).not.toMatch(MAY);
+  });
+
   it('a 200 without a code is a failure, not a success with an empty code', async () => {
     respond = () => new Response(JSON.stringify({}), { status: 200 });
     const result = await mintMembershipCode(INPUT);

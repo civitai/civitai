@@ -1,4 +1,5 @@
 import { env } from '$env/dynamic/private';
+import type { MembershipCodeTier } from '$lib/membership-code';
 import { civitaiAppUrl } from './civitai-url';
 import { getRequestEvent } from '$app/server';
 import { sql } from '@civitai/db/kysely';
@@ -1167,11 +1168,6 @@ const MAY_HAVE_COMPLETED =
  * app at all. `ModActivity` is append-only in production, so a second call here is a second row in
  * the account history for one deletion, not a deduped one.
  */
-export const MEMBERSHIP_CODE_TIERS = ['bronze', 'silver', 'gold'] as const;
-export type MembershipCodeTier = (typeof MEMBERSHIP_CODE_TIERS)[number];
-/** Mirrors `SUPPORT_MEMBERSHIP_CODE_LIMITS.maxMonths` in the main app, which enforces it. */
-export const MEMBERSHIP_CODE_MAX_MONTHS = 6;
-
 const MINT_MAY_HAVE_COMPLETED =
   'Could not confirm the code was minted. Check the account’s mod activity before minting again.';
 

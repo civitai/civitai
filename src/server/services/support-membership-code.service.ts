@@ -2,29 +2,37 @@ import dayjs from '~/shared/utils/dayjs';
 import { dbWrite } from '~/server/db/client';
 import type { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
 import { trackModActivity } from '~/server/services/moderator.service';
+import { randomInt } from 'crypto';
+import { Prisma } from '@prisma/client';
+import {
+  SUPPORT_MEMBERSHIP_CODE_LIMITS,
+  SUPPORT_MEMBERSHIP_CODE_SOURCE,
+  SUPPORT_MEMBERSHIP_CODE_TIERS,
+  type SupportMembershipCodeTier,
+} from '~/server/services/support-membership-code.constants';
 import {
   throwBadRequestError,
+  throwConflictError,
   throwNotFoundError,
   throwRateLimitError,
 } from '~/server/utils/errorHandling';
 import { PaymentProvider, RedeemableCodeType } from '~/shared/utils/prisma/enums';
-import { generateToken } from '~/utils/string-helpers';
 
-export const SUPPORT_MEMBERSHIP_CODE_TIERS = ['bronze', 'silver', 'gold'] as const;
-export type SupportMembershipCodeTier = (typeof SUPPORT_MEMBERSHIP_CODE_TIERS)[number];
-
-export const SUPPORT_MEMBERSHIP_CODE_LIMITS = {
-  maxMonths: 6,
-  dailyPerModerator: 10,
-  expiryDays: 30,
-} as const;
+export {
+  SUPPORT_MEMBERSHIP_CODE_LIMITS,
+  SUPPORT_MEMBERSHIP_CODE_TIERS,
+} from '~/server/services/support-membership-code.constants';
 
 /** ModActivity prefix. The daily cap counts it, so renaming it resets every moderator's count. */
 const ACTIVITY_PREFIX = 'mintMembershipCode:';
 
-/** Same shape `createRedeemableCodes` mints, so support codes are indistinguishable at redemption. */
+const CODE_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+const codePart = () =>
+  Array.from({ length: 4 }, () => CODE_ALPHABET[randomInt(CODE_ALPHABET.length)]).join('');
+
+/** The `MB-XXXX-XXXX` shape every membership code has, drawn from a CSPRNG: the code is the credential. */
 export function generateMembershipCode() {
-  return `MB-${generateToken(4)}-${generateToken(4)}`.toUpperCase();
+  return `MB-${codePart()}-${codePart()}`;
 }
 
 /**
@@ -54,6 +62,10 @@ export async function mintSupportMembershipCode({
     throw throwBadRequestError(`Unknown tier "${tier}".`);
   const trimmedReason = reason.trim();
   if (!trimmedReason) throw throwBadRequestError('A reason is required.');
+  // The code is bound to `forUserId` at redemption, so a self-mint would be a moderator paying
+  // themselves.
+  if (forUserId === moderatorId)
+    throw throwBadRequestError('You cannot mint a membership code for your own account.');
 
   // Civitai-provider prices only: a code for any other provider is refused at redemption.
   const priceId = `${tier}-monthly`;
@@ -73,7 +85,8 @@ export async function mintSupportMembershipCode({
 
   return dbWrite.$transaction(async (tx) => {
     // Serialises one moderator's mints so two concurrent requests cannot both pass the cap.
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('support-membership-code'), ${moderatorId})`;
+    // Both arguments int4: Prisma binds a JS number as int8, and there is no (int4, int8) overload.
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('support-membership-code'), ${moderatorId}::int)`;
 
     const minted = await tx.modActivity.count({
       where: {
@@ -90,21 +103,30 @@ export async function mintSupportMembershipCode({
     const code = generateMembershipCode();
     // UTC: a local-time day add drifts by an hour across a DST change.
     const expiresAt = dayjs.utc().add(limits.expiryDays, 'day').toDate();
-    await tx.redeemableCode.create({
-      data: {
-        code,
-        type: RedeemableCodeType.Membership,
-        unitValue: months,
-        priceId: price.id,
-        expiresAt,
-        metadata: {
-          source: 'moderator-membership-code',
-          mintedBy: moderatorId,
-          forUserId,
-          reason: trimmedReason,
+    await tx.redeemableCode
+      .create({
+        data: {
+          code,
+          type: RedeemableCodeType.Membership,
+          unitValue: months,
+          priceId: price.id,
+          expiresAt,
+          metadata: {
+            source: SUPPORT_MEMBERSHIP_CODE_SOURCE,
+            mintedBy: moderatorId,
+            forUserId,
+            reason: trimmedReason,
+          },
         },
-      },
-    });
+      })
+      .catch((e: unknown) => {
+        // A 4xx, not a 500: the transaction rolled back, so nothing was minted and a retry is safe.
+        if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002')
+          throw throwConflictError(
+            'Generated a code that already exists. Nothing was minted; try again.'
+          );
+        throw e;
+      });
     // No code in the activity text: account history is visible to moderators who cannot mint, and
     // an unredeemed code is a bearer credential.
     await trackModActivity(

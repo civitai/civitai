@@ -24,8 +24,6 @@ import {
   refundShopPurchase,
   sendBuzz,
   mintMembershipCode,
-  MEMBERSHIP_CODE_MAX_MONTHS,
-  MEMBERSHIP_CODE_TIERS,
   setRewardsEligibility,
   clearProfileText,
   deleteAccount,
@@ -43,6 +41,7 @@ import {
   setMuted,
 } from '$lib/server/user-actions.service';
 import { resolveUsername } from '$lib/server/user-lookup.service';
+import { MEMBERSHIP_CODE_MAX_MONTHS, MEMBERSHIP_CODE_TIERS } from '$lib/membership-code';
 import { BUZZ_ENTITY_TYPES } from '../enforcement-options';
 import { PROFILE_FIELD_KEYS, type ProfileField } from '$lib/enforcement';
 

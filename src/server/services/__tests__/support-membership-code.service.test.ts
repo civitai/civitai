@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { Prisma } from '@prisma/client';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
 /**
@@ -137,6 +138,13 @@ describe('bounds', () => {
     expect(tx.redeemableCode.create).not.toHaveBeenCalled();
   });
 
+  it('refuses a moderator minting for their own account (the code is bound to it)', async () => {
+    await expect(mintSupportMembershipCode({ ...valid(), forUserId: MODERATOR })).rejects.toThrow(
+      /own account/
+    );
+    expect(tx.redeemableCode.create).not.toHaveBeenCalled();
+  });
+
   it('refuses a blank reason', async () => {
     await expect(mintSupportMembershipCode({ ...valid(), reason: '   ' })).rejects.toThrow(
       /reason/i
@@ -146,9 +154,12 @@ describe('bounds', () => {
 });
 
 describe('daily cap per moderator', () => {
-  it('refuses the 11th code in 24 hours', async () => {
+  it('refuses the 11th code in 24 hours, as a rate limit (429)', async () => {
     tx.modActivity.count.mockResolvedValue(10);
-    await expect(mintSupportMembershipCode(valid())).rejects.toThrow(/10/);
+    await expect(mintSupportMembershipCode(valid())).rejects.toMatchObject({
+      code: 'TOO_MANY_REQUESTS',
+      message: expect.stringMatching(/10/),
+    });
     expect(tx.redeemableCode.create).not.toHaveBeenCalled();
     expect(trackModActivity).not.toHaveBeenCalled();
   });
@@ -181,8 +192,12 @@ describe('daily cap per moderator', () => {
       TemplateStringsArray,
       ...unknown[]
     ];
-    expect(strings.join('?')).toContain('pg_advisory_xact_lock');
-    expect(values).toContain(MODERATOR);
+    // The exact text: the `::int` is load-bearing. Prisma binds a JS number as int8 and Postgres has
+    // no pg_advisory_xact_lock(int4, int8) — without the cast every mint fails at this line.
+    expect(strings.join('?')).toBe(
+      "SELECT pg_advisory_xact_lock(hashtext('support-membership-code'), ?::int)"
+    );
+    expect(values).toEqual([MODERATOR]);
   });
 });
 
@@ -219,6 +234,32 @@ describe('what it writes', () => {
       { entityType: 'user', entityId: TARGET, activity: 'mintMembershipCode:silver:2' },
       tx
     );
+  });
+
+  it('stores the reason trimmed', async () => {
+    await mintSupportMembershipCode({ ...valid(), reason: '  Ticket 9  ' });
+    expect(tx.redeemableCode.create.mock.calls[0][0].data.metadata.reason).toBe('Ticket 9');
+  });
+
+  it('a failed audit write fails the mint (so the transaction rolls the code back)', async () => {
+    trackModActivity.mockRejectedValueOnce(new Error('insert failed'));
+    await expect(mintSupportMembershipCode(valid())).rejects.toThrow('insert failed');
+  });
+
+  it('a code collision is a 409 (nothing minted, safe to retry), not a 500', async () => {
+    tx.redeemableCode.create.mockRejectedValueOnce(
+      new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
+        code: 'P2002',
+        clientVersion: 'test',
+      })
+    );
+    await expect(mintSupportMembershipCode(valid())).rejects.toMatchObject({ code: 'CONFLICT' });
+    expect(trackModActivity).not.toHaveBeenCalled();
+  });
+
+  it('control: any other create failure is passed through unchanged', async () => {
+    tx.redeemableCode.create.mockRejectedValueOnce(new Error('connection reset'));
+    await expect(mintSupportMembershipCode(valid())).rejects.toThrow('connection reset');
   });
 
   it('does not carry the code itself into ModActivity (it is a bearer secret)', async () => {

@@ -113,6 +113,7 @@ interface MockRedeemableCode {
   redeemedAt: Date | null;
   expiresAt: Date | null;
   transactionId: string | null;
+  metadata?: Record<string, unknown> | null;
 }
 
 interface MockSubscription {
@@ -1131,6 +1132,60 @@ describe('redeemableCode.service', () => {
         const expectedEnd = dayjs.utc(now).add(3, 'month').toDate();
         expect(updatedSubscription.currentPeriodStart.getTime()).toBe(now.getTime());
         expect(updatedSubscription.currentPeriodEnd.getTime()).toBe(expectedEnd.getTime());
+      });
+    });
+
+    describe('Support codes are bound to their customer', () => {
+      const supportMeta = { source: 'moderator-membership-code', forUserId: 1, mintedBy: 7 };
+      const txThatRedeems = (mockCode: object) =>
+        mockDbWrite.$transaction.mockImplementation(async (callback: any) =>
+          callback({
+            redeemableCode: {
+              update: vi.fn().mockResolvedValue({ ...mockCode, redeemedAt: new Date(), userId: 1 }),
+            },
+            customerSubscription: {
+              findFirst: vi.fn().mockResolvedValue(null),
+              create: vi.fn().mockResolvedValue({ id: 'sub_new' }),
+            },
+          })
+        );
+
+      it('refuses a support code presented by anyone but its customer, as if it did not exist', async () => {
+        const mockCode = createMockRedeemableCode({ metadata: supportMeta });
+        mockDbWrite.redeemableCode.findUnique.mockResolvedValue(mockCode);
+        txThatRedeems(mockCode);
+
+        await expect(consumeRedeemableCode({ code: 'MB-TEST-1234', userId: 2 })).rejects.toThrow(
+          'Code does not exist or has been redeemed'
+        );
+        expect(mockDbWrite.$transaction).not.toHaveBeenCalled();
+      });
+
+      it('control: the customer it was minted for redeems it', async () => {
+        const mockCode = createMockRedeemableCode({ metadata: supportMeta });
+        mockDbWrite.redeemableCode.findUnique.mockResolvedValue(mockCode);
+        txThatRedeems(mockCode);
+
+        await consumeRedeemableCode({ code: 'MB-TEST-1234', userId: 1 });
+        expect(mockDbWrite.$transaction).toHaveBeenCalledTimes(1);
+      });
+
+      it('leaves every other code redeemable by whoever holds it', async () => {
+        const mockCode = createMockRedeemableCode({ metadata: { orderId: 'o_1', forUserId: 1 } });
+        mockDbWrite.redeemableCode.findUnique.mockResolvedValue(mockCode);
+        txThatRedeems(mockCode);
+
+        await consumeRedeemableCode({ code: 'MB-TEST-1234', userId: 2 });
+        expect(mockDbWrite.$transaction).toHaveBeenCalledTimes(1);
+      });
+
+      it('asks the database for metadata, or the binding could never be read', async () => {
+        const mockCode = createMockRedeemableCode({ metadata: supportMeta });
+        mockDbWrite.redeemableCode.findUnique.mockResolvedValue(mockCode);
+        txThatRedeems(mockCode);
+
+        await consumeRedeemableCode({ code: 'MB-TEST-1234', userId: 1 });
+        expect(mockDbWrite.redeemableCode.findUnique.mock.calls[0][0].select.metadata).toBe(true);
       });
     });
 
