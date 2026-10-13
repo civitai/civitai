@@ -3,6 +3,8 @@
   import { goto } from '$app/navigation';
   import PromptWorkspace from '$lib/components/text-scan-lab/PromptWorkspace.svelte';
   import TryPanel from '$lib/components/text-scan-lab/TryPanel.svelte';
+  import LabSideTabs from '$lib/components/text-scan-tests/LabSideTabs.svelte';
+  import TestSetsPanel from '$lib/components/text-scan-tests/TestSetsPanel.svelte';
   import { denied } from '$lib/permissions';
   import { currentPromptsOf } from '$lib/text-scan-lab/changes';
   import { createChangesSync } from '$lib/text-scan-lab/changes.svelte';
@@ -56,14 +58,30 @@
       <p class="text-sm text-red-300">{data.prompts.error}</p>
     </section>
   {/if}
-  <TryPanel
-    prompts={changes.json}
-    rules="[]"
-    editedKeys={changes.keys}
-    only={null}
-    draftsError={changes.blankError}
-    onedit={(key) => goto(promptsHref(key), { noScroll: true, keepFocus: true })}
-    workspace="prompts"
-    {canCapture}
-  />
+  <LabSideTabs>
+    {#snippet tryPanel()}
+      <TryPanel
+        prompts={changes.json}
+        rules="[]"
+        editedKeys={changes.keys}
+        only={null}
+        draftsError={changes.blankError}
+        onedit={(key) => goto(promptsHref(key), { noScroll: true, keepFocus: true })}
+        workspace="prompts"
+        {canCapture}
+      />
+    {/snippet}
+    {#snippet testSets(visible)}
+      <TestSetsPanel
+        workspace="prompts"
+        {visible}
+        prompts={changes.json}
+        rules="[]"
+        hasDraft={changes.keys.length > 0}
+        draftsError={changes.blankError}
+        canEdit={canCapture}
+        userId={data.user?.id ?? 0}
+      />
+    {/snippet}
+  </LabSideTabs>
 </div>

@@ -16,6 +16,7 @@ import {
 } from '$lib/server/text-scan-lab/prompt-save';
 import { runTry } from '$lib/server/text-scan-lab/try';
 import { promptAuthors } from '$lib/server/text-scan-lab/version';
+import { cancelAction, quoteAction, startAction } from '$lib/server/text-scan-tests/form-actions';
 import { PROMPT_KEYS } from '$lib/text-scan-lab/types';
 
 const querySchema = z.object({ key: z.enum(PROMPT_KEYS).catch('base') });
@@ -51,4 +52,8 @@ export const actions: Actions = {
     if (typeof input === 'string') return fail(400, { error: input });
     return restorePrompt(input);
   }),
+
+  quoteRun: (event) => quoteAction(event, 'prompts'),
+  startRun: (event) => startAction(event, 'prompts'),
+  cancelRun: (event) => cancelAction(event),
 };
