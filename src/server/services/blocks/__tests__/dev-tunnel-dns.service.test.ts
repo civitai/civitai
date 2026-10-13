@@ -5,6 +5,7 @@ import { redisMock } from '~/__tests__/mocks/redis.mock';
 
 const DOMAIN = 'apps.example';
 const HOST = `dev-0123456789abcdef.${DOMAIN}`;
+const devHost = (n: number) => `dev-${n.toString(16).padStart(16, '0')}.${DOMAIN}`;
 // RFC 5737 documentation addresses. Three nameservers, the first with two addresses, so the
 // "first two nameservers, one address each" selection differs from every simpler one.
 const NS_NAMES = ['ns1.dns.example', 'ns2.dns.example', 'ns3.dns.example'];
@@ -136,10 +137,10 @@ describe('isDevTunnelHostPublished', () => {
   });
 
   it.each(['ETIMEOUT', 'ECONNREFUSED', 'ESERVFAIL'])(
-    'is not ready, and does not throw, when every query fails with %s',
+    'fails open, and does not throw, when every query fails with %s',
     async (code) => {
       nameservers(fails(code));
-      await expect(isDevTunnelHostPublished(HOST)).resolves.toBe(false);
+      await expect(isDevTunnelHostPublished(HOST)).resolves.toBe(true);
       expect(warnings()).toEqual([
         { event: 'app-blocks.dev-tunnel.dns-ready.error', code, error: `query ${code}` },
       ]);
@@ -243,14 +244,14 @@ describe('isDevTunnelHostPublished', () => {
 
     it('discovers once, then again after ten minutes', async () => {
       vi.useFakeTimers({ toFake: ['Date'] });
-      await isDevTunnelHostPublished(HOST);
-      await isDevTunnelHostPublished(HOST);
+      await isDevTunnelHostPublished(devHost(1));
+      await isDevTunnelHostPublished(devHost(2));
       expect(nsLookups()).toBe(1);
       vi.advanceTimersByTime(10 * 60_000 - 1);
-      await isDevTunnelHostPublished(HOST);
+      await isDevTunnelHostPublished(devHost(3));
       expect(nsLookups()).toBe(1);
       vi.advanceTimersByTime(2);
-      await isDevTunnelHostPublished(HOST);
+      await isDevTunnelHostPublished(devHost(4));
       expect(nsLookups()).toBe(2);
     });
 
@@ -259,11 +260,11 @@ describe('isDevTunnelHostPublished', () => {
       expect(nsLookups()).toBe(1);
     });
 
-    it('is not ready when no nameserver can be found, retries only after a short pause, and recovers', async () => {
+    it('fails open when no nameserver can be found, retries only after a short pause, and recovers', async () => {
       vi.useFakeTimers({ toFake: ['Date'] });
       dns.state.zones = {};
-      await expect(isDevTunnelHostPublished(HOST)).resolves.toBe(false);
-      await expect(isDevTunnelHostPublished(HOST)).resolves.toBe(false);
+      await expect(isDevTunnelHostPublished(HOST)).resolves.toBe(true);
+      await expect(isDevTunnelHostPublished(HOST)).resolves.toBe(true);
       expect(nsLookups()).toBe(1);
       expect(hostQueries()).toEqual([]);
       expect(warnings()).toEqual([
@@ -274,17 +275,115 @@ describe('isDevTunnelHostPublished', () => {
       ]);
 
       dns.state.zones = { [`${DOMAIN}.`]: NS_NAMES };
+      nameservers(fails('ENOTFOUND'));
       vi.advanceTimersByTime(14_999);
-      expect(await isDevTunnelHostPublished(HOST)).toBe(false);
-      vi.advanceTimersByTime(2);
       expect(await isDevTunnelHostPublished(HOST)).toBe(true);
+      expect(nsLookups()).toBe(1);
+      vi.advanceTimersByTime(2);
+      expect(await isDevTunnelHostPublished(HOST)).toBe(false);
+      expect(nsLookups()).toBe(2);
     });
 
     it('does not reuse one apps domain’s nameservers for another', async () => {
       await isDevTunnelHostPublished(HOST);
       setEnv({ APPS_DOMAIN: 'other.example' });
-      expect(await isDevTunnelHostPublished('dev-0123456789abcdef.other.example')).toBe(false);
+      expect(await isDevTunnelHostPublished('dev-0123456789abcdef.other.example')).toBe(true);
       expect(hostQueries().some((q) => q.name.includes('other.example'))).toBe(false);
+      expect(
+        systemQueries()
+          .filter((q) => q.type === 'NS')
+          .map((q) => q.name)
+      ).toEqual([`${DOMAIN}.`, 'other.example.']);
+    });
+  });
+
+  describe('when no nameserver can be asked', () => {
+    it('is ready when discovery finds no nameserver', async () => {
+      dns.state.zones = {};
+      expect(await isDevTunnelHostPublished(HOST)).toBe(true);
+      expect(hostQueries()).toEqual([]);
+      expect(warnings().map((w) => w.error)).toEqual(['no authoritative nameserver found']);
+    });
+
+    it('is ready when every nameserver errors or times out', async () => {
+      nameservers(fails('ETIMEOUT'), fails('ESERVFAIL'));
+      expect(await isDevTunnelHostPublished(HOST)).toBe(true);
+      expect(hostQueries()).toHaveLength(2);
+      expect(warnings().map((w) => w.code)).toEqual(['ETIMEOUT', 'ESERVFAIL']);
+    });
+
+    it.each(['ENOTFOUND', 'ENODATA'])(
+      'is still not ready when one nameserver answers %s and the other errors',
+      async (code) => {
+        nameservers(fails(code), fails('ETIMEOUT'));
+        expect(await isDevTunnelHostPublished(HOST)).toBe(false);
+        nameservers(fails('ETIMEOUT'), fails(code));
+        expect(await isDevTunnelHostPublished(HOST)).toBe(false);
+      }
+    );
+  });
+
+  describe('hosts seen published', () => {
+    const queriesFor = (host: string) => hostQueries().filter((q) => q.name === `${host}.`);
+
+    it.each(['ETIMEOUT', 'ENOTFOUND'])(
+      'stay ready with no further lookup, even once the nameservers answer %s',
+      async (code) => {
+        expect(await isDevTunnelHostPublished(HOST)).toBe(true);
+        const before = dns.state.queries.length;
+        nameservers(fails(code));
+        dns.state.zones = {};
+        expect(await isDevTunnelHostPublished(HOST)).toBe(true);
+        expect(dns.state.queries.length - before).toBe(0);
+      }
+    );
+
+    it('are asked about again after eight hours', async () => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      expect(await isDevTunnelHostPublished(HOST)).toBe(true);
+      nameservers(fails('ENOTFOUND'));
+      vi.advanceTimersByTime(8 * 60 * 60_000 - 1);
+      expect(await isDevTunnelHostPublished(HOST)).toBe(true);
+      expect(queriesFor(HOST)).toHaveLength(2);
+      vi.advanceTimersByTime(2);
+      expect(await isDevTunnelHostPublished(HOST)).toBe(false);
+      expect(queriesFor(HOST)).toHaveLength(4);
+    });
+
+    it('include a host one nameserver confirmed while the other could not be reached', async () => {
+      nameservers(fails('ETIMEOUT'), address);
+      expect(await isDevTunnelHostPublished(HOST)).toBe(true);
+      nameservers(fails('ENOTFOUND'));
+      expect(await isDevTunnelHostPublished(HOST)).toBe(true);
+      expect(queriesFor(HOST)).toHaveLength(2);
+    });
+
+    it('never include a host last seen missing', async () => {
+      nameservers(fails('ENOTFOUND'));
+      expect(await isDevTunnelHostPublished(HOST)).toBe(false);
+      nameservers(address);
+      expect(await isDevTunnelHostPublished(HOST)).toBe(true);
+      expect(queriesFor(HOST)).toHaveLength(4);
+    });
+
+    it('never include a host only failed open on', async () => {
+      nameservers(fails('ETIMEOUT'));
+      expect(await isDevTunnelHostPublished(HOST)).toBe(true);
+      nameservers(fails('ENOTFOUND'));
+      expect(await isDevTunnelHostPublished(HOST)).toBe(false);
+    });
+
+    it('are capped at 1000, forgetting the oldest first', async () => {
+      for (let n = 0; n <= 1000; n++) expect(await isDevTunnelHostPublished(devHost(n))).toBe(true);
+      nameservers(fails('ENOTFOUND'));
+      dns.state.queries = [];
+
+      expect(await isDevTunnelHostPublished(devHost(1))).toBe(true);
+      expect(await isDevTunnelHostPublished(devHost(1000))).toBe(true);
+      expect(hostQueries()).toEqual([]);
+
+      expect(await isDevTunnelHostPublished(devHost(0))).toBe(false);
+      expect(queriesFor(devHost(0))).toHaveLength(2);
     });
   });
 
@@ -326,11 +425,12 @@ describe('getDevTunnelDnsReadiness', () => {
 
   it("reports the caller's own live tunnel", async () => {
     seed({ userId: OWNER, blockId: 'my-app' }, SESSION);
-    expect(await getDevTunnelDnsReadiness(OWNER, 'my-app')).toEqual({ active: true, ready: true });
-    expect(hostQueries().map((q) => q.name)).toEqual([`${HOST}.`, `${HOST}.`]);
-
     nameservers(fails('ENOTFOUND'));
     expect(await getDevTunnelDnsReadiness(OWNER, 'my-app')).toEqual({ active: true, ready: false });
+
+    nameservers(address);
+    expect(await getDevTunnelDnsReadiness(OWNER, 'my-app')).toEqual({ active: true, ready: true });
+    expect(hostQueries().map((q) => q.name)).toEqual(Array(4).fill(`${HOST}.`));
   });
 
   it("refuses another user's tunnel for the same app, with no lookup", async () => {
