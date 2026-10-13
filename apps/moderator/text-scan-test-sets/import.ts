@@ -1,13 +1,4 @@
-/**
- * Seeds a text-scan test set from a local JSON file (kept under docs/superpowers/text-scan-v1.local/,
- * never committed). Dry run by default; prints counts only.
- *
- *   pnpm exec tsx --env-file=.env apps/moderator/text-scan-test-sets/import.ts \
- *     --set <name> --workspace prompts|modelRules --file <path> --format lab-seed|bench \
- *     [--label poi|minor|scam --truth-map <value>=yes|no|skip,...] --by <moderatorId> [--write]
- *
- * Env: MODERATOR_DATABASE_URL.
- */
+// Seeds a test set from a local JSON file (never committed). Dry run by default; prints counts only. See README.md.
 import { readFileSync } from 'node:fs';
 import type { DB as ModeratorDB } from '../src/lib/server/moderator-db/types';
 import {
@@ -16,7 +7,7 @@ import {
   type ImportOptions,
 } from '../src/lib/server/text-scan-tests/seed';
 import { FLAG_LABELS, type FlagLabel } from '../src/lib/text-scan-tests/expected';
-import { WORKSPACES, type Workspace } from '../src/lib/text-scan-tests/types';
+import { TEST_SET_LIMITS, WORKSPACES, type Workspace } from '../src/lib/text-scan-tests/types';
 import { CliError, createKyselyClients, describeDb, describeError, flag, requireEnv } from './cli';
 
 function parseArgs(argv: string[]): ImportOptions & { file: string } {
@@ -27,7 +18,8 @@ function parseArgs(argv: string[]): ImportOptions & { file: string } {
   const label = flag(argv, '--label');
   const truthMap = flag(argv, '--truth-map');
   const by = Number(flag(argv, '--by'));
-  if (!set || set.length > 100) throw new CliError('--set needs a name of 1-100 characters');
+  if (!set || set.length > TEST_SET_LIMITS.nameChars)
+    throw new CliError(`--set needs a name of 1-${TEST_SET_LIMITS.nameChars} characters`);
   if (!(WORKSPACES as readonly unknown[]).includes(workspace))
     throw new CliError('--workspace is prompts or modelRules');
   if (!file) throw new CliError('--file is required');
@@ -35,7 +27,7 @@ function parseArgs(argv: string[]): ImportOptions & { file: string } {
     throw new CliError('--format is lab-seed or bench');
   if (!Number.isInteger(by) || by < 1) throw new CliError('--by needs the moderator user id');
   if (label !== undefined && !(FLAG_LABELS as readonly string[]).includes(label))
-    throw new CliError('--label is poi, minor or scam');
+    throw new CliError(`--label is one of ${FLAG_LABELS.join(', ')}`);
   const map = truthMap === undefined ? undefined : parseTruthMap(truthMap);
   if (typeof map === 'string') throw new CliError(map);
   return {

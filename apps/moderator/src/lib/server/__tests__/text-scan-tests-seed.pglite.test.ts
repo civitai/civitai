@@ -83,6 +83,19 @@ describe('parsing', () => {
     expect(parsed.refused).toEqual({ 'unknown entity type': 1, 'duplicate entity': 1 });
   });
 
+  it('accepts an explicit null entity id, as for the author', () => {
+    const parsed = parseLabSeed({
+      cases: [{ ...LAB_SEED.cases[1], entityId: null, authorId: null }],
+    });
+    if (typeof parsed === 'string') throw new Error(parsed);
+    expect(parsed.refused).toEqual({});
+    expect(parsed.rows).toEqual([expect.objectContaining({ entityId: null, authorId: null })]);
+  });
+
+  it('trims the keys and values of a truth map', () => {
+    expect(parseTruthMap(' bad = yes , fine=no ')).toEqual({ bad: 'yes', fine: 'no' });
+  });
+
   it('counts an inherited property name as an unmapped truth value', () => {
     const rows = ['constructor', 'toString', '__proto__'].map((truth) => ({
       ...BENCH[0],
@@ -142,6 +155,47 @@ describe('importSeed', () => {
     expect(again.written).toEqual({ created: 0, updated: 3 });
     const [set] = await listSets(db, 'prompts');
     expect(await listCases(db, set.id)).toHaveLength(3);
+  });
+
+  it('rescores the set once when a re-import changes a case', async () => {
+    await importSeed(db, BENCH, { ...opts, write: true });
+    const [set] = await listSets(db, 'prompts');
+    const [first] = await listCases(db, set.id);
+    const run = await db
+      .insertInto('text_scan_test_run')
+      .values({
+        set_id: String(set.id),
+        kind: 'baseline',
+        start_id: '00000000-0000-4000-8000-000000000009',
+        max_case_id: String(first.id + 10),
+        prompt_ids: '{}',
+        model: 'model-a',
+        thinking: false,
+        status: 'done',
+        run_by: 990001,
+        totals: '[]',
+      })
+      .returning('id')
+      .executeTakeFirstOrThrow();
+    await db
+      .insertInto('text_scan_test_result')
+      .values({
+        run_id: run.id,
+        case_id: String(first.id),
+        status: 'ok',
+        output: JSON.stringify({ scam: { detected: true } }),
+      })
+      .execute();
+    await importSeed(db, BENCH, {
+      ...opts,
+      truthMap: { bad: 'no', fine: 'no', unsure: 'skip' },
+      write: true,
+    });
+    const { totals } = await db
+      .selectFrom('text_scan_test_run')
+      .select('totals')
+      .executeTakeFirstOrThrow();
+    expect(totals).toEqual([expect.objectContaining({ label: 'scam', scored: 1, passed: 0 })]);
   });
 
   it('refuses a set that belongs to the other workspace', async () => {

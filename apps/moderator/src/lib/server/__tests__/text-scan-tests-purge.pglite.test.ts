@@ -57,7 +57,14 @@ describe('purgeDeletedSources', () => {
       )
       .execute();
 
-    expect(await purgeDeletedSources(db, main)).toEqual({ checked: 5, wiped: 3 });
+    const before = await db.selectFrom('text_scan_test_case').selectAll().orderBy('id').execute();
+    expect(await purgeDeletedSources(db, main, { write: false })).toEqual({ checked: 5, wiped: 3 });
+    expect(await db.selectFrom('text_scan_test_case').selectAll().orderBy('id').execute()).toEqual(
+      before
+    );
+    expect((await resultsOf(db, runId)).every((r) => r.output !== null)).toBe(true);
+
+    expect(await purgeDeletedSources(db, main, { write: true })).toEqual({ checked: 5, wiped: 3 });
     const cases = await db
       .selectFrom('text_scan_test_case')
       .select(['id', 'fields'])
@@ -84,7 +91,7 @@ describe('expireDraftResults', () => {
       kind: 'draft',
       status: 'done',
       expiresAt: new Date('2026-01-01'),
-      totals: [],
+      totals: [{ label: 'scam', scored: 1, passed: 1 }],
     });
     const current = await seedRun(db, setId, {
       kind: 'draft',
@@ -98,7 +105,9 @@ describe('expireDraftResults', () => {
         .values({ run_id: String(runId), case_id: String(caseId), status: 'ok', output: '{}' })
         .execute();
 
-    expect(await expireDraftResults(db)).toEqual({ runs: 1, results: 1 });
+    expect(await expireDraftResults(db, { write: false })).toEqual({ runs: 1, results: 1 });
+    expect(await resultsOf(db, expired)).toHaveLength(1);
+    expect(await expireDraftResults(db, { write: true })).toEqual({ runs: 1, results: 1 });
     expect(await resultsOf(db, expired)).toHaveLength(0);
     expect(await resultsOf(db, current)).toHaveLength(1);
     expect(await resultsOf(db, baseline)).toHaveLength(1);
@@ -107,6 +116,6 @@ describe('expireDraftResults', () => {
       .select('totals')
       .where('id', '=', String(expired))
       .executeTakeFirstOrThrow();
-    expect(run.totals).toEqual([]);
+    expect(run.totals).toEqual([{ label: 'scam', scored: 1, passed: 1 }]);
   });
 });

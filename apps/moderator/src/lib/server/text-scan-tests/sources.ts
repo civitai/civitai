@@ -113,9 +113,11 @@ async function goneAuthorCaseIds(
   return gone;
 }
 
+/** `write: false` counts what would be wiped and changes nothing. */
 export async function purgeDeletedSources(
   db: Kysely<ModeratorDB>,
-  main: Kysely<MainDB>
+  main: Kysely<MainDB>,
+  { write }: { write: boolean }
 ): Promise<{ checked: number; wiped: number }> {
   const cases = await db
     .selectFrom('text_scan_test_case')
@@ -140,6 +142,8 @@ export async function purgeDeletedSources(
       : []
   );
   const gone = [...(await goneCaseIds(main, refs)), ...(await goneAuthorCaseIds(main, authorOnly))];
+  const checked = refs.length + authorOnly.length;
+  if (!write) return { checked, wiped: gone.length };
   const wiped = await wipeCases(db, gone);
   // Swept for every wiped case, not only those wiped now: a run can write a verdict while its case is wiped.
   await db
@@ -152,27 +156,25 @@ export async function purgeDeletedSources(
       db.selectFrom('text_scan_test_case').select('id').where('source_deleted_at', 'is not', null)
     )
     .execute();
-  return { checked: refs.length + authorOnly.length, wiped };
+  return { checked, wiped };
 }
 
-/** Draft results past `expires_at` go; the run row and its cached totals stay, as do all baselines. */
+/** Run rows, cached totals and baselines are kept. `write: false` only counts. */
 export async function expireDraftResults(
-  db: Kysely<ModeratorDB>
+  db: Kysely<ModeratorDB>,
+  { write }: { write: boolean }
 ): Promise<{ runs: number; results: number }> {
   const expired = await db
     .selectFrom('text_scan_test_run as r')
-    .select('r.id')
+    .innerJoin('text_scan_test_result as x', 'x.run_id', 'r.id')
+    .select(['r.id', sql<string>`count(*)`.as('n')])
     .where('r.kind', '=', 'draft')
     .where('r.expires_at', '<', sql<Date>`now()`)
-    .where(({ exists, selectFrom }) =>
-      exists(
-        selectFrom('text_scan_test_result as x')
-          .select('x.case_id')
-          .whereRef('x.run_id', '=', 'r.id')
-      )
-    )
+    .groupBy('r.id')
     .execute();
   if (!expired.length) return { runs: 0, results: 0 };
+  if (!write)
+    return { runs: expired.length, results: expired.reduce((n, r) => n + Number(r.n), 0) };
   const res = await db
     .deleteFrom('text_scan_test_result')
     .where(

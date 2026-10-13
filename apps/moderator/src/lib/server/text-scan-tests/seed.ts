@@ -15,6 +15,7 @@ import {
 } from '../../text-scan-tests/expected';
 import { TEST_SET_LIMITS, type Workspace } from '../../text-scan-tests/types';
 import { TestSetError, createSet, upsertCase } from './store';
+import { refreshSetTotals } from './totals';
 
 export type TruthMap = Record<string, 'yes' | 'no' | 'skip'>;
 export type SeedRow = {
@@ -38,8 +39,8 @@ const isEntityType = (v: unknown): v is LabEntityType =>
 
 export function parseTruthMap(raw: string): TruthMap | string {
   const map: TruthMap = Object.create(null);
-  for (const pair of raw.split(',').filter(Boolean)) {
-    const [key, value] = pair.split('=');
+  for (const pair of raw.split(',').filter((p) => p.trim())) {
+    const [key, value] = pair.split('=').map((part) => part.trim());
     if (!key || (value !== 'yes' && value !== 'no' && value !== 'skip'))
       return '--truth-map values are yes, no or skip.';
     map[key] = value;
@@ -99,7 +100,7 @@ export function parseLabSeed(json: unknown): SeedParse | string {
       out.refuse('unknown entity type');
       continue;
     }
-    if (raw.entityId !== undefined && !isId(raw.entityId)) {
+    if (raw.entityId != null && !isId(raw.entityId)) {
       out.refuse('bad id');
       continue;
     }
@@ -123,7 +124,7 @@ export function parseLabSeed(json: unknown): SeedParse | string {
     }
     out.add({
       entityType: raw.entityType,
-      entityId: (raw.entityId as number | undefined) ?? null,
+      entityId: (raw.entityId as number | null | undefined) ?? null,
       authorId: (raw.authorId as number | null | undefined) ?? null,
       sourceRef: null,
       fields,
@@ -163,7 +164,7 @@ export function parseBench(
       out.refuse('label not scored for entity type');
       continue;
     }
-    if (raw.entityId !== undefined && !isId(raw.entityId)) {
+    if (raw.entityId != null && !isId(raw.entityId)) {
       out.refuse('bad id');
       continue;
     }
@@ -181,7 +182,7 @@ export function parseBench(
     }
     out.add({
       entityType: raw.entityType,
-      entityId: (raw.entityId as number | undefined) ?? null,
+      entityId: (raw.entityId as number | null | undefined) ?? null,
       authorId: null,
       sourceRef: raw.key,
       fields,
@@ -264,6 +265,7 @@ export async function importSeed(
     }
     let created = 0;
     let updated = 0;
+    let rescore = false;
     const refused: Record<string, number> = {};
     for (const row of parsed.rows) {
       // A failed statement aborts the transaction; the savepoint keeps one refused row from taking the rest.
@@ -272,6 +274,7 @@ export async function importSeed(
         const saved = await upsertCase(trx, { ...row, setId, origin: 'import' }, opts.by);
         if (saved.created) created++;
         else updated++;
+        rescore ||= saved.rescore;
         await sql`RELEASE SAVEPOINT import_row`.execute(trx);
       } catch (e) {
         if (!(e instanceof TestSetError)) throw e;
@@ -281,8 +284,9 @@ export async function importSeed(
         refused[reason] = (refused[reason] ?? 0) + 1;
       }
     }
-    return { written: { created, updated }, refused };
+    return { written: { created, updated }, refused, setId, rescore };
   });
+  if (outcome.rescore) await refreshSetTotals(db, outcome.setId);
   summary.written = outcome.written;
   for (const [reason, n] of Object.entries(outcome.refused))
     summary.refused[reason] = (summary.refused[reason] ?? 0) + n;

@@ -15,7 +15,10 @@ export function requireEnv(name: string): string {
 
 export function flag(argv: string[], name: string): string | undefined {
   const i = argv.indexOf(name);
-  return i === -1 ? undefined : argv[i + 1];
+  if (i === -1) return undefined;
+  const value = argv[i + 1];
+  if (value === undefined || value.startsWith('--')) throw new CliError(`${name} needs a value`);
+  return value;
 }
 
 /** Host, port and database only — never the credentials. */
@@ -24,10 +27,11 @@ export function describeDb(connectionString: string): string {
   return `${u.hostname}:${u.port || 5432}${u.pathname}`;
 }
 
-// Never the message: Postgres quotes the failing row, and these rows hold case text.
 export function describeError(e: unknown): string {
   if (e instanceof CliError) return e.message;
   const { code, constraint, status, message } = (e ?? {}) as Record<string, unknown>;
   if (typeof status === 'number' && typeof message === 'string') return message;
+  // Postgres errors fall through to code + constraint only: the message quotes the failing row,
+  // which can hold case text.
   return JSON.stringify({ code: code ?? 'unknown', constraint: constraint ?? null });
 }
