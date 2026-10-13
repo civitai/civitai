@@ -1257,7 +1257,7 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
   // learns what a call will cost:
   //
   //   estimate_quoted — the estimate got a live orchestrator quote.
-  //   estimate_absent — it could not. A pass-through `$type` was shown its
+  //   estimate_absent — it could not. A non-training pass-through `$type` was shown its
   //                     declared price; a registry step or a workflow got a
   //                     failed snapshot with no price.
   //

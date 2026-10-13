@@ -1313,8 +1313,6 @@ const billingModeHandlers: Record<StepBillingMode, BillingModeHandler> = {
   prepaidFixed: {
     // The display estimate is computed from the PARAMS — the variant is not an
     // input to it, and this handler deliberately does not destructure one.
-    // `estimateStepBuzz` has no router caller since the estimate stopped showing
-    // a declared price; the registry tests still read it.
     estimateBuzz: ({ step, params }) => step.estimateBuzz(params),
     planSpend: ({ step, variant }) => {
       const entry = step as PrepaidFixedStep<unknown>;
@@ -1348,9 +1346,8 @@ export function isBillingModeImplemented(mode: StepBillingMode): boolean {
  * The display estimate for a step, dispatched on its declared billing mode.
  *
  * Resolves the variant through `resolveStepVariant` before dispatching — see
- * `planStepSpend` below for why the resolution lives in the dispatcher, and note
- * that this is what makes an out-of-set resolution fail IDENTICALLY on estimate
- * and on submit.
+ * `planStepSpend` below for why the resolution lives in the dispatcher. The block
+ * estimate does not call this: it shows a live quote or no price.
  */
 export function estimateStepBuzz(
   step: AnyBlockStep,

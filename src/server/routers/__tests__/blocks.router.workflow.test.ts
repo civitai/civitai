@@ -8135,7 +8135,7 @@ describe("step-type registry bridge (kind: 'step')", () => {
     });
 
     it('floors on the SUBMIT’s declared value too, not only the estimate’s', async () => {
-      // 🔴 THE TWO FLOORS ARE DIFFERENT DERIVATIONS. `estimateStepBuzz` is
+      // 🔴 THE TWO FLOORS ARE DIFFERENT DERIVATIONS. The display estimate is
       // params-driven and un-ceiled (`step.estimateBuzz(params)`); the submit's
       // is variant-driven and ceiled (`Math.ceil(priceForVariant(variant))`).
       // Registry load ties them only at CANONICAL params and nothing re-checks
