@@ -404,6 +404,8 @@ describe('insertTextScanPrompt with a base version', () => {
     await expect(save(null)).resolves.toEqual({ id: 1, key: 'base' });
     dbMock.dbWrite.textScanPrompt.findFirst.mockResolvedValueOnce({ id: 1 });
     await expect(save(null)).rejects.toMatchObject({ code: 'CONFLICT' });
+    dbMock.dbWrite.textScanPrompt.findFirst.mockResolvedValueOnce(null);
+    await expect(save(3)).rejects.toThrow(/^(?!.*undefined)/);
   });
 
   it('lets only one of two saves from the same base through', async () => {

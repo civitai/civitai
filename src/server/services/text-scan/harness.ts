@@ -781,7 +781,10 @@ export async function runTextScanHarnessAction(
       const results = await Promise.all(
         input.entityIds.map((entityId) => limit(() => scanEntitySync({ ...input, entityId })))
       );
-      return { kind: 'json', body: summarizeScans(input.entityType, results) };
+      return {
+        kind: 'json',
+        body: { ...summarizeScans(input.entityType, results), ...hoistSharedPrompt(results) },
+      };
     }
 
     case 'sampleShadow': {

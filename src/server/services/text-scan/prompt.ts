@@ -172,7 +172,9 @@ export async function insertTextScanPrompt({
           });
           if ((newest?.id ?? null) !== baseId)
             throwConflictError(
-              `A newer version of ${key} (#${newest?.id}) was saved after this edit started.`
+              `A newer version of ${key}${
+                newest ? ` (#${newest.id})` : ''
+              } was saved after this edit started.`
             );
           return tx.textScanPrompt.create({ data, select });
         });

@@ -236,6 +236,34 @@ describe('model visibility', () => {
   });
 });
 
+describe('batchEntities', () => {
+  it('sends the system prompt and rule list once, with literal hits per entity', async () => {
+    vi.mocked(loadModelScanSubjects).mockImplementation(
+      async (ids: number[]) =>
+        new Map(
+          ids.map((id) => [id, { fields: [{ heading: 'Name', text: 'Some model' }], declared: {} }])
+        )
+    );
+    const { body } = (await run({
+      action: 'batchEntities',
+      entityType: 'ModelRules',
+      entityIds: [7, 9],
+    })) as { body: Record<string, unknown> & { results: Record<string, unknown>[] } };
+
+    expect(body.system).toContain('RULES DEF');
+    expect(body.rules).toEqual([
+      { id: 3, subject: 'Example' },
+      { id: 8, subject: 'Other' },
+    ]);
+    expect(body.results).toHaveLength(2);
+    for (const result of body.results) {
+      expect(result).not.toHaveProperty('system');
+      expect(result).not.toHaveProperty('rules');
+      expect(result).toHaveProperty('literalRuleIds');
+    }
+  });
+});
+
 describe('putPrompt', () => {
   it('passes no note and the base version through', async () => {
     vi.mocked(insertTextScanPrompt).mockResolvedValue({ id: 4, key: 'base' });
