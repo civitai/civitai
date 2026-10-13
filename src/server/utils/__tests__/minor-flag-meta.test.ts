@@ -8,6 +8,9 @@ import {
   stripMinorHashMeta,
   MODERATION_FLOW_META_KEYS,
   stripModerationOwnedMeta,
+  pickModerationOwnedMeta,
+  pickServerOwnedMeta,
+  stripServerOwnedMeta,
 } from '~/server/utils/minor-flag-meta';
 import type { MinorFlagSnapshot, ModelMeta } from '~/server/schema/model.schema';
 
@@ -279,6 +282,47 @@ describe('textScanFlags is moderation-owned', () => {
     const meta = { textScanFlags, commentsLocked: true } as ModelMeta;
     expect(stripModerationOwnedMeta(meta, false)).toEqual({ commentsLocked: true });
     expect(stripModerationOwnedMeta(meta, true)).toEqual(meta);
+  });
+});
+
+describe('pickModerationOwnedMeta', () => {
+  const stored = {
+    cannotPublish: true,
+    declinedReason: 'x',
+    textScanFlags: { poi: { at: 'x', workflowId: 'wf', reason: 'r', names: [] } },
+    minorFlagSnapshot: snapshot(),
+    commentsLocked: true,
+  } as ModelMeta;
+
+  it('returns exactly the moderation-owned and flow keys that are present', () => {
+    const picked = pickModerationOwnedMeta(stored);
+    expect(Object.keys(picked).sort()).toEqual(
+      ['cannotPublish', 'declinedReason', 'minorFlagSnapshot', 'textScanFlags'].sort()
+    );
+  });
+
+  it('is empty for null and undefined', () => {
+    expect(pickModerationOwnedMeta(null)).toEqual({});
+    expect(pickModerationOwnedMeta(undefined)).toEqual({});
+  });
+});
+
+describe('server-only keys', () => {
+  const meta = {
+    trainingStudioWorkflowId: 'wf',
+    restoreCannotPromote: true,
+    commentsLocked: true,
+  } as ModelMeta;
+
+  it('strips the cannotPromote restore marker from client meta, moderators included', () => {
+    expect(stripServerOwnedMeta(meta)).toEqual({ commentsLocked: true });
+  });
+
+  it('carries the restore marker across a wholesale meta write', () => {
+    expect(pickServerOwnedMeta(meta)).toEqual({
+      trainingStudioWorkflowId: 'wf',
+      restoreCannotPromote: true,
+    });
   });
 });
 

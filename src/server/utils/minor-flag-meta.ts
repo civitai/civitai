@@ -136,6 +136,13 @@ export function stripModerationOwnedMeta<T extends ModelMeta | null | undefined>
 }
 
 /**
+ * Server-only marker, outside `ModelMeta`: set by `privateModelFromTraining` when a moderator's
+ * `cannotPromote` was in force before the private cycle forced it on, and consumed by
+ * `publishPrivateModel` to put that value back.
+ */
+export const RESTORE_CANNOT_PROMOTE_KEY = 'restoreCannotPromote';
+
+/**
  * Meta keys only server code may write, for everyone including moderators: no moderator flow writes
  * them through client meta. `trainingStudioWorkflowId` links a model to its training workflow and
  * `trainingStudioModerationApproved` records that the run passed the moderation check; the publish
@@ -147,20 +154,34 @@ export const SERVER_OWNED_META_KEYS = [
   'trainingStudioModerationApproved',
 ] as const satisfies readonly (keyof ModelMeta)[];
 
+const SERVER_ONLY_META_KEYS: readonly string[] = [
+  ...SERVER_OWNED_META_KEYS,
+  RESTORE_CANNOT_PROMOTE_KEY,
+];
+
 export function stripServerOwnedMeta<T extends ModelMeta | null | undefined>(meta: T): T {
   if (!meta) return meta;
-  const rest = { ...meta } as ModelMeta;
-  for (const key of SERVER_OWNED_META_KEYS) delete rest[key];
+  const rest = { ...meta } as Record<string, unknown>;
+  for (const key of SERVER_ONLY_META_KEYS) delete rest[key];
   return rest as T;
+}
+
+function pickKeys(meta: ModelMeta | null | undefined, keys: readonly string[]): ModelMeta {
+  const picked: Record<string, unknown> = {};
+  if (!meta) return picked as ModelMeta;
+  const source = meta as Record<string, unknown>;
+  for (const key of keys) if (source[key] !== undefined) picked[key] = source[key];
+  return picked as ModelMeta;
 }
 
 /** The server-owned keys of a stored meta, to carry across a write that replaces meta wholesale. */
 export function pickServerOwnedMeta(meta: ModelMeta | null | undefined): ModelMeta {
-  const picked: ModelMeta = {};
-  if (!meta) return picked;
-  for (const key of SERVER_OWNED_META_KEYS)
-    if (meta[key] !== undefined) (picked as Record<string, unknown>)[key] = meta[key];
-  return picked;
+  return pickKeys(meta, SERVER_ONLY_META_KEYS);
+}
+
+/** The moderation-owned and moderation-flow keys of a stored meta, for a wholesale meta write by a non-moderator. */
+export function pickModerationOwnedMeta(meta: ModelMeta | null | undefined): ModelMeta {
+  return pickKeys(meta, [...MODERATION_OWNED_META_KEYS, ...MODERATION_FLOW_META_KEYS]);
 }
 
 export function filterModelMetaForClient(meta: ModelMeta, isModerator?: boolean): ModelMeta {
