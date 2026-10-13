@@ -31,8 +31,10 @@ express a partial index, so after `db:moderator:pull` the schema may need a hand
   prompts changed since the quote. Buzz is derived on the server, not taken from the form.
 - **Baseline and draft.** A run of a draft is compared with the set's baseline: its latest finished run
   of the production prompt versions (and, for Model rules, the live rule state). A fresh baseline is
-  reused, so only the draft side is scanned; a stale or missing one is queued alongside. A draft run
-  never becomes a baseline.
+  reused, so only the draft side is scanned; a stale or missing one is queued alongside. A fresh
+  baseline missing some cases (added since, or re-added with changed text, which drops that case's
+  verdicts) is topped up in place; if the top-up is cancelled or fails, the baseline is done again at
+  its old finish time. A draft run never becomes a baseline.
 - **Background worker.** Runs scan in the moderator server after the request returns, 8 cases per
   harness call, writing each chunk's results as it lands. Harness calls use the starting moderator's
   session. A database lease makes sure one process scans a run. A run whose heartbeat is older than
@@ -40,9 +42,13 @@ express a partial index, so after `db:moderator:pull` the schema may need a hand
   the server only releases this host's stale leases. A restart re-scans at most the chunk in flight.
 - **Limits.** At most 500 cases per run, one run in progress per moderator, three in total.
 - **Errors** are recorded per case and never scored as misses; **Re-run errors** repeats only those,
-  with the run's recorded prompts, and is refused once a prompt it used has a newer version.
+  with the run's recorded prompts. It is refused once a prompt it used has a newer version, for an
+  expired draft, and for a stopped run that still has cases it never scanned (start a new run).
+- **Wiped cases.** A case whose source was deleted loses its text and verdicts; its results count as
+  missing, never as a failure.
 - **Audit.** Run start, cancel and re-run each write a `ModActivity` row for the set and an Axiom event
-  (run ids, calls, server-derived Buzz); never text.
+  (run ids, calls, server-derived Buzz); never text. Adding, relabelling and removing a case, and
+  creating or archiving a set, also write a `ModActivity` row.
 - **Access.** Running needs only the workspace page grant. Curating sets and cancelling another
   moderator's run need `textScan.testSets.edit`.
 
@@ -53,8 +59,8 @@ the repo root with `pnpm exec tsx --env-file=.env <script>`. Keep seed files out
 
 | script | what it does | env |
 | --- | --- | --- |
-| `import.ts` | Seeds a set from a `lab-seed` or `bench` JSON file. Dry run unless `--write`. Idempotent on the entity or `key`. Goes through `upsertCase`, one savepoint per row: a row refused by validation (400) or as a conflicting case (409) is counted and skipped and the rest land; any other error rolls back the whole import. | `MODERATOR_DATABASE_URL` |
-| `purge.ts` | Wipes text and stored verdicts of cases whose source entity or author was deleted (including imported rows with an author id only), and drops expired draft-run results. Run it by hand, weekly. | `MODERATOR_DATABASE_URL`, `DATABASE_REPLICA_URL` (read only) |
+| `import.ts` | Seeds a set from a `lab-seed` or `bench` JSON file. Dry run unless `--write`. Idempotent on the entity or `key`; a re-import that changes cases rescores the set's runs. Goes through `upsertCase`, one savepoint per row: a row refused by validation (400) or as a conflicting case (409) is counted and skipped and the rest land; any other error rolls back the whole import. | `MODERATOR_DATABASE_URL` |
+| `purge.ts` | Wipes text and stored verdicts of cases whose source entity or author was deleted (including imported rows with an author id only), and drops expired draft-run results. Dry run unless `--write`; prints both databases it reads and the counts it would wipe. Run it by hand; the app has no scheduler. | `MODERATOR_DATABASE_URL`, `DATABASE_REPLICA_URL` (read only) |
 
 ```bash
 pnpm exec tsx --env-file=.env apps/moderator/text-scan-test-sets/import.ts \
@@ -66,5 +72,5 @@ pnpm exec tsx --env-file=.env apps/moderator/text-scan-test-sets/import.ts \
 
 | file format | shape |
 | --- | --- |
-| `lab-seed` | `{ cases: [{ entityType, entityId?, authorId?, fields, expected, note? }] }`; nsfw ranges kept |
+| `lab-seed` | `{ cases: [{ entityType, entityId?, authorId?, fields, expected, note? }] }` (`entityId` and `authorId` may be `null`); nsfw ranges kept |
 | `bench` | `[{ key, entityType, fields, truth, entityId? }]`; `key` is the case's import key; `truth` goes through `--truth-map` onto `--label` (required for `bench`) |
