@@ -141,9 +141,7 @@ export function parseImageScanningSteps(workflowSteps: unknown[], workflowId: st
     throw new Error(`Incomplete workflow: ${workflowId}. Missing imageScanning output`);
 
   return {
-    ...combineFrames(
-      frames.map((frame) => readScan(frame.output as ScanningOutput, workflowId))
-    ),
+    ...combineFrames(frames.map((frame) => readScan(frame.output as ScanningOutput, workflowId))),
     perceptualHash,
   };
 }
