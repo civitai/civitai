@@ -35,6 +35,14 @@ describe('visualViewportBottomInset — the keyboard strip a fixed bottom sheet 
     expect(visualViewportBottomInset(844, { height: 744, offsetTop: 0, scale: 1 })).toBe(100);
   });
 
+  it('the floor is on the keyboard height, not on what is left after a pan', () => {
+    // A 336px keyboard, panned 250px: 86px of it still overlaps the layout viewport's bottom.
+    expect(visualViewportBottomInset(844, { height: 508, offsetTop: 250, scale: 1 })).toBe(86);
+    expect(visualViewportBottomInset(844, { height: 508, offsetTop: 335, scale: 1 })).toBe(1);
+    // Panned all the way: nothing left to clear.
+    expect(visualViewportBottomInset(844, { height: 508, offsetTop: 336, scale: 1 })).toBe(0);
+  });
+
   it('never negative (pinch-zoomed out, or a taller visual viewport)', () => {
     expect(visualViewportBottomInset(844, { height: 900, offsetTop: 0 })).toBe(0);
   });

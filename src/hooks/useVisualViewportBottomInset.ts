@@ -3,8 +3,9 @@ import { useEffect, useState } from 'react';
 type VisualViewportLike = { height: number; offsetTop: number; scale?: number };
 
 /**
- * Smaller gaps than this are not a keyboard: a collapsing URL bar or a scrollbar leaves a sliver
- * between the two viewports. Well under the shortest real on-screen keyboard.
+ * A visual viewport shorter than the layout viewport by less than this is not a keyboard: a
+ * collapsing URL bar or a scrollbar leaves a sliver between the two. Well under the shortest real
+ * on-screen keyboard.
  */
 export const KEYBOARD_INSET_MIN_PX = 100;
 /** Float tolerance around `scale === 1`. */
@@ -20,7 +21,12 @@ const SCALE_TOLERANCE = 0.01;
  * A shrunken visual viewport is not always a keyboard, so two readings count as none:
  * - a pinch-zoomed page (`scale` not 1) — zooming shrinks the visual viewport by itself, and the
  *   gap then changes with every pan;
- * - a gap under {@link KEYBOARD_INSET_MIN_PX}.
+ * - a visual viewport less than {@link KEYBOARD_INSET_MIN_PX} shorter than the layout viewport.
+ *
+ * That floor is on the keyboard's HEIGHT (`layoutHeight - viewport.height`), not on what is
+ * returned. Once a keyboard is up, the result is whatever part of it still overlaps the layout
+ * viewport's bottom after a pan (`offsetTop`), however small, so the element tracks a pan
+ * continuously instead of dropping under the keyboard when the remainder gets short.
  *
  * `0` as well whenever the numbers are unusable, so a missing or odd reading leaves the element
  * where it would have been without this.
@@ -31,8 +37,10 @@ export function visualViewportBottomInset(
 ): number {
   if (!viewport) return 0;
   if (viewport.scale != null && Math.abs(viewport.scale - 1) > SCALE_TOLERANCE) return 0;
-  const inset = layoutHeight - (viewport.height + viewport.offsetTop);
-  return Number.isFinite(inset) && inset >= KEYBOARD_INSET_MIN_PX ? Math.round(inset) : 0;
+  const keyboardHeight = layoutHeight - viewport.height;
+  if (!Number.isFinite(keyboardHeight) || keyboardHeight < KEYBOARD_INSET_MIN_PX) return 0;
+  const inset = keyboardHeight - viewport.offsetTop;
+  return Number.isFinite(inset) && inset > 0 ? Math.round(inset) : 0;
 }
 
 /**
