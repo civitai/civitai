@@ -139,9 +139,12 @@ describe('revokeMembershipCode', () => {
 
   it('posts the account and code to the revoke endpoint as the moderator', async () => {
     respond = () =>
-      new Response(JSON.stringify({ code: 'MB-ABCD-EF12', revokedAt: '2026-10-13T12:00:00.000Z' }), {
-        status: 200,
-      });
+      new Response(
+        JSON.stringify({ code: 'MB-ABCD-EF12', revokedAt: '2026-10-13T12:00:00.000Z' }),
+        {
+          status: 200,
+        }
+      );
     const result = await revokeMembershipCode(REVOKE);
     expect(result).toEqual({ ok: true });
     expect(calls[0].url).toBe('https://civitai.com/api/mod/user/membership-code-revoke');
