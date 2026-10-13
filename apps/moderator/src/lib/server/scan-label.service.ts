@@ -17,7 +17,6 @@ export type ScanLabelCard = {
   name: string | null;
   width: number | null;
   height: number | null;
-  /** When this moderator's lease on the item runs out; a vote after it is accepted only while a slot is free. */
   leaseExpiresAt: Date;
 };
 
@@ -62,7 +61,6 @@ function openItems(db: Db, filters: ScanLabelFilters) {
   return q;
 }
 
-/** Live leases held on an item by moderators other than `userId`. */
 const otherLiveLeases = (db: Db, itemId: number, userId: number, now: Date) =>
   db
     .selectFrom('ScanLabelClaim')
@@ -91,11 +89,11 @@ async function toCard(db: Db, itemId: number, leaseExpiresAt: Date): Promise<Sca
   return row ? { ...row, type: String(row.type), leaseExpiresAt } : null;
 }
 
+const MAX_CLAIM_ATTEMPTS = 20;
+
 /**
- * Serve this moderator one item and hold a vote slot on it for `LEASE_MS`.
- *
- * A moderator with a live lease on an open item gets that item back, so a reload cannot pile up
- * leases. Otherwise partly-voted items come first, then newest.
+ * A live lease on an open item in the current filter is returned as-is, so a reload cannot pile up
+ * leases. A live lease outside the filter is released.
  */
 export async function claimNext(
   userId: number,
@@ -105,18 +103,31 @@ export async function claimNext(
   return dbWrite.transaction().execute(async (trx) => {
     const held = await trx
       .selectFrom('ScanLabelClaim as c')
-      .innerJoin('ScanLabelItem as i', 'i.id', 'c.itemId')
       .select(['c.itemId', 'c.expiresAt'])
       .where('c.userId', '=', userId)
       .where('c.expiresAt', '>', now)
-      .where('i.status', '=', 'open')
       .orderBy('c.expiresAt', 'desc')
-      .executeTakeFirst();
-    if (held) return toCard(trx, held.itemId, held.expiresAt);
+      .execute();
+    for (const lease of held) {
+      const inView = await openItems(trx, filters)
+        .select('i.id')
+        .where('i.id', '=', lease.itemId)
+        .executeTakeFirst();
+      if (inView) return toCard(trx, lease.itemId, lease.expiresAt);
+    }
+    if (held.length)
+      await trx
+        .deleteFrom('ScanLabelClaim')
+        .where('userId', '=', userId)
+        .where(
+          'itemId',
+          'in',
+          held.map((l) => l.itemId)
+        )
+        .execute();
 
     const tried: number[] = [];
-    // Bounded: each pass either leases an item or retires one that filled up under us.
-    for (let attempt = 0; attempt < 20; attempt++) {
+    for (let attempt = 0; attempt < MAX_CLAIM_ATTEMPTS; attempt++) {
       let q = openItems(trx, filters)
         .select(['i.id', 'i.votes'])
         .where(({ not, exists, selectFrom }) =>
@@ -183,10 +194,6 @@ export async function claimNext(
   });
 }
 
-/**
- * Record one moderator's vote. Votes run to `VOTES_PER_ITEM` even after a block majority, so the
- * label records whether the moderators agreed.
- */
 export async function castVote(
   {
     itemId,
@@ -267,11 +274,12 @@ export type ScanLabelCounters = {
   decidedToday: number;
 };
 
+// Reads the primary: it runs straight after a vote, and a lagging replica shows the count one behind.
 export async function getCounters(
   userId: number,
   filters: ScanLabelFilters,
   now: Date = new Date(),
-  db: Kysely<DB> = dbRead
+  db: Kysely<DB> = dbWrite
 ): Promise<ScanLabelCounters> {
   const today = utcDayStart(now);
   const [open, mine, quota, decided] = await Promise.all([

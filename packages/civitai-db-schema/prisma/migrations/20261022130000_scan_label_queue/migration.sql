@@ -1,12 +1,9 @@
 -- Upload scan label queue: moderators vote on images an upload scan flagged, three votes per image.
 --
--- A flag is a label only; nothing here changes an image's visibility. "ScanLabelItem" is one row per
--- image under labelling; "ScanLabelFlag" is one row per scan hit, so a rescan or a second scanner
--- attaches to the same item and the votes (which hang off the item) are never split. Text columns with
--- CHECK constraints rather than enums, so adding a value is one constraint swap, not an enum deploy.
+-- A flag is a label only; nothing here changes an image's visibility.
+-- "ScanLabelFlag" rows attach to one "ScanLabelItem" per image, so votes are never split by a rescan.
 --
--- Apply order: any time, before the ingestion writer's flag (`scan-label-queue-writer`) is turned on
--- and before the moderator page is granted to anyone.
+-- Apply before the moderator page is granted to anyone and before anything writes flags.
 --
 -- 🔴 The FK to "Image" takes a SHARE ROW EXCLUSIVE lock on "Image" while the table is created (blocks
 -- writes, not reads). Apply one statement at a time and re-run on lock timeout.
@@ -61,7 +58,7 @@ CREATE TABLE IF NOT EXISTS "ScanLabelVote" (
 
 CREATE INDEX IF NOT EXISTS "ScanLabelVote_userId_createdAt_idx" ON "ScanLabelVote" ("userId", "createdAt");
 
--- A lease on one vote slot. Expiry is read lazily (`"expiresAt" > now()`); nothing sweeps these.
+-- Expiry is read lazily (`expiresAt > now`); nothing sweeps expired rows.
 CREATE TABLE IF NOT EXISTS "ScanLabelClaim" (
   "itemId"    INTEGER NOT NULL REFERENCES "ScanLabelItem"("id") ON DELETE CASCADE,
   "userId"    INTEGER NOT NULL,
@@ -71,7 +68,7 @@ CREATE TABLE IF NOT EXISTS "ScanLabelClaim" (
 
 CREATE INDEX IF NOT EXISTS "ScanLabelClaim_userId_idx" ON "ScanLabelClaim" ("userId");
 
--- Per-moderator daily vote target (UTC day). 50 is the floor, not only the default.
+-- 50 is the floor, not only the default (`DEFAULT_DAILY_QUOTA` mirrors it).
 CREATE TABLE IF NOT EXISTS "ScanLabelQuota" (
   "userId"     INTEGER PRIMARY KEY,
   "dailyVotes" INTEGER NOT NULL DEFAULT 50 CHECK ("dailyVotes" >= 50),

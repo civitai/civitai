@@ -14,7 +14,6 @@ export const load: PageServerLoad = async ({ url, locals }) => {
   const query = parseQuery(url, scanLabelFiltersSchema);
   const filters = toFilters(query);
   const userId = locals.user.id;
-  // The claim runs first so the counters include the lease it just took.
   const card = await claimNext(userId, filters);
   const [counters, versions] = await Promise.all([
     getCounters(userId, filters),

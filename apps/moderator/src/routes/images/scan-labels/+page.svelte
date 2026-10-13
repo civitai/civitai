@@ -22,17 +22,32 @@
     shownAt = Date.now();
   });
 
-  const setFilter = (key: 'day' | 'version', value: string) =>
-    goto(urlWith(page.url, { [key]: value }), { keepFocus: true });
+  // Blurred so B / N work again: the key handler ignores events from the filter controls.
+  const setFilter = async (key: 'day' | 'version', value: string) => {
+    await goto(urlWith(page.url, { [key]: value }), { keepFocus: true });
+    (document.activeElement as HTMLElement | null)?.blur();
+  };
 
-  // A refused vote still moves on: every refusal means this item no longer needs this moderator.
+  let serverError = $state<string | null>(null);
+
   const submitVote: SubmitFunction = ({ formData }) => {
     submitting = true;
+    serverError = null;
     formData.set('ms', String(Date.now() - shownAt));
     return async ({ result }) => {
-      await applyAction(result);
-      await invalidateAll();
-      submitting = false;
+      try {
+        // An error result must not reload: the reload would serve the same item again and hide
+        // that the vote was not recorded.
+        if (result.type === 'error') {
+          serverError = 'Your vote was not recorded. Try again.';
+          return;
+        }
+        await applyAction(result);
+        // Invalidate on 409 too: the reload claims the next item.
+        await invalidateAll();
+      } finally {
+        submitting = false;
+      }
     };
   };
 
@@ -43,7 +58,7 @@
   };
 
   const onKeydown = (e: KeyboardEvent) => {
-    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    if (e.repeat || e.metaKey || e.ctrlKey || e.altKey) return;
     const target = e.target as HTMLElement | null;
     if (target?.closest('input, textarea, select, [role="combobox"], [role="listbox"]')) return;
     if (e.key === 'b' || e.key === 'B') vote(true);
@@ -111,13 +126,18 @@
     </div>
   </dl>
 
-  {#if form?.error}
+  {#if serverError}
+    <ErrorAlert message={serverError} />
+  {:else if form?.error}
     <ErrorAlert message={form.error} />
   {/if}
 
   {#if data.card}
     {#key data.card.itemId}
-      <section class="flex flex-col gap-4 rounded-xl border border-dark-4 bg-dark-6 p-5">
+      <section
+        class="flex flex-col gap-4 rounded-xl border border-dark-4 bg-dark-6 p-5 transition-opacity"
+        class:opacity-50={submitting}
+      >
         <div class="flex justify-center">
           <EdgeMedia
             src={data.card.url}
@@ -163,6 +183,9 @@
     {/key}
   {:else}
     <section class="rounded-xl border border-dark-4 bg-dark-6 p-5 text-center text-sm text-dark-2">
+      {#if data.counters.myVotesToday >= data.counters.myQuota}
+        You have reached today’s target.
+      {/if}
       Nothing left for you in this view. Other moderators may hold the remaining slots for a couple of
       minutes; check back, or widen the filters.
     </section>

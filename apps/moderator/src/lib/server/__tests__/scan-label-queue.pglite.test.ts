@@ -101,7 +101,6 @@ describe('claimNext order', () => {
     const one = await seedItem(4, { votes: 1, flaggedAt: '2026-10-12T00:00:00Z' });
 
     const served: number[] = [];
-    // One lease per moderator: an item keeps being served until its votes plus leases reach three.
     for (let userId = 1; userId <= 7; userId++)
       served.push((await claimNext(userId, {}, NOW))!.itemId);
 
@@ -117,6 +116,17 @@ describe('claimNext order', () => {
     expect((await claimNext(1, {}, later(1000)))!.itemId).toBe(a);
     const { rows } = await pg.query(`SELECT * FROM "ScanLabelClaim" WHERE "userId" = 1`);
     expect(rows).toHaveLength(1);
+  });
+
+  it('releases a held lease that the new filter excludes', async () => {
+    const d12 = await seedItem(1, { flaggedAt: '2026-10-12T10:00:00Z' });
+    const d13 = await seedItem(2, { flaggedAt: '2026-10-13T10:00:00Z' });
+    expect((await claimNext(1, {}, NOW))!.itemId).toBe(d13);
+    expect((await claimNext(1, { day: '2026-10-12' }, later(1000)))!.itemId).toBe(d12);
+    const { rows } = await pg.query<{ itemId: number }>(
+      `SELECT "itemId" FROM "ScanLabelClaim" WHERE "userId" = 1`
+    );
+    expect(rows).toEqual([{ itemId: d12 }]);
   });
 
   it('never serves an item the moderator already voted on', async () => {

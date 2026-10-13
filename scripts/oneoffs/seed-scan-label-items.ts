@@ -10,8 +10,8 @@
  * in the seed unless its image no longer exists, so a truncated seed file is refused, not half-run.
  *
  * Without `--apply` the whole seed runs inside a transaction that is rolled back, so the counts it
- * prints are the ones an apply would produce. Writes only the two scan label tables, with the same
- * statements as the ingestion writer, so a re-run (or a flag ingestion already wrote) is a no-op.
+ * prints are the ones an apply would produce. Writes only the two scan label tables; idempotent on
+ * `imageId` and `workflowId`, so a re-run is a no-op. `--apply` requires `--expected-ids`.
  */
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -141,6 +141,8 @@ async function main() {
 
   const rows = parseSeed(readFileSync(seedPath, 'utf8'));
   const expectedIds = expectedPath ? parseExpectedIds(readFileSync(expectedPath, 'utf8')) : [];
+  if (apply && !expectedIds.length)
+    throw new Error('--apply needs --expected-ids pointing at a file with at least one id');
   console.log(
     `[seed] apply=${apply} rows=${rows.length} expectedIds=${expectedIds.length} version=${flaggerVersion}`
   );

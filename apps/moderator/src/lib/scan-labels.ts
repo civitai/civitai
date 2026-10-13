@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 export const VOTES_PER_ITEM = 3;
-/** Block votes at which the image is blocked; voting still runs to `VOTES_PER_ITEM`. */
+/** Block votes that make a block the majority; voting still runs to `VOTES_PER_ITEM`. */
 export const BLOCK_MAJORITY = 2;
 export const LEASE_MS = 2 * 60_000;
 /** Mirrors the `ScanLabelQuota."dailyVotes"` default and floor in the migration. */
