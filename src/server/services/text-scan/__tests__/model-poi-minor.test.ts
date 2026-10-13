@@ -126,11 +126,35 @@ describe('applyModelPoiMinor — nothing to do', () => {
     expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
   });
 
+  it('never touches poi or minor for an outcome that did not ask for them', async () => {
+    await run(outcome({ triggeredLabels: ['nsfw'], nsfwLevel: 16 }));
+    expect(dbMock.dbWrite.model.findUnique).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.$queryRaw).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
+  });
+
   it('does nothing for a model deleted before the callback', async () => {
     dbMock.dbWrite.model.findUnique.mockResolvedValue(null);
     await run(outcome({ poi: poi(), minor: minor() }));
     expect(dbMock.dbWrite.$queryRaw).not.toHaveBeenCalled();
     expect(mockSetModelMinor).not.toHaveBeenCalled();
+  });
+});
+
+describe('applyModelPoiMinor — the verdict row', () => {
+  it('stamps promptIds and model from the row whose workflow produced the verdict', async () => {
+    await run(outcome({ poi: poi(), minor: minor() }));
+    for (const call of [
+      dbMock.dbWrite.$queryRaw.mock.calls[0],
+      dbMock.dbWrite.$executeRaw.mock.calls[0],
+    ]) {
+      const text = sqlOf(call);
+      expect(text).toContain('em."entityType" = ANY(');
+      expect(text).toContain('ORDER BY em."workflowId" = ');
+      const values = call.slice(1);
+      expect(values).toContainEqual(['Model', 'Model:search']);
+      expect(values).toContain('wf-1');
+    }
   });
 });
 
