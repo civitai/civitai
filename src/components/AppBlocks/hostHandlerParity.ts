@@ -83,12 +83,15 @@ export interface MessageSpec {
   /**
    * Reply type the SDK awaits (REQUEST-style only); '' for fire-and-forget.
    *
-   * 🔴 DOCUMENTATION ONLY — NOTHING ENFORCES THIS STRING. The parity test greps
-   * each host for a REGISTERED handler (`onMessage('<TYPE>'`), then interpolates
-   * this value into the test's NAME. It never checks that the host actually
-   * sends it, so a wrong value here is invisible: it produces a green test with a
-   * misleading title. Treat it as a comment, and put behavioural claims about the
-   * reply in the per-message browser tests.
+   * 🔴 ENFORCED ONLY FOR THE FORWARDED TYPES. The parity test greps each host for a
+   * REGISTERED handler (`onMessage('<TYPE>'`) and merely interpolates this value
+   * into the test's NAME, so for every other type a wrong value here is invisible.
+   * For the forwarded types (workflows, app subqueue, buzz, viewer, images, private
+   * and shared storage), the premise test of the forward matrix
+   * (`PageBlockHostForwardMatrix.browser.test.tsx` /
+   * `IframeHostForwardMatrix.browser.test.tsx`) asserts this string equals the reply
+   * type the hosts are observed to send. For the rest, treat it as a comment and put
+   * behavioural claims about the reply in the per-message browser tests.
    */
   reply: string;
   IframeHost: HostReq;
