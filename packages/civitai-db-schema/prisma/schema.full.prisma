@@ -6928,6 +6928,22 @@ model ModerationRule {
 
   createdById Int
   createdBy   User @relation(fields: [createdById], references: [id], onDelete: Cascade)
+  versions    ModerationRuleVersion[]
+}
+
+model ModerationRuleVersion {
+  id          Int                  @id @default(autoincrement())
+  ruleId      Int
+  definition  Json
+  enabled     Boolean
+  action      ModerationRuleAction
+  reason      String?
+  createdById Int
+  createdAt   DateTime             @default(now())
+
+  rule ModerationRule @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+
+  @@index([ruleId, id(sort: Desc)])
 }
 
 enum ChangelogType {

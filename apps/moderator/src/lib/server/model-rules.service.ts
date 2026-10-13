@@ -1,4 +1,5 @@
-import { sql } from 'kysely';
+import { sql, type Insertable, type Transaction } from 'kysely';
+import type { DB } from '@civitai/db-schema/kysely';
 import { REDIS_KEYS, type RedisKeyTemplateCache } from '@civitai/redis';
 import { convertLegacyModelRule } from '@civitai/moderation/model-rules-convert';
 import {
@@ -9,6 +10,7 @@ import {
   type ModelRuleForm,
   type RuleMatch,
 } from '$lib/model-rules';
+import { sameRuleState, type ModelRuleVersionView } from '$lib/model-rule-versions';
 import { bustKeyBestEffort } from './cache';
 import { dbRead, dbWrite } from './db';
 import { takePage } from './keyset-page';
@@ -97,6 +99,89 @@ export class LegacyRuleError extends Error {
   }
 }
 
+export class ModelRuleStaleError extends Error {
+  constructor() {
+    super('Someone saved this rule after your edit started. Reload, compare, then edit again.');
+    this.name = 'ModelRuleStaleError';
+  }
+}
+
+export class ModelRuleVersionNotFoundError extends Error {
+  constructor() {
+    super('That version is not in this rule’s history. Reload the page.');
+    this.name = 'ModelRuleVersionNotFoundError';
+  }
+}
+
+export class RestoreRefusedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'RestoreRefusedError';
+  }
+}
+
+type Trx = Transaction<DB>;
+
+function lockRule(trx: Trx, id: number) {
+  return trx
+    .selectFrom('ModerationRule')
+    .select(['id', 'definition', 'enabled', 'action', 'reason', 'createdById', 'updatedAt'])
+    .where('id', '=', id)
+    .where('entityType', '=', 'Model')
+    .forUpdate()
+    .executeTakeFirst();
+}
+type LockedRule = NonNullable<Awaited<ReturnType<typeof lockRule>>>;
+type RuleState = Pick<LockedRule, 'definition' | 'enabled' | 'action' | 'reason'>;
+
+const editorOf = (rule: LockedRule) =>
+  (isSemanticDefinition(rule.definition) && rule.definition.updatedById) || rule.createdById;
+
+/**
+ * Appends `next` to the rule's history. A rule written before history was kept has none, so its
+ * state before this write goes in first, attributed and dated as it was last written.
+ */
+async function appendVersion(
+  trx: Trx,
+  ruleId: number,
+  before: LockedRule | null,
+  next: RuleState,
+  userId: number
+) {
+  const rows: Insertable<DB['ModerationRuleVersion']>[] = [];
+  if (before) {
+    const any = await trx
+      .selectFrom('ModerationRuleVersion')
+      .select('id')
+      .where('ruleId', '=', ruleId)
+      .limit(1)
+      .executeTakeFirst();
+    if (!any)
+      rows.push({
+        ruleId,
+        definition: before.definition,
+        enabled: before.enabled,
+        action: before.action,
+        reason: before.reason,
+        createdById: editorOf(before),
+        createdAt: before.updatedAt,
+      });
+  }
+  rows.push({ ruleId, ...next, createdById: userId });
+  await trx.insertInto('ModerationRuleVersion').values(rows).execute();
+}
+
+const viewOf = (definition: unknown, reason: string | null, enabled: boolean) => {
+  const semantic = convertLegacyModelRule(definition, reason);
+  return {
+    subject: semantic.subject,
+    description: semantic.description,
+    aliases: semantic.aliases ?? [],
+    note: reason ?? '',
+    enabled,
+  };
+};
+
 export async function createModelRule(
   input: ModelRuleForm,
   userId: number
@@ -109,47 +194,55 @@ export async function createModelRule(
     updatedById: userId,
   });
   const now = new Date();
-  const created = await dbWrite
-    .insertInto('ModerationRule')
-    .values({
-      entityType: 'Model',
-      definition,
-      action: 'Block',
-      enabled: true,
-      order: null,
-      reason: input.note || null,
-      createdById: userId,
-      updatedAt: now,
-    })
-    .returning(['id'])
-    .executeTakeFirstOrThrow();
+  const reason = input.note || null;
+  const id = await dbWrite.transaction().execute(async (trx) => {
+    const created = await trx
+      .insertInto('ModerationRule')
+      .values({
+        entityType: 'Model',
+        definition,
+        action: 'Block',
+        enabled: true,
+        order: null,
+        reason,
+        createdById: userId,
+        updatedAt: now,
+      })
+      .returning(['id'])
+      .executeTakeFirstOrThrow();
+    await appendVersion(
+      trx,
+      created.id,
+      null,
+      { definition, enabled: true, action: 'Block', reason },
+      userId
+    );
+    return created.id;
+  });
 
   const cacheStale = !(await bustCache());
   await recordModActivity({
     userId,
     entityType: ACTIVITY_ENTITY,
-    entityId: created.id,
+    entityId: id,
     activity: 'create',
   });
-  return { id: created.id, cacheStale };
+  return { id, cacheStale };
 }
 
 /** Edits one rule, keeping `legacyMatch` and clearing `needsAttention` — saving is the act of reviewing. */
 export async function updateModelRule(
   id: number,
   input: ModelRuleForm,
-  userId: number
+  userId: number,
+  opts: { baseUpdatedAt?: string } = {}
 ): Promise<WriteResult> {
   await dbWrite.transaction().execute(async (trx) => {
-    const existing = await trx
-      .selectFrom('ModerationRule')
-      .select(['definition'])
-      .where('id', '=', id)
-      .where('entityType', '=', 'Model')
-      .forUpdate()
-      .executeTakeFirst();
+    const existing = await lockRule(trx, id);
     if (!existing) throw new ModelRuleNotFoundError();
     if (!isSemanticDefinition(existing.definition)) throw new LegacyRuleError();
+    if (opts.baseUpdatedAt !== undefined && existing.updatedAt.toISOString() !== opts.baseUpdatedAt)
+      throw new ModelRuleStaleError();
 
     const definition = semanticModelRuleSchema.parse({
       type: 'semantic',
@@ -161,12 +254,20 @@ export async function updateModelRule(
         : { legacyMatch: existing.definition.legacyMatch }),
       updatedById: userId,
     });
+    const reason = input.note || null;
     await trx
       .updateTable('ModerationRule')
-      .set({ definition, reason: input.note || null, updatedAt: new Date() })
+      .set({ definition, reason, updatedAt: new Date() })
       .where('id', '=', id)
       .where('entityType', '=', 'Model')
       .executeTakeFirstOrThrow();
+    await appendVersion(
+      trx,
+      id,
+      existing,
+      { definition, enabled: existing.enabled, action: existing.action, reason },
+      userId
+    );
   });
 
   const cacheStale = !(await bustCache());
@@ -185,27 +286,24 @@ export async function setModelRuleEnabled(
   userId: number
 ): Promise<WriteResult> {
   await dbWrite.transaction().execute(async (trx) => {
-    const existing = await trx
-      .selectFrom('ModerationRule')
-      .select(['definition'])
-      .where('id', '=', id)
-      .where('entityType', '=', 'Model')
-      .forUpdate()
-      .executeTakeFirst();
+    const existing = await lockRule(trx, id);
     if (!existing) throw new ModelRuleNotFoundError();
-
+    const definition = isSemanticDefinition(existing.definition)
+      ? { ...existing.definition, updatedById: userId }
+      : existing.definition;
     await trx
       .updateTable('ModerationRule')
-      .set({
-        enabled,
-        updatedAt: new Date(),
-        ...(isSemanticDefinition(existing.definition)
-          ? { definition: { ...existing.definition, updatedById: userId } }
-          : {}),
-      })
+      .set({ enabled, updatedAt: new Date(), definition })
       .where('id', '=', id)
       .where('entityType', '=', 'Model')
       .executeTakeFirstOrThrow();
+    await appendVersion(
+      trx,
+      id,
+      existing,
+      { definition, enabled, action: existing.action, reason: existing.reason },
+      userId
+    );
   });
 
   const cacheStale = !(await bustCache());
@@ -214,6 +312,86 @@ export async function setModelRuleEnabled(
     entityType: ACTIVITY_ENTITY,
     entityId: id,
     activity: enabled ? 'enable' : 'disable',
+  });
+  return { cacheStale };
+}
+
+export async function listModelRuleVersions(
+  ruleId: number,
+  limit = 50
+): Promise<ModelRuleVersionView[]> {
+  const rows = await dbWrite
+    .selectFrom('ModerationRuleVersion as v')
+    .innerJoin('ModerationRule as r', 'r.id', 'v.ruleId')
+    .select(['v.id', 'v.definition', 'v.enabled', 'v.reason', 'v.createdById', 'v.createdAt'])
+    .where('v.ruleId', '=', ruleId)
+    .where('r.entityType', '=', 'Model')
+    .orderBy('v.id', 'desc')
+    .limit(limit)
+    .execute();
+  const users = await usersByIds(rows.map((row) => row.createdById));
+  return rows.map((row) => ({
+    id: row.id,
+    legacy: !isSemanticDefinition(row.definition),
+    ...viewOf(row.definition, row.reason, row.enabled),
+    createdById: row.createdById,
+    createdBy: users.get(row.createdById)?.username ?? null,
+    createdAt: row.createdAt.toISOString(),
+  }));
+}
+
+/** Writes an old version's definition and enabled state as the rule's new state, and as a new version. */
+export async function restoreModelRuleVersion(
+  ruleId: number,
+  versionId: number,
+  userId: number
+): Promise<WriteResult> {
+  await dbWrite.transaction().execute(async (trx) => {
+    const existing = await lockRule(trx, ruleId);
+    if (!existing) throw new ModelRuleNotFoundError();
+    if (!isSemanticDefinition(existing.definition)) throw new LegacyRuleError();
+    const version = await trx
+      .selectFrom('ModerationRuleVersion')
+      .select(['definition', 'enabled', 'reason'])
+      .where('id', '=', versionId)
+      .where('ruleId', '=', ruleId)
+      .executeTakeFirst();
+    if (!version) throw new ModelRuleVersionNotFoundError();
+    if (!isSemanticDefinition(version.definition))
+      throw new RestoreRefusedError('That version is a regex rule and cannot be restored.');
+    if (
+      sameRuleState(
+        viewOf(existing.definition, existing.reason, existing.enabled),
+        viewOf(version.definition, version.reason, version.enabled)
+      )
+    )
+      throw new RestoreRefusedError('That version is the same as the current rule.');
+
+    const definition = semanticModelRuleSchema.parse({
+      ...version.definition,
+      updatedById: userId,
+    });
+    await trx
+      .updateTable('ModerationRule')
+      .set({ definition, enabled: version.enabled, reason: version.reason, updatedAt: new Date() })
+      .where('id', '=', ruleId)
+      .where('entityType', '=', 'Model')
+      .executeTakeFirstOrThrow();
+    await appendVersion(
+      trx,
+      ruleId,
+      existing,
+      { definition, enabled: version.enabled, action: existing.action, reason: version.reason },
+      userId
+    );
+  });
+
+  const cacheStale = !(await bustCache());
+  await recordModActivity({
+    userId,
+    entityType: ACTIVITY_ENTITY,
+    entityId: ruleId,
+    activity: 'restore',
   });
   return { cacheStale };
 }

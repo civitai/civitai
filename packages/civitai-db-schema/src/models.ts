@@ -4324,6 +4324,19 @@ export interface ModerationRule {
   reason: string | null;
   createdById: number;
   createdBy?: User;
+  versions?: ModerationRuleVersion[];
+}
+
+export interface ModerationRuleVersion {
+  id: number;
+  ruleId: number;
+  definition: JsonValue;
+  enabled: boolean;
+  action: ModerationRuleAction;
+  reason: string | null;
+  createdById: number;
+  createdAt: Date;
+  rule?: ModerationRule;
 }
 
 export interface Changelog {
