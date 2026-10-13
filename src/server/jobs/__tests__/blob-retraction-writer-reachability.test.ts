@@ -352,9 +352,13 @@ beforeEach(async () => {
     store.images.filter((i) => matches(i, where))
   );
   dbMock.dbWrite.image.create.mockImplementation(async ({ data }: any) => {
-    const row = image(data.id, data.userId, {
+    // `createImage` never writes an `id`; the store assigns it from the `key-<id>/` url.
+    if (data.id !== undefined) throw new Error('createImage wrote a caller-supplied id');
+    const key = /^key-(\d+)\//.exec(data.url ?? '');
+    if (!key) throw new Error(`fixture url must be key-<id>/…, got ${data.url}`);
+    const row = image(Number(key[1]), data.userId, {
       metadata: data.metadata ?? null,
-      url: data.url ?? `key-${data.id}/original.jpeg`,
+      url: data.url,
       ingestion: data.ingestion ?? 'Pending',
     });
     store.images.push(row);
@@ -505,7 +509,6 @@ describe('who can reach blob retraction, driven through the real block writers',
   ] as const) {
     it(`ignores a forged marker (${label}) carried through the real upload path`, async () => {
       await createImage({
-        id: 2,
         userId: TAKEDOWN_USER,
         url: 'key-2/original.jpeg',
         type: 'image',
@@ -539,7 +542,6 @@ describe('who can reach blob retraction, driven through the real block writers',
   // object behind any byte-identical image simply by getting their own copy blocked.
   it('a forged marker cannot make an automated block retract', async () => {
     await createImage({
-      id: 3,
       userId: SCANNED_USER,
       url: 'key-3/original.jpeg',
       type: 'image',

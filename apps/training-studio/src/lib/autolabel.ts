@@ -1,6 +1,6 @@
 // Client side of auto-labeling: submit uploaded blobs in batches through the backend seam, poll each
 // workflow, and stream results back per tile via `onResult`. Mirrors the main app's poll loop (5s in
-// prod; a touch faster here). Labels are keyed by the tile id we send as `key`.
+// prod; a touch faster here). Results are keyed by the `key` the caller sends, which must be unique per run.
 
 import { backend } from '$lib/host';
 import type { Media } from '$lib/data/trainingModels';

@@ -169,6 +169,7 @@ function base(over: Partial<ListingDetail>): ListingDetail {
     // Default: no public source repo → the Details rail renders no `Source` row.
     sourceRepoUrl: null,
     betaMessage: null,
+    restrictedAudience: null,
     updatedAt: '2026-03-04T05:06:07.000Z',
     screenshots: [],
     // No declared scopes: this file is not about the permission disclosure, and an

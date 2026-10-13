@@ -86,7 +86,10 @@ const LEDGER: Record<string, { calls: number; selfBinds: string; why: string }> 
     // 15 → 16: `assertTrainingRequestAllowed`, the shared gate of the four
     // `kind:'training'` entry points (dataset, estimate, submit, and the consent
     // pair via its preamble). One call site, not four — the helper is the gate.
-    calls: 16,
+    // 16 → 14: `getMyBuzzBalance`'s inline call and the buzz-read helper's call. The four
+    // buzz reads now reach the gate through `authorizeBlockBridgeViewer`'s one call, which
+    // was already counted.
+    calls: 14,
     selfBinds: 'parseSubjectUserId(claims.sub) on claims from authorizeBlockBridgeToken',
     why: 'The tRPC bridge procs. Block-JWT-authed procedures (`previewPostFromApp`, `createPostFromApp` and `publishGenerationOutputs` additionally require a session matching the subject), so the flag is evaluated against the token subject, never ctx.user. Was 17 until two post-authorization halves moved out to be shared with their REST twins: `getImagesByIds` into block-gated-images-read.service.ts, and `updateUserSettings` into user-settings.service.ts. Neither call disappeared — both MOVED, and the entries below are where they went.',
   },

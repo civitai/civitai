@@ -256,7 +256,7 @@ function UserMenuItems({ items }: { items: UserMenuItem[] }) {
               {/* NEW first, then the count, both immediately after the label
                   rather than pushed to the right edge — the two badges read as
                   one group belonging to the entry. */}
-              {!!item.newUntil && Date.now() < item.newUntil.getTime() && (
+              {(item.isNew || (!!item.newUntil && Date.now() < item.newUntil.getTime())) && (
                 <Badge color="green.8" variant="filled" size="sm" ml={4}>
                   NEW
                 </Badge>

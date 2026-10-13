@@ -22,6 +22,7 @@ import {
 } from '~/server/schema/resource-intent.schema';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { Availability } from '~/shared/utils/prisma/enums';
+import { drainStdio, runScriptAndExit } from './lib/run-as-script';
 
 /**
  * ResourceInsight labeling pass (M2) — batch-labels PUBLISHED model versions
@@ -1014,12 +1015,10 @@ export async function main(): Promise<void> {
  * first of those two mutants silently restores the truncated-resume-token defect
  * this wrapper exists to fix. The defaults are therefore pinned by their own
  * tests (`runAsScript(exit)` with the real `drainStdio`; `runAsScript(undefined,
- * flush)` against a spied `process.exit`). ⚠️ Neither of those two imports
- * `drainStdio`, so neither is why it is exported — both mutants above die with
- * it unexported. The export exists for the THIRD test, which imports and calls
- * it directly to watch it WAIT on the write callbacks; `drainStdio`'s own
- * docstring is the single explanation. Do not collapse the signature or
- * "simplify" the defaults away.
+ * flush)` against a spied `process.exit`). The THIRD test imports `drainStdio`
+ * from ./lib/run-as-script and watches it WAIT on the write callbacks;
+ * `drainStdio`'s own docstring there is the single explanation. Do not collapse
+ * the signature or "simplify" the defaults away.
  */
 export async function runAsScript(
   exit: (code: number) => void = process.exit,
@@ -1027,30 +1026,9 @@ export async function runAsScript(
   // runs after the exit would be inert, and nothing else could see that.
   flush: () => Promise<void> = drainStdio
 ): Promise<void> {
-  try {
-    await main();
-  } catch (error) {
-    console.error(error);
-    await flush();
-    exit(1);
-    return;
-  }
-  await flush();
-  exit(0);
-}
-
-/**
- * Wait for stdout AND stderr to drain. Empty writes settle after pending ones.
- *
- * Exported ONLY so it is reachable from a test — nothing in the app imports it.
- * Precisely what the export buys: a test can hold the two write callbacks and
- * watch this function WAIT for them. The default-binding test above cannot see
- * that — it observes the writes being issued, which a fire-and-forget version
- * would also satisfy while leaving the original truncation defect intact.
- */
-export async function drainStdio(): Promise<void> {
-  await new Promise<void>((resolve) => process.stdout.write('', () => resolve()));
-  await new Promise<void>((resolve) => process.stderr.write('', () => resolve()));
+  // The drain-then-exit rule itself lives in ./lib/run-as-script (shared with the M3
+  // gold-set runner); `drainStdio` moved there with it.
+  await runScriptAndExit(main, exit, flush);
 }
 
 if (process.argv[1]?.endsWith('label-resource-insights.ts')) {

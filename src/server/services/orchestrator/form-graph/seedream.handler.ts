@@ -3,7 +3,7 @@
 import type { ImageGenStepTemplate, SeedreamImageGenInput, SeedreamVersion } from '@civitai/client';
 import { removeEmpty } from '~/utils/object-helpers';
 import { seedreamVersionIds } from '~/shared/form-graph/generation/image/seedream.graph';
-import { defineHandler } from '../ecosystems/handler-factory';
+import { defineHandler } from '../handlers/handler-factory';
 import type { EcosystemData } from './types';
 
 const versionIdToVersion = new Map<number, SeedreamVersion>(

@@ -27,6 +27,7 @@ import { ToggleLockComments } from '../CommentsV2/ToggleLockComments';
 import { IconLock, IconRosetteDiscountCheck } from '@tabler/icons-react';
 import { ToggleSearchableMenuItem } from '../MenuItems/ToggleSearchableMenuItem';
 import { AddArtFrameMenuItem } from '~/components/Decorations/AddArtFrameMenuItem';
+import { AddEventDecorationMenuItem } from '~/components/Decorations/AddEventDecorationMenuItem';
 import { useRescanArticle } from '~/hooks/useRescanArticle';
 import type { ArticleGetById } from '~/types/router';
 import { openAddToCollectionModal } from '~/components/Dialog/triggers/add-to-collection';
@@ -182,6 +183,16 @@ export function ArticleContextMenu({ article, ...props }: Props) {
                 entityId={article.id}
                 image={article.coverImage}
                 currentCosmetic={article.cosmetic}
+              />
+            )}
+            {/* On the article's own page too: otherwise its cover image is the nearest thing to hat. */}
+            {isOwner && article.coverImage && (
+              <AddEventDecorationMenuItem
+                entityType={CosmeticEntity.Article}
+                entityId={article.id}
+                image={article.coverImage}
+                currentCosmetic={article.eventDecoration}
+                findWornHat={atDetailsPage}
               />
             )}
             <Menu.Item

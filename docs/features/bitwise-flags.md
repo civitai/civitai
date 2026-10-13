@@ -17,7 +17,7 @@ Feature flags are **not** bitwise — those are string-keyed and Flipt-backed, s
 | `src/shared/utils/flags.ts` | `Flags` utility class |
 | `src/server/common/enums.ts` | `NsfwLevel` enum (the bit values) |
 | `src/shared/constants/browsingLevel.constants.ts` | Derived browsing-level flags + predicates |
-| `src/shared/constants/cosmetic-flags.constants.ts` | `CosmeticFlag` bits on `Cosmetic.flags` (moderator-set, e.g. `SfwPlacementsOnly`) |
+| `src/shared/constants/cosmetic-flags.constants.ts` | `CosmeticFlag` bits on `Cosmetic.flags` (moderator-set: `SfwPlacementsOnly`, `NsfwPlacementsOnly`, mutually exclusive) |
 | `packages/civitai-shared/src/model-version-flags.constants.ts` | `ModelVersionFlag` bits on `ModelVersion.flags` (`GenerationDisabled`, `NotEvictable` and `NoAdditionalResourceFee` via the moderator menu; `NotDerivative` via SQL) |
 
 ## The Flags Class

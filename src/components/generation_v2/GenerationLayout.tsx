@@ -31,7 +31,7 @@ import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useTourContext } from '~/components/Tours/ToursProvider';
 import createSlots from '~/libs/slots/create-slots';
 import { hashify } from '~/utils/string-helpers';
-import { useSelfHostedBlock, SelfHostedBlockedAlert } from './FormFooter';
+import { useSelfHostedBlock, SelfHostedBlockedAlert } from '~/components/Generation/footer-parts';
 
 // =============================================================================
 // Slots

@@ -8,8 +8,8 @@ import type { MiniMaxMusic3Input, MiniMaxMusic3StepTemplate } from '@civitai/cli
 import { createMusicConceptStep } from '../music-concept';
 import { maxRandomSeed } from '~/server/common/constants';
 import { removeEmpty } from '~/utils/object-helpers';
-import { defineHandler } from '../ecosystems/handler-factory';
-import type { StepInput } from '../ecosystems';
+import { defineHandler } from '../handlers/handler-factory';
+import type { StepInput } from '../handlers';
 import type { EcosystemData } from './types';
 
 type MiniMaxMusicData = EcosystemData<'MiniMaxMusic3'>;

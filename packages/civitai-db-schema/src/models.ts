@@ -232,9 +232,9 @@ export type ComicEngagementType = "None" | "Notify" | "Hide";
 
 export type ComicGenre = "Action" | "Adventure" | "Comedy" | "Drama" | "Fantasy" | "Horror" | "Mystery" | "Romance" | "SciFi" | "SliceOfLife" | "Thriller" | "Other";
 
-export type UserRestrictionStatus = "Pending" | "Upheld" | "Overturned";
+export type UserRestrictionStatus = "Pending" | "Upheld" | "Overturned" | "AccountDeleted";
 
-export type StrikeReason = "BlockedContent" | "RealisticMinorContent" | "CSAMContent" | "TOSViolation" | "HarassmentContent" | "ProhibitedContent" | "ManualModAction";
+export type StrikeReason = "BlockedContent" | "RealisticMinorContent" | "CSAMContent" | "TOSViolation" | "HarassmentContent" | "ProhibitedContent" | "ManualModAction" | "Scam";
 
 export type StrikeStatus = "Active" | "Expired" | "Voided";
 
@@ -553,6 +553,7 @@ export interface User {
   reports?: Report[];
   feedback?: Feedback[];
   feedbackHandled?: Feedback[];
+  feedbackOwnerStatus?: Feedback[];
   questions?: Question[];
   answers?: Answer[];
   commentsv2?: CommentV2[];
@@ -581,6 +582,8 @@ export interface User {
   articleEngagements?: ArticleEngagement[];
   articleRatingReviewsSubmitted?: ArticleRatingReview[];
   articleRatingReviewsResolved?: ArticleRatingReview[];
+  ratingReviewsSubmitted?: RatingReview[];
+  ratingReviewsResolved?: RatingReview[];
   leaderboardResults?: LeaderboardResult[];
   receivedReports?: UserReport[];
   engagedImages?: ImageEngagement[];
@@ -656,6 +659,7 @@ export interface User {
   issuedStrikes?: UserStrike[];
   voidedStrikes?: UserStrike[];
   generationPresets?: GenerationPreset[];
+  postPresets?: PostPreset[];
   generationSizePresets?: GenerationSizePreset[];
   ownedWildcardSets?: WildcardSet[];
   blurbs?: Blurb[];
@@ -695,6 +699,8 @@ export interface User {
   appListingReportsReported?: AppListingReport[];
   appListingReportsResolved?: AppListingReport[];
   appListingModerationEvents?: AppListingModerationEvent[];
+  appSubListingsAuthored?: AppSubListing[];
+  appSubListingsModerated?: AppSubListing[];
   appCollaboratorSeats?: AppCollaborator[];
   appCollaboratorInvitesSent?: AppCollaborator[];
   appOwnershipEventsActed?: AppOwnershipEvent[];
@@ -716,6 +722,7 @@ export interface User {
   crucibleEntries?: CrucibleEntry[];
   crucibleEngagements?: CrucibleEngagement[];
   prizes?: Prize[];
+  gameFrameGames?: GameFrameGame[];
 }
 
 export interface CustomerSubscription {
@@ -1196,9 +1203,12 @@ export interface ModelMetric {
   nsfwLevel: number;
   userId: number;
   lastVersionAt: Date | null;
+  publishedAt: Date | null;
   mode: ModelModifier | null;
   status: ModelStatus;
   availability: Availability;
+  hotScore: number | null;
+  uniqueGeneratorCount: number;
 }
 
 export interface ModelVersionMetric {
@@ -1231,6 +1241,10 @@ export interface ModelBaseModelMetric {
   poi: boolean;
   minor: boolean;
   updatedAt: Date;
+  hotScore: number | null;
+  generationCount: number | null;
+  uniqueGeneratorCount: number | null;
+  publishedAt: Date | null;
 }
 
 export interface ModelMetricDaily {
@@ -1307,6 +1321,8 @@ export interface Report {
   model3dReview?: Model3DReviewReport | null;
   announcement?: AnnouncementReport | null;
   crucible?: CrucibleReport | null;
+  gameFrameGame?: GameFrameGameReport | null;
+  gameFrameReceipts?: GameFrameReportReceipt[];
 }
 
 export interface ResourceReviewReport {
@@ -1448,6 +1464,28 @@ export interface ResourceInsight {
   stale: boolean;
 }
 
+export interface ResourceIntentCoocSnapshot {
+  id: string;
+  kind: string;
+  status: string;
+  contentHash: string | null;
+  specHash: string;
+  trainStart: Date;
+  trainEnd: Date;
+  seed: number;
+  pinnedUntil: Date | null;
+  builtAt: Date;
+  trainCreatedAtMin: Date | null;
+  trainCreatedAtMax: Date | null;
+  idsTried: number | null;
+  trainRows: number | null;
+  vocab: number | null;
+  models: number | null;
+  keptPairs: number | null;
+  payload: Buffer | null;
+  trainImageIds: Buffer | null;
+}
+
 export interface Post {
   id: number;
   nsfw: boolean;
@@ -1471,6 +1509,8 @@ export interface Post {
   unlisted: boolean;
   availability: Availability;
   nsfwLevel: number;
+  moderatorNsfwLevel: number | null;
+  moderatorNsfwLevelBasis: number | null;
   images?: Image[];
   tags?: TagsOnPost[];
   reactions?: PostReaction[];
@@ -1583,6 +1623,8 @@ export interface Image {
   appListingIcons?: AppListing[];
   appListingCovers?: AppListing[];
   appListingScreenshots?: AppListingScreenshot[];
+  appSubListingImages?: AppSubListing[];
+  appSubListingPendingImages?: AppSubListing[];
   crucibles?: Crucible[];
   crucibleHeroes?: Crucible[];
   crucibleEntries?: CrucibleEntry[];
@@ -1631,8 +1673,18 @@ export interface EntityModeration {
   triggeredLabels: string[];
   result: JsonValue | null;
   contentHash: string | null;
+  nsfwLevel: number | null;
   createdAt: Date;
   updatedAt: Date;
+}
+
+export interface TextScanPrompt {
+  id: number;
+  key: string;
+  content: string;
+  note: string | null;
+  createdById: number | null;
+  createdAt: Date;
 }
 
 export interface ImageEngagement {
@@ -1699,6 +1751,25 @@ export interface ArticleRatingReview {
   userComment: string | null;
   modComment: string | null;
   status: ReportStatus;
+}
+
+export interface RatingReview {
+  id: number;
+  entityType: string;
+  entityId: number;
+  userId: number;
+  user?: User;
+  currentLevel: number;
+  suggestedLevel: number;
+  appliedLevel: number | null;
+  userComment: string | null;
+  modComment: string | null;
+  status: ReportStatus;
+  resolvedBy: number | null;
+  resolver?: User | null;
+  resolvedAt: Date | null;
+  resolvedTextHash: string | null;
+  createdAt: Date;
 }
 
 export interface CollectionMetric {
@@ -1924,6 +1995,16 @@ export interface Feedback {
   handledAt: Date | null;
   bugId: number | null;
   bug?: Bug | null;
+  appListingId: string | null;
+  appListing?: AppListing | null;
+  appBlockVersion: string | null;
+  appBlockSha: string | null;
+  ownerStatus: string | null;
+  ownerStatusAt: Date | null;
+  ownerStatusById: number | null;
+  ownerStatusBy?: User | null;
+  ownerFlaggedAt: Date | null;
+  hiddenFromOwnerAt: Date | null;
 }
 
 export interface ApiKey {
@@ -2117,6 +2198,20 @@ export interface AppBlockPublishRequest {
   updatedAt: Date;
 }
 
+export interface AppBlockBuildAttempt {
+  id: number;
+  publishRequestId: string | null;
+  slug: string;
+  sha: string;
+  runId: string | null;
+  mode: string;
+  status: string;
+  failedStep: string | null;
+  failedReason: string | null;
+  failureClass: string | null;
+  createdAt: Date;
+}
+
 export interface AppListing {
   id: string;
   serialId: number;
@@ -2161,6 +2256,9 @@ export interface AppListing {
   collaborators?: AppCollaborator[];
   ownershipEvents?: AppOwnershipEvent[];
   ownershipTransfers?: AppOwnershipTransfer[];
+  subListings?: AppSubListing[];
+  subListingParent?: AppSubListingParent | null;
+  feedback?: Feedback[];
 }
 
 export interface AppListingScreenshot {
@@ -2256,6 +2354,47 @@ export interface AppListingModerationEvent {
   before: JsonValue | null;
   after: JsonValue | null;
   createdAt: Date;
+}
+
+export interface AppSubListingParent {
+  parentListingId: string;
+  parentListing?: AppListing;
+  enabled: boolean;
+  maxPerAuthor: number;
+  linkTemplate: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface AppSubListing {
+  id: string;
+  parentListingId: string;
+  parentListing?: AppListing;
+  itemKey: string;
+  authorUserId: number;
+  author?: User;
+  title: string;
+  tagline: string | null;
+  imageId: number | null;
+  image?: Image | null;
+  subPath: string;
+  contentRating: string | null;
+  pendingTitle: string | null;
+  pendingTagline: string | null;
+  pendingImageId: number | null;
+  pendingImage?: Image | null;
+  pendingSubPath: string | null;
+  pendingContentRating: string | null;
+  pendingSubmittedAt: Date | null;
+  editRejectionReason: string | null;
+  status: string;
+  statusReason: string | null;
+  moderatedById: number | null;
+  moderatedBy?: User | null;
+  moderatedAt: Date | null;
+  approvedAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
 }
 
 export interface AppReviewAgentReport {
@@ -2775,6 +2914,8 @@ export interface Thread {
   model3dReview?: Model3DReview | null;
   appListingId: number | null;
   appListing?: AppListing | null;
+  crucibleId: number | null;
+  crucible?: Crucible | null;
   metadata: JsonValue;
   commentCount: number;
   comments?: CommentV2[];
@@ -2970,6 +3111,7 @@ export interface Cosmetic {
   cosmeticShopItems?: CosmeticShopItem[];
   packMemberships?: CosmeticShopItemCosmetic[];
   creatorMilestones?: CreatorMilestone[];
+  milestoneExtras?: CreatorMilestoneCosmetic[];
 }
 
 export interface UserCosmetic {
@@ -2988,11 +3130,45 @@ export interface UserCosmetic {
   remaining: number | null;
 }
 
+export interface EventCosmeticPlacement {
+  id: bigint;
+  event: string;
+  userId: number;
+  cosmeticId: number;
+  claimKey: string;
+  team: string;
+  entityType: CosmeticEntity;
+  entityId: number;
+  entityOwnerId: number | null;
+  startedAt: Date;
+  endedAt: Date | null;
+  updatedAt: Date;
+}
+
+export interface EventCosmeticScoreDaily {
+  event: string;
+  day: Date;
+  userId: number;
+  cosmeticId: number;
+  claimKey: string;
+  team: string;
+  impressions: number;
+  anonImpressions: number;
+  reactions: number;
+  comments: number;
+  stickers: number;
+  remixes: number;
+  modelLikes: number;
+  points: number;
+  updatedAt: Date;
+}
+
 export interface CreatorMilestone {
   key: string;
   track: string;
   threshold: number | null;
   hidden: boolean;
+  unlisted: boolean;
   hint: string | null;
   name: string;
   description: string | null;
@@ -3000,6 +3176,14 @@ export interface CreatorMilestone {
   cosmetic?: Cosmetic | null;
   sortOrder: number;
   achievements?: UserCreatorMilestone[];
+  extraCosmetics?: CreatorMilestoneCosmetic[];
+}
+
+export interface CreatorMilestoneCosmetic {
+  milestoneKey: string;
+  milestone?: CreatorMilestone;
+  cosmeticId: number;
+  cosmetic?: Cosmetic;
 }
 
 export interface UserCreatorMilestone {
@@ -3101,6 +3285,17 @@ export interface UserCosmeticShopPurchases {
   refunded: boolean;
   meta: JsonValue | null;
   components?: UserCosmeticShopPurchaseCosmetic[];
+}
+
+export interface CosmeticShopPurchaseClaim {
+  transactionId: string;
+  userId: number;
+  shopItemId: number;
+  amount: number;
+  status: string;
+  attempts: number;
+  createdAt: Date;
+  updatedAt: Date;
 }
 
 export interface UserCosmeticShopPurchaseCosmetic {
@@ -3260,6 +3455,8 @@ export interface Collection {
   metadata: JsonValue;
   availability: Availability;
   nsfwLevel: number;
+  moderatorNsfwLevel: number | null;
+  moderatorNsfwLevelBasis: number | null;
   collaborationDisabledAt: Date | null;
   items?: CollectionItem[];
   contributors?: CollectionContributor[];
@@ -3391,9 +3588,15 @@ export interface Bounty {
   poi: boolean;
   complete: boolean;
   refunded: boolean;
+  payoutRecordedAt: Date | null;
+  payoutSettledAt: Date | null;
+  payoutWinnerUserId: number | null;
   availability: Availability;
   nsfwLevel: number;
+  moderatorNsfwLevel: number | null;
+  moderatorNsfwLevelBasis: number | null;
   lockedProperties: string[];
+  meta: JsonValue | null;
   tags?: TagsOnBounty[];
   entries?: BountyEntry[];
   benefactors?: BountyBenefactor[];
@@ -3416,6 +3619,8 @@ export interface BountyEntry {
   locked: boolean;
   description: string | null;
   nsfwLevel: number;
+  moderatorNsfwLevel: number | null;
+  moderatorNsfwLevelBasis: number | null;
   benefactors?: BountyBenefactor[];
   thread?: Thread | null;
   reactions?: BountyEntryReaction[];
@@ -4001,8 +4206,40 @@ export interface Appeal {
   resolvedBy: number | null;
   resolvedByUser?: User | null;
   resolvedMessage: string | null;
+  resolvedReason: string | null;
   internalNotes: string | null;
   buzzTransactionId: string | null;
+  entityRemovedAt: Date | null;
+}
+
+export interface AppealDecisionRecord {
+  id: bigint;
+  appealId: number;
+  imageId: number;
+  imageUrl: string;
+  pHash: bigint | null;
+  promptHash: string | null;
+  nsfwLevel: number;
+  nsfwLevelLocked: boolean;
+  nsfwLevelReason: string | null;
+  aiNsfwLevel: number | null;
+  blockedFor: string | null;
+  decision: string;
+  resolvedReason: string | null;
+  decidedAt: Date;
+  removalLabel: string | null;
+  removalNsfw: string | null;
+  restoredLevel: number | null;
+  trainingLabelCorrectedAt: Date | null;
+  trainingCopyState: string | null;
+  trainingObjectKey: string | null;
+  ownerHash: string | null;
+  createdAt: Date;
+}
+
+export interface AppealTrainingObjectDeletion {
+  key: string;
+  createdAt: Date;
 }
 
 export interface AuctionBase {
@@ -4191,6 +4428,8 @@ export interface Challenge {
   coverImageId: number | null;
   coverImage?: Image | null;
   nsfwLevel: number;
+  moderatorNsfwLevel: number | null;
+  moderatorNsfwLevelBasis: number | null;
   modelVersionIds: number[];
   allowedNsfwLevel: number;
   judgingPrompt: string | null;
@@ -5319,6 +5558,8 @@ export interface UserRestriction {
   resolvedAt: Date | null;
   resolvedBy: number | null;
   resolvedMessage: string | null;
+  resolvedReason: string | null;
+  internalNotes: string | null;
   userMessage: string | null;
   userMessageAt: Date | null;
 }
@@ -5343,6 +5584,16 @@ export interface UserStrike {
   voidReason: string | null;
   issuedBy: number | null;
   issuedByUser?: User | null;
+}
+
+export interface PostPreset {
+  id: number;
+  userId: number;
+  user?: User;
+  name: string;
+  data: JsonValue;
+  createdAt: Date;
+  updatedAt: Date;
 }
 
 export interface GenerationPreset {
@@ -5753,6 +6004,8 @@ export interface Crucible {
   heroImage?: Image | null;
   buzzType: string;
   nsfwLevel: number;
+  moderatorNsfwLevel: number | null;
+  moderatorNsfwLevelBasis: number | null;
   contentType: MediaType;
   entryFee: number;
   seededPrizePool: number;
@@ -5760,6 +6013,8 @@ export interface Crucible {
   entryLimit: number;
   freeEntriesPerUser: number;
   maxTotalEntries: number | null;
+  entryWarningPercent: number;
+  entryCutoffPercent: number;
   minViewSeconds: number | null;
   maxClipSeconds: number | null;
   prizePositions: JsonValue;
@@ -5776,9 +6031,11 @@ export interface Crucible {
   ingestion: CrucibleIngestionStatus;
   scannedAt: Date | null;
   textNsfw: boolean;
+  timeAdjustedPlacement: boolean;
   entries?: CrucibleEntry[];
   reports?: CrucibleReport[];
   engagements?: CrucibleEngagement[];
+  thread?: Thread | null;
 }
 
 export interface CrucibleEngagement {
@@ -5795,6 +6052,36 @@ export interface CrucibleReport {
   crucible?: Crucible;
   reportId: number;
   report?: Report;
+}
+
+export interface GameFrameGame {
+  id: number;
+  slug: string;
+  title: string;
+  userId: number | null;
+  user?: User | null;
+  official: boolean;
+  visibility: string;
+  url: string;
+  coverUrl: string | null;
+  stateAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+  reports?: GameFrameGameReport[];
+}
+
+export interface GameFrameGameReport {
+  gameFrameGameId: number;
+  gameFrameGame?: GameFrameGame;
+  reportId: number;
+  report?: Report;
+}
+
+export interface GameFrameReportReceipt {
+  gfReportId: string;
+  reportId: number;
+  report?: Report;
+  createdAt: Date;
 }
 
 export interface CrucibleEntry {

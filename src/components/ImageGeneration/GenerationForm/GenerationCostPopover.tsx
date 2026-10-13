@@ -249,8 +249,11 @@ function GenerationCostPopoverDetail({
   const licensingFees = Object.values(workflowCost.fees ?? {}).reduce((sum, fee) => sum + fee, 0);
   const hasAdditionalFees = fixedFees.length > 0 || licensingFees > 0;
 
+  // A hidden creator tip is not charged, so it must not reach the total either.
   const creatorTipAmount = readOnly
     ? workflowCost.tips?.creators ?? 0
+    : hideCreatorTip
+    ? 0
     : Math.ceil((baseCost * creatorTip) / 100);
   const civitaiTipAmount = readOnly
     ? workflowCost.tips?.civitai ?? 0

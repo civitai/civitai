@@ -160,7 +160,7 @@ export function canAccessAppsBuild(
  * `FeatureAccess` turns that silent degradation into a compile error here.
  *
  * The import is TYPE-ONLY, so nothing from the server module reaches a runtime
- * bundle (the established pattern — see `src/shared/data-graph/generation/context.ts`).
+ * bundle (the established pattern — see `src/shared/generation/context.ts`).
  */
 export type AppsStoreFeatureFlags =
   | Partial<Pick<FeatureAccess, 'appBlocks' | 'appListings' | 'appListingsPublicExternal'>>
@@ -306,6 +306,19 @@ export type AppsActivityFeatureFlags =
  */
 export function canAccessAppsActivity(features: AppsActivityFeatureFlags): boolean {
   return !!features?.appBlocks || !!features?.appBlocksPages;
+}
+
+export type AppAssistantFeatureFlags =
+  | Partial<Pick<FeatureAccess, 'appBlocks' | 'appAssistant'>>
+  | null
+  | undefined;
+
+/**
+ * The App Assistant gate, shared by its page, sidebar row and token routes so they cannot drift.
+ * Neither flag is `toggleable`, so the SSR and first-client values agree. Sign-in is the caller's.
+ */
+export function canAccessAppAssistant(features: AppAssistantFeatureFlags): boolean {
+  return !!features?.appBlocks && !!features?.appAssistant;
 }
 
 /**

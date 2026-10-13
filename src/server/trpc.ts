@@ -1,7 +1,7 @@
 import { initTRPC, TRPCError } from '@trpc/server';
 import {
   clampRequestBrowsingLevels,
-  domainBrowsingLevelCap,
+  requestDomainBrowsingLevelCap,
   type RequestBrowsingLevels,
 } from '~/server/utils/browsing-level';
 import { requiresEmailVerification } from '~/server/common/email-verification-gate';
@@ -35,8 +35,10 @@ import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { Flags } from '~/shared/utils/flags';
-import { runEnforceTokenScope } from '~/server/services/oauth/enforce-token-scope';
-import { parseVerifiedBotHeader, VERIFIED_BOT_HEADER } from '~/server/utils/bot-detection/header';
+import {
+  assertSessionOrFullUserKey,
+  runEnforceTokenScope,
+} from '~/server/services/oauth/enforce-token-scope';
 import { errorFormatter } from '~/server/trpc/error-formatter';
 import type { Context } from './createContext';
 
@@ -80,6 +82,11 @@ export interface TRPCMeta {
    * to the orchestrator.
    */
   blockApiKeys?: boolean;
+  /**
+   * When true, a token-based request must be a full-scope personal API key
+   * (`isFullScopeUserKey`); session auth is unaffected.
+   */
+  requireFullUserCredential?: boolean;
 }
 
 const t = initTRPC
@@ -210,18 +217,7 @@ const applyDomainFeature = t.middleware(async (options) => {
   // v11: `rawInput` became the async `getRawInput()`.
   const input = ((await options.getRawInput()) ?? {}) as RequestBrowsingLevels;
 
-  // Verified search-engine crawlers (set by botDetectionMiddleware) are
-  // treated as authorized only on mature-allowed domains. On the SFW site
-  // they're a regular public user — no level expansion. This enables the
-  // bot bypass on civitai.red while keeping civitai.com strictly SFW for
-  // crawlers and humans alike.
-  const verifiedBot = parseVerifiedBotHeader(ctx.req?.headers[VERIFIED_BOT_HEADER]);
-  const isAuthorized = !!ctx.user || (verifiedBot !== null && ctx.features.canViewNsfw);
-
-  const maxAllowed = domainBrowsingLevelCap({
-    isAuthorized,
-    canViewNsfw: ctx.features.canViewNsfw,
-  });
+  const maxAllowed = requestDomainBrowsingLevelCap(ctx);
 
   if (maxAllowed !== undefined) clampRequestBrowsingLevels(input, maxAllowed);
 
@@ -230,13 +226,14 @@ const applyDomainFeature = t.middleware(async (options) => {
 
 /**
  * Token scope enforcement middleware (fail-safe).
- * - Session auth (no apiKeyId) is always allowed through unless blockApiKeys is set.
+ * - Session auth (no apiKeyId) always passes.
  * - Procedures without `.meta({ requiredScope })` implicitly require `TokenScope.Full`.
  *   Scoped tokens are denied on un-annotated endpoints; session and full-access keys
  *   pass through (subject to the blockApiKeys gate below).
  * - blockApiKeys: when set, the procedure is forbidden for any API-key/OAuth-token
- *   request regardless of scope. Used for buzz-spending operations that the
- *   orchestrator owns; tokens have no business spending buzz on Civitai's side.
+ *   request regardless of scope (session auth only).
+ * - requireFullUserCredential: when set, a token-based request must be a full-scope
+ *   personal API key; OAuth tokens and other key types are forbidden.
  */
 // `enforceTokenScope`'s body lives in a light standalone module so the OAuth
 // scope-verification + unified scope-usage audit wiring is unit-testable without
@@ -422,6 +419,7 @@ const isMod = t.middleware(({ ctx: { user, acceptableOrigin, ...ctx }, next }) =
       code: 'FORBIDDEN',
       message: 'You do not have permission to perform this action',
     });
+  assertSessionOrFullUserKey(ctx);
   return next({
     ctx: { ...ctx, user, acceptableOrigin },
   });
@@ -455,7 +453,8 @@ const isOnboarded = t.middleware(({ ctx, next }) => {
 export const protectedProcedure = publicProcedure.use(isAuthed);
 
 /**
- * Moderator procedure
+ * Moderator procedure. A token-based request must be a full-scope personal API key, whatever
+ * `requiredScope` the procedure declares.
  **/
 export const moderatorProcedure = protectedProcedure.use(isMod);
 

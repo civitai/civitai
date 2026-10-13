@@ -4,15 +4,22 @@ import { useEffect, useRef, useState } from 'react';
 import useIsClient from '~/hooks/useIsClient';
 import { toStringList } from '~/utils/array-helpers';
 
-function getCountdownString(
+const MINUTE_MS = 60 * 1000;
+const HOUR_MS = 60 * MINUTE_MS;
+const DAY_MS = 24 * HOUR_MS;
+
+export function getCountdownString(
   duration: plugin.Duration,
   format: 'short' | 'long',
   withSeconds?: boolean
 ) {
-  const days = duration.days();
-  const hours = duration.hours();
-  const minutes = duration.minutes();
-  const seconds = duration.seconds();
+  // Not `duration.days()` and friends: those are the parts left after whole months (of 30.4 days)
+  // and years, so 33 days read "2 days, 14 hours".
+  const ms = duration.asMilliseconds();
+  const days = Math.floor(ms / DAY_MS);
+  const hours = Math.floor((ms % DAY_MS) / HOUR_MS);
+  const minutes = Math.floor((ms % HOUR_MS) / MINUTE_MS);
+  const seconds = Math.floor((ms % MINUTE_MS) / 1000);
 
   const countdownTuple = [];
   if (days > 0)

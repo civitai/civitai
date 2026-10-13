@@ -74,7 +74,10 @@ const PAGE = {
   contentRating: 'g',
 };
 
-function makeCtx(host: string, opts: { slug?: string; features?: any; session?: any } = {}) {
+function makeCtx(
+  host: string,
+  opts: { slug?: string; features?: any; session?: any; query?: Record<string, unknown> } = {}
+) {
   const { slug = 'cool-app', features = { appBlocks: true, appBlocksPages: true } } = opts;
   // 🔴 `'session' in opts`, NOT a default parameter. A default fires on an explicit
   // `undefined`, so `{ session: undefined }` would silently get the authed default back —
@@ -84,7 +87,7 @@ function makeCtx(host: string, opts: { slug?: string; features?: any; session?: 
   return {
     features,
     session,
-    ctx: { params: { slug }, req: { headers: { host } }, res: {} },
+    ctx: { params: { slug }, query: opts.query ?? {}, req: { headers: { host } }, res: {} },
   };
 }
 
@@ -112,6 +115,27 @@ describe('run-page SSR — play recording', () => {
     // The id is the RESOLVED block's, not the request's slug — the two differ whenever a
     // slug is re-pointed, and the rollup joins on `app_listings.app_block_id`.
     expect(mockRecordOpen.mock.calls[0][0]).toMatchObject({ appBlockId: 'ab_1' });
+  });
+
+  it('attributes the play to the store sub-listing card it came from (`?sl=`)', async () => {
+    mockResolvePageBlockBySlug.mockResolvedValue({ ...PAGE, contentRating: 'g' });
+    const resolver = await loadResolver();
+    const sl = 'asl_01J9ZK3Q4R5S6T7V8W9X0Y1Z2A';
+    await resolver(makeCtx('civitai.com', { query: { slug: 'cool-app', sl } }));
+    expect(mockRecordOpen.mock.calls[0][0]).toMatchObject({ appBlockId: 'ab_1', subListingId: sl });
+  });
+
+  it.each([
+    ['a listing id', 'apl_01J9ZK3Q4R5S6T7V8W9X0Y1Z2A'],
+    ['free text', '<script>'],
+    ['a repeated param', ['asl_01J9ZK3Q4R5S6T7V8W9X0Y1Z2A', 'x']],
+    ['nothing', undefined],
+  ])('records no sub-listing id for %s, and still records the play', async (_label, sl) => {
+    mockResolvePageBlockBySlug.mockResolvedValue({ ...PAGE, contentRating: 'g' });
+    const resolver = await loadResolver();
+    await resolver(makeCtx('civitai.com', { query: { sl } }));
+    expect(mockRecordOpen).toHaveBeenCalledTimes(1);
+    expect(mockRecordOpen.mock.calls[0][0].subListingId).toBeNull();
   });
 
   it('passes the resolved session through, so an authed play is attributable', async () => {

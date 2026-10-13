@@ -1,0 +1,26 @@
+// The padding (ITEM_BLEED) lies over neighbouring cards, so only the card takes the pointer.
+.item {
+  pointer-events: none;
+  // Containment and stacking come back only once a grown hat has settled (its settle is 320ms),
+  // or the shrinking hat is cropped mid-animation.
+  transition: content-visibility 0s linear 360ms, z-index 0s linear 360ms;
+  transition-behavior: allow-discrete;
+
+  & > * {
+    pointer-events: auto;
+  }
+}
+
+// A worn hat reaches over its neighbours; paint it above them.
+.item:has([data-event-decoration='hat']) {
+  z-index: 1;
+}
+
+// A hat grows past the bleed while its card is hovered or focused. Lifting containment on that one
+// item lets it paint unclipped; `!important` beats the inline `contentVisibility`.
+.item:has([data-event-decoration='hat']:hover),
+.item:has([data-event-decoration='hat']:focus-within) {
+  z-index: 2;
+  content-visibility: visible !important;
+  transition-delay: 0s;
+}

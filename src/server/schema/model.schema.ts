@@ -2,6 +2,7 @@ import * as z from 'zod';
 import { constants } from '~/server/common/constants';
 import { ModelSort } from '~/server/common/enums';
 import type { UnpublishReason } from '~/server/common/moderation-helpers';
+import type { TextScanFlags } from '~/server/services/text-scan/flag-snapshot';
 import { unpublishReasons } from '~/server/common/moderation-helpers';
 import {
   baseQuerySchema,
@@ -88,10 +89,6 @@ export const getAllModelsSchema = z.object({
   sort: z.enum(ModelSort).default(constants.modelFilterDefaults.sort),
   period: z.enum(MetricTimeframe).default(constants.modelFilterDefaults.period),
   periodMode: periodModeSchema,
-  // Opt-in: retry the first page at AllTime when `period` returns nothing. Off by
-  // default because an empty result is the correct answer on a browse feed — the
-  // caller has to be a surface where an empty page is a dead end, like /tag/:name.
-  periodFallback: z.boolean().optional(),
   rating: z
     .preprocess((val) => Number(val), z.number())
     .transform((val) => Math.floor(val))
@@ -321,8 +318,8 @@ export const setModelSfwOnlySchema = z.object({ id: z.number(), sfwOnly: z.boole
 
 export type MinorFlagSnapshot = {
   at: string;
-  source: 'auto' | 'manual';
-  confirmedFrom?: 'auto' | 'manual';
+  source: 'auto' | 'manual' | 'text-scan';
+  confirmedFrom?: 'auto' | 'manual' | 'text-scan';
   confirmedAt?: string;
   confirmedBy?: number;
   prevNsfw?: boolean;
@@ -381,6 +378,7 @@ export type ModelMeta = Partial<{
   minorHashDismissed: { at: string; by: number };
   minorHashCleared: { at: string };
   minorHashAccepted: { at: string };
+  textScanFlags: TextScanFlags;
   // Creator Controls: hide public metrics (only while the owner has a valid
   // Creator Program membership — see server/utils/model-metric-privacy.ts).
   hideBuzz: boolean | null;

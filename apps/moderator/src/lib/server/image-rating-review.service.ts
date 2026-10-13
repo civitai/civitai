@@ -1,5 +1,6 @@
 import { sql } from '@civitai/db/kysely';
 import { dbRead } from './db';
+import { takePage } from './keyset-page';
 import { NsfwLevel } from '@civitai/shared';
 import type { MediaType } from '$lib/media/edge-url';
 
@@ -24,7 +25,7 @@ export async function getImageRatingRequests({
   cursor?: number;
   limit: number;
 }): Promise<{ items: ImageRatingItem[]; nextCursor?: number }> {
-  const { rows } = await sql<ImageRatingItem>`
+  const { rows: fetched } = await sql<ImageRatingItem>`
     WITH image_rating_requests AS (
       SELECT
         "imageId",
@@ -64,15 +65,12 @@ export async function getImageRatingRequests({
       AND i."nsfwLevelLocked" = FALSE
       AND i.ingestion != 'PendingManualAssignment'::"ImageIngestionStatus"
       AND i."nsfwLevel" < ${NsfwLevel.Blocked}
-      ${cursor ? sql`AND i."id" >= ${cursor}` : sql``}
+      ${cursor ? sql`AND i."id" > ${cursor}` : sql``}
     ORDER BY i."id" ASC
     LIMIT ${limit + 1}
   `.execute(dbRead);
 
-  let nextCursor: number | undefined;
-  if (limit && rows.length > limit) nextCursor = rows.pop()?.id;
-
-  return { items: rows, nextCursor };
+  return takePage(fetched, limit, (r) => r.id);
 }
 
 export async function getImageRatingReviewCount(): Promise<number> {

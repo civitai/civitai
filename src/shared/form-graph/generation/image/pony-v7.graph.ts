@@ -4,7 +4,7 @@ import { SDXL_FULL_AR_2MP, SEED, guidancePresetsLowBalHigh, sliderDef } from '..
 import { familyResources, familyScope, promptOnlyTextBlock, type FamilyExt } from '../shared';
 
 /**
- * Pony V7 (AuraFlow architecture), ported from `pony-v7-graph.ts`. LoRAs
+ * Pony V7 (AuraFlow architecture). LoRAs
  * supported; no negative prompt, sampler, or CLIP skip. Works best at 40+
  * steps, hence the default.
  */

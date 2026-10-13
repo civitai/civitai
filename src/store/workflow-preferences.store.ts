@@ -11,7 +11,7 @@ import { persist } from 'zustand/middleware';
 import {
   isEnhancementWorkflow,
   getEcosystemsForWorkflow,
-} from '~/shared/data-graph/generation/config/workflows';
+} from '~/shared/generation/config/workflows';
 
 interface WorkflowPreferenceEntry {
   ecosystem: string;

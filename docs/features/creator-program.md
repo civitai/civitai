@@ -90,7 +90,7 @@ bankBuzz(userId, amount, buzzType: 'yellow' | 'green')
 ```
 
 1. Validates: not banned, has active membership, in banking phase
-2. Checks unified cap (sum of all banked types vs cap)
+2. Under a per-user lock, clamps the deposit to the lower of the unified cap (sum of all banked types vs cap) and, from the cutover, the remaining bankable amount. A ClickHouse failure blocks banking but not extraction
 3. Creates `TransactionType.Bank` from user's buzz account to `creatorProgramBank`
 4. Busts caches, signals pool update
 
@@ -103,7 +103,7 @@ extractBuzz(userId)
 All-or-nothing across all buzz types:
 
 1. Validates: not banned, in extraction phase
-2. Gets banked amounts per type via `getBanked(userId)`
+2. Gets banked amounts per type via `getBankedBalance(userId)`
 3. Extracts each type back to its original account (green -> green, yellow -> yellow)
 4. Calculates fee on combined total, distributes proportionally across types
 5. Fee uses `Math.floor` for all but last type (last gets remainder to avoid rounding errors)
@@ -111,10 +111,12 @@ All-or-nothing across all buzz types:
 #### Getting Banked Amounts
 
 ```
-getBanked(userId) → { perType: { yellow: number, green: number }, total: number, cap: UserCapCacheItem }
+getBankedBalance(userId, { fresh? }) → { perType: { yellow: number, green: number }, total: number, cap: UserCapCacheItem }
+getBanked(userId)        → { ...getBankedBalance, bankable: BankableAmount | null }
 ```
 
-- Queries `getCounterPartyBuzzTransactions` for each buzz type against `creatorProgramBank`
+- `getBankedBalance` queries `getCounterPartyBuzzTransactions` for each buzz type against `creatorProgramBank`, through a cache. `bankBuzz`, `extractBuzz` and `/api/mod/reset-bank` pass `fresh: true`: the cache can hold a total from before the last deposit while a display read refreshes it
+- `getBanked` is for display (the `creatorProgram.getBanked` query). It reads the ClickHouse half of the bankable amount through a 3-minute cache (`REDIS_KEYS.CREATOR_PROGRAM.BANKABLE`) and nets this month's deposits from the bank account. Its `bankable` is `null` before the cutover, without ClickHouse, or when the lookup fails
 - The counterparty filter preserves type separation even with a unified bank account
 - Cap is unified across all types based on highest membership tier
 
@@ -130,10 +132,27 @@ getBanked(userId) → { perType: { yellow: number, green: number }, total: numbe
 | Gold | No fixed limit | 1.5x |
 
 - Minimum cap: 100,000 for all tiers
-- Silver/Gold caps scale with peak monthly earnings over a 12-month rolling window
+- Silver/Gold caps scale with peak monthly earnings over a 12-month rolling window. Peak earnings count license fees and paid/early access (`PEAK_EARNING_PREDICATE_SQL`). Until `BANKABLE_CUTOVER` they also count generation compensation (`PRE_CUTOVER_PEAK_EARNING_PREDICATE_SQL`); from it, compensation is excluded for every month in the window. Pool forecasts and `earnedCache` in `buzz.service.ts` still count compensation
 - The highest tier across all active subscriptions is used
 
 **Relevant code:** `createUserCapCache()` in the service queries `CustomerSubscription` joined with `Product.metadata.tier`.
+
+### Bankable Amount
+
+**`src/server/services/creator-program-bankable.ts`**
+
+From `BANKABLE_CUTOVER` (2026-11-01 UTC, start of a month) a creator banks up to the lower of the tier cap and their bankable amount:
+
+```
+bankable = yellow+green balance at the cutover
+         + bankable earnings since the cutover
+         - banked since the cutover
+         + extracted since the cutover, net of the extraction fee
+```
+
+- Bankable earnings: `licenseFee`, `donation`, `sell`, `bounty`, App Blocks author fees (matched by the `APP_AUTHOR_FEE_DESCRIPTION` prefix the fee writers also use, under `fee`, `unknown_28` or `appAuthorFee`, the types ClickHouse has stored them as or would after an ingest fix), user-paid `purchase` and `tip`, generation tips, and the placement legs paid to creators (`BANKABLE_EARNING_PREDICATE_SQL`). Generation tips are their own `compensation` transaction keyed `generation-tip-` since payout date 2026-10-13; earlier tips sit inside compensation, before the cutover, so the snapshot covers them. They are bankable but do not set the peak. Other generation `compensation` is still paid but not bankable, nor is purchased or Blue Buzz.
+- The cutover balance is computed from ClickHouse the first time it is needed and stored in the `REDIS_SYS_KEYS.CREATOR_PROGRAM.BANKABLE_SNAPSHOT` hash, keyed by user id. It is not stored until an hour after the cutover, and not until ClickHouse holds a ledger row dated past that point. That catches an ingest that stalled before then, not pre-cutover rows that arrive later out of order. To recompute a stored snapshot, `HDEL` the user's field from that hash.
+- Closed months come from ClickHouse; the current month's deposits come from the bank account via `getBankedBalance`, so a deposit made seconds earlier already counts.
 
 ### Extraction Fees
 
@@ -193,8 +212,9 @@ The three stage notifications run daily and gate on `getStageNotificationDays`, 
 
 | Key | Content | TTL |
 |-----|---------|-----|
-| `CAPS` | User cap data (tier, peak earnings, cap amount) | 1 day |
+| `CAPS` | User cap data (tier, peak earnings, cap amount). A cap cached before `BANKABLE_CUTOVER` is refilled on first read after it | 1 day |
 | `BANKED:{userId}` | Per-type banked amounts for user | 1 day |
+| `BANKABLE:{userId}` | Bankable ledger for display (cutover balance, earned, consumed) | 3 min |
 | `CASH` | User cash balance (pending, ready, withdrawn) | 1 day |
 | `POOL_VALUE` | Monthly pool dollar value | 1 day |
 | `POOL_SIZE` | Current total banked buzz | Not cached (live) |
@@ -212,7 +232,8 @@ The `bustCompensationPoolCache()` function also clears old per-type cache keys (
 ### ClickHouse (`buzzTransactions` table)
 
 Used for:
-- Peak earnings calculation (compensation, tips, early access)
+- Peak earnings calculation (license fees, early access)
+- Bankable amount (cutover balance, bankable earnings, banked and extracted since the cutover)
 - Pool value calculation (purchases, redeemable codes)
 - Pool forecast (projected earnings)
 - Pool participants (bank/extract transactions)
@@ -284,13 +305,14 @@ Bitwise flags on `User.onboarding`:
 | `CompensationPoolCard` | Same file | Unified pool value and size |
 | `EstimatedEarningsCard` | Same file | Per-type banked breakdown + value estimate |
 | `WithdrawCashCard` | Same file | Cash withdrawal interface |
+| `BankableBuzzMeter` | `src/components/Buzz/CreatorProgramV2/BankableBuzzMeter.tsx` | From the cutover, splits the yellow + green balance into bankable this month, over the cap, and not bankable (`getBankableBreakdown`) |
 
 ### Hooks (`CreatorProgram.util.ts`)
 
 | Hook | Returns |
 |------|---------|
 | `useCompensationPool()` | Unified pool data |
-| `useBankedBuzz()` | `{ perType, total, cap }` |
+| `useBankedBuzz()` | `{ perType, total, cap, bankable }` |
 | `useCreatorProgramPhase()` | Current phase ('bank' or 'extraction') |
 | `useCreatorProgramMutate()` | Bank, extract, withdraw mutations |
 | `useCreatorPoolListener()` | Subscribes to realtime pool/cash signals |
@@ -302,13 +324,13 @@ Bitwise flags on `User.onboarding`:
 
 ## Testing
 
-Test file: `src/server/services/__tests__/creator-program.service.test.ts`
+Test files: `src/server/services/__tests__/creator-program.service.test.ts`, `src/server/services/__tests__/creator-program-bankable.test.ts`, `src/shared/utils/__tests__/creator-program.utils.test.ts`
 
-Covers: `getCreatorRequirements`, `joinCreatorsProgram`, `getBanked`, `bankBuzz`, `extractBuzz`, `getCompensationPool`, `withdrawCash`, unified pool invariants.
+Covers: `getCreatorRequirements`, `joinCreatorsProgram`, `getBanked`/`getBankedBalance`, `bankBuzz`, `extractBuzz`, `getCompensationPool`, `withdrawCash`, unified pool invariants, the bankable amount.
 
 Run tests:
 ```bash
-pnpm run test:unit -- src/server/services/__tests__/creator-program.service.test.ts
+pnpm exec vitest run --project 'unit*' src/server/services/__tests__/creator-program.service.test.ts src/server/services/__tests__/creator-program-bankable.test.ts src/shared/utils/__tests__/creator-program.utils.test.ts
 ```
 
 Shared utility tests: `src/shared/utils/__tests__/creator-program.utils.test.ts` (cap calculations).

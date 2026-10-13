@@ -120,9 +120,10 @@ function ModeratorApiPage({ endpoints }: InferGetServerSidePropsType<typeof getS
         Moderator API
       </Title>
       <Text size="sm" c="dimmed" className="mb-4">
-        Every endpoint accepts a moderator session from the browser, a moderator API key as{' '}
-        <Code>Authorization: Bearer</Code>, or that same session forwarded by a spoke. All three
-        resolve to a real moderator, and the rate limit and audit trail are per person.
+        Every endpoint accepts a moderator session from the browser, a moderator&apos;s full-access
+        personal API key as <Code>Authorization: Bearer</Code>, or that same session forwarded by a
+        spoke. All three resolve to a real moderator, and the rate limit and audit trail are per
+        person.
       </Text>
 
       {groups.length > 1 && (

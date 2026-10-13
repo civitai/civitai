@@ -33,8 +33,8 @@ import {
   getEcosystemDisplayItems,
   type EcosystemDisplayItem,
 } from '~/shared/constants/basemodel.constants';
-import { getWorkflowsForEcosystem } from '~/shared/data-graph/generation/config/workflows';
-import type { GateItemState } from '~/shared/data-graph/generation/gates';
+import { getWorkflowsForEcosystem } from '~/shared/generation/config/workflows';
+import type { GateItemState } from '~/shared/generation/gates';
 import { useEcosystemGroupPreferencesStore } from '~/store/ecosystem-group-preferences.store';
 import { ExperimentalFlask } from '~/components/generation_v2/Experimental';
 

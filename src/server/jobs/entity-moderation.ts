@@ -11,9 +11,11 @@ import { clavataCounter } from '~/server/prom/client';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { ReportEntity } from '~/shared/utils/report-helpers';
 import { createReport } from '~/server/services/report.service';
-import { trackModActivity } from '~/server/services/moderator.service';
-import { updateUserById } from '~/server/services/user.service';
-import { invalidateSession } from '~/server/auth/session-invalidation';
+import { hashContent } from '~/server/services/entity-moderation.service';
+import { autoMuteScamAccount } from '~/server/services/scam-auto-mute.service';
+import { getTextScanOwnedClavataKeys } from '~/server/services/text-scan/clavata-cutover';
+import { clavataVerdict, logScanVerdict } from '~/server/services/text-scan/verdict-log';
+import type { ScamCleanup } from '~/server/services/scam-cleanup.service';
 import { getBlocklists, type ModWordBlocklist } from '~/server/utils/moderation-utils';
 import type { EntityType } from '~/shared/utils/prisma/enums';
 import { ChatMessageType, JobQueueType, ReportReason } from '~/shared/utils/prisma/enums';
@@ -33,9 +35,7 @@ const jobNameClear = 'clear-automated';
 const chunkSize = 100; // keep an eye on this
 const minDate = '2025-06-13';
 
-// Tags that trigger auto-mute for new accounts (< autoMuteAccountAgeDays old)
 const autoMuteTags = ['Impersonating Civitai Staff'];
-const autoMuteAccountAgeDays = 7;
 
 const log = createLogger(jobName, 'blue');
 const logAx = (data: MixedObject) => {
@@ -45,107 +45,72 @@ const logAx = (data: MixedObject) => {
 
 const tracker = new Tracker();
 
-// Entity types eligible for auto-mute on scam impersonation tags
-const autoMuteEntityTypes: AllModKeys[] = ['Chat', 'Comment', 'CommentV2'];
+const autoMuteCleanup: Partial<Record<AllModKeys, ScamCleanup>> = {
+  Chat: 'chatMessages',
+  Comment: 'comments',
+  CommentV2: 'commentsV2',
+};
 
-/**
- * Auto-mute users who match high-confidence scam tags and have new accounts.
- * Applies to Chat, Comment, and CommentV2 entities. Skips moderators.
- */
-async function autoMuteIfScamAccount({
+/** The newest flagged message a sender wrote in one flagged chat group. */
+type ChatSender = { messageId: number; at: Date };
+
+export function clavataScamEvidence({
   type,
-  userId,
+  entityId,
   matches,
+  value,
+  sender,
 }: {
   type: AllModKeys;
+  entityId: number;
+  matches: string[];
+  value: string;
+  sender?: ChatSender;
+}) {
+  const tags = [...matches].sort().join('|');
+  const textHash = hashContent(value);
+  // A chat group is keyed by the chat, so the sender's newest flagged message is what makes a later
+  // offence in the same chat a new verdict. Other entities are keyed by their text, so an edit is too.
+  const contentKey = sender ? `m${sender.messageId}` : textHash.slice(0, 16);
+  return {
+    source: `clavata:${type}`,
+    dedupeKey: `clavata:${type}:${entityId}:${contentKey}:${tags}`,
+    reason: `tags: ${matches.join(', ')}`,
+    entityType: type,
+    entityId,
+    textHash,
+    contentAt: sender?.at ?? null,
+  };
+}
+
+export async function autoMuteIfScamAccount({
+  type,
+  entityId,
+  userId,
+  matches,
+  value,
+  sender,
+}: {
+  type: AllModKeys;
+  entityId: number;
   userId: number;
   matches: string[];
+  value: string;
+  sender?: ChatSender;
 }) {
-  if (!autoMuteEntityTypes.includes(type)) return;
-  const hasAutoMuteTag = matches.some((m) => autoMuteTags.includes(m));
-  if (!hasAutoMuteTag) return;
-
-  log(`Auto-mute check: userId=${userId}, type=${type}, matches=[${matches.join(', ')}]`);
+  const cleanup = autoMuteCleanup[type];
+  if (!cleanup) return;
+  if (!matches.some((m) => autoMuteTags.includes(m))) return;
 
   try {
-    const user = await dbRead.user.findUnique({
-      where: { id: userId },
-      select: { createdAt: true, isModerator: true, muted: true },
+    const result = await autoMuteScamAccount({
+      userId,
+      cleanup,
+      evidence: clavataScamEvidence({ type, entityId, matches, value, sender }),
     });
-    if (!user) {
-      log(`Auto-mute skip: user ${userId} not found`);
-      return;
-    }
-    if (user.isModerator) {
-      log(`Auto-mute skip: user ${userId} is moderator`);
-      return;
-    }
-    if (user.muted) {
-      log(`Auto-mute skip: user ${userId} already muted`);
-      return;
-    }
-
-    const accountAgeDays = dayjs().diff(dayjs(user.createdAt), 'day');
-    if (accountAgeDays > autoMuteAccountAgeDays) {
-      log(
-        `Auto-mute skip: user ${userId} account age ${accountAgeDays}d > ${autoMuteAccountAgeDays}d`
-      );
-      return;
-    }
-
-    // Gate the user via `muted` only. `mutedAt` is reserved for moderator
-    // confirmation (uphold) — setting it here would trip the confirm-mutes cron
-    // and cancel the membership before any moderator reviews the auto-mute.
-    await updateUserById({
-      id: userId,
-      data: { muted: true },
-      updateSource: 'entity-moderation:auto-mute-scam',
-    });
-    await invalidateSession(userId, 'moderation');
-
-    // Clean up the scammer's content based on entity type
-    let cleanupSummary: string;
-    if (type === 'Chat') {
-      const deleted = await dbWrite.chatMessage.deleteMany({
-        where: { userId },
-      });
-      cleanupSummary = `deleted ${deleted.count} chat msgs`;
-    } else if (type === 'Comment') {
-      const hidden = await dbWrite.comment.updateMany({
-        where: { userId, hidden: { not: true } },
-        data: { hidden: true },
-      });
-      cleanupSummary = `hidden ${hidden.count} comments`;
-    } else {
-      // CommentV2
-      const hidden = await dbWrite.commentV2.updateMany({
-        where: { userId, hidden: { not: true } },
-        data: { hidden: true },
-      });
-      cleanupSummary = `hidden ${hidden.count} v2 comments`;
-    }
-
-    // Audit trail — track in ModActivity (Postgres) and userActivities (ClickHouse)
-    await trackModActivity(-1, {
-      entityType: 'user',
-      entityId: userId,
-      activity: 'autoMuteScam',
-    });
-    await tracker.userActivity({
-      type: 'Muted',
-      targetUserId: userId,
-      source: `auto-mute-scam (age: ${accountAgeDays}d, tags: ${matches.join(
-        ', '
-      )}, ${cleanupSummary})`,
-    });
-
-    log(
-      `Auto-muted user ${userId} and ${cleanupSummary} (account age: ${accountAgeDays}d, tags: ${matches.join(
-        ', '
-      )})`
-    );
+    log(`Auto-mute userId=${userId} type=${type}: ${JSON.stringify(result)}`);
   } catch (error) {
-    logAx({ message: 'Error auto-muting user', data: { error, userId, matches } });
+    logAx({ message: 'Error auto-muting user', data: { error, userId, type, entityId } });
   }
 }
 
@@ -289,12 +254,19 @@ async function getPolicies() {
   return policies ? (JSON.parse(policies) as RedisPolicyType) : ({} as RedisPolicyType);
 }
 
-async function getDisabledEntities() {
-  const policies = await sysRedis.hGet(
-    REDIS_SYS_KEYS.ENTITY_MODERATION.BASE,
-    REDIS_SYS_KEYS.ENTITY_MODERATION.KEYS.ENTITIES
-  );
-  return policies ? (JSON.parse(policies) as RedisDisabledType) : ({} as RedisDisabledType);
+export async function getDisabledEntities() {
+  const [policies, owned] = await Promise.all([
+    sysRedis.hGet(
+      REDIS_SYS_KEYS.ENTITY_MODERATION.BASE,
+      REDIS_SYS_KEYS.ENTITY_MODERATION.KEYS.ENTITIES
+    ),
+    getTextScanOwnedClavataKeys(),
+  ]);
+  const disabled = policies
+    ? (JSON.parse(policies) as RedisDisabledType)
+    : ({} as RedisDisabledType);
+  for (const key of owned) disabled[key as AllModKeys] = false;
+  return disabled;
 }
 
 function getPolicyFor(entity: AllModKeys, policies: RedisPolicyType) {
@@ -319,6 +291,7 @@ interface ContentItem {
   id: number;
   userId: number;
   userIds?: number[]; // For chat: all real userIds in a grouped entity
+  senders?: Record<number, ChatSender>;
   value: string;
 }
 
@@ -381,7 +354,20 @@ const runClavata = async ({
         const onlyNSFW = item.matches?.length === 1 && item.matches[0] === 'NSFW';
         const allowedNSFWTypes: AllModKeys[] = ['Bounty', 'Model'];
 
-        if (item.result === 'FALSE' || (onlyNSFW && !allowedNSFWTypes.includes(type))) {
+        const skipped = item.result === 'FALSE' || (onlyNSFW && !allowedNSFWTypes.includes(type));
+        // Clean results too: they are the only record that Clavata passed this text.
+        void logScanVerdict(
+          clavataVerdict({
+            entityType: type,
+            entityId: metadata.id,
+            userId: metadata.userId,
+            result: item.result,
+            matches: item.matches,
+            skipped,
+          })
+        );
+
+        if (skipped) {
           if (deleteJob) await deleteFromJobQueue(type as QueueKeys, [metadata.id]);
           continue;
         }
@@ -460,7 +446,14 @@ const runClavata = async ({
         );
 
         for (const uid of userIdsToCheck) {
-          await autoMuteIfScamAccount({ type, userId: uid, matches });
+          await autoMuteIfScamAccount({
+            type,
+            entityId: Number(metadata.id),
+            userId: uid,
+            matches,
+            value: originalItem?.value ?? metadata.value ?? '',
+            sender: originalItem?.senders?.[uid],
+          });
         }
 
         if (deleteJob) {
@@ -512,6 +505,7 @@ async function runModChat(lastRun: Date) {
       userId: true,
       chatId: true,
       content: true,
+      createdAt: true,
     },
     where: {
       createdAt: { gt: lastRun },
@@ -541,6 +535,7 @@ async function runModChat(lastRun: Date) {
 
   if (badMessages.length > 0) {
     const chatUserIds: Record<string, Set<number>> = {};
+    const chatSenders: Record<string, Record<number, ChatSender>> = {};
     const badMessagesByChat = badMessages.reduce((acc, cur) => {
       const key = `${cur.chatId}`;
       if (!acc[key]) {
@@ -550,6 +545,10 @@ async function runModChat(lastRun: Date) {
       }
       if (!chatUserIds[key]) chatUserIds[key] = new Set();
       chatUserIds[key].add(cur.userId);
+      const senders = (chatSenders[key] ??= {});
+      const latest = senders[cur.userId];
+      if (!latest || cur.id > latest.messageId)
+        senders[cur.userId] = { messageId: cur.id, at: cur.createdAt };
       return acc;
     }, {} as Record<string, string>);
 
@@ -560,6 +559,7 @@ async function runModChat(lastRun: Date) {
         id: Number(key),
         userId: -1, // we are parsing multiple chats at once, so we can't know who is responsible
         userIds: Array.from(chatUserIds[key] ?? []),
+        senders: chatSenders[key],
         value,
       })),
       deleteJob: false,

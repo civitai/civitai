@@ -1,6 +1,8 @@
 import type { ReactNode } from 'react';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import type * as Trpc from '~/utils/trpc';
+import type * as FeatureFlagsModule from '~/providers/FeatureFlagsProvider';
+import type * as BrowserSettingsModule from '~/providers/BrowserSettingsProvider';
 
 // The component project loads no global stylesheet, so Tailwind — including
 // preflight's `box-sizing: border-box` — is inert unless a test imports it.
@@ -11,17 +13,22 @@ import '~/styles/globals.css';
 
 const features = { stickerPlacement: false, imageCardInfoButton: false, imageGeneration: false };
 
-vi.mock('~/providers/FeatureFlagsProvider', () => ({
+// Both provider mocks spread the real module. The card's import graph reaches other exports of
+// each (`useOptionalFeatureFlags` via the impression hook, `useAutoplayGifs` via the nameplate),
+// and a hand-listed mock that omits one fails the whole file at import, collecting 0 tests.
+vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
+  ...(await importOriginal<typeof FeatureFlagsModule>()),
   useFeatureFlags: () => features,
 }));
-vi.mock('~/utils/trpc', async (importOriginal) => ({
-  ...(await importOriginal<typeof Trpc>()),
-  trpc: { reaction: { toggle: { useMutation: () => ({ mutate: vi.fn(), isPending: false }) } } },
-}));
+vi.mock('~/utils/trpc', async (importOriginal) => {
+  const { makeTrpcProxy } = await import('../../../test/trpcProxyStub');
+  return { ...(await importOriginal<typeof Trpc>()), trpc: makeTrpcProxy() };
+});
 vi.mock('~/hooks/useCurrentUser', () => ({
   useCurrentUser: () => ({ id: 1, isModerator: false, muted: false, filePreferences: {} }),
 }));
-vi.mock('~/providers/BrowserSettingsProvider', () => ({
+vi.mock('~/providers/BrowserSettingsProvider', async (importOriginal) => ({
+  ...(await importOriginal<typeof BrowserSettingsModule>()),
   useBrowsingSettings: <T,>(selector: (state: { autoplayGifs: boolean }) => T) =>
     selector({ autoplayGifs: false }),
 }));

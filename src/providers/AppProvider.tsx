@@ -9,6 +9,7 @@ import { trpc } from '~/utils/trpc';
 import type { AnnouncementsSeed } from '~/providers/announcements-seed';
 import { reviveAnnouncementsSeed } from '~/providers/announcements-seed';
 import type { DismissedByType } from '~/components/Announcements/announcements-dismissed-cookie';
+import type { NavBanner } from '~/shared/constants/nav-banner.constants';
 
 type AppProviderProps = {
   children: React.ReactNode;
@@ -27,6 +28,10 @@ type AppProviderProps = {
   // client paint compute `dismissed` from the SAME value — the hydration-match
   // guarantee behind the SSR-exact feed-CLS fix. Absent → treated as empty.
   announcementsDismissed?: DismissedByType;
+  // SSR-computed `event.getNavBanners` (anon + authed) and the dismissed-strip cookie, so the nav
+  // announcement slot is in the server HTML and never shifts the page when it arrives.
+  navBanners?: NavBanner[];
+  navBannersDismissed?: string[];
   // SSR-computed `user.getFollowingUsers` result (logged-in only) — the list of
   // followed userIds. Seeds the query directly (fixed `undefined` key) so the
   // ambient follow/notify buttons never fire it on bootstrap.
@@ -70,9 +75,11 @@ type AppContext = {
   verifiedBot: VerifiedBot | null;
   announcements?: AnnouncementsSeed;
   announcementsDismissed?: DismissedByType;
+  navBannersDismissed?: string[];
   tosMeta?: TosMeta;
 };
 const Context = createContext<AppContext | null>(null);
+export const NAV_BANNERS_STALE_TIME = 1000 * 60 * 5;
 export function useAppContext() {
   const context = useContext(Context);
   if (!context) throw new Error('missing AppProvider in tree');
@@ -106,6 +113,8 @@ export function AppProvider({
   tosMeta,
   announcements,
   announcementsDismissed,
+  navBanners,
+  navBannersDismissed,
   following,
   liveNow,
   chatSettings,
@@ -144,6 +153,12 @@ export function AppProvider({
     initialData: liveNow,
     staleTime: 1000 * 60 * 5,
   });
+  // Seed the nav announcement slot. `staleTime` keeps the seed fresh through hydration (no refetch
+  // to shift the page); after it, a refetch picks up an event opening or closing mid-session.
+  trpc.event.getNavBanners.useQuery(undefined, {
+    initialData: navBanners,
+    staleTime: NAV_BANNERS_STALE_TIME,
+  });
   // Seed `chat.getUserSettings` (per-user chat settings) from the SSR snapshot
   // so the chat widget reads a primed cache and never fires the query on
   // bootstrap (~19 req/s off api-primary). Shares the fixed `undefined` query
@@ -172,6 +187,7 @@ export function AppProvider({
     verifiedBot,
     announcements: reviveAnnouncementsSeed(announcements),
     announcementsDismissed,
+    navBannersDismissed,
     // All-string payload (current hash + baseline + field keys) — survives the
     // pageProps JSON round-trip as-is, no revival needed.
     tosMeta,

@@ -93,7 +93,7 @@ import {
 } from '~/components/Model3D/Viewer/Model3DOutputActions';
 import Model3DLightbox from '~/components/ImageGeneration/Model3DLightbox';
 import { dialogStore } from '~/components/Dialog/dialogStore';
-import { workflowConfigs } from '~/shared/data-graph/generation/config/workflows';
+import { workflowConfigs } from '~/shared/generation/config/workflows';
 
 const PENDING_PROCESSING_STATUSES: WorkflowStatus[] = [
   ...orchestratorPendingStatuses,
@@ -210,7 +210,7 @@ export function QueueItem({
 
   const hasUnstableResources = resources.some((x) => unstableResources.includes(x.id));
   const overwriteStatusLabel = canceled
-    ? 'cancelled - This generation was cancelled. Any undelivered generations were refunded.'
+    ? 'canceled - This generation was canceled. Any undelivered generations were refunded.'
     : hasUnstableResources && status === 'failed'
     ? `${status} - Potentially caused by unstable resources`
     : status === 'failed'
@@ -484,7 +484,7 @@ function ResourceRow({
   // name as a non-linking pill. Quick-add follows the same flags as the seeding
   // paths; without them the server rejects the quote and the button is a trap.
   if (isRawAirResource(resource)) {
-    const canQuickAdd = features.generationAirResources && features.formGraphGenerator;
+    const canQuickAdd = features.generationAirResources;
     return (
       <Button.Group className="max-w-full">
         <Button
@@ -610,6 +610,9 @@ function StepOutputs({
     .filter((img): img is ImageBlob | VideoBlob | AudioBlob => img.type !== 'model3d')
     .filter((img) => matchesMarkerTags(img, markerTags));
   const blockedReasons = step ? step.blockedReasons : request.blockedReasons;
+  const pendingRating = (step ? step.pendingRatingOutput : request.pendingRatingOutput).filter(
+    (img) => matchesMarkerTags(img, markerTags)
+  );
 
   const stepFailure = step
     ? step.errors?.join(',\n') ||
@@ -633,6 +636,18 @@ function StepOutputs({
             <GeneratedOutput key={image.id} image={image} />
           )
         )}
+        {pendingRating.map((image) => (
+          <TwCard
+            key={image.id}
+            className="items-center justify-center border"
+            style={{ aspectRatio: image.aspect ?? 1 }}
+          >
+            <Loader size={24} />
+            <Text c="dimmed" size="xs" align="center">
+              Rating
+            </Text>
+          </TwCard>
+        ))}
         <BlockedBlocks
           blockedReasons={blockedReasons.filter((r) => r !== 'siteRestricted')}
           workflowId={request.id}
@@ -689,7 +704,7 @@ function StepOutputs({
  */
 const workflowStatusAlertMap: Partial<Record<WorkflowStatus, { color: string; message: string }>> =
   {
-    canceled: { color: 'gray', message: 'This generation was cancelled.' },
+    canceled: { color: 'gray', message: 'This generation was canceled.' },
   };
 
 function WorkflowStatusAlert({

@@ -341,6 +341,40 @@ describe('reserveAppSpend — VELOCITY', () => {
     expect(store.get(dailyKey())).toBe(dailyBefore);
   });
 
+  it('counts `units` generations against the velocity ceiling for ONE reservation', async () => {
+    setLimits({ dailyBuzz: 5_000_000, velocityMaxGens: 10 });
+    // A 3-step workflow takes 3 slots…
+    const first = await reserveAppSpend(APP_BLOCK_ID, 5, { units: 3 });
+    expect(first.allowed).toBe(true);
+    expect(first.velocityCount).toBe(3);
+    expect(mockSysRedis.incrBy).toHaveBeenCalledWith(velocityKey(), 3);
+    // …and still reserves its Buzz once.
+    expect(Number(store.get(dailyKey()))).toBe(5);
+    // 3 + 3 + 3 = 9 fits under 10; the fourth (12) does not, though only 4
+    // reservations were made.
+    expect((await reserveAppSpend(APP_BLOCK_ID, 5, { units: 3 })).allowed).toBe(true);
+    expect((await reserveAppSpend(APP_BLOCK_ID, 5, { units: 3 })).allowed).toBe(true);
+    const fourth = await reserveAppSpend(APP_BLOCK_ID, 5, { units: 3 });
+    expect(fourth.allowed).toBe(false);
+    expect(fourth.reason).toBe('velocity');
+  });
+
+  it('arms the velocity TTL when the FIRST write of a bucket is a multi-unit one', async () => {
+    await reserveAppSpend(APP_BLOCK_ID, 0, { units: 4 });
+    expect(mockSysRedis.expire).toHaveBeenCalledWith(
+      velocityKey(),
+      BLOCK_APP_SPEND_VELOCITY_WINDOW_SECONDS
+    );
+  });
+
+  it.each([undefined, 0, -2, 1.5, Number.NaN])(
+    'treats units=%s as one generation',
+    async (units) => {
+      const res = await reserveAppSpend(APP_BLOCK_ID, 0, { units });
+      expect(res.velocityCount).toBe(1);
+    }
+  );
+
   it('enforces velocity even for 0-cost gens (a burst of cache-hits is bounded)', async () => {
     const max = APP_SPEND_TIER_CAP_LIMITS.trusted.velocityMaxGens;
     let denied = 0;

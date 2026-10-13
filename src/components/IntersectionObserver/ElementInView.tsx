@@ -10,6 +10,8 @@ import type {
 } from 'react';
 import { createContext, forwardRef, useContext, useEffect } from 'react';
 import { useInView } from '~/hooks/useInView';
+import { useTrackImpression } from '~/components/TrackView/useTrackImpression';
+import type { ImpressionTarget } from '~/components/TrackView/useTrackImpression';
 
 const ElementInViewContext = createContext<boolean | null>(null);
 
@@ -26,6 +28,13 @@ type OwnProps = {
   children?: ReactNode;
   /** Initial value returned before the observer has reported. */
   initialInView?: boolean;
+  /**
+   * Entities this element presents, reported as feed impressions once it has been
+   * half visible for a second. A card that already renders through this component
+   * tracks with this prop; one that does not calls `useTrackImpression` on its own
+   * root rather than gaining a second `useInView` observer by wrapping in this.
+   */
+  impressions?: ImpressionTarget[];
 };
 
 type ElementInViewProps<C extends ElementType> = OwnProps & {
@@ -46,12 +55,17 @@ type ElementInViewComponent = {
 };
 
 function ElementInViewImpl<C extends ElementType = 'div'>(
-  { component, children, initialInView, ...rest }: ElementInViewProps<C>,
+  { component, children, initialInView, impressions, ...rest }: ElementInViewProps<C>,
   forwardedRef: ForwardedRef<unknown>
 ) {
   const Component = (component ?? 'div') as ElementType;
   const { ref: internalRef, inView } = useInView({ initialInView });
-  const mergedRef = useMergedRef(internalRef as Ref<HTMLElement>, forwardedRef as Ref<HTMLElement>);
+  const impressionRef = useTrackImpression<HTMLElement>(impressions);
+  const mergedRef = useMergedRef(
+    internalRef as Ref<HTMLElement>,
+    impressionRef,
+    forwardedRef as Ref<HTMLElement>
+  );
 
   return (
     <Component ref={mergedRef} {...rest}>

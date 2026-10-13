@@ -2,6 +2,7 @@ import { sql } from '@civitai/db/kysely';
 import { dbRead } from './db';
 import { getClickhouse } from './clickhouse';
 import { clickhouseDate } from './clickhouse-date';
+import { escapeLike } from './like';
 import { SYSTEM_USER_ID, isInt4Id, usernameExists } from './users.service';
 
 // The PAGE LOAD half of Chat Audit (Retool's "Chat Audit" app) — search, the chat list, a transcript and
@@ -132,7 +133,6 @@ export function classifySearch(term: string): SearchMode {
 
 /** `%` and `_` are LIKE metacharacters. Kysely binds the value, so this is not injection — but an
  *  unescaped `100%` matches "1000 buzz", and a bare `%` matches every message on the site. */
-const escapeLike = (term: string) => term.replace(/[\\%_]/g, (c) => '\\' + c);
 
 const SEARCH_LIMIT = 50;
 

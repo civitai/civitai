@@ -12,6 +12,7 @@ import {
 } from '~/server/services/feed-shadow.service';
 
 export const FEED_PRIMARY_TIMEOUT_MS = 5_000;
+const HUB_ROUTES = new Set(['union-walk', 'union-gather', 'empty']);
 
 const requestCounter = registerCounterWithLabels({
   name: 'feed_primary_requests_total',
@@ -96,11 +97,24 @@ export function feedHydrateQuery<
     period?: unknown;
     modelId?: number;
     modelVersionId?: number;
+    hubId?: number;
+    hubExcludedSources?: unknown;
   }
 >(
   input: T,
   ids: number[]
-): Omit<T, 'cursor' | 'skip' | 'offset' | 'entry' | 'period' | 'modelId' | 'modelVersionId'> & {
+): Omit<
+  T,
+  | 'cursor'
+  | 'skip'
+  | 'offset'
+  | 'entry'
+  | 'period'
+  | 'modelId'
+  | 'modelVersionId'
+  | 'hubId'
+  | 'hubExcludedSources'
+> & {
   ids: number[];
   limit: number;
   period: 'AllTime';
@@ -116,6 +130,9 @@ export function feedHydrateQuery<
     // the hydrate's resource join would drop it.
     modelId: _modelId,
     modelVersionId: _modelVersionId,
+    // The feed already applied the hub, and the database path refuses a hub outright.
+    hubId: _hubId,
+    hubExcludedSources: _hubExcludedSources,
     ...rest
   } = input;
   // getAllImages would answer a statement timeout with an empty page, which here would read as
@@ -143,10 +160,12 @@ export async function serveFromFeed<T extends { id: number }>(
 ): Promise<FeedPrimaryResult<T>> {
   const count = (outcome: string, reason = '') => countFeedPrimary(outcome, reason, deps.route);
   // Meilisearch answers a follow list with no creators as an empty feed, whatever else is set,
-  // and an unpopulated new-creator board serves nothing rather than the global feed.
+  // an unpopulated new-creator board serves nothing rather than the global feed, and so does a
+  // hub that resolves to nothing for this viewer.
   if (
     (input.followed === true && input.followedUserIds?.length === 0) ||
-    (input.newCreators === true && input.newCreatorUserIds?.length === 0)
+    (input.newCreators === true && input.newCreatorUserIds?.length === 0) ||
+    (!!input.hubId && input.hubSources === null)
   ) {
     count('served');
     return { ok: true, page: { data: [], nextCursor: undefined, feedMs: 0 } };
@@ -170,6 +189,12 @@ export async function serveFromFeed<T extends { id: number }>(
   if (answer.status !== 200) {
     count('error', `status:${answer.status}`);
     return { ok: false, reason: `status:${answer.status}` };
+  }
+  // A feed build without the any-of sources ignores them and answers with the open feed. Only
+  // a plan that took the union, or the feed's own empty page, is the hub.
+  if (input.hubId && !HUB_ROUTES.has(answer.route ?? '')) {
+    count('error', 'hub:route');
+    return { ok: false, reason: 'hub:route' };
   }
   const nextCursor = answer.nextCursor ? encodeFeedCursor(answer.nextCursor) : undefined;
   if (!answer.ids.length) {

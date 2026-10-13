@@ -4,11 +4,19 @@ import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { REGISTERED_RECIPE_IDS } from '~/server/services/blocks/recipes';
 import { REGISTERED_STEP_IDS } from '~/server/services/blocks/steps';
 import type { BlockStepToolCall } from '~/server/services/blocks/steps';
+import type {
+  TrainingQuoteErrorCode,
+  StepQuoteErrorCode,
+  WorkflowQuoteErrorCode,
+} from '~/server/services/blocks/pass-through-quote-failure';
+import type { CONFIRMED_STEP_DAILY_LIMIT_ERROR_CODE } from '~/shared/constants/block-scope.constants';
+import type { BlockWorkflowErrorCode } from '~/server/services/blocks/workflow-graph';
 import {
   civitaiHostedImageUrlSchema,
   SOURCE_IMAGE_URL_MAX,
 } from '~/server/schema/blocks/civitai-image-url';
-import type { ModelSubstitutionReason } from '~/shared/data-graph/generation/model-substitution';
+import type { ModelSubstitutionReason } from '~/shared/generation/model-substitution';
+import { BLOCK_ESTIMATE_BATCH_MAX_CELLS } from '~/shared/constants/block-estimate-batch.constants';
 import { aiToolkitTrainingParamsSchema } from '~/server/schema/orchestrator/training.schema';
 
 // The spendable buzz account types a viewer may pick for a (money) page block.
@@ -123,10 +131,9 @@ export type BlockSourceImage = z.infer<typeof blockSourceImageSchema>;
 
 // ── Multi-image conditioning (App Blocks IMAGE bridge) ───────────────────────
 // ABSOLUTE wire bound on `sourceImages`, NOT the real cap. The real cap is
-// PER-ECOSYSTEM and derived from the graph's own `imagesNode` config at build
-// time (`getImagesLimit` — Boogu/Kontext/MAI/SD-family 1, Qwen/Qwen2/MageFlow
-// 3, Reve/HiDream-O1 4, WanImage 5, Flux.2/Klein/OpenAI/NanoBanana/Seedream/
-// Grok 7). This constant only stops an untrusted iframe from posting an
+// PER-ECOSYSTEM and derived from the graph's own `imagesDef` config at build
+// time (`getImagesLimit`, ranging 1–10). This constant only stops an untrusted
+// iframe from posting an
 // unbounded array before the body is even parsed — it is set ABOVE the largest
 // per-ecosystem cap on purpose so a future ecosystem raising its own limit is
 // not silently clamped here. Every element is validated individually against
@@ -168,7 +175,7 @@ const blockTextToImageBodySchema = z.object({
   // (`normalizeBlockSourceImages`) and everything downstream sees only arrays.
   sourceImage: blockSourceImageSchema.optional(),
   // Multi-image conditioning. The graph layer has always supported N images
-  // (`imagesNode({ min, max, slots })`); the block bridge could only ever
+  // (`imagesDef({ min, max, slots })`); the block bridge could only ever
   // express one. Each element is validated INDIVIDUALLY (Civitai-hosted https
   // host check + DIM_MIN/DIM_MAX bounds) — the array form has exactly the same
   // per-image posture as the singular one, with no "first element only" gap.
@@ -396,18 +403,18 @@ export const blockCustomComfyBodySchema = z
  * 1000, and RAISING IT CHANGES WHAT ONE JOB CAN COST AN ORDINARY VIEWER. The
  * false version read as "raising this changes nothing".
  *
- * Its VALUE is still derived rather than invented: it is pinned equal to
- * `DEV_BUZZ_BUDGET_CAP` (250) in `services/blocks/dev-scoped-mint.service` so the
- * two cannot diverge silently, and it sits comfortably above the largest shipped
- * recipe ceiling (180, the `qwen-image` engine of `seamless-pano-360`) so an
- * inline graph is not more constrained than a recipe. What the pin is NOT is a
- * restatement of some other gate that already clamps this path.
+ * Its VALUE is a policy choice about what one inline job may cost a viewer, set
+ * comfortably above the largest shipped recipe ceiling (180, the `qwen-image`
+ * engine of `seamless-pano-360`) so an inline graph is not more constrained than a
+ * recipe. It must stay at or below `DEV_BUZZ_BUDGET_CAP` in
+ * `services/blocks/dev-scoped-mint.service`, so a pre-approval token can afford any
+ * inline job and an app can be developed and reviewed at the price it will charge.
  *
  * Deliberately a LITERAL here rather than an import: this module is imported by
  * the wire layer and must stay import-light, while `dev-scoped-mint.service`
  * pulls in the block-token service.
  * `src/server/schema/blocks/__tests__/workflow.schema.inline-comfy.test.ts`
- * imports both and pins them equal, so the derivation cannot drift silently.
+ * imports both and pins `INLINE_MAX_BUZZ <= DEV_BUZZ_BUDGET_CAP`.
  * (That sentence used to name `inline-comfy-budget.test.ts`, a file that does not
  * exist anywhere in this repo — the guard is real, the filename was not.)
  */
@@ -562,10 +569,15 @@ export const blockStepBodySchema = makeBlockStepBodySchema(REGISTERED_STEP_IDS);
 // assumes). Recorded here so it is a decision someone can revisit, not a
 // surprise. See the PR that added this arm.
 //
-// `maxBuzz` is the ONLY spend knob and it works exactly as the inline-comfy arm's
-// does: the server derives `stepTimeoutSeconds = maxBuzz` and stamps it as the
-// step timeout, so `maxBuzz === ceil(stepTimeoutSeconds)` cannot be violated —
-// there is only one number.
+// `maxBuzz` is the ONLY spend knob an app sets and it works exactly as the
+// inline-comfy arm's does: the server derives `stepTimeoutSeconds = maxBuzz` and
+// stamps it as the step timeout, so `maxBuzz === ceil(stepTimeoutSeconds)` cannot be
+// violated — there is only one number.
+//
+// The one exception is a CONFIRMED job (`quoteId`): a fixed orchestrator price above
+// the token's per-call budget that the viewer confirmed in host chrome. That job is
+// charged the confirmed price, not `maxBuzz` — see `submitConfirmedPassThroughStepWorkflow`
+// in blocks.router and `blockConfirmedStepCeiling` in block-scope.middleware.
 
 /**
  * Hard per-job Buzz ceiling a pass-through body may declare. The same number as
@@ -573,7 +585,7 @@ export const blockStepBodySchema = makeBlockStepBodySchema(REGISTERED_STEP_IDS);
  *
  * 🔴 IT IS THE BINDING BOUND, NOT A REDUNDANT ONE. A draft of this comment said
  * both arms were developer-only and therefore already clamped by
- * `DEV_BUZZ_BUDGET_CAP` (250); both halves are false — neither arm runs
+ * `DEV_BUZZ_BUDGET_CAP`; both halves are false — neither arm runs
  * `assertViewerIsAppDeveloper`, and an ordinary install token's per-call budget
  * clamps at `BUZZ_BUDGET_CAP` (1000, see `shared/constants/block-scope.constants`).
  * Recorded because the false version read as "raising this changes nothing".
@@ -611,6 +623,13 @@ export const PASS_THROUGH_TYPE_MAX_CHARS = 64;
  */
 export const PASS_THROUGH_INPUT_BYTES_MAX = INLINE_GRAPH_BYTES_MAX;
 
+/**
+ * Opaque handle to a server-stored confirmed-STEP quote (`blocks.estimateWorkflow` on
+ * a pass-through body priced above the token's per-call budget). Disjoint from the
+ * training `tq_` shape, so neither kind's id can name the other's record.
+ */
+export const BLOCK_STEP_QUOTE_ID_REGEX = /^sq_[a-f0-9]{32}$/;
+
 const blockPassThroughStepShape = {
   kind: z.literal('step'),
   // The ARM discriminator. `z.undefined()` — NOT an absent key. See the
@@ -626,6 +645,11 @@ const blockPassThroughStepShape = {
   // draft claimed identity here and in `blocks.router`; measured false.)
   input: z.record(z.string(), z.unknown()),
   maxBuzz: z.number().int().min(1).max(PASS_THROUGH_MAX_BUZZ),
+  // Present on a CONFIRMED submit only — the viewer-confirmed fixed-price quote
+  // (`stepQuote.quoteId` on the estimate reply) this job is charged against in place
+  // of the per-call budget. Excluded from the body hash that binds a quote to its
+  // body. Absent, the arm is exactly the unconfirmed one described above.
+  quoteId: z.string().regex(BLOCK_STEP_QUOTE_ID_REGEX).optional(),
 };
 
 export const blockPassThroughStepBodySchema = z
@@ -635,6 +659,63 @@ export const blockPassThroughStepBodySchema = z
     path: ['input'],
     message: `step input exceeds the ${PASS_THROUGH_INPUT_BYTES_MAX}-byte limit`,
   });
+
+export type PassThroughStepBody = z.infer<typeof blockPassThroughStepBodySchema>;
+
+// ── App Blocks MULTI-STEP kind (`kind:'workflow'`) ────────────────────────────
+//
+// 1..N pass-through steps submitted as ONE workflow. A step input may hold the
+// orchestrator's reference object (`{ "$ref", "path", "default"?, "format"? }`)
+// naming `$arguments` or an earlier step.
+//
+// 🔴 THERE IS NO `maxBuzz`. The ceiling is the token's per-generation budget
+// times the number of steps, computed by the server; the app declares nothing.
+//
+// 🔴 THIS SCHEMA CHECKS SHAPE AND SIZE ONLY. The step count, the step-name rules
+// and the reference graph are checked by `resolveBlockWorkflowGraph`, and the
+// step-type denylist by the router — both on the estimate and the submit, before
+// any orchestrator call. They are NOT here because a schema rejection is thrown
+// at the tRPC boundary, where it cannot carry the `errorCode` a block branches
+// on; those refusals are returned as a failed snapshot instead.
+
+/**
+ * Max serialized bytes of every step `input` plus `arguments`, summed. The same
+ * payload bound a single pass-through `input` gets, applied to the whole body.
+ */
+export const WORKFLOW_INPUT_BYTES_MAX = PASS_THROUGH_INPUT_BYTES_MAX;
+
+/** Max characters of a step `name` on the wire; the name rules are tighter. */
+const WORKFLOW_STEP_NAME_WIRE_MAX = 64;
+
+const blockMultiStepWorkflowStepSchema = z
+  .object({
+    name: z.string().min(1).max(WORKFLOW_STEP_NAME_WIRE_MAX).optional(),
+    $type: z.string().min(1).max(PASS_THROUGH_TYPE_MAX_CHARS),
+    // Orchestrator-native and forwarded unmodified, like the pass-through arm's.
+    input: z.record(z.string(), z.unknown()),
+    suppressOutput: z.boolean().optional(),
+  })
+  .strict();
+
+export const blockMultiStepWorkflowBodySchema = z
+  .object({
+    kind: z.literal('workflow'),
+    steps: z.array(blockMultiStepWorkflowStepSchema).min(1),
+    arguments: z.record(z.string(), z.unknown()).optional(),
+  })
+  .strict()
+  .refine(
+    (b) =>
+      b.steps.reduce((bytes, step) => bytes + JSON.stringify(step.input).length, 0) +
+        (b.arguments ? JSON.stringify(b.arguments).length : 0) <=
+      WORKFLOW_INPUT_BYTES_MAX,
+    {
+      path: ['steps'],
+      message: `workflow step inputs and arguments exceed the ${WORKFLOW_INPUT_BYTES_MAX}-byte limit`,
+    }
+  );
+
+export type BlockMultiStepWorkflowBody = z.infer<typeof blockMultiStepWorkflowBodySchema>;
 
 // ── App Blocks TRAINING kind (`kind:'training'`) ───────────────────────────────
 //
@@ -657,6 +738,24 @@ export const blockPassThroughStepBodySchema = z
 export const BLOCK_TRAINING_DATASET_ID_REGEX = /^tds_[a-f0-9]{32}$/;
 /** Opaque handle to a server-stored training quote. */
 export const BLOCK_TRAINING_QUOTE_ID_REGEX = /^tq_[a-f0-9]{32}$/;
+/**
+ * Input of the shared consent pair (`blocks.previewQuoteGrant` /
+ * `blocks.consentQuoteGrant`). The caller states the KIND it is confirming and the
+ * quote id must be of that kind — a discriminated union, so a training id sent as a
+ * step (or the reverse) is refused at the input rather than dispatched by its prefix.
+ */
+export const blockQuoteGrantConsentInputSchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('training'),
+    blockToken: z.string().min(1),
+    quoteId: z.string().regex(BLOCK_TRAINING_QUOTE_ID_REGEX),
+  }),
+  z.object({
+    kind: z.literal('step'),
+    blockToken: z.string().min(1),
+    quoteId: z.string().regex(BLOCK_STEP_QUOTE_ID_REGEX),
+  }),
+]);
 /** Max sample prompts on a training run. */
 export const BLOCK_TRAINING_SAMPLE_PROMPTS_MAX = 6;
 /** Max characters of one sample prompt. */
@@ -795,7 +894,54 @@ export const blockWorkflowBodySchema = z.discriminatedUnion('kind', [
   blockCustomComfyMemberSchema,
   blockStepMemberSchema,
   blockTrainingBodySchema,
+  blockMultiStepWorkflowBodySchema,
 ]);
+
+export { BLOCK_ESTIMATE_BATCH_MAX_CELLS };
+
+/**
+ * Input of `blocks.estimateWorkflowBatch` — the batch twin of `estimateWorkflow`.
+ *
+ * 🔴 `bodies` IS `unknown[]`, NOT `blockWorkflowBodySchema[]`, AND THAT IS THE
+ * PER-CELL INDEPENDENCE RULE RATHER THAN A LOOSENING. tRPC validates `.input()`
+ * for the whole call, so a typed array would fail EVERY cell when one is
+ * malformed. Each element is parsed against `blockWorkflowBodySchema` inside the
+ * procedure instead — the same schema, applied per cell — and a cell that fails it
+ * becomes that cell's error. What this schema still refuses for the whole call is
+ * what is wrong with the LIST: not an array, empty, or longer than the cap.
+ */
+export const blockEstimateBatchInputSchema = z.object({
+  blockToken: z.string().min(1),
+  bodies: z.array(z.unknown()).min(1).max(BLOCK_ESTIMATE_BATCH_MAX_CELLS),
+});
+
+/**
+ * The run total a batch estimate reports beside its per-cell snapshots.
+ *
+ * `total` is the sum of `cost.total` over the cells that PRICED — a non-failed
+ * snapshot carrying a numeric `cost.total`, the same rule the SDK applies to one
+ * estimate. It is a total for the whole list only when `pricedCells` equals
+ * `cellCount`; otherwise it is a partial sum and must be shown as one.
+ *
+ * It is a quote, exactly as each cell is: nothing reserves it and each cell is
+ * priced again when it is submitted.
+ */
+export type BlockEstimateBatchAggregate = {
+  total: number;
+  pricedCells: number;
+  cellCount: number;
+};
+
+/**
+ * Reply of `blocks.estimateWorkflowBatch`. `snapshots[i]` answers `bodies[i]`:
+ * either the snapshot `estimateWorkflow` would have returned for that body, or
+ * the failure-shape snapshot a host builds when that call throws
+ * (`{ workflowId: 'failed', status: 'failed', error }`).
+ */
+export type BlockEstimateBatchResult = {
+  snapshots: BlockWorkflowSnapshot[];
+  aggregate: BlockEstimateBatchAggregate;
+};
 
 // Mirrors BlockWorkflowSnapshot in @civitai/app-sdk's blocks/types.ts.
 // Keep field names in lockstep — this is the wire contract the iframe consumes.
@@ -807,9 +953,67 @@ export const blockWorkflowBodySchema = z.discriminatedUnion('kind', [
 export type BlockWorkflowSnapshot = {
   workflowId: string;
   status: 'pending' | 'processing' | 'succeeded' | 'failed' | 'expired' | 'canceled';
-  cost?: { total: number };
+  cost?: {
+    /** Whole Buzz. Includes `authorFee` whenever that field is present. */
+    total: number;
+    /**
+     * The part of `total` that is the app author's per-generation fee, in whole
+     * Buzz — the exact amount added into `total` for this reply. Display only.
+     *
+     * A NUMBER wherever `total` was built from a fee quote: the `textToImage`
+     * and registered-`step` estimate replies, and those kinds' submit refusals
+     * by a budget, spend cap or rate limit (they quote the refused price). `0`
+     * means a fee was looked up and none applies.
+     *
+     * ABSENT wherever `total` carries no fee quote — every snapshot of a
+     * submitted workflow (its total is the realized generation cost; the fee is
+     * a separate charge), the registered-`step` submit refusal for a missing
+     * orchestrator price quote (it refuses before any fee is looked up), and the
+     * kinds that price no fee. Absent means "not itemised", which an app must
+     * not read as zero.
+     *
+     * 🔴 THE DISCLOSURE BOUNDARY — this is the one place it is explained. The
+     * cost an app sees is `{ total, authorFee? }` and nothing more: every other
+     * component of `total` — the generation base, other creators' licensing and
+     * lineage fees, the viewer's tips — stays folded into `total` and is NOT
+     * itemised. Showing the author fee is a deliberate product decision: the app
+     * is the fee's beneficiary and the fee formula is already public. It does let
+     * an app (or a viewer) bound the generation base and so roughly infer how much
+     * of `total` went to other parties; that consequence was accepted. Do NOT add
+     * any further breakdown field (base, licensing, lineage, tip) to this wire
+     * shape without a new decision.
+     */
+    authorFee?: number;
+  };
   imageUrls?: string[];
   error?: string;
+  /**
+   * A stable, machine-readable companion to `error`, for a block to branch on.
+   * OPTIONAL + additive: set only on the refusals that define a code, absent
+   * everywhere else. Treat an unknown value as opaque — codes may be added.
+   *
+   * `workflow_quote_rejected` / `workflow_quote_unavailable` / `workflow_quote_unpriced`
+   * are ESTIMATE-only: a `kind: 'workflow'` estimate with no price quote is a failed
+   * snapshot with no `cost`. `rejected` means the orchestrator refused the body and a
+   * retry of the same body will not help; `unavailable` is transient; `unpriced` is
+   * an answer without a price. The SUBMIT of the same body defines no such refusal.
+   *
+   * `step_quote_rejected` / `step_quote_unavailable` / `step_quote_unpriced` mean the
+   * same for a registered-step (`kind: 'step'` with `step`) ESTIMATE. Its submit, with
+   * no quote, refuses with a failed snapshot that carries a `cost` and no code.
+   *
+   * `'daily-limit-exceeded'` — a viewer-confirmed job (a confirmed pass-through step or
+   * a `kind:'training'` run) that would exceed what remains of the viewer's own opted-in
+   * daily Buzz limit for this app. Never overridable by the confirm; the viewer raises
+   * the limit themselves. Returned by the submit for an ordinary page token only: a
+   * private run reserves against its own cap and makes no daily-limit check at submit.
+   */
+  errorCode?:
+    | TrainingQuoteErrorCode
+    | WorkflowQuoteErrorCode
+    | StepQuoteErrorCode
+    | BlockWorkflowErrorCode
+    | typeof CONFIRMED_STEP_DAILY_LIMIT_ERROR_CODE;
   // The buzz account that primarily funded this generation (the accountType of
   // the largest realized debit). OPTIONAL + additive: existing consumers that
   // don't read it are unaffected. Only the account TYPE is surfaced — nothing
@@ -1106,8 +1310,9 @@ export type BlockWorkflowSnapshot = {
    * unscanned-text surface is real for every `$type` that does NOT collide.
    *
    * OMITTED entirely when the workflow carries no step with an UNRECOGNISED
-   * `$type` — which is every workflow the other three kinds produce — so their
-   * snapshots stay byte-identical.
+   * `$type` submitted by the pass-through arm — which is every workflow the other
+   * kinds produce (`kind:'workflow'` reports step output on {@link steps}) — so
+   * their snapshots stay byte-identical.
    *
    * 🔴 WIRE CONTRACT: additive on the type `@civitai/app-sdk`'s `blocks/types.ts`
    * mirrors, exactly like `textOutputs` above. The SDK's inbound validator does
@@ -1146,7 +1351,70 @@ export type BlockWorkflowSnapshot = {
    * 🔴 WIRE CONTRACT: additive; mirrored by `@civitai/app-sdk` in its own repo.
    */
   trainingQuote?: BlockTrainingQuote;
+  /**
+   * The server-stored quote a pass-through `kind:'step'` ESTIMATE produced when the
+   * orchestrator quoted a FIXED price above the token's per-call budget (and within
+   * the per-job ceiling). The block passes `quoteId` back on `RUN_CONFIRMED_STEP`; the
+   * host shows the viewer this price (read back from the server, never from the
+   * block), and only a submit naming a viewer-confirmed quote may charge it. `total`
+   * is the exact price confirmed and charged — it may differ from `cost.total`, which
+   * stays what an UNCONFIRMED submit would reserve (`max(maxBuzz, quote)`). Present
+   * only on such an estimate reply. 🔴 WIRE CONTRACT: additive; mirrored by
+   * `@civitai/app-sdk` in its own repo.
+   */
+  stepQuote?: BlockStepQuote;
+  /**
+   * Labels for the 3D models (`Model3dBlob`, `type: 'model3d'`) a pass-through step
+   * produced. Every one of those urls is ALSO in `imageUrls`, unchanged — this only
+   * says which entry is which: `format` is the orchestrator blob's own `format`
+   * (`glb`, `fbx`, …) and `variant` is the output key path it was found at
+   * (`model`, `riggedFbxModel`, `basicAnimations.walkingModel`, …). OMITTED when the
+   * workflow produced none. 🔴 WIRE CONTRACT: additive; mirrored by `@civitai/app-sdk`.
+   */
+  model3dOutputs?: BlockModel3dOutput[];
+  /**
+   * One entry per step of a `kind:'workflow'` submit, in the orchestrator's order.
+   * The children a `repeat` step generates follow it, named `<repeat name>.<n>`.
+   *
+   * `imageUrls` is that step's available media and is omitted for a step submitted
+   * with `suppressOutput`; the snapshot's own `imageUrls` is the union of the steps
+   * that did not suppress theirs. `output` follows the {@link stepOutputs} rule
+   * (blobs removed, the rest forwarded unscanned) and is absent for a step whose
+   * `$type` has its own extraction — scanned text arrives on {@link textOutputs}.
+   * `error` is the orchestrator's reason for a step that did not succeed, and only
+   * when it is plain prose.
+   *
+   * `cost` stays on the snapshot: the orchestrator reports one price for the whole
+   * workflow. A `failed` workflow can carry a non-zero `cost.total` and usable
+   * `imageUrls`, because steps that finished before the failing one stay charged.
+   * The author fee is the exception: it is reversed WHOLE for any workflow that
+   * does not succeed, whatever its earlier steps delivered.
+   *
+   * Present ONLY on a workflow this kind submitted; every other snapshot is
+   * byte-identical to before.
+   * 🔴 WIRE CONTRACT: additive; mirrored by `@civitai/app-sdk` in its own repo.
+   */
+  steps?: BlockWorkflowStepSnapshot[];
 };
+
+export type BlockWorkflowStepSnapshot = {
+  name: string;
+  $type: string;
+  status: BlockWorkflowSnapshot['status'];
+  imageUrls?: string[];
+  output?: unknown;
+  error?: string;
+};
+
+export type BlockStepQuote = {
+  quoteId: string;
+  total: number;
+  /** The orchestrator `$type` that was priced. */
+  stepType: string;
+  expiresAt: string;
+};
+
+export type BlockModel3dOutput = { url: string; format: string; variant: string };
 
 export type BlockTrainingQuote = {
   quoteId: string;

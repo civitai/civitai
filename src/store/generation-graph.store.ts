@@ -1,7 +1,7 @@
 /**
  * Generation Graph Store
  *
- * Store for passing generation data to the DataGraph-based form.
+ * Store for passing generation data into the generation form.
  * Handles opening the generation sidebar, fetching generation data,
  * and providing graph-compatible data to GenerationFormProvider.
  */

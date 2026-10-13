@@ -158,7 +158,7 @@ export function ImageUploadMultipleInput({
   // Only wrap the label when there is an action to show. Mantine renders a label
   // element for any truthy `label`, and a JSX wrapper is always truthy — so wrapping
   // unconditionally puts an empty row on every image input that has no label, which
-  // is most of them (imagesNode has no default).
+  // is most of them (imagesDef has no default).
   const labelWithActions =
     showRecent || showClearAll ? (
       <div className="flex w-full items-center justify-between gap-3">

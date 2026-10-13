@@ -14,3 +14,4 @@ export { membershipGiftReceivedEmail } from './membershipGiftReceived.email';
 export { membershipGiftSentEmail } from './membershipGiftSent.email';
 export { emailVerificationEmail } from './emailVerification.email';
 export type { Email } from './base.email';
+export { bankingChangeNoticeEmail } from './bankingChangeNotice.email';

@@ -272,10 +272,20 @@ describe('AspectRatioInput "Custom"', () => {
 
     // 512 tall caps the width at 1280 (2.5:1); End drives the thumb to the top of the
     // full range, and it stops at the grey zone's edge.
+    //
+    // Mantine's focus trap places the modal's initial focus from TWO `setTimeout`s scheduled at
+    // mount — one in its ref callback, one in its effect — and either can fire after we focus the
+    // thumb, moving focus to the close button so End goes nowhere. Neither leaves anything to wait
+    // on, so the step is retried until the readout shows the end state. That is safe because End
+    // is idempotent: from anywhere it drives to the same clamped edge. A clamp regression still
+    // fails here — End lands on another value every attempt, and the wait times out on this
+    // readout assertion, printing what it got.
     const thumb = modal().getByRole('slider', { name: 'Width' });
-    (thumb.element() as HTMLElement).focus();
-    await userEvent.keyboard('{End}');
-    await expect.element(readout()).toHaveTextContent('1280 × 512');
+    await vi.waitFor(async () => {
+      (thumb.element() as HTMLElement).focus();
+      await userEvent.keyboard('{End}');
+      expect(readout().element().textContent).toBe('1280 × 512');
+    });
 
     // Raising the height shrinks the width's grey zone, then removes it.
     await userEvent.fill(modal().getByRole('textbox', { name: 'Height' }), '1024');

@@ -1,6 +1,10 @@
+import { chunk } from 'lodash-es';
 import type { AugmentedPool } from '~/server/db/db-helpers';
-import { isFlipt } from '~/server/flipt/client';
-import { isFliptOnForTesters } from '~/server/flipt/tester-segment';
+import {
+  isFliptFlagReadable,
+  isFliptOnForTesters,
+  isFliptPublic,
+} from '~/server/flipt/tester-segment';
 import {
   milestoneGrantableUserSql,
   owedScoreTierSql,
@@ -21,12 +25,17 @@ export function isCreatorJourneyOnFor(user: { id: number; isModerator: boolean }
   return isFliptOnForTesters(fliptKey(), user);
 }
 
+/** Whether a "no" from the flag is a real answer; see `isFliptFlagReadable`. */
+export function isCreatorJourneyFlagReadable() {
+  return isFliptFlagReadable(fliptKey());
+}
+
 /**
  * True only once the flag answers true for someone in no segment, i.e. it has gone public. A
  * percentage rollout could put entity '0' in its bucket early, so launch by setting `enabled`.
  */
-export async function isCreatorJourneyPublic() {
-  return isFlipt(fliptKey(), '0', { userId: '0', isModerator: 'false' });
+export function isCreatorJourneyPublic() {
+  return isFliptPublic(fliptKey());
 }
 
 /**
@@ -46,7 +55,28 @@ export async function creatorJourneyAudience(pg: AugmentedPool, userIds: number[
     `,
     [userIds]
   );
-  const candidates = await query.result();
-  const on = await Promise.all(candidates.map((user) => isCreatorJourneyOnFor(user)));
-  return new Set(candidates.filter((_, i) => on[i]).map((user) => user.id));
+  return flagOnAmong(await query.result());
+}
+
+/** Of `userIds`, already known to be owed a milestone, the grantable users the flag is on for. */
+export async function creatorJourneyAudienceAmong(pg: AugmentedPool, userIds: number[]) {
+  if (!userIds.length) return new Set<number>();
+  const query = await pg.cancellableQuery<{ id: number; isModerator: boolean }>(
+    `
+    SELECT u.id, u."isModerator"
+    FROM "User" u
+    WHERE u.id = ANY($1::int[]) AND ${milestoneGrantableUserSql('u')}
+    `,
+    [userIds]
+  );
+  return flagOnAmong(await query.result());
+}
+
+async function flagOnAmong(candidates: { id: number; isModerator: boolean }[]) {
+  const audience = new Set<number>();
+  for (const batch of chunk(candidates, 1000)) {
+    const on = await Promise.all(batch.map((user) => isCreatorJourneyOnFor(user)));
+    batch.forEach((user, i) => on[i] && audience.add(user.id));
+  }
+  return audience;
 }

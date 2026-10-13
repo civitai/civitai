@@ -118,7 +118,7 @@ export function AppsRailNavView({
            links to this heading, and no list wrapping them — they are loose anchors
            that happen to follow a `<Text>`. A screen reader announces the heading
            when the user reaches it and announces each link separately; nothing
-           associates the two. That is a defensible choice for a six-row rail, but
+           associates the two. That is a defensible choice for a seven-row rail, but
            the association is NOT delivered, so do not cite this as grouping
            semantics. Making it real means `role="group"` + `aria-labelledby` on a
            wrapper, or a `<ul>`/`<li>` list — a markup change, not a comment change.

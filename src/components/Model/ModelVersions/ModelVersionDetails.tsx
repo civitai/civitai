@@ -28,6 +28,7 @@ import {
   IconBolt,
   IconBookmark,
   IconBrush,
+  IconCalendarPlus,
   IconClock,
   IconCloudCheck,
   IconCloudLock,
@@ -591,7 +592,12 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
   return (
     <ContainerGrid2 gutter={{ base: 'xl', sm: 'sm', md: 'xl' }}>
       <TrackView entityId={version.id} entityType="ModelVersion" type="ModelVersionView" />
-      <ContainerGrid2.Col span={{ base: 12, sm: 5, md: 4 }} order={{ sm: 2 }} ref={adContainerRef}>
+      <ContainerGrid2.Col
+        span={{ base: 12, sm: 5, md: 4 }}
+        order={{ sm: 2 }}
+        className={classes.sidebarSection}
+        ref={adContainerRef}
+      >
         <Stack>
           {/* Owner-only banner: lists publisher_all_my_models subscriptions
               that would render here so the model owner can opt out of any
@@ -732,6 +738,27 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                   Republish (keep private)
                 </Button>
               )}
+              {features.batchPostScheduling &&
+                isOwner &&
+                !deleted &&
+                version.status === ModelStatus.Published && (
+                  <Tooltip
+                    label="Upload a set of images once and schedule them as posts over days or weeks, each attributed to this version."
+                    multiline
+                    w={280}
+                    withArrow
+                  >
+                    <Button
+                      component={Link}
+                      href={`/posts/batch?modelId=${model.id}&modelVersionId=${version.id}`}
+                      variant="light"
+                      fullWidth
+                      leftSection={<IconCalendarPlus size={16} />}
+                    >
+                      Promote this model
+                    </Button>
+                  </Tooltip>
+                )}
               {/* Primary Actions Card */}
               <Card withBorder p="md">
                 <Stack gap="xs">

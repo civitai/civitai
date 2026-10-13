@@ -158,6 +158,7 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { getRequestBoardDomainColor } from '~/server/utils/server-domain';
+import { resolveRequestBrowsingLevels } from '~/server/utils/browsing-level';
 import { getPrimaryFile, selectLiveLinkedComponents } from '~/server/utils/model-helpers';
 import {
   GET_ALL_IMAGES_PER_MODEL,
@@ -165,10 +166,12 @@ import {
 } from '~/server/utils/model-getall-images';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { filterSensitiveProfanityData } from '~/libs/profanity-simple/helpers';
+import { resolveFlagScanReasons } from '~/server/services/text-scan/flag-snapshot';
 import {
   filterModelMetaForClient,
   resolveMinorAppeal,
   resolveMinorFlagged,
+  resolvePoiFlagged,
 } from '~/server/utils/minor-flag-meta';
 import {
   allBrowsingLevelsFlag,
@@ -189,6 +192,7 @@ import {
   ModelUsageControl,
 } from '~/shared/utils/prisma/enums';
 import { resolveDownloadUrl } from '~/utils/delivery-worker';
+import { resolveActorFor } from '~/utils/resolve-attribution';
 import { primaryModelFileTypes } from '~/utils/file-display-helpers';
 import { removeNulls } from '~/utils/object-helpers';
 import { isDefined } from '~/utils/type-guards';
@@ -560,6 +564,17 @@ export const getModelHandler = async ({
         minor: model.minor,
         meta: model.meta as ModelMeta | null,
       }),
+      poiFlagged: resolvePoiFlagged({
+        isOwner,
+        poi: model.poi,
+        meta: model.meta as ModelMeta | null,
+      }),
+      flagScanReasons: resolveFlagScanReasons({
+        isOwner,
+        poi: model.poi,
+        minor: model.minor,
+        meta: model.meta as ModelMeta | null,
+      }),
       minorAppeal: resolveMinorAppeal({ isOwner, appeal: minorAppeal }),
       meta: model.meta
         ? filterModelMetaForClient(model.meta as ModelMeta, ctx?.user?.isModerator)
@@ -592,6 +607,10 @@ export const getModelsInfiniteHandler = async ({
   ctx: Context;
 }) => {
   try {
+    // The input schema leaves `browsingLevel` optional with no default, so a signed-in
+    // caller who omits it where the domain caps nothing would otherwise reach the query
+    // with no level and get no rows.
+    resolveRequestBrowsingLevels(input, ctx);
     let loopCount = 0;
     let isPrivate = false;
     let nextCursor: string | bigint | undefined;
@@ -607,8 +626,6 @@ export const getModelsInfiniteHandler = async ({
     // value so the feed-hydration path skips the metric-privacy resolution when OFF.
     const metricPrivacyEnabled = !!ctx.features.modelMetricPrivacyReadtime;
     const results: Awaited<ReturnType<typeof getModelsWithImagesAndModelVersions>>['items'] = [];
-    // The loop below advances `input.cursor`, so capture what the caller actually asked for.
-    const requestedCursor = input.cursor;
     while (results.length < (input.limit ?? 100) && loopCount < 3) {
       const result = await getModelsWithImagesAndModelVersions({
         input,
@@ -617,6 +634,8 @@ export const getModelsInfiniteHandler = async ({
         imagesPerModel,
         biasImageSlice: slim,
         metricPrivacyEnabled,
+        // model.getAll never edge-caches a signed-in response (skipEdgeCache).
+        eventDecorationViewer: ctx.user,
       });
       if (result.isPrivate) isPrivate = true;
       results.push(...result.items);
@@ -625,34 +644,6 @@ export const getModelsInfiniteHandler = async ({
       input.cursor = result.nextCursor;
       nextCursor = result.nextCursor;
       loopCount++;
-    }
-
-    // A period-filtered feed that finds nothing is a dead end on surfaces whose whole
-    // purpose is to list one collection — /tag/:name promises "N models tagged X" in its
-    // meta description and CollectionPage schema, then renders an empty grid whenever
-    // none of those models shipped inside the window. Retry once at AllTime so the page
-    // shows the content it advertises. First page only: deep paging legitimately runs out.
-    if (
-      !results.length &&
-      !requestedCursor &&
-      input.periodFallback &&
-      input.period !== MetricTimeframe.AllTime
-    ) {
-      const fallback = await getModelsWithImagesAndModelVersions({
-        input: { ...input, cursor: undefined, period: MetricTimeframe.AllTime },
-        user: ctx.user,
-        domain: getRequestBoardDomainColor(ctx.req),
-        imagesPerModel,
-        biasImageSlice: slim,
-        metricPrivacyEnabled,
-      });
-      if (fallback.isPrivate) isPrivate = true;
-      if (isPrivate) ctx.cache.canCache = false;
-      return {
-        items: fallback.items,
-        nextCursor: fallback.nextCursor,
-        periodFallbackApplied: true,
-      };
     }
 
     if (isPrivate) ctx.cache.canCache = false;
@@ -1231,7 +1222,10 @@ export const getDownloadCommandHandler = async ({
     }
 
     const fileName = getDownloadFilename({ model, modelVersion, file, versionFiles: files });
-    const { url } = await resolveDownloadUrl(file.id, file.url, fileName);
+    const { url } = await resolveDownloadUrl(file.id, file.url, fileName, {
+      caller: 'link',
+      actor: resolveActorFor(ctx.user),
+    });
 
     const commands: CommandResourcesAdd[] = [];
     commands.push({
@@ -1266,8 +1260,12 @@ export const getDownloadCommandHandler = async ({
           name: additionalFileName,
           modelName: model.name,
           modelVersionName: modelVersion.name,
-          url: (await resolveDownloadUrl(additionalFile.id, additionalFile.url, additionalFileName))
-            .url,
+          url: (
+            await resolveDownloadUrl(additionalFile.id, additionalFile.url, additionalFileName, {
+              caller: 'link',
+              actor: resolveActorFor(ctx.user),
+            })
+          ).url,
         },
       });
     }
@@ -1570,6 +1568,7 @@ export const setModelMinorHandler = async ({
       userId: ctx.user.id,
       tracker: ctx.track,
       isModerator: ctx.user.isModerator,
+      recordTextScanRuling: true,
     });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -2480,7 +2479,10 @@ export const publishPrivateModelHandler = async ({
       callerId: userId,
     });
 
-    const { versionIds } = await publishPrivateModel(input);
+    const { versionIds } = await publishPrivateModel({
+      ...input,
+      isModerator: ctx.user.isModerator,
+    });
     await dataForModelsCache.refresh(input.modelId);
     await bustMvCache(versionIds, input.modelId);
     await modelsSearchIndex.queueUpdate([

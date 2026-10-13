@@ -91,6 +91,6 @@ The SQL for all three coverage branches, `GenerationBaseModel` and `AuctionBase`
 
 ## Mistakes that fail silently
 
-- **Wiring only one lane.** The generator has two lanes, data-graph (`src/shared/data-graph/generation/`) and form-graph (`src/shared/form-graph/generation/`). Each has its own graph, handler and registration. The parity tests and `handlers.differential.test.ts` list ecosystems by hand, so a missing entry isn't flagged anywhere.
+- **Registering the graph but not the handler, or the reverse.** The graph lives in `src/shared/form-graph/generation/` (registered in the modality's `hub.graph.ts`) and the handler in `src/server/services/orchestrator/form-graph/` (registered in `index.ts`'s `createStep`). Nothing reconciles the two registrations, so a graph with no handler case throws only on submit.
 - **Skipping the cache bust.** After the coverage insert, the generator reports the version as uncovered for up to an hour.
 - **Misspelling the gate target.** A rule with a wrong ecosystem key has no effect, and nothing distinguishes it from having no rule at all.

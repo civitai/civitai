@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../../test/component-setup';
+import { makeTrpcProxy } from '../../../../test/trpcProxyStub';
 import { useRouter } from 'next/router';
 import { CONNECT_CLIENT_TRANSFER_REFUSAL } from '~/shared/constants/app-transfer.constants';
 import { capabilitiesForKind } from '~/shared/constants/app-capabilities.constants';
@@ -186,40 +187,49 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
   });
   return {
     ...actual,
-    trpc: {
-      useUtils: () => ({
-        appCollaborators: {
-          list: { invalidate: vi.fn().mockResolvedValue(undefined) },
-          getPendingTransfer: { invalidate: vi.fn().mockResolvedValue(undefined) },
-        },
-      }),
-      appListings: {
-        getAuthoringContext: {
+    trpc: makeTrpcProxy(
+      {
+        'appListings.getAuthoringContext': {
           useQuery: () => ({
             data: state.context,
             isLoading: state.context == null,
             error: null,
           }),
         },
-      },
-      appCollaborators: {
-        list: { useQuery: () => ({ data: state.rows, isLoading: false, error: null }) },
-        getPendingTransfer: {
+        // The page asks whether the listing has feedback before deriving its tabs; not this
+        // suite's subject, so the answer is "none" and no Feedback tab renders.
+        'appFeedback.hasAnyForListing': {
+          useQuery: () => ({ data: { hasAny: false }, isLoading: false, error: null }),
+        },
+        'appCollaborators.list': {
+          useQuery: () => ({ data: state.rows, isLoading: false, error: null }),
+        },
+        'appCollaborators.getPendingTransfer': {
           useQuery: () => ({ data: state.pendingTransfer, isLoading: false, error: null }),
         },
         // The invite picker screens the candidates it is offering against the server. Nothing
         // here exercises that answer — these cases are about transfer — but the panel calls it
         // on every render, so an absent entry renders the whole tab as an empty <div>.
-        ineligibleTargets: { useQuery: () => ({ data: [], isLoading: false, error: null }) },
-        invite: mutation(),
-        remove: mutation(),
-        setDisplayed: mutation(),
-        leave: mutation(),
+        'appCollaborators.ineligibleTargets': {
+          useQuery: () => ({ data: [], isLoading: false, error: null }),
+        },
+        'appCollaborators.invite': mutation(),
+        'appCollaborators.remove': mutation(),
+        'appCollaborators.setDisplayed': mutation(),
+        'appCollaborators.leave': mutation(),
         // 🔴 Recorded, and asserted EMPTY. A refused listing must not be able to submit.
-        initiateTransfer: mutation((args) => state.initiateCalls.push(args)),
-        cancelTransfer: mutation(),
+        'appCollaborators.initiateTransfer': mutation((args) => state.initiateCalls.push(args)),
+        'appCollaborators.cancelTransfer': mutation(),
       },
-    },
+      {
+        useUtils: () => ({
+          appCollaborators: {
+            list: { invalidate: vi.fn().mockResolvedValue(undefined) },
+            getPendingTransfer: { invalidate: vi.fn().mockResolvedValue(undefined) },
+          },
+        }),
+      }
+    ),
   };
 });
 

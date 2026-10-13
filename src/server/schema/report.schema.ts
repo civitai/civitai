@@ -173,17 +173,24 @@ export const reportStickerPlacementSchema = baseSchema.extend({
 // #endregion
 
 export type CreateReportInput = z.infer<typeof createReportInputSchema>;
-export const createReportInputSchema = z.discriminatedUnion('reason', [
-  reportNsfwSchema,
-  reportTOSViolationSchema,
-  reportOwnershipSchema,
-  reportClaimSchema,
-  reportAdminAttentionSchema,
-  reportCsamSchema,
-  reportAutomatedSchema,
-  reportSpamSchema,
-  reportStickerPlacementSchema,
-]);
+export const createReportInputSchema = z
+  .discriminatedUnion('reason', [
+    reportNsfwSchema,
+    reportTOSViolationSchema,
+    reportOwnershipSchema,
+    reportClaimSchema,
+    reportAdminAttentionSchema,
+    reportCsamSchema,
+    reportAutomatedSchema,
+    reportSpamSchema,
+    reportStickerPlacementSchema,
+  ])
+  // Game reports come only from Game Frame's server, which verifies the reporter and maps the
+  // reason. Taken from the public route, a site user could file against any mirror id.
+  .refine((input) => input.type !== ReportEntity.GameFrameGame, {
+    path: ['type'],
+    message: 'Games are reported from Civitai Games.',
+  });
 
 export type GetReportCountInput = z.infer<typeof getReportCount>;
 export const getReportCount = z.object({

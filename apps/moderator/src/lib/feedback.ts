@@ -1,4 +1,4 @@
-import { FEEDBACK_AREAS } from '@civitai/shared/feedback.constants';
+import { APP_BLOCK_FEEDBACK_AREA, FEEDBACK_AREAS } from '@civitai/shared/feedback.constants';
 import type { LightboxItem } from './lightbox';
 
 export const FEEDBACK_STATUSES = ['new', 'reviewed', 'actioned', 'dismissed'] as const;
@@ -50,6 +50,23 @@ export function feedbackAreaOptions(
 ): string[] {
   return [...new Set([...distinctAreas, ...knownAreas])].filter(Boolean).sort();
 }
+
+/**
+ * Areas the queue and the sidebar badge leave out unless the area is picked explicitly. App feedback
+ * is monitored on the main app's App review page; its rows still open at `/feedback/<id>`.
+ */
+export const FEEDBACK_AREAS_EXCLUDED_BY_DEFAULT: readonly string[] = [APP_BLOCK_FEEDBACK_AREA];
+
+// A Map, not an object literal: `area` is a stored string, and `{}['constructor']` is not undefined.
+const FEEDBACK_AREA_LABELS = new Map<string, string>([[APP_BLOCK_FEEDBACK_AREA, 'App feedback']]);
+
+/** The display name for an area slug; unlabelled slugs render as themselves. */
+export const feedbackAreaLabel = (area: string): string => FEEDBACK_AREA_LABELS.get(area) ?? area;
+
+/** The area filter's "no area selected" option, which names what that view leaves out. */
+export const FEEDBACK_ANY_AREA_LABEL = `Area — any except ${FEEDBACK_AREAS_EXCLUDED_BY_DEFAULT.map(
+  feedbackAreaLabel
+).join(', ')}`;
 
 export type FeedbackFilters = Record<string, string | number | boolean>;
 

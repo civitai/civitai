@@ -1,6 +1,7 @@
 import * as z from 'zod';
 import { resolveStoreVisibilityScope } from '~/server/services/app-blocks-flag';
 import { getListingDetail } from '~/server/services/blocks/app-listing.service';
+import { withoutViewerScopedFields } from '~/server/schema/blocks/app-listing-read.schema';
 import { recordStoreScopeApplied } from '~/server/prom/store-scope.metrics';
 import { resolvePublicAppsCatalogScope } from '~/server/services/blocks/public-apps-catalog';
 import { MixedAuthEndpoint, handleEndpointError } from '~/server/utils/endpoint-helpers';
@@ -110,7 +111,7 @@ export default MixedAuthEndpoint(async function handler(req, res, user) {
     if (!detail) {
       return res.status(404).json(restErrorBody(REST_ERROR_CODE.NOT_FOUND, 'App not found'));
     }
-    return res.status(200).json(detail);
+    return res.status(200).json(withoutViewerScopedFields(detail));
   } catch (e) {
     return handleEndpointError(res, e);
   }

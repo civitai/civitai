@@ -21,6 +21,7 @@ import {
 } from '~/shared/zod/username.schema';
 import { removeEmpty } from '~/utils/object-helpers';
 import { postgresSlugify } from '~/utils/string-helpers';
+import { stripBlockProvenanceMetadata } from '~/shared/utils/block-provenance-metadata';
 import {
   commaDelimitedEnumArray,
   commaDelimitedNumberArray,
@@ -93,7 +94,10 @@ export const profilePictureSchema = z.object({
   width: z.number().nullish(),
   sizeKB: z.number().optional(),
   mimeType: z.string().optional(),
-  metadata: z.looseObject({}).optional(),
+  metadata: z
+    .looseObject({})
+    .transform((metadata) => stripBlockProvenanceMetadata(metadata))
+    .optional(),
   type: z.enum(MediaType).default(MediaType.image),
 });
 
@@ -345,6 +349,10 @@ export const userSettingsSchema = z.object({
   // they hold is reading one of the two, not the sum. NOT a filter for earned buzz — yellow and
   // green are `purchasable`, so the remaining balance still mixes earned and bought.
   hideBlueBuzzInHeader: z.boolean().optional(),
+  hideFromCreatorShowcase: z.boolean().optional(),
+  // Opt-in, per event name: list me on my team's roster (events/points/roster.ts). The durable record
+  // the Redis roster is rebuilt from; absent means hidden. Written only by event.setRosterOptIn.
+  eventRosterOptIn: z.record(z.string(), z.boolean()).optional(),
   // Opt-out: the arrival pop and idle sway on placed stickers. Animation that
   // never ends is the kind a viewer wants a way out of, and `prefers-reduced-motion`
   // only covers people who set it at the OS level.
@@ -421,6 +429,7 @@ export const setUserSettingsInput = z.object({
   swipeGalleryCards: z.boolean().optional(),
   disableStickerMotion: z.boolean().optional(),
   hideBlueBuzzInHeader: z.boolean().optional(),
+  hideFromCreatorShowcase: z.boolean().optional(),
   hideDonationGoals: z.boolean().optional(),
   hideStickerBook: z.boolean().optional(),
   hidePurchasedStickers: z.boolean().optional(),

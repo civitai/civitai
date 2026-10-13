@@ -181,7 +181,7 @@ const MOD = 4004;
 
 /**
  * 🔴 EVERY ID AND BUDGET IS PAIRWISE DISTINCT, AND DISTINCT FROM EVERY CONSTANT THE
- * ASSERTIONS NAME. The manifest budget is 137 — not 250 (the cap), not 50 (the
+ * ASSERTIONS NAME. The manifest budget is 137 — not 1000 (the cap), not 50 (the
  * default), not a multiple of either — so a clamp or precedence mutant MOVES the
  * asserted value instead of landing on it.
  */
@@ -358,27 +358,27 @@ describe('PHASE 3 private-run mint — the grant path [REG]', () => {
       });
       const res = await invoke(BODY());
       expect(res._body.scopes, `audience=${audience}`).toContain('ai:write:budgeted');
-      // 137 is under the 250 cap, so it passes through verbatim — and because it is
+      // 137 is under the 1000 cap, so it passes through verbatim — and because it is
       // neither the cap nor the default, this value could only have come from the
       // manifest via the clamp.
       expect(mockTokenService.sign.mock.calls[0][0].buzzBudget).toBe(137);
     }
   });
 
-  it('a manifest budget OVER the dev cap clamps to 250', async () => {
+  it('a manifest budget OVER the dev cap clamps to 1000', async () => {
     mockPrivateRunAccess.resolvePrivateRunAccess.mockResolvedValue({
       allowed: true,
       audience: 'moderator',
       block: BLOCK({
         manifest: {
           name: 'x',
-          page: { path: '/', buzzBudgetPerGen: 301 },
+          page: { path: '/', buzzBudgetPerGen: 1301 },
           scopes: ['ai:write:budgeted'],
         },
       }),
     });
     await invoke(BODY());
-    expect(mockTokenService.sign.mock.calls[0][0].buzzBudget).toBe(250);
+    expect(mockTokenService.sign.mock.calls[0][0].buzzBudget).toBe(1000);
   });
 
   it('the mint-time AUDIT line carries the audience, slug, status and listing status', async () => {

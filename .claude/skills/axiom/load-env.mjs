@@ -10,8 +10,15 @@ import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+// Resolved from THIS FILE, not the cwd. The second path used to be `process.cwd()/.env`,
+// which meant the skill found its credentials only when invoked from the repo root and
+// failed from any subdirectory or worktree with "env var is required" — a missing-config
+// error that reads like a missing credential.
+const projectRoot = path.resolve(__dirname, '../../..');
+
 const ENV_PATHS = [
   path.resolve(__dirname, '.env'),
+  path.resolve(projectRoot, '.env'),
   path.resolve(process.cwd(), '.env'),
 ];
 
@@ -29,6 +36,5 @@ for (const envPath of ENV_PATHS) {
         process.env[key] = value;
       }
     }
-    break;
   }
 }

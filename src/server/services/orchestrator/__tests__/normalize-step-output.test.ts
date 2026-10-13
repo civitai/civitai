@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from 'vitest';
  * There is no type error and no runtime error; the only symptom is an empty
  * result, which is how vid2vid:preprocess first shipped.
  *
- * Mock preamble mirrors `orchestration-new.shadow-tap.test.ts`: it only keeps
+ * Mock preamble keeps only
  * the heavy DB/redis module graph inert so the module imports.
  */
 vi.mock('~/server/db/pgDb', () => ({ pgDbReadLong: {}, pgDbRead: {}, pgDbWrite: {} }));

@@ -1,4 +1,5 @@
 import { isGenerationEligible } from '@civitai/shared/generation-eligibility';
+import type { EventViewer } from '~/server/events/event-access';
 import {
   coverageColumn,
   coveragePair,
@@ -74,6 +75,7 @@ import type {
   GetMyTrainingModelsSchema,
   LimitOnly,
   MigrateResourceToCollectionInput,
+  MinorFlagSnapshot,
   ModelGallerySettingsSchema,
   ModelInput,
   ModelMeta,
@@ -98,7 +100,7 @@ import {
   modelsSearchIndex,
 } from '~/server/search-index';
 import type { ModelSearchIndexRecord } from '~/server/search-index/models.search-index';
-import type { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
+import type { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
 import { associatedResourceSelect } from '~/server/selectors/model.selector';
 import { modelFileSelect } from '~/server/selectors/modelFile.selector';
 import { simpleUserSelect, userWithCosmeticsSelect } from '~/server/selectors/user.selector';
@@ -116,7 +118,10 @@ import {
   enqueueCollectionRebuild,
   getCollectionIdsForModelCascade,
 } from '~/server/services/collection-media-index';
-import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
+import {
+  getCosmeticsForEntity,
+  getEventDecorationsForEntity,
+} from '~/server/services/cosmetic.service';
 import type { ImagesForModelVersions } from '~/server/services/image.service';
 import {
   getImagesForModelVersion,
@@ -125,12 +130,17 @@ import {
 } from '~/server/services/image.service';
 import { getFilesForModelVersionCache } from '~/server/services/model-file.service';
 import { buildRepublishImageIndexTouch } from '~/server/services/model-republish-image-index.sql';
+import { recordStatusAtDelete } from '~/server/services/model-status-at-delete';
 import {
   expandBlurbs,
   getReferencedBlurbIds,
   reconcileBlurbReferences,
 } from '~/server/services/blurb-materialize.service';
 import { submitModelTextModeration } from '~/server/services/model-moderation.adapter';
+import { summarizeTextScan } from '~/server/services/text-scan/moderator-summary';
+import { reassertModelPoiRestrictions } from '~/server/services/text-scan/actions/model-poi-minor';
+import { legacyProfanityAutoNsfwApplies } from '~/server/services/text-scan/route';
+import { scanEntityInBackground } from '~/server/services/text-scan/submit';
 import {
   bustMvCache,
   bustPublicModelResponseCache,
@@ -170,11 +180,14 @@ import {
 } from '~/server/utils/errorHandling';
 import { enforceLockedProperties } from '~/server/utils/locked-properties';
 import {
+  pickModerationOwnedMeta,
   pickServerOwnedMeta,
+  RESTORE_CANNOT_PROMOTE_KEY,
   type SERVER_OWNED_META_KEYS,
   stripMinorHashMeta,
   stripModerationOwnedMeta,
   stripServerOwnedMeta,
+  withPrivateCannotPromote,
 } from '~/server/utils/minor-flag-meta';
 import type { RuleDefinition } from '~/server/utils/mod-rules';
 import {
@@ -300,7 +313,7 @@ type ModelRaw = {
     flags: number;
   }[];
   userId: number;
-  cosmetic?: WithClaimKey<ContentDecorationCosmetic> | null;
+  cosmetic?: ContentDecorationCosmetic | null;
   availability?: Availability;
 };
 
@@ -346,6 +359,7 @@ export const getModelsRaw = async ({
   domain,
   ignoreBrowsingAddons,
   _forceBaseModelMetrics,
+  eventDecorationViewer,
 }: {
   input: Omit<GetAllModelsOutput, 'limit' | 'page'> & {
     take?: number;
@@ -364,6 +378,9 @@ export const getModelsRaw = async ({
   ignoreBrowsingAddons?: boolean;
   /** For testing only: force the ModelBaseModelMetric query path regardless of feature flag */
   _forceBaseModelMetrics?: boolean;
+  // Who sees event decorations before launch (see getEventDecorationsForEntity). Set only by
+  // routes whose response is never cached for another viewer.
+  eventDecorationViewer?: EventViewer;
 }) => {
   // Ahead of every early empty return below, including the Meilisearch no-hits one: the point of
   // throwing rather than falling back is that the misuse is legible, and an empty page hides it.
@@ -519,14 +536,17 @@ export const getModelsRaw = async ({
   // subquery scans every "ModelBaseModelMetric" row matching the requested base
   // models BEFORE the cursor predicate can be applied (since the cursor lives on
   // mm."lastVersionAt"). On production this is ~2.8s/query at deep cursors. The
-  // new path drives from "ModelMetric" using the feed_newest / feed_oldest
+  // new path drives from "ModelMetric" using its feed_newest / feed_oldest / feed_hot
   // covering index, semi-joins to "ModelBaseModelMetric" via EXISTS, and pulls
   // the per-base-model rank sums via LATERAL aggregate that fires only for the
   // LIMIT survivors.
-  const useNewestOldestMultiBmPath =
+  // Newest, Oldest and Hot all order on a ModelMetric column, so driving from ModelMetric
+  // lets its index seek and the cursor push down. The aggregate path below has to scan every
+  // matching ModelBaseModelMetric row first. Measurements: docs/model-feed-hot-ranking.md §10.
+  const useModelMetricDrivenMultiBmPath =
     !!useBaseModelMetrics &&
     (baseModels?.length ?? 0) > 1 &&
-    (sort === ModelSort.Newest || sort === ModelSort.Oldest);
+    (sort === ModelSort.Newest || sort === ModelSort.Oldest || sort === ModelSort.Hot);
 
   // Dynamic alias: 'mbm' for ModelBaseModelMetric path, 'mm' for standard ModelMetric path
   // pSql is used for columns denormalized on both tables (status, nsfwLevel, availability, mode, minor, poi)
@@ -534,15 +554,15 @@ export const getModelsRaw = async ({
   //
   // The newest/oldest multi-bm path drives from mm and only references mbm for the
   // per-base-model rank sums (downloadCount, thumbsUpCount). All other denormalized
-  // columns come from mm so the feed_newest/feed_oldest covering index is fully
+  // columns come from mm so the feed_newest / feed_oldest / feed_hot covering index is fully
   // exploited (filters are applied during the index scan, not after).
-  const pAlias = useBaseModelMetrics && !useNewestOldestMultiBmPath ? 'mbm' : 'mm';
+  const pAlias = useBaseModelMetrics && !useModelMetricDrivenMultiBmPath ? 'mbm' : 'mm';
   const pSql = Prisma.raw(pAlias);
 
   // For the SELECT-list rank fields, the per-base-model sums must come from mbm
   // (the ModelBaseModelMetric driver in the legacy paths, or the LATERAL alias in
   // the new path). Other paths can keep using `${pSql}` directly.
-  const rankPSql = useNewestOldestMultiBmPath ? Prisma.raw('mbm') : pSql;
+  const rankPSql = useModelMetricDrivenMultiBmPath ? Prisma.raw('mbm') : pSql;
 
   if (searchModelIds.length) {
     AND.push(Prisma.sql`mm."modelId" IN (${Prisma.join(searchModelIds, ',')})`);
@@ -685,7 +705,7 @@ export const getModelsRaw = async ({
   // - Standard path: EXISTS subquery on ModelVersion
   // - Base model metrics, single base model: direct equality on mbm."baseModel" (preserves index scan)
   // - Base model metrics, multiple base models, Newest/Oldest sort: EXISTS semi-join
-  //   on ModelBaseModelMetric (planner-friendly, lets feed_newest/feed_oldest drive)
+  //   on ModelBaseModelMetric (planner-friendly, lets the ModelMetric feed index drive)
   // - Base model metrics, multiple base models, per-base-model-stat sort: filter is
   //   inside the FROM subquery (see fromClause)
   if (baseModels?.length && !useBaseModelMetrics) {
@@ -699,9 +719,9 @@ export const getModelsRaw = async ({
   } else if (useBaseModelMetrics && baseModels!.length === 1) {
     // Single base model: filter in WHERE clause so covering indexes can be fully utilized
     AND.push(Prisma.sql`mbm."baseModel" = ${baseModels![0]}`);
-  } else if (useNewestOldestMultiBmPath) {
+  } else if (useModelMetricDrivenMultiBmPath) {
     // Multi-base-model + lastVersionAt sort: semi-join via EXISTS so the planner
-    // keeps the feed_newest/feed_oldest index as the driver. The PK on
+    // keeps the ModelMetric feed index as the driver. The PK on
     // (modelId, baseModel) makes this lookup index-only.
     AND.push(
       Prisma.sql`EXISTS (
@@ -907,7 +927,8 @@ export const getModelsRaw = async ({
   // Use mm.* for model-level stats (commentCount, collectedCount, lastVersionAt)
   let orderBy = `mm."lastVersionAt" DESC NULLS LAST, ${pAlias}."modelId" DESC`;
 
-  if (sort === ModelSort.HighestRated)
+  if (sort === ModelSort.Hot) orderBy = `${pAlias}."hotScore" DESC, ${pAlias}."modelId"`;
+  else if (sort === ModelSort.HighestRated)
     orderBy = `${pAlias}."thumbsUpCount" DESC, ${pAlias}."downloadCount" DESC, ${pAlias}."modelId"`;
   else if (sort === ModelSort.MostLiked)
     orderBy = `${pAlias}."thumbsUpCount" DESC, ${pAlias}."downloadCount" DESC, ${pAlias}."modelId"`;
@@ -970,7 +991,7 @@ export const getModelsRaw = async ({
   // 2. Base model metrics, single base model: direct JOIN on ModelBaseModelMetric
   //    (preserves covering index scan + sort order + early LIMIT termination)
   // 3. Base model metrics, multiple base models, lastVersionAt-based sort
-  //    (Newest/Oldest): drive from ModelMetric so the feed_newest/feed_oldest
+  //    (Newest/Oldest/Hot): drive from ModelMetric so its feed_newest / feed_oldest / feed_hot
   //    index seek + cursor pushdown work; semi-join to ModelBaseModelMetric via
   //    EXISTS; pull per-base-model rank sums via LATERAL that fires only for the
   //    LIMIT survivors.
@@ -984,7 +1005,7 @@ export const getModelsRaw = async ({
     ? Prisma.sql`FROM "ModelBaseModelMetric" mbm
       JOIN "Model" m ON m."id" = mbm."modelId"
       JOIN "ModelMetric" mm ON mm."modelId" = mbm."modelId"`
-    : useNewestOldestMultiBmPath
+    : useModelMetricDrivenMultiBmPath
     ? Prisma.sql`FROM "ModelMetric" mm
       JOIN "Model" m ON m."id" = mm."modelId"
       LEFT JOIN LATERAL (
@@ -1126,19 +1147,33 @@ export const getModelsRaw = async ({
   const userIds = [...new Set(models.map((m) => m.userId))];
   const modelIds = models.map((m) => m.id);
 
-  const [userBasicData, profilePictures, userCosmetics, modelData, cosmetics, paidAccessGates] =
-    await withSpan('model:getAll:parallelFetch', () =>
-      Promise.all([
-        userBasicCache.fetch(userIds),
-        getProfilePicturesForUsers(userIds),
-        getCosmeticsForUsers(userIds),
-        dataForModelsCache.fetch(modelIds),
-        includeCosmetics
-          ? getCosmeticsForEntity({ ids: modelIds, entity: 'Model' })
-          : ({} as Record<string, WithClaimKey<ContentDecorationCosmetic>>),
-        getModelPaidAccessGates(modelIds),
-      ])
-    );
+  const [
+    userBasicData,
+    profilePictures,
+    userCosmetics,
+    modelData,
+    cosmetics,
+    paidAccessGates,
+    eventDecorations,
+  ] = await withSpan('model:getAll:parallelFetch', () =>
+    Promise.all([
+      userBasicCache.fetch(userIds),
+      getProfilePicturesForUsers(userIds),
+      getCosmeticsForUsers(userIds),
+      dataForModelsCache.fetch(modelIds),
+      includeCosmetics
+        ? getCosmeticsForEntity({ ids: modelIds, entity: 'Model' })
+        : ({} as Record<number, ContentDecorationCosmetic>),
+      getModelPaidAccessGates(modelIds),
+      includeCosmetics
+        ? getEventDecorationsForEntity({
+            ids: modelIds,
+            entity: 'Model',
+            viewer: eventDecorationViewer,
+          })
+        : undefined,
+    ])
+  );
   for (const model of models) {
     const gate = paidAccessGates.get(model.id);
     model.earlyAccessDeadline = gate?.earlyAccessDeadline ?? null;
@@ -1234,6 +1269,7 @@ export const getModelsRaw = async ({
               cosmetics: userCosmetics[model.userId] ?? [],
             },
             cosmetic: cosmetics[model.id] ?? null,
+            eventDecoration: eventDecorations?.[model.id] ?? null,
             metricPrivacy: getMetaMetricPrivacy(meta),
           };
         })
@@ -1539,9 +1575,13 @@ export const getModelsWithImagesAndModelVersions = async ({
   // skipped and raw metrics are emitted (pre-#3266 visibility).
   metricPrivacyEnabled = true,
   domain,
+  eventDecorationViewer,
 }: {
   input: GetAllModelsOutput;
   user?: SessionUser;
+  // Who sees event decorations before launch (see getEventDecorationsForEntity). Set only by
+  // routes whose response is never cached for another viewer.
+  eventDecorationViewer?: EventViewer;
   imagesPerModel?: number;
   biasImageSlice?: boolean;
   metricPrivacyEnabled?: boolean;
@@ -1568,6 +1608,7 @@ export const getModelsWithImagesAndModelVersions = async ({
     user,
     domain,
     include: ['cosmetics'],
+    eventDecorationViewer,
   });
 
   const modelVersionIds = items
@@ -1843,12 +1884,14 @@ export const deleteModelById = async ({
   }
 
   const deletedModel = await dbWrite.$transaction(async (tx) => {
+    // Re-deleting a deleted model keeps the first delete's actor: the creator score reads `deletedBy`,
+    // and an owner must not be able to overwrite a moderator's.
+    const firstDelete = (await recordStatusAtDelete(tx, id)) > 0;
     const model = await tx.model.update({
       where: { id },
       data: {
-        deletedAt: new Date(),
+        ...(firstDelete ? { deletedAt: new Date(), deletedBy: userId } : {}),
         status: ModelStatus.Deleted,
-        deletedBy: userId,
         modelVersions: {
           updateMany: {
             where: { status: { in: [ModelStatus.Published, ModelStatus.Scheduled] } },
@@ -2346,6 +2389,7 @@ export type ModelMinorActivity =
   | 'setMinor'
   | 'unsetMinor'
   | 'setMinorAutoHash'
+  | 'setMinorTextScan'
   | 'rollbackMinorAutoHash';
 
 export const MINOR_FLAG_SNAPSHOT_KEY = 'minorFlagSnapshot';
@@ -2355,10 +2399,11 @@ export const MINOR_FLAG_SNAPSHOT_KEY = 'minorFlagSnapshot';
 // this the change is unrecoverable, whether a job or a moderator made it.
 // `source` is what lets a bulk rollback undo only the automated flags and leave
 // deliberate moderator decisions alone.
-// Idempotent via the WHERE guard: a re-flag can never clobber the original
-// pre-state. Best-effort — losing the snapshot must block a later rollback, not
+// A re-flag of a model that is still minor never clobbers the original pre-state; a snapshot left
+// behind by an unset is replaced, or the new flag would inherit the old one's source and pre-state.
+// Best-effort — losing the snapshot must block a later rollback, not
 // the flag itself, so failures are logged rather than thrown.
-async function captureMinorFlagSnapshot(modelId: number, source: 'auto' | 'manual') {
+async function captureMinorFlagSnapshot(modelId: number, source: MinorFlagSnapshot['source']) {
   try {
     await dbWrite.$executeRaw`
       UPDATE "Model" m
@@ -2380,7 +2425,7 @@ async function captureMinorFlagSnapshot(modelId: number, source: 'auto' | 'manua
         )
       )
       WHERE m.id = ${modelId}
-        AND NOT (COALESCE(m.meta, '{}'::jsonb) ? ${MINOR_FLAG_SNAPSHOT_KEY})
+        AND (NOT (COALESCE(m.meta, '{}'::jsonb) ? ${MINOR_FLAG_SNAPSHOT_KEY}) OR NOT m.minor)
     `;
   } catch (error) {
     logToAxiom({
@@ -2392,6 +2437,12 @@ async function captureMinorFlagSnapshot(modelId: number, source: 'auto' | 'manua
   }
 }
 
+function minorFlagSource(activity: ModelMinorActivity | undefined): MinorFlagSnapshot['source'] {
+  if (activity === 'setMinorAutoHash') return 'auto';
+  if (activity === 'setMinorTextScan') return 'text-scan';
+  return 'manual';
+}
+
 export async function setModelMinor({
   id,
   minor,
@@ -2399,11 +2450,13 @@ export async function setModelMinor({
   activity,
   tracker,
   isModerator,
+  recordTextScanRuling,
 }: SetModelMinorInput & {
   userId: number;
   activity?: ModelMinorActivity;
   tracker?: Tracker;
   isModerator?: boolean;
+  recordTextScanRuling?: boolean;
 }) {
   const before = await dbRead.model.findUnique({
     where: { id },
@@ -2419,10 +2472,24 @@ export async function setModelMinor({
   });
   if (!before) throw throwNotFoundError(`No model with id ${id}`);
 
+  if (!minor && recordTextScanRuling) {
+    // Dynamic: model.service is imported almost everywhere; only this branch needs the profiles.
+    const { stampModeratorTextScanRuling } = await import(
+      '~/server/services/text-scan/actions/appeal-text-hash'
+    );
+    const stamped = await stampModeratorTextScanRuling({ modelId: id, userId, label: 'minor' });
+    if (!stamped)
+      logToAxiom({
+        type: 'error',
+        name: 'text-scan',
+        message: 'moderator minor ruling not recorded: model text unreadable',
+        modelId: id,
+      }).catch(() => null);
+  }
+
   // Must run before the update below and before side effects propagate `minor`
   // to images, or the snapshot records post-flag state.
-  if (minor)
-    await captureMinorFlagSnapshot(id, activity === 'setMinorAutoHash' ? 'auto' : 'manual');
+  if (minor) await captureMinorFlagSnapshot(id, minorFlagSource(activity));
 
   const prevLockedProperties = before.lockedProperties ?? [];
   const lockedProperties = minor
@@ -2500,6 +2567,7 @@ export async function setModelMinor({
       .catch(() => null);
   }
   await applyModelFlagSideEffects({ before, after: result });
+  if (!minor && result.poi) await reassertModelPoiRestrictions(id);
 
   return result;
 }
@@ -2656,9 +2724,11 @@ export const upsertModel = async (
   let meta = stripServerOwnedMeta(stripModerationOwnedMeta(input.meta, isModerator));
   if (serverMeta) meta = { ...(meta ?? {}), ...serverMeta };
 
+  // Primary, not the replica: ownership, the availability lock and the meta merge below all act on
+  // this row, and a lagging copy can show a stale availability or omit a just-written key.
   const beforeUpdate =
     id && !templateId
-      ? await dbRead.model.findUnique({
+      ? await dbWrite.model.findUnique({
           where: { id },
           select: {
             name: true,
@@ -2672,6 +2742,7 @@ export const upsertModel = async (
             gallerySettings: true,
             meta: true,
             availability: true,
+            status: true,
             mode: true,
             allowNoCredit: true,
             allowCommercialUse: true,
@@ -2714,7 +2785,7 @@ export const upsertModel = async (
   }
 
   let profanityAutoNsfw = false;
-  if (!isModerator) {
+  if (!isModerator && (await legacyProfanityAutoNsfwApplies('Model', id))) {
     // Check model name and description for profanity using threshold-based evaluation
     const profanityFilter = createProfanityFilter();
     const textToCheck = [data.name, data.description].filter(Boolean).join(' ');
@@ -2756,13 +2827,17 @@ export const upsertModel = async (
   }
 
   if (!id || templateId) {
+    if (!isModerator && data.availability === Availability.Private)
+      throw throwBadRequestError('Private models are created from the private model flow.');
+
     const result = await dbWrite.$transaction(
       async (tx) => {
         const created = await tx.model.create({
           select: { id: true, nsfwLevel: true, meta: true, availability: true },
           data: {
             ...data,
-            status,
+            // Publishing goes through model.publish, which enforces what a create would skip.
+            status: isModerator ? status : ModelStatus.Draft,
             gallerySettings,
             meta:
               bountyId || meta
@@ -2856,8 +2931,29 @@ export const upsertModel = async (
     const isOwner = beforeUpdate.userId === userId || isModerator;
     if (!isOwner) return null;
 
+    // Going public skips `publishPrivateModel`'s checks and going private skips the
+    // `maxPrivateModels` cap, so availability only changes through those flows.
+    if (!isModerator && data.availability && data.availability !== beforeUpdate.availability) {
+      throw throwBadRequestError(
+        beforeUpdate.availability === Availability.Private
+          ? 'A private model can only be made public by publishing it.'
+          : 'A model cannot be made private here. Use the private model flow.'
+      );
+    }
+
     const prevGallerySettings = beforeUpdate.gallerySettings as ModelGallerySettingsSchema;
     const prevMeta = beforeUpdate.meta as ModelMeta | null;
+    let mergedMeta: ModelMeta = { ...prevMeta, ...meta };
+    if (beforeUpdate.availability === Availability.Private) {
+      // `meta` only carries `cannotPromote` for a moderator. While private it is forced on, so the
+      // moderator's decision is what publish restores.
+      const sent = (meta as ModelMeta | undefined)?.cannotPromote;
+      const banned =
+        typeof sent === 'boolean'
+          ? sent
+          : (prevMeta as Record<string, unknown> | null)?.[RESTORE_CANNOT_PROMOTE_KEY] === true;
+      mergedMeta = withPrivateCannotPromote(mergedMeta, banned);
+    }
 
     let clearedLicensingSources: { id: number; licensingSourceVersionId: number }[] = [];
     let typeBeforeUpdate: ModelType | undefined;
@@ -2888,7 +2984,7 @@ export const upsertModel = async (
           where: { id },
           data: {
             ...data,
-            meta: { ...prevMeta, ...meta },
+            meta: mergedMeta,
             gallerySettings: {
               ...prevGallerySettings,
               level:
@@ -3203,12 +3299,14 @@ export async function applyModelContentChange({
     // This branch is the fan-out, which has neither — and the text it just wrote is text the
     // upsert's gate never saw. Without this, editing a blurb is a way to put profanity into a
     // published description while it keeps the SFW classification it earned with the old text.
-    const flagged = evaluateAutoNsfw({
-      name: stored.name,
-      description,
-      alreadyNsfw: stored.nsfw,
-      lockedProperties: stored.lockedProperties,
-    });
+    const flagged = (await legacyProfanityAutoNsfwApplies('Model', id))
+      ? evaluateAutoNsfw({
+          name: stored.name,
+          description,
+          alreadyNsfw: stored.nsfw,
+          lockedProperties: stored.lockedProperties,
+        })
+      : null;
     if (flagged) {
       const meta = {
         ...((stored.meta as MixedObject | null) ?? {}),
@@ -4870,6 +4968,7 @@ export async function migrateResourceToCollection({
   await modelsSearchIndex.queueUpdate(
     modelIds.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
   );
+  modelIds.forEach((entityId) => scanEntityInBackground({ entityType: 'Model', entityId }));
 
   return { ok: true };
 }
@@ -4956,25 +5055,38 @@ export async function bustFeaturedModelsCache() {
 
 // Mod-only read of a model's moderation state — surfaces why a model is
 // locked / marked nsfw / hidden so mods can self-triage instead of escalating
-// (auto-actions like the profanity nsfw-lock are otherwise invisible to them).
+// (automated actions such as the profanity nsfw-lock or the text-scan nsfw flag are otherwise
+// invisible to them).
 export async function getModelModerationDetail({ id }: { id: number }) {
-  const model = await dbRead.model.findUnique({
-    where: { id },
-    select: {
-      id: true,
-      name: true,
-      nsfw: true,
-      nsfwLevel: true,
-      status: true,
-      availability: true,
-      minor: true,
-      poi: true,
-      lockedProperties: true,
-      deletedAt: true,
-      deletedBy: true,
-      meta: true,
-    },
-  });
+  const [model, scan] = await Promise.all([
+    dbRead.model.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        name: true,
+        nsfw: true,
+        nsfwLevel: true,
+        status: true,
+        availability: true,
+        minor: true,
+        poi: true,
+        lockedProperties: true,
+        deletedAt: true,
+        deletedBy: true,
+        meta: true,
+      },
+    }),
+    dbRead.entityModeration.findUnique({
+      where: { entityType_entityId: { entityType: 'Model', entityId: id } },
+      select: {
+        status: true,
+        nsfwLevel: true,
+        triggeredLabels: true,
+        result: true,
+        updatedAt: true,
+      },
+    }),
+  ]);
   if (!model) throw throwNotFoundError(`No model with id ${id}`);
 
   const meta = (model.meta ?? {}) as ModelMeta;
@@ -5001,6 +5113,7 @@ export async function getModelModerationDetail({ id }: { id: number }) {
         }
       : null,
     textModeration: meta.textModeration ?? null,
+    textScan: summarizeTextScan(scan),
     unpublishedAt: meta.unpublishedAt ?? null,
     unpublishedBy: meta.unpublishedBy ?? null,
     unpublishedReason: meta.unpublishedReason ?? null,
@@ -5046,6 +5159,23 @@ export const getPrivateModelCount = async ({ userId }: { userId: number }) => {
   });
 };
 
+/** Both steps of the private flow publish the model, so they honor the same moderation limits as `model.publish`. */
+function assertPrivateFlowPublishable({
+  status,
+  meta,
+  isModerator,
+}: {
+  status: ModelStatus;
+  meta: unknown;
+  isModerator?: boolean;
+}) {
+  if (isModerator) return;
+  if (constants.modPublishOnlyStatuses.includes(status))
+    throw throwAuthorizationError('You are not authorized to publish this model');
+  if ((meta as ModelMeta | null)?.cannotPublish)
+    throw throwBadRequestError('This model cannot be published due to moderation restrictions.');
+}
+
 export const privateModelFromTraining = async ({
   modelVersionIds,
   ...input
@@ -5054,12 +5184,15 @@ export const privateModelFromTraining = async ({
 }) => {
   const { id, tagsOnModels, user, templateId, bountyId, meta, status, ...data } = input;
 
-  const model = await dbRead.model.findUnique({
+  // Primary: the stored meta feeds a wholesale meta rewrite and the restore marker below.
+  const model = await dbWrite.model.findUnique({
     where: { id },
     select: {
       userId: true,
       lockedProperties: true,
       meta: true,
+      status: true,
+      availability: true,
     },
   });
 
@@ -5067,6 +5200,17 @@ export const privateModelFromTraining = async ({
 
   const isOwner = model.userId === user.id || user.isModerator;
   if (!isOwner) return null;
+
+  assertPrivateFlowPublishable({
+    status: model.status,
+    meta: model.meta,
+    isModerator: user.isModerator,
+  });
+
+  const storedMeta = model.meta as ModelMeta | null;
+  // A private model already had its cannotPromote forced on, so only a first entry can record a moderator's ban.
+  const restoreCannotPromote =
+    model.availability !== Availability.Private && storedMeta?.cannotPromote === true;
 
   enforceLockedProperties({
     data,
@@ -5125,11 +5269,18 @@ export const privateModelFromTraining = async ({
       data: {
         ...data,
         meta: {
-          ...(stripServerOwnedMeta(meta as ModelMeta) ?? {}),
-          // This write replaces meta wholesale, so the stored server-owned keys are carried over.
-          ...pickServerOwnedMeta(model.meta as ModelMeta | null),
+          // This write replaces meta wholesale. A moderator's form never holds the hidden
+          // moderation-owned keys, so they are carried under the moderator's input.
+          ...(user.isModerator
+            ? pickModerationOwnedMeta(storedMeta, { includeFlowKeys: false })
+            : {}),
+          ...(stripServerOwnedMeta(stripModerationOwnedMeta(meta as ModelMeta, user.isModerator)) ??
+            {}),
+          ...pickServerOwnedMeta(storedMeta),
+          ...(user.isModerator ? {} : pickModerationOwnedMeta(storedMeta)),
           // Makes it so these models cannot go into auctions or be promoted
           cannotPromote: true,
+          ...(restoreCannotPromote && { [RESTORE_CANNOT_PROMOTE_KEY]: true }),
         },
         availability: Availability.Private,
         status: ModelStatus.Published,
@@ -5177,6 +5328,7 @@ export const privateModelFromTraining = async ({
       result.id
     );
 
+    if (!user.isModerator) scanEntityInBackground({ entityType: 'Model', entityId: result.id });
     return withoutMinorHashMeta(result);
   } catch (error) {
     await dbWrite.model.update({
@@ -5203,13 +5355,17 @@ export const privateModelFromTraining = async ({
 export const publishPrivateModel = async ({
   modelId,
   publishVersions,
-}: PublishPrivateModelInput) => {
-  const model = await dbRead.model.findUnique({
+  isModerator,
+}: PublishPrivateModelInput & { isModerator?: boolean }) => {
+  // Primary: the stored meta decides the publish gates and the cannotPromote value restored.
+  const model = await dbWrite.model.findUnique({
     where: { id: modelId },
     select: { id: true, userId: true, availability: true, status: true, meta: true },
   });
 
   if (!model) throw throwNotFoundError('Model not found');
+
+  assertPrivateFlowPublishable({ status: model.status, meta: model.meta, isModerator });
 
   const versions = await dbRead.modelVersion.findMany({
     where: { modelId, status: ModelStatus.Published },
@@ -5245,6 +5401,11 @@ export const publishPrivateModel = async ({
       );
     }
   }
+
+  // Back to what a moderator had set before the private cycle forced cannotPromote on.
+  const { [RESTORE_CANNOT_PROMOTE_KEY]: restoreCannotPromote, ...storedMeta } = (model.meta ??
+    {}) as ModelMeta & Record<string, unknown>;
+  const publishedMeta = { ...storedMeta, cannotPromote: restoreCannotPromote === true };
 
   await dbWrite.$transaction(async (tx) => {
     // Availability + demotion to null flip unconditionally; the publish
@@ -5303,10 +5464,7 @@ export const publishPrivateModel = async ({
         status: publishVersions ? ModelStatus.Published : ModelStatus.Unpublished,
         // Same rationale as the ModelVersion write above.
         publishedAt: publishVersions ? undefined : null,
-        meta: {
-          ...((model.meta ?? {}) as ModelMeta),
-          cannotPromote: false,
-        },
+        meta: publishedMeta,
       },
       select: { id: true },
     });
@@ -5356,17 +5514,28 @@ export const toggleCannotPromote = async ({
 }) => {
   if (!isModerator) throw throwAuthorizationError();
 
-  const model = await getModel({ id, select: { id: true, meta: true } });
+  const model = await dbWrite.model.findUnique({
+    where: { id },
+    select: { id: true, meta: true, availability: true },
+  });
   if (!model) throw throwNotFoundError(`No model with id ${id}`);
 
   const modelMeta = model.meta as ModelMeta | null;
-  const currentCannotPromote = modelMeta?.cannotPromote ?? false;
+  const isPrivate = model.availability === Availability.Private;
+  // A private model has cannotPromote forced on, so the moderator's own decision is the marker.
+  const currentCannotPromote = isPrivate
+    ? (modelMeta as Record<string, unknown> | null)?.[RESTORE_CANNOT_PROMOTE_KEY] === true
+    : modelMeta?.cannotPromote ?? false;
   const cannotPromote = !currentCannotPromote;
 
   const updated = await dbWrite.model.update({
     where: { id },
     data: {
-      meta: modelMeta ? { ...modelMeta, cannotPromote } : { cannotPromote },
+      meta: isPrivate
+        ? withPrivateCannotPromote(modelMeta ?? {}, cannotPromote)
+        : modelMeta
+        ? { ...modelMeta, cannotPromote }
+        : { cannotPromote },
     },
     select: { id: true, meta: true },
   });

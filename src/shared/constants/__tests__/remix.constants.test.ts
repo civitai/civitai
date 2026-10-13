@@ -1,15 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { ecosystemByKey, getEcosystemSetting } from '~/shared/constants/basemodel.constants';
 import { REMIX_ENGINES } from '~/shared/constants/remix.constants';
-import {
-  isWorkflowAvailable,
-  workflowConfigByKey,
-} from '~/shared/data-graph/generation/config/workflows';
+import { isWorkflowAvailable, workflowConfigByKey } from '~/shared/generation/config/workflows';
 import {
   minimaxVersionIds,
   nanoBananaVersionIds,
   qwenVersionIds,
-} from '~/shared/data-graph/generation/version-ids';
+} from '~/shared/generation/version-ids';
 
 /**
  * The Remix button sends the user straight into these workflow/ecosystem pairs

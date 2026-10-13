@@ -69,10 +69,17 @@ export type AppOpenRequestContext = Pick<GetServerSidePropsContext, 'req' | 'res
  */
 export async function recordAppListingOpen({
   appBlockId,
+  subListingId,
   session,
   ctx,
 }: {
   appBlockId: string;
+  /**
+   * The store sub-listing card the launch came from (`?sl=`), so sub-card traffic can be
+   * measured on its own. The caller passes it only when it has the `asl_<ULID>` shape; it
+   * still counts toward the parent's play.
+   */
+  subListingId?: string | null;
   session: Session | null;
   ctx: AppOpenRequestContext;
 }): Promise<void> {
@@ -88,7 +95,10 @@ export async function recordAppListingOpen({
     // Actor metadata is KEPT (no `skipActorMeta`): a launch is an interaction, not a
     // private judgement, and `userId`/`ip` are what let the rollup collapse a refresh loop
     // into one play at read time instead of trusting the raw row count.
-    await tracker.action({ type: 'App_Open', details: { appBlockId } });
+    await tracker.action({
+      type: 'App_Open',
+      details: subListingId ? { appBlockId, subListingId } : { appBlockId },
+    });
   } catch {
     // Swallowed deliberately — see the fire-and-forget note above. A play that goes
     // unrecorded is a slightly low number; a throw here is a failed app launch.

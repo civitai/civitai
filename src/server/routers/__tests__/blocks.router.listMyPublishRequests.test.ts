@@ -562,3 +562,93 @@ describe('listMyPublishRequests — the advisory is KIND-AWARE', () => {
     expect(taglineLabelOf(rows[0])).toBe(MANIFEST_TAGLINE);
   });
 });
+
+describe('listMyPublishRequests — the hidden-mature-rating advisory', () => {
+  const requestRow = (id: string, blockId: string, declared: string) => ({
+    id,
+    appBlockId: null,
+    slug: `app-${id}`,
+    version: '1.0.0',
+    status: 'approved',
+    submittedAt: new Date('2026-01-01'),
+    reviewedAt: new Date('2026-01-02'),
+    rejectionReason: null,
+    approvalNotes: null,
+    deployState: 'live',
+    deployDetail: null,
+    deployUpdatedAt: new Date('2026-01-02'),
+    fileSummary: null,
+    manifestDiffSummary: null,
+    appBlock: {
+      id: blockId,
+      manifest: PAGE_MANIFEST,
+      contentRating: declared,
+      _count: { userSubscriptions: 0 },
+    },
+  });
+  /** Complete in every other dimension, so the rating problem is the only one that can fire. */
+  const listingRow = (id: string, blockId: string, status: string, contentRating: string) => ({
+    id,
+    appBlockId: blockId,
+    status,
+    kind: 'onsite',
+    iconId: 41,
+    coverId: 53,
+    description: 'A description.',
+    tagline: 'A tagline',
+    category: 'utility',
+    contentRating,
+    _count: { screenshots: 7 },
+  });
+
+  it('an approved listing rated above its app’s declared rating is reported hidden, naming both', async () => {
+    mockDbRead.appBlockPublishRequest.findMany.mockResolvedValue([
+      requestRow('req-r', 'blk-r', 'g'),
+    ]);
+    mockDbRead.appListing.findMany.mockResolvedValue([listingRow('l-r', 'blk-r', 'approved', 'r')]);
+
+    const caller = blocksRouter.createCaller(fakeCtx(owner) as never);
+    const rows = await caller.listMyPublishRequests();
+
+    expect(rows[0].problems).toEqual([
+      {
+        code: 'hidden-mature-rating',
+        severity: 'advisory',
+        label:
+          'Rated R — hidden on civitai.com (visible on civitai.red). You declared G; a listing is rated at least as high as its most mature store image — check its images',
+      },
+    ]);
+    const args = mockDbRead.appListing.findMany.mock.calls[0][0] as {
+      select: Record<string, unknown>;
+    };
+    expect(args.select.contentRating).toBe(true);
+    const requestArgs = mockDbRead.appBlockPublishRequest.findMany.mock.calls[0][0] as {
+      select: { appBlock: { select: Record<string, unknown> } };
+    };
+    expect(requestArgs.select.appBlock.select.contentRating).toBe(true);
+  });
+
+  it('an app that DECLARED R has nothing to fix, so no problem', async () => {
+    mockDbRead.appBlockPublishRequest.findMany.mockResolvedValue([
+      requestRow('req-d', 'blk-d', 'r'),
+    ]);
+    mockDbRead.appListing.findMany.mockResolvedValue([listingRow('l-d', 'blk-d', 'approved', 'r')]);
+
+    const caller = blocksRouter.createCaller(fakeCtx(owner) as never);
+    const rows = await caller.listMyPublishRequests();
+
+    expect(rows[0].problems).toEqual([]);
+  });
+
+  it('a removed listing is not flagged — it is not in the store at all', async () => {
+    mockDbRead.appBlockPublishRequest.findMany.mockResolvedValue([
+      requestRow('req-x', 'blk-x', 'g'),
+    ]);
+    mockDbRead.appListing.findMany.mockResolvedValue([listingRow('l-x', 'blk-x', 'removed', 'r')]);
+
+    const caller = blocksRouter.createCaller(fakeCtx(owner) as never);
+    const rows = await caller.listMyPublishRequests();
+
+    expect(rows[0].problems).toEqual([]);
+  });
+});

@@ -239,6 +239,12 @@ them with the slice of the event they read. Component behaviour is **not** — n
 browser-test project, so anything that depends on `use:enhance`, bindings or lifecycle is verified by
 review and by opening the page, not by a test.
 
+The one exception is static markup branches. `apps/creator-studio` compiles `.svelte` in its vitest
+config, so a test may server-render a page with `svelte/server` (mocking `$app/*`) to pin which branch
+renders, such as a link that must be present or absent. SSR output never runs `use:enhance`, `$state`
+changes or anything after hydration, so do not use it for those. The app's `src/test/setup.ts` stubs
+`@tabler/icons-svelte` for every suite, because compiling the real barrel adds about a minute.
+
 🔴 **A suite must not open a connection to whatever `DATABASE_URL` points at.** Mock the app's db
 module. Where a suite genuinely needs the real schema, plan the statement rather than run it — compile
 through Kysely's `DummyDriver` and send `EXPLAIN` *without* `ANALYZE`, which validates columns, joins

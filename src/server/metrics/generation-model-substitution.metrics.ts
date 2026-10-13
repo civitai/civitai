@@ -10,7 +10,7 @@
 // keep degrading `unrecognized`?) needs a real traffic number first.
 //
 // Emitted from `validateInput` in orchestration-new.service — the single choke
-// point through which every SERVER-side `generationGraph.safeParse` runs
+// point through which every SERVER-side generation-hub parse runs
 // (on-site submit, whatIf, and the App Blocks bridge alike). The in-browser form
 // parse never reaches here: only the server attaches a substitution collector.
 //
@@ -81,7 +81,7 @@ import {
   MODEL_SUBSTITUTION_REASONS,
   type GenerationSurface,
   type ModelSubstitutionReason,
-} from '~/shared/data-graph/generation/model-substitution';
+} from '~/shared/generation/model-substitution';
 
 /**
  * Initialise all 12 `(reason, surface)` series to 0 at registration.

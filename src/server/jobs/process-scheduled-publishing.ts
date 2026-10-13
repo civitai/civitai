@@ -287,6 +287,21 @@ export const processScheduledPublishing = createJob(
       { timeout: 30000 }
     );
 
+    // Before the engagements, which are unguarded: a throw there aborts the run, and these versions
+    // already read Published, so the next run never selects them again — a bust skipped here is lost.
+    // Each bust is guarded so that moving them first cannot let one cache fault cancel the engagements.
+    for (const modelVersion of scheduledModelVersions) {
+      await bustMvCache(modelVersion.id, modelVersion.extras?.modelId).catch((error) =>
+        logToAxiom({
+          name: 'process-scheduled-publishing',
+          type: 'error',
+          message: 'model version cache bust failed',
+          modelVersionId: modelVersion.id,
+          error: (error as Error)?.message,
+        }).catch(() => undefined)
+      );
+    }
+
     // Process event engagements
     for (const model of scheduledModels) {
       await eventEngine.processEngagement({
@@ -303,7 +318,6 @@ export const processScheduledPublishing = createJob(
         entityType: 'modelVersion',
         entityId: modelVersion.id,
       });
-      await bustMvCache(modelVersion.id, modelVersion.extras?.modelId);
     }
     // Neither scheduled path reaches the inline side effects in post.controller, so
     // they land here on the day the post actually goes live. The sweep half of this

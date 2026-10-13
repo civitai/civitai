@@ -87,6 +87,7 @@ import { NextLink } from '~/components/NextLink/NextLink';
 import { PostFiltersDropdown } from '~/components/Post/Infinite/PostFiltersDropdown';
 import PostsInfinite from '~/components/Post/Infinite/PostsInfinite';
 import { usePostQueryParams } from '~/components/Post/post.utils';
+import { OwnerRatingControls } from '~/components/RatingReview/OwnerRatingControls';
 import { ReactionSettingsProvider } from '~/components/Reaction/ReactionSettingsProvider';
 import { ToolMultiSelect } from '~/components/Tool/ToolMultiSelect';
 import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
@@ -762,6 +763,13 @@ export function Collection({
                       <Text size="xs">{abbreviateNumber(data._count.contributors)}</Text>
                     </IconBadge> */}
                       </Group>
+                    )}
+                    {collection && (
+                      <OwnerRatingControls
+                        entityType="Collection"
+                        entityId={collection.id}
+                        isOwner={!!permissions?.isOwner}
+                      />
                     )}
                   </Stack>
                   {collection && permissions && (

@@ -9,6 +9,7 @@ const {
   mockCreateNotification,
   mockQueueImageSearchIndexUpdate,
   mockRefreshImageVideoCounts,
+  mockBustMvCache,
   jobDate,
 } = vi.hoisted(() => ({
   mockApply: vi.fn(),
@@ -18,6 +19,7 @@ const {
   mockCreateNotification: vi.fn(),
   mockQueueImageSearchIndexUpdate: vi.fn(),
   mockRefreshImageVideoCounts: vi.fn(),
+  mockBustMvCache: vi.fn(async () => undefined),
   jobDate: { lastRun: new Date(0) },
 }));
 
@@ -38,7 +40,7 @@ vi.mock('~/server/services/image.service', () => ({
 }));
 vi.mock('~/server/search-index', () => ({ modelsSearchIndex: { queueUpdate: vi.fn() } }));
 vi.mock('~/server/services/model-version.service', () => ({
-  bustMvCache: vi.fn(),
+  bustMvCache: mockBustMvCache,
   publishModelVersionsWithEarlyAccess: vi.fn(),
 }));
 vi.mock('~/server/services/notification.service', () => ({
@@ -73,12 +75,14 @@ type Follower = { projectId: number; userId: number };
 
 // Routed on SQL text rather than call order so adding a read doesn't shift these.
 const stubReads = ({
+  models = [],
   versions = [],
   scheduled = [],
   newlyLive = [],
   chapters = [],
   followers = [],
 }: {
+  models?: Row[];
   versions?: (Row & { extras: { modelId: number } })[];
   scheduled?: Row[];
   newlyLive?: Row[];
@@ -92,6 +96,7 @@ const stubReads = ({
     if (sql.includes('"ComicEngagement"'))
       throw new Error('relation "ComicEngagement" does not exist');
     if (sql.includes('"ComicProjectEngagement"')) return followers;
+    if (sql.includes('FROM "Model"') && !sql.includes('FROM "Model" m')) return models;
     if (sql.includes("'hasEarlyAccess'")) return versions;
     if (sql.includes('"ComicChapter"')) return chapters;
     if (sql.includes('JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"')) return scheduled;
@@ -368,5 +373,52 @@ describe('processScheduledPublishing :: lastVersionAt', () => {
       `SET "lastVersionAt" = date_trunc('milliseconds', NOW())`
     );
     expect(call!.slice(1).some((v) => v instanceof Date)).toBe(false);
+  });
+});
+
+describe('processScheduledPublishing :: model version cache busts', () => {
+  const versions = [
+    { id: 101, userId: 10, extras: { modelId: 11 } },
+    { id: 102, userId: 10, extras: { modelId: 12 } },
+  ];
+
+  // `clearAllMocks` keeps implementations, so a throwing engagement would leak into the next case.
+  beforeEach(() => {
+    mockProcessEngagement.mockReset();
+    mockBustMvCache.mockReset();
+    mockBustMvCache.mockResolvedValue(undefined);
+  });
+
+  // The versions already read Published, so a bust this run skips is never retried.
+  it.each([
+    ['a version engagement', { entityType: 'modelVersion', entityId: 101 }],
+    ['a model engagement', { entityType: 'model', entityId: 7 }],
+  ])('busts every published version when %s throws', async (_name, failing) => {
+    stubReads({ models: [{ id: 7, userId: 10 }], versions });
+    mockProcessEngagement.mockImplementation(
+      async (e: { entityType: string; entityId: number }) => {
+        if (e.entityType === failing.entityType && e.entityId === failing.entityId)
+          throw new Error('engagement down');
+      }
+    );
+
+    await expect(runJob()).rejects.toThrow('engagement down');
+    expect(mockBustMvCache.mock.calls).toEqual([
+      [101, 11],
+      [102, 12],
+    ]);
+  });
+
+  it('a failing bust is logged and the engagements still run', async () => {
+    stubReads({ versions });
+    mockBustMvCache.mockRejectedValueOnce(new Error('redis down'));
+
+    await runJob();
+
+    expect(mockBustMvCache).toHaveBeenCalledTimes(2);
+    expect(mockProcessEngagement.mock.calls.map(([e]) => e.entityId)).toEqual([101, 102]);
+    expect(mockLogToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ modelVersionId: 101, error: 'redis down' })
+    );
   });
 });

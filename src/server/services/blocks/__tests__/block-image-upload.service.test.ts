@@ -135,7 +135,7 @@ describe('persistBlockWorkflowOutputImage — orchestrator output-blob redirect 
       url: 'uuid-key',
       mimeType: 'image/jpeg',
       userId: 7,
-      metadata: expect.objectContaining({ blockPublishedAppId: 'oc_app_1' }),
+      blockProvenance: { key: 'blockPublishedAppId', appId: 'oc_app_1' },
     });
   });
 

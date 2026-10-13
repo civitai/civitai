@@ -61,6 +61,7 @@ const storeShowcase = (showcaseItems: ShowcaseItemSchema[]) =>
     meta: {},
     settings: {},
     publicSettings: {},
+    cosmetics: [],
     profile: { userId: OWNER_ID, message: null, coverImage: null, showcaseItems },
   });
 

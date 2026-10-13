@@ -198,6 +198,17 @@ export interface Img {
   caption: string;
 }
 
+/** Start one auto-label pass over `targets`. Each step is charged, so every target is marked tried
+ *  here, at submit, rather than when its result lands — a tile whose result never maps back can't be
+ *  resent by the drain. Results map back by position, not tile id: when two tiles shared an id, the
+ *  second was never marked and was resent every pass until the user's Buzz ran out. */
+export function startLabelPass(targets: Img[]) {
+  const byKey = new Map(targets.map((t, i) => [String(i), t]));
+  for (const t of targets) Object.assign(t, { labeling: true, labelTried: true });
+  const items = [...byKey].map(([key, t]) => ({ key, mediaUrl: t.blobUrl ?? '' }));
+  return { byKey, items };
+}
+
 /** An image counts toward the trainable dataset once its bytes are uploaded and it passed the scan. */
 export function isTrainable(img: Img): boolean {
   return img.status === 'uploaded';

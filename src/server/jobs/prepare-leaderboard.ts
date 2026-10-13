@@ -78,24 +78,11 @@ const prepareLeaderboard = createJob('prepare-leaderboard', '0 23 * * *', async 
             id,
           }).catch();
 
-          try {
-            if (includesCTE && query.includes('clickhouse_')) {
-              await clickhouseLeaderboardPopulation(context);
-            } else if (includesCTE && query.includes('image_scores AS')) {
-              if (!imageRange) imageRange = await getImageRange();
-              await imageLeaderboardPopulation(context, imageRange);
-            } else {
-              if (includesCTE && !query.includes('scores'))
-                throw new Error('Query must include scores CTE');
-              await defaultLeadboardPopulation(context);
-            }
-          } catch (e) {
-            const error = e as Error;
-            logToAxiom({ type: 'leaderboard-error', id, message: error.message }).catch();
-            throw e;
-          }
-
-          await markLeaderboardPopulated(id, addDays);
+          const populated = await populateLeaderboard(context, async () => {
+            if (!imageRange) imageRange = await getImageRange();
+            return imageRange;
+          });
+          if (!populated) return;
 
           log(`Leaderboard ${id} - Done - ${(Date.now() - start) / 1000}s`);
           logToAxiom({
@@ -116,6 +103,44 @@ const prepareLeaderboard = createJob('prepare-leaderboard', '0 23 * * *', async 
     throw error;
   }
 });
+
+/**
+ * Populate one board and mark it populated. Resolves `false` when the board was skipped.
+ * `getRange` is only called for image-score boards.
+ */
+export async function populateLeaderboard(
+  context: LeaderboardContext,
+  getRange: () => Promise<[number, number]>
+): Promise<boolean> {
+  const { id, query, includesCTE, addDays = 0 } = context;
+  let skipped = false;
+  try {
+    if (includesCTE && query.includes('clickhouse_')) {
+      skipped = (await clickhouseLeaderboardPopulation(context)) === false;
+    } else if (includesCTE && query.includes('image_scores AS')) {
+      skipped = (await imageLeaderboardPopulation(context, await getRange())) === false;
+    } else {
+      if (includesCTE && !query.includes('scores'))
+        throw new Error('Query must include scores CTE');
+      await defaultLeadboardPopulation(context);
+    }
+  } catch (e) {
+    const error = e as Error;
+    logToAxiom({ type: 'leaderboard-error', id, message: error.message }).catch();
+    throw e;
+  }
+
+  // A skipped board has no rows; marking it would pass the populated gate and let
+  // cosmetic revocation strip every holder.
+  if (skipped) {
+    log(`Leaderboard ${id} - Skipped, ClickHouse unavailable`);
+    logToAxiom({ type: 'leaderboard-skipped', id }).catch();
+    return false;
+  }
+
+  await markLeaderboardPopulated(id, addDays);
+  return true;
+}
 
 /**
  * Record that a board finished populating, and for which date.
@@ -139,7 +164,7 @@ const prepareLeaderboard = createJob('prepare-leaderboard', '0 23 * * *', async 
  * leaving ~58 minutes of margin — fixing it properly means threading one date through
  * every population path, which is a change to shared cron behavior for all 34 boards.
  */
-async function markLeaderboardPopulated(id: string, addDays: number) {
+export async function markLeaderboardPopulated(id: string, addDays: number) {
   const { rows } = await pgDbWrite.query<{ date: string }>(
     `SELECT (current_date + interval '${addDays} days')::date::text as date`
   );
@@ -158,7 +183,7 @@ type LegendsBoardResult = {
   position: number; // 1-1000
 };
 async function updateLegendsBoardResults() {
-  log('Legends Board - Fetching');
+  log('Legacy Board - Fetching');
   const legendsBoardDataRes = await pgDbReadLong.cancellableQuery<LegendsBoardResult>(`
     WITH scores AS (
       SELECT
@@ -199,9 +224,9 @@ async function updateLegendsBoardResults() {
   `);
   const legendsBoardData = await legendsBoardDataRes.result();
 
-  log('Legends Board - Truncating');
+  log('Legacy Board - Truncating');
   await dbWrite.$executeRaw`TRUNCATE "LegendsBoardResult"`;
-  log('Legends Board - Populating');
+  log('Legacy Board - Populating');
   const tasks = chunk(legendsBoardData, 500).map((batch) => async () => {
     const batchJson = JSON.stringify(batch);
     await dbWrite.$executeRaw`
@@ -210,7 +235,7 @@ async function updateLegendsBoardResults() {
     `;
   });
   await limitConcurrency(tasks, 2);
-  log('Legends Board - Done');
+  log('Legacy Board - Done');
 }
 
 type LeaderboardContext = {
@@ -341,7 +366,11 @@ type ImageScores = {
 const IMAGE_SCORE_BATCH_SIZE = 100000;
 const IMAGE_SCORE_FALLOFF = 120;
 const IMAGE_SCORE_MULTIPLIER = 100;
-async function imageLeaderboardPopulation(ctx: LeaderboardContext, [min, max]: [number, number]) {
+async function imageLeaderboardPopulation(
+  ctx: LeaderboardContext,
+  [min, max]: [number, number]
+): Promise<boolean> {
+  if (ctx.query.includes('ch_image_scores') && !clickhouse) return false;
   // Fetch Scores
   const userScores: Record<number, UserScoreKeeper> = {};
   const tasks: Task[] = [];
@@ -431,6 +460,7 @@ async function imageLeaderboardPopulation(ctx: LeaderboardContext, [min, max]: [
   `);
   // ctx.jobContext.on('cancel', leaderboardUpdateQuery.cancel);
   await leaderboardUpdateQuery.result();
+  return true;
 }
 
 type NsfwLevelRow = {
@@ -520,8 +550,9 @@ type ClickhouseScores = {
   metrics: string;
 };
 const CLICKHOUSE_INSERT_BATCH_SIZE = 500;
-async function clickhouseLeaderboardPopulation(ctx: LeaderboardContext) {
-  if (!clickhouse) return;
+/** Resolves `false` when skipped for lack of a ClickHouse client. */
+export async function clickhouseLeaderboardPopulation(ctx: LeaderboardContext): Promise<boolean> {
+  if (!clickhouse) return false;
   log('Leaderboard', ctx.id, 'Clickhouse');
   const scores = (await clickhouse.$query<ClickhouseScores>(ctx.query))
     ?.slice(0, 1000)
@@ -550,6 +581,7 @@ async function clickhouseLeaderboardPopulation(ctx: LeaderboardContext) {
     log('Leaderboard', ctx.id, 'Inserted', i + 1, 'of', tasks.length);
   });
   await limitConcurrency(tasks, 5);
+  return true;
 }
 
 const clearLeaderboardCache = createJob('clear-leaderboard-cache', '0 0 * * *', async () => {

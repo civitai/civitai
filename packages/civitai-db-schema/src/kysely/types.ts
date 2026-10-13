@@ -320,6 +320,19 @@ export type AppBlock = {
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
 };
+export type AppBlockBuildAttempt = {
+  id: Generated<number>;
+  publish_request_id: string | null;
+  slug: string;
+  sha: string;
+  run_id: string | null;
+  mode: string;
+  status: string;
+  failed_step: string | null;
+  failed_reason: string | null;
+  failure_class: string | null;
+  created_at: Generated<Timestamp>;
+};
 export type AppBlockPublishRequest = {
   id: string;
   app_block_id: string | null;
@@ -400,8 +413,38 @@ export type Appeal = {
   resolvedAt: Timestamp | null;
   resolvedBy: number | null;
   resolvedMessage: string | null;
+  resolvedReason: string | null;
   internalNotes: string | null;
   buzzTransactionId: string | null;
+  entityRemovedAt: Timestamp | null;
+};
+export type AppealDecisionRecord = {
+  id: Generated<string>;
+  appealId: number;
+  imageId: number;
+  imageUrl: string;
+  pHash: string | null;
+  promptHash: string | null;
+  nsfwLevel: number;
+  nsfwLevelLocked: boolean;
+  nsfwLevelReason: string | null;
+  aiNsfwLevel: number | null;
+  blockedFor: string | null;
+  decision: string;
+  resolvedReason: string | null;
+  decidedAt: Timestamp;
+  removalLabel: string | null;
+  removalNsfw: string | null;
+  restoredLevel: number | null;
+  trainingLabelCorrectedAt: Timestamp | null;
+  trainingCopyState: string | null;
+  trainingObjectKey: string | null;
+  ownerHash: string | null;
+  createdAt: Generated<Timestamp>;
+};
+export type AppealTrainingObjectDeletion = {
+  key: string;
+  createdAt: Generated<Timestamp>;
 };
 export type AppListing = {
   id: string;
@@ -435,8 +478,8 @@ export type AppListing = {
    * PURPOSE, AND THAT
    * IS A FIX FOR A PRODUCTION 500, NOT A STYLE CHOICE. Prisma names every scalar the model
    * declares in its default SELECT/RETURNING, so while this was an ordinary field every
-   * `appListing` call that returns rows with no explicit `select` emitted it — 18 such sites
-   * on this tree, 17 of them WRITES — and during the manual-apply window that is
+   * `appListing` call that returns rows with no explicit `select` emitted it - 18 such sites
+   * on this tree, 17 of them WRITES - and during the manual-apply window that is
    * `prisma.appListing.create()` dying with P2022. It happened: off-site submit, approve and
    * delist all 500d on the PR preview. Stripping the field makes every one of those sites
    * immune by construction. The column is reached ONLY by raw SQL, in
@@ -613,6 +656,42 @@ export type AppReviewAgentReport = {
   prior_report_id: string | null;
   token_usage: unknown | null;
   cost_usd: string | null;
+  created_at: Generated<Timestamp>;
+  updated_at: Generated<Timestamp>;
+};
+export type AppSubListing = {
+  id: string;
+  parent_listing_id: string;
+  item_key: string;
+  author_user_id: number;
+  title: string;
+  tagline: string | null;
+  image_id: number | null;
+  sub_path: string;
+  content_rating: string | null;
+  pending_title: string | null;
+  pending_tagline: string | null;
+  pending_image_id: number | null;
+  pending_sub_path: string | null;
+  pending_content_rating: string | null;
+  pending_submitted_at: Timestamp | null;
+  edit_rejection_reason: string | null;
+  status: Generated<string>;
+  status_reason: string | null;
+  moderated_by_id: number | null;
+  moderated_at: Timestamp | null;
+  approved_at: Timestamp | null;
+  created_at: Generated<Timestamp>;
+  updated_at: Generated<Timestamp>;
+};
+export type AppSubListingParent = {
+  parent_listing_id: string;
+  enabled: Generated<boolean>;
+  max_per_author: Generated<number>;
+  /**
+   * The https URL an off-site parent's store cards open, with one `{id}` (manual-apply column).
+   */
+  link_template: string | null;
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
 };
@@ -1471,9 +1550,24 @@ export type Bounty = {
   poi: Generated<boolean>;
   complete: Generated<boolean>;
   refunded: Generated<boolean>;
+  /**
+   * When the award (or, with `refunded`, the refund) was recorded under the payout lock.
+   */
+  payoutRecordedAt: Timestamp | null;
+  /**
+   * When that payout's Buzz moved. Recorded but unsettled rows are retried by `bounty-payout-retry`.
+   */
+  payoutSettledAt: Timestamp | null;
+  /**
+   * The award's winner, captured when it is recorded: the entry it went to can be deleted first.
+   */
+  payoutWinnerUserId: number | null;
   availability: Generated<Availability>;
   nsfwLevel: Generated<number>;
+  moderatorNsfwLevel: number | null;
+  moderatorNsfwLevelBasis: number | null;
   lockedProperties: Generated<string[]>;
+  meta: unknown | null;
 };
 export type BountyBenefactor = {
   userId: number;
@@ -1501,6 +1595,8 @@ export type BountyEntry = {
   locked: Generated<boolean>;
   description: string | null;
   nsfwLevel: Generated<number>;
+  moderatorNsfwLevel: number | null;
+  moderatorNsfwLevelBasis: number | null;
 };
 export type BountyEntryMetric = {
   bountyEntryId: number;
@@ -1799,6 +1895,8 @@ export type Challenge = {
   invitation: string | null;
   coverImageId: number | null;
   nsfwLevel: Generated<number>;
+  moderatorNsfwLevel: number | null;
+  moderatorNsfwLevelBasis: number | null;
   modelVersionIds: Generated<number[]>;
   allowedNsfwLevel: Generated<number>;
   judgingPrompt: string | null;
@@ -2139,6 +2237,8 @@ export type Collection = {
   metadata: Generated<unknown>;
   availability: Generated<Availability>;
   nsfwLevel: Generated<number>;
+  moderatorNsfwLevel: number | null;
+  moderatorNsfwLevelBasis: number | null;
   collaborationDisabledAt: Timestamp | null;
 };
 export type CollectionContributor = {
@@ -2441,6 +2541,28 @@ export type CosmeticShopItemCosmetic = {
   index: Generated<number>;
   floorAmount: number;
 };
+export type CosmeticShopPurchaseClaim = {
+  /**
+   * The charge's external transaction id prefix (UserCosmeticShopPurchases.buzzTransactionId once paid).
+   */
+  transactionId: string;
+  userId: number;
+  shopItemId: number;
+  /**
+   * What this claim charges. A retry of a pending claim charges this, not the current price.
+   */
+  amount: number;
+  /**
+   * pending | refunding | refunded | paid (text + CHECK, not an enum).
+   */
+  status: string;
+  /**
+   * Requests that have charged under this claim: 1 for the one that created it, +1 per resume.
+   */
+  attempts: Generated<number>;
+  createdAt: Generated<Timestamp>;
+  updatedAt: Generated<Timestamp>;
+};
 export type CosmeticShopSection = {
   id: Generated<number>;
   addedById: number | null;
@@ -2472,11 +2594,19 @@ export type CreatorMilestone = {
   track: string;
   threshold: number | null;
   hidden: Generated<boolean>;
+  /**
+   * A special (hidden, not score or activity) milestone left off the journey page's special list until earned. Honoured there only.
+   */
+  unlisted: Generated<boolean>;
   hint: string | null;
   name: string;
   description: string | null;
   cosmeticId: number | null;
   sortOrder: Generated<number>;
+};
+export type CreatorMilestoneCosmetic = {
+  milestoneKey: string;
+  cosmeticId: number;
 };
 export type Crucible = {
   id: Generated<number>;
@@ -2487,6 +2617,8 @@ export type Crucible = {
   heroImageId: number | null;
   buzzType: Generated<string>;
   nsfwLevel: Generated<number>;
+  moderatorNsfwLevel: number | null;
+  moderatorNsfwLevelBasis: number | null;
   contentType: Generated<MediaType>;
   entryFee: Generated<number>;
   seededPrizePool: Generated<number>;
@@ -2494,6 +2626,8 @@ export type Crucible = {
   entryLimit: Generated<number>;
   freeEntriesPerUser: Generated<number>;
   maxTotalEntries: number | null;
+  entryWarningPercent: Generated<number>;
+  entryCutoffPercent: Generated<number>;
   minViewSeconds: number | null;
   maxClipSeconds: number | null;
   prizePositions: Generated<unknown>;
@@ -2510,6 +2644,7 @@ export type Crucible = {
   ingestion: Generated<CrucibleIngestionStatus>;
   scannedAt: Timestamp | null;
   textNsfw: Generated<boolean>;
+  timeAdjustedPlacement: Generated<boolean>;
 };
 export type CrucibleEngagement = {
   userId: number;
@@ -2678,8 +2813,40 @@ export type EntityModeration = {
   triggeredLabels: Generated<string[]>;
   result: unknown | null;
   contentHash: string | null;
+  nsfwLevel: number | null;
   createdAt: Generated<Timestamp>;
   updatedAt: Timestamp;
+};
+export type EventCosmeticPlacement = {
+  id: Generated<string>;
+  event: string;
+  userId: number;
+  cosmeticId: number;
+  claimKey: string;
+  team: string;
+  entityType: CosmeticEntity;
+  entityId: number;
+  entityOwnerId: number | null;
+  startedAt: Generated<Timestamp>;
+  endedAt: Timestamp | null;
+  updatedAt: Generated<Timestamp>;
+};
+export type EventCosmeticScoreDaily = {
+  event: string;
+  day: Timestamp;
+  userId: number;
+  cosmeticId: number;
+  claimKey: string;
+  team: string;
+  impressions: Generated<number>;
+  anonImpressions: Generated<number>;
+  reactions: Generated<number>;
+  comments: Generated<number>;
+  stickers: Generated<number>;
+  remixes: Generated<number>;
+  modelLikes: Generated<number>;
+  points: Generated<number>;
+  updatedAt: Generated<Timestamp>;
 };
 export type FeaturedModelVersion = {
   id: Generated<number>;
@@ -2703,6 +2870,36 @@ export type Feedback = {
   handledById: number | null;
   handledAt: Timestamp | null;
   bugId: number | null;
+  /**
+   * The `app-block` area only: the `Feedback_app_columns_check` CHECK requires this and the seven app
+   * columns below (appBlockVersion, appBlockSha, ownerStatus, ownerStatusAt, ownerStatusById,
+   * ownerFlaggedAt, hiddenFromOwnerAt) to be NULL unless `area` is 'app-block'; it requires nothing of
+   * an app-block row. Always the PARENT listing, never a shadow revision. SetNull, not Cascade:
+   * deleting a listing must not destroy the report for moderators.
+   */
+  appListingId: string | null;
+  /**
+   * The block version live when the feedback was sent, stamped server-side. NULL for off-site apps.
+   */
+  appBlockVersion: string | null;
+  appBlockSha: string | null;
+  /**
+   * Owner (developer) status, SEPARATE from the moderator `status` / `triageNote` / `handledBy`
+   * columns above so an owner can never move moderator triage. NULL = new to the developer; otherwise
+   * one of FEEDBACK_OWNER_STATUSES (CHECK `Feedback_ownerStatus_check`).
+   */
+  ownerStatus: string | null;
+  ownerStatusAt: Timestamp | null;
+  ownerStatusById: number | null;
+  /**
+   * The owner flagged this report as abusive, for moderators.
+   */
+  ownerFlaggedAt: Timestamp | null;
+  /**
+   * A moderator hid this report from the developer. Which moderator is recorded by the
+   * append-only ModActivity row written on each hide/unhide, not by a column here.
+   */
+  hiddenFromOwnerAt: Timestamp | null;
 };
 export type File = {
   id: Generated<number>;
@@ -2713,6 +2910,28 @@ export type File = {
   entityId: number;
   entityType: string;
   metadata: unknown | null;
+};
+export type GameFrameGame = {
+  id: Generated<number>;
+  slug: string;
+  title: string;
+  userId: number | null;
+  official: Generated<boolean>;
+  visibility: string;
+  url: string;
+  coverUrl: string | null;
+  stateAt: Timestamp | null;
+  createdAt: Generated<Timestamp>;
+  updatedAt: Timestamp;
+};
+export type GameFrameGameReport = {
+  gameFrameGameId: number;
+  reportId: number;
+};
+export type GameFrameReportReceipt = {
+  gfReportId: string;
+  reportId: number;
+  createdAt: Generated<Timestamp>;
 };
 export type GenerationBaseModel = {
   baseModel: string;
@@ -3236,6 +3455,32 @@ export type ModelBaseModelMetric = {
   poi: Generated<boolean>;
   minor: Generated<boolean>;
   updatedAt: Generated<Timestamp>;
+  /**
+   * This base model's OWN hot score, so a filtered feed ranks on the slice rather than on
+   * engagement the model earned in another ecosystem. Served by mbmm_feed_hot. Computed by
+   * trigger from the columns below; falls back to mirroring ModelMetric.hotScore while
+   * generationCount is NULL. Same formula as the whole-model score, so a rank does not jump
+   * when a filter is applied.
+   */
+  hotScore: number | null;
+  /**
+   * Generations attributed to this model's versions of THIS base model. A plain SUM over
+   * ModelVersionMetric, so it arrives with the metrics job.
+   */
+  generationCount: number | null;
+  /**
+   * Distinct generators for this slice, merged across its versions; caps generationCount the
+   * same way ModelMetric.uniqueGeneratorCount does. NULL is what gates hotScore onto the
+   * mirrored fallback, because this is the one value that needs ClickHouse and so arrives
+   * last — a row scores on its own slice only once all three are in hand.
+   */
+  uniqueGeneratorCount: number | null;
+  /**
+   * EARLIEST published version for this base model — not the model's first publish, which
+   * would make a new version in a new ecosystem read as old there, and not the newest, which
+   * would let a republish refresh recency inside a filtered feed.
+   */
+  publishedAt: Timestamp | null;
 };
 export type ModelEngagement = {
   userId: number;
@@ -3314,9 +3559,24 @@ export type ModelMetric = {
   nsfwLevel: Generated<number>;
   userId: Generated<number>;
   lastVersionAt: Timestamp | null;
+  publishedAt: Timestamp | null;
   mode: ModelModifier | null;
   status: Generated<ModelStatus>;
   availability: Generated<Availability>;
+  /**
+   * Hot feed sort key, maintained by the trg_model_metric_hot_score trigger. Never write it
+   * from application code: the DB computes it so the migration can ship before the deploy.
+   * Int, not float — the keyset cursor parser runs parseInt on the sort token.
+   */
+  hotScore: number | null;
+  /**
+   * Distinct users who have generated with any version of this model, merged across
+   * versions rather than summed. Caps hotScore's generation term so one person — the
+   * owner included — cannot lift a model on their own generations. Since 20261013120000
+   * the first generator earns nothing, so 0 means "no generation credit" (it was "not
+   * computed yet" and inert before). Kept current by the Model metrics job.
+   */
+  uniqueGeneratorCount: Generated<number>;
 };
 export type ModelMetricDaily = {
   modelId: number;
@@ -3743,6 +4003,8 @@ export type Post = {
   unlisted: Generated<boolean>;
   availability: Generated<Availability>;
   nsfwLevel: Generated<number>;
+  moderatorNsfwLevel: number | null;
+  moderatorNsfwLevelBasis: number | null;
 };
 export type PostHelper = {
   postId: number;
@@ -3764,6 +4026,14 @@ export type PostMetric = {
   collectedCount: Generated<number>;
   updatedAt: Generated<Timestamp>;
   ageGroup: Generated<MetricTimeframe>;
+};
+export type PostPreset = {
+  id: Generated<number>;
+  userId: number;
+  name: string;
+  data: unknown;
+  createdAt: Generated<Timestamp>;
+  updatedAt: Timestamp;
 };
 export type PostReaction = {
   id: Generated<number>;
@@ -3993,6 +4263,22 @@ export type QuestionReaction = {
   createdAt: Generated<Timestamp>;
   updatedAt: Timestamp;
 };
+export type RatingReview = {
+  id: Generated<number>;
+  entityType: string;
+  entityId: number;
+  userId: number;
+  currentLevel: number;
+  suggestedLevel: number;
+  appliedLevel: number | null;
+  userComment: string | null;
+  modComment: string | null;
+  status: Generated<ReportStatus>;
+  resolvedBy: number | null;
+  resolvedAt: Timestamp | null;
+  resolvedTextHash: string | null;
+  createdAt: Generated<Timestamp>;
+};
 export type RecommendedResource = {
   id: Generated<number>;
   resourceId: number;
@@ -4092,6 +4378,27 @@ export type ResourceInsight = {
   model: string;
   createdAt: Generated<Timestamp>;
   stale: Generated<boolean>;
+};
+export type ResourceIntentCoocSnapshot = {
+  id: string;
+  kind: string;
+  status: Generated<string>;
+  contentHash: string | null;
+  specHash: string;
+  trainStart: Timestamp;
+  trainEnd: Timestamp;
+  seed: number;
+  pinnedUntil: Timestamp | null;
+  builtAt: Generated<Timestamp>;
+  trainCreatedAtMin: Timestamp | null;
+  trainCreatedAtMax: Timestamp | null;
+  idsTried: number | null;
+  trainRows: number | null;
+  vocab: number | null;
+  models: number | null;
+  keptPairs: number | null;
+  payload: Buffer | null;
+  trainImageIds: Buffer | null;
 };
 export type ResourceOverride = {
   hash: string;
@@ -4409,6 +4716,14 @@ export type Technique = {
   enabled: Generated<boolean>;
   type: TechniqueType;
 };
+export type TextScanPrompt = {
+  id: Generated<number>;
+  key: string;
+  content: string;
+  note: string | null;
+  createdById: number | null;
+  createdAt: Generated<Timestamp>;
+};
 export type Thread = {
   id: Generated<number>;
   locked: Generated<boolean>;
@@ -4431,6 +4746,7 @@ export type Thread = {
   model3dId: number | null;
   model3dReviewId: number | null;
   appListingId: number | null;
+  crucibleId: number | null;
   metadata: Generated<unknown>;
   commentCount: Generated<number>;
 };
@@ -4710,6 +5026,8 @@ export type UserRestriction = {
   resolvedAt: Timestamp | null;
   resolvedBy: number | null;
   resolvedMessage: string | null;
+  resolvedReason: string | null;
+  internalNotes: string | null;
   userMessage: string | null;
   userMessageAt: Timestamp | null;
 };
@@ -4870,6 +5188,7 @@ export type DB = {
   AnswerReaction: AnswerReaction;
   AnswerVote: AnswerVote;
   ApiKey: ApiKey;
+  app_block_build_attempts: AppBlockBuildAttempt;
   app_block_publish_requests: AppBlockPublishRequest;
   app_blocks: AppBlock;
   app_collaborators: AppCollaborator;
@@ -4884,8 +5203,12 @@ export type DB = {
   app_ownership_events: AppOwnershipEvent;
   app_ownership_transfers: AppOwnershipTransfer;
   app_review_agent_reports: AppReviewAgentReport;
+  app_sub_listing_parents: AppSubListingParent;
+  app_sub_listings: AppSubListing;
   app_user_scope_grants: AppUserScopeGrant;
   Appeal: Appeal;
+  AppealDecisionRecord: AppealDecisionRecord;
+  AppealTrainingObjectDeletion: AppealTrainingObjectDeletion;
   AppPageAccess: AppPageAccess;
   Article: Article;
   ArticleEngagement: ArticleEngagement;
@@ -4988,11 +5311,13 @@ export type DB = {
   Cosmetic: Cosmetic;
   CosmeticShopItem: CosmeticShopItem;
   CosmeticShopItemCosmetic: CosmeticShopItemCosmetic;
+  CosmeticShopPurchaseClaim: CosmeticShopPurchaseClaim;
   CosmeticShopSection: CosmeticShopSection;
   CosmeticShopSectionItem: CosmeticShopSectionItem;
   CoveredCheckpoint: CoveredCheckpoint;
   CreatorGalleryHiddenUser: CreatorGalleryHiddenUser;
   CreatorMilestone: CreatorMilestone;
+  CreatorMilestoneCosmetic: CreatorMilestoneCosmetic;
   Crucible: Crucible;
   CrucibleEngagement: CrucibleEngagement;
   CrucibleEntry: CrucibleEntry;
@@ -5011,9 +5336,14 @@ export type DB = {
   EntityMetric: EntityMetric;
   EntityMetricImage: EntityMetricImage;
   EntityModeration: EntityModeration;
+  EventCosmeticPlacement: EventCosmeticPlacement;
+  EventCosmeticScoreDaily: EventCosmeticScoreDaily;
   FeaturedModelVersion: FeaturedModelVersion;
   Feedback: Feedback;
   File: File;
+  GameFrameGame: GameFrameGame;
+  GameFrameGameReport: GameFrameGameReport;
+  GameFrameReportReceipt: GameFrameReportReceipt;
   GenerationBaseModel: GenerationBaseModel;
   GenerationCoverage: GenerationCoverage;
   GenerationPreset: GenerationPreset;
@@ -5095,6 +5425,7 @@ export type DB = {
   PostHelper: PostHelper;
   PostImageTag: PostImageTag;
   PostMetric: PostMetric;
+  PostPreset: PostPreset;
   PostReaction: PostReaction;
   PostReport: PostReport;
   PostResourceHelper: PostResourceHelper;
@@ -5112,6 +5443,7 @@ export type DB = {
   QuestionMetric: QuestionMetric;
   QuestionRank: QuestionRank;
   QuestionReaction: QuestionReaction;
+  RatingReview: RatingReview;
   RecommendedResource: RecommendedResource;
   RedeemableCode: RedeemableCode;
   ReferralAttribution: ReferralAttribution;
@@ -5121,6 +5453,7 @@ export type DB = {
   Report: Report;
   ReportAutomated: ReportAutomated;
   ResourceInsight: ResourceInsight;
+  ResourceIntentCoocSnapshot: ResourceIntentCoocSnapshot;
   ResourceOverride: ResourceOverride;
   ResourceReview: ResourceReview;
   ResourceReviewHelper: ResourceReviewHelper;
@@ -5157,6 +5490,7 @@ export type DB = {
   TagsOnTags: TagsOnTags;
   TagStat: TagStat;
   Technique: Technique;
+  TextScanPrompt: TextScanPrompt;
   Thread: Thread;
   ThreadMute: ThreadMute;
   TipConnection: TipConnection;

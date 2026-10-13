@@ -17,6 +17,7 @@ import fsAsync from 'fs/promises';
 import fs from 'fs';
 import archiver from 'archiver';
 import stream, { Readable } from 'stream';
+import type { ReadableStream as NodeReadableStream } from 'stream/web';
 import { Upload } from '@aws-sdk/lib-storage';
 import ncmecCaller from '~/server/http/ncmec/ncmec.caller';
 import * as z from 'zod';
@@ -89,36 +90,27 @@ export async function createCsamReport({
   type,
 }: CreateCsamReportSchema & { reportedById: number }) {
   const isInternalReport = userId === -1;
-  const reportedUserId = !isInternalReport ? userId : undefined;
+  const data = {
+    userId: isInternalReport ? null : userId,
+    reportedById,
+    details,
+    type,
+    //map imageIds to objects so that we can append additional data to them later
+    images: imageIds?.map((id) => ({ id })) ?? [],
+  };
 
-  const exists = await dbWrite.csamReport.findFirst({
-    where: { userId: reportedUserId },
-    select: { id: true, reportSentAt: true },
-  });
+  // An update replaces the row's images and details, so only fold into a report of the same account
+  // AND type: internal reports belong to no account, and a different type is a different report.
+  const unsent = isInternalReport
+    ? null
+    : await dbWrite.csamReport.findFirst({
+        where: { userId, type, reportSentAt: null },
+        select: { id: true },
+      });
 
-  const report =
-    exists && !exists.reportSentAt
-      ? await dbWrite.csamReport.update({
-          where: { id: exists.id },
-          data: {
-            userId: reportedUserId,
-            reportedById,
-            details,
-            type,
-            //map imageIds to objects so that we can append additional data to them later
-            images: imageIds?.map((id) => ({ id })) ?? [],
-          },
-        })
-      : await dbWrite.csamReport.create({
-          data: {
-            userId: reportedUserId,
-            reportedById,
-            details,
-            type,
-            //map imageIds to objects so that we can append additional data to them later
-            images: imageIds?.map((id) => ({ id })) ?? [],
-          },
-        });
+  const report = unsent
+    ? await dbWrite.csamReport.update({ where: { id: unsent.id }, data })
+    : await dbWrite.csamReport.create({ data });
 
   if (imageIds.length) {
     const affectedImages = await dbWrite.image.findMany({
@@ -645,6 +637,8 @@ async function getTrainingDataZipStream({
     modelVersionId: versionId,
     type: 'Training Data',
     user: reportingUser ?? undefined,
+    // Fetched server-side to build a report, not on a user's behalf.
+    attribution: { caller: 'other', actor: 'internal' },
   });
   if (modelFile.status !== 'success') throw new Error('training data not found');
 
@@ -652,7 +646,7 @@ async function getTrainingDataZipStream({
   if (!response.ok) throw new Error(`no training data exists for model version: ${versionId}`);
   if (!response.body) throw new Error(`no response body for model version: ${versionId}`);
   // Convert Web ReadableStream to Node.js Readable stream
-  return Readable.fromWeb(response.body as import('stream/web').ReadableStream);
+  return Readable.fromWeb(response.body as NodeReadableStream);
 }
 
 function uploadStream({

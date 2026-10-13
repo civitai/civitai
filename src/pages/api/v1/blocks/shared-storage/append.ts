@@ -28,9 +28,9 @@ import { appendSharedRow, sharedValueInput } from '~/server/routers/apps-shared.
  *     the fail-closed kill-switch, the ANON REFUSAL (401), and
  *     `assertSharedWriteTrust` (account age / paid tier / verified email or a
  *     linked OAuth account).
- *   - the per-(user, app) DAILY append bucket, taken BEFORE the content-safety
- *     belt and before any pooled connection, so a flood costs neither external
- *     moderation calls nor a connection.
+ *   - the per-(user, app) write budget (shared with update), reserved BEFORE the
+ *     content-safety belt and before any pooled connection, so a flood costs
+ *     neither external moderation calls nor a connection.
  *   - the BLOCKING content-safety belt on `title`/`body`, the whole-value byte
  *     cap, the per-user row cap and the per-app byte/row quota.
  *
@@ -94,7 +94,8 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
     // forwards a raw `pg` message verbatim, and on THIS surface such a message can
     // name the app's schema and the offending row value. Same decision, same
     // helper and same reasoning as the PR-1 read routes — see list.ts. Consequence:
-    // these routes answer with `{ message }`, not `{ error }`.
+    // these routes answer with `{ message }`, not `{ error }` — except a rate-limited 429,
+    // which every shared write route (increment included) answers with the full envelope.
     return handleEndpointError(res, error);
   }
 });

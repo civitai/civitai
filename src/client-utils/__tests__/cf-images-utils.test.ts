@@ -18,6 +18,7 @@ import {
   resolveOptimized,
   snapWidthToCommonSize,
 } from '~/client-utils/cf-images-utils';
+import { toOriginalEdgeUrl } from '~/client-utils/edge-url';
 
 describe('snapWidthToCommonSize', () => {
   it('leaves widths that are exactly on the ladder unchanged', () => {
@@ -246,5 +247,35 @@ describe('resolveOptimized', () => {
     const url = getEdgeUrl('KEY', download);
     expect(url).toContain('original=true');
     expect(url).not.toContain('optimized');
+  });
+});
+
+describe('toOriginalEdgeUrl', () => {
+  const key = '273fd897-cdc4-44b6-be25-499d3b09e2c9';
+
+  it('swaps a resized variant for the stored original', () => {
+    expect(
+      toOriginalEdgeUrl(`https://image.test/${key}/anim=false,width=450,optimized=true/${key}.jpeg`)
+    ).toBe(`https://image.test/${key}/original=true/${key}.jpeg`);
+  });
+
+  it('adds the original param to a url that has none, and drops a query', () => {
+    expect(toOriginalEdgeUrl(`https://image.test/${key}/photo.png?x=1`)).toBe(
+      `https://image.test/${key}/original=true/photo.png`
+    );
+  });
+
+  it('leaves video frames, other hosts and unknown shapes alone', () => {
+    for (const url of [
+      `https://image.test/${key}/anim=false,transcode=true,width=450/${key}.jpeg`,
+      `https://image.test/${key}/skip=2,width=450/${key}.jpeg`,
+      `https://elsewhere.test/${key}/width=450/${key}.jpeg`,
+      `https://image.testing/${key}/width=450/${key}.jpeg`,
+      `https://image.test/${key}`,
+      `https://image.test/a/b/c/d.jpeg`,
+      `blob:https://civitai.com/${key}`,
+    ]) {
+      expect(toOriginalEdgeUrl(url)).toBe(url);
+    }
   });
 });

@@ -6,7 +6,11 @@ import { GET_ALL_IMAGES_PER_MODEL_SLIM } from '~/server/utils/model-getall-image
 // suite — that is how it reddened main). At module scope it moves to collection, which nothing
 // bounds, so a real hang here has no timeout to name it. See vitest.config.mts; the
 // measurements behind these numbers are in PR #4363.
-import { getHomeBlockData, resolveFeedFetchLimit } from '~/server/services/home-block.service';
+import {
+  getHomeBlockData,
+  newCreatorsPoolFetchLimit,
+  resolveFeedFetchLimit,
+} from '~/server/services/home-block.service';
 import type * as ModelService from '~/server/services/model.service';
 
 const { getModelsWithImagesAndModelVersionsMock, getFeaturedModelsMock } = vi.hoisted(() => ({
@@ -69,6 +73,12 @@ describe('feed fetch size', () => {
   // cast, never parsed, so the schema default cannot rescue it.
   it('falls back to the schema default when limit is missing', async () => {
     expect(resolveFeedFetchLimit(undefined)).toBe(28);
+  });
+
+  // A per-creator-capped new-creators pool over-fetches so capped-out creators are backfilled.
+  it('over-fetches a capped new-creators pool 3x, up to a ceiling', () => {
+    expect(newCreatorsPoolFetchLimit(42)).toBe(126);
+    expect(newCreatorsPoolFetchLimit(60)).toBe(150);
   });
 });
 

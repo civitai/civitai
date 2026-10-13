@@ -14,7 +14,12 @@ export const GET: RequestHandler = async ({ locals, url }) => {
   const fromEpoch = parse(url.searchParams.get('fromEpoch'));
   const addEpochs = parse(url.searchParams.get('addEpochs'));
   if (!workflowId || fromEpoch === null || addEpochs === null) error(400, 'Bad request.');
-  const opts: ContinueOpts = { workflowId, fromEpoch, addEpochs };
+  const opts: ContinueOpts = {
+    workflowId,
+    fromEpoch,
+    addEpochs,
+    currencies: url.searchParams.getAll('currencies'),
+  };
   const token = await requireToken(locals, 'Pricing is unavailable right now.');
   try {
     return json(await continueTrainingWhatIf(token, locals.user.id, opts));

@@ -5,6 +5,7 @@
   import { SvelteMap } from 'svelte/reactivity';
   import { optimisticEnhancer } from '$lib/form-action';
   import { urlWith } from '$lib/url';
+  import { clearPaging } from '$lib/paging';
   import ImageQueueGrid from '$lib/components/ImageQueueGrid.svelte';
   import { browsingLevels, NsfwLevel, getBrowsingLevelLabel } from '@civitai/shared';
   import type { PageData } from './$types';
@@ -39,8 +40,11 @@
     return () => acted.delete(id);
   });
 
-  const navigate = (params: Record<string, string | number | null>) =>
-    goto(urlWith(page.url, params));
+  const setFilter = (params: Record<string, string | number | null>) => {
+    const url = new URL(page.url);
+    clearPaging(url.searchParams);
+    return goto(urlWith(url, params));
+  };
 
   const cardClass = (item: Item) => (acted.has(item.id) ? 'opacity-60' : '');
 </script>
@@ -51,14 +55,14 @@
     <select
       class="h-8 rounded-md border bg-background px-2 text-sm"
       value={data.originalLevel ?? ''}
-      onchange={(e) => navigate({ originalLevel: e.currentTarget.value || null, cursor: null })}
+      onchange={(e) => setFilter({ originalLevel: e.currentTarget.value || null })}
     >
       {#each levelFilters as o (o.value)}<option value={o.value}>{o.label}</option>{/each}
     </select>
     <select
       class="h-8 rounded-md border bg-background px-2 text-sm"
       value={data.limit}
-      onchange={(e) => navigate({ limit: e.currentTarget.value, cursor: null })}
+      onchange={(e) => setFilter({ limit: e.currentTarget.value })}
     >
       {#each limitOptions as n (n)}<option value={n}>{n} items</option>{/each}
     </select>

@@ -50,7 +50,7 @@ import { playerInfoSelect, userWithPlayerInfoSelect } from '~/server/selectors/u
 import { handleBlockImages, updateImageNsfwLevel } from '~/server/services/image.service';
 import { createNotification } from '~/server/services/notification.service';
 import { createReport } from '~/server/services/report.service';
-import { claimCosmetic } from '~/server/services/user.service';
+import { awardTrophyCosmetic } from '~/server/services/user.service';
 import { fetchThroughCache } from '~/server/utils/cache-helpers';
 import { withDistributedLock } from '~/server/utils/distributed-lock';
 import {
@@ -130,7 +130,7 @@ export async function joinGame({ userId }: { userId: number }) {
   });
 
   // Grant cosmetic to new players
-  await claimCosmetic({
+  await awardTrophyCosmetic({
     id: newOrderConfig.cosmetics.badgeIds.acolyte,
     userId,
   }).catch(() => null); // Ignore if it fails
@@ -800,7 +800,7 @@ async function processImageRating({
     });
 
     // Grant cosmetic to new players
-    await claimCosmetic({
+    await awardTrophyCosmetic({
       id: newOrderConfig.cosmetics.badgeIds.knight,
       userId: playerId,
     }).catch(() => null); // Ignore if it fails

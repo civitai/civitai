@@ -46,6 +46,10 @@ export const PERMISSIONS = [
   // main app's `deleteUser`. That app checks this id by its literal (`ModeratorGrantId` in
   // `src/server/services/moderator-grants.ts`), so rename the two together.
   { id: 'user.deleteAccount', label: 'Delete an account on its owner’s behalf (erasure request)' },
+  // Money: a membership code is worth up to six months of a paid tier. Checked again by the main
+  // app's `/api/mod/user/membership-code` by this literal (`ModeratorGrantId`), so rename the two
+  // together.
+  { id: 'user.membership.code', label: 'Mint membership codes for a customer' },
   // The widest read in the app: everything an account generated on-site and in Comfy Cloud, published
   // or not, prompts included. Reaching User Lookup or the restriction queue is not consent to that.
   { id: 'user.generations.view', label: 'View a user’s generated media' },
@@ -74,6 +78,16 @@ export const PERMISSIONS = [
   // instead of a rename, and a rename orphans stored grant rows.
   { id: 'feedback.status.set', label: 'Set feedback status' },
   { id: 'feedback.bug.promote', label: 'Promote feedback to a Known Issue' },
+  { id: 'textScan.prompt.publish', label: 'Publish text-scan prompt versions (production)' },
+  // `/decisions`: reading the inbox is the page grant; recording a ruling is this. A ruling is
+  // labelled data other systems will train and calibrate on, so who may produce it is its own call.
+  { id: 'decisions.rule', label: 'Record a ruling on a decision item' },
+  // Held IN ADDITION to `decisions.rule` for a `resolved` ruling. A label trains a model; a canonical
+  // answer is text meant to reach customers, so who may write one is a separate, narrower call.
+  { id: 'decisions.answer', label: 'Record the canonical answer for a decision group' },
+  // Support tickets carry the requester's email, a different class of data from anything moderation
+  // shows. Without this the email is never even selected — see `ticketSql`.
+  { id: 'decisions.support.pii', label: 'See support-ticket requester emails on Decisions' },
 ] as const satisfies readonly { id: string; label: string }[];
 
 export type Permission = (typeof PERMISSIONS)[number];

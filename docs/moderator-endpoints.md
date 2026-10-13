@@ -10,7 +10,8 @@ who acted. The new helper takes a signed-in moderator.
 
 **Three ways in, one actor rule.** A moderator's browser session; that same session forwarded one hop by
 a `*.civitai.com` spoke (which shares the hub's `.civitai.com` cookie, so it is not cross-domain); or a
-moderator's own API key for scripts. All three resolve to a real moderator.
+moderator's own full-access personal API key for scripts (any other token gets 403). All three resolve
+to a real moderator.
 
 🔒 The mutating endpoints are cookie-authenticated POSTs, so CSRF is prevented **only** by the session
 cookie being `SameSite=Lax`. That invariant is recorded in `moderator-endpoint.ts`; read it before
@@ -30,8 +31,8 @@ enforced. `/moderator/api` renders those specs, as `/xguard/docs` does in the mo
 - [x] `defineRetoolEndpoint`, its tests and `src/pages/api/mod/retool/` are deleted. No `retool` remains
       in any moderator endpoint URL.
 - [x] Shared zod pieces live in `src/server/schema/moderator/` — **not** under `src/pages`, where Next 16
-      routes every file and the build's route-type validator rejects one with no default export. Only
-      `next build` catches that; typecheck, vitest and `next dev` all stay green.
+      routes every file and the build's route-type validator rejects one with no default export. `next build` and
+      `pnpm run typecheck` (which runs `next typegen` first) catch that; vitest and `next dev` stay green.
 - [x] 18 unit tests on the helper: method handling, both auth paths, the moderator and banned gates,
       schema failure, the privileged gate in both directions, the rate limit, both audit outcomes, and
       two `specToDoc` regressions (see below).

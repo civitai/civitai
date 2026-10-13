@@ -2,6 +2,7 @@ import * as z from 'zod';
 
 import { MARKETPLACE_CATEGORIES } from '~/server/services/blocks/marketplace-categories.constants';
 import { APP_LISTING_STATUSES } from '~/server/services/blocks/app-listing-status.constants';
+import type { RestrictedListingAudience } from '~/shared/utils/app-listing-visibility';
 
 /**
  * App Store Listings (W13) — P2a UNIFIED STORE READ PATH schemas + public DTOs.
@@ -46,6 +47,13 @@ export type ListingKindFilter = z.infer<typeof listingKindFilterSchema>;
 export const listingSortSchema = z.enum(['top-rated', 'popular', 'newest', 'name']);
 export type ListingSort = z.infer<typeof listingSortSchema>;
 
+/**
+ * Upper bound on the opaque keyset cursor. Sized for the `name` sort key (64 characters,
+ * up to 4 UTF-8 bytes each) plus id and pinned mean, base64url-encoded; lowering it stops
+ * pagination on pages ending in a long non-ASCII title.
+ */
+export const LISTING_CURSOR_MAX = 512;
+
 export const listAppListingsSchema = z.object({
   kind: listingKindFilterSchema.default('all'),
   // Category filter validated against the single-source taxonomy const (shared
@@ -53,8 +61,13 @@ export const listAppListingsSchema = z.object({
   category: z.enum(MARKETPLACE_CATEGORIES).optional(),
   sort: listingSortSchema.default('top-rated'),
   // Opaque keyset cursor (base64url) — see app-listing.service encode/decode.
-  cursor: z.string().max(128).optional(),
+  cursor: z.string().max(LISTING_CURSOR_MAX).optional(),
   limit: z.number().int().min(1).max(50).default(20),
+  /**
+   * Opt in to sub-listing cards (`SubListingCard`) in `items`; also needs the
+   * `app-store-sub-listings` flag. Only the `/apps` store grid asks.
+   */
+  includeSubListings: z.boolean().optional(),
 });
 export type ListAppListingsInput = z.infer<typeof listAppListingsSchema>;
 
@@ -73,7 +86,7 @@ export function getAppListingsListQuery() {
     kind: listingKindFilterSchema.default('all'),
     category: z.enum(MARKETPLACE_CATEGORIES).optional(),
     sort: listingSortSchema.default('top-rated'),
-    cursor: z.string().max(128).optional(),
+    cursor: z.string().max(LISTING_CURSOR_MAX).optional(),
     limit: z
       .preprocess(
         (v) => (v === undefined || v === null || v === '' ? undefined : Number(v)),
@@ -271,8 +284,68 @@ export type ListingCard = {
    * than needing a backfill.
    */
   openCount: number | null;
+  /**
+   * The listing's RESTRICTED audience as THIS VIEWER may know it, for the store badge
+   * ("Testers only" / "Moderators only" / "Unlisted") — or `null`, which renders nothing.
+   *
+   * 🔴 ALLOWLIST JUSTIFICATION — A DERIVED, VIEWER-SCOPED VALUE, NOT THE `visibility`
+   * COLUMN. The raw level is an owner-only setting (see `ListingVisibilityMenuModal`), so it
+   * is never projected. This is set only for the owner, a moderator, or a viewer whose cohort
+   * the level already admits — `restrictedAudienceForViewer` is the one rule. `null` covers
+   * unset, `public`, the manual-apply column being absent, and "this viewer is not told".
+   *
+   * Not served by the public REST `GET /api/v1/apps` — its handler strips it (the field is
+   * always `null` there, and adding it would change a documented contract for nothing).
+   */
+  restrictedAudience: RestrictedListingAudience | null;
   kindData: ListingCardKindData;
 };
+
+/**
+ * One store card for a SUB-LISTING: an item a parent app placed in the store. Public-field
+ * allowlist like `ListingCard`. `kind` and `category` are the parent's, so the grid's filters
+ * and client-side search treat it like any other card; `contentRating` is the stricter of
+ * parent and item. `runHref` is built server-side: under the parent's run route, or, for an
+ * off-site parent (`external`), from the parent's moderator-set link template. There is no
+ * author-supplied URL.
+ *
+ * Only the tRPC store grid returns these (behind the `app-store-sub-listings` flag). The
+ * public REST catalog never does.
+ */
+export type SubListingCard = {
+  cardType: 'sub-listing';
+  id: string;
+  name: string;
+  tagline: string | null;
+  kind: ListingKind;
+  category: string | null;
+  contentRating: string | null;
+  /** The item image when it is cleared for this viewer, else the parent's cover. */
+  coverUrl: string | null;
+  /** The item's author. */
+  creator: ListingCreatorChip;
+  parent: { id: string; slug: string; name: string; iconUrl: string | null };
+  runHref: string;
+  /** `runHref` leaves Civitai: open it in a new tab, whether or not the viewer can open pages. */
+  external?: true;
+};
+
+export type StoreGridItem = ListingCard | SubListingCard;
+
+/**
+ * Drop the viewer-scoped fields from a store DTO before it crosses the public REST boundary.
+ *
+ * `GET /api/v1/apps` and `/api/v1/apps/{slug}` are a hand-documented published contract and
+ * always read as an anonymous, floor-`public` viewer, so `restrictedAudience` is `null` there
+ * by construction. Serving a key that can only ever be `null` would change the documented
+ * response shape for nothing, so both handlers strip it.
+ */
+export function withoutViewerScopedFields<T extends { restrictedAudience: unknown }>(
+  dto: T
+): Omit<T, 'restrictedAudience'> {
+  const { restrictedAudience: _viewerScoped, ...rest } = dto;
+  return rest;
+}
 
 export type ListingGalleryScreenshot = {
   url: string;
@@ -534,6 +607,13 @@ export type ListingDetail = {
    * the MANUAL-APPLY migration is outstanding.
    */
   betaMessage: string | null;
+  /**
+   * Same viewer-scoped restricted audience as `ListingCard.restrictedAudience`, for the
+   * detail header's badge. 🔴 `private` admits no cohort, so it may reach only the owner and
+   * moderators — `restrictedAudienceForViewer` decides, not this read's caller.
+   * Stripped from the public REST `GET /api/v1/apps/{slug}` response, like the card's.
+   */
+  restrictedAudience: RestrictedListingAudience | null;
   /** Ordered gallery — screenshots whose backing Image still exists (null-image rows dropped). */
   screenshots: ListingGalleryScreenshot[];
   kindData: ListingDetailKindData;

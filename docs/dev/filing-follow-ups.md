@@ -23,7 +23,7 @@ the follow-ups list — the line exists so the new list does not become where re
 
 Two rules for anything you file:
 
-- **File as the human whose session you are running in**, not as the meta agent. Their name on it is what
+- **File as the human whose session you are running in**, not as a bot account. Their name on it is what
   makes it findable by the person who has to decide it.
 - **Name the PR or commit it fell out of.** A follow-up without that is a sentence nobody can act on six
   weeks later.

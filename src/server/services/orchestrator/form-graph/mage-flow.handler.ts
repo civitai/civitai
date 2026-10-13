@@ -9,7 +9,7 @@ import type {
 } from '@civitai/client';
 import { removeEmpty } from '~/utils/object-helpers';
 import { mageFlowVersionIds } from '~/shared/form-graph/generation/image/mage-flow.graph';
-import { defineHandler } from '../ecosystems/handler-factory';
+import { defineHandler } from '../handlers/handler-factory';
 import type { EcosystemData } from './types';
 
 type MageFlowModel = '4b' | '4b-turbo' | '4b-edit' | '4b-edit-turbo';

@@ -1,4 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as AppListingRating from '~/server/services/blocks/app-listing-rating';
+
+// The post-commit history write is a seam: these suites pin what each go-live HANDS it;
+// `app-listing-rating.test.ts` pins that it writes one event only when the value changed.
+const { recordRatingChange } = vi.hoisted(() => ({
+  recordRatingChange: vi.fn(async (..._a: unknown[]): Promise<void> => undefined),
+}));
+vi.mock('~/server/services/blocks/app-listing-rating', async (importOriginal) => ({
+  ...(await importOriginal<typeof AppListingRating>()),
+  recordListingRatingChangeAfterCommit: (...a: unknown[]) => recordRatingChange(...a),
+}));
 
 import { NsfwLevel } from '~/server/common/enums';
 import { approveExternalRequest } from '~/server/services/blocks/offsite-listing.service';
@@ -153,6 +164,14 @@ describe('approveExternalRequest — ON-SITE rating is RAISE-ONLY over the app d
     });
     await approveExternalRequest({ publishRequestId: REQUEST_ID, reviewerUserId: MOD });
     expect(flipData()).toEqual({ status: 'approved', contentRating: 'x' });
+    expect(recordRatingChange).toHaveBeenCalledTimes(1);
+    expect(recordRatingChange).toHaveBeenCalledWith({
+      appListingId: LISTING_ID,
+      slug: SLUG,
+      before: 'g',
+      after: 'x',
+      actorUserId: MOD,
+    });
   });
 
   it('a moderator override may raise above the floor', async () => {

@@ -4,6 +4,7 @@ import { AppealStatus, EntityType, Model3DStatus } from '~/shared/utils/prisma/e
 export const APPEAL_ALREADY_PENDING = 'Your appeal of this removal is already under review.';
 export const APPEAL_ALREADY_DECIDED =
   'Your appeal of this removal was reviewed and the decision stands.';
+export const IMAGE_NOT_APPEALABLE = 'Only an image blocked by moderators can be appealed';
 
 // One appeal per block (product decision, 2026-10-02). An approved image appeal lifted the block, so a later
 // block is a new decision to contest; a rejected one upheld the block that is still in place. An
@@ -33,3 +34,16 @@ export function isAppealableImage(image: {
 export function isAppealableModel3D(model: { status: Model3DStatus }) {
   return model.status === Model3DStatus.Unpublished || model.status === Model3DStatus.Deleted;
 }
+
+// apps/moderator also sends closed-owner-deleted and reviewed-*; it mirrors these strings.
+export type OrphanedAppealOutcome =
+  | 'under-review'
+  | 'closed-owner-deleted'
+  | 'closed-unreviewed'
+  | 'reviewed-approved'
+  | 'reviewed-rejected';
+
+export const OrphanedAppealReason = {
+  DeletedByOwner: 'deleted-by-owner',
+  RemovedBeforeReview: 'removed-before-review',
+} as const;

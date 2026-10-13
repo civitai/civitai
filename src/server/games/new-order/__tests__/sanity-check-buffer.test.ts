@@ -67,7 +67,7 @@ vi.mock('~/server/services/image.service', () => ({
 }));
 vi.mock('~/server/services/notification.service', () => ({ createNotification: vi.fn() }));
 vi.mock('~/server/services/report.service', () => ({ createReport: vi.fn() }));
-vi.mock('~/server/services/user.service', () => ({ claimCosmetic: vi.fn() }));
+vi.mock('~/server/services/user.service', () => ({ awardTrophyCosmetic: vi.fn() }));
 vi.mock('~/utils/signal-client', () => ({ signalClient: { topicSend: vi.fn() } }));
 
 // Import AFTER mocks — real decodeRedisString + shuffle stay in play.

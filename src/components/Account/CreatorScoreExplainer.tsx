@@ -12,7 +12,7 @@ export function CreatorScoreExplainer() {
         How Creator Score works
       </Text>
       <Text size="sm" c="dimmed">
-        Your Creator Score measures how much the community values what you share. It grows when
+        Your Creator Score measures how much the community values what you share. It grows when{' '}
         {creatorScoreGrowsWhen}.
       </Text>
       <List size="sm" spacing={4}>

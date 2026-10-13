@@ -1,14 +1,60 @@
 # CLS Remediation Plan
 
 Tracking the Cumulative Layout Shift (CLS) work surfaced by Google Search
-Console's Core Web Vitals report (desktop, 2026-06-29). CLS measures how much
+Console's Core Web Vitals report (desktop; first report 2026-06-29, latest
+2026-10-05). CLS measures how much
 visible content jumps around as a page loads — it's both a real UX problem and a
 Google page-experience ranking signal, sourced from **field data** (real Chrome
 users via CrUX), not lab tests.
 
 Scoring: `≤ 0.10` good · `0.10–0.25` needs improvement · `> 0.25` **poor**.
 
-## Reported groups (worst first)
+## Current state (Search Console desktop report, data to 2026-10-03)
+
+64,567 desktop URLs: 9% good, 72% needs improvement, 19% poor. CLS is the whole
+story — every poor URL fails on CLS (`> 0.25`), and all but 6 of the 46,533
+needs-improvement URLs fail on CLS (`> 0.1`). LCP (`> 2.5s`, 10,348 URLs) overlaps
+the same pages.
+
+| Group (example URL)             | URLs   | Group CLS  | Status                                                                                      |
+| ------------------------------- | ------ | ---------- | ------------------------------------------------------------------------------------------- |
+| `/models/:id/:slug`             | 46,527 | 0.20       | Fixed — [streamed HTML](#field-only-shifts-streamed-html)                                   |
+| `/posts/:id`                    | 4,740  | 0.35       | Fixed — [P4](#p4--detail--profile-residuals)                                                |
+| `/` (homepage)                  | 3,557  | 0.64       | Fixed — [announcements](#banners--intermittent-in-the-lab-the-homepage-driver-in-the-field) |
+| `/tag/:tag`                     | 1,571  | 0.59       | Open — not reproducible in the lab                                                          |
+| `/user/:name/*` (tabs, profile) | 13–669 | 0.35–0.63  | Open — not reproducible in the lab                                                          |
+| `/images`, `/posts`             | 99, 59 | 0.73, 0.72 | Open — see [the min-height fix](#the-fix--implemented-min-height)                           |
+
+The model-detail group is 72% of all desktop URLs, so taking it under 0.10 moves
+the property from ~9% good to ~80% good on its own. Field data is a 28-day CrUX
+window, so a deploy takes about four weeks to show fully.
+
+CrUX is real Chrome users, logged in or not — not Googlebot — so a shift that only
+logged-in viewers get counts in full.
+
+## Field-only shifts: streamed HTML
+
+The model page scored 0.20 in the field but ~0.001 on a fast lab load. Throttled
+(150ms latency, 1.6 Mbps, 4× CPU) it scored 0.21 — the browser paints the document
+while it is still downloading, so any layout that depends on content later in the
+HTML paints wrong first:
+
+- The version-details sidebar comes **before** the main column in source order but
+  sits on the right (`order: 2`). Parsed alone, it painted at the left edge, then
+  jumped ~800px right when the main column arrived. Fix: `.sidebarSection`
+  (`margin-inline-start: auto` from the `sm` container breakpoint) in
+  [ModelVersionDetails.module.scss](../src/components/Model/ModelVersions/ModelVersionDetails.module.scss)
+  holds it at its final slot.
+- The ad rail comes **after** the content column, so until it arrived the column was
+  1320px wide, then shrank to 1188px. Fix: `.withRail` is a CSS grid with an
+  explicit rail track instead of flex
+  (`src/pages/models/[id]/[[...slug]].module.scss`).
+
+A fast local load cannot show this class of shift. To test for it, cut the SSR HTML
+off mid-document (scripts stripped, same-origin so the CSS loads) and compare element
+rects against the full document — they must match at every width.
+
+## Reported groups, 2026-06-29 (worst first)
 
 | Page template (example URL)                    | Group CLS |
 | ---------------------------------------------- | --------- |
@@ -43,9 +89,11 @@ masonry system already does the hard part right:
   [PostsCard.tsx](../src/components/Post/Infinite/PostsCard.tsx).
 - In-feed ad slots are pre-sized in the same pass (`createAdFeed`).
 
-So the dominant CLS source is **structural**, not per-tile — and (measurement
-below) **not the footer** either. It's the category chip row that renders _above_
-the feed and pops in once its client-side query resolves.
+So on the feed pages (`/images`, `/posts`) the dominant lab-measured source is
+**structural**, not per-tile — and (measurement below) **not the footer**: the
+category chip row that renders _above_ the feed and pops in once its client-side
+query resolves. The field's largest group, model detail, had a different cause
+([streamed HTML](#field-only-shifts-streamed-html)).
 
 ---
 
@@ -122,10 +170,10 @@ but more plumbing) for being surgical and zero-risk.
 | `/images` | 0.77                | **0.069** (category shift eliminated) |
 | `/posts`  | 0.75                | **0.0001**                            |
 
-`/images` moved from "poor" into Google's "good" band (<0.1). Dev numbers are
-noisy, but the structural before/after — the +36px category-row shift is gone —
-is the reliable signal, corroborated by `/posts` going to ~0. Re-confirm on a
-production build or the preview deploy; field p75 lags ~28 days.
+The field did not follow: on 2026-10-03 the `/images` group is still 0.73 and
+`/posts` 0.72 (99 and 59 URLs, so small weight). Local dev loads were fast and
+whole, which hides [streamed-HTML shifts](#field-only-shifts-streamed-html) and
+anything specific to logged-in viewers.
 
 ### Residual on `/images` (~0.069) — feed loading-spinner swap
 
@@ -137,10 +185,11 @@ in the "good" band, so this is optional polish (diminishing returns). If pursued
 reserve a stable min-height for the loading state so the swap to the grid doesn't
 collapse. TODO (low priority).
 
-### Banners — intermittent, secondary
+### Banners — intermittent in the lab, the homepage driver in the field
 
-These render above the feed too and shift when they appear post-paint, but only
-when active (so not the persistent driver):
+These render above the feed and shift when they appear post-paint. In the lab they
+appeared only when active; in the field the `site` announcement was the homepage's
+main shift (see the table above):
 
 - **`MatureContentMigrationAlert`** — ✅ removed (component file + references
   deleted). One fewer above-feed injector. Only affected green-domain
@@ -150,13 +199,15 @@ when active (so not the persistent driver):
   which is **not** SSR-seeded. Renders `null` while `multipliersLoading`, then
   pops in. **Fix: seed it in the `_app` bootstrap** (same mechanism that already
   seeds chat settings / announcements / feature flags). TODO.
-- **`Announcements`** — its data is **already SSR-seeded**
+- **`Announcements`** — ✅ fixed. Dismissals live in the `announcements-dismissed`
+  cookie, which `_app` reads server-side, so the `site` banner renders in the SSR
+  HTML at its true height (or not at all for a dismisser)
   ([announcements.utils.ts](../src/components/Announcements/announcements.utils.ts)).
-  The pop-in is NOT a data gap: `useGetAnnouncements` deliberately returns `[]`
-  until `useIsClient()` to avoid a hydration mismatch against the localStorage
-  `dismissed` store, and `AnnouncementsCarousel` is a `dynamic()` import. So
-  preloading data won't fix it — the fix is reserving the banner's space or moving
-  dismissal state server-side. TODO (needs design).
+  This path sat behind the mod-only `feedReserveCls` flag until 2026-10; everyone
+  else got a 174px pop-in above the homepage feed (lab CLS 0.088). The flag is
+  removed. Remaining edges (both collapse once): a dismissal made on another device is
+  merged from the account only after hydration, and a user who dismissed under the
+  old localStorage bundle has no cookie on their first load of the new one.
 
 ---
 
@@ -215,14 +266,28 @@ cover` styling in [Cards.module.css](../src/components/Cards/Cards.module.css).
 
 ---
 
-## P4 — Detail & profile residuals (re-measure after P0–P3)
+## P4 — Detail & profile residuals
 
-**Status: BLOCKED on P0–P3 re-measurement.**
+**Status: `/posts/:id` and `/models/:id` fixed; profiles open.**
 
-`/reviews/:id` (0.52), `/posts/:id` (0.47), `/user/:name` (0.39),
-`/models/:id` (0.29), `/user/:name/collections` (0.27). Several embed the same
-feed/card and footer paths fixed above, so re-measure before doing dedicated
-work. Likely residual cause: profile/cover headers without reserved dimensions.
+- **`/posts/:id`** — ✅ fixed. The SSR prefetch of `image.getInfinite` omitted the
+  addon fields `useQueryImages` adds to its key (`excludedTagIds`, `disablePoi`,
+  `disableMinor`), so the client never hit it: SSR sent a 300px "Loading Images"
+  box and the post's images (~11,000px) arrived after hydration, pushing the
+  comments down and delaying LCP. Both pages now build those fields with
+  `getServerImageQueryFilters`
+  ([browsing-level.ts](../src/server/utils/browsing-level.ts)); any new SSR prefetch
+  of `image.getInfinite` should too.
+- **`/reviews/:id`, `/user/:name/collections`** — not re-measured since 2026-06-29;
+  absent from the 2026-10-03 report's top groups. Re-check before dedicated work.
+- **`/models/:id`** — ✅ fixed, see
+  [streamed HTML](#field-only-shifts-streamed-html).
+- **`/user/:name/*`, `/tag/:tag`** — open. Logged in and logged out, throttled,
+  scrolled deep, and across in-app navigation and back, these stay ≤ 0.02 in the
+  lab against 0.35–0.63 in the field. Next step is field attribution: Faro's
+  web-vitals beacons carry the largest shift's element as
+  `context_largest_shift_target` in Loki — group CLS beacons over 0.1 by page URL
+  and that field.
 
 ---
 
@@ -239,7 +304,8 @@ dimensions. Hand off to whoever owns that site.
 
 ## Measurement note
 
-Static analysis can't prove which source dominates the 0.77. The decisive check
-is capturing real `layout-shift` PerformanceObserver entries in a browser on
-`/images` and `/posts` (attributes the shift to a specific element). Worth doing
-to confirm P0's impact and to re-rank P1–P4.
+Capture `layout-shift` PerformanceObserver entries (they name the moved elements)
+against **production**, not local dev, and under throttling: local loads are fast
+and arrive whole, so they miss streamed-HTML shifts entirely. Score with session
+windows (gaps < 1s, max 5s) as CrUX does. When the lab still can't reproduce a field
+number, use the Faro `context_largest_shift_target` field rather than guessing.

@@ -1,14 +1,21 @@
 import { describe, expect, it, vi } from 'vitest';
-import { submitTraining, submitTrainingBatch, type TrainingRunInput } from './train-core';
+import {
+  continueTraining,
+  continueTrainingWhatIf,
+  submitTraining,
+  submitTrainingBatch,
+  type TrainingRunInput,
+} from './train-core';
 
 const submitWorkflow = vi.fn();
+const getWorkflow = vi.fn();
 // Hand-listed rather than spread over importOriginal: @civitai/client's dist imports a directory,
 // which Node's ESM loader refuses when the factory resolves the real module — the main app's
 // suites mock this package the same way.
 vi.mock('@civitai/client', () => ({
   Air: { isAir: () => false, stringify: vi.fn() },
   getResource: vi.fn(),
-  getWorkflow: vi.fn(),
+  getWorkflow: (...args: unknown[]) => getWorkflow(...args),
   updateWorkflow: vi.fn(),
   submitWorkflow: (...args: unknown[]) => submitWorkflow(...args),
 }));
@@ -80,5 +87,38 @@ describe('extra ai-toolkit fields on the wire', () => {
       submitTrainingBatch(client, [{ ...baseRun(), shuffleTokens: 'yes' as unknown as boolean }])
     ).rejects.toThrow(/shuffleTokens must be a boolean/);
     expect(submitWorkflow.mock.calls.length).toBe(calls);
+  });
+});
+
+describe('keep-training currencies', () => {
+  const sourceRun = {
+    data: {
+      steps: [
+        {
+          $type: 'training',
+          input: { engine: 'ai-toolkit', ecosystem: 'sdxl', epochs: 10, steps: 2000 },
+          output: { epochs: [{ epochNumber: 10, model: { id: 'blob-10', available: true } }] },
+        },
+      ],
+    },
+  };
+  const opts = { workflowId: 'wf-src', fromEpoch: 10, addEpochs: 5 };
+
+  it('charges the accounts the user picked, for both the quote and the submit', async () => {
+    getWorkflow.mockResolvedValue(sourceRun);
+    submitWorkflow.mockResolvedValueOnce({ data: { cost: { total: 1400 } } });
+    await continueTrainingWhatIf(client, { ...opts, currencies: ['blue', 'green'] });
+    submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-next' } });
+    await continueTraining(client, { ...opts, currencies: ['blue', 'green'] });
+    const [quoted, submitted] = submitWorkflow.mock.calls.slice(-2);
+    expect(quoted![0].body.currencies).toEqual(['blue', 'green']);
+    expect(submitted![0].body.currencies).toEqual(['blue', 'green']);
+  });
+
+  it('falls back to blue + yellow when none (or none valid) are sent', async () => {
+    getWorkflow.mockResolvedValue(sourceRun);
+    submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-next' } });
+    await continueTraining(client, { ...opts, currencies: ['red'] });
+    expect(submitWorkflow.mock.calls.at(-1)![0].body.currencies).toEqual(['blue', 'yellow']);
   });
 });

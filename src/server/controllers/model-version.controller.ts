@@ -496,6 +496,17 @@ export const upsertModelVersionHandler = async ({
       throw throwBadRequestError('Only moderators can manage external generation models');
     }
 
+    // Denied/Paused are moderation decisions. Updates are judged against the stored value in
+    // upsertModelVersion; internal creators (publish-from-workflow) call the service directly.
+    if (
+      !updatesExistingVersion &&
+      !ctx.user.isModerator &&
+      (input.trainingStatus === TrainingStatus.Denied ||
+        input.trainingStatus === TrainingStatus.Paused)
+    ) {
+      throw throwBadRequestError("A new version's training status can't be set here.");
+    }
+
     if (input.trainingDetails === null) {
       input.trainingDetails = undefined;
     }

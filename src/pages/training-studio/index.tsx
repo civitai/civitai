@@ -97,7 +97,7 @@ function TrainingStudioEmbed({ orchestratorMode }: { orchestratorMode: 'dev' | '
   // the v2 lane ignores it — so both need BOTH flags or they would target a lane that silently
   // does nothing with the handoff.
   const features = useFeatureFlags();
-  const canGenerate = features.generationAirResources && features.formGraphGenerator;
+  const canGenerate = features.generationAirResources;
   // The host knows its domain color; the element locks its Buzz mode to it (no user toggle).
   const buzzMode: 'yellow' | 'green' = features.isGreen ? 'green' : 'yellow';
   // Epoch generation runs off UNPUBLISHED weights, which this app gates on membership — the same

@@ -43,6 +43,7 @@ import {
 } from '~/server/services/block-token-subject';
 import { effectiveBlockScopes } from '~/shared/constants/block-effective-scopes';
 import {
+  BUZZ_BUDGET_CAP,
   isKnownBlockScope,
   isPrivateRunAudience,
   type PrivateRunAudience,
@@ -236,9 +237,9 @@ export interface BlockTokenClaims {
  *
  * ── WHY IT EXISTS AT ALL ────────────────────────────────────────────────────
  * The submit gates spell the same comparison and are NOT interchangeable. The
- * txt2img and registry-step gates add the per-generation author fee into the value
- * they compare; the custom-comfy and pass-through gates do not, because neither has
- * a pre-submit `cost.base` to price a fee from, and training charges no fee (that split is
+ * txt2img, registry-step and multi-step workflow gates add the per-generation author
+ * fee into the value they compare; the custom-comfy and pass-through gates do not,
+ * because neither reserves one, and training charges no fee (that split is
  * documented at `src/server/services/blocks/author-fee-charge.service.ts` and
  * ledgered in `src/server/services/__tests__/no-divergent-author-fee-base.test.ts`).
  * Any future change to the ceiling is correct for at most one of those two
@@ -271,12 +272,14 @@ export interface BlockTokenClaims {
  * never by widening what `buzzBudget` means, which would hand the money-unsafe
  * value to every gate written the obvious way.
  *
- * ⚠️ ONE SUCH CEILING EXISTS: `blockTrainingRunCeiling`, for `kind:'training'`. It
- * is fee-free (the training author fee is zero by decision), so the fee half of the
- * sentence above does not apply; what replaces it is that the grant is a PER-RUN
- * confirmation of one exact price, recorded only by the viewer's own signed-in
- * session — see that function for why that, and not a wider `buzzBudget`, is what
- * lets it exceed the declared number. It still routes through this helper first.
+ * ⚠️ TWO SUCH CEILINGS EXIST: `blockTrainingRunCeiling` (`kind:'training'`) and
+ * `blockConfirmedStepCeiling` (a confirmed pass-through step). Both are fee-free (the
+ * training author fee is zero by decision; the pass-through arm charges none), so the
+ * fee half of the sentence above does not apply; what replaces it is that the grant
+ * is a PER-JOB confirmation of one exact price, recorded only by the viewer's own
+ * signed-in session — see `blockTrainingRunCeiling` for why that, and not a wider
+ * `buzzBudget`, is what lets it exceed the declared number. Both check the grant
+ * through `blockQuoteGrantRefusal`, which routes through this helper first.
  *
  * Returns 0 when no budget was minted, so a caller that skipped the
  * `typeof claims.buzzBudget !== 'number'` pre-check still fails CLOSED.
@@ -303,7 +306,7 @@ export function blockPerCallBudget(
   // before a clamp regression and still inside its lifetime.
   //
   // 🔴 IT IS ONE PLACE BECAUSE N COPIES WOULD BE N BUGS. Every submit gate compares a
-  // cost against this ceiling (the training gate via `blockTrainingRunCeiling`), and
+  // cost against this ceiling (the two confirmed-quote gates via `blockQuoteGrantRefusal`), and
   // `no-direct-block-budget-claim-read` forces each through this function rather than
   // reading `claims.buzzBudget` directly — which is what lets a ceiling decision be made
   // once here and apply to all of them. Open-coding an audience check at each gate would
@@ -331,18 +334,75 @@ export function blockPerCallBudget(
 export const BLOCK_TRAINING_MAX_BUZZ_PER_RUN = 5000;
 
 /**
- * The quote a `kind:'training'` submit is gated against — the server-stored record
- * written by the estimate and confirmed by the viewer's own signed-in session.
+ * Hard per-job Buzz ceiling for a CONFIRMED pass-through step — a fixed price above
+ * the token's per-call budget that the viewer confirmed in host chrome. Every other
+ * cap still applies on top. The same number as `BLOCK_TRAINING_MAX_BUZZ_PER_RUN` by
+ * product decision, and a SEPARATE constant on purpose so the two can diverge.
  */
-export type BlockTrainingQuoteGrant = {
+export const BLOCK_CONFIRMED_STEP_MAX_BUZZ_PER_JOB = 5000;
+
+/**
+ * The quote a viewer-confirmed submit is gated against — the server-stored record
+ * written by an estimate and confirmed by the viewer's own signed-in session. Shared
+ * by `kind:'training'` and the confirmed pass-through step.
+ */
+export type BlockQuoteGrant = {
   userId: number;
   appBlockId: string;
   blockInstanceId: string;
-  /** The quoted whole-Buzz price of the run. */
+  /** The quoted whole-Buzz price of the job. */
   total: number;
   /** The session user who confirmed this exact quote, or null until one does. */
   consentedBy: number | null;
 };
+
+/** The `kind:'training'` quote grant — the shared shape, named for its first use. */
+export type BlockTrainingQuoteGrant = BlockQuoteGrant;
+
+/** Why a quote grant cannot be charged, in the order `blockQuoteGrantRefusal` checks. */
+export type BlockQuoteGrantRefusal =
+  /** No per-call budget was minted, or this is an editor's read-only private run. */
+  | 'no-budget'
+  /** The quote belongs to another viewer, app or install. */
+  | 'not-bound'
+  /** Nobody — or somebody other than the token subject — confirmed it. */
+  | 'not-confirmed'
+  /** The stored total is not a positive whole number. */
+  | 'invalid-total';
+
+/**
+ * THE one check of a viewer-confirmed quote grant, shared by every ceiling that may
+ * exceed the token's per-call budget — `null` when the grant may be charged, else why
+ * not.
+ *
+ * 🔴 ONE RULE, ONE PLACE. The training and confirmed-step ceilings ask the same four
+ * questions of the same record; a second copy is where one of them would drift. It
+ * routes through `blockPerCallBudget` FIRST, so an unbudgeted token and an editor's
+ * read-only private run can never be granted, whatever the record says.
+ *
+ * Fee-free by classification (`pricesAuthorFee: false`): neither grant charges an
+ * author fee, so the number that clears this gate is the number reserved and charged.
+ */
+export function blockQuoteGrantRefusal(
+  claims: Pick<
+    BlockTokenClaims,
+    'buzzBudget' | 'privateRunAudience' | 'appBlockId' | 'blockInstanceId'
+  >,
+  quote: BlockQuoteGrant,
+  subjectUserId: number
+): BlockQuoteGrantRefusal | null {
+  if (blockPerCallBudget(claims, { pricesAuthorFee: false }) <= 0) return 'no-budget';
+  if (
+    quote.userId !== subjectUserId ||
+    quote.appBlockId !== claims.appBlockId ||
+    quote.blockInstanceId !== claims.blockInstanceId
+  ) {
+    return 'not-bound';
+  }
+  if (quote.consentedBy !== subjectUserId) return 'not-confirmed';
+  if (!Number.isInteger(quote.total) || quote.total <= 0) return 'invalid-total';
+  return null;
+}
 
 /**
  * THE per-run ceiling a `kind:'training'` submit compares against, in place of the
@@ -361,6 +421,8 @@ export type BlockTrainingQuoteGrant = {
  *
  * Fee-free by classification (`pricesAuthorFee: false`): the training author fee
  * is zero, so the number that clears this gate is the number reserved and charged.
+ * The grant itself is checked by `blockQuoteGrantRefusal`, shared with
+ * `blockConfirmedStepCeiling`.
  */
 export function blockTrainingRunCeiling(
   claims: Pick<
@@ -370,17 +432,42 @@ export function blockTrainingRunCeiling(
   quote: BlockTrainingQuoteGrant,
   subjectUserId: number
 ): number {
-  if (blockPerCallBudget(claims, { pricesAuthorFee: false }) <= 0) return 0;
-  if (
-    quote.userId !== subjectUserId ||
-    quote.appBlockId !== claims.appBlockId ||
-    quote.blockInstanceId !== claims.blockInstanceId
-  ) {
-    return 0;
-  }
-  if (quote.consentedBy !== subjectUserId) return 0;
-  if (!Number.isInteger(quote.total) || quote.total <= 0) return 0;
+  if (blockQuoteGrantRefusal(claims, quote, subjectUserId) !== null) return 0;
   return Math.min(quote.total, BLOCK_TRAINING_MAX_BUZZ_PER_RUN);
+}
+
+/**
+ * THE per-job ceiling a CONFIRMED pass-through step submit compares against, in place
+ * of the token's per-call budget — `{ ceiling }`, or the one reason it is refused.
+ *
+ * 🔴 THE SECOND "SEPARATE, GRANTED CEILING" `blockPerCallBudget` DESCRIBES, for the
+ * same reason as `blockTrainingRunCeiling`: the viewer confirmed THIS fixed price in
+ * host chrome, recorded only by a procedure that requires their own signed-in session
+ * (`blocks.consentQuoteGrant`), which the block, holding nothing but its token, cannot
+ * call. `buzzBudget` keeps meaning exactly what it did.
+ *
+ * 🔴 IT REFUSES ABOVE THE PER-JOB MAXIMUM; IT DOES NOT CLAMP. The training ceiling
+ * clamps to its maximum and leaves the refusal to the submit's re-quote comparison;
+ * here the record is refused outright (`above-max`), so the ceiling it grants IS the
+ * confirmed total and the submit's one re-quote comparison (`requote > ceiling`) is
+ * also its "above the confirmed price" refusal. One check per refusal, each with its
+ * own reason, so removing any one of them is visible on its own.
+ *
+ * Fee-free by classification (`pricesAuthorFee: false`, via `blockQuoteGrantRefusal`):
+ * the pass-through arm charges no author fee.
+ */
+export function blockConfirmedStepCeiling(
+  claims: Pick<
+    BlockTokenClaims,
+    'buzzBudget' | 'privateRunAudience' | 'appBlockId' | 'blockInstanceId'
+  >,
+  quote: BlockQuoteGrant,
+  subjectUserId: number
+): { ceiling: number } | { refusal: BlockQuoteGrantRefusal | 'above-max' } {
+  const refusal = blockQuoteGrantRefusal(claims, quote, subjectUserId);
+  if (refusal !== null) return { refusal };
+  if (quote.total > BLOCK_CONFIRMED_STEP_MAX_BUZZ_PER_JOB) return { refusal: 'above-max' };
+  return { ceiling: quote.total };
 }
 
 export type BlockScopedNextApiRequest = NextApiRequest & {
@@ -692,14 +779,18 @@ function rememberWarnedOrigin(origin: string) {
   return true;
 }
 
+// `Retry-After` is not a CORS-safelisted response header; a cross-origin block can't read a
+// 429's wait unless it is exposed.
+const BLOCK_CORS_EXPOSE_HEADERS = 'Retry-After';
+
 /**
  * Sets block-CORS headers when the origin is in the allowlist (union of
  * `BLOCK_ALLOWED_ORIGINS` env CSV + every approved OauthClient's
  * `allowedOrigins[]` — W11 dynamic-lookup landed 2026-05-30).
  *
- * Returns true ONLY when we've fully handled the request (block-origin preflight).
+ * Returns `'handled'` ONLY when we've fully handled the request (block-origin preflight).
  * In every other case — including OPTIONS from origins we don't recognize —
- * returns false so the caller falls through to the wrapped handler's own
+ * returns `'fallthrough'` so the caller falls through to the wrapped handler's own
  * CORS path. This preserves the pre-PR behavior of routes like
  * /api/v1/models/[id] (which set ACAO: * in PublicEndpoint) for browser
  * integrations doing CORS preflight from origins outside our allowlist.
@@ -723,6 +814,7 @@ async function setBlockCors(
     // be "*", and we want that flexibility on the wrapped handler's path.
     res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Expose-Headers', BLOCK_CORS_EXPOSE_HEADERS);
     if (req.method === 'OPTIONS') {
       res.status(204).end();
       return 'handled';
@@ -742,6 +834,7 @@ async function setBlockCors(
     res.setHeader('Vary', 'Origin');
     res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Expose-Headers', BLOCK_CORS_EXPOSE_HEADERS);
     if (req.method === 'OPTIONS') {
       res.status(204).end();
       return 'handled';
@@ -1093,12 +1186,14 @@ export function enforceContextBinding(
       case 'social:tip:self':
       case 'goods:read:self':
       case 'goods:purchase:self':
+      case 'apps:store:items:write':
       case 'user:read:self': {
         // Every :self scope requires an authenticated subject — there's no
         // anonymous "self" to read/tip. user:read:self joined this set
         // when /api/v1/blocks/me switched off buzz:read:self (audit I3), and
         // the goods pair joined it because an anonymous viewer has no balance
-        // to charge and no entitlements to hold.
+        // to charge and no entitlements to hold. Store items are published under
+        // the viewer's name, so there is no anonymous author either.
         if (claims.sub === ANON_SUBJECT) {
           throw forbidden(`${scope} requires authenticated subject`);
         }
@@ -1201,15 +1296,14 @@ export function enforceContextBinding(
 // Same instance id the page host mints under, so storage, rate-limit buckets and the
 // publisher-ban revocation sweep (`page_` prefix) line up whichever credential the block holds.
 const HUB_INSTANCE_PREFIX = 'page_';
-// Mirror of the mint's private per-gen clamp (block-tokens/index.ts BUZZ_BUDGET_DEFAULT / _CAP).
+// Mirror of the mint's private per-gen default (block-tokens/index.ts BUZZ_BUDGET_DEFAULT).
 const HUB_BUZZ_BUDGET_DEFAULT = 10;
-const HUB_BUZZ_BUDGET_CAP = 1000;
 
 function hubBuzzBudget(manifest: { page?: { buzzBudgetPerGen?: unknown } }): number {
   const raw = manifest.page?.buzzBudgetPerGen;
   const candidate =
     typeof raw === 'number' && Number.isInteger(raw) ? raw : HUB_BUZZ_BUDGET_DEFAULT;
-  return Math.min(Math.max(candidate, 0), HUB_BUZZ_BUDGET_CAP);
+  return Math.min(Math.max(candidate, 0), BUZZ_BUDGET_CAP);
 }
 
 /**
@@ -1654,10 +1748,11 @@ export function withBlockScope(handler: NextApiHandler, opts: WithBlockScopeOpts
       //
       // ⚠️ THE 503 BUYS AN HONEST MESSAGE, NOT AUTOMATIC RECOVERY. `client-safe-error.ts` passes
       // a 503's message through (every other 5xx is replaced), and `utils/trpc.ts` retries
-      // QUERIES only — and the block host currently turns any poll throw into a terminal `failed`
-      // snapshot (`PageBlockHost.tsx`). So today this changes what the viewer is TOLD, not
-      // whether the SDK resumes; teaching the host to branch on 503 is client work and is NOT
-      // done here. Do not read this branch as delivering retry.
+      // QUERIES only. Over the BRIDGE the hosts now answer a poll that throws SERVICE_UNAVAILABLE
+      // with a non-terminal snapshot (`pollFailureSnapshot`), so the block keeps polling; this is
+      // the REST seam, where no host sits in between and what the caller does with a 503 is up to
+      // it. So here this changes what the caller is TOLD, not whether it resumes. Do not read this
+      // branch as delivering retry.
       // 🔴 AND IT REFUSES ONLY WHEN THE ROUTE'S OWN SCOPE IS REVOKABLE. Placing this branch
       // ahead of the `requiredScope` test made it refuse EVERY consulted request, including the
       // 21 routes whose `requiredScope` is a `CONSENT_EXEMPT_SCOPES` member (5 `app-storage/*`,
@@ -2079,6 +2174,8 @@ export const KNOWN_STATIC_ENDPOINT_SEGMENTS = new Set([
   'item',
   'list',
   'me',
+  // `/api/v1/blocks/sub-listings/mine` — the caller's own store items.
+  'mine',
   'models',
   'poll',
   // `/api/v1/blocks/resource-intent` — the Jev resource-intent primitive. Static:
@@ -2095,6 +2192,9 @@ export const KNOWN_STATIC_ENDPOINT_SEGMENTS = new Set([
   'report',
   'set',
   'shared-storage',
+  // `/api/v1/blocks/sub-listings/{upsert,withdraw,mine}` — store items. Static: the item
+  // key rides the POST body, so no path segment carries a per-item value.
+  'sub-listings',
   'submit',
   'tip',
   'tip-allowance',
@@ -2102,6 +2202,7 @@ export const KNOWN_STATIC_ENDPOINT_SEGMENTS = new Set([
   'top',
   'unvote',
   'update',
+  'upsert',
   // The per-viewer checkpoint override write. Like `app-storage`, nothing
   // identifying is in the path: the install and the viewer both come from the
   // JWT, and the only body field is a bounded integer — so there is no `:seg`

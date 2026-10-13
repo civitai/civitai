@@ -24,7 +24,10 @@ import {
   wasLastReviewARejection,
 } from '~/server/services/creator-shop.data';
 import type { StickerEconomics } from '~/shared/utils/sticker-token';
-import { stickerEconomicsFromCosmeticData } from '~/shared/utils/sticker-token';
+import {
+  stickerEconomicsFromCosmeticData,
+  stickerSlugSearchTerm,
+} from '~/shared/utils/sticker-token';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import {
@@ -1441,6 +1444,8 @@ export const getCommunityCosmetics = async ({
   const { take, skip } = getPagination(limit, page);
   // 'Pack' rides in the same filter but is not a CosmeticType.
   const realTypes = (cosmeticTypes ?? []).filter((t): t is CosmeticType => t !== PACK_FILTER_VALUE);
+  // Slugs are validated lowercase, so the JSON match can stay case-sensitive.
+  const slugTerm = query ? stickerSlugSearchTerm(query) : undefined;
   const where: Prisma.CosmeticShopItemWhereInput = {
     status: CosmeticShopItemStatus.Published,
     // Discovery surface that leads straight to checkout — a delisted item
@@ -1515,12 +1520,25 @@ export const getCommunityCosmetics = async ({
       // In `AND` rather than beside the branches above: a second top-level `OR`
       // key would replace the creator/pack one and widen the feed to every
       // official item.
+      // Same fields as `shopItemMatchesSearch`, which searches the client-held grids
+      // — except the description is matched as raw HTML here, not tag-stripped text.
       ...(query
         ? [
             {
               OR: [
                 { title: { contains: query, mode: Prisma.QueryMode.insensitive } },
+                { description: { contains: query, mode: Prisma.QueryMode.insensitive } },
                 { cosmetic: { name: { contains: query, mode: Prisma.QueryMode.insensitive } } },
+                ...(slugTerm
+                  ? [
+                      {
+                        cosmetic: {
+                          type: CosmeticType.Sticker,
+                          data: { path: ['slug'], string_contains: slugTerm },
+                        },
+                      },
+                    ]
+                  : []),
               ],
             },
           ]
@@ -2259,8 +2277,10 @@ export const takedownCosmeticShopItem = async ({
     // Sales made since the payout-recording migration carry exactly who was paid
     // what, in which color — reverse those verbatim, refunding the payout
     // transaction itself where its id was recorded.
+    // An empty list is a record too: a creator restocking their own sticker is
+    // paid nothing, and must not be charged back a re-derived share.
     const recordedPayouts = (purchase.meta as CosmeticPurchaseMeta | null)?.payouts;
-    if (recordedPayouts?.length) {
+    if (recordedPayouts) {
       for (const payout of recordedPayouts) {
         if (payout.amount <= 0) continue;
         if (payout.transactionId)
@@ -2313,10 +2333,12 @@ export const takedownCosmeticShopItem = async ({
     if (creatorId) {
       // Without a payout record there's no way to tell whether another creator's
       // storefront or the platform took the seller share, so a resellable item
-      // only claws back what the creator is certain to have received.
-      recipients = [
-        { userId: creatorId, amount: meta.sellableByOthers ? creatorAmount : creatorPool },
-      ];
+      // only claws back what the creator is certain to have received. A
+      // creator's own restock paid them nothing.
+      recipients =
+        purchase.userId === item.cosmetic?.createdById
+          ? []
+          : [{ userId: creatorId, amount: meta.sellableByOthers ? creatorAmount : creatorPool }];
       if (meta.sellableByOthers) unrecoveredResellerShare += sellerAmount;
     } else {
       const paidToUserIds = meta.paidToUserIds ?? [];

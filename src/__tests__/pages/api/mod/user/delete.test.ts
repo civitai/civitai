@@ -75,12 +75,12 @@ import handler from '~/pages/api/mod/user/delete';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 const TARGET = 8675309;
+const PERSONAL_KEY = { apiKeyId: 1, apiKeyType: 'User', subject: { type: 'apiKey', id: 1 } };
 /** The confirmation the endpoint REQUIRES for any account that has a username. */
 const NAME = 'not_a_real_user';
 
 function call(
   body: Record<string, unknown>,
-  context?: { tokenScope?: number },
   headers: Record<string, string> = {},
   query: Record<string, unknown> = {}
 ) {
@@ -89,7 +89,6 @@ function call(
     headers,
     body,
     query,
-    ...(context ? { context } : {}),
   } as Parameters<typeof handler>[0];
   let statusCode = 200;
   let payload: unknown;
@@ -329,7 +328,7 @@ describe('user.delete — the already-deleted refusal', () => {
  */
 describe('user.delete — where the confirmation may travel', () => {
   it('refuses a username sent in the query string, and says where to put it', async () => {
-    const { status, body } = await call({ userId: TARGET }, undefined, {}, { username: NAME });
+    const { status, body } = await call({ userId: TARGET }, {}, { username: NAME });
 
     expect(status).toBe(400);
     expect(body).toMatchObject({
@@ -406,58 +405,26 @@ describe('user.delete — what the audit row keeps', () => {
   });
 });
 
-describe('user.delete — token scope', () => {
-  // The self-serve `user.delete` procedure is `requiredScope: TokenScope.Full`, so a scoped token
-  // cannot delete even its own account. This route must not be the looser way in.
-  const NARROW = TokenScope.MediaRead;
+describe('user.delete — API keys', () => {
+  // The refusals here come from `defineModeratorEndpoint`'s credential rule, pinned in
+  // `moderator-rest-wrappers.credential-requirements.test.ts`. These cases hold this route to it.
+  const MODERATOR = { id: 990000007, isModerator: true, permissions: [], bannedAt: null };
+  const asBearer = (tokenScope: number) => {
+    bearerSession.value = { user: MODERATOR, ...PERSONAL_KEY, tokenScope };
+    return call({ userId: TARGET, username: NAME }, { authorization: 'Bearer key' });
+  };
 
-  it('refuses a token that is not full-scope', async () => {
-    const { status } = await call({ userId: TARGET, username: NAME }, { tokenScope: NARROW });
+  it('refuses a reduced-scope personal API key', async () => {
+    const { status, body } = await asBearer(TokenScope.MediaRead);
     expect(status).toBe(403);
+    expect(body).toEqual({
+      error: 'This action requires a signed-in session or a full-access personal API key',
+    });
     expect(deleteUser).not.toHaveBeenCalled();
   });
 
-  // THE CONTROL. Same call, full scope: without it the refusal above passes against an endpoint
-  // that refuses every token, or one whose scope check rejects unconditionally.
-  it('allows the SAME call with a full-scope token', async () => {
-    const { status } = await call(
-      { userId: TARGET, username: NAME },
-      { tokenScope: TokenScope.Full }
-    );
-    expect(status).toBe(200);
-    expect(deleteUser).toHaveBeenCalledTimes(1);
-  });
-
-  // A cookie session carries no scope at all, and is the full-authority case. If this reddened,
-  // every moderator using the moderator app would be locked out of the route.
-  it('treats a cookie session (no scope on the request) as full', async () => {
-    const { status } = await call({ userId: TARGET, username: NAME });
-    expect(status).toBe(200);
-  });
-
-  // 🔴 THE BEARER BRANCH IS A SEPARATE RESOLUTION. `resolveActor` reads the scope from a different
-  // place here than on the cookie path, and a scope lost on this branch must not read as full —
-  // with the three cases above still green, because none of them takes this branch.
-  it('refuses a NARROW bearer token', async () => {
-    bearerSession.value = {
-      user: { id: 990000007, isModerator: true, permissions: [], bannedAt: null },
-      tokenScope: TokenScope.MediaRead,
-    };
-    const { status } = await call({ userId: TARGET, username: NAME }, undefined, {
-      authorization: 'Bearer key',
-    });
-    expect(status).toBe(403);
-    expect(deleteUser).not.toHaveBeenCalled();
-  });
-
-  it('allows the SAME bearer call at full scope', async () => {
-    bearerSession.value = {
-      user: { id: 990000007, isModerator: true, permissions: [], bannedAt: null },
-      tokenScope: TokenScope.Full,
-    };
-    const { status } = await call({ userId: TARGET, username: NAME }, undefined, {
-      authorization: 'Bearer key',
-    });
+  it('serves the same call from a full-scope personal API key', async () => {
+    const { status } = await asBearer(TokenScope.Full);
     expect(status).toBe(200);
     expect(deleteUser).toHaveBeenCalledTimes(1);
   });

@@ -5,7 +5,7 @@ import {
   openCompatibilityConfirmModal,
   buildWorkflowPendingChange,
 } from '~/components/generation_v2/CompatibilityConfirmModal';
-import { toResourceData } from '~/components/generation_v2/GenerationFormProvider';
+import { toResourceData } from '~/components/Generation/form-helpers';
 import {
   decodeGenerationHandoff,
   GENERATION_HANDOFF_PARAM,
@@ -25,8 +25,8 @@ import {
   workflowConfigByKey,
   isWorkflowAvailable,
   getEcosystemsForWorkflow,
-} from '~/shared/data-graph/generation/config/workflows';
-import type { ResourceData, SnippetsNodeValue } from '~/shared/data-graph/generation/common';
+} from '~/shared/generation/config/workflows';
+import type { ResourceData, SnippetsNodeValue } from '~/shared/generation/values';
 import { splitResourcesByType } from '~/shared/utils/resource.utils';
 import { showErrorNotification } from '~/utils/notifications';
 import {
@@ -37,14 +37,12 @@ import {
 import { workflowPreferences } from '~/store/workflow-preferences.store';
 
 import type { GenerationStore } from './store';
+import { REMIX_RESET } from './remix-reset';
 
 /**
  * The new lane's ingestion: everything that pushes data INTO the generator
  * from outside — Remix buttons site-wide, preset apply, the cross-domain
- * `?gen=` handoff, wildcard loads, image append. A transcription of v1
- * GenerationFormProvider's state machine onto the form-graph store: same
- * run-types, same policies, `graph.reset/set/getSnapshot` becoming
- * `store.reset/set/getSnapshot().state`. The one storage read (append's
+ * `?gen=` handoff, wildcard loads, image append. The one storage read (append's
  * per-workflow images) goes through the store's own intent record instead of
  * v1's per-workflow localStorage keys.
  */
@@ -159,6 +157,21 @@ type GenerationData = NonNullable<ReturnType<typeof useGenerationGraphStore.getS
 export function applyGenerationData(store: GenerationStore, data: GenerationData) {
   const state = () => store.getSnapshot().state as Record<string, unknown>;
 
+  // 🔴 A null param means "clear", and the only write that CLEARS is `undefined` — the
+  // store deletes that key's intent, where a null is stored verbatim as a trusted value
+  // and then fails the output schema, killing the submit button. QueueItem replays send
+  // `seed: null`, txt2img ones `images: null`.
+  //
+  // Done here rather than per branch: the remix arm used to filter nulls itself and the
+  // Run/Patch arm spread `data.params` raw, so the same null was handled on one path
+  // and not the other.
+  data = {
+    ...data,
+    params: Object.fromEntries(
+      Object.entries(data.params).map(([k, v]) => [k, v === null ? undefined : v])
+    ),
+  } as GenerationData;
+
   // Params are already mapped via mapDataToGraphInput (workflow,
   // ecosystem, aspectRatio, etc.); split flat resources into
   // model/resources/vae for the form's fields.
@@ -221,22 +234,42 @@ export function applyGenerationData(store: GenerationStore, data: GenerationData
       ? isWorkflowAvailable(resolvedWorkflow, remixEco.id)
       : !remixEcosystemKey;
 
-    // v1 parity: a null param means "clear" (QueueItem replays send
-    // `seed: null`, txt2img ones `images: null`). The reset below already
-    // clears everything, and a null written through set() is a TRUSTED value
-    // stored verbatim — it fails the output schema at validate() and the
-    // submit button dies silently. Drop nulls instead of writing them.
-    const remixValues = Object.fromEntries(
-      Object.entries({
-        ...paramsWithoutOutputSettings,
-        ...(isPolyGenRemix ? { ecosystem: model3dEcosystem } : {}),
-        workflow: resolvedWorkflow,
-        model: split.model,
-        upscaler: split.upscaler,
-        resources: split.resources,
-        vae: split.vae,
-      }).filter(([, value]) => value !== null)
-    );
+    // Nulls are already `undefined` (see the entry), and the reset below clears
+    // everything anyway — so an absent key here means "leave it at its default".
+    const remixValues = {
+      ...paramsWithoutOutputSettings,
+      ...(isPolyGenRemix ? { ecosystem: model3dEcosystem } : {}),
+      workflow: resolvedWorkflow,
+      model: split.model,
+      upscaler: split.upscaler,
+      resources: split.resources,
+      vae: split.vae,
+    };
+
+    // Stage the discriminators, then the values. Never one combined set: two separate
+    // mechanisms land on the target family only if it is already active, and both fail
+    // silently rather than loudly.
+    //
+    // 1. A single set can evaluate child keys before the branch switched, so a
+    //    family-specific value lands outside the ACTIVE subgraph (3D's original reason).
+    // 2. `coerce` is read from the resolution as it stands BEFORE the patch
+    //    (form-graph `store.js`: `resolution.records.get(key)?.codec?.coerce`), so a combined
+    //    set truncates text against the SOURCE family's cap and stores a value the target
+    //    refuses — a Generate button that does nothing, which is the class the hooks in
+    //    `defs.ts` exist to close. `correct` is immune: it runs inside resolution, after the
+    //    patch. `coerce` is the one hook in the set with this asymmetry.
+    const applyRemix = (ecosystemOverride?: string) => {
+      const ecosystem =
+        ecosystemOverride ?? (remixValues as { ecosystem?: string }).ecosystem ?? undefined;
+
+      // 3. The reset runs BETWEEN the two sets, not before both: `scope: 'active'` reads the
+      //    resolution as it stands, so the discriminators go first to make the TARGET family
+      //    active. Reset first and it clears the family being LEFT while sparing the one being
+      //    entered, which is the inverse of the point. REMIX_RESET says what it keeps and why.
+      store.set({ ...(ecosystem ? { ecosystem } : {}), workflow: resolvedWorkflow });
+      store.reset(REMIX_RESET);
+      store.set(ecosystemOverride ? { ...remixValues, ecosystem: ecosystemOverride } : remixValues);
+    };
 
     if (!ecosystemSupportsWorkflow && remixEcosystemKey) {
       openCompatibilityConfirmModal({
@@ -245,24 +278,11 @@ export function applyGenerationData(store: GenerationStore, data: GenerationData
           currentEcosystem: remixEcosystemKey,
         }),
         onConfirm: (selectedEcosystemKey) => {
-          if (selectedEcosystemKey) {
-            store.reset({ exclude: ['quantity', 'priority', 'outputFormat'] });
-            store.set({ ...remixValues, ecosystem: selectedEcosystemKey });
-          }
+          if (selectedEcosystemKey) applyRemix(selectedEcosystemKey);
         },
       });
     } else {
-      store.reset({ exclude: ['quantity', 'priority', 'outputFormat'] });
-      // Two-stage set for 3D remixes: switch the discriminators first so
-      // every PolyGen-specific value lands in the ACTIVE subgraph (a
-      // single set can evaluate child keys before the branch switched).
-      if (
-        isPolyGenRemix &&
-        (resolvedWorkflow === 'txt2model3d' || resolvedWorkflow === 'img2model3d')
-      ) {
-        store.set({ ecosystem: model3dEcosystem, workflow: resolvedWorkflow });
-      }
-      store.set(remixValues);
+      applyRemix();
     }
   } else if (data.runType === 'wildcard') {
     // Add a wildcard set id to the snippets node, preserving the user's
@@ -297,9 +317,26 @@ export function applyGenerationData(store: GenerationStore, data: GenerationData
 
     const existingUrls = new Set(existingImages.map((img) => img.url));
     const newImages = incomingImages.filter((img) => !existingUrls.has(img.url));
-    const mergedImages = [...existingImages, ...newImages];
+    const merged = [...existingImages, ...newImages];
 
-    store.set({ workflow: targetWorkflow, images: mergedImages });
+    // 🔴 DROP FROM THE FRONT when the target is already full. `imagesDef`'s own correction
+    // keeps the FIRST n, which is right for a remix (stored order is the user's order) and
+    // wrong here: append is dispatched from a queue item or the 3D viewer, so the newest
+    // image IS the user's request and silently discarding it reads as a dead button.
+    //
+    // Set the workflow FIRST and read the field's own meta, rather than asking
+    // `getImagesLimit` for an (ecosystem, workflow) pair we cannot name: append crosses
+    // output types ("send to Image-to-Video"), and the current ecosystem does not belong to
+    // the target workflow. That pin resolves to a different ecosystem, so the probe fails
+    // closed and returns no cap at all — measured undefined for every cross-output target,
+    // which left the newest image to be trimmed after all. The store answers exactly,
+    // because by then it has resolved the target and corrected its ecosystem.
+    store.set({ workflow: targetWorkflow });
+    const cap = (store.getField('images')?.meta as { max?: number } | undefined)?.max;
+    const mergedImages =
+      cap !== undefined && merged.length > cap ? merged.slice(merged.length - cap) : merged;
+
+    store.set({ images: mergedImages });
   } else {
     // Run/Patch: model/vae overwrite, resources merge with existing
     const snap = state();

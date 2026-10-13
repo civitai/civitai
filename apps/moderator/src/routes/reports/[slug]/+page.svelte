@@ -42,9 +42,11 @@
     getReportItemUrl,
     reportedPlacementId,
     reportDetail,
+    gameFrameReportImage,
   } from '$lib/reports';
   import type { ActionResult } from '@sveltejs/kit';
   import { FormState } from '$lib/form-state.svelte';
+  import OwnerFlaggedMinorBadge from '$lib/components/minor-flags/OwnerFlaggedMinorBadge.svelte';
   import type { ActionData, PageData } from './$types';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -65,11 +67,20 @@
   const notesForm = new FormState({ onSuccess: null, reload: true, onSettled: reloadIfGone });
   const placementForm = new FormState({ onSuccess: null, reload: true });
   const sweepForm = new FormState({ onSuccess: null, reload: true });
+  const delistForm = new FormState({
+    onSuccess: (result) => {
+      confirmingDelist = null;
+      toast.success(String(result?.delisted ?? 'Delisted'));
+    },
+    reload: true,
+    onSettled: reloadIfGone,
+  });
 
   let selectedId = $state<number | null>(null);
   // Armed per placement id, so closing the sheet and opening another report cannot leave a live
   // destructive button pointed at the previous one.
   let confirmingPlacement = $state<number | null>(null);
+  let confirmingDelist = $state<number | null>(null);
   // The reporter's own words, wherever this entity type puts them: `comment` is the free-text field on
   // most forms, `violation`/`reason` is what the picker-driven ones carry.
   const reportComment = (r: { details: unknown }) =>
@@ -84,6 +95,10 @@
   const selected = $derived(
     selectedId != null ? (data.items.find((r) => r.id === selectedId) ?? null) : null
   );
+
+  const ownerFlaggedMinor = $derived(new Set(data.ownerFlaggedMinor));
+  const isOwnerFlaggedMinor = (entityId: number | null) =>
+    entityId != null && ownerFlaggedMinor.has(entityId);
 
   const totalPages = $derived(Math.max(1, Math.ceil(data.totalItems / data.limit)));
   const fmtDate = dateTime;
@@ -122,6 +137,8 @@
     statusForm.error = null;
     notesForm.error = null;
     placementForm.error = null;
+    delistForm.error = null;
+    confirmingDelist = null;
   }
 </script>
 
@@ -217,6 +234,9 @@
               <a href={itemUrl} target="_blank" rel="noreferrer" class="link">#{report.entityId}</a>
             {:else}
               #{report.entityId}
+            {/if}
+            {#if isOwnerFlaggedMinor(report.entityId)}
+              <OwnerFlaggedMinorBadge />
             {/if}
           </TableCell>
           <TableCell>{report.reason}</TableCell>
@@ -324,6 +344,10 @@
           </a>
         {/if}
 
+        {#if isOwnerFlaggedMinor(selected.entityId)}
+          <div><OwnerFlaggedMinorBadge /></div>
+        {/if}
+
         <dl class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
           <dt class="text-muted-foreground">Reason</dt>
           <dd>{selected.reason}</dd>
@@ -377,6 +401,63 @@
               <Button size="sm" variant="destructive" onclick={() => (confirmingPlacement = placementId)}>
                 Remove placement
               </Button>
+            {/if}
+          </div>
+        {/if}
+
+        {#if data.type === 'gameFrameGame'}
+          {@const game = data.games.find((g) => g.id === selected.entityId)}
+          {@const reportedImage = gameFrameReportImage(selected.details)}
+          {#if reportedImage}
+            <div class="rounded-lg border p-3">
+              <p class="mb-2 text-sm">
+                This report is about one player's picture in a room of this game, not the game itself.
+                Civitai Games keeps the picture for 7 days after the report.
+              </p>
+              <a href={reportedImage} target="_blank" rel="noreferrer">
+                <img
+                  src={reportedImage}
+                  alt="Reported player upload"
+                  referrerpolicy="no-referrer"
+                  class="max-h-80 w-full rounded border bg-muted/40 object-contain"
+                />
+              </a>
+            </div>
+          {/if}
+          <div class="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3">
+            {#if game}
+              <p class="mb-2 flex flex-wrap items-center gap-2 text-sm">
+                <span class="font-medium">{game.title}</span>
+                <Badge variant="outline">{game.visibility}</Badge>
+                {#if game.official}<Badge variant="outline">official</Badge>{/if}
+              </p>
+              {#if game.visibility === 'delisted'}
+                <p class="mb-2 text-sm">Already delisted on Civitai Games.</p>
+              {/if}
+            {:else}
+              <p class="mb-2 text-sm text-muted-foreground">Game details unavailable.</p>
+            {/if}
+            <p class="mb-2 text-sm">
+              Delisting takes this game and its forks off Civitai Games, then sets this report Actioned.
+              Undelisting is done on Civitai Games.
+            </p>
+            {#if confirmingDelist === selected.id}
+              <form method="POST" action="?/delistGame" use:enhance={delistForm.enhance} class="flex flex-wrap gap-2">
+                <input type="hidden" name="id" value={selected.id} />
+                <Button type="submit" size="sm" variant="destructive" disabled={delistForm.submitting}>
+                  Yes, delist it
+                </Button>
+                <Button type="button" size="sm" variant="outline" onclick={() => (confirmingDelist = null)}>
+                  Cancel
+                </Button>
+              </form>
+            {:else}
+              <Button size="sm" variant="destructive" onclick={() => (confirmingDelist = selected.id)}>
+                {game?.visibility === 'delisted' ? 'Confirm delisted and action' : 'Delist game'}
+              </Button>
+            {/if}
+            {#if delistForm.error}
+              <p class="mt-2 text-sm text-red-300" role="alert">{delistForm.error}</p>
             {/if}
           </div>
         {/if}

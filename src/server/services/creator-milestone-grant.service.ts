@@ -22,10 +22,88 @@ export type ScoreTierCrossing = {
 type CancelHook = (cancel: () => Promise<void>) => void;
 
 /**
- * Grants every score-track milestone at or below each user's new total. A row whose threshold the OLD
- * total had already reached is stamped seen, because it is a late grant rather than a crossing, and
- * only crossings come back to be announced. The milestone's cosmetic, if it has one, is granted with
- * the milestone key as its claimKey.
+ * SQL selecting one grant candidate per row: "userId" int, "milestoneKey" text, "achievedAt" timestamp
+ * (NULL for now) and "silent" boolean. A silent grant is stamped seen, so it is never announced; a
+ * NULL "silent" counts as silent.
+ */
+export type MilestoneCandidates = { sql: string; params: unknown[] };
+
+export type MilestoneGrant = {
+  userId: number;
+  milestoneKey: string;
+  name: string;
+  threshold: number | null;
+  silent: boolean;
+};
+
+/**
+ * Inserts the rows of CTE `candidates`, returning only the new ones. Every grant path goes through it,
+ * so none can skip the account exclusions.
+ */
+export function insertMilestoneGrantsSql(candidates: string) {
+  return `INSERT INTO "UserCreatorMilestone" ("userId", "milestoneKey", "achievedAt", "seenAt")
+      SELECT c."userId", c."milestoneKey", COALESCE(c."achievedAt", CURRENT_TIMESTAMP),
+        CASE WHEN COALESCE(c.silent, true) THEN now() END
+      FROM ${candidates} c
+      ${joinMilestoneGrantableUserSql('u', 'c."userId"')}
+      ON CONFLICT DO NOTHING
+      RETURNING "userId", "milestoneKey", "seenAt" IS NOT NULL AS silent`;
+}
+
+/**
+ * Whether a row's `achievedAt` is when the milestone happened, rather than when a silent grant caught
+ * up with it (a launch backfill, or a tier the user had already passed). A silent grant with no
+ * achievedAt of its own stamps both columns in one INSERT, so they are equal; every other row is
+ * unseen at insert and stamped later, or carries the detector's own achievedAt.
+ */
+export function achievedAtIsObserved(row: { achievedAt: Date; seenAt: Date | null }) {
+  return row.seenAt?.getTime() !== row.achievedAt.getTime();
+}
+
+/** achievedAtIsObserved as a predicate on a "UserCreatorMilestone" alias, for filtering in SQL. */
+export function achievedAtIsObservedSql(alias: string) {
+  return `${alias}."seenAt" IS DISTINCT FROM ${alias}."achievedAt"`;
+}
+
+/** One row per cosmetic a milestone grants: its badge, then any extras. */
+const milestoneCosmeticsSql = `
+  SELECT key AS "milestoneKey", "cosmeticId" FROM "CreatorMilestone" WHERE "cosmeticId" IS NOT NULL
+  UNION
+  SELECT "milestoneKey", "cosmeticId" FROM "CreatorMilestoneCosmetic"`;
+
+/** Grants each row of CTE `granted` its milestone's cosmetics, claimed under the milestone key. */
+export function insertMilestoneCosmeticsSql(granted: string) {
+  return `INSERT INTO "UserCosmetic" ("userId", "cosmeticId", "claimKey")
+      SELECT g."userId", mc."cosmeticId", mc."milestoneKey"
+      FROM ${granted} g
+      JOIN (${milestoneCosmeticsSql}) mc ON mc."milestoneKey" = g."milestoneKey"
+      ON CONFLICT DO NOTHING`;
+}
+
+export async function grantMilestones(
+  pg: AugmentedPool,
+  candidates: MilestoneCandidates,
+  onCancel?: CancelHook
+): Promise<MilestoneGrant[]> {
+  const query = await pg.cancellableQuery<MilestoneGrant>(
+    `
+    WITH candidates AS (${candidates.sql}),
+    granted AS (${insertMilestoneGrantsSql('candidates')}),
+    cosmetics AS (${insertMilestoneCosmeticsSql('granted')})
+    SELECT g."userId", g."milestoneKey", m.name, m.threshold, g.silent
+    FROM granted g
+    JOIN "CreatorMilestone" m ON m.key = g."milestoneKey"
+    `,
+    candidates.params
+  );
+  onCancel?.(query.cancel);
+  return query.result();
+}
+
+/**
+ * Grants every score-track milestone at or below each user's new total. A tier the OLD total had
+ * already reached is a late grant rather than a crossing, so it is granted silently, and only
+ * crossings come back to be announced.
  */
 export async function grantScoreTierMilestones(
   pg: AugmentedPool,
@@ -34,38 +112,28 @@ export async function grantScoreTierMilestones(
 ): Promise<ScoreTierCrossing[]> {
   if (!transitions.length) return [];
 
-  const query = await pg.cancellableQuery<ScoreTierCrossing>(
-    `
-    WITH t AS (
-      SELECT * FROM jsonb_to_recordset($1::jsonb)
-        AS x("userId" int, "oldTotal" numeric, "newTotal" numeric)
-    ), granted AS (
-      INSERT INTO "UserCreatorMilestone" ("userId", "milestoneKey", "seenAt")
-      SELECT t."userId", m.key,
-        CASE WHEN COALESCE(t."oldTotal", 0) < m.threshold THEN NULL ELSE now() END
-      FROM t
-      ${joinMilestoneGrantableUserSql('u', 't."userId"')}
-      JOIN "CreatorMilestone" m
-        ON m.track = 'score' AND m.threshold IS NOT NULL AND t."newTotal" >= m.threshold
-      ON CONFLICT DO NOTHING
-      RETURNING "userId", "milestoneKey", "seenAt"
-    ), cosmetics AS (
-      INSERT INTO "UserCosmetic" ("userId", "cosmeticId", "claimKey")
-      SELECT g."userId", m."cosmeticId", m.key
-      FROM granted g
-      JOIN "CreatorMilestone" m ON m.key = g."milestoneKey"
-      WHERE m."cosmeticId" IS NOT NULL
-      ON CONFLICT DO NOTHING
-    )
-    SELECT g."userId", g."milestoneKey", m.name, m.threshold
-    FROM granted g
-    JOIN "CreatorMilestone" m ON m.key = g."milestoneKey"
-    WHERE g."seenAt" IS NULL
-    `,
-    [JSON.stringify(transitions)]
+  const grants = await grantMilestones(
+    pg,
+    {
+      sql: `
+        SELECT t."userId", m.key AS "milestoneKey", NULL::timestamp AS "achievedAt",
+          COALESCE(t."oldTotal", 0) >= m.threshold AS silent
+        FROM jsonb_to_recordset($1::jsonb)
+          AS t("userId" int, "oldTotal" numeric, "newTotal" numeric)
+        JOIN "CreatorMilestone" m
+          ON m.track = 'score' AND m.threshold IS NOT NULL AND t."newTotal" >= m.threshold`,
+      params: [JSON.stringify(transitions)],
+    },
+    onCancel
   );
-  onCancel?.(query.cancel);
-  return query.result();
+  return grants
+    .filter((grant) => !grant.silent)
+    .map(({ userId, milestoneKey, name, threshold }) => ({
+      userId,
+      milestoneKey,
+      name,
+      threshold: threshold as number,
+    }));
 }
 
 /**
@@ -116,22 +184,15 @@ export async function backfillScoreTierBatch(
         )
       ORDER BY u.id
       LIMIT $3
-    ), granted AS (
-      INSERT INTO "UserCreatorMilestone" ("userId", "milestoneKey", "seenAt")
-      SELECT batch.id, m.key, now()
+    ), candidates AS (
+      SELECT batch.id AS "userId", m.key AS "milestoneKey", NULL::timestamp AS "achievedAt",
+        true AS silent
       FROM batch
       JOIN "CreatorMilestone" m
         ON m.track = 'score' AND m.threshold IS NOT NULL AND batch.total >= m.threshold
-      ON CONFLICT DO NOTHING
-      RETURNING "userId", "milestoneKey"
-    ), cosmetics AS (
-      INSERT INTO "UserCosmetic" ("userId", "cosmeticId", "claimKey")
-      SELECT g."userId", m."cosmeticId", m.key
-      FROM granted g
-      JOIN "CreatorMilestone" m ON m.key = g."milestoneKey"
-      WHERE m."cosmeticId" IS NOT NULL
-      ON CONFLICT DO NOTHING
-    )
+    ),
+    granted AS (${insertMilestoneGrantsSql('candidates')}),
+    cosmetics AS (${insertMilestoneCosmeticsSql('granted')})
     SELECT
       (SELECT count(*) FROM batch)::int AS users,
       (SELECT count(*) FROM granted)::int AS inserted,
@@ -144,7 +205,7 @@ export async function backfillScoreTierBatch(
 }
 
 /**
- * Grants the cosmetic of every milestone that has one to that milestone's existing holders, for the
+ * Grants the cosmetics of every milestone that has any to that milestone's existing holders, for the
  * next `limit` holders above `afterUserId`. This is what runs after art is attached to a definition
  * that already has holders, since live grants only cover rows created from then on.
  */
@@ -160,9 +221,9 @@ export async function grantMilestoneCosmeticsBatch(
   const query = await pg.cancellableQuery<MilestoneBatchResult>(
     `
     WITH m AS (
-      SELECT key, "cosmeticId"
-      FROM "CreatorMilestone"
-      WHERE "cosmeticId" IS NOT NULL AND ($4::text IS NULL OR key = $4)
+      SELECT "milestoneKey" AS key, "cosmeticId"
+      FROM (${milestoneCosmeticsSql}) mc
+      WHERE $4::text IS NULL OR "milestoneKey" = $4
     ), batch AS (
       SELECT DISTINCT ucm."userId" AS id
       FROM "UserCreatorMilestone" ucm
@@ -223,14 +284,14 @@ export async function previewMilestoneCosmetics(
     `
     SELECT count(DISTINCT ucm."userId")::int AS users, count(*)::int AS rows
     FROM "UserCreatorMilestone" ucm
-    JOIN "CreatorMilestone" m ON m.key = ucm."milestoneKey"
+    JOIN (${milestoneCosmeticsSql}) mc ON mc."milestoneKey" = ucm."milestoneKey"
     ${joinMilestoneGrantableUserSql('u', 'ucm."userId"')}
-    WHERE m."cosmeticId" IS NOT NULL
-      AND ($3::text IS NULL OR m.key = $3)
+    WHERE ($3::text IS NULL OR mc."milestoneKey" = $3)
       AND ucm."userId" > $1 AND ($2::int IS NULL OR ucm."userId" <= $2)
       AND NOT EXISTS (
         SELECT 1 FROM "UserCosmetic" uc
-        WHERE uc."userId" = ucm."userId" AND uc."cosmeticId" = m."cosmeticId" AND uc."claimKey" = m.key
+        WHERE uc."userId" = ucm."userId" AND uc."cosmeticId" = mc."cosmeticId"
+          AND uc."claimKey" = mc."milestoneKey"
       )
     `,
     [afterUserId, maxUserId ?? null, milestoneKey ?? null]

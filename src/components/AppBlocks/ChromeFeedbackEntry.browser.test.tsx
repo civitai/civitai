@@ -1,0 +1,732 @@
+import { MantineProvider } from '@mantine/core';
+// Real Mantine CSS: the bar-geometry tests below measure the rendered button, and without the
+// stylesheet the bar is not a flex row and an ActionIcon is not its resting 22px.
+import '@mantine/core/styles.css';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import React from 'react';
+import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { page, userEvent } from 'vitest/browser';
+import { render } from 'vitest-browser-react';
+import type * as FeatureFlagsMod from '~/providers/FeatureFlagsProvider';
+import type * as TrpcMod from '~/utils/trpc';
+import { makeTrpcProxy } from '../../../test/trpcProxyStub';
+
+/**
+ * "Send feedback to developer" — the chrome entry point and its modal, mounted through the real
+ * `AppBlockChrome` (as `ChromeReviewEntry.browser.test.tsx` does) so the seam is under test: the
+ * chrome derives the request from its props, places the button in the bar and owns the modal
+ * state. The tRPC query is backed by real React Query with a counting `queryFn`, so a fetch
+ * count is a count of requests, not of hook calls.
+ */
+
+type Eligibility =
+  | { eligible: false }
+  | { eligible: true; appListingId: string; appName: string; appBlockVersion: string | null };
+
+const mocks = vi.hoisted(() => ({
+  features: { appListings: true } as Record<string, boolean>,
+  user: { id: 7, username: 'viewer', isModerator: false } as unknown,
+  eligibility: null as unknown,
+  eligibilityInputs: [] as unknown[],
+  /** When set, `getEligibility` waits on this before answering — holds the query pending. */
+  eligibilityGate: null as Promise<void> | null,
+  /** When set, `getEligibility` rejects (e.g. the procedure refused an un-onboarded viewer). */
+  eligibilityError: false,
+  createInputs: [] as unknown[],
+  createResult: { kind: 'ok' } as { kind: 'ok' } | { kind: 'error'; message: string; code: string },
+  /** When set, `create` waits on this before settling — holds the mutation pending. */
+  createGate: null as Promise<void> | null,
+  /** `getAppDetail`'s answer — read only by the ⋮ menu's review item. */
+  detail: null as unknown,
+}));
+
+vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => mocks.user }));
+
+vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
+  ...(await importOriginal<typeof FeatureFlagsMod>()),
+  useFeatureFlags: () => mocks.features,
+  useOptionalFeatureFlags: () => mocks.features,
+}));
+
+vi.mock('~/utils/trpc', async (importOriginal) => {
+  const { useMutation, useQuery } = await import('@tanstack/react-query');
+  return {
+    ...(await importOriginal<typeof TrpcMod>()),
+    trpc: makeTrpcProxy(
+      {
+        'appFeedback.getEligibility': {
+          useQuery: (input: unknown, opts?: Record<string, unknown>) =>
+            useQuery({
+              queryKey: [['appFeedback', 'getEligibility'], { input, type: 'query' }],
+              queryFn: async () => {
+                mocks.eligibilityInputs.push(input);
+                if (mocks.eligibilityGate) await mocks.eligibilityGate;
+                if (mocks.eligibilityError)
+                  throw Object.assign(new Error('Forbidden'), { data: { code: 'FORBIDDEN' } });
+                return mocks.eligibility;
+              },
+              ...opts,
+            }),
+        },
+        'appFeedback.create': {
+          useMutation: () =>
+            useMutation({
+              mutationFn: async (input: unknown) => {
+                mocks.createInputs.push(input);
+                if (mocks.createGate) await mocks.createGate;
+                const result = mocks.createResult;
+                if (result.kind === 'error')
+                  throw Object.assign(new Error(result.message), { data: { code: result.code } });
+                return { id: 1 };
+              },
+            }),
+        },
+        'appListings.getAppDetail': {
+          useQuery: (input: unknown, opts?: Record<string, unknown>) =>
+            useQuery({
+              queryKey: [['appListings', 'getAppDetail'], { input, type: 'query' }],
+              queryFn: async () => mocks.detail,
+              ...opts,
+            }),
+        },
+        'appListings.getMyReview': {
+          useQuery: (input: unknown, opts?: Record<string, unknown>) =>
+            useQuery({
+              queryKey: [['appListings', 'getMyReview'], { input, type: 'query' }],
+              queryFn: async () => null,
+              ...opts,
+            }),
+        },
+      },
+      {
+        useUtils: () => ({
+          blocks: { listMyScopeGrants: { invalidate: vi.fn(async () => undefined) } },
+        }),
+      }
+    ),
+  };
+});
+
+// eslint-disable-next-line import/first
+import { AppBlockChrome } from '~/components/AppBlocks/IframeHost';
+// eslint-disable-next-line import/first
+import { trpc } from '~/utils/trpc';
+
+const APP_NAME = 'Budgeted Generator';
+const SLUG = 'budgeted-generator';
+const APP_BLOCK_ID = 'ab_01HZ';
+const MODEL_ID = 31337;
+
+function eligible(over: Partial<Extract<Eligibility, { eligible: true }>> = {}): Eligibility {
+  return {
+    eligible: true,
+    appListingId: 'apl_01HZ',
+    appName: 'Pixel Forge',
+    appBlockVersion: '1.4.2',
+    ...over,
+  };
+}
+
+function ProdishProviders({ children }: { children: React.ReactNode }) {
+  const [queryClient] = React.useState(
+    () =>
+      new QueryClient({
+        defaultOptions: {
+          queries: { refetchOnWindowFocus: false, retry: false, staleTime: Infinity },
+          mutations: { retry: false },
+        },
+      })
+  );
+  return (
+    <QueryClientProvider client={queryClient}>
+      <MantineProvider>{children}</MantineProvider>
+    </QueryClientProvider>
+  );
+}
+
+/** Page host: what `PageBlockHost` passes. */
+const PAGE_PROPS = {
+  appBlockId: APP_BLOCK_ID,
+  slug: SLUG,
+  slotId: 'app.page',
+  hostSurface: 'page-run',
+} as const;
+/** Model slot: what `IframeHost` passes — no slug, a model id. */
+const SLOT_PROPS = {
+  appBlockId: APP_BLOCK_ID,
+  slotId: 'model.sidebar_top',
+  modelId: MODEL_ID,
+  hostSurface: 'model-slot',
+} as const;
+
+/**
+ * A second observer of the eligibility query that renders a marker once it has resolved, so an
+ * "item absent" assertion is made AFTER the data landed rather than passing at t0 because nothing
+ * has arrived yet. It shares the key, so it adds no request.
+ */
+function EligibilityProbe({ target }: { target: Record<string, string> }) {
+  const { data, isError } = trpc.appFeedback.getEligibility.useQuery({ target } as never, {
+    retry: false,
+  });
+  if (isError) return <span data-testid="eligibility-probe-errored" />;
+  return data ? <span data-testid="eligibility-probe-resolved" /> : null;
+}
+
+function renderChrome(
+  props: Record<string, unknown> = PAGE_PROPS,
+  probeTarget?: Record<string, string>
+) {
+  return render(
+    <>
+      <AppBlockChrome blockInstanceId="inst-fb" appName={APP_NAME} {...props} />
+      {probeTarget && <EligibilityProbe target={probeTarget} />}
+    </>,
+    { wrapper: ProdishProviders }
+  );
+}
+
+async function openOverflow() {
+  await page.getByTestId('app-block-menu-trigger').click();
+  await expect.element(page.getByTestId('app-block-menu-dropdown')).toBeInTheDocument();
+}
+
+const feedbackButton = () => page.getByTestId('app-block-feedback-button');
+/** The retired ⋮ menu item — asserted absent. */
+const feedbackMenuItem = () => page.getByTestId('app-block-feedback-menu-item');
+const menuTrigger = () => page.getByTestId('app-block-menu-trigger');
+const chromeBar = () => page.getByTestId('app-block-chrome').element() as HTMLElement;
+const rectOf = (el: Element) => el.getBoundingClientRect();
+/** `ActionIcon size="sm"` in @mantine/core 7 — the size of every icon button in the bar. */
+const RESTING_ICON_PX = 22;
+/** 22 + `py={4}` ×2 + 1px border: the bar's measured resting height (see the mobile-shell suite). */
+const CHROME_BAR_RENDERED_PX = 31;
+
+/** The wide-bar form: the visible "Feedback" text beside the icon, at the bar's 22px height. */
+function expectLabelled() {
+  const el = feedbackButton().element() as HTMLElement;
+  expect(el.getAttribute('data-labelled')).toBe('true');
+  expect(el.textContent?.trim()).toBe('Feedback');
+  const r = rectOf(el);
+  expect(r.height).toBe(RESTING_ICON_PX);
+  expect(r.width).toBeGreaterThan(RESTING_ICON_PX * 2);
+  // The accessible name is the full sentence, which still contains the visible word.
+  expect(el.getAttribute('aria-label')).toBe('Send feedback to developer');
+}
+
+/**
+ * Wait until the bar has been MEASURED narrow. An unmeasured bar renders the wide (labelled) form
+ * first and flips once the resize observer fires, so asserting straight after `toBeVisible` would
+ * race that flip.
+ */
+async function waitForIconOnly() {
+  await vi.waitFor(() =>
+    expect(feedbackButton().element().getAttribute('data-labelled')).toBe('false')
+  );
+}
+
+/** The narrow-bar form: the bare 22px icon, no visible text. */
+function expectIconOnly() {
+  const el = feedbackButton().element() as HTMLElement;
+  expect(el.getAttribute('data-labelled')).toBe('false');
+  expect(el.textContent?.trim()).toBe('');
+  const r = rectOf(el);
+  expect([r.width, r.height]).toEqual([RESTING_ICON_PX, RESTING_ICON_PX]);
+  expect(el.getAttribute('aria-label')).toBe('Send feedback to developer');
+}
+
+/** Guard-the-guard: without the stylesheet every measurement below reads as something else. */
+function expectStyledOneLineBar() {
+  expect(getComputedStyle(chromeBar()).display).toBe('flex');
+  expect(Math.round(rectOf(chromeBar()).height)).toBe(CHROME_BAR_RENDERED_PX);
+}
+const modal = () => page.getByTestId('app-feedback-modal');
+const messageBox = () => page.getByTestId('app-feedback-message');
+const sendButton = () => page.getByTestId('app-feedback-submit');
+
+async function openFeedbackModal(props: Record<string, unknown> = PAGE_PROPS) {
+  renderChrome(props);
+  await expect.element(feedbackButton()).toBeInTheDocument();
+  await feedbackButton().click();
+  await expect
+    .element(page.getByText("Send private feedback to Pixel Forge's developer"))
+    .toBeInTheDocument();
+}
+
+async function typeAndSend(text: string) {
+  await userEvent.fill(messageBox().element() as HTMLElement, text);
+  await sendButton().click();
+}
+
+beforeEach(async () => {
+  mocks.features = { appListings: true };
+  mocks.user = { id: 7, username: 'viewer', isModerator: false };
+  mocks.eligibility = eligible();
+  mocks.eligibilityInputs = [];
+  mocks.eligibilityGate = null;
+  mocks.eligibilityError = false;
+  mocks.createInputs = [];
+  mocks.createResult = { kind: 'ok' };
+  mocks.createGate = null;
+  mocks.detail = null;
+  await page.viewport(1280, 900);
+});
+
+describe('the bar button', () => {
+  test('page host: an eligible viewer gets the button in the bar, asked of the server by slug', async () => {
+    renderChrome();
+    // In the bar itself — no menu has been opened.
+    await expect
+      .element(page.getByRole('button', { name: 'Send feedback to developer' }))
+      .toBeInTheDocument();
+    await expect.element(feedbackButton()).toBeVisible();
+    expect(page.getByTestId('app-block-menu-dropdown').elements()).toHaveLength(0);
+    expect(mocks.eligibilityInputs).toEqual([{ target: { slug: SLUG } }]);
+  });
+
+  test('model slot: the button is offered there too, asked of the server by AppBlock id', async () => {
+    renderChrome(SLOT_PROPS);
+    await expect.element(feedbackButton()).toBeVisible();
+    expect(mocks.eligibilityInputs).toEqual([{ target: { appBlockId: APP_BLOCK_ID } }]);
+  });
+
+  test('desktop: a labelled "Feedback" button right before the ⋮ trigger, the bar height', async () => {
+    renderChrome();
+    await expect.element(feedbackButton()).toBeVisible();
+    const button = feedbackButton().element() as HTMLElement;
+    const trigger = menuTrigger().element() as HTMLElement;
+    expect(button.closest('[data-testid="app-block-chrome"]')).not.toBeNull();
+    // Same trailing cluster, button first.
+    expect(button.parentElement).toBe(trigger.parentElement);
+    expect(button.nextElementSibling).toBe(trigger);
+    expectStyledOneLineBar();
+    const b = rectOf(button);
+    const t = rectOf(trigger);
+    // Right before ⋮ (the cluster's 4px gap), not floated elsewhere in the row.
+    expect(b.right).toBeLessThanOrEqual(t.left);
+    expect(t.left - b.right).toBeLessThanOrEqual(8);
+    expectLabelled();
+    expect([t.width, t.height]).toEqual([RESTING_ICON_PX, RESTING_ICON_PX]);
+    expect(b.top).toBe(t.top);
+    await expect.element(page.getByText('Feedback', { exact: true })).toBeVisible();
+    // Pinned to the right edge with ⋮, not floated into the middle of the row.
+    expect(rectOf(chromeBar()).right - t.right).toBeLessThan(16);
+  });
+
+  test('a full-width bar (~1840px) shows the label at the far right', async () => {
+    await page.viewport(1840, 900);
+    renderChrome();
+    await expect.element(feedbackButton()).toBeVisible();
+    expectStyledOneLineBar();
+    expect(Math.round(rectOf(chromeBar()).width)).toBe(1840);
+    expect(chromeBar().getAttribute('data-chrome-compact')).toBe('false');
+    expectLabelled();
+  });
+
+  test('hover shows a tooltip with the same text', async () => {
+    renderChrome();
+    await expect.element(feedbackButton()).toBeVisible();
+    expect(page.getByRole('tooltip').elements()).toHaveLength(0);
+    await feedbackButton().hover();
+    await expect.element(page.getByRole('tooltip')).toHaveTextContent('Send feedback to developer');
+  });
+
+  test('keyboard focus also shows the tooltip', async () => {
+    renderChrome();
+    await expect.element(feedbackButton()).toBeVisible();
+    expect(page.getByRole('tooltip').elements()).toHaveLength(0);
+    // Park the pointer off the button first: the previous test hovered this exact spot, and a
+    // pointer left there opens the tooltip by hover, which would pass this test for the wrong
+    // reason (measured: it did, with `focus: false`).
+    await menuTrigger().hover();
+    await new Promise((r) => setTimeout(r, 400)); // past the 300ms openDelay
+    expect(page.getByRole('tooltip').elements()).toHaveLength(0);
+    (feedbackButton().element() as HTMLElement).focus();
+    await expect.element(page.getByRole('tooltip')).toHaveTextContent('Send feedback to developer');
+  });
+
+  test('absent while the eligibility answer is still in flight', async () => {
+    let release: () => void = () => undefined;
+    mocks.eligibilityGate = new Promise<void>((r) => {
+      release = r;
+    });
+    renderChrome();
+    await vi.waitFor(() => expect(mocks.eligibilityInputs).toHaveLength(1));
+    await expect.element(menuTrigger()).toBeInTheDocument();
+    expect(feedbackButton().elements()).toHaveLength(0);
+    // CONTROL: the same render shows it once the answer lands.
+    release();
+    await expect.element(feedbackButton()).toBeVisible();
+  });
+
+  test('absent when the eligibility query fails (e.g. the procedure refuses the viewer)', async () => {
+    mocks.eligibilityError = true;
+    renderChrome(PAGE_PROPS, { slug: SLUG });
+    await expect.element(page.getByTestId('eligibility-probe-errored')).toBeInTheDocument();
+    expect(mocks.eligibilityInputs).toHaveLength(1);
+    expect(feedbackButton().elements()).toHaveLength(0);
+  });
+
+  test('hidden when the server says not eligible (muted, flag off, …)', async () => {
+    mocks.eligibility = { eligible: false };
+    renderChrome(PAGE_PROPS, { slug: SLUG });
+    await expect.element(page.getByTestId('eligibility-probe-resolved')).toBeInTheDocument();
+    await expect.element(menuTrigger()).toBeInTheDocument();
+    expect(mocks.eligibilityInputs).toHaveLength(1);
+    expect(feedbackButton().elements()).toHaveLength(0);
+  });
+
+  test('CONTROL — the same harness shows it when eligible', async () => {
+    renderChrome(PAGE_PROPS, { slug: SLUG });
+    await expect.element(page.getByTestId('eligibility-probe-resolved')).toBeInTheDocument();
+    await expect.element(feedbackButton()).toBeInTheDocument();
+  });
+
+  test('signed out: no button and no eligibility request', async () => {
+    mocks.user = null;
+    renderChrome();
+    await expect.element(menuTrigger()).toBeInTheDocument();
+    expect(feedbackButton().elements()).toHaveLength(0);
+    expect(mocks.eligibilityInputs).toHaveLength(0);
+  });
+
+  // 🔴 The dev tunnel runs unpublished code; a report there would be stamped with the published
+  // version. Same page props as the CONTROL above, only the host surface differs.
+  for (const hostSurface of ['dev-tunnel', 'review-preview', undefined]) {
+    test(`host surface ${String(hostSurface)}: no button and no eligibility request`, async () => {
+      renderChrome({ ...PAGE_PROPS, hostSurface });
+      await expect.element(menuTrigger()).toBeInTheDocument();
+      expect(feedbackButton().elements()).toHaveLength(0);
+      expect(mocks.eligibilityInputs).toHaveLength(0);
+    });
+  }
+
+  test('no store access: no button and no eligibility request', async () => {
+    mocks.features = {};
+    renderChrome();
+    await expect.element(menuTrigger()).toBeInTheDocument();
+    expect(feedbackButton().elements()).toHaveLength(0);
+    expect(mocks.eligibilityInputs).toHaveLength(0);
+  });
+
+  test('the ⋮ menu no longer carries a feedback item (one entry point)', async () => {
+    renderChrome();
+    await expect.element(feedbackButton()).toBeInTheDocument();
+    await openOverflow();
+    await expect.element(page.getByRole('menuitem', { name: 'Manage apps' })).toBeInTheDocument();
+    expect(feedbackMenuItem().elements()).toHaveLength(0);
+    expect(
+      page.getByRole('menuitem', { name: 'Send feedback to developer' }).elements()
+    ).toHaveLength(0);
+    // Still one request: the button's, not a second observer inside the menu.
+    expect(mocks.eligibilityInputs).toHaveLength(1);
+  });
+});
+
+describe('opening the modal', () => {
+  test('clicking the button opens the private-feedback modal titled for the app', async () => {
+    await openFeedbackModal();
+    await expect
+      .element(page.getByTestId('app-feedback-private-notice'))
+      .toHaveTextContent(
+        "Private. Only this app's developer, their collaborators and Civitai moderators can read this. It won't appear on the app's page. They will see your username."
+      );
+    await expect
+      .element(page.getByTestId('app-feedback-sent-with'))
+      .toHaveTextContent('Sent with: app version 1.4.2. Nothing else is collected.');
+    await expect
+      .element(page.getByRole('dialog'))
+      .toHaveAccessibleName("Send private feedback to Pixel Forge's developer");
+    // The ⋮ menu was never involved.
+    expect(menuTrigger().element().getAttribute('aria-expanded')).toBe('false');
+    // Desktop control for the 375px full-screen test below.
+    const content = document.querySelector('.mantine-Modal-content') as HTMLElement | null;
+    expect(content).not.toBeNull();
+    expect(content?.getAttribute('data-full-screen')).toBeNull();
+  });
+
+  test('Send is disabled until there is text', async () => {
+    await openFeedbackModal();
+    await expect.element(sendButton()).toBeDisabled();
+    await userEvent.fill(messageBox().element() as HTMLElement, '   ');
+    await expect.element(sendButton()).toBeDisabled();
+    await userEvent.fill(messageBox().element() as HTMLElement, 'hello');
+    await expect.element(sendButton()).toBeEnabled();
+  });
+});
+
+describe('submitting', () => {
+  test('page host: sends exactly {target: slug, message, context: {surface: page}} and confirms', async () => {
+    await openFeedbackModal();
+    await typeAndSend('  the export button 404s  ');
+    await expect
+      .element(page.getByTestId('app-feedback-sent'))
+      .toHaveTextContent(
+        "Sent to the developer. You'll get a notification if they mark it resolved or won't fix."
+      );
+    expect(mocks.createInputs).toStrictEqual([
+      { target: { slug: SLUG }, message: 'the export button 404s', context: { surface: 'page' } },
+    ]);
+  });
+
+  test('model slot: sends exactly {target: appBlockId, message, context: {surface: slot, modelId}}', async () => {
+    await openFeedbackModal(SLOT_PROPS);
+    await expect
+      .element(page.getByTestId('app-feedback-sent-with'))
+      .toHaveTextContent(
+        'Sent with: app version 1.4.2 and the model you were viewing. Nothing else is collected.'
+      );
+    await typeAndSend('love it');
+    await expect.element(page.getByTestId('app-feedback-sent')).toBeInTheDocument();
+    expect(mocks.createInputs).toStrictEqual([
+      {
+        target: { appBlockId: APP_BLOCK_ID },
+        message: 'love it',
+        context: { surface: 'slot', modelId: MODEL_ID },
+      },
+    ]);
+  });
+
+  const errorCases: Array<[string, string, string, string]> = [
+    [
+      'per-app daily cap',
+      'TOO_MANY_REQUESTS',
+      'You have sent this app a lot of feedback today — give it a little while.',
+      'You have sent this app a lot of feedback today — give it a little while.',
+    ],
+    [
+      'content filter with blocked links',
+      'BAD_REQUEST',
+      'Your feedback links to a site that is not allowed: bad.example. Remove the link and try again.',
+      'Your feedback links to a site that is not allowed: bad.example. Remove the link and try again.',
+    ],
+    [
+      'not eligible any more',
+      'NOT_FOUND',
+      'App not found',
+      "This app isn't accepting feedback from you right now.",
+    ],
+    [
+      'muted account',
+      'FORBIDDEN',
+      'Your account cannot send feedback right now',
+      'Your account cannot send feedback right now',
+    ],
+  ];
+
+  for (const [name, code, serverMessage, shown] of errorCases) {
+    test(`${name} (${code}): readable error, modal stays open, text kept`, async () => {
+      mocks.createResult = { kind: 'error', code, message: serverMessage };
+      await openFeedbackModal();
+      await typeAndSend('my feedback');
+      await expect.element(page.getByTestId('app-feedback-error')).toHaveTextContent(shown);
+      await expect.element(modal()).toBeInTheDocument();
+      expect((messageBox().element() as HTMLTextAreaElement).value).toBe('my feedback');
+      expect(page.getByTestId('app-feedback-sent').elements()).toHaveLength(0);
+    });
+  }
+});
+
+describe('alongside the review entry on the page host', () => {
+  // A listing the ⋮ review item will offer review for (signed in, not the owner, onsite).
+  const reviewableDetail = {
+    id: 'apl_DETAIL',
+    slug: SLUG,
+    name: APP_NAME,
+    kind: 'onsite',
+    creator: { id: 4242, username: 'publisher', image: null },
+    recommend: { recommendedCount: 0, notRecommendedCount: 0, recommendPct: null },
+    reviewCount: 0,
+  };
+
+  test('page host: "Rate this app" stays in the ⋮ menu and feedback is the bar button', async () => {
+    mocks.detail = reviewableDetail;
+    renderChrome();
+    await expect.element(feedbackButton()).toBeVisible();
+    await openOverflow();
+    await expect
+      .element(page.getByTestId('app-block-review-menu-item'))
+      .toHaveTextContent('Rate this app');
+    expect(feedbackMenuItem().elements()).toHaveLength(0);
+  });
+});
+
+describe('a reused host (app A → app B without remount)', () => {
+  const chrome = (slug: string) => (
+    <AppBlockChrome blockInstanceId="inst-fb" appName={APP_NAME} {...PAGE_PROPS} slug={slug} />
+  );
+
+  test('the open modal still sends to the app it was opened for', async () => {
+    const view = await render(chrome('app-a'), { wrapper: ProdishProviders });
+    await expect.element(feedbackButton()).toBeInTheDocument();
+    await feedbackButton().click();
+    await expect.element(modal()).toBeInTheDocument();
+    // Same element type at the same position, so React updates props rather than remounting —
+    // the modal staying open is what shows it.
+    await view.rerender(chrome('app-b'));
+    await expect.element(modal()).toBeInTheDocument();
+    await typeAndSend('about app A');
+    await expect.element(page.getByTestId('app-feedback-sent')).toBeInTheDocument();
+    expect(mocks.createInputs).toStrictEqual([
+      { target: { slug: 'app-a' }, message: 'about app A', context: { surface: 'page' } },
+    ]);
+  });
+});
+
+describe('while a submit is pending', () => {
+  test('a second Send is ignored and the modal cannot be dismissed', async () => {
+    let release: () => void = () => undefined;
+    mocks.createGate = new Promise<void>((r) => {
+      release = r;
+    });
+    await openFeedbackModal();
+    await userEvent.fill(messageBox().element() as HTMLElement, 'hello');
+    await sendButton().click();
+    await vi.waitFor(() => expect(mocks.createInputs).toHaveLength(1));
+    // DOM clicks, not userEvent: these controls are expected to be disabled while pending. A
+    // loading Mantine Button is disabled, so this pins the disabled Send, not `submit`'s own guard.
+    (sendButton().element() as HTMLButtonElement).click();
+    await userEvent.keyboard('{Escape}');
+    const cancel = page.getByRole('button', { name: 'Cancel' });
+    await expect.element(cancel).toBeDisabled();
+    (cancel.element() as HTMLButtonElement).click();
+    await expect.element(modal()).toBeInTheDocument();
+    expect(mocks.createInputs).toHaveLength(1);
+
+    release();
+    await expect.element(page.getByTestId('app-feedback-sent')).toBeInTheDocument();
+    expect(mocks.createInputs).toHaveLength(1);
+  });
+});
+
+describe('narrow bars', () => {
+  test('at 375px the compact shell has the button beside ⋮ (not in the sheet), and the modal is full-screen', async () => {
+    await page.viewport(375, 720);
+    renderChrome();
+    const root = page.getByTestId('app-block-chrome');
+    await expect.element(root).toBeInTheDocument();
+    await vi.waitFor(() =>
+      expect((root.element() as HTMLElement).getAttribute('data-chrome-compact')).toBe('true')
+    );
+    await expect.element(feedbackButton()).toBeVisible();
+    expectStyledOneLineBar();
+    // Icon-only here, the same tap target as its neighbours, the back chevron and ⋮.
+    expectIconOnly();
+    for (const id of ['app-block-feedback-button', 'app-block-menu-trigger', 'app-block-back']) {
+      const r = rectOf(page.getByTestId(id).element());
+      expect([r.width, r.height], id).toEqual([RESTING_ICON_PX, RESTING_ICON_PX]);
+    }
+    expect((feedbackButton().element() as HTMLElement).nextElementSibling).toBe(
+      menuTrigger().element()
+    );
+    const b = rectOf(feedbackButton().element());
+    const t = rectOf(menuTrigger().element());
+    expect(t.left - b.right).toBeLessThanOrEqual(8);
+    // The sheet no longer carries the item, under any testid.
+    await openOverflow();
+    expect(feedbackMenuItem().elements()).toHaveLength(0);
+    const sheet = page.getByTestId('app-block-menu-dropdown').element();
+    expect(sheet.textContent).not.toContain('Send feedback to developer');
+    await userEvent.keyboard('{Escape}');
+    await expect.element(page.getByTestId('app-block-menu-dropdown')).not.toBeInTheDocument();
+    await feedbackButton().click();
+    await expect.element(modal()).toBeInTheDocument();
+    const content = document.querySelector('.mantine-Modal-content') as HTMLElement | null;
+    expect(content?.getAttribute('data-full-screen')).toBe('true');
+  });
+
+  test('a 320px model sidebar keeps the button in the one-line bar', async () => {
+    render(
+      <div style={{ width: 320 }}>
+        <AppBlockChrome blockInstanceId="inst-fb" appName={APP_NAME} {...SLOT_PROPS} />
+      </div>,
+      { wrapper: ProdishProviders }
+    );
+    await expect.element(feedbackButton()).toBeVisible();
+    await waitForIconOnly();
+    expectStyledOneLineBar();
+    const bar = rectOf(chromeBar());
+    expect(Math.round(bar.width)).toBe(320);
+    const b = rectOf(feedbackButton().element());
+    const t = rectOf(menuTrigger().element());
+    expect(b.top).toBe(t.top);
+    // Right before ⋮ (the cluster's 4px gap), not floated elsewhere in the row.
+    expect(b.right).toBeLessThanOrEqual(t.left);
+    expect(t.left - b.right).toBeLessThanOrEqual(8);
+    expect(t.right).toBeLessThanOrEqual(bar.right);
+    // No mobile shell on the model slot (`data-chrome-compact` is the SHELL decision, page-only),
+    // but the bar is still narrow, so the button is icon-only.
+    expect(chromeBar().getAttribute('data-chrome-compact')).toBe('false');
+    expect(chromeBar().getAttribute('data-chrome-tier')).toBe('base');
+    expectIconOnly();
+  });
+
+  test('the label switches at the `sm` bar width: 767px icon-only, resized to 768px labelled', async () => {
+    // One mounted tree, resized across the boundary. Starting at 767 means the labelled state at
+    // 768 is OBSERVED as a flip from a measured icon-only bar — not the unmeasured first render,
+    // which is labelled too and would pass a 768-only check without any measurement.
+    await page.viewport(1280, 720);
+    const at = (width: number) => (
+      <div style={{ width }}>
+        <AppBlockChrome blockInstanceId="inst-fb" appName={APP_NAME} {...SLOT_PROPS} />
+      </div>
+    );
+    const view = await render(at(767), { wrapper: ProdishProviders });
+    await expect.element(feedbackButton()).toBeVisible();
+    await waitForIconOnly();
+    expect(Math.round(rectOf(chromeBar()).width)).toBe(767);
+    expectIconOnly();
+    await view.rerender(at(768));
+    await vi.waitFor(() =>
+      expect(feedbackButton().element().getAttribute('data-labelled')).toBe('true')
+    );
+    expect(Math.round(rectOf(chromeBar()).width)).toBe(768);
+    expectLabelled();
+  });
+
+  test('the icon-only form keeps the tooltip', async () => {
+    render(
+      <div style={{ width: 320 }}>
+        <AppBlockChrome blockInstanceId="inst-fb" appName={APP_NAME} {...SLOT_PROPS} />
+      </div>,
+      { wrapper: ProdishProviders }
+    );
+    await expect.element(feedbackButton()).toBeVisible();
+    await waitForIconOnly();
+    expect(page.getByRole('tooltip').elements()).toHaveLength(0);
+    await feedbackButton().hover();
+    await expect.element(page.getByRole('tooltip')).toHaveTextContent('Send feedback to developer');
+  });
+
+  const LONG_NAME =
+    'An Extraordinarily Long Application Name That Would Happily Fill The Whole Bar';
+
+  test.each([
+    ['320px model sidebar', SLOT_PROPS, 320, false],
+    ['375px compact page shell', PAGE_PROPS, 375, false],
+    ['1280px desktop page host', PAGE_PROPS, 1280, true],
+  ] as const)(
+    // INVARIANT GUARD, not regression coverage: Mantine's ActionIcon `min-width` and the Button
+    // label's `nowrap` already hold the size (removing every `flexShrink: 0` here stays green). It
+    // pins the outcome, whatever holds it.
+    'INVARIANT GUARD — a long app name cannot squeeze the button or ⋮ (%s)',
+    async (_label, props, width, labelled) => {
+      await page.viewport(width, 720);
+      render(
+        <div style={{ width }}>
+          <AppBlockChrome blockInstanceId="inst-fb" appName={LONG_NAME} {...props} />
+        </div>,
+        { wrapper: ProdishProviders }
+      );
+      await expect.element(feedbackButton()).toBeVisible();
+      if (!labelled) await waitForIconOnly();
+      expectStyledOneLineBar();
+      const bar = rectOf(chromeBar());
+      if (labelled) expectLabelled();
+      else expectIconOnly();
+      const t = rectOf(menuTrigger().element());
+      expect([t.width, t.height]).toEqual([RESTING_ICON_PX, RESTING_ICON_PX]);
+      expect(rectOf(feedbackButton().element()).right).toBeLessThanOrEqual(t.left);
+      expect(t.right).toBeLessThanOrEqual(bar.right);
+    }
+  );
+});
