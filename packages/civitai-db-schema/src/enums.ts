@@ -1253,6 +1253,13 @@ export const OutboxEntity = {
 
 export type OutboxEntity = (typeof OutboxEntity)[keyof typeof OutboxEntity];
 
+export const StorylineStatus = {
+  Ongoing: 'Ongoing',
+  Complete: 'Complete',
+} as const;
+
+export type StorylineStatus = (typeof StorylineStatus)[keyof typeof StorylineStatus];
+
 export const UserHubSourceType = {
   User: 'User',
   Model: 'Model',
