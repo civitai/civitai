@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import type * as FliptClientModule from '~/server/flipt/client';
+import type * as AuditModule from '~/utils/metadata/audit';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { BlockedContentHit } from '~/server/services/blocklist.service';
@@ -33,6 +34,16 @@ vi.mock('~/server/flipt/client', async (importOriginal) => ({
   isFlipt: (flag: string, entityId?: string, context?: unknown) =>
     mockIsFlipt(flag, entityId, context),
 }));
+// The detectors still run for real; wrapping them only records what text each one was given.
+vi.mock('~/utils/metadata/audit', async (importOriginal) => {
+  const actual = await importOriginal<typeof AuditModule>();
+  return {
+    ...actual,
+    includesMinor: vi.fn(actual.includesMinor),
+    includesPoi: vi.fn(actual.includesPoi),
+    auditPromptEnriched: vi.fn(actual.auditPromptEnriched),
+  };
+});
 const clickhouseBox = vi.hoisted(() => ({ client: undefined as unknown }));
 vi.mock('~/server/clickhouse/client', () => ({
   get clickhouse() {
@@ -58,7 +69,7 @@ import {
   truncateUtf8,
   type SharedTextScan,
 } from '../shared-data-moderation';
-import { auditPromptEnriched } from '~/utils/metadata/audit';
+import { auditPromptEnriched, includesMinor, includesPoi } from '~/utils/metadata/audit';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { normalizeText } from '~/utils/normalize-text';
 
@@ -300,6 +311,81 @@ describe('full-audit budget — only profane-looking leaves spend it', () => {
         leaf: { raw: 'fuck', path: '500', segments: [500], kind: 'value' },
       },
     ]);
+  });
+});
+
+describe('identifier-shaped leaves — the free-text audits skip the identifier', () => {
+  const ULID = '01JABCDEFGHJKMNPQRSTVWXYZ0';
+  const UUID = '3f2b8c1e-9a4d-4e7f-b6c5-0d1e2f3a4b5c';
+  const SHA1 = 'da39a3ee5e6b4b0d3255bfef95601890afd80709';
+  const INTEGER = '4815162342';
+  const IDS = [ULID, UUID, SHA1, INTEGER];
+
+  /** Every text the minor detector and the green-domain audit were handed. */
+  const freeTextReads = () => [
+    ...vi.mocked(includesMinor).mock.calls.map(([text]) => text ?? ''),
+    ...vi.mocked(auditPromptEnriched).mock.calls.map(([text]) => text),
+  ];
+  const carriesAnId = (text: string) => IDS.some((id) => text.includes(id));
+
+  it('a data value, an object key and a counter key: neither audit reads the identifier', async () => {
+    await scanSharedData({
+      [ULID]: UUID,
+      list: [SHA1, INTEGER, `plays:${ULID}`, `votes:${INTEGER}:${UUID}`],
+    });
+    await scanCounterKey(`playcount:${SHA1}`);
+    const reads = freeTextReads();
+    expect(reads.filter(carriesAnId)).toEqual([]);
+    // Positive control: the same calls DID read the labels around the ids, and the plain key.
+    expect(vi.mocked(includesMinor).mock.calls.map(([text]) => text)).toEqual(
+      expect.arrayContaining(['list', 'plays', 'votes', 'playcount', ''])
+    );
+  });
+
+  it('INVARIANT GUARD: POI and the blocklists still read the WHOLE identifier leaf', async () => {
+    await scanSharedData({ v: ULID });
+    await scanCounterKey(`plays:${UUID}`);
+    expect(vi.mocked(includesPoi).mock.calls.map(([text]) => text)).toEqual(
+      expect.arrayContaining([ULID, `plays:${UUID}`])
+    );
+    expect(mockFindBlocked.mock.calls.map(([texts]) => texts)).toEqual([
+      ['v', ULID],
+      [`plays:${UUID}`],
+    ]);
+  });
+
+  it('INVARIANT GUARD: a link or pattern hit on an identifier leaf is still reported', async () => {
+    mockFindBlocked.mockResolvedValueOnce([
+      { index: 0, kind: 'link', matched: [ULID] },
+      { index: 0, kind: 'pattern', matched: 'plays' },
+    ]);
+    const scan = await scanCounterKey(`plays:${ULID}`);
+    expect(scan.hits.map((h) => h.category).sort()).toEqual(['link', 'pattern']);
+  });
+
+  it('INVARIANT GUARD: a POI label in front of an id is still a POI hit', async () => {
+    const scan = await scanCounterKey(`emma_watson:${ULID}`);
+    expect(scan.hits).toContainEqual(expect.objectContaining({ category: 'poi' }));
+  });
+
+  it('INVARIANT GUARD: the label in front of an id is still read by both free-text audits', async () => {
+    // Only the identifier is skipped; a flagged word used as the label is not.
+    const audited = await scanCounterKey(`fuck:${ULID}`);
+    expect(audited.hits).toContainEqual(
+      expect.objectContaining({ category: 'audit_regex', label: 'profanity' })
+    );
+    const minor = await scanCounterKey(`kg8:${ULID}`);
+    expect(minor.hits).toContainEqual(expect.objectContaining({ category: 'minor' }));
+  });
+
+  it('INVARIANT GUARD: a leaf that only CONTAINS an identifier is read in full', async () => {
+    await scanSharedData({ v: `my id is ${ULID}` });
+    expect(freeTextReads()).toContain(`my id is ${ULID}`);
+    // ...so a flagged word beside an id, or a free-text "label", is still caught.
+    const beside = await scanSharedData({ v: `${ULID} fuck` });
+    expect(beside.hits).toContainEqual(expect.objectContaining({ category: 'audit_regex' }));
+    const label = await scanCounterKey(`${MINOR}:${ULID}`);
+    expect(label.hits).toContainEqual(expect.objectContaining({ category: 'minor' }));
   });
 });
 

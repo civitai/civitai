@@ -20,6 +20,7 @@ import {
   type SharedDataLeafKind,
   type SharedDataOverflow,
 } from '~/server/services/apps/shared-data-leaves';
+import { sharedLeafFreeText } from '~/server/services/apps/shared-data-identifiers';
 
 /**
  * LOCAL moderation of the app-owned text in App Blocks shared storage: every string and object key
@@ -215,17 +216,22 @@ export async function classifySharedTexts(
   // with the blocklist's confusable fold. This is the ONLY place the strip happens; the record
   // keeps the raw leaf.
   const texts = inputs.map((input) => stripInvisible(input.raw));
+  // The free-text audits (minor, green-domain) skip a leaf's identifiers: an identifier-shaped leaf
+  // is read without them (`sharedLeafFreeText`), any other leaf in full. The link, pattern and POI
+  // checks always read the whole leaf. Shadow and enforce both come through here, so the soak
+  // measures the rule enforce applies.
+  const freeTexts = texts.map(sharedLeafFreeText);
   const hits: SharedTextHit[] = [];
 
   const blocklistHits = await findBlockedUserContent(texts, { exemptFromPatterns: isModerator });
   const budget = { remaining: SHARED_DATA_FULL_AUDIT_BUDGET };
   const audits: AuditLeafResult[] = [];
   // Sequential, so the budget is spent in leaf order and the outcome is deterministic.
-  for (const text of texts) audits.push(await auditLeaf(text, budget));
+  for (const text of freeTexts) audits.push(await auditLeaf(text, budget));
 
   texts.forEach((text, index) => {
     const leaf = inputs[index];
-    if (includesMinor(text))
+    if (includesMinor(freeTexts[index]))
       hits.push({ category: 'minor', matched: 'minor', label: 'minor', leaf });
     const poi = includesPoi(text);
     if (poi) {
@@ -528,9 +534,7 @@ export async function recordSharedDataScan(
     }
   };
   await Promise.all([
-    scan.hits.length
-      ? insert(SHARED_DATA_HITS_TABLE, () => sharedDataHitRows(scan, ctx))
-      : null,
+    scan.hits.length ? insert(SHARED_DATA_HITS_TABLE, () => sharedDataHitRows(scan, ctx)) : null,
     insert(SHARED_DATA_SCANS_TABLE, () => [sharedDataScanRow(scan, ctx)]),
   ]);
 }
