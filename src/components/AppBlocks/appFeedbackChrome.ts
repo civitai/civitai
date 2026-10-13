@@ -129,16 +129,20 @@ export function appFeedbackCharacterCounter(length: number): string | null {
 
 /**
  * Ctrl+Enter (⌘+Enter on a Mac) sends from the textarea. Plain Enter stays a newline, and an
- * Enter that commits an IME composition is not a send. Whether a send is allowed at all
- * (text present, nothing pending) is the submit handler's own guard, not this predicate's.
+ * Enter that commits an IME composition is not a send: `isComposing` covers most browsers, and
+ * `keyCode` 229 covers Safari, which ends the composition before that keydown and so reports
+ * `isComposing: false` on it. Whether a send is allowed at all (text present, nothing pending)
+ * is the submit handler's own guard, not this predicate's.
  */
 export function isAppFeedbackSubmitShortcut(event: {
   key: string;
   ctrlKey: boolean;
   metaKey: boolean;
   isComposing?: boolean;
+  keyCode?: number;
 }): boolean {
-  return event.key === 'Enter' && (event.ctrlKey || event.metaKey) && !event.isComposing;
+  if (event.isComposing || event.keyCode === 229) return false;
+  return event.key === 'Enter' && (event.ctrlKey || event.metaKey);
 }
 
 /** The second sentence is held to the server's notified statuses by appFeedbackChrome.test.ts. */

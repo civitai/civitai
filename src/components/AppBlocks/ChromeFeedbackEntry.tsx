@@ -2,7 +2,6 @@ import {
   ActionIcon,
   Alert,
   Button,
-  Drawer,
   Group,
   Modal,
   Stack,
@@ -14,6 +13,7 @@ import { IconMessage2 } from '@tabler/icons-react';
 import type { ReactNode } from 'react';
 import { useState } from 'react';
 
+import { MobileMenuDrawer } from '~/components/Drawer/MobileMenuDrawer';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { useVisualViewportBottomInset } from '~/hooks/useVisualViewportBottomInset';
@@ -54,7 +54,6 @@ import {
 export type AppFeedbackModalTarget = {
   request: AppFeedbackRequest;
   appName: string;
-  appBlockVersion: string | null;
 };
 
 export const APP_FEEDBACK_BUTTON_LABEL = 'Send feedback to developer';
@@ -115,8 +114,8 @@ function ChromeFeedbackButtonBody({
     { retry: false }
   );
   if (!data?.eligible) return null;
-  const { appName, appBlockVersion } = data;
-  const open = () => onOpenFeedback({ request, appName, appBlockVersion });
+  const { appName } = data;
+  const open = () => onOpenFeedback({ request, appName });
   // Both forms are 22px tall (`compact-xs` / ActionIcon `sm`), the bar's resting control height,
   // so neither grows the pinned one-line bar (`CHROME_BAR_PX`). Neither shrinks under a long app
   // name: an ActionIcon has `min-width: var(--ai-size)` and a Button's label does not wrap.
@@ -213,6 +212,7 @@ export function AppFeedbackModal({
               ctrlKey: e.ctrlKey,
               metaKey: e.metaKey,
               isComposing: e.nativeEvent.isComposing,
+              keyCode: e.nativeEvent.keyCode,
             });
             if (!shortcut) return;
             e.preventDefault();
@@ -276,13 +276,14 @@ export function AppFeedbackModal({
 }
 
 /**
- * The phone rendering: the site's bottom-sheet idiom (`Drawer position="bottom"`, as in
- * `ChromeSurface`), sized to its content.
+ * The phone rendering: the site's bottom sheet (`MobileMenuDrawer` — `Drawer position="bottom"`,
+ * sized to its content, at the sheet z-index tier), with two changes for a form:
  *
- * - The bottom safe-area inset is paid by the global `.mantine-Drawer-content` rule in
- *   `src/styles/globals.css`, so the `content` slot's padding is deliberately not set here.
  * - `inner`'s `bottom` is raised by the on-screen keyboard's height, so the textarea and Send stay
- *   above the keyboard; the content's `maxHeight` is relative to that raised box.
+ *   above the keyboard. The content's `maxHeight` is therefore a share of that raised box rather
+ *   than of the viewport (the wrapper's `90dvh` would run under the keyboard).
+ * - The bottom safe-area inset is paid by the global `.mantine-Drawer-content` rule in
+ *   `src/styles/globals.css`; neither this nor the wrapper sets the `content` slot's padding.
  */
 function AppFeedbackSheet({
   title,
@@ -296,21 +297,18 @@ function AppFeedbackSheet({
   children: ReactNode;
 }) {
   return (
-    <Drawer
+    <MobileMenuDrawer
       opened
       onClose={onClose}
-      position="bottom"
       title={title}
       overlayProps={{ backgroundOpacity: APP_FEEDBACK_SHEET_SCRIM_OPACITY }}
       styles={{
         inner: { bottom: keyboardInset },
         content: { height: 'auto', maxHeight: '90%' },
-        header: { paddingTop: 8, paddingBottom: 8, paddingInline: 12, minHeight: 0 },
-        body: { paddingInline: 12, paddingBottom: 12 },
       }}
       data-testid="app-feedback-modal"
     >
       {children}
-    </Drawer>
+    </MobileMenuDrawer>
   );
 }

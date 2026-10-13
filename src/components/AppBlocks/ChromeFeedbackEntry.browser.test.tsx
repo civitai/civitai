@@ -588,6 +588,24 @@ describe('keyboard submit', () => {
     await vi.waitFor(() => expect(mocks.createInputs).toHaveLength(1));
   });
 
+  test('a Ctrl+Enter that commits an IME composition is not a send', async () => {
+    await openFeedbackModal();
+    await userEvent.fill(messageBox().element() as HTMLElement, '日本語');
+    const box = messageBox().element() as HTMLTextAreaElement;
+    const keydown = (init: KeyboardEventInit) =>
+      box.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, bubbles: true, ...init })
+      );
+    keydown({ isComposing: true });
+    // Safari's shape: composition already ended, keyCode 229 on the committing keydown.
+    keydown({ isComposing: false, keyCode: 229 });
+    await new Promise((r) => setTimeout(r, 200));
+    expect(mocks.createInputs).toHaveLength(0);
+    // CONTROL: the same synthetic event without the composition sends.
+    keydown({ isComposing: false });
+    await vi.waitFor(() => expect(mocks.createInputs).toHaveLength(1));
+  });
+
   test('Ctrl+Enter on an empty message sends nothing', async () => {
     await openFeedbackModal();
     await vi.waitFor(() => expect(document.activeElement).toBe(messageBox().element()));
@@ -766,6 +784,43 @@ describe('the phone bottom sheet (375×720)', () => {
     const sheet = getComputedStyle(dialogContent() as HTMLElement);
     expect(alphaOf(sheet.backgroundColor)).toBe(1);
     expect(Number(sheet.opacity)).toBe(1);
+  });
+
+  test('while a send is pending, Esc and a scrim tap cannot dismiss the sheet', async () => {
+    let release: () => void = () => undefined;
+    mocks.createGate = new Promise<void>((r) => {
+      release = r;
+    });
+    await openFeedbackModal();
+    await settledDialogRect();
+    await userEvent.fill(messageBox().element() as HTMLElement, 'from my phone');
+    await sendButton().click();
+    await vi.waitFor(() => expect(mocks.createInputs).toHaveLength(1));
+    await userEvent.keyboard('{Escape}');
+    const overlay = document.querySelector<HTMLElement>('.mantine-Drawer-overlay');
+    expect(overlay).not.toBeNull();
+    (overlay as HTMLElement).click();
+    await new Promise((r) => setTimeout(r, 300)); // past the Drawer's close transition
+    await expect.element(modal()).toBeInTheDocument();
+    expect(dialogContent()).not.toBeNull();
+    expect(mocks.successes).toHaveLength(0);
+    release();
+    await expectClosedWithToast();
+  });
+
+  test('CONTROL — with nothing pending, a scrim tap does dismiss the sheet', async () => {
+    await openFeedbackModal();
+    await settledDialogRect();
+    (document.querySelector('.mantine-Drawer-overlay') as HTMLElement).click();
+    await expect.element(modal()).not.toBeInTheDocument();
+  });
+
+  test('the sheet sits above routed dialogs and the generation panel (z-index tier 400)', async () => {
+    await openFeedbackModal();
+    const inner = document.querySelector<HTMLElement>('.mantine-Drawer-inner');
+    expect(inner).not.toBeNull();
+    // `mobileMenuSheetZIndex`, via `MobileMenuDrawer`; Mantine's own default would be 200.
+    expect(getComputedStyle(inner as HTMLElement).zIndex).toBe('400');
   });
 
   test('the textarea has focus on open in the sheet too', async () => {

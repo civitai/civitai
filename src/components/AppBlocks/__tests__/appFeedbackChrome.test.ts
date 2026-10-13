@@ -254,6 +254,10 @@ describe('isAppFeedbackSubmitShortcut — Ctrl/⌘+Enter sends, plain Enter does
 
   it('an Enter that commits an IME composition is not a send', () => {
     expect(key({ ctrlKey: true, isComposing: true })).toBe(false);
+    // Safari: the composition has already ended, but the keydown carries keyCode 229.
+    expect(key({ ctrlKey: true, isComposing: false, keyCode: 229 })).toBe(false);
+    // CONTROL: an ordinary Enter's keyCode (13) does not block the send.
+    expect(key({ ctrlKey: true, isComposing: false, keyCode: 13 })).toBe(true);
   });
 });
 
