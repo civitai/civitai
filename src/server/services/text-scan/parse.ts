@@ -127,12 +127,19 @@ export function textScanStepsBySegment(steps: unknown) {
 
 export type TextScanStepsResult =
   | { ok: true; outputs: TextScanOutput[] }
-  | { ok: false; reason: TextScanFailureReason; detail?: string; segment?: number };
+  | {
+      ok: false;
+      reason: TextScanFailureReason;
+      detail?: string;
+      segment?: number;
+      /** The segments that did parse, in segment order; empty when the workflow itself is unusable. */
+      outputs: TextScanOutput[];
+    };
 
 /**
  * All `expected` segments parsed, in segment order, or the first failure with its segment. Any
- * missing, extra or unusable step fails the whole scan: a partial verdict would replace the
- * stored one with less than the text justified.
+ * missing, extra or unusable step fails the scan: a partial verdict must never replace the stored
+ * one, though the callback may still raise it from the segments that parsed.
  */
 export function parseTextScanSteps(
   steps: unknown,
@@ -140,22 +147,32 @@ export function parseTextScanSteps(
   expected: number
 ): TextScanStepsResult {
   if (!Number.isInteger(expected) || expected < 1)
-    return { ok: false, reason: 'malformed', detail: `invalid expected step count ${expected}` };
+    return {
+      ok: false,
+      reason: 'malformed',
+      detail: `invalid expected step count ${expected}`,
+      outputs: [],
+    };
   const count = chatCompletionSteps(steps).length;
   if (count > expected)
     return {
       ok: false,
       reason: 'malformed',
       detail: `expected ${expected} chatCompletion steps, got ${count}`,
+      outputs: [],
     };
   const bySegment = textScanStepsBySegment(steps);
   const outputs: TextScanOutput[] = [];
+  let failure: { reason: TextScanFailureReason; detail?: string; segment: number } | undefined;
   for (let segment = 0; segment < expected; segment++) {
     const step = bySegment.get(segment);
-    if (!step) return { ok: false, reason: 'missing_segment', segment };
-    const parsed = parseTextScanStep(step, labels);
-    if (!parsed.ok) return { ...parsed, segment };
-    outputs.push(parsed.output);
+    const parsed: TextScanParseResult = step
+      ? parseTextScanStep(step, labels)
+      : { ok: false, reason: 'missing_segment' };
+    if (parsed.ok) outputs.push(parsed.output);
+    else failure ??= { reason: parsed.reason, detail: parsed.detail, segment };
   }
-  return { ok: true, outputs };
+  if (!failure) return { ok: true, outputs };
+  const { detail, ...rest } = failure;
+  return { ok: false, ...rest, ...(detail === undefined ? {} : { detail }), outputs };
 }

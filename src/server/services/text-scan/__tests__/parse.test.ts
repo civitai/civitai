@@ -141,13 +141,18 @@ describe('parseTextScanSteps', () => {
   it('fails a missing segment with its index', () => {
     expect(
       parseTextScanSteps([segStep(0, verdict('none')), segStep(2, verdict('none'))], ['nsfw'], 3)
-    ).toEqual({ ok: false, reason: 'missing_segment', segment: 1 });
+    ).toEqual({
+      ok: false,
+      reason: 'missing_segment',
+      segment: 1,
+      outputs: [verdict('none'), verdict('none')],
+    });
   });
 
   it('fails when two steps claim the same segment and one is therefore missing', () => {
     expect(
       parseTextScanSteps([segStep(0, verdict('none')), segStep(0, verdict('x'))], ['nsfw'], 2)
-    ).toEqual({ ok: false, reason: 'missing_segment', segment: 1 });
+    ).toEqual({ ok: false, reason: 'missing_segment', segment: 1, outputs: [verdict('none')] });
   });
 
   it('fails more steps than were submitted', () => {
@@ -168,6 +173,29 @@ describe('parseTextScanSteps', () => {
       reason,
       segment: 1,
     });
+  });
+
+  it('names the first failing segment and returns every segment that parsed, in order', () => {
+    const bad = segStep(1, undefined, { content: 'not json' });
+    const worse = segStep(3, undefined, { finishReason: 'content_filter' });
+    expect(
+      parseTextScanSteps(
+        [segStep(2, verdict('r')), worse, bad, segStep(0, verdict('x'))],
+        ['nsfw'],
+        4
+      )
+    ).toEqual({
+      ok: false,
+      reason: 'malformed',
+      segment: 1,
+      outputs: [verdict('x'), verdict('r')],
+    });
+  });
+
+  it('returns no outputs when the workflow has more steps than were submitted', () => {
+    expect(
+      parseTextScanSteps([segStep(0, verdict('x')), segStep(1, verdict('x'))], ['nsfw'], 1)
+    ).toMatchObject({ ok: false, outputs: [] });
   });
 
   it.each([0, -1, 1.5, Number.NaN])(

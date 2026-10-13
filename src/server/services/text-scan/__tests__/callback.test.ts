@@ -578,3 +578,147 @@ describe('handleTextScanCallback with segments', () => {
     );
   });
 });
+
+describe('handleTextScanCallback with some segments unusable', () => {
+  const findUnique = dbMock.dbWrite.entityModeration.findUnique;
+  const LABELS = { labels: ['nsfw', 'minor'] };
+  const CLEAN = {
+    nsfw: { level: 'none', reason: 'clean' },
+    minor: { detected: false, reason: 'n' },
+  };
+  const MINOR = {
+    nsfw: { level: 'none', reason: 'clean' },
+    minor: { detected: true, reason: 'm' },
+  };
+  const stored = (over: Record<string, unknown> = {}) => ({
+    workflowId: 'wf-1',
+    nsfwLevel: 1,
+    triggeredLabels: [],
+    result: {
+      version: 1,
+      labels: CLEAN,
+      promptIds: { base: 1 },
+      model: 'air:old',
+      textHash: 'old',
+    },
+    ...over,
+  });
+  const raiseWrite = () => vi.mocked(updateMany).mock.calls[1]?.[0] as any;
+  const logged = (message: string) =>
+    vi
+      .mocked(loggingMock.logToAxiom)
+      .mock.calls.map(([event]) => event as Record<string, unknown>)
+      .find((event) => event.message === message);
+
+  it('active: leaves the row Failed for retry and applies what the parsed segments raised', async () => {
+    findUnique.mockResolvedValue(stored() as any);
+    vi.mocked(getWorkflow).mockResolvedValue(segmented([MINOR, 'TRUNCATED'], LABELS) as any);
+    await handleTextScanCallback({ workflowId: 'wf-1', status: 'succeeded' });
+
+    expect(vi.mocked(updateMany).mock.calls[0][0].data).toMatchObject({
+      status: 'Failed',
+      retryCount: { increment: 1 },
+    });
+    expect(updateMany).toHaveBeenCalledTimes(2);
+    expect(raiseWrite().where).toEqual({
+      entityType: 'Post',
+      entityId: 7,
+      workflowId: 'wf-1',
+      status: 'Failed',
+    });
+    expect(raiseWrite().data).not.toHaveProperty('status');
+    expect(raiseWrite().data).toMatchObject({ triggeredLabels: ['minor'], nsfwLevel: 1 });
+    expect(raiseWrite().data.result).toMatchObject({
+      version: 1,
+      textHash: 'old',
+      labels: { nsfw: CLEAN.nsfw, minor: MINOR.minor },
+    });
+
+    const [{ outcome }] = adapter.applyTextScan.mock.calls[0];
+    expect(outcome.triggeredLabels).toEqual(['minor']);
+    expect(outcome).not.toHaveProperty('nsfw');
+    expect(adapter.applyFailure).toHaveBeenCalledWith(
+      expect.objectContaining({ status: 'failed' })
+    );
+    expect(adapter.applyTextScan.mock.invocationCallOrder[0]).toBeLessThan(
+      adapter.applyFailure.mock.invocationCallOrder[0]
+    );
+    expect(logged('partial verdict raised')).toMatchObject({
+      raised: ['minor'],
+      parsedSegments: 1,
+      segments: 2,
+    });
+  });
+
+  it('raises nsfw only above the stored level', async () => {
+    findUnique.mockResolvedValue(stored({ nsfwLevel: 4 }) as any);
+    vi.mocked(getWorkflow).mockResolvedValue(
+      segmented([{ ...CLEAN, nsfw: { level: 'x', reason: 'X.' } }, 'TRUNCATED'], LABELS) as any
+    );
+    await handleTextScanCallback({ workflowId: 'wf-1', status: 'succeeded' });
+    expect(raiseWrite().data).toMatchObject({ nsfwLevel: 8, triggeredLabels: ['nsfw'] });
+    expect(adapter.applyTextScan.mock.calls[0][0].outcome).toMatchObject({
+      nsfwLevel: 8,
+      triggeredLabels: ['nsfw'],
+    });
+  });
+
+  it('shadow: raises the shadow row and acts on nothing', async () => {
+    findUnique.mockResolvedValue(stored() as any);
+    vi.mocked(getWorkflow).mockResolvedValue(
+      segmented([MINOR, 'TRUNCATED'], { ...shadowMetadata, ...LABELS }) as any
+    );
+    await handleTextScanCallback({ workflowId: 'wf-1', status: 'succeeded' });
+    expect(raiseWrite().where).toMatchObject({ entityType: 'Post:shadow', status: 'Failed' });
+    expect(adapter.applyTextScan).not.toHaveBeenCalled();
+    expect(adapter.applyFailure).not.toHaveBeenCalled();
+  });
+
+  it('never lowers or clears a stricter stored verdict', async () => {
+    findUnique.mockResolvedValue(
+      stored({
+        nsfwLevel: 16,
+        triggeredLabels: ['nsfw', 'minor'],
+        result: { version: 1, labels: { nsfw: { level: 'xxx', reason: 'a' }, minor: MINOR.minor } },
+      }) as any
+    );
+    vi.mocked(getWorkflow).mockResolvedValue(
+      segmented([{ ...MINOR, nsfw: { level: 'x', reason: 'X.' } }, 'TRUNCATED'], LABELS) as any
+    );
+    await handleTextScanCallback({ workflowId: 'wf-1', status: 'succeeded' });
+    expect(updateMany).toHaveBeenCalledTimes(1);
+    expect(adapter.applyTextScan).not.toHaveBeenCalled();
+    expect(adapter.applyFailure).toHaveBeenCalled();
+    expect(logged('partial verdict raised')).toBeUndefined();
+  });
+
+  it('raises nothing on a row a newer workflow already owns', async () => {
+    findUnique.mockResolvedValue(stored({ workflowId: 'wf-2' }) as any);
+    vi.mocked(getWorkflow).mockResolvedValue(segmented([MINOR, 'TRUNCATED'], LABELS) as any);
+    await handleTextScanCallback({ workflowId: 'wf-1', status: 'succeeded' });
+    expect(updateMany).toHaveBeenCalledTimes(1);
+    expect(adapter.applyTextScan).not.toHaveBeenCalled();
+  });
+
+  it('with no segment parsed, fails as before without reading the stored verdict', async () => {
+    vi.mocked(getWorkflow).mockResolvedValue(segmented(['TRUNCATED', 'TRUNCATED'], LABELS) as any);
+    await handleTextScanCallback({ workflowId: 'wf-1', status: 'succeeded' });
+    expect(updateMany).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(updateMany).mock.calls[0][0].data).toMatchObject({ status: 'Failed' });
+    expect(findUnique).not.toHaveBeenCalled();
+    expect(load).not.toHaveBeenCalled();
+    expect(adapter.applyTextScan).not.toHaveBeenCalled();
+    expect(adapter.applyFailure).toHaveBeenCalled();
+  });
+
+  it('still runs the failure hook when applying the partial verdict throws', async () => {
+    findUnique.mockResolvedValue(stored() as any);
+    adapter.applyTextScan.mockRejectedValueOnce(new Error('db down'));
+    vi.mocked(getWorkflow).mockResolvedValue(segmented([MINOR, 'TRUNCATED'], LABELS) as any);
+    await expect(
+      handleTextScanCallback({ workflowId: 'wf-1', status: 'succeeded' })
+    ).rejects.toThrow('db down');
+    expect(adapter.applyFailure).toHaveBeenCalled();
+    expect(updateMany).toHaveBeenCalledTimes(2);
+  });
+});

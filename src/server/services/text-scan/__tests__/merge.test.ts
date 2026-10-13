@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { mergeTextScanOutputs } from '~/server/services/text-scan/merge';
+import { mergeTextScanOutputs, stricterThanStored } from '~/server/services/text-scan/merge';
 import type { TextScanOutput } from '~/server/services/text-scan/types';
 
 describe('mergeTextScanOutputs', () => {
@@ -113,5 +113,40 @@ describe('mergeTextScanOutputs', () => {
 
   it('refuses an empty list', () => {
     expect(() => mergeTextScanOutputs([], ['nsfw'])).toThrow();
+  });
+});
+
+describe('stricterThanStored', () => {
+  const output = {
+    nsfw: { level: 'r' as const, reason: 'r' },
+    poi: { detected: true, names: ['A'], reason: 'p' },
+    minor: { detected: false, reason: 'm' },
+    scam: { detected: true, reason: 's' },
+  };
+  const all = ['nsfw', 'poi', 'minor', 'scam'] as const;
+
+  it('keeps a higher nsfw level and flags not already raised', () => {
+    expect(stricterThanStored({ nsfwLevel: 2, triggeredLabels: [] }, output, all)).toEqual([
+      'nsfw',
+      'poi',
+      'scam',
+    ]);
+  });
+
+  it('drops an equal or lower level, a PG level, and a flag stored in either field', () => {
+    expect(
+      stricterThanStored(
+        { nsfwLevel: 4, triggeredLabels: ['scam'], labels: { poi: output.poi } },
+        output,
+        all
+      )
+    ).toEqual([]);
+    expect(
+      stricterThanStored(
+        { nsfwLevel: null, triggeredLabels: [] },
+        { nsfw: { level: 'none', reason: '' } },
+        ['nsfw']
+      )
+    ).toEqual([]);
   });
 });

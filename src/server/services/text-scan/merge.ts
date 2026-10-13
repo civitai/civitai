@@ -1,4 +1,5 @@
-import { NSFW_LEVEL_NAMES } from '~/server/services/text-scan/types';
+import { NsfwLevel } from '~/server/common/enums';
+import { NSFW_LEVEL_NAMES, nsfwLevelFromName } from '~/server/services/text-scan/types';
 import type { TextScanLabel, TextScanOutput } from '~/server/services/text-scan/types';
 
 /** Empty for a one-segment scan. */
@@ -73,4 +74,29 @@ export function mergeTextScanOutputs(
     }
   }
   return { output, flaggedSegments };
+}
+
+export type StoredTextScanVerdict = {
+  nsfwLevel: number | null;
+  triggeredLabels: string[];
+  labels?: TextScanOutput;
+};
+
+/** The labels where `output` is stricter than the stored verdict: a higher nsfw level, or a flag not yet raised. */
+export function stricterThanStored(
+  stored: StoredTextScanVerdict,
+  output: TextScanOutput,
+  labels: readonly TextScanLabel[]
+): TextScanLabel[] {
+  return labels.filter((label) => {
+    if (label === 'nsfw') {
+      const level = output.nsfw ? nsfwLevelFromName[output.nsfw.level] : NsfwLevel.PG;
+      return level > NsfwLevel.PG && level > (stored.nsfwLevel ?? 0);
+    }
+    return (
+      !!output[label]?.detected &&
+      !stored.triggeredLabels.includes(label) &&
+      !stored.labels?.[label]?.detected
+    );
+  });
 }

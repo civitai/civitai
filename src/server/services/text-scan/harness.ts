@@ -405,7 +405,12 @@ async function scanComposed(input: ComposeInput & { wait: number }) {
       workflowId: data.id,
       promptIds: ctx.composed.promptIds,
       thinking: ctx.thinking,
-      parse: parsed,
+      parse: {
+        ok: false as const,
+        reason: parsed.reason,
+        detail: parsed.detail,
+        segment: parsed.segment,
+      },
       outcome: null,
       rawContent: bySegment.get(parsed.segment ?? 0)?.output?.choices?.[0]?.message?.content,
       elapsedMs: Date.now() - startedAt,
