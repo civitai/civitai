@@ -25,7 +25,9 @@ const { submitWorkflow } = await import('@civitai/client');
 const { getActiveTextScanPrompts, getTextScanConfig, insertTextScanPrompt, setTextScanConfig } =
   await import('~/server/services/text-scan/prompt');
 const { textScanContentHash } = await import('~/server/services/text-scan/submit');
-const { composeUserText, segmentUserText } = await import('~/server/services/text-scan/segment');
+const { composeUserText, segmentUserText, MIN_SEGMENT_CHARS } = await import(
+  '~/server/services/text-scan/segment'
+);
 
 registerTextScanProfile({
   entityType: 'Post',
@@ -200,6 +202,11 @@ describe('chat-completion-scan text-scan actions', () => {
     expect(
       (await call({ action: 'putConfig', moderatorId: 5, config: { other: 1 } }))._status()
     ).toBe(400);
+    expect(
+      (
+        await call({ action: 'putConfig', moderatorId: 5, config: { maxInputChars: 999 } })
+      )._status()
+    ).toBe(400);
     for (const maxSegments of [0, 21, 2.5, '4'])
       expect(
         (await call({ action: 'putConfig', moderatorId: 5, config: { maxSegments } }))._status()
@@ -219,6 +226,15 @@ describe('chat-completion-scan text-scan actions', () => {
     });
     expect(segments._status()).toBe(200);
     expect(setTextScanConfig).toHaveBeenLastCalledWith({ maxSegments: 20 }, { moderatorId: 5 });
+    expect(
+      (
+        await call({
+          action: 'putConfig',
+          moderatorId: 5,
+          config: { maxInputChars: MIN_SEGMENT_CHARS },
+        })
+      )._status()
+    ).toBe(200);
   });
 
   it('scanEntity composes the production prompt, applies overrides, and waits', async () => {
@@ -731,6 +747,20 @@ describe('free-text actions', () => {
     expect(res._status()).toBe(200);
   });
 
+  it('quoteTexts accepts a text of three segments at the production budget', async () => {
+    vi.mocked(getTextScanConfig).mockResolvedValue({ ...CONFIG, maxInputChars: 200_000 });
+    vi.mocked(submitWorkflow).mockResolvedValue({ data: { id: 'q', cost: { total: 3 } } } as never);
+    const res = await call({
+      action: 'quoteTexts',
+      entityType: 'Comment',
+      texts: [{ key: 'a', fields: [{ heading: 'Body', text: 'word '.repeat(110_000).trim() }] }],
+      promptOverrides: SCAM_OVERRIDES,
+    });
+    expect(res._status()).toBe(200);
+    expect(vi.mocked(submitWorkflow).mock.calls[0][0].body!.steps).toHaveLength(3);
+    expect((res._body() as { results: unknown[] }).results[0]).toMatchObject({ segments: 3 });
+  });
+
   it.each([
     {
       name: 'too many fields',
@@ -738,7 +768,7 @@ describe('free-text actions', () => {
     },
     {
       name: 'a text over its character cap',
-      texts: [{ key: 'a', fields: Array(3).fill({ heading: 'H', text: 'x'.repeat(70_000) }) }],
+      texts: [{ key: 'a', fields: Array(9).fill({ heading: 'H', text: 'x'.repeat(70_000) }) }],
     },
     {
       name: 'a request over its character cap',

@@ -10,7 +10,7 @@
   {#if result.workflowId}
     <p class="mt-1 break-all text-xs text-dark-2">
       Workflow <span class="font-mono text-dark-0">{result.workflowId}</span>{result.ok
-        ? ` · ${num(result.elapsedMs)} ms`
+        ? ` · ${num(result.elapsedMs)} ms${result.segments ? ` · ${result.segments} segments` : ''}`
         : ''}
     </p>
   {/if}

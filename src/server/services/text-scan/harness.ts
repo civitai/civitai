@@ -4,6 +4,7 @@ import * as z from 'zod';
 import { dbRead } from '~/server/db/client';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
 import { evaluateTextScan } from '~/server/services/text-scan/evaluate';
+import { MIN_SEGMENT_CHARS } from '~/server/services/text-scan/segment';
 import { mergeTextScanOutputs } from '~/server/services/text-scan/merge';
 import { parseTextScanSteps, textScanStepsBySegment } from '~/server/services/text-scan/parse';
 import type { ChatCompletionStepLike } from '~/server/services/text-scan/parse';
@@ -84,14 +85,14 @@ function refineTimeBudget(noun: string) {
 const textsWithinBudget = refineTimeBudget('texts');
 const entitiesWithinBudget = refineTimeBudget('entities');
 /**
- * Sized for real entities, which production composes in full and then splits into segments of
- * `maxInputChars`: a Model emits up to three fields per version. Mirrored by the moderator lab
+ * Sized for real entities, including ones past the per-call budget (`maxInputChars`), which scan as
+ * up to three segments here. Mirrored by the moderator lab
  * (apps/moderator/src/lib/text-scan-lab/limits.ts), which checks each text before sending.
  */
 export const TEXT_SCAN_HARNESS_LIMITS = {
   textsPerRequest: 50,
   fieldsPerText: 500,
-  charsPerText: 200_000,
+  charsPerText: 600_000,
   charsPerRequest: 1_000_000,
   headingChars: 100,
 } as const;
@@ -144,7 +145,7 @@ export const textScanHarnessSchema = z.discriminatedUnion('action', [
     config: z
       .strictObject({
         model: z.string().min(1).optional(),
-        maxInputChars: z.number().int().positive().optional(),
+        maxInputChars: z.number().int().min(MIN_SEGMENT_CHARS).optional(),
         maxSegments: z.number().int().min(1).max(MAX_SEGMENTS_LIMIT).optional(),
         thinking: z.boolean().optional(),
       })
