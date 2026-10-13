@@ -16,7 +16,11 @@ import {
   revokedScopesForToken,
   shouldConsultMarker,
 } from '~/server/services/blocks/consent-revocation.service';
-import { resolveAppBlockApprovalVerdict } from '~/server/services/blocks/block-approval.service';
+import {
+  resolveAppBlockApprovalVerdict,
+  resolveStrictAppBlockApproval,
+} from '~/server/services/blocks/block-approval.service';
+import { sanitizeAppSlug } from '~/server/utils/apps-slug';
 
 /**
  * THE authorization gate for the tRPC half of the host↔block postMessage bridge
@@ -28,8 +32,9 @@ import { resolveAppBlockApprovalVerdict } from '~/server/services/blocks/block-a
  * exists or the app is still allowed to run, so on its own it keeps honouring a token
  * for a whole lifetime after the user uninstalled the app or a moderator suspended it.
  * The two tRPC resolvers beside this one check both — `resolveStorageContext`
- * (apps.router) and `resolveSharedContext` (apps-shared.router). The bridge procs called
- * `verifyBlockToken` directly, thirteen times, and checked neither.
+ * (apps/app-storage.service) and `resolveSharedContext` (apps-shared.router) — and all three
+ * now do it through `resolveBlockToken` below. The bridge procs called `verifyBlockToken`
+ * directly, thirteen times, and checked neither.
  *
  * ⚠️ THE REST WRAPPER NOW HAS AN APPROVED-STATUS GATE TOO. This paragraph used to say it
  * checked revocation ONLY and that the resulting asymmetry was real and unclosed; that was
@@ -144,8 +149,157 @@ import { resolveAppBlockApprovalVerdict } from '~/server/services/blocks/block-a
  * reshuffle of these three steps.
  */
 export async function authorizeBlockBridgeToken(blockToken: string): Promise<BlockTokenClaims> {
+  const resolved = await resolveBlockToken(blockToken, {
+    order: 'revocation-first',
+    approval: 'bridge',
+    consent: 'strip',
+    metrics: 'bridge',
+    slugCheck: false,
+  });
+  if (!resolved.ok) throw blockTokenRefusalError(resolved.refusal);
+  return resolved.claims;
+}
+
+// ── THE ONE BLOCK-TOKEN RESOLVER ──────────────────────────────────────────────────────────
+//
+// `authorizeBlockBridgeToken` above, `resolveSharedContext` (`apps-shared.router.ts`) and
+// `resolveStorageContext` (`apps/app-storage.service.ts`) used to verify a block token three
+// times over, each with its own copy of the same steps. They now share this one, and their
+// differences are OPTIONS — every one of them required, none defaulted — because several of
+// them are deliberate and documented as such at each caller. Choosing an option is choosing
+// a policy: read the caller's comment before changing what it passes.
+//
+// What stays at each entry point: mapping a refusal onto its own response and counters, and
+// everything after the token resolves (per-op scope checks, subject hydration, flags, trust).
+
+/** Which of the two containment checks runs first. The refusal of the first one wins. */
+export type BlockTokenStepOrder = 'revocation-first' | 'approval-first';
+
+/**
+ * What the backing `app_blocks` row must say.
+ *   - `bridge` — the shared predicate `resolveAppBlockApprovalVerdict` and its exemptions
+ *     (run-for-real review, private run, no backing row on a dev token, owner + live dev
+ *     tunnel). A missing row answers `not_found`; a tunnel-lookup fault answers `not_approved`.
+ *   - `strict` — `resolveStrictAppBlockApproval`: the row must exist and be approved. No
+ *     exemption at all.
+ *   - `strict+reviewPreview` — `strict`, except that a token carrying the signed
+ *     `reviewRunForReal` claim reads no row and resolves to `review_preview`; the caller then
+ *     owns the review sandbox.
+ */
+export type BlockTokenApprovalPolicy = 'bridge' | 'strict' | 'strict+reviewPreview';
+
+/**
+ * Per-scope consent revocation.
+ *   - `strip` — read the viewer's marker and remove every revoked scope from the claims
+ *     returned; an unreadable marker refuses with `consent_unavailable`.
+ *   - `exempt-only` — no marker read. Sound only for a caller that authorizes nothing but
+ *     consent-exempt scopes; ledgered in
+ *     `src/server/services/__tests__/no-unguarded-block-rest-token.test.ts`.
+ */
+export type BlockTokenConsentMode = 'strip' | 'exempt-only';
+
+/**
+ * `bridge` emits the runtime refusal/strip counters labelled `surface=bridge`; `none` emits
+ * nothing (a caller with its own counter records it while mapping the refusal).
+ */
+export type BlockTokenMetrics = 'bridge' | 'none';
+
+export type BlockTokenRefusal =
+  | 'invalid_token'
+  | 'invalid_slug'
+  | 'revoked'
+  | 'not_found'
+  | 'not_approved'
+  | 'consent_unavailable';
+
+export interface ResolveBlockTokenOptions {
+  order: BlockTokenStepOrder;
+  approval: BlockTokenApprovalPolicy;
+  consent: BlockTokenConsentMode;
+  metrics: BlockTokenMetrics;
+  /** Refuse with `invalid_slug` when `claims.blockId` is not a usable storage slug. */
+  slugCheck: boolean;
+}
+
+/**
+ * `admitted` — the `bridge` policy let the token through (it carries no row id).
+ * `approved` — a `strict` policy read the row; `appBlockId` is the row's own id.
+ * `review_preview` — `strict+reviewPreview` answered a run-for-real review token.
+ */
+export type BlockTokenApproval =
+  | { kind: 'admitted' }
+  | { kind: 'approved'; appBlockId: string }
+  | { kind: 'review_preview' };
+
+/**
+ * ⚠️ DELIBERATELY NOT GENERIC over the options. The result is one plain union, so a caller
+ * checks what it needs (`slug` non-null, `approval.kind`) instead of trusting a narrowing the
+ * implementation could only assert — and so the function cannot be called with explicit type
+ * arguments, a spelling the caller ledgers (which look for the bare call) would not see.
+ */
+export type BlockTokenResolution =
+  | {
+      ok: true;
+      /** The verified claims — NARROWED by the consent strip when `consent: 'strip'`. */
+      claims: BlockTokenClaims;
+      /** The storage slug when `slugCheck` is on; `null` when it is off. */
+      slug: string | null;
+      approval: BlockTokenApproval;
+    }
+  | { ok: false; refusal: BlockTokenRefusal };
+
+/**
+ * Today's response for each refusal. One table, because the three entry points answer every
+ * refusal with the same code and the same message; per-entry counters stay with the entries.
+ */
+export function blockTokenRefusalError(refusal: BlockTokenRefusal): TRPCError {
+  switch (refusal) {
+    case 'invalid_token':
+      return new TRPCError({ code: 'UNAUTHORIZED', message: 'invalid block token' });
+    case 'invalid_slug':
+      return new TRPCError({
+        code: 'INTERNAL_SERVER_ERROR',
+        message: 'block id is not a valid storage slug',
+      });
+    case 'revoked':
+      return new TRPCError({ code: 'FORBIDDEN', message: 'block instance revoked' });
+    case 'not_found':
+      return new TRPCError({ code: 'NOT_FOUND', message: 'app block not found' });
+    case 'not_approved':
+      return new TRPCError({ code: 'FORBIDDEN', message: 'app block is not approved' });
+    case 'consent_unavailable':
+      // `SERVICE_UNAVAILABLE` rather than `FORBIDDEN` is the whole point — see the consent
+      // step in `resolveBlockToken` — and it is the one tRPC 5xx whose message survives
+      // `client-safe-error.ts`.
+      return new TRPCError({
+        code: 'SERVICE_UNAVAILABLE',
+        message: 'permission state is temporarily unavailable — retry shortly',
+      });
+  }
+  refusal satisfies never;
+  throw new Error(`unknown block-token refusal: ${String(refusal)}`);
+}
+
+/**
+ * Verify a block token and run the containment checks every token-bearing tRPC surface
+ * needs, in the order and under the policies the caller names. Returns a discriminated
+ * result rather than throwing for a refusal, so each caller keeps its own mapping onto
+ * responses and counters. A read that THROWS (the approval row, the verifier) propagates.
+ */
+export async function resolveBlockToken(
+  blockToken: string,
+  options: ResolveBlockTokenOptions
+): Promise<BlockTokenResolution> {
+  const refuse = (refusal: BlockTokenRefusal): BlockTokenResolution => ({ ok: false, refusal });
+
   const claims = await verifyBlockToken(blockToken);
-  if (!claims) throw new TRPCError({ code: 'UNAUTHORIZED', message: 'invalid block token' });
+  if (!claims) return refuse('invalid_token');
+
+  let slug: string | null = null;
+  if (options.slugCheck) {
+    slug = sanitizeAppSlug(claims.blockId);
+    if (!slug) return refuse('invalid_slug');
+  }
 
   // 🔴 STARTED HERE, AWAITED AFTER THE APPROVAL READ — so the consent GET pipelines with
   // `isRevoked`'s instead of adding a serial round trip. The first cut of this seam awaited it
@@ -154,30 +308,59 @@ export async function authorizeBlockBridgeToken(blockToken: string): Promise<Blo
   // two seams got it. Every input is available the moment the token verifies.
   //
   // Safe to leave unawaited on the refusal paths below: `ConsentRevocation.lookup` catches
-  // everything and resolves to a verdict, so an early throw cannot strand a rejection.
-  const consentUserId = parseSubjectUserId(claims.sub);
-  const consentLookup = shouldConsultMarker({ userId: consentUserId, scopes: claims.scopes })
-    ? ConsentRevocation.lookup({
-        // Non-null by `shouldConsultMarker`, which returns false for a null userId.
-        userId: consentUserId as number,
-        appBlockId: claims.appBlockId,
-      })
-    : null;
+  // everything and resolves to a verdict, so an early return cannot strand a rejection.
+  //
+  // ⚠️ `parseSubjectUserId` THROWS on a malformed `sub`, and under `strip` it runs here —
+  // before revocation — exactly where the bridge has always run it. Under `exempt-only` it
+  // does not run at all; those callers parse the subject themselves, later, each its own way.
+  let consentLookup: ReturnType<typeof ConsentRevocation.lookup> | null = null;
+  if (options.consent === 'strip') {
+    const consentUserId = parseSubjectUserId(claims.sub);
+    consentLookup = shouldConsultMarker({ userId: consentUserId, scopes: claims.scopes })
+      ? ConsentRevocation.lookup({
+          // Non-null by `shouldConsultMarker`, which returns false for a null userId.
+          userId: consentUserId as number,
+          appBlockId: claims.appBlockId,
+        })
+      : null;
+  }
 
   // Per-instance revocation. Keyed on the token's OWN `blockInstanceId` claim, never on
   // anything the caller sent. Dev and review-sandbox tokens carry a synthetic but stable
   // instance id minted for exactly this purpose, so they are covered too.
   // `claims.sub` verbatim — same reason as the REST wrapper; see `bannedSubjectKey`.
-  if (await BlockRevocation.isRevoked(claims.blockInstanceId, claims.sub)) {
+  const isRevoked = async (): Promise<boolean> => {
+    if (!(await BlockRevocation.isRevoked(claims.blockInstanceId, claims.sub))) return false;
     // Same counter the REST wrapper emits, different `surface` label — both guards read
     // the same primitive, and a series that could not tell them apart would leave you
     // unable to say which half of the surface refused. See the counter's own comment for
     // why this mechanism had no signal at all before clawgate #618.
-    recordBlockRevocationRefusal('bridge', claims.blockInstanceId);
-    throw new TRPCError({ code: 'FORBIDDEN', message: 'block instance revoked' });
-  }
+    if (options.metrics === 'bridge') {
+      recordBlockRevocationRefusal('bridge', claims.blockInstanceId);
+    }
+    return true;
+  };
 
-  await assertAppBlockApproved(claims);
+  // The order decides which refusal wins for a token that is BOTH revoked and not approved,
+  // and whether the approval row is read at all for a revoked one.
+  let approval: BlockTokenApproval;
+  if (options.order === 'revocation-first') {
+    if (await isRevoked()) return refuse('revoked');
+    const outcome = await resolveApproval(claims, options.approval);
+    if (outcome.kind === 'refused') return refuse(outcome.refusal);
+    approval = outcome;
+  } else {
+    const outcome = await resolveApproval(claims, options.approval);
+    if (outcome.kind === 'refused') return refuse(outcome.refusal);
+    approval = outcome;
+    if (await isRevoked()) return refuse('revoked');
+  }
+  const resolved = (out: BlockTokenClaims): BlockTokenResolution => ({
+    ok: true,
+    claims: out,
+    slug,
+    approval,
+  });
 
   // ── PER-SCOPE CONSENT REVOCATION, ON THE BRIDGE.
   //
@@ -228,11 +411,8 @@ export async function authorizeBlockBridgeToken(blockToken: string): Promise<Blo
       // bridge call 503'd while the consent series read a flat ZERO on `surface=bridge` — and
       // that series' help text tells the operator to expect the opposite. Same defect as the
       // REST strip branch emitting nothing, one round later and one surface over.
-      recordBlockConsentMarkerUnavailable('bridge');
-      throw new TRPCError({
-        code: 'SERVICE_UNAVAILABLE',
-        message: 'permission state is temporarily unavailable — retry shortly',
-      });
+      if (options.metrics === 'bridge') recordBlockConsentMarkerUnavailable('bridge');
+      return refuse('consent_unavailable');
     }
 
     const revoked = revokedScopesForToken(verdict, claims.scopes);
@@ -241,17 +421,41 @@ export async function authorizeBlockBridgeToken(blockToken: string): Promise<Blo
       // `applyRevocations` returns the SAME object when nothing changed, so identity is the
       // cheap test for "did this request lose a scope". The emitter is SHARED with the REST seam
       // so the two cannot report different things under one counter name.
-      recordConsentStrip('bridge', claims.scopes, revoked);
-      return narrowed;
+      if (options.metrics === 'bridge') recordConsentStrip('bridge', claims.scopes, revoked);
+      return resolved(narrowed);
     }
   }
 
-  return claims;
+  return resolved(claims);
+}
+
+type ApprovalOutcome = BlockTokenApproval | { kind: 'refused'; refusal: BlockTokenRefusal };
+
+/** The approval step, under the caller's policy. See `BlockTokenApprovalPolicy`. */
+async function resolveApproval(
+  claims: BlockTokenClaims,
+  policy: BlockTokenApprovalPolicy
+): Promise<ApprovalOutcome> {
+  if (policy === 'bridge') return assertAppBlockApproved(claims);
+  // The run-for-real review token's ONLY exemption on the storage path, taken BEFORE the row
+  // is read — the review mint signs an `appId` that resolves to no row. The caller resolves
+  // the disposable review schema itself; this step only says that it must.
+  if (policy === 'strict+reviewPreview' && claims.reviewRunForReal === true) {
+    return { kind: 'review_preview' };
+  }
+  const strict = await resolveStrictAppBlockApproval(claims);
+  if (strict.verdict === 'approved') return { kind: 'approved', appBlockId: strict.appBlockId };
+  return { kind: 'refused', refusal: strict.verdict };
 }
 
 /**
  * The backing `app_blocks` row must still be `approved`. Resolved by the same
  * `(appId, blockId)` unique the sibling resolvers use, and from the token's claims only.
+ *
+ * ⚠️ IT NO LONGER THROWS, despite the name: it returns the `bridge` policy's outcome and
+ * `authorizeBlockBridgeToken` maps a refusal onto the same `TRPCError` it always threw. The
+ * name is kept because comments elsewhere — including in modules this consolidation does
+ * not touch — point readers here by it.
  *
  * 🔴 THE EXEMPTION IS NO LONGER "A `dev` TOKEN", AND THIS PARAGRAPH USED TO SAY IT WAS.
  * It justified a bare `claims.dev === true` short-circuit by listing the belts
@@ -304,7 +508,7 @@ export async function authorizeBlockBridgeToken(blockToken: string): Promise<Blo
  *     counter, which is a metrics change rather than a guard one. Recorded here so the
  *     next reader does not infer from the REST series that this surface is covered.
  */
-async function assertAppBlockApproved(claims: BlockTokenClaims): Promise<void> {
+async function assertAppBlockApproved(claims: BlockTokenClaims): Promise<ApprovalOutcome> {
   const verdict = await resolveAppBlockApprovalVerdict(claims);
   // 🔴 `private_run_exempt` IS ADMITTED HERE, and it is the one exemption that lets a
   // NON-OWNER reach the bridge on a non-approved app. Listed explicitly rather than
@@ -313,22 +517,22 @@ async function assertAppBlockApproved(claims: BlockTokenClaims): Promise<void> {
   // NOT here — it is the mint: a self-bound `sub`, scopes clamped to the app's last
   // moderator-approved snapshot with the tip rail stripped, a per-call budget and a
   // per-(viewer, app) aggregate ceiling.
-  if (verdict === 'ok' || verdict === 'dev_exempt' || verdict === 'private_run_exempt') return;
-  if (verdict === 'not_found') {
-    throw new TRPCError({ code: 'NOT_FOUND', message: 'app block not found' });
+  if (verdict === 'ok' || verdict === 'dev_exempt' || verdict === 'private_run_exempt') {
+    return { kind: 'admitted' };
   }
+  if (verdict === 'not_found') return { kind: 'refused', refusal: 'not_found' };
   if (verdict === 'not_approved' || verdict === 'tunnel_lookup_failed') {
     // 🔴 THE SAME REFUSAL FOR BOTH, DELIBERATELY — identical code AND identical message.
     // `tunnel_lookup_failed` is a separate verdict so the REST counter can attribute it,
     // not so the caller can tell the two apart: a block that learned "the dev-tunnel cache
     // is down" rather than "not approved" would be a state oracle on infrastructure, for
     // no benefit to it. The split is for the operator, not the bearer.
-    throw new TRPCError({ code: 'FORBIDDEN', message: 'app block is not approved' });
+    return { kind: 'refused', refusal: 'not_approved' };
   }
   // Compile-time exhaustiveness: a verdict added to the shared union fails to build here
   // until this path decides what it means, rather than inheriting "not approved" — the
   // two policies already differ on `not_found`, so a silent default is the wrong shape.
   // Runtime still fails CLOSED on an unexpected value.
   verdict satisfies never;
-  throw new TRPCError({ code: 'FORBIDDEN', message: 'app block is not approved' });
+  return { kind: 'refused', refusal: 'not_approved' };
 }

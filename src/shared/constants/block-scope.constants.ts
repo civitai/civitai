@@ -200,9 +200,10 @@ export type BlockScopeString = keyof typeof BLOCK_SCOPE_TO_OAUTH_BIT;
  * as a block JWS:
  *
  *   - `apps:storage:read` / `apps:storage:write`  → `resolveStorageContext`
- *     (`server/services/apps/app-storage.service.ts`) — `verifyBlockToken(blockToken)`.
+ *     (`server/services/apps/app-storage.service.ts`), through `resolveBlockToken`
+ *     (`server/services/blocks/block-bridge-auth.service.ts`), which calls `verifyBlockToken`.
  *   - `apps:storage:shared:read` / `…:shared:write` → `resolveSharedContext`
- *     (`server/routers/apps-shared.router.ts`) — `verifyBlockToken(blockToken)`, reached
+ *     (`server/routers/apps-shared.router.ts`), through the same `resolveBlockToken`, reached
  *     from eleven `/api/v1/blocks/shared-storage/*` routes that each pass `bearer(req)`
  *     back down after the middleware already verified it.
  *
@@ -220,9 +221,11 @@ export type BlockScopeString = keyof typeof BLOCK_SCOPE_TO_OAUTH_BIT;
  * because a new storage scope DOES read middleware-resolved claims, update the ledger and
  * this docblock in the same commit.
  *
- * The eleven routes and the four `verifyBlockToken` call sites have their OWN ledgers in
- * `src/server/middleware/__tests__/block-token-kind-app-storage-seam.test.ts`. When the
- * first of those empties out, this family stops needing the manifest refusal at all.
+ * The eleven routes and the two `verifyBlockToken` call sites have their OWN ledgers in
+ * `src/server/middleware/__tests__/block-token-kind-app-storage-seam.test.ts`; the callers of
+ * `resolveBlockToken` are ledgered in
+ * `src/server/services/__tests__/no-unguarded-block-rest-token.test.ts`. When the first of
+ * those empties out, this family stops needing the manifest refusal at all.
  */
 export const APP_STORAGE_SCOPE_PREFIX = 'apps:storage:';
 export const APP_STORAGE_SCOPES: readonly string[] = Object.keys(BLOCK_SCOPE_TO_OAUTH_BIT).filter(
