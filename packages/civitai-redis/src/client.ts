@@ -2500,6 +2500,12 @@ export const REDIS_SYS_KEYS = {
      */
     MODES: 'system:text-scan:modes',
     /*
+      Use: per-entity-type rollout of the web-search pass (text-scan harness `putWebSearchModes`).
+        Model only; a missing field is off, and the effective mode never exceeds the MODES one.
+      Structure: hset, field = entity type ("Model"), value = json { "shadow": 0-100, "active": 0-100 }
+     */
+    WEB_SEARCH: 'system:text-scan:web-search',
+    /*
       Use: Clavata keys (e.g. "Model", "Chat") cut over to text scan by `disableClavataFor`. The
         Clavata job skips them only while the `text-scan` Flipt kill switch is on.
       Structure: set of Clavata keys
