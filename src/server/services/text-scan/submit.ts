@@ -310,6 +310,8 @@ export async function scanEntity({
     model: config.model,
     thinking: config.thinking,
     textHash: textScanTextHash(subject),
+    inputChars: composed.inputChars,
+    inputCut: composed.inputCut,
     ...(subject.meta ? { subjectMeta: subject.meta } : {}),
   };
 

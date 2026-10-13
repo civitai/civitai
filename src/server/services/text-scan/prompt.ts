@@ -19,7 +19,7 @@ import { throwAuthorizationError, throwBadRequestError } from '~/server/utils/er
 
 export const DEFAULT_TEXT_SCAN_MODEL =
   'urn:air:qwen3:repository:huggingface:gittensor-model-hub/Qwen3.8-27B-NVFP4-RTX5090@main.tar';
-const DEFAULT_MAX_INPUT_CHARS = 12000;
+const DEFAULT_MAX_INPUT_CHARS = 200000;
 
 export type TextScanConfig = { model: string; maxInputChars: number; thinking: boolean };
 
@@ -161,12 +161,15 @@ export function subjectTextLength(subject: TextScanSubject) {
   return subject.fields.reduce((sum, field) => sum + (field.text?.trim().length ?? 0), 0);
 }
 
-export function composeUserMessage(subject: TextScanSubject, maxInputChars: number) {
+function composeFullText(subject: TextScanSubject) {
   return subject.fields
     .filter((field) => field.text?.trim())
     .map((field) => `## ${field.heading}\n${field.text!.trim()}`)
-    .join('\n\n')
-    .slice(0, maxInputChars);
+    .join('\n\n');
+}
+
+export function composeUserMessage(subject: TextScanSubject, maxInputChars: number) {
+  return composeFullText(subject).slice(0, maxInputChars);
 }
 
 export function composeTextScanMessages({
@@ -193,7 +196,14 @@ export function composeTextScanMessages({
   const promptIds: PromptIds = { base: prompts.base.id };
   for (const label of labels) promptIds[label] = prompts[`label:${label}`].id;
 
-  return { system, user: composeUserMessage(subject, maxInputChars), promptIds };
+  const full = composeFullText(subject);
+  return {
+    system,
+    user: full.slice(0, maxInputChars),
+    promptIds,
+    inputChars: full.length,
+    inputCut: full.length > maxInputChars,
+  };
 }
 
 /** Uncapped and prompt-independent, unlike the dedup hash: appeal and re-file gates compare it. */
