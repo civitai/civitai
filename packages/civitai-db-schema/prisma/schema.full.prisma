@@ -6779,7 +6779,6 @@ model AppealDecisionRecord {
   id                       BigInt    @id @default(autoincrement())
   appealId                 Int       @unique
   imageId                  Int
-  ownerId                  Int
   imageUrl                 String
   pHash                    BigInt?
   promptHash               String?
@@ -6797,7 +6796,6 @@ model AppealDecisionRecord {
   createdAt                DateTime  @default(now()) @db.Timestamptz(3)
 
   @@index([imageId])
-  @@index([ownerId])
 }
 
 enum AuctionType {

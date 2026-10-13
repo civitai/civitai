@@ -421,7 +421,6 @@ export type AppealDecisionRecord = {
   id: Generated<string>;
   appealId: number;
   imageId: number;
-  ownerId: number;
   imageUrl: string;
   pHash: string | null;
   promptHash: string | null;

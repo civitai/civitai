@@ -1,15 +1,13 @@
 -- Image appeal outcomes, kept as labelled examples for evaluating the content classifiers.
 --
 -- A trigger on "Appeal" writes one row when an image appeal is decided. It snapshots the image at
--- decision time because a rejected image is purged a few days later, taking its url, pHash and level
--- with it. A trigger rather than app code because appeals are decided by several writers (both apps'
--- resolve paths, accept, bulk actions, the minor-flag queue), and a record one of them can skip is not
--- a record. The nightly `appeal-decision-records` job fills `removalLabel` and `restoredLevel`, which
--- are not known at decision time, and deletes rows the exclusion rules below cover.
+-- decision time because a rejected image is later purged, taking its url, pHash and level with it. A
+-- trigger rather than app code because several code paths decide appeals, and a record any of them can
+-- skip is not a record. The nightly `appeal-decision-records` job fills what is not known at decision
+-- time and deletes rows that later become ineligible.
 --
--- Excluded from the start: an image under a CSAM flag or in any CSAM report, and an image whose owner
--- is named in one. The trigger writes nothing for those; the nightly job deletes any row that becomes
--- excluded later.
+-- The record must never block the decision: the function runs as its owner (so it does not depend on
+-- the deciding role's grants on this table) and swallows its own errors as a WARNING.
 --
 -- Apply order: any time; the trigger is inert until an image appeal is decided.
 --
@@ -21,7 +19,6 @@ CREATE TABLE IF NOT EXISTS "AppealDecisionRecord" (
   "id"                       BIGSERIAL PRIMARY KEY,
   "appealId"                 INTEGER NOT NULL,
   "imageId"                  INTEGER NOT NULL,
-  "ownerId"                  INTEGER NOT NULL,
   "imageUrl"                 TEXT NOT NULL,
   "pHash"                    BIGINT,
   "promptHash"               TEXT,
@@ -41,31 +38,39 @@ CREATE TABLE IF NOT EXISTS "AppealDecisionRecord" (
 
 CREATE UNIQUE INDEX IF NOT EXISTS "AppealDecisionRecord_appealId_key" ON "AppealDecisionRecord" ("appealId");
 CREATE INDEX IF NOT EXISTS "AppealDecisionRecord_imageId_idx" ON "AppealDecisionRecord" ("imageId");
-CREATE INDEX IF NOT EXISTS "AppealDecisionRecord_ownerId_idx" ON "AppealDecisionRecord" ("ownerId");
 
+-- Must match `excludedRecord` in src/server/jobs/appeal-decision-records.ts; edit both together.
 CREATE OR REPLACE FUNCTION appeal_decision_record()
 RETURNS trigger
 LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
 AS $$
 BEGIN
-  INSERT INTO "AppealDecisionRecord" (
-    "appealId", "imageId", "ownerId", "imageUrl", "pHash", "promptHash", "nsfwLevel",
-    "nsfwLevelLocked", "nsfwLevelReason", "aiNsfwLevel", "blockedFor", "decision", "resolvedReason",
-    "decidedAt"
-  )
-  SELECT
-    NEW.id, i.id, i."userId", i.url, i."pHash", md5(i.meta->>'prompt'), i."nsfwLevel",
-    i."nsfwLevelLocked", i.metadata->>'nsfwLevelReason', i."aiNsfwLevel", i."blockedFor",
-    NEW.status::text, NEW."resolvedReason", coalesce(NEW."resolvedAt", now())
-  FROM "Image" i
-  WHERE i.id = NEW."entityId"
-    AND i."needsReview" IS DISTINCT FROM 'csam'
-    AND NOT EXISTS (
-      SELECT 1 FROM "CsamReport" c
-      WHERE c."userId" = i."userId"
-         OR c.images @> jsonb_build_array(jsonb_build_object('id', i.id))
+  BEGIN
+    INSERT INTO "AppealDecisionRecord" (
+      "appealId", "imageId", "imageUrl", "pHash", "promptHash", "nsfwLevel",
+      "nsfwLevelLocked", "nsfwLevelReason", "aiNsfwLevel", "blockedFor", "decision", "resolvedReason",
+      "decidedAt"
     )
-  ON CONFLICT ("appealId") DO NOTHING;
+    SELECT
+      NEW.id, i.id, i.url, i."pHash", md5(i.meta->>'prompt'), i."nsfwLevel",
+      i."nsfwLevelLocked", i.metadata->>'nsfwLevelReason', i."aiNsfwLevel", i."blockedFor",
+      -- "resolvedAt" is a zoneless timestamp holding UTC (Prisma's convention).
+      NEW.status::text, NEW."resolvedReason", coalesce(NEW."resolvedAt" AT TIME ZONE 'UTC', now())
+    FROM "Image" i
+    WHERE i.id = NEW."entityId"
+      AND i."needsReview" IS DISTINCT FROM 'csam'
+      AND i."blockedFor" IS DISTINCT FROM 'CSAM'
+      AND i."userId" NOT IN (SELECT c."userId" FROM "CsamReport" c WHERE c."userId" IS NOT NULL)
+      AND NOT EXISTS (
+        SELECT 1 FROM "CsamReport" c
+        WHERE c.images @> jsonb_build_array(jsonb_build_object('id', i.id))
+      )
+    ON CONFLICT ("appealId") DO NOTHING;
+  EXCEPTION WHEN OTHERS THEN
+    RAISE WARNING 'appeal_decision_record: appeal % not recorded: %', NEW.id, SQLERRM;
+  END;
   RETURN NULL;
 END;
 $$;

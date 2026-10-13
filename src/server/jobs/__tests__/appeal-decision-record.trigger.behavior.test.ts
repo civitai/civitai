@@ -8,8 +8,8 @@ vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
 /**
  * What the `appeal_decision_record` trigger writes, executed on an in-process Postgres running the
- * committed migration unmodified. Each exclusion case has a twin that differs only in the excluded
- * property and does write a row, so a zero cannot come from a trigger that writes nothing at all.
+ * committed migration unmodified. Each case that expects no row has a twin that differs in one property
+ * and does write one, so a zero cannot come from a trigger that writes nothing at all.
  */
 
 const MIGRATION = path.resolve(
@@ -20,7 +20,9 @@ const MIGRATION = path.resolve(
 const db = { pg: null as unknown as PGlite };
 
 const OWNER = 11;
+const APPELLANT = 12; // differs from the owner, so the owner exclusion is seen to key on the owner
 const IMAGE = 501;
+const DECIDED_AT = '2026-01-02T03:04:05.000Z';
 
 beforeAll(async () => {
   db.pg = await PGlite.create();
@@ -75,25 +77,26 @@ beforeEach(async () => {
   );
   await db.pg.query(
     `INSERT INTO "Appeal" ("userId", "entityType", "entityId") VALUES ($1, 'Image', $2)`,
-    [OWNER, IMAGE]
+    [APPELLANT, IMAGE]
   );
 });
 
 const records = async () =>
   (
     await db.pg.query<Record<string, unknown>>(
-      `SELECT "appealId", "imageId", "ownerId", "imageUrl", "pHash"::text AS "pHash", "promptHash",
+      `SELECT "appealId", "imageId", "imageUrl", "pHash"::text AS "pHash", "promptHash",
               "nsfwLevel", "nsfwLevelLocked", "nsfwLevelReason", "aiNsfwLevel", "blockedFor",
-              "decision", "resolvedReason"
+              "decision", "resolvedReason", to_char("decidedAt" AT TIME ZONE 'UTC',
+                'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "decidedAt"
        FROM "AppealDecisionRecord" ORDER BY id`
     )
   ).rows;
 
 const decide = (status: string, reason: string | null = 'misclassified') =>
   db.pg.query(
-    `UPDATE "Appeal" SET "status" = $1::"AppealStatus", "resolvedReason" = $2, "resolvedAt" = now()
+    `UPDATE "Appeal" SET "status" = $1::"AppealStatus", "resolvedReason" = $2, "resolvedAt" = $3
      WHERE "status" = 'Pending'`,
-    [status, reason]
+    [status, reason, DECIDED_AT]
   );
 
 describe('a decided image appeal', () => {
@@ -104,7 +107,6 @@ describe('a decided image appeal', () => {
       {
         appealId: 1,
         imageId: IMAGE,
-        ownerId: OWNER,
         imageUrl: 'u-501',
         pHash: '77',
         promptHash: (await db.pg.query<{ h: string }>(`SELECT md5('a cat') AS h`)).rows[0].h,
@@ -115,6 +117,7 @@ describe('a decided image appeal', () => {
         blockedFor: 'moderated',
         decision: 'Approved',
         resolvedReason: 'misclassified',
+        decidedAt: DECIDED_AT,
       },
     ]);
   });
@@ -125,6 +128,17 @@ describe('a decided image appeal', () => {
     expect((await records()).map((r) => [r.decision, r.resolvedReason])).toEqual([
       ['Rejected', 'violation-confirmed'],
     ]);
+  });
+
+  it('falls back to now() when the decision carries no resolvedAt', async () => {
+    await db.pg.exec(`UPDATE "Appeal" SET "status" = 'Approved'`);
+
+    const [{ fresh }] = (
+      await db.pg.query<{ fresh: boolean }>(
+        `SELECT "decidedAt" > now() - interval '1 minute' AS fresh FROM "AppealDecisionRecord"`
+      )
+    ).rows;
+    expect(fresh).toBe(true);
   });
 
   it('writes nothing for a void', async () => {
@@ -140,11 +154,13 @@ describe('a decided image appeal', () => {
     expect(await records()).toEqual([]);
   });
 
-  it('writes once: touching a decided appeal again adds nothing', async () => {
+  it('keeps the first decision when a decided appeal is changed again', async () => {
     await decide('Approved');
-    await db.pg.exec(`UPDATE "Appeal" SET "status" = 'Approved', "resolvedReason" = 'other'`);
+    await db.pg.exec(`UPDATE "Appeal" SET "status" = 'Rejected', "resolvedReason" = 'other'`);
 
-    expect(await records()).toHaveLength(1);
+    expect((await records()).map((r) => [r.decision, r.resolvedReason])).toEqual([
+      ['Approved', 'misclassified'],
+    ]);
   });
 
   it('writes nothing when the image no longer exists', async () => {
@@ -155,9 +171,43 @@ describe('a decided image appeal', () => {
   });
 });
 
-describe('CSAM exclusions', () => {
-  // The CSAM report path sets the flag and closes the appeal in one transaction, flag first.
-  const closeAsCsamReportDoes = async (flag: string | null) => {
+describe('never blocks the decision', () => {
+  it('records even when the deciding role has no grant on the record table', async () => {
+    await db.pg.exec(`
+      DO $$ BEGIN CREATE ROLE appeal_writer; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+      GRANT SELECT, UPDATE ON "Appeal" TO appeal_writer;
+      GRANT SELECT ON "Image", "CsamReport" TO appeal_writer;
+      SET ROLE appeal_writer;
+    `);
+    try {
+      await decide('Rejected');
+    } finally {
+      await db.pg.exec(`RESET ROLE`);
+    }
+
+    expect(await records()).toHaveLength(1);
+  });
+
+  it('lets the decision through when the record cannot be written', async () => {
+    await db.pg.exec(
+      `ALTER TABLE "AppealDecisionRecord" ADD CONSTRAINT refuse_all CHECK (false) NOT VALID`
+    );
+    try {
+      await decide('Approved');
+    } finally {
+      await db.pg.exec(`ALTER TABLE "AppealDecisionRecord" DROP CONSTRAINT refuse_all`);
+    }
+
+    expect((await db.pg.query<{ status: string }>(`SELECT "status" FROM "Appeal"`)).rows).toEqual([
+      { status: 'Approved' },
+    ]);
+    expect(await records()).toEqual([]);
+  });
+});
+
+describe('exclusions', () => {
+  // Flag first, then close, in one transaction.
+  const flagAndClose = async (flag: string | null) => {
     await db.pg.transaction(async (tx) => {
       await tx.query(`UPDATE "Image" SET "needsReview" = $1 WHERE "id" = $2`, [flag, IMAGE]);
       await tx.query(
@@ -166,19 +216,33 @@ describe('CSAM exclusions', () => {
     });
   };
 
-  it('writes nothing when the image is CSAM-flagged at close', async () => {
-    await closeAsCsamReportDoes('csam');
+  it('writes nothing for an image flagged at close', async () => {
+    await flagAndClose('csam');
 
     expect(await records()).toEqual([]);
   });
 
-  it('control: the same close with another flag writes a row', async () => {
-    await closeAsCsamReportDoes('minor');
+  it('control: the same close without that flag writes a row', async () => {
+    await flagAndClose(null);
 
     expect(await records()).toHaveLength(1);
   });
 
-  it('writes nothing when the image is in a CSAM report', async () => {
+  it('writes nothing for an image carrying the block marker', async () => {
+    await db.pg.exec(`UPDATE "Image" SET "blockedFor" = 'CSAM'`);
+    await decide('Rejected');
+
+    expect(await records()).toEqual([]);
+  });
+
+  it('control: another block reason writes a row', async () => {
+    await db.pg.exec(`UPDATE "Image" SET "blockedFor" = 'tos'`);
+    await decide('Rejected');
+
+    expect(await records()).toHaveLength(1);
+  });
+
+  it('writes nothing for an image named in a report', async () => {
     await db.pg.query(`INSERT INTO "CsamReport" ("images") VALUES ($1)`, [
       JSON.stringify([{ id: 1 }, { id: IMAGE, hash: 'h' }]),
     ]);
@@ -196,15 +260,15 @@ describe('CSAM exclusions', () => {
     expect(await records()).toHaveLength(1);
   });
 
-  it("writes nothing when the image's owner is named in a CSAM report", async () => {
+  it("writes nothing when the image's owner is named in a report", async () => {
     await db.pg.query(`INSERT INTO "CsamReport" ("userId") VALUES ($1)`, [OWNER]);
     await decide('Approved');
 
     expect(await records()).toEqual([]);
   });
 
-  it('control: a report on another user does not exclude this owner', async () => {
-    await db.pg.query(`INSERT INTO "CsamReport" ("userId") VALUES ($1)`, [OWNER + 1]);
+  it('control: a report naming the appellant, not the owner, does not exclude', async () => {
+    await db.pg.query(`INSERT INTO "CsamReport" ("userId") VALUES ($1)`, [APPELLANT]);
     await decide('Approved');
 
     expect(await records()).toHaveLength(1);

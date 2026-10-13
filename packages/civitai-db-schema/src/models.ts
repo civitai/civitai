@@ -4208,7 +4208,6 @@ export interface AppealDecisionRecord {
   id: bigint;
   appealId: number;
   imageId: number;
-  ownerId: number;
   imageUrl: string;
   pHash: bigint | null;
   promptHash: string | null;
