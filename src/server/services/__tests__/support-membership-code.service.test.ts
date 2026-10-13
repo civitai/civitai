@@ -328,9 +328,10 @@ describe('revokeSupportMembershipCode', () => {
   it('expires an open code now and records who revoked it, guarded on still being unredeemed', async () => {
     const result = await revoke();
     expect(tx.redeemableCode.updateMany).toHaveBeenCalledWith({
-      where: { code: CODE, redeemedAt: null },
+      where: { code: CODE, userId: TARGET, redeemedAt: null },
       data: {
-        expiresAt: NOW,
+        // The epoch, so a redeem that read the clock before this revoke still fails its expiry check.
+        expiresAt: new Date(0),
         metadata: {
           source: 'moderator-membership-code',
           mintedBy: 5,
@@ -363,6 +364,7 @@ describe('revokeSupportMembershipCode', () => {
       'CONFLICT',
     ],
     ['already expired', openCode({ expiresAt: new Date('2026-10-01') }), 'CONFLICT'],
+    ['expiring exactly now', openCode({ expiresAt: NOW }), 'CONFLICT'],
   ])('refuses a code that is %s, and changes nothing', async (_l, row, code) => {
     tx.redeemableCode.findFirst.mockResolvedValue(row);
     await expect(revoke()).rejects.toMatchObject({ code });
@@ -381,5 +383,19 @@ describe('revokeSupportMembershipCode', () => {
     expect(trackModActivity.mock.calls[0][1].activity.startsWith('mintMembershipCode:')).toBe(
       false
     );
+  });
+});
+
+describe('revokeSupportMembershipCode: refusal order', () => {
+  it('a code both redeemed and marked revoked reports as redeemed', async () => {
+    tx.redeemableCode.findFirst.mockResolvedValue(
+      openCode({
+        redeemedAt: new Date('2026-10-02'),
+        metadata: { ...openCode().metadata, revokedAt: '2026-10-01T00:00:00.000Z' },
+      })
+    );
+    await expect(
+      revokeSupportMembershipCode({ code: CODE, forUserId: TARGET, moderatorId: MODERATOR })
+    ).rejects.toThrow('already been redeemed');
   });
 });

@@ -25,6 +25,7 @@ export {
 
 /** ModActivity prefix. The daily cap counts it, so renaming it resets every moderator's count. */
 const ACTIVITY_PREFIX = 'mintMembershipCode:';
+const REVOKED_EXPIRY = new Date(0);
 
 const CODE_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
 const codePart = () =>
@@ -180,9 +181,12 @@ export async function revokeSupportMembershipCode({
     // Guarded on still being unredeemed: a redemption that landed after the read wins, and nothing
     // is recorded as revoked.
     const { count } = await tx.redeemableCode.updateMany({
-      where: { code, redeemedAt: null },
+      where: { code, userId: forUserId, redeemedAt: null },
       data: {
-        expiresAt: now,
+        // The epoch, not `now`: a redeem already in flight compares expiresAt against its own
+        // earlier clock reading, and would still beat a "now" written by this revoke. The revoke
+        // time is kept in metadata.
+        expiresAt: REVOKED_EXPIRY,
         metadata: { ...metadata, revokedBy: moderatorId, revokedAt: now.toISOString() },
       },
     });

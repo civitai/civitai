@@ -60,17 +60,25 @@
       months = '';
       reason = '';
       copyState = 'idle';
-      version += 1;
+      revoke.error = null;
     },
     // Disarm after every answer, failures included: a "may have minted" warning must not sit above a
     // live confirm button.
-    onSettled: () => (confirming = false),
+    // Refetch after every answer: a "may have minted" failure must show whether the code landed.
+    onSettled: () => {
+      confirming = false;
+      version += 1;
+    },
   });
 
   const revoke = new FormState({
     reset: false,
-    onSuccess: () => (version += 1),
-    onSettled: () => (revoking = null),
+    onSuccess: null,
+    // After any answer, including "could not confirm": the list is what tells the operator.
+    onSettled: () => {
+      revoking = null;
+      version += 1;
+    },
   });
 
   const copy = async (code: string) => {
@@ -185,7 +193,7 @@
   {/if}
   {#if codes}
     {#await codes}
-      <p class="text-xs text-dark-2">Loading…</p>
+      <p class="text-xs text-dark-2">Loading codes…</p>
     {:then rows}
       {#if rows.length === 0}
         <p class="text-xs text-dark-2">None.</p>
@@ -222,8 +230,9 @@
           {/each}
         </ul>
       {/if}
-    {:catch}
-      <p class="text-xs text-red-400">Could not load this account's codes.</p>
+    {:catch e}
+      <ErrorAlert message={`Could not load this account's codes (${(e as Error).message}).`} />
+      <Button size="sm" variant="outline" class="mt-2" onclick={() => (version += 1)}>Retry</Button>
     {/await}
   {/if}
 </section>

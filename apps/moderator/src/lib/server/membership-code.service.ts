@@ -1,5 +1,5 @@
 import { sql } from 'kysely';
-import { dbRead } from '$lib/server/db';
+import { dbWrite } from '$lib/server/db';
 import { SUPPORT_CODE_SOURCE } from '$lib/membership-code';
 
 /**
@@ -8,7 +8,9 @@ import { SUPPORT_CODE_SOURCE } from '$lib/membership-code';
  * shop and gift codes out of a list that offers Revoke.
  */
 export async function listSupportMembershipCodes(userId: number) {
-  const rows = await dbRead
+  // The primary: the panel refetches this the moment a mint or revoke returns, and a lagging replica
+  // would show a revoked code as still open.
+  const rows = await dbWrite
     .selectFrom('RedeemableCode')
     .select([
       'code',

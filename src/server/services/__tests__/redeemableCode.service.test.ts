@@ -1193,6 +1193,30 @@ describe('redeemableCode.service', () => {
         expect(result).toMatchObject({ code: 'MB-TEST-1234' });
       });
 
+      it('redeems only an unexpired code, which is what makes a revoke stick', async () => {
+        const mockCode = createMockRedeemableCode({ metadata: supportMeta });
+        mockDbWrite.redeemableCode.findUnique.mockResolvedValue(mockCode);
+        const update = vi
+          .fn()
+          .mockResolvedValue({ ...mockCode, redeemedAt: new Date(), userId: 1 });
+        mockDbWrite.$transaction.mockImplementation(async (callback: any) =>
+          callback({
+            redeemableCode: { update },
+            customerSubscription: {
+              findFirst: vi.fn().mockResolvedValue(null),
+              create: vi.fn().mockResolvedValue({ id: 'sub_new' }),
+            },
+          })
+        );
+
+        await consumeRedeemableCode({ code: 'MB-TEST-1234', userId: 1 });
+        expect(update.mock.calls[0][0].where).toEqual({
+          code: 'MB-TEST-1234',
+          redeemedAt: null,
+          OR: [{ expiresAt: { gt: expect.any(Date) } }, { expiresAt: null }],
+        });
+      });
+
       it('asks the database for metadata, or the binding could never be read', async () => {
         const mockCode = createMockRedeemableCode({ metadata: supportMeta });
         mockDbWrite.redeemableCode.findUnique.mockResolvedValue(mockCode);
