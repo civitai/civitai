@@ -228,28 +228,17 @@ export const NAVIGATION: NavLink[] = [
 let stored: Partial<Record<string, Role[]>> = {};
 let storedPermissions: Partial<Record<string, Role[]>> = {};
 
-// A page grant stored for a page that left NAVIGATION is honoured as a grant of the page that replaced it,
-// until the next grants review ticks the new page. Page grants only: no permission is ever aliased.
-const RETIRED_PAGE_GRANTS: Record<string, string> = {
-  '/text-scan/check': '/text-scan/prompts',
-};
-
 export function applyGrants(map: Record<string, string[]>): void {
   const nextPages: Partial<Record<string, Role[]>> = {};
   const nextPermissions: Partial<Record<string, Role[]>> = {};
   // Checked against the super role only, never the hub's role catalogue: this runs on every gated request,
   // and a grant filtered against a catalogue that failed to load would revoke the app. A grant naming a
   // role nobody holds — a deleted one — matches nobody anyway.
-  const addPage = (path: string, roles: Role[]) => {
-    nextPages[path] = [...new Set([...(nextPages[path] ?? []), ...roles])];
-  };
   for (const [key, roles] of Object.entries(map)) {
     const allowed = roles.filter(isStorableRole);
     if (isPermissionKey(key)) {
       if (isGrantablePermission(key)) nextPermissions[key] = allowed;
-    } else if (isGrantable(key)) addPage(key, allowed);
-    else if (RETIRED_PAGE_GRANTS[key] && isGrantable(RETIRED_PAGE_GRANTS[key]))
-      addPage(RETIRED_PAGE_GRANTS[key], allowed);
+    } else if (isGrantable(key)) nextPages[key] = allowed;
   }
   if (sameGrants(nextPages, stored) && sameGrants(nextPermissions, storedPermissions)) return;
   stored = nextPages;
