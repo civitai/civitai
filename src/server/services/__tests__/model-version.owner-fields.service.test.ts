@@ -102,13 +102,19 @@ const OTHER_MODEL_ID = 43;
 const OWNER_ID = 7;
 const VERSION_ID = 100;
 
-type StoredGate = { timeframeDays: number | null; terms: Record<string, unknown> } | null;
+type StoredGate = {
+  timeframeDays: number | null;
+  terms: Record<string, unknown>;
+  endsAt?: Date | null;
+} | null;
 
 function seedExisting({
   status = ModelStatus.Draft,
   trainingStatus = null,
   gate = null,
+  initialPublishedAt = null,
 }: {
+  initialPublishedAt?: Date | null;
   status?: ModelStatus;
   trainingStatus?: TrainingStatus | null;
   gate?: StoredGate;
@@ -123,12 +129,13 @@ function seedExisting({
   dbMock.dbWrite.modelVersion.findUniqueOrThrow.mockResolvedValue({
     id: VERSION_ID,
     status,
+    initialPublishedAt,
     trainingStatus,
     meta: null,
     model: { id: MODEL_ID, userId: OWNER_ID, meta: null, availability: 'Public' },
     monetization: null,
   });
-  dbMock.dbWrite.paidAccess.findUnique.mockResolvedValue(gate);
+  dbMock.dbWrite.paidAccess.findUnique.mockResolvedValue(gate && { endsAt: null, ...gate });
   mockTx.modelVersion.update.mockResolvedValue({ id: VERSION_ID, modelId: MODEL_ID });
 }
 
@@ -171,6 +178,7 @@ describe('upsertModelVersion — trainingStatus is not owner-changeable', () => 
     [TrainingStatus.Pending, TrainingStatus.Pending],
     [null, TrainingStatus.Pending],
     [TrainingStatus.Denied, TrainingStatus.Denied],
+    [TrainingStatus.Expired, TrainingStatus.Pending],
   ] as const)('lets the wizard move %s to %s', async (from, to) => {
     seedExisting({ trainingStatus: from });
 
@@ -288,6 +296,65 @@ describe('upsertModelVersion — early access cannot grow after publish', () => 
     expect(mockTx.modelVersion.update).toHaveBeenCalled();
   });
 
+  const gen = (generation: unknown, download: number | null = 500) => ({
+    timeframeDays: 7,
+    terms: { ...(download == null ? {} : { download: { price: download } }), generation },
+  });
+  const body = (terms: Record<string, unknown>, extra: Record<string, unknown> = {}) => ({
+    usageControl: 'Download',
+    paidAccess: { timeframeDays: 7, terms, ...extra },
+  });
+
+  it('refuses switching to bundled generation when that raises the generation price', async () => {
+    seedExisting({ status: ModelStatus.Published, gate: gen({ price: 100 }) });
+
+    await expect(edit(body({ download: { price: 500 } }))).rejects.toThrowError(/increase.*price/i);
+  });
+
+  it('refuses turning free generation into bundled (paid) generation', async () => {
+    seedExisting({ status: ModelStatus.Published, gate: gen({ free: true }) });
+
+    await expect(edit(body({ download: { price: 500 } }))).rejects.toThrowError(/increase.*price/i);
+  });
+
+  it('lets a Download version become generation-only at the same effective price', async () => {
+    seedExisting({ status: ModelStatus.Published, gate: gen(undefined, 500) });
+
+    await edit(body({ generation: { price: 500 } }));
+
+    expect(mockTx.modelVersion.update).toHaveBeenCalled();
+  });
+
+  it('lets generation drop to a cheaper explicit price or to free', async () => {
+    seedExisting({ status: ModelStatus.Published, gate: gen(undefined, 500) });
+
+    await edit(body({ download: { price: 500 }, generation: { price: 200 } }));
+    await edit(body({ download: { price: 500 }, generation: { free: true } }));
+
+    expect(mockTx.modelVersion.update).toHaveBeenCalledTimes(2);
+  });
+
+  it('still guards a version that is Draft now but was published before', async () => {
+    seedExisting({
+      status: ModelStatus.Draft,
+      initialPublishedAt: new Date(Date.now() - 86_400_000),
+      gate: timed(7, 500),
+    });
+
+    await expect(edit(input(14))).rejects.toThrowError(/increase.*timeframe/i);
+  });
+
+  it('does not let an ended gate block a later write', async () => {
+    seedExisting({
+      status: ModelStatus.Published,
+      gate: { ...timed(7, 500), endsAt: new Date(Date.now() - 86_400_000) },
+    });
+
+    await edit(input(14, 900));
+
+    expect(mockTx.modelVersion.update).toHaveBeenCalled();
+  });
+
   it('leaves a moderator free to increase it', async () => {
     seedExisting({ status: ModelStatus.Published, gate: timed(7, 500) });
 
@@ -307,11 +374,13 @@ describe('updateModelVersionPaidAccess — early access cannot grow after publis
       modelId: MODEL_ID,
       meta: null,
       status,
+      initialPublishedAt: null,
       model: { userId: OWNER_ID },
     });
     dbMock.dbWrite.paidAccess.findUnique.mockResolvedValue({
       timeframeDays: 7,
       terms: { download: { price: 500 } },
+      endsAt: null,
     });
   };
   const update = (timeframeDays: number, price: number, isModerator = false) =>
@@ -338,6 +407,22 @@ describe('updateModelVersionPaidAccess — early access cannot grow after publis
     await update(3, 500);
 
     expect(writePaidAccessForModelVersion).toHaveBeenCalled();
+  });
+
+  it('guards an unpublished version that was published before', async () => {
+    seed(ModelStatus.Draft);
+    dbMock.dbWrite.modelVersion.findUniqueOrThrow.mockResolvedValue({
+      id: VERSION_ID,
+      baseModel: 'SDXL 1.0',
+      usageControl: 'Download',
+      modelId: MODEL_ID,
+      meta: null,
+      status: ModelStatus.Draft,
+      initialPublishedAt: new Date(Date.now() - 86_400_000),
+      model: { userId: OWNER_ID },
+    });
+
+    await expect(update(14, 500)).rejects.toThrowError(/increase.*timeframe/i);
   });
 
   it('does not restrict an unpublished version or a moderator', async () => {

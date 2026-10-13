@@ -514,7 +514,8 @@ function assertOwnerTrainingStatusChange(
     next === TrainingStatus.Approved &&
     (stored === TrainingStatus.InReview || stored === TrainingStatus.Failed);
   const keepsDraftPending =
-    next === TrainingStatus.Pending && (stored === null || stored === TrainingStatus.Failed);
+    next === TrainingStatus.Pending &&
+    (stored === null || stored === TrainingStatus.Failed || stored === TrainingStatus.Expired);
   if (!approvesFinishedRun && !keepsDraftPending)
     throw throwBadRequestError("A version's training status can't be changed here.");
 }
@@ -529,30 +530,36 @@ async function assertPaidAccessNotIncreased(
 
   const stored = await dbWrite.paidAccess.findUnique({
     where: { entityType_entityId: { entityType: 'ModelVersion', entityId: versionId } },
-    select: { timeframeDays: true, terms: true },
+    select: { timeframeDays: true, terms: true, endsAt: true },
   });
   if (!stored) return;
+  // An ended gate is a tombstone: starting a window after publish is assertUserEarlyAccessLimits' call.
+  if (stored.endsAt != null && stored.endsAt <= new Date()) return;
 
   const window = (days: number | null | undefined, permanent?: boolean) =>
     permanent || days == null ? Infinity : days;
   if (window(next.timeframeDays, next.permanent) > window(stored.timeframeDays))
     throw throwBadRequestError('Cannot increase the early access timeframe after publishing.');
 
-  const storedTerms = (stored.terms ?? {}) as ModelVersionPaidAccessInputSchema['terms'];
-  const priceOf = (terms: ModelVersionPaidAccessInputSchema['terms']) => ({
-    download: terms.download?.price,
+  // Effective prices: an omitted generation price is the download price (bundled), and free is 0.
+  const effective = (terms: ModelVersionTerms) => ({
+    download: terms.download?.price ?? 0,
     generation:
-      terms.generation && 'price' in terms.generation ? terms.generation.price : undefined,
+      terms.generation && 'free' in terms.generation
+        ? 0
+        : (terms.generation ? generationPrice(terms) : terms.download?.price) ?? 0,
   });
-  const before = priceOf(storedTerms);
-  const after = priceOf(next.terms);
-  for (const tier of ['download', 'generation'] as const) {
-    const afterPrice = after[tier];
-    const beforePrice = before[tier];
-    if (afterPrice != null && (beforePrice == null || afterPrice > beforePrice))
-      throw throwBadRequestError('Cannot increase the early access price after publishing.');
-  }
+  const before = effective((stored.terms ?? {}) as ModelVersionTerms);
+  const after = effective(next.terms as ModelVersionTerms);
+  if (after.download > before.download || after.generation > before.generation)
+    throw throwBadRequestError('Cannot increase the early access price after publishing.');
 }
+
+// Same test assertUserEarlyAccessLimits uses: a Scheduled version carries a FUTURE anchor, so only a
+// date that has passed counts. Unpublishing must not reset the guard.
+const hasBeenPublished = (v: { status: ModelStatus; initialPublishedAt: Date | null }) =>
+  v.status === ModelStatus.Published ||
+  (!!v.initialPublishedAt && v.initialPublishedAt <= new Date());
 
 export const upsertModelVersion = async ({
   id,
@@ -849,6 +856,7 @@ export const upsertModelVersion = async ({
       select: {
         id: true,
         status: true,
+        initialPublishedAt: true,
         trainingStatus: true,
         description: true,
         trainedWords: true,
@@ -930,7 +938,7 @@ export const upsertModelVersion = async ({
         throw throwBadRequestError('A version cannot be moved to another model.');
       }
       assertOwnerTrainingStatusChange(existingVersion.trainingStatus, data.trainingStatus);
-      if (existingVersion.status === ModelStatus.Published)
+      if (hasBeenPublished(existingVersion))
         await assertPaidAccessNotIncreased(id as number, paidAccess);
     }
 
@@ -1196,6 +1204,7 @@ export const updateModelVersionPaidAccess = async ({
       modelId: true,
       meta: true,
       status: true,
+      initialPublishedAt: true,
       model: { select: { userId: true } },
     },
   });
@@ -1222,7 +1231,7 @@ export const updateModelVersionPaidAccess = async ({
     ) as typeof paidAccess.terms;
 
   assertPaidAccessInput(paidAccess);
-  if (!isModerator && existingVersion.status === ModelStatus.Published)
+  if (!isModerator && hasBeenPublished(existingVersion))
     await assertPaidAccessNotIncreased(id, paidAccess);
 
   const rightsAffirmation = await resolveRightsAffirmation({
