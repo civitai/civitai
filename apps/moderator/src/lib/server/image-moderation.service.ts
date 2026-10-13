@@ -308,7 +308,7 @@ function closePendingAppeal(
       .where('entityType', '=', 'Image')
       .where('entityId', '=', imageId)
       .where('status', '=', 'Pending')
-      // A removed-content appeal belongs to its own page, whose notice says the content is gone.
+      // Removed-content appeals are decided on /images/removed-appeals, not here.
       .where('entityRemovedAt', 'is', null)
       .returning(['id', 'userId', 'buzzTransactionId'])
       .executeTakeFirst()

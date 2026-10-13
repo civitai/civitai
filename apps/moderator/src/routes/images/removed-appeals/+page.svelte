@@ -1,6 +1,6 @@
 <script lang="ts">
   import { enhance } from '$app/forms';
-  import { SvelteMap } from 'svelte/reactivity';
+  import { SvelteMap, SvelteSet } from 'svelte/reactivity';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
@@ -19,11 +19,16 @@
   let { data, form }: { data: PageData; form: ActionData } = $props();
 
   const CHOICES = appealRulingChoices();
-  // A refusal is shown on its row: the list holds up to a hundred appeals.
+  // Cast: the generated ActionData drops the `appealId` the refusals carry (svelte-check, 2026-10-13).
   const failure = $derived(form as { error?: string; appealId?: number } | null);
   const rowError = $derived(
     failure?.error && failure.appealId ? { appealId: failure.appealId, error: failure.error } : null
   );
+  // Kept past the next verdict, whose result replaces `form`: the row is gone after the reload.
+  const refundUnconfirmed = new SvelteSet<number>();
+  $effect(() => {
+    if (form?.refundFailed && form.appealId) refundUnconfirmed.add(form.appealId);
+  });
   const acted = new SvelteMap<number, string>();
   const messages = new SvelteMap<number, string>();
   const drafts = new SvelteMap<number, RulingDraft<Verdict>>();
@@ -53,16 +58,17 @@
   the verdict decides the refund and what the user is told.
 </p>
 
-{#if form && 'error' in form && form.error && !rowError}
+{#if form?.error && !rowError}
   <ErrorAlert class="mb-4" message={form.error} />
 {/if}
 
-{#if form && 'refundFailed' in form && form.refundFailed}
+<!-- A timed-out refund can still land, so this asks for a check, not a second refund. -->
+{#each [...refundUnconfirmed] as appealId (appealId)}
   <ErrorAlert
     class="mb-4"
-    message={`Appeal #${form.appealId} is closed, but its fee could not be refunded. Refund it by hand.`}
+    message={`Appeal #${appealId} is closed, but its fee may not have been refunded. Check its Buzz transaction before refunding by hand.`}
   />
-{/if}
+{/each}
 
 {#if data.hasMore}
   <p class="mb-2 text-xs text-dark-2">Showing the {data.limit} that have waited longest.</p>

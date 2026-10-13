@@ -224,8 +224,7 @@ describe('resolving one appeal twice at once', () => {
     });
   });
 
-  // Its content is gone, so the removed-appeals page owns it; a queue card loaded before the delete must
-  // not decide it with the image-queue notice.
+  // A queue card loaded before the delete must not decide it.
   it('leaves an appeal whose content was removed to its own page', async () => {
     await db.query(`UPDATE "Appeal" SET "entityRemovedAt" = now()`);
 
