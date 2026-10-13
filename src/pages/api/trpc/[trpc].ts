@@ -163,7 +163,10 @@ const trpcHandler = createNextApiHandler({
       if (!!input) {
         try {
           // `blockToken` (a bearer credential) is replaced, key kept — see redactBlockTokens.
-          axInput = JSON.stringify(redactBlockTokens(input));
+          // Stringify first and redact only when the key appears, so the common case pays one
+          // walk of the input rather than two.
+          const raw = JSON.stringify(input);
+          axInput = raw?.includes('"blockToken"') ? JSON.stringify(redactBlockTokens(input)) : raw;
         } catch {
           axInput = undefined;
         }

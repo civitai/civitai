@@ -403,6 +403,20 @@ describe('src/pages/api/trpc/[trpc].ts wiring', () => {
     }
   );
 
+  it('onError: redaction does not mutate the input object tRPC handed the procedure', async () => {
+    const original = { blockToken: TOKEN, nested: { blockToken: TOKEN } };
+    await h.options?.onError?.({
+      error: new TRPCError({ code: 'NOT_FOUND', message: 'none' }),
+      type: 'query',
+      path: 'apps.storage.get',
+      input: original,
+      ctx: {},
+      req: request(2),
+    });
+    expect(loggedInput()).not.toContain(TOKEN);
+    expect(original).toEqual({ blockToken: TOKEN, nested: { blockToken: TOKEN } });
+  });
+
   it('onError: a token nested in a mutation input is redacted too', async () => {
     await h.options?.onError?.({
       error: new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'boom' }),
@@ -450,6 +464,16 @@ describe('src/pages/api/trpc/[trpc].ts wiring', () => {
     } as unknown as NextApiRequest);
 
   const TOKEN_INPUT = JSON.stringify({ json: { blockToken: TOKEN, key: 'k' } });
+
+  it('counter: every block-token procedure is published (seeded) once the route loads', async () => {
+    // Seeding is what makes "no GETs" read as 0 instead of an absent series — the signal the
+    // later GET refusal is gated on. Set equality: a seed loop that skipped any path, or none,
+    // fails here (other tests in this file increment only three of the eight).
+    const metric = client.register.getSingleMetric('civitai_app_block_token_get_requests_total');
+    expect(metric).toBeDefined();
+    const { values } = await (metric as NonNullable<typeof metric>).get();
+    expect(values.map((v) => v.labels.path).sort()).toEqual([...BLOCK_TOKEN_QUERIES]);
+  });
 
   it('counter: a GET carrying a block token increments its procedure', async () => {
     const before = await getCount('apps.storage.get');
