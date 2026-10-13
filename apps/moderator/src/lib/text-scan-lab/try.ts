@@ -67,6 +67,7 @@ export function judgeCandidates(
   const labels = edited.flatMap((key) =>
     key === 'base' ? [] : [key.slice('label:'.length) as LabLabel]
   );
+  // A type none of whose labels the drafts edit would judge both sides alike and show no change.
   const using = pool.filter((type) => LAB_LABELS[type].some((label) => labels.includes(label)));
   return [...(using.length ? using : pool)];
 }

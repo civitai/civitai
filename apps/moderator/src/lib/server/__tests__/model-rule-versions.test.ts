@@ -217,6 +217,12 @@ describe('restoreModelRuleVersion', () => {
     expect(captured.some((s) => s.startsWith('update'))).toBe(false);
   });
 
+  it('refuses a version that no longer fits the rule schema', async () => {
+    answers.version = [{ ...OLD, definition: { ...OLD.definition, aliases: ['  '] } }];
+    await expect(restoreModelRuleVersion(7, 2, 5)).rejects.toBeInstanceOf(RestoreRefusedError);
+    expect(captured.some((s) => s.startsWith('update') || s.startsWith('insert'))).toBe(false);
+  });
+
   it('refuses a regex version', async () => {
     answers.version = [{ definition: { match: 'x' }, enabled: true, reason: null }];
     await expect(restoreModelRuleVersion(7, 2, 5)).rejects.toBeInstanceOf(RestoreRefusedError);

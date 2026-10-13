@@ -369,7 +369,12 @@ export async function restoreModelRuleVersion(
       throw new RestoreRefusedError('That version is the same as the current rule.');
 
     const { needsAttention: _needsAttention, ...restored } = version.definition;
-    const definition = semanticModelRuleSchema.parse({ ...restored, updatedById: userId });
+    const parsed = semanticModelRuleSchema.safeParse({ ...restored, updatedById: userId });
+    if (!parsed.success)
+      throw new RestoreRefusedError(
+        'That version no longer fits the rule format and cannot be restored.'
+      );
+    const definition = parsed.data;
     await trx
       .updateTable('ModerationRule')
       .set({ definition, enabled: version.enabled, reason: version.reason, updatedAt: new Date() })
