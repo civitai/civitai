@@ -9336,8 +9336,9 @@ model Storyline {
   user         User            @relation(fields: [userId], references: [id], onDelete: Cascade)
   title        String          @db.VarChar(255)
   status       StorylineStatus @default(Ongoing)
-  /// The highest rating a chapter may carry, as a single `NsfwLevel` flag. Continuations
-  /// above it cannot be added, and chapters above it are never shown in this storyline.
+  /// The highest rating a chapter may carry, as a single `NsfwLevel` flag from PG to XXX
+  /// (CHECK in the migration). Continuations above it cannot be added, and chapters above
+  /// it are never shown in this storyline.
   maxNsfwLevel Int
   /// Moderator takedown of the storyline as a whole. Individual chapters are taken down
   /// through their posts.
@@ -9379,7 +9380,11 @@ model StorylineChapter {
   parents  StorylineChapterEdge[] @relation("StorylineChapterEdgeChild")
   children StorylineChapterEdge[] @relation("StorylineChapterEdgeParent")
 
+  /// Target of the edge foreign keys, which carry `storylineId` so an edge can never
+  /// join chapters from two storylines.
+  @@unique([id, storylineId])
   @@index([storylineId])
+  @@index([userId])
 }
 
 /// Parent to child link between chapters. Forks happen only at the end of a chapter, so
@@ -9388,10 +9393,17 @@ model StorylineChapter {
 /// v1 allows one parent per chapter: a unique index on `chapterId` in the migration.
 /// Dropping that index is the whole change needed for a chapter with several parents.
 model StorylineChapterEdge {
+  storylineId     Int
   chapterId       Int
-  chapter         StorylineChapter @relation("StorylineChapterEdgeChild", fields: [chapterId], references: [id], onDelete: Cascade)
+  chapter         StorylineChapter @relation("StorylineChapterEdgeChild", fields: [chapterId, storylineId], references: [id, storylineId], onDelete: Cascade)
   parentChapterId Int
-  parentChapter   StorylineChapter @relation("StorylineChapterEdgeParent", fields: [parentChapterId], references: [id], onDelete: Cascade)
+  /// NoAction, not Cascade: deleting a chapter row that still has children is refused
+  /// rather than silently cutting its subtree off from the root. Take a chapter down by
+  /// its post instead, which leaves a tombstone. The constraint is DEFERRABLE INITIALLY
+  /// DEFERRED in the migration (not expressible here), so it is checked at commit: deleting
+  /// the whole storyline works because the child-side cascade has removed these edges by
+  /// then. A violating write therefore fails at commit, not at the statement.
+  parentChapter   StorylineChapter @relation("StorylineChapterEdgeParent", fields: [parentChapterId, storylineId], references: [id, storylineId], onDelete: NoAction)
   /// The storyline owner's main route out of the parent. At most one per parent (partial
   /// unique index in the migration). Whether a non-canon child is "endorsed" or
   /// "community" is not stored: it follows the current collaborator list, so endorsing

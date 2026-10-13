@@ -4535,8 +4535,9 @@ export type Storyline = {
   title: string;
   status: Generated<StorylineStatus>;
   /**
-   * The highest rating a chapter may carry, as a single `NsfwLevel` flag. Continuations
-   * above it cannot be added, and chapters above it are never shown in this storyline.
+   * The highest rating a chapter may carry, as a single `NsfwLevel` flag from PG to XXX
+   * (CHECK in the migration). Continuations above it cannot be added, and chapters above
+   * it are never shown in this storyline.
    */
   maxNsfwLevel: number;
   /**
@@ -4572,6 +4573,7 @@ export type StorylineChapter = {
   createdAt: Generated<Timestamp>;
 };
 export type StorylineChapterEdge = {
+  storylineId: number;
   chapterId: number;
   parentChapterId: number;
   /**

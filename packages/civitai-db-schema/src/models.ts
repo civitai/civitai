@@ -5968,6 +5968,7 @@ export interface StorylineChapter {
 }
 
 export interface StorylineChapterEdge {
+  storylineId: number;
   chapterId: number;
   chapter?: StorylineChapter;
   parentChapterId: number;

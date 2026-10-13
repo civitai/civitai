@@ -4,6 +4,12 @@
 -- environment (dev, preview, staging, prod) BEFORE the code that reads these tables ships.
 -- Purely additive: new enums and tables, nothing existing is altered, so the currently
 -- deployed client is unaffected.
+--
+-- Each foreign key to "User", "Post" or "Report" briefly takes a SHARE ROW EXCLUSIVE lock
+-- on that table, and while it waits for in-flight writers every later write to it queues
+-- behind it. Apply statement by statement (not inside one long transaction), with a lock
+-- timeout so a busy table fails fast and can be retried instead of stalling writes:
+SET lock_timeout = '3s';
 
 -- CreateEnum
 CREATE TYPE "StorylineStatus" AS ENUM ('Ongoing', 'Complete');
@@ -19,7 +25,9 @@ CREATE TABLE "Storyline" (
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
 
-    CONSTRAINT "Storyline_pkey" PRIMARY KEY ("id")
+    CONSTRAINT "Storyline_pkey" PRIMARY KEY ("id"),
+    -- Exactly one NsfwLevel flag, PG (1) to XXX (16).
+    CONSTRAINT "Storyline_maxNsfwLevel_check" CHECK ("maxNsfwLevel" IN (1, 2, 4, 8, 16))
 );
 
 CREATE INDEX "Storyline_userId_idx" ON "Storyline"("userId");
@@ -46,6 +54,10 @@ CREATE TABLE "StorylineChapter" (
 CREATE UNIQUE INDEX "StorylineChapter_postId_key" ON "StorylineChapter"("postId");
 CREATE UNIQUE INDEX "StorylineChapter_placementId_key" ON "StorylineChapter"("placementId");
 CREATE INDEX "StorylineChapter_storylineId_idx" ON "StorylineChapter"("storylineId");
+CREATE INDEX "StorylineChapter_userId_idx" ON "StorylineChapter"("userId");
+-- Target of the edge foreign keys below, which carry "storylineId" so an edge cannot join
+-- chapters from two storylines.
+CREATE UNIQUE INDEX "StorylineChapter_id_storylineId_key" ON "StorylineChapter"("id", "storylineId");
 -- Exactly one first chapter per storyline. Not expressible in the Prisma schema.
 CREATE UNIQUE INDEX "StorylineChapter_storylineId_root_key" ON "StorylineChapter"("storylineId") WHERE "depth" = 0;
 
@@ -54,6 +66,7 @@ ALTER TABLE "StorylineChapter" ADD CONSTRAINT "StorylineChapter_postId_fkey" FOR
 
 -- CreateTable
 CREATE TABLE "StorylineChapterEdge" (
+    "storylineId" INTEGER NOT NULL,
     "chapterId" INTEGER NOT NULL,
     "parentChapterId" INTEGER NOT NULL,
     "canon" BOOLEAN NOT NULL DEFAULT false,
@@ -69,8 +82,13 @@ CREATE UNIQUE INDEX "StorylineChapterEdge_single_parent_key" ON "StorylineChapte
 -- At most one canon (main route) child per parent. Not expressible in the Prisma schema.
 CREATE UNIQUE INDEX "StorylineChapterEdge_one_canon_key" ON "StorylineChapterEdge"("parentChapterId") WHERE "canon";
 
-ALTER TABLE "StorylineChapterEdge" ADD CONSTRAINT "StorylineChapterEdge_chapterId_fkey" FOREIGN KEY ("chapterId") REFERENCES "StorylineChapter"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-ALTER TABLE "StorylineChapterEdge" ADD CONSTRAINT "StorylineChapterEdge_parentChapterId_fkey" FOREIGN KEY ("parentChapterId") REFERENCES "StorylineChapter"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "StorylineChapterEdge" ADD CONSTRAINT "StorylineChapterEdge_chapterId_storylineId_fkey" FOREIGN KEY ("chapterId", "storylineId") REFERENCES "StorylineChapter"("id", "storylineId") ON DELETE CASCADE ON UPDATE CASCADE;
+-- NO ACTION, not CASCADE: deleting a chapter row that still has children is refused rather
+-- than cutting its subtree off from the root (take a chapter down by its post instead).
+-- DEFERRABLE INITIALLY DEFERRED so the check runs at commit: deleting a whole storyline then
+-- succeeds, because by commit the child-side cascade above has removed these edges. Checked
+-- per statement instead, the storyline delete is refused too. Not expressible in Prisma.
+ALTER TABLE "StorylineChapterEdge" ADD CONSTRAINT "StorylineChapterEdge_parentChapterId_storylineId_fkey" FOREIGN KEY ("parentChapterId", "storylineId") REFERENCES "StorylineChapter"("id", "storylineId") ON DELETE NO ACTION ON UPDATE CASCADE DEFERRABLE INITIALLY DEFERRED;
 
 -- CreateTable
 CREATE TABLE "StorylineCollaborator" (
