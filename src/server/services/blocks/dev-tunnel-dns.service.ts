@@ -59,7 +59,6 @@ let serversCache: { domain: string; servers: Promise<string[]>; expiresAt: numbe
 const publishedUntil = new Map<string, number>();
 
 function rememberPublished(host: string) {
-  publishedUntil.delete(host);
   publishedUntil.set(host, Date.now() + PUBLISHED_MEMO_TTL_MS);
   if (publishedUntil.size > PUBLISHED_MEMO_MAX) {
     const oldest = publishedUntil.keys().next().value;
@@ -127,9 +126,9 @@ async function serverHasName(server: string, name: string): Promise<boolean | nu
  * A recursive resolver (the system one included) caches a miss for the zone's negative TTL and
  * keeps answering "not there" after the record exists.
  *
- * Never throws. Ready means no nameserver that answered lacks the name, including when none could
- * be asked: the check only narrows a race, so its worst case should be loading the host unchecked,
- * as before the check existed, not holding every preview on nameservers being reachable.
+ * Never throws. Ready means no nameserver that answered lacks the name, so it is also ready when
+ * none could be asked: the check only narrows a race, and skipping it is the behaviour from before
+ * it existed.
  *
  * Without `APPS_DEV_TUNNEL_INGRESS_TARGET` this deployment publishes no record per tunnel, so
  * there is nothing to wait for and the answer is always `true`.

@@ -287,7 +287,7 @@ describe('isDevTunnelHostPublished', () => {
     it('does not reuse one apps domain’s nameservers for another', async () => {
       await isDevTunnelHostPublished(HOST);
       setEnv({ APPS_DOMAIN: 'other.example' });
-      await isDevTunnelHostPublished('dev-0123456789abcdef.other.example');
+      expect(await isDevTunnelHostPublished('dev-0123456789abcdef.other.example')).toBe(true);
       expect(hostQueries().some((q) => q.name.includes('other.example'))).toBe(false);
       expect(
         systemQueries()
@@ -348,6 +348,14 @@ describe('isDevTunnelHostPublished', () => {
       vi.advanceTimersByTime(2);
       expect(await isDevTunnelHostPublished(HOST)).toBe(false);
       expect(queriesFor(HOST)).toHaveLength(4);
+    });
+
+    it('include a host one nameserver confirmed while the other could not be reached', async () => {
+      nameservers(fails('ETIMEOUT'), address);
+      expect(await isDevTunnelHostPublished(HOST)).toBe(true);
+      nameservers(fails('ENOTFOUND'));
+      expect(await isDevTunnelHostPublished(HOST)).toBe(true);
+      expect(queriesFor(HOST)).toHaveLength(2);
     });
 
     it('never include a host last seen missing', async () => {
