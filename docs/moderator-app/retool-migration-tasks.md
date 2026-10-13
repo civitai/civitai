@@ -113,7 +113,8 @@ messages), and Newest. Message bodies outside an opened transcript sit behind a 
 supports this) and 0.1 for list resolution.
 
 **2.2 Moderation Rules** — ticket marks this low priority, "not used much." Model rules are managed on
-`/text-scan/model-rules` (list, create, edit, enable/disable, no delete). Image rules stay in Retool.
+`/text-scan/model-rules` (list, create, edit, enable/disable, per-rule history with compare and
+restore, and a Try panel; no delete). Image rules stay in Retool.
 
 **2.3 Model notes** — free-text mod notes on models. **Shipped 2026-09-29** on `/retool/model-lookup`
 rather than a page of its own: `model-notes.service.ts` + `/api/model-notes/[modelId]`, with the list

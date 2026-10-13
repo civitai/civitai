@@ -6,16 +6,17 @@ single orchestrator `chatCompletion` step with a strict JSON schema; the verdict
 
 ## Pieces
 
-| piece                                                                    | where                                                       |
-| ------------------------------------------------------------------------ | ----------------------------------------------------------- |
-| Scan profiles (which fields, which labels, the entity's declared state)  | `src/server/services/text-scan/profiles/`                   |
-| Prompt storage (append-only table, cached; content is never in the repo) | `TextScanPrompt`, `text-scan/prompt.ts`                     |
-| Model and input-size config                                              | sysRedis `system:text-scan:config`                          |
-| Submit, dedup (`contentHash`), external id                               | `text-scan/submit.ts`                                       |
-| Callback                                                                 | `/api/webhooks/text-scan-result`                            |
-| Retry of failed scans                                                    | the `retry-failed-text-moderation` job (shared with XGuard) |
-| Row retention                                                            | the `text-scan-retention` job                               |
-| Actions per label                                                        | `text-scan/actions/` and each entity's moderation adapter   |
+| piece                                                                                 | where                                                       |
+| ------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| Scan profiles (which fields, which labels, the entity's declared state)               | `src/server/services/text-scan/profiles/`                   |
+| Prompt storage (append-only table, cached; content is never in the repo)              | `TextScanPrompt`, `text-scan/prompt.ts`                     |
+| Model and input-size config                                                           | sysRedis `system:text-scan:config`                          |
+| Submit, dedup (`contentHash`), external id                                            | `text-scan/submit.ts`                                       |
+| Callback                                                                              | `/api/webhooks/text-scan-result`                            |
+| Retry of failed scans                                                                 | the `retry-failed-text-moderation` job (shared with XGuard) |
+| Row retention                                                                         | the `text-scan-retention` job                               |
+| Actions per label                                                                     | `text-scan/actions/` and each entity's moderation adapter   |
+| Model-rule storage and history (append-only versions, written with every rule change) | `ModerationRule`, `ModerationRuleVersion`                   |
 
 ## Entities
 
@@ -41,7 +42,9 @@ the rules and that prompt on the moderator app's `/text-scan/model-rules` page: 
 the moderator's browser until saved, and every create, edit, enable/disable and restore of a rule
 writes a row to `ModerationRuleVersion` in the same transaction, so each rule has a history that can
 be compared and restored. A rule saved before that table existed gets its earlier state recorded on
-its next save. The page's Try panel judges a pasted link, id or text as `ModelRules` with the saved
+its next save. The `ModerationRuleVersion` table is created by a hand-applied migration; apply it
+before deploying the moderator app, since a rule save writes its version row in the same
+transaction. The page's Try panel judges a pasted link, id or text as `ModelRules` with the saved
 rules and, side by side, with the drafts (new rules carry negative ids that exist only in the lab);
 literal hits show there even when the model gives no answer. A literal hold at publish also writes
 the model's `ModelRules` scan row (no content hash, so the scan after a moderator's republish still
@@ -140,8 +143,12 @@ so chat verdicts don't pair one to one with text scan's per-message ones.
   scans it synchronously without recording it (`scanEntity`, `batchEntities`), does the same for free
   text (`scanTexts`), prices either without running (`quoteEntities`, `quoteTexts`, `whatif`),
   returns the composed text only (`composeEntities`), or samples shadow verdicts for grading
-  (`sampleShadow`). `scanEntity`, `batchEntities` and `scanTexts` refuse a request whose worst case,
-  `ceil(items / concurrency) * wait`, exceeds 120 seconds (`HARNESS_BUDGET_SECONDS`). Locally, the
+  (`sampleShadow`). `scanEntity` and `scanTexts` also take lab-only `ruleOverrides` (a positive id
+  replaces that Model rule, a negative id adds an unsaved one, `enabled: false` drops it). A scan
+  returns the `system` prompt it sent and, for `ModelRules`, the `rules` listed and the
+  `literalRuleIds`; `batchEntities` and `scanTexts` return `{ results, system, rules, ... }`, carrying
+  `system` and `rules` once for all results. `scanEntity`, `batchEntities` and `scanTexts` refuse a
+  request whose worst case, `ceil(items / concurrency) * wait`, exceeds 120 seconds (`HARNESS_BUDGET_SECONDS`). Locally, the
   scan and quote actions are reached through `/api/testing/chat-completion-scan`. `composeEntities`
   and `sampleShadow` read any entity's text and author, so they are refused there (403) and only the
   attributed, audited moderator endpoint `/api/mod/text-scan` serves them. Like every moderator
