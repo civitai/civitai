@@ -10,6 +10,7 @@ import { BlocklistType } from '~/server/common/enums';
 import {
   auditPromptEnriched,
   includesMinor,
+  includesMinorAge,
   includesPoi,
   MAX_AUDIT_PROMPT_LENGTH,
 } from '~/utils/metadata/audit';
@@ -218,8 +219,9 @@ export async function classifySharedTexts(
   const texts = inputs.map((input) => stripInvisible(input.raw));
   // The free-text audits (minor, green-domain) skip a leaf's identifiers: an identifier-shaped leaf
   // is read without them (`sharedLeafFreeText`), any other leaf in full. The link, pattern and POI
-  // checks always read the whole leaf. Shadow and enforce both come through here, so the soak
-  // measures the rule enforce applies.
+  // checks always read the whole leaf, and so does the minor AGE check (below), which needs a label
+  // and its number together. Shadow and enforce both come through here, so the soak measures the
+  // rule enforce applies.
   const freeTexts = texts.map(sharedLeafFreeText);
   const hits: SharedTextHit[] = [];
 
@@ -231,7 +233,8 @@ export async function classifySharedTexts(
 
   texts.forEach((text, index) => {
     const leaf = inputs[index];
-    if (includesMinor(freeTexts[index]))
+    const freeText = freeTexts[index];
+    if (includesMinor(freeText) || (freeText !== text && includesMinorAge(text).found))
       hits.push({ category: 'minor', matched: 'minor', label: 'minor', leaf });
     const poi = includesPoi(text);
     if (poi) {

@@ -378,6 +378,17 @@ describe('identifier-shaped leaves — the free-text audits skip the identifier'
     expect(minor.hits).toContainEqual(expect.objectContaining({ category: 'minor' }));
   });
 
+  it('the minor AGE check still reads a label and its number together', async () => {
+    // A labelled integer is identifier-shaped, so the free text is only the label; the age check
+    // reads the whole leaf.
+    for (const key of ['age:13', `age:13:${ULID}`]) {
+      const scan = await scanCounterKey(key);
+      expect([key, scan.hits.map((h) => h.category)]).toEqual([key, ['minor']]);
+    }
+    const value = await scanSharedData({ v: 'aged:12' });
+    expect(value.hits.map((h) => h.category)).toEqual(['minor']);
+  });
+
   it('INVARIANT GUARD: a leaf that only CONTAINS an identifier is read in full', async () => {
     await scanSharedData({ v: `my id is ${ULID}` });
     expect(freeTextReads()).toContain(`my id is ${ULID}`);

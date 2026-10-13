@@ -1,3 +1,5 @@
+import { isUUID } from '~/utils/string-helpers';
+
 /**
  * Identifier-shaped leaves in App Blocks shared storage.
  *
@@ -13,8 +15,6 @@
 
 /** A ULID exactly as `newUlid()` writes it: 26 upper-case Crockford base32 chars, 48-bit time first. */
 const ULID = /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/;
-/** A canonical 8-4-4-4-12 UUID, any version, either case. */
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /** A hex digest: 128, 160 or 256 bits, either case. */
 const HEX_DIGEST = /^(?:[0-9a-f]{32}|[0-9a-f]{40}|[0-9a-f]{64})$/i;
 /** A non-negative decimal integer, up to 20 digits. */
@@ -25,7 +25,8 @@ const LABEL = /^[a-z][a-z0-9_-]{0,31}$/;
 const MAX_SEGMENTS = 4;
 
 const isIdentifier = (segment: string) =>
-  ULID.test(segment) || UUID.test(segment) || HEX_DIGEST.test(segment) || DECIMAL.test(segment);
+  // `isUUID`: a canonical 8-4-4-4-12 UUID, any version, either case.
+  ULID.test(segment) || isUUID(segment) || HEX_DIGEST.test(segment) || DECIMAL.test(segment);
 
 /**
  * The leaf split into its labels and identifiers, or `null` when it is not identifier-shaped.
