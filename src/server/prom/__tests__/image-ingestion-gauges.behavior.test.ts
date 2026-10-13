@@ -8,6 +8,7 @@ const holder = vi.hoisted(() => ({
   db: null as unknown as PGlite,
   failImageQuery: false,
   imageQueries: 0,
+  sqls: [] as string[],
   releases: [] as (Error | undefined)[],
 }));
 
@@ -21,6 +22,7 @@ vi.mock('~/server/db/pgDb', () => ({
   pgDbRead: {
     connect: async () => ({
       query: async (sql: string) => {
+        holder.sqls.push(sql);
         if (sql.includes('"Image"')) holder.imageQueries++;
         if (holder.failImageQuery && sql.includes('"Image"'))
           throw new Error('canceling statement due to statement timeout');
@@ -78,6 +80,7 @@ beforeAll(async () => {
 beforeEach(async () => {
   holder.failImageQuery = false;
   holder.imageQueries = 0;
+  holder.sqls = [];
   holder.releases = [];
   // Different stuck counts per type, so a swapped image/video mapping cannot pass.
   await holder.db.exec(`
@@ -179,6 +182,8 @@ function freezeClock() {
   vi.setSystemTime(now);
   return now;
 }
+
+const FRESH_AS_STRING = 'the fresh timestamp, as a string';
 
 // Every value differs from what the seeded tables produce, so a gauge read tells which side it came from.
 const sharedSnapshot = (computedAt: number) => ({
@@ -309,8 +314,12 @@ describe('image-ingestion gauges shared across processes', () => {
   // One case per field the shape check covers; every other field stays valid, so each case reaches
   // only its own check. Any of these applied would make collect() throw and fail the whole scrape.
   // Each patch replaces one field of a valid snapshot (undefined drops it from the JSON).
+  // FRESH_AS_STRING stands for the snapshot's own fresh timestamp as a string: it would subtract
+  // like a number and read as fresh, where any other string just reads as stale.
   it.each<[string, Record<string, unknown>]>([
+    ['a computedAt that is a numeric string', { computedAt: FRESH_AS_STRING }],
     ['stuckPending missing', { stuckPending: undefined }],
+    ['stuckPending null', { stuckPending: null }],
     ['a stuck count that is not a number', { stuckPending: { image: '13', video: 17, audio: 19 } }],
     ['backlog not an array', { backlog: { Pending: 777 } }],
     [
@@ -325,7 +334,9 @@ describe('image-ingestion gauges shared across processes', () => {
     'a fresh shared snapshot of the wrong shape (%s) is replaced, never served',
     async (_, patch) => {
       const now = freezeClock();
-      const { store, calls } = fakeStore({ ...sharedSnapshot(now - 5_000), ...patch });
+      const snapshot: Record<string, unknown> = { ...sharedSnapshot(now - 5_000), ...patch };
+      if (snapshot.computedAt === FRESH_AS_STRING) snapshot.computedAt = String(now - 5_000);
+      const { store, calls } = fakeStore(snapshot);
       const proc = await loadProcess();
       proc.setIngestionGaugeSharedStore(store);
 
@@ -366,6 +377,22 @@ describe('image-ingestion gauges shared across processes', () => {
     } finally {
       vi.doUnmock('@civitai/shared/image-ingestion');
     }
+  });
+
+  // Pinned to what the database receives, so a query added to the refresh but left out of the
+  // version (or dropped from it) fails here rather than sharing a key across releases.
+  it('the snapshot version covers every query the refresh sends, and moves when any of them does', async () => {
+    const proc = await loadProcess();
+
+    await proc.__refreshIngestionGaugesForTest();
+
+    const selects = holder.sqls.filter((sql) => /^\s*SELECT/i.test(sql));
+    expect(selects).toHaveLength(2);
+    const versionOf = proc.__ingestionGaugeSnapshotVersionOfForTest;
+    expect(proc.__ingestionGaugeSnapshotVersionForTest()).toBe(versionOf(selects));
+    expect(versionOf([`${selects[0]} `, selects[1]])).not.toBe(versionOf(selects));
+    expect(versionOf([selects[0], `${selects[1]} `])).not.toBe(versionOf(selects));
+    expect(versionOf([selects[0]])).not.toBe(versionOf(selects));
   });
 
   it('a process that lost the lock never replaces its own newer values with an older shared snapshot', async () => {

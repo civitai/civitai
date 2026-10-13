@@ -128,10 +128,15 @@ const SCAN_QUEUE_SQL = `
 // Names the shared snapshot's key, so processes on releases whose queries differ (a new stuck
 // window, a new status) never serve each other's values: those pass the shape check but mean
 // something else. Bump the tag when IngestionGaugeSnapshot's fields change.
-const INGESTION_GAUGE_SNAPSHOT_VERSION = createHash('sha256')
-  .update(['snapshot-v1', INGESTION_BACKLOG_SQL, SCAN_QUEUE_SQL].join('\0'))
-  .digest('hex')
-  .slice(0, 12);
+const ingestionGaugeSnapshotVersionOf = (queries: string[]) =>
+  createHash('sha256')
+    .update(['snapshot-v1', ...queries].join('\0'))
+    .digest('hex')
+    .slice(0, 12);
+const INGESTION_GAUGE_SNAPSHOT_VERSION = ingestionGaugeSnapshotVersionOf([
+  INGESTION_BACKLOG_SQL,
+  SCAN_QUEUE_SQL,
+]);
 
 type IngestionBacklogQueryRow = {
   status: string;
@@ -314,6 +319,7 @@ function refreshIngestionBacklog() {
 
 export const __refreshIngestionGaugesForTest = () => refreshIngestionBacklog();
 export const __ingestionGaugeSnapshotVersionForTest = () => INGESTION_GAUGE_SNAPSHOT_VERSION;
+export const __ingestionGaugeSnapshotVersionOfForTest = ingestionGaugeSnapshotVersionOf;
 export const __ingestionGaugeStateForTest = () => ({
   computedAt: ingestionBacklogFetchedAt,
   backlog: ingestionBacklogCache,
