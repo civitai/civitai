@@ -193,6 +193,7 @@ export type ModEndpoint =
   | 'training-data/resolve'
   | 'user/delete'
   | 'user/membership-code'
+  | 'user/membership-code-revoke'
   | 'user/toggle-moderator'
   | 'user/unmute'
   | 'user/update-identity';
@@ -1197,6 +1198,26 @@ export async function mintMembershipCode(input: {
   if (typeof code !== 'string' || !code || typeof expiresAt !== 'string')
     return { ok: false, error: MINT_MAY_HAVE_COMPLETED };
   return { ok: true, code, expiresAt };
+}
+
+const REVOKE_MAY_HAVE_COMPLETED =
+  'Could not confirm the revoke. Refresh the code list before trying again.';
+
+export async function revokeMembershipCode(input: {
+  userId: number;
+  code: string;
+}): Promise<ActionResult> {
+  const result = await callModEndpoint(
+    'user/membership-code-revoke',
+    { userId: input.userId, code: input.code },
+    'Revoke membership code'
+  );
+  if (result.ok) return { ok: true };
+  if (result.status !== undefined && (result.status >= 500 || result.status === 408))
+    return { ok: false, error: REVOKE_MAY_HAVE_COMPLETED };
+  if (result.status !== undefined || result.requestNeverSent)
+    return { ok: false, error: result.error };
+  return { ok: false, error: REVOKE_MAY_HAVE_COMPLETED };
 }
 
 export async function deleteAccount(input: {

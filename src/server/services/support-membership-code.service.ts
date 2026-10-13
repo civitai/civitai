@@ -110,6 +110,9 @@ export async function mintSupportMembershipCode({
           type: RedeemableCodeType.Membership,
           unitValue: months,
           priceId: price.id,
+          // Pre-set to the customer: support lists an account's codes by the indexed
+          // (userId, createdAt), and the customer sees the code among their own.
+          userId: forUserId,
           expiresAt,
           metadata: {
             source: SUPPORT_MEMBERSHIP_CODE_SOURCE,
@@ -136,5 +139,66 @@ export async function mintSupportMembershipCode({
     );
 
     return { code, expiresAt, tier, months };
+  });
+}
+
+/**
+ * Withdraw an unredeemed support code: it is expired now and stamped with who revoked it, so the
+ * row keeps its audit trail. Scoped to the account it was minted for, so a code cannot be revoked
+ * from another customer's page.
+ */
+export async function revokeSupportMembershipCode({
+  code,
+  forUserId,
+  moderatorId,
+}: {
+  code: string;
+  forUserId: number;
+  moderatorId: number;
+}) {
+  return dbWrite.$transaction(async (tx) => {
+    const row = await tx.redeemableCode.findFirst({
+      where: { code, userId: forUserId },
+      select: {
+        code: true,
+        unitValue: true,
+        priceId: true,
+        redeemedAt: true,
+        expiresAt: true,
+        metadata: true,
+      },
+    });
+    const metadata = (row?.metadata ?? null) as Record<string, unknown> | null;
+    if (!row || metadata?.source !== SUPPORT_MEMBERSHIP_CODE_SOURCE)
+      throw throwNotFoundError('No support membership code with that code on this account.');
+    if (row.redeemedAt) throw throwConflictError('That code has already been redeemed.');
+    const now = new Date();
+    if (metadata.revokedAt) throw throwConflictError('That code has already been revoked.');
+    if (row.expiresAt && row.expiresAt <= now)
+      throw throwConflictError('That code has already expired.');
+
+    // Guarded on still being unredeemed: a redemption that landed after the read wins, and nothing
+    // is recorded as revoked.
+    const { count } = await tx.redeemableCode.updateMany({
+      where: { code, redeemedAt: null },
+      data: {
+        expiresAt: now,
+        metadata: { ...metadata, revokedBy: moderatorId, revokedAt: now.toISOString() },
+      },
+    });
+    if (count !== 1) throw throwConflictError('That code was redeemed while being revoked.');
+
+    const tier = row.priceId?.replace(/-monthly$/, '') ?? 'unknown';
+    await trackModActivity(
+      moderatorId,
+      {
+        entityType: 'user',
+        entityId: forUserId,
+        activity: `revokeMembershipCode:${tier}:${row.unitValue}`,
+      },
+      tx
+    );
+
+    return { code, revokedAt: now };
   });
 }

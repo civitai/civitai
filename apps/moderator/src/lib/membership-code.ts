@@ -19,3 +19,19 @@ export type MintedMembershipCode = {
   tier: MembershipCodeTier;
   months: number;
 };
+
+/** `RedeemableCode.metadata.source` the main app stamps on support codes. */
+export const SUPPORT_CODE_SOURCE = 'moderator-membership-code';
+
+export type MembershipCodeStatus = 'open' | 'redeemed' | 'revoked' | 'expired';
+
+/** Redeemed beats everything: a redeemed code cannot be revoked, and its expiry no longer matters. */
+export function membershipCodeStatus(
+  row: { redeemedAt: string | null; expiresAt: string | null; revokedAt: string | null },
+  now = new Date()
+): MembershipCodeStatus {
+  if (row.redeemedAt) return 'redeemed';
+  if (row.revokedAt) return 'revoked';
+  if (row.expiresAt && new Date(row.expiresAt) <= now) return 'expired';
+  return 'open';
+}

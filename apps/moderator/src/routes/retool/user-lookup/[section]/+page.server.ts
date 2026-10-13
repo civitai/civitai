@@ -24,6 +24,7 @@ import {
   refundShopPurchase,
   sendBuzz,
   mintMembershipCode,
+  revokeMembershipCode,
   setRewardsEligibility,
   clearProfileText,
   deleteAccount,
@@ -526,6 +527,18 @@ export const actions: Actions = {
         months: input.months,
       },
     };
+  }),
+
+  revokeMembershipCode: requiresGrant('user.membership.code', async ({ request }) => {
+    const input = parseForm(
+      userIdSchema.extend({ code: z.string().regex(/^MB-[A-Z0-9]{4}-[A-Z0-9]{4}$/) }),
+      await request.formData()
+    );
+    if (typeof input === 'string') return membershipCodeFail(input);
+
+    const result = await revokeMembershipCode(input);
+    if (!result.ok) return membershipCodeFail(result.error);
+    return { success: true, revoked: input.code };
   }),
 
   // Scoped to `account`, not `buzz`: the buttons live in the Admin section's action panel, and a

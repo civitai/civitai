@@ -78,7 +78,9 @@ type UserModActivity = {
     | 'deleteAccount'
     // Support minted a membership code for this account (`mintMembershipCode:<tier>:<months>`). The
     // daily per-moderator cap counts these rows; the code itself lives on RedeemableCode, never here.
-    | `mintMembershipCode:${string}`;
+    | `mintMembershipCode:${string}`
+    // Support withdrew an unredeemed code it minted (`revokeMembershipCode:<tier>:<months>`).
+    | `revokeMembershipCode:${string}`;
 };
 
 type ComicProjectModActivity = {

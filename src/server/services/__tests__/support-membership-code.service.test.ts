@@ -301,7 +301,12 @@ describe('isSupportCodeRedeemableBy', () => {
     ['its customer', { source: 'moderator-membership-code', forUserId: 1 }, 1, true],
     ['someone else', { source: 'moderator-membership-code', forUserId: 1 }, 2, false],
     ['anyone, when forUserId is missing', { source: 'moderator-membership-code' }, 1, false],
-    ['anyone, when forUserId is a string', { source: 'moderator-membership-code', forUserId: '1' }, 1, false],
+    [
+      'anyone, when forUserId is a string',
+      { source: 'moderator-membership-code', forUserId: '1' },
+      1,
+      false,
+    ],
     ['anyone, for a non-support code', { orderId: 'o' }, 2, true],
     ['anyone, for a code without metadata', null, 2, true],
   ])('a support code is redeemable by %s', (_l, meta, userId, expected) => {
@@ -349,7 +354,7 @@ describe('revokeSupportMembershipCode', () => {
   });
 
   it.each([
-    ['unknown, or another account's', null, 'NOT_FOUND'],
+    ['unknown, or on another account', null, 'NOT_FOUND'],
     ['not a support code', openCode({ metadata: { orderId: 'o' } }), 'NOT_FOUND'],
     ['already redeemed', openCode({ redeemedAt: new Date('2026-10-01') }), 'CONFLICT'],
     [

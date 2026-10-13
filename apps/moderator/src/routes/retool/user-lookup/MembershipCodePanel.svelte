@@ -1,5 +1,7 @@
 <script lang="ts">
+  import { browser } from '$app/environment';
   import { enhance } from '$app/forms';
+  import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import { Label } from '@civitai/ui/components/ui/label/index.js';
@@ -11,9 +13,12 @@
     MEMBERSHIP_CODE_MAX_MONTHS,
     MEMBERSHIP_CODE_TIER_LABELS,
     MEMBERSHIP_CODE_TIERS,
+    membershipCodeStatus,
+    type MembershipCodeStatus,
     type MembershipCodeTier,
     type MintedMembershipCode,
   } from '$lib/membership-code';
+  import { fetchMembershipCodes } from './membership-codes';
 
   let { userId, civitaiUrl }: { userId: number; civitaiUrl: string } = $props();
 
@@ -25,6 +30,18 @@
   let confirming = $state(false);
   let minted = $state<MintedMembershipCode | null>(null);
   let copyState = $state<'idle' | 'copied' | 'failed'>('idle');
+
+  // Bumped after a mint or revoke so the list refetches; it comes from `/api/*`, not the page load.
+  let version = $state(0);
+  const codes = $derived(browser ? fetchMembershipCodes(userId, version) : null);
+  let revoking = $state<string | null>(null);
+
+  const STATUS_VARIANT: Record<MembershipCodeStatus, 'secondary' | 'outline' | 'destructive'> = {
+    open: 'secondary',
+    redeemed: 'outline',
+    revoked: 'destructive',
+    expired: 'outline',
+  };
 
   const tierLabel = (t: string) => MEMBERSHIP_CODE_TIER_LABELS[t as MembershipCodeTier] ?? t;
 
@@ -43,10 +60,17 @@
       months = '';
       reason = '';
       copyState = 'idle';
+      version += 1;
     },
     // Disarm after every answer, failures included: a "may have minted" warning must not sit above a
     // live confirm button.
     onSettled: () => (confirming = false),
+  });
+
+  const revoke = new FormState({
+    reset: false,
+    onSuccess: () => (version += 1),
+    onSettled: () => (revoking = null),
   });
 
   const copy = async (code: string) => {
@@ -154,4 +178,52 @@
       {/if}
     </div>
   </form>
+
+  <h4 class="mt-5 mb-2 text-xs font-semibold text-white">Codes minted for this account</h4>
+  {#if revoke.error}
+    <ErrorAlert class="mb-2" message={revoke.error} />
+  {/if}
+  {#if codes}
+    {#await codes}
+      <p class="text-xs text-dark-2">Loading…</p>
+    {:then rows}
+      {#if rows.length === 0}
+        <p class="text-xs text-dark-2">None.</p>
+      {:else}
+        <ul class="space-y-2 text-sm">
+          {#each rows as row (row.code)}
+            {@const status = membershipCodeStatus(row)}
+            <li class="flex flex-wrap items-center gap-x-2 gap-y-1">
+              <code class="font-mono text-white select-all">{row.code}</code>
+              <span class="text-dark-2">
+                {row.months} mo {row.tier ? tierLabel(row.tier) : ''} · {dateTime(row.createdAt)}
+              </span>
+              <Badge variant={STATUS_VARIANT[status]}>{status}</Badge>
+              {#if status === 'open'}
+                {#if revoking === row.code}
+                  <form method="POST" action="?/revokeMembershipCode" use:enhance={revoke.enhance}>
+                    <input type="hidden" name="userId" value={userId} />
+                    <input type="hidden" name="code" value={row.code} />
+                    <Button type="submit" size="sm" variant="destructive" disabled={revoke.submitting}>
+                      Confirm revoke
+                    </Button>
+                  </form>
+                  <Button size="sm" variant="outline" onclick={() => (revoking = null)}>Cancel</Button>
+                {:else}
+                  <Button size="sm" variant="outline" onclick={() => (revoking = row.code)}>
+                    Revoke
+                  </Button>
+                {/if}
+              {/if}
+              {#if row.reason}
+                <span class="w-full text-xs text-dark-2">{row.reason}</span>
+              {/if}
+            </li>
+          {/each}
+        </ul>
+      {/if}
+    {:catch}
+      <p class="text-xs text-red-400">Could not load this account's codes.</p>
+    {/await}
+  {/if}
 </section>

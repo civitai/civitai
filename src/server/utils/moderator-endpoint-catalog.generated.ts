@@ -40,6 +40,8 @@ export const MODERATOR_ENDPOINT_MODULES: Record<string, () => Promise<unknown>> 
   '/api/mod/user/delete': () => import('~/pages/api/mod/user/delete'),
   '/api/mod/user/force-logout': () => import('~/pages/api/mod/user/force-logout'),
   '/api/mod/user/membership-code': () => import('~/pages/api/mod/user/membership-code'),
+  '/api/mod/user/membership-code-revoke': () =>
+    import('~/pages/api/mod/user/membership-code-revoke'),
   '/api/mod/user/mute': () => import('~/pages/api/mod/user/mute'),
   '/api/mod/user/toggle-moderator': () => import('~/pages/api/mod/user/toggle-moderator'),
   '/api/mod/user/unmute': () => import('~/pages/api/mod/user/unmute'),

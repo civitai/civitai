@@ -291,8 +291,11 @@ export async function consumeRedeemableCode({
     const buzzValue = convertCodeValueToBuzz(codeRecord.type, codeRecord.unitValue, tierName);
     const giftNotices = await getMatchingGiftNotices(buzzValue);
 
+    // `metadata` was read only for the binding check; it carries internal notes (a support reason,
+    // the minting moderator, a purchaser's order id) and goes back to the browser otherwise.
+    const { metadata: _internal, ...publicRecord } = codeRecord;
     return {
-      ...codeRecord,
+      ...publicRecord,
       giftNotices,
     }; // Already redeemed by this user, return the record with gift notices.
   }
