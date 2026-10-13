@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as PromptModule from '~/server/services/text-scan/prompt';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 import '~/__tests__/mocks/logging.mock';
 
 // @civitai/client is mocked globally in src/__tests__/setup.ts (submitWorkflow is a vi.fn()).
@@ -13,7 +14,11 @@ vi.mock('~/server/services/text-scan/prompt', async (importOriginal) => ({
 const { runTextScanHarnessAction, textScanHarnessSchema } = await import(
   '~/server/services/text-scan/harness'
 );
-const { registerTextScanProfile } = await import('~/server/services/text-scan/profiles');
+const { getTextScanProfile, registerTextScanProfile } = await import(
+  '~/server/services/text-scan/profiles'
+);
+const { textScanContentHash } = await import('~/server/services/text-scan/submit');
+const { composeUserText } = await import('~/server/services/text-scan/segment');
 const { submitWorkflow } = await import('@civitai/client');
 const { getActiveTextScanPrompts, getTextScanConfig } = await import(
   '~/server/services/text-scan/prompt'
@@ -100,5 +105,36 @@ describe('text-scan harness with segmented text', () => {
     expect(sentSteps().length).toBeGreaterThan(2);
     expect(res).toMatchObject({ ok: false, workflowId: 'wf-1', workflowStatus: 'failed' });
     expect(res.error).toContain('segment one blew up');
+  });
+
+  it('does not report a long, unedited text as changed since its scan', async () => {
+    const PROMPT_IDS = { base: 1, nsfw: 2 };
+    const subject = (await getTextScanProfile('Post')!.load([1])).get(1)!;
+    const user = composeUserText(subject);
+    expect(user.length).toBeGreaterThan(CONFIG.maxInputChars);
+    vi.mocked(dbMock.dbRead.$queryRaw).mockResolvedValue([
+      {
+        entityId: 1,
+        workflowId: 'wf-1',
+        triggeredLabels: [],
+        nsfwLevel: 1,
+        result: {
+          version: 1,
+          labels: { nsfw: { level: 'none', reason: 'clean' } },
+          promptIds: PROMPT_IDS,
+          model: 'air:test',
+        },
+        contentHash: textScanContentHash({
+          user,
+          promptIds: PROMPT_IDS,
+          model: 'air:test',
+          thinking: false,
+          segmentBudget: CONFIG,
+        }),
+        updatedAt: new Date('2026-10-01T00:00:00Z'),
+      },
+    ] as never);
+    const res = await run({ action: 'sampleShadow', entityType: 'Post', label: 'nsfw' });
+    expect(res.items.map((i: any) => i.textChangedSinceScan)).toEqual([false]);
   });
 });

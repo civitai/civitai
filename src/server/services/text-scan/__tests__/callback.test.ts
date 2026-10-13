@@ -648,6 +648,7 @@ describe('handleTextScanCallback with some segments unusable', () => {
       raised: ['minor'],
       parsedSegments: 1,
       segments: 2,
+      acted: true,
     });
   });
 
@@ -672,6 +673,7 @@ describe('handleTextScanCallback with some segments unusable', () => {
     await handleTextScanCallback({ workflowId: 'wf-1', status: 'succeeded' });
     expect(raiseWrite().where).toMatchObject({ entityType: 'Post:shadow', status: 'Failed' });
     expect(adapter.applyTextScan).not.toHaveBeenCalled();
+    expect(logged('partial verdict raised')).toMatchObject({ acted: false });
     expect(adapter.applyFailure).not.toHaveBeenCalled();
   });
 
@@ -761,6 +763,56 @@ describe('handleTextScanCallback with some segments unusable', () => {
     await handleTextScanCallback({ workflowId: 'wf-1', status: 'succeeded' });
     expect(adapter.applyTextScan).toHaveBeenCalledTimes(2);
     expect(row.triggeredLabels).toEqual(['minor']);
+  });
+
+  it('adds the raised flag to the flags already stored', async () => {
+    findUnique.mockResolvedValue(
+      stored({
+        triggeredLabels: ['poi'],
+        result: {
+          version: 1,
+          labels: { ...CLEAN, poi: { detected: true, names: [], reason: 'p' } },
+        },
+      }) as any
+    );
+    vi.mocked(getWorkflow).mockResolvedValue(segmented([MINOR, 'TRUNCATED'], LABELS) as any);
+    await handleTextScanCallback({ workflowId: 'wf-1', status: 'succeeded' });
+    expect(raiseWrite().data.triggeredLabels).toEqual(['poi', 'minor']);
+  });
+
+  it('acts on nothing when the raise write matches no row', async () => {
+    findUnique.mockResolvedValue(stored() as any);
+    vi.mocked(updateMany).mockResolvedValueOnce({ count: 1 }).mockResolvedValueOnce({ count: 0 });
+    vi.mocked(getWorkflow).mockResolvedValue(segmented([MINOR, 'TRUNCATED'], LABELS) as any);
+    await handleTextScanCallback({ workflowId: 'wf-1', status: 'succeeded' });
+    expect(updateMany).toHaveBeenCalledTimes(2);
+    expect(adapter.applyTextScan).not.toHaveBeenCalled();
+    expect(logged('partial verdict raised')).toBeUndefined();
+  });
+
+  it('raises nothing for an entity that no longer loads', async () => {
+    findUnique.mockResolvedValue(stored() as any);
+    load.mockResolvedValue(new Map());
+    vi.mocked(getWorkflow).mockResolvedValue(segmented([MINOR, 'TRUNCATED'], LABELS) as any);
+    await handleTextScanCallback({ workflowId: 'wf-1', status: 'succeeded' });
+    expect(updateMany).toHaveBeenCalledTimes(1);
+    expect(adapter.applyTextScan).not.toHaveBeenCalled();
+    expect(adapter.applyFailure).toHaveBeenCalled();
+  });
+
+  it('starts a text-scan result, stamped with the submitted textHash, on a row that had none', async () => {
+    findUnique.mockResolvedValue(stored({ nsfwLevel: null, result: null }) as any);
+    vi.mocked(getWorkflow).mockResolvedValue(
+      segmented([MINOR, 'TRUNCATED'], { ...LABELS, textHash: 'th-new' }) as any
+    );
+    await handleTextScanCallback({ workflowId: 'wf-1', status: 'succeeded' });
+    expect(raiseWrite().data.result).toEqual({
+      version: 1,
+      labels: { minor: MINOR.minor },
+      promptIds: { base: 1, nsfw: 2 },
+      model: 'air:test',
+      textHash: 'th-new',
+    });
   });
 
   it.each([
