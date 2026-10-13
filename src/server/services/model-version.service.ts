@@ -132,16 +132,13 @@ import {
   getModelVersionEarlyAccessRefundRequirement,
   refundModelEarlyAccessPurchases,
 } from '~/server/services/model-early-access-refund.service';
-import type {
-  ModelType,
-  ModelVersionEngagementType,
-  TrainingStatus,
-} from '~/shared/utils/prisma/enums';
+import type { ModelType, ModelVersionEngagementType } from '~/shared/utils/prisma/enums';
 import {
   Availability,
   CommercialUse,
   ModelStatus,
   ModelUsageControl,
+  TrainingStatus,
 } from '~/shared/utils/prisma/enums';
 import type { LicensingFeeSettlementCurrency, LicensingFeeType } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
@@ -505,6 +502,58 @@ function toMonetizationAuditShape(
     : null;
 }
 
+// The training wizard's own transitions: it approves a finished (or failed) run's epoch and keeps a
+// draft Pending. Anything else — a Denied/Paused run going back to Approved or Pending — is a
+// moderator or training-service decision.
+function assertOwnerTrainingStatusChange(
+  stored: TrainingStatus | null,
+  next: TrainingStatus | null | undefined
+) {
+  if (next === undefined || next === stored) return;
+  const approvesFinishedRun =
+    next === TrainingStatus.Approved &&
+    (stored === TrainingStatus.InReview || stored === TrainingStatus.Failed);
+  const keepsDraftPending =
+    next === TrainingStatus.Pending && (stored === null || stored === TrainingStatus.Failed);
+  if (!approvesFinishedRun && !keepsDraftPending)
+    throw throwBadRequestError("A version's training status can't be changed here.");
+}
+
+// Mirrors the comics rule: once published, early access can only shrink or end.
+async function assertPaidAccessNotIncreased(
+  versionId: number,
+  next: ModelVersionPaidAccessInputSchema | null | undefined
+) {
+  const gated = !!next && (!!next.permanent || (next.timeframeDays ?? 0) > 0);
+  if (!next || !gated) return;
+
+  const stored = await dbWrite.paidAccess.findUnique({
+    where: { entityType_entityId: { entityType: 'ModelVersion', entityId: versionId } },
+    select: { timeframeDays: true, terms: true },
+  });
+  if (!stored) return;
+
+  const window = (days: number | null | undefined, permanent?: boolean) =>
+    permanent || days == null ? Infinity : days;
+  if (window(next.timeframeDays, next.permanent) > window(stored.timeframeDays))
+    throw throwBadRequestError('Cannot increase the early access timeframe after publishing.');
+
+  const storedTerms = (stored.terms ?? {}) as ModelVersionPaidAccessInputSchema['terms'];
+  const priceOf = (terms: ModelVersionPaidAccessInputSchema['terms']) => ({
+    download: terms.download?.price,
+    generation:
+      terms.generation && 'price' in terms.generation ? terms.generation.price : undefined,
+  });
+  const before = priceOf(storedTerms);
+  const after = priceOf(next.terms);
+  for (const tier of ['download', 'generation'] as const) {
+    const afterPrice = after[tier];
+    const beforePrice = before[tier];
+    if (afterPrice != null && (beforePrice == null || afterPrice > beforePrice))
+      throw throwBadRequestError('Cannot increase the early access price after publishing.');
+  }
+}
+
 export const upsertModelVersion = async ({
   id,
   monetization,
@@ -800,6 +849,7 @@ export const upsertModelVersion = async ({
       select: {
         id: true,
         status: true,
+        trainingStatus: true,
         description: true,
         trainedWords: true,
         publishedAt: true,
@@ -873,6 +923,15 @@ export const upsertModelVersion = async ({
       throw throwBadRequestError(
         "Use the publish or unpublish action to change a version's status."
       );
+    }
+
+    if (!isModerator) {
+      if (data.modelId !== undefined && data.modelId !== existingVersion.model.id) {
+        throw throwBadRequestError('A version cannot be moved to another model.');
+      }
+      assertOwnerTrainingStatusChange(existingVersion.trainingStatus, data.trainingStatus);
+      if (existingVersion.status === ModelStatus.Published)
+        await assertPaidAccessNotIncreased(id as number, paidAccess);
     }
 
     const mergedMeta =
@@ -1136,6 +1195,7 @@ export const updateModelVersionPaidAccess = async ({
       usageControl: true,
       modelId: true,
       meta: true,
+      status: true,
       model: { select: { userId: true } },
     },
   });
@@ -1162,6 +1222,8 @@ export const updateModelVersionPaidAccess = async ({
     ) as typeof paidAccess.terms;
 
   assertPaidAccessInput(paidAccess);
+  if (!isModerator && existingVersion.status === ModelStatus.Published)
+    await assertPaidAccessNotIncreased(id, paidAccess);
 
   const rightsAffirmation = await resolveRightsAffirmation({
     userId: actorUserId ?? existingVersion.model.userId,
