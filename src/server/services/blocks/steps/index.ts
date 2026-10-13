@@ -1346,8 +1346,7 @@ export function isBillingModeImplemented(mode: StepBillingMode): boolean {
  * The display estimate for a step, dispatched on its declared billing mode.
  *
  * Resolves the variant through `resolveStepVariant` before dispatching — see
- * `planStepSpend` below for why the resolution lives in the dispatcher. The block
- * estimate does not call this: it shows a live quote or no price.
+ * `planStepSpend` below for why the resolution lives in the dispatcher.
  */
 export function estimateStepBuzz(
   step: AnyBlockStep,
