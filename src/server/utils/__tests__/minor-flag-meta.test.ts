@@ -6,6 +6,7 @@ import {
   resolveMinorFlagged,
   resolvePoiFlagged,
   stripMinorHashMeta,
+  MODERATION_FLOW_META_KEYS,
   stripModerationOwnedMeta,
 } from '~/server/utils/minor-flag-meta';
 import type { MinorFlagSnapshot, ModelMeta } from '~/server/schema/model.schema';
@@ -249,6 +250,20 @@ describe('stripModerationOwnedMeta', () => {
     expect(stripModerationOwnedMeta(undefined)).toBeUndefined();
   });
 });
+describe('moderation-flow keys', () => {
+  const flow = Object.fromEntries(MODERATION_FLOW_META_KEYS.map((key) => [key, 1])) as ModelMeta;
+  const meta = { ...flow, hideBuzz: true } as ModelMeta;
+
+  it('are dropped for a non-moderator and kept for a moderator', () => {
+    expect(stripModerationOwnedMeta(meta, false)).toEqual({ hideBuzz: true });
+    expect(stripModerationOwnedMeta(meta, true)).toBe(meta);
+  });
+
+  it('stay visible to the owner on the way out', () => {
+    expect(stripMinorHashMeta(meta)).toEqual(meta);
+  });
+});
+
 describe('textScanFlags is moderation-owned', () => {
   const textScanFlags = {
     poi: { at: 'x', workflowId: 'wf-1', reason: 'Names a real actor.', names: ['Jane Doe'] },

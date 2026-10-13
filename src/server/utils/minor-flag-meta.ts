@@ -93,6 +93,28 @@ const MODERATION_OWNED_META_KEYS = [
 ] as const satisfies readonly (keyof ModelMeta)[];
 
 /**
+ * Meta keys written only by moderation and system flows (takedown, unpublish, decline, archive,
+ * promotion/publish bans). Unlike `MODERATION_OWNED_META_KEYS` they are shown to the owner, so
+ * `stripMinorHashMeta` does not hide them; an owner still must not author or clear them through
+ * `model.upsert`, where a form that echoes `meta` back would otherwise overwrite the stored value.
+ */
+export const MODERATION_FLOW_META_KEYS = [
+  'cannotPublish',
+  'cannotPromote',
+  'unpublishedReason',
+  'unpublishedAt',
+  'unpublishedBy',
+  'customMessage',
+  'needsReview',
+  'declinedReason',
+  'declinedAt',
+  'takenDownAt',
+  'takenDownBy',
+  'archivedAt',
+  'archivedBy',
+] as const satisfies readonly (keyof ModelMeta)[];
+
+/**
  * Drops moderation-owned keys from CLIENT-supplied meta on the way in. Moderators
  * pass through untouched — they reach the same field through moderator-only routers
  * and stripping there would break those flows.
@@ -108,6 +130,7 @@ export function stripModerationOwnedMeta<T extends ModelMeta | null | undefined>
 
   const rest = { ...meta } as ModelMeta;
   for (const key of MODERATION_OWNED_META_KEYS) delete rest[key];
+  for (const key of MODERATION_FLOW_META_KEYS) delete rest[key];
 
   return rest as T;
 }

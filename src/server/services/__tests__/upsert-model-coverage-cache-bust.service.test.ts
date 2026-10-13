@@ -187,7 +187,10 @@ describe('upsertModel — busts version caches when generation coverage can chan
   });
 
   it('busts when availability changes', async () => {
-    await upsert({ availability: Availability.Private });
+    await upsert({
+      availability: Availability.Private,
+      isModerator: true,
+    } as Partial<ModelUpsertInput>);
 
     expect(bustMvCache).toHaveBeenCalledWith(VERSION_IDS, MODEL_ID, OWNER_ID);
   });

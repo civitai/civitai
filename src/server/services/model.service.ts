@@ -2733,6 +2733,7 @@ export const upsertModel = async (
             gallerySettings: true,
             meta: true,
             availability: true,
+            status: true,
             mode: true,
             allowNoCredit: true,
             allowCommercialUse: true,
@@ -2817,6 +2818,9 @@ export const upsertModel = async (
   }
 
   if (!id || templateId) {
+    if (!isModerator && data.availability === Availability.Private)
+      throw throwBadRequestError('Private models are created from the private model flow.');
+
     const result = await dbWrite.$transaction(
       async (tx) => {
         const created = await tx.model.create({
@@ -2917,6 +2921,16 @@ export const upsertModel = async (
 
     const isOwner = beforeUpdate.userId === userId || isModerator;
     if (!isOwner) return null;
+
+    // Going public skips `publishPrivateModel`'s checks and going private skips the
+    // `maxPrivateModels` cap, so availability only changes through those flows.
+    if (!isModerator && data.availability && data.availability !== beforeUpdate.availability) {
+      throw throwBadRequestError(
+        beforeUpdate.availability === Availability.Private
+          ? 'A private model can only be made public by publishing it.'
+          : 'A model cannot be made private here. Use the private model flow.'
+      );
+    }
 
     const prevGallerySettings = beforeUpdate.gallerySettings as ModelGallerySettingsSchema;
     const prevMeta = beforeUpdate.meta as ModelMeta | null;
