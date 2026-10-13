@@ -233,12 +233,14 @@ describe('getEntityCoverImage bounds the CONNECTIONS branch to one row per entit
         `WHEN 'Bounty' THEN e."entityId" WHEN 'BountyEntry' THEN be."bountyId" END ` +
         `LEFT JOIN "Article" a ON e."entityType" = 'Article' AND a.id = e."entityId" ` +
         `WHERE i."ingestion" = 'Scanned' AND i."needsReview" IS NULL ` +
-        // The parent entity's visibility: canViewBounty, then the article rule.
-        `AND ( e."entityType" NOT IN ('Bounty', 'BountyEntry') ` +
-        `OR b.availability <> 'Private' OR b."userId" = ? OR ?::boolean ) ` +
-        `AND ( e."entityType" <> 'Article' ` +
-        `OR (a.status = 'Published' AND a."publishedAt" IS NOT NULL AND a.ingestion = 'Scanned') ` +
-        `OR a."userId" = ? OR ?::boolean ) ` +
+        // Only types with a visibility rule here, then canViewBounty or the article rule.
+        `AND e."entityType" IN ('Bounty', 'BountyEntry', 'Article') ` +
+        'AND ( ?::boolean ' +
+        `OR ( e."entityType" IN ('Bounty', 'BountyEntry') ` +
+        `AND (b.availability <> 'Private' OR b."userId" = ?) ) ` +
+        `OR ( e."entityType" = 'Article' AND ( ` +
+        `(a.status = 'Published' AND a."publishedAt" IS NOT NULL AND a.ingestion = 'Scanned') ` +
+        'OR a."userId" = ? ) ) ) ' +
         'ORDER BY e."entityId", e."entityType", i.id ' +
         ') t ) t'
     );

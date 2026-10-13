@@ -114,6 +114,55 @@ beforeAll(async () => {
     INSERT INTO "Post" (id, "modelVersionId", "publishedAt") VALUES
       (521, 511, now()), (522, 512, now()), (523, 513, now());
     INSERT INTO "Image" (id, "postId") VALUES (531, 521), (532, 522), (533, 523);
+
+    -- Articles with publishedAt set but hidden by status or ingestion: 304/305 by their cover,
+    -- 306/307 by content images only.
+    INSERT INTO "Image" (id) VALUES (314), (315), (316), (317);
+    INSERT INTO "Article" (id, "coverId", status, "publishedAt", ingestion) VALUES
+      (304, 314, 'Unpublished', now(), 'Scanned'), (305, 315, 'Published', now(), 'Blocked'),
+      (306, null, 'Unpublished', now(), 'Scanned'), (307, null, 'Published', now(), 'Blocked');
+    INSERT INTO "ImageConnection" VALUES (316, 306, 'Article'), (317, 307, 'Article');
+
+    -- Public models whose first version or post is hidden, ahead of a visible one:
+    -- 601 draft version, 602 scheduled version, 603 Private version, 604 draft post,
+    -- 605 Private post, 606 scheduled post.
+    INSERT INTO "Model" (id, status) VALUES
+      (601, 'Published'), (602, 'Published'), (603, 'Published'),
+      (604, 'Published'), (605, 'Published'), (606, 'Published');
+    INSERT INTO "ModelVersion" (id, "modelId", index, status, "publishedAt", availability) VALUES
+      (611, 601, 0, 'Draft', null, 'Public'), (612, 601, 1, 'Published', null, 'Public'),
+      (613, 602, 0, 'Published', now() + interval '1 day', 'Public'),
+      (614, 602, 1, 'Published', null, 'Public'),
+      (615, 603, 0, 'Published', null, 'Private'), (616, 603, 1, 'Published', null, 'Public'),
+      (617, 604, 0, 'Published', null, 'Public'), (618, 605, 0, 'Published', null, 'Public'),
+      (619, 606, 0, 'Published', null, 'Public');
+    INSERT INTO "Post" (id, "modelVersionId", "publishedAt", availability) VALUES
+      (621, 611, now() - interval '1 day', 'Public'), (622, 612, now() - interval '1 day', 'Public'),
+      (623, 613, now() - interval '1 day', 'Public'), (624, 614, now() - interval '1 day', 'Public'),
+      (625, 615, now() - interval '1 day', 'Public'), (626, 616, now() - interval '1 day', 'Public'),
+      (627, 617, null, 'Public'), (628, 617, now() - interval '1 day', 'Public'),
+      (629, 618, now() - interval '1 day', 'Private'), (630, 618, now() - interval '1 day', 'Public'),
+      (631, 619, now() + interval '1 day', 'Public'), (632, 619, now() - interval '1 day', 'Public');
+    INSERT INTO "Image" (id, "postId") VALUES
+      (641, 621), (642, 622), (643, 623), (644, 624), (645, 625), (646, 626),
+      (647, 627), (648, 628), (649, 629), (650, 630), (651, 631), (652, 632);
+
+    -- Published versions of public model 701: 711 only on a draft post, 712 only on a Private
+    -- post, 713 with a community post ahead of the owner's.
+    INSERT INTO "Model" (id, status) VALUES (701, 'Published');
+    INSERT INTO "ModelVersion" (id, "modelId", status) VALUES
+      (711, 701, 'Published'), (712, 701, 'Published'), (713, 701, 'Published');
+    INSERT INTO "Post" (id, "userId", "modelVersionId", "publishedAt", availability) VALUES
+      (721, ${OWNER}, 711, null, 'Public'),
+      (722, ${OWNER}, 712, now() - interval '1 day', 'Private'),
+      (723, 50, 713, now() - interval '1 day', 'Public'),
+      (724, ${OWNER}, 713, now() - interval '1 day', 'Public');
+    INSERT INTO "Image" (id, "postId", "userId") VALUES
+      (731, 721, ${OWNER}), (732, 722, ${OWNER}), (733, 723, 50), (734, 724, ${OWNER});
+
+    -- A connection under an entity type no rule covers.
+    INSERT INTO "Image" (id) VALUES (801);
+    INSERT INTO "ImageConnection" VALUES (801, 9, 'Collection');
   `);
   const raw = pgliteRaw(db);
   (dbMock.dbRead.$queryRaw as unknown as ReturnType<typeof vi.fn>).mockImplementation(raw.queryRaw);
@@ -144,6 +193,22 @@ const hidden: [string, string, number, number][] = [
   ['a Private version', 'ModelVersion', 511, 531],
   ['a scheduled version', 'ModelVersion', 512, 532],
   ['a draft version', 'ModelVersion', 513, 533],
+  ['an Unpublished article', 'Article', 304, 314],
+  ['a Published article whose ingestion is Blocked', 'Article', 305, 315],
+  ['an Unpublished article with content images only', 'Article', 306, 316],
+  ['a Blocked article with content images only', 'Article', 307, 317],
+  ['a published version whose only post is a draft', 'ModelVersion', 711, 731],
+  ['a published version whose only post is Private', 'ModelVersion', 712, 732],
+];
+
+// [label, entityType, entityId, cover for anonymous/stranger, cover for owner/moderator]
+const fallback: [string, string, number, number, number][] = [
+  ['a public model whose first version is a draft', 'Model', 601, 642, 641],
+  ['a public model whose first version is scheduled', 'Model', 602, 644, 643],
+  ['a public model whose first version is Private', 'Model', 603, 646, 645],
+  ['a public model whose first post is a draft', 'Model', 604, 648, 647],
+  ['a public model whose first post is Private', 'Model', 605, 650, 649],
+  ['a public model whose first post is scheduled', 'Model', 606, 652, 651],
 ];
 
 const visible: [string, string, number, number][] = [
@@ -165,6 +230,32 @@ describe('getEntityCoverImage respects the parent entity visibility', () => {
       expect(await coverOf(entityType, entityId, viewers[who])).toBe(imageId);
     });
   });
+
+  describe.each(fallback)('%s', (_, entityType, entityId, publicImage, ownerImage) => {
+    it.each(['anonymous', 'stranger'] as const)(
+      'falls back to the next visible cover for a %s viewer',
+      async (who) => {
+        expect(await coverOf(entityType, entityId, viewers[who])).toBe(publicImage);
+      }
+    );
+    it.each(['owner', 'moderator'] as const)('keeps the first cover for the %s', async (who) => {
+      expect(await coverOf(entityType, entityId, viewers[who])).toBe(ownerImage);
+    });
+  });
+
+  it.each(Object.keys(viewers) as (keyof typeof viewers)[])(
+    "takes a version's cover from the model owner's post for a %s viewer",
+    async (who) => {
+      expect(await coverOf('ModelVersion', 713, viewers[who])).toBe(734);
+    }
+  );
+
+  it.each(Object.keys(viewers) as (keyof typeof viewers)[])(
+    'has no cover through a connection type no rule covers, for a %s viewer',
+    async (who) => {
+      expect(await coverOf('Collection', 9, viewers[who])).toBeNull();
+    }
+  );
 
   describe.each(visible)('%s', (_, entityType, entityId, imageId) => {
     it.each(['anonymous', 'stranger'] as const)('keeps its cover for a %s viewer', async (who) => {
