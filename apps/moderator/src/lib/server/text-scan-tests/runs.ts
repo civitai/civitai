@@ -20,13 +20,20 @@ import {
 } from '../../text-scan-tests/baseline';
 import {
   ACTIVE_RUN_STATUSES,
+  CANCELLABLE_RUN_STATUSES,
   TEST_SET_LIMITS,
   type TestSet,
   type Workspace,
 } from '../../text-scan-tests/types';
-import { TestSetError, requireOpenSet } from './store';
 import { ruleStateHash } from './rule-state';
-import type { RunRow } from './worker';
+import {
+  TestSetError,
+  getRun,
+  noResultIn,
+  requireOpenSet,
+  runnableCases,
+  type RunRow,
+} from './store';
 
 type Db = Kysely<ModeratorDB>;
 
@@ -74,7 +81,6 @@ export type Started = { startId: string; runIds: number[]; runId: number };
 const CHUNK_SECONDS = 20;
 
 const sha256 = (value: string) => createHash('sha256').update(value).digest('hex');
-export { ruleStateHash };
 const sortedKeys = <T>(record: Record<string, T>) =>
   Object.fromEntries(Object.entries(record).sort(([a], [b]) => a.localeCompare(b)));
 
@@ -88,13 +94,7 @@ async function record(audit: RunAudit, event: RunAuditEvent) {
 }
 
 export async function setLabels(db: Db, setId: number): Promise<LabLabel[]> {
-  const rows = await db
-    .selectFrom('text_scan_test_case')
-    .select('entity_type')
-    .distinct()
-    .where('set_id', '=', String(setId))
-    .where('fields', 'is not', null)
-    .execute();
+  const rows = await runnableCases(db, setId).select('c.entity_type').distinct().execute();
   return labelsOf(rows.map((r) => r.entity_type as LabEntityType));
 }
 
@@ -180,22 +180,24 @@ async function planRun(
   draftInput: DraftInput | null
 ): Promise<Plan> {
   const set = await requireOpenSet(deps.db, setId, workspace);
-  const stats = await deps.db
-    .selectFrom('text_scan_test_case')
-    .select([
-      sql<string>`count(*) FILTER (WHERE fields IS NOT NULL)`.as('runnable'),
-      sql<string | null>`max(id)`.as('max_id'),
-    ])
-    .where('set_id', '=', String(setId))
-    .executeTakeFirstOrThrow();
-  const runnable = Number(stats.runnable);
+  const [counted, last] = await Promise.all([
+    runnableCases(deps.db, setId)
+      .select(sql<string>`count(*)`.as('n'))
+      .executeTakeFirstOrThrow(),
+    deps.db
+      .selectFrom('text_scan_test_case')
+      .select(sql<string | null>`max(id)`.as('max_id'))
+      .where('set_id', '=', String(setId))
+      .executeTakeFirstOrThrow(),
+  ]);
+  const runnable = Number(counted.n);
   if (!runnable) throw new TestSetError('This set has no case with text to scan.', 400);
   if (runnable > TEST_SET_LIMITS.casesPerRun)
     throw new TestSetError(
       `${runnable} cases is more than the ${TEST_SET_LIMITS.casesPerRun} one run can scan. Split the set.`,
       400
     );
-  const maxCaseId = Number(stats.max_id);
+  const maxCaseId = Number(last.max_id);
 
   const labels = await setLabels(deps.db, setId);
   const { live, ruleState, prompts } = await liveStateFor(deps, labels);
@@ -206,21 +208,9 @@ async function planRun(
   const state = baselineState(latest && { ...asLive(latest), status: latest.status }, live);
   let missing = 0;
   if (latest && state === 'fresh') {
-    const row = await deps.db
-      .selectFrom('text_scan_test_case as c')
+    const row = await runnableCases(deps.db, setId)
       .select(sql<string>`count(*)`.as('n'))
-      .where('c.set_id', '=', String(setId))
-      .where('c.fields', 'is not', null)
-      .where(({ not, exists, selectFrom }) =>
-        not(
-          exists(
-            selectFrom('text_scan_test_result as r')
-              .select('r.case_id')
-              .whereRef('r.case_id', '=', 'c.id')
-              .where('r.run_id', '=', latest.id)
-          )
-        )
-      )
+      .where(noResultIn(latest.id))
       .executeTakeFirstOrThrow();
     missing = Number(row.n);
   }
@@ -240,13 +230,10 @@ async function planRun(
 
   const calls =
     (draft ? runnable : 0) + (mode === 'new' ? runnable : mode === 'top-up' ? missing : 0);
-  const sampleRows = await deps.db
-    .selectFrom('text_scan_test_case')
-    .select(['entity_type', 'fields'])
-    .where('set_id', '=', String(setId))
-    .where('fields', 'is not', null)
-    .orderBy('entity_type')
-    .orderBy('id')
+  const sampleRows = await runnableCases(deps.db, setId)
+    .select(['c.entity_type', 'c.fields'])
+    .orderBy('c.entity_type')
+    .orderBy('c.id')
     .limit(TEST_SET_LIMITS.quoteSample)
     .execute();
   const sampleType = sampleRows[0].entity_type as LabEntityType;
@@ -452,13 +439,7 @@ export async function cancelRun(
   canCancelAny: boolean
 ): Promise<number> {
   const { db } = deps;
-  const run = await db
-    .selectFrom('text_scan_test_run')
-    .select(['start_id', 'run_by'])
-    .where('id', '=', String(runId))
-    .where('set_id', '=', String(setId))
-    .executeTakeFirst();
-  if (!run) throw new TestSetError(`Run ${runId} not found in this set.`, 404);
+  const run = await getRun(db, setId, runId);
   if (run.run_by !== userId && !canCancelAny)
     throw new TestSetError(
       'Only the moderator who started this run, or someone who can edit test sets, can cancel it.',
@@ -471,7 +452,7 @@ export async function cancelRun(
       finished_at: sql`CASE WHEN status = 'queued' THEN now() ELSE finished_at END`,
     })
     .where('start_id', '=', run.start_id)
-    .where('status', 'in', ['queued', 'running'])
+    .where('status', 'in', [...CANCELLABLE_RUN_STATUSES])
     .returning('id')
     .execute();
   if (!res.length) throw new TestSetError('This run is not in progress.', 409);
@@ -491,13 +472,7 @@ export async function rerunErrors(
   userId: number
 ): Promise<Started> {
   await requireOpenSet(deps.db, setId);
-  const run = await deps.db
-    .selectFrom('text_scan_test_run')
-    .selectAll()
-    .where('id', '=', String(runId))
-    .where('set_id', '=', String(setId))
-    .executeTakeFirst();
-  if (!run) throw new TestSetError(`Run ${runId} not found in this set.`, 404);
+  const run = await getRun(deps.db, setId, runId);
   if (!['done', 'cancelled', 'failed'].includes(run.status))
     throw new TestSetError('This run has not finished yet.', 409);
   const errors = await deps.db

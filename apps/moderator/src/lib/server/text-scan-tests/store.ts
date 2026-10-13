@@ -1,7 +1,8 @@
-import { sql, type Kysely, type Selectable } from 'kysely';
+import { sql, type ExpressionBuilder, type Kysely, type Selectable } from 'kysely';
 import type {
   DB as ModeratorDB,
   text_scan_test_case,
+  text_scan_test_run,
   text_scan_test_set,
 } from '../moderator-db/types';
 import { normaliseLabFields } from '../../text-scan-lab/compose';
@@ -24,6 +25,7 @@ export class TestSetError extends Error {
 }
 
 type Db = Kysely<ModeratorDB>;
+export type RunRow = Selectable<text_scan_test_run>;
 
 export const toTestSet = (r: Selectable<text_scan_test_set>): TestSet => ({
   id: Number(r.id),
@@ -85,14 +87,53 @@ export async function getSet(db: Db, id: number): Promise<TestSet | null> {
   return row ? toTestSet(row) : null;
 }
 
-export async function requireOpenSet(db: Db, id: number, workspace?: Workspace): Promise<TestSet> {
+export async function requireSet(db: Db, id: number): Promise<TestSet> {
   const set = await getSet(db, id);
   if (!set) throw new TestSetError(`Test set ${id} not found.`, 404);
+  return set;
+}
+
+export async function requireOpenSet(db: Db, id: number, workspace?: Workspace): Promise<TestSet> {
+  const set = await requireSet(db, id);
   if (set.archivedAt) throw new TestSetError(`Test set "${set.name}" is archived.`, 409);
   if (workspace && set.workspace !== workspace)
     throw new TestSetError(`Test set "${set.name}" belongs to the other workspace.`, 409);
   return set;
 }
+
+export async function getRun(db: Db, setId: number, runId: number): Promise<RunRow> {
+  const row = await db
+    .selectFrom('text_scan_test_run')
+    .selectAll()
+    .where('id', '=', String(runId))
+    .where('set_id', '=', String(setId))
+    .executeTakeFirst();
+  if (!row) throw new TestSetError(`Run ${runId} not found in this set.`, 404);
+  return row;
+}
+
+const setCases = (db: Db, setId: number | string) =>
+  db.selectFrom('text_scan_test_case as c').where('c.set_id', '=', String(setId));
+
+/** Cases that still have their text: a wiped case is never scanned. */
+export const runnableCases = (db: Db, setId: number | string) =>
+  setCases(db, setId).where('c.fields', 'is not', null);
+
+export const wipedCases = (db: Db, setId: number | string) =>
+  setCases(db, setId).where('c.fields', 'is', null);
+
+/** For a `text_scan_test_case as c` query: the case has no result row in this run. */
+export const noResultIn =
+  (runId: number | string) =>
+  ({ not, exists, selectFrom }: ExpressionBuilder<ModeratorDB & { c: text_scan_test_case }, 'c'>) =>
+    not(
+      exists(
+        selectFrom('text_scan_test_result as r')
+          .select('r.case_id')
+          .whereRef('r.case_id', '=', 'c.id')
+          .where('r.run_id', '=', String(runId))
+      )
+    );
 
 export async function listSets(
   db: Db,

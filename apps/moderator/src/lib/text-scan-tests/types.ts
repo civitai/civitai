@@ -31,7 +31,19 @@ export const ACTIVE_RUN_STATUSES = [
   'running',
   'cancelling',
 ] as const satisfies readonly RunStatus[];
+export const CANCELLABLE_RUN_STATUSES = [
+  'queued',
+  'running',
+] as const satisfies readonly RunStatus[];
+export const isActiveRun = (status: string) =>
+  (ACTIVE_RUN_STATUSES as readonly string[]).includes(status);
+/** A cancelling run is already stopping. */
+export const isCancellable = (status: string) =>
+  (CANCELLABLE_RUN_STATUSES as readonly string[]).includes(status);
 export type RunKind = 'baseline' | 'draft';
+export const RUN_KIND_NAMES: Record<RunKind, string> = { baseline: 'Baseline', draft: 'Draft' };
+/** How often an open page re-reads a run in progress. */
+export const RUN_POLL_MS = 4000;
 
 export const TEST_SET_LIMITS = {
   nameChars: 100,
@@ -46,6 +58,8 @@ export const TEST_SET_LIMITS = {
   draftRetentionDays: 90,
   recentRuns: 5,
 } as const;
+
+export type SetOption = { id: number; name: string; caseCount: number };
 
 export type TestSet = {
   id: number;

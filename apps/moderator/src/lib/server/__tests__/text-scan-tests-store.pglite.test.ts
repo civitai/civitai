@@ -7,6 +7,7 @@ import {
   archiveSet,
   createSet,
   getCase,
+  getRun,
   listCases,
   listSets,
   removeCase,
@@ -14,7 +15,13 @@ import {
   upsertCase,
   type CaseInput,
 } from '../text-scan-tests/store';
-import { MOD, TEST_SETS_SCHEMA, useTestSetsDb } from './text-scan-tests-pglite.harness';
+import {
+  MOD,
+  TEST_SETS_SCHEMA,
+  seedRun,
+  seedSet,
+  useTestSetsDb,
+} from './text-scan-tests-pglite.harness';
 
 let pg: PGlite;
 let db: Kysely<ModeratorDB>;
@@ -234,5 +241,19 @@ describe('updateExpectation and removeCase', () => {
   it('throws TestSetError, which the routes map to fail()', async () => {
     const set = await newSet();
     await expect(removeCase(db, set.id, 999)).rejects.toBeInstanceOf(TestSetError);
+  });
+});
+
+describe('getRun', () => {
+  it('finds a run of this set and 404s a run of another set', async () => {
+    const setId = await seedSet(db);
+    const other = await seedSet(db);
+    const runId = await seedRun(db, setId);
+    const elsewhere = await seedRun(db, other);
+    expect(Number((await getRun(db, setId, runId)).id)).toBe(runId);
+    await expect(getRun(db, setId, elsewhere)).rejects.toMatchObject({
+      status: 404,
+      message: `Run ${elsewhere} not found in this set.`,
+    });
   });
 });

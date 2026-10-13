@@ -5,6 +5,7 @@
   import { FormState } from '$lib/form-state.svelte';
   import type { Jsonified } from '$lib/format';
   import type { RunView } from '$lib/server/text-scan-tests/reports';
+  import { RUN_KIND_NAMES, isCancellable } from '$lib/text-scan-tests/types';
 
   let {
     run,
@@ -31,10 +32,10 @@
 <div class="rounded-lg border border-dark-4 bg-dark-7 p-3">
   <div class="flex items-center justify-between gap-2 text-xs text-dark-2">
     <span>
-      #{run.id} {run.kind === 'baseline' ? 'Baseline' : 'Draft'} · {STATUS[run.status] ?? run.status} ·
+      #{run.id} {RUN_KIND_NAMES[run.kind]} · {STATUS[run.status] ?? run.status} ·
       {run.caseDone}/{run.caseTotal}{#if run.errorCount} · {run.errorCount} errors{/if}
     </span>
-    {#if canCancel && (run.status === 'queued' || run.status === 'running')}
+    {#if canCancel && isCancellable(run.status)}
       <form method="POST" {action} use:enhance={cancel.enhance}>
         <input type="hidden" name="setId" value={run.setId} />
         <input type="hidden" name="runId" value={run.id} />

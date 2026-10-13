@@ -17,7 +17,7 @@
   import { ENTITY_TYPE_NAMES, LABEL_NAMES } from '$lib/text-scan-lab/labels';
   import type { LabEntityType, LabLabel } from '$lib/text-scan-lab/types';
   import { LABEL_ORDER, scoredLabels } from '$lib/text-scan-tests/expected';
-  import { WORKSPACE_NAMES, WORKSPACE_PATHS } from '$lib/text-scan-tests/types';
+  import { RUN_KIND_NAMES, WORKSPACE_NAMES, WORKSPACE_PATHS } from '$lib/text-scan-tests/types';
 
   let { data } = $props();
 
@@ -180,7 +180,7 @@
       {#each data.runs as run (run.id)}
         <li class="text-sm">
           <a href="/text-scan/test-sets/{data.set.id}/runs/{run.id}" class={LINK_CLASS}>
-            #{run.id} {run.kind === 'baseline' ? 'Baseline' : 'Draft'} · {run.status}
+            #{run.id} {RUN_KIND_NAMES[run.kind]} · {run.status}
           </a>
           <span class="text-xs text-dark-2">
             {dateTime(run.finishedAt ?? run.createdAt)} · {run.caseDone}/{run.caseTotal}

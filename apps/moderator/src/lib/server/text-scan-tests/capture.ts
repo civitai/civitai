@@ -7,9 +7,8 @@ import { normaliseLabFields } from '$lib/text-scan-lab/compose';
 import { LAB_ENTITY_TYPES, type LabEntityType, type LabField } from '$lib/text-scan-lab/types';
 import { parseExpected, workspaceOf } from '$lib/text-scan-tests/expected';
 import { TEST_SET_LIMITS, WORKSPACE_NAMES, WORKSPACES } from '$lib/text-scan-tests/types';
+import { idField as id } from './guard';
 import { TestSetError, createSet, requireOpenSet, upsertCase } from './store';
-
-const id = z.coerce.number().int().positive().max(2_147_483_647);
 const optionalText = (max: number, message: string) =>
   z
     .string()

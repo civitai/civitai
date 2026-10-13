@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { hostname } from 'node:os';
-import { sql, type Kysely, type Selectable } from 'kysely';
+import { sql, type Kysely } from 'kysely';
 import type { DB as MainDB } from '@civitai/db-schema/kysely';
-import type { DB as ModeratorDB, text_scan_test_run } from '../moderator-db/types';
+import type { DB as ModeratorDB } from '../moderator-db/types';
 import { LabHarnessError, type LabOverrides, type LabRun } from '../text-scan-lab/harness-client';
 import { chunkTexts } from '../../text-scan-lab/limits';
 import type {
@@ -27,9 +27,9 @@ import {
   type Workspace,
 } from '../../text-scan-tests/types';
 import { goneCaseIds, wipeCases } from './sources';
+import { noResultIn, runnableCases, wipedCases, type RunRow } from './store';
 
 type Db = Kysely<ModeratorDB>;
-export type RunRow = Selectable<text_scan_test_run>;
 
 export type WorkerDeps = {
   db: Db;
@@ -79,26 +79,11 @@ type PendingCase = {
   fields: LabField[];
 };
 
-const inRun = (run: RunRow) => (db: Db) =>
-  db
-    .selectFrom('text_scan_test_case as c')
-    .where('c.set_id', '=', run.set_id)
-    .where('c.id', '<=', run.max_case_id)
-    .where(({ not, exists, selectFrom }) =>
-      not(
-        exists(
-          selectFrom('text_scan_test_result as r')
-            .select('r.case_id')
-            .whereRef('r.case_id', '=', 'c.id')
-            .where('r.run_id', '=', run.id)
-        )
-      )
-    );
-
 async function pendingCases(db: Db, run: RunRow): Promise<PendingCase[]> {
-  const rows = await inRun(run)(db)
+  const rows = await runnableCases(db, run.set_id)
+    .where('c.id', '<=', run.max_case_id)
+    .where(noResultIn(run.id))
     .select(['c.id', 'c.entity_type', 'c.entity_id', 'c.fields'])
-    .where('c.fields', 'is not', null)
     .orderBy('c.entity_type')
     .orderBy('c.id')
     .limit(PENDING_PAGE)
@@ -112,7 +97,11 @@ async function pendingCases(db: Db, run: RunRow): Promise<PendingCase[]> {
 }
 
 async function wipedWithoutResult(db: Db, run: RunRow): Promise<number[]> {
-  const rows = await inRun(run)(db).select('c.id').where('c.fields', 'is', null).execute();
+  const rows = await wipedCases(db, run.set_id)
+    .where('c.id', '<=', run.max_case_id)
+    .where(noResultIn(run.id))
+    .select('c.id')
+    .execute();
   return rows.map((r) => Number(r.id));
 }
 

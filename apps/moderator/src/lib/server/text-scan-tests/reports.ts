@@ -19,18 +19,18 @@ import {
 import {
   ACTIVE_RUN_STATUSES,
   TEST_SET_LIMITS,
+  isActiveRun,
   type RunKind,
   type RunStatus,
   type TestCase,
   type TestSet,
 } from '../../text-scan-tests/types';
 import { asLive, latestBaseline, liveStateFor, setLabels, type RunsDeps } from './runs';
-import { TestSetError, getSet } from './store';
-import { computeTotals, type RunRow } from './worker';
+import { TestSetError, getRun, requireSet, runnableCases, type RunRow } from './store';
+import { computeTotals } from './worker';
 
 type Db = Kysely<ModeratorDB>;
 
-const ACTIVE = new Set<string>(ACTIVE_RUN_STATUSES);
 const PREVIEW_CHARS = 300;
 
 export type RunView = {
@@ -67,7 +67,7 @@ export function toRunView(r: RunRow, now = Date.now()): RunView {
     kind: r.kind as RunKind,
     status: r.status as RunStatus,
     interrupted:
-      ACTIVE.has(r.status) &&
+      isActiveRun(r.status) &&
       r.status !== 'queued' &&
       (heartbeat === null || now - heartbeat > TEST_SET_LIMITS.leaseStaleMs),
     baselineRunId: r.baseline_run_id === null ? null : Number(r.baseline_run_id),
@@ -97,25 +97,21 @@ export type SetOverview = {
   recent: RunView[];
 };
 
-async function requireSet(db: Db, setId: number): Promise<TestSet> {
-  const set = await getSet(db, setId);
-  if (!set) throw new TestSetError(`Test set ${setId} not found.`, 404);
-  return set;
-}
-
 export async function setOverview(
   deps: Pick<RunsDeps, 'db' | 'getPrompts' | 'liveRuleState'>,
   setId: number
 ): Promise<SetOverview> {
   const set = await requireSet(deps.db, setId);
-  const counts = await deps.db
-    .selectFrom('text_scan_test_case')
-    .select([
-      sql<string>`count(*)`.as('total'),
-      sql<string>`count(*) FILTER (WHERE fields IS NOT NULL)`.as('runnable'),
-    ])
-    .where('set_id', '=', String(setId))
-    .executeTakeFirstOrThrow();
+  const [all, withText] = await Promise.all([
+    deps.db
+      .selectFrom('text_scan_test_case')
+      .select(sql<string>`count(*)`.as('n'))
+      .where('set_id', '=', String(setId))
+      .executeTakeFirstOrThrow(),
+    runnableCases(deps.db, setId)
+      .select(sql<string>`count(*)`.as('n'))
+      .executeTakeFirstOrThrow(),
+  ]);
   const latest = await latestBaseline(deps.db, setId);
   let state: SetOverview['baseline']['state'] = 'none';
   if (latest) {
@@ -127,26 +123,36 @@ export async function setOverview(
       if (!(e instanceof TestSetError)) throw e;
     }
   }
-  const views = await listRuns(deps.db, setId, 50);
-  const total = Number(counts.total);
-  const runnable = Number(counts.runnable);
+  const [active, recent] = await Promise.all([
+    listRuns(deps.db, setId, { active: true }),
+    listRuns(deps.db, setId, { active: false, limit: TEST_SET_LIMITS.recentRuns }),
+  ]);
+  const total = Number(all.n);
+  const runnable = Number(withText.n);
   return {
     set,
     cases: { total, runnable, wiped: total - runnable },
     baseline: { state, run: latest ? toRunView(latest) : null },
-    active: views.filter((v) => ACTIVE.has(v.status)),
-    recent: views.filter((v) => !ACTIVE.has(v.status)).slice(0, TEST_SET_LIMITS.recentRuns),
+    active,
+    recent,
   };
 }
 
-export async function listRuns(db: Db, setId: number, limit = 100): Promise<RunView[]> {
-  const rows = await db
+/** `active`: only runs in progress (true) or only finished ones (false); omitted, both. */
+export async function listRuns(
+  db: Db,
+  setId: number,
+  opts: { active?: boolean; limit?: number } = {}
+): Promise<RunView[]> {
+  let query = db
     .selectFrom('text_scan_test_run')
     .selectAll()
     .where('set_id', '=', String(setId))
     .orderBy('id', 'desc')
-    .limit(limit)
-    .execute();
+    .limit(opts.limit ?? 100);
+  if (opts.active !== undefined)
+    query = query.where('status', opts.active ? 'in' : 'not in', [...ACTIVE_RUN_STATUSES]);
+  const rows = await query.execute();
   const now = Date.now();
   return rows.map((r) => toRunView(r, now));
 }
@@ -237,24 +243,19 @@ const previewOf = (fields: LabField[] | null) =>
         .slice(0, PREVIEW_CHARS)
     : null;
 
-async function runRow(db: Db, setId: number, runId: number): Promise<RunRow> {
-  const row = await db
-    .selectFrom('text_scan_test_run')
-    .selectAll()
-    .where('id', '=', String(runId))
-    .where('set_id', '=', String(setId))
-    .executeTakeFirst();
-  if (!row) throw new TestSetError(`Run ${runId} not found in this set.`, 404);
-  return row;
-}
+/** A baseline can be gone (its set's cases were re-run elsewhere); anything else still throws. */
+const gone = (e: unknown): null => {
+  if (e instanceof TestSetError && e.status === 404) return null;
+  throw e;
+};
 
 export async function runReport(db: Db, setId: number, runId: number): Promise<RunReport> {
   const set = await requireSet(db, setId);
-  const row = await runRow(db, setId, runId);
+  const row = await getRun(db, setId, runId);
   const run = toRunView(row);
   const baselineRow =
     run.kind === 'draft' && run.baselineRunId !== null
-      ? await runRow(db, setId, run.baselineRunId).catch(() => null)
+      ? await getRun(db, setId, run.baselineRunId).catch(gone)
       : null;
   const baselineId = run.kind === 'baseline' ? run.id : baselineRow ? Number(baselineRow.id) : null;
   const [baseResults, draftResults] = await Promise.all([

@@ -18,7 +18,7 @@ const session = vi.hoisted(() => ({
 vi.mock('$lib/server/user-actions.service', () => session);
 const deps = vi.hoisted(() => ({
   runsDeps: vi.fn(),
-  resumeRuns: vi.fn(async () => undefined),
+  kickResume: vi.fn(),
 }));
 vi.mock('$lib/server/text-scan-tests/deps', () => deps);
 
@@ -38,7 +38,8 @@ vi.mock('$lib/server/text-scan-tests/runs', async (importOriginal) => ({
   ...runs,
 }));
 const store = vi.hoisted(() => ({
-  getSet: vi.fn(),
+  requireSet: vi.fn(),
+  getRun: vi.fn(),
   getCase: vi.fn(),
   updateExpectation: vi.fn(),
   removeCase: vi.fn(),
@@ -51,6 +52,7 @@ vi.mock('$lib/server/text-scan-tests/store', async (importOriginal) => ({
 const reports = vi.hoisted(() => ({
   setOverview: vi.fn(),
   refreshSetTotals: vi.fn(async () => 1),
+  toRunView: vi.fn((row: { id: string }) => ({ id: Number(row.id) })),
 }));
 vi.mock('$lib/server/text-scan-tests/reports', () => reports);
 const activity = vi.hoisted(() => ({ recordModActivity: vi.fn(async () => undefined) }));
@@ -67,6 +69,9 @@ const {
 } = await import('../text-scan-tests/form-actions');
 const { TestSetError } = await import('../text-scan-tests/store');
 const { GET } = await import('../../../routes/text-scan/test-sets/[setId]/overview/+server');
+const { GET: progress } = await import(
+  '../../../routes/text-scan/test-sets/[setId]/runs/[runId]/progress/+server'
+);
 
 const USER = { id: 1, roles: [] };
 const event = (fields: Record<string, string>, grants: Record<string, boolean> = {}) => {
@@ -95,7 +100,7 @@ beforeEach(() => {
   runs.quoteRun.mockResolvedValue({ calls: 2, stamp: 's' });
   runs.startRun.mockResolvedValue({ startId: 'x', runIds: [5, 6], runId: 6 });
   runs.cancelRun.mockResolvedValue(2);
-  store.getSet.mockResolvedValue({ id: 3, workspace: 'prompts' });
+  store.requireSet.mockResolvedValue({ id: 3, workspace: 'prompts' });
   reports.setOverview.mockResolvedValue({ set: { id: 3 } });
 });
 
@@ -181,7 +186,7 @@ describe('cancelAction', () => {
   });
 
   it('refuses an unknown set and a set of a workspace the moderator cannot open', async () => {
-    store.getSet.mockResolvedValueOnce(null);
+    store.requireSet.mockRejectedValueOnce(new TestSetError('Test set 3 not found.', 404));
     expect(await cancelAction(event({ setId: '3', runId: '6' }))).toMatchObject({ status: 404 });
     access.canAccess.mockReturnValue(false);
     expect(await cancelAction(event({ setId: '3', runId: '6' }))).toMatchObject({ status: 403 });
@@ -197,21 +202,38 @@ describe('overview endpoint', () => {
     const res = (await call('3')) as Response;
     expect(await res.json()).toEqual({ set: { id: 3 } });
     expect(reports.setOverview).toHaveBeenCalledWith(DEPS, 3);
-    expect(deps.resumeRuns).toHaveBeenCalledWith(USER);
+    expect(deps.kickResume).toHaveBeenCalledWith(USER, 3);
   });
 
   it('404s an unknown set and 403s another workspace, resuming nothing', async () => {
-    store.getSet.mockResolvedValueOnce(null);
+    store.requireSet.mockRejectedValueOnce(new TestSetError('Test set 3 not found.', 404));
     await expect(call('3')).rejects.toMatchObject({ status: 404 });
     access.canAccess.mockReturnValue(false);
     await expect(call('3')).rejects.toMatchObject({ status: 403 });
     await expect(call('abc')).rejects.toMatchObject({ status: 404 });
-    expect(deps.resumeRuns).not.toHaveBeenCalled();
+    expect(deps.kickResume).not.toHaveBeenCalled();
   });
 
   it('401s without a session', async () => {
     session.requestCookie.mockReturnValue(null);
     await expect(call('3')).rejects.toMatchObject({ status: 401 });
+    expect(deps.kickResume).not.toHaveBeenCalled();
+  });
+});
+
+describe('progress endpoint', () => {
+  const call = (runId: string) =>
+    progress({
+      params: { setId: '3', runId },
+      locals: { user: USER },
+    } as unknown as Parameters<typeof progress>[0]);
+
+  it('returns the run, and 404s a run that is not in this set', async () => {
+    store.getRun.mockResolvedValueOnce({ id: '6' });
+    expect(await ((await call('6')) as Response).json()).toEqual({ id: 6 });
+    expect(store.getRun).toHaveBeenCalledWith({}, 3, 6);
+    store.getRun.mockRejectedValueOnce(new TestSetError('Run 7 not found in this set.', 404));
+    await expect(call('7')).rejects.toMatchObject({ status: 404 });
   });
 });
 

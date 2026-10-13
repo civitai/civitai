@@ -11,7 +11,7 @@
   import { FormState } from '$lib/form-state.svelte';
   import type { LabEntityType, LabField, LabLabel, LabRule } from '$lib/text-scan-lab/types';
   import type { Expected } from '$lib/text-scan-tests/expected';
-  import type { Workspace } from '$lib/text-scan-tests/types';
+  import type { SetOption, Workspace } from '$lib/text-scan-tests/types';
   import ExpectedEditor from './ExpectedEditor.svelte';
 
   let {
@@ -34,7 +34,6 @@
     ruleChoices: readonly LabRule[];
   } = $props();
 
-  type SetOption = { id: number; name: string; caseCount: number };
   const NEW = 'new';
 
   let open = $state(false);

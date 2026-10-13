@@ -1,12 +1,13 @@
 import { hostname } from 'node:os';
-import { canAccess } from '$lib/server/access';
-import { logToAxiom } from '$lib/server/axiom';
+import type { canAccess } from '$lib/server/access';
+import { logAxiomError, logToAxiom } from '$lib/server/axiom';
 import { dbRead, dbWrite } from '$lib/server/db';
 import { getModeratorDb } from '$lib/server/moderator-db';
 import { getPrompts, quoteTexts, scanTexts } from '$lib/server/text-scan-lab/harness-client';
 import { recordModActivity } from '$lib/server/mod-activity';
 import { requestCookie } from '$lib/server/user-actions.service';
-import { WORKSPACES, WORKSPACE_PATHS } from '$lib/text-scan-tests/types';
+import { WORKSPACES } from '$lib/text-scan-tests/types';
+import { canOpenWorkspace } from './guard';
 import { liveModelRuleState, liveRuleStateHash } from './rule-state';
 import type { RunAuditEvent, RunsDeps } from './runs';
 import { TestSetError } from './store';
@@ -19,6 +20,7 @@ import {
 } from './worker';
 
 const WORKER_ID = newWorkerId();
+type Viewer = Parameters<typeof canAccess>[0];
 
 /** `credential`: the session cookie the worker's harness calls forward. Never log or store it. */
 export const workerDeps = (credential: string): WorkerDeps => ({
@@ -87,10 +89,16 @@ function start(runId: number, launch: boolean): boolean {
 }
 
 /** Resumes, under the viewer's session, the runs of sets in the workspaces the viewer can open. */
-export async function resumeRuns(viewer: Parameters<typeof canAccess>[0]): Promise<void> {
-  const workspaces = WORKSPACES.filter((w) => canAccess(viewer, WORKSPACE_PATHS[w]));
+export async function resumeRuns(viewer: Viewer): Promise<void> {
+  const workspaces = WORKSPACES.filter((w) => canOpenWorkspace(viewer, w));
   if (!workspaces.length) return;
   for (const runId of await resumableRunIds(getModeratorDb(), workspaces)) start(runId, false);
 }
+
+// Needs the request scope: the worker forwards this viewer's session.
+export const kickResume = (viewer: Viewer, setId: number) =>
+  void resumeRuns(viewer).catch((e) =>
+    logAxiomError(e, { event: 'text-scan test run resume failed', setId })
+  );
 
 export const releaseLeasesAtBoot = () => releaseOwnLeases(getModeratorDb(), hostname());

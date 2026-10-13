@@ -11,14 +11,19 @@ import {
 import { requestCookie } from '$lib/server/user-actions.service';
 import type { Workspace } from '$lib/text-scan-tests/types';
 import { runsDeps } from './deps';
-import { refusal, requireWorkspace } from './guard';
+import { idField as id, refusal, requireWorkspace } from './guard';
 import { refreshSetTotals } from './reports';
 import { cancelRun, quoteRun, rerunErrors, startRun, type DraftInput, type RunsDeps } from './runs';
-import { TestSetError, archiveSet, getCase, getSet, removeCase, updateExpectation } from './store';
+import {
+  TestSetError,
+  archiveSet,
+  getCase,
+  removeCase,
+  requireSet,
+  updateExpectation,
+} from './store';
 
 type Db = RunsDeps['db'];
-
-const id = z.coerce.number().int().positive().max(2_147_483_647);
 
 const runSchema = z.object({
   setId: id,
@@ -46,9 +51,7 @@ function draftOf(input: RunForm): DraftInput | null {
 }
 
 async function openSetFor(event: RequestEvent, db: Db, setId: number) {
-  const set = await getSet(db, setId);
-  if (!set) throw new TestSetError(`Test set ${setId} not found.`, 404);
-  requireWorkspace(event.locals.user, set.workspace);
+  requireWorkspace(event.locals.user, (await requireSet(db, setId)).workspace);
 }
 
 export async function quoteAction(event: RequestEvent, workspace: Workspace) {

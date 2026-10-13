@@ -91,6 +91,16 @@ describe('setOverview', () => {
     expect(overview.recent).toHaveLength(5);
   });
 
+  it('lists a run in progress behind more than 50 newer finished runs', async () => {
+    await seedCase(db, setId);
+    const active = await seedRun(db, setId, { status: 'running', heartbeatAt: new Date() });
+    for (let i = 0; i < 51; i++) await seedRun(db, setId, { status: 'done' });
+    const { deps } = makeDeps();
+    const overview = await setOverview(deps, setId);
+    expect(overview.active.map((r) => r.id)).toEqual([active]);
+    expect(overview.recent).toHaveLength(5);
+  });
+
   it('refuses an unknown set', async () => {
     const { deps } = makeDeps();
     await expect(setOverview(deps, 999)).rejects.toMatchObject({ status: 404 });
@@ -237,6 +247,30 @@ describe('runReport', () => {
     expect(report.cases.map((c) => c.caseId)).toEqual([fails, passes]);
     expect(report.cases[0].draft).toBeNull();
     expect(report.baselineRun).toBeNull();
+  });
+
+  it('fails rather than drop the baseline when reading it fails', async () => {
+    await seedCase(db, setId);
+    const baseline = await seedRun(db, setId, { status: 'done' });
+    const draft = await seedRun(db, setId, {
+      kind: 'draft',
+      status: 'done',
+      baselineRunId: baseline,
+    });
+    let runReads = 0;
+    const failing = db.withPlugin({
+      transformQuery: ({ node }) => {
+        if (
+          node.kind === 'SelectQueryNode' &&
+          JSON.stringify(node.from).includes('text_scan_test_run') &&
+          ++runReads === 2
+        )
+          throw new Error('synthetic connection lost');
+        return node;
+      },
+      transformResult: async ({ result }) => result,
+    });
+    await expect(runReport(failing, setId, draft)).rejects.toThrow('synthetic connection lost');
   });
 
   it('refuses a run of another set', async () => {

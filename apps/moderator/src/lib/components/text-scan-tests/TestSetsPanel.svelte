@@ -7,7 +7,12 @@
   import type { SetOverview } from '$lib/server/text-scan-tests/reports';
   import { LABEL_NAMES } from '$lib/text-scan-lab/labels';
   import type { LabelSummary } from '$lib/text-scan-tests/score';
-  import type { Workspace } from '$lib/text-scan-tests/types';
+  import {
+    RUN_KIND_NAMES,
+    RUN_POLL_MS,
+    type SetOption,
+    type Workspace,
+  } from '$lib/text-scan-tests/types';
   import RunDialog from './RunDialog.svelte';
   import RunProgress from './RunProgress.svelte';
 
@@ -31,9 +36,7 @@
     userId: number;
   } = $props();
 
-  type SetOption = { id: number; name: string; caseCount: number };
   type Overview = Jsonified<SetOverview>;
-  const POLL_MS = 4000;
 
   let selected = $state<number | null>(null);
   let version = $state(0);
@@ -52,7 +55,7 @@
 
   $effect(() => {
     if (!visible || !running) return;
-    const timer = setInterval(() => version++, POLL_MS);
+    const timer = setInterval(() => version++, RUN_POLL_MS);
     return () => clearInterval(timer);
   });
 
@@ -133,7 +136,7 @@
             {#each o.recent as run (run.id)}
               <li class="text-sm">
                 <a href="/text-scan/test-sets/{o.set.id}/runs/{run.id}" class={LINK_CLASS}>
-                  #{run.id} {run.kind === 'baseline' ? 'Baseline' : 'Draft'} · {run.status}
+                  #{run.id} {RUN_KIND_NAMES[run.kind]} · {run.status}
                 </a>
                 <span class="text-xs text-dark-2">
                   {dateTime(run.finishedAt)}{#if run.totals?.length} · {scores(run.totals)}{/if}

@@ -1,19 +1,21 @@
 import { error, fail } from '@sveltejs/kit';
 import type { Kysely } from 'kysely';
+import { z } from 'zod';
 import { canAccess } from '$lib/server/access';
 import type { DB as ModeratorDB } from '$lib/server/moderator-db/types';
 import { LabError } from '$lib/server/text-scan-lab/errors';
+import { MAX_INT4, isInt4Id } from '$lib/server/users.service';
 import {
   WORKSPACE_NAMES,
   WORKSPACE_PATHS,
   type TestSet,
   type Workspace,
 } from '$lib/text-scan-tests/types';
-import { TestSetError, getSet } from './store';
+import { TestSetError, requireSet } from './store';
 
 type User = Parameters<typeof canAccess>[0];
 
-const MAX_INT4 = 2_147_483_647;
+export const idField = z.coerce.number().int().positive().max(MAX_INT4);
 const cannotOpen = (workspace: Workspace) =>
   `This set belongs to ${WORKSPACE_NAMES[workspace]}, which you cannot open.`;
 
@@ -30,20 +32,28 @@ export function refusal(e: unknown) {
   throw e;
 }
 
+/** For loads and GET endpoints, where a refusal is an error page rather than a form failure. */
+export function viewError(e: unknown): never {
+  if (e instanceof TestSetError) error(e.status, e.message);
+  throw e;
+}
+
 export function routeId(raw: string): number {
   const id = Number(raw);
-  if (!Number.isInteger(id) || id < 1 || id > MAX_INT4) error(404, 'Not found.');
+  if (!isInt4Id(id)) error(404, 'Not found.');
   return id;
 }
 
-/** For loads and GET endpoints, where a refusal is an error page rather than a form failure. */
 export async function setForView(
   db: Kysely<ModeratorDB>,
   user: User,
   setId: number
 ): Promise<TestSet> {
-  const set = await getSet(db, setId);
-  if (!set) error(404, 'Test set not found.');
-  if (!canOpenWorkspace(user, set.workspace)) error(403, cannotOpen(set.workspace));
-  return set;
+  try {
+    const set = await requireSet(db, setId);
+    requireWorkspace(user, set.workspace);
+    return set;
+  } catch (e) {
+    viewError(e);
+  }
 }

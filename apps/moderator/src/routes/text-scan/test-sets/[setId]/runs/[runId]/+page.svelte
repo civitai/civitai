@@ -11,13 +11,12 @@
   import { LINK_CLASS, dateTime, plural, type Jsonified } from '$lib/format';
   import { keepLast } from '$lib/keep-last.svelte';
   import type { RunView } from '$lib/server/text-scan-tests/reports';
-  import { ACTIVE_RUN_STATUSES } from '$lib/text-scan-tests/types';
+  import { RUN_KIND_NAMES, RUN_POLL_MS, isActiveRun } from '$lib/text-scan-tests/types';
 
   let { data } = $props();
 
-  const isActive = (status: string) => (ACTIVE_RUN_STATUSES as readonly string[]).includes(status);
   const report = $derived(data.report);
-  const active = $derived(isActive(report.run.status));
+  const active = $derived(isActiveRun(report.run.status));
   const open = $derived(!report.set.archivedAt);
 
   let tick = $state(0);
@@ -30,12 +29,12 @@
   );
   $effect(() => {
     if (!active) return;
-    const timer = setInterval(() => tick++, 4000);
+    const timer = setInterval(() => tick++, RUN_POLL_MS);
     return () => clearInterval(timer);
   });
   $effect(() => {
     const status = progress.value?.status;
-    if (active && status && !isActive(status)) void invalidateAll();
+    if (active && status && !isActiveRun(status)) void invalidateAll();
   });
 
   const rerun = new FormState({ reset: false, reload: true, onSuccess: null });
@@ -48,7 +47,7 @@
       .join(' ')
   );
   const title = $derived(
-    `${report.run.kind === 'baseline' ? 'Baseline' : 'Draft'} run #${report.run.id}`
+    `${RUN_KIND_NAMES[report.run.kind]} run #${report.run.id}`
   );
 </script>
 

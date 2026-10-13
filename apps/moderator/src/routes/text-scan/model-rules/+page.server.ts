@@ -241,5 +241,5 @@ export const actions: Actions = {
 
   quoteRun: (event) => quoteAction(event, 'modelRules'),
   startRun: (event) => startAction(event, 'modelRules'),
-  cancelRun: (event) => cancelAction(event),
+  cancelRun: cancelAction,
 };

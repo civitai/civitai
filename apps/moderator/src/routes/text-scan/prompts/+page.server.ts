@@ -55,5 +55,5 @@ export const actions: Actions = {
 
   quoteRun: (event) => quoteAction(event, 'prompts'),
   startRun: (event) => startAction(event, 'prompts'),
-  cancelRun: (event) => cancelAction(event),
+  cancelRun: cancelAction,
 };

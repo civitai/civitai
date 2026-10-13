@@ -1,8 +1,7 @@
 import type { Actions, PageServerLoad } from './$types';
 import { requiresGrant } from '$lib/server/access';
-import { logAxiomError } from '$lib/server/axiom';
 import { getModeratorDb } from '$lib/server/moderator-db';
-import { resumeRuns } from '$lib/server/text-scan-tests/deps';
+import { kickResume } from '$lib/server/text-scan-tests/deps';
 import {
   archiveSetAction,
   cancelAction,
@@ -17,10 +16,7 @@ export const load: PageServerLoad = async ({ params, locals }) => {
   const setId = routeId(params.setId);
   const db = getModeratorDb();
   const set = await setForView(db, locals.user, setId);
-  // Inside this request: a resumed worker forwards this viewer's session to the harness.
-  void resumeRuns(locals.user).catch((e) =>
-    logAxiomError(e, { event: 'text-scan test run resume failed', setId })
-  );
+  kickResume(locals.user, setId);
   const [cases, history, runs] = await Promise.all([
     listCases(db, setId),
     baselineHistory(db, setId),
@@ -37,8 +33,8 @@ export const load: PageServerLoad = async ({ params, locals }) => {
 };
 
 export const actions: Actions = {
-  editCase: requiresGrant('textScan.testSets.edit', (event) => editCaseAction(event)),
-  removeCase: requiresGrant('textScan.testSets.edit', (event) => removeCaseAction(event)),
-  archiveSet: requiresGrant('textScan.testSets.edit', (event) => archiveSetAction(event)),
-  cancelRun: (event) => cancelAction(event),
+  editCase: requiresGrant('textScan.testSets.edit', editCaseAction),
+  removeCase: requiresGrant('textScan.testSets.edit', removeCaseAction),
+  archiveSet: requiresGrant('textScan.testSets.edit', archiveSetAction),
+  cancelRun: cancelAction,
 };

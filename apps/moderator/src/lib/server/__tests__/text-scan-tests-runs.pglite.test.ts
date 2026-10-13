@@ -16,9 +16,8 @@ vi.mock('$lib/server/mod-activity', () => ({ recordModActivity: vi.fn(async () =
 
 const { LabHarnessError } = await import('../text-scan-lab/harness-client');
 const { runsDeps } = await import('../text-scan-tests/deps');
-const { cancelRun, quoteRun, rerunErrors, ruleStateHash, startRun } = await import(
-  '../text-scan-tests/runs'
-);
+const { cancelRun, quoteRun, rerunErrors, startRun } = await import('../text-scan-tests/runs');
+const { ruleStateHash } = await import('../text-scan-tests/rule-state');
 
 let pg: PGlite;
 let db: Kysely<ModeratorDB>;
