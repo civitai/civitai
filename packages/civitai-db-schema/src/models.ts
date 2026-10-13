@@ -4202,6 +4202,7 @@ export interface Appeal {
   resolvedReason: string | null;
   internalNotes: string | null;
   buzzTransactionId: string | null;
+  entityRemovedAt: Date | null;
 }
 
 export interface AppealDecisionRecord {

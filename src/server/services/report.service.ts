@@ -63,7 +63,13 @@ import {
 import type { Report } from '~/shared/utils/prisma/models';
 import { withRetries } from '~/utils/errorHandling';
 import { isSafeToRetry } from '@civitai/buzz';
-import { APPEAL_ALREADY_PENDING, IMAGE_NOT_APPEALABLE } from '~/shared/utils/appeal';
+import {
+  APPEAL_ALREADY_PENDING,
+  IMAGE_NOT_APPEALABLE,
+  OrphanedAppealReason,
+  type OrphanedAppealOutcome,
+} from '~/shared/utils/appeal';
+import { clickhouse } from '~/server/clickhouse/client';
 import { getModeratedTags } from '~/server/services/system-cache';
 
 export const getReportById = <TSelect extends Prisma.ReportSelect>({
@@ -702,7 +708,13 @@ export function getAppealCount({
   startDate?: Date;
 }) {
   return dbRead.appeal.count({
-    where: { userId, status: { in: status }, createdAt: { gte: startDate } },
+    where: {
+      userId,
+      status: { in: status },
+      createdAt: { gte: startDate },
+      // Waiting on review because the content was removed first is not the user's doing.
+      NOT: { status: AppealStatus.Pending, entityRemovedAt: { not: null } },
+    },
   });
 }
 
@@ -911,59 +923,237 @@ async function refundAppealFee(appeal: AppealFeeRef) {
   }
 }
 
+type ClaimedOrphan = Omit<AppealFeeRef, 'buzzTransactionId'> & {
+  userId: number;
+  buzzTransactionId: string | null;
+};
+
+type OrphanCandidate = ClaimedOrphan & { createdAt: Date; userDeleted: boolean };
+
 /**
- * Closes appeals whose entity has been deleted. The moderator queue is driven from the entity row,
- * so these can never be reviewed; left Pending they keep the user's fee and count toward their
- * free-appeal allowance. Silent by decision: no notification, only the refund.
+ * Appeals whose appellant deleted the entity after filing. `null` when ClickHouse cannot answer,
+ * so the caller routes everything for review rather than closing an appeal it cannot classify.
  */
-export async function voidOrphanedAppeals({ limit = 1000 }: { limit?: number } = {}) {
-  const voided = await dbWrite.$queryRaw<
-    (Omit<AppealFeeRef, 'buzzTransactionId'> & {
-      userId: number;
-      buzzTransactionId: string | null;
-    })[]
-  >`
-    UPDATE "Appeal"
-    SET status = 'Void'::"AppealStatus", "resolvedAt" = now(), "updatedAt" = now()
-    WHERE id IN (
-      SELECT a.id FROM "Appeal" a
-      WHERE a.status = 'Pending'::"AppealStatus"
-        AND (
-          (a."entityType" = 'Image' AND NOT EXISTS (SELECT 1 FROM "Image" i WHERE i.id = a."entityId"))
-          OR (a."entityType" = 'Model' AND NOT EXISTS (SELECT 1 FROM "Model" m WHERE m.id = a."entityId"))
+async function getOwnerDeletedAppealIds(candidates: OrphanCandidate[]) {
+  if (!candidates.length) return new Set<number>();
+  if (!clickhouse) return null;
+
+  const idsOf = (type: EntityType) => [
+    ...new Set(candidates.filter((a) => a.entityType === type).map((a) => a.entityId)),
+  ];
+  const imageIds = idsOf(EntityType.Image);
+  const modelIds = idsOf(EntityType.Model);
+  type DeleteEvent = { entityId: number | string; userId: number | string; t: number | string };
+
+  try {
+    const [imageDeletes, modelDeletes] = await Promise.all([
+      imageIds.length
+        ? clickhouse.$query<DeleteEvent>`
+            SELECT imageId AS entityId, userId, toUnixTimestamp(time) AS t
+            FROM images WHERE type = 'Delete' AND imageId IN (${imageIds})
+          `
+        : [],
+      modelIds.length
+        ? clickhouse.$query<DeleteEvent>`
+            SELECT modelId AS entityId, userId, toUnixTimestamp(time) AS t
+            FROM modelEvents WHERE type IN ('Delete', 'PermanentDelete') AND modelId IN (${modelIds})
+          `
+        : [],
+    ]);
+    const deletes = [
+      ...imageDeletes.map((e) => ({ ...e, entityType: EntityType.Image })),
+      ...modelDeletes.map((e) => ({ ...e, entityType: EntityType.Model })),
+    ];
+
+    return new Set(
+      candidates
+        .filter((a) =>
+          deletes.some(
+            (e) =>
+              e.entityType === a.entityType &&
+              Number(e.entityId) === a.entityId &&
+              Number(e.userId) === a.userId &&
+              Number(e.t) >= Math.floor(a.createdAt.getTime() / 1000)
+          )
         )
-      LIMIT ${limit}
-    )
-      AND status = 'Pending'::"AppealStatus"
+        .map((a) => a.id)
+    );
+  } catch (e) {
+    logToAxiom({
+      type: 'error',
+      name: 'void-orphaned-appeals',
+      message: 'Owner-delete lookup failed; routing orphans for review',
+      error: (e as Error).message,
+    });
+    return null;
+  }
+}
+
+// Parallels the moderator app's `csamExcludedImageIds`; keep the report sources in step. Only
+// sources that outlive the image row count here: per-image report rows cascade away with it.
+async function getDefensiveCloseIds(candidates: OrphanCandidate[]) {
+  const imageIds = candidates
+    .filter((a) => a.entityType === EntityType.Image)
+    .map((a) => a.entityId);
+  const userIds = [...new Set(candidates.map((a) => a.userId))];
+  if (!userIds.length) return new Set<number>();
+
+  const [images, users] = await Promise.all([
+    imageIds.length
+      ? dbWrite.$queryRaw<{ id: number }[]>`
+          SELECT c.id FROM unnest(${imageIds}::int[]) AS c(id)
+          WHERE c.id::text IN (
+            SELECT CASE jsonb_typeof(e) WHEN 'object' THEN e->>'id' ELSE e#>>'{}' END
+            FROM "CsamReport" cr, jsonb_array_elements(cr.images) e
+          )
+        `
+      : [],
+    dbWrite.$queryRaw<{ id: number }[]>`
+      SELECT c.id FROM unnest(${userIds}::int[]) AS c(id)
+      WHERE EXISTS (SELECT 1 FROM "CsamReport" cr WHERE cr."userId" = c.id)
+        OR EXISTS (
+          SELECT 1 FROM "UserReport" ur JOIN "Report" r ON r.id = ur."reportId"
+          WHERE ur."userId" = c.id AND r.reason = 'CSAM'
+        )
+        OR EXISTS (SELECT 1 FROM "Image" o WHERE o."userId" = c.id AND o."blockedFor" = 'CSAM')
+    `,
+  ]);
+  const imageSet = new Set(images.map((r) => r.id));
+  const userSet = new Set(users.map((r) => r.id));
+  return new Set(
+    candidates
+      .filter(
+        (a) =>
+          userSet.has(a.userId) || (a.entityType === EntityType.Image && imageSet.has(a.entityId))
+      )
+      .map((a) => a.id)
+  );
+}
+
+// Re-checks Pending and the stamp so a moderator who resolved the appeal since the pick wins.
+function closeOrphans(ids: number[], reason: string | null) {
+  if (!ids.length) return Promise.resolve([] as ClaimedOrphan[]);
+  return dbWrite.$queryRaw<ClaimedOrphan[]>`
+    UPDATE "Appeal"
+    SET status = 'Void'::"AppealStatus", "resolvedReason" = ${reason},
+      "resolvedAt" = now(), "updatedAt" = now()
+    WHERE id = ANY(${ids})
+      AND status = 'Pending'::"AppealStatus" AND "entityRemovedAt" IS NULL
     RETURNING id, "userId", "entityType", "entityId", "buzzTransactionId"
   `;
+}
+
+function routeOrphansForReview(ids: number[]) {
+  if (!ids.length) return Promise.resolve([] as ClaimedOrphan[]);
+  return dbWrite.$queryRaw<ClaimedOrphan[]>`
+    UPDATE "Appeal"
+    SET "entityRemovedAt" = now(), "updatedAt" = now()
+    WHERE id = ANY(${ids})
+      AND status = 'Pending'::"AppealStatus" AND "entityRemovedAt" IS NULL
+    RETURNING id, "userId", "entityType", "entityId", "buzzTransactionId"
+  `;
+}
+
+async function refundOrphan(appeal: ClaimedOrphan) {
+  const { buzzTransactionId } = appeal;
+  if (!buzzTransactionId) return { refunded: false, failed: false };
+  try {
+    await refundAppealFee({ ...appeal, buzzTransactionId });
+    return { refunded: true, failed: false };
+  } catch (e) {
+    // The appeal is already Void and will not be swept again: this is the only record that the
+    // user is still owed the fee.
+    logToAxiom({
+      type: 'error',
+      name: 'void-orphaned-appeals',
+      message: 'Failed to refund appeal fee',
+      appealId: appeal.id,
+      userId: appeal.userId,
+      buzzTransactionId,
+      error: (e as Error).message,
+    });
+    return { refunded: false, failed: true };
+  }
+}
+
+export function notifyOrphanedAppeal(
+  appeal: Pick<ClaimedOrphan, 'id' | 'userId' | 'entityType' | 'entityId'>,
+  outcome: OrphanedAppealOutcome,
+  refunded = false
+) {
+  return createNotification({
+    userId: appeal.userId,
+    type: 'entity-appeal-content-removed',
+    category: NotificationCategory.Other,
+    // The worker drops a repeated key, so the outcome is part of it: a closing notice after
+    // "under-review" would never arrive.
+    key: `entity-appeal-content-removed:${appeal.id}:${outcome}`,
+    details: { entityType: appeal.entityType, entityId: appeal.entityId, outcome, refunded },
+  });
+}
+
+/**
+ * Sorts appeals whose entity has been deleted; the moderator queue is driven from the entity row,
+ * so it never shows them. An owner who deleted their own content gets the appeal closed and
+ * refunded; anything else stays Pending, stamped `entityRemovedAt`, for review. Both are told.
+ * Some appeals are closed defensively without a notice.
+ */
+export async function voidOrphanedAppeals({ limit = 1000 }: { limit?: number } = {}) {
+  const candidates = await dbWrite.$queryRaw<OrphanCandidate[]>`
+    SELECT a.id, a."userId", a."entityType", a."entityId", a."buzzTransactionId", a."createdAt",
+      (u."deletedAt" IS NOT NULL) AS "userDeleted"
+    FROM "Appeal" a
+    JOIN "User" u ON u.id = a."userId"
+    WHERE a.status = 'Pending'::"AppealStatus"
+      AND a."entityRemovedAt" IS NULL
+      AND (
+        (a."entityType" = 'Image' AND NOT EXISTS (SELECT 1 FROM "Image" i WHERE i.id = a."entityId"))
+        OR (a."entityType" = 'Model' AND NOT EXISTS (SELECT 1 FROM "Model" m WHERE m.id = a."entityId"))
+      )
+    LIMIT ${limit}
+  `;
+
+  const defensiveIds = await getDefensiveCloseIds(candidates);
+  const isQuiet = (a: OrphanCandidate) => a.userDeleted || defensiveIds.has(a.id);
+  const quiet = candidates.filter(isQuiet);
+  const rest = candidates.filter((a) => !isQuiet(a));
+  const ownerDeletedIds = (await getOwnerDeletedAppealIds(rest)) ?? new Set<number>();
+
+  const closedQuietly = await closeOrphans(
+    quiet.map((a) => a.id),
+    null
+  );
+  const closedOwnerDeleted = await closeOrphans(
+    rest.filter((a) => ownerDeletedIds.has(a.id)).map((a) => a.id),
+    OrphanedAppealReason.DeletedByOwner
+  );
+  const routed = await routeOrphansForReview(
+    rest.filter((a) => !ownerDeletedIds.has(a.id)).map((a) => a.id)
+  );
 
   let refunded = 0;
   let refundFailed = 0;
-  for (const appeal of voided) {
-    const { buzzTransactionId } = appeal;
-    if (buzzTransactionId) {
-      try {
-        await refundAppealFee({ ...appeal, buzzTransactionId });
-        refunded++;
-      } catch (e) {
-        refundFailed++;
-        // The appeal is already Void and will not be swept again: this is the only record that
-        // the user is still owed the fee.
-        logToAxiom({
-          type: 'error',
-          name: 'void-orphaned-appeals',
-          message: 'Failed to refund appeal fee',
-          appealId: appeal.id,
-          userId: appeal.userId,
-          buzzTransactionId,
-          error: (e as Error).message,
-        });
-      }
-    }
-  }
+  const refund = async (appeal: ClaimedOrphan) => {
+    const result = await refundOrphan(appeal);
+    if (result.refunded) refunded++;
+    if (result.failed) refundFailed++;
+    return result.refunded;
+  };
 
-  return { voided: voided.length, refunded, refundFailed };
+  for (const appeal of closedQuietly) await refund(appeal);
+  for (const appeal of closedOwnerDeleted) {
+    const wasRefunded = await refund(appeal);
+    await notifyOrphanedAppeal(appeal, 'closed-owner-deleted', wasRefunded);
+  }
+  for (const appeal of routed) await notifyOrphanedAppeal(appeal, 'under-review');
+
+  return {
+    closedQuietly: closedQuietly.length,
+    closedOwnerDeleted: closedOwnerDeleted.length,
+    routedForReview: routed.length,
+    refunded,
+    refundFailed,
+  };
 }
 
 export async function resolveEntityAppeal({

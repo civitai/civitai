@@ -416,6 +416,7 @@ export type Appeal = {
   resolvedReason: string | null;
   internalNotes: string | null;
   buzzTransactionId: string | null;
+  entityRemovedAt: Timestamp | null;
 };
 export type AppealDecisionRecord = {
   id: Generated<string>;

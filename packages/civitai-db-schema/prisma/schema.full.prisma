@@ -6767,6 +6767,7 @@ model Appeal {
   resolvedReason    String?
   internalNotes     String?
   buzzTransactionId String?
+  entityRemovedAt   DateTime?
 
   @@index([entityType, entityId, userId])
   @@index([userId])
