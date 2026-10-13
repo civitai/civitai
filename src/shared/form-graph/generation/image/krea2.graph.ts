@@ -1,7 +1,6 @@
 import { z } from 'zod';
 import { branch, defFamily, defineGraph } from 'form-graph';
 import { checkpointDef } from '../checkpoint';
-import { BM, baseModelById } from '~/shared/constants/basemodel.constants';
 import { fourMegapixelCustomDimensionLimits } from '~/shared/constants/generation.constants';
 import { fitCustomDimensions } from '~/utils/aspect-ratio-helpers';
 import { SEED, aspectRatioDef, enumDef, imagesDef, workflowScoped } from '../defs';
@@ -63,7 +62,7 @@ const krea2VersionIdToVariant = new Map<number, Krea2Variant>([
 export const isOfficialKrea2Version = (id: number) => krea2VersionIdToVariant.has(id);
 
 /** Community checkpoints fine-tuned from Turbo carry this base model; nothing else marks them. */
-export const KREA2_TURBO_BASE_MODEL = baseModelById.get(BM.Krea2Turbo)!.name;
+export const KREA2_TURBO_BASE_MODEL = 'Krea 2 Turbo';
 
 /**
  * The official Turbo build, or a community checkpoint tagged as fine-tuned from it.

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { ecosystemKeyForBaseModel } from '~/shared/form-graph/generation/checkpoint';
 import { generationHub } from '~/shared/form-graph/generation/hub.graph';
 import {
   KREA2_TURBO_BASE_MODEL,
@@ -23,6 +24,10 @@ function state(workflow: string, model: { id: number; baseModel?: string }) {
 }
 
 describe('krea2 variant', () => {
+  it('names a registered Krea 2 base model', () => {
+    expect(ecosystemKeyForBaseModel(KREA2_TURBO_BASE_MODEL)).toBe('Krea2');
+  });
+
   it('gives a Turbo fine-tune the turbo build and its defaults', () => {
     const s = state('txt2img', { id: communityVersionId, baseModel: KREA2_TURBO_BASE_MODEL });
 
