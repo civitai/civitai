@@ -326,6 +326,29 @@ export async function getUserLookup(userId: number): Promise<UserLookupResult | 
     : null;
 }
 
+export type ReportedAccountDetails = {
+  card: UserCard;
+  profile: UserProfileText | null;
+  counts: UserCounts;
+};
+
+/**
+ * Who a reported account IS, for the report queues — the slice of `getUserLookup` a report is judged
+ * on. Most user reports are Spam, and spam lives in the profile text and in what the account posts,
+ * not in its images; a queue that showed only the image grid hid the evidence for the commonest case.
+ * Not the whole lookup: scores, stats and leaderboard ranks answer nothing about a report.
+ */
+export async function getReportedAccountDetails(
+  userId: number
+): Promise<ReportedAccountDetails | null> {
+  const [card, profile, counts] = await Promise.all([
+    getUserCard(userId),
+    getProfile(userId),
+    getCounts(userId),
+  ]);
+  return card ? { card, profile, counts } : null;
+}
+
 // CURATOR STATUS (Retool's CuratorStatus / CuratorStatus2). Curators hold elevated permissions on the
 // featured collections, so it changes what an account can already do and belongs beside identity — a
 // moderator acting on one without knowing is the failure this prevents.
