@@ -3,6 +3,7 @@ import { z } from 'zod';
 import type { Actions, PageServerLoad } from './$types';
 import { modelRuleFormSchema, type ModelRuleForm } from '$lib/model-rules';
 import { requiresGrant } from '$lib/server/access';
+import { logAxiomError } from '$lib/server/axiom';
 import { civitaiLinkUrl } from '$lib/server/civitai-url';
 import {
   LegacyRuleError,
@@ -92,7 +93,7 @@ const saveAllSchema = z.object({
       .array(
         z.object({
           draftId: z.number().int(),
-          id: z.number().int().positive().optional(),
+          id: z.number().int().positive().max(MAX_INT4).optional(),
           subject: z.string(),
           description: z.string(),
           aliases: z.string(),
@@ -170,7 +171,14 @@ export const actions: Actions = {
         saved.push({ draftId, id: result.id });
         cacheStale ||= result.cacheStale;
       } catch (error) {
-        failed.push({ draftId, error: ruleRefusal(error).error });
+        // One rule's unexpected failure must not hide that the rules before it were written.
+        let message = 'An unexpected error stopped this rule; reload to check whether it saved.';
+        try {
+          message = ruleRefusal(error).error;
+        } catch {
+          void logAxiomError(error, { event: 'model rules save all failed', ruleId: id ?? null });
+        }
+        failed.push({ draftId, error: message });
       }
     }
     const cacheWarning = cacheStale ? STALE_CACHE : null;

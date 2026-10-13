@@ -150,3 +150,50 @@ describe('prune', () => {
     expect(drafts.ids).toEqual([id]);
   });
 });
+
+describe('your own write to a rule', () => {
+  const edited = { ...fieldsOf(saved()), subject: 'Edited' };
+  const toggled = saved({ enabled: false, updatedAt: new Date('2026-09-04T00:00:00.000Z') });
+
+  it('rebases a draft that was current onto the rule the write produced', () => {
+    const drafts = make();
+    drafts.edit(saved(), edited);
+    drafts.rebaseOwnWrite(saved(), toggled);
+    expect(drafts.isStale(toggled)).toBe(false);
+    expect(drafts.get(3)).toMatchObject({
+      subject: 'Edited',
+      baseUpdatedAt: '2026-09-04T00:00:00.000Z',
+    });
+  });
+
+  it('leaves a draft that was already stale stale', () => {
+    const drafts = make();
+    drafts.edit(saved(), edited);
+    const theirs = saved({ updatedAt: new Date('2026-09-02T00:00:00.000Z') });
+    drafts.rebaseOwnWrite(theirs, toggled);
+    expect(drafts.isStale(toggled)).toBe(true);
+    expect(drafts.get(3)?.baseUpdatedAt).toBe(UPDATED.toISOString());
+  });
+});
+
+describe('storage that reads but cannot write', () => {
+  it('keeps drafts that never reached storage, alongside drafts other tabs stored', () => {
+    const store = memoryStore();
+    store.data.set(
+      KEY,
+      JSON.stringify({ 9: { ...fieldsOf(saved()), subject: 'Other tab', baseUpdatedAt: null } })
+    );
+    const drafts = make({
+      ...store,
+      setItem: () => {
+        throw new Error('quota');
+      },
+    });
+    drafts.reload();
+    drafts.edit(saved(), { ...fieldsOf(saved()), subject: 'Edited' });
+    drafts.edit(saved({ id: 4 }), { ...fieldsOf(saved()), subject: 'Also edited' });
+    drafts.reload();
+    expect(drafts.ids).toEqual([3, 4, 9]);
+    expect(drafts.get(3)?.subject).toBe('Edited');
+  });
+});

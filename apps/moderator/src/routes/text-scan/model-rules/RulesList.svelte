@@ -81,6 +81,7 @@
     },
   });
 
+  const reloaded = (id: number) => rules.find((rule) => rule.id === id);
   const toggleRow = (id: number) => (expanded.has(id) ? expanded.delete(id) : expanded.add(id));
   function addRule() {
     expanded.add(drafts.add());
@@ -142,6 +143,7 @@
             expanded={expanded.has(id)}
             ontoggle={() => toggleRow(id)}
             onhistory={() => {}}
+            {reloaded}
           />
         {/each}
         {#each shown as rule (rule.id)}
@@ -153,6 +155,7 @@
             expanded={expanded.has(rule.id)}
             ontoggle={() => toggleRow(rule.id)}
             onhistory={() => (historyRuleId = rule.id)}
+            {reloaded}
           />
         {/each}
       </TableBody>

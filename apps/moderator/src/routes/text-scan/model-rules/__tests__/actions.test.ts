@@ -6,6 +6,8 @@ vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: {} }));
 vi.mock('$lib/server/cache', () => ({ bustKeyBestEffort: vi.fn(async () => true) }));
 vi.mock('$app/server', () => ({ getRequestEvent: vi.fn() }));
 vi.mock('$lib/server/civitai-url', () => ({ civitaiLinkUrl: () => 'https://civitai.com' }));
+const axiom = vi.hoisted(() => ({ logAxiomError: vi.fn() }));
+vi.mock('$lib/server/axiom', () => axiom);
 
 const harness = vi.hoisted(() => ({
   getPrompts: vi.fn(),
@@ -22,13 +24,14 @@ const service = vi.hoisted(() => ({
   updateModelRule: vi.fn(),
   setModelRuleEnabled: vi.fn(),
   restoreModelRuleVersion: vi.fn(),
+  listModelRules: vi.fn(),
 }));
 vi.mock('$lib/server/model-rules.service', async (importOriginal) => ({
   ...(await importOriginal<typeof RulesService>()),
   ...service,
 }));
 
-const { actions } = await import('../+page.server');
+const { actions, load } = await import('../+page.server');
 const { ModelRuleStaleError, RestoreRefusedError } = await import(
   '$lib/server/model-rules.service'
 );
@@ -161,5 +164,70 @@ describe('try', () => {
     harness.scanTexts.mockResolvedValue({ results: [], system: null, rules: null });
     await post('try', { input: 'some model text', judgeAs: 'CommentV2' }, {});
     expect(harness.scanTexts.mock.calls[0][0]).toBe('ModelRules');
+  });
+});
+
+describe('saveAll refusals', () => {
+  const draft = (draftId: number, id?: number) => ({
+    draftId,
+    ...(id ? { id } : {}),
+    subject: `Rule ${draftId}`,
+    description: '',
+    aliases: '',
+    note: '',
+  });
+
+  it('reports an unexpected error for one rule and keeps saving the rest', async () => {
+    service.createModelRule.mockResolvedValue({ id: 11, cacheStale: false });
+    service.updateModelRule.mockRejectedValue(new Error('connection reset'));
+    const rules = [draft(-1), draft(3, 3), draft(-2)];
+    expect(await post('saveAll', { rules: JSON.stringify(rules) })).toMatchObject({
+      status: 422,
+      data: {
+        saved: [
+          { draftId: -1, id: 11 },
+          { draftId: -2, id: 11 },
+        ],
+        failed: [{ draftId: 3, error: expect.stringContaining('unexpected error') }],
+      },
+    });
+    expect(axiom.logAxiomError).toHaveBeenCalledOnce();
+  });
+
+  it('refuses an id beyond int4 before writing anything', async () => {
+    const rules = [draft(-1), draft(2147483648, 2147483648)];
+    expect(await post('saveAll', { rules: JSON.stringify(rules) })).toMatchObject({
+      status: 400,
+    });
+    expect(service.createModelRule).not.toHaveBeenCalled();
+    expect(service.updateModelRule).not.toHaveBeenCalled();
+  });
+});
+
+describe('toggle', () => {
+  it('disables a rule and reports it', async () => {
+    service.setModelRuleEnabled.mockResolvedValue({ cacheStale: false });
+    expect(await post('toggle', { id: '3', enabled: 'false' })).toEqual({
+      success: true,
+      message: 'Rule 3 disabled.',
+      cacheWarning: null,
+    });
+    expect(service.setModelRuleEnabled).toHaveBeenCalledExactlyOnceWith(3, false, 1);
+  });
+});
+
+describe('load', () => {
+  it('still lists the rules when the policy prompt cannot load', async () => {
+    const rule = { id: 3, subject: 'Example' };
+    service.listModelRules.mockResolvedValue([rule]);
+    harness.getPrompts.mockRejectedValue(new Error('down'));
+    const data = (await load({
+      url: new URL('http://x/text-scan/model-rules'),
+    } as unknown as Parameters<typeof load>[0])) as Record<string, unknown>;
+    expect(data).toMatchObject({
+      rules: [rule],
+      policy: { ok: false, error: 'Could not load the policy prompt: unexpected error' },
+      authors: {},
+    });
   });
 });

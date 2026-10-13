@@ -81,6 +81,8 @@ export class RuleDraftsState {
   #f: RuleDraftsFields;
   #store: Store | null;
   #key: string;
+  // Changes storage refused (quota, private mode): re-applied over every read so they are never lost.
+  #unstored: Record<string, RuleDraft | null> = {};
 
   constructor(fields: RuleDraftsFields, store: Store | null, key: string) {
     this.#f = fields;
@@ -91,7 +93,7 @@ export class RuleDraftsState {
   /** Re-reads storage, for an edit saved in another tab. */
   reload() {
     const stored = readStored(this.#store, this.#key);
-    if (stored) this.#f.drafts = stored;
+    if (stored) this.#f.drafts = this.#overlay(stored, this.#unstored);
   }
 
   /** New rules first (newest first), then saved rules by id. */
@@ -127,6 +129,16 @@ export class RuleDraftsState {
 
   editNew(id: number, fields: RuleFields) {
     this.#write({ [id]: { ...fields, baseUpdatedAt: null } });
+  }
+
+  /**
+   * After this moderator's own write to `before` (a toggle) produced `after`: a draft that was current
+   * on `before` moves onto `after`, so the write does not read as someone else's save. A draft that was
+   * already stale stays stale.
+   */
+  rebaseOwnWrite(before: SavedRule, after: SavedRule) {
+    const draft = this.get(after.id);
+    if (draft?.baseUpdatedAt === isoOf(before.updatedAt)) this.keepMine(after);
   }
 
   /** Keeps this edit over the newer saved rule: it is now written against it. */
@@ -198,17 +210,26 @@ export class RuleDraftsState {
 
   // Another tab may have saved since this one read: keep its other drafts, and this tab's patch.
   #write(patch: Record<string, RuleDraft | null>) {
-    const merged: Drafts = { ...(readStored(this.#store, this.#key) ?? this.#f.drafts) };
-    for (const [id, draft] of Object.entries(patch)) {
-      if (draft) merged[id] = draft;
-      else delete merged[id];
-    }
+    const stored = readStored(this.#store, this.#key);
+    const unstored = { ...this.#unstored, ...patch };
+    const merged = this.#overlay(stored ?? this.#f.drafts, unstored);
     try {
       if (Object.keys(merged).length) this.#store?.setItem(this.#key, JSON.stringify(merged));
       else this.#store?.removeItem(this.#key);
+      this.#unstored = {};
     } catch {
       // Kept in memory for this page only.
+      this.#unstored = unstored;
     }
     this.#f.drafts = merged;
+  }
+
+  #overlay(base: Drafts, patch: Record<string, RuleDraft | null>): Drafts {
+    const out: Drafts = { ...base };
+    for (const [id, draft] of Object.entries(patch)) {
+      if (draft) out[id] = draft;
+      else delete out[id];
+    }
+    return out;
   }
 }

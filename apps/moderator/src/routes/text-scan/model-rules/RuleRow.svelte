@@ -21,6 +21,7 @@
     expanded,
     ontoggle,
     onhistory,
+    reloaded,
   }: {
     rule: ModelRuleView | null;
     draftId: number;
@@ -29,6 +30,8 @@
     expanded: boolean;
     ontoggle: () => void;
     onhistory: () => void;
+    /** The rule as the page now holds it: this row unmounts when a filter hides the toggled rule. */
+    reloaded: (id: number) => ModelRuleView | undefined;
   } = $props();
 
   const fields = $derived<RuleFields>(rule ? drafts.fields(rule) : (drafts.get(draftId) ?? EMPTY));
@@ -60,7 +63,22 @@
       notify(data);
     },
   });
-  const toggle = new FormState({ reload: true, reset: false, onSuccess: notify });
+  // The toggle bumps the rule's updatedAt; without a rebase the moderator's own open draft would read
+  // as written against someone else's save.
+  let toggledFrom: ModelRuleView | null = null;
+  const toggle = new FormState({
+    reload: true,
+    reset: false,
+    onSubmit: () => {
+      toggledFrom = rule;
+    },
+    onSuccess: (data) => {
+      const after = toggledFrom && reloaded(toggledFrom.id);
+      if (toggledFrom && after) drafts.rebaseOwnWrite(toggledFrom, after);
+      toggledFrom = null;
+      notify(data);
+    },
+  });
 
   function discard() {
     const what = rule ? `your edits to “${rule.subject}”` : 'this new rule';

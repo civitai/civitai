@@ -131,3 +131,13 @@ describe('the text-scan lab', () => {
     expect(pageAccessState().paths).not.toContain('/text-scan/check');
   });
 });
+
+describe('the Model rules history endpoint', () => {
+  it('is gated with the Model rules page', () => {
+    applyGrants({ '/text-scan/model-rules': ['moderator:reviewer'] });
+    expect(canAccess(reviewer, '/text-scan/model-rules/history')).toBe(true);
+
+    applyGrants({ '/text-scan/prompts': ['moderator:reviewer'] });
+    expect(canAccess(reviewer, '/text-scan/model-rules/history')).toBe(false);
+  });
+});
