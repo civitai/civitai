@@ -4,6 +4,7 @@ import path from 'path';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
+import type { Removal } from '~/server/jobs/appeal-decision-records';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
@@ -299,7 +300,9 @@ describe('fillRemovalLabels', () => {
     await record({ appealId: 5, imageId: 105, daysAgo: 29 });
     const lookup = vi.fn(
       async (ids: number[]) =>
-        new Map(ids.filter((id) => id !== 103).map((id) => [id, `label-${id}`]))
+        new Map(
+          ids.filter((id) => id !== 103).map((id) => [id, { label: `label-${id}`, nsfw: 'Soft' }])
+        )
     );
 
     expect(await fillRemovalLabels(lookup)).toBe(2);
@@ -312,10 +315,20 @@ describe('fillRemovalLabels', () => {
       [4, null],
       [5, 'label-105'],
     ]);
+    const ratings = await holder.db.query<{ appealId: number; removalNsfw: string | null }>(
+      `SELECT "appealId", "removalNsfw" FROM "AppealDecisionRecord" ORDER BY "appealId"`
+    );
+    expect(ratings.rows.map((r) => [r.appealId, r.removalNsfw])).toEqual([
+      [1, 'Soft'],
+      [2, null],
+      [3, null],
+      [4, null],
+      [5, 'Soft'],
+    ]);
   });
 
   it('skips the lookup when nothing is missing', async () => {
-    const lookup = vi.fn(async () => new Map<number, string>());
+    const lookup = vi.fn(async () => new Map<number, Removal>());
 
     expect(await fillRemovalLabels(lookup)).toBe(0);
     expect(lookup).not.toHaveBeenCalled();
@@ -324,10 +337,18 @@ describe('fillRemovalLabels', () => {
 
 describe('removalLabelsFromClickhouse', () => {
   it('asks for the latest DeleteTOS violation per image and maps the answer', async () => {
-    const $query = vi.fn(async () => [{ imageId: 5, label: 'spam' }]);
+    const $query = vi.fn(async () => [
+      { imageId: 5, label: 'spam', nsfw: 'Soft' },
+      { imageId: 6, label: 'poi', nsfw: '' },
+    ]);
     holder.ch = { $query };
 
-    expect(await removalLabelsFromClickhouse([5, 6])).toEqual(new Map([[5, 'spam']]));
+    expect(await removalLabelsFromClickhouse([5, 6])).toEqual(
+      new Map([
+        [5, { label: 'spam', nsfw: 'Soft' }],
+        [6, { label: 'poi', nsfw: null }],
+      ])
+    );
 
     const [strings, ...values] = $query.mock.calls[0] as unknown as [
       TemplateStringsArray,
@@ -335,7 +356,8 @@ describe('removalLabelsFromClickhouse', () => {
     ];
     const sql = strings.join('?');
     expect(sql).toContain("type = 'DeleteTOS'");
-    expect(sql).toContain("argMax(coalesce(nullIf(violationType, ''), tosReason), time)");
+    expect(sql).toContain("argMax(coalesce(nullIf(violationType, ''), tosReason), time) AS label");
+    expect(sql).toContain('argMax(toString(nsfw), time) AS nsfw');
     expect(values).toEqual([[5, 6]]);
   });
 
@@ -493,7 +515,9 @@ describe('the nightly run', () => {
     await label(101, 'Blocked', 10);
     await label(102, 'Blocked', 10);
     await holder.db.query(`INSERT INTO "CsamReport" ("userId") VALUES (8)`);
-    const lookup = vi.fn(async (ids: number[]) => new Map(ids.map((id) => [id, 'spam'])));
+    const lookup = vi.fn(
+      async (ids: number[]) => new Map(ids.map((id) => [id, { label: 'spam', nsfw: null }]))
+    );
 
     expect(await runAppealDecisionRecords(lookup)).toEqual({
       swept: 1,

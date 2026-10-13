@@ -434,6 +434,7 @@ export type AppealDecisionRecord = {
   resolvedReason: string | null;
   decidedAt: Timestamp;
   removalLabel: string | null;
+  removalNsfw: string | null;
   restoredLevel: number | null;
   trainingLabelCorrectedAt: Timestamp | null;
   trainingCopyState: string | null;

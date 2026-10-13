@@ -87,6 +87,8 @@ beforeAll(async () => {
       decision text NOT NULL,
       "decidedAt" timestamptz NOT NULL DEFAULT now(),
       "removalLabel" text,
+      "removalNsfw" text,
+      "aiNsfwLevel" int,
       "trainingCopyState" text
     );
   `);

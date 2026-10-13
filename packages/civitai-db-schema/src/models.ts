@@ -4221,6 +4221,7 @@ export interface AppealDecisionRecord {
   resolvedReason: string | null;
   decidedAt: Date;
   removalLabel: string | null;
+  removalNsfw: string | null;
   restoredLevel: number | null;
   trainingLabelCorrectedAt: Date | null;
   trainingCopyState: string | null;

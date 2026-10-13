@@ -6792,6 +6792,7 @@ model AppealDecisionRecord {
   resolvedReason           String?
   decidedAt                DateTime  @db.Timestamptz(3)
   removalLabel             String?
+  removalNsfw              String?
   restoredLevel            Int?
   trainingLabelCorrectedAt DateTime? @db.Timestamptz(3)
   trainingCopyState        String?

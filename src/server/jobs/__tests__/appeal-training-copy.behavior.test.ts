@@ -7,6 +7,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
+import type { Removal, RemovalLabelLookup } from '~/server/jobs/appeal-decision-records';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
@@ -90,6 +91,8 @@ type Rec = {
   imageId: number;
   decision?: 'Approved' | 'Rejected';
   removalLabel?: string | null;
+  removalNsfw?: string | null;
+  aiNsfwLevel?: number | null;
   hoursAgo?: number;
   state?: string | null;
   key?: string | null;
@@ -101,6 +104,8 @@ const record = async ({
   imageId,
   decision = 'Rejected',
   removalLabel = 'spam',
+  removalNsfw = null,
+  aiNsfwLevel = 0,
   hoursAgo = 0.1,
   state = null,
   key = null,
@@ -115,9 +120,20 @@ const record = async ({
   await holder.db.query(
     `INSERT INTO "AppealDecisionRecord" ("appealId", "imageId", "imageUrl", "nsfwLevel",
        "nsfwLevelLocked", "decision", "decidedAt", "removalLabel", "trainingCopyState",
-       "trainingObjectKey")
-     VALUES ($1, $2, $3, 32, true, $4, now() - make_interval(secs => $5), $6, $7, $8)`,
-    [appealId, imageId, `u-${imageId}`, decision, hoursAgo * 3600, removalLabel, state, key]
+       "trainingObjectKey", "removalNsfw", "aiNsfwLevel")
+     VALUES ($1, $2, $3, 32, true, $4, now() - make_interval(secs => $5), $6, $7, $8, $9, $10)`,
+    [
+      appealId,
+      imageId,
+      `u-${imageId}`,
+      decision,
+      hoursAgo * 3600,
+      removalLabel,
+      state,
+      key,
+      removalNsfw,
+      aiNsfwLevel,
+    ]
   );
 };
 const states = async () =>
@@ -137,7 +153,7 @@ const fakeStore = () => ({
   copy: vi.fn(async (imageUrl: string) => `copied/${imageUrl}`),
   remove: vi.fn<(keys: string[]) => Promise<void>>(async () => undefined),
 });
-const noLabels = vi.fn(async () => new Map<number, string>());
+const noLabels = vi.fn(async () => new Map<number, Removal>());
 
 describe('copyRejectedForTraining', () => {
   it('copies a rejected image with a copyable label and records the object key', async () => {
@@ -160,8 +176,6 @@ describe('copyRejectedForTraining', () => {
     'schoolNsfw',
     'minorViolence',
     'diaper',
-    'poi',
-    'realPerson',
     'realPersonNsfw',
     'non-ai',
     'someNewMinorLabel',
@@ -174,6 +188,29 @@ describe('copyRejectedForTraining', () => {
     expect(store.copy).not.toHaveBeenCalled();
     expect(await states()).toEqual([{ appealId: 1, removalLabel, state: 'skipped', key: null }]);
   });
+
+  it.each([
+    ['poi', 'None', 0, 'copied'],
+    ['poi', 'Soft', 2, 'copied'],
+    ['realPerson', 'None', null, 'copied'],
+    ['poi', 'Mature', 0, 'skipped'],
+    ['poi', 'X', 0, 'skipped'],
+    ['poi', null, 0, 'skipped'],
+    ['poi', 'None', 4, 'skipped'],
+    ['realPerson', 'Blocked', 1, 'skipped'],
+    ['realPersonNsfw', 'None', 1, 'skipped'],
+  ])(
+    'rates a record labelled %s at %s (ai level %s): %s',
+    async (removalLabel, removalNsfw, aiNsfwLevel, state) => {
+      await record({ appealId: 1, imageId: 101, removalLabel, removalNsfw, aiNsfwLevel });
+      const store = fakeStore();
+
+      await copyRejectedForTraining({ store, lookup: noLabels });
+
+      expect(store.copy).toHaveBeenCalledTimes(state === 'copied' ? 1 : 0);
+      expect((await states())[0].state).toBe(state);
+    }
+  );
 
   it.each([
     [
@@ -206,22 +243,25 @@ describe('copyRejectedForTraining', () => {
   it('looks up a missing label, stores it, and copies on it', async () => {
     await record({ appealId: 1, imageId: 101, removalLabel: null });
     await record({ appealId: 2, imageId: 102, removalLabel: null });
-    const lookup = vi.fn<(ids: number[]) => Promise<Map<number, string>>>(
+    await record({ appealId: 3, imageId: 103, removalLabel: null });
+    const lookup = vi.fn<RemovalLabelLookup>(
       async () =>
         new Map([
-          [101, 'spam'],
-          [102, 'realisticMinorNsfw'],
+          [101, { label: 'spam', nsfw: 'X' }],
+          [102, { label: 'realisticMinorNsfw', nsfw: 'None' }],
+          [103, { label: 'poi', nsfw: 'None' }],
         ])
     );
     const store = fakeStore();
 
     await copyRejectedForTraining({ store, lookup });
 
-    expect(lookup).toHaveBeenCalledExactlyOnceWith([101, 102]);
-    expect(store.copy).toHaveBeenCalledExactlyOnceWith('u-101');
+    expect(lookup).toHaveBeenCalledExactlyOnceWith([101, 102, 103]);
+    expect(store.copy.mock.calls).toEqual([['u-101'], ['u-103']]);
     expect(await states()).toEqual([
       { appealId: 1, removalLabel: 'spam', state: 'copied', key: 'copied/u-101' },
       { appealId: 2, removalLabel: 'realisticMinorNsfw', state: 'skipped', key: null },
+      { appealId: 3, removalLabel: 'poi', state: 'copied', key: 'copied/u-103' },
     ]);
   });
 
@@ -280,7 +320,9 @@ describe('copyRejectedForTraining', () => {
   it('does nothing but warn when the training bucket is not configured', async () => {
     await record({ appealId: 1, imageId: 101, removalLabel: null });
     await record({ appealId: 2, imageId: 102, hoursAgo: 30 });
-    const lookup = vi.fn(async () => new Map([[101, 'spam']]));
+    const lookup = vi.fn<RemovalLabelLookup>(
+      async () => new Map([[101, { label: 'spam', nsfw: 'None' }]])
+    );
 
     await copyRejectedForTraining({ store: null, lookup });
 
@@ -318,12 +360,20 @@ describe('appealTrainingHeld', () => {
 
   it('never holds a record the copy would skip', async () => {
     await record({ appealId: 1, imageId: 101, removalLabel: 'realisticMinorNsfw' });
-    await record({ appealId: 2, imageId: 102, removalLabel: 'poi' });
+    await record({ appealId: 2, imageId: 102, removalLabel: 'poi', removalNsfw: 'X' });
     await record({ appealId: 3, imageId: 103, removalLabel: 'animatedMinor' });
     await record({ appealId: 4, imageId: 104, userId: 9 });
     await holder.db.exec(`INSERT INTO "CsamReport" ("userId") VALUES (9)`);
 
     expect(await held()).toEqual([]);
+  });
+
+  it('holds a rated label only at a level the copy accepts', async () => {
+    await record({ appealId: 1, imageId: 101, removalLabel: 'poi', removalNsfw: 'Soft' });
+    await record({ appealId: 2, imageId: 102, removalLabel: 'poi' });
+    await record({ appealId: 3, imageId: 103, removalLabel: 'realPerson', removalNsfw: 'Mature' });
+
+    expect(await held()).toEqual([101]);
   });
 
   it('releases a record once it is copied, skipped or failed, and never holds an approval', async () => {

@@ -104,19 +104,21 @@ async function removeTrainingObjects(
   }
 }
 
-export type RemovalLabelLookup = (imageIds: number[]) => Promise<Map<number, string>>;
+export type Removal = { label: string; nsfw: string | null };
+export type RemovalLabelLookup = (imageIds: number[]) => Promise<Map<number, Removal>>;
 
-/** The violation each image was removed for, from its latest DeleteTOS event. */
+/** The violation each image was removed for, and its rating then, from its latest DeleteTOS event. */
 export const removalLabelsFromClickhouse: RemovalLabelLookup = async (imageIds) => {
   if (!clickhouse || !imageIds.length) return new Map();
-  const rows = await clickhouse.$query<{ imageId: number; label: string }>`
-    SELECT imageId, argMax(coalesce(nullIf(violationType, ''), tosReason), time) AS label
+  const rows = await clickhouse.$query<{ imageId: number; label: string; nsfw: string | null }>`
+    SELECT imageId, argMax(coalesce(nullIf(violationType, ''), tosReason), time) AS label,
+      argMax(toString(nsfw), time) AS nsfw
     FROM images
     WHERE type = 'DeleteTOS' AND imageId IN (${imageIds})
     GROUP BY imageId
     HAVING label IS NOT NULL AND label != ''
   `;
-  return new Map(rows.map((row) => [row.imageId, row.label]));
+  return new Map(rows.map((row) => [row.imageId, { label: row.label, nsfw: row.nsfw || null }]));
 };
 
 /** Rows without a removal label are retried each night for a while; ClickHouse can lag the decision. */
@@ -133,14 +135,15 @@ export async function fillRemovalLabels(lookup: RemovalLabelLookup = removalLabe
   return storeRemovalLabels(await lookup(pending.map((p) => p.imageId)));
 }
 
-async function storeRemovalLabels(labels: Map<number, string>) {
-  if (!labels.size) return 0;
+async function storeRemovalLabels(removals: Map<number, Removal>) {
+  if (!removals.size) return 0;
+  const ids = [...removals.keys()];
+  const labels = [...removals.values()].map((v) => v.label);
+  const ratings = [...removals.values()].map((v) => v.nsfw);
   return dbWrite.$executeRaw`
     UPDATE "AppealDecisionRecord" r
-    SET "removalLabel" = l.label
-    FROM unnest(${[...labels.keys()]}::int[], ${[
-    ...labels.values(),
-  ]}::text[]) AS l("imageId", label)
+    SET "removalLabel" = l.label, "removalNsfw" = l.nsfw
+    FROM unnest(${ids}::int[], ${labels}::text[], ${ratings}::text[]) AS l("imageId", label, nsfw)
     WHERE r."imageId" = l."imageId" AND r."removalLabel" IS NULL
   `;
 }
@@ -158,14 +161,23 @@ const NEVER_COPY_LABELS = [
   'schoolNsfw',
   'minorViolence',
   'diaper',
-  'poi',
-  'realPerson',
   'realPersonNsfw',
   'non-ai',
 ];
+const RATED_COPY_LABELS = ['poi', 'realPerson'];
 
-const neverCopy = (label: Prisma.Sql) =>
-  Prisma.sql`(${label} = ANY(${NEVER_COPY_LABELS}::text[]) OR ${label} ILIKE '%minor%')`;
+// NULL-safe: an unknown rating counts as never-copy.
+const neverCopy = (r: Prisma.Sql) => Prisma.sql`(
+  ${r}."removalLabel" = ANY(${NEVER_COPY_LABELS}::text[])
+  OR ${r}."removalLabel" ILIKE '%minor%'
+  OR (
+    ${r}."removalLabel" = ANY(${RATED_COPY_LABELS}::text[])
+    AND NOT coalesce(
+      ${r}."removalNsfw" IN ('None', 'Soft') AND coalesce(${r}."aiNsfwLevel", 0) IN (0, 1, 2),
+      false
+    )
+  )
+)`;
 
 const pendingCopy = (r: Prisma.Sql) =>
   Prisma.sql`${r}.decision = 'Rejected' AND ${r}."trainingCopyState" IS NULL`;
@@ -176,7 +188,7 @@ const pendingCopy = (r: Prisma.Sql) =>
  */
 export const appealTrainingHeld = (i: Prisma.Sql) => {
   const h = Prisma.raw('h');
-  const copyable = Prisma.sql`NOT ${neverCopy(Prisma.sql`h."removalLabel"`)}`;
+  const copyable = Prisma.sql`NOT ${neverCopy(h)}`;
   return Prisma.sql`EXISTS (
     SELECT 1 FROM "AppealDecisionRecord" h
     WHERE h."imageId" = ${i}.id
@@ -311,7 +323,7 @@ export async function copyRejectedForTraining({
           OR ${excludedRecord(r)}
           THEN 'skip'
         WHEN r."removalLabel" IS NULL THEN 'wait'
-        WHEN ${neverCopy(Prisma.sql`r."removalLabel"`)} THEN 'skip'
+        WHEN ${neverCopy(r)} THEN 'skip'
         ELSE 'copy'
       END AS action
     FROM "AppealDecisionRecord" r
