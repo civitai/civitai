@@ -1014,8 +1014,10 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
   // This series and the `block-confirmed-quote-overcharge` log line (which carries
   // the app, step type, workflow and both amounts) are the only places it is visible.
   //
-  // Expected to be ZERO. Any increase means a viewer was charged more than they
-  // agreed to: alert on `increase(...) > 0`.
+  // Expected to be ZERO. Any non-zero value means a viewer was charged more than they
+  // agreed to. Alert on the VALUE (e.g. `max_over_time(...[24h]) > 0`), not on
+  // `increase()`/`rate()`: the labelled child is created lazily at its first
+  // increment, so the series is born at 1 and a single event shows no 0->1 delta.
   //
   // 🔴 `kind` IS THE ONLY LABEL. The pass-through `$type` is caller-supplied (an open
   // set by construction on that arm), and app/user ids would grow with traffic; all of
