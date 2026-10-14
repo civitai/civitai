@@ -111,7 +111,6 @@ export const platformFeedbackServerStateSchema = z.object({
   reports: z.number().int().catch(1),
   firstSeenAt: z.string().nullable().catch(null),
   lastSeenAt: z.string().nullable().catch(null),
-  postCloseReporters: z.number().int().catch(0),
   regressionOf: z.number().int().optional().catch(undefined),
   reopenOf: z.number().int().optional().catch(undefined),
   resolution: z

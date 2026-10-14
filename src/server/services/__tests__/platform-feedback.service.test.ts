@@ -75,6 +75,7 @@ type ServerState = {
   regressionOf?: number;
   reopenOf?: number;
   postCloseReporters?: number;
+  postCloseFor?: string;
   resolution?: unknown;
 };
 type StoredRow = {
@@ -125,6 +126,20 @@ const storedRows = async () =>
 
 const setStatus = (id: number, status: string) =>
   pg.query('UPDATE "Feedback" SET "status" = $1 WHERE "id" = $2', [status, id]);
+
+/**
+ * A status change as the moderator app makes it: every one stamps `handledAt`, and a move back to
+ * `new` clears it. An ISO string, never a `Date` (see the harness header).
+ */
+const triage = (id: number, status: string, at: string) =>
+  pg.query('UPDATE "Feedback" SET "status" = $1, "handledAt" = $2::timestamp WHERE "id" = $3', [
+    status,
+    status === 'new' ? null : at,
+    id,
+  ]);
+const H1 = '2026-10-02T09:00:00.000';
+const H2 = '2026-10-03T09:00:00.000';
+const H3 = '2026-10-04T09:00:00.000';
 
 /** What the moderator app will write; this service only reads it. */
 const setResolution = (id: number, resolution: Record<string, unknown>) =>
@@ -696,7 +711,7 @@ describe('createPlatformFeedback — a dismissed report reopens', () => {
     await expect(send(carol)).resolves.toMatchObject(NOT_PLANNED);
     expect(await postClose()).toBe(3);
     // At the threshold, someone already counted still cannot reopen it.
-    await expect(send(5002)).resolves.toMatchObject(NOT_PLANNED);
+    await expect(send(carol)).resolves.toMatchObject(NOT_PLANNED);
     await expect(send(alice)).resolves.toMatchObject(NOT_PLANNED);
     expect(await countRows(pg, 'Feedback')).toBe(1);
 
@@ -768,7 +783,7 @@ describe('createPlatformFeedback — a dismissed report reopens', () => {
         'status',
         'updatedAt',
       ]);
-    expect(JSON.stringify(result)).not.toMatch(/reopenOf|postCloseReporters/);
+    expect(JSON.stringify(result)).not.toMatch(/reopenOf|postClose/);
   });
 
   // 47 ids at the close: the three who reach the threshold also fill the list, so the next
@@ -793,13 +808,111 @@ describe('createPlatformFeedback — a dismissed report reopens', () => {
     expect(await postClose()).toBe(3);
     await setStatus(1, 'reviewed');
 
-    await expect(send(await seedUser(pg, 'carol'))).resolves.toMatchObject({
+    const carol = await seedUser(pg, 'carol');
+    await expect(send(carol)).resolves.toMatchObject({
       ref: '1-ccb33a3a',
       duplicate: true,
       status: 'acknowledged',
     });
     expect(await postClose()).toBe(3);
     expect(await countRows(pg, 'Feedback')).toBe(1);
+
+    // Dismissed again: the count belongs to the close before, so this starts from nothing.
+    await triage(1, 'dismissed', H3);
+    const dave = await seedUser(pg, 'dave');
+    await expect(send(dave)).resolves.toMatchObject(NOT_PLANNED);
+    expect(await postClose()).toBe(1);
+    expect(await countRows(pg, 'Feedback')).toBe(1);
+  });
+
+  /**
+   * The count is for ONE close. `carried` reporters arrive after the first dismissal, the
+   * moderator reconsiders and dismisses again, and the second close must need the full three.
+   * With 3 carried this is the sequence where a single account undid a considered re-dismissal.
+   */
+  it.each([1, 2, 3])(
+    'a second dismissal needs three new reporters again, with %i counted before it',
+    async (carried) => {
+      await send(alice);
+      await triage(1, 'dismissed', H1);
+      for (let i = 0; i < carried; i++) await send(5001 + i);
+      expect(await postClose()).toBe(carried);
+
+      await triage(1, 'reviewed', H2);
+      await expect(send(5010)).resolves.toMatchObject({ status: 'acknowledged' });
+      await triage(1, 'dismissed', H3);
+
+      const [carol, dave, erin, frank] = [
+        await seedUser(pg, 'carol'),
+        await seedUser(pg, 'dave'),
+        await seedUser(pg, 'erin'),
+        await seedUser(pg, 'frank'),
+      ];
+      await expect(send(carol)).resolves.toMatchObject(NOT_PLANNED);
+      expect(await postClose()).toBe(1);
+      await expect(send(dave)).resolves.toMatchObject(NOT_PLANNED);
+      await expect(send(erin)).resolves.toMatchObject(NOT_PLANNED);
+      expect(await postClose()).toBe(3);
+      expect(await countRows(pg, 'Feedback')).toBe(1);
+
+      await expect(send(frank)).resolves.toMatchObject({ ref: '2-ccb33a3a', duplicate: false });
+      expect(await countRows(pg, 'Feedback')).toBe(2);
+    }
+  );
+
+  it('a second dismissal with no report in between also starts from nothing', async () => {
+    await send(alice);
+    await triage(1, 'dismissed', H1);
+    for (const id of [5001, 5002, 5003]) await send(id);
+    await triage(1, 'reviewed', H2);
+    await triage(1, 'dismissed', H3);
+    await expect(send(await seedUser(pg, 'carol'))).resolves.toMatchObject(NOT_PLANNED);
+    expect(await postClose()).toBe(1);
+    expect(await countRows(pg, 'Feedback')).toBe(1);
+  });
+
+  // A count stored without saying which close it is for (or for a row nobody stamped) cannot be
+  // attributed to the current close, so it is not trusted.
+  it.each([
+    ['a stamped row', H1],
+    ['a row with no handledAt', null],
+  ])('does not trust a stored count that names no close, on %s', async (_label, handledAt) => {
+    await seedFeedback(pg, {
+      userId: alice,
+      area: 'apps-platform',
+      status: 'dismissed',
+      context: {
+        server: {
+          fingerprint: FP_CLI_REF,
+          reporterIds: [1],
+          reporters: 1,
+          reports: 1,
+          postCloseReporters: 3,
+        },
+      },
+    });
+    await pg.query('UPDATE "Feedback" SET "handledAt" = $1::timestamp WHERE "id" = 1', [handledAt]);
+
+    const carol = await seedUser(pg, 'carol');
+    await expect(send(carol)).resolves.toMatchObject(NOT_PLANNED);
+    expect(await postClose()).toBe(1);
+    expect(await countRows(pg, 'Feedback')).toBe(1);
+    // From there it counts normally, on a row with no handledAt as well.
+    await send(5001);
+    await send(5002);
+    expect(await postClose()).toBe(3);
+    await expect(send(await seedUser(pg, 'dave'))).resolves.toMatchObject({
+      ref: '2-ccb33a3a',
+      duplicate: false,
+    });
+  });
+
+  it('names the close a count is for', async () => {
+    await send(alice);
+    await triage(1, 'dismissed', H1);
+    await send(bob);
+    // 2026-10-02T09:00:00.000Z in epoch milliseconds.
+    expect((await storedRows())[0].context.server.postCloseFor).toBe('1790931600000');
   });
 
   it.each(['new', 'reviewed', 'actioned'])('a %s row never reopens', async (stored) => {

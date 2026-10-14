@@ -29,8 +29,8 @@ export const PLATFORM_FEEDBACK_REPORTER_IDS_MAX = 50;
 export const PLATFORM_FEEDBACK_SAMPLES_MAX = 5;
 export const PLATFORM_FEEDBACK_SAMPLE_TEXT_MAX_LENGTH = 300;
 /**
- * How many reporters must arrive after a report was dismissed before the next new one opens a
- * fresh row instead of being told `not_planned`.
+ * How many new reporters one dismissal absorbs before the next new one opens a fresh row instead
+ * of being told `not_planned`. The count is per dismissal: dismissing the row again starts it over.
  */
 export const PLATFORM_FEEDBACK_REOPEN_AFTER_REPORTERS = 3;
 const PUBLIC_NOTE_MAX_LENGTH = 300;
@@ -144,7 +144,24 @@ async function assertCollecting(user: SessionUser) {
 
 type ExistingRow = { id: number; status: string; server: unknown };
 /** `provablyNew`: the caller is not in `reporterIds` and the list still has room to say so. */
-type LookupRow = ExistingRow & { provablyNew: boolean };
+type LookupRow = ExistingRow & { provablyNew: boolean; postCloseCount: number };
+
+/**
+ * Which dismissal a row is under: its `handledAt`, which the moderator app stamps on every status
+ * change. A row nobody stamped still gets a value, so its count has something to match.
+ */
+const CLOSE_ANCHOR = Prisma.sql`COALESCE((EXTRACT(EPOCH FROM f."handledAt") * 1000)::bigint::text, 'unhandled')`;
+
+/**
+ * New reporters counted under the row's CURRENT dismissal. A count stored for another dismissal,
+ * or with none named, reads as zero: otherwise a row dismissed a second time would reopen on the
+ * reporters the first dismissal had already absorbed.
+ */
+const POST_CLOSE_COUNT = Prisma.sql`(CASE
+  WHEN f."context"->'server'->>'postCloseFor' IS NOT DISTINCT FROM ${CLOSE_ANCHOR}
+    THEN COALESCE((f."context"->'server'->>'postCloseReporters')::int, 0)
+  ELSE 0
+END)`;
 
 /**
  * `context.server` without the two fields only moderators read. Every read here selects this, so
@@ -209,8 +226,9 @@ async function insertReport(
  * seen. Once `reporterIds` is full it stops recording new users, so past that many distinct
  * reporters a returning one is counted again and `reporters` is an upper bound.
  *
- * On a dismissed row (`closed`) a new reporter is also counted in `postCloseReporters`, but only
- * while their id can still be recorded: past the cap nobody can be shown to be new.
+ * On a dismissed row (`closed`) a new reporter is also counted in `postCloseReporters`, for the
+ * dismissal named by `postCloseFor`, but only while their id can still be recorded: past the cap
+ * nobody can be shown to be new.
  */
 async function countRepeat(
   tx: RawTx,
@@ -266,7 +284,8 @@ async function countRepeat(
                WHEN ${closed}::boolean
                  AND jsonb_array_length(COALESCE(f."context"->'server'->'reporterIds', '[]'::jsonb)) < ${PLATFORM_FEEDBACK_REPORTER_IDS_MAX}::int
                  THEN jsonb_build_object(
-                   'postCloseReporters', COALESCE((f."context"->'server'->>'postCloseReporters')::int, 0) + 1
+                   'postCloseReporters', ${POST_CLOSE_COUNT} + 1,
+                   'postCloseFor', ${CLOSE_ANCHOR}
                  )
                ELSE '{}'::jsonb
              END
@@ -306,7 +325,8 @@ export async function createPlatformFeedback({
       SELECT f."id", f."status", ${SERVER_STATE} AS "server",
              (NOT COALESCE(f."context"->'server'->'reporterIds' @> to_jsonb(${userId}::int), false)
                AND jsonb_array_length(COALESCE(f."context"->'server'->'reporterIds', '[]'::jsonb)) < ${PLATFORM_FEEDBACK_REPORTER_IDS_MAX}::int
-             ) AS "provablyNew"
+             ) AS "provablyNew",
+             ${POST_CLOSE_COUNT} AS "postCloseCount"
       FROM "Feedback" f
       WHERE f."area" = ${APPS_PLATFORM_FEEDBACK_AREA}
         AND f."context"->'server'->>'fingerprint' = ${fingerprint}
@@ -321,8 +341,7 @@ export async function createPlatformFeedback({
     const reopen =
       existing?.status === 'dismissed' &&
       existing.provablyNew &&
-      !!before &&
-      before.postCloseReporters >= PLATFORM_FEEDBACK_REOPEN_AFTER_REPORTERS;
+      existing.postCloseCount >= PLATFORM_FEEDBACK_REOPEN_AFTER_REPORTERS;
 
     if (!existing || regression || reopen) {
       const id = await insertReport(tx, {
