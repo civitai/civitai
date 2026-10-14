@@ -7,12 +7,13 @@ import { getPlacementConfig } from '~/server/services/placement.service';
 import { resolvePlacementSpaceFor } from '~/server/services/placement-space.service';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
-import type { PlacementSpaceMode, PlacementTargetType } from '~/shared/utils/placement';
+import type { PlacementSpaceMode } from '~/shared/utils/placement';
 import { PLACEMENT_SURFACES } from '~/shared/utils/placement';
 import type { StorylineSpaceMode } from '~/shared/utils/storyline-placement';
 import { STORYLINE_REFUSALS } from '~/shared/utils/storyline-placement';
 
 const SURFACE = 'storyline' as const;
+const TARGET_TYPE = 'post' as const;
 
 /**
  * Advisory-lock class for the per-placer pending cap on this surface.
@@ -28,8 +29,10 @@ const LOCK_TIMEOUT = '3s';
 
 export type CreateStorylinePlacement = {
   placerId: number;
-  targetType: PlacementTargetType;
-  targetId: number;
+  /** The chapter being continued: the placement's target. */
+  parentPostId: number;
+  /** The placer's own post, offered as the next chapter. */
+  postId: number;
   /**
    * What the placer was shown. Refused if the owner has moved it since.
    *
@@ -44,9 +47,10 @@ export type CreateStorylinePlacement = {
    * row made before the column existed.
    */
   spendType: BuzzSpendType;
-  /** The surface's own payload. Opaque here. */
-  data: Prisma.InputJsonValue;
 };
+
+/** What a storyline placement carries. Storyline and parent come from the target. */
+export type StorylinePlacementData = { postId: number };
 
 /**
  * Submits a continuation to a storyline, priced or not.
@@ -70,21 +74,33 @@ export type CreateStorylinePlacement = {
  * atomic. The lock is per placer: the cap is per (placer, owner) and one placer
  * racing themselves is the whole threat.
  *
- * 🔴 **No router reaches this yet, and none may until it refuses a target that
- * is not a chapter of an open storyline.** The surface defaults to open at zero,
- * which is safe only because a storyline is opt-in by existing; without that
- * refusal every post on the site would accept free continuations into its
- * owner's queue.
+ * The target must be a storyline chapter: resolving the space refuses any
+ * other post, which is what keeps a surface that opens at zero by default from
+ * opening every post on the site.
+ *
+ * Resolving the space already refuses a taken-down storyline and reads a
+ * Complete one as closed.
+ *
+ * 🔴 **No router reaches this yet, and none may until it also runs the
+ * storyline's remaining checks** (blocks between the placer and the storyline's
+ * creator or the chapter's author, collaborators-only) and the continuation
+ * post's readiness and rating ceiling.
  */
 export async function createStorylinePlacement({
   placerId,
-  targetType,
-  targetId,
+  parentPostId,
+  postId,
   expectedPrice,
   spendType,
-  data,
 }: CreateStorylinePlacement) {
-  const space = await resolvePlacementSpaceFor({ surface: SURFACE, targetType, targetId });
+  if (postId === parentPostId)
+    throw throwBadRequestError('storyline: a chapter cannot continue itself');
+
+  const space = await resolvePlacementSpaceFor({
+    surface: SURFACE,
+    targetType: TARGET_TYPE,
+    targetId: parentPostId,
+  });
 
   const allowedModes = PLACEMENT_SURFACES[SURFACE].allowedModes as readonly PlacementSpaceMode[];
   if (space.mode === 'off' || !allowedModes.includes(space.mode))
@@ -103,6 +119,16 @@ export async function createStorylinePlacement({
   // paid one.
   if (expectedPrice !== space.price)
     throw throwBadRequestError(`${STORYLINE_REFUSALS.priceChanged}: now ${space.price} Buzz`);
+
+  // Only your own post can be offered as a chapter: a continuation credits its
+  // post's author, so offering someone else's would put your name on their work.
+  // Read from the primary, because ownership decides a mutation.
+  const continuation = await dbWrite.post.findUnique({
+    where: { id: postId },
+    select: { userId: true },
+  });
+  if (!continuation || continuation.userId !== placerId)
+    throw throwBadRequestError(STORYLINE_REFUSALS.notYourPost);
 
   // Outside the transaction: I/O, and read from the primary.
   await assertCanPlace({ ownerId: space.ownerId, placerId });
@@ -128,8 +154,8 @@ export async function createStorylinePlacement({
     return tx.placement.create({
       data: {
         surface: SURFACE,
-        targetType,
-        targetId,
+        targetType: TARGET_TYPE,
+        targetId: parentPostId,
         ownerId: space.ownerId,
         placerId,
         sellerId: null,
@@ -140,7 +166,7 @@ export async function createStorylinePlacement({
         spendType,
         status: 'pending',
         expiresAt,
-        data,
+        data: { postId } satisfies StorylinePlacementData,
       },
       select: { id: true },
     });

@@ -5,6 +5,7 @@ import type * as PlacementModeration from '~/server/services/placement-moderatio
 import type * as PlacementSpaceService from '~/server/services/placement-space.service';
 import type { ResolvedPlacementSpace } from '~/server/services/placement-space.service';
 import { PLACEMENT_SURFACES } from '~/shared/utils/placement';
+import { STORYLINE_REFUSALS } from '~/shared/utils/storyline-placement';
 
 const resolveSpace = vi.fn();
 const assertCanPlace = vi.fn();
@@ -35,6 +36,7 @@ const { getFreePlacementAllowance, hasUsedFreePlacementOn } = await import(
 const OWNER = 10;
 const PLACER = 20;
 const CHAPTER = 77;
+const CONTINUATION = 78;
 const PLACER_LOCK_CLASS = 0x74ee0003;
 
 type Row = Record<string, unknown>;
@@ -126,14 +128,13 @@ const givenSpace = (overrides: Partial<ResolvedPlacementSpace> = {}) =>
     ...overrides,
   } satisfies ResolvedPlacementSpace);
 
-const submit = (overrides: { expectedPrice?: number; placerId?: number } = {}) =>
+const submit = (overrides: { expectedPrice?: number; placerId?: number; postId?: number } = {}) =>
   createStorylinePlacement({
     placerId: PLACER,
-    targetType: 'image',
-    targetId: CHAPTER,
+    parentPostId: CHAPTER,
+    postId: CONTINUATION,
     expectedPrice: 0,
     spendType: 'yellow',
-    data: { postId: 1 },
     ...overrides,
   });
 
@@ -142,6 +143,7 @@ beforeEach(() => {
   givenTable();
   givenSpace();
   assertCanPlace.mockResolvedValue(undefined);
+  dbMock.dbWrite.post.findUnique.mockResolvedValue({ userId: PLACER });
   holdPlacementEscrow.mockResolvedValue({ fee: 0, principal: 0 });
   settlePlacement.mockResolvedValue({ settled: true });
 });
@@ -158,7 +160,9 @@ describe('createStorylinePlacement — priced at zero', () => {
     for (const row of rows)
       expect(row).toMatchObject({
         surface: 'storyline',
+        targetType: 'post',
         targetId: CHAPTER,
+        data: { postId: CONTINUATION },
         ownerId: OWNER,
         placerId: PLACER,
         free: false,
@@ -212,7 +216,7 @@ describe('createStorylinePlacement — the free allowance is untouched', () => {
     await expect(
       hasUsedFreePlacementOn({
         surface: 'storyline',
-        targetType: 'image',
+        targetType: 'post',
         targetId: CHAPTER,
         placerId: PLACER,
       })
@@ -306,6 +310,51 @@ describe('createStorylinePlacement — the rules that hold at any price', () => 
     givenSpace({ ownerId: PLACER });
     await expect(submit()).rejects.toThrow(/your own storyline/);
     expect(rows).toHaveLength(0);
+  });
+
+  // The closing condition for posts as targets: a continuation offers the
+  // placer's OWN post. Someone else's would put the placer's name on it.
+  it('refuses offering a post the placer does not own', async () => {
+    dbMock.dbWrite.post.findUnique.mockResolvedValue({ userId: PLACER + 1 });
+    await expect(submit()).rejects.toThrow(new RegExp(STORYLINE_REFUSALS.notYourPost));
+    expect(dbMock.dbWrite.post.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: CONTINUATION } })
+    );
+    expect(rows).toHaveLength(0);
+  });
+
+  it('refuses a post that no longer exists', async () => {
+    dbMock.dbWrite.post.findUnique.mockResolvedValue(null);
+    await expect(submit()).rejects.toThrow(new RegExp(STORYLINE_REFUSALS.notYourPost));
+    expect(rows).toHaveLength(0);
+  });
+
+  // At a price, a refusal must come before any money moves.
+  it('refuses before taking escrow on a priced storyline', async () => {
+    givenSpace({ price: 100, setPrice: 100 });
+    dbMock.dbWrite.post.findUnique.mockResolvedValue({ userId: PLACER + 1 });
+    await expect(submit({ expectedPrice: 100 })).rejects.toThrow(
+      new RegExp(STORYLINE_REFUSALS.notYourPost)
+    );
+    await expect(submit({ expectedPrice: 100, postId: CHAPTER })).rejects.toThrow(
+      /cannot continue itself/
+    );
+    expect(holdPlacementEscrow).not.toHaveBeenCalled();
+  });
+
+  it('refuses a chapter continuing itself', async () => {
+    await expect(submit({ postId: CHAPTER } as never)).rejects.toThrow(/cannot continue itself/);
+    expect(rows).toHaveLength(0);
+  });
+
+  it('resolves the space from the chapter post being continued', async () => {
+    await submit();
+    expect(resolveSpace).toHaveBeenCalledTimes(1);
+    expect(resolveSpace).toHaveBeenCalledWith({
+      surface: 'storyline',
+      targetType: 'post',
+      targetId: CHAPTER,
+    });
   });
 
   it('refuses a hand-edited space with no price', async () => {
