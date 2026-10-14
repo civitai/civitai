@@ -1,5 +1,6 @@
 import type { ImageGenStepTemplate } from '@civitai/client';
 import { getEdgeUrl } from '~/client-utils/edge-url';
+import { ORCHESTRATOR_PROXY_HOST } from '~/server/orchestrator/region-proxy';
 import { isTrustedOrchestratorUrl } from '~/server/services/orchestrator/trusted-blob-url';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { findAvatarStarter } from '~/shared/constants/avatar-starters';
@@ -35,6 +36,20 @@ function getModel(model: unknown) {
 }
 
 /**
+ * RU visitors are served results on the region proxy host (`region-proxy.ts`), a transparent route
+ * to the same blobs, so the URL is sent as is.
+ */
+function isResultUrl(url: string) {
+  if (isTrustedOrchestratorUrl(url)) return true;
+  try {
+    const { protocol, username, password, host } = new URL(url);
+    return protocol === 'https:' && !username && !password && host === ORCHESTRATOR_PROXY_HOST;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * A stored starter on our CDN. Free-palette styles send the greyscale copy, so the prompt rather
  * than the reference decides the colours.
  */
@@ -58,7 +73,8 @@ export function expandAvatarData(data: GenerationData): GenerationData {
 
   const reference = typeof loose.avatarReference === 'string' ? loose.avatarReference : '';
   const parent = typeof loose.avatarParentImage === 'string' ? loose.avatarParentImage : '';
-  const refining = !!parent && reference === parent && isTrustedOrchestratorUrl(parent);
+  const refining = !!parent && reference === parent;
+  if (refining && !isResultUrl(parent)) throw throwBadRequestError("This result can't be refined");
   const options = {
     palette: loose.avatarPalette as string | undefined,
     character: loose.avatarCharacter as string | undefined,

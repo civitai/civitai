@@ -2551,50 +2551,6 @@
     "loraStrength": 0.8,
     "workflowId": "0-01a11854-e280-7346-a9e8-ea2e15f6b61a"
   },
-  "gameboy-mara": {
-    "colourImageId": 144995397,
-    "greyImageId": 144995398,
-    "prompt": "1998 handheld game camera photo: head-and-shoulders portrait of a woman in her late twenties with long wavy auburn hair, green eyes and a few freckles, wearing a cream knit sweater. No text.",
-    "negativePrompt": "text, letters, watermark, signature, caption",
-    "seed": 20261009,
-    "model": "urn:air:krea2:diffusionmodel:civitai:2732654@3072329",
-    "lora": "1487247@3308367",
-    "loraStrength": 0.8,
-    "workflowId": "0-01a11854-e328-72c3-b39c-2336062d0321"
-  },
-  "gameboy-dev": {
-    "colourImageId": 144995399,
-    "greyImageId": 144995402,
-    "prompt": "1998 handheld game camera photo: head-and-shoulders portrait of a man in his thirties with dark brown skin, short black hair and a neat short beard, wearing an olive green jacket. No text.",
-    "negativePrompt": "text, letters, watermark, signature, caption",
-    "seed": 20261009,
-    "model": "urn:air:krea2:diffusionmodel:civitai:2732654@3072329",
-    "lora": "1487247@3308367",
-    "loraStrength": 0.8,
-    "workflowId": "0-01a11854-e63e-7a10-913b-0e363c6b358b"
-  },
-  "gameboy-ines": {
-    "colourImageId": 144995403,
-    "greyImageId": 144995405,
-    "prompt": "1998 handheld game camera photo: head-and-shoulders portrait of a woman in her sixties with East Asian features, silver hair in a low bun and round tortoiseshell glasses, wearing a navy cardigan. No text.",
-    "negativePrompt": "text, letters, watermark, signature, caption",
-    "seed": 20261009,
-    "model": "urn:air:krea2:diffusionmodel:civitai:2732654@3072329",
-    "lora": "1487247@3308367",
-    "loraStrength": 0.8,
-    "workflowId": "0-01a11854-e95d-7cba-ae56-1783138a84f0"
-  },
-  "gameboy-theo": {
-    "colourImageId": 144995408,
-    "greyImageId": 144995409,
-    "prompt": "1998 handheld game camera photo: head-and-shoulders portrait of a man in his twenties with light skin, short curly ginger hair and a friendly grin, wearing a mustard yellow hoodie. No text.",
-    "negativePrompt": "text, letters, watermark, signature, caption",
-    "seed": 20261009,
-    "model": "urn:air:krea2:diffusionmodel:civitai:2732654@3072329",
-    "lora": "1487247@3308367",
-    "loraStrength": 0.8,
-    "workflowId": "0-01a11854-ec8f-7141-a9ea-892b17b34469"
-  },
   "c64-mara": {
     "colourImageId": 144995410,
     "greyImageId": 144995413,

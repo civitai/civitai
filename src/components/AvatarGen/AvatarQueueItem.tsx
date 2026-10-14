@@ -1,14 +1,13 @@
-import { Button, Center, Loader, Text, UnstyledButton } from '@mantine/core';
+import { Button, Text, UnstyledButton } from '@mantine/core';
 import { IconCornerLeftUp, IconSparkles } from '@tabler/icons-react';
 import { useField } from 'form-graph/react';
-import { QueueItem } from '~/components/ImageGeneration/QueueItem';
-import { InViewLoader } from '~/components/InView/InViewLoader';
 import {
   avatarStarterSrc,
   avatarStyleCoverSrc,
   findAvatarStarter,
 } from '~/shared/constants/avatar-starters';
 import {
+  AVATAR_WORKFLOW,
   avatarEditModelByVersionId,
   avatarPalettes,
   avatarStyleByKey,
@@ -16,7 +15,6 @@ import {
 import type { BlobData, WorkflowData } from '~/shared/orchestrator/workflow-data';
 import { useActiveGenerationForm } from '~/store/active-generation-form.store';
 import { generationGraphPanel } from '~/store/generation-graph.store';
-import { useAvatarFeed } from './avatar-gen.hooks';
 import { AvatarProfilePictureButton } from './AvatarProfilePictureButton';
 
 type AvatarParams = {
@@ -26,7 +24,6 @@ type AvatarParams = {
   avatarPalette?: string;
 };
 
-const itemId = (workflowId: string) => `avatar-${workflowId}`;
 const capitalise = (value: string) => value[0].toUpperCase() + value.slice(1);
 
 function describeReference(params: AvatarParams) {
@@ -123,63 +120,20 @@ function RefineActions({ output, styleKey }: { output: BlobData; styleKey?: stri
   );
 }
 
-/** Standard queue items plus the reference each was made from. */
-export function AvatarQueue() {
-  const { items, isLoading, hasNextPage, fetchNextPage, isFetching } = useAvatarFeed();
-
-  if (isLoading)
-    return (
-      <Center p="xl">
-        <Loader />
-      </Center>
-    );
-
-  if (!items.length)
-    return (
-      <div className="flex flex-col items-center gap-2 px-4 py-12 text-center">
-        <IconSparkles size={40} className="text-gray-5" />
-        <Text fw={600}>Your avatars will appear here</Text>
-        <Text size="sm" c="dimmed" maw={380}>
-          Add a photo of yourself, pick a style and a reference, then generate. Each result shows
-          the reference it came from.
-        </Text>
-      </div>
-    );
-
-  const itemByOutputUrl = new Map(
-    items.flatMap((workflow) =>
-      workflow.succeededOutput.map((output) => [output.url, itemId(workflow.id)] as const)
-    )
-  );
-
-  return (
-    <div className="flex flex-col gap-3 p-3">
-      {items.map((workflow) => {
-        const params = workflow.params as AvatarParams;
-        const parentItemId = params.avatarParentImage
-          ? itemByOutputUrl.get(params.avatarParentImage)
-          : undefined;
-        return (
-          <div key={workflow.id} id={itemId(workflow.id)}>
-            <QueueItem
-              id={workflow.id}
-              request={workflow}
-              hideDetails
-              beforeOutputs={<ReferenceStrip workflow={workflow} parentItemId={parentItemId} />}
-              renderOutputFooter={(output) => (
-                <RefineActions output={output} styleKey={params.avatarStyle} />
-              )}
-            />
-          </div>
-        );
-      })}
-      {hasNextPage && (
-        <InViewLoader loadFn={fetchNextPage} loadCondition={!isFetching}>
-          <Center p="md">
-            <Loader size="sm" />
-          </Center>
-        </InViewLoader>
-      )}
-    </div>
-  );
+/** `queueIdByOutputUrl` finds the card of the result a refine started from. */
+export function avatarQueueItemProps(
+  workflow: WorkflowData,
+  queueIdByOutputUrl: ReadonlyMap<string, string>
+) {
+  if (workflow.params.workflow !== AVATAR_WORKFLOW) return {};
+  const params = workflow.params as AvatarParams;
+  const parentItemId = params.avatarParentImage
+    ? queueIdByOutputUrl.get(params.avatarParentImage)
+    : undefined;
+  return {
+    beforeOutputs: <ReferenceStrip workflow={workflow} parentItemId={parentItemId} />,
+    renderOutputFooter: (output: BlobData) => (
+      <RefineActions output={output} styleKey={params.avatarStyle} />
+    ),
+  };
 }

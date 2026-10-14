@@ -110,6 +110,10 @@ function RefineOnlyReference({
 
   return (
     <Input.Wrapper label="Refining from">
+      <Text size="sm" className="mb-2 rounded-md bg-gray-1 px-3 py-2 dark:bg-dark-5">
+        Your photo is drawn again following this result&apos;s style, colours and composition, for
+        another take on an avatar you like.
+      </Text>
       <div className="relative mt-1 w-28 overflow-hidden rounded-md ring-4 ring-blue-5 ring-offset-2 dark:ring-offset-dark-7">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img

@@ -19,6 +19,7 @@ import {
 import { useTourContext } from '~/components/Tours/ToursProvider';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { postGeneratedMedia } from '~/components/ImageGeneration/utils/postGeneratedMedia';
+import { partitionPostable } from '~/components/ImageGeneration/utils/partitionPostable';
 import { useShowCreatePostError } from '~/components/Post/showCreatePostError';
 import { showErrorNotification, showWarningNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -91,24 +92,12 @@ export function GeneratedImageActions({
   const isMutating = isLoading || createPostMutation.isPending;
 
   const postSelectedImages = async () => {
-    // Audio outputs aren't supported by the post system — filter them out.
-    const postable = selected.filter((image) => image.mediaType !== 'audio');
-    const skipped = selected.length - postable.length;
-
-    if (postable.length === 0) {
-      showErrorNotification({
-        title: 'Cannot create post',
-        error: new Error('Audio outputs cannot be added to a post'),
-      });
+    const { postable, notice } = partitionPostable(selected);
+    if (notice?.kind === 'error') {
+      showErrorNotification({ title: notice.title, error: new Error(notice.message) });
       return;
     }
-
-    if (skipped > 0) {
-      showWarningNotification({
-        title: 'Some outputs were skipped',
-        message: `${skipped} audio output${skipped === 1 ? '' : 's'} cannot be added to a post.`,
-      });
-    }
+    if (notice) showWarningNotification({ title: notice.title, message: notice.message });
 
     const imageData = postable.map((image) => ({
       url: image.url,
@@ -238,8 +227,14 @@ function BulkWorkflowMenu({
   const { setSelected } = useActions();
 
   // Split selected by media type
-  const selectedImages = useMemo(() => selected.filter((s) => s.type === 'image'), [selected]);
-  const selectedVideos = useMemo(() => selected.filter((s) => s.type === 'video'), [selected]);
+  const selectedImages = useMemo(
+    () => selected.filter((s) => s.type === 'image' && s.canUse('derive').allowed),
+    [selected]
+  );
+  const selectedVideos = useMemo(
+    () => selected.filter((s) => s.type === 'video' && s.canUse('derive').allowed),
+    [selected]
+  );
 
   // Get workflows for each type
   const imageWorkflows = useGeneratedItemWorkflows({ outputType: 'image', filterBy: 'input' });

@@ -1,21 +1,15 @@
 import { Alert, Center, Loader, Stack, Text, Anchor } from '@mantine/core';
+import { useMemo } from 'react';
 import { IconCalendar, IconInbox } from '@tabler/icons-react';
 
 import { QueueItem } from '~/components/ImageGeneration/QueueItem';
 import { useGeneratedRequestsContext } from '~/components/ImageGeneration/GeneratedRequestsProvider';
 import { generationGraphPanel } from '~/store/generation-graph.store';
 import { InViewLoader } from '~/components/InView/InViewLoader';
-import { AvatarQueue } from '~/components/AvatarGen/AvatarQueue';
-import { AVATAR_WORKFLOW } from '~/shared/constants/avatar-styles.constants';
-import { useActiveGenerationForm } from '~/store/active-generation-form.store';
+import { avatarQueueItemProps } from '~/components/AvatarGen/AvatarQueueItem';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 
 export function Queue() {
-  const workflow = useActiveGenerationForm((state) => state.workflow);
-  return workflow === AVATAR_WORKFLOW ? <AvatarQueue /> : <StandardQueue />;
-}
-
-function StandardQueue() {
   const filters = useFiltersContext((state) => state.generation);
 
   const {
@@ -29,6 +23,16 @@ function StandardQueue() {
     isError,
     error,
   } = useGeneratedRequestsContext();
+
+  const queueIdByOutputUrl = useMemo(
+    () =>
+      new Map(
+        data.flatMap((request) =>
+          request.succeededOutput.map((output) => [output.url, request.id.toString()] as const)
+        )
+      ),
+    [data]
+  );
 
   if (isError)
     return (
@@ -105,6 +109,7 @@ function StandardQueue() {
               id={request.id.toString()}
               request={request}
               markerTags={markerTags}
+              {...avatarQueueItemProps(request, queueIdByOutputUrl)}
             />
           );
         })}

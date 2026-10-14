@@ -10,6 +10,7 @@ import {
   matchesMarkerTags,
   useGetTextToImageRequestsImages,
 } from '~/components/ImageGeneration/utils/generationRequestHooks';
+import { workflowConfigByKey } from '~/shared/generation/config/workflows';
 import { IntersectionObserverProvider } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 
 import { GeneratedOutput } from './GeneratedOutput';
@@ -150,20 +151,21 @@ export default function GeneratedOutputLightbox({
           paddingBottom: 'var(--safe-area-inset-bottom)',
         }}
       >
-        {images?.[slide] && (
-          <GenerationDetails
-            label="Generation Details"
-            params={{ ...images[slide].params, seed: images[slide].seed }}
-            labelWidth={150}
-            paperProps={{ radius: 0 }}
-            controlProps={{
-              style: {
-                backgroundColor:
-                  colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[2],
-              },
-            }}
-          />
-        )}
+        {images?.[slide] &&
+          !workflowConfigByKey.get(images[slide].params.workflow as string)?.hideDetails && (
+            <GenerationDetails
+              label="Generation Details"
+              params={{ ...images[slide].params, seed: images[slide].seed }}
+              labelWidth={150}
+              paperProps={{ radius: 0 }}
+              controlProps={{
+                style: {
+                  backgroundColor:
+                    colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[2],
+                },
+              }}
+            />
+          )}
       </div>
     </Modal>
   );

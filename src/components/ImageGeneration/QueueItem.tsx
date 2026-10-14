@@ -115,7 +115,6 @@ export function QueueItem({
   markerTags,
   beforeOutputs,
   renderOutputFooter,
-  hideDetails,
 }: {
   request: WorkflowData;
   id: string;
@@ -124,8 +123,6 @@ export function QueueItem({
   beforeOutputs?: React.ReactNode;
   /** Workflow-specific actions shown under each output. */
   renderOutputFooter?: (image: BlobData) => React.ReactNode;
-  /** Leaves out the prompt and the Additional Details panel, for workflows that write them for the user. */
-  hideDetails?: boolean;
 }) {
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
@@ -243,6 +240,7 @@ export function QueueItem({
     !!sourceLineageStep;
 
   const workflowDefinition = workflowConfigs[params.workflow as keyof typeof workflowConfigs];
+  const hideDetails = !!workflowDefinition?.hideDetails;
 
   // PolyGen workflows don't always carry `params.workflow` consistently
   // (the orchestrator-side step is the source of truth), so derive the
@@ -356,7 +354,7 @@ export function QueueItem({
               )}
             </div>
             <div className="flex gap-1">
-              <SubmitBlockedImagesForReviewButton request={request} />
+              <SubmitBlockedImagesForReviewButton request={request} hideDetails={hideDetails} />
               {currentUser?.isModerator && (
                 <ButtonTooltip {...tooltipProps} label="Go to Workflow">
                   <LegacyActionIcon
@@ -776,9 +774,23 @@ function CancelOrDeleteWorkflow({
   );
 }
 
-function SubmitBlockedImagesForReviewButton({ request }: { request: WorkflowData }) {
+function SubmitBlockedImagesForReviewButton({
+  request,
+  hideDetails,
+}: {
+  request: WorkflowData;
+  hideDetails: boolean;
+}) {
   const currentUser = useCurrentUser();
   if (!request.blockedCount || !currentUser?.username) return null;
+
+  const query = new URLSearchParams({ 'Civitai Username': currentUser.username });
+  if (!hideDetails) {
+    query.set('Prompt', (request.params?.prompt as string) ?? '');
+    query.set('Negative Prompt', (request.params?.negativePrompt as string) ?? '');
+  }
+  query.set('Workflow ID', request.id);
+  // Spaces as %20, as the form has always been sent; it may not read `+` as a space.
 
   return (
     <ButtonTooltip {...tooltipProps} label="Submit blocked images for review">
@@ -789,13 +801,9 @@ function SubmitBlockedImagesForReviewButton({ request }: { request: WorkflowData
         p={4}
         radius={0}
         color="orange"
-        href={`https://forms.clickup.com/8459928/f/825mr-9671/KRFFR2BFKJCROV3B8Q?Civitai%20Username=${encodeURIComponent(
-          currentUser.username
-        )}&Prompt=${encodeURIComponent(
-          (request.params?.prompt as string) ?? ''
-        )}&Negative%20Prompt=${encodeURIComponent(
-          (request.params?.negativePrompt as string) ?? ''
-        )}&Workflow%20ID=${request.id}`}
+        href={`https://forms.clickup.com/8459928/f/825mr-9671/KRFFR2BFKJCROV3B8Q?${query
+          .toString()
+          .replace(/\+/g, '%20')}`}
       >
         <IconFlagQuestion size={20} />
       </LegacyActionIcon>

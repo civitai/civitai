@@ -20,6 +20,7 @@ import { TextToImageQualityFeedbackModal } from '~/components/Modals/GenerationQ
 import { useTourContext } from '~/components/Tours/ToursProvider';
 import { TwCard } from '~/components/TwCard/TwCard';
 import { GeneratedItemWorkflowMenu } from '~/components/generation_v2/GeneratedItemWorkflowMenu';
+import { workflowConfigByKey } from '~/shared/generation/config/workflows';
 import type { AudioBlob, ImageBlob, VideoBlob } from '~/shared/orchestrator/workflow-data';
 
 import { GeneratedOutputActions } from './GeneratedOutputActions';
@@ -37,6 +38,7 @@ export function GeneratedOutputWrapper({
   children: (props: { onClick: () => void; onLoaded: () => void; loaded: boolean }) => ReactNode;
 }) {
   const step = image.step;
+  const hideDetails = !!workflowConfigByKey.get(step.params?.workflow as string)?.hideDetails;
   const request = image.workflow;
   const [ref, inView] = useInViewDynamic({ id: image.id });
   const selected = useIsSelected(image);
@@ -227,15 +229,17 @@ export function GeneratedOutputWrapper({
               onToggleFavorite={handleToggleFavorite}
               onToggleFeedback={handleToggleFeedback}
               infoSlot={
-                <ImageMetaPopover
-                  meta={step.params as any}
-                  zIndex={isLightbox ? 410 : imageGenerationDrawerZIndex + 1}
-                  hideSoftware
-                >
-                  <LegacyActionIcon size="md" variant="subtle" color="gray">
-                    <IconInfoCircle size={16} />
-                  </LegacyActionIcon>
-                </ImageMetaPopover>
+                !hideDetails && (
+                  <ImageMetaPopover
+                    meta={step.params as any}
+                    zIndex={isLightbox ? 410 : imageGenerationDrawerZIndex + 1}
+                    hideSoftware
+                  >
+                    <LegacyActionIcon size="md" variant="subtle" color="gray">
+                      <IconInfoCircle size={16} />
+                    </LegacyActionIcon>
+                  </ImageMetaPopover>
+                )
               }
             />
           )}

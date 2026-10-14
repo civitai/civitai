@@ -6,10 +6,10 @@ from the queue. It is open to everyone; there is no feature flag.
 
 ## How a generation is built
 
-| Model                                               | Images sent                                                                    | Style comes from                                               |
-| --------------------------------------------------- | ------------------------------------------------------------------------------ | -------------------------------------------------------------- |
-| Krea 2 (default)                                    | the portrait; when refining, the earlier result as a second image              | the style's LoRA (strength 1) and description, 30 steps, CFG 3 |
-| Nano Banana 2, Nano Banana Pro, GPT Image 2.5 Flare | the portrait, then a starter reference (or, when refining, the earlier result) | the reference, plus the style description in the prompt        |
+| Model                                               | Images sent                                                                    | Style comes from                                                 |
+| --------------------------------------------------- | ------------------------------------------------------------------------------ | ---------------------------------------------------------------- |
+| Krea 2 (default)                                    | the portrait; when refining, the earlier result as a second image              | the style's LoRA (strength 1) and `stylePrompt`, 30 steps, CFG 3 |
+| Nano Banana 2, Nano Banana Pro, GPT Image 2.5 Flare | the portrait, then a starter reference (or, when refining, the earlier result) | the reference, plus the style's `stylePrompt`                    |
 
 - **The form** is the normal generator form. The model selector offers only the four models above
   (`avatarEditModels`). The avatar fields (style, reference, palette, character) are rendered by
@@ -23,20 +23,42 @@ from the queue. It is open to everyone; there is no feature flag.
 - **References** are only:
 
   - **a stored starter**: four per style, served from our CDN. Styles with a free palette get the
-    greyscale copy, so the prompt decides the colours. Fixed-palette styles (monochrome, Game Boy and
+    greyscale copy, so the prompt decides the colours. Fixed-palette styles (monochrome, 8-bit and
     the like) get the colour copy and offer no palette choice.
-  - **the result being refined**, sent as it is.
+  - **the result being refined**, sent as it is. It must be an orchestrator blob; RU visitors see
+    theirs on the region proxy host (`region-proxy.ts`), which is accepted too.
 
   Anything else is refused.
 
-- **Output** is capped at PG-13 with mature content off, whatever the user's own setting
-  (`workflowOutputRestrictions` in `form-graph/output-restrictions.ts`, the same cap private
-  generation uses).
+## Rules
+
+An avatar depicts a real person. Generating that likeness is allowed; posting it is not.
+
+- **PG-13.** The workflow config sets `maxNsfwLevel: 'pg13'`, so output is capped at PG-13 with
+  mature content off, whatever the user's own setting (`workflowOutputRestrictions` in
+  `form-graph/output-restrictions.ts`, the same cap private generation uses).
+- **Results can't be posted, fed to another workflow or trained on.** Every workflow config states
+  its `outputUses`, out of `post` (posts, contest entries, comics), `derive` (input to another
+  workflow) and `train` (training datasets). The field is required, so a new workflow has to
+  decide. Every workflow but the avatar allows all three; the avatar allows none.
+  - `canUseWorkflowOutput` (`src/shared/generation/config/output-uses.ts`) answers from the
+    saved `params.workflow`, through `BlobData.canUse(use)`, so a config change applies to
+    existing outputs too. A workflow with no config (older generations) allows everything.
+  - **post**: bulk post leaves them out, with one notice covering them and any audio. The remix
+    menu hides its post action. The entry picker and the shared generator picker
+    (`ImageSelectModal`, which defaults to `post`: the post editor and Comics) don't list them.
+  - **derive**: the output menus and bulk "Apply workflow to selected" offer no workflows (upscale,
+    edit and the like), and the image editor's picker doesn't list them.
+  - **train**: the training dataset picker doesn't list them.
+- **Prompts stay hidden.** The workflow config sets `hideDetails`, so the queue shows neither the
+  prompt nor the details panel for an avatar job, outputs have no info popover, and the
+  lightbox leaves out its Generation Details panel. The "Submit blocked images for review" link
+  sends the workflow ID without the prompt.
 
 ## Styles and starter references
 
-- **The catalogue** is `src/shared/constants/avatar-styles.constants.ts`: 80 styles in 10 categories.
-  Each style has a name, a description, an optional Krea 2 LoRA, and optional `fixedPalette` and
+- **The catalogue** is `src/shared/constants/avatar-styles.constants.ts`, grouped into categories.
+  Each style has a name, a category, a `stylePrompt`, an optional Krea 2 LoRA, and optional `fixedPalette` and
   `characters` (the Fantasy styles' Human/Elf/Orc/Dwarf choice).
 - **The starters** are the same four people (Mara, Dev, Ines, Theo), drawn in every style.
   - They are Image rows owned by the CivitaiOfficial account and have no post, so they are not
@@ -46,6 +68,7 @@ from the queue. It is open to everyone; there is no feature flag.
   - `node scripts/avatar-starters/check.mjs <image-host>` requests every starter on the CDN and
     reports any that fail.
 - **Making a new style**:
+  - Check that the LoRA works without its trigger words: avatar gen sends none.
   - Generate its four starters with Krea 2 raw and the style's LoRA at 0.8, seed 20261009. Use the
     template `{style phrase}: head-and-shoulders portrait of {person}. No text.`, with each person
     described as in the provenance file.
@@ -54,8 +77,9 @@ from the queue. It is open to everyone; there is no feature flag.
 
 ## Queue and landing page
 
-- **The queue**: while the form is on the avatar workflow, the queue tab shows avatar jobs only
-  (`AvatarQueue`). Each is a standard `QueueItem` without the prompt and details, plus:
+- **The queue**: avatar jobs appear in the normal queue, unfiltered, alongside everything else.
+  Each is a standard `QueueItem` (prompt and details hidden, see Rules), plus what
+  `avatarQueueItemProps` (`AvatarQueueItem.tsx`) adds:
   - a strip showing the style, reference and colours used;
   - under each result, **Refine** and **Use as profile picture**. Use as profile picture copies the
     result to our image storage first, because generation outputs expire.
@@ -76,21 +100,20 @@ from the queue. It is open to everyone; there is no feature flag.
   better than telling the model to ignore a colour reference's colours, which loses the style too.
 - **Strong palettes darken skin.** Warm and dark palettes shift the subject's skin tone, and the
   prompt only partly corrects it. "Natural" (the photo's own colours) is the default for that reason.
+- **Name the style and what not to copy.** Called only "a style reference", the reference's person
+  came through on Nano Banana. The prompt now gives the style's `stylePrompt` and lists what not to take
+  from the reference. Styles that turn the person into something else (`reimagines`, Animal
+  Version) keep them recognisable by expression, clothing and pose instead of by their face.
 - **Franchise styles leak characters.** User-generated references for them drew the franchise's own
   characters, which is one reason references are limited to the reviewed starters.
 
 ## Later
 
-Not needed to ship.
-
 - **Composable queue.** The generation composability plan (`docs/generation-composability-plan.md`,
   on `feat/generation-composability`) splits the queue card into parts. For avatar gen:
-  - **The card becomes a composition.** `QueueItem`'s `beforeOutputs`, `renderOutputFooter` and
-    `hideDetails` props exist only for avatar gen. With the parts, the avatar card is assembled
+  - **The card becomes a composition.** `QueueItem`'s `beforeOutputs` and `renderOutputFooter`
+    props exist only for avatar gen. With the parts, the avatar card is assembled
     without `Prompt` and `Details`, with Refine under each output.
-  - **The card is chosen per workflow.** Today the whole queue switches to `AvatarQueue` from the
-    form's current workflow (`useActiveGenerationForm`), with its own query and polling. Choosing a
-    card per workflow inside the normal queue removes all three.
   - **Refine and Use as profile picture become injected actions.** They are site-only actions, so
     they should be passed in through the card's actions rather than imported.
 - **A dedicated page** would be an App Block: it submits `img2img:avatar` through the generation graph

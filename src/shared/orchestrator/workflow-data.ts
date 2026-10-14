@@ -13,6 +13,8 @@ import type {
 } from '~/server/services/orchestrator/orchestration-new.service';
 import type { ColorDomain } from '~/shared/constants/domain.constants';
 import { isPrivateMature, isMature } from '~/shared/constants/orchestrator.constants';
+import { canUseWorkflowOutput } from '~/shared/generation/config/output-uses';
+import type { OutputUse } from '~/shared/generation/config/types';
 import {
   orchestratorCompletedStatuses,
   orchestratorRefundableStatuses,
@@ -377,6 +379,11 @@ export abstract class BlobData {
 
   get canUpgrade() {
     return this.blockedReason === 'canUpgrade';
+  }
+
+  /** Whether this output can be used for `use`, by the workflow that made it. */
+  canUse(use: OutputUse) {
+    return canUseWorkflowOutput(this.#step.workflow?.params.workflow ?? this.params.workflow, use);
   }
 
   /** Whether this image's block can be resolved in-place (upgrade or redirect). */

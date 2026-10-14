@@ -4,6 +4,7 @@ import { findAvatarStarter } from '~/shared/constants/avatar-starters';
 import {
   avatarStyleByKey,
   buildAvatarEditPrompt,
+  buildAvatarRestylePrompt,
 } from '~/shared/constants/avatar-styles.constants';
 import { nanoBananaVersionIds } from '~/shared/form-graph/generation/image/nano-banana.graph';
 import { openaiVersionIds } from '~/shared/form-graph/generation/image/openai.graph';
@@ -68,7 +69,7 @@ describe('img2img:avatar graph', () => {
     expect(expand({ avatarStyle: 'ghibli-kiki', avatarPalette: 'neon' }).avatarPalette).toBe(
       'neon'
     );
-    expect(expand({ avatarStyle: 'gameboy', avatarPalette: 'neon' }).avatarPalette).toBeUndefined();
+    expect(expand({ avatarStyle: 'c64', avatarPalette: 'neon' }).avatarPalette).toBeUndefined();
   });
 });
 
@@ -83,8 +84,8 @@ describe('expandAvatarData', () => {
   });
 
   it('sends a fixed-palette style its starter in colour', async () => {
-    const input = await editInput({ avatarStyle: 'gameboy' });
-    expect(input.images).toEqual([PORTRAIT.url, starterUrl('gameboy', 'cover', 'colour')]);
+    const input = await editInput({ avatarStyle: 'c64' });
+    expect(input.images).toEqual([PORTRAIT.url, starterUrl('c64', 'cover', 'colour')]);
   });
 
   it('defaults to Krea 2 and builds the request for the selected model version', async () => {
@@ -132,6 +133,31 @@ describe('refining on a reference model', () => {
     expect(input.images).toEqual([PORTRAIT.url, RESULT]);
     expect(input.prompt).toContain('earlier avatar of the same person');
     expect(input.prompt).not.toContain('do not copy');
+  });
+
+  it('refines from a result served on the region proxy', async () => {
+    const proxied = 'https://orchestration-proxy.civitai.com/v2/consumer/blobs/result.png';
+    const input = await editInput({
+      avatarStyle: 'art-nouveau',
+      avatarReference: proxied,
+      avatarParentImage: proxied,
+    });
+    expect(input.images).toEqual([PORTRAIT.url, proxied]);
+  });
+
+  it.each([
+    'https://evil.example/v2/consumer/blobs/result.png',
+    'http://orchestration-proxy.civitai.com/v2/consumer/blobs/result.png',
+    'https://user@orchestration-proxy.civitai.com/v2/consumer/blobs/result.png',
+    'https://orchestration-proxy.civitai.com.evil.example/v2/consumer/blobs/result.png',
+  ])('refuses to refine from %s', (elsewhere) => {
+    expect(() =>
+      expand({
+        avatarStyle: 'art-nouveau',
+        avatarReference: elsewhere,
+        avatarParentImage: elsewhere,
+      })
+    ).toThrow("This result can't be refined");
   });
 });
 
@@ -195,7 +221,7 @@ describe('Krea 2', () => {
 
 describe('buildAvatarEditPrompt', () => {
   it('asks for the reference colours only on fixed-palette styles', () => {
-    const fixed = buildAvatarEditPrompt(avatarStyleByKey.get('gameboy')!, { palette: 'neon' });
+    const fixed = buildAvatarEditPrompt(avatarStyleByKey.get('c64')!, { palette: 'neon' });
     expect(fixed).toContain('colour palette, lighting and mood of the second image');
     expect(fixed).not.toContain('neon');
 
@@ -208,6 +234,37 @@ describe('buildAvatarEditPrompt', () => {
     expect(
       buildAvatarEditPrompt(avatarStyleByKey.get('art-nouveau')!, { palette: 'natural' })
     ).toContain('natural colours of the photo');
+  });
+
+  it('names the style in words and what not to take from the reference', () => {
+    const style = avatarStyleByKey.get('vaporwave')!;
+    const prompt = buildAvatarEditPrompt(style);
+    expect(prompt).toContain(style.stylePrompt);
+    expect(prompt).toContain('do not copy their face, hair, body, clothing or pose');
+  });
+
+  it('keeps the face of everyone else, with no text', () => {
+    const style = avatarStyleByKey.get('art-nouveau')!;
+    for (const prompt of [
+      buildAvatarEditPrompt(style),
+      buildAvatarEditPrompt(style, { refining: true }),
+      buildAvatarRestylePrompt(style),
+    ]) {
+      expect(prompt).toContain('facial features');
+      expect(prompt).toContain('No text');
+    }
+  });
+
+  it('keeps a reimagined person recognisable by more than the face', () => {
+    const prompt = buildAvatarEditPrompt(avatarStyleByKey.get('anthropomorphic')!);
+    expect(prompt).toContain('recognisable from the first image through their expression');
+    expect(prompt).not.toContain('facial features');
+    expect(buildAvatarRestylePrompt(avatarStyleByKey.get('anthropomorphic')!)).not.toContain(
+      'facial features'
+    );
+    expect(
+      buildAvatarEditPrompt(avatarStyleByKey.get('anthropomorphic')!, { refining: true })
+    ).not.toContain('facial features');
   });
 });
 

@@ -2667,52 +2667,6 @@
       }
     }
   ],
-  "gameboy": [
-    {
-      "character": "mara",
-      "colour": {
-        "imageId": 144995397,
-        "url": "f58d0337-68e1-4cbc-a1b3-612b7ad0f0c9"
-      },
-      "grey": {
-        "imageId": 144995398,
-        "url": "b421aa17-b48b-461d-97b9-f72815d83de2"
-      }
-    },
-    {
-      "character": "dev",
-      "colour": {
-        "imageId": 144995399,
-        "url": "95aa2558-ad8a-4f32-b1b2-f4cd1a6c9506"
-      },
-      "grey": {
-        "imageId": 144995402,
-        "url": "7626a9b3-627d-4846-8409-3e851ee0e254"
-      }
-    },
-    {
-      "character": "ines",
-      "colour": {
-        "imageId": 144995403,
-        "url": "9a64f41c-ab1e-44a8-bf31-97a1d15b76c2"
-      },
-      "grey": {
-        "imageId": 144995405,
-        "url": "8c98667c-f320-455f-aac5-86ada7ab303e"
-      }
-    },
-    {
-      "character": "theo",
-      "colour": {
-        "imageId": 144995408,
-        "url": "3a97097b-73dc-4f44-8e80-77c9cfa6f0eb"
-      },
-      "grey": {
-        "imageId": 144995409,
-        "url": "487d3490-bd6d-40e3-95d7-f47b70609b1f"
-      }
-    }
-  ],
   "c64": [
     {
       "character": "mara",

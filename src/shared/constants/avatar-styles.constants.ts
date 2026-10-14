@@ -58,12 +58,17 @@ export type AvatarStyle = {
   lora?: number;
   stylePrompt: string;
   /**
-   * The colours are part of the look (monochrome, Game Boy green, Technicolor), so the reference
+   * The colours are part of the look (monochrome, 8-bit, Technicolor), so the reference
    * reaches the model in colour and the user gets no palette choice.
    */
   fixedPalette?: true;
   /** Offers the fantasy Character choice (elf, orc, dwarf). */
   characters?: true;
+  /**
+   * The style turns the person into something else (an animal), so a likeness is kept through
+   * their expression, colouring, clothing and pose rather than their face.
+   */
+  reimagines?: true;
 };
 
 export const avatarStyles: AvatarStyle[] = [
@@ -179,6 +184,7 @@ export const avatarStyles: AvatarStyle[] = [
     stylePrompt:
       'Reimagine the person as an anthropomorphic animal character that matches their personality, keeping their expression, clothing and pose.',
     fixedPalette: true,
+    reimagines: true,
   },
   {
     key: 'cel-shaded',
@@ -546,15 +552,6 @@ export const avatarStyles: AvatarStyle[] = [
       '16-bit pixel art portrait: crisp visible pixels, limited palette, dithered shading, retro game character portrait.',
   },
   {
-    key: 'gameboy',
-    name: 'Game Boy Camera',
-    category: 'Games',
-    lora: 3308367,
-    stylePrompt:
-      '1998 handheld game camera photo: tiny resolution, four shades of green, heavy dithering.',
-    fixedPalette: true,
-  },
-  {
     key: 'c64',
     name: '8-bit Computer',
     category: 'Games',
@@ -820,8 +817,13 @@ const characterByKey = new Map<string, { label: string; phrase?: string; changes
   avatarCharacters.map((character) => [character.key, character])
 );
 
-const KEEP_IDENTITY =
-  "Keep the person's face, facial features, age and identity. The person from the first image must be the only subject: do not copy the other person. No text, letters or captions.";
+function keepIdentity(style: AvatarStyle) {
+  return style.reimagines
+    ? 'Keep them recognisable from the first image through their expression, colouring, clothing and pose.'
+    : "Keep the person's face, facial features, age and identity from the first image.";
+}
+
+const NO_TEXT = 'No text, letters or captions.';
 
 export function buildAvatarEditPrompt(
   style: AvatarStyle,
@@ -831,8 +833,13 @@ export function buildAvatarEditPrompt(
     refining,
   }: { palette?: string; character?: string; refining?: boolean } = {}
 ) {
-  const intro =
-    'The first image is a photo of the person to draw. The second image is a different person drawn in the target art style, used only as a style reference.';
+  // Calling the second image only "a style reference" let its person show up in the result on
+  // Nano Banana.
+  const intro = [
+    'The first image is a photo of the person to draw.',
+    'The second image is only a sample of the art style. It shows a different, unrelated person: do not copy their face, hair, body, clothing or pose.',
+    `The art style: ${style.stylePrompt}`,
+  ].join(' ');
   const becomes = character ? characterByKey.get(character) : undefined;
   // Without asking for new clothes, the photo's own outfit survives the change: an orc in a sweater.
   const transform = becomes?.phrase
@@ -850,7 +857,8 @@ export function buildAvatarEditPrompt(
       'The first image is a photo of the person to draw. The second image is an earlier avatar of the same person.',
       'Redraw the person from the first image as a head-and-shoulders portrait in the style, colours and composition of the second image, refining it.',
       transform,
-      "Keep the person's face, facial features, age and identity. No text, letters or captions.",
+      keepIdentity(style),
+      NO_TEXT,
     ]
       .filter(Boolean)
       .join(' ');
@@ -860,7 +868,9 @@ export function buildAvatarEditPrompt(
       intro,
       'Redraw the person from the first image as a head-and-shoulders portrait in exactly the art style, colour palette, lighting and mood of the second image.',
       transform,
-      KEEP_IDENTITY,
+      keepIdentity(style),
+      'The person from the first image must be the only subject.',
+      NO_TEXT,
     ]
       .filter(Boolean)
       .join(' ');
@@ -876,7 +886,9 @@ export function buildAvatarEditPrompt(
     'Redraw the person from the first image as a head-and-shoulders portrait using the line work, shading, brushwork and rendering of the second image.',
     transform,
     colour,
-    KEEP_IDENTITY,
+    keepIdentity(style),
+    'The person from the first image must be the only subject.',
+    NO_TEXT,
   ]
     .filter(Boolean)
     .join(' ');
@@ -910,7 +922,8 @@ export function buildAvatarRestylePrompt(
     style.stylePrompt,
     transform,
     phrase ? `Colour palette: ${phrase}.` : '',
-    "Keep the person's face, facial features, age and identity. No text, letters or captions.",
+    keepIdentity(style),
+    NO_TEXT,
   ]
     .filter(Boolean)
     .join(' ');

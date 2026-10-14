@@ -33,7 +33,8 @@ export function GeneratedOutputActions({
     outputType: output.mediaType,
     ecosystemKey: output.ecosystemKey,
   });
-  const hasWorkflows = groups.some((g) => g.workflows.length > 0);
+  const hasWorkflows =
+    output.canUse('derive').allowed && groups.some((g) => g.workflows.length > 0);
 
   const [downloading, setDownloading] = useState(false);
   const handleDownload = async () => {
