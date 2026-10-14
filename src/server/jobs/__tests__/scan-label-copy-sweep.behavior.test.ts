@@ -362,6 +362,23 @@ describe('sweepScanLabelCopies', () => {
     expect(removed).toEqual(['1/key-1']);
   });
 
+  it('does not stamp removed a row a late upload re-armed during the delete', async () => {
+    await copied(1);
+    await holder.db.exec(`UPDATE "Image" SET "needsReview" = 'csam'`);
+    const rearming = {
+      remove: async () => {
+        await holder.db.exec(
+          `UPDATE "ScanLabelCopyObject" SET "withdrawnAt" = NULL, "withdrawReason" = NULL, "removedAt" = NULL`
+        );
+      },
+    };
+    await sweepScanLabelCopies({ store: rearming });
+    const { rows } = await holder.db.query<{ removedAt: Date | null }>(
+      `SELECT "removedAt" FROM "ScanLabelCopyObject"`
+    );
+    expect(rows[0].removedAt).toBeNull();
+  });
+
   it('leaves a fresh claim to the sweep that holds it', async () => {
     await copied(1);
     await holder.db.exec(
