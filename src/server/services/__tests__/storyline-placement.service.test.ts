@@ -5,6 +5,7 @@ import type * as PlacementModeration from '~/server/services/placement-moderatio
 import type * as PlacementSpaceService from '~/server/services/placement-space.service';
 import type { ResolvedPlacementSpace } from '~/server/services/placement-space.service';
 import { PLACEMENT_SURFACES } from '~/shared/utils/placement';
+import { STORYLINE_REFUSALS } from '~/shared/utils/storyline-placement';
 
 const resolveSpace = vi.fn();
 const assertCanPlace = vi.fn();
@@ -315,7 +316,7 @@ describe('createStorylinePlacement — the rules that hold at any price', () => 
   // placer's OWN post. Someone else's would put the placer's name on it.
   it('refuses offering a post the placer does not own', async () => {
     dbMock.dbWrite.post.findUnique.mockResolvedValue({ userId: PLACER + 1 });
-    await expect(submit()).rejects.toThrow(/you can only submit your own posts/);
+    await expect(submit()).rejects.toThrow(new RegExp(STORYLINE_REFUSALS.notYourPost));
     expect(dbMock.dbWrite.post.findUnique).toHaveBeenCalledWith(
       expect.objectContaining({ where: { id: CONTINUATION } })
     );
@@ -324,8 +325,21 @@ describe('createStorylinePlacement — the rules that hold at any price', () => 
 
   it('refuses a post that no longer exists', async () => {
     dbMock.dbWrite.post.findUnique.mockResolvedValue(null);
-    await expect(submit()).rejects.toThrow(/you can only submit your own posts/);
+    await expect(submit()).rejects.toThrow(new RegExp(STORYLINE_REFUSALS.notYourPost));
     expect(rows).toHaveLength(0);
+  });
+
+  // At a price, a refusal must come before any money moves.
+  it('refuses before taking escrow on a priced storyline', async () => {
+    givenSpace({ price: 100, setPrice: 100 });
+    dbMock.dbWrite.post.findUnique.mockResolvedValue({ userId: PLACER + 1 });
+    await expect(submit({ expectedPrice: 100 })).rejects.toThrow(
+      new RegExp(STORYLINE_REFUSALS.notYourPost)
+    );
+    await expect(submit({ expectedPrice: 100, postId: CHAPTER })).rejects.toThrow(
+      /cannot continue itself/
+    );
+    expect(holdPlacementEscrow).not.toHaveBeenCalled();
   });
 
   it('refuses a chapter continuing itself', async () => {
@@ -335,6 +349,7 @@ describe('createStorylinePlacement — the rules that hold at any price', () => 
 
   it('resolves the space from the chapter post being continued', async () => {
     await submit();
+    expect(resolveSpace).toHaveBeenCalledTimes(1);
     expect(resolveSpace).toHaveBeenCalledWith({
       surface: 'storyline',
       targetType: 'post',

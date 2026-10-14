@@ -21,6 +21,7 @@ import {
   effectivePlacementPrice,
   FREE_SLOT_HOLDING_STATUSES,
   PLACEMENT_SURFACES,
+  placementSurfaceLabel,
   resolvePlacementSpace,
   surfaceAcceptsTarget,
 } from '~/shared/utils/placement';
@@ -79,16 +80,27 @@ async function resolveChapterTarget(postId: number) {
     where: { postId },
     select: {
       storyline: {
-        select: { id: true, userId: true, user: { select: { username: true } } },
+        select: {
+          id: true,
+          userId: true,
+          status: true,
+          tosViolation: true,
+          user: { select: { username: true } },
+        },
       },
     },
   });
-  if (!chapter) throw throwBadRequestError(STORYLINE_REFUSALS.notAChapter);
+  // A taken-down storyline is not a target at all: refusing here, where the
+  // space is resolved, keeps every read of it (the contributor's price, the
+  // submit) from showing it as open.
+  if (!chapter || chapter.storyline.tosViolation)
+    throw throwBadRequestError(STORYLINE_REFUSALS.notAChapter);
 
   return {
     ownerId: chapter.storyline.userId,
     postId: null,
     storylineId: chapter.storyline.id,
+    complete: chapter.storyline.status === 'Complete',
     ownerUsername: chapter.storyline.user?.username ?? null,
   };
 }
@@ -100,6 +112,7 @@ const resolveTarget = (
   ownerId: number;
   postId: number | null;
   storylineId?: number;
+  complete?: boolean;
   ownerUsername: string | null;
 }> => {
   if (targetType === 'model') return resolveModelTarget(targetId);
@@ -230,7 +243,10 @@ export async function resolvePlacementSpaceFor({
   if (!surfaceAcceptsTarget(surface, targetType))
     throw throwBadRequestError(`placement: ${surface} cannot be placed on a ${targetType}`);
 
-  const { ownerId, postId, storylineId, ownerUsername } = await resolveTarget(targetType, targetId);
+  const { ownerId, postId, storylineId, complete, ownerUsername } = await resolveTarget(
+    targetType,
+    targetId
+  );
 
   const rows = await dbWrite.placementSpace.findMany({
     where: {
@@ -295,7 +311,10 @@ export async function resolvePlacementSpaceFor({
     ownerId,
     ...(storylineId ? { storylineId } : {}),
     ownerUsername,
-    mode: resolved.mode,
+    // A completed storyline takes no continuations, whatever its space says.
+    // Read from the storyline itself rather than trusting Complete to have
+    // written the space too, so the two cannot disagree.
+    mode: complete ? 'off' : resolved.mode,
     setPrice: resolved.price,
     price: effectivePlacementPrice(resolved.price, cap),
     cap,
@@ -402,6 +421,14 @@ export async function setPlacementSpace({
   settings?: PlacementSpaceSettings;
   userId: number;
 }) {
+  // A storyline is configured on the storyline or the creator's account, and a
+  // storyline row means nothing on any other surface: refused both ways rather
+  // than written somewhere no resolver reads it.
+  if ((entityType === 'storyline') !== (surface === 'storyline') && entityType !== 'user')
+    throw throwBadRequestError(
+      `placement: ${placementSurfaceLabel(surface)} are not configured on a ${entityType}`
+    );
+
   await assertOwnsSpaceEntity({ entityType, entityId, userId });
 
   if (declineFeePercent !== undefined) {

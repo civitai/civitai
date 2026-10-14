@@ -587,7 +587,8 @@ export function resolvePlacementSpace(
       {},
       levels.user?.settings,
       levels.post?.settings,
-      levels.image?.settings
+      levels.image?.settings,
+      levels.storyline?.settings
     ),
   };
 }
