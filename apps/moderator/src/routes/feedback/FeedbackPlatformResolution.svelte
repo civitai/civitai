@@ -84,7 +84,8 @@
       Only {regressionComponents} versions are compared with a reporter's own client version: once the
       report is <em>actioned</em>, anyone on that version or later who reports it again opens a
       regression. An actioned report with a version reads back as <em>fixed</em>; without one, as
-      <em>addressed</em>.
+      <em>addressed</em>. For an <em>mcp</em> fix, leave Version blank: the hosted MCP server is one
+      continuously deployed instance whose reported version does not change with each fix.
     </p>
 
     <div class="flex flex-col gap-1">
