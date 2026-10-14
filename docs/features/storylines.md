@@ -13,9 +13,9 @@ version as designed rather than what is live today.
 - **Finding one.** An image that belongs to a storyline carries a storyline pill in the images feed and
   in image detail. Opening it enters storyline mode.
 - **Reading.** In storyline mode, left and right in image detail walk the chapter's images and then
-  move on to the next chapter, instead of paging the feed. A banner says which storyline you are in;
-  leaving returns you to where you were in the feed.
-- **Where am I.** The pill opens a map of the storyline: the main path as a timeline, the forks off it,
+  move on to the next chapter, instead of paging the feed. A chip on the image says which storyline
+  and chapter you are in; its x leaves, returning you to where you were in the feed.
+- **Where am I.** The chip opens a map of the storyline: the main path as a timeline, the forks off it,
   and how readers have split at each fork, from the first recorded choice. Any chapter on the map can
   be jumped to. On mobile the map is full screen.
 - **End of a chapter.** At the end of a chapter the reader picks how to continue. Each way on shows

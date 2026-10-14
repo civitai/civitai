@@ -54,19 +54,25 @@ test.describe('storylines smoke', () => {
     await page.getByTestId('storyline-enter').click();
 
     await expect(page).toHaveURL(/[?&]storylineChapter=\d+/);
-    await expect(page.getByTestId('storyline-banner')).toContainText('The Patch');
+    await expect(page.getByTestId('storyline-mode-chip')).toContainText('The Patch');
 
-    // The corner pill carries the title; a feed card's pill on the same page would not.
-    await page.getByTestId('storyline-pill').filter({ hasText: 'The Patch' }).click();
+    // The chip opens the map.
+    await page.getByTestId('storyline-mode-chip').getByTestId('storyline-pill').click();
     await expect(page.getByTestId('storyline-subway')).toBeVisible();
   });
 
   test('end of the main path offers the forks, then the coming-soon prompt', async ({ page }) => {
     await page.goto(`/images/${env.lastImageId}?storylineChapter=${env.lastChapterId}`);
-    await expect(page.getByTestId('storyline-banner')).toBeVisible();
+    await expect(page.getByTestId('storyline-mode-chip')).toBeVisible();
 
     await page.getByTestId('storyline-next').click();
     await expect(page.getByTestId('storyline-end-of-chapter')).toBeVisible();
+
+    // The chip stays usable over the end card: a click only lands if nothing covers it.
+    await page.getByTestId('storyline-mode-chip').getByTestId('storyline-pill').click();
+    await expect(page.getByTestId('storyline-subway')).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(page.getByTestId('storyline-subway')).toBeHidden();
 
     const forks = page.getByTestId('storyline-fork');
     await expect(forks).toHaveCount(3);

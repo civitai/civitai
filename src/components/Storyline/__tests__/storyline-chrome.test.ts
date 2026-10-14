@@ -7,7 +7,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as QueriesModule from '~/components/Storyline/storyline.queries';
 import { StorylineDrawer } from '~/components/Storyline/StorylineDrawer';
 import type { ActiveStorylineMode } from '~/components/Storyline/StorylineModeProvider';
-import { StorylinePill } from '~/components/Storyline/StorylinePill';
+import {
+  StorylineEntryChip,
+  StorylineModeChip,
+  StorylinePill,
+} from '~/components/Storyline/StorylinePill';
 
 const mocks = vi.hoisted(() => ({
   pathChildren: new Map<number, unknown[]>(),
@@ -72,16 +76,54 @@ describe('StorylinePill', () => {
     const c = render(createElement(StorylinePill, { title: 'The Patch', depth: 2 }));
     const text = c.querySelector('[data-testid="storyline-pill"]')?.textContent;
     // The separator sits after a no-break space, so it never starts a line of its own.
-    expect(text?.replace(/\s/g, ' ')).toBe('The Patch · ch 3');
+    expect(text?.replace(/\s/g, ' ')).toBe('The Patch · Ch 3');
   });
 
   it('truncates only the title, so the chapter stays readable', () => {
     const c = render(createElement(StorylinePill, { title: 'A'.repeat(200), depth: 0 }));
     const title = c.querySelector('[data-testid="storyline-pill-title"]');
-    expect([title?.className, title?.nextElementSibling?.className]).toEqual([
-      'truncate',
-      'shrink-0',
-    ]);
+    expect([
+      title?.classList.contains('truncate'),
+      title?.nextElementSibling?.classList.contains('shrink-0'),
+    ]).toEqual([true, true]);
+  });
+});
+
+const text = (el: Element | null | undefined) => el?.textContent?.replace(/\s/g, ' ');
+
+describe('StorylineModeChip', () => {
+  function renderChip(title = 'The Patch') {
+    const onOpenMap = vi.fn();
+    const onLeave = vi.fn();
+    const c = render(createElement(StorylineModeChip, { title, depth: 3, onOpenMap, onLeave }));
+    const chip = c.querySelector('[data-testid="storyline-mode-chip"]');
+    return { chip, onOpenMap, onLeave };
+  }
+
+  // No "of M": the path's length reads as the story ending at a fork. The map carries the length.
+  it('names the storyline and the chapter, with no total', () => {
+    const { chip } = renderChip();
+    expect(text(chip?.querySelector('[data-testid="storyline-pill"]'))).toBe('The Patch · Ch 4');
+  });
+
+  it('opens the map from the name and leaves from the x, each on its own', () => {
+    const { chip, onOpenMap, onLeave } = renderChip();
+    act(() => chip?.querySelector<HTMLElement>('[data-testid="storyline-pill"]')?.click());
+    expect([onOpenMap.mock.calls.length, onLeave.mock.calls.length]).toEqual([1, 0]);
+    const leave = chip?.querySelector<HTMLElement>('[aria-label="Leave the storyline"]');
+    act(() => leave?.click());
+    expect([onOpenMap.mock.calls.length, onLeave.mock.calls.length]).toEqual([1, 1]);
+  });
+});
+
+describe('StorylineEntryChip', () => {
+  it('invites reading the story from this chapter', () => {
+    const onEnter = vi.fn();
+    const c = render(createElement(StorylineEntryChip, { title: 'The Patch', depth: 3, onEnter }));
+    const chip = c.querySelector<HTMLElement>('[data-testid="storyline-enter"]');
+    expect(text(chip)).toBe('The Patch · Ch 4Read the story');
+    act(() => chip?.click());
+    expect(onEnter).toHaveBeenCalledTimes(1);
   });
 });
 
