@@ -1,9 +1,13 @@
 import { QueryClient } from '@tanstack/react-query';
-import { describe, expect, it } from 'vitest';
+import { getQueryKey } from '@trpc/react-query';
+import { describe, expect, it, vi } from 'vitest';
 import {
   hasLoadedNotificationList,
+  insertSignalledNotification,
   notificationListFilters,
 } from '~/components/Notifications/notifications.utils';
+import type { NotificationGetAllItem } from '~/types/router';
+import { trpc } from '~/utils/trpc';
 
 /**
  * A new-notification signal used to trigger a detail fetch in every open tab, whether or not that tab
@@ -11,20 +15,52 @@ import {
  * is already loaded, so in a tab without one it was discarded: a request per signal, per tab, for
  * nothing.
  *
- * `hasLoadedNotificationList` is the condition the signal handler now fetches on. These tests use a
- * real `QueryClient`, because the question is what the cache's own key matching says.
+ * Keys are built with the real tRPC `getQueryKey`, the same call the panel's query makes, and a real
+ * `QueryClient` does the matching — the question is what the cache says, not what a fixture assumes.
  */
-const LIST_KEY = ['notification', 'getAllByUser'];
-const listKey = (input: Record<string, unknown>) => [LIST_KEY, { input, type: 'infinite' }];
+const LIST_KEY = getQueryKey(trpc.notification.getAllByUser)[0];
+/** The panel's own query: `useQueryNotifications({ limit: 30, category: selectedCategory, … })`. */
+const panelKey = (category?: string) =>
+  getQueryKey(trpc.notification.getAllByUser, { limit: 30, category } as never, 'infinite');
+
 const page = (ids: number[]) => ({ items: ids.map((id) => ({ id })), nextCursor: undefined });
+const loaded = (queryClient: QueryClient, category?: string, pages = [page([4])]) =>
+  queryClient.setQueryData(panelKey(category), { pages, pageParams: pages.map(() => undefined) });
+
+const SIGNALLED = {
+  id: '2421362569',
+  type: 'new-comment',
+  category: 'Comment',
+  details: { commentId: 731 },
+  createdAt: '2026-10-12T16:00:00.000Z',
+  read: false,
+} as unknown as NotificationGetAllItem;
 
 const filters = notificationListFilters(LIST_KEY, 'Comment');
+
+const okFetch = () =>
+  vi.fn<typeof fetch>(
+    async () =>
+      new Response(
+        JSON.stringify({ id: '2421362569', details: { commentId: 731, content: 'hi' } }),
+        {
+          status: 200,
+        }
+      )
+  );
+
+const firstItems = (queryClient: QueryClient, category?: string) =>
+  (queryClient.getQueryData(panelKey(category)) as { pages: { items: unknown[] }[] }).pages[0]
+    .items;
 
 describe('notificationListFilters', () => {
   it('targets the All list and the notification’s own category list', () => {
     expect(filters).toEqual([
-      { queryKey: [LIST_KEY, { input: { category: null } }], exact: false },
-      { queryKey: [LIST_KEY, { input: { category: 'Comment' } }], exact: false },
+      { queryKey: [['notification', 'getAllByUser'], { input: { category: null } }], exact: false },
+      {
+        queryKey: [['notification', 'getAllByUser'], { input: { category: 'Comment' } }],
+        exact: false,
+      },
     ]);
   });
 });
@@ -34,76 +70,85 @@ describe('hasLoadedNotificationList', () => {
     expect(hasLoadedNotificationList(new QueryClient(), filters)).toBe(false);
   });
 
-  it('is false when only unrelated queries are cached', () => {
-    const queryClient = new QueryClient();
-    queryClient.setQueryData([['user', 'checkNotifications']], { all: 3 });
-
-    expect(hasLoadedNotificationList(queryClient, filters)).toBe(false);
-  });
-
   it('is false for a list that has no page yet', () => {
     const queryClient = new QueryClient();
-    queryClient.setQueryData(listKey({ limit: 30, category: 'Comment' }), {
-      pages: [],
-      pageParams: [],
-    });
+    loaded(queryClient, 'Comment', []);
 
     expect(hasLoadedNotificationList(queryClient, filters)).toBe(false);
   });
 
   it('is false when the only loaded list is another category’s', () => {
     const queryClient = new QueryClient();
-    queryClient.setQueryData(listKey({ limit: 30, category: 'Buzz' }), {
-      pages: [page([4])],
-      pageParams: [undefined],
-    });
+    loaded(queryClient, 'Buzz');
 
     expect(hasLoadedNotificationList(queryClient, filters)).toBe(false);
   });
 
   it('is true once the notification’s category list is loaded', () => {
     const queryClient = new QueryClient();
-    queryClient.setQueryData(listKey({ limit: 30, category: 'Comment' }), {
-      pages: [page([4])],
-      pageParams: [undefined],
-    });
+    loaded(queryClient, 'Comment');
 
     expect(hasLoadedNotificationList(queryClient, filters)).toBe(true);
   });
+});
 
-  it('is true once a list keyed on `category: null` is loaded', () => {
+describe('insertSignalledNotification', () => {
+  it('does not fetch in a tab with no loaded notification list', async () => {
     const queryClient = new QueryClient();
-    queryClient.setQueryData(listKey({ limit: 30, category: null }), {
-      pages: [page([4])],
-      pageParams: [undefined],
-    });
+    const fetchImpl = okFetch();
 
-    expect(hasLoadedNotificationList(queryClient, filters)).toBe(true);
+    await insertSignalledNotification(queryClient, LIST_KEY, SIGNALLED, fetchImpl);
+
+    expect(fetchImpl).toHaveBeenCalledTimes(0);
   });
 
-  it('agrees with the write: true exactly when the same filters reach a list with a page', () => {
-    // The fetch is skipped on this answer, so it must never be false while a write would still land.
-    const states: Array<[string, Record<string, unknown> | null, unknown[]]> = [
-      ['nothing cached', null, []],
-      ['own category, loaded', { category: 'Comment' }, [page([1])]],
-      ['own category, no page', { category: 'Comment' }, []],
-      ['other category, loaded', { category: 'Buzz' }, [page([1])]],
-      ['category null, loaded', { category: null }, [page([1])]],
-    ];
+  it('fetches once and writes the enriched row into the loaded category list', async () => {
+    const queryClient = new QueryClient();
+    loaded(queryClient, 'Comment');
+    const fetchImpl = okFetch();
 
-    for (const [name, input, pages] of states) {
-      const queryClient = new QueryClient();
-      if (input) queryClient.setQueryData(listKey(input), { pages, pageParams: [] });
+    await insertSignalledNotification(queryClient, LIST_KEY, SIGNALLED, fetchImpl);
 
-      let written = 0;
-      for (const filter of filters) {
-        queryClient.setQueriesData<{ pages: unknown[] }>(filter, (old) => {
-          if (old?.pages?.length) written++;
-          return old;
-        });
-      }
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(fetchImpl.mock.calls[0][0]).toBe('/api/notification/getDetails');
+    expect(firstItems(queryClient, 'Comment')[0]).toEqual({
+      ...SIGNALLED,
+      details: { commentId: 731, content: 'hi' },
+    });
+  });
 
-      expect(hasLoadedNotificationList(queryClient, filters), name).toBe(written > 0);
-    }
+  it('still writes the unenriched row when the detail request fails', async () => {
+    const queryClient = new QueryClient();
+    loaded(queryClient, 'Comment');
+    const fetchImpl = vi.fn<typeof fetch>(async () => new Response('{}', { status: 400 }));
+
+    await insertSignalledNotification(queryClient, LIST_KEY, SIGNALLED, fetchImpl);
+
+    expect(firstItems(queryClient, 'Comment')[0]).toEqual(SIGNALLED);
+  });
+
+  it('does not fetch when only another category’s list is loaded, and leaves that list alone', async () => {
+    const queryClient = new QueryClient();
+    loaded(queryClient, 'Buzz');
+    const fetchImpl = okFetch();
+
+    await insertSignalledNotification(queryClient, LIST_KEY, SIGNALLED, fetchImpl);
+
+    expect(fetchImpl).toHaveBeenCalledTimes(0);
+    expect(firstItems(queryClient, 'Buzz')).toEqual([{ id: 4 }]);
+  });
+
+  it('the panel’s All list (no category in its key) receives no write, so it costs no fetch', async () => {
+    // Pre-existing and unchanged: the All filter asks for `category: null`, the panel's All query has
+    // no category at all, and the cache's partial key match does not treat the two as equal. This pins
+    // that the fetch follows the write — not that the All list is right to be skipped.
+    const queryClient = new QueryClient();
+    loaded(queryClient, undefined);
+    const fetchImpl = okFetch();
+
+    await insertSignalledNotification(queryClient, LIST_KEY, SIGNALLED, fetchImpl);
+
+    expect(fetchImpl).toHaveBeenCalledTimes(0);
+    expect(firstItems(queryClient, undefined)).toEqual([{ id: 4 }]);
   });
 });

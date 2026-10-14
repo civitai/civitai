@@ -357,43 +357,62 @@ export function hasLoadedNotificationList(
   );
 }
 
+/**
+ * Puts a newly-signalled notification into every loaded list it belongs in, enriched by the detail
+ * endpoint when — and only when — there is such a list to put it in.
+ *
+ * Out of the hook so the gate can be exercised where it is applied, not just as a helper: `fetchImpl`
+ * is the seam.
+ */
+export async function insertSignalledNotification(
+  queryClient: Pick<QueryClient, 'getQueriesData' | 'setQueriesData'>,
+  listKey: QueryKey[number],
+  updated: NotificationGetAllItem,
+  fetchImpl: typeof fetch = fetch
+) {
+  const listFilters = notificationListFilters(listKey, updated.category);
+
+  let newUpdated = updated;
+  if (hasLoadedNotificationList(queryClient, listFilters)) {
+    try {
+      const newUpdatedResp = await fetchImpl('/api/notification/getDetails', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(updated),
+      });
+      if (newUpdatedResp.ok) {
+        const newUpdatedJson: NotificationGetAllItem = await newUpdatedResp.json();
+        newUpdated = { ...newUpdated, ...newUpdatedJson };
+      }
+    } catch {}
+  }
+
+  // update All + "Category" cache
+  for (const filter of listFilters) {
+    queryClient.setQueriesData<InfiniteData<NotificationGetAll>>(
+      filter,
+      produce((old) => {
+        if (!old || !old.pages || !old.pages.length) return;
+        const firstPage = old.pages[0];
+        firstPage.items.unshift(newUpdated);
+      })
+    );
+  }
+}
+
 export const useNotificationSignal = () => {
   const queryClient = useQueryClient();
   const queryUtils = trpc.useUtils();
 
   const onUpdate = useCallback(
     async (updated: NotificationGetAllItem) => {
-      const queryKey = getQueryKey(trpc.notification.getAllByUser)[0];
-      const listFilters = notificationListFilters(queryKey, updated.category);
-
-      let newUpdated = updated;
-      if (hasLoadedNotificationList(queryClient, listFilters)) {
-        try {
-          const newUpdatedResp = await fetch('/api/notification/getDetails', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(updated),
-          });
-          if (newUpdatedResp.ok) {
-            const newUpdatedJson: NotificationGetAllItem = await newUpdatedResp.json();
-            newUpdated = { ...newUpdated, ...newUpdatedJson };
-          }
-        } catch {}
-      }
-
-      // update All + "Category" cache
-      for (const filter of listFilters) {
-        queryClient.setQueriesData<InfiniteData<NotificationGetAll>>(
-          filter,
-          produce((old) => {
-            if (!old || !old.pages || !old.pages.length) return;
-            const firstPage = old.pages[0];
-            firstPage.items.unshift(newUpdated);
-          })
-        );
-      }
+      await insertSignalledNotification(
+        queryClient,
+        getQueryKey(trpc.notification.getAllByUser)[0],
+        updated
+      );
 
       queryUtils.user.checkNotifications.setData(undefined, (old) => {
         // Writes two named keys only, so unlike the mark-read updater it cannot

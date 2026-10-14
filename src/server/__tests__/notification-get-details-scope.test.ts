@@ -156,6 +156,52 @@ describe('POST /api/notification/getDetails — ids as they arrive on the wire',
     expect(call.status()).toBe(200);
   });
 
+  it('matches a string posted id against a numeric stored id', async () => {
+    queryNotifications.mockResolvedValue([{ ...STORED, id: 2421362569 }]);
+    const call = post(signalled(WIRE_ID));
+    await call.promise;
+
+    expect(call.status()).toBe(200);
+    expect(populateNotificationDetails).toHaveBeenCalledTimes(1);
+  });
+
+  it('reads leading zeros as the same id — it can only ever resolve among the caller’s own', async () => {
+    const call = post(signalled('0' + WIRE_ID));
+    await call.promise;
+
+    expect(call.status()).toBe(200);
+    expect(populateNotificationDetails).toHaveBeenCalledWith([
+      { id: WIRE_ID, type: 'new-comment', details: { commentId: 731, version: 2 } },
+    ]);
+  });
+
+  it('skips a stored row whose id cannot be read, rather than matching it', async () => {
+    queryNotifications.mockResolvedValue([
+      { ...STORED, id: 'not-an-id', details: { commentId: 1 } },
+      { ...STORED, id: '9007199254740993', details: { commentId: 2 } },
+      STORED,
+    ]);
+    const call = post(signalled(WIRE_ID));
+    await call.promise;
+
+    expect(call.status()).toBe(200);
+    expect(populateNotificationDetails).toHaveBeenCalledWith([
+      { id: WIRE_ID, type: 'new-comment', details: { commentId: 731, version: 2 } },
+    ]);
+  });
+
+  it.each([
+    ['null', null],
+    ['a string', WIRE_ID],
+    ['an array', [WIRE_ID]],
+  ])('rejects a body that is %s', async (_name, body) => {
+    const call = post(body);
+    await call.promise;
+
+    expect(call.status()).toBe(400);
+    expect(queryNotifications).not.toHaveBeenCalled();
+  });
+
   it('still answers 404 for a string id that is not the caller’s', async () => {
     const call = post(signalled('2421362570'));
     await call.promise;
@@ -168,6 +214,12 @@ describe('POST /api/notification/getDetails — ids as they arrive on the wire',
     ['empty', ''],
     ['blank', ' '],
     ['signed', '-1'],
+    ['plus-signed', '+12'],
+    ['leading space', ' 12'],
+    ['trailing space', '12 '],
+    ['negative number', -1],
+    ['zero number', 0],
+    ['unsafe number', Number.MAX_SAFE_INTEGER + 2],
     ['fractional', '1.5'],
     ['exponent', '1e3'],
     ['hex', '0x10'],
