@@ -6,10 +6,13 @@ export function StorylineRatingInput({
   value,
   onChange,
   disabled,
+  isAllowed,
 }: {
   value: number;
   onChange: (level: number) => void;
   disabled?: boolean;
+  /** Ratings that may not be chosen, e.g. below a chapter already in the storyline. */
+  isAllowed?: (level: number) => boolean;
 }) {
   return (
     <SegmentedControl
@@ -21,6 +24,7 @@ export function StorylineRatingInput({
       data={STORYLINE_RATING_OPTIONS.map((option) => ({
         value: String(option.value),
         label: option.label,
+        disabled: isAllowed ? !isAllowed(option.value) : false,
       }))}
     />
   );

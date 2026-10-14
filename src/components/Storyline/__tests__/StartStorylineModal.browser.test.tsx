@@ -62,6 +62,7 @@ describe('StartStorylineModal', () => {
 
     await page.getByRole('textbox', { name: 'Title' }).fill('  The Patch  ');
     await page.getByText('X', { exact: true }).click();
+    await page.getByText('Only collaborators').click();
     await page.getByRole('button', { name: 'Start storyline' }).click();
 
     expect(mocks.mutate).toHaveBeenCalledTimes(1);
@@ -69,6 +70,7 @@ describe('StartStorylineModal', () => {
       postId: 41,
       title: 'The Patch',
       maxNsfwLevel: NsfwLevel.X,
+      whoCanContinue: 'Collaborators',
     });
   });
 
