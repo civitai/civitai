@@ -91,9 +91,10 @@ export const moderateStorylineTitleSchema = z
     id: z.number().int().positive(),
     /** null hands the title's rating back to the scan. */
     moderatorNsfwLevel: ceilingSchema.nullable().optional(),
-    liftScanTakedown: z.literal(true).optional(),
+    /** The title the moderator read; refused if it has changed since. */
+    liftScanTakedown: z.object({ reviewedTitle: z.string() }).optional(),
   })
-  .refine((input) => input.moderatorNsfwLevel !== undefined || input.liftScanTakedown, {
+  .refine((input) => input.moderatorNsfwLevel !== undefined || !!input.liftScanTakedown, {
     message: 'Nothing to change',
   });
 export type ModerateStorylineTitleInput = z.infer<typeof moderateStorylineTitleSchema>;

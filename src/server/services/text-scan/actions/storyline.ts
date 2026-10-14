@@ -46,9 +46,8 @@ export async function applyStorylineTextScan({
       await notifyOwner(before, { storylineId: entityId, level }, workflowId);
   }
 
-  // Both labels must have answered before a takedown is lifted.
-  if (!outcome.poi || !outcome.minor) return;
-  if (outcome.poi.detected || outcome.minor.detected) {
+  // Either label finding something takes it down; lifting needs both to have answered clean.
+  if (outcome.poi?.detected || outcome.minor?.detected) {
     // Never over a takedown already in place, and not again for text a moderator has cleared.
     const { count } = await dbWrite.storyline.updateMany({
       where: {
@@ -59,7 +58,7 @@ export async function applyStorylineTextScan({
       data: { tosViolation: true, tosViolationByScan: true },
     });
     if (count) await notifyOwner(before, { storylineId: entityId, takenDown: true }, workflowId);
-  } else {
+  } else if (outcome.poi && outcome.minor) {
     await dbWrite.storyline.updateMany({
       where: { id: entityId, tosViolationByScan: true },
       data: { tosViolation: false, tosViolationByScan: false },

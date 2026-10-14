@@ -8,6 +8,7 @@ import type * as UserPreferencesService from '~/server/services/user-preferences
 import type * as CacheHelpers from '~/server/utils/cache-helpers';
 import { dbMock, resetSharedMocks, setEnv } from '~/__tests__/mocks';
 import { NsfwLevel } from '~/server/common/enums';
+import { raiseNsfwLevelText } from '@civitai/shared/rated-entity-sql';
 
 const {
   enforceBlockedBrowsingTags,
@@ -3124,6 +3125,30 @@ describe('title moderation', () => {
         ).resolves.toMatchObject({ id: 10 });
     });
 
+    // A post's level is a mask of its images' levels. Comparing it with the title as a number
+    // would keep a PG image's flag and let a PG reader past an R title.
+    it.each([
+      ['an R title on a chapter 1 with PG and X images', PG | X, R, true, X],
+      ['a PG title on an X chapter 1', X, PG, true, X],
+      ['an X title on an R chapter 1', R, X, true, X],
+      ['an R title on a chapter 1 with PG and R images', PG | R, R, true, R],
+      ['a PG title on a chapter 1 with PG and X images', PG | X, PG, false, X],
+    ])('getStoryline: %s -> hidden from PG %s', async (_n, chapterLevel, title, hidden, seenAt) => {
+      r.storyline.findUnique.mockResolvedValue(
+        titled({
+          maxNsfwLevel: X,
+          nsfwLevel: title,
+          chapters: [{ id: 1, postId: 101, post: { nsfwLevel: chapterLevel } }],
+        }) as never
+      );
+      const read = getStoryline({ id: 10, viewer: { id: STRANGER }, browsingLevel: PG_READER });
+      if (hidden) await expect(read).rejects.toMatchObject({ code: 'NOT_FOUND' });
+      else await expect(read).resolves.toMatchObject({ id: 10 });
+      await expect(
+        getStoryline({ id: 10, viewer: { id: STRANGER }, browsingLevel: seenAt })
+      ).resolves.toMatchObject({ id: 10 });
+    });
+
     // The db mock returns the fixture whatever is selected; without these the real read would
     // leave the title's rating out and the gate would judge on nothing.
     it('reads the title rating wherever the gate runs', async () => {
@@ -3171,7 +3196,9 @@ describe('title moderation', () => {
       expect(Object.keys(result).map(Number)).toEqual([1, 3]);
     });
 
-    it('getStorylinesInfinite: the level filter is the higher of chapter 1 and the title', async () => {
+    // The CASE itself is raiseNsfwLevelText's, pinned in its own package; this pins what it is
+    // applied to. Its behaviour on the masks above was checked against Postgres by hand.
+    it('getStorylinesInfinite: the level filter raises chapter 1 to the title', async () => {
       await getStorylinesInfinite({
         filter: 'all',
         sort: 'newest',
@@ -3184,9 +3211,10 @@ describe('title moderation', () => {
         ...unknown[]
       ];
       const { sql } = Prisma.sql(strings, ...(values as Prisma.Sql[]));
-      expect(sql).toContain(
-        `OR (GREATEST(COALESCE(NULLIF(rp."nsfwLevel", 0), st."maxNsfwLevel"), ` +
-          `COALESCE(st."moderatorNsfwLevel", st."nsfwLevel")) & ?::int) <> 0)`
+      expect(sql.replace(/\s+/g, ' ')).toContain(
+        `OR ((SELECT ${raiseNsfwLevelText('lv.l', 'lv.f')} ` +
+          `FROM (SELECT COALESCE(NULLIF(rp."nsfwLevel", 0), st."maxNsfwLevel") AS l, ` +
+          `COALESCE(st."moderatorNsfwLevel", st."nsfwLevel") AS f) lv) & ?::int) <> 0)`
       );
     });
   });
@@ -3224,20 +3252,21 @@ describe('title moderation', () => {
   });
 
   describe('moderateStorylineTitle', () => {
+    const lift = { reviewedTitle: 'Bad' };
     beforeEach(() => {
-      w.storyline.findUnique.mockResolvedValue({ tosViolationByScan: true } as never);
+      w.storyline.findUnique.mockResolvedValue({ tosViolationByScan: true, title: 'Bad' } as never);
       w.storyline.updateMany.mockResolvedValue({ count: 1 } as never);
       w.storyline.findUniqueOrThrow.mockResolvedValue({ id: 10 } as never);
       loadTextScanTextHash.mockResolvedValue('hash-now');
     });
 
     it("lifts the scan's takedown and records the text it was lifted for", async () => {
-      await moderateStorylineTitle({ id: 10, liftScanTakedown: true });
+      await moderateStorylineTitle({ id: 10, liftScanTakedown: lift });
       expect(loadTextScanTextHash).toHaveBeenCalledWith('Storyline', 10);
       expect(w.storyline.updateMany.mock.calls).toEqual([
         [
           {
-            where: { id: 10, tosViolationByScan: true },
+            where: { id: 10, tosViolationByScan: true, title: 'Bad' },
             data: {
               moderatorNsfwLevel: undefined,
               tosViolation: false,
@@ -3250,25 +3279,40 @@ describe('title moderation', () => {
     });
 
     it("refuses to lift a moderator's takedown", async () => {
-      w.storyline.findUnique.mockResolvedValue({ tosViolationByScan: false } as never);
+      w.storyline.findUnique.mockResolvedValue({
+        tosViolationByScan: false,
+        title: 'Bad',
+      } as never);
       await expect(
-        moderateStorylineTitle({ id: 10, liftScanTakedown: true })
+        moderateStorylineTitle({ id: 10, liftScanTakedown: lift })
       ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
       expect(w.storyline.updateMany).not.toHaveBeenCalled();
     });
 
-    it("refuses when the takedown stopped being the scan's in between", async () => {
+    // The owner edited the title after the moderator read it: the new one was never reviewed.
+    it('refuses to lift for a title other than the one reviewed', async () => {
+      w.storyline.findUnique.mockResolvedValue({
+        tosViolationByScan: true,
+        title: 'Worse',
+      } as never);
+      await expect(
+        moderateStorylineTitle({ id: 10, liftScanTakedown: lift })
+      ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+      expect(w.storyline.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('refuses when the takedown or the title changed in between', async () => {
       w.storyline.updateMany.mockResolvedValue({ count: 0 } as never);
       await expect(
-        moderateStorylineTitle({ id: 10, liftScanTakedown: true })
+        moderateStorylineTitle({ id: 10, liftScanTakedown: lift })
       ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
     });
 
+    // Set beside a scan takedown, so leaving it in place is something the call could get wrong.
     it.each([
       ['sets', R],
       ['hands back to the scan', null],
     ])('%s the rating without touching a takedown', async (_name, level) => {
-      w.storyline.findUnique.mockResolvedValue({ tosViolationByScan: false } as never);
       await moderateStorylineTitle({ id: 10, moderatorNsfwLevel: level });
       expect(w.storyline.updateMany.mock.calls).toEqual([
         [{ where: { id: 10 }, data: { moderatorNsfwLevel: level } }],

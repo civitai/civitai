@@ -4,6 +4,7 @@ import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { NsfwLevel } from '~/server/common/enums';
 import type * as FliptClient from '~/server/flipt/client';
 import type * as NotificationService from '~/server/services/notification.service';
+import type * as PromptModule from '~/server/services/text-scan/prompt';
 
 vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ...(await importOriginal<typeof FliptClient>()),
@@ -12,6 +13,11 @@ vi.mock('~/server/flipt/client', async (importOriginal) => ({
 vi.mock('~/server/services/notification.service', async (importOriginal) => ({
   ...(await importOriginal<typeof NotificationService>()),
   createNotification: vi.fn(),
+}));
+vi.mock('~/server/services/text-scan/prompt', async (importOriginal) => ({
+  ...(await importOriginal<typeof PromptModule>()),
+  getActiveTextScanPrompts: vi.fn(),
+  getTextScanConfig: vi.fn(),
 }));
 
 await import('~/server/services/text-scan/profiles/index');
@@ -23,6 +29,20 @@ const { getModerationAdapter } = await import('~/server/services/moderation-adap
 const { isFlipt } = await import('~/server/flipt/client');
 const { createNotification } = await import('~/server/services/notification.service');
 const { submitWorkflow } = await import('@civitai/client');
+const { getActiveTextScanPrompts, getTextScanConfig } = await import(
+  '~/server/services/text-scan/prompt'
+);
+const { loadTextScanTextHash } = await import(
+  '~/server/services/text-scan/actions/appeal-text-hash'
+);
+
+const PROMPTS = Object.fromEntries(
+  ['base', 'label:nsfw', 'label:poi', 'label:minor'].map((key, i) => [
+    key,
+    { id: i + 1, key, content: `${key} prompt` },
+  ])
+);
+const CONFIG = { model: 'air:test', maxInputChars: 1000, thinking: false };
 
 const w = dbMock.dbWrite;
 const ID = 10;
@@ -118,6 +138,28 @@ describe('Storyline rollout', () => {
       reason: 'missing',
     });
     expect(w.storyline.findMany).toHaveBeenCalledTimes(1);
+  });
+
+  // A moderator's lift records loadTextScanTextHash; the verdict compares the textHash the scan
+  // submitted. If the two ever hashed different text, a redelivered verdict would take down a
+  // title a moderator had cleared.
+  it('submits the same text hash a moderator lift records', async () => {
+    rollout('{"shadow":100,"active":100}');
+    w.storyline.findMany.mockResolvedValue([
+      { id: ID, userId: OWNER, title: 'Dark Road' },
+    ] as never);
+    vi.mocked(getActiveTextScanPrompts).mockResolvedValue(PROMPTS);
+    vi.mocked(getTextScanConfig).mockResolvedValue(CONFIG);
+    vi.mocked(submitWorkflow).mockResolvedValueOnce({ data: { id: 'wf-9' } } as never);
+    expect(await scanEntity({ entityType: 'Storyline', entityId: ID })).toEqual({
+      status: 'submitted',
+      workflowId: 'wf-9',
+    });
+    const submitted = (
+      vi.mocked(submitWorkflow).mock.calls[0][0].body!.metadata as { textHash: string }
+    ).textHash;
+    expect(submitted).toEqual(expect.any(String));
+    expect(await loadTextScanTextHash('Storyline', ID)).toBe(submitted);
   });
 
   it.each([
@@ -227,9 +269,20 @@ describe('applyStorylineTextScan', () => {
     it.each([
       ['poi is missing', { nsfw: NsfwLevel.PG, minor: false }],
       ['minor is missing', { nsfw: NsfwLevel.PG, poi: false }],
-    ])('neither takes down nor lifts when %s', async (_name, verdict) => {
+    ])('does not lift when %s, though the other answered clean', async (_name, verdict) => {
       await applyStorylineTextScan(args(verdict) as never);
       expect(updates()).toEqual([{ where: { id: ID }, data: { nsfwLevel: NsfwLevel.PG } }]);
+    });
+
+    it.each([
+      ['poi found, minor missing', { nsfw: NsfwLevel.PG, poi: true }],
+      ['minor found, poi missing', { nsfw: NsfwLevel.PG, minor: true }],
+    ])('takes it down when %s: one finding is enough', async (_name, verdict) => {
+      await applyStorylineTextScan(args(verdict) as never);
+      expect(updates()).toEqual([
+        { where: { id: ID }, data: { nsfwLevel: NsfwLevel.PG } },
+        takedownWrite,
+      ]);
     });
   });
 
