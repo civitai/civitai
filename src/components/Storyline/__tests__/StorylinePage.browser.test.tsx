@@ -6,9 +6,10 @@ import type * as QueriesMod from '~/components/Storyline/storyline.queries';
 import { StorylinePage } from '~/components/Storyline/StorylinePage';
 
 /**
- * The storyline page: the main path in the server's order with its forks, a chapter the reader
+ * The storyline page: the canon path in the server's order with its forks, a chapter the reader
  * may not see shown as unavailable rather than dropped, the cast, chapter 1's thread as the
- * discussion, and Continue offered from the end of the path at the price this reader would pay.
+ * discussion, and Continue offered from the end of the path, with the price this reader would pay
+ * said in a chip before they press it.
  */
 
 const chapter = (depth: number, postId: number | null, childCount = 1, title?: string) => ({
@@ -17,7 +18,12 @@ const chapter = (depth: number, postId: number | null, childCount = 1, title?: s
   depth,
   tombstone: postId ? null : 'browsingLevel',
   post: postId
-    ? { id: postId, title: title ?? null, userId: 10, username: depth ? 'tehalex86' : 'Sillycat83' }
+    ? {
+        id: postId,
+        title: title ?? null,
+        userId: depth ? 11 : 10,
+        username: depth ? 'tehalex86' : 'Sillycat83',
+      }
     : null,
   childCount,
 });
@@ -26,6 +32,7 @@ const STORYLINE = {
   id: 2,
   title: 'The Patch',
   status: 'Ongoing',
+  whoCanContinue: 'Anyone',
   maxNsfwLevel: 2,
   userId: 10,
   user: { id: 10, username: 'Sillycat83' },
@@ -34,6 +41,7 @@ const STORYLINE = {
   chapterCount: 7,
   contributorCount: 3,
   viewerRole: null as string | null,
+  collaborators: [{ id: 11, username: 'tehalex86' }],
   mainPath: [
     chapter(0, 501, 1, 'The cat patch'),
     chapter(1, 502, 3),
@@ -47,10 +55,14 @@ const STORYLINE = {
   ],
 };
 
+const COVER = { id: 9001, url: 'cover-of-501', type: 'image', nsfwLevel: 1, userId: 10 };
+
 const mocks = vi.hoisted(() => ({
   storyline: undefined as Record<string, unknown> | undefined,
+  loading: false,
   terms: null as { open: boolean; closedReason: string | null; price: number } | null,
   termsFor: vi.fn(),
+  coverFor: vi.fn(),
   commentsPostId: vi.fn(),
   openContinue: vi.fn(),
   openManage: vi.fn(),
@@ -61,7 +73,9 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
   return {
     ...(await importOriginal<typeof TrpcMod>()),
     trpc: makeTrpcProxy({
-      'storyline.getById': { useQuery: () => ({ data: mocks.storyline, isLoading: false }) },
+      'storyline.getById': {
+        useQuery: () => ({ data: mocks.storyline, isLoading: mocks.loading }),
+      },
     }),
   };
 });
@@ -78,9 +92,19 @@ vi.mock('~/components/Storyline/continue/openStorylineContinueModal', () => ({
 vi.mock('~/components/Storyline/manage/openStorylineManageModal', () => ({
   openStorylineManageModal: mocks.openManage,
 }));
+// Chapter 1's first image, read per post: the hero and the card cover both show what it returns.
 vi.mock('~/components/Storyline/StorylineCover', () => ({
-  StorylineCover: ({ title, postId }: { title: string; postId: number | null }) => (
-    <h1 data-cover-post={String(postId)}>{title}</h1>
+  useStorylineFirstImage: (postId: number | null) => {
+    mocks.coverFor(postId);
+    return postId ? COVER : null;
+  },
+  StorylineHero: ({ image }: { image: { url: string } | null }) => (
+    <div data-testid="storyline-hero" data-image={image?.url ?? 'none'} />
+  ),
+}));
+vi.mock('~/components/Storyline/StorylineThumb', () => ({
+  StorylineThumb: ({ image }: { image: { url: string } | null }) => (
+    <div data-testid="storyline-card-cover" data-image={image?.url ?? 'none'} />
   ),
 }));
 vi.mock('~/components/Post/Detail/PostComments', () => ({
@@ -95,82 +119,137 @@ vi.mock('~/components/UserAvatar/UserAvatarSimple', () => ({
 
 beforeEach(() => {
   mocks.storyline = { ...STORYLINE };
+  mocks.loading = false;
   mocks.terms = null;
-  for (const fn of [mocks.termsFor, mocks.commentsPostId, mocks.openContinue, mocks.openManage])
+  for (const fn of [
+    mocks.termsFor,
+    mocks.coverFor,
+    mocks.commentsPostId,
+    mocks.openContinue,
+    mocks.openManage,
+  ])
     fn.mockReset();
 });
 
-const heading = () => page.getByRole('heading', { name: 'The Patch' });
+const heading = () => page.getByRole('heading', { name: 'The Patch', level: 1 });
+const stops = () =>
+  page
+    .getByRole('region', { name: 'Chapters' })
+    .getByTestId('storyline-chapter')
+    .elements()
+    .map((li) => li.textContent);
+const testIds = (id: string) =>
+  [...document.querySelectorAll(`[data-testid="${id}"]`)].map((n) => n.textContent);
 
 describe('StorylinePage', () => {
-  test('shows the main path with its forks, the cast and the discussion', async () => {
+  test('shows the canon path with its forks, the cast and the discussion', async () => {
     renderWithProviders(<StorylinePage id={2} />);
 
-    await expect.element(heading()).toHaveAttribute('data-cover-post', '501');
-    await expect.element(page.getByText('7 chapters · 3 creators')).toBeVisible();
-    await expect.element(page.getByText('Rated up to PG-13')).toBeVisible();
+    await expect.element(heading()).toBeVisible();
+    // The hero and the card cover are chapter 1's first image, read for chapter 1's post.
+    expect(mocks.coverFor).toHaveBeenLastCalledWith(501);
+    expect(page.getByTestId('storyline-hero').element().getAttribute('data-image')).toBe(
+      'cover-of-501'
+    );
+    expect(page.getByTestId('storyline-card-cover').element().getAttribute('data-image')).toBe(
+      'cover-of-501'
+    );
+    expect(testIds('storyline-ceiling-chip')).toContain('Up to PG-13');
     await expect
-      .element(page.getByRole('link', { name: 'Read from the start' }))
+      .element(page.getByRole('link', { name: 'Start reading' }))
       .toHaveAttribute('href', '/posts/501');
 
-    const path = page.getByRole('region', { name: 'Main path' }).getByRole('listitem');
-    expect(path.elements().map((li) => li.textContent)).toEqual([
-      '1. The cat patch by Sillycat83',
-      '2. Chapter 2 by tehalex863 ways to continue',
-      "3. This chapter isn't available",
-      '4. Framed by tehalex862 ways to continue',
+    expect(stops()).toEqual([
+      '1Chapter 1The cat patchby Sillycat83',
+      // Untitled: named by its number once, not as an eyebrow and a name. A collaborator's
+      // chapter carries the Endorsed chip.
+      '2Chapter 2by tehalex86EndorsedThe story forks here · 3 paths',
+      '3This chapter is hidden by your browsing level',
+      '4Chapter 4Framedby tehalex86EndorsedThe story forks here · 2 paths',
     ]);
 
     expect(page.getByRole('region', { name: 'Contributors' }).element().textContent).toBe(
-      'ContributorsSillycat83Creatortehalex86EndorsedTar_TarjContributor'
+      'ContributorsSillycat83Creatortehalex86EndorsedTar_Tarj'
     );
     await expect.element(page.getByText('Comments for post 501')).toBeVisible();
     expect(mocks.commentsPostId).toHaveBeenCalledWith(501);
   });
 
-  test('continues from the end of the main path, at their price', async () => {
+  test('continues from the end of the canon path, and says the price before you press', async () => {
     mocks.terms = { open: true, closedReason: null, price: 0 };
     renderWithProviders(<StorylinePage id={2} />);
 
-    await page.getByRole('button', { name: 'Continue the story · Free' }).click();
+    await expect.element(heading()).toBeVisible();
+    expect(testIds('storyline-price-chip')).toEqual(['Free to continue', 'Free to continue']);
+    await page.getByRole('button', { name: 'Continue the story' }).click();
     expect(mocks.openContinue).toHaveBeenCalledWith({ parentPostId: 504 });
     expect(mocks.termsFor).toHaveBeenLastCalledWith(504);
-    await expect.element(page.getByText('Open for continuations')).toBeVisible();
   });
 
-  test('a priced storyline shows its price on Continue', async () => {
-    mocks.terms = { open: true, closedReason: null, price: 150 };
+  test('a priced storyline shows its price in Buzz', async () => {
+    mocks.terms = { open: true, closedReason: null, price: 1500 };
     renderWithProviders(<StorylinePage id={2} />);
 
-    await expect
-      .element(page.getByRole('button', { name: 'Continue the story · 150 Buzz' }))
-      .toBeVisible();
+    await expect.element(heading()).toBeVisible();
+    expect(testIds('storyline-price-chip')).toEqual(['1,500 to continue', '1,500 to continue']);
   });
 
   test.each([
-    ['closed', { open: false, closedReason: 'closed', price: 0 }],
-    ['unknown', null],
-  ])('a storyline %s to this reader offers no Continue', async (_label, terms) => {
+    ['closed', { open: false, closedReason: 'closed', price: 0 }, ['Closed']],
+    [
+      'collaborators only',
+      { open: false, closedReason: 'collaboratorsOnly', price: 0 },
+      ['Collaborators only'],
+    ],
+    ['unknown', null, []],
+  ])('a storyline %s to this reader offers no Continue', async (_label, terms, closed) => {
     mocks.terms = terms;
     renderWithProviders(<StorylinePage id={2} />);
 
     await expect.element(heading()).toBeVisible();
     expect(page.getByRole('button', { name: /Continue the story/ }).elements()).toHaveLength(0);
-    expect(page.getByText('Open for continuations').elements()).toHaveLength(0);
+    expect(testIds('storyline-price-chip')).toEqual([]);
+    expect(testIds('storyline-closed-chip')).toEqual(closed);
+  });
+
+  test.each([
+    [
+      {},
+      null,
+      'Anyone can continue. Sillycat83 reviews each one; endorsed collaborators skip review.',
+    ],
+    [{ whoCanContinue: 'Collaborators' }, null, "Only Sillycat83's collaborators can continue it."],
+    [
+      {},
+      { open: false, closedReason: 'closed', price: 0 },
+      'This storyline is not taking new chapters right now.',
+    ],
+    [{ status: 'Complete' }, null, 'This storyline is complete and takes no more chapters.'],
+  ])('About continuing says who may continue (%o)', async (extra, terms, sentence) => {
+    mocks.storyline = { ...STORYLINE, ...extra };
+    mocks.terms = terms;
+    renderWithProviders(<StorylinePage id={2} />);
+
+    await expect.element(heading()).toBeVisible();
+    expect(page.getByRole('region', { name: 'About continuing' }).element().textContent).toContain(
+      sentence
+    );
   });
 
   // Chapter 1 hidden from this reader: its post, cover and thread must not be reached through
   // the storyline, even though getById carries rootPostId.
-  test('a hidden chapter 1 shows no link, cover post or thread', async () => {
+  test('a hidden chapter 1 shows no link, cover or thread', async () => {
     mocks.storyline = {
       ...STORYLINE,
       mainPath: [chapter(0, null), ...STORYLINE.mainPath.slice(1)],
     };
     renderWithProviders(<StorylinePage id={2} />);
 
-    await expect.element(heading()).toHaveAttribute('data-cover-post', 'null');
-    await expect.element(page.getByText("1. This chapter isn't available")).toBeVisible();
-    expect(page.getByText('Read from the start').elements()).toHaveLength(0);
+    await expect.element(heading()).toBeVisible();
+    expect(mocks.coverFor).not.toHaveBeenCalledWith(501);
+    expect(page.getByTestId('storyline-hero').element().getAttribute('data-image')).toBe('none');
+    expect(stops()[0]).toBe('1This chapter is hidden by your browsing level');
+    expect(page.getByText('Start reading').elements()).toHaveLength(0);
     expect(mocks.commentsPostId).not.toHaveBeenCalled();
   });
 
@@ -181,7 +260,19 @@ describe('StorylinePage', () => {
     await expect
       .element(page.getByText("This storyline doesn't exist or isn't available to you."))
       .toBeVisible();
-    expect(page.getByText('Read from the start').elements()).toHaveLength(0);
+    expect(page.getByText('Start reading').elements()).toHaveLength(0);
+  });
+
+  test('loading shows the page skeleton, not the unavailable message', async () => {
+    mocks.loading = true;
+    mocks.storyline = undefined;
+    renderWithProviders(<StorylinePage id={2} />);
+
+    // The harness loads no stylesheet, so the skeleton has no height to be "visible" with.
+    await expect.element(page.getByTestId('storyline-page-skeleton')).toBeInTheDocument();
+    expect(
+      page.getByText("This storyline doesn't exist or isn't available to you.").elements()
+    ).toHaveLength(0);
   });
 
   // Manage is the only way into the storyline's settings, and only its owner may use them.
@@ -205,10 +296,15 @@ describe('StorylinePage', () => {
     mocks.storyline = { ...STORYLINE, chapterCount: 1, contributorCount: 1 };
     renderWithProviders(<StorylinePage id={2} />);
 
-    await expect.element(page.getByText('1 chapter · 1 creator')).toBeVisible();
+    await expect.element(heading()).toBeVisible();
+    const header = page.getByRole('banner').element().textContent;
+    expect(header).toContain('1 chapter');
+    expect(header).not.toContain('1 chapters');
+    expect(header).toContain('1 creator');
+    expect(header).not.toContain('1 creators');
   });
 
-  test('offers no Continue when the end of the main path is hidden from this reader', async () => {
+  test('offers no Continue when the end of the canon path is hidden from this reader', async () => {
     mocks.storyline = { ...STORYLINE, mainPath: [...STORYLINE.mainPath, chapter(4, null, 0)] };
     mocks.terms = { open: true, closedReason: null, price: 0 };
     renderWithProviders(<StorylinePage id={2} />);

@@ -1,6 +1,5 @@
-import { Alert, Badge, Button, Center, Group, Loader, Skeleton, Text } from '@mantine/core';
-import { IconBolt, IconBook2, IconCircleCheck, IconLock, IconUsers } from '@tabler/icons-react';
-import clsx from 'clsx';
+import { Alert, Button, Center, Group, Loader, Skeleton, Text } from '@mantine/core';
+import { IconBook2, IconUsers } from '@tabler/icons-react';
 import { useMemo, useState } from 'react';
 import { useViewerBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
@@ -11,10 +10,15 @@ import { SelectMenuV2 } from '~/components/SelectMenu/SelectMenu';
 import { storylineUrl } from '~/components/Storyline/storyline-routes';
 import { StorylineFiltersDropdown } from '~/components/Storyline/StorylineFiltersDropdown';
 import type { StorylineFeedFilter } from '~/components/Storyline/StorylineFiltersDropdown';
+import {
+  StorylineClosedChip,
+  StorylinePriceChip,
+  StorylineStat,
+  StorylineStatusChip,
+} from '~/components/Storyline/StorylineChips';
 import { StorylineThumb } from '~/components/Storyline/StorylineThumb';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { RouterOutput } from '~/types/router';
-import { numberWithCommas } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 
 type StorylineCard = RouterOutput['storyline']['getInfinite']['items'][number];
@@ -30,7 +34,6 @@ const gridClass =
   'grid list-none grid-cols-2 gap-2.5 p-0 sm:grid-cols-[repeat(auto-fill,minmax(220px,1fr))] sm:gap-4';
 const cardClass =
   'flex h-full flex-col overflow-hidden rounded-xl border border-solid border-gray-3 bg-gray-0 shadow-sm dark:border-dark-4 dark:bg-dark-6';
-const onImageChip = '!bg-black/55 !text-white backdrop-blur-sm';
 
 export function StorylinesFeed() {
   const [filter, setFilter] = useState<StorylineFeedFilter>('all');
@@ -116,7 +119,6 @@ function closedLabel(storyline: StorylineCard, viewerId: number | undefined) {
 }
 
 export function StorylineFeedCard({ storyline }: { storyline: StorylineCard }) {
-  const complete = storyline.status === 'Complete';
   const currentUser = useCurrentUser();
   const closed = closedLabel(storyline, currentUser?.id);
   const price = storyline.open ? storyline.continuePrice : null;
@@ -124,35 +126,9 @@ export function StorylineFeedCard({ storyline }: { storyline: StorylineCard }) {
   return (
     <Link href={storylineUrl(storyline.id)} className={cardClass}>
       <StorylineThumb image={storyline.coverImage} width={300} fluid className="!rounded-none">
-        <Badge
-          className={clsx('absolute left-2 top-2', onImageChip)}
-          size="sm"
-          radius="xl"
-          variant="light"
-          color={complete ? 'gray' : 'green'}
-          leftSection={
-            complete ? (
-              <IconCircleCheck size={12} />
-            ) : (
-              <span className="block size-1.5 rounded-full bg-green-5" />
-            )
-          }
-          data-testid="storyline-status-chip"
-        >
-          {storyline.status}
-        </Badge>
+        <StorylineStatusChip status={storyline.status} onImage className="absolute left-2 top-2" />
         {closed && (
-          <Badge
-            className={clsx('absolute right-2 top-2', onImageChip)}
-            size="sm"
-            radius="xl"
-            variant="light"
-            color="gray"
-            leftSection={<IconLock size={12} />}
-            data-testid="storyline-closed-chip"
-          >
-            {closed}
-          </Badge>
+          <StorylineClosedChip label={closed} onImage className="absolute right-2 top-2" />
         )}
         <div className="absolute inset-x-0 bottom-0 flex h-[45%] flex-col justify-end bg-gradient-to-t from-black/80 to-transparent px-3 pb-2.5 [text-shadow:0_1px_2px_rgba(0,0,0,.6)]">
           <Text fz={17} fw={800} lh={1.2} c="white" lineClamp={2}>
@@ -166,51 +142,20 @@ export function StorylineFeedCard({ storyline }: { storyline: StorylineCard }) {
         </div>
       </StorylineThumb>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 px-3 py-2.5">
-        <Stat icon={IconBook2} label={storyline.chapterCount === 1 ? 'chapter' : 'chapters'}>
-          {storyline.chapterCount}
-        </Stat>
-        <Stat icon={IconUsers} label={storyline.contributorCount === 1 ? 'creator' : 'creators'}>
-          {storyline.contributorCount}
-        </Stat>
-        {price != null && (
-          <Badge
-            className="ml-auto"
-            size="sm"
-            radius="xl"
-            variant="light"
-            color={price > 0 ? 'yellow' : 'green'}
-            leftSection={price > 0 ? <IconBolt size={12} /> : undefined}
-            data-testid="storyline-price-chip"
-            title={price > 0 ? `${numberWithCommas(price)} Buzz to continue` : 'Free to continue'}
-          >
-            {price > 0 ? numberWithCommas(price) : 'Free'}
-          </Badge>
-        )}
+        <StorylineStat
+          icon={IconBook2}
+          count={storyline.chapterCount}
+          one="chapter"
+          many="chapters"
+        />
+        <StorylineStat
+          icon={IconUsers}
+          count={storyline.contributorCount}
+          one="creator"
+          many="creators"
+        />
+        {price != null && <StorylinePriceChip price={price} short className="ml-auto" />}
       </div>
     </Link>
-  );
-}
-
-function Stat({
-  icon: Icon,
-  label,
-  children,
-}: {
-  icon: typeof IconBook2;
-  label: string;
-  children: number;
-}) {
-  return (
-    <Text
-      component="span"
-      size="xs"
-      c="dimmed"
-      className="flex items-center gap-1"
-      title={`${children} ${label}`}
-    >
-      <Icon size={14} stroke={2} aria-hidden />
-      {children}
-      <span className="sr-only">{` ${label}`}</span>
-    </Text>
   );
 }
