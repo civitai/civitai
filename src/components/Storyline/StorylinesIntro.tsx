@@ -100,7 +100,7 @@ export function StorylinesIntro() {
           Got it
         </Button>
       </Group>
-      <Text size="xs" c="dimmed" mt="xs">
+      <Text size="xs" c="dimmed" mt="xs" visibleFrom="sm">
         Start a storyline opens your posts; any post you made can become chapter 1.
       </Text>
     </Card>
