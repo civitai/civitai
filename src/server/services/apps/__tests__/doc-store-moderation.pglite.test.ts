@@ -397,26 +397,47 @@ function defineModerationSuite(rls: boolean) {
     });
   });
 
-  describe('version binding', () => {
-    it('with ifVersion, hide and delete refuse a document that changed; nothing is written', async () => {
+  describe('revision binding', () => {
+    it('with ifRevision, hide and delete refuse a document that changed; nothing is written', async () => {
       const app = freshApp('modver');
       const v1 = ctx(app, NS_PROD, VIEWER_1);
       await store.put(v1, BOARD, 'x', { text: 'seen' });
+      const seen = (await store.moderation.get(app, NS_PROD, 'board', 'x'))!.revision;
       await store.put(v1, BOARD, 'x', { text: 'edited after the moderator looked' });
       await expectCode(
-        store.moderation.setHidden(app, NS_PROD, 'board', 'x', true, MOD, { ifVersion: 1 }),
+        store.moderation.setHidden(app, NS_PROD, 'board', 'x', true, MOD, { ifRevision: seen }),
         'version_conflict'
       );
       await expectCode(
-        store.moderation.delete(app, NS_PROD, 'board', 'x', { ifVersion: 1 }),
+        store.moderation.delete(app, NS_PROD, 'board', 'x', { ifRevision: seen }),
         'version_conflict'
       );
       expect(await store.get(v1, BOARD, 'x')).toMatchObject({ version: 2 });
       expect(await h.raw(`SELECT 1 FROM appdata.doc_tomb WHERE app_id = $1`, [app])).toEqual([]);
-      // Positive control: the current version is accepted.
+      // Positive control: the current revision is accepted.
+      const current = (await store.moderation.get(app, NS_PROD, 'board', 'x'))!.revision;
       expect(
-        await store.moderation.delete(app, NS_PROD, 'board', 'x', { ifVersion: 2 })
+        await store.moderation.delete(app, NS_PROD, 'board', 'x', { ifRevision: current })
       ).toMatchObject({ deleted: true });
+    });
+
+    it('a key deleted and re-created by its author is a new revision, though its version is 1 again', async () => {
+      const app = freshApp('modaba');
+      const v1 = ctx(app, NS_PROD, VIEWER_1);
+      await store.put(v1, BOARD, 'x', { text: 'reported content' });
+      const seen = (await store.moderation.get(app, NS_PROD, 'board', 'x'))!;
+      await store.delete(v1, BOARD, 'x');
+      await store.put(v1, BOARD, 'x', { text: 'new content nobody reviewed' });
+      const now = (await store.moderation.get(app, NS_PROD, 'board', 'x'))!;
+      expect({ seen: seen.version, now: now.version }).toEqual({ seen: 1, now: 1 });
+      expect(now.revision).not.toBe(seen.revision);
+      await expectCode(
+        store.moderation.delete(app, NS_PROD, 'board', 'x', { ifRevision: seen.revision }),
+        'version_conflict'
+      );
+      expect(await store.get(v1, BOARD, 'x')).toMatchObject({
+        data: { text: 'new content nobody reviewed' },
+      });
     });
   });
 

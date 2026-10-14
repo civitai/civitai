@@ -138,6 +138,7 @@ function row(over: Row = {}): Row {
     hidden: null,
     sizeBytes: 120,
     version: 3,
+    revision: 41,
     ...over,
   };
 }
@@ -199,7 +200,7 @@ describe('AppDocStoreReportsQueue', () => {
     await expect.element(confirm).toBeEnabled();
     await userEvent.click(confirm);
     expect(m.hideCalls).toStrictEqual([
-      { ...TARGET, version: 3, reason: 'spam link', hidden: true },
+      { ...TARGET, revision: 41, reason: 'spam link', hidden: true },
     ]);
     expect(m.deleteCalls).toEqual([]);
     expect(m.successes).toEqual([DOC_STORE_ACTION_COPY.hide.done]);
@@ -216,7 +217,7 @@ describe('AppDocStoreReportsQueue', () => {
     await userEvent.fill(page.getByTestId('doc-store-report-reason'), 'reviewed, fine');
     await userEvent.click(page.getByTestId('doc-store-report-confirm'));
     expect(m.hideCalls).toStrictEqual([
-      { ...TARGET, version: 3, reason: 'reviewed, fine', hidden: false },
+      { ...TARGET, revision: 41, reason: 'reviewed, fine', hidden: false },
     ]);
     expect(m.successes).toEqual([DOC_STORE_ACTION_COPY.unhide.done]);
   });
@@ -228,7 +229,7 @@ describe('AppDocStoreReportsQueue', () => {
     await expect.element(page.getByText(DOC_STORE_ACTION_COPY.delete.title)).toBeVisible();
     await userEvent.fill(page.getByTestId('doc-store-report-reason'), 'illegal content');
     await userEvent.click(page.getByTestId('doc-store-report-confirm'));
-    expect(m.deleteCalls).toStrictEqual([{ ...TARGET, version: 3, reason: 'illegal content' }]);
+    expect(m.deleteCalls).toStrictEqual([{ ...TARGET, revision: 41, reason: 'illegal content' }]);
     expect(m.hideCalls).toEqual([]);
   });
 

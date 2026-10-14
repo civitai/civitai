@@ -235,9 +235,13 @@ export function AppDocStoreReportsQueue() {
 
   const confirm = () => {
     if (!pending) return;
-    // `version` ties the action to the version this row showed: a document edited since is
-    // refused (CONFLICT) instead of acted on unseen.
-    const input = { ...targetOf(pending.row), version: pending.row.version, reason: reason.trim() };
+    // `revision` ties the action to the state this row showed: a document edited (or deleted
+    // and re-created) since is refused (CONFLICT) instead of acted on unseen.
+    const input = {
+      ...targetOf(pending.row),
+      revision: pending.row.revision,
+      reason: reason.trim(),
+    };
     if (pending.action === 'delete') remove.mutate(input);
     else setHidden.mutate({ ...input, hidden: pending.action === 'hide' });
   };

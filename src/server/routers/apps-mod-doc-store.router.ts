@@ -32,8 +32,8 @@ const collectionInput = z.string().regex(DOC_STORE_BOUNDS.collectionName);
 const keyInput = z.string().regex(DOC_STORE_BOUNDS.key);
 /** The listing takedown verbs' floor and ceiling, trimmed like the per-user storage purge. */
 const reasonInput = z.string().trim().min(OFFSITE_MOD_REASON_MIN).max(OFFSITE_MOD_REASON_MAX);
-/** The version the moderator saw; the action is refused (CONFLICT) if the document changed. */
-const versionInput = z.number().int().min(1).optional();
+/** The revision the moderator saw; the action is refused (CONFLICT) if the document changed. */
+const revisionInput = z.number().int().nonnegative().optional();
 const target = { appBlockId: appBlockIdInput, collection: collectionInput, key: keyInput };
 
 /** Map service and store refusals to tRPC codes. Messages are fixed; the original is the `cause`. */
@@ -100,14 +100,16 @@ export const appsModDocStoreRouter = router({
 
   /** Hide (reads as not found to the app) or unhide. Reversible. */
   setHidden: moderatorProcedure
-    .input(z.object({ ...target, hidden: z.boolean(), reason: reasonInput, version: versionInput }))
+    .input(
+      z.object({ ...target, hidden: z.boolean(), reason: reasonInput, revision: revisionInput })
+    )
     .mutation(({ ctx, input }) =>
       mapped(() => setModeratedDocHidden({ ...input, actorUserId: ctx.user.id }))
     ),
 
   /** Hard delete, with its tallies, marks and index rows; refunds usage. Irreversible. */
   delete: moderatorProcedure
-    .input(z.object({ ...target, reason: reasonInput, version: versionInput }))
+    .input(z.object({ ...target, reason: reasonInput, revision: revisionInput }))
     .mutation(({ ctx, input }) =>
       mapped(() => deleteModeratedDoc({ ...input, actorUserId: ctx.user.id }))
     ),

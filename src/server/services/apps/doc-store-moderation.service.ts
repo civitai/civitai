@@ -159,8 +159,9 @@ export type ReportedDocItem = {
   author: { kind: ReportedDocRow['authorKind']; userId: number | null; username: string | null };
   hidden: { at: Date; byUserId: number | null; byUsername: string | null } | null;
   sizeBytes: number;
-  /** Pass back on an action so it refuses if the document changed since this row was read. */
   version: number;
+  /** Pass back on an action so it refuses if the document changed since this row was read. */
+  revision: number;
 };
 
 /**
@@ -222,6 +223,7 @@ export async function listReportedDocs(input: {
         : null,
       sizeBytes: row.sizeBytes,
       version: row.version,
+      revision: row.revision,
     })),
     nextCursor:
       merged.length > input.limit && last
@@ -283,8 +285,8 @@ type ModAction = keyof typeof DOC_STORE_MOD_ACTIONS;
  * (`DocStoreError`, raised inside the transaction before COMMIT) is recorded as
  * `failed`; any other error as `unknown`, because it may have struck after COMMIT.
  *
- * The action is bound to the snapshot's version (and to `expectedVersion`, the version the
- * moderator saw, when given): the store refuses under its row lock if the document changed,
+ * The action is bound to the snapshot's revision (and to `expectedRevision`, the revision
+ * the moderator saw, when given): the store refuses under its row lock if the document changed,
  * so what the audit row describes is exactly what was hidden or deleted.
  */
 async function audited<T extends Record<string, unknown>>(
@@ -295,15 +297,15 @@ async function audited<T extends Record<string, unknown>>(
     app: AppIdentity;
     collection: string;
     key: string;
-    expectedVersion?: number;
+    expectedRevision?: number;
   },
-  run: (ifVersion: number) => Promise<T>
+  run: (ifRevision: number) => Promise<T>
 ): Promise<T & { auditEventId: string }> {
   const { app, collection, key } = args;
   // The snapshot is what the moderator acted on; a missing or changed document refuses the
   // action before any audit row exists.
   const before = await readDoc(app, collection, key);
-  if (args.expectedVersion !== undefined && args.expectedVersion !== before.version) {
+  if (args.expectedRevision !== undefined && args.expectedRevision !== before.revision) {
     throw new DocStoreModerationError('version_conflict');
   }
   const id = newAppListingModerationEventId();
@@ -327,6 +329,7 @@ async function audited<T extends Record<string, unknown>>(
         hiddenAt: before.hiddenAt?.toISOString() ?? null,
         hiddenBy: before.hiddenBy,
         version: before.version,
+        revision: before.revision,
         sizeBytes: before.sizeBytes,
         dataMd5: before.dataMd5,
       } as Prisma.InputJsonValue,
@@ -334,7 +337,7 @@ async function audited<T extends Record<string, unknown>>(
   });
   let result: T;
   try {
-    result = await run(before.version);
+    result = await run(before.revision);
   } catch (err) {
     await dbWrite.appListingModerationEvent
       .update({
@@ -378,12 +381,12 @@ export async function setModeratedDocHidden(input: {
   key: string;
   hidden: boolean;
   reason: string;
-  version?: number;
+  revision?: number;
 }) {
   const app = await resolveApp(input.appBlockId);
   return audited(
-    { ...input, app, action: input.hidden ? 'hide' : 'unhide', expectedVersion: input.version },
-    async (ifVersion) =>
+    { ...input, app, action: input.hidden ? 'hide' : 'unhide', expectedRevision: input.revision },
+    async (ifRevision) =>
       getDocStore().moderation.setHidden(
         app.appBlockId,
         MOD_NS,
@@ -391,7 +394,7 @@ export async function setModeratedDocHidden(input: {
         input.key,
         input.hidden,
         input.actorUserId,
-        { ifVersion }
+        { ifRevision }
       )
   );
 }
@@ -403,14 +406,14 @@ export async function deleteModeratedDoc(input: {
   collection: string;
   key: string;
   reason: string;
-  version?: number;
+  revision?: number;
 }) {
   const app = await resolveApp(input.appBlockId);
   return audited(
-    { ...input, app, action: 'delete', expectedVersion: input.version },
-    async (ifVersion) =>
+    { ...input, app, action: 'delete', expectedRevision: input.revision },
+    async (ifRevision) =>
       getDocStore().moderation.delete(app.appBlockId, MOD_NS, input.collection, input.key, {
-        ifVersion,
+        ifRevision,
       })
   );
 }

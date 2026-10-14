@@ -162,7 +162,8 @@ async function report(app: { id: string }, coll: typeof POSTS, key: string, n: n
  * A: posts/a1 ×3, posts/a0 ×3, board/a2 ×1.   B: posts/b1 ×2, posts/b2 ×1.   C: posts/c1 ×3.
  * Cross-app order by reports (DESC on reports, app, collection, key):
  *   C/posts/c1:3, A/posts/a1:3, A/posts/a0:3, B/posts/b1:2, B/posts/b2:1, A/board/a2:1
- * (a1/a0 tie on count, app and collection, so the TypeScript merge must order them by key.)
+ * (a1/a0 tie on count, app and collection: the per-app SQL orders them by key, and the merge
+ * must keep that order.)
  */
 async function seedQueue() {
   await h.store.put(v(APP_A), POSTS, 'a1', { status: 'open', score: 5 });
@@ -492,34 +493,89 @@ describe('setHidden / delete: effects through the app reads, and the audit trail
     expect(await h.store.get(v(APP_A), POSTS, 'a1')).not.toBeNull();
   });
 
-  it('an action carrying the version the moderator saw is refused once the author edits', async () => {
+  it('an action carrying the revision the moderator saw is refused once the author edits', async () => {
     await seedQueue();
     const seen = await caller().get(A1);
     await h.store.put(v(APP_A), POSTS, 'a1', { status: 'edited', score: 1 });
     await expect(
-      caller().delete({ ...A1, version: seen.version, reason: 'illegal content' })
+      caller().delete({ ...A1, revision: seen.revision, reason: 'illegal content' })
     ).rejects.toMatchObject({ code: 'CONFLICT' });
     await expect(
-      caller().setHidden({ ...A1, hidden: true, version: seen.version, reason: 'spam report' })
+      caller().setHidden({ ...A1, hidden: true, revision: seen.revision, reason: 'spam report' })
     ).rejects.toMatchObject({ code: 'CONFLICT' });
     expect(await h.store.get(v(APP_A), POSTS, 'a1')).toMatchObject({ version: 2 });
     expect(audit).toEqual([]);
-    // The current version goes through.
-    await caller().delete({ ...A1, version: 2, reason: 'illegal content' });
+    // The current revision goes through.
+    const now = await caller().get(A1);
+    await caller().delete({ ...A1, revision: now.revision, reason: 'illegal content' });
     expect(await h.store.get(v(APP_A), POSTS, 'a1')).toBeNull();
   });
 
-  it('the store action is bound to the audited snapshot version', async () => {
+  it('a stale row cannot delete a key its author deleted and re-created (version 1 again)', async () => {
     await seedQueue();
-    const spy = vi.spyOn(h.store.moderation, 'delete');
+    const A2 = { appBlockId: APP_A.id, collection: 'board', key: 'a2' };
+    const seen = await caller().get(A2);
+    await h.store.delete(v(APP_A), BOARD, 'a2');
+    await h.store.put(v(APP_A), BOARD, 'a2', { text: 'new, unreviewed' });
+    await expect(
+      caller().delete({ ...A2, revision: seen.revision, reason: 'illegal content' })
+    ).rejects.toMatchObject({ code: 'CONFLICT' });
+    expect(await h.store.get(v(APP_A), BOARD, 'a2')).toMatchObject({
+      version: 1,
+      data: { text: 'new, unreviewed' },
+    });
+  });
+
+  it('every store action is bound to the audited snapshot revision', async () => {
+    await seedQueue();
+    const hide = vi.spyOn(h.store.moderation, 'setHidden');
+    const del = vi.spyOn(h.store.moderation, 'delete');
+    await caller().setHidden({ ...A1, hidden: true, reason: 'spam report' });
+    await caller().setHidden({ ...A1, hidden: false, reason: 'reviewed, fine' });
     await caller().delete({ ...A1, reason: 'illegal content' });
-    expect(spy.mock.calls[0][4]).toEqual({ ifVersion: audit[0].before.version });
+    expect(hide.mock.calls.map((c) => c[6])).toEqual([
+      { ifRevision: audit[0].before.revision },
+      { ifRevision: audit[1].before.revision },
+    ]);
+    expect(del.mock.calls.map((c) => c[4])).toEqual([{ ifRevision: audit[2].before.revision }]);
+    // Unhide moved the revision, so each action carried its own snapshot's.
+    expect(audit[2].before.revision).not.toBe(audit[0].before.revision);
+  });
+
+  it('an edit landing between the audit snapshot and the action: CONFLICT, stamped failed, nothing hidden', async () => {
+    await seedQueue();
+    const real = h.store.moderation.setHidden;
+    vi.spyOn(h.store.moderation, 'setHidden').mockImplementationOnce(async (...args) => {
+      await h.store.put(v(APP_A), POSTS, 'a1', { status: 'edited in the gap' });
+      return real(...args);
+    });
+    await expect(
+      caller().setHidden({ ...A1, hidden: true, reason: 'spam report' })
+    ).rejects.toMatchObject({ code: 'CONFLICT' });
+    expect(audit.map((r) => [r.action, r.after?.outcome])).toEqual([
+      ['storage-doc-hide', 'failed'],
+    ]);
+    expect(await h.store.get(v(APP_A), POSTS, 'a1')).toMatchObject({
+      data: { status: 'edited in the gap' },
+    });
+  });
+
+  it('a delete landing between the audit snapshot and the action: NOT_FOUND, stamped failed', async () => {
+    await seedQueue();
+    const real = h.store.moderation.setHidden;
+    vi.spyOn(h.store.moderation, 'setHidden').mockImplementationOnce(async (...args) => {
+      await h.store.delete(v(APP_A), POSTS, 'a1');
+      return real(...args);
+    });
+    await expect(
+      caller().setHidden({ ...A1, hidden: true, reason: 'spam report' })
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    expect(audit.map((r) => r.after?.outcome)).toEqual(['failed']);
   });
 
   it('a store refusal after the audit row is stamped failed; any other error unknown', async () => {
     await seedQueue();
-    const spy = vi
-      .spyOn(h.store.moderation, 'setHidden')
+    vi.spyOn(h.store.moderation, 'setHidden')
       .mockRejectedValueOnce(new DocStoreError('rate_limited', 'storage is busy; retry'))
       .mockRejectedValueOnce(new Error('connection reset after commit'));
     await expect(

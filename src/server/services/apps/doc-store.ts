@@ -1413,6 +1413,8 @@ export type ReportedDocRow = {
   hiddenBy: number | null;
   sizeBytes: number;
   version: number;
+  /** The document's revision (`seq`): pass it back to bind an action to exactly this state. */
+  revision: number;
   /** The keyset value for the requested sort, as a decimal bigint. */
   sortValue: string;
 };
@@ -1438,7 +1440,7 @@ type ModerationDeps = {
 // Reported shared documents of one (app, ns): a positive `report` mark tally joined to
 // its document. $1 app, $2 ns, $3 the report mark name.
 const SQL_MOD_REPORTED = `SELECT d.coll, d.key, d.author_uid, d.author_kind, d.created_at, d.updated_at,
-    d.hidden_at, d.hidden_by, d.size_bytes, d.version, t.count AS reports,
+    d.hidden_at, d.hidden_by, d.size_bytes, d.version, d.seq, t.count AS reports,
     (SELECT max(rm.created_at) FROM appdata.doc_mark rm
       WHERE rm.app_id = $1 AND rm.ns = $2 AND rm.coll = t.coll AND rm.key = t.key AND rm.name = $3) AS last_reported_at
   FROM appdata.doc_tally t
@@ -1446,7 +1448,7 @@ const SQL_MOD_REPORTED = `SELECT d.coll, d.key, d.author_uid, d.author_kind, d.c
   WHERE t.app_id = $1 AND t.ns = $2 AND t.kind = 'mark' AND t.name = $3 AND t.count > 0`;
 
 // One shared document as a moderator sees it, hidden or not. $1 app, $2 ns, $3 coll, $4 key
-const SQL_MOD_GET = `SELECT d.coll, d.key, d.data, md5(d.data::text) AS data_md5, d.version, d.size_bytes,
+const SQL_MOD_GET = `SELECT d.coll, d.key, d.data, md5(d.data::text) AS data_md5, d.version, d.seq, d.size_bytes,
     d.author_uid, d.author_kind, d.created_at, d.updated_at, d.hidden_at, d.hidden_by,
     (SELECT jsonb_object_agg(t.kind || ':' || t.name, t.count) FROM appdata.doc_tally t
       WHERE t.app_id = $1 AND t.ns = $2 AND t.coll = d.coll AND t.key = d.key) AS tallies
@@ -1464,6 +1466,13 @@ const SQL_MOD_HIDE = `UPDATE appdata.doc d SET hidden_at = now(), hidden_by = $5
 const SQL_MOD_UNHIDE = `UPDATE appdata.doc d SET hidden_at = NULL, hidden_by = NULL, seq = $5::bigint
   WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = 0 AND d.key = $4`;
 
+// The moderator's lock read: SQL_LOCK_DOC's columns plus `seq`, the revision an action is
+// bound to. $1 app, $2 ns, $3 coll, $4 key
+const SQL_MOD_LOCK = `SELECT d.version, d.seq, d.author_uid, d.size_bytes, d.hidden_at IS NOT NULL AS hidden
+  FROM appdata.doc d
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = 0 AND d.key = $4
+  FOR UPDATE`;
+
 const SORT_VALUE_SHAPE = /^[0-9]{1,18}$/;
 
 function assertModTarget(collection: string, key: string): void {
@@ -1471,9 +1480,14 @@ function assertModTarget(collection: string, key: string): void {
   assertKey(key);
 }
 
-/** Refuse, under the row lock, an action on a version other than the one the moderator saw. */
-function assertModVersion(row: Record<string, unknown>, ifVersion: number | undefined): void {
-  if (ifVersion !== undefined && Number(row.version) !== ifVersion) {
+/**
+ * Refuse, under the row lock, an action on any revision other than the one the moderator saw.
+ * The revision is the document's `seq`, not its `version`: `version` restarts at 1 when a key
+ * is deleted and re-created, while `seq` is unique per (app, ns) and changes on every document
+ * write (and on unhide), so a re-created document can never pass for the one that was reviewed.
+ */
+function assertModRevision(row: Record<string, unknown>, ifRevision: number | undefined): void {
+  if (ifRevision !== undefined && Number(row.seq) !== ifRevision) {
     throw new DocStoreError('version_conflict', 'document changed since it was read', {
       currentVersion: Number(row.version),
     });
@@ -1555,6 +1569,7 @@ function createModeration({ withTx, charge }: ModerationDeps) {
       hiddenBy: r.hidden_by === null ? null : Number(r.hidden_by),
       sizeBytes: Number(r.size_bytes),
       version: Number(r.version),
+      revision: Number(r.seq),
       sortValue: String(r.sv),
     }));
   }
@@ -1592,6 +1607,7 @@ function createModeration({ withTx, charge }: ModerationDeps) {
       hiddenBy: row.hidden_by === null ? null : Number(row.hidden_by),
       sizeBytes: Number(row.size_bytes),
       version: Number(row.version),
+      revision: Number(row.seq),
       counters,
       marks,
     };
@@ -1603,7 +1619,7 @@ function createModeration({ withTx, charge }: ModerationDeps) {
    * is reversible. A hide takes the next seq into a tombstone, so a feed reader drops
    * the document; an unhide gives the document the next seq, so the reader sees it
    * again. Already in the requested state: `changed: false`, nothing written. With
-   * `ifVersion`, a document at any other version is refused (`version_conflict`).
+   * `ifRevision`, a document at any other revision (`seq`) is refused (`version_conflict`).
    */
   async function setHidden(
     appId: string,
@@ -1612,7 +1628,7 @@ function createModeration({ withTx, charge }: ModerationDeps) {
     key: string,
     hidden: boolean,
     moderatorUid: number,
-    opts: { ifVersion?: number } = {}
+    opts: { ifRevision?: number } = {}
   ): Promise<{ changed: boolean; seq: number | null }> {
     assertModTarget(collection, key);
     if (!(Number.isSafeInteger(moderatorUid) && moderatorUid > 0)) {
@@ -1620,9 +1636,9 @@ function createModeration({ withTx, charge }: ModerationDeps) {
     }
     const ctx = modCtx(appId, ns);
     return withTx(ctx, async (c) => {
-      const row = (await c.query(SQL_LOCK_DOC, [appId, ns, collection, 0, key])).rows[0];
+      const row = (await c.query(SQL_MOD_LOCK, [appId, ns, collection, key])).rows[0];
       if (!row) throw new DocStoreError('not_found', 'document not found');
-      assertModVersion(row, opts.ifVersion);
+      assertModRevision(row, opts.ifRevision);
       if (row.hidden === hidden) return { changed: false, seq: null };
       // No bytes move; the charge only takes the next seq under the usage_app lock (LOCK ORDER (2)).
       const noCharge = { uid: 0, bytes: 0, docs: 0, ceiling: 'app' as const };
@@ -1649,14 +1665,14 @@ function createModeration({ withTx, charge }: ModerationDeps) {
     ns: string,
     collection: string,
     key: string,
-    opts: { ifVersion?: number } = {}
+    opts: { ifRevision?: number } = {}
   ): Promise<{ deleted: true; sizeBytes: number; seq: number }> {
     assertModTarget(collection, key);
     const ctx = modCtx(appId, ns);
     return withTx(ctx, async (c) => {
-      const row = (await c.query(SQL_LOCK_DOC, [appId, ns, collection, 0, key])).rows[0];
+      const row = (await c.query(SQL_MOD_LOCK, [appId, ns, collection, key])).rows[0];
       if (!row) throw new DocStoreError('not_found', 'document not found');
-      assertModVersion(row, opts.ifVersion);
+      assertModRevision(row, opts.ifRevision);
       await c.query(SQL_DELETE_DOC, [appId, ns, collection, 0, key]);
       await c.query(SQL_DELETE_TALLIES, [appId, ns, collection, key]);
       await c.query(SQL_DELETE_MARKS, [appId, ns, collection, key]);
@@ -1666,6 +1682,8 @@ function createModeration({ withTx, charge }: ModerationDeps) {
         c,
         ctx,
         { bytes: -size, docs: -1 },
+        // No writer creates a shared doc without an author uid today; an app-authored doc
+        // (owner writes, not built yet) would charge no user, so none is refunded.
         author === null
           ? { uid: 0, bytes: 0, docs: 0, ceiling: 'author' }
           : { uid: author, bytes: -size, docs: -1, ceiling: 'author' }
