@@ -1,5 +1,5 @@
 import { Alert, Group, Loader, Modal } from '@mantine/core';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { useQueryImages } from '~/components/Image/image.utils';
 import {
@@ -9,6 +9,7 @@ import {
 import {
   STORYLINE_CONTINUE_POST_LIMIT,
   storylineContinuePostOptions,
+  storylineWithoutChapters,
   storylineSubmitInput,
 } from '~/components/Storyline/storyline-ui';
 import { getStorylineChapterName } from '~/components/Storyline/storyline-mode.utils';
@@ -76,12 +77,27 @@ export default function StorylineContinueModal({
   const submit = useSubmitStorylineContinuation({ onSuccess: setOutcome });
 
   const firstPage = postPages?.pages[0];
-  const posts = currentUser
-    ? storylineContinuePostOptions(firstPage?.items ?? [], {
-        viewerId: currentUser.id,
-        parentPostId,
-      })
-    : [];
+  const ownPosts = useMemo(
+    () =>
+      currentUser
+        ? storylineContinuePostOptions(firstPage?.items ?? [], {
+            viewerId: currentUser.id,
+            parentPostId,
+          })
+        : [],
+    [currentUser, firstPage, parentPostId]
+  );
+  // Which of them are already chapters; the author is told whatever the post's level.
+  const ownPostIds = useMemo(() => ownPosts.map((post) => post.id), [ownPosts]);
+  const { data: ownChapters, isLoading: ownChaptersLoading } = trpc.storyline.getForPosts.useQuery(
+    { postIds: ownPostIds, browsingLevel: allBrowsingLevelsFlag },
+    // Keep the last answer while a refetch adds a post, so the grid does not blink to skeletons.
+    { enabled: enabled && ownPostIds.length > 0, placeholderData: (previous) => previous }
+  );
+  const { posts, alreadyChapters } = storylineWithoutChapters(
+    ownPosts,
+    new Set(Object.keys(ownChapters ?? {}).map(Number))
+  );
 
   const parentName =
     parentChapter && parentPost
@@ -125,7 +141,8 @@ export default function StorylineContinueModal({
           price={terms.data.price}
           isCollaborator={storyline.collaborators.some((user) => user.id === currentUser.id)}
           posts={posts}
-          postsLoading={postsLoading}
+          postsLoading={postsLoading || (ownPostIds.length > 0 && ownChaptersLoading)}
+          alreadyChapters={alreadyChapters}
           // A failed refetch keeps the posts already shown.
           postsError={postsError && !firstPage}
           morePosts={!!firstPage?.nextCursor}

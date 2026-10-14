@@ -6,6 +6,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { MantineProvider } from '@mantine/core';
 import type * as Trpc from '~/utils/trpc';
 import type * as Notifications from '~/utils/notifications';
+import type * as ImageUtils from '~/components/Image/image.utils';
 import { makeTrpcProxy } from '../../../../test/trpcProxyStub';
 import { NsfwLevel } from '~/server/common/enums';
 
@@ -30,6 +31,8 @@ const { server, spies } = vi.hoisted(() => ({
     hasNextPage: false,
     mine: null as null | { items: { id: number; status: string; awaitingReadiness: boolean }[] },
     mutationResult: { ok: true as boolean, data: undefined as unknown, message: '' },
+    myPosts: [] as unknown[],
+    chapterPostIds: [] as number[],
   },
   spies: {
     mutate: [] as { proc: string; input: unknown }[],
@@ -88,6 +91,31 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
       'placement.submitStorylineContinuation': mutation('submitStorylineContinuation'),
       'placement.actOnStorylineContinuation': mutation('actOnStorylineContinuation'),
       'storyline.addCollaborator': mutation('addCollaborator'),
+      // The continued chapter is a chapter of storyline 3; so are `chapterPostIds`.
+      'storyline.getForPosts': {
+        useQuery: (input: { postIds: number[] }) => ({
+          data: Object.fromEntries(
+            input.postIds
+              .filter((id) => id === 200 || server.chapterPostIds.includes(id))
+              .map((id) => [id, { chapterId: id, depth: 4, storylineId: 3, title: 'The Patch' }])
+          ),
+          isLoading: false,
+        }),
+      },
+      'post.getInfinite': {
+        useInfiniteQuery: () => ({
+          data: { pages: [{ items: server.myPosts, nextCursor: null }] },
+          isLoading: false,
+          isError: false,
+        }),
+      },
+      'placement.getStorylineContinuePrice': {
+        useQuery: () => ({
+          data: { open: true, price: 0, closedReason: null },
+          error: null,
+          isLoading: false,
+        }),
+      },
       'placement.getPendingStorylineContinuations': {
         useInfiniteQuery: () => ({
           data: { pages: server.queuePages },
@@ -132,6 +160,11 @@ vi.mock('~/components/Dialog/DialogProvider', () => ({
 }));
 vi.mock('~/components/Search/QuickSearchDropdown', () => ({ QuickSearchDropdown: () => null }));
 vi.mock('~/components/UserAvatar/UserAvatar', () => ({ UserAvatar: () => null }));
+// The header cover read needs the browsing providers; these tests are not about it.
+vi.mock('~/components/Image/image.utils', async (importOriginal) => ({
+  ...(await importOriginal<typeof ImageUtils>()),
+  useQueryImages: () => ({ images: [], isLoading: false }),
+}));
 vi.mock('~/utils/notifications', async (importOriginal) => ({
   ...(await importOriginal<typeof Notifications>()),
   showSuccessNotification: () => undefined,
@@ -144,6 +177,9 @@ const { StorylineContinuationQueue } = await import(
 );
 const { default: StorylineManageModal } = await import(
   '~/components/Storyline/manage/StorylineManageModal'
+);
+const { default: StorylineContinueModal } = await import(
+  '~/components/Storyline/continue/StorylineContinueModal'
 );
 const { STORYLINE_REFUSALS } = await import('~/shared/utils/storyline-placement');
 
@@ -184,6 +220,8 @@ beforeEach(() => {
   server.hasNextPage = false;
   server.mine = null;
   server.mutationResult = { ok: true, data: undefined, message: '' };
+  server.myPosts = [];
+  server.chapterPostIds = [];
   spies.mutate.length = 0;
   spies.invalidate.length = 0;
   spies.setData.length = 0;
@@ -401,6 +439,59 @@ describe('StorylineManageModal status change', () => {
       path: 'placement.getStorylineSpace',
       input: { storylineId: 3 },
     });
+  });
+});
+
+describe('StorylineManageModal price', () => {
+  it('replaces the slider with a note when the space read refuses the storyline', () => {
+    server.storyline = {
+      id: 3,
+      userId: 1,
+      title: 'The Patch',
+      status: 'Ongoing',
+      maxNsfwLevel: NsfwLevel.PG13,
+      whoCanContinue: 'Anyone',
+      collaborators: [],
+    };
+    server.spaceError = { message: STORYLINE_REFUSALS.notAvailable };
+    render(React.createElement(StorylineManageModal, { storylineId: 3 }));
+
+    expect(document.body.textContent).toContain('The price is not available yet.');
+    expect(document.body.querySelector('[role="slider"]')).toBeNull();
+  });
+});
+
+describe('StorylineContinueModal post picker', () => {
+  const post = (id: number) => ({
+    id,
+    title: `Post ${id}`,
+    nsfwLevel: NsfwLevel.PG,
+    publishedAt: null,
+    imageCount: 1,
+    user: { id: 1 },
+    images: [],
+  });
+
+  it("leaves out the viewer's posts that are already chapters, and says how many", () => {
+    server.storyline = {
+      id: 3,
+      userId: 9,
+      title: 'The Patch',
+      status: 'Ongoing',
+      maxNsfwLevel: NsfwLevel.PG13,
+      whoCanContinue: 'Anyone',
+      collaborators: [],
+      mainPath: [],
+    };
+    server.myPosts = [post(11), post(12), post(13)];
+    server.chapterPostIds = [12, 13];
+    render(React.createElement(StorylineContinueModal, { parentPostId: 200 }));
+
+    const tiles = [...document.body.querySelectorAll('[role="radio"]')];
+    expect(tiles.map((node) => node.getAttribute('aria-label'))).toEqual(['Post 11, rated PG']);
+    expect(document.body.textContent).toContain(
+      '2 of your posts are already chapters, so they aren’t listed.'
+    );
   });
 });
 

@@ -53,6 +53,7 @@ export function StorylineContinueForm({
   posts,
   postsLoading,
   postsError,
+  alreadyChapters = 0,
   morePosts,
   postId,
   onPostChange,
@@ -81,6 +82,8 @@ export function StorylineContinueForm({
   posts: StorylineContinuePost[];
   postsLoading?: boolean;
   postsError?: boolean;
+  /** The viewer's posts left out because they are already chapters. */
+  alreadyChapters?: number;
   /** Only the most recent posts are offered. */
   morePosts?: boolean;
   postId: number | null;
@@ -177,7 +180,9 @@ export function StorylineContinueForm({
           </Text>
         ) : !posts.length ? (
           <Text size="sm" c="dimmed">
-            You have no published posts.{' '}
+            {alreadyChapters
+              ? 'All your recent posts are already chapters. Make a new post to continue the story.'
+              : 'You have no published posts.'}{' '}
             <Anchor component={Link} href="/posts/create">
               Create a post
             </Anchor>
@@ -199,6 +204,13 @@ export function StorylineContinueForm({
               />
             ))}
           </div>
+        )}
+        {alreadyChapters > 0 && posts.length > 0 && (
+          <Text size="xs" c="dimmed">
+            {alreadyChapters === 1
+              ? '1 of your posts is already a chapter, so it isn’t listed.'
+              : `${alreadyChapters} of your posts are already chapters, so they aren’t listed.`}
+          </Text>
         )}
         {morePosts && (
           <Text size="xs" c="dimmed">
