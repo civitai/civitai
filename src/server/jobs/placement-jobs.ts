@@ -12,6 +12,7 @@ import {
 } from '~/server/services/placement-metrics.service';
 import { sweepDeletedRemixGallerySubmissions } from '~/server/services/remix-gallery-sweep.service';
 import { startReadyRemixSubmissionClocks } from '~/server/services/remix-gallery.service';
+import { startReadyStorylineContinuations } from '~/server/services/storyline-placement.service';
 
 const BATCH = 100;
 
@@ -91,6 +92,34 @@ export const startReadyRemixSubmissionClocksJob = createJob(
       started: sum(runs, (run) => run.started),
       refunded: sum(runs, (run) => run.refunded),
       marked: sum(runs, (run) => run.marked),
+      hitCap,
+    };
+  },
+  { lockExpiration: 10 * 60 }
+);
+
+/**
+ * Storyline continuations submitted before their post was finished, admitted
+ * to the owner's queue (or refunded) once it is. Until this runs the owner
+ * cannot see them.
+ */
+export const startReadyStorylineContinuationsJob = createJob(
+  'storyline-continuation-readiness',
+  '*/5 * * * *',
+  async (jobContext) => {
+    const { runs, hitCap } = await drain(
+      'storyline-continuation-readiness',
+      jobContext,
+      () => startReadyStorylineContinuations({ limit: BATCH }),
+      // Rows that LEFT the set: admitted or refunded. A row still selected
+      // after a pass (a transient failure) must not keep the drain going.
+      (result) => result.started + result.refunded
+    );
+
+    return {
+      considered: sum(runs, (run) => run.considered),
+      started: sum(runs, (run) => run.started),
+      refunded: sum(runs, (run) => run.refunded),
       hitCap,
     };
   },
@@ -269,6 +298,7 @@ export const sweepUncountedPlacementsJob = createJob(
 export const placementJobs = [
   expirePlacementsJob,
   startReadyRemixSubmissionClocksJob,
+  startReadyStorylineContinuationsJob,
   sweepUnpaidPlacementLegsJob,
   sweepUnplannedPlacementSettlementsJob,
   sweepDeletedRemixGallerySubmissionsJob,

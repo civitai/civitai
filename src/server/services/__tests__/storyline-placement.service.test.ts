@@ -3,6 +3,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as PlacementEscrow from '~/server/services/placement-escrow.service';
 import type * as PlacementModeration from '~/server/services/placement-moderation.service';
 import type * as PlacementSpaceService from '~/server/services/placement-space.service';
+import type * as StorylineService from '~/server/services/storyline.service';
 import type { ResolvedPlacementSpace } from '~/server/services/placement-space.service';
 import { PLACEMENT_SURFACES } from '~/shared/utils/placement';
 import { STORYLINE_REFUSALS } from '~/shared/utils/storyline-placement';
@@ -11,6 +12,7 @@ const resolveSpace = vi.fn();
 const assertCanPlace = vi.fn();
 const holdPlacementEscrow = vi.fn();
 const settlePlacement = vi.fn();
+const assertCanContinueStoryline = vi.fn();
 
 vi.mock('~/server/services/placement-space.service', async (importOriginal) => ({
   ...(await importOriginal<typeof PlacementSpaceService>()),
@@ -24,6 +26,11 @@ vi.mock('~/server/services/placement-escrow.service', async (importOriginal) => 
   ...(await importOriginal<typeof PlacementEscrow>()),
   holdPlacementEscrow,
   settlePlacement,
+}));
+
+vi.mock('~/server/services/storyline.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof StorylineService>()),
+  assertCanContinueStoryline,
 }));
 
 const { createStorylinePlacement } = await import('~/server/services/storyline-placement.service');
@@ -88,6 +95,24 @@ const tx = {
       txLog.push('count');
       return rows.filter((row) => matches(row, where)).length;
     }),
+    // Only the shape the duplicate check sends: a status list and a payload
+    // path. Anything else throws, so a changed predicate fails by name.
+    findFirst: vi.fn(async ({ where }: { where: Where }) => {
+      txLog.push('findFirst');
+      const { data, status, ...rest } = where as {
+        data: { path: string[]; equals: unknown };
+        status: { in: string[] };
+      };
+      if (data?.path?.join('.') !== 'postId' || !status?.in)
+        throw new Error('fake: unexpected duplicate predicate');
+      const hit = rows.find(
+        (row) =>
+          matches(row, rest) &&
+          status.in.includes(row.status as string) &&
+          (row.data as Row | undefined)?.postId === data.equals
+      );
+      return hit ? { id: rows.indexOf(hit) + 1 } : null;
+    }),
     create: vi.fn(async ({ data }: { data: Row }) => {
       txLog.push('create');
       rows.push({ createdAt: new Date(), ...data });
@@ -95,6 +120,62 @@ const tx = {
     }),
   },
 };
+
+type Image = {
+  ingestion: string;
+  tosViolation: boolean;
+  minor: boolean;
+  poi: boolean;
+  needsReview: string | null;
+};
+const SCANNED: Image = {
+  ingestion: 'Scanned',
+  tosViolation: false,
+  minor: false,
+  poi: false,
+  needsReview: null,
+};
+
+/** The continuation post, finished and rated PG unless overridden. */
+const givenPost = (
+  overrides: Partial<{
+    userId: number;
+    publishedAt: Date | null;
+    nsfwLevel: number;
+    tosViolation: boolean;
+    storylineChapter: { id: number } | null;
+    images: Image[];
+  }> = {}
+) =>
+  dbMock.dbWrite.post.findUnique.mockResolvedValue({
+    userId: PLACER,
+    publishedAt: new Date('2026-01-01'),
+    nsfwLevel: 1,
+    tosViolation: false,
+    storylineChapter: null,
+    images: [SCANNED],
+    ...overrides,
+  });
+
+/** What meilin's assert returns for a placer it lets through. */
+const givenAccess = ({
+  isCollaborator = false,
+  whoCanContinue = 'Anyone',
+  maxNsfwLevel = 4,
+}: { isCollaborator?: boolean; whoCanContinue?: string; maxNsfwLevel?: number } = {}) =>
+  assertCanContinueStoryline.mockResolvedValue({
+    storylineId: 5,
+    ownerId: OWNER,
+    isOwner: false,
+    isCollaborator,
+    parent: {
+      id: 1,
+      storylineId: 5,
+      depth: 0,
+      userId: OWNER,
+      storyline: { userId: OWNER, maxNsfwLevel, tosViolation: false, whoCanContinue },
+    },
+  });
 
 const givenTable = () => {
   rows = [];
@@ -143,7 +224,10 @@ beforeEach(() => {
   givenTable();
   givenSpace();
   assertCanPlace.mockResolvedValue(undefined);
-  dbMock.dbWrite.post.findUnique.mockResolvedValue({ userId: PLACER });
+  givenPost();
+  givenAccess();
+  // `settleStorylineContinuation` checks the surface before it settles.
+  dbMock.dbWrite.placement.findUnique.mockResolvedValue({ surface: 'storyline' });
   holdPlacementEscrow.mockResolvedValue({ fee: 0, principal: 0 });
   settlePlacement.mockResolvedValue({ settled: true });
 });
@@ -154,15 +238,16 @@ describe('createStorylinePlacement — priced at zero', () => {
   // the second would be refused by the daily allowance and the third by the
   // once-per-target rule; here neither applies because these are not free rows.
   it('lands five continuations on one zero-priced storyline in one day', async () => {
-    for (let i = 0; i < 5; i++) await expect(submit()).resolves.toEqual({ id: i + 1 });
+    for (let i = 0; i < 5; i++)
+      await expect(submit({ postId: CONTINUATION + i })).resolves.toEqual({ id: i + 1 });
 
     expect(rows).toHaveLength(5);
-    for (const row of rows)
+    for (const [i, row] of rows.entries())
       expect(row).toMatchObject({
         surface: 'storyline',
         targetType: 'post',
         targetId: CHAPTER,
-        data: { postId: CONTINUATION },
+        data: { postId: CONTINUATION + i },
         ownerId: OWNER,
         placerId: PLACER,
         free: false,
@@ -207,7 +292,7 @@ describe('createStorylinePlacement — priced at zero', () => {
  */
 describe('createStorylinePlacement — the free allowance is untouched', () => {
   it('leaves the daily allowance and the free-on-target rule unspent after five', async () => {
-    for (let i = 0; i < 5; i++) await submit();
+    for (let i = 0; i < 5; i++) await submit({ postId: CONTINUATION + i });
 
     await expect(getFreePlacementAllowance({ placerId: PLACER })).resolves.toMatchObject({
       used: 0,
@@ -249,9 +334,11 @@ describe('createStorylinePlacement — the pending cap', () => {
   // eleventh through.
   it('refuses the continuation past the per-owner pending cap', async () => {
     const cap = PLACEMENT_SURFACES.storyline.maxPendingPerOwner;
-    for (let i = 0; i < cap; i++) await submit();
+    for (let i = 0; i < cap; i++) await submit({ postId: CONTINUATION + i });
 
-    await expect(submit()).rejects.toThrow(/maximum continuations waiting/);
+    await expect(submit({ postId: CONTINUATION + cap })).rejects.toThrow(
+      /maximum continuations waiting/
+    );
     expect(rows).toHaveLength(cap);
   });
 
@@ -270,8 +357,11 @@ describe('createStorylinePlacement — the pending cap', () => {
     seed({ ...base, status: 'declined' });
     seed({ ...base, surface: 'remixGallery' });
 
-    for (let i = 0; i < cap; i++) await expect(submit()).resolves.toBeDefined();
-    await expect(submit()).rejects.toThrow(/maximum continuations waiting/);
+    for (let i = 0; i < cap; i++)
+      await expect(submit({ postId: CONTINUATION + i })).resolves.toBeDefined();
+    await expect(submit({ postId: CONTINUATION + cap })).rejects.toThrow(
+      /maximum continuations waiting/
+    );
   });
 
   // A spammer pays nothing to race the cap, so the count and the insert happen
@@ -284,6 +374,7 @@ describe('createStorylinePlacement — the pending cap', () => {
       "unsafe SET LOCAL lock_timeout = '3s'",
       `raw SELECT pg_advisory_xact_lock(?::int, ?::int) [${PLACER_LOCK_CLASS},${PLACER}]`,
       'count',
+      'findFirst',
       'create',
     ]);
     expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
@@ -315,7 +406,7 @@ describe('createStorylinePlacement — the rules that hold at any price', () => 
   // The closing condition for posts as targets: a continuation offers the
   // placer's OWN post. Someone else's would put the placer's name on it.
   it('refuses offering a post the placer does not own', async () => {
-    dbMock.dbWrite.post.findUnique.mockResolvedValue({ userId: PLACER + 1 });
+    givenPost({ userId: PLACER + 1 });
     await expect(submit()).rejects.toThrow(new RegExp(STORYLINE_REFUSALS.notYourPost));
     expect(dbMock.dbWrite.post.findUnique).toHaveBeenCalledWith(
       expect.objectContaining({ where: { id: CONTINUATION } })
@@ -332,7 +423,7 @@ describe('createStorylinePlacement — the rules that hold at any price', () => 
   // At a price, a refusal must come before any money moves.
   it('refuses before taking escrow on a priced storyline', async () => {
     givenSpace({ price: 100, setPrice: 100 });
-    dbMock.dbWrite.post.findUnique.mockResolvedValue({ userId: PLACER + 1 });
+    givenPost({ userId: PLACER + 1 });
     await expect(submit({ expectedPrice: 100 })).rejects.toThrow(
       new RegExp(STORYLINE_REFUSALS.notYourPost)
     );
@@ -417,5 +508,202 @@ describe('createStorylinePlacement — priced above zero', () => {
 
     await expect(submit({ expectedPrice: 100 })).rejects.toThrow(/insufficient funds/);
     expect(settlePlacement).toHaveBeenCalledWith({ placementId: 1, action: 'expire' });
+  });
+});
+
+/**
+ * Who may continue, decided by the storyline service's assert (blocks,
+ * collaborators-only) and the access rule (closed, auto-approve, review).
+ */
+describe('createStorylinePlacement — who may continue', () => {
+  // Settles the way the real escrow does as far as these tests can see: the
+  // row it names leaves `pending`.
+  const settleFlips = () =>
+    settlePlacement.mockImplementation(
+      async ({ placementId, action }: { placementId: number; action: string }) => {
+        rows[placementId - 1].status = action === 'approve' ? 'approved' : 'declined';
+        return { settled: true, placement: rows[placementId - 1] };
+      }
+    );
+
+  it('asks the storyline service about this placer and this chapter', async () => {
+    await submit();
+    expect(assertCanContinueStoryline).toHaveBeenCalledWith({
+      parentPostId: CHAPTER,
+      placerId: PLACER,
+    });
+  });
+
+  it('lands an endorsed collaborator approved, with no pending row left', async () => {
+    settleFlips();
+    givenAccess({ isCollaborator: true });
+
+    await expect(submit()).resolves.toEqual({ id: 1 });
+
+    expect(settlePlacement).toHaveBeenCalledTimes(1);
+    expect(settlePlacement).toHaveBeenCalledWith(
+      expect.objectContaining({
+        placementId: 1,
+        action: 'approve',
+        inTransaction: expect.any(Function),
+      })
+    );
+    expect(rows.map((row) => row.status)).toEqual(['approved']);
+  });
+
+  it('lands an endorsed collaborator approved on a collaborators-only storyline', async () => {
+    settleFlips();
+    givenAccess({ isCollaborator: true, whoCanContinue: 'Collaborators' });
+
+    await submit();
+    expect(rows.map((row) => row.status)).toEqual(['approved']);
+  });
+
+  it('lands a stranger pending for the owner', async () => {
+    settleFlips();
+
+    await submit();
+    expect(settlePlacement).not.toHaveBeenCalled();
+    expect(rows.map((row) => row.status)).toEqual(['pending']);
+  });
+
+  it('refuses a stranger on a collaborators-only storyline, before writing', async () => {
+    // What the storyline service's assert does for this placer.
+    assertCanContinueStoryline.mockRejectedValue(new Error(STORYLINE_REFUSALS.collaboratorsOnly));
+
+    await expect(submit()).rejects.toThrow(STORYLINE_REFUSALS.collaboratorsOnly);
+    expect(rows).toHaveLength(0);
+  });
+
+  // The access rule refuses it too, should the assert ever let one through.
+  it('refuses a stranger the assert let through on a collaborators-only storyline', async () => {
+    givenAccess({ whoCanContinue: 'Collaborators' });
+
+    await expect(submit()).rejects.toThrow(STORYLINE_REFUSALS.collaboratorsOnly);
+    expect(rows).toHaveLength(0);
+  });
+
+  it('refuses a collaborator on a closed storyline', async () => {
+    givenSpace({ mode: 'off' });
+    givenAccess({ isCollaborator: true });
+
+    await expect(submit()).rejects.toThrow(STORYLINE_REFUSALS.notOpen);
+    expect(rows).toHaveLength(0);
+    expect(settlePlacement).not.toHaveBeenCalled();
+  });
+
+  it('refuses a placer the storyline service refuses (a block)', async () => {
+    assertCanContinueStoryline.mockRejectedValue(
+      new Error('Continuations are not available on this chapter')
+    );
+    await expect(submit()).rejects.toThrow(/not available on this chapter/);
+    expect(rows).toHaveLength(0);
+  });
+
+  // The row is written and, at a price, paid for. An approval the edge refuses
+  // leaves it with the owner rather than failing a submission that happened.
+  it('leaves an endorsed continuation pending when its approval is refused', async () => {
+    givenAccess({ isCollaborator: true });
+    settlePlacement.mockRejectedValue(new Error('This post is already in a storyline'));
+
+    await expect(submit()).resolves.toEqual({ id: 1 });
+    expect(rows.map((row) => row.status)).toEqual(['pending']);
+  });
+});
+
+describe('createStorylinePlacement — the continuation post', () => {
+  it.each([
+    ['taken down', { tosViolation: true }],
+    ['with a taken-down image', { images: [{ ...SCANNED, tosViolation: true }] }],
+    ['with a minor image', { images: [SCANNED, { ...SCANNED, minor: true }] }],
+    ['with a poi image', { images: [{ ...SCANNED, poi: true }] }],
+    ['with a blocked image', { images: [{ ...SCANNED, ingestion: 'Blocked' }] }],
+    // A verdict refuses even while the post is a draft: waiting cannot clear it.
+    [
+      'blocked and unpublished',
+      { publishedAt: null, images: [{ ...SCANNED, ingestion: 'Blocked' }] },
+    ],
+  ])('refuses a post %s', async (_, post) => {
+    givenPost(post);
+    await expect(submit()).rejects.toThrow(STORYLINE_REFUSALS.cannotSubmit);
+    expect(rows).toHaveLength(0);
+  });
+
+  it('refuses a post rated above the storyline', async () => {
+    givenAccess({ maxNsfwLevel: 1 });
+    givenPost({ nsfwLevel: 4 });
+    await expect(submit()).rejects.toThrow(STORYLINE_REFUSALS.aboveRating);
+    expect(rows).toHaveLength(0);
+  });
+
+  // The control for the refusal above: the same post under a higher ceiling lands.
+  it('takes the same post under a ceiling it fits', async () => {
+    givenAccess({ maxNsfwLevel: 4 });
+    givenPost({ nsfwLevel: 4 });
+    await expect(submit()).resolves.toEqual({ id: 1 });
+  });
+
+  it('refuses a post with an image under review', async () => {
+    givenPost({ images: [{ ...SCANNED, needsReview: 'poi' }] });
+    await expect(submit()).rejects.toThrow(STORYLINE_REFUSALS.inReview);
+    expect(rows).toHaveLength(0);
+  });
+
+  it('refuses a post that is already a chapter', async () => {
+    givenPost({ storylineChapter: { id: 9 } });
+    await expect(submit()).rejects.toThrow(STORYLINE_REFUSALS.alreadyAChapter);
+    expect(rows).toHaveLength(0);
+  });
+
+  it.each([
+    ['unpublished', { publishedAt: null }],
+    ['scheduled', { publishedAt: new Date(Date.now() + 86_400_000) }],
+    ['still scanning', { images: [SCANNED, { ...SCANNED, ingestion: 'Pending' }] }],
+    ['without images yet', { images: [] }],
+    ['not rated yet', { nsfwLevel: 0 }],
+  ])('accepts a post %s and marks it awaiting readiness', async (_, post) => {
+    givenPost(post);
+    await submit();
+    expect(rows).toHaveLength(1);
+    expect(rows[0].data).toEqual({ postId: CONTINUATION, awaitingReadiness: true });
+  });
+
+  // The rating cannot be compared until there is one: an unscanned post rated
+  // above the ceiling waits, and the readiness pass refuses it.
+  it('defers the rating check on a post still scanning', async () => {
+    givenAccess({ maxNsfwLevel: 1 });
+    givenPost({ nsfwLevel: 16, images: [{ ...SCANNED, ingestion: 'Pending' }] });
+    await submit();
+    expect(rows[0].data).toEqual({ postId: CONTINUATION, awaitingReadiness: true });
+  });
+
+  it('leaves a finished post unmarked', async () => {
+    await submit();
+    expect(rows[0].data).toEqual({ postId: CONTINUATION });
+  });
+
+  // The approval would refuse an unfinished post; the readiness pass approves it.
+  it('does not auto-approve a collaborator whose post is not ready', async () => {
+    givenAccess({ isCollaborator: true });
+    givenPost({ publishedAt: null });
+    await submit();
+    expect(settlePlacement).not.toHaveBeenCalled();
+    expect(rows[0].status).toBe('pending');
+  });
+
+  it.each(['pending', 'approved'])(
+    'refuses a post already %s as a continuation',
+    async (status) => {
+      rows.push({ surface: 'storyline', status, data: { postId: CONTINUATION } });
+      await expect(submit()).rejects.toThrow(STORYLINE_REFUSALS.alreadySubmitted);
+      expect(rows).toHaveLength(1);
+    }
+  );
+
+  // Answered ones do not hold the post: a declined continuation may be offered again.
+  it('takes a post whose earlier continuation was declined or expired', async () => {
+    rows.push({ surface: 'storyline', status: 'declined', data: { postId: CONTINUATION } });
+    rows.push({ surface: 'storyline', status: 'expired', data: { postId: CONTINUATION } });
+    await expect(submit()).resolves.toEqual({ id: 3 });
   });
 });
