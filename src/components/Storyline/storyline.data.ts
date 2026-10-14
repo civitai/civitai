@@ -47,8 +47,8 @@ export function useStorylineSpace(
     data: space ? { setPrice: space.setPrice, price: space.price, cap: space.cap } : null,
     unavailable: isStorylineNotAvailable(query.error),
     isSaving: mutation.isPending,
-    // The mode is carried as read: Complete closes the space server-side, and nothing here may
-    // reopen it by writing a stale mode back.
+    // The write requires a mode; a price change carries the stored one so it never changes who
+    // may submit.
     save: (price) => {
       if (space) mutation.mutate({ storylineId, mode: space.mode, price });
     },

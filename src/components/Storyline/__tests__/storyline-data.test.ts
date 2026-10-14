@@ -201,7 +201,7 @@ describe('useStorylineSpace', () => {
     expect(hook.current.data).toEqual({ setPrice: 5, price: 5, cap: 90 });
     act(() => hook.current.save(7));
 
-    // `off` is what Complete wrote. Writing anything else here would reopen the storyline.
+    // A price change must leave the stored mode as it was; `off` here was set by the owner.
     expect(spies.mutate).toEqual([
       { proc: 'setStorylineSpace', input: { storylineId: 3, mode: 'off', price: 7 } },
     ]);
@@ -344,7 +344,7 @@ describe('StorylineContinuationQueue after a decision', () => {
 });
 
 describe('StorylineManageModal status change', () => {
-  it('re-reads the space after a status change, so the next price save sends the new mode', async () => {
+  it('re-reads the space after a status change, which decides whether it takes continuations', async () => {
     server.storyline = {
       id: 3,
       userId: 1,
