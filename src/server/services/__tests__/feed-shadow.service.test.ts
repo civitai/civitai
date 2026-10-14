@@ -71,6 +71,22 @@ describe('fetchFeedAnswer', () => {
   });
 });
 
+describe('fetchFeedAnswer refusals', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('keeps the feed\'s reason for a 400 and nothing for other failures', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{"error":{"fieldErrors":{"tools":["Invalid input"]}}}', { status: 400 })));
+    const refused = await fetchFeedAnswer('http://feed', 'tools=1', 1000, 'primary');
+    expect(refused.status).toBe(400);
+    expect(refused.ids).toEqual([]);
+    expect(refused.error).toContain('tools');
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('busy', { status: 503 })));
+    const down = await fetchFeedAnswer('http://feed', 'tools=1', 1000, 'primary');
+    expect(down).toMatchObject({ status: 503, ids: [] });
+    expect(down.error).toBeUndefined();
+  });
+});
+
 describe('meta flags', () => {
   it('asks the feed for images with visible meta, and for on-site ones', () => {
     const m = mapSearchInputToFeedQuery({ ...base, withMeta: true, fromPlatform: true });
