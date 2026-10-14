@@ -767,7 +767,12 @@ export function createDocStore(deps: DocStoreDeps) {
     return seq;
   }
 
-  /** Who a document's bytes are charged to, besides the app. Counter- and app-authored docs: nobody. */
+  /**
+   * Who a document's bytes are charged to, besides the app: the viewer for a
+   * private doc, the recorded user for a user- or counter-created shared doc,
+   * nobody for an app-authored one. The ceiling label is `author` whenever the
+   * doc's bytes belong to someone other than (possibly) the caller.
+   */
   function chargee(
     coll: DocCollection,
     scope: number,
@@ -778,7 +783,7 @@ export function createDocStore(deps: DocStoreDeps) {
     if (authorUid === null || authorUid === undefined) return null;
     if (authorKind === 'user') return { uid: Number(authorUid), ceiling: 'author' };
     // The viewer whose first increment created it (see SQL_INSERT_COUNTER_DOC).
-    if (authorKind === 'counter') return { uid: Number(authorUid), ceiling: 'viewer' };
+    if (authorKind === 'counter') return { uid: Number(authorUid), ceiling: 'author' };
     return null;
   }
 
@@ -1139,14 +1144,15 @@ export function createDocStore(deps: DocStoreDeps) {
           expiresAt,
         ]);
         if (ins.rows.length === 0) continue; // lost the race; increment the winner's doc
-        // Same accounting as any document create: tallies, then the app charge
-        // (no user is charged — the document has no user author), then the seq.
+        // Same accounting as any document create: tallies, then the app and the
+        // creating viewer's own ceiling (labelled `viewer`: it is the caller's),
+        // then the seq.
         await seedTallies(c, ctx, coll, key);
         const value = Number((await bump()).count);
         const size = Number(ins.rows[0].size_bytes);
         app.bytes += size;
         app.docs += 1;
-        addUserDelta(users, chargee(coll, 0, 'counter', viewer), size, 1);
+        addUserDelta(users, { uid: viewer, ceiling: 'viewer' }, size, 1);
         const seq = await charge(c, ctx, app, users);
         await c.query(SQL_STAMP_SEQ, [ctx.appId, ctx.ns, coll.name, 0, key, seq, ctx.viewerUid]);
         return { value };

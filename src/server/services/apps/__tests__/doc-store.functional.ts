@@ -500,9 +500,9 @@ export function defineFunctionalSuite(makeHarness: () => Promise<Harness>) {
         key: 'col-9',
         data: {},
         version: 1,
-        author: { kind: 'counter' },
         counters: { plays: 4 },
       });
+      expect(doc?.author).toEqual({ kind: 'counter' });
       expect(await store.increment(ctx(app, NS_PROD, VIEWER_2), TALLIES, 'col-9', 'plays')).toEqual(
         { value: 5 }
       );
@@ -588,6 +588,16 @@ export function defineFunctionalSuite(makeHarness: () => Promise<Harness>) {
         config: { visibility: 'shared', write: 'anyone', counters: ['n'] },
       };
       await store.increment(v1, counted, 'k', 'n');
+      // The creator's ceiling binds another viewer's edit, and is reported as the author's.
+      const tight = createDocStore({
+        db: h.db,
+        limits: { appBytes: 10_000, appDocs: 100, userBytes: 10, userDocs: 10 },
+      });
+      const over = await expectCode(
+        tight.put(ctx(app, NS_PROD, VIEWER_2), counted, 'k', { note: 'x'.repeat(20) }),
+        'quota_exceeded'
+      );
+      expect(over.details).toEqual({ ceiling: 'author' });
       const edited = await store.put(ctx(app, NS_PROD, VIEWER_2), counted, 'k', { note: 'hi' });
       expect(edited.author).toEqual({ kind: 'counter' });
       expect(edited.version).toBe(2);
