@@ -3,8 +3,10 @@ import { logToAxiom } from '~/server/logging/client';
 import { hashContent } from '~/server/services/entity-moderation.service';
 import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
 import {
+  isTextScanWebSearchEntityType,
   parseTextScanRollout,
   readTextScanRollouts,
+  readTextScanWebSearchRollouts,
   resetTextScanRolloutCache,
   type TextScanRollout,
 } from '~/server/services/text-scan/mode';
@@ -107,6 +109,35 @@ export async function setTextScanRollout(
     rollout,
   });
   return readTextScanRollouts();
+}
+
+/** As `setTextScanRollout`, for the web-search pass. Only Model is eligible. */
+export async function setTextScanWebSearchRollout(
+  entityType: TextScanEntityType,
+  rollout: TextScanRollout | null,
+  { moderatorId, allowActive = false }: { moderatorId: number; allowActive?: boolean }
+) {
+  if (!isTextScanWebSearchEntityType(entityType))
+    throw throwBadRequestError(`${entityType}: web search is only available for Model`);
+  await assertActiveModerator(moderatorId);
+  if (rollout && rollout.active > 0 && !allowActive)
+    throw throwBadRequestError(`${entityType}: an active share needs allowActive`);
+  if (rollout) {
+    const value = parseTextScanRollout(JSON.stringify(rollout));
+    await sysRedis.hSet(REDIS_SYS_KEYS.TEXT_SCAN.WEB_SEARCH, entityType, JSON.stringify(value));
+  } else {
+    await sysRedis.hDel(REDIS_SYS_KEYS.TEXT_SCAN.WEB_SEARCH, entityType);
+  }
+  resetTextScanRolloutCache();
+  await logToAxiom({
+    name: 'text-scan',
+    type: 'info',
+    message: 'web-search rollout updated',
+    moderatorId,
+    entityType,
+    rollout,
+  });
+  return readTextScanWebSearchRollouts();
 }
 
 export type ActiveTextScanPrompt = { id: number; key: string; content: string };

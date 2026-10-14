@@ -5265,6 +5265,24 @@ model CreatorMilestoneCosmetic {
   @@index([cosmeticId])
 }
 
+/// Creator Score a moderator awarded by hand. `User.meta.scores.staffAwarded` is the sum of the
+/// unrevoked rows, rewritten on every grant and revoke; the nightly job carries it forward but never
+/// recomputes it.
+model CreatorScoreGrant {
+  id           Int       @id @default(autoincrement())
+  userId       Int
+  amount       Int
+  reason       String
+  grantedById  Int?
+  createdAt    DateTime  @default(now())
+  revokedAt    DateTime?
+  revokedById  Int?
+  revokeReason String?
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([grantedById, createdAt])
+}
+
 /// Badges are permanent by product decision: no revocation columns.
 model UserCreatorMilestone {
   userId       Int
@@ -6843,6 +6861,69 @@ model AppealDecisionRecord {
 model AppealTrainingObjectDeletion {
   key       String   @id
   createdAt DateTime @default(now()) @db.Timestamptz(3)
+}
+
+// Upload scan label queue. FKs and CHECK constraints live in migration 20261022130000_scan_label_queue.
+model ScanLabelItem {
+  id             Int       @id @default(autoincrement())
+  imageId        Int       @unique
+  lane           String    @default("flagged")
+  firstFlaggedAt DateTime  @db.Timestamptz(3)
+  status         String    @default("open")
+  voidReason     String?
+  votes          Int       @default(0) @db.SmallInt
+  blockVotes     Int       @default(0) @db.SmallInt
+  outcome        String?
+  unanimous      Boolean?
+  decidedAt      DateTime? @db.Timestamptz(3)
+  actionedAt      DateTime? @db.Timestamptz(3)
+  actionStartedAt DateTime? @db.Timestamptz(3)
+  actionResult    String?
+  actionError     String?
+  createdAt      DateTime  @default(now()) @db.Timestamptz(3)
+}
+
+model ScanLabelFlag {
+  id             Int      @id @default(autoincrement())
+  itemId         Int
+  source         String
+  flaggerVersion String
+  reason         String?
+  workflowId     String   @unique
+  flaggedAt      DateTime @db.Timestamptz(3)
+  snapshot       Json?
+  createdAt      DateTime @default(now()) @db.Timestamptz(3)
+
+  @@index([itemId])
+}
+
+model ScanLabelVote {
+  itemId    Int
+  userId    Int
+  block     Boolean
+  reason    String?
+  msOnItem  Int?
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  @@id([itemId, userId])
+  @@index([userId, createdAt])
+}
+
+model ScanLabelClaim {
+  itemId    Int
+  userId    Int
+  expiresAt DateTime @db.Timestamptz(3)
+
+  @@id([itemId, userId])
+  @@index([userId])
+}
+
+model ScanLabelQuota {
+  userId     Int      @id
+  dailyVotes Int      @default(50)
+  active     Boolean  @default(true)
+  updatedBy  Int?
+  updatedAt  DateTime @default(now()) @db.Timestamptz(3)
 }
 
 enum AuctionType {

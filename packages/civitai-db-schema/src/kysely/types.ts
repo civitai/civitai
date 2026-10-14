@@ -2609,6 +2609,17 @@ export type CreatorMilestoneCosmetic = {
   milestoneKey: string;
   cosmeticId: number;
 };
+export type CreatorScoreGrant = {
+  id: Generated<number>;
+  userId: number;
+  amount: number;
+  reason: string;
+  grantedById: number | null;
+  createdAt: Generated<Timestamp>;
+  revokedAt: Timestamp | null;
+  revokedById: number | null;
+  revokeReason: string | null;
+};
 export type Crucible = {
   id: Generated<number>;
   userId: number;
@@ -4477,6 +4488,55 @@ export type SavedModel = {
   createdAt: Generated<Timestamp>;
   updatedAt: Timestamp;
 };
+export type ScanLabelClaim = {
+  itemId: number;
+  userId: number;
+  expiresAt: Timestamp;
+};
+export type ScanLabelFlag = {
+  id: Generated<number>;
+  itemId: number;
+  source: string;
+  flaggerVersion: string;
+  reason: string | null;
+  workflowId: string;
+  flaggedAt: Timestamp;
+  snapshot: unknown | null;
+  createdAt: Generated<Timestamp>;
+};
+export type ScanLabelItem = {
+  id: Generated<number>;
+  imageId: number;
+  lane: Generated<string>;
+  firstFlaggedAt: Timestamp;
+  status: Generated<string>;
+  voidReason: string | null;
+  votes: Generated<number>;
+  blockVotes: Generated<number>;
+  outcome: string | null;
+  unanimous: boolean | null;
+  decidedAt: Timestamp | null;
+  actionedAt: Timestamp | null;
+  actionStartedAt: Timestamp | null;
+  actionResult: string | null;
+  actionError: string | null;
+  createdAt: Generated<Timestamp>;
+};
+export type ScanLabelQuota = {
+  userId: number;
+  dailyVotes: Generated<number>;
+  active: Generated<boolean>;
+  updatedBy: number | null;
+  updatedAt: Generated<Timestamp>;
+};
+export type ScanLabelVote = {
+  itemId: number;
+  userId: number;
+  block: boolean;
+  reason: string | null;
+  msOnItem: number | null;
+  createdAt: Generated<Timestamp>;
+};
 export type ScannerContentSnapshot = {
   contentHash: string;
   scanner: string;
@@ -5319,6 +5379,7 @@ export type DB = {
   CreatorGalleryHiddenUser: CreatorGalleryHiddenUser;
   CreatorMilestone: CreatorMilestone;
   CreatorMilestoneCosmetic: CreatorMilestoneCosmetic;
+  CreatorScoreGrant: CreatorScoreGrant;
   Crucible: Crucible;
   CrucibleEngagement: CrucibleEngagement;
   CrucibleEntry: CrucibleEntry;
@@ -5465,6 +5526,11 @@ export type DB = {
   Role: Role;
   RunStrategy: RunStrategy;
   SavedModel: SavedModel;
+  ScanLabelClaim: ScanLabelClaim;
+  ScanLabelFlag: ScanLabelFlag;
+  ScanLabelItem: ScanLabelItem;
+  ScanLabelQuota: ScanLabelQuota;
+  ScanLabelVote: ScanLabelVote;
   ScannerContentSnapshot: ScannerContentSnapshot;
   ScannerLabelReview: ScannerLabelReview;
   Session: Session;

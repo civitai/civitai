@@ -196,17 +196,22 @@ export type ImageDeleteTosInput = {
   violationDetails?: string;
 };
 
+const activeTagNames = async (imageId: number) =>
+  (
+    await dbRead
+      .selectFrom('TagsOnImageDetails as toi')
+      .innerJoin('Tag as t', 't.id', 'toi.tagId')
+      .select('t.name')
+      .where('toi.imageId', '=', imageId)
+      .where('toi.disabled', '=', false)
+      .execute()
+  ).map((r) => r.name);
+
 export async function trackImageDeleteTos(input: ImageDeleteTosInput): Promise<void> {
   const { imageId, ownerId, nsfwLevel, needsReview, actorUserId } = input;
   try {
-    const [tagRows, resourceRows, reportRes] = await Promise.all([
-      dbRead
-        .selectFrom('TagsOnImageDetails as toi')
-        .innerJoin('Tag as t', 't.id', 'toi.tagId')
-        .select('t.name')
-        .where('toi.imageId', '=', imageId)
-        .where('toi.disabled', '=', false)
-        .execute(),
+    const [tags, resourceRows, reportRes] = await Promise.all([
+      activeTagNames(imageId),
       dbRead
         .selectFrom('ImageResourceNew')
         .select('modelVersionId')
@@ -230,7 +235,7 @@ export async function trackImageDeleteTos(input: ImageDeleteTosInput): Promise<v
           type: 'DeleteTOS',
           userId: actorUserId,
           imageId,
-          tags: tagRows.map((r) => r.name),
+          tags,
           nsfw: deprecatedNsfwName(nsfwLevel),
           ip: input.ip ?? 'unknown',
           userAgent: input.userAgent ?? 'unknown',
@@ -250,6 +255,47 @@ export async function trackImageDeleteTos(input: ImageDeleteTosInput): Promise<v
     });
   } catch (e) {
     console.error('trackImageDeleteTos failed', { imageId, error: (e as Error).message });
+  }
+}
+
+/** A restore of a removed image, as the main app's `/api/mod/restore-images` logs it. Without it the
+ *  User Lookup's Image removals list shows the removal as standing after the image came back. */
+export async function trackImageRestore(input: {
+  imageId: number;
+  actorUserId: number;
+}): Promise<void> {
+  const { imageId, actorUserId } = input;
+  try {
+    const [image, tags] = await Promise.all([
+      dbRead
+        .selectFrom('Image')
+        .select(['userId', 'nsfwLevel'])
+        .where('id', '=', imageId)
+        .executeTakeFirst(),
+      activeTagNames(imageId),
+    ]);
+    if (!image) return;
+    await getClickhouse().insert({
+      table: 'images',
+      values: [
+        {
+          type: 'Restore',
+          userId: actorUserId,
+          imageId,
+          ownerId: image.userId,
+          tags,
+          nsfw: deprecatedNsfwName(image.nsfwLevel),
+          ip: 'unknown',
+          userAgent: 'unknown',
+          via: 'web',
+          viaClientId: '',
+          viaApiKeyId: 0,
+        },
+      ],
+      format: 'JSONEachRow',
+    });
+  } catch (e) {
+    console.error('trackImageRestore failed', { imageId, error: (e as Error).message });
   }
 }
 
