@@ -88,9 +88,9 @@ export type StorylineTombstoneReason =
   /** Taken down by a moderator, or its author's account is banned or deleted. */
   | 'removed'
   /**
-   * Not published, not rated yet, or the reader and the chapter's author have blocked one
-   * another. A block is reported as this, never as itself, so a reader cannot learn that an
-   * author blocked them.
+   * Not published, not rated yet, or by an author the reader blocked, was blocked by, or hid.
+   * A block is reported as this, never as itself, so a reader cannot learn that an author
+   * blocked them.
    */
   | 'unavailable'
   /** Rated above this storyline's ceiling. */

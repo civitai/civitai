@@ -2,7 +2,7 @@ import type { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { isPlacementBlocked } from '~/server/services/placement-moderation.service';
-import { getBlockedPairIds } from '~/server/services/user-preferences.service';
+import { getAllHiddenForUser, getBlockedPairIds } from '~/server/services/user-preferences.service';
 import {
   throwAuthorizationError,
   throwBadRequestError,
@@ -52,6 +52,11 @@ const storylineSelect = {
 const storylineReadSelect = {
   ...storylineSelect,
   user: { select: { id: true, username: true, bannedAt: true, deletedAt: true } },
+  // The first chapter's level is the story's level for the reader's browsing-level gate.
+  chapters: {
+    where: { depth: 0 },
+    select: { id: true, postId: true, post: { select: { nsfwLevel: true } } },
+  },
 } satisfies Prisma.StorylineSelect;
 
 // ---------------------------------------------------------------------------
@@ -106,14 +111,42 @@ function isStorylineHidden(
   );
 }
 
-async function getViewerBlockedIds(viewer: Viewer): Promise<ReadonlySet<number>> {
+/**
+ * Users whose work this viewer does not see: either side of a block, and anyone the viewer has
+ * hidden. Their storylines are hidden and their chapters are tombstones.
+ */
+async function getViewerExcludedIds(viewer: Viewer): Promise<ReadonlySet<number>> {
   if (!viewer) return new Set();
-  return new Set(await getBlockedPairIds(viewer.id));
+  const [blocked, hidden] = await Promise.all([
+    getBlockedPairIds(viewer.id),
+    getAllHiddenForUser({ userId: viewer.id }),
+  ]);
+  return new Set([...blocked, ...hidden.hiddenUsers.map((u) => u.id)]);
 }
 
 /** A level outside the reader's browsing level. 0 (unrated) is not "outside": nothing is known. */
 const outsideBrowsingLevel = (nsfwLevel: number, browsingLevel: number) =>
   nsfwLevel !== 0 && (nsfwLevel & browsingLevel) === 0;
+
+/**
+ * Whether the story as a whole is outside the reader's browsing level, in which case nothing of
+ * it is served: not its title, its cast, its path or its forks. The story is judged by its first
+ * chapter, or by its ceiling when that chapter is gone or unrated. The owner and moderators are
+ * exempt, as they are from every storyline-level hide.
+ */
+function isStorylineOutsideLevel(
+  storyline: {
+    userId: number;
+    maxNsfwLevel: number;
+    chapters: { post: { nsfwLevel: number } | null }[];
+  },
+  viewer: Viewer,
+  browsingLevel: number
+) {
+  if (viewer?.isModerator || viewer?.id === storyline.userId) return false;
+  const storyLevel = storyline.chapters[0]?.post?.nsfwLevel || storyline.maxNsfwLevel;
+  return outsideBrowsingLevel(storyLevel, browsingLevel);
+}
 
 // ---------------------------------------------------------------------------
 // Chapter writes
@@ -534,22 +567,17 @@ export async function getStoryline({
         },
         orderBy: { createdAt: 'asc' },
       },
-      chapters: {
-        where: { depth: 0 },
-        select: { id: true, postId: true, post: { select: { nsfwLevel: true } } },
-      },
     },
   });
   if (!storyline) throw throwNotFoundError('Storyline not found');
-  const blockedUserIds = await getViewerBlockedIds(viewer);
-  if (isStorylineHidden(storyline, viewer, blockedUserIds))
+  const blockedUserIds = await getViewerExcludedIds(viewer);
+  if (
+    isStorylineHidden(storyline, viewer, blockedUserIds) ||
+    isStorylineOutsideLevel(storyline, viewer, browsingLevel)
+  )
     throw throwNotFoundError('Storyline not found');
 
   const root = storyline.chapters[0];
-  const storyLevel = root?.post?.nsfwLevel || storyline.maxNsfwLevel;
-  const exempt = viewer?.isModerator || viewer?.id === storyline.userId;
-  if (!exempt && outsideBrowsingLevel(storyLevel, browsingLevel))
-    throw throwNotFoundError('Storyline not found');
 
   const { chapters: _chapters, collaborators, user, ...rest } = storyline;
   return {
@@ -592,13 +620,15 @@ export async function getStorylinesForPosts({
             id: true,
             title: true,
             userId: true,
+            maxNsfwLevel: true,
             tosViolation: true,
             user: { select: { bannedAt: true, deletedAt: true } },
+            chapters: { where: { depth: 0 }, select: { post: { select: { nsfwLevel: true } } } },
           },
         },
       },
     }),
-    getViewerBlockedIds(viewer),
+    getViewerExcludedIds(viewer),
   ]);
 
   const byPost: Record<
@@ -608,6 +638,7 @@ export async function getStorylinesForPosts({
   for (const c of chapters) {
     if (c.postId == null || !c.post) continue;
     if (isStorylineHidden(c.storyline, viewer, blockedUserIds)) continue;
+    if (isStorylineOutsideLevel(c.storyline, viewer, browsingLevel)) continue;
     if (!c.post.nsfwLevel || outsideBrowsingLevel(c.post.nsfwLevel, browsingLevel)) continue;
     byPost[c.postId] = {
       chapterId: c.id,
@@ -648,16 +679,19 @@ function toPathChapter(
   };
 }
 
-async function getStorylineForRead(storylineId: number, viewer: Viewer) {
+async function getStorylineForRead(storylineId: number, viewer: Viewer, browsingLevel: number) {
   const storyline = await dbRead.storyline.findUnique({
     where: { id: storylineId },
     select: storylineReadSelect,
   });
   if (!storyline) throw throwNotFoundError('Storyline not found');
-  const blockedUserIds = await getViewerBlockedIds(viewer);
-  if (isStorylineHidden(storyline, viewer, blockedUserIds))
+  const blockedUserIds = await getViewerExcludedIds(viewer);
+  if (
+    isStorylineHidden(storyline, viewer, blockedUserIds) ||
+    isStorylineOutsideLevel(storyline, viewer, browsingLevel)
+  )
     throw throwNotFoundError('Storyline not found');
-  const { user: _user, ...rest } = storyline;
+  const { user: _user, chapters: _chapters, ...rest } = storyline;
   return { storyline: rest, blockedUserIds };
 }
 
@@ -683,7 +717,11 @@ export async function getStorylinePath({
     select: { storylineId: true, depth: true },
   });
   if (!target) throw throwNotFoundError('Chapter not found');
-  const { storyline, blockedUserIds } = await getStorylineForRead(target.storylineId, viewer);
+  const { storyline, blockedUserIds } = await getStorylineForRead(
+    target.storylineId,
+    viewer,
+    browsingLevel
+  );
 
   // Bounded by the target's depth and the window, so a corrupt edge cannot loop forever.
   const maxHops = Math.min(target.depth, STORYLINE_PATH_LIMIT - 1);
@@ -761,7 +799,11 @@ export async function getStorylineChildren({
     select: { storylineId: true },
   });
   if (!parent) throw throwNotFoundError('Chapter not found');
-  const { storyline, blockedUserIds } = await getStorylineForRead(parent.storylineId, viewer);
+  const { storyline, blockedUserIds } = await getStorylineForRead(
+    parent.storylineId,
+    viewer,
+    browsingLevel
+  );
 
   const collaborators = await dbRead.storylineCollaborator.findMany({
     where: { storylineId: storyline.id },

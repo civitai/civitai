@@ -4,10 +4,14 @@ import type * as UserPreferencesService from '~/server/services/user-preferences
 import { dbMock, resetSharedMocks } from '~/__tests__/mocks';
 import { NsfwLevel } from '~/server/common/enums';
 
-const getBlockedPairIds = vi.hoisted(() => vi.fn());
+const { getBlockedPairIds, getAllHiddenForUser } = vi.hoisted(() => ({
+  getBlockedPairIds: vi.fn(),
+  getAllHiddenForUser: vi.fn(),
+}));
 vi.mock('~/server/services/user-preferences.service', async (importOriginal) => ({
   ...(await importOriginal<typeof UserPreferencesService>()),
   getBlockedPairIds,
+  getAllHiddenForUser,
 }));
 vi.mock('~/server/services/blocklist.service', async (importOriginal) => ({
   ...(await importOriginal<typeof BlocklistService>()),
@@ -51,6 +55,8 @@ const storylineRow = (overrides: Record<string, unknown> = {}) => ({
   tosViolation: false,
   createdAt: new Date('2026-10-01'),
   user: { id: OWNER, username: 'owner', ...notBanned },
+  // Chapter 1, PG: inside every reader level used here unless a test says otherwise.
+  chapters: [{ id: 1, postId: 101, post: { nsfwLevel: NsfwLevel.PG } }],
   ...overrides,
 });
 
@@ -83,6 +89,8 @@ beforeEach(() => {
   resetSharedMocks();
   getBlockedPairIds.mockReset();
   getBlockedPairIds.mockResolvedValue([]);
+  getAllHiddenForUser.mockReset();
+  getAllHiddenForUser.mockResolvedValue({ hiddenUsers: [] });
   blockedPairs = [];
   answerRaw(w);
 });
@@ -542,8 +550,10 @@ describe('getStorylinesForPosts', () => {
       id: 10,
       title: 'A story',
       userId: OWNER,
+      maxNsfwLevel: NsfwLevel.R,
       tosViolation: false,
       user: notBanned,
+      chapters: [{ post: { nsfwLevel: NsfwLevel.PG } }],
       ...overrides,
     },
   });
