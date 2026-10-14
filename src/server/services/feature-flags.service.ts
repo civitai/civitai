@@ -1181,13 +1181,30 @@ export function getFeatureFlagsLazy(ctx: FeatureAccessContext) {
   return obj as FeatureAccess;
 }
 
+// One SSR render asks for its request's flags twice (`_app` getInitialProps, then
+// createServerSideProps). The shared cache above can expire or rotate between the two, so the
+// render could otherwise evaluate twice and even see two different answers. Keyed by the same
+// identity key, so a request that resolves a different user still gets its own evaluation.
+const requestFeatureAccess = new WeakMap<object, Map<string, FeatureAccess>>();
+
 export async function getFeatureFlagsAsync(ctx: FeatureAccessContext) {
+  const key = ctx.req ? featureAccessKey(ctx) : undefined;
+  const memo = ctx.req ? requestFeatureAccess.get(ctx.req) : undefined;
+  const hit = key !== undefined ? memo?.get(key) : undefined;
+  if (hit) return { ...hit };
+
   // Ensure Flipt module is loaded and initialized (timeout + circuit breaker in FliptSingleton)
   const flipt = await loadFliptModule();
   if (flipt) {
     await flipt.ensureFliptInitialized();
   }
-  return getFeatureFlags(ctx);
+  const value = getFeatureFlags(ctx);
+  if (ctx.req && key !== undefined) {
+    const map = requestFeatureAccess.get(ctx.req) ?? new Map<string, FeatureAccess>();
+    map.set(key, value);
+    requestFeatureAccess.set(ctx.req, map);
+  }
+  return { ...value };
 }
 
 export const toggleableFeatures = Object.entries(featureFlags)
