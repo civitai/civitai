@@ -93,6 +93,30 @@ describe('WorkflowData unrated outputs', () => {
     expect(wf.steps[0].output.map((x) => x.pendingRating)).toEqual([false, false, false]);
   });
 
+  it("shows a video the orchestrator marks 'na' (never scanned), on green and in a private generation", () => {
+    const wf = new WorkflowData(
+      {
+        id: 'wf-1',
+        status: 'succeeded',
+        allowMatureContent: false,
+        metadata: { isPrivateGeneration: true },
+        steps: [
+          {
+            $type: 'videoGen',
+            name: '$0',
+            status: 'succeeded',
+            metadata: {},
+            output: [blob({ type: 'video', nsfwLevel: 'na' })],
+          },
+        ],
+      } as any,
+      { domain: { green: true } as any, nsfwEnabled: false, holdUnrated: true }
+    );
+
+    expect(wf.steps[0].output[0].blockedReason).toBeFalsy();
+    expect(wf.displayOutput.map((x) => x.id)).toEqual(['blob-1']);
+  });
+
   it('keeps an orchestrator block on an unrated output', () => {
     const wf = build([blob({ blockedReason: 'NSFWLevel' })]);
 
