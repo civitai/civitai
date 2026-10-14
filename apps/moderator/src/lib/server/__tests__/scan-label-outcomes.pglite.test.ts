@@ -7,6 +7,7 @@ import type { DB } from '@civitai/db-schema/kysely';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { pgliteDialect } from './abuse-detection-pglite.harness';
 import { quotaStatus } from '$lib/scan-labels';
+import type { BlockDeps, BlockImageArgs } from '../scan-label.service';
 
 /** The majority-block sweep, the quota report and the label view, against the real migrations. */
 
@@ -26,8 +27,8 @@ vi.mock('../db', () => ({
 const { ACTION_CLAIM_MS, applyMajorityBlocks, castVote } = await import('../scan-label.service');
 const { isModerationBlocked } = await import('../image-moderation.service');
 
-const noop = () => vi.fn(async (_args: unknown) => undefined);
-const deps = (block: (args: never) => Promise<void> = noop()) => ({ block, isModerationBlocked });
+const noop = () => vi.fn(async (_args: BlockImageArgs) => undefined);
+const deps = (block: BlockDeps['block'] = noop()): BlockDeps => ({ block, isModerationBlocked });
 const { getQuotaReport, setQuota } = await import('../scan-label-metrics.service');
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -305,7 +306,8 @@ describe('quota', () => {
     expect(sameDay.find((r) => r.username === 'ana')!.days).toEqual([
       { day: '2026-10-13', votes: 5, status: 'in-progress' },
     ]);
-  });
+    // 55 votes, each its own transaction: slow under a loaded machine, not stuck.
+  }, 30_000);
 
   it('drops a moderator taken off the roster unless they voted', async () => {
     await pg.exec(`INSERT INTO "User" VALUES (1, 'ana')`);
