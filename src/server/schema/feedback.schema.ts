@@ -1,6 +1,7 @@
 import * as z from 'zod';
 import {
   APP_BLOCK_FEEDBACK_AREA,
+  APPS_PLATFORM_FEEDBACK_AREA,
   FEEDBACK_AREAS,
   FEEDBACK_CONSOLE_ERROR_MAX_COUNT,
   FEEDBACK_CONSOLE_ERROR_MAX_LENGTH,
@@ -210,9 +211,12 @@ const feedbackContextSchema = z.object({
 export const GENERIC_FEEDBACK_APP_BLOCK_REFUSAL =
   'App feedback is sent from the app itself, not through the general feedback form.';
 
+export const GENERIC_FEEDBACK_APPS_PLATFORM_REFUSAL =
+  'Developer-platform feedback is sent through the platform feedback endpoint, not the general feedback form.';
+
 /**
  * The area as the GENERIC `feedback.create` / `feedback.getArea` procedures accept it: every
- * declared area EXCEPT `app-block`.
+ * declared area EXCEPT `app-block` and `apps-platform`.
  *
  * 🔴 `app-block` is in `FEEDBACK_AREAS` (the moderator queue and the DB CHECK need the slug), but
  * its rows must carry a server-resolved `appListingId` and are readable by the app's OWNER — so
@@ -230,11 +234,13 @@ export const GENERIC_FEEDBACK_APP_BLOCK_REFUSAL =
  * `CreateFeedbackInput['area']`, the type the shared `createFeedback` service is written against,
  * and its rejection reads exactly like an unknown slug's. The refine keeps the type, runs during
  * input parsing (so BEFORE the flag lookup and before the service), and fails with its own message.
+ *
+ * `apps-platform` is refused the same way: `platformFeedback.create` counts reports on a
+ * fingerprint it computes into `context.server`, and a row written here would carry none.
  */
-const genericFeedbackAreaSchema = feedbackAreaSchema.refine(
-  (area) => area !== APP_BLOCK_FEEDBACK_AREA,
-  GENERIC_FEEDBACK_APP_BLOCK_REFUSAL
-);
+const genericFeedbackAreaSchema = feedbackAreaSchema
+  .refine((area) => area !== APP_BLOCK_FEEDBACK_AREA, GENERIC_FEEDBACK_APP_BLOCK_REFUSAL)
+  .refine((area) => area !== APPS_PLATFORM_FEEDBACK_AREA, GENERIC_FEEDBACK_APPS_PLATFORM_REFUSAL);
 
 export type CreateFeedbackInput = z.infer<typeof createFeedbackSchema>;
 export const createFeedbackSchema = z.object({

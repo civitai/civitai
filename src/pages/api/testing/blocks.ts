@@ -13,8 +13,7 @@
  *       type validation gates. Setting null clears the field.
  *
  *   set-buzz-budget        - { blockInstanceId, buzzBudgetPerGen }
- *       Updates the publisher's buzz_budget_per_gen cap (max 1000, per
- *       BlockTokenService).
+ *       Updates the publisher's buzz_budget_per_gen (at most BUZZ_BUDGET_CAP).
  *
  *   show                   - { blockInstanceId }
  *       Returns the install row's settings JSON. Read-only.
@@ -24,6 +23,7 @@ import * as z from 'zod';
 import { dbWrite } from '~/server/db/client';
 import { BlockRegistry } from '~/server/services/block-registry.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
+import { BUZZ_BUDGET_CAP } from '~/shared/constants/block-scope.constants';
 
 const schema = z.discriminatedUnion('action', [
   z.object({
@@ -34,7 +34,7 @@ const schema = z.discriminatedUnion('action', [
   z.object({
     action: z.literal('set-buzz-budget'),
     blockInstanceId: z.string().min(1).max(64),
-    buzzBudgetPerGen: z.coerce.number().int().min(1).max(1000),
+    buzzBudgetPerGen: z.coerce.number().int().min(1).max(BUZZ_BUDGET_CAP),
   }),
   z.object({
     action: z.literal('show'),
