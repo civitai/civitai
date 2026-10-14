@@ -83,7 +83,7 @@ export function StorylineCoversRow({ storylineId }: { storylineId: number }) {
         </Text>
       </div>
 
-      <div className="flex flex-wrap items-start gap-5">
+      <div className="flex flex-wrap items-start gap-5 sm:items-end">
         <CoverSlot
           label="Card cover"
           onChange={() => openPicker('cover')}
