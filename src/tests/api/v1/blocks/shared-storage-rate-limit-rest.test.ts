@@ -82,7 +82,6 @@ vi.mock('~/server/routers/apps-shared.router', async () => {
     withdrawSharedRow: mocks.withdraw,
     reportSharedRow: mocks.report,
     incrementSharedCounter: mocks.increment,
-    assertValidCounterKey: (k: string) => k,
     SHARED_KEY_MAX: 64,
     SHARED_REASON_MAX: 500,
     sharedValueInput: zod.object({ title: zod.string().min(1) }),

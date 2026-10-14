@@ -502,6 +502,7 @@ export const userScoreMetaSchema = z.object({
   users: z.number().optional(),
   reportsActioned: z.number().optional(),
   reportsAgainst: z.number().optional(),
+  staffAwarded: z.number().optional(),
 });
 
 export const userMeta = z.object({

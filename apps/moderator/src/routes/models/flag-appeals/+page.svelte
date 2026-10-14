@@ -1,16 +1,13 @@
 <script lang="ts">
-  import MinorFlagQueue from '$lib/components/minor-flags/MinorFlagQueue.svelte';
+  import AppealFilterBar from './AppealFilterBar.svelte';
+  import AppealTriage from './AppealTriage.svelte';
   import type { ActionData, PageData } from './$types';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
 </script>
 
-<header class="page-header">
-  <h1>Model Flag Appeals</h1>
-  <p>
-    Owners contesting a model flagged as depicting a minor or a real person, whether the flag came
-    from a hash match, the text scan or a moderator.
-  </p>
-</header>
-
-<MinorFlagQueue {data} {form} />
+<div class="flex flex-col gap-3 px-6 pb-4 lg:h-[calc(100svh-3rem)]">
+  <h1 class="m-0 text-xl font-semibold text-white">Model Flag Appeals</h1>
+  <AppealFilterBar filters={data.appealFilters} facets={data.facets} q={data.q} />
+  <AppealTriage {data} {form} />
+</div>

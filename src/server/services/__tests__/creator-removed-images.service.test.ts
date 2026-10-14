@@ -18,7 +18,7 @@ import {
   REMOVALS_QUERY,
   REMOVED_IMAGES_LIMIT,
 } from '~/server/services/creator-removed-images.service';
-import { REPORTS_AGAINST_EVENT } from '~/shared/constants/creator-journey.constants';
+import { removalsQuery } from '~/server/services/creator-removals.service';
 import { AppealStatus, EntityType } from '~/shared/utils/prisma/enums';
 
 const USER = 42;
@@ -49,15 +49,16 @@ function given({
   excludedOwners?: number[];
 }) {
   chQuery.mockResolvedValue({ json: async () => events });
-  dbMock.dbRead.$queryRaw.mockResolvedValue(
-    states.map((s) => ({
-      excluded: false,
-      owned: true,
-      blockedFor: 'moderated',
-      needsReview: null,
-      ...s,
-    })) as never
-  );
+  const stateRows = states.map((s) => ({
+    excluded: false,
+    owned: true,
+    blockedFor: 'moderated',
+    needsReview: null,
+    ...s,
+  }));
+  // No removal here was reversed on appeal; creator-removals.behavior.test.ts covers that rule.
+  dbMock.dbRead.$queryRaw.mockImplementation(((...args: unknown[]) =>
+    Promise.resolve(sqlOf(args).sql.includes('FROM "Appeal"') ? [] : stateRows)) as never);
   // `getAppealExcludedIds` runs for real; these answer its two queries for the ids they are asked.
   dbMock.dbWrite.$queryRaw.mockImplementation(((...args: unknown[]) => {
     const { sql, values } = sqlOf(args);
@@ -98,7 +99,7 @@ describe('getMyRemovedImages', () => {
     });
   });
 
-  it('reads the caller’s removals from the event the score counts, grouped per image', async () => {
+  it('reads the caller’s removals through the definition the score counts', async () => {
     given({ events: [], states: [] });
 
     await getMyRemovedImages(USER);
@@ -106,18 +107,14 @@ describe('getMyRemovedImages', () => {
     expect(chQuery).toHaveBeenCalledWith(
       expect.objectContaining({ query: REMOVALS_QUERY, query_params: { userId: USER } })
     );
-    expect(REMOVALS_QUERY).toContain(
-      `WHERE type = '${REPORTS_AGAINST_EVENT}' AND ownerId = {userId:Int32}`
-    );
-    expect(REMOVALS_QUERY).toMatch(/^\s*GROUP BY imageId$/m);
-    expect(REMOVALS_QUERY).toMatch(/^\s*ORDER BY max\(time\) DESC$/m);
-    // The score job deducts per distinct image of the same event; both read the one constant.
+    expect(REMOVALS_QUERY.startsWith(removalsQuery('ownerId = {userId:Int32}'))).toBe(true);
+    expect(REMOVALS_QUERY).toMatch(/^\s*ORDER BY removedAt DESC$/m);
+    // The score job counts through the same definition.
     const scoreJob = readFileSync(
       join(process.cwd(), 'src/server/jobs/update-user-score.ts'),
       'utf8'
     );
-    expect(scoreJob.match(/WHERE type = '\$\{REPORTS_AGAINST_EVENT\}'/g)).toHaveLength(2);
-    expect(scoreJob).toContain('uniq(imageId) as violations');
+    expect(scoreJob).toContain('countRemovalsByOwner(ctx.ch, owners)');
     expect(scoreJob).not.toContain("'DeleteTOS'");
   });
 

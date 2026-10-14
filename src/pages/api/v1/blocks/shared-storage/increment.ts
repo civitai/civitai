@@ -9,7 +9,7 @@ import {
   withBlockScope,
   type BlockScopedNextApiRequest,
 } from '~/server/middleware/block-scope.middleware';
-import { assertValidCounterKey, incrementSharedCounter } from '~/server/routers/apps-shared.router';
+import { incrementSharedCounter } from '~/server/routers/apps-shared.router';
 import { sendRestRateLimited } from '~/server/utils/endpoint-helpers';
 import { rateLimitMetaOf } from '~/server/utils/rate-limit-error';
 
@@ -55,7 +55,7 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
   }
 
   try {
-    const key = assertValidCounterKey(parsed.data.key);
+    const key = parsed.data.key;
     const result = await incrementSharedCounter(bearer(req), key);
     // W13 richer audit detail — stash a structured ref so the middleware
     // finish-writer records "Bumped shared counter <key>". Best-effort.

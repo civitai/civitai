@@ -143,25 +143,26 @@ Next already separates them on every request line it prints:
 **Two failures are FAST, and both are checked before any timing rule**, because a verdict of `ok` on
 a broken page is worse than no verdict. A stale `node_modules` after a merge or checkout 500s in
 milliseconds (`STALE-DEPS` — the fix is `pnpm install`, and purging the build cache installs
-nothing); and the settings self-fetch case below renders a degraded page quickly.
+nothing); and the settings-bootstrap case below renders a degraded page quickly.
 
-**One case defeats the split, and `probe` checks for it first.** `_app` self-fetches
-`/api/user/settings` on every SSR render and aborts at `APP_SETTINGS_FETCH_TIMEOUT_MS` (8s default).
-That abort is billed to *application-code*, so a server that cannot answer its own API route reads as
-"slow database" on the split alone. The greppable marker `[_app] settings bootstrap fetch failed`
-outranks the timing, and the verdict is `SELF-FETCH-FAILING`; `probe` then requests that endpoint
-directly and tells you which of the two causes you have — a self-fetch aimed at the wrong port
-(`NEXTAUTH_URL_INTERNAL` vs the session's port) or an endpoint that genuinely never answers.
+**One case defeats the split, and `probe` checks for it first.** `_app` reads the settings bootstrap
+(the code behind `/api/user/settings`, called in-process) on every SSR render and gives up at
+`APP_SETTINGS_FETCH_TIMEOUT_MS` (8s default). That wait is billed to *application-code*, so a
+bootstrap that never answers reads as "slow database" on the split alone. The greppable marker
+`[_app] settings bootstrap fetch failed` outranks the timing, and the verdict is `SELF-FETCH-FAILING`
+(named for the HTTP self-fetch this used to be); `probe` then requests that endpoint directly and
+tells you which case you have — a bootstrap that genuinely never answers, or a failure that was
+transient or specific to the page request.
 
 The tell that separates it from any slow dependency: **the page time is a constant equal to a
 configured timeout**, identical warm and cold. A slow dependency varies; a timeout does not. Measured
 2026-08-16 — moving `APP_SETTINGS_FETCH_TIMEOUT_MS` from 8000 to 30000 moved `/home` from 8.1s to
 30.1s in lockstep, and purging `.next` did not help at either value.
 
-Worth knowing when you read that verdict: `updateEnvUrlsForPort` returns early on port 3000, so a
-primary session uses `NEXTAUTH_URL_INTERNAL` exactly as the `.env` writes it while every secondary
-session gets it rewritten to its own port. The value is correct today — this is only why the two
-kinds of session can differ, and why the verdict asks you to compare it against the session's port.
+Worth knowing: `updateEnvUrlsForPort` returns early on port 3000, so a primary session uses
+`NEXTAUTH_URL_INTERNAL` exactly as the `.env` writes it while every secondary session gets it
+rewritten to its own port. The settings bootstrap no longer goes through it, so it cannot cause this
+verdict.
 
 This is why "flat 8s means purge `.next`" is wrong as a rule and cost real time as a habit: measured
 on this repo on 2026-08-16, a flat 8.1s `/home` was **30ms of framework and 8.1s of application

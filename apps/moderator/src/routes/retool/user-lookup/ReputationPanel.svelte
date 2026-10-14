@@ -34,6 +34,7 @@
         ['Articles', scores?.articles],
         ['Reports against', scores?.reportsAgainst],
         ['Reports actioned', scores?.reportsActioned],
+        ['Staff awarded', scores?.staffAwarded],
       ] as [string, number | null | undefined][]
     ).filter((entry): entry is [string, number] => typeof entry[1] === 'number')
   );

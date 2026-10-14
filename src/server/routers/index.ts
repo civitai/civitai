@@ -19,6 +19,12 @@ export const appRouter = router({
   blockImageUpload: lazy(() =>
     import('~/server/routers/block-image-upload.router').then((m) => m.blockImageUploadRouter)
   ),
+  blockImagePicker: lazy(() =>
+    import('~/server/routers/block-image-picker.router').then((m) => m.blockImagePickerRouter)
+  ),
+  platformFeedback: lazy(() =>
+    import('~/server/routers/platform-feedback.router').then((m) => m.platformFeedbackRouter)
+  ),
   account: lazy(() => import('./account.router').then((m) => m.accountRouter)),
   announcement: lazy(() => import('./announcement.router').then((m) => m.announcementRouter)),
   answer: lazy(() => import('./answer.router').then((m) => m.answerRouter)),

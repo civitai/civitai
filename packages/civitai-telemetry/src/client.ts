@@ -748,6 +748,24 @@ export const appStorageLatencyHistogram = registerHistogram({
   buckets: [0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5],
 });
 
+// App Blocks SHARED (cross-user) storage. Separate from the KV pair, not a `storage` label on it:
+// a shared write can wait on external moderation, so the histogram needs buckets past 2.5s and a
+// histogram has one bucket set; the op and outcome domains also differ. No per-app, per-key or
+// per-user label: the number of apps is unbounded. Exposed names are pinned by
+// `__tests__/app-block-storage-metric-names.test.ts`.
+export const appSharedStorageOpsCounter = registerCounterWithLabels({
+  name: 'block_shared_storage_ops_total',
+  help: 'App Blocks shared storage operations by op and outcome',
+  labelNames: ['op', 'outcome'] as const,
+});
+
+export const appSharedStorageLatencyHistogram = registerHistogram({
+  name: 'block_shared_storage_latency_seconds',
+  help: 'App Blocks shared storage operation latency, including moderation and rate-limit checks',
+  labelNames: ['op'] as const,
+  buckets: [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10],
+});
+
 // Image ingestion / scan pipeline. The image-ingestion path (submit → scanner →
 // webhook write-back → cron drain) previously had ZERO Prometheus coverage; these
 // give per-lane submission volume, webhook-outcome split, cron throughput, and (via

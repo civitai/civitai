@@ -12,9 +12,12 @@ vi.mock('~/server/services/text-scan/submit', async (importOriginal) => ({
   scanEntityInBackground: vi.fn(),
 }));
 
-const { legacyProfanityAutoNsfwApplies, submitTextModerationOrScan } = await import(
-  '~/server/services/text-scan/route'
-);
+const {
+  legacyProfanityAutoNsfwApplies,
+  submitTextModerationOrScan,
+  TEXT_SCAN_ENTITY_GONE,
+  TEXT_SCAN_ENTITY_NOT_PUBLIC,
+} = await import('~/server/services/text-scan/route');
 const { getTextScanMode } = await import('~/server/services/text-scan/mode');
 const { scanEntity, scanEntityInBackground } = await import('~/server/services/text-scan/submit');
 
@@ -97,6 +100,23 @@ describe('submitTextModerationOrScan', () => {
       onActiveSkip,
     });
     expect(onActiveSkip).not.toHaveBeenCalled();
+  });
+
+  it('active: an entity the scan cannot load returns the gone marker the retry cron deletes on', async () => {
+    vi.mocked(getTextScanMode).mockResolvedValue('active');
+    vi.mocked(scanEntity).mockResolvedValue({ status: 'skipped', reason: 'missing' });
+    expect(
+      await submitTextModerationOrScan({ entityType: 'Model', entityId: 3, xguard, onActiveSkip })
+    ).toBe(TEXT_SCAN_ENTITY_GONE);
+    expect(onActiveSkip).toHaveBeenCalledWith('missing');
+  });
+
+  it('active: a not-public entity returns the not-public marker, distinct from gone', async () => {
+    vi.mocked(getTextScanMode).mockResolvedValue('active');
+    vi.mocked(scanEntity).mockResolvedValue({ status: 'skipped', reason: 'not-public' });
+    const result = await submitTextModerationOrScan({ entityType: 'Model', entityId: 3, xguard });
+    expect(result).toBe(TEXT_SCAN_ENTITY_NOT_PUBLIC);
+    expect(result).not.toBe(TEXT_SCAN_ENTITY_GONE);
   });
 
   it('active: falls back to XGuard when the flag turned off before the scan read it', async () => {

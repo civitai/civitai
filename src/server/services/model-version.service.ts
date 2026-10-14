@@ -116,7 +116,10 @@ import {
 } from '~/server/services/donation-goal.service';
 import { imagesForModelVersionsCache, uploadImageFromUrl } from '~/server/services/image.service';
 import { createNotification } from '~/server/services/notification.service';
-import { scanEntityInBackground } from '~/server/services/text-scan/submit';
+import {
+  scanEntitiesInBackground,
+  scanEntityInBackground,
+} from '~/server/services/text-scan/submit';
 import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
 import { addPostImage, createPost } from '~/server/services/post.service';
 import { createCachedArray } from '~/server/utils/cache-helpers';
@@ -1832,6 +1835,10 @@ export const publishModelVersionById = async ({
     where: { postId: { in: posts.map((x) => x.id) } },
     select: { id: true },
   });
+  scanEntitiesInBackground(
+    'Post',
+    posts.map((p) => p.id)
+  );
 
   await updateModelLastVersionAt({ id: version.modelId, onlyForward: republishing });
   await bustMvCache(version.id, version.modelId);
@@ -2224,6 +2231,10 @@ export const modelVersionGeneratedImagesOnTimeframe = async ({
         SUM(count) AS generations
       FROM orchestration.daily_resource_generation_counts
       WHERE createdDate >= ${date}
+        -- A legacy import left rows dated 2079 and 2120 carrying a version's whole
+        -- all-time total. Without the upper bound they answer every window, and the
+        -- chart gets a point in the next century.
+        AND createdDate <= today()
         AND modelVersionId IN (${modelVersions.map((x) => x.id)})
       GROUP BY modelVersionId, createdDate
       ORDER BY createdAt DESC, generations DESC;

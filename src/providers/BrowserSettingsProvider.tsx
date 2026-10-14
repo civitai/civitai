@@ -22,6 +22,13 @@ export function BrowserSettingsProvider({ children }: { children: React.ReactNod
   const queryUtils = trpc.useUtils();
   const { mutate } = trpc.user.updateContentSettings.useMutation({
     onSuccess: (_, variables) => {
+      // The app image picker's posted list is filtered on the server by these two, read from the
+      // session, which this mutation has refreshed by the time it returns. A list fetched before
+      // that was filtered at the old level. A no-op when the picker has not been opened.
+      if (variables.showNsfw !== undefined || variables.browsingLevel !== undefined) {
+        void queryUtils.blockImagePicker.getPosted.reset();
+      }
+
       // Patch every confirmed field into the getSettings React Query cache so
       // `CivitaiSessionProvider` sees the user's intent immediately, instead
       // of the stale `session.user.*` values that live behind the JWT cookie

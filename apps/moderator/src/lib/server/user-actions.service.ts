@@ -185,12 +185,18 @@ export type ModEndpoint =
   | 'minor-flag/resolve-appeal'
   | 'minor-flag/revert'
   | 'minor-flag/set-minor'
+  | 'model/bring-back'
+  | 'model/set-sfw-only'
+  | 'model/take-down'
+  | 'model/unpublish'
   | 'restriction/resolve'
   | 'review/delete'
   | 'review/set-exclude'
   | 'strike/create'
   | 'text-scan'
   | 'training-data/resolve'
+  | 'user/creator-score-grant'
+  | 'user/creator-score-grant-revoke'
   | 'user/delete'
   | 'user/membership-code'
   | 'user/membership-code-revoke'
@@ -1172,6 +1178,20 @@ const MAY_HAVE_COMPLETED =
 const MINT_MAY_HAVE_COMPLETED =
   'Could not confirm the code was minted. Wait a minute, then check this account’s code list before minting again.';
 
+/**
+ * Operator-facing error for a failed non-idempotent write. A lost response (5xx, 408, or no answer after
+ * the request left) may have written, and a blind retry writes twice, so it gets `mayHaveCompleted`.
+ */
+function writeFailureError(
+  result: Extract<JsonResult, { ok: false }>,
+  mayHaveCompleted: string
+): string {
+  if (result.status !== undefined && (result.status >= 500 || result.status === 408))
+    return mayHaveCompleted;
+  if (result.status !== undefined || result.requestNeverSent) return result.error;
+  return mayHaveCompleted;
+}
+
 // MEMBERSHIP CODE (support make-good). The endpoint records the ModActivity row inside the same
 // transaction as the code, and its daily cap counts those rows — so no `logAction` here.
 export async function mintMembershipCode(input: {
@@ -1185,15 +1205,7 @@ export async function mintMembershipCode(input: {
     { userId: input.userId, tier: input.tier, months: input.months, reason: input.reason },
     'Mint membership code'
   );
-  if (!result.ok) {
-    // Not idempotent: a lost response (5xx, 408, or no answer after the request left) may have
-    // minted a code, and a blind retry mints a second one.
-    if (result.status !== undefined && (result.status >= 500 || result.status === 408))
-      return { ok: false, error: MINT_MAY_HAVE_COMPLETED };
-    if (result.status !== undefined || result.requestNeverSent)
-      return { ok: false, error: result.error };
-    return { ok: false, error: MINT_MAY_HAVE_COMPLETED };
-  }
+  if (!result.ok) return { ok: false, error: writeFailureError(result, MINT_MAY_HAVE_COMPLETED) };
   const { code, expiresAt } = result.body;
   if (typeof code !== 'string' || !code || typeof expiresAt !== 'string')
     return { ok: false, error: MINT_MAY_HAVE_COMPLETED };
@@ -1213,11 +1225,48 @@ export async function revokeMembershipCode(input: {
     'Revoke membership code'
   );
   if (result.ok) return { ok: true };
-  if (result.status !== undefined && (result.status >= 500 || result.status === 408))
-    return { ok: false, error: REVOKE_MAY_HAVE_COMPLETED };
-  if (result.status !== undefined || result.requestNeverSent)
-    return { ok: false, error: result.error };
-  return { ok: false, error: REVOKE_MAY_HAVE_COMPLETED };
+  return { ok: false, error: writeFailureError(result, REVOKE_MAY_HAVE_COMPLETED) };
+}
+
+const GRANT_MAY_HAVE_COMPLETED =
+  'Could not confirm the grant. Wait a minute, then check this account’s grant list before granting again.';
+
+// The endpoint records the ModActivity row in the grant's transaction, so no `logAction` here.
+export async function grantCreatorScore(input: {
+  userId: number;
+  amount: number;
+  reason: string;
+}): Promise<{ ok: true; total: number } | { ok: false; error: string }> {
+  const result = await callModEndpoint(
+    'user/creator-score-grant',
+    { userId: input.userId, amount: input.amount, reason: input.reason },
+    'Grant Creator Score'
+  );
+  if (!result.ok) return { ok: false, error: writeFailureError(result, GRANT_MAY_HAVE_COMPLETED) };
+  const { total } = result.body;
+  if (typeof total !== 'number') return { ok: false, error: GRANT_MAY_HAVE_COMPLETED };
+  return { ok: true, total };
+}
+
+const GRANT_REVOKE_MAY_HAVE_COMPLETED =
+  'Could not confirm the revoke. Refresh the grant list before trying again.';
+
+export async function revokeCreatorScoreGrant(input: {
+  userId: number;
+  grantId: number;
+  reason: string;
+}): Promise<{ ok: true; total: number } | { ok: false; error: string }> {
+  const result = await callModEndpoint(
+    'user/creator-score-grant-revoke',
+    { userId: input.userId, grantId: input.grantId, reason: input.reason },
+    'Revoke Creator Score grant'
+  );
+  if (!result.ok)
+    return { ok: false, error: writeFailureError(result, GRANT_REVOKE_MAY_HAVE_COMPLETED) };
+  // The endpoint's total, not a re-read: the page reloads its scores from a replica that can lag.
+  const { total } = result.body;
+  if (typeof total !== 'number') return { ok: false, error: GRANT_REVOKE_MAY_HAVE_COMPLETED };
+  return { ok: true, total };
 }
 
 export async function deleteAccount(input: {

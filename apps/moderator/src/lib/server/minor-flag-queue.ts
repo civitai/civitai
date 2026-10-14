@@ -4,11 +4,20 @@ import type { Actions, RequestEvent } from '@sveltejs/kit';
 import { parseQuery } from '$lib/server/query';
 import {
   getAutoFlaggedMinorModels,
+  getMinorFlagAppealGroups,
   getMinorFlagAppealsForReview,
   getMinorHashMatchesForReview,
   getModelMinorState,
   type MinorSearch,
 } from '$lib/server/minor-hash.service';
+import {
+  APPEAL_FLAGS,
+  APPEAL_SORTS,
+  APPEAL_SOURCES,
+  appealFacets,
+  DEFAULT_APPEAL_FILTERS,
+  type AppealFilters,
+} from '$lib/minor-flags/appeal-filters';
 import { MAX_INT4 } from '$lib/server/users.service';
 import {
   confirmMinorFlag,
@@ -19,13 +28,30 @@ import {
   setModelMinorFlag,
 } from '$lib/server/minor-flag.service';
 
-export type MinorQueueView = 'pending' | 'auto' | 'appeals';
+export type MinorQueueView = 'pending' | 'auto';
 
 const querySchema = z.object({
   limit: z.coerce.number().int().min(10).max(200).catch(50),
   page: z.coerce.number().int().min(1).max(500).catch(1),
   q: z.string().trim().max(100).catch(''),
 });
+
+const appealFilterSchema = z.object({
+  source: z.enum(APPEAL_SOURCES).catch(DEFAULT_APPEAL_FILTERS.source),
+  flag: z.enum(APPEAL_FLAGS).catch(DEFAULT_APPEAL_FILTERS.flag),
+  sort: z.enum(APPEAL_SORTS).catch(DEFAULT_APPEAL_FILTERS.sort),
+});
+
+function parsePaging(url: URL) {
+  const { limit, page, q } = parseQuery(url, querySchema);
+  const numeric = /^\d+$/.test(q) ? Number(q) : null;
+  const search: MinorSearch | undefined = !q
+    ? undefined
+    : numeric !== null
+    ? { modelOrUserId: numeric > MAX_INT4 ? 0 : numeric }
+    : { username: q };
+  return { limit, page, q, offset: (page - 1) * limit, numeric, search };
+}
 
 /**
  * Only the open tab's ROWS are queried here. The tab counts come from `/api/minor-queue-counts`,
@@ -42,31 +68,38 @@ export async function loadMinorQueue(
   tab: MinorQueueView,
   tabs: readonly { value: MinorQueueView; label: string }[] | null
 ) {
-  const { limit, page, q } = parseQuery(url, querySchema);
-  const offset = (page - 1) * limit;
-
-  const numeric = /^\d+$/.test(q) ? Number(q) : null;
-  const search: MinorSearch | undefined = !q
-    ? undefined
-    : numeric !== null
-    ? { modelOrUserId: numeric > MAX_INT4 ? 0 : numeric }
-    : { username: q };
+  const { limit, page, q, offset, numeric, search } = parsePaging(url);
 
   const [queue, lookup] = await Promise.all([
     tab === 'auto'
       ? getAutoFlaggedMinorModels({ limit, offset, search })
-      : tab === 'appeals'
-      ? getMinorFlagAppealsForReview({ limit, offset, search })
       : getMinorHashMatchesForReview({ limit, offset, search }),
-    tab !== 'appeals' && numeric !== null && numeric <= MAX_INT4
-      ? getModelMinorState(numeric)
-      : null,
+    numeric !== null && numeric <= MAX_INT4 ? getModelMinorState(numeric) : null,
   ]);
 
   return { tab, limit, page, offset, q, lookup, tabs, ...queue, wide: true };
 }
 
 export type MinorQueueData = Awaited<ReturnType<typeof loadMinorQueue>>;
+
+export async function loadAppealQueue(url: URL) {
+  const { limit, page, q, offset, search } = parsePaging(url);
+  const appealFilters: AppealFilters = parseQuery(url, appealFilterSchema);
+
+  const [queue, groups] = await Promise.all([
+    getMinorFlagAppealsForReview({ limit, offset, search, filters: appealFilters }),
+    // The counts are decoration; a failure here must not take the list down with it.
+    getMinorFlagAppealGroups({ search }).catch((err) => {
+      console.error('Appeal facet counts failed', err);
+      return null;
+    }),
+  ]);
+
+  const facets = groups ? appealFacets(groups, appealFilters) : null;
+  return { limit, page, offset, q, appealFilters, facets, ...queue, fullBleed: true };
+}
+
+export type AppealQueueData = Awaited<ReturnType<typeof loadAppealQueue>>;
 
 const modelIdFrom = async (event: RequestEvent) => {
   const form = await event.request.formData();

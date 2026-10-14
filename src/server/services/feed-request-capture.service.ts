@@ -141,6 +141,7 @@ export type CapturableSearchInput = {
   /** Resolved by the primary path only; `newCreators` without it is not servable. */
   newCreatorUserIds?: number[];
   postId?: number;
+  postIds?: number[];
   collectionId?: number;
   hubId?: number;
   /**

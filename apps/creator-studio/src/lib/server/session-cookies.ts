@@ -1,11 +1,12 @@
-import { sessionCookieName } from '@civitai/auth';
+/** Only the hub's auth cookies cross to the main app; this app's own test-simulator cookies stay here.
+ *  Matched by shape rather than by `sessionCookieName()`: that helper derives the `__Secure-` prefix
+ *  from this app's env, and a mismatch with the main app's derivation silently forwards nothing. */
+const HUB_COOKIE = /^(?:__Secure-|__Host-)?civ-(?:token|device)=/;
 
-/** Only the hub's session cookie crosses to the main app; this app's own test-simulator cookies stay here.
- *  The name carries a `__Secure-` prefix on HTTPS, so it comes from the auth package, never a literal. */
-export function sessionCookies(request: Request, cookieName = sessionCookieName()): string {
+export function sessionCookies(request: Request): string {
   return (request.headers.get('cookie') ?? '')
     .split(';')
     .map((part) => part.trim())
-    .filter((part) => part.startsWith(`${cookieName}=`))
+    .filter((part) => HUB_COOKIE.test(part))
     .join('; ');
 }

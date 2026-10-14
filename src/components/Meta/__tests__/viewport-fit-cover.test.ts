@@ -76,6 +76,11 @@ const INSET_EDGES = ['top', 'right', 'bottom', 'left'] as const;
  */
 const INSET_CONSUMERS = [
   'src/components/Ads/AdhesiveAd.tsx',
+  // An inline `styles.inner` padding, which outranks the shell's modal rule the same way
+  // SupportModal's Tailwind one does — but only while an on-screen keyboard is up, when the
+  // feedback dialog swaps its 10dvh offsets for a small gap. It folds the TOP inset into that
+  // gap; the bottom edge is the keyboard's, so there is no bottom inset to pay.
+  'src/components/AppBlocks/ChromeFeedbackEntry.tsx',
   'src/components/AppLayout/AppFooter.tsx',
   'src/components/Apps/ReviewActionBar.tsx',
   'src/components/Chat/ChatPortal.tsx',
@@ -100,7 +105,8 @@ const INSET_CONSUMERS = [
   // Here for the same reason as NotificationsDrawer, via the other override
   // channel: a Tailwind utility in `classNames` is UNLAYERED, so its `inner`
   // padding outranks the shell's modal rule and it has to fold the inset in
-  // itself. The only `inner:` override in the app.
+  // itself. One of two `inner` padding overrides in the app; the other is the feedback dialog
+  // above, through inline `styles`.
   'src/components/Support/SupportModal.tsx',
   'src/components/generation_v2/GenerationLayout.tsx',
   'src/pages/comics/project/[id]/ProjectWorkspace.module.scss',

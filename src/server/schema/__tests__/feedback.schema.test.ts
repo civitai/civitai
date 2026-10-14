@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import {
   createFeedbackSchema,
   GENERIC_FEEDBACK_APP_BLOCK_REFUSAL,
+  GENERIC_FEEDBACK_APPS_PLATFORM_REFUSAL,
   getFeedbackAreaSchema,
 } from '~/server/schema/feedback.schema';
 import {
@@ -506,16 +507,22 @@ describe('feedback schema — context bounds', () => {
  * report bounced.
  */
 describe('feedback areas', () => {
-  const areas = ['bitdex-image-feed', 'apps-marketplace', 'site-bug-report', 'app-block'];
+  const areas = [
+    'bitdex-image-feed',
+    'apps-marketplace',
+    'site-bug-report',
+    'app-block',
+    'apps-platform',
+  ];
 
   // Both halves hand-typed. Reading the expectation out of FEEDBACK_AREAS would make
   // this test follow any future edit instead of pinning the set.
-  it('are exactly the four declared surfaces', () => {
+  it('are exactly the five declared surfaces', () => {
     expect([...FEEDBACK_AREAS]).toEqual(areas);
   });
 
-  // `app-block` is declared but is NOT a generic-route area: only the dedicated app-feedback
-  // procedure writes it. Hand-typed, like `areas`.
+  // `app-block` and `apps-platform` are declared but are NOT generic-route areas: only their
+  // dedicated procedures write them. Hand-typed, like `areas`.
   const genericAreas = ['bitdex-image-feed', 'apps-marketplace', 'site-bug-report'];
 
   it.each(genericAreas)('accepts %s on the submit schema', (area) => {
@@ -542,6 +549,24 @@ describe('feedback areas', () => {
     ]);
   });
 
+  // The two refusals are told apart by message: with the `apps-platform` refine removed this slug
+  // PARSES, and with the two messages swapped the array diff names the wrong guard.
+  it('refuses apps-platform on both generic schemas, with the apps-platform refusal', () => {
+    const create = createFeedbackSchema.safeParse({ area: 'apps-platform', message: 'cli broke' });
+    const get = getFeedbackAreaSchema.safeParse({ area: 'apps-platform' });
+    expect(create.success).toBe(false);
+    expect(get.success).toBe(false);
+    expect(create.error?.issues.map((i) => [i.path, i.message])).toEqual([
+      [
+        ['area'],
+        'Developer-platform feedback is sent through the platform feedback endpoint, not the general feedback form.',
+      ],
+    ]);
+    expect(get.error?.issues.map((i) => [i.path, i.message])).toEqual([
+      [['area'], GENERIC_FEEDBACK_APPS_PLATFORM_REFUSAL],
+    ]);
+  });
+
   it('rejects an area that is not declared', () => {
     expect(() =>
       createFeedbackSchema.parse({ area: 'apps-markteplace', message: 'typo in the slug' })
@@ -560,6 +585,7 @@ describe('feedback areas', () => {
     expect(feedbackAreaFlagKey('apps-marketplace')).toBe('feedback-area-apps-marketplace');
     expect(feedbackAreaFlagKey('site-bug-report')).toBe('feedback-area-site-bug-report');
     expect(feedbackAreaFlagKey('app-block')).toBe('feedback-area-app-block');
+    expect(feedbackAreaFlagKey('apps-platform')).toBe('feedback-area-apps-platform');
   });
 });
 

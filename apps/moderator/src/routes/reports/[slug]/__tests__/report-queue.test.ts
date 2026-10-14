@@ -28,7 +28,10 @@ vi.mock('$lib/server/reports.service', () => ({
   getReportedGame: vi.fn(),
   getGameMirrors: vi.fn(async () => []),
   getOwnerFlaggedMinorModelIds,
+  getReportedModelId: vi.fn(),
+  getReportedModelStates: vi.fn(async () => []),
 }));
+vi.mock('$lib/server/model-moderation.service', () => ({}));
 vi.mock('$lib/server/moderation-board.service', () => ({ getResolvedPostReportIds: vi.fn() }));
 vi.mock('$lib/server/user-actions.service', () => ({ removePlacement: vi.fn() }));
 vi.mock('$lib/server/game-frame', () => ({ delistGame: vi.fn(), delistReason: vi.fn() }));

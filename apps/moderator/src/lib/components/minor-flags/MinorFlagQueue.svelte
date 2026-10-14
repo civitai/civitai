@@ -12,7 +12,8 @@
   import { userLookupUrl } from '$lib/entity-url';
   import type { MinorQueueData } from '$lib/server/minor-flag-queue';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
-  import { flagsOf, isOpenVerdict, openVerdicts } from '$lib/minor-flags/text-scan-verdicts';
+  import { effectiveSource, sourceKey } from '$lib/minor-flags/appeal-filters';
+  import { fetchHashDetail, type HashDetail } from '$lib/minor-flags/hash-detail';
 
   type QueueForm = {
     error?: string;
@@ -30,16 +31,6 @@
   const rows = $derived(data.items as Row[]);
   const n = (v: unknown) => (typeof v === 'number' ? v : null);
   const s = (v: unknown) => (typeof v === 'string' ? v : null);
-
-  const poiOpen = (row: Row) =>
-    row.poi === true && isOpenVerdict(flagsOf(row.textScanFlags)?.poi);
-  // Mirrors appealRowState.showHashMatch: a poi-only or text-scan minor row has no hash match, so
-  // there is no detail to fetch.
-  const hasHashDetail = (row: Row) => {
-    if (data.tab !== 'appeals') return true;
-    const source = s(row.flagSource);
-    return source !== null && (s(row.flagConfirmedFrom) ?? source) !== 'text-scan';
-  };
 
   const tabHref = (tab: string) => {
     const url = new URL(page.url);
@@ -78,52 +69,18 @@
       { reload: true }
     );
 
-  type Detail = {
-    match: {
-      minorModelId: number;
-      minorModelName: string | null;
-      minorModelVersionId: number | null;
-      hash: string;
-      /** The version of THIS model that carried the matched hash. Only the auto/appeals tabs get it
-       *  from here — the Pending row already knows its own. */
-      modelVersionId: number | null;
-    } | null;
-    detail: {
-      modelCoverUrl: string | null;
-      modelCoverType: string | null;
-      modelCreatedAt: string | null;
-      uploaderModelCount: number;
-      uploaderJoinedAt: string | null;
-      minorModelCoverUrl: string | null;
-      minorModelCoverType: string | null;
-      minorModelStatus: string | null;
-      minorModelDeletedAt: string | null;
-      minorUsername: string | null;
-      minorFlaggedAt: string | null;
-      minorFlaggedByUsername: string | null;
-    } | null;
-  };
-
   // Fetched on expand and cached per row. The promise is stored, not the resolved value, so the
   // template can await it — and a second expand of the same row does not refetch.
   // Aliased so the generic does not end in `>>`, which the script parser reads as a shift operator
   // and rejects — svelte-check accepts it, so the only symptom is a 500 from the dev server.
-  type DetailRequest = Promise<Detail>;
+  type DetailRequest = Promise<HashDetail>;
   const details = new SvelteMap<number, DetailRequest>();
   function toggle(row: Row) {
     const id = Number(row.modelId);
     if (expanded.has(id)) return expanded.delete(id);
     expanded.add(id);
     if (details.has(id)) return;
-    const seed = n(row.minorModelId);
-    const q = seed ? `?minorModelId=${seed}` : '';
-    details.set(
-      id,
-      fetch(`/api/minor-hash-detail/${id}${q}`).then((r) => {
-        if (!r.ok) throw new Error(String(r.status));
-        return r.json() as Promise<Detail>;
-      })
-    );
+    details.set(id, fetchHashDetail(id, n(row.minorModelId)));
   }
 
   // Version-specific, and `view=basic`, matching the href the main app builds. Landing on the model
@@ -139,8 +96,8 @@
   };
 
   // Cached server-side and fetched here: the Pending count alone is ~10s, which is not a price to pay
-  // on every page render to label two tabs. The appeals page has no tabs, so it skips the fetch.
-  let counts = $state<{ pending: number; auto: number; appeals: number } | null>(null);
+  // on every page render to label two tabs.
+  let counts = $state<{ pending: number; auto: number } | null>(null);
   $effect(() => {
     if (!data.tabs) return;
     fetch('/api/minor-queue-counts')
@@ -158,6 +115,126 @@
   const lastShown = $derived(data.offset + rows.length);
 </script>
 
+{#snippet detailPanel(row: Row, modelId: number)}
+          {#await details.get(modelId)}
+            <p class="mt-3 text-sm text-dark-2">Loading detail…</p>
+          {:then payload}
+            {#if payload?.detail}
+              {@const d = payload.detail}
+              {@const m = payload.match}
+              {@const ownVersion = n(row.modelVersionId) ?? m?.modelVersionId ?? null}
+              {@const seedId = n(row.minorModelId) ?? m?.minorModelId ?? null}
+              {@const seedVersion = n(row.minorModelVersionId) ?? m?.minorModelVersionId ?? null}
+              {@const hash = s(row.hash) ?? m?.hash ?? null}
+              <div class="mt-3 grid gap-4 border-t border-dark-4 pt-3 sm:grid-cols-2">
+                <div>
+                  <h4 class="mb-1 text-xs tracking-wide text-dark-2 uppercase">This model</h4>
+                  {#if d.modelCoverUrl}
+                    <!-- Fixed box, `object-contain`: the two covers are here to be COMPARED, so they
+                         need the same frame, and cropping to fill it can hide the thing being judged.
+                         Without an object-fit the `width` attribute and the height clamp fight and the
+                         image renders stretched. -->
+                    <div
+                      class="mb-2 flex h-48 w-fit max-w-full items-center justify-center overflow-hidden rounded-md border border-dark-4 bg-dark-7"
+                    >
+                      <EdgeMedia
+                        src={d.modelCoverUrl}
+                        type={(d.modelCoverType ?? 'image') as 'image' | 'video'}
+                        width={450}
+                        class="h-full w-auto max-w-full object-contain"
+                      />
+                    </div>
+                  {/if}
+                  <p class="text-xs text-dark-2">
+                    Uploaded {dateTime(d.modelCreatedAt)} · {s(row.status) ?? 'unknown'}
+                  </p>
+                  <p class="text-xs text-dark-2">
+                    {s(row.username) ?? row.userId} · {num(d.uploaderModelCount)} model{d.uploaderModelCount ===
+                    1
+                      ? ''
+                      : 's'} · joined {dateTime(d.uploaderJoinedAt)}
+                  </p>
+                  <a
+                    href={modelHref(modelId, ownVersion ?? null)}
+                    target="_blank"
+                    rel="noreferrer"
+                    class="mt-1 inline-block text-xs {LINK_CLASS}"
+                  >
+                    Open model ↗
+                  </a>
+                </div>
+
+                {#if seedId}
+                  <div>
+                    <h4 class="mb-1 text-xs tracking-wide text-dark-2 uppercase">The flagged source</h4>
+                    {#if d.minorModelCoverUrl}
+                      <div
+                        class="mb-2 flex h-48 w-fit max-w-full items-center justify-center overflow-hidden rounded-md border border-dark-4 bg-dark-7"
+                      >
+                        <EdgeMedia
+                          src={d.minorModelCoverUrl}
+                          type={(d.minorModelCoverType ?? 'image') as 'image' | 'video'}
+                          width={450}
+                          class="h-full w-auto max-w-full object-contain"
+                        />
+                      </div>
+                    {/if}
+                    <p class="text-xs text-dark-2">
+                      {d.minorUsername ?? 'unknown'} · {d.minorModelStatus ?? 'unknown'}
+                    </p>
+                    <!-- The GAP between this and the copy's upload date is the evidence; a "deleted"
+                         badge alone does not show they happened minutes apart. -->
+                    {#if d.minorModelDeletedAt}
+                      <p class="text-xs text-dark-2">Deleted {dateTime(d.minorModelDeletedAt)}</p>
+                    {/if}
+                    <!-- Most minor-locked models have no setMinor ModActivity row, so a placeholder
+                         would read as missing data on nearly every row. -->
+                    {#if d.minorFlaggedAt}
+                      <p class="text-xs text-dark-2">
+                        Set minor {dateTime(d.minorFlaggedAt)}{d.minorFlaggedByUsername
+                          ? ` by ${d.minorFlaggedByUsername}`
+                          : ''}
+                      </p>
+                    {/if}
+                    <a
+                      href={modelHref(seedId, seedVersion ?? null)}
+                      target="_blank"
+                      rel="noreferrer"
+                      class="mt-1 inline-block text-xs {LINK_CLASS}"
+                    >
+                      Open flagged model ↗
+                    </a>
+                  </div>
+                {:else if effectiveSource(s(row.flagSource), s(row.flagConfirmedFrom)) === 'moderator'}
+                  <div class="rounded-md border border-blue-500/30 bg-blue-500/10 p-3 text-sm text-blue-200">
+                    <strong class="block">No hash match</strong>
+                    A moderator flagged this model directly rather than the automation matching it
+                    against a known minor model, so there is no match to show — nothing is missing here.
+                  </div>
+                {:else}
+                  <div class="rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-200">
+                    <strong class="block">No matching flagged model</strong>
+                    Nothing a moderator has flagged minor still shares a file with this model. The match
+                    is resolved live, so the model it matched has since been unflagged or its hashes were
+                    deleted — worth checking before you keep the flag.
+                  </div>
+                {/if}
+              </div>
+
+              {#if hash}
+                <div class="mt-3">
+                  <h4 class="text-xs font-semibold text-dark-2">Shared SHA256</h4>
+                  <code class="text-xs break-all text-dark-0">{hash}</code>
+                </div>
+              {/if}
+            {:else}
+              <p class="mt-3 text-sm text-dark-2">No detail for this model.</p>
+            {/if}
+          {:catch}
+            <p class="mt-3 text-sm text-red-300">Could not load the detail for this model.</p>
+          {/await}
+{/snippet}
+
 {#if data.tabs}
 <nav class="mb-4 flex gap-1 border-b border-dark-4">
   {#each data.tabs as t (t.value)}
@@ -171,8 +248,7 @@
       )}
     >
       {t.label}
-      <!-- Absent until loaded rather than a placeholder zero: "Appeals 0" is a claim, and on these
-           queues it is the one a moderator would act on by not looking. -->
+      <!-- Absent until loaded: a placeholder 0 reads as "nothing to review". -->
       {#if counts}
         <Badge variant="secondary">{num(counts[t.value])}</Badge>
       {/if}
@@ -247,7 +323,7 @@
       {#if verdict}
         <span class="text-sm text-dark-2">{verdict}</span>
       {:else if m.minor && m.flaggedAt}
-        {#if m.flagSource === 'auto'}
+        {#if sourceKey(m.flagSource) === 'hash'}
           <form method="POST" action="?/confirm" use:enhance={submit(m.modelId, 'Kept flagged')}>
             <input type="hidden" name="modelId" value={m.modelId} />
             <Button type="submit" size="xs">Keep flagged</Button>
@@ -275,10 +351,8 @@
     {data.q
       ? `Nothing on this tab matches "${data.q}".`
       : data.tab === 'pending'
-      ? 'No unreviewed hash matches.'
-      : data.tab === 'auto'
-        ? 'Nothing flagged automatically inside the review window.'
-        : 'No open appeals against a minor or real-person flag.'}
+        ? 'No unreviewed hash matches.'
+        : 'Nothing flagged automatically inside the review window.'}
   </p>
 {:else}
   <ul class="space-y-2">
@@ -302,11 +376,6 @@
           </a>
           <code class="text-xs text-dark-2">#{modelId}</code>
           <Badge variant="secondary">{s(row.status) ?? 'unknown'}</Badge>
-          {#if row.minor === false && !poiOpen(row)}
-            <!-- Reverting from the Auto-flagged tab leaves the appeal open; the row has to say the
-                 flag is already gone or a moderator upholds against nothing. -->
-            <Badge variant="outline">no longer flagged</Badge>
-          {/if}
           {#if s(row.flagSource)}
             <Badge variant="outline">
               {s(row.flagSource)}{s(row.flagConfirmedFrom) ? ` (was ${s(row.flagConfirmedFrom)})` : ''}
@@ -324,23 +393,6 @@
             <span class="text-xs text-dark-2">uploaded {dateTime(s(row.createdAt))}</span>
           {/if}
         </div>
-
-        {#if s(row.appealMessage)}
-          <p class="mt-2 rounded-md bg-dark-7 p-2 text-sm text-dark-0">{s(row.appealMessage)}</p>
-          <p class="mt-1 text-xs text-dark-2">appealed {dateTime(s(row.appealCreatedAt))}</p>
-        {/if}
-
-        {#each openVerdicts(row.textScanFlags) as { label, flag } (label)}
-          {#if flag.reason}
-            <p class="mt-2 text-xs text-dark-2">
-              <Badge variant="outline">text scan · {label === 'poi' ? 'real person' : 'minor'}</Badge>
-              {flag.reason}
-              {#if flag.names?.length}
-                — {flag.names.join(', ')}
-              {/if}
-            </p>
-          {/if}
-        {/each}
 
         {#if s(row.hash)}
           <p class="mt-2 text-xs break-all text-dark-2">
@@ -368,11 +420,9 @@
         {/if}
 
         <div class="mt-3 flex flex-wrap items-center gap-2">
-          {#if hasHashDetail(row)}
-            <Button size="xs" variant="outline" onclick={() => toggle(row)}>
-              {expanded.has(modelId) ? 'Hide detail' : 'Detail'}
-            </Button>
-          {/if}
+          <Button size="xs" variant="outline" onclick={() => toggle(row)}>
+            {expanded.has(modelId) ? 'Hide detail' : 'Detail'}
+          </Button>
 
           {#if verdict}
             <span class="text-sm text-dark-2">{verdict}</span>
@@ -394,158 +444,11 @@
               <input type="hidden" name="modelId" value={modelId} />
               <Button type="submit" size="xs" variant="destructive">Revert</Button>
             </form>
-          {:else}
-            <form method="POST" action="?/upholdAppeal" use:enhance={submit(modelId, 'Appeal rejected')}>
-              <input type="hidden" name="modelId" value={modelId} />
-              <Button type="submit" size="xs">Uphold flag</Button>
-            </form>
-            <form method="POST" action="?/overturnAppeal" use:enhance={submit(modelId, 'Appeal approved')}>
-              <input type="hidden" name="modelId" value={modelId} />
-              <Button type="submit" size="xs" variant="destructive">Overturn</Button>
-            </form>
-            {#if row.minor === true && poiOpen(row)}
-              <form
-                method="POST"
-                action="?/splitAppeal"
-                use:enhance={submit(modelId, 'Kept minor, lifted real person')}
-              >
-                <input type="hidden" name="modelId" value={modelId} />
-                <input type="hidden" name="minor" value="uphold" />
-                <input type="hidden" name="poi" value="overturn" />
-                <Button type="submit" size="xs" variant="outline">Keep minor, lift real person</Button>
-              </form>
-              <form
-                method="POST"
-                action="?/splitAppeal"
-                use:enhance={submit(modelId, 'Lifted minor, kept real person')}
-              >
-                <input type="hidden" name="modelId" value={modelId} />
-                <input type="hidden" name="minor" value="overturn" />
-                <input type="hidden" name="poi" value="uphold" />
-                <Button type="submit" size="xs" variant="outline">Lift minor, keep real person</Button>
-              </form>
-            {/if}
           {/if}
         </div>
 
         {#if expanded.has(modelId)}
-          {#await details.get(modelId)}
-            <p class="mt-3 text-sm text-dark-2">Loading detail…</p>
-          {:then payload}
-            {#if payload?.detail}
-              {@const d = payload.detail}
-              {@const m = payload.match}
-              {@const ownVersion = n(row.modelVersionId) ?? m?.modelVersionId ?? null}
-              {@const seedId = n(row.minorModelId) ?? m?.minorModelId ?? null}
-              {@const seedVersion = n(row.minorModelVersionId) ?? m?.minorModelVersionId ?? null}
-              {@const hash = s(row.hash) ?? m?.hash ?? null}
-              <div class="mt-3 grid gap-4 border-t border-dark-4 pt-3 sm:grid-cols-2">
-                <div>
-                  <h4 class="mb-1 text-xs tracking-wide text-dark-2 uppercase">This model</h4>
-                  {#if d.modelCoverUrl}
-                    <!-- Fixed box, `object-contain`: the two covers are here to be COMPARED, so they
-                         need the same frame, and cropping to fill it can hide the thing being judged.
-                         Without an object-fit the `width` attribute and the height clamp fight and the
-                         image renders stretched. -->
-                    <div
-                      class="mb-2 flex h-48 w-fit max-w-full items-center justify-center overflow-hidden rounded-md border border-dark-4 bg-dark-7"
-                    >
-                      <EdgeMedia
-                        src={d.modelCoverUrl}
-                        type={(d.modelCoverType ?? 'image') as 'image' | 'video'}
-                        width={450}
-                        class="h-full w-auto max-w-full object-contain"
-                      />
-                    </div>
-                  {/if}
-                  <p class="text-xs text-dark-2">
-                    Uploaded {dateTime(d.modelCreatedAt)} · {s(row.status) ?? 'unknown'}
-                  </p>
-                  <p class="text-xs text-dark-2">
-                    {s(row.username) ?? row.userId} · {num(d.uploaderModelCount)} model{d.uploaderModelCount ===
-                    1
-                      ? ''
-                      : 's'} · joined {dateTime(d.uploaderJoinedAt)}
-                  </p>
-                  <a
-                    href={modelHref(modelId, ownVersion ?? null)}
-                    target="_blank"
-                    rel="noreferrer"
-                    class="mt-1 inline-block text-xs {LINK_CLASS}"
-                  >
-                    Open model ↗
-                  </a>
-                </div>
-
-                {#if seedId}
-                  <div>
-                    <h4 class="mb-1 text-xs tracking-wide text-dark-2 uppercase">The flagged source</h4>
-                    {#if d.minorModelCoverUrl}
-                      <div
-                        class="mb-2 flex h-48 w-fit max-w-full items-center justify-center overflow-hidden rounded-md border border-dark-4 bg-dark-7"
-                      >
-                        <EdgeMedia
-                          src={d.minorModelCoverUrl}
-                          type={(d.minorModelCoverType ?? 'image') as 'image' | 'video'}
-                          width={450}
-                          class="h-full w-auto max-w-full object-contain"
-                        />
-                      </div>
-                    {/if}
-                    <p class="text-xs text-dark-2">
-                      {d.minorUsername ?? 'unknown'} · {d.minorModelStatus ?? 'unknown'}
-                    </p>
-                    <!-- The GAP between this and the copy's upload date is the evidence; a "deleted"
-                         badge alone does not show they happened minutes apart. -->
-                    {#if d.minorModelDeletedAt}
-                      <p class="text-xs text-dark-2">Deleted {dateTime(d.minorModelDeletedAt)}</p>
-                    {/if}
-                    <!-- Only 2 of ~13.5k minor-locked models carry a setMinor ModActivity row, so a
-                         placeholder here would read as missing data on nearly every row. -->
-                    {#if d.minorFlaggedAt}
-                      <p class="text-xs text-dark-2">
-                        Set minor {dateTime(d.minorFlaggedAt)}{d.minorFlaggedByUsername
-                          ? ` by ${d.minorFlaggedByUsername}`
-                          : ''}
-                      </p>
-                    {/if}
-                    <a
-                      href={modelHref(seedId, seedVersion ?? null)}
-                      target="_blank"
-                      rel="noreferrer"
-                      class="mt-1 inline-block text-xs {LINK_CLASS}"
-                    >
-                      Open flagged model ↗
-                    </a>
-                  </div>
-                {:else if (s(row.flagConfirmedFrom) ?? s(row.flagSource) ?? 'auto') === 'manual'}
-                  <div class="rounded-md border border-blue-500/30 bg-blue-500/10 p-3 text-sm text-blue-200">
-                    <strong class="block">No hash match</strong>
-                    A moderator flagged this model directly rather than the automation matching it
-                    against a known minor model, so there is no match to show — nothing is missing here.
-                  </div>
-                {:else}
-                  <div class="rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-200">
-                    <strong class="block">No matching flagged model</strong>
-                    Nothing a moderator has flagged minor still shares a file with this model. The match
-                    is resolved live, so the model it matched has since been unflagged or its hashes were
-                    deleted — worth checking before you keep the flag.
-                  </div>
-                {/if}
-              </div>
-
-              {#if hash}
-                <div class="mt-3">
-                  <h4 class="text-xs font-semibold text-dark-2">Shared SHA256</h4>
-                  <code class="text-xs break-all text-dark-0">{hash}</code>
-                </div>
-              {/if}
-            {:else}
-              <p class="mt-3 text-sm text-dark-2">No detail for this model.</p>
-            {/if}
-          {:catch}
-            <p class="mt-3 text-sm text-red-300">Could not load the detail for this model.</p>
-          {/await}
+          {@render detailPanel(row, modelId)}
         {/if}
       </li>
     {/each}

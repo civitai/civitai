@@ -105,6 +105,12 @@ const LEDGER: Record<string, { calls: number; selfBinds: string; why: string }> 
       'parseSubjectUserId(claims.sub) on claims from authorizeBlockBridgeToken — taken by the CALLER (the router proc, or this module’s own token-taking wrapper) and passed in as verified claims, never as a client-supplied id',
     why: 'The per-viewer block-settings write, shared by BOTH transports: the tRPC bridge proc blocks.updateUserSettings and the REST route /api/v1/blocks/user-checkpoint/set. Sharing this exact function is what makes the two doors agree about the kill switch — the same reason me.ts is in this set. The subject it binds to is also the subject the write is KEYED on (block_user_settings.user_id), so a gate evaluated against anything else would be checking a different person than the row belongs to.',
   },
+  'src/server/services/apps/doc-store-access.ts': {
+    calls: 1,
+    selfBinds:
+      'parseSubjectUserId(claims.sub) on claims stamped by withBlockScope, passed in by the document-store route handler',
+    why: 'The document-store resolver behind /api/v1/blocks/storage: the RUN gate on the viewer whose documents a request reads or writes, the same gate the legacy per-viewer storage path applies. The subject is the one the store keys private documents and authorship on.',
+  },
   'src/pages/api/v1/blocks/me.ts': {
     calls: 1,
     selfBinds: 'parseSubjectUserId(claims.sub) on claims stamped by withBlockScope',
@@ -189,7 +195,8 @@ describe('assertAppBlocksEnabledForTokenUser — production call-site ledger', (
     expect(files.length).toBeGreaterThan(500);
     // 2 → 4: `block-gated-images-read.service.ts` (the extracted gated-image read body)
     // and `user-settings.service.ts` (the extracted viewer-settings write body).
-    expect(consumers.length).toBe(4);
+    // 4 → 5: `apps/doc-store-access.ts` (the document-store resolver).
+    expect(consumers.length).toBe(5);
     expect(
       importsSharedGate(readFileSync(join(ROOT, 'src/pages/api/v1/blocks/me.ts'), 'utf8'))
     ).toBe(true);

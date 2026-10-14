@@ -268,6 +268,8 @@
     // Not sortable — a SQL ordering would need a second implementation of the attachment count;
     // `$lib/feedback-sort.ts` has the reasoning.
     { id: 'attachments', label: '📎', sortable: null, class: 'text-right' },
+    // `apps-platform` rows only. Not sortable: an unindexed expression over `context`.
+    { id: 'reporters', label: 'Reporters', sortable: null, class: 'text-right' },
     { id: 'status', label: 'Status', sortable: 'status' },
     { id: 'handled', label: 'Handled', sortable: 'handled' },
     { id: 'issue', label: 'Issue', sortable: 'issue' },
@@ -346,7 +348,7 @@
   {/if}
 
   <!--
-    🔴 NARROW WIDTHS SCROLL, THEY DO NOT COLLAPSE — deliberate, and the operator's call. Nine columns
+    🔴 NARROW WIDTHS SCROLL, THEY DO NOT COLLAPSE — deliberate, and the operator's call. Ten columns
     do not become a card list; they stay a table and the container scrolls.
 
     `min-w-0` is the whole guard: this sits in a flex column, where a flex item's default
@@ -427,6 +429,7 @@
               <span class="line-clamp-1 text-sm text-dark-2" title={row.message}>{row.message}</span>
             </TableCell>
             <TableCell class="text-right tabular-nums text-dark-2">{attachments || ''}</TableCell>
+            <TableCell class="text-right tabular-nums text-dark-2">{row.reporters ?? ''}</TableCell>
             <TableCell>
               <Badge class={feedbackStatusBadgeClass(row.status)}>{row.status}</Badge>
             </TableCell>

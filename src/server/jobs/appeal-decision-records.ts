@@ -31,7 +31,7 @@ const reportNamesImage = (imageId: Prisma.Sql) => Prisma.sql`EXISTS (
 )`;
 
 /** An excluded image, judged on its live row. */
-const excludedImageRow = (i: Prisma.Sql) => Prisma.sql`(
+export const excludedImageRow = (i: Prisma.Sql) => Prisma.sql`(
   ${i}."needsReview" = 'csam'
   OR ${i}."blockedFor" = 'CSAM'
   OR ${i}."userId" IN (SELECT c."userId" FROM "CsamReport" c WHERE c."userId" IS NOT NULL)
