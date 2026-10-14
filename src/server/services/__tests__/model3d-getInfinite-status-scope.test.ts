@@ -1,16 +1,10 @@
-import type * as DbClient from '~/server/db/client';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { getModel3DsInfinite } from '~/server/services/model3d.service';
 import { Model3DStatus } from '~/shared/utils/prisma/enums';
 import type { SessionUser } from '~/types/session';
 
-const { findMany } = vi.hoisted(() => ({ findMany: vi.fn() }));
-
-vi.mock('~/server/db/client', async (importOriginal) => ({
-  ...(await importOriginal<typeof DbClient>()),
-  dbRead: { model3D: { findMany } },
-}));
-
-const { getModel3DsInfinite } = await import('~/server/services/model3d.service');
+const findMany = dbMock.dbRead.model3D.findMany;
 
 type Input = Parameters<typeof getModel3DsInfinite>[0];
 
