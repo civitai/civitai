@@ -12,10 +12,7 @@ import { IconArrowRight, IconPlus } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { StorylineEarlyAccessModal } from '~/components/Storyline/StorylineEarlyAccessModal';
-import {
-  openStorylineContinue,
-  STORYLINE_CONTINUE_READY,
-} from '~/components/Storyline/storyline-continue';
+import { openStorylineContinueModal } from '~/components/Storyline/continue/openStorylineContinueModal';
 import type { StorylineChild } from '~/components/Storyline/storyline.queries';
 import {
   useStorylineChildren,
@@ -152,9 +149,7 @@ export function StorylineEndOfChapter({
         >
           Create the next section
         </Button>
-        {STORYLINE_CONTINUE_READY && parentPostId && (
-          <StorylineContinueWithPost parentPostId={parentPostId} />
-        )}
+        {parentPostId && <StorylineContinueWithPost parentPostId={parentPostId} />}
       </div>
     </div>
   );
@@ -246,7 +241,7 @@ export function StorylineContinueWithPost({ parentPostId }: { parentPostId: numb
     <Button
       variant="default"
       radius="md"
-      onClick={() => openStorylineContinue({ parentPostId })}
+      onClick={() => openStorylineContinueModal({ parentPostId })}
       data-testid="storyline-continue-with-post"
     >
       Continue with a post you made · {terms.price > 0 ? `${terms.price} Buzz` : 'Free'}
