@@ -103,3 +103,86 @@ describe('POST /api/notification/getDetails', () => {
     expect(queryNotifications).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * Every fixture above spells the id as a JSON number, which is what the types say and NOT what travels.
+ * The id column is 64-bit and the notifications service serializes 64-bit integers as decimal strings,
+ * both in the signal the browser forwards to this endpoint and in the rows `queryNotifications`
+ * returns. The endpoint demanded a number, so it answered 400 to every request a real client made, and
+ * behind that it compared the posted id to the stored one with `===`, which a string never satisfies.
+ *
+ * These fixtures are the wire shape. The id is deliberately past 2^31: a value the number-only schema
+ * cannot have been handed by a 32-bit column.
+ */
+describe('POST /api/notification/getDetails — ids as they arrive on the wire', () => {
+  const WIRE_ID = '2421362569';
+  const STORED = { ...OWN, id: WIRE_ID, details: { commentId: 731, version: 2 } };
+  /** What the signal carries, forwarded unchanged by the client. */
+  const signalled = (id: unknown) => ({
+    type: 'new-comment',
+    category: 'Comment',
+    details: { commentId: 731, version: 2 },
+    id,
+    createdAt: '2026-10-12T16:00:00.000Z',
+    read: false,
+  });
+
+  beforeEach(() => {
+    queryNotifications.mockResolvedValue([OWN, STORED]);
+  });
+
+  it('enriches a notification whose id arrives as a decimal string', async () => {
+    const call = post(signalled(WIRE_ID));
+    await call.promise;
+
+    expect(call.status(), 'a well-formed signal payload must not be refused').toBe(200);
+    expect(populateNotificationDetails).toHaveBeenCalledWith([
+      { id: WIRE_ID, type: 'new-comment', details: { commentId: 731, version: 2 } },
+    ]);
+  });
+
+  it('matches a numeric posted id against a string stored id', async () => {
+    const call = post(signalled(2421362569));
+    await call.promise;
+
+    expect(call.status()).toBe(200);
+    expect(populateNotificationDetails).toHaveBeenCalledTimes(1);
+  });
+
+  it('needs nothing but the id — the rest of the body is never read', async () => {
+    const call = post({ id: WIRE_ID });
+    await call.promise;
+
+    expect(call.status()).toBe(200);
+  });
+
+  it('still answers 404 for a string id that is not the caller’s', async () => {
+    const call = post(signalled('2421362570'));
+    await call.promise;
+
+    expect(call.status()).toBe(404);
+    expect(populateNotificationDetails).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['empty', ''],
+    ['blank', ' '],
+    ['signed', '-1'],
+    ['fractional', '1.5'],
+    ['exponent', '1e3'],
+    ['hex', '0x10'],
+    ['word', 'abc'],
+    ['zero', '0'],
+    ['beyond exact integer range', '9007199254740993'],
+    ['null', null],
+    ['boolean', true],
+    ['array', [1]],
+    ['fractional number', 1.5],
+  ])('rejects an id that is not one: %s', async (_name, id) => {
+    const call = post(signalled(id));
+    await call.promise;
+
+    expect(call.status()).toBe(400);
+    expect(queryNotifications).not.toHaveBeenCalled();
+  });
+});

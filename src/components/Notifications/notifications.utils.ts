@@ -1,5 +1,5 @@
 import { withPlaceholderData } from '~/hooks/trpcHelpers';
-import type { InfiniteData } from '@tanstack/react-query';
+import type { InfiniteData, QueryClient, QueryKey } from '@tanstack/react-query';
 import { useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { getQueryKey } from '@trpc/react-query';
 import produce from 'immer';
@@ -324,6 +324,39 @@ export const useMarkReadNotification = () => {
   return mutation;
 };
 
+/**
+ * The cached notification lists a newly-signalled notification is written into: All + its category.
+ *
+ * One list for both the write and the question "is there anything to write into", so the two cannot
+ * drift — see `hasLoadedNotificationList`.
+ */
+export function notificationListFilters(listKey: QueryKey[number], category: string) {
+  return [
+    { queryKey: [listKey, { input: { category: null } }], exact: false },
+    { queryKey: [listKey, { input: { category } }], exact: false },
+  ];
+}
+
+/**
+ * Whether any of those lists holds a page — the same condition the write below applies per list.
+ *
+ * The detail fetch on a new-notification signal exists only to enrich the row that gets written into a
+ * loaded list. A tab that has never opened its notifications has no such list, so the response would
+ * be thrown away: one authenticated request per signal, per open tab, for nothing. This is what lets
+ * the signal handler skip it. A list loaded later is fetched from the server and already carries the
+ * notification, enriched.
+ */
+export function hasLoadedNotificationList(
+  queryClient: Pick<QueryClient, 'getQueriesData'>,
+  filters: ReturnType<typeof notificationListFilters>
+): boolean {
+  return filters.some((filter) =>
+    queryClient
+      .getQueriesData<InfiniteData<NotificationGetAll>>(filter)
+      .some(([, old]) => !!old?.pages?.length)
+  );
+}
+
 export const useNotificationSignal = () => {
   const queryClient = useQueryClient();
   const queryUtils = trpc.useUtils();
@@ -331,40 +364,36 @@ export const useNotificationSignal = () => {
   const onUpdate = useCallback(
     async (updated: NotificationGetAllItem) => {
       const queryKey = getQueryKey(trpc.notification.getAllByUser)[0];
+      const listFilters = notificationListFilters(queryKey, updated.category);
 
-      // nb: this shouldn't run if "old" doesn't exist, but can't test that yet, and produce doesn't allow async
       let newUpdated = updated;
-      try {
-        const newUpdatedResp = await fetch('/api/notification/getDetails', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(updated),
-        });
-        if (newUpdatedResp.ok) {
-          const newUpdatedJson: NotificationGetAllItem = await newUpdatedResp.json();
-          newUpdated = { ...newUpdated, ...newUpdatedJson };
-        }
-      } catch {}
+      if (hasLoadedNotificationList(queryClient, listFilters)) {
+        try {
+          const newUpdatedResp = await fetch('/api/notification/getDetails', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(updated),
+          });
+          if (newUpdatedResp.ok) {
+            const newUpdatedJson: NotificationGetAllItem = await newUpdatedResp.json();
+            newUpdated = { ...newUpdated, ...newUpdatedJson };
+          }
+        } catch {}
+      }
 
       // update All + "Category" cache
-      queryClient.setQueriesData<InfiniteData<NotificationGetAll>>(
-        { queryKey: [queryKey, { input: { category: null } }], exact: false },
-        produce((old) => {
-          if (!old || !old.pages || !old.pages.length) return;
-          const firstPage = old.pages[0];
-          firstPage.items.unshift(newUpdated);
-        })
-      );
-      queryClient.setQueriesData<InfiniteData<NotificationGetAll>>(
-        { queryKey: [queryKey, { input: { category: updated.category } }], exact: false },
-        produce((old) => {
-          if (!old || !old.pages || !old.pages.length) return;
-          const firstPage = old.pages[0];
-          firstPage.items.unshift(newUpdated);
-        })
-      );
+      for (const filter of listFilters) {
+        queryClient.setQueriesData<InfiniteData<NotificationGetAll>>(
+          filter,
+          produce((old) => {
+            if (!old || !old.pages || !old.pages.length) return;
+            const firstPage = old.pages[0];
+            firstPage.items.unshift(newUpdated);
+          })
+        );
+      }
 
       queryUtils.user.checkNotifications.setData(undefined, (old) => {
         // Writes two named keys only, so unlike the mark-read updater it cannot
