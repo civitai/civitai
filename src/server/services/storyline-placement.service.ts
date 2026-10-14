@@ -78,10 +78,13 @@ export type StorylinePlacementData = { postId: number };
  * other post, which is what keeps a surface that opens at zero by default from
  * opening every post on the site.
  *
+ * Resolving the space already refuses a taken-down storyline and reads a
+ * Complete one as closed.
+ *
  * 🔴 **No router reaches this yet, and none may until it also runs the
- * storyline's own checks** (taken down, blocks between the placer and the
- * storyline's creator or the chapter's author, collaborators-only) and the
- * continuation post's readiness and rating ceiling.
+ * storyline's remaining checks** (blocks between the placer and the storyline's
+ * creator or the chapter's author, collaborators-only) and the continuation
+ * post's readiness and rating ceiling.
  */
 export async function createStorylinePlacement({
   placerId,
