@@ -1,6 +1,7 @@
 import { Alert, Group, Loader, Modal } from '@mantine/core';
 import { useState } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { useQueryImages } from '~/components/Image/image.utils';
 import {
   StorylineContinueForm,
   type StorylineSubmitOutcome,
@@ -10,6 +11,7 @@ import {
   storylineContinuePostOptions,
   storylineSubmitInput,
 } from '~/components/Storyline/storyline-ui';
+import { getStorylineChapterName } from '~/components/Storyline/storyline-mode.utils';
 import {
   useStorylineContinueTerms,
   useSubmitStorylineContinuation,
@@ -42,13 +44,18 @@ export default function StorylineContinueModal({
     { postIds: [parentPostId] },
     { enabled }
   );
-  const storylineId = membership?.[parentPostId]?.storylineId;
+  const parentChapter = membership?.[parentPostId];
+  const storylineId = parentChapter?.storylineId;
   const { data: storyline, isLoading: storylineLoading } = trpc.storyline.getById.useQuery(
     { id: storylineId ?? 0 },
     { enabled: !!storylineId }
   );
   // Every level: a post above the storyline's ceiling has to be listed to be refused out loud.
-  const { data: postPages, isLoading: postsLoading } = trpc.post.getInfinite.useInfiniteQuery(
+  const {
+    data: postPages,
+    isLoading: postsLoading,
+    isError: postsError,
+  } = trpc.post.getInfinite.useInfiniteQuery(
     {
       username: currentUser?.username,
       browsingLevel: allBrowsingLevelsFlag,
@@ -57,6 +64,13 @@ export default function StorylineContinueModal({
     { enabled: enabled && !!currentUser?.username, getNextPageParam: (page) => page.nextCursor }
   );
   const { data: parentPost } = trpc.post.get.useQuery({ id: parentPostId }, { enabled });
+  // The cover is chapter 1's first image until storylines carry a cover of their own.
+  const coverPostId = storyline?.mainPath[0]?.post?.id;
+  const { images: coverImages, isLoading: coverLoading } = useQueryImages(
+    { postId: coverPostId, limit: 1, withMeta: false, include: [] },
+    { enabled: !!coverPostId }
+  );
+  const cover = coverPostId ? (coverLoading ? undefined : coverImages[0] ?? null) : null;
   const terms = useStorylineContinueTerms(parentPostId, { enabled });
   const submit = useSubmitStorylineContinuation({ onSuccess: setOutcome });
 
@@ -68,7 +82,21 @@ export default function StorylineContinueModal({
       })
     : [];
 
-  const loading = membershipLoading || storylineLoading || postsLoading || terms.isLoading;
+  const parentName =
+    parentChapter && parentPost
+      ? getStorylineChapterName({
+          depth: parentChapter.depth,
+          tombstone: null,
+          post: {
+            id: parentPost.id,
+            title: parentPost.title,
+            userId: parentPost.user.id,
+            username: parentPost.user.username,
+          },
+        })
+      : null;
+
+  const loading = membershipLoading || storylineLoading || terms.isLoading;
 
   return (
     <Modal {...dialog} title="Continue the story" size="md">
@@ -90,11 +118,15 @@ export default function StorylineContinueModal({
         <StorylineContinueForm
           viewerId={currentUser.id}
           storyline={storyline}
-          parentTitle={parentPost?.title ?? null}
+          cover={cover}
+          parentName={parentName}
           closedReason={terms.data.closedReason}
           price={terms.data.price}
           isCollaborator={storyline.collaborators.some((user) => user.id === currentUser.id)}
           posts={posts}
+          postsLoading={postsLoading}
+          // A failed refetch keeps the posts already shown.
+          postsError={postsError && !firstPage}
           morePosts={!!firstPage?.nextCursor}
           postId={postId}
           onPostChange={setPostId}

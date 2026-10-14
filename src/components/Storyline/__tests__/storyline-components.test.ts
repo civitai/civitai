@@ -70,6 +70,23 @@ vi.mock('~/components/Search/QuickSearchDropdown', () => ({
       )
     ),
 }));
+// The real guard needs the session providers. This one keeps its contract: unless told
+// `explain={false}`, a hidden picture gets an explainer with a Show button.
+vi.mock('~/components/ImageGuard/ImageGuard2', () => ({
+  ImageGuard2: ({
+    explain = true,
+    children,
+  }: {
+    explain?: boolean;
+    children: (safe: boolean) => React.ReactNode;
+  }) =>
+    React.createElement(
+      React.Fragment,
+      null,
+      children(false),
+      explain ? React.createElement('button', { type: 'button' }, 'Show') : null
+    ),
+}));
 vi.mock('~/components/UserAvatar/UserAvatar', () => ({
   UserAvatar: ({ userId }: { userId: number }) =>
     React.createElement('span', null, `user ${userId}`),
@@ -152,7 +169,7 @@ function continueForm(overrides: Partial<React.ComponentProps<typeof StorylineCo
   return React.createElement(StorylineContinueForm, {
     viewerId: contributor,
     storyline: story,
-    parentTitle: 'Framed in a thrift store',
+    parentName: 'Framed in a thrift store',
     closedReason: null,
     price: 0,
     isCollaborator: false,
@@ -224,6 +241,120 @@ const row = (id: number, placerId = 50) => ({
   post: { id: 100 + id, title: `Continuation ${id}`, nsfwLevel: NsfwLevel.PG },
   parentPost: { id: 200, title: 'Chapter 4' },
   storyline: { id: 7, title: 'The Patch', maxNsfwLevel: NsfwLevel.PG13 },
+});
+
+describe('StorylineContinueForm post picker', () => {
+  const radios = (el: Element) => [...el.querySelectorAll('[role="radio"]')] as HTMLButtonElement[];
+
+  it('says what is being continued, after which chapter, and on what terms', () => {
+    const text = visibleText(render(continueForm({ price: 50 })));
+
+    expect(text).toContain('Continue The Patch');
+    expect(text).toContain('after Framed in a thrift store');
+    expect(text).toContain('Up to PG-13');
+    expect(text).toContain('50 Buzz to continue');
+    act(() => root?.unmount());
+    expect(visibleText(render(continueForm()))).toContain('Free to continue');
+  });
+
+  it('offers each post as a radio named for the post, and picks the one clicked', () => {
+    const picked: (number | null)[] = [];
+    const el = render(continueForm({ postId: 11, onPostChange: (id) => picked.push(id) }));
+
+    const group = el.querySelector('[role="radiogroup"]');
+    expect(group?.getAttribute('aria-labelledby')).toBeTruthy();
+    expect(
+      el.querySelector(`#${CSS.escape(group?.getAttribute('aria-labelledby') ?? '')}`)?.textContent
+    ).toBe('Your post');
+    expect(
+      radios(el).map((node) => [node.getAttribute('aria-label'), node.getAttribute('aria-checked')])
+    ).toEqual([
+      ["After hours, above this storyline's PG-13 limit", 'false'],
+      ['The cat returns, rated PG', 'true'],
+    ]);
+
+    act(() => radios(el)[0].click());
+    expect(picked).toEqual([10]);
+  });
+
+  it('keeps an above-ceiling post in the grid, marked with the storyline limit', () => {
+    const el = render(continueForm());
+    const [above, under] = radios(el);
+
+    expect(visibleText(above)).toContain('Above PG-13');
+    expect(visibleText(under)).not.toContain('Above');
+  });
+
+  it('does not mark an unrated post as above the ceiling', () => {
+    const el = render(continueForm({ posts: [{ id: 12, title: null, nsfwLevel: 0 }] }));
+    const [tile] = radios(el);
+
+    expect(tile.getAttribute('aria-label')).toBe('Post 12, not rated yet');
+    expect(visibleText(tile)).not.toContain('Above');
+  });
+
+  it('names an untitled post by its date', () => {
+    const el = render(
+      continueForm({
+        posts: [
+          { id: 13, title: null, nsfwLevel: NsfwLevel.PG, publishedAt: new Date(2026, 9, 3) },
+        ],
+      })
+    );
+
+    expect(radios(el)[0].getAttribute('aria-label')).toBe('Oct 3, 2026, rated PG');
+  });
+
+  it('counts the images of each post beside its name', () => {
+    const el = render(
+      continueForm({
+        posts: [
+          { id: 14, title: 'Many', nsfwLevel: NsfwLevel.PG, imageCount: 15 },
+          { id: 15, title: 'One', nsfwLevel: NsfwLevel.PG, imageCount: 1 },
+        ],
+      })
+    );
+
+    expect(
+      radios(el).map(
+        (node) =>
+          node.querySelector('[data-testid="storyline-post-image-count"]')?.textContent ?? null
+      )
+    ).toEqual(['15 images', '1 image']);
+    act(() => root?.unmount());
+    const uncounted = render(continueForm());
+    expect(uncounted.querySelector('[data-testid="storyline-post-image-count"]')).toBeNull();
+  });
+
+  it('puts no control inside a tile, even over a blurred picture', () => {
+    const cover = { id: 99, url: 'x', type: 'image' as const, nsfwLevel: NsfwLevel.X, hash: null };
+    const el = render(
+      continueForm({ posts: [{ id: 16, title: 'Blurred', nsfwLevel: NsfwLevel.PG, cover }] })
+    );
+
+    const [tile] = radios(el);
+    expect(tile.querySelectorAll('button, a, input')).toHaveLength(0);
+  });
+
+  it('says the posts could not load instead of claiming there are none', () => {
+    const text = visibleText(render(continueForm({ posts: [], postsError: true })));
+
+    expect(text).toContain("Couldn't load your posts.");
+    expect(text).not.toContain('You have no published posts');
+  });
+
+  it('shows placeholder tiles while posts load, and a way to make one when there are none', () => {
+    const loading = render(continueForm({ posts: [], postsLoading: true, cover: null }));
+    expect(loading.querySelectorAll('.mantine-Skeleton-root')).toHaveLength(6);
+    expect(loading.querySelector('[role="radiogroup"]')).toBeNull();
+    expect(visibleText(loading)).not.toContain('You have no published posts');
+    act(() => root?.unmount());
+
+    const empty = render(continueForm({ posts: [] }));
+    expect(visibleText(empty)).toContain('You have no published posts.');
+    const link = [...empty.querySelectorAll('a')].find((a) => a.textContent === 'Create a post');
+    expect(link?.getAttribute('href')).toBe('/posts/create');
+  });
 });
 
 describe('StorylineQueueList', () => {

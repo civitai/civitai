@@ -47,13 +47,28 @@ export const STORYLINE_CONTINUE_POST_LIMIT = 50;
  * username on the server: the server drops its user filter when a username lookup misses, and
  * this list is read at every browsing level so a post above the ceiling can be refused out loud.
  */
-export function storylineContinuePostOptions(
-  posts: { id: number; title: string | null; nsfwLevel: number; user: { id: number } }[],
+export function storylineContinuePostOptions<TImage>(
+  posts: {
+    id: number;
+    title: string | null;
+    nsfwLevel: number;
+    publishedAt: Date | null;
+    imageCount: number;
+    user: { id: number };
+    images: TImage[];
+  }[],
   { viewerId, parentPostId }: { viewerId: number; parentPostId: number }
 ) {
   return posts
     .filter((post) => post.user.id === viewerId && post.id !== parentPostId)
-    .map(({ id, title, nsfwLevel }) => ({ id, title, nsfwLevel }));
+    .map(({ id, title, nsfwLevel, publishedAt, imageCount, images }) => ({
+      id,
+      title,
+      nsfwLevel,
+      publishedAt,
+      imageCount,
+      cover: images[0] ?? null,
+    }));
 }
 
 /**
