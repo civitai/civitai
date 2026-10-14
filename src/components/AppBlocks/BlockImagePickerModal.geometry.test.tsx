@@ -164,8 +164,9 @@ describe('BlockImagePickerModal geometry with a large library', () => {
     }
   );
 
-  // Invariant guard (holds at origin/main too): a desktop picker is a centred modal, not full
-  // screen, with its footer on screen.
+  // A desktop picker is a centred modal, not full screen, with its footer on screen. Regression at
+  // 1280 x 600 (at origin/main the 440px grid pushes Use below a short window); an invariant guard
+  // at 1440 x 900, which fits either way.
   test.each(DESKTOPS)(
     'desktop $width x $height: a centred modal with Use on screen',
     async (vp) => {

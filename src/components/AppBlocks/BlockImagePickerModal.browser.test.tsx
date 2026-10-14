@@ -700,6 +700,7 @@ describe('BlockImagePickerModal: tray, jump to date, tile labels', () => {
     );
   });
 
+  // Red at origin/main: a tile was named by its index alone.
   test('labels a tile with when the image was posted', async () => {
     setPosted([postedItem(1, { createdAt: new Date(2024, 5, 30, 12) })]);
     openModal({ sources: ['posted'] });
