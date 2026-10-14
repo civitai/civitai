@@ -85,6 +85,9 @@ const { StorylineCollaboratorsPanel } = await import(
   '~/components/Storyline/manage/StorylineCollaboratorsPanel'
 );
 const { STORYLINE_MAX_COLLABORATORS } = await import('~/shared/utils/storyline');
+const { StorylineRatingInput } = await import(
+  '~/components/Storyline/settings/StorylineRatingInput'
+);
 const { StorylineQueueList } = await import('~/components/Storyline/queue/StorylineQueueList');
 const { StorylineContinuationQueue } = await import(
   '~/components/Storyline/queue/StorylineContinuationQueue'
@@ -544,5 +547,30 @@ describe('isStorylineNotAvailable', () => {
     expect(isStorylineNotAvailable({ message: STORYLINE_REFUSALS.notAvailable })).toBe(true);
     expect(isStorylineNotAvailable({ message: STORYLINE_REFUSALS.notOpen })).toBe(false);
     expect(isStorylineNotAvailable(null)).toBe(false);
+  });
+});
+
+describe('StorylineRatingInput', () => {
+  it('disables the ratings isAllowed refuses and leaves the rest', () => {
+    const el = render(
+      React.createElement(StorylineRatingInput, {
+        value: NsfwLevel.R,
+        onChange: () => undefined,
+        isAllowed: (level) => level >= NsfwLevel.R,
+      })
+    );
+
+    expect(option(el, 'Maximum rating', 'PG').disabled).toBe(true);
+    expect(option(el, 'Maximum rating', 'PG-13').disabled).toBe(true);
+    expect(option(el, 'Maximum rating', 'R').disabled).toBe(false);
+    expect(option(el, 'Maximum rating', 'XXX').disabled).toBe(false);
+  });
+
+  it('allows every rating without isAllowed', () => {
+    const el = render(
+      React.createElement(StorylineRatingInput, { value: NsfwLevel.PG, onChange: () => undefined })
+    );
+
+    expect(option(el, 'Maximum rating', 'PG').disabled).toBe(false);
   });
 });

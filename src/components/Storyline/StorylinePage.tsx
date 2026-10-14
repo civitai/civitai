@@ -1,31 +1,31 @@
 import { Alert, Badge, Button, Center, Container, Loader, Text, Title } from '@mantine/core';
-import { IconBook2, IconSettings } from '@tabler/icons-react';
+import { IconBook2, IconPencilPlus, IconSettings } from '@tabler/icons-react';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { PostComments } from '~/components/Post/Detail/PostComments';
-import { StorylineCover } from '~/components/Storyline/StorylineCover';
+import { openStorylineContinueModal } from '~/components/Storyline/continue/openStorylineContinueModal';
 import { openStorylineManageModal } from '~/components/Storyline/manage/openStorylineManageModal';
+import { StorylineCover } from '~/components/Storyline/StorylineCover';
+import { useStorylineContinueTerms } from '~/components/Storyline/storyline.queries';
+import { storylinePriceLabel } from '~/components/Storyline/storyline-ui';
 import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
 import { browsingLevelLabels } from '~/shared/constants/browsingLevel.constants';
-import type { StorylineChapterRank } from '~/shared/utils/storyline';
 import { trpc } from '~/utils/trpc';
 
-const rankLabel: Record<StorylineChapterRank, string> = {
-  canon: 'Main path',
-  endorsed: 'Endorsed',
-  community: 'Community',
-};
+const roleLabel = { creator: 'Creator', endorsed: 'Endorsed', contributor: 'Contributor' } as const;
+
+const plural = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`;
 
 export function StorylinePage({ id }: { id: number }) {
   const storylineQuery = trpc.storyline.getById.useQuery({ id });
   const storyline = storylineQuery.data;
-  const rootChapterId = storyline?.rootChapterId ?? null;
-  const chapterQueryInput = { chapterId: rootChapterId ?? 0 };
-  const { data: rootPath } = trpc.storyline.getPath.useQuery(chapterQueryInput, {
-    enabled: !!rootChapterId,
-  });
-  const { data: continuations = [] } = trpc.storyline.getChildren.useQuery(chapterQueryInput, {
-    enabled: !!rootChapterId,
-  });
+  const mainPath = storyline?.mainPath ?? [];
+  // Cover, thread and Read from the start come from the reading path, which tombstones chapter 1
+  // where this reader may not see it; `rootPostId` does not.
+  const rootPost = mainPath[0]?.post ?? null;
+  // Continue adds the next chapter after the end of the main path. When that chapter is hidden
+  // from this reader, Continue is not offered: continuing an earlier one would make a side branch.
+  const lastPost = mainPath.at(-1)?.post ?? null;
+  const terms = useStorylineContinueTerms(lastPost?.id);
 
   if (storylineQuery.isLoading)
     return (
@@ -42,8 +42,6 @@ export function StorylinePage({ id }: { id: number }) {
       </Container>
     );
 
-  const firstChapter = rootPath?.chapters.find((chapter) => chapter.chapterId === rootChapterId);
-  const rootPost = firstChapter?.post ?? null;
   const ratingLabel =
     browsingLevelLabels[storyline.maxNsfwLevel as keyof typeof browsingLevelLabels];
 
@@ -54,6 +52,15 @@ export function StorylinePage({ id }: { id: number }) {
       <div className="flex flex-wrap items-center gap-2">
         <Badge color={storyline.status === 'Complete' ? 'gray' : 'green'} variant="light">
           {storyline.status}
+        </Badge>
+        {terms?.open && (
+          <Badge color="violet" variant="light">
+            Open for continuations
+          </Badge>
+        )}
+        <Badge variant="outline" color="gray">
+          {plural(storyline.chapterCount, 'chapter', 'chapters')} ·{' '}
+          {plural(storyline.contributorCount, 'creator', 'creators')}
         </Badge>
         {ratingLabel && <Badge variant="outline">Rated up to {ratingLabel}</Badge>}
         <Text size="sm" c="dimmed">
@@ -70,6 +77,15 @@ export function StorylinePage({ id }: { id: number }) {
             Read from the start
           </Button>
         )}
+        {lastPost && terms?.open && (
+          <Button
+            variant="light"
+            leftSection={<IconPencilPlus />}
+            onClick={() => openStorylineContinueModal({ parentPostId: lastPost.id })}
+          >
+            Continue the story · {storylinePriceLabel(terms.price)}
+          </Button>
+        )}
         {storyline.viewerRole === 'owner' && (
           <Button
             variant="default"
@@ -82,47 +98,33 @@ export function StorylinePage({ id }: { id: number }) {
       </div>
 
       <div className="flex flex-col gap-6 md:flex-row">
-        <section className="flex flex-[2] flex-col gap-2">
-          <Title order={3}>Chapters</Title>
+        <section aria-labelledby="storyline-main-path" className="flex flex-[2] flex-col gap-2">
+          <Title order={3} id="storyline-main-path">
+            Main path
+          </Title>
           <ol className="flex list-none flex-col gap-2 border-l-2 border-blue-5 pl-4">
-            <li>
-              {rootPost ? (
-                <Text component={Link} href={`/posts/${rootPost.id}`} fw={600}>
-                  1. {rootPost.title || 'Chapter 1'}
-                </Text>
-              ) : (
-                <Text c="dimmed">1. This chapter isn&apos;t available</Text>
-              )}
-            </li>
-            {continuations.length > 0 && (
-              <li className="flex flex-col gap-1">
-                <Text size="sm" c="dimmed">
-                  {continuations.length === 1
-                    ? '1 way to continue'
-                    : `${continuations.length} ways to continue`}
-                </Text>
-                {continuations.map((chapter) => (
-                  <div key={chapter.chapterId} className="flex items-center gap-2">
-                    {chapter.post ? (
-                      <Text component={Link} href={`/posts/${chapter.post.id}`} size="sm">
-                        2. {chapter.post.title || 'Chapter 2'}
-                        <Text span size="xs" c="dimmed">
-                          {' '}
-                          by {chapter.post.username}
-                        </Text>
-                      </Text>
-                    ) : (
-                      <Text size="sm" c="dimmed">
-                        2. This chapter isn&apos;t available
-                      </Text>
-                    )}
-                    <Badge size="xs" variant="light">
-                      {rankLabel[chapter.rank]}
-                    </Badge>
-                  </div>
-                ))}
+            {mainPath.map((chapter) => (
+              <li key={chapter.chapterId} className="flex flex-wrap items-center gap-2">
+                {chapter.post ? (
+                  <Text component={Link} href={`/posts/${chapter.post.id}`} size="sm">
+                    {chapter.depth + 1}. {chapter.post.title || `Chapter ${chapter.depth + 1}`}
+                    <Text span size="xs" c="dimmed">
+                      {' '}
+                      by {chapter.post.username}
+                    </Text>
+                  </Text>
+                ) : (
+                  <Text size="sm" c="dimmed">
+                    {chapter.depth + 1}. This chapter isn&apos;t available
+                  </Text>
+                )}
+                {chapter.childCount > 1 && (
+                  <Badge size="xs" variant="light" color="violet">
+                    {plural(chapter.childCount, 'way', 'ways')} to continue
+                  </Badge>
+                )}
               </li>
-            )}
+            ))}
           </ol>
         </section>
 
@@ -130,15 +132,11 @@ export function StorylinePage({ id }: { id: number }) {
           <Title order={3} id="storyline-contributors">
             Contributors
           </Title>
-          <div className="flex items-center gap-2">
-            <UserAvatarSimple id={storyline.user.id} username={storyline.user.username} />
-            <Badge size="xs">Creator</Badge>
-          </div>
-          {storyline.collaborators.map((user) => (
+          {storyline.contributors.map(({ user, role }) => (
             <div key={user.id} className="flex items-center gap-2">
               <UserAvatarSimple id={user.id} username={user.username} />
-              <Badge size="xs" variant="light">
-                Endorsed
+              <Badge size="xs" variant={role === 'creator' ? 'filled' : 'light'}>
+                {roleLabel[role]}
               </Badge>
             </div>
           ))}

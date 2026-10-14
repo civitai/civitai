@@ -1,21 +1,14 @@
-import {
-  Alert,
-  Button,
-  Group,
-  Modal,
-  SegmentedControl,
-  Stack,
-  Text,
-  TextInput,
-} from '@mantine/core';
+import { Alert, Button, Group, Modal, Stack, Text, TextInput } from '@mantine/core';
 import { IconAlertTriangle } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { useState } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
+import { StorylineContinueModeInput } from '~/components/Storyline/settings/StorylineContinueModeInput';
+import { StorylineRatingInput } from '~/components/Storyline/settings/StorylineRatingInput';
+import type { StorylineWhoCanContinue } from '~/components/Storyline/storyline-ui';
 import type { StorylineSourcePost } from '~/components/Storyline/storyline.utils';
 import { storylineUrl } from '~/components/Storyline/storyline-routes';
-import { browsingLevelLabels } from '~/shared/constants/browsingLevel.constants';
 import { NsfwLevel } from '~/server/common/enums';
 import { STORYLINE_CEILING_LEVELS, storylineLevelAllowed } from '~/shared/utils/storyline';
 import { showErrorNotification } from '~/utils/notifications';
@@ -50,6 +43,7 @@ export function StartStorylineModal({
   const [maxNsfwLevel, setMaxNsfwLevel] = useState<number>(
     allowed.find((level) => level >= NsfwLevel.PG13) ?? allowed[0] ?? NsfwLevel.PG13
   );
+  const [whoCanContinue, setWhoCanContinue] = useState<StorylineWhoCanContinue>('Anyone');
 
   const create = trpc.storyline.create.useMutation({
     onSuccess: async ({ id }) => {
@@ -89,14 +83,10 @@ export function StartStorylineModal({
               <Text size="sm" fw={500}>
                 Max rating
               </Text>
-              <SegmentedControl
-                value={String(maxNsfwLevel)}
-                onChange={(value) => setMaxNsfwLevel(Number(value))}
-                data={STORYLINE_CEILING_LEVELS.map((level) => ({
-                  value: String(level),
-                  label: browsingLevelLabels[level],
-                  disabled: !allowed.includes(level),
-                }))}
+              <StorylineRatingInput
+                value={maxNsfwLevel}
+                onChange={setMaxNsfwLevel}
+                isAllowed={(level) => allowed.includes(level)}
               />
               <Text size="xs" c="dimmed">
                 Continuations rated above this can&apos;t be added. It can&apos;t be lower than
@@ -105,9 +95,12 @@ export function StartStorylineModal({
             </Stack>
             <Stack gap={2}>
               <Text size="sm" fw={500}>
-                Continuing
+                Who can continue
               </Text>
-              <Text size="sm">Anyone can continue, and you review each one. Free to continue.</Text>
+              <StorylineContinueModeInput value={whoCanContinue} onChange={setWhoCanContinue} />
+              <Text size="xs" c="dimmed">
+                Free to continue. You can set a price from Manage on the storyline&apos;s page.
+              </Text>
             </Stack>
           </>
         )}
@@ -118,7 +111,7 @@ export function StartStorylineModal({
           <Button
             disabled={!canStart || !trimmed}
             loading={create.isPending}
-            onClick={() => create.mutate({ postId, title: trimmed, maxNsfwLevel })}
+            onClick={() => create.mutate({ postId, title: trimmed, maxNsfwLevel, whoCanContinue })}
           >
             Start storyline
           </Button>

@@ -62,6 +62,7 @@ describe('StartStorylineModal', () => {
 
     await page.getByRole('textbox', { name: 'Title' }).fill('  The Patch  ');
     await page.getByText('X', { exact: true }).click();
+    await page.getByText('Only collaborators').click();
     await page.getByRole('button', { name: 'Start storyline' }).click();
 
     expect(mocks.mutate).toHaveBeenCalledTimes(1);
@@ -69,7 +70,18 @@ describe('StartStorylineModal', () => {
       postId: 41,
       title: 'The Patch',
       maxNsfwLevel: NsfwLevel.X,
+      whoCanContinue: 'Collaborators',
     });
+  });
+
+  test('anyone can continue unless the creator says otherwise', async () => {
+    renderWithProviders(<StartStorylineModal postId={41} postNsfwLevel={NsfwLevel.PG} />);
+
+    await page.getByRole('textbox', { name: 'Title' }).fill('The Patch');
+    await page.getByRole('button', { name: 'Start storyline' }).click();
+    expect(mocks.mutate).toHaveBeenCalledWith(
+      expect.objectContaining({ whoCanContinue: 'Anyone' })
+    );
   });
 
   // A post's level is the OR of its images', so it is judged by its most severe image.
