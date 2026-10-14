@@ -519,11 +519,16 @@ async function moderate(
 /**
  * Failures that are OUR fault, refunded without charging the caller's rejection bucket: the
  * store or a dependency was unavailable, the store timed out on a lock other writers held, or
- * anything that is not a `DocStoreError` at all. The store validates a document fully before
- * any SQL runs (shape, size, unstorable text, keys, indexes), so a raw error out of it is the
- * database — a refused connection, BEGIN or COMMIT — not the caller's value. Every refusal
- * about the caller's request or document is charged as a rejection, the same split the legacy
- * surface makes (`withSharedWriteBudget` and `asTransactionFault`, `apps-shared.router.ts`).
+ * anything that is not a `DocStoreError` at all. Every refusal about the caller's request or
+ * document is charged as a rejection.
+ *
+ * ⚠️ THE DEFAULT IS THE OPPOSITE OF THE LEGACY SURFACE'S. `apps-shared.router.ts` refunds only
+ * the statements it marks as plumbing (`asTransactionFault`: connection, BEGIN, COMMIT) and
+ * charges a raw error from its INSERT/UPDATE, because a value can make those fail. Here a raw
+ * error is refunded, which is sound only because the store validates a document fully before
+ * any SQL runs and `translatePgError` (`doc-store.ts`) maps the one value-reachable database
+ * error (the stored-size CHECK) to `too_large`. A new constraint a value can violate must be
+ * mapped there too, or every such failure becomes a free retry of the moderation scan.
  */
 function isOurFault(err: unknown): boolean {
   if (!(err instanceof DocStoreError)) return true;
