@@ -5,6 +5,7 @@ import { logToAxiom } from '~/server/logging/client';
 import {
   holdPlacementEscrow,
   isPlacementEscrowFunded,
+  LEG_RETRY_BACKOFF_MINUTES,
   settlePlacement,
 } from '~/server/services/placement-escrow.service';
 import { assertCanPlace } from '~/server/services/placement-moderation.service';
@@ -28,6 +29,7 @@ import {
   effectivePlacementPrice,
   encodePlacementQueueCursor,
   parsePlacementQueueCursor,
+  PLACEMENT_HOLD_KINDS,
   PLACEMENT_QUEUE_PAGE_SIZE,
   PLACEMENT_SURFACES,
   resolvePlacementSpace,
@@ -594,6 +596,14 @@ const isPositiveId = (id: number | null): id is number => id != null;
  * drafts read every tick would starve the rows behind it. A post under review
  * is left out of the selection for the same reason, and refunds at its deadline.
  */
+/** What the escrow has receipted for a placement row `pl`, as a SQL expression. */
+const receiptedHolds = Prisma.sql`(
+  SELECT COALESCE(SUM(t.amount), 0) FROM "PlacementTransaction" t
+  WHERE t."placementId" = pl.id
+    AND t.kind IN (${Prisma.join([...PLACEMENT_HOLD_KINDS])})
+    AND t."transactionId" IS NOT NULL
+)`;
+
 export async function startReadyStorylineContinuations({ limit = 200 }: { limit?: number } = {}) {
   const candidates = await dbWrite.$queryRaw<{ id: number }[]>`
     SELECT pl.id
@@ -603,6 +613,10 @@ export async function startReadyStorylineContinuations({ limit = 200 }: { limit?
       AND pl."targetType" = ${TARGET_TYPE}
       AND pl.status = 'pending'
       AND pl.data ->> 'awaitingReadiness' = 'true'
+      -- A priced row whose holds have not all landed is skipped below every
+      -- tick; selecting it would let a backlog of them fill the batch and
+      -- starve the rows behind. The unfunded sweep settles those.
+      AND (pl.amount = 0 OR ${receiptedHolds} >= pl.amount)
       AND (
         p.id IS NULL
         OR p."tosViolation"
@@ -1090,4 +1104,70 @@ export async function retractStorylineContinuation({
   if (!result.settled)
     throw throwBadRequestError('storyline: this continuation has already been answered');
   return { retracted: true };
+}
+
+/**
+ * How long a priced continuation may sit without all of its holds before it is
+ * settled. Submission takes the holds in the same request, each bounded by the
+ * Buzz call timeout, so a row this old that is still unfunded was left behind:
+ * the request died between writing the row and charging for it.
+ */
+export const STALE_UNFUNDED_MINUTES = 15;
+
+/**
+ * Settles priced continuations whose escrow never filled, as an expiry, so
+ * whatever was taken is returned in full and the row leaves the owner's queue
+ * and the placer's pending cap.
+ *
+ * Until settled such a row cannot be answered (approving or declining it waits
+ * for the holds) and would otherwise sit there for its whole seven days.
+ *
+ * A hold attempted within the escrow's retry window may still be in flight, so
+ * a row with one is left for a later tick: settling it now would plan the
+ * refund from the part receipted so far, and a hold landing afterwards would
+ * never be returned. Funding is checked again per row before settling, and the
+ * settlement itself only claims a row that is still pending.
+ */
+export async function settleStaleUnfundedContinuations({ limit = 200 }: { limit?: number } = {}) {
+  const stale = await dbWrite.$queryRaw<{ id: number; amount: number }[]>`
+    SELECT pl.id, pl.amount
+    FROM "Placement" pl
+    WHERE pl.surface = ${SURFACE}
+      AND pl.status = 'pending'
+      AND pl.amount > 0
+      AND pl."createdAt" < now() - ${STALE_UNFUNDED_MINUTES} * interval '1 minute'
+      AND ${receiptedHolds} < pl.amount
+      AND NOT EXISTS (
+        SELECT 1 FROM "PlacementTransaction" t
+        WHERE t."placementId" = pl.id
+          AND t.kind IN (${Prisma.join([...PLACEMENT_HOLD_KINDS])})
+          AND t."transactionId" IS NULL
+          -- A leg claimed but not yet attempted has no lastAttemptAt; its claim
+          -- time stands in, so it is not mistaken for an abandoned one.
+          AND COALESCE(t."lastAttemptAt", t."createdAt")
+            > now() - ${LEG_RETRY_BACKOFF_MINUTES} * interval '1 minute'
+      )
+    ORDER BY pl.id ASC
+    LIMIT ${limit}
+  `;
+
+  let settled = 0;
+  for (const row of stale) {
+    // Caught per row, so one failure does not wedge the batch on the lowest id.
+    try {
+      if (await isPlacementEscrowFunded({ placementId: row.id, amount: row.amount })) continue;
+      const result = await settlePlacement({ placementId: row.id, action: 'expire' });
+      if (result.settled) settled++;
+    } catch (error) {
+      await logToAxiom({
+        name: 'storyline-placement',
+        type: 'error',
+        message: 'unfunded continuation settle failed',
+        placementId: row.id,
+        error: error instanceof Error ? error.message : String(error),
+      }).catch(() => undefined);
+    }
+  }
+
+  return { considered: stale.length, settled };
 }

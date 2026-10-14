@@ -12,7 +12,10 @@ import {
 } from '~/server/services/placement-metrics.service';
 import { sweepDeletedRemixGallerySubmissions } from '~/server/services/remix-gallery-sweep.service';
 import { startReadyRemixSubmissionClocks } from '~/server/services/remix-gallery.service';
-import { startReadyStorylineContinuations } from '~/server/services/storyline-placement.service';
+import {
+  settleStaleUnfundedContinuations,
+  startReadyStorylineContinuations,
+} from '~/server/services/storyline-placement.service';
 
 const BATCH = 100;
 
@@ -120,6 +123,31 @@ export const startReadyStorylineContinuationsJob = createJob(
       considered: sum(runs, (run) => run.considered),
       started: sum(runs, (run) => run.started),
       refunded: sum(runs, (run) => run.refunded),
+      hitCap,
+    };
+  },
+  { lockExpiration: 10 * 60 }
+);
+
+/**
+ * Priced storyline continuations whose holds never all landed, settled as an
+ * expiry so what was taken returns and the row leaves the owner's queue.
+ */
+export const settleStaleUnfundedContinuationsJob = createJob(
+  'storyline-continuation-unfunded',
+  '*/10 * * * *',
+  async (jobContext) => {
+    const { runs, hitCap } = await drain(
+      'storyline-continuation-unfunded',
+      jobContext,
+      () => settleStaleUnfundedContinuations({ limit: BATCH }),
+      // Rows that left the set. A row skipped this pass must not keep the drain going.
+      (result) => result.settled
+    );
+
+    return {
+      considered: sum(runs, (run) => run.considered),
+      settled: sum(runs, (run) => run.settled),
       hitCap,
     };
   },
@@ -299,6 +327,7 @@ export const placementJobs = [
   expirePlacementsJob,
   startReadyRemixSubmissionClocksJob,
   startReadyStorylineContinuationsJob,
+  settleStaleUnfundedContinuationsJob,
   sweepUnpaidPlacementLegsJob,
   sweepUnplannedPlacementSettlementsJob,
   sweepDeletedRemixGallerySubmissionsJob,
