@@ -1,0 +1,193 @@
+import type { IncomingMessage } from 'http';
+import { getUserContentSettings } from '~/server/services/user.service';
+import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
+import { getTosMeta } from '~/server/services/content.service';
+import { getCurrentAnnouncements } from '~/server/services/announcement.service';
+import { getNavBanners } from '~/server/services/nav-banner.service';
+import { getUserFollows } from '~/server/redis/caches';
+import { getRequestDomainColor } from '~/server/utils/server-domain';
+import { getBrowsingSettingAddons, getLiveNow } from '~/server/services/system-cache';
+import { withTimeoutFallback } from '~/server/utils/timeout-helpers';
+import { env } from '~/env/server';
+import { logToAxiom } from '~/server/logging/client';
+
+/**
+ * The per-user settings bootstrap: the session plus every ambient seed a page needs on its
+ * first paint. ONE implementation, two callers —
+ *
+ *   - `/api/user/settings`, over HTTP;
+ *   - `_app.getInitialProps`, in-process during a server render
+ *     (`resolveSettingsBootstrapForRender` below).
+ *
+ * 🔴 SERVER ONLY. This module reaches the database, redis, the server env and `fs`. `_app` is
+ * compiled into the client bundle too, so its one import of this file must stay a dynamic
+ * `import()` inside an `if (typeof window === 'undefined') { … }` BLOCK — the form both
+ * bundlers drop from the client build. `no-server-infra-in-app-graph.test.ts` pins that edge.
+ */
+
+type AuthArgs = Parameters<typeof getServerAuthSession>[0];
+
+/** What the route answers with, and what a server render is seeded from. */
+export const SETTINGS_BOOTSTRAP_PATH = '/api/user/settings';
+
+/**
+ * A member that never replies would pin every page on it, and a `.catch` cannot answer a
+ * parked read — only a deadline can. Timing out is reported, not swallowed: the incident this
+ * exists to prevent was invisible precisely because nothing logged.
+ */
+function settle<T, F>(promise: Promise<T>, fallback: F, member: string): Promise<T | F> {
+  const timeoutMs = env.SETTINGS_READ_DEADLINE_MS;
+  return withTimeoutFallback<T | F>(promise, timeoutMs, fallback, () => {
+    logToAxiom(
+      {
+        type: 'warning',
+        name: 'settings bootstrap deadline',
+        message: `${member} exceeded ${timeoutMs}ms`,
+        member,
+        timeoutMs,
+      },
+      'settings'
+    ).catch();
+  }).catch(() => fallback);
+}
+
+/**
+ * Rejects only when the session lookup does. Every other member degrades on its own, so the
+ * returned object ALWAYS carries a `session` key — present-but-null means "signed out", and
+ * callers rely on telling that apart from a failed bootstrap, which has no payload at all.
+ */
+export async function resolveSettingsBootstrap({ req, res }: AuthArgs) {
+  // Deliberately unbounded: failing this open renders a logged-in user anonymous, which
+  // `_app`'s hasAuthCookie carve-out exists to avoid.
+  const session = await getServerAuthSession({ req, res });
+  // Concurrent, to keep this hot per-bootstrap read off the critical path.
+  // EVERY member swallows its own errors: a single rejection fails the whole
+  // bootstrap, which `_app` reads as "degraded" — so one blip would drop the
+  // session seed and the browsing-settings addons too.
+  const domainColor = getRequestDomainColor(req);
+  const [settings, tosMeta, announcements, following, browsingSettingsAddons, liveNow, navBanners] =
+    await Promise.all([
+      // Content-settings view so SSR initialData matches the tRPC getSettings response
+      // shape. `undefined` — NOT `{}` — because AppProvider passes this straight to
+      // `useQuery({ initialData })` under a global `staleTime: Infinity`: any defined
+      // value is fresh from frame 0 and never refetched, and an empty one resolves
+      // showNsfw/blurNsfw off the JWT, which lags a user who just turned nsfw OFF.
+      // `undefined` leaves the query unseeded so it fetches and self-heals, matching
+      // what `_app` already does on its degraded path.
+      settle(getUserContentSettings(session?.user?.id ?? -1), undefined, 'getUserContentSettings'),
+      // The static per-domain ToS metadata. Resolved here because `content.service` reads
+      // `fs/promises`, which must never be imported into `_app`'s client-bundled graph. The
+      // show/hide decision is computed client-side against the seeded `user.getSettings`,
+      // so this is user-independent and we can resolve it for everyone (it's cheap +
+      // cached). Domain fallback matches createContext's
+      // `getRequestDomainColor(req) ?? 'blue'`.
+      // `undefined` on failure: `useToSUpdateModal` guards on it and simply
+      // doesn't prompt, which beats degrading the whole payload.
+      settle(getTosMeta({ domainColor: domainColor ?? 'blue' }), undefined, 'getTosMeta'),
+      // Seeds the ambient `announcement.getAnnouncements` query (fires on every
+      // bootstrap, anon + authed). Match the resolver byte-for-byte: its
+      // `applyRequestDomainColor` middleware overrides the client input with
+      // `getRequestDomainColor(req)` (NO 'blue' fallback), so we pass the same raw
+      // value here. On failure fall back to undefined and let the client self-heal
+      // via a live fetch.
+      settle(
+        getCurrentAnnouncements({ domain: domainColor, userId: session?.user?.id }),
+        undefined,
+        'getCurrentAnnouncements'
+      ),
+      // Seeds the ambient, auth-gated `user.getFollowingUsers` query (fires
+      // on every logged-in bootstrap wherever a follow/notify button mounts).
+      // `getUserFollows` is the same redis-cached fn the resolver calls, so the
+      // seed is byte-identical (a `number[]` of followed userIds). Anon never
+      // fires this query (`enabled: !!currentUser`), so seed authed-only.
+      session?.user
+        ? settle(getUserFollows(session.user.id), undefined, 'getUserFollows')
+        : Promise.resolve(undefined),
+      // Global, user-independent sysRedis reads.
+      //
+      // `getBrowsingSettingAddons` fails OPEN internally — a redis reject, a
+      // `withSysReadDeadline` timeout and corrupt JSON all RETURN
+      // DEFAULT_BROWSING_SETTINGS_ADDONS rather than throwing. So on degraded
+      // sysRedis the client is seeded with the defaults, and because the provider
+      // passes this to `useQuery({ initialData, staleTime: Infinity })` they are
+      // pinned for the session; the live config is only picked up on the next
+      // bootstrap. Telling "live config" apart from "failed open" would need a
+      // sentinel out of system-cache. `undefined` on the deadline path for the same
+      // reason the old `.catch` used it — react-query treats a `[]` seed as valid
+      // data and pins it as "no restrictions".
+      settle(getBrowsingSettingAddons(), undefined, 'getBrowsingSettingAddons'),
+      settle(getLiveNow(), false, 'getLiveNow'),
+      // Seeds `event.getNavBanners` so the nav strip is in the first paint and never shifts
+      // the page. Session-only (no cookies), so the anonymous answer is the same for every
+      // anonymous caller, as the route's public cache header requires.
+      settle(getNavBanners({ viewer: session?.user }), undefined, 'getNavBanners'),
+    ]);
+  return {
+    settings,
+    tosMeta,
+    announcements,
+    following,
+    browsingSettingsAddons,
+    liveNow,
+    navBanners,
+    session: session?.user && Object.keys(session.user).length > 0 ? session : null,
+  };
+}
+
+/**
+ * Ceiling on the WHOLE bootstrap during a server render. The per-member deadlines above leave
+ * one thing unbounded on purpose — the session lookup — and this is what stops a parked lookup
+ * from parking every page: past it, the render goes ahead without a bootstrap.
+ *
+ * 8s only trips on a genuine hang; a slow-but-successful bootstrap should not be thrown away
+ * for a degraded render. Env-overridable, clamped to a 1s floor so a zero or negative override
+ * cannot turn every render into the degraded one.
+ */
+const RENDER_DEADLINE_MS = Math.max(
+  1000,
+  Number(process.env.APP_SETTINGS_FETCH_TIMEOUT_MS) || 8000
+);
+
+const TIMED_OUT = Symbol('settings bootstrap timed out');
+
+/**
+ * The bootstrap for a page that is being server-rendered, with no HTTP request to ourselves.
+ *
+ * It answers exactly what a GET of `SETTINGS_BOOTSTRAP_PATH` carrying the page request's
+ * headers would have answered, because that is what callers were built against:
+ *
+ *   - The session is resolved from the page request's HEADERS AND COOKIES ONLY, never its
+ *     URL. `getServerAuthSession` treats a `?token=` query parameter as an API credential,
+ *     and a page URL may carry an unrelated one.
+ *   - Its own `req.context`, so nothing it records lands on the page request.
+ *   - Cookie writes are discarded. The session lookup can roll or upgrade the session cookie
+ *     on the response it is handed; over HTTP that response was this internal call's own and
+ *     was never forwarded to the browser. Sending those cookies on the document response is
+ *     a change to session-cookie behaviour and does not belong in a transport swap.
+ *   - JSON round-tripped, so a `Date` reaches the render as the same string the browser gets
+ *     from `__NEXT_DATA__`, and server and client render from identical values.
+ *
+ * Rejects on a failed session lookup or past the deadline. The caller must treat a rejection
+ * as "no bootstrap", NOT as "signed out".
+ */
+export async function resolveSettingsBootstrapForRender(
+  request: IncomingMessage & { cookies?: Partial<Record<string, string>> }
+): Promise<unknown> {
+  const req = {
+    headers: request.headers,
+    cookies: request.cookies,
+    url: SETTINGS_BOOTSTRAP_PATH,
+  } as unknown as AuthArgs['req'];
+  const res = {
+    getHeader: () => undefined,
+    setHeader: () => undefined,
+  } as unknown as AuthArgs['res'];
+
+  const payload = await withTimeoutFallback<
+    Awaited<ReturnType<typeof resolveSettingsBootstrap>> | typeof TIMED_OUT
+  >(resolveSettingsBootstrap({ req, res }), RENDER_DEADLINE_MS, TIMED_OUT);
+  if (payload === TIMED_OUT) {
+    throw new Error(`settings bootstrap timed out after ${RENDER_DEADLINE_MS}ms`);
+  }
+  return JSON.parse(JSON.stringify(payload));
+}
