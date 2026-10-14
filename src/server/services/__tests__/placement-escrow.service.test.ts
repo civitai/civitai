@@ -2948,14 +2948,18 @@ describe('a write inside the settlement transaction', () => {
       expect(writeChapterEdgeForPlacement).not.toHaveBeenCalled();
     });
 
-    // A parent post deleted since submission must not trap the placer's money.
-    it('still declines when the parent post is no longer a chapter', async () => {
+    // Changed deliberately: this used to decline, keeping the decline fee for an
+    // owner who could never have accepted it. It is refunded in full instead, by
+    // the orphaned-continuation job or at its deadline, so declining must fail.
+    it('refuses to decline when the parent post is no longer a chapter, and leaves it pending', async () => {
       givenContinuation();
       storylineOwner.mockResolvedValue(null);
 
-      await settleStorylineContinuation({ placementId: 1, action: 'decline', actorId: OWNER });
+      await expect(
+        settleStorylineContinuation({ placementId: 1, action: 'decline', actorId: OWNER })
+      ).rejects.toThrow('not a chapter of an open storyline');
 
-      expect(db.placements.get(1)!.status).toBe('declined');
+      expect(db.placements.get(1)!.status).toBe('pending');
     });
 
     // Petra's notification tells an auto-approval from the owner's by this.

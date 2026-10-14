@@ -622,6 +622,25 @@ describe('resolvePlacementSpaceFor — a storyline chapter', () => {
     await expect(resolveChapter()).rejects.toThrow(/not a chapter of an open storyline/);
   });
 
+  // Its space would still read as open with a price; nothing may be offered on it.
+  it('refuses a removed chapter of a live storyline', async () => {
+    chapterFindUnique.mockResolvedValue({
+      removedAt: new Date(),
+      storyline: {
+        id: STORYLINE,
+        userId: OWNER,
+        status: 'Ongoing',
+        tosViolation: false,
+        user: { username: 'storyteller' },
+      },
+    });
+    spaceFindMany.mockResolvedValue([
+      { entityType: 'storyline', mode: 'review', price: 50, freeSlots: null, settings: {} },
+    ]);
+
+    await expect(resolveChapter()).rejects.toThrow(/not a chapter of an open storyline/);
+  });
+
   // Complete closes the storyline from the storyline row itself, even when the
   // space still says review.
   it('reads a completed storyline as closed', async () => {

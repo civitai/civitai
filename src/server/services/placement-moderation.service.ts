@@ -3,6 +3,7 @@ import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { settlePlacement } from '~/server/services/placement-escrow.service';
 import { onPlacementsTakenDown } from '~/server/events/points/hooks';
+import { tombstoneChaptersForPlacements } from '~/server/services/storyline-chapter-removal.service';
 
 /**
  * Whether either user has blocked the other.
@@ -131,6 +132,57 @@ export async function declinePlacementsOnBlock({
 }
 
 /**
+ * Takes approved placements down, and in the same transaction turns any storyline
+ * chapter one of them added into a tombstone.
+ *
+ * A storyline continuation's approval wrote a chapter; without this, taking the
+ * placement down would leave the chapter in the story. Tombstoned, not deleted:
+ * the chapters after it stay reachable, and the row keeps holding its post, so
+ * the same post cannot be submitted as a continuation again. Other surfaces
+ * have no chapter rows, so for them the second write matches nothing.
+ *
+ * The tombstone is written for every id asked about, not only the rows this
+ * call flipped, so a retry after a partial failure still finishes the job; it
+ * only ever sets an unset `removedAt`, so a replay changes nothing.
+ */
+const takeDownApproved = (
+  placementIds: number[],
+  where: Prisma.PlacementWhereInput,
+  data: Prisma.PlacementUpdateManyMutationInput
+) =>
+  dbWrite.$transaction(async (tx) => {
+    const result = await tx.placement.updateMany({ where, data });
+    await tombstoneChaptersForPlacements({ placementIds }, tx);
+    return result;
+  });
+
+/**
+ * Refunds the pending continuations of the chapters these takedowns removed.
+ *
+ * After the commit, because settling moves Buzz. A failure is logged, not
+ * thrown: the takedown has happened, and from its commit those rows can no
+ * longer be answered; the orphaned-continuation job settles whatever this left.
+ * Imported on use, because the storyline layer imports this module.
+ */
+async function settleContinuationsOf(placementIds: number[]) {
+  if (!placementIds.length) return;
+  try {
+    const { settleOrphanedContinuations } = await import(
+      '~/server/services/storyline-placement.service'
+    );
+    await settleOrphanedContinuations({ removedPlacementIds: placementIds });
+  } catch (error) {
+    await logToAxiom({
+      name: 'placement-moderation',
+      type: 'error',
+      message: 'settling continuations of removed chapters failed',
+      placementIds,
+      error: error instanceof Error ? error.message : String(error),
+    }).catch(() => undefined);
+  }
+}
+
+/**
  * Removes everything a user has placed, sitewide.
  *
  * Pending placements settle through the ordinary path, which forfeits their
@@ -182,18 +234,21 @@ export async function removePlacementsByUser({
     take: limit,
   });
 
-  const { count: takenDown } = await dbWrite.placement.updateMany({
-    where: { id: { in: approved.map((row) => row.id) }, status: 'approved' },
-    data: {
+  const approvedIds = approved.map((row) => row.id);
+  const { count: takenDown } = await takeDownApproved(
+    approvedIds,
+    { id: { in: approvedIds }, status: 'approved' },
+    {
       status: 'removed',
       removedBy: 'moderator',
       // Not `resolvedAt`/`resolvedById`: those record who approved it, and this
       // is the one path whose purpose is a moderation record.
       takenDownAt: new Date(),
       takenDownById: actorId,
-    },
-  });
-  if (takenDown > 0) void onPlacementsTakenDown(approved.map((row) => row.id));
+    }
+  );
+  if (takenDown > 0) void onPlacementsTakenDown(approvedIds);
+  await settleContinuationsOf(approvedIds);
 
   return {
     ...settled,
@@ -239,22 +294,27 @@ export async function removePlacementByModerator({
     return { removed: settled, wasLive: false };
   }
 
-  if (placement.status !== 'approved')
+  if (placement.status !== 'approved') {
+    // Pressing remove again finishes a takedown whose refunds did not all go through.
+    if (placement.status === 'removed') await settleContinuationsOf([placementId]);
     throw new Error(`placement: that placement is already ${placement.status}`);
+  }
 
-  const { count } = await dbWrite.placement.updateMany({
-    where: { id: placementId, status: 'approved' },
-    data: {
+  const { count } = await takeDownApproved(
+    [placementId],
+    { id: placementId, status: 'approved' },
+    {
       status: 'removed',
       removedBy: 'moderator',
       // Not `resolvedAt`/`resolvedById`: those record who approved it, and this
       // is the one path whose purpose is a moderation record.
       takenDownAt: new Date(),
       takenDownById: actorId,
-    },
-  });
+    }
+  );
 
   if (count > 0) void onPlacementsTakenDown([placementId]);
+  await settleContinuationsOf([placementId]);
   return { removed: count > 0, wasLive: true };
 }
 

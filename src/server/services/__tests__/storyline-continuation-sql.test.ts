@@ -52,6 +52,7 @@ vi.mock('~/server/services/placement.service', async (importOriginal) => ({
 
 const {
   getPendingStorylineContinuations,
+  settleOrphanedContinuations,
   settleStaleUnfundedContinuations,
   startReadyStorylineContinuations,
 } = await import('~/server/services/storyline-placement.service');
@@ -75,7 +76,13 @@ const holdKindUnique = migrationSql.match(
   /CREATE UNIQUE INDEX IF NOT EXISTS "PlacementTransaction_placementId_kind_key"\s+ON "PlacementTransaction" \("placementId", "kind"\);/
 )?.[0];
 
-const OWN_TABLES = new Set(['Post', 'Image', 'Placement', 'PlacementTransaction']);
+const OWN_TABLES = new Set([
+  'Post',
+  'Image',
+  'Placement',
+  'PlacementTransaction',
+  'StorylineChapter',
+]);
 const MAX_OWN_ROWS = 100;
 
 // Column types follow schema.full.prisma (DateTime is TIMESTAMP(3) without a zone, written in
@@ -100,6 +107,9 @@ const SCHEMA = [
      id SERIAL PRIMARY KEY, "placementId" INTEGER NOT NULL, kind TEXT NOT NULL,
      "transactionId" TEXT, amount INTEGER NOT NULL, "lastAttemptAt" TIMESTAMP(3),
      "createdAt" TIMESTAMP(3) NOT NULL DEFAULT (now() AT TIME ZONE 'UTC'))`,
+  `CREATE TABLE "StorylineChapter" (
+     id INTEGER PRIMARY KEY, "postId" INTEGER UNIQUE, "placementId" INTEGER UNIQUE,
+     "removedAt" TIMESTAMP(3))`,
 ];
 
 const ago = (minutes: number) => `(now() AT TIME ZONE 'UTC') - interval '${minutes} minutes'`;
@@ -113,6 +123,7 @@ type Row = {
   status?: string;
   surface?: string;
   targetType?: string;
+  targetId?: number;
   ownerId?: number;
   createdAt?: string;
 };
@@ -124,11 +135,12 @@ const placement = ({
   status = 'pending',
   surface = 'storyline',
   targetType = 'post',
+  targetId = 500,
   ownerId = 1,
   createdAt = ago(0),
 }: Row) =>
   `INSERT INTO "Placement" (id, surface, "targetType", "targetId", "ownerId", "placerId", data, status, amount, "createdAt")
-   VALUES (${id}, '${surface}', '${targetType}', 500, ${ownerId}, 2, ${
+   VALUES (${id}, '${surface}', '${targetType}', ${targetId}, ${ownerId}, 2, ${
     awaiting ? AWAITING.replace('%', String(postId)) : `'{"postId": ${postId}}'`
   }, '${status}', ${amount}, ${createdAt})`;
 
@@ -229,6 +241,29 @@ const FIXTURE = [
   placement({ id: 209, ownerId: 7, createdAt: ago(60) }),
   placement({ id: 210, ownerId: 7, surface: 'sticker', createdAt: ago(110) }),
   placement({ id: 211, ownerId: 7, targetType: 'model', createdAt: ago(100) }),
+  placement({ id: 212, ownerId: 7, targetId: 600, createdAt: ago(170) }), // its chapter was removed
+  placement({ id: 213, ownerId: 7, targetId: 999, createdAt: ago(165) }), // its target is no chapter
+
+  // Chapters. Every row above continues 500, a live chapter, so a filter that
+  // reads any chapter as gone empties the queue. Chapter 5 was removed and then
+  // its post deleted, which empties its postId; its post was 900.
+  `INSERT INTO "StorylineChapter" (id, "postId", "placementId", "removedAt") VALUES
+     (1, 500, 9000, NULL), (2, 600, 9001, ${ago(5)}), (3, 700, 9002, NULL),
+     (4, 800, 9003, ${ago(5)}), (5, NULL, 9004, ${ago(5)})`,
+
+  // Continuations whose parent is no longer a live chapter (4xx); 402 is inserted
+  // first, so the order is the statement's.
+  placement({ id: 402, targetId: 800 }),
+  placement({ id: 401, targetId: 600 }),
+  placement({ id: 403, targetId: 700 }), // its chapter is live
+  placement({ id: 404, targetId: 600, status: 'approved' }),
+  placement({ id: 405, targetId: 600, surface: 'sticker' }),
+  placement({ id: 406, targetId: 600, targetType: 'model' }),
+  placement({ id: 407, targetId: 999 }), // not a chapter
+  placement({ id: 408, targetId: 900 }), // its chapter's post was deleted
+  placement({ id: 409, targetId: 600, amount: 100 }), // its payment never landed
+  placement({ id: 410, targetId: 600, amount: 100 }),
+  ...funded(410, 100),
 
   // Stale unfunded sweep (3xx): priced, pending, not awaiting.
   placement({ id: 301, amount: 100, createdAt: ago(20) }), // no legs at all
@@ -344,6 +379,7 @@ describe.skipIf(!testDatabaseUrl)('storyline continuation statements on PostgreS
     real('dbRead');
     real('dbWrite');
     isPlacementEscrowFunded.mockResolvedValue(true);
+    settlePlacement.mockResolvedValue({ settled: false });
   });
   const ids = (call = 0) => (selected[call] as { id: number }[]).map((row) => row.id);
 
@@ -358,7 +394,7 @@ describe.skipIf(!testDatabaseUrl)('storyline continuation statements on PostgreS
     expect(ids()).toEqual([100, 101, 102]);
   });
 
-  it("the owner's queue lists admitted rows with a live post, oldest first, in pages", async () => {
+  it("the owner's queue lists admitted rows with a live post and parent, oldest first, in pages", async () => {
     const first = await getPendingStorylineContinuations({
       ownerId: 7,
       domainLevels: 31,
@@ -387,6 +423,20 @@ describe.skipIf(!testDatabaseUrl)('storyline continuation statements on PostgreS
   it('the unfunded sweep honours its batch limit', async () => {
     await settleStaleUnfundedContinuations({ limit: 2 });
     expect(ids()).toEqual([300, 301]);
+  });
+
+  it("selects paid pending continuations whose parent is no longer a live chapter, or of a takedown's chapters", async () => {
+    await settleOrphanedContinuations();
+    // 212 and 213 are in the owner's queue fixture and orphaned too.
+    expect(ids()).toEqual([212, 213, 401, 402, 407, 408, 410]);
+
+    selected = [];
+    await settleOrphanedContinuations({ removedPlacementIds: [9001] });
+    await settleOrphanedContinuations({ removedPlacementIds: [9003, 9002] });
+    // Its post is gone, so the takedown's own run cannot find it; the job above did.
+    await settleOrphanedContinuations({ removedPlacementIds: [9004] });
+    await settleOrphanedContinuations({ limit: 1 });
+    expect([ids(0), ids(1), ids(2), ids(3)]).toEqual([[212, 401, 410], [402], [], [212]]);
   });
 
   // The selection sums receipted hold legs. It can do that only because a second leg of one

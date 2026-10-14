@@ -13,6 +13,7 @@ import {
 import { sweepDeletedRemixGallerySubmissions } from '~/server/services/remix-gallery-sweep.service';
 import { startReadyRemixSubmissionClocks } from '~/server/services/remix-gallery.service';
 import {
+  settleOrphanedContinuations,
   settleStaleUnfundedContinuations,
   startReadyStorylineContinuations,
 } from '~/server/services/storyline-placement.service';
@@ -141,6 +142,32 @@ export const settleStaleUnfundedContinuationsJob = createJob(
       'storyline-continuation-unfunded',
       jobContext,
       () => settleStaleUnfundedContinuations({ limit: BATCH }),
+      // Rows that left the set. A row skipped this pass must not keep the drain going.
+      (result) => result.settled
+    );
+
+    return {
+      considered: sum(runs, (run) => run.considered),
+      settled: sum(runs, (run) => run.settled),
+      hitCap,
+    };
+  },
+  { lockExpiration: 10 * 60 }
+);
+
+/**
+ * Pending storyline continuations whose parent is no longer a live chapter
+ * (removed, or its post deleted), refunded in full. A takedown runs this
+ * itself; this finishes what a failed run left, and covers deleted posts.
+ */
+export const settleOrphanedContinuationsJob = createJob(
+  'storyline-continuation-orphaned',
+  '*/10 * * * *',
+  async (jobContext) => {
+    const { runs, hitCap } = await drain(
+      'storyline-continuation-orphaned',
+      jobContext,
+      () => settleOrphanedContinuations({ limit: BATCH }),
       // Rows that left the set. A row skipped this pass must not keep the drain going.
       (result) => result.settled
     );
@@ -328,6 +355,7 @@ export const placementJobs = [
   startReadyRemixSubmissionClocksJob,
   startReadyStorylineContinuationsJob,
   settleStaleUnfundedContinuationsJob,
+  settleOrphanedContinuationsJob,
   sweepUnpaidPlacementLegsJob,
   sweepUnplannedPlacementSettlementsJob,
   sweepDeletedRemixGallerySubmissionsJob,
