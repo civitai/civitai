@@ -90,8 +90,9 @@ export function StorylineSettingsForm({
         </Text>
         <StorylineRatingInput value={maxNsfwLevel} disabled={disabled} onChange={onRatingChange} />
         <Text size="xs" c="dimmed">
-          Higher-rated continuations cannot be submitted or shown. Readers also keep their own
-          browsing settings.
+          Higher-rated continuations cannot be submitted, and chapters rated above this are hidden
+          from readers. Raising it again brings them back. Readers also keep their own browsing
+          settings.
         </Text>
       </Stack>
 

@@ -351,6 +351,7 @@ describe('StorylineManageModal status change', () => {
       title: 'The Patch',
       status: 'Ongoing',
       maxNsfwLevel: NsfwLevel.PG13,
+      whoCanContinue: 'Anyone',
       collaborators: [],
     };
     server.space = { storylineId: 3, mode: 'review', setPrice: 5, price: 5, cap: 90 };
@@ -374,5 +375,39 @@ describe('StorylineManageModal status change', () => {
       path: 'placement.getStorylineSpace',
       input: { storylineId: 3 },
     });
+  });
+});
+
+describe('StorylineManageModal who can continue', () => {
+  it('shows the stored value and writes a change through storyline.update', async () => {
+    server.storyline = {
+      id: 3,
+      userId: 1,
+      title: 'The Patch',
+      status: 'Ongoing',
+      maxNsfwLevel: NsfwLevel.PG13,
+      whoCanContinue: 'Collaborators',
+      collaborators: [],
+    };
+    render(React.createElement(StorylineManageModal, { storylineId: 3 }));
+
+    const control = document.body.querySelector('[aria-label="Who can continue"]');
+    expect(control, 'who-can-continue control').not.toBeNull();
+    const inputFor = (label: string) => {
+      const labelEl = [...(control as Element).querySelectorAll('label')].find(
+        (node) => node.textContent?.trim() === label
+      );
+      return document.getElementById((labelEl as HTMLLabelElement).htmlFor) as HTMLInputElement;
+    };
+    expect(inputFor('Only collaborators').checked).toBe(true);
+    expect(inputFor('Anyone, I review first').disabled).toBe(false);
+
+    await act(async () => {
+      inputFor('Anyone, I review first').click();
+    });
+
+    expect(spies.mutate).toEqual([
+      { proc: 'storylineUpdate', input: { id: 3, whoCanContinue: 'Anyone' } },
+    ]);
   });
 });
