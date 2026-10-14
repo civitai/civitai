@@ -64,7 +64,8 @@ export default function StorylineContinueModal({
     { enabled: enabled && !!currentUser?.username, getNextPageParam: (page) => page.nextCursor }
   );
   const { data: parentPost } = trpc.post.get.useQuery({ id: parentPostId }, { enabled });
-  // The cover is chapter 1's first image until storylines carry a cover of their own.
+  // TODO: the one client image read left in this modal. Swap `cover` to the server's chapter 1
+  // `firstImage` once storyline.getById's mainPath (or getPath) carries it, and drop this query.
   const coverPostId = storyline?.mainPath[0]?.post?.id;
   const { images: coverImages, isLoading: coverLoading } = useQueryImages(
     { postId: coverPostId, limit: 1, withMeta: false, include: [] },
