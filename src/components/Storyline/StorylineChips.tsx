@@ -3,6 +3,7 @@ import type { BadgeProps } from '@mantine/core';
 import {
   IconBolt,
   IconCircleCheck,
+  IconCrown,
   IconLock,
   IconRosetteDiscountCheck,
   IconRoute,
@@ -11,7 +12,12 @@ import {
 import type { Icon as TablerIcon } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { browsingLevelLabels } from '~/shared/constants/browsingLevel.constants';
+import { STORYLINE_CEILING_LEVELS } from '~/shared/utils/storyline';
 import { numberWithCommas } from '~/utils/number-helpers';
+
+/** The surface every storyline card sits on (G3). */
+export const storylineCardClass =
+  'rounded-xl border border-solid border-gray-3 bg-gray-0 shadow-sm dark:border-dark-4 dark:bg-dark-6';
 
 /** The design system's one chip (G1): light, small, round; on an image, a dark translucent fill. */
 function Chip({
@@ -113,8 +119,9 @@ export function StorylinePriceChip({
 
 /** The storyline's rating ceiling, "Up to PG-13". */
 export function StorylineCeilingChip({ maxNsfwLevel }: { maxNsfwLevel: number }) {
+  // Only a real ceiling: the labels map other levels (0 among them) to "?".
+  if (!(STORYLINE_CEILING_LEVELS as readonly number[]).includes(maxNsfwLevel)) return null;
   const label = browsingLevelLabels[maxNsfwLevel as keyof typeof browsingLevelLabels];
-  if (!label) return null;
   return (
     <Chip
       color="gray"
@@ -136,6 +143,21 @@ export function StorylineRoleChip({ role }: { role: 'creator' | 'endorsed' | 'co
       data-testid="storyline-role-chip"
     >
       {creator ? 'Creator' : 'Endorsed'}
+    </Chip>
+  );
+}
+
+/** A way on from a chapter: the owner's canon, or an endorsed collaborator's. */
+export function StorylineRankChip({ rank }: { rank: 'canon' | 'endorsed' | 'community' }) {
+  if (rank === 'community') return null;
+  const canon = rank === 'canon';
+  return (
+    <Chip
+      color={canon ? 'blue' : 'teal'}
+      leftSection={canon ? <IconCrown size={12} /> : <IconRosetteDiscountCheck size={12} />}
+      data-testid="storyline-rank-chip"
+    >
+      {canon ? 'Canon' : 'Endorsed'}
     </Chip>
   );
 }

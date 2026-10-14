@@ -1,4 +1,5 @@
 import { Skeleton } from '@mantine/core';
+import clsx from 'clsx';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { useQueryImages } from '~/components/Image/image.utils';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
@@ -21,14 +22,18 @@ export function useStorylineFirstImage(postId: number | null) {
 
 /**
  * The page's wide banner, fading into the page at the bottom so the header card can sit over it.
- * The only wide crop of a storyline's art; `position` is the vertical focus, 0 to 100.
+ * A picked banner shows sharp at its focus (`position`, 0 to 100). Without one the art is a
+ * portrait, which a wide crop turns into a torso, so it shows as a blurred backdrop instead and
+ * the sharp picture is the card cover beside it.
  */
 export function StorylineHero({
   image,
-  position = 35,
+  position = 50,
+  backdrop,
 }: {
   image: StorylineThumbImage | null | undefined;
   position?: number;
+  backdrop?: boolean;
 }) {
   return (
     <div
@@ -45,9 +50,13 @@ export function StorylineHero({
                 <EdgeMedia
                   src={image.url}
                   type={image.type}
-                  width={1600}
-                  className="absolute inset-0 size-full object-cover"
+                  width={backdrop ? 450 : 1600}
+                  className={clsx(
+                    'absolute inset-0 size-full object-cover',
+                    backdrop && 'scale-[1.15] blur-[28px] saturate-[1.2]'
+                  )}
                   style={{ objectPosition: `center ${position}%` }}
+                  data-testid={backdrop ? 'storyline-hero-backdrop' : 'storyline-hero-image'}
                 />
               ) : (
                 <MediaHash {...image} className="absolute inset-0" />
@@ -55,6 +64,9 @@ export function StorylineHero({
             }
           </ImageGuard2>
         )
+      )}
+      {backdrop && (
+        <div className="pointer-events-none absolute inset-0 bg-[var(--mantine-color-body)] opacity-40" />
       )}
       <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-transparent from-35% to-[var(--mantine-color-body)]" />
     </div>

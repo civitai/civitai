@@ -17,13 +17,23 @@ import {
   StorylineCeilingChip,
   StorylineClosedChip,
   StorylinePriceChip,
+  StorylineRankChip,
   StorylineRoleChip,
   StorylineStat,
   StorylineStatusChip,
+  storylineCardClass,
 } from '~/components/Storyline/StorylineChips';
 import { StorylineHero, useStorylineFirstImage } from '~/components/Storyline/StorylineCover';
-import { getStorylineTombstoneLabel } from '~/components/Storyline/storyline-mode.utils';
-import { useStorylineContinueTerms } from '~/components/Storyline/storyline.queries';
+import {
+  getForkShare,
+  getStorylineChapterName,
+  getStorylineTombstoneLabel,
+} from '~/components/Storyline/storyline-mode.utils';
+import {
+  useStorylineChildren,
+  useStorylineContinueTerms,
+  useStorylineForkShares,
+} from '~/components/Storyline/storyline.queries';
 import { StorylineThumb } from '~/components/Storyline/StorylineThumb';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import type { RouterOutput } from '~/types/router';
@@ -32,9 +42,6 @@ import { trpc } from '~/utils/trpc';
 type Storyline = RouterOutput['storyline']['getById'];
 type PathChapter = Storyline['mainPath'][number];
 type ContinueTerms = ReturnType<typeof useStorylineContinueTerms>;
-
-const cardClass =
-  'rounded-xl border border-solid border-gray-3 bg-gray-0 shadow-sm dark:border-dark-4 dark:bg-dark-6';
 
 export function StorylinePage({ id }: { id: number }) {
   const storylineQuery = trpc.storyline.getById.useQuery({ id });
@@ -64,7 +71,8 @@ export function StorylinePage({ id }: { id: number }) {
 
   return (
     <div className="pb-10">
-      <StorylineHero image={cover} />
+      {/* No banner can be picked yet: chapter 1's portrait shows as a backdrop. */}
+      <StorylineHero image={cover} backdrop />
       <Container size="lg" className="relative mt-[-70px] flex flex-col gap-5 sm:mt-[-120px]">
         <StorylineHeader
           storyline={storyline}
@@ -83,7 +91,7 @@ export function StorylinePage({ id }: { id: number }) {
           </div>
           {rootPost && (
             // The thread brings its own "Comments" heading; the card only names the region.
-            <section aria-label="Discussion" className={clsx(cardClass, 'p-3.5 sm:p-5')}>
+            <section aria-label="Discussion" className={clsx(storylineCardClass, 'p-3.5 sm:p-5')}>
               <PostComments postId={rootPost.id} userId={storyline.user.id} />
             </section>
           )}
@@ -108,7 +116,10 @@ function StorylineHeader({
 }) {
   return (
     <header
-      className={clsx(cardClass, 'flex flex-col gap-4 p-3.5 sm:p-5 md:flex-row md:items-end')}
+      className={clsx(
+        storylineCardClass,
+        'flex flex-col gap-4 p-3.5 sm:p-5 md:flex-row md:items-end'
+      )}
     >
       <div className="flex min-w-0 flex-1 items-end gap-3.5">
         <div className="mt-[-50px] w-[92px] shrink-0 sm:mt-[-80px] sm:w-[150px]">
@@ -168,7 +179,7 @@ function StorylineHeader({
               Start reading
             </Button>
           )}
-          {lastPostId && terms?.open && (
+          {lastPostId && terms?.open && storyline.status !== 'Complete' && (
             <Button
               variant="default"
               size="lg"
@@ -220,14 +231,14 @@ function Section({
   aside,
   children,
 }: {
-  icon: ReactNode;
+  icon?: ReactNode;
   title: string;
   id: string;
   aside?: ReactNode;
   children: ReactNode;
 }) {
   return (
-    <section aria-labelledby={id} className={clsx(cardClass, 'p-3.5 sm:p-5')}>
+    <section aria-labelledby={id} className={clsx(storylineCardClass, 'p-3.5 sm:p-5')}>
       <div className="mb-3.5 flex items-center justify-between gap-2">
         <Title order={2} id={id} fz={18} fw={800} className="flex items-center gap-2">
           {icon}
@@ -315,15 +326,67 @@ function ChapterStop({ chapter, endorsed }: { chapter: PathChapter; endorsed: bo
         </Text>
       )}
       {chapter.childCount > 1 && (
-        <div
-          className="mt-2.5 flex items-center gap-1.5 rounded-lg bg-gray-1 px-3 py-2.5 text-xs font-bold uppercase tracking-wide text-gray-6 dark:bg-dark-5 dark:text-dark-1"
-          data-testid="storyline-fork"
-        >
-          <IconGitFork size={14} aria-hidden />
-          The story forks here · {chapter.childCount} paths
-        </div>
+        <StorylineForkPaths chapterId={chapter.chapterId} count={chapter.childCount} />
       )}
     </li>
+  );
+}
+
+/** Where the story forks: each way on, as the end of the chapter ranks it, with its reader share. */
+function StorylineForkPaths({ chapterId, count }: { chapterId: number; count: number }) {
+  const { data: children } = useStorylineChildren(chapterId);
+  const { data: shares } = useStorylineForkShares(chapterId);
+  return (
+    <div
+      className="mt-2.5 rounded-lg bg-gray-1 px-3 py-2.5 dark:bg-dark-5"
+      data-testid="storyline-fork"
+    >
+      <div className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-gray-6 dark:text-dark-1">
+        <IconGitFork size={14} aria-hidden />
+        The story forks here · {count} paths
+      </div>
+      {children && (
+        <ul className="m-0 mt-2 flex list-none flex-col gap-1.5 p-0">
+          {children.map((child) => {
+            const share = getForkShare(shares, child.chapterId);
+            return (
+              <li
+                key={child.chapterId}
+                className="flex flex-wrap items-center gap-x-2 gap-y-1"
+                data-testid="storyline-fork-path"
+              >
+                <StorylineRankChip rank={child.rank} />
+                {child.post ? (
+                  <>
+                    <Text
+                      component={Link}
+                      href={`/posts/${child.post.id}`}
+                      size="sm"
+                      fw={600}
+                      className="hover:underline"
+                    >
+                      {getStorylineChapterName(child)}
+                    </Text>
+                    <Text size="xs" c="dimmed">
+                      by {child.post.username}
+                    </Text>
+                  </>
+                ) : (
+                  <Text size="sm" c="dimmed">
+                    {getStorylineChapterName(child)}
+                  </Text>
+                )}
+                {share && (
+                  <Text size="xs" c="dimmed" fw={700} className="ml-auto">
+                    {share.percent}%
+                  </Text>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
   );
 }
 
@@ -360,21 +423,17 @@ function StorylineAboutContinuing({
       ? `Only ${owner}'s collaborators can continue it.`
       : `Anyone can continue. ${owner} reviews each one; endorsed collaborators skip review.`;
   return (
-    <section
-      aria-labelledby="storyline-about-continuing"
-      className={clsx(cardClass, 'p-3.5 sm:p-5')}
-    >
-      <Title order={2} id="storyline-about-continuing" fz={16} fw={800} mb={8}>
-        About continuing
-      </Title>
+    <Section title="About continuing" id="storyline-about-continuing">
       <div className="flex flex-wrap gap-1.5">
-        {terms?.open && <StorylinePriceChip price={terms.price} />}
+        {terms?.open && storyline.status !== 'Complete' && (
+          <StorylinePriceChip price={terms.price} />
+        )}
         <StorylineCeilingChip maxNsfwLevel={storyline.maxNsfwLevel} />
       </div>
       <Text size="sm" c="dimmed" mt={8}>
         {sentence}
       </Text>
-    </section>
+    </Section>
   );
 }
 
@@ -383,7 +442,7 @@ function StorylinePageSkeleton() {
     <div aria-busy data-testid="storyline-page-skeleton">
       <Skeleton className="h-[220px] sm:h-[340px]" radius={0} />
       <Container size="lg" className="relative mt-[-70px] sm:mt-[-120px]">
-        <div className={clsx(cardClass, 'flex items-end gap-3.5 p-5')}>
+        <div className={clsx(storylineCardClass, 'flex items-end gap-3.5 p-5')}>
           <Skeleton className="mt-[-50px] aspect-[3/4] w-[92px] sm:mt-[-80px] sm:w-[150px]" />
           <div className="flex flex-1 flex-col gap-2">
             <Skeleton height={14} width="30%" />

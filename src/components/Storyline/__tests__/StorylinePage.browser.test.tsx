@@ -12,21 +12,33 @@ import { StorylinePage } from '~/components/Storyline/StorylinePage';
  * said in a chip before they press it.
  */
 
-const chapter = (depth: number, postId: number | null, childCount = 1, title?: string) => ({
+const AUTHORS = {
+  10: 'Sillycat83',
+  11: 'tehalex86',
+  12: 'Tar_Tarj',
+} as const;
+const chapter = (
+  depth: number,
+  postId: number | null,
+  childCount = 1,
+  title?: string,
+  // The owner wrote chapter 1, a collaborator the rest, unless a test says otherwise.
+  userId: keyof typeof AUTHORS = depth ? 11 : 10
+) => ({
   // Ids deliberately out of order: the page must keep the server's order, not sort.
   chapterId: [130, 104, 121, 102, 150][depth],
   depth,
   tombstone: postId ? null : 'browsingLevel',
-  post: postId
-    ? {
-        id: postId,
-        title: title ?? null,
-        userId: depth ? 11 : 10,
-        username: depth ? 'tehalex86' : 'Sillycat83',
-      }
-    : null,
+  post: postId ? { id: postId, title: title ?? null, userId, username: AUTHORS[userId] } : null,
   childCount,
 });
+
+// The ways on from chapter 2 (chapter id 104), in the order the end of the chapter ranks them.
+const FORK_104 = [
+  { ...chapter(2, 503, 1, undefined, 10), chapterId: 121, rank: 'canon' },
+  { ...chapter(2, 560, 1, 'Rest in pieces', 11), chapterId: 160, rank: 'endorsed' },
+  { ...chapter(2, null), chapterId: 161, tombstone: 'aboveStoryRating', rank: 'community' },
+];
 
 const STORYLINE = {
   id: 2,
@@ -66,6 +78,8 @@ const mocks = vi.hoisted(() => ({
   commentsPostId: vi.fn(),
   openContinue: vi.fn(),
   openManage: vi.fn(),
+  children: {} as Record<number, unknown[]>,
+  shares: {} as Record<number, unknown>,
 }));
 
 vi.mock('~/utils/trpc', async (importOriginal) => {
@@ -85,6 +99,8 @@ vi.mock('~/components/Storyline/storyline.queries', async (importOriginal) => ({
     mocks.termsFor(parentPostId);
     return mocks.terms;
   },
+  useStorylineChildren: (chapterId: number) => ({ data: mocks.children[chapterId] }),
+  useStorylineForkShares: (chapterId: number) => ({ data: mocks.shares[chapterId] }),
 }));
 vi.mock('~/components/Storyline/continue/openStorylineContinueModal', () => ({
   openStorylineContinueModal: mocks.openContinue,
@@ -98,8 +114,12 @@ vi.mock('~/components/Storyline/StorylineCover', () => ({
     mocks.coverFor(postId);
     return postId ? COVER : null;
   },
-  StorylineHero: ({ image }: { image: { url: string } | null }) => (
-    <div data-testid="storyline-hero" data-image={image?.url ?? 'none'} />
+  StorylineHero: ({ image, backdrop }: { image: { url: string } | null; backdrop?: boolean }) => (
+    <div
+      data-testid="storyline-hero"
+      data-image={image?.url ?? 'none'}
+      data-backdrop={String(!!backdrop)}
+    />
   ),
 }));
 vi.mock('~/components/Storyline/StorylineThumb', () => ({
@@ -121,6 +141,8 @@ beforeEach(() => {
   mocks.storyline = { ...STORYLINE };
   mocks.loading = false;
   mocks.terms = null;
+  mocks.children = { 104: FORK_104 };
+  mocks.shares = { 104: { total: 20, shares: { 121: 0.62, 160: 0.29, 161: 0.09 } } };
   for (const fn of [
     mocks.termsFor,
     mocks.coverFor,
@@ -132,12 +154,25 @@ beforeEach(() => {
 });
 
 const heading = () => page.getByRole('heading', { name: 'The Patch', level: 1 });
+const stopElements = () =>
+  page.getByRole('region', { name: 'Chapters' }).getByTestId('storyline-chapter').elements();
+/** Each stop's own text, without the fork block under it. */
 const stops = () =>
-  page
-    .getByRole('region', { name: 'Chapters' })
-    .getByTestId('storyline-chapter')
-    .elements()
-    .map((li) => li.textContent);
+  stopElements().map((li) => {
+    const own = li.cloneNode(true) as HTMLElement;
+    own.querySelector('[data-testid="storyline-fork"]')?.remove();
+    return own.textContent;
+  });
+/** Per stop, the ways on listed under it, or null where the story does not fork. */
+const forks = () =>
+  stopElements().map((li) => {
+    const fork = li.querySelector('[data-testid="storyline-fork"]');
+    if (!fork) return null;
+    return [...fork.querySelectorAll('[data-testid="storyline-fork-path"]')].map((row) => ({
+      text: row.textContent,
+      href: row.querySelector('a')?.getAttribute('href') ?? null,
+    }));
+  });
 const testIds = (id: string) =>
   [...document.querySelectorAll(`[data-testid="${id}"]`)].map((n) => n.textContent);
 
@@ -151,6 +186,8 @@ describe('StorylinePage', () => {
     expect(page.getByTestId('storyline-hero').element().getAttribute('data-image')).toBe(
       'cover-of-501'
     );
+    // No banner can be picked yet, so chapter 1's portrait is a backdrop, never a wide crop.
+    expect(page.getByTestId('storyline-hero').element().getAttribute('data-backdrop')).toBe('true');
     expect(page.getByTestId('storyline-card-cover').element().getAttribute('data-image')).toBe(
       'cover-of-501'
     );
@@ -163,16 +200,71 @@ describe('StorylinePage', () => {
       '1Chapter 1The cat patchby Sillycat83',
       // Untitled: named by its number once, not as an eyebrow and a name. A collaborator's
       // chapter carries the Endorsed chip.
-      '2Chapter 2by tehalex86EndorsedThe story forks here · 3 paths',
+      '2Chapter 2by tehalex86Endorsed',
       '3This chapter is hidden by your browsing level',
-      '4Chapter 4Framedby tehalex86EndorsedThe story forks here · 2 paths',
+      '4Chapter 4Framedby tehalex86Endorsed',
     ]);
+    // Each way on from a fork, ranked, named, linked to its post, with its share; a hidden one
+    // keeps its place without a link.
+    expect(forks()).toEqual([
+      null,
+      [
+        { text: 'CanonChapter 3by Sillycat8362%', href: '/posts/503' },
+        { text: 'EndorsedRest in piecesby tehalex8629%', href: '/posts/560' },
+        { text: "This chapter is rated above the storyline's maximum9%", href: null },
+      ],
+      null,
+      // Its ways on have not arrived: the note alone.
+      [],
+    ]);
+    expect(
+      stopElements()
+        .map(
+          (li) => li.querySelector('[data-testid="storyline-fork"]')?.firstElementChild?.textContent
+        )
+        .filter(Boolean)
+    ).toEqual(['The story forks here · 3 paths', 'The story forks here · 2 paths']);
 
     expect(page.getByRole('region', { name: 'Contributors' }).element().textContent).toBe(
       'ContributorsSillycat83Creatortehalex86EndorsedTar_Tarj'
     );
     await expect.element(page.getByText('Comments for post 501')).toBeVisible();
     expect(mocks.commentsPostId).toHaveBeenCalledWith(501);
+  });
+
+  test('only collaborators are marked Endorsed: the owner and other contributors are not', async () => {
+    mocks.storyline = {
+      ...STORYLINE,
+      mainPath: [
+        chapter(0, 501, 1, 'The cat patch', 10),
+        chapter(1, 502, 1, 'By a stranger', 12),
+        chapter(2, 503, 1, 'By a collaborator', 11),
+      ],
+    };
+    renderWithProviders(<StorylinePage id={2} />);
+
+    await expect.element(heading()).toBeVisible();
+    expect(
+      stopElements().map((li) => !!li.querySelector('[data-testid="storyline-role-chip"]'))
+    ).toEqual([false, false, true]);
+  });
+
+  test('a ceiling with no label shows no ceiling chip', async () => {
+    mocks.storyline = { ...STORYLINE, maxNsfwLevel: 0 };
+    renderWithProviders(<StorylinePage id={2} />);
+
+    await expect.element(heading()).toBeVisible();
+    expect(testIds('storyline-ceiling-chip')).toEqual([]);
+  });
+
+  test('a Complete storyline offers no Continue and no price, whatever the terms say', async () => {
+    mocks.storyline = { ...STORYLINE, status: 'Complete' };
+    mocks.terms = { open: true, closedReason: null, price: 0 };
+    renderWithProviders(<StorylinePage id={2} />);
+
+    await expect.element(heading()).toBeVisible();
+    expect(page.getByRole('button', { name: /Continue the story/ }).elements()).toHaveLength(0);
+    expect(testIds('storyline-price-chip')).toEqual([]);
   });
 
   test('continues from the end of the canon path, and says the price before you press', async () => {
@@ -219,6 +311,11 @@ describe('StorylinePage', () => {
       'Anyone can continue. Sillycat83 reviews each one; endorsed collaborators skip review.',
     ],
     [{ whoCanContinue: 'Collaborators' }, null, "Only Sillycat83's collaborators can continue it."],
+    [
+      { whoCanContinue: 'Collaborators' },
+      { open: false, closedReason: 'collaboratorsOnly', price: 0 },
+      "Only Sillycat83's collaborators can continue it.",
+    ],
     [
       {},
       { open: false, closedReason: 'closed', price: 0 },

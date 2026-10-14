@@ -15,6 +15,7 @@ import {
   StorylinePriceChip,
   StorylineStat,
   StorylineStatusChip,
+  storylineCardClass,
 } from '~/components/Storyline/StorylineChips';
 import { StorylineThumb } from '~/components/Storyline/StorylineThumb';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -32,8 +33,7 @@ type Sort = (typeof STORYLINE_FEED_SORTS)[number]['value'];
 
 const gridClass =
   'grid list-none grid-cols-2 gap-2.5 p-0 sm:grid-cols-[repeat(auto-fill,minmax(220px,1fr))] sm:gap-4';
-const cardClass =
-  'flex h-full flex-col overflow-hidden rounded-xl border border-solid border-gray-3 bg-gray-0 shadow-sm dark:border-dark-4 dark:bg-dark-6';
+const cardClass = `flex h-full flex-col overflow-hidden ${storylineCardClass}`;
 
 export function StorylinesFeed() {
   const [filter, setFilter] = useState<StorylineFeedFilter>('all');
