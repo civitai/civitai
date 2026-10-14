@@ -55,7 +55,8 @@ vi.mock('~/server/db/client', () => ({
   dbWrite: mocks.dbWrite,
 }));
 
-vi.mock('~/server/db/pgDb', () => ({ pgDbReadLong: {}, 
+vi.mock('~/server/db/pgDb', () => ({
+  pgDbReadLong: {},
   pgDbRead: mocks.pgDbRead,
   pgDbWrite: mocks.pgDbWrite,
 }));
@@ -90,7 +91,15 @@ vi.mock('~/server/utils/endpoint-helpers', () => ({
 
 vi.mock('~/utils/number-helpers', () => ({ getRandomInt: () => 123 }));
 
-import { runHealthChecks } from '~/pages/api/health';
+vi.mock('~/server/warmup', () => ({
+  isWarm: () => true,
+  getWarmState: () => 'warmed-ok',
+  getWarmDurationMs: () => 0,
+  didFailOpenTimeout: () => false,
+}));
+
+import healthHandler, { runHealthChecks } from '~/pages/api/health';
+import readyHandler from '~/pages/api/ready';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 // A never-aborted signal so runHealthChecks runs the full check set.
@@ -200,5 +209,106 @@ describe('runHealthChecks — sysRedis soft dependency', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+// The probe routes reuse a run in which every check passed for 10 s, so a probe every few seconds
+// does not hit every dependency each time. Only a clean sweep is reused; the module-level verdict
+// persists across tests, so each test starts on a clock past the previous one's window.
+describe('probe routes reuse a recent clean run', () => {
+  let now = 1_000_000_000_000;
+
+  beforeEach(() => {
+    now += 60_000;
+    vi.spyOn(Date, 'now').mockImplementation(() => now);
+  });
+
+  const probe = async (handler: typeof healthHandler) => {
+    const res = {
+      statusCode: 0,
+      body: undefined as unknown,
+      on: vi.fn(),
+      off: vi.fn(),
+      status(code: number) {
+        res.statusCode = code;
+        return res;
+      },
+      json(body: unknown) {
+        res.body = body;
+        return res;
+      },
+    };
+    await (handler as unknown as (req: unknown, res: unknown) => Promise<unknown>)({}, res);
+    return res;
+  };
+
+  it('a second /api/health probe inside the window does not re-run the dependency checks', async () => {
+    const first = await probe(healthHandler);
+    now += 5_000;
+    const second = await probe(healthHandler);
+
+    expect(first.statusCode).toBe(200);
+    expect(second.statusCode).toBe(200);
+    expect(second.body).toMatchObject({ healthy: true, write: true, read: true, sysRedis: true });
+    expect(mocks.dbWrite.$transaction).toHaveBeenCalledTimes(1);
+    expect(mocks.pgDbRead.query).toHaveBeenCalledTimes(1);
+    expect(mocks.sysRedis.ping).toHaveBeenCalledTimes(1);
+  });
+
+  it('/api/ready shares the clean verdict /api/health just produced', async () => {
+    await probe(healthHandler);
+    now += 2_000;
+    const ready = await probe(readyHandler);
+
+    expect(ready.statusCode).toBe(200);
+    expect(ready.body).toMatchObject({ ready: true, deps: { write: true, read: true } });
+    expect(mocks.dbWrite.$transaction).toHaveBeenCalledTimes(1);
+  });
+
+  it('control: once the window has passed the full suite runs again', async () => {
+    await probe(healthHandler);
+    now += 10_001;
+    await probe(healthHandler);
+
+    expect(mocks.dbWrite.$transaction).toHaveBeenCalledTimes(2);
+  });
+
+  it('a failing run is never reused, and recovery is seen on the very next probe', async () => {
+    mocks.dbRead.$transaction.mockRejectedValue(new Error('db read down'));
+    const failing = await probe(healthHandler);
+    now += 1_000;
+    const stillFailing = await probe(healthHandler);
+
+    mocks.dbRead.$transaction.mockImplementation(async () => 1);
+    now += 1_000;
+    const recovered = await probe(healthHandler);
+
+    expect(failing.statusCode).toBe(500);
+    expect(stillFailing.statusCode).toBe(500);
+    expect(recovered.statusCode).toBe(200);
+    expect(mocks.dbRead.$transaction).toHaveBeenCalledTimes(3);
+  });
+
+  it('a healthy run with a soft-failing dependency is not reused', async () => {
+    mocks.sysRedis.ping.mockImplementation(async () => 'NOPE');
+    const first = await probe(healthHandler);
+    now += 1_000;
+    await probe(healthHandler);
+
+    expect(first.statusCode).toBe(200);
+    expect(mocks.sysRedis.ping).toHaveBeenCalledTimes(2);
+  });
+
+  it('a dependency that breaks after a clean run is reported once the window ends', async () => {
+    await probe(healthHandler);
+    mocks.dbWrite.$transaction.mockRejectedValue(new Error('db write down'));
+    now += 9_000;
+    const inWindow = await probe(healthHandler);
+    now += 1_001;
+    const afterWindow = await probe(healthHandler);
+
+    expect(inWindow.statusCode).toBe(200);
+    expect(afterWindow.statusCode).toBe(500);
+    expect(afterWindow.body).toMatchObject({ healthy: false, write: false });
   });
 });

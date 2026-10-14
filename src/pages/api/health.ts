@@ -401,6 +401,34 @@ export async function runHealthChecks(
   }
 }
 
+// Readiness probes call this every few seconds. A run in which EVERY check passed is reused for
+// this long, so a dependency that breaks just after a clean run is noticed up to this much later.
+// Anything less than a clean sweep is never reused: a failing or soft-failing dependency, a
+// deadline overrun or an aborted run all re-run the full suite on the next probe, so recovery is
+// seen as fast as before. Reusing only clean sweeps also keeps the verdict independent of which
+// checks a caller treats as critical.
+const CLEAN_RUN_REUSE_MS = 10_000;
+let lastCleanRun: { startedAt: number; results: Record<CheckKey, boolean> } | undefined;
+
+export async function runHealthChecksReusingCleanRun(
+  signal: AbortSignal
+): ReturnType<typeof runHealthChecks> {
+  const startedAt = Date.now();
+  if (lastCleanRun && startedAt - lastCleanRun.startedAt < CLEAN_RUN_REUSE_MS) {
+    return { healthy: true, results: { ...lastCleanRun.results }, deadlineTimedOut: false };
+  }
+
+  const run = await runHealthChecks(signal);
+  const clean =
+    !signal.aborted &&
+    run.healthy &&
+    !run.deadlineTimedOut &&
+    Object.keys(run.results).length > 0 &&
+    Object.values(run.results).every(Boolean);
+  lastCleanRun = clean ? { startedAt, results: { ...run.results } } : undefined;
+  return run;
+}
+
 export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse) => {
   const podname = process.env.PODNAME ?? getRandomInt(100, 999);
 
@@ -422,7 +450,7 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
     return;
   }
 
-  const { healthy, results } = await runHealthChecks(signal);
+  const { healthy, results } = await runHealthChecksReusingCleanRun(signal);
 
   // Clean up the close listener
   res.off('close', onClose);
