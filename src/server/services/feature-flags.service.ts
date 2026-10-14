@@ -771,6 +771,8 @@ const featureFlags = createFeatureFlags({
   //
   // Local dev: `FEATURE_FLAG_CRUCIBLE=public` in `.env`, which bypasses Flipt entirely.
   crucible: { availability: ['mod', 'granted'], fliptKey: 'crucible' },
+  // Local dev: `FEATURE_FLAG_STORYLINES=public` in `.env`.
+  storylines: ['mod', 'granted'],
   // Jev resource-intent primitive (POST /api/v1/blocks/resource-intent).
   // DARK by construction: Flipt owns it entirely and the flag must be created
   // default-OFF in flipt-state (separate, human-reviewed change) before any
