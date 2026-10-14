@@ -1699,8 +1699,11 @@ async function wipeAccountFromDocStore(userId: number): Promise<void> {
   } catch (err) {
     const { isDocStoreError } = await import('~/server/services/apps/doc-store.types');
     if (isDocStoreError(err, 'storage_disabled')) {
-      // No store connection (or one the store refuses): nothing can have been written through
-      // it, and nothing can be removed through it either. Counted, not logged.
+      // No store connection, or one the store refuses: nothing can be removed through it.
+      // Counted, not logged, because that is every wipe in an environment without the store.
+      // Rows CAN survive here if the store was configured, written to, and then disabled or
+      // pointed at a role it refuses (logged once, by the store instance): the counter is the
+      // signal, and re-running the wipe once the store is back removes them.
       await record('disabled');
       return;
     }

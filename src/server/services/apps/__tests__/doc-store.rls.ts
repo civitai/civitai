@@ -319,6 +319,38 @@ export function defineRlsSuite(makeHarness: () => Promise<Harness>) {
     });
   });
 
+  describe('doc_author_identity: who a document names', () => {
+    const insert = (key: string, kind: string, author: number | null, writer: number | null) =>
+      h.raw(
+        `INSERT INTO appdata.doc (app_id, ns, coll, scope_uid, key, data, version, seq, author_kind, author_uid, last_writer_uid)
+         VALUES ('ab_RLSAUTHORID', 'prod', 'c', 0, $1, '{}', 1, 1, $2, $3, $4)`,
+        [key, kind, author, writer]
+      );
+    it('a user document must name its author; a deleted one must name nobody, not even as last writer', async () => {
+      for (const [key, kind, author, writer] of [
+        ['u-null', 'user', null, null],
+        ['d-author', 'deleted', 7, null],
+        ['d-writer', 'deleted', null, 7],
+        ['x-kind', 'someone', null, null],
+      ] as const) {
+        expect({ key, msg: await rejects(insert(key, kind, author, writer)) }).toEqual({
+          key,
+          msg: expect.stringMatching(/check constraint "doc_author_(identity|kind)"/),
+        });
+      }
+      // Positive controls: each kind in its valid shape is accepted.
+      await insert('ok-user', 'user', 7, 7);
+      await insert('ok-deleted', 'deleted', null, null);
+      await insert('ok-counter-released', 'counter', null, null);
+      await insert('ok-app', 'app', null, null);
+      expect(
+        (
+          await h.raw(`SELECT key FROM appdata.doc WHERE app_id = 'ab_RLSAUTHORID' ORDER BY key`)
+        ).map((r) => r.key)
+      ).toEqual(['ok-app', 'ok-counter-released', 'ok-deleted', 'ok-user']);
+    });
+  });
+
   describe('account-wipe enumeration (appdata.account_wipe_uid)', () => {
     // Two users with rows in every table, in two apps and in prod, both users' dev namespaces
     // and a review namespace — every row naming its user in every column that can.
@@ -460,15 +492,16 @@ export function defineRlsSuite(makeHarness: () => Promise<Harness>) {
             rows: [],
           });
         }
-        expect(
-          await rejects(
-            c.query(
-              `INSERT INTO appdata.usage_user (app_id, ns, user_id) VALUES ('${APP_1}', 'prod', ${
-                WIPED + 1
-              })`
-            )
-          )
-        ).toMatch(/row-level security/);
+        // A row of the bound user itself, in a namespace it has none in: a policy that admitted
+        // writes for "the user's rows" would let this through.
+        for (const sql of [
+          `INSERT INTO appdata.usage_user (app_id, ns, user_id) VALUES ('${APP_2}', 'dev:1', ${WIPED})`,
+          `INSERT INTO appdata.doc_mark (app_id, ns, coll, key, name, user_id) VALUES ('${APP_2}', 'dev:1', 'c', 'k', 'vote', ${WIPED})`,
+        ]) {
+          expect(await rejects(c.query(sql))).toMatch(/row-level security/);
+          await c.query('ROLLBACK');
+          await c.query(begin(String(WIPED)));
+        }
       } finally {
         await c.query('ROLLBACK').catch(() => undefined);
         await c.close();

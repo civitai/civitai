@@ -655,7 +655,8 @@ const SQL_ACCOUNT_NAMESPACES = `SELECT w.app_id, w.ns FROM (
 
 // The wipe of ONE (app, ns), in an ordinary scoped transaction. $1 app, $2 ns, $3 user id.
 // Statement order follows the store's LOCK ORDER: document rows, then tally and mark rows, then
-// `usage_app` (taken by `charge`), then `usage_user`.
+// `usage_app` (taken by `charge`), then `usage_user` — except one second pass over the documents
+// at the end, whose reason and cost are at its call in `wipeAccountNamespace`.
 
 // A namespace that IS the account's (`dev:<uid>`, `rev:<request>:<uid>`): only that user ever
 // writes there, so everything in it goes, table by table (index rows by the document cascade).
@@ -712,6 +713,16 @@ const SQL_WIPE_LOCK_MARKED = `SELECT d.coll, d.key FROM appdata.doc d
         AND lm.user_id = $3::int)
   ORDER BY d.coll, d.key
   FOR KEY SHARE OF d`;
+// The tally rows those marks count, locked in key order before any is changed: two wipes of
+// different users who marked the same documents then queue on the first shared tally instead of
+// each holding one and waiting for the other (KEY SHARE above does not order them).
+const SQL_WIPE_LOCK_TALLIES = `SELECT 1 AS ok FROM appdata.doc_tally t
+  WHERE t.app_id = $1 AND t.ns = $2 AND t.kind = 'mark'
+    AND EXISTS (SELECT 1 FROM appdata.doc_mark tm
+      WHERE tm.app_id = $1 AND tm.ns = $2 AND tm.coll = t.coll AND tm.key = t.key
+        AND tm.name = t.name AND tm.user_id = $3::int)
+  ORDER BY t.coll, t.key, t.name
+  FOR UPDATE OF t`;
 // The user's marks, reports included, and the same statement takes each from its tally: the
 // two can never disagree. A tally already below its marks (drift; the reconciler's to report)
 // stops at 0 rather than failing the wipe on the `doc_tally_nonnegative` CHECK.
@@ -1696,26 +1707,46 @@ function buildDocStore(deps: DocStoreDeps) {
         return result;
       }
       const args = [appId, ns, userId];
-      const priv = await c.query(SQL_WIPE_PRIVATE_DOCS, args);
-      result.privateDocs = n(priv, 'docs');
-      result.privateBytes = n(priv, 'bytes');
-      result.anonymised = n(await c.query(SQL_WIPE_ANONYMISE, args));
-      result.counterDocsReleased = n(await c.query(SQL_WIPE_RELEASE_COUNTER_DOCS, args));
-      await c.query(SQL_WIPE_LAST_WRITER, args);
-      await c.query(SQL_WIPE_LOCK_MARKED, args);
-      result.marks = n(await c.query(SQL_WIPE_MARKS, args), 'marks');
-      if (result.privateDocs > 0) {
+      /** The documents naming the user; refunds the app for the private ones it deleted. */
+      const wipeDocs = async () => {
+        const priv = await c.query(SQL_WIPE_PRIVATE_DOCS, args);
+        const docs = n(priv, 'docs');
+        const bytes = n(priv, 'bytes');
+        result.privateDocs += docs;
+        result.privateBytes += bytes;
+        result.anonymised += n(await c.query(SQL_WIPE_ANONYMISE, args));
+        result.counterDocsReleased += n(await c.query(SQL_WIPE_RELEASE_COUNTER_DOCS, args));
+        await c.query(SQL_WIPE_LAST_WRITER, args);
+        return { docs, bytes };
+      };
+      const refund = async (deleted: { docs: number; bytes: number }) => {
+        if (deleted.docs === 0) return;
         // The app's usage loses the deleted documents (an anonymised one is still stored, so it
-        // stays counted). No user is charged: the account's own row is deleted next.
+        // stays counted). No user is charged: the account's own row is deleted below.
         await charge(
           c,
           ctx,
-          { bytes: -result.privateBytes, docs: -result.privateDocs },
+          { bytes: -deleted.bytes, docs: -deleted.docs },
           { uid: 0, bytes: 0, docs: 0, ceiling: 'viewer' }
         );
-      }
-      await c.query(SQL_WIPE_PRIVATE_TOMBS, args);
+      };
+      const first = await wipeDocs();
+      await c.query(SQL_WIPE_LOCK_MARKED, args);
+      await c.query(SQL_WIPE_LOCK_TALLIES, args);
+      result.marks = n(await c.query(SQL_WIPE_MARKS, args), 'marks');
+      await refund(first);
+      // A write by this user that was in flight when the statements above took their snapshots
+      // holds its `usage_user` row until it commits; this delete waits for it, and then deletes
+      // the row that counted that document. The second pass (a new statement, so a new
+      // snapshot) sees what that writer committed, so no document naming the user outlives the
+      // usage row a re-run would find it by. A write that starts later recreates the row and is
+      // found by a re-run. The second pass takes document locks after the usage locks — the
+      // reverse of LOCK ORDER — so it can deadlock only against this same user's own
+      // concurrent write; Postgres then aborts this namespace's transaction whole, and it is
+      // reported in `failures` for a re-run.
       await c.query(SQL_WIPE_USAGE_USER, args);
+      await refund(await wipeDocs());
+      await c.query(SQL_WIPE_PRIVATE_TOMBS, args);
       return result;
     });
   }

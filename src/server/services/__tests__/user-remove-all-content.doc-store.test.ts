@@ -176,6 +176,24 @@ describe('removeAllContent → document store', () => {
     expect(recorded).toEqual(['wiped']);
   });
 
+  it('runs even when the legacy per-user purge before it throws', async () => {
+    const app = await seed();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const { purgeUserAppStorageForAccountWipe } = await import(
+      '~/server/services/apps/user-storage-purge.service'
+    );
+    vi.mocked(purgeUserAppStorageForAccountWipe).mockRejectedValueOnce(
+      new Error('apps database unreachable')
+    );
+    await removeAllContent({ id: TARGET });
+    expect(warn.mock.calls.some((c) => String(c[0]).includes('apps database unreachable'))).toBe(
+      true
+    );
+    expect(recorded).toEqual(['wiped']);
+    expect((await state(app)).targetPost).toEqual({ author_kind: 'deleted', author_uid: null });
+    warn.mockRestore();
+  });
+
   it('an account with nothing in the store counts as nothing, quietly', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     await removeAllContent({ id: 4_299 });

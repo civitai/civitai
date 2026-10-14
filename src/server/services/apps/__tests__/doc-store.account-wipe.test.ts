@@ -21,6 +21,7 @@ import {
 } from './doc-store.harness';
 import {
   assertUsageConsistent,
+  snapshot,
   BOARD,
   ctx,
   decl,
@@ -57,17 +58,6 @@ const NOTES: DocCollection = {
   name: 'notes',
   config: decl({ visibility: 'private', indexes: { tag: 'string' } }),
 };
-
-/** Every row in every table for one app id (superuser, RLS bypassed), for "untouched" checks. */
-async function snapshot(h: Harness, appId: string) {
-  const out: Record<string, unknown[]> = {};
-  for (const t of APPDATA_TABLES) {
-    out[t] = await h.raw(`SELECT * FROM appdata.${t} WHERE app_id = $1 ORDER BY 1, 2, 3, 4, 5`, [
-      appId,
-    ]);
-  }
-  return out;
-}
 
 /** Every place a user id can be stored, and how many rows still hold `uid` there. */
 async function rowsNaming(h: Harness, appId: string, uid: number): Promise<Record<string, number>> {
@@ -470,6 +460,97 @@ function defineAccountWipeSuite(makeHarness: () => Promise<Harness>) {
       await assertTalliesMatchMarks(h, markOnly);
     });
 
+    it('a row naming the account inside ANOTHER user’s dev or review namespace is handled per user — that namespace is never deleted outright', async () => {
+      // Not reachable through the store (only the namespace owner's tokens resolve to it), so
+      // seeded directly: the wipe must still decide by the namespace's owner, not by its shape.
+      const app = freshApp('WIPEFOREIGNNS');
+      const req = `pubreq_WIPEFOREIGN${app.slice(-3)}`;
+      const foreign: [string, string][] = [
+        [app, `dev:${OTHER}`],
+        [req, reviewNamespace(req, OTHER)],
+      ];
+      for (const [appId, ns] of foreign) {
+        await seedUser(store, appId, ns, OTHER, 'o');
+        await h.raw(
+          `INSERT INTO appdata.doc_mark (app_id, ns, coll, key, name, user_id) VALUES ($1, $2, 'posts', 'post-o', 'vote', $3)`,
+          [appId, ns, WIPED]
+        );
+      }
+      const keep = await Promise.all(
+        foreign.map(([appId, ns]) =>
+          h.raw(
+            `SELECT * FROM appdata.doc WHERE app_id = $1 AND ns = $2 ORDER BY coll, scope_uid, key`,
+            [appId, ns]
+          )
+        )
+      );
+      expect(keep.map((k) => k.length)).toEqual([5, 5]);
+
+      const out = await maint.wipeAccount(WIPED);
+      expect(out.failures.filter((f) => f.appId === app)).toEqual([]);
+      // The dev namespace is wiped per user. The review namespace's context belongs to OTHER,
+      // so it is refused as a failure and left as it was; neither is deleted outright.
+      expect(out.namespaces.find((n) => n.appId === app)).toMatchObject({ mode: 'user', marks: 1 });
+      expect(out.namespaces.some((n) => n.appId === req && n.mode === 'namespace')).toBe(false);
+      for (const [i, [appId, ns]] of foreign.entries()) {
+        expect(
+          await h.raw(
+            `SELECT * FROM appdata.doc WHERE app_id = $1 AND ns = $2 ORDER BY coll, scope_uid, key`,
+            [appId, ns]
+          )
+        ).toEqual(keep[i]);
+      }
+      expect(await rowsNaming(h, app, WIPED)).toEqual(NAMES_NOBODY);
+      // Clean up the refused review mark so later cases start from no failures.
+      await h.raw(`DELETE FROM appdata.doc_mark WHERE app_id = $1 AND user_id = $2`, [req, WIPED]);
+    });
+
+    it('pages the enumeration: an account in more namespaces than one page holds is wiped in all of them', async () => {
+      const PAGE = 500;
+      const tag = `ab_WIPEPAGE${freshApp('p').slice(-3)}_`;
+      const apps = Array.from(
+        { length: PAGE + 1 },
+        (_, i) => `${tag}${String(i).padStart(4, '0')}`
+      );
+      await h.raw(
+        `INSERT INTO appdata.usage_user (app_id, ns, user_id, bytes, docs)
+         SELECT a, 'prod', $2, 0, 0 FROM unnest($1::text[]) AS a`,
+        [apps, WIPED]
+      );
+      const out = await maint.wipeAccount(WIPED);
+      expect(out.failures).toEqual([]);
+      expect(out.namespaces.filter((n) => n.appId.startsWith(tag)).map((n) => n.appId)).toEqual(
+        apps
+      );
+      const [left] = await h.raw(
+        `SELECT count(*)::int AS n FROM appdata.usage_user WHERE app_id LIKE $1 AND user_id = $2`,
+        [`${tag}%`, WIPED]
+      );
+      expect(left.n).toBe(0);
+    });
+
+    it('a tally already below its marks (drift) stops at 0 instead of failing the wipe; a doc whose last writer is the account loses that uid', async () => {
+      const app = await seedProd('WIPEDRIFT');
+      await h.raw(
+        `UPDATE appdata.doc_tally SET count = 0 WHERE app_id = $1 AND key = 'post-o' AND kind = 'mark' AND name = 'star'`,
+        [app]
+      );
+      // Not producible under `own` today; the uid must still not survive.
+      await h.raw(
+        `UPDATE appdata.doc SET last_writer_uid = $2 WHERE app_id = $1 AND key = 'post-o'`,
+        [app, WIPED]
+      );
+      const out = await maint.wipeAccount(WIPED);
+      expect(out.failures).toEqual([]);
+      expect(await tally(h, app, 'posts', 'post-o', 'mark', 'star')).toBe(0);
+      expect(await rawDoc(h, app, NS_PROD, 'posts', 'post-o')).toMatchObject({
+        author_kind: 'user',
+        author_uid: OTHER,
+        last_writer_uid: null,
+      });
+      expect(await rowsNaming(h, app, WIPED)).toEqual(NAMES_NOBODY);
+    });
+
     it('leaves every row of an account it was not asked about exactly as it was', async () => {
       const app = await seedProd('WIPEBYSTANDER');
       await seedUser(store, app, NS_PROD, THIRD, 't');
@@ -513,15 +594,17 @@ function defineAccountWipeSuite(makeHarness: () => Promise<Harness>) {
       const good = await seedProd('WIPEATOMA');
       const bad = await seedProd('WIPEATOMB');
       const badBefore = await snapshot(h, bad);
+      const ranForBad: string[] = [];
       const failing: DocStoreDb = {
         async connect() {
           const inner = await h.db.connect();
           const client: DocStoreClient = {
             async query(sql, params) {
-              // The LAST statement of the namespace's transaction: everything before it must undo.
+              // After every change to documents, marks, tallies and usage_app: all must undo.
               if (/DELETE FROM appdata\.usage_user u/.test(sql) && params?.[0] === bad) {
                 throw new Error('injected wipe failure');
               }
+              if (params?.[0] === bad) ranForBad.push(sql);
               return inner.query(sql, params);
             },
             release: (err) => inner.release(err),
@@ -531,6 +614,18 @@ function defineAccountWipeSuite(makeHarness: () => Promise<Harness>) {
       };
       const out = await createDocStoreMaintenance({ db: failing }).wipeAccount(WIPED);
       expect(out.failures).toEqual([{ appId: bad, ns: NS_PROD, error: 'injected wipe failure' }]);
+      // The rollback is what restored these, not their never having run.
+      for (const ran of [
+        /DELETE FROM appdata\.doc d\s+WHERE d\.app_id = \$1 AND d\.ns = \$2 AND d\.scope_uid = \$3/,
+        /SET author_kind = 'deleted'/,
+        /DELETE FROM appdata\.doc_mark mk/,
+        /INSERT INTO appdata\.usage_app/,
+      ]) {
+        expect({ ran: String(ran), seen: ranForBad.some((s) => ran.test(s)) }).toEqual({
+          ran: String(ran),
+          seen: true,
+        });
+      }
       expect(out.namespaces.map((n) => n.appId)).toContain(good);
       expect(await rowsNaming(h, good, WIPED)).toEqual(NAMES_NOBODY);
       expect(await snapshot(h, bad)).toEqual(badBefore);
@@ -552,6 +647,31 @@ function defineAccountWipeSuite(makeHarness: () => Promise<Harness>) {
         'storage_disabled'
       );
     });
+  });
+
+  it('negative control: the recorder flags an enumeration keyed on another user and one outside its transaction', async () => {
+    const before = h.violations.length;
+    const c = await h.db.connect();
+    const enumerate = `SELECT wu.app_id FROM appdata.usage_user wu WHERE wu.user_id = $1::int`;
+    try {
+      await c.query(
+        `BEGIN; SELECT set_config('appdata.app_id', '', true), set_config('appdata.ns', '', true), set_config('appdata.account_wipe_uid', '${WIPED}', true), set_config('lock_timeout', '3s', true)`
+      );
+      await c.query(enumerate, [OTHER]);
+      await c.query('ROLLBACK');
+      await c.query(
+        `BEGIN; SELECT set_config('appdata.app_id', 'ab_RECORDER', true), set_config('appdata.ns', 'prod', true), set_config('lock_timeout', '3s', true)`
+      );
+      await c.query(enumerate, [WIPED]);
+      await c.query('ROLLBACK');
+    } finally {
+      c.release();
+    }
+    const flagged = h.violations.splice(before);
+    expect(flagged.map((v) => v.split(':')[0])).toEqual([
+      '$1 does not match the bound account-wipe user',
+      'account-wipe statement outside its transaction, or vice versa',
+    ]);
   });
 
   it('every appdata statement ran in its bound transaction with the matching keys (runtime shape)', () => {
@@ -585,6 +705,55 @@ describe.skipIf(!REAL_PG_URL)('account wipe racing other writers on Postgres', (
   });
   afterAll(async () => {
     await h?.close();
+  });
+
+  it('a write by the account still in flight when its namespace is wiped does not survive with its uid', async () => {
+    const maint = createDocStoreMaintenance({ db: h.db });
+    const app = freshApp('WIPEINFLIGHT');
+    const w = ctx(app, NS_PROD, WIPED);
+    await createDocStore({ db: h.db }).put(w, PREFS, 'existing', { a: 1 });
+    // The writer runs to its COMMIT and is held there, holding its usage_app and usage_user
+    // row locks, with its document not yet visible to anyone.
+    let parked!: () => void;
+    const isParked = new Promise<void>((r) => (parked = r));
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const gated: DocStoreDb = {
+      async connect() {
+        const inner = await h.db.connect();
+        return {
+          async query(sql, params) {
+            if (sql === 'COMMIT') {
+              parked();
+              await gate;
+            }
+            return inner.query(sql, params);
+          },
+          release: (err) => inner.release(err),
+        };
+      },
+    };
+    const writer = createDocStore({ db: gated }).put(w, PREFS, 'inflight', { b: 2 });
+    await isParked;
+    const wipe = maint.wipeAccount(WIPED);
+    // Wait until the wipe is blocked on the writer's locks (observed, not timed).
+    let waiting = 0;
+    for (let i = 0; i < 200 && waiting === 0; i++) {
+      await new Promise((r) => setTimeout(r, 25));
+      const [row] = await h.raw(
+        `SELECT count(*)::int AS n FROM pg_stat_activity
+          WHERE datname = current_database() AND wait_event_type = 'Lock'`
+      );
+      waiting = Number(row.n);
+    }
+    expect(waiting, 'the wipe never blocked on the in-flight writer').toBeGreaterThan(0);
+    release();
+    await writer;
+    const out = await wipe;
+    expect(out.failures).toEqual([]);
+    expect(out.namespaces).toMatchObject([{ appId: app, privateDocs: 2 }]);
+    expect(await rowsNaming(h, app, WIPED)).toEqual(NAMES_NOBODY);
+    await assertUsageConsistent(h, app, NS_PROD);
   });
 
   it('marks, unmarks and an author delete running alongside the wipe neither deadlock nor leave a tally out of step with its marks', async () => {
