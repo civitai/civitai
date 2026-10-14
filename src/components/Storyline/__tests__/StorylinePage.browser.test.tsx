@@ -12,7 +12,8 @@ import { StorylinePage } from '~/components/Storyline/StorylinePage';
  */
 
 const chapter = (depth: number, postId: number | null, childCount = 1, title?: string) => ({
-  chapterId: 100 + depth,
+  // Ids deliberately out of order: the page must keep the server's order, not sort.
+  chapterId: [130, 104, 121, 102, 150][depth],
   depth,
   tombstone: postId ? null : 'browsingLevel',
   post: postId
@@ -127,8 +128,7 @@ describe('StorylinePage', () => {
     expect(mocks.commentsPostId).toHaveBeenCalledWith(501);
   });
 
-  test('continues from the last chapter the reader can see, at their price', async () => {
-    mocks.storyline = { ...STORYLINE, mainPath: [...STORYLINE.mainPath, chapter(4, null, 0)] };
+  test('continues from the end of the main path, at their price', async () => {
     mocks.terms = { open: true, closedReason: null, price: 0 };
     renderWithProviders(<StorylinePage id={2} />);
 
@@ -199,5 +199,22 @@ describe('StorylinePage', () => {
 
     await expect.element(heading()).toBeVisible();
     expect(page.getByRole('button', { name: 'Manage' }).elements()).toHaveLength(0);
+  });
+
+  test('counts of one read as one', async () => {
+    mocks.storyline = { ...STORYLINE, chapterCount: 1, contributorCount: 1 };
+    renderWithProviders(<StorylinePage id={2} />);
+
+    await expect.element(page.getByText('1 chapter · 1 creator')).toBeVisible();
+  });
+
+  test('offers no Continue when the end of the main path is hidden from this reader', async () => {
+    mocks.storyline = { ...STORYLINE, mainPath: [...STORYLINE.mainPath, chapter(4, null, 0)] };
+    mocks.terms = { open: true, closedReason: null, price: 0 };
+    renderWithProviders(<StorylinePage id={2} />);
+
+    await expect.element(heading()).toBeVisible();
+    expect(page.getByRole('button', { name: /Continue the story/ }).elements()).toHaveLength(0);
+    expect(mocks.termsFor).toHaveBeenLastCalledWith(undefined);
   });
 });

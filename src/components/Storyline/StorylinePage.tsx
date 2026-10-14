@@ -22,8 +22,9 @@ export function StorylinePage({ id }: { id: number }) {
   // Cover, thread and Read from the start come from the reading path, which tombstones chapter 1
   // where this reader may not see it; `rootPostId` does not.
   const rootPost = mainPath[0]?.post ?? null;
-  // A continuation is added at the end of the main path, after its last chapter this reader can see.
-  const lastPost = [...mainPath].reverse().find((chapter) => chapter.post)?.post ?? null;
+  // Continue adds the next chapter after the end of the main path. When that chapter is hidden
+  // from this reader, Continue is not offered: continuing an earlier one would make a side branch.
+  const lastPost = mainPath.at(-1)?.post ?? null;
   const terms = useStorylineContinueTerms(lastPost?.id);
 
   if (storylineQuery.isLoading)

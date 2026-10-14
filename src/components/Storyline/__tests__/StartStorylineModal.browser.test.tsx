@@ -74,6 +74,16 @@ describe('StartStorylineModal', () => {
     });
   });
 
+  test('anyone can continue unless the creator says otherwise', async () => {
+    renderWithProviders(<StartStorylineModal postId={41} postNsfwLevel={NsfwLevel.PG} />);
+
+    await page.getByRole('textbox', { name: 'Title' }).fill('The Patch');
+    await page.getByRole('button', { name: 'Start storyline' }).click();
+    expect(mocks.mutate).toHaveBeenCalledWith(
+      expect.objectContaining({ whoCanContinue: 'Anyone' })
+    );
+  });
+
   // A post's level is the OR of its images', so it is judged by its most severe image.
   test('a post with PG and R images is judged as R', async () => {
     renderWithProviders(
