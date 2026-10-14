@@ -3,6 +3,12 @@ import { expect, vi } from 'vitest';
 import type { BridgeRpcMock } from './bridgeRpcMock';
 import { trpcError } from './fixtures/trpc-client-error';
 import { RATE_LIMIT, rateLimitedClientError } from './fixtures/shared-storage-rate-limit';
+import {
+  INVENTORY,
+  checkReplyKeys,
+  parseDeclaredKeys,
+  type InventoryType,
+} from '~/components/AppBlocks/hostHandlerParity';
 
 /**
  * CHARACTERISATION MATRIX for every FORWARDED App Blocks bridge handler, on both hosts.
@@ -15,8 +21,9 @@ import { RATE_LIMIT, rateLimitedClientError } from './fixtures/shared-storage-ra
  *
  * Which host must serve a type comes from `hostHandlerParity.ts` INVENTORY ('required');
  * the first test in each `*HostForwardMatrix.browser.test.tsx` asserts that the types this
- * table covers for that host are exactly INVENTORY's `required` set, and that INVENTORY's
- * `reply` agrees with `REPLY_TYPE` below.
+ * table covers for that host are exactly INVENTORY's `required` set, that INVENTORY's
+ * `reply` agrees with `REPLY_TYPE` below, and that INVENTORY's `replyKeys` / `errorKeys` agree
+ * with the pinned replies (`replyKeysProblems`).
  *
  * Each row asserts, with STRICT equality (an `undefined`-valued key is not the same as an
  * absent one):
@@ -2267,6 +2274,55 @@ export const ROWS: readonly MatrixRow[] = [
   ...SH_WITHDRAW,
   ...SH_REPORT,
 ];
+
+/**
+ * Every way `rows` disagree with INVENTORY's `replyKeys` / `errorKeys`. `runRow` pins each row's
+ * `reply` with strict equality to what the real host sent, so a row here is evidence about the
+ * host, not a literal compared with itself.
+ *
+ * It checks both directions:
+ *   - every pinned reply matches its declared list (`checkReplyKeys`);
+ *   - every declared key, `?` keys included, appears in at least one reply of that outcome, and
+ *     a type whose `errorKeys` is a list has at least one pinned error reply. Otherwise a
+ *     declared key that no row exercises reads as checked.
+ */
+export function replyKeysProblems(rows: readonly MatrixRow[]): string[] {
+  const problems: string[] = [];
+  const seen = new Map<string, { success: Set<string>; error: Set<string>; errors: number }>();
+  for (const row of rows) {
+    if (!row.reply) continue;
+    const type = row.type as InventoryType;
+    const { outcome, problems: rowProblems } = checkReplyKeys(type, row.reply);
+    for (const p of rowProblems) problems.push(`${rowName(row)}: ${p}`);
+    const s = seen.get(type) ?? { success: new Set(), error: new Set(), errors: 0 };
+    for (const k of Object.keys(row.reply)) if (k !== 'requestId') s[outcome].add(k);
+    if (outcome === 'error') s.errors += 1;
+    seen.set(type, s);
+  }
+  for (const type of new Set(rows.map((r) => r.type))) {
+    const spec = INVENTORY[type as InventoryType];
+    const s = seen.get(type);
+    if (!s) {
+      problems.push(`${type}: no row pins a reply`);
+      continue;
+    }
+    const lists = [
+      ['replyKeys', spec.replyKeys, s.success],
+      ['errorKeys', spec.errorKeys, s.error],
+    ] as const;
+    for (const [field, declared, observed] of lists) {
+      if (!Array.isArray(declared)) continue;
+      const { required, optional } = parseDeclaredKeys(declared);
+      for (const k of [...required, ...optional]) {
+        if (!observed.has(k)) problems.push(`${type}: ${field} declares \`${k}\`; no row has it`);
+      }
+    }
+    if (Array.isArray(spec.errorKeys) && s.errors === 0) {
+      problems.push(`${type}: errorKeys is a list, but no row pins an error reply`);
+    }
+  }
+  return problems;
+}
 
 export function rowName(row: MatrixRow): string {
   return `${row.type} · ${row.mode} · ${row.scenario}`;

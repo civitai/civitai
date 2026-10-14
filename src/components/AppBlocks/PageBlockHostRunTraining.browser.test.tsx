@@ -4,6 +4,7 @@ import { DialogProvider } from '~/components/Dialog/DialogProvider';
 import { useDialogStore } from '~/components/Dialog/dialogStore';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+import { expectReplyKeys } from '../../../test/expectReplyKeys';
 import type * as TrpcMod from '~/utils/trpc';
 import { makeInertSubRouter, makeTrpcProxy } from '../../../test/trpcProxyStub';
 
@@ -207,6 +208,7 @@ describe('PageBlockHost RUN_TRAINING (consent-gated training run)', () => {
       const r = replies.last('TRAINING_RESULT');
       if (!r) throw new Error('no reply yet');
       expect(r.payload).toEqual({ requestId: 'rq_1', snapshot: SNAPSHOT });
+      expectReplyKeys('RUN_TRAINING', 'success', ['snapshot'], r.payload);
     });
     expect(consentMutate).toHaveBeenCalledWith({ blockToken: 'tok_abc', quoteId: QUOTE_ID });
     expect(submitMutate).toHaveBeenCalledWith({ blockToken: 'tok_abc', body: BODY });
@@ -242,6 +244,7 @@ describe('PageBlockHost RUN_TRAINING (consent-gated training run)', () => {
       const r = replies.last('TRAINING_RESULT');
       if (!r) throw new Error('no reply yet');
       expect(r.payload).toEqual({ requestId: 'rq_3', error: 'declined' });
+      expectReplyKeys('RUN_TRAINING', 'error', ['error'], r.payload);
     });
     expect(consentMutate).not.toHaveBeenCalled();
     expect(submitMutate).not.toHaveBeenCalled();

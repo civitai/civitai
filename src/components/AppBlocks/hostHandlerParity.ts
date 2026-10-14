@@ -94,6 +94,42 @@ export interface MessageSpec {
    * behavioural claims about the reply in the per-message browser tests.
    */
   reply: string;
+  /**
+   * Top-level keys of a SUCCESS reply payload, `requestId` left out. A `?` suffix marks a key
+   * the reply may omit: a picker's `selected` is absent when the viewer cancels. `null` for
+   * fire-and-forget types, which get no reply.
+   *
+   * A reply counts as an ERROR reply when it has a top-level `error` key; every other reply is
+   * checked against this list. It describes the host's wire shape, not what any client
+   * expects: `VIEWER_RESULT` stays `{ viewer }`.
+   *
+   * Checked by `checkReplyKeys` (below):
+   *   - the forwarded types (`REPLY_TYPE` in `test/bridgeForwardMatrix.ts`): the premise test
+   *     of each forward matrix checks every pinned reply row against this list, and requires
+   *     every listed key to appear in some row;
+   *   - every other REQUEST type: the per-message tests call `expectReplyKeys` (in
+   *     `test/expectReplyKeys.ts`) on a reply the real host sent. `hostHandlerParity.test.ts`
+   *     requires a pin from each host that must handle the type, and requires the pinned key
+   *     sets to cover every declared key, here and in `errorKeys`.
+   *
+   * Machine-read: tooling outside this repo may read these lists from the source text with a
+   * regex. Keep each one a single-line literal of quoted names, where a reader must accept the
+   * `?` suffix. `hostHandlerParity.test.ts` checks the single-line shape.
+   */
+  replyKeys: readonly string[] | null;
+  /**
+   * Top-level keys of an ERROR reply (a reply with a top-level `error` string), `requestId` left
+   * out. It uses the same `?` notation and always lists `error`. A host-specific error variant
+   * can add fields, such as storage's `value: null` or a shared write's `rateLimit`. The fields
+   * it adds are marked `?`, because the shared dispatcher's NACK (`buildBridgeNackReply`) is a
+   * bare `{ requestId, error }`.
+   *
+   * `'none'` means the host never sends a top-level `error` for this type. That covers two
+   * cases. The workflow family reports failure INSIDE the success shape: a `snapshot` whose
+   * `status` is `'failed'`, see `failureSnapshot`. REQUEST_TOKEN has no failure reply at all
+   * (`BRIDGE_NACK_EXEMPT`). `null` for fire-and-forget types.
+   */
+  errorKeys: readonly string[] | 'none' | null;
   IframeHost: HostReq;
   PageBlockHost: HostReq;
   InlineHost: HostReq;
@@ -119,6 +155,8 @@ export const INVENTORY = {
   BLOCK_HELLO: {
     request: false,
     reply: '',
+    replyKeys: null,
+    errorKeys: null,
     IframeHost: 'required',
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
@@ -126,6 +164,8 @@ export const INVENTORY = {
   BLOCK_READY: {
     request: false,
     reply: '',
+    replyKeys: null,
+    errorKeys: null,
     IframeHost: 'required',
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
@@ -133,6 +173,8 @@ export const INVENTORY = {
   BLOCK_ERROR: {
     request: false,
     reply: '',
+    replyKeys: null,
+    errorKeys: null,
     IframeHost: 'required',
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
@@ -153,6 +195,8 @@ export const INVENTORY = {
   BLOCK_MESSAGE_REJECTED: {
     request: false,
     reply: '',
+    replyKeys: null,
+    errorKeys: null,
     IframeHost:
       'bridge telemetry, not a feature: consumed by the shared usePostMessage dispatcher above the subscriber lookup, so no per-host onMessage handler exists',
     PageBlockHost:
@@ -162,6 +206,8 @@ export const INVENTORY = {
   RESIZE_IFRAME: {
     request: false,
     reply: '',
+    replyKeys: null,
+    errorKeys: null,
     IframeHost: 'required',
     // N/A: the page renders the iframe full-viewport (height:100%); a page block
     // fills the surface and does NOT size-to-content, so there is nothing to
@@ -173,6 +219,8 @@ export const INVENTORY = {
   NAVIGATE: {
     request: false,
     reply: '',
+    replyKeys: null,
+    errorKeys: null,
     // N/A: the model slot is an embedded panel inside the model page — a block
     // navigating the host away from the model page is out of its remit; the
     // model host intentionally does not bridge NAVIGATE.
@@ -184,6 +232,8 @@ export const INVENTORY = {
   TRACK_EVENT: {
     request: false,
     reply: '',
+    replyKeys: null,
+    errorKeys: null,
     // Forwarded to /api/track/block-event by `blockEventBeacon.ts`; identity comes from
     // host props, never the payload.
     IframeHost: 'required',
@@ -193,6 +243,8 @@ export const INVENTORY = {
   REQUEST_SIGN_IN: {
     request: false,
     reply: '',
+    replyKeys: null,
+    errorKeys: null,
     IframeHost: 'required',
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
@@ -219,6 +271,8 @@ export const INVENTORY = {
   REQUEST_CONSENT: {
     request: false,
     reply: '',
+    replyKeys: null,
+    errorKeys: null,
     IframeHost: 'required',
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
@@ -237,6 +291,8 @@ export const INVENTORY = {
   REQUEST_TOKEN: {
     request: true,
     reply: 'TOKEN_REFRESH_RESPONSE (or a TOKEN_REFRESH push when no requestId was sent)',
+    replyKeys: ['token'],
+    errorKeys: 'none',
     IframeHost: 'required',
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
@@ -244,6 +300,8 @@ export const INVENTORY = {
   SUBMIT_WORKFLOW: {
     request: true,
     reply: 'WORKFLOW_SUBMITTED',
+    replyKeys: ['snapshot'],
+    errorKeys: 'none',
     IframeHost: 'required',
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
@@ -251,6 +309,8 @@ export const INVENTORY = {
   ESTIMATE_WORKFLOW: {
     request: true,
     reply: 'ESTIMATE_RESULT',
+    replyKeys: ['snapshot'],
+    errorKeys: 'none',
     IframeHost: 'required',
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
@@ -263,6 +323,8 @@ export const INVENTORY = {
   ESTIMATE_WORKFLOW_BATCH: {
     request: true,
     reply: 'ESTIMATE_BATCH_RESULT',
+    replyKeys: ['snapshots', 'aggregate'],
+    errorKeys: ['error'],
     IframeHost: 'required',
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
@@ -270,6 +332,8 @@ export const INVENTORY = {
   POLL_WORKFLOW: {
     request: true,
     reply: 'WORKFLOW_STATUS',
+    replyKeys: ['snapshot'],
+    errorKeys: 'none',
     IframeHost: 'required',
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
@@ -277,6 +341,8 @@ export const INVENTORY = {
   CANCEL_WORKFLOW: {
     request: true,
     reply: 'WORKFLOW_CANCELED',
+    replyKeys: ['snapshot'],
+    errorKeys: 'none',
     IframeHost: 'required',
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
@@ -284,6 +350,8 @@ export const INVENTORY = {
   OPEN_BUZZ_PURCHASE: {
     request: true,
     reply: 'BUZZ_PURCHASE_RESULT',
+    replyKeys: ['purchased'],
+    errorKeys: ['error'],
     IframeHost: 'required',
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
@@ -298,6 +366,8 @@ export const INVENTORY = {
   QUERY_APP_WORKFLOWS: {
     request: true,
     reply: 'APP_WORKFLOWS_RESULT',
+    replyKeys: ['result'],
+    errorKeys: ['error'],
     IframeHost: 'app subqueue is a page-only affordance today; slot-apps deferred',
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
@@ -305,6 +375,8 @@ export const INVENTORY = {
   CANCEL_APP_WORKFLOW: {
     request: true,
     reply: 'CANCEL_APP_WORKFLOW_RESULT',
+    replyKeys: ['result'],
+    errorKeys: ['error'],
     IframeHost: 'app subqueue is a page-only affordance today; slot-apps deferred',
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
@@ -316,6 +388,8 @@ export const INVENTORY = {
   PUBLISH_GENERATION_OUTPUTS: {
     request: true,
     reply: 'PUBLISH_RESULT',
+    replyKeys: ['result'],
+    errorKeys: ['error'],
     IframeHost:
       'shared-grid publish is a page-only affordance today; the model slot has no such surface',
     PageBlockHost: 'required',
@@ -328,6 +402,8 @@ export const INVENTORY = {
   GET_IMAGES_BY_IDS: {
     request: true,
     reply: 'IMAGES_RESULT',
+    replyKeys: ['result'],
+    errorKeys: ['error'],
     IframeHost:
       'shared-grid gated read is a page-only affordance today; the model slot has no such surface',
     PageBlockHost: 'required',
@@ -340,6 +416,8 @@ export const INVENTORY = {
   GET_BUZZ_BALANCE: {
     request: true,
     reply: 'BUZZ_BALANCE_RESULT',
+    replyKeys: ['balance'],
+    errorKeys: ['error'],
     IframeHost: 'required',
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
@@ -356,6 +434,8 @@ export const INVENTORY = {
   GET_VIEWER: {
     request: true,
     reply: 'VIEWER_RESULT',
+    replyKeys: ['viewer'],
+    errorKeys: ['error'],
     IframeHost: 'viewer self-read is a page-only affordance; slot-apps deferred',
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
@@ -369,6 +449,8 @@ export const INVENTORY = {
   GET_BUZZ_TRANSACTIONS: {
     request: true,
     reply: 'BUZZ_TRANSACTIONS_RESULT',
+    replyKeys: ['result'],
+    errorKeys: ['error'],
     IframeHost: 'buzz self-read dashboard is a page-only affordance; slot-apps deferred',
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
@@ -376,6 +458,8 @@ export const INVENTORY = {
   GET_BUZZ_ACCOUNTS: {
     request: true,
     reply: 'BUZZ_ACCOUNTS_RESULT',
+    replyKeys: ['result'],
+    errorKeys: ['error'],
     IframeHost: 'buzz self-read dashboard is a page-only affordance; slot-apps deferred',
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
@@ -383,6 +467,8 @@ export const INVENTORY = {
   GET_DAILY_COMPENSATION: {
     request: true,
     reply: 'DAILY_COMPENSATION_RESULT',
+    replyKeys: ['result'],
+    errorKeys: ['error'],
     IframeHost: 'buzz self-read dashboard is a page-only affordance; slot-apps deferred',
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
@@ -390,6 +476,8 @@ export const INVENTORY = {
   OPEN_CHECKPOINT_PICKER: {
     request: true,
     reply: 'CHECKPOINT_PICKER_RESULT',
+    replyKeys: ['selected?'],
+    errorKeys: ['error'],
     IframeHost: 'required',
     PageBlockHost: 'required', // ported in #2799
     InlineHost: INLINE_STUB,
@@ -403,6 +491,8 @@ export const INVENTORY = {
   OPEN_RESOURCE_PICKER: {
     request: true,
     reply: 'RESOURCE_PICKER_RESULT',
+    replyKeys: ['selected?', 'selectedResources?'],
+    errorKeys: ['error'],
     IframeHost:
       'model slot uses the narrower OPEN_CHECKPOINT_PICKER; the wider resource picker is a page-only affordance',
     PageBlockHost: 'required',
@@ -427,6 +517,8 @@ export const INVENTORY = {
   OPEN_IMAGE_UPLOAD: {
     request: true,
     reply: 'IMAGE_UPLOAD_RESULT',
+    replyKeys: ['selected?'],
+    errorKeys: ['error'],
     IframeHost:
       'host-mediated image upload is a page-only affordance today; the model slot has no such surface',
     PageBlockHost: 'required',
@@ -438,6 +530,8 @@ export const INVENTORY = {
   OPEN_IMAGE_PICKER: {
     request: true,
     reply: 'IMAGE_PICKER_RESULT',
+    replyKeys: ['selected?', 'selectedImages?'],
+    errorKeys: ['error'],
     IframeHost:
       'the image picker is a page-only affordance today; the shared dispatcher NACKs it with an IMAGE_PICKER_RESULT error',
     PageBlockHost: 'required',
@@ -446,6 +540,8 @@ export const INVENTORY = {
   SET_USER_CHECKPOINT: {
     request: true,
     reply: 'USER_CHECKPOINT_SET',
+    replyKeys: ['ok'],
+    errorKeys: ['error', 'ok?'],
     IframeHost: 'required',
     // PAGE: persists to block_user_settings keyed by a model-bound install;
     // updateUserSettings HARD-REQUIRES modelId in the token ctx, which a page
@@ -458,6 +554,8 @@ export const INVENTORY = {
   APP_STORAGE_GET: {
     request: true,
     reply: 'APP_STORAGE_GET_RESULT',
+    replyKeys: ['value'],
+    errorKeys: ['error', 'value?'],
     IframeHost: 'required',
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
@@ -465,6 +563,8 @@ export const INVENTORY = {
   APP_STORAGE_SET: {
     request: true,
     reply: 'APP_STORAGE_SET_RESULT',
+    replyKeys: ['ok', 'sizeBytes'],
+    errorKeys: ['error', 'ok?'],
     IframeHost: 'required',
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
@@ -472,6 +572,8 @@ export const INVENTORY = {
   APP_STORAGE_DELETE: {
     request: true,
     reply: 'APP_STORAGE_DELETE_RESULT',
+    replyKeys: ['ok', 'deleted'],
+    errorKeys: ['error', 'ok?', 'deleted?'],
     IframeHost: 'required',
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
@@ -479,6 +581,8 @@ export const INVENTORY = {
   APP_STORAGE_LIST: {
     request: true,
     reply: 'APP_STORAGE_LIST_RESULT',
+    replyKeys: ['keys', 'nextCursor'],
+    errorKeys: ['error', 'keys?'],
     IframeHost: 'required',
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
@@ -486,6 +590,8 @@ export const INVENTORY = {
   APP_STORAGE_QUOTA: {
     request: true,
     reply: 'APP_STORAGE_QUOTA_RESULT',
+    replyKeys: ['usedBytes', 'rowCount', 'limitBytes', 'limitRows'],
+    errorKeys: ['error', 'usedBytes?', 'rowCount?', 'limitBytes?', 'limitRows?'],
     IframeHost: 'required',
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
@@ -500,6 +606,8 @@ export const INVENTORY = {
   SHARED_LIST: {
     request: true,
     reply: 'SHARED_LIST_RESULT',
+    replyKeys: ['items', 'nextCursor'],
+    errorKeys: ['error'],
     IframeHost: 'required',
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
@@ -507,6 +615,8 @@ export const INVENTORY = {
   SHARED_GET_COUNT: {
     request: true,
     reply: 'SHARED_GET_COUNT_RESULT',
+    replyKeys: ['count'],
+    errorKeys: ['error'],
     IframeHost: 'required',
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
@@ -514,6 +624,8 @@ export const INVENTORY = {
   SHARED_GET_COUNTS: {
     request: true,
     reply: 'SHARED_GET_COUNTS_RESULT',
+    replyKeys: ['counts'],
+    errorKeys: ['error'],
     IframeHost: 'required',
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
@@ -521,6 +633,8 @@ export const INVENTORY = {
   SHARED_APPEND: {
     request: true,
     reply: 'SHARED_APPEND_RESULT',
+    replyKeys: ['key'],
+    errorKeys: ['error', 'rateLimit?'],
     IframeHost: 'required',
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
@@ -538,6 +652,8 @@ export const INVENTORY = {
   SHARED_UPDATE: {
     request: true,
     reply: 'SHARED_UPDATE_RESULT',
+    replyKeys: ['ok'],
+    errorKeys: ['error', 'ok?', 'rateLimit?'],
     IframeHost: 'required',
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
@@ -545,6 +661,8 @@ export const INVENTORY = {
   SHARED_VOTE: {
     request: true,
     reply: 'SHARED_VOTE_RESULT',
+    replyKeys: ['count'],
+    errorKeys: ['error', 'rateLimit?'],
     IframeHost: 'required',
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
@@ -552,6 +670,8 @@ export const INVENTORY = {
   SHARED_UNVOTE: {
     request: true,
     reply: 'SHARED_UNVOTE_RESULT',
+    replyKeys: ['count'],
+    errorKeys: ['error', 'rateLimit?'],
     IframeHost: 'required',
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
@@ -559,6 +679,8 @@ export const INVENTORY = {
   SHARED_WITHDRAW: {
     request: true,
     reply: 'SHARED_WITHDRAW_RESULT',
+    replyKeys: ['ok', 'deleted'],
+    errorKeys: ['error', 'rateLimit?'],
     IframeHost: 'required',
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
@@ -570,6 +692,8 @@ export const INVENTORY = {
   SHARED_GET: {
     request: true,
     reply: 'SHARED_GET_RESULT',
+    replyKeys: ['item'],
+    errorKeys: ['error', 'item?'],
     IframeHost: 'required',
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
@@ -583,6 +707,8 @@ export const INVENTORY = {
   SHARED_REPORT: {
     request: true,
     reply: 'SHARED_REPORT_RESULT',
+    replyKeys: ['ok'],
+    errorKeys: ['error', 'ok?', 'rateLimit?'],
     IframeHost: 'required',
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
@@ -598,6 +724,8 @@ export const INVENTORY = {
   SAVE_IMAGE: {
     request: true,
     reply: 'SAVE_IMAGE_RESULT',
+    replyKeys: ['ok'],
+    errorKeys: ['error', 'ok?'],
     IframeHost:
       'download bridge is a page-only affordance today; the paid-output apps are page apps, the model slot has no such surface',
     PageBlockHost: 'required',
@@ -616,6 +744,8 @@ export const INVENTORY = {
   GET_WILDCARD_PACK: {
     request: true,
     reply: 'WILDCARD_PACK_RESULT',
+    replyKeys: ['pack'],
+    errorKeys: ['error'],
     IframeHost:
       'model slot has no wildcard-pack import surface; the resolve+parse bridge is a page-only affordance',
     PageBlockHost: 'required',
@@ -647,6 +777,8 @@ export const INVENTORY = {
   SET_COLLECTION_FOLLOW: {
     request: true,
     reply: 'COLLECTION_FOLLOW_RESULT',
+    replyKeys: ['result'],
+    errorKeys: ['error'],
     IframeHost: 'required',
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
@@ -678,6 +810,8 @@ export const INVENTORY = {
   CREATE_POST_FROM_APP: {
     request: true,
     reply: 'CREATE_POST_RESULT',
+    replyKeys: ['result'],
+    errorKeys: ['error'],
     // N/A, and for the SAME structural reason as PUBLISH_GENERATION_OUTPUTS /
     // QUERY_APP_WORKFLOWS / CANCEL_APP_WORKFLOW above — not a smaller version of
     // the same reason. Every image this message can post comes from the app
@@ -696,6 +830,8 @@ export const INVENTORY = {
   RUN_TRAINING: {
     request: true,
     reply: 'TRAINING_RESULT',
+    replyKeys: ['snapshot'],
+    errorKeys: ['error'],
     IframeHost:
       'training is page-only on the server; the shared dispatcher NACKs it with a TRAINING_RESULT error',
     PageBlockHost: 'required',
@@ -707,6 +843,8 @@ export const INVENTORY = {
   RUN_CONFIRMED_STEP: {
     request: true,
     reply: 'CONFIRMED_STEP_RESULT',
+    replyKeys: ['snapshot'],
+    errorKeys: ['error'],
     IframeHost:
       'confirmed steps are page-only on the server; the shared dispatcher NACKs it with a CONFIRMED_STEP_RESULT error',
     PageBlockHost: 'required',
@@ -718,12 +856,73 @@ export const INVENTORY = {
   PREPARE_TRAINING_DATASET: {
     request: true,
     reply: 'TRAINING_DATASET_RESULT',
+    replyKeys: ['result'],
+    errorKeys: ['error'],
     IframeHost:
       'training is page-only on the server; the shared dispatcher NACKs it with a TRAINING_DATASET_RESULT error',
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
   },
 } satisfies Record<string, MessageSpec>;
+
+export type InventoryType = keyof typeof INVENTORY;
+
+/** What `checkReplyKeys` concluded about one reply payload. */
+export interface ReplyKeysCheck {
+  /** `'error'` when the payload has a top-level `error` key, otherwise `'success'`. */
+  outcome: 'success' | 'error';
+  /** Each way the payload disagrees with the declared keys. Empty when it agrees. */
+  problems: string[];
+}
+
+/** Split a declared key list into the keys a reply must carry and the keys it may carry. */
+export function parseDeclaredKeys(declared: readonly string[]): {
+  required: string[];
+  optional: string[];
+} {
+  const required: string[] = [];
+  const optional: string[] = [];
+  for (const key of declared) {
+    if (key.endsWith('?')) optional.push(key.slice(0, -1));
+    else required.push(key);
+  }
+  return { required, optional };
+}
+
+/**
+ * Compare one reply payload a host sent for `type` with what INVENTORY declares for it
+ * (`replyKeys` / `errorKeys`). It checks the top-level key set only, never the value types.
+ */
+export function checkReplyKeys(type: InventoryType, payload: unknown): ReplyKeysCheck {
+  const spec: MessageSpec = INVENTORY[type];
+  if (payload === null || typeof payload !== 'object' || Array.isArray(payload)) {
+    return { outcome: 'success', problems: [`${type}: reply payload is not an object`] };
+  }
+  const keys = Object.keys(payload).filter((k) => k !== 'requestId');
+  const outcome = Object.prototype.hasOwnProperty.call(payload, 'error') ? 'error' : 'success';
+  const declared = outcome === 'error' ? spec.errorKeys : spec.replyKeys;
+  const field = outcome === 'error' ? 'errorKeys' : 'replyKeys';
+  if (declared === null) {
+    return { outcome, problems: [`${type}: fire-and-forget, so it declares no reply`] };
+  }
+  if (declared === 'none') {
+    return {
+      outcome,
+      problems: [`${type}: the reply has a top-level \`error\`, but errorKeys is 'none'`],
+    };
+  }
+  const { required, optional } = parseDeclaredKeys(declared);
+  const problems: string[] = [];
+  for (const k of required) {
+    if (!keys.includes(k)) problems.push(`${type}: ${field} requires \`${k}\`; the reply lacks it`);
+  }
+  for (const k of keys) {
+    if (!required.includes(k) && !optional.includes(k)) {
+      problems.push(`${type}: the reply carries \`${k}\`, which ${field} does not declare`);
+    }
+  }
+  return { outcome, problems };
+}
 
 /**
  * The PUBLISHED SDK block→host message union, read straight from the installed
