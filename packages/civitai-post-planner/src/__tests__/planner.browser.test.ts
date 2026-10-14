@@ -182,6 +182,19 @@ describe('<civitai-post-planner>', () => {
     expect(el._lightbox).toBe(2);
   });
 
+  it('widens the day grid to show a 3 AM post without touching the hour range', async () => {
+    const early = post(3, at(10, 3, 0));
+    await mount({ view: 'day', anchor: '2026-10-10' }, [post(1, POST_A), early], () =>
+      page.getByRole('button', { name: /^3:00 AM, untitled/ })
+    );
+
+    expect(page.getByRole('button', { name: 'Show all hours' }).elements()).toHaveLength(1);
+    const chip = page.getByRole('button', { name: /^3:00 AM, untitled/ }).element();
+    const column = page.getByLabelText('Saturday, October 10').element();
+    const top = chip.getBoundingClientRect().top - column.getBoundingClientRect().top;
+    expect(Math.round(top)).toBe(0);
+  });
+
   it('offers Undo after a move, and Undo reschedules back to the original time', async () => {
     const { backend } = await mount({ view: 'month', anchor: '2026-10-01' });
 
