@@ -94,6 +94,9 @@ CREATE TABLE IF NOT EXISTS appdata.doc (
 -- marks made after it count as open. NULL = never dismissed. A separate ADD COLUMN so a
 -- re-apply over a table created before the column existed still adds it.
 ALTER TABLE appdata.doc ADD COLUMN IF NOT EXISTS reports_dismissed_at timestamptz;
+-- The moderators' hidden view: hidden documents only (few), so it never reads the whole app.
+CREATE INDEX IF NOT EXISTS doc_hidden_idx
+  ON appdata.doc (app_id, ns, scope_uid, coll, key) WHERE hidden_at IS NOT NULL;
 
 -- `author=me` lists.
 CREATE INDEX IF NOT EXISTS doc_author_idx

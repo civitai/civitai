@@ -206,6 +206,17 @@ export function assertShareWritable(
   }
 }
 
+/**
+ * A report cannot be withdrawn. Withdrawing and re-filing would otherwise make a fresh report
+ * after a moderator dismissed the document's reports, so one viewer could re-open it
+ * indefinitely (see DISMISSED REPORTS in the moderation section). Exported so the route refuses
+ * it before spending any budget or reading the viewer's trust; the store runs it on every
+ * `unmark` itself.
+ */
+export function refuseReportWithdrawal(name: string): void {
+  if (name === REPORT_MARK) throw invalid('a report cannot be withdrawn', { mark: name });
+}
+
 /** A key made only of dots (`.`, `..`, …) is a path step to every URL client, not a name. */
 const DOT_ONLY_KEY = /^\.+$/;
 
@@ -1284,12 +1295,7 @@ function buildDocStore(deps: DocStoreDeps) {
     assertCollection(coll);
     assertKey(key);
     assertMarkName(coll, name);
-    // A report cannot be withdrawn. Withdrawing and re-filing would otherwise make a fresh
-    // report after a moderator dismissed the document's reports, so one viewer could re-open
-    // it indefinitely (see DISMISSED REPORTS in the moderation section).
-    if (name === REPORT_MARK) {
-      throw invalid('a report cannot be withdrawn', { mark: name });
-    }
+    refuseReportWithdrawal(name);
     const viewer = requireViewer(ctx);
     return withTx(ctx, async (c) => {
       const doc = await c.query(SQL_SHARE_LOCK_DOC, [ctx.appId, ctx.ns, coll.name, key]);
@@ -1594,24 +1600,40 @@ type ModerationDeps = {
   ) => Promise<number>;
 };
 
-// The queue for one (app, ns): shared documents with at least one OPEN report (made after any
-// dismissal), plus — when `listHidden` admits them — every HIDDEN document whatever its
-// report count, so a document hidden and then dismissed stays reachable for unhide or delete.
-// The open count comes from the report marks themselves. $1 app, $2 ns, $3 the report mark
-// name, $4 limit; `statusCond` and `listHidden` are fixed strings chosen in `listReported`.
-// Cost: one pass over the app's shared documents in this namespace.
-const sqlModReported = (statusCond: string, listHidden: string) => `SELECT q.* FROM (
-    SELECT d.coll, d.key, d.author_uid, d.author_kind, d.created_at, d.updated_at, d.hidden_at,
-      d.hidden_by, d.size_bytes, d.version, d.seq,
-      (SELECT count(*) FROM appdata.doc_mark rm
-        WHERE rm.app_id = $1 AND rm.ns = $2 AND rm.coll = d.coll AND rm.key = d.key AND rm.name = $3
-          AND (d.reports_dismissed_at IS NULL OR rm.created_at > d.reports_dismissed_at)) AS reports
-    FROM appdata.doc d
-    WHERE d.app_id = $1 AND d.ns = $2 AND d.scope_uid = 0 ${statusCond}
-  ) q
-  WHERE q.reports > 0 ${listHidden}
-  ORDER BY q.reports DESC, q.updated_at DESC, q.coll DESC, q.key DESC
-  LIMIT $4::int`;
+// The queue for one (app, ns). Driven by the report MARKS, so its cost follows the reports,
+// not the app's document count: documents with at least one OPEN report (made after any
+// dismissal), counted per document. $1 app, $2 ns, $3 the report mark name; `statusCond` is a
+// fixed string chosen in `listReported`.
+const sqlModOpenReported = (statusCond: string) => `SELECT d.coll, d.key, d.author_uid,
+    d.author_kind, d.created_at, d.updated_at, d.hidden_at, d.hidden_by, d.size_bytes,
+    d.version, d.seq, count(rm.user_id) AS reports
+  FROM appdata.doc_mark rm
+  JOIN appdata.doc d ON d.app_id = $1 AND d.ns = $2 AND d.coll = rm.coll AND d.scope_uid = 0
+    AND d.key = rm.key
+  WHERE rm.app_id = $1 AND rm.ns = $2 AND rm.name = $3
+    AND (d.reports_dismissed_at IS NULL OR rm.created_at > d.reports_dismissed_at) ${statusCond}
+  GROUP BY d.app_id, d.ns, d.coll, d.scope_uid, d.key`;
+
+// The hidden and all views add every HIDDEN document with NO open report (a document hidden
+// after its reports were dismissed, or hidden without reports), so it stays reachable for
+// unhide or delete. Uses the partial `doc_hidden_idx`, so it reads hidden rows only. $1 app,
+// $2 ns, $3 the report mark name.
+const SQL_MOD_HIDDEN_UNREPORTED = `SELECT hd.coll, hd.key, hd.author_uid, hd.author_kind,
+    hd.created_at, hd.updated_at, hd.hidden_at, hd.hidden_by, hd.size_bytes, hd.version, hd.seq,
+    0::bigint AS reports
+  FROM appdata.doc hd
+  WHERE hd.app_id = $1 AND hd.ns = $2 AND hd.scope_uid = 0 AND hd.hidden_at IS NOT NULL
+    AND NOT EXISTS (SELECT 1 FROM appdata.doc_mark hm
+      WHERE hm.app_id = $1 AND hm.ns = $2 AND hm.coll = hd.coll AND hm.key = hd.key
+        AND hm.name = $3
+        AND (hd.reports_dismissed_at IS NULL OR hm.created_at > hd.reports_dismissed_at))`;
+
+/** The page: the branches above, in the queue order, `LIMIT $4`. */
+const sqlModReported = (open: string, withHiddenUnreported: boolean) => `SELECT q.* FROM (
+  ${open}${withHiddenUnreported ? `\n  UNION ALL\n  ${SQL_MOD_HIDDEN_UNREPORTED}` : ''}
+) q
+ORDER BY q.reports DESC, q.updated_at DESC, q.coll DESC, q.key DESC
+LIMIT $4::int`;
 
 // One shared document as a moderator sees it, hidden or not. $1 app, $2 ns, $3 coll, $4 key
 // $5 the report mark name.
@@ -1706,10 +1728,7 @@ function createModeration({ withTx, charge }: ModerationDeps) {
         ? 'AND d.hidden_at IS NOT NULL'
         : '';
     // The hidden and all views list every hidden document; the open view needs an open report.
-    const sql = sqlModReported(
-      statusCond,
-      opts.status === 'open' ? '' : 'OR q.hidden_at IS NOT NULL'
-    );
+    const sql = sqlModReported(sqlModOpenReported(statusCond), opts.status !== 'open');
     const rows = await withTx(
       modCtx(appId, ns),
       async (c) => (await c.query(sql, [appId, ns, REPORT_MARK, opts.limit])).rows

@@ -700,6 +700,24 @@ describe('setHidden / delete: effects through the app reads, and the audit trail
     ]);
   });
 
+  it('dismissed, then hidden, then deleted: audits record 0 open of 3 reports; the hidden view still lists it', async () => {
+    await seedQueue();
+    await new Promise((r) => setTimeout(r, 5)); // past PGlite's millisecond clock tick
+    await caller().dismissReports({ ...A1, reason: 'reviewed, within the rules' });
+    await caller().setHidden({ ...A1, hidden: true, reason: 'second look: spam' });
+    // Zero open reports, yet listed for moderators (and only there).
+    expect(
+      (await caller().listReported({ status: 'hidden' })).items.map((i) => [i.key, i.reports])
+    ).toEqual([['a1', 0]]);
+    expect((await caller().listReported({})).items.map((i) => i.key)).not.toContain('a1');
+    await caller().delete({ ...A1, reason: 'illegal content' });
+    expect(audit.map((r) => [r.action, r.before.reports, r.before.reportsTotal])).toEqual([
+      ['storage-doc-dismiss', 3, 3],
+      ['storage-doc-hide', 0, 3],
+      ['storage-doc-delete', 0, 3],
+    ]);
+  });
+
   it('a reason is required and bounded', async () => {
     await seedQueue();
     await expect(caller().delete({ ...A1, reason: '  ' })).rejects.toMatchObject({

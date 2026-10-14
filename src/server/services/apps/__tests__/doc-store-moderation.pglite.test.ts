@@ -151,6 +151,72 @@ function defineModerationSuite(rls: boolean) {
     });
   });
 
+  describe('the queue reads what it lists, not the whole app', () => {
+    /** Rows read from `appdata.doc` by the queue statement, from its own executed plan. */
+    async function docRowsRead(app: string, status: 'open' | 'hidden' | 'all') {
+      const before = h.statements.length;
+      await mod.listReported(app, NS_PROD, { status, limit: 51 });
+      const st = h.statements.slice(before).find((x) => /ORDER BY q\.reports DESC/.test(x.sql));
+      if (!st) throw new Error('queue statement not recorded');
+      const [row] = await h.raw(`EXPLAIN (ANALYZE, FORMAT JSON) ${st.sql}`, st.params);
+      const plan = (row['QUERY PLAN'] as { Plan: Record<string, unknown> }[])[0].Plan;
+      let read = 0;
+      const walk = (n: Record<string, unknown>) => {
+        // Rows a scan of `doc` touched: those it returned AND those its filter threw away (a
+        // filter pushed into the scan hides a full read behind a small "Actual Rows").
+        if (n['Relation Name'] === 'doc') {
+          const touched =
+            Number(n['Actual Rows'] ?? 0) +
+            Number(n['Rows Removed by Filter'] ?? 0) +
+            Number(n['Rows Removed by Index Recheck'] ?? 0);
+          read += touched * Number(n['Actual Loops'] ?? 1);
+        }
+        for (const c of (n.Plans as Record<string, unknown>[] | undefined) ?? []) walk(c);
+      };
+      walk(plan);
+      return read;
+    }
+
+    it('with 5,000 shared documents and 3 reported, each view reads a handful of document rows', async () => {
+      const app = freshApp('modscan');
+      // Bulk rows straight into the table: the queue's cost is the question, not the write path.
+      await h.raw(
+        `INSERT INTO appdata.doc (app_id, ns, coll, scope_uid, key, data, version, seq, author_uid, author_kind)
+         SELECT $1, 'prod', 'posts', 0, 'k' || g, '{}', 1, g, 101, 'user' FROM generate_series(1, 5000) g`,
+        [app]
+      );
+      for (const k of ['k1', 'k2', 'k3']) {
+        await h.raw(
+          `INSERT INTO appdata.doc_mark (app_id, ns, coll, key, name, user_id) VALUES ($1, 'prod', 'posts', $2, 'report', 3101)`,
+          [app, k]
+        );
+      }
+      await h.raw(
+        `UPDATE appdata.doc SET hidden_at = now(), hidden_by = 9 WHERE app_id = $1 AND key IN ('k3', 'k4')`,
+        [app]
+      );
+      await h.raw(`ANALYZE appdata.doc`);
+      await h.raw(`ANALYZE appdata.doc_mark`);
+      // Positive control: the queue lists what it should (k4: hidden, never reported).
+      expect(await queue(app, { status: 'all' })).toEqual([
+        'posts/k3:1',
+        'posts/k2:1',
+        'posts/k1:1',
+        'posts/k4:0',
+      ]);
+      const read = {
+        open: await docRowsRead(app, 'open'),
+        hidden: await docRowsRead(app, 'hidden'),
+        all: await docRowsRead(app, 'all'),
+      };
+      // A scan of the app would read 5,000 rows; the queue reads the reported and hidden ones.
+      expect(read.open).toBeLessThanOrEqual(10);
+      expect(read.hidden).toBeLessThanOrEqual(10);
+      expect(read.all).toBeLessThanOrEqual(10);
+      expect(read.open).toBeGreaterThan(0);
+    });
+  });
+
   describe('review namespaces', () => {
     it('every moderator operation refuses a rev: namespace cleanly (invalid_request), touching nothing', async () => {
       const app = freshApp('modrev');

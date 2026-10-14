@@ -1022,6 +1022,66 @@ describe('rate limits: separate buckets', () => {
   });
 });
 
+describe('a report cannot be withdrawn: refused at the route before any budget or trust lookup', () => {
+  it('an untrusted viewer gets 400 invalid_request, not 403', async () => {
+    const { A } = freshApps();
+    const author = await mint({ app: A, uid: VIEWER_IDS.v1, scopes: contract.defaultScopes });
+    const newbie = await mint({ app: A, uid: VIEWER_IDS.newbie, scopes: contract.defaultScopes });
+    expect(
+      (
+        await call({
+          token: author,
+          method: 'PUT',
+          path: '/posts/w',
+          body: { data: { status: 'open' } },
+        })
+      ).status
+    ).toBe(200);
+    // Positive control: the same viewer IS refused by the trust gate on a mark.
+    expect((await call({ token: newbie, method: 'PUT', path: '/posts/w/marks/vote' })).status).toBe(
+      403
+    );
+    const r = await call({ token: newbie, method: 'DELETE', path: '/posts/w/marks/report' });
+    expect({ status: r.status, code: r.body.code }).toEqual({
+      status: 400,
+      code: 'invalid_request',
+    });
+  });
+
+  it('an exhausted tally budget still gets 400, and a refused withdrawal spends no budget', async () => {
+    const { A } = freshApps();
+    const v1 = await mint({ app: A, uid: VIEWER_IDS.v1, scopes: contract.defaultScopes });
+    const v2 = await mint({ app: A, uid: VIEWER_IDS.v2, scopes: contract.defaultScopes });
+    await call({ token: v1, method: 'PUT', path: '/posts/w', body: { data: { status: 'open' } } });
+    // v2 withdraws first (refused), then must still have the WHOLE tally budget.
+    const first = await call({ token: v2, method: 'DELETE', path: '/posts/w/marks/report' });
+    expect(first.status).toBe(400);
+    let allowed = 0;
+    for (let i = 0; i < 200; i++) {
+      const r = await call({ token: v2, method: 'PUT', path: '/posts/w/marks/vote' });
+      if (r.status === 429) break;
+      expect(r.status).toBe(200);
+      allowed += 1;
+    }
+    // The bucket's full size, measured on a viewer that never withdrew.
+    const v3 = await mint({ app: A, uid: VIEWER_IDS.v3, scopes: contract.defaultScopes });
+    let control = 0;
+    for (let i = 0; i < 200; i++) {
+      const r = await call({ token: v3, method: 'PUT', path: '/posts/w/marks/vote' });
+      if (r.status === 429) break;
+      control += 1;
+    }
+    expect(control).toBeGreaterThan(1);
+    expect(allowed).toBe(control);
+    // Exhausted now: a withdrawal is still the contract's 400, not a 429.
+    const r = await call({ token: v2, method: 'DELETE', path: '/posts/w/marks/report' });
+    expect({ status: r.status, code: r.body.code }).toEqual({
+      status: 400,
+      code: 'invalid_request',
+    });
+  });
+});
+
 describe('route faults and CORS', () => {
   it('an unexpected store fault is a 500 internal_error that discloses nothing', async () => {
     const { A } = freshApps();
