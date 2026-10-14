@@ -1,13 +1,21 @@
 <script lang="ts">
+  import {
+    Table,
+    TableBody,
+    TableCell,
+    TableHead,
+    TableHeader,
+    TableRow,
+  } from '@civitai/ui/components/ui/table/index.js';
   import VersionPicker from '$lib/components/text-scan-lab/VersionPicker.svelte';
   import { dateTime } from '$lib/format';
   import { ruleVersionDiff, type ModelRuleVersionView } from '$lib/model-rule-versions';
-  import { defaultComparePair } from '$lib/text-scan-lab/compare';
+  import { resolvePair } from '$lib/text-scan-lab/compare';
 
   let { versions }: { versions: ModelRuleVersionView[] } = $props();
 
   let picked = $state<{ from: number; to: number } | null>(null);
-  const pair = $derived(picked ?? defaultComparePair(versions));
+  const pair = $derived(resolvePair(picked, versions));
   const options = $derived(
     versions.map((v) => ({ id: v.id, label: `#${v.id} · ${dateTime(v.createdAt)}` }))
   );
@@ -38,24 +46,24 @@
       onchange={(id) => (picked = { from, to: id })}
     />
   </div>
-  <table class="w-full text-sm">
-    <thead>
-      <tr class="text-left text-xs text-dark-2">
-        <th class="py-1 pr-3 font-semibold">Field</th>
-        <th class="py-1 pr-3 font-semibold">From</th>
-        <th class="py-1 font-semibold">To</th>
-      </tr>
-    </thead>
-    <tbody>
+  <Table class="text-sm">
+    <TableHeader>
+      <TableRow class="text-xs text-dark-2">
+        <TableHead>Field</TableHead>
+        <TableHead>From</TableHead>
+        <TableHead>To</TableHead>
+      </TableRow>
+    </TableHeader>
+    <TableBody>
       {#each rows as row (row.field)}
-        <tr class={row.changed ? 'text-amber-200' : 'text-dark-2'}>
-          <th class="py-1 pr-3 text-left align-top text-xs font-semibold">{row.field}</th>
-          <td class="whitespace-pre-wrap break-words py-1 pr-3 align-top">{row.before || '—'}</td>
-          <td class="whitespace-pre-wrap break-words py-1 align-top">{row.after || '—'}</td>
-        </tr>
+        <TableRow class={row.changed ? 'text-amber-200' : 'text-dark-2'}>
+          <TableCell class="align-top text-xs font-semibold">{row.field}</TableCell>
+          <TableCell class="whitespace-pre-wrap break-words align-top">{row.before || '—'}</TableCell>
+          <TableCell class="whitespace-pre-wrap break-words align-top">{row.after || '—'}</TableCell>
+        </TableRow>
       {/each}
-    </tbody>
-  </table>
+    </TableBody>
+  </Table>
 {:else}
   <p class="text-xs text-dark-2">One version so far; nothing to compare yet.</p>
 {/if}

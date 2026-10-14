@@ -17,7 +17,7 @@
   import { ENTITY_TYPE_NAMES, LABEL_NAMES } from '$lib/text-scan-lab/labels';
   import type { LabEntityType, LabLabel } from '$lib/text-scan-lab/types';
   import { LABEL_ORDER, scoredLabels } from '$lib/text-scan-tests/expected';
-  import ConfirmButton from './ConfirmButton.svelte';
+  import ConfirmButton from '$lib/components/ConfirmButton.svelte';
 
   let {
     setId,

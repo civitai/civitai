@@ -16,6 +16,7 @@
   {#each items as item (item.value)}
     <a
       href={item.href}
+      aria-current={item.value === active ? 'page' : undefined}
       class={cn(
         'rounded-md px-3 py-1 text-sm',
         item.value === active ? 'bg-dark-5 text-white' : 'text-dark-2 hover:bg-dark-6'

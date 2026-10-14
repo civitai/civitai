@@ -5,3 +5,17 @@ export function defaultComparePair(
   if (versions.length < 2) return null;
   return { from: versions[1].id, to: versions[0].id };
 }
+
+/** The pair the user picked, or the default pair when either picked id is no longer among `versions`. */
+export function resolvePair(
+  picked: { from: number; to: number } | null,
+  versions: readonly { id: number }[]
+): { from: number; to: number } | null {
+  if (
+    picked &&
+    versions.some((v) => v.id === picked.from) &&
+    versions.some((v) => v.id === picked.to)
+  )
+    return picked;
+  return defaultComparePair(versions);
+}

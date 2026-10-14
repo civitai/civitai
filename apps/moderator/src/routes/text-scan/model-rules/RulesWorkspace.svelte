@@ -9,7 +9,7 @@
   import { describeBlankPrompts } from '$lib/text-scan-lab/labels';
   import { createRuleDraftsSync } from '$lib/text-scan-lab/rule-drafts.svelte';
   import { MODEL_RULES_POLICY_KEY } from '$lib/text-scan-lab/types';
-  import type { LoadedPolicy } from './+page.server';
+  import type { LoadedPrompts } from '$lib/server/text-scan-lab/version';
   import type { PageData } from './$types';
   import PolicyEditor from './PolicyEditor.svelte';
   import RulesList from './RulesList.svelte';
@@ -25,7 +25,7 @@
     url,
   }: {
     rules: ModelRuleView[];
-    policy: LoadedPolicy;
+    policy: LoadedPrompts;
     authors: Record<number, string>;
     query: PageData['query'];
     canEdit: boolean;
@@ -63,7 +63,6 @@
         prompts={tryPrompts}
         rules={tryRules}
         editedKeys={[MODEL_RULES_POLICY_KEY]}
-        only="ModelRules"
         {draftsError}
         workspace="modelRules"
         {canCapture}

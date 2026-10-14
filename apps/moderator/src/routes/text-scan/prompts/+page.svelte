@@ -66,7 +66,6 @@
         prompts={changes.json}
         rules="[]"
         editedKeys={changes.keys}
-        only={null}
         draftsError={changes.blankError}
         onedit={(key) => goto(promptsHref(key), { noScroll: true, keepFocus: true })}
         workspace="prompts"

@@ -13,6 +13,7 @@ const {
   StalePromptError,
   composeEntities,
   getPrompts,
+  isRefused,
   putPrompt,
   quoteTexts,
   scanTexts,
@@ -490,6 +491,22 @@ describe('putPrompt', () => {
     expect(await refusedOf()).toBe(true);
     call.mockResolvedValueOnce({ ok: false, status: 502, error: 'down' });
     expect(await refusedOf()).toBe(false);
+  });
+});
+
+describe('isRefused', () => {
+  it.each([
+    [{ ok: false, error: 'x', requestNeverSent: true }, true],
+    [{ ok: false, error: 'x', status: 400 }, true],
+    [{ ok: false, error: 'x', status: 401 }, true],
+    [{ ok: false, error: 'x', status: 403 }, true],
+    [{ ok: false, error: 'x', status: 404 }, false],
+    [{ ok: false, error: 'x', status: 409 }, false],
+    [{ ok: false, error: 'x', status: 502 }, false],
+    [{ ok: false, error: 'x' }, false],
+    [{ ok: true, body: {} }, false],
+  ] as const)('%o -> %s', (result, expected) => {
+    expect(isRefused(result as never)).toBe(expected);
   });
 });
 

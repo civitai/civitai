@@ -1,4 +1,5 @@
 import {
+  LabHarnessError,
   getPrompts,
   type LabPrompt,
   type LabPromptVersion,
@@ -6,6 +7,20 @@ import {
 } from './harness-client';
 import type { PromptKey } from '$lib/text-scan-lab/types';
 import { usersByIds } from '$lib/server/users.service';
+
+export type LoadedPrompts = { ok: true; value: LabPrompts } | { ok: false; error: string };
+
+/** A page's prompts, or the reason they could not load: a failed harness shows as a message, not a 500. */
+export const loadPrompts = (key: string, noun: string): Promise<LoadedPrompts> =>
+  getPrompts(key).then(
+    (value): LoadedPrompts => ({ ok: true, value }),
+    (e: unknown): LoadedPrompts => ({
+      ok: false,
+      error: `Could not load the ${noun}: ${
+        e instanceof LabHarnessError ? e.message : 'unexpected error'
+      }`,
+    })
+  );
 
 /** One version of a prompt from its loaded history, and the version live now. Harness failures propagate. */
 export async function getVersion(

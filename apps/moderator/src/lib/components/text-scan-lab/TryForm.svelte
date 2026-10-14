@@ -15,12 +15,13 @@
     type LabEntityType,
     type PromptKey,
   } from '$lib/text-scan-lab/types';
+  import { WORKSPACE_ONLY, type Workspace } from '$lib/text-scan-tests/types';
 
   let {
     prompts,
     rules,
     editedKeys,
-    only,
+    workspace,
     draftsError,
     onstart,
     onresult,
@@ -28,7 +29,7 @@
     prompts: string;
     rules: string;
     editedKeys: readonly PromptKey[];
-    only: 'ModelRules' | null;
+    workspace: Workspace;
     draftsError: string | null;
     onstart: () => void;
     onresult: (result: Record<string, unknown>) => void;
@@ -44,6 +45,7 @@
     parsed.kind !== 'empty' && parsed.kind !== 'too-many-ids' && parsed.kind !== 'refused'
   );
   const source = $derived(sourceTypeOf(parsed, { lookupAs, profileAs }));
+  const only = $derived(WORKSPACE_ONLY[workspace]);
   const candidates = $derived(only ? [only] : judgeCandidates(source, editedKeys));
   const judged = $derived(candidates.includes(judgeAs) ? judgeAs : candidates[0]);
 

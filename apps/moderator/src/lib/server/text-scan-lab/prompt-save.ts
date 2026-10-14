@@ -1,5 +1,6 @@
 import { fail } from '@sveltejs/kit';
 import { z } from 'zod';
+import { int4Id } from '$lib/server/query';
 import { promptKeyName } from '$lib/text-scan-lab/labels';
 import { PROMPT_KEYS, type PromptKey } from '$lib/text-scan-lab/types';
 import { LabHarnessError, StalePromptError, putPrompt } from './harness-client';
@@ -28,7 +29,7 @@ export const saveSchema = z.object({
 
 export const restoreSchema = z.object({
   key: z.enum(PROMPT_KEYS),
-  id: z.coerce.number().int().positive(),
+  id: int4Id,
   baseId: baseIdField,
   note: noteField,
 });

@@ -7,6 +7,7 @@ import {
   parseAliases,
   parseMatchCursor,
   parseRuleMatches,
+  ruleChoicesOf,
   ruleMatchesText,
 } from '$lib/model-rules';
 
@@ -149,5 +150,22 @@ describe('isHeldAtPublish', () => {
     expect(isHeldAtPublish({ meta: { heldAtPublish: true } })).toBe(true);
     expect(isHeldAtPublish({ meta: {} })).toBe(false);
     expect(isHeldAtPublish(null)).toBe(false);
+  });
+});
+
+describe('ruleChoicesOf', () => {
+  it('lists each saved rule once, naming an unnamed one by its id and skipping ad hoc rules', () => {
+    expect(
+      ruleChoicesOf([
+        { ruleId: 4, subject: 'Alice' },
+        { ruleId: 4, subject: 'Alice again' },
+        { ruleId: 7, subject: null },
+        { ruleId: 0, subject: 'Ad hoc' },
+        { ruleId: -1, subject: 'Draft' },
+      ])
+    ).toEqual([
+      { id: 4, subject: 'Alice' },
+      { id: 7, subject: 'Rule 7' },
+    ]);
   });
 });

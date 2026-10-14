@@ -1,9 +1,8 @@
 <script lang="ts">
-  import { plural } from '$lib/format';
   import { browser } from '$app/environment';
   import * as Select from '@civitai/ui/components/ui/select/index.js';
   import { fetchJson } from '$lib/fetch-json';
-  import { LINK_CLASS, dateTime, type Jsonified } from '$lib/format';
+  import { LINK_CLASS, dateTime, plural, type Jsonified } from '$lib/format';
   import { keepLast } from '$lib/keep-last.svelte';
   import type { SetOverview } from '$lib/server/text-scan-tests/reports';
   import { LABEL_NAMES } from '$lib/text-scan-lab/labels';

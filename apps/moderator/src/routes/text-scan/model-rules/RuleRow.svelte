@@ -4,15 +4,16 @@
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import { Label } from '@civitai/ui/components/ui/label/index.js';
-  import { toast } from '@civitai/ui/components/ui/sonner/index.js';
   import { TableCell, TableRow } from '@civitai/ui/components/ui/table/index.js';
   import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
   import { cn } from '@civitai/ui/utils.js';
+  import ConfirmButton from '$lib/components/ConfirmButton.svelte';
   import { FormState } from '$lib/form-state.svelte';
   import { dateTime } from '$lib/format';
   import { parseAliases } from '$lib/model-rules';
   import type { ModelRuleView } from '$lib/server/model-rules.service';
   import { EMPTY, type RuleDraftsState, type RuleFields } from '$lib/text-scan-lab/rule-drafts';
+  import { notifySaved } from './notify-saved';
 
   let {
     rule,
@@ -49,16 +50,12 @@
     else drafts.editNew(draftId, next);
   }
 
-  const notify = (data: Record<string, unknown> | undefined) => {
-    toast.success(String(data?.message ?? 'Saved'));
-    if (data?.cacheWarning) toast.warning(String(data.cacheWarning));
-  };
   const save = new FormState({
     reload: true,
     reset: false,
     onSuccess: (data) => {
       drafts.drop([draftId]);
-      notify(data);
+      notifySaved(data);
     },
   });
   // Rebase: the toggle bumps updatedAt, which would flag the open draft as stale.
@@ -73,13 +70,14 @@
       const after = toggledFrom && reloaded(toggledFrom.id);
       if (toggledFrom && after) drafts.rebaseOwnWrite(toggledFrom, after);
       toggledFrom = null;
-      notify(data);
+      notifySaved(data);
     },
   });
 
+  const discardWhat = $derived(rule ? `your edits to “${rule.subject}”` : 'this new rule');
+
   function discard() {
-    const what = rule ? `your edits to “${rule.subject}”` : 'this new rule';
-    if (confirm(`Discard ${what}?`)) drafts.drop([draftId]);
+    drafts.drop([draftId]);
   }
 </script>
 
@@ -152,7 +150,13 @@
                 <Button size="xs" variant="outline" onclick={() => drafts.keepMine(rule)}>
                   Keep my edit
                 </Button>
-                <Button size="xs" variant="ghost" onclick={discard}>Discard</Button>
+                <ConfirmButton
+                  size="xs"
+                  label="Discard"
+                  title="Discard this draft?"
+                  description="Drops {discardWhat}; the saved rule is untouched."
+                  onconfirm={discard}
+                />
               </div>
             </div>
           {/if}
@@ -224,9 +228,14 @@
                     ? 'Save as reviewed'
                     : 'Save'}
               </Button>
-              <Button type="button" size="sm" variant="ghost" disabled={!draft} onclick={discard}>
-                Discard
-              </Button>
+              <ConfirmButton
+                size="sm"
+                label="Discard"
+                title="Discard this draft?"
+                description="Drops {discardWhat}; the saved rule is untouched."
+                disabled={!draft}
+                onconfirm={discard}
+              />
               {#if rule}
                 <span class="text-xs text-dark-2">
                   Last saved {dateTime(rule.updatedAt)} by {rule.editedBy ?? 'unknown'}
@@ -238,9 +247,14 @@
             {/if}
           {:else}
             <div class="flex flex-wrap items-center gap-2">
-              <Button type="button" size="sm" variant="ghost" disabled={!draft} onclick={discard}>
-                Discard
-              </Button>
+              <ConfirmButton
+                size="sm"
+                label="Discard"
+                title="Discard this draft?"
+                description="Drops {discardWhat}; the saved rule is untouched."
+                disabled={!draft}
+                onconfirm={discard}
+              />
               <p class="text-xs text-dark-2">
                 You can try this edit; saving needs the Model rules edit permission.
               </p>

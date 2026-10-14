@@ -2,7 +2,7 @@
   import { enhance } from '$app/forms';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import CaseTable from '$lib/components/text-scan-tests/CaseTable.svelte';
-  import ConfirmButton from '$lib/components/text-scan-tests/ConfirmButton.svelte';
+  import ConfirmButton from '$lib/components/ConfirmButton.svelte';
   import HistoryChart from '$lib/components/text-scan-tests/HistoryChart.svelte';
   import { FormState } from '$lib/form-state.svelte';
   import { LINK_CLASS, dateTime } from '$lib/format';

@@ -6,6 +6,7 @@
   import { Label } from '@civitai/ui/components/ui/label/index.js';
   import { toast } from '@civitai/ui/components/ui/sonner/index.js';
   import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
+  import ConfirmButton from '$lib/components/ConfirmButton.svelte';
   import { FormState } from '$lib/form-state.svelte';
   import { dateTime } from '$lib/format';
   import type { LabPrompts } from '$lib/server/text-scan-lab/harness-client';
@@ -62,10 +63,8 @@
   });
 
   function discard() {
-    if (confirm(`Discard your draft of ${promptKeyName(promptKey)}?`)) {
-      changes.drop([promptKey]);
-      save.error = null;
-    }
+    changes.drop([promptKey]);
+    save.error = null;
   }
 </script>
 
@@ -103,7 +102,13 @@
         >
           Keep my draft
         </Button>
-        <Button size="xs" variant="ghost" onclick={discard}>Discard</Button>
+        <ConfirmButton
+          size="xs"
+          label="Discard"
+          title="Discard your draft?"
+          description="Your draft of {promptKeyName(promptKey)} is dropped; the saved version is untouched."
+          onconfirm={discard}
+        />
       </div>
     </div>
   {/if}
@@ -140,9 +145,14 @@
       <Button type="submit" size="sm" disabled={!drafted || stale || save.submitting}>
         {save.submitting ? 'Saving…' : 'Save'}
       </Button>
-      <Button type="button" size="sm" variant="ghost" disabled={!drafted} onclick={discard}>
-        Discard
-      </Button>
+      <ConfirmButton
+        size="sm"
+        label="Discard"
+        title="Discard your draft?"
+        description="Your draft of {promptKeyName(promptKey)} is dropped; the saved version is untouched."
+        disabled={!drafted}
+        onconfirm={discard}
+      />
     </form>
     {#if save.error}
       <p class="mt-2 whitespace-pre-wrap text-sm text-red-300">{save.error}</p>

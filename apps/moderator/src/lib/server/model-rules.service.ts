@@ -30,6 +30,17 @@ const bustCache = () =>
     message: 'Model rule was written but its cache key was not cleared; readers stay stale',
   });
 
+/** The tail of every rule write: clear the scan cache, then log the activity. */
+async function afterRuleWrite(
+  userId: number,
+  ruleId: number,
+  activity: string
+): Promise<WriteResult> {
+  const cacheStale = !(await bustCache());
+  await recordModActivity({ userId, entityType: ACTIVITY_ENTITY, entityId: ruleId, activity });
+  return { cacheStale };
+}
+
 export type ModelRuleView = {
   id: number;
   legacy: boolean;
@@ -227,13 +238,7 @@ export async function createModelRule(
     return created.id;
   });
 
-  const cacheStale = !(await bustCache());
-  await recordModActivity({
-    userId,
-    entityType: ACTIVITY_ENTITY,
-    entityId: id,
-    activity: 'create',
-  });
+  const { cacheStale } = await afterRuleWrite(userId, id, 'create');
   return { id, cacheStale };
 }
 
@@ -277,14 +282,7 @@ export async function updateModelRule(
     );
   });
 
-  const cacheStale = !(await bustCache());
-  await recordModActivity({
-    userId,
-    entityType: ACTIVITY_ENTITY,
-    entityId: id,
-    activity: 'edit',
-  });
-  return { cacheStale };
+  return afterRuleWrite(userId, id, 'edit');
 }
 
 export async function setModelRuleEnabled(
@@ -316,14 +314,7 @@ export async function setModelRuleEnabled(
     );
   });
 
-  const cacheStale = !(await bustCache());
-  await recordModActivity({
-    userId,
-    entityType: ACTIVITY_ENTITY,
-    entityId: id,
-    activity: enabled ? 'enable' : 'disable',
-  });
-  return { cacheStale };
+  return afterRuleWrite(userId, id, enabled ? 'enable' : 'disable');
 }
 
 export async function listModelRuleVersions(
@@ -403,14 +394,7 @@ export async function restoreModelRuleVersion(
     );
   });
 
-  const cacheStale = !(await bustCache());
-  await recordModActivity({
-    userId,
-    entityType: ACTIVITY_ENTITY,
-    entityId: ruleId,
-    activity: 'restore',
-  });
-  return { cacheStale };
+  return afterRuleWrite(userId, ruleId, 'restore');
 }
 
 export const MATCH_MODES = ['all', 'shadow', 'active'] as const;

@@ -2,7 +2,7 @@
   import * as Sheet from '@civitai/ui/components/ui/sheet/index.js';
   import { dateTime } from '$lib/format';
   import type { LabPromptVersion } from '$lib/server/text-scan-lab/harness-client';
-  import { defaultComparePair } from '$lib/text-scan-lab/compare';
+  import { resolvePair } from '$lib/text-scan-lab/compare';
   import { promptKeyName } from '$lib/text-scan-lab/labels';
   import type { PromptKey } from '$lib/text-scan-lab/types';
   import DiffView from './DiffView.svelte';
@@ -29,11 +29,7 @@
 
   const sorted = $derived([...versions].sort((a, b) => b.id - a.id));
   let picked = $state<{ from: number; to: number } | null>(null);
-  const pair = $derived(
-    picked && sorted.some((v) => v.id === picked!.from) && sorted.some((v) => v.id === picked!.to)
-      ? picked
-      : defaultComparePair(sorted)
-  );
+  const pair = $derived(resolvePair(picked, sorted));
   const byId = (id: number) => sorted.find((v) => v.id === id);
   const label = (v: LabPromptVersion) =>
     `#${v.id} · ${dateTime(v.createdAt)}${v.id === currentId ? ' (current)' : ''}`;

@@ -13,7 +13,6 @@
     prompts,
     rules,
     editedKeys,
-    only,
     draftsError,
     onedit = null,
     workspace,
@@ -22,7 +21,6 @@
     prompts: string;
     rules: string;
     editedKeys: readonly PromptKey[];
-    only: 'ModelRules' | null;
     draftsError: string | null;
     onedit?: ((key: PromptKey) => void) | null;
     workspace: Workspace;
@@ -58,7 +56,7 @@
     {prompts}
     {rules}
     {editedKeys}
-    {only}
+    {workspace}
     {draftsError}
     onstart={() => {
       result = null;

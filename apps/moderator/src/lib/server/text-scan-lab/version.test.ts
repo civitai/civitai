@@ -10,7 +10,8 @@ vi.mock('./harness-client', async (importOriginal) => ({
   ...harness,
 }));
 
-const { getVersion } = await import('./version');
+const { LabHarnessError } = await import('./harness-client');
+const { getVersion, loadPrompts } = await import('./version');
 
 const v = (id: number, key = 'base') => ({
   id,
@@ -57,5 +58,29 @@ describe('getVersion', () => {
   it('lets a harness failure through for the caller to word', async () => {
     harness.getPrompts.mockRejectedValue(new Error('down'));
     await expect(getVersion('base', 2)).rejects.toThrow('down');
+  });
+});
+
+describe('loadPrompts', () => {
+  it('wraps the loaded prompts', async () => {
+    const res = await loadPrompts('base', 'prompts');
+    expect(res).toMatchObject({ ok: true, value: { active: { base: { id: 3 } } } });
+    expect(harness.getPrompts).toHaveBeenCalledExactlyOnceWith('base');
+  });
+
+  it('turns a harness failure into a message naming what failed to load', async () => {
+    harness.getPrompts.mockRejectedValue(new LabHarnessError('harness down'));
+    expect(await loadPrompts('base', 'policy prompt')).toEqual({
+      ok: false,
+      error: 'Could not load the policy prompt: harness down',
+    });
+  });
+
+  it('hides an unexpected failure behind a generic message', async () => {
+    harness.getPrompts.mockRejectedValue(new Error('secret detail'));
+    expect(await loadPrompts('base', 'prompts')).toEqual({
+      ok: false,
+      error: 'Could not load the prompts: unexpected error',
+    });
   });
 });

@@ -3,7 +3,6 @@
   import { invalidateAll } from '$app/navigation';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
-  import { toast } from '@civitai/ui/components/ui/sonner/index.js';
   import {
     Table,
     TableBody,
@@ -20,6 +19,7 @@
   import type { RuleDraftsState } from '$lib/text-scan-lab/rule-drafts';
   import { urlWith } from '$lib/url';
   import type { PageData } from './$types';
+  import { notifySaved } from './notify-saved';
   import RuleHistoryDrawer from './RuleHistoryDrawer.svelte';
   import RuleRow from './RuleRow.svelte';
 
@@ -70,8 +70,7 @@
     reset: false,
     onSuccess: (data) => {
       dropSaved(data);
-      toast.success(String(data?.message ?? 'Saved'));
-      if (data?.cacheWarning) toast.warning(String(data.cacheWarning));
+      notifySaved(data);
     },
     onSettled: (result) => {
       if (result.type !== 'failure') return;
@@ -122,7 +121,9 @@
   {/if}
 
   {#if !shown.length && !newIds.length}
-    <p class="text-sm text-dark-2">No rules match.</p>
+    <p class="text-sm text-dark-2">
+      {rules.length ? 'No rules match these filters.' : 'No model rules yet.'}
+    </p>
   {:else}
     <Table>
       <TableHeader>

@@ -20,12 +20,7 @@ import {
   setModelRuleEnabled,
   updateModelRule,
 } from '$lib/server/model-rules.service';
-import { jsonField, parseForm, parseQuery } from '$lib/server/query';
-import {
-  LabHarnessError,
-  getPrompts,
-  type LabPrompts,
-} from '$lib/server/text-scan-lab/harness-client';
+import { int4Id, jsonField, parseForm, parseQuery } from '$lib/server/query';
 import {
   restorePrompt,
   restoreSchema,
@@ -33,25 +28,22 @@ import {
   saveSchema,
 } from '$lib/server/text-scan-lab/prompt-save';
 import { runTry } from '$lib/server/text-scan-lab/try';
-import { promptAuthors } from '$lib/server/text-scan-lab/version';
+import { loadPrompts, promptAuthors } from '$lib/server/text-scan-lab/version';
 import { cancelAction, quoteAction, startAction } from '$lib/server/text-scan-tests/form-actions';
 import { MAX_INT4 } from '$lib/server/users.service';
 import { MODEL_RULES_POLICY_KEY } from '$lib/text-scan-lab/types';
+import { WORKSPACE_ONLY } from '$lib/text-scan-tests/types';
 
 const PAGE_SIZE = 50;
-
-const positiveInt = z.coerce.number().int().positive().max(MAX_INT4);
 
 const querySchema = z.object({
   tab: z.enum(['rules', 'matches']).catch('rules'),
   q: z.string().trim().max(200).catch(''),
   status: z.enum(['all', 'enabled', 'disabled']).catch('all'),
   mode: z.enum(MATCH_MODES).catch('all'),
-  rule: positiveInt.optional().catch(undefined),
+  rule: int4Id.optional().catch(undefined),
   cursor: z.string().max(64).optional().catch(undefined),
 });
-
-export type LoadedPolicy = { ok: true; value: LabPrompts } | { ok: false; error: string };
 
 export const load: PageServerLoad = async ({ url }) => {
   const query = parseQuery(url, querySchema);
@@ -69,26 +61,18 @@ export const load: PageServerLoad = async ({ url }) => {
 
   const [rules, policy] = await Promise.all([
     listModelRules(),
-    getPrompts(MODEL_RULES_POLICY_KEY).then(
-      (value): LoadedPolicy => ({ ok: true, value }),
-      (e: unknown): LoadedPolicy => ({
-        ok: false,
-        error: `Could not load the policy prompt: ${
-          e instanceof LabHarnessError ? e.message : 'unexpected error'
-        }`,
-      })
-    ),
+    loadPrompts(MODEL_RULES_POLICY_KEY, 'policy prompt'),
   ]);
   const authors = await promptAuthors(policy.ok ? policy.value : null);
   return { ...base, rules, policy, authors, matches: null };
 };
 
 const ruleSaveSchema = modelRuleFormSchema.extend({
-  id: positiveInt.optional().catch(undefined),
+  id: int4Id.optional().catch(undefined),
   baseUpdatedAt: z.string().max(40).optional(),
 });
-const toggleSchema = z.object({ id: positiveInt, enabled: z.enum(['true', 'false']) });
-const restoreRuleSchema = z.object({ ruleId: positiveInt, versionId: positiveInt });
+const toggleSchema = z.object({ id: int4Id, enabled: z.enum(['true', 'false']) });
+const restoreRuleSchema = z.object({ ruleId: int4Id, versionId: int4Id });
 const saveAllSchema = z.object({
   rules: jsonField(
     z
@@ -139,7 +123,7 @@ async function saveRule(
 }
 
 export const actions: Actions = {
-  try: async ({ request }) => runTry(await request.formData(), { only: 'ModelRules' }),
+  try: async ({ request }) => runTry(await request.formData(), { only: WORKSPACE_ONLY.modelRules }),
 
   save: requiresGrant('textScan.modelRules.edit', async ({ request, locals }) => {
     const form = await request.formData();

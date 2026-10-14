@@ -9,6 +9,12 @@ export const WORKSPACE_PATHS: Record<Workspace, string> = {
   modelRules: '/text-scan/model-rules',
 };
 
+/** The one judge a workspace's Try runs, or null when it picks from the text's type and its edited prompts. */
+export const WORKSPACE_ONLY: Record<Workspace, 'ModelRules' | null> = {
+  prompts: null,
+  modelRules: 'ModelRules',
+};
+
 export const WORKSPACE_NAMES: Record<Workspace, string> = {
   prompts: 'Prompts',
   modelRules: 'Model rules',

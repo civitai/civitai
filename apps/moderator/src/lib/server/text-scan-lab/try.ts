@@ -231,7 +231,7 @@ async function scanSubjects(
 
 export async function runTry(
   form: FormData,
-  opts: { only?: 'ModelRules' } = {}
+  opts: { only?: 'ModelRules' | null } = {}
 ): Promise<TryResult | ActionFailure<{ error: string }>> {
   const input = parseForm(trySchema, form);
   if (typeof input === 'string') return fail(400, { error: input });

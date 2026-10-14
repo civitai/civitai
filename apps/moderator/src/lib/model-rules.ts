@@ -9,6 +9,7 @@ import {
   type SemanticModelRule,
 } from '@civitai/moderation/model-rules';
 import { z } from 'zod';
+import type { LabRule } from '$lib/text-scan-lab/types';
 
 export { MODEL_RULE_LIMITS, isSemanticDefinition, semanticModelRuleSchema, type SemanticModelRule };
 
@@ -86,6 +87,16 @@ export function mergeRuleMatches(
         literal: true,
       });
   return [...byRule.values()];
+}
+
+/** The saved rules among `matches`, once each, as the choices a captured case can expect. Ad hoc rules (id <= 0) are left out. */
+export function ruleChoicesOf(
+  matches: readonly Pick<RuleMatch, 'ruleId' | 'subject'>[]
+): LabRule[] {
+  const seen = new Map<number, string>();
+  for (const m of matches)
+    if (m.ruleId > 0 && !seen.has(m.ruleId)) seen.set(m.ruleId, m.subject ?? `Rule ${m.ruleId}`);
+  return [...seen].map(([id, subject]) => ({ id, subject }));
 }
 
 export function parseRuleMatches(result: unknown): RuleMatch[] {

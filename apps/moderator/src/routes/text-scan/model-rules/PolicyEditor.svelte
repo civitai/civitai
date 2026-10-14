@@ -5,7 +5,7 @@
   import { denied } from '$lib/permissions';
   import type { ChangesState } from '$lib/text-scan-lab/changes';
   import { MODEL_RULES_POLICY_KEY } from '$lib/text-scan-lab/types';
-  import type { LoadedPolicy } from './+page.server';
+  import type { LoadedPrompts } from '$lib/server/text-scan-lab/version';
 
   let {
     changes,
@@ -14,7 +14,7 @@
     canEdit,
   }: {
     changes: ChangesState;
-    policy: LoadedPolicy;
+    policy: LoadedPrompts;
     authors: Record<number, string>;
     canEdit: boolean;
   } = $props();

@@ -20,7 +20,7 @@ const SCAN_WAIT_SECONDS = 60;
 const HARNESS_TIMEOUT_MS = 150_000;
 
 export class LabHarnessError extends LabError {
-  /** True when the request is known not to have taken effect: never sent, or refused with a 4xx.
+  /** True when the request is known not to have taken effect (see `isRefused`).
    *  `authRefused`: refused for the session itself (none to forward, 401, 403). */
   constructor(message: string, readonly refused = false, readonly authRefused = false) {
     super(message, 502);
@@ -46,6 +46,14 @@ const postHarness = (
 
 const isAuthRefusal = (result: JsonResult) =>
   !result.ok && (result.noSession === true || result.status === 401 || result.status === 403);
+
+/** The request is known not to have taken effect: never sent, or rejected as invalid or unauthorised. */
+export const isRefused = (result: JsonResult) =>
+  !result.ok &&
+  (result.requestNeverSent === true ||
+    result.status === 400 ||
+    result.status === 401 ||
+    result.status === 403);
 
 async function callHarness<T>(
   action: string,
@@ -124,10 +132,7 @@ export async function putPrompt(
   );
   if (result.ok) return result.body as { id: number; key: string };
   if (result.status === 409) throw new StalePromptError(result.reason ?? result.error);
-  const refused =
-    result.requestNeverSent === true ||
-    (result.status !== undefined && result.status >= 400 && result.status < 500);
-  throw new LabHarnessError(result.error, refused);
+  throw new LabHarnessError(result.error, isRefused(result));
 }
 
 type HarnessScanResult =
@@ -221,13 +226,8 @@ export async function scanTexts(
       continue;
     }
     const error = nameTexts(result.error, batch);
-    const refused =
-      result.requestNeverSent ||
-      result.status === 400 ||
-      result.status === 401 ||
-      result.status === 403;
     const auth = isAuthRefusal(result);
-    if (refused && sent === 1) throw new LabHarnessError(error, false, auth);
+    if (isRefused(result) && sent === 1) throw new LabHarnessError(error, false, auth);
     authRefused ||= auth;
     for (const { key } of batch) byKey.set(key, { key, ok: false, error });
   }

@@ -2,9 +2,10 @@
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import AddToSetDialog from '$lib/components/text-scan-tests/AddToSetDialog.svelte';
+  import { ruleChoicesOf } from '$lib/model-rules';
   import { labRuleMatches } from '$lib/text-scan-lab/labels';
   import { itemChanged, type TryItem, type TrySide } from '$lib/text-scan-lab/try';
-  import type { LabEntityType, LabLabel, LabRule, PromptKey } from '$lib/text-scan-lab/types';
+  import type { LabEntityType, LabLabel, PromptKey } from '$lib/text-scan-lab/types';
   import { expectedFromOutput } from '$lib/text-scan-tests/expected';
   import type { Workspace } from '$lib/text-scan-tests/types';
   import ScanDetails from './ScanDetails.svelte';
@@ -46,16 +47,12 @@
       item.current.ok ? currentMatches.map((m) => m.ruleId) : null
     )
   );
-  const ruleChoices = $derived.by((): LabRule[] => {
-    const seen = new Map<number, string>();
-    const sides = [
+  const ruleChoices = $derived(
+    ruleChoicesOf([
       ...currentMatches,
       ...(item.edited ? labRuleMatches(item.edited, edited?.rules ?? null) : []),
-    ];
-    for (const m of sides)
-      if (m.ruleId > 0 && !seen.has(m.ruleId)) seen.set(m.ruleId, m.subject ?? `Rule ${m.ruleId}`);
-    return [...seen].map(([id, subject]) => ({ id, subject }));
-  });
+    ])
+  );
 </script>
 
 <section class="rounded-xl border border-dark-4 bg-dark-6 p-5">
