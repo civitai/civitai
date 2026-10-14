@@ -60,13 +60,16 @@ BEGIN
     RETURN;
   END IF;
 
-  -- Published posts at or under the ceiling that are not already a chapter somewhere.
+  -- Public, live posts at or under the ceiling that are not already a chapter somewhere. Every
+  -- post the seed picks must pass the same visibility filters.
   SELECT array_agg(id ORDER BY "publishedAt", id) INTO owner_posts FROM "Post" p
-  WHERE p."userId" = owner_id AND p."publishedAt" IS NOT NULL
+  WHERE p."userId" = owner_id AND p."publishedAt" <= now()
+    AND NOT p."tosViolation" AND NOT p.unlisted AND p.availability = 'Public'
     AND p."nsfwLevel" > 0 AND p."nsfwLevel" < ceiling * 2
     AND NOT EXISTS (SELECT 1 FROM "StorylineChapter" c WHERE c."postId" = p.id);
   SELECT array_agg(id ORDER BY "publishedAt", id) INTO collaborator_posts FROM "Post" p
-  WHERE p."userId" = collaborator_id AND p."publishedAt" IS NOT NULL
+  WHERE p."userId" = collaborator_id AND p."publishedAt" <= now()
+    AND NOT p."tosViolation" AND NOT p.unlisted AND p.availability = 'Public'
     AND p."nsfwLevel" > 0 AND p."nsfwLevel" < ceiling * 2
     AND NOT EXISTS (SELECT 1 FROM "StorylineChapter" c WHERE c."postId" = p.id);
   IF coalesce(array_length(owner_posts, 1), 0) < 3 OR coalesce(array_length(collaborator_posts, 1), 0) < 3 THEN
@@ -75,7 +78,8 @@ BEGIN
   END IF;
   IF community_id IS NOT NULL THEN
     SELECT array_agg(id ORDER BY "publishedAt", id) INTO community_posts FROM "Post" p
-    WHERE p."userId" = community_id AND p."publishedAt" IS NOT NULL
+    WHERE p."userId" = community_id AND p."publishedAt" <= now()
+      AND NOT p."tosViolation" AND NOT p.unlisted AND p.availability = 'Public'
       AND p."nsfwLevel" > 0 AND p."nsfwLevel" < ceiling * 2
       AND NOT EXISTS (SELECT 1 FROM "StorylineChapter" c WHERE c."postId" = p.id);
     IF community_posts IS NULL THEN
@@ -84,7 +88,8 @@ BEGIN
   END IF;
 
   SELECT id INTO above_ceiling_post FROM "Post" p
-  WHERE p."userId" IN (owner_id, collaborator_id) AND p."publishedAt" IS NOT NULL
+  WHERE p."userId" IN (owner_id, collaborator_id) AND p."publishedAt" <= now()
+    AND NOT p."tosViolation" AND NOT p.unlisted AND p.availability = 'Public'
     AND p."nsfwLevel" >= ceiling * 2
     -- 32 is the Blocked flag: never attach blocked content, even to demonstrate a refusal.
     AND (p."nsfwLevel" & 32) = 0

@@ -32,7 +32,7 @@ version as designed rather than what is live today.
 
 - **Starting one.** A published post becomes the first chapter of a new storyline.
 - **Settings.** Status (ongoing or complete), who may continue it, the maximum content level, and the
-  price to submit a continuation, which can be zero.
+  price, if any, to submit a continuation.
 - **Collaborators.** The creator can endorse collaborators. Their continuations are added without
   review and are listed ahead of other contributors' at the end of a chapter.
 - **Review.** Continuations from anyone else wait in the creator's review queue to be approved or

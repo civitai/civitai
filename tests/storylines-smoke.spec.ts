@@ -16,8 +16,12 @@ import { expect, test } from '@playwright/test';
  *   STORYLINE_SMOKE_ABOVE_CEILING_CHAPTER_ID=<chapterId of the row with aboveCeiling = true>
  *   pnpm exec playwright test tests/storylines-smoke.spec.ts --project chromium --no-deps
  *
- * The seed prints every id. Not covered: the pill on a feed card, because which images the feed
- * shows is not under the test's control; check that step by hand.
+ * The seed prints every id. Seed it without a community account: the fork count below assumes
+ * the default three continuations. An expired token runs the test signed out, which reads as a
+ * storyline that will not open.
+ *
+ * Not covered: the pill on a feed card, because which images the feed shows is not under the
+ * test's control; check that step by hand.
  */
 
 const env = {
@@ -47,7 +51,7 @@ test.describe('storylines smoke', () => {
     await page.getByTestId('storyline-enter').click();
 
     await expect(page).toHaveURL(/[?&]storylineChapter=\d+/);
-    await expect(page.getByTestId('storyline-banner')).toBeVisible();
+    await expect(page.getByTestId('storyline-banner')).toContainText('The Patch');
 
     await page.getByTestId('storyline-pill').click();
     await expect(page.getByTestId('storyline-subway')).toBeVisible();
