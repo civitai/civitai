@@ -11,19 +11,25 @@ import { isDefined } from '~/utils/type-guards';
 /**
  * One page of the caller's own posted images an app may be handed, newest first. A page can come
  * back short: a row with no usable rendition is dropped after the query.
+ *
+ * `toDate` starts the list at an older point ("jump to date") without changing its order or cursor.
  */
 export async function getBlockPickablePostedImages({
   userId,
   browsingLevel,
   limit,
   cursor,
+  toDate,
 }: GetBlockPickablePostedImagesInput & { userId: number; browsingLevel: number }): Promise<{
   items: PostedPickableImage[];
   nextCursor?: number;
 }> {
   const rows = await dbRead.image.findMany({
     select: postedPickableSelect,
-    where: postedPickableWhere(userId, browsingLevel),
+    where: {
+      ...postedPickableWhere(userId, browsingLevel),
+      ...(toDate ? { createdAt: { lte: toDate } } : {}),
+    },
     take: limit + 1,
     cursor: cursor ? { id: cursor } : undefined,
     orderBy: { id: 'desc' },

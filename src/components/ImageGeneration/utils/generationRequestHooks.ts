@@ -122,8 +122,9 @@ export function useGetTextToImageRequests(
       ...input,
       ascending: filters.sort === GenerationSort.Oldest,
       tags: queryTags,
-      fromDate: filters.fromDate,
-      toDate: filters.toDate,
+      // The queue's own date filter wins; a caller that ignores it (a picker) brings its own.
+      fromDate: filters.fromDate ?? input?.fromDate,
+      toDate: filters.toDate ?? input?.toDate,
       excludeFailed: filters.excludeFailed,
     },
     {

@@ -15,6 +15,7 @@ const row = (id: number, over: Record<string, unknown> = {}) => ({
   width: 1216,
   height: 832,
   nsfwLevel: 4,
+  createdAt: new Date('2025-03-15T10:00:00Z'),
   ...over,
 });
 
@@ -44,6 +45,28 @@ describe('getBlockPickablePostedImages', () => {
       nsfwLevel: { in: [4, 8] },
     });
     expect(args.where.post.publishedAt.lte).toBeInstanceOf(Date);
+    // Without a date the list starts at the newest image: no bound on when it was created.
+    expect(args.where).not.toHaveProperty('createdAt');
+  });
+
+  it('jumps to a date: bounds by creation time, keeping the newest-first id order and cursor', async () => {
+    dbMock.dbRead.image.findMany.mockResolvedValue([]);
+    const toDate = new Date('2024-06-30T23:59:59.999Z');
+
+    await getBlockPickablePostedImages({
+      userId: 8123,
+      browsingLevel: 12,
+      limit: 3,
+      cursor: 55,
+      toDate,
+    });
+
+    const args = dbMock.dbRead.image.findMany.mock.calls[0][0];
+    expect(args.where.createdAt).toEqual({ lte: toDate });
+    // The bound is added to the pickable rules, never in place of them.
+    expect(args.where).toMatchObject({ userId: 8123, nsfwLevel: { in: [4, 8] } });
+    expect(args.orderBy).toEqual({ id: 'desc' });
+    expect(args.cursor).toEqual({ id: 55 });
   });
 
   it('pages by id: a full page reports the next row as the cursor and does not return it', async () => {
@@ -85,6 +108,7 @@ describe('getBlockPickablePostedImages', () => {
         width: 1200,
         height: 821,
         nsfwLevel: 4,
+        createdAt: new Date('2025-03-15T10:00:00Z'),
       },
     ]);
   });

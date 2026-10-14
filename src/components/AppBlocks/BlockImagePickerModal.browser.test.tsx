@@ -588,3 +588,124 @@ describe('BlockImagePickerModal', () => {
     expect(onResolved).not.toHaveBeenCalled();
   });
 });
+
+const postedTiles = () => page.getByRole('button', { name: /^Posted image / }).elements();
+
+describe('BlockImagePickerModal: tray, jump to date, tile labels', () => {
+  beforeEach(() => {
+    useDialogStore.getState().closeAll();
+    mocks.currentUser = { id: 1 };
+    mocks.browsingLevel = 3;
+    mocks.postedQuery.mockReset();
+    mocks.generatedQuery.mockReset();
+    setPosted([]);
+    setGenerated([]);
+  });
+
+  // Regression: at origin/main there is no tray, so a pick on the other tab is invisible.
+  test('multi pick: the tray shows picks from both tabs, and removing one deselects it', async () => {
+    setPosted([postedItem(1), postedItem(2)]);
+    setGenerated([output('gen-a')]);
+    const onResolved = openModal({ max: 5 });
+
+    await userEvent.click(tile('Posted image 2'));
+    await userEvent.click(page.getByRole('tab', { name: 'Generated' }));
+    await userEvent.click(tile('Generated image 1'));
+
+    const tray = page.getByRole('list', { name: 'Selected images' });
+    const removePosted = tray.getByRole('button', { name: 'Remove selected image 1 (Posted)' });
+    // The posted pick is listed while its own tab is not on screen.
+    await expect.element(removePosted).toBeInTheDocument();
+    await expect
+      .element(tray.getByRole('button', { name: 'Remove selected image 2 (Generated)' }))
+      .toBeInTheDocument();
+    expect(tray.getByRole('listitem').elements()).toHaveLength(2);
+
+    await userEvent.click(removePosted);
+    const count = page.getByTestId('block-image-picker-count');
+    await expect.element(count).toHaveTextContent('1 of 5 selected');
+    expect(tray.getByRole('listitem').elements()).toHaveLength(1);
+    await userEvent.click(page.getByRole('tab', { name: 'Posted' }));
+    await expect.element(tile('Posted image 2')).toHaveAttribute('aria-pressed', 'false');
+
+    await userEvent.click(confirmButton());
+    expect(onResolved).toHaveBeenCalledWith([
+      { source: 'generated', url: blobUrl('gen-a'), width: 832, height: 1216, nsfwLevel: 1 },
+    ]);
+  });
+
+  // Invariant guard (no tray at origin/main either): a single pick has nothing to collect.
+  test('single pick: no tray', async () => {
+    setPosted([postedItem(1)]);
+    openModal({ sources: ['posted'] });
+
+    await userEvent.click(tile('Posted image 1'));
+    await expect.element(tile('Posted image 1')).toHaveAttribute('aria-pressed', 'true');
+    expect(page.getByTestId('block-image-picker-tray').query()).toBeNull();
+  });
+
+  // Regression: at origin/main there is no way to start the list anywhere but the newest image.
+  test('jumping to a date asks the posted list for that day, and keeps the picks', async () => {
+    const newest = { data: { pages: [{ items: [postedItem(1), postedItem(2)] }] } };
+    const older = { data: { pages: [{ items: [postedItem(30)] }] } };
+    mocks.postedQuery.mockImplementation((input: { toDate?: Date }) => ({
+      isLoading: false,
+      isError: false,
+      isFetching: false,
+      hasNextPage: false,
+      fetchNextPage: vi.fn(async () => undefined),
+      refetch: vi.fn(async () => undefined),
+      // A new first page for a new date, as the real query gives: the list is replaced.
+      ...(input.toDate ? older : newest),
+    }));
+    const onResolved = openModal({ sources: ['posted'], max: 5 });
+
+    await userEvent.click(tile('Posted image 2'));
+    await userEvent.fill(page.getByLabelText('Jump to date'), '2024-06-30');
+
+    await vi.waitFor(() =>
+      expect(mocks.postedQuery).toHaveBeenLastCalledWith(
+        { toDate: new Date(2024, 5, 30, 23, 59, 59, 999) },
+        expect.anything()
+      )
+    );
+    await expect.element(tile('Posted image 1')).toHaveAttribute('aria-pressed', 'false');
+    expect(postedTiles()).toHaveLength(1);
+    const count = page.getByTestId('block-image-picker-count');
+    await expect.element(count).toHaveTextContent('1 of 5 selected');
+
+    await userEvent.click(page.getByRole('button', { name: 'Back to newest' }));
+    await vi.waitFor(() =>
+      expect(mocks.postedQuery).toHaveBeenLastCalledWith({}, expect.anything())
+    );
+    await expect.element(tile('Posted image 2')).toHaveAttribute('aria-pressed', 'true');
+
+    await userEvent.click(confirmButton());
+    expect(onResolved).toHaveBeenCalledWith([postedPick(2)]);
+  });
+
+  // Regression: at origin/main the generated tab has no date control.
+  test('jumping to a date asks the generated list for that day', async () => {
+    setGenerated([output('gen-a')]);
+    openModal({ sources: ['generated'] });
+
+    await expect.element(tile('Generated image 1')).toBeInTheDocument();
+    await userEvent.fill(page.getByLabelText('Jump to date'), '2025-01-05');
+
+    await vi.waitFor(() =>
+      expect(mocks.generatedQuery).toHaveBeenLastCalledWith(
+        { tags: ['img'], toDate: new Date(2025, 0, 5, 23, 59, 59, 999) },
+        { enabled: true, ignoreFilters: true }
+      )
+    );
+  });
+
+  test('labels a tile with when the image was posted', async () => {
+    setPosted([postedItem(1, { createdAt: new Date(2024, 5, 30, 12) })]);
+    openModal({ sources: ['posted'] });
+
+    await expect
+      .element(page.getByRole('button', { name: 'Posted image 1, Jun 30, 2024', exact: true }))
+      .toBeInTheDocument();
+  });
+});

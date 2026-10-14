@@ -6,10 +6,15 @@ import {
   IMAGE_PICKER_MULTIPLE_ERROR,
   IMAGE_PICKER_MULTIPLE_MAX,
   IMAGE_PICKER_SOURCES_ERROR,
+  jumpDateToBound,
+  pickerGridLayout,
   projectGeneratedPick,
   projectPostedPick,
   ratingToLevel,
+  removePickedImage,
   resolveImagePickerRequest,
+  shouldDropPostedPicks,
+  toDateInputValue,
   togglePickedImage,
   type BlockPickedImageInfo,
 } from '../imagePickerLogic';
@@ -374,5 +379,111 @@ describe('projectGeneratedPick', () => {
       success: true,
       data: GENERATED_URL,
     });
+  });
+});
+
+describe('removePickedImage', () => {
+  it('removes only the image matching source and url, keeping the order of the rest', () => {
+    const generated = { ...posted(2), source: 'generated' as const, imageId: undefined };
+    const current = [posted(1), generated, posted(2), posted(3)];
+    expect(removePickedImage(current, posted(2))).toEqual([posted(1), generated, posted(3)]);
+  });
+
+  it('keeps fields the caller attached to a selection', () => {
+    const current = [
+      { ...posted(1), thumbnail: 'key-1' },
+      { ...posted(2), thumbnail: 'key-2' },
+    ];
+    expect(removePickedImage(current, posted(1))).toEqual([{ ...posted(2), thumbnail: 'key-2' }]);
+  });
+
+  it('returns the same picks when the image is not selected', () => {
+    expect(removePickedImage([posted(1)], posted(9))).toEqual([posted(1)]);
+  });
+});
+
+describe('pickerGridLayout', () => {
+  it('fits as many columns as the minimum tile allows and shares the rest of the width', () => {
+    // 7 columns of 112 with 6 gaps of 8 need 832: 760 fits 6, each (760 - 40) / 6 = 120 wide.
+    expect(pickerGridLayout(760, 112, 8)).toEqual({ columns: 6, tile: 120 });
+    // Exactly 3 tiles and 2 gaps: the boundary keeps 3 columns at the minimum size.
+    expect(pickerGridLayout(352, 112, 8)).toEqual({ columns: 3, tile: 112 });
+    // One pixel short of that drops to 2 wider tiles.
+    expect(pickerGridLayout(351, 112, 8)).toEqual({ columns: 2, tile: 171 });
+  });
+
+  it('never has fewer than one column, even narrower than a tile or before it is measured', () => {
+    expect(pickerGridLayout(90, 112, 8)).toEqual({ columns: 1, tile: 90 });
+    expect(pickerGridLayout(0, 112, 8)).toEqual({ columns: 1, tile: 0 });
+    expect(pickerGridLayout(-20, 112, 8)).toEqual({ columns: 1, tile: 0 });
+  });
+
+  it('a phone-width grid has three columns down to a 320px screen, a desktop one six', () => {
+    // Full screen, less the modal padding (2 x 16) and the grid inset (2 x 4).
+    expect(pickerGridLayout(320 - 32 - 8)).toEqual({ columns: 3, tile: 88 });
+    expect(pickerGridLayout(375 - 32 - 8)).toEqual({ columns: 3, tile: 106 });
+    // Just under the narrow threshold, still the phone minimum: 6 columns, not 4.
+    expect(pickerGridLayout(599)).toEqual({ columns: 6, tile: 93 });
+    // At the threshold the wide minimum applies.
+    expect(pickerGridLayout(600)).toEqual({ columns: 4, tile: 144 });
+    // The 800px desktop modal, less its padding and the inset.
+    expect(pickerGridLayout(800 - 32 - 8)).toEqual({ columns: 6, tile: 120 });
+  });
+});
+
+describe('jumpDateToBound', () => {
+  it('is the last millisecond of the chosen local day', () => {
+    const bound = jumpDateToBound('2024-02-29');
+    expect(bound).toEqual(new Date(2024, 1, 29, 23, 59, 59, 999));
+  });
+
+  it('means no bound for an empty, malformed or impossible date', () => {
+    for (const value of ['', '2024-2-9', '2024/02/09', 'yesterday', '2023-02-29', '2024-13-01']) {
+      expect(jumpDateToBound(value)).toBeNull();
+    }
+  });
+
+  it('round-trips with toDateInputValue', () => {
+    const day = new Date(2025, 0, 5, 9, 30);
+    expect(toDateInputValue(day)).toBe('2025-01-05');
+    expect(toDateInputValue(jumpDateToBound(toDateInputValue(day))!)).toBe('2025-01-05');
+  });
+});
+
+describe('shouldDropPostedPicks', () => {
+  const pageA = { items: ['a'] };
+  const pageB = { items: ['b'] };
+
+  it('drops when the list is replaced at the same date bound (a browsing-level reset)', () => {
+    expect(
+      shouldDropPostedPicks(
+        { listKey: pageA, bound: undefined },
+        { listKey: pageB, bound: undefined }
+      )
+    ).toBe(true);
+    expect(
+      shouldDropPostedPicks({ listKey: pageA, bound: 5 }, { listKey: undefined, bound: 5 })
+    ).toBe(true);
+  });
+
+  it('keeps picks when the list is replaced because the viewer jumped to another date', () => {
+    expect(
+      shouldDropPostedPicks({ listKey: pageA, bound: undefined }, { listKey: undefined, bound: 5 })
+    ).toBe(false);
+    expect(shouldDropPostedPicks({ listKey: pageA, bound: 5 }, { listKey: pageB, bound: 7 })).toBe(
+      false
+    );
+    expect(
+      shouldDropPostedPicks({ listKey: pageA, bound: 5 }, { listKey: pageB, bound: undefined })
+    ).toBe(false);
+  });
+
+  it('keeps picks for the first list after a mount, and while the list only gains pages', () => {
+    expect(
+      shouldDropPostedPicks({ listKey: undefined, bound: 5 }, { listKey: pageA, bound: 5 })
+    ).toBe(false);
+    expect(shouldDropPostedPicks({ listKey: pageA, bound: 5 }, { listKey: pageA, bound: 5 })).toBe(
+      false
+    );
   });
 });

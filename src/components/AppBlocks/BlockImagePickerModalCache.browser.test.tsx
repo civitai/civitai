@@ -108,7 +108,7 @@ vi.mock('~/utils/trpc', async (orig) => {
           useInfiniteQuery: (input: unknown, options: Record<string, unknown>) =>
             useInfiniteQuery({
               queryKey: [...POSTED_KEY, input],
-              queryFn: ({ pageParam }) => mocks.fetchPosted(pageParam),
+              queryFn: ({ pageParam }) => mocks.fetchPosted(pageParam, input),
               initialPageParam: undefined,
               getNextPageParam: () => undefined,
               ...options,
@@ -176,6 +176,7 @@ function mountApp() {
       <DialogProvider />
     </QueryClientProvider>
   );
+  return queryClient;
 }
 
 function openPicker(props: { sources?: BlockImagePickerSource[]; max?: number | null } = {}) {
@@ -403,5 +404,55 @@ describe('BlockImagePickerModal posted list and the query cache', () => {
     await userEvent.click(confirmButton());
     expect(onResolved).toHaveBeenCalledTimes(1);
     expect(onResolved).toHaveBeenCalledWith([pickOf(SFW)]);
+  });
+
+  // Regression: at origin/main there is no date control (and a replaced list always dropped picks).
+  test('a jump to a date keeps posted picks, and confirms them though the new list lacks them', async () => {
+    mocks.fetchPosted.mockImplementation(async (_cursor: unknown, input?: { toDate?: Date }) =>
+      input?.toDate ? { items: [SFW] } : { items: [MATURE] }
+    );
+    mountApp();
+
+    const onResolved = openPicker({ max: 5 });
+    await userEvent.click(firstTile());
+    const count = page.getByTestId('block-image-picker-count');
+    await expect.element(count).toHaveTextContent('1 of 5 selected');
+
+    await userEvent.fill(page.getByLabelText('Jump to date'), '2024-06-30');
+    await vi.waitFor(() =>
+      expect(mocks.fetchPosted).toHaveBeenLastCalledWith(undefined, {
+        toDate: new Date(2024, 5, 30, 23, 59, 59, 999),
+      })
+    );
+    // The list on screen is the older one, and the pick made from the newer one is still held.
+    await expect.element(firstTile()).toHaveAttribute('aria-pressed', 'false');
+    await expect.element(count).toHaveTextContent('1 of 5 selected');
+
+    await userEvent.click(confirmButton());
+    expect(onResolved).toHaveBeenCalledWith([pickOf(MATURE)]);
+  });
+
+  // Invariant guard for the rule the date jump must not weaken: a list reset at the SAME date (what
+  // the settings provider does when a level change has been saved) still drops the posted picks.
+  test('a list reset while a date is set still drops the posted picks', async () => {
+    mocks.fetchPosted.mockResolvedValue({ items: [MATURE] });
+    const queryClient = mountApp();
+
+    openPicker({ max: 5 });
+    await userEvent.fill(page.getByLabelText('Jump to date'), '2024-06-30');
+    await vi.waitFor(() =>
+      expect(mocks.fetchPosted).toHaveBeenLastCalledWith(undefined, {
+        toDate: new Date(2024, 5, 30, 23, 59, 59, 999),
+      })
+    );
+    await userEvent.click(firstTile());
+    const count = page.getByTestId('block-image-picker-count');
+    await expect.element(count).toHaveTextContent('1 of 5 selected');
+
+    mocks.fetchPosted.mockResolvedValue({ items: [SFW] });
+    await queryClient.resetQueries({ queryKey: ['blockImagePicker', 'getPosted'] });
+
+    await expect.element(count).toHaveTextContent('0 of 5 selected');
+    await expect.element(firstTile()).toHaveAttribute('aria-pressed', 'false');
   });
 });

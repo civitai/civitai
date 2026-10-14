@@ -65,6 +65,22 @@ describe('blockImagePicker.getPosted', () => {
     expect(queriedWhere().nsfwLevel).toEqual({ in: [1, 2] });
   });
 
+  it('passes a jump-to date through to the query', async () => {
+    const toDate = new Date('2024-06-30T23:59:59.999Z');
+    await caller({ showNsfw: true, browsingLevel: 3 }, { canViewNsfw: true }).getPosted({ toDate });
+
+    expect(queriedWhere().createdAt).toEqual({ lte: toDate });
+  });
+
+  it('rejects a jump-to date that is not a date, without querying', async () => {
+    await expect(
+      caller({ showNsfw: true, browsingLevel: 3 }, { canViewNsfw: true }).getPosted({
+        toDate: '2024-06-30',
+      } as never)
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(dbMock.dbRead.image.findMany).not.toHaveBeenCalled();
+  });
+
   it('refuses a signed-out caller without querying', async () => {
     await expect(caller(null, { canViewNsfw: true }).getPosted({})).rejects.toMatchObject({
       code: 'UNAUTHORIZED',
