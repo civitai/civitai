@@ -1705,8 +1705,8 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     kind: oauth?.outcome === 'minted' ? 'oauth' : 'block',
     scopes: manifestScopes,
     // The per-call budget this token carries, so the host forwards it to the block
-    // instead of deriving its own: the install setting it comes from is not always
-    // visible to the client. Absent when the token carries no spend scope.
+    // instead of deriving its own: an install setting it can resolve from is not
+    // always visible to the client. Absent when the token carries no spend scope.
     buzzBudget: reportedBuzzBudget,
     needsConsent,
     missingScopes,
