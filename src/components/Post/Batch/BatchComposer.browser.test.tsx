@@ -18,6 +18,25 @@ const mocks = vi.hoisted(() => ({
     perDay: [] as { day: string; existing: number; incoming: number }[],
   },
   scheduleCalls: [] as { idempotencyKey?: string; posts: { publishedAt: Date }[] }[],
+  drafts: new Map<string, unknown>(),
+}));
+
+vi.mock('idb-keyval', () => ({
+  get: async (key: string) => mocks.drafts.get(key),
+  set: async (key: string, value: unknown) => {
+    mocks.drafts.set(key, value);
+  },
+  del: async (key: string) => {
+    mocks.drafts.delete(key);
+  },
+}));
+// The pick is a registry dialog too; answer it with a fixed version.
+vi.mock('~/components/Dialog/triggers/resource-select', () => ({
+  openResourceSelectModal: ({
+    onSelect,
+  }: {
+    onSelect: (resource: { id: number; name: string; model: { name: string } }) => void;
+  }) => onSelect({ id: 42, name: 'v2.0', model: { name: 'Neon Noir' } }),
 }));
 
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
@@ -99,7 +118,7 @@ function fileInput(): Promise<HTMLInputElement> {
 }
 
 async function uploadPosts(count: number, opts: { strict?: boolean } = {}) {
-  await renderWithProviders(
+  const rendered = await renderWithProviders(
     opts.strict ? (
       <StrictMode>
         <BatchComposer />
@@ -116,12 +135,56 @@ async function uploadPosts(count: number, opts: { strict?: boolean } = {}) {
   await expect
     .element(page.getByTestId('batch-grouping-summary'))
     .toHaveTextContent(`${count} posts`);
+  return rendered;
 }
 
 describe('BatchComposer', () => {
   beforeEach(() => {
     mocks.validateResult = { ok: true, issues: [], dailyLimit: 100, perDay: [] };
     mocks.scheduleCalls = [];
+    mocks.drafts.clear();
+  });
+
+  test('a reload brings every uploaded image back from the draft', async () => {
+    const rendered = await uploadPosts(3);
+    expect(page.getByTestId('batch-media-thumb').elements()).toHaveLength(3);
+    await vi.waitFor(() => {
+      const [draft] = [...mocks.drafts.values()] as { media: unknown[] }[];
+      expect(draft?.media).toHaveLength(3);
+    });
+
+    rendered.rerender(<div data-testid="between-reloads" />);
+    await expect.element(page.getByTestId('between-reloads')).toBeInTheDocument();
+    expect(page.getByTestId('batch-media-thumb').elements()).toHaveLength(0);
+    rendered.rerender(<BatchComposer />);
+
+    await expect.element(page.getByTestId('batch-grouping-summary')).toHaveTextContent('3 posts');
+    await expect.poll(() => page.getByTestId('batch-media-thumb').elements().length).toBe(3);
+    const thumbs = page.getByTestId('batch-media-thumb').elements();
+    expect(thumbs.map((thumb) => thumb.getAttribute('data-status'))).toEqual([
+      'added',
+      'added',
+      'added',
+    ]);
+    expect(thumbs.map((thumb) => thumb.querySelector('img')?.getAttribute('src'))).toEqual(
+      expect.arrayContaining([expect.stringContaining('key-render-1.png')])
+    );
+  });
+
+  test('a model picked in the composer fills {model} and {version} in the titles', async () => {
+    await uploadPosts(2);
+    await userEvent.click(page.getByTestId('batch-pick-promoted'));
+    await expect.element(page.getByTestId('batch-promoted')).toHaveTextContent('Neon Noir v2.0');
+    const template = page.getByTestId('batch-title-template');
+    await expect.element(template).toHaveValue('{model} — {n}');
+    await userEvent.fill(template, '{model} {version} #{n}');
+    await userEvent.click(page.getByRole('radio', { name: 'List' }));
+    await vi.waitFor(() => {
+      const rows = page.getByTestId('batch-preview-list').element().querySelectorAll('tr');
+      expect(rows).toHaveLength(2);
+      expect(rows[0].textContent).toContain('Neon Noir v2.0 #1');
+      expect(rows[1].textContent).toContain('Neon Noir v2.0 #2');
+    });
   });
 
   test('preview times never land on the hour', async () => {
