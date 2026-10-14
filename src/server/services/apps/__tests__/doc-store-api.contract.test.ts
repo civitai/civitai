@@ -2,11 +2,13 @@
 // service and the middleware read it at module load.
 import '~/__tests__/setup';
 import { readFileSync } from 'fs';
+import { Readable } from 'stream';
 import path from 'path';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import type * as AppBlocksFlag from '~/server/services/app-blocks-flag';
 import type * as SessionClientModule from '~/server/auth/session-client';
 import type * as Moderation from '~/server/services/apps/shared-data-moderation';
@@ -92,6 +94,7 @@ import { DEFAULT_DOC_STORE_LIMITS, DocStoreError } from '~/server/services/apps/
 import { OnboardingSteps } from '~/server/common/enums';
 import {
   matchStorageRoute,
+  STORAGE_BODY_LIMIT_BYTES,
   STORAGE_ERROR_STATUS,
   STORAGE_RESERVED_SEGMENTS,
   storageRefusalBody,
@@ -304,19 +307,29 @@ async function call(opts: {
   body?: unknown;
   ip?: string;
   origin?: string;
+  rawBody?: string;
+  contentLength?: number;
 }): Promise<Reply> {
   const segments = opts.path.split('/').filter(Boolean);
-  const req = {
+  // The route reads its own body (Next's parser is off), so the request is a real stream of
+  // the JSON text — or of `rawBody`, verbatim, to send something that is not JSON.
+  const text =
+    opts.rawBody !== undefined
+      ? opts.rawBody
+      : opts.body === undefined
+      ? ''
+      : JSON.stringify(opts.body);
+  const req = Object.assign(Readable.from(text ? [Buffer.from(text)] : []), {
     method: opts.method,
     url: `/api/v1/blocks/storage${opts.path}`,
     query: { ...(opts.query ?? {}), ...(segments.length ? { path: segments } : {}) },
     headers: {
       ...(opts.token ? { authorization: `Bearer ${opts.token}` } : {}),
       ...(opts.origin ? { origin: opts.origin } : {}),
+      ...(opts.contentLength !== undefined ? { 'content-length': String(opts.contentLength) } : {}),
     },
-    body: opts.body,
     socket: { remoteAddress: opts.ip ?? '198.51.100.7' },
-  } as unknown as NextApiRequest;
+  }) as unknown as NextApiRequest;
   const headers: Record<string, unknown> = {};
   let status = 0;
   let body: unknown;
@@ -828,7 +841,7 @@ describe('rate limits: separate buckets', () => {
     expect(refused.status).toBe(429);
     expect(refused.body).toMatchObject({
       code: 'rate_limited',
-      details: { bucket: 'private-write' },
+      details: { bucket: 'write' },
     });
     expect((await call({ token: v1, method: 'GET', path: '/prefs/same' })).body).toMatchObject({
       version: 120,
@@ -1188,6 +1201,236 @@ describe('review findings: refusal detail, usage, budget refunds, review gates, 
       code: 'unauthenticated',
       message: 'invalid block token',
       error: 'invalid block token',
+    });
+  });
+});
+
+describe('round 1: approved manifests, dot keys, CORS default, failures, deletes', () => {
+  const BUDGETED = {
+    scopes: contract.defaultScopes,
+    storage: {
+      collections: {
+        prefs: { visibility: 'private' },
+        posts: { visibility: 'shared', write: 'own' },
+        budgeted: { visibility: 'shared', write: 'own', dailyWritesPerAuthor: 50 },
+      },
+    },
+  };
+
+  it('an approved manifest using a deferred field keeps every collection declared; only that one is refused, by the store', async () => {
+    const { A } = freshApps('approved', BUDGETED);
+    const t = await mint({ app: A, uid: VIEWER_IDS.v1, scopes: contract.defaultScopes });
+    expect(
+      (await call({ token: t, method: 'PUT', path: '/prefs/k', body: { data: {} } })).status
+    ).toBe(200);
+    expect(
+      (await call({ token: t, method: 'PUT', path: '/posts/k', body: { data: {} } })).status
+    ).toBe(200);
+    for (const [method, path] of [
+      ['PUT', '/budgeted/k'],
+      ['GET', '/budgeted/k'],
+      ['GET', '/budgeted'],
+    ] as const) {
+      const r = await call({
+        token: t,
+        method,
+        path,
+        body: method === 'PUT' ? { data: {} } : undefined,
+      });
+      expect(r.status, `${method} ${path}`).toBe(400);
+      expect(r.body).toMatchObject({
+        code: 'invalid_request',
+        message: 'dailyWritesPerAuthor is not supported yet',
+        details: { collection: 'budgeted' },
+      });
+    }
+    const info = (await call({ token: t, method: 'GET', path: '' })).body as {
+      collections: Record<string, unknown>;
+    };
+    expect(Object.keys(info.collections).sort()).toEqual(['budgeted', 'posts', 'prefs']);
+  });
+
+  it('a manifest whose storage does not parse at all is a retryable 503, logged once per app, never "not declared"', async () => {
+    const { A } = freshApps('approved', {
+      scopes: contract.defaultScopes,
+      storage: { collections: { prefs: { visibility: 'nope' } } },
+    });
+    const { ensureRegisterAppBlockRuntimeMetrics } = await import(
+      '~/server/metrics/app-block-runtime.metrics'
+    );
+    const counter = ensureRegisterAppBlockRuntimeMetrics().storageManifestUnparseableTotal;
+    const before = (await counter.get()).values[0]?.value ?? 0;
+    loggingMock.logToAxiom.mockClear();
+    const t = await mint({ app: A, uid: VIEWER_IDS.v1, scopes: contract.defaultScopes });
+    for (let i = 0; i < 3; i++) {
+      const r = await call({ token: t, method: 'GET', path: '/prefs/k' });
+      expect(r.status).toBe(503);
+      expect(r.body).toMatchObject({ code: 'service_unavailable', details: { retryAfter: 30 } });
+      expect(r.headers['retry-after']).toBe('30');
+    }
+    expect((await counter.get()).values[0]?.value).toBe(before + 3);
+    const logged = loggingMock.logToAxiom.mock.calls.filter(
+      (c: unknown[]) =>
+        (c[0] as { name?: string }).name === 'app-blocks-doc-store-manifest-unparseable'
+    );
+    expect(logged).toHaveLength(1);
+  });
+
+  it('a failed database read in the resolver is a retryable 503 with Retry-After', async () => {
+    const { A } = freshApps();
+    const t = await mint({ app: A, uid: VIEWER_IDS.v1, scopes: contract.defaultScopes });
+    const real = dbMock.dbRead.appBlock.findUnique.getMockImplementation();
+    dbMock.dbRead.appBlock.findUnique.mockImplementation(
+      async (args: { where: { id?: string } }) => {
+        if (args.where.id) throw new Error('replica unreachable');
+        return real?.(args);
+      }
+    );
+    const r = await call({ token: t, method: 'GET', path: '/prefs/k' });
+    expect(r.status).toBe(503);
+    expect(r.body).toMatchObject({ code: 'service_unavailable' });
+    expect(r.headers['retry-after']).toBe('1');
+  });
+
+  it('dot-only keys: why they cannot be addressed, and that the store refuses them', async () => {
+    // A URL client resolves dot segments before sending: this DELETE of a mark on key `..`
+    // arrives as a DELETE of key `vote` in collection `marks`.
+    expect(new URL('https://h.example/api/v1/blocks/storage/posts/../marks/vote').pathname).toBe(
+      '/api/v1/blocks/storage/marks/vote'
+    );
+    expect(matchStorageRoute('DELETE', ['marks', 'vote'])).toEqual({
+      route: { op: 'delete', collection: 'marks', key: 'vote' },
+    });
+    const app = { appId: 'ab_DOTKEYS', ns: 'prod', viewerUid: VIEWER_IDS.v1 };
+    const prefs = {
+      name: 'prefs',
+      config: parseManifestStorage(MANIFEST).collections.get('prefs')!,
+    };
+    for (const key of ['.', '..', '...', '.'.repeat(128)]) {
+      await expect(liveStore.put(app, prefs, key, {})).rejects.toMatchObject({
+        code: 'invalid_request',
+      });
+    }
+    // Dots inside a key are fine.
+    expect((await liveStore.put(app, prefs, 'a..b', {})).key).toBe('a..b');
+  });
+
+  it('a route that does not opt into extraCorsMethods keeps GET, POST, OPTIONS on its preflight', async () => {
+    const { withBlockScope } = await import('~/server/middleware/block-scope.middleware');
+    const plain = withBlockScope(async () => undefined, {
+      endpoint: 'storage_read',
+      requiredScope: 'apps:storage',
+      allowOpaqueOrigin: true,
+    });
+    const headers: Record<string, unknown> = {};
+    let status = 0;
+    const res = {
+      setHeader: (k: string, v: unknown) => {
+        headers[k.toLowerCase()] = v;
+      },
+      status: (c: number) => {
+        status = c;
+        return { end: () => undefined };
+      },
+    };
+    await plain(
+      { method: 'OPTIONS', headers: { origin: 'null' }, query: {} } as unknown as NextApiRequest,
+      res as unknown as NextApiResponse
+    );
+    expect(status).toBe(204);
+    expect(headers['access-control-allow-methods']).toBe('GET, POST, OPTIONS');
+  });
+
+  it('a malformed or oversized body is answered in the envelope, with the CORS headers set', async () => {
+    const { A } = freshApps();
+    const t = await mint({ app: A, uid: VIEWER_IDS.v1, scopes: contract.defaultScopes });
+    const bad = await call({
+      token: t,
+      method: 'PUT',
+      path: '/prefs/k',
+      rawBody: '{not json',
+      origin: 'null',
+    });
+    expect(bad.status).toBe(400);
+    expect(bad.body).toMatchObject({
+      code: 'invalid_request',
+      message: 'request body is not valid JSON',
+    });
+    expect(bad.headers['access-control-allow-origin']).toBe('null');
+    const big = await call({
+      token: t,
+      method: 'PUT',
+      path: '/prefs/k',
+      rawBody: 'x'.repeat(STORAGE_BODY_LIMIT_BYTES + 1),
+      origin: 'null',
+    });
+    expect(big.status).toBe(413);
+    expect(big.body).toMatchObject({
+      code: 'too_large',
+      details: { limit: STORAGE_BODY_LIMIT_BYTES },
+    });
+    expect(big.headers['access-control-allow-origin']).toBe('null');
+    const declared = await call({
+      token: t,
+      method: 'PUT',
+      path: '/prefs/k',
+      rawBody: '{}',
+      contentLength: STORAGE_BODY_LIMIT_BYTES + 1,
+    });
+    expect(declared.status).toBe(413);
+  });
+
+  it('a viewer can always delete their own shared documents with apps:storage alone; creating and updating still need publish and trust', async () => {
+    const { A } = freshApps();
+    const full = await mint({ app: A, uid: VIEWER_IDS.v1, scopes: contract.defaultScopes });
+    for (const k of ['a', 'b', 'c']) {
+      expect(
+        (await call({ token: full, method: 'PUT', path: `/posts/${k}`, body: { data: {} } })).status
+      ).toBe(200);
+    }
+    // Publish never granted on this token.
+    const baseOnly = await mint({ app: A, uid: VIEWER_IDS.v1, scopes: ['apps:storage'] });
+    expect((await call({ token: baseOnly, method: 'DELETE', path: '/posts/a' })).body).toEqual({
+      deleted: true,
+    });
+    expect(
+      (await call({ token: baseOnly, method: 'PUT', path: '/posts/a', body: { data: {} } })).body
+    ).toMatchObject({
+      code: 'consent_required',
+    });
+    // Publish revoked while the token still carries it.
+    kv.set(`${REDIS_KEYS.BLOCKS.CONSENT_REVOKED_SCOPES}:${VIEWER_IDS.v1}:${A.id}`, {
+      value: JSON.stringify(['apps:storage:publish']),
+      ttl: -1,
+    });
+    expect((await call({ token: full, method: 'DELETE', path: '/posts/b' })).body).toEqual({
+      deleted: true,
+    });
+    expect(
+      (await call({ token: full, method: 'PUT', path: '/posts/b', body: { data: {} } })).body
+    ).toMatchObject({
+      code: 'consent_required',
+    });
+    kv.clear();
+    // Muted (fails the trust gate).
+    h.users.set(VIEWER_IDS.v1, { ...user('v1', true), muted: true });
+    expect((await call({ token: full, method: 'DELETE', path: '/posts/c' })).body).toEqual({
+      deleted: true,
+    });
+    expect(
+      (await call({ token: full, method: 'PUT', path: '/posts/c', body: { data: {} } })).body
+    ).toMatchObject({
+      code: 'not_eligible',
+    });
+    // Still only one's own: another viewer's document is not deletable.
+    const v2 = await mint({ app: A, uid: VIEWER_IDS.v2, scopes: contract.defaultScopes });
+    expect(
+      (await call({ token: v2, method: 'PUT', path: '/posts/theirs', body: { data: {} } })).status
+    ).toBe(200);
+    expect(
+      (await call({ token: baseOnly, method: 'DELETE', path: '/posts/theirs' })).body
+    ).toMatchObject({
+      code: 'not_author',
     });
   });
 });

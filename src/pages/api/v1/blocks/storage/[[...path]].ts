@@ -17,9 +17,10 @@ import {
  * store answers every data operation `503 storage_disabled`.
  */
 
-// A document is at most 64 KiB stored. The parser limit sits above that so the store, not
-// Next, answers an oversized write — with `too_large` in the house envelope.
-export const config = { api: { bodyParser: { sizeLimit: '256kb' } } };
+// Next's body parser is OFF: the handler reads the body itself, capped at the store's own
+// document limit plus the request wrapper (`STORAGE_BODY_LIMIT_BYTES`), so a malformed or
+// oversized body is answered in the storage envelope, with the CORS headers already set.
+export const config = { api: { bodyParser: false } };
 
 // allowOpaqueOrigin: an UNVERIFIED block direct-fetches this from an opaque origin
 // (`Origin: null`); the Bearer block-JWT (no cookies) remains the sole authz gate — see

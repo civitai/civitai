@@ -141,7 +141,8 @@ export async function checkSharedReportRateLimit(
 // here: they spend the token-bucket write budget below (`reserveSharedWrite`), as the legacy
 // append/update do.
 //   reads             — per (app, viewer), or per (app, client IP) for an anonymous viewer;
-//   private writes    — per (app, viewer);
+//   writes            — per (app, viewer): private document writes, and every DELETE (a
+//                       viewer's own shared documents included — see the route);
 //   marks + counters  — per (app, viewer), every mark and counter write;
 //   report            — per (app, viewer) per day, on top of the marks + counters bucket.
 export const DOC_STORE_READ_RATE_LIMIT_MAX = 300;
@@ -151,11 +152,11 @@ export const DOC_STORE_TALLY_RATE_LIMIT_MAX = SHARED_VOTE_RATE_LIMIT_MAX;
 export const DOC_STORE_REPORT_RATE_LIMIT_MAX = SHARED_REPORT_RATE_LIMIT_MAX;
 const MINUTE_SECONDS = 60;
 
-export type DocStoreRateBucket = 'read' | 'private-write' | 'tally' | 'report';
+export type DocStoreRateBucket = 'read' | 'write' | 'tally' | 'report';
 
 const DOC_STORE_BUCKETS: Record<DocStoreRateBucket, { max: number; windowSeconds: number }> = {
   read: { max: DOC_STORE_READ_RATE_LIMIT_MAX, windowSeconds: MINUTE_SECONDS },
-  'private-write': { max: DOC_STORE_PRIVATE_WRITE_RATE_LIMIT_MAX, windowSeconds: MINUTE_SECONDS },
+  write: { max: DOC_STORE_PRIVATE_WRITE_RATE_LIMIT_MAX, windowSeconds: MINUTE_SECONDS },
   tally: {
     max: DOC_STORE_TALLY_RATE_LIMIT_MAX,
     windowSeconds: SHARED_VOTE_RATE_LIMIT_WINDOW_SECONDS,

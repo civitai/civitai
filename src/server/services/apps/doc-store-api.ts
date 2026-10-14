@@ -34,7 +34,11 @@ import {
   hasLinkedOAuthAccount,
   sharedWriteTrustRefusal,
 } from '~/server/services/blocks/block-write-trust.service';
-import { assertShareWritable, type DocStore } from '~/server/services/apps/doc-store';
+import {
+  assertCollection,
+  assertShareWritable,
+  type DocStore,
+} from '~/server/services/apps/doc-store';
 import { resolveStorageAccess, type StorageAccess } from '~/server/services/apps/doc-store-access';
 import { getDocStore } from '~/server/services/apps/doc-store.instance';
 import type {
@@ -162,7 +166,7 @@ function pathSegments(req: NextApiRequest): string[] {
 // The error envelope — the ONE place a code becomes a status
 // ---------------------------------------------------------------------------
 
-export type StorageApiCode = DocStoreErrorCode | 'internal_error';
+export type StorageApiCode = DocStoreErrorCode | 'internal_error' | 'method_not_allowed';
 
 export const STORAGE_ERROR_STATUS: Record<StorageApiCode, number> = {
   invalid_request: 400,
@@ -188,6 +192,7 @@ export const STORAGE_ERROR_STATUS: Record<StorageApiCode, number> = {
   consent_unavailable: 503,
   service_unavailable: 503,
   internal_error: 500,
+  method_not_allowed: 405,
 };
 
 export type StorageErrorBody = {
@@ -229,10 +234,11 @@ function sendError(res: NextApiResponse, err: unknown): void {
     return;
   }
   const body = envelope(err.code, CLIENT_MESSAGE[err.code] ?? err.message, err.details);
+  // Every refusal that names a retry delay (a 429, or a retryable 503) says so in the header.
   const retryAfter = err.details?.retryAfter;
-  if (err.code === 'rate_limited' && typeof retryAfter === 'number') {
+  if (typeof retryAfter === 'number') {
     res.setHeader('Retry-After', String(retryAfter));
-    body.rateLimit = rateLimitMetaFor(retryAfter);
+    if (err.code === 'rate_limited') body.rateLimit = rateLimitMetaFor(retryAfter);
   }
   res.status(STORAGE_ERROR_STATUS[err.code]).json(body);
 }
@@ -274,9 +280,41 @@ const incrementBody = z.strictObject({ by: z.number().optional() });
 // A mark carries no payload; `report` included.
 const markBody = z.strictObject({});
 
+/**
+ * The largest request body read: one document at the store's own stored-size cap plus room for
+ * the request wrapper around it (`{"data":…,"ifVersion":n}`, or a batch get's 100 keys). Next's
+ * body parser is OFF for this route (see the page), so an oversized or malformed body is
+ * answered here, in this route's envelope, after the token middleware has set CORS headers.
+ */
+export const STORAGE_BODY_LIMIT_BYTES = DOC_STORE_BOUNDS.docBytes + 16 * 1024;
+
+/** Read and parse a JSON request body; `undefined` when there is none. Only POST and PUT. */
+async function readJsonBody(req: NextApiRequest): Promise<unknown> {
+  if (req.method !== 'POST' && req.method !== 'PUT') return undefined;
+  const tooLarge = () =>
+    new DocStoreError('too_large', `request body exceeds ${STORAGE_BODY_LIMIT_BYTES} bytes`, {
+      limit: STORAGE_BODY_LIMIT_BYTES,
+    });
+  const declared = Number(req.headers['content-length']);
+  if (Number.isFinite(declared) && declared > STORAGE_BODY_LIMIT_BYTES) throw tooLarge();
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of req as unknown as AsyncIterable<Buffer | string>) {
+    const buf = typeof chunk === 'string' ? Buffer.from(chunk) : chunk;
+    size += buf.length;
+    if (size > STORAGE_BODY_LIMIT_BYTES) throw tooLarge();
+    chunks.push(buf);
+  }
+  if (size === 0) return undefined;
+  try {
+    return JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown;
+  } catch {
+    throw invalid('request body is not valid JSON');
+  }
+}
+
 function parseBody<T>(schema: z.ZodType<T>, body: unknown): T {
-  // A body Next could not parse arrives as a string; an absent one as undefined / ''.
-  const value = body === undefined || body === '' ? {} : body;
+  const value = body === undefined ? {} : body;
   const parsed = schema.safeParse(value);
   if (!parsed.success) {
     throw invalid('invalid request body', {
@@ -426,7 +464,11 @@ function collectionOf(access: StorageAccess, name: string): DocCollection {
       collection: name,
     });
   }
-  return { name, config: decl };
+  const coll = { name, config: decl };
+  // A declared collection using a feature the store does not support yet is refused here, the
+  // store's own way, before any budget, trust lookup or moderation is spent on it.
+  assertCollection(coll);
+  return coll;
 }
 
 function requireViewer(access: StorageAccess): number {
@@ -605,6 +647,7 @@ type Reply = { status: number; body: unknown };
 
 async function run(
   req: NextApiRequest,
+  body: unknown,
   route: StorageRoute,
   access: StorageAccess,
   store: DocStore
@@ -663,7 +706,7 @@ async function run(
       return ok(await presentDoc(doc, decl));
     }
     case 'getMany': {
-      const { keys } = parseBody(getManyBody, req.body);
+      const { keys } = parseBody(getManyBody, body);
       const docs = await store.getMany(ctx, coll, keys);
       return ok({ items: await presentDocs(docs, decl) });
     }
@@ -673,10 +716,13 @@ async function run(
       const uid = requireViewer(access);
       // The store's own write-policy rule, run before any budget or moderation is spent.
       assertShareWritable(coll);
-      assertPublishScope(access, coll);
+      // DELETE needs only `apps:storage`: revoking the publish scope, or failing the trust gate,
+      // never stops a viewer removing documents they authored (the store still requires the
+      // viewer to be the author). Creating and updating need both.
+      if (route.op !== 'delete') assertPublishScope(access, coll);
       // Parsed before any budget is reserved, so a malformed body is not charged.
-      const created = route.op === 'create' ? parseBody(createBody, req.body) : null;
-      const putIn = route.op === 'put' ? parseBody(putBody, req.body) : null;
+      const created = route.op === 'create' ? parseBody(createBody, body) : null;
+      const putIn = route.op === 'put' ? parseBody(putBody, body) : null;
       const deleteVersion = route.op === 'delete' ? deleteIfVersion(req) : undefined;
       const write = async (user: SessionUser | null, landed: () => void): Promise<Reply> => {
         if (created) {
@@ -695,8 +741,8 @@ async function run(
         if (route.op !== 'delete') throw new Error('doc-store-api: unreachable write op');
         return ok(await store.delete(ctx, coll, route.key, { ifVersion: deleteVersion }));
       };
-      if (!shared) {
-        await charge('private-write', access, req);
+      if (!shared || route.op === 'delete') {
+        await charge('write', access, req);
         return write(null, () => undefined);
       }
       const user = await assertTrusted(uid);
@@ -704,7 +750,7 @@ async function run(
     }
     case 'increment': {
       const uid = requireViewer(access);
-      const { by } = parseBody(incrementBody, req.body);
+      const { by } = parseBody(incrementBody, body);
       // The bucket first: a refused request costs no subject lookup.
       await charge('tally', access, req);
       const user = shared ? await assertTrusted(uid) : null;
@@ -717,7 +763,7 @@ async function run(
     case 'mark':
     case 'unmark': {
       const uid = requireViewer(access);
-      if (route.op === 'mark') parseBody(markBody, req.body);
+      if (route.op === 'mark') parseBody(markBody, body);
       await charge('tally', access, req);
       if (route.op === 'mark' && route.name === REPORT_MARK) await charge('report', access, req);
       if (shared) await assertTrusted(uid);
@@ -765,7 +811,9 @@ export function createStorageHandler(deps: StorageApiDeps = { store: getDocStore
       if (!match) throw new DocStoreError('not_found', 'no such storage route');
       if ('methods' in match) {
         res.setHeader('Allow', match.methods.join(', '));
-        res.status(405).json(envelope('invalid_request', 'method not allowed'));
+        res
+          .status(STORAGE_ERROR_STATUS.method_not_allowed)
+          .json(envelope('method_not_allowed', 'method not allowed'));
         return;
       }
       const claims = (req as BlockScopedNextApiRequest).blockClaims;
@@ -774,7 +822,8 @@ export function createStorageHandler(deps: StorageApiDeps = { store: getDocStore
       const access = await resolveStorageAccess(claims, {
         consentUnavailable: (req as BlockScopedNextApiRequest).blockConsentUnavailable === true,
       });
-      const reply = await run(req, match.route, access, deps.store());
+      const body = await readJsonBody(req);
+      const reply = await run(req, body, match.route, access, deps.store());
       res.status(reply.status).json(reply.body);
     } catch (err) {
       sendError(res, err);

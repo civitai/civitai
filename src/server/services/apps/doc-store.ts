@@ -135,8 +135,11 @@ function assertContext(ctx: DocStoreContext): void {
 
 type WritePolicy = 'own' | 'owner' | 'none';
 
-/** Validate a collection and return its write policy (shared) — refusing what is not supported yet. */
-function assertCollection(coll: DocCollection): WritePolicy {
+/**
+ * Validate a collection and return its write policy (shared) — refusing what is not supported
+ * yet. Exported so the route refuses an unsupported collection before any other gate runs.
+ */
+export function assertCollection(coll: DocCollection): WritePolicy {
   if (!B.collectionName.test(coll.name)) throw invalid('invalid collection name');
   if (coll.config.ttlSeconds !== undefined) {
     throw invalid('ttlSeconds is not supported yet', { collection: coll.name });
@@ -144,6 +147,9 @@ function assertCollection(coll: DocCollection): WritePolicy {
   // Log collections (server keys, trimmed to maxEntries) are a later phase.
   if (coll.config.kind === 'log' || coll.config.maxEntries !== undefined) {
     throw invalid('log collections are not supported yet', { collection: coll.name });
+  }
+  if (coll.config.dailyWritesPerAuthor !== undefined) {
+    throw invalid('dailyWritesPerAuthor is not supported yet', { collection: coll.name });
   }
   const write = coll.config.write ?? 'own';
   if (write === 'anyone') {
@@ -173,9 +179,15 @@ export function assertShareWritable(
   }
 }
 
+/** A key made only of dots (`.`, `..`, …) is a path step to every URL client, not a name. */
+const DOT_ONLY_KEY = /^\.+$/;
+
 function assertKey(key: string): void {
   if (typeof key !== 'string' || !B.key.test(key)) {
     throw invalid('key must be 1–128 characters of [A-Za-z0-9._:-]');
+  }
+  if (DOT_ONLY_KEY.test(key)) {
+    throw invalid('key must not consist only of dots: it cannot be addressed in a URL path');
   }
 }
 

@@ -699,6 +699,7 @@ type Bundle = {
   revocationRefusalsTotal: Counter<string>;
   consentRevocationRefusalsTotal: Counter<string>;
   consentMarkerUnavailableTotal: Counter<string>;
+  storageManifestUnparseableTotal: Counter<string>;
   bridgeRateLimitRefusalsTotal: Counter<string>;
   postSubjectRefusalsTotal: Counter<string>;
   stepPriceCheckTotal: Counter<string>;
@@ -1154,6 +1155,17 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
     ['surface']
   );
 
+  // The document store could not parse an APPROVED (or pending, for a review token) manifest's
+  // `storage` declaration even with every phased feature switched on, so it answered 503 rather
+  // than declaring nothing. No label: the app is in the log line (written once per app per
+  // process), and a flat zero is the steady state.
+  const storageManifestUnparseableTotal = getOrCreateCounter(
+    reg,
+    'civitai_app_block_storage_manifest_unparseable_total',
+    'Document-store requests answered 503 service_unavailable because the app manifest storage declaration did not parse (apps/doc-store-access.ts). Non-zero means a reviewed manifest no longer matches the parser; the app id is in the log. A flat zero is the expected steady state',
+    []
+  );
+
   // 🔴 THE ONLY SERIES ON THIS PLATFORM THAT COUNTS A BRIDGE RATE-LIMIT REFUSAL, and it
   // exists because every ceiling on the tRPC bridge was previously UNGRADEABLE. The one
   // App Blocks request counter, `civitai_app_block_requests_total` above, is incremented
@@ -1392,6 +1404,7 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
     revocationRefusalsTotal,
     consentRevocationRefusalsTotal,
     consentMarkerUnavailableTotal,
+    storageManifestUnparseableTotal,
     bridgeRateLimitRefusalsTotal,
     postSubjectRefusalsTotal,
     stepPriceCheckTotal,
@@ -1705,6 +1718,15 @@ export function recordBlockConsentMarkerUnavailable(surface: AppBlockRevocationS
   try {
     const { consentMarkerUnavailableTotal } = ensureRegisterAppBlockRuntimeMetrics();
     consentMarkerUnavailableTotal.inc({ surface });
+  } catch {
+    /* instrument-only — never let a metrics error change a refusal into a 500 */
+  }
+}
+
+/** One document-store request refused because its manifest's `storage` did not parse. Total. */
+export function recordStorageManifestUnparseable(): void {
+  try {
+    ensureRegisterAppBlockRuntimeMetrics().storageManifestUnparseableTotal.inc();
   } catch {
     /* instrument-only — never let a metrics error change a refusal into a 500 */
   }

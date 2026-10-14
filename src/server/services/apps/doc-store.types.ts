@@ -93,7 +93,10 @@ export const DEFAULT_DOC_STORE_LIMITS: DocStoreLimits = {
 
 export const DOC_STORE_BOUNDS = {
   collectionName: /^[a-z][a-z0-9_]{0,31}$/,
-  /** 1–128 chars of `[A-Za-z0-9._:-]` — ASCII only, so 128 chars is 128 bytes. */
+  /**
+   * 1–128 chars of `[A-Za-z0-9._:-]` — ASCII only, so 128 chars is 128 bytes. A key made only
+   * of dots is additionally refused (`doc-store.ts`): URL clients rewrite `.` and `..` segments.
+   */
   key: /^[A-Za-z0-9._:-]{1,128}$/,
   /** Stored unit (`octet_length(data::text)`); also a CHECK constraint on the doc table. */
   docBytes: 65536,

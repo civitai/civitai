@@ -5,7 +5,9 @@
     "blockedText": "contract-blocked-term",
     "blockedLink": "https://contract-blocked.example/x",
     "scannerDown": "contract-scanner-down",
-    "note": "A runner's moderation scanner rejects any string leaf, object key or document key containing blockedText (category blocked) or blockedLink (category link), and fails (an outage) on scannerDown."
+    "note": "A runner's moderation scanner rejects any string leaf, object key or document key containing blockedText (category blocked) or blockedLink (category link), and fails (an outage) on scannerDown.",
+    "rateLimits": "Each limit is a fixed window per (app, viewer): reads 300/min (an anonymous reader per client IP), private document writes and every delete 120/min, marks and counters 30/min, reports 20/day. A report is a mark, so it also spends one from the marks-and-counters bucket. Shared document creates and updates spend the shared write budget (burst 10).",
+    "keys": "A document key is 1-128 characters of [A-Za-z0-9._:-] and must not consist only of dots: URL clients rewrite `.` and `..` path segments, so such a key could never be addressed."
   },
   "storage": {
     "collections": {
@@ -329,7 +331,7 @@
           "path": "/_get/prefs",
           "expect": {
             "status": 405,
-            "code": "invalid_request"
+            "code": "method_not_allowed"
           }
         }
       ]
@@ -878,7 +880,7 @@
           "path": "/prefs/k",
           "expect": {
             "status": 405,
-            "code": "invalid_request"
+            "code": "method_not_allowed"
           }
         },
         {
@@ -901,6 +903,42 @@
           "path": "/prefs/k",
           "query": {
             "ifVersion": "-1"
+          },
+          "expect": {
+            "status": 400,
+            "code": "invalid_request"
+          }
+        },
+        {
+          "as": "v1@A",
+          "method": "PUT",
+          "path": "/prefs/..",
+          "body": {
+            "data": {}
+          },
+          "expect": {
+            "status": 400,
+            "code": "invalid_request"
+          }
+        },
+        {
+          "as": "v1@A",
+          "method": "PUT",
+          "path": "/prefs/...",
+          "body": {
+            "data": {}
+          },
+          "expect": {
+            "status": 400,
+            "code": "invalid_request"
+          }
+        },
+        {
+          "as": "v1@A",
+          "method": "POST",
+          "path": "/_get/prefs",
+          "body": {
+            "keys": ["."]
           },
           "expect": {
             "status": 400,
@@ -988,7 +1026,7 @@
       ]
     },
     {
-      "name": "the publish scope gates viewer-authored shared documents only",
+      "name": "the publish scope gates creating and updating viewer-authored shared documents",
       "steps": [
         {
           "as": "v1@A",
@@ -1027,9 +1065,12 @@
           "method": "DELETE",
           "path": "/posts/p1",
           "expect": {
-            "status": 403,
-            "code": "consent_required"
-          }
+            "status": 200,
+            "body": {
+              "deleted": false
+            }
+          },
+          "$comment": "Deleting needs only apps:storage: a viewer can always remove what they authored."
         },
         {
           "as": "v1@A",
@@ -1521,16 +1562,16 @@
           }
         },
         {
-          "as": "v2@A",
+          "as": "v3@A",
           "method": "PUT",
           "path": "/posts/p1/marks/vote",
-          "repeat": 9,
+          "repeat": 30,
           "expect": {
             "status": 200
           }
         },
         {
-          "as": "v2@A",
+          "as": "v3@A",
           "method": "POST",
           "path": "/plays/m1/counters/plays",
           "expect": {
@@ -1552,15 +1593,7 @@
           }
         },
         {
-          "as": "v2@B",
-          "method": "PUT",
-          "path": "/plays/m1/counters/plays",
-          "expect": {
-            "status": 405
-          }
-        },
-        {
-          "as": "v2@B",
+          "as": "v3@B",
           "method": "POST",
           "path": "/plays/m1/counters/plays",
           "expect": {
