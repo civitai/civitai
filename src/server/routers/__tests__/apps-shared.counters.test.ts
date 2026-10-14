@@ -127,6 +127,7 @@ import {
   incrementSharedCounter,
 } from '../apps-shared.router';
 import { appSchemaIdent, sanitizeAppSlug } from '~/server/utils/apps-slug';
+import { newUlid } from '~/server/utils/app-block-ids';
 import { OnboardingSteps } from '~/server/common/enums';
 import { isEscalatedServerFault } from '~/server/logging/server-fault-override';
 
@@ -186,6 +187,21 @@ beforeEach(() => {
   mockFindBlocked.mockResolvedValue([]);
 });
 
+// Near misses are cut from a real generated key, so each differs from it in one property.
+function appChosenKeys(): Array<[label: string, key: string]> {
+  const rowKey = newUlid();
+  return [
+    ['prefixed', 'playcount:123'],
+    ['short, no colon', 'plays'],
+    ['64 chars', 'k'.repeat(64)],
+    ['row-key length, with a colon', `playcount:${'7'.repeat(16)}`],
+    ['one char short of a row key', rowKey.slice(0, 25)],
+    ['one char longer than a row key', `${rowKey}0`],
+    ['row-key length, lower case', `${rowKey.slice(0, 25)}a`],
+    ['row-key length, a letter the generator omits', `${rowKey.slice(0, 25)}U`],
+  ];
+}
+
 describe('assertValidCounterKey', () => {
   it('accepts a bounded key', () => {
     expect(assertValidCounterKey('playcount:123')).toBe('playcount:123');
@@ -194,6 +210,23 @@ describe('assertValidCounterKey', () => {
     expect(() => assertValidCounterKey('')).toThrow();
     expect(() => assertValidCounterKey('x'.repeat(65))).toThrow();
     expect(() => assertValidCounterKey(123 as unknown)).toThrow();
+  });
+  it('refuses a key in the shape `append` generates for a feed row', () => {
+    expect(() => assertValidCounterKey(newUlid())).toThrow(
+      expect.objectContaining({ code: 'BAD_REQUEST', message: 'invalid counter key' })
+    );
+  });
+  // Both ends of the generator's timestamp range, so the rule is not only true of today's prefix.
+  it.each(['0'.repeat(26), `7${'Z'.repeat(25)}`])(
+    'refuses the row-key-shaped literal %s',
+    (key) => {
+      expect(() => assertValidCounterKey(key)).toThrow(
+        expect.objectContaining({ code: 'BAD_REQUEST', message: 'invalid counter key' })
+      );
+    }
+  );
+  it.each(appChosenKeys())('still accepts an app-chosen key: %s', (_label, key) => {
+    expect(assertValidCounterKey(key)).toBe(key);
   });
 });
 
@@ -206,6 +239,24 @@ describe('incrementSharedCounter', () => {
     const sql = allClientSql();
     expect(sql).toContain(`${schemaFor('app-voting')}.counters`);
     expect(sql).toContain(`${schemaFor('app-voting')}.shared_kv`);
+  });
+
+  it('refuses a feed-row-shaped key and writes nothing', async () => {
+    mockVerifyBlockToken.mockResolvedValue(claims('app-voting', [READ, WRITE]));
+    await expect(incrementSharedCounter('tok', newUlid())).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: 'invalid counter key',
+    });
+    expect(mockCheckVoteRl).not.toHaveBeenCalled();
+    expect(mockPool.connect).not.toHaveBeenCalled();
+    expect(mockClient.query).not.toHaveBeenCalled();
+    expect(mockPool.query).not.toHaveBeenCalled();
+  });
+
+  it.each(appChosenKeys())('still increments an app-chosen key: %s', async (_label, key) => {
+    mockVerifyBlockToken.mockResolvedValue(claims('app-voting', [READ, WRITE]));
+    await expect(incrementSharedCounter('tok', key)).resolves.toEqual({ key, count: 3 });
+    expect(allClientSql()).toContain(`${schemaFor('app-voting')}.counters`);
   });
 
   it('sub-trust caller (account too new) → FORBIDDEN (anti-inflation min-trust gate)', async () => {

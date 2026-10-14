@@ -2,6 +2,7 @@ import { randomBytes } from 'crypto';
 
 // Crockford base32 alphabet (no I, L, O, U)
 const ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
+const TIME_LEN = 10;
 const RANDOM_LEN = 16;
 
 function encodeTime(time: number, length: number): string {
@@ -68,7 +69,15 @@ function nextRandom(time: number): number[] {
  */
 export function newUlid(): string {
   const time = Date.now();
-  return encodeTime(time, 10) + encodeRandom(nextRandom(time));
+  return encodeTime(time, TIME_LEN) + encodeRandom(nextRandom(time));
+}
+
+// Built from the constants `newUlid` encodes with, so the two cannot disagree about the shape.
+const ULID_SHAPE = new RegExp(`^[${ALPHABET}]{${TIME_LEN + RANDOM_LEN}}$`);
+
+/** True for any string `newUlid` could return. Case-sensitive: the generator emits upper case only. */
+export function isUlidShaped(value: string): boolean {
+  return ULID_SHAPE.test(value);
 }
 
 export function newAppBlockId(): string {

@@ -65,7 +65,7 @@ const { mockIncrement, mockStash } = vi.hoisted(() => ({
 }));
 vi.mock('~/server/routers/apps-shared.router', () => ({
   incrementSharedCounter: mockIncrement,
-  // identity — the endpoint's zod schema already bounds the key
+  // identity — key validation is covered against the real module in apps-shared.counters.test.ts
   assertValidCounterKey: (k: string) => k,
 }));
 

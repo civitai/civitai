@@ -24,7 +24,8 @@
 // auth/counter/trust logic.
 //
 // Data model (per-app schema `app_<slug>`, provisioned by AppStorageProvisioner):
-//   - shared_kv(key ULID PK [SERVER-generated], author_user_id, value jsonb, …)
+//   - shared_kv(key PK [SERVER-generated ULID for `append` rows; app-chosen and never
+//     ULID-shaped for counter anchors], author_user_id, value jsonb, …)
 //   - votes(key→shared_kv ON DELETE CASCADE, user_id, PK(key,user_id))
 //   - counters(key→shared_kv ON DELETE CASCADE, count>=0)  ← reconstructable cache
 //   - shared_kv_reports(id, key, reporter_user_id, reason, …)
@@ -40,7 +41,7 @@ import * as z from 'zod';
 import { dbRead } from '~/server/db/client';
 import { requireAppsDb } from '~/server/db/appsDb';
 import { appSchemaIdent, sanitizeAppSlug } from '~/server/utils/apps-slug';
-import { newUlid } from '~/server/utils/app-block-ids';
+import { isUlidShaped, newUlid } from '~/server/utils/app-block-ids';
 import { parseSubjectUserId } from '~/server/middleware/block-scope.middleware';
 import {
   blockTokenRefusalError,
@@ -1474,8 +1475,7 @@ export const appsSharedRouter = router({
 // increment as best-effort/fire-and-forget), so a fresh/sybil account can't pump
 // a count.
 
-// Per-app counter keys are bounded to the shared key shape (≤64 chars) — same
-// bound as the vote `key` input.
+// Same length bound as the vote `key` input.
 const COUNTER_KEY_MAX = 64;
 
 /**
@@ -1491,13 +1491,13 @@ const COUNTER_KEY_MAX = 64;
  * enforces is intentionally NOT applied here — counter keys are app-global
  * (one anchor row per key across ALL users), created at most once per key. The
  * write-scope + min-trust gate + rate limit + the app byte/row quota trigger are
- * the bounds. Counter anchor rows carry a distinct app-chosen key prefix (e.g.
- * `playcount:`), so an app that also runs a request feed keeps them separable.
+ * the bounds.
  */
 export async function incrementSharedCounter(
   blockToken: string,
   key: string
 ): Promise<{ key: string; count: number }> {
+  assertValidCounterKey(key);
   const { userId, subjectUser, slug, schema, appBlockId } = await resolveSharedContext(
     blockToken,
     'increment'
@@ -1628,9 +1628,17 @@ export async function getTopSharedCounters(
   return rows.map((r) => ({ key: r.key, count: Number(r.count) }));
 }
 
-/** Shared key-shape validator for the block counter endpoints (≤64 chars). */
+/**
+ * Refuses the shape of a server-generated `append` row key: a feed row's vote tally is its
+ * `counters` row, so an increment on that key would move the tally without a vote.
+ */
 export function assertValidCounterKey(key: unknown): string {
-  if (typeof key !== 'string' || key.length < 1 || key.length > COUNTER_KEY_MAX) {
+  if (
+    typeof key !== 'string' ||
+    key.length < 1 ||
+    key.length > COUNTER_KEY_MAX ||
+    isUlidShaped(key)
+  ) {
     throw new TRPCError({ code: 'BAD_REQUEST', message: 'invalid counter key' });
   }
   return key;
