@@ -65,8 +65,6 @@ const { mockIncrement, mockStash } = vi.hoisted(() => ({
 }));
 vi.mock('~/server/routers/apps-shared.router', () => ({
   incrementSharedCounter: mockIncrement,
-  // identity — the endpoint's zod schema already bounds the key
-  assertValidCounterKey: (k: string) => k,
 }));
 
 import handler from '~/pages/api/v1/blocks/shared-storage/increment';
