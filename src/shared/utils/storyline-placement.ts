@@ -90,7 +90,7 @@ export type StorylineContinuationPage<T> = { items: T[]; nextCursor: string | nu
 export const STORYLINE_REFUSALS = {
   notAvailable: 'storylines: this is not available yet',
   notOpen: 'storyline: this creator is not accepting continuations here',
-  collaboratorsOnly: 'storyline: only this storyline’s collaborators can continue it',
+  collaboratorsOnly: 'storyline: only collaborators on this storyline can continue it',
   notAChapter: 'storyline: that post is not a chapter of an open storyline',
   ownStoryline: 'storyline: you cannot submit a continuation to your own storyline',
   notYourPost: 'storyline: you can only submit your own posts',
