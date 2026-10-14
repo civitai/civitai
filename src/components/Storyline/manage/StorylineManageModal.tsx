@@ -33,7 +33,10 @@ export default function StorylineManageModal({ storylineId }: { storylineId: num
 
   const invalidate = () => utils.storyline.getById.invalidate({ id: storylineId });
   const update = trpc.storyline.update.useMutation({
-    onSuccess: invalidate,
+    // Complete closes the space server-side; the cached space must be re-read before a price save
+    // sends its mode back, or the save reopens it.
+    onSuccess: () =>
+      Promise.all([invalidate(), utils.placement.getStorylineSpace.invalidate({ storylineId })]),
     onError: showError("Couldn't save that"),
   });
   const addCollaborator = trpc.storyline.addCollaborator.useMutation({

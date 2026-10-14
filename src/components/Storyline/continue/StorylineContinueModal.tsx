@@ -8,6 +8,7 @@ import {
 import {
   STORYLINE_CONTINUE_POST_LIMIT,
   storylineContinuePostOptions,
+  storylineSubmitInput,
 } from '~/components/Storyline/storyline-ui';
 import {
   useStorylineContinueTerms,
@@ -103,12 +104,9 @@ export default function StorylineContinueModal({
           onSubmit={() => {
             const post = posts.find((candidate) => candidate.id === postId);
             if (!post || !terms.data) return;
-            submit.mutate({
-              parentPostId,
-              postId: post.id,
-              expectedPrice: terms.data.price,
-              awaitingScan: !post.nsfwLevel,
-            });
+            submit.mutate(
+              storylineSubmitInput({ parentPostId, post, shownPrice: terms.data.price })
+            );
           }}
         />
       )}

@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'vitest';
 import {
   storylineContinuePostOptions,
+  storylineSubmitInput,
   storylinePriceCaption,
   storylinePriceLabel,
   storylineSubmitVerdict,
@@ -112,5 +113,20 @@ describe('storylineContinuePostOptions', () => {
         parentPostId: 3,
       })
     ).toEqual([{ id: 1, title: 'Post 1', nsfwLevel: NsfwLevel.PG }]);
+  });
+});
+
+describe('storylineSubmitInput', () => {
+  test('sends the price that was shown, and marks an unrated post as waiting for its rating', () => {
+    expect(
+      storylineSubmitInput({ parentPostId: 9, post: { id: 4, nsfwLevel: 0 }, shownPrice: 40 })
+    ).toEqual({ parentPostId: 9, postId: 4, expectedPrice: 40, awaitingScan: true });
+    expect(
+      storylineSubmitInput({
+        parentPostId: 9,
+        post: { id: 5, nsfwLevel: NsfwLevel.PG },
+        shownPrice: 0,
+      })
+    ).toEqual({ parentPostId: 9, postId: 5, expectedPrice: 0, awaitingScan: false });
   });
 });

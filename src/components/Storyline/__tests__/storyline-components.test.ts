@@ -440,6 +440,8 @@ describe('StorylineSettingsForm', () => {
     const el = render(settingsForm({ status: 'Complete' }));
 
     expect(option(el, 'Who can continue', 'Only collaborators').disabled).toBe(true);
+    // A price save sends the space's mode back; none may be made while the storyline is closed.
+    expect(visibleText(el)).not.toContain('Use my default');
     expect(visibleText(el)).toContain(
       'Set the storyline back to Ongoing to accept continuations again.'
     );

@@ -56,6 +56,27 @@ export function storylineContinuePostOptions(
     .map(({ id, title, nsfwLevel }) => ({ id, title, nsfwLevel }));
 }
 
+/**
+ * What submit sends. The price is the one the contributor was shown, so a change while they
+ * decide is refused rather than charged; an unrated post is sent and waits for its rating.
+ */
+export function storylineSubmitInput({
+  parentPostId,
+  post,
+  shownPrice,
+}: {
+  parentPostId: number;
+  post: { id: number; nsfwLevel: number };
+  shownPrice: number;
+}) {
+  return {
+    parentPostId,
+    postId: post.id,
+    expectedPrice: shownPrice,
+    awaitingScan: !post.nsfwLevel,
+  };
+}
+
 /** How long a continuation waits for the creator before it expires and any Buzz is refunded. */
 export const STORYLINE_CONTINUATION_EXPIRY_DAYS = 7;
 

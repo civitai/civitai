@@ -40,7 +40,9 @@ export function useStorylineSpace(
     onError: showError("Couldn't save the price"),
   });
 
-  const space = query.data;
+  // Withheld while re-reading: a save sends the mode it read, and a mode from before a status change
+  // is the one value it must not send.
+  const space = query.isFetching ? undefined : query.data;
   return {
     data: space ? { setPrice: space.setPrice, price: space.price, cap: space.cap } : null,
     unavailable: isStorylineNotAvailable(query.error),

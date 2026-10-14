@@ -100,7 +100,7 @@ export function StorylineSettingsForm({
           <Text size="sm" fw={500}>
             Price to continue
           </Text>
-          {space && space.setPrice != null && (
+          {space && space.setPrice != null && !complete && (
             <Anchor
               component="button"
               type="button"
@@ -116,7 +116,7 @@ export function StorylineSettingsForm({
           value={price}
           fallback={space?.price ?? 0}
           cap={space?.cap ?? null}
-          disabled={disabled || !space}
+          disabled={disabled || !space || complete}
           onChange={setPrice}
           onCommit={(value) => {
             setPrice(value);
