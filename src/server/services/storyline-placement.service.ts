@@ -627,7 +627,7 @@ export async function startReadyStorylineContinuations({ limit = 200 }: { limit?
 
   const rows = await dbWrite.placement.findMany({
     where: { id: { in: candidates.map((row) => row.id) }, status: 'pending' },
-    select: { id: true, targetId: true, placerId: true, data: true },
+    select: { id: true, targetId: true, placerId: true, amount: true, data: true },
     orderBy: { id: 'asc' },
   });
   const postIds = rows.map((row) => continuationPostId(row.data)).filter(isPositiveId);
@@ -661,6 +661,15 @@ export async function startReadyStorylineContinuations({ limit = 200 }: { limit?
   };
 
   for (const row of rows) {
+    // A priced row whose holds are still landing is neither admitted nor
+    // refunded: a refund now is planned from the part paid so far, and the hold
+    // that lands after it is never returned. Next tick.
+    if (
+      row.amount > 0 &&
+      !(await isPlacementEscrowFunded({ placementId: row.id, amount: row.amount }))
+    )
+      continue;
+
     const postId = continuationPostId(row.data);
     const post = postId ? posts.get(postId) : undefined;
     if (!post || !row.targetId) {
@@ -1062,13 +1071,20 @@ export async function retractStorylineContinuation({
 }) {
   const placement = await dbWrite.placement.findUnique({
     where: { id: placementId },
-    select: { surface: true, placerId: true, status: true },
+    select: { surface: true, placerId: true, status: true, amount: true },
   });
   if (!placement || placement.surface !== SURFACE)
     throw throwNotFoundError('Continuation not found');
   if (placement.placerId !== placerId) throw throwAuthorizationError();
   if (placement.status !== 'pending')
     throw throwBadRequestError('storyline: this continuation has already been answered');
+  // The same race `settleStorylineContinuation` refuses: a refund planned while
+  // a hold is landing never returns that hold.
+  if (
+    placement.amount > 0 &&
+    !(await isPlacementEscrowFunded({ placementId, amount: placement.amount }))
+  )
+    throw throwBadRequestError('storyline: the payment for this continuation is still processing');
 
   const result = await settlePlacement({ placementId, action: 'expire', actorId: placerId });
   if (!result.settled)

@@ -9,6 +9,7 @@ import { STORYLINE_REFUSALS } from '~/shared/utils/storyline-placement';
 
 const resolveSpace = vi.fn();
 const settlePlacement = vi.fn();
+const isPlacementEscrowFunded = vi.fn();
 const assertCanContinueStoryline = vi.fn();
 
 vi.mock('~/server/services/placement-space.service', async (importOriginal) => ({
@@ -18,15 +19,18 @@ vi.mock('~/server/services/placement-space.service', async (importOriginal) => (
 vi.mock('~/server/services/placement-escrow.service', async (importOriginal) => ({
   ...(await importOriginal<typeof PlacementEscrow>()),
   settlePlacement,
+  isPlacementEscrowFunded,
 }));
 vi.mock('~/server/services/storyline.service', async (importOriginal) => ({
   ...(await importOriginal<typeof StorylineService>()),
   assertCanContinueStoryline,
 }));
 
-const { startReadyStorylineContinuations, getPendingStorylineContinuations } = await import(
-  '~/server/services/storyline-placement.service'
-);
+const {
+  startReadyStorylineContinuations,
+  getPendingStorylineContinuations,
+  retractStorylineContinuation,
+} = await import('~/server/services/storyline-placement.service');
 
 const PLACER = 20;
 const CHAPTER = 77;
@@ -83,6 +87,7 @@ beforeEach(() => {
   // `settleStorylineContinuation` reads the surface before it settles.
   dbMock.dbWrite.placement.findUnique.mockResolvedValue({ surface: 'storyline' });
   settlePlacement.mockResolvedValue({ settled: true, placement: { status: 'expired' } });
+  isPlacementEscrowFunded.mockResolvedValue(true);
 });
 
 describe('startReadyStorylineContinuations', () => {
@@ -247,5 +252,93 @@ describe('getPendingStorylineContinuations', () => {
     expect(page.items[0].post.coverImage).toBeNull();
     expect(page.items[0].parentPost.coverImage).toEqual({ id: 2, url: 'u2', nsfwLevel: 1 });
     expect(page.items[0].storyline).toEqual({ id: 5, title: 'Tale', maxNsfwLevel: 4 });
+  });
+});
+
+describe('startReadyStorylineContinuations — a priced row', () => {
+  const givenPriced = () =>
+    dbMock.dbWrite.placement.findMany.mockResolvedValue([
+      {
+        id: ROW,
+        targetId: CHAPTER,
+        placerId: PLACER,
+        amount: 100,
+        data: { postId: POST, awaitingReadiness: true },
+      },
+    ]);
+
+  // A refund planned from a partial escrow never returns the hold that lands after it.
+  it('neither refunds nor admits while its holds are still landing', async () => {
+    givenPriced();
+    givenPost({ tosViolation: true });
+    isPlacementEscrowFunded.mockResolvedValue(false);
+
+    await expect(startReadyStorylineContinuations()).resolves.toMatchObject({
+      started: 0,
+      refunded: 0,
+    });
+    expect(isPlacementEscrowFunded).toHaveBeenCalledWith({ placementId: ROW, amount: 100 });
+    expect(settlePlacement).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.placement.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('refunds it once funded', async () => {
+    givenPriced();
+    givenPost({ tosViolation: true });
+
+    await startReadyStorylineContinuations();
+    expect(settlePlacement).toHaveBeenCalledWith({ placementId: ROW, action: 'expire' });
+  });
+});
+
+describe('retractStorylineContinuation', () => {
+  const givenOwn = (overrides: Record<string, unknown> = {}) =>
+    dbMock.dbWrite.placement.findUnique.mockResolvedValue({
+      surface: 'storyline',
+      placerId: PLACER,
+      status: 'pending',
+      amount: 100,
+      ...overrides,
+    });
+
+  it('refunds a pending one as an expiry, as the placer', async () => {
+    givenOwn();
+    await expect(
+      retractStorylineContinuation({ placementId: ROW, placerId: PLACER })
+    ).resolves.toEqual({ retracted: true });
+    expect(settlePlacement).toHaveBeenCalledWith({
+      placementId: ROW,
+      action: 'expire',
+      actorId: PLACER,
+    });
+  });
+
+  it('refuses while the payment is still landing, and settles nothing', async () => {
+    givenOwn();
+    isPlacementEscrowFunded.mockResolvedValue(false);
+    await expect(
+      retractStorylineContinuation({ placementId: ROW, placerId: PLACER })
+    ).rejects.toThrow('storyline: the payment for this continuation is still processing');
+    expect(settlePlacement).not.toHaveBeenCalled();
+  });
+
+  it('does not ask about funding for a free one', async () => {
+    givenOwn({ amount: 0 });
+    isPlacementEscrowFunded.mockResolvedValue(false);
+    await retractStorylineContinuation({ placementId: ROW, placerId: PLACER });
+    expect(settlePlacement).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses one that is not the placer’s, and one already answered', async () => {
+    givenOwn({ placerId: PLACER + 1 });
+    await expect(
+      retractStorylineContinuation({ placementId: ROW, placerId: PLACER })
+    ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+
+    givenOwn({ status: 'approved' });
+    await expect(
+      retractStorylineContinuation({ placementId: ROW, placerId: PLACER })
+    ).rejects.toThrow('already been answered');
+    expect(settlePlacement).not.toHaveBeenCalled();
   });
 });
