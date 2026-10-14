@@ -866,6 +866,24 @@ describe('namespaces per token kind', () => {
     expect(ns.map((r) => r.ns)).toEqual(
       [`rev:${pubreq.id}:${VIEWER_IDS.v1}`, `rev:${pubreq.id}:${VIEWER_IDS.v2}`].sort()
     );
+
+    // The purge a decision runs finds exactly the namespaces the route wrote: nothing of the
+    // request is left in any table.
+    expect((await liveStore.purgeReview(pubreq.id)).namespaces).toBe(2);
+    for (const t of [
+      'doc',
+      'doc_index',
+      'doc_tally',
+      'doc_mark',
+      'doc_tomb',
+      'usage_app',
+      'usage_user',
+    ]) {
+      expect(
+        await harness.raw(`SELECT 1 FROM appdata.${t} WHERE app_id = $1`, [pubreq.id]),
+        t
+      ).toEqual([]);
+    }
   });
 
   it('the run gate on the token subject refuses with not_eligible apps_disabled', async () => {

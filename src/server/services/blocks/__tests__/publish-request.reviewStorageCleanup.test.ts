@@ -294,6 +294,20 @@ describe('review storage is deleted on every transition out of pending', () => {
     await expectPurged(older.id);
   });
 
+  it('approve whose build trigger fails: the request stays approved, and its review data still goes', async () => {
+    const pr = pending('cool-app');
+    await seedReview(pr.id);
+    const pipeline = await import('~/server/services/blocks/apps-pipeline.service');
+    vi.mocked(pipeline.triggerBuild).mockRejectedValueOnce(new Error('build system unavailable'));
+
+    await expect(
+      approveRequest({ publishRequestId: pr.id, reviewerUserId: MODS[0] })
+    ).rejects.toThrow(/build trigger failed/);
+
+    expect(h.requests.get(pr.id)?.status).toBe('approved');
+    await expectPurged(pr.id);
+  });
+
   it('owner withdraw', async () => {
     const pr = pending('wd-app');
     await seedReview(pr.id);
@@ -301,6 +315,22 @@ describe('review storage is deleted on every transition out of pending', () => {
     await withdrawRequest({ publishRequestId: pr.id, userId: SUBMITTER });
 
     expect(h.requests.get(pr.id)?.status).toBe('withdrawn');
+    await expectPurged(pr.id);
+  });
+
+  it('owner withdraw that loses the race to a concurrent withdraw (the count === 0 branch)', async () => {
+    const pr = pending('wd-race-app', { status: 'withdrawn' });
+    await seedReview(pr.id);
+    // The classify read still saw `pending`; the guarded update then matches nothing.
+    dbMock.dbRead.appBlockPublishRequest.findUnique.mockResolvedValueOnce({
+      ...pr,
+      status: 'pending',
+    });
+
+    await expect(
+      withdrawRequest({ publishRequestId: pr.id, userId: SUBMITTER })
+    ).resolves.toBeUndefined();
+
     await expectPurged(pr.id);
   });
 
@@ -382,10 +412,48 @@ describe('teardownReviewStorageForRequest', () => {
     expect(await rows(pr.id)).toBe(before);
   });
 
+  it('reads the status from the PRIMARY: a replica still saying pending does not stop the purge', async () => {
+    const pr = pending('lag-app', { status: 'rejected' });
+    await seedReview(pr.id);
+    dbMock.dbRead.appBlockPublishRequest.findUnique.mockImplementation(
+      async ({ where }: { where: { id: string } }) => ({
+        ...h.requests.get(where.id),
+        status: 'pending',
+      })
+    );
+
+    await teardownReviewStorageForRequest(pr.id);
+
+    expect(h.outcomes).toEqual(['purged']);
+    expect(await rows(pr.id)).toBe(0);
+  });
+
   it('no store connection: counted as disabled, never thrown', async () => {
     const pr = pending('nodb-app', { status: 'rejected' });
     h.store = createDocStore({ db: null });
     await expect(teardownReviewStorageForRequest(pr.id)).resolves.toBeUndefined();
     expect(h.outcomes).toEqual(['disabled']);
+  });
+});
+
+describe('civitai_app_block_review_storage_cleanup_total', () => {
+  it('the real recorder increments the labelled series', async () => {
+    const real = await vi.importActual<typeof RuntimeMetrics>(
+      '~/server/metrics/app-block-runtime.metrics'
+    );
+    const prom = await import('prom-client');
+    const read = async (outcome: string) => {
+      const metric = prom.register.getSingleMetric(
+        'civitai_app_block_review_storage_cleanup_total'
+      );
+      const values = metric ? (await metric.get()).values : [];
+      return values.find((v) => v.labels.outcome === outcome)?.value ?? 0;
+    };
+    real.recordReviewStorageCleanup('failed');
+    const before = await read('failed');
+    real.recordReviewStorageCleanup('failed');
+    real.recordReviewStorageCleanup('purged');
+    expect(await read('failed')).toBe(before + 1);
+    expect(before).toBeGreaterThanOrEqual(1);
   });
 });

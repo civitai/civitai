@@ -847,12 +847,18 @@ export function createDocStore(deps: DocStoreDeps) {
     return inTx(ctx.appId, ctx.ns, fn);
   }
 
-  /** One transaction bound to (appId, ns). Callers validate both first. */
+  /**
+   * One transaction bound to (appId, ns). Callers validate the context first (`assertContext`);
+   * this re-checks only the shapes, so no caller can bind a namespace the store does not know.
+   */
   async function inTx<T>(
     appId: string,
     ns: string,
     fn: (c: DocStoreClient) => Promise<T>
   ): Promise<T> {
+    if (!APP_ID_SHAPE.test(appId) || !(NS_SHAPE.test(ns) || ns === `rev:${appId}`)) {
+      throw new Error('doc-store: malformed transaction scope');
+    }
     if (!deps.db) {
       throw new DocStoreError('storage_disabled', 'document storage is not configured');
     }
@@ -1431,7 +1437,8 @@ export function createDocStore(deps: DocStoreDeps) {
    *
    * IDEMPOTENT and RESUMABLE: a moderator leaves the registry only after their namespace is
    * gone, so a failure part-way leaves exactly the unfinished moderators registered, and the
-   * next call finishes them. A second call after a complete one finds nothing to do.
+   * next call finishes them (if one is made — see `teardownReviewStorageForRequest`). A second
+   * call after a complete one finds nothing to do.
    *
    * ⚠️ NOT COVERED: a write already past the resolver's `pending` check when the decision lands
    * can commit after its namespace was purged and its moderator unregistered. That row is then

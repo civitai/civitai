@@ -157,6 +157,29 @@ function defineReviewSuite(makeHarness: () => Promise<Harness>) {
     });
   });
 
+  it('a review write whose registration fails writes nothing, so no review data is ever unregistered', async () => {
+    const pr = freshRequest('NOREG');
+    const refuseRegistration: DocStoreDb = {
+      async connect() {
+        const inner = await h.db.connect();
+        const client: DocStoreClient = {
+          async query(sql, params) {
+            if (/INSERT INTO appdata\.usage_user AS u \(app_id, ns, user_id\)\s+VALUES/.test(sql)) {
+              throw new Error('injected registration failure');
+            }
+            return inner.query(sql, params);
+          },
+          release: (err) => inner.release(err),
+        };
+        return client;
+      },
+    };
+    await expect(
+      createDocStore({ db: refuseRegistration }).put(asMod(pr, MOD_1), PREFS, 'k', { a: 1 })
+    ).rejects.toThrow('injected registration failure');
+    expect(await rowsByTable(h, pr)).toEqual(Object.fromEntries(APPDATA_TABLES.map((t) => [t, 0])));
+  });
+
   describe('purgeReview', () => {
     it('deletes every row of every moderator namespace of the request, and nothing else', async () => {
       const pr = freshRequest('PURGE');

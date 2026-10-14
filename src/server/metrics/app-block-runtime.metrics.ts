@@ -1168,12 +1168,12 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
   );
 
   // One increment per review-storage teardown attempt (publish-request.service.ts
-  // `teardownReviewStorageForRequest`), by outcome. `failed` is review data left behind until
-  // a later attempt for the same request; it is the one outcome to alert on.
+  // `teardownReviewStorageForRequest`), by outcome. `failed` is review data left behind, and
+  // nothing retries it automatically; it is the one outcome to alert on.
   const reviewStorageCleanupTotal = getOrCreateCounter(
     reg,
     'civitai_app_block_review_storage_cleanup_total',
-    'Deletions of the document-store review namespaces of a publish request leaving pending, by outcome: purged (data deleted), nothing (no review data), skipped_pending (request still pending, refused), disabled (no usable store connection), failed (data left behind; logged)',
+    'Deletions of the document-store review namespaces of a publish request leaving pending, by outcome: purged (data deleted), nothing (no review data), skipped_pending (request still pending, refused), disabled (no usable store connection), failed (data left behind and not retried automatically; logged)',
     ['outcome']
   );
 

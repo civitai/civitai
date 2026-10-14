@@ -3487,6 +3487,11 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
     },
   });
 
+  // Review document-store data of this request, started the moment the decision is durable:
+  // the supersede below and the build trigger after it can each throw past every later teardown
+  // (a build-trigger failure leaves the request approved). Never rejects.
+  const approvedReviewTeardown = teardownDecidedReviewStorage([request.id]);
+
   // (6b) Supersede any OTHER request still 'pending' for this slug. If the
   // git-push webhook raced ahead of (6) it may have parked a duplicate
   // pending-review row for THIS approved sha; withdraw it (and any older
@@ -3502,10 +3507,8 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
     data: { status: 'withdrawn' },
   });
 
-  // Review document-store data of this request and of every request it superseded. Here, not
-  // beside the teardowns further down: the decision is durable from the status flip above, and
-  // a build-trigger failure below throws past those (leaving the request approved).
-  void teardownDecidedReviewStorage([request.id, ...supersededIds]);
+  // …and of every request it superseded, after this request's (one teardown at a time).
+  void approvedReviewTeardown.then(() => teardownDecidedReviewStorage(supersededIds));
 
   // (7) Trigger the Tekton build directly from the moderator-approve path.
   // This is the ONLY thing that may ship code to a live block — the webhook
@@ -5128,8 +5131,10 @@ export async function teardownAgentReviewForRequest(publishRequestId: string): P
  * `hadReviewPreview` would leak exactly the data this exists to delete.
  *
  * NEVER throws into the decision path, and is safe to call any number of times: the purge is
- * idempotent and resumes where a failed attempt stopped, so a retry (this function again, from
- * any caller) finishes the job. Unless the caller has itself just moved the request out of
+ * idempotent and resumes where a failed attempt stopped, so calling this again finishes the job.
+ * ⚠️ NOTHING CALLS IT AGAIN YET: each decision path calls it once, and no job retries a decided
+ * request, so a `failed` outcome is review data left in place until a sweeper (or a manual call)
+ * runs it. Unless the caller has itself just moved the request out of
  * `pending` (`decided: true`), it re-reads the status from the primary and refuses a request
  * that is still pending, so a stray call can never wipe a review in progress. Every outcome is
  * counted (`civitai_app_block_review_storage_cleanup_total`); a failure is also logged.
