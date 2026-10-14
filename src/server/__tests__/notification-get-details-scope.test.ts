@@ -175,10 +175,12 @@ describe('POST /api/notification/getDetails — ids as they arrive on the wire',
     ]);
   });
 
-  it('skips a stored row whose id cannot be read, rather than matching it', async () => {
+  it('reads stored ids with the same grammar as posted ones, not with a looser coercion', async () => {
+    // Each decoy is a value `Number()` would equate to the posted id but that is not an id, and each
+    // sits before the real row — so a lookup that coerced loosely would enrich the decoy's details.
     queryNotifications.mockResolvedValue([
-      { ...STORED, id: 'not-an-id', details: { commentId: 1 } },
-      { ...STORED, id: '9007199254740993', details: { commentId: 2 } },
+      { ...STORED, id: `${WIRE_ID}.0`, details: { commentId: 1 } },
+      { ...STORED, id: ` ${WIRE_ID}`, details: { commentId: 2 } },
       STORED,
     ]);
     const call = post(signalled(WIRE_ID));
