@@ -73,8 +73,8 @@ export function useStorylineContinueTerms(
 }
 
 /**
- * Submit returns the new placement only. Whether it went straight in (an endorsed collaborator)
- * is not reported, so the outcome says it was sent, or that it waits for the post's rating.
+ * Submit returns only the new placement's id, so the outcome is read back from the contributor's
+ * own list: an endorsed collaborator's continuation is approved at once, anyone else's is pending.
  */
 export function useSubmitStorylineContinuation({
   onSuccess,
@@ -97,8 +97,12 @@ export function useSubmitStorylineContinuation({
     error: mutation.error?.message ?? null,
     mutate: ({ awaitingScan, ...input }) =>
       mutation.mutate(input, {
-        onSuccess: () => {
-          onSuccess(awaitingScan ? 'awaitingScan' : 'pending');
+        onSuccess: async ({ id }) => {
+          onSuccess(
+            await readSubmitOutcome(id, awaitingScan, () =>
+              utils.client.placement.getMyStorylineContinuations.query({})
+            )
+          );
           utils.placement.getStorylineContinuePrice.invalidate({
             parentPostId: input.parentPostId,
           });
@@ -150,4 +154,21 @@ export function useActOnStorylineContinuation(): {
       await mutation.mutateAsync(input);
     },
   };
+}
+
+/** What became of a submitted continuation, from the contributor's own list (read uncached). */
+export async function readSubmitOutcome(
+  id: number,
+  awaitingScan: boolean,
+  readMine: () => Promise<{ items: { id: number; status: string; awaitingReadiness: boolean }[] }>
+): Promise<StorylineSubmitOutcome> {
+  const fallback = awaitingScan ? 'awaitingScan' : 'pending';
+  try {
+    const row = (await readMine()).items.find((item) => item.id === id);
+    if (!row) return fallback;
+    if (row.status === 'approved') return 'approved';
+    return row.awaitingReadiness ? 'awaitingScan' : 'pending';
+  } catch {
+    return fallback;
+  }
 }

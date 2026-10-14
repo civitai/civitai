@@ -28,6 +28,7 @@ const { server, spies } = vi.hoisted(() => ({
     queuePages: [] as { items: unknown[]; nextCursor: string | null }[],
     queueError: null as { message: string } | null,
     hasNextPage: false,
+    mine: null as null | { items: { id: number; status: string; awaitingReadiness: boolean }[] },
     mutationResult: { ok: true as boolean, data: undefined as unknown, message: '' },
   },
   spies: {
@@ -108,6 +109,16 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
           getPendingStorylineContinuations: utilsLeaf('placement.getPendingStorylineContinuations'),
         },
         storyline: { invalidate: spies.broadInvalidate, getById: utilsLeaf('storyline.getById') },
+        client: {
+          placement: {
+            getMyStorylineContinuations: {
+              query: async () => {
+                if (!server.mine) throw new Error('not stubbed');
+                return server.mine;
+              },
+            },
+          },
+        },
       }),
     }
   ),
@@ -171,6 +182,7 @@ beforeEach(() => {
   server.queuePages = [];
   server.queueError = null;
   server.hasNextPage = false;
+  server.mine = null;
   server.mutationResult = { ok: true, data: undefined, message: '' };
   spies.mutate.length = 0;
   spies.invalidate.length = 0;
@@ -237,17 +249,21 @@ describe('useStorylineSpace', () => {
 });
 
 describe('useSubmitStorylineContinuation', () => {
-  const submit = (awaitingScan: boolean) => {
+  const submit = async (awaitingScan: boolean) => {
     const outcomes: string[] = [];
+    if (server.mutationResult.ok) server.mutationResult.data = { id: 99 };
     const hook = renderHook(() =>
       data.useSubmitStorylineContinuation({ onSuccess: (outcome) => outcomes.push(outcome) })
     );
-    act(() => hook.current.mutate({ parentPostId: 9, postId: 4, expectedPrice: 40, awaitingScan }));
+    await act(async () => {
+      hook.current.mutate({ parentPostId: 9, postId: 4, expectedPrice: 40, awaitingScan });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
     return outcomes;
   };
 
-  it('sends the shown price and nothing else, and reports what it is waiting on', () => {
-    expect(submit(true)).toEqual(['awaitingScan']);
+  it('sends the shown price and nothing else, and reports what it is waiting on', async () => {
+    expect(await submit(true)).toEqual(['awaitingScan']);
     expect(spies.mutate).toEqual([
       {
         proc: 'submitStorylineContinuation',
@@ -256,16 +272,21 @@ describe('useSubmitStorylineContinuation', () => {
     ]);
     act(() => root?.unmount());
 
-    expect(submit(false)).toEqual(['pending']);
+    expect(await submit(false)).toEqual(['pending']);
   });
 
-  it('re-reads the price when the refusal says it changed, and not for any other refusal', () => {
+  it('reports the outcome the server recorded, so an endorsed collaborator hears "added"', async () => {
+    server.mine = { items: [{ id: 99, status: 'approved', awaitingReadiness: false }] };
+    expect(await submit(false)).toEqual(['approved']);
+  });
+
+  it('re-reads the price when the refusal says it changed, and not for any other refusal', async () => {
     server.mutationResult = {
       ok: false,
       data: undefined,
       message: `${STORYLINE_REFUSALS.priceChanged}: now 60 Buzz`,
     };
-    submit(false);
+    await submit(false);
     expect(spies.invalidate).toEqual([
       { path: 'placement.getStorylineContinuePrice', input: { parentPostId: 9 } },
     ]);
@@ -273,7 +294,7 @@ describe('useSubmitStorylineContinuation', () => {
 
     spies.invalidate.length = 0;
     server.mutationResult = { ok: false, data: undefined, message: STORYLINE_REFUSALS.pendingCap };
-    submit(false);
+    await submit(false);
     expect(spies.invalidate).toEqual([]);
   });
 });
@@ -371,6 +392,11 @@ describe('StorylineManageModal status change', () => {
     expect(spies.mutate).toEqual([
       { proc: 'storylineUpdate', input: { id: 3, status: 'Complete' } },
     ]);
+    // No count disc on the Collaborators tab when there are none.
+    const tab = [...document.body.querySelectorAll('[role="tab"]')].find((node) =>
+      node.textContent?.includes('Collaborators')
+    );
+    expect(tab?.textContent?.trim()).toBe('Collaborators');
     expect(spies.invalidate).toContainEqual({
       path: 'placement.getStorylineSpace',
       input: { storylineId: 3 },
@@ -409,5 +435,75 @@ describe('StorylineManageModal who can continue', () => {
     expect(spies.mutate).toEqual([
       { proc: 'storylineUpdate', input: { id: 3, whoCanContinue: 'Anyone' } },
     ]);
+  });
+});
+
+describe('readSubmitOutcome', () => {
+  const mine =
+    (items: { id: number; status: string; awaitingReadiness: boolean }[]) => async () => ({
+      items,
+    });
+
+  it("reports an endorsed collaborator's continuation as approved", async () => {
+    expect(
+      await data.readSubmitOutcome(
+        99,
+        false,
+        mine([{ id: 99, status: 'approved', awaitingReadiness: false }])
+      )
+    ).toBe('approved');
+  });
+
+  it('reports pending, or waiting for a rating, for anyone else', async () => {
+    expect(
+      await data.readSubmitOutcome(
+        99,
+        false,
+        mine([{ id: 99, status: 'pending', awaitingReadiness: false }])
+      )
+    ).toBe('pending');
+    expect(
+      await data.readSubmitOutcome(
+        99,
+        false,
+        mine([{ id: 99, status: 'pending', awaitingReadiness: true }])
+      )
+    ).toBe('awaitingScan');
+  });
+
+  it('falls back to what it knew when the row is missing or the read fails', async () => {
+    expect(
+      await data.readSubmitOutcome(
+        99,
+        true,
+        mine([{ id: 1, status: 'approved', awaitingReadiness: false }])
+      )
+    ).toBe('awaitingScan');
+    expect(
+      await data.readSubmitOutcome(99, false, async () => {
+        throw new Error('down');
+      })
+    ).toBe('pending');
+  });
+});
+
+describe('StorylineManageModal collaborators count', () => {
+  it('shows a two-digit count as a pill, not a one-character disc', async () => {
+    server.storyline = {
+      id: 3,
+      userId: 1,
+      title: 'The Patch',
+      status: 'Ongoing',
+      maxNsfwLevel: NsfwLevel.PG13,
+      whoCanContinue: 'Anyone',
+      collaborators: Array.from({ length: 12 }, (_, i) => ({ id: 100 + i, username: `u${i}` })),
+    };
+    render(React.createElement(StorylineManageModal, { storylineId: 3 }));
+
+    const tab = [...document.body.querySelectorAll('[role="tab"]')].find((node) =>
+      node.textContent?.includes('Collaborators')
+    );
+    expect(tab?.textContent?.trim()).toBe('Collaborators12');
+    expect(tab?.querySelector('[data-circle]')).toBeNull();
   });
 });

@@ -114,6 +114,8 @@ export function StorylineContinueForm({
         value={postId ? String(postId) : null}
         onChange={(value) => onPostChange(value ? Number(value) : null)}
         searchable
+        // Inside this modal the options otherwise open behind it and cannot be clicked.
+        comboboxProps={{ withinPortal: true, zIndex: 500 }}
         disabled={!posts.length}
         description={
           morePosts

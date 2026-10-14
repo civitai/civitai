@@ -61,9 +61,11 @@ export default function StorylineManageModal({ storylineId }: { storylineId: num
             <Tabs.Tab
               value="collaborators"
               rightSection={
-                <Badge size="sm" variant="light" circle>
-                  {storyline.collaborators.length}
-                </Badge>
+                storyline.collaborators.length ? (
+                  <Badge size="sm" variant="light">
+                    {storyline.collaborators.length}
+                  </Badge>
+                ) : null
               }
             >
               Collaborators
