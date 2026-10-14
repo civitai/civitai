@@ -434,9 +434,9 @@ describe('BlockImagePickerModal posted list and the query cache', () => {
     expect(onResolved).toHaveBeenCalledWith([pickOf(MATURE)]);
   });
 
-  // Invariant guard for the rule the date jump must not weaken: a list reset at the SAME date (what the
-  // settings provider does when a level change has been saved) still drops the posted picks. Red
-  // at origin/main only because there is no date control; the rule itself held there.
+  // Invariant guard for the rule the date jump must not weaken: a list reset at the SAME date
+  // (what the settings provider does when a level change has been saved) still drops the posted
+  // picks. Red at origin/main only because there is no date control; the rule itself held there.
   test('a list reset while a date is set still drops the posted picks', async () => {
     mocks.fetchPosted.mockResolvedValue({ items: [MATURE] });
     const queryClient = mountApp();

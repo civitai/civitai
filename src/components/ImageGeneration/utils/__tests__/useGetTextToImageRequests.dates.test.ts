@@ -92,6 +92,7 @@ describe('useGetTextToImageRequests — date bounds reaching the query', () => {
     expect(input.fromDate).toBe(QUEUE_FROM);
   });
 
+  // Invariant guard.
   it("prefers the queue's date filter over a caller's when both are set", () => {
     const input = queriedInput(
       { toDate: PICKED, fromDate: new Date(2020, 0, 1) },

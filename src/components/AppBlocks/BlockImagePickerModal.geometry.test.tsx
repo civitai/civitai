@@ -131,6 +131,7 @@ const settle = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 /** Use and Cancel lie inside the dialog's own box (not clipped by it) and inside the window. */
 function expectFooterOnScreen(dialog: HTMLElement, vp: Viewport) {
   for (const button of [confirmButton(), cancelButton()]) {
+    expect(box(button).height).toBeGreaterThan(0);
     expect(box(button).top).toBeGreaterThanOrEqual(Math.max(0, box(dialog).top));
     expect(box(button).bottom).toBeLessThanOrEqual(Math.min(vp.height, box(dialog).bottom));
   }
@@ -181,8 +182,8 @@ describe('BlockImagePickerModal geometry with a large library', () => {
     }
   );
 
-  // Regression (no tray at origin/main): picks add the tray above the footer; the footer stays on
-  // screen and the grid keeps at least a row of height.
+  // Invariant guard (red at origin/main only because there is no tray): picks add the tray above
+  // the footer; the footer stays on screen and the grid keeps at least a row of height.
   test.each([PHONES[0], DESKTOPS[0]])(
     '$width x $height: with picks in the tray, Use and Cancel stay on screen',
     async (vp) => {
@@ -196,6 +197,10 @@ describe('BlockImagePickerModal geometry with a large library', () => {
       await nextLayout();
 
       expect(tray.querySelectorAll('[role="listitem"]')).toHaveLength(2);
+      // The tray asks for the grid's own thumbnail url, so it is already loaded.
+      const trayImg = tray.querySelector('img');
+      expect(trayImg?.getAttribute('src')).toMatch(/\/width=320[,/]/);
+      expect(trayImg?.getAttribute('srcset')).toMatch(/\/width=512[,/]/);
       expectFooterOnScreen(dialog, vp);
       expect(dialog.scrollHeight).toBe(dialog.clientHeight);
       expect(dialog.scrollWidth).toBe(dialog.clientWidth);

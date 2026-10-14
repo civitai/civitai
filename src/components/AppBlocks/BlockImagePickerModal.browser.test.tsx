@@ -714,7 +714,7 @@ describe('BlockImagePickerModal: tray, jump to date, tile labels', () => {
       .toBeInTheDocument();
   });
 
-  // Regression: at origin/main there is no date bound, so no message for an empty one.
+  // Invariant guard (red at origin/main only because there is no date control).
   test('a date with nothing on or before it says so, and offers the way back', async () => {
     mocks.postedQuery.mockImplementation((input: { toDate?: Date }) => ({
       data: { pages: [{ items: input.toDate ? [] : [postedItem(1)] }] },
@@ -749,7 +749,42 @@ describe('BlockImagePickerModal: tray, jump to date, tile labels', () => {
 
     await expect.element(tile('Posted image 1')).toBeInTheDocument();
     await userEvent.fill(page.getByLabelText('Jump to date'), '0202-06-30');
+    // The input really holds the half-typed year, so the absence below is not a dropped fill.
+    await expect.element(page.getByLabelText('Jump to date')).toHaveValue('0202-06-30');
     await settle(800);
     for (const [input] of mocks.postedQuery.mock.calls) expect(input).toEqual({});
+  });
+
+  // A date is applied once it holds still, not on every change; an emptied input on blur.
+  test('a date is applied after it holds still, and an emptied input returns to newest on blur', async () => {
+    setPosted([postedItem(1)]);
+    openModal({ sources: ['posted'] });
+    await expect.element(tile('Posted image 1')).toBeInTheDocument();
+    const input = page.getByLabelText('Jump to date');
+
+    await userEvent.fill(input, '2024-06-30');
+    // Straight after the change: not applied yet.
+    expect(mocks.postedQuery).not.toHaveBeenCalledWith(
+      { toDate: expect.anything() },
+      expect.anything()
+    );
+    await vi.waitFor(
+      () =>
+        expect(mocks.postedQuery).toHaveBeenLastCalledWith(
+          { toDate: new Date(2024, 5, 30, 23, 59, 59, 999) },
+          expect.anything()
+        ),
+      { timeout: 5000 }
+    );
+
+    await userEvent.clear(input);
+    await expect.element(input).toHaveValue('');
+    // Click away: Tab inside a native date input only moves between its own parts.
+    await userEvent.click(page.getByText('Choose an image'));
+    expect(document.activeElement).not.toBe(input.element());
+    await vi.waitFor(
+      () => expect(mocks.postedQuery).toHaveBeenLastCalledWith({}, expect.anything()),
+      { timeout: 5000 }
+    );
   });
 });

@@ -14,7 +14,6 @@ import {
   Tooltip,
   UnstyledButton,
 } from '@mantine/core';
-import { useDebouncedValue } from '@mantine/hooks';
 import { IconCheck, IconX } from '@tabler/icons-react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import clsx from 'clsx';
@@ -29,7 +28,7 @@ import { useSignInToUpload } from '~/components/Login/useSignInToUpload';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { PICKER_JUMP_MIN_DATE } from '~/server/schema/blocks/block-image-picker.schema';
 import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
-import { formatDate } from '~/utils/date-helpers';
+import { formatDateNullable } from '~/utils/date-helpers';
 import { trpc } from '~/utils/trpc';
 import {
   isSamePick,
@@ -50,7 +49,7 @@ import {
 type PickableImage = {
   /** What the grid renders: a storage key (posted) or the output's own url (generated). */
   thumbnail: string;
-  /** Day posted or generated, formatted once per page rather than per render. */
+  /** Day posted or generated. */
   dateLabel?: string;
   pick: BlockPickedImageInfo;
 };
@@ -68,18 +67,13 @@ const EMPTY_MESSAGE: Record<BlockImagePickerSource, string> = {
   generated: 'None of your generated images can be used here yet.',
 };
 
-// `formatDate(undefined)` formats NOW, which would label an undated image with today.
-const dateLabelOf = (date: Date | undefined) => (date ? formatDate(date) : undefined);
-
 /** Space the grid keeps around its tiles, so a selected tile's ring is not clipped. */
 const GRID_INSET_PX = 4;
 const TRAY_THUMB_PX = 48;
 /**
- * Width every thumbnail (grid and tray) is requested at. Tiles are 88-247px (`pickerGridLayout`),
- * which the image CDN's 320 rung covers; `hiDpi` adds its 512 rung for a 2x screen. A width taken
- * from the tile would land a narrow phone's ~90px tile on the 96 rung, which has no 2x variant
- * (the next rung is 320), so a dense screen would get a blurry image. One width also lets the
- * tray reuse the grid's already-loaded image.
+ * Width every thumbnail (grid and tray) is requested at. A width taken from the tile can land a
+ * narrow phone on the 96 rung, which has no 2x variant (next rung 320), so a dense screen gets a
+ * blurry image. One width also lets the tray reuse the grid's image.
  */
 const THUMB_WIDTH = 320;
 /** How long a jump-to date has to hold still before the list is refetched for it. */
@@ -372,18 +366,20 @@ function JumpToDate({
 }) {
   const isMobile = useIsMobile({ type: 'media' });
   // What the input holds while the viewer edits it. A native date input reports `''` until every
-  // part of the date is filled in, and steps through a whole date per arrow-key press, so a date is
-  // applied once it has held still; an input left empty is applied when it loses focus.
+  // part of the date is filled in, and steps through a whole date per arrow-key press, so a whole
+  // date is applied once it has held still for `JUMP_DEBOUNCE_MS`.
   const [draft, setDraft] = useState(value);
   useEffect(() => setDraft(value), [value]);
-  const [settled] = useDebouncedValue(draft, JUMP_DEBOUNCE_MS);
+  const pending = useRef<number>();
   const apply = useRef(onChange);
   apply.current = onChange;
-  useEffect(() => {
-    if (settled !== value && jumpDateToBound(settled)) apply.current(settled);
-    // `value` is read, not watched: a change to it already resets the draft.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [settled]);
+  useEffect(() => () => window.clearTimeout(pending.current), []);
+
+  function applyNow(next: string) {
+    window.clearTimeout(pending.current);
+    onChange(next);
+  }
+
   const today = toDateInputValue(new Date());
   return (
     <Group gap="xs" mb="xs" wrap="nowrap" align="flex-end" className="shrink-0">
@@ -395,14 +391,23 @@ function JumpToDate({
         value={draft}
         min={toDateInputValue(PICKER_JUMP_MIN_DATE)}
         max={today}
-        onChange={(event) => setDraft(event.currentTarget.value)}
-        onBlur={() => {
-          if (draft === '' && value !== '') onChange('');
+        onChange={(event) => {
+          const next = event.currentTarget.value;
+          setDraft(next);
+          window.clearTimeout(pending.current);
+          if (jumpDateToBound(next)) {
+            pending.current = window.setTimeout(() => apply.current(next), JUMP_DEBOUNCE_MS);
+          }
+        }}
+        onBlur={(event) => {
+          // Emptied, not half-edited (a half-edited date also reads `''`, but as bad input).
+          const input = event.currentTarget;
+          if (input.value === '' && !input.validity.badInput && value !== '') applyNow('');
         }}
         className="max-w-[200px] flex-1"
       />
       {value ? (
-        <Button size="xs" variant="subtle" onClick={() => onChange('')}>
+        <Button size="xs" variant="subtle" onClick={() => applyNow('')}>
           Back to newest
         </Button>
       ) : (
@@ -435,7 +440,7 @@ function PostedGrid({
         page.items.flatMap((item): PickableImage[] => {
           const pick = projectPostedPick(item);
           return pick
-            ? [{ thumbnail: item.key, dateLabel: dateLabelOf(item.createdAt), pick }]
+            ? [{ thumbnail: item.key, dateLabel: formatDateNullable(item.createdAt), pick }]
             : [];
         })
       ),
@@ -488,7 +493,7 @@ function GeneratedGrid({ toDate, ...selection }: GridSelection & { toDate: Date 
         workflow.succeededOutput.flatMap((output): PickableImage[] => {
           const pick = projectGeneratedPick(output, browsingLevel);
           return pick
-            ? [{ thumbnail: output.url, dateLabel: dateLabelOf(workflow.createdAt), pick }]
+            ? [{ thumbnail: output.url, dateLabel: formatDateNullable(workflow.createdAt), pick }]
             : [];
         })
       ),
