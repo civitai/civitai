@@ -5,15 +5,20 @@ import type { ActiveStorylineMode } from '~/components/Storyline/StorylineModePr
 import type { StorylineChild } from '~/components/Storyline/storyline.queries';
 import {
   STORYLINE_DRAWER_FORK_STOPS,
+  useStorylineCanonAhead,
   useStorylineForkShares,
   useStorylinePathChildren,
 } from '~/components/Storyline/storyline.queries';
-import { getStorylineTombstoneLabel } from '~/components/Storyline/storyline-mode.utils';
+import {
+  buildSubwayStops,
+  getStorylineChapterName,
+} from '~/components/Storyline/storyline-mode.utils';
 import { useIsMobile } from '~/hooks/useIsMobile';
 
 /**
- * "Where am I": the path as a subway line, with the other branches leaving each stop. Any
- * chapter on the line can be jumped to; a branch off it is read by continuing into it.
+ * "Where am I": the story as a subway line, the path being read then the canon chapters after
+ * it, with the other branches leaving each stop. Any stop can be jumped to; a branch is read by
+ * continuing into it.
  */
 export function StorylineDrawer({
   storyline,
@@ -28,9 +33,19 @@ export function StorylineDrawer({
     () => path.chapters.slice(-STORYLINE_DRAWER_FORK_STOPS).map((c) => c.chapterId),
     [path.chapters]
   );
-  const childrenByChapterId = useStorylinePathChildren(forkStopIds, { enabled: drawerOpen });
+  const pathChildren = useStorylinePathChildren(forkStopIds, { enabled: drawerOpen });
   const endChapterId = path.chapters[path.chapters.length - 1]?.chapterId;
+  const canonAhead = useStorylineCanonAhead(endChapterId, { enabled: drawerOpen });
   const { data: endShares } = useStorylineForkShares(drawerOpen ? endChapterId : undefined);
+  const stops = useMemo(
+    () =>
+      buildSubwayStops(
+        path.chapters,
+        canonAhead.ahead,
+        new Map([...canonAhead.childrenByChapterId, ...pathChildren])
+      ),
+    [path.chapters, canonAhead, pathChildren]
+  );
 
   return (
     <Drawer
@@ -51,40 +66,38 @@ export function StorylineDrawer({
       <ol className="relative m-0 list-none p-0" data-testid="storyline-subway">
         <span
           aria-hidden
-          className="absolute bottom-3 left-[9px] top-3 w-0.5 bg-blue-5 dark:bg-blue-4"
+          className="absolute inset-y-3 left-[9px] w-0.5 bg-blue-5 dark:bg-blue-4"
         />
-        {path.chapters.map((chapter, i) => {
-          const nextOnPath = path.chapters[i + 1]?.chapterId;
-          const branches = (childrenByChapterId.get(chapter.chapterId) ?? []).filter(
-            (child) => child.chapterId !== nextOnPath
-          );
-          const isEnd = i === path.chapters.length - 1;
+        {stops.map(({ chapter, kind, branches }) => {
+          const isEnd = chapter.chapterId === endChapterId;
           const isCurrent = chapter.chapterId === currentChapterId;
+          const open = () =>
+            kind === 'path'
+              ? jumpToChapter(chapter.chapterId)
+              : continueTo(chapter, { track: false });
           return (
-            <li key={chapter.chapterId} className="relative">
+            <li key={chapter.chapterId} className="relative" data-stop={kind}>
               <UnstyledButton
-                onClick={() => jumpToChapter(chapter.chapterId)}
-                disabled={!chapter.post}
+                onClick={open}
+                disabled={kind === 'path' && !chapter.post}
                 aria-current={isCurrent ? 'step' : undefined}
                 className={clsx(
                   'relative flex w-full items-center gap-2 rounded py-2 pl-7 pr-2 text-left',
-                  isCurrent && 'bg-blue-0 font-bold dark:bg-dark-5',
-                  !chapter.post && 'cursor-default'
+                  isCurrent && 'bg-blue-0 font-bold dark:bg-dark-5'
                 )}
+                data-testid="storyline-stop"
+                data-chapter-id={chapter.chapterId}
               >
                 <span
                   aria-hidden
                   className={clsx(
                     'absolute left-1 top-1/2 size-3 -translate-y-1/2 rounded-full border-2 border-solid border-white dark:border-dark-7',
-                    chapter.post ? 'bg-blue-5' : 'bg-gray-5',
+                    !chapter.post ? 'bg-gray-5' : kind === 'ahead' ? 'bg-blue-2' : 'bg-blue-5',
                     isCurrent && 'ring-4 ring-blue-5/30'
                   )}
                 />
                 <Text size="sm" c={chapter.post ? undefined : 'dimmed'} lineClamp={2}>
-                  {chapter.depth + 1}.{' '}
-                  {chapter.post
-                    ? chapter.post.title || 'Untitled chapter'
-                    : getStorylineTombstoneLabel(chapter.tombstone)}
+                  {chapter.depth + 1}. {getStorylineChapterName(chapter)}
                 </Text>
                 {chapter.post?.username && (
                   <Text size="xs" c="dimmed" className="ml-auto shrink-0">
@@ -103,17 +116,15 @@ export function StorylineDrawer({
                           ? endShares.shares[child.chapterId] ?? 0
                           : undefined
                       }
-                      onClick={() => continueTo(child)}
+                      onClick={() => continueTo(child, { from: chapter.chapterId })}
                     />
                   ))}
-                  {isEnd && endShares && !endShares.enough && (
-                    <li>
-                      <Text size="xs" c="dimmed" data-testid="storyline-shares-pending">
-                        Not enough readers yet ({endShares.total} of {endShares.minChoices} choices)
-                      </Text>
-                    </li>
-                  )}
                 </ul>
+              )}
+              {isEnd && endShares && !endShares.enough && (
+                <Text size="xs" c="dimmed" pl={36} data-testid="storyline-shares-pending">
+                  Not enough readers yet ({endShares.total} of {endShares.minChoices} choices)
+                </Text>
               )}
             </li>
           );
@@ -142,9 +153,7 @@ function BranchRow({
         data-tombstone={child.tombstone ?? undefined}
       >
         <Text size="xs" c="dimmed" lineClamp={1} className="flex-1">
-          {child.post
-            ? child.post.title || 'Untitled chapter'
-            : getStorylineTombstoneLabel(child.tombstone)}
+          {getStorylineChapterName(child, { withAuthor: true })}
         </Text>
         {child.rank === 'canon' && (
           <Badge size="xs" variant="outline">

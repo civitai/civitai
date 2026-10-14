@@ -1,4 +1,4 @@
-import { keepPreviousData } from '@tanstack/react-query';
+import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { useEffect, useMemo } from 'react';
 import { useViewerBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useQueryImages } from '~/components/Image/image.utils';
@@ -63,6 +63,54 @@ export function useStorylineChildren(
   return { data, isLoading: query.isLoading };
 }
 
+/** Most canon chapters the drawer follows past the end of the path being read. */
+export const STORYLINE_CANON_AHEAD_LIMIT = 10;
+
+/**
+ * The canon line after a chapter, by following each stop's canon child. One read per stop, so it
+ * is capped; the services are adding a single read for this, which replaces the loop.
+ */
+export function useStorylineCanonAhead(
+  chapterId: number | undefined,
+  options: { enabled: boolean }
+) {
+  const enabled = useStorylinesEnabled() && options.enabled && !!chapterId;
+  const browsingLevel = useViewerBrowsingLevelDebounced();
+  const hiddenUserIds = useHiddenUserIds();
+  const utils = trpc.useUtils();
+  const query = useQuery({
+    queryKey: ['storyline-canon-ahead', chapterId, browsingLevel],
+    enabled,
+    queryFn: async () => {
+      const ahead: StorylineChild[] = [];
+      const childrenByChapterId = new Map<number, StorylineChild[]>();
+      let from = chapterId as number;
+      for (let i = 0; i < STORYLINE_CANON_AHEAD_LIMIT; i++) {
+        const children = await utils.storyline.getChildren.fetch({
+          chapterId: from,
+          browsingLevel,
+        });
+        childrenByChapterId.set(from, children);
+        const canon = children.find((child) => child.rank === 'canon');
+        if (!canon) break;
+        ahead.push(canon);
+        from = canon.chapterId;
+      }
+      return { ahead, childrenByChapterId };
+    },
+  });
+  return useMemo(() => {
+    if (!query.data) return { ahead: [], childrenByChapterId: new Map<number, StorylineChild[]>() };
+    const childrenByChapterId = new Map(
+      [...query.data.childrenByChapterId].map(([id, children]) => [
+        id,
+        hideHiddenUsersChapters(children, hiddenUserIds),
+      ])
+    );
+    return { ahead: hideHiddenUsersChapters(query.data.ahead, hiddenUserIds), childrenByChapterId };
+  }, [query.data, hiddenUserIds]);
+}
+
 /** One children read per chapter on the path, for the forks the drawer draws beside it. */
 export function useStorylinePathChildren(chapterIds: number[], options: { enabled: boolean }) {
   const enabled = useStorylinesEnabled() && options.enabled;
@@ -117,6 +165,17 @@ export function useStorylinePathImages(chapters: StorylinePathChapter[] | undefi
     isLoading: postIds.length > 0 && isLoading,
     isFetching: paging.loading,
   };
+}
+
+/** Whether this reader may continue a chapter with a post of theirs, and at what price. */
+export function useStorylineContinueTerms(parentPostId: number | undefined) {
+  const enabled = useStorylinesEnabled() && !!parentPostId;
+  const query = trpc.placement.getStorylineContinuePrice.useQuery(
+    { parentPostId: parentPostId as number },
+    { enabled, retry: false }
+  );
+  // Until the placement routes are wired the read refuses; that reads as "no terms", not an error.
+  return query.data ?? null;
 }
 
 // The procedures below are owned by the storyline services and are not on the router yet; these

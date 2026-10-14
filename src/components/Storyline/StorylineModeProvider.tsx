@@ -30,7 +30,15 @@ export type ActiveStorylineMode = {
   images: ImagesInfiniteModel[];
   chapterIdOfImage: (imageId: number) => number | undefined;
   jumpToChapter: (chapterId: number) => void;
-  continueTo: (child: Pick<StorylineChild, 'chapterId'>) => void;
+  /**
+   * Read on into another chapter. `from` is the chapter it continues, when that is not the end
+   * of the path (a branch off an earlier stop); `track: false` for a jump along the line, which
+   * is not a choice at a fork.
+   */
+  continueTo: (
+    child: Pick<StorylineChild, 'chapterId'>,
+    options?: { from?: number; track?: boolean }
+  ) => void;
   endOpen: boolean;
   setEndOpen: (open: boolean) => void;
   drawerOpen: boolean;
@@ -151,9 +159,12 @@ export function StorylineModeProvider({
   );
 
   const continueTo = useCallback(
-    (child: Pick<StorylineChild, 'chapterId'>) => {
-      if (chapterId)
-        tracking.trackBranchChoice({ fromChapterId: chapterId, toChapterId: child.chapterId });
+    (
+      child: Pick<StorylineChild, 'chapterId'>,
+      { from = chapterId, track = true }: { from?: number; track?: boolean } = {}
+    ) => {
+      if (from && track)
+        tracking.trackBranchChoice({ fromChapterId: from, toChapterId: child.chapterId });
       setDrawerOpen(false);
       setTrusted({ chapterId: child.chapterId, imageId: routeImageId });
       setPendingChapterId(child.chapterId);

@@ -279,6 +279,21 @@ describe('StorylineModeProvider', () => {
     expect([active().endOpen, active().drawerOpen]).toEqual([false, false]);
   });
 
+  it('a branch taken from an earlier stop is recorded against that stop and keeps the reader in while it loads', () => {
+    open(30, 3);
+    mocks.imagesFetching = true;
+    act(() => active().continueTo({ chapterId: 9 }, { from: 2 }));
+    // Image 30 is not on 9's path, and the branch has not resolved yet.
+    expect(mode.active).toBe(true);
+    expect(mocks.trackBranchChoice).toHaveBeenCalledWith({ fromChapterId: 2, toChapterId: 9 });
+  });
+
+  it('a jump along the canon line is not recorded as a choice at a fork', () => {
+    open(30, 3);
+    act(() => active().continueTo({ chapterId: 4 }, { track: false }));
+    expect(mocks.trackBranchChoice).not.toHaveBeenCalled();
+  });
+
   it('leaving drops the chapter from the URL and closes the end view', () => {
     open(30, 3);
     act(() => active().setEndOpen(true));

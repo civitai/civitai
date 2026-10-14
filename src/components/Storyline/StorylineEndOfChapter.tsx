@@ -12,13 +12,21 @@ import { IconArrowRight, IconPlus } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { StorylineEarlyAccessModal } from '~/components/Storyline/StorylineEarlyAccessModal';
+import {
+  openStorylineContinue,
+  STORYLINE_CONTINUE_READY,
+} from '~/components/Storyline/storyline-continue';
 import type { StorylineChild } from '~/components/Storyline/storyline.queries';
 import {
   useStorylineChildren,
+  useStorylineContinueTerms,
   useStorylineForkShares,
   useStorylineTracking,
 } from '~/components/Storyline/storyline.queries';
-import { getStorylineTombstoneLabel } from '~/components/Storyline/storyline-mode.utils';
+import {
+  getStorylineChapterName,
+  getStorylineTombstoneLabel,
+} from '~/components/Storyline/storyline-mode.utils';
 
 const rankLabel: Record<StorylineChild['rank'], string | null> = {
   canon: 'Canon',
@@ -48,6 +56,7 @@ export function StorylineEndOfChapter({
   chapterId,
   storylineId,
   chapterTombstone,
+  parentPostId,
   onContinue,
   onClose,
 }: {
@@ -56,6 +65,8 @@ export function StorylineEndOfChapter({
   chapterTombstone?: Parameters<typeof getStorylineTombstoneLabel>[0] | null;
   onContinue: (child: StorylineChild) => void;
   onClose?: () => void;
+  /** The post of the chapter that ends here; absent when it is a tombstone. */
+  parentPostId?: number;
 }) {
   const { data: children, isLoading } = useStorylineChildren(chapterId);
   const { data: forkShares } = useStorylineForkShares(chapterId);
@@ -141,6 +152,9 @@ export function StorylineEndOfChapter({
         >
           Create the next section
         </Button>
+        {STORYLINE_CONTINUE_READY && parentPostId && (
+          <StorylineContinueWithPost parentPostId={parentPostId} />
+        )}
       </div>
     </div>
   );
@@ -158,9 +172,7 @@ function ForkCard({
   big?: boolean;
 }) {
   const label = rankLabel[child.rank];
-  const title = child.post
-    ? child.post.title || 'Untitled chapter'
-    : getStorylineTombstoneLabel(child.tombstone);
+  const title = getStorylineChapterName(child, { withAuthor: true });
 
   return (
     <UnstyledButton
@@ -190,9 +202,10 @@ function ForkCard({
             </Badge>
           )}
         </div>
-        {child.post?.username && (
+        {child.post?.title && (
           <Text size="xs" c="dimmed">
-            by {child.post.username}
+            Chapter {child.depth + 1}
+            {child.post.username ? ` by ${child.post.username}` : ''}
           </Text>
         )}
         {share != null && (
@@ -210,5 +223,33 @@ function ForkCard({
         </Button>
       )}
     </UnstyledButton>
+  );
+}
+
+const closedCopy = {
+  closed: 'This storyline is not taking continuations right now.',
+  collaboratorsOnly: "Only the storyline's collaborators can continue it.",
+} as const;
+
+/** Submit a post the reader already made as the next chapter, through the storyline's review. */
+export function StorylineContinueWithPost({ parentPostId }: { parentPostId: number }) {
+  const terms = useStorylineContinueTerms(parentPostId);
+  if (!terms) return null;
+  if (!terms.open)
+    return terms.closedReason ? (
+      <Text size="sm" c="dimmed" ta="center" data-testid="storyline-continue-closed">
+        {closedCopy[terms.closedReason]}
+      </Text>
+    ) : null;
+
+  return (
+    <Button
+      variant="default"
+      radius="md"
+      onClick={() => openStorylineContinue({ parentPostId })}
+      data-testid="storyline-continue-with-post"
+    >
+      Continue with a post you made · {terms.price > 0 ? `${terms.price} Buzz` : 'Free'}
+    </Button>
   );
 }

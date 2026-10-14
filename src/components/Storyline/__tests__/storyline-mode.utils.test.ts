@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import { isAdjacent } from '~/components/Image/DetailV2/image-detail-carousel.utils';
 import {
+  buildSubwayStops,
   getPathImagesPaging,
+  getStorylineChapterName,
   getStorylineStep,
   getStorylineWalk,
   hideHiddenUsersChapters,
@@ -247,5 +249,43 @@ describe('isAdjacent, boundaries', () => {
     expect(isAdjacent(2, 0, 5, true)).toBe(false);
     expect(isAdjacent(0, 0, 1, false)).toBe(true);
     expect(isAdjacent(1, 0, 1, true)).toBe(false);
+  });
+});
+
+describe('buildSubwayStops', () => {
+  it('runs the path then the canon line ahead, hanging other continuations off their stop', () => {
+    const path = [visible(1, 0, 100), visible(2, 1, 200)];
+    const ahead = [visible(3, 2, 300), visible(4, 3, 400)];
+    const children = new Map([
+      [1, [visible(2, 1, 200), visible(8, 1, 800)]],
+      [2, [visible(3, 2, 300), visible(9, 2, 900)]],
+      [4, [visible(5, 4, 500), visible(6, 4, 600)]],
+    ]);
+    const stops = buildSubwayStops(path, ahead, children);
+    expect(
+      stops.map((s) => [s.chapter.chapterId, s.kind, s.branches.map((b) => b.chapterId)])
+    ).toEqual([
+      [1, 'path', [8]],
+      [2, 'path', [9]],
+      [3, 'ahead', []],
+      // The end of the line: every continuation is a branch.
+      [4, 'ahead', [5, 6]],
+    ]);
+  });
+});
+
+describe('getStorylineChapterName', () => {
+  it('uses the title, else the number, adding the author only where asked', () => {
+    const titled = {
+      ...visible(2, 1, 200),
+      post: { ...visible(2, 1, 200).post!, title: 'The painting' },
+    };
+    const untitled = { ...visible(2, 1, 200), post: { ...visible(2, 1, 200).post!, title: null } };
+    expect(getStorylineChapterName(titled, { withAuthor: true })).toBe('The painting');
+    expect(getStorylineChapterName(untitled, { withAuthor: true })).toBe('Chapter 2 by author');
+    expect(getStorylineChapterName(untitled)).toBe('Chapter 2');
+    expect(getStorylineChapterName(hidden(3, 2))).toBe(
+      'This chapter is hidden by your browsing level'
+    );
   });
 });

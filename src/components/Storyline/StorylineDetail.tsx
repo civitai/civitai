@@ -20,16 +20,19 @@ export function StorylineBanner({ imageId }: { imageId: number }) {
   if (!storyline.active) return null;
 
   const { depth } = chapterPosition(storyline, imageId);
-  const last = storyline.path.chapters[storyline.path.chapters.length - 1];
   const where = storyline.endOpen
     ? 'End of chapter'
     : depth != null
-    ? `Chapter ${depth + 1} of ${last.depth + 1}`
+    ? `Chapter ${depth + 1}`
     : undefined;
 
   return (
     <div
-      className="flex flex-wrap items-center gap-x-3 gap-y-1 bg-gradient-to-r from-violet-7 to-blue-7 px-3 py-1.5 text-white"
+      className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-1.5 text-white"
+      style={{
+        background:
+          'linear-gradient(90deg, var(--mantine-color-violet-7), var(--mantine-color-blue-7))',
+      }}
       data-testid="storyline-banner"
     >
       <Text size="sm" fw={700}>
@@ -108,6 +111,7 @@ export function StorylineStageOverlay({
           chapterId={end.chapterId}
           storylineId={storyline.path.storyline.id}
           chapterTombstone={end.tombstone}
+          parentPostId={end.post?.id}
           onContinue={storyline.continueTo}
           onClose={() => storyline.setEndOpen(false)}
         />

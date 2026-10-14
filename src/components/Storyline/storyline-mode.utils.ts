@@ -148,3 +148,45 @@ export function getPathImagesPaging({
   const wantsMore = hasNextPage && !isError && pages < maxPages;
   return { fetchNext: wantsMore && !isFetching, loading: isFetching || wantsMore };
 }
+
+/** A chapter's name: its post's title, else its number (and author, where nothing else shows it). */
+export function getStorylineChapterName(
+  chapter: Pick<StorylinePathChapter, 'depth' | 'post' | 'tombstone'>,
+  { withAuthor = false }: { withAuthor?: boolean } = {}
+) {
+  if (!chapter.post) return getStorylineTombstoneLabel(chapter.tombstone ?? 'deleted');
+  const number = `Chapter ${chapter.depth + 1}`;
+  const author = withAuthor && chapter.post.username ? ` by ${chapter.post.username}` : '';
+  return chapter.post.title || `${number}${author}`;
+}
+
+type SubwayChapter = Pick<StorylinePathChapter, 'chapterId' | 'depth' | 'post' | 'tombstone'>;
+export type SubwayStop<T extends SubwayChapter> = {
+  chapter: SubwayChapter;
+  /** On the path being read (walked), or on the canon line ahead of its end. */
+  kind: 'path' | 'ahead';
+  /** Continuations leaving this stop other than the next stop on the line. */
+  branches: T[];
+};
+
+/**
+ * The drawer's line: the path being read, then the canon chapters after its end, with every
+ * other continuation hung off the stop it leaves from.
+ */
+export function buildSubwayStops<T extends SubwayChapter>(
+  path: SubwayChapter[],
+  ahead: SubwayChapter[],
+  childrenByChapterId: ReadonlyMap<number, T[]>
+): SubwayStop<T>[] {
+  const line = [
+    ...path.map((chapter) => ({ chapter, kind: 'path' as const })),
+    ...ahead.map((chapter) => ({ chapter, kind: 'ahead' as const })),
+  ];
+  return line.map((stop, i) => {
+    const next = line[i + 1]?.chapter.chapterId;
+    const branches = (childrenByChapterId.get(stop.chapter.chapterId) ?? []).filter(
+      (child) => child.chapterId !== next
+    );
+    return { ...stop, branches };
+  });
+}
