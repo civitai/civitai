@@ -40,7 +40,11 @@ const AUTHOR = 7;
 const r = dbMock.dbRead;
 
 /** A signed-in reader granted the storylines flag, on a domain that allows mature content. */
-function callerFor(userId: number, permissions: string[] = ['storylines']) {
+function callerFor(
+  userId: number,
+  permissions: string[] = ['storylines'],
+  user: Record<string, unknown> = {}
+) {
   return storylineRouter.createCaller({
     user: {
       id: userId,
@@ -49,6 +53,7 @@ function callerFor(userId: number, permissions: string[] = ['storylines']) {
       browsingLevel: NsfwLevel.PG,
       // Onboarded, so the write procedures' guards let the call reach the service.
       onboarding: OnboardingSteps.Buzz,
+      ...user,
     },
     acceptableOrigin: true,
     tokenScope: TokenScope.Full,
@@ -71,6 +76,8 @@ const xStory = {
   status: 'Ongoing',
   maxNsfwLevel: NsfwLevel.X,
   tosViolation: false,
+  nsfwLevel: 0,
+  moderatorNsfwLevel: null,
   createdAt: new Date('2026-10-01'),
   user: { id: OWNER, username: 'owner', ...notBanned },
   chapters: [{ id: 1, postId: 101, post: { nsfwLevel: NsfwLevel.X } }],
@@ -351,5 +358,38 @@ describe('storyline router: chapter levels and the ceiling floor', () => {
     w.storyline.update.mockResolvedValue(xStory as never);
     await callerFor(OWNER).update({ id: 10, maxNsfwLevel: NsfwLevel.X });
     expect(w.storyline.update).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('storyline router: moderating a title', () => {
+  it('is for moderators only, the owner included', async () => {
+    dbMock.dbWrite.storyline.findUnique.mockResolvedValue({ tosViolationByScan: true } as never);
+    await expect(
+      callerFor(OWNER).moderateTitle({ id: 10, liftScanTakedown: { reviewedTitle: 'A' } })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(dbMock.dbWrite.storyline.updateMany).not.toHaveBeenCalled();
+  });
+
+  const moderator = () => callerFor(99, [], { isModerator: true });
+
+  it('reaches the service for a moderator', async () => {
+    dbMock.dbWrite.storyline.findUnique.mockResolvedValue({ tosViolationByScan: false } as never);
+    dbMock.dbWrite.storyline.updateMany.mockResolvedValue({ count: 1 } as never);
+    await moderator().moderateTitle({ id: 10, moderatorNsfwLevel: NsfwLevel.R });
+    expect(dbMock.dbWrite.storyline.updateMany).toHaveBeenCalledWith({
+      where: { id: 10 },
+      data: { moderatorNsfwLevel: NsfwLevel.R },
+    });
+  });
+
+  it.each([
+    ['nothing to change', { id: 10 }],
+    ['a lift without the reviewed title', { id: 10, liftScanTakedown: {} }],
+    ['a rating that is not one level', { id: 10, moderatorNsfwLevel: 0 }],
+  ])('refuses %s before the service', async (_name, input) => {
+    await expect(moderator().moderateTitle(input as never)).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+    });
+    expect(dbMock.dbWrite.storyline.findUnique).not.toHaveBeenCalled();
   });
 });

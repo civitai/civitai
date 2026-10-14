@@ -28,7 +28,8 @@ export type TextScanEntityType =
   | 'User'
   | 'UserProfile'
   | 'Crucible'
-  | 'Collection';
+  | 'Collection'
+  | 'Storyline';
 
 export type TextScanField = { heading: string; text: string | null | undefined };
 

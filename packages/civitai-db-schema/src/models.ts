@@ -5953,6 +5953,10 @@ export interface Storyline {
   whoCanContinue: StorylineWhoCanContinue;
   maxNsfwLevel: number;
   tosViolation: boolean;
+  tosViolationByScan: boolean;
+  scanFlagLiftedTextHash: string | null;
+  nsfwLevel: number;
+  moderatorNsfwLevel: number | null;
   createdAt: Date;
   updatedAt: Date;
   coverImageId: number | null;

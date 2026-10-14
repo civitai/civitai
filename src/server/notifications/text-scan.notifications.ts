@@ -1,4 +1,5 @@
 import { NotificationCategory } from '~/server/common/enums';
+import { storylineUrl } from '~/components/Storyline/storyline-routes';
 import { createNotificationProcessor } from '~/server/notifications/base.notifications';
 import { browsingLevelLabels } from '~/shared/constants/browsingLevel.constants';
 
@@ -29,6 +30,34 @@ export const textScanNotifications = createNotificationProcessor({
       const named = title ? `${noun} "${title}"` : noun;
       return {
         message: `Your ${named} is now rated ${label} based on its text. If you believe this is a mistake, you can dispute the rating on its page.`,
+        url,
+      };
+    },
+  },
+
+  // A storyline has no dispute on its page: its owner edits the title, which is scanned again.
+  'storyline-title-moderated': {
+    displayName: 'Storyline title moderated',
+    category: NotificationCategory.System,
+    toggleable: false,
+    prepareMessage: ({ details }) => {
+      if (!details) return undefined;
+      const { storylineId, title, level, takenDown } = details as {
+        storylineId: number;
+        title: string;
+        level?: number;
+        takenDown?: boolean;
+      };
+      const url = storylineUrl(storylineId);
+      const recheck = 'Edit the title to have it checked again.';
+      if (takenDown)
+        return {
+          message: `Your storyline "${title}" is hidden from other readers because of its title. ${recheck}`,
+          url,
+        };
+      const label = browsingLevelLabels[level as keyof typeof browsingLevelLabels] ?? '?';
+      return {
+        message: `Your storyline "${title}" is now rated ${label} because of its title, so only readers who browse at that level see it. ${recheck}`,
         url,
       };
     },
