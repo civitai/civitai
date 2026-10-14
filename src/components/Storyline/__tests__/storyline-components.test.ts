@@ -55,7 +55,20 @@ vi.mock('~/utils/notifications', async (importOriginal) => ({
 }));
 // The search index and avatar fetches are not what these tests are about.
 vi.mock('~/components/Search/QuickSearchDropdown', () => ({
-  QuickSearchDropdown: () => React.createElement('input', { 'aria-label': 'user search' }),
+  QuickSearchDropdown: ({
+    onItemSelected,
+  }: {
+    onItemSelected: (entity: string, item: { id: number; username: string }) => void;
+  }) =>
+    React.createElement(
+      'div',
+      { 'aria-label': 'user search' },
+      React.createElement(
+        'button',
+        { type: 'button', onClick: () => onItemSelected('users', { id: 60, username: 'newbie' }) },
+        'Pick user 60'
+      )
+    ),
 }));
 vi.mock('~/components/UserAvatar/UserAvatar', () => ({
   UserAvatar: ({ userId }: { userId: number }) =>
@@ -481,11 +494,27 @@ describe('StorylineCollaboratorsPanel', () => {
       username: `u${i}`,
     }));
     const el = panel({ collaborators: full });
+    act(() => button(el, 'Pick user 60').click());
 
     expect(visibleText(el)).toContain(
       `A storyline can have up to ${STORYLINE_MAX_COLLABORATORS} endorsed collaborators.`
     );
     expect(button(el, 'Endorse').disabled).toBe(true);
+  });
+
+  it('endorses the picked user below the cap, then clears the pick', () => {
+    const added: number[] = [];
+    const el = panel({ onAdd: (user) => added.push(user.id) });
+    expect(button(el, 'Endorse').disabled).toBe(true);
+
+    act(() => button(el, 'Pick user 60').click());
+    const endorse = button(el, 'Endorse');
+    expect(endorse.disabled).toBe(false);
+    act(() => endorse.click());
+
+    expect(added).toEqual([60]);
+    expect(button(el, 'Endorse').disabled).toBe(true);
+    expect(el.querySelector('[aria-label="user search"]')).not.toBeNull();
   });
 
   it('shows the list without controls to someone who cannot manage it', () => {
