@@ -199,6 +199,8 @@ export function buildCreatorScoreUnlocks(inputs: CreatorScoreUnlockInputs): Crea
   return unlocks.filter((unlock) => unlock.minScore > 0).sort((a, b) => a.minScore - b.minScore);
 }
 
+// Reads one synthetic entity, so a PERCENTAGE rollout of the flag could read as public early and put
+// the unlock in tier notifications. Launch it by setting the flag's `enabled`, not by percentage.
 async function isServicesPublic() {
   const fliptKey = getFeatureFliptKey('creatorServices');
   if (!fliptKey) return false;

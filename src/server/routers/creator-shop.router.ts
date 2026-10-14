@@ -264,7 +264,11 @@ export const creatorShopRouter = router({
     .mutation(({ input, ctx }) => {
       const { userId: targetUserId, ...patch } = input;
       const userId = ctx.user.isModerator && targetUserId ? targetUserId : ctx.user.id;
-      return updateCreatorShopSettings({ ...patch, userId });
+      return updateCreatorShopSettings({
+        ...patch,
+        userId,
+        servicesEnabled: ctx.features.creatorServices,
+      });
     }),
   // #endregion
 

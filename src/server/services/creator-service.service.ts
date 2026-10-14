@@ -1,5 +1,6 @@
 import type { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { assertCreatorShopVisible } from '~/server/services/creator-shop.service';
 import type {
   GetShopServiceOfferingsInput,
   SetServiceOfferingStatusInput,
@@ -95,12 +96,17 @@ export function getMyServiceOfferings(sellerId: number) {
   });
 }
 
-export function getShopServiceOfferings({ userId }: GetShopServiceOfferingsInput) {
+export async function getShopServiceOfferings({
+  userId,
+  viewerId,
+  isModerator,
+}: GetShopServiceOfferingsInput & { viewerId?: number; isModerator?: boolean }) {
+  await assertCreatorShopVisible({ userId, viewerId, isModerator });
   return dbRead.serviceOffering.findMany({
     where: {
       sellerId: userId,
       status: ServiceOfferingStatus.Active,
-      seller: { bannedAt: null, deletedAt: null },
+      seller: { bannedAt: null, deletedAt: null, muted: false },
     },
     select: serviceOfferingSelect,
     orderBy: { createdAt: 'asc' },
@@ -129,8 +135,9 @@ export async function upsertServiceOffering({
     });
   }
 
+  const owned = { id, sellerId, status: { not: ServiceOfferingStatus.Removed } };
   const existing = await dbWrite.serviceOffering.findFirst({
-    where: { id, sellerId, status: { not: ServiceOfferingStatus.Removed } },
+    where: owned,
     select: { status: true },
   });
   if (!existing) throw throwNotFoundError('Service not found');
@@ -138,9 +145,14 @@ export async function upsertServiceOffering({
   const activating = publish && existing.status !== ServiceOfferingStatus.Active;
   if (activating) await assertUnderActiveOfferingCap(sellerId);
 
-  return dbWrite.serviceOffering.update({
-    where: { id },
+  // Re-scoped so a remove that lands after the read above can't be undone by this write.
+  const { count } = await dbWrite.serviceOffering.updateMany({
+    where: owned,
     data: { ...fields, ...(activating ? { status: ServiceOfferingStatus.Active } : {}) },
+  });
+  if (count === 0) throw throwNotFoundError('Service not found');
+  return dbWrite.serviceOffering.findUniqueOrThrow({
+    where: { id },
     select: serviceOfferingSelect,
   });
 }

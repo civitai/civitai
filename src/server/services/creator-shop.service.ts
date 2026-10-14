@@ -56,6 +56,7 @@ import {
   CosmeticType,
   MediaType,
   ModelStatus,
+  ServiceOfferingStatus,
 } from '~/shared/utils/prisma/enums';
 import type {
   CosmeticPurchaseMeta,
@@ -1230,6 +1231,30 @@ export const getCreatorShopManageItems = async ({ userId }: { userId: number }) 
 // Public: creator storefront
 // ---------------------------------------------------------------------------
 
+/**
+ * Owners and moderators always see a shop; a private shop, or a block either way, is NotFound to
+ * others. Returns the viewer's blocked-pair ids, which the storefront also filters resales by.
+ */
+export async function assertCreatorShopVisible({
+  userId,
+  viewerId,
+  isModerator,
+  settings,
+}: {
+  userId: number;
+  viewerId?: number;
+  isModerator?: boolean;
+  settings?: CreatorShopSettings;
+}): Promise<number[]> {
+  if (viewerId === userId || isModerator) return [];
+  const { enabled } = settings ?? (await getCreatorShopSettings({ userId }));
+  if (enabled !== true) throw throwNotFoundError('Shop not found');
+  // Same NotFound as a private shop so the block isn't revealed.
+  const viewerPairIds = viewerId ? await getBlockedPairIds(viewerId) : [];
+  if (viewerPairIds.includes(userId)) throw throwNotFoundError('Shop not found');
+  return viewerPairIds;
+}
+
 export const getCreatorShop = async ({
   userId,
   viewerId,
@@ -1249,18 +1274,9 @@ export const getCreatorShop = async ({
   preview?: boolean;
 }) => {
   const settings = await getCreatorShopSettings({ userId });
-  // Owners and moderators can always see the shop (to edit / moderate); a
-  // disabled shop is hidden from everyone else.
-  if (!preview && viewerId !== userId && !isModerator && settings.enabled !== true)
-    throw throwNotFoundError('Shop not found');
-
-  // A block between viewer and shop owner (either direction) hides the whole
-  // shop — same NotFound as a private shop so the block isn't revealed.
-  const viewerPairIds =
-    !preview && !isModerator && viewerId && viewerId !== userId
-      ? await getBlockedPairIds(viewerId)
-      : [];
-  if (viewerPairIds.includes(userId)) throw throwNotFoundError('Shop not found');
+  const viewerPairIds = preview
+    ? []
+    : await assertCreatorShopVisible({ userId, viewerId, isModerator, settings });
 
   const now = new Date();
   // The resale rows ARE the permission and the terms: a listing survives its
@@ -2629,8 +2645,9 @@ export const getCreatorShopSettings = async ({
 
 export const updateCreatorShopSettings = async ({
   userId,
+  servicesEnabled = false,
   ...patch
-}: UpdateCreatorShopSettingsInput & { userId: number }) => {
+}: UpdateCreatorShopSettingsInput & { userId: number; servicesEnabled?: boolean }) => {
   // The merge happens in Postgres, over the stored column. Reading the blob into JS
   // and writing the whole object back replaced every other settings key with the value
   // it held at read time, discarding any write that landed in between (a notice
@@ -2638,7 +2655,13 @@ export const updateCreatorShopSettings = async ({
   const settings = await dbWrite.$transaction(async (tx) => {
     if (patch.enabled === true) {
       // Don't let a creator publish an empty shop — there'd be nothing to show.
-      const itemCount = await tx.cosmeticShopItem.count({ where: { addedById: userId } });
+      const itemCount =
+        (await tx.cosmeticShopItem.count({ where: { addedById: userId } })) ||
+        (servicesEnabled
+          ? await tx.serviceOffering.count({
+              where: { sellerId: userId, status: ServiceOfferingStatus.Active },
+            })
+          : 0);
       if (itemCount === 0)
         throw throwBadRequestError('Add at least one item to your shop before publishing.');
     }

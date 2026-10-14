@@ -47,5 +47,11 @@ export const creatorServiceRouter = router({
     .use(isFlagProtected('creatorShop'))
     .use(isFlagProtected('creatorServices'))
     .input(getShopServiceOfferingsSchema)
-    .query(({ input }) => getShopServiceOfferings(input)),
+    .query(({ input, ctx }) =>
+      getShopServiceOfferings({
+        ...input,
+        viewerId: ctx.user?.id,
+        isModerator: ctx.user?.isModerator,
+      })
+    ),
 });
