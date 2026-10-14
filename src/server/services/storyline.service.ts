@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { env } from '~/env/server';
+import { NsfwLevel } from '~/server/common/enums';
 import { REDIS_KEYS } from '~/server/redis/client';
 import { simpleUserSelect } from '~/server/selectors/user.selector';
 import { bustFetchThroughCache, fetchThroughCache } from '~/server/utils/cache-helpers';
@@ -32,6 +33,7 @@ import {
 } from '~/shared/utils/storyline';
 import type { StorylineStatus, StorylineWhoCanContinue } from '~/shared/utils/prisma/enums';
 import { STORYLINE_REFUSALS } from '~/shared/utils/storyline-placement';
+import { getHighestBrowsingLevelBit } from '~/shared/constants/browsingLevel.constants';
 
 type Db = Prisma.TransactionClient | typeof dbWrite;
 type Viewer = { id: number; isModerator?: boolean } | undefined;
@@ -438,14 +440,17 @@ export async function updateStoryline({
   userId: number;
   isModerator?: boolean;
 }) {
-  await getOwnedStoryline({ storylineId: id, userId, isModerator });
-  if (maxNsfwLevel !== undefined && !isStorylineCeilingLevel(maxNsfwLevel))
-    throw throwBadRequestError('Invalid maximum rating');
+  const current = await getOwnedStoryline({ storylineId: id, userId, isModerator });
+  if (maxNsfwLevel !== undefined) {
+    if (!isStorylineCeilingLevel(maxNsfwLevel))
+      throw throwBadRequestError('Invalid maximum rating');
+    if (maxNsfwLevel < current.maxNsfwLevel) await assertCeilingKeepsFirstChapter(id, maxNsfwLevel);
+  }
   if (title !== undefined)
     await throwOnBlockedUserContent(title, { isModerator, surface: 'storyline' });
 
-  // Lowering the ceiling hides chapters above it at read time; nothing is deleted, so raising it
-  // again brings them back.
+  // Lowering the ceiling hides later chapters above it at read time; nothing is deleted, so
+  // raising it again brings them back.
   // Closing a Complete storyline to continuations is left to the placement layer reading the
   // status, so there is no second switch here to disagree with it.
   return dbWrite.storyline.update({
@@ -453,6 +458,29 @@ export async function updateStoryline({
     data: { title, status, maxNsfwLevel, whoCanContinue },
     select: storylineSelect,
   });
+}
+
+/**
+ * A lowered ceiling may not drop below chapter 1's rating: that would tombstone the story's
+ * opening for every reader. Later chapters may fall above it and are hidden. When chapter 1 is
+ * gone, taken down, blocked or not yet rated there is nothing to keep, so any valid ceiling is
+ * accepted. Only lowering is checked, so an owner whose chapter 1 was re-rated upwards can still
+ * raise the ceiling towards it.
+ */
+async function assertCeilingKeepsFirstChapter(storylineId: number, maxNsfwLevel: number) {
+  // The primary: the write that follows must not be judged on a replica's older rating.
+  const root = await dbWrite.storylineChapter.findFirst({
+    where: { storylineId, depth: 0 },
+    select: { post: { select: { nsfwLevel: true, tosViolation: true } } },
+  });
+  const post = root?.post;
+  if (!post || post.tosViolation || !post.nsfwLevel) return;
+  const highest = getHighestBrowsingLevelBit(post.nsfwLevel);
+  if (highest === NsfwLevel.Blocked) return;
+  if (highest > maxNsfwLevel)
+    throw throwBadRequestError(
+      "The maximum rating cannot be below your first chapter's rating. Choose a higher rating"
+    );
 }
 
 /** The owner continuing their own story directly; everyone else continues through a placement. */
@@ -716,6 +744,7 @@ async function getStorylineMainPath({
   browsingLevel,
   blockedUserIds,
 }: {
+  /** Where the route starts: chapter 1 for the whole route, any chapter for the canon after it. */
   rootChapterId: number;
   storyline: { maxNsfwLevel: number };
   viewer: Viewer;
@@ -764,6 +793,71 @@ async function getStorylineMainPath({
     });
     return { ...toPathChapter(row, post, tombstone), childCount: childCountById.get(row.id) ?? 0 };
   });
+}
+
+/**
+ * The owner's main route after `chapterId`: its canon child, that chapter's canon child, and so on,
+ * at most `STORYLINE_PATH_LIMIT - 1` chapters. Tombstones are kept, as in the reading path, so the
+ * route stays followable past a removed chapter. Empty when the chapter has no canon child.
+ */
+export async function getStorylineCanonAhead({
+  chapterId,
+  viewer,
+  browsingLevel,
+}: {
+  chapterId: number;
+  viewer: Viewer;
+  browsingLevel: number;
+}) {
+  const chapter = await dbRead.storylineChapter.findUnique({
+    where: { id: chapterId },
+    select: { storylineId: true },
+  });
+  if (!chapter) throw throwNotFoundError('Chapter not found');
+  const { storyline, blockedUserIds } = await getStorylineForRead(
+    chapter.storylineId,
+    viewer,
+    browsingLevel
+  );
+  const route = await getStorylineMainPath({
+    rootChapterId: chapterId,
+    storyline,
+    viewer,
+    browsingLevel,
+    blockedUserIds,
+  });
+  // The route starts at the chapter asked about; the reader is already on it.
+  return route.slice(1);
+}
+
+/**
+ * Every chapter's rating, for the owner choosing a ceiling: so the settings can warn how many
+ * chapters a lower one would hide. Owner and moderators only; the ratings of chapters a reader is
+ * not shown are not theirs to see. `rootNsfwLevel` is chapter 1's, null when it is gone or not
+ * yet rated; `chapterLevels` are the later chapters' rated posts, in depth order.
+ */
+export async function getStorylineChapterLevels({
+  id,
+  userId,
+  isModerator,
+}: {
+  id: number;
+  userId: number;
+  isModerator?: boolean;
+}) {
+  await getOwnedStoryline({ storylineId: id, userId, isModerator });
+  const rows = await dbRead.$queryRaw<{ depth: number; nsfwLevel: number }[]>`
+    SELECT c.depth, p."nsfwLevel"
+    FROM "StorylineChapter" c
+    JOIN "Post" p ON p.id = c."postId"
+    WHERE c."storylineId" = ${id} AND p."nsfwLevel" <> 0
+    ORDER BY c.depth, c.id
+  `;
+  const root = rows.find((row) => row.depth === 0);
+  return {
+    rootNsfwLevel: root?.nsfwLevel ?? null,
+    chapterLevels: rows.filter((row) => row.depth > 0).map((row) => row.nsfwLevel),
+  };
 }
 
 /**
