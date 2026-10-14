@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import { renderWithProviders } from '../../../../test/component-setup';
 import type * as TrpcMod from '~/utils/trpc';
+import type * as ImageUtilsMod from '~/components/Image/image.utils';
 import { StorylinesFeed } from '~/components/Storyline/StorylinesFeed';
 
 /**
@@ -37,7 +38,8 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
     }),
   };
 });
-vi.mock('~/components/Image/image.utils', () => ({
+vi.mock('~/components/Image/image.utils', async (importOriginal) => ({
+  ...(await importOriginal<typeof ImageUtilsMod>()),
   useQueryImages: (input: unknown) => {
     mocks.imagesInput(input);
     return { images: mocks.images };
