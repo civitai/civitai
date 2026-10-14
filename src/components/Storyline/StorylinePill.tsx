@@ -12,13 +12,11 @@ export function StorylinePill({
   depth,
   onClick,
   className,
-  withTitle = false,
 }: {
   title: string;
   depth: number;
   onClick?: MouseEventHandler<HTMLButtonElement>;
   className?: string;
-  withTitle?: boolean;
 }) {
   return (
     <Badge
@@ -30,13 +28,13 @@ export function StorylinePill({
       h={26}
       onClick={onClick}
       leftSection={<IconRoute size={14} stroke={2.5} />}
-      className={clsx('cursor-pointer normal-case', className)}
+      className={clsx('max-w-[240px] cursor-pointer normal-case', className)}
       title={`Part of the storyline "${title}"`}
       aria-label={`Storyline: ${title}, chapter ${depth + 1}`}
       style={{ pointerEvents: 'auto' }}
       data-testid="storyline-pill"
     >
-      Storyline{withTitle ? ` · ${title}` : ''} · {storylineChapterLabel(depth)}
+      {title} · {storylineChapterLabel(depth)}
     </Badge>
   );
 }
