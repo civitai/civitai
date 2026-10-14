@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as PlacementService from '~/server/services/placement.service';
 import { STORYLINE_REFUSALS } from '~/shared/utils/storyline-placement';
 import { createFakeDb, type FakeDb } from './storyline-loop.fake-db';
@@ -85,10 +85,10 @@ const publishedPost = (id: number, userId: number, nsfwLevel: number) => {
   });
 };
 
-const submit = (placerId: number, postId: number, expectedPrice = 0) =>
+const submit = (placerId: number, postId: number, expectedPrice = 0, parentPostId = ROOT_POST) =>
   createStorylinePlacement({
     placerId,
-    parentPostId: ROOT_POST,
+    parentPostId,
     postId,
     expectedPrice,
     spendType: 'yellow',
@@ -123,6 +123,7 @@ const moneyCalls = () => ({
 });
 
 beforeEach(() => {
+  vi.useRealTimers();
   vi.clearAllMocks();
   createMultiAccountBuzzTransaction.mockResolvedValue({ transactionCount: 1 });
   createBuzzTransaction.mockResolvedValue({ transactionId: 'payout' });
@@ -168,6 +169,7 @@ beforeEach(() => {
 
 describe('the storyline continuation loop', () => {
   it("takes a stranger's continuation to the owner's queue, and on approval into the story", async () => {
+    const before = Date.now();
     const { id } = await submit(STRANGER, STRANGER_POST);
 
     expect(db.row('placement', { id })).toMatchObject({
@@ -175,6 +177,12 @@ describe('the storyline continuation loop', () => {
       ownerId: OWNER,
       amount: 0,
     });
+    // A zero-priced row takes no hold, so submission alone must give it its
+    // seven-day deadline; without one the expiry sweep never selects it.
+    expect((db.row('placement', { id })!.expiresAt as Date).getTime()).toBeGreaterThanOrEqual(
+      before + 7 * 24 * 3_600_000
+    );
+    await expect(expirePlacements()).resolves.toEqual({ considered: 0, expired: 0 });
     expect(chapterFor(id)).toBeUndefined();
     const queue = await getPendingStorylineContinuations({
       ownerId: OWNER,
@@ -295,11 +303,20 @@ describe('the storyline continuation loop', () => {
     expect(db.rows('storylineChapterEdge')).toEqual([]);
   });
 
-  it('refunds both holds in full when nobody answers in time, and writes no chapter', async () => {
+  it('refunds both holds in full when nobody answers in seven days, and writes no chapter', async () => {
+    // Only the clock is faked; promises still resolve normally.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const submittedAt = Date.now();
     charge(100);
     const { id } = await submit(STRANGER, STRANGER_POST, 100);
-    db.update('placement', { id }, { expiresAt: new Date(Date.now() - 1000) });
+    // Stamped by submission itself, seven days out: a row with no deadline never expires.
+    expect((db.row('placement', { id })!.expiresAt as Date).getTime()).toBe(
+      submittedAt + 7 * 24 * 3_600_000
+    );
 
+    vi.setSystemTime(submittedAt + 7 * 24 * 3_600_000 - 60_000);
+    await expect(expirePlacements()).resolves.toEqual({ considered: 0, expired: 0 });
+    vi.setSystemTime(submittedAt + 7 * 24 * 3_600_000 + 60_000);
     await expect(expirePlacements()).resolves.toEqual({ considered: 1, expired: 1 });
 
     expect(db.row('placement', { id })).toMatchObject({ status: 'expired' });
@@ -322,12 +339,23 @@ describe('the storyline continuation loop', () => {
     expect(chapterFor(id)).toMatchObject({ postId: STRANGER_POST });
   });
 
-  // A block made after submission: the chapter edge re-checks blocks at approval.
+  // Changed after submission: the chapter edge re-checks blocks, the post and
+  // who may continue at approval.
   it.each([
     [
       'the owner blocks the placer',
       () => db.block(OWNER, STRANGER),
       'Continuations are not available on this chapter',
+    ],
+    [
+      'the placer blocks the owner',
+      () => db.block(STRANGER, OWNER),
+      'Continuations are not available on this chapter',
+    ],
+    [
+      'the storyline becomes collaborators-only',
+      () => db.update('storyline', { id: STORYLINE }, { whoCanContinue: 'Collaborators' }),
+      STORYLINE_REFUSALS.collaboratorsOnly,
     ],
     [
       'the post is taken down',
@@ -356,4 +384,47 @@ describe('the storyline continuation loop', () => {
       expect(chapterFor(id)).toBeUndefined();
     }
   );
+
+  // The chapter being continued has its own author, and a block between them and
+  // the placer counts as much as one with the storyline's owner.
+  describe("under a collaborator's chapter", () => {
+    const STRANGER_SECOND_POST = 500;
+    beforeEach(async () => {
+      await submit(COLLABORATOR, COLLABORATOR_POST);
+      publishedPost(STRANGER_SECOND_POST, STRANGER, PG);
+    });
+
+    it("refuses a placer the chapter's author has blocked", async () => {
+      db.block(COLLABORATOR, STRANGER);
+
+      await expect(submit(STRANGER, STRANGER_SECOND_POST, 0, COLLABORATOR_POST)).rejects.toThrow(
+        'Continuations are not available on this chapter'
+      );
+      expect(db.rows('placement').filter((p) => p.placerId === STRANGER)).toEqual([]);
+    });
+
+    it("refuses the approval once the chapter's author blocks the placer", async () => {
+      const { id } = await submit(STRANGER, STRANGER_SECOND_POST, 0, COLLABORATOR_POST);
+      db.block(COLLABORATOR, STRANGER);
+
+      await expect(
+        actOnStorylineContinuation({ placementId: id, ownerId: OWNER, action: 'approve' })
+      ).rejects.toThrow('Continuations are not available on this chapter');
+      expect(db.row('placement', { id })).toMatchObject({ status: 'pending' });
+      expect(chapterFor(id)).toBeUndefined();
+    });
+
+    it('approves a continuation of it into the story at depth two', async () => {
+      const { id } = await submit(STRANGER, STRANGER_SECOND_POST, 0, COLLABORATOR_POST);
+
+      await actOnStorylineContinuation({ placementId: id, ownerId: OWNER, action: 'approve' });
+
+      const parent = db.row('storylineChapter', { postId: COLLABORATOR_POST });
+      const chapter = chapterFor(id);
+      expect(chapter).toMatchObject({ depth: 2, postId: STRANGER_SECOND_POST });
+      expect(edgeFor(chapter!.id as number)).toMatchObject({ parentChapterId: parent!.id });
+    });
+  });
 });
+
+afterAll(() => vi.useRealTimers());

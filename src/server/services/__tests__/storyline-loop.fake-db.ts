@@ -44,15 +44,30 @@ const RELATIONS: Record<string, Record<string, Relation>> = {
   },
 };
 
-/** Column sets each table refuses to duplicate, and the compound-key names Prisma gives them. */
-const UNIQUES: Record<string, string[][]> = {
-  placementTransaction: [['placementId', 'kind']],
-  storylineChapter: [['postId'], ['placementId']],
-  // v1: one parent per chapter (a unique index on chapterId in the migration).
-  storylineChapterEdge: [['chapterId']],
-  storylineCollaborator: [['storylineId', 'userId']],
-  placementSpace: [['surface', 'entityType', 'entityId']],
-  placementSuspension: [['userId']],
+type Unique = { columns: string[]; where?: (row: Row) => boolean };
+
+/**
+ * Column sets each table refuses to duplicate, as the migrations define them,
+ * partial indexes included, and the compound-key names Prisma gives them.
+ */
+const UNIQUES: Record<string, Unique[]> = {
+  placementTransaction: [{ columns: ['placementId', 'kind'] }],
+  storylineChapter: [
+    { columns: ['postId'] },
+    { columns: ['placementId'] },
+    // StorylineChapter_storylineId_root_key: one first chapter per storyline.
+    { columns: ['storylineId'], where: (row) => row.depth === 0 },
+  ],
+  storylineChapterEdge: [
+    { columns: ['chapterId', 'parentChapterId'] },
+    // StorylineChapterEdge_single_parent_key: v1, one parent per chapter.
+    { columns: ['chapterId'] },
+    // StorylineChapterEdge_one_canon_key: at most one canon child per parent.
+    { columns: ['parentChapterId'], where: (row) => row.canon === true },
+  ],
+  storylineCollaborator: [{ columns: ['storylineId', 'userId'] }],
+  placementSpace: [{ columns: ['surface', 'entityType', 'entityId'] }],
+  placementSuspension: [{ columns: ['userId'] }],
 };
 const COMPOUND_KEYS: Record<string, string[]> = {
   placementId_kind: ['placementId', 'kind'],
@@ -74,7 +89,7 @@ const DEFAULTS: Record<string, () => Row> = {
     resolvedById: null,
     takenDownAt: null,
     takenDownById: null,
-    data: null,
+    data: {},
     createdAt: new Date(),
   }),
   placementTransaction: () => ({
@@ -147,6 +162,9 @@ export function createFakeDb() {
         if (matchesField(value, not)) return false;
       } else if (same(value, not)) return false;
     }
+    // NULL compared with anything is unknown in Postgres, so the row is excluded.
+    const ranged = ['lt', 'lte', 'gt', 'gte'].some((op) => op in condition);
+    if (ranged && value == null) return false;
     const cmp = value as number | Date;
     if ('lt' in condition && !(cmp < (condition.lt as typeof cmp))) return false;
     if ('lte' in condition && !(cmp <= (condition.lte as typeof cmp))) return false;
@@ -220,10 +238,14 @@ export function createFakeDb() {
   };
 
   const assertUnique = (model: string, row: Row, ignore?: Row) => {
-    for (const columns of UNIQUES[model] ?? []) {
+    for (const { columns, where } of UNIQUES[model] ?? []) {
       if (columns.some((column) => row[column] == null)) continue;
+      if (where && !where(row)) continue;
       const clash = tables[model].find(
-        (other) => other !== ignore && columns.every((column) => same(other[column], row[column]))
+        (other) =>
+          other !== ignore &&
+          (!where || where(other)) &&
+          columns.every((column) => same(other[column], row[column]))
       );
       if (clash)
         throw new Prisma.PrismaClientKnownRequestError(
@@ -242,9 +264,21 @@ export function createFakeDb() {
     }
   };
 
+  /** The edge table's CHECK and composite foreign keys: both ends in the edge's own storyline. */
+  const assertEdge = (row: Row) => {
+    if (same(row.chapterId, row.parentChapterId))
+      throw new Error('fake db: StorylineChapterEdge_not_self_check violated');
+    for (const end of ['chapterId', 'parentChapterId']) {
+      const chapter = tables.storylineChapter.find((c) => same(c.id, row[end]));
+      if (!chapter || !same(chapter.storylineId, row.storylineId))
+        throw new Error(`fake db: StorylineChapterEdge ${end} is not a chapter of its storyline`);
+    }
+  };
+
   const insert = (model: string, data: Row) => {
     const row: Row = { ...(DEFAULTS[model]?.() ?? {}), ...structuredClone(data) };
     if (row.id == null && model !== 'storylineChapterEdge') row.id = nextId[model]++;
+    if (model === 'storylineChapterEdge') assertEdge(row);
     assertUnique(model, row);
     tables[model].push(row);
     return row;
@@ -333,10 +367,16 @@ export function createFakeDb() {
     const text = sql.text;
     const v = sql.values;
     if (text.includes('"UserEngagement"') && text.includes("'Block'")) {
-      const [ownerId, placerId] = v as number[];
-      return [
-        { exists: blocks.has(`${ownerId}:${placerId}`) || blocks.has(`${placerId}:${ownerId}`) },
-      ];
+      // Either side's block counts. Answered from the statement's own two clauses,
+      // so a query that drops one direction is caught rather than answered.
+      const compact = text.replace(/\s+/g, ' ');
+      const clauses =
+        compact.includes('("userId" = $1 AND "targetUserId" = $2)') &&
+        compact.includes('("userId" = $3 AND "targetUserId" = $4)');
+      const [a, b, c, d] = v as number[];
+      if (!clauses || a !== d || b !== c)
+        throw new Error(`fake db: block check is not two-way: ${compact} [${v.join(',')}]`);
+      return [{ exists: blocks.has(`${a}:${b}`) || blocks.has(`${c}:${d}`) }];
     }
     if (text.includes("'scores'")) return [{ score: 0 }];
     if (text.includes('FOR NO KEY UPDATE')) return [];
@@ -365,7 +405,12 @@ export function createFakeDb() {
 
   const executeRaw = async (strings: TemplateStringsArray, ...values: unknown[]) => {
     const text = Prisma.sql(strings, ...values).text;
-    if (text.includes('pg_advisory_xact_lock')) return 0;
+    // Prisma binds a JS number as int8, which pg_advisory_xact_lock(int, int) does not accept.
+    if (text.includes('pg_advisory_xact_lock')) {
+      if (!/pg_advisory_xact_lock\(\$1::int, \$2::int\)/.test(text))
+        throw new Error(`fake db: advisory lock arguments are not cast to int: ${text}`);
+      return 0;
+    }
     throw new Error(`fake db: raw statement not modelled: ${text.slice(0, 120)}`);
   };
   const executeRawUnsafe = async (text: string) => {
