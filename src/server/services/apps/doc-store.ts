@@ -9,11 +9,18 @@
 // `appdata.app_id` / `appdata.ns` (set at the top of every transaction in
 // `withTx`) is the second, independent layer.
 //
-// The ONE exception is review maintenance (`purgeReview`, `listReviewAppIds`):
+// There are TWO exceptions. The first is review maintenance (`purgeReview`, `listReviewAppIds`):
 // statements keyed on `app_id = $1 AND ns LIKE 'rev:%'` (the listing: `ns LIKE 'rev:%'`
 // on `usage_app` and `doc`), run only inside `maintenanceTx`, whose transaction-local
 // `appdata.review_maintenance` setting is what the migration's review policies
 // admit — review namespaces only, read and delete only.
+//
+// The other exception is the ACCOUNT WIPE's enumeration (`listAccountNamespaces`): one
+// SELECT keyed on `user_id = $1` over `usage_user` and `doc_mark`, run only inside
+// `accountWipeTx`, whose transaction-local `appdata.account_wipe_uid` setting the
+// migration's wipe policy admits for that ONE user's rows of those two tables, read only.
+// It returns (app, ns) pairs; the wipe of each runs in an ordinary `withTx`, keyed and
+// scoped like any viewer call.
 //
 // Row-level security does not bind a superuser or BYPASSRLS role, so the store
 // requires its own least-privilege connection (`APPDATA_DATABASE_URL`, see
@@ -64,6 +71,9 @@ import { escapeLiteral } from 'pg';
 import type { AugmentedPool } from '~/server/db/db-helpers';
 import { newUlid } from '~/server/utils/app-block-ids';
 import type {
+  AccountWipeNamespaceResult,
+  AccountWipeResult,
+  DocAuthor,
   DocCollection,
   DocIndexType,
   DocListQuery,
@@ -158,6 +168,27 @@ export function reviewNamespace(publishRequestId: string, moderatorUid: number):
     throw new Error('doc-store: malformed review namespace');
   }
   return ns;
+}
+
+/** (app, ns) pairs read per page by the account wipe's enumeration. */
+const ACCOUNT_WIPE_PAGE = 500;
+
+/** A user id the account wipe accepts: a positive integer that fits the `integer` columns. */
+function assertWipeUserId(userId: number): void {
+  if (!(Number.isSafeInteger(userId) && userId > 0 && userId <= 2_147_483_647)) {
+    throw new Error('doc-store: malformed user id');
+  }
+}
+
+/**
+ * Whether `ns` belongs to `userId` alone: their dev namespace, or one of their review
+ * namespaces. Only that user's tokens resolve to it (`doc-store-access.ts`), so every row in it
+ * is theirs.
+ */
+function ownsNamespace(userId: number, ns: string): boolean {
+  if (ns === `dev:${userId}`) return true;
+  const review = REVIEW_NS.exec(ns);
+  return review !== null && Number(review[2]) === userId;
 }
 
 type WritePolicy = 'own' | 'owner' | 'none';
@@ -607,6 +638,103 @@ const SQL_REVIEW_APP_IDS = `SELECT r.app_id FROM (
     SELECT d.app_id FROM appdata.doc d WHERE d.ns LIKE 'rev:%' AND d.app_id > $1
   ) r ORDER BY r.app_id LIMIT $2::int`;
 
+// ACCOUNT WIPE (see the module header and `wipeAccount`).
+//
+// The (app, ns) pairs in which one user has rows that name them, in key order after a keyset
+// cursor. Two sources suffice: every document that names a user — their private documents, the
+// shared documents they authored, the counter documents whose creation was charged to them — is
+// charged to that user's `usage_user` row in the same transaction that writes it (the invariant
+// `assertUsageConsistent` checks in every suite), and a mark names its user in `doc_mark`. Run
+// only inside `accountWipeTx`. $1 user id, $2 app id and $3 ns of the cursor (exclusive), $4 limit.
+const SQL_ACCOUNT_NAMESPACES = `SELECT w.app_id, w.ns FROM (
+    SELECT wu.app_id, wu.ns FROM appdata.usage_user wu WHERE wu.user_id = $1::int
+    UNION
+    SELECT wm.app_id, wm.ns FROM appdata.doc_mark wm WHERE wm.user_id = $1::int
+  ) w WHERE (w.app_id, w.ns) > ($2::text, $3::text)
+  ORDER BY w.app_id, w.ns LIMIT $4::int`;
+
+// The wipe of ONE (app, ns), in an ordinary scoped transaction. $1 app, $2 ns, $3 user id.
+// Statement order follows the store's LOCK ORDER: document rows, then tally and mark rows, then
+// `usage_app` (taken by `charge`), then `usage_user`.
+
+// A namespace that IS the account's (`dev:<uid>`, `rev:<request>:<uid>`): only that user ever
+// writes there, so everything in it goes, table by table (index rows by the document cascade).
+const SQL_WIPE_NAMESPACE = [
+  `WITH gone AS (DELETE FROM appdata.doc d WHERE d.app_id = $1 AND d.ns = $2 RETURNING 1)
+  SELECT count(*)::int AS n FROM gone`,
+  `WITH gone AS (DELETE FROM appdata.doc_index ix WHERE ix.app_id = $1 AND ix.ns = $2 RETURNING 1)
+  SELECT count(*)::int AS n FROM gone`,
+  `WITH gone AS (DELETE FROM appdata.doc_tally t WHERE t.app_id = $1 AND t.ns = $2 RETURNING 1)
+  SELECT count(*)::int AS n FROM gone`,
+  `WITH gone AS (DELETE FROM appdata.doc_mark mk WHERE mk.app_id = $1 AND mk.ns = $2 RETURNING 1)
+  SELECT count(*)::int AS n FROM gone`,
+  `WITH gone AS (DELETE FROM appdata.doc_tomb tb WHERE tb.app_id = $1 AND tb.ns = $2 RETURNING 1)
+  SELECT count(*)::int AS n FROM gone`,
+  `WITH gone AS (DELETE FROM appdata.usage_app u WHERE u.app_id = $1 AND u.ns = $2 RETURNING 1)
+  SELECT count(*)::int AS n FROM gone`,
+  `WITH gone AS (DELETE FROM appdata.usage_user u WHERE u.app_id = $1 AND u.ns = $2 RETURNING 1)
+  SELECT count(*)::int AS n FROM gone`,
+] as const;
+
+// A shared namespace (`prod`): only what names the user.
+// The user's private documents; their index rows go by the cascade. Private documents have no
+// tallies or marks, and get no tombstone: the only reader of a private key space is its owner.
+const SQL_WIPE_PRIVATE_DOCS = `WITH gone AS (DELETE FROM appdata.doc d
+    WHERE d.app_id = $1 AND d.ns = $2 AND d.scope_uid = $3::int RETURNING d.size_bytes)
+  SELECT count(*)::int AS docs, COALESCE(sum(gone.size_bytes), 0)::bigint AS bytes FROM gone`;
+// Shared documents the user authored: kept (the owner's decision: anonymise, moderators can still
+// delete) and stripped of every trace of the uid. Data, version, seq and tallies are unchanged.
+const SQL_WIPE_ANONYMISE = `WITH done AS (UPDATE appdata.doc d
+    SET author_kind = 'deleted', author_uid = NULL, last_writer_uid = NULL
+    WHERE d.app_id = $1 AND d.ns = $2 AND d.scope_uid = 0 AND d.author_kind = 'user'
+      AND d.author_uid = $3::int
+    RETURNING 1)
+  SELECT count(*)::int AS n FROM done`;
+// Counter-created documents whose creation was charged to the user: the uid was kept ONLY for
+// that charge, and the charge is released with the user's usage rows below, so the uid goes too.
+const SQL_WIPE_RELEASE_COUNTER_DOCS = `WITH done AS (UPDATE appdata.doc d
+    SET author_uid = NULL, last_writer_uid = NULL
+    WHERE d.app_id = $1 AND d.ns = $2 AND d.scope_uid = 0 AND d.author_kind = 'counter'
+      AND d.author_uid = $3::int
+    RETURNING 1)
+  SELECT count(*)::int AS n FROM done`;
+// Any other shared document still naming the user as its last writer (none can today: under
+// `own` only the author writes); the uid must not survive anywhere.
+const SQL_WIPE_LAST_WRITER = `UPDATE appdata.doc d SET last_writer_uid = NULL
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.scope_uid = 0 AND d.last_writer_uid = $3::int`;
+// KEY SHARE on every document the user marked, in key order, before their mark and tally rows
+// (LOCK ORDER (1) before (1b)): an author or moderator deleting one of those documents waits for
+// this transaction instead of deadlocking against it on the tally rows.
+const SQL_WIPE_LOCK_MARKED = `SELECT d.coll, d.key FROM appdata.doc d
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.scope_uid = 0
+    AND EXISTS (SELECT 1 FROM appdata.doc_mark lm
+      WHERE lm.app_id = $1 AND lm.ns = $2 AND lm.coll = d.coll AND lm.key = d.key
+        AND lm.user_id = $3::int)
+  ORDER BY d.coll, d.key
+  FOR KEY SHARE OF d`;
+// The user's marks, reports included, and the same statement takes each from its tally: the
+// two can never disagree. A tally already below its marks (drift; the reconciler's to report)
+// stops at 0 rather than failing the wipe on the `doc_tally_nonnegative` CHECK.
+const SQL_WIPE_MARKS = `WITH gone AS (DELETE FROM appdata.doc_mark mk
+    WHERE mk.app_id = $1 AND mk.ns = $2 AND mk.user_id = $3::int
+    RETURNING mk.coll, mk.key, mk.name),
+  per AS (SELECT g.coll, g.key, g.name, count(*)::bigint AS n FROM gone g
+    GROUP BY g.coll, g.key, g.name),
+  down AS (UPDATE appdata.doc_tally t SET count = GREATEST(t.count - per.n, 0)
+    FROM per
+    WHERE t.app_id = $1 AND t.ns = $2 AND t.coll = per.coll AND t.key = per.key
+      AND t.kind = 'mark' AND t.name = per.name
+    RETURNING 1)
+  SELECT (SELECT count(*) FROM gone)::int AS marks`;
+// Tombstones of the user's private documents carry their uid as `scope_uid`. After `usage_app`,
+// where every writer of a tombstone takes it.
+const SQL_WIPE_PRIVATE_TOMBS = `DELETE FROM appdata.doc_tomb tb
+  WHERE tb.app_id = $1 AND tb.ns = $2 AND tb.scope_uid = $3::int`;
+// The user's usage row: every byte it counted is gone from it (deleted) or released (anonymised
+// and counter documents now charge no user).
+const SQL_WIPE_USAGE_USER = `DELETE FROM appdata.usage_user u
+  WHERE u.app_id = $1 AND u.ns = $2 AND u.user_id = $3::int`;
+
 // List fragments. Aliases are fixed so every fragment's predicates are visible
 // to the static isolation scan; only parameter placeholders are interpolated.
 // $1 app, $2 ns, $3 coll, $4 scope_uid; `joins` are the fragments below.
@@ -644,6 +772,27 @@ const listMarkedByMe = (name: string, user: string) => `EXISTS (SELECT 1 FROM ap
 // Row mapping
 // ---------------------------------------------------------------------------
 
+/**
+ * The author is read from `author_kind` alone, never inferred from a NULL `author_uid`: a NULL
+ * uid is what an anonymised (`deleted`) and a released counter document both have, and reading
+ * it as "the app wrote it" would misattribute them. The `doc_author_identity` CHECK guarantees a
+ * `user` row has a uid.
+ */
+function toDocAuthor(row: Record<string, unknown>, ctx: DocStoreContext): DocAuthor {
+  switch (row.author_kind) {
+    case 'user': {
+      const uid = Number(row.author_uid);
+      return { kind: 'user', uid, isViewer: uid === ctx.viewerUid };
+    }
+    case 'app':
+    case 'counter':
+    case 'deleted':
+      return { kind: row.author_kind };
+    default:
+      throw new Error(`doc-store: unknown author kind ${String(row.author_kind)}`);
+  }
+}
+
 function toDocRecord(
   row: Record<string, unknown>,
   ctx: DocStoreContext,
@@ -664,19 +813,13 @@ function toDocRecord(
       else if (kind === 'mark' && name !== REPORT_MARK) marks[name] = Number(v);
     }
   }
-  const authorUid = row.author_uid === null ? null : Number(row.author_uid);
   return {
     key: row.key as string,
     data: row.data as Record<string, unknown>,
     version: Number(row.version),
     createdAt: new Date(row.created_at as string | Date),
     updatedAt: new Date(row.updated_at as string | Date),
-    author:
-      row.author_kind === 'counter'
-        ? { kind: 'counter' }
-        : row.author_kind === 'app' || authorUid === null
-        ? { kind: 'app' }
-        : { kind: 'user', uid: authorUid, isViewer: authorUid === ctx.viewerUid },
+    author: toDocAuthor(row, ctx),
     counters,
     marks,
     viewer:
@@ -817,10 +960,11 @@ export function createDocStoreModeration(deps: DocStoreDeps) {
 }
 
 /**
- * Review-namespace MAINTENANCE (`purgeReview`, `listReviewAppIds`), as a separate object from
- * the viewer store: it runs with the review-maintenance setting that reaches every `rev:` row
- * of a request, so nothing holding the block-token routes' store may reach it. Only
- * `doc-store-maintenance.instance.ts` builds one in production; its importers are pinned by
+ * MAINTENANCE — review-namespace deletion (`purgeReview`, `listReviewAppIds`) and account
+ * deletion (`wipeAccount`) — as a separate object from the viewer store: the first runs with the
+ * setting that reaches every `rev:` row of a request, the second with the one that reads one
+ * user's rows in every app, so nothing holding the block-token routes' store may reach either.
+ * Only `doc-store-maintenance.instance.ts` builds one in production; its importers are pinned by
  * a ledger test (`__tests__/doc-store-maintenance.ledger.test.ts`).
  */
 export function createDocStoreMaintenance(deps: DocStoreDeps) {
@@ -897,6 +1041,24 @@ function buildDocStore(deps: DocStoreDeps) {
       `BEGIN; SELECT set_config('appdata.app_id', ${escapeLiteral(
         publishRequestId ?? ''
       )}, true), set_config('appdata.ns', '', true), set_config('appdata.review_maintenance', 'on', true), set_config('lock_timeout', '${LOCK_TIMEOUT}', true)`,
+      fn
+    );
+  }
+
+  /**
+   * An ACCOUNT-WIPE ENUMERATION transaction: no app or namespace bound, and
+   * `appdata.account_wipe_uid` set to one validated user id — which the migration's wipe policy
+   * admits for that user's `usage_user` and `doc_mark` rows only, read only. Transaction-local like
+   * every other setting. 🔴 Called by `listAccountNamespaces` ONLY (pinned by
+   * `doc-store.sql-isolation.test.ts`).
+   */
+  async function accountWipeTx<T>(
+    userId: number,
+    fn: (c: DocStoreClient) => Promise<T>
+  ): Promise<T> {
+    assertWipeUserId(userId);
+    return runTx(
+      `BEGIN; SELECT set_config('appdata.app_id', '', true), set_config('appdata.ns', '', true), set_config('appdata.account_wipe_uid', '${userId}', true), set_config('lock_timeout', '${LOCK_TIMEOUT}', true)`,
       fn
     );
   }
@@ -1490,6 +1652,106 @@ function buildDocStore(deps: DocStoreDeps) {
     );
   }
 
+  /** Every (app, ns) in which `userId` has a usage row or a mark, in key order, all pages. */
+  async function listAccountNamespaces(userId: number): Promise<{ appId: string; ns: string }[]> {
+    const out: { appId: string; ns: string }[] = [];
+    let after = { appId: '', ns: '' };
+    for (;;) {
+      const page = await accountWipeTx(userId, async (c) =>
+        (
+          await c.query(SQL_ACCOUNT_NAMESPACES, [userId, after.appId, after.ns, ACCOUNT_WIPE_PAGE])
+        ).rows.map((r) => ({ appId: r.app_id as string, ns: r.ns as string }))
+      );
+      out.push(...page);
+      if (page.length < ACCOUNT_WIPE_PAGE) return out;
+      after = page[page.length - 1];
+    }
+  }
+
+  /** One (app, ns) of an account wipe, in ONE ordinary scoped transaction: all of it or none. */
+  async function wipeAccountNamespace(
+    userId: number,
+    appId: string,
+    ns: string
+  ): Promise<AccountWipeNamespaceResult> {
+    // The viewer is the account being wiped, so a review namespace's context check passes only
+    // for that account's own review namespace (`assertContext`).
+    const ctx: DocStoreContext = { appId, ns, viewerUid: userId };
+    const result: AccountWipeNamespaceResult = {
+      appId,
+      ns,
+      mode: ownsNamespace(userId, ns) ? 'namespace' : 'user',
+      privateDocs: 0,
+      privateBytes: 0,
+      anonymised: 0,
+      counterDocsReleased: 0,
+      marks: 0,
+      namespaceRows: 0,
+    };
+    const n = (res: DocStoreQueryResult, col = 'n') => Number(res.rows[0]?.[col] ?? 0);
+    return withTx(ctx, async (c) => {
+      if (result.mode === 'namespace') {
+        for (const sql of SQL_WIPE_NAMESPACE)
+          result.namespaceRows += n(await c.query(sql, [appId, ns]));
+        return result;
+      }
+      const args = [appId, ns, userId];
+      const priv = await c.query(SQL_WIPE_PRIVATE_DOCS, args);
+      result.privateDocs = n(priv, 'docs');
+      result.privateBytes = n(priv, 'bytes');
+      result.anonymised = n(await c.query(SQL_WIPE_ANONYMISE, args));
+      result.counterDocsReleased = n(await c.query(SQL_WIPE_RELEASE_COUNTER_DOCS, args));
+      await c.query(SQL_WIPE_LAST_WRITER, args);
+      await c.query(SQL_WIPE_LOCK_MARKED, args);
+      result.marks = n(await c.query(SQL_WIPE_MARKS, args), 'marks');
+      if (result.privateDocs > 0) {
+        // The app's usage loses the deleted documents (an anonymised one is still stored, so it
+        // stays counted). No user is charged: the account's own row is deleted next.
+        await charge(
+          c,
+          ctx,
+          { bytes: -result.privateBytes, docs: -result.privateDocs },
+          { uid: 0, bytes: 0, docs: 0, ceiling: 'viewer' }
+        );
+      }
+      await c.query(SQL_WIPE_PRIVATE_TOMBS, args);
+      await c.query(SQL_WIPE_USAGE_USER, args);
+      return result;
+    });
+  }
+
+  /**
+   * ACCOUNT DELETION: remove one user from the document store, in every app and namespace they
+   * have rows in. Per namespace, in one transaction:
+   *   - their own namespaces (`dev:<uid>`, `rev:<request>:<uid>`) are deleted outright;
+   *   - elsewhere, their private documents are deleted (index rows with them) and refunded to the
+   *     app; their marks — reports included — are deleted and each tally decremented; the shared
+   *     documents they authored are ANONYMISED (`author_kind = 'deleted'`, no uid: readers see a
+   *     deleted author, `author=me` matches nobody, nobody may edit or delete them under `own`,
+   *     moderators can still hide or delete them); counter-created documents charged to them keep
+   *     their counters but lose the uid; their usage rows and private tombstones are deleted.
+   * Idempotent: a re-run finds nothing left that names the user. A namespace whose transaction
+   * fails is reported in `failures` (it rolled back in full) and the rest continue; a disabled
+   * store throws `storage_disabled`. Called by the account wipe (`removeAllContent`).
+   */
+  async function wipeAccount(userId: number): Promise<AccountWipeResult> {
+    assertWipeUserId(userId);
+    const result: AccountWipeResult = { userId, namespaces: [], failures: [] };
+    for (const { appId, ns } of await listAccountNamespaces(userId)) {
+      try {
+        result.namespaces.push(await wipeAccountNamespace(userId, appId, ns));
+      } catch (err) {
+        if (err instanceof DocStoreError && err.code === 'storage_disabled') throw err;
+        result.failures.push({
+          appId,
+          ns,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+    return result;
+  }
+
   const store = {
     get,
     getMany,
@@ -1506,7 +1768,7 @@ function buildDocStore(deps: DocStoreDeps) {
   return {
     store,
     moderation: createModeration({ withTx, charge }),
-    maintenance: { purgeReview, listReviewAppIds },
+    maintenance: { purgeReview, listReviewAppIds, wipeAccount },
   };
 }
 
@@ -1569,7 +1831,8 @@ export type ReportedDocRow = {
   reports: number;
   createdAt: Date;
   updatedAt: Date;
-  authorKind: 'user' | 'app' | 'counter';
+  /** `deleted`: authored by an account since deleted; `authorUid` is then null. */
+  authorKind: 'user' | 'app' | 'counter' | 'deleted';
   /** Moderators may see it; it must never reach an app. */
   authorUid: number | null;
   hiddenAt: Date | null;
@@ -1866,6 +2129,8 @@ function createModeration({ withTx, charge }: ModerationDeps) {
    * cascade), its tallies and marks are deleted, the app and the charged author are
    * refunded (a counter-created doc's `author_uid` is the user its creation was charged
    * to), and a tombstone takes the next seq — the same accounting as an author delete.
+   * A document with no `author_uid` (anonymised by an account wipe, a counter document
+   * whose creator was wiped, or app-authored) refunds the app only: no user carries it.
    */
   async function remove(
     appId: string,
@@ -1889,8 +2154,8 @@ function createModeration({ withTx, charge }: ModerationDeps) {
         c,
         ctx,
         { bytes: -size, docs: -1 },
-        // No writer creates a shared doc without an author uid today; an app-authored doc
-        // (owner writes, not built yet) would charge no user, so none is refunded.
+        // No user carries a doc without an author uid: an account wipe released its charge
+        // with the account's usage row, and an app-authored doc never charged one.
         author === null
           ? { uid: 0, bytes: 0, docs: 0, ceiling: 'author' }
           : { uid: author, bytes: -size, docs: -1, ceiling: 'author' }

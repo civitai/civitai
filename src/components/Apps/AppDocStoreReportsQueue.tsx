@@ -170,6 +170,8 @@ function ReportRow({ row, onReview }: { row: Row; onReview: () => void }) {
       ? `${row.author.username ?? 'unknown'} (#${row.author.userId})`
       : row.author.kind === 'counter'
       ? 'created by a counter'
+      : row.author.kind === 'deleted'
+      ? 'a deleted account'
       : 'the app';
   return (
     <Paper

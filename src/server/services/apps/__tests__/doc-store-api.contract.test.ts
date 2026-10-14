@@ -116,7 +116,7 @@ import storageRoute from '~/pages/api/v1/blocks/storage/[[...path]]';
 // The contract
 // ---------------------------------------------------------------------------
 
-type Step = {
+type RequestStep = {
   as: string;
   token?: 'dev';
   scopes?: string[];
@@ -127,6 +127,10 @@ type Step = {
   repeat?: number;
   expect: { status: number; code?: string; body?: unknown };
 };
+/** Not a request: the platform deletes this viewer's account (`stepFields.accountWipe`). */
+type AccountWipeStep = { accountWipe: string; $comment?: string };
+type Step = RequestStep | AccountWipeStep;
+const isAccountWipe = (s: Step): s is AccountWipeStep => 'accountWipe' in s;
 type Case = {
   name: string;
   consentMarker?: 'unavailable' | string[];
@@ -490,6 +494,14 @@ async function runCase(c: Case) {
     }
   }
   for (const [n, step] of c.steps.entries()) {
+    if (isAccountWipe(step)) {
+      // The host's account wipe, as `removeAllContent` runs it: every app, every namespace.
+      const uid = VIEWER_IDS[step.accountWipe];
+      expect(uid, `${c.name} — step ${n + 1}: unknown viewer`).toBeDefined();
+      const wiped = await createDocStoreMaintenance({ db: harness.db }).wipeAccount(uid);
+      expect(wiped.failures, `${c.name} — step ${n + 1} accountWipe`).toEqual([]);
+      continue;
+    }
     for (let i = 0; i < (step.repeat ?? 1); i++) {
       vars.i = i;
       let token: string | null = null;
@@ -618,7 +630,9 @@ describe('the contract file', () => {
 
   it('every error code the storage handler can emit in phase 1 appears in some case', () => {
     const used = new Set(
-      contract.cases.flatMap((c) => c.steps.map((s) => s.expect.code)).filter(Boolean)
+      contract.cases
+        .flatMap((c) => c.steps.map((s) => (isAccountWipe(s) ? undefined : s.expect.code)))
+        .filter(Boolean)
     );
     // Derived from the one status table; the exclusions are named, so a NEW code is required
     // here until a case reaches it or it is excluded with a reason.

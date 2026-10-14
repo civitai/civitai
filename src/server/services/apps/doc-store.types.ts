@@ -41,7 +41,12 @@ export type DocAuthor =
   | { kind: 'user'; uid: number; isViewer: boolean }
   | { kind: 'app' }
   /** Created by the first increment of a counter; nobody owns it. */
-  | { kind: 'counter' };
+  | { kind: 'counter' }
+  /**
+   * Written by an account that has since been deleted (`DocStoreMaintenance.wipeAccount`). The
+   * document carries no user id any more, so nobody — that account included — is its author.
+   */
+  | { kind: 'deleted' };
 
 export type DocRecord = {
   key: string;
@@ -143,6 +148,37 @@ export type DocStoreErrorCode =
   | 'service_unavailable';
 
 export type QuotaCeiling = 'app' | 'viewer' | 'author';
+
+/** What `DocStoreMaintenance.wipeAccount` did in one (app, namespace). */
+export type AccountWipeNamespaceResult = {
+  appId: string;
+  ns: string;
+  /**
+   * `namespace`: the namespace was the account's own (`dev:<uid>`, `rev:<request>:<uid>`), so
+   * every row in it was deleted. `user`: a namespace other users share (`prod`), so only what
+   * names the account was deleted or anonymised.
+   */
+  mode: 'namespace' | 'user';
+  /** Private documents deleted (their index rows went with them). */
+  privateDocs: number;
+  /** Bytes refunded to the app's usage for those documents. */
+  privateBytes: number;
+  /** Shared documents the account authored, now `author_kind = 'deleted'` with no user id. */
+  anonymised: number;
+  /** Counter-created documents whose creation was charged to the account: the uid dropped. */
+  counterDocsReleased: number;
+  /** The account's marks deleted, reports included; each one decremented its tally. */
+  marks: number;
+  /** Rows deleted in `namespace` mode, across every table (index rows not counted). */
+  namespaceRows: number;
+};
+
+export type AccountWipeResult = {
+  userId: number;
+  namespaces: AccountWipeNamespaceResult[];
+  /** Namespaces whose transaction failed and rolled back in full; a re-run retries them. */
+  failures: { appId: string; ns: string; error: string }[];
+};
 
 export class DocStoreError extends Error {
   readonly code: DocStoreErrorCode;

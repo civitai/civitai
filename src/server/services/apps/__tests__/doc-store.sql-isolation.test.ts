@@ -2,7 +2,12 @@ import { readdirSync, readFileSync, statSync } from 'fs';
 import path from 'path';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
-import { APPDATA_TABLES, isReviewMaintenanceStatement, scanStatement } from './doc-store.sql-scan';
+import {
+  APPDATA_TABLES,
+  isAccountWipeStatement,
+  isReviewMaintenanceStatement,
+  scanStatement,
+} from './doc-store.sql-scan';
 
 /**
  * Static half of the isolation guard for the shared `appdata` tables.
@@ -57,6 +62,10 @@ describe('scanner controls', () => {
       `WITH gone AS (DELETE FROM appdata.doc d WHERE d.app_id = $1 AND d.ns LIKE 'rev:%' RETURNING 1) SELECT 1`,
       `SELECT u.app_id FROM appdata.usage_app u WHERE u.ns LIKE 'rev:%' AND u.app_id > $1`,
       `SELECT d.app_id FROM appdata.doc d WHERE d.ns LIKE 'rev:%' AND d.app_id > $1`,
+      // Account-wipe enumeration: the two per-user tables, read only, keyed on the user.
+      `SELECT wu.app_id FROM appdata.usage_user wu WHERE wu.user_id = $1::int`,
+      `SELECT wm.app_id FROM appdata.doc_mark wm WHERE wm.user_id = $1::int`,
+      `BEGIN; SELECT set_config('appdata.account_wipe_uid', '7', true)`,
     ]) {
       expect({ ok, v: scanStatement(ok) }).toEqual({ ok, v: [] });
     }
@@ -108,6 +117,18 @@ describe('scanner controls', () => {
         `UPDATE appdata.doc d SET version = 1 WHERE d.app_id = $1 AND d.ns LIKE 'rev:%'`,
         /is not a SELECT or DELETE/,
       ],
+      // Account-wipe shape: never a write, never another table, and a second alias still
+      // needs its own key.
+      [
+        `WITH gone AS (DELETE FROM appdata.doc_mark wm WHERE wm.user_id = $1::int RETURNING 1) SELECT 1`,
+        /account-wipe statement on appdata\.doc_mark is not a SELECT/,
+      ],
+      [`UPDATE appdata.usage_user wu SET bytes = 0 WHERE wu.user_id = $1::int`, /is not a SELECT/],
+      [`SELECT d.key FROM appdata.doc d WHERE d.user_id = $1::int`, /reads appdata\.doc\b/],
+      [
+        `SELECT wu.app_id FROM appdata.usage_user wu JOIN appdata.doc d ON d.key = wu.ns WHERE wu.user_id = $1::int`,
+        /lacks d\.app_id = \$1/,
+      ],
     ];
     for (const [sql, want] of bad) {
       expect({ sql, v: scanStatement(sql).join('; ') }).toEqual({
@@ -140,7 +161,7 @@ describe('doc-store.ts SQL', () => {
   });
 });
 
-describe('review maintenance is confined to the purge and the sweep listing', () => {
+describe('review maintenance and account-wipe enumeration are confined to their own functions', () => {
   const source = ts.createSourceFile(
     MODULE,
     readFileSync(MODULE, 'utf8'),
@@ -225,6 +246,56 @@ describe('review maintenance is confined to the purge and the sweep listing', ()
       'server/services/apps/migrations/20261013120000_appdata_document_store.sql',
     ]);
   });
+
+  it('every account-wipe-shaped statement is SQL_ACCOUNT_NAMESPACES', () => {
+    const wipe = collect((n) => {
+      const t = literalText(n);
+      return t !== null && /appdata\./.test(t) && isAccountWipeStatement(t);
+    });
+    expect(wipe.map((n) => owner(n, 'variable'))).toEqual(['SQL_ACCOUNT_NAMESPACES']);
+  });
+
+  it('the account-wipe setting is set in exactly one place, `accountWipeTx`, which only the enumeration calls', () => {
+    const nearestFn = (n: ts.Node) => {
+      for (let p: ts.Node | undefined = n.parent; p; p = p.parent) {
+        if ((ts.isFunctionDeclaration(p) || ts.isFunctionExpression(p)) && p.name)
+          return p.name.text;
+      }
+      return null;
+    };
+    const setting = collect((n) => (literalText(n) ?? '').includes('appdata.account_wipe_uid'));
+    expect(setting.map(nearestFn)).toEqual(['accountWipeTx']);
+    const calls = collect(
+      (n) =>
+        ts.isCallExpression(n) &&
+        ts.isIdentifier(n.expression) &&
+        n.expression.text === 'accountWipeTx'
+    );
+    expect(calls.map(nearestFn)).toEqual(['listAccountNamespaces']);
+  });
+
+  it('no other server code mentions the account-wipe setting (only the store, the migration and tests)', () => {
+    const found: string[] = [];
+    const walkAll = (dir: string) => {
+      for (const name of readdirSync(dir)) {
+        if (name === 'node_modules' || name.startsWith('.')) continue;
+        const full = path.join(dir, name);
+        if (statSync(full).isDirectory()) walkAll(full);
+        else if (
+          /\.(ts|tsx|js|mjs|cjs|sql)$/.test(name) &&
+          readFileSync(full, 'utf8').includes('account_wipe_uid')
+        ) {
+          found.push(path.relative(SRC_ROOT, full).split(path.sep).join('/'));
+        }
+      }
+    };
+    walkAll(path.join(SRC_ROOT, 'server'));
+    walkAll(path.join(SRC_ROOT, 'pages'));
+    expect(found.filter((f) => !f.includes('/__tests__/')).sort()).toEqual([
+      'server/services/apps/doc-store.ts',
+      'server/services/apps/migrations/20261013120000_appdata_document_store.sql',
+    ]);
+  });
 });
 
 describe('only the doc-store module touches the appdata tables', () => {
@@ -233,10 +304,14 @@ describe('only the doc-store module touches the appdata tables', () => {
   const EXPECTED = [
     // The moderator router suite resets the tables and pins report times between cases.
     'server/routers/__tests__/apps-mod-doc-store.router.test.ts',
+    // The account-wipe seam: reads the wiped account's and a bystander's rows back.
+    'server/services/__tests__/user-remove-all-content.doc-store.test.ts',
     // The route suite reads the rows a request wrote, to assert the namespace it landed in.
     'server/services/apps/__tests__/doc-store-api.contract.test.ts',
     // Seeds report times and counts the rows a moderator delete must remove.
     'server/services/apps/__tests__/doc-store-moderation.pglite.test.ts',
+    // Reads every column that can hold a user id, to prove an account wipe left none.
+    'server/services/apps/__tests__/doc-store.account-wipe.test.ts',
     'server/services/apps/__tests__/doc-store.functional.ts',
     'server/services/apps/__tests__/doc-store.pg.test.ts',
     'server/services/apps/__tests__/doc-store.pglite.test.ts',

@@ -702,6 +702,7 @@ type Bundle = {
   storageManifestUnparseableTotal: Counter<string>;
   reviewStorageCleanupTotal: Counter<string>;
   reviewStorageSweepTotal: Counter<string>;
+  docStoreAccountWipeTotal: Counter<string>;
   bridgeRateLimitRefusalsTotal: Counter<string>;
   postSubjectRefusalsTotal: Counter<string>;
   stepPriceCheckTotal: Counter<string>;
@@ -1187,6 +1188,16 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
     ['outcome']
   );
 
+  // One increment per account wipe (`removeAllContent`) that reached the document store. A
+  // `partial` or `failed` means a wiped account still has rows there: re-running the wipe retries
+  // exactly what is left (`DocStoreMaintenance.wipeAccount` is idempotent).
+  const docStoreAccountWipeTotal = getOrCreateCounter(
+    reg,
+    'civitai_app_block_doc_store_account_wipe_total',
+    'Account wipes applied to the App Blocks document store, by outcome: wiped, nothing (no rows), partial (some namespaces failed), failed, disabled (no store)',
+    ['outcome']
+  );
+
   // 🔴 THE ONLY SERIES ON THIS PLATFORM THAT COUNTS A BRIDGE RATE-LIMIT REFUSAL, and it
   // exists because every ceiling on the tRPC bridge was previously UNGRADEABLE. The one
   // App Blocks request counter, `civitai_app_block_requests_total` above, is incremented
@@ -1428,6 +1439,7 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
     storageManifestUnparseableTotal,
     reviewStorageCleanupTotal,
     reviewStorageSweepTotal,
+    docStoreAccountWipeTotal,
     bridgeRateLimitRefusalsTotal,
     postSubjectRefusalsTotal,
     stepPriceCheckTotal,
@@ -1770,6 +1782,16 @@ export function recordReviewStorageSweep(outcome: 'purged' | 'failed'): void {
     ensureRegisterAppBlockRuntimeMetrics().reviewStorageSweepTotal.inc({ outcome });
   } catch {
     /* instrument-only — a metrics error must never fail the sweep */
+  }
+}
+
+export type DocStoreAccountWipeOutcome = 'wiped' | 'nothing' | 'partial' | 'failed' | 'disabled';
+
+export function recordDocStoreAccountWipe(outcome: DocStoreAccountWipeOutcome): void {
+  try {
+    ensureRegisterAppBlockRuntimeMetrics().docStoreAccountWipeTotal.inc({ outcome });
+  } catch {
+    /* instrument-only — a metrics error must never fail an account wipe */
   }
 }
 
