@@ -255,7 +255,7 @@ function LeadFork({
         className={clsx(
           'w-full @md:aspect-[4/5] @md:max-h-none @md:w-[210px] @md:flex-none',
           // On a phone the cover leaves room for the title, share and Read in the first screen.
-          child.firstImage || hidden ? 'aspect-[4/5] max-h-[45vh]' : 'aspect-video max-h-[160px]'
+          child.firstImage || hidden ? 'aspect-[4/5] max-h-[30vh]' : 'aspect-video max-h-[160px]'
         )}
         emptyIcon="route"
         overlay={

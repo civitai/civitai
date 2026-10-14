@@ -200,7 +200,7 @@ describe('StorylineEndOfChapter', () => {
       within(other, 'blur-toggle'),
       !!within(other, 'storyline-chapter-image-empty'),
       // Capped on a phone so Read stays in the first screen.
-      [...lead.querySelectorAll('*')].some((e) => e.classList.contains('max-h-[45vh]')),
+      [...lead.querySelectorAll('*')].some((e) => e.classList.contains('max-h-[30vh]')),
     ]).toEqual(['cover-501', null, null, true, true]);
   });
 
