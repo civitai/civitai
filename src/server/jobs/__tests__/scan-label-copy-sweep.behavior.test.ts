@@ -274,6 +274,20 @@ describe('sweepScanLabelCopies', () => {
     expect(removed).toEqual(['1/key-1']);
   });
 
+  it('retries a failed withdrawal of a copy whose item is gone', async () => {
+    await copied(1);
+    await holder.db.exec(`DELETE FROM "Image" WHERE id = 1`);
+    const failing = {
+      remove: async () => {
+        throw new Error('b2 down');
+      },
+    };
+    await sweepScanLabelCopies({ store: failing });
+    const { removed, store } = removing();
+    await sweepScanLabelCopies({ store });
+    expect(removed).toEqual(['1/key-1']);
+  });
+
   it('deletes once when two sweeps run at the same time', async () => {
     await copied(1);
     await holder.db.exec(`UPDATE "Image" SET "needsReview" = 'csam'`);
