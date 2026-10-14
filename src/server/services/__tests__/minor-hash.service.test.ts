@@ -1808,21 +1808,32 @@ describe('resolveMinorFlagAppeal', () => {
     expect(mockResolveEntityAppeal).not.toHaveBeenCalled();
   });
 
-  // Review Focus 2.
-  it('queues a rescan when the text changed while the appeal was pending', async () => {
+  // The ruling is stamped against the text the moderator reviewed, so a rescan of it would only
+  // re-apply a verdict the grant already covers.
+  it('queues no rescan when the text changed while the appeal was pending', async () => {
     mockPrimaryModelFindUnique.mockResolvedValue({
-      minor: false,
+      minor: true,
       poi: true,
-      meta: { textScanFlags: { poi: { ...poiEntry, textHash: 'h-flagged' } } },
+      meta: {
+        minorFlagSnapshot: { at: 'x', source: 'text-scan' },
+        textScanFlags: {
+          poi: { ...poiEntry, textHash: 'h-flagged' },
+          minor: { ...poiEntry, textHash: 'h-flagged' },
+        },
+      },
     });
+    mockLoadTextScanTextHash.mockResolvedValue('h-current');
 
     expect(await resolveMinorFlagAppeal({ modelId: 42, uphold: false, userId: 7 })).toEqual({
-      rescanQueued: true,
+      rescanQueued: false,
     });
-    expect(mockQueueTextScanRescan).toHaveBeenCalledWith('Model', 42);
-    expect(mockResolveEntityAppeal.mock.invocationCallOrder[0]).toBeLessThan(
-      mockQueueTextScanRescan.mock.invocationCallOrder[0]
-    );
+    expect(mockQueueTextScanRescan).not.toHaveBeenCalled();
+    expect(grantStamps()).toEqual([expect.objectContaining({ currentHash: 'h-current' })]);
+    expect(mockGrantModelTextScanPoi).toHaveBeenCalledWith({
+      modelId: 42,
+      userId: 7,
+      currentHash: 'h-current',
+    });
   });
 
   it('upholds a text-scan poi flag by stamping it, without a minor confirm', async () => {

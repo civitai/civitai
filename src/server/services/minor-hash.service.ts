@@ -12,7 +12,6 @@ import { throwBadRequestError } from '~/server/utils/errorHandling';
 import type { ModelMeta } from '~/server/schema/model.schema';
 import {
   loadTextScanTextHash,
-  queueTextScanRescan,
   stampModeratorTextScanRuling,
 } from '~/server/services/text-scan/actions/appeal-text-hash';
 import {
@@ -23,7 +22,6 @@ import {
 import {
   hasOpenTextScanFlag,
   hasTextScanVerdict,
-  readTextScanFlags,
   TEXT_SCAN_FLAGS_KEY,
   type TextScanFlags,
 } from '~/server/services/text-scan/flag-snapshot';
@@ -814,13 +812,9 @@ export async function resolveMinorFlagAppeal({
     userId,
   });
 
-  const flags = readTextScanFlags(meta);
-  const rescanQueued = overturned.some((label) => {
-    const flaggedHash = flags[label]?.textHash;
-    return !!flaggedHash && flaggedHash !== currentHash;
-  });
-  if (rescanQueued) await queueTextScanRescan('Model', modelId);
-  return { rescanQueued };
+  // The grants cover the current text, so there is nothing to rescan. The moderator app still reads
+  // the flag.
+  return { rescanQueued: false };
 }
 
 export async function dismissMinorHashMatch({

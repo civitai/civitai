@@ -358,7 +358,7 @@ export async function grantModelTextScanPoi({
           jsonb_build_object(
             'at', now(),
             'by', ${userId}::int,
-            'textHash', COALESCE(m.meta->${TEXT_SCAN_FLAGS_KEY}->'poi'->>'textHash', ${currentHash}::text),
+            'textHash', COALESCE(${currentHash}::text, m.meta->${TEXT_SCAN_FLAGS_KEY}->'poi'->>'textHash'),
             'via', 'appeal'
           )
         )
@@ -424,6 +424,9 @@ export async function stampModelTextScanAppeal({
   currentHash?: string | null;
 }) {
   if (!labels.length) return;
+  // A grant covers the text the moderator reviewed. Stamping the flagged hash instead leaves an
+  // owner's later edit uncovered, and the next scan of it re-flags and erases the grant.
+  const grantHash = decision === 'appealGranted' ? currentHash : null;
   await dbWrite.$executeRaw`
     UPDATE "Model" m
     SET meta = COALESCE(m.meta, '{}'::jsonb) || jsonb_build_object(
@@ -434,7 +437,7 @@ export async function stampModelTextScanAppeal({
             ${decision}::text, jsonb_build_object(
               'at', now(),
               'by', ${userId}::int,
-              'textHash', COALESCE(m.meta->${TEXT_SCAN_FLAGS_KEY}->l.label->>'textHash', ${currentHash}::text),
+              'textHash', COALESCE(${grantHash}::text, m.meta->${TEXT_SCAN_FLAGS_KEY}->l.label->>'textHash'),
               'via', 'appeal'
             )
           )

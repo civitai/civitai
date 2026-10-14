@@ -436,7 +436,7 @@ describe('grantModelTextScanPoi', () => {
     expect(text).toMatch(
       /meta = jsonb_set\(\s+m\.meta,\s+ARRAY\[\?::text, 'poi', 'appealGranted'\]/
     );
-    expect(text).toContain(`'textHash', COALESCE(m.meta->?->'poi'->>'textHash', ?::text)`);
+    expect(text).toContain(`'textHash', COALESCE(?::text, m.meta->?->'poi'->>'textHash')`);
     expect(text).toContain(`'via', 'appeal'`);
     expect(call.slice(1)).toEqual(expect.arrayContaining([3, 'h-current', MODEL_ID]));
     expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
@@ -485,7 +485,7 @@ describe('grantModelTextScanPoi', () => {
 });
 
 describe('stampModelTextScanAppeal', () => {
-  it('stamps only the named labels, with the flagged text hash and the current one as fallback', async () => {
+  it('grants against the current text, not the flagged one, so a verdict for that text cannot re-flag', async () => {
     await stampModelTextScanAppeal({
       modelId: MODEL_ID,
       userId: 3,
@@ -496,12 +496,26 @@ describe('stampModelTextScanAppeal', () => {
     const call = dbMock.dbWrite.$executeRaw.mock.calls[0];
     const text = sqlOf(call);
     expect(text).toContain('unnest(');
-    expect(text).toContain(`'textHash', COALESCE(m.meta->?->l.label->>'textHash', ?::text)`);
+    expect(text).toContain(`'textHash', COALESCE(?::text, m.meta->?->l.label->>'textHash')`);
     expect(text).toContain(`'via', 'appeal'`);
     expect(call.slice(1)).toContainEqual(['poi']);
     expect(call.slice(1)).toEqual(
       expect.arrayContaining(['appealGranted', 3, MODEL_ID, 'h-current'])
     );
+  });
+
+  it('keeps an upheld ruling on the flagged text', async () => {
+    await stampModelTextScanAppeal({
+      modelId: MODEL_ID,
+      userId: 3,
+      decision: 'appealUpheld',
+      labels: ['poi'],
+      currentHash: 'h-current',
+    });
+    const call = dbMock.dbWrite.$executeRaw.mock.calls[0];
+    expect(sqlOf(call)).toContain(`'textHash', COALESCE(?::text, m.meta->?->l.label->>'textHash')`);
+    // The leading COALESCE slot is null for an upheld ruling, so the flagged hash wins.
+    expect(call.slice(1)).not.toContain('h-current');
   });
 
   it('writes nothing for an empty label list', async () => {
