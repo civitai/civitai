@@ -93,6 +93,14 @@ CREATE INDEX IF NOT EXISTS doc_expires_idx
 
 -- Declared indexes, one row per (doc, index name). A side table rather than
 -- expression indexes, which would be per-app DDL.
+--
+-- `v_type` is the index type the row was written under. Number, boolean and
+-- time all store into `v_num`, so without it a row written under an earlier
+-- type of the same index name (a `1` written as number) would match a filter or
+-- sort under the current type (`true` as boolean). Every read joins on it.
+-- It is NOT in the primary key: there is exactly one row per (doc, name), so a
+-- re-declared type replaces the row on the document's next write instead of a
+-- stale row of the old type living beside it.
 CREATE TABLE IF NOT EXISTS appdata.doc_index (
   app_id    text COLLATE "C" NOT NULL,
   ns        text COLLATE "C" NOT NULL,
@@ -100,6 +108,7 @@ CREATE TABLE IF NOT EXISTS appdata.doc_index (
   scope_uid integer NOT NULL,
   name      text COLLATE "C" NOT NULL,
   key       text COLLATE "C" NOT NULL,
+  v_type    text COLLATE "C" NOT NULL,
   v_text    text COLLATE "C",
   v_num     double precision,
   -- Key before name: index maintenance and the cascade from `doc` look rows up by
@@ -108,12 +117,19 @@ CREATE TABLE IF NOT EXISTS appdata.doc_index (
   CONSTRAINT doc_index_pkey PRIMARY KEY (app_id, ns, coll, scope_uid, key, name),
   CONSTRAINT doc_index_doc_fkey FOREIGN KEY (app_id, ns, coll, scope_uid, key)
     REFERENCES appdata.doc (app_id, ns, coll, scope_uid, key) ON DELETE CASCADE,
-  CONSTRAINT doc_index_one_value CHECK ((v_text IS NULL) <> (v_num IS NULL))
+  CONSTRAINT doc_index_type CHECK (v_type IN ('string', 'number', 'boolean', 'time')),
+  -- A string lives in v_text and every other type in v_num, never both.
+  CONSTRAINT doc_index_value_column CHECK (
+    CASE WHEN v_type = 'string'
+      THEN v_text IS NOT NULL AND v_num IS NULL
+      ELSE v_num IS NOT NULL AND v_text IS NULL
+    END)
 );
+-- `v_type` follows `name` so a typed filter or sort is still one index range.
 CREATE INDEX IF NOT EXISTS doc_index_text_idx
-  ON appdata.doc_index (app_id, ns, coll, scope_uid, name, v_text, key);
+  ON appdata.doc_index (app_id, ns, coll, scope_uid, name, v_type, v_text, key);
 CREATE INDEX IF NOT EXISTS doc_index_num_idx
-  ON appdata.doc_index (app_id, ns, coll, scope_uid, name, v_num, key);
+  ON appdata.doc_index (app_id, ns, coll, scope_uid, name, v_type, v_num, key);
 
 -- Counters and mark counts. `kind` is in the primary key, so a counter and a mark
 -- of the same name on the same document are separate rows and incrementing a

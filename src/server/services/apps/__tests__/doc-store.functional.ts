@@ -113,6 +113,46 @@ export async function assertUsageConsistent(h: Harness, appId: string, ns: strin
   }
 }
 
+/**
+ * Number, boolean and time all store into `v_num`. Re-declare an index from
+ * number to boolean, and separately to time, and check neither a filter nor a
+ * sort under the new type reaches rows written under the old one. The number
+ * values are chosen so that, without the type match, they WOULD match: `1` is
+ * the stored form of `true`, and `7` is a valid time (7 ms after the epoch).
+ */
+export async function assertNumericRetypeIsolated(store: DocStore, appId: string) {
+  const who = ctx(appId, NS_PROD, VIEWER_1);
+  const keys = async (coll: DocCollection, q: Parameters<DocStore['list']>[2]) =>
+    (await store.list(who, coll, q)).items.map((d) => d.key);
+  for (const [name, newType, newValue, probe] of [
+    ['to_bool', 'boolean', true, true],
+    ['to_time', 'time', '2026-01-01T00:00:00Z', 7],
+  ] as const) {
+    const asNumber: DocCollection = {
+      name,
+      config: { visibility: 'shared', indexes: { f: 'number' } },
+    };
+    const retyped: DocCollection = {
+      name,
+      config: { visibility: 'shared', indexes: { f: newType } },
+    };
+    await store.put(who, asNumber, 'num-1', { f: 1 });
+    await store.put(who, asNumber, 'num-7', { f: 7 });
+    await store.put(who, retyped, 'new', { f: newValue });
+    // Positive control: under the OLD type the number rows are there to be found.
+    expect({ name, old: await keys(asNumber, { where: { f: 7 } }) }).toEqual({
+      name,
+      old: ['num-7'],
+    });
+    expect({ name, filter: await keys(retyped, { where: { f: probe } }) }).toEqual({
+      name,
+      filter: newType === 'boolean' ? ['new'] : [],
+    });
+    expect({ name, asc: await keys(retyped, { sort: 'f' }) }).toEqual({ name, asc: ['new'] });
+    expect({ name, desc: await keys(retyped, { sort: '-f' }) }).toEqual({ name, desc: ['new'] });
+  }
+}
+
 export function defineFunctionalSuite(makeHarness: () => Promise<Harness>) {
   let h: Harness;
   let store: DocStore;
@@ -896,6 +936,10 @@ export function defineFunctionalSuite(makeHarness: () => Promise<Harness>) {
   });
 
   describe('index rows across declaration changes and viewers', () => {
+    it('re-declaring number → boolean or number → time never mixes the old rows into filters or sorts', async () => {
+      await assertNumericRetypeIsolated(store, freshApp('numretype'));
+    });
+
     it('an index whose type changed sorts only rows of the declared type, paging both ways', async () => {
       const app = freshApp('retyped');
       const v1 = ctx(app, NS_PROD, VIEWER_1);

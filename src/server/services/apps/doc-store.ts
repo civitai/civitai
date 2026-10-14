@@ -236,7 +236,7 @@ function assertJsonShape(value: unknown, depth: number): void {
 // Declared indexes
 // ---------------------------------------------------------------------------
 
-type IndexRow = { name: string; vText: string | null; vNum: number | null };
+type IndexRow = { name: string; type: DocIndexType; vText: string | null; vNum: number | null };
 type IndexValue = { column: 'v_text' | 'v_num'; value: string | number };
 
 function declaredIndexes(coll: DocCollection): [string, DocIndexType][] {
@@ -317,8 +317,8 @@ function indexRowsFor(coll: DocCollection, data: Record<string, unknown>): Index
     const v = indexValue(type, raw, name);
     rows.push(
       v.column === 'v_text'
-        ? { name, vText: v.value as string, vNum: null }
-        : { name, vText: null, vNum: v.value as number }
+        ? { name, type, vText: v.value as string, vNum: null }
+        : { name, type, vText: null, vNum: v.value as number }
     );
   }
   return rows;
@@ -414,17 +414,17 @@ const SQL_DELETE_MARKS = `DELETE FROM appdata.doc_mark mk
 
 // Replace a document's index rows in one statement: drop names it no longer has,
 // upsert the ones it does. The two touch disjoint rows.
-// $1 app, $2 ns, $3 coll, $4 scope_uid, $5 key, $6 names, $7 v_text, $8 v_num
+// $1 app, $2 ns, $3 coll, $4 scope_uid, $5 key, $6 names, $7 v_text, $8 v_num, $9 v_type
 const SQL_SYNC_INDEX = `WITH gone AS (
     DELETE FROM appdata.doc_index ix
     WHERE ix.app_id = $1 AND ix.ns = $2 AND ix.coll = $3 AND ix.scope_uid = $4::int AND ix.key = $5
       AND NOT (ix.name = ANY($6::text[]))
   )
-  INSERT INTO appdata.doc_index AS ix (app_id, ns, coll, scope_uid, key, name, v_text, v_num)
-  SELECT $1, $2, $3, $4::int, $5, u.name, u.v_text, u.v_num
-  FROM unnest($6::text[], $7::text[], $8::float8[]) AS u(name, v_text, v_num)
+  INSERT INTO appdata.doc_index AS ix (app_id, ns, coll, scope_uid, key, name, v_text, v_num, v_type)
+  SELECT $1, $2, $3, $4::int, $5, u.name, u.v_text, u.v_num, u.v_type
+  FROM unnest($6::text[], $7::text[], $8::float8[], $9::text[]) AS u(name, v_text, v_num, v_type)
   ON CONFLICT (app_id, ns, coll, scope_uid, key, name)
-  DO UPDATE SET v_text = EXCLUDED.v_text, v_num = EXCLUDED.v_num`;
+  DO UPDATE SET v_text = EXCLUDED.v_text, v_num = EXCLUDED.v_num, v_type = EXCLUDED.v_type`;
 
 // Charge the per-(app, ns) ceiling and take the next seq. Zero rows = over quota.
 // A negative delta always passes, so a delete or a shrink is never refused, even
@@ -504,15 +504,22 @@ const SQL_MARK_COUNT = `SELECT t.count FROM appdata.doc_tally t
 const listBase = (joins: string) => `FROM appdata.doc d
   ${joins}
   WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = $4::int AND ${VISIBLE}`;
-const listEqualityJoin = (name: string, col: string, value: string) => `JOIN appdata.doc_index ix
+// Both index joins match `v_type` to the DECLARED type, so only rows written
+// under the current type of an index take part. Number, boolean and time share
+// `v_num`, so a value-column check alone cannot tell a `1` written as a number
+// from a `true` written as a boolean. The table's `doc_index_value_column` CHECK
+// guarantees the declared type's column is non-NULL, so sort values never are.
+const listEqualityJoin = (
+  name: string,
+  type: string,
+  col: string,
+  value: string
+) => `JOIN appdata.doc_index ix
     ON ix.app_id = $1 AND ix.ns = $2 AND ix.coll = d.coll AND ix.scope_uid = d.scope_uid
-    AND ix.key = d.key AND ix.name = ${name} AND ix.${col} = ${value}`;
-// `IS NOT NULL` on the sorted column: only rows holding a value of the DECLARED
-// type take part. A row written under an earlier type of the same index name has
-// its value in the other column, and a NULL sort value breaks keyset paging.
-const listSortIndexJoin = (name: string, col: string) => `JOIN appdata.doc_index sx
+    AND ix.key = d.key AND ix.name = ${name} AND ix.v_type = ${type} AND ix.${col} = ${value}`;
+const listSortIndexJoin = (name: string, type: string) => `JOIN appdata.doc_index sx
     ON sx.app_id = $1 AND sx.ns = $2 AND sx.coll = d.coll AND sx.scope_uid = d.scope_uid
-    AND sx.key = d.key AND sx.name = ${name} AND sx.${col} IS NOT NULL`;
+    AND sx.key = d.key AND sx.name = ${name} AND sx.v_type = ${type}`;
 // LEFT JOIN + COALESCE: a document with no tally row sorts as 0. That ordering
 // cannot come from `doc_tally_top_idx`, so a tally sort reads the collection and
 // sorts it; serving it from the index would need a zero row per declared tally
@@ -911,6 +918,7 @@ export function createDocStore(deps: DocStoreDeps) {
       indexRows.map((r) => r.name),
       indexRows.map((r) => r.vText),
       indexRows.map((r) => r.vNum),
+      indexRows.map((r) => r.type),
     ]);
     const seq = await charge(c, ctx, usage.app, usage.user);
     const res = await c.query(SQL_STAMP_SEQ, [
@@ -1203,7 +1211,9 @@ export function createDocStore(deps: DocStoreDeps) {
       }
       const v = indexValue(type, raw, field);
       const cast = v.column === 'v_text' ? '::text' : '::float8';
-      joins.push(listEqualityJoin(`${p(field)}::text`, v.column, `${p(v.value)}${cast}`));
+      joins.push(
+        listEqualityJoin(`${p(field)}::text`, `${p(type)}::text`, v.column, `${p(v.value)}${cast}`)
+      );
     }
 
     if (q.keyPrefix !== undefined) {
@@ -1246,7 +1256,7 @@ export function createDocStore(deps: DocStoreDeps) {
       }
       case 'index': {
         const col = indexColumn(sort.type);
-        joins.push(listSortIndexJoin(`${p(sort.name)}::text`, col));
+        joins.push(listSortIndexJoin(`${p(sort.name)}::text`, `${p(sort.type)}::text`));
         sortExpr = `sx.${col}`;
         keyExpr = 'sx.key';
         sortValueExpr = col === 'v_text' ? `sx.v_text` : `sx.v_num::text`;

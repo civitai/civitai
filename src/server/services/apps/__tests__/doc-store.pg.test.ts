@@ -5,6 +5,7 @@ import type { DocCollection } from '~/server/services/apps/doc-store.types';
 import { barrier, createRealPgHarness, REAL_PG_URL } from './doc-store.harness';
 import type { Harness } from './doc-store.harness';
 import {
+  assertNumericRetypeIsolated,
   assertUsageConsistent,
   BOARD,
   ctx,
@@ -266,6 +267,17 @@ describe.skipIf(!REAL_PG_URL)('concurrency on Postgres (appdata_rw, RLS on)', ()
       [app, NS_PROD]
     );
     expect(new Set(seqs.map((s) => Number(s.seq))).size).toBe(seqs.length);
+  });
+});
+
+describe.skipIf(!REAL_PG_URL)('index type change within v_num on Postgres', () => {
+  it('re-declaring number → boolean or number → time never mixes the old rows into filters or sorts', async () => {
+    const h = await createRealPgHarness();
+    try {
+      await assertNumericRetypeIsolated(createDocStore({ db: h.db }), freshApp('pg_numretype'));
+    } finally {
+      await h.close();
+    }
   });
 });
 
