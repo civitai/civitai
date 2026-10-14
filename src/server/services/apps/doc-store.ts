@@ -9,12 +9,12 @@
 // `appdata.app_id` / `appdata.ns` (set at the top of every transaction in
 // `withTx`) is the second, independent layer.
 //
-// RLS binds only a role that is neither superuser nor BYPASSRLS, so that is a
-// CHECKED precondition here, not a hope: the store runs on its own pool
-// (`APPDATA_DATABASE_URL`, see `doc-store.instance.ts`), never the superuser apps
-// pool, and on first use it reads the connected role's attributes and refuses
-// every call with `storage_disabled` if either is set (logged once). No pool at
-// all is also `storage_disabled` — there is no fallback.
+// Row-level security does not bind a superuser or BYPASSRLS role, so the store
+// requires its own least-privilege connection (`APPDATA_DATABASE_URL`, see
+// `doc-store.instance.ts`) and treats that as a CHECKED precondition: on first
+// use it reads the connected role's attributes and refuses every call with
+// `storage_disabled` if either is set (logged once). No pool at all is also
+// `storage_disabled` — there is no fallback to any other connection.
 //
 // What this module does NOT do, by design — the caller (the REST layer) does it
 // before calling in, and each is a seam at the call into an operation here:
@@ -27,7 +27,8 @@
 //   - resolve `author.uid` to a username (and never forward the uid).
 //
 // Deliberately not supported yet, refused with `invalid_request` so a
-// declaration that uses them fails loudly: `write: 'anyone'`, `ttlSeconds`.
+// declaration that uses them fails loudly: `write: 'anyone'`, `ttlSeconds`,
+// `kind: 'log'` and `maxEntries`.
 // The `expires_at` column and its index exist in the schema so TTL needs no
 // second manual migration; nothing here reads or writes it.
 //
@@ -138,6 +139,10 @@ function assertCollection(coll: DocCollection): WritePolicy {
   if (!B.collectionName.test(coll.name)) throw invalid('invalid collection name');
   if (coll.config.ttlSeconds !== undefined) {
     throw invalid('ttlSeconds is not supported yet', { collection: coll.name });
+  }
+  // Log collections (server keys, trimmed to maxEntries) are a later phase.
+  if (coll.config.kind === 'log' || coll.config.maxEntries !== undefined) {
+    throw invalid('log collections are not supported yet', { collection: coll.name });
   }
   const write = coll.config.write ?? 'own';
   if (write === 'anyone') {
@@ -502,9 +507,12 @@ const listBase = (joins: string) => `FROM appdata.doc d
 const listEqualityJoin = (name: string, col: string, value: string) => `JOIN appdata.doc_index ix
     ON ix.app_id = $1 AND ix.ns = $2 AND ix.coll = d.coll AND ix.scope_uid = d.scope_uid
     AND ix.key = d.key AND ix.name = ${name} AND ix.${col} = ${value}`;
-const listSortIndexJoin = (name: string) => `JOIN appdata.doc_index sx
+// `IS NOT NULL` on the sorted column: only rows holding a value of the DECLARED
+// type take part. A row written under an earlier type of the same index name has
+// its value in the other column, and a NULL sort value breaks keyset paging.
+const listSortIndexJoin = (name: string, col: string) => `JOIN appdata.doc_index sx
     ON sx.app_id = $1 AND sx.ns = $2 AND sx.coll = d.coll AND sx.scope_uid = d.scope_uid
-    AND sx.key = d.key AND sx.name = ${name}`;
+    AND sx.key = d.key AND sx.name = ${name} AND sx.${col} IS NOT NULL`;
 // LEFT JOIN + COALESCE: a document with no tally row sorts as 0. That ordering
 // cannot come from `doc_tally_top_idx`, so a tally sort reads the collection and
 // sorts it; serving it from the index would need a zero row per declared tally
@@ -838,7 +846,6 @@ export function createDocStore(deps: DocStoreDeps) {
     }
     const json = serializeData(data);
     const indexRows = indexRowsFor(coll, data as Record<string, unknown>);
-    const hasIndexes = declaredIndexes(coll).length > 0;
     const scope = scopeUid(ctx, coll);
     const base = [ctx.appId, ctx.ns, coll.name, scope, key];
 
@@ -860,7 +867,7 @@ export function createDocStore(deps: DocStoreDeps) {
           assertMayModify(ctx, coll, existing);
           const res = await c.query(SQL_UPDATE_DOC, [...base, json, viewer]);
           const delta = Number(res.rows[0].size_bytes) - Number(existing.size_bytes);
-          return finishWrite(c, ctx, coll, scope, key, indexRows, hasIndexes, {
+          return finishWrite(c, ctx, coll, scope, key, indexRows, {
             app: { bytes: delta, docs: 0 },
             user: { uid: viewer, bytes: delta, docs: 0, ceiling: ceilingFor(coll) },
           });
@@ -872,7 +879,7 @@ export function createDocStore(deps: DocStoreDeps) {
         const ins = await c.query(SQL_INSERT_DOC, [...base, json, viewer]);
         if (ins.rows.length === 0) continue; // lost the race; re-read
         const size = Number(ins.rows[0].size_bytes);
-        return finishWrite(c, ctx, coll, scope, key, indexRows, hasIndexes, {
+        return finishWrite(c, ctx, coll, scope, key, indexRows, {
           app: { bytes: size, docs: 1 },
           user: { uid: viewer, bytes: size, docs: 1, ceiling: ceilingFor(coll) },
         });
@@ -890,21 +897,21 @@ export function createDocStore(deps: DocStoreDeps) {
     scope: number,
     key: string,
     indexRows: IndexRow[],
-    hasIndexes: boolean,
     usage: { app: UsageDelta; user: UserCharge }
   ): Promise<DocRecord> {
-    if (hasIndexes) {
-      await c.query(SQL_SYNC_INDEX, [
-        ctx.appId,
-        ctx.ns,
-        coll.name,
-        scope,
-        key,
-        indexRows.map((r) => r.name),
-        indexRows.map((r) => r.vText),
-        indexRows.map((r) => r.vNum),
-      ]);
-    }
+    // Always, even with no index declared: it then deletes every index row the
+    // document has, so an index declared, dropped and declared again never
+    // serves values from before it was dropped.
+    await c.query(SQL_SYNC_INDEX, [
+      ctx.appId,
+      ctx.ns,
+      coll.name,
+      scope,
+      key,
+      indexRows.map((r) => r.name),
+      indexRows.map((r) => r.vText),
+      indexRows.map((r) => r.vNum),
+    ]);
     const seq = await charge(c, ctx, usage.app, usage.user);
     const res = await c.query(SQL_STAMP_SEQ, [
       ctx.appId,
@@ -963,9 +970,6 @@ export function createDocStore(deps: DocStoreDeps) {
     data: Record<string, unknown>,
     opts: { ifVersion?: number } = {}
   ): Promise<DocRecord> {
-    if (coll.config.kind === 'log') {
-      throw invalid('log collections take server-assigned keys only; use create');
-    }
     return writeDoc(ctx, coll, key, data, opts);
   }
 
@@ -1242,7 +1246,7 @@ export function createDocStore(deps: DocStoreDeps) {
       }
       case 'index': {
         const col = indexColumn(sort.type);
-        joins.push(listSortIndexJoin(`${p(sort.name)}::text`));
+        joins.push(listSortIndexJoin(`${p(sort.name)}::text`, col));
         sortExpr = `sx.${col}`;
         keyExpr = 'sx.key';
         sortValueExpr = col === 'v_text' ? `sx.v_text` : `sx.v_num::text`;

@@ -8,6 +8,7 @@
  * change; reconciling the two is a one-edit swap of this type for the schema's.
  */
 export type DocCollectionConfig = {
+  /** `log` is part of the manifest shape but NOT SUPPORTED YET: the store refuses it. */
   kind?: 'docs' | 'log';
   visibility: 'private' | 'shared';
   /**
@@ -31,6 +32,7 @@ export type DocCollectionConfig = {
   showAuthor?: boolean;
   /** Part of the manifest shape but NOT SUPPORTED YET: the store refuses a collection declaring it. */
   ttlSeconds?: number;
+  /** Part of the manifest shape but NOT SUPPORTED YET: the store refuses a collection declaring it. */
   maxEntries?: number;
 };
 

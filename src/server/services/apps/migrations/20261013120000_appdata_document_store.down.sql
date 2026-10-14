@@ -4,6 +4,12 @@
 -- and usage row in it. Take a backup first if any app has written data. Apply by
 -- hand to the same App Blocks datastore the forward migration was applied to.
 --
+-- ROLE SCOPE: `appdata_rw` is a CLUSTER-WIDE role, not a per-database object.
+--   The store expects exactly one datastore database per Postgres server; if
+--   the forward migration was ever applied to a second database on the same
+--   server, the DROP ROLE below fails while that database still grants to it
+--   (drop that database's schema first).
+--
 -- IDEMPOTENT: safe to re-run; a no-op once the schema and role are gone.
 
 BEGIN;

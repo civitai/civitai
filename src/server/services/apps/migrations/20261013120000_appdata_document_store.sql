@@ -72,6 +72,7 @@ CREATE TABLE IF NOT EXISTS appdata.doc (
   expires_at      timestamptz,
   hidden_at       timestamptz,
   hidden_by       integer,
+  CONSTRAINT doc_scope_nonempty CHECK (app_id <> '' AND ns <> ''),
   CONSTRAINT doc_pkey PRIMARY KEY (app_id, ns, coll, scope_uid, key),
   CONSTRAINT doc_size_cap CHECK (size_bytes <= 65536),
   -- 'counter': created by the first increment of a counter; no user author.
@@ -103,6 +104,7 @@ CREATE TABLE IF NOT EXISTS appdata.doc_index (
   v_num     double precision,
   -- Key before name: index maintenance and the cascade from `doc` look rows up by
   -- document; access by index name goes through the two btrees below.
+  CONSTRAINT doc_index_scope_nonempty CHECK (app_id <> '' AND ns <> ''),
   CONSTRAINT doc_index_pkey PRIMARY KEY (app_id, ns, coll, scope_uid, key, name),
   CONSTRAINT doc_index_doc_fkey FOREIGN KEY (app_id, ns, coll, scope_uid, key)
     REFERENCES appdata.doc (app_id, ns, coll, scope_uid, key) ON DELETE CASCADE,
@@ -124,6 +126,7 @@ CREATE TABLE IF NOT EXISTS appdata.doc_tally (
   kind   text COLLATE "C" NOT NULL,
   name   text COLLATE "C" NOT NULL,
   count  bigint NOT NULL DEFAULT 0,
+  CONSTRAINT doc_tally_scope_nonempty CHECK (app_id <> '' AND ns <> ''),
   CONSTRAINT doc_tally_pkey PRIMARY KEY (app_id, ns, coll, key, kind, name),
   CONSTRAINT doc_tally_kind CHECK (kind IN ('counter', 'mark')),
   CONSTRAINT doc_tally_nonnegative CHECK (count >= 0)
@@ -143,6 +146,7 @@ CREATE TABLE IF NOT EXISTS appdata.doc_mark (
   user_id    integer NOT NULL,
   reason     text,
   created_at timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT doc_mark_scope_nonempty CHECK (app_id <> '' AND ns <> ''),
   CONSTRAINT doc_mark_pkey PRIMARY KEY (app_id, ns, coll, key, name, user_id)
 );
 -- `markedBy=me` lists and account deletion.
@@ -158,6 +162,7 @@ CREATE TABLE IF NOT EXISTS appdata.doc_tomb (
   key        text COLLATE "C" NOT NULL,
   seq        bigint NOT NULL,
   deleted_at timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT doc_tomb_scope_nonempty CHECK (app_id <> '' AND ns <> ''),
   CONSTRAINT doc_tomb_pkey PRIMARY KEY (app_id, ns, coll, scope_uid, key)
 );
 CREATE INDEX IF NOT EXISTS doc_tomb_deleted_idx ON appdata.doc_tomb (deleted_at);
@@ -170,6 +175,7 @@ CREATE TABLE IF NOT EXISTS appdata.usage_app (
   bytes    bigint NOT NULL DEFAULT 0,
   docs     integer NOT NULL DEFAULT 0,
   last_seq bigint NOT NULL DEFAULT 0,
+  CONSTRAINT usage_app_scope_nonempty CHECK (app_id <> '' AND ns <> ''),
   CONSTRAINT usage_app_pkey PRIMARY KEY (app_id, ns)
 );
 
@@ -181,6 +187,7 @@ CREATE TABLE IF NOT EXISTS appdata.usage_user (
   user_id integer NOT NULL,
   bytes   bigint NOT NULL DEFAULT 0,
   docs    integer NOT NULL DEFAULT 0,
+  CONSTRAINT usage_user_scope_nonempty CHECK (app_id <> '' AND ns <> ''),
   CONSTRAINT usage_user_pkey PRIMARY KEY (app_id, ns, user_id)
 );
 
@@ -195,14 +202,17 @@ BEGIN
     EXECUTE format('ALTER TABLE appdata.%I ENABLE ROW LEVEL SECURITY', t);
     EXECUTE format('ALTER TABLE appdata.%I FORCE ROW LEVEL SECURITY', t);
     EXECUTE format('DROP POLICY IF EXISTS appdata_scope ON appdata.%I', t);
-    -- `current_setting(…, true)` is NULL when the setting is absent, so the
-    -- predicate is NULL (not true) and the row is invisible / the write refused.
+    -- `current_setting(…, true)` is NULL when the setting was never set in the
+    -- session, but '' on a connection where a transaction once set it with
+    -- SET LOCAL semantics and ended. NULLIF folds both to NULL, so the predicate
+    -- is NULL (not true) and the row is invisible / the write refused. The
+    -- `*_scope_nonempty` CHECKs make '' an impossible stored value as well.
     EXECUTE format(
       'CREATE POLICY appdata_scope ON appdata.%I '
-      'USING (app_id = current_setting(''appdata.app_id'', true) '
-      'AND ns = current_setting(''appdata.ns'', true)) '
-      'WITH CHECK (app_id = current_setting(''appdata.app_id'', true) '
-      'AND ns = current_setting(''appdata.ns'', true))',
+      'USING (app_id = NULLIF(current_setting(''appdata.app_id'', true), '''') '
+      'AND ns = NULLIF(current_setting(''appdata.ns'', true), '''')) '
+      'WITH CHECK (app_id = NULLIF(current_setting(''appdata.app_id'', true), '''') '
+      'AND ns = NULLIF(current_setting(''appdata.ns'', true), ''''))',
       t);
   END LOOP;
 END

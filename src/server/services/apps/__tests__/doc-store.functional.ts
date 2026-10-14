@@ -288,7 +288,7 @@ export function defineFunctionalSuite(makeHarness: () => Promise<Harness>) {
       expect(doc?.viewer).toBeNull();
     });
 
-    it('write: anyone and ttlSeconds are refused as not supported yet, for every operation', async () => {
+    it('write: anyone, ttlSeconds, kind: log and maxEntries are refused as not supported yet, for every operation', async () => {
       const app = freshApp('unsupported');
       const v1 = ctx(app, NS_PROD, VIEWER_1);
       const anyone: DocCollection = {
@@ -296,13 +296,19 @@ export function defineFunctionalSuite(makeHarness: () => Promise<Harness>) {
         config: { visibility: 'shared', write: 'anyone' },
       };
       const ttl: DocCollection = { name: 'ttl', config: { visibility: 'private', ttlSeconds: 60 } };
-      for (const coll of [anyone, ttl]) {
+      const log: DocCollection = { name: 'log', config: { visibility: 'private', kind: 'log' } };
+      const capped: DocCollection = {
+        name: 'capped',
+        config: { visibility: 'shared', maxEntries: 100, counters: ['n'] },
+      };
+      for (const coll of [anyone, ttl, log, capped]) {
         await expectCode(store.put(v1, coll, 'k', { a: 1 }), 'invalid_request');
         await expectCode(store.create(v1, coll, { a: 1 }), 'invalid_request');
         await expectCode(store.get(v1, coll, 'k'), 'invalid_request');
         await expectCode(store.list(v1, coll), 'invalid_request');
         await expectCode(store.delete(v1, coll, 'k'), 'invalid_request');
       }
+      await expectCode(store.increment(v1, capped, 'k', 'n'), 'invalid_request');
       expect(await h.raw(`SELECT 1 FROM appdata.doc WHERE app_id = $1`, [app])).toEqual([]);
     });
 
@@ -889,6 +895,84 @@ export function defineFunctionalSuite(makeHarness: () => Promise<Harness>) {
     });
   });
 
+  describe('index rows across declaration changes and viewers', () => {
+    it('an index whose type changed sorts only rows of the declared type, paging both ways', async () => {
+      const app = freshApp('retyped');
+      const v1 = ctx(app, NS_PROD, VIEWER_1);
+      const asNumber: DocCollection = {
+        name: 'retyped',
+        config: { visibility: 'shared', indexes: { rank: 'number' } },
+      };
+      const asString: DocCollection = {
+        name: 'retyped',
+        config: { visibility: 'shared', indexes: { rank: 'string' } },
+      };
+      for (const [k, r] of [
+        ['n1', 3],
+        ['n2', 1],
+        ['n3', 2],
+      ] as const) {
+        await store.put(v1, asNumber, k, { rank: r });
+      }
+      for (const [k, r] of [
+        ['s1', 'b'],
+        ['s2', 'a'],
+        ['s3', 'c'],
+      ] as const) {
+        await store.put(v1, asString, k, { rank: r });
+      }
+      for (const [sort, want] of [
+        ['rank', ['s2', 's1', 's3']],
+        ['-rank', ['s3', 's1', 's2']],
+      ] as const) {
+        const paged: string[] = [];
+        let cursor: string | undefined;
+        for (let i = 0; i < 10; i++) {
+          const page = await store.list(v1, asString, { sort, limit: 1, cursor });
+          paged.push(...page.items.map((d) => d.key));
+          if (!page.nextCursor) break;
+          cursor = page.nextCursor;
+        }
+        expect({ sort, paged }).toEqual({ sort, paged: [...want] });
+      }
+    });
+
+    it('declare → write → undeclare → rewrite → redeclare never serves a value from before the undeclare', async () => {
+      const app = freshApp('redeclare');
+      const v1 = ctx(app, NS_PROD, VIEWER_1);
+      const declared: DocCollection = {
+        name: 'redecl',
+        config: { visibility: 'shared', indexes: { status: 'string' } },
+      };
+      const undeclared: DocCollection = { name: 'redecl', config: { visibility: 'shared' } };
+      await store.put(v1, declared, 'k', { status: 'open' });
+      await store.put(v1, undeclared, 'k', { status: 'closed' });
+      expect(await h.raw(`SELECT 1 FROM appdata.doc_index WHERE app_id = $1`, [app])).toEqual([]);
+      const open = await store.list(v1, declared, { where: { status: 'open' } });
+      expect(open.items.map((d) => d.key)).toEqual([]);
+    });
+
+    it('private collections: two viewers with the same key and different index values each see their own', async () => {
+      const app = freshApp('prividx');
+      const coll: DocCollection = {
+        name: 'notes',
+        config: { visibility: 'private', indexes: { tag: 'string' } },
+      };
+      const v1 = ctx(app, NS_PROD, VIEWER_1);
+      const v2 = ctx(app, NS_PROD, VIEWER_2);
+      await store.put(v1, coll, 'k', { tag: 'mine-1' });
+      await store.put(v2, coll, 'k', { tag: 'mine-2' });
+      const keysData = async (c: DocStoreContext, q: Parameters<DocStore['list']>[2]) =>
+        (await store.list(c, coll, q)).items.map((d) => [d.key, d.data]);
+      expect(await keysData(v1, { where: { tag: 'mine-1' } })).toEqual([['k', { tag: 'mine-1' }]]);
+      expect(await keysData(v1, { where: { tag: 'mine-2' } })).toEqual([]);
+      expect(await keysData(v2, { where: { tag: 'mine-2' } })).toEqual([['k', { tag: 'mine-2' }]]);
+      expect(await keysData(v2, { where: { tag: 'mine-1' } })).toEqual([]);
+      expect(await keysData(v1, { sort: 'tag' })).toEqual([['k', { tag: 'mine-1' }]]);
+      expect(await keysData(v2, { sort: '-tag' })).toEqual([['k', { tag: 'mine-2' }]]);
+    });
+  });
+
   describe('cursor bound at the maximum key and index value lengths', () => {
     it('round-trips 128-char keys and 128-byte multi-byte index values; every cursor ≤ 512', async () => {
       const app = freshApp('cursor');
@@ -1088,6 +1172,21 @@ export function defineFunctionalSuite(makeHarness: () => Promise<Harness>) {
   });
 
   describe('seq and tombstones', () => {
+    it('a counter-created doc takes a non-zero seq in commit order', async () => {
+      const app = freshApp('ctrseq');
+      const v1 = ctx(app, NS_PROD, VIEWER_1);
+      await store.increment(v1, TALLIES, 'first', 'plays');
+      await store.increment(v1, TALLIES, 'second', 'plays');
+      await store.increment(v1, TALLIES, 'first', 'plays');
+      const rows = await h.raw(`SELECT key, seq FROM appdata.doc WHERE app_id = $1 ORDER BY key`, [
+        app,
+      ]);
+      expect(rows.map((r) => [r.key, Number(r.seq)])).toEqual([
+        ['first', 1],
+        ['second', 2],
+      ]);
+    });
+
     it('every document write and delete takes the next seq of its (app, ns); a delete leaves a tombstone', async () => {
       const app = freshApp('seq');
       const me = ctx(app, NS_PROD, VIEWER_1);

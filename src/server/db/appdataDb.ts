@@ -8,10 +8,11 @@ declare global {
 }
 
 /**
- * App Blocks document-store connection: the same datastore as `appsDb`, but as a
- * least-privilege role that holds only `appdata_rw` — so the row-level security
- * on the `appdata` tables actually binds it (it never binds a superuser, which
- * is what `appsDb` connects as). Only `doc-store.instance.ts` uses it.
+ * App Blocks document-store connection: the same datastore as `appsDb`, as a
+ * least-privilege role that holds only `appdata_rw`. Row-level security does not
+ * bind a superuser or BYPASSRLS role, so the store requires its own
+ * least-privilege connection (and checks the role on first use). Only
+ * `doc-store.instance.ts` uses it.
  *
  * Optional: when `APPDATA_DATABASE_URL` is unset this is `null` and every
  * document-store call fails closed with `storage_disabled`. It deliberately has

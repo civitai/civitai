@@ -116,7 +116,16 @@ export function defineRlsSuite(makeHarness: () => Promise<Harness>) {
         );
         expect(await c.query(`SELECT app_id FROM appdata.doc`)).toEqual([]);
         await c.query('COMMIT');
+        // A reused connection: the settings now read '' (not NULL). Still nothing
+        // visible, and a row scoped to '' is refused by the POLICY, not only by
+        // the non-empty CHECK behind it.
+        expect(await c.query(`SELECT current_setting('appdata.app_id', true) AS v`)).toEqual([
+          { v: '' },
+        ]);
         expect(await c.query(`SELECT app_id FROM appdata.doc`)).toEqual([]);
+        expect(
+          await rejects(c.query(`INSERT INTO appdata.usage_app (app_id, ns) VALUES ('', '')`))
+        ).toMatch(/row-level security/);
       } finally {
         await c.close();
       }

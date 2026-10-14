@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createDocStore } from '~/server/services/apps/doc-store';
 import { DocStoreError } from '~/server/services/apps/doc-store.types';
+import type { DocCollection } from '~/server/services/apps/doc-store.types';
 import { barrier, createRealPgHarness, REAL_PG_URL } from './doc-store.harness';
 import type { Harness } from './doc-store.harness';
 import {
@@ -36,6 +37,14 @@ if (!REAL_PG_URL) {
     '[doc-store.pg.test] APPDATA_TEST_DATABASE_URL unset — real-Postgres and concurrency cases SKIPPED'
   );
 }
+
+// In CI the unit job provides a Postgres service; a missing URL there means the
+// wiring broke, and silently skipping would hide every concurrency property.
+describe.runIf(!!process.env.CI)('CI provides a real Postgres', () => {
+  it('APPDATA_TEST_DATABASE_URL is set', () => {
+    expect(REAL_PG_URL, 'the unit job must set APPDATA_TEST_DATABASE_URL').toBeTruthy();
+  });
+});
 
 const N = 8;
 const DOC = { p: 'xxxxxxxxxx' }; // 19 bytes of jsonb text
@@ -257,6 +266,55 @@ describe.skipIf(!REAL_PG_URL)('concurrency on Postgres (appdata_rw, RLS on)', ()
       [app, NS_PROD]
     );
     expect(new Set(seqs.map((s) => Number(s.seq))).size).toBe(seqs.length);
+  });
+});
+
+describe.skipIf(!REAL_PG_URL)('index type change on Postgres', () => {
+  it('an index whose type changed sorts only rows of the declared type, paging both ways', async () => {
+    const h = await createRealPgHarness();
+    try {
+      const store = createDocStore({ db: h.db });
+      const app = freshApp('pg_retyped');
+      const v1 = ctx(app, NS_PROD, 1);
+      const asNumber: DocCollection = {
+        name: 'retyped',
+        config: { visibility: 'shared', indexes: { rank: 'number' } },
+      };
+      const asString: DocCollection = {
+        name: 'retyped',
+        config: { visibility: 'shared', indexes: { rank: 'string' } },
+      };
+      for (const [k, r] of [
+        ['n1', 3],
+        ['n2', 1],
+        ['n3', 2],
+      ] as const) {
+        await store.put(v1, asNumber, k, { rank: r });
+      }
+      for (const [k, r] of [
+        ['s1', 'b'],
+        ['s2', 'a'],
+        ['s3', 'c'],
+      ] as const) {
+        await store.put(v1, asString, k, { rank: r });
+      }
+      for (const [sort, want] of [
+        ['rank', ['s2', 's1', 's3']],
+        ['-rank', ['s3', 's1', 's2']],
+      ] as const) {
+        const paged: string[] = [];
+        let cursor: string | undefined;
+        for (let i = 0; i < 10; i++) {
+          const page = await store.list(v1, asString, { sort, limit: 1, cursor });
+          paged.push(...page.items.map((d) => d.key));
+          if (!page.nextCursor) break;
+          cursor = page.nextCursor;
+        }
+        expect({ sort, paged }).toEqual({ sort, paged: [...want] });
+      }
+    } finally {
+      await h.close();
+    }
   });
 });
 
