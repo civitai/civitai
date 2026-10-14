@@ -1,8 +1,12 @@
 import { describe, expect, it } from 'vitest';
+// `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
+import { scanSource } from '../../../../test/source-scan';
+import { SLUG_REGEX } from '~/server/schema/blocks/publish-request.schema';
 import {
   appRoleIdent,
   appSchemaIdent,
   isValidAppSlug,
+  newBlockIdHyphenRunError,
   normalizeReviewPreviewId,
   reviewPreviewSchemaIdent,
   sanitizeAppSlug,
@@ -145,5 +149,67 @@ describe('apps-slug', () => {
       expect(normalizeReviewPreviewId(null)).toBe(null);
       expect(normalizeReviewPreviewId(42 as unknown as string)).toBe(null);
     });
+  });
+});
+
+describe('newBlockIdHyphenRunError', () => {
+  it.each(['my--app', 'a---b'])('refuses %s', (blockId) => {
+    expect(newBlockIdHyphenRunError(blockId)).toBe(
+      `blockId "${blockId}" must not contain consecutive hyphens ("--"): app storage treats a run of hyphens as a single separator, so it could share storage with another app. Use single hyphens.`
+    );
+  });
+
+  it.each(['my-app', 'a-b-c', 'plainapp'])('allows %s', (blockId) => {
+    expect(newBlockIdHyphenRunError(blockId)).toBeNull();
+  });
+
+  it('the pair it exists to separate: both are pattern-legal and share one storage slug', () => {
+    expect(SLUG_REGEX.test('my-app') && SLUG_REGEX.test('my--app')).toBe(true);
+    expect(sanitizeAppSlug('my--app')).toBe('my_app');
+    expect(sanitizeAppSlug('my-app')).toBe('my_app');
+  });
+
+  /** Every pattern-legal blockId of 3–6 chars over a small alphabet, plus length edges. */
+  function patternLegalIds(): string[] {
+    const alphabet = ['a', 'b', '7', '-'];
+    let frontier = [''];
+    const all: string[] = [];
+    for (let len = 1; len <= 6; len++) {
+      frontier = frontier.flatMap((prefix) => alphabet.map((ch) => prefix + ch));
+      if (len >= 3) all.push(...frontier);
+    }
+    all.push('a' + 'b'.repeat(39), 'a-' + 'b'.repeat(38), 'a' + 'b-'.repeat(19) + 'b');
+    return all.filter((id) => id.length <= 40 && SLUG_REGEX.test(id));
+  }
+
+  it('among accepted pattern-legal blockIds, distinct ids never share a storage slug', () => {
+    const accepted = patternLegalIds().filter((id) => newBlockIdHyphenRunError(id) === null);
+    expect(accepted.length).toBeGreaterThan(1000);
+
+    const idBySlug = new Map<string, string>();
+    for (const id of accepted) {
+      const slug = sanitizeAppSlug(id);
+      expect(slug, id).toBe(id.replaceAll('-', '_'));
+      expect(idBySlug.get(slug!), `${id} collides`).toBeUndefined();
+      idBySlug.set(slug!, id);
+    }
+  });
+
+  it('without the rule the same generated set does collide (the property test can go red)', () => {
+    const slugs = patternLegalIds().map((id) => sanitizeAppSlug(id));
+    expect(new Set(slugs).size).toBeLessThan(slugs.length);
+  });
+
+  it('every file that creates an app block row applies the rule, and no other file does', () => {
+    const scan = scanSource(process.cwd(), {
+      newBlockIdHyphenRunError: 'src/server/utils/apps-slug.ts',
+    });
+    const creates = /\bappBlock\s*\.\s*(create|createMany|createManyAndReturn|upsert)\s*\(/;
+    const creators = scan.files.filter((f) => creates.test(scan.code.get(f)!)).sort();
+    expect(creators).toEqual([
+      'src/pages/api/v1/developer/block-manifests.ts',
+      'src/server/services/blocks/publish-request.service.ts',
+    ]);
+    expect(scan.callersOf('newBlockIdHyphenRunError')).toEqual(creators);
   });
 });

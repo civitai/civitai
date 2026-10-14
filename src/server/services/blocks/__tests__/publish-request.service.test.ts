@@ -770,3 +770,53 @@ describe('submitVersion — sensitive-scope justification gate (enforced AT SUBM
     expect(data.forgejoCommitSha).toBeUndefined();
   });
 });
+
+describe('submitVersion — consecutive hyphens in a NEW blockId', () => {
+  async function makeBundle(blockId: string): Promise<Buffer> {
+    const zip = new JSZip();
+    zip.file(
+      'block.manifest.json',
+      JSON.stringify({ blockId, version: '0.3.0', name: 'Fixture App', scopes: [] })
+    );
+    zip.file('index.html', '<!doctype html><html><body>hi</body></html>');
+    return Buffer.from(await zip.generateAsync({ type: 'nodebuffer' }));
+  }
+
+  const SUBMITTER = 61;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    dbMocks.pubReqFindFirst.mockResolvedValue(null);
+    dbMocks.listingReqFindFirst.mockResolvedValue(null);
+    dbMocks.appBlockFindFirst.mockResolvedValue(null);
+    dbMocks.createPublishRequest.mockResolvedValue({});
+    dbMocks.appListingFindFirst.mockResolvedValue(null);
+    dbMocks.appListingCreate.mockResolvedValue({ id: 'apl_fixture' });
+  });
+
+  it.each(['my--app', 'a---b'])('refuses a first version of %s', async (blockId) => {
+    const buf = await makeBundle(blockId);
+    await expect(
+      submitVersion({ bundleBuffer: buf, submittedByUserId: SUBMITTER })
+    ).rejects.toThrow(
+      `blockId "${blockId}" must not contain consecutive hyphens ("--"): app storage treats a run of hyphens as a single separator, so it could share storage with another app. Use single hyphens.`
+    );
+    expect(dbMocks.createPublishRequest).not.toHaveBeenCalled();
+    expect(dbMocks.appListingCreate).not.toHaveBeenCalled();
+  });
+
+  it.each(['my-app', 'a-b-c', 'plainapp'])('accepts a first version of %s', async (blockId) => {
+    const buf = await makeBundle(blockId);
+    const result = await submitVersion({ bundleBuffer: buf, submittedByUserId: SUBMITTER });
+    expect(result.slug).toBe(blockId);
+    expect(dbMocks.createPublishRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it('accepts a new version of an EXISTING app whose blockId contains consecutive hyphens', async () => {
+    dbMocks.appBlockFindFirst.mockResolvedValue({ id: 'apb_legacy', appId: 'app_9' });
+    const buf = await makeBundle('old--name');
+    const result = await submitVersion({ bundleBuffer: buf, submittedByUserId: SUBMITTER });
+    expect(result.slug).toBe('old--name');
+    expect(dbMocks.createPublishRequest).toHaveBeenCalledTimes(1);
+  });
+});
