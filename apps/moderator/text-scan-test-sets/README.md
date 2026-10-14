@@ -26,8 +26,9 @@ express a partial index, so after `db:moderator:pull` the schema may need a hand
 
 ## How a run works
 
-- **Quote, then confirm.** The Test sets tab prices the run first (`quoteTexts` on up to 8 cases; 1 Buzz
-  per call, flat) and shows calls, Buzz and minutes. Start is refused if the set, the draft or the live
+- **Quote, then confirm.** The Test sets tab prices the run first (`quoteTexts` on a sample of up to 8
+  cases; 1 Buzz per call as the fallback price) and shows calls, Buzz and minutes. A call is one case
+  scanned, so Buzz and calls scale with cases, not with requests. Start is refused if the set, the draft or the live
   prompts changed since the quote. Buzz is derived on the server, not taken from the form.
 - **Baseline and draft.** A run of a draft is compared with the set's baseline: its latest finished run
   of the production prompt versions (and, for Model rules, the live rule state). A fresh baseline is
@@ -35,8 +36,9 @@ express a partial index, so after `db:moderator:pull` the schema may need a hand
   baseline missing some cases (added since, or re-added with changed text, which drops that case's
   verdicts) is topped up in place; if the top-up is cancelled or fails, the baseline is done again at
   its old finish time. A draft run never becomes a baseline.
-- **Background worker.** Runs scan in the moderator server after the request returns, 8 cases per
-  harness call, writing each chunk's results as it lands. Harness calls use the starting moderator's
+- **Background worker.** Runs scan in the moderator server after the request returns, up to 8 cases per
+  harness request (one request covers up to 8 calls, so a small set finishes in one step and progress jumps),
+  writing each chunk's results as it lands. Harness calls use the starting moderator's
   session. A database lease makes sure one process scans a run. A run whose heartbeat is older than
   5 minutes is resumed when a moderator opens a Test sets view (under that viewer's session); on boot
   the server only releases this host's stale leases. A restart re-scans at most the chunk in flight.

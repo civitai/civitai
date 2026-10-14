@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { countOf } from '$lib/text-scan-tests/format';
   import { browser } from '$app/environment';
   import * as Select from '@civitai/ui/components/ui/select/index.js';
   import { fetchJson } from '$lib/fetch-json';
@@ -93,7 +94,7 @@
         </Select.Trigger>
         <Select.Content>
           {#each options as set (set.id)}
-            <Select.Item value={String(set.id)}>{set.name} · {set.caseCount} cases</Select.Item>
+            <Select.Item value={String(set.id)}>{set.name} · {countOf(set.caseCount, 'case')}</Select.Item>
           {/each}
         </Select.Content>
       </Select.Root>
@@ -107,7 +108,7 @@
       {@const o = overview.value}
       <div class="flex flex-wrap items-baseline justify-between gap-2">
         <p class="text-sm text-dark-0">
-          {o.cases.runnable} cases{#if o.cases.wiped} · {o.cases.wiped} with text removed{/if}
+          {countOf(o.cases.runnable, 'case')}{#if o.cases.wiped} · {o.cases.wiped} with text removed{/if}
         </p>
         <a href="/text-scan/test-sets/{o.set.id}" class={LINK_CLASS}>Open set</a>
       </div>

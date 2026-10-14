@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { formatVersions } from '$lib/text-scan-tests/format';
   import { browser } from '$app/environment';
   import { enhance } from '$app/forms';
   import { invalidateAll } from '$app/navigation';
@@ -45,11 +46,7 @@
   const errorCount = $derived(
     report.cases.filter((c) => (c.draft ?? c.baseline)?.result?.status === 'error').length
   );
-  const versions = $derived(
-    Object.entries(report.run.promptIds)
-      .map(([key, id]) => `${key}#${id}`)
-      .join(' ')
-  );
+  const versions = $derived(formatVersions(report.run.promptIds));
   const title = $derived(
     `${RUN_KIND_NAMES[report.run.kind]} run #${report.run.id}`
   );

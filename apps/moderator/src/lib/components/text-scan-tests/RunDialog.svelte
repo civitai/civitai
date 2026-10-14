@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { countOf } from '$lib/text-scan-tests/format';
   import { enhance } from '$app/forms';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import * as Dialog from '@civitai/ui/components/ui/dialog/index.js';
@@ -73,7 +74,7 @@
     </Dialog.Header>
     {#if quote}
       <p class="text-sm text-dark-0">
-        Run {quote.cases} cases: about {quote.calls} calls, about {quote.buzz} Buzz, about
+        Run {countOf(quote.cases, 'case')}: about {countOf(quote.calls, 'call')}, about {quote.buzz} Buzz, about
         {quote.minutes} min.
       </p>
       <p class="text-xs text-dark-2">

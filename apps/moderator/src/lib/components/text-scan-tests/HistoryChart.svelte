@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { formatVersions } from '$lib/text-scan-tests/format';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { CHART_PALETTE_SIZE } from '@civitai/ui/components/ui/chart/chart-colors.js';
   import {
@@ -36,10 +37,7 @@
   const y = (rate: number) => PAD.top + (1 - rate) * plotH;
   const pct = (rate: number | null | undefined) =>
     rate == null ? '—' : `${Math.round(rate * 100)}%`;
-  const versions = (p: HistoryPoint) =>
-    Object.entries(p.promptIds)
-      .map(([key, id]) => `${key}#${id}`)
-      .join(' ');
+  const versions = (p: HistoryPoint) => formatVersions(p.promptIds);
   const line = (label: LabLabel) =>
     points
       .flatMap((p, i) => {
