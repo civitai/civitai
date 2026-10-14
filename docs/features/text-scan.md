@@ -84,7 +84,9 @@ never exceeds its main mode, and the `text-scan` kill switch turns both off.
   row and logs `scan-verdict` with `variant: 'web-search'` and `acted: false`. It never acts.
 - **active** (main scan also active) — the main scan stops asking for `poi`/`minor`; the search scan
   writes to `Model:search` and its `poi`/`minor` verdict goes through the Model adapter. `nsfw` only
-  ever comes from the main scan, and neither scan clears a flag the other set.
+  ever comes from the main scan, and neither scan clears a flag the other set. An edit that both
+  raises the rating and sets `poi`/`minor` sends the owner two notices, one per scan; deduplicating
+  them would risk dropping one.
 
 A scan acts on the labels it was submitted with, whatever the search rollout says when its verdict
 arrives: a main scan submitted before the search pass went active still acts on its `poi`/`minor`,
