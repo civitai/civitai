@@ -31,7 +31,7 @@
 --   transaction. A statement run without those settings sees no rows and cannot
 --   insert any.
 --
---   The one exception is REVIEW MAINTENANCE: deleting the review namespaces
+--   The first exception is REVIEW MAINTENANCE: deleting the review namespaces
 --   (`rev:<publishRequestId>:<moderatorUid>`) of a decided publish request. A
 --   transaction that also sets `appdata.review_maintenance` to 'on' may read and
 --   delete rows whose `ns` starts with `rev:` AND whose `app_id` is the request
@@ -40,6 +40,14 @@
 --   requests to purge. It can never
 --   see or touch a `prod` or `dev:` row, and never insert or update anything.
 --   Only the purge and sweep functions in `doc-store.ts` set it.
+--
+--   The other exception is ACCOUNT WIPE enumeration: finding every (app, namespace)
+--   in which one wiped account has rows. A transaction that sets
+--   `appdata.account_wipe_uid` to a user id may READ the `usage_user` and
+--   `doc_mark` rows of that ONE user, in every app and namespace. Nothing else:
+--   no other table, no other user, no insert, update or delete. The wipe itself
+--   then runs one ordinary (app, ns)-scoped transaction per namespace found.
+--   Only the account-wipe enumeration in `doc-store.ts` sets it.
 --
 -- IDEMPOTENT: every statement is IF NOT EXISTS, or a DROP IF EXISTS + CREATE
 --   inside this one transaction; safe to re-run. ROLLBACK: the sibling file
@@ -274,6 +282,18 @@ BEGIN
       'USING (current_setting(''appdata.review_maintenance'', true) = ''on'' '
       'AND ns LIKE ''rev:%%'' '
       'AND app_id = NULLIF(current_setting(''appdata.app_id'', true), ''''))',
+      t);
+  END LOOP;
+  -- Account-wipe enumeration (see the header): read only, the rows of the ONE user in
+  -- `appdata.account_wipe_uid`, on the two tables that record which namespaces a user has
+  -- data in. Compared as text so a malformed setting matches nothing instead of erroring;
+  -- NULLIF folds an unset or ended setting ('' on a reused connection) to NULL, as above.
+  FOREACH t IN ARRAY ARRAY['doc_mark', 'usage_user']
+  LOOP
+    EXECUTE format('DROP POLICY IF EXISTS appdata_account_wipe_read ON appdata.%I', t);
+    EXECUTE format(
+      'CREATE POLICY appdata_account_wipe_read ON appdata.%I FOR SELECT '
+      'USING (user_id::text = NULLIF(current_setting(''appdata.account_wipe_uid'', true), ''''))',
       t);
   END LOOP;
 END

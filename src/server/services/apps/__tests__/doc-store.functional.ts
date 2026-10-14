@@ -18,6 +18,7 @@ import type {
 } from '~/server/services/apps/doc-store.types';
 import { DocStoreError } from '~/server/services/apps/doc-store.types';
 import type { Harness } from './doc-store.harness';
+import { APPDATA_TABLES } from './doc-store.sql-scan';
 
 /**
  * A collection declaration in the manifest parser's shape (`DocCollectionConfig`
@@ -91,6 +92,17 @@ export async function expectCode(p: Promise<unknown>, code: DocStoreErrorCode) {
 let appSeq = 0;
 /** A fresh app id per test so tests never share rows. */
 export const freshApp = (tag: string) => `ab_${tag}_${(appSeq += 1)}`;
+
+/** Every row of every appdata table for one app id (superuser, RLS bypassed), for "untouched" checks. */
+export async function snapshot(h: Harness, appId: string) {
+  const out: Record<string, unknown[]> = {};
+  for (const t of APPDATA_TABLES) {
+    out[t] = await h.raw(`SELECT * FROM appdata.${t} WHERE app_id = $1 ORDER BY 1, 2, 3, 4, 5`, [
+      appId,
+    ]);
+  }
+  return out;
+}
 
 /** Recompute usage from the documents themselves and compare with the counters. */
 export async function assertUsageConsistent(h: Harness, appId: string, ns: string) {
@@ -457,9 +469,7 @@ export function defineFunctionalSuite(makeHarness: () => Promise<Harness>) {
     it('report is built in; its count is never exposed', async () => {
       const app = freshApp('report');
       await store.put(ctx(app, NS_PROD, VIEWER_1), POSTS, 'k', { status: 'a' });
-      expect(
-        await store.mark(ctx(app, NS_PROD, VIEWER_2), POSTS, 'k', 'report')
-      ).toEqual({
+      expect(await store.mark(ctx(app, NS_PROD, VIEWER_2), POSTS, 'k', 'report')).toEqual({
         marked: true,
         count: null,
       });

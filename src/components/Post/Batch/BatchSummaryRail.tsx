@@ -174,7 +174,8 @@ function MobileRail(props: BatchSummaryRailProps) {
         size="85%"
         title="Summary"
       >
-        <div className="flex flex-col gap-4 pb-4">
+        {/* The theme gives every Drawer body `overflow: hidden`, so the sheet scrolls here. */}
+        <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto pb-4">
           <Totals {...props} />
           <Issues {...props} />
           <SchedulePreview

@@ -7,6 +7,7 @@ import {
   IconX,
 } from '@tabler/icons-react';
 import clsx from 'clsx';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import type { TrackedFile } from '~/components/FileUpload/FileUploadProvider';
 import { MediaDropzone } from '~/components/Image/ImageDropzone/MediaDropzone';
 import { UploadNotice } from '~/components/UploadNotice/UploadNotice';
@@ -18,6 +19,9 @@ import { useBatchComposerStore } from './batch-composer.store';
 import { groupIntoPosts } from './batch-composer.utils';
 
 export type DroppedFile = { file: File; meta?: Record<string, unknown> };
+
+/** The smallest edge size; the cells are 96px wide. */
+const THUMB_WIDTH = 96;
 
 export function BatchMediaGrid({
   onDrop,
@@ -248,12 +252,16 @@ function MediaThumb({
         data-status={status}
         data-testid="batch-media-thumb"
       >
-        {item.type === 'video' ? (
-          <video src={item.objectUrl} muted className="size-full object-cover" />
-        ) : (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={item.objectUrl} alt={item.name} className="size-full object-cover" />
-        )}
+        <EdgeMedia
+          src={item.url}
+          type={item.type}
+          name={item.name}
+          width={THUMB_WIDTH}
+          anim={false}
+          loading="lazy"
+          alt={item.name}
+          className="size-full object-cover"
+        />
         {item.type === 'video' && (
           <IconVideo size={16} className="absolute bottom-1 left-1 text-white drop-shadow" />
         )}

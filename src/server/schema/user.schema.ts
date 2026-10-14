@@ -303,6 +303,7 @@ export const navigationSettingsSchema = z
     more: navZone,
     hidden: navZone,
     showLabels: z.boolean().optional(),
+    keepProfileLabels: z.boolean().optional(),
   })
   .superRefine((value, ctx) => {
     // A key in both groups makes "the nearest placed sibling" ambiguous during resolution and

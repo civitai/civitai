@@ -12,7 +12,15 @@
   import { effectiveSource, sourceLabel } from '$lib/minor-flags/appeal-filters';
   import { fetchHashDetail } from '$lib/minor-flags/hash-detail';
   import { clipList, pastAppealsText } from '$lib/minor-flags/appeal-row';
-  import { flagInForce, openVerdicts, poiInForce } from '$lib/minor-flags/text-scan-verdicts';
+  import {
+    flagInForce,
+    latestScanDisagrees,
+    openVerdicts,
+    poiInForce,
+    scanVerdictProvenance,
+    scanVerdictText,
+    type FlagLabel,
+  } from '$lib/minor-flags/text-scan-verdicts';
   import AppealImages from './AppealImages.svelte';
   import AppealTags from './AppealTags.svelte';
 
@@ -42,6 +50,14 @@
 
   const origin = $derived(effectiveSource(row.flagSource, row.flagConfirmedFrom));
   const verdicts = $derived(openVerdicts(row.textScanFlags));
+  const scan = $derived(row.latestScan);
+  const scanLabels = $derived(
+    (['minor', 'poi'] as const).flatMap((label) => {
+      const value = scan?.[label];
+      return value ? [{ label, value }] : [];
+    })
+  );
+  const labelName = (label: FlagLabel) => (label === 'poi' ? 'real person' : 'minor');
   const poiOpen = $derived(poiInForce(row));
   const tags = $derived(clipList(row.tags, 12, row.tagCount));
   const words = $derived(clipList(row.trainedWords, 8, row.trainedWordCount));
@@ -102,14 +118,49 @@
           {#each verdicts as { label, flag } (label)}
             <div class="rounded-md bg-dark-6 p-3 text-sm">
               <p class="m-0 font-medium text-white">
-                Text scan: {label === 'poi' ? 'real person' : 'minor'}
+                Text scan: {labelName(label)}
+                {#if flag.at}
+                  <span class="font-normal text-dark-2" title={dateTime(flag.at)}>
+                    · flagged {ago(flag.at)}
+                  </span>
+                {/if}
               </p>
               {#if flag.reason}<p class="m-0 mt-1">{flag.reason}</p>{/if}
               {#if flag.names?.length}
                 <p class="m-0 mt-1">Names: {flag.names.join(', ')}</p>
               {/if}
+              {#if latestScanDisagrees(scan, label)}
+                <p
+                  class="m-0 mt-2 rounded border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-amber-200"
+                >
+                  Latest scan: not detected — flag kept (sticky)
+                </p>
+              {/if}
             </div>
           {/each}
+
+          {#if verdicts.length || scanLabels.length}
+            <div class="rounded-md bg-dark-6 p-3 text-sm">
+              <p class="m-0 font-medium text-white">Latest scan</p>
+              {#each scanLabels as { label, value } (label)}
+                {@const provenance = scanVerdictProvenance(value)}
+                <p class="m-0 mt-1">
+                  <span class="text-white">{labelName(label)}:</span>
+                  {scanVerdictText(value)}
+                </p>
+                <p class="m-0 text-dark-2">
+                  {provenance.source} ·
+                  {#if provenance.note}
+                    <span title={dateTime(value.updatedAt)}>{provenance.note}</span>
+                  {:else}
+                    <span title={dateTime(value.updatedAt)}>{ago(value.updatedAt)}</span>
+                  {/if}
+                </p>
+              {:else}
+                <p class="m-0 text-sm text-dark-2">No text scan on record.</p>
+              {/each}
+            </div>
+          {/if}
 
           {#if hashDetail}
             {#await hashDetail}

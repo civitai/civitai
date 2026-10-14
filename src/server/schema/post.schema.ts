@@ -296,6 +296,16 @@ export const reorderPostImagesSchema = z.object({
   imageIds: z.number().array(),
 });
 
+export const getImageMoveTargetsSchema = z.object({ fromPostId: z.number().int() });
+
+export type MoveImagesToPostInput = z.infer<typeof moveImagesToPostSchema>;
+export const moveImagesToPostSchema = z.object({
+  imageIds: z.number().int().array().min(1).max(POST_IMAGE_LIMIT),
+  fromPostId: z.number().int(),
+  /** Omit to move into a new post published at the source post's date. */
+  toPostId: z.number().int().optional(),
+});
+
 export type GetPostTagsInput = z.infer<typeof getPostTagsSchema>;
 export const getPostTagsSchema = z.object({
   query: z.string().optional(),

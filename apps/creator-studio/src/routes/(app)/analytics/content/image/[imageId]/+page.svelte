@@ -10,6 +10,7 @@
   import DeltaChip from '$lib/components/DeltaChip.svelte';
   import AnalyticsHeader from '$lib/components/AnalyticsHeader.svelte';
   import ImpressionsNotice from '$lib/components/ImpressionsNotice.svelte';
+  import CollectorsPanel from '$lib/components/CollectorsPanel.svelte';
   import ReactorsPanel from '$lib/components/ReactorsPanel.svelte';
   import { chartType } from '$lib/stores/chart-type';
   import { formatRange, dayDiff, shiftIso } from '$lib/date-range';
@@ -256,5 +257,9 @@
 
 <ReactorsPanel
   endpoint="/analytics/content/image/{image.imageId}/reactors"
+  noun={image.type === 'video' ? 'video' : 'image'}
+/>
+<CollectorsPanel
+  endpoint="/analytics/content/image/{image.imageId}/collectors"
   noun={image.type === 'video' ? 'video' : 'image'}
 />

@@ -8,7 +8,9 @@ import {
   countOutsideBand,
   type HourBand,
   type HourRow,
+  fittedBand,
   hourBand,
+  hourLabel,
   hourRows,
   layoutColumn,
   placeInBand,
@@ -33,8 +35,9 @@ export interface HourGridProps {
 
 export function renderHourGrid(props: HourGridProps): TemplateResult {
   const { dayKeys, allHours, context } = props;
-  const band = hourBand(allHours);
+  const band = hourBand(allHours, props.posts, dayKeys);
   const rows = hourRows(band);
+  const fitted = allHours ? fittedBand(props.posts, dayKeys) : band;
   const hidden = countOutsideBand(props.posts, dayKeys, band);
   const nowPlace = placeInBand(props.now, band);
   return html`
@@ -61,7 +64,7 @@ export function renderHourGrid(props: HourGridProps): TemplateResult {
       <div class="hour-foot">
         <button class="plain more" type="button" @click=${() => context.actions.toggleAllHours()}>
           ${allHours
-            ? 'Show 6 AM – 2 AM'
+            ? `Show ${hourLabel(fitted.startHour)} – ${hourLabel(fitted.endHour)}`
             : hidden
             ? `Show all hours (${hidden} hidden)`
             : 'Show all hours'}

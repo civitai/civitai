@@ -6,8 +6,13 @@ import { immer } from 'zustand/middleware/immer';
 import type { MediaUploadOnCompleteProps } from '~/hooks/useMediaUpload';
 import type { GenerationResource } from '~/shared/types/generation.types';
 import { POST_IMAGE_LIMIT } from '~/server/common/constants';
-import type { PlannedPost, ScheduleSettings } from './batch-composer.utils';
-import { defaultScheduleSettings, shuffle } from './batch-composer.utils';
+import type {
+  ComposerDraft,
+  PlannedPost,
+  PromotedVersion,
+  ScheduleSettings,
+} from './batch-composer.utils';
+import { defaultScheduleSettings, defaultTitleTemplate, shuffle } from './batch-composer.utils';
 
 export type NamedOption = { id: number; name: string };
 
@@ -27,6 +32,8 @@ export type BatchComposerState = {
   media: MediaUploadOnCompleteProps[];
   imagesPerPost: number;
   shared: SharedSettings;
+  /** Names behind `shared.promotedVersionId`, from the version query or the picked resource. */
+  promotedNames: { model: string; version: string } | null;
   /** The saved preset section 2 currently matches; cleared by any edit to it. */
   presetId: number | null;
   schedule: ScheduleSettings;
@@ -35,11 +42,19 @@ export type BatchComposerState = {
   fixedDates: Date[] | null;
   screen: 'edit' | 'review';
   reviewPlan: ReviewPost[] | null;
+  /** False until the saved draft has been read, so nothing is saved over it in the meantime. */
+  hydrated: boolean;
+  /** Set once every post was created; the state still holds the media but is no longer a draft. */
+  submitted: boolean;
   addMedia: (media: MediaUploadOnCompleteProps) => void;
   removeMedia: (url: string) => void;
   shuffleMedia: () => void;
   setImagesPerPost: (count: number) => void;
   updateShared: (patch: Partial<SharedSettings>) => void;
+  /** Names may lag the id while the version query is in flight. */
+  setPromoted: (version: ({ id: number } & Partial<PromotedVersion>) | null) => void;
+  hydrate: (draft: ComposerDraft | null) => void;
+  markSubmitted: () => void;
   applyPreset: (presetId: number | null, settings: Partial<SharedSettings>) => void;
   updateSchedule: (patch: Partial<ScheduleSettings>) => void;
   setFixedDates: (dates: Date[] | null) => void;
@@ -72,12 +87,15 @@ export function createBatchComposerStore(input: {
       tags: [],
       titleTemplate: input.titleTemplate,
     },
+    promotedNames: null,
     presetId: null,
     schedule: defaultScheduleSettings(input.now ?? new Date(), input.startAt),
     seed: Math.floor(Math.random() * 2 ** 31),
     fixedDates: null,
     screen: 'edit' as const,
     reviewPlan: null,
+    hydrated: false,
+    submitted: false,
   });
 
   return createStore<BatchComposerState>()(
@@ -109,6 +127,40 @@ export function createBatchComposerStore(input: {
           set((state) => {
             Object.assign(state.shared, patch);
             state.presetId = null;
+          }),
+        setPromoted: (version) =>
+          set((state) => {
+            if (
+              version &&
+              version.id !== state.shared.promotedVersionId &&
+              !state.shared.titleTemplate
+            )
+              state.shared.titleTemplate = defaultTitleTemplate(true);
+            state.shared.promotedVersionId = version?.id ?? null;
+            state.promotedNames =
+              version?.model && version.version
+                ? { model: version.model, version: version.version }
+                : null;
+          }),
+        hydrate: (draft) =>
+          set((state) => {
+            state.hydrated = true;
+            if (!draft) return;
+            const uploadedMeanwhile = state.media.filter(
+              (item) => !draft.media.some((saved) => saved.url === item.url)
+            );
+            state.media = [...draft.media, ...uploadedMeanwhile];
+            state.imagesPerPost = draft.imagesPerPost;
+            state.shared = draft.shared;
+            state.promotedNames = draft.promotedNames;
+            state.presetId = draft.presetId;
+            state.schedule = draft.schedule;
+            state.seed = draft.seed;
+            state.fixedDates = draft.fixedDates;
+          }),
+        markSubmitted: () =>
+          set((state) => {
+            state.submitted = true;
           }),
         applyPreset: (presetId, settings) =>
           set((state) => {
@@ -143,7 +195,7 @@ export function createBatchComposerStore(input: {
           set((state) => {
             if (state.reviewPlan) state.reviewPlan = state.reviewPlan.filter((x) => x.key !== key);
           }),
-        reset: () => set(initial()),
+        reset: () => set({ ...initial(), hydrated: true }),
       })),
       { name: 'batch-composer' }
     )

@@ -170,7 +170,7 @@ export function validateBatchSchedule(...)                 // section 3
 export function getDailyPostLimit(user: Pick<SessionUser,'tier'|'meta'>): number
 ```
 
-Generator constraints so jitter cannot break the gap: `everyMinutes ≥ 60` (UI minimum 1h) and `spread`
+Generator constraints so jitter cannot break the gap: `everyMinutes ≥ 40` (the 30-minute gap plus the jitter) and `spread`
 requires `(to - from) / (count - 1) ≥ 40` min; otherwise the generator returns an issue instead of
 dates. Base dates are computed in the user's local time and converted to UTC; cap days are UTC.
 
