@@ -87,8 +87,10 @@ import {
  *
  * It is narrowed by reading at all ONLY when a read could change the outcome — see
  * {@link shouldConsultMarker}: an anon token has no (user, app) pair, and a token carrying
- * no consent-gated scope cannot be affected by any marker. That keeps every
- * `apps:storage:*` and `collections:read:self`/`write:self` app out of the coupling
+ * no consent-gated scope cannot be affected by any marker. That keeps every app whose
+ * scopes are all exempt — the four legacy `apps:storage:*` scopes, `apps:storage`,
+ * `collections:read:self`/`write:self` — out of the coupling (an app declaring the
+ * consent-gated `apps:storage:publish` is IN it)
  * entirely, which is keyed on the app's MANIFEST, not on the route.
  *
  * ⚠️ DO NOT QUOTE "20 of the 29 scope-bound routes" FOR THIS PREDICATE — that figure belongs to
@@ -247,7 +249,8 @@ export type ConsentRevocationVerdict =
  *     `CONSENT_EXEMPT_SCOPES` member on the exempt test ALONE, before it consults the grant,
  *     and `blocks.revokeScopes` refuses to record a suppression for one — so a marker can
  *     never name a scope such a token carries. An app whose whole manifest is exempt
- *     (`apps:storage:*`, shared storage, `collections:read:self`) never reads the marker.
+ *     (the four legacy `apps:storage:*` scopes, `apps:storage`, `collections:read:self`) never
+ *     reads the marker. `apps:storage:publish` is consent-gated, so a manifest carrying it does.
  *
  *     ⚠️ NO ROUTE FIGURE HERE. "20 of the 29 scope-bound REST routes" was retracted in this
  *     file's header and again in the middleware, and survived in THIS docblock — the one both
@@ -273,7 +276,8 @@ export function shouldConsultMarker(opts: {
  *
  * 🔴 `unavailable` FAILS CLOSED BY NAMING EVERY REVOKABLE SCOPE THE TOKEN CARRIES, not by
  * naming all of them. Stripping a consent-EXEMPT scope during a Redis incident would refuse
- * `apps:storage:*` and `collections:read:self` traffic that no revoke could ever have
+ * exempt-storage (the four legacy `apps:storage:*` scopes, `apps:storage`) and
+ * `collections:read:self` traffic that no revoke could ever have
  * touched — a self-inflicted outage on a population the feature does not apply to. Exempt
  * scopes are signed without a grant, so there is nothing about them for a marker to be
  * unknown about.

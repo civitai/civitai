@@ -1383,9 +1383,12 @@ function rethrowMissingRevokedScopesColumn(err: unknown, site: string): unknown 
  * granted scopes, returning the granted subset to sign + the withheld scopes
  * the host must re-consent for.
  *
- * `apps:storage:*` (per-user KV) is intentionally NOT consent-gated here — it is
+ * The per-user storage scopes (`apps:storage:read` / `apps:storage:write`, the per-user
+ * KV, and `apps:storage`, the document store's base scope) are intentionally NOT
+ * consent-gated here — NOT the whole `apps:storage:*` family, since `apps:storage:publish`
+ * is gated (see its entry below). The per-user KV scopes are each
  * an ambient-but-otherwise-gated scope with its own issuance-time / per-op check
- * (resolveStorageContext). Subjecting it to per-user consent would make the
+ * (resolveStorageContext). Subjecting them to per-user consent would make the
  * publisher re-consent to their own block's storage on every version bump for
  * no security gain. The remaining user-resource scopes (user/ai/buzz/
  * social, models:write) flow through the consent gate.

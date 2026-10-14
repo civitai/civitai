@@ -326,6 +326,17 @@ describe('manifest storage — shape rules', () => {
       'storage.collections.plays has write "none" but declares no counters or marks, so nothing could ever be written to it — declare at least one counter or mark, or choose another write policy',
     ],
     [
+      // The "declares no counters or marks" rule must stay silent when the tally list is
+      // there but malformed: that already has its own error, and "declares none" would be
+      // a false second one.
+      'write "none" with a malformed counters value',
+      manifest(
+        { collections: { plays: { visibility: 'shared', write: 'none', counters: 'plays' } } },
+        [STORAGE]
+      ),
+      'storage.collections.plays.counters must be an array of names',
+    ],
+    [
       'dailyWritesPerAuthor on a write "none" collection',
       manifest(
         {
