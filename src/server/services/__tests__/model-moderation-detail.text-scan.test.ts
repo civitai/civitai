@@ -165,6 +165,60 @@ describe('getModelModerationDetail — latest poi/minor verdict per label', () =
       { label: 'poi', source: 'main', status: 'Failed' },
     ]);
   });
+
+  it.each(['Pending', 'Failed'])(
+    'prefers an older succeeded verdict over a newer %s row still carrying a stale one',
+    async (status) => {
+      rows = {
+        Model: mainWithPoi('2026-10-01T00:00:00Z'),
+        'Model:search': {
+          ...SEARCH,
+          status,
+          result: {
+            version: 1,
+            labels: { poi: { detected: true, names: ['x'], reason: 'stale search poi' } },
+          },
+          updatedAt: new Date('2026-10-06T00:00:00Z'),
+        },
+      };
+      const { textScan } = await getModelModerationDetail({ id: 7 });
+      expect(textScan?.labelVerdicts).toEqual([
+        {
+          label: 'poi',
+          detected: false,
+          reason: 'main poi',
+          source: 'main',
+          status: 'Succeeded',
+          updatedAt: new Date('2026-10-01T00:00:00Z'),
+        },
+      ]);
+    }
+  );
+
+  it('takes the only row carrying the label even when it failed', async () => {
+    rows = {
+      Model: MAIN,
+      'Model:search': {
+        ...SEARCH,
+        status: 'Failed',
+        result: {
+          version: 1,
+          labels: { poi: { detected: true, names: ['x'], reason: 'failed search poi' } },
+        },
+      },
+    };
+    const { textScan } = await getModelModerationDetail({ id: 7 });
+    expect(textScan?.labelVerdicts).toEqual([
+      {
+        label: 'poi',
+        detected: true,
+        reason: 'failed search poi',
+        source: 'web search',
+        status: 'Failed',
+        updatedAt: SEARCH.updatedAt,
+      },
+    ]);
+  });
 });
 
 describe('getModelModerationDetail — text-scan flag verdicts', () => {

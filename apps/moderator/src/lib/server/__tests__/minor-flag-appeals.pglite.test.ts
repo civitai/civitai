@@ -63,7 +63,7 @@ CREATE TABLE "ModActivity" (
 CREATE TABLE "EntityModeration" (
   "id" SERIAL PRIMARY KEY, "entityType" TEXT NOT NULL, "entityId" INTEGER NOT NULL,
   "status" TEXT NOT NULL DEFAULT 'Pending', "result" JSONB,
-  "updatedAt" TIMESTAMPTZ NOT NULL DEFAULT '2026-01-01',
+  "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT '2026-01-01',
   UNIQUE ("entityType", "entityId")
 );
 `;
@@ -357,7 +357,7 @@ describe('latest scan', () => {
     db.query(
       `INSERT INTO "EntityModeration" ("entityType","entityId","status","result","updatedAt")
        SELECT * FROM jsonb_to_recordset($1::jsonb)
-         AS x("entityType" text, "entityId" int, status text, result jsonb, "updatedAt" timestamptz)`,
+         AS x("entityType" text, "entityId" int, status text, result jsonb, "updatedAt" timestamp)`,
       [
         JSON.stringify(
           rows.map(([entityType, entityId, status, result, updatedAt]) => ({
@@ -407,6 +407,21 @@ describe('latest scan', () => {
       minor: { detected: false, reason: 'No age given.', source: 'web search' },
     });
     expect(new Date(scan!.poi!.updatedAt).toISOString()).toBe('2026-10-02T00:00:00.000Z');
+  });
+
+  it('serializes updatedAt as a UTC instant', async () => {
+    await insert([
+      [
+        'Model',
+        7,
+        'Succeeded',
+        scanRow({ poi: { detected: true, reason: 'Names an actor.' } }),
+        '2026-10-14T20:39:32.167Z',
+      ],
+    ]);
+    const { updatedAt } = (await scanFor(7))!.poi!;
+    expect(updatedAt).toBe('2026-10-14T20:39:32.167Z');
+    expect(new Date(updatedAt).getTime()).toBe(Date.UTC(2026, 9, 14, 20, 39, 32, 167));
   });
 
   it('prefers a newer succeeded main verdict over a stale succeeded web-search one', async () => {

@@ -140,6 +140,7 @@ import { submitModelTextModeration } from '~/server/services/model-moderation.ad
 import {
   summarizeTextScan,
   summarizeTextScanFlags,
+  textScanLabelDetected,
   type TextScanLabelVerdict,
   type TextScanModeratorSummary,
 } from '~/server/services/text-scan/moderator-summary';
@@ -5124,13 +5125,6 @@ const textScanRowSelect = {
 // takes the newest Succeeded row that carries it, else whichever row carries it.
 type TextScanRow = Parameters<typeof summarizeTextScan>[0];
 
-function labelDetected(result: unknown, label: string) {
-  const detected = (result as { labels?: Record<string, { detected?: unknown }> } | null)?.labels?.[
-    label
-  ]?.detected;
-  return typeof detected === 'boolean' ? detected : null;
-}
-
 function withWebSearchVerdict(
   mainRow: TextScanRow,
   searchRow: TextScanRow
@@ -5153,7 +5147,7 @@ function withWebSearchVerdict(
   const labelVerdicts = picks.map(
     ({ label, summary, row, source }): TextScanLabelVerdict => ({
       label,
-      detected: labelDetected(row.result, label),
+      detected: textScanLabelDetected(row.result, label),
       reason: summary.reasons.find((r) => r.label === label)?.reason ?? '',
       source,
       status: summary.status,

@@ -108,6 +108,18 @@ describe('ModelModerationCard — text-scan flag verdicts', () => {
     expect(page.getByText('Open', { exact: true }).elements()).toHaveLength(0);
   });
 
+  test('badges an upheld appeal beside the open badge', async () => {
+    mocks.data = {
+      ...base,
+      textScanFlags: [{ ...poiVerdict, appealUpheld: { at: '2026-09-03T00:00:00.000Z', by: 4 } }],
+    };
+    renderWithProviders(<ModelModerationCard modelId={7} />);
+    await openCard();
+
+    await expect.element(page.getByText('Appeal upheld')).toBeInTheDocument();
+    await expect.element(page.getByText('Open', { exact: true })).toBeInTheDocument();
+  });
+
   test('counts an open verdict once alongside its flag badge, and a closed one not at all', async () => {
     mocks.data = {
       ...base,
@@ -165,6 +177,15 @@ describe('ModelModerationCard — latest scan per label', () => {
     await expect.element(page.getByText(/^web search · /)).toBeInTheDocument();
     expect(page.getByText(/Latest scan · Succeeded/).elements()).toHaveLength(0);
     await expect.element(page.getByText(/Latest scan · complete/)).toBeInTheDocument();
+    expect(page.getByText(/No real person named\./).elements()).toHaveLength(1);
+  });
+
+  test('says no verdict when the verdict carries no boolean detected', async () => {
+    mocks.data = withVerdict({ detected: null });
+    renderWithProviders(<ModelModerationCard modelId={7} />);
+    await openCard();
+
+    await expect.element(page.getByText(/no verdict — No real person named\./)).toBeInTheDocument();
   });
 
   test('says a rescan is pending instead of dating the last verdict', async () => {

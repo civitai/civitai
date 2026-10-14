@@ -2,7 +2,11 @@ import type {
   TextScanFlagDecision,
   TextScanFlagLabel,
 } from '~/server/services/text-scan/flag-snapshot';
-import { hasOpenTextScanFlag, readTextScanFlags } from '~/server/services/text-scan/flag-snapshot';
+import {
+  hasOpenTextScanFlag,
+  readTextScanFlags,
+  TEXT_SCAN_FLAG_LABELS,
+} from '~/server/services/text-scan/flag-snapshot';
 import type { TextScanResult } from '~/server/services/text-scan/record';
 import type { EntityModerationStatus } from '~/shared/utils/prisma/enums';
 
@@ -56,6 +60,14 @@ export function summarizeTextScan(
   };
 }
 
+export function textScanLabelDetected(result: unknown, label: string): boolean | null {
+  const labels = (result as Partial<TextScanResult> | null | undefined)?.labels as
+    | Record<string, { detected?: unknown }>
+    | undefined;
+  const detected = labels?.[label]?.detected;
+  return typeof detected === 'boolean' ? detected : null;
+}
+
 export type TextScanFlagVerdict = {
   label: TextScanFlagLabel;
   reason: string | null;
@@ -72,7 +84,7 @@ export type TextScanFlagVerdict = {
 // record of why the flag is on.
 export function summarizeTextScanFlags(meta: unknown): TextScanFlagVerdict[] {
   const flags = readTextScanFlags(meta);
-  return (['poi', 'minor'] as const).flatMap((label) => {
+  return TEXT_SCAN_FLAG_LABELS.flatMap((label) => {
     const entry = flags[label];
     if (!entry?.workflowId) return [];
     return [

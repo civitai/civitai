@@ -274,6 +274,8 @@ const scanLabelValue = (row: ScanRowAlias, label: FlagLabel) =>
 const scanCarriesLabel = (row: ScanRowAlias, label: FlagLabel) =>
   sql`COALESCE(jsonb_typeof(${scanLabelValue(row, label)}) = 'object', FALSE)`;
 
+// `updatedAt` is a UTC timestamp without time zone. jsonb renders it with no offset and the
+// TIMESTAMP parser that appends Z only reaches plain columns, so it is formatted as UTC here.
 const scanLabelSql = (row: ScanRowAlias, label: FlagLabel) => {
   const value = scanLabelValue(row, label);
   const r = sql.raw(row);
@@ -281,7 +283,8 @@ const scanLabelSql = (row: ScanRowAlias, label: FlagLabel) => {
     'detected', CASE WHEN jsonb_typeof(${value}->'detected') = 'boolean'
                      THEN (${value}->>'detected')::boolean END,
     'reason', ${value}->>'reason', 'source', ${sql.lit(SCAN_ROW_SOURCE[row])},
-    'status', ${r}.status::text, 'updatedAt', ${r}."updatedAt"
+    'status', ${r}.status::text,
+    'updatedAt', to_char(${r}."updatedAt", 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
   )`;
 };
 
