@@ -517,6 +517,8 @@ describe('settings bootstrap during a server render — domain resolution', () =
   it('rejects with no base URL, as the fetch to an undefined base did, so the render degrades', async () => {
     vi.stubEnv('NEXTAUTH_URL_INTERNAL', undefined);
     vi.stubEnv('NEXT_PUBLIC_BASE_URL', undefined);
+    // The client env falls back to NEXTAUTH_URL, which a developer's `.env` usually sets.
+    vi.stubEnv('NEXTAUTH_URL', undefined);
     const { env: clientEnv } = await import('~/env/client');
     expect(clientEnv.NEXT_PUBLIC_BASE_URL, 'this case needs no public base URL either').toBeFalsy();
     const fresh = await import('~/server/services/settings-bootstrap.service');
