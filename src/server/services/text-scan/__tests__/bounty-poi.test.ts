@@ -169,7 +169,7 @@ describe('resolveBountyPoiAppeal', () => {
     // The grant covers the scanned text; the flagged hash is not carried over.
     expect(call.slice(1)).toContain('h-current');
     expect(call.slice(1)).not.toContain('h-flagged');
-    expect(mockLoadGrantTextHash).toHaveBeenCalledWith('Bounty', 9);
+    expect(mockLoadGrantTextHash).toHaveBeenCalledWith('Bounty', 9, 'poi');
     expect(mockQueueUpdate).toHaveBeenCalledWith(
       expect.objectContaining({ items: [{ id: 9, action: 'Update' }] })
     );

@@ -4,6 +4,11 @@ import {
   TEXT_SCAN_FLAGS_KEY,
   type TextScanFlagLabel,
 } from '~/server/services/text-scan/flag-snapshot';
+import {
+  getTextScanWebSearchMode,
+  TEXT_SCAN_WEB_SEARCH_LABELS,
+  textScanEmEntityType,
+} from '~/server/services/text-scan/mode';
 import { getTextScanProfile } from '~/server/services/text-scan/profiles';
 // `text-scan/profiles` resolves to the registry file; only the barrel registers the profiles.
 import '~/server/services/text-scan/profiles/index';
@@ -16,12 +21,23 @@ export async function loadTextScanTextHash(entityType: 'Model' | 'Bounty', entit
 
 // The hash an overturn grants against, as rating disputes stamp `resolvedTextHash`: the text the
 // latest completed scan read, so a verdict landing for that scan is covered while a later owner edit
-// gets its own scan and hash. Null when the text cannot be read, whatever the scan row holds.
-export async function loadGrantTextHash(entityType: 'Model' | 'Bounty', entityId: number) {
+// gets its own scan and hash. The scan is the one that owns the label: with the web-search pass
+// active it judges poi and minor on a row of its own, which can lag or lead the main row after an
+// edit. Null when the text cannot be read, whatever the scan row holds.
+export async function loadGrantTextHash(
+  entityType: 'Model' | 'Bounty',
+  entityId: number,
+  label: TextScanFlagLabel
+) {
   const current = await loadTextScanTextHash(entityType, entityId);
   if (!current) return null;
+  const owner =
+    (TEXT_SCAN_WEB_SEARCH_LABELS as readonly string[]).includes(label) &&
+    (await getTextScanWebSearchMode(entityType, entityId)) === 'active'
+      ? textScanEmEntityType(entityType, 'active', 'web-search')
+      : entityType;
   const scan = await dbWrite.entityModeration.findUnique({
-    where: { entityType_entityId: { entityType, entityId } },
+    where: { entityType_entityId: { entityType: owner, entityId } },
     select: { result: true },
   });
   return textScanResultTextHash(scan?.result) ?? current;

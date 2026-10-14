@@ -2,6 +2,7 @@ import { PGlite } from '@electric-sql/pglite';
 import { Prisma } from '@prisma/client';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import type * as ModeModule from '~/server/services/text-scan/mode';
 import type { TextScanOutcome } from '~/server/services/text-scan/types';
 
 // The grant writer and the re-flag guard are hand-written SQL that have to agree on the key path and
@@ -46,7 +47,15 @@ db.entityModeration.findUnique.mockImplementation(
     ).rows[0] ?? null) as never
 );
 
-const { mockSetModelMinor } = vi.hoisted(() => ({ mockSetModelMinor: vi.fn() }));
+const { mockSetModelMinor, searchMode } = vi.hoisted(() => ({
+  mockSetModelMinor: vi.fn(),
+  searchMode: { value: 'off' as 'off' | 'shadow' | 'active' },
+}));
+// The rollout lives in redis; the helper that maps a mode to its row stays real.
+vi.mock('~/server/services/text-scan/mode', async (importOriginal) => ({
+  ...(await importOriginal<typeof ModeModule>()),
+  getTextScanWebSearchMode: async () => searchMode.value,
+}));
 vi.mock('~/server/services/model.service', () => ({
   setModelMinor: mockSetModelMinor,
   applyModelFlagSideEffects: vi.fn(),
@@ -102,10 +111,12 @@ async function seed({
   minor = false,
   poi = false,
   scanHash,
+  searchHash,
 }: {
   minor?: boolean;
   poi?: boolean;
   scanHash?: string;
+  searchHash?: string;
 }) {
   await holder.db.exec(`DELETE FROM "Model"; DELETE FROM "EntityModeration";`);
   await holder.db.query(
@@ -126,6 +137,11 @@ async function seed({
       MODEL_ID,
       JSON.stringify({ version: 1, textHash: scanHash }),
     ]);
+  if (searchHash)
+    await holder.db.query(
+      `INSERT INTO "EntityModeration" VALUES ('Model:search', $1, 'wf-s', $2)`,
+      [MODEL_ID, JSON.stringify({ version: 1, textHash: searchHash })]
+    );
 }
 type StoredModel = {
   poi: boolean;
@@ -153,17 +169,20 @@ const apply = (label: 'minor' | 'poi', textHash: string) =>
     textHash,
   } as never);
 
-beforeEach(() => vi.clearAllMocks());
+beforeEach(() => {
+  vi.clearAllMocks();
+  searchMode.value = 'off';
+});
 
 describe('overturn grant reads the latest scan', () => {
   it('takes the hash of the latest completed scan, not the flagged or the live text', async () => {
     await seed({ scanHash: SCANNED });
-    expect(await loadGrantTextHash('Model', MODEL_ID)).toBe(SCANNED);
+    expect(await loadGrantTextHash('Model', MODEL_ID, 'minor')).toBe(SCANNED);
   });
 
   it('falls back to the composed current text when no scan completed', async () => {
     await seed({});
-    expect(await loadGrantTextHash('Model', MODEL_ID)).toBe(textScanTextHash(CURRENT));
+    expect(await loadGrantTextHash('Model', MODEL_ID, 'minor')).toBe(textScanTextHash(CURRENT));
   });
 });
 
@@ -174,7 +193,7 @@ describe('minor', () => {
       userId: 3,
       decision: 'appealGranted',
       labels: ['minor'],
-      grantHash: (await loadGrantTextHash('Model', MODEL_ID))!,
+      grantHashes: { minor: (await loadGrantTextHash('Model', MODEL_ID, 'minor'))! },
     });
   };
 
@@ -208,7 +227,7 @@ describe('poi', () => {
     grantModelTextScanPoi({
       modelId: MODEL_ID,
       userId: 3,
-      grantHash: (await loadGrantTextHash('Model', MODEL_ID))!,
+      grantHash: (await loadGrantTextHash('Model', MODEL_ID, 'poi'))!,
     });
 
   it('stays unflagged when a verdict arrives for the scanned text', async () => {
@@ -229,6 +248,59 @@ describe('poi', () => {
 
     await apply('poi', NEWER);
 
+    expect((await stored()).poi).toBe(true);
+  });
+});
+
+// When the web-search pass is active it owns poi and minor, and finishes apart from the main pass,
+// so the two rows can hold different hashes for a moment after an edit.
+describe('web search active', () => {
+  const MAIN = 'hash-main';
+  const SEARCH = 'hash-search';
+  beforeEach(() => {
+    searchMode.value = 'active';
+  });
+
+  it('takes the hash from the search row for poi and minor', async () => {
+    await seed({ scanHash: MAIN, searchHash: SEARCH });
+    expect(await loadGrantTextHash('Model', MODEL_ID, 'minor')).toBe(SEARCH);
+    expect(await loadGrantTextHash('Model', MODEL_ID, 'poi')).toBe(SEARCH);
+  });
+
+  it('falls back to the composed text when the search row has no completed scan', async () => {
+    await seed({ scanHash: MAIN });
+    expect(await loadGrantTextHash('Model', MODEL_ID, 'minor')).toBe(textScanTextHash(CURRENT));
+  });
+
+  it('minor: a verdict for the searched text stays unflagged, the main row text re-flags', async () => {
+    await seed({ scanHash: MAIN, searchHash: SEARCH });
+    await stampModelTextScanAppeal({
+      modelId: MODEL_ID,
+      userId: 3,
+      decision: 'appealGranted',
+      labels: ['minor'],
+      grantHashes: { minor: (await loadGrantTextHash('Model', MODEL_ID, 'minor'))! },
+    });
+
+    await apply('minor', SEARCH);
+    expect(mockSetModelMinor).not.toHaveBeenCalled();
+
+    await apply('minor', MAIN);
+    expect(mockSetModelMinor).toHaveBeenCalledTimes(1);
+  });
+
+  it('poi: a verdict for the searched text stays unflagged, the main row text re-flags', async () => {
+    await seed({ poi: true, scanHash: MAIN, searchHash: SEARCH });
+    await grantModelTextScanPoi({
+      modelId: MODEL_ID,
+      userId: 3,
+      grantHash: (await loadGrantTextHash('Model', MODEL_ID, 'poi'))!,
+    });
+
+    await apply('poi', SEARCH);
+    expect((await stored()).poi).toBe(false);
+
+    await apply('poi', MAIN);
     expect((await stored()).poi).toBe(true);
   });
 });

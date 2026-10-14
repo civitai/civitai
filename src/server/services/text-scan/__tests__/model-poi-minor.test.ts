@@ -485,22 +485,24 @@ describe('grantModelTextScanPoi', () => {
 });
 
 describe('stampModelTextScanAppeal', () => {
-  it('grants against the current text, not the flagged one, so a verdict for that text cannot re-flag', async () => {
+  it('grants each label against its own hash, not the flagged one, so a verdict for that text cannot re-flag', async () => {
     await stampModelTextScanAppeal({
       modelId: MODEL_ID,
       userId: 3,
       decision: 'appealGranted',
-      labels: ['poi'],
-      grantHash: 'h-current',
+      labels: ['poi', 'minor'],
+      grantHashes: { poi: 'h-main', minor: 'h-search' },
     });
     const call = dbMock.dbWrite.$executeRaw.mock.calls[0];
     const text = sqlOf(call);
     expect(text).toContain('unnest(');
-    expect(text).toContain(`'textHash', COALESCE(?::text, m.meta->?->l.label->>'textHash')`);
+    expect(text).toContain(
+      `'textHash', COALESCE((?::jsonb)->>l.label, m.meta->?->l.label->>'textHash')`
+    );
     expect(text).toContain(`'via', 'appeal'`);
-    expect(call.slice(1)).toContainEqual(['poi']);
-    expect(call.slice(1)).toEqual(
-      expect.arrayContaining(['appealGranted', 3, MODEL_ID, 'h-current'])
+    expect(call.slice(1)).toContainEqual(['poi', 'minor']);
+    expect(call.slice(1).map((v) => (typeof v === 'string' ? v : ''))).toContain(
+      JSON.stringify({ poi: 'h-main', minor: 'h-search' })
     );
   });
 
@@ -510,25 +512,32 @@ describe('stampModelTextScanAppeal', () => {
       userId: 3,
       decision: 'appealUpheld',
       labels: ['poi'],
-      grantHash: 'h-current',
+      grantHashes: { poi: 'h-main' },
     });
     const call = dbMock.dbWrite.$executeRaw.mock.calls[0];
-    expect(sqlOf(call)).toContain(`'textHash', COALESCE(?::text, m.meta->?->l.label->>'textHash')`);
-    // The leading COALESCE slot is null for an upheld ruling, so the flagged hash wins.
-    expect(call.slice(1)).not.toContain('h-current');
+    // The hash map is empty for an upheld ruling, so the flagged hash wins.
+    expect(call.slice(1)).toContain('{}');
+    expect(call.slice(1)).not.toContain(JSON.stringify({ poi: 'h-main' }));
   });
 
-  it('refuses a grant that names no hash instead of falling back to the flagged one', async () => {
-    await expect(
-      stampModelTextScanAppeal({
-        modelId: MODEL_ID,
-        userId: 3,
-        decision: 'appealGranted',
-        labels: ['poi'],
-      } as never)
-    ).rejects.toThrow(/grant hash/i);
-    expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
-  });
+  it.each([
+    ['no hashes', undefined],
+    ['a hash for only one label', { poi: 'h-main' }],
+  ])(
+    'refuses a grant with %s instead of falling back to the flagged hash',
+    async (_n, grantHashes) => {
+      await expect(
+        stampModelTextScanAppeal({
+          modelId: MODEL_ID,
+          userId: 3,
+          decision: 'appealGranted',
+          labels: ['poi', 'minor'],
+          grantHashes,
+        })
+      ).rejects.toThrow(/grant hash/i);
+      expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
+    }
+  );
 
   it('writes nothing for an empty label list', async () => {
     await stampModelTextScanAppeal({

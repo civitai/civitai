@@ -1664,7 +1664,7 @@ describe('resolveMinorFlagAppeal', () => {
         userId: 7,
         decision: 'appealGranted',
         labels: ['minor'],
-        grantHash: 'h-current',
+        grantHashes: { minor: 'h-current', poi: 'h-current' },
       },
     ]);
     expect(mockGrantModelTextScanPoi).toHaveBeenCalledWith({
@@ -1823,12 +1823,40 @@ describe('resolveMinorFlagAppeal', () => {
     expect(await resolveMinorFlagAppeal({ modelId: 42, uphold: false, userId: 7 })).toEqual({
       rescanQueued: false,
     });
-    expect(grantStamps()).toEqual([expect.objectContaining({ grantHash: 'h-current' })]);
+    expect(grantStamps()).toEqual([
+      expect.objectContaining({ grantHashes: { minor: 'h-current', poi: 'h-current' } }),
+    ]);
     expect(mockGrantModelTextScanPoi).toHaveBeenCalledWith({
       modelId: 42,
       userId: 7,
       grantHash: 'h-current',
     });
+  });
+
+  // The web-search pass can own a label, so each overturned label asks for its own hash.
+  it('grants each overturned label against the hash of the row that owns it', async () => {
+    mockPrimaryModelFindUnique.mockResolvedValue({
+      minor: true,
+      poi: true,
+      meta: {
+        minorFlagSnapshot: { at: 'x', source: 'text-scan' },
+        textScanFlags: { poi: poiEntry, minor: poiEntry },
+      },
+    });
+    mockLoadGrantTextHash.mockImplementation(async (_type, _id, label) =>
+      label === 'minor' ? 'h-search' : 'h-main'
+    );
+
+    await resolveMinorFlagAppeal({ modelId: 42, uphold: false, userId: 7 });
+
+    expect(mockLoadGrantTextHash).toHaveBeenCalledWith('Model', 42, 'minor');
+    expect(mockLoadGrantTextHash).toHaveBeenCalledWith('Model', 42, 'poi');
+    expect(grantStamps()).toEqual([
+      expect.objectContaining({ grantHashes: { minor: 'h-search', poi: 'h-main' } }),
+    ]);
+    expect(mockGrantModelTextScanPoi).toHaveBeenCalledWith(
+      expect.objectContaining({ grantHash: 'h-main' })
+    );
   });
 
   it('upholds a text-scan poi flag by stamping it, without a minor confirm', async () => {

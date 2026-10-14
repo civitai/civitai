@@ -119,7 +119,7 @@ export async function resolveBountyPoiAppeal({
       WHERE b.id = ${bountyId} AND b.meta->${TEXT_SCAN_FLAGS_KEY}->'poi' IS NOT NULL
     `;
   } else {
-    const grantHash = await loadGrantTextHash('Bounty', bountyId);
+    const grantHash = await loadGrantTextHash('Bounty', bountyId, 'poi');
     if (!grantHash)
       throw throwBadRequestError(
         "Could not read this bounty's text, so the grant cannot record what it covers. The appeal is still open."

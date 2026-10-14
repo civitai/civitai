@@ -766,14 +766,14 @@ export async function resolveMinorFlagAppeal({
   const upheld = flagged.filter((label) => decide(label) === 'uphold');
   const overturned = flagged.filter((label) => decide(label) === 'overturn');
 
-  let grantHash = '';
-  if (overturned.length) {
-    const loaded = await loadGrantTextHash('Model', modelId);
-    if (!loaded)
+  const grantHashes: Record<string, string> = {};
+  for (const label of overturned) {
+    const hash = await loadGrantTextHash('Model', modelId, label);
+    if (!hash)
       throw throwBadRequestError(
         "Could not read this model's text, so the grant cannot record what it covers. The appeal is still open."
       );
-    grantHash = loaded;
+    grantHashes[label] = hash;
   }
 
   if (upheld.includes('minor')) await confirmMinorHashAutoFlag({ modelId, userId });
@@ -794,7 +794,7 @@ export async function resolveMinorFlagAppeal({
       userId,
       decision: 'appealGranted',
       labels: ['minor'],
-      grantHash,
+      grantHashes,
     });
     const snapshot = meta?.minorFlagSnapshot;
     const origin = snapshot?.confirmedFrom ?? snapshot?.source;
@@ -803,7 +803,8 @@ export async function resolveMinorFlagAppeal({
       await revertMinorHashAutoFlag({ modelId, userId });
     else await setModelMinor({ id: modelId, minor: false, userId });
   }
-  if (overturned.includes('poi')) await grantModelTextScanPoi({ modelId, userId, grantHash });
+  if (overturned.includes('poi'))
+    await grantModelTextScanPoi({ modelId, userId, grantHash: grantHashes.poi });
 
   const approved = labels ? overturned.length > 0 : !uphold;
   await resolveEntityAppeal({
