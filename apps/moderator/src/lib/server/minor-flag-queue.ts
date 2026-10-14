@@ -4,11 +4,20 @@ import type { Actions, RequestEvent } from '@sveltejs/kit';
 import { parseQuery } from '$lib/server/query';
 import {
   getAutoFlaggedMinorModels,
+  getMinorFlagAppealGroups,
   getMinorFlagAppealsForReview,
   getMinorHashMatchesForReview,
   getModelMinorState,
   type MinorSearch,
 } from '$lib/server/minor-hash.service';
+import {
+  APPEAL_FLAGS,
+  APPEAL_SORTS,
+  APPEAL_SOURCES,
+  appealFacets,
+  DEFAULT_APPEAL_FILTERS,
+  type AppealFilters,
+} from '$lib/minor-flags/appeal-filters';
 import { MAX_INT4 } from '$lib/server/users.service';
 import {
   confirmMinorFlag,
@@ -25,6 +34,12 @@ const querySchema = z.object({
   limit: z.coerce.number().int().min(10).max(200).catch(50),
   page: z.coerce.number().int().min(1).max(500).catch(1),
   q: z.string().trim().max(100).catch(''),
+});
+
+const appealFilterSchema = z.object({
+  source: z.enum(APPEAL_SOURCES).catch(DEFAULT_APPEAL_FILTERS.source),
+  flag: z.enum(APPEAL_FLAGS).catch(DEFAULT_APPEAL_FILTERS.flag),
+  sort: z.enum(APPEAL_SORTS).catch(DEFAULT_APPEAL_FILTERS.sort),
 });
 
 /**
@@ -52,18 +67,25 @@ export async function loadMinorQueue(
     ? { modelOrUserId: numeric > MAX_INT4 ? 0 : numeric }
     : { username: q };
 
-  const [queue, lookup] = await Promise.all([
+  const appealFilters: AppealFilters | null =
+    tab === 'appeals' ? parseQuery(url, appealFilterSchema) : null;
+
+  const [queue, lookup, appealGroups] = await Promise.all([
     tab === 'auto'
       ? getAutoFlaggedMinorModels({ limit, offset, search })
       : tab === 'appeals'
-      ? getMinorFlagAppealsForReview({ limit, offset, search })
+      ? getMinorFlagAppealsForReview({ limit, offset, search, filters: appealFilters ?? undefined })
       : getMinorHashMatchesForReview({ limit, offset, search }),
     tab !== 'appeals' && numeric !== null && numeric <= MAX_INT4
       ? getModelMinorState(numeric)
       : null,
+    // The chip counts: one grouped scan of the pending appeals, only on this view.
+    appealFilters ? getMinorFlagAppealGroups({ search }) : null,
   ]);
 
-  return { tab, limit, page, offset, q, lookup, tabs, ...queue, wide: true };
+  const facets = appealFilters && appealGroups ? appealFacets(appealGroups, appealFilters) : null;
+
+  return { tab, limit, page, offset, q, lookup, tabs, appealFilters, facets, ...queue, wide: true };
 }
 
 export type MinorQueueData = Awaited<ReturnType<typeof loadMinorQueue>>;

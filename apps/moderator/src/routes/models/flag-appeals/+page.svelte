@@ -1,4 +1,5 @@
 <script lang="ts">
+  import AppealFilterBar from '$lib/components/minor-flags/AppealFilterBar.svelte';
   import MinorFlagQueue from '$lib/components/minor-flags/MinorFlagQueue.svelte';
   import type { ActionData, PageData } from './$types';
 
@@ -12,5 +13,9 @@
     from a hash match, the text scan or a moderator.
   </p>
 </header>
+
+{#if data.appealFilters}
+  <AppealFilterBar filters={data.appealFilters} facets={data.facets} />
+{/if}
 
 <MinorFlagQueue {data} {form} />

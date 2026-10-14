@@ -12,7 +12,9 @@
   import { userLookupUrl } from '$lib/entity-url';
   import type { MinorQueueData } from '$lib/server/minor-flag-queue';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
-  import { flagsOf, isOpenVerdict, openVerdicts } from '$lib/minor-flags/text-scan-verdicts';
+  import { appealFilterParams } from '$lib/minor-flags/appeal-filters';
+  import AppealRow from '$lib/components/minor-flags/AppealRow.svelte';
+  import type { MinorFlagAppealRow } from '$lib/server/minor-hash.service';
 
   type QueueForm = {
     error?: string;
@@ -31,8 +33,6 @@
   const n = (v: unknown) => (typeof v === 'number' ? v : null);
   const s = (v: unknown) => (typeof v === 'string' ? v : null);
 
-  const poiOpen = (row: Row) =>
-    row.poi === true && isOpenVerdict(flagsOf(row.textScanFlags)?.poi);
   // Mirrors appealRowState.showHashMatch: a poi-only or text-scan minor row has no hash match, so
   // there is no detail to fetch.
   const hasHashDetail = (row: Row) => {
@@ -154,281 +154,14 @@
     url.searchParams.set('page', String(n));
     return url.pathname + url.search;
   };
+  const filtersActive = $derived(
+    data.appealFilters !== null && Object.keys(appealFilterParams(data.appealFilters)).length > 0
+  );
   const firstShown = $derived(data.offset + 1);
   const lastShown = $derived(data.offset + rows.length);
 </script>
 
-{#if data.tabs}
-<nav class="mb-4 flex gap-1 border-b border-dark-4">
-  {#each data.tabs as t (t.value)}
-    <a
-      href={tabHref(t.value)}
-      class={cn(
-        'flex items-center gap-2 rounded-t-md px-4 py-2 text-sm',
-        data.tab === t.value
-          ? 'border-b-2 border-blue-500 text-white'
-          : 'text-dark-2 hover:text-dark-0'
-      )}
-    >
-      {t.label}
-      <!-- Absent until loaded rather than a placeholder zero: "Appeals 0" is a claim, and on these
-           queues it is the one a moderator would act on by not looking. -->
-      {#if counts}
-        <Badge variant="secondary">{num(counts[t.value])}</Badge>
-      {/if}
-    </a>
-  {/each}
-</nav>
-{/if}
-
-<form method="GET" class="mb-4 flex max-w-xl gap-2">
-  {#if data.tabs}
-    <input type="hidden" name="tab" value={data.tab} />
-  {/if}
-  <Input
-    name="q"
-    value={data.q}
-    placeholder="Model ID, user ID or username"
-    aria-label="Search models"
-    class="flex-1"
-  />
-  <Button type="submit">Search</Button>
-  {#if data.q}
-    <Button href={clearSearchHref()} variant="outline">Clear</Button>
-  {/if}
-</form>
-
-{#if form && 'error' in form && form.error}
-  <ErrorAlert class="mb-4" message={form.error} />
-{/if}
-
-{#if form && 'rescanQueued' in form && form.rescanQueued}
-  <p class="mb-4 rounded-md border border-blue-500/30 bg-blue-500/10 p-3 text-sm text-blue-200">
-    Model #{form.modelId}: the owner edited the text while the appeal was open, so it will be scanned
-    again.
-  </p>
-{/if}
-
-<!-- A numeric term is also a user id, so a model with no minor history is not shown — it would put an
-     unrelated model's actions beside a queue filtered to some account. -->
-{#if data.lookup && (data.lookup.minor || data.lookup.flaggedAt || data.lookup.clearedAt)}
-  {@const m = data.lookup}
-  {@const verdict = acted.get(m.modelId)}
-  <section
-    class={cn(
-      'mb-4 rounded-lg border border-dark-4 bg-dark-6 p-4 transition-opacity',
-      verdict && 'opacity-50'
-    )}
-  >
-    <div class="flex flex-wrap items-baseline gap-x-2">
-      <span class="text-xs tracking-wide text-dark-2 uppercase">Model #{m.modelId}</span>
-      <a href={modelHref(m.modelId, null)} target="_blank" rel="noreferrer" class="font-medium {LINK_CLASS}">
-        {m.modelName}
-      </a>
-      <Badge variant="secondary">{m.status}</Badge>
-      <Badge variant={m.minor ? 'destructive' : 'outline'}>{m.minor ? 'minor' : 'not minor'}</Badge>
-      {#if m.flagSource}
-        <Badge variant="outline">
-          {m.flagSource}{m.flagConfirmedFrom ? ` (was ${m.flagConfirmedFrom})` : ''}
-        </Badge>
-      {/if}
-      {#if m.username}
-        <a href={userLookupUrl(m.userId)} class="text-xs {LINK_CLASS}">{m.username}</a>
-      {/if}
-    </div>
-    <p class="mt-1 text-xs text-dark-2">
-      {#if m.flaggedAt}Flagged {dateTime(m.flaggedAt)}.{/if}
-      {#if m.acceptedAt}Aged out of review {dateTime(m.acceptedAt)}.{/if}
-      {#if m.clearedAt}Cleared {dateTime(m.clearedAt)} — the sweep and scan skip files uploaded before then.{/if}
-    </p>
-
-    {#if verdict || m.minor}
-    <div class="mt-3 flex flex-wrap items-center gap-2">
-      {#if verdict}
-        <span class="text-sm text-dark-2">{verdict}</span>
-      {:else if m.minor && m.flaggedAt}
-        {#if m.flagSource === 'auto'}
-          <form method="POST" action="?/confirm" use:enhance={submit(m.modelId, 'Kept flagged')}>
-            <input type="hidden" name="modelId" value={m.modelId} />
-            <Button type="submit" size="xs">Keep flagged</Button>
-          </form>
-        {/if}
-        <form method="POST" action="?/revert" use:enhance={submit(m.modelId, 'Reverted')}>
-          <input type="hidden" name="modelId" value={m.modelId} />
-          <Button type="submit" size="xs" variant="destructive">Revert flag</Button>
-        </form>
-        <span class="text-xs text-dark-2">
-          Revert restores the pre-flag NSFW, gallery level and locks, and stops the automation re-flagging it.
-        </span>
-      {:else}
-        <span class="text-xs text-dark-2">
-          Flagged with no snapshot to restore, so it cannot be reverted here — edit the model by hand.
-        </span>
-      {/if}
-    </div>
-    {/if}
-  </section>
-{/if}
-
-{#if rows.length === 0}
-  <p class="text-sm text-dark-2">
-    {data.q
-      ? `Nothing on this tab matches "${data.q}".`
-      : data.tab === 'pending'
-      ? 'No unreviewed hash matches.'
-      : data.tab === 'auto'
-        ? 'Nothing flagged automatically inside the review window.'
-        : 'No open appeals against a minor or real-person flag.'}
-  </p>
-{:else}
-  <ul class="space-y-2">
-    {#each rows as row (row.modelId)}
-      {@const modelId = Number(row.modelId)}
-      {@const verdict = acted.get(modelId)}
-      <li
-        class={cn(
-          'rounded-lg border border-dark-4 bg-dark-6 p-4 transition-opacity',
-          verdict && 'opacity-50'
-        )}
-      >
-        <div class="flex flex-wrap items-baseline gap-x-2">
-          <a
-            href={modelHref(modelId, n(row.modelVersionId))}
-            target="_blank"
-            rel="noreferrer"
-            class="font-medium {LINK_CLASS}"
-          >
-            {s(row.modelName) ?? `#${modelId}`}
-          </a>
-          <code class="text-xs text-dark-2">#{modelId}</code>
-          <Badge variant="secondary">{s(row.status) ?? 'unknown'}</Badge>
-          {#if row.minor === false && !poiOpen(row)}
-            <!-- Reverting from the Auto-flagged tab leaves the appeal open; the row has to say the
-                 flag is already gone or a moderator upholds against nothing. -->
-            <Badge variant="outline">no longer flagged</Badge>
-          {/if}
-          {#if s(row.flagSource)}
-            <Badge variant="outline">
-              {s(row.flagSource)}{s(row.flagConfirmedFrom) ? ` (was ${s(row.flagConfirmedFrom)})` : ''}
-            </Badge>
-          {/if}
-          {#if row.username}
-            <a href={userLookupUrl(Number(row.userId))} class="text-xs {LINK_CLASS}">
-              {s(row.username)}
-            </a>
-          {/if}
-          {#if s(row.flaggedAt)}
-            <span class="text-xs text-dark-2">flagged {dateTime(s(row.flaggedAt))}</span>
-          {/if}
-          {#if s(row.createdAt)}
-            <span class="text-xs text-dark-2">uploaded {dateTime(s(row.createdAt))}</span>
-          {/if}
-        </div>
-
-        {#if s(row.appealMessage)}
-          <p class="mt-2 rounded-md bg-dark-7 p-2 text-sm text-dark-0">{s(row.appealMessage)}</p>
-          <p class="mt-1 text-xs text-dark-2">appealed {dateTime(s(row.appealCreatedAt))}</p>
-        {/if}
-
-        {#each openVerdicts(row.textScanFlags) as { label, flag } (label)}
-          {#if flag.reason}
-            <p class="mt-2 text-xs text-dark-2">
-              <Badge variant="outline">text scan · {label === 'poi' ? 'real person' : 'minor'}</Badge>
-              {flag.reason}
-              {#if flag.names?.length}
-                — {flag.names.join(', ')}
-              {/if}
-            </p>
-          {/if}
-        {/each}
-
-        {#if s(row.hash)}
-          <p class="mt-2 text-xs break-all text-dark-2">
-            Matches
-            {#if n(row.minorModelId)}
-              <a
-                href={modelHref(Number(row.minorModelId), n(row.minorModelVersionId))}
-                target="_blank"
-                rel="noreferrer"
-                class={LINK_CLASS}
-              >
-                {s(row.minorModelName) ?? `#${n(row.minorModelId)}`}
-              </a>
-            {/if}
-            on <code>{s(row.hash)}</code>
-          </p>
-        {/if}
-
-        {#if row.prevNsfw != null || n(row.prevGalleryLevel) != null}
-          <p class="mt-1 text-xs text-dark-2">
-            Before the flag: NSFW {row.prevNsfw ? 'on' : 'off'}{n(row.prevGalleryLevel) != null
-              ? `, gallery level ${n(row.prevGalleryLevel)}`
-              : ''}
-          </p>
-        {/if}
-
-        <div class="mt-3 flex flex-wrap items-center gap-2">
-          {#if hasHashDetail(row)}
-            <Button size="xs" variant="outline" onclick={() => toggle(row)}>
-              {expanded.has(modelId) ? 'Hide detail' : 'Detail'}
-            </Button>
-          {/if}
-
-          {#if verdict}
-            <span class="text-sm text-dark-2">{verdict}</span>
-          {:else if data.tab === 'pending'}
-            <form method="POST" action="?/setMinor" use:enhance={submit(modelId, 'Flagged as minor')}>
-              <input type="hidden" name="modelId" value={modelId} />
-              <Button type="submit" size="xs" variant="destructive">Set as minor</Button>
-            </form>
-            <form method="POST" action="?/dismiss" use:enhance={submit(modelId, 'Dismissed')}>
-              <input type="hidden" name="modelId" value={modelId} />
-              <Button type="submit" size="xs" variant="outline">Dismiss match</Button>
-            </form>
-          {:else if data.tab === 'auto'}
-            <form method="POST" action="?/confirm" use:enhance={submit(modelId, 'Kept flagged')}>
-              <input type="hidden" name="modelId" value={modelId} />
-              <Button type="submit" size="xs">Keep flagged</Button>
-            </form>
-            <form method="POST" action="?/revert" use:enhance={submit(modelId, 'Reverted')}>
-              <input type="hidden" name="modelId" value={modelId} />
-              <Button type="submit" size="xs" variant="destructive">Revert</Button>
-            </form>
-          {:else}
-            <form method="POST" action="?/upholdAppeal" use:enhance={submit(modelId, 'Appeal rejected')}>
-              <input type="hidden" name="modelId" value={modelId} />
-              <Button type="submit" size="xs">Uphold flag</Button>
-            </form>
-            <form method="POST" action="?/overturnAppeal" use:enhance={submit(modelId, 'Appeal approved')}>
-              <input type="hidden" name="modelId" value={modelId} />
-              <Button type="submit" size="xs" variant="destructive">Overturn</Button>
-            </form>
-            {#if row.minor === true && poiOpen(row)}
-              <form
-                method="POST"
-                action="?/splitAppeal"
-                use:enhance={submit(modelId, 'Kept minor, lifted real person')}
-              >
-                <input type="hidden" name="modelId" value={modelId} />
-                <input type="hidden" name="minor" value="uphold" />
-                <input type="hidden" name="poi" value="overturn" />
-                <Button type="submit" size="xs" variant="outline">Keep minor, lift real person</Button>
-              </form>
-              <form
-                method="POST"
-                action="?/splitAppeal"
-                use:enhance={submit(modelId, 'Lifted minor, kept real person')}
-              >
-                <input type="hidden" name="modelId" value={modelId} />
-                <input type="hidden" name="minor" value="overturn" />
-                <input type="hidden" name="poi" value="uphold" />
-                <Button type="submit" size="xs" variant="outline">Lift minor, keep real person</Button>
-              </form>
-            {/if}
-          {/if}
-        </div>
-
-        {#if expanded.has(modelId)}
+{#snippet detailPanel(row: Row, modelId: number)}
           {#await details.get(modelId)}
             <p class="mt-3 text-sm text-dark-2">Loading detail…</p>
           {:then payload}
@@ -546,8 +279,253 @@
           {:catch}
             <p class="mt-3 text-sm text-red-300">Could not load the detail for this model.</p>
           {/await}
+{/snippet}
+
+{#if data.tabs}
+<nav class="mb-4 flex gap-1 border-b border-dark-4">
+  {#each data.tabs as t (t.value)}
+    <a
+      href={tabHref(t.value)}
+      class={cn(
+        'flex items-center gap-2 rounded-t-md px-4 py-2 text-sm',
+        data.tab === t.value
+          ? 'border-b-2 border-blue-500 text-white'
+          : 'text-dark-2 hover:text-dark-0'
+      )}
+    >
+      {t.label}
+      <!-- Absent until loaded rather than a placeholder zero: "Appeals 0" is a claim, and on these
+           queues it is the one a moderator would act on by not looking. -->
+      {#if counts}
+        <Badge variant="secondary">{num(counts[t.value])}</Badge>
+      {/if}
+    </a>
+  {/each}
+</nav>
+{/if}
+
+<form method="GET" class="mb-4 flex max-w-xl gap-2">
+  {#if data.tabs}
+    <input type="hidden" name="tab" value={data.tab} />
+  {/if}
+  {#if data.appealFilters}
+    {#each Object.entries(appealFilterParams(data.appealFilters)) as [name, value] (name)}
+      <input type="hidden" {name} {value} />
+    {/each}
+  {/if}
+  <Input
+    name="q"
+    value={data.q}
+    placeholder="Model ID, user ID or username"
+    aria-label="Search models"
+    class="flex-1"
+  />
+  <Button type="submit">Search</Button>
+  {#if data.q}
+    <Button href={clearSearchHref()} variant="outline">Clear</Button>
+  {/if}
+</form>
+
+{#if form && 'error' in form && form.error}
+  <ErrorAlert class="mb-4" message={form.error} />
+{/if}
+
+{#if form && 'rescanQueued' in form && form.rescanQueued}
+  <p class="mb-4 rounded-md border border-blue-500/30 bg-blue-500/10 p-3 text-sm text-blue-200">
+    Model #{form.modelId}: the owner edited the text while the appeal was open, so it will be scanned
+    again.
+  </p>
+{/if}
+
+<!-- A numeric term is also a user id, so a model with no minor history is not shown — it would put an
+     unrelated model's actions beside a queue filtered to some account. -->
+{#if data.lookup && (data.lookup.minor || data.lookup.flaggedAt || data.lookup.clearedAt)}
+  {@const m = data.lookup}
+  {@const verdict = acted.get(m.modelId)}
+  <section
+    class={cn(
+      'mb-4 rounded-lg border border-dark-4 bg-dark-6 p-4 transition-opacity',
+      verdict && 'opacity-50'
+    )}
+  >
+    <div class="flex flex-wrap items-baseline gap-x-2">
+      <span class="text-xs tracking-wide text-dark-2 uppercase">Model #{m.modelId}</span>
+      <a href={modelHref(m.modelId, null)} target="_blank" rel="noreferrer" class="font-medium {LINK_CLASS}">
+        {m.modelName}
+      </a>
+      <Badge variant="secondary">{m.status}</Badge>
+      <Badge variant={m.minor ? 'destructive' : 'outline'}>{m.minor ? 'minor' : 'not minor'}</Badge>
+      {#if m.flagSource}
+        <Badge variant="outline">
+          {m.flagSource}{m.flagConfirmedFrom ? ` (was ${m.flagConfirmedFrom})` : ''}
+        </Badge>
+      {/if}
+      {#if m.username}
+        <a href={userLookupUrl(m.userId)} class="text-xs {LINK_CLASS}">{m.username}</a>
+      {/if}
+    </div>
+    <p class="mt-1 text-xs text-dark-2">
+      {#if m.flaggedAt}Flagged {dateTime(m.flaggedAt)}.{/if}
+      {#if m.acceptedAt}Aged out of review {dateTime(m.acceptedAt)}.{/if}
+      {#if m.clearedAt}Cleared {dateTime(m.clearedAt)} — the sweep and scan skip files uploaded before then.{/if}
+    </p>
+
+    {#if verdict || m.minor}
+    <div class="mt-3 flex flex-wrap items-center gap-2">
+      {#if verdict}
+        <span class="text-sm text-dark-2">{verdict}</span>
+      {:else if m.minor && m.flaggedAt}
+        {#if m.flagSource === 'auto'}
+          <form method="POST" action="?/confirm" use:enhance={submit(m.modelId, 'Kept flagged')}>
+            <input type="hidden" name="modelId" value={m.modelId} />
+            <Button type="submit" size="xs">Keep flagged</Button>
+          </form>
+        {/if}
+        <form method="POST" action="?/revert" use:enhance={submit(m.modelId, 'Reverted')}>
+          <input type="hidden" name="modelId" value={m.modelId} />
+          <Button type="submit" size="xs" variant="destructive">Revert flag</Button>
+        </form>
+        <span class="text-xs text-dark-2">
+          Revert restores the pre-flag NSFW, gallery level and locks, and stops the automation re-flagging it.
+        </span>
+      {:else}
+        <span class="text-xs text-dark-2">
+          Flagged with no snapshot to restore, so it cannot be reverted here — edit the model by hand.
+        </span>
+      {/if}
+    </div>
+    {/if}
+  </section>
+{/if}
+
+{#if rows.length === 0}
+  <p class="text-sm text-dark-2">
+    {data.q
+      ? `Nothing on this tab matches "${data.q}".`
+      : filtersActive
+      ? 'No open appeals match these filters.'
+      : data.tab === 'pending'
+      ? 'No unreviewed hash matches.'
+      : data.tab === 'auto'
+        ? 'Nothing flagged automatically inside the review window.'
+        : 'No open appeals against a minor or real-person flag.'}
+  </p>
+{:else}
+  <ul class="space-y-2">
+    {#each rows as row (row.modelId)}
+      {#if data.tab === 'appeals'}
+        {@const appeal = row as unknown as MinorFlagAppealRow}
+        <AppealRow
+          row={appeal}
+          civitaiUrl={data.civitaiUrl}
+          verdict={acted.get(appeal.modelId)}
+          canExpand={hasHashDetail(row)}
+          expanded={expanded.has(appeal.modelId)}
+          ontoggle={() => toggle(row)}
+          {submit}
+        >
+          {#snippet detail()}
+            {@render detailPanel(row, appeal.modelId)}
+          {/snippet}
+        </AppealRow>
+      {:else}
+      {@const modelId = Number(row.modelId)}
+      {@const verdict = acted.get(modelId)}
+      <li
+        class={cn(
+          'rounded-lg border border-dark-4 bg-dark-6 p-4 transition-opacity',
+          verdict && 'opacity-50'
+        )}
+      >
+        <div class="flex flex-wrap items-baseline gap-x-2">
+          <a
+            href={modelHref(modelId, n(row.modelVersionId))}
+            target="_blank"
+            rel="noreferrer"
+            class="font-medium {LINK_CLASS}"
+          >
+            {s(row.modelName) ?? `#${modelId}`}
+          </a>
+          <code class="text-xs text-dark-2">#{modelId}</code>
+          <Badge variant="secondary">{s(row.status) ?? 'unknown'}</Badge>
+          {#if s(row.flagSource)}
+            <Badge variant="outline">
+              {s(row.flagSource)}{s(row.flagConfirmedFrom) ? ` (was ${s(row.flagConfirmedFrom)})` : ''}
+            </Badge>
+          {/if}
+          {#if row.username}
+            <a href={userLookupUrl(Number(row.userId))} class="text-xs {LINK_CLASS}">
+              {s(row.username)}
+            </a>
+          {/if}
+          {#if s(row.flaggedAt)}
+            <span class="text-xs text-dark-2">flagged {dateTime(s(row.flaggedAt))}</span>
+          {/if}
+          {#if s(row.createdAt)}
+            <span class="text-xs text-dark-2">uploaded {dateTime(s(row.createdAt))}</span>
+          {/if}
+        </div>
+
+        {#if s(row.hash)}
+          <p class="mt-2 text-xs break-all text-dark-2">
+            Matches
+            {#if n(row.minorModelId)}
+              <a
+                href={modelHref(Number(row.minorModelId), n(row.minorModelVersionId))}
+                target="_blank"
+                rel="noreferrer"
+                class={LINK_CLASS}
+              >
+                {s(row.minorModelName) ?? `#${n(row.minorModelId)}`}
+              </a>
+            {/if}
+            on <code>{s(row.hash)}</code>
+          </p>
+        {/if}
+
+        {#if row.prevNsfw != null || n(row.prevGalleryLevel) != null}
+          <p class="mt-1 text-xs text-dark-2">
+            Before the flag: NSFW {row.prevNsfw ? 'on' : 'off'}{n(row.prevGalleryLevel) != null
+              ? `, gallery level ${n(row.prevGalleryLevel)}`
+              : ''}
+          </p>
+        {/if}
+
+        <div class="mt-3 flex flex-wrap items-center gap-2">
+          {#if hasHashDetail(row)}
+            <Button size="xs" variant="outline" onclick={() => toggle(row)}>
+              {expanded.has(modelId) ? 'Hide detail' : 'Detail'}
+            </Button>
+          {/if}
+
+          {#if verdict}
+            <span class="text-sm text-dark-2">{verdict}</span>
+          {:else if data.tab === 'pending'}
+            <form method="POST" action="?/setMinor" use:enhance={submit(modelId, 'Flagged as minor')}>
+              <input type="hidden" name="modelId" value={modelId} />
+              <Button type="submit" size="xs" variant="destructive">Set as minor</Button>
+            </form>
+            <form method="POST" action="?/dismiss" use:enhance={submit(modelId, 'Dismissed')}>
+              <input type="hidden" name="modelId" value={modelId} />
+              <Button type="submit" size="xs" variant="outline">Dismiss match</Button>
+            </form>
+          {:else if data.tab === 'auto'}
+            <form method="POST" action="?/confirm" use:enhance={submit(modelId, 'Kept flagged')}>
+              <input type="hidden" name="modelId" value={modelId} />
+              <Button type="submit" size="xs">Keep flagged</Button>
+            </form>
+            <form method="POST" action="?/revert" use:enhance={submit(modelId, 'Reverted')}>
+              <input type="hidden" name="modelId" value={modelId} />
+              <Button type="submit" size="xs" variant="destructive">Revert</Button>
+            </form>
+          {/if}
+        </div>
+
+        {#if expanded.has(modelId)}
+          {@render detailPanel(row, modelId)}
         {/if}
       </li>
+      {/if}
     {/each}
   </ul>
 
