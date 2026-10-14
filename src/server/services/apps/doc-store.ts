@@ -1600,9 +1600,12 @@ type ModerationDeps = {
   ) => Promise<number>;
 };
 
-// The queue for one (app, ns). Driven by the report MARKS, so its cost follows the reports,
-// not the app's document count: documents with at least one OPEN report (made after any
-// dismissal), counted per document. $1 app, $2 ns, $3 the report mark name; `statusCond` is a
+// The queue for one (app, ns). Driven by the report marks through `doc_mark_name_idx`
+// (app_id, ns, name, …), so its cost follows the app's REPORT marks — not its document count,
+// and not its other marks (votes, likes…), which that index skips: documents with at least one
+// OPEN report (made after any dismissal), counted per document. The other mark reads are served
+// by the existing indexes (`markedBy=me` by `doc_mark_user_idx`, a document's own marks by the
+// primary key). $1 app, $2 ns, $3 the report mark name; `statusCond` is a
 // fixed string chosen in `listReported`.
 const sqlModOpenReported = (statusCond: string) => `SELECT d.coll, d.key, d.author_uid,
     d.author_kind, d.created_at, d.updated_at, d.hidden_at, d.hidden_by, d.size_bytes,

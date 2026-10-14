@@ -183,6 +183,11 @@ CREATE TABLE IF NOT EXISTS appdata.doc_mark (
   CONSTRAINT doc_mark_scope_nonempty CHECK (app_id <> '' AND ns <> ''),
   CONSTRAINT doc_mark_pkey PRIMARY KEY (app_id, ns, coll, key, name, user_id)
 );
+-- The moderators' report queue: every mark of ONE name in an app (`report`), without reading
+-- the app's other marks. Neither the primary key nor `doc_mark_user_idx` has `name` right
+-- after (app_id, ns). One more btree entry per mark write.
+CREATE INDEX IF NOT EXISTS doc_mark_name_idx
+  ON appdata.doc_mark (app_id, ns, name, coll, key);
 -- `markedBy=me` lists and account deletion.
 CREATE INDEX IF NOT EXISTS doc_mark_user_idx
   ON appdata.doc_mark (app_id, ns, coll, user_id, name, key);
