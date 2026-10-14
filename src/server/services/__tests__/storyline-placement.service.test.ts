@@ -607,6 +607,8 @@ describe('createStorylinePlacement — who may continue', () => {
     settlePlacement.mockRejectedValue(new Error('This post is already in a storyline'));
 
     await expect(submit()).resolves.toEqual({ id: 1 });
+    // Attempted, so pending is the refusal's doing and not a skipped approval.
+    expect(settlePlacement).toHaveBeenCalledTimes(1);
     expect(rows.map((row) => row.status)).toEqual(['pending']);
   });
 });

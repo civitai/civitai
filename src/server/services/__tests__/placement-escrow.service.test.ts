@@ -9,6 +9,7 @@ import { placementUnfundedSettlementsGauge } from '~/server/prom/client';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import type * as Award from '~/server/events/points/award';
+import type * as StorylineService from '~/server/services/storyline.service';
 const dbWriteMock = dbMock.dbWrite;
 
 const createMultiAccountBuzzTransaction = vi.fn();
@@ -2544,7 +2545,10 @@ const writeChapterEdgeForPlacement = vi.fn(async (..._args: unknown[]) => ({
   chapterId: 500,
   created: true,
 }));
-vi.mock('~/server/services/storyline.service', () => ({ writeChapterEdgeForPlacement }));
+vi.mock('~/server/services/storyline.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof StorylineService>()),
+  writeChapterEdgeForPlacement,
+}));
 
 const { settleStorylineContinuation, actOnStorylineContinuation } = await import(
   '~/server/services/storyline-placement.service'
@@ -2607,6 +2611,12 @@ describe('a write inside the settlement transaction', () => {
    * through the wrong client refuses every approval and is seen.
    */
   const storylineOwner = vi.fn();
+  /**
+   * The continuation post, on the transaction's client only. The global client
+   * answers that it is gone, so a readiness check read outside the settlement
+   * refuses every approval and is seen.
+   */
+  const txPostFind = vi.fn();
   const globalChapterFind = dbWriteMock.storylineChapter.findUnique as unknown as ReturnType<
     typeof vi.fn
   >;
@@ -2619,7 +2629,9 @@ describe('a write inside the settlement transaction', () => {
     globalChapterFind.mockResolvedValue({ storyline: { userId: OWNER + 99 } });
     txClients.length = 0;
     // A finished continuation post: the approval checks its images first.
-    dbWriteMock.post.findUnique.mockResolvedValue(READY_POST);
+    txPostFind.mockReset();
+    txPostFind.mockResolvedValue(READY_POST);
+    dbWriteMock.post.findUnique.mockResolvedValue(null);
     Object.assign(dbWriteMock, {
       $transaction: async (fn: (tx: unknown) => Promise<unknown>) => {
         const placements = new Map(
@@ -2632,6 +2644,7 @@ describe('a write inside the settlement transaction', () => {
         Object.defineProperty(tx, 'storylineChapter', {
           value: { findUnique: storylineOwner },
         });
+        Object.defineProperty(tx, 'post', { value: { findUnique: txPostFind } });
         txClients.push(tx);
         try {
           return await realTransaction(() => fn(tx));
@@ -2884,36 +2897,49 @@ describe('a write inside the settlement transaction', () => {
         'still awaiting readiness',
         { data: { postId: CONTINUATION_POST, awaitingReadiness: true } },
         null,
+        'storyline: that post is not ready yet',
       ],
       [
         'with an image in review',
         {},
         { ...READY_POST, images: [{ ...SCANNED, needsReview: 'poi' }] },
+        'storyline: that post is not ready yet',
       ],
       [
         'with an image still scanning',
         {},
         { ...READY_POST, images: [{ ...SCANNED, ingestion: 'Pending' }] },
+        'storyline: that post is not ready yet',
       ],
-      ['with a minor image', {}, { ...READY_POST, images: [{ ...SCANNED, minor: true }] }],
-    ])('refuses to approve a continuation %s, and writes no edge', async (_, row, post) => {
-      givenContinuation({ amount: 1000, ...row });
-      await holdStoryline(1000);
-      clearMoneyMocks();
-      if (post) dbWriteMock.post.findUnique.mockResolvedValue(post);
+      // A verdict, not a wait: told apart from the three above.
+      [
+        'with a minor image',
+        {},
+        { ...READY_POST, images: [{ ...SCANNED, minor: true }] },
+        'storyline: that post cannot be submitted',
+      ],
+    ])(
+      'refuses to approve a continuation %s, and writes no edge',
+      async (_, row, post, message) => {
+        givenContinuation({ amount: 1000, ...row });
+        await holdStoryline(1000);
+        clearMoneyMocks();
+        if (post) txPostFind.mockResolvedValue(post);
 
-      await expect(
-        settleStorylineContinuation({ placementId: 1, action: 'approve', actorId: OWNER })
-      ).rejects.toThrow(/^storyline: that post (is not ready yet|cannot be submitted)$/);
+        await expect(
+          settleStorylineContinuation({ placementId: 1, action: 'approve', actorId: OWNER })
+        ).rejects.toThrow(new RegExp(`^${message}$`));
+        expect(txPostFind).toHaveBeenCalledTimes(post ? 1 : 0);
 
-      expect(db.placements.get(1)!.status).toBe('pending');
-      expect(writeChapterEdgeForPlacement).not.toHaveBeenCalled();
-      expect(moneyMoved()).toBe(0);
-    });
+        expect(db.placements.get(1)!.status).toBe('pending');
+        expect(writeChapterEdgeForPlacement).not.toHaveBeenCalled();
+        expect(moneyMoved()).toBe(0);
+      }
+    );
 
     it('refuses to approve a continuation whose post was deleted', async () => {
       givenContinuation();
-      dbWriteMock.post.findUnique.mockResolvedValue(null);
+      txPostFind.mockResolvedValue(null);
 
       await expect(
         settleStorylineContinuation({ placementId: 1, action: 'approve', actorId: OWNER })

@@ -54,9 +54,11 @@ beforeEach(() => {
 
 /**
  * The chapter check, at the router entry, through the real storyline
- * placement service. A post that is not a chapter of a live storyline must be
- * refused by both routes that take one, or a surface that opens at 0 by
- * default would open every post on the site.
+ * placement service with the storyline service's assert replaced. What this
+ * pins is that both routes taking a chapter ask that assert, with this caller,
+ * and stop on its refusal; what the assert refuses is tested beside it. A post
+ * that is not a chapter must be refused by both, or a surface that opens at 0
+ * by default would open every post on the site.
  */
 describe('storyline routes refuse a post that is not a chapter', () => {
   // Braced: a function returned from beforeEach is run as its teardown.
