@@ -124,7 +124,7 @@ export function StorylineModeProvider({
   );
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [pendingChapterId, setPendingChapterId] = useState<number>();
-  const [trustedChapterId, setTrustedChapterId] = useState<number>();
+  const [trusted, setTrusted] = useState<{ chapterId: number; imageId: number | undefined }>();
 
   const walk = useMemo(
     () => getStorylineWalk(path?.chapters ?? [], images),
@@ -135,6 +135,7 @@ export function StorylineModeProvider({
   const leave = useCallback(() => {
     setEndOpenFor(undefined);
     setDrawerOpen(false);
+    setTrusted(undefined);
     go({ chapterId: undefined });
   }, [go]);
 
@@ -154,11 +155,11 @@ export function StorylineModeProvider({
       if (chapterId)
         tracking.trackBranchChoice({ fromChapterId: chapterId, toChapterId: child.chapterId });
       setDrawerOpen(false);
-      setTrustedChapterId(child.chapterId);
+      setTrusted({ chapterId: child.chapterId, imageId: routeImageId });
       setPendingChapterId(child.chapterId);
       go({ chapterId: child.chapterId });
     },
-    [chapterId, go, tracking]
+    [chapterId, routeImageId, go, tracking]
   );
 
   // Once the chosen chapter's path and images arrive, open its first image. A chapter with no
@@ -183,14 +184,14 @@ export function StorylineModeProvider({
     if (routeImageId !== next.imageId) go({ imageId: next.imageId, chapterId: pendingChapterId });
   }, [pendingChapterId, chapterId, pathEndId, imagesFetching, walk, go, routeImageId]);
 
-  // The URL's chapter is trusted only for an image on its path, or for a branch the reader took
-  // from inside the storyline: a link pairing an image with an unrelated storyline must not put
-  // that image under the storyline's banner.
-  const onPath = !!routeImageId && walk.chapterIdByImageId.has(routeImageId);
-  useEffect(() => {
-    if (onPath && chapterId) setTrustedChapterId(chapterId);
-  }, [onPath, chapterId]);
-  const inStoryline = !!chapterId && !!path && (onPath || trustedChapterId === chapterId);
+  // The URL's chapter is trusted only for an image on its own path (not the previous chapter's,
+  // still shown while this one loads), or for the image a reader was on when they took the
+  // branch from inside the storyline: a link pairing an image with an unrelated storyline must
+  // not put that image under the storyline's banner.
+  const onPath =
+    pathEndId === chapterId && !!routeImageId && walk.chapterIdByImageId.has(routeImageId);
+  const tookBranchHere = trusted?.chapterId === chapterId && trusted?.imageId === routeImageId;
+  const inStoryline = !!chapterId && !!path && (onPath || tookBranchHere);
 
   const value = useMemo<StorylineModeState>(() => {
     if (!chapterId || !path || !inStoryline) return { active: false, enter };

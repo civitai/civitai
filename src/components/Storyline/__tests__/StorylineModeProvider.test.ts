@@ -25,6 +25,8 @@ const mocks = vi.hoisted(() => {
     /** Images by post id; a post absent here has no image this reader can see. */
     imagesByPost: {} as Record<number, Image[]>,
     imagesFetching: false,
+    /** Chapter whose path read still shows another chapter's data (keepPreviousData). */
+    placeholder: {} as Record<number, number>,
     bump: () => undefined as void,
   };
 });
@@ -68,17 +70,20 @@ vi.mock('~/components/Storyline/storyline.queries', async (importOriginal) => ({
     trackBranchChoice: mocks.trackBranchChoice,
     trackCreateClick: vi.fn(),
   }),
-  useStorylinePath: (chapterId: number | undefined) => ({
-    data:
-      chapterId && mocks.paths[chapterId]
-        ? {
-            storyline: { id: 1, title: 'The Patch', userId: 1, maxNsfwLevel: 1 },
-            chapters: mocks.paths[chapterId],
-            hasEarlier: false,
-          }
-        : undefined,
-    isLoading: false,
-  }),
+  useStorylinePath: (requested: number | undefined) => {
+    const chapterId = (requested && mocks.placeholder[requested]) || requested;
+    return {
+      data:
+        chapterId && mocks.paths[chapterId]
+          ? {
+              storyline: { id: 1, title: 'The Patch', userId: 1, maxNsfwLevel: 1 },
+              chapters: mocks.paths[chapterId],
+              hasEarlier: false,
+            }
+          : undefined,
+      isLoading: false,
+    };
+  },
   useStorylinePathImages: (chapters: Chapter[] | undefined) => ({
     images: (chapters ?? []).flatMap((c) => (c.post ? mocks.imagesByPost[c.post.id] ?? [] : [])),
     isLoading: false,
@@ -150,6 +155,7 @@ beforeEach(() => {
   mocks.trackBranchChoice.mockClear();
   mocks.hiddenUserIds = new Set();
   mocks.imagesFetching = false;
+  mocks.placeholder = {};
   mocks.paths = {
     3: [chapter(1, 0, 100), chapter(2, 1, 200), chapter(3, 2, 300)],
     4: [chapter(1, 0, 100), chapter(2, 1, 200), chapter(3, 2, 300), chapter(4, 3, 400)],
@@ -229,6 +235,48 @@ describe('StorylineModeProvider', () => {
     // e.g. history back to an old link pairing image 30 with an unrelated storyline
     moveUrl({ imageId: 30, storylineChapter: 77 });
     expect(mode.active).toBe(false);
+  });
+
+  it('an end view closes when the URL moves to another chapter the reader is on', () => {
+    open(30, 3);
+    act(() => active().continueTo({ chapterId: 9 }));
+    expect(active().endOpen).toBe(true);
+    moveUrl({ imageId: 20, storylineChapter: 4 });
+    expect(mode.active).toBe(true);
+    expect(active().endOpen).toBe(false);
+  });
+
+  it("does not trust a chapter on the strength of the previous chapter's data", () => {
+    open(30, 3);
+    // Chapter 77's read still shows chapter 3's path, which image 30 is on.
+    mocks.placeholder = { 77: 3 };
+    moveUrl({ imageId: 30, storylineChapter: 77 });
+    expect(mode.active).toBe(false);
+    mocks.placeholder = {};
+    moveUrl({ imageId: 30, storylineChapter: 77 });
+    expect(mode.active).toBe(false);
+  });
+
+  it('trust from taking a branch covers the image the reader was on, not any other', () => {
+    open(30, 3);
+    act(() => active().continueTo({ chapterId: 9 }));
+    expect(mode.active).toBe(true);
+    moveUrl({ imageId: 70, storylineChapter: 9 });
+    expect(mode.active).toBe(false);
+  });
+
+  it('jumping to a chapter opens its first image and closes the end view and drawer', () => {
+    open(30, 3);
+    act(() => {
+      active().setEndOpen(true);
+      active().setDrawerOpen(true);
+    });
+    act(() => active().jumpToChapter(1));
+    expect(mocks.replace).toHaveBeenLastCalledWith(
+      expect.objectContaining({ imageId: 10, storylineChapter: 3 }),
+      '/images/10'
+    );
+    expect([active().endOpen, active().drawerOpen]).toEqual([false, false]);
   });
 
   it('leaving drops the chapter from the URL and closes the end view', () => {

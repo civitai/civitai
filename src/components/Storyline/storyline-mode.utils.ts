@@ -126,3 +126,25 @@ export function withStorylineNavigation<
 export function uniquePostIds(images: { postId?: number | null }[] | undefined) {
   return [...new Set((images ?? []).flatMap((image) => (image.postId ? [image.postId] : [])))];
 }
+
+/**
+ * Path images page until the path is whole, so an image deep in a long path counts as on it.
+ * A failed page stops the paging instead of re-requesting it in a loop, and stops counting as
+ * loading, so a reader waiting on a branch is not held forever.
+ */
+export function getPathImagesPaging({
+  hasNextPage,
+  isFetching,
+  isError,
+  pages,
+  maxPages,
+}: {
+  hasNextPage: boolean;
+  isFetching: boolean;
+  isError: boolean;
+  pages: number;
+  maxPages: number;
+}) {
+  const wantsMore = hasNextPage && !isError && pages < maxPages;
+  return { fetchNext: wantsMore && !isFetching, loading: isFetching || wantsMore };
+}

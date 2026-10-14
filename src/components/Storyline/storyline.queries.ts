@@ -3,6 +3,7 @@ import { useEffect, useMemo } from 'react';
 import { useViewerBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useQueryImages } from '~/components/Image/image.utils';
 import {
+  getPathImagesPaging,
   hideHiddenUsersChapters,
   orderPathImages,
 } from '~/components/Storyline/storyline-mode.utils';
@@ -94,20 +95,27 @@ export function useStorylinePathImages(chapters: StorylinePathChapter[] | undefi
     () => (chapters ?? []).flatMap((c) => (c.post ? [c.post.id] : [])),
     [chapters]
   );
-  const { images, data, isLoading, isFetching, hasNextPage, fetchNextPage } = useQueryImages(
-    { postIds, browsingLevel, limit: PATH_IMAGES_LIMIT },
-    { enabled: postIds.length > 0, keepPreviousData: true }
-  );
-  // The walk needs the whole path, and an image missing from it reads as "not on this path".
+  const { images, data, isLoading, isFetching, isError, hasNextPage, fetchNextPage } =
+    useQueryImages(
+      { postIds, browsingLevel, limit: PATH_IMAGES_LIMIT },
+      { enabled: postIds.length > 0, keepPreviousData: true }
+    );
   const pages = data?.pages.length ?? 0;
+  const paging = getPathImagesPaging({
+    hasNextPage: !!hasNextPage,
+    isFetching,
+    isError,
+    pages,
+    maxPages: PATH_IMAGES_MAX_PAGES,
+  });
   useEffect(() => {
-    if (hasNextPage && !isFetching && pages < PATH_IMAGES_MAX_PAGES) fetchNextPage();
-  }, [hasNextPage, isFetching, pages, fetchNextPage]);
+    if (paging.fetchNext) fetchNextPage();
+  }, [paging.fetchNext, fetchNextPage]);
   const ordered = useMemo(() => orderPathImages(images, postIds), [images, postIds]);
   return {
     images: ordered,
     isLoading: postIds.length > 0 && isLoading,
-    isFetching: isFetching || (!!hasNextPage && pages < PATH_IMAGES_MAX_PAGES),
+    isFetching: paging.loading,
   };
 }
 

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { isAdjacent } from '~/components/Image/DetailV2/image-detail-carousel.utils';
 import {
+  getPathImagesPaging,
   getStorylineStep,
   getStorylineWalk,
   hideHiddenUsersChapters,
@@ -195,5 +196,56 @@ describe('isAdjacent', () => {
     expect(isAdjacent(4, 0, 5, true)).toBe(true);
     expect(isAdjacent(4, 0, 5, false)).toBe(false);
     expect(isAdjacent(1, 0, 5, false)).toBe(true);
+  });
+});
+
+describe('getPathImagesPaging', () => {
+  const base = { hasNextPage: true, isFetching: false, isError: false, pages: 1, maxPages: 10 };
+  it('asks for the next page while the path has more', () => {
+    expect(getPathImagesPaging(base)).toEqual({ fetchNext: true, loading: true });
+  });
+  it('does not stack a request on one in flight', () => {
+    expect(getPathImagesPaging({ ...base, isFetching: true })).toEqual({
+      fetchNext: false,
+      loading: true,
+    });
+  });
+  it('stops, and stops reporting loading, after a failed page', () => {
+    expect(getPathImagesPaging({ ...base, isError: true })).toEqual({
+      fetchNext: false,
+      loading: false,
+    });
+  });
+  it('stops at the page cap', () => {
+    expect(getPathImagesPaging({ ...base, pages: 10 })).toEqual({
+      fetchNext: false,
+      loading: false,
+    });
+  });
+  it('is done when there is no next page', () => {
+    expect(getPathImagesPaging({ ...base, hasNextPage: false })).toEqual({
+      fetchNext: false,
+      loading: false,
+    });
+  });
+});
+
+describe('withStorylineNavigation, the other steps', () => {
+  it('steps back from the middle and opens the end from the last of a longer path', () => {
+    const middle = { index: 2, next: vi.fn(), previous: vi.fn() };
+    withStorylineNavigation(middle, 5, vi.fn()).previous();
+    expect(middle.previous).toHaveBeenCalledTimes(1);
+    const last = { index: 4, next: vi.fn(), previous: vi.fn() };
+    const onEnd = vi.fn();
+    withStorylineNavigation(last, 5, onEnd).next();
+    expect([onEnd.mock.calls.length, last.next.mock.calls.length]).toEqual([1, 0]);
+  });
+});
+
+describe('isAdjacent, boundaries', () => {
+  it('counts only immediate neighbours, and a lone slide is adjacent only to itself', () => {
+    expect(isAdjacent(2, 0, 5, true)).toBe(false);
+    expect(isAdjacent(0, 0, 1, false)).toBe(true);
+    expect(isAdjacent(1, 0, 1, true)).toBe(false);
   });
 });
