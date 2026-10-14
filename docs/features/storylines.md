@@ -4,7 +4,9 @@ A storyline is a branching visual story told in posts. Each chapter is an ordina
 who starts the storyline writes the main path; other creators can continue it from the end of any
 chapter, so a story grows into a tree of alternatives that readers walk through and choose between.
 
-In development behind the `storylines` feature flag (moderators and individually granted users).
+**Status:** in development behind the `storylines` feature flag. The data model is in place; the
+reader and creator screens below are landing in separate changes, so this page describes the first
+version as designed rather than what is live today.
 
 ## For readers
 
@@ -21,15 +23,16 @@ In development behind the `storylines` feature flag (moderators and individually
   everyone else's, ordered by how many readers took them.
 - **Creating the next section.** A reader can ask to make their own continuation. Until that tool
   ships, this joins an early-access list.
-- **Content level.** Every storyline has a maximum content level set by its creator. Chapters above
-  it are not shown in the storyline. Each reader's own browsing level still applies chapter by
-  chapter, and a chapter a reader cannot see is shown as a placeholder so the path still reads end to
-  end. The same applies to a chapter whose post was removed: the chapters after it stay reachable.
+- **Content level.** Every storyline has a maximum content level set by its creator. A chapter above
+  it is shown only as a placeholder, without its images, so the chapters after it stay reachable.
+  The same goes for a chapter whose post was removed. Each reader's own browsing level still applies
+  chapter by chapter.
 
 ## For creators
 
 - **Starting one.** A published post becomes the first chapter of a new storyline.
-- **Settings.** Status (ongoing or complete), who may continue it, and the maximum content level.
+- **Settings.** Status (ongoing or complete), who may continue it, the maximum content level, and the
+  price to submit a continuation, which can be zero.
 - **Collaborators.** The creator can endorse collaborators. Their continuations are added without
   review and are listed ahead of other contributors' at the end of a chapter.
 - **Review.** Continuations from anyone else wait in the creator's review queue to be approved or
@@ -37,18 +40,9 @@ In development behind the `storylines` feature flag (moderators and individually
 - **Credit.** A continuation can fork from the end of any chapter. Earlier chapters are referenced and
   credited to their authors, never copied.
 
-## Shape of the data
-
-A storyline owns a set of chapters, one per post. The tree is held as edges from a chapter to its
-parent, separate from the chapters, so a chapter could later gain a second parent (two branches
-rejoining) without reshaping existing data; for now each chapter has one. At most one child of each
-chapter is marked as the main path. Whether a continuation counts as endorsed is not stored on it:
-it follows the current collaborator list, so endorsing someone also reorders the chapters they have
-already added.
-
 ## Not in the first version
 
-Branches rejoining, an in-app tool for making the next section, and paid continuations.
+Branches rejoining, and an in-app tool for making the next section.
 
 ## Trying it locally
 

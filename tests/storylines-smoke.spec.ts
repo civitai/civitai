@@ -5,13 +5,15 @@ import { expect, test } from '@playwright/test';
  * image detail -> storyline mode -> end of the main path -> forks -> coming-soon prompt.
  *
  * Runs against a dev server on the dev database, not the local e2e database, so it signs in
- * itself and must be run without the `setup` project (which asserts a local database):
+ * itself and must be run without the `setup` project (which asserts a local database). It is
+ * collected only when STORYLINE_SMOKE_TOKEN is set (see playwright.config.ts):
  *
  *   STORYLINE_SMOKE_BASE_URL=<the dev server, default http://localhost:3000>
  *   STORYLINE_SMOKE_TOKEN=<a civ-token session for a test account, never a real person's>
  *   STORYLINE_SMOKE_FIRST_IMAGE_ID=<firstImageId of the depth-0 chapter>
  *   STORYLINE_SMOKE_LAST_IMAGE_ID=<lastImageId of the depth-3 chapter>
  *   STORYLINE_SMOKE_LAST_CHAPTER_ID=<chapterId of the depth-3 chapter>
+ *   STORYLINE_SMOKE_ABOVE_CEILING_CHAPTER_ID=<chapterId of the row with aboveCeiling = true>
  *   pnpm exec playwright test tests/storylines-smoke.spec.ts --project chromium --no-deps
  *
  * The seed prints every id. Not covered: the pill on a feed card, because which images the feed
@@ -23,14 +25,17 @@ const env = {
   firstImageId: process.env.STORYLINE_SMOKE_FIRST_IMAGE_ID,
   lastImageId: process.env.STORYLINE_SMOKE_LAST_IMAGE_ID,
   lastChapterId: process.env.STORYLINE_SMOKE_LAST_CHAPTER_ID,
+  aboveCeilingChapterId: process.env.STORYLINE_SMOKE_ABOVE_CEILING_CHAPTER_ID,
 };
 
-test.describe('storylines smoke', () => {
-  test.skip(
-    Object.values(env).some((v) => !v),
-    'set the STORYLINE_SMOKE_* variables (see the header of this file)'
-  );
+const missing = Object.entries(env)
+  .filter(([, v]) => !v)
+  .map(([k]) => k);
+if (missing.length) {
+  throw new Error(`storylines-smoke: missing env for ${missing.join(', ')} (see the file header)`);
+}
 
+test.describe('storylines smoke', () => {
   test.use({ baseURL: process.env.STORYLINE_SMOKE_BASE_URL ?? 'http://localhost:3000' });
 
   test.beforeEach(async ({ context, baseURL }) => {
@@ -55,11 +60,24 @@ test.describe('storylines smoke', () => {
     await page.getByTestId('storyline-next').click();
     await expect(page.getByTestId('storyline-end-of-chapter')).toBeVisible();
 
-    // The demo has three continuations; the one above the storyline's ceiling must not show.
     const forks = page.getByTestId('storyline-fork');
-    await expect(forks).toHaveCount(2);
-    await expect(forks.nth(0)).toHaveAttribute('data-rank', 'canon');
-    await expect(forks.nth(1)).toHaveAttribute('data-rank', 'endorsed');
+    await expect(forks).toHaveCount(3);
+
+    // Above the storyline's ceiling: kept as a placeholder so later chapters stay reachable,
+    // with none of the post's content.
+    const aboveCeiling = page.locator(
+      `[data-testid="storyline-fork"][data-chapter-id="${env.aboveCeilingChapterId}"]`
+    );
+    await expect(aboveCeiling).toHaveAttribute('data-tombstone', 'aboveStoryRating');
+    await expect(aboveCeiling).toContainText('rated above');
+    await expect(aboveCeiling.locator('img')).toHaveCount(0);
+
+    const readable = page.locator('[data-testid="storyline-fork"]:not([data-tombstone])');
+    await expect(readable).toHaveCount(2);
+    await expect(readable.nth(0)).toHaveAttribute('data-rank', 'canon');
+    await expect(readable.nth(1)).toHaveAttribute('data-rank', 'endorsed');
+    // Read again once settled: toHaveCount passes at the first moment it matches.
+    expect(await forks.count()).toBe(3);
 
     await page.getByTestId('storyline-create-next').click();
     await expect(page.getByRole('dialog').getByText('Get early access')).toBeVisible();

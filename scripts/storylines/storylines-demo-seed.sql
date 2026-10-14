@@ -7,7 +7,7 @@
 --
 -- Shape: four chapters on the main path alternating owner and collaborator, then continuations
 -- of the last one: canon by the owner, endorsed by the collaborator, one rated above the
--- storyline's ceiling (readers should never be shown it), and a community one when a third
+-- storyline's ceiling (readers see it only as a placeholder), and a community one when a third
 -- account is named.
 --
 -- It does not create posts: inserting "Image" rows queues them for scanning.
@@ -86,6 +86,8 @@ BEGIN
   SELECT id INTO above_ceiling_post FROM "Post" p
   WHERE p."userId" IN (owner_id, collaborator_id) AND p."publishedAt" IS NOT NULL
     AND p."nsfwLevel" >= ceiling * 2
+    -- 32 is the Blocked flag: never attach blocked content, even to demonstrate a refusal.
+    AND (p."nsfwLevel" & 32) = 0
     AND NOT EXISTS (SELECT 1 FROM "StorylineChapter" c WHERE c."postId" = p.id)
   ORDER BY p."publishedAt", p.id LIMIT 1;
   IF above_ceiling_post IS NULL THEN
