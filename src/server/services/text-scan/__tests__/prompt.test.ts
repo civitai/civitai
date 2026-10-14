@@ -17,6 +17,7 @@ const {
   getTextScanConfig,
   setTextScanConfig,
   setTextScanRollout,
+  setTextScanWebSearchRollout,
   insertTextScanPrompt,
   MissingTextScanPromptError,
   DEFAULT_TEXT_SCAN_MODEL,
@@ -40,7 +41,7 @@ const subject = {
   declared: {},
 };
 
-const DEFAULTS = { model: DEFAULT_TEXT_SCAN_MODEL, maxInputChars: 12000, thinking: false };
+const DEFAULTS = { model: DEFAULT_TEXT_SCAN_MODEL, maxInputChars: 200000, thinking: false };
 
 describe('composeTextScanMessages', () => {
   it('puts base then each requested label definition in the system message', () => {
@@ -108,6 +109,35 @@ describe('composeUserMessage', () => {
     expect(composeUserMessage(long, 100)).toHaveLength(100);
   });
 
+  it('reports the full composed length and whether the cap cut it', () => {
+    const body = (n: number) => ({ fields: [{ heading: 'B', text: 'x'.repeat(n) }], declared: {} });
+    const labels = ['scam'] as any;
+    const prompts = { base: { id: 1, content: 'b' }, 'label:scam': { id: 2, content: 's' } } as any;
+    const full = '## B\n'.length + 250000;
+    const big = composeTextScanMessages({
+      prompts,
+      labels,
+      subject: body(250000),
+      maxInputChars: 200000,
+    });
+    expect(big.user).toHaveLength(200000);
+    expect(big).toMatchObject({ inputChars: full, inputCut: true });
+    const fits = composeTextScanMessages({
+      prompts,
+      labels,
+      subject: body(100),
+      maxInputChars: 200000,
+    });
+    expect(fits).toMatchObject({ inputChars: '## B\n'.length + 100, inputCut: false });
+    const exact = composeTextScanMessages({
+      prompts,
+      labels,
+      subject: body(100),
+      maxInputChars: '## B\n'.length + 100,
+    });
+    expect(exact.inputCut).toBe(false);
+  });
+
   it('returns an empty string when every field is empty', () => {
     expect(composeUserMessage({ fields: [{ heading: 'A', text: '  ' }], declared: {} }, 100)).toBe(
       ''
@@ -153,7 +183,7 @@ describe('getTextScanConfig', () => {
 
   it('falls back to defaults on unparseable or invalid config', async () => {
     redisMock.sysRedis.get.mockResolvedValue('{not json');
-    expect((await getTextScanConfig()).maxInputChars).toBe(12000);
+    expect((await getTextScanConfig()).maxInputChars).toBe(200000);
     redisMock.sysRedis.get.mockResolvedValue(
       JSON.stringify({ maxInputChars: -1, model: '', thinking: 'yes' })
     );
@@ -249,6 +279,49 @@ describe('setTextScanRollout', () => {
     );
     await setTextScanRollout('Comment', null, { moderatorId: 5 });
     expect(redisMock.sysRedis.hDel).toHaveBeenCalledWith('system:text-scan:modes', 'Comment');
+  });
+});
+
+describe('setTextScanWebSearchRollout', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('refuses entity types other than Model and users who are not active moderators', async () => {
+    dbMock.dbRead.user.findFirst.mockResolvedValue({ id: 5 });
+    await expect(
+      setTextScanWebSearchRollout('Post', { shadow: 10, active: 0 }, { moderatorId: 5 })
+    ).rejects.toThrow('Model');
+    dbMock.dbRead.user.findFirst.mockResolvedValue(null);
+    await expect(
+      setTextScanWebSearchRollout('Model', { shadow: 10, active: 0 }, { moderatorId: 9 })
+    ).rejects.toThrow();
+    expect(redisMock.sysRedis.hSet).not.toHaveBeenCalled();
+  });
+
+  it('refuses an active share unless allowActive is set', async () => {
+    dbMock.dbRead.user.findFirst.mockResolvedValue({ id: 5 });
+    await expect(
+      setTextScanWebSearchRollout('Model', { shadow: 100, active: 10 }, { moderatorId: 5 })
+    ).rejects.toThrow('allowActive');
+    expect(redisMock.sysRedis.hSet).not.toHaveBeenCalled();
+    await setTextScanWebSearchRollout(
+      'Model',
+      { shadow: 100, active: 10 },
+      { moderatorId: 5, allowActive: true }
+    );
+    expect(redisMock.sysRedis.hSet).toHaveBeenCalledWith(
+      'system:text-scan:web-search',
+      'Model',
+      '{"shadow":100,"active":10}'
+    );
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'web-search rollout updated', moderatorId: 5 })
+    );
+  });
+
+  it('removes the field for null', async () => {
+    dbMock.dbRead.user.findFirst.mockResolvedValue({ id: 5 });
+    await setTextScanWebSearchRollout('Model', null, { moderatorId: 5 });
+    expect(redisMock.sysRedis.hDel).toHaveBeenCalledWith('system:text-scan:web-search', 'Model');
   });
 });
 

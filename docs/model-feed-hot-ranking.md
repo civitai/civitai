@@ -1098,6 +1098,10 @@ one account can supply all of it.
 `uniqMerge` over it matched `orchestration.jobs` exactly on every version checked. No new
 materialized view, no new pipeline.
 
+Only the all-time merge is sound, though: despite the name, the view's current rows carry no usable
+date (§17). That costs this signal nothing — it wants the all-time count — but it rules the view out
+as the source for anything windowed.
+
 It cannot go through `ModelVersionMetric` the way `generationCount` does, because
 `getVersionAggregationTasks` **sums** version rows into `ModelMetric` and summing per-version distinct
 counts double-counts anyone who used two versions. The count is merged in ClickHouse instead —
@@ -1408,20 +1412,43 @@ sockpuppet at its new rank 30. This is why the migration footer says "0 or near 
 
 ### What the 0-earns-nothing change costs
 
-The ClickHouse coverage gap — models with generations but no row in the generator view — now earns no
-generation credit at all, where before it was uncapped:
+The ClickHouse coverage gap — models with a generation count but no row in the generator view — now
+earns no generation credit at all, where before it was uncapped. Re-measured after the 2026-10-13
+release and its backfills:
 
-| | Count | With 500+ generations |
-| --- | ---: | ---: |
-| `ModelMetric` rows, `uniqueGeneratorCount = 0` with generations | 1,472 | **77** |
-| `ModelBaseModelMetric` slices, same | 1,275 | **85** |
+| | 2026-10-12 | 2026-10-13 | With 500+ generations |
+| --- | ---: | ---: | ---: |
+| `ModelMetric` rows, `uniqueGeneratorCount = 0` with generations | 1,472 | 1,768 | 77 → **141** |
+| `ModelBaseModelMetric` slices, same | 1,275 | 1,352 | 85 → **95** |
 
-So the exposure is ~80 rows in each table that lose a signal they have genuinely earned, against the
-1,614 single-generator models the floor is there to stop. The error runs toward under-crediting, which
-is the safe direction for a ranking signal, and the affected rows keep their likes and downloads — one
-of them still leads its filtered feed on those alone. Closing the gap properly means finding why those
-versions have generation rows but no generator rows, which is ClickHouse-side work and not tracked
-here.
+The error runs toward under-crediting, which is the safe direction for a ranking signal, and the
+affected rows keep their likes and downloads — one of them still leads its filtered feed on those
+alone.
+
+**It is not new models, and not the metrics job.** 1,761 of the 1,768 are models published more than
+30 days ago, so it is not ingestion lag. Nor is the live job zeroing a count it cannot find:
+`bulkInsertMetrics` writes `COALESCE(d."<key>", im."<key>", 0)`, so a model ClickHouse returns nothing
+for keeps its stored value rather than falling to 0 (`src/server/metrics/model.metrics.ts:253`).
+
+**What it actually is.** Checked against ClickHouse on 2026-10-13 for the five largest affected
+models. They have exactly **one** row each in `orchestration.daily_resource_generation_counts`, and its
+count matches Postgres exactly — 173,658, 129,848, 117,578, 33,528. But that row is dated **2120-07-26**
+or **2079-06-07**: a legacy bulk import with a corrupt date, not daily telemetry. In
+`daily_resource_generation_user_counts` they have **no rows at all**.
+
+So the gap is exactly what it looked like: a real all-time generation total with no generator data
+behind it. The models did earn those generations; nothing records how many different people produced
+them, so the floor declines to credit them. The error still runs toward under-crediting.
+
+🔴 **Query the database-qualified name.** `daily_resource_generation_counts` exists in both `default`
+and `orchestration` with **different contents** — the `default` copy holds nothing before 2025-11-15,
+so these models look absent from it. Fourteen of the sixteen readers in this repo use the
+`orchestration.`-qualified name; the unqualified ones resolve to `default`. An unqualified check is how
+an earlier draft of this section concluded the rows did not exist.
+
+The count grows as each metrics run reaches more old models of that kind, not because coverage is
+degrading: for models published in 2026, 143,112 have a generation count and 143,131 have a generator
+count. §17 records what the two views do and do not contain.
 
 ## 17. Trending is a different signal (2026-10-13)
 
@@ -1472,12 +1499,40 @@ Checked, because it bounds every design:
 - `ModelMetric` and `ModelVersionMetric` are keyed by id alone — **all-time counts, no timeframe
   dimension**, unlike `UserMetric`, `PostMetric`, `TagMetric` and `CollectionMetric`. `ModelRank` has
   no period columns either.
-- The only real time series is ClickHouse `daily_resource_generation_counts` and
-  `daily_resource_generation_user_counts` — daily granularity, **generations only**.
+- The nearest thing to a time series is ClickHouse `daily_resource_generation_counts` and
+  `daily_resource_generation_user_counts` — generations only, and neither is reliably dated.
 
-So a generation-based trending signal is buildable with no new pipeline. Including downloads or likes
-needs net-new infrastructure: a daily snapshot of the all-time counters to diff against (one row per
-model per day, ~8 days retention, plus a job). That snapshot is the bulk of the work, not the formula.
+**Measured 2026-10-13, and it is worse than "generations only".** There are three copies of the
+generation counts across two databases, and the generator view has lost its dates entirely:
+
+| Table | Rows | Date range | Future-dated rows | Readers in this repo |
+| --- | ---: | --- | ---: | ---: |
+| `orchestration.daily_resource_generation_counts` | 36,368,452 | 1970-01-01 → **2120-07-26** | 24,968 | **14** |
+| `default.daily_resource_generation_counts` | 12,249,501 | 2025-11-15 → 2036-02-07 | 86,897 | 2, unqualified |
+| `default.daily_resource_generation_counts_all` | 41,055,168 | 1970-01-01 → 2036-02-07 | 86,897 | **0** |
+| `default.daily_resource_generation_user_counts` | 4,992,125 | 1970-01-01, and 2023–2024-05-08 | — | 4 (hot score) |
+
+Three copies of the generation counts, with different contents, and none of them safely dated: the
+orchestration copy reaches to 2120, the `default` copy starts at 2025-11-15, and `_all` has no reader
+in this repo at all. The generator view is worse — 989,051 of its versions carry `createdDate`
+`1970-01-01` and its last real date is 2024-05-08. It is still being written: five versions from models published in the last five days all have rows,
+each a single row stamped `1970-01-01`. It is an all-time count per version wearing a daily view's
+name, and its 2023–2024 dated rows are legacy from when the date worked.
+
+The cause is one line of DDL. `daily_resource_generation_counts_mv` selects `date AS createdDate`;
+`daily_resource_generation_user_counts_mv` selects `date` and declares its own column as `date`, while
+the target table's column is `createdDate`. Nothing fills it, so it takes the `Date` default. Same
+source, same target shape — the alias is the only difference. A corrected MV belongs in
+`src/server/clickhouse/migrations/` with the rest of the manually-applied ClickHouse DDL.
+
+That kills the cheap version of this feature. Generation **counts** can be windowed, provided the
+query picks a database deliberately and bounds the upper end (`createdDate <= today()`, as
+`backfill-generation-counts.ts` already does) so a row dated 2120 cannot land in "the last 7 days".
+Distinct **generators** cannot be windowed at all, at any granularity — and the section below argues the distinct-actor denominator
+is a day-one requirement, not a follow-up. So a trending signal needs new pipeline work whichever
+metric it ranks: either fix the generator view's date, or snapshot the all-time counters daily and diff
+them (one row per model per day, ~8 days retention, plus a job). That is the bulk of the work, not the
+formula.
 
 ### The formula shape, and its two traps
 

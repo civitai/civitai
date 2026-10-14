@@ -369,13 +369,13 @@ export function ScoredEventHomeBlock({
           <UnstyledButton
             onClick={openVideo}
             aria-label={`Watch the ${video.title} video`}
-            // On the faded side, clear of the characters.
-            className="group absolute bottom-3.5 left-[22%] z-[3] flex -translate-x-1/2 flex-col items-center gap-1.5"
+            // Centered on the art, and see-through so the art still reads behind it.
+            className="group absolute left-1/2 top-1/2 z-[3] flex -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-1.5"
           >
-            <span className="flex size-[52px] items-center justify-center rounded-full bg-white/90 text-dark-7 shadow-lg transition-transform group-hover:scale-110">
+            <span className="flex size-[52px] items-center justify-center rounded-full border border-solid border-white/50 bg-white/30 text-white shadow-lg backdrop-blur-md transition-transform group-hover:scale-110">
               <IconPlayerPlayFilled size={22} />
             </span>
-            <span className="rounded-full bg-dark-9/70 px-2.5 py-0.5 text-xs font-bold text-white">
+            <span className="rounded-full bg-dark-9/40 px-2.5 py-0.5 text-xs font-bold text-white backdrop-blur-md">
               {Number.isFinite(video.duration) && Math.round(video.duration ?? 0) > 0
                 ? `Watch · ${filmLength(video.duration ?? 0)}`
                 : 'Watch'}
@@ -455,7 +455,7 @@ function Positions({
             {t.team}
           </span>
           <span className="font-extrabold tabular-nums">
-            <AnimatedCount value={t.score} resetKey={t.team} />
+            <AnimatedCount value={t.score} abbreviate={false} resetKey={t.team} />
           </span>
         </div>
       ))}

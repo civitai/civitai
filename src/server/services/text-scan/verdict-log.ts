@@ -28,6 +28,8 @@ export type ScanVerdict = {
   /** The system's own labels: XGuard triggered labels, Clavata matches, text scan triggered labels. */
   tags?: string[];
   mode?: 'shadow' | 'active';
+  /** Text scan's second, web-search pass (Model poi/minor); absent for the main pass. */
+  variant?: 'web-search';
   textHash?: string;
   workflowId?: string;
 };

@@ -11,6 +11,8 @@
   import type { ModActivityCount, ModActivityCursor } from '$lib/mod-activity';
   import type { ModActivityRow, RetoolActivityRow } from '$lib/server/user-account.service';
   import ListFilterBar, { type FilterField } from '$lib/components/ListFilterBar.svelte';
+  import WalkPager from '$lib/components/WalkPager.svelte';
+  import ImageRemovalsPanel from './ImageRemovalsPanel.svelte';
 
   type Row = Omit<ModActivityRow, 'createdAt'> & { createdAt: string };
 
@@ -105,17 +107,12 @@
 </script>
 
 {#snippet pager(next: ModActivityCursor | null)}
-  {#if position.index > 0 || next}
-    <div class="mt-3 flex items-center gap-2">
-      <Button size="xs" variant="outline" disabled={position.index === 0} onclick={back}>
-        Previous
-      </Button>
-      <span class="text-xs text-dark-2">Page {num(position.index + 1)}</span>
-      <Button size="xs" variant="outline" disabled={!next} onclick={() => next && advance(next)}>
-        Next
-      </Button>
-    </div>
-  {/if}
+  <WalkPager
+    index={position.index}
+    hasNext={!!next}
+    onBack={back}
+    onNext={() => next && advance(next)}
+  />
 {/snippet}
 
 <section class="mb-4 rounded-xl border border-dark-4 bg-dark-6 p-5">
@@ -199,6 +196,10 @@
     <p class="text-sm text-red-300">Could not load moderator activity: {e.message}</p>
     {@render pager(null)}
   {/await}
+
+  <!-- Its own list, not merged above: recent removals are in both sources, and these rows come from
+       ClickHouse with no ModActivity id. -->
+  <ImageRemovalsPanel {userId} />
 
   <!-- Pre-migration history from `ReToolActions`, kept in its own list: these rows have no entity link
        and no moderator id (`User` is a Retool display name), so interleaving them would imply a

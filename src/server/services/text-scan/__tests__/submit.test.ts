@@ -282,6 +282,20 @@ describe('scanEntity', () => {
     });
   });
 
+  it('carries inputChars and inputCut in the workflow metadata', async () => {
+    await scanEntity({ entityType: 'Post', entityId: 7 });
+    expect(vi.mocked(submitWorkflow).mock.calls[0][0].body!.metadata).toMatchObject({
+      inputChars: '## Title\nHello world'.length,
+      inputCut: false,
+    });
+    vi.mocked(getTextScanConfig).mockResolvedValue({ ...CONFIG, maxInputChars: 5 });
+    await scanEntity({ entityType: 'Post', entityId: 7 });
+    expect(vi.mocked(submitWorkflow).mock.calls[1][0].body!.metadata).toMatchObject({
+      inputChars: '## Title\nHello world'.length,
+      inputCut: true,
+    });
+  });
+
   it('rescans unchanged content when forced, with a fresh externalId', async () => {
     await scanEntity({ entityType: 'Post', entityId: 7 });
     const hash = vi.mocked(em.upsert).mock.calls[0][0].update.contentHash;

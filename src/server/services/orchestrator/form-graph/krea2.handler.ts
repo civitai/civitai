@@ -14,7 +14,7 @@ import type {
 import { removeEmpty } from '~/utils/object-helpers';
 import {
   isOfficialKrea2Version,
-  krea2VersionIds,
+  isKrea2TurboModel,
   krea2VersionIdToSize,
 } from '~/shared/form-graph/generation/image/krea2.graph';
 import { defineHandler } from '../handlers/handler-factory';
@@ -60,7 +60,7 @@ export const createKrea2Input = defineHandler<EcosystemData<'Krea2'>, [ImageGenS
       ];
     }
 
-    const model = isEdit ? 'edit' : data.model?.id === krea2VersionIds.turbo ? 'turbo' : 'raw';
+    const model = isEdit ? 'edit' : isKrea2TurboModel(data.model) ? 'turbo' : 'raw';
 
     const loras = resourcesToLoras('resources' in data ? data.resources : undefined, ctx.airs);
 

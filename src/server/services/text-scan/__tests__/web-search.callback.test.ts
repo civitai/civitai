@@ -1,0 +1,190 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as ModeModule from '~/server/services/text-scan/mode';
+import type * as Adapters from '~/server/services/moderation-adapters';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+
+// @civitai/client is mocked globally in src/__tests__/setup.ts (getWorkflow is a vi.fn()).
+vi.mock('~/server/services/text-scan/profiles/index', () => ({}));
+vi.mock('~/server/services/text-scan/mode', async (importOriginal) => ({
+  ...(await importOriginal<typeof ModeModule>()),
+  getTextScanMode: vi.fn(),
+  getTextScanWebSearchMode: vi.fn(),
+}));
+vi.mock('~/server/services/moderation-adapters', async (importOriginal) => ({
+  ...(await importOriginal<typeof Adapters>()),
+  getModerationAdapter: vi.fn(),
+}));
+
+const { handleTextScanCallback } = await import('~/server/services/text-scan/callback');
+const { registerTextScanProfile } = await import('~/server/services/text-scan/profiles');
+const { getWorkflow } = await import('@civitai/client');
+const { getTextScanMode, getTextScanWebSearchMode } = await import(
+  '~/server/services/text-scan/mode'
+);
+const { getModerationAdapter } = await import('~/server/services/moderation-adapters');
+
+const load = vi.fn();
+registerTextScanProfile({ entityType: 'Model', labels: ['nsfw', 'poi', 'minor'], load });
+const adapter = { resolveContent: vi.fn(), submit: vi.fn(), applyTextScan: vi.fn() };
+const updateMany = dbMock.dbWrite.entityModeration.updateMany;
+
+const searchMeta = (mode: 'shadow' | 'active') => ({
+  entityType: 'Model',
+  entityId: 7,
+  emEntityType: mode === 'shadow' ? 'Model:search-shadow' : 'Model:search',
+  mode,
+  variant: 'web-search',
+  externalId: 'ts-marker',
+  labels: ['poi', 'minor'],
+  promptIds: { base: 1, poi: 3, minor: 4 },
+  model: 'air:test',
+});
+const mainMeta = {
+  entityType: 'Model',
+  entityId: 7,
+  emEntityType: 'Model',
+  mode: 'active',
+  externalId: 'ts-main',
+  labels: ['nsfw', 'poi', 'minor'],
+  promptIds: { base: 1, nsfw: 2, poi: 3, minor: 4 },
+  model: 'air:test',
+};
+const FLAGGED = {
+  poi: { detected: true, names: ['Someone'], reason: 'r' },
+  minor: { detected: true, reason: 'r' },
+};
+const workflow = (meta: Record<string, unknown>, parsed: unknown = FLAGGED) => ({
+  data: {
+    metadata: meta,
+    tags: ['text-scan', 'Model', meta.mode],
+    steps: [
+      {
+        $type: 'chatCompletion',
+        output: {
+          choices: [{ message: { content: JSON.stringify(parsed) }, finishReason: 'stop' }],
+          parsed,
+        },
+      },
+    ],
+  },
+});
+const verdicts = () =>
+  vi
+    .mocked(loggingMock.logToAxiom)
+    .mock.calls.map(([e]) => e as Record<string, unknown>)
+    .filter((e) => e.name === 'scan-verdict');
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  vi.mocked(getModerationAdapter).mockReturnValue(adapter as any);
+  vi.mocked(getTextScanMode).mockResolvedValue('active');
+  vi.mocked(getTextScanWebSearchMode).mockResolvedValue('active');
+  load.mockResolvedValue(
+    new Map([[7, { fields: [], declared: { nsfwLevel: 1, poi: false, minor: false } }]])
+  );
+  updateMany.mockResolvedValue({ count: 1 });
+});
+
+describe('handleTextScanCallback — web-search pass', () => {
+  it('shadow: records on its own row, logs the verdict as web-search, and never acts', async () => {
+    vi.mocked(getTextScanWebSearchMode).mockResolvedValue('shadow');
+    vi.mocked(getWorkflow).mockResolvedValue(workflow(searchMeta('shadow')) as any);
+    await handleTextScanCallback({ workflowId: 'wf-1', status: 'succeeded' });
+
+    expect(updateMany.mock.calls[0][0].where).toMatchObject({
+      entityType: 'Model:search-shadow',
+      entityId: 7,
+    });
+    expect(updateMany.mock.calls[0][0].data).toMatchObject({
+      status: 'Succeeded',
+      triggeredLabels: ['poi', 'minor'],
+      nsfwLevel: null,
+    });
+    expect(adapter.applyTextScan).not.toHaveBeenCalled();
+    expect(verdicts()).toEqual([
+      expect.objectContaining({
+        entityType: 'Model',
+        mode: 'shadow',
+        variant: 'web-search',
+        flagged: true,
+        acted: false,
+        poi: true,
+        minor: true,
+      }),
+    ]);
+  });
+
+  it('active: applies only poi/minor, never an nsfw verdict', async () => {
+    vi.mocked(getWorkflow).mockResolvedValue(workflow(searchMeta('active')) as any);
+    await handleTextScanCallback({ workflowId: 'wf-1', status: 'succeeded' });
+
+    expect(updateMany.mock.calls[0][0].where).toMatchObject({ entityType: 'Model:search' });
+    const [{ outcome }] = adapter.applyTextScan.mock.calls[0];
+    expect(outcome.poi.newlyDetected).toBe(true);
+    expect(outcome.minor.newlyDetected).toBe(true);
+    expect(outcome.nsfw).toBeUndefined();
+    expect(verdicts()).toEqual([
+      expect.objectContaining({ mode: 'active', variant: 'web-search', acted: true }),
+    ]);
+  });
+
+  it('active: does nothing once the search rollout has left active', async () => {
+    vi.mocked(getTextScanWebSearchMode).mockResolvedValue('shadow');
+    vi.mocked(getWorkflow).mockResolvedValue(workflow(searchMeta('active')) as any);
+    await handleTextScanCallback({ workflowId: 'wf-1', status: 'succeeded' });
+    expect(updateMany).not.toHaveBeenCalled();
+    expect(adapter.applyTextScan).not.toHaveBeenCalled();
+  });
+
+  it('main active pass: leaves poi/minor to an active search pass but keeps them on its row', async () => {
+    vi.mocked(getWorkflow).mockResolvedValue(
+      workflow(mainMeta, { nsfw: { level: 'x', reason: 'r' }, ...FLAGGED }) as any
+    );
+    await handleTextScanCallback({ workflowId: 'wf-1', status: 'succeeded' });
+
+    expect(updateMany.mock.calls[0][0].data.triggeredLabels).toEqual(['nsfw', 'poi', 'minor']);
+    const [{ outcome }] = adapter.applyTextScan.mock.calls[0];
+    expect(outcome.nsfw.raised).toBe(true);
+    expect(outcome.poi).toBeUndefined();
+    expect(outcome.minor).toBeUndefined();
+    expect(outcome.triggeredLabels).toEqual(['nsfw']);
+  });
+
+  it('main active pass applies poi/minor itself while the search pass is not active', async () => {
+    vi.mocked(getTextScanWebSearchMode).mockResolvedValue('shadow');
+    vi.mocked(getWorkflow).mockResolvedValue(
+      workflow(mainMeta, { nsfw: { level: 'none', reason: 'r' }, ...FLAGGED }) as any
+    );
+    await handleTextScanCallback({ workflowId: 'wf-1', status: 'succeeded' });
+    const [{ outcome }] = adapter.applyTextScan.mock.calls[0];
+    expect(outcome.poi.newlyDetected).toBe(true);
+  });
+
+  it('ignores a web-search workflow whose row key or entity type does not fit', async () => {
+    vi.mocked(getWorkflow).mockResolvedValue(
+      workflow({ ...searchMeta('active'), emEntityType: 'Model' }) as any
+    );
+    await handleTextScanCallback({ workflowId: 'wf-1', status: 'succeeded' });
+    vi.mocked(getWorkflow).mockResolvedValue(
+      workflow({ ...searchMeta('active'), variant: 'other', emEntityType: 'Model' }) as any
+    );
+    await handleTextScanCallback({ workflowId: 'wf-2', status: 'succeeded' });
+    expect(updateMany).not.toHaveBeenCalled();
+    expect(adapter.applyTextScan).not.toHaveBeenCalled();
+  });
+
+  it('writes a failed search scan to its own row without calling applyFailure', async () => {
+    const applyFailure = vi.fn();
+    vi.mocked(getModerationAdapter).mockReturnValue({ ...adapter, applyFailure } as any);
+    vi.mocked(getWorkflow).mockResolvedValue({
+      data: { metadata: searchMeta('active'), tags: ['text-scan'], steps: [] },
+    } as any);
+    await handleTextScanCallback({ workflowId: 'wf-1', status: 'failed' });
+    expect(updateMany.mock.calls[0][0]).toMatchObject({
+      where: { entityType: 'Model:search', entityId: 7 },
+      data: { status: 'Failed' },
+    });
+    expect(applyFailure).not.toHaveBeenCalled();
+  });
+});

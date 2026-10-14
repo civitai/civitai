@@ -5492,6 +5492,8 @@ model Article {
   coverId          Int?          @unique
   coverImage       Image?        @relation(fields: [coverId], references: [id], onDelete: SetNull)
   publishedAt      DateTime?
+  // Go-live time for a never-published Draft; publishedAt stays NULL until then.
+  scheduledAt      DateTime?
   contentScannedAt DateTime?              // Set when both image + text scans complete successfully
   ingestion        ArticleIngestionStatus @default(Pending)
   scanRequestedAt  DateTime?
@@ -6841,6 +6843,69 @@ model AppealDecisionRecord {
 model AppealTrainingObjectDeletion {
   key       String   @id
   createdAt DateTime @default(now()) @db.Timestamptz(3)
+}
+
+// Upload scan label queue. FKs and CHECK constraints live in migration 20261022130000_scan_label_queue.
+model ScanLabelItem {
+  id             Int       @id @default(autoincrement())
+  imageId        Int       @unique
+  lane           String    @default("flagged")
+  firstFlaggedAt DateTime  @db.Timestamptz(3)
+  status         String    @default("open")
+  voidReason     String?
+  votes          Int       @default(0) @db.SmallInt
+  blockVotes     Int       @default(0) @db.SmallInt
+  outcome        String?
+  unanimous      Boolean?
+  decidedAt      DateTime? @db.Timestamptz(3)
+  actionedAt      DateTime? @db.Timestamptz(3)
+  actionStartedAt DateTime? @db.Timestamptz(3)
+  actionResult    String?
+  actionError     String?
+  createdAt      DateTime  @default(now()) @db.Timestamptz(3)
+}
+
+model ScanLabelFlag {
+  id             Int      @id @default(autoincrement())
+  itemId         Int
+  source         String
+  flaggerVersion String
+  reason         String?
+  workflowId     String   @unique
+  flaggedAt      DateTime @db.Timestamptz(3)
+  snapshot       Json?
+  createdAt      DateTime @default(now()) @db.Timestamptz(3)
+
+  @@index([itemId])
+}
+
+model ScanLabelVote {
+  itemId    Int
+  userId    Int
+  block     Boolean
+  reason    String?
+  msOnItem  Int?
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  @@id([itemId, userId])
+  @@index([userId, createdAt])
+}
+
+model ScanLabelClaim {
+  itemId    Int
+  userId    Int
+  expiresAt DateTime @db.Timestamptz(3)
+
+  @@id([itemId, userId])
+  @@index([userId])
+}
+
+model ScanLabelQuota {
+  userId     Int      @id
+  dailyVotes Int      @default(50)
+  active     Boolean  @default(true)
+  updatedBy  Int?
+  updatedAt  DateTime @default(now()) @db.Timestamptz(3)
 }
 
 enum AuctionType {

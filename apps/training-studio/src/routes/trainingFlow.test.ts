@@ -3,6 +3,7 @@ import { cardByType } from '$lib/data/trainingModels';
 import {
   buildTrainingRuns,
   captionTriggerHit,
+  compareFileNames,
   defaultRunParams,
   newRun,
   nextImgId,
@@ -208,5 +209,19 @@ describe('auto-label pass', () => {
     expect(items.map((i) => byKey.get(i.key))).toEqual([a, b]);
     expect(items.map((i) => i.mediaUrl)).toEqual([a.blobUrl, b.blobUrl]);
     for (const t of [a, b]) expect(t).toMatchObject({ labeling: true, labelTried: true });
+  });
+});
+
+describe('compareFileNames', () => {
+  it('orders like a file browser: numeric runs by value, case-insensitive, folders grouped', () => {
+    const names = ['clip10.mp4', 'Clip2.mp4', 'b/a.mp4', 'clip1.mp4', 'a/z.mp4', 'clip2.txt'];
+    expect([...names].sort(compareFileNames)).toEqual([
+      'a/z.mp4',
+      'b/a.mp4',
+      'clip1.mp4',
+      'Clip2.mp4',
+      'clip2.txt',
+      'clip10.mp4',
+    ]);
   });
 });

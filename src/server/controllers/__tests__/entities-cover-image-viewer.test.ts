@@ -26,6 +26,15 @@ describe('getEntitiesCoverImageHandler', () => {
     });
     expect(covers).toHaveBeenCalledWith(expect.objectContaining({ eventDecorationViewer: user }));
   });
+
+  it('resolves covers as the session user, so owners and moderators keep hidden covers', async () => {
+    const user = { id: 5, isModerator: true };
+    await getEntitiesCoverImageHandler({
+      input: { entities: [{ entityType: 'Image', entityId: 1 }] },
+      ctx: { user } as never,
+    });
+    expect(covers).toHaveBeenCalledWith(expect.objectContaining({ viewer: user }));
+  });
 });
 
 /**

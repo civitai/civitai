@@ -708,6 +708,63 @@ export async function getReportedGame(reportId: number): Promise<ReportedGame | 
   };
 }
 
+/**
+ * The model a report is about, read through its join row — never taken from the form. A posted model
+ * id would let a stale tab unpublish one model and action a report about another. Null for a report
+ * that is not a model's, or no longer exists.
+ */
+export async function getReportedModelId(reportId: number): Promise<number | null> {
+  // The primary, not the replica: the moderator is acting on a row they just opened.
+  const row = await dbWrite
+    .selectFrom('ModelReport')
+    .select('modelId')
+    .where('reportId', '=', reportId)
+    .executeTakeFirst();
+  return row?.modelId ?? null;
+}
+
+/**
+ * Where each reported model stands now, so the panel can say it plainly and offer only the actions
+ * that would change it. In the page load rather than the client-fetched preview: an action reloads the
+ * load, so the status beside the buttons is never the one from before the click.
+ */
+export type ReportedModelState = {
+  id: number;
+  name: string;
+  status: string;
+  mode: string | null;
+  minor: boolean;
+  sfwOnly: boolean;
+  poi: boolean;
+  nsfw: boolean;
+  deleted: boolean;
+  /** From `meta`, as the main app wrote it when the model was unpublished or taken down. */
+  unpublishedReason: string | null;
+  unpublishedAt: string | null;
+  takenDownAt: string | null;
+};
+
+const metaString = (meta: unknown, key: string): string | null => {
+  const v = meta && typeof meta === 'object' ? (meta as Record<string, unknown>)[key] : undefined;
+  return typeof v === 'string' && v ? v : null;
+};
+
+export async function getReportedModelStates(ids: number[]): Promise<ReportedModelState[]> {
+  if (!ids.length) return [];
+  const rows = await dbRead
+    .selectFrom('Model')
+    .select(['id', 'name', 'status', 'mode', 'minor', 'sfwOnly', 'poi', 'nsfw', 'deletedAt', 'meta'])
+    .where('id', 'in', ids)
+    .execute();
+  return rows.map(({ deletedAt, meta, ...r }) => ({
+    ...r,
+    deleted: deletedAt != null,
+    unpublishedReason: metaString(meta, 'unpublishedReason'),
+    unpublishedAt: metaString(meta, 'unpublishedAt'),
+    takenDownAt: metaString(meta, 'takenDownAt'),
+  }));
+}
+
 export type GameMirror = { id: number; title: string; visibility: string; official: boolean };
 
 /** What the mirror row says about each reported game, as of Game Frame's last push. */

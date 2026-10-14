@@ -3,7 +3,13 @@ import { logToAxiom } from '~/server/logging/client';
 import { getModerationAdapter } from '~/server/services/moderation-adapters';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
 import { evaluateTextScan } from '~/server/services/text-scan/evaluate';
-import { getTextScanMode, textScanEmEntityType } from '~/server/services/text-scan/mode';
+import {
+  getTextScanMode,
+  getTextScanWebSearchMode,
+  isTextScanWebSearchEntityType,
+  TEXT_SCAN_WEB_SEARCH_LABELS,
+  textScanEmEntityType,
+} from '~/server/services/text-scan/mode';
 import { findChatCompletionStep, parseTextScanStep } from '~/server/services/text-scan/parse';
 import { getTextScanProfile, isTextScanEntityType } from '~/server/services/text-scan/profiles';
 import '~/server/services/text-scan/profiles/index';
@@ -36,12 +42,15 @@ export async function handleTextScanCallback(event: { workflowId: string; status
     entityId?: number;
     emEntityType?: string;
     mode?: string;
+    variant?: string;
     externalId?: string;
     labels?: TextScanLabel[];
     promptIds?: PromptIds;
     model?: string;
     textHash?: string;
     subjectMeta?: Record<string, unknown>;
+    inputChars?: number;
+    inputCut?: boolean;
   };
   const { entityType, entityId, mode } = metadata;
   if (
@@ -58,7 +67,19 @@ export async function handleTextScanCallback(event: { workflowId: string; status
     });
     return;
   }
-  const emEntityType = textScanEmEntityType(entityType, mode);
+  const variant = metadata.variant;
+  if (
+    variant !== undefined &&
+    (variant !== 'web-search' || !isTextScanWebSearchEntityType(entityType))
+  ) {
+    await log('warning', 'callback for an unknown text-scan pass', {
+      workflowId,
+      entityType,
+      variant,
+    });
+    return;
+  }
+  const emEntityType = textScanEmEntityType(entityType, mode, variant);
   if (metadata.emEntityType !== undefined && metadata.emEntityType !== emEntityType) {
     await log('warning', 'callback row key disagrees with its mode', {
       workflowId,
@@ -73,11 +94,16 @@ export async function handleTextScanCallback(event: { workflowId: string; status
   const ctx = { workflowId, entityType, entityId, emEntityType };
 
   // After a rollback the old pipeline owns the live row again, and plan 02's floor reads it.
-  if (submittedActive && (await getTextScanMode(entityType, entityId)) !== 'active')
+  const currentMode = variant
+    ? await getTextScanWebSearchMode(entityType, entityId)
+    : await getTextScanMode(entityType, entityId);
+  if (submittedActive && currentMode !== 'active')
     return log('info', 'mode left active before the callback; live row not written', ctx);
 
   // Shadow verdicts must not drive the live adapter's failure hooks either (e.g. Article ingestion).
   const adapter = submittedActive ? getModerationAdapter(entityType) : undefined;
+  // The search pass only ever adds poi/minor; failures stay the main pass's business.
+  const failureAdapter = variant ? undefined : adapter;
 
   if (event.status && Object.hasOwn(failureStatus, event.status)) {
     const status = event.status as keyof typeof failureStatus;
@@ -90,7 +116,7 @@ export async function handleTextScanCallback(event: { workflowId: string; status
     });
     if (!recorded) return log('warning', 'stale callback ignored', ctx);
     await log(status === 'failed' ? 'error' : 'warning', `workflow ${status}`, ctx);
-    await adapter?.applyFailure?.({ entityId, workflowId, status });
+    await failureAdapter?.applyFailure?.({ entityId, workflowId, status });
     return;
   }
   if (event.status !== 'succeeded')
@@ -115,7 +141,7 @@ export async function handleTextScanCallback(event: { workflowId: string; status
       reason: parsed.reason,
       detail: parsed.detail,
     });
-    await adapter?.applyFailure?.({ entityId, workflowId, status: 'failed' });
+    await failureAdapter?.applyFailure?.({ entityId, workflowId, status: 'failed' });
     return;
   }
 
@@ -123,6 +149,11 @@ export async function handleTextScanCallback(event: { workflowId: string; status
   if (!subject) return log('info', 'entity gone before callback', ctx);
 
   const outcome = evaluateTextScan(parsed.output, subject.declared, labels);
+  const subjectMeta = metadata.subjectMeta ?? subject.meta;
+  const meta =
+    metadata.inputChars === undefined
+      ? subjectMeta
+      : { ...subjectMeta, inputChars: metadata.inputChars, inputCut: metadata.inputCut ?? false };
   const recorded = await recordTextScanSuccess({
     entityType: emEntityType,
     entityId,
@@ -133,9 +164,25 @@ export async function handleTextScanCallback(event: { workflowId: string; status
     promptIds: metadata.promptIds ?? {},
     model: metadata.model ?? '',
     textHash: metadata.textHash,
-    meta: metadata.subjectMeta ?? subject.meta,
+    meta,
   });
   if (!recorded) return log('warning', 'stale callback ignored', ctx);
+
+  // An active search pass owns poi/minor: a main pass submitted before it went active still asked
+  // for them, and must not act on them now.
+  const searchOwned = (label: TextScanLabel) =>
+    (TEXT_SCAN_WEB_SEARCH_LABELS as readonly TextScanLabel[]).includes(label);
+  const applied =
+    submittedActive &&
+    !variant &&
+    labels.some(searchOwned) &&
+    (await getTextScanWebSearchMode(entityType, entityId, 'active')) === 'active'
+      ? evaluateTextScan(
+          parsed.output,
+          subject.declared,
+          labels.filter((label) => !searchOwned(label))
+        )
+      : outcome;
 
   void logScanVerdict({
     system: 'text-scan',
@@ -145,7 +192,7 @@ export async function handleTextScanCallback(event: { workflowId: string; status
     mode,
     workflowId,
     flagged: outcome.triggeredLabels.length > 0,
-    acted: submittedActive && outcome.triggeredLabels.length > 0,
+    acted: submittedActive && applied.triggeredLabels.length > 0,
     nsfwLevel: outcome.nsfw?.detectedLevel,
     declaredNsfwLevel: outcome.nsfw?.declaredLevel,
     poi: outcome.poi?.detected,
@@ -153,13 +200,14 @@ export async function handleTextScanCallback(event: { workflowId: string; status
     scam: outcome.scam?.detected,
     tags: outcome.triggeredLabels,
     textHash: metadata.textHash,
+    ...(variant ? { variant } : {}),
   });
 
   try {
     await adapter?.applyTextScan?.({
       entityId,
       workflowId,
-      outcome,
+      outcome: applied,
       subject,
       textHash: metadata.textHash ?? textScanTextHash(subject),
     });

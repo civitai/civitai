@@ -149,3 +149,5 @@ export function parseMilestoneShareId(raw: string) {
 
 /** The ClickHouse image event the Creator Score deducts "Reports against" for, once per image. */
 export const REPORTS_AGAINST_EVENT = 'DeleteTOS';
+/** The ClickHouse image event a moderator restore records. */
+export const REMOVAL_RESTORED_EVENT = 'Restore';

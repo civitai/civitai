@@ -825,7 +825,7 @@ export const getPostImageIds = async ({ id, user }: GetByIdInput & { user: Sessi
       postId: id,
       post: user.isModerator
         ? undefined
-        : { OR: [{ publishedAt: { not: null } }, { userId: user.id }] },
+        : { OR: [{ publishedAt: { lte: new Date() } }, { userId: user.id }] },
     },
     select: { id: true },
   });

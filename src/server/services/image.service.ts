@@ -6859,12 +6859,17 @@ type GetEntityImageRaw = {
 const isCosmeticEntity = (value: string): value is CosmeticEntity =>
   (Object.values(CosmeticEntity) as string[]).includes(value);
 
+export type CoverImageViewer = { id?: number; isModerator?: boolean | null } | null | undefined;
+
 export const getEntityCoverImage = async ({
   entities,
   include,
+  viewer,
   eventDecorationViewer,
 }: GetEntitiesCoverImage & {
   include?: ['tags'];
+  // Covers follow the parent entity's visibility for this viewer; undefined is signed out.
+  viewer: CoverImageViewer;
   // Who sees event decorations before launch (see getEventDecorationsForEntity). Pass one only
   // where the result is never cached for someone else.
   eventDecorationViewer?: EventViewer;
@@ -6872,6 +6877,17 @@ export const getEntityCoverImage = async ({
   if (entities.length === 0) {
     return [];
   }
+
+  const viewerId = viewer?.id ?? null;
+  // Owner matches are gated on this rather than on viewerId, so a placeholder id can never make a
+  // signed-out viewer the owner of a model held by a system account (userId -1).
+  const signedIn = typeof viewer?.id === 'number' && viewer.id > 0;
+  const isModerator = !!viewer?.isModerator;
+  // TRUE keeps Prisma.join non-empty: the helper returns no conditions for moderators.
+  const imageVisible = Prisma.join(
+    [Prisma.sql`TRUE`, ...imageVisibilityConditions({ userId: viewer?.id, isModerator })],
+    ' AND '
+  );
 
   // Returns 1 cover image for:
   // Models, Images, Bounties, BountyEntries, Article and Post.
@@ -6940,7 +6956,17 @@ export const getEntityCoverImage = async ({
           JOIN "Post" p ON mv.id = p."modelVersionId" AND p."userId" = m."userId"
           JOIN "Image" i ON p.id = i."postId"
           WHERE e."entityType" = 'Model'
-          AND m.status = 'Published'
+          -- The version and post rules sit before DISTINCT ON so a hidden first version or post
+          -- falls back to the next visible one rather than leaving the model without a cover.
+          AND (
+            (
+              m.status = 'Published' AND m.availability <> 'Private'
+              AND mv.status = 'Published' AND mv.availability <> 'Private'
+              AND (mv."publishedAt" IS NULL OR mv."publishedAt" <= now())
+              AND p."publishedAt" < now() AND p.availability <> 'Private'
+            )
+            OR (${signedIn}::boolean AND m."userId" = ${viewerId}) OR ${isModerator}::boolean
+          )
           AND i."ingestion" = 'Scanned'
           AND i."needsReview" IS NULL
           AND (
@@ -6964,10 +6990,21 @@ export const getEntityCoverImage = async ({
             0 "coverRank"
           FROM entities e
           JOIN "ModelVersion" mv ON e."entityId" = mv."id"
-          JOIN "Post" p ON mv.id = p."modelVersionId"
+          JOIN "Model" m ON m.id = mv."modelId"
+          -- The owner's posts only, as getImagesForModelVersion picks a version's images.
+          JOIN "Post" p ON mv.id = p."modelVersionId" AND (p."userId" = m."userId" OR m."userId" = -1)
           JOIN "Image" i ON p.id = i."postId"
           WHERE e."entityType" = 'ModelVersion'
-          AND mv.status = 'Published'
+          -- canViewModelVersionStatus plus the private-version rule; access grantees are not resolved here.
+          AND (
+            (
+              m.status = 'Published' AND mv.status = 'Published'
+              AND (mv."publishedAt" IS NULL OR mv."publishedAt" <= now())
+              AND m.availability <> 'Private' AND mv.availability <> 'Private'
+              AND p."publishedAt" < now() AND p.availability <> 'Private'
+            )
+            OR (${signedIn}::boolean AND m."userId" = ${viewerId}) OR ${isModerator}::boolean
+          )
           AND i."ingestion" = 'Scanned'
           AND i."needsReview" IS NULL
           AND (
@@ -6988,7 +7025,10 @@ export const getEntityCoverImage = async ({
             0 "order3",
             0 "coverRank"
         FROM entities e
+        JOIN "Image" i ON i.id = e."entityId"
+        LEFT JOIN "Post" p ON p.id = i."postId"
         WHERE e."entityType" = 'Image'
+          AND ${imageVisible}
 
         UNION
         -- ARTICLES
@@ -7005,7 +7045,10 @@ export const getEntityCoverImage = async ({
           JOIN "Article" a ON a.id = e."entityId"
           JOIN "Image" i ON a."coverId" = i.id
           WHERE e."entityType" = 'Article'
-          AND a."publishedAt" IS NOT NULL
+          AND (
+            (a.status = 'Published' AND a."publishedAt" IS NOT NULL AND a.ingestion = 'Scanned')
+            OR (${signedIn}::boolean AND a."userId" = ${viewerId}) OR ${isModerator}::boolean
+          )
               AND i."ingestion" = 'Scanned'
               AND i."needsReview" IS NULL
         ) t
@@ -7026,7 +7069,10 @@ export const getEntityCoverImage = async ({
           LEFT JOIN "ModelVersion" mv ON p."modelVersionId" = mv.id
           JOIN "Image" i ON i."postId" = p.id
           WHERE e."entityType" = 'Post'
-            AND p."publishedAt" IS NOT NULL
+            AND (
+              (p."publishedAt" < now() AND p.availability <> 'Private')
+              OR (${signedIn}::boolean AND p."userId" = ${viewerId}) OR ${isModerator}::boolean
+            )
             AND i."ingestion" = 'Scanned'
             AND i."needsReview" IS NULL
             AND (
@@ -7077,8 +7123,32 @@ export const getEntityCoverImage = async ({
           FROM entities e
           JOIN "ImageConnection" ic ON ic."entityId" = e."entityId" AND ic."entityType" = e."entityType"
           JOIN "Image" i ON i.id = ic."imageId"
+          LEFT JOIN "BountyEntry" be ON e."entityType" = 'BountyEntry' AND be.id = e."entityId"
+          LEFT JOIN "Bounty" b ON b.id = CASE e."entityType"
+            WHEN 'Bounty' THEN e."entityId"
+            WHEN 'BountyEntry' THEN be."bountyId"
+          END
+          LEFT JOIN "Article" a ON e."entityType" = 'Article' AND a.id = e."entityId"
           WHERE i."ingestion" = 'Scanned'
             AND i."needsReview" IS NULL
+            -- An allowlist: a connection type without a visibility rule here serves no cover.
+            AND e."entityType" IN ('Bounty', 'BountyEntry', 'Article')
+            AND (
+              ${isModerator}::boolean
+              -- canViewBounty
+              OR (
+                e."entityType" IN ('Bounty', 'BountyEntry')
+                AND (b.availability <> 'Private' OR (${signedIn}::boolean AND b."userId" = ${viewerId}))
+              )
+              -- An article's content images, under the same rule as the ARTICLES branch.
+              OR (
+                e."entityType" = 'Article'
+                AND (
+                  (a.status = 'Published' AND a."publishedAt" IS NOT NULL AND a.ingestion = 'Scanned')
+                  OR (${signedIn}::boolean AND a."userId" = ${viewerId})
+                )
+              )
+            )
           ORDER BY e."entityId", e."entityType", i.id
         ) t
     ) t

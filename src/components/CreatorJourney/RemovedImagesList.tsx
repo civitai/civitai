@@ -52,7 +52,7 @@ export function RemovedImagesView({ removed }: { removed: RemovedImages }) {
             }.`}{' '}
         Images deleted since their removal show the date and reason only.
       </Text>
-      <Table.ScrollContainer minWidth={360} mah={400}>
+      <Table.ScrollContainer minWidth={360} maxHeight={400}>
         <Table striped verticalSpacing={6} fz="sm">
           <Table.Thead>
             <Table.Tr>

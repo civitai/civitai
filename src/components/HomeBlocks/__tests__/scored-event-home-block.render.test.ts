@@ -269,6 +269,24 @@ describe('not joined', () => {
     expect(arg.component).toBe(EventVideoModal);
     expect(arg.props.onJoin).toBeTypeOf('function');
   });
+
+  // To whoever moves it to a corner again: Justin preferred it centered on the art (2026-10-13),
+  // made see-through so the art still shows behind it.
+  it('centers the film button on the art, see-through', () => {
+    const play = block().querySelector('button[aria-label="Watch the Hats On video"]')!;
+    const classes = play.className.split(/\s+/);
+    expect(classes).toEqual(
+      expect.arrayContaining(['left-1/2', 'top-1/2', '-translate-x-1/2', '-translate-y-1/2'])
+    );
+    expect(classes.filter((c) => /^(left|right|top|bottom)-/.test(c))).toEqual([
+      'left-1/2',
+      'top-1/2',
+    ]);
+    const disc = play.firstElementChild!.className.split(/\s+/);
+    const fill = disc.filter((c) => c.startsWith('bg-'));
+    expect(fill).toEqual(['bg-white/30']);
+    expect(disc).toContain('backdrop-blur-md');
+  });
 });
 
 describe('joined', () => {
@@ -289,6 +307,21 @@ describe('joined', () => {
     expect(el.querySelector('[data-testid="event-home-block-get-hat"]')?.getAttribute('href')).toBe(
       '/events/birthday2026#team-hats'
     );
+  });
+
+  // To whoever shortens these again: compacted to "122.4K", a live total that moves by a few
+  // points never visibly changes, which hid the live counting Justin asked to see (2026-10-13).
+  it('shows each team total in full, with commas, so a live change is visible', () => {
+    joinAs('Pink');
+    h.standings = {
+      ...STANDINGS,
+      teams: [
+        { team: 'Blue', rank: 1, score: 1_234_567 },
+        { team: 'Pink', rank: 2, score: 122_431 },
+      ],
+    };
+    const rows = block().querySelectorAll('[data-testid="event-home-block-standings"] > div');
+    expect([...rows].map((r) => text(r))).toEqual(['#1Blue1,234,567', '#2Pink122,431']);
   });
 
   it('offers Place it on an unplaced hat, and counts the hats that do not fit', () => {

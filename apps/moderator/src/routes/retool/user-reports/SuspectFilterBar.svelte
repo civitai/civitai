@@ -10,6 +10,8 @@
   import type { PageData } from './$types';
   import { clearPaging } from '$lib/paging';
 
+  // No box of its own: the Images tab folds it into one toolbar card with the counts and the selection
+  // actions, instead of three stacked cards before the first image.
   let { filters }: { filters: PageData['filters'] } = $props();
 
   // 0 is not a browsing level — it is an image nothing has rated yet. Without a box of its own,
@@ -73,7 +75,7 @@
 
 <form
   onsubmit={apply}
-  class="mb-4 flex flex-wrap items-end gap-x-5 gap-y-3 rounded-xl border border-dark-4 bg-dark-6 p-5"
+  class="flex flex-wrap items-end gap-x-5 gap-y-3"
 >
   <div class="flex flex-wrap items-center gap-x-4 gap-y-2">
     <div class="flex items-center gap-2">
