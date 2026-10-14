@@ -34,6 +34,7 @@ const mocks = vi.hoisted(() => ({
   storyline: undefined as Record<string, unknown> | undefined,
   root: undefined as Record<string, unknown> | undefined,
   commentsPostId: vi.fn(),
+  openManage: vi.fn(),
 }));
 
 vi.mock('~/utils/trpc', async (importOriginal) => {
@@ -83,6 +84,9 @@ vi.mock('~/components/Post/Detail/PostComments', () => ({
     return <div>Comments for post {postId}</div>;
   },
 }));
+vi.mock('~/components/Storyline/manage/openStorylineManageModal', () => ({
+  openStorylineManageModal: mocks.openManage,
+}));
 vi.mock('~/components/UserAvatar/UserAvatarSimple', () => ({
   UserAvatarSimple: ({ username }: { username: string }) => <span>{username}</span>,
 }));
@@ -91,6 +95,7 @@ beforeEach(() => {
   mocks.storyline = { ...STORYLINE };
   mocks.root = { ...ROOT_CHAPTER };
   mocks.commentsPostId.mockReset();
+  mocks.openManage.mockReset();
 });
 
 describe('StorylinePage', () => {
@@ -145,5 +150,22 @@ describe('StorylinePage', () => {
       .element(page.getByText("This storyline doesn't exist or isn't available to you."))
       .toBeVisible();
     await expect.element(page.getByText('Read from the start')).not.toBeInTheDocument();
+  });
+
+  // Manage is the only way into the storyline's settings, and only its owner may use them.
+  test('the owner can open Manage', async () => {
+    mocks.storyline = { ...STORYLINE, viewerRole: 'owner' };
+    renderWithProviders(<StorylinePage id={2} />);
+
+    await page.getByRole('button', { name: 'Manage' }).click();
+    expect(mocks.openManage).toHaveBeenCalledWith({ storylineId: 2 });
+  });
+
+  test.each([null, 'collaborator'])('a %s viewer sees no Manage button', async (viewerRole) => {
+    mocks.storyline = { ...STORYLINE, viewerRole };
+    renderWithProviders(<StorylinePage id={2} />);
+
+    await expect.element(page.getByRole('heading', { name: 'The Patch' })).toBeVisible();
+    expect(page.getByRole('button', { name: 'Manage' }).elements()).toHaveLength(0);
   });
 });

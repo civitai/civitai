@@ -1,8 +1,9 @@
 import { Alert, Badge, Button, Center, Container, Loader, Text, Title } from '@mantine/core';
-import { IconBook2 } from '@tabler/icons-react';
+import { IconBook2, IconSettings } from '@tabler/icons-react';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { PostComments } from '~/components/Post/Detail/PostComments';
 import { StorylineCover } from '~/components/Storyline/StorylineCover';
+import { openStorylineManageModal } from '~/components/Storyline/manage/openStorylineManageModal';
 import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
 import { browsingLevelLabels } from '~/shared/constants/browsingLevel.constants';
 import type { StorylineChapterRank } from '~/shared/utils/storyline';
@@ -67,6 +68,15 @@ export function StorylinePage({ id }: { id: number }) {
         {rootPost && (
           <Button component={Link} href={`/posts/${rootPost.id}`} leftSection={<IconBook2 />}>
             Read from the start
+          </Button>
+        )}
+        {storyline.viewerRole === 'owner' && (
+          <Button
+            variant="default"
+            leftSection={<IconSettings />}
+            onClick={() => openStorylineManageModal({ storylineId: storyline.id })}
+          >
+            Manage
           </Button>
         )}
       </div>
