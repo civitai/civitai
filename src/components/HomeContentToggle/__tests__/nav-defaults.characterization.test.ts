@@ -46,7 +46,12 @@ describe('sub-nav default layout', () => {
       'updates',
       'shop',
     ]);
-    expect(more.map((e) => e.key)).toEqual(['bounties', 'challenges']);
+    expect(more.map((e) => e.key)).toEqual([
+      // Gated on `features.storylines`, so it is absent from the all-flags-off vector below.
+      'storylines',
+      'bounties',
+      'challenges',
+    ]);
   });
 
   /**
