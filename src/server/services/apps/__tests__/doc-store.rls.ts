@@ -97,6 +97,19 @@ export function defineRlsSuite(makeHarness: () => Promise<Harness>) {
           )
         );
         expect(msg).toMatch(/row-level security/);
+        // Same app, other namespace: the ns half of WITH CHECK refuses it.
+        await c.query('ROLLBACK');
+        await c.query(
+          `BEGIN; SELECT set_config('appdata.app_id', '${RLS_A}', true), set_config('appdata.ns', 'prod', true)`
+        );
+        expect(
+          await rejects(
+            c.query(
+              `INSERT INTO appdata.doc (app_id, ns, coll, scope_uid, key, data, version, seq, author_kind)
+               VALUES ('${RLS_A}', 'dev:1', 'c', 0, 'k4', '{}', 1, 1, 'app')`
+            )
+          )
+        ).toMatch(/row-level security/);
         await c.query('ROLLBACK');
         await c.query(
           `BEGIN; SELECT set_config('appdata.app_id', '${RLS_A}', true), set_config('appdata.ns', 'dev:1', true)`

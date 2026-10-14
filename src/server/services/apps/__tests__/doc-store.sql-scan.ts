@@ -42,6 +42,17 @@ const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 export function scanStatement(sql: string): string[] {
   const violations: string[] = [];
+  // Spellings that would reach the tables without matching the patterns below.
+  if (/"appdata"|appdata\s*\.\s*"/i.test(sql)) violations.push('quoted appdata identifier');
+  if (/search_path/i.test(sql)) violations.push('search_path change');
+  if (
+    /\bappdata\b/i.test(
+      sql.replace(/appdata\.(?:[a-z_]+)/g, '').replace(/'appdata\.(?:app_id|ns)'/g, '')
+    )
+  ) {
+    violations.push('appdata referenced in a non-canonical spelling');
+  }
+  if (/--|\/\*/.test(sql)) violations.push('comment inside an appdata statement');
   const all = [...sql.matchAll(/appdata\.([a-z_]+)/g)].filter((m) => !SETTING_NAMES.has(m[1]));
   const refs = [
     ...sql.matchAll(

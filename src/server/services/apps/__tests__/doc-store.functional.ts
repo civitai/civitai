@@ -90,6 +90,15 @@ export async function assertUsageConsistent(h: Harness, appId: string, ns: strin
        FROM appdata.usage_user u WHERE u.app_id = $1 AND u.ns = $2`,
     [appId, ns]
   );
+  // Every user who owns bytes must HAVE a usage row — a missing row is invisible to the loop below.
+  const owners = await h.raw(
+    `SELECT DISTINCT CASE WHEN d.scope_uid <> 0 THEN d.scope_uid ELSE d.author_uid END AS uid
+       FROM appdata.doc d WHERE d.app_id = $1 AND d.ns = $2
+        AND (d.scope_uid <> 0 OR d.author_kind = 'user')`,
+    [appId, ns]
+  );
+  const charged = new Set(perUser.map((r) => Number(r.user_id)));
+  expect(owners.map((o) => Number(o.uid)).filter((u) => !charged.has(u))).toEqual([]);
   for (const r of perUser) {
     expect({ user: r.user_id, bytes: Number(r.bytes), docs: Number(r.docs) }).toEqual({
       user: r.user_id,
@@ -167,8 +176,31 @@ export function defineFunctionalSuite(makeHarness: () => Promise<Harness>) {
       expect(b?.marks.vote).toBe(0);
       expect(b?.counters.views).toBe(0);
       expect(b?.viewer).toEqual({ marks: [] });
+      await store.mark(ctx(APP_B, NS_PROD, VIEWER_1), POSTS, 'p', 'star');
+      await store.increment(ctx(APP_B, NS_PROD, VIEWER_1), POSTS, 'p', 'views', 3);
       await store.delete(ctx(APP_A, NS_PROD, VIEWER_1), POSTS, 'p');
-      expect(await store.get(ctx(APP_B, NS_PROD, VIEWER_1), POSTS, 'p')).not.toBeNull();
+      // A's delete removed A's tallies and marks, and none of B's.
+      const after = await store.get(ctx(APP_B, NS_PROD, VIEWER_1), POSTS, 'p');
+      expect(after?.marks).toEqual({ vote: 0, star: 1 });
+      expect(after?.counters).toEqual({ vote: 0, views: 3 });
+      expect(after?.viewer).toEqual({ marks: ['star'] });
+    });
+  });
+
+  describe('context', () => {
+    it('refuses a malformed context before touching the database', async () => {
+      for (const bad of [
+        ctx('', NS_PROD, VIEWER_1),
+        ctx("ab_x'; --", NS_PROD, VIEWER_1),
+        ctx(APP_A, 'staging', VIEWER_1),
+        ctx(APP_A, 'dev:0', VIEWER_1),
+        ctx(APP_A, NS_PROD, 0),
+        ctx(APP_A, NS_PROD, -3),
+        ctx(APP_A, NS_PROD, 1.5),
+      ]) {
+        await expect(store.put(bad, PREFS, 'k', { a: 1 })).rejects.toThrow(/malformed context/);
+        await expect(store.get(bad, BOARD, 'k')).rejects.toThrow(/malformed context/);
+      }
     });
   });
 
@@ -371,6 +403,22 @@ export function defineFunctionalSuite(makeHarness: () => Promise<Harness>) {
       );
     });
 
+    it('report stays unexposed even when a collection declares it as a mark', async () => {
+      const app = freshApp('report_decl');
+      const coll: DocCollection = {
+        name: 'flagged',
+        config: { visibility: 'shared', write: 'anyone', marks: ['vote', 'report'] },
+      };
+      await store.put(ctx(app, NS_PROD, VIEWER_1), coll, 'k', { a: 1 });
+      await store.mark(ctx(app, NS_PROD, VIEWER_2), coll, 'k', 'report');
+      const doc = await store.get(ctx(app, NS_PROD, VIEWER_1), coll, 'k');
+      expect(doc?.marks).toEqual({ vote: 0 });
+      await expectCode(
+        store.list(ctx(app, NS_PROD, VIEWER_1), coll, { sort: '-mark:report' }),
+        'index_not_declared'
+      );
+    });
+
     it('increment takes 1..100 on an existing doc and a declared counter only', async () => {
       const app = freshApp('inc');
       await store.put(ctx(app, NS_PROD, VIEWER_1), POSTS, 'k', { status: 'a' });
@@ -449,6 +497,49 @@ export function defineFunctionalSuite(makeHarness: () => Promise<Harness>) {
     });
     const ks = (r: { items: { key: string }[] }) => r.items.map((d) => d.key);
     const me = (v: number | null = VIEWER_1) => ctx(app, NS_PROD, v);
+
+    it('createdAt and updatedAt order by time, not by key', async () => {
+      const app2 = freshApp('times');
+      const who = ctx(app2, NS_PROD, VIEWER_1);
+      for (const k of ['zz', 'aa', 'mm']) await store.put(who, BOARD, k, { k });
+      await store.put(who, BOARD, 'zz', { k: 'again' });
+      expect(ks(await store.list(who, BOARD, { sort: 'createdAt' }))).toEqual(['zz', 'aa', 'mm']);
+      expect(ks(await store.list(who, BOARD, { sort: '-createdAt' }))).toEqual(['mm', 'aa', 'zz']);
+      expect(ks(await store.list(who, BOARD, { sort: 'updatedAt' }))).toEqual(['aa', 'mm', 'zz']);
+      const page1 = await store.list(who, BOARD, { sort: 'createdAt', limit: 2 });
+      const page2 = await store.list(who, BOARD, {
+        sort: 'createdAt',
+        limit: 2,
+        cursor: page1.nextCursor!,
+      });
+      expect([...ks(page1), ...ks(page2)]).toEqual(['zz', 'aa', 'mm']);
+    });
+
+    it('rewriting a doc moves, changes and drops its index rows', async () => {
+      const app2 = freshApp('reindex');
+      const who = ctx(app2, NS_PROD, VIEWER_1);
+      await store.put(who, POSTS, 'k', { status: 'open', score: 5, meta: { tag: 'x' } });
+      await store.put(who, POSTS, 'k', { status: 'done', meta: { tag: 'x' } });
+      expect(ks(await store.list(who, POSTS, { where: { status: 'open' } }))).toEqual([]);
+      expect(ks(await store.list(who, POSTS, { where: { status: 'done' } }))).toEqual(['k']);
+      expect(ks(await store.list(who, POSTS, { sort: 'score' }))).toEqual([]);
+      const rows = await h.raw(
+        `SELECT name FROM appdata.doc_index WHERE app_id = $1 ORDER BY name`,
+        [app2]
+      );
+      expect(rows.map((r) => r.name)).toEqual(['meta.tag', 'status']);
+      await expectCode(store.put(who, POSTS, 'k', { status: 7 }), 'invalid_request');
+      const t = await store.put(who, POSTS, 't', { at: 1767225600000 });
+      expect(t.version).toBe(1);
+      expect(
+        ks(
+          await store.list(who, POSTS, {
+            sort: 'at',
+            where: { at: { gte: '2026-01-01T00:00:00Z' } },
+          })
+        )
+      ).toEqual(['t']);
+    });
 
     it('built-in sorts', async () => {
       expect(ks(await store.list(me(), POSTS))).toEqual(keys);
@@ -594,6 +685,30 @@ export function defineFunctionalSuite(makeHarness: () => Promise<Harness>) {
       await expectCode(store.list(me(), POSTS, { keyPrefix: 'bad prefix' }), 'invalid_request');
     });
 
+    it('a field named after an Object.prototype member is undeclared, not a crash or an empty list', async () => {
+      for (const field of ['constructor', 'toString', '__proto__', 'hasOwnProperty']) {
+        await expectCode(
+          store.list(me(), POSTS, { where: { [field]: 'x' } }),
+          'index_not_declared'
+        );
+        await expectCode(store.list(me(), POSTS, { sort: field }), 'index_not_declared');
+      }
+    });
+
+    it('a cursor whose bigint payload was edited to a non-integer is an invalid cursor, not a database error', async () => {
+      for (const sort of ['createdAt', '-mark:vote']) {
+        const first = await store.list(me(), POSTS, { sort, limit: 1 });
+        const parts = first.nextCursor!.split('~');
+        for (const payload of ['1.5', '1e3', '99999999999999999999999']) {
+          const edited = [parts[0], payload, parts[2]].join('~');
+          await expectCode(
+            store.list(me(), POSTS, { sort, limit: 1, cursor: edited }),
+            'invalid_request'
+          );
+        }
+      }
+    });
+
     it('refuses a cursor from another query, a tampered one, or an oversized one', async () => {
       const first = await store.list(me(), POSTS, { sort: 'score', limit: 1 });
       expect(first.nextCursor).not.toBeNull();
@@ -710,6 +825,33 @@ export function defineFunctionalSuite(makeHarness: () => Promise<Harness>) {
       expect({ bytes: Number(u.bytes), docs: Number(u.docs) }).toEqual({ bytes: 48, docs: 3 });
     });
 
+    it('a shrink and a delete pass even when usage is already over a lowered ceiling', async () => {
+      const app2 = freshApp('lowered');
+      const me = ctx(app2, NS_PROD, VIEWER_1);
+      for (const k of ['a', 'b', 'c']) await store.put(me, PREFS, k, { p: 'xxxxxxxxxx' }); // 57 bytes
+      const lowered = createDocStore({
+        db: h.db,
+        limits: { appBytes: 20, appDocs: 1, userBytes: 20, userDocs: 1 },
+      });
+      await expectCode(lowered.put(me, PREFS, 'a', { p: 'xxxxxxxxxxx' }), 'quota_exceeded');
+      expect((await lowered.put(me, PREFS, 'a', { p: 'x' })).version).toBe(2);
+      expect(await lowered.delete(me, PREFS, 'b')).toEqual({ deleted: true });
+      await assertUsageConsistent(h, app2, NS_PROD);
+    });
+
+    it('a first write larger than the ceiling is refused (the insert path of the charge)', async () => {
+      const tiny = createDocStore({
+        db: h.db,
+        limits: { appBytes: 5, appDocs: 10, userBytes: 1000, userDocs: 10 },
+      });
+      const app2 = freshApp('firstwrite');
+      await expectCode(
+        tiny.put(ctx(app2, NS_PROD, VIEWER_1), PREFS, 'a', { p: 'x' }),
+        'quota_exceeded'
+      );
+      expect(await h.raw(`SELECT 1 FROM appdata.usage_app WHERE app_id = $1`, [app2])).toEqual([]);
+    });
+
     it('per-user ceilings: viewer for private docs, author for shared, doc counts too', async () => {
       const app = freshApp('uquota');
       const tight = createDocStore({
@@ -735,6 +877,21 @@ export function defineFunctionalSuite(makeHarness: () => Promise<Harness>) {
   });
 
   describe('size, shape and the stored unit', () => {
+    it('the cap is exactly 65536 stored bytes, enforced by the database even when the wire size fits', async () => {
+      const me = ctx(freshApp('cap'), NS_PROD, VIEWER_1);
+      // `{"s": "<n x>"}` is n + 9 bytes stored and n + 8 on the wire.
+      const atCap = await store.put(me, PREFS, 'at', { s: 'x'.repeat(65_527) });
+      expect(atCap.version).toBe(1);
+      const [row] = await h.raw(
+        `SELECT size_bytes FROM appdata.doc WHERE key = 'at' AND app_id = $1`,
+        [me.appId]
+      );
+      expect(Number(row.size_bytes)).toBe(65_536);
+      // 65,536 on the wire passes the JS pre-check; 65,537 stored fails the CHECK.
+      expect(Buffer.byteLength(JSON.stringify({ s: 'x'.repeat(65_528) }))).toBe(65_536);
+      await expectCode(store.put(me, PREFS, 'over', { s: 'x'.repeat(65_528) }), 'too_large');
+    });
+
     it('caps a document at 65536 bytes of stored jsonb text, including a payload that only grows once stored', async () => {
       const app = freshApp('size');
       const me = ctx(app, NS_PROD, VIEWER_1);
@@ -761,7 +918,8 @@ export function defineFunctionalSuite(makeHarness: () => Promise<Harness>) {
         await expectCode(store.put(me, PREFS, 'k', bad), 'invalid_request');
       }
       let ok: Record<string, unknown> = { leaf: 1 };
-      for (let i = 0; i < 14; i++) ok = { d: ok };
+      // 15 wraps: the innermost object sits at depth 16, the maximum.
+      for (let i = 0; i < 15; i++) ok = { d: ok };
       expect((await store.put(me, PREFS, 'k', ok)).version).toBe(1);
     });
   });

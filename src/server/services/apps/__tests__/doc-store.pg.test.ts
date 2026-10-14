@@ -138,7 +138,7 @@ describe.skipIf(!REAL_PG_URL)('concurrency on Postgres (appdata_rw, RLS on)', ()
     await assertUsageConsistent(h, app, NS_PROD);
   });
 
-  it(`viewer ceiling: one viewer, ${N} racing writes — exactly 2 fit`, async () => {
+  it(`viewer ceiling: one viewer, ${N} racing writes — exactly 2 fit (user charges serialise behind usage_app by lock order)`, async () => {
     const app = freshApp('race_user');
     const gate = barrier(N);
     const store = createDocStore({
@@ -149,9 +149,37 @@ describe.skipIf(!REAL_PG_URL)('concurrency on Postgres (appdata_rw, RLS on)', ()
     const { ok, codes } = await settle(
       Array.from({ length: N }, (_, i) => store.put(ctx(app, NS_PROD, 77), PREFS, `k${i}`, DOC))
     );
+    expect(gate.arrived).toBe(N);
     expect(ok).toBe(2);
     expect(codes).toEqual(Array(N - 2).fill('quota_exceeded'));
     await assertUsageConsistent(h, app, NS_PROD);
+  });
+
+  it('a writer blocked on a held usage row gives up as rate_limited instead of parking its connection', async () => {
+    const app = freshApp('locked');
+    const store = createDocStore({ db: h.db });
+    await store.put(ctx(app, NS_PROD, 1), PREFS, 'seed', { a: 1 });
+    const holder = await h.rawAsRole();
+    try {
+      await holder.query(
+        `BEGIN; SELECT set_config('appdata.app_id', '${app}', true), set_config('appdata.ns', '${NS_PROD}', true)`
+      );
+      await holder.query(
+        `SELECT 1 FROM appdata.usage_app u WHERE u.app_id = $1 AND u.ns = $2 FOR UPDATE`,
+        [app, NS_PROD]
+      );
+      const started = Date.now();
+      const err = await store.put(ctx(app, NS_PROD, 1), PREFS, 'blocked', { a: 1 }).catch((e) => e);
+      const waited = Date.now() - started;
+      expect(err).toBeInstanceOf(DocStoreError);
+      expect((err as DocStoreError).code).toBe('rate_limited');
+      expect(waited).toBeGreaterThanOrEqual(2_900);
+      expect(waited).toBeLessThan(15_000);
+      await holder.query('ROLLBACK');
+    } finally {
+      await holder.close();
+    }
+    expect(await store.get(ctx(app, NS_PROD, 1), PREFS, 'blocked')).toBeNull();
   });
 
   it('marks: 12 users, each racing 3 identical marks on one doc — count 12, then 0 after racing unmarks', async () => {
@@ -206,8 +234,10 @@ describe.skipIf(!REAL_PG_URL)('concurrency on Postgres (appdata_rw, RLS on)', ()
       ops.push(store.put(who, PREFS, `p${i % 2}`, { v: i }));
     }
     const r = await settle(ops);
-    // Deadlocks would surface as raw pg errors (40P01); none may appear.
+    // Deadlocks would surface as raw pg errors (40P01); none may appear. Every
+    // private write is uncontended by key ownership, so at least those succeed.
     expect(r.codes.filter((c) => !['version_conflict', 'not_found'].includes(c))).toEqual([]);
+    expect(r.ok).toBeGreaterThanOrEqual(12);
     await assertUsageConsistent(h, app, NS_PROD);
     const seqs = await h.raw(
       `SELECT seq FROM appdata.doc WHERE app_id = $1 AND ns = $2
@@ -215,5 +245,26 @@ describe.skipIf(!REAL_PG_URL)('concurrency on Postgres (appdata_rw, RLS on)', ()
       [app, NS_PROD]
     );
     expect(new Set(seqs.map((s) => Number(s.seq))).size).toBe(seqs.length);
+  });
+});
+
+describe.skipIf(!REAL_PG_URL)('runtime isolation shape on Postgres', () => {
+  it('the statement recorders saw traffic and no violations', async () => {
+    const h = await createRealPgHarness({ rls: true });
+    try {
+      const store = createDocStore({ db: h.db });
+      const app = freshApp('pg_recorder');
+      await store.put(ctx(app, NS_PROD, 1), POSTS, 'k', { status: 'open' });
+      await store.mark(ctx(app, NS_PROD, 2), POSTS, 'k', 'vote');
+      await store.list(ctx(app, NS_PROD, 2), POSTS, {
+        sort: '-mark:vote',
+        where: { status: 'open' },
+      });
+      await store.delete(ctx(app, NS_PROD, 1), POSTS, 'k');
+      expect(h.statements.length).toBeGreaterThan(8);
+      expect(h.violations).toEqual([]);
+    } finally {
+      await h.close();
+    }
   });
 });

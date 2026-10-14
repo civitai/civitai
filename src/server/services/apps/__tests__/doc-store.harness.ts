@@ -44,7 +44,7 @@ export type Harness = {
 };
 
 const BEGIN_SETTINGS =
-  /^BEGIN; SELECT set_config\('appdata\.app_id', '([^']*)', true\), set_config\('appdata\.ns', '([^']*)', true\)$/;
+  /^BEGIN; SELECT set_config\('appdata\.app_id', '([^']*)', true\), set_config\('appdata\.ns', '([^']*)', true\), set_config\('lock_timeout', '[0-9]+s', true\)$/;
 
 /**
  * Wrap a store client so every statement is recorded and checked: the settings
@@ -60,7 +60,7 @@ function recording(inner: DocStoreClient, h: Pick<Harness, 'statements' | 'viola
       const m = BEGIN_SETTINGS.exec(sql);
       if (m) bound = { app: m[1], ns: m[2] };
       else if (sql === 'COMMIT' || sql === 'ROLLBACK') bound = null;
-      else if (/appdata\./.test(sql)) {
+      else if (/appdata/i.test(sql)) {
         const p = params ?? [];
         if (!bound) h.violations.push(`statement outside a bound transaction: ${sql}`);
         else {

@@ -34,10 +34,11 @@ function sqlLiterals(file: string): { line: number; text: string }[] {
     else if (ts.isTemplateExpression(node)) {
       text = node.head.text + node.templateSpans.map((s) => ` \${…} ${s.literal.text}`).join('');
     }
-    if (text !== null && /appdata\./.test(text)) {
+    if (text !== null && /appdata/i.test(text)) {
       out.push({ line: source.getLineAndCharacterOfPosition(node.getStart()).line + 1, text });
     }
-    if (!ts.isTemplateExpression(node)) ts.forEachChild(node, visit);
+    // Descend into substitutions too, so a template nested in `${…}` is scanned on its own.
+    ts.forEachChild(node, visit);
   };
   visit(source);
   return out;
@@ -82,6 +83,13 @@ describe('scanner controls', () => {
         `INSERT INTO appdata.doc AS d (app_id, ns, key) VALUES ($3, $2, $1)`,
         /does not write \$1, \$2/,
       ],
+      [
+        `SELECT 1 FROM "appdata"."doc" d WHERE d.app_id = $1 AND d.ns = $2`,
+        /quoted appdata identifier/,
+      ],
+      [`SELECT 1 FROM AppData.doc d WHERE d.app_id = $1 AND d.ns = $2`, /non-canonical spelling/],
+      [`SET LOCAL search_path = appdata; SELECT 1 FROM doc d`, /search_path change/],
+      [`SELECT 1 FROM appdata.doc d WHERE -- d.app_id = $1 AND d.ns = $2\n true`, /comment inside/],
     ];
     for (const [sql, want] of bad) {
       expect({ sql, v: scanStatement(sql).join('; ') }).toEqual({

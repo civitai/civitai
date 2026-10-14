@@ -92,7 +92,9 @@ CREATE TABLE IF NOT EXISTS appdata.doc_index (
   key       text COLLATE "C" NOT NULL,
   v_text    text COLLATE "C",
   v_num     double precision,
-  CONSTRAINT doc_index_pkey PRIMARY KEY (app_id, ns, coll, scope_uid, name, key),
+  -- Key before name: index maintenance and the cascade from `doc` look rows up by
+  -- document; access by index name goes through the two btrees below.
+  CONSTRAINT doc_index_pkey PRIMARY KEY (app_id, ns, coll, scope_uid, key, name),
   CONSTRAINT doc_index_doc_fkey FOREIGN KEY (app_id, ns, coll, scope_uid, key)
     REFERENCES appdata.doc (app_id, ns, coll, scope_uid, key) ON DELETE CASCADE,
   CONSTRAINT doc_index_one_value CHECK ((v_text IS NULL) <> (v_num IS NULL))

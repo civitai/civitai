@@ -312,6 +312,14 @@ function docColumns(viewerParam: string): string {
         AND vm.user_id = ${viewerParam} AND d.scope_uid = 0) AS viewer_marks`;
 }
 
+/**
+ * Transaction-local cap on waiting for a row lock. A burst of writes to one app
+ * queues on its `usage_app` row, and in a transaction-pooled setup a waiter holds
+ * a server connection the whole time; this bounds how long one busy app can hold
+ * connections other apps share.
+ */
+const LOCK_TIMEOUT = '3s';
+
 const VISIBLE = `d.hidden_at IS NULL AND (d.expires_at IS NULL OR d.expires_at > now())`;
 
 // $1 app, $2 ns, $3 coll, $4 scope_uid, $5 viewer, $6 keys
@@ -416,6 +424,12 @@ const SQL_INCREMENT = `INSERT INTO appdata.doc_tally AS t (app_id, ns, coll, key
   ON CONFLICT (app_id, ns, coll, key, kind, name) DO UPDATE SET count = t.count + EXCLUDED.count
   RETURNING t.count`;
 
+// A new shared document's zero tally rows, one per declared counter and mark, so
+// tally sorts can inner-join. $1 app, $2 ns, $3 coll, $4 key, $5 kinds, $6 names
+const SQL_SEED_TALLIES = `INSERT INTO appdata.doc_tally AS t (app_id, ns, coll, key, kind, name, count)
+  SELECT $1, $2, $3, $4, u.kind, u.name, 0 FROM unnest($5::text[], $6::text[]) AS u(kind, name)
+  ON CONFLICT (app_id, ns, coll, key, kind, name) DO NOTHING`;
+
 // $1 app, $2 ns, $3 coll, $4 key, $5 name, $6 user, $7 reason
 const SQL_INSERT_MARK = `INSERT INTO appdata.doc_mark AS mk (app_id, ns, coll, key, name, user_id, reason)
   VALUES ($1, $2, $3, $4, $5, $6::int, $7::text)
@@ -456,7 +470,7 @@ const listSortIndexJoin = (
   name: string
 ) => `JOIN appdata.doc_index sx ON sx.app_id = $1 AND sx.ns = $2
     AND sx.coll = d.coll AND sx.scope_uid = d.scope_uid AND sx.key = d.key AND sx.name = ${name}`;
-const listSortTallyJoin = (kind: string, name: string) => `LEFT JOIN appdata.doc_tally st
+const listSortTallyJoin = (kind: string, name: string) => `JOIN appdata.doc_tally st
     ON st.app_id = $1 AND st.ns = $2 AND st.coll = d.coll AND st.key = d.key
     AND st.kind = ${kind} AND st.name = ${name}`;
 const listMarkedByMe = (name: string, user: string) => `EXISTS (SELECT 1 FROM appdata.doc_mark mb
@@ -477,7 +491,7 @@ function toDocRecord(
   const marks: Record<string, number> = {};
   if (coll.config.visibility === 'shared') {
     for (const name of coll.config.counters ?? []) counters[name] = 0;
-    for (const name of coll.config.marks ?? []) marks[name] = 0;
+    for (const name of coll.config.marks ?? []) if (name !== REPORT_MARK) marks[name] = 0;
     for (const [k, v] of Object.entries(tallies)) {
       const sep = k.indexOf(':');
       const kind = k.slice(0, sep);
@@ -530,14 +544,15 @@ function parseSort(coll: DocCollection, raw: string | undefined): SortSpec {
     const kind = tally[1] as 'counter' | 'mark';
     const name = tally[2];
     const declared = kind === 'counter' ? coll.config.counters ?? [] : coll.config.marks ?? [];
-    if (!declared.includes(name)) {
+    // A report count is never exposed, so it is never a sort key — even if declared.
+    if (!declared.includes(name) || (kind === 'mark' && name === REPORT_MARK)) {
       throw new DocStoreError('index_not_declared', `${kind} ${name} is not declared`, {
         field,
       });
     }
     return { kind: 'tally', desc, tally: kind, name };
   }
-  const type = coll.config.indexes?.[field];
+  const type = declaredIndexType(coll, field);
   if (!type) {
     throw new DocStoreError('index_not_declared', `sort field ${field} is not declared`, { field });
   }
@@ -557,6 +572,14 @@ const CURSOR_KIND: Record<string, string> = {
 function sortTag(sort: SortSpec): string {
   if (sort.kind === 'index') return CURSOR_KIND[`index:${indexColumn(sort.type)}`];
   return CURSOR_KIND[sort.kind];
+}
+
+/** A declared index's type, by OWN property only — a request field named `constructor` is undeclared. */
+function declaredIndexType(coll: DocCollection, field: string): DocIndexType | undefined {
+  const indexes = coll.config.indexes;
+  return indexes && Object.prototype.hasOwnProperty.call(indexes, field)
+    ? indexes[field]
+    : undefined;
 }
 
 function indexColumn(type: DocIndexType): 'v_text' | 'v_num' {
@@ -608,8 +631,12 @@ function decodeCursor(
   if (sort.kind === 'index' && sort.type === 'string') {
     if (!/^[A-Za-z0-9_-]*$/.test(payload)) throw bad();
     value = Buffer.from(payload, 'base64url').toString('utf8');
-  } else if (sort.kind !== 'key') {
+  } else if (sort.kind === 'index') {
+    // float8 text, as Postgres printed it.
     if (!/^-?[0-9.eE+-]{1,32}$/.test(payload) || !Number.isFinite(Number(payload))) throw bad();
+  } else if (sort.kind !== 'key') {
+    // Microseconds or a tally count: a bigint, so anything else would be a 500 from the cast.
+    if (!/^-?[0-9]{1,19}$/.test(payload)) throw bad();
   }
   return { value, key };
 }
@@ -656,7 +683,9 @@ export function createDocStore(deps: DocStoreDeps) {
       await client.query(
         `BEGIN; SELECT set_config('appdata.app_id', ${escapeLiteral(
           ctx.appId
-        )}, true), set_config('appdata.ns', ${escapeLiteral(ctx.ns)}, true)`
+        )}, true), set_config('appdata.ns', ${escapeLiteral(
+          ctx.ns
+        )}, true), set_config('lock_timeout', '${LOCK_TIMEOUT}', true)`
       );
       const out = await fn(client);
       await client.query('COMMIT');
@@ -833,6 +862,7 @@ export function createDocStore(deps: DocStoreDeps) {
         const ins = await c.query(SQL_INSERT_DOC, [...base, json, viewer, expiresAt]);
         if (ins.rows.length === 0) continue; // lost the race; re-read
         const size = Number(ins.rows[0].size_bytes);
+        await seedTallies(c, ctx, coll, key);
         app.bytes += size;
         app.docs += 1;
         addUserDelta(users, chargee(coll, scope, 'user', viewer), size, 1);
@@ -878,6 +908,26 @@ export function createDocStore(deps: DocStoreDeps) {
       ctx.viewerUid,
     ]);
     return toDocRecord(res.rows[0], ctx, coll);
+  }
+
+  async function seedTallies(
+    c: DocStoreClient,
+    ctx: DocStoreContext,
+    coll: DocCollection,
+    key: string
+  ) {
+    if (coll.config.visibility !== 'shared') return;
+    const counters = coll.config.counters ?? [];
+    const marks = (coll.config.marks ?? []).filter((m) => m !== REPORT_MARK);
+    if (counters.length + marks.length === 0) return;
+    await c.query(SQL_SEED_TALLIES, [
+      ctx.appId,
+      ctx.ns,
+      coll.name,
+      key,
+      [...counters.map(() => 'counter'), ...marks.map(() => 'mark')],
+      [...counters, ...marks],
+    ]);
   }
 
   /** Delete a locked document row and, for a shared doc, its tallies and marks. */
@@ -1115,7 +1165,7 @@ export function createDocStore(deps: DocStoreDeps) {
     let eqCount = 0;
     let range: DocRangeFilter | null = null;
     for (const [field, raw] of Object.entries(q.where ?? {})) {
-      const type = coll.config.indexes?.[field];
+      const type = declaredIndexType(coll, field);
       if (!type) {
         throw new DocStoreError('index_not_declared', `${field} is not a declared index`, {
           field,
@@ -1158,6 +1208,9 @@ export function createDocStore(deps: DocStoreDeps) {
     }
 
     let sortExpr: string;
+    // The key column of the table that drives the sort, so the keyset cursor and
+    // ORDER BY sit on ONE table's index and stay an index seek, not a join filter.
+    let keyExpr = 'd.key';
     let sortValueExpr: string;
     let cursorCast: string;
     switch (sort.kind) {
@@ -1179,6 +1232,7 @@ export function createDocStore(deps: DocStoreDeps) {
         const col = indexColumn(sort.type);
         joins.push(listSortIndexJoin(`${p(sort.name)}::text`));
         sortExpr = `sx.${col}`;
+        keyExpr = 'sx.key';
         sortValueExpr = col === 'v_text' ? `sx.v_text` : `sx.v_num::text`;
         cursorCast = col === 'v_text' ? `PARAM::text` : `PARAM::float8`;
         if (range) {
@@ -1198,8 +1252,12 @@ export function createDocStore(deps: DocStoreDeps) {
       }
       case 'tally':
         joins.push(listSortTallyJoin(`${p(sort.tally)}::text`, `${p(sort.name)}::text`));
-        sortExpr = `COALESCE(st.count, 0)`;
-        sortValueExpr = `COALESCE(st.count, 0)::text`;
+        // Every document is created with a zero row per declared counter and mark
+        // (SQL_SEED_TALLIES), so an inner join loses nothing and the tally index
+        // (`doc_tally_top_idx`) drives the scan instead of a sort of the collection.
+        sortExpr = `st.count`;
+        keyExpr = 'st.key';
+        sortValueExpr = `st.count::text`;
         cursorCast = `PARAM::bigint`;
         break;
     }
@@ -1211,12 +1269,12 @@ export function createDocStore(deps: DocStoreDeps) {
         conds.push(`d.key ${op} ${p(cur.key)}::text`);
       } else {
         const v = cursorCast.replace('PARAM', p(cur.value));
-        conds.push(`(${sortExpr}, d.key) ${op} (${v}, ${p(cur.key)}::text)`);
+        conds.push(`(${sortExpr}, ${keyExpr}) ${op} (${v}, ${p(cur.key)}::text)`);
       }
     }
 
     const dir = sort.desc ? 'DESC' : 'ASC';
-    const orderBy = sortExpr ? `${sortExpr} ${dir}, d.key ${dir}` : `d.key ${dir}`;
+    const orderBy = sortExpr ? `${sortExpr} ${dir}, ${keyExpr} ${dir}` : `d.key ${dir}`;
     const sql = [
       `SELECT ${docColumns(viewerParam)}, ${sortValueExpr} AS sort_value`,
       listBase(joins.join('\n')),
@@ -1242,6 +1300,14 @@ export function createDocStore(deps: DocStoreDeps) {
 
 function translatePgError(err: unknown): unknown {
   const e = err as { code?: string; constraint?: string };
+  // lock_not_available: waited LOCK_TIMEOUT on a row lock (an app's usage row
+  // under a write burst). Retryable; never park a pooled connection longer.
+  if (e && e.code === '55P03') {
+    return new DocStoreError('rate_limited', 'storage is busy; retry', {
+      reason: 'contention',
+      retryAfter: 1,
+    });
+  }
   if (e && e.code === '23514' && e.constraint === 'doc_size_cap') {
     return new DocStoreError('too_large', `document exceeds ${B.docBytes} bytes`, {
       limit: B.docBytes,
