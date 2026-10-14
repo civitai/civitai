@@ -2,16 +2,25 @@ import {
   Badge,
   Button,
   CloseButton,
-  Loader,
   Progress,
+  Skeleton,
   Text,
   Title,
   UnstyledButton,
 } from '@mantine/core';
-import { IconArrowRight, IconPlus } from '@tabler/icons-react';
+import {
+  IconArrowRight,
+  IconCrown,
+  IconGitFork,
+  IconPlus,
+  IconRosetteDiscountCheck,
+  IconRoute,
+} from '@tabler/icons-react';
 import clsx from 'clsx';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { StorylineEarlyAccessModal } from '~/components/Storyline/StorylineEarlyAccessModal';
+import { StorylineChapterImage } from '~/components/Storyline/StorylineChapterImage';
+import type { StorylineCoverImage } from '~/components/Storyline/StorylineChapterImage';
 import { openStorylineContinueModal } from '~/components/Storyline/continue/openStorylineContinueModal';
 import type { StorylineChild } from '~/components/Storyline/storyline.queries';
 import {
@@ -25,11 +34,10 @@ import {
   getStorylineTombstoneLabel,
 } from '~/components/Storyline/storyline-mode.utils';
 
-const rankLabel: Record<StorylineChild['rank'], string | null> = {
-  canon: 'Canon',
-  endorsed: 'Endorsed',
-  community: null,
-};
+/** A way on from a chapter, with its first image once the reads carry it. */
+type ForkChild = StorylineChild & { firstImage?: StorylineCoverImage | null };
+
+type Shares = { total: number; shares: Record<number, number> } | undefined;
 
 export function openStorylineEarlyAccess({
   chapterId,
@@ -45,13 +53,23 @@ export function openStorylineEarlyAccess({
   });
 }
 
+/** Readers who took a way, from its share of the total; a way nobody took reads 0. */
+export function getForkShare(shares: Shares, chapterId: number) {
+  if (!shares || shares.total <= 0) return null;
+  const share = shares.shares[chapterId] ?? 0;
+  return { percent: Math.round(share * 100), readers: Math.round(share * shares.total) };
+}
+
 /**
- * The fork point at the end of a chapter. The first child is the main path and gets the big
- * card; the order is the server's (canon, endorsed collaborators, then by readers).
+ * The fork point at the end of a chapter. The first child is the main path and gets the lead
+ * card with the Read action; the order is the server's (canon, endorsed collaborators, then by
+ * readers). Writing a continuation sits below reading.
  */
 export function StorylineEndOfChapter({
   chapterId,
   storylineId,
+  storylineTitle,
+  chapterDepth,
   chapterTombstone,
   parentPostId,
   onContinue,
@@ -59,6 +77,9 @@ export function StorylineEndOfChapter({
 }: {
   chapterId: number;
   storylineId: number;
+  storylineTitle: string;
+  /** Depth of the chapter that ends here (chapter 1 is depth 0). */
+  chapterDepth: number;
   chapterTombstone?: Parameters<typeof getStorylineTombstoneLabel>[0] | null;
   onContinue: (child: StorylineChild) => void;
   onClose?: () => void;
@@ -74,61 +95,58 @@ export function StorylineEndOfChapter({
     openStorylineEarlyAccess({ chapterId, storylineId });
   };
 
-  const [main, ...others] = children ?? [];
+  const [main, ...others] = (children ?? []) as ForkChild[];
+  const ended = !children?.length && !isLoading;
 
   return (
     <div
-      className="absolute inset-0 z-20 overflow-y-auto bg-gray-0 p-4 dark:bg-dark-7 @md:p-6"
+      className="absolute inset-0 z-20 overflow-y-auto bg-white p-4 @md:p-7 dark:bg-dark-7"
       data-testid="storyline-end-of-chapter"
     >
-      <div className="mx-auto flex max-w-2xl flex-col gap-4">
+      <div className="mx-auto flex max-w-3xl flex-col gap-4">
         <div className="flex items-start justify-between gap-2">
-          <div>
-            <Text size="sm" c="dimmed">
-              {chapterTombstone
-                ? getStorylineTombstoneLabel(chapterTombstone)
-                : 'End of the chapter you are reading'}
+          <div className="min-w-0">
+            <Text
+              className="text-violet-7 dark:text-violet-3 flex items-center gap-1.5 text-[13px] font-bold"
+              component="div"
+            >
+              <IconRoute size={15} className="shrink-0" />
+              <span className="truncate">
+                {storylineTitle} · end of chapter {chapterDepth + 1}
+              </span>
             </Text>
-            <Title order={3}>
-              {!children?.length && !isLoading
-                ? 'The story stops here, for now'
-                : 'What happens next?'}
+            <Title order={2} className="mt-1 text-2xl font-extrabold @md:text-[30px]">
+              {ended ? 'The story stops here, for now' : 'What happens next?'}
             </Title>
+            {chapterTombstone && (
+              <Text size="sm" c="dimmed" mt={4}>
+                {getStorylineTombstoneLabel(chapterTombstone)}
+              </Text>
+            )}
           </div>
           {onClose && <CloseButton onClick={onClose} aria-label="Back to the chapter" />}
         </div>
 
         {isLoading ? (
-          <Loader className="mx-auto" />
+          <LeadSkeleton />
         ) : (
           <>
-            {forkShares && !forkShares.enough && !!children?.length && (
-              <Text size="xs" c="dimmed" data-testid="storyline-shares-pending">
-                Not enough readers yet to show where people go ({forkShares.total} of{' '}
-                {forkShares.minChoices} choices)
-              </Text>
-            )}
-            {main && (
-              <ForkCard
-                child={main}
-                share={forkShares?.enough ? forkShares.shares[main.chapterId] ?? 0 : undefined}
-                onContinue={onContinue}
-                big
-              />
-            )}
+            {main && <LeadFork child={main} shares={forkShares} onContinue={onContinue} />}
             {others.length > 0 && (
               <>
-                <Text size="sm" c="dimmed">
-                  Other ways readers continued
+                <Text component="div" className="flex items-center gap-1.5 font-bold">
+                  <IconGitFork size={16} />
+                  Other paths
+                  <Text span c="dimmed" fw={600}>
+                    {others.length}
+                  </Text>
                 </Text>
-                <div className="grid grid-cols-1 gap-2 @sm:grid-cols-2">
+                <div className="-mx-4 flex gap-2.5 overflow-x-auto px-4 pb-1 @md:mx-0 @md:grid @md:grid-cols-2 @md:gap-3 @md:overflow-visible @md:p-0">
                   {others.map((child) => (
-                    <ForkCard
+                    <OtherFork
                       key={child.chapterId}
                       child={child}
-                      share={
-                        forkShares?.enough ? forkShares.shares[child.chapterId] ?? 0 : undefined
-                      }
+                      shares={forkShares}
                       onContinue={onContinue}
                     />
                   ))}
@@ -138,86 +156,257 @@ export function StorylineEndOfChapter({
           </>
         )}
 
-        <Button
-          size="lg"
-          radius="md"
-          variant="gradient"
-          gradient={{ from: 'violet', to: 'blue', deg: 90 }}
-          leftSection={<IconPlus size={20} />}
-          onClick={handleCreate}
-          data-testid="storyline-create-next"
+        <div
+          className="border-violet-5 bg-violet-0 dark:bg-violet-9/15 flex flex-col items-stretch gap-3 rounded-xl border-[1.5px] border-dashed px-4 py-3.5 @md:flex-row @md:items-center"
+          data-testid="storyline-create-block"
         >
-          Create the next section
-        </Button>
-        {parentPostId && <StorylineContinueWithPost parentPostId={parentPostId} />}
+          <div className="flex-1">
+            <Text fw={700}>Write what happens next</Text>
+            <Text size="sm" c="dimmed">
+              Add a chapter of your own. The creator reviews it before it joins the story.
+            </Text>
+          </div>
+          <Button
+            color="violet"
+            leftSection={<IconPlus size={16} />}
+            onClick={handleCreate}
+            data-testid="storyline-create-next"
+          >
+            Create the next section
+          </Button>
+          {parentPostId && <StorylineContinueWithPost parentPostId={parentPostId} />}
+        </div>
       </div>
     </div>
   );
 }
 
-function ForkCard({
+const cardClass =
+  'relative rounded-xl border border-solid border-gray-3 bg-gray-0 shadow-sm dark:border-dark-4 dark:bg-dark-6';
+const hiddenCardClass =
+  'relative rounded-xl border-[1.5px] border-dashed border-gray-4 bg-transparent dark:border-dark-3';
+
+function RankChip({ rank, onImage }: { rank: StorylineChild['rank']; onImage?: boolean }) {
+  if (rank === 'community') return null;
+  const canon = rank === 'canon';
+  return (
+    <Badge
+      size="sm"
+      radius="xl"
+      variant="light"
+      color={canon ? 'blue' : 'teal'}
+      leftSection={canon ? <IconCrown size={12} /> : <IconRosetteDiscountCheck size={12} />}
+      className={clsx(onImage && '!bg-black/55 !text-white backdrop-blur-sm')}
+      data-testid="storyline-rank-chip"
+    >
+      {canon ? 'Canon' : 'Endorsed'}
+    </Badge>
+  );
+}
+
+function ShareBar({ percent, hidden }: { percent: number; hidden?: boolean }) {
+  return (
+    <Progress
+      value={percent}
+      size={6}
+      radius="xl"
+      color={hidden ? 'gray' : 'blue'}
+      className="flex-1"
+      aria-hidden
+    />
+  );
+}
+
+function byline(child: StorylineChild) {
+  return `Chapter ${child.depth + 1}${child.post?.username ? ` by ${child.post.username}` : ''}`;
+}
+
+/** Fork-tagging attributes the end-to-end spec reads. */
+function forkAttrs(child: StorylineChild) {
+  return {
+    'data-testid': 'storyline-fork',
+    'data-rank': child.rank,
+    'data-chapter-id': child.chapterId,
+    'data-tombstone': child.tombstone ?? undefined,
+  };
+}
+
+function LeadFork({
   child,
-  share,
+  shares,
   onContinue,
-  big,
 }: {
-  child: StorylineChild;
-  share: number | undefined;
+  child: ForkChild;
+  shares: Shares;
   onContinue: (child: StorylineChild) => void;
-  big?: boolean;
 }) {
-  const label = rankLabel[child.rank];
-  const title = getStorylineChapterName(child, { withAuthor: true });
+  const hidden = !child.post;
+  const share = getForkShare(shares, child.chapterId);
+  const name = getStorylineChapterName(child);
 
   return (
-    <UnstyledButton
-      onClick={() => onContinue(child)}
+    <div
+      {...forkAttrs(child)}
       className={clsx(
-        'flex items-center gap-3 rounded-lg border border-solid bg-white text-left dark:bg-dark-6',
-        big ? 'border-2 border-blue-5 p-4' : 'border-gray-3 p-3 dark:border-dark-4'
+        'flex flex-col gap-4 p-3 @md:flex-row',
+        hidden ? hiddenCardClass : clsx(cardClass, '!border-2 !border-blue-6')
       )}
-      data-testid="storyline-fork"
-      data-rank={child.rank}
-      data-chapter-id={child.chapterId}
-      data-tombstone={child.tombstone ?? undefined}
     >
-      <div className="min-w-0 flex-1">
-        <div className="flex flex-wrap items-center gap-2">
+      <StorylineChapterImage
+        image={child.firstImage}
+        hidden={hidden}
+        hiddenLabel={hidden ? name : undefined}
+        className="aspect-[4/5] max-h-[440px] w-full @md:w-[210px] @md:flex-none"
+        overlay={
+          <div className="absolute left-2 top-2">
+            <RankChip rank={child.rank} onImage />
+          </div>
+        }
+      />
+      <div className="flex min-w-0 flex-1 flex-col gap-2.5 @md:px-1 @md:py-1.5">
+        <Text size="xs" fw={700} c="dimmed" tt="uppercase" className="tracking-wide">
+          Keep reading
+        </Text>
+        <div>
           <Text
-            fw={700}
-            size={big ? 'lg' : 'sm'}
-            lineClamp={2}
-            c={child.post ? undefined : 'dimmed'}
+            className="text-[21px] font-extrabold leading-tight @md:text-[26px]"
+            c={hidden ? 'dimmed' : undefined}
+            lineClamp={3}
           >
-            {title}
+            {name}
           </Text>
-          {label && (
-            <Badge size="sm" variant="outline" color={child.rank === 'canon' ? 'blue' : 'violet'}>
-              {label}
-            </Badge>
+          <Text size="sm" c="dimmed" mt={6}>
+            {byline(child)}
+          </Text>
+        </div>
+        <div className="mt-auto" data-testid="storyline-share">
+          {share ? (
+            <>
+              <div className="flex items-center gap-2.5">
+                <Text className="text-[22px] font-extrabold">{share.percent}%</Text>
+                <ShareBar percent={share.percent} hidden={hidden} />
+              </div>
+              <Text size="xs" c="dimmed" mt={3}>
+                of readers went this way · {share.readers}{' '}
+                {share.readers === 1 ? 'reader' : 'readers'}
+              </Text>
+            </>
+          ) : (
+            <Text size="sm" c="dimmed">
+              Be the first to choose
+            </Text>
           )}
         </div>
-        {child.post?.title && (
-          <Text size="xs" c="dimmed">
-            Chapter {child.depth + 1}
-            {child.post.username ? ` by ${child.post.username}` : ''}
-          </Text>
+        {hidden ? (
+          <ForkOpener child={child} name={name} onContinue={onContinue} />
+        ) : (
+          <Button
+            size="lg"
+            rightSection={<IconArrowRight size={18} />}
+            onClick={() => onContinue(child)}
+            className="w-full @md:w-auto @md:self-start"
+            data-testid="storyline-read-next"
+          >
+            Read chapter {child.depth + 1}
+          </Button>
         )}
-        {share != null && (
-          <div className="mt-1 flex items-center gap-2">
-            <Progress value={share * 100} size="sm" className="w-24" />
-            <Text size="xs" fw={700}>
-              {Math.round(share * 100)}% of readers
+      </div>
+    </div>
+  );
+}
+
+function OtherFork({
+  child,
+  shares,
+  onContinue,
+}: {
+  child: ForkChild;
+  shares: Shares;
+  onContinue: (child: StorylineChild) => void;
+}) {
+  const hidden = !child.post;
+  const share = getForkShare(shares, child.chapterId);
+  const name = getStorylineChapterName(child);
+
+  return (
+    <div
+      {...forkAttrs(child)}
+      className={clsx(
+        'flex w-[150px] flex-none flex-col gap-2.5 p-2.5 @md:w-auto @md:flex-row @md:gap-3',
+        hidden ? hiddenCardClass : cardClass
+      )}
+    >
+      <StorylineChapterImage
+        image={child.firstImage}
+        hidden={hidden}
+        className="aspect-[3/4] w-full @md:w-[84px] @md:flex-none"
+      />
+      <div className="flex min-w-0 flex-1 flex-col gap-1">
+        <div className="min-h-[22px]">
+          <RankChip rank={child.rank} />
+        </div>
+        <Text
+          fw={700}
+          size="sm"
+          lineClamp={2}
+          c={hidden ? 'dimmed' : undefined}
+          className="leading-tight"
+        >
+          {name}
+        </Text>
+        <Text size="xs" c="dimmed">
+          {byline(child)}
+        </Text>
+        {share && (
+          <div className="mt-auto flex items-center gap-2">
+            <ShareBar percent={share.percent} hidden={hidden} />
+            <Text size="xs" fw={700} c={hidden ? 'dimmed' : undefined}>
+              {share.percent}%
             </Text>
           </div>
         )}
       </div>
-      {big && (
-        <Button component="span" rightSection={<IconArrowRight size={16} />}>
-          Read
-        </Button>
-      )}
-    </UnstyledButton>
+      <ForkOpener child={child} name={name} onContinue={onContinue} />
+    </div>
+  );
+}
+
+/**
+ * The whole card opens the way on, under the image's own blur toggle. A hidden chapter opens too:
+ * the story can go on past it, and the reader steps through it as before.
+ */
+function ForkOpener({
+  child,
+  name,
+  onContinue,
+}: {
+  child: StorylineChild;
+  name: string;
+  onContinue: (child: StorylineChild) => void;
+}) {
+  return (
+    <UnstyledButton
+      onClick={() => onContinue(child)}
+      aria-label={child.post ? `Read ${name}` : `Continue past a hidden chapter: ${name}`}
+      className="absolute inset-0 rounded-xl"
+      data-testid="storyline-fork-open"
+    />
+  );
+}
+
+function LeadSkeleton() {
+  return (
+    <div
+      className={clsx(cardClass, 'flex flex-col gap-4 p-3 @md:flex-row')}
+      data-testid="storyline-end-skeleton"
+    >
+      <Skeleton className="aspect-[4/5] w-full rounded-lg @md:w-[210px] @md:flex-none" />
+      <div className="flex flex-1 flex-col gap-3 py-1.5">
+        <Skeleton h={12} w={90} />
+        <Skeleton h={26} w="70%" />
+        <Skeleton h={14} w="40%" />
+      </div>
+    </div>
   );
 }
 
@@ -232,7 +421,7 @@ export function StorylineContinueWithPost({ parentPostId }: { parentPostId: numb
   if (!terms) return null;
   if (!terms.open)
     return terms.closedReason ? (
-      <Text size="sm" c="dimmed" ta="center" data-testid="storyline-continue-closed">
+      <Text size="sm" c="dimmed" data-testid="storyline-continue-closed">
         {closedCopy[terms.closedReason]}
       </Text>
     ) : null;
@@ -240,11 +429,10 @@ export function StorylineContinueWithPost({ parentPostId }: { parentPostId: numb
   return (
     <Button
       variant="default"
-      radius="md"
       onClick={() => openStorylineContinueModal({ parentPostId })}
       data-testid="storyline-continue-with-post"
     >
-      Continue with a post you made · {terms.price > 0 ? `${terms.price} Buzz` : 'Free'}
+      Use a post you made · {terms.price > 0 ? `${terms.price} Buzz` : 'Free'}
     </Button>
   );
 }

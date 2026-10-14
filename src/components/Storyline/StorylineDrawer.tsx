@@ -114,7 +114,7 @@ export function StorylineDrawer({
                       key={child.chapterId}
                       child={child}
                       share={
-                        isEnd && endShares?.enough
+                        isEnd && endShares && endShares.total > 0
                           ? endShares.shares[child.chapterId] ?? 0
                           : undefined
                       }
@@ -123,9 +123,9 @@ export function StorylineDrawer({
                   ))}
                 </ul>
               )}
-              {isEnd && endShares && !endShares.enough && (
+              {isEnd && endShares?.total === 0 && branches.length > 0 && (
                 <Text size="xs" c="dimmed" pl={36} data-testid="storyline-shares-pending">
-                  Not enough readers yet ({endShares.total} of {endShares.minChoices} choices)
+                  Be the first to choose
                 </Text>
               )}
             </li>
