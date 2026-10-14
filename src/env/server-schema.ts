@@ -32,6 +32,11 @@ export const serverSchema = z
     // so PR previews + dev environments that haven't provisioned the apps DB
     // yet keep starting (the storage tRPC procedures throw cleanly when unset).
     APPS_DATABASE_URL: z.url().optional(),
+    // App Blocks document store — a SEPARATE least-privilege connection to the
+    // same datastore, as a role holding only `appdata_rw` (never superuser or
+    // BYPASSRLS; the store checks and refuses). Unset → the document store is
+    // disabled (`storage_disabled`); it never falls back to APPS_DATABASE_URL.
+    APPDATA_DATABASE_URL: z.url().optional(),
     DATABASE_CONNECTION_TIMEOUT: z.coerce.number().default(0),
     DATABASE_POOL_MAX: z.coerce.number().default(20),
     NOTIFICATION_POOL_MAX: z.coerce.number().optional(),

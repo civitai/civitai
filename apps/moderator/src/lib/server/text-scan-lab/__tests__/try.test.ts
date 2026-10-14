@@ -115,6 +115,18 @@ describe('runTry — refusals before any scan', () => {
 });
 
 describe('runTry — more refusals', () => {
+  it('judges text up to the scan limit and refuses longer text, naming the limit', async () => {
+    harness.scanTexts.mockImplementation(echoScan);
+    await tryWith({ input: 'a'.repeat(600_000) });
+    expect(harness.scanTexts).toHaveBeenCalledTimes(1);
+    vi.clearAllMocks();
+
+    const res = await tryWith({ input: 'a'.repeat(600_001) });
+    expect(res).toMatchObject({ status: 400 });
+    expect((res as { data: { error: string } }).data.error).toContain('600,000 characters');
+    nothingCalled();
+  });
+
   it("refuses links to different kinds of content with the parser's notice", async () => {
     const res = await tryWith({
       input: 'https://civitai.com/models/1 https://civitai.com/articles/2',

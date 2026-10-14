@@ -43,7 +43,7 @@ import {
 } from '~/server/services/block-token-subject';
 import { effectiveBlockScopes } from '~/shared/constants/block-effective-scopes';
 import {
-  BUZZ_BUDGET_CAP,
+  resolvePerCallBuzzBudget,
   isKnownBlockScope,
   isPrivateRunAudience,
   type PrivateRunAudience,
@@ -1219,6 +1219,22 @@ export function enforceContextBinding(
         }
         break;
       }
+      case 'apps:storage': {
+        // DOCUMENT STORE, base scope. An anonymous viewer may READ shared collections
+        // (they are public within the app), so the binding cannot demand a subject. Every
+        // other operation under this scope — private collections, marks, counters — is
+        // refused for an anonymous viewer by the storage route itself, per op, which is
+        // where the operation is known. No request-shape binding; presence is the check.
+        break;
+      }
+      case 'apps:storage:publish': {
+        // Authoring a document in a shared collection is ALWAYS attributed to a user, so
+        // an anonymous subject can never hold it (mirrors apps:storage:shared:write).
+        if (claims.sub === ANON_SUBJECT) {
+          throw forbidden(`${scope} requires authenticated subject`);
+        }
+        break;
+      }
       case 'apps:storage:shared:read': {
         // SHARED (app-global) READS are allowed for anon — the shared list +
         // counts are public within the app (the real per-op authorization + the
@@ -1296,16 +1312,6 @@ export function enforceContextBinding(
 // Same instance id the page host mints under, so storage, rate-limit buckets and the
 // publisher-ban revocation sweep (`page_` prefix) line up whichever credential the block holds.
 const HUB_INSTANCE_PREFIX = 'page_';
-// Mirror of the mint's private per-gen default (block-tokens/index.ts BUZZ_BUDGET_DEFAULT).
-const HUB_BUZZ_BUDGET_DEFAULT = 10;
-
-function hubBuzzBudget(manifest: { page?: { buzzBudgetPerGen?: unknown } }): number {
-  const raw = manifest.page?.buzzBudgetPerGen;
-  const candidate =
-    typeof raw === 'number' && Number.isInteger(raw) ? raw : HUB_BUZZ_BUDGET_DEFAULT;
-  return Math.min(Math.max(candidate, 0), BUZZ_BUDGET_CAP);
-}
-
 /**
  * Block claims for a hub-issued OAuth access token whose OauthClient owns an AppBlock.
  * Null for anything else — a personal API key is never elevated. Scopes are what the
@@ -1444,7 +1450,9 @@ async function resolveHubTokenClaims(
     blockInstanceId: `${HUB_INSTANCE_PREFIX}${block.id}`,
     ctx: { entityType: 'none' },
     scopes,
-    ...(scopes.includes('ai:write:budgeted') ? { buzzBudget: hubBuzzBudget(manifest) } : {}),
+    ...(scopes.includes('ai:write:budgeted')
+      ? { buzzBudget: resolvePerCallBuzzBudget(manifest.page?.buzzBudgetPerGen) }
+      : {}),
     ...(typeof domainColor === 'string' ? { domain: domainColor } : {}),
     maxBrowsingLevel,
   };

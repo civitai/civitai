@@ -84,7 +84,7 @@ import {
   TagTarget,
 } from '~/shared/utils/prisma/enums';
 import { decreaseDate } from '~/utils/date-helpers';
-import { postgresSlugify, removeTags } from '~/utils/string-helpers';
+import { removeTags } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { getFilesByEntity } from './file.service';
 import { generateJSON } from '@tiptap/html/server';
@@ -206,9 +206,7 @@ export const getArticles = async ({
   try {
     const take = limit + 1;
     const isMod = sessionUser?.isModerator ?? false;
-    const isOwnerRequest =
-      !!sessionUser?.username &&
-      postgresSlugify(sessionUser.username) === postgresSlugify(username);
+    let isOwnerRequest = false;
     const hidePrivateArticles =
       forceHidePrivate ||
       (!ids && !username && !collectionId && !followed && !hidden && !favorites && !userIds);
@@ -268,6 +266,7 @@ export const getArticles = async ({
 
       if (!targetUser) throw throwNotFoundError('User not found');
 
+      isOwnerRequest = !!userId && targetUser.id === userId;
       AND.push(Prisma.sql`u.id = ${targetUser.id}`);
     }
 

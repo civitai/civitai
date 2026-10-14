@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest';
 
 import {
   PROM_PREFIX,
+  appSharedStorageLatencyHistogram,
+  appSharedStorageOpsCounter,
   appStorageLatencyHistogram,
   appStorageOpsCounter,
   appStorageQuotaExceededCounter,
@@ -127,5 +129,54 @@ describe('App Blocks storage metric names', () => {
     const names = promClient.register.getMetricsAsArray().map((m) => (m as { name: string }).name);
     expect(names.filter((n) => n.startsWith(PROM_PREFIX)).length).toBeGreaterThan(10);
     expect(names.filter((n) => n.startsWith(`${PROM_PREFIX}app_`))).toEqual([]);
+  });
+});
+
+/**
+ * The same ledger for the two App Blocks SHARED storage metrics, for the same reasons: the
+ * exposed names, label sets and buckets are what alert rules outside this repo are written
+ * against, and nothing app-side can see them.
+ */
+const SHARED_OPS = 'civitai_app_block_shared_storage_ops_total';
+const SHARED_LATENCY = 'civitai_app_block_shared_storage_latency_seconds';
+
+describe('App Blocks shared storage metric names', () => {
+  const declared = (name: string) =>
+    [
+      ...((
+        (promClient.register.getSingleMetric(name) ?? {}) as unknown as {
+          labelNames?: string[];
+        }
+      ).labelNames ?? []),
+    ].sort();
+
+  it('exposes exactly these two names, and the family has no others', () => {
+    for (const name of [SHARED_OPS, SHARED_LATENCY]) {
+      expect(promClient.register.getSingleMetric(name), name).toBeDefined();
+    }
+    const family = promClient.register
+      .getMetricsAsArray()
+      .map((m) => (m as { name: string }).name)
+      .filter((n) => n.startsWith('civitai_app_block_shared_storage_'));
+    expect(family.sort()).toEqual([SHARED_LATENCY, SHARED_OPS].sort());
+  });
+
+  it('the exported handles ARE those two metrics', () => {
+    expect((appSharedStorageOpsCounter as unknown as { name: string }).name).toBe(SHARED_OPS);
+    expect((appSharedStorageLatencyHistogram as unknown as { name: string }).name).toBe(
+      SHARED_LATENCY
+    );
+  });
+
+  it('🔴 declares only op and outcome — no per-app, per-key or per-user label', () => {
+    expect(declared(SHARED_OPS)).toEqual(['op', 'outcome']);
+    expect(declared(SHARED_LATENCY)).toEqual(['op']);
+  });
+
+  it('🔴 pins the latency buckets, which run to 10s for writes that wait on moderation', () => {
+    const buckets = (
+      promClient.register.getSingleMetric(SHARED_LATENCY) as unknown as { upperBounds: number[] }
+    ).upperBounds;
+    expect([...buckets]).toEqual([0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10]);
   });
 });

@@ -141,3 +141,48 @@ describe('the Model rules history endpoint', () => {
     expect(canAccess(reviewer, '/text-scan/model-rules/history')).toBe(false);
   });
 });
+
+describe('the Feedback section', () => {
+  const feedback = () => NAVIGATION.find((n) => n.path === '/feedback');
+  const platformHref = '/feedback?area=apps-platform&status=new';
+
+  it('keeps one grant, on /feedback, for the queue and its developer-platform view', () => {
+    expect(feedback()?.sharedAccess).toBe(true);
+    expect(feedback()?.children?.map((c) => [c.path, c.countKey])).toEqual([
+      ['/feedback', 'feedbackNew'],
+      [platformHref, 'feedbackAppsPlatformNew'],
+    ]);
+    const { tree, granted } = pageAccessState();
+    expect(tree.filter((n) => n.key.startsWith('/feedback')).map((n) => [n.key, n.kind])).toEqual([
+      ['/feedback', 'page'],
+    ]);
+    expect(Object.keys(granted).filter((k) => k.startsWith('/feedback'))).toEqual(['/feedback']);
+  });
+
+  it('shows both links, counts and all, to whoever holds /feedback, and neither to anyone else', () => {
+    applyGrants({ '/feedback': ['moderator:reviewer'] });
+    expect(labelsUnder('Feedback')).toEqual([
+      ['/feedback', 'General queue'],
+      [platformHref, 'Apps platform (developers)'],
+    ]);
+    expect(canAccess(reviewer, '/feedback')).toBe(true);
+    expect(canAccess(reviewer, '/feedback/12')).toBe(true);
+
+    applyGrants({ '/abuse': ['moderator:reviewer'] });
+    expect(labelsUnder('Feedback')).toBeUndefined();
+    expect(canAccess(reviewer, '/feedback')).toBe(false);
+  });
+
+  it('marks the developer-platform link active on its view and the queue link everywhere else', () => {
+    const links = feedback()?.children ?? [];
+    const [general, platform] = links;
+    const active = (href: string) =>
+      [general, platform].map((l) => isNavLinkActive(l, links, at(href)));
+    expect(active('/feedback?area=apps-platform&status=new')).toEqual([false, true]);
+    expect(active('/feedback?status=new&area=apps-platform&sort=age')).toEqual([false, true]);
+    expect(active('/feedback?status=new')).toEqual([true, false]);
+    expect(active('/feedback?area=apps-platform&status=reviewed')).toEqual([true, false]);
+    expect(active('/feedback/12')).toEqual([true, false]);
+    expect(active('/abuse')).toEqual([false, false]);
+  });
+});

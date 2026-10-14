@@ -61,7 +61,7 @@ const blockAccountTypeSchema = z.enum(buzzSpendTypes as [BuzzSpendType, ...BuzzS
 //
 // Caps are intentionally tighter than the platform-wide generateImageSchema —
 // blocks run in untrusted iframes and the token issuer caps per-call buzz at
-// BUZZ_BUDGET_CAP=1000, so wide-open quantity/dimensions wouldn't be honored
+// BUZZ_BUDGET_CAP, so wide-open quantity/dimensions wouldn't be honored
 // anyway. Trim the surface area at the boundary instead of relying on
 // downstream gates.
 
@@ -397,10 +397,10 @@ export const blockCustomComfyBodySchema = z
  * `assertViewerIsAppDeveloper`; the gates the two arms share are page-token-only,
  * the `ai:write:budgeted` scope, a resolvable token subject, the per-user Apps
  * kill-switch and a positive `claims.buzzBudget`. And an ordinary install token's
- * per-call budget clamps at `BUZZ_BUDGET_CAP` (1000, see
- * `shared/constants/block-scope.constants`) — 4× this number. So this constant is
- * the only thing stopping an inline body declaring a ceiling between 251 and
- * 1000, and RAISING IT CHANGES WHAT ONE JOB CAN COST AN ORDINARY VIEWER. The
+ * per-call budget clamps at `BUZZ_BUDGET_CAP` (see
+ * `shared/constants/block-scope.constants`) — many times this number. So this constant
+ * is the only thing stopping an inline body declaring a ceiling between this number and
+ * that cap, and RAISING IT CHANGES WHAT ONE JOB CAN COST AN ORDINARY VIEWER. The
  * false version read as "raising this changes nothing".
  *
  * Its VALUE is a policy choice about what one inline job may cost a viewer, set
@@ -587,7 +587,7 @@ export const blockStepBodySchema = makeBlockStepBodySchema(REGISTERED_STEP_IDS);
  * both arms were developer-only and therefore already clamped by
  * `DEV_BUZZ_BUDGET_CAP`; both halves are false — neither arm runs
  * `assertViewerIsAppDeveloper`, and an ordinary install token's per-call budget
- * clamps at `BUZZ_BUDGET_CAP` (1000, see `shared/constants/block-scope.constants`).
+ * clamps at `BUZZ_BUDGET_CAP` (see `shared/constants/block-scope.constants`).
  * Recorded because the false version read as "raising this changes nothing".
  * (`INLINE_MAX_BUZZ`'s own docblock above CARRIED THE SAME CLAIM and has now been
  * corrected in the same terms. The published `@civitai/app-sdk` doc comments and

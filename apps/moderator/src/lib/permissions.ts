@@ -54,6 +54,10 @@ export const PERMISSIONS = [
   // app's `/api/mod/user/membership-code` by this literal (`ModeratorGrantId`), so rename the two
   // together.
   { id: 'user.membership.code', label: 'Mint membership codes for a customer' },
+  // Moves a creator's score, and with it their tier and what the tier unlocks. Checked again by the
+  // main app's `/api/mod/user/creator-score-grant` by this literal (`ModeratorGrantId`), so rename the
+  // two together.
+  { id: 'user.creatorScore.grant', label: 'Grant or revoke Creator Score' },
   // The widest read in the app: everything an account generated on-site and in Comfy Cloud, published
   // or not, prompts included. Reaching User Lookup or the restriction queue is not consent to that.
   { id: 'user.generations.view', label: 'View a user’s generated media' },

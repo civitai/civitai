@@ -4,13 +4,18 @@ import { getModerationAdapter } from '~/server/services/moderation-adapters';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
 import { evaluateTextScan } from '~/server/services/text-scan/evaluate';
 import {
+  mergeTextScanOutputs,
+  stricterThanStored,
+  type FlaggedSegments,
+} from '~/server/services/text-scan/merge';
+import {
   getTextScanMode,
   getTextScanWebSearchMode,
   isTextScanWebSearchEntityType,
   TEXT_SCAN_WEB_SEARCH_LABELS,
   textScanEmEntityType,
 } from '~/server/services/text-scan/mode';
-import { findChatCompletionStep, parseTextScanStep } from '~/server/services/text-scan/parse';
+import { parseTextScanSteps } from '~/server/services/text-scan/parse';
 import { getTextScanProfile, isTextScanEntityType } from '~/server/services/text-scan/profiles';
 import '~/server/services/text-scan/profiles/index';
 import { textScanTextHash } from '~/server/services/text-scan/prompt';
@@ -19,11 +24,21 @@ import {
   getModelRuleSnapshots,
 } from '~/server/services/text-scan/model-rules';
 import {
+  readTextScanVerdict,
   recordTextScanFailure,
+  recordTextScanRaise,
+  revertTextScanRaise,
   recordTextScanSuccess,
   type TextScanResult,
 } from '~/server/services/text-scan/record';
-import type { PromptIds, TextScanLabel } from '~/server/services/text-scan/types';
+import type {
+  PromptIds,
+  TextScanDeclared,
+  TextScanEntityType,
+  TextScanLabel,
+  TextScanOutcome,
+  TextScanOutput,
+} from '~/server/services/text-scan/types';
 import { logScanVerdict } from '~/server/services/text-scan/verdict-log';
 import { EntityModerationStatus } from '~/shared/utils/prisma/enums';
 
@@ -37,6 +52,85 @@ function log(type: 'error' | 'warning' | 'info', message: string, extra: Record<
   return logToAxiom({ name: 'text-scan', type, message, ...extra });
 }
 
+type TextScanWorkflowMetadata = {
+  entityType?: string;
+  entityId?: number;
+  emEntityType?: string;
+  mode?: string;
+  variant?: string;
+  externalId?: string;
+  labels?: TextScanLabel[];
+  promptIds?: PromptIds;
+  model?: string;
+  textHash?: string;
+  subjectMeta?: Record<string, unknown>;
+  ruleIds?: number[];
+  rulesFingerprint?: string;
+  literalRuleIds?: number[];
+  inputChars?: number;
+  inputCut?: boolean;
+  segments?: number;
+  scannedChars?: number;
+};
+
+/** Workflows submitted before segmentation carry no `segments` and hold one step. */
+function expectedSegments({ segments }: TextScanWorkflowMetadata) {
+  return Number.isInteger(segments) && (segments as number) > 0 ? (segments as number) : 1;
+}
+
+function inputMeta(metadata: TextScanWorkflowMetadata, flaggedSegments: FlaggedSegments) {
+  if (metadata.inputChars === undefined) return undefined;
+  return {
+    inputChars: metadata.inputChars,
+    inputCut: metadata.inputCut ?? false,
+    ...(metadata.segments === undefined
+      ? {}
+      : {
+          segments: expectedSegments(metadata),
+          scannedChars: metadata.scannedChars ?? metadata.inputChars,
+        }),
+    ...(Object.keys(flaggedSegments).length ? { flaggedSegments } : {}),
+  };
+}
+
+const searchOwned = (label: TextScanLabel) =>
+  (TEXT_SCAN_WEB_SEARCH_LABELS as readonly TextScanLabel[]).includes(label);
+
+/**
+ * The part of `outcome` the live adapter may act on. An active search pass owns poi/minor: a main
+ * pass submitted before it went active still asked for them, and must not act on them now.
+ */
+async function applicableOutcome({
+  outcome,
+  output,
+  declared,
+  labels,
+  submittedActive,
+  variant,
+  entityType,
+  entityId,
+}: {
+  outcome: TextScanOutcome;
+  output: TextScanOutput;
+  declared: TextScanDeclared;
+  labels: TextScanLabel[];
+  submittedActive: boolean;
+  variant?: string;
+  entityType: TextScanEntityType;
+  entityId: number;
+}) {
+  return submittedActive &&
+    !variant &&
+    labels.some(searchOwned) &&
+    (await getTextScanWebSearchMode(entityType, entityId, 'active')) === 'active'
+    ? evaluateTextScan(
+        output,
+        declared,
+        labels.filter((label) => !searchOwned(label))
+      )
+    : outcome;
+}
+
 export async function handleTextScanCallback(event: { workflowId: string; status: string }) {
   const { workflowId } = event;
   const { data } = await getWorkflow({
@@ -45,24 +139,7 @@ export async function handleTextScanCallback(event: { workflowId: string; status
   });
   if (!data) throw new Error(`could not find workflow: ${workflowId}`);
 
-  const metadata = (data.metadata ?? {}) as {
-    entityType?: string;
-    entityId?: number;
-    emEntityType?: string;
-    mode?: string;
-    variant?: string;
-    externalId?: string;
-    labels?: TextScanLabel[];
-    promptIds?: PromptIds;
-    model?: string;
-    textHash?: string;
-    subjectMeta?: Record<string, unknown>;
-    ruleIds?: number[];
-    rulesFingerprint?: string;
-    literalRuleIds?: number[];
-    inputChars?: number;
-    inputCut?: boolean;
-  };
+  const metadata = (data.metadata ?? {}) as TextScanWorkflowMetadata;
   const { entityType, entityId, mode } = metadata;
   if (
     !(data.tags ?? []).includes('text-scan') ||
@@ -137,7 +214,82 @@ export async function handleTextScanCallback(event: { workflowId: string; status
   if (!profile) return log('error', 'no profile registered', ctx);
   const labels = metadata.labels ?? profile.labels;
 
-  const parsed = parseTextScanStep(findChatCompletionStep(data.steps), labels);
+  const segments = expectedSegments(metadata);
+  const parsed = parseTextScanSteps(data.steps, labels, segments);
+  // The scan stays Failed for the retry job, but what the parsed segments found already holds for
+  // the whole text, so it may raise the stored verdict now; it never lowers or clears it.
+  const raisePartialVerdict = async (outputs: TextScanOutput[]) => {
+    const subject = (await profile.load([entityId])).get(entityId);
+    if (!subject) return;
+    const stored = await readTextScanVerdict({
+      entityType: emEntityType,
+      entityId,
+      workflowId,
+    });
+    if (!stored) return;
+    const { output: merged } = mergeTextScanOutputs(outputs, labels);
+    const raised = stricterThanStored(stored, merged, labels);
+    if (!raised.length) return;
+    const output: TextScanOutput = Object.fromEntries(
+      raised.map((label) => [label, merged[label]])
+    );
+    const outcome = evaluateTextScan(output, subject.declared, raised);
+    const recorded = await recordTextScanRaise({
+      entityType: emEntityType,
+      entityId,
+      workflowId,
+      stored,
+      outcome,
+      output,
+      promptIds: metadata.promptIds ?? {},
+      model: metadata.model ?? '',
+      textHash: metadata.textHash,
+      meta: metadata.subjectMeta ?? subject.meta,
+    });
+    if (!recorded) return;
+    const applied = await applicableOutcome({
+      outcome,
+      output,
+      declared: subject.declared,
+      labels: raised,
+      submittedActive,
+      variant,
+      entityType,
+      entityId,
+    });
+    await log('warning', 'partial verdict raised', {
+      ...ctx,
+      raised,
+      parsedSegments: outputs.length,
+      segments,
+      acted: !!adapter?.applyTextScan && applied.triggeredLabels.length > 0,
+    });
+    if (!applied.triggeredLabels.length && !applied.nsfw) return;
+    try {
+      await adapter?.applyTextScan?.({
+        entityId,
+        workflowId,
+        outcome: applied,
+        subject,
+        textHash: metadata.textHash ?? textScanTextHash(subject),
+      });
+    } catch (error) {
+      // Left raised, the next callback would find nothing stricter and never act on it.
+      const reverted = await revertTextScanRaise({
+        entityType: emEntityType,
+        entityId,
+        workflowId,
+        stored,
+      });
+      await log('error', 'applying the partial verdict failed', {
+        ...ctx,
+        reverted,
+        error: (error as Error).message,
+      });
+      throw error;
+    }
+  };
+
   if (!parsed.ok) {
     const recorded = await recordTextScanFailure({
       entityType: emEntityType,
@@ -151,20 +303,25 @@ export async function handleTextScanCallback(event: { workflowId: string; status
       ...ctx,
       reason: parsed.reason,
       detail: parsed.detail,
+      ...(parsed.segment === undefined ? {} : { segment: parsed.segment }),
+      segments,
     });
-    await failureAdapter?.applyFailure?.({ entityId, workflowId, status: 'failed' });
+    try {
+      if (parsed.outputs.length) await raisePartialVerdict(parsed.outputs);
+    } finally {
+      await failureAdapter?.applyFailure?.({ entityId, workflowId, status: 'failed' });
+    }
     return;
   }
 
   const subject = (await profile.load([entityId])).get(entityId);
   if (!subject) return log('info', 'entity gone before callback', ctx);
 
+  const { output, flaggedSegments } = mergeTextScanOutputs(parsed.outputs, labels);
+
   let modelRules: TextScanResult['modelRules'];
-  if (parsed.output.modelRules) {
-    const { kept, dropped } = filterModelRuleMatches(
-      parsed.output.modelRules.matched,
-      metadata.ruleIds
-    );
+  if (output.modelRules) {
+    const { kept, dropped } = filterModelRuleMatches(output.modelRules.matched, metadata.ruleIds);
     if (dropped.length)
       await log('warning', 'matched rule ids the prompt did not list', { ...ctx, dropped });
     const listed = new Set(metadata.ruleIds);
@@ -173,7 +330,7 @@ export async function handleTextScanCallback(event: { workflowId: string; status
       ...new Set([...kept.map((m) => m.ruleId), ...literalCandidates]),
     ]);
     const live = new Set(snapshot.map((rule) => rule.id));
-    parsed.output.modelRules = { matched: kept.filter((m) => live.has(m.ruleId)) };
+    output.modelRules = { matched: kept.filter((m) => live.has(m.ruleId)) };
     modelRules = {
       fingerprint: metadata.rulesFingerprint,
       snapshot,
@@ -181,19 +338,17 @@ export async function handleTextScanCallback(event: { workflowId: string; status
     };
   }
 
-  const outcome = evaluateTextScan(parsed.output, subject.declared, labels);
+  const outcome = evaluateTextScan(output, subject.declared, labels);
   const subjectMeta = metadata.subjectMeta ?? subject.meta;
-  const meta =
-    metadata.inputChars === undefined
-      ? subjectMeta
-      : { ...subjectMeta, inputChars: metadata.inputChars, inputCut: metadata.inputCut ?? false };
+  const extra = inputMeta(metadata, flaggedSegments);
+  const meta = extra ? { ...subjectMeta, ...extra } : subjectMeta;
   const recorded = await recordTextScanSuccess({
     entityType: emEntityType,
     entityId,
     workflowId,
     marker,
     outcome,
-    output: parsed.output,
+    output,
     promptIds: metadata.promptIds ?? {},
     model: metadata.model ?? '',
     textHash: metadata.textHash,
@@ -202,21 +357,16 @@ export async function handleTextScanCallback(event: { workflowId: string; status
   });
   if (!recorded) return log('warning', 'stale callback ignored', ctx);
 
-  // An active search pass owns poi/minor: a main pass submitted before it went active still asked
-  // for them, and must not act on them now.
-  const searchOwned = (label: TextScanLabel) =>
-    (TEXT_SCAN_WEB_SEARCH_LABELS as readonly TextScanLabel[]).includes(label);
-  const applied =
-    submittedActive &&
-    !variant &&
-    labels.some(searchOwned) &&
-    (await getTextScanWebSearchMode(entityType, entityId, 'active')) === 'active'
-      ? evaluateTextScan(
-          parsed.output,
-          subject.declared,
-          labels.filter((label) => !searchOwned(label))
-        )
-      : outcome;
+  const applied = await applicableOutcome({
+    outcome,
+    output,
+    declared: subject.declared,
+    labels,
+    submittedActive,
+    variant,
+    entityType,
+    entityId,
+  });
 
   void logScanVerdict({
     system: 'text-scan',
@@ -235,6 +385,7 @@ export async function handleTextScanCallback(event: { workflowId: string; status
     tags: [
       ...outcome.triggeredLabels,
       ...(outcome.modelRules?.matched.map((m) => `modelRules:${m.ruleId}`) ?? []),
+      ...(metadata.inputCut ? ['inputCut'] : []),
     ],
     textHash: metadata.textHash,
     ...(variant ? { variant } : {}),

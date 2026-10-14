@@ -74,6 +74,7 @@ export type LabScanResult =
       rawContent?: string;
       literalRuleIds?: number[];
       elapsedMs: number;
+      segments?: number;
     }
   | { key: string; ok: false; error: string; workflowId?: string };
 

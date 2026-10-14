@@ -15,6 +15,7 @@ import {
   resetTextScanRolloutCache,
   type TextScanRollout,
 } from '~/server/services/text-scan/mode';
+import { composeUserText, segmentUserText } from '~/server/services/text-scan/segment';
 import type {
   PromptIds,
   TextScanEntityType,
@@ -31,13 +32,24 @@ import {
 export const DEFAULT_TEXT_SCAN_MODEL =
   'urn:air:qwen3:repository:huggingface:gittensor-model-hub/Qwen3.8-27B-NVFP4-RTX5090@main.tar';
 const DEFAULT_MAX_INPUT_CHARS = 200000;
+const DEFAULT_MAX_SEGMENTS = 10;
+/** Each segment is a billed call; bounds a bad config override. */
+export const MAX_SEGMENTS_LIMIT = 20;
 
-export type TextScanConfig = { model: string; maxInputChars: number; thinking: boolean };
+export type TextScanConfig = {
+  model: string;
+  /** Per-call budget; longer text is split into segments of this size. */
+  maxInputChars: number;
+  /** The most calls one scan makes; text past them is not scanned and the result says so. */
+  maxSegments: number;
+  thinking: boolean;
+};
 
 function withDefaults(raw: unknown): TextScanConfig {
   const config: TextScanConfig = {
     model: DEFAULT_TEXT_SCAN_MODEL,
     maxInputChars: DEFAULT_MAX_INPUT_CHARS,
+    maxSegments: DEFAULT_MAX_SEGMENTS,
     thinking: false,
   };
   if (!raw || typeof raw !== 'object') return config;
@@ -45,6 +57,9 @@ function withDefaults(raw: unknown): TextScanConfig {
   if (typeof parsed.model === 'string' && parsed.model) config.model = parsed.model;
   if (Number.isInteger(parsed.maxInputChars) && (parsed.maxInputChars as number) > 0)
     config.maxInputChars = parsed.maxInputChars as number;
+  const maxSegments = parsed.maxSegments as number;
+  if (Number.isInteger(maxSegments) && maxSegments >= 1 && maxSegments <= MAX_SEGMENTS_LIMIT)
+    config.maxSegments = maxSegments;
   if (typeof parsed.thinking === 'boolean') config.thinking = parsed.thinking;
   return config;
 }
@@ -222,17 +237,6 @@ export function subjectTextLength(subject: TextScanSubject) {
   return subject.fields.reduce((sum, field) => sum + (field.text?.trim().length ?? 0), 0);
 }
 
-function composeFullText(subject: TextScanSubject) {
-  return subject.fields
-    .filter((field) => field.text?.trim())
-    .map((field) => `## ${field.heading}\n${field.text!.trim()}`)
-    .join('\n\n');
-}
-
-export function composeUserMessage(subject: TextScanSubject, maxInputChars: number) {
-  return composeFullText(subject).slice(0, maxInputChars);
-}
-
 /** Stands in for the rule set in `MissingTextScanPromptError`: no enabled rule is a missing prompt. */
 export const MODEL_RULES_SET_KEY = 'modelRules:rules';
 
@@ -242,6 +246,7 @@ export function composeTextScanMessages({
   subject,
   maxInputChars,
   modelRules,
+  maxSegments,
 }: {
   prompts: Record<string, ActiveTextScanPrompt>;
   labels: TextScanLabel[];
@@ -249,6 +254,7 @@ export function composeTextScanMessages({
   maxInputChars: number;
   /** Required when `labels` includes `modelRules`. */
   modelRules?: ModelRuleForPrompt[];
+  maxSegments: number;
 }) {
   const keys = ['base', ...labels.map((label) => `label:${label}`)];
   // A blank row would compose an empty definition and be submitted everywhere; treat it as missing.
@@ -268,13 +274,18 @@ export function composeTextScanMessages({
   const promptIds: PromptIds = { base: prompts.base.id };
   for (const label of labels) promptIds[label] = prompts[`label:${label}`].id;
 
-  const full = composeFullText(subject);
+  const { text, segments, inputChars, scannedChars, inputCut } = segmentUserText(subject, {
+    budget: maxInputChars,
+    maxSegments,
+  });
   return {
     system,
-    user: full.slice(0, maxInputChars),
+    text,
+    segments,
     promptIds,
-    inputChars: full.length,
-    inputCut: full.length > maxInputChars,
+    inputChars,
+    scannedChars,
+    inputCut,
     ...(scansRules && modelRules
       ? {
           ruleIds: modelRules.map((rule) => rule.id),
@@ -286,5 +297,5 @@ export function composeTextScanMessages({
 
 /** Uncapped and prompt-independent, unlike the dedup hash: appeal and re-file gates compare it. */
 export function textScanTextHash(subject: TextScanSubject) {
-  return hashContent(composeUserMessage(subject, Number.MAX_SAFE_INTEGER));
+  return hashContent(composeUserText(subject));
 }

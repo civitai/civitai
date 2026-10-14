@@ -432,7 +432,7 @@ describe('POST /api/v1/block-tokens — W10 page mint', () => {
   // ───────────────────────── W10 generation spend ──────────────────────────
   // A page can now mint an `ai:write:budgeted` token. The per-gen budget is
   // sourced from the approved manifest's `page.buzzBudgetPerGen`, clamped to
-  // BUZZ_BUDGET_CAP (1000), defaulted to BUZZ_BUDGET_DEFAULT (10) when absent.
+  // BUZZ_BUDGET_CAP (5000), defaulted to BUZZ_BUDGET_DEFAULT (1000) when absent.
   // (The user must have GRANTED ai:write:budgeted — consent — for it to be
   // signed; we mock that grant in each case.)
   describe('W10 generation-spend budget (ai:write:budgeted)', () => {
@@ -457,18 +457,26 @@ describe('POST /api/v1/block-tokens — W10 page mint', () => {
       expect(signArg.ctx).toEqual({ slotId: 'app.page', entityType: 'none' });
     });
 
-    it('clamps a manifest budget above the cap to BUZZ_BUDGET_CAP (1000)', async () => {
-      mockBlockRegistry.resolvePageBlock.mockResolvedValue(PAGE_BUDGET_BLOCK(5000));
+    // 6301 overshoots the cap without being a multiple of it; 5000 and 5001 are the
+    // boundary either side.
+    it.each([
+      [5000, 5000],
+      [5001, 5000],
+      [6301, 5000],
+    ])('a manifest budget of %i mints buzzBudget %i (cap 5000)', async (declared, minted) => {
+      mockBlockRegistry.resolvePageBlock.mockResolvedValue(PAGE_BUDGET_BLOCK(declared));
       const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
       const res = makeRes();
       await handler(makeReq({ origin: 'https://civitai.com', body: pageBody() }), res);
 
       expect(res._status).toBe(200);
       const signArg = mockTokenService.sign.mock.calls[0][0];
-      expect(signArg.buzzBudget).toBe(1000);
+      expect(signArg.buzzBudget).toBe(minted);
+      // The response reports the signed budget, for the host to forward.
+      expect(res._body.buzzBudget).toBe(minted);
     });
 
-    it('falls back to BUZZ_BUDGET_DEFAULT (10) when the manifest omits a budget', async () => {
+    it('falls back to BUZZ_BUDGET_DEFAULT (1000) when the manifest omits a budget', async () => {
       mockBlockRegistry.resolvePageBlock.mockResolvedValue(PAGE_BUDGET_BLOCK(undefined));
       const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
       const res = makeRes();
@@ -476,7 +484,7 @@ describe('POST /api/v1/block-tokens — W10 page mint', () => {
 
       expect(res._status).toBe(200);
       const signArg = mockTokenService.sign.mock.calls[0][0];
-      expect(signArg.buzzBudget).toBe(10);
+      expect(signArg.buzzBudget).toBe(1000);
     });
 
     it('422 INVALID_BUZZ_BUDGET when the manifest declares a <= 0 budget (fail-closed, no silent default)', async () => {
@@ -507,15 +515,15 @@ describe('POST /api/v1/block-tokens — W10 page mint', () => {
 
       expect(res._status).toBe(200);
       const signArg = mockTokenService.sign.mock.calls[0][0];
-      expect(signArg.buzzBudget).toBe(10);
+      expect(signArg.buzzBudget).toBe(1000);
     });
 
     // ── Audit should-fix: integer enforcement in resolveBuzzBudget ──────────
     // A fractional manifest budget reaches the mint as a finite number (the
     // pageSettings mapper only filters non-finite/non-number), so the integer
     // guard in resolveBuzzBudget is what stops a fractional Buzz budget. It
-    // must DEFAULT (10), not pass 12.5 through.
-    it('a fractional manifest budget (12.5) → integer default (10), never a fractional budget', async () => {
+    // must DEFAULT (1000), not pass 12.5 through.
+    it('a fractional manifest budget (12.5) → integer default (1000), never a fractional budget', async () => {
       mockBlockRegistry.resolvePageBlock.mockResolvedValue(PAGE_BUDGET_BLOCK(12.5));
       const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
       const res = makeRes();
@@ -523,11 +531,11 @@ describe('POST /api/v1/block-tokens — W10 page mint', () => {
 
       expect(res._status).toBe(200);
       const signArg = mockTokenService.sign.mock.calls[0][0];
-      expect(signArg.buzzBudget).toBe(10);
+      expect(signArg.buzzBudget).toBe(1000);
       expect(Number.isInteger(signArg.buzzBudget)).toBe(true);
     });
 
-    it('an Infinity manifest budget → default (10), not an unbounded budget', async () => {
+    it('an Infinity manifest budget → default (1000), not an unbounded budget', async () => {
       // Infinity is filtered by the pageSettings mapper (Number.isFinite false)
       // → empty settings → resolveBuzzBudget default. Belt: even if it reached
       // resolveBuzzBudget, Number.isInteger(Infinity) is false → default.
@@ -538,10 +546,10 @@ describe('POST /api/v1/block-tokens — W10 page mint', () => {
 
       expect(res._status).toBe(200);
       const signArg = mockTokenService.sign.mock.calls[0][0];
-      expect(signArg.buzzBudget).toBe(10);
+      expect(signArg.buzzBudget).toBe(1000);
     });
 
-    it('a NaN manifest budget → default (10), not a poisoned budget', async () => {
+    it('a NaN manifest budget → default (1000), not a poisoned budget', async () => {
       // NaN is a `number` but Number.isFinite(NaN) is false → filtered by the
       // pageSettings mapper → empty settings → resolveBuzzBudget default. Belt:
       // even if it reached resolveBuzzBudget, Number.isInteger(NaN) is false →
@@ -556,7 +564,7 @@ describe('POST /api/v1/block-tokens — W10 page mint', () => {
 
       expect(res._status).toBe(200);
       const signArg = mockTokenService.sign.mock.calls[0][0];
-      expect(signArg.buzzBudget).toBe(10);
+      expect(signArg.buzzBudget).toBe(1000);
       expect(Number.isInteger(signArg.buzzBudget)).toBe(true);
     });
 
@@ -607,9 +615,9 @@ describe('POST /api/v1/block-tokens — W10 page mint', () => {
     expect(signArg.scopes).toEqual(
       expect.arrayContaining(['ai:write:budgeted', 'social:tip:self'])
     );
-    // Generation budget still resolves (default 10) since the page manifest
+    // Generation budget still resolves (default 1000) since the page manifest
     // omits page.buzzBudgetPerGen.
-    expect(signArg.buzzBudget).toBe(10);
+    expect(signArg.buzzBudget).toBe(1000);
   });
 
   // ── MODEL_INSTALL positive regression: the path the integer-enforcement fix
@@ -642,13 +650,86 @@ describe('POST /api/v1/block-tokens — W10 page mint', () => {
     expect(signArg.ctx).toEqual({ modelId: 12345, slotId: 'model.sidebar_top' });
   });
 
-  // ── Audit 🟡#2 — REGRESSION LOCK: the Number.isInteger guard now also affects
-  // the MODEL-slot path (both paths share resolveBuzzBudget). A FRACTIONAL
-  // install budget that PRE-PR would have flowed through verbatim (12.5) now
-  // falls back to the DEFAULT (10). This is the intended post-PR behavior — a
-  // model slot can never carry a fractional Buzz budget either. Documented here
-  // so a future change can't silently re-loosen the integer guard for models.
-  it('MODEL path regression: a FRACTIONAL install budget (12.5) → DEFAULT 10 (post-PR integer behavior)', async () => {
+  it.each([
+    [{ buzz_budget_per_gen: 5000 }, 5000],
+    [{ buzz_budget_per_gen: 5001 }, 5000],
+    [{ buzz_budget_per_gen: 6301 }, 5000],
+    [{}, 1000],
+  ])('MODEL path: install settings %j mint buzzBudget %i', async (settings, minted) => {
+    mockBlockRegistry.resolveBlockInstance.mockResolvedValue({
+      ...MODEL_INSTALL,
+      settings,
+      appBlock: {
+        ...MODEL_INSTALL.appBlock,
+        manifest: { scopes: ['ai:write:budgeted'] },
+        approvedScopes: ['ai:write:budgeted'],
+        app: { allowedScopes: 1 << 15 /* AIServicesWrite */ },
+      },
+    });
+    mockDbWrite.appUserScopeGrant.findUnique.mockResolvedValue({
+      grantedScopes: ['ai:write:budgeted'],
+      revokedAt: null,
+    });
+    const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
+    const res = makeRes();
+    await handler(makeReq({ origin: 'https://civitai.com', body: modelBody() }), res);
+
+    expect(res._status).toBe(200);
+    expect(mockTokenService.sign.mock.calls[0][0].buzzBudget).toBe(minted);
+    expect(res._body.buzzBudget).toBe(minted);
+  });
+
+  // The install setting is private unless the manifest lists it as public, so the
+  // host cannot read it: the response is the only way the host learns what was signed.
+  it('MODEL path: the response reports the budget signed from a PRIVATE install setting', async () => {
+    mockBlockRegistry.resolveBlockInstance.mockResolvedValue({
+      ...MODEL_INSTALL,
+      settings: { buzz_budget_per_gen: 53 },
+      appBlock: {
+        ...MODEL_INSTALL.appBlock,
+        manifest: { scopes: ['ai:write:budgeted'] },
+        approvedScopes: ['ai:write:budgeted'],
+        app: { allowedScopes: 1 << 15 /* AIServicesWrite */ },
+      },
+    });
+    mockDbWrite.appUserScopeGrant.findUnique.mockResolvedValue({
+      grantedScopes: ['ai:write:budgeted'],
+      revokedAt: null,
+    });
+    const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
+    const res = makeRes();
+    await handler(makeReq({ origin: 'https://civitai.com', body: modelBody() }), res);
+
+    expect(res._status).toBe(200);
+    expect(mockTokenService.sign.mock.calls[0][0].buzzBudget).toBe(53);
+    expect(res._body.buzzBudget).toBe(53);
+  });
+
+  it('MODEL path: the response reports no budget when the spend scope was not signed', async () => {
+    mockBlockRegistry.resolveBlockInstance.mockResolvedValue({
+      ...MODEL_INSTALL,
+      settings: { buzz_budget_per_gen: 53 },
+      appBlock: {
+        ...MODEL_INSTALL.appBlock,
+        manifest: { scopes: ['ai:write:budgeted'] },
+        approvedScopes: ['ai:write:budgeted'],
+        app: { allowedScopes: 1 << 15 /* AIServicesWrite */ },
+      },
+    });
+    mockDbWrite.appUserScopeGrant.findUnique.mockResolvedValue(null);
+    const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
+    const res = makeRes();
+    await handler(makeReq({ origin: 'https://civitai.com', body: modelBody() }), res);
+
+    expect(res._status).toBe(200);
+    expect(mockTokenService.sign.mock.calls[0][0].scopes).not.toContain('ai:write:budgeted');
+    expect(mockTokenService.sign.mock.calls[0][0].buzzBudget).toBeUndefined();
+    expect(res._body.buzzBudget).toBeUndefined();
+  });
+
+  // The integer guard covers the MODEL-slot path too (both paths share
+  // resolveBuzzBudget): a model slot can never carry a fractional Buzz budget.
+  it('MODEL path: a fractional install budget (12.5) falls back to the default', async () => {
     mockBlockRegistry.resolveBlockInstance.mockResolvedValue({
       ...MODEL_INSTALL,
       settings: { buzz_budget_per_gen: 12.5 },
@@ -669,7 +750,7 @@ describe('POST /api/v1/block-tokens — W10 page mint', () => {
 
     expect(res._status).toBe(200);
     const signArg = mockTokenService.sign.mock.calls[0][0];
-    expect(signArg.buzzBudget).toBe(10);
+    expect(signArg.buzzBudget).toBe(1000);
     expect(Number.isInteger(signArg.buzzBudget)).toBe(true);
   });
 

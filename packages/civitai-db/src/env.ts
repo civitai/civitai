@@ -25,6 +25,7 @@ const schema = z.object({
   NOTIFICATION_DB_REPLICA_URL: z.url().optional(),
   DATAPACKET_DATABASE_RO_URL: z.url().optional(),
   APPS_DATABASE_URL: z.url().optional(),
+  APPDATA_DATABASE_URL: z.url().optional(),
   DATABASE_CONNECTION_TIMEOUT: z.coerce.number().default(0),
   DATABASE_POOL_MAX: z.coerce.number().default(20),
   NOTIFICATION_POOL_MAX: z.coerce.number().optional(),
@@ -40,7 +41,9 @@ const schema = z.object({
 function buildEnv() {
   const parsed = schema.safeParse(process.env);
   if (!parsed.success) {
-    throw new Error('[@civitai/db] Invalid environment variables:\n' + z.prettifyError(parsed.error));
+    throw new Error(
+      '[@civitai/db] Invalid environment variables:\n' + z.prettifyError(parsed.error)
+    );
   }
   return {
     databaseUrl: parsed.data.DATABASE_URL,
@@ -51,6 +54,7 @@ function buildEnv() {
     notificationReplicaUrl: parsed.data.NOTIFICATION_DB_REPLICA_URL,
     datapacketReadUrl: parsed.data.DATAPACKET_DATABASE_RO_URL,
     appsUrl: parsed.data.APPS_DATABASE_URL,
+    appdataUrl: parsed.data.APPDATA_DATABASE_URL,
     connectionTimeout: parsed.data.DATABASE_CONNECTION_TIMEOUT,
     poolMax: parsed.data.DATABASE_POOL_MAX,
     notificationPoolMax: parsed.data.NOTIFICATION_POOL_MAX,

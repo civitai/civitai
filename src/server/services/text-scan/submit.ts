@@ -71,12 +71,18 @@ export type ScanEntityResult =
   | { status: 'submitted'; workflowId: string }
   | { status: 'failed' };
 
+/** Segment 0 keeps the pre-segmentation step name. */
+export function textScanStepName(segment: number) {
+  return segment === 0 ? 'textScan' : `textScan${segment}`;
+}
+
 export function buildTextScanStep({
   system,
   user,
   model,
   labels,
   thinking,
+  segment,
   webSearch = false,
 }: {
   system: string;
@@ -84,6 +90,7 @@ export function buildTextScanStep({
   model: string;
   labels: TextScanLabel[];
   thinking: boolean;
+  segment?: number;
   webSearch?: boolean;
 }) {
   // The generated ChatCompletionMessage type declares only `role`; content is untyped upstream.
@@ -100,7 +107,34 @@ export function buildTextScanStep({
     // Auto tool choice: the model decides whether a name needs looking up.
     ...(webSearch ? { tools: [{ type: 'civitai:web_search' }] } : {}),
   };
-  return { $type: 'chatCompletion', name: 'textScan', input } as ChatCompletionStepTemplate;
+  return {
+    $type: 'chatCompletion',
+    name: textScanStepName(segment ?? 0),
+    ...(segment === undefined ? {} : { metadata: { segment } }),
+    input,
+  } as ChatCompletionStepTemplate;
+}
+
+export function buildTextScanSteps({
+  system,
+  segments,
+  model,
+  labels,
+  thinking,
+  webSearch = false,
+}: {
+  system: string;
+  segments: string[];
+  model: string;
+  labels: TextScanLabel[];
+  thinking: boolean;
+  webSearch?: boolean;
+}) {
+  if (segments.length === 1)
+    return [buildTextScanStep({ system, user: segments[0], model, labels, thinking, webSearch })];
+  return segments.map((user, segment) =>
+    buildTextScanStep({ system, user, model, labels, thinking, webSearch, segment })
+  );
 }
 
 export function textScanContentHash({
@@ -110,6 +144,7 @@ export function textScanContentHash({
   thinking,
   rulesFingerprint,
   variant,
+  segmentBudget,
 }: {
   user: string;
   promptIds: PromptIds;
@@ -117,6 +152,7 @@ export function textScanContentHash({
   thinking: boolean;
   rulesFingerprint?: string;
   variant?: TextScanVariant;
+  segmentBudget?: { maxInputChars: number; maxSegments: number };
 }) {
   const ids = Object.keys(promptIds)
     .sort()
@@ -125,7 +161,15 @@ export function textScanContentHash({
   // Appended only when present, so every existing row's hash is unchanged.
   const rules = rulesFingerprint ? `\u0000rules=${rulesFingerprint}` : '';
   const tail = variant ? `\u0000${variant}` : '';
-  return hashContent(`${user}\u0000${ids}\u0000${model}\u0000thinking=${thinking}${rules}${tail}`);
+  // Only text over the budget is split, so only its hash may change with the budget: a shorter
+  // text keeps its hash and is not rescanned when the budget changes.
+  const segmenting =
+    segmentBudget && user.length > segmentBudget.maxInputChars
+      ? `\u0000segments=${segmentBudget.maxInputChars}x${segmentBudget.maxSegments}`
+      : '';
+  return hashContent(
+    `${user}\u0000${ids}\u0000${model}\u0000thinking=${thinking}${rules}${tail}${segmenting}`
+  );
 }
 
 export function textScanExternalId({
@@ -344,20 +388,27 @@ async function submitTextScanPass({
       subject,
       maxInputChars: config.maxInputChars,
       modelRules,
+      maxSegments: config.maxSegments,
     });
   } catch (e) {
     if (!(e instanceof MissingTextScanPromptError)) throw e;
     await logMissingPrompts({ entityType, entityId, keys: e.keys });
     return { status: 'skipped', reason: 'missing-prompt' };
   }
+  // A profile with minChars 0 would otherwise submit an empty step.
+  if (!composed.text.trim()) {
+    await clearStaleVerdict({ entityType, entityId, pass: { mode, labels, variant }, subject });
+    return { status: 'skipped', reason: 'too-short' };
+  }
 
   const contentHash = textScanContentHash({
-    user: composed.user,
+    user: composed.text,
     promptIds: composed.promptIds,
     model: config.model,
     thinking: config.thinking,
     rulesFingerprint: composed.rulesFingerprint,
     variant,
+    segmentBudget: config,
   });
 
   const emEntityType = textScanEmEntityType(entityType, mode, variant);
@@ -415,6 +466,8 @@ async function submitTextScanPass({
     textHash: textScanTextHash(subject),
     inputChars: composed.inputChars,
     inputCut: composed.inputCut,
+    segments: composed.segments.length,
+    scannedChars: composed.scannedChars,
     ...(subject.meta ? { subjectMeta: subject.meta } : {}),
     ...(composed.ruleIds
       ? { ruleIds: composed.ruleIds, rulesFingerprint: composed.rulesFingerprint }
@@ -442,16 +495,14 @@ async function submitTextScanPass({
         tags: ['text-scan', entityType, mode, ...(variant ? [variant] : [])],
         externalId,
         currencies: [],
-        steps: [
-          buildTextScanStep({
-            system: composed.system,
-            user: composed.user,
-            model: config.model,
-            labels,
-            thinking: config.thinking,
-            webSearch: variant === 'web-search',
-          }),
-        ],
+        steps: buildTextScanSteps({
+          system: composed.system,
+          segments: composed.segments,
+          model: config.model,
+          labels,
+          thinking: config.thinking,
+          webSearch: variant === 'web-search',
+        }),
         callbacks: [
           {
             url: textScanCallbackUrl(),
@@ -500,6 +551,7 @@ async function submitTextScanPass({
     mode,
     ...(variant ? { variant } : {}),
     workflowId,
+    segments: composed.segments.length,
   }).catch(() => null);
   return { status: 'submitted', workflowId };
 }
