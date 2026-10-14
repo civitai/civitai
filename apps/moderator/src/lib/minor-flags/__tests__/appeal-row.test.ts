@@ -31,4 +31,7 @@ describe('clipList', () => {
     expect(clipList([1, 2, 3, 4, 5], 3)).toEqual({ shown: [1, 2, 3], more: 2 });
     expect(clipList([1], 3)).toEqual({ shown: [1], more: 0 });
   });
+  it('counts the overflow against the full length when the list itself was capped', () => {
+    expect(clipList([1, 2, 3, 4, 5], 3, 40)).toEqual({ shown: [1, 2, 3], more: 37 });
+  });
 });

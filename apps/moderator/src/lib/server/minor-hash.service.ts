@@ -245,7 +245,9 @@ export type MinorFlagAppealRow = {
   modelCreatedAt: Date;
   baseModel: string | null;
   trainedWords: string[];
+  trainedWordCount: number;
   tags: string[];
+  tagCount: number;
   coverImages: AppealCoverImage[];
   flaggedByUsername: string | null;
   flaggedByAt: Date | null;
@@ -259,7 +261,13 @@ const APPEAL_TRAINED_WORDS_CAP = 8;
 const APPEAL_TAGS_CAP = 12;
 const APPEAL_COVER_COUNT = 4;
 
-const flagSourceSql = sql`m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'source'`;
+/** A text-scan real-person flag sets `poi` and `meta.textScanFlags.poi` but writes no snapshot, so the
+ *  snapshot source alone would file it under "No flag record". One expression feeds the list predicate,
+ *  the facet groups and the returned row. */
+const flagSourceSql = sql`COALESCE(
+  m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'source',
+  CASE WHEN m.poi AND m.meta->'textScanFlags' ? 'poi' THEN ${SNAPSHOT_SOURCE['text-scan']} END
+)`;
 
 const appealSourcePredicate = (source: AppealSource) => {
   if (source === 'all') return sql`TRUE`;
@@ -282,7 +290,7 @@ const appealFlagPredicate = (flag: AppealFlag) =>
 const flaggedAtSql = sql`(m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'at')::timestamptz`;
 
 /** Tab 3 — Appeals. Deliberately NOT tab 2 narrowed by an appeal: that tab bounds itself to
- *  `source='auto'` inside 30 days and drops accepted flags, so an appeal against a moderator's own
+ *  `source='auto'` inside `AUTO_FLAG_REVIEW_WINDOW_DAYS` and drops accepted flags, so an appeal against a moderator's own
  *  Set-as-Minor, or against a flag that has since aged out, would surface nowhere. An appeal is a
  *  human asking for review, which outranks every one of those bounds.
  *
@@ -291,8 +299,7 @@ const flaggedAtSql = sql`(m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'at')::timestampt
  *  show that state instead.
  *
  *  The page of appeals is cut first (CTE), and only then do the per-model LATERALs run, so their cost
- *  is bounded by `limit`. They lean on `Appeal_status_idx`, `Model_userId`, `Post_modelVersionId_idx_new2`
- *  and `ModActivity_entityType_entityId_createdAt_idx`. */
+ *  is bounded by `limit`. */
 export async function getMinorFlagAppealsForReview({
   limit,
   offset = 0,
@@ -345,7 +352,8 @@ export async function getMinorFlagAppealsForReview({
     )
     SELECT pg.*,
            v."baseModel", COALESCE(v."trainedWords", '{}') AS "trainedWords",
-           COALESCE(t.tags, '{}') AS tags,
+           COALESCE(v."trainedWordCount", 0) AS "trainedWordCount",
+           COALESCE(t.tags, '{}') AS tags, COALESCE(t."tagCount", 0) AS "tagCount",
            COALESCE(ci.images, '[]'::jsonb) AS "coverImages",
            fb.username AS "flaggedByUsername", fb."createdAt" AS "flaggedByAt",
            COALESCE(up."otherFlaggedModels", 0) AS "otherFlaggedModels",
@@ -357,14 +365,15 @@ export async function getMinorFlagAppealsForReview({
     LEFT JOIN LATERAL (
       SELECT mv."baseModel", mv."trainedWords"[1:${sql.raw(
         String(APPEAL_TRAINED_WORDS_CAP)
-      )}] AS "trainedWords"
+      )}] AS "trainedWords", cardinality(mv."trainedWords") AS "trainedWordCount"
       FROM "ModelVersion" mv
       WHERE mv."modelId" = pg."modelId"
       ORDER BY (mv.status::text = 'Published') DESC, mv."createdAt" DESC, mv.id DESC
       LIMIT 1
     ) v ON TRUE
     LEFT JOIN LATERAL (
-      SELECT array_agg(x.name ORDER BY x.name) AS tags
+      SELECT array_agg(x.name ORDER BY x.name) AS tags,
+             (SELECT count(*)::int FROM "TagsOnModels" tc WHERE tc."modelId" = pg."modelId") AS "tagCount"
       FROM (
         SELECT tg.name::text AS name
         FROM "TagsOnModels" tom
@@ -396,7 +405,7 @@ export async function getMinorFlagAppealsForReview({
       SELECT ma."createdAt", su.username
       FROM "ModActivity" ma
       LEFT JOIN "User" su ON su.id = ma."userId"
-      WHERE pg."flagSource" = 'manual'
+      WHERE pg."flagSource" = ${SNAPSHOT_SOURCE.moderator}
         AND ma."entityType" = 'model'
         AND ma."entityId" = pg."modelId"
         AND ma.activity = 'setMinor'

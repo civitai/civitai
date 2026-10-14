@@ -45,16 +45,26 @@ export const SORT_LABELS: Record<AppealSort, string> = {
   flagged: 'Recently flagged',
 };
 
-/** A moderator affirming an auto-flag rewrites the source to `manual`, so `confirmedFrom` is the only
- *  trace that a hash match started it. */
+/** A moderator affirming an auto or text-scan flag rewrites the source to `manual`, so `confirmedFrom`
+ *  is the only trace of what started it. */
+export const effectiveSource = (
+  snapshotSource: string | null,
+  confirmedFrom: string | null
+): Exclude<AppealSource, 'all'> => {
+  const key = sourceKey(snapshotSource);
+  if (key !== 'moderator') return key;
+  const origin = sourceKey(confirmedFrom);
+  return origin === 'hash' || origin === 'text-scan' ? origin : key;
+};
+
 export const sourceLabel = (
   snapshotSource: string | null,
   confirmedFrom: string | null
 ): string => {
-  const key = sourceKey(snapshotSource);
-  const label = SOURCE_LABELS[key];
-  return key === 'moderator' && sourceKey(confirmedFrom) === 'hash'
-    ? `${label} (was hash match)`
+  const label = SOURCE_LABELS[sourceKey(snapshotSource)];
+  const origin = effectiveSource(snapshotSource, confirmedFrom);
+  return sourceKey(snapshotSource) === 'moderator' && origin !== 'moderator'
+    ? `${label} (was ${SOURCE_LABELS[origin].toLowerCase()})`
     : label;
 };
 
@@ -89,7 +99,6 @@ export function appealFacets(groups: AppealGroup[], filters: AppealFilters): App
   return { source, flag };
 }
 
-/** Non-default filters only, so the bare URL stays the default view. */
 export const appealFilterParams = (filters: AppealFilters): Record<string, string> => {
   const params: Record<string, string> = {};
   for (const k of ['source', 'flag', 'sort'] as const)

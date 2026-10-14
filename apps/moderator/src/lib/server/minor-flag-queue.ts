@@ -28,7 +28,7 @@ import {
   setModelMinorFlag,
 } from '$lib/server/minor-flag.service';
 
-export type MinorQueueView = 'pending' | 'auto' | 'appeals';
+export type MinorQueueView = 'pending' | 'auto';
 
 const querySchema = z.object({
   limit: z.coerce.number().int().min(10).max(200).catch(50),
@@ -41,6 +41,17 @@ const appealFilterSchema = z.object({
   flag: z.enum(APPEAL_FLAGS).catch(DEFAULT_APPEAL_FILTERS.flag),
   sort: z.enum(APPEAL_SORTS).catch(DEFAULT_APPEAL_FILTERS.sort),
 });
+
+function parsePaging(url: URL) {
+  const { limit, page, q } = parseQuery(url, querySchema);
+  const numeric = /^\d+$/.test(q) ? Number(q) : null;
+  const search: MinorSearch | undefined = !q
+    ? undefined
+    : numeric !== null
+    ? { modelOrUserId: numeric > MAX_INT4 ? 0 : numeric }
+    : { username: q };
+  return { limit, page, q, offset: (page - 1) * limit, numeric, search };
+}
 
 /**
  * Only the open tab's ROWS are queried here. The tab counts come from `/api/minor-queue-counts`,
@@ -57,38 +68,39 @@ export async function loadMinorQueue(
   tab: MinorQueueView,
   tabs: readonly { value: MinorQueueView; label: string }[] | null
 ) {
-  const { limit, page, q } = parseQuery(url, querySchema);
-  const offset = (page - 1) * limit;
+  const { limit, page, q, offset, numeric, search } = parsePaging(url);
 
-  const numeric = /^\d+$/.test(q) ? Number(q) : null;
-  const search: MinorSearch | undefined = !q
-    ? undefined
-    : numeric !== null
-    ? { modelOrUserId: numeric > MAX_INT4 ? 0 : numeric }
-    : { username: q };
-
-  const appealFilters: AppealFilters | null =
-    tab === 'appeals' ? parseQuery(url, appealFilterSchema) : null;
-
-  const [queue, lookup, appealGroups] = await Promise.all([
+  const [queue, lookup] = await Promise.all([
     tab === 'auto'
       ? getAutoFlaggedMinorModels({ limit, offset, search })
-      : tab === 'appeals'
-      ? getMinorFlagAppealsForReview({ limit, offset, search, filters: appealFilters ?? undefined })
       : getMinorHashMatchesForReview({ limit, offset, search }),
-    tab !== 'appeals' && numeric !== null && numeric <= MAX_INT4
-      ? getModelMinorState(numeric)
-      : null,
-    // The chip counts: one grouped scan of the pending appeals, only on this view.
-    appealFilters ? getMinorFlagAppealGroups({ search }) : null,
+    numeric !== null && numeric <= MAX_INT4 ? getModelMinorState(numeric) : null,
   ]);
 
-  const facets = appealFilters && appealGroups ? appealFacets(appealGroups, appealFilters) : null;
-
-  return { tab, limit, page, offset, q, lookup, tabs, appealFilters, facets, ...queue, wide: true };
+  return { tab, limit, page, offset, q, lookup, tabs, ...queue, wide: true };
 }
 
 export type MinorQueueData = Awaited<ReturnType<typeof loadMinorQueue>>;
+
+/** `fullBleed`: the appeals page owns its height so the queue and the open appeal scroll separately. */
+export async function loadAppealQueue(url: URL) {
+  const { limit, page, q, offset, search } = parsePaging(url);
+  const appealFilters: AppealFilters = parseQuery(url, appealFilterSchema);
+
+  const [queue, groups] = await Promise.all([
+    getMinorFlagAppealsForReview({ limit, offset, search, filters: appealFilters }),
+    // The counts are decoration; a failure here must not take the list down with it.
+    getMinorFlagAppealGroups({ search }).catch((err) => {
+      console.error('Appeal facet counts failed', err);
+      return null;
+    }),
+  ]);
+
+  const facets = groups ? appealFacets(groups, appealFilters) : null;
+  return { limit, page, offset, q, appealFilters, facets, ...queue, fullBleed: true };
+}
+
+export type AppealQueueData = Awaited<ReturnType<typeof loadAppealQueue>>;
 
 const modelIdFrom = async (event: RequestEvent) => {
   const form = await event.request.formData();

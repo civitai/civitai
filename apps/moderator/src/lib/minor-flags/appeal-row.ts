@@ -1,6 +1,6 @@
 import { NsfwLevel } from '@civitai/shared';
 
-/** Only PG and PG-13 show unblurred; an unrated (0) or higher level is blurred. */
+/** Unrated (0) blurs, same as R and above. */
 export const shouldBlurThumbnail = (nsfwLevel: number): boolean =>
   nsfwLevel !== NsfwLevel.PG && nsfwLevel !== NsfwLevel.PG13;
 
@@ -19,8 +19,11 @@ export const pastAppealsText = (past: {
   return parts.length ? parts.join(', ') : 'none';
 };
 
-/** The first `max` items and how many were left out. */
-export const clipList = <T>(items: T[], max: number): { shown: T[]; more: number } => ({
-  shown: items.slice(0, max),
-  more: Math.max(0, items.length - max),
-});
+export const clipList = <T>(
+  items: T[],
+  max: number,
+  total = items.length
+): { shown: T[]; more: number } => {
+  const shown = items.slice(0, max);
+  return { shown, more: Math.max(0, total - shown.length) };
+};

@@ -12,9 +12,8 @@
   import { userLookupUrl } from '$lib/entity-url';
   import type { MinorQueueData } from '$lib/server/minor-flag-queue';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
-  import { appealFilterParams } from '$lib/minor-flags/appeal-filters';
-  import AppealRow from '$lib/components/minor-flags/AppealRow.svelte';
-  import type { MinorFlagAppealRow } from '$lib/server/minor-hash.service';
+  import { effectiveSource, sourceKey } from '$lib/minor-flags/appeal-filters';
+  import type { HashDetail } from '$lib/minor-flags/hash-detail';
 
   type QueueForm = {
     error?: string;
@@ -32,14 +31,6 @@
   const rows = $derived(data.items as Row[]);
   const n = (v: unknown) => (typeof v === 'number' ? v : null);
   const s = (v: unknown) => (typeof v === 'string' ? v : null);
-
-  // Mirrors appealRowState.showHashMatch: a poi-only or text-scan minor row has no hash match, so
-  // there is no detail to fetch.
-  const hasHashDetail = (row: Row) => {
-    if (data.tab !== 'appeals') return true;
-    const source = s(row.flagSource);
-    return source !== null && (s(row.flagConfirmedFrom) ?? source) !== 'text-scan';
-  };
 
   const tabHref = (tab: string) => {
     const url = new URL(page.url);
@@ -78,37 +69,11 @@
       { reload: true }
     );
 
-  type Detail = {
-    match: {
-      minorModelId: number;
-      minorModelName: string | null;
-      minorModelVersionId: number | null;
-      hash: string;
-      /** The version of THIS model that carried the matched hash. Only the auto/appeals tabs get it
-       *  from here — the Pending row already knows its own. */
-      modelVersionId: number | null;
-    } | null;
-    detail: {
-      modelCoverUrl: string | null;
-      modelCoverType: string | null;
-      modelCreatedAt: string | null;
-      uploaderModelCount: number;
-      uploaderJoinedAt: string | null;
-      minorModelCoverUrl: string | null;
-      minorModelCoverType: string | null;
-      minorModelStatus: string | null;
-      minorModelDeletedAt: string | null;
-      minorUsername: string | null;
-      minorFlaggedAt: string | null;
-      minorFlaggedByUsername: string | null;
-    } | null;
-  };
-
   // Fetched on expand and cached per row. The promise is stored, not the resolved value, so the
   // template can await it — and a second expand of the same row does not refetch.
   // Aliased so the generic does not end in `>>`, which the script parser reads as a shift operator
   // and rejects — svelte-check accepts it, so the only symptom is a 500 from the dev server.
-  type DetailRequest = Promise<Detail>;
+  type DetailRequest = Promise<HashDetail>;
   const details = new SvelteMap<number, DetailRequest>();
   function toggle(row: Row) {
     const id = Number(row.modelId);
@@ -121,7 +86,7 @@
       id,
       fetch(`/api/minor-hash-detail/${id}${q}`).then((r) => {
         if (!r.ok) throw new Error(String(r.status));
-        return r.json() as Promise<Detail>;
+        return r.json() as Promise<HashDetail>;
       })
     );
   }
@@ -139,8 +104,8 @@
   };
 
   // Cached server-side and fetched here: the Pending count alone is ~10s, which is not a price to pay
-  // on every page render to label two tabs. The appeals page has no tabs, so it skips the fetch.
-  let counts = $state<{ pending: number; auto: number; appeals: number } | null>(null);
+  // on every page render to label two tabs.
+  let counts = $state<{ pending: number; auto: number } | null>(null);
   $effect(() => {
     if (!data.tabs) return;
     fetch('/api/minor-queue-counts')
@@ -154,9 +119,6 @@
     url.searchParams.set('page', String(n));
     return url.pathname + url.search;
   };
-  const filtersActive = $derived(
-    data.appealFilters !== null && Object.keys(appealFilterParams(data.appealFilters)).length > 0
-  );
   const firstShown = $derived(data.offset + 1);
   const lastShown = $derived(data.offset + rows.length);
 </script>
@@ -233,8 +195,8 @@
                     {#if d.minorModelDeletedAt}
                       <p class="text-xs text-dark-2">Deleted {dateTime(d.minorModelDeletedAt)}</p>
                     {/if}
-                    <!-- Only 2 of ~13.5k minor-locked models carry a setMinor ModActivity row, so a
-                         placeholder here would read as missing data on nearly every row. -->
+                    <!-- Most minor-locked models have no setMinor ModActivity row, so a placeholder
+                         would read as missing data on nearly every row. -->
                     {#if d.minorFlaggedAt}
                       <p class="text-xs text-dark-2">
                         Set minor {dateTime(d.minorFlaggedAt)}{d.minorFlaggedByUsername
@@ -251,7 +213,7 @@
                       Open flagged model ↗
                     </a>
                   </div>
-                {:else if (s(row.flagConfirmedFrom) ?? s(row.flagSource) ?? 'auto') === 'manual'}
+                {:else if effectiveSource(s(row.flagSource), s(row.flagConfirmedFrom)) === 'moderator'}
                   <div class="rounded-md border border-blue-500/30 bg-blue-500/10 p-3 text-sm text-blue-200">
                     <strong class="block">No hash match</strong>
                     A moderator flagged this model directly rather than the automation matching it
@@ -307,11 +269,6 @@
 <form method="GET" class="mb-4 flex max-w-xl gap-2">
   {#if data.tabs}
     <input type="hidden" name="tab" value={data.tab} />
-  {/if}
-  {#if data.appealFilters}
-    {#each Object.entries(appealFilterParams(data.appealFilters)) as [name, value] (name)}
-      <input type="hidden" {name} {value} />
-    {/each}
   {/if}
   <Input
     name="q"
@@ -375,7 +332,7 @@
       {#if verdict}
         <span class="text-sm text-dark-2">{verdict}</span>
       {:else if m.minor && m.flaggedAt}
-        {#if m.flagSource === 'auto'}
+        {#if sourceKey(m.flagSource) === 'hash'}
           <form method="POST" action="?/confirm" use:enhance={submit(m.modelId, 'Kept flagged')}>
             <input type="hidden" name="modelId" value={m.modelId} />
             <Button type="submit" size="xs">Keep flagged</Button>
@@ -402,33 +359,13 @@
   <p class="text-sm text-dark-2">
     {data.q
       ? `Nothing on this tab matches "${data.q}".`
-      : filtersActive
-      ? 'No open appeals match these filters.'
       : data.tab === 'pending'
-      ? 'No unreviewed hash matches.'
-      : data.tab === 'auto'
-        ? 'Nothing flagged automatically inside the review window.'
-        : 'No open appeals against a minor or real-person flag.'}
+        ? 'No unreviewed hash matches.'
+        : 'Nothing flagged automatically inside the review window.'}
   </p>
 {:else}
   <ul class="space-y-2">
     {#each rows as row (row.modelId)}
-      {#if data.tab === 'appeals'}
-        {@const appeal = row as unknown as MinorFlagAppealRow}
-        <AppealRow
-          row={appeal}
-          civitaiUrl={data.civitaiUrl}
-          verdict={acted.get(appeal.modelId)}
-          canExpand={hasHashDetail(row)}
-          expanded={expanded.has(appeal.modelId)}
-          ontoggle={() => toggle(row)}
-          {submit}
-        >
-          {#snippet detail()}
-            {@render detailPanel(row, appeal.modelId)}
-          {/snippet}
-        </AppealRow>
-      {:else}
       {@const modelId = Number(row.modelId)}
       {@const verdict = acted.get(modelId)}
       <li
@@ -492,11 +429,9 @@
         {/if}
 
         <div class="mt-3 flex flex-wrap items-center gap-2">
-          {#if hasHashDetail(row)}
-            <Button size="xs" variant="outline" onclick={() => toggle(row)}>
-              {expanded.has(modelId) ? 'Hide detail' : 'Detail'}
-            </Button>
-          {/if}
+          <Button size="xs" variant="outline" onclick={() => toggle(row)}>
+            {expanded.has(modelId) ? 'Hide detail' : 'Detail'}
+          </Button>
 
           {#if verdict}
             <span class="text-sm text-dark-2">{verdict}</span>
@@ -525,7 +460,6 @@
           {@render detailPanel(row, modelId)}
         {/if}
       </li>
-      {/if}
     {/each}
   </ul>
 

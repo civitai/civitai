@@ -3,6 +3,7 @@ import {
   appealFacets,
   appealFilterParams,
   DEFAULT_APPEAL_FILTERS,
+  effectiveSource,
   matchesFlag,
   sourceKey,
   sourceLabel,
@@ -21,9 +22,25 @@ describe('sourceKey', () => {
   });
 });
 
+describe('effectiveSource', () => {
+  it.each([
+    ['manual', 'auto', 'hash'],
+    ['manual', 'text-scan', 'text-scan'],
+    ['manual', null, 'moderator'],
+    ['manual', 'manual', 'moderator'],
+    ['auto', 'text-scan', 'hash'],
+    [null, 'auto', 'none'],
+  ])('%s confirmed from %s is %s', (source, confirmedFrom, expected) => {
+    expect(effectiveSource(source, confirmedFrom)).toBe(expected);
+  });
+});
+
 describe('sourceLabel', () => {
   it('names a hash match that a moderator later affirmed', () => {
     expect(sourceLabel('manual', 'auto')).toBe('Moderator (was hash match)');
+  });
+  it('names a text scan that a moderator later affirmed', () => {
+    expect(sourceLabel('manual', 'text-scan')).toBe('Moderator (was text scan)');
   });
   it('does not claim a hash origin for a plain moderator flag', () => {
     expect(sourceLabel('manual', null)).toBe('Moderator');

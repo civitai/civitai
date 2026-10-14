@@ -8,11 +8,7 @@ import {
   type AppealFilters,
 } from '../../minor-flags/appeal-filters';
 
-/**
- * The Model Flag Appeals queue run against a real Postgres: every filter predicate, every sort, the
- * paging boundary under a filter, and the per-row context LATERALs. The text-only SQL tests cannot see a
- * predicate that compiles and selects the wrong rows.
- */
+/** Runs the appeals queue SQL on real Postgres; text-only SQL tests can't see a predicate that compiles but selects the wrong rows. */
 
 const { dbHandle } = vi.hoisted(() => ({ dbHandle: { current: null as unknown } }));
 
@@ -78,7 +74,8 @@ type Seed = {
   appealAt: string;
 };
 
-// Appeal order (oldest first): 1,2,3,4,5,6. Flag order (newest first): 3,2,6,1,5; model 4 has none.
+// Appeal order (oldest first): 1..7. Flag order (newest first): 3,2,6,1,5; models 4 and 7 have no snapshot.
+// Model 7 is a text-scan real-person flag, which writes textScanFlags and no snapshot.
 const MODELS: Seed[] = [
   {
     id: 1,
@@ -121,6 +118,14 @@ const MODELS: Seed[] = [
     meta: snapshot('legacy', '2026-09-22'),
     appealAt: '2026-10-06',
   },
+  {
+    id: 7,
+    userId: 15,
+    minor: false,
+    poi: true,
+    meta: { textScanFlags: { poi: { workflowId: 'wf-1' } } },
+    appealAt: '2026-10-07',
+  },
 ];
 
 let db: PGlite;
@@ -134,6 +139,7 @@ beforeEach(async () => {
     [12, 'c'],
     [13, 'd'],
     [14, 'e'],
+    [15, 'f'],
     [99, 'modA'],
   ])
     await db.query(`INSERT INTO "User" ("id","username") VALUES ($1,$2)`, [id, username]);
@@ -147,7 +153,6 @@ beforeEach(async () => {
       [m.id, m.userId, m.id, m.appealAt]
     );
   }
-  // Not Pending, not a Model appeal: neither may appear.
   await db.query(
     `INSERT INTO "Appeal" ("id","userId","entityType","entityId","status","createdAt") VALUES
       (50, 11, 'Model', 2, 'Approved', '2026-08-01'),
@@ -175,8 +180,8 @@ const ids = async (
 
 describe('source filter', () => {
   it.each([
-    ['all', [1, 2, 3, 4, 5, 6]],
-    ['text-scan', [3]],
+    ['all', [1, 2, 3, 4, 5, 6, 7]],
+    ['text-scan', [3, 7]],
     ['hash', [2]],
     ['moderator', [1, 5]],
     ['none', [4, 6]],
@@ -185,11 +190,19 @@ describe('source filter', () => {
   });
 });
 
+describe('text-scan real-person flag with no snapshot', () => {
+  it('reads as a text-scan source in the row, the filter and the counts', async () => {
+    const { items } = await getMinorFlagAppealsForReview({ limit: 50 });
+    expect(items.find((i) => i.modelId === 7)?.flagSource).toBe('text-scan');
+    expect(await ids({ source: 'none' })).not.toContain(7);
+  });
+});
+
 describe('flag filter', () => {
   it.each([
-    ['all', [1, 2, 3, 4, 5, 6]],
+    ['all', [1, 2, 3, 4, 5, 6, 7]],
     ['minor', [1, 2, 6]],
-    ['poi', [2, 3]],
+    ['poi', [2, 3, 7]],
     ['unflagged', [4, 5]],
   ] as const)('%s', async (flag, expected) => {
     expect(await ids({ flag })).toEqual(expected);
@@ -203,13 +216,13 @@ describe('flag filter', () => {
 
 describe('sort', () => {
   it('oldest appeal first by default', async () => {
-    expect(await ids({})).toEqual([1, 2, 3, 4, 5, 6]);
+    expect(await ids({})).toEqual([1, 2, 3, 4, 5, 6, 7]);
   });
   it('newest appeal first', async () => {
-    expect(await ids({ sort: 'newest' })).toEqual([6, 5, 4, 3, 2, 1]);
+    expect(await ids({ sort: 'newest' })).toEqual([7, 6, 5, 4, 3, 2, 1]);
   });
   it('most recently flagged first, unflagged-since-never last', async () => {
-    expect(await ids({ sort: 'flagged' })).toEqual([3, 2, 6, 1, 5, 4]);
+    expect(await ids({ sort: 'flagged' })).toEqual([3, 2, 6, 1, 5, 4, 7]);
   });
 });
 
@@ -249,8 +262,8 @@ describe('facet groups', () => {
   it('yields counts that match what each filter returns', async () => {
     const groups = await getMinorFlagAppealGroups({});
     const f = appealFacets(groups, DEFAULT_APPEAL_FILTERS);
-    expect(f.source).toEqual({ all: 6, 'text-scan': 1, hash: 1, moderator: 2, none: 2 });
-    expect(f.flag).toEqual({ all: 6, minor: 3, poi: 2, unflagged: 2 });
+    expect(f.source).toEqual({ all: 7, 'text-scan': 2, hash: 1, moderator: 2, none: 2 });
+    expect(f.flag).toEqual({ all: 7, minor: 3, poi: 3, unflagged: 2 });
   });
 
   it('honours the search', async () => {
@@ -296,6 +309,13 @@ describe('row context', () => {
     const row = await rowFor(1);
     expect(row.baseModel).toBe('Pony');
     expect(row.trainedWords).toEqual(['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h']);
+  });
+
+  it('reports the full tag and trained-word counts, not the capped arrays', async () => {
+    const row = await rowFor(1);
+    expect(row.trainedWordCount).toBe(10);
+    expect(row.tagCount).toBe(2);
+    expect(await rowFor(2)).toMatchObject({ trainedWordCount: 0, tagCount: 0 });
   });
 
   it('lists tags sorted by name', async () => {
