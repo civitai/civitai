@@ -1,0 +1,11 @@
+import singletonRouter from 'next/router';
+
+/**
+ * The current page's route PATTERN (e.g. `/models/[id]/[[...slug]]`) — never the concrete URL,
+ * which would carry ids and slugs into a metric label. Browser only.
+ */
+export function pageRouteHeaders(): { 'x-page-route'?: string } {
+  if (typeof window === 'undefined') return {};
+  const pageRoute = singletonRouter.router?.pathname;
+  return pageRoute ? { 'x-page-route': pageRoute } : {};
+}

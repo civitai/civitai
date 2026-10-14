@@ -645,6 +645,23 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
     appContext.ctx.res.end();
   }
 
+  // Exactly this `if` form: it is what keeps prom-client out of the client bundle (see the
+  // settings bootstrap above).
+  if (typeof window === 'undefined') {
+    if (!guardTo) {
+      try {
+        const { recordPageRender } = await import('~/server/prom/route-traffic.metrics');
+        recordPageRender({
+          route: appContext.ctx.pathname,
+          authed: !!session?.user,
+          headers: request.headers,
+        });
+      } catch {
+        // A metric must never fail the render.
+      }
+    }
+  }
+
   return {
     pageProps: {
       ...pageProps,

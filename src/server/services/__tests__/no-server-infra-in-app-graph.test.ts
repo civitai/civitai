@@ -131,6 +131,11 @@ const SERVER_ONLY_EDGES: { file: string; spec: string; reason: string }[] = [
     reason:
       'the per-render settings bootstrap, read in-process instead of over an HTTP request to our own `/api/user/settings`.',
   },
+  {
+    file: 'src/pages/_app.tsx',
+    spec: '~/server/prom/route-traffic.metrics',
+    reason: 'the per-render `page_render_total` counter; prom-client is server-only.',
+  },
 ];
 
 /**

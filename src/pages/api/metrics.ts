@@ -70,6 +70,7 @@ import { ensureRegisterAppBlockBuildMetrics } from '~/server/prom/app-block-buil
 // Without it every process runs those queries itself. Here rather than in ~/server/prom/client so
 // that module's graph never loads the redis client.
 import '~/server/prom/ingestion-gauge-store';
+import { ensureRegisterThreadCpuMetrics } from '~/server/prom/thread-cpu.metrics';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 
 ensureRegisterGenerationModelSubstitutionMetrics();
@@ -77,6 +78,7 @@ seedGenerationValidationMetrics();
 ensureRegisterImageUploadRelayMetrics();
 ensureRegisterCsamArchiveMetrics();
 ensureRegisterAppBlockBuildMetrics();
+ensureRegisterThreadCpuMetrics();
 
 const labels: Record<string, string> = {};
 if (process.env.PODNAME) {
