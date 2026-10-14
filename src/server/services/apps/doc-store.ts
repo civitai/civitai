@@ -350,11 +350,14 @@ const SQL_INSERT_DOC = `INSERT INTO appdata.doc AS d
   RETURNING d.size_bytes`;
 
 // A shared document created by the first increment of one of its counters:
-// empty data, no user author (so `author=me` never lists it and `own` never
-// makes the incrementer its owner). $1 app, $2 ns, $3 coll, $4 key, $5 incrementer, $6 expires_at
+// empty data and author_kind 'counter'. `author_uid` records the incrementer
+// ONLY so the creation is charged to their per-user ceiling like any other
+// create; it confers nothing — `author=me` and the `own` policy both require
+// author_kind 'user', and readers see `{ kind: 'counter' }` with no uid.
+// $1 app, $2 ns, $3 coll, $4 key, $5 incrementer, $6 expires_at
 const SQL_INSERT_COUNTER_DOC = `INSERT INTO appdata.doc AS d
     (app_id, ns, coll, scope_uid, key, data, version, seq, author_uid, author_kind, last_writer_uid, expires_at)
-  VALUES ($1, $2, $3, 0, $4, '{}'::jsonb, 1, 0, NULL, 'counter', $5::int, $6::timestamptz)
+  VALUES ($1, $2, $3, 0, $4, '{}'::jsonb, 1, 0, $5::int, 'counter', $5::int, $6::timestamptz)
   ON CONFLICT DO NOTHING
   RETURNING d.size_bytes`;
 
@@ -772,9 +775,10 @@ export function createDocStore(deps: DocStoreDeps) {
     authorUid: unknown
   ): { uid: number; ceiling: QuotaCeiling } | null {
     if (coll.config.visibility === 'private') return { uid: scope, ceiling: 'viewer' };
-    if (authorKind === 'user' && authorUid !== null) {
-      return { uid: Number(authorUid), ceiling: 'author' };
-    }
+    if (authorUid === null || authorUid === undefined) return null;
+    if (authorKind === 'user') return { uid: Number(authorUid), ceiling: 'author' };
+    // The viewer whose first increment created it (see SQL_INSERT_COUNTER_DOC).
+    if (authorKind === 'counter') return { uid: Number(authorUid), ceiling: 'viewer' };
     return null;
   }
 
@@ -1122,6 +1126,10 @@ export function createDocStore(deps: DocStoreDeps) {
             -1
           );
         }
+        // An owner-curated collection gains documents only from its owner.
+        if ((coll.config.write ?? 'own') === 'owner') {
+          throw new DocStoreError('not_found', 'document not found');
+        }
         const ins = await c.query(SQL_INSERT_COUNTER_DOC, [
           ctx.appId,
           ctx.ns,
@@ -1135,8 +1143,10 @@ export function createDocStore(deps: DocStoreDeps) {
         // (no user is charged — the document has no user author), then the seq.
         await seedTallies(c, ctx, coll, key);
         const value = Number((await bump()).count);
-        app.bytes += Number(ins.rows[0].size_bytes);
+        const size = Number(ins.rows[0].size_bytes);
+        app.bytes += size;
         app.docs += 1;
+        addUserDelta(users, chargee(coll, 0, 'counter', viewer), size, 1);
         const seq = await charge(c, ctx, app, users);
         await c.query(SQL_STAMP_SEQ, [ctx.appId, ctx.ns, coll.name, 0, key, seq, ctx.viewerUid]);
         return { value };

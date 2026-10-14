@@ -16,7 +16,8 @@ export type DocCollectionConfig = {
    *   anyone — viewers create, update and delete any document.
    *   owner  — only the app owner writes documents.
    *   none   — nobody writes documents; they exist only because a declared
-   *            counter was incremented (which creates the document).
+   *            counter was incremented (which creates the document — under
+   *            own, anyone and none; never under owner).
    * Counters and marks are not document writes and are allowed under all four.
    */
   write?: 'own' | 'anyone' | 'owner' | 'none';

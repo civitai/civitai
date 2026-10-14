@@ -89,9 +89,9 @@ export async function assertUsageConsistent(h: Harness, appId: string, ns: strin
   const perUser = await h.raw(
     `SELECT u.user_id, u.bytes, u.docs,
             COALESCE((SELECT sum(d.size_bytes) FROM appdata.doc d WHERE d.app_id = u.app_id AND d.ns = u.ns
-                        AND ((d.scope_uid = u.user_id) OR (d.scope_uid = 0 AND d.author_kind = 'user' AND d.author_uid = u.user_id))), 0)::bigint AS want_bytes,
+                        AND ((d.scope_uid = u.user_id) OR (d.scope_uid = 0 AND d.author_kind IN ('user', 'counter') AND d.author_uid = u.user_id))), 0)::bigint AS want_bytes,
             (SELECT count(*) FROM appdata.doc d WHERE d.app_id = u.app_id AND d.ns = u.ns
-                        AND ((d.scope_uid = u.user_id) OR (d.scope_uid = 0 AND d.author_kind = 'user' AND d.author_uid = u.user_id)))::int AS want_docs
+                        AND ((d.scope_uid = u.user_id) OR (d.scope_uid = 0 AND d.author_kind IN ('user', 'counter') AND d.author_uid = u.user_id)))::int AS want_docs
        FROM appdata.usage_user u WHERE u.app_id = $1 AND u.ns = $2`,
     [appId, ns]
   );
@@ -99,7 +99,7 @@ export async function assertUsageConsistent(h: Harness, appId: string, ns: strin
   const owners = await h.raw(
     `SELECT DISTINCT CASE WHEN d.scope_uid <> 0 THEN d.scope_uid ELSE d.author_uid END AS uid
        FROM appdata.doc d WHERE d.app_id = $1 AND d.ns = $2
-        AND (d.scope_uid <> 0 OR d.author_kind = 'user')`,
+        AND (d.scope_uid <> 0 OR (d.author_kind IN ('user', 'counter') AND d.author_uid IS NOT NULL))`,
     [appId, ns]
   );
   const charged = new Set(perUser.map((r) => Number(r.user_id)));
@@ -491,7 +491,7 @@ export function defineFunctionalSuite(makeHarness: () => Promise<Harness>) {
   });
 
   describe('create on first increment', () => {
-    it('creates an empty, author-less version-1 doc, charged like any create; later increments only count', async () => {
+    it('creates an empty, unowned version-1 doc, charged to its creator like any create; later increments only count', async () => {
       const app = freshApp('ctrcreate');
       const v1 = ctx(app, NS_PROD, VIEWER_1);
       expect(await store.increment(v1, TALLIES, 'col-9', 'plays', 4)).toEqual({ value: 4 });
@@ -517,7 +517,14 @@ export function defineFunctionalSuite(makeHarness: () => Promise<Harness>) {
         docs: 1,
         seq: 1,
       });
-      expect(await h.raw(`SELECT 1 FROM appdata.usage_user WHERE app_id = $1`, [app])).toEqual([]);
+      // The creating incrementer is charged like any creator; the second incrementer is not.
+      const users = await h.raw(
+        `SELECT user_id, bytes, docs FROM appdata.usage_user WHERE app_id = $1`,
+        [app]
+      );
+      expect(users.map((r) => [r.user_id, Number(r.bytes), Number(r.docs)])).toEqual([
+        [VIEWER_1, 2, 1],
+      ]);
       await assertUsageConsistent(h, app, NS_PROD);
       await expectCode(store.increment(v1, TALLIES, 'k'.repeat(129), 'plays'), 'invalid_request');
       await expectCode(
@@ -552,6 +559,63 @@ export function defineFunctionalSuite(makeHarness: () => Promise<Harness>) {
         'not_author'
       );
       expect((await store.get(v1, POSTS, 'counted'))?.author).toEqual({ kind: 'counter' });
+    });
+
+    it("the create is charged to the incrementer's own ceiling", async () => {
+      const app = freshApp('ctruser');
+      const tight = createDocStore({
+        db: h.db,
+        limits: { appBytes: 10_000, appDocs: 100, userBytes: 10_000, userDocs: 2 },
+      });
+      const v1 = ctx(app, NS_PROD, VIEWER_1);
+      await tight.increment(v1, TALLIES, 'a', 'plays');
+      await tight.increment(v1, TALLIES, 'b', 'plays');
+      const err = await expectCode(tight.increment(v1, TALLIES, 'c', 'plays'), 'quota_exceeded');
+      expect(err.details).toEqual({ ceiling: 'viewer' });
+      expect(await tight.increment(ctx(app, NS_PROD, VIEWER_2), TALLIES, 'c', 'plays')).toEqual({
+        value: 1,
+      });
+      await assertUsageConsistent(h, app, NS_PROD);
+    });
+
+    it('owner collections gain no documents from increments; anyone-collections keep the counter author on edit', async () => {
+      const app = freshApp('ctrpolicy');
+      const v1 = ctx(app, NS_PROD, VIEWER_1);
+      await expectCode(store.increment(v1, PLAYS, 'absent', 'plays'), 'not_found');
+      expect(await h.raw(`SELECT 1 FROM appdata.doc WHERE app_id = $1`, [app])).toEqual([]);
+      const counted: DocCollection = {
+        name: 'counted',
+        config: { visibility: 'shared', write: 'anyone', counters: ['n'] },
+      };
+      await store.increment(v1, counted, 'k', 'n');
+      const edited = await store.put(ctx(app, NS_PROD, VIEWER_2), counted, 'k', { note: 'hi' });
+      expect(edited.author).toEqual({ kind: 'counter' });
+      expect(edited.version).toBe(2);
+      expect(edited.counters).toEqual({ n: 1 });
+      const mine = await store.list(ctx(app, NS_PROD, VIEWER_2), counted, { author: 'me' });
+      expect(mine.items).toEqual([]);
+      await assertUsageConsistent(h, app, NS_PROD);
+    });
+
+    it('incrementing an expired user-authored doc credits its author back', async () => {
+      const app = freshApp('ctrcredit');
+      await store.put(ctx(app, NS_PROD, VIEWER_1), POSTS, 'k', { status: 'open' });
+      await h.raw(
+        `UPDATE appdata.doc SET expires_at = now() - interval '1 second' WHERE app_id = $1`,
+        [app]
+      );
+      expect(await store.increment(ctx(app, NS_PROD, VIEWER_2), POSTS, 'k', 'views')).toEqual({
+        value: 1,
+      });
+      const users = await h.raw(
+        `SELECT user_id, bytes, docs FROM appdata.usage_user WHERE app_id = $1 ORDER BY user_id`,
+        [app]
+      );
+      expect(users.map((r) => [r.user_id, Number(r.bytes), Number(r.docs)])).toEqual([
+        [VIEWER_1, 0, 0],
+        [VIEWER_2, 2, 1],
+      ]);
+      await assertUsageConsistent(h, app, NS_PROD);
     });
 
     it('the create is refused by the app quota; an existing doc still counts', async () => {
