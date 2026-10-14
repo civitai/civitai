@@ -26,7 +26,8 @@ export type DocCollection = { name: string; config: DocCollectionConfig };
  * The resolved identity every operation runs under. Produced by the caller's
  * token resolver from verified claims — never from request input.
  *   - `appId`: the approved app's id.
- *   - `ns`: `prod`, `dev:<uid>` or `rev:<publishRequestId>`.
+ *   - `ns`: `prod`, `dev:<uid>` or `rev:<publishRequestId>:<moderatorUid>` (the app id of a
+ *     review context is the publish request id, and its viewer is that moderator).
  *   - `viewerUid`: the signed-in viewer, or null for an anonymous viewer.
  */
 export type DocStoreContext = {

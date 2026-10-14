@@ -9,7 +9,7 @@ import path from 'path';
 import { PGlite } from '@electric-sql/pglite';
 import { Client } from 'pg';
 import type { DocStoreClient, DocStoreDb } from '~/server/services/apps/doc-store';
-import { APPDATA_TABLES, scanStatement } from './doc-store.sql-scan';
+import { APPDATA_TABLES, isReviewMaintenanceStatement, scanStatement } from './doc-store.sql-scan';
 
 export const MIGRATION_UP = path.resolve(
   __dirname,
@@ -48,6 +48,9 @@ export type Harness = {
 
 const BEGIN_SETTINGS =
   /^BEGIN; SELECT set_config\('appdata\.app_id', '([^']*)', true\), set_config\('appdata\.ns', '([^']*)', true\), set_config\('lock_timeout', '[0-9]+s', true\)$/;
+/** The store's review-maintenance transaction: no namespace, maintenance on, app id or none. */
+const BEGIN_MAINTENANCE =
+  /^BEGIN; SELECT set_config\('appdata\.app_id', '([^']*)', true\), set_config\('appdata\.ns', '', true\), set_config\('appdata\.review_maintenance', 'on', true\), set_config\('lock_timeout', '[0-9]+s', true\)$/;
 
 /**
  * Wrap a store client so every statement is recorded and checked: the settings
@@ -57,18 +60,35 @@ const BEGIN_SETTINGS =
  * builder assembles, which no static scan can.
  */
 function recording(inner: DocStoreClient, h: Pick<Harness, 'statements' | 'violations'>) {
-  let bound: { app: string; ns: string } | null = null;
+  let bound: { app: string; ns: string; maintenance: boolean } | null = null;
   const client: DocStoreClient = {
     async query(sql, params) {
       const m = BEGIN_SETTINGS.exec(sql);
-      if (m) bound = { app: m[1], ns: m[2] };
+      const mm = BEGIN_MAINTENANCE.exec(sql);
+      if (m) bound = { app: m[1], ns: m[2], maintenance: false };
+      else if (mm) bound = { app: mm[1], ns: '', maintenance: true };
       else if (sql === 'COMMIT' || sql === 'ROLLBACK') bound = null;
       else if (/appdata/i.test(sql)) {
         const p = params ?? [];
         if (!bound) h.violations.push(`statement outside a bound transaction: ${sql}`);
         else {
           h.statements.push({ sql, params: p, app: bound.app, ns: bound.ns });
-          if (p[0] !== bound.app || p[1] !== bound.ns) {
+          const maintenanceShape = isReviewMaintenanceStatement(sql);
+          if (maintenanceShape !== bound.maintenance) {
+            h.violations.push(
+              `${
+                maintenanceShape ? 'maintenance statement outside' : 'scoped statement inside'
+              } a maintenance transaction: ${sql}`
+            );
+          } else if (bound.maintenance) {
+            // A purge carries the request as $1; the listing binds no app and carries none.
+            if (bound.app !== '' && p[0] !== bound.app) {
+              h.violations.push(`$1 does not match the bound request: ${sql}`);
+            }
+            if (bound.app === '' && /app_id\s*=\s*\$1/.test(sql)) {
+              h.violations.push(`keyed maintenance statement with no bound request: ${sql}`);
+            }
+          } else if (p[0] !== bound.app || p[1] !== bound.ns) {
             h.violations.push(`$1/$2 do not match the bound context: ${sql}`);
           }
         }

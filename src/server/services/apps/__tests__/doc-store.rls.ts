@@ -34,10 +34,11 @@ export function defineRlsSuite(makeHarness: () => Promise<Harness>) {
   });
 
   describe('row-level security (second isolation layer)', () => {
-    it('every appdata table has RLS enabled AND forced, with the one scope policy', async () => {
+    it('every appdata table has RLS enabled AND forced, with the scope policy and the two review-maintenance policies', async () => {
       const rows = await h.raw(
         `SELECT c.relname, c.relrowsecurity, c.relforcerowsecurity,
-                (SELECT count(*) FROM pg_policies p WHERE p.schemaname = 'appdata' AND p.tablename = c.relname)::int AS policies
+                (SELECT string_agg(p.policyname || ':' || p.cmd, ',' ORDER BY p.policyname)
+                   FROM pg_policies p WHERE p.schemaname = 'appdata' AND p.tablename = c.relname) AS policies
            FROM pg_class c WHERE c.relnamespace = 'appdata'::regnamespace AND c.relkind = 'r' ORDER BY c.relname`
       );
       expect(rows).toEqual(
@@ -45,7 +46,7 @@ export function defineRlsSuite(makeHarness: () => Promise<Harness>) {
           relname: t,
           relrowsecurity: true,
           relforcerowsecurity: true,
-          policies: 1,
+          policies: 'appdata_review_delete:DELETE,appdata_review_read:SELECT,appdata_scope:ALL',
         }))
       );
     });
@@ -131,6 +132,188 @@ export function defineRlsSuite(makeHarness: () => Promise<Harness>) {
       }
       const [b] = await h.raw(`SELECT version FROM appdata.doc WHERE app_id = $1`, [RLS_B]);
       expect(Number(b.version)).toBe(1);
+    });
+  });
+
+  describe('review maintenance (appdata.review_maintenance)', () => {
+    // A request with review rows AND (impossible in practice, but the clause must not care)
+    // prod and dev rows under the same app id, plus another request's review row.
+    const REQ = 'pubreq_RLSMAINTREQ';
+    const OTHER = 'pubreq_RLSMAINTOTHER';
+    const SEED: [string, string][] = [
+      [REQ, 'prod'],
+      [REQ, 'dev:7'],
+      [REQ, `rev:${REQ}:7`],
+      [REQ, `rev:${REQ}:8`],
+      [OTHER, `rev:${OTHER}:7`],
+      [OTHER, 'prod'],
+    ];
+    const begin = (app: string, maintenance: string) =>
+      `BEGIN; SELECT set_config('appdata.app_id', '${app}', true), set_config('appdata.ns', '', true), set_config('appdata.review_maintenance', '${maintenance}', true)`;
+    const pairs = (rows: Record<string, unknown>[]) =>
+      rows.map((r) => `${r.app_id}|${r.ns}`).sort();
+    const all = async (t: string) =>
+      pairs(
+        await h.raw(`SELECT app_id, ns FROM appdata.${t} WHERE app_id IN ($1, $2)`, [REQ, OTHER])
+      );
+
+    beforeAll(async () => {
+      for (const [app, ns] of SEED) {
+        await h.raw(
+          `INSERT INTO appdata.doc (app_id, ns, coll, scope_uid, key, data, version, seq, author_kind)
+           VALUES ($1, $2, 'c', 0, 'k', '{}', 1, 1, 'app')`,
+          [app, ns]
+        );
+        await h.raw(`INSERT INTO appdata.usage_app (app_id, ns) VALUES ($1, $2)`, [app, ns]);
+        // One row in each of the other five tables too, so every table's policy is probed.
+        await h.raw(
+          `INSERT INTO appdata.doc_index (app_id, ns, coll, scope_uid, key, name, v_type, v_text)
+           VALUES ($1, $2, 'c', 0, 'k', 'i', 'string', 'v')`,
+          [app, ns]
+        );
+        await h.raw(
+          `INSERT INTO appdata.doc_tally (app_id, ns, coll, key, kind, name, count)
+           VALUES ($1, $2, 'c', 'k', 'counter', 'n', 1)`,
+          [app, ns]
+        );
+        await h.raw(
+          `INSERT INTO appdata.doc_mark (app_id, ns, coll, key, name, user_id) VALUES ($1, $2, 'c', 'k', 'n', 7)`,
+          [app, ns]
+        );
+        await h.raw(
+          `INSERT INTO appdata.doc_tomb (app_id, ns, coll, scope_uid, key, seq) VALUES ($1, $2, 'c', 0, 'gone', 1)`,
+          [app, ns]
+        );
+        await h.raw(`INSERT INTO appdata.usage_user (app_id, ns, user_id) VALUES ($1, $2, 7)`, [
+          app,
+          ns,
+        ]);
+      }
+    });
+
+    const OTHER_TABLES = ['doc_index', 'doc_tally', 'doc_mark', 'doc_tomb', 'usage_user'];
+
+    it('every table: bound to a request, reads only its review rows; bound to none, reads nothing outside doc and usage_app', async () => {
+      const c = await h.rawAsRole();
+      try {
+        for (const t of [...OTHER_TABLES, 'doc', 'usage_app']) {
+          await c.query(begin(REQ, 'on'));
+          expect({ t, rows: pairs(await c.query(`SELECT app_id, ns FROM appdata.${t}`)) }).toEqual({
+            t,
+            rows: [`${REQ}|rev:${REQ}:7`, `${REQ}|rev:${REQ}:8`],
+          });
+          await c.query('ROLLBACK');
+        }
+        for (const t of OTHER_TABLES) {
+          await c.query(begin('', 'on'));
+          expect({ t, rows: await c.query(`SELECT app_id FROM appdata.${t}`) }).toEqual({
+            t,
+            rows: [],
+          });
+          await c.query('ROLLBACK');
+        }
+      } finally {
+        await c.query('ROLLBACK').catch(() => undefined);
+        await c.close();
+      }
+    });
+
+    it('positive control: the superuser sees every seeded row', async () => {
+      const want = SEED.map(([a, n]) => `${a}|${n}`).sort();
+      for (const t of APPDATA_TABLES) expect({ t, rows: await all(t) }).toEqual({ t, rows: want });
+    });
+
+    it('on, bound to a request: reads and deletes ONLY that request’s review rows — never prod or dev', async () => {
+      const c = await h.rawAsRole();
+      try {
+        await c.query(begin(REQ, 'on'));
+        expect(pairs(await c.query(`SELECT app_id, ns FROM appdata.doc`))).toEqual([
+          `${REQ}|rev:${REQ}:7`,
+          `${REQ}|rev:${REQ}:8`,
+        ]);
+        expect(pairs(await c.query(`SELECT app_id, ns FROM appdata.usage_app`))).toEqual([
+          `${REQ}|rev:${REQ}:7`,
+          `${REQ}|rev:${REQ}:8`,
+        ]);
+        // Predicate-less deletes reach exactly the bound request's review rows.
+        expect(pairs(await c.query(`DELETE FROM appdata.doc RETURNING app_id, ns`))).toEqual([
+          `${REQ}|rev:${REQ}:7`,
+          `${REQ}|rev:${REQ}:8`,
+        ]);
+        expect(pairs(await c.query(`DELETE FROM appdata.usage_app RETURNING app_id, ns`))).toEqual([
+          `${REQ}|rev:${REQ}:7`,
+          `${REQ}|rev:${REQ}:8`,
+        ]);
+        // Read and delete only: no update, no insert.
+        expect(await c.query(`UPDATE appdata.usage_app SET bytes = 9 RETURNING 1`)).toEqual([]);
+        expect(
+          await rejects(
+            c.query(`INSERT INTO appdata.usage_app (app_id, ns) VALUES ('${REQ}', 'rev:${REQ}:9')`)
+          )
+        ).toMatch(/row-level security/);
+      } finally {
+        await c.query('ROLLBACK').catch(() => undefined);
+        await c.close();
+      }
+      expect(await all('doc')).toHaveLength(SEED.length);
+    });
+
+    it('on, bound to no request: reads every app’s review rows on doc and usage_app (the listing) — still no prod or dev — and deletes nothing', async () => {
+      const c = await h.rawAsRole();
+      try {
+        await c.query(begin('', 'on'));
+        const reviewRows = [
+          `${OTHER}|rev:${OTHER}:7`,
+          `${REQ}|rev:${REQ}:7`,
+          `${REQ}|rev:${REQ}:8`,
+        ];
+        expect(pairs(await c.query(`SELECT app_id, ns FROM appdata.doc`))).toEqual(reviewRows);
+        expect(pairs(await c.query(`SELECT app_id, ns FROM appdata.usage_app`))).toEqual(
+          reviewRows
+        );
+        expect(await c.query(`DELETE FROM appdata.usage_app RETURNING 1`)).toEqual([]);
+        expect(await c.query(`DELETE FROM appdata.doc RETURNING 1`)).toEqual([]);
+      } finally {
+        await c.query('ROLLBACK').catch(() => undefined);
+        await c.close();
+      }
+    });
+
+    it('any other value, or none, admits nothing; and the setting ends with its transaction', async () => {
+      const c = await h.rawAsRole();
+      try {
+        for (const value of ['off', 'true', '1', 'ON']) {
+          await c.query(begin(REQ, value));
+          expect(await c.query(`SELECT app_id FROM appdata.usage_app`), value).toEqual([]);
+          expect(await c.query(`DELETE FROM appdata.doc RETURNING 1`), value).toEqual([]);
+          await c.query('ROLLBACK');
+        }
+        await c.query(begin(REQ, 'on'));
+        expect((await c.query(`SELECT app_id FROM appdata.doc`)).length).toBe(2);
+        await c.query('COMMIT');
+        // Transaction-local: the same connection afterwards carries '' and sees nothing.
+        expect(
+          await c.query(`SELECT current_setting('appdata.review_maintenance', true) AS v`)
+        ).toEqual([{ v: '' }]);
+        expect(await c.query(`SELECT app_id FROM appdata.usage_app`)).toEqual([]);
+        expect(await c.query(`DELETE FROM appdata.doc RETURNING 1`)).toEqual([]);
+      } finally {
+        await c.close();
+      }
+      expect(await all('doc')).toHaveLength(SEED.length);
+    });
+
+    it('the ordinary scope is unchanged by the clause: a prod binding of the request sees its prod row only', async () => {
+      const c = await h.rawAsRole();
+      try {
+        await c.query(
+          `BEGIN; SELECT set_config('appdata.app_id', '${REQ}', true), set_config('appdata.ns', 'prod', true)`
+        );
+        expect(pairs(await c.query(`SELECT app_id, ns FROM appdata.doc`))).toEqual([`${REQ}|prod`]);
+      } finally {
+        await c.query('ROLLBACK').catch(() => undefined);
+        await c.close();
+      }
     });
   });
 }

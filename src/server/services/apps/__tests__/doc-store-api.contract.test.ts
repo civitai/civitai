@@ -756,10 +756,24 @@ describe('namespaces per token kind', () => {
     expect(r.body).toMatchObject({ code: 'not_eligible', details: { reason: 'app_not_approved' } });
   });
 
-  it('the REAL review run-for-real mint withholds both storage scopes: refused before the store', async () => {
+  /** A token from the REAL run-for-real review mint, for `uid` reviewing `pubreq`. */
+  async function realReviewMint(
+    pubreq: { id: string; status: string; slug: string; manifest: unknown },
+    uid: number
+  ): Promise<{ token: string; scopes: string[] }> {
     const { mintReviewBlockToken } = await import(
       '~/server/services/blocks/publish-request.service'
     );
+    dbMock.dbRead.appBlockPublishRequest.findUnique.mockResolvedValue(pubreq);
+    const minted = await mintReviewBlockToken({
+      publishRequestId: pubreq.id,
+      modUserId: uid,
+      runForReal: true,
+    });
+    return minted as { token: string; scopes: string[] };
+  }
+
+  it("the REAL review run-for-real mint carries both storage scopes and reaches the store, in the moderator's own namespace", async () => {
     freshApps();
     const pubreq = {
       id: 'pubreq_01JREVIEWREALMINT0000000',
@@ -767,17 +781,117 @@ describe('namespaces per token kind', () => {
       slug: 'review-real-mint',
       manifest: MANIFEST,
     };
-    dbMock.dbRead.appBlockPublishRequest.findUnique.mockResolvedValue(pubreq);
     publishRequests.push(pubreq);
-    const minted = await mintReviewBlockToken({
-      publishRequestId: pubreq.id,
-      modUserId: VIEWER_IDS.v1,
-      runForReal: true,
+    const { token, scopes } = await realReviewMint(pubreq, VIEWER_IDS.v1);
+    expect(scopes).toEqual(['apps:storage', 'apps:storage:publish', 'user:read:self']);
+    const put = await call({ token, method: 'PUT', path: '/prefs/k', body: { data: { a: 1 } } });
+    expect(put.status).toBe(200);
+    const shared = await call({
+      token,
+      method: 'PUT',
+      path: '/posts/p1',
+      body: { data: { status: 'open' } },
     });
-    const token = (minted as { token: string }).token;
-    const r = await call({ token, method: 'GET', path: '/prefs/k' });
-    expect(r.status).toBe(403);
-    expect(r.body).toMatchObject({ code: 'insufficient_scope' });
+    expect(shared.status).toBe(200);
+    const rows = await harness.raw(
+      `SELECT app_id, ns, coll FROM appdata.doc WHERE app_id = $1 ORDER BY coll`,
+      [pubreq.id]
+    );
+    expect(rows).toEqual([
+      { app_id: pubreq.id, ns: `rev:${pubreq.id}:${VIEWER_IDS.v1}`, coll: 'posts' },
+      { app_id: pubreq.id, ns: `rev:${pubreq.id}:${VIEWER_IDS.v1}`, coll: 'prefs' },
+    ]);
+  });
+
+  it('two moderators reviewing ONE request share nothing: private and shared docs, marks, counters', async () => {
+    freshApps();
+    const pubreq = {
+      id: 'pubreq_01JREVIEWTWOMODS00000000',
+      status: 'pending',
+      slug: 'review-two-mods',
+      manifest: MANIFEST,
+    };
+    publishRequests.push(pubreq);
+    const m1 = (await realReviewMint(pubreq, VIEWER_IDS.v1)).token;
+    const m2 = (await realReviewMint(pubreq, VIEWER_IDS.v2)).token;
+    const req = (token: string, method: string, path: string, body?: unknown) =>
+      call({ token, method, path, body });
+
+    // Moderator 1 writes a private doc, a shared doc, a mark, a counter and a counter-created doc.
+    expect((await req(m1, 'PUT', '/prefs/k', { data: { who: 1 } })).status).toBe(200);
+    expect((await req(m1, 'PUT', '/posts/p1', { data: { status: 'open' } })).status).toBe(200);
+    expect((await req(m1, 'PUT', '/posts/p1/marks/vote')).body).toMatchObject({ count: 1 });
+    expect((await req(m1, 'POST', '/posts/p1/counters/views', { by: 5 })).body).toEqual({
+      value: 5,
+    });
+    expect((await req(m1, 'POST', '/plays/g1/counters/plays', { by: 3 })).body).toEqual({
+      value: 3,
+    });
+
+    // Moderator 2 sees none of it.
+    expect((await req(m2, 'GET', '/prefs/k')).status).toBe(404);
+    expect((await req(m2, 'GET', '/posts/p1')).status).toBe(404);
+    expect((await req(m2, 'GET', '/plays/g1')).status).toBe(404);
+    expect((await req(m2, 'GET', '/posts')).body).toMatchObject({ items: [] });
+    // The same keys are fresh for moderator 2: no `not_author` on moderator 1's shared doc,
+    // and marks and counters start from zero.
+    expect((await req(m2, 'PUT', '/posts/p1', { data: { status: 'closed' } })).body).toMatchObject({
+      version: 1,
+      author: { kind: 'user', isViewer: true },
+    });
+    expect((await req(m2, 'PUT', '/posts/p1/marks/vote')).body).toMatchObject({ count: 1 });
+    expect((await req(m2, 'POST', '/posts/p1/counters/views', { by: 2 })).body).toEqual({
+      value: 2,
+    });
+    expect((await req(m2, 'POST', '/plays/g1/counters/plays', { by: 1 })).body).toEqual({
+      value: 1,
+    });
+
+    // …and moderator 1's own data is unchanged by moderator 2's writes.
+    expect((await req(m1, 'GET', '/posts/p1')).body).toMatchObject({
+      data: { status: 'open' },
+      version: 1,
+      counters: { views: 5 },
+      marks: { vote: 1 },
+    });
+    expect((await req(m1, 'GET', '/plays/g1')).body).toMatchObject({ counters: { plays: 3 } });
+    expect((await req(m1, 'GET', '/posts')).body).toMatchObject({
+      items: [{ key: 'p1', data: { status: 'open' } }],
+    });
+    // Two namespaces, one per moderator, for the one request.
+    const ns = await harness.raw(
+      `SELECT DISTINCT ns FROM appdata.doc WHERE app_id = $1 ORDER BY ns`,
+      [pubreq.id]
+    );
+    expect(ns.map((r) => r.ns)).toEqual(
+      [`rev:${pubreq.id}:${VIEWER_IDS.v1}`, `rev:${pubreq.id}:${VIEWER_IDS.v2}`].sort()
+    );
+
+    // The purge a decision runs finds exactly the namespaces the route wrote: nothing of the
+    // request is left in any table. A delete first, so the tombstone table has a row too, and a
+    // positive control that every table HAS rows before the purge.
+    expect((await req(m1, 'PUT', '/notes/n1', { data: { t: 'x' } })).status).toBe(200);
+    expect((await req(m1, 'DELETE', '/notes/n1')).status).toBe(200);
+    const TABLES = [
+      'doc',
+      'doc_index',
+      'doc_tally',
+      'doc_mark',
+      'doc_tomb',
+      'usage_app',
+      'usage_user',
+    ];
+    const count = async (t: string) =>
+      Number(
+        (
+          await harness.raw(`SELECT count(*)::int AS n FROM appdata.${t} WHERE app_id = $1`, [
+            pubreq.id,
+          ])
+        )[0].n
+      );
+    for (const t of TABLES) expect({ t, rows: (await count(t)) > 0 }).toEqual({ t, rows: true });
+    expect((await liveStore.purgeReview(pubreq.id)).rows).toBeGreaterThan(0);
+    for (const t of TABLES) expect({ t, rows: await count(t) }).toEqual({ t, rows: 0 });
   });
 
   it('the run gate on the token subject refuses with not_eligible apps_disabled', async () => {
@@ -1050,9 +1164,8 @@ describe('review findings: refusal detail, usage, budget refunds, review gates, 
     });
   });
 
-  // RESOLVER-ONLY: no mint grants a review token the storage scopes today (see the REAL
-  // review mint test above), so these hand-signed tokens exercise the resolver's review
-  // branch directly; it is unreachable from a minted token until that decision is made.
+  // Hand-signed review tokens, so each resolver gate below is reached on its own (the REAL
+  // run-for-real mint is exercised above).
   it('resolver review branch (hand-signed): rev namespace, author capability, sign-in, pending request', async () => {
     {
       const pr = { id: 'pubreq_01JREVIEWNAMESPACE00000000', status: 'pending', manifest: MANIFEST };
@@ -1067,9 +1180,10 @@ describe('review findings: refusal detail, usage, budget refunds, review gates, 
       const put = await call({ token: t, method: 'PUT', path: '/prefs/k', body: { data: {} } });
       expect(put.status).toBe(200);
       const rows = await harness.raw(
-        `SELECT app_id, ns FROM appdata.doc WHERE key = 'k' AND ns LIKE 'rev:%'`
+        `SELECT app_id, ns FROM appdata.doc WHERE key = 'k' AND app_id = $1`,
+        [pr.id]
       );
-      expect(rows).toEqual([{ app_id: pr.id, ns: `rev:${pr.id}` }]);
+      expect(rows).toEqual([{ app_id: pr.id, ns: `rev:${pr.id}:${VIEWER_IDS.v1}` }]);
     }
     freshApps();
     const pubreq = { id: 'pubreq_01JREVIEWGATES0000000000', status: 'pending', manifest: MANIFEST };
