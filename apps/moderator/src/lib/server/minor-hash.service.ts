@@ -1,6 +1,14 @@
 import { sql, type RawBuilder } from '@civitai/db/kysely';
 import { createCache } from './cache';
 import { dbRead } from './db';
+import {
+  DEFAULT_APPEAL_FILTERS,
+  SNAPSHOT_SOURCE,
+  type AppealFilters,
+  type AppealFlag,
+  type AppealGroup,
+  type AppealSource,
+} from '$lib/minor-flags/appeal-filters';
 
 /**
  * The read half of the main app's `/moderator/minor-hash-matches`, ported per
@@ -214,6 +222,8 @@ export async function getAutoFlaggedMinorModels({ limit, offset = 0, search }: P
   return { items: rows.rows.slice(0, limit), hasMore: rows.rows.length > limit };
 }
 
+export type AppealCoverImage = { id: number; url: string };
+
 export type MinorFlagAppealRow = {
   appealId: number;
   appealMessage: string;
@@ -231,46 +241,213 @@ export type MinorFlagAppealRow = {
   flagConfirmedFrom: string | null;
   prevNsfw: boolean | null;
   prevGalleryLevel: number | null;
+  modelType: string;
+  modelCreatedAt: Date;
+  baseModel: string | null;
+  trainedWords: string[];
+  trainedWordCount: number;
+  tags: string[];
+  tagCount: number;
+  coverImages: AppealCoverImage[];
+  flaggedByUsername: string | null;
+  flaggedByAt: Date | null;
+  otherFlaggedModels: number;
+  pastAppeals: { approved: number; rejected: number; void: number; pending: number };
 };
 
-/** Tab 3 — Appeals. Deliberately NOT tab 2 narrowed by an appeal: that tab bounds itself to
- *  `source='auto'` inside 30 days and drops accepted flags, so an appeal against a moderator's own
- *  Set-as-Minor, or against a flag that has since aged out, would surface nowhere. An appeal is a
- *  human asking for review, which outranks every one of those bounds.
+export type AppealQuery = Page & { filters?: AppealFilters };
+
+const APPEAL_TRAINED_WORDS_CAP = 8;
+const APPEAL_TAGS_CAP = 12;
+const APPEAL_COVER_COUNT = 4;
+
+/** A text-scan real-person flag sets `poi` and `meta.textScanFlags.poi` but writes no snapshot, so the
+ *  snapshot source alone would file it under "No flag record". One expression feeds the list predicate,
+ *  the facet groups and the returned row. */
+const flagSourceSql = sql`COALESCE(
+  m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'source',
+  CASE WHEN m.poi AND m.meta->'textScanFlags' ? 'poi' THEN ${SNAPSHOT_SOURCE['text-scan']} END
+)`;
+
+const appealSourcePredicate = (source: AppealSource) => {
+  if (source === 'all') return sql`TRUE`;
+  if (source === 'none')
+    return sql`(${flagSourceSql} IS NULL OR ${flagSourceSql} NOT IN (${sql.join(
+      Object.values(SNAPSHOT_SOURCE)
+    )}))`;
+  return sql`${flagSourceSql} = ${SNAPSHOT_SOURCE[source]}`;
+};
+
+const appealFlagPredicate = (flag: AppealFlag) =>
+  flag === 'minor'
+    ? sql`m.minor`
+    : flag === 'poi'
+    ? sql`m.poi`
+    : flag === 'unflagged'
+    ? sql`(NOT m.minor AND NOT m.poi)`
+    : sql`TRUE`;
+
+const flaggedAtSql = sql`(m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'at')::timestamptz`;
+
+/** Open appeals against a minor or real-person flag. Deliberately NOT the auto-flagged tab narrowed by
+ *  an appeal: that tab bounds itself to `source='auto'` inside `AUTO_FLAG_REVIEW_WINDOW_DAYS` and drops
+ *  accepted flags, so an appeal against a moderator's own Set-as-Minor, or against a flag that has
+ *  since aged out, would surface nowhere. An appeal is a human asking for review, which outranks every
+ *  one of those bounds.
  *
  *  No gate on the model still being minor either: reverting from tab 2 leaves the appeal Pending, and
  *  hiding it here would strand it with nowhere left to close it. `minor` is returned so the row can
- *  show that state instead. */
-export async function getMinorFlagAppealsForReview({ limit, offset = 0, search }: Page) {
+ *  show that state instead.
+ *
+ *  The page is cut first (CTE) so the per-model LATERALs are bounded by limit. */
+export async function getMinorFlagAppealsForReview({
+  limit,
+  offset = 0,
+  search,
+  filters = DEFAULT_APPEAL_FILTERS,
+}: AppealQuery) {
+  const inner =
+    filters.sort === 'newest'
+      ? sql`a."createdAt" DESC, a.id DESC`
+      : filters.sort === 'flagged'
+      ? sql`${flaggedAtSql} DESC NULLS LAST, a."createdAt", a.id`
+      : sql`a."createdAt", a.id`;
+  const outer =
+    filters.sort === 'newest'
+      ? sql`pg."appealCreatedAt" DESC, pg."appealId" DESC`
+      : filters.sort === 'flagged'
+      ? sql`pg."flaggedAt" DESC NULLS LAST, pg."appealCreatedAt", pg."appealId"`
+      : sql`pg."appealCreatedAt", pg."appealId"`;
+
   const rows = await sql<MinorFlagAppealRow>`
-    SELECT a.id AS "appealId", a."appealMessage", a."createdAt" AS "appealCreatedAt",
-           m.id AS "modelId", m.name AS "modelName", m."userId", u.username,
-           m.status::text AS status, m.minor, m.poi,
-           m.meta->'textScanFlags' AS "textScanFlags",
-           (m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'at')::timestamptz AS "flaggedAt",
-           m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'source' AS "flagSource",
-           -- A moderator affirming an auto-flag rewrites source to 'manual', so this is the only
-           -- surviving record that a hash match started it.
-           m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'confirmedFrom' AS "flagConfirmedFrom",
-           (m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'prevNsfw')::boolean AS "prevNsfw",
-           (m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'prevGalleryLevel')::int AS "prevGalleryLevel"
+    WITH pg AS (
+      SELECT a.id AS "appealId", a."appealMessage", a."createdAt" AS "appealCreatedAt",
+             m.id AS "modelId", m.name AS "modelName", m."userId", u.username,
+             m.status::text AS status, m.minor, m.poi, m.type::text AS "modelType",
+             m."createdAt" AS "modelCreatedAt",
+             m.meta->'textScanFlags' AS "textScanFlags",
+             ${flaggedAtSql} AS "flaggedAt",
+             ${flagSourceSql} AS "flagSource",
+             -- A moderator affirming an auto-flag rewrites source to 'manual', so this is the only
+             -- surviving record that a hash match started it.
+             m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'confirmedFrom' AS "flagConfirmedFrom",
+             (m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'prevNsfw')::boolean AS "prevNsfw",
+             (m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'prevGalleryLevel')::int AS "prevGalleryLevel"
+      FROM "Appeal" a
+      JOIN "Model" m ON m.id = a."entityId"
+      LEFT JOIN "User" u ON u.id = m."userId"
+      WHERE a."entityType" = 'Model'
+        -- Cast rather than bind the enum: the value goes over as text and Postgres has no
+        -- AppealStatus = text operator.
+        AND a.status::text = 'Pending'
+        AND ${appealSourcePredicate(filters.source)}
+        AND ${appealFlagPredicate(filters.flag)}
+        AND ${searchPredicate(search, {
+          modelId: 'm.id',
+          userId: 'm.userId',
+          username: 'u.username',
+        })}
+      ORDER BY ${inner}
+      LIMIT ${limit + 1} OFFSET ${offset}
+    )
+    SELECT pg.*,
+           v."baseModel", COALESCE(v."trainedWords", '{}') AS "trainedWords",
+           COALESCE(v."trainedWordCount", 0) AS "trainedWordCount",
+           COALESCE(t.tags, '{}') AS tags, COALESCE(t."tagCount", 0) AS "tagCount",
+           COALESCE(ci.images, '[]'::jsonb) AS "coverImages",
+           fb.username AS "flaggedByUsername", fb."createdAt" AS "flaggedByAt",
+           COALESCE(up."otherFlaggedModels", 0) AS "otherFlaggedModels",
+           jsonb_build_object(
+             'approved', COALESCE(ap.approved, 0), 'rejected', COALESCE(ap.rejected, 0),
+             'void', COALESCE(ap.void, 0), 'pending', COALESCE(ap.pending, 0)
+           ) AS "pastAppeals"
+    FROM pg
+    LEFT JOIN LATERAL (
+      SELECT mv."baseModel", mv."trainedWords"[1:${sql.raw(
+        String(APPEAL_TRAINED_WORDS_CAP)
+      )}] AS "trainedWords", cardinality(mv."trainedWords") AS "trainedWordCount"
+      FROM "ModelVersion" mv
+      WHERE mv."modelId" = pg."modelId"
+      ORDER BY (mv.status::text = 'Published') DESC, mv."createdAt" DESC, mv.id DESC
+      LIMIT 1
+    ) v ON TRUE
+    LEFT JOIN LATERAL (
+      SELECT array_agg(x.name ORDER BY x.name) AS tags,
+             (SELECT count(*)::int FROM "TagsOnModels" tc WHERE tc."modelId" = pg."modelId") AS "tagCount"
+      FROM (
+        SELECT tg.name::text AS name
+        FROM "TagsOnModels" tom
+        JOIN "Tag" tg ON tg.id = tom."tagId"
+        WHERE tom."modelId" = pg."modelId"
+        ORDER BY tg.name
+        LIMIT ${sql.raw(String(APPEAL_TAGS_CAP))}
+      ) x
+    ) t ON TRUE
+    LEFT JOIN LATERAL (
+      SELECT jsonb_agg(
+               jsonb_build_object('id', c.id, 'url', c.url)
+               ORDER BY c."versionIndex" ASC NULLS LAST, c."postId", c."imageIndex" ASC NULLS LAST, c.id
+             ) AS images
+      FROM (
+        SELECT i.id, i.url, mv.index AS "versionIndex", p.id AS "postId",
+               i.index AS "imageIndex"
+        FROM "ModelVersion" mv
+        JOIN "Post" p ON p."modelVersionId" = mv.id AND p."publishedAt" IS NOT NULL
+        JOIN "Image" i ON i."postId" = p.id
+        WHERE mv."modelId" = pg."modelId"
+          AND p."userId" = pg."userId"
+          AND i.type::text = 'image'
+        ORDER BY mv.index ASC NULLS LAST, p.id ASC, i.index ASC NULLS LAST, i.id ASC
+        LIMIT ${sql.raw(String(APPEAL_COVER_COUNT))}
+      ) c
+    ) ci ON TRUE
+    LEFT JOIN LATERAL (
+      SELECT ma."createdAt", su.username
+      FROM "ModActivity" ma
+      LEFT JOIN "User" su ON su.id = ma."userId"
+      WHERE pg."flagSource" = ${SNAPSHOT_SOURCE.moderator}
+        AND ma."entityType" = 'model'
+        AND ma."entityId" = pg."modelId"
+        AND ma.activity = 'setMinor'
+      ORDER BY ma."createdAt" DESC
+      LIMIT 1
+    ) fb ON TRUE
+    LEFT JOIN LATERAL (
+      SELECT count(*)::int AS "otherFlaggedModels"
+      FROM "Model" o
+      WHERE o."userId" = pg."userId" AND o.id <> pg."modelId" AND (o.minor OR o.poi)
+    ) up ON TRUE
+    LEFT JOIN LATERAL (
+      SELECT count(*) FILTER (WHERE pa.status::text = 'Approved')::int AS approved,
+             count(*) FILTER (WHERE pa.status::text = 'Rejected')::int AS rejected,
+             count(*) FILTER (WHERE pa.status::text = 'Void')::int AS void,
+             count(*) FILTER (WHERE pa.status::text = 'Pending')::int AS pending
+      FROM "Appeal" pa
+      WHERE pa."userId" = pg."userId" AND pa."entityType" = 'Model' AND pa.id <> pg."appealId"
+    ) ap ON TRUE
+    ORDER BY ${outer}
+  `.execute(dbRead);
+
+  return { items: rows.rows.slice(0, limit), hasMore: rows.rows.length > limit };
+}
+
+/** Cross-tabbed on source and flag state so both chip rows come from one scan. */
+export async function getMinorFlagAppealGroups({ search }: { search?: MinorSearch }) {
+  const rows = await sql<AppealGroup>`
+    SELECT ${flagSourceSql} AS source, m.minor, m.poi, count(*)::int AS count
     FROM "Appeal" a
     JOIN "Model" m ON m.id = a."entityId"
-    LEFT JOIN "User" u ON u.id = m."userId"
+    ${search && 'username' in search ? sql`LEFT JOIN "User" u ON u.id = m."userId"` : sql``}
     WHERE a."entityType" = 'Model'
-      -- Cast rather than bind the enum: the value goes over as text and Postgres has no
-      -- AppealStatus = text operator.
       AND a.status::text = 'Pending'
       AND ${searchPredicate(search, {
         modelId: 'm.id',
         userId: 'm.userId',
         username: 'u.username',
       })}
-    ORDER BY a."createdAt", a.id
-    LIMIT ${limit + 1} OFFSET ${offset}
+    GROUP BY 1, 2, 3
   `.execute(dbRead);
-
-  return { items: rows.rows.slice(0, limit), hasMore: rows.rows.length > limit };
+  return rows.rows;
 }
 
 export type ModelMinorState = {
@@ -413,12 +590,12 @@ export async function getAutoFlaggedMinorMatch({ modelId }: { modelId: number })
   return result.rows[0] ?? null;
 }
 
-/** The Auto-flagged and Appeals tabs' detail panel. Two queries rather than one join, so the second is
+/** The Auto-flagged tab's and the appeal panel's detail. Two queries rather than one join, so the second is
  *  the exact same `getMinorHashMatchDetail` the review queue expands with — the panels stay identical
  *  by construction rather than by being kept in step.
  *
  *  The detail query runs even with no seed: a manual Set-as-Minor has no hash match by definition, and
- *  that is most of what the appeals tab reviews. Short-circuiting left those panels with no cover, no
+ *  that is most of what the appeals page reviews. Short-circuiting left those panels with no cover, no
  *  upload date and "0 models" for the uploader. */
 export async function getAutoFlaggedMinorDetail({ modelId }: { modelId: number }) {
   const match = await getAutoFlaggedMinorMatch({ modelId });
@@ -429,18 +606,18 @@ export async function getAutoFlaggedMinorDetail({ modelId }: { modelId: number }
   return { match, detail };
 }
 
-export type MinorQueueCounts = { pending: number; auto: number; appeals: number };
+export type MinorQueueCounts = { pending: number; auto: number };
 
 /**
  * Tab counts. Client-fetched and cached rather than part of `load`, because the Pending count costs
  * ~10s on its own: it has to build the same seed set and candidate CTE the queue does, then count the
- * whole population instead of one page of it. Blocking every page render on that to label three tabs
+ * whole population instead of one page of it. Blocking every page render on that to label two tabs
  * is the trade the row queries already refuse.
  *
- * All three in one round trip, since a moderator reads them together and a tab labelled with a count
+ * Both in one round trip, since a moderator reads them together and a tab labelled with a count
  * from a different moment is the thing worth avoiding.
  */
-const counts = createCache({ name: 'minor-queue-counts:v1', fetch: fetchCounts, ttlSeconds: 300 });
+const counts = createCache({ name: 'minor-queue-counts:v2', fetch: fetchCounts, ttlSeconds: 300 });
 
 export function getMinorQueueCounts(): Promise<MinorQueueCounts> {
   return counts.get({});
@@ -481,7 +658,7 @@ async function fetchCounts(): Promise<MinorQueueCounts> {
       WHERE NOT c."sameUploader"
         AND EXISTS (SELECT 1 FROM minor_src s2 WHERE s2.hash = c.hash AND s2."userId" <> c."userId")
     `.execute(dbRead),
-    sql<{ auto: number; appeals: number }>`
+    sql<{ auto: number }>`
       SELECT
         (SELECT count(*)::int FROM "Model" m
           WHERE m.meta ? ${MINOR_FLAG_SNAPSHOT_KEY}
@@ -489,17 +666,12 @@ async function fetchCounts(): Promise<MinorQueueCounts> {
             AND NOT ${humanConfirmedPredicate}
             AND NOT (m.meta ? ${MINOR_HASH_ACCEPTED_KEY})
             AND (m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'at')::timestamptz > ${reviewWindowCutoff}
-        ) AS auto,
-        (SELECT count(*)::int FROM "Appeal" a
-          JOIN "Model" m ON m.id = a."entityId"
-          WHERE a."entityType" = 'Model' AND a.status::text = 'Pending'
-        ) AS appeals
+        ) AS auto
     `.execute(dbRead),
   ]);
 
   return {
     pending: Number(pending.rows[0]?.count ?? 0),
     auto: Number(rest.rows[0]?.auto ?? 0),
-    appeals: Number(rest.rows[0]?.appeals ?? 0),
   };
 }
