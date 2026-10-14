@@ -274,6 +274,14 @@ describe('sweepScanLabelCopies', () => {
     expect(removed).toEqual(['1/key-1']);
   });
 
+  it('deletes once when two sweeps run at the same time', async () => {
+    await copied(1);
+    await holder.db.exec(`UPDATE "Image" SET "needsReview" = 'csam'`);
+    const { removed, store } = removing();
+    await Promise.all([sweepScanLabelCopies({ store }), sweepScanLabelCopies({ store })]);
+    expect(removed).toEqual(['1/key-1']);
+  });
+
   it('revives a withdrawn row whose item was copied again under the same key', async () => {
     await copied(1);
     await holder.db.exec(
