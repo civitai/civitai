@@ -119,6 +119,7 @@ describe('the text-scan lab', () => {
     expect(ids.filter((id) => id.startsWith('textScan.'))).toEqual([
       'textScan.prompt.publish',
       'textScan.modelRules.edit',
+      'textScan.testSets.edit',
     ]);
     const group = NAVIGATION.find((n) => n.path === '/text-scan');
     expect(group?.children?.map((c) => [c.path, c.label])).toEqual([
