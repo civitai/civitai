@@ -3,7 +3,7 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { env } from '~/env/server';
 import { NsfwLevel } from '~/server/common/enums';
 import { REDIS_KEYS } from '~/server/redis/client';
-import { simpleUserSelect } from '~/server/selectors/user.selector';
+import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import {
   bustFetchThroughCache,
   fetchThroughCache,
@@ -75,6 +75,32 @@ const storylineSelect = {
   tosViolation: true,
   createdAt: true,
 } satisfies Prisma.StorylineSelect;
+
+/** The owner's picks, for the page and the owner's picker. Not part of every read. */
+const storylinePicksSelect = {
+  coverImageId: true,
+  heroImageId: true,
+  heroImagePosition: true,
+} satisfies Prisma.StorylineSelect;
+
+/** A credited user as `UserAvatar` renders them, plus what decides whether they are shown. */
+const castUserSelect = {
+  ...userWithCosmeticsSelect,
+  bannedAt: true,
+} satisfies Prisma.UserSelect;
+
+/** `chapterPostSelect` with its author's avatar and cosmetics, for the page's main route. */
+const castChapterPostSelect = {
+  ...chapterPostSelect,
+  user: { select: castUserSelect },
+} satisfies Prisma.PostSelect;
+
+/** A credited user without the fields that only decided whether to show them. */
+const toCastUser = <T extends { bannedAt: Date | null; deletedAt: Date | null }>({
+  bannedAt: _bannedAt,
+  deletedAt: _deletedAt,
+  ...user
+}: T) => user;
 
 /** What the read paths need to decide whether the storyline is hidden from a viewer. */
 const storylineReadSelect = {
@@ -408,6 +434,9 @@ export async function createStoryline({
   title,
   maxNsfwLevel,
   whoCanContinue,
+  coverImageId,
+  heroImageId,
+  heroImagePosition,
   userId,
   isModerator,
 }: {
@@ -415,6 +444,9 @@ export async function createStoryline({
   title: string;
   maxNsfwLevel: number;
   whoCanContinue?: StorylineWhoCanContinue;
+  coverImageId?: number | null;
+  heroImageId?: number | null;
+  heroImagePosition?: number;
   userId: number;
   isModerator?: boolean;
 }) {
@@ -432,6 +464,18 @@ export async function createStoryline({
         data: { storylineId: storyline.id, postId, userId, depth: 0 },
         select: { id: true },
       });
+      // Checked once chapter 1 exists, by the same rule as later picks: at this point that means
+      // an image of the post the storyline starts from.
+      const picks = { coverImageId, heroImageId, heroImagePosition };
+      if (coverImageId || heroImageId || heroImagePosition !== undefined) {
+        await assertStorylinePicks(tx, {
+          storylineId: storyline.id,
+          ownerId: userId,
+          maxNsfwLevel,
+          imageIds: [coverImageId, heroImageId],
+        });
+        await tx.storyline.update({ where: { id: storyline.id }, data: picks });
+      }
       return { id: storyline.id, rootChapterId: root.id };
     });
   } catch (error) {
@@ -447,6 +491,9 @@ export async function updateStoryline({
   status,
   maxNsfwLevel,
   whoCanContinue,
+  coverImageId,
+  heroImageId,
+  heroImagePosition,
   userId,
   isModerator,
 }: {
@@ -455,6 +502,10 @@ export async function updateStoryline({
   status?: StorylineStatus;
   maxNsfwLevel?: number;
   whoCanContinue?: StorylineWhoCanContinue;
+  /** null clears the pick. */
+  coverImageId?: number | null;
+  heroImageId?: number | null;
+  heroImagePosition?: number;
   userId: number;
   isModerator?: boolean;
 }) {
@@ -466,6 +517,13 @@ export async function updateStoryline({
   }
   if (title !== undefined)
     await throwOnBlockedUserContent(title, { isModerator, surface: 'storyline' });
+  // A moderator editing is held to the owner's rule: the picks are the owner's chapters'.
+  await assertStorylinePicks(dbWrite, {
+    storylineId: id,
+    ownerId: current.userId,
+    maxNsfwLevel: maxNsfwLevel ?? current.maxNsfwLevel,
+    imageIds: [coverImageId, heroImageId],
+  });
 
   // Lowering the ceiling hides later chapters above it at read time; nothing is deleted, so
   // raising it again brings them back.
@@ -473,9 +531,80 @@ export async function updateStoryline({
   // status, so there is no second switch here to disagree with it.
   return dbWrite.storyline.update({
     where: { id },
-    data: { title, status, maxNsfwLevel, whoCanContinue },
-    select: storylineSelect,
+    data: {
+      title,
+      status,
+      maxNsfwLevel,
+      whoCanContinue,
+      coverImageId,
+      heroImageId,
+      heroImagePosition,
+    },
+    select: { ...storylineSelect, ...storylinePicksSelect },
   });
+}
+
+/**
+ * The cover and banner may only be images from this storyline's chapters written by its owner or
+ * by an endorsed collaborator (the endorsement is their consent), not from removed chapters, and
+ * rated within the ceiling. Anything else is refused, whatever the client offered.
+ *
+ * Checked when chosen only. A collaborator removed later leaves their image as the cover until
+ * the owner changes it, unless the image itself is deleted. An image that later becomes hidden or
+ * above a reader's level is replaced, for that reader, by chapter 1's first image they may see.
+ */
+async function assertStorylinePicks(
+  db: Db,
+  {
+    storylineId,
+    ownerId,
+    maxNsfwLevel,
+    imageIds,
+  }: {
+    storylineId: number;
+    ownerId: number;
+    maxNsfwLevel: number;
+    /** undefined is no change and null clears: neither is checked. */
+    imageIds: (number | null | undefined)[];
+  }
+) {
+  const ids = [...new Set(imageIds.filter((imageId): imageId is number => !!imageId))];
+  if (!ids.length) return;
+  const [images, collaborators] = await Promise.all([
+    db.image.findMany({
+      where: { id: { in: ids } },
+      select: {
+        id: true,
+        nsfwLevel: true,
+        post: {
+          select: {
+            storylineChapter: { select: { storylineId: true, userId: true, removedAt: true } },
+          },
+        },
+      },
+    }),
+    db.storylineCollaborator.findMany({ where: { storylineId }, select: { userId: true } }),
+  ]);
+  const allowedAuthors = new Set([ownerId, ...collaborators.map((c) => c.userId)]);
+  const byId = new Map(images.map((image) => [image.id, image]));
+  for (const imageId of ids) {
+    const image = byId.get(imageId);
+    const chapter = image?.post?.storylineChapter;
+    if (
+      !image ||
+      !chapter ||
+      chapter.storylineId !== storylineId ||
+      chapter.removedAt ||
+      !allowedAuthors.has(chapter.userId)
+    )
+      throw throwBadRequestError(
+        "Choose an image from your own chapters or an endorsed collaborator's"
+      );
+    if (!image.nsfwLevel)
+      throw throwBadRequestError('This image has not been rated yet. Try again once it has been');
+    if (!storylineLevelAllowed({ postLevel: image.nsfwLevel, maxNsfwLevel }))
+      throw throwBadRequestError("This image is rated above the storyline's maximum rating");
+  }
 }
 
 /**
@@ -664,8 +793,10 @@ export async function getStoryline({
     where: { id },
     select: {
       ...storylineReadSelect,
+      ...storylinePicksSelect,
+      user: { select: castUserSelect },
       collaborators: {
-        select: { user: { select: { ...simpleUserSelect, bannedAt: true } } },
+        select: { user: { select: castUserSelect } },
         orderBy: { createdAt: 'asc' },
       },
     },
@@ -684,8 +815,9 @@ export async function getStoryline({
   const collaborators = storyline.collaborators
     .map((c) => c.user)
     .filter(shownUser)
-    .map(({ bannedAt: _b, deletedAt: _d, ...u }) => u);
+    .map(toCastUser);
   const collaboratorIds = new Set(storyline.collaborators.map((c) => c.user.id));
+  const gate = getStorylineImageGate(viewer, browsingLevel, blockedUserIds);
 
   // A contributor is credited only through a chapter this reader would be shown: published,
   // rated, not taken down, within the story's ceiling and the reader's level. Otherwise the cast
@@ -696,7 +828,8 @@ export async function getStoryline({
     AND p."tosViolation" = false AND p."publishedAt" < now() AND p."nsfwLevel" <> 0
     AND (p."nsfwLevel" & ${browsingLevel}::int) <> 0
     AND (p."nsfwLevel" & ~${ceilingMask}::int) = 0`;
-  const [counts, authors, mainPath] = await Promise.all([
+  const castIds = [storyline.userId, ...collaboratorIds];
+  const [counts, authors, castCounts, mainPath, chosen] = await Promise.all([
     dbRead.$queryRaw<{ chapters: number; contributors: number }[]>`
       SELECT COUNT(*)::int AS chapters,
         COUNT(DISTINCT c."userId") FILTER (WHERE p.id IS NOT NULL AND ${visibleChapter})::int
@@ -706,12 +839,19 @@ export async function getStoryline({
       WHERE c."storylineId" = ${id}
     `,
     // Everyone else credited, most visible chapters first.
-    dbRead.$queryRaw<{ userId: number }[]>`
-      SELECT c."userId" FROM "StorylineChapter" c
+    dbRead.$queryRaw<{ userId: number; chapterCount: number }[]>`
+      SELECT c."userId", COUNT(*)::int AS "chapterCount" FROM "StorylineChapter" c
       JOIN "Post" p ON p.id = c."postId"
       WHERE c."storylineId" = ${id} AND c."userId" <> ${storyline.userId} AND ${visibleChapter}
       GROUP BY c."userId" ORDER BY COUNT(*) DESC, c."userId"
       LIMIT ${STORYLINE_MAX_CONTRIBUTORS}
+    `,
+    // The owner's and collaborators' own counts, which the list above may not reach.
+    dbRead.$queryRaw<{ userId: number; chapterCount: number }[]>`
+      SELECT c."userId", COUNT(*)::int AS "chapterCount" FROM "StorylineChapter" c
+      JOIN "Post" p ON p.id = c."postId"
+      WHERE c."storylineId" = ${id} AND c."userId" = ANY(${castIds}::int[]) AND ${visibleChapter}
+      GROUP BY c."userId"
     `,
     root
       ? getStorylineMainPath({
@@ -720,24 +860,52 @@ export async function getStoryline({
           viewer,
           browsingLevel,
           blockedUserIds,
+          gate,
         })
       : [],
+    getChosenStorylineImages(gate, [
+      { storylineId: id, imageId: storyline.heroImageId },
+      { storylineId: id, imageId: storyline.coverImageId },
+    ]),
   ]);
   const contributorUsers = authors.length
     ? await dbRead.user.findMany({
         where: {
           id: { in: authors.map((a) => a.userId).filter((uid) => !collaboratorIds.has(uid)) },
         },
-        select: { ...simpleUserSelect, bannedAt: true },
+        select: castUserSelect,
       })
     : [];
   const contributorById = new Map(contributorUsers.map((u) => [u.id, u]));
+  // Chapters this reader is shown, by author, as the credits count them.
+  const chapterCountById = new Map(
+    [...authors, ...castCounts].map((row) => [row.userId, row.chapterCount])
+  );
+  const chaptersBy = (userId: number) => chapterCountById.get(userId) ?? 0;
 
-  const { chapters: _chapters, collaborators: _collaborators, user, ...rest } = storyline;
-  const ownerUser = { id: user.id, username: user.username };
+  const {
+    chapters: _chapters,
+    collaborators: _collaborators,
+    user,
+    coverImageId,
+    heroImageId,
+    ...rest
+  } = storyline;
+  const ownerUser = toCastUser(user);
+  const isOwnerView = viewer?.id === storyline.userId || !!viewer?.isModerator;
+  const firstChapter = mainPath[0]?.depth === 0 ? mainPath[0] : undefined;
   return {
     ...rest,
     user: ownerUser,
+    // The banner: the owner's banner pick, else their cover pick, else chapter 1's first image,
+    // each only if this reader may see it. Never a hidden pick shown blurred.
+    heroImage:
+      chosen(id, heroImageId) ?? chosen(id, coverImageId) ?? firstChapter?.firstImage ?? null,
+    // The card's picture, as the feed shows it: the cover pick, else chapter 1's first image.
+    coverImage: chosen(id, coverImageId) ?? firstChapter?.firstImage ?? null,
+    // The raw picks, for the owner's picker only.
+    coverImageId: isOwnerView ? coverImageId : null,
+    heroImageId: isOwnerView ? heroImageId : null,
     rootChapterId: root?.id ?? null,
     // Chapter 1's post id, whatever this reader may see of it: for the discussion thread, not a
     // cover. Take a cover from the reading path, which tombstones chapter 1 where it must.
@@ -753,14 +921,19 @@ export async function getStoryline({
       : null,
     collaborators,
     contributors: [
-      { user: ownerUser, role: 'creator' as const },
-      ...collaborators.map((u) => ({ user: u, role: 'endorsed' as const })),
+      { user: ownerUser, role: 'creator' as const, chapterCount: chaptersBy(ownerUser.id) },
+      ...collaborators.map((u) => ({
+        user: u,
+        role: 'endorsed' as const,
+        chapterCount: chaptersBy(u.id),
+      })),
       ...authors
         .map((a) => contributorById.get(a.userId))
         .filter((u): u is NonNullable<typeof u> => !!u && shownUser(u))
-        .map(({ bannedAt: _b, deletedAt: _d, ...u }) => ({
-          user: u,
+        .map((u) => ({
+          user: toCastUser(u),
           role: 'contributor' as const,
+          chapterCount: chaptersBy(u.id),
         })),
     ],
     mainPath,
@@ -778,6 +951,7 @@ async function getStorylineMainPath({
   viewer,
   browsingLevel,
   blockedUserIds,
+  gate = getStorylineImageGate(viewer, browsingLevel, blockedUserIds),
 }: {
   /** Where the route starts: chapter 1 for the whole route, any chapter for the canon after it. */
   rootChapterId: number;
@@ -785,6 +959,8 @@ async function getStorylineMainPath({
   viewer: Viewer;
   browsingLevel: number;
   blockedUserIds: ReadonlySet<number>;
+  /** A caller reading other images for the same reader passes its own. */
+  gate?: StorylineImageGateSource;
 }) {
   const rows = await dbRead.$queryRaw<
     { id: number; postId: number | null; depth: number; removedAt: Date | null }[]
@@ -808,7 +984,7 @@ async function getStorylineMainPath({
   const postIds = rows.flatMap((r) => (r.postId != null ? [r.postId] : []));
   const [posts, childCounts] = await Promise.all([
     postIds.length
-      ? dbRead.post.findMany({ where: { id: { in: postIds } }, select: chapterPostSelect })
+      ? dbRead.post.findMany({ where: { id: { in: postIds } }, select: castChapterPostSelect })
       : [],
     dbRead.storylineChapterEdge.groupBy({
       by: ['parentChapterId'],
@@ -819,7 +995,7 @@ async function getStorylineMainPath({
   const postById = new Map(posts.map((p) => [p.id, p]));
   const childCountById = new Map(childCounts.map((c) => [c.parentChapterId, c._count._all]));
 
-  return rows.map((row) => {
+  const route = rows.map((row) => {
     const post = row.postId != null ? postById.get(row.postId) ?? null : null;
     const tombstone = getStorylineChapterTombstone({
       post,
@@ -829,8 +1005,15 @@ async function getStorylineMainPath({
       browsingLevel,
       blockedUserIds,
     });
-    return { ...toPathChapter(row, post, tombstone), childCount: childCountById.get(row.id) ?? 0 };
+    const chapter = toPathChapter(row, post, tombstone);
+    return {
+      ...chapter,
+      // The author as the page's cast shows them, on a chapter the reader is shown.
+      post: chapter.post && post ? { ...chapter.post, user: toCastUser(post.user) } : null,
+      childCount: childCountById.get(row.id) ?? 0,
+    };
   });
+  return withFirstImages(gate, route);
 }
 
 /**
@@ -1106,7 +1289,14 @@ export async function getStorylinePath({
     return toPathChapter(row, post, tombstone);
   });
 
-  return { storyline, chapters, hasEarlier: (rows[0]?.depth ?? 0) > 0 };
+  return {
+    storyline,
+    chapters: await withFirstImages(
+      getStorylineImageGate(viewer, browsingLevel, blockedUserIds),
+      chapters
+    ),
+    hasEarlier: (rows[0]?.depth ?? 0) > 0,
+  };
 }
 
 const childEdgeSelect = {
@@ -1214,9 +1404,10 @@ export async function getStorylineChildren({
   // Reader counts order the list but are not returned: a fork's share of readers is shown only
   // once enough readers have chosen, and that rule belongs to the share read, not this one.
   children.sort((a, b) => compareStorylineChildren(a, b));
-  return children
-    .slice(0, STORYLINE_CHILDREN_LIMIT)
-    .map(({ readers: _readers, ...child }) => child);
+  return withFirstImages(
+    getStorylineImageGate(viewer, browsingLevel, blockedUserIds),
+    children.slice(0, STORYLINE_CHILDREN_LIMIT).map(({ readers: _readers, ...child }) => child)
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -1407,62 +1598,194 @@ export type StorylineFeedCover = {
   poi: boolean;
 };
 
-/**
- * Each chapter 1 post's first image this reader may be shown, in one query for the page: scanned,
- * not taken down or awaiting review, rated, inside the reader's level and the story's ceiling,
- * not one they hid and not carrying a tag they hid or the site excludes at their level, never a
- * minor or real-person image, and not from a private post that is not theirs. Keyed by post id;
- * a post with no such image has no entry, so a hidden first image falls through to the next.
- */
-async function getStorylineFeedCovers({
-  postIds,
-  viewer,
-  browsingLevel,
-}: {
-  postIds: number[];
+/** What decides which storyline images one reader may be shown. */
+type StorylineImageGate = {
   viewer: Viewer;
   browsingLevel: number;
-}) {
-  if (!postIds.length) return new Map<number, StorylineFeedCover>();
-  // The cached hidden set every image read applies: images and tags the reader hid, the tags
-  // moderated for everyone, and the site's defaults for a signed-out reader.
-  // Plus the browsing-settings exclusions every image feed applies server-side for this level.
-  const enforced: { browsingLevel: number; excludedTagIds?: number[] } = { browsingLevel };
-  const [hidden] = await Promise.all([
-    getAllHiddenForUser(viewer ? { userId: viewer.id } : {}),
-    enforceBlockedBrowsingTags(enforced, { id: viewer?.id, isModerator: viewer?.isModerator }),
-  ]);
-  const hiddenIds = hidden.hiddenImages.map((image) => image.id);
-  const hiddenTagIds = [
-    ...new Set([...hidden.hiddenTags.map((tag) => tag.id), ...(enforced.excludedTagIds ?? [])]),
-  ];
-  const viewerId = viewer?.id ?? -1;
-  const rows = await dbRead.$queryRaw<(StorylineFeedCover & { postId: number })[]>`
-    SELECT DISTINCT ON (i."postId") i."postId", i.id, i.url, i.type, i."nsfwLevel", i.hash,
-      i.width, i.height, i."userId", i.minor, i.poi
-    FROM "Image" i
-    JOIN "StorylineChapter" c ON c."postId" = i."postId" AND c.depth = 0
-    JOIN "Storyline" st ON st.id = c."storylineId"
-    JOIN "Post" p ON p.id = i."postId"
-    WHERE i."postId" = ANY(${postIds}::int[])
-      AND i.ingestion = 'Scanned' AND i."tosViolation" = false AND i."needsReview" IS NULL
+  blockedUserIds: ReadonlySet<number>;
+  hiddenImageIds: number[];
+  hiddenTagIds: number[];
+};
+
+/**
+ * The cached hidden set every image read applies (images and tags the reader hid, the tags
+ * moderated for everyone, the site's defaults for a signed-out reader), plus the browsing-settings
+ * exclusions every image feed applies server-side for this level.
+ *
+ * Read on first use and once per request, so a read with no image to show reads nothing.
+ */
+type StorylineImageGateSource = () => Promise<StorylineImageGate>;
+
+function getStorylineImageGate(
+  viewer: Viewer,
+  browsingLevel: number,
+  blockedUserIds: ReadonlySet<number>
+): StorylineImageGateSource {
+  let gate: Promise<StorylineImageGate> | undefined;
+  return () =>
+    (gate ??= (async () => {
+      const enforced: { browsingLevel: number; excludedTagIds?: number[] } = { browsingLevel };
+      const [hidden] = await Promise.all([
+        getAllHiddenForUser(viewer ? { userId: viewer.id } : {}),
+        enforceBlockedBrowsingTags(enforced, { id: viewer?.id, isModerator: viewer?.isModerator }),
+      ]);
+      return {
+        viewer,
+        browsingLevel,
+        blockedUserIds,
+        hiddenImageIds: hidden.hiddenImages.map((image) => image.id),
+        hiddenTagIds: [
+          ...new Set([
+            ...hidden.hiddenTags.map((tag) => tag.id),
+            ...(enforced.excludedTagIds ?? []),
+          ]),
+        ],
+      };
+    })());
+}
+
+/**
+ * An image this reader may be shown from a storyline chapter: scanned, not taken down or awaiting
+ * review, rated, inside the reader's level and the story's ceiling, not one they hid and not
+ * carrying a tag they hid or the site excludes at their level, never a minor or real-person image,
+ * and not from a private post that is not theirs. Expects `i` (Image), `p` (its Post) and `st`
+ * (the Storyline its chapter is in).
+ */
+function storylineImageVisible(gate: StorylineImageGate) {
+  const viewerId = gate.viewer?.id ?? -1;
+  return Prisma.sql`i.ingestion = 'Scanned' AND i."tosViolation" = false AND i."needsReview" IS NULL
       AND i."acceptableMinor" = false
-      -- A cover is shown to everyone who sees the card, so no minor or real-person image.
+      -- Shown to everyone who sees the card or page, so no minor or real-person image.
       AND i.minor = false AND i.poi = false
       AND (p.availability <> 'Private' OR p."userId" = ${viewerId})
       AND i."nsfwLevel" <> 0
-      AND (i."nsfwLevel" & ${browsingLevel}::int) <> 0
+      AND (i."nsfwLevel" & ${gate.browsingLevel}::int) <> 0
       AND (i."nsfwLevel" & ~(st."maxNsfwLevel" * 2 - 1)) = 0
-      AND i.id <> ALL(${hiddenIds}::int[])
+      AND i.id <> ALL(${gate.hiddenImageIds}::int[])
       -- A reader's own image is not hidden from them by their hidden tags, as in image reads.
       AND (NOT EXISTS (
         SELECT 1 FROM "TagsOnImageDetails" toi
-        WHERE toi."imageId" = i.id AND toi."tagId" = ANY(${hiddenTagIds}::int[])
+        WHERE toi."imageId" = i.id AND toi."tagId" = ANY(${gate.hiddenTagIds}::int[])
           AND toi.disabled = false
-      ) OR i."userId" = ${viewerId})
+      ) OR i."userId" = ${viewerId})`;
+}
+
+const storylineImageColumns = Prisma.sql`i.id, i.url, i.type, i."nsfwLevel", i.hash,
+      i.width, i.height, i."userId", i.minor, i.poi`;
+
+const toStorylineImage = (row: StorylineFeedCover): StorylineFeedCover => ({
+  id: row.id,
+  url: row.url,
+  type: row.type,
+  nsfwLevel: row.nsfwLevel,
+  hash: row.hash,
+  width: row.width,
+  height: row.height,
+  userId: row.userId,
+  minor: row.minor,
+  poi: row.poi,
+});
+
+/**
+ * Each chapter post's first image this reader may be shown, in one query: keyed by post id; a
+ * post with no such image has no entry, so a hidden first image falls through to the next. The
+ * caller passes only chapters the reader is shown.
+ */
+async function getFirstStorylineImages(gate: StorylineImageGateSource, postIds: number[]) {
+  if (!postIds.length) return new Map<number, StorylineFeedCover>();
+  const rows = await dbRead.$queryRaw<(StorylineFeedCover & { postId: number })[]>`
+    SELECT DISTINCT ON (i."postId") i."postId", ${storylineImageColumns}
+    FROM "Image" i
+    JOIN "StorylineChapter" c ON c."postId" = i."postId"
+    JOIN "Storyline" st ON st.id = c."storylineId"
+    JOIN "Post" p ON p.id = i."postId"
+    WHERE i."postId" = ANY(${postIds}::int[])
+      AND ${storylineImageVisible(await gate())}
     ORDER BY i."postId", i.index NULLS LAST, i.id
   `;
-  return new Map(rows.map(({ postId, ...cover }) => [postId, cover]));
+  return new Map(rows.map((row) => [row.postId, toStorylineImage(row)]));
+}
+
+/**
+ * Adds each row's `firstImage`, in one query for all of them. A tombstone carries no post
+ * (`toPathChapter`), so it gets none and is not asked about.
+ */
+async function withFirstImages<T extends { post: { id: number } | null }>(
+  gate: StorylineImageGateSource,
+  rows: T[]
+) {
+  const images = await getFirstStorylineImages(
+    gate,
+    rows.flatMap((row) => (row.post ? [row.post.id] : []))
+  );
+  return rows.map((row) => ({
+    ...row,
+    firstImage: row.post ? images.get(row.post.id) ?? null : null,
+  }));
+}
+
+/**
+ * Owners' chosen covers and banners this reader may be shown, in one query: the same gate as
+ * first images, and the chapter the image is in must be one this reader is shown, judged as the
+ * reading path judges it. Returns a lookup by storyline and image id, so an image counts only as
+ * a pick of the storyline it belongs to.
+ */
+async function getChosenStorylineImages(
+  gate: StorylineImageGateSource,
+  picks: { storylineId: number; imageId: number | null }[]
+) {
+  const key = (storylineId: number, imageId: number) => `${storylineId}:${imageId}`;
+  const imageIds = [...new Set(picks.flatMap((pick) => (pick.imageId ? [pick.imageId] : [])))];
+  const found = new Map<string, StorylineFeedCover>();
+  if (imageIds.length) {
+    const resolved = await gate();
+    const rows = await dbRead.$queryRaw<
+      (StorylineFeedCover & {
+        storylineId: number;
+        postId: number;
+        postUserId: number;
+        postNsfwLevel: number;
+        publishedAt: Date | null;
+        postTosViolation: boolean;
+        removedAt: Date | null;
+        bannedAt: Date | null;
+        deletedAt: Date | null;
+        maxNsfwLevel: number;
+      })[]
+    >`
+      SELECT ${storylineImageColumns}, c."storylineId", i."postId",
+        p."userId" AS "postUserId", p."nsfwLevel" AS "postNsfwLevel", p."publishedAt",
+        p."tosViolation" AS "postTosViolation", c."removedAt", pu."bannedAt", pu."deletedAt",
+        st."maxNsfwLevel"
+      FROM "Image" i
+      JOIN "StorylineChapter" c ON c."postId" = i."postId"
+      JOIN "Storyline" st ON st.id = c."storylineId"
+      JOIN "Post" p ON p.id = i."postId"
+      JOIN "User" pu ON pu.id = p."userId"
+      WHERE i.id = ANY(${imageIds}::int[])
+        AND ${storylineImageVisible(resolved)}
+    `;
+    for (const row of rows) {
+      const tombstone = getStorylineChapterTombstone({
+        post: {
+          id: row.postId,
+          userId: row.postUserId,
+          nsfwLevel: row.postNsfwLevel,
+          publishedAt: row.publishedAt,
+          tosViolation: row.postTosViolation,
+          user: { bannedAt: row.bannedAt, deletedAt: row.deletedAt },
+        },
+        removed: !!row.removedAt,
+        viewer: resolved.viewer,
+        maxNsfwLevel: row.maxNsfwLevel,
+        browsingLevel: resolved.browsingLevel,
+        blockedUserIds: resolved.blockedUserIds,
+      });
+      if (!tombstone) found.set(key(row.storylineId, row.id), toStorylineImage(row));
+    }
+  }
+  return (storylineId: number, imageId: number | null) =>
+    imageId ? found.get(key(storylineId, imageId)) ?? null : null;
 }
 
 /** Deepest offset the most-chapters order pages to. */
@@ -1550,6 +1873,7 @@ export async function getStorylinesInfinite({
       chapterCount: number;
       contributorCount: number;
       createdAt: Date;
+      coverImageId: number | null;
     }[]
   >`
     SELECT st.id, st.title, st.status, st."userId", u.username, u."bannedAt", u."deletedAt",
@@ -1562,7 +1886,7 @@ export async function getStorylinesInfinite({
       rp."publishedAt" AS "rootPublishedAt", rp."tosViolation" AS "rootTosViolation",
       ss.mode AS "storylineMode", ss.price AS "storylinePrice",
       us.mode AS "userMode", us.price AS "userPrice",
-      cc."chapterCount", cc."contributorCount", st."createdAt"
+      cc."chapterCount", cc."contributorCount", st."createdAt", st."coverImageId"
     FROM "Storyline" st
     JOIN "User" u ON u.id = st."userId"
     LEFT JOIN "StorylineChapter" rc ON rc."storylineId" = st.id AND rc.depth = 0
@@ -1603,8 +1927,17 @@ export async function getStorylinesInfinite({
       ? [row.rootPostId]
       : []
   );
-  const [covers, priceRanges] = await Promise.all([
-    getStorylineFeedCovers({ postIds: coverPostIds, viewer, browsingLevel }),
+  const gate = getStorylineImageGate(viewer, browsingLevel, blockedUserIds);
+  const ownerIds = [...new Set(page.map((row) => row.userId))];
+  const [chosen, covers, owners, priceRanges] = await Promise.all([
+    getChosenStorylineImages(
+      gate,
+      page.map((row) => ({ storylineId: row.id, imageId: row.coverImageId }))
+    ),
+    getFirstStorylineImages(gate, coverPostIds),
+    ownerIds.length
+      ? dbRead.user.findMany({ where: { id: { in: ownerIds } }, select: castUserSelect })
+      : [],
     // Display only: the continue path prices again. A failure here leaves the page without
     // prices rather than failing it for every reader.
     placementPriceRanges(
@@ -1621,12 +1954,14 @@ export async function getStorylinesInfinite({
     }),
   ]);
 
+  const ownerById = new Map(owners.map((owner) => [owner.id, toCastUser(owner)]));
   const items = page.map(
     ({
       userId,
       username,
       bannedAt: _bannedAt,
       deletedAt: _deletedAt,
+      coverImageId,
       isCollaborator,
       rootNsfwLevel: _rootNsfwLevel,
       rootPublishedAt: _rootPublishedAt,
@@ -1650,8 +1985,11 @@ export async function getStorylinesInfinite({
         row.whoCanContinue === 'Anyone' || viewer?.id === userId || isCollaborator;
       return {
         ...row,
-        user: { id: userId, username },
-        coverImage: row.rootPostId != null ? covers.get(row.rootPostId) ?? null : null,
+        user: ownerById.get(userId) ?? { id: userId, username },
+        // The owner's pick when this reader may see it, else chapter 1's first image they may.
+        coverImage:
+          chosen(row.id, coverImageId) ??
+          (row.rootPostId != null ? covers.get(row.rootPostId) ?? null : null),
         // What the "open" filter means, per card: the storyline accepts continuations and this
         // reader is among those it takes them from (its owner counts, as in the filter). A
         // Complete storyline takes none, whatever its space says, as the placement layer reads it.

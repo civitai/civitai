@@ -4549,6 +4549,17 @@ export type Storyline = {
   tosViolation: Generated<boolean>;
   createdAt: Generated<Timestamp>;
   updatedAt: Timestamp;
+  /**
+   * The feed card's picture and the page banner, chosen by the owner from images in their own
+   * chapters or endorsed collaborators' (checked when chosen). Readers who may not see the
+   * chosen image get chapter 1's first image they may see instead.
+   */
+  coverImageId: number | null;
+  heroImageId: number | null;
+  /**
+   * The banner's vertical focus, as a percentage (0 top to 100 bottom).
+   */
+  heroImagePosition: Generated<number>;
 };
 export type StorylineBranchChoice = {
   userId: number;
