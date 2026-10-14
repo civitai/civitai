@@ -145,7 +145,9 @@ describe.skipIf(!ENABLED)('packed.mGet on a real cluster', () => {
         key: prefix as any,
         idKey: 'imageId',
         ttl: 60,
-        debounceTime: 1,
+        // bust() back-dates the entry to `debounceTime` before it goes stale, so a read inside that
+        // window is still a plain hit; 30s keeps the read below well inside it.
+        debounceTime: 30,
         lookupFn: async (want) => {
           lookups.push([...want]);
           return Object.fromEntries(want.filter((id) => db.has(id)).map((id) => [id, db.get(id)!]));
@@ -154,23 +156,32 @@ describe.skipIf(!ENABLED)('packed.mGet on a real cluster', () => {
       const want = [...ids, 100_001]; // one id the origin does not have (negative cache)
       const steps: unknown[] = [];
       steps.push(await cache.fetch(want)); // cold: every id misses and is filled
+      sent = 0;
       steps.push(await cache.fetch(want)); // warm: all hits (incl. the cached not-found)
+      const warmCommands = sent;
       db.set(3, { imageId: 3, tags: [999] });
       await cache.refresh(3); // write-path refill from origin
       steps.push(await cache.fetch([3, 4]));
       await cache.bust([4]); // SWR cache: invalidate() back-dates the entry
       steps.push(await cache.fetch([4]));
-      return { steps, lookups: lookups.map((l) => l.length) };
+      return { steps, lookups: lookups.map((l) => l.length), warmCommands };
     };
 
     const batched = await run(client, `${PREFIX}-cache-b`);
     const perKey = await run(perKeyClient, `${PREFIX}-cache-p`);
-    expect(batched).toEqual(perKey);
+    expect(batched.steps).toEqual(perKey.steps);
+    expect(batched.lookups).toEqual(perKey.lookups);
+    // The batched client really read through the script: N+1 ids in chunks of 200 → at most one
+    // command per master for the first chunk plus one GET for the last id; per-key is one each.
+    expect(perKey.warmCommands).toBe(N + 1);
+    expect(batched.warmCommands).toBeLessThanOrEqual(4);
+    expect(logs.filter((l) => l.includes('fell back'))).toEqual([]);
     // Cold fill looked up all N+1 ids once; the warm read looked up nothing.
     expect(batched.lookups[0]).toBe(N + 1);
     expect(batched.lookups).toHaveLength(2); // cold fill + refresh(3); no lookup on the warm read
     expect((batched.steps[1] as Record<string, unknown>)['100001']).toBeUndefined();
     expect((batched.steps[2] as Record<string, any>)['3'].tags).toEqual([999]);
+    expect(batched.steps[3]).toEqual({ '4': { imageId: 4, tags: [28] } });
     expect(logs.filter((l) => l.startsWith('failopen'))).toEqual([]);
   }, 60_000);
 
@@ -214,7 +225,8 @@ describe.skipIf(!ENABLED)('packed.mGet on a real cluster', () => {
       for (const i of [0, 1, 2]) cluster.redisCli(i, ['cluster', 'setslot', slot, 'node', dstId]);
     }
 
-    // After the move completes the client learns the new owner (MOVED) and reads stay correct.
+    // After the move completes reads stay correct. This checks VALUES only: the client has just
+    // fallen back, so within its 10s cooldown this read uses per-key GETs, not the script.
     const after = await client.packed.mGet(ids.map(keyOf));
     expect(after).toEqual(expected);
   }, 60_000);
@@ -260,6 +272,7 @@ describe.skipIf(!ENABLED)('packed.mGet on a real cluster', () => {
           // already closed
         }
       }
+      // Values only: `client` may still be in a fallback cooldown, so this may read key by key.
       expect(await client.packed.mGet(['a', 'b', 'c'].map(k))).toEqual([
         { v: 'a' },
         { v: 'b' },

@@ -207,7 +207,7 @@ describe('createBatchedGet', () => {
     ['too many entries', (n: number, id: Buffer) => [...nulls(n + 1), id]],
     ['an extra entry after the node id', (n: number, id: Buffer) => [...nulls(n), id, id]],
     ['string elements', (n: number, id: Buffer) => [...new Array(n).fill('not-a-buffer'), id]],
-    ['no node id', (n: number) => nulls(n)],
+    ['a null where the node id goes', (n: number) => [...nulls(n), null]],
     ["another node's id", (n: number) => [...nulls(n), Buffer.from('n9')]],
     ['a non-array reply', () => 'OK'],
   ])('a reply with %s is never mapped onto keys — the group is re-read', async (_, reply) => {
@@ -347,6 +347,23 @@ describe('createClusterBufferGet (the wiring client.ts uses)', () => {
 
 describe('REDIS_CLUSTER_BATCHED_GET_ENABLED', () => {
   const base = { REDIS_URL: 'redis://a:6379', REDIS_SYS_URL: 'redis://b:6379' };
+  it.each([
+    ['false', false],
+    [undefined, true],
+  ])('reaches the client config: %s → clusterBatchedGetEnabled %s', async (value, enabled) => {
+    // loadRedisEnv is memoized per module instance, so load a fresh one with this env.
+    vi.resetModules();
+    const saved = { ...process.env };
+    try {
+      Object.assign(process.env, base);
+      if (value === undefined) delete process.env.REDIS_CLUSTER_BATCHED_GET_ENABLED;
+      else process.env.REDIS_CLUSTER_BATCHED_GET_ENABLED = value;
+      const { loadRedisEnv } = await import('../env');
+      expect(loadRedisEnv().clusterBatchedGetEnabled).toBe(enabled);
+    } finally {
+      process.env = saved;
+    }
+  });
   it.each([
     [undefined, true],
     ['true', true],

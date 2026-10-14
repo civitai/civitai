@@ -28,12 +28,16 @@
 // failure costs one extra round-trip for that group and never returns a wrong value or a false
 // miss. A TRANSPORT failure (deadline, closed or reconnecting connection) is not retried key by
 // key: those GETs would go to the same struggling node, so the call rejects as a failed GET did
-// before, and callers fail open as before.
+// before, and callers fail open as before. Every error REPLY falls back, including ones a GET would
+// also get (LOADING, BUSY, CLUSTERDOWN): those GETs then fail and the call rejects as before, at
+// the cost of one extra script per cooldown. Falling back too eagerly costs a round-trip; failing
+// too eagerly would send the whole batch to the database, so the classification errs this way.
 //
 // After a fallback the getter stops using the script for a cooldown, so a topology change does not
 // cost a failed script plus N GETs on every call while the slot map catches up.
 import calculateSlot from 'cluster-key-slot';
 import { createHash } from 'node:crypto';
+import { performance } from 'node:perf_hooks';
 import { ErrorReply } from 'redis';
 
 /**
@@ -135,7 +139,7 @@ async function runScript<V>(
  */
 export function createBatchedGet<V>(
   deps: BatchedGetDeps<V>,
-  { cooldownMs = NODE_LOCAL_GET_FALLBACK_COOLDOWN_MS, now = Date.now } = {}
+  { cooldownMs = NODE_LOCAL_GET_FALLBACK_COOLDOWN_MS, now = () => performance.now() } = {}
 ) {
   let scriptPausedUntil = 0;
   const perKey = (keys: string[]) => Promise.all(keys.map((k) => deps.get(k)));
