@@ -530,7 +530,7 @@ export async function getSiblingFeedback(input: {
 export type TriageResult =
   | { ok: true; changed: true }
   | { ok: true; changed: false }
-  | { ok: false; reason: 'gone' | 'not-platform' | 'no-server-state' };
+  | { ok: false; reason: 'gone' | 'not-platform' | 'no-server-state' | 'resolution-changed' };
 
 /**
  * Set a row's status and triage note in one statement.
@@ -613,7 +613,8 @@ export async function triageFeedback(input: {
       .where('area', '=', APPS_PLATFORM_FEEDBACK_AREA)
       .where(sql<string>`jsonb_typeof("context"->'server')`, '=', 'object')
       .where(
-        sql<boolean>`("context"->'server'->'resolution'->>'at') IS NOT DISTINCT FROM ${input.resolution.expectedAt}`
+        // A non-string `at` reads as none, as the panel reads it — else such a row could never be cleared.
+        sql<boolean>`(CASE WHEN jsonb_typeof("context"->'server'->'resolution'->'at') = 'string' THEN "context"->'server'->'resolution'->>'at' END) IS NOT DISTINCT FROM ${input.resolution.expectedAt}`
       );
   const result = await update.executeTakeFirst();
 
@@ -636,12 +637,18 @@ export async function triageFeedback(input: {
 
   const row = await dbWrite
     .selectFrom('Feedback')
-    .select(['area', sql<string | null>`jsonb_typeof("context"->'server')`.as('serverType')])
+    .select([
+      'area',
+      'status',
+      sql<string | null>`jsonb_typeof("context"->'server')`.as('serverType'),
+    ])
     .where('id', '=', input.id)
     .executeTakeFirst();
   if (!row) return { ok: false, reason: 'gone' };
   if (row.area !== APPS_PLATFORM_FEEDBACK_AREA) return { ok: false, reason: 'not-platform' };
   if (row.serverType !== 'object') return { ok: false, reason: 'no-server-state' };
+  // The status still matches, so what moved is the resolution itself.
+  if (row.status === input.expectedStatus) return { ok: false, reason: 'resolution-changed' };
   return { ok: true, changed: false };
 }
 

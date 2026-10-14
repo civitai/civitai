@@ -87,7 +87,7 @@
         {:else if context.resolution.fixedIn}
           <!-- The readback drops a fixed-in with no version, so reporters see none. -->
           — <span class="text-dark-2">({context.resolution.fixedIn.component} recorded, no version: reads
-            back as addressed)</span>
+            back as addressed once actioned)</span>
         {:else}
           —
         {/if}
@@ -130,6 +130,7 @@
 
 {#if context.other}
   <section class="flex min-w-0 flex-col gap-2">
+    <!-- Dumped verbatim: whatever the parser did not recognise is shown, never dropped. -->
     <h3 class="text-xs tracking-wide text-dark-2 uppercase">Other context</h3>
     <pre class="max-h-64 overflow-auto rounded-lg border border-dark-4 bg-dark-7 p-3 text-xs">{JSON.stringify(
         context.other,

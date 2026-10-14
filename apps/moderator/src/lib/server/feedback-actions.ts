@@ -64,6 +64,10 @@ const triageSchema = z.object({
 const triageFailure = (reason: Extract<TriageResult, { ok: false }>['reason']) => {
   if (reason === 'not-platform')
     return fail(400, { error: 'Only Apps platform reports carry a resolution.' });
+  if (reason === 'resolution-changed')
+    return fail(409, {
+      error: 'Someone else changed the resolution. Reload to see it before saving yours.',
+    });
   if (reason === 'no-server-state')
     return fail(409, {
       error: 'This report has no server-side state to attach a resolution to.',

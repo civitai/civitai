@@ -339,10 +339,38 @@ describe('the resolution write', () => {
     );
     expect(result).toEqual({
       status: 409,
-      error: 'Someone else already triaged this. Reload to see the current verdict.',
+      error: 'Someone else changed the resolution. Reload to see it before saving yours.',
     });
     expect(await contextOf(id)).toEqual(context);
     expect((await readFeedback(db, id)).status).toBe('new');
+  });
+
+  it('names a status conflict as one, even on a resolution save', async () => {
+    const id = await seedPlatform({ status: 'reviewed' });
+    const result = failure(await triageAction(event(resolutionForm(id))));
+    expect(result).toEqual({
+      status: 409,
+      error: 'Someone else already triaged this. Reload to see the current verdict.',
+    });
+    expect(await contextOf(id)).toEqual({ report: REPORT, server: SERVER });
+  });
+
+  it('clears a stored resolution whose `at` is not a string, which the panel reads as none', async () => {
+    const id = await seedPlatform({
+      status: 'actioned',
+      context: { report: REPORT, server: { ...SERVER, resolution: { publicNote: 'n', at: 17 } } },
+    });
+    const result = await triageAction(
+      event({
+        id: String(id),
+        expectedStatus: 'actioned',
+        status: 'actioned',
+        resolution: 'clear',
+        expectedResolutionAt: '',
+      })
+    );
+    expect(result).toEqual({ success: true, triaged: id });
+    expect(await contextOf(id)).toEqual({ report: REPORT, server: SERVER });
   });
 
   it('refuses a resolution form that does not say which resolution it was editing', async () => {
