@@ -21,7 +21,9 @@
 // importing slot — including keys still on the source, which it does not have — as nil: a false
 // miss in a well-formed reply. So the script also returns the id of the node it ran on, and a
 // reply from any node other than the one the group was built for is discarded. (Reproduced on a
-// real 7.4 cluster; see the integration test.)
+// real 7.4 cluster; see the integration test.) A MOVED followed by an ASK can bring the script
+// back to the expected node WITH ASKING; that path is caught because the MOVED changes the
+// client's slot map, which is re-checked after the reply.
 //
 // A group whose script Redis REFUSED (an error reply), or whose reply is unusable (wrong shape,
 // wrong node), is re-read with the original per-key GETs, which follow MOVED/ASK. So such a
@@ -124,6 +126,13 @@ async function runScript<V>(
   const ranOn = Buffer.isBuffer(last) ? last.toString('utf8') : last;
   if (ranOn !== node) {
     throw new UnusableReplyError(`node-local GET ran on ${String(ranOn)}, expected ${node}`);
+  }
+  // The id proves WHERE the script ran, not that it ran without ASKING. A MOVED then an ASK can
+  // land it back on the expected node with ASKING (the slot left and is coming back). Any MOVED
+  // makes the client re-read its slot map, so a map that no longer names this node for the first
+  // key means the script was redirected on the way: discard the reply.
+  if (deps.nodeOf(calculateSlot(keys[0])) !== node) {
+    throw new UnusableReplyError(`slot map moved while the node-local GET ran on ${node}`);
   }
   return reply.slice(0, keys.length).map((v) => {
     if (v === null || v === undefined) return null;

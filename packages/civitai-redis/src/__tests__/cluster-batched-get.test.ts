@@ -246,6 +246,25 @@ describe('createBatchedGet', () => {
     expect(String((c.fallbacks[0].err as Error).message)).toContain(`ran on ${importing}`);
   });
 
+  it('MOVED then ASK back to the expected node: the moved slot map discards the reply', async () => {
+    // The client's map says n1 owns the slot. The script is MOVED away (the client re-reads its
+    // map), then ASKed back to n1 with ASKING: the reply carries n1's id but serves keys still
+    // on the other node as nil.
+    const k = (s: string) => `packed:caches:x:{t}${s}`;
+    const slot = calculateSlot(k('a'));
+    let owner = 'n1';
+    const c = fakeCluster({ mapOverride: (sl) => (sl === slot ? owner : ownerOf(sl)) });
+    c.store.set(k('a'), Buffer.from('A'));
+    c.store.set(k('b'), Buffer.from('B'));
+    c.deps.evalSha = async (_sha, args) => {
+      owner = 'n2'; // the MOVED made the client rediscover
+      return [Buffer.from('A'), null, Buffer.from('n1')];
+    };
+    const out = await c.get([k('a'), k('b')]);
+    expect(out).toEqual([Buffer.from('A'), Buffer.from('B')]);
+    expect(String((c.fallbacks[0].err as Error).message)).toContain('slot map moved');
+  });
+
   it('bounds each script call to 100 keys', async () => {
     const c = fakeCluster({ mapOverride: () => 'n1' });
     // 250 keys that really all live on n1.
