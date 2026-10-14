@@ -51,9 +51,9 @@ import { redis, REDIS_KEYS } from '~/server/redis/client';
 //      it is `'pdb_' || app_block_id` — one string shared by EVERY concurrent viewer
 //      of that app, platform-wide. So for those surfaces "120 per 10 s" is an
 //      app-wide ceiling, not a per-user one, and one viewer can be refused because
-//      of strangers' traffic. The `:poll:`, `:post:` and `:training-dataset:`
-//      buckets below do NOT inherit this: each puts the viewer in the key, and the
-//      poll bucket says why.
+//      of strangers' traffic. The `:poll:`, `:post:`, `:training-dataset:` and
+//      `:upload:` buckets below do NOT inherit this: each puts the viewer in the
+//      key, and the poll bucket says why.
 //   2. ITS TENANCY GREW, SO THE CEILING MOVED WITH IT — clawgate #569 plus its round-0
 //      audit. #569 first added FIVE bridge procedures to this bucket against an
 //      UNCHANGED ceiling sized for "a model/image selector" alone. That is a tightening
@@ -96,6 +96,9 @@ export const BLOCK_CATALOG_RATE_LIMIT_WINDOW_SECONDS = 10;
 // call. 60 published images / 5-minute window is generous for a real benchmark
 // grid (which publishes a handful of results once) but hard-caps a token that
 // tries to drive a sustained fetch/upload/scan fan-out onto the origin.
+//
+// KEYED ON THE INSTALL ALONE, so on a page app it is one allowance shared by every
+// viewer of that app.
 export const BLOCK_PUBLISH_RATE_LIMIT_MAX = 60;
 export const BLOCK_PUBLISH_RATE_LIMIT_WINDOW_SECONDS = 300;
 
@@ -191,7 +194,8 @@ export const BLOCK_POST_APP_RATE_LIMIT_WINDOW_SECONDS = 3600;
 //
 // 🔴 KEYED ON THE INSTALL **AND THE VIEWER**, WHICH IS WHERE THIS BUCKET DEPARTS
 // FROM THE CATALOG, PUBLISH, APP-AGGREGATE POST AND LLM BUCKETS (the per-viewer post
-// bucket and the training-dataset bucket follow this one instead). The catalog,
+// bucket, the training-dataset bucket and the upload bucket follow this one instead).
+// The catalog,
 // publish and LLM buckets key on `blockInstanceId` alone. That id names an install,
 // not a person — a MODEL-SLOT install is served to every visitor of its model page —
 // and for a PAGE app the sharing is widest:
@@ -593,6 +597,40 @@ export async function checkBlockTrainingDatasetRateLimit(
   );
 }
 
+// UPLOAD bucket (blocks.persistAppUploadImage, the server half of an app's upload
+// from bytes). One token per upload: each one creates a real, scanned Image row.
+//
+// KEYED ON THE INSTALL **AND THE VIEWER**, for the reason the poll bucket argues: a
+// page app's `blockInstanceId` is one string shared by every viewer of that app, so
+// an install-only key would let one viewer's uploads use up everyone else's
+// allowance. As with the poll bucket, the app-wide total then scales with the
+// number of viewers. `userId` is the self-bound token subject, never client input.
+//
+// The ceiling mirrors the publish bucket's; it was not sized for one viewer.
+// FIXED window and FAILS OPEN on a Redis error, like every bucket in this file.
+export const BLOCK_UPLOAD_RATE_LIMIT_MAX = 60;
+export const BLOCK_UPLOAD_RATE_LIMIT_WINDOW_SECONDS = 300;
+
+/**
+ * Records ONE upload from bytes against this (install, viewer)'s upload window. Own
+ * `:upload:` sub-namespace, so it never contends with the publish bucket or any
+ * other; fail-open like every sibling limiter.
+ *
+ * @param blockInstanceId the stable per-install identity from the verified token —
+ *   for a page app, shared by every viewer of it, which is why the viewer is keyed too.
+ * @param userId the SELF-BOUND token subject — never client input.
+ */
+export async function checkBlockUploadRateLimit(
+  blockInstanceId: string,
+  userId: number
+): Promise<BlockCatalogRateLimitResult> {
+  return checkFixedWindow(
+    `${REDIS_KEYS.BLOCKS.TOKEN_RATE_LIMIT}:upload:${blockInstanceId}:${userId}`,
+    BLOCK_UPLOAD_RATE_LIMIT_MAX,
+    BLOCK_UPLOAD_RATE_LIMIT_WINDOW_SECONDS
+  );
+}
+
 // ESTIMATE-CELLS bucket (blocks.estimateWorkflowBatch). A batch estimate charges
 // the catalog bucket ONCE, like a single estimate — that is the point of it: a
 // 16-cell grid no longer spends 16 of an allowance that a page app shares between
@@ -604,7 +642,8 @@ export async function checkBlockTrainingDatasetRateLimit(
 // COUNT, before any cell runs.
 //
 // 🔴 KEYED ON THE INSTALL ALONE, LIKE THE CATALOG BUCKET, AND NOT ON THE VIEWER —
-// THE OPPOSITE OF THE POLL AND TRAINING-DATASET BUCKETS, DELIBERATELY. Those two put
+// THE OPPOSITE OF THE VIEWER-KEYED BUCKETS (POLL, POST, TRAINING-DATASET, UPLOAD),
+// DELIBERATELY. Those put
 // the viewer in the key so a page app's strangers cannot throttle each other, and
 // accept that the app-wide total then scales with the number of viewers. Here that
 // trade is the wrong one: the quantity being bounded is upstream cost quotes, which

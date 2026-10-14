@@ -34,6 +34,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
  * signed-in session`). Measured against `6594d3f8e7`'s router: 4 failed / 30 passed; with the
  * binding: 34 passed. The four refusal cases there are its regression coverage; the success case
  * is an INVARIANT GUARD. The four older publish cases now pass the viewer's session.
+ *
+ * ALSO AN INVARIANT GUARD: `charges the INSTALL’s publish bucket by image count`, which pins
+ * the publish bucket's install-only key and is regression coverage for nothing.
  */
 
 const {
@@ -896,5 +899,40 @@ describe('blocks.publishGenerationOutputs — bound to the signed-in session', (
         appId: APP_ID,
       })
     );
+  });
+
+  it('charges the INSTALL’s publish bucket by image count, with no viewer in the charge', async () => {
+    // INVARIANT GUARD (passes at base too): the publish bucket is per install, so on a page app
+    // every viewer shares it. Three outputs, so the up-front token (1) and the remainder (2)
+    // are distinct numbers.
+    mockGetWorkflow.mockResolvedValue(
+      workflowFixture({
+        status: 'succeeded',
+        cost: { total: 97 },
+        steps: [
+          {
+            $type: 'customComfy',
+            output: {
+              blobs: [
+                { url: 'https://blobs.example.test/a.png', available: true },
+                { url: 'https://blobs.example.test/b.png', available: true },
+                { url: 'https://blobs.example.test/c.png', available: true },
+              ],
+            },
+          },
+        ],
+      })
+    );
+
+    const result = await caller(viewerSession).publishGenerationOutputs({
+      blockToken: 'tok',
+      workflowId: OWN_ID,
+    });
+
+    expect(result).toEqual({ imageIds: [901, 902, 903] });
+    expect(mockCheckBlockPublishRateLimit.mock.calls).toEqual([
+      ['bki_01JQ8XG7YV2K4M6P8R0T2W4Y6C', 1],
+      ['bki_01JQ8XG7YV2K4M6P8R0T2W4Y6C', 2],
+    ]);
   });
 });

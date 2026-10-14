@@ -242,7 +242,7 @@ describe('PageBlockHost OPEN_IMAGE_UPLOAD { bytes }', () => {
     replies.stop();
   });
 
-  test('a persist refused by the publish bucket replies its message once and polls no scan', async () => {
+  test('a persist refused by a rate limit replies its message once and polls no scan', async () => {
     h.persist.mockRejectedValueOnce(new Error('Rate limit exceeded, please retry shortly.'));
     renderWithProviders(<PageBlockHost {...baseProps} />);
     await driveToReady();
