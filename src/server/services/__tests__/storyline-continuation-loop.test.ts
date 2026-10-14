@@ -80,6 +80,10 @@ const publishedPost = (id: number, userId: number, nsfwLevel: number) => {
     postId: id,
     index: 0,
     url: `img-${id}`,
+    type: 'image',
+    hash: null,
+    width: 832,
+    height: 1216,
     nsfwLevel,
     ingestion: 'Scanned',
     tosViolation: false,
@@ -195,6 +199,16 @@ describe('the storyline continuation loop', () => {
     expect(queue.items.map((item) => [item.id, item.post.id, item.parentPost.id])).toEqual([
       [id, STRANGER_POST, ROOT_POST],
     ]);
+    // This fake honours `select`: the cover carries what it needs to render.
+    expect(queue.items[0].post.coverImage).toEqual({
+      id: STRANGER_POST * 10,
+      url: `img-${STRANGER_POST}`,
+      nsfwLevel: expect.any(Number),
+      type: 'image',
+      hash: null,
+      width: 832,
+      height: 1216,
+    });
 
     await expect(
       actOnStorylineContinuation({ placementId: id, ownerId: OWNER, action: 'approve' })

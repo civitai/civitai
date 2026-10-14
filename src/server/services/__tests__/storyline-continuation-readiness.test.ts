@@ -246,6 +246,29 @@ describe('getPendingStorylineContinuations', () => {
     });
   });
 
+  // Prisma is mocked, so this pins the fields the query asks for: without `type` a video cover
+  // is requested as an image, and without `hash` a blurred one has nothing to draw.
+  it('asks for what a cover needs to render: its media type, blurhash and size', async () => {
+    givenQueue({ id: 1, url: 'u1', nsfwLevel: 1 });
+    await getPendingStorylineContinuations({ ownerId: 10, domainLevels: 1 });
+    const { select } = dbMock.dbRead.post.findMany.mock.calls[0][0];
+    expect(select.images.select).toEqual({
+      id: true,
+      url: true,
+      nsfwLevel: true,
+      type: true,
+      hash: true,
+      width: true,
+      height: true,
+    });
+  });
+
+  it('passes a video cover through with its type', async () => {
+    givenQueue({ id: 1, url: 'u1', nsfwLevel: 1, type: 'video' } as never);
+    const page = await getPendingStorylineContinuations({ ownerId: 10, domainLevels: 1 });
+    expect(page.items[0].post.coverImage).toMatchObject({ id: 1, type: 'video' });
+  });
+
   it('withholds a cover above what the domain serves, and shows one within it', async () => {
     givenQueue({ id: 1, url: 'u1', nsfwLevel: 4 });
     const page = await getPendingStorylineContinuations({ ownerId: 10, domainLevels: 1 });

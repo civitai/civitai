@@ -897,7 +897,16 @@ const summaryPostSelect = {
       poi: false,
       needsReview: null,
     },
-    select: { id: true, url: true, nsfwLevel: true },
+    // `type` so a video cover is not requested as an image; `hash` and size for its blur.
+    select: {
+      id: true,
+      url: true,
+      nsfwLevel: true,
+      type: true,
+      hash: true,
+      width: true,
+      height: true,
+    },
     orderBy: { index: 'asc' },
     take: 1,
   },
