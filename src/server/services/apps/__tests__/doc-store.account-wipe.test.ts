@@ -486,23 +486,39 @@ function defineAccountWipeSuite(makeHarness: () => Promise<Harness>) {
       );
       expect(keep.map((k) => k.length)).toEqual([5, 5]);
 
-      const out = await maint.wipeAccount(WIPED);
-      expect(out.failures.filter((f) => f.appId === app)).toEqual([]);
-      // The dev namespace is wiped per user. The review namespace's context belongs to OTHER,
-      // so it is refused as a failure and left as it was; neither is deleted outright.
-      expect(out.namespaces.find((n) => n.appId === app)).toMatchObject({ mode: 'user', marks: 1 });
-      expect(out.namespaces.some((n) => n.appId === req && n.mode === 'namespace')).toBe(false);
-      for (const [i, [appId, ns]] of foreign.entries()) {
-        expect(
-          await h.raw(
-            `SELECT * FROM appdata.doc WHERE app_id = $1 AND ns = $2 ORDER BY coll, scope_uid, key`,
-            [appId, ns]
-          )
-        ).toEqual(keep[i]);
+      try {
+        const out = await maint.wipeAccount(WIPED);
+        expect(out.failures.filter((f) => f.appId === app)).toEqual([]);
+        expect(out.failures.filter((f) => f.appId === req)).toEqual([
+          {
+            appId: req,
+            ns: reviewNamespace(req, OTHER),
+            error: expect.stringMatching(/review namespace does not belong/),
+          },
+        ]);
+        // The dev namespace is wiped per user. The review namespace's context belongs to OTHER,
+        // so it is refused as a failure and left as it was; neither is deleted outright.
+        expect(out.namespaces.find((n) => n.appId === app)).toMatchObject({
+          mode: 'user',
+          marks: 1,
+        });
+        expect(out.namespaces.some((n) => n.appId === req && n.mode === 'namespace')).toBe(false);
+        for (const [i, [appId, ns]] of foreign.entries()) {
+          expect(
+            await h.raw(
+              `SELECT * FROM appdata.doc WHERE app_id = $1 AND ns = $2 ORDER BY coll, scope_uid, key`,
+              [appId, ns]
+            )
+          ).toEqual(keep[i]);
+        }
+        expect(await rowsNaming(h, app, WIPED)).toEqual(NAMES_NOBODY);
+      } finally {
+        // Remove the refused review mark so later cases start from no failures.
+        await h.raw(`DELETE FROM appdata.doc_mark WHERE app_id = $1 AND user_id = $2`, [
+          req,
+          WIPED,
+        ]);
       }
-      expect(await rowsNaming(h, app, WIPED)).toEqual(NAMES_NOBODY);
-      // Clean up the refused review mark so later cases start from no failures.
-      await h.raw(`DELETE FROM appdata.doc_mark WHERE app_id = $1 AND user_id = $2`, [req, WIPED]);
     });
 
     it('pages the enumeration: an account in more namespaces than one page holds is wiped in all of them', async () => {
