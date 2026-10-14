@@ -33,6 +33,7 @@ const h = vi.hoisted(() => ({
   addons: vi.fn(),
   navBanners: vi.fn(),
   session: vi.fn(),
+  tos: vi.fn(async (_: { domainColor: string }) => undefined as unknown),
 }));
 
 // The real `~/env/server` validates every prod var and throws under test. Only the deadline
@@ -78,7 +79,7 @@ vi.mock('~/server/services/announcement.service', async (importOriginal) => ({
 vi.mock('~/server/services/nav-banner.service', () => ({ getNavBanners: h.navBanners }));
 vi.mock('~/server/services/content.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ContentService>()),
-  getTosMeta: vi.fn(async () => undefined),
+  getTosMeta: h.tos,
 }));
 vi.mock('~/server/services/system-cache', async (importOriginal) => ({
   ...(await importOriginal<typeof SystemCache>()),
@@ -253,9 +254,18 @@ function pageRequest() {
   };
 }
 
+/**
+ * The host the HTTP route actually saw: `_app` fetched the internal base URL, and `fetch`
+ * replaces a caller-supplied `Host` with the URL's own. Any render-path test that compares
+ * against the route must call the route with THIS host, never the page's.
+ */
+const INTERNAL_BASE_URL = 'http://internal.example:3000';
+const INTERNAL_HOST = 'internal.example:3000';
+
 describe('settings bootstrap during a server render', () => {
   beforeEach(() => {
     vi.useFakeTimers();
+    vi.stubEnv('NEXTAUTH_URL_INTERNAL', INTERNAL_BASE_URL);
     h.session.mockResolvedValue(null);
     h.contentSettings.mockResolvedValue({ showNsfw: true });
     h.announcements.mockResolvedValue([{ id: 1, startsAt: new Date('2026-01-02T03:04:05.000Z') }]);
@@ -272,7 +282,7 @@ describe('settings bootstrap during a server render', () => {
 
   it('answers exactly what the route puts on the wire, for the same request', async () => {
     h.session.mockResolvedValue({ user: { id: 42, username: 'x' } });
-    const { done, json } = invoke({ host: 'civitai.com' });
+    const { done, json } = invoke({ host: INTERNAL_HOST });
     await vi.runAllTimersAsync();
     await done;
     const wire = JSON.parse(JSON.stringify(json.mock.calls[0][0]));
@@ -320,7 +330,9 @@ describe('settings bootstrap during a server render', () => {
     expect(h.session).toHaveBeenCalledTimes(1);
     const { req, res } = h.session.mock.calls[0][0];
     expect(req.url).toBe('/api/user/settings');
-    expect(req.headers).toBe(page.headers);
+    // The page's headers, except `Host`, which is the internal base URL's as it was over HTTP.
+    expect(req.headers).toEqual({ ...page.headers, host: INTERNAL_HOST });
+    expect(page.headers.host, 'the page request itself is not rewritten').toBe('civitai.com');
     expect(req.cookies).toBe(page.cookies);
     expect(req).not.toBe(page);
     // The lookup records what it resolved on `req.context`; that must not reach the page.
@@ -420,5 +432,110 @@ describe('settings bootstrap during a server render', () => {
       );
     await vi.advanceTimersByTimeAsync(10_000);
     expect(await outcome).toBe(message);
+  });
+});
+
+/**
+ * 🔴 The domain colour a render resolves must be the one the HTTP route resolved — for the
+ * INTERNAL host — not the page's. Resolving the page's host instead changes which ToS fields
+ * and which domain-targeted announcements land on first paint.
+ *
+ * Domains are configured here (they are read at module load, hence the fresh imports), and
+ * the ToS and announcement mocks echo the colour they were asked for, so a host difference
+ * shows up in the payload rather than vanishing into identical fixtures.
+ */
+describe('settings bootstrap during a server render — domain resolution', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.stubEnv('NEXTAUTH_URL_INTERNAL', INTERNAL_BASE_URL);
+    vi.stubEnv('SERVER_DOMAIN_GREEN', 'civitai.com');
+    vi.stubEnv('SERVER_DOMAIN_BLUE', 'blue.example');
+    vi.stubEnv('SERVER_DOMAIN_RED', 'civitai.red');
+    // Set too, so the cases below also pin the precedence `_app` used: the internal URL wins
+    // over the public one whenever both exist.
+    vi.stubEnv('NEXT_PUBLIC_BASE_URL', 'https://civitai.com');
+    vi.resetModules();
+    h.session.mockResolvedValue(null);
+    h.contentSettings.mockResolvedValue({ showNsfw: true });
+    h.tos.mockImplementation(async ({ domainColor }) => ({ domainColor }));
+    h.announcements.mockImplementation(async ({ domain }: { domain?: string }) => [
+      { id: 1, domain: domain ?? 'none' },
+    ]);
+    h.liveNow.mockResolvedValue(false);
+    h.follows.mockResolvedValue([]);
+    h.addons.mockResolvedValue([]);
+    h.navBanners.mockResolvedValue([]);
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.clearAllMocks();
+    vi.unstubAllEnvs();
+  });
+
+  it.each(['civitai.com', 'civitai.red'])(
+    'a render for Host: %s answers what the route answered for the internal host',
+    async (publicHost) => {
+      const { default: freshHandler } = await import('~/pages/api/user/settings');
+      const fresh = await import('~/server/services/settings-bootstrap.service');
+
+      const json = vi.fn();
+      const res = { status: vi.fn(() => res), json, setHeader: vi.fn(), end: vi.fn() };
+      const done = (
+        freshHandler as unknown as (q: NextApiRequest, s: NextApiResponse) => Promise<void>
+      )(
+        {
+          method: 'GET',
+          headers: { host: INTERNAL_HOST },
+          query: {},
+          cookies: {},
+        } as unknown as NextApiRequest,
+        res as unknown as NextApiResponse
+      );
+      await vi.runAllTimersAsync();
+      await done;
+      const wire = JSON.parse(JSON.stringify(json.mock.calls[0][0]));
+
+      const rendered = await fresh.resolveSettingsBootstrapForRender({
+        headers: { host: publicHost },
+        cookies: {},
+        url: '/',
+      } as unknown as RenderRequest);
+
+      expect(
+        rendered,
+        'a server render must resolve the domain the HTTP route resolved (the internal host), not the page host'
+      ).toEqual(wire);
+      // Literal, so both sides moving together still shows: the internal host matches no
+      // configured domain, so ToS falls back to blue and announcements get no domain.
+      expect(rendered).toMatchObject({
+        tosMeta: { domainColor: 'blue' },
+        announcements: [{ id: 1, domain: 'none' }],
+      });
+    }
+  );
+
+  it('rejects with no base URL, as the fetch to an undefined base did, so the render degrades', async () => {
+    vi.stubEnv('NEXTAUTH_URL_INTERNAL', undefined);
+    vi.stubEnv('NEXT_PUBLIC_BASE_URL', undefined);
+    const { env: clientEnv } = await import('~/env/client');
+    expect(clientEnv.NEXT_PUBLIC_BASE_URL, 'this case needs no public base URL either').toBeFalsy();
+    const fresh = await import('~/server/services/settings-bootstrap.service');
+    await expect(
+      fresh.resolveSettingsBootstrapForRender({
+        headers: { host: 'civitai.com' },
+        cookies: {},
+        url: '/',
+      } as unknown as RenderRequest)
+    ).rejects.toThrow('settings bootstrap has no usable base URL');
+    expect(h.session).not.toHaveBeenCalled();
+  });
+
+  it('POSITIVE CONTROL: the fixtures do tell the hosts apart', async () => {
+    // Without this, a config that resolved every host to the same colour would make the cases
+    // above pass whichever host the render used.
+    const { getRequestDomainColor } = await import('~/server/utils/server-domain');
+    expect(getRequestDomainColor({ headers: { host: 'civitai.com' } })).toBe('green');
+    expect(getRequestDomainColor({ headers: { host: 'civitai.red' } })).toBe('red');
+    expect(getRequestDomainColor({ headers: { host: INTERNAL_HOST } })).toBeUndefined();
   });
 });

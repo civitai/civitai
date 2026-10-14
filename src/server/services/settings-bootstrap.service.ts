@@ -9,6 +9,7 @@ import { getRequestDomainColor } from '~/server/utils/server-domain';
 import { getBrowsingSettingAddons, getLiveNow } from '~/server/services/system-cache';
 import { withTimeoutFallback } from '~/server/utils/timeout-helpers';
 import { env } from '~/env/server';
+import { env as clientEnv } from '~/env/client';
 import { logToAxiom } from '~/server/logging/client';
 
 /**
@@ -151,11 +152,34 @@ const RENDER_DEADLINE_MS = Math.max(
 const TIMED_OUT = Symbol('settings bootstrap timed out');
 
 /**
+ * The `Host` the bootstrap saw when `_app` reached it over HTTP. That request went to the
+ * internal base URL, and Node's `fetch` replaces a caller-supplied `Host` with the URL's own
+ * (measured on Node 24.19 and 24.21: a forwarded `Host: civitai.com` arrived as the URL's
+ * `host:port`). So the route never saw the page's public host, and everything it derives from
+ * the host — the domain colour behind the ToS fields and the domain-targeted announcements —
+ * resolved for the internal host. Rendering with the page's host would change both on first
+ * paint. Derived exactly as `_app` derived that URL; whether a render SHOULD see the public
+ * host is a separate product question, not part of moving this call in-process.
+ *
+ * No base URL rejects, as the fetch to `undefined/...` did: the render degrades.
+ */
+function bootstrapHost(): string {
+  const baseUrl = process.env.NEXTAUTH_URL_INTERNAL ?? clientEnv.NEXT_PUBLIC_BASE_URL;
+  try {
+    return new URL(SETTINGS_BOOTSTRAP_PATH, baseUrl).host;
+  } catch {
+    throw new Error('settings bootstrap has no usable base URL');
+  }
+}
+
+/**
  * The bootstrap for a page that is being server-rendered, with no HTTP request to ourselves.
  *
- * It answers exactly what a GET of `SETTINGS_BOOTSTRAP_PATH` carrying the page request's
- * headers would have answered, because that is what callers were built against:
+ * It answers exactly what `_app`'s old `fetch` of `SETTINGS_BOOTSTRAP_PATH` at the internal
+ * base URL, forwarding the page request's headers, would have answered, because that is what
+ * callers were built against:
  *
+ *   - `Host` is the internal base URL's, not the page's — `bootstrapHost` says why.
  *   - The session is resolved from the page request's HEADERS AND COOKIES ONLY, never its
  *     URL. `getServerAuthSession` treats a `?token=` query parameter as an API credential,
  *     and a page URL may carry an unrelated one.
@@ -173,8 +197,11 @@ const TIMED_OUT = Symbol('settings bootstrap timed out');
 export async function resolveSettingsBootstrapForRender(
   request: IncomingMessage & { cookies?: Partial<Record<string, string>> }
 ): Promise<unknown> {
+  // Every other request field the bootstrap reads is the page's own, unchanged: it reads only
+  // `authorization` and `host` from the headers (plus the parsed cookies), and `fetch` forwarded
+  // `authorization` and `cookie` as-is.
   const req = {
-    headers: request.headers,
+    headers: { ...request.headers, host: bootstrapHost() },
     cookies: request.cookies,
     url: SETTINGS_BOOTSTRAP_PATH,
   } as unknown as AuthArgs['req'];
