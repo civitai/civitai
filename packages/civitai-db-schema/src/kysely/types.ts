@@ -4593,6 +4593,15 @@ export type ServiceDeal = {
   deliveryDays: number;
   previewKind: ServicePreviewKind;
   status: Generated<ServiceDealStatus>;
+  /**
+   * Set once the Hold leg's Buzz call has succeeded. A deal without it was never paid
+   * for: no other status may be acted on, and no Release or Refund may run against it.
+   */
+  heldAt: Timestamp | null;
+  /**
+   * Set once the Release or Refund leg's Buzz call has succeeded.
+   */
+  settledAt: Timestamp | null;
   chatId: number | null;
   requestText: string;
   requestedAt: Generated<Timestamp>;

@@ -258,7 +258,7 @@ export type ServiceOfferingStatus = "Draft" | "Active" | "Paused" | "Removed";
 
 export type ServicePreviewKind = "Image" | "Video" | "SampleOutputs" | "None";
 
-export type ServiceBuzzType = "yellow" | "blue";
+export type ServiceBuzzType = "yellow" | "blue" | "green";
 
 export type ServiceDealStatus = "Requested" | "Accepted" | "Delivered" | "InRevision" | "Completed" | "Declined" | "Expired" | "CancellationRequested" | "Cancelled" | "Disputed";
 
@@ -6069,6 +6069,8 @@ export interface ServiceDeal {
   deliveryDays: number;
   previewKind: ServicePreviewKind;
   status: ServiceDealStatus;
+  heldAt: Date | null;
+  settledAt: Date | null;
   chatId: number | null;
   requestText: string;
   requestedAt: Date;

@@ -4,6 +4,12 @@
 -- append-only event sheet, delivery files, and one receipt row per Buzz movement.
 -- Nothing reads or writes these tables until the dark `creatorServices` flag ships code
 -- that does, so this can be applied before or after the deploy that carries the client.
+--
+-- The REFERENCES "User" clauses take a SHARE ROW EXCLUSIVE lock on "User", which queues
+-- behind any open write transaction on it and blocks new writes while it waits. The
+-- timeout makes a contended run fail fast instead; re-run it, it is idempotent.
+
+SET lock_timeout = '5s';
 
 DO $$ BEGIN
   CREATE TYPE "ServiceOfferingStatus" AS ENUM ('Draft', 'Active', 'Paused', 'Removed');
@@ -16,7 +22,7 @@ EXCEPTION WHEN duplicate_object THEN NULL;
 END $$;
 
 DO $$ BEGIN
-  CREATE TYPE "ServiceBuzzType" AS ENUM ('yellow', 'blue');
+  CREATE TYPE "ServiceBuzzType" AS ENUM ('yellow', 'blue', 'green');
 EXCEPTION WHEN duplicate_object THEN NULL;
 END $$;
 
@@ -75,6 +81,8 @@ CREATE TABLE IF NOT EXISTS "ServiceOffering" (
   "updatedAt"         TIMESTAMP(3) NOT NULL
 );
 
+CREATE UNIQUE INDEX IF NOT EXISTS "ServiceOffering_id_sellerId_key"
+  ON "ServiceOffering" ("id", "sellerId");
 CREATE INDEX IF NOT EXISTS "ServiceOffering_sellerId_status_idx"
   ON "ServiceOffering" ("sellerId", "status");
 CREATE INDEX IF NOT EXISTS "ServiceOffering_status_createdAt_idx"
@@ -96,6 +104,8 @@ CREATE TABLE IF NOT EXISTS "ServiceDeal" (
   "deliveryDays"              INTEGER NOT NULL CHECK ("deliveryDays" > 0),
   "previewKind"               "ServicePreviewKind" NOT NULL,
   "status"                    "ServiceDealStatus" NOT NULL DEFAULT 'Requested',
+  "heldAt"                    TIMESTAMP(3),
+  "settledAt"                 TIMESTAMP(3),
   "chatId"                    INTEGER,
   "requestText"               TEXT NOT NULL,
   "requestedAt"               TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -122,17 +132,38 @@ CREATE TABLE IF NOT EXISTS "ServiceDeal" (
   -- The release sweeper selects Completed deals by "releaseAt"; a Completed deal
   -- without one would never be paid out.
   CONSTRAINT "ServiceDeal_completed_has_releaseAt" CHECK ("status" <> 'Completed' OR "releaseAt" IS NOT NULL),
-  CONSTRAINT "ServiceDeal_dispute_resolution_consistent" CHECK (("disputeResolvedAt" IS NULL) = ("disputeResolution" IS NULL))
+  -- A deal past Requested is one the buyer has paid for: the seller must never be able to
+  -- accept, deliver or be paid on a deal whose hold never cleared.
+  CONSTRAINT "ServiceDeal_held_before_work" CHECK (
+    "heldAt" IS NOT NULL OR "status" IN ('Requested', 'Declined', 'Expired', 'Cancelled')
+  ),
+  CONSTRAINT "ServiceDeal_settled_after_held" CHECK ("settledAt" IS NULL OR "heldAt" IS NOT NULL),
+  CONSTRAINT "ServiceDeal_dispute_resolution_consistent" CHECK (("disputeResolvedAt" IS NULL) = ("disputeResolution" IS NULL)),
+  -- Release pays "sellerId", so it must be the offering's seller, not whatever a caller passed.
+  -- Not in the Prisma schema, which declares the offering relation on "offeringId" alone.
+  CONSTRAINT "ServiceDeal_offering_seller_fkey" FOREIGN KEY ("offeringId", "sellerId")
+    REFERENCES "ServiceOffering"("id", "sellerId") ON DELETE RESTRICT ON UPDATE CASCADE
 );
 
 CREATE INDEX IF NOT EXISTS "ServiceDeal_buyerId_status_idx" ON "ServiceDeal" ("buyerId", "status");
 CREATE INDEX IF NOT EXISTS "ServiceDeal_sellerId_status_idx" ON "ServiceDeal" ("sellerId", "status");
 CREATE INDEX IF NOT EXISTS "ServiceDeal_offeringId_status_idx" ON "ServiceDeal" ("offeringId", "status");
-CREATE INDEX IF NOT EXISTS "ServiceDeal_status_requestedAt_idx" ON "ServiceDeal" ("status", "requestedAt");
-CREATE INDEX IF NOT EXISTS "ServiceDeal_status_deliveredAt_idx" ON "ServiceDeal" ("status", "deliveredAt");
-CREATE INDEX IF NOT EXISTS "ServiceDeal_status_cancellationRequestedAt_idx" ON "ServiceDeal" ("status", "cancellationRequestedAt");
-CREATE INDEX IF NOT EXISTS "ServiceDeal_status_dueAt_idx" ON "ServiceDeal" ("status", "dueAt");
-CREATE INDEX IF NOT EXISTS "ServiceDeal_status_releaseAt_idx" ON "ServiceDeal" ("status", "releaseAt");
+-- The sweeps, PARTIAL so each holds only the deals it can still act on. The Prisma schema
+-- declares them without the predicates, which it cannot express.
+CREATE INDEX IF NOT EXISTS "ServiceDeal_status_requestedAt_idx" ON "ServiceDeal" ("status", "requestedAt")
+  WHERE "status" = 'Requested';
+CREATE INDEX IF NOT EXISTS "ServiceDeal_status_deliveredAt_idx" ON "ServiceDeal" ("status", "deliveredAt")
+  WHERE "status" = 'Delivered';
+CREATE INDEX IF NOT EXISTS "ServiceDeal_status_cancellationRequestedAt_idx" ON "ServiceDeal" ("status", "cancellationRequestedAt")
+  WHERE "status" = 'CancellationRequested';
+CREATE INDEX IF NOT EXISTS "ServiceDeal_status_dueAt_idx" ON "ServiceDeal" ("status", "dueAt")
+  WHERE "status" IN ('Accepted', 'InRevision');
+-- Completed stays Completed after payout, so without "settledAt" this would grow with every
+-- deal ever completed.
+CREATE INDEX IF NOT EXISTS "ServiceDeal_status_releaseAt_idx" ON "ServiceDeal" ("status", "releaseAt")
+  WHERE "status" = 'Completed' AND "settledAt" IS NULL;
+CREATE INDEX IF NOT EXISTS "ServiceDeal_status_closedAt_idx" ON "ServiceDeal" ("status", "closedAt")
+  WHERE "status" IN ('Declined', 'Expired', 'Cancelled') AND "settledAt" IS NULL;
 
 CREATE TABLE IF NOT EXISTS "ServiceDealEvent" (
   "id"        SERIAL PRIMARY KEY,
@@ -144,7 +175,7 @@ CREATE TABLE IF NOT EXISTS "ServiceDealEvent" (
   "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX IF NOT EXISTS "ServiceDealEvent_dealId_createdAt_idx" ON "ServiceDealEvent" ("dealId", "createdAt");
+CREATE INDEX IF NOT EXISTS "ServiceDealEvent_dealId_createdAt_id_idx" ON "ServiceDealEvent" ("dealId", "createdAt", "id");
 
 CREATE TABLE IF NOT EXISTS "ServiceDealFile" (
   "id"             SERIAL PRIMARY KEY,
@@ -180,12 +211,17 @@ CREATE UNIQUE INDEX IF NOT EXISTS "ServiceDealTransaction_externalTransactionId_
   ON "ServiceDealTransaction" ("externalTransactionId");
 CREATE UNIQUE INDEX IF NOT EXISTS "ServiceDealTransaction_dealId_leg_key"
   ON "ServiceDealTransaction" ("dealId", "leg");
-CREATE INDEX IF NOT EXISTS "ServiceDealTransaction_leg_createdAt_idx"
-  ON "ServiceDealTransaction" ("leg", "createdAt");
+-- The recovery sweep's claimed-but-unpaid legs. Rows leave it as they are paid.
+CREATE INDEX IF NOT EXISTS "ServiceDealTransaction_createdAt_idx"
+  ON "ServiceDealTransaction" ("createdAt")
+  WHERE "transactionId" IS NULL;
 
--- Release and Refund are mutually exclusive per deal: whichever leg is claimed first
--- holds this slot, and the other's insert fails. Not in the Prisma schema, which cannot
--- express a partial index.
+-- A refund excludes both halves of a payout: whichever side is claimed first holds the
+-- slot, and the other side's insert fails. Release and Fee may coexist. Not in the Prisma
+-- schema, which cannot express a partial index.
 CREATE UNIQUE INDEX IF NOT EXISTS "ServiceDealTransaction_dealId_payout_key"
   ON "ServiceDealTransaction" ("dealId")
   WHERE "leg" IN ('Release', 'Refund');
+CREATE UNIQUE INDEX IF NOT EXISTS "ServiceDealTransaction_dealId_fee_refund_key"
+  ON "ServiceDealTransaction" ("dealId")
+  WHERE "leg" IN ('Fee', 'Refund');

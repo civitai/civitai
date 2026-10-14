@@ -9434,6 +9434,7 @@ enum ServicePreviewKind {
 enum ServiceBuzzType {
   yellow
   blue
+  green
 }
 
 /// Open: Requested, Accepted, Delivered, InRevision, CancellationRequested, Disputed.
@@ -9515,6 +9516,8 @@ model ServiceOffering {
   updatedAt         DateTime              @updatedAt
   deals             ServiceDeal[]
 
+  /// Target of the deal's composite FK that binds `ServiceDeal.sellerId` to the offering's seller.
+  @@unique([id, sellerId])
   @@index([sellerId, status])
   @@index([status, createdAt])
 }
@@ -9539,6 +9542,11 @@ model ServiceDeal {
   deliveryDays              Int
   previewKind               ServicePreviewKind
   status                    ServiceDealStatus       @default(Requested)
+  /// Set once the Hold leg's Buzz call has succeeded. A deal without it was never paid
+  /// for: no other status may be acted on, and no Release or Refund may run against it.
+  heldAt                    DateTime?
+  /// Set once the Release or Refund leg's Buzz call has succeeded.
+  settledAt                 DateTime?
   chatId                    Int?
   requestText               String
   requestedAt               DateTime                @default(now())
@@ -9569,12 +9577,14 @@ model ServiceDeal {
   @@index([buyerId, status])
   @@index([sellerId, status])
   @@index([offeringId, status])
-  /// The sweeps: unanswered requests, auto-complete, unanswered cancellations, late deals.
+  /// The sweeps. Each is a PARTIAL index over the status it selects (see the migration),
+  /// so it holds only open deals rather than every deal ever made.
   @@index([status, requestedAt])
   @@index([status, deliveredAt])
   @@index([status, cancellationRequestedAt])
   @@index([status, dueAt])
   @@index([status, releaseAt])
+  @@index([status, closedAt])
 }
 
 /// The deal's accountability sheet. Append-only. `actorId` -1 is the system.
@@ -9588,7 +9598,7 @@ model ServiceDealEvent {
   comment   String?
   createdAt DateTime             @default(now())
 
-  @@index([dealId, createdAt])
+  @@index([dealId, createdAt, id])
 }
 
 model ServiceDealFile {
@@ -9614,8 +9624,9 @@ model ServiceDealFile {
 /// derived from the row so the Buzz service's dedupe is a second line. A null
 /// `transactionId` is a claimed leg not yet paid, which the recovery job finishes.
 ///
-/// The migration adds a PARTIAL unique index on `dealId` over the Release and Refund
-/// legs: a deal can never hold both. Prisma cannot express it.
+/// The migration adds two PARTIAL unique indexes on `dealId`, over Release+Refund and
+/// Fee+Refund: a refunded deal can hold neither a release nor a fee. Prisma cannot
+/// express them.
 model ServiceDealTransaction {
   id                    Int             @id @default(autoincrement())
   dealId                Int
@@ -9631,7 +9642,8 @@ model ServiceDealTransaction {
   createdAt             DateTime        @default(now())
 
   @@unique([dealId, leg])
-  @@index([leg, createdAt])
+  /// PARTIAL over unpaid legs (`transactionId IS NULL`), for the recovery sweep.
+  @@index([createdAt])
 }
 
 enum UserHubSourceType {

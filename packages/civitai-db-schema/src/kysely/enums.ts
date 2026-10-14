@@ -1016,6 +1016,7 @@ export type ServicePreviewKind = (typeof ServicePreviewKind)[keyof typeof Servic
 export const ServiceBuzzType = {
   yellow: 'yellow',
   blue: 'blue',
+  green: 'green',
 } as const;
 export type ServiceBuzzType = (typeof ServiceBuzzType)[keyof typeof ServiceBuzzType];
 export const ServiceDealStatus = {

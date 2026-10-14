@@ -9,7 +9,7 @@ vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 /**
  * The escrow's money invariants that live in the hand-applied migration rather than in
  * code, run against the real SQL on an in-process Postgres. The Prisma schema cannot
- * express the partial index or the CHECKs, so nothing else exercises them.
+ * express the partial indexes, the composite FK or the CHECKs, so nothing else exercises them.
  */
 
 const MIGRATION = join(
@@ -22,23 +22,31 @@ const q = async (sql: string, params?: unknown[]) => (await holder.db.query(sql,
 
 const SELLER = 1;
 const BUYER = 2;
+const OTHER_SELLER = 3;
+const OFFERING = 1;
+const OTHER_OFFERING = 2;
 
 async function insertDeal(overrides: Record<string, unknown> = {}) {
   const row = {
-    offeringId: 1,
+    offeringId: OFFERING,
     buyerId: BUYER,
     sellerId: SELLER,
     price: 1000,
     buzzType: 'yellow',
     feeAmount: 0,
     status: 'Requested',
+    heldAt: null,
+    settledAt: null,
     releaseAt: null,
+    disputeResolvedAt: null,
+    disputeResolution: null,
     ...overrides,
   };
   const [deal] = await q(
     `INSERT INTO "ServiceDeal" ("offeringId", "buyerId", "sellerId", price, "buzzType", "feeAmount",
-       "revisionsIncluded", "deliveryDays", "previewKind", status, "requestText", "releaseAt", "updatedAt")
-     VALUES ($1, $2, $3, $4, $5, $6, 1, 3, 'Image', $7, 'a request', $8, now())
+       "revisionsIncluded", "deliveryDays", "previewKind", status, "requestText", "heldAt",
+       "settledAt", "releaseAt", "disputeResolvedAt", "disputeResolution", "updatedAt")
+     VALUES ($1, $2, $3, $4, $5, $6, 1, 3, 'Image', $7, 'a request', $8, $9, $10, $11, $12, now())
      RETURNING id`,
     [
       row.offeringId,
@@ -48,7 +56,11 @@ async function insertDeal(overrides: Record<string, unknown> = {}) {
       row.buzzType,
       row.feeAmount,
       row.status,
+      row.heldAt,
+      row.settledAt,
       row.releaseAt,
+      row.disputeResolvedAt,
+      row.disputeResolution,
     ]
   );
   return (deal as { id: number }).id;
@@ -57,12 +69,12 @@ async function insertDeal(overrides: Record<string, unknown> = {}) {
 async function insertLeg(
   dealId: number,
   leg: string,
-  externalTransactionId = `svc:${dealId}:${leg}`
+  { externalTransactionId = `svc:${dealId}:${leg}`, amount = 1000 } = {}
 ) {
   await q(
     `INSERT INTO "ServiceDealTransaction" ("dealId", leg, "externalTransactionId", amount, "buzzType")
-     VALUES ($1, $2, $3, 1000, 'yellow')`,
-    [dealId, leg, externalTransactionId]
+     VALUES ($1, $2, $3, $4, 'yellow')`,
+    [dealId, leg, externalTransactionId, amount]
   );
 }
 
@@ -76,9 +88,10 @@ beforeEach(async () => {
   await holder.db.exec(`
     TRUNCATE "ServiceDealTransaction", "ServiceDealEvent", "ServiceDealFile", "ServiceDeal", "ServiceOffering" RESTART IDENTITY;
     DELETE FROM "User";
-    INSERT INTO "User" (id) VALUES (${SELLER}), (${BUYER});
+    INSERT INTO "User" (id) VALUES (${SELLER}), (${BUYER}), (${OTHER_SELLER});
     INSERT INTO "ServiceOffering" ("sellerId", title, description, price, "deliveryDays", "updatedAt")
-      VALUES (${SELLER}, 'Offering', 'desc', 1000, 3, now());
+      VALUES (${SELLER}, 'Offering', 'desc', 1000, 3, now()),
+             (${OTHER_SELLER}, 'Other', 'desc', 1000, 3, now());
   `);
 });
 
@@ -87,23 +100,17 @@ describe('creator services migration', () => {
     await expect(holder.db.exec(readFileSync(MIGRATION, 'utf8'))).resolves.toBeDefined();
   });
 
-  describe('a deal can never take both the release and the refund leg', () => {
-    it('refuses a refund after a release', async () => {
+  describe('a refunded deal can take neither half of a payout', () => {
+    it.each([
+      ['Release', 'Refund', 'ServiceDealTransaction_dealId_payout_key'],
+      ['Refund', 'Release', 'ServiceDealTransaction_dealId_payout_key'],
+      ['Fee', 'Refund', 'ServiceDealTransaction_dealId_fee_refund_key'],
+      ['Refund', 'Fee', 'ServiceDealTransaction_dealId_fee_refund_key'],
+    ])('refuses %s then %s', async (first, second, constraint) => {
       const dealId = await insertDeal();
       await insertLeg(dealId, 'Hold');
-      await insertLeg(dealId, 'Release');
-      await expect(insertLeg(dealId, 'Refund')).rejects.toThrow(
-        /ServiceDealTransaction_dealId_payout_key/
-      );
-    });
-
-    it('refuses a release after a refund', async () => {
-      const dealId = await insertDeal();
-      await insertLeg(dealId, 'Hold');
-      await insertLeg(dealId, 'Refund');
-      await expect(insertLeg(dealId, 'Release')).rejects.toThrow(
-        /ServiceDealTransaction_dealId_payout_key/
-      );
+      await insertLeg(dealId, first);
+      await expect(insertLeg(dealId, second)).rejects.toThrow(new RegExp(constraint));
     });
 
     it('still lets a release carry its fee leg, and other deals pay independently', async () => {
@@ -122,36 +129,136 @@ describe('creator services migration', () => {
     const dealId = await insertDeal();
     const other = await insertDeal();
     await insertLeg(dealId, 'Hold');
-    await expect(insertLeg(dealId, 'Hold', 'svc:fresh-id')).rejects.toThrow(
-      /ServiceDealTransaction_dealId_leg_key/
-    );
-    await expect(insertLeg(other, 'Hold', `svc:${dealId}:Hold`)).rejects.toThrow(
-      /ServiceDealTransaction_externalTransactionId_key/
+    await expect(
+      insertLeg(dealId, 'Hold', { externalTransactionId: 'svc:fresh-id' })
+    ).rejects.toThrow(/ServiceDealTransaction_dealId_leg_key/);
+    await expect(
+      insertLeg(other, 'Hold', { externalTransactionId: `svc:${dealId}:Hold` })
+    ).rejects.toThrow(/ServiceDealTransaction_externalTransactionId_key/);
+  });
+
+  it('refuses a leg that moves no Buzz', async () => {
+    const dealId = await insertDeal();
+    await expect(insertLeg(dealId, 'Hold', { amount: 0 })).rejects.toThrow(
+      /ServiceDealTransaction_amount_check/
     );
   });
 
-  it('refuses a Completed deal without releaseAt, which the release sweeper would never pay', async () => {
-    await expect(insertDeal({ status: 'Completed' })).rejects.toThrow(
-      /ServiceDeal_completed_has_releaseAt/
+  describe('a deal nobody paid for can never be worked or paid out', () => {
+    it.each(['Accepted', 'Delivered', 'InRevision', 'CancellationRequested', 'Disputed'])(
+      'refuses %s without heldAt',
+      async (status) => {
+        await expect(insertDeal({ status })).rejects.toThrow(/ServiceDeal_held_before_work/);
+        await expect(insertDeal({ status, heldAt: new Date() })).resolves.toEqual(
+          expect.any(Number)
+        );
+      }
     );
-    await expect(insertDeal({ status: 'Completed', releaseAt: new Date() })).resolves.toEqual(
+
+    it('refuses a settled deal that was never held', async () => {
+      await expect(insertDeal({ status: 'Declined', settledAt: new Date() })).rejects.toThrow(
+        /ServiceDeal_settled_after_held/
+      );
+    });
+
+    it('lets an unpaid request close without a hold', async () => {
+      for (const status of ['Declined', 'Expired', 'Cancelled'])
+        await expect(insertDeal({ status })).resolves.toEqual(expect.any(Number));
+    });
+  });
+
+  it('refuses a Completed deal without releaseAt, which the release sweeper would never pay', async () => {
+    const held = { status: 'Completed', heldAt: new Date() };
+    await expect(insertDeal(held)).rejects.toThrow(/ServiceDeal_completed_has_releaseAt/);
+    await expect(insertDeal({ ...held, releaseAt: new Date() })).resolves.toEqual(
       expect.any(Number)
     );
   });
 
-  it('refuses a fee that reaches the price', async () => {
-    await expect(insertDeal({ feeAmount: 1000 })).rejects.toThrow(/ServiceDeal_fee_below_price/);
+  it.each([
+    [1000, 'reaches the price'],
+    [-1, 'is negative and would pay the seller more than the price'],
+  ])('refuses a fee of %i, which %s', async (feeAmount) => {
+    await expect(insertDeal({ feeAmount })).rejects.toThrow(/ServiceDeal_fee_below_price/);
+  });
+
+  it('accepts a fee just below the price', async () => {
     await expect(insertDeal({ feeAmount: 999 })).resolves.toEqual(expect.any(Number));
   });
 
-  it('refuses a deal with yourself', async () => {
-    await expect(insertDeal({ buyerId: SELLER })).rejects.toThrow(/ServiceDeal_buyer_not_seller/);
+  it('refuses a free deal', async () => {
+    // Either check catches it: a fee of 0 cannot be below a price of 0.
+    await expect(insertDeal({ price: 0 })).rejects.toThrow(
+      /ServiceDeal_price_check|ServiceDeal_fee_below_price/
+    );
   });
 
-  it('keeps the money record when someone tries to delete a party to it', async () => {
-    await insertDeal();
-    await expect(q(`DELETE FROM "User" WHERE id = $1`, [BUYER])).rejects.toThrow(
-      /ServiceDeal_buyerId_fkey/
+  it('refuses a deal with yourself', async () => {
+    await expect(insertDeal({ buyerId: SELLER, sellerId: SELLER })).rejects.toThrow(
+      /ServiceDeal_buyer_not_seller/
     );
+  });
+
+  it("refuses a seller who does not own the offering, since release pays the deal's seller", async () => {
+    await expect(insertDeal({ sellerId: OTHER_SELLER })).rejects.toThrow(
+      /ServiceDeal_offering_seller_fkey/
+    );
+    await expect(
+      insertDeal({ offeringId: OTHER_OFFERING, sellerId: OTHER_SELLER })
+    ).resolves.toEqual(expect.any(Number));
+  });
+
+  it('refuses a dispute marked resolved without a resolution, and the reverse', async () => {
+    const held = { status: 'Disputed', heldAt: new Date() };
+    await expect(insertDeal({ ...held, disputeResolvedAt: new Date() })).rejects.toThrow(
+      /ServiceDeal_dispute_resolution_consistent/
+    );
+    await expect(insertDeal({ ...held, disputeResolution: 'Refund' })).rejects.toThrow(
+      /ServiceDeal_dispute_resolution_consistent/
+    );
+  });
+
+  describe('keeps the money record when something it hangs off is deleted', () => {
+    it.each([
+      ['the buyer', `DELETE FROM "User" WHERE id = ${BUYER}`, 'ServiceDeal_buyerId_fkey'],
+      [
+        'the offering',
+        `DELETE FROM "ServiceOffering" WHERE id = ${OFFERING}`,
+        'ServiceDeal_offeringId_fkey|ServiceDeal_offering_seller_fkey',
+      ],
+      [
+        'the deal, via its receipt',
+        `DELETE FROM "ServiceDeal"`,
+        'ServiceDealTransaction_dealId_fkey',
+      ],
+    ])('refuses deleting %s', async (_name, sql, constraint) => {
+      const dealId = await insertDeal();
+      await insertLeg(dealId, 'Hold');
+      await expect(q(sql)).rejects.toThrow(new RegExp(constraint));
+    });
+
+    it('refuses deleting the seller, whose offering cascades but whose deals do not', async () => {
+      await insertDeal();
+      await expect(q(`DELETE FROM "User" WHERE id = ${SELLER}`)).rejects.toThrow(
+        /ServiceDeal_sellerId_fkey|ServiceDeal_offeringId_fkey|ServiceDeal_offering_seller_fkey/
+      );
+    });
+
+    it.each([
+      [
+        'ServiceDealEvent',
+        `INSERT INTO "ServiceDealEvent" ("dealId", "actorId", type) VALUES ($1, -1, 'Requested')`,
+      ],
+      [
+        'ServiceDealFile',
+        `INSERT INTO "ServiceDealFile" ("dealId", kind, "s3Key", "mimeType", size) VALUES ($1, 'Preview', 'k', 'image/png', 1)`,
+      ],
+    ])('refuses deleting a deal that has a %s row', async (table, insert) => {
+      const dealId = await insertDeal();
+      await q(insert, [dealId]);
+      await expect(q(`DELETE FROM "ServiceDeal"`)).rejects.toThrow(
+        new RegExp(`${table}_dealId_fkey`)
+      );
+    });
   });
 });
