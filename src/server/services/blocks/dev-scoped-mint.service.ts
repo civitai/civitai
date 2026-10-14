@@ -1,6 +1,7 @@
 import {
   BLOCK_SPEND_SCOPE,
   BUZZ_BUDGET_CAP,
+  BUZZ_BUDGET_DEFAULT,
   isKnownBlockScope,
   validateBlockScopesAgainstOauthClient,
 } from '~/shared/constants/block-scope.constants';
@@ -71,7 +72,9 @@ import type { PrivateRunAudience } from '~/shared/constants/block-scope.constant
 // privately or exercise in review. Total spend on these tokens is bounded by the
 // aggregate caps (per-user daily, dev session, private-run, review).
 export const DEV_BUZZ_BUDGET_CAP = BUZZ_BUDGET_CAP;
-export const DEV_BUZZ_BUDGET_DEFAULT = 50;
+// Not lower than the install-token default either, for the same reason: an app that
+// declares no budget must develop, run privately and review at the budget it gets live.
+export const DEV_BUZZ_BUDGET_DEFAULT = BUZZ_BUDGET_DEFAULT;
 
 // Forced SFW — the dev mint NEVER reads the request host. localhost / the dev
 // tunnel has no color domain, and even a color-localhost dev config must not widen
@@ -694,13 +697,12 @@ export function parseManifestBuzzBudget(page: unknown): number | undefined {
  * Precedence: an EXPLICIT caller-supplied `requestedBudget` (the CLI/body can
  * always ask for a specific budget) > the RESOLVED app manifest's
  * `page.buzzBudgetPerGen` (`manifestDefaultBudget`, present for the approved +
- * pending modes where a manifest is resolvable) > `DEV_BUZZ_BUDGET_DEFAULT` (the
- * flat platform floor, used only for the ephemeral no-row mode). The
+ * pending modes where a manifest is resolvable) > `DEV_BUZZ_BUDGET_DEFAULT` (when
+ * neither is present). The
  * `DEV_BUZZ_BUDGET_CAP` hard ceiling clamps the final value in EVERY case, so a
  * manifest can only ever raise the dev default UP TO the cap. This is what lets a
- * recipe/app whose `page.buzzBudgetPerGen` exceeds 50 be dev-tested without a
- * manual `buzzBudget` request (the flat-50 default previously rejected it with
- * `ceiling N exceeds budget 50`).
+ * recipe/app whose `page.buzzBudgetPerGen` exceeds the default be dev-tested without
+ * a manual `buzzBudget` request.
  */
 export function resolveDevBuzzBudget(
   granted: string[],

@@ -283,7 +283,7 @@ export interface BlockInitPayload {
     expiresAt: string;
     /** Omitted by hosts that predate hub-minted OAuth tokens. */
     kind?: 'block' | 'oauth';
-    /** Present only when manifest declares ai:write:budgeted. */
+    /** Present only when the token carries ai:write:budgeted. */
     buzzBudget?: number;
   };
   context: SlotContext;

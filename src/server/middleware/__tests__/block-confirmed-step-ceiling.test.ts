@@ -6,6 +6,7 @@ import {
   blockQuoteGrantRefusal,
   type BlockQuoteGrant,
 } from '../block-scope.middleware';
+import { BUZZ_BUDGET_CAP } from '~/shared/constants/block-scope.constants';
 
 /**
  * `blockConfirmedStepCeiling` — the per-job ceiling a CONFIRMED pass-through step is
@@ -21,7 +22,7 @@ const CLAIMS = {
   appBlockId: 'apb_1',
   blockInstanceId: 'page_apb_1',
 };
-// 1040 — the motivating 3D price, above the production install cap of 1000.
+// 1040 — the motivating 3D price, above this token's per-call budget.
 const QUOTE: BlockQuoteGrant = {
   userId: 42,
   appBlockId: 'apb_1',
@@ -45,6 +46,12 @@ describe('blockConfirmedStepCeiling', () => {
     ).toEqual({ ceiling: 5000 });
     expect(BLOCK_CONFIRMED_STEP_MAX_BUZZ_PER_JOB).toBe(5000);
     expect(BLOCK_TRAINING_MAX_BUZZ_PER_RUN).toBe(5000);
+  });
+
+  // Equal, so a token at the per-call cap has no price that is both above its budget
+  // and within this maximum. Raising either one alone changes who is offered a confirm.
+  it('the per-call budget cap equals the per-job maximum', () => {
+    expect(BUZZ_BUDGET_CAP).toBe(BLOCK_CONFIRMED_STEP_MAX_BUZZ_PER_JOB);
   });
 
   it.each([
