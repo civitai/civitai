@@ -1,0 +1,327 @@
+import { describe, expect, it, vi } from 'vitest';
+import { isAdjacent } from '~/components/Image/DetailV2/image-detail-carousel.utils';
+import {
+  buildSubwayStops,
+  followCanon,
+  getPathImagesPaging,
+  getStorylineChapterName,
+  getStorylineStep,
+  getStorylineWalk,
+  hideHiddenUsersChapters,
+  orderPathImages,
+  parseIdParam,
+  resolvePendingContinue,
+  uniquePostIds,
+  withStorylineNavigation,
+} from '~/components/Storyline/storyline-mode.utils';
+import type { StorylinePathChapter } from '~/server/services/storyline.service';
+
+function visible(chapterId: number, depth: number, postId: number): StorylinePathChapter {
+  return {
+    chapterId,
+    depth,
+    tombstone: null,
+    post: { id: postId, title: `Chapter ${depth + 1}`, userId: 1, username: 'author' },
+  };
+}
+function hidden(chapterId: number, depth: number): StorylinePathChapter {
+  return { chapterId, depth, tombstone: 'browsingLevel', post: null };
+}
+
+describe('orderPathImages', () => {
+  it('orders by the path, then by image index within a chapter, whatever order the feed returned', () => {
+    // The image query orders by recency, so the newest chapter's images arrive first.
+    const images = [
+      { id: 31, postId: 300, index: 1 },
+      { id: 30, postId: 300, index: 0 },
+      { id: 11, postId: 100, index: 1 },
+      { id: 10, postId: 100, index: 0 },
+      { id: 99, postId: 999, index: 0 },
+    ];
+    expect(orderPathImages(images, [100, 300]).map((i) => i.id)).toEqual([10, 11, 30, 31]);
+  });
+});
+
+describe('getStorylineWalk', () => {
+  it('maps each image to its chapter and skips a hidden chapter instead of failing on it', () => {
+    const chapters = [visible(1, 0, 100), hidden(2, 1), visible(3, 2, 300)];
+    const walk = getStorylineWalk(chapters, [
+      { id: 10, postId: 100 },
+      { id: 11, postId: 100 },
+      { id: 30, postId: 300 },
+    ]);
+    expect([...walk.chapterIdByImageId]).toEqual([
+      [10, 1],
+      [11, 1],
+      [30, 3],
+    ]);
+    expect([...walk.firstImageIdByChapterId]).toEqual([
+      [1, 10],
+      [3, 30],
+    ]);
+    expect(walk.firstImageIdByChapterId.has(2)).toBe(false);
+  });
+});
+
+describe('parseIdParam', () => {
+  it.each([
+    ['12', 12],
+    [12, 12],
+    [['7', '8'], 7],
+    ['null', undefined],
+    ['0', undefined],
+    ['-3', undefined],
+    ['1.5', undefined],
+    [undefined, undefined],
+  ])('%j -> %j', (value, expected) => {
+    expect(parseIdParam(value)).toBe(expected);
+  });
+});
+
+describe('orderPathImages tie-breaks', () => {
+  it('falls back to id when two images in one post share or lack an index', () => {
+    const images = [
+      { id: 12, postId: 100, index: null },
+      { id: 11, postId: 100, index: null },
+      { id: 10, postId: 100, index: 0 },
+    ];
+    expect(orderPathImages(images, [100]).map((i) => i.id)).toEqual([10, 11, 12]);
+  });
+});
+
+describe('hideHiddenUsersChapters', () => {
+  it("turns a hidden user's chapter into an unavailable tombstone and leaves the rest", () => {
+    const chapters = [
+      visible(1, 0, 100),
+      { ...visible(2, 1, 200), post: { ...visible(2, 1, 200).post!, userId: 7 } },
+    ];
+    const result = hideHiddenUsersChapters(chapters, new Set([7]));
+    expect(result.map((c) => [c.chapterId, c.tombstone, c.post?.id ?? null])).toEqual([
+      [1, null, 100],
+      [2, 'unavailable', null],
+    ]);
+  });
+});
+
+describe('resolvePendingContinue', () => {
+  const first = new Map([[5, 50]]);
+  it('waits while the path still ends at the previous chapter', () => {
+    expect(
+      resolvePendingContinue({
+        pendingChapterId: 5,
+        pathEndId: 4,
+        imagesFetching: false,
+        firstImageIdByChapterId: first,
+      })
+    ).toEqual({ kind: 'wait' });
+  });
+  it("waits while the branch's images are still loading", () => {
+    expect(
+      resolvePendingContinue({
+        pendingChapterId: 5,
+        pathEndId: 5,
+        imagesFetching: true,
+        firstImageIdByChapterId: new Map(),
+      })
+    ).toEqual({ kind: 'wait' });
+  });
+  it("opens the branch's first image once it has arrived", () => {
+    expect(
+      resolvePendingContinue({
+        pendingChapterId: 5,
+        pathEndId: 5,
+        imagesFetching: false,
+        firstImageIdByChapterId: first,
+      })
+    ).toEqual({ kind: 'open', imageId: 50 });
+  });
+  it('shows the end-of-chapter view for a branch with nothing this reader can see', () => {
+    expect(
+      resolvePendingContinue({
+        pendingChapterId: 5,
+        pathEndId: 5,
+        imagesFetching: false,
+        firstImageIdByChapterId: new Map(),
+      })
+    ).toEqual({ kind: 'end' });
+  });
+});
+
+describe('getStorylineStep', () => {
+  it.each([
+    [0, 3, 'next', 'move'],
+    [1, 3, 'next', 'move'],
+    [2, 3, 'next', 'end'],
+    [0, 1, 'next', 'end'],
+    [0, 3, 'previous', 'stay'],
+    [2, 3, 'previous', 'move'],
+  ] as const)('index %i of %i, %s -> %s', (index, length, direction, expected) => {
+    expect(getStorylineStep(index, length, direction)).toBe(expected);
+  });
+});
+
+describe('withStorylineNavigation', () => {
+  const nav = (index: number) => ({ index, next: vi.fn(), previous: vi.fn() });
+
+  it('hands back the carousel untouched outside a storyline, so the feed still loops', () => {
+    const carousel = nav(2);
+    expect(withStorylineNavigation(carousel, 3, undefined)).toBe(carousel);
+  });
+
+  it('opens the end-of-chapter view past the last image instead of wrapping to the first', () => {
+    const carousel = nav(2);
+    const onEnd = vi.fn();
+    withStorylineNavigation(carousel, 3, onEnd).next();
+    expect(onEnd).toHaveBeenCalledTimes(1);
+    expect(carousel.next).not.toHaveBeenCalled();
+  });
+
+  it('moves within the path and stays put before the first image', () => {
+    const middle = nav(1);
+    withStorylineNavigation(middle, 3, vi.fn()).next();
+    expect(middle.next).toHaveBeenCalledTimes(1);
+    const first = nav(0);
+    withStorylineNavigation(first, 3, vi.fn()).previous();
+    expect(first.previous).not.toHaveBeenCalled();
+  });
+});
+
+describe('uniquePostIds', () => {
+  it('keeps arrival order, drops repeats and images with no post', () => {
+    expect(
+      uniquePostIds([{ postId: 3 }, { postId: 1 }, { postId: 3 }, { postId: null }, {}])
+    ).toEqual([3, 1]);
+  });
+});
+
+describe('isAdjacent', () => {
+  it('treats the first and last slides as neighbours only when looping', () => {
+    expect(isAdjacent(4, 0, 5, true)).toBe(true);
+    expect(isAdjacent(4, 0, 5, false)).toBe(false);
+    expect(isAdjacent(1, 0, 5, false)).toBe(true);
+  });
+});
+
+describe('getPathImagesPaging', () => {
+  const base = { hasNextPage: true, isFetching: false, isError: false, pages: 1, maxPages: 10 };
+  it('asks for the next page while the path has more', () => {
+    expect(getPathImagesPaging(base)).toEqual({ fetchNext: true, loading: true });
+  });
+  it('does not stack a request on one in flight', () => {
+    expect(getPathImagesPaging({ ...base, isFetching: true })).toEqual({
+      fetchNext: false,
+      loading: true,
+    });
+  });
+  it('stops, and stops reporting loading, after a failed page', () => {
+    expect(getPathImagesPaging({ ...base, isError: true })).toEqual({
+      fetchNext: false,
+      loading: false,
+    });
+  });
+  it('stops at the page cap', () => {
+    expect(getPathImagesPaging({ ...base, pages: 10 })).toEqual({
+      fetchNext: false,
+      loading: false,
+    });
+  });
+  it('is done when there is no next page', () => {
+    expect(getPathImagesPaging({ ...base, hasNextPage: false })).toEqual({
+      fetchNext: false,
+      loading: false,
+    });
+  });
+});
+
+describe('withStorylineNavigation, the other steps', () => {
+  it('steps back from the middle and opens the end from the last of a longer path', () => {
+    const middle = { index: 2, next: vi.fn(), previous: vi.fn() };
+    withStorylineNavigation(middle, 5, vi.fn()).previous();
+    expect(middle.previous).toHaveBeenCalledTimes(1);
+    const last = { index: 4, next: vi.fn(), previous: vi.fn() };
+    const onEnd = vi.fn();
+    withStorylineNavigation(last, 5, onEnd).next();
+    expect([onEnd.mock.calls.length, last.next.mock.calls.length]).toEqual([1, 0]);
+  });
+});
+
+describe('isAdjacent, boundaries', () => {
+  it('counts only immediate neighbours, and a lone slide is adjacent only to itself', () => {
+    expect(isAdjacent(2, 0, 5, true)).toBe(false);
+    expect(isAdjacent(0, 0, 1, false)).toBe(true);
+    expect(isAdjacent(1, 0, 1, true)).toBe(false);
+  });
+});
+
+describe('buildSubwayStops', () => {
+  it('runs the path then the canon line ahead, hanging other continuations off their stop', () => {
+    const path = [visible(1, 0, 100), visible(2, 1, 200)];
+    const ahead = [visible(3, 2, 300), visible(4, 3, 400)];
+    const children = new Map([
+      [1, [visible(2, 1, 200), visible(8, 1, 800)]],
+      [2, [visible(3, 2, 300), visible(9, 2, 900)]],
+      [4, [visible(5, 4, 500), visible(6, 4, 600)]],
+    ]);
+    const stops = buildSubwayStops(path, ahead, children);
+    expect(
+      stops.map((s) => [s.chapter.chapterId, s.kind, s.branches.map((b) => b.chapterId)])
+    ).toEqual([
+      [1, 'path', [8]],
+      [2, 'path', [9]],
+      [3, 'ahead', []],
+      // The end of the line: every continuation is a branch.
+      [4, 'ahead', [5, 6]],
+    ]);
+  });
+});
+
+describe('getStorylineChapterName', () => {
+  it('uses the title, else the number, adding the author only where asked', () => {
+    const titled = {
+      ...visible(2, 1, 200),
+      post: { ...visible(2, 1, 200).post!, title: 'The painting' },
+    };
+    const untitled = { ...visible(2, 1, 200), post: { ...visible(2, 1, 200).post!, title: null } };
+    expect(getStorylineChapterName(titled, { withAuthor: true })).toBe('The painting');
+    expect(getStorylineChapterName(untitled, { withAuthor: true })).toBe('Chapter 2 by author');
+    expect(getStorylineChapterName(untitled)).toBe('Chapter 2');
+    expect(getStorylineChapterName(hidden(3, 2))).toBe(
+      'This chapter is hidden by your browsing level'
+    );
+  });
+});
+
+describe('followCanon', () => {
+  // The fake always has a canon child and stops itself at 50 calls, so a missing cap fails on
+  // the count rather than hanging.
+  const endless = () => {
+    let calls = 0;
+    const fetch = async (id: number) => {
+      calls++;
+      return calls > 50
+        ? []
+        : [
+            { chapterId: id + 1, rank: 'canon' },
+            { chapterId: id + 100, rank: 'community' },
+          ];
+    };
+    return { fetch, calls: () => calls };
+  };
+
+  it('stops at the limit on a line that keeps going', async () => {
+    const fake = endless();
+    const result = await followCanon(fake.fetch, 1, 10);
+    expect([fake.calls(), result.ahead.map((c) => c.chapterId)]).toEqual([
+      10,
+      [2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
+    ]);
+  });
+
+  it('stops where a chapter has no canon continuation, keeping its children', async () => {
+    const fetch = vi.fn(async () => [{ chapterId: 9, rank: 'community' }]);
+    const result = await followCanon(fetch, 4, 10);
+    expect([fetch.mock.calls.length, result.ahead, [...result.childrenByChapterId.keys()]]).toEqual(
+      [1, [], [4]]
+    );
+  });
+});
