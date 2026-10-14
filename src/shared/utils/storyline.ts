@@ -13,6 +13,22 @@ export const STORYLINE_CEILING_LEVELS = [
 export const isStorylineCeilingLevel = (value: number) =>
   (STORYLINE_CEILING_LEVELS as readonly number[]).includes(value);
 
+/**
+ * The highest a chapter may be rated in a storyline whose title the scan found to be about a
+ * minor: safe for work, as for a minor-flagged model (`modelBrowsingLevelLimit`).
+ */
+export const STORYLINE_MINOR_CEILING = NsfwLevel.PG13;
+
+/**
+ * The ceiling every chapter is held to: the owner's, lowered to safe for work while the title
+ * scan holds the storyline as about a minor. The owner's own setting is kept, so a clean rescan
+ * gives it back. Read this, never `maxNsfwLevel` alone, wherever a chapter or image is gated.
+ */
+export const storylineCeiling = (storyline: { maxNsfwLevel: number; minorByScan: boolean }) =>
+  storyline.minorByScan
+    ? Math.min(storyline.maxNsfwLevel, STORYLINE_MINOR_CEILING)
+    : storyline.maxNsfwLevel;
+
 /** Most children an end-of-chapter listing reads. Ordering by readers happens after the read. */
 export const STORYLINE_CHILDREN_LIMIT = 200;
 /** Most chapters one path read returns, ending at the chapter asked for. */

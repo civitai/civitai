@@ -4560,6 +4560,12 @@ export type Storyline = {
    */
   tosViolationByModerator: Generated<boolean>;
   /**
+   * The title scan found the title to be about a minor. Not a takedown: every chapter is held
+   * to safe for work (`storylineCeiling`) while it is set, whatever `maxNsfwLevel` says. Set and
+   * cleared only by the scan, on a minor and a clean minor verdict.
+   */
+  minorByScan: Generated<boolean>;
+  /**
    * The title text a moderator lifted a scan takedown for, as `textScanTextHash`. A scan of
    * the same text does not take it down again; an edited title is scanned afresh.
    */

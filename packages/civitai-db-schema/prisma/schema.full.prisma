@@ -9362,6 +9362,10 @@ model Storyline {
   /// A moderator holds a takedown. Only a moderator's restore clears it, and that leaves
   /// `tosViolation` set while the scan holds one too.
   tosViolationByModerator Boolean @default(false)
+  /// The title scan found the title to be about a minor. Not a takedown: every chapter is held
+  /// to safe for work (`storylineCeiling`) while it is set, whatever `maxNsfwLevel` says. Set and
+  /// cleared only by the scan, on a minor and a clean minor verdict.
+  minorByScan Boolean @default(false)
   /// The title text a moderator lifted a scan takedown for, as `textScanTextHash`. A scan of
   /// the same text does not take it down again; an edited title is scanned afresh.
   scanFlagLiftedTextHash String?

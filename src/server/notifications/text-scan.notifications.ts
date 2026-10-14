@@ -42,17 +42,23 @@ export const textScanNotifications = createNotificationProcessor({
     toggleable: false,
     prepareMessage: ({ details }) => {
       if (!details) return undefined;
-      const { storylineId, title, level, takenDown } = details as {
+      const { storylineId, title, level, takenDown, minor } = details as {
         storylineId: number;
         title: string;
         level?: number;
         takenDown?: boolean;
+        minor?: boolean;
       };
       const url = storylineUrl(storylineId);
       const recheck = 'Edit the title to have it checked again.';
       if (takenDown)
         return {
           message: `Your storyline "${title}" is hidden from other readers because of its title. ${recheck}`,
+          url,
+        };
+      if (minor)
+        return {
+          message: `Your storyline "${title}" can only hold safe-for-work chapters because of its title: chapters rated above PG-13 are hidden and new ones are refused. ${recheck}`,
           url,
         };
       const label = browsingLevelLabels[level as keyof typeof browsingLevelLabels] ?? '?';

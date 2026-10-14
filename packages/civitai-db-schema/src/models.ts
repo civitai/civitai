@@ -5955,6 +5955,7 @@ export interface Storyline {
   tosViolation: boolean;
   tosViolationByScan: boolean;
   tosViolationByModerator: boolean;
+  minorByScan: boolean;
   scanFlagLiftedTextHash: string | null;
   nsfwLevel: number;
   moderatorNsfwLevel: number | null;

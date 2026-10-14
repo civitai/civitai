@@ -43,6 +43,8 @@ import {
   getStorylineChapterRank,
   getStorylineChapterTombstone,
   isStorylineCeilingLevel,
+  STORYLINE_MINOR_CEILING,
+  storylineCeiling,
   storylineLevelAllowed,
   storylineShareMinChoices,
   toStorylineForkShares,
@@ -77,6 +79,7 @@ const storylineSelect = {
   status: true,
   whoCanContinue: true,
   maxNsfwLevel: true,
+  minorByScan: true,
   tosViolation: true,
   createdAt: true,
 } satisfies Prisma.StorylineSelect;
@@ -235,6 +238,9 @@ const storyLevelSql = Prisma.sql`(SELECT ${Prisma.raw(raiseNsfwLevelText('lv.l',
   FROM (SELECT COALESCE(NULLIF(rp."nsfwLevel", 0), st."maxNsfwLevel") AS l,
     COALESCE(st."moderatorNsfwLevel", st."nsfwLevel") AS f) lv)`;
 
+/** `storylineCeiling` in SQL, for a storyline aliased `st`. */
+const storylineCeilingSql = Prisma.sql`(CASE WHEN st."minorByScan" THEN LEAST(st."maxNsfwLevel", ${STORYLINE_MINOR_CEILING}) ELSE st."maxNsfwLevel" END)`;
+
 // ---------------------------------------------------------------------------
 // Chapter writes
 // ---------------------------------------------------------------------------
@@ -385,7 +391,7 @@ export async function writeChapterEdgeForPlacement(
   await assertPostCanBeChapter(db, {
     postId,
     authorId: placerId,
-    maxNsfwLevel: parent.storyline.maxNsfwLevel,
+    maxNsfwLevel: storylineCeiling(parent.storyline),
   });
 
   const chapterId = await insertChildChapter(db, {
@@ -419,7 +425,13 @@ export async function assertCanContinueStoryline(
       userId: true,
       removedAt: true,
       storyline: {
-        select: { userId: true, maxNsfwLevel: true, tosViolation: true, whoCanContinue: true },
+        select: {
+          userId: true,
+          maxNsfwLevel: true,
+          minorByScan: true,
+          tosViolation: true,
+          whoCanContinue: true,
+        },
       },
     },
   });
@@ -558,7 +570,10 @@ export async function updateStoryline({
   await assertStorylinePicks(dbWrite, {
     storylineId: id,
     ownerId: current.userId,
-    maxNsfwLevel: maxNsfwLevel ?? current.maxNsfwLevel,
+    maxNsfwLevel: storylineCeiling({
+      maxNsfwLevel: maxNsfwLevel ?? current.maxNsfwLevel,
+      minorByScan: current.minorByScan,
+    }),
     imageIds: [
       coverImageId !== current.coverImageId ? coverImageId : undefined,
       heroImageId !== current.heroImageId ? heroImageId : undefined,
@@ -798,7 +813,9 @@ export async function addOwnerChapter({
         storylineId: true,
         depth: true,
         removedAt: true,
-        storyline: { select: { userId: true, maxNsfwLevel: true, tosViolation: true } },
+        storyline: {
+          select: { userId: true, maxNsfwLevel: true, minorByScan: true, tosViolation: true },
+        },
       },
     });
     if (!parent) throw throwNotFoundError('Chapter not found');
@@ -809,7 +826,7 @@ export async function addOwnerChapter({
     await assertPostCanBeChapter(tx, {
       postId,
       authorId: userId,
-      maxNsfwLevel: parent.storyline.maxNsfwLevel,
+      maxNsfwLevel: storylineCeiling(parent.storyline),
     });
     const chapterId = await insertChildChapter(tx, {
       parent,
@@ -964,7 +981,7 @@ export async function getStoryline({
   // A contributor is credited only through a chapter this reader would be shown: published,
   // rated, not taken down, within the story's ceiling and the reader's level. Otherwise the cast
   // list would name the author of a chapter the path shows as a tombstone.
-  const ceilingMask = storyline.maxNsfwLevel * 2 - 1;
+  const ceilingMask = storylineCeiling(storyline) * 2 - 1;
   const visibleChapter = Prisma.sql`
     c."removedAt" IS NULL
     AND p."tosViolation" = false AND p."publishedAt" < now() AND p."nsfwLevel" <> 0
@@ -1031,6 +1048,7 @@ export async function getStoryline({
     user,
     coverImageId,
     heroImageId,
+    minorByScan,
     ...rest
   } = storyline;
   const ownerUser = toCastUser(user);
@@ -1040,6 +1058,10 @@ export async function getStoryline({
   return {
     ...rest,
     user: ownerUser,
+    // The ceiling chapters are held to, lowered while the title scan holds the storyline as about
+    // a minor. The owner's own setting, for their settings form, is `ownerMaxNsfwLevel`.
+    maxNsfwLevel: storylineCeiling({ maxNsfwLevel: rest.maxNsfwLevel, minorByScan }),
+    ownerMaxNsfwLevel: isOwnerView ? rest.maxNsfwLevel : null,
     // The banner: the owner's banner pick, else their cover pick, else chapter 1's first image,
     // each only if this reader may see it. Never a hidden pick shown blurred.
     heroImage: banner ?? chosen(id, coverImageId) ?? firstChapter?.firstImage ?? null,
@@ -1100,7 +1122,7 @@ async function getStorylineMainPath({
 }: {
   /** Where the route starts: chapter 1 for the whole route, any chapter for the canon after it. */
   rootChapterId: number;
-  storyline: { maxNsfwLevel: number };
+  storyline: { maxNsfwLevel: number; minorByScan: boolean };
   viewer: Viewer;
   browsingLevel: number;
   blockedUserIds: ReadonlySet<number>;
@@ -1146,7 +1168,7 @@ async function getStorylineMainPath({
       post,
       removed: !!row.removedAt,
       viewer,
-      maxNsfwLevel: storyline.maxNsfwLevel,
+      maxNsfwLevel: storylineCeiling(storyline),
       browsingLevel,
       blockedUserIds,
     });
@@ -1289,6 +1311,7 @@ export async function getStorylinesForPosts({
             title: true,
             userId: true,
             maxNsfwLevel: true,
+            minorByScan: true,
             tosViolation: true,
             ...storylineTitleLevelSelect,
             user: { select: { bannedAt: true, deletedAt: true } },
@@ -1312,7 +1335,16 @@ export async function getStorylinesForPosts({
     if (isStorylineOutsideLevel(c.storyline, viewer, browsingLevel)) continue;
     // The post's own author is told it is a chapter whatever their level, as the owner is.
     const isAuthor = viewer?.id === c.post.userId;
-    if (!isAuthor && (!c.post.nsfwLevel || outsideBrowsingLevel(c.post.nsfwLevel, browsingLevel)))
+    if (
+      !isAuthor &&
+      (!c.post.nsfwLevel ||
+        outsideBrowsingLevel(c.post.nsfwLevel, browsingLevel) ||
+        // Above the storyline's ceiling, the chapter is a tombstone inside it.
+        !storylineLevelAllowed({
+          postLevel: c.post.nsfwLevel,
+          maxNsfwLevel: storylineCeiling(c.storyline),
+        }))
+    )
       continue;
     byPost[c.postId] = {
       chapterId: c.id,
@@ -1428,7 +1460,7 @@ export async function getStorylinePath({
       post,
       removed: !!row.removedAt,
       viewer,
-      maxNsfwLevel: storyline.maxNsfwLevel,
+      maxNsfwLevel: storylineCeiling(storyline),
       browsingLevel,
       blockedUserIds,
     });
@@ -1535,7 +1567,7 @@ export async function getStorylineChildren({
       post: chapter.post,
       removed: !!chapter.removedAt,
       viewer,
-      maxNsfwLevel: storyline.maxNsfwLevel,
+      maxNsfwLevel: storylineCeiling(storyline),
       browsingLevel,
       blockedUserIds,
     });
@@ -1807,7 +1839,7 @@ function storylineImageVisible(gate: StorylineImageGate) {
       AND (p.availability <> 'Private' OR p."userId" = ${viewerId})
       AND i."nsfwLevel" <> 0
       AND (i."nsfwLevel" & ${gate.browsingLevel}::int) <> 0
-      AND (i."nsfwLevel" & ~(st."maxNsfwLevel" * 2 - 1)) = 0
+      AND (i."nsfwLevel" & ~(${storylineCeilingSql} * 2 - 1)) = 0
       AND i.id <> ALL(${gate.hiddenImageIds}::int[])
       -- A reader's own image is not hidden from them by their hidden tags, as in image reads.
       AND (NOT EXISTS (
@@ -1898,12 +1930,13 @@ async function getChosenStorylineImages(
         bannedAt: Date | null;
         deletedAt: Date | null;
         maxNsfwLevel: number;
+        minorByScan: boolean;
       })[]
     >`
       SELECT ${storylineImageColumns}, c."storylineId", i."postId",
         p."userId" AS "postUserId", p."nsfwLevel" AS "postNsfwLevel", p."publishedAt",
         p."tosViolation" AS "postTosViolation", c."removedAt", pu."bannedAt", pu."deletedAt",
-        st."maxNsfwLevel"
+        st."maxNsfwLevel", st."minorByScan"
       FROM "Image" i
       JOIN "StorylineChapter" c ON c."postId" = i."postId"
       JOIN "Storyline" st ON st.id = c."storylineId"
@@ -1924,7 +1957,7 @@ async function getChosenStorylineImages(
         },
         removed: !!row.removedAt,
         viewer: resolved.viewer,
-        maxNsfwLevel: row.maxNsfwLevel,
+        maxNsfwLevel: storylineCeiling(row),
         browsingLevel: resolved.browsingLevel,
         blockedUserIds: resolved.blockedUserIds,
       });
@@ -2006,6 +2039,7 @@ export async function getStorylinesInfinite({
       bannedAt: Date | null;
       deletedAt: Date | null;
       maxNsfwLevel: number;
+      minorByScan: boolean;
       whoCanContinue: StorylineWhoCanContinue;
       isCollaborator: boolean;
       rootPostId: number | null;
@@ -2023,7 +2057,7 @@ export async function getStorylinesInfinite({
     }[]
   >`
     SELECT st.id, st.title, st.status, st."userId", u.username, u."bannedAt", u."deletedAt",
-      st."maxNsfwLevel", st."whoCanContinue",
+      st."maxNsfwLevel", st."minorByScan", st."whoCanContinue",
       EXISTS (
         SELECT 1 FROM "StorylineCollaborator" vc
         WHERE vc."storylineId" = st.id AND vc."userId" = ${viewerId}
@@ -2066,7 +2100,7 @@ export async function getStorylinesInfinite({
         user: { bannedAt: row.bannedAt, deletedAt: row.deletedAt },
       },
       viewer,
-      maxNsfwLevel: row.maxNsfwLevel,
+      maxNsfwLevel: storylineCeiling(row),
       browsingLevel,
       blockedUserIds,
     })
@@ -2116,6 +2150,7 @@ export async function getStorylinesInfinite({
       storylinePrice,
       userMode,
       userPrice,
+      minorByScan,
       ...row
     }) => {
       // The placement layer's cascade, as `resolvePlacementSpaceFor` applies it to one target.
@@ -2131,6 +2166,8 @@ export async function getStorylinesInfinite({
         row.whoCanContinue === 'Anyone' || viewer?.id === userId || isCollaborator;
       return {
         ...row,
+        // The ceiling chapters are held to, which the card's rating chip shows.
+        maxNsfwLevel: storylineCeiling({ maxNsfwLevel: row.maxNsfwLevel, minorByScan }),
         user: ownerById.get(userId) ?? { id: userId, username },
         // The owner's pick when this reader may see it, else chapter 1's first image they may.
         coverImage:

@@ -28,6 +28,10 @@ version as designed rather than what is live today.
   it is shown only as a placeholder, without its images, so the chapters after it stay reachable.
   The same goes for a chapter whose post was removed or whose author was banned. Each reader's own
   browsing level still applies chapter by chapter.
+- **Titles.** A storyline's title is checked automatically. A title about a real person takes the
+  storyline down, and so does one about a minor that is not safe for work. A safe-for-work title about
+  a minor leaves it up, but every chapter in it, forks included, is then held to PG-13: anything above
+  is a placeholder, and new chapters above it are refused. Editing the title has it checked again.
 - **Reporting.** The menu on a storyline's page reports the storyline itself, such as its title, to
   moderators. A chapter is reported as its post or image.
 

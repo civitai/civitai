@@ -29,7 +29,7 @@ export async function liftScanTakedown(
 
 const notifyOwner = (
   storyline: { userId: number; title: string },
-  details: { storylineId: number; level?: number; takenDown?: true },
+  details: { storylineId: number; level?: number; takenDown?: true; minor?: true },
   workflowId: string
 ) =>
   createNotification({
@@ -38,17 +38,21 @@ const notifyOwner = (
     type: STORYLINE_TITLE_MODERATED,
     // Per verdict: a redelivered callback is the same notice, a later scan is a new one.
     key: `${STORYLINE_TITLE_MODERATED}-${details.storylineId}-${
-      details.takenDown ? 'tos' : details.level
+      details.takenDown ? 'tos' : details.minor ? 'minor' : details.level
     }-${workflowId}`,
     details: { ...details, title: storyline.title },
   });
 
 /**
  * nsfw sets the title's rating, which only ever narrows who is shown the story (the higher of it
- * and chapter 1's level); the ceiling on chapters is the owner's and is left alone. poi or minor
- * takes the storyline down, marked as the scan's, so a clean scan of an edited title lifts it.
- * The scan's mark is recorded even over a moderator's takedown, and its lift never clears theirs:
- * each holds a takedown of its own, and the storyline is down while either does.
+ * and chapter 1's level). A person of interest takes the storyline down, and so does a minor with
+ * an NSFW title (R or above, by a moderator's rating where one is set). A minor with a safe title
+ * does not: it sets `minorByScan`, which holds every chapter to safe for work (`storylineCeiling`)
+ * and is cleared by a clean minor verdict.
+ *
+ * Fail closed: a minor finding with no rating to judge the title by takes it down, and a lift
+ * needs poi and minor both answered. The scan's takedown is marked as its own, recorded even over
+ * a moderator's takedown, and its lift never clears theirs.
  */
 export async function applyStorylineTextScan({
   entityId,
@@ -58,7 +62,12 @@ export async function applyStorylineTextScan({
 }: ApplyTextScanArgs) {
   const before = await dbWrite.storyline.findUnique({
     where: { id: entityId },
-    select: { userId: true, title: true, nsfwLevel: true, moderatorNsfwLevel: true },
+    select: {
+      userId: true,
+      title: true,
+      nsfwLevel: true,
+      moderatorNsfwLevel: true,
+    },
   });
   if (!before) return;
 
@@ -70,8 +79,12 @@ export async function applyStorylineTextScan({
       await notifyOwner(before, { storylineId: entityId, level }, workflowId);
   }
 
-  // Either label finding something takes it down; lifting needs both to have answered clean.
-  if (outcome.poi?.detected || outcome.minor?.detected) {
+  const titleLevel = before.moderatorNsfwLevel ?? outcome.nsfw?.detectedLevel;
+  const minor = !!outcome.minor?.detected;
+  const takeDown =
+    !!outcome.poi?.detected || (minor && (titleLevel == null || titleLevel >= NsfwLevel.R));
+
+  if (takeDown) {
     // Not again over the scan's own takedown, nor for text a moderator has cleared.
     const { count } = await dbWrite.storyline.updateMany({
       where: {
@@ -84,5 +97,15 @@ export async function applyStorylineTextScan({
     if (count) await notifyOwner(before, { storylineId: entityId, takenDown: true }, workflowId);
   } else if (outcome.poi && outcome.minor) {
     await liftScanTakedown(entityId);
+  }
+
+  // Only an answered minor label moves the flag: a missing one leaves it as it was.
+  if (outcome.minor) {
+    const { count } = await dbWrite.storyline.updateMany({
+      where: { id: entityId, minorByScan: !minor },
+      data: { minorByScan: minor },
+    });
+    if (count && minor && !takeDown)
+      await notifyOwner(before, { storylineId: entityId, minor: true }, workflowId);
   }
 }

@@ -420,6 +420,76 @@ describe('the storyline continuation loop', () => {
     }
   );
 
+  // Justin's ruling: a storyline whose title the scan found to be about a minor stays up, and
+  // nothing in it may be NSFW, forks included. Its chapters are held to PG-13 whatever the owner
+  // set (storylineCeiling), at submission, at approval and when read.
+  describe('a storyline the title scan holds as about a minor', () => {
+    const PG13 = 2;
+    const R = 4;
+    const R_POST = 500;
+    const PG13_POST = 600;
+    const holdAsMinor = (minorByScan: boolean) =>
+      db.update('storyline', { id: STORYLINE }, { minorByScan });
+    const approve = (placementId: number) =>
+      actOnStorylineContinuation({ placementId, ownerId: OWNER, action: 'approve' });
+
+    beforeEach(() => {
+      db.update('storyline', { id: STORYLINE }, { maxNsfwLevel: X });
+      publishedPost(R_POST, STRANGER, R);
+      publishedPost(PG13_POST, STRANGER, PG13);
+    });
+
+    // The control: under the owner's X ceiling alone, the same R continuation goes in.
+    it('takes an R continuation when only the owner’s ceiling applies', async () => {
+      const { id } = await submit(STRANGER, R_POST);
+      await expect(approve(id)).resolves.toEqual({ settled: true, status: 'approved' });
+      expect(chapterFor(id)).toMatchObject({ postId: R_POST });
+    });
+
+    it('refuses an R continuation at submission, and takes a PG-13 one', async () => {
+      holdAsMinor(true);
+      await expect(submit(STRANGER, R_POST)).rejects.toThrow(STORYLINE_REFUSALS.aboveRating);
+      expect(db.rows('placement')).toEqual([]);
+
+      const { id } = await submit(STRANGER, PG13_POST);
+      await expect(approve(id)).resolves.toEqual({ settled: true, status: 'approved' });
+      expect(chapterFor(id)).toMatchObject({ postId: PG13_POST });
+    });
+
+    it('refuses at approval an R continuation sent before the title was flagged', async () => {
+      const { id } = await submit(STRANGER, R_POST);
+      holdAsMinor(true);
+      await expect(approve(id)).rejects.toThrow(/above the storyline's maximum rating/);
+      expect(chapterFor(id)).toBeUndefined();
+      expect(db.row('placement', { id })).toMatchObject({ status: 'pending' });
+    });
+
+    // The queue marks a row above the ceiling approval would refuse it at.
+    it("shows the owner's queue the ceiling approval holds the row to", async () => {
+      await submit(STRANGER, R_POST);
+      const ceilingOf = async () =>
+        (await getPendingStorylineContinuations({ ownerId: OWNER, domainLevels: ALL_LEVELS }))
+          .items[0].storyline.maxNsfwLevel;
+      expect(await ceilingOf()).toBe(X);
+      holdAsMinor(true);
+      expect(await ceilingOf()).toBe(PG13);
+    });
+
+    it('hides an R chapter already in it, and gives it back when a clean rescan clears the flag', async () => {
+      const { id } = await submit(STRANGER, R_POST);
+      await approve(id);
+      const chapterId = chapterFor(id)!.id;
+      const tombstoneOf = async () =>
+        (await children()).find((c) => c.chapterId === chapterId)?.tombstone;
+
+      expect(await tombstoneOf()).toBeNull();
+      holdAsMinor(true);
+      expect(await tombstoneOf()).toBe('aboveStoryRating');
+      holdAsMinor(false);
+      expect(await tombstoneOf()).toBeNull();
+    });
+  });
+
   // The chapter being continued has its own author, and a block between them and
   // the placer counts as much as one with the storyline's owner.
   describe("under a collaborator's chapter", () => {
