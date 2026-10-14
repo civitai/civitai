@@ -36,6 +36,14 @@ export function maxNsfwLevel(levels: Array<NsfwLevel | null | undefined>): NsfwL
   return max >= 0 ? nsfwLevelSeverity[max] : undefined;
 }
 
+/** Whether a rated level is above `cap`; unrated / 'na' never exceed it. */
+export function exceedsNsfwLevel(nsfwLevel: NsfwLevel | null | undefined, cap: NsfwLevel) {
+  if (!nsfwLevel) return false;
+  const rank = nsfwLevelSeverity.indexOf(nsfwLevel);
+  const capRank = nsfwLevelSeverity.indexOf(cap);
+  return rank >= 0 && capRank >= 0 && rank > capRank;
+}
+
 export function isMature(nsfwLevel?: NsfwLevel) {
   return nsfwLevel && matureNsfwLevels.includes(nsfwLevel);
 }
