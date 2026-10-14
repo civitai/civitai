@@ -16,6 +16,7 @@ import {
 } from '~/server/services/blocks/block-image-picker.logic';
 
 const KEY = '00000000-0000-4000-8000-000000004711';
+const CREATED_AT = new Date('2025-03-15T10:00:00Z');
 
 const row = (over: Partial<PostedPickableRow> = {}): PostedPickableRow => ({
   id: 4711,
@@ -23,6 +24,7 @@ const row = (over: Partial<PostedPickableRow> = {}): PostedPickableRow => ({
   width: 3732,
   height: 1982,
   nsfwLevel: 8,
+  createdAt: CREATED_AT,
   ...over,
 });
 
@@ -142,6 +144,7 @@ describe('projectPostedPickableImage', () => {
       width: 1200,
       height: 637,
       nsfwLevel: 8,
+      createdAt: CREATED_AT,
     });
   });
 

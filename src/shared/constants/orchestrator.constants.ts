@@ -40,6 +40,8 @@ export function isMature(nsfwLevel?: NsfwLevel) {
   return nsfwLevel && matureNsfwLevels.includes(nsfwLevel);
 }
 
+// The orchestrator writes 'na' only when the provider moderated the output itself, so no scan
+// was needed. If it ever means "scan failed", this lets unscanned private output through.
 export function isPrivateMature(nsfwLevel?: NsfwLevel) {
-  return nsfwLevel && !privateGenNsfwLevels.includes(nsfwLevel);
+  return nsfwLevel && nsfwLevel !== NsfwLevel.NA && !privateGenNsfwLevels.includes(nsfwLevel);
 }

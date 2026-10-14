@@ -185,6 +185,7 @@ export type ModEndpoint =
   | 'minor-flag/resolve-appeal'
   | 'minor-flag/revert'
   | 'minor-flag/set-minor'
+  | 'model/bring-back'
   | 'model/set-sfw-only'
   | 'model/take-down'
   | 'model/unpublish'

@@ -116,7 +116,10 @@ import {
 } from '~/server/services/donation-goal.service';
 import { imagesForModelVersionsCache, uploadImageFromUrl } from '~/server/services/image.service';
 import { createNotification } from '~/server/services/notification.service';
-import { scanEntityInBackground } from '~/server/services/text-scan/submit';
+import {
+  scanEntitiesInBackground,
+  scanEntityInBackground,
+} from '~/server/services/text-scan/submit';
 import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
 import { addPostImage, createPost } from '~/server/services/post.service';
 import { createCachedArray } from '~/server/utils/cache-helpers';
@@ -1832,6 +1835,10 @@ export const publishModelVersionById = async ({
     where: { postId: { in: posts.map((x) => x.id) } },
     select: { id: true },
   });
+  scanEntitiesInBackground(
+    'Post',
+    posts.map((p) => p.id)
+  );
 
   await updateModelLastVersionAt({ id: version.modelId, onlyForward: republishing });
   await bustMvCache(version.id, version.modelId);

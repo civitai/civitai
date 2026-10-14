@@ -964,6 +964,13 @@ export const serverSchema = z
     // Stored copies are matched through it: do not rotate or unset it while copies exist.
     APPEAL_OWNER_HASH_KEY: z.string().optional(),
 
+    // Scan label review copies. Any unset: no copies.
+    SCAN_LABEL_P3_B2_BUCKET: z.string().optional(),
+    SCAN_LABEL_P3_B2_ENDPOINT: z.string().optional(),
+    SCAN_LABEL_P3_B2_REGION: z.string().optional(),
+    SCAN_LABEL_P3_B2_ACCESS_KEY: z.string().optional(),
+    SCAN_LABEL_P3_B2_SECRET_KEY: z.string().optional(),
+
     // Storage resolver internal API (for registering B2 uploads)
     STORAGE_RESOLVER_INTERNAL_URL: z.string().optional(),
     STORAGE_RESOLVER_INTERNAL_TOKEN: z.string().optional(),

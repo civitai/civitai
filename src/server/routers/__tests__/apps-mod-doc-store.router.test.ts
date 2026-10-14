@@ -1,6 +1,3 @@
-import { readdirSync, readFileSync, statSync } from 'fs';
-import ts from 'typescript';
-import path from 'path';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DocStore, DocStoreDb, DocStoreModeration } from '~/server/services/apps/doc-store';
 
@@ -35,6 +32,7 @@ import {
   MOD_QUEUE_PER_APP,
 } from '~/server/services/apps/doc-store-moderation.service';
 import { DocStoreError } from '~/server/services/apps/doc-store.types';
+import { importersOf } from '~/server/services/apps/__tests__/import-ledger';
 import { APP_LISTING_MODERATION_ACTIONS } from '~/server/schema/blocks/offsite-moderation.schema';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import {
@@ -715,92 +713,17 @@ describe('setHidden / delete: effects through the app reads, and the audit trail
 });
 
 describe('the moderation operations are reachable from the moderator service only', () => {
-  // Structural, not spelled: the operations live on a separate object, and the set of
-  // modules that can obtain one is pinned by parsing every import in src (static imports,
-  // `import()` and `require`), failing when it grows OR shrinks. Enumerated with fs: the
-  // wrapped grep honours .gitignore.
-  const SRC = path.resolve(__dirname, '../../..');
-  const INSTANCE = 'server/services/apps/doc-store-moderation.instance';
-  const STORE = 'server/services/apps/doc-store';
-
-  /** Resolve a specifier from `file` to a src-relative module path without extension. */
-  function resolveSpec(file: string, spec: string): string | null {
-    if (spec.startsWith('~/')) return spec.slice(2);
-    if (spec.startsWith('.')) {
-      return path
-        .relative(SRC, path.resolve(path.dirname(file), spec))
-        .split(path.sep)
-        .join('/');
-    }
-    return null;
-  }
-
-  type Use = { file: string; module: string; names: string[] | 'all' };
-  function importsOf(file: string): Use[] {
-    const src = ts.createSourceFile(file, readFileSync(file, 'utf8'), ts.ScriptTarget.Latest, true);
-    const rel = path.relative(SRC, file).split(path.sep).join('/');
-    const out: Use[] = [];
-    const visit = (node: ts.Node) => {
-      if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) {
-        const spec = node.moduleSpecifier;
-        if (spec && ts.isStringLiteral(spec)) {
-          const target = resolveSpec(file, spec.text);
-          if (target) {
-            let names: string[] | 'all' = 'all';
-            if (ts.isImportDeclaration(node)) {
-              const b = node.importClause?.namedBindings;
-              if (node.importClause?.isTypeOnly) names = [];
-              else if (b && ts.isNamedImports(b)) {
-                names = b.elements
-                  .filter((e) => !e.isTypeOnly)
-                  .map((e) => e.propertyName?.text ?? e.name.text);
-              }
-            }
-            out.push({ file: rel, module: target, names });
-          }
-        }
-      } else if (
-        ts.isCallExpression(node) &&
-        (node.expression.kind === ts.SyntaxKind.ImportKeyword ||
-          (ts.isIdentifier(node.expression) && node.expression.text === 'require')) &&
-        node.arguments[0] &&
-        ts.isStringLiteral(node.arguments[0])
-      ) {
-        const target = resolveSpec(file, node.arguments[0].text);
-        if (target) out.push({ file: rel, module: target, names: 'all' });
-      }
-      ts.forEachChild(node, visit);
-    };
-    visit(src);
-    return out;
-  }
-
-  function walk(dir: string, out: string[]) {
-    for (const name of readdirSync(dir)) {
-      if (name === 'node_modules' || name.startsWith('.') || name === '__tests__') continue;
-      const full = path.join(dir, name);
-      if (statSync(full).isDirectory()) walk(full, out);
-      else if (/\.(ts|tsx)$/.test(name) && !/\.test\.tsx?$/.test(name)) out.push(full);
-    }
-    return out;
-  }
-  const uses = walk(SRC, []).flatMap(importsOf);
-
+  // Structural, not spelled: the operations live on a separate object, and the modules that can
+  // obtain one are pinned by parsing every import in src (`import-ledger.ts`), failing when the
+  // set grows OR shrinks.
   it('only the moderation service imports the moderation instance', () => {
-    const importers = uses.filter((u) => u.module === INSTANCE).map((u) => u.file);
-    expect([...new Set(importers)].sort()).toEqual([
+    expect(importersOf('server/services/apps/doc-store-moderation.instance')).toEqual([
       'server/services/apps/doc-store-moderation.service.ts',
     ]);
   });
 
   it('only the moderation instance obtains the factory from the store module', () => {
-    const importers = uses
-      .filter(
-        (u) =>
-          u.module === STORE && (u.names === 'all' || u.names.includes('createDocStoreModeration'))
-      )
-      .map((u) => u.file);
-    expect([...new Set(importers)].sort()).toEqual([
+    expect(importersOf('server/services/apps/doc-store', 'createDocStoreModeration')).toEqual([
       'server/services/apps/doc-store-moderation.instance.ts',
     ]);
   });

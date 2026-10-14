@@ -6,6 +6,12 @@
 // `<alias>.ns = $2` for that alias; an INSERT lists `app_id, ns` first and
 // writes `$1, $2` into them. A reference to an unknown appdata relation, or one
 // that is not in a FROM / JOIN / UPDATE / INTO position, is itself a violation.
+//
+// The one exception, REVIEW MAINTENANCE: a SELECT or DELETE whose every alias carries
+// `<alias>.ns LIKE 'rev:%'` in place of `ns = $2`. It must still carry `app_id = $1`,
+// except a SELECT reading `usage_app` / `doc` (the sweep's listing). Such a statement only
+// works inside the store's maintenance transaction (RLS admits nothing else);
+// `isReviewMaintenanceStatement` names them so the isolation test can pin where they live.
 
 export const APPDATA_TABLES = [
   'doc',
@@ -17,8 +23,8 @@ export const APPDATA_TABLES = [
   'usage_user',
 ] as const;
 
-/** `appdata.app_id` / `appdata.ns` are the RLS setting names, not relations. */
-const SETTING_NAMES = new Set(['app_id', 'ns']);
+/** `appdata.app_id` / `appdata.ns` / `appdata.review_maintenance` are RLS settings, not relations. */
+const SETTING_NAMES = new Set(['app_id', 'ns', 'review_maintenance']);
 
 const NOT_AN_ALIAS = new Set([
   'where',
@@ -47,7 +53,9 @@ export function scanStatement(sql: string): string[] {
   if (/search_path/i.test(sql)) violations.push('search_path change');
   if (
     /\bappdata\b/i.test(
-      sql.replace(/appdata\.(?:[a-z_]+)/g, '').replace(/'appdata\.(?:app_id|ns)'/g, '')
+      sql
+        .replace(/appdata\.(?:[a-z_]+)/g, '')
+        .replace(/'appdata\.(?:app_id|ns|review_maintenance)'/g, '')
     )
   ) {
     violations.push('appdata referenced in a non-canonical spelling');
@@ -87,6 +95,18 @@ export function scanStatement(sql: string): string[] {
       continue;
     }
     const a = escape(alias);
+    if (new RegExp(`\\b${a}\\.ns\\s+LIKE\\s+'rev:%'`).test(sql)) {
+      // Review maintenance: read or delete only, and keyed on the request unless it is the
+      // usage_app-only listing.
+      if (!/^\s*(WITH\s+gone\s+AS\s+\(\s*DELETE|SELECT)\b/i.test(sql)) {
+        violations.push(`maintenance statement on appdata.${table} is not a SELECT or DELETE`);
+      }
+      const listing = /^\s*SELECT\b/i.test(sql) && (table === 'usage_app' || table === 'doc');
+      if (!listing && !new RegExp(`\\b${a}\\.app_id\\s*=\\s*\\$1(?![0-9])`).test(sql)) {
+        violations.push(`appdata.${table} ${alias} lacks ${alias}.app_id = $1`);
+      }
+      continue;
+    }
     if (!new RegExp(`\\b${a}\\.app_id\\s*=\\s*\\$1(?![0-9])`).test(sql)) {
       violations.push(`appdata.${table} ${alias} lacks ${alias}.app_id = $1`);
     }
@@ -95,4 +115,9 @@ export function scanStatement(sql: string): string[] {
     }
   }
   return violations;
+}
+
+/** A statement written in the review-maintenance shape (`ns LIKE 'rev:%'`). */
+export function isReviewMaintenanceStatement(sql: string): boolean {
+  return /\.ns\s+LIKE\s+'rev:%'/.test(sql);
 }

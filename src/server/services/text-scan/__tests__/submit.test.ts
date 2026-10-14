@@ -23,9 +23,8 @@ vi.mock('~/server/services/text-scan/prompt', async (importOriginal) => ({
   getTextScanConfig: vi.fn(),
 }));
 
-const { scanEntity, textScanExternalId, textScanContentHash } = await import(
-  '~/server/services/text-scan/submit'
-);
+const { scanEntity, scanEntitiesInBackground, textScanExternalId, textScanContentHash } =
+  await import('~/server/services/text-scan/submit');
 const { segmentUserText } = await import('~/server/services/text-scan/segment');
 const { registerTextScanProfile } = await import('~/server/services/text-scan/profiles');
 const { submitWorkflow } = await import('@civitai/client');
@@ -97,6 +96,21 @@ describe('scanEntity', () => {
       status: 'skipped',
       reason: 'missing',
     });
+  });
+
+  it('skips a not-public entity without reading or touching its stored verdict', async () => {
+    // Short text too: a public entity this short would have its stale verdict cleared.
+    load.mockResolvedValue(
+      new Map([[7, { fields: [{ heading: 'Title', text: 'x' }], declared: {}, notPublic: true }]])
+    );
+    expect(await scanEntity({ entityType: 'Post', entityId: 7 })).toEqual({
+      status: 'skipped',
+      reason: 'not-public',
+    });
+    expect(em.findUnique).not.toHaveBeenCalled();
+    expect(em.upsert).not.toHaveBeenCalled();
+    expect(em.updateMany).not.toHaveBeenCalled();
+    expect(submitWorkflow).not.toHaveBeenCalled();
   });
 
   it('skips without writing EM when a prompt row is missing, and logs the key', async () => {
@@ -687,6 +701,7 @@ describe('scanEntity', () => {
       workflowId: marker,
       contentHash: expect.any(String),
       status: 'Pending',
+      retryCount: 0,
     });
     expect(create).toMatchObject({
       entityType: 'Post:shadow',
@@ -694,6 +709,14 @@ describe('scanEntity', () => {
       workflowId: marker,
       status: 'Pending',
     });
+  });
+
+  // A row the retry cron parked at its limit (the entity was not public) must be retried again
+  // once a publish rescans it; the cron's own resubmits still count against the limit.
+  it('a fresh scan re-arms the retry budget, a retry does not', async () => {
+    await scanEntity({ entityType: 'Post', entityId: 7, fromRetry: true });
+    expect(vi.mocked(em.upsert).mock.calls[0][0].update).not.toHaveProperty('retryCount');
+    expect(vi.mocked(em.upsert).mock.calls[0][0].create).not.toHaveProperty('retryCount');
   });
 
   it('binds the real workflow id over the marker after submit', async () => {
@@ -738,4 +761,20 @@ describe('textScanExternalId', () => {
       expect(id.length).toBeLessThanOrEqual(128);
     }
   );
+});
+
+describe('scanEntitiesInBackground', () => {
+  it('scans every entity, and one that throws does not stop the rest', async () => {
+    load.mockImplementation(async ([id]: number[]) => {
+      if (id === 1) throw new Error('db down');
+      return new Map([[id, { fields: [{ heading: 'Title', text: 'Hello world' }], declared: {} }]]);
+    });
+
+    scanEntitiesInBackground('Post', [1, 2, 3]);
+
+    await vi.waitFor(() => expect(submitWorkflow).toHaveBeenCalledTimes(2));
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'background scan threw', entityId: 1 })
+    );
+  });
 });

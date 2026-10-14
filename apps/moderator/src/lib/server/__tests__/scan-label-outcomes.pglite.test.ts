@@ -31,6 +31,9 @@ const noop = () => vi.fn(async (_args: BlockImageArgs) => undefined);
 const deps = (block: BlockDeps['block'] = noop()): BlockDeps => ({ block, isModerationBlocked });
 const { getQuotaReport, setQuota } = await import('../scan-label-metrics.service');
 
+const BLOCK = { block: true, reason: 'real-person', reasonComment: null } as const;
+const KEEP = { block: false } as const;
+
 const HERE = dirname(fileURLToPath(import.meta.url));
 const migration = (name: string) =>
   readFileSync(
@@ -54,6 +57,7 @@ beforeEach(async () => {
   `);
   await pg.exec(migration('20261022130000_scan_label_queue'));
   await pg.exec(migration('20261022140000_scan_label_outcomes'));
+  await pg.exec(migration('20261023130000_scan_label_reasons_copy'));
   dbHandle.current = new Kysely<DB>({ dialect: pgliteDialect(pg) });
 });
 
@@ -76,7 +80,7 @@ async function seedItem(imageId: number): Promise<number> {
 
 const at = (iso: string) => new Date(iso);
 const vote = (itemId: number, userId: number, block: boolean, when = '2026-10-13T10:00:00Z') =>
-  castVote({ itemId, userId, block, msOnItem: 1000 }, at(when));
+  castVote({ itemId, userId, choice: block ? BLOCK : KEEP, msOnItem: 1000 }, at(when));
 const item = async (id: number) =>
   (await pg.query<Record<string, unknown>>(`SELECT * FROM "ScanLabelItem" WHERE id = $1`, [id]))
     .rows[0];
@@ -265,6 +269,38 @@ describe('applyMajorityBlocks', () => {
       userId: 12,
       violationDetails: 'Scan label majority',
     });
+  });
+});
+
+describe('block reasons', () => {
+  it('stores the reason and comment with a block vote', async () => {
+    const it1 = await seedItem(1);
+    await castVote(
+      {
+        itemId: it1,
+        userId: 11,
+        choice: { block: true, reason: 'other', reasonComment: 'self-harm' },
+        msOnItem: 1,
+      },
+      at('2026-10-13T10:00:00Z')
+    );
+    const { rows } = await pg.query(`SELECT "reason", "reasonComment" FROM "ScanLabelVote"`);
+    expect(rows).toEqual([{ reason: 'other', reasonComment: 'self-harm' }]);
+  });
+
+  it.each([
+    ['a block with no reason', `TRUE, NULL, NULL`],
+    ['a keep vote with a reason', `FALSE, 'real-person', NULL`],
+    ['an unknown reason', `TRUE, 'made-up', NULL`],
+    ['"other" with no comment', `TRUE, 'other', '  '`],
+  ])('the database refuses %s', async (_, values) => {
+    const it1 = await seedItem(1);
+    await expect(
+      pg.query(
+        `INSERT INTO "ScanLabelVote" ("itemId", "userId", "block", "reason", "reasonComment")
+         VALUES (${it1}, 11, ${values})`
+      )
+    ).rejects.toMatchObject({ code: '23514' });
   });
 });
 

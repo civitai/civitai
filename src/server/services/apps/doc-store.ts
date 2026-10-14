@@ -9,6 +9,12 @@
 // `appdata.app_id` / `appdata.ns` (set at the top of every transaction in
 // `withTx`) is the second, independent layer.
 //
+// The ONE exception is review maintenance (`purgeReview`, `listReviewAppIds`):
+// statements keyed on `app_id = $1 AND ns LIKE 'rev:%'` (the listing: `ns LIKE 'rev:%'`
+// on `usage_app` and `doc`), run only inside `maintenanceTx`, whose transaction-local
+// `appdata.review_maintenance` setting is what the migration's review policies
+// admit — review namespaces only, read and delete only.
+//
 // Row-level security does not bind a superuser or BYPASSRLS role, so the store
 // requires its own least-privilege connection (`APPDATA_DATABASE_URL`, see
 // `doc-store.instance.ts`) and treats that as a CHECKED precondition: on first
@@ -113,7 +119,13 @@ export type DocStoreDeps = {
 // ---------------------------------------------------------------------------
 
 const APP_ID_SHAPE = /^[A-Za-z0-9_-]{1,64}$/;
-const NS_SHAPE = /^(prod|dev:[1-9][0-9]{0,9}|rev:[A-Za-z0-9_-]{1,64})$/;
+/**
+ * `prod`, `dev:<uid>`, or `rev:<publishRequestId>:<moderatorUid>` — one review namespace per
+ * (publish request, reviewing moderator), so moderators reviewing the same request never share
+ * documents, marks or counters. A review context's app id IS that publish request id.
+ */
+const NS_SHAPE = /^(prod|dev:[1-9][0-9]{0,9}|rev:[A-Za-z0-9_-]{1,64}:[1-9][0-9]{0,9})$/;
+const REVIEW_NS = /^rev:([A-Za-z0-9_-]{1,64}):([1-9][0-9]{0,9})$/;
 const INDEX_NAME_SHAPE = /^[A-Za-z_][A-Za-z0-9_]{0,63}(\.[A-Za-z_][A-Za-z0-9_]{0,63}){0,2}$/;
 const TALLY_NAME_SHAPE = /^[a-z][a-z0-9_]{0,31}$/;
 const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
@@ -131,6 +143,21 @@ function assertContext(ctx: DocStoreContext): void {
   if (ctx.viewerUid !== null && !(Number.isSafeInteger(ctx.viewerUid) && ctx.viewerUid > 0)) {
     throw new Error('doc-store: malformed context viewerUid');
   }
+  // A review namespace belongs to one request (the context's app id) and one moderator (the
+  // viewer): a context that pairs it with anyone else is refused, whatever built it.
+  const review = REVIEW_NS.exec(ctx.ns);
+  if (review && (review[1] !== ctx.appId || Number(review[2]) !== ctx.viewerUid)) {
+    throw new Error('doc-store: review namespace does not belong to this context');
+  }
+}
+
+/** The review namespace of one moderator reviewing one publish request. */
+export function reviewNamespace(publishRequestId: string, moderatorUid: number): string {
+  const ns = `rev:${publishRequestId}:${moderatorUid}`;
+  if (!APP_ID_SHAPE.test(publishRequestId) || !REVIEW_NS.test(ns)) {
+    throw new Error('doc-store: malformed review namespace');
+  }
+  return ns;
 }
 
 type WritePolicy = 'own' | 'owner' | 'none';
@@ -536,6 +563,39 @@ const SQL_USAGE_APP = `SELECT u.bytes, u.docs FROM appdata.usage_app u
 const SQL_USAGE_USER = `SELECT u.bytes, u.docs FROM appdata.usage_user u
   WHERE u.app_id = $1 AND u.ns = $2 AND u.user_id = $3::int`;
 
+// Review maintenance (see the module header). Every row of every review namespace of one
+// publish request, table by table, in the store's lock order (document first — its index rows
+// go with it by the foreign-key cascade — then tallies and marks, then usage_app before
+// usage_user), so a write racing the purge cannot deadlock against it. $1 publish request id.
+// Each returns the number of rows it deleted.
+const SQL_REVIEW_PURGE = [
+  `WITH gone AS (DELETE FROM appdata.doc d WHERE d.app_id = $1 AND d.ns LIKE 'rev:%' RETURNING 1)
+  SELECT count(*)::int AS n FROM gone`,
+  `WITH gone AS (DELETE FROM appdata.doc_index ix WHERE ix.app_id = $1 AND ix.ns LIKE 'rev:%' RETURNING 1)
+  SELECT count(*)::int AS n FROM gone`,
+  `WITH gone AS (DELETE FROM appdata.doc_tally t WHERE t.app_id = $1 AND t.ns LIKE 'rev:%' RETURNING 1)
+  SELECT count(*)::int AS n FROM gone`,
+  `WITH gone AS (DELETE FROM appdata.doc_mark mk WHERE mk.app_id = $1 AND mk.ns LIKE 'rev:%' RETURNING 1)
+  SELECT count(*)::int AS n FROM gone`,
+  `WITH gone AS (DELETE FROM appdata.doc_tomb tb WHERE tb.app_id = $1 AND tb.ns LIKE 'rev:%' RETURNING 1)
+  SELECT count(*)::int AS n FROM gone`,
+  `WITH gone AS (DELETE FROM appdata.usage_app u WHERE u.app_id = $1 AND u.ns LIKE 'rev:%' RETURNING 1)
+  SELECT count(*)::int AS n FROM gone`,
+  `WITH gone AS (DELETE FROM appdata.usage_user u WHERE u.app_id = $1 AND u.ns LIKE 'rev:%' RETURNING 1)
+  SELECT count(*)::int AS n FROM gone`,
+] as const;
+
+// The publish requests that still have review data, in id order after a keyset cursor. From
+// `usage_app` AND `doc`: a document inserted by a write that overlapped a purge can commit
+// after the purge deleted its namespace's `usage_app` row, leaving a document with no usage
+// row; tallies, marks and index rows exist only beside a document, and a tombstone's write
+// holds the document's lock, which the purge waits for. $1 cursor (exclusive), $2 limit.
+const SQL_REVIEW_APP_IDS = `SELECT r.app_id FROM (
+    SELECT u.app_id FROM appdata.usage_app u WHERE u.ns LIKE 'rev:%' AND u.app_id > $1
+    UNION
+    SELECT d.app_id FROM appdata.doc d WHERE d.ns LIKE 'rev:%' AND d.app_id > $1
+  ) r ORDER BY r.app_id LIMIT $2::int`;
+
 // List fragments. Aliases are fixed so every fragment's predicates are visible
 // to the static isolation scan; only parameter placeholders are interpolated.
 // $1 app, $2 ns, $3 coll, $4 scope_uid; `joins` are the fragments below.
@@ -745,6 +805,18 @@ export function createDocStoreModeration(deps: DocStoreDeps) {
   return buildDocStore(deps).moderation;
 }
 
+/**
+ * Review-namespace MAINTENANCE (`purgeReview`, `listReviewAppIds`), as a separate object from
+ * the viewer store: it runs with the review-maintenance setting that reaches every `rev:` row
+ * of a request, so nothing holding the block-token routes' store may reach it. Only
+ * `doc-store-maintenance.instance.ts` builds one in production; its importers are pinned by
+ * a ledger test (`__tests__/doc-store-maintenance.ledger.test.ts`).
+ */
+export function createDocStoreMaintenance(deps: DocStoreDeps) {
+  return buildDocStore(deps).maintenance;
+}
+export type DocStoreMaintenance = ReturnType<typeof createDocStoreMaintenance>;
+
 function buildDocStore(deps: DocStoreDeps) {
   const limits = deps.limits ?? DEFAULT_DOC_STORE_LIMITS;
   // Settled only by a successful role read; a failed read is retried next call.
@@ -786,6 +858,39 @@ function buildDocStore(deps: DocStoreDeps) {
     fn: (c: DocStoreClient) => Promise<T>
   ): Promise<T> {
     assertContext(ctx);
+    return runTx(
+      `BEGIN; SELECT set_config('appdata.app_id', ${escapeLiteral(
+        ctx.appId
+      )}, true), set_config('appdata.ns', ${escapeLiteral(
+        ctx.ns
+      )}, true), set_config('lock_timeout', '${LOCK_TIMEOUT}', true)`,
+      fn
+    );
+  }
+
+  /**
+   * A REVIEW MAINTENANCE transaction: no namespace bound, `appdata.review_maintenance` on —
+   * which the migration's review policies admit for `rev:` rows only, read and delete only —
+   * and `appdata.app_id` bound to `publishRequestId` (the only app whose rows a delete reaches),
+   * or to nothing when listing. Transaction-local like every other setting. 🔴 Called by
+   * `purgeReview` and `listReviewAppIds` ONLY (pinned by `doc-store.sql-isolation.test.ts`).
+   */
+  async function maintenanceTx<T>(
+    publishRequestId: string | null,
+    fn: (c: DocStoreClient) => Promise<T>
+  ): Promise<T> {
+    if (publishRequestId !== null && !APP_ID_SHAPE.test(publishRequestId)) {
+      throw new Error('doc-store: malformed publish request id');
+    }
+    return runTx(
+      `BEGIN; SELECT set_config('appdata.app_id', ${escapeLiteral(
+        publishRequestId ?? ''
+      )}, true), set_config('appdata.ns', '', true), set_config('appdata.review_maintenance', 'on', true), set_config('lock_timeout', '${LOCK_TIMEOUT}', true)`,
+      fn
+    );
+  }
+
+  async function runTx<T>(begin: string, fn: (c: DocStoreClient) => Promise<T>): Promise<T> {
     if (!deps.db) {
       throw new DocStoreError('storage_disabled', 'document storage is not configured');
     }
@@ -798,13 +903,7 @@ function buildDocStore(deps: DocStoreDeps) {
       throw err;
     }
     try {
-      await client.query(
-        `BEGIN; SELECT set_config('appdata.app_id', ${escapeLiteral(
-          ctx.appId
-        )}, true), set_config('appdata.ns', ${escapeLiteral(
-          ctx.ns
-        )}, true), set_config('lock_timeout', '${LOCK_TIMEOUT}', true)`
-      );
+      await client.query(begin);
       const out = await fn(client);
       await client.query('COMMIT');
       return out;
@@ -1355,6 +1454,36 @@ function buildDocStore(deps: DocStoreDeps) {
     });
   }
 
+  /**
+   * Delete every row of every review namespace (`rev:<publishRequestId>:<moderatorUid>`) of one
+   * publish request, from all seven tables, usage rows included, in ONE maintenance transaction:
+   * all of it goes or none of it does. Idempotent. Called when the request is decided
+   * (`teardownReviewStorageForRequest`) and by the sweep (`jobs/sweep-review-storage.ts`).
+   * Returns the rows deleted (index rows removed by the document delete's foreign-key cascade are
+   * not counted).
+   */
+  async function purgeReview(publishRequestId: string): Promise<{ rows: number }> {
+    return maintenanceTx(publishRequestId, async (c) => {
+      let rows = 0;
+      for (const sql of SQL_REVIEW_PURGE) {
+        rows += Number((await c.query(sql, [publishRequestId])).rows[0]?.n ?? 0);
+      }
+      return { rows };
+    });
+  }
+
+  /** Publish request ids that still hold review data, after `after`, at most `limit`. */
+  async function listReviewAppIds(opts: { after?: string; limit: number }): Promise<string[]> {
+    if (!Number.isSafeInteger(opts.limit) || opts.limit < 1 || opts.limit > 1000) {
+      throw new Error('doc-store: limit must be 1–1000');
+    }
+    return maintenanceTx(null, async (c) =>
+      (await c.query(SQL_REVIEW_APP_IDS, [opts.after ?? '', opts.limit])).rows.map(
+        (r) => r.app_id as string
+      )
+    );
+  }
+
   const store = {
     get,
     getMany,
@@ -1368,7 +1497,11 @@ function buildDocStore(deps: DocStoreDeps) {
     usage,
     limits,
   };
-  return { store, moderation: createModeration({ withTx, charge }) };
+  return {
+    store,
+    moderation: createModeration({ withTx, charge }),
+    maintenance: { purgeReview, listReviewAppIds },
+  };
 }
 
 function translatePgError(err: unknown): unknown {
@@ -1540,7 +1673,17 @@ function assertModRevision(row: Record<string, unknown>, ifRevision: number | un
   }
 }
 
-const modCtx = (appId: string, ns: string): DocStoreContext => ({ appId, ns, viewerUid: null });
+/**
+ * The context a moderator operation runs under. A review namespace belongs to the review
+ * itself and is deleted with it (`purgeReview`), so moderation refuses it cleanly
+ * (`invalid_request`) rather than reaching it or failing as a malformed context.
+ */
+function modCtx(appId: string, ns: string): DocStoreContext {
+  if (ns.startsWith('rev:')) {
+    throw invalid('moderation does not act on review namespaces');
+  }
+  return { appId, ns, viewerUid: null };
+}
 
 function createModeration({ withTx, charge }: ModerationDeps) {
   /**

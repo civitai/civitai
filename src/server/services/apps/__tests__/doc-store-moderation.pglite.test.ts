@@ -151,6 +151,18 @@ function defineModerationSuite(rls: boolean) {
     });
   });
 
+  describe('review namespaces', () => {
+    it('every moderator operation refuses a rev: namespace cleanly (invalid_request), touching nothing', async () => {
+      const app = freshApp('modrev');
+      const rev = 'rev:pubreq_MODREV:9001';
+      await expectCode(mod.listReported(app, rev, { status: 'all', limit: 5 }), 'invalid_request');
+      await expectCode(mod.get(app, rev, 'posts', 'k'), 'invalid_request');
+      await expectCode(mod.setHidden(app, rev, 'posts', 'k', true, MOD), 'invalid_request');
+      await expectCode(mod.dismissReports(app, rev, 'posts', 'k'), 'invalid_request');
+      await expectCode(mod.delete(app, rev, 'posts', 'k'), 'invalid_request');
+    });
+  });
+
   describe('get', () => {
     it('returns a shared doc with its data, every tally including reports, hidden or not', async () => {
       const app = freshApp('modget');

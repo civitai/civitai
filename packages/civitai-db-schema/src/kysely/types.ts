@@ -4520,6 +4520,10 @@ export type ScanLabelItem = {
   actionStartedAt: Timestamp | null;
   actionResult: string | null;
   actionError: string | null;
+  copyState: string | null;
+  copyKey: string | null;
+  copiedAt: Timestamp | null;
+  copyError: string | null;
   createdAt: Generated<Timestamp>;
 };
 export type ScanLabelQuota = {
@@ -4534,6 +4538,7 @@ export type ScanLabelVote = {
   userId: number;
   block: boolean;
   reason: string | null;
+  reasonComment: string | null;
   msOnItem: number | null;
   createdAt: Generated<Timestamp>;
 };

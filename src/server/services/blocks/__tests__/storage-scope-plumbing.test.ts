@@ -141,10 +141,24 @@ describe('storage scopes — which mints carry them', () => {
     expect(granted).toEqual([BASE, PUBLISH, 'user:read:self']);
   });
 
+  // The run-for-real review mint carries both: the storage routes confine its token to the
+  // reviewing moderator's own `rev:<publishRequestId>:<uid>` namespace (`doc-store-access.ts`).
+  it('REVIEW_RUN_FOR_REAL_MINT_SCOPE_ALLOWLIST admits both, and its clamp keeps both', () => {
+    expect(REVIEW_RUN_FOR_REAL_MINT_SCOPE_ALLOWLIST.has(BASE)).toBe(true);
+    expect(REVIEW_RUN_FOR_REAL_MINT_SCOPE_ALLOWLIST.has(PUBLISH)).toBe(true);
+    const granted = clampDevScopes({
+      scopeSource: [BASE, PUBLISH, 'user:read:self'],
+      oauthAllowed: null,
+      spendEntitled: true,
+      spendRequested: true,
+      allowlist: REVIEW_RUN_FOR_REAL_MINT_SCOPE_ALLOWLIST,
+    });
+    expect(granted).toEqual([BASE, PUBLISH, 'user:read:self']);
+  });
+
   const WITHHOLDING = {
     TUNNEL_HOST_MINT_SCOPE_ALLOWLIST,
     REVIEW_MINT_SCOPE_ALLOWLIST,
-    REVIEW_RUN_FOR_REAL_MINT_SCOPE_ALLOWLIST,
   };
 
   // Each allowlist must visibly ADMIT a known scope, so "absent" below is a finding about

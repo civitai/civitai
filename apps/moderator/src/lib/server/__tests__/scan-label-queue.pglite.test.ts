@@ -33,13 +33,22 @@ const { claimNext, castVote, getCounters, getOpenFlaggerVersions } = await impor
   '../scan-label.service'
 );
 
+const BLOCK = { block: true, reason: 'real-person', reasonComment: null } as const;
+const KEEP = { block: false } as const;
+
 const HERE = dirname(fileURLToPath(import.meta.url));
-const MIGRATION = readFileSync(
-  join(
-    HERE,
-    '../../../../../../packages/civitai-db-schema/prisma/migrations/20261022130000_scan_label_queue/migration.sql'
-  ),
-  'utf8'
+const MIGRATIONS = [
+  '20261022130000_scan_label_queue',
+  '20261022140000_scan_label_outcomes',
+  '20261023130000_scan_label_reasons_copy',
+].map((name) =>
+  readFileSync(
+    join(
+      HERE,
+      `../../../../../../packages/civitai-db-schema/prisma/migrations/${name}/migration.sql`
+    ),
+    'utf8'
+  )
 );
 
 const NOW = new Date('2026-10-13T12:00:00.000Z');
@@ -52,10 +61,10 @@ beforeEach(async () => {
   await pg.exec(`
     CREATE TABLE "Image" (
       "id" INTEGER PRIMARY KEY, "url" TEXT NOT NULL DEFAULT 'u', "type" TEXT NOT NULL DEFAULT 'image',
-      "name" TEXT, "width" INTEGER, "height" INTEGER
+      "name" TEXT, "width" INTEGER, "height" INTEGER, "pHash" BIGINT
     );
   `);
-  await pg.exec(MIGRATION);
+  for (const sql of MIGRATIONS) await pg.exec(sql);
   dbHandle.current = new Kysely<DB>({ dialect: pgliteDialect(pg) });
 });
 
@@ -83,7 +92,8 @@ async function seedItem(
   // Prior votes come from moderators 900+, so they never collide with the test's own voters.
   for (let i = 0; i < votes; i++)
     await pg.query(
-      `INSERT INTO "ScanLabelVote" ("itemId", "userId", "block") VALUES ($1, $2, $3)`,
+      `INSERT INTO "ScanLabelVote" ("itemId", "userId", "block", "reason")
+       VALUES ($1, $2, $3, CASE WHEN $3 THEN 'real-person' END)`,
       [itemId, 900 + i, i < blockVotes]
     );
   return itemId;
@@ -112,7 +122,7 @@ describe('claimNext order', () => {
     const b = await seedItem(2);
     expect((await claimNext(1, {}, NOW))!.itemId).toBe(a);
     // b is now partly voted, so a fresh claim would rank it first.
-    await castVote({ itemId: b, userId: 2, block: false, msOnItem: 1 }, NOW);
+    await castVote({ itemId: b, userId: 2, choice: KEEP, msOnItem: 1 }, NOW);
     expect((await claimNext(1, {}, later(1000)))!.itemId).toBe(a);
     const { rows } = await pg.query(`SELECT * FROM "ScanLabelClaim" WHERE "userId" = 1`);
     expect(rows).toHaveLength(1);
@@ -165,7 +175,7 @@ describe('vote slots', () => {
     await claimNext(2, {}, later(LEASE_MS + 1));
     await claimNext(3, {}, later(LEASE_MS + 1));
     const r = await castVote(
-      { itemId: it1, userId: 1, block: true, msOnItem: 10 },
+      { itemId: it1, userId: 1, choice: BLOCK, msOnItem: 10 },
       later(LEASE_MS + 2)
     );
     expect(r).toEqual({ ok: false, reason: 'full' });
@@ -176,7 +186,7 @@ describe('vote slots', () => {
     const it1 = await seedItem(1);
     await claimNext(1, {}, NOW);
     const r = await castVote(
-      { itemId: it1, userId: 1, block: false, msOnItem: 10 },
+      { itemId: it1, userId: 1, choice: KEEP, msOnItem: 10 },
       later(LEASE_MS + 1)
     );
     expect(r.ok).toBe(true);
@@ -185,22 +195,22 @@ describe('vote slots', () => {
   it('counts one vote per moderator per item', async () => {
     const it1 = await seedItem(1);
     await claimNext(1, {}, NOW);
-    expect((await castVote({ itemId: it1, userId: 1, block: true, msOnItem: 5 }, NOW)).ok).toBe(
+    expect((await castVote({ itemId: it1, userId: 1, choice: BLOCK, msOnItem: 5 }, NOW)).ok).toBe(
       true
     );
-    expect(await castVote({ itemId: it1, userId: 1, block: true, msOnItem: 5 }, later(10))).toEqual(
-      {
-        ok: false,
-        reason: 'already-voted',
-      }
-    );
+    expect(
+      await castVote({ itemId: it1, userId: 1, choice: BLOCK, msOnItem: 5 }, later(10))
+    ).toEqual({
+      ok: false,
+      reason: 'already-voted',
+    });
     expect(await item(it1)).toMatchObject({ votes: 1, blockVotes: 1, status: 'open' });
   });
 
   it('refuses a fourth vote', async () => {
     const it1 = await seedItem(1, { votes: 3, blockVotes: 0 });
     await pg.query(`UPDATE "ScanLabelItem" SET status = 'decided' WHERE id = $1`, [it1]);
-    expect(await castVote({ itemId: it1, userId: 1, block: true, msOnItem: 1 }, NOW)).toEqual({
+    expect(await castVote({ itemId: it1, userId: 1, choice: BLOCK, msOnItem: 1 }, NOW)).toEqual({
       ok: false,
       reason: 'not-open',
     });
@@ -209,7 +219,7 @@ describe('vote slots', () => {
   it('releases the voter’s lease', async () => {
     const it1 = await seedItem(1);
     await claimNext(1, {}, NOW);
-    await castVote({ itemId: it1, userId: 1, block: false, msOnItem: 1 }, NOW);
+    await castVote({ itemId: it1, userId: 1, choice: KEEP, msOnItem: 1 }, NOW);
     const { rows } = await pg.query(`SELECT * FROM "ScanLabelClaim"`);
     expect(rows).toHaveLength(0);
   });
@@ -217,7 +227,7 @@ describe('vote slots', () => {
 
 describe('outcome', () => {
   const voteAs = (itemId: number, userId: number, block: boolean) =>
-    castVote({ itemId, userId, block, msOnItem: 1 }, NOW);
+    castVote({ itemId, userId, choice: block ? BLOCK : KEEP, msOnItem: 1 }, NOW);
 
   it('signals the block majority on the second block vote only, and keeps voting to three', async () => {
     const it1 = await seedItem(1);
@@ -268,10 +278,10 @@ describe('counters', () => {
     const a = await seedItem(1);
     const b = await seedItem(2);
     await castVote(
-      { itemId: a, userId: 1, block: false, msOnItem: 1 },
+      { itemId: a, userId: 1, choice: KEEP, msOnItem: 1 },
       new Date('2026-10-12T23:00:00Z')
     );
-    await castVote({ itemId: b, userId: 1, block: false, msOnItem: 1 }, NOW);
+    await castVote({ itemId: b, userId: 1, choice: KEEP, msOnItem: 1 }, NOW);
     await pg.query(`INSERT INTO "ScanLabelQuota" ("userId", "dailyVotes") VALUES (1, 80)`);
     expect(await getCounters(1, {}, NOW)).toEqual({
       openInFilter: 2,

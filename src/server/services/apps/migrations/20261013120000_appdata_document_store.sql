@@ -31,6 +31,16 @@
 --   transaction. A statement run without those settings sees no rows and cannot
 --   insert any.
 --
+--   The one exception is REVIEW MAINTENANCE: deleting the review namespaces
+--   (`rev:<publishRequestId>:<moderatorUid>`) of a decided publish request. A
+--   transaction that also sets `appdata.review_maintenance` to 'on' may read and
+--   delete rows whose `ns` starts with `rev:` AND whose `app_id` is the request
+--   in `appdata.app_id`; bound to no request, it may read the review rows of any
+--   app on `doc` and `usage_app` (read only), which is how the sweep finds
+--   requests to purge. It can never
+--   see or touch a `prod` or `dev:` row, and never insert or update anything.
+--   Only the purge and sweep functions in `doc-store.ts` set it.
+--
 -- IDEMPOTENT: every statement is IF NOT EXISTS, or a DROP IF EXISTS + CREATE
 --   inside this one transaction; safe to re-run. ROLLBACK: the sibling file
 --   `20261013120000_appdata_document_store.down.sql` (destroys all data in it).
@@ -234,6 +244,28 @@ BEGIN
       'AND ns = NULLIF(current_setting(''appdata.ns'', true), '''')) '
       'WITH CHECK (app_id = NULLIF(current_setting(''appdata.app_id'', true), '''') '
       'AND ns = NULLIF(current_setting(''appdata.ns'', true), ''''))',
+      t);
+    -- Review maintenance (see the header). Read and delete only: no INSERT or
+    -- UPDATE policy admits it, so WITH CHECK stays the scope policy's alone.
+    EXECUTE format('DROP POLICY IF EXISTS appdata_review_read ON appdata.%I', t);
+    EXECUTE format('DROP POLICY IF EXISTS appdata_review_delete ON appdata.%I', t);
+    -- Reads are keyed on the bound request like deletes, except that on `doc` and
+    -- `usage_app` a transaction bound to NO request may read every app's review rows: that is
+    -- the sweep's listing of requests that still hold review data.
+    EXECUTE format(
+      'CREATE POLICY appdata_review_read ON appdata.%I FOR SELECT '
+      'USING (current_setting(''appdata.review_maintenance'', true) = ''on'' '
+      'AND ns LIKE ''rev:%%'' '
+      'AND (app_id = NULLIF(current_setting(''appdata.app_id'', true), '''')%s))',
+      t,
+      CASE WHEN t IN ('doc', 'usage_app')
+        THEN ' OR NULLIF(current_setting(''appdata.app_id'', true), '''') IS NULL'
+        ELSE '' END);
+    EXECUTE format(
+      'CREATE POLICY appdata_review_delete ON appdata.%I FOR DELETE '
+      'USING (current_setting(''appdata.review_maintenance'', true) = ''on'' '
+      'AND ns LIKE ''rev:%%'' '
+      'AND app_id = NULLIF(current_setting(''appdata.app_id'', true), ''''))',
       t);
   END LOOP;
 END

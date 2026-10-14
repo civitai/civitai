@@ -1,3 +1,4 @@
+import { PICKER_JUMP_MIN_DATE } from '~/server/schema/blocks/block-image-picker.schema';
 import { isCivitaiHostedImageUrl } from '~/server/schema/blocks/civitai-image-url';
 import type { PostedPickableImage } from '~/server/services/blocks/block-image-picker.logic';
 import {
@@ -89,20 +90,28 @@ export const isSamePick = (
   b: Pick<BlockPickedImageInfo, 'source' | 'url'>
 ) => a.source === b.source && a.url === b.url;
 
+type PickIdentity = Pick<BlockPickedImageInfo, 'source' | 'url'>;
+
 /**
  * The selection after the viewer clicks `image`: a selected image is removed, a single pick
  * (`max: null`) is replaced, and a multi pick grows only while it is under `max`.
  */
-export function togglePickedImage(
-  current: readonly BlockPickedImageInfo[],
-  image: BlockPickedImageInfo,
+export function togglePickedImage<T extends PickIdentity>(
+  current: readonly T[],
+  image: T,
   max: number | null
-): BlockPickedImageInfo[] {
-  if (current.some((s) => isSamePick(s, image))) {
-    return current.filter((s) => !isSamePick(s, image));
-  }
+): T[] {
+  if (current.some((s) => isSamePick(s, image))) return removePickedImage(current, image);
   if (max === null) return [image];
   return current.length >= max ? [...current] : [...current, image];
+}
+
+/** The selection without `image`, the order of the rest kept. */
+export function removePickedImage<T extends PickIdentity>(
+  current: readonly T[],
+  image: PickIdentity
+): T[] {
+  return current.filter((s) => !isSamePick(s, image));
 }
 
 /** Pick order kept, a repeated image collapsed onto its first occurrence, never more than `max`. */
@@ -224,3 +233,77 @@ export function projectGeneratedPick(
 
 /** Consecutive pages with nothing pickable after which a grid stops loading the next one itself. */
 export const MAX_EMPTY_AUTO_PAGES = 3;
+
+/**
+ * Narrowest a grid tile is drawn: the grid has as many columns as fit at this width. A phone-width
+ * grid takes smaller tiles, so even a 320px screen shows three to a row.
+ */
+export const PICKER_TILE_MIN_PX = { narrow: 88, wide: 120 } as const;
+/** Grids narrower than this use the `narrow` minimum. */
+export const PICKER_NARROW_GRID_PX = 600;
+export const PICKER_TILE_GAP_PX = 8;
+
+/**
+ * Columns and square tile size for a grid `width` px wide. Tiles share the width left after the
+ * gaps, so they are never narrower than `minTile` unless one column is all that fits.
+ */
+export function pickerGridLayout(
+  width: number,
+  minTile: number = width < PICKER_NARROW_GRID_PX
+    ? PICKER_TILE_MIN_PX.narrow
+    : PICKER_TILE_MIN_PX.wide,
+  gap = PICKER_TILE_GAP_PX
+): { columns: number; tile: number } {
+  const usable = Math.max(0, width);
+  const columns = Math.max(1, Math.floor((usable + gap) / (minTile + gap)));
+  const tile = Math.max(0, Math.floor((usable - gap * (columns - 1)) / columns));
+  return { columns, tile };
+}
+
+/**
+ * How long a jump-to date has to hold still before the list is replaced for it. Applying every
+ * intermediate value as it is typed or stepped through would swap the grid to a new, briefly empty
+ * list on each one; the list is replaced once, for the date the viewer stops on.
+ */
+export const PICKER_JUMP_DEBOUNCE_MS = 400;
+
+/**
+ * A native date input's `YYYY-MM-DD` as the newest moment a "jump to date" list may show: the END
+ * of that day in the viewer's time zone, so images from the chosen day itself are listed. `null`
+ * for an empty, malformed or impossible value, or one before `PICKER_JUMP_MIN_DATE`: no bound, the
+ * list starts at the newest image. A year still being typed reads as 0002, 0020, 0202; were those
+ * applied, the grid would flash empty for a date nobody meant.
+ */
+export function jumpDateToBound(value: string): Date | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) return null;
+  const [year, month, day] = [Number(match[1]), Number(match[2]) - 1, Number(match[3])];
+  const bound = new Date(year, month, day, 23, 59, 59, 999);
+  // `new Date` rolls an impossible day over (Feb 30 → Mar 2); that is not the day that was asked.
+  if (bound.getFullYear() !== year || bound.getMonth() !== month || bound.getDate() !== day) {
+    return null;
+  }
+  return bound < PICKER_JUMP_MIN_DATE ? null : bound;
+}
+
+/** A local date as the `YYYY-MM-DD` a native date input takes. */
+export function toDateInputValue(date: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
+/**
+ * Whether the posted picks have to go when the posted list on screen changes.
+ *
+ * A list replaced while the viewer kept the same date bound was replaced because what they may see
+ * changed (a browsing-level change resets it), so picks made from the old list go with it. A list
+ * replaced because the viewer jumped to another date is the same library seen from elsewhere: its
+ * picks are still theirs to use, so they stay. The first list after a mount replaces nothing.
+ */
+export function shouldDropPostedPicks(
+  previous: { listKey: unknown; bound: number | undefined },
+  next: { listKey: unknown; bound: number | undefined }
+): boolean {
+  if (previous.bound !== next.bound) return false;
+  return previous.listKey !== undefined && previous.listKey !== next.listKey;
+}
