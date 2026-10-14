@@ -51,6 +51,23 @@ export const APP_BLOCK_FEEDBACK_AREA: FeedbackArea = 'app-block';
 export const APPS_PLATFORM_FEEDBACK_AREA: FeedbackArea = 'apps-platform';
 
 /**
+ * `apps-platform` values the moderator app must agree with, because it writes or explains what the
+ * main app's platform-feedback service reads back to reporters.
+ */
+/** The only reporter-sent URL the moderator panel renders as a link. */
+export const PLATFORM_FEEDBACK_DOC_URL_PREFIX = 'https://developer.civitai.com/';
+/** How much of a moderator's public note the readback returns. */
+export const PLATFORM_FEEDBACK_PUBLIC_NOTE_MAX_LENGTH = 300;
+/**
+ * Which `resolution.fixedIn.component` a reporting client's own version is compared against, to open
+ * a regression row. `other` is absent on purpose: its version says nothing about any component we ship.
+ */
+export const PLATFORM_FEEDBACK_CLIENT_COMPONENT = {
+  'civitai-cli': 'cli',
+  'civitai-mcp': 'mcp',
+} as const;
+
+/**
  * Who can read an `app-block` report, as user-facing copy. The developer's inbox note
  * interpolates it (`INBOX_PRIVACY_NOTE`); the send dialog no longer states its readers, only that
  * the feedback is private. Accepted collaborators (editor seats)

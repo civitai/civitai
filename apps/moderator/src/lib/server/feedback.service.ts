@@ -1,16 +1,19 @@
+import { sql } from '@civitai/db/kysely';
+import { APPS_PLATFORM_FEEDBACK_AREA } from '@civitai/shared/feedback.constants';
 import { dbRead, dbWrite } from './db';
 import { recordModActivity, recordModActivityBatch } from './mod-activity';
+// Relative, not `$lib`: imported by the main app's moderator-seam test.
 import {
   FEEDBACK_AREAS_EXCLUDED_BY_DEFAULT,
   FEEDBACK_PAGE_SIZE,
   type FeedbackStatus,
-} from '$lib/feedback';
-import {
-  isFeedbackSortState,
-  type FeedbackSort,
-  type FeedbackSortColumn,
-} from '$lib/feedback-sort';
+} from '../feedback';
+import { isFeedbackSortState, type FeedbackSort, type FeedbackSortColumn } from '../feedback-sort';
 import { MAX_INT4 } from './users.service';
+import {
+  platformResolutionContext,
+  type PlatformResolutionWrite,
+} from './feedback-platform-resolution';
 import type { PermissionSet } from '$lib/permissions';
 
 /**
@@ -72,7 +75,21 @@ export type FeedbackRow = {
   bugId: number | null;
   bugTitle: string | null;
   bugStatus: string | null;
+  /** `context.server.reporters` on an `apps-platform` row; null on every other area, and when unreadable. */
+  reporters: number | null;
 };
+
+/**
+ * 🔴 GUARDED, NEVER A BARE `::int`. `context` is JSONB with no schema at rest, and a cast that throws
+ * on one row (a string, a fraction, a number past int4) fails the whole queue page. Anything that is
+ * not a plain run of digits reads as null.
+ */
+const REPORTERS = sql<number | null>`CASE
+  WHEN f."area" = ${APPS_PLATFORM_FEEDBACK_AREA}
+   AND jsonb_typeof(f."context"->'server'->'reporters') = 'number'
+   AND (f."context"->'server'->>'reporters') ~ '^[0-9]{1,9}$'
+  THEN (f."context"->'server'->>'reporters')::int
+END`;
 
 /**
  * Every sortable column, as the SQL reference it orders by and the `FeedbackRow` field that carries
@@ -229,6 +246,15 @@ const coerceSortValue = (
  *
  * Revisit if a moderator reports a conflict they cannot explain; the fix is this one word.
  */
+/**
+ * Which areas the queue shows: the one picked, or every area but `FEEDBACK_AREAS_EXCLUDED_BY_DEFAULT`.
+ * The badges count through this too, so a badge and the view it links to cannot disagree.
+ */
+const inQueueArea = (area: string | null | undefined) =>
+  area
+    ? sql<boolean>`f."area" = ${area}`
+    : sql<boolean>`f."area" NOT IN (${sql.join([...FEEDBACK_AREAS_EXCLUDED_BY_DEFAULT])})`;
+
 const feedbackRowQuery = () =>
   dbRead
     .selectFrom('Feedback as f')
@@ -251,6 +277,7 @@ const feedbackRowQuery = () =>
       'f.bugId',
       'b.title as bugTitle',
       'b.status as bugStatus',
+      REPORTERS.as('reporters'),
     ]);
 
 /**
@@ -375,9 +402,7 @@ export async function getFeedbackList(input: {
 
   // An empty selection is every status, said by the caller rather than implied here.
   if (input.statuses.length) query = query.where('f.status', 'in', [...input.statuses]);
-  query = input.area
-    ? query.where('f.area', '=', input.area)
-    : query.where('f.area', 'not in', [...FEEDBACK_AREAS_EXCLUDED_BY_DEFAULT]);
+  query = query.where(inQueueArea(input.area));
 
   if (input.cursor) {
     if (!sort) {
@@ -442,22 +467,22 @@ export async function getFeedbackList(input: {
 }
 
 /**
- * The sidebar badge: what the queue's default view shows, so it leaves out the same areas.
+ * A sidebar badge: `new` rows in what the queue shows for the same `area` — with no area, the default
+ * view, so it leaves out the same areas; with one, that area alone (the `apps-platform` badge).
  *
  * Cheap enough to sit in `sidebar-counts.service.ts`' single `Promise.all` without `bounded()`: the
- * table is small, the producer is rate-limited to five submissions per user per hour, and the whole
- * map is behind a 60-second cache. The plan depends on table size and vacuum state, so no plan shape
+ * table is small, every producer is rate-limited, and the whole map is behind a 60-second cache. The plan depends on table size and vacuum state, so no plan shape
  * is claimed here: at tens of rows the planner seq-scans; on PGlite at 5,000+ rows it chose a
  * bitmap heap scan before VACUUM and an index-only scan on `Feedback_area_status_createdAt_idx`
  * after `VACUUM ANALYZE`. The no-`bounded()` decision rests on the size and cache above, not on
  * any particular plan.
  */
-export async function countNewFeedback(): Promise<number> {
+export async function countNewFeedback(area?: string): Promise<number> {
   const row = await dbRead
-    .selectFrom('Feedback')
+    .selectFrom('Feedback as f')
     .select((eb) => eb.fn.countAll<number>().as('count'))
-    .where('status', '=', 'new')
-    .where('area', 'not in', [...FEEDBACK_AREAS_EXCLUDED_BY_DEFAULT])
+    .where('f.status', '=', 'new')
+    .where(inQueueArea(area))
     .executeTakeFirst();
   return Number(row?.count ?? 0);
 }
@@ -505,7 +530,7 @@ export async function getSiblingFeedback(input: {
 export type TriageResult =
   | { ok: true; changed: true }
   | { ok: true; changed: false }
-  | { ok: false; reason: 'gone' };
+  | { ok: false; reason: 'gone' | 'not-platform' | 'no-server-state' };
 
 /**
  * Set a row's status and triage note in one statement.
@@ -531,16 +556,35 @@ export async function triageFeedback(input: {
    * no failure to notice: the UPDATE succeeds, the status moves, and the note is gone.
    */
   note?: string | null;
+  /**
+   * `apps-platform` only, written in the same statement as the status change; `undefined` leaves
+   * `context` alone. With `status === expectedStatus` it saves the resolution only. 🔴 `handledAt`
+   * anchors the platform service's reopen count, so re-stamping it for a note would restart that count.
+   */
+  resolution?: PlatformResolutionWrite;
   moderatorId: number;
 }): Promise<TriageResult> {
   const handled = input.status !== 'new';
-  const result = await dbWrite
+  const resolutionOnly = input.resolution !== undefined && input.status === input.expectedStatus;
+  let update = dbWrite
     .updateTable('Feedback')
     .set({
-      status: input.status,
+      ...(resolutionOnly
+        ? {}
+        : {
+            status: input.status,
+            handledById: handled ? input.moderatorId : null,
+            handledAt: handled ? new Date() : null,
+          }),
       ...(input.note === undefined ? {} : { triageNote: input.note }),
-      handledById: handled ? input.moderatorId : null,
-      handledAt: handled ? new Date() : null,
+      ...(input.resolution === undefined
+        ? {}
+        : {
+            context: platformResolutionContext(input.resolution, {
+              moderatorId: input.moderatorId,
+              at: new Date(),
+            }),
+          }),
       // 🔴 `bugId` IS DELIBERATELY NOT TOUCHED HERE — not on any status, reopening included.
       //
       // Clearing it on the way back to `new` was tried and reverted. It reads as symmetric with
@@ -557,8 +601,21 @@ export async function triageFeedback(input: {
       // causes it nor is a sensible back door to it. This PR does not add one.
     })
     .where('id', '=', input.id)
-    .where('status', '=', input.expectedStatus)
-    .executeTakeFirst();
+    .where('status', '=', input.expectedStatus);
+  /**
+   * 🔴 Area, `server` and the resolution being edited are checked in the same statement, never taken
+   * from the form: a resolution on another area is a stray key nothing reads, `jsonb_set` under a
+   * missing `server` is a silent no-op that would still report "saved", and a resolution someone else
+   * changed meanwhile would be silently replaced.
+   */
+  if (input.resolution !== undefined)
+    update = update
+      .where('area', '=', APPS_PLATFORM_FEEDBACK_AREA)
+      .where(sql<string>`jsonb_typeof("context"->'server')`, '=', 'object')
+      .where(
+        sql<boolean>`("context"->'server'->'resolution'->>'at') IS NOT DISTINCT FROM ${input.resolution.expectedAt}`
+      );
+  const result = await update.executeTakeFirst();
 
   if (Number(result.numUpdatedRows) > 0) {
     await recordModActivity({
@@ -570,11 +627,22 @@ export async function triageFeedback(input: {
     return { ok: true, changed: true };
   }
 
-  // Zero rows has two causes and they need different words on screen. One extra read, only on the
-  // path that already failed.
-  return (await feedbackExists(dbWrite, input.id))
-    ? { ok: true, changed: false }
-    : { ok: false, reason: 'gone' };
+  // Zero rows has several causes and they need different words on screen. One extra read, only on
+  // the path that already failed.
+  if (input.resolution === undefined)
+    return (await feedbackExists(dbWrite, input.id))
+      ? { ok: true, changed: false }
+      : { ok: false, reason: 'gone' };
+
+  const row = await dbWrite
+    .selectFrom('Feedback')
+    .select(['area', sql<string | null>`jsonb_typeof("context"->'server')`.as('serverType')])
+    .where('id', '=', input.id)
+    .executeTakeFirst();
+  if (!row) return { ok: false, reason: 'gone' };
+  if (row.area !== APPS_PLATFORM_FEEDBACK_AREA) return { ok: false, reason: 'not-platform' };
+  if (row.serverType !== 'object') return { ok: false, reason: 'no-server-state' };
+  return { ok: true, changed: false };
 }
 
 /**
