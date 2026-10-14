@@ -89,7 +89,11 @@ export function useStorylineCanonAhead(
     [query.data]
   );
   const childrenByChapterId = useStorylinePathChildren(forkStopIds, { enabled });
-  return { ahead, childrenByChapterId, isLoading: enabled && query.isLoading };
+  const isLoading = enabled && query.isLoading;
+  return useMemo(
+    () => ({ ahead, childrenByChapterId, isLoading }),
+    [ahead, childrenByChapterId, isLoading]
+  );
 }
 
 /** One children read per chapter on the path, for the forks the drawer draws beside it. */

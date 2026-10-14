@@ -306,4 +306,9 @@ describe('canonAheadForkStops', () => {
     const line = [stop(1, 3), stop(2, 3), stop(3, 3), stop(4, 3)];
     expect(canonAheadForkStops(line, 2)).toEqual([1, 2]);
   });
+
+  it('counts the limit in forks, not in stops, so a long straight run does not hide them', () => {
+    const line = [stop(1, 1), stop(2, 1), stop(3, 3), stop(4, 1), stop(5, 3), stop(6, 2)];
+    expect(canonAheadForkStops(line, 2)).toEqual([3, 5]);
+  });
 });

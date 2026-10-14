@@ -30,6 +30,8 @@ const mocks = vi.hoisted(() => ({
   setStatusData: vi.fn(),
   canonAheadQuery: vi.fn(),
   canonAheadData: undefined as unknown[] | undefined,
+  canonAheadLoading: false,
+  childrenByChapter: {} as Record<number, unknown[]>,
   childrenReads: [] as unknown[],
   hiddenUsers: [] as { id: number }[],
 }));
@@ -51,7 +53,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
         'storyline.getCanonAhead': {
           useQuery: (input: unknown, opts: unknown) => {
             mocks.canonAheadQuery(input, opts);
-            return { data: mocks.canonAheadData, isLoading: false };
+            return { data: mocks.canonAheadData, isLoading: mocks.canonAheadLoading };
           },
         },
         'storyline.getEarlyAccessStatus': {
@@ -92,13 +94,16 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
         },
       },
       {
-        // Records which chapters the drawer reads children for, and answers with none.
+        // Records which chapters the drawer reads children for, and answers from childrenByChapter.
         useQueries: (
           build: (t: { storyline: { getChildren: (input: unknown) => unknown } }) => unknown[]
         ) => {
           const inputs = build({ storyline: { getChildren: (input) => input } });
           mocks.childrenReads.push(...inputs);
-          return inputs.map(() => ({ data: undefined, dataUpdatedAt: 0 }));
+          return inputs.map((input) => {
+            const data = mocks.childrenByChapter[(input as { chapterId: number }).chapterId];
+            return { data, dataUpdatedAt: data ? 1 : 0 };
+          });
         },
         useUtils: () => ({
           storyline: {
@@ -142,6 +147,8 @@ beforeEach(() => {
   mocks.user = { id: 1 };
   mocks.statusData = undefined;
   mocks.canonAheadData = undefined;
+  mocks.canonAheadLoading = false;
+  mocks.childrenByChapter = {};
   mocks.childrenReads = [];
   mocks.hiddenUsers = [];
   mocks.canonAheadQuery.mockClear();
@@ -299,6 +306,32 @@ describe('useStorylineCanonAhead', () => {
       { chapterId: 6, browsingLevel: 7 },
       { chapterId: 8, browsingLevel: 7 },
     ]);
+  });
+
+  it("gives each fork stop its children, without a hidden user's branch", () => {
+    mocks.canonAheadData = [chapter(5, 3), chapter(6, 1)];
+    mocks.hiddenUsers = [{ id: 99 }];
+    mocks.childrenByChapter = { 5: [chapter(6, 1), chapter(50, 0), chapter(51, 0, 99)] };
+    const result = renderHook(() => useStorylineCanonAhead(4, { enabled: true }));
+    const branches = result.current.childrenByChapterId.get(5) ?? [];
+    expect([
+      [...result.current.childrenByChapterId.keys()],
+      branches.map((c) => [c.chapterId, c.tombstone]),
+    ]).toEqual([
+      [5],
+      [
+        [6, null],
+        [50, null],
+        [51, 'unavailable'],
+      ],
+    ]);
+  });
+
+  it('is loading only while the drawer is open and the line is being read', () => {
+    mocks.canonAheadLoading = true;
+    const open = renderHook(() => useStorylineCanonAhead(4, { enabled: true }));
+    const closed = renderHook(() => useStorylineCanonAhead(4, { enabled: false }));
+    expect([open.current.isLoading, closed.current.isLoading]).toEqual([true, false]);
   });
 
   it('reads nothing while the drawer is closed', () => {

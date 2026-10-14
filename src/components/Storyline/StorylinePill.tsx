@@ -34,7 +34,13 @@ export function StorylinePill({
       style={{ pointerEvents: 'auto' }}
       data-testid="storyline-pill"
     >
-      {title} · {storylineChapterLabel(depth)}
+      {/* A long title gives way before the chapter does. */}
+      <span className="flex min-w-0">
+        <span className="truncate" data-testid="storyline-pill-title">
+          {title}
+        </span>
+        <span className="shrink-0">&nbsp;· {storylineChapterLabel(depth)}</span>
+      </span>
     </Badge>
   );
 }

@@ -35,7 +35,18 @@ beforeEach(() => {
 describe('StorylinePill', () => {
   it('names the storyline and the chapter, not the word Storyline', () => {
     const c = render(createElement(StorylinePill, { title: 'The Patch', depth: 2 }));
-    expect(c.querySelector('[data-testid="storyline-pill"]')?.textContent).toBe('The Patch · ch 3');
+    const text = c.querySelector('[data-testid="storyline-pill"]')?.textContent;
+    // The separator sits after a no-break space, so it never starts a line of its own.
+    expect(text?.replace(/\s/g, ' ')).toBe('The Patch · ch 3');
+  });
+
+  it('truncates only the title, so the chapter stays readable', () => {
+    const c = render(createElement(StorylinePill, { title: 'A'.repeat(200), depth: 0 }));
+    const title = c.querySelector('[data-testid="storyline-pill-title"]');
+    expect([title?.className, title?.nextElementSibling?.className]).toEqual([
+      'truncate',
+      'shrink-0',
+    ]);
   });
 });
 
@@ -54,6 +65,11 @@ describe('StorylineDrawer', () => {
     render(createElement(StorylineDrawer, { storyline, currentChapterId: 1 }));
     const overlay = document.body.querySelector<HTMLElement>('.mantine-Drawer-overlay');
     expect(overlay).not.toBeNull();
-    expect(overlay?.style.getPropertyValue('--overlay-bg')).toBe('rgba(0, 0, 0, 0)');
+    expect([
+      overlay?.style.getPropertyValue('--overlay-bg'),
+      overlay?.style.getPropertyValue('--overlay-filter'),
+    ]).toEqual(['rgba(0, 0, 0, 0)', '']);
+    act(() => overlay?.click());
+    expect(storyline.setDrawerOpen).toHaveBeenCalledWith(false);
   });
 });
