@@ -626,7 +626,7 @@ async function listSharedRowsUnmetered(
   // is index-covered and adds no scan to the hot list path. The raw vote rows
   // are NEVER returned — only the boolean derived from the viewer's own row.
   //
-  // `mine` ($5) reuses that same $4 — see this function's JSDoc for why it is a
+  // `mine` ($5) reuses that same $4 — see `listSharedRows`' JSDoc for why it is a
   // boolean rather than a user id. 🔴 AN ANONYMOUS VIEWER ASKING FOR `mine` GETS
   // AN EMPTY PAGE, NOT AN ERROR AND NOT THE WHOLE BOARD, and it is the SQL that
   // guarantees it rather than a guard anyone could forget: $4 is NULL for anon,

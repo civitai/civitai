@@ -677,13 +677,15 @@ describe('a thrown error is recorded once and reaches the caller unchanged', () 
   it.each(['inc', 'observe'] as const)(
     'a metrics handle whose `%s` throws changes neither the result nor the error',
     async (method) => {
-      (method === 'inc' ? incSpy : observeSpy).mockImplementation(() => {
+      const spy = method === 'inc' ? incSpy : observeSpy;
+      spy.mockImplementation(() => {
         throw new Error('registry broken');
       });
       await expect(listSharedRows('t', { limit: 10 })).resolves.toEqual({
         items: [],
         nextCursor: undefined,
       });
+      expect(spy, 'the throwing handle was reached').toHaveBeenCalled();
 
       const failure = new Error('connection reset');
       mockPool.query.mockRejectedValueOnce(failure);
@@ -815,7 +817,7 @@ describe('the router has one metered entry point per op', () => {
         if (entry.isDirectory()) {
           if (entry.name !== 'node_modules' && entry.name !== '__tests__') walk(full);
         } else if (
-          /\.tsx?$/.test(entry.name) &&
+          /(?<!\.test)\.tsx?$/.test(entry.name) &&
           /\bwithSharedStorageMetrics\b/.test(codeOf(full))
         ) {
           callers.push(path.relative(SRC, full).split(path.sep).join('/'));
