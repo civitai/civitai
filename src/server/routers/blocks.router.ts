@@ -70,7 +70,9 @@ import {
   checkBlockPostRateLimit,
   checkBlockPublishRateLimit,
   checkBlockTrainingDatasetRateLimit,
+  checkBlockUploadAppRateLimit,
   checkBlockUploadRateLimit,
+  releaseBlockUploadRateLimit,
 } from '~/server/utils/block-catalog-rate-limit';
 import { acquireBlockPollHoldSlot } from '~/server/utils/block-poll-hold-slots';
 import {
@@ -5431,18 +5433,24 @@ export const blocksRouter = router({
    *
    * Gated as a post, because posting is the only thing the stamp unlocks: the shared post
    * preamble (`posts:write:self`, subject = session user, runtime flag, subject hydration,
-   * post-creation flag) and page tokens only. Then the upload's ONE upload-bucket charge,
+   * post-creation flag) and page tokens only. Then the upload's rate-limit charges,
    * BEFORE the persist, so a refusal creates no Image row and starts no scan. The bytes
    * are already in the store by then; a refused upload leaves that object unreferenced, as a
    * picked upload refused at `blockImageUpload.persist` does.
    *
-   * RATE LIMIT: its own bucket keyed per (install, viewer), like the training-dataset
-   * bucket: a page app's install id is shared by every viewer, and the per-install publish
-   * bucket would let one viewer's uploads use up everyone else's allowance.
+   * RATE LIMIT: two buckets, as a post has. The viewer's own, keyed per (install, viewer): a
+   * page app's install id is shared by every viewer, and the per-install publish bucket would
+   * let one viewer's uploads use up everyone else's allowance. Then the app's aggregate, keyed
+   * on `appId`, which bounds the app across all of its viewers.
+   *
+   * The viewer's bucket is checked FIRST, so a viewer over their own allowance takes nothing
+   * from the app's. When the app's bucket refuses, the viewer's bucket token is refunded; the
+   * per-account `rateLimit` attempt below is not. The two refusals carry different messages so
+   * an app can tell a viewer over their allowance from an app at capacity.
    *
    * ⚠️ The 60/h `rateLimit` below does NOT bind every caller: the middleware skips moderators
-   * (the current flag audience) and non-prod envs. For them the binding server bound is the
-   * upload bucket, plus the host's own per-page window.
+   * (the current flag audience) and non-prod envs. For them the binding server bounds are the
+   * two upload buckets, plus the host's own per-page window.
    */
   persistAppUploadImage: protectedProcedure
     .meta({ blockApiKeys: true })
@@ -5475,6 +5483,14 @@ export const blocksRouter = router({
         throw new TRPCError({
           code: 'TOO_MANY_REQUESTS',
           message: 'Rate limit exceeded, please retry shortly.',
+        });
+      }
+      const appRate = await checkBlockUploadAppRateLimit(claims.appId);
+      if (!appRate.allowed) {
+        await releaseBlockUploadRateLimit(claims.blockInstanceId, userId);
+        throw new TRPCError({
+          code: 'TOO_MANY_REQUESTS',
+          message: 'This app is handling too many uploads right now, please retry shortly.',
         });
       }
       const { persistBlockUploadImage } = await import(

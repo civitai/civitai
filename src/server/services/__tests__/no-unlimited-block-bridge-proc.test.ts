@@ -101,6 +101,7 @@ const BUCKET_BY_FN: Readonly<Record<string, string>> = Object.freeze({
   checkBlockTrainingDatasetRateLimit: 'training-dataset',
   checkBlockEstimateCellsRateLimit: 'estimate-cells',
   checkBlockUploadRateLimit: 'upload',
+  checkBlockUploadAppRateLimit: 'upload-app',
 });
 
 type Decision = {
@@ -197,8 +198,8 @@ const RATE_LIMIT_DECISION_LEDGER: Readonly<Record<string, Decision>> = Object.fr
     why: 'Image-WEIGHTED (each image is a server-side fetch + orchestrator import) on its OWN bucket keyed per (install, viewer): a page app install id is shared by every viewer, so the publish bucket would let one viewer’s dataset starve the others and the app’s publishing.',
   },
   persistAppUploadImage: {
-    buckets: ['upload'],
-    why: 'The server half of OPEN_IMAGE_UPLOAD { bytes }: each persist creates a real, scanned Image row, so it takes one token, before the row is created, from its OWN bucket keyed per (install, viewer): a page app install id is shared by every viewer, so the per-install publish bucket would let one viewer’s uploads use up the others’ allowance.',
+    buckets: ['upload', 'upload-app'],
+    why: 'The server half of OPEN_IMAGE_UPLOAD { bytes }: each persist creates a real, scanned Image row, so it takes one token, before the row is created, from its OWN bucket keyed per (install, viewer): a page app install id is shared by every viewer, so the per-install publish bucket would let one viewer’s uploads use up the others’ allowance. Plus one from the per-app upload bucket, the aggregate the per-viewer one cannot express; the viewer’s token is refunded when the app’s bucket refuses.',
   },
   previewQuoteGrant: {
     buckets: ['catalog'],
@@ -456,16 +457,17 @@ describe('no unlimited block-bridge procedure without a recorded decision', () =
     expect(pollers).toEqual(['pollWorkflow']);
   });
 
-  it('an upload charges the per-viewer upload bucket and NOT the per-install publish bucket', () => {
+  it('an upload charges the per-viewer and per-app upload buckets and NOT the per-install publish bucket', () => {
     // Pinned as a relationship: "is it limited at all" passes just as well if an upload charges
     // the install-only publish bucket, which every viewer of a page app shares.
-    expect(derived.get('persistAppUploadImage')).toEqual(['upload']);
+    expect(derived.get('persistAppUploadImage')).toEqual(['upload', 'upload-app']);
     const chargers = (bucket: string) =>
       [...derived.entries()]
         .filter(([, buckets]) => buckets.includes(bucket))
         .map(([name]) => name)
         .sort();
     expect(chargers('upload')).toEqual(['persistAppUploadImage']);
+    expect(chargers('upload-app')).toEqual(['persistAppUploadImage']);
     // Shared per install: what a post adopts and what a publish creates.
     expect(chargers('publish')).toEqual(['createPostFromApp', 'publishGenerationOutputs']);
   });

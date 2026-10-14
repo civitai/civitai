@@ -2,10 +2,14 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 import {
   BLOCK_PUBLISH_RATE_LIMIT_WINDOW_SECONDS,
+  BLOCK_UPLOAD_APP_RATE_LIMIT_MAX,
+  BLOCK_UPLOAD_APP_RATE_LIMIT_WINDOW_SECONDS,
   BLOCK_UPLOAD_RATE_LIMIT_MAX,
   BLOCK_UPLOAD_RATE_LIMIT_WINDOW_SECONDS,
   checkBlockPublishRateLimit,
+  checkBlockUploadAppRateLimit,
   checkBlockUploadRateLimit,
+  releaseBlockUploadRateLimit,
 } from '../block-catalog-rate-limit';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 
@@ -113,6 +117,96 @@ describe('checkBlockUploadRateLimit', () => {
         ['blocks:token-rate-limit:upload:page_apb_shared:9417', 1],
       ]);
     });
+  });
+});
+
+/**
+ * The refund of one per-viewer token, for an upload the app-aggregate bucket refused.
+ */
+describe('releaseBlockUploadRateLimit', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('takes ONE token back off the same (install, viewer) key the charge used', async () => {
+    mockRedis.decrBy.mockResolvedValue(41);
+    await releaseBlockUploadRateLimit(PAGE_INSTANCE, VIEWER_A);
+    expect(mockRedis.decrBy.mock.calls).toEqual([[KEY, 1]]);
+    expect(mockRedis.del).not.toHaveBeenCalled();
+  });
+
+  it.each([1, 0])('keeps a counter the refund leaves at %i', async (count) => {
+    mockRedis.decrBy.mockResolvedValue(count);
+    await releaseBlockUploadRateLimit(PAGE_INSTANCE, VIEWER_A);
+    expect(mockRedis.del).not.toHaveBeenCalled();
+  });
+
+  it('deletes a counter the refund leaves negative, which only a refund after expiry can do', async () => {
+    mockRedis.decrBy.mockResolvedValue(-1);
+    await releaseBlockUploadRateLimit(PAGE_INSTANCE, VIEWER_A);
+    expect(mockRedis.del.mock.calls).toEqual([[KEY]]);
+  });
+
+  it('swallows a redis error from the delete too', async () => {
+    mockRedis.decrBy.mockResolvedValue(-1);
+    mockRedis.del.mockRejectedValue(new Error('redis down'));
+    await expect(releaseBlockUploadRateLimit(PAGE_INSTANCE, VIEWER_A)).resolves.toBeUndefined();
+    expect(mockRedis.del).toHaveBeenCalledTimes(1);
+  });
+
+  it('swallows a redis error', async () => {
+    mockRedis.decrBy.mockRejectedValue(new Error('redis down'));
+    await expect(releaseBlockUploadRateLimit(PAGE_INSTANCE, VIEWER_A)).resolves.toBeUndefined();
+  });
+});
+
+/**
+ * The app-aggregate upload bucket: one allowance per app, across its viewers and installs.
+ */
+describe('checkBlockUploadAppRateLimit', () => {
+  const APP_KEY = 'blocks:token-rate-limit:upload-app:appblk_test';
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockRedis.expire.mockResolvedValue(true);
+    mockRedis.ttl.mockResolvedValue(BLOCK_UPLOAD_APP_RATE_LIMIT_WINDOW_SECONDS);
+  });
+
+  it('keys on the app alone, in its own `:upload-app:` sub-namespace, one token per upload', async () => {
+    mockRedis.incrBy.mockResolvedValue(1);
+    await checkBlockUploadAppRateLimit('appblk_test');
+    expect(mockRedis.incrBy.mock.calls).toEqual([[APP_KEY, 1]]);
+    expect(mockRedis.expire.mock.calls).toEqual([[APP_KEY, 300]]);
+  });
+
+  it('two different apps get different keys', async () => {
+    mockRedis.incrBy.mockResolvedValue(1);
+    await checkBlockUploadAppRateLimit('appblk_alpha');
+    await checkBlockUploadAppRateLimit('appblk_beta');
+    expect(mockRedis.incrBy.mock.calls.map((c) => c[0])).toEqual([
+      'blocks:token-rate-limit:upload-app:appblk_alpha',
+      'blocks:token-rate-limit:upload-app:appblk_beta',
+    ]);
+  });
+
+  it('allows exactly 600 in a window and refuses the next one with the live TTL', async () => {
+    expect(BLOCK_UPLOAD_APP_RATE_LIMIT_MAX).toBe(600);
+    expect(BLOCK_UPLOAD_APP_RATE_LIMIT_WINDOW_SECONDS).toBe(300);
+
+    mockRedis.incrBy.mockResolvedValue(600);
+    await expect(checkBlockUploadAppRateLimit('appblk_test')).resolves.toEqual({ allowed: true });
+
+    mockRedis.incrBy.mockResolvedValue(601);
+    mockRedis.ttl.mockResolvedValue(177);
+    await expect(checkBlockUploadAppRateLimit('appblk_test')).resolves.toEqual({
+      allowed: false,
+      retryAfterSeconds: 177,
+    });
+  });
+
+  it('FAILS OPEN on a redis error, like every sibling limiter', async () => {
+    mockRedis.incrBy.mockRejectedValue(new Error('redis down'));
+    await expect(checkBlockUploadAppRateLimit('appblk_test')).resolves.toEqual({ allowed: true });
   });
 });
 

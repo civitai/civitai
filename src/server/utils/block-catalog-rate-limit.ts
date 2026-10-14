@@ -603,8 +603,8 @@ export async function checkBlockTrainingDatasetRateLimit(
 // KEYED ON THE INSTALL **AND THE VIEWER**, for the reason the poll bucket argues: a
 // page app's `blockInstanceId` is one string shared by every viewer of that app, so
 // an install-only key would let one viewer's uploads use up everyone else's
-// allowance. As with the poll bucket, the app-wide total then scales with the
-// number of viewers. `userId` is the self-bound token subject, never client input.
+// allowance. `userId` is the self-bound token subject, never client input. An app's
+// total across its viewers is bounded by the app-aggregate upload bucket below.
 //
 // The ceiling mirrors the publish bucket's; it was not sized for one viewer.
 // FIXED window and FAILS OPEN on a Redis error, like every bucket in this file.
@@ -631,6 +631,59 @@ export async function checkBlockUploadRateLimit(
   );
 }
 
+/**
+ * Gives back the one token `checkBlockUploadRateLimit` took, for an upload the
+ * app-aggregate bucket then refused.
+ *
+ * Best-effort: a Redis error is swallowed and the viewer stays one token short for
+ * the window. A refund landing after the window expired recreates the key negative
+ * with no TTL, so a negative counter is deleted. The decrement and the delete are
+ * separate commands: a charge landing between them is deleted with it.
+ */
+export async function releaseBlockUploadRateLimit(
+  blockInstanceId: string,
+  userId: number
+): Promise<void> {
+  const key = `${REDIS_KEYS.BLOCKS.TOKEN_RATE_LIMIT}:upload:${blockInstanceId}:${userId}`;
+  try {
+    const count = await redis.decrBy(key as never, 1);
+    if (typeof count === 'number' && count < 0) await redis.del(key as never);
+  } catch {
+    /* best-effort */
+  }
+}
+
+// APP-AGGREGATE upload bucket, keyed on `claims.appId` like the app-aggregate post
+// bucket. The bucket above bounds ONE VIEWER of one install, so on its own an app's
+// uploads grow with its number of viewers; this is the total, and it is what keeps
+// one app's uploads within a share of the capacity every app's uploads draw on.
+//
+// `appId` and not `blockInstanceId`: it is the app's identity across every install
+// and surface, and it is the id an uploaded image is stamped with.
+//
+// 600 per 300 s: ten viewers each at their own maximum in one window. Not
+// data-derived; a starting value.
+//
+// FIXED window and FAILS OPEN on a Redis error, like every bucket in this file. A
+// refused call still counts toward this window.
+export const BLOCK_UPLOAD_APP_RATE_LIMIT_MAX = 600;
+export const BLOCK_UPLOAD_APP_RATE_LIMIT_WINDOW_SECONDS = 300;
+
+/**
+ * Records ONE upload from bytes against `appId`'s aggregate upload window. Own
+ * `:upload-app:` sub-namespace, so it never contends with the per-viewer `:upload:`
+ * bucket or any other; fail-open like every sibling limiter.
+ */
+export async function checkBlockUploadAppRateLimit(
+  appId: string
+): Promise<BlockCatalogRateLimitResult> {
+  return checkFixedWindow(
+    `${REDIS_KEYS.BLOCKS.TOKEN_RATE_LIMIT}:upload-app:${appId}`,
+    BLOCK_UPLOAD_APP_RATE_LIMIT_MAX,
+    BLOCK_UPLOAD_APP_RATE_LIMIT_WINDOW_SECONDS
+  );
+}
+
 // ESTIMATE-CELLS bucket (blocks.estimateWorkflowBatch). A batch estimate charges
 // the catalog bucket ONCE, like a single estimate — that is the point of it: a
 // 16-cell grid no longer spends 16 of an allowance that a page app shares between
@@ -643,9 +696,9 @@ export async function checkBlockUploadRateLimit(
 //
 // 🔴 KEYED ON THE INSTALL ALONE, LIKE THE CATALOG BUCKET, AND NOT ON THE VIEWER —
 // THE OPPOSITE OF THE VIEWER-KEYED BUCKETS (POLL, POST, TRAINING-DATASET, UPLOAD),
-// DELIBERATELY. Those put
-// the viewer in the key so a page app's strangers cannot throttle each other, and
-// accept that the app-wide total then scales with the number of viewers. Here that
+// DELIBERATELY. Those put the viewer in the key so a page app's strangers cannot
+// throttle each other; poll and training-dataset accept that the app-wide total
+// then scales with the number of viewers. Here that
 // trade is the wrong one: the quantity being bounded is upstream cost quotes, which
 // the catalog bucket already bounds PER INSTALL, and a per-viewer key would let an
 // app with V concurrent viewers reach V × this ceiling — a batch would become

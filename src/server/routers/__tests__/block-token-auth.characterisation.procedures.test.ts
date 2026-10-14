@@ -1069,7 +1069,7 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
   },
   'blocks.persistAppUploadImage': {
     'valid token': PASSED(
-      ['checkBlockUploadRateLimit("bki_char", 42)'],
+      ['checkBlockUploadRateLimit("bki_char", 42)', 'checkBlockUploadAppRateLimit("app_char")'],
       ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42', 'hydrate:42']
     ),
     'garbage token': E('UNAUTHORIZED', 'invalid block token', [], ['bridge-auth:threw']),
