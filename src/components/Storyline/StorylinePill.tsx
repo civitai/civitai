@@ -80,7 +80,7 @@ export function StorylineModeChip({
 }) {
   return (
     <div
-      className="bg-violet-6 inline-flex h-[30px] max-w-[min(360px,calc(100vw-24px))] items-center rounded-full text-[13px] font-bold text-white shadow-[0_4px_14px_rgba(121,80,242,.45)]"
+      className="inline-flex h-[30px] max-w-[min(360px,calc(100vw-24px))] items-center rounded-full bg-[var(--mantine-color-violet-6)] text-[13px] font-bold text-white shadow-[0_4px_14px_rgba(121,80,242,.45)]"
       style={{ pointerEvents: 'auto' }}
       data-testid="storyline-mode-chip"
     >
@@ -131,9 +131,9 @@ export function StorylineEntryChip({
         aria-label={`Read the storyline ${title} from chapter ${depth + 1}`}
         data-testid="storyline-enter"
       >
-        <IconRoute size={15} className="text-violet-3 shrink-0" />
+        <IconRoute size={15} className="shrink-0 text-[var(--mantine-color-violet-3)]" />
         <ChipLabel title={title} depth={depth} />
-        <span className="bg-violet-6 ml-1 shrink-0 rounded-full px-[9px] py-1 text-xs">
+        <span className="ml-1 shrink-0 rounded-full bg-[var(--mantine-color-violet-6)] px-[9px] py-1 text-xs">
           Read the story
         </span>
       </UnstyledButton>
