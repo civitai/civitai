@@ -2659,7 +2659,11 @@ export const updateCreatorShopSettings = async ({
         (await tx.cosmeticShopItem.count({ where: { addedById: userId } })) ||
         (servicesEnabled
           ? await tx.serviceOffering.count({
-              where: { sellerId: userId, status: ServiceOfferingStatus.Active },
+              where: {
+                sellerId: userId,
+                status: ServiceOfferingStatus.Active,
+                seller: { muted: false },
+              },
             })
           : 0);
       if (itemCount === 0)

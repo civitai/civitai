@@ -40,7 +40,7 @@ describe('publishing a shop with no cosmetics', () => {
     activeOfferings(1);
     expect(await publish(true)).toBe('published');
     expect(dbMock.dbWrite.serviceOffering.count).toHaveBeenCalledWith({
-      where: { sellerId: USER, status: ServiceOfferingStatus.Active },
+      where: { sellerId: USER, status: ServiceOfferingStatus.Active, seller: { muted: false } },
     });
   });
 

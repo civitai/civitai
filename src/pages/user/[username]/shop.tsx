@@ -74,7 +74,6 @@ function UserShopPage() {
   const displayName = user?.username ?? username;
   const isEmpty =
     !isLoading &&
-    !servicesLoading &&
     isStorefrontEmpty({
       cosmeticCount: shop?.cosmetics.length ?? 0,
       activeServiceCount: services.length,
@@ -119,7 +118,7 @@ function UserShopPage() {
           </Stack>
         </div>
 
-        {isLoading ? (
+        {isLoading || servicesLoading ? (
           <div className={constrained}>
             <Center py="xl">
               <Loader />
