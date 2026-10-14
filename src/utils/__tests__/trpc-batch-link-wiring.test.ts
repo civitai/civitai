@@ -116,10 +116,12 @@ describe('every tRPC link sends the page route header', () => {
   it('on the createTRPCNext client', () => {
     expect(h.nextConfig).not.toBeNull();
     vi.stubGlobal('window', {});
-    h.router = { pathname: '/models/[id]/[[...slug]]' };
+    // A different route at config time: the header must follow later navigations.
+    h.router = { pathname: '/images' };
     const batchBefore = h.batchLinkOptions.length;
     const plainBefore = h.plainLinkOptions.length;
     h.nextConfig!({ ctx: undefined });
+    h.router = { pathname: '/models/[id]/[[...slug]]' };
     expectRouteHeader([
       ...h.batchLinkOptions.slice(batchBefore),
       ...h.plainLinkOptions.slice(plainBefore),
