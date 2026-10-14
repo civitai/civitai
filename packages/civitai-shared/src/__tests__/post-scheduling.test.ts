@@ -199,8 +199,8 @@ describe('generateEverySchedule', () => {
   });
 
   it('refuses an interval the jitter could collapse below the gap', () => {
-    const result = generateEverySchedule({ start, everyMinutes: 45, count: 3, rng: seededRng(1) });
-    expect(result).toEqual({ ok: false, issue: expect.stringMatching(/at least 1 hour/) });
+    const result = generateEverySchedule({ start, everyMinutes: 35, count: 3, rng: seededRng(1) });
+    expect(result).toEqual({ ok: false, issue: expect.stringMatching(/at least 40 minutes/) });
   });
 
   it('refuses an empty batch', () => {
