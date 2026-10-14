@@ -6,6 +6,7 @@ import { createRoot } from 'react-dom/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { StorylineEarlyAccessModal } from '~/components/Storyline/StorylineEarlyAccessModal';
+import type * as NotificationsModule from '~/utils/notifications';
 
 const mocks = vi.hoisted(() => ({
   join: vi.fn<(input: { storylineId?: number }) => Promise<unknown>>(),
@@ -28,7 +29,10 @@ vi.mock('~/components/LoginRedirect/LoginRedirect', () => ({
       onClick: () => mocks.requireLogin(reason),
     }),
 }));
-vi.mock('~/utils/notifications', () => ({ showErrorNotification: mocks.showError }));
+vi.mock('~/utils/notifications', async (importOriginal) => ({
+  ...(await importOriginal<typeof NotificationsModule>()),
+  showErrorNotification: mocks.showError,
+}));
 
 function render() {
   const container = document.createElement('div');
