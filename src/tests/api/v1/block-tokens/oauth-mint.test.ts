@@ -264,6 +264,34 @@ describe('POST /api/v1/block-tokens — auth: "oauth" manifests', () => {
     expect(res._body.buzzBudget).toBe(137);
   });
 
+  it('reports no budget for an OAuth token minted without the spend scope', async () => {
+    mockEnv.APP_BLOCK_OAUTH_TOKENS_ENABLED = true;
+    const declared = ['user:read:self', 'ai:write:budgeted'];
+    // The viewer granted identity only, so the spend scope is withheld from the token.
+    mockDbWrite.appUserScopeGrant.findUnique.mockResolvedValue({
+      grantedScopes: ['user:read:self'],
+      revokedAt: null,
+    });
+    mockBlockRegistry.resolvePageBlock.mockResolvedValue({
+      appBlock: {
+        ...pageBlock().appBlock,
+        manifest: {
+          scopes: declared,
+          auth: 'oauth',
+          page: { path: '/', title: 'Hello', buzzBudgetPerGen: 137 },
+        },
+        approvedScopes: declared,
+        app: { allowedScopes: TokenScope.UserRead | TokenScope.AIServicesWrite },
+      },
+    });
+    const res = await mint();
+    expect(res._status).toBe(200);
+    expect(res._body.kind).toBe('oauth');
+    expect(res._body.scopes).toEqual(['user:read:self']);
+    expect(res._body.missingScopes).toEqual(['ai:write:budgeted']);
+    expect(res._body.buzzBudget).toBeUndefined();
+  });
+
   it('flag on + anonymous viewer keeps the stripped anonymous JWT', async () => {
     mockEnv.APP_BLOCK_OAUTH_TOKENS_ENABLED = true;
     mockSession.value = null;
