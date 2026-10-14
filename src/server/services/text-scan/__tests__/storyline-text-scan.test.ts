@@ -79,18 +79,28 @@ const args = (v: Verdict) => ({
 });
 const clean = { nsfw: NsfwLevel.PG, poi: false, minor: false };
 
+// Conditional on the SCAN's flag, not on the storyline being up: a verdict arriving while a
+// moderator holds a takedown is still recorded, or that moderator's restore would publish it.
 const takedownWrite = {
   where: {
     id: ID,
-    tosViolation: false,
+    tosViolationByScan: false,
     OR: [{ scanFlagLiftedTextHash: null }, { scanFlagLiftedTextHash: { not: HASH } }],
   },
   data: { tosViolation: true, tosViolationByScan: true },
 };
-const liftWrite = {
-  where: { id: ID, tosViolationByScan: true },
-  data: { tosViolation: false, tosViolationByScan: false },
-};
+// One write per state of the moderator's flag: the storyline comes back up only when no
+// moderator holds a takedown of their own.
+const liftWrites = [
+  {
+    where: { id: ID, tosViolationByScan: true, tosViolationByModerator: false },
+    data: { tosViolation: false, tosViolationByScan: false },
+  },
+  {
+    where: { id: ID, tosViolationByScan: true, tosViolationByModerator: true },
+    data: { tosViolationByScan: false },
+  },
+];
 const updates = () => w.storyline.updateMany.mock.calls.map((c) => c[0]);
 
 beforeEach(() => {
@@ -250,7 +260,7 @@ describe('applyStorylineTextScan', () => {
       );
     });
 
-    it('stays silent when nothing was taken down (already down, or text a moderator cleared)', async () => {
+    it('stays silent when nothing was taken down (already down by the scan, or text a moderator cleared)', async () => {
       w.storyline.updateMany
         .mockResolvedValueOnce({ count: 1 } as never)
         .mockResolvedValueOnce({ count: 0 } as never);
@@ -263,7 +273,7 @@ describe('applyStorylineTextScan', () => {
       await applyStorylineTextScan(args(clean) as never);
       expect(updates()).toEqual([
         { where: { id: ID }, data: { nsfwLevel: NsfwLevel.PG } },
-        liftWrite,
+        ...liftWrites,
       ]);
       expect(createNotification).not.toHaveBeenCalled();
     });

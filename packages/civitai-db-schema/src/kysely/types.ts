@@ -4543,15 +4543,22 @@ export type Storyline = {
    */
   maxNsfwLevel: number;
   /**
-   * Moderator takedown of the storyline as a whole. Individual chapters are taken down
-   * through their posts.
+   * Whether the storyline as a whole is taken down: true while the title scan or a moderator
+   * holds a takedown (the two flags below). Every read gates on this. Individual chapters are
+   * taken down through their posts.
    */
   tosViolation: Generated<boolean>;
   /**
-   * Set with `tosViolation` by the title scan, which lifts it again on a clean rescan. A
-   * takedown by a moderator leaves this false, so no scan ever lifts it.
+   * The title scan holds a takedown. Set on a poi or minor verdict and cleared on a clean rescan
+   * or by a moderator lifting it for the title they reviewed; neither clears `tosViolation`
+   * while a moderator's takedown is in place.
    */
   tosViolationByScan: Generated<boolean>;
+  /**
+   * A moderator holds a takedown. Only a moderator's restore clears it, and that leaves
+   * `tosViolation` set while the scan holds one too.
+   */
+  tosViolationByModerator: Generated<boolean>;
   /**
    * The title text a moderator lifted a scan takedown for, as `textScanTextHash`. A scan of
    * the same text does not take it down again; an edited title is scanned afresh.

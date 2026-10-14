@@ -3290,16 +3290,30 @@ describe('title moderation', () => {
       w.storyline.findMany.mockResolvedValue([{ id: 10, userId: OWNER, title: 'Worse' }] as never);
       await moderateStorylineTitle({ id: 10, liftScanTakedown: lift });
       const reviewed = textScanTextHash(storylineTextScanSubject({ userId: OWNER, title: 'Bad' }));
+      // Two writes, one per state of the moderator's flag: the storyline comes back up only when
+      // no moderator holds a takedown of their own (see storyline-takedown.test.ts).
+      const data = { moderatorNsfwLevel: undefined, scanFlagLiftedTextHash: reviewed };
       expect(w.storyline.updateMany.mock.calls).toEqual([
         [
           {
-            where: { id: 10, tosViolationByScan: true, title: 'Bad' },
-            data: {
-              moderatorNsfwLevel: undefined,
-              tosViolation: false,
-              tosViolationByScan: false,
-              scanFlagLiftedTextHash: reviewed,
+            where: {
+              title: 'Bad',
+              id: 10,
+              tosViolationByScan: true,
+              tosViolationByModerator: false,
             },
+            data: { ...data, tosViolation: false, tosViolationByScan: false },
+          },
+        ],
+        [
+          {
+            where: {
+              title: 'Bad',
+              id: 10,
+              tosViolationByScan: true,
+              tosViolationByModerator: true,
+            },
+            data: { ...data, tosViolationByScan: false },
           },
         ],
       ]);

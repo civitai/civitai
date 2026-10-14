@@ -4,9 +4,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { pgliteDialect } from './abuse-detection-pglite.harness';
 
 /**
- * A moderator's storyline takedown and restore from the report queue, on the real SQL. The title
- * scan lifts only a takedown marked as its own (`tosViolationByScan`), so the property is that a
- * moderator's takedown is never marked that way and a restore never clears the scan's.
+ * A moderator's storyline takedown and restore from the report queue, on the real SQL, run
+ * against the title scan's own writes. The two hold separate flags and the storyline is down while
+ * either does, so the properties are about sequences: a restore never publishes a title the scan
+ * flagged, and a clean rescan never lifts a moderator's takedown.
  */
 
 const { dbHandle, recordModActivity } = vi.hoisted(() => ({
@@ -30,8 +31,7 @@ const { setStorylineTakedown, getReportStorylineId } = await import(
   '../storyline-takedown.service'
 );
 
-const UP = 10;
-const SCAN_DOWN = 11;
+const ID = 10;
 const MOD = 7;
 
 const SCHEMA = `
@@ -39,26 +39,50 @@ CREATE TABLE "Storyline" (
   "id" INTEGER PRIMARY KEY,
   "title" TEXT NOT NULL,
   "tosViolation" BOOLEAN NOT NULL DEFAULT false,
-  "tosViolationByScan" BOOLEAN NOT NULL DEFAULT false
+  "tosViolationByScan" BOOLEAN NOT NULL DEFAULT false,
+  "tosViolationByModerator" BOOLEAN NOT NULL DEFAULT false
 );
 CREATE TABLE "StorylineReport" ("reportId" INTEGER NOT NULL, "storylineId" INTEGER NOT NULL);
-INSERT INTO "Storyline" VALUES (${UP}, 'Up', false, false), (${SCAN_DOWN}, 'Scanned', true, true);
-INSERT INTO "StorylineReport" VALUES (100, ${UP});
+INSERT INTO "Storyline" ("id", "title") VALUES (${ID}, 'A story');
+INSERT INTO "StorylineReport" VALUES (100, ${ID});
 `;
 
-/** The title scan's lift, as `applyStorylineTextScan` writes it on a clean verdict. */
-const cleanScanLift = (id: number) =>
+// The title scan's writes, as `applyStorylineTextScan` makes them in the main app.
+const flaggingScan = () =>
   pg.query(
-    `UPDATE "Storyline" SET "tosViolation" = false, "tosViolationByScan" = false WHERE id = $1 AND "tosViolationByScan" = true`,
-    [id]
+    `UPDATE "Storyline" SET "tosViolation" = true, "tosViolationByScan" = true WHERE id = $1 AND "tosViolationByScan" = false`,
+    [ID]
   );
-const state = async (id: number) =>
-  (
-    await pg.query<{ tosViolation: boolean; tosViolationByScan: boolean }>(
-      `SELECT "tosViolation", "tosViolationByScan" FROM "Storyline" WHERE id = $1`,
-      [id]
-    )
-  ).rows[0];
+const cleanScan = async () => {
+  await pg.query(
+    `UPDATE "Storyline" SET "tosViolation" = false, "tosViolationByScan" = false WHERE id = $1 AND "tosViolationByScan" AND NOT "tosViolationByModerator"`,
+    [ID]
+  );
+  await pg.query(
+    `UPDATE "Storyline" SET "tosViolationByScan" = false WHERE id = $1 AND "tosViolationByScan" AND "tosViolationByModerator"`,
+    [ID]
+  );
+};
+const takeDown = () => setStorylineTakedown({ storylineId: ID, takenDown: true, moderatorId: MOD });
+const restore = () => setStorylineTakedown({ storylineId: ID, takenDown: false, moderatorId: MOD });
+
+const state = async () => {
+  const { rows } = await pg.query<{
+    tosViolation: boolean;
+    tosViolationByScan: boolean;
+    tosViolationByModerator: boolean;
+  }>(
+    `SELECT "tosViolation", "tosViolationByScan", "tosViolationByModerator" FROM "Storyline" WHERE id = $1`,
+    [ID]
+  );
+  const r = rows[0];
+  return {
+    down: r.tosViolation,
+    byScan: r.tosViolationByScan,
+    byModerator: r.tosViolationByModerator,
+  };
+};
+const UP = { down: false, byScan: false, byModerator: false };
 
 let pg: PGlite;
 
@@ -76,45 +100,55 @@ afterEach(async () => {
 
 describe('storyline takedown from the report queue', () => {
   it('finds the storyline a report is about', async () => {
-    expect(await getReportStorylineId(100)).toBe(UP);
+    expect(await getReportStorylineId(100)).toBe(ID);
     expect(await getReportStorylineId(999)).toBeNull();
   });
 
-  // The control: the scan's lift does lift its own takedown on this table.
-  it("a clean scan lifts the scan's own takedown", async () => {
-    await cleanScanLift(SCAN_DOWN);
-    expect(await state(SCAN_DOWN)).toEqual({ tosViolation: false, tosViolationByScan: false });
+  // The controls: each side lifts its own takedown here.
+  it('a clean scan lifts the scan’s takedown, and a restore lifts the moderator’s', async () => {
+    await flaggingScan();
+    await cleanScan();
+    expect(await state()).toEqual(UP);
+    await takeDown();
+    await restore();
+    expect(await state()).toEqual(UP);
   });
 
-  it("a clean scan does not lift a moderator's takedown, including one over the scan's", async () => {
-    for (const id of [UP, SCAN_DOWN]) {
-      await setStorylineTakedown({ storylineId: id, takenDown: true, moderatorId: MOD });
-      await cleanScanLift(id);
-      expect(await state(id)).toEqual({ tosViolation: true, tosViolationByScan: false });
-    }
+  it("a clean scan does not lift a moderator's takedown", async () => {
+    await takeDown();
+    await cleanScan();
+    expect(await state()).toEqual({ down: true, byScan: false, byModerator: true });
+  });
+
+  it("scan flags, a moderator takes it down, a restore: still down, on the scan's takedown", async () => {
+    await flaggingScan();
+    await takeDown();
+    await expect(restore()).resolves.toMatchObject({ tosViolation: true, changed: true });
+    expect(await state()).toEqual({ down: true, byScan: true, byModerator: false });
+  });
+
+  it('a moderator takes it down, the edited title is flagged, a restore: still down', async () => {
+    await takeDown();
+    await flaggingScan();
+    await restore();
+    expect(await state()).toEqual({ down: true, byScan: true, byModerator: false });
+  });
+
+  it('records activity only when the moderator flag changed', async () => {
+    await takeDown();
+    await expect(takeDown()).resolves.toMatchObject({ changed: false });
+    await restore();
+    await expect(restore()).resolves.toMatchObject({ changed: false });
+    expect(recordModActivity.mock.calls.map(([call]) => call.activity)).toEqual([
+      'takedown',
+      'restore',
+    ]);
     expect(recordModActivity).toHaveBeenCalledWith({
       userId: MOD,
       entityType: 'storyline',
-      entityId: UP,
+      entityId: ID,
       activity: 'takedown',
     });
-  });
-
-  it("restores a moderator's takedown", async () => {
-    await setStorylineTakedown({ storylineId: UP, takenDown: true, moderatorId: MOD });
-    await expect(
-      setStorylineTakedown({ storylineId: UP, takenDown: false, moderatorId: MOD })
-    ).resolves.toMatchObject({ tosViolation: false });
-    expect(recordModActivity).toHaveBeenLastCalledWith(
-      expect.objectContaining({ activity: 'restore' })
-    );
-  });
-
-  it("leaves the scan's takedown in place on a restore, and records nothing", async () => {
-    await expect(
-      setStorylineTakedown({ storylineId: SCAN_DOWN, takenDown: false, moderatorId: MOD })
-    ).resolves.toMatchObject({ tosViolation: true, tosViolationByScan: true });
-    expect(recordModActivity).not.toHaveBeenCalled();
   });
 
   it('is null for a storyline that no longer exists', async () => {

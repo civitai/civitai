@@ -479,19 +479,23 @@
             {#if storyline}
               <p class="mb-2 flex flex-wrap items-center gap-2 text-sm">
                 <span class="font-medium">{storyline.title}</span>
-                {#if storyline.tosViolation}
-                  <Badge variant="outline">
-                    {storyline.tosViolationByScan ? 'taken down by title scan' : 'taken down'}
-                  </Badge>
+                {#if storyline.tosViolationByModerator}
+                  <Badge variant="outline">taken down by a moderator</Badge>
+                {/if}
+                {#if storyline.tosViolationByScan}
+                  <Badge variant="outline">taken down by title scan</Badge>
                 {/if}
               </p>
             {:else}
               <p class="mb-2 text-sm text-muted-foreground">This storyline no longer exists.</p>
             {/if}
-            {#if storyline && (!storyline.tosViolation || storyline.tosViolationByScan)}
+            {#if storyline && !storyline.tosViolationByModerator}
               <p class="mb-2 text-sm">
                 Taking it down hides the storyline from everyone but its owner and moderators, then sets this report
                 Actioned. A later clean scan of its title does not bring it back.
+                {#if storyline.tosViolationByScan}
+                  Its title scan already keeps it down; this holds it down after the scan lifts.
+                {/if}
               </p>
               {#if confirmingTakedown === selected.id}
                 <form method="POST" action="?/takeDownStoryline" use:enhance={storylineForm.enhance} class="flex flex-wrap gap-2">
@@ -509,6 +513,11 @@
                 </Button>
               {/if}
             {:else if storyline}
+              {#if storyline.tosViolationByScan}
+                <p class="mb-2 text-sm">
+                  Restoring lifts the moderator takedown only. Its title scan still keeps it down.
+                </p>
+              {/if}
               <form method="POST" action="?/restoreStoryline" use:enhance={storylineForm.enhance}>
                 <input type="hidden" name="id" value={selected.id} />
                 <Button type="submit" size="sm" variant="outline" disabled={storylineForm.submitting}>

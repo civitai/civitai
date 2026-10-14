@@ -16,6 +16,7 @@ import { placementPriceRanges } from '~/server/services/placement.service';
 import { raiseNsfwLevelText } from '@civitai/shared/rated-entity-sql';
 import { storylineTextScanSubject } from '~/server/services/text-scan/profiles/storyline.profile';
 import { textScanTextHash } from '~/server/services/text-scan/prompt';
+import { liftScanTakedown as liftScanTakedownWrite } from '~/server/services/text-scan/actions/storyline';
 import { scanEntityInBackground } from '~/server/services/text-scan/submit';
 import { logToAxiom } from '~/server/logging/client';
 import {
@@ -592,7 +593,7 @@ export async function updateStoryline({
  * rating (null hands it back to the scan). `liftScanTakedown` lifts a takedown the title scan
  * made, for the title the moderator reviewed, and records that text so a scan of it, a redelivered
  * verdict included, does not take it down again. Refused if the title has changed since: the new
- * one was never reviewed. A takedown a moderator made is not lifted here.
+ * one was never reviewed. A moderator's own takedown is not lifted here, and keeps it down.
  */
 export async function moderateStorylineTitle({
   id,
@@ -616,57 +617,68 @@ export async function moderateStorylineTitle({
     throw throwBadRequestError('The title has changed since it was reviewed');
 
   // The hash of the reviewed text itself, not a fresh read: the title could change and change
-  // back between a read and the update below, which only checks the text at the end.
-  const lift = liftScanTakedown
-    ? {
-        tosViolation: false,
-        tosViolationByScan: false,
-        scanFlagLiftedTextHash: textScanTextHash(
-          storylineTextScanSubject({
-            userId: storyline.userId,
-            title: liftScanTakedown.reviewedTitle,
-          })
-        ),
-      }
-    : {};
-  // Conditional on the flag still being the scan's and the title the reviewed one, so neither a
-  // takedown nor an edit made in between is waved through.
-  const { count } = await dbWrite.storyline.updateMany({
-    where: {
-      id,
-      ...(liftScanTakedown && { tosViolationByScan: true, title: liftScanTakedown.reviewedTitle }),
-    },
-    data: { moderatorNsfwLevel, ...lift },
-  });
+  // back between a read and the update below, which only checks the text at the end. Conditional
+  // on the flag still being the scan's and the title the reviewed one, so neither a takedown nor
+  // an edit made in between is waved through. A moderator's takedown, if any, stays.
+  const count = liftScanTakedown
+    ? await liftScanTakedownWrite(id, {
+        where: { title: liftScanTakedown.reviewedTitle },
+        data: {
+          moderatorNsfwLevel,
+          scanFlagLiftedTextHash: textScanTextHash(
+            storylineTextScanSubject({
+              userId: storyline.userId,
+              title: liftScanTakedown.reviewedTitle,
+            })
+          ),
+        },
+      })
+    : (await dbWrite.storyline.updateMany({ where: { id }, data: { moderatorNsfwLevel } })).count;
   if (!count) throw throwBadRequestError('The storyline changed since it was reviewed');
   return dbWrite.storyline.findUniqueOrThrow({
     where: { id },
-    select: {
-      id: true,
-      tosViolation: true,
-      tosViolationByScan: true,
-      ...storylineTitleLevelSelect,
-    },
+    select: { id: true, ...storylineTakedownSelect, ...storylineTitleLevelSelect },
   });
 }
 
+const storylineTakedownSelect = {
+  tosViolation: true,
+  tosViolationByScan: true,
+  tosViolationByModerator: true,
+} satisfies Prisma.StorylineSelect;
+
 /**
- * A moderator takes a storyline down, or restores one they took down. A takedown is marked as a
- * moderator's (`tosViolationByScan` false) even over the title scan's, so a clean scan of the
- * title cannot lift it. A restore clears only a moderator's takedown: one the scan made is lifted
- * through `moderateStorylineTitle`, for the title reviewed, and is left in place here.
+ * A moderator takes a storyline down, or restores one they took down. Their takedown is held
+ * apart from the title scan's, so a clean rescan cannot lift it and a restore cannot lift the
+ * scan's: the storyline stays down while the scan holds one. `changed` is false when there was
+ * nothing to do (already down, or no moderator takedown to restore).
  */
 export async function setStorylineTakedown({ id, takenDown }: { id: number; takenDown: boolean }) {
-  await dbWrite.storyline.updateMany({
-    where: takenDown ? { id } : { id, tosViolationByScan: false },
-    data: takenDown ? { tosViolation: true, tosViolationByScan: false } : { tosViolation: false },
-  });
+  const changed = takenDown
+    ? (
+        await dbWrite.storyline.updateMany({
+          where: { id, tosViolationByModerator: false },
+          data: { tosViolation: true, tosViolationByModerator: true },
+        })
+      ).count
+    : (
+        await Promise.all([
+          dbWrite.storyline.updateMany({
+            where: { id, tosViolationByModerator: true, tosViolationByScan: false },
+            data: { tosViolation: false, tosViolationByModerator: false },
+          }),
+          dbWrite.storyline.updateMany({
+            where: { id, tosViolationByModerator: true, tosViolationByScan: true },
+            data: { tosViolationByModerator: false },
+          }),
+        ])
+      ).reduce((sum, { count }) => sum + count, 0);
   const storyline = await dbWrite.storyline.findUnique({
     where: { id },
-    select: { id: true, tosViolation: true, tosViolationByScan: true },
+    select: { id: true, ...storylineTakedownSelect },
   });
   if (!storyline) throw throwNotFoundError('Storyline not found');
-  return storyline;
+  return { ...storyline, changed: changed > 0 };
 }
 
 /**
