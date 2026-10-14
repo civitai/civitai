@@ -14,10 +14,16 @@
   }: { ruleId?: number | null; subject?: string | null; canEdit: boolean } = $props();
 
   let refresh = $state(0);
+  // The sheet animates out after `ruleId` goes null; keep the last rule so it doesn't flash "#null".
+  let last: { ruleId: number | null; subject: string | null } = { ruleId: null, subject: null };
+  const shown = $derived.by(() => {
+    if (ruleId !== null) last = { ruleId, subject };
+    return last;
+  });
   const versions = $derived(
-    browser && ruleId !== null
+    browser && shown.ruleId !== null
       ? fetchJson<ModelRuleVersionView[]>(
-          `/text-scan/model-rules/history?rule=${ruleId}&v=${refresh}`
+          `/text-scan/model-rules/history?rule=${shown.ruleId}&v=${refresh}`
         )
       : null
   );
@@ -29,7 +35,7 @@
     class="overflow-y-auto p-5 data-[side=right]:w-full data-[side=right]:sm:max-w-3xl"
   >
     <Sheet.Header class="p-0">
-      <Sheet.Title class="text-white">History · {subject ?? `#${ruleId}`}</Sheet.Title>
+      <Sheet.Title class="text-white">History · {shown.subject ?? `#${shown.ruleId}`}</Sheet.Title>
       <Sheet.Description class="text-dark-2">
         Every save, enable, disable and restore. Restoring saves an old version as the rule's new
         version.
@@ -45,7 +51,7 @@
             records how it looked before and after.
           </p>
         {:else}
-          {#key ruleId}
+          {#key shown.ruleId}
             <RuleVersionCompare versions={list} />
           {/key}
           <ul class="space-y-2">
@@ -60,16 +66,18 @@
                   </p>
                   <p class="break-words text-xs text-dark-2">
                     {version.subject} · {version.enabled ? 'enabled' : 'disabled'}{version.needsAttention
-                      ? ' · needs attention'
+                      ? ' · needs attention (restoring it leaves the rule disabled and not scanned)'
                       : ''}{version.legacy ? ' · regex' : ''}
                   </p>
                 </div>
-                {#if canEdit && i > 0 && !version.legacy && ruleId !== null}
+                {#if canEdit && i > 0 && !version.legacy && shown.ruleId !== null}
                   <RestoreDialog
                     action="?/restoreRule"
                     title="Restore version #{version.id}"
-                    description="Saves this definition and enabled state as the rule's new version. Scans use it from the next scan on."
-                    fields={{ ruleId, versionId: version.id }}
+                    description={version.needsAttention
+                      ? "Saves this definition as the rule's new version, flagged as needing review and disabled. It is not scanned until someone reviews and enables it."
+                      : "Saves this definition and enabled state as the rule's new version. Scans use it from the next scan on."}
+                    fields={{ ruleId: shown.ruleId, versionId: version.id }}
                     withNote={false}
                     onrestored={() => refresh++}
                   />

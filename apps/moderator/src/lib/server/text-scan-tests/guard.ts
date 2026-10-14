@@ -1,10 +1,10 @@
 import { error, fail } from '@sveltejs/kit';
 import type { Kysely } from 'kysely';
-import { z } from 'zod';
 import { canAccess } from '$lib/server/access';
 import type { DB as ModeratorDB } from '$lib/server/moderator-db/types';
+import { int4Id } from '$lib/server/query';
 import { LabError } from '$lib/server/text-scan-lab/errors';
-import { MAX_INT4, isInt4Id } from '$lib/server/users.service';
+import { isInt4Id } from '$lib/server/users.service';
 import {
   WORKSPACE_NAMES,
   WORKSPACE_PATHS,
@@ -15,7 +15,7 @@ import { TestSetError, requireSet } from './store';
 
 type User = Parameters<typeof canAccess>[0];
 
-export const idField = z.coerce.number().int().positive().max(MAX_INT4);
+export const idField = int4Id;
 const cannotOpen = (workspace: Workspace) =>
   `This set belongs to ${WORKSPACE_NAMES[workspace]}, which you cannot open.`;
 

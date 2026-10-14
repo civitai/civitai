@@ -207,7 +207,9 @@ export const actions: Actions = {
       const result = await restoreModelRuleVersion(input.ruleId, input.versionId, locals.user.id);
       return {
         success: true,
-        message: `Restored rule ${input.ruleId}.`,
+        message: result.flagged
+          ? `Restored rule ${input.ruleId} as needing review (disabled).`
+          : `Restored rule ${input.ruleId}.`,
         cacheWarning: result.cacheStale ? STALE_CACHE : null,
       };
     } catch (error) {

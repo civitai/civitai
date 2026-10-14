@@ -29,9 +29,9 @@
   const restore = new FormState({
     reload: true,
     reset: false,
-    onSuccess: () => {
+    onSuccess: (data) => {
       open = false;
-      toast.success('Restored as a new version');
+      toast.success(String(data?.message ?? 'Restored as a new version'));
       onrestored();
     },
     onSettled: (result) => {

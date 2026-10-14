@@ -55,6 +55,8 @@
     reset: false,
     onSuccess: (data) => {
       drafts.drop([draftId]);
+      // A save clears what a refused Enable said: "review and save first".
+      toggle.error = null;
       notifySaved(data);
     },
   });
@@ -111,8 +113,16 @@
           <form method="POST" action="?/toggle" use:enhance={toggle.enhance}>
             <input type="hidden" name="id" value={rule.id} />
             <input type="hidden" name="enabled" value={String(!rule.enabled)} />
-            <Button type="submit" size="xs" variant="outline" disabled={toggle.submitting}>
-              {rule.enabled ? 'Disable' : 'Enable'}
+            <Button
+              type="submit"
+              size="xs"
+              variant="outline"
+              disabled={toggle.submitting || (!rule.enabled && rule.needsAttention)}
+              title={!rule.enabled && rule.needsAttention
+                ? 'Review and save this rule first (Edit, then Save as reviewed).'
+                : undefined}
+            >
+              {rule.enabled ? 'Disable' : rule.needsAttention ? 'Review to enable' : 'Enable'}
             </Button>
           </form>
         {/if}

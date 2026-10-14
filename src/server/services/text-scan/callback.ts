@@ -256,7 +256,7 @@ export async function handleTextScanCallback(event: { workflowId: string; status
     });
     if (!stored) return;
     const { output: merged } = mergeTextScanOutputs(outputs, labels);
-    await scopeModelRules(merged, metadata, ctx);
+    const modelRules = await scopeModelRules(merged, metadata, ctx);
     const raised = stricterThanStored(stored, merged, labels);
     if (!raised.length) return;
     const output: TextScanOutput = Object.fromEntries(
@@ -274,6 +274,7 @@ export async function handleTextScanCallback(event: { workflowId: string; status
       model: metadata.model ?? '',
       textHash: metadata.textHash,
       meta: metadata.subjectMeta ?? subject.meta,
+      modelRules,
     });
     if (!recorded) return;
     const applied = await applicableOutcome({

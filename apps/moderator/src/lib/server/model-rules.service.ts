@@ -346,7 +346,8 @@ export async function restoreModelRuleVersion(
   ruleId: number,
   versionId: number,
   userId: number
-): Promise<WriteResult> {
+): Promise<WriteResult & { flagged: boolean }> {
+  let flagged = false;
   await dbWrite.transaction().execute(async (trx) => {
     const existing = await lockRule(trx, ruleId);
     if (!existing) throw new ModelRuleNotFoundError();
@@ -360,14 +361,6 @@ export async function restoreModelRuleVersion(
     if (!version) throw new ModelRuleVersionNotFoundError();
     if (!isSemanticDefinition(version.definition))
       throw new RestoreRefusedError('That version is a regex rule and cannot be restored.');
-    if (
-      sameRuleState(
-        viewOf(existing.definition, existing.reason, existing.enabled),
-        viewOf(version.definition, version.reason, version.enabled)
-      )
-    )
-      throw new RestoreRefusedError('That version is the same as the current rule.');
-
     const parsed = semanticModelRuleSchema.safeParse({
       ...version.definition,
       updatedById: userId,
@@ -379,6 +372,16 @@ export async function restoreModelRuleVersion(
     const definition = parsed.data;
     // A flagged rule is restored flagged, and so disabled: the same state the converter leaves it in.
     const enabled = version.enabled && !definition.needsAttention;
+    flagged = !!definition.needsAttention;
+    // Compared as it will land, not as the version recorded it: a flagged version lands disabled.
+    if (
+      sameRuleState(
+        viewOf(existing.definition, existing.reason, existing.enabled),
+        viewOf(version.definition, version.reason, enabled)
+      )
+    )
+      throw new RestoreRefusedError('That version is the same as the current rule.');
+
     await trx
       .updateTable('ModerationRule')
       .set({ definition, enabled, reason: version.reason, updatedAt: new Date() })
@@ -394,7 +397,7 @@ export async function restoreModelRuleVersion(
     );
   });
 
-  return afterRuleWrite(userId, ruleId, 'restore');
+  return { ...(await afterRuleWrite(userId, ruleId, 'restore')), flagged };
 }
 
 export const MATCH_MODES = ['all', 'shadow', 'active'] as const;

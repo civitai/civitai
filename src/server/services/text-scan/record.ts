@@ -247,6 +247,7 @@ export async function recordTextScanRaise({
   model,
   textHash,
   meta,
+  modelRules,
 }: RowKey & {
   workflowId: string;
   stored: StoredRow;
@@ -256,10 +257,12 @@ export async function recordTextScanRaise({
   model: string;
   textHash?: string;
   meta?: Record<string, unknown>;
+  modelRules?: TextScanResult['modelRules'];
 }) {
   const result: TextScanResult = stored.result
     ? { ...stored.result, labels: { ...stored.result.labels, ...output } }
     : { version: 1, labels: output, promptIds, model, textHash, meta };
+  if (modelRules) result.modelRules = modelRules;
   const updated = await dbWrite.entityModeration.updateMany({
     where: { entityType, entityId, workflowId, status: EntityModerationStatus.Failed },
     data: {
