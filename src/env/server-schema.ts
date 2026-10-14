@@ -970,6 +970,9 @@ export const serverSchema = z
     SCAN_LABEL_P3_B2_REGION: z.string().optional(),
     SCAN_LABEL_P3_B2_ACCESS_KEY: z.string().optional(),
     SCAN_LABEL_P3_B2_SECRET_KEY: z.string().optional(),
+    // The sweep's own key, for withdrawing copies. Either unset: nothing withdrawn.
+    SCAN_LABEL_P3_B2_DELETE_ACCESS_KEY: z.string().optional(),
+    SCAN_LABEL_P3_B2_DELETE_SECRET_KEY: z.string().optional(),
 
     // Storage resolver internal API (for registering B2 uploads)
     STORAGE_RESOLVER_INTERNAL_URL: z.string().optional(),
