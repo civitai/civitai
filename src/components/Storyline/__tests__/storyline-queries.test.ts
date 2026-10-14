@@ -1,0 +1,188 @@
+// @vitest-environment happy-dom
+import { act, createElement } from 'react';
+import { createRoot } from 'react-dom/client';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+import type * as TrpcModule from '~/utils/trpc';
+import type * as FeatureFlagsModule from '~/providers/FeatureFlagsProvider';
+import type * as BrowsingLevelModule from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import {
+  useStorylineEarlyAccess,
+  useStorylineForkShares,
+  useStorylineTracking,
+} from '~/components/Storyline/storyline.queries';
+
+type MutationOptions = { onSuccess?: (data: unknown, input: never) => unknown };
+
+const mocks = vi.hoisted(() => ({
+  storylines: true,
+  user: { id: 1 } as { id: number } | null,
+  forkSharesQuery: vi.fn(),
+  statusQuery: vi.fn(),
+  statusData: undefined as { joined: boolean } | undefined,
+  branchMutate: vi.fn(),
+  createMutate: vi.fn(),
+  joinMutateAsync: vi.fn(async () => undefined),
+  invalidateShares: vi.fn(),
+  setStatusData: vi.fn(),
+  options: {} as Record<string, MutationOptions | undefined>,
+}));
+
+vi.mock('~/utils/trpc', async (importOriginal) => {
+  const { makeTrpcProxy } = await import('../../../../test/trpcProxyStub');
+  return {
+    ...(await importOriginal<typeof TrpcModule>()),
+    trpc: makeTrpcProxy(
+      {
+        'storyline.getForkShares': {
+          useQuery: (input: unknown, opts: unknown) => {
+            mocks.forkSharesQuery(input, opts);
+            return { data: undefined };
+          },
+        },
+        'storyline.getEarlyAccessStatus': {
+          useQuery: (input: unknown, opts: unknown) => {
+            mocks.statusQuery(input, opts);
+            return { data: mocks.statusData };
+          },
+        },
+        'storyline.trackBranchChoice': {
+          useMutation: (opts: MutationOptions) => {
+            mocks.options.branch = opts;
+            return { mutate: mocks.branchMutate };
+          },
+        },
+        'storyline.trackCreateClick': {
+          useMutation: () => ({ mutate: mocks.createMutate }),
+        },
+        'storyline.joinEarlyAccess': {
+          useMutation: (opts: MutationOptions) => {
+            mocks.options.join = opts;
+            return { mutateAsync: mocks.joinMutateAsync, isPending: false };
+          },
+        },
+      },
+      {
+        useUtils: () => ({
+          storyline: {
+            getForkShares: { invalidate: mocks.invalidateShares },
+            getEarlyAccessStatus: { setData: mocks.setStatusData },
+          },
+        }),
+      }
+    ),
+  };
+});
+vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
+  ...(await importOriginal<typeof FeatureFlagsModule>()),
+  useFeatureFlags: () => ({ storylines: mocks.storylines }),
+}));
+vi.mock('~/components/BrowsingLevel/BrowsingLevelProvider', async (importOriginal) => ({
+  ...(await importOriginal<typeof BrowsingLevelModule>()),
+  useViewerBrowsingLevelDebounced: () => 7,
+}));
+vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => mocks.user }));
+
+function renderHook<T>(hook: () => T): { current: T } {
+  const result = {} as { current: T };
+  function Probe() {
+    result.current = hook();
+    return null;
+  }
+  const container = document.createElement('div');
+  document.body.appendChild(container);
+  act(() => createRoot(container).render(createElement(Probe)));
+  return result;
+}
+
+beforeEach(() => {
+  mocks.storylines = true;
+  mocks.user = { id: 1 };
+  mocks.statusData = undefined;
+  mocks.options = {};
+  for (const fn of [
+    mocks.forkSharesQuery,
+    mocks.statusQuery,
+    mocks.branchMutate,
+    mocks.createMutate,
+    mocks.joinMutateAsync,
+    mocks.invalidateShares,
+    mocks.setStatusData,
+  ])
+    fn.mockClear();
+});
+
+describe('useStorylineForkShares', () => {
+  it('reads the shares for the chapter at the reader browsing level', () => {
+    renderHook(() => useStorylineForkShares(4));
+    expect(mocks.forkSharesQuery).toHaveBeenLastCalledWith(
+      { chapterId: 4, browsingLevel: 7 },
+      { enabled: true }
+    );
+  });
+
+  it('does not read without a chapter or with the flag off', () => {
+    renderHook(() => useStorylineForkShares(undefined));
+    expect(mocks.forkSharesQuery.mock.lastCall?.[1]).toEqual({ enabled: false });
+    mocks.storylines = false;
+    renderHook(() => useStorylineForkShares(4));
+    expect(mocks.forkSharesQuery.mock.lastCall?.[1]).toEqual({ enabled: false });
+  });
+});
+
+describe('useStorylineTracking', () => {
+  it('records a signed-in choice with the browsing level', () => {
+    const tracking = renderHook(() => useStorylineTracking());
+    tracking.current.trackBranchChoice({ fromChapterId: 3, toChapterId: 5 });
+    tracking.current.trackCreateClick({ chapterId: 5 });
+    expect(mocks.branchMutate).toHaveBeenCalledWith({
+      fromChapterId: 3,
+      toChapterId: 5,
+      browsingLevel: 7,
+    });
+    expect(mocks.createMutate).toHaveBeenCalledWith({ chapterId: 5, browsingLevel: 7 });
+  });
+
+  it('sends nothing for a signed-out reader, whom the server would refuse', () => {
+    mocks.user = null;
+    const tracking = renderHook(() => useStorylineTracking());
+    tracking.current.trackBranchChoice({ fromChapterId: 3, toChapterId: 5 });
+    tracking.current.trackCreateClick({ chapterId: 5 });
+    expect([mocks.branchMutate.mock.calls, mocks.createMutate.mock.calls]).toEqual([[], []]);
+  });
+
+  it('refreshes the shares of the chapter the choice was made from, not the one taken', async () => {
+    renderHook(() => useStorylineTracking());
+    await mocks.options.branch?.onSuccess?.(undefined, {
+      fromChapterId: 3,
+      toChapterId: 5,
+    } as never);
+    expect(mocks.invalidateShares.mock.calls).toEqual([[{ chapterId: 3 }]]);
+  });
+});
+
+describe('useStorylineEarlyAccess', () => {
+  it('reads as not joined, and never asks, when signed out', () => {
+    mocks.user = null;
+    mocks.statusData = { joined: true };
+    const access = renderHook(() => useStorylineEarlyAccess());
+    expect(mocks.statusQuery.mock.lastCall?.[1]).toEqual({ enabled: false });
+    expect(access.current.joined).toBe(false);
+  });
+
+  it('reads the signed-in reader status', () => {
+    mocks.statusData = { joined: true };
+    const access = renderHook(() => useStorylineEarlyAccess());
+    expect(mocks.statusQuery.mock.lastCall?.[1]).toEqual({ enabled: true });
+    expect(access.current.joined).toBe(true);
+  });
+
+  it('joins for the storyline and marks the reader joined', async () => {
+    const access = renderHook(() => useStorylineEarlyAccess());
+    expect(access.current.joined).toBe(false);
+    await access.current.join({ storylineId: 9 });
+    expect(mocks.joinMutateAsync).toHaveBeenCalledWith({ storylineId: 9 });
+    mocks.options.join?.onSuccess?.(undefined, {} as never);
+    expect(mocks.setStatusData).toHaveBeenCalledWith(undefined, { joined: true });
+  });
+});

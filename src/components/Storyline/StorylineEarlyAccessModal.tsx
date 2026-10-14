@@ -5,6 +5,7 @@ import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { useStorylineEarlyAccess } from '~/components/Storyline/storyline.queries';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { showErrorNotification } from '~/utils/notifications';
 
 export function StorylineEarlyAccessModal({
   storylineId,
@@ -19,8 +20,12 @@ export function StorylineEarlyAccessModal({
   const joined = earlyAccess.joined || joinedNow;
 
   const handleJoin = async () => {
-    await earlyAccess.join({ storylineId });
-    setJoinedNow(true);
+    try {
+      await earlyAccess.join({ storylineId });
+      setJoinedNow(true);
+    } catch (error) {
+      showErrorNotification({ title: 'Could not join early access', error: error as Error });
+    }
   };
 
   return (

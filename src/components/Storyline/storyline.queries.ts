@@ -10,6 +10,7 @@ import {
   orderPathImages,
 } from '~/components/Storyline/storyline-mode.utils';
 import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { StorylinePathChapter } from '~/server/services/storyline.service';
 import type { RouterOutput } from '~/types/router';
@@ -175,44 +176,55 @@ export function useStorylineContinueTerms(parentPostId: number | undefined) {
     { parentPostId: parentPostId as number },
     { enabled, retry: false }
   );
-  // Until the placement routes are wired the read refuses; that reads as "no terms", not an error.
+  // A refused read reads as "no terms", not an error.
   return query.data ?? null;
 }
 
-// The procedures below are owned by the storyline services and are not on the router yet; these
-// keep the viewer's call sites final so swapping each one in is a one-line change.
-
 /** Below `minChoices` choices, `enough` is false and `shares` is empty. */
-export type StorylineForkShares = {
-  enough: boolean;
-  total: number;
-  minChoices: number;
-  shares: Record<number, number>;
-};
-const NO_SHARES: StorylineForkShares = { enough: false, total: 0, minChoices: 20, shares: {} };
-
 export function useStorylineForkShares(chapterId: number | undefined) {
-  return { data: chapterId ? NO_SHARES : undefined };
+  const enabled = useStorylinesEnabled();
+  const browsingLevel = useViewerBrowsingLevelDebounced();
+  return trpc.storyline.getForkShares.useQuery(
+    { chapterId: chapterId as number, browsingLevel },
+    { enabled: enabled && !!chapterId }
+  );
 }
 
+/** Signed-in readers only: the server refuses a signed-out choice, so none is sent. */
 export function useStorylineTracking() {
+  const currentUser = useCurrentUser();
+  const browsingLevel = useViewerBrowsingLevelDebounced();
+  const utils = trpc.useUtils();
+  const branchChoice = trpc.storyline.trackBranchChoice.useMutation({
+    // The server drops its cached shares before answering, so this read sees the new choice.
+    onSuccess: (_, { fromChapterId }) =>
+      utils.storyline.getForkShares.invalidate({ chapterId: fromChapterId }),
+  });
+  const createClick = trpc.storyline.trackCreateClick.useMutation();
   return {
-    /** Once real: invalidate `getForkShares` for `fromChapterId` when it resolves. */
     trackBranchChoice: (input: { fromChapterId: number; toChapterId: number }) => {
-      void input;
+      if (currentUser) branchChoice.mutate({ ...input, browsingLevel });
     },
     trackCreateClick: (input: { chapterId: number }) => {
-      void input;
+      if (currentUser) createClick.mutate({ ...input, browsingLevel });
     },
   };
 }
 
+/** Signed out reads as not joined; joining needs an account. */
 export function useStorylineEarlyAccess() {
+  const currentUser = useCurrentUser();
+  const enabled = useStorylinesEnabled() && !!currentUser;
+  const utils = trpc.useUtils();
+  const status = trpc.storyline.getEarlyAccessStatus.useQuery(undefined, { enabled });
+  const mutation = trpc.storyline.joinEarlyAccess.useMutation({
+    onSuccess: () => utils.storyline.getEarlyAccessStatus.setData(undefined, { joined: true }),
+  });
   return {
-    joined: false,
+    joined: enabled && !!status.data?.joined,
     join: async (input: { storylineId?: number }) => {
-      void input;
+      await mutation.mutateAsync(input);
     },
-    isJoining: false,
+    isJoining: mutation.isPending,
   };
 }
