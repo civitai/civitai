@@ -297,8 +297,10 @@ export const FIXED_SCOPE_NOTES: Record<string, string> = {
   // Sourced from `apps:storage`'s entry in `CONSENT_EXEMPT_SCOPES`: it reaches only this app's
   // own store, bounded by the app's reviewed declaration. Writing documents OTHER users read is
   // the separate, consent-gated `apps:storage:publish`, which is why this note can say "your own".
+  // 🔴 Not "reaches only": that phrase is `apps:storage:read`'s discriminating fragment in
+  // `ScopeRevoke.browser.test.tsx`, which must match exactly one note in this map.
   'apps:storage':
-    "Can't be withdrawn. It reaches only this app's own store: your private data there, and " +
+    "Can't be withdrawn. It is confined to this app's own store: your private data there, and " +
     'reading — and marking or counting — the entries the app shares with all its users.',
   'models:read:self':
     "Can't be withdrawn. It reads only the model on the page the app is mounted on, which is " +
