@@ -20,6 +20,28 @@ import { formatDate } from '~/utils/date-helpers';
 import { trpc } from '~/utils/trpc';
 import classes from './ModelVersionDetails.module.scss';
 
+const scanStatusText: Record<string, string> = {
+  Succeeded: 'complete',
+  Pending: 'rescan pending',
+  Failed: 'failed',
+  Expired: 'expired',
+  Canceled: 'canceled',
+};
+
+// A label's verdict can come from a row whose rescan has not finished; its updatedAt is then the
+// rescan's, not the verdict's.
+function verdictProvenance(v: { source: string; status: string; updatedAt: Date }) {
+  const source = v.source === 'main' ? 'main scan' : v.source;
+  if (v.status === 'Succeeded') return `${source} · ${formatDate(v.updatedAt)}`;
+  if (v.status === 'Pending') return `${source} · rescan pending — last verdict shown`;
+  return `${source} · last rescan failed — last verdict shown`;
+}
+
+function detectedText(detected: boolean | null) {
+  if (detected === null) return 'no verdict';
+  return detected ? 'detected' : 'not detected';
+}
+
 // Mod-only at-a-glance moderation status for a model. Surfaces automated state
 // (minor/POI/nsfw flags, locked properties, profanity lock, unpublish/takedown)
 // that mods otherwise can't see since they bypass the enforcement filters.
@@ -55,6 +77,9 @@ export function ModelModerationCard({
 
   const locked = data?.lockedProperties ?? [];
   const verdicts = data?.textScanFlags ?? [];
+  // An open verdict is the reason behind its label's flag badge; count it only without one.
+  const badgedLabels = { poi: !!data?.poi, minor: !!data?.minor };
+  const unbadgedOpenVerdicts = verdicts.filter((v) => v.open && !badgedLabels[v.label]).length;
   const hasFooter = !!(
     verdicts.length ||
     data?.profanity ||
@@ -90,7 +115,7 @@ export function ModelModerationCard({
     locked.length +
     (data?.profanity ? 1 : 0) +
     (data?.textModeration ? 1 : 0) +
-    verdicts.length +
+    unbadgedOpenVerdicts +
     (data?.textScan?.triggeredLabels.length ? 1 : 0) +
     (data?.unpublishedAt ? 1 : 0) +
     (data?.takenDownAt ? 1 : 0) +
@@ -259,16 +284,31 @@ export function ModelModerationCard({
                   {data.textScan && (
                     <Stack gap={4}>
                       <Text size="xs" fw={600} c="orange">
-                        Latest scan · {data.textScan.status}
+                        Latest scan · {scanStatusText[data.textScan.status] ?? data.textScan.status}
                         {data.textScan.nsfwLevel
                           ? ` · ${getBrowsingLevelLabel(data.textScan.nsfwLevel)}`
                           : ''}{' '}
                         · {formatDate(data.textScan.updatedAt)}
                       </Text>
-                      {data.textScan.reasons.map((r) => (
-                        <Text key={r.label} size="xs">
-                          <Code>{r.label}</Code> {r.reason}
-                        </Text>
+                      {data.textScan.reasons
+                        .filter(
+                          (r) => !data.textScan?.labelVerdicts?.some((v) => v.label === r.label)
+                        )
+                        .map((r) => (
+                          <Text key={r.label} size="xs">
+                            <Code>{r.label}</Code> {r.reason}
+                          </Text>
+                        ))}
+                      {data.textScan.labelVerdicts?.map((v) => (
+                        <Stack key={v.label} gap={0}>
+                          <Text size="xs">
+                            <Code>{v.label}</Code> {detectedText(v.detected)}
+                            {v.reason ? ` — ${v.reason}` : ''}
+                          </Text>
+                          <Text size="xs" c="dimmed">
+                            {verdictProvenance(v)}
+                          </Text>
+                        </Stack>
                       ))}
                     </Stack>
                   )}

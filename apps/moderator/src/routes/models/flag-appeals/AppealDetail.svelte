@@ -17,6 +17,8 @@
     latestScanDisagrees,
     openVerdicts,
     poiInForce,
+    scanVerdictProvenance,
+    scanVerdictText,
     type FlagLabel,
   } from '$lib/minor-flags/text-scan-verdicts';
   import AppealImages from './AppealImages.svelte';
@@ -56,8 +58,6 @@
     })
   );
   const labelName = (label: FlagLabel) => (label === 'poi' ? 'real person' : 'minor');
-  const detectedText = (detected: boolean | null) =>
-    detected ? 'detected' : detected === false ? 'not detected' : 'no verdict';
   const poiOpen = $derived(poiInForce(row));
   const tags = $derived(clipList(row.tags, 12, row.tagCount));
   const words = $derived(clipList(row.trainedWords, 8, row.trainedWordCount));
@@ -139,23 +139,26 @@
             </div>
           {/each}
 
-          {#if scan && scanLabels.length}
-            <div class="rounded-md border border-dark-4 p-3 text-sm">
-              <p class="m-0 font-medium text-white">
-                Latest scan
-                <span class="font-normal text-dark-2" title={dateTime(scan.updatedAt)}>
-                  · {scan.status} · {ago(scan.updatedAt)}
-                </span>
+          <div class="rounded-md bg-dark-6 p-3 text-sm">
+            <p class="m-0 font-medium text-white">Latest scan</p>
+            {#each scanLabels as { label, value } (label)}
+              {@const provenance = scanVerdictProvenance(value)}
+              <p class="m-0 mt-1">
+                <span class="text-white">{labelName(label)}:</span>
+                {scanVerdictText(value)}
               </p>
-              {#each scanLabels as { label, value } (label)}
-                <p class="m-0 mt-1">
-                  <span class="text-white">{labelName(label)}:</span>
-                  {detectedText(value.detected)}{#if value.reason}
-                    — {value.reason}{/if}
-                </p>
-              {/each}
-            </div>
-          {/if}
+              <p class="m-0 text-dark-2">
+                {provenance.source} ·
+                {#if provenance.note}
+                  <span title={dateTime(value.updatedAt)}>{provenance.note}</span>
+                {:else}
+                  <span title={dateTime(value.updatedAt)}>{ago(value.updatedAt)}</span>
+                {/if}
+              </p>
+            {:else}
+              <p class="m-0 text-sm text-dark-2">No text scan on record.</p>
+            {/each}
+          </div>
 
           {#if hashDetail}
             {#await hashDetail}

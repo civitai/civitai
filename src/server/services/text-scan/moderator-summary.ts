@@ -16,6 +16,18 @@ export type TextScanModeratorSummary = {
   /** Set when the text was scanned as more than one segment. */
   segments?: number;
   updatedAt: Date;
+  /** poi/minor can come from either the main or the web-search row, each with its own status. */
+  labelVerdicts?: TextScanLabelVerdict[];
+};
+
+export type TextScanLabelVerdict = {
+  label: string;
+  /** null when the verdict carries no boolean `detected`. */
+  detected: boolean | null;
+  reason: string;
+  source: 'main' | 'web search';
+  status: EntityModerationStatus;
+  updatedAt: Date;
 };
 
 export function summarizeTextScan(

@@ -87,7 +87,7 @@ describe('ModelModerationCard — text-scan flag verdicts', () => {
     await expect.element(page.getByText(/llm-1/)).toBeInTheDocument();
     await expect.element(page.getByText('Open', { exact: true })).toBeInTheDocument();
 
-    const latest = page.getByText(/Latest scan · Succeeded/);
+    const latest = page.getByText(/Latest scan · complete/);
     await expect.element(latest).toBeInTheDocument();
     expect(
       flagged.element().compareDocumentPosition(latest.element()) & Node.DOCUMENT_POSITION_FOLLOWING
@@ -108,6 +108,28 @@ describe('ModelModerationCard — text-scan flag verdicts', () => {
     expect(page.getByText('Open', { exact: true }).elements()).toHaveLength(0);
   });
 
+  test('counts an open verdict once alongside its flag badge, and a closed one not at all', async () => {
+    mocks.data = {
+      ...base,
+      textScan: null,
+      textScanFlags: [poiVerdict, { ...poiVerdict, label: 'minor', open: false }],
+    };
+    renderWithProviders(<ModelModerationCard modelId={7} />);
+
+    const control = page.getByRole('button', { name: /Moderation/ });
+    await expect.element(control).toBeInTheDocument();
+    expect(control.element().textContent).toMatch(/^Moderation1mods only$/);
+  });
+
+  test('counts an open verdict whose flag badge is not shown', async () => {
+    mocks.data = { ...base, poi: false, textScan: null, textScanFlags: [poiVerdict] };
+    renderWithProviders(<ModelModerationCard modelId={7} />);
+
+    const control = page.getByRole('button', { name: /Moderation/ });
+    await expect.element(control).toBeInTheDocument();
+    expect(control.element().textContent).toMatch(/^Moderation1mods only$/);
+  });
+
   test('a verdict alone keeps the card out of its empty state', async () => {
     mocks.data = { ...base, poi: false, textScan: null, textScanFlags: [poiVerdict] };
     renderWithProviders(<ModelModerationCard modelId={7} />);
@@ -115,5 +137,53 @@ describe('ModelModerationCard — text-scan flag verdicts', () => {
 
     await expect.element(page.getByText(/Flagged by text scan · poi/)).toBeInTheDocument();
     expect(page.getByText('No moderation flags on this model').elements()).toHaveLength(0);
+  });
+});
+
+describe('ModelModerationCard — latest scan per label', () => {
+  const labelVerdict = {
+    label: 'poi',
+    detected: false,
+    reason: 'No real person named.',
+    source: 'web search',
+    status: 'Succeeded',
+    updatedAt: new Date('2026-10-02T00:00:00Z'),
+  };
+  const withVerdict = (overrides: Record<string, unknown>) => ({
+    ...base,
+    textScan: { ...base.textScan, labelVerdicts: [{ ...labelVerdict, ...overrides }] },
+  });
+
+  test('shows where each poi/minor verdict came from', async () => {
+    mocks.data = withVerdict({});
+    renderWithProviders(<ModelModerationCard modelId={7} />);
+    await openCard();
+
+    await expect
+      .element(page.getByText(/not detected — No real person named\./))
+      .toBeInTheDocument();
+    await expect.element(page.getByText(/^web search · /)).toBeInTheDocument();
+    expect(page.getByText(/Latest scan · Succeeded/).elements()).toHaveLength(0);
+    await expect.element(page.getByText(/Latest scan · complete/)).toBeInTheDocument();
+  });
+
+  test('says a rescan is pending instead of dating the last verdict', async () => {
+    mocks.data = withVerdict({ source: 'main', status: 'Pending' });
+    renderWithProviders(<ModelModerationCard modelId={7} />);
+    await openCard();
+
+    await expect
+      .element(page.getByText('main scan · rescan pending — last verdict shown'))
+      .toBeInTheDocument();
+  });
+
+  test('says the last rescan failed instead of dating the last verdict', async () => {
+    mocks.data = withVerdict({ status: 'Expired' });
+    renderWithProviders(<ModelModerationCard modelId={7} />);
+    await openCard();
+
+    await expect
+      .element(page.getByText('web search · last rescan failed — last verdict shown'))
+      .toBeInTheDocument();
   });
 });

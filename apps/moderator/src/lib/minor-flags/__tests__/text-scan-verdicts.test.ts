@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { flagInForce, latestScanDisagrees, openVerdicts, poiInForce } from '../text-scan-verdicts';
+import {
+  flagInForce,
+  latestScanDisagrees,
+  openVerdicts,
+  poiInForce,
+  scanVerdictProvenance,
+  scanVerdictText,
+} from '../text-scan-verdicts';
 
 const verdict = { at: 'x', workflowId: 'wf-1', reason: 'Names a real actor.', names: ['Jane'] };
 const granted = { ...verdict, appealGranted: { at: 'x', by: 1, textHash: 'h', via: 'appeal' } };
@@ -45,12 +52,14 @@ describe('flagInForce', () => {
 });
 
 describe('latestScanDisagrees', () => {
-  const scan = {
-    entityType: 'Model:search',
+  const at = {
+    source: 'web search' as const,
     status: 'Succeeded',
     updatedAt: '2026-10-02T00:00:00Z',
-    poi: { detected: false, reason: 'No real person named.' },
-    minor: { detected: true, reason: 'Says 15.' },
+  };
+  const scan = {
+    poi: { detected: false, reason: 'No real person named.', ...at },
+    minor: { detected: true, reason: 'Says 15.', ...at },
   };
 
   it('is true only when the latest scan no longer detects the flagged label', () => {
@@ -60,9 +69,39 @@ describe('latestScanDisagrees', () => {
 
   it('is false when the scan has no verdict for the label, or there is no scan', () => {
     expect(latestScanDisagrees({ ...scan, poi: null }, 'poi')).toBe(false);
-    expect(latestScanDisagrees({ ...scan, poi: { detected: null, reason: null } }, 'poi')).toBe(
+    expect(latestScanDisagrees({ ...scan, poi: { ...scan.poi, detected: null } }, 'poi')).toBe(
       false
     );
     expect(latestScanDisagrees(null, 'poi')).toBe(false);
+  });
+});
+
+describe('scanVerdictProvenance', () => {
+  const label = { detected: true, reason: 'r', updatedAt: '2026-10-02T00:00:00Z' };
+
+  it('names the source and leaves the date to the caller for a finished scan', () => {
+    expect(scanVerdictProvenance({ ...label, source: 'main', status: 'Succeeded' })).toEqual({
+      source: 'main scan',
+      note: null,
+    });
+  });
+
+  it('says a rescan is pending or failed instead of dating the last verdict', () => {
+    expect(scanVerdictProvenance({ ...label, source: 'web search', status: 'Pending' })).toEqual({
+      source: 'web search',
+      note: 'rescan pending — last verdict shown',
+    });
+    for (const status of ['Failed', 'Expired', 'Canceled'])
+      expect(scanVerdictProvenance({ ...label, source: 'main', status }).note).toBe(
+        'last rescan failed — last verdict shown'
+      );
+  });
+});
+
+describe('scanVerdictText', () => {
+  it('joins the verdict and its reason', () => {
+    expect(scanVerdictText({ detected: true, reason: 'Says 15.' })).toBe('detected — Says 15.');
+    expect(scanVerdictText({ detected: false, reason: null })).toBe('not detected');
+    expect(scanVerdictText({ detected: null, reason: 'Odd.' })).toBe('no verdict — Odd.');
   });
 });

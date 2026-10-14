@@ -76,6 +76,97 @@ describe('getModelModerationDetail — text scan', () => {
   });
 });
 
+describe('getModelModerationDetail — latest poi/minor verdict per label', () => {
+  const mainWithPoi = (updatedAt: string, status = 'Succeeded') => ({
+    ...MAIN,
+    status,
+    triggeredLabels: ['nsfw'],
+    result: {
+      version: 1,
+      labels: {
+        nsfw: { level: 'r', reason: 'main nsfw' },
+        poi: { detected: false, names: [], reason: 'main poi' },
+      },
+    },
+    updatedAt: new Date(updatedAt),
+  });
+
+  it('prefers a newer succeeded main verdict over a stale succeeded web-search one', async () => {
+    rows = {
+      Model: mainWithPoi('2026-10-05T00:00:00Z'),
+      'Model:search': {
+        ...SEARCH,
+        triggeredLabels: ['poi'],
+        result: {
+          version: 1,
+          labels: { poi: { detected: true, names: ['x'], reason: 'stale search poi' } },
+        },
+        updatedAt: new Date('2026-10-02T00:00:00Z'),
+      },
+    };
+    const { textScan } = await getModelModerationDetail({ id: 7 });
+    expect(textScan?.triggeredLabels).toEqual(['nsfw']);
+    expect(textScan?.labelVerdicts).toEqual([
+      {
+        label: 'poi',
+        detected: false,
+        reason: 'main poi',
+        source: 'main',
+        status: 'Succeeded',
+        updatedAt: new Date('2026-10-05T00:00:00Z'),
+      },
+    ]);
+  });
+
+  it('falls back to the main verdict when the web-search row is pending with no result', async () => {
+    rows = {
+      Model: mainWithPoi('2026-10-01T00:00:00Z'),
+      'Model:search': {
+        status: 'Pending',
+        nsfwLevel: null,
+        triggeredLabels: [],
+        result: null,
+        updatedAt: new Date('2026-10-06T00:00:00Z'),
+      },
+    };
+    const { textScan } = await getModelModerationDetail({ id: 7 });
+    expect(textScan?.labelVerdicts).toMatchObject([
+      { label: 'poi', source: 'main', status: 'Succeeded', reason: 'main poi' },
+    ]);
+  });
+
+  it('takes the web-search verdict when it is the newest succeeded one', async () => {
+    rows = { Model: mainWithPoi('2026-10-01T00:00:00Z'), 'Model:search': SEARCH };
+    const { textScan } = await getModelModerationDetail({ id: 7 });
+    expect(textScan?.labelVerdicts).toEqual([
+      {
+        label: 'poi',
+        detected: false,
+        reason: 'search poi',
+        source: 'web search',
+        status: 'Succeeded',
+        updatedAt: SEARCH.updatedAt,
+      },
+      {
+        label: 'minor',
+        detected: true,
+        reason: 'search minor',
+        source: 'web search',
+        status: 'Succeeded',
+        updatedAt: SEARCH.updatedAt,
+      },
+    ]);
+  });
+
+  it('marks a verdict from an unfinished row with that row status', async () => {
+    rows = { Model: mainWithPoi('2026-10-01T00:00:00Z', 'Failed') };
+    const { textScan } = await getModelModerationDetail({ id: 7 });
+    expect(textScan?.labelVerdicts).toMatchObject([
+      { label: 'poi', source: 'main', status: 'Failed' },
+    ]);
+  });
+});
+
 describe('getModelModerationDetail — text-scan flag verdicts', () => {
   it('returns the verdict that set each flag, beside the latest scan', async () => {
     dbMock.dbRead.model.findUnique.mockResolvedValue({

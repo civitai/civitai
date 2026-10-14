@@ -353,53 +353,168 @@ describe('row context', () => {
 
 describe('latest scan', () => {
   const scanRow = (labels: Record<string, unknown>) => JSON.stringify({ version: 1, labels });
-
-  beforeEach(async () => {
-    await db.query(
-      `INSERT INTO "EntityModeration" ("entityType","entityId","status","result","updatedAt") VALUES
-        ('Model', 7, 'Succeeded', $1::jsonb, '2026-10-01T00:00:00Z'),
-        ('Model:search', 7, 'Succeeded', $2::jsonb, '2026-10-02T00:00:00Z'),
-        ('Model', 3, 'Succeeded', $3::jsonb, '2026-10-03T00:00:00Z'),
-        ('Image', 1, 'Succeeded', $1::jsonb, '2026-10-04T00:00:00Z')`,
+  const insert = (rows: [string, number, string, string | null, string][]) =>
+    db.query(
+      `INSERT INTO "EntityModeration" ("entityType","entityId","status","result","updatedAt")
+       SELECT * FROM jsonb_to_recordset($1::jsonb)
+         AS x("entityType" text, "entityId" int, status text, result jsonb, "updatedAt" timestamptz)`,
       [
-        scanRow({
-          nsfw: { level: 'none', reason: 'Clean.' },
-          poi: { detected: true, names: ['x'], reason: 'stale main poi' },
-        }),
-        scanRow({
-          poi: { detected: false, names: [], reason: 'No real person named.' },
-          minor: { detected: false, reason: 'No age given.' },
-        }),
-        scanRow({ poi: { detected: true, names: ['y'], reason: 'Names an actor.' } }),
+        JSON.stringify(
+          rows.map(([entityType, entityId, status, result, updatedAt]) => ({
+            entityType,
+            entityId,
+            status,
+            result: result === null ? null : JSON.parse(result),
+            updatedAt,
+          }))
+        ),
       ]
     );
-  });
 
   const scanFor = async (modelId: number) => {
     const { items } = await getMinorFlagAppealsForReview({ limit: 50 });
     return items.find((i) => i.modelId === modelId)!.latestScan;
   };
 
-  it('reads poi/minor from the web-search row when there is one', async () => {
+  it('takes each label from the web-search row when it is the newest succeeded one', async () => {
+    await insert([
+      [
+        'Model',
+        7,
+        'Succeeded',
+        scanRow({ poi: { detected: true, reason: 'stale main poi' } }),
+        '2026-10-01T00:00:00Z',
+      ],
+      [
+        'Model:search',
+        7,
+        'Succeeded',
+        scanRow({
+          poi: { detected: false, names: [], reason: 'No real person named.' },
+          minor: { detected: false, reason: 'No age given.' },
+        }),
+        '2026-10-02T00:00:00Z',
+      ],
+    ]);
     const scan = await scanFor(7);
     expect(scan).toMatchObject({
-      entityType: 'Model:search',
-      status: 'Succeeded',
-      poi: { detected: false, reason: 'No real person named.' },
-      minor: { detected: false, reason: 'No age given.' },
+      poi: {
+        detected: false,
+        reason: 'No real person named.',
+        source: 'web search',
+        status: 'Succeeded',
+      },
+      minor: { detected: false, reason: 'No age given.', source: 'web search' },
     });
-    expect(new Date(scan!.updatedAt).toISOString()).toBe('2026-10-02T00:00:00.000Z');
+    expect(new Date(scan!.poi!.updatedAt).toISOString()).toBe('2026-10-02T00:00:00.000Z');
   });
 
-  it('falls back to the main row, with no verdict for a label it did not scan', async () => {
-    expect(await scanFor(3)).toMatchObject({
-      entityType: 'Model',
-      poi: { detected: true, reason: 'Names an actor.' },
+  it('prefers a newer succeeded main verdict over a stale succeeded web-search one', async () => {
+    await insert([
+      [
+        'Model',
+        7,
+        'Succeeded',
+        scanRow({ poi: { detected: false, reason: 'Fresh main.' } }),
+        '2026-10-05T00:00:00Z',
+      ],
+      [
+        'Model:search',
+        7,
+        'Succeeded',
+        scanRow({ poi: { detected: true, reason: 'Stale search.' } }),
+        '2026-10-02T00:00:00Z',
+      ],
+    ]);
+    expect(await scanFor(7)).toMatchObject({
+      poi: { detected: false, reason: 'Fresh main.', source: 'main', status: 'Succeeded' },
       minor: null,
     });
   });
 
-  it('is null when the model was never text-scanned', async () => {
+  it('falls back to the main verdict when the web-search row is pending with no result', async () => {
+    await insert([
+      [
+        'Model',
+        7,
+        'Succeeded',
+        scanRow({ poi: { detected: true, reason: 'Names an actor.' } }),
+        '2026-10-01T00:00:00Z',
+      ],
+      ['Model:search', 7, 'Pending', null, '2026-10-06T00:00:00Z'],
+    ]);
+    expect(await scanFor(7)).toMatchObject({
+      poi: { detected: true, reason: 'Names an actor.', source: 'main', status: 'Succeeded' },
+    });
+  });
+
+  it('prefers a succeeded verdict over a newer one from an unfinished rescan', async () => {
+    await insert([
+      [
+        'Model',
+        7,
+        'Succeeded',
+        scanRow({ poi: { detected: true, reason: 'Main.' } }),
+        '2026-10-01T00:00:00Z',
+      ],
+      [
+        'Model:search',
+        7,
+        'Failed',
+        scanRow({ poi: { detected: false, reason: 'Old search.' } }),
+        '2026-10-06T00:00:00Z',
+      ],
+    ]);
+    expect(await scanFor(7)).toMatchObject({ poi: { reason: 'Main.', source: 'main' } });
+  });
+
+  it('shows an unfinished row verdict, with its status, when no succeeded row carries the label', async () => {
+    await insert([
+      [
+        'Model:search',
+        7,
+        'Pending',
+        scanRow({ poi: { detected: true, reason: 'Last verdict.' } }),
+        '2026-10-06T00:00:00Z',
+      ],
+    ]);
+    expect(await scanFor(7)).toMatchObject({
+      poi: { detected: true, reason: 'Last verdict.', source: 'web search', status: 'Pending' },
+      minor: null,
+    });
+  });
+
+  it('reads a non-boolean detected as no verdict instead of failing the query', async () => {
+    await insert([
+      [
+        'Model',
+        7,
+        'Succeeded',
+        scanRow({ poi: { detected: 'yes', reason: 'Odd.' } }),
+        '2026-10-01T00:00:00Z',
+      ],
+    ]);
+    expect(await scanFor(7)).toMatchObject({ poi: { detected: null, reason: 'Odd.' } });
+  });
+
+  it('is null when no row carries a poi/minor verdict', async () => {
+    await insert([
+      [
+        'Model',
+        3,
+        'Succeeded',
+        scanRow({ nsfw: { level: 'none', reason: 'Clean.' } }),
+        '2026-10-03T00:00:00Z',
+      ],
+      [
+        'Image',
+        1,
+        'Succeeded',
+        scanRow({ poi: { detected: true, reason: 'x' } }),
+        '2026-10-04T00:00:00Z',
+      ],
+    ]);
+    expect(await scanFor(3)).toBeNull();
     expect(await scanFor(1)).toBeNull();
   });
 });
