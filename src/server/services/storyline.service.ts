@@ -1231,9 +1231,8 @@ export async function getStorylineReaderCounts(chapterId: number) {
 }
 
 /**
- * How the readers who chose at the end of a chapter went: each way on's count and share, from the
- * first choice. `enough` says whether `STORYLINE_SHARE_MIN_CHOICES` (default 1) choices have been
- * made, for the copy only; it no longer withholds anything.
+ * How the readers who chose at the end of a chapter went: each way on's count and share, once
+ * `STORYLINE_SHARE_MIN_CHOICES` (default 1) choices have been made; below that, only the total.
  */
 /** Not found unless this reader can see the storyline `chapterId` belongs to. */
 async function assertStorylineReadableByChapter(
@@ -1299,7 +1298,14 @@ export async function recordStorylineBranchChoice({
   const key = forkCountsKey(fromChapterId);
   try {
     await setFetchThroughCache(key, await readForkCounts(fromChapterId));
-  } catch {
+  } catch (error) {
+    logToAxiom({
+      name: 'storyline-engagement',
+      type: 'warning',
+      message: 'fork counts not written through after a choice; marked stale',
+      chapterId: fromChapterId,
+      error: error instanceof Error ? error.message : String(error),
+    }).catch(() => undefined);
     await bustFetchThroughCache(key).catch(() => undefined);
   }
 }

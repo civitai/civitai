@@ -237,49 +237,47 @@ describe('storylineShareMinChoices', () => {
 });
 
 describe('toStorylineForkShares', () => {
-  it('gives every way on its count and share from the first choice, below the minimum too', () => {
-    expect(
-      toStorylineForkShares(
-        new Map([
-          [11, 2],
-          [12, 1],
-        ]),
-        20
-      )
-    ).toEqual({
-      enough: false,
-      total: 3,
-      minChoices: 20,
-      counts: { 11: 2, 12: 1 },
-      shares: { 11: 2 / 3, 12: 1 / 3 },
-    });
-  });
+  // The minimum is a dial: 1 shows from the first choice; above 1 it withholds counts and shares
+  // until that many readers have chosen, so a few known readers' choices cannot be inferred.
+  const forks = (pairs: Array<[number, number]>) => new Map(pairs);
 
-  it('says enough once the minimum is reached', () => {
-    expect(
-      toStorylineForkShares(
-        new Map([
-          [11, 15],
-          [12, 5],
-        ]),
-        20
-      )
-    ).toEqual({
-      enough: true,
-      total: 20,
-      minChoices: 20,
-      counts: { 11: 15, 12: 5 },
-      shares: { 11: 0.75, 12: 0.25 },
-    });
-  });
-
-  it('shows a single first choice as the whole share', () => {
-    expect(toStorylineForkShares(new Map([[11, 1]]), 1)).toEqual({
+  it('at the default minimum of 1, shows a single first choice in full', () => {
+    expect(toStorylineForkShares(forks([[11, 1]]), 1)).toEqual({
       enough: true,
       total: 1,
       minChoices: 1,
       counts: { 11: 1 },
       shares: { 11: 1 },
+    });
+  });
+
+  it('at a raised minimum of 5, gives only the total at 4 choices', () => {
+    expect(
+      toStorylineForkShares(
+        forks([
+          [11, 3],
+          [12, 1],
+        ]),
+        5
+      )
+    ).toEqual({ enough: false, total: 4, minChoices: 5, counts: {}, shares: {} });
+  });
+
+  it('at a raised minimum of 5, shows counts and shares at 5 choices', () => {
+    expect(
+      toStorylineForkShares(
+        forks([
+          [11, 4],
+          [12, 1],
+        ]),
+        5
+      )
+    ).toEqual({
+      enough: true,
+      total: 5,
+      minChoices: 5,
+      counts: { 11: 4, 12: 1 },
+      shares: { 11: 0.8, 12: 0.2 },
     });
   });
 

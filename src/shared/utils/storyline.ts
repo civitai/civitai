@@ -165,9 +165,11 @@ export function storylineShareMinChoices(raw: string | undefined) {
 }
 
 /**
- * Each way on's count and share of the readers who chose at a fork, from the first choice. A way
- * nobody took is absent from both. `enough` (at least `minChoices` choices) is for the copy, which
- * can say how settled the shares are; it withholds nothing.
+ * Each way on's count and share of the readers who chose at a fork. A way nobody took is absent
+ * from both. Below `minChoices` choices both are withheld and only the total is given
+ * (`enough: false`): with very few readers, someone who knows who read the chapter could tell
+ * which way they went. The default minimum is 1, so by default they show from the first choice;
+ * raising `STORYLINE_SHARE_MIN_CHOICES` is the dial.
  */
 export function toStorylineForkShares(
   counts: ReadonlyMap<number, number>,
@@ -180,11 +182,13 @@ export function toStorylineForkShares(
   shares: Record<number, number>;
 } {
   const total = [...counts.values()].reduce((sum, n) => sum + n, 0);
+  const enough = total >= minChoices && total > 0;
   const byChapter: Record<number, number> = {};
   const shares: Record<number, number> = {};
-  for (const [chapterId, n] of counts) {
-    byChapter[chapterId] = n;
-    if (total > 0) shares[chapterId] = n / total;
-  }
-  return { enough: total >= minChoices && total > 0, total, minChoices, counts: byChapter, shares };
+  if (enough)
+    for (const [chapterId, n] of counts) {
+      byChapter[chapterId] = n;
+      shares[chapterId] = n / total;
+    }
+  return { enough, total, minChoices, counts: byChapter, shares };
 }

@@ -952,20 +952,41 @@ describe('fork shares', () => {
     });
   });
 
-  it('gives shares below a raised STORYLINE_SHARE_MIN_CHOICES too, and ignores an invalid one', async () => {
-    choices([[11, 1]]);
-    setEnv({ STORYLINE_SHARE_MIN_CHOICES: '20' });
+  it('withholds counts and shares below a raised STORYLINE_SHARE_MIN_CHOICES, then shows them', async () => {
+    setEnv({ STORYLINE_SHARE_MIN_CHOICES: '5' });
+    choices([
+      [11, 3],
+      [12, 1],
+    ]);
     await expect(getStorylineForkShares(read)).resolves.toEqual({
       enough: false,
+      total: 4,
+      minChoices: 5,
+      counts: {},
+      shares: {},
+    });
+    choices([
+      [11, 4],
+      [12, 1],
+    ]);
+    await expect(getStorylineForkShares(read)).resolves.toEqual({
+      enough: true,
+      total: 5,
+      minChoices: 5,
+      counts: { 11: 4, 12: 1 },
+      shares: { 11: 0.8, 12: 0.2 },
+    });
+  });
+
+  it('falls back to a minimum of 1 for an invalid STORYLINE_SHARE_MIN_CHOICES', async () => {
+    setEnv({ STORYLINE_SHARE_MIN_CHOICES: '0' });
+    choices([[11, 1]]);
+    await expect(getStorylineForkShares(read)).resolves.toEqual({
+      enough: true,
       total: 1,
-      minChoices: 20,
+      minChoices: 1,
       counts: { 11: 1 },
       shares: { 11: 1 },
-    });
-    setEnv({ STORYLINE_SHARE_MIN_CHOICES: '0' });
-    await expect(getStorylineForkShares(read)).resolves.toMatchObject({
-      enough: true,
-      minChoices: 1,
     });
   });
 

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as UserPreferencesService from '~/server/services/user-preferences.service';
 import { dbMock, resetSharedMocks } from '~/__tests__/mocks';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { CacheTTL } from '~/server/common/constants';
 import { NsfwLevel } from '~/server/common/enums';
@@ -160,5 +161,9 @@ describe('fork shares straight after a choice', () => {
       data: [[11, 1]],
       cachedAt: 0,
     });
+    // Swallowed, so it must be logged: a failure moved inside that catch would otherwise vanish.
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'warning', chapterId: 1, error: 'primary unavailable' })
+    );
   });
 });
