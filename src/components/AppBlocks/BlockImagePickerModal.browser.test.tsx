@@ -767,7 +767,7 @@ describe('BlockImagePickerModal: tray, jump to date, tile labels', () => {
     await userEvent.fill(page.getByLabelText('Jump to date'), '0202-06-30');
     // The input really holds the half-typed year, so the absence below is not a dropped fill.
     await expect.element(page.getByLabelText('Jump to date')).toHaveValue('0202-06-30');
-    await settle(800);
+    await settle(PICKER_JUMP_DEBOUNCE_MS * 2);
     for (const [input] of mocks.postedQuery.mock.calls) expect(input).toEqual({});
   });
 
@@ -829,7 +829,7 @@ describe('BlockImagePickerModal: tray, jump to date, tile labels', () => {
       performance.now() - started,
       `fill + click took longer than the ${PICKER_JUMP_DEBOUNCE_MS}ms debounce`
     ).toBeLessThan(PICKER_JUMP_DEBOUNCE_MS);
-    await settle(800);
+    await settle(PICKER_JUMP_DEBOUNCE_MS * 2);
 
     expect(mocks.postedQuery).toHaveBeenLastCalledWith({}, expect.anything());
     expect(boundsQueried()).not.toContain(JULY_15.toDate.getTime());
@@ -847,7 +847,7 @@ describe('BlockImagePickerModal: tray, jump to date, tile labels', () => {
       performance.now() - started,
       `fill + clear took longer than the ${PICKER_JUMP_DEBOUNCE_MS}ms debounce`
     ).toBeLessThan(PICKER_JUMP_DEBOUNCE_MS);
-    await settle(800);
+    await settle(PICKER_JUMP_DEBOUNCE_MS * 2);
 
     expect(boundsQueried().filter((bound) => bound !== undefined)).toEqual([]);
   });
@@ -860,7 +860,7 @@ describe('BlockImagePickerModal: tray, jump to date, tile labels', () => {
     // The setup really produced a half-edited field, not an empty one.
     expect((input.element() as HTMLInputElement).validity.badInput).toBe(true);
     await userEvent.click(page.getByText('Choose an image'));
-    await settle(800);
+    await settle(PICKER_JUMP_DEBOUNCE_MS * 2);
 
     expect(mocks.postedQuery).toHaveBeenLastCalledWith(JUNE_30, expect.anything());
   });
