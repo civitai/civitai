@@ -1165,6 +1165,7 @@ describe("kind:'workflow' SUBMIT — the money path", () => {
         unquoted();
         await submit(stepsOf(steps));
         expect(counter(USER_CAP)).toBe(reserved);
+        expect(realSubmits()[0].body.steps).toHaveLength(steps);
         for (const step of realSubmits()[0].body.steps) {
           expect(step.timeout).toBe(formatStepTimeout(timeout));
         }
@@ -1190,7 +1191,7 @@ describe("kind:'workflow' SUBMIT — the money path", () => {
       }
     );
 
-    it('a call priced at exactly 8000 is accepted at budget 5000 x 8 steps', async () => {
+    it('a call priced at exactly 8000 is accepted at budget 5000 x 8 steps [INV]', async () => {
       withBudget(5000);
       noFee();
       whatifCost = { total: 8000, base: 8000 };
@@ -1210,7 +1211,7 @@ describe("kind:'workflow' SUBMIT — the money path", () => {
       );
     });
 
-    it('a one-step call is held to its budget, not to the 8000 limit', async () => {
+    it('a one-step call is held to its budget, not to the 8000 limit [INV]', async () => {
       withBudget(5000);
       noFee();
       whatifCost = { total: 5001, base: 5001 };
@@ -1222,6 +1223,17 @@ describe("kind:'workflow' SUBMIT — the money path", () => {
       realizedCost = { total: 5000, base: 5000 };
       const allowed = await submit(stepsOf(1));
       expect(allowed.snapshot.workflowId).toBe(WORKFLOW_ID);
+    });
+
+    // budget x steps is exactly the limit: the limit does not bind, so the budget is named.
+    it('at budget 1000 x 8 steps a call priced at 8001 is refused by the budget [INV]', async () => {
+      withBudget(1000);
+      noFee();
+      whatifCost = { total: 8001, base: 8001 };
+      const { snapshot } = await submit(stepsOf(8));
+      expect(snapshot.error).toBe(
+        'insufficient buzz budget: workflow price 8001 exceeds budget 8000 (8 steps at 1000 each)'
+      );
     });
 
     it('under the bound the refusal still names the budget [INV]', async () => {

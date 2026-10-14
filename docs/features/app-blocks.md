@@ -532,7 +532,9 @@ Every token carrying `ai:write:budgeted` also carries `buzzBudget`, the most one
 single-step call may cost. A multi-step call (`kind: 'workflow'`, up to 8 steps) is bounded
 as a whole: its total price, author fee included, may not exceed the budget times its step
 count, nor `BLOCK_WORKFLOW_MAX_BUZZ_PER_CALL` (8,000 Buzz) whatever the budget. That total
-is not divided per step, so one step may use more than the budget. A multi-step call the
+is not divided per step, so one step may use more than the budget. The bound is on the
+quoted price: a chained workflow can bill above its quote, and the settle then corrects the
+cap counters up. A multi-step call the
 orchestrator cannot price is reserved at that ceiling, and each step's timeout is an equal
 share of it. The app declares it in its manifest (`page.buzzBudgetPerGen`); the mint clamps it to
 `BUZZ_BUDGET_CAP` (5,000 Buzz) and uses `BUZZ_BUDGET_DEFAULT` (1,000 Buzz) when the manifest

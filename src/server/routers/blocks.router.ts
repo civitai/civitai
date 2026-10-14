@@ -12535,7 +12535,7 @@ function multiStepTrainingType(steps: readonly ResolvedBlockWorkflowStep[]): str
   return steps.flatMap((step) => step.stepTypes).find(isTrainingStepTypeIgnoringCase) ?? '';
 }
 
-/** The most one `kind:'workflow'` call may cost in total, author fee included. */
+/** The most one `kind:'workflow'` call may be quoted or reserved at, author fee included. */
 function multiStepWorkflowCeiling(perStepBudget: number, stepCount: number): number {
   return Math.min(perStepBudget * stepCount, BLOCK_WORKFLOW_MAX_BUZZ_PER_CALL);
 }
@@ -12543,7 +12543,7 @@ function multiStepWorkflowCeiling(perStepBudget: number, stepCount: number): num
 /**
  * The timeout, in seconds, each step of an UNQUOTED workflow is stamped with. The
  * timeouts are the only bound on what such a workflow spends, so they share the
- * ceiling that was reserved: summed over the steps they never exceed it.
+ * ceiling that was reserved: summed over the steps, the seconds never exceed it.
  */
 function multiStepUnquotedStepTimeout(workflowCeiling: number, stepCount: number): number {
   return Math.floor(workflowCeiling / stepCount);

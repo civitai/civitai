@@ -473,9 +473,11 @@ export const BLOCK_BUZZ_CAP_PER_DAY = 50_000;
 export const BUZZ_BUDGET_CAP = 5000;
 
 /**
- * The most ONE multi-step (`kind: 'workflow'`) call may cost in total, author fee
- * included, whatever the token's budget and step count. Without it that call's ceiling
- * is the budget times its step count, so it would rise with `BUZZ_BUDGET_CAP`.
+ * The most ONE multi-step (`kind: 'workflow'`) call may be quoted or reserved at in
+ * total, author fee included, whatever the token's budget and step count. Without it
+ * that call's ceiling is the budget times its step count, so it would rise with
+ * `BUZZ_BUDGET_CAP`. A chained workflow can still bill above its quote; the settle
+ * then corrects the cap counters up.
  */
 export const BLOCK_WORKFLOW_MAX_BUZZ_PER_CALL = 8000;
 
