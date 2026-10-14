@@ -20,7 +20,7 @@ const SCAN_WAIT_SECONDS = 60;
 const HARNESS_TIMEOUT_MS = 150_000;
 
 export class LabHarnessError extends LabError {
-  /** True when the request is known not to have taken effect (see `isRefused`).
+  /** True when the request is known not to have taken effect (`isRejected` for a save, `isRefused` for a scan).
    *  `authRefused`: refused for the session itself (none to forward, 401, 403). */
   constructor(message: string, readonly refused = false, readonly authRefused = false) {
     super(message, 502);
@@ -54,6 +54,12 @@ export const isRefused = (result: JsonResult) =>
     result.status === 400 ||
     result.status === 401 ||
     result.status === 403);
+
+/** A write that was never sent or got any 4xx back did not happen; only a 5xx or a timeout leaves it unknown. */
+export const isRejected = (result: JsonResult) =>
+  !result.ok &&
+  (result.requestNeverSent === true ||
+    (result.status !== undefined && result.status >= 400 && result.status < 500));
 
 async function callHarness<T>(
   action: string,
@@ -132,7 +138,7 @@ export async function putPrompt(
   );
   if (result.ok) return result.body as { id: number; key: string };
   if (result.status === 409) throw new StalePromptError(result.reason ?? result.error);
-  throw new LabHarnessError(result.error, isRefused(result));
+  throw new LabHarnessError(result.error, isRejected(result));
 }
 
 type HarnessScanResult =

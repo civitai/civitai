@@ -14,6 +14,7 @@ const {
   composeEntities,
   getPrompts,
   isRefused,
+  isRejected,
   putPrompt,
   quoteTexts,
   scanTexts,
@@ -487,6 +488,8 @@ describe('putPrompt', () => {
       );
     call.mockResolvedValueOnce({ ok: false, status: 400, error: 'bad' });
     expect(await refusedOf()).toBe(true);
+    call.mockResolvedValueOnce({ ok: false, status: 422, error: 'invalid' });
+    expect(await refusedOf()).toBe(true);
     call.mockResolvedValueOnce({ ok: false, requestNeverSent: true, error: 'no session' });
     expect(await refusedOf()).toBe(true);
     call.mockResolvedValueOnce({ ok: false, status: 502, error: 'down' });
@@ -507,6 +510,19 @@ describe('isRefused', () => {
     [{ ok: true, body: {} }, false],
   ] as const)('%o -> %s', (result, expected) => {
     expect(isRefused(result as never)).toBe(expected);
+  });
+});
+
+describe('isRejected', () => {
+  it.each([
+    [{ ok: false, error: 'x', requestNeverSent: true }, true],
+    [{ ok: false, error: 'x', status: 404 }, true],
+    [{ ok: false, error: 'x', status: 422 }, true],
+    [{ ok: false, error: 'x', status: 502 }, false],
+    [{ ok: false, error: 'x' }, false],
+    [{ ok: true, body: {} }, false],
+  ] as const)('%o -> %s', (result, expected) => {
+    expect(isRejected(result as never)).toBe(expected);
   });
 });
 
