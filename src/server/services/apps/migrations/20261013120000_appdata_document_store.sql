@@ -80,6 +80,11 @@ CREATE TABLE IF NOT EXISTS appdata.doc (
   CONSTRAINT doc_version_positive CHECK (version >= 1)
 );
 
+-- When a moderator last dismissed the document's reports (reviewed and kept): only report
+-- marks made after it count as open. NULL = never dismissed. A separate ADD COLUMN so a
+-- re-apply over a table created before the column existed still adds it.
+ALTER TABLE appdata.doc ADD COLUMN IF NOT EXISTS reports_dismissed_at timestamptz;
+
 -- `author=me` lists.
 CREATE INDEX IF NOT EXISTS doc_author_idx
   ON appdata.doc (app_id, ns, coll, scope_uid, author_uid, key);

@@ -1,7 +1,8 @@
 import { readdirSync, readFileSync, statSync } from 'fs';
+import ts from 'typescript';
 import path from 'path';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { DocStore, DocStoreDb } from '~/server/services/apps/doc-store';
+import type { DocStore, DocStoreDb, DocStoreModeration } from '~/server/services/apps/doc-store';
 
 /**
  * `apps.mod.docStore.*` end to end below the HTTP layer: the REAL router and its
@@ -16,12 +17,18 @@ import type { DocStore, DocStoreDb } from '~/server/services/apps/doc-store';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
-const h = vi.hoisted(() => ({ store: undefined as unknown as DocStore }));
+const h = vi.hoisted(() => ({
+  store: undefined as unknown as DocStore,
+  mod: undefined as unknown as DocStoreModeration,
+}));
 vi.mock('~/server/services/apps/doc-store.instance', () => ({ getDocStore: () => h.store }));
+vi.mock('~/server/services/apps/doc-store-moderation.instance', () => ({
+  getDocStoreModeration: () => h.mod,
+}));
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { appsModRouter } from '~/server/routers/apps-shared.router';
-import { createDocStore } from '~/server/services/apps/doc-store';
+import { createDocStore, createDocStoreModeration } from '~/server/services/apps/doc-store';
 import {
   MOD_APP_CONCURRENCY,
   MOD_QUEUE_MAX,
@@ -112,7 +119,9 @@ function serialised(db: DocStoreDb): DocStoreDb {
 beforeAll(async () => {
   // A real server when one is named (its pool connections really run in parallel), else PGlite.
   harness = REAL_PG_URL ? await createRealPgHarness() : await createPgliteHarness({ rls: true });
-  h.store = createDocStore({ db: harness.concurrent ? harness.db : serialised(harness.db) });
+  const db = harness.concurrent ? harness.db : serialised(harness.db);
+  h.store = createDocStore({ db });
+  h.mod = createDocStoreModeration({ db });
 });
 afterAll(async () => {
   await harness?.close();
@@ -265,7 +274,10 @@ describe('listReported: the cross-app queue', () => {
     await seedQueue();
     const out = await caller().listReported({});
     expect(out.items.map(tag)).toEqual(EXPECTED_ORDER);
-    expect(out.truncated).toBe(false);
+    expect({ truncated: out.truncated, failedApps: out.failedApps }).toEqual({
+      truncated: false,
+      failedApps: 0,
+    });
     const a1 = out.items.find((i) => i.key === 'a1')!;
     expect(a1).toMatchObject({
       appSlug: 'mod-a-store',
@@ -290,7 +302,7 @@ describe('listReported: the cross-app queue', () => {
 
   it('asks the store once per app, for one row more than it keeps per app', async () => {
     await seedQueue();
-    const spy = vi.spyOn(h.store.moderation, 'listReported');
+    const spy = vi.spyOn(h.mod, 'listReported');
     await caller().listReported({ status: 'hidden' });
     expect(spy.mock.calls.map((c) => c[0]).sort()).toEqual(APPS.map((a) => a.id).sort());
     expect(spy.mock.calls.map((c) => c[2])).toEqual(
@@ -303,7 +315,7 @@ describe('listReported: the cross-app queue', () => {
       [MOD_QUEUE_PER_APP, false],
       [MOD_QUEUE_PER_APP + 1, true],
     ] as const) {
-      vi.spyOn(h.store.moderation, 'listReported').mockImplementation(async (appId) =>
+      vi.spyOn(h.mod, 'listReported').mockImplementation(async (appId) =>
         appId === APP_B.id
           ? Array.from({ length: n }, (_, i) => fakeRow(`k${String(i).padStart(3, '0')}`, 1))
           : []
@@ -331,7 +343,7 @@ describe('listReported: the cross-app queue', () => {
         appListing: null,
       }))
     );
-    vi.spyOn(h.store.moderation, 'listReported').mockImplementation(async () =>
+    vi.spyOn(h.mod, 'listReported').mockImplementation(async () =>
       Array.from({ length: perApp }, (_, i) => fakeRow(`k${String(i).padStart(3, '0')}`, 1 + i))
     );
     const out = await caller().listReported({});
@@ -344,6 +356,31 @@ describe('listReported: the cross-app queue', () => {
     expect(out.items.filter((i) => i.reports === 1)).toHaveLength(apps - cut);
   });
 
+  it('an app whose read fails is skipped and counted; every other app is still listed', async () => {
+    await seedQueue();
+    const real = h.mod.listReported;
+    vi.spyOn(h.mod, 'listReported').mockImplementation(async (appId, ...rest) => {
+      if (appId === APP_B.id) throw new Error('storage is busy');
+      return real(appId, ...rest);
+    });
+    const out = await caller().listReported({});
+    expect(out.failedApps).toBe(1);
+    expect(out.items.map(tag)).toEqual(EXPECTED_ORDER.filter((t) => !t.startsWith(APP_B.id)));
+  });
+
+  it('an app id the store refuses as malformed fails that app only, never the queue', async () => {
+    await seedQueue();
+    mockRead.appBlock.findMany.mockImplementationOnce(async () => [
+      ...APPS.map((a) => ({ id: a.id, blockId: a.blockId, appListing: a.listing })),
+      { id: 'not a valid id!', blockId: 'odd', appListing: null },
+    ]);
+    const out = await caller().listReported({});
+    expect({ failedApps: out.failedApps, items: out.items.map(tag) }).toEqual({
+      failedApps: 1,
+      items: EXPECTED_ORDER,
+    });
+  });
+
   it('keeps exactly MOD_APP_CONCURRENCY per-app store calls in flight, not more', async () => {
     // More apps than the limit, and store calls that overlap for as long as they are allowed
     // to, so an unbounded fan-out would reach the app count instead of the limit.
@@ -353,7 +390,7 @@ describe('listReported: the cross-app queue', () => {
     );
     let inFlight = 0;
     let peak = 0;
-    const spy = vi.spyOn(h.store.moderation, 'listReported').mockImplementation(async () => {
+    const spy = vi.spyOn(h.mod, 'listReported').mockImplementation(async () => {
       inFlight += 1;
       peak = Math.max(peak, inFlight);
       await new Promise((r) => setTimeout(r, 20));
@@ -552,8 +589,8 @@ describe('setHidden / delete: effects through the app reads, and the audit trail
 
   it('every store action is bound to the audited snapshot revision', async () => {
     await seedQueue();
-    const hide = vi.spyOn(h.store.moderation, 'setHidden');
-    const del = vi.spyOn(h.store.moderation, 'delete');
+    const hide = vi.spyOn(h.mod, 'setHidden');
+    const del = vi.spyOn(h.mod, 'delete');
     await caller().setHidden({ ...A1, hidden: true, reason: 'spam report' });
     await caller().setHidden({ ...A1, hidden: false, reason: 'reviewed, fine' });
     await caller().delete({ ...A1, reason: 'illegal content' });
@@ -568,8 +605,8 @@ describe('setHidden / delete: effects through the app reads, and the audit trail
 
   it('an edit landing between the audit snapshot and the action: CONFLICT, stamped failed, nothing hidden', async () => {
     await seedQueue();
-    const real = h.store.moderation.setHidden;
-    vi.spyOn(h.store.moderation, 'setHidden').mockImplementationOnce(async (...args) => {
+    const real = h.mod.setHidden;
+    vi.spyOn(h.mod, 'setHidden').mockImplementationOnce(async (...args) => {
       await h.store.put(v(APP_A), POSTS, 'a1', { status: 'edited in the gap' });
       return real(...args);
     });
@@ -586,8 +623,8 @@ describe('setHidden / delete: effects through the app reads, and the audit trail
 
   it('a delete landing between the audit snapshot and the action: NOT_FOUND, stamped failed', async () => {
     await seedQueue();
-    const real = h.store.moderation.setHidden;
-    vi.spyOn(h.store.moderation, 'setHidden').mockImplementationOnce(async (...args) => {
+    const real = h.mod.setHidden;
+    vi.spyOn(h.mod, 'setHidden').mockImplementationOnce(async (...args) => {
       await h.store.delete(v(APP_A), POSTS, 'a1');
       return real(...args);
     });
@@ -599,7 +636,7 @@ describe('setHidden / delete: effects through the app reads, and the audit trail
 
   it('a store refusal after the audit row is stamped failed; any other error unknown', async () => {
     await seedQueue();
-    vi.spyOn(h.store.moderation, 'setHidden')
+    vi.spyOn(h.mod, 'setHidden')
       .mockRejectedValueOnce(new DocStoreError('rate_limited', 'storage is busy; retry'))
       .mockRejectedValueOnce(new Error('connection reset after commit'));
     await expect(
@@ -612,6 +649,25 @@ describe('setHidden / delete: effects through the app reads, and the audit trail
       ['storage-doc-hide', 'failed'],
       ['storage-doc-hide', 'unknown'],
     ]);
+  });
+
+  it('dismiss: reviewed and kept — leaves the queue, stays visible to the app, audited', async () => {
+    await seedQueue();
+    await new Promise((r) => setTimeout(r, 5)); // past PGlite's millisecond clock tick
+    const seen = await caller().get(A1);
+    const out = await caller().dismissReports({
+      ...A1,
+      revision: seen.revision,
+      reason: 'reviewed, within the rules',
+    });
+    expect(out).toMatchObject({ dismissed: 3, auditEventId: expect.stringMatching(/^alme_/) });
+    expect((await caller().listReported({})).items.map((i) => i.key)).not.toContain('a1');
+    expect(await h.store.get(v(APP_A), POSTS, 'a1')).not.toBeNull();
+    expect(audit.map((r) => [r.action, r.before.reports, r.after?.outcome])).toEqual([
+      ['storage-doc-dismiss', 3, 'applied'],
+    ]);
+    expect(APP_LISTING_MODERATION_ACTIONS as readonly string[]).toContain('storage-doc-dismiss');
+    expect((await caller().get(A1)).reports).toBe(0);
   });
 
   it('a reason is required and bounded', async () => {
@@ -627,25 +683,112 @@ describe('setHidden / delete: effects through the app reads, and the audit trail
 });
 
 describe('the moderation operations are reachable from the moderator service only', () => {
-  // A seam ledger: fails when the set of files calling `<store>.moderation.*` grows OR
-  // shrinks. The block-token routes (`doc-store-api.ts`, `pages/api/v1/blocks/storage`)
-  // must never appear here. Enumerated with fs: the wrapped grep honours .gitignore.
+  // Structural, not spelled: the operations live on a separate object, and the set of
+  // modules that can obtain one is pinned by parsing every import in src (static imports,
+  // `import()` and `require`), failing when it grows OR shrinks. Enumerated with fs: the
+  // wrapped grep honours .gitignore.
   const SRC = path.resolve(__dirname, '../../..');
-  const PATTERN = /\.moderation\.(listReported|get|setHidden|delete)\b/;
+  const INSTANCE = 'server/services/apps/doc-store-moderation.instance';
+  const STORE = 'server/services/apps/doc-store';
+
+  /** Resolve a specifier from `file` to a src-relative module path without extension. */
+  function resolveSpec(file: string, spec: string): string | null {
+    if (spec.startsWith('~/')) return spec.slice(2);
+    if (spec.startsWith('.')) {
+      return path
+        .relative(SRC, path.resolve(path.dirname(file), spec))
+        .split(path.sep)
+        .join('/');
+    }
+    return null;
+  }
+
+  type Use = { file: string; module: string; names: string[] | 'all' };
+  function importsOf(file: string): Use[] {
+    const src = ts.createSourceFile(file, readFileSync(file, 'utf8'), ts.ScriptTarget.Latest, true);
+    const rel = path.relative(SRC, file).split(path.sep).join('/');
+    const out: Use[] = [];
+    const visit = (node: ts.Node) => {
+      if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) {
+        const spec = node.moduleSpecifier;
+        if (spec && ts.isStringLiteral(spec)) {
+          const target = resolveSpec(file, spec.text);
+          if (target) {
+            let names: string[] | 'all' = 'all';
+            if (ts.isImportDeclaration(node)) {
+              const b = node.importClause?.namedBindings;
+              if (node.importClause?.isTypeOnly) names = [];
+              else if (b && ts.isNamedImports(b)) {
+                names = b.elements
+                  .filter((e) => !e.isTypeOnly)
+                  .map((e) => e.propertyName?.text ?? e.name.text);
+              }
+            }
+            out.push({ file: rel, module: target, names });
+          }
+        }
+      } else if (
+        ts.isCallExpression(node) &&
+        (node.expression.kind === ts.SyntaxKind.ImportKeyword ||
+          (ts.isIdentifier(node.expression) && node.expression.text === 'require')) &&
+        node.arguments[0] &&
+        ts.isStringLiteral(node.arguments[0])
+      ) {
+        const target = resolveSpec(file, node.arguments[0].text);
+        if (target) out.push({ file: rel, module: target, names: 'all' });
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(src);
+    return out;
+  }
+
   function walk(dir: string, out: string[]) {
     for (const name of readdirSync(dir)) {
       if (name === 'node_modules' || name.startsWith('.') || name === '__tests__') continue;
       const full = path.join(dir, name);
       if (statSync(full).isDirectory()) walk(full, out);
-      else if (/\.(ts|tsx)$/.test(name) && !/\.test\.tsx?$/.test(name)) {
-        if (PATTERN.test(readFileSync(full, 'utf8'))) {
-          out.push(path.relative(SRC, full).split(path.sep).join('/'));
-        }
-      }
+      else if (/\.(ts|tsx)$/.test(name) && !/\.test\.tsx?$/.test(name)) out.push(full);
     }
     return out;
   }
-  it('is exactly the moderation service', () => {
-    expect(walk(SRC, []).sort()).toEqual(['server/services/apps/doc-store-moderation.service.ts']);
+  const uses = walk(SRC, []).flatMap(importsOf);
+
+  it('only the moderation service imports the moderation instance', () => {
+    const importers = uses.filter((u) => u.module === INSTANCE).map((u) => u.file);
+    expect([...new Set(importers)].sort()).toEqual([
+      'server/services/apps/doc-store-moderation.service.ts',
+    ]);
+  });
+
+  it('only the moderation instance obtains the factory from the store module', () => {
+    const importers = uses
+      .filter(
+        (u) =>
+          u.module === STORE && (u.names === 'all' || u.names.includes('createDocStoreModeration'))
+      )
+      .map((u) => u.file);
+    expect([...new Set(importers)].sort()).toEqual([
+      'server/services/apps/doc-store-moderation.instance.ts',
+    ]);
+  });
+
+  it('the viewer store the block-token routes hold carries no moderator operation', () => {
+    const store = createDocStore({ db: null });
+    expect(Object.keys(store).sort()).toEqual(
+      [
+        'create',
+        'delete',
+        'get',
+        'getMany',
+        'increment',
+        'limits',
+        'list',
+        'mark',
+        'unmark',
+        'put',
+        'usage',
+      ].sort()
+    );
   });
 });

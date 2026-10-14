@@ -151,6 +151,7 @@ describe('LISTING_STATUS_CHANGING_MODERATION_ACTIONS', () => {
       'storage-doc-hide',
       'storage-doc-unhide',
       'storage-doc-delete',
+      'storage-doc-dismiss',
     ]);
   });
 
@@ -179,6 +180,7 @@ describe('LISTING_STATUS_CHANGING_MODERATION_ACTIONS', () => {
     'storage-doc-hide',
     'storage-doc-unhide',
     'storage-doc-delete',
+    'storage-doc-dismiss',
   ])(
     '%s leaves app_listings.status alone ⇒ state-neutral, and must NOT displace a removal',
     (action) => {

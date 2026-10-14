@@ -1947,6 +1947,7 @@ describe('listMyListingModerationEvents', () => {
           'storage-doc-hide',
           'storage-doc-unhide',
           'storage-doc-delete',
+          'storage-doc-dismiss',
         ],
       },
     });
@@ -1966,7 +1967,13 @@ describe('listMyListingModerationEvents', () => {
     await listMyListingModerationEvents({ input: { appListingId: APP_ID }, userId: OWNER });
     const ownerWhere = mockRead.appListingModerationEvent.findMany.mock.calls[0][0].where;
     expect(ownerWhere.action).toEqual({
-      notIn: ['purge-user-storage', 'storage-doc-hide', 'storage-doc-unhide', 'storage-doc-delete'],
+      notIn: [
+        'purge-user-storage',
+        'storage-doc-hide',
+        'storage-doc-unhide',
+        'storage-doc-delete',
+        'storage-doc-dismiss',
+      ],
     });
 
     mockRead.appListingModerationEvent.findMany.mockResolvedValueOnce([]);

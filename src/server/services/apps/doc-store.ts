@@ -729,8 +729,23 @@ type UsageDelta = { bytes: number; docs: number };
 type UserCharge = UsageDelta & { uid: number; ceiling: QuotaCeiling };
 
 export type DocStore = ReturnType<typeof createDocStore>;
+export type DocStoreModeration = ReturnType<typeof createDocStoreModeration>;
 
+/** The store the block-token routes use. It carries no moderator operation. */
 export function createDocStore(deps: DocStoreDeps) {
+  return buildDocStore(deps).store;
+}
+
+/**
+ * The session-moderator operations, as a SEPARATE object from the viewer store, so holding
+ * the block-token API's store gives no path to them. Only `doc-store-moderation.instance.ts`
+ * builds one in production; its importers are pinned by a ledger test.
+ */
+export function createDocStoreModeration(deps: DocStoreDeps) {
+  return buildDocStore(deps).moderation;
+}
+
+function buildDocStore(deps: DocStoreDeps) {
   const limits = deps.limits ?? DEFAULT_DOC_STORE_LIMITS;
   // Settled only by a successful role read; a failed read is retried next call.
   let privileges: 'safe' | 'refused' | undefined;
@@ -1334,7 +1349,7 @@ export function createDocStore(deps: DocStoreDeps) {
     });
   }
 
-  return {
+  const store = {
     get,
     getMany,
     put,
@@ -1346,9 +1361,8 @@ export function createDocStore(deps: DocStoreDeps) {
     unmark,
     usage,
     limits,
-    /** Session-moderator operations; never reachable from a block token (see the section below). */
-    moderation: createModeration({ withTx, charge }),
   };
+  return { store, moderation: createModeration({ withTx, charge }) };
 }
 
 function translatePgError(err: unknown): unknown {
@@ -1373,9 +1387,20 @@ function translatePgError(err: unknown): unknown {
 // Moderation — session moderators only
 // ---------------------------------------------------------------------------
 //
-// Called ONLY by `doc-store-moderation.service.ts`, behind `moderatorProcedure`; the
-// block-token routes never reach it (the caller set is pinned by
-// `routers/__tests__/apps-mod-doc-store.router.test.ts`, its caller-ledger case).
+// Reachable only through `createDocStoreModeration` — a separate object from the viewer store
+// the block-token routes hold — built by `doc-store-moderation.instance.ts` and used by
+// `doc-store-moderation.service.ts` behind `moderatorProcedure`. The importer set is pinned by
+// `routers/__tests__/apps-mod-doc-store.router.test.ts` (its ledger case).
+//
+// DISMISSED REPORTS. A moderator who reviews a document and keeps it dismisses its reports:
+// `doc.reports_dismissed_at` records when, and only report marks made after that point count
+// as OPEN (the queue and `reports` below). The marks themselves are kept, so each reporter's
+// own "I reported this" state (`viewer.marks`) stays true and a report cannot be filed twice;
+// deleting them would tell reporters they never reported, and let one viewer re-report the
+// same document after every dismissal. Unhide does not touch the point, so it re-surfaces no
+// dismissed report. The point is the dismissing transaction's start time: a report whose own
+// transaction started later is never swept, and one made between the moderator's last look
+// and the click is (the revision binding covers the document's content, not its reports).
 //
 // CROSS-APP WITHOUT A CROSS-APP CONNECTION. Every call here runs in ONE app's
 // transaction through the same `withTx` a viewer call uses: the RLS settings are
@@ -1408,6 +1433,8 @@ export type ReportedDocRow = {
 };
 
 export type ModeratedDoc = ReportedDocRow & {
+  /** When a moderator last dismissed this document's reports; earlier reports are closed. */
+  reportsDismissedAt: Date | null;
   data: Record<string, unknown>;
   /** md5 of the stored jsonb text — what an audit row records instead of the content. */
   dataMd5: string;
@@ -1425,24 +1452,42 @@ type ModerationDeps = {
   ) => Promise<number>;
 };
 
-// Reported shared documents of one (app, ns): a positive `report` mark tally joined to
-// its document. $1 app, $2 ns, $3 the report mark name; the caller appends a status
-// condition, the order and `LIMIT $4`.
-const SQL_MOD_REPORTED = `SELECT d.coll, d.key, d.author_uid, d.author_kind, d.created_at, d.updated_at,
-    d.hidden_at, d.hidden_by, d.size_bytes, d.version, d.seq, t.count AS reports
-  FROM appdata.doc_tally t
-  JOIN appdata.doc d ON d.app_id = $1 AND d.ns = $2 AND d.coll = t.coll AND d.scope_uid = 0 AND d.key = t.key
-  WHERE t.app_id = $1 AND t.ns = $2 AND t.kind = 'mark' AND t.name = $3 AND t.count > 0`;
-
-/** The one queue order, applied per app here and again across apps by the caller. */
-const MOD_QUEUE_ORDER = `ORDER BY t.count DESC, d.updated_at DESC, d.coll DESC, d.key DESC`;
+// Shared documents of one (app, ns) with at least one OPEN report (made after any dismissal),
+// counted from the report marks themselves. Grouped by the document's primary key, so its
+// other columns can be selected. $1 app, $2 ns, $3 the report mark name, $4 limit;
+// `statusCond` is one of the fixed strings in `listReported`.
+const sqlModReported = (statusCond: string) => `SELECT d.coll, d.key, d.author_uid, d.author_kind,
+    d.created_at, d.updated_at, d.hidden_at, d.hidden_by, d.size_bytes, d.version, d.seq,
+    count(rm.user_id) AS reports
+  FROM appdata.doc d
+  JOIN appdata.doc_mark rm ON rm.app_id = $1 AND rm.ns = $2 AND rm.coll = d.coll AND rm.key = d.key
+    AND rm.name = $3 AND (d.reports_dismissed_at IS NULL OR rm.created_at > d.reports_dismissed_at)
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.scope_uid = 0 ${statusCond}
+  GROUP BY d.app_id, d.ns, d.coll, d.scope_uid, d.key
+  ORDER BY count(rm.user_id) DESC, d.updated_at DESC, d.coll DESC, d.key DESC
+  LIMIT $4::int`;
 
 // One shared document as a moderator sees it, hidden or not. $1 app, $2 ns, $3 coll, $4 key
+// $5 the report mark name.
 const SQL_MOD_GET = `SELECT d.coll, d.key, d.data, md5(d.data::text) AS data_md5, d.version, d.seq, d.size_bytes,
     d.author_uid, d.author_kind, d.created_at, d.updated_at, d.hidden_at, d.hidden_by,
+    d.reports_dismissed_at,
     (SELECT jsonb_object_agg(t.kind || ':' || t.name, t.count) FROM appdata.doc_tally t
-      WHERE t.app_id = $1 AND t.ns = $2 AND t.coll = d.coll AND t.key = d.key) AS tallies
+      WHERE t.app_id = $1 AND t.ns = $2 AND t.coll = d.coll AND t.key = d.key) AS tallies,
+    (SELECT count(*) FROM appdata.doc_mark rm
+      WHERE rm.app_id = $1 AND rm.ns = $2 AND rm.coll = d.coll AND rm.key = d.key AND rm.name = $5
+        AND (d.reports_dismissed_at IS NULL OR rm.created_at > d.reports_dismissed_at)) AS open_reports
   FROM appdata.doc d
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = 0 AND d.key = $4`;
+
+// Open reports of one shared document. $1 app, $2 ns, $3 coll, $4 key, $5 the report mark name
+const SQL_MOD_OPEN_REPORTS = `SELECT count(*) AS n FROM appdata.doc_mark rm
+  JOIN appdata.doc d ON d.app_id = $1 AND d.ns = $2 AND d.coll = rm.coll AND d.scope_uid = 0 AND d.key = rm.key
+  WHERE rm.app_id = $1 AND rm.ns = $2 AND rm.coll = $3 AND rm.key = $4 AND rm.name = $5
+    AND (d.reports_dismissed_at IS NULL OR rm.created_at > d.reports_dismissed_at)`;
+
+// $1 app, $2 ns, $3 coll, $4 key
+const SQL_MOD_DISMISS = `UPDATE appdata.doc d SET reports_dismissed_at = now()
   WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = 0 AND d.key = $4`;
 
 // $1 app, $2 ns, $3 coll, $4 key, $5 moderator
@@ -1504,7 +1549,7 @@ function createModeration({ withTx, charge }: ModerationDeps) {
         : opts.status === 'hidden'
         ? 'AND d.hidden_at IS NOT NULL'
         : '';
-    const sql = `${SQL_MOD_REPORTED} ${statusCond}\n  ${MOD_QUEUE_ORDER}\n  LIMIT $4::int`;
+    const sql = sqlModReported(statusCond);
     const rows = await withTx(
       modCtx(appId, ns),
       async (c) => (await c.query(sql, [appId, ns, REPORT_MARK, opts.limit])).rows
@@ -1535,7 +1580,7 @@ function createModeration({ withTx, charge }: ModerationDeps) {
     assertModTarget(collection, key);
     const row = await withTx(
       modCtx(appId, ns),
-      async (c) => (await c.query(SQL_MOD_GET, [appId, ns, collection, key])).rows[0]
+      async (c) => (await c.query(SQL_MOD_GET, [appId, ns, collection, key, REPORT_MARK])).rows[0]
     );
     if (!row) return null;
     const counters: Record<string, number> = {};
@@ -1549,7 +1594,11 @@ function createModeration({ withTx, charge }: ModerationDeps) {
       key: row.key as string,
       data: row.data as Record<string, unknown>,
       dataMd5: row.data_md5 as string,
-      reports: marks[REPORT_MARK] ?? 0,
+      // Open reports only; `marks.report` keeps the all-time count.
+      reports: Number(row.open_reports),
+      reportsDismissedAt: row.reports_dismissed_at
+        ? new Date(row.reports_dismissed_at as string | Date)
+        : null,
       createdAt: new Date(row.created_at as string | Date),
       updatedAt: new Date(row.updated_at as string | Date),
       authorKind: row.author_kind as ReportedDocRow['authorKind'],
@@ -1606,6 +1655,28 @@ function createModeration({ withTx, charge }: ModerationDeps) {
   }
 
   /**
+   * Dismiss the document's open reports (it was reviewed and kept): later reports open it
+   * again. Bound to the revision like the other actions. Returns how many were open.
+   */
+  async function dismissReports(
+    appId: string,
+    ns: string,
+    collection: string,
+    key: string,
+    opts: { ifRevision?: number } = {}
+  ): Promise<{ dismissed: number }> {
+    assertModTarget(collection, key);
+    return withTx(modCtx(appId, ns), async (c) => {
+      const row = (await c.query(SQL_MOD_LOCK, [appId, ns, collection, key])).rows[0];
+      if (!row) throw new DocStoreError('not_found', 'document not found');
+      assertModRevision(row, opts.ifRevision);
+      const open = await c.query(SQL_MOD_OPEN_REPORTS, [appId, ns, collection, key, REPORT_MARK]);
+      await c.query(SQL_MOD_DISMISS, [appId, ns, collection, key]);
+      return { dismissed: Number(open.rows[0]?.n ?? 0) };
+    });
+  }
+
+  /**
    * Hard-delete one shared document, hidden or not: its index rows go with it (FK
    * cascade), its tallies and marks are deleted, the app and the charged author are
    * refunded (a counter-created doc's `author_uid` is the user its creation was charged
@@ -1644,5 +1715,5 @@ function createModeration({ withTx, charge }: ModerationDeps) {
     });
   }
 
-  return { listReported, get, setHidden, delete: remove };
+  return { listReported, get, setHidden, dismissReports, delete: remove };
 }

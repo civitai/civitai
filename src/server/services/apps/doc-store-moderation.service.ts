@@ -34,7 +34,8 @@ import type {
   ModeratedDocStatus,
   ReportedDocRow,
 } from '~/server/services/apps/doc-store';
-import { getDocStore } from '~/server/services/apps/doc-store.instance';
+import { logToAxiom } from '~/server/logging/client';
+import { getDocStoreModeration } from '~/server/services/apps/doc-store-moderation.instance';
 import { isDocStoreError } from '~/server/services/apps/doc-store.types';
 import { newAppListingModerationEventId } from '~/server/utils/app-block-ids';
 
@@ -52,6 +53,7 @@ export const DOC_STORE_MOD_ACTIONS = {
   hide: 'storage-doc-hide',
   unhide: 'storage-doc-unhide',
   delete: 'storage-doc-delete',
+  dismiss: 'storage-doc-dismiss',
 } as const;
 
 export class DocStoreModerationError extends Error {
@@ -150,30 +152,45 @@ export type ReportedDocItem = {
 };
 
 /**
- * Reported shared documents across every app, most reported first. Not paged: at most
+ * Documents with open reports across every app, most reported first. Not paged: at most
  * `MOD_QUEUE_PER_APP` per app and `MOD_QUEUE_MAX` in total; `truncated` says either cap cut
- * something off.
+ * something off. An app whose read fails is skipped and counted in `failedApps` (and logged),
+ * so one bad app never hides every other app's reports.
  */
 export async function listReportedDocs(input: {
   status: ModeratedDocStatus;
-}): Promise<{ items: ReportedDocItem[]; truncated: boolean }> {
+}): Promise<{ items: ReportedDocItem[]; truncated: boolean; failedApps: number }> {
   const apps = await allApps();
-  const store = getDocStore();
+  const mod = getDocStoreModeration();
   const limit = pLimit(MOD_APP_CONCURRENCY);
   const perApp = await Promise.all(
     apps.map((app) =>
       limit(async () => {
-        // One more than kept, to know whether this app was cut off.
-        const rows = await store.moderation.listReported(app.appBlockId, MOD_NS, {
-          status: input.status,
-          limit: MOD_QUEUE_PER_APP + 1,
-        });
-        return {
-          cut: rows.length > MOD_QUEUE_PER_APP,
-          rows: rows
-            .slice(0, MOD_QUEUE_PER_APP)
-            .map((row) => ({ app, appId: app.appBlockId, row })),
-        };
+        try {
+          // One more than kept, to know whether this app was cut off.
+          const rows = await mod.listReported(app.appBlockId, MOD_NS, {
+            status: input.status,
+            limit: MOD_QUEUE_PER_APP + 1,
+          });
+          return {
+            failed: false,
+            cut: rows.length > MOD_QUEUE_PER_APP,
+            rows: rows
+              .slice(0, MOD_QUEUE_PER_APP)
+              .map((row) => ({ app, appId: app.appBlockId, row })),
+          };
+        } catch (err) {
+          logToAxiom(
+            {
+              type: 'error',
+              event: 'doc_store_mod_queue_app_failed',
+              appBlockId: app.appBlockId,
+              error: err instanceof Error ? err.message : String(err),
+            },
+            'app-blocks'
+          ).catch(() => undefined);
+          return { failed: true, cut: false, rows: [] };
+        }
       })
     )
   );
@@ -206,6 +223,7 @@ export async function listReportedDocs(input: {
       revision: row.revision,
     })),
     truncated: merged.length > MOD_QUEUE_MAX || perApp.some((p) => p.cut),
+    failedApps: perApp.filter((p) => p.failed).length,
   };
 }
 
@@ -217,7 +235,7 @@ export type ModeratedDocView = Omit<ModeratedDoc, 'authorUid' | 'hiddenAt' | 'hi
 };
 
 async function readDoc(app: AppIdentity, collection: string, key: string): Promise<ModeratedDoc> {
-  const doc = await getDocStore().moderation.get(app.appBlockId, MOD_NS, collection, key);
+  const doc = await getDocStoreModeration().get(app.appBlockId, MOD_NS, collection, key);
   if (!doc) throw new DocStoreModerationError('doc_not_found');
   return doc;
 }
@@ -304,6 +322,7 @@ async function audited<T extends Record<string, unknown>>(
         revision: before.revision,
         sizeBytes: before.sizeBytes,
         dataMd5: before.dataMd5,
+        reportsDismissedAt: before.reportsDismissedAt?.toISOString() ?? null,
       } as Prisma.InputJsonValue,
     },
   });
@@ -359,7 +378,7 @@ export async function setModeratedDocHidden(input: {
   return audited(
     { ...input, app, action: input.hidden ? 'hide' : 'unhide', expectedRevision: input.revision },
     async (ifRevision) =>
-      getDocStore().moderation.setHidden(
+      getDocStoreModeration().setHidden(
         app.appBlockId,
         MOD_NS,
         input.collection,
@@ -384,7 +403,26 @@ export async function deleteModeratedDoc(input: {
   return audited(
     { ...input, app, action: 'delete', expectedRevision: input.revision },
     async (ifRevision) =>
-      getDocStore().moderation.delete(app.appBlockId, MOD_NS, input.collection, input.key, {
+      getDocStoreModeration().delete(app.appBlockId, MOD_NS, input.collection, input.key, {
+        ifRevision,
+      })
+  );
+}
+
+/** Dismiss the open reports on a document reviewed and kept; later reports re-open it. */
+export async function dismissModeratedDocReports(input: {
+  actorUserId: number;
+  appBlockId: string;
+  collection: string;
+  key: string;
+  reason: string;
+  revision?: number;
+}) {
+  const app = await resolveApp(input.appBlockId);
+  return audited(
+    { ...input, app, action: 'dismiss', expectedRevision: input.revision },
+    async (ifRevision) =>
+      getDocStoreModeration().dismissReports(app.appBlockId, MOD_NS, input.collection, input.key, {
         ifRevision,
       })
   );

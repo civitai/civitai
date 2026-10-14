@@ -1293,6 +1293,7 @@ const OWNER_HIDDEN_MODERATION_ACTIONS = [
   'storage-doc-hide',
   'storage-doc-unhide',
   'storage-doc-delete',
+  'storage-doc-dismiss',
 ] as const;
 
 /**

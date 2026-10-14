@@ -21,6 +21,7 @@ import { moderatorProcedure, router } from '~/server/trpc';
 import {
   DocStoreModerationError,
   deleteModeratedDoc,
+  dismissModeratedDocReports,
   getModeratedDoc,
   listReportedDocs,
   setModeratedDocHidden,
@@ -98,6 +99,13 @@ export const appsModDocStoreRouter = router({
     )
     .mutation(({ ctx, input }) =>
       mapped(() => setModeratedDocHidden({ ...input, actorUserId: ctx.user.id }))
+    ),
+
+  /** Dismiss the open reports on a document reviewed and kept. Reports made later re-open it. */
+  dismissReports: moderatorProcedure
+    .input(z.object({ ...target, reason: reasonInput, revision: revisionInput }))
+    .mutation(({ ctx, input }) =>
+      mapped(() => dismissModeratedDocReports({ ...input, actorUserId: ctx.user.id }))
     ),
 
   /** Hard delete, with its tallies, marks and index rows; refunds usage. Irreversible. */

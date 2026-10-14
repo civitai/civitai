@@ -135,6 +135,7 @@ export const STATE_NEUTRAL_MODERATION_ACTIONS = [
   'storage-doc-hide',
   'storage-doc-unhide',
   'storage-doc-delete',
+  'storage-doc-dismiss',
 ] as const satisfies readonly AppListingModerationAction[];
 
 /**

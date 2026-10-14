@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { createDocStore } from '~/server/services/apps/doc-store';
-import type { DocStore } from '~/server/services/apps/doc-store';
+import { createDocStore, createDocStoreModeration } from '~/server/services/apps/doc-store';
+import type { DocStore, DocStoreModeration } from '~/server/services/apps/doc-store';
 import type { DocCollection } from '~/server/services/apps/doc-store.types';
 import { createPgliteHarness } from './doc-store.harness';
 import type { Harness } from './doc-store.harness';
@@ -21,7 +21,7 @@ import {
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
 /**
- * The document store's MODERATOR operations (`store.moderation.*`) on the embedded Postgres,
+ * The document store's MODERATOR operations (`mod.*`) on the embedded Postgres,
  * as the least-privilege role, twice: with RLS disabled on the tables (the module's own
  * `$1`/`$2` predicates alone) and with it on (both layers). Every effect is checked through
  * the REAL viewer reads, and usage against a recompute from the documents.
@@ -34,6 +34,7 @@ const MOD = 9001;
 const R1 = 3101;
 const R2 = 3202;
 const R3 = 3303;
+const R4 = 3404;
 
 const harnesses: Harness[] = [];
 
@@ -43,10 +44,12 @@ const OPEN5_BYTES = Buffer.byteLength('{"score": 5, "status": "open"}', 'utf8');
 function defineModerationSuite(rls: boolean) {
   let h: Harness;
   let store: DocStore;
+  let mod: DocStoreModeration;
   beforeAll(async () => {
     h = await createPgliteHarness({ rls });
     harnesses.push(h);
     store = createDocStore({ db: h.db });
+    mod = createDocStoreModeration({ db: h.db });
   });
   afterAll(async () => {
     await h?.close();
@@ -57,9 +60,9 @@ function defineModerationSuite(rls: boolean) {
   };
   const queue = async (
     app: string,
-    opts: Partial<Parameters<DocStore['moderation']['listReported']>[2]> = {}
+    opts: Partial<Parameters<DocStoreModeration['listReported']>[2]> = {}
   ) =>
-    (await store.moderation.listReported(app, NS_PROD, { status: 'all', limit: 50, ...opts })).map(
+    (await mod.listReported(app, NS_PROD, { status: 'all', limit: 50, ...opts })).map(
       (r) => `${r.collection}/${r.key}:${r.reports}`
     );
 
@@ -108,7 +111,7 @@ function defineModerationSuite(rls: boolean) {
       await seedQueue(app);
       expect(await queue(app, { limit: 3 })).toEqual(['posts/p1:3', 'board/b1:2', 'posts/p6:2']);
       await expectCode(
-        store.moderation.listReported(app, NS_PROD, { status: 'all', limit: 0 }),
+        mod.listReported(app, NS_PROD, { status: 'all', limit: 0 }),
         'invalid_request'
       );
     });
@@ -116,7 +119,7 @@ function defineModerationSuite(rls: boolean) {
     it('carries the author, timestamps, revision and hidden state for moderators', async () => {
       const app = freshApp('modrow');
       await seedQueue(app);
-      const [top] = await store.moderation.listReported(app, NS_PROD, { status: 'all', limit: 1 });
+      const [top] = await mod.listReported(app, NS_PROD, { status: 'all', limit: 1 });
       expect(top).toMatchObject({
         collection: 'posts',
         key: 'p1',
@@ -126,14 +129,14 @@ function defineModerationSuite(rls: boolean) {
         hiddenAt: null,
         hiddenBy: null,
         updatedAt: new Date('2026-02-01T00:00:00Z'),
-        revision: (await store.moderation.get(app, NS_PROD, 'posts', 'p1'))!.revision,
+        revision: (await mod.get(app, NS_PROD, 'posts', 'p1'))!.revision,
       });
     });
 
     it('status filters open / hidden / all', async () => {
       const app = freshApp('modstat');
       await seedQueue(app);
-      await store.moderation.setHidden(app, NS_PROD, 'posts', 'p1', true, MOD);
+      await mod.setHidden(app, NS_PROD, 'posts', 'p1', true, MOD);
       expect(await queue(app, { status: 'open' })).toEqual([
         'board/b1:2',
         'posts/p6:2',
@@ -142,7 +145,7 @@ function defineModerationSuite(rls: boolean) {
       ]);
       expect(await queue(app, { status: 'hidden' })).toEqual(['posts/p1:3']);
       expect(await queue(app, { status: 'all' })).toHaveLength(5);
-      const [hidden] = await store.moderation.listReported(app, NS_PROD, {
+      const [hidden] = await mod.listReported(app, NS_PROD, {
         status: 'hidden',
         limit: 5,
       });
@@ -159,8 +162,8 @@ function defineModerationSuite(rls: boolean) {
       await store.increment(ctx(app, NS_PROD, VIEWER_2), POSTS, 'g', 'views', 7);
       await store.mark(ctx(app, NS_PROD, VIEWER_2), POSTS, 'g', 'star');
       await report(app, POSTS, 'g', R1, R2);
-      await store.moderation.setHidden(app, NS_PROD, 'posts', 'g', true, MOD);
-      const doc = await store.moderation.get(app, NS_PROD, 'posts', 'g');
+      await mod.setHidden(app, NS_PROD, 'posts', 'g', true, MOD);
+      const doc = await mod.get(app, NS_PROD, 'posts', 'g');
       expect(doc).toMatchObject({
         collection: 'posts',
         key: 'g',
@@ -180,12 +183,9 @@ function defineModerationSuite(rls: boolean) {
     it('never reaches a private doc: scope is shared only', async () => {
       const app = freshApp('modpriv');
       await store.put(ctx(app, NS_PROD, VIEWER_1), PREFS, 'mine', { a: 1 });
-      expect(await store.moderation.get(app, NS_PROD, 'prefs', 'mine')).toBeNull();
-      await expectCode(
-        store.moderation.setHidden(app, NS_PROD, 'prefs', 'mine', true, MOD),
-        'not_found'
-      );
-      await expectCode(store.moderation.delete(app, NS_PROD, 'prefs', 'mine'), 'not_found');
+      expect(await mod.get(app, NS_PROD, 'prefs', 'mine')).toBeNull();
+      await expectCode(mod.setHidden(app, NS_PROD, 'prefs', 'mine', true, MOD), 'not_found');
+      await expectCode(mod.delete(app, NS_PROD, 'prefs', 'mine'), 'not_found');
       expect(await store.get(ctx(app, NS_PROD, VIEWER_1), PREFS, 'mine')).not.toBeNull();
     });
   });
@@ -210,9 +210,9 @@ function defineModerationSuite(rls: boolean) {
 
     it('a hidden doc is absent from get, getMany and every list shape; the visible control stays', async () => {
       const { app, v1 } = await seedHidden();
-      expect(
-        await store.moderation.setHidden(app, NS_PROD, 'posts', 'h1', true, MOD)
-      ).toMatchObject({ changed: true });
+      expect(await mod.setHidden(app, NS_PROD, 'posts', 'h1', true, MOD)).toMatchObject({
+        changed: true,
+      });
       expect(await store.get(v1, POSTS, 'h1')).toBeNull();
       expect(await store.get(v1, POSTS, 'v1')).not.toBeNull();
       expect((await store.getMany(v1, POSTS, ['h1', 'v1'])).map((d) => d?.key ?? null)).toEqual([
@@ -245,7 +245,7 @@ function defineModerationSuite(rls: boolean) {
 
     it('writes to a hidden key are refused as not_found; delete reports nothing deleted', async () => {
       const { app, v1 } = await seedHidden();
-      await store.moderation.setHidden(app, NS_PROD, 'posts', 'h1', true, MOD);
+      await mod.setHidden(app, NS_PROD, 'posts', 'h1', true, MOD);
       await expectCode(store.put(v1, POSTS, 'h1', { status: 'x' }), 'not_found');
       await expectCode(store.put(v1, POSTS, 'h1', { status: 'x' }, { ifVersion: 1 }), 'not_found');
       expect(await store.delete(v1, POSTS, 'h1')).toEqual({ deleted: false });
@@ -254,7 +254,7 @@ function defineModerationSuite(rls: boolean) {
       await expectCode(store.mark(ctx(app, NS_PROD, R2), POSTS, 'h1', 'report'), 'not_found');
       await expectCode(store.increment(v1, POSTS, 'h1', 'views'), 'not_found');
       // Nothing changed underneath.
-      const doc = await store.moderation.get(app, NS_PROD, 'posts', 'h1');
+      const doc = await mod.get(app, NS_PROD, 'posts', 'h1');
       expect(doc).toMatchObject({
         version: 1,
         counters: { views: 3 },
@@ -265,7 +265,7 @@ function defineModerationSuite(rls: boolean) {
     it('a hidden counter-collection key cannot be re-created by an increment', async () => {
       const app = freshApp('modhidectr');
       await store.increment(ctx(app, NS_PROD, VIEWER_2), TALLIES, 't', 'plays');
-      await store.moderation.setHidden(app, NS_PROD, 'tallies', 't', true, MOD);
+      await mod.setHidden(app, NS_PROD, 'tallies', 't', true, MOD);
       await expectCode(
         store.increment(ctx(app, NS_PROD, VIEWER_2), TALLIES, 't', 'plays'),
         'not_found'
@@ -280,16 +280,16 @@ function defineModerationSuite(rls: boolean) {
             .last_seq
         );
       const before = await lastSeq();
-      const hide = await store.moderation.setHidden(app, NS_PROD, 'posts', 'h1', true, MOD);
+      const hide = await mod.setHidden(app, NS_PROD, 'posts', 'h1', true, MOD);
       expect(hide).toEqual({ changed: true, seq: before + 1 });
-      expect(await store.moderation.setHidden(app, NS_PROD, 'posts', 'h1', true, MOD)).toEqual({
+      expect(await mod.setHidden(app, NS_PROD, 'posts', 'h1', true, MOD)).toEqual({
         changed: false,
         seq: null,
       });
       const tomb = await h.raw(`SELECT key, seq FROM appdata.doc_tomb WHERE app_id = $1`, [app]);
       expect(tomb.map((t) => [t.key, Number(t.seq)])).toEqual([['h1', before + 1]]);
 
-      const unhide = await store.moderation.setHidden(app, NS_PROD, 'posts', 'h1', false, MOD);
+      const unhide = await mod.setHidden(app, NS_PROD, 'posts', 'h1', false, MOD);
       expect(unhide).toEqual({ changed: true, seq: before + 2 });
       const [row] = await h.raw(
         `SELECT seq, hidden_at, hidden_by FROM appdata.doc WHERE app_id = $1 AND key = 'h1'`,
@@ -308,7 +308,7 @@ function defineModerationSuite(rls: boolean) {
         marks: { star: 1 },
       });
       expect(keysOf(await store.list(v1, POSTS, { sort: '-score' }))).toEqual(['v1', 'h1']);
-      expect(await store.moderation.setHidden(app, NS_PROD, 'posts', 'h1', false, MOD)).toEqual({
+      expect(await mod.setHidden(app, NS_PROD, 'posts', 'h1', false, MOD)).toEqual({
         changed: false,
         seq: null,
       });
@@ -318,16 +318,65 @@ function defineModerationSuite(rls: boolean) {
     it('hiding keeps the quota charge (the data is still stored)', async () => {
       const { app, v1 } = await seedHidden();
       const before = await store.usage(v1);
-      await store.moderation.setHidden(app, NS_PROD, 'posts', 'h1', true, MOD);
+      await mod.setHidden(app, NS_PROD, 'posts', 'h1', true, MOD);
       expect(await store.usage(v1)).toEqual(before);
     });
 
     it('an absent key is not_found', async () => {
       const app = freshApp('modabsent');
-      await expectCode(
-        store.moderation.setHidden(app, NS_PROD, 'posts', 'nope', true, MOD),
-        'not_found'
+      await expectCode(mod.setHidden(app, NS_PROD, 'posts', 'nope', true, MOD), 'not_found');
+    });
+  });
+
+  describe('dismissing reports', () => {
+    // PGlite's clock ticks in milliseconds, so a report and a dismissal in the same tick would
+    // share a timestamp; a real server ticks in microseconds. Step past a tick around each.
+    const tick = () => new Promise((r) => setTimeout(r, 5));
+
+    it("closes the open reports, keeps every reporter's own mark, and a NEW report re-opens it", async () => {
+      const app = freshApp('moddis');
+      await seedQueue(app);
+      await tick();
+      expect(await mod.dismissReports(app, NS_PROD, 'posts', 'p1')).toEqual({ dismissed: 3 });
+      await tick();
+      expect(await queue(app)).not.toContain('posts/p1:3');
+      const doc = (await mod.get(app, NS_PROD, 'posts', 'p1'))!;
+      expect({ open: doc.reports, total: doc.marks.report }).toEqual({ open: 0, total: 3 });
+      expect(doc.reportsDismissedAt).toBeInstanceOf(Date);
+      // A reporter still sees their own report, and re-reporting is not a new report.
+      expect((await store.get(ctx(app, NS_PROD, R1), POSTS, 'p1'))?.viewer?.marks).toContain(
+        'report'
       );
+      await store.mark(ctx(app, NS_PROD, R1), POSTS, 'p1', 'report');
+      expect(await queue(app)).not.toContain('posts/p1:1');
+      // A new reporter re-opens it with exactly the new report.
+      await report(app, POSTS, 'p1', R4);
+      expect(await queue(app)).toContain('posts/p1:1');
+    });
+
+    it('unhide does not re-surface dismissed reports', async () => {
+      const app = freshApp('moddisun');
+      await seedQueue(app);
+      await mod.setHidden(app, NS_PROD, 'posts', 'p1', true, MOD);
+      await tick();
+      await mod.dismissReports(app, NS_PROD, 'posts', 'p1');
+      await tick();
+      await mod.setHidden(app, NS_PROD, 'posts', 'p1', false, MOD);
+      expect(await queue(app, { status: 'all' })).not.toContain('posts/p1:3');
+      expect((await mod.get(app, NS_PROD, 'posts', 'p1'))!.reports).toBe(0);
+    });
+
+    it('is bound to the revision, and refuses a missing document', async () => {
+      const app = freshApp('moddisrev');
+      await seedQueue(app);
+      const seen = (await mod.get(app, NS_PROD, 'posts', 'p1'))!.revision;
+      await store.put(ctx(app, NS_PROD, VIEWER_1), POSTS, 'p1', { status: 'edited' });
+      await expectCode(
+        mod.dismissReports(app, NS_PROD, 'posts', 'p1', { ifRevision: seen }),
+        'version_conflict'
+      );
+      expect((await mod.get(app, NS_PROD, 'posts', 'p1'))!.reports).toBe(3);
+      await expectCode(mod.dismissReports(app, NS_PROD, 'posts', 'nope'), 'not_found');
     });
   });
 
@@ -336,37 +385,37 @@ function defineModerationSuite(rls: boolean) {
       const app = freshApp('modver');
       const v1 = ctx(app, NS_PROD, VIEWER_1);
       await store.put(v1, BOARD, 'x', { text: 'seen' });
-      const seen = (await store.moderation.get(app, NS_PROD, 'board', 'x'))!.revision;
+      const seen = (await mod.get(app, NS_PROD, 'board', 'x'))!.revision;
       await store.put(v1, BOARD, 'x', { text: 'edited after the moderator looked' });
       await expectCode(
-        store.moderation.setHidden(app, NS_PROD, 'board', 'x', true, MOD, { ifRevision: seen }),
+        mod.setHidden(app, NS_PROD, 'board', 'x', true, MOD, { ifRevision: seen }),
         'version_conflict'
       );
       await expectCode(
-        store.moderation.delete(app, NS_PROD, 'board', 'x', { ifRevision: seen }),
+        mod.delete(app, NS_PROD, 'board', 'x', { ifRevision: seen }),
         'version_conflict'
       );
       expect(await store.get(v1, BOARD, 'x')).toMatchObject({ version: 2 });
       expect(await h.raw(`SELECT 1 FROM appdata.doc_tomb WHERE app_id = $1`, [app])).toEqual([]);
       // Positive control: the current revision is accepted.
-      const current = (await store.moderation.get(app, NS_PROD, 'board', 'x'))!.revision;
-      expect(
-        await store.moderation.delete(app, NS_PROD, 'board', 'x', { ifRevision: current })
-      ).toMatchObject({ deleted: true });
+      const current = (await mod.get(app, NS_PROD, 'board', 'x'))!.revision;
+      expect(await mod.delete(app, NS_PROD, 'board', 'x', { ifRevision: current })).toMatchObject({
+        deleted: true,
+      });
     });
 
     it('a key deleted and re-created by its author is a new revision, though its version is 1 again', async () => {
       const app = freshApp('modaba');
       const v1 = ctx(app, NS_PROD, VIEWER_1);
       await store.put(v1, BOARD, 'x', { text: 'reported content' });
-      const seen = (await store.moderation.get(app, NS_PROD, 'board', 'x'))!;
+      const seen = (await mod.get(app, NS_PROD, 'board', 'x'))!;
       await store.delete(v1, BOARD, 'x');
       await store.put(v1, BOARD, 'x', { text: 'new content nobody reviewed' });
-      const now = (await store.moderation.get(app, NS_PROD, 'board', 'x'))!;
+      const now = (await mod.get(app, NS_PROD, 'board', 'x'))!;
       expect({ seen: seen.version, now: now.version }).toEqual({ seen: 1, now: 1 });
       expect(now.revision).not.toBe(seen.revision);
       await expectCode(
-        store.moderation.delete(app, NS_PROD, 'board', 'x', { ifRevision: seen.revision }),
+        mod.delete(app, NS_PROD, 'board', 'x', { ifRevision: seen.revision }),
         'version_conflict'
       );
       expect(await store.get(v1, BOARD, 'x')).toMatchObject({
@@ -390,7 +439,7 @@ function defineModerationSuite(rls: boolean) {
       const v1Before = (await store.usage(v1)).viewer!;
       const v2Before = (await store.usage(v2)).viewer!;
 
-      expect(await store.moderation.delete(app, NS_PROD, 'posts', 'd1')).toMatchObject({
+      expect(await mod.delete(app, NS_PROD, 'posts', 'd1')).toMatchObject({
         deleted: true,
         sizeBytes: OPEN5_BYTES,
       });
@@ -433,14 +482,14 @@ function defineModerationSuite(rls: boolean) {
         counters: { views: 0 },
         marks: { star: 0, vote: 0 },
       });
-      await expectCode(store.moderation.delete(app, NS_PROD, 'posts', 'nope'), 'not_found');
+      await expectCode(mod.delete(app, NS_PROD, 'posts', 'nope'), 'not_found');
     });
 
     it('a hidden doc can be deleted; the tombstone takes the delete seq', async () => {
       const app = freshApp('moddelhid');
       await store.put(ctx(app, NS_PROD, VIEWER_1), BOARD, 'x', { text: 'bad' });
-      await store.moderation.setHidden(app, NS_PROD, 'board', 'x', true, MOD);
-      const del = await store.moderation.delete(app, NS_PROD, 'board', 'x');
+      await mod.setHidden(app, NS_PROD, 'board', 'x', true, MOD);
+      const del = await mod.delete(app, NS_PROD, 'board', 'x');
       const tomb = await h.raw(`SELECT seq FROM appdata.doc_tomb WHERE app_id = $1 AND key = 'x'`, [
         app,
       ]);
@@ -453,7 +502,7 @@ function defineModerationSuite(rls: boolean) {
       const v2 = ctx(app, NS_PROD, VIEWER_2);
       await store.increment(v2, TALLIES, 't', 'plays', 5);
       expect((await store.usage(v2)).viewer?.docs).toBe(1);
-      await store.moderation.delete(app, NS_PROD, 'tallies', 't');
+      await mod.delete(app, NS_PROD, 'tallies', 't');
       expect((await store.usage(v2)).viewer).toEqual({ bytes: 0, docs: 0 });
       expect((await store.usage(v2)).app).toEqual({ bytes: 0, docs: 0 });
       await assertUsageConsistent(h, app, NS_PROD);
@@ -472,7 +521,7 @@ function defineModerationSuite(rls: boolean) {
       await store.put(ctx(b, NS_PROD, VIEWER_1), POSTS, 'only_b', { status: 'open' });
       await report(b, POSTS, 'only_b', R1, R2);
       const bSnapshot = async () => ({
-        doc: await store.moderation.get(b, NS_PROD, 'posts', 'same'),
+        doc: await mod.get(b, NS_PROD, 'posts', 'same'),
         usage: await store.usage(ctx(b, NS_PROD, VIEWER_1)),
         tombs: await h.raw(`SELECT key FROM appdata.doc_tomb WHERE app_id = $1`, [b]),
         queue: await queue(b),
@@ -481,17 +530,14 @@ function defineModerationSuite(rls: boolean) {
       expect(bBefore.queue).toEqual(['posts/only_b:2', 'posts/same:1']);
 
       expect(await queue(a)).toEqual(['posts/same:1']);
-      await store.moderation.setHidden(a, NS_PROD, 'posts', 'same', true, MOD);
+      await mod.setHidden(a, NS_PROD, 'posts', 'same', true, MOD);
       expect(await store.get(ctx(b, NS_PROD, VIEWER_1), POSTS, 'same')).not.toBeNull();
-      await expectCode(
-        store.moderation.setHidden(a, NS_PROD, 'posts', 'only_b', true, MOD),
-        'not_found'
-      );
-      await expectCode(store.moderation.delete(a, NS_PROD, 'posts', 'only_b'), 'not_found');
-      await store.moderation.delete(a, NS_PROD, 'posts', 'same');
+      await expectCode(mod.setHidden(a, NS_PROD, 'posts', 'only_b', true, MOD), 'not_found');
+      await expectCode(mod.delete(a, NS_PROD, 'posts', 'only_b'), 'not_found');
+      await mod.delete(a, NS_PROD, 'posts', 'same');
 
       expect(await bSnapshot()).toEqual(bBefore);
-      expect(await store.moderation.get(a, NS_PROD, 'posts', 'same')).toBeNull();
+      expect(await mod.get(a, NS_PROD, 'posts', 'same')).toBeNull();
       await assertUsageConsistent(h, a, NS_PROD);
       await assertUsageConsistent(h, b, NS_PROD);
     });
@@ -511,13 +557,14 @@ describe('runtime isolation shape of every moderation statement', () => {
     const statements = harnesses.flatMap((x) => x.statements);
     // Positive control: the recorder saw the assembled moderation SQL itself.
     expect(
-      statements.filter((s) => /FROM appdata\.doc_tally t\s+JOIN appdata\.doc d/.test(s.sql)).length
+      statements.filter((s) => /FROM appdata\.doc d\s+JOIN appdata\.doc_mark rm/.test(s.sql)).length
     ).toBeGreaterThan(10);
     expect(statements.filter((s) => /SET hidden_at = now\(\)/.test(s.sql)).length).toBeGreaterThan(
       5
     );
     expect(
-      statements.filter((s) => /ORDER BY t\.count DESC, d\.updated_at DESC/.test(s.sql)).length
+      statements.filter((s) => /ORDER BY count\(rm\.user_id\) DESC, d\.updated_at DESC/.test(s.sql))
+        .length
     ).toBeGreaterThan(0);
     expect(harnesses.flatMap((x) => x.violations)).toEqual([]);
   });

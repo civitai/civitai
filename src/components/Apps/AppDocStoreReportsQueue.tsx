@@ -22,15 +22,21 @@ import { trpc } from '~/utils/trpc';
 import type { RouterOutput } from '~/types/router';
 
 /**
- * `/apps/review` → "Storage reports": shared documents in the App Blocks document store that
- * viewers reported, across every app, with hide / unhide / delete (`apps.mod.docStore.*`).
- * Every action requires a reason, which is written to the moderation audit log. The list is
- * capped rather than paged; when it was cut off, it says so.
+ * `/apps/review` → "Storage reports": shared documents in the App Blocks document store with
+ * open reports, across every app (`apps.mod.docStore.*`). A moderator opens a document to
+ * review it, then hides / unhides it, dismisses its reports (reviewed and kept), or deletes it.
+ * Every action requires a reason, written to the moderation audit log.
+ *
+ * Actions live in the review dialog, not on the row, and send the revision of the document
+ * the dialog SHOWS: the store refuses them if the document changed since, so a moderator can
+ * never act on content they have not seen. The list is capped rather than paged; when it was
+ * cut off, or an app could not be read, it says so.
  */
 
 type Row = RouterOutput['apps']['mod']['docStore']['listReported']['items'][number];
+type Doc = RouterOutput['apps']['mod']['docStore']['get'];
 type Status = 'open' | 'hidden' | 'all';
-type Action = 'hide' | 'unhide' | 'delete';
+type Action = 'hide' | 'unhide' | 'dismiss' | 'delete';
 
 const DATE_FORMAT = 'MMM D, YYYY HH:mm';
 
@@ -53,8 +59,14 @@ export const DOC_STORE_ACTION_COPY: Record<
   unhide: {
     button: 'Unhide',
     title: 'Unhide this document?',
-    body: 'The app will read it again, with its counts.',
+    body: 'The app will read it again, with its counts. Dismissed reports stay dismissed.',
     done: 'Document unhidden',
+  },
+  dismiss: {
+    button: 'Dismiss reports',
+    title: 'Dismiss the reports on this document?',
+    body: 'You reviewed it and it stays. Its open reports are closed and it leaves the queue until someone reports it again.',
+    done: 'Reports dismissed',
   },
   delete: {
     button: 'Delete',
@@ -64,17 +76,34 @@ export const DOC_STORE_ACTION_COPY: Record<
   },
 };
 
+export const DOC_STORE_TRUNCATED_COPY =
+  'Not every reported document is shown: the list is capped per app and in total. Dismiss the reports on documents you reviewed and kept (or hide or delete the rest) and refresh to see more.';
+
 const targetOf = (row: Row) => ({
   appBlockId: row.appBlockId,
   collection: row.collection,
   key: row.key,
 });
 
-function DocDataModal({ row, onClose }: { row: Row | null; onClose: () => void }) {
+function ReviewModal({
+  row,
+  onClose,
+  onAction,
+}: {
+  row: Row | null;
+  onClose: () => void;
+  /** `doc` is the document as displayed; its revision is what the action is bound to. */
+  onAction: (doc: Doc, action: Action) => void;
+}) {
+  // Always fetched on open, never served from a cache the app otherwise keeps forever
+  // (`staleTime: Infinity`), so what is shown is what was just read.
   const doc = trpc.apps.mod.docStore.get.useQuery(row ? targetOf(row) : (undefined as never), {
     enabled: row != null,
     retry: false,
+    staleTime: 0,
+    refetchOnMount: 'always',
   });
+  const shown = doc.data;
   return (
     <Modal
       opened={row != null}
@@ -90,28 +119,49 @@ function DocDataModal({ row, onClose }: { row: Row | null; onClose: () => void }
         <Text c="red" size="sm">
           Could not load the document: {doc.error.message}
         </Text>
-      ) : doc.data ? (
-        <ScrollArea.Autosize mah={480}>
-          <Code block data-testid="doc-store-report-data">
-            {JSON.stringify(doc.data.data, null, 2)}
-          </Code>
-        </ScrollArea.Autosize>
+      ) : shown ? (
+        <Stack gap="sm">
+          <Group gap="md" wrap="wrap">
+            <Text size="xs" c="dimmed" data-testid="doc-store-review-revision">
+              Revision {shown.revision}
+            </Text>
+            <Text size="xs" c="dimmed">
+              {shown.reports} open report{shown.reports === 1 ? '' : 's'}
+            </Text>
+            {shown.reportsDismissedAt && (
+              <Text size="xs" c="dimmed">
+                Reports last dismissed {formatDate(shown.reportsDismissedAt, DATE_FORMAT)}
+              </Text>
+            )}
+            {doc.isFetching && <Loader size="xs" />}
+          </Group>
+          <ScrollArea.Autosize mah={420}>
+            <Code block data-testid="doc-store-report-data">
+              {JSON.stringify(shown.data, null, 2)}
+            </Code>
+          </ScrollArea.Autosize>
+          <Group justify="flex-end" gap="xs">
+            <Button
+              size="xs"
+              variant="default"
+              onClick={() => onAction(shown, shown.hidden ? 'unhide' : 'hide')}
+            >
+              {DOC_STORE_ACTION_COPY[shown.hidden ? 'unhide' : 'hide'].button}
+            </Button>
+            <Button size="xs" variant="default" onClick={() => onAction(shown, 'dismiss')}>
+              {DOC_STORE_ACTION_COPY.dismiss.button}
+            </Button>
+            <Button size="xs" color="red" variant="light" onClick={() => onAction(shown, 'delete')}>
+              {DOC_STORE_ACTION_COPY.delete.button}
+            </Button>
+          </Group>
+        </Stack>
       ) : null}
     </Modal>
   );
 }
 
-function ReportRow({
-  row,
-  busy,
-  onView,
-  onAction,
-}: {
-  row: Row;
-  busy: boolean;
-  onView: () => void;
-  onAction: (action: Action) => void;
-}) {
+function ReportRow({ row, onReview }: { row: Row; onReview: () => void }) {
   const author =
     row.author.kind === 'user'
       ? `${row.author.username ?? 'unknown'} (#${row.author.userId})`
@@ -144,28 +194,9 @@ function ReportRow({
               </Badge>
             )}
           </Group>
-          <Group gap="xs" wrap="nowrap">
-            <Button size="xs" variant="default" onClick={onView}>
-              View data
-            </Button>
-            <Button
-              size="xs"
-              variant="default"
-              loading={busy}
-              onClick={() => onAction(row.hidden ? 'unhide' : 'hide')}
-            >
-              {DOC_STORE_ACTION_COPY[row.hidden ? 'unhide' : 'hide'].button}
-            </Button>
-            <Button
-              size="xs"
-              color="red"
-              variant="light"
-              loading={busy}
-              onClick={() => onAction('delete')}
-            >
-              {DOC_STORE_ACTION_COPY.delete.button}
-            </Button>
-          </Group>
+          <Button size="xs" variant="default" onClick={onReview}>
+            Review
+          </Button>
         </Group>
         <Group gap="md" wrap="wrap">
           <Text size="xs" c="dimmed">
@@ -185,8 +216,8 @@ function ReportRow({
 
 export function AppDocStoreReportsQueue() {
   const [status, setStatus] = useState<Status>('open');
-  const [viewing, setViewing] = useState<Row | null>(null);
-  const [pending, setPending] = useState<{ row: Row; action: Action } | null>(null);
+  const [reviewing, setReviewing] = useState<Row | null>(null);
+  const [pending, setPending] = useState<{ row: Row; doc: Doc; action: Action } | null>(null);
   const [reason, setReason] = useState('');
 
   const utils = trpc.useUtils();
@@ -197,10 +228,16 @@ export function AppDocStoreReportsQueue() {
     setPending(null);
     setReason('');
   };
+  const refresh = () =>
+    Promise.all([
+      utils.apps.mod.docStore.listReported.invalidate(),
+      utils.apps.mod.docStore.get.invalidate(),
+    ]);
   const done = async (action: Action) => {
     showSuccessNotification({ message: DOC_STORE_ACTION_COPY[action].done });
     close();
-    await utils.apps.mod.docStore.listReported.invalidate();
+    setReviewing(null);
+    await refresh();
   };
   const failed = (error: { message: string }) => {
     showErrorNotification({
@@ -208,28 +245,33 @@ export function AppDocStoreReportsQueue() {
       error: new Error(error.message),
     });
     close();
-    void utils.apps.mod.docStore.listReported.invalidate();
+    void refresh();
   };
   const setHidden = trpc.apps.mod.docStore.setHidden.useMutation({
     onSuccess: (_data, vars) => done(vars.hidden ? 'hide' : 'unhide'),
+    onError: failed,
+  });
+  const dismiss = trpc.apps.mod.docStore.dismissReports.useMutation({
+    onSuccess: () => done('dismiss'),
     onError: failed,
   });
   const remove = trpc.apps.mod.docStore.delete.useMutation({
     onSuccess: () => done('delete'),
     onError: failed,
   });
-  const submitting = setHidden.isPending || remove.isPending;
+  const submitting = setHidden.isPending || dismiss.isPending || remove.isPending;
 
   const confirm = () => {
     if (!pending) return;
-    // `revision` ties the action to the state this row showed: a document edited (or deleted
-    // and re-created) since is refused (CONFLICT) instead of acted on unseen.
+    // The revision of the document the dialog DISPLAYED, not the list row's: a document that
+    // changed since is refused (CONFLICT) instead of acted on unseen.
     const input = {
       ...targetOf(pending.row),
-      revision: pending.row.revision,
+      revision: pending.doc.revision,
       reason: reason.trim(),
     };
     if (pending.action === 'delete') remove.mutate(input);
+    else if (pending.action === 'dismiss') dismiss.mutate(input);
     else setHidden.mutate({ ...input, hidden: pending.action === 'hide' });
   };
 
@@ -247,6 +289,14 @@ export function AppDocStoreReportsQueue() {
           w={200}
           data-testid="doc-store-reports-status"
         />
+        <Button
+          variant="default"
+          onClick={() => list.refetch()}
+          loading={list.isFetching}
+          data-testid="doc-store-reports-refresh"
+        >
+          Refresh
+        </Button>
       </Group>
 
       {list.isLoading ? (
@@ -262,10 +312,15 @@ export function AppDocStoreReportsQueue() {
         />
       ) : null}
 
+      {list.data && list.data.failedApps > 0 && (
+        <Alert color="red" variant="light" data-testid="doc-store-reports-failed-apps">
+          {list.data.failedApps} app{list.data.failedApps === 1 ? '' : 's'} could not be read, so
+          their reports are missing from this list. Refresh to try again.
+        </Alert>
+      )}
       {list.data?.truncated && (
         <Alert color="yellow" variant="light" data-testid="doc-store-reports-truncated">
-          Not every reported document is shown: the list is capped per app and in total. Hide or
-          delete the ones here, or narrow the status filter, to see the rest.
+          {DOC_STORE_TRUNCATED_COPY}
         </Alert>
       )}
 
@@ -279,15 +334,17 @@ export function AppDocStoreReportsQueue() {
             <ReportRow
               key={`${row.appBlockId}/${row.collection}/${row.key}`}
               row={row}
-              busy={submitting && pending?.row === row}
-              onView={() => setViewing(row)}
-              onAction={(action) => setPending({ row, action })}
+              onReview={() => setReviewing(row)}
             />
           ))}
         </Stack>
       )}
 
-      <DocDataModal row={viewing} onClose={() => setViewing(null)} />
+      <ReviewModal
+        row={reviewing}
+        onClose={() => setReviewing(null)}
+        onAction={(doc, action) => reviewing && setPending({ row: reviewing, doc, action })}
+      />
 
       <ReasonGatedActionModal
         opened={pending != null}

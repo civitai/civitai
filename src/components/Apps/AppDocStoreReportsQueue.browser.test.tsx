@@ -1,22 +1,27 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 import { renderWithProviders } from '../../../test/component-setup';
+import { makeTrpcProxy } from '../../../test/trpcProxyStub';
 import type * as NotificationsMod from '~/utils/notifications';
 import type * as TrpcMod from '~/utils/trpc';
-import { makeTrpcProxy } from '../../../test/trpcProxyStub';
 
-/** The `/apps/review` Storage reports tab: rows, filters → query input, hide/unhide/delete with a reason. */
+/**
+ * The `/apps/review` Storage reports tab against a REAL query cache configured like the
+ * app's (`staleTime: Infinity`). The component's own query and mutation options reach
+ * react-query untouched; only the network calls are replaced (`m.fetch*`, `m.send*`). That is
+ * what lets these tests see a review dialog serving a cached older document.
+ */
 
 type Row = Record<string, unknown>;
+type Doc = Record<string, unknown>;
 const m = vi.hoisted(() => ({
-  rows: [] as Row[],
-  truncated: false,
-  listInputs: [] as Record<string, unknown>[],
-  hideCalls: [] as Record<string, unknown>[],
-  deleteCalls: [] as Record<string, unknown>[],
-  getInputs: [] as Record<string, unknown>[],
-  invalidated: 0,
-  fail: null as null | { message: string; data: { code: string } },
+  listCalls: [] as Record<string, unknown>[],
+  listResult: { items: [] as Row[], truncated: false, failedApps: 0 },
+  fetchGet: null as unknown as (input: Record<string, unknown>) => Promise<Doc>,
+  getCalls: 0,
+  sent: [] as [string, Record<string, unknown>][],
+  fail: null as null | Error,
   errors: [] as string[],
   successes: [] as string[],
 }));
@@ -28,106 +33,91 @@ vi.mock('~/utils/notifications', async (importOriginal) => ({
 }));
 
 vi.mock('~/utils/trpc', async (importOriginal) => {
-  const mutation =
-    (calls: () => Record<string, unknown>[]) =>
-    (opts: {
-      onSuccess?: (d: unknown, v: Record<string, unknown>) => unknown;
-      onError?: (e: unknown) => unknown;
-    }) => ({
-      isPending: false,
-      variables: undefined,
-      mutate: (vars: Record<string, unknown>) => {
-        calls().push(vars);
-        if (m.fail) void opts.onError?.(m.fail);
-        else void opts.onSuccess?.(vars, vars);
-      },
-    });
-  // `makeTrpcProxy` resolves `router.procedure` paths only; this component's procedures sit
-  // four levels deep (`apps.mod.docStore.<proc>`), so that one subtree is a local proxy seeded
-  // with the measured procedures. Anything else under `apps` would be a fixture defect.
+  const { useQuery, useMutation, useQueryClient } = await import('@tanstack/react-query');
+  const LIST = ['docStore', 'listReported'];
+  const GET = ['docStore', 'get'];
+  const mutation = (name: string) => ({
+    useMutation: (options: Record<string, unknown>) =>
+      useMutation({
+        mutationFn: async (input: Record<string, unknown>) => {
+          m.sent.push([name, input]);
+          if (m.fail) throw m.fail;
+          return {};
+        },
+        ...options,
+      }),
+  });
+  // `makeTrpcProxy` resolves `router.procedure` paths only; these procedures sit four levels
+  // deep (`apps.mod.docStore.<proc>`), so that subtree is a local object seeded with exactly
+  // the procedures the component calls. Anything else under it is a fixture defect.
   const docStore: Record<string, unknown> = {
     listReported: {
-      useQuery: (input: Record<string, unknown>) => {
-        m.listInputs.push(input);
-        return {
-          data: { items: m.rows, truncated: m.truncated },
-          isLoading: false,
-          isFetching: false,
-          error: null,
-          refetch: vi.fn(),
-        };
-      },
+      useQuery: (input: Record<string, unknown>, options: Record<string, unknown>) =>
+        useQuery({
+          queryKey: [...LIST, input],
+          queryFn: async () => {
+            m.listCalls.push(input);
+            return m.listResult;
+          },
+          ...options,
+        }),
     },
     get: {
-      useQuery: (input: Record<string, unknown>, opts: { enabled?: boolean }) => {
-        if (opts?.enabled) m.getInputs.push(input);
-        return {
-          isLoading: false,
-          error: null,
-          data: opts?.enabled ? { data: { title: 'reported text zq77' } } : undefined,
-        };
-      },
+      useQuery: (input: Record<string, unknown>, options: Record<string, unknown>) =>
+        useQuery({
+          queryKey: [...GET, input],
+          queryFn: () => {
+            m.getCalls += 1;
+            return m.fetchGet(input);
+          },
+          ...options,
+        }),
     },
-    setHidden: { useMutation: mutation(() => m.hideCalls) },
-    delete: { useMutation: mutation(() => m.deleteCalls) },
+    setHidden: mutation('setHidden'),
+    dismissReports: mutation('dismissReports'),
+    delete: mutation('delete'),
   };
-  const apps = new Proxy(
-    {},
-    {
-      get: (_t, k) =>
-        k === 'mod'
-          ? new Proxy(
-              {},
-              {
-                get: (_t2, k2) =>
-                  k2 === 'docStore'
-                    ? new Proxy(docStore, {
-                        get: (t, proc: string) => {
-                          if (proc in t) return t[proc];
-                          throw new Error(`unmocked procedure apps.mod.docStore.${proc}`);
-                        },
-                      })
-                    : undefined,
-              }
-            )
-          : undefined,
-    }
-  );
+  const strict = (t: Record<string, unknown>, where: string) =>
+    new Proxy(t, {
+      get: (target, key: string) => {
+        if (key in target) return target[key];
+        throw new Error(`unmocked ${where}.${key}`);
+      },
+    });
   return {
     ...(await importOriginal<typeof TrpcMod>()),
     trpc: makeTrpcProxy(
       {},
       {
-        apps,
-        useUtils: () => ({
-          apps: {
-            mod: {
-              docStore: {
-                listReported: {
-                  invalidate: () => {
-                    m.invalidated += 1;
-                    return Promise.resolve();
-                  },
+        apps: { mod: { docStore: strict(docStore, 'apps.mod.docStore') } },
+        useUtils: () => {
+          const client = useQueryClient();
+          return {
+            apps: {
+              mod: {
+                docStore: {
+                  listReported: { invalidate: () => client.invalidateQueries({ queryKey: LIST }) },
+                  get: { invalidate: () => client.invalidateQueries({ queryKey: GET }) },
                 },
               },
             },
-          },
-        }),
+          };
+        },
       }
     ),
   };
 });
 
-const { AppDocStoreReportsQueue, DOC_STORE_ACTION_COPY } = await import(
+const { AppDocStoreReportsQueue, DOC_STORE_ACTION_COPY, DOC_STORE_TRUNCATED_COPY } = await import(
   './AppDocStoreReportsQueue'
 );
 
+const TARGET = { appBlockId: 'apb_ROW1', collection: 'posts', key: 'k-17' };
+
 function row(over: Row = {}): Row {
   return {
-    appBlockId: 'apb_ROW1',
+    ...TARGET,
     appSlug: 'pose-studio',
-    collection: 'posts',
-    key: 'k-17',
     reports: 4,
     createdAt: new Date('2026-10-01T10:00:00Z'),
     updatedAt: new Date('2026-10-02T10:00:00Z'),
@@ -140,122 +130,180 @@ function row(over: Row = {}): Row {
   };
 }
 
+function doc(revision: number, text: string, over: Doc = {}): Doc {
+  return {
+    ...TARGET,
+    appSlug: 'pose-studio',
+    data: { text },
+    revision,
+    version: 3,
+    reports: 4,
+    reportsDismissedAt: null,
+    hidden: null,
+    ...over,
+  };
+}
+
+/** The app's global query default, `staleTime: Infinity` (`src/utils/trpc.ts`). */
+function mount() {
+  const client = new QueryClient({
+    defaultOptions: { queries: { staleTime: Infinity, retry: false }, mutations: { retry: false } },
+  });
+  return renderWithProviders(
+    <QueryClientProvider client={client}>
+      <AppDocStoreReportsQueue />
+    </QueryClientProvider>
+  );
+}
+
+async function act(button: string, reason: string) {
+  await userEvent.click(page.getByRole('button', { name: button }));
+  await userEvent.fill(page.getByTestId('doc-store-report-reason'), reason);
+  await userEvent.click(page.getByTestId('doc-store-report-confirm'));
+}
+
 beforeEach(() => {
-  m.rows = [];
-  m.truncated = false;
-  m.listInputs = [];
-  m.hideCalls = [];
-  m.deleteCalls = [];
-  m.getInputs = [];
-  m.invalidated = 0;
+  m.listCalls = [];
+  m.listResult = { items: [], truncated: false, failedApps: 0 };
+  m.fetchGet = async () => doc(41, 'current text');
+  m.getCalls = 0;
+  m.sent = [];
   m.fail = null;
   m.errors = [];
   m.successes = [];
 });
 
-const TARGET = { appBlockId: 'apb_ROW1', collection: 'posts', key: 'k-17' };
-
 describe('AppDocStoreReportsQueue', () => {
-  test('a row shows the app, the document, the report count and its author for moderators', async () => {
-    m.rows = [row()];
-    renderWithProviders(<AppDocStoreReportsQueue />);
+  test('a row shows the app, the document, the report count and its author', async () => {
+    m.listResult.items = [row()];
+    mount();
     const r = page.getByTestId('doc-store-report-row');
     await expect.element(r).toHaveTextContent('pose-studio');
     await expect.element(r).toHaveTextContent('posts/k-17');
     await expect.element(r).toHaveTextContent('4 reports');
     await expect.element(r).toHaveTextContent('author-a (#31)');
-    await expect.element(r.getByRole('button', { name: 'Hide' })).toBeVisible();
-    expect(page.getByTestId('doc-store-report-hidden').elements()).toHaveLength(0);
+    expect(page.getByTestId('doc-store-reports-truncated').elements()).toHaveLength(0);
+    expect(page.getByTestId('doc-store-reports-failed-apps').elements()).toHaveLength(0);
   });
 
-  test('defaults the query to visible docs; no truncation notice when nothing was cut', async () => {
-    renderWithProviders(<AppDocStoreReportsQueue />);
-    await expect.element(page.getByTestId('doc-store-reports-queue')).toBeVisible();
-    expect(m.listInputs.at(-1)).toStrictEqual({ status: 'open' });
-    expect(page.getByTestId('doc-store-reports-truncated').elements()).toHaveLength(0);
+  test('defaults to visible docs; status and Refresh re-query', async () => {
+    mount();
     await expect
       .element(page.getByText('No reported documents match these filters.'))
       .toBeVisible();
-  });
-
-  test('changing the status re-queries with it', async () => {
-    renderWithProviders(<AppDocStoreReportsQueue />);
+    expect(m.listCalls).toStrictEqual([{ status: 'open' }]);
+    await userEvent.click(page.getByTestId('doc-store-reports-refresh'));
+    await expect.poll(() => m.listCalls.length).toBe(2);
     await userEvent.click(page.getByTestId('doc-store-reports-status'));
     await userEvent.click(page.getByRole('option', { name: 'Hidden' }));
-    await expect.poll(() => m.listInputs.at(-1)).toStrictEqual({ status: 'hidden' });
+    await expect.poll(() => m.listCalls.at(-1)).toStrictEqual({ status: 'hidden' });
   });
 
-  test('a truncated list says so plainly, above the rows', async () => {
-    m.rows = [row()];
-    m.truncated = true;
-    renderWithProviders(<AppDocStoreReportsQueue />);
+  test('a truncated list and an unreadable app are each said plainly', async () => {
+    m.listResult = { items: [row()], truncated: true, failedApps: 2 };
+    mount();
     await expect
       .element(page.getByTestId('doc-store-reports-truncated'))
-      .toHaveTextContent('Not every reported document is shown');
-    await expect.element(page.getByTestId('doc-store-report-row')).toBeVisible();
+      .toHaveTextContent(DOC_STORE_TRUNCATED_COPY);
+    await expect
+      .element(page.getByTestId('doc-store-reports-truncated'))
+      .toHaveTextContent('Dismiss the reports');
+    await expect
+      .element(page.getByTestId('doc-store-reports-failed-apps'))
+      .toHaveTextContent('2 apps could not be read');
   });
 
-  test('hide needs a reason, then sends the target and the reason, and refreshes the queue', async () => {
-    m.rows = [row()];
-    renderWithProviders(<AppDocStoreReportsQueue />);
-    await userEvent.click(page.getByRole('button', { name: 'Hide' }));
-    const confirm = page.getByTestId('doc-store-report-confirm');
-    await expect.element(confirm).toBeDisabled();
-    await userEvent.fill(page.getByTestId('doc-store-report-reason'), 'spam link');
-    await expect.element(confirm).toBeEnabled();
-    await userEvent.click(confirm);
-    expect(m.hideCalls).toStrictEqual([
-      { ...TARGET, revision: 41, reason: 'spam link', hidden: true },
+  test('🔴 a review showing a cached older document acts on THAT revision, never the newer one', async () => {
+    m.listResult.items = [row({ revision: 41 })];
+    m.fetchGet = async () => doc(40, 'what the moderator read');
+    mount();
+    await userEvent.click(page.getByRole('button', { name: 'Review' }));
+    await expect.element(page.getByTestId('doc-store-review-revision')).toHaveTextContent('40');
+    await userEvent.keyboard('{Escape}');
+
+    // The author edits; the next read never answers, so the dialog can only show its cache.
+    m.fetchGet = () => new Promise<Doc>(() => undefined);
+    await userEvent.click(page.getByRole('button', { name: 'Review' }));
+    // Re-read on open even under the app's `staleTime: Infinity` …
+    await expect.poll(() => m.getCalls).toBe(2);
+    // … and while that read is outstanding, what is shown is the cached revision 40.
+    await expect
+      .element(page.getByTestId('doc-store-report-data'))
+      .toHaveTextContent('what the moderator read');
+    await expect.element(page.getByTestId('doc-store-review-revision')).toHaveTextContent('40');
+    await act('Hide', 'spam link');
+    // Bound to what was displayed (40), not the list row (41): the server refuses it if the
+    // document moved on, so newer content is never hidden unseen.
+    expect(m.sent).toStrictEqual([
+      ['setHidden', { ...TARGET, revision: 40, reason: 'spam link', hidden: true }],
     ]);
-    expect(m.deleteCalls).toEqual([]);
-    expect(m.successes).toEqual([DOC_STORE_ACTION_COPY.hide.done]);
-    expect(m.invalidated).toBe(1);
   });
 
-  test('a hidden row offers Unhide, and unhide sends hidden: false', async () => {
-    m.rows = [row({ hidden: { at: new Date(), byUserId: 9, byUsername: 'mod-m' } })];
-    renderWithProviders(<AppDocStoreReportsQueue />);
+  test('hide needs a reason; success notifies', async () => {
+    m.listResult.items = [row()];
+    mount();
+    await userEvent.click(page.getByRole('button', { name: 'Review' }));
+    await userEvent.click(page.getByRole('button', { name: 'Hide' }));
+    await expect.element(page.getByTestId('doc-store-report-confirm')).toBeDisabled();
+    await userEvent.fill(page.getByTestId('doc-store-report-reason'), 'spam link');
+    await userEvent.click(page.getByTestId('doc-store-report-confirm'));
+    await expect.poll(() => m.successes).toEqual([DOC_STORE_ACTION_COPY.hide.done]);
+    expect(m.sent).toStrictEqual([
+      ['setHidden', { ...TARGET, revision: 41, reason: 'spam link', hidden: true }],
+    ]);
+  });
+
+  test('a hidden document offers Unhide, which sends hidden: false', async () => {
+    m.listResult.items = [row({ hidden: { at: new Date(), byUserId: 9, byUsername: 'mod-m' } })];
+    m.fetchGet = async () => doc(41, 'x', { hidden: { at: new Date(), byUserId: 9 } });
+    mount();
     await expect
       .element(page.getByTestId('doc-store-report-hidden'))
       .toHaveTextContent('Hidden by mod-m');
-    await userEvent.click(page.getByRole('button', { name: 'Unhide' }));
-    await userEvent.fill(page.getByTestId('doc-store-report-reason'), 'reviewed, fine');
-    await userEvent.click(page.getByTestId('doc-store-report-confirm'));
-    expect(m.hideCalls).toStrictEqual([
-      { ...TARGET, revision: 41, reason: 'reviewed, fine', hidden: false },
-    ]);
-    expect(m.successes).toEqual([DOC_STORE_ACTION_COPY.unhide.done]);
+    await userEvent.click(page.getByRole('button', { name: 'Review' }));
+    await act('Unhide', 'reviewed, fine');
+    await expect
+      .poll(() => m.sent)
+      .toStrictEqual([
+        ['setHidden', { ...TARGET, revision: 41, reason: 'reviewed, fine', hidden: false }],
+      ]);
   });
 
-  test('delete confirms with its own copy and calls delete, not setHidden', async () => {
-    m.rows = [row()];
-    renderWithProviders(<AppDocStoreReportsQueue />);
+  test('Dismiss reports calls dismissReports with the displayed revision', async () => {
+    m.listResult.items = [row()];
+    mount();
+    await userEvent.click(page.getByRole('button', { name: 'Review' }));
+    await act('Dismiss reports', 'reviewed, within the rules');
+    await expect
+      .poll(() => m.sent)
+      .toStrictEqual([
+        ['dismissReports', { ...TARGET, revision: 41, reason: 'reviewed, within the rules' }],
+      ]);
+    await expect.poll(() => m.successes).toEqual([DOC_STORE_ACTION_COPY.dismiss.done]);
+  });
+
+  test('delete confirms with its own copy and calls delete', async () => {
+    m.listResult.items = [row()];
+    mount();
+    await userEvent.click(page.getByRole('button', { name: 'Review' }));
     await userEvent.click(page.getByRole('button', { name: 'Delete' }));
     await expect.element(page.getByText(DOC_STORE_ACTION_COPY.delete.title)).toBeVisible();
     await userEvent.fill(page.getByTestId('doc-store-report-reason'), 'illegal content');
     await userEvent.click(page.getByTestId('doc-store-report-confirm'));
-    expect(m.deleteCalls).toStrictEqual([{ ...TARGET, revision: 41, reason: 'illegal content' }]);
-    expect(m.hideCalls).toEqual([]);
-  });
-
-  test('a refused action is reported and the queue is refreshed', async () => {
-    m.rows = [row()];
-    m.fail = { message: 'document not found', data: { code: 'NOT_FOUND' } };
-    renderWithProviders(<AppDocStoreReportsQueue />);
-    await userEvent.click(page.getByRole('button', { name: 'Hide' }));
-    await userEvent.fill(page.getByTestId('doc-store-report-reason'), 'spam link');
-    await userEvent.click(page.getByTestId('doc-store-report-confirm'));
-    expect(m.errors).toEqual(['document not found']);
-    expect(m.invalidated).toBe(1);
-  });
-
-  test('View data loads the one document and shows it', async () => {
-    m.rows = [row()];
-    renderWithProviders(<AppDocStoreReportsQueue />);
-    await userEvent.click(page.getByRole('button', { name: 'View data' }));
     await expect
-      .element(page.getByTestId('doc-store-report-data'))
-      .toHaveTextContent('reported text zq77');
-    expect(m.getInputs.at(-1)).toStrictEqual(TARGET);
+      .poll(() => m.sent)
+      .toStrictEqual([['delete', { ...TARGET, revision: 41, reason: 'illegal content' }]]);
+  });
+
+  test('a refused action is reported and the queue is re-read', async () => {
+    m.listResult.items = [row()];
+    m.fail = new Error('document changed since it was read; reload and retry');
+    mount();
+    await userEvent.click(page.getByRole('button', { name: 'Review' }));
+    await act('Hide', 'spam link');
+    await expect
+      .poll(() => m.errors)
+      .toEqual(['document changed since it was read; reload and retry']);
+    await expect.poll(() => m.listCalls.length).toBe(2);
   });
 });
