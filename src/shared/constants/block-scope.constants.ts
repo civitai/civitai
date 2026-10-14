@@ -455,8 +455,8 @@ export const BLOCK_BUZZ_CAP_PER_DAY = 50_000;
  * The most a block token's per-call `buzzBudget` claim may be, for an install token
  * and a pre-approval (dev / private-run / review) token alike. It bounds one
  * generation only. A multi-step (`kind: 'workflow'`) call is bounded in TOTAL at this
- * budget times its step count; no single step is held to the budget. Total spend is
- * bounded by
+ * budget times its step count, and at `BLOCK_WORKFLOW_MAX_BUZZ_PER_CALL` whatever the
+ * budget; no single step is held to the budget. Total spend is bounded by
  * `BLOCK_BUZZ_CAP_PER_DAY`, `PRIVATE_RUN_BUZZ_CAP`, `REVIEW_RUN_FOR_REAL_BUZZ_CAP`,
  * the dev-tunnel session cap and the per-app caps.
  *
@@ -471,6 +471,13 @@ export const BLOCK_BUZZ_CAP_PER_DAY = 50_000;
  * a confirmed step — every price a confirm could cover already fits the budget.
  */
 export const BUZZ_BUDGET_CAP = 5000;
+
+/**
+ * The most ONE multi-step (`kind: 'workflow'`) call may cost in total, author fee
+ * included, whatever the token's budget and step count. Without it that call's ceiling
+ * is the budget times its step count, so it would rise with `BUZZ_BUDGET_CAP`.
+ */
+export const BLOCK_WORKFLOW_MAX_BUZZ_PER_CALL = 8000;
 
 /**
  * The per-call budget a token gets when nothing declares one (manifest

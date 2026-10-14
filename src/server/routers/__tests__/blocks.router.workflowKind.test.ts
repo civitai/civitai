@@ -1115,6 +1115,126 @@ describe("kind:'workflow' SUBMIT — the money path", () => {
     expect(allowed.snapshot.workflowId).toBe(WORKFLOW_ID);
   });
 
+  // One multi-step call is bounded at 8000 Buzz in total whatever the budget. Budgets
+  // here overshoot that bound without their ceiling being a multiple of it: 1301 x 8 is
+  // 10408 and 5000 x 8 is 40000 (the per-call cap), 5000 x 2 is 10000.
+  describe('the 8000 Buzz bound on one multi-step call', () => {
+    const stepsOf = (n: number) =>
+      body({
+        steps: Array.from({ length: n }, () => ({ $type: 'echo', input: {} })),
+        arguments: undefined,
+      });
+    const withBudget = (buzzBudget: number) =>
+      h.authorize.mockImplementation(async () => claims({ buzzBudget }));
+    const unquoted = () => {
+      whatifError = new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'upstream down' });
+      annotateOrchestratorSubmitFailure(whatifError, { status: 503, attempt: 3 });
+      realizedCost = { total: 20, base: 20 };
+    };
+    const noFee = () => h.authorFeeFlag.mockImplementation(async () => false);
+
+    it.each([
+      // budget, steps, reserved, per-step timeout (seconds)
+      [5000, 8, 8000, 1000],
+      [1301, 8, 8000, 1000],
+      [5000, 2, 8000, 4000],
+      [5000, 3, 8000, 2666],
+    ])(
+      'an unquoted call at budget %i x %i steps reserves %i, and each step times out at %is',
+      async (budget, steps, reserved, timeout) => {
+        withBudget(budget);
+        unquoted();
+        const { snapshot } = await submit(stepsOf(steps));
+        expect(snapshot.workflowId).toBe(WORKFLOW_ID);
+        expect(counter(USER_CAP)).toBe(reserved);
+        const sent = realSubmits()[0].body.steps;
+        expect(sent).toHaveLength(steps);
+        for (const step of sent) expect(step.timeout).toBe(formatStepTimeout(timeout));
+      }
+    );
+
+    it.each([
+      // Under the bound the ceiling is still budget x steps, and the timeout the budget.
+      [1000, 8, 8000, 1000],
+      [5000, 1, 5000, 5000],
+      [999, 8, 7992, 999],
+    ])(
+      'an unquoted call at budget %i x %i steps reserves %i (the bound does not bind) [INV]',
+      async (budget, steps, reserved, timeout) => {
+        withBudget(budget);
+        unquoted();
+        await submit(stepsOf(steps));
+        expect(counter(USER_CAP)).toBe(reserved);
+        for (const step of realSubmits()[0].body.steps) {
+          expect(step.timeout).toBe(formatStepTimeout(timeout));
+        }
+      }
+    );
+
+    it.each([[8001], [9301], [39999]])(
+      'a call priced at %i is refused, naming the 8000 limit, at budget 5000 x 8 steps',
+      async (total) => {
+        withBudget(5000);
+        noFee();
+        whatifCost = { total, base: total };
+        const { snapshot } = await submit(stepsOf(8));
+        expect(snapshot).toEqual({
+          workflowId: 'failed',
+          status: 'failed',
+          cost: { total, authorFee: 0 },
+          error: `insufficient buzz budget: workflow price ${total} exceeds the limit of 8000 Buzz for one multi-step call`,
+        });
+        expect(realSubmits()).toHaveLength(0);
+        expect(counter(USER_CAP)).toBe(0);
+        expect(h.reserveAppSpend).not.toHaveBeenCalled();
+      }
+    );
+
+    it('a call priced at exactly 8000 is accepted at budget 5000 x 8 steps', async () => {
+      withBudget(5000);
+      noFee();
+      whatifCost = { total: 8000, base: 8000 };
+      realizedCost = { total: 8000, base: 8000 };
+      const { snapshot } = await submit(stepsOf(8));
+      expect(snapshot.workflowId).toBe(WORKFLOW_ID);
+      expect(counter(USER_CAP)).toBe(8000);
+    });
+
+    it('the author fee counts toward the 8000: 7900 + a 5% fee is refused', async () => {
+      withBudget(5000);
+      whatifCost = { total: 7900, base: 7900 };
+      const { snapshot } = await submit(stepsOf(8));
+      expect(snapshot.cost).toEqual({ total: 8295, authorFee: 395 });
+      expect(snapshot.error).toBe(
+        'insufficient buzz budget: workflow price 8295 exceeds the limit of 8000 Buzz for one multi-step call'
+      );
+    });
+
+    it('a one-step call is held to its budget, not to the 8000 limit', async () => {
+      withBudget(5000);
+      noFee();
+      whatifCost = { total: 5001, base: 5001 };
+      const refused = await submit(stepsOf(1));
+      expect(refused.snapshot.error).toBe(
+        'insufficient buzz budget: workflow price 5001 exceeds budget 5000 (1 steps at 5000 each)'
+      );
+      whatifCost = { total: 5000, base: 5000 };
+      realizedCost = { total: 5000, base: 5000 };
+      const allowed = await submit(stepsOf(1));
+      expect(allowed.snapshot.workflowId).toBe(WORKFLOW_ID);
+    });
+
+    it('under the bound the refusal still names the budget [INV]', async () => {
+      withBudget(999);
+      noFee();
+      whatifCost = { total: 7993, base: 7993 };
+      const { snapshot } = await submit(stepsOf(8));
+      expect(snapshot.error).toBe(
+        'insufficient buzz budget: workflow price 7993 exceeds budget 7992 (8 steps at 999 each)'
+      );
+    });
+  });
+
   it('🔴 an UNQUOTED workflow proceeds, reserved at the ceiling, with no fee', async () => {
     whatifError = new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'upstream down' });
     annotateOrchestratorSubmitFailure(whatifError, { status: 503, attempt: 3 });

@@ -6,6 +6,7 @@ import {
   manifestWantsOauthToken,
   assertSensitiveScopesJustified,
   BLOCK_SCOPE_TO_OAUTH_BIT,
+  BLOCK_WORKFLOW_MAX_BUZZ_PER_CALL,
   BUZZ_BUDGET_CAP,
   BUZZ_BUDGET_DEFAULT,
   deriveOauthBitmaskFromBlockScopes,
@@ -27,6 +28,10 @@ describe('the per-call Buzz budget', () => {
   it('caps at 5000 and defaults to 1000', () => {
     expect(BUZZ_BUDGET_CAP).toBe(5000);
     expect(BUZZ_BUDGET_DEFAULT).toBe(1000);
+  });
+
+  it('one multi-step call is bounded at 8000', () => {
+    expect(BLOCK_WORKFLOW_MAX_BUZZ_PER_CALL).toBe(8000);
   });
 
   // 6301 overshoots the cap without being a multiple of it, so a mutant that drops
