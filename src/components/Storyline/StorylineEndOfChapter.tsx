@@ -95,7 +95,7 @@ export function StorylineEndOfChapter({
 
   return (
     <div
-      className="absolute inset-0 z-20 overflow-y-auto bg-white p-4 pt-14 @md:p-7 @md:pt-14 dark:bg-dark-7"
+      className="absolute inset-0 z-20 overflow-y-auto bg-white p-4 @md:p-7 dark:bg-dark-7"
       data-testid="storyline-end-of-chapter"
     >
       <div className="mx-auto flex max-w-3xl flex-col gap-4">

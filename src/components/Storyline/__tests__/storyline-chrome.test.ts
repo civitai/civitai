@@ -15,16 +15,23 @@ import {
 
 const mocks = vi.hoisted(() => ({
   pathChildren: new Map<number, unknown[]>(),
+  ahead: [] as unknown[],
+  aheadLoading: false,
   shares: undefined as undefined | { total: number; shares: Record<number, number> },
+  mobile: false,
 }));
 
 vi.mock('~/components/Storyline/storyline.queries', async (importOriginal) => ({
   ...(await importOriginal<typeof QueriesModule>()),
   useStorylinePathChildren: () => mocks.pathChildren,
-  useStorylineCanonAhead: () => ({ ahead: [], childrenByChapterId: new Map(), isLoading: false }),
+  useStorylineCanonAhead: () => ({
+    ahead: mocks.ahead,
+    childrenByChapterId: new Map(),
+    isLoading: mocks.aheadLoading,
+  }),
   useStorylineForkShares: () => ({ data: mocks.shares }),
 }));
-vi.mock('~/hooks/useIsMobile', () => ({ useIsMobile: () => false }));
+vi.mock('~/hooks/useIsMobile', () => ({ useIsMobile: () => mocks.mobile }));
 
 function render(element: ReturnType<typeof createElement>) {
   const container = document.createElement('div');
@@ -40,43 +47,47 @@ function render(element: ReturnType<typeof createElement>) {
 beforeEach(() => {
   document.body.innerHTML = '';
   mocks.pathChildren = new Map();
+  mocks.ahead = [];
+  mocks.aheadLoading = false;
   mocks.shares = undefined;
+  mocks.mobile = false;
 });
 
-function openDrawer(chapterIds = [1]) {
+const text = (el: Element | null | undefined) => el?.textContent?.replace(/\s/g, ' ');
+const q = (testId: string) => document.body.querySelector<HTMLElement>(`[data-testid="${testId}"]`);
+const chapter = (chapterId: number, depth: number, title: string | null = `Ch ${chapterId}`) => ({
+  chapterId,
+  depth,
+  tombstone: title === null ? 'removed' : null,
+  post: title === null ? null : { id: chapterId * 10, title, userId: 3, username: 'u' },
+});
+
+function openMap({ chapterIds = [1], current = chapterIds[0] } = {}) {
   const storyline = {
     path: {
       storyline: { id: 2, title: 'The Patch' },
-      chapters: chapterIds.map((chapterId, depth) => ({
-        chapterId,
-        depth,
-        post: null,
-        tombstone: null,
-      })),
+      chapters: chapterIds.map((id, depth) => chapter(id, depth)),
     },
     drawerOpen: true,
     setDrawerOpen: vi.fn(),
     jumpToChapter: vi.fn(),
     continueTo: vi.fn(),
+    leave: vi.fn(),
   } as unknown as ActiveStorylineMode;
-  render(createElement(StorylineDrawer, { storyline, currentChapterId: 1 }));
+  render(createElement(StorylineDrawer, { storyline, currentChapterId: current }));
   return storyline;
 }
 
 const branch = (chapterId: number) => ({
-  chapterId,
-  depth: 1,
+  ...chapter(chapterId, 1, `Way ${chapterId}`),
   rank: 'community',
-  tombstone: null,
-  post: { id: chapterId * 10, title: `Way ${chapterId}`, userId: 3, username: 'u' },
 });
 
 describe('StorylinePill', () => {
   it('names the storyline and the chapter, not the word Storyline', () => {
     const c = render(createElement(StorylinePill, { title: 'The Patch', depth: 2 }));
-    const text = c.querySelector('[data-testid="storyline-pill"]')?.textContent;
     // The separator sits after a no-break space, so it never starts a line of its own.
-    expect(text?.replace(/\s/g, ' ')).toBe('The Patch · Ch 3');
+    expect(text(c.querySelector('[data-testid="storyline-pill"]'))).toBe('The Patch · Ch 3');
   });
 
   it('truncates only the title, so the chapter stays readable', () => {
@@ -89,15 +100,13 @@ describe('StorylinePill', () => {
   });
 });
 
-const text = (el: Element | null | undefined) => el?.textContent?.replace(/\s/g, ' ');
-
 describe('StorylineModeChip', () => {
-  function renderChip(title = 'The Patch') {
-    const onOpenMap = vi.fn();
-    const onLeave = vi.fn();
-    const c = render(createElement(StorylineModeChip, { title, depth: 3, onOpenMap, onLeave }));
-    const chip = c.querySelector('[data-testid="storyline-mode-chip"]');
-    return { chip, onOpenMap, onLeave };
+  function renderChip(mapOpen = false) {
+    const onToggleMap = vi.fn();
+    const c = render(
+      createElement(StorylineModeChip, { title: 'The Patch', depth: 3, mapOpen, onToggleMap })
+    );
+    return { chip: c.querySelector('[data-testid="storyline-mode-chip"]'), onToggleMap };
   }
 
   // No "of M": the path's length reads as the story ending at a fork. The map carries the length.
@@ -106,13 +115,15 @@ describe('StorylineModeChip', () => {
     expect(text(chip?.querySelector('[data-testid="storyline-pill"]'))).toBe('The Patch · Ch 4');
   });
 
-  it('opens the map from the name and leaves from the x, each on its own', () => {
-    const { chip, onOpenMap, onLeave } = renderChip();
-    act(() => chip?.querySelector<HTMLElement>('[data-testid="storyline-pill"]')?.click());
-    expect([onOpenMap.mock.calls.length, onLeave.mock.calls.length]).toEqual([1, 0]);
-    const leave = chip?.querySelector<HTMLElement>('[aria-label="Leave the storyline"]');
-    act(() => leave?.click());
-    expect([onOpenMap.mock.calls.length, onLeave.mock.calls.length]).toEqual([1, 1]);
+  // Justin chose no x on the chip: leaving lives in the map's header.
+  it('toggles the map and has no leave control of its own', () => {
+    const { chip, onToggleMap } = renderChip(true);
+    const pill = chip?.querySelector<HTMLElement>('[data-testid="storyline-pill"]');
+    expect(pill?.getAttribute('aria-expanded')).toBe('true');
+    act(() => pill?.click());
+    expect([onToggleMap.mock.calls.length, chip?.querySelectorAll('button').length]).toEqual([
+      1, 1,
+    ]);
   });
 });
 
@@ -127,36 +138,131 @@ describe('StorylineEntryChip', () => {
   });
 });
 
-describe('StorylineDrawer', () => {
-  it('does not gray out the page behind it', () => {
+describe('the map on desktop: a flyout with no backdrop', () => {
+  it('opens beside the image with nothing covering the page', () => {
+    openMap();
+    expect([
+      !!q('storyline-map-flyout'),
+      !!document.body.querySelector('.mantine-Drawer-overlay, .mantine-Overlay-root'),
+    ]).toEqual([true, false]);
+  });
+
+  it('tucks back on Esc and on a press outside it, but not on a press inside it', () => {
+    const storyline = openMap();
+    act(() => q('storyline-subway')?.dispatchEvent(new Event('pointerdown', { bubbles: true })));
+    expect(storyline.setDrawerOpen).not.toHaveBeenCalled();
+    act(() => document.body.dispatchEvent(new Event('pointerdown', { bubbles: true })));
+    act(() => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })));
+    expect((storyline.setDrawerOpen as ReturnType<typeof vi.fn>).mock.calls).toEqual([
+      [false],
+      [false],
+    ]);
+  });
+
+  it('leaves the press on the chip to the chip, which toggles the map itself', () => {
+    const storyline = openMap();
+    const chip = document.createElement('div');
+    chip.setAttribute('data-storyline-map-keep', '');
+    document.body.appendChild(chip);
+    act(() => chip.dispatchEvent(new Event('pointerdown', { bubbles: true })));
+    expect(storyline.setDrawerOpen).not.toHaveBeenCalled();
+  });
+
+  it('renders nothing while closed', () => {
     const storyline = {
-      path: {
-        storyline: { id: 2, title: 'The Patch' },
-        chapters: [{ chapterId: 1, depth: 0, post: null, tombstone: null }],
-      },
-      drawerOpen: true,
+      path: { storyline: { id: 2, title: 'The Patch' }, chapters: [chapter(1, 0)] },
+      drawerOpen: false,
       setDrawerOpen: vi.fn(),
-      jumpToChapter: vi.fn(),
-      continueTo: vi.fn(),
     } as unknown as ActiveStorylineMode;
     render(createElement(StorylineDrawer, { storyline, currentChapterId: 1 }));
-    const overlay = document.body.querySelector<HTMLElement>('.mantine-Drawer-overlay');
-    expect(overlay).not.toBeNull();
+    expect(q('storyline-map-flyout')).toBeNull();
+  });
+});
+
+describe('the map on a phone: a bottom sheet that does not dim the page', () => {
+  it('opens as a sheet with no overlay', () => {
+    mocks.mobile = true;
+    openMap();
     expect([
-      overlay?.style.getPropertyValue('--overlay-bg'),
-      overlay?.style.getPropertyValue('--overlay-filter'),
-    ]).toEqual(['rgba(0, 0, 0, 0)', '']);
-    act(() => overlay?.click());
-    expect(storyline.setDrawerOpen).toHaveBeenCalledWith(false);
+      !!q('storyline-subway'),
+      !!q('storyline-map-flyout'),
+      !!document.body.querySelector('.mantine-Drawer-overlay'),
+    ]).toEqual([true, false, false]);
+  });
+});
+
+describe('the map', () => {
+  it('names the storyline and where the reader is on the canon line', () => {
+    mocks.ahead = [chapter(3, 2), chapter(4, 3)];
+    openMap({ chapterIds: [1, 2], current: 2 });
+    expect([text(q('storyline-map-title')), text(q('storyline-map-position'))]).toEqual([
+      'The Patch',
+      'Chapter 2 of 4',
+    ]);
+  });
+
+  it('gives no total while the canon line is still being read', () => {
+    mocks.aheadLoading = true;
+    openMap({ chapterIds: [1, 2], current: 2 });
+    expect(text(q('storyline-map-position'))).toBe('Chapter 2');
+  });
+
+  it('marks where the reader is', () => {
+    openMap({ chapterIds: [1, 2], current: 2 });
+    const stops = [...document.body.querySelectorAll('[data-testid="storyline-stop"]')];
+    expect(stops.map((s) => s.getAttribute('aria-current'))).toEqual([null, 'step']);
+    expect(stops[1].textContent).toContain('YOU ARE HERE');
+  });
+
+  it('reads on to the next chapter from the footer', () => {
+    mocks.ahead = [chapter(3, 2)];
+    const storyline = openMap({ chapterIds: [1, 2], current: 1 });
+    expect(text(q('storyline-map-read-next'))).toBe('Read chapter 2');
+    act(() => q('storyline-map-read-next')?.click());
+    expect((storyline.jumpToChapter as ReturnType<typeof vi.fn>).mock.calls).toEqual([[2]]);
+  });
+
+  it('continues onto the canon line ahead from the footer at the end of the path', () => {
+    mocks.ahead = [chapter(3, 2)];
+    const storyline = openMap({ chapterIds: [1, 2], current: 2 });
+    act(() => q('storyline-map-read-next')?.click());
+    expect(
+      (storyline.continueTo as ReturnType<typeof vi.fn>).mock.calls.map(([c, o]) => [
+        c.chapterId,
+        o,
+      ])
+    ).toEqual([[3, { track: false }]]);
+  });
+
+  it('links to the story page, and has no Read when there is nothing after', () => {
+    openMap();
+    expect([
+      q('storyline-map-story-page')?.getAttribute('href'),
+      q('storyline-map-read-next'),
+    ]).toEqual(['/storylines/2', null]);
+  });
+
+  it('leaves the storyline from its header', () => {
+    const storyline = openMap();
+    act(() => q('storyline-leave')?.click());
+    expect(storyline.leave).toHaveBeenCalledTimes(1);
   });
 
   it('shows the share of each way off the end from the first choice', () => {
     mocks.pathChildren = new Map([[1, [branch(2), branch(3)]]]);
     mocks.shares = { total: 4, shares: { 2: 0.75 } };
-    openDrawer();
+    openMap();
     const rows = [...document.body.querySelectorAll('[data-testid="storyline-branch"]')];
-    expect(rows.map((r) => r.textContent)).toEqual(['Way 275%', 'Way 30%']);
-    expect(document.body.querySelector('[data-testid="storyline-shares-pending"]')).toBeNull();
+    expect(
+      rows.map((r) => [
+        r.querySelector('[data-testid="storyline-branch-name"]')?.textContent,
+        r.querySelector('[data-testid="storyline-branch-share"]')?.textContent,
+      ])
+    ).toEqual([
+      ['Way 2', '75%'],
+      ['Way 3', '0%'],
+    ]);
+    expect(q('storyline-shares-pending')).toBeNull();
   });
 
   it('shows shares only where the path ends, not on branches left behind', () => {
@@ -165,20 +271,20 @@ describe('StorylineDrawer', () => {
       [2, [branch(3)]],
     ]);
     mocks.shares = { total: 4, shares: { 3: 1 } };
-    openDrawer([1, 2]);
+    openMap({ chapterIds: [1, 2] });
     const rows = [...document.body.querySelectorAll('[data-testid="storyline-branch"]')];
-    expect(rows.map((r) => r.textContent)).toEqual(['Way 5', 'Way 3100%']);
+    expect(
+      rows.map((r) => r.querySelector('[data-testid="storyline-branch-share"]')?.textContent ?? null)
+    ).toEqual([null, '100%']);
   });
 
   it('invites the first choice when nobody has chosen', () => {
     mocks.pathChildren = new Map([[1, [branch(2)]]]);
     mocks.shares = { total: 0, shares: {} };
-    openDrawer();
-    expect(
-      document.body.querySelector('[data-testid="storyline-shares-pending"]')?.textContent
-    ).toBe('Be the first to choose');
-    expect(document.body.querySelector('[data-testid="storyline-branch"]')?.textContent).toBe(
-      'Way 2'
-    );
+    openMap();
+    expect([
+      q('storyline-shares-pending')?.textContent,
+      q('storyline-branch-share'),
+    ]).toEqual(['Be the first to choose', null]);
   });
 });

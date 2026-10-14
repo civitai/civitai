@@ -33,7 +33,10 @@ import {
   IconShare3,
 } from '@tabler/icons-react';
 import { useEffect, useMemo, useRef } from 'react';
-import { StorylineStageOverlay } from '~/components/Storyline/StorylineDetail';
+import {
+  StorylineStageOverlay,
+  StorylineToolbarChip,
+} from '~/components/Storyline/StorylineDetail';
 import { useStorylineMode } from '~/components/Storyline/StorylineModeProvider';
 import {
   getStorylineStep,
@@ -254,7 +257,8 @@ export function ImageDetail2() {
     ? IconLayoutSidebarRightExpand
     : IconLayoutSidebarRightCollapse;
 
-  const LeftImageControls = (
+  // The storyline chip sits after Save in the desktop toolbar only; the phone puts it by the close button.
+  const renderLeftImageControls = (withStoryline: boolean) => (
     <>
       {canRemix && (
         <RemixMenu image={image} source="remix:image">
@@ -272,6 +276,13 @@ export function ImageDetail2() {
           Save
         </Text>
       </Button>
+      {withStoryline && (
+        <StorylineToolbarChip
+          imageId={image.id}
+          postId={image.postId ?? null}
+          placement="toolbar"
+        />
+      )}
       {image.postId && (
         <NextLink
           href={`/posts/${image.postId}`}
@@ -353,11 +364,16 @@ export function ImageDetail2() {
                           className="size-9 rounded-full"
                         />
                         <div className="flex flex-1 flex-wrap justify-between gap-1">
-                          {/* Placeholder */}
-                          <div className="@md:hidden" />
+                          <div className="flex items-center @md:hidden">
+                            <StorylineToolbarChip
+                              imageId={image.id}
+                              postId={image.postId ?? null}
+                              placement="mobile"
+                            />
+                          </div>
                           <div className="flex items-center gap-1 @max-md:hidden">
                             <ImageGuard2.BlurToggle {...sharedBadgeProps} />
-                            {LeftImageControls}
+                            {renderLeftImageControls(true)}
                           </div>
 
                           <div className="flex items-center gap-1">
@@ -434,11 +450,7 @@ export function ImageDetail2() {
                           loop={!storyline.active}
                           {...navigation}
                         />
-                        <StorylineStageOverlay
-                          imageId={image.id}
-                          postId={image.postId ?? null}
-                          isLastImage={isLastImage}
-                        />
+                        <StorylineStageOverlay isLastImage={isLastImage} />
                       </div>
                       {/* FOOTER */}
                       <div className="flex flex-col gap-3 p-3">
@@ -518,7 +530,7 @@ export function ImageDetail2() {
                     !active ? '@max-md:pb-[calc(0.75rem+var(--safe-area-inset-bottom-unpaid))]' : ''
                   }`}
                 >
-                  <div className="flex gap-1">{LeftImageControls}</div>
+                  <div className="flex gap-1">{renderLeftImageControls(false)}</div>
                   <LegacyActionIcon {...sharedActionIconProps} onClick={toggleInfo}>
                     <IconChevron {...sharedIconProps} />
                   </LegacyActionIcon>

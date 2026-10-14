@@ -1,11 +1,12 @@
 import { Button } from '@mantine/core';
 import { IconArrowRight } from '@tabler/icons-react';
 import { useViewerBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
-import { StorylineDrawer } from '~/components/Storyline/StorylineDrawer';
 import { StorylineEndOfChapter } from '~/components/Storyline/StorylineEndOfChapter';
 import type { ActiveStorylineMode } from '~/components/Storyline/StorylineModeProvider';
 import { useStorylineMode } from '~/components/Storyline/StorylineModeProvider';
-import { StorylineEntryChip, StorylineModeChip } from '~/components/Storyline/StorylinePill';
+import { StorylineMapControl } from '~/components/Storyline/StorylineMap';
+import { StorylineEntryChip } from '~/components/Storyline/StorylinePill';
+import { useIsMobile } from '~/hooks/useIsMobile';
 import { useStorylinesEnabled } from '~/components/Storyline/storyline.queries';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { trpc } from '~/utils/trpc';
@@ -17,36 +18,44 @@ function chapterPosition(storyline: ActiveStorylineMode, imageId: number) {
 }
 
 /**
- * Rendered over the carousel: the storyline chip (the only storyline chrome in image detail), the
- * way on past the last image, the fork point.
+ * The storyline's place in the stage toolbar: in the mode, the chip the map drops from; outside
+ * it, the invitation to read the post's storyline. Desktop puts it after Save, a phone after the
+ * close button, so each layout mounts exactly one.
  */
-export function StorylineStageOverlay({
+export function StorylineToolbarChip({
   imageId,
   postId,
-  isLastImage,
+  placement,
 }: {
   imageId: number;
   postId: number | null;
-  isLastImage: boolean;
+  placement: 'toolbar' | 'mobile';
 }) {
   const storyline = useStorylineMode();
-  const currentUser = useCurrentUser();
+  const isMobile = useIsMobile({ type: 'media' });
+  if (isMobile !== (placement === 'mobile')) return null;
   if (!storyline.active) return <StorylineEntryPill postId={postId} />;
-
   const { chapterId, depth } = chapterPosition(storyline, imageId);
+  const end = storyline.path.chapters[storyline.path.chapters.length - 1];
+  return (
+    <StorylineMapControl
+      storyline={storyline}
+      currentChapterId={chapterId}
+      depth={depth ?? end.depth}
+    />
+  );
+}
+
+/** Rendered over the carousel: the way on past the last image, and the fork point. */
+export function StorylineStageOverlay({ isLastImage }: { isLastImage: boolean }) {
+  const storyline = useStorylineMode();
+  const currentUser = useCurrentUser();
+  if (!storyline.active) return null;
+
   const end = storyline.path.chapters[storyline.path.chapters.length - 1];
 
   return (
     <>
-      {/* Above the end-of-chapter card too, so the map and leaving stay one tap away there. */}
-      <div className="absolute left-3 top-3 z-30">
-        <StorylineModeChip
-          title={storyline.path.storyline.title}
-          depth={depth ?? end.depth}
-          onOpenMap={() => storyline.setDrawerOpen(true)}
-          onLeave={storyline.leave}
-        />
-      </div>
       {isLastImage && !storyline.endOpen && (
         <div className="absolute bottom-4 right-4 z-10">
           <Button
@@ -73,7 +82,6 @@ export function StorylineStageOverlay({
           onClose={() => storyline.setEndOpen(false)}
         />
       )}
-      <StorylineDrawer storyline={storyline} currentChapterId={chapterId} />
     </>
   );
 }
@@ -91,12 +99,10 @@ function StorylineEntryPill({ postId }: { postId: number | null }) {
   if (!entry) return null;
 
   return (
-    <div className="absolute left-3 top-3 z-10">
-      <StorylineEntryChip
-        title={entry.title}
-        depth={entry.depth}
-        onEnter={() => storyline.enter(entry.chapterId)}
-      />
-    </div>
+    <StorylineEntryChip
+      title={entry.title}
+      depth={entry.depth}
+      onEnter={() => storyline.enter(entry.chapterId)}
+    />
   );
 }
