@@ -78,6 +78,34 @@ function expectedSegments({ segments }: TextScanWorkflowMetadata) {
   return Number.isInteger(segments) && (segments as number) > 0 ? (segments as number) : 1;
 }
 
+/**
+ * Narrows the merged `modelRules` match to rules the prompt listed that are still live, in place.
+ * Every path that acts on a verdict goes through here, so a rule the prompt never carried, or one
+ * disabled since the submit, can never unpublish a model.
+ */
+async function scopeModelRules(
+  output: TextScanOutput,
+  metadata: TextScanWorkflowMetadata,
+  ctx: Record<string, unknown>
+): Promise<TextScanResult['modelRules']> {
+  if (!output.modelRules) return undefined;
+  const { kept, dropped } = filterModelRuleMatches(output.modelRules.matched, metadata.ruleIds);
+  if (dropped.length)
+    await log('warning', 'matched rule ids the prompt did not list', { ...ctx, dropped });
+  const listed = new Set(metadata.ruleIds);
+  const literalCandidates = (metadata.literalRuleIds ?? []).filter((id) => listed.has(id));
+  const snapshot = await getModelRuleSnapshots([
+    ...new Set([...kept.map((m) => m.ruleId), ...literalCandidates]),
+  ]);
+  const live = new Set(snapshot.map((rule) => rule.id));
+  output.modelRules = { matched: kept.filter((m) => live.has(m.ruleId)) };
+  return {
+    fingerprint: metadata.rulesFingerprint,
+    snapshot,
+    literalRuleIds: literalCandidates.filter((id) => live.has(id)),
+  };
+}
+
 function inputMeta(metadata: TextScanWorkflowMetadata, flaggedSegments: FlaggedSegments) {
   if (metadata.inputChars === undefined) return undefined;
   return {
@@ -228,6 +256,7 @@ export async function handleTextScanCallback(event: { workflowId: string; status
     });
     if (!stored) return;
     const { output: merged } = mergeTextScanOutputs(outputs, labels);
+    await scopeModelRules(merged, metadata, ctx);
     const raised = stricterThanStored(stored, merged, labels);
     if (!raised.length) return;
     const output: TextScanOutput = Object.fromEntries(
@@ -319,24 +348,7 @@ export async function handleTextScanCallback(event: { workflowId: string; status
 
   const { output, flaggedSegments } = mergeTextScanOutputs(parsed.outputs, labels);
 
-  let modelRules: TextScanResult['modelRules'];
-  if (output.modelRules) {
-    const { kept, dropped } = filterModelRuleMatches(output.modelRules.matched, metadata.ruleIds);
-    if (dropped.length)
-      await log('warning', 'matched rule ids the prompt did not list', { ...ctx, dropped });
-    const listed = new Set(metadata.ruleIds);
-    const literalCandidates = (metadata.literalRuleIds ?? []).filter((id) => listed.has(id));
-    const snapshot = await getModelRuleSnapshots([
-      ...new Set([...kept.map((m) => m.ruleId), ...literalCandidates]),
-    ]);
-    const live = new Set(snapshot.map((rule) => rule.id));
-    output.modelRules = { matched: kept.filter((m) => live.has(m.ruleId)) };
-    modelRules = {
-      fingerprint: metadata.rulesFingerprint,
-      snapshot,
-      literalRuleIds: literalCandidates.filter((id) => live.has(id)),
-    };
-  }
+  const modelRules = await scopeModelRules(output, metadata, ctx);
 
   const outcome = evaluateTextScan(output, subject.declared, labels);
   const subjectMeta = metadata.subjectMeta ?? subject.meta;

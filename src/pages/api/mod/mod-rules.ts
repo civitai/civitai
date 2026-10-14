@@ -58,7 +58,7 @@ async function upsertModRule(req: NextApiRequest, res: NextApiResponse) {
   } else {
     const schemaResult = payloadSchema.omit({ id: true }).safeParse(req.body);
     if (!schemaResult.success)
-      return res.status(400).json({ error: 'Bad Request', details: schemaResult.error.format });
+      return res.status(400).json({ error: 'Bad Request', details: schemaResult.error.format() });
 
     try {
       const { userId: createdById, ...data } = schemaResult.data;

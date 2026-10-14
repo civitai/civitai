@@ -80,13 +80,13 @@ const cases: [file: string, start: string, call: string, times: number][] = [
   [
     'src/server/services/model-moderation.adapter.ts',
     'export async function submitModelTextModeration(',
-    "if (model.isModerator) return;\n\n  if (model.rules !== false)\n    scanEntityInBackground({ entityType: 'ModelRules', entityId: model.id })",
+    'if (model.isModerator) return;\n\n  if (model.rules !== false) scanModelRules(model.id)',
     1,
   ],
   [
     'src/server/controllers/model.controller.ts',
     'export const publishModelHandler',
-    "if (!isModerator)\n      scanEntityInBackground({ entityType: 'ModelRules', entityId: updatedModel.id })",
+    'if (!isModerator) scanModelRules(updatedModel.id)',
     1,
   ],
   [
@@ -122,18 +122,24 @@ const cases: [file: string, start: string, call: string, times: number][] = [
   [
     'src/server/controllers/model-version.controller.ts',
     'export const publishModelVersionHandler',
-    "if (!ctx.user.isModerator)\n      scanEntityInBackground({ entityType: 'ModelRules', entityId: updatedVersion.modelId })",
+    'if (!ctx.user.isModerator) scanModelRules(updatedVersion.modelId)',
     1,
   ],
   [
     'src/server/services/model.service.ts',
     'export const publishPrivateModel',
-    "scanEntityInBackground({ entityType: 'ModelRules', entityId: modelId })",
+    'if (publishVersions && enforceModelRules) scanModelRules(modelId)',
     1,
   ],
   [
     'src/server/services/text-scan/submit.ts',
     'export function scanModelAndRules(',
+    'if (rules) scanModelRules(modelId)',
+    1,
+  ],
+  [
+    'src/server/services/text-scan/submit.ts',
+    'export function scanModelRules(',
     "scanEntityInBackground({ entityType: 'ModelRules', entityId: modelId })",
     1,
   ],
@@ -196,6 +202,6 @@ const cases: [file: string, start: string, call: string, times: number][] = [
 describe('text-scan write-path wiring', () => {
   it.each(cases)('%s → %s', (file, start, call, times) => {
     const body = functionBody(file, start);
-    expect(body.split(call).length - 1, `${call} in ${start}`).toBeGreaterThanOrEqual(times);
+    expect(body.split(call).length - 1, `${call} in ${start}`).toBe(times);
   });
 });

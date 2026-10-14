@@ -24,7 +24,7 @@ import {
   submitTextModerationOrScan,
   TEXT_SCAN_ENTITY_NOT_PUBLIC,
 } from '~/server/services/text-scan/route';
-import { scanEntityInBackground } from '~/server/services/text-scan/submit';
+import { scanModelRules } from '~/server/services/text-scan/submit';
 import { removeTags } from '~/utils/string-helpers';
 
 export const MODEL_MODERATION_ENTITY_TYPE = 'Model' as const;
@@ -327,8 +327,7 @@ export async function submitModelTextModeration(model: {
   // stays cleared going into this call).
   if (model.isModerator) return;
 
-  if (model.rules !== false)
-    scanEntityInBackground({ entityType: 'ModelRules', entityId: model.id });
+  if (model.rules !== false) scanModelRules(model.id);
   const content = buildModelModerationText(model);
   try {
     if (!(await isPublicModel(model.id))) return;

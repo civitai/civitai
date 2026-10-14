@@ -107,7 +107,7 @@ import { assertTrainingSourcePublishable } from '~/server/services/orchestrator/
 import { updateTrainingWorkflowRecords } from '~/server/services/training.service';
 import { unpublishLiveModelForLiteralRules } from '~/server/services/text-scan/actions/model-rules';
 import { checkModelRulesLiteralHold } from '~/server/services/text-scan/model-rules-hold';
-import { scanEntityInBackground } from '~/server/services/text-scan/submit';
+import { scanModelRules } from '~/server/services/text-scan/submit';
 import { getAllowedAccountTypes } from '~/server/utils/buzz-helpers';
 import { isDefined } from '~/utils/type-guards';
 
@@ -913,8 +913,7 @@ export const publishModelVersionHandler = async ({
         });
       }
     }
-    if (!ctx.user.isModerator)
-      scanEntityInBackground({ entityType: 'ModelRules', entityId: updatedVersion.modelId });
+    if (!ctx.user.isModerator) scanModelRules(updatedVersion.modelId);
     // The takedown refreshed the caches, and the model is no longer live to announce or reindex.
     if (held) return { ...updatedVersion, held };
 

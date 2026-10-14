@@ -588,8 +588,16 @@ export function scanEntitiesInBackground(entityType: TextScanEntityType, entityI
   ).catch(() => null);
 }
 
+/**
+ * The one place a model's rules scan is queued. Callers decide who is scanned (moderator edits
+ * are not); the profile skips a model that is not public.
+ */
+export function scanModelRules(modelId: number) {
+  scanEntityInBackground({ entityType: 'ModelRules', entityId: modelId });
+}
+
 /** Every Model scan trigger also checks the rules; both profiles skip a model that is not public. */
 export function scanModelAndRules(modelId: number, { rules = true }: { rules?: boolean } = {}) {
   scanEntityInBackground({ entityType: 'Model', entityId: modelId });
-  if (rules) scanEntityInBackground({ entityType: 'ModelRules', entityId: modelId });
+  if (rules) scanModelRules(modelId);
 }

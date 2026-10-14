@@ -145,8 +145,8 @@ import { checkModelRulesLiteralHold } from '~/server/services/text-scan/model-ru
 import { legacyProfanityAutoNsfwApplies } from '~/server/services/text-scan/route';
 import {
   scanEntitiesInBackground,
-  scanEntityInBackground,
   scanModelAndRules,
+  scanModelRules,
 } from '~/server/services/text-scan/submit';
 import {
   bustMvCache,
@@ -5566,7 +5566,7 @@ export const publishPrivateModel = async (
       `;
     }
   });
-  if (publishVersions) scanEntityInBackground({ entityType: 'ModelRules', entityId: modelId });
+  if (publishVersions && enforceModelRules) scanModelRules(modelId);
 
   const updatedImageIds = await dbRead.image.findMany({
     where: {

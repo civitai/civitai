@@ -46,7 +46,7 @@ vi.mock('~/server/redis/caches', async (importOriginal) => ({
 }));
 
 vi.mock('~/server/events', () => ({ eventEngine: { processEngagement: vi.fn() } }));
-vi.mock('~/server/services/text-scan/submit', () => ({ scanEntityInBackground: mockScan }));
+vi.mock('~/server/services/text-scan/submit', () => ({ scanModelRules: mockScan }));
 
 import {
   publishModelHandler,
@@ -151,7 +151,7 @@ describe('publishModelHandler — Model rules', () => {
 
     await publish();
 
-    expect(mockScan).toHaveBeenCalledWith({ entityType: 'ModelRules', entityId: MODEL_ID });
+    expect(mockScan).toHaveBeenCalledExactlyOnceWith(MODEL_ID);
     expect(mockReindex).toHaveBeenCalledTimes(1);
     expect(mockRefresh).toHaveBeenCalledWith(MODEL_ID);
   });
