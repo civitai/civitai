@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { afterEach, describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Unit test for runHealthChecks' overall-health computation, focused on the
 // sysRedis SOFT-dependency rule: a failing sysRedis check must NOT flip the
@@ -223,8 +223,14 @@ describe('runHealthChecks — sysRedis soft dependency', () => {
 describe('/api/health reuses a recent clean run', () => {
   let now = 1_000_000;
 
+  let clock: { mockRestore: () => void } | undefined;
+
   beforeEach(() => {
-    vi.spyOn(performance, 'now').mockImplementation(() => now);
+    clock = vi.spyOn(performance, 'now').mockImplementation(() => now);
+  });
+
+  afterEach(() => {
+    clock?.mockRestore();
   });
 
   const probe = async (handler: typeof healthHandler) => {
@@ -315,6 +321,40 @@ describe('/api/health reuses a recent clean run', () => {
 
     expect(first.statusCode).toBe(200);
     expect(mocks.sysRedis.ping).toHaveBeenCalledTimes(2);
+  });
+
+  it('a slow failing run that finishes after a newer clean run evicts it', async () => {
+    let failSlow!: () => void;
+    mocks.dbRead.$transaction.mockImplementationOnce(
+      () => new Promise<number>((_, reject) => (failSlow = () => reject(new Error('db read down'))))
+    );
+    const slowFailing = probe(healthHandler);
+
+    now += 1_000;
+    const clean = await probe(healthHandler);
+
+    now += 1_000;
+    failSlow();
+    expect((await slowFailing).statusCode).toBe(500);
+
+    now += 1_000;
+    await probe(healthHandler);
+
+    expect(clean.statusCode).toBe(200);
+    expect(mocks.dbRead.$transaction).toHaveBeenCalledTimes(3);
+  });
+
+  it('the test reset also forgets the last failure, so a fresh clean run is reused', async () => {
+    mocks.dbRead.$transaction.mockRejectedValueOnce(new Error('db read down'));
+    await probe(healthHandler);
+
+    resetHealthCheckReuseForTests();
+    now -= 5_000; // a clock reading earlier than that failure, as in a fresh test file
+    await probe(healthHandler);
+    now += 1_000;
+    await probe(healthHandler);
+
+    expect(mocks.dbRead.$transaction).toHaveBeenCalledTimes(2);
   });
 
   it('a slow clean run that finishes after a newer failing run does not mask the failure', async () => {
