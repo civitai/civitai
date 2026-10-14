@@ -1,8 +1,7 @@
+import { HIDE_FROM_REACTION_LISTS_KEY as sharedKey } from '@civitai/shared/reaction-privacy';
 import type { UserSettingsSchema } from '~/server/schema/user.schema';
 
-/** `User.settings` key for "Hide me from 'who reacted' and 'who collected' lists". Creator Studio reads the same key. */
-export const HIDE_FROM_REACTION_LISTS_KEY =
-  'hideFromReactionLists' satisfies keyof UserSettingsSchema;
+export const HIDE_FROM_REACTION_LISTS_KEY = sharedKey satisfies keyof UserSettingsSchema;
 
 /** Stands in for an opted-out reactor. No real user has id 0, so it never matches a viewer or links anywhere. */
 export const HIDDEN_REACTOR_ID = 0;

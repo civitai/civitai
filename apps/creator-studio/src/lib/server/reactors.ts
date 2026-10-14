@@ -1,6 +1,7 @@
 import { error, json, type RequestHandler } from '@sveltejs/kit';
 import { sql } from '@civitai/db/kysely';
 import { sfwBrowsingLevelsFlag } from '@civitai/shared';
+import { HIDE_FROM_REACTION_LISTS_KEY } from '@civitai/shared/reaction-privacy';
 import { dbRead } from '$lib/server/db';
 import { followersAmong } from '$lib/server/followers';
 import {
@@ -49,9 +50,6 @@ export function keysetClause(column: string, cursor: ReactorCursor) {
       : sql`AND ${col} > ${cursor.userId}`;
   return { bound, order: cursor?.dir === 'before' ? sql`ASC` : sql`DESC` };
 }
-
-/** Main-app `User.settings` key behind "Hide me from 'who reacted' and 'who collected' lists" (HIDE_FROM_REACTION_LISTS_KEY). */
-const HIDE_FROM_REACTION_LISTS_KEY = 'hideFromReactionLists';
 
 /**
  * The user in `userIdColumn` may be named to `viewerId`: false only for someone else who opted out of reaction and
