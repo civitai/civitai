@@ -1,5 +1,12 @@
 import { trpc } from '~/utils/trpc';
 
+export type StorylineSourcePost = {
+  id: number;
+  title?: string | null;
+  nsfwLevel: number;
+  publishedAt?: Date | null;
+};
+
 /** Whether a post is already a chapter, and of which storyline. */
 export function useStorylineForPost(postId: number, { enabled = true } = {}) {
   const { data, isLoading } = trpc.storyline.getForPosts.useQuery(

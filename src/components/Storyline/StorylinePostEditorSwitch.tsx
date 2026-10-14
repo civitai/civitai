@@ -1,9 +1,8 @@
 import { Anchor, Switch, Text } from '@mantine/core';
-import { dialogStore } from '~/components/Dialog/dialogStore';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
-import type { StorylineSourcePost } from '~/components/Storyline/StartStorylineMenuItem';
-import { StartStorylineModal } from '~/components/Storyline/StartStorylineModal';
+import { openStartStorylineModal } from '~/components/Storyline/StartStorylineModal';
 import { storylineUrl } from '~/components/Storyline/storyline-routes';
+import type { StorylineSourcePost } from '~/components/Storyline/storyline.utils';
 import { isPublished, useStorylineForPost } from '~/components/Storyline/storyline.utils';
 
 /**
@@ -23,11 +22,7 @@ export function StorylinePostEditorSwitch({ post }: { post: StorylineSourcePost 
         checked={!!storyline}
         disabled={!!storyline}
         onChange={(e) => {
-          if (!e.currentTarget.checked) return;
-          dialogStore.trigger({
-            component: StartStorylineModal,
-            props: { postId: post.id, postTitle: post.title, postNsfwLevel: post.nsfwLevel },
-          });
+          if (e.currentTarget.checked) openStartStorylineModal(post);
         }}
       />
       {storyline && (

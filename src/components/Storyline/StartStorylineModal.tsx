@@ -12,20 +12,20 @@ import { IconAlertTriangle } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { useState } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { dialogStore } from '~/components/Dialog/dialogStore';
+import type { StorylineSourcePost } from '~/components/Storyline/storyline.utils';
 import { storylineUrl } from '~/components/Storyline/storyline-routes';
-import {
-  browsingLevelLabels,
-  getHighestBrowsingLevelBit,
-} from '~/shared/constants/browsingLevel.constants';
+import { browsingLevelLabels } from '~/shared/constants/browsingLevel.constants';
 import { NsfwLevel } from '~/server/common/enums';
-import { STORYLINE_CEILING_LEVELS } from '~/shared/utils/storyline';
+import { STORYLINE_CEILING_LEVELS, storylineLevelAllowed } from '~/shared/utils/storyline';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
-/** The lowest ceiling chapter 1 fits under; a ceiling below it would hide the story's own start. */
-export function lowestCeilingFor(postNsfwLevel: number) {
-  const highest = getHighestBrowsingLevelBit(postNsfwLevel);
-  return (STORYLINE_CEILING_LEVELS as readonly number[]).includes(highest) ? highest : null;
+export function openStartStorylineModal(post: StorylineSourcePost) {
+  dialogStore.trigger({
+    component: StartStorylineModal,
+    props: { postId: post.id, postTitle: post.title, postNsfwLevel: post.nsfwLevel },
+  });
 }
 
 export function StartStorylineModal({
@@ -40,10 +40,15 @@ export function StartStorylineModal({
   const dialog = useDialogContext();
   const router = useRouter();
   const utils = trpc.useUtils();
-  const minimum = lowestCeilingFor(postNsfwLevel);
+  // The server's own rule, so a ceiling it would refuse is never offered: chapter 1 above its
+  // storyline's ceiling would hide the story's start.
+  const allowed = STORYLINE_CEILING_LEVELS.filter((level) =>
+    storylineLevelAllowed({ postLevel: postNsfwLevel, maxNsfwLevel: level })
+  );
+  const canStart = allowed.length > 0;
   const [title, setTitle] = useState(postTitle ?? '');
   const [maxNsfwLevel, setMaxNsfwLevel] = useState<number>(
-    Math.max(minimum ?? NsfwLevel.PG13, NsfwLevel.PG13)
+    allowed.find((level) => level >= NsfwLevel.PG13) ?? allowed[0] ?? NsfwLevel.PG13
   );
 
   const create = trpc.storyline.create.useMutation({
@@ -67,7 +72,7 @@ export function StartStorylineModal({
         <Text size="sm" c="dimmed">
           This post becomes chapter 1. Its first image is the storyline&apos;s cover.
         </Text>
-        {minimum == null ? (
+        {!canStart ? (
           <Alert color="yellow" icon={<IconAlertTriangle />}>
             This post hasn&apos;t been rated yet. Try again once its images have been scanned.
           </Alert>
@@ -90,7 +95,7 @@ export function StartStorylineModal({
                 data={STORYLINE_CEILING_LEVELS.map((level) => ({
                   value: String(level),
                   label: browsingLevelLabels[level],
-                  disabled: level < minimum,
+                  disabled: !allowed.includes(level),
                 }))}
               />
               <Text size="xs" c="dimmed">
@@ -103,9 +108,6 @@ export function StartStorylineModal({
                 Continuing
               </Text>
               <Text size="sm">Anyone can continue, and you review each one. Free to continue.</Text>
-              <Text size="xs" c="dimmed">
-                You can change who can continue and the price in the storyline&apos;s settings.
-              </Text>
             </Stack>
           </>
         )}
@@ -114,7 +116,7 @@ export function StartStorylineModal({
             Cancel
           </Button>
           <Button
-            disabled={minimum == null || !trimmed}
+            disabled={!canStart || !trimmed}
             loading={create.isPending}
             onClick={() => create.mutate({ postId, title: trimmed, maxNsfwLevel })}
           >

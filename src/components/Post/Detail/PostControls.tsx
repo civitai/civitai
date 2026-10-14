@@ -14,7 +14,7 @@ import { openReportModal } from '~/components/Dialog/triggers/report';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { DeletePostButton } from '~/components/Post/DeletePostButton';
 import { GalleryPromotionModal } from '~/components/Promotion/GalleryPromotionModal';
-import type { StorylineSourcePost } from '~/components/Storyline/StartStorylineMenuItem';
+import type { StorylineSourcePost } from '~/components/Storyline/storyline.utils';
 import { StartStorylineMenuItem } from '~/components/Storyline/StartStorylineMenuItem';
 import { isPublished } from '~/components/Storyline/storyline.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
