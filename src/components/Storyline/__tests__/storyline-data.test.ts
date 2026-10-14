@@ -6,7 +6,6 @@ import { createRoot, type Root } from 'react-dom/client';
 import { MantineProvider } from '@mantine/core';
 import type * as Trpc from '~/utils/trpc';
 import type * as Notifications from '~/utils/notifications';
-import type * as ImageUtils from '~/components/Image/image.utils';
 import { makeTrpcProxy } from '../../../../test/trpcProxyStub';
 import { NsfwLevel } from '~/server/common/enums';
 
@@ -160,11 +159,6 @@ vi.mock('~/components/Dialog/DialogProvider', () => ({
 }));
 vi.mock('~/components/Search/QuickSearchDropdown', () => ({ QuickSearchDropdown: () => null }));
 vi.mock('~/components/UserAvatar/UserAvatar', () => ({ UserAvatar: () => null }));
-// The header cover read needs the browsing providers; these tests are not about it.
-vi.mock('~/components/Image/image.utils', async (importOriginal) => ({
-  ...(await importOriginal<typeof ImageUtils>()),
-  useQueryImages: () => ({ images: [], isLoading: false }),
-}));
 vi.mock('~/utils/notifications', async (importOriginal) => ({
   ...(await importOriginal<typeof Notifications>()),
   showSuccessNotification: () => undefined,
@@ -461,6 +455,28 @@ describe('StorylineManageModal price', () => {
   });
 });
 
+describe('StorylineManageModal title', () => {
+  it("leads with the storyline's card picture from its read", () => {
+    server.storyline = {
+      id: 3,
+      userId: 1,
+      title: 'The Patch',
+      status: 'Ongoing',
+      maxNsfwLevel: NsfwLevel.PG13,
+      whoCanContinue: 'Anyone',
+      collaborators: [],
+      coverImage: null,
+    };
+    render(React.createElement(StorylineManageModal, { storylineId: 3 }));
+
+    const title = document.body.querySelector('.mantine-Modal-title') as HTMLElement;
+    expect(title.textContent).toBe('Manage The Patch');
+    // No picture that may be shown: the 3:4 placeholder, not a skeleton waiting on a query.
+    expect(title.querySelector('.aspect-\\[3\\/4\\]')).not.toBeNull();
+    expect(title.querySelector('.mantine-Skeleton-root')).toBeNull();
+  });
+});
+
 describe('StorylineContinueModal post picker', () => {
   const post = (id: number) => ({
     id,
@@ -481,7 +497,7 @@ describe('StorylineContinueModal post picker', () => {
       maxNsfwLevel: NsfwLevel.PG13,
       whoCanContinue: 'Anyone',
       collaborators: [],
-      mainPath: [],
+      coverImage: null,
     };
     server.myPosts = [post(11), post(12), post(13)];
     server.chapterPostIds = [12, 13];
@@ -492,6 +508,8 @@ describe('StorylineContinueModal post picker', () => {
     expect(document.body.textContent).toContain(
       '2 of your posts are already chapters, so they aren’t listed.'
     );
+    // The header cover comes with the storyline read: no image query left to wait on.
+    expect(document.body.querySelectorAll('.mantine-Skeleton-root')).toHaveLength(0);
   });
 });
 

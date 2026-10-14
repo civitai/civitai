@@ -70,7 +70,7 @@ export function StorylineContinueForm({
     status: 'Ongoing' | 'Complete';
     maxNsfwLevel: number;
   };
-  /** The storyline's cover; `undefined` while it loads. */
+  /** The storyline's card picture from its read; `null` when none may be shown. */
   cover?: StorylineThumbImage | null;
   /** The chapter being continued, by name. */
   parentName: string | null;
