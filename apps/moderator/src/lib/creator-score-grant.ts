@@ -5,3 +5,6 @@
 export const CREATOR_SCORE_GRANT_MAX_AMOUNT = 10_000;
 export const CREATOR_SCORE_GRANT_DAILY_CAP = 20;
 export const CREATOR_SCORE_GRANT_REASON_MAX = 500;
+
+/** What a grant or revoke action hands the panel: the endpoint's own total after the write. */
+export type CreatorScoreGrantResult = { kind: 'granted' | 'revoked'; amount?: number; total: number };

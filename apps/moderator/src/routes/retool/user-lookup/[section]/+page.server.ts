@@ -48,6 +48,7 @@ import { MEMBERSHIP_CODE_MAX_MONTHS, MEMBERSHIP_CODE_TIERS } from '$lib/membersh
 import {
   CREATOR_SCORE_GRANT_MAX_AMOUNT,
   CREATOR_SCORE_GRANT_REASON_MAX,
+  type CreatorScoreGrantResult,
 } from '$lib/creator-score-grant';
 import { BUZZ_ENTITY_TYPES } from '../enforcement-options';
 import { PROFILE_FIELD_KEYS, type ProfileField } from '$lib/enforcement';
@@ -562,7 +563,12 @@ export const actions: Actions = {
 
     const result = await grantCreatorScore(input);
     if (!result.ok) return creatorScoreFail(result.error);
-    return { success: true, granted: { amount: input.amount, total: result.total } };
+    const outcome: CreatorScoreGrantResult = {
+      kind: 'granted',
+      amount: input.amount,
+      total: result.total,
+    };
+    return { success: true, outcome };
   }),
 
   revokeCreatorScoreGrant: requiresGrant('user.creatorScore.grant', async ({ request }) => {
@@ -577,7 +583,8 @@ export const actions: Actions = {
 
     const result = await revokeCreatorScoreGrant(input);
     if (!result.ok) return creatorScoreFail(result.error);
-    return { success: true, revoked: input.grantId };
+    const outcome: CreatorScoreGrantResult = { kind: 'revoked', total: result.total };
+    return { success: true, outcome };
   }),
 
   // Scoped to `account`, not `buzz`: the buttons live in the Admin section's action panel, and a

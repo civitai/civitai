@@ -125,13 +125,18 @@ describe('revokeCreatorScoreGrant', () => {
       new Response(JSON.stringify({ id: 7, revokedAt: '2026-10-14T12:00:00.000Z', total: 1000 }), {
         status: 200,
       });
-    expect(await revokeCreatorScoreGrant(REVOKE)).toEqual({ ok: true });
+    expect(await revokeCreatorScoreGrant(REVOKE)).toEqual({ ok: true, total: 1000 });
     expect(calls[0].url).toBe('https://civitai.com/api/mod/user/creator-score-grant-revoke');
     expect((calls[0].init.headers as Record<string, string>).cookie).toBe(
       'civ-token=the-moderators-session'
     );
     expect(JSON.parse(String(calls[0].init.body))).toEqual(REVOKE);
     expect(recordModActivity).not.toHaveBeenCalled();
+  });
+
+  it('a 200 without a total is a failure, not a success', async () => {
+    respond = () => new Response(JSON.stringify({ id: 7 }), { status: 200 });
+    expect((await revokeCreatorScoreGrant(REVOKE)).ok).toBe(false);
   });
 
   it('carries a refusal (already revoked) to the operator', async () => {

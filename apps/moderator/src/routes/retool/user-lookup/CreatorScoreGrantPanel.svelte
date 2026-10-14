@@ -12,6 +12,7 @@
     CREATOR_SCORE_GRANT_DAILY_CAP,
     CREATOR_SCORE_GRANT_MAX_AMOUNT,
     CREATOR_SCORE_GRANT_REASON_MAX,
+    type CreatorScoreGrantResult,
   } from '$lib/creator-score-grant';
   import { fetchCreatorScoreGrants } from './creator-score-grants';
 
@@ -20,7 +21,9 @@
   let amount = $state('');
   let reason = $state('');
   let confirming = $state(false);
-  let granted = $state<{ amount: number; total: number } | null>(null);
+  // The endpoint's total after the last write. The Reputation panel above re-reads from a replica that
+  // can lag, so this is the number to trust right after a grant or revoke.
+  let outcome = $state<CreatorScoreGrantResult | null>(null);
 
   // Bumped after a grant or revoke so the list refetches; it comes from `/api/*`, not the page load.
   let version = $state(0);
@@ -41,10 +44,10 @@
     onSubmit: ({ cancel }) => {
       // Enter in a text field submits the form; only the confirm step's button may grant.
       if (!confirming) return cancel();
-      granted = null;
+      outcome = null;
     },
     onSuccess: (data) => {
-      granted = (data?.granted as { amount: number; total: number } | undefined) ?? null;
+      outcome = (data?.outcome as CreatorScoreGrantResult | undefined) ?? null;
       amount = '';
       reason = '';
       revoke.error = null;
@@ -60,13 +63,18 @@
   const revoke = new FormState({
     reload: true,
     reset: false,
-    onSuccess: () => {
-      form.error = null;
+    onSubmit: () => {
+      outcome = null;
     },
-    // After any answer, including "could not confirm": the list is what tells the operator.
-    onSettled: () => {
+    onSuccess: (data) => {
+      outcome = (data?.outcome as CreatorScoreGrantResult | undefined) ?? null;
+      form.error = null;
       revoking = null;
       revokeReason = '';
+    },
+    // After any answer, including "could not confirm": the list is what tells the operator. A refused
+    // revoke keeps its row open with the reason, so the moderator can fix and resubmit.
+    onSettled: () => {
       version += 1;
     },
   });
@@ -85,12 +93,13 @@
     <ErrorAlert class="mb-3" message={form.error} />
   {/if}
 
-  {#if granted}
+  {#if outcome}
     <div
       class="mb-3 rounded-md border border-green-500/30 bg-green-500/10 p-3 text-sm text-green-200"
       role="status"
     >
-      Granted {num(granted.amount)} points. Creator Score is now {num(granted.total)}.
+      {outcome.kind === 'granted' ? `Granted ${num(outcome.amount ?? 0)} points.` : 'Grant revoked.'}
+      Creator Score is now {num(outcome.total)}.
     </div>
   {/if}
 
@@ -142,7 +151,12 @@
     </div>
   </form>
 
-  <h4 class="mt-5 mb-2 text-xs font-semibold text-white">Grants on this account</h4>
+  <div class="mt-5 mb-2 flex items-center justify-between">
+    <h4 class="text-xs font-semibold text-white">Grants on this account</h4>
+    <!-- Always offered: after a "could not confirm" answer the moderator is told to check this list, and
+         a write that committed after the automatic refetch only shows up on a later one. -->
+    <Button size="sm" variant="ghost" onclick={() => (version += 1)}>Refresh</Button>
+  </div>
   {#if revoke.error}
     <ErrorAlert class="mb-2" message={revoke.error} />
   {/if}
@@ -151,7 +165,7 @@
       <p class="text-xs text-dark-2">Loading grants…</p>
     {:then rows}
       {#if rows.length === 0}
-        <p class="text-xs text-dark-2">None.</p>
+        <p class="text-xs text-dark-2">No Creator Score grants on this account.</p>
       {:else}
         <ul class="space-y-3 text-sm">
           {#each rows as row (row.id)}
