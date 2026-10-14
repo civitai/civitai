@@ -57,6 +57,7 @@ const STRANGER = 3;
 const BLOCKED = 4;
 const MODERATOR = 5;
 const PARENT_AUTHOR = 8;
+const AUTHOR_OF_POSTS = 9;
 
 const w = dbMock.dbWrite;
 const r = dbMock.dbRead;
@@ -627,7 +628,7 @@ describe('getStorylinesForPosts', () => {
     id: postId + 1000,
     postId,
     depth: 1,
-    post: { nsfwLevel: level },
+    post: { nsfwLevel: level, userId: AUTHOR_OF_POSTS },
     storyline: {
       id: 10,
       title: 'A story',
@@ -655,6 +656,15 @@ describe('getStorylinesForPosts', () => {
       browsingLevel: NsfwLevel.PG,
     });
     expect(Object.keys(result)).toEqual(['1']);
+
+    // The author of the X post is still told it is a chapter, though it is outside their level.
+    // (The fake returns every row whatever the ids, so post 1 comes back too.)
+    const asAuthor = await getStorylinesForPosts({
+      postIds: [3],
+      viewer: { id: AUTHOR_OF_POSTS },
+      browsingLevel: NsfwLevel.PG,
+    });
+    expect(Object.keys(asAuthor)).toEqual(['1', '3']);
     expect(result[1]).toEqual({ chapterId: 1001, depth: 1, storylineId: 10, title: 'A story' });
   });
 });

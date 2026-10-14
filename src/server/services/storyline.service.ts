@@ -676,6 +676,8 @@ export async function getStoryline({
     ...rest,
     user: ownerUser,
     rootChapterId: root?.id ?? null,
+    // Chapter 1's post id, whatever this reader may see of it: for the discussion thread, not a
+    // cover. Take a cover from the reading path, which tombstones chapter 1 where it must.
     rootPostId: root?.postId ?? null,
     chapterCount: counts[0]?.chapters ?? 0,
     contributorCount: counts[0]?.contributors ?? 0,
@@ -786,7 +788,7 @@ export async function getStorylinesForPosts({
         id: true,
         postId: true,
         depth: true,
-        post: { select: { nsfwLevel: true } },
+        post: { select: { nsfwLevel: true, userId: true } },
         storyline: {
           select: {
             id: true,
@@ -811,7 +813,10 @@ export async function getStorylinesForPosts({
     if (c.postId == null || !c.post) continue;
     if (isStorylineHidden(c.storyline, viewer, blockedUserIds)) continue;
     if (isStorylineOutsideLevel(c.storyline, viewer, browsingLevel)) continue;
-    if (!c.post.nsfwLevel || outsideBrowsingLevel(c.post.nsfwLevel, browsingLevel)) continue;
+    // The post's own author is told it is a chapter whatever their level, as the owner is.
+    const isAuthor = viewer?.id === c.post.userId;
+    if (!isAuthor && (!c.post.nsfwLevel || outsideBrowsingLevel(c.post.nsfwLevel, browsingLevel)))
+      continue;
     byPost[c.postId] = {
       chapterId: c.id,
       depth: c.depth,
