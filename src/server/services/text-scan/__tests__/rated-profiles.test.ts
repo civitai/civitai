@@ -77,7 +77,14 @@ describe('rated-entity profiles', () => {
       'Trained words': 'a, b',
     });
     expect(dbMock.dbWrite.model.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { id: { in: [1] }, deletedAt: null } })
+      expect.objectContaining({
+        where: {
+          id: { in: [1] },
+          deletedAt: null,
+          status: { in: ['Published', 'Scheduled'] },
+          availability: { not: 'Private' },
+        },
+      })
     );
   });
 
@@ -146,6 +153,13 @@ describe('rated-entity profiles', () => {
     const subject = await load('Challenge');
     expect(subject.userId).toBe(9);
     expect(subject.text).toMatchObject({ 'Theme elements': 'rain, city', Description: 'D' });
+  });
+
+  it('Post: loads only posts with a publish date, scheduled ones included', async () => {
+    await getTextScanProfile('Post')!.load([1]);
+    expect(dbMock.dbWrite.post.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: { in: [1] }, publishedAt: { not: null } } })
+    );
   });
 
   it('reads the primary, so a scan right after a save sees the new text', async () => {

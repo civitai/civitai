@@ -1,6 +1,7 @@
 import { NsfwLevel } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { registerTextScanProfile } from '~/server/services/text-scan/profiles';
+import { PUBLIC_MODEL_WHERE } from '~/server/services/text-scan/public-content';
 import { removeTags } from '~/utils/string-helpers';
 
 registerTextScanProfile({
@@ -8,7 +9,7 @@ registerTextScanProfile({
   labels: ['nsfw', 'poi', 'minor'],
   load: async (ids) => {
     const rows = await dbWrite.model.findMany({
-      where: { id: { in: ids }, deletedAt: null },
+      where: { id: { in: ids }, ...PUBLIC_MODEL_WHERE },
       select: {
         id: true,
         userId: true,

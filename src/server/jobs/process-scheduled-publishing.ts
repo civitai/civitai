@@ -17,6 +17,7 @@ import {
 } from '~/server/services/model-version.service';
 import { createNotification } from '~/server/services/notification.service';
 import { updateComicNsfwLevels } from '~/server/services/nsfwLevels.service';
+import { scanEntityInBackground } from '~/server/services/text-scan/submit';
 import { isDefined } from '~/utils/type-guards';
 import { createJob, getJobDate } from './job';
 
@@ -395,6 +396,10 @@ export const processScheduledPublishing = createJob(
       // This job publishes via raw SQL rather than updatePost, so it owns the
       // count refresh for the posts it flips.
       await userImageVideoCountCaches.refresh(uniq(scheduledPosts.map((p) => p.userId)));
+      // Undated until now, so never scanned. Scheduled models and dated posts were scanned
+      // when they were scheduled.
+      for (const post of scheduledPosts)
+        scanEntityInBackground({ entityType: 'Post', entityId: post.id });
     }
 
     const processedModelIds = [

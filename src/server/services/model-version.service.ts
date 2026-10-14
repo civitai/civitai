@@ -1832,6 +1832,7 @@ export const publishModelVersionById = async ({
     where: { postId: { in: posts.map((x) => x.id) } },
     select: { id: true },
   });
+  for (const post of posts) scanEntityInBackground({ entityType: 'Post', entityId: post.id });
 
   await updateModelLastVersionAt({ id: version.modelId, onlyForward: republishing });
   await bustMvCache(version.id, version.modelId);

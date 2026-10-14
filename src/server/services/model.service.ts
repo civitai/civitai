@@ -3512,6 +3512,15 @@ export const publishModelById = async ({
     select: { id: true },
   });
 
+  // Drafts are not scanned, so going public (or scheduled) is the first scan for the model and
+  // for the posts this publish dated. Unchanged text dedups to a no-op on a republish.
+  submitModelTextModeration({
+    id: model.id,
+    name: model.name,
+    description: model.description,
+  }).catch(() => null);
+  for (const post of posts) scanEntityInBackground({ entityType: 'Post', entityId: post.id });
+
   // Republish only: a dropped Update on this path has no recovery without an updatedAt bump (both
   // image indexes re-derive a missing Update solely from a delta scan of moved rows, and a
   // republish otherwise never touches the image rows — see buildRepublishImageIndexTouch). A
@@ -5360,7 +5369,15 @@ export const publishPrivateModel = async ({
   // Primary: the stored meta decides the publish gates and the cannotPromote value restored.
   const model = await dbWrite.model.findUnique({
     where: { id: modelId },
-    select: { id: true, userId: true, availability: true, status: true, meta: true },
+    select: {
+      id: true,
+      userId: true,
+      name: true,
+      description: true,
+      availability: true,
+      status: true,
+      meta: true,
+    },
   });
 
   if (!model) throw throwNotFoundError('Model not found');
@@ -5501,6 +5518,19 @@ export const publishPrivateModel = async ({
     await imagesMetricsSearchIndex.queueUpdate(
       updatedImageIds.map((x) => ({ id: x.id, action: SearchIndexUpdateQueueAction.Update }))
     );
+  }
+
+  if (publishVersions) {
+    submitModelTextModeration({
+      id: model.id,
+      name: model.name,
+      description: model.description,
+    }).catch(() => null);
+    const posts = await dbWrite.post.findMany({
+      where: { modelVersionId: { in: versionIds } },
+      select: { id: true },
+    });
+    for (const post of posts) scanEntityInBackground({ entityType: 'Post', entityId: post.id });
   }
 
   return { versionIds };

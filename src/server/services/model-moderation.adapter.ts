@@ -19,6 +19,7 @@ import {
 import { applyModelPoiMinor } from '~/server/services/text-scan/actions/model-poi-minor';
 import { getTextScanMode } from '~/server/services/text-scan/mode';
 import { notifyTextScanRatingRaised } from '~/server/services/text-scan/notify';
+import { PUBLIC_MODEL_WHERE } from '~/server/services/text-scan/public-content';
 import { submitTextModerationOrScan } from '~/server/services/text-scan/route';
 import { removeTags } from '~/utils/string-helpers';
 
@@ -184,7 +185,7 @@ async function recordForensics({
 export const modelModerationAdapter: ModerationAdapter = {
   resolveContent: async (ids) => {
     const rows = await dbRead.model.findMany({
-      where: { id: { in: ids }, deletedAt: null },
+      where: { id: { in: ids }, ...PUBLIC_MODEL_WHERE },
       select: { id: true, name: true, description: true },
     });
     return new Map(rows.map((r) => [r.id, buildModelModerationText(r)]));
@@ -295,8 +296,9 @@ export const modelModerationAdapter: ModerationAdapter = {
 };
 
 /**
- * Fire-and-forget submit for the model write path. Owns its own flag check and error
- * handling so `upsertModel` gets a single awaitable that can never fail the save.
+ * Fire-and-forget submit for the model write and publish paths. Owns its own flag check and
+ * error handling so a caller gets a single awaitable that can never fail the save. A model that
+ * is not public is not scanned; publishing it scans it.
  */
 export async function submitModelTextModeration(model: {
   id: number;
@@ -312,6 +314,12 @@ export async function submitModelTextModeration(model: {
 
   const content = buildModelModerationText(model);
   try {
+    const isPublic = await dbWrite.model.findFirst({
+      where: { id: model.id, ...PUBLIC_MODEL_WHERE },
+      select: { id: true },
+    });
+    if (!isPublic) return;
+
     await submitTextModerationOrScan({
       entityType: MODEL_MODERATION_ENTITY_TYPE,
       entityId: model.id,

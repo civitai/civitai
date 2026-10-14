@@ -564,11 +564,18 @@ describe('modelModerationAdapter.resolveContent', () => {
     expect((await modelModerationAdapter.resolveContent([1, 2])).size).toBe(0);
   });
 
-  it('reads only models the text scan would load, so soft-deleted ones take the missing path', async () => {
+  it('reads only models the text scan would load, so non-public ones take the missing path', async () => {
     await modelModerationAdapter.resolveContent([1]);
 
     expect(dbMock.dbRead.model.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: expect.objectContaining({ deletedAt: null }) })
+      expect.objectContaining({
+        where: {
+          id: { in: [1] },
+          deletedAt: null,
+          status: { in: ['Published', 'Scheduled'] },
+          availability: { not: 'Private' },
+        },
+      })
     );
   });
 });

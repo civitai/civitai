@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as FliptClient from '~/server/flipt/client';
 import type * as ModeModule from '~/server/services/text-scan/mode';
 
@@ -25,7 +26,29 @@ const { submitTextModeration } = await import('~/server/services/text-moderation
 const { isFlipt } = await import('~/server/flipt/client');
 
 describe('submitModelTextModeration', () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    dbMock.dbWrite.model.findFirst.mockResolvedValue({ id: 7 });
+  });
+
+  it('does not submit for a model that is not public', async () => {
+    vi.mocked(isFlipt).mockResolvedValue(true);
+    dbMock.dbWrite.model.findFirst.mockResolvedValue(null);
+
+    await submitModelTextModeration({ id: 7, name: 'My LoRA', description: null });
+
+    expect(dbMock.dbWrite.model.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          id: 7,
+          deletedAt: null,
+          status: { in: ['Published', 'Scheduled'] },
+          availability: { not: 'Private' },
+        },
+      })
+    );
+    expect(submitTextModeration).not.toHaveBeenCalled();
+  });
 
   it('submits when the flag is on, keyed on the model id', async () => {
     vi.mocked(isFlipt).mockResolvedValue(true);
