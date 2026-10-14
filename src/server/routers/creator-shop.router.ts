@@ -267,7 +267,8 @@ export const creatorShopRouter = router({
       return updateCreatorShopSettings({
         ...patch,
         userId,
-        servicesEnabled: ctx.features.creatorServices,
+        // Only the owner's own session carries the owner's flags; acting for someone else fails closed.
+        servicesEnabled: userId === ctx.user.id && ctx.features.creatorServices,
       });
     }),
   // #endregion
