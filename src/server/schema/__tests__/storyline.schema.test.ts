@@ -8,9 +8,12 @@ describe('storyline cover and banner picks', () => {
   it('takes an image id, or null to clear one, on create and update', () => {
     for (const schema of [createStorylineSchema, updateStorylineSchema]) {
       const base = schema === createStorylineSchema ? create : { id: 10 };
-      expect(schema.safeParse({ ...base, coverImageId: 5, heroImageId: null }).success).toBe(true);
-      expect(schema.safeParse({ ...base, coverImageId: 0 }).success).toBe(false);
-      expect(schema.safeParse({ ...base, heroImageId: 1.5 }).success).toBe(false);
+      for (const field of ['coverImageId', 'heroImageId']) {
+        expect(schema.safeParse({ ...base, [field]: 5 }).success).toBe(true);
+        expect(schema.safeParse({ ...base, [field]: null }).success).toBe(true);
+        expect(schema.safeParse({ ...base, [field]: 0 }).success).toBe(false);
+        expect(schema.safeParse({ ...base, [field]: 1.5 }).success).toBe(false);
+      }
     }
   });
 

@@ -135,7 +135,7 @@ async function getOwnedStoryline({
 }) {
   const storyline = await dbWrite.storyline.findUnique({
     where: { id: storylineId },
-    select: storylineSelect,
+    select: { ...storylineSelect, ...storylinePicksSelect },
   });
   if (!storyline) throw throwNotFoundError('Storyline not found');
   if (storyline.userId !== userId && !isModerator) throw throwAuthorizationError();
@@ -517,12 +517,17 @@ export async function updateStoryline({
   }
   if (title !== undefined)
     await throwOnBlockedUserContent(title, { isModerator, surface: 'storyline' });
-  // A moderator editing is held to the owner's rule: the picks are the owner's chapters'.
+  // A moderator editing is held to the owner's rule: the picks are the owner's chapters'. A pick
+  // sent back unchanged is not judged again, so the picker can resend the whole form after a
+  // collaborator whose image it is has been removed.
   await assertStorylinePicks(dbWrite, {
     storylineId: id,
     ownerId: current.userId,
     maxNsfwLevel: maxNsfwLevel ?? current.maxNsfwLevel,
-    imageIds: [coverImageId, heroImageId],
+    imageIds: [
+      coverImageId !== current.coverImageId ? coverImageId : undefined,
+      heroImageId !== current.heroImageId ? heroImageId : undefined,
+    ],
   });
 
   // Lowering the ceiling hides later chapters above it at read time; nothing is deleted, so
@@ -576,6 +581,8 @@ async function assertStorylinePicks(
       select: {
         id: true,
         nsfwLevel: true,
+        minor: true,
+        poi: true,
         post: {
           select: {
             storylineChapter: { select: { storylineId: true, userId: true, removedAt: true } },
@@ -600,6 +607,9 @@ async function assertStorylinePicks(
       throw throwBadRequestError(
         "Choose an image from your own chapters or an endorsed collaborator's"
       );
+    // Never shown as a cover or banner (see storylineImageVisible), so refused rather than kept.
+    if (image.minor || image.poi)
+      throw throwBadRequestError('This image cannot be used as a cover or banner');
     if (!image.nsfwLevel)
       throw throwBadRequestError('This image has not been rated yet. Try again once it has been');
     if (!storylineLevelAllowed({ postLevel: image.nsfwLevel, maxNsfwLevel }))
