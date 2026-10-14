@@ -2577,19 +2577,34 @@ describe('a write inside the settlement transaction', () => {
    * The suite's `$transaction` double does not roll back. These tests are about
    * what a throw inside the transaction leaves behind, so here it does: both
    * tables are restored to their state at BEGIN when the callback throws.
+   *
+   * And the callback gets its own client, not `dbWrite` itself: it reaches the
+   * same tables, but a write made through the global `dbWrite` instead of the
+   * transaction's client is then told apart, which is the whole point of
+   * running the edge write inside the settlement.
    */
   const realTransaction = dbWriteMock.$transaction;
+  const txClients: unknown[] = [];
+  const storylineOwner = dbWriteMock.storylineChapter.findUnique as unknown as ReturnType<
+    typeof vi.fn
+  >;
   beforeEach(() => {
     writeChapterEdgeForPlacement.mockReset();
     writeChapterEdgeForPlacement.mockResolvedValue({ chapterId: 500, created: true });
+    // The parent chapter's storyline belongs to the placement's owner, as it must.
+    storylineOwner.mockReset();
+    storylineOwner.mockResolvedValue({ storyline: { userId: OWNER } });
+    txClients.length = 0;
     Object.assign(dbWriteMock, {
       $transaction: async (fn: (tx: unknown) => Promise<unknown>) => {
         const placements = new Map(
           [...db.placements].map(([id, row]) => [id, structuredClone(row)])
         );
         const legs = new Map([...db.legs].map(([key, row]) => [key, structuredClone(row)]));
+        const tx = Object.create(dbWriteMock);
+        txClients.push(tx);
         try {
-          return await realTransaction(fn);
+          return await realTransaction(() => fn(tx));
         } catch (error) {
           db.placements.clear();
           for (const [id, row] of placements) db.placements.set(id, row);
@@ -2606,8 +2621,22 @@ describe('a write inside the settlement transaction', () => {
 
   describe('settlePlacement', () => {
     it('runs the hook inside the transaction, with the placement, before commit', async () => {
-      givenPlacement();
-      const seen: { client: unknown; id: unknown; placerId: unknown; commitsBefore: number }[] = [];
+      givenPlacement({ amount: 1000 });
+      await holdPlacementEscrow({
+        spendType: 'yellow',
+        placementId: 1,
+        placerId: PLACER,
+        surface: 'sticker',
+        amount: 1000,
+      });
+      const seen: {
+        client: unknown;
+        id: unknown;
+        placerId: unknown;
+        commitsBefore: number;
+        status: unknown;
+        planned: string[];
+      }[] = [];
 
       await settlePlacement({
         placementId: 1,
@@ -2619,13 +2648,26 @@ describe('a write inside the settlement transaction', () => {
             id: pending.id,
             placerId: pending.placerId,
             commitsBefore: txCommits.length,
+            // After the flip and the plan, so a hook that throws takes both back.
+            status: db.placements.get(1)!.status,
+            planned: Object.keys(legsFor(1)).sort(),
           });
         },
       });
 
-      // The double hands the callback `dbWriteMock`; the hook got that client
-      // and ran before the transaction committed.
-      expect(seen).toEqual([{ client: dbWriteMock, id: 1, placerId: PLACER, commitsBefore: 0 }]);
+      // The settle transaction's own client, not the global one, and before commit.
+      const settleTx = txClients.at(-1);
+      expect(settleTx).not.toBe(dbWriteMock);
+      expect(seen).toEqual([
+        {
+          client: settleTx,
+          id: 1,
+          placerId: PLACER,
+          commitsBefore: 0,
+          status: 'approved',
+          planned: ['holdFee', 'holdPrincipal', 'toOwner', 'toPlatform'],
+        },
+      ]);
       expect(txCommits).toHaveLength(1);
     });
 
@@ -2687,17 +2729,18 @@ describe('a write inside the settlement transaction', () => {
 
       expect(result.settled).toBe(true);
       expect(db.placements.get(1)!.status).toBe('approved');
-      expect(writeChapterEdgeForPlacement.mock.calls).toEqual([
-        [
-          {
-            placementId: 1,
-            parentPostId: CHAPTER_POST,
-            postId: CONTINUATION_POST,
-            placerId: PLACER,
-          },
-          dbWriteMock,
-        ],
-      ]);
+      expect(writeChapterEdgeForPlacement).toHaveBeenCalledTimes(1);
+      const [args, client] = writeChapterEdgeForPlacement.mock.calls[0];
+      expect(args).toEqual({
+        placementId: 1,
+        parentPostId: CHAPTER_POST,
+        postId: CONTINUATION_POST,
+        placerId: PLACER,
+      });
+      // The settle transaction's client: through `dbWrite` the edge would land
+      // on another connection, outside the approval it belongs to.
+      expect(client).toBe(txClients.at(-1));
+      expect(client).not.toBe(dbWriteMock);
     });
 
     it('writes no second edge when the approval is replayed', async () => {
@@ -2727,6 +2770,54 @@ describe('a write inside the settlement transaction', () => {
       expect(db.placements.get(1)!.status).toBe('pending');
       expect(moneyMoved()).toBe(0);
       expect(Object.keys(legsFor(1)).sort()).toEqual(['holdFee', 'holdPrincipal']);
+    });
+
+    // The owner can see a priced row before its holds land; settling then would
+    // plan from a partial escrow and strand the hold that lands afterwards.
+    it.each([
+      ['approve', 'no hold yet', []],
+      ['approve', 'only the fee hold', ['holdFee']],
+      ['decline', 'no hold yet', []],
+      ['decline', 'only the fee hold', ['holdFee']],
+    ] as const)(
+      'refuses to %s a priced one whose escrow has %s, and moves nothing',
+      async (action, _, receipted) => {
+        givenContinuation({ amount: 1000 });
+        for (const kind of receipted)
+          db.legs.set(`1:${kind}`, {
+            placementId: 1,
+            kind,
+            amount: 300,
+            transactionId: 'tx',
+            attempts: 1,
+            createdAt: new Date(0),
+          });
+
+        await expect(
+          settleStorylineContinuation({ placementId: 1, action, actorId: OWNER })
+        ).rejects.toThrow('still processing');
+
+        expect(db.placements.get(1)!.status).toBe('pending');
+        expect(moneyMoved()).toBe(0);
+        expect(writeChapterEdgeForPlacement).not.toHaveBeenCalled();
+        expect(Object.keys(legsFor(1))).toEqual([...receipted]);
+      }
+    );
+
+    it('refuses an approval whose owner is not the storyline owner, and leaves it pending', async () => {
+      givenContinuation();
+      storylineOwner.mockResolvedValue({ storyline: { userId: OWNER + 1 } });
+
+      await expect(
+        settleStorylineContinuation({ placementId: 1, action: 'approve', actorId: OWNER })
+      ).rejects.toThrow("is not owned by its storyline's owner");
+
+      expect(db.placements.get(1)!.status).toBe('pending');
+      expect(writeChapterEdgeForPlacement).not.toHaveBeenCalled();
+      // Read against the chapter being continued.
+      expect(storylineOwner).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { postId: CHAPTER_POST } })
+      );
     });
 
     it('writes no edge on decline', async () => {
@@ -2815,8 +2906,18 @@ describe('a write inside the settlement transaction', () => {
       expect(writeChapterEdgeForPlacement).toHaveBeenCalledTimes(1);
     });
 
-    it('refuses to approve a row that names no continuation post, and leaves it pending', async () => {
-      givenContinuation({ data: {} });
+    it.each([
+      ['no post', { data: {} }],
+      ['a string post id', { data: { postId: '88' } }],
+      ['post id 0', { data: { postId: 0 } }],
+      ['a negative post id', { data: { postId: -3 } }],
+      ['a fractional post id', { data: { postId: 1.5 } }],
+      ['an array payload', { data: [88] }],
+      ['a null payload', { data: null }],
+      ['an image target', { targetType: 'image' }],
+      ['no target id', { targetId: null }],
+    ])('refuses to approve a row with %s, and leaves it pending', async (_, overrides) => {
+      givenContinuation(overrides);
 
       await expect(
         settleStorylineContinuation({ placementId: 1, action: 'approve', actorId: OWNER })
@@ -2849,6 +2950,17 @@ describe('a write inside the settlement transaction', () => {
         expect(writeChapterEdgeForPlacement).not.toHaveBeenCalled();
       }
     );
+
+    // The edge is the storyline handler's to write, through the hook. Goes red
+    // if settlePlacement starts writing it itself for the storyline surface.
+    it('writes no edge when settlePlacement approves a storyline row with no hook', async () => {
+      givenContinuation();
+
+      await settlePlacement({ placementId: 1, action: 'approve', actorId: OWNER });
+
+      expect(db.placements.get(1)!.status).toBe('approved');
+      expect(writeChapterEdgeForPlacement).not.toHaveBeenCalled();
+    });
   });
 
   describe('the owner answering', () => {
@@ -2859,17 +2971,31 @@ describe('a write inside the settlement transaction', () => {
         actOnStorylineContinuation({ placementId: 1, ownerId: OWNER, action: 'approve' })
       ).resolves.toEqual({ settled: true, status: 'approved' });
       expect(writeChapterEdgeForPlacement).toHaveBeenCalledTimes(1);
+      expect(db.placements.get(1)!.resolvedById).toBe(OWNER);
     });
 
-    it('refuses anyone but the owner, and settles nothing', async () => {
+    it('lets the owner decline, and writes no edge', async () => {
       givenContinuation();
 
       await expect(
-        actOnStorylineContinuation({ placementId: 1, ownerId: PLACER, action: 'approve' })
-      ).rejects.toThrow();
-      expect(db.placements.get(1)!.status).toBe('pending');
+        actOnStorylineContinuation({ placementId: 1, ownerId: OWNER, action: 'decline' })
+      ).resolves.toEqual({ settled: true, status: 'declined' });
       expect(writeChapterEdgeForPlacement).not.toHaveBeenCalled();
+      expect(db.placements.get(1)!.resolvedById).toBe(OWNER);
     });
+
+    it.each(['approve', 'decline'] as const)(
+      'refuses anyone but the owner, and settles nothing: %s',
+      async (action) => {
+        givenContinuation();
+
+        await expect(
+          actOnStorylineContinuation({ placementId: 1, ownerId: PLACER, action })
+        ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+        expect(db.placements.get(1)!.status).toBe('pending');
+        expect(writeChapterEdgeForPlacement).not.toHaveBeenCalled();
+      }
+    );
 
     it('refuses one already answered', async () => {
       givenContinuation({ status: 'declined' });
