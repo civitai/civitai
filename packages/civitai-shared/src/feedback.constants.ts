@@ -24,11 +24,17 @@
 // the shared area enum accept the slug, so the generic `feedback.create` / `feedback.getArea`
 // inputs refuse it explicitly (`genericFeedbackAreaSchema` in src/server/schema/feedback.schema.ts)
 // whatever its `feedback-area-app-block` flag says; that flag gates only the dedicated procedure.
+//
+// `apps-platform` is feedback about the developer platform (CLI, SDK, docs, review), sent by a
+// coding agent with an API token. Its rows are deduplicated on a server-computed fingerprint held
+// in `context.server`, so the generic inputs refuse it for the same reason they refuse `app-block`:
+// a row written there would carry no fingerprint and never be counted.
 export const FEEDBACK_AREAS = [
   'bitdex-image-feed',
   'apps-marketplace',
   'site-bug-report',
   'app-block',
+  'apps-platform',
 ] as const;
 
 /**
@@ -40,6 +46,9 @@ export const SITE_BUG_REPORT_AREA: FeedbackArea = 'site-bug-report';
 
 /** Private per-app feedback from the App Block chrome — see the `app-block` note on FEEDBACK_AREAS. */
 export const APP_BLOCK_FEEDBACK_AREA: FeedbackArea = 'app-block';
+
+/** Developer-platform feedback from coding agents — see the `apps-platform` note on FEEDBACK_AREAS. */
+export const APPS_PLATFORM_FEEDBACK_AREA: FeedbackArea = 'apps-platform';
 
 /**
  * Who can read an `app-block` report, as user-facing copy. The developer's inbox note
