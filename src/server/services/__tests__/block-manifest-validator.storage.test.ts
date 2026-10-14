@@ -123,9 +123,9 @@ describe('manifest storage — accepted declarations', () => {
       ),
     ],
     [
-      'plays: shared counters that any eligible viewer may write',
+      'plays: shared counters on viewer-authored documents (write "own")',
       manifest(
-        { collections: { plays: { visibility: 'shared', write: 'anyone', counters: ['plays'] } } },
+        { collections: { plays: { visibility: 'shared', write: 'own', counters: ['plays'] } } },
         [STORAGE, PUBLISH],
         { scopeJustifications: JUSTIFIED }
       ),
@@ -407,7 +407,16 @@ describe('manifest storage — features not available yet', () => {
         { collections: { plays: { visibility: 'shared', write: 'owner', counters: ['plays'] } } },
         [STORAGE]
       ),
-      'storage.collections.plays.write "owner" is not available yet — owner-written documents arrive in a later phase of App Storage; use "own", "anyone" or "none" for now',
+      'storage.collections.plays.write "owner" is not available yet — owner-written documents arrive in a later phase of App Storage; use "own" or "none" for now',
+    ],
+    [
+      'documents any viewer may edit',
+      manifest(
+        { collections: { notes: { visibility: 'shared', write: 'anyone', marks: ['vote'] } } },
+        [STORAGE, PUBLISH],
+        { scopeJustifications: JUSTIFIED }
+      ),
+      'storage.collections.notes.write "anyone" is not available yet — documents any viewer may edit arrive in a later phase of App Storage; use "own" or "none" for now',
     ],
   ])('refuses %s', (_label, m, message) => {
     expect(validate(isolated(m as Record<string, unknown>))).toEqual(refused(message));
@@ -451,23 +460,6 @@ describe('manifest storage — scope rules', () => {
     ).toEqual(
       refused(
         'storage collection datasets, items lets viewers write documents other users read, which requires the apps:storage:publish scope — add it to scopes with a scopeJustifications entry'
-      )
-    );
-  });
-
-  it('write "anyone" requires apps:storage:publish as well', () => {
-    expect(
-      validate(
-        manifest(
-          {
-            collections: { plays: { visibility: 'shared', write: 'anyone', counters: ['plays'] } },
-          },
-          [STORAGE]
-        )
-      )
-    ).toEqual(
-      refused(
-        'storage collection plays lets viewers write documents other users read, which requires the apps:storage:publish scope — add it to scopes with a scopeJustifications entry'
       )
     );
   });

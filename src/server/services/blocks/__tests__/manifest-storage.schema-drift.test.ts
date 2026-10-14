@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import {
   APP_STORAGE_BUILTIN_MARKS,
   APP_STORAGE_COLLECTION_NAME_RE,
+  APP_STORAGE_ENABLED_FEATURES,
   APP_STORAGE_INDEX_PATH_RE,
   APP_STORAGE_INDEX_TYPES,
   APP_STORAGE_KINDS,
@@ -50,7 +51,10 @@ const schema = JSON.parse(readFileSync(SCHEMA_PATH, 'utf8')) as {
 };
 const storageSchema = schema.properties.storage;
 
-const ALL_ON = { ownerWrites: true, logCollections: true, ttl: true } as const;
+// Every phased feature ON, derived from the switch so a feature added there is covered here.
+const ALL_ON = Object.fromEntries(
+  Object.keys(APP_STORAGE_ENABLED_FEATURES).map((feature) => [feature, true])
+) as Record<keyof typeof APP_STORAGE_ENABLED_FEATURES, boolean>;
 const parserAccepts = (storage: unknown, features = ALL_ON) =>
   parseManifestStorage({ storage }, features).errors.length === 0;
 
@@ -68,7 +72,7 @@ const CASES: Array<[string, unknown, boolean, boolean?]> = [
   // accept
   ['private, minimal', priv(), true],
   ['shared own', shared(), true],
-  ['shared anyone', shared({ write: 'anyone' }), true],
+  ['shared anyone', shared({ write: 'anyone' }), true, true],
   [
     'design example',
     {

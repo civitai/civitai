@@ -83,7 +83,8 @@ export type AppStorageVisibility = (typeof APP_STORAGE_VISIBILITIES)[number];
 /**
  * Who may create, update and delete documents in a SHARED collection:
  *   - `own`    — eligible viewers create; only a document's author updates or deletes it.
- *   - `anyone` — eligible viewers may update or delete any document.
+ *   - `anyone` — eligible viewers may update or delete any document (later phase; see the
+ *                feature switch).
  *   - `owner`  — only the app owner writes documents (later phase; see the feature switch).
  *   - `none`   — nobody creates, updates or deletes documents. Viewers may only increment
  *                the declared counters and set the declared marks; incrementing a counter
@@ -110,13 +111,14 @@ export const APP_STORAGE_MAX_DAILY_WRITES_PER_AUTHOR = 1_000;
 export const APP_STORAGE_MAX_ERRORS = 20;
 
 /** The storage features that ship in later phases than the declaration itself. */
-export type AppStorageFeature = 'ownerWrites' | 'logCollections' | 'ttl';
+export type AppStorageFeature = 'anyoneWrites' | 'ownerWrites' | 'logCollections' | 'ttl';
 
 /**
  * 🔴 THE ONE SWITCH for which declared storage features the platform accepts. Everything
  * in the `storage` schema that is not listed here is available now. Each entry is refused
  * by {@link parseManifestStorage} while it is `false`:
  *
+ *   - `anyoneWrites`   — `write: "anyone"` (any eligible viewer edits or deletes any document).
  *   - `ownerWrites`    — `write: "owner"` (documents written by the app owner, not viewers).
  *   - `logCollections` — `kind: "log"` (append-only, trimmed to `maxEntries`).
  *   - `ttl`            — `ttlSeconds` (documents that expire).
@@ -127,6 +129,7 @@ export type AppStorageFeature = 'ownerWrites' | 'logCollections' | 'ttl';
  */
 export const APP_STORAGE_ENABLED_FEATURES: Readonly<Record<AppStorageFeature, boolean>> =
   Object.freeze({
+    anyoneWrites: false,
     ownerWrites: false,
     logCollections: false,
     ttl: false,
@@ -356,13 +359,18 @@ function parseCollection(
     errors.push(`${at}.write must be one of ${APP_STORAGE_WRITE_POLICIES.join(', ')}`);
   } else {
     write = raw.write as AppStorageWritePolicy;
-    if (write === 'owner' && !features.ownerWrites) {
+    if (write === 'anyone' && !features.anyoneWrites) {
       errors.push(
         notYet(
-          `${at}.write "owner"`,
-          'owner-written documents',
-          'use "own", "anyone" or "none" for now'
+          `${at}.write "anyone"`,
+          'documents any viewer may edit',
+          'use "own" or "none" for now'
         )
+      );
+    }
+    if (write === 'owner' && !features.ownerWrites) {
+      errors.push(
+        notYet(`${at}.write "owner"`, 'owner-written documents', 'use "own" or "none" for now')
       );
     }
   }
@@ -568,7 +576,8 @@ export function parseManifestStorage(
 export function collectionNeedsPublishScope(collection: DeclaredStorageCollection): boolean {
   // An allowlist of the policies under which a VIEWER authors documents, not "anything but
   // owner": a new policy must be classified here deliberately, and `none` (counters and
-  // marks only) must never require the consent-gated publish scope.
+  // marks only) must never require the consent-gated publish scope. `anyone` stays listed
+  // although the feature switch refuses it today, so enabling it needs no change here.
   return (
     collection.visibility === 'shared' &&
     (collection.write === 'own' || collection.write === 'anyone')

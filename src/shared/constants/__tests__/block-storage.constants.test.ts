@@ -25,8 +25,9 @@ const REQUESTS = {
 describe('APP_STORAGE_ENABLED_FEATURES', () => {
   // A ledger: turning a feature on must be a deliberate edit of this line AND of the
   // runtime behind it.
-  it('ships with owner writes, log collections and TTL switched off', () => {
+  it('ships with anyone-writes, owner writes, log collections and TTL switched off', () => {
     expect(APP_STORAGE_ENABLED_FEATURES).toEqual({
+      anyoneWrites: false,
       ownerWrites: false,
       logCollections: false,
       ttl: false,
@@ -37,6 +38,7 @@ describe('APP_STORAGE_ENABLED_FEATURES', () => {
   // Positive control for every "not available yet" refusal: the same declaration is
   // accepted once its feature is on, so the refusal is the switch's and not a shape error.
   it.each([
+    ['anyoneWrites', { visibility: 'shared', write: 'anyone', marks: ['vote'] }],
     ['ownerWrites', { visibility: 'shared', write: 'owner', counters: ['plays'] }],
     ['logCollections', { visibility: 'private', kind: 'log', maxEntries: 500 }],
     ['ttl', { visibility: 'private', ttlSeconds: 86400 }],
@@ -181,5 +183,24 @@ describe('owner-written collections (feature on)', () => {
     ).toEqual([
       'storage.collections.plays.dailyWritesPerAuthor does not apply to write "owner" — only the app owner writes that collection',
     ]);
+  });
+});
+
+/**
+ * `write: "anyone"` is refused by the feature switch before any scope rule runs, so this pins
+ * what the publish rule does the day `anyoneWrites` flips: viewers author those documents,
+ * so the publish scope is required — with no change to the rule itself.
+ */
+describe('write "anyone" collections (feature on)', () => {
+  const ANYONE_ON = { ...APP_STORAGE_ENABLED_FEATURES, anyoneWrites: true };
+  const notes = { visibility: 'shared', write: 'anyone', marks: ['vote'] };
+
+  it('require apps:storage:publish', () => {
+    const parsed = parseManifestStorage({ storage: { collections: { notes } } }, ANYONE_ON);
+    expect(parsed.errors).toEqual([]);
+    expect(appStorageScopeErrors(['apps:storage'], parsed)).toEqual([
+      'storage collection notes lets viewers write documents other users read, which requires the apps:storage:publish scope — add it to scopes with a scopeJustifications entry',
+    ]);
+    expect(appStorageScopeErrors(['apps:storage', 'apps:storage:publish'], parsed)).toEqual([]);
   });
 });
