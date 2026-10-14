@@ -141,9 +141,10 @@ CREATE TABLE IF NOT EXISTS "ServiceDeal" (
   CONSTRAINT "ServiceDeal_settled_after_held" CHECK ("settledAt" IS NULL OR "heldAt" IS NOT NULL),
   CONSTRAINT "ServiceDeal_dispute_resolution_consistent" CHECK (("disputeResolvedAt" IS NULL) = ("disputeResolution" IS NULL)),
   -- Release pays "sellerId", so it must be the offering's seller, not whatever a caller passed.
-  -- NO ACTION on update: moving an offering to another seller must not redirect the payout of a
-  -- deal already open on it. Not in the Prisma schema, which declares the offering relation on
-  -- "offeringId" alone.
+  -- NO ACTION on update: moving an offering to another seller must not redirect a deal's payout.
+  -- Deals are never deleted, so an offering that has had ANY deal, open or closed, can never
+  -- change seller. Not in the Prisma schema, which declares the offering relation on "offeringId"
+  -- alone.
   CONSTRAINT "ServiceDeal_offering_seller_fkey" FOREIGN KEY ("offeringId", "sellerId")
     REFERENCES "ServiceOffering"("id", "sellerId") ON DELETE RESTRICT ON UPDATE NO ACTION
 );

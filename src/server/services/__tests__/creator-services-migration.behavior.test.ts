@@ -218,7 +218,7 @@ describe('creator services migration', () => {
     );
   });
 
-  it('refuses moving an offering to another seller while a deal on it is open, since the payout would follow', async () => {
+  it('refuses moving an offering that has a deal to another seller, since the payout would follow', async () => {
     await insertDeal({ status: 'Accepted', heldAt: new Date() });
     await expect(
       q(`UPDATE "ServiceOffering" SET "sellerId" = $1 WHERE id = $2`, [OTHER_SELLER, OFFERING])
