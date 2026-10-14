@@ -26,13 +26,6 @@ describe('the Creator Score category list', () => {
     );
   });
 
-  // The sum itself is run against Postgres in creator-score-grant.behavior.test.ts.
-  it("getCreatorRequirements' GREATEST sums the shared list", () => {
-    expect(read('src/server/services/creator-program.service.ts')).toContain(
-      "${Prisma.raw(creatorScoreCategorySumSql('u.meta'))},"
-    );
-  });
-
   it('Creator Studio keeps the same list', () => {
     const source = read('apps/creator-studio/src/lib/server/creator-score.ts');
     const list = source.match(/const SCORE_KEYS = \[([\s\S]*?)\] as const;/)?.[1];
