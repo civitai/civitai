@@ -204,7 +204,8 @@ export async function createStorylinePlacement({
     isCollaborator,
     whoCanContinue: parent.storyline.whoCanContinue,
   });
-  if (access === 'closed') throw throwBadRequestError(STORYLINE_REFUSALS.notOpen);
+  // `closed` was refused above, before the assert, so a stranger on a closed
+  // storyline hears that it is closed rather than that it is collaborators-only.
   if (access === 'collaboratorsOnly')
     throw throwBadRequestError(STORYLINE_REFUSALS.collaboratorsOnly);
 

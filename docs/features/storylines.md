@@ -36,7 +36,9 @@ version as designed rather than what is live today.
 - **Collaborators.** The creator can endorse collaborators. Their continuations are added without
   review and are listed ahead of other contributors' at the end of a chapter.
 - **Review.** Continuations from anyone else wait in the creator's review queue to be approved or
-  declined. A post above the storyline's content level cannot be submitted at all.
+  declined. A post above the storyline's content level cannot be submitted at all. A post submitted
+  while still a draft or still being scanned reaches the queue once it is published and rated, or is
+  withdrawn then if it turns out above the content level.
 - **Credit.** A continuation can fork from the end of any chapter. Earlier chapters are referenced and
   credited to their authors, never copied.
 
