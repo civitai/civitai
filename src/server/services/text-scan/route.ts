@@ -9,12 +9,16 @@ import type { TextScanEntityType } from '~/server/services/text-scan/types';
 type SubmittedWorkflow = { id?: string | null } | null | undefined;
 type SkipReason = Extract<ScanEntityResult, { status: 'skipped' }>['reason'];
 
-// Compared by identity: the retry cron deletes the row instead of spending another attempt on it.
+// Compared by identity. The retry cron deletes a gone entity's row, and keeps a not-public one's
+// (a rating floor still reads its verdict) but stops retrying it.
 export const TEXT_SCAN_ENTITY_GONE: SubmittedWorkflow = Object.freeze({ id: null });
+export const TEXT_SCAN_ENTITY_NOT_PUBLIC: SubmittedWorkflow = Object.freeze({ id: null });
 
 export function toSubmittedWorkflow(result: ScanEntityResult): SubmittedWorkflow {
   if (result.status === 'submitted') return { id: result.workflowId };
   if (result.status === 'skipped' && result.reason === 'missing') return TEXT_SCAN_ENTITY_GONE;
+  if (result.status === 'skipped' && result.reason === 'not-public')
+    return TEXT_SCAN_ENTITY_NOT_PUBLIC;
   return null;
 }
 

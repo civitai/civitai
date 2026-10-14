@@ -140,7 +140,10 @@ import { submitModelTextModeration } from '~/server/services/model-moderation.ad
 import { summarizeTextScan } from '~/server/services/text-scan/moderator-summary';
 import { reassertModelPoiRestrictions } from '~/server/services/text-scan/actions/model-poi-minor';
 import { legacyProfanityAutoNsfwApplies } from '~/server/services/text-scan/route';
-import { scanEntityInBackground } from '~/server/services/text-scan/submit';
+import {
+  scanEntitiesInBackground,
+  scanEntityInBackground,
+} from '~/server/services/text-scan/submit';
 import {
   bustMvCache,
   bustPublicModelResponseCache,
@@ -3505,21 +3508,26 @@ export const publishModelById = async ({
   // search-index update batch.
   const posts = await dbWrite.post.findMany({
     where: { modelVersionId: { in: allVersionIds }, userId: model.userId },
-    select: { id: true },
+    select: { id: true, modelVersionId: true },
   });
   const images = await dbWrite.image.findMany({
     where: { postId: { in: posts.map((x) => x.id) } },
     select: { id: true },
   });
 
-  // Drafts are not scanned, so going public (or scheduled) is the first scan for the model and
-  // for the posts this publish dated. Unchanged text dedups to a no-op on a republish.
+  // Unchanged text dedups to a no-op on a republish, so no republish guard.
   submitModelTextModeration({
     id: model.id,
     name: model.name,
     description: model.description,
   }).catch(() => null);
-  for (const post of posts) scanEntityInBackground({ entityType: 'Post', entityId: post.id });
+  if (includeVersions)
+    scanEntitiesInBackground(
+      'Post',
+      posts
+        .filter((p) => p.modelVersionId && versionIds.includes(p.modelVersionId))
+        .map((p) => p.id)
+    );
 
   // Republish only: a dropped Update on this path has no recovery without an updatedAt bump (both
   // image indexes re-derive a missing Update solely from a delta scan of moved rows, and a
@@ -5527,10 +5535,13 @@ export const publishPrivateModel = async ({
       description: model.description,
     }).catch(() => null);
     const posts = await dbWrite.post.findMany({
-      where: { modelVersionId: { in: versionIds } },
+      where: { modelVersionId: { in: versionIds }, userId: model.userId },
       select: { id: true },
     });
-    for (const post of posts) scanEntityInBackground({ entityType: 'Post', entityId: post.id });
+    scanEntitiesInBackground(
+      'Post',
+      posts.map((p) => p.id)
+    );
   }
 
   return { versionIds };

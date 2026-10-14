@@ -1,13 +1,15 @@
 import type { Prisma } from '@prisma/client';
-import { Availability, ModelStatus } from '~/shared/utils/prisma/enums';
+import { ModelStatus } from '~/shared/utils/prisma/enums';
 
-// Scheduled counts as public so the verdict exists by the time the content goes live.
+// Scheduled counts as public so the verdict exists by the time the content goes live. Private
+// models count too: generation can use them, and its real-person guard reads `Model.poi`.
+const PUBLIC_MODEL_STATUSES: ModelStatus[] = [ModelStatus.Published, ModelStatus.Scheduled];
+
 export const PUBLIC_MODEL_WHERE = {
   deletedAt: null,
-  status: { in: [ModelStatus.Published, ModelStatus.Scheduled] },
-  availability: { not: Availability.Private },
+  status: { in: PUBLIC_MODEL_STATUSES },
 } satisfies Prisma.ModelWhereInput;
 
-export const PUBLIC_POST_WHERE = {
-  publishedAt: { not: null },
-} satisfies Prisma.PostWhereInput;
+export function isPublicModelStatus(status: ModelStatus) {
+  return PUBLIC_MODEL_STATUSES.includes(status);
+}

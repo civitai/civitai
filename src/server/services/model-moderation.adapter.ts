@@ -20,7 +20,10 @@ import { applyModelPoiMinor } from '~/server/services/text-scan/actions/model-po
 import { getTextScanMode } from '~/server/services/text-scan/mode';
 import { notifyTextScanRatingRaised } from '~/server/services/text-scan/notify';
 import { PUBLIC_MODEL_WHERE } from '~/server/services/text-scan/public-content';
-import { submitTextModerationOrScan } from '~/server/services/text-scan/route';
+import {
+  submitTextModerationOrScan,
+  TEXT_SCAN_ENTITY_NOT_PUBLIC,
+} from '~/server/services/text-scan/route';
 import { removeTags } from '~/utils/string-helpers';
 
 export const MODEL_MODERATION_ENTITY_TYPE = 'Model' as const;
@@ -185,7 +188,7 @@ async function recordForensics({
 export const modelModerationAdapter: ModerationAdapter = {
   resolveContent: async (ids) => {
     const rows = await dbRead.model.findMany({
-      where: { id: { in: ids }, ...PUBLIC_MODEL_WHERE },
+      where: { id: { in: ids }, deletedAt: null },
       select: { id: true, name: true, description: true },
     });
     return new Map(rows.map((r) => [r.id, buildModelModerationText(r)]));
@@ -210,6 +213,7 @@ export const modelModerationAdapter: ModerationAdapter = {
       // here — the same shape as a submit the helper itself declined.
       xguard: async () => {
         if (!(await submitEnabled(entityId))) return undefined;
+        if (!(await isPublicModel(entityId))) return TEXT_SCAN_ENTITY_NOT_PUBLIC;
         return submitModelScan({ entityId, content });
       },
     }),
@@ -295,10 +299,18 @@ export const modelModerationAdapter: ModerationAdapter = {
   // The omission is deliberate — do not add an empty hook.
 };
 
+// The primary: a publish scans right after its commit, before a replica has the new status.
+async function isPublicModel(id: number) {
+  return !!(await dbWrite.model.findFirst({
+    where: { id, ...PUBLIC_MODEL_WHERE },
+    select: { id: true },
+  }));
+}
+
 /**
  * Fire-and-forget submit for the model write and publish paths. Owns its own flag check and
  * error handling so a caller gets a single awaitable that can never fail the save. A model that
- * is not public is not scanned; publishing it scans it.
+ * is not public is not scanned.
  */
 export async function submitModelTextModeration(model: {
   id: number;
@@ -314,11 +326,7 @@ export async function submitModelTextModeration(model: {
 
   const content = buildModelModerationText(model);
   try {
-    const isPublic = await dbWrite.model.findFirst({
-      where: { id: model.id, ...PUBLIC_MODEL_WHERE },
-      select: { id: true },
-    });
-    if (!isPublic) return;
+    if (!(await isPublicModel(model.id))) return;
 
     await submitTextModerationOrScan({
       entityType: MODEL_MODERATION_ENTITY_TYPE,

@@ -78,14 +78,36 @@ describe('rated-entity profiles', () => {
     });
     expect(dbMock.dbWrite.model.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: {
-          id: { in: [1] },
-          deletedAt: null,
-          status: { in: ['Published', 'Scheduled'] },
-          availability: { not: 'Private' },
-        },
+        where: { id: { in: [1] }, deletedAt: null },
       })
     );
+  });
+
+  // Every reader but the scan needs non-public models too: a moderator ruling or an appeal on a
+  // model its owner has since unpublished still hashes its text.
+  it.each([
+    ['Draft', 'Public', true],
+    ['Unpublished', 'Public', true],
+    ['Published', 'Public', false],
+    ['Scheduled', 'Public', false],
+    // Generation can use a private model, and its real-person guard reads Model.poi.
+    ['Published', 'Private', false],
+  ])('Model: a %s %s model loads, marked notPublic=%s', async (status, availability, notPublic) => {
+    dbMock.dbWrite.model.findMany.mockResolvedValue([
+      {
+        id: 1,
+        userId: 9,
+        name: 'x',
+        description: null,
+        nsfw: false,
+        poi: false,
+        minor: false,
+        status,
+        availability,
+        modelVersions: [],
+      },
+    ]);
+    expect(Boolean((await load('Model')).notPublic)).toBe(notPublic);
   });
 
   it('Model: an nsfw model is declared at the top level', async () => {
@@ -155,10 +177,17 @@ describe('rated-entity profiles', () => {
     expect(subject.text).toMatchObject({ 'Theme elements': 'rain, city', Description: 'D' });
   });
 
-  it('Post: loads only posts with a publish date, scheduled ones included', async () => {
-    await getTextScanProfile('Post')!.load([1]);
+  it.each([
+    [null, true],
+    [new Date('2099-01-01'), false],
+    [new Date('2020-01-01'), false],
+  ])('Post: publishedAt %s loads, marked notPublic=%s', async (publishedAt, notPublic) => {
+    dbMock.dbWrite.post.findMany.mockResolvedValue([
+      { id: 1, userId: 9, title: 'T', detail: null, nsfwLevel: 1, publishedAt },
+    ]);
+    expect(Boolean((await load('Post')).notPublic)).toBe(notPublic);
     expect(dbMock.dbWrite.post.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { id: { in: [1] }, publishedAt: { not: null } } })
+      expect.objectContaining({ where: { id: { in: [1] } } })
     );
   });
 

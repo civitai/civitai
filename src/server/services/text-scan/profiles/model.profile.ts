@@ -1,7 +1,7 @@
 import { NsfwLevel } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { registerTextScanProfile } from '~/server/services/text-scan/profiles';
-import { PUBLIC_MODEL_WHERE } from '~/server/services/text-scan/public-content';
+import { isPublicModelStatus } from '~/server/services/text-scan/public-content';
 import { removeTags } from '~/utils/string-helpers';
 
 registerTextScanProfile({
@@ -9,7 +9,7 @@ registerTextScanProfile({
   labels: ['nsfw', 'poi', 'minor'],
   load: async (ids) => {
     const rows = await dbWrite.model.findMany({
-      where: { id: { in: ids }, ...PUBLIC_MODEL_WHERE },
+      where: { id: { in: ids }, deletedAt: null },
       select: {
         id: true,
         userId: true,
@@ -18,6 +18,7 @@ registerTextScanProfile({
         nsfw: true,
         poi: true,
         minor: true,
+        status: true,
         modelVersions: {
           select: { name: true, description: true, trainedWords: true },
           orderBy: { index: 'asc' },
@@ -29,6 +30,7 @@ registerTextScanProfile({
         m.id,
         {
           userId: m.userId,
+          notPublic: !isPublicModelStatus(m.status),
           declared: {
             nsfwLevel: m.nsfw ? NsfwLevel.XXX : NsfwLevel.PG13,
             poi: m.poi,

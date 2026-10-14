@@ -27,7 +27,6 @@ export const articleModerationAdapter: ModerationAdapter = {
     );
   },
 
-  // Only the retry cron calls submit.
   submit: ({ entityId, content }) =>
     submitTextModerationOrScan({
       entityType: 'Article',

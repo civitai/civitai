@@ -3,6 +3,7 @@ import { submitWorkflow } from '@civitai/client';
 import { env } from '~/env/server';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
+import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { hashContent } from '~/server/services/entity-moderation.service';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
@@ -44,6 +45,7 @@ export const TEXT_SCAN_CALLBACK_PATH = '/api/webhooks/text-scan-result';
 const MAX_OUTPUT_TOKENS = 1024;
 // Same window as the retry cron's stuck-Pending timeout (text-moderation-retry.ts).
 const IN_FLIGHT_MINUTES = 30;
+const BACKGROUND_SCAN_CONCURRENCY = 5;
 const MISSING_PROMPT_LOG_SECONDS = 15 * 60;
 
 export function textScanCallbackUrl() {
@@ -61,6 +63,7 @@ export type ScanEntityResult =
         | 'off'
         | 'no-profile'
         | 'missing'
+        | 'not-public'
         | 'too-short'
         | 'unchanged'
         | 'in-flight'
@@ -321,6 +324,7 @@ export async function scanEntity({
 
   const subject = (await profile.load([entityId])).get(entityId);
   if (!subject) return { status: 'skipped', reason: 'missing' };
+  if (subject.notPublic) return { status: 'skipped', reason: 'not-public' };
   if (subjectTextLength(subject) < (profile.minChars ?? 1)) {
     for (const pass of passes) await clearStaleVerdict({ entityType, entityId, pass, subject });
     return { status: 'skipped', reason: 'too-short' };
@@ -462,6 +466,7 @@ async function submitTextScanPass({
     entityId,
     marker: externalId,
     contentHash,
+    rearmRetries: !fromRetry,
   });
 
   let workflowId: string | undefined;
@@ -535,12 +540,10 @@ async function submitTextScanPass({
   return { status: 'submitted', workflowId };
 }
 
-export function scanEntityInBackground(args: {
-  entityType: TextScanEntityType;
-  entityId: number;
-  force?: boolean;
-}) {
-  scanEntity(args).catch((e) =>
+type BackgroundScanArgs = { entityType: TextScanEntityType; entityId: number; force?: boolean };
+
+function scanEntityOrLog(args: BackgroundScanArgs) {
+  return scanEntity(args).catch((e) =>
     logToAxiom({
       name: 'text-scan',
       type: 'error',
@@ -550,4 +553,16 @@ export function scanEntityInBackground(args: {
       error: (e as Error).message,
     })
   );
+}
+
+export function scanEntityInBackground(args: BackgroundScanArgs) {
+  scanEntityOrLog(args).catch(() => null);
+}
+
+// A publish can date every post on a model at once.
+export function scanEntitiesInBackground(entityType: TextScanEntityType, entityIds: number[]) {
+  limitConcurrency(
+    entityIds.map((entityId) => () => scanEntityOrLog({ entityType, entityId })),
+    BACKGROUND_SCAN_CONCURRENCY
+  ).catch(() => null);
 }

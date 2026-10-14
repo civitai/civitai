@@ -65,12 +65,13 @@ export function createTextScanAdapter(
       if (!profile) return new Map();
       const subjects = await profile.load(ids);
       const minChars = profile.minChars ?? 1;
-      // Omitted ids take the retry cron's missing path (row deleted) instead of failing forever.
+      // Omitted ids take the retry cron's missing path (row deleted) instead of failing forever;
+      // a not-public entity is kept so its row, and the verdict on it, survive.
       // `submit` rescans from the entity and ignores the content, so a marker avoids holding a
       // whole batch of composed text in memory.
       return new Map(
         [...subjects]
-          .filter(([, subject]) => subjectTextLength(subject) >= minChars)
+          .filter(([, subject]) => subject.notPublic || subjectTextLength(subject) >= minChars)
           .map(([id]) => [id, TEXT_SCAN_RETRY_CONTENT])
       );
     },

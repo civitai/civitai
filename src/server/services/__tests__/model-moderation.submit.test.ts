@@ -39,14 +39,11 @@ describe('submitModelTextModeration', () => {
 
     expect(dbMock.dbWrite.model.findFirst).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: {
-          id: 7,
-          deletedAt: null,
-          status: { in: ['Published', 'Scheduled'] },
-          availability: { not: 'Private' },
-        },
+        where: { id: 7, deletedAt: null, status: { in: ['Published', 'Scheduled'] } },
       })
     );
+    // The primary: a publish scans right after its commit, before a replica has the new status.
+    expect(dbMock.dbRead.model.findFirst).not.toHaveBeenCalled();
     expect(submitTextModeration).not.toHaveBeenCalled();
   });
 

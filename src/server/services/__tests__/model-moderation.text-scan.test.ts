@@ -100,6 +100,7 @@ describe('submitModelTextModeration — routed', () => {
   });
 
   it('never scans a moderator save, in either pipeline', async () => {
+    dbMock.dbWrite.model.findFirst.mockResolvedValue({ id: 7 });
     await submitModelTextModeration({ id: 7, name: 'LoRA', description: null, isModerator: true });
     expect(submitTextModerationOrScan).not.toHaveBeenCalled();
   });

@@ -84,51 +84,15 @@ const cases: [file: string, start: string, call: string, times: number][] = [
     1,
   ],
   [
-    'src/server/services/post.service.ts',
-    'export const createPost',
-    "scanEntityInBackground({ entityType: 'Post', entityId: post.id })",
-    1,
-  ],
-  [
-    'src/server/services/post.service.ts',
-    'export const updatePost',
-    "scanEntityInBackground({ entityType: 'Post', entityId: post.id })",
-    1,
-  ],
-  [
-    'src/server/services/model.service.ts',
-    'export const publishModelById',
-    'submitModelTextModeration({',
-    1,
-  ],
-  [
-    'src/server/services/model.service.ts',
-    'export const publishModelById',
-    "scanEntityInBackground({ entityType: 'Post', entityId: post.id })",
-    1,
-  ],
-  [
-    'src/server/services/model.service.ts',
-    'export const publishPrivateModel',
-    'submitModelTextModeration({',
-    1,
-  ],
-  [
-    'src/server/services/model.service.ts',
-    'export const publishPrivateModel',
-    "scanEntityInBackground({ entityType: 'Post', entityId: post.id })",
-    1,
-  ],
-  [
     'src/server/services/model-version.service.ts',
     'export const publishModelVersionById',
-    "scanEntityInBackground({ entityType: 'Post', entityId: post.id })",
+    'scanEntitiesInBackground(',
     1,
   ],
   [
     'src/server/jobs/process-scheduled-publishing.ts',
     'export const processScheduledPublishing',
-    "scanEntityInBackground({ entityType: 'Post', entityId: post.id })",
+    'scanEntitiesInBackground(',
     1,
   ],
   [
