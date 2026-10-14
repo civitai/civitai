@@ -155,7 +155,7 @@ function BranchRow({
     <li>
       <UnstyledButton
         onClick={onClick}
-        className="flex w-full items-center gap-2 rounded border border-dashed border-violet-5 px-2 py-1 text-left"
+        className="flex w-full items-center gap-2 rounded border border-dashed border-[var(--mantine-color-violet-5)] px-2 py-1 text-left"
         data-testid="storyline-branch"
         data-chapter-id={child.chapterId}
         data-tombstone={child.tombstone ?? undefined}

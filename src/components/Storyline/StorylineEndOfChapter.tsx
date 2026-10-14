@@ -100,7 +100,7 @@ export function StorylineEndOfChapter({
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
             <Text
-              className="text-violet-7 dark:text-violet-3 flex items-center gap-1.5 text-[13px] font-bold"
+              className="flex items-center gap-1.5 text-[13px] font-bold text-[var(--mantine-color-violet-7)] dark:text-[var(--mantine-color-violet-3)]"
               component="div"
             >
               <IconRoute size={15} className="shrink-0" />
@@ -150,7 +150,7 @@ export function StorylineEndOfChapter({
         )}
 
         <div
-          className="border-violet-5 bg-violet-0 dark:bg-violet-9/15 flex flex-col items-stretch gap-3 rounded-xl border-[1.5px] border-dashed px-4 py-3.5 @md:flex-row @md:items-center"
+          className="flex flex-col items-stretch gap-3 rounded-xl border-[1.5px] border-dashed border-[var(--mantine-color-violet-5)] bg-[var(--mantine-color-violet-0)] px-4 py-3.5 @md:flex-row @md:flex-wrap @md:items-center dark:bg-[rgba(95,61,196,0.15)]"
           data-testid="storyline-create-block"
         >
           <div className="flex-1">
@@ -210,8 +210,11 @@ function ShareBar({ percent, hidden }: { percent: number; hidden?: boolean }) {
   );
 }
 
+/** Who wrote it; the chapter number too when the title does not already say it. */
 function byline(child: StorylineChild) {
-  return `Chapter ${child.depth + 1}${child.post?.username ? ` by ${child.post.username}` : ''}`;
+  const author = child.post?.username ? `by ${child.post.username}` : '';
+  if (child.post && !child.post.title) return author;
+  return [`Chapter ${child.depth + 1}`, author].filter(Boolean).join(' ');
 }
 
 /** Fork-tagging attributes the end-to-end spec reads. */
@@ -426,7 +429,7 @@ export function StorylineContinueWithPost({ parentPostId }: { parentPostId: numb
   if (!terms) return null;
   if (!terms.open)
     return terms.closedReason ? (
-      <Text size="sm" c="dimmed" data-testid="storyline-continue-closed">
+      <Text size="sm" c="dimmed" className="w-full" data-testid="storyline-continue-closed">
         {closedCopy[terms.closedReason]}
       </Text>
     ) : null;

@@ -208,6 +208,16 @@ describe('StorylineEndOfChapter', () => {
     ]).toEqual(['The thrift store', 'Chapter 6 by user5', 'Read chapter 6', 'Chapter 6']);
   });
 
+  // An untitled chapter is named "Chapter N", so its byline does not say the number twice.
+  it('drops the chapter number from the byline of an untitled chapter', () => {
+    mocks.children = [child(5, 'canon', '', 5)];
+    const lead = forks(render())[0];
+    expect([
+      within(lead, 'storyline-fork-name')?.textContent,
+      within(lead, 'storyline-fork-byline')?.textContent,
+    ]).toEqual(['Chapter 6', 'by user5']);
+  });
+
   it('counts the other paths, and has no such header when there is only one way', () => {
     mocks.children = [
       child(5, 'canon', 'A'),
