@@ -6,10 +6,15 @@ import {
   type StorylineSubmitOutcome,
 } from '~/components/Storyline/continue/StorylineContinueForm';
 import {
+  STORYLINE_CONTINUE_POST_LIMIT,
+  storylineContinuePostOptions,
+} from '~/components/Storyline/storyline-ui';
+import {
   useStorylineContinueTerms,
   useSubmitStorylineContinuation,
 } from '~/components/Storyline/storyline.data';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { trpc } from '~/utils/trpc';
 
@@ -27,12 +32,15 @@ export default function StorylineContinueModal({
 }: StorylineContinueModalProps) {
   const dialog = useDialogContext();
   const currentUser = useCurrentUser();
+  const features = useFeatureFlags();
+  const enabled = !!currentUser && !!features.storylines;
   const [postId, setPostId] = useState<number | null>(initialPostId ?? null);
   const [outcome, setOutcome] = useState<StorylineSubmitOutcome | null>(null);
 
-  const { data: membership, isLoading: membershipLoading } = trpc.storyline.getForPosts.useQuery({
-    postIds: [parentPostId],
-  });
+  const { data: membership, isLoading: membershipLoading } = trpc.storyline.getForPosts.useQuery(
+    { postIds: [parentPostId] },
+    { enabled }
+  );
   const storylineId = membership?.[parentPostId]?.storylineId;
   const { data: storyline, isLoading: storylineLoading } = trpc.storyline.getById.useQuery(
     { id: storylineId ?? 0 },
@@ -43,17 +51,21 @@ export default function StorylineContinueModal({
     {
       username: currentUser?.username,
       browsingLevel: allBrowsingLevelsFlag,
-      limit: 50,
+      limit: STORYLINE_CONTINUE_POST_LIMIT,
     },
-    { enabled: !!currentUser?.username, getNextPageParam: (page) => page.nextCursor }
+    { enabled: enabled && !!currentUser?.username, getNextPageParam: (page) => page.nextCursor }
   );
-  const { data: parentPost } = trpc.post.get.useQuery({ id: parentPostId });
+  const { data: parentPost } = trpc.post.get.useQuery({ id: parentPostId }, { enabled });
   const terms = useStorylineContinueTerms(parentPostId);
   const submit = useSubmitStorylineContinuation({ onSuccess: setOutcome });
 
-  const posts = (postPages?.pages.flatMap((page) => page.items) ?? [])
-    .filter((post) => post.id !== parentPostId)
-    .map((post) => ({ id: post.id, title: post.title, nsfwLevel: post.nsfwLevel }));
+  const firstPage = postPages?.pages[0];
+  const posts = currentUser
+    ? storylineContinuePostOptions(firstPage?.items ?? [], {
+        viewerId: currentUser.id,
+        parentPostId,
+      })
+    : [];
 
   const loading = membershipLoading || storylineLoading || postsLoading || terms.isLoading;
 
@@ -61,6 +73,8 @@ export default function StorylineContinueModal({
     <Modal {...dialog} title="Continue the story" size="md">
       {!currentUser ? (
         <Alert color="gray">Sign in to continue a storyline.</Alert>
+      ) : !features.storylines ? (
+        <Alert color="gray">Storylines are not available yet.</Alert>
       ) : loading ? (
         <Group justify="center" p="xl">
           <Loader />
@@ -78,14 +92,16 @@ export default function StorylineContinueModal({
           price={terms.data.price}
           isCollaborator={storyline.collaborators.some((user) => user.id === currentUser.id)}
           posts={posts}
+          morePosts={!!firstPage?.nextCursor}
           postId={postId}
           onPostChange={setPostId}
           submitting={submit.isPending}
           error={submit.error}
           outcome={outcome}
-          onSubmit={() =>
-            postId && submit.mutate({ parentPostId, postId, expectedPrice: terms.data?.price ?? 0 })
-          }
+          onSubmit={() => {
+            if (!postId || !terms.data) return;
+            submit.mutate({ parentPostId, postId, expectedPrice: terms.data.price });
+          }}
         />
       )}
     </Modal>

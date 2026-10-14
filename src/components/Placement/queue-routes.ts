@@ -21,6 +21,18 @@ export const PLACEMENT_SURFACE_TABS = [
 
 export type PlacementSurfaceTab = (typeof PLACEMENT_SURFACE_TABS)[number]['value'];
 
+/** The surfaces this viewer's flags let them open. A link to any other lands on stickers. */
+export function visiblePlacementSurfaceTabs(flags: {
+  creatorPromotions?: boolean;
+  storylines?: boolean;
+}) {
+  return PLACEMENT_SURFACE_TABS.filter(
+    (option) =>
+      (option.value !== 'promotion' || !!flags.creatorPromotions) &&
+      (option.value !== 'storyline' || !!flags.storylines)
+  );
+}
+
 export function isPlacementSurfaceTab(value: unknown): value is PlacementSurfaceTab {
   return PLACEMENT_SURFACE_TABS.some((option) => option.value === value);
 }

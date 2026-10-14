@@ -8,6 +8,7 @@ import {
   useStorylineWhoCanContinue,
 } from '~/components/Storyline/storyline.data';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
@@ -18,15 +19,14 @@ const showError = (title: string) => (error: { message: string }) =>
 export default function StorylineManageModal({ storylineId }: { storylineId: number }) {
   const dialog = useDialogContext();
   const currentUser = useCurrentUser();
+  const features = useFeatureFlags();
   const utils = trpc.useUtils();
 
   const {
     data: storyline,
     isLoading,
     isError,
-  } = trpc.storyline.getById.useQuery({
-    id: storylineId,
-  });
+  } = trpc.storyline.getById.useQuery({ id: storylineId }, { enabled: !!features.storylines });
   const isOwner = !!currentUser && storyline?.userId === currentUser.id;
   const space = useStorylineSpace(storylineId, { enabled: isOwner });
   const whoCanContinue = useStorylineWhoCanContinue(storylineId);
@@ -47,7 +47,9 @@ export default function StorylineManageModal({ storylineId }: { storylineId: num
 
   return (
     <Modal {...dialog} title={storyline?.title ?? 'Storyline'} size="lg">
-      {isLoading ? (
+      {!features.storylines ? (
+        <Alert color="gray">Storylines are not available yet.</Alert>
+      ) : isLoading ? (
         <Group justify="center" p="xl">
           <Loader />
         </Group>

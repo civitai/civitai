@@ -1,9 +1,10 @@
 import { Alert, Anchor, Badge, Button, Card, Group, Stack, Text } from '@mantine/core';
 import { IconCheck, IconStar, IconX } from '@tabler/icons-react';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
-import { storylinePriceLabel, storylineRatingLabel } from '~/components/Storyline/storyline-ui';
+import { storylinePriceLabel } from '~/components/Storyline/storyline-ui';
+import { getBrowsingLevelLabel } from '~/shared/constants/browsingLevel.constants';
 import { storylineLevelAllowed } from '~/shared/utils/storyline';
-import { daysFromNow, formatDate } from '~/utils/date-helpers';
+import { formatDate, recentOrDate } from '~/utils/date-helpers';
 
 export type StorylineQueueRow = {
   id: number;
@@ -18,12 +19,6 @@ export type StorylineQueueRow = {
 };
 
 export type StorylineQueueAction = 'accept' | 'endorse' | 'decline';
-
-const A_DAY_MS = 24 * 60 * 60 * 1000;
-const agedLabel = (at: Date | string) => {
-  const value = new Date(at);
-  return Date.now() - value.getTime() < A_DAY_MS ? daysFromNow(value) : formatDate(value);
-};
 
 /**
  * Continuations waiting on the viewer's storylines. Endorse accepts this one and endorses its
@@ -105,7 +100,7 @@ export function StorylineQueueList({
                 <Group gap={6}>
                   <Badge size="sm" variant="light" color={overCeiling ? 'red' : 'gray'}>
                     {row.post.nsfwLevel
-                      ? storylineRatingLabel(row.post.nsfwLevel)
+                      ? getBrowsingLevelLabel(row.post.nsfwLevel)
                       : 'Not rated yet'}
                   </Badge>
                   <Badge size="sm" variant="light" color={row.amount > 0 ? 'yellow' : 'green'}>
@@ -114,11 +109,11 @@ export function StorylineQueueList({
                 </Group>
                 {overCeiling && (
                   <Text size="xs" c="red">
-                    Rated above this storyline&apos;s maximum of {storylineRatingLabel(ceiling)}.
+                    Rated above this storyline&apos;s maximum of {getBrowsingLevelLabel(ceiling)}.
                   </Text>
                 )}
                 <Text size="xs" c="dimmed">
-                  Sent {agedLabel(row.createdAt)}
+                  Sent {recentOrDate(row.createdAt)}
                   {row.expiresAt ? ` — expires ${formatDate(row.expiresAt)}` : ''}
                 </Text>
               </Stack>

@@ -2,11 +2,12 @@ import { Alert, Badge, Button, Group, Select, Stack, Text } from '@mantine/core'
 import { IconAlertTriangle, IconCheck, IconClock } from '@tabler/icons-react';
 import {
   STORYLINE_CONTINUATION_EXPIRY_DAYS,
+  STORYLINE_CONTINUE_POST_LIMIT,
   storylinePriceLabel,
-  storylineRatingLabel,
   storylineSubmitVerdict,
   type StorylineClosedReason,
 } from '~/components/Storyline/storyline-ui';
+import { getBrowsingLevelLabel } from '~/shared/constants/browsingLevel.constants';
 
 export type StorylineContinuePost = { id: number; title: string | null; nsfwLevel: number };
 
@@ -28,6 +29,7 @@ export function StorylineContinueForm({
   price,
   isCollaborator,
   posts,
+  morePosts,
   postId,
   onPostChange,
   onSubmit,
@@ -50,6 +52,8 @@ export function StorylineContinueForm({
   isCollaborator: boolean;
   /** The viewer's own posts to choose from. */
   posts: StorylineContinuePost[];
+  /** Only the most recent posts are offered. */
+  morePosts?: boolean;
   postId: number | null;
   onPostChange: (postId: number | null) => void;
   onSubmit: () => void;
@@ -59,7 +63,7 @@ export function StorylineContinueForm({
   error?: string | null;
 }) {
   const post = posts.find((candidate) => candidate.id === postId) ?? null;
-  const ceiling = storylineRatingLabel(storyline.maxNsfwLevel);
+  const ceiling = getBrowsingLevelLabel(storyline.maxNsfwLevel);
   const verdict = storylineSubmitVerdict({
     postLevel: post?.nsfwLevel ?? 0,
     viewerId,
@@ -104,20 +108,26 @@ export function StorylineContinueForm({
         data={posts.map((candidate) => ({
           value: String(candidate.id),
           label: `${candidate.title || `Post ${candidate.id}`} · ${
-            candidate.nsfwLevel ? storylineRatingLabel(candidate.nsfwLevel) : 'not rated yet'
+            candidate.nsfwLevel ? getBrowsingLevelLabel(candidate.nsfwLevel) : 'not rated yet'
           }`,
         }))}
         value={postId ? String(postId) : null}
         onChange={(value) => onPostChange(value ? Number(value) : null)}
         searchable
         disabled={!posts.length}
+        description={
+          morePosts
+            ? `Your ${STORYLINE_CONTINUE_POST_LIMIT} most recent published posts.`
+            : undefined
+        }
       />
 
       {post && !verdict.allowed && (
         <Alert color="red" icon={<IconAlertTriangle size={18} />}>
           <Text size="sm">
-            Cannot be submitted. Your post is rated {storylineRatingLabel(post.nsfwLevel)}; this
-            storyline accepts up to {ceiling}. You can start your own storyline from it instead.
+            Cannot be submitted. Your post is rated {getBrowsingLevelLabel(post.nsfwLevel)}; this
+            storyline accepts up to {ceiling}.
+            {onStartOwn ? ' You can start your own storyline from it instead.' : ''}
           </Text>
         </Alert>
       )}

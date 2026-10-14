@@ -1,7 +1,4 @@
-import {
-  browsingLevelLabels,
-  getHighestBrowsingLevelBit,
-} from '~/shared/constants/browsingLevel.constants';
+import { browsingLevelLabels } from '~/shared/constants/browsingLevel.constants';
 import { placementPriceCaption } from '~/shared/utils/placement';
 import { STORYLINE_CEILING_LEVELS, storylineLevelAllowed } from '~/shared/utils/storyline';
 import { numberWithCommas } from '~/utils/number-helpers';
@@ -38,15 +35,26 @@ export function storylinePriceCaption(price: number, cap: number | null) {
   );
 }
 
-export function storylineRatingLabel(level: number) {
-  const highest = getHighestBrowsingLevelBit(level);
-  return browsingLevelLabels[highest as keyof typeof browsingLevelLabels] ?? '?';
-}
-
 export const STORYLINE_RATING_OPTIONS = STORYLINE_CEILING_LEVELS.map((level) => ({
   value: level,
   label: browsingLevelLabels[level],
 }));
+
+export const STORYLINE_CONTINUE_POST_LIMIT = 50;
+
+/**
+ * The viewer's posts they may offer as a continuation. Filtered by owner id here as well as by
+ * username on the server: the server drops its user filter when a username lookup misses, and
+ * this list is read at every browsing level so a post above the ceiling can be refused out loud.
+ */
+export function storylineContinuePostOptions(
+  posts: { id: number; title: string | null; nsfwLevel: number; user: { id: number } }[],
+  { viewerId, parentPostId }: { viewerId: number; parentPostId: number }
+) {
+  return posts
+    .filter((post) => post.user.id === viewerId && post.id !== parentPostId)
+    .map(({ id, title, nsfwLevel }) => ({ id, title, nsfwLevel }));
+}
 
 /** How long a continuation waits for the creator before it expires and any Buzz is refunded. */
 export const STORYLINE_CONTINUATION_EXPIRY_DAYS = 7;

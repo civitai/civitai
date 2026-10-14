@@ -11,7 +11,7 @@ import { StorylineContinuationQueue } from '~/components/Storyline/queue/Storyli
 import { PromotionQueue } from '~/components/Promotion/PromotionQueue';
 import {
   isPlacementSurfaceTab,
-  PLACEMENT_SURFACE_TABS,
+  visiblePlacementSurfaceTabs,
   type PlacementSurfaceTab,
 } from '~/components/Placement/queue-routes';
 import { stickerBookUrl } from '~/components/StickerBook/sticker-book.util';
@@ -42,11 +42,7 @@ export function PlacementsPanel() {
   const features = useFeatureFlags();
   const { pendingStickerPlacements, pendingRemixSubmissions } = useQueryNotificationsCount();
 
-  const tabs = PLACEMENT_SURFACE_TABS.filter(
-    (option) =>
-      (option.value !== 'promotion' || features.creatorPromotions) &&
-      (option.value !== 'storyline' || features.storylines)
-  );
+  const tabs = visiblePlacementSurfaceTabs(features);
   // A link to a tab this viewer cannot see lands on stickers.
   const surface: PlacementSurfaceTab =
     tabs.find((option) => option.value === router.query.type)?.value ?? 'sticker';

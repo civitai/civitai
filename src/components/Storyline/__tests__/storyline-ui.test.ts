@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import {
+  storylineContinuePostOptions,
   storylinePriceCaption,
   storylinePriceLabel,
   storylineSubmitVerdict,
@@ -93,5 +94,23 @@ describe('price copy', () => {
       text: 'Contributors pay 500 Buzz',
       warning: true,
     });
+  });
+});
+
+describe('storylineContinuePostOptions', () => {
+  const post = (id: number, userId: number) => ({
+    id,
+    title: `Post ${id}`,
+    nsfwLevel: NsfwLevel.PG,
+    user: { id: userId },
+  });
+
+  test("keeps only the viewer's own posts and never the chapter being continued", () => {
+    expect(
+      storylineContinuePostOptions([post(1, contributor), post(2, 99), post(3, contributor)], {
+        viewerId: contributor,
+        parentPostId: 3,
+      })
+    ).toEqual([{ id: 1, title: 'Post 1', nsfwLevel: NsfwLevel.PG }]);
   });
 });
