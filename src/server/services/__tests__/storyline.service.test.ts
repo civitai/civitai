@@ -3364,7 +3364,8 @@ describe('title moderation', () => {
 
     // Set beside a scan takedown, so leaving it in place is something the call could get wrong.
     it.each([
-      ['sets', R],
+      // Below R: an R rating can also take down a minor-flagged title, a case of its own below.
+      ['sets', NsfwLevel.PG13],
       ['hands back to the scan', null],
     ])('%s the rating without touching a takedown', async (_name, level) => {
       await moderateStorylineTitle({ id: 10, moderatorNsfwLevel: level });
@@ -3554,5 +3555,54 @@ describe('a storyline the title scan holds as about a minor', () => {
         minorByScan ? 'aboveStoryRating' : null,
       ]);
     });
+  });
+});
+
+describe('the title scan’s minor finding, beyond the scan', () => {
+  // getPath is public: readers get the ceiling chapters are held to, never the finding itself.
+  it.each([
+    [true, NsfwLevel.PG13],
+    [false, NsfwLevel.X],
+  ])(
+    'a reading path serves no minor flag (held: %s), only the ceiling',
+    async (minorByScan, ceiling) => {
+      r.storyline.findUnique.mockResolvedValue(
+        storylineRow({ maxNsfwLevel: NsfwLevel.X, minorByScan }) as never
+      );
+      r.storylineChapter.findUnique.mockResolvedValue({ storylineId: 10, depth: 0 } as never);
+      r.$queryRaw.mockResolvedValue([] as never);
+      r.post.findMany.mockResolvedValue([] as never);
+      getBlockedPairIds.mockResolvedValue([]);
+      const { storyline } = await getStorylinePath({
+        chapterId: 1,
+        viewer: undefined,
+        browsingLevel: NsfwLevel.PG,
+      });
+      expect(storyline).not.toHaveProperty('minorByScan');
+      expect(storyline.maxNsfwLevel).toBe(ceiling);
+    }
+  );
+
+  // The rule the scan applies, when the NSFW rating arrives from a moderator instead.
+  it('a moderator rating a minor-flagged title NSFW takes it down as the scan would', async () => {
+    w.storyline.findUnique.mockResolvedValue({
+      tosViolationByScan: false,
+      title: 'T',
+      userId: OWNER,
+    } as never);
+    w.storyline.updateMany.mockResolvedValue({ count: 1 } as never);
+    w.storyline.findUniqueOrThrow.mockResolvedValue({ id: 10 } as never);
+    await moderateStorylineTitle({ id: 10, moderatorNsfwLevel: NsfwLevel.R });
+    expect(w.storyline.updateMany.mock.calls.map(([call]) => call)).toEqual([
+      { where: { id: 10 }, data: { moderatorNsfwLevel: NsfwLevel.R } },
+      {
+        where: { id: 10, minorByScan: true, tosViolationByScan: false },
+        data: { tosViolation: true, tosViolationByScan: true },
+      },
+    ]);
+
+    w.storyline.updateMany.mockClear();
+    await moderateStorylineTitle({ id: 10, moderatorNsfwLevel: NsfwLevel.PG13 });
+    expect(w.storyline.updateMany).toHaveBeenCalledTimes(1);
   });
 });

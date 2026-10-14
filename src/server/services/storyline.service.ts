@@ -650,6 +650,13 @@ export async function moderateStorylineTitle({
       })
     : (await dbWrite.storyline.updateMany({ where: { id }, data: { moderatorNsfwLevel } })).count;
   if (!count) throw throwBadRequestError('The storyline changed since it was reviewed');
+  // A title the scan holds as about a minor, now rated NSFW: the takedown the scan would have made
+  // with this rating, marked as the scan's so a clean rescan or a lift for the title can end it.
+  if (moderatorNsfwLevel != null && moderatorNsfwLevel >= NsfwLevel.R)
+    await dbWrite.storyline.updateMany({
+      where: { id, minorByScan: true, tosViolationByScan: false },
+      data: { tosViolation: true, tosViolationByScan: true },
+    });
   return dbWrite.storyline.findUniqueOrThrow({
     where: { id },
     select: { id: true, ...storylineTakedownSelect, ...storylineTitleLevelSelect },
@@ -1015,7 +1022,7 @@ export async function getStoryline({
     root
       ? getStorylineMainPath({
           rootChapterId: root.id,
-          storyline,
+          ceiling: storylineCeiling(storyline),
           viewer,
           browsingLevel,
           blockedUserIds,
@@ -1114,7 +1121,7 @@ export async function getStoryline({
  */
 async function getStorylineMainPath({
   rootChapterId,
-  storyline,
+  ceiling,
   viewer,
   browsingLevel,
   blockedUserIds,
@@ -1122,7 +1129,8 @@ async function getStorylineMainPath({
 }: {
   /** Where the route starts: chapter 1 for the whole route, any chapter for the canon after it. */
   rootChapterId: number;
-  storyline: { maxNsfwLevel: number; minorByScan: boolean };
+  /** The ceiling chapters are held to (`storylineCeiling`), not the owner's setting alone. */
+  ceiling: number;
   viewer: Viewer;
   browsingLevel: number;
   blockedUserIds: ReadonlySet<number>;
@@ -1168,7 +1176,7 @@ async function getStorylineMainPath({
       post,
       removed: !!row.removedAt,
       viewer,
-      maxNsfwLevel: storylineCeiling(storyline),
+      maxNsfwLevel: ceiling,
       browsingLevel,
       blockedUserIds,
     });
@@ -1209,7 +1217,7 @@ export async function getStorylineCanonAhead({
   );
   const route = await getStorylineMainPath({
     rootChapterId: chapterId,
-    storyline,
+    ceiling: storyline.maxNsfwLevel,
     viewer,
     browsingLevel,
     blockedUserIds,
@@ -1397,8 +1405,13 @@ async function getStorylineForRead(storylineId: number, viewer: Viewer, browsing
     isStorylineOutsideLevel(storyline, viewer, browsingLevel)
   )
     throw throwNotFoundError('Storyline not found');
-  const { user: _user, chapters: _chapters, ...rest } = storyline;
-  return { storyline: rest, blockedUserIds };
+  // Readers get the ceiling chapters are held to, never the title scan's minor finding: these
+  // reads are public, and the flag is a content classification.
+  const { user: _user, chapters: _chapters, minorByScan, ...rest } = storyline;
+  return {
+    storyline: { ...rest, maxNsfwLevel: storylineCeiling({ ...rest, minorByScan }) },
+    blockedUserIds,
+  };
 }
 
 /**
@@ -1460,7 +1473,8 @@ export async function getStorylinePath({
       post,
       removed: !!row.removedAt,
       viewer,
-      maxNsfwLevel: storylineCeiling(storyline),
+      // Already the ceiling chapters are held to: `getStorylineForRead` applies it.
+      maxNsfwLevel: storyline.maxNsfwLevel,
       browsingLevel,
       blockedUserIds,
     });
@@ -1567,7 +1581,8 @@ export async function getStorylineChildren({
       post: chapter.post,
       removed: !!chapter.removedAt,
       viewer,
-      maxNsfwLevel: storylineCeiling(storyline),
+      // Already the ceiling chapters are held to: `getStorylineForRead` applies it.
+      maxNsfwLevel: storyline.maxNsfwLevel,
       browsingLevel,
       blockedUserIds,
     });
@@ -1957,6 +1972,8 @@ async function getChosenStorylineImages(
         },
         removed: !!row.removedAt,
         viewer: resolved.viewer,
+        // Judges the image's POST, which the SQL gate (per image) does not: a safe image from a
+        // post that also holds one above the ceiling is not used as a pick.
         maxNsfwLevel: storylineCeiling(row),
         browsingLevel: resolved.browsingLevel,
         blockedUserIds: resolved.blockedUserIds,
@@ -2100,6 +2117,8 @@ export async function getStorylinesInfinite({
         user: { bannedAt: row.bannedAt, deletedAt: row.deletedAt },
       },
       viewer,
+      // Chapter 1's post as a whole, so a card never takes its cover from a chapter that is a
+      // placeholder inside the story, though each image is also gated in SQL.
       maxNsfwLevel: storylineCeiling(row),
       browsingLevel,
       blockedUserIds,

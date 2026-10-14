@@ -250,7 +250,7 @@ describe('applyStorylineTextScan', () => {
 
     it('a person of interest takes the storyline down as the scan, and tells the owner', async () => {
       await applyStorylineTextScan(args({ ...clean, poi: true }) as never);
-      expect(updates()).toEqual([rated(NsfwLevel.PG), takedownWrite, clearMinor]);
+      expect(updates()).toEqual([rated(NsfwLevel.PG), clearMinor, takedownWrite]);
       expect(notices()).toEqual([`storyline-title-moderated-${ID}-tos-wf-1`]);
       expect(createNotification).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -261,7 +261,7 @@ describe('applyStorylineTextScan', () => {
 
     it('a minor with an NSFW title takes it down, and marks the minor', async () => {
       await applyStorylineTextScan(args({ nsfw: NsfwLevel.R, poi: false, minor: true }) as never);
-      expect(updates()).toEqual([rated(NsfwLevel.R), takedownWrite, setMinor]);
+      expect(updates()).toEqual([rated(NsfwLevel.R), setMinor, takedownWrite]);
       // The rating notice and the takedown notice; no third one for the minor on its own.
       expect(notices()).toEqual([
         `storyline-title-moderated-${ID}-${NsfwLevel.R}-wf-1`,
@@ -276,7 +276,8 @@ describe('applyStorylineTextScan', () => {
       ['PG-13', NsfwLevel.PG13],
     ])('a minor with a %s title does not take it down: it marks the minor', async (_n, level) => {
       await applyStorylineTextScan(args({ nsfw: level, poi: false, minor: true }) as never);
-      expect(updates()).toEqual([rated(level), ...liftWrites, setMinor]);
+      // The cap is written before the lift, so the storyline never comes back up uncapped.
+      expect(updates()).toEqual([rated(level), setMinor, ...liftWrites]);
       expect(updates()).not.toContainEqual(takedownWrite);
       expect(notices()).toEqual([`storyline-title-moderated-${ID}-minor-wf-1`]);
       expect(createNotification).toHaveBeenCalledWith(
@@ -287,15 +288,18 @@ describe('applyStorylineTextScan', () => {
     // Fail closed: with no rating to judge the title by, a minor finding is treated as NSFW.
     it('a minor with no nsfw verdict takes it down', async () => {
       await applyStorylineTextScan(args({ poi: false, minor: true }) as never);
-      expect(updates()).toEqual([takedownWrite, setMinor]);
+      expect(updates()).toEqual([setMinor, takedownWrite]);
     });
 
     it.each([
-      ['rated it safe, over an NSFW verdict', NsfwLevel.PG13, NsfwLevel.R, false],
+      // A rating is not tied to the text it was given for: after an edit, an NSFW verdict on the
+      // new title must not be outvoted by a safe rating of the old one.
+      ['rated it safe, under an NSFW verdict', NsfwLevel.PG13, NsfwLevel.R, true],
       ['rated it safe, with no nsfw verdict', NsfwLevel.PG, undefined, false],
       ['rated it NSFW, over a safe verdict', NsfwLevel.R, NsfwLevel.PG, true],
+      ['rated it safe, and the verdict agrees', NsfwLevel.PG, NsfwLevel.PG13, false],
     ])(
-      "a moderator's rating judges the title when they %s",
+      "the higher of a moderator's rating and the verdict judges the title when they %s",
       async (_n, moderatorNsfwLevel, nsfw, down) => {
         w.storyline.findUnique.mockResolvedValue(before({ moderatorNsfwLevel }) as never);
         await applyStorylineTextScan(args({ nsfw, poi: false, minor: true }) as never);
@@ -306,7 +310,7 @@ describe('applyStorylineTextScan', () => {
 
     it('a clean verdict lifts only the scan’s own takedown and clears the minor', async () => {
       await applyStorylineTextScan(args(clean) as never);
-      expect(updates()).toEqual([rated(NsfwLevel.PG), ...liftWrites, clearMinor]);
+      expect(updates()).toEqual([rated(NsfwLevel.PG), clearMinor, ...liftWrites]);
       expect(createNotification).not.toHaveBeenCalled();
     });
 
@@ -332,7 +336,7 @@ describe('applyStorylineTextScan', () => {
         .mockResolvedValueOnce({ count: 0 } as never)
         .mockResolvedValueOnce({ count: 0 } as never);
       await applyStorylineTextScan(args({ ...clean, poi: true }) as never);
-      expect(updates()[1]).toEqual(takedownWrite);
+      expect(updates()[2]).toEqual(takedownWrite);
       expect(createNotification).not.toHaveBeenCalled();
 
       vi.clearAllMocks();
