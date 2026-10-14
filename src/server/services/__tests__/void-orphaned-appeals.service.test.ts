@@ -198,8 +198,9 @@ describe('voidOrphanedAppeals', () => {
     expect(sql).toMatch(
       /a\."entityType" = 'Image' AND NOT EXISTS \(SELECT 1 FROM "Image" i WHERE i\.id = a\."entityId"\)/
     );
+    // A soft-deleted model row is as gone as a hard-deleted one.
     expect(sql).toMatch(
-      /a\."entityType" = 'Model' AND NOT EXISTS \(SELECT 1 FROM "Model" m WHERE m\.id = a\."entityId"\)/
+      /a\."entityType" = 'Model' AND NOT EXISTS \(SELECT 1 FROM "Model" m WHERE m\.id = a\."entityId" AND m\."deletedAt" IS NULL\)/
     );
     // The owner rule needs the filing time, and the quiet rule the account state.
     expect(sql).toMatch(/a\."createdAt"/);

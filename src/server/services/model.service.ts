@@ -1909,7 +1909,13 @@ export const deleteModelById = async ({
           },
         },
       },
-      select: { id: true, userId: true, nsfwLevel: true, modelVersions: { select: { id: true } } },
+      select: {
+        id: true,
+        userId: true,
+        nsfwLevel: true,
+        deletedBy: true,
+        modelVersions: { select: { id: true } },
+      },
     });
     if (!model) return null;
 
