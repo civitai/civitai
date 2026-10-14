@@ -116,5 +116,10 @@ describe('SSR feature flags are evaluated once per request', () => {
 
     expect(b).not.toBe(a);
     expect((b as Record<string, unknown>).canViewNsfw).not.toBe('mutated');
+
+    // b came from the memo: mutating it must not reach the next caller either.
+    (b as Record<string, unknown>).canViewNsfw = 'mutated-again';
+    const c = await appFlags(req);
+    expect((c as Record<string, unknown>).canViewNsfw).not.toBe('mutated-again');
   });
 });
