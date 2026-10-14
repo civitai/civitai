@@ -60,6 +60,12 @@ CREATE TABLE "ModActivity" (
   "id" SERIAL PRIMARY KEY, "userId" INTEGER, "activity" TEXT NOT NULL, "entityType" TEXT,
   "entityId" INTEGER, "createdAt" TIMESTAMPTZ NOT NULL
 );
+CREATE TABLE "EntityModeration" (
+  "id" SERIAL PRIMARY KEY, "entityType" TEXT NOT NULL, "entityId" INTEGER NOT NULL,
+  "status" TEXT NOT NULL DEFAULT 'Pending', "result" JSONB,
+  "updatedAt" TIMESTAMPTZ NOT NULL DEFAULT '2026-01-01',
+  UNIQUE ("entityType", "entityId")
+);
 `;
 
 const snapshot = (source: string | null, at: string, extra: Record<string, unknown> = {}) =>
@@ -342,5 +348,58 @@ describe('row context', () => {
     expect(row.otherFlaggedModels).toBe(0);
     expect(row.pastAppeals).toEqual({ approved: 1, rejected: 2, void: 0, pending: 1 });
     expect((await rowFor(5)).otherFlaggedModels).toBe(1);
+  });
+});
+
+describe('latest scan', () => {
+  const scanRow = (labels: Record<string, unknown>) => JSON.stringify({ version: 1, labels });
+
+  beforeEach(async () => {
+    await db.query(
+      `INSERT INTO "EntityModeration" ("entityType","entityId","status","result","updatedAt") VALUES
+        ('Model', 7, 'Succeeded', $1::jsonb, '2026-10-01T00:00:00Z'),
+        ('Model:search', 7, 'Succeeded', $2::jsonb, '2026-10-02T00:00:00Z'),
+        ('Model', 3, 'Succeeded', $3::jsonb, '2026-10-03T00:00:00Z'),
+        ('Image', 1, 'Succeeded', $1::jsonb, '2026-10-04T00:00:00Z')`,
+      [
+        scanRow({
+          nsfw: { level: 'none', reason: 'Clean.' },
+          poi: { detected: true, names: ['x'], reason: 'stale main poi' },
+        }),
+        scanRow({
+          poi: { detected: false, names: [], reason: 'No real person named.' },
+          minor: { detected: false, reason: 'No age given.' },
+        }),
+        scanRow({ poi: { detected: true, names: ['y'], reason: 'Names an actor.' } }),
+      ]
+    );
+  });
+
+  const scanFor = async (modelId: number) => {
+    const { items } = await getMinorFlagAppealsForReview({ limit: 50 });
+    return items.find((i) => i.modelId === modelId)!.latestScan;
+  };
+
+  it('reads poi/minor from the web-search row when there is one', async () => {
+    const scan = await scanFor(7);
+    expect(scan).toMatchObject({
+      entityType: 'Model:search',
+      status: 'Succeeded',
+      poi: { detected: false, reason: 'No real person named.' },
+      minor: { detected: false, reason: 'No age given.' },
+    });
+    expect(new Date(scan!.updatedAt).toISOString()).toBe('2026-10-02T00:00:00.000Z');
+  });
+
+  it('falls back to the main row, with no verdict for a label it did not scan', async () => {
+    expect(await scanFor(3)).toMatchObject({
+      entityType: 'Model',
+      poi: { detected: true, reason: 'Names an actor.' },
+      minor: null,
+    });
+  });
+
+  it('is null when the model was never text-scanned', async () => {
+    expect(await scanFor(1)).toBeNull();
   });
 });

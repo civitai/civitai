@@ -9,6 +9,7 @@ import {
   type AppealGroup,
   type AppealSource,
 } from '$lib/minor-flags/appeal-filters';
+import type { LatestScan } from '$lib/minor-flags/text-scan-verdicts';
 
 /**
  * The read half of the main app's `/moderator/minor-hash-matches`, ported per
@@ -236,6 +237,7 @@ export type MinorFlagAppealRow = {
   minor: boolean;
   poi: boolean;
   textScanFlags: unknown;
+  latestScan: LatestScan | null;
   flaggedAt: Date | null;
   flagSource: string | null;
   flagConfirmedFrom: string | null;
@@ -260,6 +262,15 @@ export type AppealQuery = Page & { filters?: AppealFilters };
 const APPEAL_TRAINED_WORDS_CAP = 8;
 const APPEAL_TAGS_CAP = 12;
 const APPEAL_COVER_COUNT = 4;
+
+const TEXT_SCAN_SEARCH_ENTITY_TYPE = 'Model:search';
+
+const latestScanLabelSql = (label: 'poi' | 'minor') => {
+  const value = sql`em.result->'labels'->${sql.lit(label)}`;
+  return sql`CASE WHEN ${value} IS NULL THEN NULL ELSE jsonb_build_object(
+    'detected', (${value}->>'detected')::boolean, 'reason', ${value}->>'reason'
+  ) END`;
+};
 
 /** A text-scan real-person flag sets `poi` and `meta.textScanFlags.poi` but writes no snapshot, so the
  *  snapshot source alone would file it under "No flag record". One expression feeds the list predicate,
@@ -357,6 +368,7 @@ export async function getMinorFlagAppealsForReview({
            COALESCE(ci.images, '[]'::jsonb) AS "coverImages",
            fb.username AS "flaggedByUsername", fb."createdAt" AS "flaggedByAt",
            COALESCE(up."otherFlaggedModels", 0) AS "otherFlaggedModels",
+           ls."latestScan",
            jsonb_build_object(
              'approved', COALESCE(ap.approved, 0), 'rejected', COALESCE(ap.rejected, 0),
              'void', COALESCE(ap.void, 0), 'pending', COALESCE(ap.pending, 0)
@@ -417,6 +429,19 @@ export async function getMinorFlagAppealsForReview({
       FROM "Model" o
       WHERE o."userId" = pg."userId" AND o.id <> pg."modelId" AND (o.minor OR o.poi)
     ) up ON TRUE
+    LEFT JOIN LATERAL (
+      SELECT jsonb_build_object(
+               'entityType', em."entityType", 'status', em.status::text, 'updatedAt', em."updatedAt",
+               'poi', ${latestScanLabelSql('poi')}, 'minor', ${latestScanLabelSql('minor')}
+             ) AS "latestScan"
+      FROM "EntityModeration" em
+      WHERE em."entityId" = pg."modelId"
+        AND em."entityType" IN ('Model', ${TEXT_SCAN_SEARCH_ENTITY_TYPE})
+      -- Once web search is active the main pass is submitted without poi/minor, and its row keeps
+      -- whatever poi/minor it last carried.
+      ORDER BY (em."entityType" = ${TEXT_SCAN_SEARCH_ENTITY_TYPE}) DESC
+      LIMIT 1
+    ) ls ON TRUE
     LEFT JOIN LATERAL (
       SELECT count(*) FILTER (WHERE pa.status::text = 'Approved')::int AS approved,
              count(*) FILTER (WHERE pa.status::text = 'Rejected')::int AS rejected,

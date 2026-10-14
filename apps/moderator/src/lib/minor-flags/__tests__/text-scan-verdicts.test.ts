@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { flagInForce, openVerdicts, poiInForce } from '../text-scan-verdicts';
+import { flagInForce, latestScanDisagrees, openVerdicts, poiInForce } from '../text-scan-verdicts';
 
 const verdict = { at: 'x', workflowId: 'wf-1', reason: 'Names a real actor.', names: ['Jane'] };
 const granted = { ...verdict, appealGranted: { at: 'x', by: 1, textHash: 'h', via: 'appeal' } };
@@ -41,5 +41,28 @@ describe('flagInForce', () => {
   });
   it('is false with no flag', () => {
     expect(flagInForce({ minor: false, poi: false, textScanFlags: open })).toBe(false);
+  });
+});
+
+describe('latestScanDisagrees', () => {
+  const scan = {
+    entityType: 'Model:search',
+    status: 'Succeeded',
+    updatedAt: '2026-10-02T00:00:00Z',
+    poi: { detected: false, reason: 'No real person named.' },
+    minor: { detected: true, reason: 'Says 15.' },
+  };
+
+  it('is true only when the latest scan no longer detects the flagged label', () => {
+    expect(latestScanDisagrees(scan, 'poi')).toBe(true);
+    expect(latestScanDisagrees(scan, 'minor')).toBe(false);
+  });
+
+  it('is false when the scan has no verdict for the label, or there is no scan', () => {
+    expect(latestScanDisagrees({ ...scan, poi: null }, 'poi')).toBe(false);
+    expect(latestScanDisagrees({ ...scan, poi: { detected: null, reason: null } }, 'poi')).toBe(
+      false
+    );
+    expect(latestScanDisagrees(null, 'poi')).toBe(false);
   });
 });

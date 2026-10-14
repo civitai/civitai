@@ -29,3 +29,16 @@ export const openVerdicts = (v: unknown) =>
     const flag = flagsOf(v)?.[label];
     return flag && isOpenVerdict(flag) ? [{ label, flag }] : [];
   });
+
+export type LatestScanLabel = { detected: boolean | null; reason: string | null };
+
+export type LatestScan = {
+  entityType: string;
+  status: string;
+  updatedAt: string;
+  poi: LatestScanLabel | null;
+  minor: LatestScanLabel | null;
+};
+
+export const latestScanDisagrees = (scan: LatestScan | null, label: FlagLabel) =>
+  scan?.[label]?.detected === false;
