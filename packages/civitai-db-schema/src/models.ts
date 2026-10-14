@@ -256,6 +256,8 @@ export type OutboxEntity = "Article" | "Image" | "Model" | "Post" | "ModelVersio
 
 export type StorylineStatus = "Ongoing" | "Complete";
 
+export type StorylineWhoCanContinue = "Anyone" | "Collaborators";
+
 export type UserHubSourceType = "User" | "Model" | "ModelVersion" | "Collection" | "Tag";
 
 export type CrucibleStatus = "Pending" | "Active" | "Completed" | "Cancelled";
@@ -676,6 +678,8 @@ export interface User {
   storylines?: Storyline[];
   storylineCollaborations?: StorylineCollaborator[];
   storylineEarlyAccess?: StorylineEarlyAccessSignup | null;
+  storylineBranchChoices?: StorylineBranchChoice[];
+  storylineCreateClicks?: StorylineCreateClick[];
   blockUserSettings?: BlockUserSettings[];
   promotedPlatformBlocks?: PlatformDefaultBlock[];
   blockUserSubscriptions?: BlockUserSubscription[];
@@ -5944,6 +5948,7 @@ export interface Storyline {
   user?: User;
   title: string;
   status: StorylineStatus;
+  whoCanContinue: StorylineWhoCanContinue;
   maxNsfwLevel: number;
   tosViolation: boolean;
   createdAt: Date;
@@ -5965,6 +5970,9 @@ export interface StorylineChapter {
   createdAt: Date;
   parents?: StorylineChapterEdge[];
   children?: StorylineChapterEdge[];
+  branchChoicesFrom?: StorylineBranchChoice[];
+  branchChoicesTo?: StorylineBranchChoice[];
+  createClicks?: StorylineCreateClick[];
 }
 
 export interface StorylineChapterEdge {
@@ -5982,6 +5990,25 @@ export interface StorylineCollaborator {
   storyline?: Storyline;
   userId: number;
   user?: User;
+  createdAt: Date;
+}
+
+export interface StorylineBranchChoice {
+  userId: number;
+  user?: User;
+  parentChapterId: number;
+  parentChapter?: StorylineChapter;
+  chapterId: number;
+  chapter?: StorylineChapter;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface StorylineCreateClick {
+  userId: number;
+  user?: User;
+  parentChapterId: number;
+  parentChapter?: StorylineChapter;
   createdAt: Date;
 }
 

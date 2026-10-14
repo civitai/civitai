@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { StorylineStatus } from '~/shared/utils/prisma/enums';
+import { StorylineStatus, StorylineWhoCanContinue } from '~/shared/utils/prisma/enums';
 import { STORYLINE_CEILING_LEVELS } from '~/shared/utils/storyline';
 
 const ceilingSchema = z
@@ -15,6 +15,7 @@ export const createStorylineSchema = z.object({
   postId: z.number().int().positive(),
   title: titleSchema,
   maxNsfwLevel: ceilingSchema,
+  whoCanContinue: z.nativeEnum(StorylineWhoCanContinue).optional(),
 });
 export type CreateStorylineInput = z.infer<typeof createStorylineSchema>;
 
@@ -23,6 +24,7 @@ export const updateStorylineSchema = z.object({
   title: titleSchema.optional(),
   status: z.nativeEnum(StorylineStatus).optional(),
   maxNsfwLevel: ceilingSchema.optional(),
+  whoCanContinue: z.nativeEnum(StorylineWhoCanContinue).optional(),
 });
 export type UpdateStorylineInput = z.infer<typeof updateStorylineSchema>;
 
@@ -51,5 +53,23 @@ export const getStorylineSchema = z.object({
 
 export const getStorylinesForPostsSchema = z.object({
   postIds: z.array(z.number().int().positive()).max(100),
+  browsingLevel: z.number().int().min(0).optional(),
+});
+
+export const storylineBranchChoiceSchema = z.object({
+  fromChapterId: z.number().int().positive(),
+  toChapterId: z.number().int().positive(),
+  browsingLevel: z.number().int().min(0).optional(),
+});
+
+export const joinStorylineEarlyAccessSchema = z
+  .object({ storylineId: z.number().int().positive().optional() })
+  .default({});
+
+export const getStorylinesInfiniteSchema = z.object({
+  filter: z.enum(['all', 'ongoing', 'complete', 'open']).default('all'),
+  sort: z.enum(['newest', 'mostChapters']).default('newest'),
+  cursor: z.number().int().min(0).optional(),
+  limit: z.number().int().min(1).max(50).default(20),
   browsingLevel: z.number().int().min(0).optional(),
 });

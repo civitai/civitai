@@ -133,6 +133,7 @@ import type {
   ShopifyMerchOrderStatus,
   OutboxEntity,
   StorylineStatus,
+  StorylineWhoCanContinue,
   UserHubSourceType,
   CrucibleStatus,
   CrucibleIngestionStatus,
@@ -4534,6 +4535,7 @@ export type Storyline = {
   userId: number;
   title: string;
   status: Generated<StorylineStatus>;
+  whoCanContinue: Generated<StorylineWhoCanContinue>;
   /**
    * The highest rating a chapter may carry, as a single `NsfwLevel` flag from PG to XXX
    * (CHECK in the migration). Continuations above it cannot be added, and chapters above
@@ -4547,6 +4549,13 @@ export type Storyline = {
   tosViolation: Generated<boolean>;
   createdAt: Generated<Timestamp>;
   updatedAt: Timestamp;
+};
+export type StorylineBranchChoice = {
+  userId: number;
+  parentChapterId: number;
+  chapterId: number;
+  createdAt: Generated<Timestamp>;
+  updatedAt: Generated<Timestamp>;
 };
 export type StorylineChapter = {
   id: Generated<number>;
@@ -4588,6 +4597,11 @@ export type StorylineChapterEdge = {
 export type StorylineCollaborator = {
   storylineId: number;
   userId: number;
+  createdAt: Generated<Timestamp>;
+};
+export type StorylineCreateClick = {
+  userId: number;
+  parentChapterId: number;
   createdAt: Generated<Timestamp>;
 };
 export type StorylineEarlyAccessSignup = {
@@ -5547,9 +5561,11 @@ export type DB = {
   ShopifyCustomerLink: ShopifyCustomerLink;
   ShopifyMerchOrder: ShopifyMerchOrder;
   Storyline: Storyline;
+  StorylineBranchChoice: StorylineBranchChoice;
   StorylineChapter: StorylineChapter;
   StorylineChapterEdge: StorylineChapterEdge;
   StorylineCollaborator: StorylineCollaborator;
+  StorylineCreateClick: StorylineCreateClick;
   StorylineEarlyAccessSignup: StorylineEarlyAccessSignup;
   StorylineReport: StorylineReport;
   Tag: Tag;

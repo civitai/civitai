@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as UserPreferencesService from '~/server/services/user-preferences.service';
+import type * as CacheHelpers from '~/server/utils/cache-helpers';
 import { dbMock, resetSharedMocks } from '~/__tests__/mocks';
 import { NsfwLevel } from '~/server/common/enums';
 
@@ -10,14 +11,23 @@ import { NsfwLevel } from '~/server/common/enums';
  * the reader blocked or hid is a tombstone.
  */
 
-const { getBlockedPairIds, getAllHiddenForUser } = vi.hoisted(() => ({
+const { getBlockedPairIds, hiddenUsersCached } = vi.hoisted(() => ({
   getBlockedPairIds: vi.fn(),
-  getAllHiddenForUser: vi.fn(),
+  hiddenUsersCached: vi.fn(),
+}));
+vi.mock('~/server/utils/cache-helpers', async (importOriginal) => ({
+  ...(await importOriginal<typeof CacheHelpers>()),
+  // Straight through to the origin; caching is not what these tests are about.
+  fetchThroughCache: (_key: string, fn: () => Promise<unknown>) => fn(),
+  bustFetchThroughCache: vi.fn(),
 }));
 vi.mock('~/server/services/user-preferences.service', async (importOriginal) => ({
   ...(await importOriginal<typeof UserPreferencesService>()),
   getBlockedPairIds,
-  getAllHiddenForUser,
+  HiddenUsers: {
+    ...(await importOriginal<typeof UserPreferencesService>()).HiddenUsers,
+    getCached: hiddenUsersCached,
+  },
 }));
 
 import { storylineRouter } from '~/server/routers/storyline.router';
@@ -74,8 +84,8 @@ beforeEach(() => {
   resetSharedMocks();
   getBlockedPairIds.mockReset();
   getBlockedPairIds.mockResolvedValue([]);
-  getAllHiddenForUser.mockReset();
-  getAllHiddenForUser.mockResolvedValue({ hiddenUsers: [] });
+  hiddenUsersCached.mockReset();
+  hiddenUsersCached.mockResolvedValue([]);
 });
 
 describe('storyline router: a story outside the reader’s level serves nothing of itself', () => {
@@ -152,9 +162,9 @@ describe('storyline router: chapters by people the reader blocked or hid', () =>
   });
 
   it('tombstones the chapter of an author the reader hid', async () => {
-    getAllHiddenForUser.mockResolvedValue({ hiddenUsers: [{ id: AUTHOR }] });
+    hiddenUsersCached.mockResolvedValue([{ id: AUTHOR }]);
     expect(await pathTombstones()).toEqual([null, 'unavailable']);
-    expect(getAllHiddenForUser).toHaveBeenCalledWith({ userId: READER });
+    expect(hiddenUsersCached).toHaveBeenCalledWith({ userId: READER });
   });
 
   it('tombstones the chapter of an author in a block with the reader', async () => {
@@ -170,5 +180,58 @@ describe('storyline router: flag', () => {
     await expect(
       callerFor(READER, []).getById({ id: 10, browsingLevel: NsfwLevel.X })
     ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+  });
+});
+
+describe('storyline router: who may call the engagement procedures', () => {
+  function signedOut() {
+    return storylineRouter.createCaller({
+      user: undefined,
+      acceptableOrigin: true,
+      tokenScope: TokenScope.Full,
+      apiKeyId: null,
+      req: { headers: {} },
+      res: { setHeader: () => undefined },
+      cache: { edgeTTL: 0 },
+      features: { canViewNsfw: true, isGreen: false },
+      track: { action: vi.fn(() => Promise.resolve(true)) },
+    } as never);
+  }
+
+  it('refuses signed-out readers every write and the sign-up status', async () => {
+    const caller = signedOut();
+    await expect(
+      caller.trackBranchChoice({ fromChapterId: 1, toChapterId: 2 })
+    ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+    await expect(caller.trackCreateClick({ chapterId: 1 })).rejects.toMatchObject({
+      code: 'UNAUTHORIZED',
+    });
+    await expect(caller.joinEarlyAccess({})).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+    await expect(caller.getEarlyAccessStatus()).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+    expect(dbMock.dbWrite.storylineBranchChoice.upsert).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.storylineCreateClick.upsert).not.toHaveBeenCalled();
+  });
+
+  it('shows early-access numbers to moderators only', async () => {
+    await expect(callerFor(READER).getEarlyAccessStats()).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
+  });
+
+  it("records a signed-in reader's choice as theirs", async () => {
+    dbMock.dbWrite.storylineChapter.findUnique.mockResolvedValue({ storylineId: 10 } as never);
+    r.storyline.findUnique.mockResolvedValue({
+      ...xStory,
+      chapters: [{ id: 1, postId: 101, post: { nsfwLevel: NsfwLevel.PG } }],
+    } as never);
+    dbMock.dbWrite.storylineChapterEdge.findUnique.mockResolvedValue({ chapterId: 2 } as never);
+    await callerFor(READER).trackBranchChoice({
+      fromChapterId: 1,
+      toChapterId: 2,
+      browsingLevel: NsfwLevel.PG,
+    });
+    expect(dbMock.dbWrite.storylineBranchChoice.upsert.mock.calls[0][0]).toMatchObject({
+      create: { userId: READER, parentChapterId: 1, chapterId: 2 },
+    });
   });
 });

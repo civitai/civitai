@@ -1,17 +1,29 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { Prisma } from '@prisma/client';
 import type * as BlocklistService from '~/server/services/blocklist.service';
 import type * as UserPreferencesService from '~/server/services/user-preferences.service';
-import { dbMock, resetSharedMocks } from '~/__tests__/mocks';
+import type * as CacheHelpers from '~/server/utils/cache-helpers';
+import { dbMock, resetSharedMocks, setEnv } from '~/__tests__/mocks';
 import { NsfwLevel } from '~/server/common/enums';
 
-const { getBlockedPairIds, getAllHiddenForUser } = vi.hoisted(() => ({
+const { getBlockedPairIds, hiddenUsersCached } = vi.hoisted(() => ({
   getBlockedPairIds: vi.fn(),
-  getAllHiddenForUser: vi.fn(),
+  hiddenUsersCached: vi.fn(),
 }));
+vi.mock('~/server/utils/cache-helpers', async (importOriginal) => ({
+  ...(await importOriginal<typeof CacheHelpers>()),
+  // Straight through to the origin; caching is not what these tests are about.
+  fetchThroughCache: (_key: string, fn: () => Promise<unknown>) => fn(),
+  bustFetchThroughCache,
+}));
+const bustFetchThroughCache = vi.hoisted(() => vi.fn());
 vi.mock('~/server/services/user-preferences.service', async (importOriginal) => ({
   ...(await importOriginal<typeof UserPreferencesService>()),
   getBlockedPairIds,
-  getAllHiddenForUser,
+  HiddenUsers: {
+    ...(await importOriginal<typeof UserPreferencesService>()).HiddenUsers,
+    getCached: hiddenUsersCached,
+  },
 }));
 vi.mock('~/server/services/blocklist.service', async (importOriginal) => ({
   ...(await importOriginal<typeof BlocklistService>()),
@@ -25,7 +37,14 @@ import {
   getStoryline,
   getStorylineChildren,
   getStorylinePath,
+  getStorylineForkShares,
   getStorylinesForPosts,
+  getStorylineEarlyAccessStats,
+  getStorylineEarlyAccessStatus,
+  getStorylinesInfinite,
+  joinStorylineEarlyAccess,
+  recordStorylineBranchChoice,
+  recordStorylineCreateClick,
   removeStorylineCollaborator,
   setCanonChapter,
   updateStoryline,
@@ -38,6 +57,7 @@ const STRANGER = 3;
 const BLOCKED = 4;
 const MODERATOR = 5;
 const PARENT_AUTHOR = 8;
+const AUTHOR_OF_POSTS = 9;
 
 const w = dbMock.dbWrite;
 const r = dbMock.dbRead;
@@ -51,6 +71,7 @@ const storylineRow = (overrides: Record<string, unknown> = {}) => ({
   userId: OWNER,
   title: 'A story',
   status: 'Ongoing',
+  whoCanContinue: 'Anyone',
   maxNsfwLevel: NsfwLevel.R,
   tosViolation: false,
   createdAt: new Date('2026-10-01'),
@@ -89,8 +110,9 @@ beforeEach(() => {
   resetSharedMocks();
   getBlockedPairIds.mockReset();
   getBlockedPairIds.mockResolvedValue([]);
-  getAllHiddenForUser.mockReset();
-  getAllHiddenForUser.mockResolvedValue({ hiddenUsers: [] });
+  hiddenUsersCached.mockReset();
+  hiddenUsersCached.mockResolvedValue([]);
+  bustFetchThroughCache.mockReset();
   blockedPairs = [];
   answerRaw(w);
 });
@@ -103,7 +125,12 @@ describe('writeChapterEdgeForPlacement', () => {
     storylineId: 10,
     depth: 2,
     userId: PARENT_AUTHOR,
-    storyline: { userId: OWNER, maxNsfwLevel: NsfwLevel.R, tosViolation: false },
+    storyline: {
+      userId: OWNER,
+      maxNsfwLevel: NsfwLevel.R,
+      tosViolation: false,
+      whoCanContinue: 'Anyone',
+    },
   };
 
   const findChapter = (parent: unknown) =>
@@ -199,7 +226,7 @@ describe('writeChapterEdgeForPlacement', () => {
             storyline: { ...parentChapter.storyline, tosViolation: true },
           })
         ),
-      /taken down/,
+      /not a chapter of an open storyline/,
     ],
     [
       'a post above the ceiling',
@@ -252,6 +279,49 @@ describe('writeChapterEdgeForPlacement', () => {
     expect(w.storylineChapterEdge.create).not.toHaveBeenCalled();
   });
 
+  describe('when only collaborators may continue', () => {
+    beforeEach(() => {
+      w.storylineChapter.findUnique.mockImplementation(
+        findChapter({
+          ...parentChapter,
+          storyline: { ...parentChapter.storyline, whoCanContinue: 'Collaborators' },
+        })
+      );
+    });
+
+    it("refuses a stranger with the placement layer's refusal", async () => {
+      await expect(writeChapterEdgeForPlacement(args, tx)).rejects.toMatchObject({
+        code: 'BAD_REQUEST',
+        message: 'storyline: only collaborators on this storyline can continue it',
+      });
+      expect(w.storylineChapter.create).not.toHaveBeenCalled();
+    });
+
+    it('lets the owner continue without being a collaborator', async () => {
+      w.post.findUnique.mockResolvedValue(publishedPost({ userId: OWNER }) as never);
+      await expect(
+        writeChapterEdgeForPlacement({ ...args, placerId: OWNER }, tx)
+      ).resolves.toMatchObject({ created: true });
+    });
+
+    it('lets an endorsed collaborator continue', async () => {
+      w.storylineCollaborator.findUnique.mockImplementation((({
+        where,
+      }: {
+        where: { storylineId_userId: { storylineId: number; userId: number } };
+      }) =>
+        Promise.resolve(
+          where.storylineId_userId.storylineId === 10 &&
+            where.storylineId_userId.userId === STRANGER
+            ? { userId: STRANGER }
+            : null
+        )) as never);
+      await expect(writeChapterEdgeForPlacement(args, tx)).resolves.toMatchObject({
+        created: true,
+      });
+    });
+  });
+
   it('refuses a chapter continuing itself', async () => {
     await expect(writeChapterEdgeForPlacement({ ...args, postId: 500 }, tx)).rejects.toThrow(
       /continue itself/
@@ -268,6 +338,7 @@ describe('writeChapterEdgeForPlacement', () => {
         findFirst: vi.fn().mockResolvedValue(null),
         create: vi.fn().mockResolvedValue({}),
       },
+      storylineCollaborator: { findUnique: vi.fn().mockResolvedValue(null) },
       post: { findUnique: vi.fn().mockResolvedValue(publishedPost({ userId: OWNER })) },
       $queryRaw: vi.fn(),
     };
@@ -353,6 +424,18 @@ describe('authorization', () => {
         forbidden
       );
       expect(w.storyline.update).not.toHaveBeenCalled();
+    });
+
+    it('lets the owner choose who can continue, and nobody else', async () => {
+      await updateStoryline({ id: 10, whoCanContinue: 'Collaborators', userId: OWNER });
+      expect(w.storyline.update.mock.calls[0][0]).toMatchObject({
+        data: { whoCanContinue: 'Collaborators' },
+      });
+      for (const userId of [COLLABORATOR, STRANGER])
+        await expect(
+          updateStoryline({ id: 10, whoCanContinue: 'Anyone', userId })
+        ).rejects.toMatchObject(forbidden);
+      expect(w.storyline.update).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -545,7 +628,7 @@ describe('getStorylinesForPosts', () => {
     id: postId + 1000,
     postId,
     depth: 1,
-    post: { nsfwLevel: level },
+    post: { nsfwLevel: level, userId: AUTHOR_OF_POSTS },
     storyline: {
       id: 10,
       title: 'A story',
@@ -573,6 +656,15 @@ describe('getStorylinesForPosts', () => {
       browsingLevel: NsfwLevel.PG,
     });
     expect(Object.keys(result)).toEqual(['1']);
+
+    // The author of the X post is still told it is a chapter, though it is outside their level.
+    // (The fake returns every row whatever the ids, so post 1 comes back too.)
+    const asAuthor = await getStorylinesForPosts({
+      postIds: [3],
+      viewer: { id: AUTHOR_OF_POSTS },
+      browsingLevel: NsfwLevel.PG,
+    });
+    expect(Object.keys(asAuthor)).toEqual(['1', '3']);
     expect(result[1]).toEqual({ chapterId: 1001, depth: 1, storylineId: 10, title: 'A story' });
   });
 });
@@ -755,6 +847,26 @@ describe('reading', () => {
       expect(children[0]).not.toHaveProperty('readers');
     });
 
+    it('orders community children by stored reader counts when none are passed in', async () => {
+      const all = [edge(11, STRANGER, false, 1), edge(12, BLOCKED, false, 2)];
+      r.storylineChapterEdge.findFirst.mockResolvedValue(null as never);
+      r.storylineChapterEdge.findMany.mockImplementation((({
+        where,
+      }: {
+        where: { chapter?: unknown };
+      }) => Promise.resolve(where.chapter ? [] : all)) as never);
+      w.storylineBranchChoice.groupBy.mockResolvedValue([
+        { chapterId: 12, _count: { _all: 9 } },
+        { chapterId: 11, _count: { _all: 2 } },
+      ] as never);
+      const children = await getStorylineChildren({
+        chapterId: 1,
+        viewer: { id: 99 },
+        browsingLevel: NsfwLevel.PG,
+      });
+      expect(children.map((c) => c.chapterId)).toEqual([12, 11]);
+    });
+
     it('still lists canon and collaborators first when they fall outside the oldest page', async () => {
       // The oldest-first read is full of strangers; canon and the collaborator are newer.
       const strangers = Array.from({ length: 200 }, (_, i) => edge(1000 + i, STRANGER, false, 1));
@@ -781,5 +893,338 @@ describe('reading', () => {
         where: { parentChapterId: 1, canon: true },
       });
     });
+  });
+});
+
+describe('fork shares', () => {
+  const choices = (pairs: Array<[number, number]>) =>
+    w.storylineBranchChoice.groupBy.mockResolvedValue(
+      pairs.map(([chapterId, n]) => ({ chapterId, _count: { _all: n } })) as never
+    );
+  const read = { chapterId: 1, viewer: { id: STRANGER }, browsingLevel: NsfwLevel.PG };
+
+  beforeEach(() => {
+    r.storylineChapter.findUnique.mockResolvedValue({ storylineId: 10 } as never);
+    r.storyline.findUnique.mockResolvedValue(storylineRow() as never);
+  });
+
+  it('gives no shares below 20 choices by default, with the total so far', async () => {
+    choices([
+      [11, 12],
+      [12, 7],
+    ]);
+    await expect(getStorylineForkShares(read)).resolves.toEqual({
+      enough: false,
+      total: 19,
+      minChoices: 20,
+      shares: {},
+    });
+    expect(w.storylineBranchChoice.groupBy.mock.calls[0][0]).toMatchObject({
+      by: ['chapterId'],
+      where: { parentChapterId: 1 },
+    });
+  });
+
+  it('gives shares at 20 choices', async () => {
+    choices([
+      [11, 15],
+      [12, 5],
+    ]);
+    await expect(getStorylineForkShares(read)).resolves.toMatchObject({
+      enough: true,
+      shares: { 11: 0.75, 12: 0.25 },
+    });
+  });
+
+  it('follows STORYLINE_SHARE_MIN_CHOICES, and ignores an invalid one', async () => {
+    choices([[11, 1]]);
+    setEnv({ STORYLINE_SHARE_MIN_CHOICES: '1' });
+    await expect(getStorylineForkShares(read)).resolves.toMatchObject({
+      enough: true,
+      minChoices: 1,
+      shares: { 11: 1 },
+    });
+    setEnv({ STORYLINE_SHARE_MIN_CHOICES: '0' });
+    await expect(getStorylineForkShares(read)).resolves.toMatchObject({
+      enough: false,
+      minChoices: 20,
+    });
+  });
+
+  it('serves nothing for a story the reader cannot open', async () => {
+    getBlockedPairIds.mockResolvedValue([OWNER]);
+    choices([[11, 50]]);
+    await expect(getStorylineForkShares(read)).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+});
+
+describe('recording engagement', () => {
+  const reader = { id: STRANGER };
+  const PG = NsfwLevel.PG;
+
+  beforeEach(() => {
+    // The read gate: chapter 1 of storyline 10, which this reader can see. Looked up on the
+    // primary, so a chapter added seconds ago is found.
+    w.storylineChapter.findUnique.mockResolvedValue({ storylineId: 10 } as never);
+    r.storyline.findUnique.mockResolvedValue(storylineRow() as never);
+  });
+
+  it("records a reader's latest choice, only for a real way on, and clears the cached counts", async () => {
+    w.storylineChapterEdge.findUnique.mockResolvedValue(null as never);
+    await expect(
+      recordStorylineBranchChoice({
+        viewer: reader,
+        browsingLevel: PG,
+        fromChapterId: 1,
+        toChapterId: 99,
+      })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(w.storylineBranchChoice.upsert).not.toHaveBeenCalled();
+    expect(bustFetchThroughCache).not.toHaveBeenCalled();
+
+    w.storylineChapterEdge.findUnique.mockResolvedValue({ chapterId: 12 } as never);
+    await recordStorylineBranchChoice({
+      viewer: reader,
+      browsingLevel: PG,
+      fromChapterId: 1,
+      toChapterId: 12,
+    });
+    expect(w.storylineChapterEdge.findUnique.mock.calls[1][0]).toMatchObject({
+      where: { chapterId_parentChapterId: { chapterId: 12, parentChapterId: 1 } },
+    });
+    expect(w.storylineBranchChoice.upsert.mock.calls[0][0]).toEqual({
+      where: { userId_parentChapterId: { userId: STRANGER, parentChapterId: 1 } },
+      create: { userId: STRANGER, parentChapterId: 1, chapterId: 12 },
+      update: { chapterId: 12 },
+    });
+    expect(bustFetchThroughCache).toHaveBeenCalledTimes(1);
+    expect(bustFetchThroughCache).toHaveBeenCalledWith('packed:caches:storyline-fork-counts:1');
+  });
+
+  it('gives no vote to a reader who cannot see the story', async () => {
+    getBlockedPairIds.mockResolvedValue([OWNER]);
+    w.storylineChapterEdge.findUnique.mockResolvedValue({ chapterId: 12 } as never);
+    await expect(
+      recordStorylineBranchChoice({
+        viewer: reader,
+        browsingLevel: PG,
+        fromChapterId: 1,
+        toChapterId: 12,
+      })
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    await expect(
+      recordStorylineCreateClick({ viewer: reader, browsingLevel: PG, chapterId: 1 })
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    expect(w.storylineBranchChoice.upsert).not.toHaveBeenCalled();
+    expect(w.storylineCreateClick.upsert).not.toHaveBeenCalled();
+  });
+
+  it('counts a create click once per reader per chapter', async () => {
+    await recordStorylineCreateClick({ viewer: reader, browsingLevel: PG, chapterId: 1 });
+    expect(w.storylineCreateClick.upsert.mock.calls[0][0]).toEqual({
+      where: { userId_parentChapterId: { userId: STRANGER, parentChapterId: 1 } },
+      create: { userId: STRANGER, parentChapterId: 1 },
+      update: {},
+    });
+  });
+
+  it('refuses a create click on a chapter that does not exist', async () => {
+    w.storylineChapter.findUnique.mockResolvedValue(null as never);
+    await expect(
+      recordStorylineCreateClick({ viewer: reader, browsingLevel: PG, chapterId: 404 })
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    expect(w.storylineCreateClick.upsert).not.toHaveBeenCalled();
+  });
+
+  it('keeps the first early-access sign-up and reports it', async () => {
+    await joinStorylineEarlyAccess({ userId: STRANGER, storylineId: 10 });
+    expect(w.storylineEarlyAccessSignup.upsert.mock.calls[0][0]).toEqual({
+      where: { userId: STRANGER },
+      create: { userId: STRANGER, storylineId: 10 },
+      update: {},
+    });
+    r.storylineEarlyAccessSignup.findUnique.mockResolvedValue({ userId: STRANGER } as never);
+    await expect(getStorylineEarlyAccessStatus(STRANGER)).resolves.toEqual({ joined: true });
+    r.storylineEarlyAccessSignup.findUnique.mockResolvedValue(null as never);
+    await expect(getStorylineEarlyAccessStatus(STRANGER)).resolves.toEqual({ joined: false });
+  });
+
+  it('reports sign-ups, distinct clickers and clicks to moderators', async () => {
+    r.storylineEarlyAccessSignup.count.mockResolvedValue(4 as never);
+    r.$queryRaw.mockResolvedValue([{ readers: 3, clicks: 7 }] as never);
+    await expect(getStorylineEarlyAccessStats()).resolves.toEqual({
+      signups: 4,
+      createClickReaders: 3,
+      createClicks: 7,
+    });
+  });
+});
+
+describe('getStoryline: page fields', () => {
+  const user = (id: number, extra: Record<string, unknown> = {}) => ({
+    id,
+    username: `u${id}`,
+    image: null,
+    profilePicture: null,
+    ...notBanned,
+    ...extra,
+  });
+
+  beforeEach(() => {
+    r.storyline.findUnique.mockResolvedValue({
+      ...storylineRow(),
+      collaborators: [{ user: user(COLLABORATOR) }],
+    } as never);
+    r.$queryRaw.mockImplementation(((strings: TemplateStringsArray) => {
+      const sql = strings.join('?');
+      if (sql.includes('COUNT(DISTINCT'))
+        return Promise.resolve([{ chapters: 4, contributors: 3 }]);
+      if (sql.includes('GROUP BY c."userId"'))
+        return Promise.resolve([
+          { userId: STRANGER },
+          { userId: BLOCKED },
+          { userId: COLLABORATOR },
+        ]);
+      if (sql.includes('WITH RECURSIVE main'))
+        return Promise.resolve([
+          { id: 1, postId: 101, depth: 0 },
+          { id: 2, postId: null, depth: 1 },
+        ]);
+      return Promise.resolve([]);
+    }) as never);
+    r.user.findMany.mockResolvedValue([user(STRANGER), user(BLOCKED)] as never);
+    r.post.findMany.mockResolvedValue([
+      {
+        id: 101,
+        userId: OWNER,
+        title: 'one',
+        nsfwLevel: NsfwLevel.PG,
+        publishedAt: new Date('2026-10-01'),
+        tosViolation: false,
+        user: { username: 'owner', ...notBanned },
+      },
+    ] as never);
+    r.storylineChapterEdge.groupBy.mockResolvedValue([
+      { parentChapterId: 1, _count: { _all: 3 } },
+    ] as never);
+  });
+
+  it('gives counts, roles, the main route with tombstones, and the viewer’s role', async () => {
+    getBlockedPairIds.mockResolvedValue([BLOCKED]);
+    const page = await getStoryline({
+      id: 10,
+      viewer: { id: COLLABORATOR },
+      browsingLevel: NsfwLevel.PG,
+    });
+    expect(page).toMatchObject({
+      chapterCount: 4,
+      contributorCount: 3,
+      viewerRole: 'collaborator',
+    });
+    expect(page.contributors.map((c) => [c.user.id, c.role])).toEqual([
+      [OWNER, 'creator'],
+      [COLLABORATOR, 'endorsed'],
+      // BLOCKED is left out; the collaborator is not listed twice.
+      [STRANGER, 'contributor'],
+    ]);
+    expect(page.mainPath.map((c) => [c.chapterId, c.tombstone, c.childCount])).toEqual([
+      [1, null, 3],
+      [2, 'deleted', 0],
+    ]);
+    expect(page.collaborators[0]).not.toHaveProperty('bannedAt');
+
+    // Credited only through chapters this reader is shown.
+    const contributorQuery = r.$queryRaw.mock.calls
+      .map((call) => {
+        const [strings, ...values] = call as unknown as [TemplateStringsArray, ...unknown[]];
+        return Prisma.sql(strings, ...(values as Prisma.Sql[])).sql;
+      })
+      .find((sql) => sql.includes('GROUP BY c."userId"'));
+    expect(contributorQuery).toMatch(
+      /AND\s+p\."tosViolation" = false AND p\."publishedAt" < now\(\)/
+    );
+    expect(contributorQuery).toContain('& ~');
+  });
+
+  it('tells the owner they own it, and a stranger nothing', async () => {
+    await expect(
+      getStoryline({ id: 10, viewer: { id: OWNER }, browsingLevel: NsfwLevel.PG })
+    ).resolves.toMatchObject({ viewerRole: 'owner' });
+    await expect(
+      getStoryline({ id: 10, viewer: { id: 99 }, browsingLevel: NsfwLevel.PG })
+    ).resolves.toMatchObject({ viewerRole: null });
+  });
+});
+
+describe('getStorylinesInfinite', () => {
+  /** The query as Postgres would get it, with the nested fragments composed. */
+  const sqlOf = () => {
+    const [strings, ...values] = r.$queryRaw.mock.calls[0] as unknown as [
+      TemplateStringsArray,
+      ...unknown[]
+    ];
+    const composed = Prisma.sql(strings, ...(values as Prisma.Sql[]));
+    return { text: composed.sql, values: composed.values };
+  };
+
+  it('pages by offset and says when there is more', async () => {
+    r.$queryRaw.mockResolvedValue(
+      Array.from({ length: 3 }, (_, i) => ({
+        id: 10 - i,
+        title: `s${i}`,
+        status: 'Ongoing',
+        userId: OWNER,
+        username: 'owner',
+        rootPostId: 100 + i,
+        chapterCount: 1,
+        contributorCount: 1,
+        createdAt: new Date('2026-10-01'),
+      })) as never
+    );
+    const page = await getStorylinesInfinite({
+      filter: 'all',
+      sort: 'newest',
+      limit: 2,
+      viewer: undefined,
+      browsingLevel: NsfwLevel.PG,
+    });
+    expect(page.items.map((s) => s.id)).toEqual([10, 9]);
+    // Newest first pages by id: the next page starts below the last id shown.
+    expect(page.nextCursor).toBe(9);
+    expect(page.items[0].user).toEqual({ id: OWNER, username: 'owner' });
+  });
+
+  it('continues newest-first below the last id seen', async () => {
+    await getStorylinesInfinite({
+      filter: 'all',
+      sort: 'newest',
+      cursor: 9,
+      limit: 20,
+      viewer: undefined,
+      browsingLevel: NsfwLevel.PG,
+    });
+    const { text, values } = sqlOf();
+    expect(text).toMatch(/st\.id < \?/);
+    expect(values).toContain(9);
+  });
+
+  it('leaves out owners the reader blocked or hid, and applies the open filter', async () => {
+    getBlockedPairIds.mockResolvedValue([BLOCKED]);
+    hiddenUsersCached.mockResolvedValue([{ id: 77 }]);
+    await getStorylinesInfinite({
+      filter: 'open',
+      sort: 'mostChapters',
+      limit: 20,
+      viewer: { id: STRANGER },
+      browsingLevel: NsfwLevel.PG,
+    });
+    const { text, values } = sqlOf();
+    expect(text).toContain(`COALESCE(ss.mode, us.mode, 'review') <> 'off'`);
+    expect(text).toContain('st."userId" <> ALL(');
+    expect(values).toContainEqual(expect.arrayContaining([BLOCKED, 77]));
+    // Collaborators-only storylines are open only to their collaborators.
+    // Anchored on the opening bracket, so a condition slipped in front of it is caught.
+    expect(text).toContain(`(st."whoCanContinue" = 'Anyone' OR st."userId" = `);
+    expect(text).toContain('"StorylineCollaborator" sc');
   });
 });

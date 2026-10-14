@@ -1,6 +1,9 @@
 import {
   addOwnerChapterSchema,
   createStorylineSchema,
+  getStorylinesInfiniteSchema,
+  joinStorylineEarlyAccessSchema,
+  storylineBranchChoiceSchema,
   getStorylineSchema,
   getStorylinesForPostsSchema,
   storylineChapterReadSchema,
@@ -15,7 +18,14 @@ import {
   getStoryline,
   getStorylineChildren,
   getStorylinePath,
+  getStorylineEarlyAccessStats,
+  getStorylineEarlyAccessStatus,
+  getStorylineForkShares,
   getStorylinesForPosts,
+  getStorylinesInfinite,
+  joinStorylineEarlyAccess,
+  recordStorylineBranchChoice,
+  recordStorylineCreateClick,
   removeStorylineCollaborator,
   setCanonChapter,
   updateStoryline,
@@ -23,6 +33,7 @@ import {
 import {
   guardedProcedure,
   isFlagProtected,
+  moderatorProcedure,
   protectedProcedure,
   publicProcedure,
   router,
@@ -65,6 +76,60 @@ export const storylineRouter = router({
       browsingLevel: storylineReaderLevel(ctx, input.browsingLevel),
     })
   ),
+
+  getForkShares: storylineReadProcedure.input(storylineChapterReadSchema).query(({ input, ctx }) =>
+    getStorylineForkShares({
+      chapterId: input.chapterId,
+      viewer: ctx.user,
+      browsingLevel: storylineReaderLevel(ctx, input.browsingLevel),
+    })
+  ),
+
+  getInfinite: storylineReadProcedure.input(getStorylinesInfiniteSchema).query(({ input, ctx }) =>
+    getStorylinesInfinite({
+      filter: input.filter,
+      sort: input.sort,
+      cursor: input.cursor,
+      limit: input.limit,
+      viewer: ctx.user,
+      browsingLevel: storylineReaderLevel(ctx, input.browsingLevel),
+    })
+  ),
+
+  // Signed-in readers only: a choice from a signed-out reader is not counted, so the share
+  // cannot be stuffed by repeated anonymous requests.
+  trackBranchChoice: storylineMemberProcedure
+    .input(storylineBranchChoiceSchema)
+    .mutation(({ input, ctx }) =>
+      recordStorylineBranchChoice({
+        fromChapterId: input.fromChapterId,
+        toChapterId: input.toChapterId,
+        viewer: ctx.user,
+        browsingLevel: storylineReaderLevel(ctx, input.browsingLevel),
+      })
+    ),
+
+  trackCreateClick: storylineMemberProcedure
+    .input(storylineChapterReadSchema)
+    .mutation(({ input, ctx }) =>
+      recordStorylineCreateClick({
+        chapterId: input.chapterId,
+        viewer: ctx.user,
+        browsingLevel: storylineReaderLevel(ctx, input.browsingLevel),
+      })
+    ),
+
+  joinEarlyAccess: storylineMemberProcedure
+    .input(joinStorylineEarlyAccessSchema)
+    .mutation(({ input, ctx }) =>
+      joinStorylineEarlyAccess({ storylineId: input.storylineId, userId: ctx.user.id })
+    ),
+
+  getEarlyAccessStatus: storylineMemberProcedure.query(({ ctx }) =>
+    getStorylineEarlyAccessStatus(ctx.user.id)
+  ),
+
+  getEarlyAccessStats: moderatorProcedure.query(() => getStorylineEarlyAccessStats()),
 
   create: storylineWriteProcedure
     .input(createStorylineSchema)

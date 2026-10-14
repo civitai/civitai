@@ -6,6 +6,8 @@ import {
   getStorylineChapterRank,
   getStorylineChapterTombstone,
   storylineLevelAllowed,
+  storylineShareMinChoices,
+  toStorylineForkShares,
 } from '~/shared/utils/storyline';
 
 describe('storylineLevelAllowed', () => {
@@ -213,5 +215,52 @@ describe('getStorylineChapterTombstone', () => {
     expect(
       getStorylineChapterTombstone({ ...base, viewer: { id: 1 }, post: post({ nsfwLevel: 0 }) })
     ).toBe('unavailable');
+  });
+});
+
+describe('storylineShareMinChoices', () => {
+  it.each([
+    [undefined, 20],
+    ['', 20],
+    ['0', 20],
+    ['-3', 20],
+    ['1.5', 20],
+    ['abc', 20],
+    ['1e3', 20],
+    ['1', 1],
+    [' 7 ', 7],
+    ['20', 20],
+  ])('reads %j as %i', (raw, expected) => {
+    expect(storylineShareMinChoices(raw)).toBe(expected);
+  });
+});
+
+describe('toStorylineForkShares', () => {
+  it('gives no shares below the minimum, but still the total so far', () => {
+    expect(
+      toStorylineForkShares(
+        new Map([
+          [11, 2],
+          [12, 1],
+        ]),
+        20
+      )
+    ).toEqual({ enough: false, total: 3, minChoices: 20, shares: {} });
+  });
+
+  it('gives each way on its share once the minimum is reached', () => {
+    expect(
+      toStorylineForkShares(
+        new Map([
+          [11, 15],
+          [12, 5],
+        ]),
+        20
+      )
+    ).toEqual({ enough: true, total: 20, minChoices: 20, shares: { 11: 0.75, 12: 0.25 } });
+  });
+
+  it('never claims enough with no readers, whatever the minimum', () => {
+    expect(toStorylineForkShares(new Map(), 1)).toMatchObject({ enough: false, total: 0 });
   });
 });
