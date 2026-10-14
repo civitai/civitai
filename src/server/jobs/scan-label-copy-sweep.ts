@@ -82,6 +82,13 @@ export function scanLabelSweepStoreFromEnv(): ScanLabelSweepStore | null {
 type Due = { key: string; itemId: number; reason: WithdrawReason };
 
 async function dueForWithdrawal(): Promise<{ due: Due[]; eligibilityRead: boolean }> {
+  // Copies recorded only on the item (made by a build that predates the ledger) join it here.
+  await dbWrite.$executeRaw`
+    INSERT INTO "ScanLabelCopyObject" ("key", "itemId", "imageId", "createdAt")
+    SELECT "copyKey", "id", "imageId", COALESCE("copiedAt", now())
+    FROM "ScanLabelItem" WHERE "copyKey" IS NOT NULL
+    ON CONFLICT ("key") DO NOTHING
+  `;
   const img = Prisma.raw('img');
   const due = await dbWrite.$queryRaw<Due[]>`
     SELECT o.key, o."itemId",
@@ -91,6 +98,7 @@ async function dueForWithdrawal(): Promise<{ due: Due[]; eligibilityRead: boolea
     LEFT JOIN "Image" img ON img.id = o."imageId"
     WHERE o."withdrawnAt" IS NULL
       AND (i.id IS NULL OR img.id IS NULL OR ${excludedObject(img)})
+    ORDER BY o."withdrawError" IS NOT NULL, o."createdAt"
     LIMIT ${BATCH}
   `;
   // A separate query: without the view, the checks above must still run.
@@ -102,6 +110,7 @@ async function dueForWithdrawal(): Promise<{ due: Due[]; eligibilityRead: boolea
       JOIN "ScanLabelItem" i ON i.id = o."itemId"
       LEFT JOIN "ScanLabelCopyEligibility" e ON e."itemId" = i.id
       WHERE o."withdrawnAt" IS NULL AND e."eligibleForCopy" IS NOT TRUE
+      ORDER BY o."withdrawError" IS NOT NULL, o."createdAt"
       LIMIT ${BATCH}
     `;
     for (const d of ineligible) if (!seen.has(d.key)) due.push(d);
@@ -142,7 +151,7 @@ export async function sweepScanLabelCopies({ store }: { store?: ScanLabelSweepSt
       `;
       await dbWrite.$executeRaw`
         UPDATE "ScanLabelItem" SET "copyState" = 'withdrawn', "copyKey" = NULL
-        WHERE id = ${itemId} AND "copyKey" = ${key}
+        WHERE id = ${itemId} AND ("copyKey" = ${key} OR "copyKey" IS NULL)
       `;
       withdrawn++;
     } catch (e) {

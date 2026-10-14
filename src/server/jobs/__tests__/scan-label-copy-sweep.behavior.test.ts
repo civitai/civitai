@@ -193,6 +193,61 @@ describe('sweepScanLabelCopies', () => {
     }
   });
 
+  it('withdraws a failed copy for good, so it is never retried once it no longer qualifies', async () => {
+    await holder.db.query(`INSERT INTO "Image" ("id", "url") VALUES (1, 'key-1')`);
+    await holder.db.query(
+      `INSERT INTO "ScanLabelItem" ("id", "imageId", "firstFlaggedAt", "status", "votes", "outcome", "decidedAt")
+       VALUES (1, 1, now(), 'decided', 3, 'clear', now())`
+    );
+    await holder.db.query(`INSERT INTO test_eligibility VALUES (1, true)`);
+    const failingPut = {
+      put: async () => {
+        throw new Error('b2 down');
+      },
+    };
+    await copyScanLabelImages({ store: failingPut });
+    await holder.db.exec(`UPDATE test_eligibility SET ok = false`);
+    const { store } = removing();
+    await sweepScanLabelCopies({ store });
+    expect(await item(1)).toEqual({ copyState: 'withdrawn', copyKey: null });
+    await holder.db.exec(`UPDATE test_eligibility SET ok = true`);
+    const put = vi.fn(async () => undefined);
+    await copyScanLabelImages({ store: { put } });
+    expect(put).not.toHaveBeenCalled();
+  });
+
+  it('re-arms a ledger row a sweep withdrew while its upload was in flight', async () => {
+    await holder.db.query(`INSERT INTO "Image" ("id", "url") VALUES (1, 'key-1')`);
+    await holder.db.query(
+      `INSERT INTO "ScanLabelItem" ("id", "imageId", "firstFlaggedAt", "status", "votes", "outcome", "decidedAt")
+       VALUES (1, 1, now(), 'decided', 3, 'clear', now())`
+    );
+    await holder.db.query(`INSERT INTO test_eligibility VALUES (1, true)`);
+    await copyScanLabelImages({
+      store: {
+        put: async () => {
+          await holder.db.exec(
+            `UPDATE "ScanLabelCopyObject" SET "withdrawnAt" = now(), "withdrawReason" = 'ineligible'`
+          );
+        },
+      },
+    });
+    expect(await ledger()).toEqual([{ key: '1/key-1', withdrawReason: null }]);
+    await holder.db.exec(`UPDATE "Image" SET "needsReview" = 'csam'`);
+    const { removed, store } = removing();
+    await sweepScanLabelCopies({ store });
+    expect(removed).toEqual(['1/key-1']);
+  });
+
+  it('ledgers and withdraws a copy recorded only on its item', async () => {
+    await copied(1);
+    await holder.db.exec(`DELETE FROM "ScanLabelCopyObject"`);
+    await holder.db.exec(`UPDATE "Image" SET "needsReview" = 'csam'`);
+    const { removed, store } = removing();
+    await sweepScanLabelCopies({ store });
+    expect(removed).toEqual(['1/key-1']);
+  });
+
   it('runs safely with nothing copied', async () => {
     const { removed, store } = removing();
     expect(await sweepScanLabelCopies({ store })).toMatchObject({ withdrawn: 0, failed: 0 });

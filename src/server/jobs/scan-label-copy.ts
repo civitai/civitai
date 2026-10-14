@@ -144,12 +144,17 @@ export async function copyScanLabelImages({ store }: { store?: ScanLabelCopyStor
   for (const { id, imageId, url } of pending.filter((p) => p.action === 'copy')) {
     const key = `${id}/${url}`;
     try {
-      // Ledgered before the upload, so a copy whose bookkeeping never lands can still be withdrawn.
+      // Ledgered before the upload, so a copy whose bookkeeping never lands can still be withdrawn,
+      // and re-armed after it: a sweep may have marked this key withdrawn while it was absent.
       await dbWrite.$executeRaw`
         INSERT INTO "ScanLabelCopyObject" ("key", "itemId", "imageId") VALUES (${key}, ${id}, ${imageId})
         ON CONFLICT ("key") DO NOTHING
       `;
       await store.put(url, key);
+      await dbWrite.$executeRaw`
+        UPDATE "ScanLabelCopyObject" SET "withdrawnAt" = NULL, "withdrawReason" = NULL
+        WHERE key = ${key}
+      `;
       await dbWrite.$executeRaw`
         UPDATE "ScanLabelItem"
         SET "copyState" = 'copied', "copyKey" = ${key}, "copiedAt" = now(), "copyError" = NULL

@@ -3,7 +3,7 @@
 -- deleted, because that is exactly when it has to be withdrawn.
 --
 -- Apply before the build that ships it: the copy job writes the ledger before each upload, and the
--- sweep writes "withdrawn".
+-- sweep writes "withdrawn". Copies an older build makes after this runs are ledgered by the sweep.
 
 CREATE TABLE IF NOT EXISTS "ScanLabelCopyObject" (
   "key"            TEXT PRIMARY KEY,
@@ -27,4 +27,5 @@ ON CONFLICT ("key") DO NOTHING;
 
 ALTER TABLE "ScanLabelItem" DROP CONSTRAINT IF EXISTS "ScanLabelItem_copyState_check";
 ALTER TABLE "ScanLabelItem" ADD CONSTRAINT "ScanLabelItem_copyState_check"
-  CHECK ("copyState" IN ('copied', 'skipped', 'failed', 'withdrawn'));
+  CHECK ("copyState" IN ('copied', 'skipped', 'failed', 'withdrawn')) NOT VALID;
+ALTER TABLE "ScanLabelItem" VALIDATE CONSTRAINT "ScanLabelItem_copyState_check";
