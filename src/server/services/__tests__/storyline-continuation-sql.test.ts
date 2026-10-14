@@ -29,7 +29,12 @@ import type * as PlacementService from '~/server/services/placement.service';
  *     pnpm vitest run --project 'unit*' src/server/services/__tests__/storyline-continuation-sql.test.ts
  *   docker stop pg-storyline-sql
  *
- * Run it whenever one of the three statements changes.
+ * Neither CI nor `pnpm run test:unit:run` sets that variable, so there every case here is
+ * skipped and a dropped condition turns nothing red. Run it whenever one of the three statements
+ * changes.
+ *
+ * Timestamps are written in UTC and compared with `now()` under the server's session time zone,
+ * which is UTC here and in production (`Etc/UTC`, read 2026-10-14).
  */
 const testDatabaseUrl = process.env.STORYLINE_SQL_TEST_DATABASE_URL;
 
@@ -55,6 +60,13 @@ const migrationSql = readFileSync(
   resolve(
     dirname(fileURLToPath(import.meta.url)),
     '../../../../packages/civitai-db-schema/prisma/migrations/20260803210000_add_placement_foundation/migration.sql'
+  ),
+  'utf8'
+);
+const prismaSchema = readFileSync(
+  resolve(
+    dirname(fileURLToPath(import.meta.url)),
+    '../../../../packages/civitai-db-schema/prisma/schema.full.prisma'
   ),
   'utf8'
 );
@@ -100,6 +112,7 @@ type Row = {
   amount?: number;
   status?: string;
   surface?: string;
+  targetType?: string;
   ownerId?: number;
   createdAt?: string;
 };
@@ -110,11 +123,12 @@ const placement = ({
   amount = 0,
   status = 'pending',
   surface = 'storyline',
+  targetType = 'post',
   ownerId = 1,
   createdAt = ago(0),
 }: Row) =>
   `INSERT INTO "Placement" (id, surface, "targetType", "targetId", "ownerId", "placerId", data, status, amount, "createdAt")
-   VALUES (${id}, '${surface}', 'post', 500, ${ownerId}, 2, ${
+   VALUES (${id}, '${surface}', '${targetType}', 500, ${ownerId}, 2, ${
     awaiting ? AWAITING.replace('%', String(postId)) : `'{"postId": ${postId}}'`
   }, '${status}', ${amount}, ${createdAt})`;
 
@@ -199,6 +213,7 @@ const FIXTURE = [
   placement({ id: 121, awaiting: true, postId: 1012 }), // a draft
   placement({ id: 122, awaiting: true, postId: 1013 }), // doomed: an image ToS
   placement({ id: 123, awaiting: true, postId: 1014 }), // doomed: an image of a real person
+  placement({ id: 124, awaiting: true, targetType: 'model' }),
 
   // Owner queue (2xx): owner 7.
   placement({ id: 201, ownerId: 7, createdAt: ago(180) }),
@@ -213,6 +228,7 @@ const FIXTURE = [
   placement({ id: 208, ownerId: 7, status: 'declined', createdAt: ago(130) }),
   placement({ id: 209, ownerId: 7, createdAt: ago(60) }),
   placement({ id: 210, ownerId: 7, surface: 'sticker', createdAt: ago(110) }),
+  placement({ id: 211, ownerId: 7, targetType: 'model', createdAt: ago(100) }),
 
   // Stale unfunded sweep (3xx): priced, pending, not awaiting.
   placement({ id: 301, amount: 100, createdAt: ago(20) }), // no legs at all
@@ -220,7 +236,8 @@ const FIXTURE = [
   placement({ id: 303, amount: 100, createdAt: ago(20) }),
   ...funded(303, 100),
   placement({ id: 304, createdAt: ago(20) }), // free
-  placement({ id: 305, amount: 100, createdAt: ago(20) }), // a leg attempted 5 minutes ago
+  // A leg claimed long ago and retried 5 minutes ago: its claim time alone would call it abandoned.
+  placement({ id: 305, amount: 100, createdAt: ago(120) }),
   leg({ placementId: 305, kind: 'holdFee', amount: 30 }),
   leg({
     placementId: 305,
@@ -228,7 +245,7 @@ const FIXTURE = [
     amount: 70,
     receipted: false,
     lastAttemptAt: ago(5),
-    createdAt: ago(19),
+    createdAt: ago(60),
   }),
   placement({ id: 306, amount: 100, createdAt: ago(120) }), // a leg last attempted 45 minutes ago
   leg({ placementId: 306, kind: 'holdFee', amount: 30 }),
@@ -256,6 +273,23 @@ const FIXTURE = [
   leg({ placementId: 311, kind: 'holdFee', amount: 30 }),
   placement({ id: 312, amount: 100, createdAt: ago(20) }), // a non-hold leg for the whole amount
   leg({ placementId: 312, kind: 'feeToOwner', amount: 100 }),
+  placement({ id: 313, amount: 100, createdAt: ago(20) }), // only a non-hold leg in flight
+  leg({
+    placementId: 313,
+    kind: 'feeToOwner',
+    amount: 30,
+    receipted: false,
+    lastAttemptAt: ago(5),
+  }),
+  // Still awaiting its post: readiness skips an unfunded row, so the sweep must take it.
+  placement({ id: 314, awaiting: true, amount: 100, createdAt: ago(20) }),
+
+  // Inserted last with the lowest ids, so a statement without its ORDER BY returns them last.
+  placement({ id: 100, awaiting: true }),
+  `INSERT INTO "Placement" (id, surface, "targetType", "targetId", "ownerId", "placerId", data, status, amount, "createdAt")
+   SELECT 200, surface, "targetType", "targetId", "ownerId", "placerId", data, status, amount, "createdAt"
+   FROM "Placement" WHERE id = 202`, // ties 202 and 203 on createdAt
+  placement({ id: 300, amount: 100, createdAt: ago(20) }),
 ];
 
 async function assertThrowaway(prisma: PrismaClient) {
@@ -282,10 +316,11 @@ async function assertThrowaway(prisma: PrismaClient) {
 }
 
 describe.skipIf(!testDatabaseUrl)('storyline continuation statements on PostgreSQL', () => {
-  const prisma = new PrismaClient({ datasourceUrl: testDatabaseUrl });
+  let prisma: PrismaClient;
   let selected: unknown[][] = [];
 
   beforeAll(async () => {
+    prisma = new PrismaClient({ datasourceUrl: testDatabaseUrl });
     await assertThrowaway(prisma);
     for (const statement of [...SCHEMA, ...FIXTURE]) await prisma.$executeRawUnsafe(statement);
   });
@@ -310,12 +345,12 @@ describe.skipIf(!testDatabaseUrl)('storyline continuation statements on PostgreS
   it('the readiness pass selects funded rows whose post is ready, doomed or gone', async () => {
     await startReadyStorylineContinuations();
     // 114 and 115 are decided after the selection, against the storyline.
-    expect(ids()).toEqual([101, 102, 108, 109, 113, 114, 115, 116, 122, 123]);
+    expect(ids()).toEqual([100, 101, 102, 108, 109, 113, 114, 115, 116, 122, 123]);
   });
 
   it('the readiness pass honours its batch limit', async () => {
     await startReadyStorylineContinuations({ limit: 3 });
-    expect(ids()).toEqual([101, 102, 108]);
+    expect(ids()).toEqual([100, 101, 102]);
   });
 
   it("the owner's queue lists admitted rows with a live post, oldest first, in pages", async () => {
@@ -324,7 +359,7 @@ describe.skipIf(!testDatabaseUrl)('storyline continuation statements on PostgreS
       domainLevels: 31,
       limit: 2,
     });
-    expect(ids()).toEqual([201, 202, 203]);
+    expect(ids()).toEqual([201, 200, 202]);
     expect(first.nextCursor).toEqual(expect.any(String));
 
     selected = [];
@@ -334,23 +369,62 @@ describe.skipIf(!testDatabaseUrl)('storyline continuation statements on PostgreS
       limit: 2,
       cursor: first.nextCursor,
     });
-    // 203 shares 202's createdAt: the id breaks the tie, so it is neither lost nor repeated.
-    expect(ids()).toEqual([203, 209]);
+    // 200, 202 and 203 share a createdAt: the id breaks the tie, so none is lost or repeated.
+    expect(ids()).toEqual([202, 203, 209]);
   });
 
   it('the unfunded sweep selects stale priced rows with no hold leg in flight', async () => {
     await settleStaleUnfundedContinuations();
-    expect(ids()).toEqual([301, 306, 308, 311, 312]);
+    expect(ids()).toEqual([300, 301, 306, 308, 311, 312, 313, 314]);
     expect(settlePlacement).not.toHaveBeenCalled();
+  });
+
+  it('the unfunded sweep honours its batch limit', async () => {
+    await settleStaleUnfundedContinuations({ limit: 2 });
+    expect(ids()).toEqual([300, 301]);
   });
 
   // The selection sums receipted hold legs. It can do that only because a second leg of one
   // kind cannot exist, or a retried hold would count twice and fund a row that is short.
   it('a placement cannot hold two legs of one kind', async () => {
+    expect(prismaSchema).toMatch(
+      /model PlacementTransaction \{[^}]*@@unique\(\[placementId, kind\]\)/
+    );
     expect(holdKindUnique).toBeDefined();
     await prisma.$executeRawUnsafe(holdKindUnique!);
     await expect(
       prisma.$executeRawUnsafe(leg({ placementId: 311, kind: 'holdFee', amount: 70 }))
     ).rejects.toThrow(/23505[\s\S]*\(311, holdFee\) already exists/);
+  });
+
+  it('refuses to wipe a database holding a table it did not make, or more rows than it writes', async () => {
+    await expect(assertThrowaway(prisma)).resolves.toBeUndefined();
+
+    // Each probe is undone in `finally`: left behind, it would make the guard refuse every
+    // later run, which reads as this suite failing for an unrelated reason.
+    const refuses = async (setup: string[], undo: string, message: RegExp) => {
+      try {
+        for (const statement of setup) await prisma.$executeRawUnsafe(statement);
+        await expect(assertThrowaway(prisma)).rejects.toThrow(message);
+      } finally {
+        await prisma.$executeRawUnsafe(undo);
+      }
+    };
+    await refuses(
+      [`CREATE TABLE "User" (id INTEGER PRIMARY KEY)`],
+      `DROP TABLE IF EXISTS "User"`,
+      /did not create \(public\.User\)/
+    );
+    // A table of one of its own names, outside the schema it wipes.
+    await refuses(
+      [`CREATE SCHEMA other`, `CREATE TABLE other."Post" (id INTEGER PRIMARY KEY)`],
+      `DROP SCHEMA IF EXISTS other CASCADE`,
+      /did not create \(other\.Post\)/
+    );
+    await refuses(
+      [`INSERT INTO "Image" ("postId") SELECT NULL FROM generate_series(1, ${MAX_OWN_ROWS})`],
+      `DELETE FROM "Image" WHERE "postId" IS NULL`,
+      /public\."Image" has more rows/
+    );
   });
 });
