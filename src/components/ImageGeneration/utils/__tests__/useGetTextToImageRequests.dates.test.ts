@@ -93,6 +93,12 @@ describe('useGetTextToImageRequests — date bounds reaching the query', () => {
   });
 
   // Invariant guard.
+  it("prefers the queue's toDate over a caller's when the queue's filters are not ignored", () => {
+    const input = queriedInput({ toDate: PICKED }, { enabled: true });
+    expect(input.toDate).toBe(QUEUE_TO);
+  });
+
+  // Invariant guard.
   it("uses the queue's own date filter when it is not ignored", () => {
     const input = queriedInput({}, { enabled: true });
     expect(input.toDate).toBe(QUEUE_TO);
@@ -112,7 +118,7 @@ describe('useGenerateFromGraph — a submitted workflow and the cached lists', (
       queryClient.getQueryData(keyFor(input)) as { pages: Array<{ items: Array<{ id: string }> }> }
     ).pages[0].items.map((item) => item.id);
 
-  function submit(workflow: { id: string }) {
+  function submit(workflow: { id: string; createdAt?: Date }) {
     mocks.generateMutation.mockImplementation((options) => options);
     let options: { onSuccess: (data: unknown) => void } | undefined;
     function Probe() {
@@ -145,6 +151,31 @@ describe('useGenerateFromGraph — a submitted workflow and the cached lists', (
     expect(ids(unbounded)).toEqual(['new', 'old-2']);
     expect(ids(oldestFirstBounded)).toEqual(['old-3']);
     expect(ids(oldestFirst)).toEqual(['old-4', 'new']);
+  });
+
+  // Regression: red at 9987a920, which skipped every list with a toDate. The queue's own "To"
+  // filter can be today or later, and such a list includes a workflow created now.
+  it('adds to a list whose toDate is not before the workflow was created, in both orders', () => {
+    const createdAt = new Date();
+    const later = new Date(createdAt.getTime() + 24 * 3600_000);
+    const sameInstant = new Date(createdAt.getTime());
+    const newestFirst = { tags: ['img'], ascending: false, toDate: later };
+    const atCreation = {
+      tags: ['img'],
+      ascending: false,
+      toDate: sameInstant,
+      excludeFailed: true,
+    };
+    const oldestFirst = { tags: ['img'], ascending: true, toDate: later };
+    queryClient.setQueryData(keyFor(newestFirst), list('old-6'));
+    queryClient.setQueryData(keyFor(atCreation), list('old-7'));
+    queryClient.setQueryData(keyFor(oldestFirst), list('old-8'));
+
+    submit({ id: 'new', createdAt });
+
+    expect(ids(newestFirst)).toEqual(['new', 'old-6']);
+    expect(ids(atCreation)).toEqual(['new', 'old-7']);
+    expect(ids(oldestFirst)).toEqual(['old-8', 'new']);
   });
 
   // Invariant guard: a list with only a start date still takes a workflow submitted now.

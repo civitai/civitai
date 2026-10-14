@@ -257,22 +257,25 @@ type CachedWorkflow = InfiniteTextToImageRequests['pages'][number]['items'][numb
 
 /**
  * Puts a just-submitted workflow into each cached list it belongs in: first in a newest-first list,
- * last in an oldest-first one whose last page is loaded. A list bounded by `toDate` (the queue's
- * own date filter, or the App Blocks image picker's jump to date) ends at a moment already past,
- * so a workflow submitted now is not in it and is left out.
+ * last in an oldest-first one whose last page is loaded. A list bounded by `toDate` takes it only
+ * when the bound is not before the workflow's creation time, as the server would list it.
  */
 export function addSubmittedWorkflowToCaches(workflow: CachedWorkflow) {
+  const createdAt = workflow.createdAt ? new Date(workflow.createdAt) : new Date();
+  const endsBeforeIt = (queryInput?: { toDate?: Date | string }) =>
+    !!queryInput?.toDate && new Date(queryInput.toDate) < createdAt;
+
   updateTextToImageRequests({
     input: { ascending: false },
     cb: (old, queryInput) => {
-      if (queryInput?.toDate) return;
+      if (endsBeforeIt(queryInput)) return;
       old.pages[0].items.unshift(workflow);
     },
   });
   updateTextToImageRequests({
     input: { ascending: true },
     cb: (old, queryInput) => {
-      if (queryInput?.toDate) return;
+      if (endsBeforeIt(queryInput)) return;
       const index = old.pages.length - 1;
       if (!old.pages[index].nextCursor) {
         old.pages[index].items.push(workflow);
