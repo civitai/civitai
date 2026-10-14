@@ -20,6 +20,9 @@ patchedDependencies:
   '@mantine/hooks':
     hash: b45a85bd4d007c796b93eb90a75d3234b81cce13964921b25721734c7ed79f64
     path: patches/@mantine__hooks.patch
+  '@prisma/client@6.13.0':
+    hash: 572e223e8f8b304a4fa7c80b6ad62ea636488e4304ea2e144c573973737c391d
+    path: patches/@prisma__client@6.13.0.patch
 
 importers:
 
@@ -237,7 +240,7 @@ importers:
         version: 8.8.3(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
       '@prisma/client':
         specifier: ^6.3.0
-        version: 6.13.0(prisma@6.13.0(typescript@5.9.2))(typescript@5.9.2)
+        version: 6.13.0(patch_hash=572e223e8f8b304a4fa7c80b6ad62ea636488e4304ea2e144c573973737c391d)(prisma@6.13.0(typescript@5.9.2))(typescript@5.9.2)
       '@prisma/instrumentation':
         specifier: ^7.4.2
         version: 7.4.2(@opentelemetry/api@1.9.0)
@@ -15712,7 +15715,7 @@ snapshots:
 
   '@polka/url@1.0.0-next.29': {}
 
-  '@prisma/client@6.13.0(prisma@6.13.0(typescript@5.9.2))(typescript@5.9.2)':
+  '@prisma/client@6.13.0(patch_hash=572e223e8f8b304a4fa7c80b6ad62ea636488e4304ea2e144c573973737c391d)(prisma@6.13.0(typescript@5.9.2))(typescript@5.9.2)':
     optionalDependencies:
       prisma: 6.13.0(typescript@5.9.2)
       typescript: 5.9.2

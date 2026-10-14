@@ -457,7 +457,8 @@
       "utf-8-validate"
     ],
     "patchedDependencies": {
-      "@mantine/hooks": "patches/@mantine__hooks.patch"
+      "@mantine/hooks": "patches/@mantine__hooks.patch",
+      "@prisma/client@6.13.0": "patches/@prisma__client@6.13.0.patch"
     }
   }
 }

@@ -671,6 +671,11 @@ jobs:
       - name: Next SVG loader patch applied
         run: node scripts/ci/assert-next-svg-patch-applied.mjs
 
+      # Parked here for the same reasons as the step above. Guards the @prisma/client patch that
+      # memoises the per-model field map (see the script header); reads the INSTALLED runtime.
+      - name: Prisma field-map patch applied
+        run: node scripts/ci/assert-prisma-field-map-patch-applied.mjs
+
       # Parked here for the same two reasons as the step above: it needs a completed
       # `pnpm install` and a job that FAILS the build, and this is the cheapest one that is
       # both. `postinstall` has already run `db:generate`, so the re-run inside the script is
