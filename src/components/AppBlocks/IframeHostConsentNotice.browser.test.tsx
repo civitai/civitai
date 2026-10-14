@@ -372,6 +372,85 @@ describe('IframeHost consent backstop — the BlockHost → useBlockToken → If
     }
   });
 
+  test('🔴 ANONYMOUS viewer: the mint-signed scopes reach BLOCK_INIT / TOKEN_REFRESH, and a REQUEST_CONSENT for a stripped gated scope is refused', async () => {
+    // The anon mint (`userId == null`) strips every consent-gated scope but reports
+    // `missingScopes: []` and `needsConsent: false`. Before the hook carried the
+    // mint's `scopes`, the host advertised `declared − []` — the gated scope too —
+    // and then treated a REQUEST_CONSENT for it as "already granted" and dropped it.
+    const EXEMPT = 'apps:storage:read';
+    const GATED = 'apps:storage:publish';
+    const anonInstall: BlockInstall = {
+      ...install,
+      blockInstanceId: 'inst_anon',
+      manifest: { ...install.manifest, scopes: [EXEMPT, GATED] },
+    };
+    respondWith(
+      () =>
+        ({
+          ok: true,
+          status: 200,
+          json: async () => ({
+            token: 'tok_anon',
+            expiresAt: new Date(Date.now() + TOKEN_TTL_MS).toISOString(),
+            kind: 'block',
+            scopes: [EXEMPT],
+            needsConsent: false,
+            missingScopes: [],
+            domain: 'blue',
+            maxBrowsingLevel: 3,
+          }),
+        } as unknown as Response)
+    );
+    renderWithProviders(
+      <BlockHost
+        blockInstall={anonInstall}
+        slotContext={{ ...context, viewerUserId: null, viewerUsername: null }}
+      />
+    );
+    const el = await waitForIframe();
+    const posts = listenForPosts(el);
+    const postFromBlock = (type: string, payload: unknown) =>
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: { type, payload },
+          origin: window.location.origin,
+          source: el.contentWindow,
+        })
+      );
+    try {
+      for (let i = 0; i < 200 && posts.of('BLOCK_INIT').length === 0; i++) await advance(5);
+      const init = posts.of('BLOCK_INIT');
+      expect(init.length).toBeGreaterThan(0);
+      expect((init[0].payload as { token?: { scopes?: string[] } }).token?.scopes).toEqual([
+        EXEMPT,
+      ]);
+
+      await driveToReady(el);
+
+      // REQUEST_TOKEN with no requestId is answered with a TOKEN_REFRESH push.
+      postFromBlock('REQUEST_TOKEN', {});
+      for (let i = 0; i < 200 && posts.of('TOKEN_REFRESH').length === 0; i++) await advance(5);
+      const refresh = posts.of('TOKEN_REFRESH');
+      expect(refresh.length).toBeGreaterThan(0);
+      expect((refresh[0].payload as { token?: { scopes?: string[] } }).token?.scopes).toEqual([
+        EXEMPT,
+      ]);
+
+      postFromBlock('REQUEST_CONSENT', { scopes: [GATED] });
+      for (let i = 0; i < 200 && posts.of('CONSENT_UNAVAILABLE').length === 0; i++) {
+        await advance(5);
+      }
+      expect(posts.of('CONSENT_UNAVAILABLE')).toHaveLength(1);
+      expect(posts.of('CONSENT_UNAVAILABLE')[0].payload).toEqual({
+        reason: 'ungrantable',
+        scopes: [GATED],
+      });
+      expect(useDialogStore.getState().dialogs).toHaveLength(0);
+    } finally {
+      posts.stop();
+    }
+  });
+
   test('DISCRIMINATING CONTROL — the same seam with a fully-granted mint shows nothing', async () => {
     // Everything about this render is identical except the mint's verdict, so a pass
     // above cannot be "the notice renders unconditionally once ready".

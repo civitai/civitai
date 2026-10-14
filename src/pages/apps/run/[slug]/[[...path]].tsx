@@ -598,6 +598,7 @@ function AppPage(props: PageProps) {
     kind,
     needsConsent,
     missingScopes,
+    signedScopes,
     domain,
     maxBrowsingLevel,
     effectiveBrowsingLevel,
@@ -759,6 +760,7 @@ function AppPage(props: PageProps) {
           tokenKind={kind}
           declaredScopes={scopes}
           missingScopes={missingScopes}
+          signedScopes={signedScopes}
           needsConsent={needsConsent}
           domain={domain}
           maxBrowsingLevel={maxBrowsingLevel}

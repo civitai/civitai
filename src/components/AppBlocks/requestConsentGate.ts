@@ -36,6 +36,33 @@ export function resolveRequestConsent(
   return missingScopes;
 }
 
+/**
+ * The scopes a host advertises to the block in BLOCK_INIT / TOKEN_REFRESH /
+ * TOKEN_REFRESH_RESPONSE, and the "already granted" set the consent gates read.
+ * Shared by both host surfaces so they cannot disagree.
+ *
+ * `signedScopes` is the set the mint reports it SIGNED into this token, and wins
+ * whenever present. Re-deriving it as `declared − missingScopes` is wrong for an
+ * anonymous viewer: the mint strips every consent-gated scope but reports
+ * `missingScopes: []` (anon cannot consent), so the derivation advertised gated
+ * scopes the token lacks — and a REQUEST_CONSENT for one was then read as
+ * "already granted" and dropped. It also differs for a signed-in viewer whose
+ * manifest still lists a deprecated scope the mint no longer signs.
+ *
+ * The derivation stays only as the fallback for a mint response with no
+ * `scopes` field (the dev-tunnel mint omits it).
+ */
+export function resolveAdvertisedScopes(
+  declaredScopes: string[],
+  missingScopes: string[] | undefined,
+  signedScopes: string[] | undefined
+): string[] {
+  if (Array.isArray(signedScopes)) return signedScopes;
+  if (!missingScopes || missingScopes.length === 0) return declaredScopes;
+  const withheld = new Set(missingScopes);
+  return declaredScopes.filter((s) => !withheld.has(s));
+}
+
 /** Everything a host needs to decide whether to offer the consent notice itself. */
 export type HostConsentNoticeInput = {
   /** The host's gate status, already collapsed onto the shared union. */

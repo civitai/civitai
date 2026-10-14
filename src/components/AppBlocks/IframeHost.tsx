@@ -41,6 +41,7 @@ import { hostRenderDecision } from './hostRenderDecision';
 import { resolveBuzzPurchaseRequest } from './openBuzzPurchaseGate';
 import { resolveRequestSignIn } from './requestSignInGate';
 import {
+  resolveAdvertisedScopes,
   resolveHostConsentNotice,
   resolveRequestConsent,
   resolveUngrantableConsentNotice,
@@ -124,6 +125,9 @@ interface IframeHostProps {
    *  we also trim them from the wrapped `token.scopes` we send the iframe so
    *  the block's "do I have this capability?" check is accurate. */
   missingScopes?: string[];
+  /** The scopes the mint signed into `token`. When present, exactly this set is
+   *  advertised to the block — see `resolveAdvertisedScopes`. */
+  signedScopes?: string[];
   /**
    * 🔴 THE MINT'S OWN VERDICT that the signed-in viewer's grant is short of the
    * app's approved manifest — and the input the HOST-SIDE consent notice keys on,
@@ -1187,6 +1191,7 @@ export function IframeHost({
   tokenKind,
   buzzBudget,
   missingScopes,
+  signedScopes,
   needsConsent,
   domain,
   maxBrowsingLevel,
@@ -1478,21 +1483,14 @@ export function IframeHost({
     return () => window.removeEventListener('resize', onViewportChange);
   }, [install.manifest.iframe?.minHeight, install.manifest.iframe?.maxHeight]);
 
-  // A6 lazy consent: the scopes ACTUALLY carried by the minted token — the
-  // manifest scopes minus the consent-gated ones the viewer hasn't granted yet
-  // (`missingScopes`, reported by the mint). The server signs exactly this set
-  // into the JWT; sending the full manifest scopes in the wrapped token would
-  // lie to the block (it would think it has `ai:write:budgeted` when the JWT
-  // doesn't), defeating the block's Generate-time consent check. For anon and
-  // fully-granted viewers `missingScopes` is empty, so this equals the manifest
-  // scopes — no behavior change. (Anon is gated block-side by `viewer === null`,
-  // not by scopes.)
-  const grantedScopes = useMemo<string[]>(() => {
-    const declared = install.manifest.scopes ?? [];
-    if (!missingScopes || missingScopes.length === 0) return declared;
-    const withheld = new Set(missingScopes);
-    return declared.filter((s) => !withheld.has(s));
-  }, [install.manifest.scopes, missingScopes]);
+  // A6 lazy consent: the scopes ACTUALLY carried by the minted token. Sending the
+  // full manifest scopes would lie to the block (it would think it has
+  // `ai:write:budgeted` when the JWT doesn't), defeating its Generate-time consent
+  // check. See `resolveAdvertisedScopes` for why the mint's signed set wins.
+  const grantedScopes = useMemo<string[]>(
+    () => resolveAdvertisedScopes(install.manifest.scopes ?? [], missingScopes, signedScopes),
+    [install.manifest.scopes, missingScopes, signedScopes]
+  );
 
   // Effective Checkpoint after publisher-default ∪ viewer-override merge.
   // Anon viewers see publisher default; authenticated viewers see their

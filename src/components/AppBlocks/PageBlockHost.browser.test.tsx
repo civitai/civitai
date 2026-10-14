@@ -740,6 +740,54 @@ describe('PageBlockHost REQUEST_CONSENT (W10 lazy-consent wiring)', () => {
     }
   });
 
+  test('ANONYMOUS viewer: BLOCK_INIT / TOKEN_REFRESH advertise only the SIGNED scopes, and a REQUEST_CONSENT for a stripped gated scope is refused, not dropped', async () => {
+    // The anon mint strips every consent-gated scope but reports
+    // `missingScopes: []` / `needsConsent: false` — anon cannot consent. Before
+    // `signedScopes`, the host advertised `declared − []`, i.e. the gated scope
+    // too, and then read it as "already granted" so the request was dropped.
+    renderWithProviders(
+      <PageBlockHost
+        {...baseProps}
+        declaredScopes={['apps:storage:read', 'apps:storage:publish']}
+        missingScopes={[]}
+        signedScopes={['apps:storage:read']}
+        needsConsent={false}
+        viewer={null}
+        onConsentGranted={vi.fn()}
+      />
+    );
+
+    // BLOCK_INIT is re-posted until BLOCK_READY, so subscribe BEFORE acking.
+    await pollFor('iframe mount', () => !!iframeElQuery()?.contentWindow);
+    const posts = listenForHostPosts();
+    try {
+      await vi.waitFor(() => expect(posts.of('BLOCK_INIT').length).toBeGreaterThan(0));
+      const initScopes = (posts.of('BLOCK_INIT')[0].payload as { token?: { scopes?: string[] } })
+        .token?.scopes;
+      expect(initScopes).toEqual(['apps:storage:read']);
+
+      await driveToReady();
+
+      // REQUEST_TOKEN with no requestId is answered with a TOKEN_REFRESH push.
+      postFromBlock('REQUEST_TOKEN', {});
+      await vi.waitFor(() => expect(posts.of('TOKEN_REFRESH').length).toBeGreaterThan(0));
+      const refreshScopes = (
+        posts.of('TOKEN_REFRESH')[0].payload as { token?: { scopes?: string[] } }
+      ).token?.scopes;
+      expect(refreshScopes).toEqual(['apps:storage:read']);
+
+      postFromBlock('REQUEST_CONSENT', { scopes: ['apps:storage:publish'] });
+      await vi.waitFor(() => expect(posts.of('CONSENT_UNAVAILABLE')).toHaveLength(1));
+      expect(posts.of('CONSENT_UNAVAILABLE')[0].payload).toEqual({
+        reason: 'ungrantable',
+        scopes: ['apps:storage:publish'],
+      });
+      expect(useDialogStore.getState().dialogs).toHaveLength(0);
+    } finally {
+      posts.stop();
+    }
+  });
+
   test('reviewMode surfaces a passive reduced-permissions notice and NEVER a consent modal', async () => {
     // Was: reviewMode dropped REQUEST_CONSENT silently, so a moderator clicking a
     // consent-gated action in the review preview got nothing at all and the app

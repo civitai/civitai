@@ -23,7 +23,6 @@ import {
   decideAutoRetry,
   advanceReviewConsentLatch,
   buildReviewConsentNotification,
-  grantedPageScopes,
   INITIAL_REVIEW_CONSENT_LATCH,
   MID_SESSION_LOSS_ERROR_CLASS,
   pageFallbackReason,
@@ -120,6 +119,7 @@ import {
   type WildcardPackErrorCode,
 } from './wildcardPackParse';
 import {
+  resolveAdvertisedScopes,
   resolveHostConsentNotice,
   resolveRequestConsent,
   resolveUngrantableConsentNotice,
@@ -661,6 +661,9 @@ export interface PageBlockHostProps {
    *  Trimmed from the wrapped `token.scopes` so the block's capability check is
    *  accurate, and used to surface a consent-needed terminal state. */
   missingScopes?: string[];
+  /** The scopes the mint signed into `token`. When present, exactly this set is
+   *  advertised to the block — see `resolveAdvertisedScopes`. */
+  signedScopes?: string[];
   /** #3/#6: true when the app's approved manifest declares scopes the viewer has
    *  not granted (the token still mints with the granted subset). */
   needsConsent?: boolean;
@@ -845,6 +848,7 @@ export function PageBlockHost({
   tokenKind,
   declaredScopes,
   missingScopes,
+  signedScopes,
   needsConsent,
   tokenError,
   tokenTerminal = false,
@@ -1273,12 +1277,12 @@ export function PageBlockHost({
   // fail-closed in [[...path]].tsx), so the event is dark behind the same flag as
   // the rest of App Blocks.
 
-  // #3/#6: the scopes the minted JWT ACTUALLY carries (declared − missing).
-  // See pageBlockHostLogic.grantedPageScopes. Posting `[]` (the old hardcode)
+  // #3/#6: the scopes the minted JWT ACTUALLY carries. See
+  // requestConsentGate.resolveAdvertisedScopes. Posting `[]` (the old hardcode)
   // lied to the block about its capabilities.
   const grantedScopes = useMemo<string[]>(
-    () => grantedPageScopes(declaredScopes, missingScopes),
-    [declaredScopes, missingScopes]
+    () => resolveAdvertisedScopes(declaredScopes, missingScopes, signedScopes),
+    [declaredScopes, missingScopes, signedScopes]
   );
 
   // Current sub-path under /apps/run/<slug>/<...path> (no leading slash). Read
