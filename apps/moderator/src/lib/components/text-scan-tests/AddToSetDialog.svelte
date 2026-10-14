@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { countOf } from '$lib/text-scan-tests/format';
+  import { plural } from '$lib/format';
   import { browser } from '$app/environment';
   import { enhance } from '$app/forms';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
@@ -103,7 +103,7 @@
             </Select.Trigger>
             <Select.Content>
               {#each options as set (set.id)}
-                <Select.Item value={String(set.id)}>{set.name} · {countOf(set.caseCount, 'case')}</Select.Item>
+                <Select.Item value={String(set.id)}>{set.name} · {plural(set.caseCount, 'case')}</Select.Item>
               {/each}
               <Select.Item value={NEW}>New set…</Select.Item>
             </Select.Content>

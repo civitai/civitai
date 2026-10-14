@@ -1,13 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { countOf, formatVersions } from './format';
-
-describe('countOf', () => {
-  it('pluralizes except for exactly one', () => {
-    expect(countOf(0, 'case')).toBe('0 cases');
-    expect(countOf(1, 'case')).toBe('1 case');
-    expect(countOf(2, 'case')).toBe('2 cases');
-  });
-});
+import { formatVersions } from './format';
 
 describe('formatVersions', () => {
   it('keeps saved versions as key#id', () => {
