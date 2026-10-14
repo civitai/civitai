@@ -348,18 +348,25 @@ export class CivitaiPostPlanner extends CivitaiElement {
 
   #opener: HTMLElement | null = null;
 
+  /** Focus stays on a drawer-header control that opened the post, so a keyboard user can keep
+   *  stepping; otherwise it moves to Close and the opening chip is remembered for `#close`. */
   #open(post: PlannerPost, at?: Date): void {
-    if (this._selectedId !== post.id) {
-      const active = this.shadowRoot?.activeElement;
+    const active = this.shadowRoot?.activeElement;
+    const fromDrawer = active instanceof HTMLElement && active.closest('.drawer') != null;
+    if (this._selectedId !== post.id && !fromDrawer) {
       this.#opener = active instanceof HTMLElement ? active : null;
     }
+    const keep = fromDrawer ? active.getAttribute('aria-label') : null;
     this._selectedId = post.id;
     this._descriptionExpanded = false;
     this._draftWhen = at ?? new Date(post.publishedAt);
     this._lightbox = null;
-    void this.updateComplete.then(() =>
-      this.renderRoot.querySelector<HTMLElement>('.drawer [aria-label="Close"]')?.focus()
-    );
+    void this.updateComplete.then(() => {
+      const drawer = this.renderRoot.querySelector('.drawer');
+      const kept = keep ? drawer?.querySelector<HTMLElement>(`[aria-label="${keep}"]`) : null;
+      const target = kept && !kept.hasAttribute('disabled') ? kept : null;
+      focusControl(target ?? drawer?.querySelector<HTMLElement>('[aria-label="Close"]'));
+    });
   }
 
   #close(): void {
@@ -955,6 +962,11 @@ export class CivitaiPostPlanner extends CivitaiElement {
       actions: this.#actions,
     });
   }
+}
+
+/** A <civitai-button> host is not focusable itself; its native button is. */
+function focusControl(control: HTMLElement | null | undefined): void {
+  (control?.shadowRoot?.querySelector<HTMLElement>('button, a') ?? control)?.focus();
 }
 
 function showMatureKey(userId: number | undefined): string {

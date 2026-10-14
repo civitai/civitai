@@ -261,4 +261,36 @@ describe('<civitai-post-planner>', () => {
     );
     expect(backend.shift).not.toHaveBeenCalled();
   });
+
+  it('keeps the drawer prev/next controls in the header and focus on the one pressed', async () => {
+    const { el } = await mount({ view: 'month', anchor: '2026-10-01' }, [
+      post(1, POST_A),
+      post(2, POST_B),
+      post(3, at(12, 18, 0)),
+    ]);
+    const detail = el.host!.backend.getPostDetail;
+    el.host!.backend.getPostDetail = vi.fn(async (id: number) => ({
+      ...(await detail(id)),
+      description: id === 1 ? 'short' : 'long\n'.repeat(80),
+    }));
+    const control = (label: string) =>
+      el.renderRoot.querySelector<HTMLElement>(`.drawer-head [aria-label="${label}"]`)!;
+
+    await userEvent.click(chipA());
+    const next = page.getByRole('button', { name: 'Next post' });
+    await expect.element(next).toBeInTheDocument();
+    const before = control('Next post').getBoundingClientRect().top;
+
+    await userEvent.click(next);
+    await vi.waitFor(() => expect(el._selectedId).toBe(2));
+    await expect.element(page.getByText(/long/)).toBeInTheDocument();
+    expect(control('Next post').getBoundingClientRect().top).toBe(before);
+    expect(el.shadowRoot!.activeElement).toBe(control('Next post'));
+
+    await userEvent.click(next);
+    await vi.waitFor(() => expect(el._selectedId).toBe(3));
+    expect(control('Next post').hasAttribute('disabled')).toBe(true);
+    expect(el.shadowRoot!.activeElement).toBe(control('Close'));
+  });
+
 });
