@@ -9,8 +9,8 @@ interface UseBlockTokenResult {
    *  BLOCK_INIT.token.expiresAt so blocks don't have to JWT-decode. */
   expiresAt: string | null;
   kind: 'block' | 'oauth' | undefined;
-  /** The per-call Buzz budget the current token was signed with, as the mint
-   *  reported it. `undefined` when the token carries no spend scope. */
+  /** The per-call Buzz budget the current token carries, as the mint reported it.
+   *  `undefined` when the token carries no spend scope. */
   buzzBudget: number | undefined;
   error: Error | null;
   pending: boolean;

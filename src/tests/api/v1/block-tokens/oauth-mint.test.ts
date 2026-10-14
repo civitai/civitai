@@ -218,6 +218,52 @@ describe('POST /api/v1/block-tokens — auth: "oauth" manifests', () => {
     });
   });
 
+  // An OAuth token's budget is resolved at verify time from the manifest alone, so
+  // the response must report that number and not one read from install settings.
+  it('reports the budget the OAuth token will carry, not the install setting', async () => {
+    mockEnv.APP_BLOCK_OAUTH_TOKENS_ENABLED = true;
+    // A model-slot token mints for moderators only.
+    mockSession.value = { user: { ...VIEWER.user, isModerator: true } };
+    const scopes = ['user:read:self', 'ai:write:budgeted'];
+    const bits = TokenScope.UserRead | TokenScope.AIServicesWrite;
+    mockDbWrite.appUserScopeGrant.findUnique.mockResolvedValue({
+      grantedScopes: scopes,
+      revokedAt: null,
+    });
+    mockHub.syncOauthConsentFromGrant.mockResolvedValue({ clientId: 'appblk-m', scope: bits });
+    mockBlockRegistry.resolveBlockInstance.mockResolvedValue({
+      source: 'install',
+      modelId: 12345,
+      slotId: 'model.sidebar_top',
+      enabled: true,
+      settings: { buzz_budget_per_gen: 53 },
+      installedByUserId: 42,
+      appBlock: {
+        id: 'apb_m',
+        blockId: 'm',
+        appId: 'appblk-m',
+        status: 'approved',
+        currentVersionDeployedAt: new Date('2026-01-01T00:00:00Z'),
+        manifest: { scopes, auth: 'oauth', page: { buzzBudgetPerGen: 137 } },
+        approvedScopes: scopes,
+        app: { allowedScopes: bits },
+      },
+    });
+    const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
+    const res = makeRes();
+    await handler(
+      makeReq({
+        blockInstanceId: 'bki_x',
+        slotContext: { modelId: 12345, slotId: 'model.sidebar_top' },
+      }),
+      res
+    );
+    expect(res._status).toBe(200);
+    expect(res._body.kind).toBe('oauth');
+    expect(mockTokenService.sign).not.toHaveBeenCalled();
+    expect(res._body.buzzBudget).toBe(137);
+  });
+
   it('flag on + anonymous viewer keeps the stripped anonymous JWT', async () => {
     mockEnv.APP_BLOCK_OAUTH_TOKENS_ENABLED = true;
     mockSession.value = null;

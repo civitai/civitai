@@ -2,14 +2,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { env } from '~/env/server';
 
-const { mockFindUnique, mockUpdateSettings } = vi.hoisted(() => ({
-  mockFindUnique: vi.fn(),
-  mockUpdateSettings: vi.fn(),
-}));
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
-vi.mock('~/server/db/client', () => ({
-  dbWrite: { blockUserSubscription: { findUnique: mockFindUnique } },
-}));
+const mockFindUnique = dbMock.dbWrite.blockUserSubscription.findUnique;
+const { mockUpdateSettings } = vi.hoisted(() => ({ mockUpdateSettings: vi.fn() }));
+
 vi.mock('~/server/services/block-registry.service', () => ({
   BlockRegistry: { updateSettings: mockUpdateSettings },
 }));

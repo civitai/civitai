@@ -1684,6 +1684,15 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
           maxBrowsingLevel,
         });
 
+  // An OAuth token is not signed here: its budget is resolved when it is verified,
+  // from the manifest alone (`resolveHubTokenClaims`), never from install settings.
+  const reportedBuzzBudget =
+    oauth?.outcome === 'minted' && buzzBudget !== undefined
+      ? resolvePerCallBuzzBudget(
+          (block.manifest as { page?: { buzzBudgetPerGen?: unknown } }).page?.buzzBudgetPerGen
+        )
+      : buzzBudget;
+
   // A6: surface the consent signal alongside the token. The token carries only
   // the granted subset; `needsConsent` + `missingScopes` tell the host to prompt
   // the user to re-consent for the scopes the app's approved manifest declares
@@ -1695,10 +1704,10 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     expiresAt: result.expiresAt,
     kind: oauth?.outcome === 'minted' ? 'oauth' : 'block',
     scopes: manifestScopes,
-    // The per-call budget this token was signed with, so the host forwards it to the
-    // block instead of deriving its own: the install setting it comes from is not
-    // always visible to the client. Absent when the token carries no spend scope.
-    buzzBudget,
+    // The per-call budget this token carries, so the host forwards it to the block
+    // instead of deriving its own: the install setting it comes from is not always
+    // visible to the client. Absent when the token carries no spend scope.
+    buzzBudget: reportedBuzzBudget,
     needsConsent,
     missingScopes,
     // Advisory maturity signal for the host → BLOCK_INIT. The AUTHORITATIVE

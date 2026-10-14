@@ -216,7 +216,7 @@ the token endpoint has resolved. Matches `@civitai/app-sdk/blocks` v1:
     raw: string;                       // RS256 JWT
     scopes: string[];                  // from manifest, e.g. ['models:read:self']
     expiresAt: string;                 // ISO-8601
-    buzzBudget?: number;               // only when manifest includes ai:write:budgeted
+    buzzBudget?: number;               // only when the token carries ai:write:budgeted
   };
   context: SlotContext;                // slotId + per-surface fields
   settings: {
@@ -542,8 +542,8 @@ declares none. Both live in `src/shared/constants/block-scope.constants.ts` and 
 install, hub, dev, review and private-run tokens alike. The viewer consents to the scope,
 not to this number, and is not asked again per call.
 
-The mint response reports the budget it signed (`buzzBudget`, absent when the token carries
-no spend scope). The model-slot host forwards that value to the block as `token.buzzBudget`
+The mint response reports the budget the token carries (`buzzBudget`, absent when the token
+carries no spend scope). The model-slot host forwards that value to the block as `token.buzzBudget`
 on `BLOCK_INIT`, `TOKEN_REFRESH` and the `REQUEST_TOKEN` reply; it does not work the number
 out from install settings, which are not all visible to the client. The page host does not
 send `token.buzzBudget`.

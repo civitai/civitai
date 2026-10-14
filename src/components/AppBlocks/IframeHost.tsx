@@ -115,7 +115,7 @@ interface IframeHostProps {
   /** ISO-8601 — surfaces in BLOCK_INIT.token.expiresAt for the iframe. */
   expiresAt: string;
   tokenKind?: 'block' | 'oauth';
-  /** The per-call Buzz budget `token` was signed with, as the mint reported it.
+  /** The per-call Buzz budget `token` carries, as the mint reported it.
    *  Forwarded to the block as-is; never derived here. */
   buzzBudget?: number;
   /** A6 lazy consent: consent-gated scopes the app's approved manifest declares
