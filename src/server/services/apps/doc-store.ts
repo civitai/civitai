@@ -656,8 +656,9 @@ const SQL_ACCOUNT_NAMESPACES = `SELECT w.app_id, w.ns FROM (
 // `usage_app` (taken by `charge`), then `usage_user` — except one second pass over the documents
 // at the end, whose reason and cost are at its call in `wipeAccountNamespace`.
 
-// A namespace that IS the account's (`dev:<uid>`, `rev:<request>:<uid>`): only that user ever
-// writes there, so everything in it goes, table by table (index rows by the document cascade).
+// The account's own dev namespace (`dev:<uid>`): only that user ever writes there, so everything
+// in it goes, table by table (index rows by the document cascade). Review namespaces are not
+// treated so: they belong to the reviewing moderator and are purged with their request.
 const SQL_WIPE_NAMESPACE = [
   `WITH gone AS (DELETE FROM appdata.doc d WHERE d.app_id = $1 AND d.ns = $2 RETURNING 1)
   SELECT count(*)::int AS n FROM gone`,
@@ -675,15 +676,16 @@ const SQL_WIPE_NAMESPACE = [
   SELECT count(*)::int AS n FROM gone`,
 ] as const;
 
-// A shared namespace (`prod`): only what names the user.
+// Any other namespace (`prod`, a review namespace): only what names the user.
 // The user's private documents; their index rows go by the cascade. Private documents have no
 // tallies or marks, and get no tombstone: the only reader of a private key space is its owner.
 const SQL_WIPE_PRIVATE_DOCS = `WITH gone AS (DELETE FROM appdata.doc d
     WHERE d.app_id = $1 AND d.ns = $2 AND d.scope_uid = $3::int RETURNING d.size_bytes)
   SELECT count(*)::int AS docs, COALESCE(sum(gone.size_bytes), 0)::bigint AS bytes FROM gone`;
 // EVERY shared document the wipe will touch in this namespace — the ones the user authored
-// (hidden or not), which it deletes, and the ones the user marked, whose tallies it decrements —
-// locked in ONE statement, in (coll, key) order. Two wipes of users who authored and marked each
+// (hidden or not), which it deletes; the counter documents whose creation was charged to the
+// user, whose uid it clears; and the ones the user marked, whose tallies it decrements — locked
+// in ONE statement, in (coll, key) order. Two wipes of users who authored and marked each
 // other's documents then queue on the first document they share instead of each holding its own
 // author's documents and waiting for the other's: with the authored set and the marked set
 // locked by separate statements, that deadlocked every time on a real server.
@@ -691,14 +693,20 @@ const SQL_WIPE_PRIVATE_DOCS = `WITH gone AS (DELETE FROM appdata.doc d
 // has a single strength. Taking a weaker lock on the marked ones would need a second statement
 // (or an upgrade later), which is the interleaving this exists to remove. The cost: a viewer
 // marking one of those documents waits for the wipe to commit (bounded by LOCK_TIMEOUT).
-// No later statement locks a document or a tally first: every tally the wipe changes belongs to
-// a document locked here. `authored` tells the two sets apart; the authored ones are deleted
-// through `deleteLockedSharedDocs`, the same path a moderator delete takes.
+// After this statement, the only document rows the wipe writes are (a) shared documents in this
+// lock set — deleted by `deleteLockedSharedDocs` (authored), uid-cleared by
+// `SQL_WIPE_RELEASE_COUNTER_DOCS` (counter) — and (b) the user's own PRIVATE documents
+// (`SQL_WIPE_PRIVATE_DOCS`, `scope_uid` = the user), which no other wipe ever locks: every other
+// wipe's lock set is shared documents only. Every tally and mark row it changes belongs to a
+// document in this set. (Leaving the counter documents out of this set deadlocked two wipes of
+// users who had reported each other's counter documents.) `authored` marks the documents to
+// delete: user-authored only, never a counter document, which outlives its creator; the same
+// delete path a moderator delete takes.
 const SQL_WIPE_LOCK_DOCS = `SELECT d.coll, d.key, d.size_bytes, d.author_uid,
     (d.author_kind = 'user' AND d.author_uid = $3::int) AS authored
   FROM appdata.doc d
   WHERE d.app_id = $1 AND d.ns = $2 AND d.scope_uid = 0
-    AND ((d.author_kind = 'user' AND d.author_uid = $3::int)
+    AND ((d.author_kind IN ('user', 'counter') AND d.author_uid = $3::int)
       OR EXISTS (SELECT 1 FROM appdata.doc_mark lm
         WHERE lm.app_id = $1 AND lm.ns = $2 AND lm.coll = d.coll AND lm.key = d.key
           AND lm.user_id = $3::int))
@@ -1659,8 +1667,11 @@ function buildDocStore(deps: DocStoreDeps) {
     appId: string,
     ns: string
   ): Promise<AccountWipeNamespaceResult> {
-    // The viewer is the account being wiped, so a review namespace's context check passes only
-    // for a review namespace of that account (`assertContext`); any other is refused, as a failure.
+    // The viewer is the account being wiped. Enumeration only finds namespaces the account has
+    // rows in, and through the store only its own tokens can write into a review namespace, so
+    // `assertContext`'s review-namespace check passes for every namespace the store could have
+    // produced. (A row put into another moderator's review namespace by hand would be refused
+    // here and reported in `failures`.)
     const ctx: DocStoreContext = { appId, ns, viewerUid: userId };
     const result: AccountWipeNamespaceResult = {
       appId,

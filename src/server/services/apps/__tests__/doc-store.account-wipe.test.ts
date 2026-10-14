@@ -807,6 +807,48 @@ describe.skipIf(!REAL_PG_URL)('account wipe racing other writers on Postgres', (
     }
   });
 
+  it('two accounts that created counter documents and reported each other’s are wiped concurrently without deadlock, round after round', async () => {
+    const store = createDocStore({ db: h.db });
+    const maint = createDocStoreMaintenance({ db: h.db });
+    const ROUNDS = 10;
+    for (let round = 0; round < ROUNDS; round++) {
+      const app = freshApp('WIPECOUNTERX');
+      const a = ctx(app, NS_PROD, WIPED);
+      const b = ctx(app, NS_PROD, OTHER);
+      for (const [c, tag] of [
+        [a, 'a'],
+        [b, 'b'],
+      ] as const) {
+        await store.increment(c, TALLIES, `game-${tag}1`, 'plays', 1);
+        await store.increment(c, TALLIES, `game-${tag}2`, 'plays', 1);
+      }
+      for (const key of ['game-b1', 'game-b2']) await store.mark(a, TALLIES, key, 'report');
+      for (const key of ['game-a1', 'game-a2']) await store.mark(b, TALLIES, key, 'report');
+
+      const [wa, wb] = await Promise.all([maint.wipeAccount(WIPED), maint.wipeAccount(OTHER)]);
+      expect({ round, failures: [...wa.failures, ...wb.failures] }).toEqual({
+        round,
+        failures: [],
+      });
+      expect(await rowsNaming(h, app, WIPED)).toEqual(NAMES_NOBODY);
+      expect(await rowsNaming(h, app, OTHER)).toEqual(NAMES_NOBODY);
+      // Counter documents survive their creators, released.
+      expect(
+        await h.raw(
+          `SELECT key, author_kind, author_uid FROM appdata.doc WHERE app_id = $1 ORDER BY key`,
+          [app]
+        )
+      ).toEqual(
+        ['game-a1', 'game-a2', 'game-b1', 'game-b2'].map((key) => ({
+          key,
+          author_kind: 'counter',
+          author_uid: null,
+        }))
+      );
+      await assertUsageConsistent(h, app, NS_PROD);
+    }
+  });
+
   it('marks, unmarks and an author delete running alongside the wipe neither deadlock nor leave a tally out of step with its marks', async () => {
     const store = createDocStore({ db: h.db });
     const maint = createDocStoreMaintenance({ db: h.db });
