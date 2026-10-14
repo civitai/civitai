@@ -468,6 +468,31 @@ describe('StorylineSettingsForm', () => {
     );
   });
 
+  it('says how many chapters the current ceiling hides, and will not go below chapter 1', () => {
+    const el = render(
+      settingsForm({
+        chapterLevels: {
+          rootNsfwLevel: NsfwLevel.PG13,
+          chapterLevels: [NsfwLevel.PG, NsfwLevel.R, NsfwLevel.X],
+        },
+      })
+    );
+
+    expect(visibleText(el)).toContain(
+      '2 chapters are rated above this and are hidden from readers.'
+    );
+    expect(option(el, 'Maximum rating', 'PG').disabled).toBe(true);
+    expect(option(el, 'Maximum rating', 'PG-13').disabled).toBe(false);
+    expect(option(el, 'Maximum rating', 'XXX').disabled).toBe(false);
+  });
+
+  it('offers every rating and no count before the chapter ratings are read', () => {
+    const el = render(settingsForm({ chapterLevels: null }));
+
+    expect(visibleText(el)).not.toContain('rated above this and are hidden');
+    expect(option(el, 'Maximum rating', 'PG').disabled).toBe(false);
+  });
+
   it('disables the controls it cannot read yet', () => {
     const el = render(settingsForm({ whoCanContinue: null, space: null }));
 

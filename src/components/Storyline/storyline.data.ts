@@ -172,3 +172,9 @@ export async function readSubmitOutcome(
     return fallback;
   }
 }
+
+/** Chapter ratings, for the owner's ceiling picker. Owner and moderators only. */
+export function useStorylineChapterLevels(storylineId: number, { enabled }: { enabled: boolean }) {
+  const query = trpc.storyline.getChapterLevels.useQuery({ id: storylineId }, { enabled });
+  return query.data ?? null;
+}

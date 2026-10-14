@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import {
+  storylineCeilingImpact,
   storylineContinuePostOptions,
   storylineSubmitInput,
   storylinePriceCaption,
@@ -128,5 +129,34 @@ describe('storylineSubmitInput', () => {
         shownPrice: 0,
       })
     ).toEqual({ parentPostId: 9, postId: 5, expectedPrice: 0, awaitingScan: false });
+  });
+});
+
+describe('storylineCeilingImpact', () => {
+  const levels = {
+    rootNsfwLevel: NsfwLevel.PG13,
+    chapterLevels: [NsfwLevel.PG, NsfwLevel.R, NsfwLevel.X, 0],
+  };
+
+  test('counts the later chapters a ceiling would hide, ignoring unrated ones', () => {
+    expect(storylineCeilingImpact(NsfwLevel.XXX, levels)).toEqual({ allowed: true, hidden: 0 });
+    expect(storylineCeilingImpact(NsfwLevel.R, levels)).toEqual({ allowed: true, hidden: 1 });
+    expect(storylineCeilingImpact(NsfwLevel.PG13, levels)).toEqual({ allowed: true, hidden: 2 });
+  });
+
+  test('refuses a ceiling below chapter 1, judged by its most severe image', () => {
+    expect(storylineCeilingImpact(NsfwLevel.PG, levels).allowed).toBe(false);
+    expect(
+      storylineCeilingImpact(NsfwLevel.PG13, {
+        rootNsfwLevel: NsfwLevel.PG | NsfwLevel.R,
+        chapterLevels: [],
+      }).allowed
+    ).toBe(false);
+  });
+
+  test('puts no floor under a storyline whose chapter 1 cannot be read', () => {
+    expect(
+      storylineCeilingImpact(NsfwLevel.PG, { rootNsfwLevel: null, chapterLevels: [] }).allowed
+    ).toBe(true);
   });
 });

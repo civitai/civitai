@@ -3,7 +3,10 @@ import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { STORYLINE_QUEUE_RECEIVED_URL } from '~/components/Placement/queue-routes';
 import { StorylineCollaboratorsPanel } from '~/components/Storyline/manage/StorylineCollaboratorsPanel';
 import { StorylineSettingsForm } from '~/components/Storyline/manage/StorylineSettingsForm';
-import { useStorylineSpace } from '~/components/Storyline/storyline.data';
+import {
+  useStorylineChapterLevels,
+  useStorylineSpace,
+} from '~/components/Storyline/storyline.data';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { showErrorNotification } from '~/utils/notifications';
@@ -26,6 +29,7 @@ export default function StorylineManageModal({ storylineId }: { storylineId: num
   } = trpc.storyline.getById.useQuery({ id: storylineId }, { enabled: !!features.storylines });
   const isOwner = !!currentUser && storyline?.userId === currentUser.id;
   const space = useStorylineSpace(storylineId, { enabled: isOwner });
+  const chapterLevels = useStorylineChapterLevels(storylineId, { enabled: isOwner });
 
   const invalidate = () => utils.storyline.getById.invalidate({ id: storylineId });
   const update = trpc.storyline.update.useMutation({
@@ -78,6 +82,7 @@ export default function StorylineManageModal({ storylineId }: { storylineId: num
               maxNsfwLevel={storyline.maxNsfwLevel}
               whoCanContinue={storyline.whoCanContinue}
               space={space.data}
+              chapterLevels={chapterLevels}
               disabled={update.isPending || space.isSaving}
               onStatusChange={(status) => update.mutate({ id: storylineId, status })}
               onRatingChange={(maxNsfwLevel) => update.mutate({ id: storylineId, maxNsfwLevel })}
