@@ -800,13 +800,8 @@ function SubmitBlockedImagesForReviewButton({
   const currentUser = useCurrentUser();
   if (!request.blockedCount || !currentUser?.username) return null;
 
-  const query = new URLSearchParams({ 'Civitai Username': currentUser.username });
-  if (!hideDetails) {
-    query.set('Prompt', (request.params?.prompt as string) ?? '');
-    query.set('Negative Prompt', (request.params?.negativePrompt as string) ?? '');
-  }
-  query.set('Workflow ID', request.id);
-  // Spaces as %20, as the form has always been sent; it may not read `+` as a space.
+  const prompt = hideDetails ? '' : (request.params?.prompt as string) ?? '';
+  const negativePrompt = hideDetails ? '' : (request.params?.negativePrompt as string) ?? '';
 
   return (
     <ButtonTooltip {...tooltipProps} label="Submit blocked images for review">
@@ -817,9 +812,11 @@ function SubmitBlockedImagesForReviewButton({
         p={4}
         radius={0}
         color="orange"
-        href={`https://forms.clickup.com/8459928/f/825mr-9671/KRFFR2BFKJCROV3B8Q?${query
-          .toString()
-          .replace(/\+/g, '%20')}`}
+        href={`https://forms.clickup.com/8459928/f/825mr-9671/KRFFR2BFKJCROV3B8Q?Civitai%20Username=${encodeURIComponent(
+          currentUser.username
+        )}&Prompt=${encodeURIComponent(prompt)}&Negative%20Prompt=${encodeURIComponent(
+          negativePrompt
+        )}&Workflow%20ID=${request.id}`}
       >
         <IconFlagQuestion size={20} />
       </LegacyActionIcon>

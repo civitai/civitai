@@ -1,9 +1,9 @@
-import { Button, Text, UnstyledButton } from '@mantine/core';
-import { IconCornerLeftUp, IconSparkles } from '@tabler/icons-react';
+import { Button, Text } from '@mantine/core';
+import { IconSparkles } from '@tabler/icons-react';
 import { useField } from 'form-graph/react';
 import {
   avatarStarterSrc,
-  avatarStyleCoverSrc,
+  avatarStyleCharacterSrc,
   findAvatarStarter,
 } from '~/shared/constants/avatar-starters';
 import {
@@ -15,6 +15,7 @@ import {
 import type { BlobData, WorkflowData } from '~/shared/orchestrator/workflow-data';
 import { useActiveGenerationForm } from '~/store/active-generation-form.store';
 import { generationGraphPanel } from '~/store/generation-graph.store';
+import { capitalize } from '~/utils/string-helpers';
 import { AvatarProfilePictureButton } from './AvatarProfilePictureButton';
 
 type AvatarParams = {
@@ -24,37 +25,28 @@ type AvatarParams = {
   avatarPalette?: string;
 };
 
-const capitalise = (value: string) => value[0].toUpperCase() + value.slice(1);
-
 function describeReference(params: AvatarParams) {
   const { avatarReference: reference, avatarStyle: style, avatarParentImage: parent } = params;
-  if (!reference) return undefined;
-  if (reference === parent) return { src: reference, label: 'Earlier result' };
-  const starter = style ? findAvatarStarter(style, reference) : undefined;
+  if (parent) return { src: parent, label: 'Earlier result' };
+  const starter = style && reference ? findAvatarStarter(style, reference) : undefined;
   return starter
-    ? { src: avatarStarterSrc(starter, 120), label: capitalise(starter.character) }
+    ? { src: avatarStarterSrc(starter, 120), label: capitalize(starter.character) }
     : undefined;
 }
 
-function ReferenceStrip({
-  workflow,
-  parentItemId,
-}: {
-  workflow: WorkflowData;
-  parentItemId?: string;
-}) {
+function ReferenceStrip({ workflow }: { workflow: WorkflowData }) {
   const params = workflow.params as AvatarParams;
   const style = params.avatarStyle ? avatarStyleByKey.get(params.avatarStyle) : undefined;
   const modelId = workflow.resources.find((resource) => resource.model?.type === 'Checkpoint')?.id;
   const usesReference =
     modelId == null || avatarEditModelByVersionId.get(modelId)?.usesReference !== false;
-  const coverSrc = style ? avatarStyleCoverSrc(style.key, 120) : undefined;
   const reference =
     usesReference || params.avatarParentImage
       ? describeReference(params)
-      : coverSrc
-      ? { src: coverSrc, label: 'none, restyled with the style itself' }
-      : undefined;
+      : style && {
+          src: avatarStyleCharacterSrc(style.key, undefined, 120),
+          label: 'none, restyled with the style itself',
+        };
   if (!reference) return null;
   const palette = avatarPalettes.find((p) => p.key === params.avatarPalette);
 
@@ -75,17 +67,6 @@ function ReferenceStrip({
             </>
           )}
         </Text>
-        {params.avatarParentImage && parentItemId && (
-          <UnstyledButton
-            className="flex items-center gap-1 text-xs text-blue-6 hover:underline dark:text-blue-4"
-            onClick={() =>
-              document.getElementById(parentItemId)?.scrollIntoView({ behavior: 'smooth' })
-            }
-          >
-            <IconCornerLeftUp size={12} />
-            Refined from an earlier result
-          </UnstyledButton>
-        )}
       </div>
     </div>
   );
@@ -94,7 +75,7 @@ function ReferenceStrip({
 function RefineActions({ output, styleKey }: { output: BlobData; styleKey?: string }) {
   const form = useActiveGenerationForm((state) => state.store);
   const refiningFrom = useField<string>(form ?? null, 'avatarParentImage')?.value;
-  if (output.type !== 'image' || !output.available || output.blockedReason) return null;
+  if (output.type !== 'image' || output.blockedReason) return null;
   const active = refiningFrom === output.url;
 
   return (
@@ -107,7 +88,6 @@ function RefineActions({ output, styleKey }: { output: BlobData; styleKey?: stri
         onClick={() => {
           form?.set({
             ...(styleKey ? { avatarStyle: styleKey } : {}),
-            avatarReference: output.url,
             avatarParentImage: output.url,
           });
           generationGraphPanel.setView('generate');
@@ -120,18 +100,11 @@ function RefineActions({ output, styleKey }: { output: BlobData; styleKey?: stri
   );
 }
 
-/** `queueIdByOutputUrl` finds the card of the result a refine started from. */
-export function avatarQueueItemProps(
-  workflow: WorkflowData,
-  queueIdByOutputUrl: ReadonlyMap<string, string>
-) {
+export function avatarQueueItemProps(workflow: WorkflowData) {
   if (workflow.params.workflow !== AVATAR_WORKFLOW) return {};
   const params = workflow.params as AvatarParams;
-  const parentItemId = params.avatarParentImage
-    ? queueIdByOutputUrl.get(params.avatarParentImage)
-    : undefined;
   return {
-    beforeOutputs: <ReferenceStrip workflow={workflow} parentItemId={parentItemId} />,
+    beforeOutputs: <ReferenceStrip workflow={workflow} />,
     renderOutputFooter: (output: BlobData) => (
       <RefineActions output={output} styleKey={params.avatarStyle} />
     ),

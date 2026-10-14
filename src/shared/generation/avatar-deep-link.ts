@@ -1,4 +1,7 @@
-import { isAvatarStarterReference } from '~/shared/constants/avatar-starters';
+import {
+  DEFAULT_AVATAR_CHARACTER,
+  isAvatarStarterCharacter,
+} from '~/shared/constants/avatar-starters';
 import { avatarStyleByKey } from '~/shared/constants/avatar-styles.constants';
 
 /** The `/generate?workflow=img2img:avatar` link's own params, read by the generator's ingestion. */
@@ -14,7 +17,8 @@ export function avatarDeepLinkFields(params: URLSearchParams): Record<string, st
   const reference = params.get('avatarReference');
   return {
     avatarStyle: style,
-    avatarReference: reference && isAvatarStarterReference(reference) ? reference : 'cover',
+    avatarReference:
+      reference && isAvatarStarterCharacter(reference) ? reference : DEFAULT_AVATAR_CHARACTER,
     // A fresh style starts a fresh avatar, as picking one in the form does.
     avatarParentImage: '',
   };

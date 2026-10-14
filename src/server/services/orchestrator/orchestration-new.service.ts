@@ -1403,8 +1403,7 @@ export async function createWorkflowStepsFromGraph({
     }
   }
 
-  const workflowConfig = workflowConfigByKey.get(data.workflow);
-  const needsSourceMetadata = workflowConfig?.enhancement === true;
+  const needsSourceMetadata = workflowConfigByKey.get(data.workflow)?.enhancement === true;
 
   const provenance =
     !isWhatIf && user?.id && sourceImageIds?.length

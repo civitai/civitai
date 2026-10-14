@@ -1,6 +1,7 @@
 import { Input, SegmentedControl } from '@mantine/core';
 import { Controller, useField } from 'form-graph/react';
 import type { GenerationStore } from '~/components/form-graph/generation/store';
+import { DEFAULT_AVATAR_CHARACTER } from '~/shared/constants/avatar-starters';
 import { generationHub } from '~/shared/form-graph/generation/hub.graph';
 import { AvatarPalettePicker } from './AvatarPalettePicker';
 import { AvatarReferenceGrid } from './AvatarReferenceGrid';
@@ -23,7 +24,11 @@ export function AvatarFormFields({ store }: { store: GenerationStore }) {
           <AvatarStylePicker
             value={value}
             onChange={(avatarStyle) =>
-              store.set({ avatarStyle, avatarReference: 'cover', avatarParentImage: '' })
+              store.set({
+                avatarStyle,
+                avatarReference: DEFAULT_AVATAR_CHARACTER,
+                avatarParentImage: '',
+              })
             }
           />
         )}

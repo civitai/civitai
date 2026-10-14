@@ -201,7 +201,7 @@ export default function ImageSelectModal({
             x.available &&
             x.type !== 'model3d' &&
             matchesMarkerTags(x, markerTags) &&
-            x.canUse(outputUse).allowed
+            x.canUse(outputUse)
         )
       ),
     [generationData, markerTags, outputUse]

@@ -78,7 +78,7 @@ export function GeneratorMediaPicker({
       data.flatMap((wf) =>
         wf.succeededOutput.filter(
           (x): x is ImageBlob | VideoBlob | AudioBlob =>
-            x.available && x.type !== 'model3d' && x.canUse('post').allowed
+            x.available && x.type !== 'model3d' && x.canUse('post')
         )
       ),
     [data]

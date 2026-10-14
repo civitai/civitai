@@ -65,7 +65,6 @@ vi.mock('~/server/services/image.service', () => ({
 import { formatGenerationResponse2 } from '~/server/services/orchestrator/orchestration-new.service';
 import { WORKFLOW_METADATA_MODEL_SUBSTITUTIONS_KEY } from '~/shared/generation/model-substitution';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import { WorkflowData } from '~/shared/orchestrator/workflow-data';
 
 const SUBSTITUTION = { requested: 999999999, applied: 2436219, reason: 'unrecognized' as const };
 
@@ -136,20 +135,5 @@ describe('formatGenerationResponse2 — persisted modelSubstitutions', () => {
       [WORKFLOW_METADATA_MODEL_SUBSTITUTIONS_KEY]: { requested: 1 },
     });
     expect(formatted.metadata && 'modelSubstitutions' in formatted.metadata).toBe(false);
-  });
-});
-
-// The client decides where an output can be used from its workflow key (`output-uses.ts`).
-describe('formatGenerationResponse2 — workflow key', () => {
-  it('reaches the client, so avatar results stay unusable', async () => {
-    const formatted = await formatOne({
-      params: { prompt: 'a portrait', workflow: 'img2img:avatar' },
-    });
-    expect(formatted.metadata?.params.workflow).toBe('img2img:avatar');
-    const workflow = new WorkflowData(formatted, {
-      domain: { green: false } as never,
-      nsfwEnabled: true,
-    });
-    expect(workflow.params.workflow).toBe('img2img:avatar');
   });
 });

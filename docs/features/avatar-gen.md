@@ -25,7 +25,8 @@ from the queue. It is open to everyone; there is no feature flag.
   - **a stored starter**: four per style, served from our CDN. Styles with a free palette get the
     greyscale copy, so the prompt decides the colours. Fixed-palette styles (monochrome, 8-bit and
     the like) get the colour copy and offer no palette choice.
-  - **the result being refined**, sent as it is. It must be an orchestrator blob; RU visitors see
+  - **the result being refined** (`avatarParentImage`, which overrides the starter in
+    `avatarReference`), sent as it is. It must be an orchestrator blob; RU visitors see
     theirs on the region proxy host (`region-proxy.ts`), which is accepted too.
 
   Anything else is refused.
@@ -34,7 +35,7 @@ from the queue. It is open to everyone; there is no feature flag.
 
 An avatar depicts a real person. Generating that likeness is allowed; posting it is not.
 
-- **PG-13.** The workflow config sets `maxNsfwLevel: 'pg13'`, so output is capped at PG-13 with
+- **PG-13.** The workflow config sets `sfwOnly`, so output is capped at PG-13 with
   mature content off, whatever the user's own setting (`workflowOutputRestrictions` in
   `form-graph/output-restrictions.ts`, the same cap private generation uses).
 - **Results can't be posted, fed to another workflow or trained on.** Every workflow config states

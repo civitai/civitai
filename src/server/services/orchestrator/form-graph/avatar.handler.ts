@@ -73,7 +73,7 @@ export function expandAvatarData(data: GenerationData): GenerationData {
 
   const reference = typeof loose.avatarReference === 'string' ? loose.avatarReference : '';
   const parent = typeof loose.avatarParentImage === 'string' ? loose.avatarParentImage : '';
-  const refining = !!parent && reference === parent;
+  const refining = !!parent;
   if (refining && !isResultUrl(parent)) throw throwBadRequestError("This result can't be refined");
   const options = {
     palette: loose.avatarPalette as string | undefined,
@@ -111,25 +111,18 @@ export function createAvatarSteps(
   const prompt = data.prompt ?? '';
   const quantity = data.quantity ?? 1;
 
+  const nanoBanana = () => ({
+    engine: 'google',
+    model: model.key,
+    images,
+    prompt,
+    aspectRatio: '1:1',
+    numImages: quantity,
+    seed: data.seed,
+  });
   const inputs: Record<AvatarEditModel, () => Record<string, unknown>> = {
-    'nano-banana-2': () => ({
-      engine: 'google',
-      model: 'nano-banana-2',
-      images,
-      prompt,
-      aspectRatio: '1:1',
-      numImages: quantity,
-      seed: data.seed,
-    }),
-    'nano-banana-pro': () => ({
-      engine: 'google',
-      model: 'nano-banana-pro',
-      images,
-      prompt,
-      aspectRatio: '1:1',
-      numImages: quantity,
-      seed: data.seed,
-    }),
+    'nano-banana-2': nanoBanana,
+    'nano-banana-pro': nanoBanana,
     'gpt-image-2.5-flare': () => ({
       engine: 'openai',
       model: 'gpt-image-2.5-flare',

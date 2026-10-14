@@ -119,14 +119,10 @@ export function BaseGenerationForm() {
   useEffect(() => () => storage?.dispose(), [storage]);
 
   const store = useForm(generationHub, { ext, storage }) as GenerationStore;
-  const workflow = useField<string>(store, 'workflow')?.value;
   useEffect(() => {
-    useActiveGenerationForm.setState({ store, workflow });
-  }, [store, workflow]);
-  useEffect(
-    () => () => useActiveGenerationForm.setState({ store: undefined, workflow: undefined }),
-    []
-  );
+    useActiveGenerationForm.setState({ store });
+    return () => useActiveGenerationForm.setState({ store: undefined });
+  }, [store]);
 
   return (
     <FormProvider store={store}>

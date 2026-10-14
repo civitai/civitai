@@ -297,7 +297,7 @@ export const workflowConfigs: WorkflowConfigs = {
     ecosystemIds: [],
     isNew: true,
     hideDetails: true,
-    maxNsfwLevel: 'pg13',
+    sfwOnly: true,
   },
 
   // ===========================================================================

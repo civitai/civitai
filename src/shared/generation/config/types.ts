@@ -96,8 +96,8 @@ export interface WorkflowConfig {
    */
   outputUses: readonly OutputUse[];
 
-  /** Caps every output at this level, whatever the user's own setting. */
-  maxNsfwLevel?: 'pg13';
+  /** Caps every output at PG-13, whatever the user's own setting. */
+  sfwOnly?: boolean;
 
   /**
    * Keeps the prompt and generation details out of the queue and the output info popover, for

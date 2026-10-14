@@ -101,7 +101,7 @@ function GeneratedOutputRemixMenuContent({
         </LegacyActionIcon>
       </Menu.Target>
       <Menu.Dropdown>
-        {output.canUse('post').allowed && (
+        {output.canUse('post') && (
           <Menu.Item
             leftSection={<IconPhotoUp size={14} stroke={1.5} />}
             onClick={postThisRemix}

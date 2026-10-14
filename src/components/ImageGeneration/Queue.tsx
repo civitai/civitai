@@ -1,5 +1,4 @@
 import { Alert, Center, Loader, Stack, Text, Anchor } from '@mantine/core';
-import { useMemo } from 'react';
 import { IconCalendar, IconInbox } from '@tabler/icons-react';
 
 import { QueueItem } from '~/components/ImageGeneration/QueueItem';
@@ -23,16 +22,6 @@ export function Queue() {
     isError,
     error,
   } = useGeneratedRequestsContext();
-
-  const queueIdByOutputUrl = useMemo(
-    () =>
-      new Map(
-        data.flatMap((request) =>
-          request.succeededOutput.map((output) => [output.url, request.id.toString()] as const)
-        )
-      ),
-    [data]
-  );
 
   if (isError)
     return (
@@ -109,7 +98,7 @@ export function Queue() {
               id={request.id.toString()}
               request={request}
               markerTags={markerTags}
-              {...avatarQueueItemProps(request, queueIdByOutputUrl)}
+              {...avatarQueueItemProps(request)}
             />
           );
         })}

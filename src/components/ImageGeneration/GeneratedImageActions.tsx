@@ -19,7 +19,6 @@ import {
 import { useTourContext } from '~/components/Tours/ToursProvider';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { postGeneratedMedia } from '~/components/ImageGeneration/utils/postGeneratedMedia';
-import { partitionPostable } from '~/components/ImageGeneration/utils/partitionPostable';
 import { useShowCreatePostError } from '~/components/Post/showCreatePostError';
 import { showErrorNotification, showWarningNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -92,12 +91,26 @@ export function GeneratedImageActions({
   const isMutating = isLoading || createPostMutation.isPending;
 
   const postSelectedImages = async () => {
-    const { postable, notice } = partitionPostable(selected);
-    if (notice?.kind === 'error') {
-      showErrorNotification({ title: notice.title, error: new Error(notice.message) });
+    // Audio outputs aren't supported by the post system, and some workflows' outputs can't be posted.
+    const postable = selected.filter(
+      (image) => image.mediaType !== 'audio' && image.canUse('post')
+    );
+    const skipped = selected.length - postable.length;
+
+    if (postable.length === 0) {
+      showErrorNotification({
+        title: 'Cannot create post',
+        error: new Error('None of the selected outputs can be added to a post'),
+      });
       return;
     }
-    if (notice) showWarningNotification({ title: notice.title, message: notice.message });
+
+    if (skipped > 0) {
+      showWarningNotification({
+        title: 'Some outputs were skipped',
+        message: `${skipped} selected output${skipped === 1 ? '' : 's'} cannot be added to a post.`,
+      });
+    }
 
     const imageData = postable.map((image) => ({
       url: image.url,
@@ -228,11 +241,11 @@ function BulkWorkflowMenu({
 
   // Split selected by media type
   const selectedImages = useMemo(
-    () => selected.filter((s) => s.type === 'image' && s.canUse('derive').allowed),
+    () => selected.filter((s) => s.type === 'image' && s.canUse('derive')),
     [selected]
   );
   const selectedVideos = useMemo(
-    () => selected.filter((s) => s.type === 'video' && s.canUse('derive').allowed),
+    () => selected.filter((s) => s.type === 'video' && s.canUse('derive')),
     [selected]
   );
 

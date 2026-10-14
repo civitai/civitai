@@ -3,6 +3,7 @@ import { IconCheck, IconX } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useField } from 'form-graph/react';
 import type { GenerationStore } from '~/components/form-graph/generation/store';
+import { capitalize } from '~/utils/string-helpers';
 import { avatarStarterSrc, avatarStartersFor } from '~/shared/constants/avatar-starters';
 import {
   avatarEditModelByVersionId,
@@ -11,12 +12,11 @@ import {
 
 type Tile = { value: string; src: string; label: string };
 
-/** The style's stored starters; the first doubles as 'cover', the graph's default reference. */
 function starterTiles(styleKey: string): Tile[] {
-  return avatarStartersFor(styleKey).map((starter, index) => ({
-    value: index === 0 ? 'cover' : `starter:${starter.character}`,
+  return avatarStartersFor(styleKey).map((starter) => ({
+    value: starter.character,
     src: avatarStarterSrc(starter),
-    label: starter.character[0].toUpperCase() + starter.character.slice(1),
+    label: capitalize(starter.character),
   }));
 }
 
@@ -129,7 +129,7 @@ function RefineOnlyReference({
             variant="filled"
             aria-label="Stop refining"
             className="absolute right-1 top-1"
-            onClick={() => store.set({ avatarReference: 'cover', avatarParentImage: '' })}
+            onClick={() => store.set({ avatarParentImage: '' })}
           >
             <IconX size={14} />
           </ActionIcon>

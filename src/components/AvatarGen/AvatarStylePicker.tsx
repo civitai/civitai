@@ -7,18 +7,29 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import {
   avatarStarterCharacters,
   avatarStyleCharacterSrc,
-  avatarStyleCoverSrc,
 } from '~/shared/constants/avatar-starters';
 import {
   avatarCategories,
   avatarStyleByKey,
   avatarStyles,
 } from '~/shared/constants/avatar-styles.constants';
+import { capitalize } from '~/utils/string-helpers';
 
-const characterOptions = avatarStarterCharacters.map((character) => ({
+export const avatarCharacterOptions = avatarStarterCharacters.map((character) => ({
   value: character,
-  label: character[0].toUpperCase() + character.slice(1),
+  label: capitalize(character),
 }));
+
+/** The person style previews show, shared by the landing page and this picker. */
+export function useAvatarPreviewCharacter() {
+  const [stored, setCharacter] = useLocalStorage<string>({
+    key: 'avatar-style-preview-character',
+    defaultValue: avatarStarterCharacters[0],
+  });
+  // A cast change can leave a stored name with no images.
+  const character = avatarStarterCharacters.find((c) => c === stored) ?? avatarStarterCharacters[0];
+  return [character, setCharacter] as const;
+}
 
 function StyleCover({
   styleKey,
@@ -32,7 +43,7 @@ function StyleCover({
   return (
     // eslint-disable-next-line @next/next/no-img-element
     <img
-      src={character ? avatarStyleCharacterSrc(styleKey, character) : avatarStyleCoverSrc(styleKey)}
+      src={avatarStyleCharacterSrc(styleKey, character)}
       alt={avatarStyleByKey.get(styleKey)?.name ?? ''}
       loading="lazy"
       className={clsx('aspect-square object-cover', className)}
@@ -96,14 +107,7 @@ function AvatarStyleModal({
   onSelect: (styleKey: string) => void;
 }) {
   const dialog = useDialogContext();
-  const [storedCharacter, setCharacter] = useLocalStorage<string>({
-    key: 'avatar-style-preview-character',
-    defaultValue: avatarStarterCharacters[0],
-  });
-  // A cast change can leave a stored name with no images.
-  const character = (avatarStarterCharacters as readonly string[]).includes(storedCharacter)
-    ? storedCharacter
-    : avatarStarterCharacters[0];
+  const [character, setCharacter] = useAvatarPreviewCharacter();
   const currentCategory = value ? avatarStyleByKey.get(value)?.category : undefined;
 
   return (
@@ -116,7 +120,7 @@ function AvatarStyleModal({
           size="xs"
           value={character}
           onChange={setCharacter}
-          data={characterOptions}
+          data={avatarCharacterOptions}
         />
       </div>
       <Tabs defaultValue={currentCategory ?? avatarCategories[0]}>

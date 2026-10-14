@@ -8,26 +8,12 @@ import { WorkflowData } from '~/shared/orchestrator/workflow-data';
 
 describe('canUseWorkflowOutput', () => {
   it.each(OUTPUT_USES)('refuses avatar results for %s', (use) => {
-    expect(canUseWorkflowOutput(AVATAR_WORKFLOW, use).allowed).toBe(false);
-  });
-
-  it('names the workflow and the use', () => {
-    expect(canUseWorkflowOutput(AVATAR_WORKFLOW, 'post')).toEqual({
-      allowed: false,
-      message: "Avatar results can't be posted",
-    });
-    expect(canUseWorkflowOutput(AVATAR_WORKFLOW, 'train')).toMatchObject({
-      message: "Avatar results can't be used for training",
-    });
-  });
-
-  it.each(OUTPUT_USES)('allows a txt2img result for %s', (use) => {
-    expect(canUseWorkflowOutput('txt2img', use)).toEqual({ allowed: true });
+    expect(canUseWorkflowOutput(AVATAR_WORKFLOW, use)).toBe(false);
   });
 
   it('allows an output of a workflow with no config', () => {
-    expect(canUseWorkflowOutput('textToImage', 'post')).toEqual({ allowed: true });
-    expect(canUseWorkflowOutput(undefined, 'post')).toEqual({ allowed: true });
+    expect(canUseWorkflowOutput('textToImage', 'post')).toBe(true);
+    expect(canUseWorkflowOutput(undefined, 'post')).toBe(true);
   });
 
   // Every other workflow states all uses today; a narrower one should be a deliberate choice here.
@@ -39,7 +25,7 @@ describe('canUseWorkflowOutput', () => {
   });
 });
 
-describe('BlobData.canUse', () => {
+describe('BlobData', () => {
   const outputOf = (
     workflowParams: Record<string, unknown>,
     stepParams: Record<string, unknown> = {}
@@ -63,13 +49,18 @@ describe('BlobData.canUse', () => {
     ).succeededOutput[0];
 
   it('reads the workflow key of the generation', () => {
-    expect(outputOf({ workflow: AVATAR_WORKFLOW }).canUse('post').allowed).toBe(false);
-    expect(outputOf({ workflow: 'txt2img' }).canUse('post').allowed).toBe(true);
+    expect(outputOf({ workflow: AVATAR_WORKFLOW }).canUse('post')).toBe(false);
+    expect(outputOf({ workflow: 'txt2img' }).canUse('post')).toBe(true);
   });
 
   it("goes by the generation's workflow over a step's", () => {
-    expect(
-      outputOf({ workflow: AVATAR_WORKFLOW }, { workflow: 'txt2img' }).canUse('derive').allowed
-    ).toBe(false);
+    expect(outputOf({ workflow: AVATAR_WORKFLOW }, { workflow: 'txt2img' }).canUse('derive')).toBe(
+      false
+    );
+  });
+
+  it('hides details by the same workflow key', () => {
+    expect(outputOf({ workflow: AVATAR_WORKFLOW }, { workflow: 'txt2img' }).hideDetails).toBe(true);
+    expect(outputOf({ workflow: 'txt2img' }).hideDetails).toBe(false);
   });
 });

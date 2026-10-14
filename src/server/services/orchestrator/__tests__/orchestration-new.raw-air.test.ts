@@ -510,7 +510,7 @@ describe('createWorkflowStepsFromGraph — workflow key', () => {
     const { workflowMetadata } = await build({
       workflow: 'img2img:avatar',
       avatarStyle: 'art-nouveau',
-      avatarReference: 'cover',
+      avatarReference: 'mara',
       model: { id: nanoBananaVersionIds.v2, model: { type: 'Checkpoint' } },
     });
     expect(workflowMetadata).toMatchObject({ params: { workflow: 'img2img:avatar' } });

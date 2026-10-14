@@ -8,7 +8,6 @@ import {
   Text,
   Title,
 } from '@mantine/core';
-import { useLocalStorage } from '@mantine/hooks';
 import {
   IconBolt,
   IconCheck,
@@ -20,6 +19,10 @@ import {
 } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useState } from 'react';
+import {
+  avatarCharacterOptions,
+  useAvatarPreviewCharacter,
+} from '~/components/AvatarGen/AvatarStylePicker';
 import { Meta } from '~/components/Meta/Meta';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { useDomainColor } from '~/hooks/useDomainColor';
@@ -37,29 +40,18 @@ import {
   avatarStyles,
 } from '~/shared/constants/avatar-styles.constants';
 import { MediaType } from '~/shared/utils/prisma/enums';
+import { capitalize } from '~/utils/string-helpers';
 
 const PATH = '/avatar-generator';
-const characterName = (character: string) => character[0].toUpperCase() + character.slice(1);
 
 type Character = (typeof avatarStarterCharacters)[number];
 
-/** Read by `useGenerationIngestion`. The first character is every style's 'cover'. */
+/** Read by `useGenerationIngestion`. */
 const generateHref = (styleKey: string | undefined, character: Character) =>
   `/generate?${new URLSearchParams({
     workflow: AVATAR_WORKFLOW,
-    ...(styleKey
-      ? {
-          avatarStyle: styleKey,
-          avatarReference:
-            character === avatarStarterCharacters[0] ? 'cover' : `starter:${character}`,
-        }
-      : {}),
+    ...(styleKey ? { avatarStyle: styleKey, avatarReference: character } : {}),
   })}`;
-
-const characterOptions = avatarStarterCharacters.map((character) => ({
-  value: character,
-  label: characterName(character),
-}));
 
 const SHOWCASE_STYLES = ['anime-niji', 'pixar-3d', 'watercolor', 'neo-noir', 'voxel', 'chibi'];
 /** A few styles from each category for the gallery. */
@@ -124,9 +116,6 @@ const faq = [
   },
 ];
 
-const styleSrc = (styleKey: string, character: Character) =>
-  avatarStyleCharacterSrc(styleKey, character);
-
 function StyleTile({
   styleKey,
   character,
@@ -139,8 +128,7 @@ function StyleTile({
   onSelect: (styleKey: string) => void;
 }) {
   const style = avatarStyleByKey.get(styleKey);
-  const src = styleSrc(styleKey, character);
-  if (!style || !src) return null;
+  if (!style) return null;
   return (
     <button
       type="button"
@@ -155,7 +143,7 @@ function StyleTile({
     >
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
-        src={src}
+        src={avatarStyleCharacterSrc(styleKey, character)}
         alt={`${style.name} AI avatar`}
         loading="lazy"
         className="aspect-square w-full object-cover"
@@ -184,15 +172,16 @@ function SelectedStyleBar({
   onClear: () => void;
 }) {
   const style = avatarStyleByKey.get(styleKey);
-  const src = styleSrc(styleKey, character);
   if (!style) return null;
   return (
     <div className="sticky inset-x-0 bottom-0 z-[51] border-y border-gray-3 bg-white/95 pb-[var(--safe-area-inset-bottom-unpaid)] shadow-lg backdrop-blur dark:border-dark-4 dark:bg-dark-7/95">
       <Container size="lg" className="flex items-center gap-3 py-3">
-        {src && (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={src} alt="" className="size-12 shrink-0 rounded-md object-cover" />
-        )}
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={avatarStyleCharacterSrc(styleKey, character)}
+          alt=""
+          className="size-12 shrink-0 rounded-md object-cover"
+        />
         <div className="min-w-0 flex-1">
           <Text size="xs" c="dimmed">
             Selected style
@@ -236,12 +225,7 @@ export default function AvatarGeneratorPage() {
   const ogStarter = avatarStartersFor(SHOWCASE_STYLES[0])[0];
   const [selectedStyle, setSelectedStyle] = useState<string>();
   // Shared with the generator's style picker, so the person chosen here is the one it previews.
-  const [storedCharacter, setCharacter] = useLocalStorage<string>({
-    key: 'avatar-style-preview-character',
-    defaultValue: avatarStarterCharacters[0],
-  });
-  const character =
-    avatarStarterCharacters.find((c) => c === storedCharacter) ?? avatarStarterCharacters[0];
+  const [character, setCharacter] = useAvatarPreviewCharacter();
   const toggleStyle = (styleKey: string) =>
     setSelectedStyle((current) => (current === styleKey ? undefined : styleKey));
 
@@ -284,9 +268,7 @@ export default function AvatarGeneratorPage() {
         title={`AI Avatar Generator: Turn Your Photo Into ${avatarStyles.length} Art Styles | Civitai`}
         description={`Make an AI avatar from one photo. Pick from ${avatarStyles.length} styles, from anime and 3D animation to watercolour and voxel, refine it, and set it as your profile picture.`}
         canonical={PATH}
-        images={
-          ogStarter ? { url: ogStarter.colour.url, nsfwLevel: 1, type: MediaType.image } : undefined
-        }
+        images={{ url: ogStarter.colour.url, nsfwLevel: 1, type: MediaType.image }}
         schema={schema}
         deIndex={deIndex}
       />
@@ -328,7 +310,7 @@ export default function AvatarGeneratorPage() {
             <div>
               <Title order={2}>Same face, any style</Title>
               <Text c="dimmed">
-                {characterName(character)}, in six of the {avatarStyles.length} styles. Pick who to
+                {capitalize(character)}, in six of the {avatarStyles.length} styles. Pick who to
                 preview; the whole page follows.
               </Text>
             </div>
@@ -336,7 +318,7 @@ export default function AvatarGeneratorPage() {
               className="self-start"
               value={character}
               onChange={setCharacter}
-              data={characterOptions}
+              data={avatarCharacterOptions}
               aria-label="Preview avatars as"
             />
             <SimpleGrid cols={{ base: 2, sm: 3, md: 6 }} spacing="sm">
@@ -380,7 +362,6 @@ export default function AvatarGeneratorPage() {
             </div>
             {avatarCategories.map((category) => {
               const styles = avatarStyles.filter((style) => style.category === category);
-              if (!styles.length) return null;
               return (
                 <div key={category} className="flex flex-col gap-3">
                   <Title order={3} className="text-lg">

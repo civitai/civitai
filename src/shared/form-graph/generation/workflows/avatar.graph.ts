@@ -9,6 +9,10 @@ import {
   avatarStyleByKey,
   avatarStyles,
 } from '~/shared/constants/avatar-styles.constants';
+import {
+  DEFAULT_AVATAR_CHARACTER,
+  avatarStarterCharacters,
+} from '~/shared/constants/avatar-starters';
 import { enumDef } from '../../defs';
 import { checkpointDef } from '../checkpoint';
 import { getResourceSelectOptions, imagesDef, quantityDef, textDef } from '../defs';
@@ -72,8 +76,13 @@ export const avatar = defineGraph<GenerationCtx>()
       default: DEFAULT_AVATAR_STYLE,
     })
   )
-  // 'cover', 'starter:<character>', or, when refining, the parent image's URL.
-  .field('avatarReference', { ...textDef('Reference', 2000), default: 'cover' })
+  .field(
+    'avatarReference',
+    enumDef({
+      options: avatarStarterCharacters.map((character) => ({ label: character, value: character })),
+      default: DEFAULT_AVATAR_CHARACTER,
+    })
+  )
   .field('avatarPalette', ({ avatarStyle }: { avatarStyle: string }) =>
     avatarStyleByKey.get(avatarStyle)?.fixedPalette
       ? null

@@ -29,15 +29,14 @@ const PORTRAIT = {
 };
 const RESULT = 'https://orchestration.civitai.com/v2/consumer/blobs/result.png';
 
-const starterUrl = (styleKey: string, reference: string, copy: 'colour' | 'grey') =>
-  getEdgeUrl(findAvatarStarter(styleKey, reference)![copy].url, { original: true });
+const starterUrl = (styleKey: string, character: string, copy: 'colour' | 'grey') =>
+  getEdgeUrl(findAvatarStarter(styleKey, character)![copy].url, { original: true });
 
 function parse(input: Record<string, unknown>) {
   const parsed = generationHub.parse(
     {
       workflow: 'img2img:avatar',
       images: [PORTRAIT],
-      avatarReference: 'cover',
       // Most cases cover the reference recipe; Krea 2, the default, is tested on its own.
       model: { id: nanoBananaVersionIds.v2, model: { type: 'Checkpoint' } },
       ...input,
@@ -75,17 +74,17 @@ describe('img2img:avatar graph', () => {
 
 describe('expandAvatarData', () => {
   it('sends the portrait first and the starter reference second, in greyscale', async () => {
-    const input = await editInput({ avatarStyle: 'art-nouveau', avatarReference: 'starter:dev' });
+    const input = await editInput({ avatarStyle: 'art-nouveau', avatarReference: 'dev' });
     expect(input).toMatchObject({
       engine: 'google',
       model: 'nano-banana-2',
-      images: [PORTRAIT.url, starterUrl('art-nouveau', 'starter:dev', 'grey')],
+      images: [PORTRAIT.url, starterUrl('art-nouveau', 'dev', 'grey')],
     });
   });
 
   it('sends a fixed-palette style its starter in colour', async () => {
     const input = await editInput({ avatarStyle: 'c64' });
-    expect(input.images).toEqual([PORTRAIT.url, starterUrl('c64', 'cover', 'colour')]);
+    expect(input.images).toEqual([PORTRAIT.url, starterUrl('c64', 'mara', 'colour')]);
   });
 
   it('defaults to Krea 2 and builds the request for the selected model version', async () => {
@@ -112,14 +111,12 @@ describe('expandAvatarData', () => {
     expect(data.prompt).toBe(buildAvatarEditPrompt(style, { palette: 'moonlit' }));
   });
 
-  it('takes no reference but a starter, or the result being refined', () => {
-    expect(() =>
-      expand({ avatarStyle: 'art-nouveau', avatarReference: 'https://evil.example/x.png' })
-    ).toThrow();
-    expect(() => expand({ avatarStyle: 'ghibli-kiki', avatarReference: RESULT })).toThrow();
-    expect(() =>
-      expand({ avatarStyle: 'ghibli-kiki', avatarReference: RESULT, avatarParentImage: RESULT })
-    ).not.toThrow();
+  it('takes no reference but a starter character', () => {
+    const data = expand({
+      avatarStyle: 'art-nouveau',
+      avatarReference: 'https://evil.example/x.png',
+    });
+    expect(data.avatarReferenceUrl).toBe(starterUrl('art-nouveau', 'mara', 'grey'));
   });
 });
 
@@ -127,7 +124,6 @@ describe('refining on a reference model', () => {
   it('sends the earlier result in colour with the refine prompt, not as a style reference', async () => {
     const input = await editInput({
       avatarStyle: 'art-nouveau',
-      avatarReference: RESULT,
       avatarParentImage: RESULT,
     });
     expect(input.images).toEqual([PORTRAIT.url, RESULT]);
@@ -139,7 +135,6 @@ describe('refining on a reference model', () => {
     const proxied = 'https://orchestration-proxy.civitai.com/v2/consumer/blobs/result.png';
     const input = await editInput({
       avatarStyle: 'art-nouveau',
-      avatarReference: proxied,
       avatarParentImage: proxied,
     });
     expect(input.images).toEqual([PORTRAIT.url, proxied]);
@@ -154,7 +149,6 @@ describe('refining on a reference model', () => {
     expect(() =>
       expand({
         avatarStyle: 'art-nouveau',
-        avatarReference: elsewhere,
         avatarParentImage: elsewhere,
       })
     ).toThrow("This result can't be refined");
@@ -196,21 +190,10 @@ describe('Krea 2', () => {
     const input = await editInput({
       avatarStyle: 'art-nouveau',
       model: krea,
-      avatarReference: RESULT,
       avatarParentImage: RESULT,
     });
     expect(input.images).toEqual([PORTRAIT.url, RESULT]);
     expect(input.prompt).toContain('earlier avatar of the same person');
-  });
-
-  it('ignores a reference that is not the result being refined', async () => {
-    const input = await editInput({
-      avatarStyle: 'art-nouveau',
-      model: krea,
-      avatarReference: RESULT,
-    });
-    expect(input.images).toEqual([PORTRAIT.url]);
-    expect(input.prompt).not.toContain('earlier avatar');
   });
 
   it('sends a style without a LoRA on its description alone', async () => {

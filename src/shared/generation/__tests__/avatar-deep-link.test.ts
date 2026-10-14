@@ -5,22 +5,22 @@ const fields = (query: string) => avatarDeepLinkFields(new URLSearchParams(query
 
 describe('avatarDeepLinkFields', () => {
   it('preselects a known style and starter character', () => {
-    expect(fields('avatarStyle=voxel&avatarReference=starter:dev')).toEqual({
+    expect(fields('avatarStyle=voxel&avatarReference=dev')).toEqual({
       avatarStyle: 'voxel',
-      avatarReference: 'starter:dev',
+      avatarReference: 'dev',
       avatarParentImage: '',
     });
   });
 
-  it('falls back to the cover for a missing or non-starter reference', () => {
-    expect(fields('avatarStyle=voxel').avatarReference).toBe('cover');
+  it('falls back to the first character for a missing or unknown reference', () => {
+    expect(fields('avatarStyle=voxel').avatarReference).toBe('mara');
     expect(
       fields('avatarStyle=voxel&avatarReference=https://evil.example/x.png').avatarReference
-    ).toBe('cover');
+    ).toBe('mara');
   });
 
   it('sets nothing for an unknown or missing style', () => {
-    expect(fields('avatarStyle=not-a-style&avatarReference=starter:dev')).toEqual({});
+    expect(fields('avatarStyle=not-a-style&avatarReference=dev')).toEqual({});
     expect(fields('')).toEqual({});
   });
 });
