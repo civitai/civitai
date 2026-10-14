@@ -4,6 +4,7 @@ import { DocStoreError } from '~/server/services/apps/doc-store.types';
 import type { DocCollection } from '~/server/services/apps/doc-store.types';
 import { barrier, createRealPgHarness, REAL_PG_URL } from './doc-store.harness';
 import type { Harness } from './doc-store.harness';
+import { defineRlsSuite } from './doc-store.rls';
 import {
   assertNumericRetypeIsolated,
   assertUsageConsistent,
@@ -350,4 +351,8 @@ describe.skipIf(!REAL_PG_URL)('runtime isolation shape on Postgres', () => {
       await h.close();
     }
   });
+});
+
+describe.skipIf(!REAL_PG_URL)('doc-store RLS probes on Postgres', () => {
+  defineRlsSuite(createRealPgHarness);
 });
