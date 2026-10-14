@@ -2095,6 +2095,8 @@ model Image {
   crucibles              Crucible[]             @relation("CrucibleImage")
   crucibleHeroes         Crucible[]             @relation("CrucibleHeroImage")
   crucibleEntries        CrucibleEntry[]
+  storylineCovers        Storyline[]            @relation("StorylineCoverImage")
+  storylineHeroes        Storyline[]            @relation("StorylineHeroImage")
 
   @@index([featuredAt])
   @@index([postId], type: Hash)
@@ -9354,12 +9356,23 @@ model Storyline {
   tosViolation Boolean         @default(false)
   createdAt    DateTime        @default(now())
   updatedAt    DateTime        @updatedAt
+  /// The feed card's picture and the page banner, chosen by the owner from images in their own
+  /// chapters or endorsed collaborators' (checked when chosen). Readers who may not see the
+  /// chosen image get chapter 1's first image they may see instead.
+  coverImageId      Int?
+  coverImage        Image? @relation("StorylineCoverImage", fields: [coverImageId], references: [id], onDelete: SetNull)
+  heroImageId       Int?
+  heroImage         Image? @relation("StorylineHeroImage", fields: [heroImageId], references: [id], onDelete: SetNull)
+  /// The banner's vertical focus, as a percentage (0 top to 100 bottom).
+  heroImagePosition Int    @default(50)
 
   chapters      StorylineChapter[]
   collaborators StorylineCollaborator[]
   reports       StorylineReport[]
 
   @@index([userId])
+  @@index([coverImageId])
+  @@index([heroImageId])
 }
 
 /// A chapter of a storyline: one post. The tree lives in `StorylineChapterEdge`, not

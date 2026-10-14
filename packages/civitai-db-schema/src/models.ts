@@ -1639,6 +1639,8 @@ export interface Image {
   crucibles?: Crucible[];
   crucibleHeroes?: Crucible[];
   crucibleEntries?: CrucibleEntry[];
+  storylineCovers?: Storyline[];
+  storylineHeroes?: Storyline[];
 }
 
 export interface ImageTagForReview {
@@ -5953,6 +5955,11 @@ export interface Storyline {
   tosViolation: boolean;
   createdAt: Date;
   updatedAt: Date;
+  coverImageId: number | null;
+  coverImage?: Image | null;
+  heroImageId: number | null;
+  heroImage?: Image | null;
+  heroImagePosition: number;
   chapters?: StorylineChapter[];
   collaborators?: StorylineCollaborator[];
   reports?: StorylineReport[];

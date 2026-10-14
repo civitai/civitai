@@ -1638,14 +1638,18 @@ describe('getStorylinesInfinite: card cover, open and continue price', () => {
     poi: false,
   });
 
-  /** Answers the page read with `rows` and the cover read with a cover for each post asked. */
-  const answer = (rows: ReturnType<typeof feedRow>[]) =>
+  /**
+   * Answers the page read with `rows`, the first-image read with a cover for each post asked, and
+   * the chosen-cover read with `picked` (as the gate and the chapter they are in would return).
+   */
+  const answer = (rows: ReturnType<typeof feedRow>[], picked: Record<string, unknown>[] = []) =>
     r.$queryRaw.mockImplementation(((strings: TemplateStringsArray, ...values: unknown[]) => {
-      const sql = strings.join('?');
-      if (sql.includes('DISTINCT ON (i."postId")')) {
-        const postIds = values[0] as number[];
+      const composed = Prisma.sql(strings, ...(values as Prisma.Sql[]));
+      if (composed.sql.includes('DISTINCT ON (i."postId")')) {
+        const postIds = composed.values[0] as number[];
         return Promise.resolve(postIds.map(cover));
       }
+      if (composed.sql.includes('WHERE i.id = ANY(')) return Promise.resolve(picked);
       return Promise.resolve(rows);
     }) as never);
 
@@ -1674,6 +1678,7 @@ describe('getStorylinesInfinite: card cover, open and continue price', () => {
 
   beforeEach(() => {
     caps(100);
+    r.user.findMany.mockResolvedValue([] as never);
   });
 
   it('reads a 24-card page in two queries and one batched price read, whoever owns it', async () => {
@@ -1700,12 +1705,13 @@ describe('getStorylinesInfinite: card cover, open and continue price', () => {
     });
     answer([feedRow(1)]);
     await feed({ id: STRANGER });
-    const [strings, ...values] = r.$queryRaw.mock.calls[1] as unknown as [
-      TemplateStringsArray,
-      ...unknown[]
-    ];
-    const sql = strings.join('?');
-    expect(sql).toContain('JOIN "StorylineChapter" c ON c."postId" = i."postId" AND c.depth = 0');
+    const { text: sql, values } = sqlAt(1);
+    // Chapter 1's post, as the page read gave it, is the only post asked about. The join serves
+    // any chapter (the page and reading rows ask about later ones), so it filters on no depth.
+    expect(sql).toContain(
+      'JOIN "StorylineChapter" c ON c."postId" = i."postId" JOIN "Storyline" st ON st.id = c."storylineId"'
+    );
+    expect(sql).not.toContain('depth');
     expect(sql).toContain(
       `i.ingestion = 'Scanned' AND i."tosViolation" = false AND i."needsReview" IS NULL`
     );
@@ -1713,7 +1719,7 @@ describe('getStorylinesInfinite: card cover, open and continue price', () => {
     expect(sql).toContain('AND (i."nsfwLevel" & ~(st."maxNsfwLevel" * 2 - 1)) = 0');
     expect(sql).toContain('AND i.id <> ALL(?::int[])');
     // Whitespace-insensitive, anchored on the NOT EXISTS so a negation dropped in front is caught.
-    expect(sql.replace(/\s+/g, ' ')).toContain(
+    expect(sql).toContain(
       'AND (NOT EXISTS ( SELECT 1 FROM "TagsOnImageDetails" toi WHERE toi."imageId" = i.id AND toi."tagId" = ANY(?::int[]) AND toi.disabled = false ) OR i."userId" = ?)'
     );
     expect(sql).toContain('ORDER BY i."postId", i.index NULLS LAST, i.id');
@@ -2248,6 +2254,795 @@ describe('a chapter whose placement was removed', () => {
     expect(w.storylineChapterEdge.updateMany).not.toHaveBeenCalled();
     expect(w.storylineChapterEdge.findFirst.mock.calls[0][0]).toMatchObject({
       select: { chapter: { select: { removedAt: true } } },
+    });
+  });
+});
+
+describe('covers and cast', () => {
+  const PG = NsfwLevel.PG;
+  /** A raw query as Postgres gets it, whitespace collapsed. */
+  const composed = (call: unknown) => {
+    const [strings, ...values] = call as [TemplateStringsArray, ...unknown[]];
+    const sql = Prisma.sql(strings, ...(values as Prisma.Sql[]));
+    return { text: sql.sql.replace(/\s+/g, ' '), values: sql.values };
+  };
+  const rawCalls = () => r.$queryRaw.mock.calls.map(composed);
+  const isFirstImageRead = (text: string) => text.includes('DISTINCT ON (i."postId")');
+  const isChosenImageRead = (text: string) => text.includes('WHERE i.id = ANY(');
+  const image = (id: number, extra: Record<string, unknown> = {}) => ({
+    id,
+    url: `img-${id}`,
+    type: 'image',
+    nsfwLevel: PG,
+    hash: null,
+    width: 100,
+    height: 200,
+    userId: OWNER,
+    minor: false,
+    poi: false,
+    ...extra,
+  });
+  /** A chosen-image row as the by-id read returns it: the image and the chapter it is in. */
+  const picked = (id: number, extra: Record<string, unknown> = {}) => ({
+    ...image(id),
+    storylineId: 10,
+    postId: 500 + id,
+    postUserId: OWNER,
+    postNsfwLevel: PG,
+    publishedAt: new Date('2026-10-01'),
+    postTosViolation: false,
+    removedAt: null,
+    bannedAt: null,
+    deletedAt: null,
+    maxNsfwLevel: NsfwLevel.R,
+    ...extra,
+  });
+  const chapterPost = (id: number, userId: number, overrides: Record<string, unknown> = {}) => ({
+    id,
+    userId,
+    title: `post ${id}`,
+    nsfwLevel: PG,
+    publishedAt: new Date('2026-10-01'),
+    tosViolation: false,
+    user: { id: userId, username: `u${userId}`, image: null, cosmetics: [], ...notBanned },
+    ...overrides,
+  });
+
+  /**
+   * Raw reads by shape: the chapter walk or path returns `walk`, the first-image read a first
+   * image for each post asked (image id = post id + 1000), the chosen read `chosenRows`.
+   */
+  const answerRaw = (walk: unknown[], chosenRows: unknown[] = []) =>
+    r.$queryRaw.mockImplementation(((strings: TemplateStringsArray, ...values: unknown[]) => {
+      const { text, values: bound } = composed([strings, ...values]);
+      if (isFirstImageRead(text))
+        return Promise.resolve(
+          (bound[0] as number[]).map((postId) => ({ postId, ...image(postId + 1000) }))
+        );
+      if (isChosenImageRead(text)) return Promise.resolve(chosenRows);
+      if (text.includes('WITH RECURSIVE')) return Promise.resolve(walk);
+      return Promise.resolve([]);
+    }) as never);
+
+  beforeEach(() => {
+    r.storyline.findUnique.mockResolvedValue(storylineRow() as never);
+    w.storyline.findUnique.mockResolvedValue(storylineRow() as never);
+    r.storylineChapterEdge.groupBy.mockResolvedValue([] as never);
+    r.user.findMany.mockResolvedValue([] as never);
+  });
+
+  describe('choosing a cover or banner', () => {
+    /** Image -> the chapter it is in: storyline, author, removed. */
+    const images = (
+      rows: Record<
+        number,
+        {
+          storylineId?: number;
+          userId: number;
+          level?: number;
+          removed?: boolean;
+          minor?: boolean;
+          poi?: boolean;
+        }
+      >
+    ) =>
+      w.image.findMany.mockImplementation((({ where }: { where: { id: { in: number[] } } }) =>
+        Promise.resolve(
+          where.id.in
+            .filter((id) => rows[id])
+            .map((id) => ({
+              id,
+              nsfwLevel: rows[id].level ?? PG,
+              minor: !!rows[id].minor,
+              poi: !!rows[id].poi,
+              post: {
+                storylineChapter: {
+                  storylineId: rows[id].storylineId ?? 10,
+                  userId: rows[id].userId,
+                  removedAt: rows[id].removed ? new Date() : null,
+                },
+              },
+            }))
+        )) as never);
+
+    beforeEach(() => {
+      w.storylineCollaborator.findMany.mockResolvedValue([{ userId: COLLABORATOR }] as never);
+      w.storyline.update.mockResolvedValue({} as never);
+      images({
+        1: { userId: OWNER },
+        2: { userId: COLLABORATOR },
+        3: { userId: STRANGER },
+        4: { userId: OWNER, storylineId: 99 },
+        5: { userId: OWNER, removed: true },
+        6: { userId: OWNER, level: NsfwLevel.X },
+        7: { userId: OWNER, level: 0 },
+        8: { userId: OWNER, minor: true },
+        9: { userId: OWNER, poi: true },
+      });
+    });
+
+    it("takes an image from the owner's chapters or an endorsed collaborator's, and writes it", async () => {
+      await updateStoryline({
+        id: 10,
+        userId: OWNER,
+        coverImageId: 1,
+        heroImageId: 2,
+        heroImagePosition: 30,
+      });
+      expect(w.storyline.update.mock.calls[0][0]).toMatchObject({
+        data: { coverImageId: 1, heroImageId: 2, heroImagePosition: 30 },
+        select: { coverImageId: true, heroImageId: true, heroImagePosition: true },
+      });
+      expect(w.storylineCollaborator.findMany.mock.calls[0][0]).toMatchObject({
+        where: { storylineId: 10 },
+      });
+      expect(w.image.findMany.mock.calls[0][0]).toMatchObject({
+        select: {
+          nsfwLevel: true,
+          post: {
+            select: {
+              storylineChapter: { select: { storylineId: true, userId: true, removedAt: true } },
+            },
+          },
+        },
+      });
+    });
+
+    it.each([
+      ['a community chapter', 3, /own chapters or an endorsed collaborator/],
+      ["another storyline's chapter", 4, /own chapters or an endorsed collaborator/],
+      ['a removed chapter', 5, /own chapters or an endorsed collaborator/],
+      ['no chapter at all', 404, /own chapters or an endorsed collaborator/],
+      ['above the ceiling', 6, /above the storyline's maximum rating/],
+      ['not rated yet', 7, /not been rated yet/],
+      ['a minor', 8, /cannot be used as a cover or banner/],
+      ['a real person', 9, /cannot be used as a cover or banner/],
+    ])(
+      'refuses an image from %s, as cover or banner, and writes nothing',
+      async (_n, id, error) => {
+        for (const pick of [{ coverImageId: id }, { heroImageId: id }]) {
+          await expect(updateStoryline({ id: 10, userId: OWNER, ...pick })).rejects.toMatchObject({
+            code: 'BAD_REQUEST',
+            message: expect.stringMatching(error),
+          });
+        }
+        expect(w.storyline.update).not.toHaveBeenCalled();
+      }
+    );
+
+    it('judges the pick against the ceiling being set in the same edit', async () => {
+      await expect(
+        updateStoryline({ id: 10, userId: OWNER, coverImageId: 6, maxNsfwLevel: NsfwLevel.X })
+      ).resolves.toBeDefined();
+      await expect(
+        updateStoryline({ id: 10, userId: OWNER, coverImageId: 1, maxNsfwLevel: NsfwLevel.PG })
+      ).resolves.toBeDefined();
+    });
+
+    it("holds a moderator to the owner's rule", async () => {
+      await expect(
+        updateStoryline({ id: 10, userId: MODERATOR, isModerator: true, coverImageId: 3 })
+      ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+      await updateStoryline({ id: 10, userId: MODERATOR, isModerator: true, coverImageId: 1 });
+      expect(w.storyline.update).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not judge again a pick sent back unchanged, only one that changes', async () => {
+      // Image 3 is now a community chapter's (its collaborator was removed): kept as it is.
+      w.storyline.findUnique.mockResolvedValue({
+        ...storylineRow(),
+        coverImageId: 3,
+        heroImageId: 3,
+        heroImagePosition: 50,
+      } as never);
+      await updateStoryline({ id: 10, userId: OWNER, coverImageId: 3, heroImageId: 3 });
+      expect(w.image.findMany).not.toHaveBeenCalled();
+      // Moving the banner onto it from elsewhere is a new pick, and refused.
+      w.storyline.findUnique.mockResolvedValue({
+        ...storylineRow(),
+        coverImageId: 3,
+        heroImageId: 1,
+        heroImagePosition: 50,
+      } as never);
+      await expect(
+        updateStoryline({ id: 10, userId: OWNER, coverImageId: 3, heroImageId: 3 })
+      ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+      expect(w.image.findMany.mock.calls[0][0]).toMatchObject({ where: { id: { in: [3] } } });
+      expect(w.storyline.findUnique.mock.calls[0][0]).toMatchObject({
+        select: { coverImageId: true, heroImageId: true },
+      });
+    });
+
+    it('clears a pick with null without checking anything', async () => {
+      await updateStoryline({ id: 10, userId: OWNER, coverImageId: null, heroImageId: null });
+      expect(w.image.findMany).not.toHaveBeenCalled();
+      expect(w.storyline.update.mock.calls[0][0]).toMatchObject({
+        data: { coverImageId: null, heroImageId: null },
+      });
+    });
+
+    it('refuses a stranger before looking at any image', async () => {
+      await expect(
+        updateStoryline({ id: 10, userId: STRANGER, coverImageId: 1 })
+      ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+      expect(w.image.findMany).not.toHaveBeenCalled();
+    });
+
+    describe('on create', () => {
+      beforeEach(() => {
+        w.post.findUnique.mockResolvedValue(publishedPost({ userId: OWNER }) as never);
+        w.storyline.create.mockResolvedValue({ id: 10 } as never);
+        w.storylineChapter.create.mockResolvedValue({ id: 20 } as never);
+      });
+      const create = (picks: Record<string, unknown>) =>
+        createStoryline({
+          postId: 600,
+          title: 'A story',
+          maxNsfwLevel: NsfwLevel.R,
+          userId: OWNER,
+          ...picks,
+        });
+
+      it('takes an image of the post the storyline starts from, once chapter 1 exists', async () => {
+        await create({ coverImageId: 1, heroImageId: 1, heroImagePosition: 80 });
+        expect(w.storylineChapter.create.mock.invocationCallOrder[0]).toBeLessThan(
+          w.image.findMany.mock.invocationCallOrder[0]
+        );
+        expect(w.storyline.update.mock.calls[0][0]).toEqual({
+          where: { id: 10 },
+          data: { coverImageId: 1, heroImageId: 1, heroImagePosition: 80 },
+        });
+      });
+
+      it('refuses any other image and does not write it', async () => {
+        await expect(create({ coverImageId: 3 })).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+        expect(w.storyline.update).not.toHaveBeenCalled();
+      });
+
+      it('saves a banner focus given on its own, without reading any image', async () => {
+        await create({ heroImagePosition: 10 });
+        expect(w.image.findMany).not.toHaveBeenCalled();
+        expect(w.storyline.update.mock.calls[0][0]).toMatchObject({
+          data: { heroImagePosition: 10 },
+        });
+      });
+
+      it('reads and writes nothing more without picks', async () => {
+        await create({});
+        expect(w.image.findMany).not.toHaveBeenCalled();
+        expect(w.storyline.update).not.toHaveBeenCalled();
+      });
+    });
+  });
+
+  describe('first images on the reading rows', () => {
+    it('gives each shown chapter of the path its first image, and a tombstone none, in one read', async () => {
+      r.storylineChapter.findUnique.mockResolvedValue({ storylineId: 10, depth: 2 } as never);
+      answerRaw([
+        { id: 1, postId: 101, depth: 0, removedAt: null },
+        { id: 2, postId: 102, depth: 1, removedAt: null },
+        { id: 3, postId: 103, depth: 2, removedAt: null },
+      ]);
+      r.post.findMany.mockResolvedValue([
+        chapterPost(101, OWNER),
+        chapterPost(102, STRANGER, { tosViolation: true }),
+        chapterPost(103, COLLABORATOR),
+      ] as never);
+      const { chapters } = await getStorylinePath({
+        chapterId: 3,
+        viewer: { id: 99 },
+        browsingLevel: PG,
+      });
+      expect(chapters.map((c) => [c.chapterId, c.tombstone, c.firstImage?.id ?? null])).toEqual([
+        [1, null, 1101],
+        [2, 'removed', null],
+        [3, null, 1103],
+      ]);
+      const reads = rawCalls().filter((call) => isFirstImageRead(call.text));
+      expect(reads).toHaveLength(1);
+      // Only the chapters the reader is shown are asked about.
+      expect(reads[0].values[0]).toEqual([101, 103]);
+      expect(chapters[0].firstImage).toEqual(image(1101));
+    });
+
+    it('reads first images in one query however many chapters there are', async () => {
+      r.storylineChapter.findUnique.mockResolvedValue({ storylineId: 10, depth: 49 } as never);
+      const rows = (n: number) =>
+        Array.from({ length: n }, (_, i) => ({
+          id: i + 1,
+          postId: 100 + i,
+          depth: i,
+          removedAt: null,
+        }));
+      const queriesFor = async (n: number) => {
+        r.$queryRaw.mockClear();
+        answerRaw(rows(n));
+        r.post.findMany.mockResolvedValue(
+          rows(n).map((row) => chapterPost(row.postId, OWNER)) as never
+        );
+        await getStorylinePath({ chapterId: n, viewer: { id: 99 }, browsingLevel: PG });
+        return r.$queryRaw.mock.calls.length;
+      };
+      const few = await queriesFor(2);
+      expect(await queriesFor(50)).toBe(few);
+      expect(few).toBe(2);
+    });
+
+    it('gives the ways on their first images, none to a tombstone', async () => {
+      r.storylineChapter.findUnique.mockResolvedValue({ storylineId: 10 } as never);
+      r.storylineCollaborator.findMany.mockResolvedValue([] as never);
+      r.storylineChapterEdge.findFirst.mockResolvedValue(null as never);
+      const child = (id: number, overrides: Record<string, unknown> = {}) => ({
+        canon: false,
+        chapter: {
+          id,
+          depth: 1,
+          userId: STRANGER,
+          createdAt: new Date('2026-10-02'),
+          removedAt: null,
+          post: chapterPost(id + 100, STRANGER, overrides),
+        },
+      });
+      r.storylineChapterEdge.findMany.mockResolvedValue([
+        child(11),
+        child(12, { publishedAt: null }),
+      ] as never);
+      answerRaw([]);
+      const children = await getStorylineChildren({
+        chapterId: 1,
+        viewer: { id: 99 },
+        browsingLevel: PG,
+        readersByChapterId: new Map(),
+      });
+      expect(children.map((c) => [c.chapterId, c.firstImage?.id ?? null])).toEqual([
+        [11, 1111],
+        [12, null],
+      ]);
+      expect(rawCalls().filter((call) => isFirstImageRead(call.text))).toHaveLength(1);
+    });
+
+    it('reads no hidden lists and no images when no chapter is shown', async () => {
+      r.storylineChapter.findUnique.mockResolvedValue({ storylineId: 10, depth: 0 } as never);
+      answerRaw([{ id: 1, postId: null, depth: 0, removedAt: null }]);
+      r.post.findMany.mockResolvedValue([] as never);
+      const { chapters } = await getStorylinePath({
+        chapterId: 1,
+        viewer: { id: 99 },
+        browsingLevel: PG,
+      });
+      expect(chapters[0].firstImage).toBeNull();
+      expect(getAllHiddenForUser).not.toHaveBeenCalled();
+      expect(rawCalls().filter((call) => isFirstImageRead(call.text))).toHaveLength(0);
+    });
+
+    it('applies the image gate to first images: level, ceiling, hidden images and tags', async () => {
+      getAllHiddenForUser.mockResolvedValue({
+        hiddenImages: [{ id: 77 }],
+        hiddenTags: [{ id: 5 }],
+      });
+      r.storylineChapter.findUnique.mockResolvedValue({ storylineId: 10, depth: 0 } as never);
+      answerRaw([{ id: 1, postId: 101, depth: 0, removedAt: null }]);
+      r.post.findMany.mockResolvedValue([chapterPost(101, OWNER)] as never);
+      await getStorylinePath({ chapterId: 1, viewer: { id: 99 }, browsingLevel: PG });
+      const read = rawCalls().find((call) => isFirstImageRead(call.text))!;
+      expect(read.text).toContain(
+        `WHERE i."postId" = ANY(?::int[]) AND i.ingestion = 'Scanned' AND i."tosViolation" = false AND i."needsReview" IS NULL`
+      );
+      expect(read.text).toContain('AND i.minor = false AND i.poi = false');
+      expect(read.text).toContain('AND i."nsfwLevel" <> 0');
+      expect(read.text).toContain('AND (i."nsfwLevel" & ~(st."maxNsfwLevel" * 2 - 1)) = 0');
+      expect(read.values).toEqual([[101], 99, PG, [77], [5], 99]);
+      expect(getAllHiddenForUser).toHaveBeenCalledWith({ userId: 99 });
+    });
+  });
+
+  describe('the storyline page', () => {
+    const page = (viewer: { id: number; isModerator?: boolean } | undefined) =>
+      getStoryline({ id: 10, viewer, browsingLevel: PG });
+    const withPicks = (picks: { coverImageId?: number | null; heroImageId?: number | null }) =>
+      r.storyline.findUnique.mockResolvedValue({
+        ...storylineRow(),
+        coverImageId: null,
+        heroImageId: null,
+        heroImagePosition: 30,
+        collaborators: [],
+        ...picks,
+      } as never);
+
+    beforeEach(() => {
+      withPicks({});
+      r.post.findMany.mockResolvedValue([chapterPost(101, OWNER)] as never);
+    });
+
+    beforeEach(() => getBlockedPairIds.mockResolvedValue([BLOCKED]));
+
+    it.each([
+      ['the banner pick', { heroImageId: 7, coverImageId: 8 }, [picked(7), picked(8)], 7],
+      [
+        'the cover pick when the banner is hidden',
+        { heroImageId: 7, coverImageId: 8 },
+        [picked(8)],
+        8,
+      ],
+      ['the cover pick when there is no banner', { coverImageId: 8 }, [picked(8)], 8],
+      [
+        "chapter 1's first image when neither is visible",
+        { heroImageId: 7, coverImageId: 8 },
+        [],
+        1101,
+      ],
+      [
+        "chapter 1's first image when the pick's chapter is a tombstone to the reader",
+        { heroImageId: 7 },
+        [picked(7, { removedAt: new Date(), postUserId: STRANGER })],
+        1101,
+      ],
+      [
+        "chapter 1's first image when the pick's chapter was taken down",
+        { heroImageId: 7 },
+        [picked(7, { postTosViolation: true })],
+        1101,
+      ],
+      [
+        "chapter 1's first image when the pick's chapter is outside the reader's level",
+        { heroImageId: 7 },
+        [picked(7, { postNsfwLevel: NsfwLevel.R })],
+        1101,
+      ],
+      [
+        "chapter 1's first image when the pick's author is banned",
+        { heroImageId: 7 },
+        [picked(7, { bannedAt: new Date() })],
+        1101,
+      ],
+      [
+        "chapter 1's first image when the pick's author is deleted",
+        { heroImageId: 7 },
+        [picked(7, { deletedAt: new Date() })],
+        1101,
+      ],
+      [
+        "chapter 1's first image when the reader blocked the pick's author",
+        { heroImageId: 7 },
+        [picked(7, { postUserId: BLOCKED })],
+        1101,
+      ],
+      [
+        "chapter 1's first image when the pick is another storyline's",
+        { heroImageId: 7 },
+        [picked(7, { storylineId: 11 })],
+        1101,
+      ],
+    ])('shows %s as the banner', async (_n, picks, chosenRows, heroId) => {
+      withPicks(picks);
+      answerRaw([{ id: 1, postId: 101, depth: 0, removedAt: null }], chosenRows);
+      const storyline = await page({ id: 99 });
+      expect(storyline.heroImage?.id).toBe(heroId);
+      expect(storyline.heroImagePosition).toBe(30);
+      expect(rawCalls().filter((call) => isChosenImageRead(call.text))).toHaveLength(1);
+    });
+
+    it('shows a pick from a chapter only its author or a moderator may see, to them', async () => {
+      withPicks({ heroImageId: 7 });
+      const unpublished = [picked(7, { postUserId: STRANGER, publishedAt: null })];
+      answerRaw([{ id: 1, postId: 101, depth: 0, removedAt: null }], unpublished);
+      expect((await page({ id: STRANGER })).heroImage?.id).toBe(7);
+      expect((await page({ id: MODERATOR, isModerator: true })).heroImage?.id).toBe(7);
+      expect((await page({ id: 99 })).heroImage?.id).toBe(1101);
+    });
+
+    it('reads the chapter fields the pick is judged by from the post, not the image', async () => {
+      withPicks({ heroImageId: 7 });
+      answerRaw([{ id: 1, postId: 101, depth: 0, removedAt: null }]);
+      await page({ id: 99 });
+      const read = rawCalls().find((call) => isChosenImageRead(call.text))!;
+      expect(read.text).toContain(
+        'c."storylineId", i."postId", p."userId" AS "postUserId", p."nsfwLevel" AS "postNsfwLevel", p."publishedAt", p."tosViolation" AS "postTosViolation", c."removedAt", pu."bannedAt", pu."deletedAt", st."maxNsfwLevel" FROM "Image" i'
+      );
+    });
+
+    it('has no banner when chapter 1 is a tombstone and nothing is picked', async () => {
+      answerRaw([{ id: 1, postId: 101, depth: 0, removedAt: null }]);
+      r.post.findMany.mockResolvedValue([chapterPost(101, OWNER, { tosViolation: true })] as never);
+      const storyline = await page({ id: 99 });
+      expect(storyline.heroImage).toBeNull();
+      expect(rawCalls().filter((call) => isChosenImageRead(call.text))).toHaveLength(0);
+    });
+
+    it('reads the picks through the image gate and the chapter they are in', async () => {
+      getAllHiddenForUser.mockResolvedValue({
+        hiddenImages: [{ id: 77 }],
+        hiddenTags: [{ id: 5 }],
+      });
+      withPicks({ heroImageId: 7, coverImageId: 8 });
+      answerRaw([{ id: 1, postId: 101, depth: 0, removedAt: null }]);
+      await page({ id: 99 });
+      const read = rawCalls().find((call) => isChosenImageRead(call.text))!;
+      expect(read.text).toContain('JOIN "StorylineChapter" c ON c."postId" = i."postId"');
+      expect(read.text).toContain('JOIN "Storyline" st ON st.id = c."storylineId"');
+      expect(read.text).toContain('JOIN "User" pu ON pu.id = p."userId"');
+      expect(read.text).toContain(
+        `WHERE i.id = ANY(?::int[]) AND i.ingestion = 'Scanned' AND i."tosViolation" = false`
+      );
+      expect(read.text).toContain('c."removedAt", pu."bannedAt", pu."deletedAt"');
+      expect(read.values).toEqual([[7, 8], 99, PG, [77], [5], 99]);
+      // The hidden lists are read once for the picks and the main route together.
+      expect(getAllHiddenForUser).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([
+      ['the cover pick', { heroImageId: 7, coverImageId: 8 }, [picked(7), picked(8)], 8],
+      ["chapter 1's first image when the cover pick is hidden", { coverImageId: 8 }, [], 1101],
+      [
+        "chapter 1's first image, not the banner pick, when there is no cover pick",
+        { heroImageId: 7 },
+        [picked(7)],
+        1101,
+      ],
+    ])('gives the card picture as the feed does: %s', async (_n, picks, chosenRows, coverId) => {
+      withPicks(picks);
+      answerRaw([{ id: 1, postId: 101, depth: 0, removedAt: null }], chosenRows);
+      expect((await page({ id: 99 })).coverImage?.id).toBe(coverId);
+    });
+
+    it('counts the chapters each credited author has that the reader is shown', async () => {
+      r.storyline.findUnique.mockResolvedValue({
+        ...storylineRow(),
+        coverImageId: null,
+        heroImageId: null,
+        heroImagePosition: 50,
+        collaborators: [{ user: { id: COLLABORATOR, username: 'c', ...notBanned } }],
+      } as never);
+      r.$queryRaw.mockImplementation(((strings: TemplateStringsArray, ...values: unknown[]) => {
+        const { text } = composed([strings, ...values]);
+        if (text.includes('c."userId" = ANY('))
+          return Promise.resolve([
+            { userId: OWNER, chapterCount: 4 },
+            { userId: COLLABORATOR, chapterCount: 2 },
+          ]);
+        if (text.includes('GROUP BY c."userId" ORDER BY'))
+          return Promise.resolve([{ userId: STRANGER, chapterCount: 3 }]);
+        return Promise.resolve([]);
+      }) as never);
+      r.user.findMany.mockResolvedValue([{ id: STRANGER, username: 's', ...notBanned }] as never);
+
+      const { contributors } = await page({ id: 99 });
+      expect(contributors.map((c) => [c.user.id, c.role, c.chapterCount])).toEqual([
+        [OWNER, 'creator', 4],
+        [COLLABORATOR, 'endorsed', 2],
+        [STRANGER, 'contributor', 3],
+      ]);
+      const castRead = rawCalls().find((call) => call.text.includes('c."userId" = ANY('))!;
+      const authorsRead = rawCalls().find((call) =>
+        call.text.includes('GROUP BY c."userId" ORDER BY')
+      )!;
+      // Both counts use the credits' own rule for a shown chapter, word for word.
+      const shownRule = (text: string) =>
+        text.slice(text.indexOf('c."removedAt" IS NULL'), text.indexOf('GROUP BY')).trim();
+      expect(castRead.text.trim()).toBe(
+        `SELECT c."userId", COUNT(*)::int AS "chapterCount" FROM "StorylineChapter" c JOIN "Post" p ON p.id = c."postId" WHERE c."storylineId" = ? AND c."userId" = ANY(?::int[]) AND ${shownRule(
+          authorsRead.text
+        )} GROUP BY c."userId"`
+          .replace(/\s+/g, ' ')
+          .trim()
+      );
+      expect(shownRule(authorsRead.text)).toContain('AND p."tosViolation" = false');
+      expect(castRead.values.slice(0, 2)).toEqual([10, [OWNER, COLLABORATOR]]);
+      expect(authorsRead.text).toContain(
+        'SELECT c."userId", COUNT(*)::int AS "chapterCount" FROM "StorylineChapter" c'
+      );
+    });
+
+    it('counts no chapters for an author with none the reader is shown', async () => {
+      answerRaw([]);
+      const { contributors } = await page({ id: 99 });
+      expect(contributors).toEqual([expect.objectContaining({ role: 'creator', chapterCount: 0 })]);
+    });
+
+    it('gives the raw picks to the owner and moderators only', async () => {
+      withPicks({ heroImageId: 7, coverImageId: 8 });
+      answerRaw([{ id: 1, postId: 101, depth: 0, removedAt: null }]);
+      for (const viewer of [{ id: OWNER }, { id: MODERATOR, isModerator: true }])
+        await expect(page(viewer)).resolves.toMatchObject({ coverImageId: 8, heroImageId: 7 });
+      for (const viewer of [{ id: 99 }, undefined])
+        await expect(page(viewer)).resolves.toMatchObject({
+          coverImageId: null,
+          heroImageId: null,
+        });
+    });
+
+    it('credits the owner, collaborators, contributors and route authors with their cosmetics', async () => {
+      const cast = (id: number) => ({
+        id,
+        username: `u${id}`,
+        image: null,
+        profilePicture: null,
+        cosmetics: [{ data: null, cosmetic: { id: id * 10 } }],
+        ...notBanned,
+      });
+      r.storyline.findUnique.mockResolvedValue({
+        ...storylineRow({ user: cast(OWNER) }),
+        coverImageId: null,
+        heroImageId: null,
+        heroImagePosition: 50,
+        collaborators: [{ user: cast(COLLABORATOR) }],
+      } as never);
+      r.$queryRaw.mockImplementation(((strings: TemplateStringsArray) => {
+        const sql = strings.join('?');
+        if (sql.includes('GROUP BY c."userId"')) return Promise.resolve([{ userId: STRANGER }]);
+        if (sql.includes('WITH RECURSIVE main'))
+          return Promise.resolve([{ id: 1, postId: 101, depth: 0, removedAt: null }]);
+        return Promise.resolve([]);
+      }) as never);
+      r.user.findMany.mockResolvedValue([cast(STRANGER)] as never);
+      r.post.findMany.mockResolvedValue([
+        { ...chapterPost(101, OWNER), user: cast(OWNER) },
+      ] as never);
+
+      const storyline = await page({ id: 99 });
+      const { bannedAt: _b, deletedAt: _d, ...shown } = cast(OWNER);
+      expect(storyline.user).toEqual(shown);
+      expect(storyline.contributors.map((c) => c.user.cosmetics[0].cosmetic.id)).toEqual([
+        OWNER * 10,
+        COLLABORATOR * 10,
+        STRANGER * 10,
+      ]);
+      expect(storyline.mainPath[0].post?.user).toEqual(shown);
+      for (const c of storyline.contributors) expect(c.user).not.toHaveProperty('bannedAt');
+
+      const cosmeticsSelect = expect.objectContaining({
+        cosmetics: expect.objectContaining({
+          where: { equippedAt: { not: null }, equippedToId: null },
+        }),
+        bannedAt: true,
+        deletedAt: true,
+        profilePicture: expect.anything(),
+      });
+      expect(r.storyline.findUnique.mock.calls[0][0]).toMatchObject({
+        select: {
+          user: { select: cosmeticsSelect },
+          collaborators: { select: { user: { select: cosmeticsSelect } } },
+        },
+      });
+      expect(r.user.findMany.mock.calls[0][0]).toMatchObject({ select: cosmeticsSelect });
+      expect(r.post.findMany.mock.calls[0][0]).toMatchObject({
+        select: { user: { select: cosmeticsSelect } },
+      });
+    });
+  });
+
+  describe('feed cards', () => {
+    const feedRow = (id: number, overrides: Record<string, unknown> = {}) => ({
+      id,
+      title: `s${id}`,
+      status: 'Ongoing',
+      userId: OWNER,
+      username: 'owner',
+      bannedAt: null,
+      deletedAt: null,
+      maxNsfwLevel: NsfwLevel.R,
+      whoCanContinue: 'Anyone',
+      isCollaborator: false,
+      rootPostId: 500 + id,
+      rootNsfwLevel: PG,
+      rootPublishedAt: new Date('2026-10-01'),
+      rootTosViolation: false,
+      storylineMode: null,
+      storylinePrice: null,
+      userMode: null,
+      userPrice: null,
+      chapterCount: 1,
+      contributorCount: 1,
+      createdAt: new Date('2026-10-01'),
+      coverImageId: null,
+      ...overrides,
+    });
+    const answerFeed = (rows: unknown[], chosenRows: unknown[] = []) =>
+      r.$queryRaw.mockImplementation(((strings: TemplateStringsArray, ...values: unknown[]) => {
+        const { text, values: bound } = composed([strings, ...values]);
+        if (isFirstImageRead(text))
+          return Promise.resolve(
+            (bound[0] as number[]).map((postId) => ({ postId, ...image(postId + 1000) }))
+          );
+        if (isChosenImageRead(text)) return Promise.resolve(chosenRows);
+        return Promise.resolve(rows);
+      }) as never);
+    const feed = (viewer: { id: number } | undefined = { id: 99 }) =>
+      getStorylinesInfinite({
+        filter: 'all',
+        sort: 'newest',
+        limit: 24,
+        viewer,
+        browsingLevel: PG,
+      });
+
+    beforeEach(() => placementPriceRanges.mockResolvedValue(new Map()));
+
+    it("covers a card with the owner's pick when the reader may see it, else chapter 1's first image", async () => {
+      answerFeed(
+        [
+          feedRow(10, { coverImageId: 7 }),
+          feedRow(11, { coverImageId: 8 }),
+          feedRow(12, { coverImageId: 9 }),
+        ],
+        [picked(7, { storylineId: 10 }), picked(9, { storylineId: 10 })]
+      );
+      const { items } = await feed();
+      expect(items.map((item) => item.coverImage?.id)).toEqual([7, 1511, 1512]);
+      expect(items[0].coverImage).toEqual(image(7));
+      expect(items[0]).not.toHaveProperty('coverImageId');
+      // Three reads for the page, whatever its size: the page, first images, picks.
+      expect(r.$queryRaw).toHaveBeenCalledTimes(3);
+      expect(rawCalls().find((call) => isChosenImageRead(call.text))!.values[0]).toEqual([7, 8, 9]);
+      expect(rawCalls()[0].text).toContain('st."createdAt", st."coverImageId" FROM "Storyline" st');
+    });
+
+    it('never covers a card with a pick from a chapter the reader is shown as a tombstone', async () => {
+      answerFeed(
+        [feedRow(10, { coverImageId: 7 })],
+        [picked(7, { postUserId: STRANGER, publishedAt: null })]
+      );
+      const [item] = (await feed()).items;
+      expect(item.coverImage?.id).toBe(1510);
+    });
+
+    it('reads no picks when no card has one', async () => {
+      answerFeed([feedRow(10)]);
+      await feed();
+      expect(rawCalls().filter((call) => isChosenImageRead(call.text))).toHaveLength(0);
+      expect(r.$queryRaw).toHaveBeenCalledTimes(2);
+    });
+
+    it("gives each card its owner's avatar and cosmetics, in one read for the page", async () => {
+      answerFeed([feedRow(10), feedRow(11), feedRow(12, { userId: COLLABORATOR, username: 'c' })]);
+      r.user.findMany.mockResolvedValue([
+        {
+          id: OWNER,
+          username: 'owner',
+          image: 'a.png',
+          profilePicture: null,
+          cosmetics: [],
+          ...notBanned,
+        },
+      ] as never);
+      const { items } = await feed();
+      expect(r.user.findMany).toHaveBeenCalledTimes(1);
+      expect(r.user.findMany.mock.calls[0][0]).toMatchObject({
+        where: { id: { in: [OWNER, COLLABORATOR] } },
+        select: expect.objectContaining({
+          cosmetics: expect.anything(),
+          profilePicture: expect.anything(),
+        }),
+      });
+      expect(items[0].user).toEqual({
+        id: OWNER,
+        username: 'owner',
+        image: 'a.png',
+        profilePicture: null,
+        cosmetics: [],
+      });
+      // An owner the read did not return still gets their name.
+      expect(items[2].user).toEqual({ id: COLLABORATOR, username: 'c' });
     });
   });
 });

@@ -11,11 +11,20 @@ const ceilingSchema = z
 
 const titleSchema = z.string().trim().min(1).max(255);
 
+/** The owner's cover and banner picks; null clears one. Which images are allowed is the server's. */
+const picksSchema = {
+  coverImageId: z.number().int().positive().nullable().optional(),
+  heroImageId: z.number().int().positive().nullable().optional(),
+  /** The banner's vertical focus, 0 (top) to 100 (bottom). */
+  heroImagePosition: z.number().int().min(0).max(100).optional(),
+};
+
 export const createStorylineSchema = z.object({
   postId: z.number().int().positive(),
   title: titleSchema,
   maxNsfwLevel: ceilingSchema,
   whoCanContinue: z.nativeEnum(StorylineWhoCanContinue).optional(),
+  ...picksSchema,
 });
 export type CreateStorylineInput = z.infer<typeof createStorylineSchema>;
 
@@ -25,6 +34,7 @@ export const updateStorylineSchema = z.object({
   status: z.nativeEnum(StorylineStatus).optional(),
   maxNsfwLevel: ceilingSchema.optional(),
   whoCanContinue: z.nativeEnum(StorylineWhoCanContinue).optional(),
+  ...picksSchema,
 });
 export type UpdateStorylineInput = z.infer<typeof updateStorylineSchema>;
 

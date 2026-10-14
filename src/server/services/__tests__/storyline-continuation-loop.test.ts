@@ -1,5 +1,6 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as PlacementService from '~/server/services/placement.service';
+import type * as UserPreferencesService from '~/server/services/user-preferences.service';
 import { STORYLINE_REFUSALS } from '~/shared/utils/storyline-placement';
 import { createFakeDb, type FakeDb } from './storyline-loop.fake-db';
 
@@ -36,6 +37,14 @@ vi.mock('~/server/services/placement.service', async (importOriginal) => ({
 vi.mock('~/server/events/points/hooks', () => ({
   onPlacementApproved: async () => undefined,
   onPlacementsTakenDown: async () => undefined,
+}));
+// The reader's hidden images and tags, read for chapter images: none, and not this loop's subject.
+vi.mock('~/server/services/user-preferences.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof UserPreferencesService>()),
+  getAllHiddenForUser: async () => ({ hiddenImages: [], hiddenTags: [] }),
+}));
+vi.mock('~/server/services/blocked-browsing-tags.service', () => ({
+  enforceBlockedBrowsingTags: async () => ({ emptyResult: false }),
 }));
 vi.mock('~/server/rewards/active/stickerPlacementAccepted.reward', () => ({
   stickerPlacementAcceptedReward: { apply: async () => undefined },

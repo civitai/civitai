@@ -247,10 +247,16 @@ describe('storyline router: canon ahead', () => {
   beforeEach(() => {
     r.storyline.findUnique.mockResolvedValue(xStory as never);
     r.storylineChapter.findUnique.mockResolvedValue({ storylineId: 10 } as never);
-    r.$queryRaw.mockResolvedValue([
-      { id: 2, postId: 102, depth: 1 },
-      { id: 3, postId: 103, depth: 2 },
-    ] as never);
+    // The canon walk; the chapters' first images are none.
+    r.$queryRaw.mockImplementation(((strings: TemplateStringsArray) =>
+      Promise.resolve(
+        strings.join('?').includes('WITH RECURSIVE main')
+          ? [
+              { id: 2, postId: 102, depth: 1 },
+              { id: 3, postId: 103, depth: 2 },
+            ]
+          : []
+      )) as never);
     r.post.findMany.mockResolvedValue([post(102, OWNER), post(103, AUTHOR)] as never);
     r.storylineChapterEdge.groupBy.mockResolvedValue([] as never);
   });
@@ -269,8 +275,15 @@ describe('storyline router: canon ahead', () => {
         chapterId: 3,
         depth: 2,
         tombstone: null,
-        post: { id: 103, title: 'post 103', userId: AUTHOR, username: `u${AUTHOR}` },
+        post: {
+          id: 103,
+          title: 'post 103',
+          userId: AUTHOR,
+          username: `u${AUTHOR}`,
+          user: { username: `u${AUTHOR}` },
+        },
         childCount: 0,
+        firstImage: null,
       },
     ]);
   });

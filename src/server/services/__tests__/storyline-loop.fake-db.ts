@@ -384,6 +384,9 @@ export function createFakeDb() {
       return [{ exists: blocks.has(`${a}:${b}`) || blocks.has(`${c}:${d}`) }];
     }
     if (text.includes("'scores'")) return [{ score: 0 }];
+    // Storyline images (first images, chosen covers): this loop seeds no images, and which
+    // images a reader may see is storyline.service.test's subject, not this one's.
+    if (text.includes('FROM "Image" i') && text.includes('JOIN "StorylineChapter" c')) return [];
     if (text.includes('FOR NO KEY UPDATE')) return [];
     if (text.includes('FROM "Placement" pl') && text.includes('JOIN "Post" p')) {
       if (text.includes('pl."createdAt" >')) throw new Error('fake db: queue keyset not modelled');
