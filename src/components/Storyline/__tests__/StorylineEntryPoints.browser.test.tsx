@@ -16,6 +16,7 @@ import { StorylinePostEditorSwitch } from '~/components/Storyline/StorylinePostE
 
 const mocks = vi.hoisted(() => ({
   forPosts: {} as Record<number, unknown>,
+  loading: false,
   open: vi.fn(),
 }));
 
@@ -25,7 +26,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
     ...(await importOriginal<typeof TrpcMod>()),
     trpc: makeTrpcProxy({
       'storyline.getForPosts': {
-        useQuery: () => ({ data: mocks.forPosts, isLoading: false }),
+        useQuery: () => ({ data: mocks.forPosts, isLoading: mocks.loading }),
       },
     }),
   };
@@ -49,6 +50,7 @@ const inOpenMenu = (ui: React.ReactElement) => (
 
 beforeEach(() => {
   mocks.forPosts = {};
+  mocks.loading = false;
   mocks.open.mockReset();
   vi.mocked(useRouter().push).mockClear();
 });
@@ -108,6 +110,25 @@ describe('post editor switch', () => {
 
     // An absence read before the first commit passes for free; wait for the same commit first.
     await expect.element(page.getByText('rendered')).toBeVisible();
+    expect(page.getByRole('switch').elements()).toHaveLength(0);
+  });
+});
+
+// Until the lookup answers, a chapter is indistinguishable from a post that is not one, and offering
+// to start a storyline then would open a second start form for an existing chapter.
+describe('while the chapter lookup is loading', () => {
+  test('neither entry point offers anything', async () => {
+    mocks.loading = true;
+    renderWithProviders(
+      <>
+        <span>rendered</span>
+        {inOpenMenu(<StartStorylineMenuItem post={post} />)}
+        <StorylinePostEditorSwitch post={post} />
+      </>
+    );
+
+    await expect.element(page.getByText('rendered')).toBeVisible();
+    expect(page.getByRole('menuitem').elements()).toHaveLength(0);
     expect(page.getByRole('switch').elements()).toHaveLength(0);
   });
 });

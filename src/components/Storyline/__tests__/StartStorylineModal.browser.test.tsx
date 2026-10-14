@@ -1,10 +1,15 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
+import { useRouter } from 'next/router';
 import { renderWithProviders } from '../../../../test/component-setup';
 import type * as TrpcMod from '~/utils/trpc';
 import type * as DialogProviderMod from '~/components/Dialog/DialogProvider';
 import { NsfwLevel } from '~/server/common/enums';
-import { StartStorylineModal } from '~/components/Storyline/StartStorylineModal';
+import { dialogStore } from '~/components/Dialog/dialogStore';
+import {
+  StartStorylineModal,
+  openStartStorylineModal,
+} from '~/components/Storyline/StartStorylineModal';
 
 /**
  * The start form sends the post, the title and the ceiling the creator chose, and refuses a ceiling
@@ -12,7 +17,11 @@ import { StartStorylineModal } from '~/components/Storyline/StartStorylineModal'
  * own start.
  */
 
-const mocks = vi.hoisted(() => ({ mutate: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+  mutate: vi.fn(),
+  onClose: vi.fn(),
+  options: {} as { onSuccess?: (data: { id: number }) => Promise<void> },
+}));
 
 vi.mock('~/utils/trpc', async (importOriginal) => {
   const { makeTrpcProxy } = await import('../../../../test/trpcProxyStub');
@@ -20,7 +29,10 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
     ...(await importOriginal<typeof TrpcMod>()),
     trpc: makeTrpcProxy({
       'storyline.create': {
-        useMutation: () => ({ mutate: mocks.mutate, isPending: false }),
+        useMutation: (options: typeof mocks.options) => {
+          mocks.options = options;
+          return { mutate: mocks.mutate, isPending: false };
+        },
       },
     }),
   };
@@ -28,10 +40,14 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
 
 vi.mock('~/components/Dialog/DialogProvider', async (orig) => ({
   ...(await orig<typeof DialogProviderMod>()),
-  useDialogContext: () => ({ opened: true, onClose: vi.fn(), zIndex: 200 }),
+  useDialogContext: () => ({ opened: true, onClose: mocks.onClose, zIndex: 200 }),
 }));
 
-beforeEach(() => mocks.mutate.mockReset());
+beforeEach(() => {
+  mocks.mutate.mockReset();
+  mocks.onClose.mockReset();
+  vi.mocked(useRouter().push).mockClear();
+});
 
 describe('StartStorylineModal', () => {
   test('starts the storyline from the post, at chapter 1 rating or above', async () => {
@@ -87,5 +103,26 @@ describe('StartStorylineModal', () => {
       .element(page.getByText("This post hasn't been rated yet.", { exact: false }))
       .toBeVisible();
     await expect.element(page.getByRole('button', { name: 'Start storyline' })).toBeDisabled();
+  });
+
+  test('once created, closes and opens the new storyline', async () => {
+    renderWithProviders(<StartStorylineModal postId={41} postNsfwLevel={NsfwLevel.PG} />);
+    await expect.element(page.getByRole('button', { name: 'Start storyline' })).toBeVisible();
+
+    await mocks.options.onSuccess?.({ id: 9 });
+    expect(mocks.onClose).toHaveBeenCalledTimes(1);
+    // The router is the shared component-setup stub.
+    expect(useRouter().push).toHaveBeenCalledWith('/storylines/9');
+  });
+
+  test('the opener hands the form the post it was opened from', () => {
+    const trigger = vi.spyOn(dialogStore, 'trigger').mockImplementation(() => undefined as never);
+    openStartStorylineModal({ id: 41, title: 'Cat patch', nsfwLevel: NsfwLevel.R });
+
+    expect(trigger).toHaveBeenCalledWith({
+      component: StartStorylineModal,
+      props: { postId: 41, postTitle: 'Cat patch', postNsfwLevel: NsfwLevel.R },
+    });
+    trigger.mockRestore();
   });
 });
