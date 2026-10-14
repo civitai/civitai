@@ -4,7 +4,11 @@ import { env } from '~/env/server';
 import { NsfwLevel } from '~/server/common/enums';
 import { REDIS_KEYS } from '~/server/redis/client';
 import { simpleUserSelect } from '~/server/selectors/user.selector';
-import { fetchThroughCache, setFetchThroughCache } from '~/server/utils/cache-helpers';
+import {
+  bustFetchThroughCache,
+  fetchThroughCache,
+  setFetchThroughCache,
+} from '~/server/utils/cache-helpers';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { isPlacementBlocked } from '~/server/services/placement-moderation.service';
 import { enforceBlockedBrowsingTags } from '~/server/services/blocked-browsing-tags.service';
@@ -1290,8 +1294,14 @@ export async function recordStorylineBranchChoice({
     update: { chapterId: toChapterId },
   });
   // Written through rather than marked stale, so the reader's next read counts their choice even
-  // when it loses the refill lock to a read beside it.
-  await setFetchThroughCache(forkCountsKey(fromChapterId), await readForkCounts(fromChapterId));
+  // when it loses the refill lock to a read beside it. The choice is saved by now: if the count
+  // cannot be read, mark the entry stale as before rather than fail the request.
+  const key = forkCountsKey(fromChapterId);
+  try {
+    await setFetchThroughCache(key, await readForkCounts(fromChapterId));
+  } catch {
+    await bustFetchThroughCache(key).catch(() => undefined);
+  }
 }
 
 /**

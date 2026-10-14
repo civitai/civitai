@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as UserPreferencesService from '~/server/services/user-preferences.service';
 import { dbMock, resetSharedMocks } from '~/__tests__/mocks';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
+import { CacheTTL } from '~/server/common/constants';
 import { NsfwLevel } from '~/server/common/enums';
 
 /**
@@ -14,7 +15,8 @@ import { NsfwLevel } from '~/server/common/enums';
  * another reader and reads straight after the choice.
  */
 
-vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: vi.fn() }));
+const logSysRedisFailOpen = vi.hoisted(() => vi.fn());
+vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen }));
 vi.mock('~/server/services/user-preferences.service', async (importOriginal) => ({
   ...(await importOriginal<typeof UserPreferencesService>()),
   getBlockedPairIds: vi.fn(async () => []),
@@ -40,6 +42,7 @@ const counts = (pairs: Array<[number, number]>) =>
 
 beforeEach(() => {
   resetSharedMocks();
+  logSysRedisFailOpen.mockReset();
   store = new Map();
   redisMock.redis.packed.get.mockImplementation(
     (async (key: string) => store.get(key) ?? null) as never
@@ -114,5 +117,48 @@ describe('fork shares straight after a choice', () => {
       browsingLevel: NsfwLevel.PG,
     });
     expect(w.storylineBranchChoice.groupBy.mock.calls.length).toBe(readsAfterChoice);
+  });
+
+  const choose = () =>
+    recordStorylineBranchChoice({
+      viewer: { id: READER },
+      browsingLevel: NsfwLevel.PG,
+      fromChapterId: 1,
+      toChapterId: 12,
+    });
+
+  it('write the counts for as long as a refill would keep them', async () => {
+    counts([[12, 1]]);
+    await choose();
+    expect(redisMock.redis.packed.set).toHaveBeenCalledWith(
+      'packed:caches:storyline-fork-counts:1',
+      { data: [[12, 1]], cachedAt: expect.any(Number) },
+      { EX: CacheTTL.sm * 2 },
+      { compress: false, cacheName: undefined }
+    );
+  });
+
+  it('keep the choice when the cache write fails, and say so', async () => {
+    counts([[12, 1]]);
+    redisMock.redis.packed.set.mockRejectedValue(new Error('cache cluster down') as never);
+    await expect(choose()).resolves.toBeUndefined();
+    expect(w.storylineBranchChoice.upsert).toHaveBeenCalledTimes(1);
+    expect(logSysRedisFailOpen).toHaveBeenCalledWith(
+      'write-degraded',
+      'setFetchThroughCache set (cache cluster)',
+      expect.any(Error),
+      { key: 'packed:caches:storyline-fork-counts:1' }
+    );
+  });
+
+  it('keep the choice when its counts cannot be read, and mark the cached ones stale', async () => {
+    store.set('packed:caches:storyline-fork-counts:1', { data: [[11, 1]], cachedAt: Date.now() });
+    w.storylineBranchChoice.groupBy.mockRejectedValue(new Error('primary unavailable') as never);
+    await expect(choose()).resolves.toBeUndefined();
+    expect(w.storylineBranchChoice.upsert).toHaveBeenCalledTimes(1);
+    expect(store.get('packed:caches:storyline-fork-counts:1')).toEqual({
+      data: [[11, 1]],
+      cachedAt: 0,
+    });
   });
 });
