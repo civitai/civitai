@@ -1,4 +1,4 @@
-// The moderator app keeps a client-safe copy of these in `apps/moderator/src/lib/creator-score-grant.ts`.
+// The endpoint enforces these; a moderator-app form that pre-validates must use the same numbers.
 export const CREATOR_SCORE_GRANT_LIMITS = {
   maxAmount: 10_000,
   dailyPerModerator: 20,

@@ -5266,7 +5266,8 @@ model CreatorMilestoneCosmetic {
 }
 
 /// Creator Score a moderator awarded by hand. `User.meta.scores.staffAwarded` is the sum of the
-/// unrevoked rows, rewritten on every grant and revoke; the nightly score job never writes it.
+/// unrevoked rows, rewritten on every grant and revoke; the nightly job carries it forward but never
+/// recomputes it.
 model CreatorScoreGrant {
   id           Int       @id @default(autoincrement())
   userId       Int

@@ -28,7 +28,7 @@ export const creatorScoreSources = {
   },
 } as const;
 
-// Kept out of `creatorScoreSources`: the explainer lists those as ways to earn, and this is not one.
+// Not in `creatorScoreSources`: the explainer lists those as ways to earn.
 export const creatorScoreStaffAwarded = {
   label: 'Staff awarded',
   earnedBy: 'Points awarded by the Civitai team',

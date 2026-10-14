@@ -475,13 +475,9 @@ export async function grantScoreTierCrossings(
   await alertNewLegends(audienceCrossings).catch((e) => log('new-legend alert failed', e));
 }
 
-// Persist per-category scores and recompute `total` for a batch of users in one
-// statement. `records` are `[userId, { category: score }]` entries; each total is
-// the sum of `CREATOR_SCORE_CATEGORIES`, taking the freshly-supplied value when present
-// and otherwise the user's previously-stored value, so a category this run did not
-// fetch (`staffAwarded` is never fetched) is carried forward. Shared by the cron job,
-// the backfills and the moderator grant tool. Returns each user's total before and
-// after; `prev` is a self-join, so it reads the pre-update row.
+// total = sum of `CREATOR_SCORE_CATEGORIES`: the supplied value if present, else the stored
+// one, so a category this run did not fetch (`staffAwarded`) is carried forward. Returns each
+// user's total before and after; `prev` is a self-join, so it reads the pre-update row.
 export async function applyUserScoreUpdates(
   pg: AugmentedPool,
   records: [string, Partial<Record<ScoreCategory, number>>][],
@@ -513,7 +509,7 @@ const TOTAL_SQL = CREATOR_SCORE_CATEGORIES.map(
     `COALESCE((s.scores->>'${category}')::numeric, (u.meta->'scores'->>'${category}')::numeric, 0)`
 ).join(' + ');
 
-// Scores are numbers from our own queries, never user text, so inlining the JSON is safe.
+// Interpolated into SQL: records must hold only numeric scores.
 export function userScoreUpdateSql(records: [string, Partial<Record<ScoreCategory, number>>][]) {
   const dataJson = JSON.stringify(records.map(([id, scores]) => ({ id: +id, scores })));
   return `
@@ -556,7 +552,6 @@ type ScoreMultipliers = {
   reportsActioned: number;
   reportsAgainst: number;
 };
-// `staffAwarded` has no multiplier and no fetcher: only the moderator grant tool writes it.
 export type ScoreCategory = keyof ScoreMultipliers | 'staffAwarded' | 'total';
 
 // The multipliers live in the `system:user-score-multipliers` key, stored both

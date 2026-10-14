@@ -24,9 +24,8 @@ export function creatorScoreFromSession(user: { meta?: unknown } | null | undefi
 }
 
 /**
- * Every per-category score `User.meta.scores.total` sums. `staffAwarded` is written by the moderator
- * grant tool, the rest by the nightly score job. The job's total and `getCreatorRequirements` build
- * their SQL from this list; Creator Studio keeps its own copy, held to it by a parity test.
+ * Every per-category score `User.meta.scores.total` sums. A new one also goes in Creator Studio's
+ * `SCORE_KEYS` (`apps/creator-studio/src/lib/server/creator-score.ts`); a parity test enforces it.
  */
 export const CREATOR_SCORE_CATEGORIES = [
   'models',
