@@ -98,7 +98,7 @@ vi.mock('~/server/warmup', () => ({
   didFailOpenTimeout: () => false,
 }));
 
-import healthHandler, { runHealthChecks } from '~/pages/api/health';
+import healthHandler, { runHealthChecks, runHealthChecksReusingCleanRun } from '~/pages/api/health';
 import readyHandler from '~/pages/api/ready';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
@@ -216,11 +216,11 @@ describe('runHealthChecks — sysRedis soft dependency', () => {
 // does not hit every dependency each time. Only a clean sweep is reused; the module-level verdict
 // persists across tests, so each test starts on a clock past the previous one's window.
 describe('probe routes reuse a recent clean run', () => {
-  let now = 1_000_000_000_000;
+  let now = 1_000_000;
 
   beforeEach(() => {
     now += 60_000;
-    vi.spyOn(Date, 'now').mockImplementation(() => now);
+    vi.spyOn(performance, 'now').mockImplementation(() => now);
   });
 
   const probe = async (handler: typeof healthHandler) => {
@@ -267,7 +267,22 @@ describe('probe routes reuse a recent clean run', () => {
 
   it('control: once the window has passed the full suite runs again', async () => {
     await probe(healthHandler);
-    now += 10_001;
+    now += 9_999;
+    await probe(healthHandler);
+    expect(mocks.dbWrite.$transaction).toHaveBeenCalledTimes(1);
+
+    now += 1; // exactly 10 s after the clean run started
+    await probe(healthHandler);
+    expect(mocks.dbWrite.$transaction).toHaveBeenCalledTimes(2);
+  });
+
+  it('a run whose caller disconnected is not reused, even if every check passed', async () => {
+    const controller = new AbortController();
+    const aborted = runHealthChecksReusingCleanRun(controller.signal);
+    controller.abort();
+    await aborted;
+
+    now += 1_000;
     await probe(healthHandler);
 
     expect(mocks.dbWrite.$transaction).toHaveBeenCalledTimes(2);
@@ -297,6 +312,29 @@ describe('probe routes reuse a recent clean run', () => {
 
     expect(first.statusCode).toBe(200);
     expect(mocks.sysRedis.ping).toHaveBeenCalledTimes(2);
+  });
+
+  it('a slow clean run that finishes after a newer failing run does not mask the failure', async () => {
+    let releaseSlow!: () => void;
+    mocks.dbWrite.$transaction.mockImplementationOnce(
+      () => new Promise<number>((resolve) => (releaseSlow = () => resolve(1)))
+    );
+    const slowClean = probe(healthHandler);
+
+    now += 1_000;
+    mocks.dbRead.$transaction.mockRejectedValueOnce(new Error('db read down'));
+    const failing = await probe(healthHandler);
+
+    now += 1_000;
+    releaseSlow();
+    expect((await slowClean).statusCode).toBe(200);
+
+    now += 1_000;
+    const next = await probe(healthHandler);
+
+    expect(failing.statusCode).toBe(500);
+    expect(next.statusCode).toBe(200);
+    expect(mocks.dbRead.$transaction).toHaveBeenCalledTimes(3);
   });
 
   it('a dependency that breaks after a clean run is reported once the window ends', async () => {

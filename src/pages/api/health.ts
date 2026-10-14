@@ -409,23 +409,31 @@ export async function runHealthChecks(
 // checks a caller treats as critical.
 const CLEAN_RUN_REUSE_MS = 10_000;
 let lastCleanRun: { startedAt: number; results: Record<CheckKey, boolean> } | undefined;
+// Overlapping probes can finish out of order: a slow clean run must not overwrite a failure that a
+// later-started run already reported.
+let lastNonCleanFinishedAt = -Infinity;
 
 export async function runHealthChecksReusingCleanRun(
   signal: AbortSignal
 ): ReturnType<typeof runHealthChecks> {
-  const startedAt = Date.now();
+  // Monotonic, so a wall-clock step backwards cannot keep a stale verdict fresh.
+  const startedAt = performance.now();
   if (lastCleanRun && startedAt - lastCleanRun.startedAt < CLEAN_RUN_REUSE_MS) {
     return { healthy: true, results: { ...lastCleanRun.results }, deadlineTimedOut: false };
   }
 
   const run = await runHealthChecks(signal);
+  // Every check true implies `healthy`, and a deadline overrun leaves an unsettled check false.
   const clean =
     !signal.aborted &&
-    run.healthy &&
-    !run.deadlineTimedOut &&
     Object.keys(run.results).length > 0 &&
     Object.values(run.results).every(Boolean);
-  lastCleanRun = clean ? { startedAt, results: { ...run.results } } : undefined;
+  if (!clean) {
+    lastNonCleanFinishedAt = performance.now();
+    lastCleanRun = undefined;
+  } else if (startedAt >= lastNonCleanFinishedAt) {
+    lastCleanRun = { startedAt, results: { ...run.results } };
+  }
   return run;
 }
 
