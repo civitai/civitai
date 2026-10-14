@@ -32,7 +32,9 @@ import {
   IconPhoto,
   IconShare3,
 } from '@tabler/icons-react';
-import { useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
+import { StorylineBanner, StorylineStageOverlay } from '~/components/Storyline/StorylineDetail';
+import { useStorylineMode } from '~/components/Storyline/StorylineModeProvider';
 import { useRouter } from 'next/router';
 import clsx from 'clsx';
 import { STICKER_REVEAL_PARAM, stickerRevealRequested } from '~/components/Placement/queue-routes';
@@ -167,6 +169,19 @@ export function ImageDetail2() {
 
   const carouselNavigation = useCarouselNavigation({ items: images, initialIndex: index });
 
+  // A storyline is walked, not looped: past its last image is the end-of-chapter view.
+  const storyline = useStorylineMode();
+  const isLastImage = carouselNavigation.index >= images.length - 1;
+  const navigation = storyline.active
+    ? {
+        ...carouselNavigation,
+        next: () => (isLastImage ? storyline.setEndOpen(true) : carouselNavigation.next()),
+        previous: () => {
+          if (carouselNavigation.index > 0) carouselNavigation.previous();
+        },
+      }
+    : carouselNavigation;
+
   // Deferred to the carousel settling rather than run per slide change: the URL
   // replace pushes a global store update that re-renders every useBrowserRouter
   // consumer, which is too much to do inside an animating frame.
@@ -181,6 +196,18 @@ export function ImageDetail2() {
     // dead-end (and loop back) at the edge of the loaded page
     if (hasMore && settledIndex >= images.length - PREFETCH_THRESHOLD) loadMore();
   };
+
+  // The drawer and the fork point move the detail to another image from outside the carousel.
+  // An index that only caught up with the carousel's own settle is skipped, or a quick second
+  // swipe would be dragged back.
+  const carouselNavigate = carouselNavigation.navigate;
+  useEffect(() => {
+    const target = images[index];
+    if (!storyline.active || !target || target.id === lastSettledIdRef.current) return;
+    lastSettledIdRef.current = target.id;
+    carouselNavigate(index);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [index, storyline.active]);
 
   const image = images[carouselNavigation.index];
 
@@ -398,14 +425,24 @@ export function ImageDetail2() {
                         </div>
                       </div>
 
+                      <StorylineBanner imageId={image.id} />
+
                       {/* IMAGE CAROUSEL */}
-                      <ImageDetailCarousel
-                        images={images}
-                        videoRef={videoRef}
-                        connect={connect}
-                        onSettle={handleSettle}
-                        {...carouselNavigation}
-                      />
+                      <div className="relative flex min-h-0 flex-1 flex-col">
+                        <ImageDetailCarousel
+                          images={images}
+                          videoRef={videoRef}
+                          connect={connect}
+                          onSettle={handleSettle}
+                          loop={!storyline.active}
+                          {...navigation}
+                        />
+                        <StorylineStageOverlay
+                          imageId={image.id}
+                          postId={image.postId ?? null}
+                          isLastImage={isLastImage}
+                        />
+                      </div>
                       {/* FOOTER */}
                       <div className="flex flex-col gap-3 p-3">
                         <div className="flex justify-center">

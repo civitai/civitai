@@ -89,6 +89,7 @@ export function ImageDetailCarousel({
   next,
   previous,
   onSettle,
+  loop = true,
 }: ImageDetailCarouselProps & {
   images: ImageProps[];
   index: number;
@@ -97,6 +98,8 @@ export function ImageDetailCarousel({
   previous: () => void;
   onSettle?: (index: number) => void;
   canNavigate: boolean;
+  /** Read once at mount, like every other embla option here; remount to change it. */
+  loop?: boolean;
 }) {
   const [embla, setEmbla] = useState<EmblaCarouselType | null>(null);
   const emblaRef = useRef<EmblaCarouselType | null>(null);
@@ -199,7 +202,7 @@ export function ImageDetailCarousel({
         onSlideChange={handleSlideChange}
         setEmbla={handleSetEmbla}
         startIndex={startIndexRef.current}
-        loop
+        loop={loop}
         watchDrag={canNavigate && watchTouchDrag}
         withKeyboardEvents={false}
       >
@@ -215,7 +218,7 @@ export function ImageDetailCarousel({
                     isn't mounted yet, so a drag started in that window reveals it late;
                     the fallback timer above bounds how long that can last. */}
                 {() =>
-                  (i === index || isAdjacent(i, settledIndex, images.length)) && (
+                  (i === index || isAdjacent(i, settledIndex, images.length, loop)) && (
                     <ImageContent
                       image={image}
                       active={index === i}
@@ -233,11 +236,11 @@ export function ImageDetailCarousel({
   );
 }
 
-// the carousel loops, so the neighbors of the first/last slide wrap around
-function isAdjacent(i: number, index: number, length: number) {
+// a looping carousel's first and last slides are neighbors
+function isAdjacent(i: number, index: number, length: number, loop: boolean) {
   if (length < 2) return i === index;
   const distance = Math.abs(i - index);
-  return Math.min(distance, length - distance) <= 1;
+  return (loop ? Math.min(distance, length - distance) : distance) <= 1;
 }
 
 function ImageContent({

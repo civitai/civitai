@@ -3,7 +3,7 @@ import { IconAlertTriangle, IconBrush, IconClock2, IconInfoCircle } from '@table
 import { useCallback, useMemo, memo } from 'react';
 import cardClasses from '~/components/Cards/Cards.module.css';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
-import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogLink';
+import { RoutedDialogLink, triggerRoutedDialog } from '~/components/Dialog/RoutedDialogLink';
 import { DurationBadge } from '~/components/DurationBadge/DurationBadge';
 import { JudgeScoreBadge } from '~/components/Image/JudgeScoreBadge/JudgeScoreBadge';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
@@ -35,6 +35,8 @@ import { useImageStore } from '~/store/image.store';
 import { useTourContext } from '~/components/Tours/ToursProvider';
 import { BlockedReason } from '~/server/common/enums';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useStorylineForPost } from '~/components/Storyline/StorylineBatchProvider';
+import { StorylinePill } from '~/components/Storyline/StorylinePill';
 import clsx from 'clsx';
 import classes from './ImagesCard.module.scss';
 
@@ -56,6 +58,7 @@ function ImagesCardContent({ data, height }: { data: ImagesInfiniteModel; height
   const currentUser = useCurrentUser();
 
   const image = useImageStore(data);
+  const storyline = useStorylineForPost(image.postId);
 
   const isBlocked = image.ingestion === ImageIngestionStatus.Blocked || !!image.blockedFor;
   const isPending = image.ingestion === ImageIngestionStatus.Pending;
@@ -158,6 +161,25 @@ function ImagesCardContent({ data, height }: { data: ImagesInfiniteModel; height
                 <div className="absolute left-[max(0.5rem,var(--event-decoration-clear-left,0px))] top-2">
                   <div className="flex flex-nowrap items-center gap-1">
                     <ImageGuard2.BlurToggle radius="xl" h={26} style={{ pointerEvents: 'auto' }} />
+                    {safe && storyline && (
+                      <StorylinePill
+                        title={storyline.title}
+                        depth={storyline.depth}
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          triggerRoutedDialog({
+                            name: 'imageDetail',
+                            state: {
+                              imageId: image.id,
+                              images: getDialogState(image.id, getImages()),
+                              ...contextProps,
+                              storylineChapterId: storyline.chapterId,
+                            },
+                          });
+                        }}
+                      />
+                    )}
                     {safe &&
                       image.type === MediaType.video &&
                       image.metadata &&
