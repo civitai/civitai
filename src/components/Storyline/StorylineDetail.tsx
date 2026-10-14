@@ -32,8 +32,10 @@ export function StorylineToolbarChip({
   placement: 'toolbar' | 'mobile';
 }) {
   const storyline = useStorylineMode();
-  const isMobile = useIsMobile({ type: 'media' });
-  if (isMobile !== (placement === 'mobile')) return null;
+  // The same test as the slots' `@md:hidden` / `@max-md:hidden`: the stage container under md.
+  // A viewport check at sm left 768-1023px with both slots' chips unmounted or hidden.
+  const narrowStage = useIsMobile({ breakpoint: 'md' });
+  if (narrowStage !== (placement === 'mobile')) return null;
   if (!storyline.active) return <StorylineEntryPill postId={postId} />;
   const { chapterId, depth } = chapterPosition(storyline, imageId);
   const end = storyline.path.chapters[storyline.path.chapters.length - 1];

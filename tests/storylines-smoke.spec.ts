@@ -68,7 +68,8 @@ test.describe('storylines smoke', () => {
     await page.getByTestId('storyline-next').click();
     await expect(page.getByTestId('storyline-end-of-chapter')).toBeVisible();
 
-    // The chip stays usable over the end card: a click only lands if nothing covers it.
+    // The toolbar chip stays clickable with the end card open: a click only lands if nothing
+    // covers it. Esc then closes the sheet, which holds focus once open.
     await page.getByTestId('storyline-mode-chip').click();
     await expect(page.getByTestId('storyline-subway')).toBeVisible();
     await page.keyboard.press('Escape');

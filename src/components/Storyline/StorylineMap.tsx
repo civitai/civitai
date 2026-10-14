@@ -74,29 +74,32 @@ export function StorylineMapControl({
     return (
       <>
         {chip}
-        <Drawer
+        {/* The parts, not <Drawer>: no overlay, and a name on the dialog itself. <Drawer> puts
+            aria-labelledby on its root, and its content only takes a Drawer.Title's id. */}
+        <Drawer.Root
           opened={drawerOpen}
           onClose={() => setDrawerOpen(false)}
           position="bottom"
           size="72%"
-          withOverlay={false}
-          withCloseButton={false}
           lockScroll={false}
           zIndex={400}
           radius="lg"
           padding={0}
-          aria-labelledby={titleId}
-          classNames={{ body: 'h-full', content: 'shadow-[0_-12px_32px_rgba(0,0,0,.45)]' }}
         >
-          <div className="flex h-full flex-col">
-            <div aria-hidden className="mx-auto mt-2 h-1 w-10 shrink-0 rounded-full bg-gray-4" />
-            <StorylineMap
-              storyline={storyline}
-              currentChapterId={currentChapterId}
-              titleId={titleId}
-            />
-          </div>
-        </Drawer>
+          <Drawer.Content
+            aria-label={`Storyline map: ${path.storyline.title}`}
+            className="shadow-[0_-12px_32px_rgba(0,0,0,.45)]"
+          >
+            <Drawer.Body className="flex h-full flex-col">
+              <div aria-hidden className="mx-auto mt-2 h-1 w-10 shrink-0 rounded-full bg-gray-4" />
+              <StorylineMap
+                storyline={storyline}
+                currentChapterId={currentChapterId}
+                titleId={titleId}
+              />
+            </Drawer.Body>
+          </Drawer.Content>
+        </Drawer.Root>
       </>
     );
 

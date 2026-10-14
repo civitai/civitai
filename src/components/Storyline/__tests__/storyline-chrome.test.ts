@@ -5,6 +5,8 @@ import { createRoot } from 'react-dom/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type * as QueriesModule from '~/components/Storyline/storyline.queries';
+import type * as ModeModule from '~/components/Storyline/StorylineModeProvider';
+import { StorylineToolbarChip } from '~/components/Storyline/StorylineDetail';
 import { StorylineMapControl } from '~/components/Storyline/StorylineMap';
 import type { ActiveStorylineMode } from '~/components/Storyline/StorylineModeProvider';
 import {
@@ -19,6 +21,8 @@ const mocks = vi.hoisted(() => ({
   aheadLoading: false,
   shares: undefined as undefined | { total: number; shares: Record<number, number> },
   mobile: false,
+  narrowStage: false,
+  mode: { active: false } as unknown,
 }));
 
 vi.mock('~/components/Storyline/storyline.queries', async (importOriginal) => ({
@@ -31,7 +35,17 @@ vi.mock('~/components/Storyline/storyline.queries', async (importOriginal) => ({
   }),
   useStorylineForkShares: () => ({ data: mocks.shares }),
 }));
-vi.mock('~/hooks/useIsMobile', () => ({ useIsMobile: () => mocks.mobile }));
+// Two questions, answered apart: the placement asks whether the stage container is under md (what
+// the toolbar slots' CSS asks); the sheet asks whether the viewport is a phone.
+vi.mock('~/hooks/useIsMobile', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  useIsMobile: (o?: { breakpoint?: string; type?: string }) =>
+    o?.breakpoint === 'md' && o?.type === undefined ? mocks.narrowStage : mocks.mobile,
+}));
+vi.mock('~/components/Storyline/StorylineModeProvider', async (importOriginal) => ({
+  ...(await importOriginal<typeof ModeModule>()),
+  useStorylineMode: () => mocks.mode,
+}));
 
 function render(element: ReturnType<typeof createElement>) {
   const container = document.createElement('div');
@@ -51,6 +65,8 @@ beforeEach(() => {
   mocks.aheadLoading = false;
   mocks.shares = undefined;
   mocks.mobile = false;
+  mocks.narrowStage = false;
+  mocks.mode = { active: false };
 });
 
 const text = (el: Element | null | undefined) => el?.textContent?.replace(/\s/g, ' ');
@@ -63,22 +79,35 @@ const chapter = (chapterId: number, depth: number, title: string | null = `Ch ${
   post: title === null ? null : { id: chapterId * 10, title, userId: 3, username: 'u' },
 });
 
-function renderMap({ chapterIds = [1], current = chapterIds[0], open = true } = {}) {
-  const storyline = {
-    path: {
-      storyline: { id: 2, title: 'The Patch' },
-      chapters: chapterIds.map((id, depth) => chapter(id, depth)),
-    },
+function makeStoryline({
+  chapters = [chapter(1, 0)] as ReturnType<typeof chapter>[],
+  open = true,
+} = {}) {
+  return {
+    active: true,
+    path: { storyline: { id: 2, title: 'The Patch' }, chapters },
     drawerOpen: open,
     setDrawerOpen: vi.fn(),
     jumpToChapter: vi.fn(),
     continueTo: vi.fn(),
     leave: vi.fn(),
+    chapterIdOfImage: () => chapters[0].chapterId,
   } as unknown as ActiveStorylineMode;
-  const depth = chapterIds.indexOf(current);
+}
+
+function renderMap({
+  chapterIds = [1],
+  current = chapterIds[0],
+  open = true,
+  chapters = chapterIds.map((id, depth) => chapter(id, depth)),
+} = {}) {
+  const storyline = makeStoryline({ chapters, open });
+  const depth = chapters.findIndex((c) => c.chapterId === current);
   render(createElement(StorylineMapControl, { storyline, currentChapterId: current, depth }));
   return storyline;
 }
+
+const flush = () => act(() => new Promise((r) => setTimeout(r, 50)));
 
 const branch = (chapterId: number) => ({
   ...chapter(chapterId, 1, `Way ${chapterId}`),
@@ -159,26 +188,46 @@ describe('the map on desktop: a sheet that drops from the chip', () => {
     ]).toEqual([true, false, 'true', true]);
   });
 
-  it('closes from the chip, the close button, Esc and a press outside, not a press inside', () => {
+  it('ignores a press inside it', () => {
     const storyline = renderMap();
     act(() => q('storyline-subway')?.dispatchEvent(new MouseEvent('mousedown', { bubbles: true })));
     expect(calls(storyline.setDrawerOpen)).toEqual([]);
-    act(() => q('storyline-mode-chip')?.click());
-    act(() => q('storyline-map-close')?.click());
+  });
+
+  it.each([
+    ['the chip', () => q('storyline-mode-chip')?.click()],
+    ['its close button', () => q('storyline-map-close')?.click()],
+    [
+      'a press outside',
+      () => document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true })),
+    ],
+  ])('closes from %s', (_, press) => {
+    const storyline = renderMap();
     act(() => {
-      q('storyline-map-sheet')?.dispatchEvent(
-        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })
-      );
+      press();
     });
-    act(() => document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true })));
-    expect(calls(storyline.setDrawerOpen)).toEqual([[false], [false], [false], [false]]);
+    expect(calls(storyline.setDrawerOpen)).toEqual([[false]]);
+  });
+
+  // The popover hears Esc only inside the sheet, so Esc right after opening relies on the focus
+  // trap having moved focus there. Esc goes to wherever focus actually is.
+  it('takes focus when it opens, so Esc closes it straight away', async () => {
+    const storyline = renderMap();
+    await flush();
+    const focused = document.activeElement;
+    expect(q('storyline-map-sheet')?.contains(focused)).toBe(true);
+    act(() => {
+      focused?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    });
+    expect(calls(storyline.setDrawerOpen)).toEqual([[false]]);
   });
 
   it('opens from the chip, and shows no sheet while closed', () => {
     const storyline = renderMap({ open: false });
-    expect([q('storyline-map-sheet'), q('storyline-mode-chip')?.getAttribute('aria-expanded')]).toEqual(
-      [null, 'false']
-    );
+    expect([
+      q('storyline-map-sheet'),
+      q('storyline-mode-chip')?.getAttribute('aria-expanded'),
+    ]).toEqual([null, 'false']);
     act(() => q('storyline-mode-chip')?.click());
     expect(calls(storyline.setDrawerOpen)).toEqual([[true]]);
   });
@@ -195,6 +244,72 @@ describe('the map on a phone: a bottom sheet that does not dim the page', () => 
       !!document.body.querySelector('.mantine-Drawer-overlay, .mantine-Overlay-root'),
       !!q('storyline-mode-chip'),
     ]).toEqual([true, false, true, false, true]);
+  });
+
+  it('is named for the storyline and closes on Esc and from its close button', async () => {
+    mocks.mobile = true;
+    const storyline = renderMap();
+    const drawer = document.body.querySelector('.mantine-Drawer-content');
+    expect([drawer?.getAttribute('role'), drawer?.getAttribute('aria-label')]).toEqual([
+      'dialog',
+      'Storyline map: The Patch',
+    ]);
+    await flush();
+    act(() => {
+      (document.activeElement ?? document.body).dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })
+      );
+    });
+    act(() => q('storyline-map-close')?.click());
+    expect(calls(storyline.setDrawerOpen)).toEqual([[false], [false]]);
+  });
+});
+
+describe('where the chip goes', () => {
+  // The two toolbar slots are shown by container queries at md (`@md:hidden`, `@max-md:hidden`).
+  // Gating on a viewport check at sm instead left 768-1023px with no chip in either slot, so no
+  // map and no way to leave. Keep the gate on the same question the slots' CSS asks.
+  it.each([
+    [false, 'toolbar', true],
+    [false, 'mobile', false],
+    [true, 'toolbar', false],
+    [true, 'mobile', true],
+  ] as const)('stage under md: %s, %s slot: chip %s', (narrow, placement, shown) => {
+    mocks.narrowStage = narrow;
+    mocks.mode = makeStoryline({ open: false });
+    render(createElement(StorylineToolbarChip, { imageId: 100, postId: 10, placement }));
+    expect(!!q('storyline-mode-chip')).toBe(shown);
+  });
+
+  it('opens the phone sheet by viewport, not by the stage width', () => {
+    mocks.narrowStage = true;
+    mocks.mobile = false;
+    mocks.mode = makeStoryline();
+    render(createElement(StorylineToolbarChip, { imageId: 100, postId: 10, placement: 'mobile' }));
+    expect([
+      !!q('storyline-map-sheet'),
+      !!document.body.querySelector('.mantine-Drawer-content'),
+    ]).toEqual([true, false]);
+  });
+});
+
+describe('the map around a chapter that is gone', () => {
+  it('cannot be opened from its stop or from the footer', () => {
+    const storyline = renderMap({ chapters: [chapter(1, 0), chapter(2, 1, null)], current: 1 });
+    const stop = document.body.querySelector<HTMLButtonElement>(
+      '[data-testid="storyline-stop"][data-chapter-id="2"]'
+    );
+    const next = q('storyline-map-read-next') as HTMLButtonElement | null;
+    act(() => {
+      stop?.click();
+      next?.click();
+    });
+    expect([
+      stop?.disabled,
+      next?.disabled,
+      calls(storyline.jumpToChapter),
+      calls(storyline.continueTo),
+    ]).toEqual([true, true, [], []]);
   });
 });
 
@@ -283,7 +398,9 @@ describe('the map', () => {
     renderMap({ chapterIds: [1, 2] });
     const rows = [...document.body.querySelectorAll('[data-testid="storyline-branch"]')];
     expect(
-      rows.map((r) => r.querySelector('[data-testid="storyline-branch-share"]')?.textContent ?? null)
+      rows.map(
+        (r) => r.querySelector('[data-testid="storyline-branch-share"]')?.textContent ?? null
+      )
     ).toEqual([null, '100%']);
   });
 
@@ -300,9 +417,9 @@ describe('the map', () => {
     mocks.pathChildren = new Map([[1, [branch(2)]]]);
     mocks.shares = { total: 0, shares: {} };
     renderMap();
-    expect([
-      q('storyline-shares-pending')?.textContent,
-      q('storyline-branch-share'),
-    ]).toEqual(['Be the first to choose', null]);
+    expect([q('storyline-shares-pending')?.textContent, q('storyline-branch-share')]).toEqual([
+      'Be the first to choose',
+      null,
+    ]);
   });
 });
