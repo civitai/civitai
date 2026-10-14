@@ -402,6 +402,7 @@ enum RewardsEligibility {
 }
 
 model User {
+  audioModerationReviews AudioModerationScan[]
   id                      Int                    @id @default(autoincrement())
   name                    String?
   username                String?                @unique @db.Citext
@@ -1999,6 +2000,7 @@ enum MediaType {
 }
 
 model Image {
+  audioModerationScans AudioModerationScan[]
   id                Int                     @id @default(autoincrement())
   pHash             BigInt?
   name              String?
@@ -2144,6 +2146,38 @@ enum EntityModerationStatus {
   Failed
   Expired
   Canceled
+}
+
+model AudioModerationScan {
+  id              Int                    @id @default(autoincrement())
+  imageId         Int?
+  image           Image?                 @relation(fields: [imageId], references: [id], onDelete: SetNull)
+  sourceDeletedAt DateTime?
+  sourceUrl       String
+  sourceHash      String
+  status          EntityModerationStatus @default(Pending)
+  attemptId       String                 @default(uuid())
+  attempts        Int                    @default(0)
+  workflowId      String?
+  nextAttemptAt   DateTime               @default(now())
+  startedAt       DateTime?
+  error           String?
+  result          Json?
+  flagged         Boolean?
+  createdAt       DateTime               @default(now())
+  updatedAt       DateTime               @updatedAt
+  completedAt     DateTime?
+  wouldBlock      Boolean?
+  reviewedAt      DateTime?
+  reviewerId      Int?
+  reviewer        User?                  @relation(fields: [reviewerId], references: [id], onDelete: SetNull)
+  reviewNotes     String?
+
+  @@unique([imageId, sourceHash])
+  @@index([status, nextAttemptAt])
+  @@index([workflowId])
+  @@index([flagged, reviewedAt, id])
+  @@index([createdAt])
 }
 
 model EntityModeration {

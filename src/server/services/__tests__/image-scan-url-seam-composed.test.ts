@@ -98,4 +98,25 @@ describe('ingestImage + the real createImageIngestionRequest (composed seam)', (
     const body = mockSubmitWorkflowWithRetry.mock.calls[0][0].body;
     expect(String(body.arguments.mediaUrl)).toContain('https://image.test/');
   });
+
+  it('does not send audio to the visual scanner, even when visual scanning is enabled', async () => {
+    mockIsFlipt.mockResolvedValue(true);
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([]);
+    const result = await ingestImage({
+      image: { ...image('aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/song.mp3'), type: 'audio' },
+    });
+    expect(result).toBe(true);
+    expect(dbMock.dbWrite.$queryRaw).toHaveBeenCalledTimes(1);
+    expect(mockSubmitWorkflowWithRetry).not.toHaveBeenCalled();
+  });
+
+  it('applies the source allowlist before completing audio ingestion', async () => {
+    dbMock.dbWrite.$queryRaw.mockClear();
+    const result = await ingestImage({
+      image: { ...image('https://evil.com/audio.mp3'), type: 'audio' },
+    });
+    expect(result).toBe(false);
+    expect(dbMock.dbWrite.$queryRaw).not.toHaveBeenCalled();
+    expect(mockSubmitWorkflowWithRetry).not.toHaveBeenCalled();
+  });
 });

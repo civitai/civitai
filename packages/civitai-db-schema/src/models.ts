@@ -487,6 +487,7 @@ export interface CryptoTransaction {
 }
 
 export interface User {
+  audioModerationReviews?: AudioModerationScan[];
   id: number;
   name: string | null;
   username: string | null;
@@ -1542,6 +1543,7 @@ export interface PostMetric {
 }
 
 export interface Image {
+  audioModerationScans?: AudioModerationScan[];
   id: number;
   pHash: bigint | null;
   name: string | null;
@@ -1660,6 +1662,32 @@ export interface ImageConnection {
   image?: Image;
   entityId: number;
   entityType: string;
+}
+
+export interface AudioModerationScan {
+  id: number;
+  imageId: number | null;
+  image?: Image | null;
+  sourceDeletedAt: Date | null;
+  sourceUrl: string;
+  sourceHash: string;
+  status: EntityModerationStatus;
+  attemptId: string;
+  attempts: number;
+  workflowId: string | null;
+  nextAttemptAt: Date;
+  startedAt: Date | null;
+  error: string | null;
+  result: JsonValue | null;
+  flagged: boolean | null;
+  createdAt: Date;
+  updatedAt: Date;
+  completedAt: Date | null;
+  wouldBlock: boolean | null;
+  reviewedAt: Date | null;
+  reviewerId: number | null;
+  reviewer?: User | null;
+  reviewNotes: string | null;
 }
 
 export interface EntityModeration {

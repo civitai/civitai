@@ -81,6 +81,7 @@ const GUARD_TOKENS = /isAllowedImageScanUrl|isAllowedAvatarUrl|ImageIngestionUrl
  * the fetcher named so the reason is legible.
  */
 const GATED_FUNNELS: [string, string][] = [
+  ['server/services/audio-moderation.service.ts', 'posted audio → orchestrator audioModeration'],
   ['server/utils/image-scan-url.ts', 'the guard itself'],
   ['server/services/image.service.ts', 'ingestImage pre-check'],
   [

@@ -1759,6 +1759,9 @@ importers:
       semver:
         specifier: ^7.6.0
         version: 7.8.5
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
     devDependencies:
       '@types/semver':
         specifier: ^7.7.1
