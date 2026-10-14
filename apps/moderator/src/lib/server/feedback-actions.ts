@@ -131,6 +131,8 @@ export const triageAction = requiresGrant(
     if (!result.ok) return triageFailure(result.reason);
     // 🔴 Zero affected rows is a REFUSAL. The UPDATE is scoped on the status the operator was
     // looking at, so nothing moving means someone else's verdict is already on the row.
+    // Success, not a refusal: what the operator asked for is what is stored.
+    if ('unchanged' in result) return { success: true, triaged: input.id, unchanged: true };
     if (!result.changed)
       return fail(409, {
         error: 'Someone else already triaged this. Reload to see the current verdict.',

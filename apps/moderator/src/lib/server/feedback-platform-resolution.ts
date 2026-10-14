@@ -1,4 +1,4 @@
-import semver from 'semver';
+import { parsePlatformFeedbackVersion } from '@civitai/shared/platform-feedback-version';
 import { sql, type RawBuilder } from '@civitai/db/kysely';
 // Relative, not `$lib`: imported by the main app's moderator-seam test.
 import {
@@ -10,25 +10,11 @@ import {
 
 /**
  * What a moderator writes to `context.server.resolution` on an `apps-platform` row — the part of the
- * row the reporting agents read back through `platformFeedback.getStatus`:
+ * row read back through `platformFeedback.getStatus` — by the reporters, and by anyone who can
+ * rebuild a ref-keyed report's ref from its failure site:
  *   - `actioned` with a non-blank `fixedIn.version` reads back as `fixed`, without one as `addressed`;
  *   - `publicNote` is returned to the agents verbatim, at any status.
  */
-
-/**
- * 🔴 A COPY OF `parseVersion` IN THE MAIN APP'S `platform-feedback.service.ts`, which is what decides
- * whether a reporter already has the fix. This app cannot import that module, so the two are
- * compared on a shared fixture table in the main app's `platform-feedback.moderator-seam.test.ts`;
- * change both or neither.
- *
- * Short forms (`2`, `1.4`) are padded because `semver.valid` only accepts three parts.
- */
-export function parsePlatformFixedInVersion(version: string): string | null {
-  const padded = /^v?\d+(\.\d+)?$/.test(version)
-    ? `${version}${version.includes('.') ? '.0' : '.0.0'}`
-    : version;
-  return semver.valid(padded);
-}
 
 // A NUL or an unpaired surrogate: Postgres stores neither in `jsonb`, so the write would 500.
 const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
@@ -88,7 +74,7 @@ export function parsePlatformResolutionForm(input: {
       ok: false,
       error: `A version is at most ${PLATFORM_FIXED_IN_VERSION_MAX_LENGTH} characters.`,
     };
-  if (version && !parsePlatformFixedInVersion(version))
+  if (version && !parsePlatformFeedbackVersion(version))
     return {
       ok: false,
       error: 'That version does not parse — use a release number like 2.4.0, v2.4 or 2.',

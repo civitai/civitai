@@ -1,6 +1,7 @@
 import type { PGlite } from '@electric-sql/pglite';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  countRows,
   feedbackKysely,
   freshAppFeedbackDb,
   readFeedback,
@@ -303,6 +304,51 @@ describe('the resolution write', () => {
     const server = ((await contextOf(id)) as { server: Record<string, unknown> }).server;
     expect(server.reports).toBe(SERVER.reports + 1);
     expect(server.resolution).toMatchObject({ fixedIn: { component: 'cli', version: '2.4.0' } });
+  });
+
+  /**
+   * Re-saving what is stored would move `at` — and with it the `updatedAt` agents poll — and log a
+   * triage that changed nothing.
+   */
+  it('treats a resolution-only save of the stored values as a no-op', async () => {
+    const context = { report: REPORT, server: { ...SERVER, resolution: PRIOR_RESOLUTION } };
+    const id = await seedPlatform({ status: 'reviewed', context });
+    const before = await readFeedback(db, id);
+    const result = await triageAction(
+      event(
+        resolutionForm(id, {
+          expectedStatus: 'reviewed',
+          status: 'reviewed',
+          expectedResolutionAt: PRIOR_RESOLUTION.at,
+          fixedInComponent: PRIOR_RESOLUTION.fixedIn.component,
+          fixedInVersion: ` ${PRIOR_RESOLUTION.fixedIn.version} `,
+          publicNote: PRIOR_RESOLUTION.publicNote,
+        })
+      )
+    );
+    expect(result).toEqual({ success: true, triaged: id, unchanged: true });
+    expect(await contextOf(id)).toEqual(context);
+    expect(await readFeedback(db, id)).toEqual(before);
+    expect(await countRows(db, 'ModActivity')).toBe(0);
+  });
+
+  it('still writes a resolution-only save that changes either field (control)', async () => {
+    const context = { report: REPORT, server: { ...SERVER, resolution: PRIOR_RESOLUTION } };
+    const id = await seedPlatform({ status: 'reviewed', context });
+    const result = await triageAction(
+      event(
+        resolutionForm(id, {
+          expectedStatus: 'reviewed',
+          status: 'reviewed',
+          expectedResolutionAt: PRIOR_RESOLUTION.at,
+          fixedInComponent: PRIOR_RESOLUTION.fixedIn.component,
+          fixedInVersion: PRIOR_RESOLUTION.fixedIn.version,
+          publicNote: 'a different note',
+        })
+      )
+    );
+    expect(result).toEqual({ success: true, triaged: id });
+    expect(await countRows(db, 'ModActivity')).toBe(1);
   });
 
   it('clears the resolution and nothing else', async () => {

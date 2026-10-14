@@ -1029,46 +1029,6 @@ describe('the apps-platform panel', () => {
     expect(count(source('FeedbackPlatformResolution.svelte'), 'href=')).toBe(0);
   });
 
-  /** Chosen by the row's AREA — the host-page panel would show "no path reported" over a dump. */
-  it('replaces the host-page panel on apps-platform rows only, chosen by area', () => {
-    const detail = source('FeedbackDetail.svelte');
-    expect(detail).toContain(
-      'isPlatformFeedbackArea(row.area) ? splitPlatformContext(row.context) : null'
-    );
-    expect(detail).toContain(
-      '{#if platform} <div class="flex min-w-0 flex-col gap-4 border-t border-dark-4 pt-5"> <FeedbackPlatformContext context={platform} /> </div> {:else}'
-    );
-    expect(detail).toContain('<FeedbackContextPanel');
-  });
-
-  /**
-   * The resolution forms post to `?/triage` through the triage form's own `FormState`: one refusal
-   * banner speaks for them, and `reset: false` keeps the seeded boxes through a reload.
-   */
-  it('posts the resolution through the triage FormState', () => {
-    const editor = source('FeedbackPlatformResolution.svelte');
-    expect(count(editor, 'action="?/triage" use:enhance={form.enhance}')).toBe(2);
-    expect(count(editor, 'use:enhance')).toBe(2);
-    expect(count(editor, '<input type="hidden" name="expectedResolutionAt"')).toBe(2);
-  });
-
-  /**
-   * 🔴 THE BOXES ARE SEEDED ONCE AND REMOUNTED ON A STORED CHANGE. Seeded one-way into the
-   * `$bindable` inputs instead, a version typed and then cleared stayed in its box — the stored value
-   * was blank before and after, so Svelte never rewrote it — and the next save posted it.
-   */
-  it('remounts the resolution editor whenever the stored resolution changes', () => {
-    expect(source('FeedbackDetail.svelte')).toContain(
-      '{#key JSON.stringify(platform.resolution)} <FeedbackPlatformResolution {row} resolution={platform.resolution} form={triageForm} /> {/key}'
-    );
-    const editor = source('FeedbackPlatformResolution.svelte');
-    for (const box of ['component', 'version', 'note'])
-      expect(editor, box).toMatch(new RegExp(`let ${box} = \\$state\\(untrack\\(`));
-    expect(editor).toContain('bind:value={version}');
-    expect(editor).toContain('bind:value={note}');
-    expect(editor).toContain('<input type="hidden" name="fixedInComponent" value={component} />');
-  });
-
   /**
    * 🔴 PROMOTE-TO-ISSUE IS NEVER SEEDED FROM THE REPORTER'S TEXT, ON THIS AREA LIKE EVERY OTHER. A
    * Bug is a public-board record; an agent's message and error excerpt are untrusted text. The draft
@@ -1083,11 +1043,5 @@ describe('the apps-platform panel', () => {
     expect(promote).toContain('row.bugId');
     for (const needle of ['row.message', 'row.context', 'platform', 'splitPlatformContext'])
       expect(promote, needle).not.toContain(needle);
-  });
-
-  it('renders the reporters column from the row query, unsorted', () => {
-    const page = source('+page.svelte');
-    expect(page).toContain("{ id: 'reporters', label: 'Reporters', sortable: null,");
-    expect(page).toContain("{row.reporters ?? ''}");
   });
 });

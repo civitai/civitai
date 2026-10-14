@@ -530,6 +530,8 @@ export async function getSiblingFeedback(input: {
 export type TriageResult =
   | { ok: true; changed: true }
   | { ok: true; changed: false }
+  /** A resolution-only save of exactly what is stored: nothing written, nothing logged. */
+  | { ok: true; changed: false; unchanged: true }
   | { ok: false; reason: 'gone' | 'not-platform' | 'no-server-state' | 'resolution-changed' };
 
 /**
@@ -608,14 +610,30 @@ export async function triageFeedback(input: {
    * missing `server` is a silent no-op that would still report "saved", and a resolution someone else
    * changed meanwhile would be silently replaced.
    */
-  if (input.resolution !== undefined)
+  const resolution = input.resolution;
+  // A non-string `at` reads as none, as the panel reads it — else such a row could never be cleared.
+  const atMatches =
+    resolution &&
+    sql<boolean>`(CASE WHEN jsonb_typeof("context"->'server'->'resolution'->'at') = 'string' THEN "context"->'server'->'resolution'->>'at' END) IS NOT DISTINCT FROM ${resolution.expectedAt}`;
+  /**
+   * Re-saving what is stored would move `at` — the `updatedAt` agents poll — and log a triage that
+   * changed nothing, so a resolution-only save of the stored values writes nothing.
+   */
+  const sameAsStored =
+    resolutionOnly && resolution?.kind === 'set'
+      ? sql<boolean>`(("context"->'server'->'resolution'->'fixedIn') IS NOT DISTINCT FROM ${
+          resolution.fixedIn ? JSON.stringify(resolution.fixedIn) : null
+        }::jsonb AND ("context"->'server'->'resolution'->>'publicNote') IS NOT DISTINCT FROM ${
+          resolution.publicNote
+        })`
+      : null;
+  if (resolution && atMatches) {
     update = update
       .where('area', '=', APPS_PLATFORM_FEEDBACK_AREA)
       .where(sql<string>`jsonb_typeof("context"->'server')`, '=', 'object')
-      .where(
-        // A non-string `at` reads as none, as the panel reads it — else such a row could never be cleared.
-        sql<boolean>`(CASE WHEN jsonb_typeof("context"->'server'->'resolution'->'at') = 'string' THEN "context"->'server'->'resolution'->>'at' END) IS NOT DISTINCT FROM ${input.resolution.expectedAt}`
-      );
+      .where(atMatches);
+    if (sameAsStored) update = update.where(sql<boolean>`NOT ${sameAsStored}`);
+  }
   const result = await update.executeTakeFirst();
 
   if (Number(result.numUpdatedRows) > 0) {
@@ -630,7 +648,7 @@ export async function triageFeedback(input: {
 
   // Zero rows has several causes and they need different words on screen. One extra read, only on
   // the path that already failed.
-  if (input.resolution === undefined)
+  if (!resolution || !atMatches)
     return (await feedbackExists(dbWrite, input.id))
       ? { ok: true, changed: false }
       : { ok: false, reason: 'gone' };
@@ -641,15 +659,18 @@ export async function triageFeedback(input: {
       'area',
       'status',
       sql<string | null>`jsonb_typeof("context"->'server')`.as('serverType'),
+      atMatches.as('atMatches'),
+      (sameAsStored ?? sql<boolean>`false`).as('sameAsStored'),
     ])
     .where('id', '=', input.id)
     .executeTakeFirst();
   if (!row) return { ok: false, reason: 'gone' };
   if (row.area !== APPS_PLATFORM_FEEDBACK_AREA) return { ok: false, reason: 'not-platform' };
   if (row.serverType !== 'object') return { ok: false, reason: 'no-server-state' };
-  // The status still matches, so what moved is the resolution itself.
-  if (row.status === input.expectedStatus) return { ok: false, reason: 'resolution-changed' };
-  return { ok: true, changed: false };
+  if (row.status !== input.expectedStatus) return { ok: true, changed: false };
+  if (!row.atMatches) return { ok: false, reason: 'resolution-changed' };
+  if (row.sameAsStored) return { ok: true, changed: false, unchanged: true };
+  return { ok: false, reason: 'resolution-changed' };
 }
 
 /**

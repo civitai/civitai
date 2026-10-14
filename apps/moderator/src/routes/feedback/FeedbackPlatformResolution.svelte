@@ -43,7 +43,7 @@
 </script>
 
 <div class="flex min-w-0 flex-col gap-3 rounded-lg border border-dark-4 p-3">
-  <h4 class="text-xs tracking-wide text-dark-2 uppercase">Resolution shown to the reporting agents</h4>
+  <h4 class="text-xs tracking-wide text-dark-2 uppercase">Resolution read back to reporters</h4>
 
   <form method="POST" action="?/triage" use:enhance={form.enhance} class="flex min-w-0 flex-col gap-3">
     <input type="hidden" name="id" value={row.id} />
@@ -97,8 +97,9 @@
         bind:value={note}
       />
       <p class="text-xs text-dark-2">
-        Shown word for word to every agent that reported this — up to
-        {PLATFORM_PUBLIC_NOTE_MAX_LENGTH} characters. Nothing internal.
+        Shown word for word to anyone who reports this failure site or holds its reference — not
+        only the original reporters. Up to {PLATFORM_PUBLIC_NOTE_MAX_LENGTH} characters; write
+        nothing private here.
       </p>
     </div>
 

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { enhance } from '$app/forms';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
+  import { toast } from '@civitai/ui/components/ui/sonner/index.js';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
   import { FormState } from '$lib/form-state.svelte';
   import { dateTime } from '$lib/format';
@@ -161,7 +162,10 @@
    * `lastSubmitted` is what has to be correct when they are.
    */
   const triageForm = new FormState({
-    onSuccess: null,
+    // The one success that changes nothing on screen, so it is the one that needs saying.
+    onSuccess: (data) => {
+      if (data?.unchanged) toast.info('Nothing to save — that is already the stored resolution.');
+    },
     reload: true,
     reset: false,
     onSubmit: () => {

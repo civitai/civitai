@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type { PGlite, Transaction } from '@electric-sql/pglite';
 import type { Prisma } from '@prisma/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -14,7 +15,6 @@ import {
   seedUser,
 } from '../../../../apps/moderator/src/lib/server/__tests__/feedback-pglite.harness';
 import { splitPlatformContext } from '../../../../apps/moderator/src/lib/feedback-platform';
-import { parsePlatformFixedInVersion } from '../../../../apps/moderator/src/lib/server/feedback-platform-resolution';
 
 /**
  * 🔴 THE SEAM BETWEEN THE TWO WRITERS OF `context.server` AND ITS ONE READER. This service writes the
@@ -44,7 +44,7 @@ vi.mock('../../../../apps/moderator/src/lib/server/db', () => ({
   },
 }));
 
-const { createPlatformFeedback, getPlatformFeedbackStatus, parseVersion } = await import(
+const { createPlatformFeedback, getPlatformFeedbackStatus } = await import(
   '../platform-feedback.service'
 );
 const { triageFeedback } = await import(
@@ -215,6 +215,28 @@ describe('a resolution the moderator app writes, read back by the service', () =
   });
 });
 
+/**
+ * 🔴 WHO CAN READ THE PUBLIC NOTE — pinned because the moderator form's copy states it. A
+ * ref-keyed report's readback ref is `<id>-<first 8 hex of sha256("v1\n" + about + "\n" + ref)>`,
+ * so anyone with the area enabled who knows the failure site can rebuild it, reporter or not.
+ */
+describe('the public note audience', () => {
+  it('is readable by a user who never reported, from a ref rebuilt off the failure site', async () => {
+    const { id } = await reportedTwice();
+    await resolve(id);
+    const suffix = createHash('sha256')
+      .update('v1\ncli\nsubmit.server-refused')
+      .digest('hex')
+      .slice(0, 8);
+    const stranger = await seedUser(pg, 'stranger');
+    const [read] = await getPlatformFeedbackStatus({
+      user: userOf(stranger),
+      input: { refs: [`${id}-${suffix}`] },
+    });
+    expect(read).toMatchObject({ found: true, status: 'fixed', note: NOTE });
+  });
+});
+
 describe('a row the service wrote, in the moderator panel', () => {
   it('splits into the panel fields without throwing, and leaves nothing unrecognised', async () => {
     const { id } = await reportedTwice();
@@ -245,41 +267,5 @@ describe('a row the service wrote, in the moderator panel', () => {
         byId: moderator,
       },
     });
-  });
-});
-
-/**
- * 🔴 THE MODERATOR APP VALIDATES `fixedIn.version` WITH A COPY of the service's parser — it cannot
- * import this module. A version the copy accepts and the service cannot parse would read back as
- * `fixed` and never open a regression; the reverse would refuse a version the service understands.
- */
-describe('the two version parsers', () => {
-  it.each([
-    '2.4.0',
-    'v2.4.0',
-    '2.4',
-    'v2.4',
-    '2',
-    'v2',
-    '0.0.1',
-    '2.4.0-beta.1',
-    '2.4.0+build.7',
-    'v2.4.0-rc.1+sha.abc',
-    ' 2.4.0 ',
-    '=2.4.0',
-    'V2.4.0',
-    '2.4.0.1',
-    '02.4.0',
-    '2.4.x',
-    'latest',
-    '',
-    '9007199254740992.0.0',
-  ])('agree on %j', (version) => {
-    expect(parsePlatformFixedInVersion(version)).toBe(parseVersion(version));
-  });
-
-  it('includes cases each side accepts and refuses (control)', () => {
-    expect(parseVersion('v2.4')).toBe('2.4.0');
-    expect(parseVersion('latest')).toBeNull();
   });
 });

@@ -1,9 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { splitPlatformContext } from '$lib/feedback-platform';
-import {
-  parsePlatformFixedInVersion,
-  parsePlatformResolutionForm,
-} from '$lib/server/feedback-platform-resolution';
+import { parsePlatformResolutionForm } from '$lib/server/feedback-platform-resolution';
 
 const REPORT = {
   about: 'cli',
@@ -205,19 +202,5 @@ describe('parsePlatformResolutionForm', () => {
       fixedInVersion: `1.0.0-${'a'.repeat(27)}`,
     });
     expect(result).toEqual({ ok: false, error: 'A version is at most 32 characters.' });
-  });
-});
-
-describe('parsePlatformFixedInVersion', () => {
-  it.each([
-    ['2.4.0', '2.4.0'],
-    ['v2.4.0', '2.4.0'],
-    ['2.4', '2.4.0'],
-    ['v2', '2.0.0'],
-    ['2.4.0-beta.1', '2.4.0-beta.1'],
-    ['latest', null],
-    ['2.4.0.1', null],
-  ])('%s → %s', (input, expected) => {
-    expect(parsePlatformFixedInVersion(input)).toBe(expected);
   });
 });
