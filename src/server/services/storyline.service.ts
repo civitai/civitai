@@ -7,7 +7,6 @@ import { bustFetchThroughCache, fetchThroughCache } from '~/server/utils/cache-h
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { isPlacementBlocked } from '~/server/services/placement-moderation.service';
 import { getBlockedPairIds, HiddenUsers } from '~/server/services/user-preferences.service';
-import { MAX_EXCLUDED_USER_IDS } from '~/server/utils/excluded-user-ids';
 import {
   throwAuthorizationError,
   throwBadRequestError,
@@ -132,7 +131,7 @@ async function getViewerExcludedIds(viewer: Viewer): Promise<ReadonlySet<number>
     getBlockedPairIds(viewer.id),
     HiddenUsers.getCached({ userId: viewer.id }),
   ]);
-  return new Set([...blocked, ...hidden.map((u) => u.id)].slice(0, MAX_EXCLUDED_USER_IDS));
+  return new Set([...hidden.map((u) => u.id), ...blocked]);
 }
 
 /** A level outside the reader's browsing level. 0 (unrated) is not "outside": nothing is known. */
@@ -447,19 +446,12 @@ export async function updateStoryline({
 
   // Lowering the ceiling hides chapters above it at read time; nothing is deleted, so raising it
   // again brings them back.
-  // Marking it Complete also closes it to continuations, in the same transaction so the two
-  // cannot disagree; reopening leaves that for the owner to choose. Imported here, not at the
-  // top: the placement layer's approval path calls `writeChapterEdgeForPlacement`, so a static
-  // import of its module from here would close a cycle.
-  const { setStorylineSpaceMode } = await import('~/server/services/storyline-placement.service');
-  return dbWrite.$transaction(async (tx) => {
-    const updated = await tx.storyline.update({
-      where: { id },
-      data: { title, status, maxNsfwLevel, whoCanContinue },
-      select: storylineSelect,
-    });
-    if (status === 'Complete') await setStorylineSpaceMode({ storylineId: id, mode: 'off' }, tx);
-    return updated;
+  // Closing a Complete storyline to continuations is left to the placement layer reading the
+  // status, so there is no second switch here to disagree with it.
+  return dbWrite.storyline.update({
+    where: { id },
+    data: { title, status, maxNsfwLevel, whoCanContinue },
+    select: storylineSelect,
   });
 }
 
@@ -1088,9 +1080,11 @@ export async function getStorylineReaderCounts(chapterId: number) {
 async function assertStorylineReadableByChapter(
   chapterId: number,
   viewer: Viewer,
-  browsingLevel: number
+  browsingLevel: number,
+  // The tracking writes pass the primary, so a chapter added seconds ago is found.
+  db: Db | typeof dbRead = dbRead
 ) {
-  const chapter = await dbRead.storylineChapter.findUnique({
+  const chapter = await db.storylineChapter.findUnique({
     where: { id: chapterId },
     select: { storylineId: true },
   });
@@ -1126,7 +1120,7 @@ export async function recordStorylineBranchChoice({
 }) {
   const userId = viewer.id;
   // Only a reader who can see the story gets a say in how its ways on are ordered.
-  await assertStorylineReadableByChapter(fromChapterId, viewer, browsingLevel);
+  await assertStorylineReadableByChapter(fromChapterId, viewer, browsingLevel, dbWrite);
   const edge = await dbWrite.storylineChapterEdge.findUnique({
     where: {
       chapterId_parentChapterId: { chapterId: toChapterId, parentChapterId: fromChapterId },
@@ -1159,7 +1153,7 @@ export async function recordStorylineCreateClick({
   chapterId: number;
 }) {
   const userId = viewer.id;
-  await assertStorylineReadableByChapter(chapterId, viewer, browsingLevel);
+  await assertStorylineReadableByChapter(chapterId, viewer, browsingLevel, dbWrite);
   await dbWrite.storylineCreateClick.upsert({
     where: { userId_parentChapterId: { userId, parentChapterId: chapterId } },
     create: { userId, parentChapterId: chapterId },

@@ -16,9 +16,7 @@ vi.mock('~/server/utils/cache-helpers', async (importOriginal) => ({
   fetchThroughCache: (_key: string, fn: () => Promise<unknown>) => fn(),
   bustFetchThroughCache,
 }));
-const setStorylineSpaceMode = vi.hoisted(() => vi.fn());
 const bustFetchThroughCache = vi.hoisted(() => vi.fn());
-vi.mock('~/server/services/storyline-placement.service', () => ({ setStorylineSpaceMode }));
 vi.mock('~/server/services/user-preferences.service', async (importOriginal) => ({
   ...(await importOriginal<typeof UserPreferencesService>()),
   getBlockedPairIds,
@@ -114,7 +112,6 @@ beforeEach(() => {
   hiddenUsersCached.mockReset();
   hiddenUsersCached.mockResolvedValue([]);
   bustFetchThroughCache.mockReset();
-  setStorylineSpaceMode.mockReset();
   blockedPairs = [];
   answerRaw(w);
 });
@@ -426,22 +423,6 @@ describe('authorization', () => {
         forbidden
       );
       expect(w.storyline.update).not.toHaveBeenCalled();
-    });
-
-    it('closes a storyline to continuations when it is marked Complete, in the same transaction', async () => {
-      // A transaction client distinct from dbWrite, so a call made outside it is visible.
-      const txClient = { storyline: { update: vi.fn().mockResolvedValue(storylineRow()) } };
-      w.$transaction.mockImplementation(((fn: (t: unknown) => unknown) => fn(txClient)) as never);
-      await updateStoryline({ id: 10, status: 'Complete', userId: OWNER });
-      expect(txClient.storyline.update).toHaveBeenCalledTimes(1);
-      expect(w.storyline.update).not.toHaveBeenCalled();
-      expect(setStorylineSpaceMode).toHaveBeenCalledWith(
-        { storylineId: 10, mode: 'off' },
-        txClient
-      );
-      setStorylineSpaceMode.mockReset();
-      await updateStoryline({ id: 10, status: 'Ongoing', userId: OWNER });
-      expect(setStorylineSpaceMode).not.toHaveBeenCalled();
     });
 
     it('lets the owner choose who can continue, and nobody else', async () => {
@@ -972,8 +953,9 @@ describe('recording engagement', () => {
   const PG = NsfwLevel.PG;
 
   beforeEach(() => {
-    // The read gate: chapter 1 of storyline 10, which this reader can see.
-    r.storylineChapter.findUnique.mockResolvedValue({ storylineId: 10 } as never);
+    // The read gate: chapter 1 of storyline 10, which this reader can see. Looked up on the
+    // primary, so a chapter added seconds ago is found.
+    w.storylineChapter.findUnique.mockResolvedValue({ storylineId: 10 } as never);
     r.storyline.findUnique.mockResolvedValue(storylineRow() as never);
   });
 
@@ -1037,7 +1019,7 @@ describe('recording engagement', () => {
   });
 
   it('refuses a create click on a chapter that does not exist', async () => {
-    r.storylineChapter.findUnique.mockResolvedValue(null as never);
+    w.storylineChapter.findUnique.mockResolvedValue(null as never);
     await expect(
       recordStorylineCreateClick({ viewer: reader, browsingLevel: PG, chapterId: 404 })
     ).rejects.toMatchObject({ code: 'NOT_FOUND' });

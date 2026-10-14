@@ -219,7 +219,7 @@ describe('storyline router: who may call the engagement procedures', () => {
   });
 
   it("records a signed-in reader's choice as theirs", async () => {
-    r.storylineChapter.findUnique.mockResolvedValue({ storylineId: 10 } as never);
+    dbMock.dbWrite.storylineChapter.findUnique.mockResolvedValue({ storylineId: 10 } as never);
     r.storyline.findUnique.mockResolvedValue({
       ...xStory,
       chapters: [{ id: 1, postId: 101, post: { nsfwLevel: NsfwLevel.PG } }],
