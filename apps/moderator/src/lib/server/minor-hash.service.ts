@@ -222,7 +222,7 @@ export async function getAutoFlaggedMinorModels({ limit, offset = 0, search }: P
   return { items: rows.rows.slice(0, limit), hasMore: rows.rows.length > limit };
 }
 
-export type AppealCoverImage = { id: number; url: string; nsfwLevel: number };
+export type AppealCoverImage = { id: number; url: string };
 
 export type MinorFlagAppealRow = {
   appealId: number;
@@ -385,11 +385,11 @@ export async function getMinorFlagAppealsForReview({
     ) t ON TRUE
     LEFT JOIN LATERAL (
       SELECT jsonb_agg(
-               jsonb_build_object('id', c.id, 'url', c.url, 'nsfwLevel', c."nsfwLevel")
+               jsonb_build_object('id', c.id, 'url', c.url)
                ORDER BY c."versionIndex" ASC NULLS LAST, c."postId", c."imageIndex" ASC NULLS LAST, c.id
              ) AS images
       FROM (
-        SELECT i.id, i.url, i."nsfwLevel", mv.index AS "versionIndex", p.id AS "postId",
+        SELECT i.id, i.url, mv.index AS "versionIndex", p.id AS "postId",
                i.index AS "imageIndex"
         FROM "ModelVersion" mv
         JOIN "Post" p ON p."modelVersionId" = mv.id AND p."publishedAt" IS NOT NULL

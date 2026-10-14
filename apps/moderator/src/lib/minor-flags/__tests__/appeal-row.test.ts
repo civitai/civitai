@@ -1,19 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { clipList, pastAppealsText, shouldBlurThumbnail } from '../appeal-row';
-
-describe('shouldBlurThumbnail', () => {
-  it.each([
-    [1, false],
-    [2, false],
-    [0, true],
-    [4, true],
-    [8, true],
-    [16, true],
-    [32, true],
-  ])('level %i blurred=%s', (level, blurred) => {
-    expect(shouldBlurThumbnail(level)).toBe(blurred);
-  });
-});
+import { clipList, pastAppealsText } from '../appeal-row';
 
 describe('pastAppealsText', () => {
   it('lists only the non-zero statuses', () => {

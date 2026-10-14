@@ -1,9 +1,3 @@
-import { NsfwLevel } from '@civitai/shared';
-
-/** Unrated (0) blurs, same as R and above. */
-export const shouldBlurThumbnail = (nsfwLevel: number): boolean =>
-  nsfwLevel !== NsfwLevel.PG && nsfwLevel !== NsfwLevel.PG13;
-
 export const pastAppealsText = (past: {
   approved: number;
   rejected: number;

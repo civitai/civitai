@@ -3,7 +3,6 @@
   import { cn } from '@civitai/ui/utils.js';
   import EdgeMedia from '$lib/components/EdgeMedia.svelte';
   import { shortAge } from '$lib/format';
-  import { shouldBlurThumbnail } from '$lib/minor-flags/appeal-row';
   import { urlWith } from '$lib/url';
   import type { MinorFlagAppealRow } from '$lib/server/minor-hash.service';
   import AppealTags from './AppealTags.svelte';
@@ -51,7 +50,6 @@
               src={cover.url}
               type="image"
               width={96}
-              blur={shouldBlurThumbnail(cover.nsfwLevel) ? 40 : undefined}
               class="size-full object-cover"
             />
           {/if}

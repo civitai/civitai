@@ -326,7 +326,7 @@ describe('row context', () => {
   it('serves up to four owner-posted published images, in version then post then image order', async () => {
     const row = await rowFor(1);
     expect(row.coverImages.map((i) => i.url)).toEqual(['u-a', 'u-b', 'u-c', 'u-d']);
-    expect(row.coverImages[1]).toEqual({ id: 2, url: 'u-b', nsfwLevel: 4 });
+    expect(row.coverImages[1]).toEqual({ id: 2, url: 'u-b' });
     expect((await rowFor(2)).coverImages).toEqual([]);
   });
 
