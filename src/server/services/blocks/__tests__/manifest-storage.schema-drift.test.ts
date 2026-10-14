@@ -51,7 +51,9 @@ const schema = JSON.parse(readFileSync(SCHEMA_PATH, 'utf8')) as {
 };
 const storageSchema = schema.properties.storage;
 
-// Every phased feature ON, derived from the switch so a feature added there is covered here.
+// Every key of the switch turned ON, derived so the agreement table runs with a new feature
+// enabled too. This does NOT check that each feature has a row here: that each switch key
+// has a refused-off / accepted-on control is asserted in `block-storage.constants.test.ts`.
 const ALL_ON = Object.fromEntries(
   Object.keys(APP_STORAGE_ENABLED_FEATURES).map((feature) => [feature, true])
 ) as Record<keyof typeof APP_STORAGE_ENABLED_FEATURES, boolean>;

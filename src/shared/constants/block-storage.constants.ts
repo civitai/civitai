@@ -580,8 +580,25 @@ export function collectionNeedsPublishScope(collection: DeclaredStorageCollectio
   // although the feature switch refuses it today, so enabling it needs no change here.
   return (
     collection.visibility === 'shared' &&
-    (collection.write === 'own' || collection.write === 'anyone')
+    collection.write !== undefined &&
+    (VIEWER_AUTHORED_WRITE_POLICIES as readonly string[]).includes(collection.write)
   );
+}
+
+/** The write policies under which a viewer authors documents other viewers read. */
+const VIEWER_AUTHORED_WRITE_POLICIES = [
+  'own',
+  'anyone',
+] as const satisfies readonly AppStorageWritePolicy[];
+
+/**
+ * The viewer-authored policies an author can declare TODAY, for error text: `anyone` only
+ * while its feature is switched on, so a message never suggests a value submit refuses.
+ */
+function availableViewerAuthoredPolicies(): string[] {
+  return VIEWER_AUTHORED_WRITE_POLICIES.filter(
+    (policy) => policy !== 'anyone' || APP_STORAGE_ENABLED_FEATURES.anyoneWrites
+  ).map((policy) => `"${policy}"`);
 }
 
 /**
@@ -630,7 +647,9 @@ export function appStorageScopeErrors(scopes: unknown, parsed: ParsedManifestSto
   }
   if (publishing.length === 0 && declared.has(APP_STORAGE_PUBLISH_SCOPE)) {
     errors.push(
-      `scopes includes ${APP_STORAGE_PUBLISH_SCOPE} but no storage collection is shared with write "own" or "anyone" — remove the scope, or declare the collection it is for`
+      `scopes includes ${APP_STORAGE_PUBLISH_SCOPE} but no storage collection is shared with write ${availableViewerAuthoredPolicies().join(
+        ' or '
+      )} — remove the scope, or declare the collection it is for`
     );
   }
   return errors;

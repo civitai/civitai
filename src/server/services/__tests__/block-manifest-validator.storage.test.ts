@@ -481,7 +481,7 @@ describe('manifest storage — scope rules', () => {
       )
     ).toEqual(
       refused(
-        'scopes includes apps:storage:publish but no storage collection is shared with write "own" or "anyone" — remove the scope, or declare the collection it is for'
+        'scopes includes apps:storage:publish but no storage collection is shared with write "own" — remove the scope, or declare the collection it is for'
       )
     );
   });
@@ -502,7 +502,7 @@ describe('manifest storage — scope rules', () => {
       )
     ).toEqual(
       refused(
-        'scopes includes apps:storage:publish but no storage collection is shared with write "own" or "anyone" — remove the scope, or declare the collection it is for'
+        'scopes includes apps:storage:publish but no storage collection is shared with write "own" — remove the scope, or declare the collection it is for'
       )
     );
   });

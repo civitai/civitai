@@ -37,12 +37,22 @@ describe('APP_STORAGE_ENABLED_FEATURES', () => {
 
   // Positive control for every "not available yet" refusal: the same declaration is
   // accepted once its feature is on, so the refusal is the switch's and not a shape error.
-  it.each([
+  const FEATURE_CONTROLS = [
     ['anyoneWrites', { visibility: 'shared', write: 'anyone', marks: ['vote'] }],
     ['ownerWrites', { visibility: 'shared', write: 'owner', counters: ['plays'] }],
     ['logCollections', { visibility: 'private', kind: 'log', maxEntries: 500 }],
     ['ttl', { visibility: 'private', ttlSeconds: 86400 }],
-  ] as const)('%s: refused while off, accepted once on', (feature, decl) => {
+  ] as const;
+
+  // Updating the ledger above for a new switch key is not enough: the key must also get a
+  // control row here, or nothing shows that it refuses anything.
+  it('has a positive-control row for exactly the keys of the switch', () => {
+    expect(FEATURE_CONTROLS.map(([feature]) => feature).sort()).toEqual(
+      Object.keys(APP_STORAGE_ENABLED_FEATURES).sort()
+    );
+  });
+
+  it.each(FEATURE_CONTROLS)('%s: refused while off, accepted once on', (feature, decl) => {
     const storage = { collections: { c: decl } };
     expect(parseManifestStorage({ storage }).errors).toHaveLength(1);
     expect(
@@ -143,7 +153,7 @@ describe('appStorageScopeErrors', () => {
       appStorageScopeErrors(['apps:storage:publish'], parse({ prefs: { visibility: 'private' } }))
     ).toEqual([
       'storage declares prefs but scopes does not include apps:storage — add it, or remove storage',
-      'scopes includes apps:storage:publish but no storage collection is shared with write "own" or "anyone" — remove the scope, or declare the collection it is for',
+      'scopes includes apps:storage:publish but no storage collection is shared with write "own" — remove the scope, or declare the collection it is for',
     ]);
   });
 
@@ -170,7 +180,7 @@ describe('owner-written collections (feature on)', () => {
     expect(parsed.errors).toEqual([]);
     expect(appStorageScopeErrors(['apps:storage'], parsed)).toEqual([]);
     expect(appStorageScopeErrors(['apps:storage', 'apps:storage:publish'], parsed)).toEqual([
-      'scopes includes apps:storage:publish but no storage collection is shared with write "own" or "anyone" — remove the scope, or declare the collection it is for',
+      'scopes includes apps:storage:publish but no storage collection is shared with write "own" — remove the scope, or declare the collection it is for',
     ]);
   });
 
