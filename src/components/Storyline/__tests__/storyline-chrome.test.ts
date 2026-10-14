@@ -39,11 +39,16 @@ beforeEach(() => {
   mocks.shares = undefined;
 });
 
-function openDrawer() {
+function openDrawer(chapterIds = [1]) {
   const storyline = {
     path: {
       storyline: { id: 2, title: 'The Patch' },
-      chapters: [{ chapterId: 1, depth: 0, post: null, tombstone: null }],
+      chapters: chapterIds.map((chapterId, depth) => ({
+        chapterId,
+        depth,
+        post: null,
+        tombstone: null,
+      })),
     },
     drawerOpen: true,
     setDrawerOpen: vi.fn(),
@@ -110,6 +115,17 @@ describe('StorylineDrawer', () => {
     const rows = [...document.body.querySelectorAll('[data-testid="storyline-branch"]')];
     expect(rows.map((r) => r.textContent)).toEqual(['Way 275%', 'Way 30%']);
     expect(document.body.querySelector('[data-testid="storyline-shares-pending"]')).toBeNull();
+  });
+
+  it('shows shares only where the path ends, not on branches left behind', () => {
+    mocks.pathChildren = new Map([
+      [1, [branch(2), branch(5)]],
+      [2, [branch(3)]],
+    ]);
+    mocks.shares = { total: 4, shares: { 3: 1 } };
+    openDrawer([1, 2]);
+    const rows = [...document.body.querySelectorAll('[data-testid="storyline-branch"]')];
+    expect(rows.map((r) => r.textContent)).toEqual(['Way 5', 'Way 3100%']);
   });
 
   it('invites the first choice when nobody has chosen', () => {

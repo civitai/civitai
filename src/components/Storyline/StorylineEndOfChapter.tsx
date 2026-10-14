@@ -29,15 +29,15 @@ import {
   useStorylineForkShares,
   useStorylineTracking,
 } from '~/components/Storyline/storyline.queries';
+import type { StorylineShares } from '~/components/Storyline/storyline-mode.utils';
 import {
+  getForkShare,
   getStorylineChapterName,
   getStorylineTombstoneLabel,
 } from '~/components/Storyline/storyline-mode.utils';
 
 /** A way on from a chapter, with its first image once the reads carry it. */
 type ForkChild = StorylineChild & { firstImage?: StorylineCoverImage | null };
-
-type Shares = { total: number; shares: Record<number, number> } | undefined;
 
 export function openStorylineEarlyAccess({
   chapterId,
@@ -51,13 +51,6 @@ export function openStorylineEarlyAccess({
     component: StorylineEarlyAccessModal,
     props: { chapterId, storylineId },
   });
-}
-
-/** Readers who took a way, from its share of the total; a way nobody took reads 0. */
-export function getForkShare(shares: Shares, chapterId: number) {
-  if (!shares || shares.total <= 0) return null;
-  const share = shares.shares[chapterId] ?? 0;
-  return { percent: Math.round(share * 100), readers: Math.round(share * shares.total) };
 }
 
 /**
@@ -237,7 +230,7 @@ function LeadFork({
   onContinue,
 }: {
   child: ForkChild;
-  shares: Shares;
+  shares: StorylineShares;
   onContinue: (child: StorylineChild) => void;
 }) {
   const hidden = !child.post;
@@ -272,29 +265,35 @@ function LeadFork({
             className="text-[21px] font-extrabold leading-tight @md:text-[26px]"
             c={hidden ? 'dimmed' : undefined}
             lineClamp={3}
+            data-testid="storyline-fork-name"
           >
             {name}
           </Text>
-          <Text size="sm" c="dimmed" mt={6}>
+          <Text size="sm" c="dimmed" mt={6} data-testid="storyline-fork-byline">
             {byline(child)}
           </Text>
         </div>
-        <div className="mt-auto" data-testid="storyline-share">
+        <div className="mt-auto">
+          {/* Nothing while the shares load or fail: "be the first" is only true at zero. */}
           {share ? (
             <>
               <div className="flex items-center gap-2.5">
-                <Text className="text-[22px] font-extrabold">{share.percent}%</Text>
+                <Text className="text-[22px] font-extrabold" data-testid="storyline-share-percent">
+                  {share.percent}%
+                </Text>
                 <ShareBar percent={share.percent} hidden={hidden} />
               </div>
-              <Text size="xs" c="dimmed" mt={3}>
+              <Text size="xs" c="dimmed" mt={3} data-testid="storyline-share-caption">
                 of readers went this way · {share.readers}{' '}
                 {share.readers === 1 ? 'reader' : 'readers'}
               </Text>
             </>
           ) : (
-            <Text size="sm" c="dimmed">
-              Be the first to choose
-            </Text>
+            shares?.total === 0 && (
+              <Text size="sm" c="dimmed" data-testid="storyline-share-first">
+                Be the first to choose
+              </Text>
+            )
           )}
         </div>
         {hidden ? (
@@ -321,7 +320,7 @@ function OtherFork({
   onContinue,
 }: {
   child: ForkChild;
-  shares: Shares;
+  shares: StorylineShares;
   onContinue: (child: StorylineChild) => void;
 }) {
   const hidden = !child.post;
@@ -351,16 +350,22 @@ function OtherFork({
           lineClamp={2}
           c={hidden ? 'dimmed' : undefined}
           className="leading-tight"
+          data-testid="storyline-fork-name"
         >
           {name}
         </Text>
-        <Text size="xs" c="dimmed">
+        <Text size="xs" c="dimmed" data-testid="storyline-fork-byline">
           {byline(child)}
         </Text>
         {share && (
           <div className="mt-auto flex items-center gap-2">
             <ShareBar percent={share.percent} hidden={hidden} />
-            <Text size="xs" fw={700} c={hidden ? 'dimmed' : undefined}>
+            <Text
+              size="xs"
+              fw={700}
+              c={hidden ? 'dimmed' : undefined}
+              data-testid="storyline-share-percent"
+            >
               {share.percent}%
             </Text>
           </div>

@@ -11,6 +11,7 @@ import {
 } from '~/components/Storyline/storyline.queries';
 import {
   buildSubwayStops,
+  getForkShare,
   getStorylineChapterName,
 } from '~/components/Storyline/storyline-mode.utils';
 import { useIsMobile } from '~/hooks/useIsMobile';
@@ -113,11 +114,7 @@ export function StorylineDrawer({
                     <BranchRow
                       key={child.chapterId}
                       child={child}
-                      share={
-                        isEnd && endShares && endShares.total > 0
-                          ? endShares.shares[child.chapterId] ?? 0
-                          : undefined
-                      }
+                      share={isEnd ? getForkShare(endShares, child.chapterId)?.percent : undefined}
                       onClick={() => continueTo(child, { from: chapter.chapterId })}
                     />
                   ))}
@@ -150,6 +147,7 @@ function BranchRow({
   onClick,
 }: {
   child: StorylineChild;
+  /** Percent of readers, shown only at the end of the path. */
   share: number | undefined;
   onClick: () => void;
 }) {
@@ -172,7 +170,7 @@ function BranchRow({
         )}
         {share != null && (
           <Badge size="xs" variant="light">
-            {Math.round(share * 100)}%
+            {share}%
           </Badge>
         )}
       </UnstyledButton>

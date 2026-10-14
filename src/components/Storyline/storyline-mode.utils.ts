@@ -205,3 +205,15 @@ export function canonAheadForkStops(
     .slice(0, limit)
     .map((stop) => stop.chapterId);
 }
+
+export type StorylineShares = { total: number; shares: Record<number, number> } | undefined;
+
+/** Readers who took a way, from its share of the total; a way nobody took reads 0. */
+export function getForkShare(shares: StorylineShares, chapterId: number) {
+  if (!shares || shares.total <= 0) return null;
+  // Choices recorded but no split returned: a server still withholding shares under a minimum.
+  // Showing 0% everywhere would be false, so show nothing.
+  if (!Object.keys(shares.shares).length) return null;
+  const share = shares.shares[chapterId] ?? 0;
+  return { percent: Math.round(share * 100), readers: Math.round(share * shares.total) };
+}

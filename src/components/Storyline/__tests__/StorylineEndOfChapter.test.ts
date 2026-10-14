@@ -6,12 +6,17 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as QueriesModule from '~/components/Storyline/storyline.queries';
 import type * as ImageGuardModule from '~/components/ImageGuard/ImageGuard2';
 import type * as EdgeMediaModule from '~/components/EdgeMedia/EdgeMedia';
+import type * as ImageHashModule from '~/components/ImageHash/ImageHash';
 import type { StorylineChild } from '~/components/Storyline/storyline.queries';
 
 const mocks = vi.hoisted(() => ({
   children: [] as StorylineChild[],
   isLoading: false,
-  forkShares: { enough: false, total: 0, minChoices: 20, shares: {} as Record<number, number> },
+  forkShares: { enough: false, total: 0, minChoices: 20, shares: {} as Record<number, number> } as
+    | { enough: boolean; total: number; minChoices: number; shares: Record<number, number> }
+    | undefined,
+  // What the image guard decides: true shows the picture, false the blurred hash.
+  safe: true,
   trackCreateClick: vi.fn(),
   trigger: vi.fn(),
   terms: null as null | {
@@ -39,14 +44,25 @@ vi.mock('~/components/Dialog/dialogStore', () => ({ dialogStore: { trigger: mock
 vi.mock('~/components/Storyline/continue/openStorylineContinueModal', () => ({
   openStorylineContinueModal: mocks.openContinue,
 }));
-// The guard and the media element need the session and the CDN; here they pass the image through.
-vi.mock('~/components/ImageGuard/ImageGuard2', async (importOriginal) => ({
-  ...(await importOriginal<typeof ImageGuardModule>()),
-  ImageGuard2: Object.assign(
-    ({ children }: { children: (safe: boolean) => unknown }) => children(true),
-    { BlurToggle: () => null }
-  ),
-}));
+// The guard and the media element need the session and the CDN; here the guard's verdict is a
+// switch, and its toggle and the hash leave a marker.
+vi.mock('~/components/ImageGuard/ImageGuard2', async (importOriginal) => {
+  const { createElement: h } = await import('react');
+  return {
+    ...(await importOriginal<typeof ImageGuardModule>()),
+    ImageGuard2: Object.assign(
+      ({ children }: { children: (safe: boolean) => unknown }) => children(mocks.safe),
+      { BlurToggle: () => h('button', { 'data-testid': 'blur-toggle' }) }
+    ),
+  };
+});
+vi.mock('~/components/ImageHash/ImageHash', async (importOriginal) => {
+  const { createElement: h } = await import('react');
+  return {
+    ...(await importOriginal<typeof ImageHashModule>()),
+    MediaHash: () => h('div', { 'data-testid': 'media-hash' }),
+  };
+});
 vi.mock('~/components/EdgeMedia/EdgeMedia', async (importOriginal) => {
   const { createElement: h } = await import('react');
   return {
@@ -70,13 +86,14 @@ import {
 function child(
   chapterId: number,
   rank: StorylineChild['rank'],
-  title: string | null
+  title: string | null,
+  depth = 4
 ): StorylineChild {
   return title === null
-    ? { chapterId, depth: 4, tombstone: 'removed', post: null, rank, createdAt: new Date(0) }
+    ? { chapterId, depth, tombstone: 'removed', post: null, rank, createdAt: new Date(0) }
     : {
         chapterId,
-        depth: 4,
+        depth,
         tombstone: null,
         post: { id: chapterId * 10, title, userId: chapterId, username: `user${chapterId}` },
         rank,
@@ -117,6 +134,7 @@ describe('StorylineEndOfChapter', () => {
   beforeEach(() => {
     document.body.innerHTML = '';
     mocks.isLoading = false;
+    mocks.safe = true;
     mocks.forkShares = { enough: false, total: 0, minChoices: 1, shares: {} };
     mocks.trackCreateClick.mockClear();
     mocks.trigger.mockClear();
@@ -173,9 +191,70 @@ describe('StorylineEndOfChapter', () => {
     ] as StorylineChild[];
     const [lead, other] = forks(render());
     expect([
-      within(lead, 'storyline-chapter-image')?.getAttribute('src')?.includes('cover-501'),
+      within(lead, 'storyline-chapter-image')?.getAttribute('src'),
       within(other, 'storyline-chapter-image'),
-    ]).toEqual([true, null]);
+      within(other, 'blur-toggle'),
+    ]).toEqual(['cover-501', null, null]);
+  });
+
+  it('names each way with its title and who wrote which chapter', () => {
+    mocks.children = [child(5, 'canon', 'The thrift store', 5), child(6, 'community', null, 5)];
+    const [lead, other] = forks(render());
+    expect([
+      within(lead, 'storyline-fork-name')?.textContent,
+      within(lead, 'storyline-fork-byline')?.textContent,
+      within(lead, 'storyline-read-next')?.textContent,
+      within(other, 'storyline-fork-byline')?.textContent,
+    ]).toEqual(['The thrift store', 'Chapter 6 by user5', 'Read chapter 6', 'Chapter 6']);
+  });
+
+  it('counts the other paths, and has no such header when there is only one way', () => {
+    mocks.children = [
+      child(5, 'canon', 'A'),
+      child(6, 'community', 'B'),
+      child(7, 'community', 'C'),
+    ];
+    expect(render().textContent).toContain('Other paths2');
+    document.body.innerHTML = '';
+    mocks.children = [child(5, 'canon', 'A')];
+    expect(render().textContent).not.toContain('Other paths');
+  });
+
+  it('leads with a hidden way as a labelled placeholder the reader can still step past', () => {
+    mocks.children = [child(5, 'canon', null), child(6, 'community', 'B')];
+    const lead = forks(render())[0];
+    expect([
+      within(lead, 'storyline-read-next'),
+      within(lead, 'storyline-chapter-image-hidden-label')?.textContent,
+      within(lead, 'storyline-rank-chip')?.textContent,
+    ]).toEqual([null, 'This chapter was removed', 'Canon']);
+    act(() => within(lead, 'storyline-fork-open')?.click());
+    expect(onContinue.mock.calls.map(([c]) => c.chapterId)).toEqual([5]);
+  });
+
+  it('blurs a cover the guard holds back, and keeps its toggle', () => {
+    mocks.safe = false;
+    mocks.children = [
+      {
+        ...child(5, 'canon', 'Kept'),
+        firstImage: {
+          id: 501,
+          url: 'cover-501',
+          type: 'image' as const,
+          width: 832,
+          height: 1216,
+          nsfwLevel: 16,
+          hash: 'LKO2?U%2Tw=w]~RBVZRi};RPxuwH',
+          userId: 5,
+        },
+      },
+    ] as StorylineChild[];
+    const lead = forks(render())[0];
+    expect([
+      !!within(lead, 'storyline-chapter-image'),
+      !!within(lead, 'media-hash'),
+      !!within(lead, 'blur-toggle'),
+    ]).toEqual([false, true, true]);
   });
 
   it('marks canon and endorsed ways, and nothing on a community one', () => {
@@ -219,31 +298,45 @@ describe('StorylineEndOfChapter', () => {
       minChoices: 20,
       shares: { 5: 8 / 13, 6: 5 / 13 },
     };
-    const [lead, other, untaken] = forks(render());
-    expect(within(lead, 'storyline-share')?.textContent).toBe(
-      '62%of readers went this way · 8 readers'
-    );
-    expect([other.textContent?.includes('38%'), untaken.textContent?.includes('0%')]).toEqual([
-      true,
-      true,
+    const cards = forks(render());
+    expect(cards.map((c) => within(c, 'storyline-share-percent')?.textContent)).toEqual([
+      '62%',
+      '38%',
+      '0%',
     ]);
+    expect(within(cards[0], 'storyline-share-caption')?.textContent).toBe(
+      'of readers went this way · 8 readers'
+    );
   });
 
   it('says one reader, not one readers', () => {
     mocks.children = [child(5, 'canon', 'Kept')];
     mocks.forkShares = { enough: true, total: 1, minChoices: 1, shares: { 5: 1 } };
-    expect(within(forks(render())[0], 'storyline-share')?.textContent).toBe(
-      '100%of readers went this way · 1 reader'
-    );
+    const lead = forks(render())[0];
+    expect([
+      within(lead, 'storyline-share-percent')?.textContent,
+      within(lead, 'storyline-share-caption')?.textContent,
+    ]).toEqual(['100%', 'of readers went this way · 1 reader']);
   });
 
   it('invites the first choice when nobody has chosen, and shows no percentages', () => {
     mocks.children = [child(5, 'canon', 'Kept'), child(6, 'community', 'Other')];
     const container = render();
-    expect(within(forks(container)[0], 'storyline-share')?.textContent).toBe(
+    expect(within(forks(container)[0], 'storyline-share-first')?.textContent).toBe(
       'Be the first to choose'
     );
     expect(container.textContent).not.toContain('%');
+  });
+
+  // "Be the first" is a claim about the count, so it waits for the count.
+  it('says nothing about choices while the shares are not read yet', () => {
+    mocks.children = [child(5, 'canon', 'Kept'), child(6, 'community', 'Other')];
+    mocks.forkShares = undefined;
+    const container = render();
+    expect([
+      container.querySelector('[data-testid="storyline-share-first"]'),
+      container.textContent?.includes('%'),
+    ]).toEqual([null, false]);
   });
 
   it('shows a skeleton of the lead while the ways on load', () => {
@@ -265,14 +358,21 @@ describe('StorylineEndOfChapter', () => {
     expect(render({}).querySelector(sel)).toBeNull();
   });
 
-  it('puts writing below reading', () => {
-    mocks.children = [child(5, 'canon', 'Kept')];
+  it('puts writing below every path, outside the cards', () => {
+    mocks.children = [
+      child(5, 'canon', 'A'),
+      child(6, 'community', 'B'),
+      child(7, 'community', 'C'),
+    ];
     const container = render();
-    const lead = forks(container)[0];
+    const cards = forks(container);
     const create = container.querySelector('[data-testid="storyline-create-block"]');
-    expect(
-      !!create && !!(lead.compareDocumentPosition(create) & Node.DOCUMENT_POSITION_FOLLOWING)
-    ).toBe(true);
+    if (!create) throw new Error('no create block');
+    const last = cards[cards.length - 1];
+    expect([
+      !!(last.compareDocumentPosition(create) & Node.DOCUMENT_POSITION_FOLLOWING),
+      cards.some((c) => c.contains(create)),
+    ]).toEqual([true, false]);
   });
 
   it('records the click on Create the next section and opens the early access prompt', () => {

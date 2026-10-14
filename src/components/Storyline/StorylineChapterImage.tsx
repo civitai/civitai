@@ -1,4 +1,3 @@
-import { Skeleton } from '@mantine/core';
 import { IconEyeOff } from '@tabler/icons-react';
 import clsx from 'clsx';
 import type { ReactNode } from 'react';
@@ -25,19 +24,17 @@ export type StorylineCoverImage = {
 };
 
 /**
- * Portrait chapter art: the cover through the normal image guard, a skeleton of the same shape
- * while it loads, and a striped placeholder for a chapter the reader cannot open.
+ * Portrait chapter art: the cover through the normal image guard, or a striped placeholder for a
+ * chapter the reader cannot open. The overlay (a rank chip) shows on both.
  */
 export function StorylineChapterImage({
   image,
-  isLoading = false,
   hidden,
   hiddenLabel,
   className,
   overlay,
 }: {
   image: StorylineCoverImage | null | undefined;
-  isLoading?: boolean;
   hidden: boolean;
   hiddenLabel?: string;
   className: string;
@@ -47,7 +44,7 @@ export function StorylineChapterImage({
     return (
       <div
         className={clsx(
-          'flex flex-col items-center justify-center gap-2 rounded-lg border-[1.5px] border-dashed border-gray-4 p-3 text-center text-gray-6 dark:border-dark-3 dark:text-dark-2',
+          'relative flex flex-col items-center justify-center gap-2 rounded-lg border-[1.5px] border-dashed border-gray-4 p-3 text-center text-gray-6 dark:border-dark-3 dark:text-dark-2',
           'bg-[repeating-linear-gradient(135deg,var(--mantine-color-gray-1)_0_8px,var(--mantine-color-gray-0)_8px_16px)]',
           'dark:bg-[repeating-linear-gradient(135deg,var(--mantine-color-dark-6)_0_8px,var(--mantine-color-dark-5)_8px_16px)]',
           className
@@ -55,10 +52,14 @@ export function StorylineChapterImage({
         data-testid="storyline-chapter-image-hidden"
       >
         <IconEyeOff size={22} />
-        {hiddenLabel && <span className="text-xs leading-snug">{hiddenLabel}</span>}
+        {hiddenLabel && (
+          <span className="text-xs leading-snug" data-testid="storyline-chapter-image-hidden-label">
+            {hiddenLabel}
+          </span>
+        )}
+        {overlay}
       </div>
     );
-  if (isLoading) return <Skeleton className={clsx('rounded-lg', className)} />;
   return (
     <div
       className={clsx('relative overflow-hidden rounded-lg bg-gray-1 dark:bg-dark-5', className)}
