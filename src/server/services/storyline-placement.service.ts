@@ -1142,7 +1142,10 @@ export async function settleStaleUnfundedContinuations({ limit = 200 }: { limit?
         WHERE t."placementId" = pl.id
           AND t.kind IN (${Prisma.join([...PLACEMENT_HOLD_KINDS])})
           AND t."transactionId" IS NULL
-          AND t."lastAttemptAt" > now() - ${LEG_RETRY_BACKOFF_MINUTES} * interval '1 minute'
+          -- A leg claimed but not yet attempted has no lastAttemptAt; its claim
+          -- time stands in, so it is not mistaken for an abandoned one.
+          AND COALESCE(t."lastAttemptAt", t."createdAt")
+            > now() - ${LEG_RETRY_BACKOFF_MINUTES} * interval '1 minute'
       )
     ORDER BY pl.id ASC
     LIMIT ${limit}

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import type * as PlacementEscrow from '~/server/services/placement-escrow.service';
 
 const settlePlacement = vi.fn();
@@ -28,7 +29,7 @@ describe('settling stale unfunded continuations', () => {
     settlePlacement.mockResolvedValue({ settled: true });
   });
 
-  it('settles each one as an expiry, so what was taken is returned in full', async () => {
+  it('settles each one as an expiry', async () => {
     selected({ id: 1, amount: 100 }, { id: 2, amount: 50 });
 
     await expect(settleStaleUnfundedContinuations()).resolves.toEqual({
@@ -75,6 +76,21 @@ describe('settling stale unfunded continuations', () => {
       settled: 1,
     });
     expect(settlePlacement).toHaveBeenCalledTimes(2);
+    expect(loggingMock.logToAxiom).toHaveBeenCalledTimes(1);
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'error', placementId: 1, error: 'buzz down' })
+    );
+  });
+
+  it('carries on past a row whose funding check fails', async () => {
+    selected({ id: 1, amount: 100 }, { id: 2, amount: 50 });
+    isPlacementEscrowFunded.mockRejectedValueOnce(new Error('db down'));
+
+    await expect(settleStaleUnfundedContinuations()).resolves.toEqual({
+      considered: 2,
+      settled: 1,
+    });
+    expect(settlePlacement.mock.calls.map((call) => call[0].placementId)).toEqual([2]);
   });
 
   it('settles nothing when nothing is stale', async () => {
