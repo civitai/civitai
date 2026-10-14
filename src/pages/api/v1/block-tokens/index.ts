@@ -1482,9 +1482,11 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
   // (allowed through the mint gate once the appBlocks flag is public) are handled
   // by the anon-scope strip immediately below — they have no grant ledger. The
   // grant lookup is keyed on (userId, appBlockId); a missing grant row → empty
-  // set → every consent-gated scope is withheld (fail-closed). Publisher/ambient
-  // scopes (block:settings:*, apps:storage:*) are consent-exempt and always pass
-  // through — see partitionByConsent.
+  // set → every consent-gated scope is withheld (fail-closed). The consent-exempt
+  // scopes (CONSENT_EXEMPT_SCOPES — among them the four legacy `apps:storage:*`
+  // scopes and `apps:storage`) always pass through — see partitionByConsent.
+  // NOT the whole storage family: `apps:storage:publish` is consent-gated, so an
+  // ungranted one is withheld here and reported as `needs_consent`.
   let manifestScopes = requestedScopes;
   let needsConsent = false;
   let missingScopes: string[] = [];
@@ -1505,9 +1507,11 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
   // single source of truth for "requires a per-user grant"; an anon viewer has
   // no grant and never can, so the entire consent-gated set is withheld.
   //
-  // What remains for anon is only the consent-exempt scopes
-  // (`apps:storage:*`; `block:settings:*` is additionally installer-only and
-  // gets rejected just below for anon). For generate-from-model the manifest is
+  // What remains for anon is only the consent-exempt scopes (the four legacy
+  // `apps:storage:*` scopes, `apps:storage`, and the other CONSENT_EXEMPT_SCOPES
+  // members; `apps:storage:publish` is consent-gated and so stripped here;
+  // `block:settings:*` is additionally installer-only and gets rejected just
+  // below for anon). For generate-from-model the manifest is
   // `models:read:self` + `ai:write:budgeted`, so the anon subset is empty — the
   // block renders from the (scope-free) BLOCK_INIT context (showcase + form),
   // and Generate stays server-gated: with no `ai:write:budgeted` scope the

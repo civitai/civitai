@@ -1329,7 +1329,8 @@ export function PageBlockHost({
         // controller posts the freshest payload via the ref.
         raw: token ?? '',
         // #3/#6: the REAL granted scopes the JWT carries (page = viewer-scoped
-        // ambient `apps:storage:*`; never money). Posting `[]` lied to the block
+        // consent-exempt storage scopes, plus any gated scope the viewer granted;
+        // never money). Posting `[]` lied to the block
         // about the capabilities it holds.
         scopes: grantedScopes,
         expiresAt: expiresAt ?? '',

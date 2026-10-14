@@ -14,6 +14,10 @@ import {
 } from '~/shared/constants/block-scope.constants';
 import { parseManifestGoods } from '~/shared/constants/block-goods.constants';
 import { parseManifestAnalytics } from '~/shared/constants/block-analytics.constants';
+import {
+  appStorageScopeErrors,
+  parseManifestStorage,
+} from '~/shared/constants/block-storage.constants';
 import { isKnownSlotId, isPageSlot } from '~/shared/constants/slot-registry';
 import {
   MARKETPLACE_CATEGORIES,
@@ -144,6 +148,13 @@ interface RawManifest {
    * later reader of the declaration must call that parser, not re-implement it.
    */
   analytics?: unknown;
+  /**
+   * Optional APP STORAGE declaration — `storage.collections` names every collection the
+   * app stores documents in, with its visibility, write policy, counters, marks and
+   * indexes. Validated by `parseManifestStorage` (and against `scopes` by
+   * `appStorageScopeErrors`); any later reader must call that parser.
+   */
+  storage?: unknown;
   /**
    * Slot targets the app installs into (model-page slots). Each entry's
    * `slotId` MUST be a known registered slot id — previously UN-validated
@@ -728,6 +739,14 @@ export class BlockManifestValidator {
     }
 
     for (const analyticsError of parseManifestAnalytics(m).errors) errors.push(analyticsError);
+
+    // APP STORAGE declaration. `parseManifestStorage` is the single rule (shape, cross-field
+    // and the phase switch `APP_STORAGE_ENABLED_FEATURES`); `appStorageScopeErrors` ties it
+    // to the declared scopes. The storage routes will read the same parse, so a collection
+    // that cannot be validated here is unreachable there.
+    const storage = parseManifestStorage(m);
+    for (const storageError of storage.errors) errors.push(storageError);
+    for (const scopeError of appStorageScopeErrors(m.scopes, storage)) errors.push(scopeError);
 
     if (!m.iframe || typeof m.iframe !== 'object') {
       // For renderMode=inline+verified, iframe may be omitted in v2. v1: require iframe.

@@ -75,6 +75,12 @@ export const SCOPE_DESCRIPTIONS: Record<string, string> = {
     "Read this app's shared, community-wide data (e.g. everyone's posts + vote counts)",
   'apps:storage:shared:write':
     "Post + vote in this app's shared, community-wide data — visible to all users of the app",
+  'apps:storage':
+    "Keep your data in this app's own store, and read, mark and count the entries it shares with all its users",
+  'apps:storage:publish':
+    // Not "under your username": the username is shown only on collections whose reviewed
+    // declaration sets `showAuthor`, so the sentence claims authorship, not display.
+    "Add and edit entries in this app's shared data as you — every user of the app can read them",
   'collections:read:self':
     'Browse and read public Civitai collections, and your own public collections',
   'collections:write:self': 'Bookmark (follow) collections on your behalf',

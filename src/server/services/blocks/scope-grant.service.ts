@@ -1383,9 +1383,12 @@ function rethrowMissingRevokedScopesColumn(err: unknown, site: string): unknown 
  * granted scopes, returning the granted subset to sign + the withheld scopes
  * the host must re-consent for.
  *
- * `apps:storage:*` (per-user KV) is intentionally NOT consent-gated here — it is
+ * The per-user storage scopes (`apps:storage:read` / `apps:storage:write`, the per-user
+ * KV, and `apps:storage`, the document store's base scope) are intentionally NOT
+ * consent-gated here — NOT the whole `apps:storage:*` family, since `apps:storage:publish`
+ * is gated (see its entry below). The per-user KV scopes are each
  * an ambient-but-otherwise-gated scope with its own issuance-time / per-op check
- * (resolveStorageContext). Subjecting it to per-user consent would make the
+ * (resolveStorageContext). Subjecting them to per-user consent would make the
  * publisher re-consent to their own block's storage on every version bump for
  * no security gain. The remaining user-resource scopes (user/ai/buzz/
  * social, models:write) flow through the consent gate.
@@ -1475,6 +1478,14 @@ const CONSENT_EXEMPT_SCOPES = new Set([
   // min-trust gate + content moderation + rate limits, not per-scope consent.
   'apps:storage:shared:read',
   'apps:storage:shared:write',
+  // DOCUMENT STORE — `apps:storage` reaches only this app's own store: the viewer's private
+  // collections, reads of shared ones, marks and counters. Each is bounded by the app's
+  // reviewed `storage` declaration and by the server-side per-op checks of the storage
+  // routes. Its sibling `apps:storage:publish` is deliberately ABSENT: authoring documents
+  // other viewers read, under the viewer's identity, needs a grant — one prompt per app.
+  // (Unlike `apps:storage:shared:write` above, which signs consent-free today and which the
+  // publish scope replaces.)
+  'apps:storage',
   'models:read:self',
   // Collections — server-side visibility/ownership (read) + self-bound subject
   // (follow) are the gate; see the block collections endpoints. #3090: exempting

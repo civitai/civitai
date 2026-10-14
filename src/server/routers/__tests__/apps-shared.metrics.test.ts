@@ -33,6 +33,8 @@ const {
   mockIsFlipt,
   mockFindBlocked,
   mockIsRevoked,
+  mockThrowOnBlocked,
+  mockReleaseWrite,
 } = vi.hoisted(() => {
   type QueryFn = (
     sql: string,
@@ -71,6 +73,10 @@ const {
     ),
     mockFindBlocked: vi.fn<(values: unknown, opts?: unknown) => Promise<unknown[]>>(async () => []),
     mockIsRevoked: vi.fn<() => Promise<boolean>>(async () => false),
+    mockThrowOnBlocked: vi.fn<(values: unknown, opts: unknown) => Promise<void>>(
+      async () => undefined
+    ),
+    mockReleaseWrite: vi.fn<(args: { rejected: boolean }) => Promise<void>>(async () => undefined),
   };
 });
 
@@ -97,7 +103,9 @@ vi.mock('~/server/db/appsDb', () => ({ requireAppsDb: () => mockPool }));
 vi.mock('~/server/utils/shared-storage-rate-limit', () => ({
   reserveSharedWrite: async (userId: number, appBlockId: string) => {
     const r = await mockReserveWrite(userId, appBlockId);
-    return r.allowed ? { allowed: true, release: async () => undefined } : r;
+    return r.allowed
+      ? { allowed: true, release: (args: { rejected: boolean }) => mockReleaseWrite(args) }
+      : r;
   },
   checkSharedVoteRateLimit: (userId: number, appBlockId: string) =>
     mockCheckVoteRl(userId, appBlockId),
@@ -107,7 +115,7 @@ vi.mock('~/server/utils/shared-storage-rate-limit', () => ({
     mockCheckWithdrawRl(userId, appBlockId),
 }));
 vi.mock('~/server/services/blocklist.service', () => ({
-  throwOnBlockedUserContent: async () => undefined,
+  throwOnBlockedUserContent: (values: unknown, opts: unknown) => mockThrowOnBlocked(values, opts),
   getBlocklistData: (type: unknown) => mockGetBlocklistData(type),
   findBlockedUserContent: (values: unknown, opts?: unknown) => mockFindBlocked(values, opts),
   stripBenignPhrases: async (text: string) => text,
@@ -156,6 +164,8 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { newUlid } from '~/server/utils/app-block-ids';
 import { OnboardingSteps } from '~/server/common/enums';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { TRPCError } from '@trpc/server';
+import { isEscalatedServerFault } from '~/server/logging/server-fault-override';
 
 const READ = 'apps:storage:shared:read';
 const WRITE = 'apps:storage:shared:write';
@@ -277,6 +287,8 @@ beforeEach(() => {
   mockFindBlocked.mockReset();
   mockFindBlocked.mockResolvedValue([]);
   mockIsRevoked.mockResolvedValue(false);
+  mockThrowOnBlocked.mockReset();
+  mockThrowOnBlocked.mockResolvedValue(undefined);
 
   incSpy = vi.spyOn(appSharedStorageOpsCounter, 'inc');
   observeSpy = vi.spyOn(appSharedStorageLatencyHistogram, 'observe');
@@ -690,6 +702,71 @@ describe('a thrown error is recorded once and reaches the caller unchanged', () 
       const failure = new Error('connection reset');
       mockPool.query.mockRejectedValueOnce(failure);
       await expect(listSharedRows('t', { limit: 10 })).rejects.toBe(failure);
+    }
+  );
+});
+
+describe('the title/body blocklist scan: a throw is unavailable moderation, a hit is a block', () => {
+  // The belt refuses text whose scan THREW with the same response as before this outcome existed
+  // (a charged 400 with a retry message, no Report). Only the recorded outcome tells it apart from
+  // a scan that found something. The audit block is the positive control for the Report check.
+  const RETRY = 'Content could not be reviewed right now. Please try again.';
+  const scanThrows = () => mockThrowOnBlocked.mockRejectedValueOnce(new TypeError('bad entry'));
+  const scanHitsPattern = () =>
+    mockThrowOnBlocked.mockImplementationOnce(async (_values, opts) => {
+      (opts as { onBlocked: (kind: 'link' | 'pattern') => void }).onBlocked('pattern');
+    });
+  const auditBlocks = () => mockAuditPromptServer.mockRejectedValueOnce(new Error('blocked'));
+
+  const ROWS: Array<
+    [
+      path: string,
+      arrange: () => void,
+      expected: { outcome: SharedStorageOutcome; message: string; reportFiled: boolean }
+    ]
+  > = [
+    [
+      'scan throws',
+      scanThrows,
+      { outcome: 'moderation_unavailable', message: RETRY, reportFiled: false },
+    ],
+    [
+      'scan finds a blocked pattern',
+      scanHitsPattern,
+      { outcome: 'moderation_blocked', message: 'Content flagged for review', reportFiled: false },
+    ],
+    [
+      'platform audit blocks',
+      auditBlocks,
+      { outcome: 'moderation_blocked', message: 'blocked', reportFiled: true },
+    ],
+  ];
+  const OPS: Array<[op: 'append' | 'update', arrange: () => void]> = [
+    ['append', () => appendDataPath()],
+    ['update', () => existingRow()],
+  ];
+
+  it.each(OPS.flatMap(([op, arrangeOp]) => ROWS.map((row) => [op, ...row, arrangeOp] as const)))(
+    '%s, %s',
+    async (op, _path, arrange, expected, arrangeOp) => {
+      arrangeOp();
+      arrange();
+      const error = await ACT[op]().then(
+        () => undefined,
+        (e: unknown) => e
+      );
+
+      expect(error).toBeInstanceOf(TRPCError);
+      expect(error).toMatchObject({ code: 'BAD_REQUEST', message: expected.message });
+      expect(isEscalatedServerFault(error), 'not escalated').toBe(false);
+      expect(mockReleaseWrite.mock.calls, 'charged to the rejection bucket').toEqual([
+        [{ rejected: true }],
+      ]);
+      const reports = mockPool.query.mock.calls.filter(([sql]) =>
+        String(sql).includes('shared_kv_reports')
+      );
+      expect(reports.length, 'Report rows filed').toBe(expected.reportFiled ? 1 : 0);
+      expect(recordedExactlyOnce()).toEqual({ op, outcome: expected.outcome });
     }
   );
 });

@@ -160,9 +160,14 @@ describe('block-scope.constants', () => {
       'apps:storage:write',
       'apps:storage:shared:read',
       'apps:storage:shared:write',
+      // The document store. Its routes are not written yet, so nothing has shown they read
+      // the middleware-resolved claims instead of re-verifying the bearer: refusing
+      // `auth: "oauth"` alongside them is the fail-closed answer until they do.
+      'apps:storage',
+      'apps:storage:publish',
     ];
 
-    it('is EXACTLY the four app-storage scopes — no more, no fewer', () => {
+    it('is EXACTLY the six app-storage scopes — no more, no fewer', () => {
       expect([...APP_STORAGE_SCOPES].sort()).toEqual([...EXPECTED_APP_STORAGE].sort());
     });
 
@@ -220,12 +225,21 @@ describe('block-scope.constants', () => {
         );
       });
 
-      // `apps:storage` (no trailing colon) and `apps:storage:readx` are NOT members, so a
+      // `apps:storagex`, `apps:storage:readx` and `x:apps:storage:read` are NOT members, so a
       // prefix predicate that used `includes`/a loose match would be caught here.
       it('matches the vocabulary, not a loose prefix', () => {
         expect(
-          appStorageScopesIn(['apps:storage', 'apps:storage:readx', 'x:apps:storage:read'])
+          appStorageScopesIn(['apps:storagex', 'apps:storage:readx', 'x:apps:storage:read'])
         ).toEqual([]);
+      });
+
+      // The bare family name is a member although it does not start with the
+      // `apps:storage:` prefix — the case a prefix-only derivation silently misses.
+      it('includes the bare `apps:storage` and `apps:storage:publish`', () => {
+        expect(appStorageScopesIn(['apps:storage', 'apps:storage:publish'])).toEqual([
+          'apps:storage',
+          'apps:storage:publish',
+        ]);
       });
     });
   });
@@ -237,6 +251,8 @@ describe('block-scope.constants', () => {
       'buzz:read:self',
       'collections:read:private',
       'apps:storage:shared:write',
+      // Documents in a shared collection, authored as the viewer, read by every viewer.
+      'apps:storage:publish',
       'posts:write:self',
       'goods:purchase:self',
       // Publishes store cards every visitor sees, under the viewer's name.
@@ -257,6 +273,7 @@ describe('block-scope.constants', () => {
         'apps:storage:read',
         'apps:storage:write',
         'apps:storage:shared:read',
+        'apps:storage',
         'collections:read:self',
         'collections:write:self',
         // The READ half of the goods pair. It returns only what the CALLING app
