@@ -36,12 +36,15 @@ async function deleteInBatches(
 
 export async function cleanupTextScanRows({
   graduatedEntityTypes,
+  graduatedWebSearchEntityTypes = [],
   cleanRowEntityTypes = TEXT_SCAN_CLEAN_ROW_ENTITY_TYPES,
   olderThanDays,
   batchSize = 1000,
   maxBatches = 50,
 }: {
   graduatedEntityTypes: TextScanEntityType[];
+  /** Only their `:search-shadow` rows are deleted; the main `:shadow` rows follow `graduatedEntityTypes`. */
+  graduatedWebSearchEntityTypes?: TextScanEntityType[];
   cleanRowEntityTypes?: TextScanEntityType[];
   olderThanDays: number;
   batchSize?: number;
@@ -49,10 +52,14 @@ export async function cleanupTextScanRows({
 }) {
   const cutoff = decreaseDate(new Date(), olderThanDays, 'days');
 
-  const shadow = graduatedEntityTypes.length
+  const shadowRowTypes = [
+    ...graduatedEntityTypes.map((t) => textScanEmEntityType(t, 'shadow')),
+    ...graduatedWebSearchEntityTypes.map((t) => textScanEmEntityType(t, 'shadow', 'web-search')),
+  ];
+  const shadow = shadowRowTypes.length
     ? await deleteInBatches(
         {
-          entityType: { in: graduatedEntityTypes.map((t) => textScanEmEntityType(t, 'shadow')) },
+          entityType: { in: shadowRowTypes },
           updatedAt: { lt: cutoff },
         },
         batchSize,
