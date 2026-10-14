@@ -24,8 +24,9 @@
 // auth/counter/trust logic.
 //
 // Data model (per-app schema `app_<slug>`, provisioned by AppStorageProvisioner):
-//   - shared_kv(key PK [SERVER-generated ULID for `append` rows; app-chosen and never
-//     ULID-shaped for counter anchors], author_user_id, value jsonb, …)
+//   - shared_kv(key PK [SERVER-generated ULID for `append` rows; app-chosen for counter
+//     anchors, which `increment` will not create under a ULID-shaped key], author_user_id,
+//     value jsonb, …)
 //   - votes(key→shared_kv ON DELETE CASCADE, user_id, PK(key,user_id))
 //   - counters(key→shared_kv ON DELETE CASCADE, count>=0)  ← reconstructable cache
 //   - shared_kv_reports(id, key, reporter_user_id, reason, …)

@@ -248,6 +248,8 @@ describe('incrementSharedCounter', () => {
       code: 'BAD_REQUEST',
       message: 'invalid counter key',
     });
+    expect(mockVerifyBlockToken).not.toHaveBeenCalled();
+    expect(mockGetSessionUser).not.toHaveBeenCalled();
     expect(mockCheckVoteRl).not.toHaveBeenCalled();
     expect(mockPool.connect).not.toHaveBeenCalled();
     expect(mockClient.query).not.toHaveBeenCalled();
