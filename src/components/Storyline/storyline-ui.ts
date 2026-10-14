@@ -77,6 +77,22 @@ export function storylineSubmitInput({
   };
 }
 
+export type StorylineChapterLevels = { rootNsfwLevel: number | null; chapterLevels: number[] };
+
+/**
+ * What a ceiling does to a storyline that already has chapters. Chapter 1 sets the floor: the
+ * server refuses a ceiling below it, so a story can never open on a hidden chapter. Any later
+ * chapter above the ceiling is hidden from readers until it is raised again. Unrated chapters
+ * (level 0) are not counted; they are hidden for being unrated, whatever the ceiling.
+ */
+export function storylineCeilingImpact(ceiling: number, levels: StorylineChapterLevels) {
+  const fits = (postLevel: number) => storylineLevelAllowed({ postLevel, maxNsfwLevel: ceiling });
+  return {
+    allowed: levels.rootNsfwLevel == null || fits(levels.rootNsfwLevel),
+    hidden: levels.chapterLevels.filter((level) => level > 0 && !fits(level)).length,
+  };
+}
+
 /** How long a continuation waits for the creator before it expires and any Buzz is refunded. */
 export const STORYLINE_CONTINUATION_EXPIRY_DAYS = 7;
 

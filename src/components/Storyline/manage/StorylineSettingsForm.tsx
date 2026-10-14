@@ -3,7 +3,11 @@ import { useEffect, useState } from 'react';
 import { StorylineContinueModeInput } from '~/components/Storyline/settings/StorylineContinueModeInput';
 import { StorylinePriceInput } from '~/components/Storyline/settings/StorylinePriceInput';
 import { StorylineRatingInput } from '~/components/Storyline/settings/StorylineRatingInput';
-import type { StorylineWhoCanContinue } from '~/components/Storyline/storyline-ui';
+import {
+  storylineCeilingImpact,
+  type StorylineChapterLevels,
+  type StorylineWhoCanContinue,
+} from '~/components/Storyline/storyline-ui';
 
 export type StorylineStatusValue = 'Ongoing' | 'Complete';
 
@@ -21,6 +25,7 @@ export function StorylineSettingsForm({
   maxNsfwLevel,
   whoCanContinue,
   space,
+  chapterLevels,
   onStatusChange,
   onRatingChange,
   onWhoCanContinueChange,
@@ -33,6 +38,8 @@ export function StorylineSettingsForm({
   whoCanContinue: StorylineWhoCanContinue | null;
   /** `null` while loading, or where the space cannot be read. */
   space: StorylineSpaceSettings | null;
+  /** `null` while loading; the picker then offers every rating and says nothing about chapters. */
+  chapterLevels?: StorylineChapterLevels | null;
   onStatusChange: (status: StorylineStatusValue) => void;
   onRatingChange: (level: number) => void;
   onWhoCanContinueChange: (value: StorylineWhoCanContinue) => void;
@@ -45,6 +52,7 @@ export function StorylineSettingsForm({
   useEffect(() => setPrice(space?.setPrice ?? ''), [space?.setPrice]);
 
   const complete = status === 'Complete';
+  const hidden = chapterLevels ? storylineCeilingImpact(maxNsfwLevel, chapterLevels).hidden : 0;
 
   return (
     <Stack gap="lg">
@@ -88,7 +96,23 @@ export function StorylineSettingsForm({
         <Text size="sm" fw={500}>
           Maximum rating
         </Text>
-        <StorylineRatingInput value={maxNsfwLevel} disabled={disabled} onChange={onRatingChange} />
+        <StorylineRatingInput
+          value={maxNsfwLevel}
+          disabled={disabled}
+          onChange={onRatingChange}
+          isAllowed={
+            chapterLevels
+              ? (level) => storylineCeilingImpact(level, chapterLevels).allowed
+              : undefined
+          }
+        />
+        {hidden > 0 && (
+          <Text size="xs" c="yellow">
+            {hidden === 1
+              ? '1 chapter is rated above this and is hidden from readers.'
+              : `${hidden} chapters are rated above this and are hidden from readers.`}
+          </Text>
+        )}
         <Text size="xs" c="dimmed">
           Higher-rated continuations cannot be submitted, and chapters rated above this are hidden
           from readers. Raising it again brings them back. Readers also keep their own browsing
