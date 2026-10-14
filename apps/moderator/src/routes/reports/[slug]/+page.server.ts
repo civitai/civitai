@@ -11,10 +11,12 @@ import {
   getReportedModelStates,
 } from '$lib/server/reports.service';
 import {
+  bringBackReportedModel,
   setReportedModelMinor,
   setReportedModelSfwOnly,
   takeDownReportedModel,
   unpublishReportedModel,
+  unsetReportedModelMinor,
 } from '$lib/server/model-moderation.service';
 import { isModelUnpublishReason, MINOR_UNPUBLISH_REASONS } from '$lib/model-unpublish-reasons';
 import { denied } from '$lib/permissions';
@@ -217,12 +219,16 @@ export const actions: Actions = {
   },
 
   /**
-   * Acts on the reported model through the main app, then sets the report Actioned (which pays the
-   * reporters) — the model page's moderator menu without the second tab, and without the trip back to
-   * close the report. Same order as `delistGame`: the report is only touched once the model call
-   * succeeded, so a refusal leaves it open to retry.
+   * Acts on the reported model through the main app — the model page's moderator menu without the
+   * second tab. It does NOT touch the report: closing it is the panel's Report status buttons, a
+   * separate decision. Doing both in one click took the report out of the queue before its result
+   * could be seen, made a second action on the same model impossible from the panel, and paid the
+   * reporters (Actioned does) as a side effect of a model button.
+   *
+   * The model is read from the REPORT, never the form — a stale tab must not act on one model while
+   * a moderator believes they are looking at another.
    */
-  moderateModel: async ({ request, locals, params, getClientAddress }) => {
+  moderateModel: async ({ request, locals, params }) => {
     const type = reportEntityForSlug(params.slug);
     if (type !== 'model' || !canAccess(locals.user, reportPath(type)))
       return fail(403, { error: 'Not permitted.' });
@@ -250,33 +256,37 @@ export const actions: Actions = {
         done = alsoFlagMinor ? 'Flagged as minor and unpublished' : 'Unpublished';
         break;
       }
-      case 'takeDown':
-        if (!locals.grants['model.takeDown']) return fail(403, { error: denied('model.takeDown') });
-        result = await takeDownReportedModel(modelId);
-        done = 'Taken down';
-        break;
-      case 'setSfwOnly':
-        result = await setReportedModelSfwOnly(modelId);
-        done = 'Set as SFW-only';
-        break;
       case 'setMinor':
         result = await setReportedModelMinor(modelId);
         done = 'Flagged as minor';
+        break;
+      case 'unsetMinor':
+        result = await unsetReportedModelMinor(modelId);
+        done = 'Unflagged as minor';
+        break;
+      case 'setSfwOnly':
+        result = await setReportedModelSfwOnly(modelId, true);
+        done = 'Set as SFW-only';
+        break;
+      case 'unsetSfwOnly':
+        result = await setReportedModelSfwOnly(modelId, false);
+        done = 'Allowed NSFW on';
+        break;
+      // Both directions behind the one grant: whoever may take a model down may bring it back.
+      case 'takeDown':
+      case 'bringBack':
+        if (!locals.grants['model.takeDown']) return fail(403, { error: denied('model.takeDown') });
+        result =
+          action === 'takeDown'
+            ? await takeDownReportedModel(modelId)
+            : await bringBackReportedModel(modelId);
+        done = action === 'takeDown' ? 'Taken down' : 'Brought back';
         break;
       default:
         return fail(400, { error: 'Unknown action.' });
     }
     if (!result.ok) return fail(400, { error: result.error });
-
-    const reported = await setReportStatus({
-      id,
-      status: ReportStatus.Actioned,
-      userId: locals.user.id,
-      ip: getClientAddress(),
-    });
-    // The model was changed either way, so say so — a bare "report gone" reads as nothing happened.
-    if (!reported.ok) return fail(410, { error: `${done}, but ${reported.error}`, gone: true });
-    return { success: true, moderated: `${done} model #${modelId}; report actioned` };
+    return { success: true, moderated: `${done} model #${modelId}` };
   },
 
   saveNotes: async ({ request }) => {

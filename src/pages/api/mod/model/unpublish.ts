@@ -17,7 +17,7 @@ export default defineModeratorEndpoint('model.unpublish', {
   returns: '{ modelId }',
   notes: [
     '`customMessage` is required when `reason` is `other`: it is then the only explanation the owner sees.',
-    'Does not touch any report — the caller actions the report itself.',
+    'Does not touch any report: closing one is a separate decision.',
   ],
   rateLimit: { max: 30, windowSeconds: 60 },
   input: z.object({

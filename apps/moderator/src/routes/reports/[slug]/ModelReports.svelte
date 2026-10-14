@@ -3,7 +3,7 @@
   import { enhance } from '$app/forms';
   import { goto, invalidateAll } from '$app/navigation';
   import { page } from '$app/state';
-  import { IconExternalLink } from '@tabler/icons-svelte';
+  import { IconCheck, IconExternalLink } from '@tabler/icons-svelte';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { toast } from '@civitai/ui/components/ui/sonner/index.js';
@@ -62,8 +62,9 @@
     onSettled: reloadIfGone,
   });
   const notesForm = new FormState({ onSuccess: null, reload: true, onSettled: reloadIfGone });
-  // A model action takes the report out of the queue and the panel on to the next one, so its own
-  // state is cleared on success — a reason picked for one model must not be pre-filled on the next.
+  // A model action leaves the report on screen (closing it is the Report status buttons), so the
+  // panel shows the result in place. Its own state is cleared on success all the same: an unpublish
+  // reason or an armed confirm belongs to the click that used it.
   const moderateForm = new FormState({
     onSuccess: (result) => {
       unpublishReason = '';
@@ -74,7 +75,7 @@
     onSettled: reloadIfGone,
   });
   let unpublishReason = $state<ModelUnpublishReason | ''>('');
-  // `<action>:<report id>`, so an armed Take down cannot survive moving to another report.
+  // `<action>:<report id>`, so an armed confirm cannot survive moving to another report.
   let confirmingModel = $state<string | null>(null);
 
   let selectedId = $state<number | null>(null);
@@ -93,11 +94,38 @@
   // picked. A status change invalidates and the row leaves the list (the queue defaults to the OPEN
   // statuses); falling back to the same POSITION then lands on the row that slid up into its place,
   // so actioning a report moves straight on to the next without another click.
+  /**
+   * `?model=` names the model on screen, so a link opens the same model for whoever follows it. A
+   * real param set by `goto`, not `replaceState`: every write here reloads the page, and
+   * `replaceState` leaves `page.url` stale at this SvelteKit version (see `$lib/feedback-sort.ts`).
+   *
+   * It names the MODEL, not the report, and a model can have several reports in view — so it only
+   * picks which report opens when nothing has been clicked yet. A click on another report about the
+   * same model changes the panel and leaves the URL alone. Like `?open=` on the feedback queue it only
+   * resolves against the current view: a model the filters or the page exclude falls back to the
+   * first row.
+   */
+  const MODEL_PARAM = 'model';
+  const urlModel = $derived(Number(page.url.searchParams.get(MODEL_PARAM)) || null);
+
   const selected = $derived(
     data.items.find((r) => r.id === selectedId) ??
+      (urlModel != null ? data.items.find((r) => r.entityId === urlModel) : undefined) ??
       data.items[Math.min(selectedIndex, data.items.length - 1)] ??
       null
   );
+
+  // After an action the report leaves the view and the panel moves to the row that slid into its
+  // place. Once the URL names a model it has to follow, or a refresh would reopen a model already
+  // dealt with. Only on that fallback: a click sets `selectedId` to a row still in view and does its
+  // own navigation, so this never doubles it. A bare landing has no param, so it stays bare.
+  $effect(() => {
+    if (!page.url.searchParams.has(MODEL_PARAM)) return;
+    if (data.items.some((r) => r.id === selectedId)) return;
+    const target = selected?.entityId ?? null;
+    if (target === urlModel) return;
+    goto(urlWith({ [MODEL_PARAM]: target }), { replaceState: true, noScroll: true, keepFocus: true });
+  });
 
   type ModelState = PageData['models'][number];
   type Tone = 'live' | 'down' | 'neutral';
@@ -166,7 +194,10 @@
     selectedId = null;
     selectedIndex = 0;
     clearPanelState();
-    goto(href);
+    // A new view opens on its own first report, not on a model the last view had open.
+    const url = new URL(href, page.url);
+    url.searchParams.delete(MODEL_PARAM);
+    goto(url.pathname + url.search);
   }
 
   function applyMulti(key: string, values: string[]) {
@@ -192,6 +223,11 @@
     selectedId = id;
     selectedIndex = Math.max(0, data.items.findIndex((r) => r.id === id));
     clearPanelState();
+    // Only when the MODEL changes: a second report on the same model is the same URL, and `goto`
+    // pushes unconditionally, so navigating anyway would silently eat a Back press.
+    const modelId = data.items.find((r) => r.id === id)?.entityId ?? null;
+    if (modelId != null && modelId !== urlModel)
+      goto(urlWith({ [MODEL_PARAM]: modelId }), { noScroll: true, keepFocus: true });
   }
 
   // A refusal belongs to the report it was raised on; showing another must not inherit it.
@@ -218,6 +254,60 @@
     openDetails(id);
   }
 </script>
+
+{#snippet row(title: string, description: string, doneLabel: string | null)}
+  <div class="flex items-center justify-between gap-3 p-3">
+    <div>
+      <p class="m-0 text-sm font-medium text-muted-foreground">{title}</p>
+      <p class="m-0 text-xs text-muted-foreground">{description}</p>
+    </div>
+    {#if doneLabel}{@render done(doneLabel)}{/if}
+  </div>
+{/snippet}
+
+{#snippet submit(action: string, label: string)}
+  <Button
+    type="submit"
+    name="modelAction"
+    value={action}
+    size="sm"
+    variant="outline"
+    disabled={moderateForm.submitting}
+  >
+    {label}
+  </Button>
+{/snippet}
+
+<!-- Armed per action AND report, so a confirm left open cannot survive moving to another report. -->
+{#snippet confirmable(action: string, label: string, confirmLabel: string, destructive = false)}
+  {@const key = `${action}:${selected?.id}`}
+  {#if confirmingModel === key}
+    <Button
+      type="submit"
+      name="modelAction"
+      value={action}
+      size="sm"
+      variant={destructive ? 'destructive' : 'default'}
+      disabled={moderateForm.submitting}
+    >
+      {confirmLabel}
+    </Button>
+    <Button type="button" size="sm" variant="ghost" onclick={() => (confirmingModel = null)}>
+      Cancel
+    </Button>
+  {:else}
+    <Button type="button" size="sm" variant="outline" onclick={() => (confirmingModel = key)}>
+      {label}
+    </Button>
+  {/if}
+{/snippet}
+
+{#snippet done(label: string)}
+  <span class="inline-flex shrink-0 items-center gap-1 text-xs font-medium text-green-300">
+    <IconCheck size={14} />
+    {label}
+  </span>
+{/snippet}
 
 <!-- Queue on the left, the open report across the rest. Mods work one report at a time, so the report
      gets the room: a table across most of the width left the details squeezed into a column taller than
@@ -457,30 +547,24 @@
               {/if}
             </section>
 
-            <!-- 3. What to do about it: the model page's moderator menu, cut down to what answers a report.
-                 Each acts through the main app and then sets this report Actioned, so the trip to the site
-                 and the trip back to close the report are both gone. Only actions that would CHANGE the
-                 model are listed — a minor model is already SFW-only, a taken-down one is already down. There
-                 is deliberately no delete: a report is answered by taking a model down, not by destroying
-                 what it was about. -->
+            <!-- 3. What to do about the model: the model page's moderator menu, cut down to what answers a
+                 report. These change the MODEL only — closing the report is the Report status buttons
+                 below, a separate decision, so the result of an action stays on screen and a second one
+                 can follow it. Every row stays put once done: it shows a tick and, except for unpublish,
+                 the undo the model page offers. There is deliberately no delete: a report is answered by
+                 taking a model down, not by destroying what it was about. -->
             {#if model && state && !model.deleted}
-              {@const canUnpublish = model.status === 'Published'}
-              {@const canFlagMinor = !model.minor}
-              <!-- SFW-only stays listed when it is already set, disabled with the reason: a row that
-                   vanished read as the action being unavailable rather than already done. -->
-              {@const sfwDoneBecause = model.minor
-                ? 'Already SFW-only: a minor model always is.'
-                : model.sfwOnly
-                  ? 'Already SFW-only.'
-                  : null}
-              {@const canTakeDown = model.mode !== 'TakenDown'}
+              {@const canTakeDown = !!data.grants['model.takeDown']}
+              {@const takenDown = model.mode === 'TakenDown'}
               <section aria-labelledby="model-actions-heading" class="flex flex-col gap-3">
                 <div>
                   <h3 id="model-actions-heading" class="m-0 text-sm font-semibold">Act on the model</h3>
-                  <p class="m-0 text-xs text-muted-foreground">Each of these also marks this report Actioned.</p>
+                  <p class="m-0 text-xs text-muted-foreground">
+                    These change the model only. Close the report with Report status below.
+                  </p>
                 </div>
 
-                {#if canUnpublish}
+                {#if model.status === 'Published'}
                   <form
                     method="POST"
                     action="?/moderateModel"
@@ -543,88 +627,89 @@
                   class="flex flex-col divide-y rounded-md border"
                 >
                   <input type="hidden" name="id" value={selected.id} />
-                  {#if canFlagMinor}
-                    <div class="flex items-center justify-between gap-3 p-3">
-                      <div>
-                        <p class="m-0 text-sm font-medium">Flag as depicting a minor</p>
-                        <p class="m-0 text-xs text-muted-foreground">
-                          Marks the model and its images as minor, which also makes it SFW-only.
-                        </p>
-                      </div>
-                      <Button
-                        type="submit"
-                        name="modelAction"
-                        value="setMinor"
-                        size="sm"
-                        variant="outline"
-                        disabled={moderateForm.submitting}
-                      >
-                        Flag minor
-                      </Button>
-                    </div>
+
+                  {#if model.status !== 'Published'}
+                    <!-- No undo here on purpose: republishing a violation is an appeal decision, and it
+                         republishes every version at once. The model page keeps that. -->
+                    {#if model.status === 'UnpublishedViolation'}
+                      {@render row(
+                        'Unpublish as a violation',
+                        'Unpublished. Republishing is done from the model page.',
+                        'Unpublished'
+                      )}
+                    {:else}
+                      {@render row(
+                        'Unpublish as a violation',
+                        'Not published, so there is nothing to unpublish.',
+                        null
+                      )}
+                    {/if}
                   {/if}
+
                   <div class="flex items-center justify-between gap-3 p-3">
                     <div>
-                      <p class="m-0 text-sm font-medium {sfwDoneBecause ? 'text-muted-foreground' : ''}">
-                        Make SFW-only
-                      </p>
+                      <p class="m-0 text-sm font-medium">Flag as depicting a minor</p>
                       <p class="m-0 text-xs text-muted-foreground">
-                        {sfwDoneBecause ??
-                          'Rates the model SFW and limits its gallery to SFW images. The owner cannot undo it.'}
+                        {model.minor
+                          ? 'Flagged as depicting a minor. Unflagging restores the state from before the flag.'
+                          : 'Marks the model and its images as minor, which also makes it SFW-only.'}
                       </p>
                     </div>
-                    <Button
-                      type="submit"
-                      name="modelAction"
-                      value="setSfwOnly"
-                      size="sm"
-                      variant="outline"
-                      disabled={!!sfwDoneBecause || moderateForm.submitting}
-                    >
-                      Make SFW
-                    </Button>
-                  </div>
-                  {#if canTakeDown}
-                    <div class="flex items-center justify-between gap-3 p-3">
-                      <div>
-                        <p class="m-0 text-sm font-medium">Take down</p>
-                        <p class="m-0 text-xs text-muted-foreground">
-                          For ownership and claim reports. Hides the model as taken down; only a moderator
-                          can bring it back.
-                        </p>
+                    {#if !model.minor}
+                      {@render submit('setMinor', 'Flag minor')}
+                    {:else}
+                      <div class="flex shrink-0 items-center gap-2">
+                        {@render done('Flagged')}
+                        {@render confirmable('unsetMinor', 'Unflag', 'Yes, unflag')}
                       </div>
-                      {#if !data.grants['model.takeDown']}
+                    {/if}
+                  </div>
+
+                  <div class="flex items-center justify-between gap-3 p-3">
+                    <div>
+                      <p class="m-0 text-sm font-medium">Make SFW-only</p>
+                      <p class="m-0 text-xs text-muted-foreground">
+                        {model.minor
+                          ? 'SFW-only, because a minor model always is. Unflag minor first to change it.'
+                          : model.sfwOnly
+                            ? 'SFW-only. Allowing NSFW leaves its current rating as it is.'
+                            : 'Rates the model SFW and limits its gallery to SFW images. The owner cannot undo it.'}
+                      </p>
+                    </div>
+                    {#if model.minor}
+                      {@render done('SFW-only')}
+                    {:else if model.sfwOnly}
+                      <div class="flex shrink-0 items-center gap-2">
+                        {@render done('SFW-only')}
+                        {@render submit('unsetSfwOnly', 'Allow NSFW')}
+                      </div>
+                    {:else}
+                      {@render submit('setSfwOnly', 'Make SFW')}
+                    {/if}
+                  </div>
+
+                  <div class="flex items-center justify-between gap-3 p-3">
+                    <div>
+                      <p class="m-0 text-sm font-medium">Take down</p>
+                      <p class="m-0 text-xs text-muted-foreground">
+                        {takenDown
+                          ? 'Taken down: hidden from the site until a moderator brings it back.'
+                          : 'For ownership and claim reports. Hides the model as taken down; only a moderator can bring it back.'}
+                      </p>
+                    </div>
+                    <div class="flex shrink-0 items-center gap-2">
+                      {#if takenDown}{@render done('Taken down')}{/if}
+                      {#if !canTakeDown}
                         <span class="max-w-32 text-right text-xs text-muted-foreground">
                           Needs the “Take down a model” permission
                         </span>
-                      {:else if confirmingModel === `takeDown:${selected.id}`}
-                        <div class="flex shrink-0 gap-1">
-                          <Button
-                            type="submit"
-                            name="modelAction"
-                            value="takeDown"
-                            size="sm"
-                            variant="destructive"
-                            disabled={moderateForm.submitting}
-                          >
-                            Yes, take down
-                          </Button>
-                          <Button type="button" size="sm" variant="ghost" onclick={() => (confirmingModel = null)}>
-                            Cancel
-                          </Button>
-                        </div>
+                      {:else if takenDown}
+                        {@render confirmable('bringBack', 'Bring back', 'Yes, bring back')}
                       {:else}
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="outline"
-                          onclick={() => (confirmingModel = `takeDown:${selected.id}`)}
-                        >
-                          Take down
-                        </Button>
+                        {@render confirmable('takeDown', 'Take down', 'Yes, take down', true)}
                       {/if}
                     </div>
-                  {/if}
+                  </div>
                 </form>
 
                 {#if moderateForm.error}
