@@ -199,8 +199,10 @@ describe('BlockImagePickerModal geometry with a large library', () => {
       expect(tray.querySelectorAll('[role="listitem"]')).toHaveLength(2);
       // The tray asks for the grid's own thumbnail url, so it is already loaded.
       const trayImg = tray.querySelector('img');
-      expect(trayImg?.getAttribute('src')).toMatch(/\/width=320[,/]/);
-      expect(trayImg?.getAttribute('srcset')).toMatch(/\/width=512[,/]/);
+      const gridImg = tileNamed(1)?.querySelector('img');
+      expect(trayImg?.getAttribute('src')).toBeTruthy();
+      expect(trayImg?.getAttribute('src')).toBe(gridImg?.getAttribute('src'));
+      expect(trayImg?.getAttribute('srcset')).toBe(gridImg?.getAttribute('srcset'));
       expectFooterOnScreen(dialog, vp);
       expect(dialog.scrollHeight).toBe(dialog.clientHeight);
       expect(dialog.scrollWidth).toBe(dialog.clientWidth);

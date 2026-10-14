@@ -762,8 +762,14 @@ describe('BlockImagePickerModal: tray, jump to date, tile labels', () => {
     await expect.element(tile('Posted image 1')).toBeInTheDocument();
     const input = page.getByLabelText('Jump to date');
 
+    const started = performance.now();
     await userEvent.fill(input, '2024-06-30');
-    // Straight after the change: not applied yet.
+    // Straight after the change: not applied yet. If the fill itself took longer than the debounce
+    // the check below means nothing, so that is reported as the harness being slow.
+    expect(
+      performance.now() - started,
+      'the fill took longer than the 400ms debounce'
+    ).toBeLessThan(400);
     expect(mocks.postedQuery).not.toHaveBeenCalledWith(
       { toDate: expect.anything() },
       expect.anything()
@@ -786,5 +792,56 @@ describe('BlockImagePickerModal: tray, jump to date, tile labels', () => {
       () => expect(mocks.postedQuery).toHaveBeenLastCalledWith({}, expect.anything()),
       { timeout: 5000 }
     );
+  });
+
+  const JUNE_30 = { toDate: new Date(2024, 5, 30, 23, 59, 59, 999) };
+  const JULY_15 = { toDate: new Date(2024, 6, 15, 23, 59, 59, 999) };
+  const boundsQueried = () =>
+    mocks.postedQuery.mock.calls.map(([input]) => (input as { toDate?: Date }).toDate?.getTime());
+
+  async function applyJune30() {
+    setPosted([postedItem(1)]);
+    openModal({ sources: ['posted'] });
+    await expect.element(tile('Posted image 1')).toBeInTheDocument();
+    await userEvent.fill(page.getByLabelText('Jump to date'), '2024-06-30');
+    await vi.waitFor(
+      () => expect(mocks.postedQuery).toHaveBeenLastCalledWith(JUNE_30, expect.anything()),
+      { timeout: 5000 }
+    );
+  }
+
+  test('Back to newest cancels a date still waiting to be applied', async () => {
+    await applyJune30();
+    await userEvent.fill(page.getByLabelText('Jump to date'), '2024-07-15');
+    await userEvent.click(page.getByRole('button', { name: 'Back to newest' }));
+    await settle(800);
+
+    expect(mocks.postedQuery).toHaveBeenLastCalledWith({}, expect.anything());
+    expect(boundsQueried()).not.toContain(JULY_15.toDate.getTime());
+  });
+
+  test('a date emptied before it settles is never applied', async () => {
+    setPosted([postedItem(1)]);
+    openModal({ sources: ['posted'] });
+    await expect.element(tile('Posted image 1')).toBeInTheDocument();
+    const input = page.getByLabelText('Jump to date');
+    await userEvent.fill(input, '2024-06-30');
+    await userEvent.clear(input);
+    await settle(800);
+
+    expect(boundsQueried().filter((bound) => bound !== undefined)).toEqual([]);
+  });
+
+  test('blurring a half-edited date keeps the date that is applied', async () => {
+    await applyJune30();
+    const input = page.getByLabelText('Jump to date');
+    await userEvent.click(input);
+    await userEvent.keyboard('{Backspace}');
+    // The setup really produced a half-edited field, not an empty one.
+    expect((input.element() as HTMLInputElement).validity.badInput).toBe(true);
+    await userEvent.click(page.getByText('Choose an image'));
+    await settle(800);
+
+    expect(mocks.postedQuery).toHaveBeenLastCalledWith(JUNE_30, expect.anything());
   });
 });
