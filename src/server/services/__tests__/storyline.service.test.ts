@@ -1836,6 +1836,19 @@ describe('getStorylinesInfinite: card cover, open and continue price', () => {
     expect(sqlAt(1).values).toContainEqual([5, 6, 9]);
   });
 
+  // Decision, for whoever edits this next: the input handed to enforceBlockedBrowsingTags carries
+  // NO userId. With one, its own-scope rule treats every reader as browsing their own images and
+  // drops all the site's browsing-settings tag exclusions from every cover.
+  it('asks for the browsing-settings exclusions as a mixed feed, never as the reader own images', async () => {
+    answer([feedRow(1)]);
+    await feed({ id: STRANGER });
+    const [input] = enforceBlockedBrowsingTags.mock.calls[0] as unknown as [
+      Record<string, unknown>
+    ];
+    expect(input).not.toHaveProperty('userId');
+    expect(input).not.toHaveProperty('username');
+  });
+
   it('shows no price, rather than failing the page, when owner caps cannot be read', async () => {
     placementPriceRanges.mockRejectedValue(new Error('cap read failed'));
     answer([feedRow(1, { storylineMode: 'review', storylinePrice: 40 }), feedRow(2)]);
