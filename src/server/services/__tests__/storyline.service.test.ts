@@ -8,6 +8,7 @@ import type * as CacheHelpers from '~/server/utils/cache-helpers';
 import { dbMock, resetSharedMocks, setEnv } from '~/__tests__/mocks';
 import { NsfwLevel } from '~/server/common/enums';
 import { raiseNsfwLevelText } from '@civitai/shared/rated-entity-sql';
+import type * as NotificationService from '~/server/services/notification.service';
 import { storylineTextScanSubject } from '~/server/services/text-scan/profiles/storyline.profile';
 import { textScanTextHash } from '~/server/services/text-scan/prompt';
 
@@ -31,6 +32,11 @@ vi.mock('~/server/utils/cache-helpers', async (importOriginal) => ({
   setFetchThroughCache,
 }));
 const setFetchThroughCache = vi.hoisted(() => vi.fn());
+const createNotification = vi.hoisted(() => vi.fn());
+vi.mock('~/server/services/notification.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof NotificationService>()),
+  createNotification,
+}));
 vi.mock('~/server/services/user-preferences.service', async (importOriginal) => ({
   ...(await importOriginal<typeof UserPreferencesService>()),
   getAllHiddenForUser,
@@ -3484,7 +3490,8 @@ describe('a storyline the title scan holds as about a minor', () => {
 
       const asOwner = await getStoryline({ id: 10, viewer: { id: OWNER }, browsingLevel: ALL });
       expect(asOwner).toMatchObject({ maxNsfwLevel: ceiling, ownerMaxNsfwLevel: NsfwLevel.X });
-      expect(asOwner).not.toHaveProperty('minorByScan');
+      for (const field of ['minorByScan', 'nsfwLevel', 'moderatorNsfwLevel'])
+        expect(asOwner).not.toHaveProperty(field);
       const asReader = await getStoryline({ id: 10, viewer: { id: STRANGER }, browsingLevel: ALL });
       expect(asReader).toMatchObject({ maxNsfwLevel: ceiling, ownerMaxNsfwLevel: null });
 
@@ -3578,31 +3585,77 @@ describe('the title scan’s minor finding, beyond the scan', () => {
         viewer: undefined,
         browsingLevel: NsfwLevel.PG,
       });
-      expect(storyline).not.toHaveProperty('minorByScan');
+      for (const field of ['minorByScan', 'nsfwLevel', 'moderatorNsfwLevel'])
+        expect(storyline).not.toHaveProperty(field);
       expect(storyline.maxNsfwLevel).toBe(ceiling);
     }
   );
 
   // The rule the scan applies, when the NSFW rating arrives from a moderator instead.
-  it('a moderator rating a minor-flagged title NSFW takes it down as the scan would', async () => {
-    w.storyline.findUnique.mockResolvedValue({
-      tosViolationByScan: false,
-      title: 'T',
-      userId: OWNER,
-    } as never);
-    w.storyline.updateMany.mockResolvedValue({ count: 1 } as never);
-    w.storyline.findUniqueOrThrow.mockResolvedValue({ id: 10 } as never);
-    await moderateStorylineTitle({ id: 10, moderatorNsfwLevel: NsfwLevel.R });
-    expect(w.storyline.updateMany.mock.calls.map(([call]) => call)).toEqual([
-      { where: { id: 10 }, data: { moderatorNsfwLevel: NsfwLevel.R } },
-      {
-        where: { id: 10, minorByScan: true, tosViolationByScan: false },
-        data: { tosViolation: true, tosViolationByScan: true },
+  describe('a moderator rating a minor-flagged title NSFW', () => {
+    const text = textScanTextHash(storylineTextScanSubject({ userId: OWNER, title: 'T' }));
+    const takedown = {
+      where: {
+        id: 10,
+        title: 'T',
+        minorByScan: true,
+        tosViolationByScan: false,
+        OR: [{ scanFlagLiftedTextHash: null }, { scanFlagLiftedTextHash: { not: text } }],
       },
-    ]);
+      data: { tosViolation: true, tosViolationByScan: true },
+    };
+    beforeEach(() => {
+      createNotification.mockClear();
+      w.storyline.findUnique.mockResolvedValue({
+        tosViolationByScan: false,
+        title: 'T',
+        userId: OWNER,
+      } as never);
+      w.storyline.updateMany.mockResolvedValue({ count: 1 } as never);
+      w.storyline.findUniqueOrThrow.mockResolvedValue({ id: 10 } as never);
+    });
 
-    w.storyline.updateMany.mockClear();
-    await moderateStorylineTitle({ id: 10, moderatorNsfwLevel: NsfwLevel.PG13 });
-    expect(w.storyline.updateMany).toHaveBeenCalledTimes(1);
+    it('takes it down as the scan would, not for text a moderator cleared, and tells the owner', async () => {
+      await moderateStorylineTitle({ id: 10, moderatorNsfwLevel: NsfwLevel.R });
+      expect(w.storyline.updateMany.mock.calls.map(([call]) => call)).toEqual([
+        { where: { id: 10 }, data: { moderatorNsfwLevel: NsfwLevel.R } },
+        takedown,
+      ]);
+      expect(createNotification).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: OWNER,
+          details: { storylineId: 10, takenDown: true, title: 'T' },
+        })
+      );
+    });
+
+    it('takes nothing down below R, and says nothing when nothing was taken down', async () => {
+      await moderateStorylineTitle({ id: 10, moderatorNsfwLevel: NsfwLevel.PG13 });
+      expect(w.storyline.updateMany).toHaveBeenCalledTimes(1);
+      w.storyline.updateMany.mockClear();
+      w.storyline.updateMany
+        .mockResolvedValueOnce({ count: 1 } as never)
+        .mockResolvedValueOnce({ count: 0 } as never);
+      await moderateStorylineTitle({ id: 10, moderatorNsfwLevel: NsfwLevel.R });
+      expect(createNotification).not.toHaveBeenCalled();
+    });
+
+    // A lift records the reviewed text, so the takedown that follows in the same call skips it:
+    // a moderator can clear a false positive and still rate the title R.
+    it('in the same call as a lift, writes the lift with the hash the takedown then skips', async () => {
+      w.storyline.findUnique.mockResolvedValue({
+        tosViolationByScan: true,
+        title: 'T',
+        userId: OWNER,
+      } as never);
+      await moderateStorylineTitle({
+        id: 10,
+        moderatorNsfwLevel: NsfwLevel.R,
+        liftScanTakedown: { reviewedTitle: 'T' },
+      });
+      const calls = w.storyline.updateMany.mock.calls.map(([call]) => call);
+      expect(calls[0]).toMatchObject({ data: { scanFlagLiftedTextHash: text } });
+      expect(calls.at(-1)).toEqual(takedown);
+    });
   });
 });

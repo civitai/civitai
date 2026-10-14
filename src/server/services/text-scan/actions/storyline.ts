@@ -27,10 +27,11 @@ export async function liftScanTakedown(
   return alone.count + underModerator.count;
 }
 
-const notifyOwner = (
+/** `source` keys the notice: one per scan verdict, or per moderator action. */
+export const notifyStorylineTitleModerated = (
   storyline: { userId: number; title: string },
   details: { storylineId: number; level?: number; takenDown?: true; minor?: true },
-  workflowId: string
+  source: string
 ) =>
   createNotification({
     userId: storyline.userId,
@@ -39,7 +40,7 @@ const notifyOwner = (
     // Per verdict: a redelivered callback is the same notice, a later scan is a new one.
     key: `${STORYLINE_TITLE_MODERATED}-${details.storylineId}-${
       details.takenDown ? 'tos' : details.minor ? 'minor' : details.level
-    }-${workflowId}`,
+    }-${source}`,
     details: { ...details, title: storyline.title },
   });
 
@@ -76,7 +77,7 @@ export async function applyStorylineTextScan({
     await dbWrite.storyline.updateMany({ where: { id: entityId }, data: { nsfwLevel: level } });
     // A moderator's ruling stands in for the scan's, so a changed scan level changes nothing.
     if (level >= NsfwLevel.R && level > before.nsfwLevel && before.moderatorNsfwLevel == null)
-      await notifyOwner(before, { storylineId: entityId, level }, workflowId);
+      await notifyStorylineTitleModerated(before, { storylineId: entityId, level }, workflowId);
   }
 
   // The higher of a moderator's rating and this verdict's: a rating is not tied to the text it
@@ -98,11 +99,17 @@ export async function applyStorylineTextScan({
       data: { minorByScan: minor },
     });
     if (count && minor && !takeDown)
-      await notifyOwner(before, { storylineId: entityId, minor: true }, workflowId);
+      await notifyStorylineTitleModerated(
+        before,
+        { storylineId: entityId, minor: true },
+        workflowId
+      );
   }
 
   if (takeDown) {
-    // Not again over the scan's own takedown, nor for text a moderator has cleared.
+    // Not again over the scan's own takedown, nor for text a moderator has cleared. Keep this
+    // write unconditional otherwise: a clean minor answer above may have just lifted the cap, and a
+    // person of interest must still take the storyline down.
     const { count } = await dbWrite.storyline.updateMany({
       where: {
         id: entityId,
@@ -111,7 +118,12 @@ export async function applyStorylineTextScan({
       },
       data: { tosViolation: true, tosViolationByScan: true },
     });
-    if (count) await notifyOwner(before, { storylineId: entityId, takenDown: true }, workflowId);
+    if (count)
+      await notifyStorylineTitleModerated(
+        before,
+        { storylineId: entityId, takenDown: true },
+        workflowId
+      );
   } else if (outcome.poi && outcome.minor) {
     await liftScanTakedown(entityId);
   }

@@ -16,7 +16,10 @@ import { placementPriceRanges } from '~/server/services/placement.service';
 import { raiseNsfwLevelText } from '@civitai/shared/rated-entity-sql';
 import { storylineTextScanSubject } from '~/server/services/text-scan/profiles/storyline.profile';
 import { textScanTextHash } from '~/server/services/text-scan/prompt';
-import { liftScanTakedown as liftScanTakedownWrite } from '~/server/services/text-scan/actions/storyline';
+import {
+  liftScanTakedown as liftScanTakedownWrite,
+  notifyStorylineTitleModerated,
+} from '~/server/services/text-scan/actions/storyline';
 import { scanEntityInBackground } from '~/server/services/text-scan/submit';
 import { logToAxiom } from '~/server/logging/client';
 import {
@@ -651,12 +654,29 @@ export async function moderateStorylineTitle({
     : (await dbWrite.storyline.updateMany({ where: { id }, data: { moderatorNsfwLevel } })).count;
   if (!count) throw throwBadRequestError('The storyline changed since it was reviewed');
   // A title the scan holds as about a minor, now rated NSFW: the takedown the scan would have made
-  // with this rating, marked as the scan's so a clean rescan or a lift for the title can end it.
-  if (moderatorNsfwLevel != null && moderatorNsfwLevel >= NsfwLevel.R)
-    await dbWrite.storyline.updateMany({
-      where: { id, minorByScan: true, tosViolationByScan: false },
+  // with this rating, marked as the scan's so a lift for the title can end it. Not for text a
+  // moderator has cleared (the scan's own rule), which includes a lift in this same call.
+  if (moderatorNsfwLevel != null && moderatorNsfwLevel >= NsfwLevel.R) {
+    const currentText = textScanTextHash(
+      storylineTextScanSubject({ userId: storyline.userId, title: storyline.title })
+    );
+    const { count: takenDown } = await dbWrite.storyline.updateMany({
+      where: {
+        id,
+        title: storyline.title,
+        minorByScan: true,
+        tosViolationByScan: false,
+        OR: [{ scanFlagLiftedTextHash: null }, { scanFlagLiftedTextHash: { not: currentText } }],
+      },
       data: { tosViolation: true, tosViolationByScan: true },
     });
+    if (takenDown)
+      await notifyStorylineTitleModerated(
+        storyline,
+        { storylineId: id, takenDown: true },
+        `moderator-${Date.now()}`
+      );
+  }
   return dbWrite.storyline.findUniqueOrThrow({
     where: { id },
     select: { id: true, ...storylineTakedownSelect, ...storylineTitleLevelSelect },
@@ -1056,6 +1076,9 @@ export async function getStoryline({
     coverImageId,
     heroImageId,
     minorByScan,
+    // The title's ratings decide who is shown the story; readers get the decision, not them.
+    nsfwLevel: _nsfwLevel,
+    moderatorNsfwLevel: _moderatorNsfwLevel,
     ...rest
   } = storyline;
   const ownerUser = toCastUser(user);
@@ -1407,7 +1430,14 @@ async function getStorylineForRead(storylineId: number, viewer: Viewer, browsing
     throw throwNotFoundError('Storyline not found');
   // Readers get the ceiling chapters are held to, never the title scan's minor finding: these
   // reads are public, and the flag is a content classification.
-  const { user: _user, chapters: _chapters, minorByScan, ...rest } = storyline;
+  const {
+    user: _user,
+    chapters: _chapters,
+    minorByScan,
+    nsfwLevel: _nsfwLevel,
+    moderatorNsfwLevel: _moderatorNsfwLevel,
+    ...rest
+  } = storyline;
   return {
     storyline: { ...rest, maxNsfwLevel: storylineCeiling({ ...rest, minorByScan }) },
     blockedUserIds,
