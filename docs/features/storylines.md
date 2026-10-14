@@ -26,8 +26,10 @@ version as designed rather than what is live today.
   ships, this joins an early-access list.
 - **Content level.** Every storyline has a maximum content level set by its creator. A chapter above
   it is shown only as a placeholder, without its images, so the chapters after it stay reachable.
-  The same goes for a chapter whose post was removed. Each reader's own browsing level still applies
-  chapter by chapter.
+  The same goes for a chapter whose post was removed or whose author was banned. Each reader's own
+  browsing level still applies chapter by chapter.
+- **Reporting.** The menu on a storyline's page reports the storyline itself, such as its title, to
+  moderators. A chapter is reported as its post or image.
 
 ## For creators
 
@@ -45,7 +47,8 @@ version as designed rather than what is live today.
 
 ## Not in the first version
 
-Branches rejoining, and an in-app tool for making the next section.
+Branches rejoining, an in-app tool for making the next section, and deleting a storyline: its creator
+marks it complete instead, and moderators take down one that breaks the rules.
 
 ## Trying it locally
 

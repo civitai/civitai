@@ -172,7 +172,7 @@ export const storylineRouter = router({
     .input(addOwnerChapterSchema)
     .mutation(({ input, ctx }) => addOwnerChapter({ ...input, userId: ctx.user.id })),
 
-  setCanon: storylineMemberProcedure.input(storylineChapterSchema).mutation(({ input, ctx }) =>
+  setCanon: storylineWriteProcedure.input(storylineChapterSchema).mutation(({ input, ctx }) =>
     setCanonChapter({
       chapterId: input.chapterId,
       userId: ctx.user.id,
@@ -180,7 +180,7 @@ export const storylineRouter = router({
     })
   ),
 
-  addCollaborator: storylineMemberProcedure
+  addCollaborator: storylineWriteProcedure
     .input(storylineCollaboratorSchema)
     .mutation(({ input, ctx }) =>
       addStorylineCollaborator({
@@ -191,7 +191,7 @@ export const storylineRouter = router({
       })
     ),
 
-  removeCollaborator: storylineMemberProcedure
+  removeCollaborator: storylineWriteProcedure
     .input(storylineCollaboratorSchema)
     .mutation(({ input, ctx }) =>
       removeStorylineCollaborator({

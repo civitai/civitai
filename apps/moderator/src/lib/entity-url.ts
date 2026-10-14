@@ -22,6 +22,7 @@ const ENTITY_PATH: Record<string, string> = {
   comicproject: 'comics',
   model3d: '3d-models',
   crucible: 'crucibles',
+  storyline: 'storylines',
   challenge: 'challenges',
 };
 

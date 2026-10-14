@@ -767,6 +767,34 @@ describe('reading', () => {
       });
     });
 
+    // A ban is the one removal no row on the chapter or post records: the post stays published and
+    // untaken-down, only its author's account changed. The chapter must still read as removed to
+    // everyone but moderators — the story's owner included — and must not cut the path short.
+    it("tombstones a banned non-owner author's chapter, with the chapters after it reachable", async () => {
+      r.post.findMany.mockResolvedValue([
+        post(101, OWNER),
+        post(103, STRANGER, { user: { username: 'gone', bannedAt: new Date(), deletedAt: null } }),
+        post(104, COLLABORATOR),
+      ] as never);
+      const path = (viewer: { id: number; isModerator?: boolean }) =>
+        getStorylinePath({ chapterId: 4, viewer, browsingLevel: NsfwLevel.PG });
+
+      for (const viewer of [{ id: 99 }, { id: OWNER }]) {
+        const { chapters } = await path(viewer);
+        expect(chapters.map((c) => [c.chapterId, c.tombstone])).toEqual([
+          [1, null],
+          [2, 'deleted'],
+          [3, 'removed'],
+          [4, null],
+        ]);
+        expect(chapters[2].post).toBeNull();
+        expect(chapters[3].post).toMatchObject({ id: 104 });
+      }
+
+      const { chapters: asModerator } = await path({ id: MODERATOR, isModerator: true });
+      expect(asModerator[2]).toMatchObject({ tombstone: null, post: { id: 103 } });
+    });
+
     it("applies the story's ceiling and the reader's blocks to each chapter", async () => {
       // Owned by someone else, so blocking chapter 1's author does not hide the whole story.
       r.storyline.findUnique.mockResolvedValue(
