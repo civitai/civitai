@@ -163,8 +163,9 @@ SELECT
     ELSE 'community'
   END AS rank,
   p."nsfwLevel" > s."maxNsfwLevel" * 2 - 1 AS "aboveCeiling",
-  (SELECT i.id FROM "Image" i WHERE i."postId" = c."postId" ORDER BY i.index NULLS LAST, i.id LIMIT 1) AS "firstImageId",
-  (SELECT i.id FROM "Image" i WHERE i."postId" = c."postId" ORDER BY i.index DESC NULLS LAST, i.id DESC LIMIT 1) AS "lastImageId"
+  -- Same order as storyline mode walks a post's images: a missing index counts as 0.
+  (SELECT i.id FROM "Image" i WHERE i."postId" = c."postId" ORDER BY coalesce(i.index, 0), i.id LIMIT 1) AS "firstImageId",
+  (SELECT i.id FROM "Image" i WHERE i."postId" = c."postId" ORDER BY coalesce(i.index, 0) DESC, i.id DESC LIMIT 1) AS "lastImageId"
 FROM "Storyline" s
 JOIN "StorylineChapter" c ON c."storylineId" = s.id
 JOIN "User" u ON u.id = c."userId"

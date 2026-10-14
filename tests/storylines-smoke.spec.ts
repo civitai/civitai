@@ -17,8 +17,8 @@ import { expect, test } from '@playwright/test';
  *   pnpm exec playwright test tests/storylines-smoke.spec.ts --project chromium --no-deps
  *
  * The seed prints every id. Seed it without a community account: the fork count below assumes
- * the default three continuations. An expired token runs the test signed out, which reads as a
- * storyline that will not open.
+ * the default three continuations. The account's browsing level must include PG-13, or the
+ * readable continuations turn into placeholders too.
  *
  * Not covered: the pill on a feed card, because which images the feed shows is not under the
  * test's control; check that step by hand.
@@ -53,7 +53,8 @@ test.describe('storylines smoke', () => {
     await expect(page).toHaveURL(/[?&]storylineChapter=\d+/);
     await expect(page.getByTestId('storyline-banner')).toContainText('The Patch');
 
-    await page.getByTestId('storyline-pill').click();
+    // The corner pill carries the title; a feed card's pill on the same page would not.
+    await page.getByTestId('storyline-pill').filter({ hasText: 'The Patch' }).click();
     await expect(page.getByTestId('storyline-subway')).toBeVisible();
   });
 
@@ -86,6 +87,9 @@ test.describe('storylines smoke', () => {
     expect(await forks.count()).toBe(3);
 
     await page.getByTestId('storyline-create-next').click();
-    await expect(page.getByRole('dialog').getByText('Get early access')).toBeVisible();
+    // Title and badge render whether or not the account is signed in or already on the list.
+    const prompt = page.getByRole('dialog');
+    await expect(prompt.getByText('Create the next section')).toBeVisible();
+    await expect(prompt.getByText('Coming soon')).toBeVisible();
   });
 });

@@ -14,9 +14,9 @@
  * The refused names are near misses of "*-dev": no hyphen, a "dev-" prefix, "-dev" in the
  * middle, and no name at all.
  *
- * Every server is wiped and rebuilt. Before touching one, the test refuses any database that
- * already holds more than a handful of users, so a real database pointed at by mistake is left
- * alone; the cluster name cannot protect it, because a real dev server passes that check too.
+ * Every server is wiped and rebuilt. Before touching one, the test checks its cluster name and
+ * refuses any database holding a table the test does not create, or more rows than it writes.
+ * The cluster name alone cannot protect a real database: a real dev server passes it too.
  */
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -54,17 +54,20 @@ const OWN_TABLES = new Set([
   ...[...migrationSql.matchAll(/CREATE TABLE "(\w+)"/g)].map((m) => m[1]),
 ]);
 
+/** More rows than the fixture ever writes to one table. */
+const MAX_OWN_ROWS = 100;
+
 /**
  * Fails closed: a database may be wiped only if every table in it, in any schema, is one this
- * test creates. A fresh server has none; anything else was not made here.
+ * test creates, and none of those holds more rows than the fixture writes. A fresh server has
+ * no tables; anything else was not made here.
  */
 async function assertThrowaway(c, url) {
   const { rows } = await c.query(
     `SELECT n.nspname AS schema, cl.relname AS name
        FROM pg_class cl JOIN pg_namespace n ON n.oid = cl.relnamespace
       WHERE cl.relkind IN ('r', 'p', 'v', 'm', 'f')
-        AND n.nspname NOT IN ('pg_catalog', 'information_schema')
-        AND n.nspname NOT LIKE 'pg\_toast%' AND n.nspname NOT LIKE 'pg\_temp%'`
+        AND n.nspname NOT IN ('pg_catalog', 'information_schema')`
   );
   const foreign = rows.filter((r) => r.schema !== 'public' || !OWN_TABLES.has(r.name));
   if (foreign.length) {
@@ -74,6 +77,20 @@ async function assertThrowaway(c, url) {
         foreign.length
       } table(s) this test did not create (${sample.join(', ')})`
     );
+  }
+  for (const { name } of rows) {
+    const { n } = (
+      await c.query(
+        `SELECT count(*)::int AS n FROM (SELECT 1 FROM public."${name}" LIMIT ${
+          MAX_OWN_ROWS + 1
+        }) t`
+      )
+    ).rows[0];
+    if (n > MAX_OWN_ROWS) {
+      throw new Error(
+        `refusing to wipe ${url}: public."${name}" has more than ${MAX_OWN_ROWS} rows, more than this test writes`
+      );
+    }
   }
 }
 
@@ -211,9 +228,9 @@ async function check(name, fn) {
 
 for (const url of NONDEV_URLS.split(',')) {
   await withClient(url, async (c) => {
-    await prepare(c, url);
     const cluster = (await c.query(`SELECT current_setting('cluster_name') AS n`)).rows[0].n;
     assert.ok(!cluster.endsWith('-dev'), `${url} must not be a *-dev cluster (got "${cluster}")`);
+    await prepare(c, url);
     const before = [await digest(c, 'Storyline'), await digest(c, 'StorylineChapter')];
 
     await check(`seed refuses cluster_name "${cluster}"`, async () => {
@@ -228,9 +245,9 @@ for (const url of NONDEV_URLS.split(',')) {
 }
 
 await withClient(DEV_URL, async (c) => {
-  await prepare(c, DEV_URL);
   const cluster = (await c.query(`SELECT current_setting('cluster_name') AS n`)).rows[0].n;
   assert.ok(cluster.endsWith('-dev'), `DEV_URL must be a *-dev cluster (got "${cluster}")`);
+  await prepare(c, DEV_URL);
   const posts = await digest(c, 'Post');
   const images = await digest(c, 'Image');
   const others = await otherStorylines(c);
@@ -249,6 +266,31 @@ await withClient(DEV_URL, async (c) => {
       }
     });
   }
+
+  await check('the wipe guard accepts this fixture and refuses anything else', async () => {
+    await assertThrowaway(c, 'fixture');
+    const cases = [
+      ['a table it did not create', `CREATE TABLE "Foreign" (id int)`, `DROP TABLE "Foreign"`],
+      [
+        'a table in another schema',
+        `CREATE SCHEMA app; CREATE TABLE app."Post" (id int)`,
+        `DROP SCHEMA app CASCADE`,
+      ],
+      [
+        'more rows than it writes',
+        `INSERT INTO "Report" SELECT g FROM generate_series(1, ${MAX_OWN_ROWS + 1}) g`,
+        `DELETE FROM "Report"`,
+      ],
+    ];
+    for (const [what, setup, teardown] of cases) {
+      try {
+        await c.query(setup);
+        await assert.rejects(assertThrowaway(c, what), /refusing to wipe/, what);
+      } finally {
+        await c.query(teardown);
+      }
+    }
+  });
 
   let rows = [];
   await check('seed builds the demo storyline', async () => {
@@ -272,7 +314,8 @@ await withClient(DEV_URL, async (c) => {
     const printed = rows.map((r) => [r.postId, r.firstImageId, r.lastImageId]);
     assert.deepEqual(printed.slice(0, 4), [
       [101, 1001, 1003],
-      [202, 2009, 2005],
+      // 2001 has no index, which storyline mode reads as 0, and the lower id breaks the tie.
+      [202, 2001, 2005],
       [103, null, null],
       [201, 3007, 3003],
     ]);
