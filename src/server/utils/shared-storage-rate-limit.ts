@@ -146,8 +146,9 @@ export async function checkSharedReportRateLimit(
 //   report            — per (app, viewer) per day, on top of the marks + counters bucket.
 export const DOC_STORE_READ_RATE_LIMIT_MAX = 300;
 export const DOC_STORE_PRIVATE_WRITE_RATE_LIMIT_MAX = 120;
-export const DOC_STORE_TALLY_RATE_LIMIT_MAX = 30;
-export const DOC_STORE_REPORT_RATE_LIMIT_MAX = 20;
+// Marks + counters and reports take the legacy vote and report limits (own buckets, same numbers).
+export const DOC_STORE_TALLY_RATE_LIMIT_MAX = SHARED_VOTE_RATE_LIMIT_MAX;
+export const DOC_STORE_REPORT_RATE_LIMIT_MAX = SHARED_REPORT_RATE_LIMIT_MAX;
 const MINUTE_SECONDS = 60;
 
 export type DocStoreRateBucket = 'read' | 'private-write' | 'tally' | 'report';
@@ -155,8 +156,14 @@ export type DocStoreRateBucket = 'read' | 'private-write' | 'tally' | 'report';
 const DOC_STORE_BUCKETS: Record<DocStoreRateBucket, { max: number; windowSeconds: number }> = {
   read: { max: DOC_STORE_READ_RATE_LIMIT_MAX, windowSeconds: MINUTE_SECONDS },
   'private-write': { max: DOC_STORE_PRIVATE_WRITE_RATE_LIMIT_MAX, windowSeconds: MINUTE_SECONDS },
-  tally: { max: DOC_STORE_TALLY_RATE_LIMIT_MAX, windowSeconds: MINUTE_SECONDS },
-  report: { max: DOC_STORE_REPORT_RATE_LIMIT_MAX, windowSeconds: 24 * 60 * 60 },
+  tally: {
+    max: DOC_STORE_TALLY_RATE_LIMIT_MAX,
+    windowSeconds: SHARED_VOTE_RATE_LIMIT_WINDOW_SECONDS,
+  },
+  report: {
+    max: DOC_STORE_REPORT_RATE_LIMIT_MAX,
+    windowSeconds: SHARED_REPORT_RATE_LIMIT_WINDOW_SECONDS,
+  },
 };
 
 /**

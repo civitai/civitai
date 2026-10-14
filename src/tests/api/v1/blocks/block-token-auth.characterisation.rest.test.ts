@@ -5614,6 +5614,7 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
         message: 'rate limit exceeded',
         error: 'rate limit exceeded',
         details: { bucket: 'read', retryAfter: 7 },
+        rateLimit: { retryAfterSeconds: 7, retryAt: '2026-01-01T00:00:07.000Z' },
       },
       true,
       ['checkDocStoreRateLimit("read", "apb_row", "u:42")'],

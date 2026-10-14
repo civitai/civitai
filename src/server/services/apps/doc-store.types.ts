@@ -12,8 +12,8 @@ import type {
  * still refuses, itself, the parts the parser admits only behind
  * `APP_STORAGE_ENABLED_FEATURES` (`write: 'anyone'`, `kind: 'log'`,
  * `ttlSeconds`, `maxEntries`); `write: 'owner'` is accepted and means nobody
- * writes documents until owner writes exist. Shared collections default to
- * `write: 'own'` when the field is absent.
+ * writes documents until owner writes exist. The parser requires `write` on a shared
+ * collection; the store reads an absent one as `own`.
  */
 export type DocCollectionConfig = DeclaredStorageCollection;
 

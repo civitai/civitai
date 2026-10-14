@@ -55,6 +55,9 @@ import {
   type SharedTextScan,
 } from '~/server/services/apps/shared-data-moderation';
 import { resolveClientIp } from '~/server/utils/client-ip';
+import { rateLimitMetaFor } from '~/server/utils/rate-limit-error';
+import { GENERIC_SERVER_ERROR_MESSAGE } from '~/server/utils/rest-error-envelope';
+import type { RateLimitMeta } from '~/shared/utils/rate-limit-meta';
 import {
   checkDocStoreRateLimit,
   DOC_STORE_PRIVATE_WRITE_RATE_LIMIT_MAX,
@@ -77,10 +80,13 @@ import {
 // ---------------------------------------------------------------------------
 
 /** Every literal path segment, and the one position each may occupy. */
+const GET_MANY_SEGMENT = '_get';
+const COUNTERS_SEGMENT = 'counters';
+const MARKS_SEGMENT = 'marks';
 export const STORAGE_RESERVED_SEGMENTS = [
-  { segment: '_get', position: 0 },
-  { segment: 'counters', position: 2 },
-  { segment: 'marks', position: 2 },
+  { segment: GET_MANY_SEGMENT, position: 0 },
+  { segment: COUNTERS_SEGMENT, position: 2 },
+  { segment: MARKS_SEGMENT, position: 2 },
 ] as const;
 
 export type StorageRoute =
@@ -108,7 +114,7 @@ export function matchStorageRoute(method: string, segments: readonly string[]): 
       if (a.startsWith('_')) return null;
       return pick({ GET: { op: 'list', collection: a }, POST: { op: 'create', collection: a } });
     case 2:
-      if (a === '_get') return pick({ POST: { op: 'getMany', collection: b } });
+      if (a === GET_MANY_SEGMENT) return pick({ POST: { op: 'getMany', collection: b } });
       if (a.startsWith('_')) return null;
       return pick({
         GET: { op: 'get', collection: a, key: b },
@@ -117,10 +123,10 @@ export function matchStorageRoute(method: string, segments: readonly string[]): 
       });
     case 4:
       if (a.startsWith('_')) return null;
-      if (c === 'counters') {
+      if (c === COUNTERS_SEGMENT) {
         return pick({ POST: { op: 'increment', collection: a, key: b, name: d } });
       }
-      if (c === 'marks') {
+      if (c === MARKS_SEGMENT) {
         return pick({
           PUT: { op: 'mark', collection: a, key: b, name: d },
           DELETE: { op: 'unmark', collection: a, key: b, name: d },
@@ -185,7 +191,23 @@ export type StorageErrorBody = {
   /** The house envelope's legacy field; always the message here. */
   error: string;
   details?: Record<string, unknown>;
+  /** On a 429 only: the house retry metadata (`rest-error-envelope.ts`), with `Retry-After`. */
+  rateLimit?: RateLimitMeta;
 };
+
+/**
+ * What the client is told for a store refusal whose own message describes the server (the
+ * database role check); the detail stays in the store's log.
+ */
+const CLIENT_MESSAGE: Partial<Record<StorageApiCode, string>> = {
+  storage_disabled: 'document storage is unavailable',
+};
+
+function envelope(code: StorageApiCode, message: string, details?: Record<string, unknown>) {
+  const body: StorageErrorBody = { code, message, error: message };
+  if (details) body.details = details;
+  return body;
+}
 
 function sendError(res: NextApiResponse, err: unknown): void {
   if (!(err instanceof DocStoreError)) {
@@ -198,23 +220,14 @@ function sendError(res: NextApiResponse, err: unknown): void {
       },
       'app-blocks'
     ).catch(() => undefined);
-    const body: StorageErrorBody = {
-      code: 'internal_error',
-      message: 'An unexpected error occurred',
-      error: 'An unexpected error occurred',
-    };
-    res.status(500).json(body);
+    res.status(500).json(envelope('internal_error', GENERIC_SERVER_ERROR_MESSAGE));
     return;
   }
-  const body: StorageErrorBody = {
-    code: err.code,
-    message: err.message,
-    error: err.message,
-    ...(err.details ? { details: err.details } : {}),
-  };
+  const body = envelope(err.code, CLIENT_MESSAGE[err.code] ?? err.message, err.details);
   const retryAfter = err.details?.retryAfter;
   if (err.code === 'rate_limited' && typeof retryAfter === 'number') {
     res.setHeader('Retry-After', String(retryAfter));
+    body.rateLimit = rateLimitMetaFor(retryAfter);
   }
   res.status(STORAGE_ERROR_STATUS[err.code]).json(body);
 }
@@ -409,14 +422,15 @@ function assertPublishScope(access: StorageAccess, coll: DocCollection): void {
   });
 }
 
-/** The min-trust gate, on every viewer write into a shared collection. */
-async function assertTrusted(uid: number): Promise<void> {
+/** The min-trust gate, on every viewer write into a shared collection. Returns the subject. */
+async function assertTrusted(uid: number): Promise<SessionUser> {
   const user = (await sessionClient.getSessionUserById(uid)) as SessionUser | null;
   const linked = user ? await hasLinkedOAuthAccount(user) : false;
   const refusal = sharedWriteTrustRefusal(user, linked);
   if (refusal) {
     throw new DocStoreError('not_eligible', refusal.message, { reason: refusal.reason });
   }
+  return user as SessionUser;
 }
 
 async function charge(
@@ -444,19 +458,21 @@ const COARSE_CATEGORY = { link: 'link', overflow: 'unreviewable' } as Record<str
  */
 async function moderate(
   access: StorageAccess,
-  uid: number,
+  user: SessionUser,
   surface: SharedDataSurface,
   rowKey: string,
   input: { data?: Record<string, unknown>; key?: string }
 ): Promise<void> {
+  // Moderators are exempt from the pattern list here exactly as on the legacy surface.
+  const scanOpts = { isModerator: user.isModerator };
   const scans: { field: 'data' | 'key'; run: () => Promise<SharedTextScan> }[] = [];
   if (input.data !== undefined) {
     const data = input.data;
-    scans.push({ field: 'data', run: () => scanSharedData(data) });
+    scans.push({ field: 'data', run: () => scanSharedData(data, scanOpts) });
   }
   if (input.key !== undefined) {
     const key = input.key;
-    scans.push({ field: 'key', run: () => scanCounterKey(key) });
+    scans.push({ field: 'key', run: () => scanCounterKey(key, scanOpts) });
   }
   for (const { field, run } of scans) {
     let scan: SharedTextScan;
@@ -486,7 +502,7 @@ async function moderate(
     });
     if (hit) {
       emitSharedBlockAlert(
-        { appBlockId: access.ctx.appId, uid },
+        { appBlockId: access.ctx.appId, uid: user.id },
         {
           policy: hit.category === 'audit_regex' ? 'audit' : hit.category,
           category: hit.category,
@@ -501,14 +517,32 @@ async function moderate(
 }
 
 /**
+ * Refusals that are OUR fault, refunded without charging the caller's rejection bucket: the
+ * store or a dependency was unavailable, or the store timed out on a lock other writers held.
+ * Everything else that fails before the write lands — a refusal about the caller's request
+ * or document, or an unexpected error on the caller's own write — is charged as a rejection,
+ * the same split the legacy surface makes (`withSharedWriteBudget`, `apps-shared.router.ts`).
+ */
+function isOurFault(err: unknown): boolean {
+  if (!(err instanceof DocStoreError)) return false;
+  if (err.code === 'rate_limited') return err.details?.reason === 'contention';
+  return (
+    err.code === 'storage_disabled' ||
+    err.code === 'moderation_unavailable' ||
+    err.code === 'consent_unavailable'
+  );
+}
+
+/**
  * A shared document write spends the shared write budget: reserved before moderation (the
- * expensive part), given back if the write does not land — charged as a rejection unless
- * the failure was ours.
+ * expensive part) and given back only if the write does not land. `fn` calls `landed()` the
+ * moment the store has committed, so a failure after that (presenting the result) spends the
+ * token like any landed write.
  */
 async function withSharedWriteBudget<T>(
   access: StorageAccess,
   uid: number,
-  fn: () => Promise<T>
+  fn: (landed: () => void) => Promise<T>
 ): Promise<T> {
   const reservation = await reserveSharedWrite(uid, access.ctx.appId);
   if (!reservation.allowed) {
@@ -517,11 +551,13 @@ async function withSharedWriteBudget<T>(
       retryAfter: reservation.retryAfterSeconds,
     });
   }
+  let hasLanded = false;
   try {
-    return await fn();
+    return await fn(() => {
+      hasLanded = true;
+    });
   } catch (err) {
-    const ours = !(err instanceof DocStoreError) || STORAGE_ERROR_STATUS[err.code] >= 500;
-    await reservation.release({ rejected: !ours });
+    if (!hasLanded) await reservation.release({ rejected: !isOurFault(err) });
     throw err;
   }
 }
@@ -605,15 +641,18 @@ async function run(
       const created = route.op === 'create' ? parseBody(createBody, req.body) : null;
       const putIn = route.op === 'put' ? parseBody(putBody, req.body) : null;
       const deleteVersion = route.op === 'delete' ? deleteIfVersion(req) : undefined;
-      const write = async (): Promise<Reply> => {
+      const write = async (user: SessionUser | null, landed: () => void): Promise<Reply> => {
         if (created) {
-          if (shared) await moderate(access, uid, 'append', '', { data: created.data });
-          return ok(await presentDoc(await store.create(ctx, coll, created.data), decl), 201);
+          if (user) await moderate(access, user, 'append', '', { data: created.data });
+          const doc = await store.create(ctx, coll, created.data);
+          landed();
+          return ok(await presentDoc(doc, decl), 201);
         }
         if (putIn && route.op === 'put') {
           const { data, ifVersion } = putIn;
-          if (shared) await moderate(access, uid, 'update', route.key, { data, key: route.key });
+          if (user) await moderate(access, user, 'update', route.key, { data, key: route.key });
           const doc = await store.put(ctx, coll, route.key, data, { ifVersion });
+          landed();
           return ok(await presentDoc(doc, decl));
         }
         if (route.op !== 'delete') throw new Error('doc-store-api: unreachable write op');
@@ -621,19 +660,20 @@ async function run(
       };
       if (!shared) {
         await charge('private-write', access, req);
-        return write();
+        return write(null, () => undefined);
       }
-      await assertTrusted(uid);
-      return withSharedWriteBudget(access, uid, write);
+      const user = await assertTrusted(uid);
+      return withSharedWriteBudget(access, uid, (landed) => write(user, landed));
     }
     case 'increment': {
       const uid = requireViewer(access);
       const { by } = parseBody(incrementBody, req.body);
-      if (shared) await assertTrusted(uid);
+      // The bucket first: a refused request costs no subject lookup.
       await charge('tally', access, req);
+      const user = shared ? await assertTrusted(uid) : null;
       // Under `write: 'none'` an increment can CREATE a public document under the app's key.
-      if (shared && decl.write === 'none') {
-        await moderate(access, uid, 'counter', route.key, { key: route.key });
+      if (user && decl.write === 'none') {
+        await moderate(access, user, 'counter', route.key, { key: route.key });
       }
       return ok(await store.increment(ctx, coll, route.key, route.name, by));
     }
@@ -642,9 +682,9 @@ async function run(
       const uid = requireViewer(access);
       const { reason } =
         route.op === 'mark' ? parseBody(markBody, req.body) : { reason: undefined };
-      if (shared) await assertTrusted(uid);
       await charge('tally', access, req);
       if (route.op === 'mark' && route.name === REPORT_MARK) await charge('report', access, req);
+      if (shared) await assertTrusted(uid);
       const result =
         route.op === 'mark'
           ? await store.mark(ctx, coll, route.key, route.name, { reason })
@@ -689,12 +729,7 @@ export function createStorageHandler(deps: StorageApiDeps = { store: getDocStore
       if (!match) throw new DocStoreError('not_found', 'no such storage route');
       if ('methods' in match) {
         res.setHeader('Allow', match.methods.join(', '));
-        const body: StorageErrorBody = {
-          code: 'invalid_request',
-          message: 'method not allowed',
-          error: 'method not allowed',
-        };
-        res.status(405).json(body);
+        res.status(405).json(envelope('invalid_request', 'method not allowed'));
         return;
       }
       const claims = (req as BlockScopedNextApiRequest).blockClaims;

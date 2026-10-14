@@ -46,13 +46,14 @@ const h = vi.hoisted(() => ({
   store: undefined as unknown as DocStore,
   users: new Map<number, unknown>(),
   runEnabled: true,
+  authorEnabled: true,
 }));
 
 vi.mock('~/server/services/app-blocks-flag', async (importOriginal) => ({
   ...(await importOriginal<typeof AppBlocksFlag>()),
   isAppBlocksRuntimeEnabled: vi.fn(async () => true),
   isAppBlocksEnabled: vi.fn(async () => h.runEnabled),
-  isAppBlocksAuthorEnabled: vi.fn(async () => true),
+  isAppBlocksAuthorEnabled: vi.fn(async () => h.authorEnabled),
 }));
 vi.mock('~/server/auth/session-client', async (importOriginal) => ({
   ...(await importOriginal<typeof SessionClientModule>()),
@@ -62,12 +63,15 @@ vi.mock('~/server/services/apps/doc-store.instance', () => ({ getDocStore: () =>
 // The scanner is replaced; `enforcedBlockingHit` (which hit refuses) stays real.
 vi.mock('~/server/services/apps/shared-data-moderation', async (importOriginal) => {
   const real = await importOriginal<typeof Moderation>();
+  // Distinctive, so a response that leaked either would be visible.
+  const SECRET_MATCH = 'scanner-matched-text-zq81';
+  const SECRET_LABEL = 'scanner-label-zq82';
   const verdict = (text: string): SharedTextScan => {
     if (text.includes('contract-scanner-down')) throw new Error('scanner outage');
     const hit = (category: 'audit_regex' | 'link') => ({
       leafCount: 1,
       overflow: null,
-      hits: [{ category, matched: 'm', label: 'l', leaf: null }],
+      hits: [{ category, matched: SECRET_MATCH, label: SECRET_LABEL, leaf: null }],
     });
     if (text.includes('https://contract-blocked.example')) return hit('link');
     if (text.includes('contract-blocked-term')) return hit('audit_regex');
@@ -86,7 +90,11 @@ import { REDIS_KEYS } from '~/server/redis/client';
 import { createDocStore } from '~/server/services/apps/doc-store';
 import { DEFAULT_DOC_STORE_LIMITS } from '~/server/services/apps/doc-store.types';
 import { OnboardingSteps } from '~/server/common/enums';
-import { matchStorageRoute, STORAGE_RESERVED_SEGMENTS } from '~/server/services/apps/doc-store-api';
+import {
+  matchStorageRoute,
+  STORAGE_ERROR_STATUS,
+  STORAGE_RESERVED_SEGMENTS,
+} from '~/server/services/apps/doc-store-api';
 import {
   APP_STORAGE_COLLECTION_NAME_RE,
   parseManifestStorage,
@@ -539,6 +547,7 @@ beforeEach(() => {
   apps = [];
   publishRequests = [];
   h.runEnabled = true;
+  h.authorEnabled = true;
   h.users.clear();
   for (const [name, v] of Object.entries(contract.viewers))
     h.users.set(VIEWER_IDS[name], user(name, v.trusted));
@@ -568,27 +577,39 @@ describe('the contract file', () => {
     const used = new Set(
       contract.cases.flatMap((c) => c.steps.map((s) => s.expect.code)).filter(Boolean)
     );
-    const reachable = [
-      'invalid_request',
-      'index_not_declared',
-      'unauthenticated',
-      'sign_in_required',
-      'consent_required',
-      'consent_unavailable',
-      'not_eligible',
-      'not_author',
-      'write_policy',
-      'not_found',
-      'collection_not_declared',
-      'version_conflict',
-      'too_large',
-      'quota_exceeded',
-      'content_rejected',
-      'rate_limited',
-      'storage_disabled',
-      'moderation_unavailable',
-    ];
+    // Derived from the one status table; the exclusions are named, so a NEW code is required
+    // here until a case reaches it or it is excluded with a reason.
+    const UNREACHABLE_IN_PHASE_1: Record<string, string> = {
+      scope_missing:
+        'a missing apps:storage is refused by the token middleware (insufficient_scope)',
+      index_building: 'declared indexes are backfilled inline; nothing raises it yet',
+      cursor_expired: 'change feed, a later phase',
+      internal_error: 'an unexpected fault; its own test below',
+    };
+    const reachable = Object.keys(STORAGE_ERROR_STATUS).filter(
+      (code) => !(code in UNREACHABLE_IN_PHASE_1)
+    );
+    expect(reachable.length).toBeGreaterThanOrEqual(18);
     expect(reachable.filter((code) => !used.has(code))).toEqual([]);
+  });
+
+  it('the matcher and the user-id check go red on what they must refuse (positive control)', () => {
+    const errs = (actual: unknown, expected: unknown) => {
+      const out: string[] = [];
+      matches(actual, expected, '$', {}, out);
+      return out.length;
+    };
+    expect(errs({ a: 1 }, { a: '$absent' })).toBe(1);
+    expect(errs({ a: 0 }, { a: '$null' })).toBe(1);
+    expect(errs([1, 2], [1])).toBe(1);
+    expect(errs({ a: { b: 2 } }, { a: { b: 3 } })).toBe(1);
+    expect(errs('x', '$iso')).toBe(1);
+    expect(errs({ a: 1, extra: 2 }, { a: 1 })).toBe(0);
+    const uid = [...ALL_UIDS][0];
+    expect(() => assertNoUserId({ author: { id: uid } }, 'control')).toThrow();
+    expect(() => assertNoUserId({ author: { uid: 5 } }, 'control')).toThrow();
+    expect(() => assertNoUserId({ s: `cursor~${uid}` }, 'control')).toThrow();
+    expect(() => assertNoUserId({ ok: 1 }, 'control')).not.toThrow();
   });
 });
 
@@ -599,8 +620,42 @@ describe('contract cases against the real handlers', () => {
 });
 
 describe('reserved path segments cannot collide with a collection name or a document key', () => {
-  const COLLECTIONS = ['a', 'counters', 'marks', 'get', 'x_get', 'z9'];
-  const KEYS = ['_get', 'counters', 'marks', 'k', '.', '..', '_', ':x', 'A-b.c', 'x'.repeat(128)];
+  // Every reserved word as a value, edge cases, plus a seeded random sample of each alphabet.
+  let seed = 20261014;
+  const rnd = (n: number) => {
+    seed = (seed * 1103515245 + 12345) % 2 ** 31;
+    return seed % n;
+  };
+  const draw = (alphabet: string, len: number) =>
+    Array.from({ length: len }, () => alphabet[rnd(alphabet.length)]).join('');
+  const RESERVED = STORAGE_RESERVED_SEGMENTS.map((r) => r.segment);
+  const COLLECTIONS = [
+    ...RESERVED.filter((r) => APP_STORAGE_COLLECTION_NAME_RE.test(r)),
+    'a',
+    'get',
+    'x_get',
+    'z9',
+    'a'.repeat(32),
+    ...Array.from(
+      { length: 40 },
+      () =>
+        draw('abcdefghijklmnopqrstuvwxyz', 1) +
+        draw('abcdefghijklmnopqrstuvwxyz0123456789_', rnd(32))
+    ),
+  ];
+  const KEYS = [
+    ...RESERVED,
+    'k',
+    '.',
+    '..',
+    '_',
+    ':x',
+    'A-b.c',
+    'x'.repeat(128),
+    ...Array.from({ length: 60 }, () =>
+      draw('ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._:-', 1 + rnd(128))
+    ),
+  ];
 
   it('every reserved segment is unparseable at the position(s) where a collection or key sits, or is a valid value there', () => {
     for (const { segment, position } of STORAGE_RESERVED_SEGMENTS) {
@@ -627,7 +682,7 @@ describe('reserved path segments cannot collide with a collection name or a docu
           const op = m === 'GET' ? 'get' : m === 'PUT' ? 'put' : 'delete';
           expect(matchStorageRoute(m, [c, k])).toEqual({ route: { op, collection: c, key: k } });
         }
-        for (const name of ['counters', 'marks', 'vote']) {
+        for (const name of [...RESERVED, 'vote']) {
           expect(matchStorageRoute('POST', [c, k, 'counters', name])).toEqual({
             route: { op: 'increment', collection: c, key: k, name },
           });
@@ -892,5 +947,200 @@ describe('route faults and CORS', () => {
     const r = await call({ token: null, method: 'OPTIONS', path: '/prefs/k', origin: 'null' });
     expect(r.status).toBe(204);
     expect(r.headers['access-control-allow-methods']).toBe('GET, POST, PUT, DELETE, OPTIONS');
+  });
+});
+
+describe('review findings: refusal detail, usage, budget refunds, review gates, CORS', () => {
+  it('a moderation refusal carries only the coarse category — never the matched text or label', async () => {
+    const { A } = freshApps();
+    const t = await mint({ app: A, uid: VIEWER_IDS.v1, scopes: contract.defaultScopes });
+    const r = await call({
+      token: t,
+      method: 'PUT',
+      path: '/posts/p1',
+      body: { data: { t: 'contract-blocked-term' } },
+    });
+    expect(r.status).toBe(422);
+    expect((r.body as { details: unknown }).details).toEqual({ category: 'blocked' });
+    expect(JSON.stringify(r.body)).not.toMatch(/scanner-matched-text-zq81|scanner-label-zq82/);
+  });
+
+  it("info: the viewer's usage is their own, distinct from the app's and another viewer's", async () => {
+    const { A } = freshApps();
+    const v1 = await mint({ app: A, uid: VIEWER_IDS.v1, scopes: contract.defaultScopes });
+    const v2 = await mint({ app: A, uid: VIEWER_IDS.v2, scopes: contract.defaultScopes });
+    for (const k of ['a', 'b', 'c']) {
+      const r = await call({ token: v2, method: 'PUT', path: `/prefs/${k}`, body: { data: {} } });
+      expect(r.status).toBe(200);
+    }
+    const mine = await call({
+      token: v1,
+      method: 'PUT',
+      path: '/prefs/mine',
+      body: { data: { x: 1 } },
+    });
+    expect(mine.status).toBe(200);
+    const info = (await call({ token: v1, method: 'GET', path: '' })).body as {
+      usage: { app: { docs: number; bytes: number }; viewer: { docs: number; bytes: number } };
+    };
+    expect(info.usage.app.docs).toBe(4);
+    expect(info.usage.viewer.docs).toBe(1);
+    expect(info.usage.viewer.bytes).toBeLessThan(info.usage.app.bytes);
+  });
+
+  it('a refused write is refunded to the burst: 5 not_author refusals, then 6 writes all land', async () => {
+    const { A } = freshApps();
+    const v1 = await mint({ app: A, uid: VIEWER_IDS.v1, scopes: contract.defaultScopes });
+    const v2 = await mint({ app: A, uid: VIEWER_IDS.v2, scopes: contract.defaultScopes });
+    const owned = await call({
+      token: v1,
+      method: 'PUT',
+      path: '/posts/owned',
+      body: { data: {} },
+    });
+    expect(owned.status).toBe(200);
+    for (let i = 0; i < 5; i++) {
+      const r = await call({ token: v2, method: 'PUT', path: '/posts/owned', body: { data: {} } });
+      expect(r.status).toBe(403);
+    }
+    for (let i = 0; i < 6; i++) {
+      const r = await call({
+        token: v2,
+        method: 'PUT',
+        path: `/posts/v2-${i}`,
+        body: { data: {} },
+      });
+      expect(r.status).toBe(200);
+    }
+  });
+
+  it('a moderation outage is our fault: refunded and NOT charged as a rejection', async () => {
+    const { A } = freshApps();
+    const v1 = await mint({ app: A, uid: VIEWER_IDS.v1, scopes: contract.defaultScopes });
+    for (let i = 0; i < 12; i++) {
+      const r = await call({
+        token: v1,
+        method: 'PUT',
+        path: '/posts/x',
+        body: { data: { t: 'contract-scanner-down' } },
+      });
+      expect(r.status).toBe(503);
+    }
+    // 12 outages exceed the 10-token rejection bucket: had they been charged, this refuses.
+    const after = await call({ token: v1, method: 'PUT', path: '/posts/x', body: { data: {} } });
+    expect(after.status).toBe(200);
+  });
+
+  it('a write that landed spends its token even if presenting it fails afterwards', async () => {
+    const { A } = freshApps();
+    const v1 = await mint({ app: A, uid: VIEWER_IDS.v1, scopes: contract.defaultScopes });
+    // The username lookup for the showAuthor collection runs after the store has committed.
+    dbMock.dbRead.user.findMany.mockRejectedValueOnce(new Error('replica blip'));
+    dbMock.dbRead.user.findMany.mockRejectedValueOnce(new Error('replica blip'));
+    dbMock.dbRead.user.findMany.mockRejectedValueOnce(new Error('replica blip'));
+    dbMock.dbRead.user.findMany.mockRejectedValueOnce(new Error('replica blip'));
+    dbMock.dbRead.user.findMany.mockRejectedValueOnce(new Error('replica blip'));
+    for (let i = 0; i < 5; i++) {
+      const r = await call({ token: v1, method: 'PUT', path: `/posts/l${i}`, body: { data: {} } });
+      expect(r.status).toBe(500);
+    }
+    const rows = await harness.raw(`SELECT count(*)::int AS n FROM appdata.doc WHERE app_id = $1`, [
+      A.id,
+    ]);
+    expect(rows).toEqual([{ n: 5 }]);
+    // Five landed writes spent five of the 10-token burst: five more land, the sixth is refused.
+    // Refunding a landed write would let the sixth through (and rejections would not bind yet).
+    for (let i = 5; i < 10; i++) {
+      const r = await call({ token: v1, method: 'PUT', path: `/posts/l${i}`, body: { data: {} } });
+      expect(r.status).toBe(200);
+    }
+    const refused = await call({
+      token: v1,
+      method: 'PUT',
+      path: '/posts/l10',
+      body: { data: {} },
+    });
+    expect(refused.status).toBe(429);
+    expect(refused.body).toMatchObject({
+      code: 'rate_limited',
+      details: { bucket: 'shared-write' },
+      rateLimit: { retryAfterSeconds: expect.any(Number), retryAt: expect.any(String) },
+    });
+  });
+
+  it('a review token: author capability required, sign-in required, publish request must exist', async () => {
+    freshApps();
+    const pubreq = { id: 'pubreq_01JREVIEWGATES0000000000', status: 'pending', manifest: MANIFEST };
+    publishRequests.push(pubreq);
+    const app = { id: pubreq.id, appId: 'appblk-review-gates', blockId: 'review-gates' };
+    const review = (uid: number | null, a = app) =>
+      mint({ app: a, uid, scopes: contract.defaultScopes, dev: true, reviewRunForReal: true });
+
+    h.authorEnabled = false;
+    const notAuthor = await call({
+      token: await review(VIEWER_IDS.v1),
+      method: 'GET',
+      path: '/prefs/k',
+    });
+    expect(notAuthor.body).toMatchObject({
+      code: 'not_eligible',
+      details: { reason: 'author_required' },
+    });
+    h.authorEnabled = true;
+    const ok = await call({ token: await review(VIEWER_IDS.v1), method: 'GET', path: '/prefs/k' });
+    expect(ok.status).toBe(404);
+
+    const anon = await call({ token: await review(null), method: 'GET', path: '/prefs/k' });
+    expect(anon.body).toMatchObject({ code: 'sign_in_required' });
+
+    const missing = { ...app, id: 'pubreq_01JREVIEWMISSING000000000' };
+    const gone = await call({
+      token: await review(VIEWER_IDS.v1, missing),
+      method: 'GET',
+      path: '/prefs/k',
+    });
+    expect(gone.body).toMatchObject({
+      code: 'not_eligible',
+      details: { reason: 'review_inactive' },
+    });
+  });
+
+  it('the preflight from an ALLOWLISTED origin allows PUT and DELETE too', async () => {
+    const { _internalsForTests } = await import('~/server/middleware/block-scope.middleware');
+    _internalsForTests.resetOriginCache();
+    dbMock.dbRead.oauthClient.findMany.mockResolvedValue([
+      { allowedOrigins: ['https://contract-app.example'] },
+    ]);
+    const r = await call({
+      token: null,
+      method: 'OPTIONS',
+      path: '/prefs/k',
+      origin: 'https://contract-app.example',
+    });
+    expect(r.status).toBe(204);
+    expect(r.headers['access-control-allow-origin']).toBe('https://contract-app.example');
+    expect(r.headers['access-control-allow-methods']).toBe('GET, POST, PUT, DELETE, OPTIONS');
+    _internalsForTests.resetOriginCache();
+  });
+
+  it('moderators keep their pattern-list exemption: the scanner is told who is writing', async () => {
+    const { scanSharedData, scanCounterKey } = await import(
+      '~/server/services/apps/shared-data-moderation'
+    );
+    const { A } = freshApps();
+    h.users.set(VIEWER_IDS.v3, { ...user('v3', true), isModerator: true });
+    const mod = await mint({ app: A, uid: VIEWER_IDS.v3, scopes: contract.defaultScopes });
+    const plain = await mint({ app: A, uid: VIEWER_IDS.v1, scopes: contract.defaultScopes });
+    vi.mocked(scanSharedData).mockClear();
+    vi.mocked(scanCounterKey).mockClear();
+    expect(
+      (await call({ token: mod, method: 'PUT', path: '/posts/m', body: { data: {} } })).status
+    ).toBe(200);
+    expect(vi.mocked(scanSharedData).mock.calls.at(-1)?.[1]).toEqual({ isModerator: true });
+    expect(vi.mocked(scanCounterKey).mock.calls.at(-1)?.[1]).toEqual({ isModerator: true });
+    expect(
+      (await call({ token: plain, method: 'PUT', path: '/posts/p', body: { data: {} } })).status
+    ).toBe(200);
+    expect(vi.mocked(scanSharedData).mock.calls.at(-1)?.[1]).toEqual({ isModerator: false });
   });
 });
