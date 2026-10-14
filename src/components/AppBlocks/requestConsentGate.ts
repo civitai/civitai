@@ -46,11 +46,14 @@ export function resolveRequestConsent(
  * anonymous viewer: the mint strips every consent-gated scope but reports
  * `missingScopes: []` (anon cannot consent), so the derivation advertised gated
  * scopes the token lacks — and a REQUEST_CONSENT for one was then read as
- * "already granted" and dropped. It also differs for a signed-in viewer whose
- * manifest still lists a deprecated scope the mint no longer signs.
+ * "already granted" and dropped. On the main mint path it also differs for a
+ * signed-in viewer whose manifest still lists a deprecated scope the mint no
+ * longer signs, and the private-run and owned dev-tunnel mints sign a clamped
+ * set derived from the approved scopes rather than the client's manifest.
  *
- * The derivation stays only as the fallback for a mint response with no
- * `scopes` field (the dev-tunnel mint omits it).
+ * The derivation stays only as the fallback for a caller that passes no signed
+ * set: a mint response without `scopes` (the ephemeral dev-tunnel mint), or a
+ * host mounter that does not forward it (DevTunnelBlockHost, ReviewBlockPreviewHost).
  */
 export function resolveAdvertisedScopes(
   declaredScopes: string[],

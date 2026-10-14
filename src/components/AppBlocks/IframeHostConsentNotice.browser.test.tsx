@@ -428,13 +428,18 @@ describe('IframeHost consent backstop — the BlockHost → useBlockToken → If
       await driveToReady(el);
 
       // REQUEST_TOKEN with no requestId is answered with a TOKEN_REFRESH push.
+      // A rotation push shares the message type, so assert on the post(s) AFTER the
+      // request rather than on `[0]`.
+      const refreshesBefore = posts.of('TOKEN_REFRESH').length;
       postFromBlock('REQUEST_TOKEN', {});
-      for (let i = 0; i < 200 && posts.of('TOKEN_REFRESH').length === 0; i++) await advance(5);
-      const refresh = posts.of('TOKEN_REFRESH');
-      expect(refresh.length).toBeGreaterThan(0);
-      expect((refresh[0].payload as { token?: { scopes?: string[] } }).token?.scopes).toEqual([
-        EXEMPT,
-      ]);
+      for (let i = 0; i < 200 && posts.of('TOKEN_REFRESH').length === refreshesBefore; i++) {
+        await advance(5);
+      }
+      const reply = posts.of('TOKEN_REFRESH').slice(refreshesBefore);
+      expect(reply.length).toBeGreaterThan(0);
+      for (const m of reply) {
+        expect((m.payload as { token?: { scopes?: string[] } }).token?.scopes).toEqual([EXEMPT]);
+      }
 
       postFromBlock('REQUEST_CONSENT', { scopes: [GATED] });
       for (let i = 0; i < 200 && posts.of('CONSENT_UNAVAILABLE').length === 0; i++) {
@@ -445,6 +450,9 @@ describe('IframeHost consent backstop — the BlockHost → useBlockToken → If
         reason: 'ungrantable',
         scopes: [GATED],
       });
+      expect(showNotificationSpy).toHaveBeenCalledTimes(1);
+      // Invariant guard, not regression coverage: with `missingScopes: []` no modal
+      // can open on main either.
       expect(useDialogStore.getState().dialogs).toHaveLength(0);
     } finally {
       posts.stop();

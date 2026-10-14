@@ -779,6 +779,12 @@ describe('POST /api/v1/block-tokens — W10 page mint', () => {
     expect(signArg.scopes).not.toContain('ai:write:budgeted');
     expect(signArg.buzzBudget).toBeUndefined();
     expect(signArg.userId).toBeNull();
+    // The hosts advertise the response's `scopes` to the block as "what this token
+    // carries" (`resolveAdvertisedScopes`), so it must be exactly the signed set —
+    // while `missingScopes` stays empty for anon, which is why the old
+    // `declared − missing` derivation over-claimed.
+    expect(res._body.scopes).toEqual(signArg.scopes);
+    expect(res._body.missingScopes).toEqual([]);
   });
 
   it('BYTE-IDENTICAL model path: ctx is exactly { modelId, slotId } (no entityType) for generate-from-model', async () => {

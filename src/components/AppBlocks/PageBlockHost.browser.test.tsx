@@ -769,12 +769,18 @@ describe('PageBlockHost REQUEST_CONSENT (W10 lazy-consent wiring)', () => {
       await driveToReady();
 
       // REQUEST_TOKEN with no requestId is answered with a TOKEN_REFRESH push.
+      // A rotation push shares the message type, so assert on the post(s) AFTER the
+      // request rather than on `[0]`.
+      const refreshesBefore = posts.of('TOKEN_REFRESH').length;
       postFromBlock('REQUEST_TOKEN', {});
-      await vi.waitFor(() => expect(posts.of('TOKEN_REFRESH').length).toBeGreaterThan(0));
-      const refreshScopes = (
-        posts.of('TOKEN_REFRESH')[0].payload as { token?: { scopes?: string[] } }
-      ).token?.scopes;
-      expect(refreshScopes).toEqual(['apps:storage:read']);
+      await vi.waitFor(() =>
+        expect(posts.of('TOKEN_REFRESH').length).toBeGreaterThan(refreshesBefore)
+      );
+      for (const m of posts.of('TOKEN_REFRESH').slice(refreshesBefore)) {
+        expect((m.payload as { token?: { scopes?: string[] } }).token?.scopes).toEqual([
+          'apps:storage:read',
+        ]);
+      }
 
       postFromBlock('REQUEST_CONSENT', { scopes: ['apps:storage:publish'] });
       await vi.waitFor(() => expect(posts.of('CONSENT_UNAVAILABLE')).toHaveLength(1));
@@ -782,6 +788,9 @@ describe('PageBlockHost REQUEST_CONSENT (W10 lazy-consent wiring)', () => {
         reason: 'ungrantable',
         scopes: ['apps:storage:publish'],
       });
+      expect(showNotificationSpy).toHaveBeenCalledTimes(1);
+      // Invariant guard, not regression coverage: with `missingScopes: []` no modal
+      // can open on main either.
       expect(useDialogStore.getState().dialogs).toHaveLength(0);
     } finally {
       posts.stop();
