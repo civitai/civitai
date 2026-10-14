@@ -78,6 +78,8 @@ export const UPDATED_AT_TABLES = new Set<keyof DB>([
   'RewardsBonusEvent',
   'Role',
   'SavedModel',
+  'ServiceDeal',
+  'ServiceOffering',
   'Tag',
   'TrustedSpokeDomain',
   'UserHub',

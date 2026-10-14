@@ -649,6 +649,9 @@ model User {
   crucibleEntries                    CrucibleEntry[]
   crucibleEngagements                CrucibleEngagement[]
   prizes                             Prize[]
+  serviceOfferings                   ServiceOffering[]
+  serviceDealsBought                 ServiceDeal[]              @relation("ServiceDealBuyer")
+  serviceDealsSold                   ServiceDeal[]              @relation("ServiceDealSeller")
 
   gameFrameGames          GameFrameGame[]
 
@@ -9408,6 +9411,227 @@ model PlacementSuspension {
   createdById Int?
 
   @@index([createdAt])
+}
+
+enum ServiceOfferingStatus {
+  Draft
+  Active
+  Paused
+  Removed
+}
+
+/// What the seller shows before the buyer accepts. `None` skips the preview: the
+/// buyer accepts the delivery on trust.
+enum ServicePreviewKind {
+  Image
+  Video
+  SampleOutputs
+  None
+}
+
+/// The Buzz a deal is paid in. One per deal, fixed at request time, so every leg
+/// draws from and returns to the same account type.
+enum ServiceBuzzType {
+  yellow
+  blue
+}
+
+/// Open: Requested, Accepted, Delivered, InRevision, CancellationRequested, Disputed.
+/// Completed takes the release leg at `releaseAt`, unless a dispute opens first.
+/// Declined, Expired and Cancelled take the refund leg. A dispute resolves to
+/// Completed or Cancelled.
+enum ServiceDealStatus {
+  Requested
+  Accepted
+  Delivered
+  InRevision
+  Completed
+  Declined
+  Expired
+  CancellationRequested
+  Cancelled
+  Disputed
+}
+
+enum ServiceDealEventType {
+  Requested
+  Accepted
+  Declined
+  Expired
+  Delivered
+  RevisionRequested
+  Completed
+  CancellationRequested
+  CancellationAccepted
+  CancellationDeclined
+  Cancelled
+  Disputed
+  DisputeResolved
+  DeadlineExtended
+  Held
+  Released
+  Refunded
+}
+
+enum ServiceDealFileKind {
+  Preview
+  Final
+}
+
+enum ServiceDealFileScanStatus {
+  Pending
+  Passed
+  Failed
+  NotScanned
+}
+
+enum ServiceDisputeResolution {
+  Refund
+  Release
+}
+
+enum ServiceDealLeg {
+  Hold
+  Release
+  Fee
+  Refund
+}
+
+model ServiceOffering {
+  id                Int                   @id @default(autoincrement())
+  sellerId          Int
+  seller            User                  @relation(fields: [sellerId], references: [id], onDelete: Cascade)
+  title             String
+  description       String
+  coverImageId      Int?
+  price             Int
+  acceptsBlue       Boolean               @default(false)
+  previewKind       ServicePreviewKind    @default(Image)
+  deliveryDays      Int
+  revisionsIncluded Int                   @default(0)
+  maxOpenDeals      Int?
+  status            ServiceOfferingStatus @default(Draft)
+  createdAt         DateTime              @default(now())
+  updatedAt         DateTime              @updatedAt
+  deals             ServiceDeal[]
+
+  @@index([sellerId, status])
+  @@index([status, createdAt])
+}
+
+/// A purchase of an offering. Price, Buzz type, fee, revisions, delivery days and
+/// preview kind are copied from the offering at request time and never re-read from
+/// it: the offering can change while the deal is open, and every leg pays from these.
+model ServiceDeal {
+  id                        Int                     @id @default(autoincrement())
+  offeringId                Int
+  offering                  ServiceOffering         @relation(fields: [offeringId], references: [id], onDelete: Restrict)
+  buyerId                   Int
+  buyer                     User                    @relation("ServiceDealBuyer", fields: [buyerId], references: [id], onDelete: Restrict)
+  sellerId                  Int
+  seller                    User                    @relation("ServiceDealSeller", fields: [sellerId], references: [id], onDelete: Restrict)
+  price                     Int
+  buzzType                  ServiceBuzzType
+  /// Kept by the platform out of `price` on release; the seller receives the rest.
+  feeAmount                 Int                     @default(0)
+  revisionsIncluded         Int
+  revisionsUsed             Int                     @default(0)
+  deliveryDays              Int
+  previewKind               ServicePreviewKind
+  status                    ServiceDealStatus       @default(Requested)
+  chatId                    Int?
+  requestText               String
+  requestedAt               DateTime                @default(now())
+  acceptedAt                DateTime?
+  dueAt                     DateTime?
+  /// Latest delivery. Starts the auto-complete window.
+  deliveredAt               DateTime?
+  completedAt               DateTime?
+  /// When the release leg may run: the end of the dispute window after completion.
+  /// Required once Completed (a CHECK in the migration).
+  releaseAt                 DateTime?
+  cancellationRequestedAt   DateTime?
+  cancellationRequestedById Int?
+  cancellationReason        String?
+  disputeOpenedAt           DateTime?
+  disputeReason             String?
+  disputeResolvedAt         DateTime?
+  disputeResolution         ServiceDisputeResolution?
+  disputeResolvedById       Int?
+  closedAt                  DateTime?
+  closeReason               String?
+  createdAt                 DateTime                @default(now())
+  updatedAt                 DateTime                @updatedAt
+  events                    ServiceDealEvent[]
+  files                     ServiceDealFile[]
+  transactions              ServiceDealTransaction[]
+
+  @@index([buyerId, status])
+  @@index([sellerId, status])
+  @@index([offeringId, status])
+  /// The sweeps: unanswered requests, auto-complete, unanswered cancellations, late deals.
+  @@index([status, requestedAt])
+  @@index([status, deliveredAt])
+  @@index([status, cancellationRequestedAt])
+  @@index([status, dueAt])
+  @@index([status, releaseAt])
+}
+
+/// The deal's accountability sheet. Append-only. `actorId` -1 is the system.
+model ServiceDealEvent {
+  id        Int                  @id @default(autoincrement())
+  dealId    Int
+  deal      ServiceDeal          @relation(fields: [dealId], references: [id], onDelete: Restrict)
+  actorId   Int
+  type      ServiceDealEventType
+  round     Int                  @default(0)
+  comment   String?
+  createdAt DateTime             @default(now())
+
+  @@index([dealId, createdAt])
+}
+
+model ServiceDealFile {
+  id             Int                       @id @default(autoincrement())
+  dealId         Int
+  deal           ServiceDeal               @relation(fields: [dealId], references: [id], onDelete: Restrict)
+  round          Int                       @default(0)
+  kind           ServiceDealFileKind
+  s3Key          String
+  watermarkedKey String?
+  /// The Image row a preview was ingested as, for the normal scanning pipeline.
+  imageId        Int?
+  mimeType       String
+  size           Int
+  scanStatus     ServiceDealFileScanStatus @default(Pending)
+  createdAt      DateTime                  @default(now())
+
+  @@index([dealId, round, kind])
+}
+
+/// One row per movement of Buzz for a deal, modelled on `PlacementTransaction`.
+/// `UNIQUE (dealId, leg)` makes the claim atomic, and `externalTransactionId` is
+/// derived from the row so the Buzz service's dedupe is a second line. A null
+/// `transactionId` is a claimed leg not yet paid, which the recovery job finishes.
+///
+/// The migration adds a PARTIAL unique index on `dealId` over the Release and Refund
+/// legs: a deal can never hold both. Prisma cannot express it.
+model ServiceDealTransaction {
+  id                    Int             @id @default(autoincrement())
+  dealId                Int
+  deal                  ServiceDeal     @relation(fields: [dealId], references: [id], onDelete: Restrict)
+  leg                   ServiceDealLeg
+  externalTransactionId String          @unique
+  transactionId         String?
+  amount                Int
+  buzzType              ServiceBuzzType
+  attempts              Int             @default(0)
+  lastAttemptAt         DateTime?
+  lastError             String?
+  createdAt             DateTime        @default(now())
+
+  @@unique([dealId, leg])
+  @@index([leg, createdAt])
 }
 
 enum UserHubSourceType {

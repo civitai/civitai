@@ -998,6 +998,85 @@ export const OutboxEntity = {
   ModelVersion: 'ModelVersion',
 } as const;
 export type OutboxEntity = (typeof OutboxEntity)[keyof typeof OutboxEntity];
+export const ServiceOfferingStatus = {
+  Draft: 'Draft',
+  Active: 'Active',
+  Paused: 'Paused',
+  Removed: 'Removed',
+} as const;
+export type ServiceOfferingStatus =
+  (typeof ServiceOfferingStatus)[keyof typeof ServiceOfferingStatus];
+export const ServicePreviewKind = {
+  Image: 'Image',
+  Video: 'Video',
+  SampleOutputs: 'SampleOutputs',
+  None: 'None',
+} as const;
+export type ServicePreviewKind = (typeof ServicePreviewKind)[keyof typeof ServicePreviewKind];
+export const ServiceBuzzType = {
+  yellow: 'yellow',
+  blue: 'blue',
+} as const;
+export type ServiceBuzzType = (typeof ServiceBuzzType)[keyof typeof ServiceBuzzType];
+export const ServiceDealStatus = {
+  Requested: 'Requested',
+  Accepted: 'Accepted',
+  Delivered: 'Delivered',
+  InRevision: 'InRevision',
+  Completed: 'Completed',
+  Declined: 'Declined',
+  Expired: 'Expired',
+  CancellationRequested: 'CancellationRequested',
+  Cancelled: 'Cancelled',
+  Disputed: 'Disputed',
+} as const;
+export type ServiceDealStatus = (typeof ServiceDealStatus)[keyof typeof ServiceDealStatus];
+export const ServiceDealEventType = {
+  Requested: 'Requested',
+  Accepted: 'Accepted',
+  Declined: 'Declined',
+  Expired: 'Expired',
+  Delivered: 'Delivered',
+  RevisionRequested: 'RevisionRequested',
+  Completed: 'Completed',
+  CancellationRequested: 'CancellationRequested',
+  CancellationAccepted: 'CancellationAccepted',
+  CancellationDeclined: 'CancellationDeclined',
+  Cancelled: 'Cancelled',
+  Disputed: 'Disputed',
+  DisputeResolved: 'DisputeResolved',
+  DeadlineExtended: 'DeadlineExtended',
+  Held: 'Held',
+  Released: 'Released',
+  Refunded: 'Refunded',
+} as const;
+export type ServiceDealEventType = (typeof ServiceDealEventType)[keyof typeof ServiceDealEventType];
+export const ServiceDealFileKind = {
+  Preview: 'Preview',
+  Final: 'Final',
+} as const;
+export type ServiceDealFileKind = (typeof ServiceDealFileKind)[keyof typeof ServiceDealFileKind];
+export const ServiceDealFileScanStatus = {
+  Pending: 'Pending',
+  Passed: 'Passed',
+  Failed: 'Failed',
+  NotScanned: 'NotScanned',
+} as const;
+export type ServiceDealFileScanStatus =
+  (typeof ServiceDealFileScanStatus)[keyof typeof ServiceDealFileScanStatus];
+export const ServiceDisputeResolution = {
+  Refund: 'Refund',
+  Release: 'Release',
+} as const;
+export type ServiceDisputeResolution =
+  (typeof ServiceDisputeResolution)[keyof typeof ServiceDisputeResolution];
+export const ServiceDealLeg = {
+  Hold: 'Hold',
+  Release: 'Release',
+  Fee: 'Fee',
+  Refund: 'Refund',
+} as const;
+export type ServiceDealLeg = (typeof ServiceDealLeg)[keyof typeof ServiceDealLeg];
 export const UserHubSourceType = {
   User: 'User',
   Model: 'Model',
