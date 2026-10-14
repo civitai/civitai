@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as SubmitModule from '~/server/services/text-scan/submit';
 import type * as ModeModule from '~/server/services/text-scan/mode';
-import type * as PromptModule from '~/server/services/text-scan/prompt';
 
 vi.mock('~/server/services/text-scan/profiles/index', () => ({}));
 vi.mock('~/server/services/text-scan/submit', async (importOriginal) => ({
@@ -13,18 +12,13 @@ vi.mock('~/server/services/text-scan/mode', async (importOriginal) => ({
   getTextScanMode: vi.fn(),
   getTextScanWebSearchMode: vi.fn(),
 }));
-vi.mock('~/server/services/text-scan/prompt', async (importOriginal) => ({
-  ...(await importOriginal<typeof PromptModule>()),
-  getTextScanConfig: vi
-    .fn()
-    .mockResolvedValue({ model: 'm', maxInputChars: 1000, thinking: false }),
-}));
 
 const {
   createTextScanAdapter,
   createTextScanShadowAdapter,
   textScanShadowAdapters,
   textScanWebSearchAdapters,
+  TEXT_SCAN_RETRY_CONTENT,
 } = await import('~/server/services/text-scan/adapter');
 const { registerTextScanProfile } = await import('~/server/services/text-scan/profiles');
 const { scanEntity } = await import('~/server/services/text-scan/submit');
@@ -49,7 +43,16 @@ describe('createTextScanAdapter', () => {
     );
     const map = await adapter.resolveContent([1, 2, 3]);
     expect([...map.keys()]).toEqual([1]);
-    expect(map.get(1)).toBe('## Name\nHello');
+    expect(map.get(1)).toBe(TEXT_SCAN_RETRY_CONTENT);
+  });
+
+  it('resolves a short marker, not the composed text, however long the text is', async () => {
+    load.mockResolvedValue(
+      new Map([[1, { fields: [{ heading: 'Name', text: 'x'.repeat(500_000) }], declared: {} }]])
+    );
+    const map = await adapter.resolveContent([1]);
+    expect(map.get(1)).toBe(TEXT_SCAN_RETRY_CONTENT);
+    expect(TEXT_SCAN_RETRY_CONTENT.length).toBeLessThan(20);
   });
 
   it('submits through scanEntity and returns the workflow id', async () => {

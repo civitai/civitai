@@ -70,6 +70,7 @@ export type LabScanResult =
       parseError?: string;
       rawContent?: string;
       elapsedMs: number;
+      segments?: number;
     }
   | { key: string; ok: false; error: string; workflowId?: string };
 

@@ -40,7 +40,7 @@ const em = dbMock.dbWrite.entityModeration;
 type Body = {
   metadata: Record<string, any>;
   tags: string[];
-  steps: { input: Record<string, any> }[];
+  steps: { name: string; metadata?: Record<string, any>; input: Record<string, any> }[];
 };
 const bodies = () =>
   vi.mocked(submitWorkflow).mock.calls.map(([args]) => args.body as unknown as Body);
@@ -224,5 +224,66 @@ describe('scanEntity with the web-search pass', () => {
       .mock.calls.map(([args]) => (args.where as any).entityType_entityId.entityType);
     expect(keys).toEqual(['Model:shadow', 'Model:search-shadow']);
     expect(submitWorkflow).not.toHaveBeenCalled();
+  });
+  it("clears composed-to-nothing text on the asked pass's row only", async () => {
+    modes('shadow', 'shadow');
+    registerTextScanProfile({
+      entityType: 'Model',
+      labels: ['nsfw', 'poi', 'minor'],
+      minChars: 0,
+      load,
+    });
+    try {
+      load.mockResolvedValue(
+        new Map([[7, { fields: [{ heading: 'Name', text: '  ' }], declared: {} }]])
+      );
+      em.findUnique.mockResolvedValue({
+        workflowId: 'wf-9',
+        status: 'Succeeded',
+        nsfwLevel: 1,
+        triggeredLabels: ['minor'],
+        result: { version: 1 },
+      } as any);
+      const cleared = () =>
+        vi.mocked(em.updateMany).mock.calls.map(([args]) => (args.where as any).entityType);
+
+      await scanEntity({ entityType: 'Model', entityId: 7, pass: 'web-search' });
+      expect(cleared()).toEqual(['Model:search-shadow']);
+      vi.mocked(em.updateMany).mockClear();
+      await scanEntity({ entityType: 'Model', entityId: 7, pass: 'main' });
+      expect(cleared()).toEqual(['Model:shadow']);
+      expect(submitWorkflow).not.toHaveBeenCalled();
+    } finally {
+      registerTextScanProfile({ entityType: 'Model', labels: ['nsfw', 'poi', 'minor'], load });
+    }
+  });
+
+  it('segments both passes alike; only the search steps carry the tool', async () => {
+    modes('active', 'active');
+    const long = Array.from({ length: 400 }, (_, i) => `word${i}`).join(' ');
+    load.mockResolvedValue(
+      new Map([[7, { fields: [{ heading: 'Body', text: long }], declared: {} }]])
+    );
+    await scanEntity({ entityType: 'Model', entityId: 7 });
+    const [main, search] = bodies();
+    expect(main.steps.length).toBeGreaterThan(1);
+    expect(search.steps.map((s) => s.input.messages[1].content)).toEqual(
+      main.steps.map((s) => s.input.messages[1].content)
+    );
+    expect(search.steps.map((s) => s.metadata)).toEqual(main.steps.map((s) => s.metadata));
+    expect(search.metadata.segments).toBe(search.steps.length);
+    expect(main.metadata.segments).toBe(main.steps.length);
+    expect(search.steps.every((s) => s.input.tools?.[0]?.type === 'civitai:web_search')).toBe(true);
+    expect(main.steps.some((s) => 'tools' in s.input)).toBe(false);
+  });
+
+  it('a one-segment search pass submits the single unsegmented step', async () => {
+    modes('active', 'active');
+    await scanEntity({ entityType: 'Model', entityId: 7 });
+    const [, search] = bodies();
+    expect(search.steps).toHaveLength(1);
+    expect(search.steps[0].name).toBe('textScan');
+    expect(search.steps[0]).not.toHaveProperty('metadata');
+    expect(search.steps[0].input.tools).toEqual([{ type: 'civitai:web_search' }]);
   });
 });

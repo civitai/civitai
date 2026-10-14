@@ -12,7 +12,6 @@ vi.mock('~/server/utils/cache-helpers', async (importOriginal) => ({
 
 const {
   composeTextScanMessages,
-  composeUserMessage,
   subjectTextLength,
   getTextScanConfig,
   setTextScanConfig,
@@ -24,6 +23,8 @@ const {
   textScanTextHash,
 } = await import('~/server/services/text-scan/prompt');
 const { bustFetchThroughCache } = await import('~/server/utils/cache-helpers');
+const { composeUserText } = await import('~/server/services/text-scan/segment');
+const { hashContent } = await import('~/server/services/entity-moderation.service');
 
 const prompts = {
   base: { id: 10, key: 'base', content: 'BASE PROMPT' },
@@ -41,7 +42,12 @@ const subject = {
   declared: {},
 };
 
-const DEFAULTS = { model: DEFAULT_TEXT_SCAN_MODEL, maxInputChars: 200000, thinking: false };
+const DEFAULTS = {
+  model: DEFAULT_TEXT_SCAN_MODEL,
+  maxInputChars: 200000,
+  maxSegments: 10,
+  thinking: false,
+};
 
 describe('composeTextScanMessages', () => {
   it('puts base then each requested label definition in the system message', () => {
@@ -50,6 +56,7 @@ describe('composeTextScanMessages', () => {
       labels: ['nsfw', 'poi'],
       subject,
       maxInputChars: 1000,
+      maxSegments: 10,
     });
     expect(system.indexOf('BASE PROMPT')).toBeLessThan(system.indexOf('NSFW DEF'));
     expect(system.indexOf('NSFW DEF')).toBeLessThan(system.indexOf('POI DEF'));
@@ -62,6 +69,7 @@ describe('composeTextScanMessages', () => {
       labels: ['nsfw'],
       subject,
       maxInputChars: 1000,
+      maxSegments: 10,
     });
     expect(system).not.toContain('POI DEF');
     expect(promptIds).toEqual({ base: 10, nsfw: 11 });
@@ -74,10 +82,17 @@ describe('composeTextScanMessages', () => {
         labels: ['nsfw', 'scam'],
         subject,
         maxInputChars: 1000,
+        maxSegments: 10,
       })
     ).toThrow(MissingTextScanPromptError);
     try {
-      composeTextScanMessages({ prompts: {}, labels: ['scam'], subject, maxInputChars: 1000 });
+      composeTextScanMessages({
+        prompts: {},
+        labels: ['scam'],
+        subject,
+        maxInputChars: 1000,
+        maxSegments: 10,
+      });
     } catch (e) {
       expect((e as InstanceType<typeof MissingTextScanPromptError>).keys).toEqual([
         'base',
@@ -93,55 +108,54 @@ describe('composeTextScanMessages', () => {
         labels: ['nsfw'],
         subject,
         maxInputChars: 1000,
+        maxSegments: 10,
       });
     expect(compose).toThrow(MissingTextScanPromptError);
     expect(compose).toThrow('label:nsfw');
   });
 });
 
-describe('composeUserMessage', () => {
-  it('renders non-empty fields under plain headers, skipping empty ones', () => {
-    expect(composeUserMessage(subject, 1000)).toBe('## Name\nMy LoRA\n\n## Version\nv1 notes');
+describe('composeTextScanMessages segments', () => {
+  const body = (n: number) => ({ fields: [{ heading: 'B', text: 'x'.repeat(n) }], declared: {} });
+  const labels = ['scam'] as any;
+  const p = { base: { id: 1, content: 'b' }, 'label:scam': { id: 2, content: 's' } } as any;
+
+  it('sends text within the budget whole, as one segment equal to the full text', () => {
+    const fits = composeTextScanMessages({
+      prompts: p,
+      labels,
+      subject: body(100),
+      maxInputChars: 200000,
+      maxSegments: 10,
+    });
+    expect(fits.segments).toEqual([fits.text]);
+    expect(fits).toMatchObject({ inputChars: '## B\n'.length + 100, inputCut: false });
   });
 
-  it('caps at maxInputChars', () => {
-    const long = { fields: [{ heading: 'Body', text: 'x'.repeat(500) }], declared: {} };
-    expect(composeUserMessage(long, 100)).toHaveLength(100);
-  });
-
-  it('reports the full composed length and whether the cap cut it', () => {
-    const body = (n: number) => ({ fields: [{ heading: 'B', text: 'x'.repeat(n) }], declared: {} });
-    const labels = ['scam'] as any;
-    const prompts = { base: { id: 1, content: 'b' }, 'label:scam': { id: 2, content: 's' } } as any;
-    const full = '## B\n'.length + 250000;
+  it('splits text past the budget instead of cutting it', () => {
     const big = composeTextScanMessages({
-      prompts,
+      prompts: p,
       labels,
       subject: body(250000),
       maxInputChars: 200000,
+      maxSegments: 10,
     });
-    expect(big.user).toHaveLength(200000);
-    expect(big).toMatchObject({ inputChars: full, inputCut: true });
-    const fits = composeTextScanMessages({
-      prompts,
-      labels,
-      subject: body(100),
-      maxInputChars: 200000,
-    });
-    expect(fits).toMatchObject({ inputChars: '## B\n'.length + 100, inputCut: false });
-    const exact = composeTextScanMessages({
-      prompts,
-      labels,
-      subject: body(100),
-      maxInputChars: '## B\n'.length + 100,
-    });
-    expect(exact.inputCut).toBe(false);
+    expect(big.segments).toHaveLength(2);
+    expect(big.segments.every((s) => s.length <= 200000)).toBe(true);
+    expect(big).toMatchObject({ inputChars: '## B\n'.length + 250000, inputCut: false });
   });
 
-  it('returns an empty string when every field is empty', () => {
-    expect(composeUserMessage({ fields: [{ heading: 'A', text: '  ' }], declared: {} }, 100)).toBe(
-      ''
-    );
+  it('reports a cut only when maxSegments runs out', () => {
+    const cut = composeTextScanMessages({
+      prompts: p,
+      labels,
+      subject: body(250000),
+      maxInputChars: 200000,
+      maxSegments: 1,
+    });
+    expect(cut.segments).toHaveLength(1);
+    expect(cut.scannedChars).toBeLessThan(cut.inputChars);
+    expect(cut.inputCut).toBe(true);
   });
 });
 
@@ -155,7 +169,7 @@ describe('subjectTextLength', () => {
       declared: {},
     };
     expect(subjectTextLength(short)).toBe(2);
-    expect(composeUserMessage(short, 1000).length).toBeGreaterThan(10);
+    expect(composeUserText(short).length).toBeGreaterThan(10);
     expect(subjectTextLength(subject)).toBe('My LoRA'.length + 'v1 notes'.length);
   });
 });
@@ -188,6 +202,14 @@ describe('getTextScanConfig', () => {
       JSON.stringify({ maxInputChars: -1, model: '', thinking: 'yes' })
     );
     expect(await getTextScanConfig()).toEqual(DEFAULTS);
+  });
+
+  it('reads maxSegments and ignores one outside 1-20', async () => {
+    redisMock.sysRedis.get.mockResolvedValue(JSON.stringify({ maxSegments: 3 }));
+    expect((await getTextScanConfig()).maxSegments).toBe(3);
+    for (const bad of [0, 21, 2.5, '4'])
+      redisMock.sysRedis.get.mockResolvedValueOnce(JSON.stringify({ maxSegments: bad }));
+    for (let i = 0; i < 4; i++) expect((await getTextScanConfig()).maxSegments).toBe(10);
   });
 
   it('falls back to defaults when sysRedis throws', async () => {
@@ -334,6 +356,11 @@ describe('textScanTextHash', () => {
     expect(textScanTextHash({ ...subject, declared: { nsfwLevel: 8 } })).toBe(
       textScanTextHash(subject)
     );
+  });
+
+  it('hashes exactly the #5856 composition', () => {
+    expect(textScanTextHash(subject)).toBe(hashContent('## Name\nMy LoRA\n\n## Version\nv1 notes'));
+    expect(composeUserText(subject)).toBe('## Name\nMy LoRA\n\n## Version\nv1 notes');
   });
 });
 

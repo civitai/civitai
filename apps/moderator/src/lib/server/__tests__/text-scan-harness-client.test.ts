@@ -192,7 +192,7 @@ describe('scanTexts', () => {
 });
 
 describe('harness limits', () => {
-  const huge = (key: string, n = 200_001) => ({
+  const huge = (key: string, n = 600_001) => ({
     key,
     fields: [{ heading: 'Description', text: 'x'.repeat(n) }],
   });
@@ -221,7 +221,7 @@ describe('harness limits', () => {
     expect(results.map((r) => r.key)).toEqual(['t0', 't1', 'big', 'wide', 't2']);
     expect(results[2]).toMatchObject({
       ok: false,
-      error: expect.stringMatching(/^too large: 1 fields \/ 200001 chars/),
+      error: expect.stringMatching(/^too large: 1 fields \/ 600001 chars/),
     });
     expect(results[3]).toMatchObject({
       ok: false,
@@ -239,6 +239,24 @@ describe('harness limits', () => {
       Array.from({ length: 6 }, (_, i) => huge(`h${i}`, 190_000))
     );
     expect(call.mock.calls.map(([, body]) => (body.texts as unknown[]).length)).toEqual([5, 1]);
+  });
+
+  it('passes the segment count of a segmented scan through', async () => {
+    call.mockResolvedValue({ ok: true, body: { results: [{ ...scannedOk('a'), segments: 3 }] } });
+    const [result] = await scanTexts(
+      'Model',
+      texts(1).map((t) => ({ ...t, key: 'a' }))
+    );
+    expect(result).toMatchObject({ key: 'a', ok: true, segments: 3 });
+  });
+
+  it('omits segments for a single-segment scan', async () => {
+    call.mockResolvedValue({ ok: true, body: { results: [{ ...scannedOk('a'), segments: 1 }] } });
+    const [result] = await scanTexts(
+      'Model',
+      texts(1).map((t) => ({ ...t, key: 'a' }))
+    );
+    expect(result).not.toHaveProperty('segments');
   });
 
   it('calls pasted text "your text" in a refusal', async () => {
@@ -294,7 +312,7 @@ describe('getPrompts / composeEntities', () => {
   it('passes the history key through and returns the body', async () => {
     const body = {
       active: { base: { id: 1, key: 'base', content: 'BASE PROMPT' } },
-      config: { model: 'm', maxInputChars: 1000, thinking: false },
+      config: { model: 'm', maxInputChars: 1000, maxSegments: 10, thinking: false },
     };
     call.mockResolvedValue({ ok: true, body });
 
