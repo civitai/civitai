@@ -277,6 +277,7 @@ describe('POST /api/v1/block-tokens — Phase 2 dev-tunnel author-own mint', () 
     expect(arg.blockInstanceId).toBe('page_ephemeral-my-app');
     // No manifest on this path, so the budget is the platform default.
     expect(arg.buzzBudget).toBe(1000);
+    expect(res._body.buzzBudget).toBe(1000);
   });
 
   it('sources the BRAND-NEW scope decision from the SESSION + the flag (never the body): passes both to the resolver', async () => {

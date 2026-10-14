@@ -590,6 +590,7 @@ async function tryDevTunnelScopedMint(args: {
     token: result.token,
     expiresAt: result.expiresAt,
     kind: oauth ? 'oauth' : 'block',
+    buzzBudget,
     // Dev tokens are self-bound + mod/author-gated; there is no per-user consent
     // ledger for a synthetic pre-approval app, so no consent signal is surfaced.
     needsConsent: false,
@@ -791,6 +792,7 @@ async function tryDevTunnelOwnedNonApprovedMint(args: {
     expiresAt: result.expiresAt,
     kind: oauth ? 'oauth' : 'block',
     scopes: granted,
+    buzzBudget,
     needsConsent: false,
     missingScopes: [],
     domain: null,
@@ -1057,6 +1059,7 @@ async function tryPrivateRunMint(args: {
     expiresAt: result.expiresAt,
     kind: 'block',
     scopes: granted,
+    buzzBudget,
     // No consent round-trip on this surface: the scope set is the prior approval
     // snapshot, not a consent-gated request, and a grant would re-mint a WIDER token at
     // the request of code the platform has taken down.
@@ -1692,6 +1695,10 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     expiresAt: result.expiresAt,
     kind: oauth?.outcome === 'minted' ? 'oauth' : 'block',
     scopes: manifestScopes,
+    // The per-call budget this token was signed with, so the host forwards it to the
+    // block instead of deriving its own: the install setting it comes from is not
+    // always visible to the client. Absent when the token carries no spend scope.
+    buzzBudget,
     needsConsent,
     missingScopes,
     // Advisory maturity signal for the host → BLOCK_INIT. The AUTHORITATIVE

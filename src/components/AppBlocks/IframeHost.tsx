@@ -49,7 +49,6 @@ import {
 import { BlockConsentNotice } from './BlockConsentNotice';
 import { openBlockConsentModal } from './openBlockConsentModal';
 import { hideBlock } from './hiddenBlocks';
-import { resolvePerCallBuzzBudget } from '~/shared/constants/block-scope.constants';
 import { isPageSlot } from '~/shared/constants/slot-registry';
 import { sanitizeAppChromeName } from './appChromeName';
 import { resolveChromeGeometry } from './chromeGeometry';
@@ -116,6 +115,9 @@ interface IframeHostProps {
   /** ISO-8601 — surfaces in BLOCK_INIT.token.expiresAt for the iframe. */
   expiresAt: string;
   tokenKind?: 'block' | 'oauth';
+  /** The per-call Buzz budget `token` was signed with, as the mint reported it.
+   *  Forwarded to the block as-is; never derived here. */
+  buzzBudget?: number;
   /** A6 lazy consent: consent-gated scopes the app's approved manifest declares
    *  but the viewer hasn't granted, so they were WITHHELD from `token`. The
    *  block sees a token without them and fires REQUEST_CONSENT on the action;
@@ -1183,6 +1185,7 @@ export function IframeHost({
   token,
   expiresAt,
   tokenKind,
+  buzzBudget,
   missingScopes,
   needsConsent,
   domain,
@@ -1490,15 +1493,6 @@ export function IframeHost({
     const withheld = new Set(missingScopes);
     return declared.filter((s) => !withheld.has(s));
   }, [install.manifest.scopes, missingScopes]);
-
-  // Resolved by the function the page/install mint and the hub token use, so blocks
-  // can display the budget without a JWT decode. Only present when the token carries
-  // ai:write:budgeted (i.e. after consent).
-  const buzzBudget = useMemo<number | undefined>(() => {
-    if (!grantedScopes.includes('ai:write:budgeted')) return undefined;
-    const budget = resolvePerCallBuzzBudget(install.publisherSettings?.buzz_budget_per_gen);
-    return budget > 0 ? budget : undefined;
-  }, [grantedScopes, install.publisherSettings]);
 
   // Effective Checkpoint after publisher-default ∪ viewer-override merge.
   // Anon viewers see publisher default; authenticated viewers see their

@@ -472,6 +472,8 @@ describe('POST /api/v1/block-tokens — W10 page mint', () => {
       expect(res._status).toBe(200);
       const signArg = mockTokenService.sign.mock.calls[0][0];
       expect(signArg.buzzBudget).toBe(minted);
+      // The response reports the signed budget, for the host to forward.
+      expect(res._body.buzzBudget).toBe(minted);
     });
 
     it('falls back to BUZZ_BUDGET_DEFAULT (1000) when the manifest omits a budget', async () => {
@@ -674,6 +676,55 @@ describe('POST /api/v1/block-tokens — W10 page mint', () => {
 
     expect(res._status).toBe(200);
     expect(mockTokenService.sign.mock.calls[0][0].buzzBudget).toBe(minted);
+    expect(res._body.buzzBudget).toBe(minted);
+  });
+
+  // The install setting is private unless the manifest lists it as public, so the
+  // host cannot read it: the response is the only way the host learns what was signed.
+  it('MODEL path: the response reports the budget signed from a PRIVATE install setting', async () => {
+    mockBlockRegistry.resolveBlockInstance.mockResolvedValue({
+      ...MODEL_INSTALL,
+      settings: { buzz_budget_per_gen: 53 },
+      appBlock: {
+        ...MODEL_INSTALL.appBlock,
+        manifest: { scopes: ['ai:write:budgeted'] },
+        approvedScopes: ['ai:write:budgeted'],
+        app: { allowedScopes: 1 << 15 /* AIServicesWrite */ },
+      },
+    });
+    mockDbWrite.appUserScopeGrant.findUnique.mockResolvedValue({
+      grantedScopes: ['ai:write:budgeted'],
+      revokedAt: null,
+    });
+    const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
+    const res = makeRes();
+    await handler(makeReq({ origin: 'https://civitai.com', body: modelBody() }), res);
+
+    expect(res._status).toBe(200);
+    expect(mockTokenService.sign.mock.calls[0][0].buzzBudget).toBe(53);
+    expect(res._body.buzzBudget).toBe(53);
+  });
+
+  it('MODEL path: the response reports no budget when the spend scope was not signed', async () => {
+    mockBlockRegistry.resolveBlockInstance.mockResolvedValue({
+      ...MODEL_INSTALL,
+      settings: { buzz_budget_per_gen: 53 },
+      appBlock: {
+        ...MODEL_INSTALL.appBlock,
+        manifest: { scopes: ['ai:write:budgeted'] },
+        approvedScopes: ['ai:write:budgeted'],
+        app: { allowedScopes: 1 << 15 /* AIServicesWrite */ },
+      },
+    });
+    mockDbWrite.appUserScopeGrant.findUnique.mockResolvedValue(null);
+    const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
+    const res = makeRes();
+    await handler(makeReq({ origin: 'https://civitai.com', body: modelBody() }), res);
+
+    expect(res._status).toBe(200);
+    expect(mockTokenService.sign.mock.calls[0][0].scopes).not.toContain('ai:write:budgeted');
+    expect(mockTokenService.sign.mock.calls[0][0].buzzBudget).toBeUndefined();
+    expect(res._body.buzzBudget).toBeUndefined();
   });
 
   // The integer guard covers the MODEL-slot path too (both paths share

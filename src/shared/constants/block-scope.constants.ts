@@ -493,8 +493,7 @@ export const BUZZ_BUDGET_DEFAULT = 1000;
  * The per-call budget for a declared value — an install's `buzz_budget_per_gen` or a
  * manifest's `page.buzzBudgetPerGen`. Anything but an integer takes the default; a
  * non-positive integer is 0, which the mint refuses and every spend gate fails closed on.
- * Shared by the page/install mint, the hub token and the host's client-side copy, which
- * must show the budget the server signed.
+ * Shared by the page/install mint and the hub token.
  */
 export function resolvePerCallBuzzBudget(declared: unknown): number {
   const candidate =

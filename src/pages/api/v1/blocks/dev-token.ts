@@ -728,7 +728,7 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
         // only raises the per-call BUDGET (never a spend AUTHORITY): spend is
         // still bounded by DEV_BUZZ_BUDGET_CAP (the clamp in resolveDevBuzzBudget),
         // the per-user daily cap, the dev-session cap, and the 7f AIServicesWrite
-        // bearer gate. Mirrors the approved path so a pending recipe with a >50
+        // bearer gate. Mirrors the approved path so a pending recipe with its own
         // budget is dev-testable pre-approval without a manual `buzzBudget`.
         manifestBudgetDefault: parseManifestBuzzBudget(manifest.page),
       };

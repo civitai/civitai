@@ -378,8 +378,9 @@ describe('PHASE 3 private-run mint — the grant path [REG]', () => {
       audience: 'moderator',
       block: BLOCK({ manifest: { name: 'x', page, scopes: ['ai:write:budgeted'] } }),
     });
-    await invoke(BODY());
+    const res = await invoke(BODY());
     expect(mockTokenService.sign.mock.calls[0][0].buzzBudget).toBe(minted);
+    expect(res._body.buzzBudget).toBe(minted);
   });
 
   it('the mint-time AUDIT line carries the audience, slug, status and listing status', async () => {

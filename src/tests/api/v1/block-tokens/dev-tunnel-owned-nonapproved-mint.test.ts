@@ -251,6 +251,7 @@ describe('POST /api/v1/block-tokens — dev-tunnel OWNED non-approved mint', () 
     const res = await invoke(DEV_BODY());
     expect(res._status).toBe(200);
     expect((mockTokenService.sign.mock.calls[0][0] as any).buzzBudget).toBe(minted);
+    expect(res._body.buzzBudget).toBe(minted);
   });
 
   it('owner + SUSPENDED app + active tunnel + flags → mints a self-bound token (real ids, dev:true, forced-SFW)', async () => {

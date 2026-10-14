@@ -33,6 +33,7 @@ export function BlockHost({ blockInstall, slotContext }: BlockHostProps) {
     token,
     expiresAt,
     kind,
+    buzzBudget,
     terminal,
     pending,
     missingScopes,
@@ -106,6 +107,7 @@ export function BlockHost({ blockInstall, slotContext }: BlockHostProps) {
       token={token}
       expiresAt={expiresAt}
       tokenKind={kind}
+      buzzBudget={buzzBudget}
       missingScopes={missingScopes}
       needsConsent={needsConsent}
       domain={domain}
