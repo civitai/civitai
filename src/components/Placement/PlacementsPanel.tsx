@@ -7,6 +7,7 @@ import { useQueryNotificationsCount } from '~/components/Notifications/notificat
 import { QueueCountBadge } from '~/components/Placement/QueueCountBadge';
 import { RemixSubmissionQueue } from '~/components/Placement/RemixSubmissionQueue';
 import { StickerPlacementQueue } from '~/components/Placement/StickerPlacementQueue';
+import { StorylineContinuationQueue } from '~/components/Storyline/queue/StorylineContinuationQueue';
 import { PromotionQueue } from '~/components/Promotion/PromotionQueue';
 import {
   isPlacementSurfaceTab,
@@ -42,7 +43,9 @@ export function PlacementsPanel() {
   const { pendingStickerPlacements, pendingRemixSubmissions } = useQueryNotificationsCount();
 
   const tabs = PLACEMENT_SURFACE_TABS.filter(
-    (option) => option.value !== 'promotion' || features.creatorPromotions
+    (option) =>
+      (option.value !== 'promotion' || features.creatorPromotions) &&
+      (option.value !== 'storyline' || features.storylines)
   );
   // A link to a tab this viewer cannot see lands on stickers.
   const surface: PlacementSurfaceTab =
@@ -71,6 +74,7 @@ export function PlacementsPanel() {
     sticker: pendingStickerPlacements,
     remix: pendingRemixSubmissions,
     promotion: 0,
+    storyline: 0,
   };
 
   return (
@@ -119,6 +123,8 @@ export function PlacementsPanel() {
             <StickerPlacementQueue />
           ) : surface === 'remix' ? (
             <RemixSubmissionQueue />
+          ) : surface === 'storyline' ? (
+            <StorylineContinuationQueue />
           ) : (
             <PromotionQueue />
           )}
