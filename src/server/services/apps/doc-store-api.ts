@@ -1,0 +1,712 @@
+// The REST layer of the App Blocks document store: `/api/v1/blocks/storage/…`, served by
+// one catch-all page (`src/pages/api/v1/blocks/storage/[[...path]].ts`). It resolves the
+// caller (`doc-store-access.ts`), runs the gates the store leaves to its caller — scopes,
+// consent, the min-trust gate, rate limits, moderation — calls the store, and presents the
+// result. Every refusal leaves through `sendError`, the one place a `DocStoreError` code
+// becomes an HTTP status.
+//
+// PATHS. Collection names match `^[a-z][a-z0-9_]{0,31}$` and keys `[A-Za-z0-9._:-]{1,128}`,
+// so a segment starting with `_` can never be a collection name. Every non-collection
+// operation therefore sits at the COLLECTION position behind a leading `_`, and the fixed
+// words `counters` / `marks` only ever appear as the third segment, after a key — a position
+// where no collection or key is parsed (`STORAGE_RESERVED_SEGMENTS`, positions 0-based):
+//   []                               GET    info
+//   [c]                              GET    list            POST create
+//   ['_get', c]                      POST   get many  { keys }
+//   [c, key]                         GET    get     PUT put     DELETE delete
+//   [c, key, 'counters', name]       POST   increment
+//   [c, key, 'marks', name]          PUT    mark    DELETE unmark
+// `_get` is a POST with a body (not a GET query) because 100 keys of 128 characters do not
+// fit in a URL every proxy accepts.
+import type { NextApiRequest, NextApiResponse } from 'next';
+import * as z from 'zod';
+import { sessionClient } from '~/server/auth/session-client';
+import { dbRead } from '~/server/db/client';
+import { logToAxiom } from '~/server/logging/client';
+import type { SessionUser } from '~/types/session';
+import type { BlockScopedNextApiRequest } from '~/server/middleware/block-scope.middleware';
+import type { AppBlockEndpoint } from '~/server/metrics/app-block-runtime.metrics';
+import {
+  hasLinkedOAuthAccount,
+  sharedWriteTrustRefusal,
+} from '~/server/services/blocks/block-write-trust.service';
+import { assertShareWritable, type DocStore } from '~/server/services/apps/doc-store';
+import { resolveStorageAccess, type StorageAccess } from '~/server/services/apps/doc-store-access';
+import { getDocStore } from '~/server/services/apps/doc-store.instance';
+import type {
+  DocAuthor,
+  DocCollection,
+  DocListQuery,
+  DocRecord,
+  DocStoreErrorCode,
+} from '~/server/services/apps/doc-store.types';
+import {
+  DOC_STORE_BOUNDS,
+  DocStoreError,
+  REPORT_MARK,
+} from '~/server/services/apps/doc-store.types';
+import {
+  emitSharedBlockAlert,
+  enforcedBlockingHit,
+  recordSharedDataScan,
+  scanCounterKey,
+  scanSharedData,
+  type SharedDataSurface,
+  type SharedTextScan,
+} from '~/server/services/apps/shared-data-moderation';
+import { resolveClientIp } from '~/server/utils/client-ip';
+import {
+  checkDocStoreRateLimit,
+  DOC_STORE_PRIVATE_WRITE_RATE_LIMIT_MAX,
+  DOC_STORE_READ_RATE_LIMIT_MAX,
+  DOC_STORE_REPORT_RATE_LIMIT_MAX,
+  DOC_STORE_TALLY_RATE_LIMIT_MAX,
+  reserveSharedWrite,
+  SHARED_WRITE_BUDGET,
+  type DocStoreRateBucket,
+} from '~/server/utils/shared-storage-rate-limit';
+import {
+  APP_STORAGE_COLLECTION_NAME_RE,
+  APP_STORAGE_PUBLISH_SCOPE,
+  collectionNeedsPublishScope,
+  type DeclaredStorageCollection,
+} from '~/shared/constants/block-storage.constants';
+
+// ---------------------------------------------------------------------------
+// Paths
+// ---------------------------------------------------------------------------
+
+/** Every literal path segment, and the one position each may occupy. */
+export const STORAGE_RESERVED_SEGMENTS = [
+  { segment: '_get', position: 0 },
+  { segment: 'counters', position: 2 },
+  { segment: 'marks', position: 2 },
+] as const;
+
+export type StorageRoute =
+  | { op: 'info' }
+  | { op: 'list' | 'create'; collection: string }
+  | { op: 'getMany'; collection: string }
+  | { op: 'get' | 'put' | 'delete'; collection: string; key: string }
+  | { op: 'increment'; collection: string; key: string; name: string }
+  | { op: 'mark' | 'unmark'; collection: string; key: string; name: string };
+
+type Match = { route: StorageRoute } | { methods: string[] } | null;
+
+/**
+ * The route for a method and the path segments after `/storage`. `{ methods }` when the
+ * path exists but not for this method; `null` when the path does not exist. Pure.
+ */
+export function matchStorageRoute(method: string, segments: readonly string[]): Match {
+  const [a, b, c, d] = segments;
+  const pick = (table: Record<string, StorageRoute>): Match =>
+    table[method] ? { route: table[method] } : { methods: Object.keys(table) };
+  switch (segments.length) {
+    case 0:
+      return pick({ GET: { op: 'info' } });
+    case 1:
+      if (a.startsWith('_')) return null;
+      return pick({ GET: { op: 'list', collection: a }, POST: { op: 'create', collection: a } });
+    case 2:
+      if (a === '_get') return pick({ POST: { op: 'getMany', collection: b } });
+      if (a.startsWith('_')) return null;
+      return pick({
+        GET: { op: 'get', collection: a, key: b },
+        PUT: { op: 'put', collection: a, key: b },
+        DELETE: { op: 'delete', collection: a, key: b },
+      });
+    case 4:
+      if (a.startsWith('_')) return null;
+      if (c === 'counters') {
+        return pick({ POST: { op: 'increment', collection: a, key: b, name: d } });
+      }
+      if (c === 'marks') {
+        return pick({
+          PUT: { op: 'mark', collection: a, key: b, name: d },
+          DELETE: { op: 'unmark', collection: a, key: b, name: d },
+        });
+      }
+      return null;
+    default:
+      return null;
+  }
+}
+
+/** The metrics label for a request, from its method and path shape only. */
+export function storageEndpointLabel(req: NextApiRequest): AppBlockEndpoint {
+  const m = matchStorageRoute(req.method ?? 'GET', pathSegments(req));
+  const op = m && 'route' in m ? m.route.op : 'info';
+  if (op === 'info') return 'storage_info';
+  if (op === 'list' || op === 'get' || op === 'getMany') return 'storage_read';
+  if (op === 'create' || op === 'put' || op === 'delete') return 'storage_write';
+  return 'storage_tally';
+}
+
+function pathSegments(req: NextApiRequest): string[] {
+  const raw = req.query.path;
+  if (raw === undefined) return [];
+  return Array.isArray(raw) ? raw : [raw];
+}
+
+// ---------------------------------------------------------------------------
+// The error envelope — the ONE place a code becomes a status
+// ---------------------------------------------------------------------------
+
+export type StorageApiCode = DocStoreErrorCode | 'internal_error';
+
+export const STORAGE_ERROR_STATUS: Record<StorageApiCode, number> = {
+  invalid_request: 400,
+  index_not_declared: 400,
+  unauthenticated: 401,
+  sign_in_required: 401,
+  scope_missing: 403,
+  consent_required: 403,
+  not_eligible: 403,
+  not_author: 403,
+  write_policy: 403,
+  not_found: 404,
+  collection_not_declared: 404,
+  version_conflict: 409,
+  index_building: 409,
+  cursor_expired: 410,
+  too_large: 413,
+  quota_exceeded: 413,
+  content_rejected: 422,
+  rate_limited: 429,
+  storage_disabled: 503,
+  moderation_unavailable: 503,
+  consent_unavailable: 503,
+  internal_error: 500,
+};
+
+export type StorageErrorBody = {
+  code: StorageApiCode;
+  message: string;
+  /** The house envelope's legacy field; always the message here. */
+  error: string;
+  details?: Record<string, unknown>;
+};
+
+function sendError(res: NextApiResponse, err: unknown): void {
+  if (!(err instanceof DocStoreError)) {
+    logToAxiom(
+      {
+        name: 'app-blocks-doc-store-route-fault',
+        type: 'error',
+        error: err instanceof Error ? err.name : typeof err,
+        message: err instanceof Error ? err.message : String(err),
+      },
+      'app-blocks'
+    ).catch(() => undefined);
+    const body: StorageErrorBody = {
+      code: 'internal_error',
+      message: 'An unexpected error occurred',
+      error: 'An unexpected error occurred',
+    };
+    res.status(500).json(body);
+    return;
+  }
+  const body: StorageErrorBody = {
+    code: err.code,
+    message: err.message,
+    error: err.message,
+    ...(err.details ? { details: err.details } : {}),
+  };
+  const retryAfter = err.details?.retryAfter;
+  if (err.code === 'rate_limited' && typeof retryAfter === 'number') {
+    res.setHeader('Retry-After', String(retryAfter));
+  }
+  res.status(STORAGE_ERROR_STATUS[err.code]).json(body);
+}
+
+const invalid = (message: string, details?: Record<string, unknown>) =>
+  new DocStoreError('invalid_request', message, details);
+
+// ---------------------------------------------------------------------------
+// Request bodies and queries
+// ---------------------------------------------------------------------------
+
+const dataSchema = z.record(z.string(), z.unknown());
+const putBody = z.strictObject({ data: dataSchema, ifVersion: z.number().optional() });
+const createBody = z.strictObject({ data: dataSchema });
+const getManyBody = z.strictObject({ keys: z.array(z.string()) });
+const incrementBody = z.strictObject({ by: z.number().optional() });
+const markBody = z.strictObject({ reason: z.string().optional() });
+
+function parseBody<T>(schema: z.ZodType<T>, body: unknown): T {
+  // A body Next could not parse arrives as a string; an absent one as undefined / ''.
+  const value = body === undefined || body === '' ? {} : body;
+  const parsed = schema.safeParse(value);
+  if (!parsed.success) {
+    throw invalid('invalid request body', {
+      issues: parsed.error.issues.map((i) => ({ path: i.path.join('.'), message: i.message })),
+    });
+  }
+  return parsed.data;
+}
+
+const LIST_PARAMS = new Set(['sort', 'author', 'markedBy', 'mark', 'keyPrefix', 'limit', 'cursor']);
+const WHERE_PARAM = /^where\[([^\]]+)\]$/;
+
+/** `?where[f]=v&sort=…` → a store query. Unknown parameters are refused, not ignored. */
+function parseListQuery(req: NextApiRequest, decl: DeclaredStorageCollection): DocListQuery {
+  const q: DocListQuery = {};
+  for (const [name, raw] of Object.entries(req.query)) {
+    if (name === 'path') continue; // the catch-all's own route parameter
+    if (Array.isArray(raw) || raw === undefined) throw invalid(`${name} must be given once`);
+    const where = WHERE_PARAM.exec(name);
+    if (where) {
+      q.where = { ...q.where, [where[1]]: whereValue(decl, where[1], raw) };
+      continue;
+    }
+    if (!LIST_PARAMS.has(name)) throw invalid(`unknown query parameter ${name}`);
+    if (name === 'limit') {
+      if (!/^[0-9]{1,3}$/.test(raw)) throw invalid('limit must be an integer');
+      q.limit = Number(raw);
+    } else if (name === 'author' || name === 'markedBy') {
+      if (raw !== 'me') throw invalid(`${name} must be "me"`);
+      q[name] = 'me';
+    } else {
+      q[name as 'sort' | 'mark' | 'keyPrefix' | 'cursor'] = raw;
+    }
+  }
+  return q;
+}
+
+/** A query-string filter value, typed by the field's DECLARED index type. */
+function whereValue(decl: DeclaredStorageCollection, field: string, raw: string) {
+  switch (decl.indexes.get(field)) {
+    case 'number': {
+      const n = Number(raw);
+      if (raw.trim() === '' || !Number.isFinite(n))
+        throw invalid(`where[${field}] must be a number`);
+      return n;
+    }
+    case 'boolean':
+      if (raw !== 'true' && raw !== 'false') throw invalid(`where[${field}] must be true or false`);
+      return raw === 'true';
+    case 'time':
+      return /^-?[0-9]+$/.test(raw) ? Number(raw) : raw;
+    default:
+      // string, or undeclared (the store answers index_not_declared)
+      return raw;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Presentation
+// ---------------------------------------------------------------------------
+
+export type PresentedAuthor =
+  | { kind: 'user'; isViewer: boolean; username?: string }
+  | { kind: 'app' }
+  | { kind: 'counter' };
+
+export type PresentedDoc = {
+  key: string;
+  data: Record<string, unknown>;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+  author: PresentedAuthor;
+  counters: Record<string, number>;
+  marks: Record<string, number>;
+  viewer: { marks: string[] } | null;
+};
+
+/**
+ * Store records → wire documents. The store's `author.uid` is read here ONLY to look up a
+ * username for a `showAuthor` collection, and is never copied to the output: every field of
+ * `PresentedAuthor` is listed explicitly.
+ */
+async function presentDocs(
+  docs: readonly (DocRecord | null)[],
+  decl: DeclaredStorageCollection
+): Promise<(PresentedDoc | null)[]> {
+  const usernames = new Map<number, string>();
+  if (decl.showAuthor) {
+    const uids = [
+      ...new Set(docs.flatMap((d) => (d && d.author.kind === 'user' ? [d.author.uid] : []))),
+    ];
+    if (uids.length > 0) {
+      const rows = await dbRead.user.findMany({
+        where: { id: { in: uids } },
+        select: { id: true, username: true },
+      });
+      for (const r of rows) if (r.username) usernames.set(r.id, r.username);
+    }
+  }
+  const author = (a: DocAuthor): PresentedAuthor => {
+    if (a.kind !== 'user') return { kind: a.kind };
+    const username = decl.showAuthor ? usernames.get(a.uid) : undefined;
+    return { kind: 'user', isViewer: a.isViewer, ...(username ? { username } : {}) };
+  };
+  return docs.map((d) =>
+    d
+      ? {
+          key: d.key,
+          data: d.data,
+          version: d.version,
+          createdAt: d.createdAt.toISOString(),
+          updatedAt: d.updatedAt.toISOString(),
+          author: author(d.author),
+          counters: d.counters,
+          marks: d.marks,
+          viewer: d.viewer,
+        }
+      : null
+  );
+}
+
+async function presentDoc(doc: DocRecord, decl: DeclaredStorageCollection) {
+  return (await presentDocs([doc], decl))[0] as PresentedDoc;
+}
+
+function presentDeclaration(decl: DeclaredStorageCollection) {
+  return {
+    kind: decl.kind,
+    visibility: decl.visibility,
+    ...(decl.visibility === 'shared' ? { write: decl.write ?? 'own' } : {}),
+    counters: [...decl.counters],
+    marks: [...decl.marks],
+    indexes: Object.fromEntries(decl.indexes),
+    showAuthor: decl.showAuthor,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Gates
+// ---------------------------------------------------------------------------
+
+function collectionOf(access: StorageAccess, name: string): DocCollection {
+  const decl = APP_STORAGE_COLLECTION_NAME_RE.test(name) ? access.collections.get(name) : undefined;
+  if (!decl) {
+    throw new DocStoreError('collection_not_declared', `collection ${name} is not declared`, {
+      collection: name,
+    });
+  }
+  return { name, config: decl };
+}
+
+function requireViewer(access: StorageAccess): number {
+  if (access.ctx.viewerUid === null) {
+    throw new DocStoreError('sign_in_required', 'sign in required');
+  }
+  return access.ctx.viewerUid;
+}
+
+/** Creating, editing or deleting a document other viewers read needs the consent-gated scope. */
+function assertPublishScope(access: StorageAccess, coll: DocCollection): void {
+  if (!collectionNeedsPublishScope(coll.config)) return;
+  if (access.scopes.includes(APP_STORAGE_PUBLISH_SCOPE)) return;
+  if (access.consentUnavailable) {
+    throw new DocStoreError('consent_unavailable', 'permission state is temporarily unavailable', {
+      retryAfter: 1,
+    });
+  }
+  throw new DocStoreError('consent_required', `${APP_STORAGE_PUBLISH_SCOPE} has not been granted`, {
+    scope: APP_STORAGE_PUBLISH_SCOPE,
+  });
+}
+
+/** The min-trust gate, on every viewer write into a shared collection. */
+async function assertTrusted(uid: number): Promise<void> {
+  const user = (await sessionClient.getSessionUserById(uid)) as SessionUser | null;
+  const linked = user ? await hasLinkedOAuthAccount(user) : false;
+  const refusal = sharedWriteTrustRefusal(user, linked);
+  if (refusal) {
+    throw new DocStoreError('not_eligible', refusal.message, { reason: refusal.reason });
+  }
+}
+
+async function charge(
+  bucket: DocStoreRateBucket,
+  access: StorageAccess,
+  req: NextApiRequest
+): Promise<void> {
+  const uid = access.ctx.viewerUid;
+  const principal = uid === null ? `ip:${resolveClientIp(req)}` : `u:${uid}`;
+  const rl = await checkDocStoreRateLimit(bucket, access.ctx.appId, principal);
+  if (!rl.allowed) {
+    throw new DocStoreError('rate_limited', 'rate limit exceeded', {
+      bucket,
+      retryAfter: rl.retryAfterSeconds,
+    });
+  }
+}
+
+const COARSE_CATEGORY = { link: 'link', overflow: 'unreviewable' } as Record<string, string>;
+
+/**
+ * Enforce-mode moderation of one shared write: every string leaf and object key of `data`
+ * and, when the app chose it, the document key. A scan that cannot run is refused as
+ * retryable; a hit is refused with a coarse category, never the matched text.
+ */
+async function moderate(
+  access: StorageAccess,
+  uid: number,
+  surface: SharedDataSurface,
+  rowKey: string,
+  input: { data?: Record<string, unknown>; key?: string }
+): Promise<void> {
+  const scans: { field: 'data' | 'key'; run: () => Promise<SharedTextScan> }[] = [];
+  if (input.data !== undefined) {
+    const data = input.data;
+    scans.push({ field: 'data', run: () => scanSharedData(data) });
+  }
+  if (input.key !== undefined) {
+    const key = input.key;
+    scans.push({ field: 'key', run: () => scanCounterKey(key) });
+  }
+  for (const { field, run } of scans) {
+    let scan: SharedTextScan;
+    try {
+      scan = await run();
+    } catch (err) {
+      logToAxiom(
+        {
+          name: 'app-blocks-doc-store-moderation-scan-failed',
+          type: 'error',
+          appBlockId: access.ctx.appId,
+          error: err instanceof Error ? err.name : typeof err,
+        },
+        'block-audit'
+      ).catch(() => undefined);
+      throw new DocStoreError('moderation_unavailable', 'content could not be reviewed right now', {
+        retryAfter: 5,
+      });
+    }
+    const hit = await enforcedBlockingHit(scan);
+    void recordSharedDataScan(scan, {
+      appBlockId: access.ctx.appId,
+      rowKey,
+      surface,
+      mode: 'enforce',
+      blocked: hit != null,
+    });
+    if (hit) {
+      emitSharedBlockAlert(
+        { appBlockId: access.ctx.appId, uid },
+        {
+          policy: hit.category === 'audit_regex' ? 'audit' : hit.category,
+          category: hit.category,
+          field,
+        }
+      );
+      throw new DocStoreError('content_rejected', 'content was rejected by moderation', {
+        category: COARSE_CATEGORY[hit.category] ?? 'blocked',
+      });
+    }
+  }
+}
+
+/**
+ * A shared document write spends the shared write budget: reserved before moderation (the
+ * expensive part), given back if the write does not land — charged as a rejection unless
+ * the failure was ours.
+ */
+async function withSharedWriteBudget<T>(
+  access: StorageAccess,
+  uid: number,
+  fn: () => Promise<T>
+): Promise<T> {
+  const reservation = await reserveSharedWrite(uid, access.ctx.appId);
+  if (!reservation.allowed) {
+    throw new DocStoreError('rate_limited', 'shared write budget exhausted', {
+      bucket: 'shared-write',
+      retryAfter: reservation.retryAfterSeconds,
+    });
+  }
+  try {
+    return await fn();
+  } catch (err) {
+    const ours = !(err instanceof DocStoreError) || STORAGE_ERROR_STATUS[err.code] >= 500;
+    await reservation.release({ rejected: !ours });
+    throw err;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Operations
+// ---------------------------------------------------------------------------
+
+type Reply = { status: number; body: unknown };
+
+async function run(
+  req: NextApiRequest,
+  route: StorageRoute,
+  access: StorageAccess,
+  store: DocStore
+): Promise<Reply> {
+  const { ctx } = access;
+  const ok = (body: unknown, status = 200): Reply => ({ status, body });
+  // Every read is charged first, so a read of an undeclared collection is limited too.
+  // Writes are charged below, once the collection says which bucket they spend.
+  if (route.op === 'info' || route.op === 'list' || route.op === 'get' || route.op === 'getMany') {
+    await charge('read', access, req);
+  }
+
+  if (route.op === 'info') {
+    const usage = await store.usage(ctx);
+    const L = store.limits;
+    return ok({
+      collections: Object.fromEntries(
+        [...access.collections].map(([name, decl]) => [name, presentDeclaration(decl)])
+      ),
+      limits: {
+        docBytes: DOC_STORE_BOUNDS.docBytes,
+        appBytes: L.appBytes,
+        appDocs: L.appDocs,
+        viewerBytes: L.userBytes,
+        viewerDocs: L.userDocs,
+        listLimitMax: DOC_STORE_BOUNDS.listLimitMax,
+        getManyMax: DOC_STORE_BOUNDS.getManyMax,
+        rate: {
+          readsPerMinute: DOC_STORE_READ_RATE_LIMIT_MAX,
+          privateWritesPerMinute: DOC_STORE_PRIVATE_WRITE_RATE_LIMIT_MAX,
+          marksAndCountersPerMinute: DOC_STORE_TALLY_RATE_LIMIT_MAX,
+          reportsPerDay: DOC_STORE_REPORT_RATE_LIMIT_MAX,
+          sharedWritesBurst: SHARED_WRITE_BUDGET.burst.capacity,
+          sharedWritesPerDay: SHARED_WRITE_BUDGET.daily.capacity,
+        },
+      },
+      usage,
+    });
+  }
+
+  const coll = collectionOf(access, route.collection);
+  const decl = coll.config;
+  const shared = decl.visibility === 'shared';
+
+  switch (route.op) {
+    case 'list': {
+      const query = parseListQuery(req, decl);
+      const result = await store.list(ctx, coll, query);
+      return ok({ items: await presentDocs(result.items, decl), nextCursor: result.nextCursor });
+    }
+    case 'get': {
+      const doc = await store.get(ctx, coll, route.key);
+      if (!doc) throw new DocStoreError('not_found', 'document not found');
+      return ok(await presentDoc(doc, decl));
+    }
+    case 'getMany': {
+      const { keys } = parseBody(getManyBody, req.body);
+      const docs = await store.getMany(ctx, coll, keys);
+      return ok({ items: await presentDocs(docs, decl) });
+    }
+    case 'create':
+    case 'put':
+    case 'delete': {
+      const uid = requireViewer(access);
+      // The store's own write-policy rule, run before any budget or moderation is spent.
+      assertShareWritable(coll);
+      assertPublishScope(access, coll);
+      // Parsed before any budget is reserved, so a malformed body is not charged.
+      const created = route.op === 'create' ? parseBody(createBody, req.body) : null;
+      const putIn = route.op === 'put' ? parseBody(putBody, req.body) : null;
+      const deleteVersion = route.op === 'delete' ? deleteIfVersion(req) : undefined;
+      const write = async (): Promise<Reply> => {
+        if (created) {
+          if (shared) await moderate(access, uid, 'append', '', { data: created.data });
+          return ok(await presentDoc(await store.create(ctx, coll, created.data), decl), 201);
+        }
+        if (putIn && route.op === 'put') {
+          const { data, ifVersion } = putIn;
+          if (shared) await moderate(access, uid, 'update', route.key, { data, key: route.key });
+          const doc = await store.put(ctx, coll, route.key, data, { ifVersion });
+          return ok(await presentDoc(doc, decl));
+        }
+        if (route.op !== 'delete') throw new Error('doc-store-api: unreachable write op');
+        return ok(await store.delete(ctx, coll, route.key, { ifVersion: deleteVersion }));
+      };
+      if (!shared) {
+        await charge('private-write', access, req);
+        return write();
+      }
+      await assertTrusted(uid);
+      return withSharedWriteBudget(access, uid, write);
+    }
+    case 'increment': {
+      const uid = requireViewer(access);
+      const { by } = parseBody(incrementBody, req.body);
+      if (shared) await assertTrusted(uid);
+      await charge('tally', access, req);
+      // Under `write: 'none'` an increment can CREATE a public document under the app's key.
+      if (shared && decl.write === 'none') {
+        await moderate(access, uid, 'counter', route.key, { key: route.key });
+      }
+      return ok(await store.increment(ctx, coll, route.key, route.name, by));
+    }
+    case 'mark':
+    case 'unmark': {
+      const uid = requireViewer(access);
+      const { reason } =
+        route.op === 'mark' ? parseBody(markBody, req.body) : { reason: undefined };
+      if (shared) await assertTrusted(uid);
+      await charge('tally', access, req);
+      if (route.op === 'mark' && route.name === REPORT_MARK) await charge('report', access, req);
+      const result =
+        route.op === 'mark'
+          ? await store.mark(ctx, coll, route.key, route.name, { reason })
+          : await store.unmark(ctx, coll, route.key, route.name);
+      // A report count is never exposed.
+      return ok(
+        route.name === REPORT_MARK
+          ? { marked: result.marked }
+          : { marked: result.marked, count: result.count }
+      );
+    }
+  }
+}
+
+function deleteIfVersion(req: NextApiRequest): number | undefined {
+  const raw = req.query.ifVersion;
+  if (raw === undefined) return undefined;
+  if (Array.isArray(raw) || !/^[0-9]{1,15}$/.test(raw)) {
+    throw invalid('ifVersion must be a non-negative integer');
+  }
+  return Number(raw);
+}
+
+/** Query parameters other than the route's own are refused everywhere except a list. */
+function assertNoStrayQuery(req: NextApiRequest, route: StorageRoute): void {
+  if (route.op === 'list') return;
+  const allowed = route.op === 'delete' ? ['path', 'ifVersion'] : ['path'];
+  const stray = Object.keys(req.query).find((k) => !allowed.includes(k));
+  if (stray) throw invalid(`unknown query parameter ${stray}`);
+}
+
+// ---------------------------------------------------------------------------
+// The handler
+// ---------------------------------------------------------------------------
+
+export type StorageApiDeps = { store: () => DocStore };
+
+export function createStorageHandler(deps: StorageApiDeps = { store: getDocStore }) {
+  return async function storageHandler(req: NextApiRequest, res: NextApiResponse) {
+    try {
+      const match = matchStorageRoute(req.method ?? 'GET', pathSegments(req));
+      if (!match) throw new DocStoreError('not_found', 'no such storage route');
+      if ('methods' in match) {
+        res.setHeader('Allow', match.methods.join(', '));
+        const body: StorageErrorBody = {
+          code: 'invalid_request',
+          message: 'method not allowed',
+          error: 'method not allowed',
+        };
+        res.status(405).json(body);
+        return;
+      }
+      const claims = (req as BlockScopedNextApiRequest).blockClaims;
+      if (!claims) throw new DocStoreError('unauthenticated', 'a block token is required');
+      assertNoStrayQuery(req, match.route);
+      const access = await resolveStorageAccess(claims, {
+        consentUnavailable: (req as BlockScopedNextApiRequest).blockConsentUnavailable === true,
+      });
+      const reply = await run(req, match.route, access, deps.store());
+      res.status(reply.status).json(reply.body);
+    } catch (err) {
+      sendError(res, err);
+    }
+  };
+}

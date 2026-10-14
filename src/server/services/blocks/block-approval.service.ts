@@ -483,8 +483,9 @@ export type StrictAppBlockApproval =
 /**
  * THE STRICT READ — the backing row must exist AND say `approved`, with NO exemption of any
  * kind. Used by the `strict` approval policies of `resolveBlockToken`
- * (`block-bridge-auth.service.ts`), i.e. by the two storage resolvers — the only callers
- * today, though no ledger enumerates this function's callers.
+ * (`block-bridge-auth.service.ts`), i.e. by the two legacy storage resolvers, and by the
+ * document store's resolver (`apps/doc-store-access.ts`), which answers a `reviewRunForReal`
+ * token before calling it — the callers today, though no ledger enumerates them.
  *
  * 🔴 NOT A SECOND COPY OF THE PREDICATE ABOVE, AND NOT TO BE FOLDED INTO IT. The predicate
  * exempts a run-for-real review token, a private run, a token with no backing row and an

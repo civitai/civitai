@@ -1,42 +1,23 @@
 // Types, limits and the error class for the App Blocks document store
 // (`./doc-store.ts`). No SQL lives here; `doc-store.ts` is the only module that
 // touches the `appdata` tables.
+import type {
+  AppStorageIndexType,
+  DeclaredStorageCollection,
+} from '~/shared/constants/block-storage.constants';
 
 /**
- * One collection's declaration: the shape of a manifest `storage.collections[name]`
- * entry. Defined here, in one place, until the manifest schema lands in its own
- * change; reconciling the two is a one-edit swap of this type for the schema's.
+ * One collection's declaration — the manifest parser's own type, so what the
+ * validator accepted at review is exactly what the store enforces. The store
+ * still refuses, itself, the parts the parser admits only behind
+ * `APP_STORAGE_ENABLED_FEATURES` (`write: 'anyone'`, `kind: 'log'`,
+ * `ttlSeconds`, `maxEntries`); `write: 'owner'` is accepted and means nobody
+ * writes documents until owner writes exist. Shared collections default to
+ * `write: 'own'` when the field is absent.
  */
-export type DocCollectionConfig = {
-  /** `log` is part of the manifest shape but NOT SUPPORTED YET: the store refuses it. */
-  kind?: 'docs' | 'log';
-  visibility: 'private' | 'shared';
-  /**
-   * Shared collections only. Defaults to `own`.
-   *   own    — viewers create; only the author updates or deletes.
-   *   owner  — only the app owner writes documents (owner writes are a later
-   *            phase, so today nobody does).
-   *   none   — nobody writes documents; they exist only because a declared
-   *            counter was incremented, which creates the document.
-   *   anyone — part of the manifest shape but NOT SUPPORTED YET: the store
-   *            refuses a collection declaring it.
-   * Counters and marks are not document writes and are allowed under every
-   * policy; only under `none` does an increment create an absent document.
-   */
-  write?: 'own' | 'anyone' | 'owner' | 'none';
-  counters?: string[];
-  /** Shared collections only. `report` is built in and need not be declared. */
-  marks?: string[];
-  /** Index name → type. The name is a dot path into `data`, at most 3 segments. */
-  indexes?: Record<string, DocIndexType>;
-  showAuthor?: boolean;
-  /** Part of the manifest shape but NOT SUPPORTED YET: the store refuses a collection declaring it. */
-  ttlSeconds?: number;
-  /** Part of the manifest shape but NOT SUPPORTED YET: the store refuses a collection declaring it. */
-  maxEntries?: number;
-};
+export type DocCollectionConfig = DeclaredStorageCollection;
 
-export type DocIndexType = 'string' | 'number' | 'boolean' | 'time';
+export type DocIndexType = AppStorageIndexType;
 
 /** A collection as the store sees it: its declared name plus its declaration. */
 export type DocCollection = { name: string; config: DocCollectionConfig };
@@ -88,6 +69,12 @@ export type DocListQuery = {
 };
 
 export type DocListResult = { items: DocRecord[]; nextCursor: string | null };
+
+/** Stored usage for (app, ns), and for the viewer within it (null for an anonymous viewer). */
+export type DocStoreUsage = {
+  app: { bytes: number; docs: number };
+  viewer: { bytes: number; docs: number } | null;
+};
 
 export type DocStoreLimits = {
   appBytes: number;
@@ -146,7 +133,9 @@ export type DocStoreErrorCode =
   | 'content_rejected'
   | 'rate_limited'
   | 'storage_disabled'
-  | 'moderation_unavailable';
+  | 'moderation_unavailable'
+  /** The viewer's consent state could not be read; retryable (raised by the route layer). */
+  | 'consent_unavailable';
 
 export type QuotaCeiling = 'app' | 'viewer' | 'author';
 

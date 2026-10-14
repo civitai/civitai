@@ -54,7 +54,6 @@ import {
   escalateToServerFault,
   isEscalatedServerFault,
 } from '~/server/logging/server-fault-override';
-import { FLIPT_FEATURE_FLAGS, getFliptBoolean } from '~/server/flipt/client';
 import { isAppBlocksSharedStorageEnabled } from '~/server/services/app-blocks-flag';
 import {
   assertSharedWriteTrust,
@@ -70,7 +69,8 @@ import {
   SHARED_BODY_MAX,
 } from '~/server/services/apps/shared-content-safety';
 import {
-  blockingHit,
+  emitSharedBlockAlert,
+  enforcedBlockingHit,
   recordSharedDataScan,
   resolveSharedDataModerationMode,
   scanCounterKey,
@@ -1672,7 +1672,7 @@ async function incrementSharedCounterUnmetered(
     );
     // Records the scan; on a hit, files the consequences against the caller (the would-be creator)
     // and throws, so nothing was ever written.
-    await refuseSharedTextHit(scan, await sharedTextBlockingHit(scan), {
+    await refuseSharedTextHit(scan, await enforcedBlockingHit(scan), {
       schema,
       slug,
       appBlockId,
@@ -1947,7 +1947,7 @@ async function assertSharedValueSafeAndSerialize(params: {
       () => scanSharedData(readStoredData(), { isModerator: subjectUser?.isModerator }),
       { appBlockId, surface: params.surface }
     );
-    await refuseSharedTextHit(scan, await sharedTextBlockingHit(scan), {
+    await refuseSharedTextHit(scan, await enforcedBlockingHit(scan), {
       schema,
       slug,
       appBlockId,
@@ -1992,25 +1992,10 @@ async function fileSharedBlockConsequences(
       reason: block.reason,
     }).catch(() => undefined);
   }
-  const alert =
-    policy === 'minor' || policy === 'poi'
-      ? { name: 'app-blocks-shared-storage-legal-block', type: 'error' }
-      : policy === 'audit'
-      ? { name: 'app-blocks-shared-storage-content-block', type: 'warning' }
-      : null;
-  if (alert) {
-    logToAxiom(
-      {
-        ...alert,
-        category: block.category,
-        ...(block.field ? { field: block.field } : {}),
-        userId: ctx.uid,
-        slug: ctx.slug,
-        appBlockId: ctx.appBlockId,
-      },
-      'block-audit'
-    ).catch(() => undefined);
-  }
+  emitSharedBlockAlert(
+    { appBlockId: ctx.appBlockId, uid: ctx.uid, slug: ctx.slug },
+    { policy, category: block.category, field: block.field }
+  );
 }
 
 /**
@@ -2048,22 +2033,6 @@ async function enforceScan(
       'moderation_unavailable'
     );
   }
-}
-
-/**
- * The hit an ENFORCE scan is refused for, or `null` to let the write through.
- *
- * 🔴 A PATTERN-list hit counts only while `user-content-pattern-enforce` is on — the same rule the
- * title/body belt follows inside `throwOnBlockedUserContent`, where a pattern hit is recorded but not
- * enforced until that flag flips. Otherwise turning this surface's enforce flag on would enforce the
- * pattern list on `data` while the same row's title is only recorded. The flag is read only when a
- * pattern hit exists, as there.
- */
-async function sharedTextBlockingHit(scan: SharedTextScan): Promise<SharedTextHit | null> {
-  const enforcePatterns = scan.hits.some((h) => h.category === 'pattern')
-    ? await getFliptBoolean(FLIPT_FEATURE_FLAGS.USER_CONTENT_PATTERN_ENFORCE)
-    : false;
-  return blockingHit(scan, { enforcePatterns });
 }
 
 /**

@@ -197,6 +197,14 @@ export type AppBlockEndpoint =
   | 'app_storage_delete'
   | 'app_storage_list'
   | 'app_storage_quota'
+  // The DOCUMENT STORE (`/api/v1/blocks/storage/…`, one catch-all route). Four labels by
+  // workload, resolved per request from method + path shape: `info` (declaration + usage),
+  // `read` (list / get / batch get), `write` (document create / put / delete — the only
+  // ones that can run content moderation and charge quota), `tally` (counters and marks).
+  | 'storage_info'
+  | 'storage_read'
+  | 'storage_write'
+  | 'storage_tally'
   // The per-viewer checkpoint override write — the REST twin of the
   // SET_USER_CHECKPOINT bridge message. Its own label rather than being folded
   // into a settings-shaped bucket: it is the only REST route that writes

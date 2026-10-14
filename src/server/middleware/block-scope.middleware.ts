@@ -472,6 +472,13 @@ export function blockConfirmedStepCeiling(
 
 export type BlockScopedNextApiRequest = NextApiRequest & {
   blockClaims?: BlockTokenClaims;
+  /**
+   * True when the per-scope consent marker could not be read for this request. The route's
+   * own scope was consent-exempt, so it was served, but every revokable scope was stripped
+   * from `blockClaims` fail-closed. A handler that sub-checks a consent-gated scope reads this
+   * to answer "retry" rather than "not granted".
+   */
+  blockConsentUnavailable?: boolean;
 };
 
 /**
@@ -644,6 +651,18 @@ export interface WithBlockScopeOpts {
    * endpoints additionally return only PUBLIC maturity-clamped data.)
    */
   allowOpaqueOrigin?: boolean;
+
+  /**
+   * Methods beyond GET and POST that this route serves, added to the CORS preflight's
+   * `Access-Control-Allow-Methods`. Without it a browser refuses a cross-origin PUT or
+   * DELETE before it is sent. Only the document store (`blocks/storage`) declares any.
+   */
+  extraCorsMethods?: readonly ('PUT' | 'DELETE')[];
+}
+
+/** The preflight's allowed methods for a route. */
+function corsAllowMethods(opts: WithBlockScopeOpts): string {
+  return ['GET', 'POST', ...(opts.extraCorsMethods ?? []), 'OPTIONS'].join(', ');
 }
 
 // L7 (audit-10): issuer/audience imported from block-token.service so a
@@ -813,7 +832,7 @@ async function setBlockCors(
     // per the CORS spec. Setting "true" would require Allow-Origin to never
     // be "*", and we want that flexibility on the wrapped handler's path.
     res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Methods', corsAllowMethods(opts));
     res.setHeader('Access-Control-Expose-Headers', BLOCK_CORS_EXPOSE_HEADERS);
     if (req.method === 'OPTIONS') {
       res.status(204).end();
@@ -833,7 +852,7 @@ async function setBlockCors(
     res.setHeader('Access-Control-Allow-Origin', 'null');
     res.setHeader('Vary', 'Origin');
     res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Methods', corsAllowMethods(opts));
     res.setHeader('Access-Control-Expose-Headers', BLOCK_CORS_EXPOSE_HEADERS);
     if (req.method === 'OPTIONS') {
       res.status(204).end();
@@ -1806,6 +1825,9 @@ export function withBlockScope(handler: NextApiHandler, opts: WithBlockScopeOpts
         return;
       }
 
+      if (verdict.kind === 'unavailable') {
+        (req as BlockScopedNextApiRequest).blockConsentUnavailable = true;
+      }
       const revoked = revokedScopesForToken(verdict, claims.scopes);
       if (opts.requiredScope !== undefined && revoked.has(opts.requiredScope)) {
         // The SHARED emitter, so this seam and the bridge cannot report different things under
@@ -2200,6 +2222,11 @@ export const KNOWN_STATIC_ENDPOINT_SEGMENTS = new Set([
   'report',
   'set',
   'shared-storage',
+  // `/api/v1/blocks/storage/…` — the document store, one optional catch-all route. Only
+  // `storage` is derivable from the route file; everything after it (collection names,
+  // document keys, tally names, and the route's own `_get` / `counters` / `marks` words)
+  // templates to `:seg` / `:ulid`, which keeps the column bounded.
+  'storage',
   // `/api/v1/blocks/sub-listings/{upsert,withdraw,mine}` — store items. Static: the item
   // key rides the POST body, so no path segment carries a per-item value.
   'sub-listings',
