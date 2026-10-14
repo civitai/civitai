@@ -1,11 +1,20 @@
 import type { Prisma } from '@prisma/client';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
-import { holdPlacementEscrow, settlePlacement } from '~/server/services/placement-escrow.service';
+import {
+  holdPlacementEscrow,
+  isPlacementEscrowFunded,
+  settlePlacement,
+} from '~/server/services/placement-escrow.service';
 import { assertCanPlace } from '~/server/services/placement-moderation.service';
 import { getPlacementConfig } from '~/server/services/placement.service';
 import { resolvePlacementSpaceFor } from '~/server/services/placement-space.service';
-import { throwBadRequestError } from '~/server/utils/errorHandling';
+import { writeChapterEdgeForPlacement } from '~/server/services/storyline.service';
+import {
+  throwAuthorizationError,
+  throwBadRequestError,
+  throwNotFoundError,
+} from '~/server/utils/errorHandling';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import type { PlacementSpaceMode } from '~/shared/utils/placement';
 import { PLACEMENT_SURFACES } from '~/shared/utils/placement';
@@ -233,4 +242,163 @@ export async function setStorylineSpaceMode(
     create: { surface: SURFACE, entityType: 'storyline', entityId: storylineId, mode },
     update: { mode },
   });
+}
+
+/** Who may continue a storyline: its own setting, separate from the space's mode. */
+export type StorylineWhoCanContinue = 'Anyone' | 'Collaborators';
+
+/**
+ * What happens to a continuation from this placer: refused because the
+ * storyline is closed, refused because only collaborators may continue it,
+ * approved without review because the placer is an endorsed collaborator, or
+ * sent to the owner's review.
+ *
+ * Mode `off` comes first and refuses collaborators too: it is what Complete
+ * sets, and a completed storyline takes nothing from anyone. The same answer
+ * drives the contributor's `closedReason` and the submission, so the UI cannot
+ * offer what the server refuses.
+ */
+export function storylineContinuationAccess({
+  mode,
+  isCollaborator,
+  whoCanContinue = 'Anyone',
+}: {
+  mode: PlacementSpaceMode;
+  isCollaborator: boolean;
+  whoCanContinue?: StorylineWhoCanContinue;
+}): 'closed' | 'collaboratorsOnly' | 'autoApprove' | 'review' {
+  const allowedModes = PLACEMENT_SURFACES[SURFACE].allowedModes as readonly PlacementSpaceMode[];
+  if (mode === 'off' || !allowedModes.includes(mode)) return 'closed';
+  if (isCollaborator) return 'autoApprove';
+  if (whoCanContinue === 'Collaborators') return 'collaboratorsOnly';
+  return 'review';
+}
+
+/** The continuation post a storyline placement carries, or null on a malformed row. */
+const continuationPostId = (data: Prisma.JsonValue): number | null => {
+  const postId =
+    data && typeof data === 'object' && !Array.isArray(data)
+      ? (data as Record<string, unknown>).postId
+      : undefined;
+  return typeof postId === 'number' && Number.isInteger(postId) && postId > 0 ? postId : null;
+};
+
+/**
+ * Approves or declines a pending storyline continuation, once.
+ *
+ * **An approval writes the chapter edge inside the transaction that flips the
+ * placement to approved**, so the two cannot disagree: if the edge is refused
+ * (the post is no longer eligible, a block, the storyline taken down), the
+ * approval rolls back with it and the placement stays pending for the owner to
+ * decline or for expiry to refund. A replay loses the status flip in
+ * `settlePlacement` and writes nothing; `writeChapterEdgeForPlacement` is
+ * idempotent on the placement id as well.
+ *
+ * A decline writes no edge. Expiry never comes through here: the generic sweep
+ * (`expirePlacements`) settles it with no hook, so it writes none either. Money
+ * is the escrow's: a zero-priced continuation holds nothing and every leg is
+ * zero; a priced one is settled by the surface's rules like any other.
+ */
+export async function settleStorylineContinuation({
+  placementId,
+  action,
+  actorId,
+}: {
+  placementId: number;
+  action: 'approve' | 'decline';
+  actorId?: number;
+}) {
+  const placement = await dbWrite.placement.findUnique({
+    where: { id: placementId },
+    select: { surface: true, amount: true },
+  });
+  // Refused rather than settled without the hook: any other surface's approval
+  // belongs to its own handler, and a storyline approved without its edge would
+  // be paid for and missing from the story.
+  if (placement?.surface !== SURFACE)
+    throw new Error(`storyline: placement ${placementId} is not a storyline continuation`);
+
+  // The row is committed before its holds are taken, so an owner can see it
+  // while they are in flight. Settling then plans the payout from whatever is
+  // receipted so far, once, and a hold landing afterwards is charged and never
+  // returned. Decline as well as approve: both write that plan.
+  if (
+    placement.amount > 0 &&
+    !(await isPlacementEscrowFunded({ placementId, amount: placement.amount }))
+  )
+    throw throwBadRequestError('storyline: the payment for this continuation is still processing');
+
+  return settlePlacement({
+    placementId,
+    action,
+    actorId,
+    inTransaction: async (tx, pending) => {
+      const postId = continuationPostId(pending.data);
+      const parentPostId = pending.targetType === 'post' ? pending.targetId : null;
+
+      // Who answers and who is paid (the owner's share, or the decline fee) is
+      // `ownerId`; the story is the parent chapter's storyline. They must be the
+      // same person, or a chapter's author could accept continuations into, or
+      // collect fees from, somebody else's story. Checked in this transaction,
+      // whatever the submission path resolved.
+      const parent = parentPostId
+        ? await tx.storylineChapter.findUnique({
+            where: { postId: parentPostId },
+            select: { storyline: { select: { userId: true } } },
+          })
+        : null;
+      if (parent && parent.storyline.userId !== pending.ownerId)
+        throw new Error(
+          `storyline: placement ${placementId} is not owned by its storyline's owner`
+        );
+
+      // A decline goes through without a chapter: it writes nothing, and a
+      // parent post deleted since must not trap the placer's money in a queue.
+      if (action === 'decline') return;
+
+      if (!parentPostId || !postId)
+        throw new Error(`storyline: placement ${placementId} does not name a chapter and a post`);
+      if (!parent) throw throwBadRequestError(STORYLINE_REFUSALS.notAChapter);
+
+      await writeChapterEdgeForPlacement(
+        { placementId, parentPostId, postId, placerId: pending.placerId },
+        tx
+      );
+    },
+  });
+}
+
+/**
+ * The storyline owner answers a continuation in their queue.
+ *
+ * Ownership is read off the placement's `ownerId`, which approval also checks
+ * against the storyline's owner. Only a pending one can be answered; an
+ * already-settled one is refused here so the owner is told, rather than handed
+ * the winner's outcome as if theirs had happened.
+ */
+export async function actOnStorylineContinuation({
+  placementId,
+  ownerId,
+  action,
+}: {
+  placementId: number;
+  ownerId: number;
+  action: 'approve' | 'decline';
+}) {
+  const placement = await dbWrite.placement.findUnique({
+    where: { id: placementId },
+    select: { surface: true, ownerId: true, status: true },
+  });
+  if (!placement || placement.surface !== SURFACE)
+    throw throwNotFoundError('Continuation not found');
+  if (placement.ownerId !== ownerId) throw throwAuthorizationError();
+  if (placement.status !== 'pending')
+    throw throwBadRequestError('storyline: this continuation has already been answered');
+
+  const { settled, placement: after } = await settleStorylineContinuation({
+    placementId,
+    action,
+    actorId: ownerId,
+  });
+  return { settled, status: after.status };
 }
