@@ -158,6 +158,21 @@ describe('getStorylineChapterTombstone', () => {
       'removed'
     );
   });
+
+  it('shows a chapter whose placement was removed as removed to everyone but moderators', () => {
+    const removed = { ...base, post: post(), removed: true };
+    expect(getStorylineChapterTombstone(removed)).toBe('removed');
+    expect(getStorylineChapterTombstone({ ...removed, viewer: undefined })).toBe('removed');
+    // Its own author too: the removal was a decision about that chapter.
+    expect(getStorylineChapterTombstone({ ...removed, viewer: { id: 1 } })).toBe('removed');
+    expect(
+      getStorylineChapterTombstone({ ...removed, viewer: { id: 3, isModerator: true } })
+    ).toBeNull();
+    // Reported ahead of a block, so the reason is the removal, not the reader's lists.
+    expect(getStorylineChapterTombstone({ ...removed, blockedUserIds: new Set([1]) })).toBe(
+      'removed'
+    );
+  });
   it('reports the most permanent reason when several apply', () => {
     // Taken down AND by a blocked author AND above the ceiling.
     expect(

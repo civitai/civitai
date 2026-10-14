@@ -359,12 +359,13 @@ export async function assertCanContinueStoryline(
       storylineId: true,
       depth: true,
       userId: true,
+      removedAt: true,
       storyline: {
         select: { userId: true, maxNsfwLevel: true, tosViolation: true, whoCanContinue: true },
       },
     },
   });
-  if (!parent || parent.storyline.tosViolation)
+  if (!parent || parent.removedAt || parent.storyline.tosViolation)
     throw throwBadRequestError(STORYLINE_REFUSALS.notAChapter);
 
   const ownerId = parent.storyline.userId;
@@ -559,10 +560,16 @@ export async function setCanonChapter({
 }) {
   const edge = await dbWrite.storylineChapterEdge.findFirst({
     where: { chapterId },
-    select: { parentChapterId: true, storylineId: true },
+    select: {
+      parentChapterId: true,
+      storylineId: true,
+      chapter: { select: { removedAt: true } },
+    },
   });
   if (!edge) throw throwBadRequestError('The first chapter is always the main route');
   await getOwnedStoryline({ storylineId: edge.storylineId, userId, isModerator });
+  if (edge.chapter.removedAt)
+    throw throwBadRequestError('A removed chapter cannot be the main route');
 
   await dbWrite.$transaction(async (tx) => {
     await lockParentChapter(tx, edge.parentChapterId);
@@ -683,7 +690,8 @@ export async function getStoryline({
   // list would name the author of a chapter the path shows as a tombstone.
   const ceilingMask = storyline.maxNsfwLevel * 2 - 1;
   const visibleChapter = Prisma.sql`
-    p."tosViolation" = false AND p."publishedAt" < now() AND p."nsfwLevel" <> 0
+    c."removedAt" IS NULL
+    AND p."tosViolation" = false AND p."publishedAt" < now() AND p."nsfwLevel" <> 0
     AND (p."nsfwLevel" & ${browsingLevel}::int) <> 0
     AND (p."nsfwLevel" & ~${ceilingMask}::int) = 0`;
   const [counts, authors, mainPath] = await Promise.all([
@@ -776,19 +784,21 @@ async function getStorylineMainPath({
   browsingLevel: number;
   blockedUserIds: ReadonlySet<number>;
 }) {
-  const rows = await dbRead.$queryRaw<{ id: number; postId: number | null; depth: number }[]>`
+  const rows = await dbRead.$queryRaw<
+    { id: number; postId: number | null; depth: number; removedAt: Date | null }[]
+  >`
     WITH RECURSIVE main AS (
-      SELECT c.id, c."postId", c.depth, 0 AS hops
+      SELECT c.id, c."postId", c.depth, c."removedAt", 0 AS hops
       FROM "StorylineChapter" c
       WHERE c.id = ${rootChapterId}
       UNION ALL
-      SELECT ch.id, ch."postId", ch.depth, main.hops + 1
+      SELECT ch.id, ch."postId", ch.depth, ch."removedAt", main.hops + 1
       FROM main
       JOIN "StorylineChapterEdge" e ON e."parentChapterId" = main.id AND e.canon
       JOIN "StorylineChapter" ch ON ch.id = e."chapterId"
       WHERE main.hops < ${STORYLINE_PATH_LIMIT - 1}
     )
-    SELECT id, "postId", depth FROM main ORDER BY depth
+    SELECT id, "postId", depth, "removedAt" FROM main ORDER BY depth
   `;
   if (!rows.length) return [];
 
@@ -811,6 +821,7 @@ async function getStorylineMainPath({
     const post = row.postId != null ? postById.get(row.postId) ?? null : null;
     const tombstone = getStorylineChapterTombstone({
       post,
+      removed: !!row.removedAt,
       viewer,
       maxNsfwLevel: storyline.maxNsfwLevel,
       browsingLevel,
@@ -885,10 +896,11 @@ export async function getStorylineChapterLevels({
         tosViolation: boolean;
         bannedAt: Date | null;
         deletedAt: Date | null;
+        removedAt: Date | null;
       }[]
     >`
       SELECT c.depth, p."userId", p."nsfwLevel", p."publishedAt", p."tosViolation",
-        u."bannedAt", u."deletedAt"
+        u."bannedAt", u."deletedAt", c."removedAt"
       FROM "StorylineChapter" c
       JOIN "Post" p ON p.id = c."postId"
       JOIN "User" u ON u.id = p."userId"
@@ -903,6 +915,7 @@ export async function getStorylineChapterLevels({
   const shownToOwner = (row: (typeof rows)[number]) =>
     !getStorylineChapterTombstone({
       post: { id: 0, ...row, user: { bannedAt: row.bannedAt, deletedAt: row.deletedAt } },
+      removed: !!row.removedAt,
       viewer: owner,
       maxNsfwLevel: NsfwLevel.XXX,
       browsingLevel: allBrowsingLevelsFlag,
@@ -938,6 +951,7 @@ export async function getStorylinesForPosts({
         id: true,
         postId: true,
         depth: true,
+        removedAt: true,
         post: { select: { nsfwLevel: true, userId: true } },
         storyline: {
           select: {
@@ -961,6 +975,7 @@ export async function getStorylinesForPosts({
   > = {};
   for (const c of chapters) {
     if (c.postId == null || !c.post) continue;
+    if (c.removedAt && !viewer?.isModerator) continue;
     if (isStorylineHidden(c.storyline, viewer, blockedUserIds)) continue;
     if (isStorylineOutsideLevel(c.storyline, viewer, browsingLevel)) continue;
     // The post's own author is told it is a chapter whatever their level, as the owner is.
@@ -1052,19 +1067,21 @@ export async function getStorylinePath({
 
   // Bounded by the target's depth and the window, so a corrupt edge cannot loop forever.
   const maxHops = Math.min(target.depth, STORYLINE_PATH_LIMIT - 1);
-  const rows = await dbRead.$queryRaw<{ id: number; postId: number | null; depth: number }[]>`
+  const rows = await dbRead.$queryRaw<
+    { id: number; postId: number | null; depth: number; removedAt: Date | null }[]
+  >`
     WITH RECURSIVE path AS (
-      SELECT c.id, c."postId", c.depth, 0 AS hops
+      SELECT c.id, c."postId", c.depth, c."removedAt", 0 AS hops
       FROM "StorylineChapter" c
       WHERE c.id = ${chapterId}
       UNION ALL
-      SELECT p.id, p."postId", p.depth, path.hops + 1
+      SELECT p.id, p."postId", p.depth, p."removedAt", path.hops + 1
       FROM path
       JOIN "StorylineChapterEdge" e ON e."chapterId" = path.id
       JOIN "StorylineChapter" p ON p.id = e."parentChapterId"
       WHERE path.hops < ${maxHops}
     )
-    SELECT id, "postId", depth FROM path ORDER BY depth
+    SELECT id, "postId", depth, "removedAt" FROM path ORDER BY depth
   `;
 
   const postIds = rows.flatMap((r) => (r.postId != null ? [r.postId] : []));
@@ -1077,6 +1094,7 @@ export async function getStorylinePath({
     const post = row.postId != null ? postById.get(row.postId) ?? null : null;
     const tombstone = getStorylineChapterTombstone({
       post,
+      removed: !!row.removedAt,
       viewer,
       maxNsfwLevel: storyline.maxNsfwLevel,
       browsingLevel,
@@ -1096,6 +1114,7 @@ const childEdgeSelect = {
       depth: true,
       userId: true,
       createdAt: true,
+      removedAt: true,
       post: { select: chapterPostSelect },
     },
   },
@@ -1175,6 +1194,7 @@ export async function getStorylineChildren({
     });
     const tombstone = getStorylineChapterTombstone({
       post: chapter.post,
+      removed: !!chapter.removedAt,
       viewer,
       maxNsfwLevel: storyline.maxNsfwLevel,
       browsingLevel,

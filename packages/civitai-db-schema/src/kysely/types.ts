@@ -4580,6 +4580,11 @@ export type StorylineChapter = {
    */
   placementId: number | null;
   createdAt: Generated<Timestamp>;
+  /**
+   * Set when the placement that added this chapter is removed. The row stays and readers other
+   * than moderators see a removed tombstone.
+   */
+  removedAt: Timestamp | null;
 };
 export type StorylineChapterEdge = {
   storylineId: number;
