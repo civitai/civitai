@@ -18,7 +18,10 @@ import {
 } from '~/server/services/announcement-allowance.service';
 import { getPlacementConfig } from '~/server/services/placement.service';
 import { CHALLENGE_MIN_CREATOR_SCORE } from '~/shared/constants/challenge.constants';
+import { getFeatureFliptKey } from '~/server/services/feature-flags.service';
+import { isFliptPublic } from '~/server/flipt/tester-segment';
 import { CRUCIBLE_JUDGE_MIN_CREATOR_SCORE } from '~/shared/constants/crucible.constants';
+import { SERVICES_MIN_CREATOR_SCORE } from '~/shared/constants/creator-service.constants';
 import type { CreatorScoreUnlock } from '~/shared/utils/creator-score-unlocks';
 import type { PlacementPriceTier, PlacementSurface } from '~/shared/utils/placement';
 import {
@@ -33,6 +36,8 @@ export type CreatorScoreUnlockInputs = {
   announcementMinScore: number;
   placementPriceCapTiers: (surface: PlacementSurface) => PlacementPriceTier[];
   placementFreeSlotTiers: (surface: PlacementSurface) => PlacementPriceTier[];
+  /** Kept out of the list, including tier-reached notifications, until the flag is on for everyone. */
+  servicesEnabled: boolean;
 };
 
 export const compiledCreatorScoreUnlockInputs: CreatorScoreUnlockInputs = {
@@ -40,6 +45,7 @@ export const compiledCreatorScoreUnlockInputs: CreatorScoreUnlockInputs = {
   announcementMinScore: ANNOUNCEMENT_DEFAULT_MIN_SCORE,
   placementPriceCapTiers: () => PLACEMENT_PRICE_CAP_TIERS,
   placementFreeSlotTiers: () => PLACEMENT_FREE_SLOT_CAP_TIERS,
+  servicesEnabled: false,
 };
 
 /** Every privilege a Creator Score unlocks, lowest first. A threshold of 0 is not an unlock. */
@@ -176,9 +182,31 @@ export function buildCreatorScoreUnlocks(inputs: CreatorScoreUnlockInputs): Crea
       scoreKind: 'aggregate',
       source: 'compiled',
     },
+    ...(inputs.servicesEnabled
+      ? [
+          {
+            key: 'creator-services',
+            minScore: SERVICES_MIN_CREATOR_SCORE,
+            label: 'Offer services in your Creator Shop',
+            surface: 'creatorServices',
+            scoreKind: 'aggregate',
+            source: 'compiled',
+          } satisfies CreatorScoreUnlock,
+        ]
+      : []),
   ];
 
   return unlocks.filter((unlock) => unlock.minScore > 0).sort((a, b) => a.minScore - b.minScore);
+}
+
+async function isServicesPublic() {
+  const fliptKey = getFeatureFliptKey('creatorServices');
+  if (!fliptKey) return false;
+  try {
+    return await isFliptPublic(fliptKey);
+  } catch {
+    return false;
+  }
 }
 
 async function getSaleMinScore() {
@@ -192,10 +220,11 @@ async function getSaleMinScore() {
 
 /** The unlocks as the gates enforce them right now, KeyValue overrides included. */
 export async function getCreatorScoreUnlocks(): Promise<CreatorScoreUnlock[]> {
-  const [saleMinScore, announcementMinScore, placementConfig] = await Promise.all([
+  const [saleMinScore, announcementMinScore, placementConfig, servicesEnabled] = await Promise.all([
     getSaleMinScore(),
     getAnnouncementMinScore(),
     getPlacementConfig(),
+    isServicesPublic(),
   ]);
 
   return buildCreatorScoreUnlocks({
@@ -203,5 +232,6 @@ export async function getCreatorScoreUnlocks(): Promise<CreatorScoreUnlock[]> {
     announcementMinScore,
     placementPriceCapTiers: placementConfig.priceCapTiers,
     placementFreeSlotTiers: placementConfig.freeSlotTiers,
+    servicesEnabled,
   });
 }

@@ -1,7 +1,16 @@
 import type { Icon, IconProps } from '@tabler/icons-react';
-import { IconBox, IconShirt, IconSparkles, IconStar, IconUsers } from '@tabler/icons-react';
+import {
+  IconBox,
+  IconBriefcase,
+  IconShirt,
+  IconSparkles,
+  IconStar,
+  IconUsers,
+} from '@tabler/icons-react';
 import type { ForwardRefExoticComponent, RefAttributes } from 'react';
 import type { CreatorShopSectionKey } from '~/server/schema/creator-shop.schema';
+import { creatorShopSectionKeys } from '~/server/schema/creator-shop.schema';
+import type { FeatureAccess } from '~/server/services/feature-flags.service';
 
 export type TablerIcon = ForwardRefExoticComponent<Omit<IconProps, 'ref'> & RefAttributes<Icon>>;
 
@@ -11,6 +20,26 @@ export const sectionIcons: Record<CreatorShopSectionKey, TablerIcon> = {
   featured: IconStar,
   cosmetics: IconSparkles,
   resold: IconUsers,
+  services: IconBriefcase,
   merch: IconShirt,
   models: IconBox,
 };
+
+const sectionFlags: Partial<Record<CreatorShopSectionKey, keyof FeatureAccess>> = {
+  services: 'creatorServices',
+};
+
+export const isSectionAvailable = (key: CreatorShopSectionKey, features: FeatureAccess) => {
+  const flag = sectionFlags[key];
+  return !flag || features[flag];
+};
+
+type SectionSetting = { key: CreatorShopSectionKey; visible: boolean };
+
+/** The saved order with any section added since it was saved appended, visible. */
+export function withMissingSections(saved?: SectionSetting[] | null): SectionSetting[] {
+  const ordered = (saved ?? []).map((s) => ({ key: s.key, visible: s.visible }));
+  for (const key of creatorShopSectionKeys)
+    if (!ordered.some((s) => s.key === key)) ordered.push({ key, visible: true });
+  return ordered;
+}
