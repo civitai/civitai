@@ -82,12 +82,14 @@ export function scanLabelSweepStoreFromEnv(): ScanLabelSweepStore | null {
 type Due = { key: string; itemId: number; reason: WithdrawReason };
 
 async function dueForWithdrawal(): Promise<{ due: Due[]; eligibilityRead: boolean }> {
-  // Copies recorded only on the item (made by a build that predates the ledger) join it here.
+  // Copies recorded only on the item (made by a build that predates the ledger) join it here, and a
+  // withdrawn row whose item still holds the key is live again: the object was written after it.
   await dbWrite.$executeRaw`
     INSERT INTO "ScanLabelCopyObject" ("key", "itemId", "imageId", "createdAt")
     SELECT "copyKey", "id", "imageId", COALESCE("copiedAt", now())
     FROM "ScanLabelItem" WHERE "copyKey" IS NOT NULL
-    ON CONFLICT ("key") DO NOTHING
+    ON CONFLICT ("key") DO UPDATE SET "withdrawnAt" = NULL, "withdrawReason" = NULL
+      WHERE "ScanLabelCopyObject"."withdrawnAt" IS NOT NULL
   `;
   const img = Prisma.raw('img');
   const due = await dbWrite.$queryRaw<Due[]>`
@@ -142,13 +144,17 @@ export async function sweepScanLabelCopies({ store }: { store?: ScanLabelSweepSt
   let withdrawn = 0;
   let failed = 0;
   for (const { key, itemId, reason } of due) {
+    // 🔴 Claim before deleting. The copy job re-arms the row after its upload lands, so an upload that
+    // lands after `remove` finds the row claimed and un-claims it, and the next run deletes again.
+    // Marking after `remove` instead lets that upload's re-arm run first and be overwritten.
+    const claimed = await dbWrite.$executeRaw`
+      UPDATE "ScanLabelCopyObject"
+      SET "withdrawnAt" = now(), "withdrawReason" = ${reason}, "withdrawError" = NULL
+      WHERE key = ${key} AND "withdrawnAt" IS NULL
+    `;
+    if (!claimed) continue;
     try {
       await store.remove(key);
-      await dbWrite.$executeRaw`
-        UPDATE "ScanLabelCopyObject"
-        SET "withdrawnAt" = now(), "withdrawReason" = ${reason}, "withdrawError" = NULL
-        WHERE key = ${key}
-      `;
       await dbWrite.$executeRaw`
         UPDATE "ScanLabelItem" SET "copyState" = 'withdrawn', "copyKey" = NULL
         WHERE id = ${itemId} AND ("copyKey" = ${key} OR "copyKey" IS NULL)
@@ -158,10 +164,12 @@ export async function sweepScanLabelCopies({ store }: { store?: ScanLabelSweepSt
       failed++;
       const message = (e as Error).message;
       await dbWrite.$executeRaw`
-        UPDATE "ScanLabelCopyObject" SET "withdrawError" = ${message.slice(
+        UPDATE "ScanLabelCopyObject"
+        SET "withdrawnAt" = NULL, "withdrawReason" = NULL, "withdrawError" = ${message.slice(
           0,
           500
-        )} WHERE key = ${key}
+        )}
+        WHERE key = ${key}
       `;
       logToAxiom({
         type: 'error',

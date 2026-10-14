@@ -239,6 +239,52 @@ describe('sweepScanLabelCopies', () => {
     expect(removed).toEqual(['1/key-1']);
   });
 
+  it('keeps a copy tracked when its upload lands after the delete and before the withdrawal mark', async () => {
+    // The copy job has ledgered the key and is uploading; the image becomes excluded meanwhile.
+    await holder.db.query(
+      `INSERT INTO "Image" ("id", "url", "needsReview") VALUES (1, 'key-1', 'csam')`
+    );
+    await holder.db.query(
+      `INSERT INTO "ScanLabelItem" ("id", "imageId", "firstFlaggedAt", "status", "votes", "outcome", "decidedAt")
+       VALUES (1, 1, now(), 'decided', 3, 'clear', now())`
+    );
+    await holder.db.query(
+      `INSERT INTO "ScanLabelCopyObject" ("key", "itemId", "imageId") VALUES ('1/key-1', 1, 1)`
+    );
+    const removed: string[] = [];
+    // remove() finds nothing; the upload then lands and runs the copy job's own bookkeeping.
+    const racing = {
+      remove: async (key: string) => {
+        removed.push(key);
+        await holder.db.exec(
+          `UPDATE "ScanLabelCopyObject" SET "withdrawnAt" = NULL, "withdrawReason" = NULL WHERE key = '1/key-1'`
+        );
+        await holder.db.exec(
+          `UPDATE "ScanLabelItem" SET "copyState" = 'copied', "copyKey" = '1/key-1' WHERE id = 1`
+        );
+      },
+    };
+    await sweepScanLabelCopies({ store: racing });
+    expect(await ledger()).toEqual([{ key: '1/key-1', withdrawReason: null }]);
+
+    const { removed: second, store } = removing();
+    await sweepScanLabelCopies({ store });
+    expect(second).toEqual(['1/key-1']);
+    expect((await ledger())[0].withdrawReason).toBe('excluded');
+    expect(removed).toEqual(['1/key-1']);
+  });
+
+  it('revives a withdrawn row whose item was copied again under the same key', async () => {
+    await copied(1);
+    await holder.db.exec(
+      `UPDATE "ScanLabelCopyObject" SET "withdrawnAt" = now(), "withdrawReason" = 'excluded'`
+    );
+    await holder.db.exec(`UPDATE "Image" SET "needsReview" = 'csam'`);
+    const { removed, store } = removing();
+    await sweepScanLabelCopies({ store });
+    expect(removed).toEqual(['1/key-1']);
+  });
+
   it('ledgers and withdraws a copy recorded only on its item', async () => {
     await copied(1);
     await holder.db.exec(`DELETE FROM "ScanLabelCopyObject"`);
