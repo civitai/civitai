@@ -23,6 +23,7 @@ import {
   useQueryMyServices,
 } from '~/components/CreatorShop/Services/creator-service.util';
 import { ServiceOfferingFormModal } from '~/components/CreatorShop/Services/ServiceOfferingFormModal';
+import { useDomainColor } from '~/hooks/useDomainColor';
 import { Currency, ServiceOfferingStatus } from '~/shared/utils/prisma/enums';
 
 const statusBadge: Record<ServiceOfferingStatus, { color: string; label: string }> = {
@@ -119,6 +120,7 @@ function SellGate({
 
 function OfferingRow({ offering, canSell }: { offering: ServiceOffering; canSell: boolean }) {
   const { setStatus, remove } = useMutateMyServices();
+  const domain = useDomainColor();
   const badge = statusBadge[offering.status];
   const isActive = offering.status === ServiceOfferingStatus.Active;
 
@@ -156,7 +158,7 @@ function OfferingRow({ offering, canSell }: { offering: ServiceOffering; canSell
         <Group gap="sm" wrap="nowrap">
           <CurrencyBadge
             currency={Currency.BUZZ}
-            type="yellow"
+            type={domain === 'green' ? 'green' : 'yellow'}
             unitAmount={offering.price}
             variant="transparent"
           />

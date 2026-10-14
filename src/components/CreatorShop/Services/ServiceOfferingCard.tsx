@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import type { ServiceOffering } from '~/components/CreatorShop/Services/creator-service.util';
 import { serviceTermsLine } from '~/components/CreatorShop/Services/creator-service.util';
+import { useDomainColor } from '~/hooks/useDomainColor';
 import { Currency } from '~/shared/utils/prisma/enums';
 
 export function ServiceOfferingCard({
@@ -15,6 +16,7 @@ export function ServiceOfferingCard({
   >;
   footer?: ReactNode;
 }) {
+  const domain = useDomainColor();
   return (
     <Paper withBorder radius="md" p="md" className="flex h-full flex-col">
       <Stack gap={6} className="flex-1">
@@ -30,7 +32,7 @@ export function ServiceOfferingCard({
         <Group justify="space-between" mt="auto" pt="xs" wrap="nowrap">
           <CurrencyBadge
             currency={Currency.BUZZ}
-            type="yellow"
+            type={domain === 'green' ? 'green' : 'yellow'}
             unitAmount={offering.price}
             variant="transparent"
             className="!px-0"
