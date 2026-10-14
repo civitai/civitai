@@ -164,7 +164,7 @@ export async function sweepScanLabelCopies({ store }: { store?: ScanLabelSweepSt
     // Marking after `remove` instead lets that upload's re-arm run first and be overwritten.
     const claimed = await dbWrite.$executeRaw`
       UPDATE "ScanLabelCopyObject"
-      SET "withdrawnAt" = now(), "withdrawReason" = ${reason}, "withdrawError" = NULL
+      SET "withdrawnAt" = now(), "withdrawReason" = ${reason}, "withdrawError" = NULL, "removedAt" = NULL
       WHERE key = ${key}
         AND ("withdrawnAt" IS NULL OR ("removedAt" IS NULL AND "withdrawnAt" < now() - ${STALE_CLAIM}))
     `;
@@ -172,7 +172,8 @@ export async function sweepScanLabelCopies({ store }: { store?: ScanLabelSweepSt
     try {
       await store.remove(key);
       await dbWrite.$executeRaw`
-        UPDATE "ScanLabelCopyObject" SET "removedAt" = now() WHERE key = ${key}
+        UPDATE "ScanLabelCopyObject" SET "removedAt" = now()
+        WHERE key = ${key} AND "withdrawnAt" IS NOT NULL
       `;
       await dbWrite.$executeRaw`
         UPDATE "ScanLabelItem" SET "copyState" = 'withdrawn', "copyKey" = NULL
