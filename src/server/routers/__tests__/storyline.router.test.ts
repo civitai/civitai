@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as UserPreferencesService from '~/server/services/user-preferences.service';
+import type * as CacheHelpers from '~/server/utils/cache-helpers';
 import { dbMock, resetSharedMocks } from '~/__tests__/mocks';
 import { NsfwLevel } from '~/server/common/enums';
 
@@ -13,6 +14,12 @@ import { NsfwLevel } from '~/server/common/enums';
 const { getBlockedPairIds, getAllHiddenForUser } = vi.hoisted(() => ({
   getBlockedPairIds: vi.fn(),
   getAllHiddenForUser: vi.fn(),
+}));
+vi.mock('~/server/utils/cache-helpers', async (importOriginal) => ({
+  ...(await importOriginal<typeof CacheHelpers>()),
+  // Straight through to the origin; caching is not what these tests are about.
+  fetchThroughCache: (_key: string, fn: () => Promise<unknown>) => fn(),
+  bustFetchThroughCache: vi.fn(),
 }));
 vi.mock('~/server/services/user-preferences.service', async (importOriginal) => ({
   ...(await importOriginal<typeof UserPreferencesService>()),

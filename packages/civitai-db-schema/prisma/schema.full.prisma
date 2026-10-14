@@ -599,6 +599,8 @@ model User {
   storylines                 Storyline[]
   storylineCollaborations    StorylineCollaborator[]
   storylineEarlyAccess       StorylineEarlyAccessSignup?
+  storylineBranchChoices     StorylineBranchChoice[]
+  storylineCreateClicks      StorylineCreateClick[]
 
   // App Blocks back-relations
   blockUserSettings          BlockUserSettings[]
@@ -9328,6 +9330,12 @@ enum StorylineStatus {
   Complete
 }
 
+/// Who may add continuations. Closing a storyline to everyone is the placement layer's mode.
+enum StorylineWhoCanContinue {
+  Anyone
+  Collaborators
+}
+
 /// A branching story. Every chapter is a post; readers choose how to continue at the end
 /// of a chapter, and other creators can add continuations.
 model Storyline {
@@ -9336,6 +9344,7 @@ model Storyline {
   user         User            @relation(fields: [userId], references: [id], onDelete: Cascade)
   title        String          @db.VarChar(255)
   status       StorylineStatus @default(Ongoing)
+  whoCanContinue StorylineWhoCanContinue @default(Anyone)
   /// The highest rating a chapter may carry, as a single `NsfwLevel` flag from PG to XXX
   /// (CHECK in the migration). Continuations above it cannot be added, and chapters above
   /// it are never shown in this storyline.
@@ -9379,6 +9388,10 @@ model StorylineChapter {
 
   parents  StorylineChapterEdge[] @relation("StorylineChapterEdgeChild")
   children StorylineChapterEdge[] @relation("StorylineChapterEdgeParent")
+
+  branchChoicesFrom StorylineBranchChoice[] @relation("StorylineBranchChoiceFrom")
+  branchChoicesTo   StorylineBranchChoice[] @relation("StorylineBranchChoiceTo")
+  createClicks      StorylineCreateClick[]
 
   /// Target of the edge foreign keys, which carry `storylineId` so an edge can never
   /// join chapters from two storylines.
@@ -9427,6 +9440,37 @@ model StorylineCollaborator {
 
   @@id([storylineId, userId])
   @@index([userId])
+}
+
+/// A signed-in reader's choice of how to continue at the end of a chapter. One row per reader
+/// per fork point, overwritten when they choose again, so a fork's share of readers counts each
+/// reader once, by their latest choice. Signed-out readers are not counted.
+model StorylineBranchChoice {
+  userId          Int
+  user            User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  parentChapterId Int
+  parentChapter   StorylineChapter @relation("StorylineBranchChoiceFrom", fields: [parentChapterId], references: [id], onDelete: Cascade)
+  chapterId       Int
+  chapter         StorylineChapter @relation("StorylineBranchChoiceTo", fields: [chapterId], references: [id], onDelete: Cascade)
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @default(now()) @updatedAt
+
+  @@id([userId, parentChapterId])
+  @@index([parentChapterId, chapterId])
+}
+
+/// A signed-in reader asking for the "Create next section" tool at the end of a chapter. One row
+/// per reader per chapter: this counts how many people want it, not how many times they clicked.
+/// Signed-out clicks are not counted.
+model StorylineCreateClick {
+  userId          Int
+  user            User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  parentChapterId Int
+  parentChapter   StorylineChapter @relation(fields: [parentChapterId], references: [id], onDelete: Cascade)
+  createdAt       DateTime         @default(now())
+
+  @@id([userId, parentChapterId])
+  @@index([createdAt])
 }
 
 /// Early-access list for the "Create next section" tool, one row per user.

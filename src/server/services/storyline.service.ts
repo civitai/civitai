@@ -1,5 +1,9 @@
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { env } from '~/env/server';
+import { REDIS_KEYS } from '~/server/redis/client';
+import { simpleUserSelect } from '~/server/selectors/user.selector';
+import { bustFetchThroughCache, fetchThroughCache } from '~/server/utils/cache-helpers';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { isPlacementBlocked } from '~/server/services/placement-moderation.service';
 import { getAllHiddenForUser, getBlockedPairIds } from '~/server/services/user-preferences.service';
@@ -16,14 +20,18 @@ import type {
 import {
   STORYLINE_CHILDREN_LIMIT,
   STORYLINE_MAX_COLLABORATORS,
+  STORYLINE_MAX_CONTRIBUTORS,
   STORYLINE_PATH_LIMIT,
   compareStorylineChildren,
   getStorylineChapterRank,
   getStorylineChapterTombstone,
   isStorylineCeilingLevel,
   storylineLevelAllowed,
+  storylineShareMinChoices,
+  toStorylineForkShares,
 } from '~/shared/utils/storyline';
-import type { StorylineStatus } from '~/shared/utils/prisma/enums';
+import type { StorylineStatus, StorylineWhoCanContinue } from '~/shared/utils/prisma/enums';
+import { STORYLINE_REFUSALS } from '~/shared/utils/storyline-placement';
 
 type Db = Prisma.TransactionClient | typeof dbWrite;
 type Viewer = { id: number; isModerator?: boolean } | undefined;
@@ -43,6 +51,7 @@ const storylineSelect = {
   userId: true,
   title: true,
   status: true,
+  whoCanContinue: true,
   maxNsfwLevel: true,
   tosViolation: true,
   createdAt: true,
@@ -291,25 +300,9 @@ export async function writeChapterEdgeForPlacement(
 
   if (postId === parentPostId) throw throwBadRequestError('A chapter cannot continue itself');
 
-  const parent = await db.storylineChapter.findUnique({
-    where: { postId: parentPostId },
-    select: {
-      id: true,
-      storylineId: true,
-      depth: true,
-      userId: true,
-      storyline: { select: { userId: true, maxNsfwLevel: true, tosViolation: true } },
-    },
-  });
-  if (!parent) throw throwBadRequestError('That post is not a chapter of a storyline');
-  if (parent.storyline.tosViolation) throw throwBadRequestError('This storyline was taken down');
-  // The storyline's owner and the author of the chapter being continued.
-  const [ownerBlocked, authorBlocked] = await Promise.all([
-    isBlockedPair(db, parent.storyline.userId, placerId),
-    isBlockedPair(db, parent.userId, placerId),
-  ]);
-  if (ownerBlocked || authorBlocked)
-    throw throwBadRequestError('Continuations are not available on this chapter');
+  // Re-checked at approval: the storyline may have been taken down, a block made, or the
+  // setting changed to collaborators only since the continuation was submitted.
+  const { parent } = await assertCanContinueStoryline({ parentPostId, placerId }, db);
 
   await assertPostCanBeChapter(db, {
     postId,
@@ -328,17 +321,58 @@ export async function writeChapterEdgeForPlacement(
 }
 
 /**
- * Whether a post is a chapter of a live storyline, so the placement layer can refuse a
- * continuation on any other post at submission time. Not a full check: approval runs
- * `writeChapterEdgeForPlacement`, which re-checks everything against the primary, blocks
- * included.
+ * Whether `placerId` may continue the chapter that is `parentPostId`, for the placement layer at
+ * submission and for `writeChapterEdgeForPlacement` at approval. Throws a 400 when the post is
+ * not a chapter of a live storyline, when the storyline's owner or the chapter's author and the
+ * placer are in a block, or when only collaborators may continue and the placer is not one.
+ * Postgres only, through `db`. Closing a storyline to everyone (mode 'off') is the placement
+ * layer's own check.
  */
-export async function isOpenStorylineChapter(postId: number) {
-  const chapter = await dbWrite.storylineChapter.findUnique({
-    where: { postId },
-    select: { storyline: { select: { tosViolation: true } } },
+export async function assertCanContinueStoryline(
+  { parentPostId, placerId }: { parentPostId: number; placerId: number },
+  db: Db = dbWrite
+) {
+  const parent = await db.storylineChapter.findUnique({
+    where: { postId: parentPostId },
+    select: {
+      id: true,
+      storylineId: true,
+      depth: true,
+      userId: true,
+      storyline: {
+        select: { userId: true, maxNsfwLevel: true, tosViolation: true, whoCanContinue: true },
+      },
+    },
   });
-  return !!chapter && !chapter.storyline.tosViolation;
+  if (!parent || parent.storyline.tosViolation)
+    throw throwBadRequestError(STORYLINE_REFUSALS.notAChapter);
+
+  const ownerId = parent.storyline.userId;
+  const [ownerBlocked, authorBlocked, collaborator] = await Promise.all([
+    isBlockedPair(db, ownerId, placerId),
+    isBlockedPair(db, parent.userId, placerId),
+    db.storylineCollaborator.findUnique({
+      where: { storylineId_userId: { storylineId: parent.storylineId, userId: placerId } },
+      select: { userId: true },
+    }),
+  ]);
+  if (ownerBlocked || authorBlocked)
+    throw throwBadRequestError('Continuations are not available on this chapter');
+
+  const isOwner = placerId === ownerId;
+  const isCollaborator = !isOwner && !!collaborator;
+  if (parent.storyline.whoCanContinue === 'Collaborators' && !isOwner && !isCollaborator)
+    throw throwBadRequestError(STORYLINE_REFUSALS.collaboratorsOnly);
+
+  return { storylineId: parent.storylineId, ownerId, isOwner, isCollaborator, parent };
+}
+
+/** `assertCanContinueStoryline` as a yes/no, for callers that only need to hide an affordance. */
+export async function isOpenStorylineChapter(postId: number, placerId: number) {
+  return assertCanContinueStoryline({ parentPostId: postId, placerId }).then(
+    () => true,
+    () => false
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -352,12 +386,14 @@ export async function createStoryline({
   postId,
   title,
   maxNsfwLevel,
+  whoCanContinue,
   userId,
   isModerator,
 }: {
   postId: number;
   title: string;
   maxNsfwLevel: number;
+  whoCanContinue?: StorylineWhoCanContinue;
   userId: number;
   isModerator?: boolean;
 }) {
@@ -368,7 +404,7 @@ export async function createStoryline({
     return await dbWrite.$transaction(async (tx) => {
       await assertPostCanBeChapter(tx, { postId, authorId: userId, maxNsfwLevel });
       const storyline = await tx.storyline.create({
-        data: { userId, title, maxNsfwLevel },
+        data: { userId, title, maxNsfwLevel, whoCanContinue },
         select: { id: true },
       });
       const root = await tx.storylineChapter.create({
@@ -389,6 +425,7 @@ export async function updateStoryline({
   title,
   status,
   maxNsfwLevel,
+  whoCanContinue,
   userId,
   isModerator,
 }: {
@@ -396,6 +433,7 @@ export async function updateStoryline({
   title?: string;
   status?: StorylineStatus;
   maxNsfwLevel?: number;
+  whoCanContinue?: StorylineWhoCanContinue;
   userId: number;
   isModerator?: boolean;
 }) {
@@ -407,10 +445,19 @@ export async function updateStoryline({
 
   // Lowering the ceiling hides chapters above it at read time; nothing is deleted, so raising it
   // again brings them back.
-  return dbWrite.storyline.update({
-    where: { id },
-    data: { title, status, maxNsfwLevel },
-    select: storylineSelect,
+  // Marking it Complete also closes it to continuations, in the same transaction so the two
+  // cannot disagree; reopening leaves that for the owner to choose. Imported here, not at the
+  // top: the placement layer's approval path calls `writeChapterEdgeForPlacement`, so a static
+  // import of its module from here would close a cycle.
+  const { setStorylineSpaceMode } = await import('~/server/services/storyline-placement.service');
+  return dbWrite.$transaction(async (tx) => {
+    const updated = await tx.storyline.update({
+      where: { id },
+      data: { title, status, maxNsfwLevel, whoCanContinue },
+      select: storylineSelect,
+    });
+    if (status === 'Complete') await setStorylineSpaceMode({ storylineId: id, mode: 'off' }, tx);
+    return updated;
   });
 }
 
@@ -562,9 +609,7 @@ export async function getStoryline({
     select: {
       ...storylineReadSelect,
       collaborators: {
-        select: {
-          user: { select: { id: true, username: true, bannedAt: true, deletedAt: true } },
-        },
+        select: { user: { select: { ...simpleUserSelect, bannedAt: true } } },
         orderBy: { createdAt: 'asc' },
       },
     },
@@ -578,18 +623,137 @@ export async function getStoryline({
     throw throwNotFoundError('Storyline not found');
 
   const root = storyline.chapters[0];
+  const shownUser = (u: { id: number; bannedAt: Date | null; deletedAt: Date | null }) =>
+    !u.bannedAt && !u.deletedAt && !blockedUserIds.has(u.id);
+  const collaborators = storyline.collaborators
+    .map((c) => c.user)
+    .filter(shownUser)
+    .map(({ bannedAt: _b, deletedAt: _d, ...u }) => u);
+  const collaboratorIds = new Set(storyline.collaborators.map((c) => c.user.id));
 
-  const { chapters: _chapters, collaborators, user, ...rest } = storyline;
+  const [counts, authors, mainPath] = await Promise.all([
+    dbRead.$queryRaw<{ chapters: number; contributors: number }[]>`
+      SELECT COUNT(*)::int AS chapters, COUNT(DISTINCT "userId")::int AS contributors
+      FROM "StorylineChapter" WHERE "storylineId" = ${id}
+    `,
+    // Everyone else who wrote a chapter, most chapters first.
+    dbRead.$queryRaw<{ userId: number }[]>`
+      SELECT "userId" FROM "StorylineChapter"
+      WHERE "storylineId" = ${id} AND "userId" <> ${storyline.userId}
+      GROUP BY "userId" ORDER BY COUNT(*) DESC, "userId" LIMIT ${STORYLINE_MAX_CONTRIBUTORS}
+    `,
+    root
+      ? getStorylineMainPath({
+          rootChapterId: root.id,
+          storyline,
+          viewer,
+          browsingLevel,
+          blockedUserIds,
+        })
+      : [],
+  ]);
+  const contributorUsers = authors.length
+    ? await dbRead.user.findMany({
+        where: {
+          id: { in: authors.map((a) => a.userId).filter((uid) => !collaboratorIds.has(uid)) },
+        },
+        select: { ...simpleUserSelect, bannedAt: true },
+      })
+    : [];
+  const contributorById = new Map(contributorUsers.map((u) => [u.id, u]));
+
+  const { chapters: _chapters, collaborators: _collaborators, user, ...rest } = storyline;
+  const ownerUser = { id: user.id, username: user.username };
   return {
     ...rest,
-    user: { id: user.id, username: user.username },
+    user: ownerUser,
     rootChapterId: root?.id ?? null,
     rootPostId: root?.postId ?? null,
-    collaborators: collaborators
-      .map((c) => c.user)
-      .filter((u) => !u.bannedAt && !u.deletedAt && !blockedUserIds.has(u.id))
-      .map(({ id, username }) => ({ id, username })),
+    chapterCount: counts[0]?.chapters ?? 0,
+    contributorCount: counts[0]?.contributors ?? 0,
+    viewerRole: !viewer
+      ? null
+      : viewer.id === storyline.userId
+      ? ('owner' as const)
+      : collaboratorIds.has(viewer.id)
+      ? ('collaborator' as const)
+      : null,
+    collaborators,
+    contributors: [
+      { user: ownerUser, role: 'creator' as const },
+      ...collaborators.map((u) => ({ user: u, role: 'endorsed' as const })),
+      ...authors
+        .map((a) => contributorById.get(a.userId))
+        .filter((u): u is NonNullable<typeof u> => !!u && shownUser(u))
+        .map(({ bannedAt: _b, deletedAt: _d, ...u }) => ({
+          user: u,
+          role: 'contributor' as const,
+        })),
+    ],
+    mainPath,
   };
+}
+
+/**
+ * The owner's main route from the first chapter: each chapter's canon child in turn, at most
+ * `STORYLINE_PATH_LIMIT` chapters, with tombstones as in the reading path and how many ways on
+ * each chapter has.
+ */
+async function getStorylineMainPath({
+  rootChapterId,
+  storyline,
+  viewer,
+  browsingLevel,
+  blockedUserIds,
+}: {
+  rootChapterId: number;
+  storyline: { maxNsfwLevel: number };
+  viewer: Viewer;
+  browsingLevel: number;
+  blockedUserIds: ReadonlySet<number>;
+}) {
+  const rows = await dbRead.$queryRaw<{ id: number; postId: number | null; depth: number }[]>`
+    WITH RECURSIVE main AS (
+      SELECT c.id, c."postId", c.depth, 0 AS hops
+      FROM "StorylineChapter" c
+      WHERE c.id = ${rootChapterId}
+      UNION ALL
+      SELECT ch.id, ch."postId", ch.depth, main.hops + 1
+      FROM main
+      JOIN "StorylineChapterEdge" e ON e."parentChapterId" = main.id AND e.canon
+      JOIN "StorylineChapter" ch ON ch.id = e."chapterId"
+      WHERE main.hops < ${STORYLINE_PATH_LIMIT - 1}
+    )
+    SELECT id, "postId", depth FROM main ORDER BY depth
+  `;
+  if (!rows.length) return [];
+
+  const chapterIds = rows.map((r) => r.id);
+  const postIds = rows.flatMap((r) => (r.postId != null ? [r.postId] : []));
+  const [posts, childCounts] = await Promise.all([
+    postIds.length
+      ? dbRead.post.findMany({ where: { id: { in: postIds } }, select: chapterPostSelect })
+      : [],
+    dbRead.storylineChapterEdge.groupBy({
+      by: ['parentChapterId'],
+      where: { parentChapterId: { in: chapterIds } },
+      _count: { _all: true },
+    }),
+  ]);
+  const postById = new Map(posts.map((p) => [p.id, p]));
+  const childCountById = new Map(childCounts.map((c) => [c.parentChapterId, c._count._all]));
+
+  return rows.map((row) => {
+    const post = row.postId != null ? postById.get(row.postId) ?? null : null;
+    const tombstone = getStorylineChapterTombstone({
+      post,
+      viewer,
+      maxNsfwLevel: storyline.maxNsfwLevel,
+      browsingLevel,
+      blockedUserIds,
+    });
+    return { ...toPathChapter(row, post, tombstone), childCount: childCountById.get(row.id) ?? 0 };
+  });
 }
 
 /**
@@ -787,11 +951,12 @@ export async function getStorylineChildren({
   chapterId,
   viewer,
   browsingLevel,
-  readersByChapterId = new Map(),
+  readersByChapterId,
 }: {
   chapterId: number;
   viewer: Viewer;
   browsingLevel: number;
+  /** Defaults to the stored counts, read only once the reader is known to see the story. */
   readersByChapterId?: ReadonlyMap<number, number>;
 }) {
   const parent = await dbRead.storylineChapter.findUnique({
@@ -805,10 +970,13 @@ export async function getStorylineChildren({
     browsingLevel
   );
 
-  const collaborators = await dbRead.storylineCollaborator.findMany({
-    where: { storylineId: storyline.id },
-    select: { userId: true },
-  });
+  const [collaborators, readers] = await Promise.all([
+    dbRead.storylineCollaborator.findMany({
+      where: { storylineId: storyline.id },
+      select: { userId: true },
+    }),
+    readersByChapterId ?? getStorylineReaderCounts(chapterId),
+  ]);
   const collaboratorIds = new Set(collaborators.map((c) => c.userId));
 
   const [canonEdge, collaboratorEdges, otherEdges] = await Promise.all([
@@ -852,7 +1020,7 @@ export async function getStorylineChildren({
     return {
       ...toPathChapter(chapter, chapter.post, tombstone),
       rank,
-      readers: readersByChapterId.get(chapter.id) ?? 0,
+      readers: readers.get(chapter.id) ?? 0,
       createdAt: chapter.createdAt,
     };
   });
@@ -863,4 +1031,229 @@ export async function getStorylineChildren({
   return children
     .slice(0, STORYLINE_CHILDREN_LIMIT)
     .map(({ readers: _readers, ...child }) => child);
+}
+
+// ---------------------------------------------------------------------------
+// Engagement: which way readers went, and who wants the "Create next section" tool
+// ---------------------------------------------------------------------------
+//
+// In Postgres, one row per signed-in reader: a reader counts once per fork point by their latest
+// choice, which is a primary key here. The direct ClickHouse writer skips every non-production
+// deployment (`isProductionDeployment`, src/server/services/blocks/block-event-ingest.service.ts:80),
+// so counts kept there would never move on a preview or dev deployment.
+
+const forkCountsKey = (chapterId: number) =>
+  `${REDIS_KEYS.CACHES.STORYLINE_FORK_COUNTS}:${chapterId}` as const;
+
+/** Readers' latest choice per way on from a chapter, as `[childChapterId, readers]` pairs. */
+function getForkCounts(chapterId: number) {
+  return fetchThroughCache(forkCountsKey(chapterId), async () => {
+    const rows = await dbRead.storylineBranchChoice.groupBy({
+      by: ['chapterId'],
+      where: { parentChapterId: chapterId },
+      _count: { _all: true },
+    });
+    return rows.map((r) => [r.chapterId, r._count._all] as [number, number]);
+  });
+}
+
+/** The ways-on reader counts as a map, for ordering children. */
+export async function getStorylineReaderCounts(chapterId: number) {
+  return new Map(await getForkCounts(chapterId));
+}
+
+/**
+ * Each way on's share of the readers who chose at the end of a chapter. Below the minimum
+ * (`STORYLINE_SHARE_MIN_CHOICES`, default 20) `enough` is false and no share is given.
+ */
+export async function getStorylineForkShares({
+  chapterId,
+  viewer,
+  browsingLevel,
+}: {
+  chapterId: number;
+  viewer: Viewer;
+  browsingLevel: number;
+}) {
+  const parent = await dbRead.storylineChapter.findUnique({
+    where: { id: chapterId },
+    select: { storylineId: true },
+  });
+  if (!parent) throw throwNotFoundError('Chapter not found');
+  await getStorylineForRead(parent.storylineId, viewer, browsingLevel);
+  const counts = await getStorylineReaderCounts(chapterId);
+  return toStorylineForkShares(counts, storylineShareMinChoices(env.STORYLINE_SHARE_MIN_CHOICES));
+}
+
+/** A signed-in reader took `toChapterId` at the end of `fromChapterId`. Their latest choice counts. */
+export async function recordStorylineBranchChoice({
+  userId,
+  fromChapterId,
+  toChapterId,
+}: {
+  userId: number;
+  fromChapterId: number;
+  toChapterId: number;
+}) {
+  const edge = await dbWrite.storylineChapterEdge.findUnique({
+    where: {
+      chapterId_parentChapterId: { chapterId: toChapterId, parentChapterId: fromChapterId },
+    },
+    select: { chapterId: true },
+  });
+  if (!edge) throw throwBadRequestError('That chapter does not continue from this one');
+
+  await dbWrite.storylineBranchChoice.upsert({
+    where: { userId_parentChapterId: { userId, parentChapterId: fromChapterId } },
+    create: { userId, parentChapterId: fromChapterId, chapterId: toChapterId },
+    update: { chapterId: toChapterId },
+  });
+  // So the reader sees their own choice counted on the next read.
+  await bustFetchThroughCache(forkCountsKey(fromChapterId));
+}
+
+/**
+ * A signed-in reader asked for the "Create next section" tool at the end of a chapter. Counted
+ * once per reader per chapter (how many people want it, not how many clicks); signed-out clicks
+ * are not counted in v1.
+ */
+export async function recordStorylineCreateClick({
+  userId,
+  chapterId,
+}: {
+  userId: number;
+  chapterId: number;
+}) {
+  const chapter = await dbWrite.storylineChapter.findUnique({
+    where: { id: chapterId },
+    select: { id: true },
+  });
+  if (!chapter) throw throwNotFoundError('Chapter not found');
+  await dbWrite.storylineCreateClick.upsert({
+    where: { userId_parentChapterId: { userId, parentChapterId: chapterId } },
+    create: { userId, parentChapterId: chapterId },
+    update: {},
+  });
+}
+
+export async function joinStorylineEarlyAccess({
+  userId,
+  storylineId,
+}: {
+  userId: number;
+  storylineId?: number;
+}) {
+  await dbWrite.storylineEarlyAccessSignup.upsert({
+    where: { userId },
+    create: { userId, storylineId },
+    update: {},
+  });
+}
+
+export async function getStorylineEarlyAccessStatus(userId: number) {
+  const row = await dbRead.storylineEarlyAccessSignup.findUnique({
+    where: { userId },
+    select: { userId: true },
+  });
+  return { joined: !!row };
+}
+
+/** For moderators: how many people want the tool. */
+export async function getStorylineEarlyAccessStats() {
+  const [signups, [clicks]] = await Promise.all([
+    dbRead.storylineEarlyAccessSignup.count(),
+    dbRead.$queryRaw<{ readers: number; clicks: number }[]>`
+      SELECT COUNT(DISTINCT "userId")::int AS readers, COUNT(*)::int AS clicks
+      FROM "StorylineCreateClick"
+    `,
+  ]);
+  return { signups, createClickReaders: clicks?.readers ?? 0, createClicks: clicks?.clicks ?? 0 };
+}
+
+// ---------------------------------------------------------------------------
+// Discover
+// ---------------------------------------------------------------------------
+
+export type StorylineFeedFilter = 'all' | 'ongoing' | 'complete' | 'open';
+export type StorylineFeedSort = 'newest' | 'mostChapters';
+
+/**
+ * Storylines a reader may open, newest or with most chapters first. Hidden ones (taken down,
+ * banned or deleted owner, an owner the reader blocked, was blocked by or hid) are left out, and
+ * so is a story outside the reader's browsing level, judged as everywhere else by its first
+ * chapter (or its ceiling when that chapter is gone or unrated).
+ *
+ * "open" means accepting continuations: the placement layer's mode for the storyline, falling
+ * back to its owner's and then to the default 'review', is not 'off'.
+ */
+export async function getStorylinesInfinite({
+  filter,
+  sort,
+  cursor = 0,
+  limit,
+  viewer,
+  browsingLevel,
+}: {
+  filter: StorylineFeedFilter;
+  sort: StorylineFeedSort;
+  /** Offset into the ordered list. */
+  cursor?: number;
+  limit: number;
+  viewer: Viewer;
+  browsingLevel: number;
+}) {
+  const excluded = [...(await getViewerExcludedIds(viewer))];
+  const viewerId = viewer?.id ?? -1;
+  const isModerator = !!viewer?.isModerator;
+
+  const where: Prisma.Sql[] = [
+    Prisma.sql`(${isModerator} OR st."userId" = ${viewerId} OR (st."tosViolation" = false AND u."bannedAt" IS NULL AND u."deletedAt" IS NULL))`,
+    // The story's level: chapter 1's, or the ceiling when chapter 1 is gone or unrated.
+    Prisma.sql`(${isModerator} OR st."userId" = ${viewerId} OR (COALESCE(NULLIF(rp."nsfwLevel", 0), st."maxNsfwLevel") & ${browsingLevel}::int) <> 0)`,
+  ];
+  if (excluded.length) where.push(Prisma.sql`st."userId" NOT IN (${Prisma.join(excluded)})`);
+  if (filter === 'ongoing') where.push(Prisma.sql`st.status = 'Ongoing'`);
+  if (filter === 'complete') where.push(Prisma.sql`st.status = 'Complete'`);
+  if (filter === 'open') where.push(Prisma.sql`COALESCE(ss.mode, us.mode, 'review') <> 'off'`);
+
+  const orderBy =
+    sort === 'mostChapters' ? Prisma.sql`"chapterCount" DESC, st.id DESC` : Prisma.sql`st.id DESC`;
+
+  const rows = await dbRead.$queryRaw<
+    {
+      id: number;
+      title: string;
+      status: StorylineStatus;
+      userId: number;
+      username: string | null;
+      rootPostId: number | null;
+      chapterCount: number;
+      contributorCount: number;
+      createdAt: Date;
+    }[]
+  >`
+    SELECT st.id, st.title, st.status, st."userId", u.username, rc."postId" AS "rootPostId",
+      cc."chapterCount", cc."contributorCount", st."createdAt"
+    FROM "Storyline" st
+    JOIN "User" u ON u.id = st."userId"
+    LEFT JOIN "StorylineChapter" rc ON rc."storylineId" = st.id AND rc.depth = 0
+    LEFT JOIN "Post" rp ON rp.id = rc."postId"
+    LEFT JOIN "PlacementSpace" ss
+      ON ss.surface = 'storyline' AND ss."entityType" = 'storyline' AND ss."entityId" = st.id
+    LEFT JOIN "PlacementSpace" us
+      ON us.surface = 'storyline' AND us."entityType" = 'user' AND us."entityId" = st."userId"
+    CROSS JOIN LATERAL (
+      SELECT COUNT(*)::int AS "chapterCount", COUNT(DISTINCT c."userId")::int AS "contributorCount"
+      FROM "StorylineChapter" c WHERE c."storylineId" = st.id
+    ) cc
+    WHERE ${Prisma.join(where, ' AND ')}
+    ORDER BY ${orderBy}
+    OFFSET ${cursor} LIMIT ${limit + 1}
+  `;
+
+  const items = rows.slice(0, limit).map(({ userId, username, ...row }) => ({
+    ...row,
+    user: { id: userId, username },
+  }));
+  return { items, nextCursor: rows.length > limit ? cursor + limit : undefined };
 }

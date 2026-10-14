@@ -18,6 +18,8 @@ export const STORYLINE_CHILDREN_LIMIT = 200;
 /** Most chapters one path read returns, ending at the chapter asked for. */
 export const STORYLINE_PATH_LIMIT = 200;
 export const STORYLINE_MAX_COLLABORATORS = 50;
+/** Most chapter authors a storyline header lists besides its owner and collaborators. */
+export const STORYLINE_MAX_CONTRIBUTORS = 50;
 
 /**
  * Whether a post's rating fits under a storyline's ceiling.
@@ -146,4 +148,34 @@ export function getStorylineChapterTombstone({
   }
   if ((post.nsfwLevel & browsingLevel) === 0) return 'browsingLevel';
   return null;
+}
+
+/** Readers who must choose at a fork before shares are shown, unless the server overrides it. */
+export const STORYLINE_SHARE_MIN_CHOICES_DEFAULT = 20;
+
+/**
+ * The fork-share minimum from its raw setting: a whole number of at least 1, or the default for
+ * anything else (unset, empty, zero, negative, fractional, not a number). Never below 1, so a
+ * share always has a reader behind it.
+ */
+export function storylineShareMinChoices(raw: string | undefined) {
+  if (raw === undefined || !/^\d+$/.test(raw.trim())) return STORYLINE_SHARE_MIN_CHOICES_DEFAULT;
+  const value = Number(raw.trim());
+  return Number.isSafeInteger(value) && value >= 1 ? value : STORYLINE_SHARE_MIN_CHOICES_DEFAULT;
+}
+
+/**
+ * Each way on's share of the readers who chose at a fork. Below `minChoices` no share is given
+ * (`enough: false`), because with a handful of readers every fork reads as a coin toss; the
+ * total is still reported so a reader can see how far off it is.
+ */
+export function toStorylineForkShares(
+  counts: ReadonlyMap<number, number>,
+  minChoices: number
+): { enough: boolean; total: number; minChoices: number; shares: Record<number, number> } {
+  const total = [...counts.values()].reduce((sum, n) => sum + n, 0);
+  const enough = total >= minChoices && total > 0;
+  const shares: Record<number, number> = {};
+  if (enough) for (const [chapterId, n] of counts) shares[chapterId] = n / total;
+  return { enough, total, minChoices, shares };
 }
