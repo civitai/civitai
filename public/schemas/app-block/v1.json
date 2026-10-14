@@ -377,7 +377,7 @@
     },
     "storage": {
       "type": "object",
-      "description": "Optional APP STORAGE declaration — every collection of JSON documents your app keeps, and who may read and write each one. Manifest-governed and REVIEW-GATED: a collection that is not declared here does not exist at runtime, and the moderator sees each collection's visibility, write policy, counters, marks and indexes. Declaring any collection also requires the `apps:storage` scope; declaring a shared collection that viewers write (`write` of \"own\" or \"anyone\") also requires the sensitive, consent-gated `apps:storage:publish` scope with a `scopeJustifications` entry; and requesting either scope with nothing here for it to reach is rejected. This schema describes the WHOLE declaration, including features the platform does not accept yet: today the server's manifest validation refuses `kind` \"log\", `ttlSeconds`, `write` \"anyone\" and `write` \"owner\" with a message saying they are not available yet, so those validate offline and are rejected at submit. Kept in lockstep with src/shared/constants/block-storage.constants.ts (a drift-guard test enforces equality); the imperative validator in that module is authoritative.",
+      "description": "Optional APP STORAGE declaration — every collection of JSON documents your app keeps, and who may read and write each one. Manifest-governed and REVIEW-GATED: a collection that is not declared here does not exist at runtime, and the moderator sees each collection's visibility, write policy, counters, marks and indexes. Declaring any collection also requires the `apps:storage` scope; declaring a shared collection that viewers write (`write` of \"own\" or \"anyone\") also requires the sensitive, consent-gated `apps:storage:publish` scope with a `scopeJustifications` entry; and requesting either scope with nothing here for it to reach is rejected. This schema describes the WHOLE declaration, including features the platform does not accept yet: today the server's manifest validation refuses `kind` \"log\", `ttlSeconds`, `dailyWritesPerAuthor`, `write` \"anyone\" and `write` \"owner\" with a message saying they are not available yet, so those validate offline and are rejected at submit. Kept in lockstep with src/shared/constants/block-storage.constants.ts (a drift-guard test enforces equality); the imperative validator in that module is authoritative.",
       "additionalProperties": false,
       "required": ["collections"],
       "properties": {
@@ -465,7 +465,7 @@
                 },
                 "dailyWritesPerAuthor": {
                   "type": "integer",
-                  "description": "Shared collections that viewers write (`write` \"own\" or \"anyone\") only — refused with \"owner\" or \"none\". Sets the per-viewer daily budget for creating and updating documents in this collection in place of the platform default, from 1 to 1000. Shown to the moderator at review.",
+                  "description": "RESERVED — civitai.com refuses this field until per-collection write budgets are enabled, so do not declare it yet. Intended meaning: for a shared collection that viewers write (`write` \"own\" or \"anyone\"; refused with \"owner\" or \"none\"), the per-viewer daily budget for creating and updating documents in this collection in place of the platform default, from 1 to 1000, shown to the moderator at review. The bounds are provisional and may change before the field is enabled.",
                   "minimum": 1,
                   "maximum": 1000
                 }

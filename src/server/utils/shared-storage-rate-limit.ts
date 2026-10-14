@@ -135,6 +135,52 @@ export async function checkSharedReportRateLimit(
   );
 }
 
+// DOCUMENT STORE (`/api/v1/blocks/storage/*`). Same fixed-window counter, own sub-namespaces
+// so the new surface never shares a bucket with the legacy one. Keyed on the resolved app id,
+// which is per (app, namespace) for review previews. Shared DOCUMENT writes do not have a bucket
+// here: they spend the token-bucket write budget below (`reserveSharedWrite`), as the legacy
+// append/update do.
+//   reads             — per (app, viewer), or per (app, client IP) for an anonymous viewer;
+//   writes            — per (app, viewer): private document writes, and every DELETE (a
+//                       viewer's own shared documents included — see the route);
+//   marks + counters  — per (app, viewer), every mark and counter write;
+//   report            — per (app, viewer) per day, on top of the marks + counters bucket.
+export const DOC_STORE_READ_RATE_LIMIT_MAX = 300;
+export const DOC_STORE_PRIVATE_WRITE_RATE_LIMIT_MAX = 120;
+// Marks + counters and reports take the legacy vote and report limits (own buckets, same numbers).
+export const DOC_STORE_TALLY_RATE_LIMIT_MAX = SHARED_VOTE_RATE_LIMIT_MAX;
+export const DOC_STORE_REPORT_RATE_LIMIT_MAX = SHARED_REPORT_RATE_LIMIT_MAX;
+const MINUTE_SECONDS = 60;
+
+export type DocStoreRateBucket = 'read' | 'write' | 'tally' | 'report';
+
+const DOC_STORE_BUCKETS: Record<DocStoreRateBucket, { max: number; windowSeconds: number }> = {
+  read: { max: DOC_STORE_READ_RATE_LIMIT_MAX, windowSeconds: MINUTE_SECONDS },
+  write: { max: DOC_STORE_PRIVATE_WRITE_RATE_LIMIT_MAX, windowSeconds: MINUTE_SECONDS },
+  tally: {
+    max: DOC_STORE_TALLY_RATE_LIMIT_MAX,
+    windowSeconds: SHARED_VOTE_RATE_LIMIT_WINDOW_SECONDS,
+  },
+  report: {
+    max: DOC_STORE_REPORT_RATE_LIMIT_MAX,
+    windowSeconds: SHARED_REPORT_RATE_LIMIT_WINDOW_SECONDS,
+  },
+};
+
+/**
+ * One request against a document-store bucket. `principal` is `u:<userId>` for a signed-in
+ * viewer or `ip:<address>` for an anonymous reader; the caller builds it. Fails open.
+ */
+export async function checkDocStoreRateLimit(
+  bucket: DocStoreRateBucket,
+  appId: string,
+  principal: string
+): Promise<SharedStorageRateLimitResult> {
+  const { max, windowSeconds } = DOC_STORE_BUCKETS[bucket];
+  const key = `${REDIS_KEYS.BLOCKS.TOKEN_RATE_LIMIT}:docs-${bucket}:${appId}:${principal}` as const;
+  return checkFixedWindow(key, max, windowSeconds);
+}
+
 // STORE ITEMS (app sub-listings): every publish/edit by one user for one parent app, in an
 // hourly and a daily bucket. Lives here to share the fixed-window counter; it is not a
 // shared-storage op.

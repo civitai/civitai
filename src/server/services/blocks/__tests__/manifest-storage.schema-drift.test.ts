@@ -106,13 +106,13 @@ const CASES: Array<[string, unknown, boolean, boolean?]> = [
   ['8 counters, 8 marks', shared({ counters: names(8, 'c'), marks: names(8, 'm') }), true],
   ['32-char segment index path', priv({ indexes: { ['A'.repeat(32)]: 'number' } }), true],
   ['showAuthor false on shared', shared({ showAuthor: false }), true],
-  ['dailyWritesPerAuthor 1', shared({ dailyWritesPerAuthor: 1 }), true],
-  ['dailyWritesPerAuthor 1000', shared({ dailyWritesPerAuthor: 1000 }), true],
   // `constructor` is the Object.prototype member the name pattern admits.
   ['`constructor` collection', { collections: { constructor: { visibility: 'private' } } }, true],
   ['write none with counters', shared({ write: 'none', counters: ['plays'] }), true],
   ['write none with marks only', shared({ write: 'none', marks: ['vote'] }), true],
   // accept, but phased
+  ['dailyWritesPerAuthor 1', shared({ dailyWritesPerAuthor: 1 }), true, true],
+  ['dailyWritesPerAuthor 1000', shared({ dailyWritesPerAuthor: 1000 }), true, true],
   ['kind log', priv({ kind: 'log' }), true, true],
   ['kind log with maxEntries 1', priv({ kind: 'log', maxEntries: 1 }), true, true],
   ['kind log with maxEntries 10000', priv({ kind: 'log', maxEntries: 10000 }), true, true],

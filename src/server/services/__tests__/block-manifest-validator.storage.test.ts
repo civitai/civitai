@@ -136,7 +136,6 @@ describe('manifest storage — accepted declarations', () => {
       '4 indexes of every type',
       withPrefs({ indexes: { a: 'string', b: 'number', c: 'boolean', d: 'time' } }),
     ],
-    ['dailyWritesPerAuthor at its maximum', withRequests({ dailyWritesPerAuthor: 1000 })],
     [
       '8 counters and 8 marks',
       withRequests({
@@ -400,6 +399,11 @@ describe('manifest storage — features not available yet', () => {
       'a TTL',
       withPrefs({ ttlSeconds: 3600 }),
       'storage.collections.prefs.ttlSeconds is not available yet — expiring documents arrive in a later phase of App Storage; remove ttlSeconds for now',
+    ],
+    [
+      'a per-collection write budget',
+      withRequests({ dailyWritesPerAuthor: 1000 }),
+      'storage.collections.requests.dailyWritesPerAuthor is not available yet — per-collection write budgets arrive in a later phase of App Storage; remove dailyWritesPerAuthor for now (the platform default applies)',
     ],
     [
       'owner-written documents',

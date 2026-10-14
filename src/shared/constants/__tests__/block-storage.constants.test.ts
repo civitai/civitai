@@ -19,18 +19,18 @@ const REQUESTS = {
   counters: ['views'],
   indexes: { status: 'string', 'meta.round': 'number' },
   showAuthor: true,
-  dailyWritesPerAuthor: 200,
 };
 
 describe('APP_STORAGE_ENABLED_FEATURES', () => {
   // A ledger: turning a feature on must be a deliberate edit of this line AND of the
   // runtime behind it.
-  it('ships with anyone-writes, owner writes, log collections and TTL switched off', () => {
+  it('ships with anyone-writes, owner writes, log collections, TTL and per-author write budgets switched off', () => {
     expect(APP_STORAGE_ENABLED_FEATURES).toEqual({
       anyoneWrites: false,
       ownerWrites: false,
       logCollections: false,
       ttl: false,
+      perAuthorWriteBudget: false,
     });
     expect(Object.isFrozen(APP_STORAGE_ENABLED_FEATURES)).toBe(true);
   });
@@ -42,6 +42,7 @@ describe('APP_STORAGE_ENABLED_FEATURES', () => {
     ['ownerWrites', { visibility: 'shared', write: 'owner', counters: ['plays'] }],
     ['logCollections', { visibility: 'private', kind: 'log', maxEntries: 500 }],
     ['ttl', { visibility: 'private', ttlSeconds: 86400 }],
+    ['perAuthorWriteBudget', { visibility: 'shared', write: 'own', dailyWritesPerAuthor: 200 }],
   ] as const;
 
   // Updating the ledger above for a new switch key is not enough: the key must also get a
@@ -93,7 +94,6 @@ describe('parseManifestStorage', () => {
         ['meta.round', 'number'],
       ]),
       showAuthor: true,
-      dailyWritesPerAuthor: 200,
     });
   });
 

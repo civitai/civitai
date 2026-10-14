@@ -126,6 +126,8 @@ describe('only the doc-store module touches the appdata tables', () => {
   // Enumerated with fs, not grep: the wrapped grep honours .gitignore. A seam
   // guard pins the RELATIONSHIP — it fails when the set grows or shrinks.
   const EXPECTED = [
+    // The route suite reads the rows a request wrote, to assert the namespace it landed in.
+    'server/services/apps/__tests__/doc-store-api.contract.test.ts',
     'server/services/apps/__tests__/doc-store.functional.ts',
     'server/services/apps/__tests__/doc-store.pg.test.ts',
     'server/services/apps/__tests__/doc-store.pglite.test.ts',

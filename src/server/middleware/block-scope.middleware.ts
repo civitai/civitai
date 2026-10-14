@@ -472,6 +472,13 @@ export function blockConfirmedStepCeiling(
 
 export type BlockScopedNextApiRequest = NextApiRequest & {
   blockClaims?: BlockTokenClaims;
+  /**
+   * True when the per-scope consent marker could not be read for this request. The route's
+   * own scope was consent-exempt, so it was served, but every revokable scope was stripped
+   * from `blockClaims` fail-closed. A handler that sub-checks a consent-gated scope reads this
+   * to answer "retry" rather than "not granted".
+   */
+  blockConsentUnavailable?: boolean;
 };
 
 /**
@@ -644,6 +651,57 @@ export interface WithBlockScopeOpts {
    * endpoints additionally return only PUBLIC maturity-clamped data.)
    */
   allowOpaqueOrigin?: boolean;
+
+  /**
+   * Methods beyond GET and POST that this route serves, added to the CORS preflight's
+   * `Access-Control-Allow-Methods`. Without it a browser refuses a cross-origin PUT or
+   * DELETE before it is sent. Only the document store (`blocks/storage`) declares any.
+   */
+  extraCorsMethods?: readonly ('PUT' | 'DELETE')[];
+
+  /**
+   * Opt-in: write THIS route's refusals in its own envelope instead of the wrapper's
+   * `{ error, code? }`. Receives every refusal the wrapper itself emits (after it has decided
+   * to refuse — the decision, the status and the order are unchanged) and returns the body.
+   * Absent, the body is byte-identical to before. Only the document store declares one.
+   */
+  formatRefusal?: (refusal: BlockScopeRefusal) => unknown;
+}
+
+/**
+ * Every refusal `withBlockScope` emits, by a stable `kind`. `code` is the wire code the
+ * default body carries (absent on the two refusals that have never had one).
+ */
+export type BlockScopeRefusalKind =
+  | 'invalid_token'
+  | 'instance_revoked'
+  | 'permission_state_unavailable'
+  | 'consent_revoked'
+  | 'app_not_approved'
+  | 'approval_unavailable'
+  | 'insufficient_scope'
+  | 'context_binding';
+
+export type BlockScopeRefusal = {
+  kind: BlockScopeRefusalKind;
+  status: number;
+  error: string;
+  code?: string;
+};
+
+/** Send a wrapper refusal: the route's own envelope when it declared one, else the default. */
+function sendRefusal(res: NextApiResponse, opts: WithBlockScopeOpts, refusal: BlockScopeRefusal) {
+  const body = opts.formatRefusal
+    ? opts.formatRefusal(refusal)
+    : refusal.code === undefined
+    ? { error: refusal.error }
+    : { error: refusal.error, code: refusal.code };
+  res.status(refusal.status).json(body);
+}
+
+/** The preflight's allowed methods for a route. */
+function corsAllowMethods(opts: WithBlockScopeOpts): string {
+  return ['GET', 'POST', ...(opts.extraCorsMethods ?? []), 'OPTIONS'].join(', ');
 }
 
 // L7 (audit-10): issuer/audience imported from block-token.service so a
@@ -813,7 +871,7 @@ async function setBlockCors(
     // per the CORS spec. Setting "true" would require Allow-Origin to never
     // be "*", and we want that flexibility on the wrapped handler's path.
     res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Methods', corsAllowMethods(opts));
     res.setHeader('Access-Control-Expose-Headers', BLOCK_CORS_EXPOSE_HEADERS);
     if (req.method === 'OPTIONS') {
       res.status(204).end();
@@ -833,7 +891,7 @@ async function setBlockCors(
     res.setHeader('Access-Control-Allow-Origin', 'null');
     res.setHeader('Vary', 'Origin');
     res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Methods', corsAllowMethods(opts));
     res.setHeader('Access-Control-Expose-Headers', BLOCK_CORS_EXPOSE_HEADERS);
     if (req.method === 'OPTIONS') {
       res.status(204).end();
@@ -1514,7 +1572,7 @@ export function withBlockScope(handler: NextApiHandler, opts: WithBlockScopeOpts
       : null;
     if (!claims) {
       if (!isJwt) return handler(req, res);
-      res.status(401).json({ error: 'invalid block token' });
+      sendRefusal(res, opts, { kind: 'invalid_token', status: 401, error: 'invalid block token' });
       return;
     }
 
@@ -1686,7 +1744,12 @@ export function withBlockScope(handler: NextApiHandler, opts: WithBlockScopeOpts
       // be a breaking change for zero gain. `code` lets an app distinguish "this install
       // went away / the publisher was banned" from the consent refusal below and from an
       // ordinary `insufficient_scope`, which are three different things for it to do.
-      res.status(403).json({ error: 'block instance revoked', code: 'instance_revoked' });
+      sendRefusal(res, opts, {
+        kind: 'instance_revoked',
+        status: 403,
+        error: 'block instance revoked',
+        code: 'instance_revoked',
+      });
       return;
     }
 
@@ -1799,13 +1862,18 @@ export function withBlockScope(handler: NextApiHandler, opts: WithBlockScopeOpts
         !isConsentExemptScope(opts.requiredScope)
       ) {
         recordBlockConsentMarkerUnavailable('rest');
-        res.status(503).json({
+        sendRefusal(res, opts, {
+          kind: 'permission_state_unavailable',
+          status: 503,
           error: 'permission state is temporarily unavailable — retry shortly',
           code: 'permission_state_unavailable',
         });
         return;
       }
 
+      if (verdict.kind === 'unavailable') {
+        (req as BlockScopedNextApiRequest).blockConsentUnavailable = true;
+      }
       const revoked = revokedScopesForToken(verdict, claims.scopes);
       if (opts.requiredScope !== undefined && revoked.has(opts.requiredScope)) {
         // The SHARED emitter, so this seam and the bridge cannot report different things under
@@ -1816,7 +1884,9 @@ export function withBlockScope(handler: NextApiHandler, opts: WithBlockScopeOpts
         // point of adding codes: "you never had this" and "the user took this away" call
         // for different app behaviour — the second one should stop asking and let the host
         // re-prompt, the first is a manifest/approval problem.
-        res.status(403).json({
+        sendRefusal(res, opts, {
+          kind: 'consent_revoked',
+          status: 403,
           error: `consent revoked for scope: ${opts.requiredScope}`,
           code: 'consent_revoked',
         });
@@ -1912,12 +1982,21 @@ export function withBlockScope(handler: NextApiHandler, opts: WithBlockScopeOpts
         // `code` on EVERY 403 this wrapper emits, so an app can treat it as always-present
         // rather than having to test for it. Review found it on 3 of 5; the two it was
         // missing are this one and the context-binding refusal below.
-        res.status(403).json({ error: 'app block is not approved', code: 'app_not_approved' });
+        sendRefusal(res, opts, {
+          kind: 'app_not_approved',
+          status: 403,
+          error: 'app block is not approved',
+          code: 'app_not_approved',
+        });
         return;
       }
       if (approval === 'lookup_failed') {
         if (opts.onApprovalLookupFailure !== 'serve') {
-          res.status(503).json({ error: 'app block status unavailable' });
+          sendRefusal(res, opts, {
+            kind: 'approval_unavailable',
+            status: 503,
+            error: 'app block status unavailable',
+          });
           return;
         }
         // SERVED by this route's declared policy; execution falls through to the handler.
@@ -1964,7 +2043,9 @@ export function withBlockScope(handler: NextApiHandler, opts: WithBlockScopeOpts
         // retrying a permission the user withdrew, or reports a consent problem for what
         // is really a manifest/approval gap. The name mirrors RFC 6750's OAuth 2.0 Bearer
         // Token error code, which is the vocabulary an app author already knows.
-        res.status(403).json({
+        sendRefusal(res, opts, {
+          kind: 'insufficient_scope',
+          status: 403,
           error: `missing required scope: ${opts.requiredScope}`,
           code: 'insufficient_scope',
         });
@@ -1984,7 +2065,12 @@ export function withBlockScope(handler: NextApiHandler, opts: WithBlockScopeOpts
           // array-form query param). A fourth distinct cause, and an app's remedy differs
           // again: re-request the token for the right context rather than re-prompt for
           // consent. `err.message` stays the human half, unchanged.
-          res.status(403).json({ error: err.message, code: 'context_binding' });
+          sendRefusal(res, opts, {
+            kind: 'context_binding',
+            status: 403,
+            error: err.message,
+            code: 'context_binding',
+          });
           return;
         }
         throw err;
@@ -2200,6 +2286,11 @@ export const KNOWN_STATIC_ENDPOINT_SEGMENTS = new Set([
   'report',
   'set',
   'shared-storage',
+  // `/api/v1/blocks/storage/…` — the document store, one optional catch-all route. Only
+  // `storage` is derivable from the route file; everything after it (collection names,
+  // document keys, tally names, and the route's own `_get` / `counters` / `marks` words)
+  // templates to `:seg` / `:ulid`, which keeps the column bounded.
+  'storage',
   // `/api/v1/blocks/sub-listings/{upsert,withdraw,mine}` — store items. Static: the item
   // key rides the POST body, so no path segment carries a per-item value.
   'sub-listings',

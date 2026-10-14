@@ -110,9 +110,10 @@ export const BLOCK_SCOPE_TO_OAUTH_BIT: Record<string, ScopeBitmaskRequirement> =
   //     so a token carries it only after the viewer granted it for this app. Required by
   //     any shared collection whose `write` is not `owner`.
   //
-  // SKIP_OAUTH_CHECK for the same reason as the rest of the storage family. Neither is in
-  // any dev, tunnel or review mint allowlist yet: no route accepts them until the storage
-  // routes land, and the dev namespace those routes need does not exist yet either.
+  // SKIP_OAUTH_CHECK for the same reason as the rest of the storage family. Both are in the
+  // BEARER dev-token allowlist (`DEV_TOKEN_SCOPE_ALLOWLIST`), whose tokens the storage routes
+  // confine to the developer's own `dev:<uid>` namespace; neither is in the tunnel, review
+  // or private-run allowlists.
   //
   // 🔴 `apps:storage` (no trailing colon) does NOT start with APP_STORAGE_SCOPE_PREFIX,
   // which is why APP_STORAGE_SCOPES below matches the family by `isAppStorageScope`

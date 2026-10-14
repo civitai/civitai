@@ -65,6 +65,7 @@ import type {
   DocRecord,
   DocStoreContext,
   DocStoreLimits,
+  DocStoreUsage,
   QuotaCeiling,
 } from '~/server/services/apps/doc-store.types';
 import {
@@ -134,8 +135,11 @@ function assertContext(ctx: DocStoreContext): void {
 
 type WritePolicy = 'own' | 'owner' | 'none';
 
-/** Validate a collection and return its write policy (shared) — refusing what is not supported yet. */
-function assertCollection(coll: DocCollection): WritePolicy {
+/**
+ * Validate a collection and return its write policy (shared) — refusing what is not supported
+ * yet. Exported so the route refuses an unsupported collection before any other gate runs.
+ */
+export function assertCollection(coll: DocCollection): WritePolicy {
   if (!B.collectionName.test(coll.name)) throw invalid('invalid collection name');
   if (coll.config.ttlSeconds !== undefined) {
     throw invalid('ttlSeconds is not supported yet', { collection: coll.name });
@@ -144,6 +148,9 @@ function assertCollection(coll: DocCollection): WritePolicy {
   if (coll.config.kind === 'log' || coll.config.maxEntries !== undefined) {
     throw invalid('log collections are not supported yet', { collection: coll.name });
   }
+  if (coll.config.dailyWritesPerAuthor !== undefined) {
+    throw invalid('dailyWritesPerAuthor is not supported yet', { collection: coll.name });
+  }
   const write = coll.config.write ?? 'own';
   if (write === 'anyone') {
     throw invalid('write: anyone is not supported yet', { collection: coll.name });
@@ -151,9 +158,36 @@ function assertCollection(coll: DocCollection): WritePolicy {
   return write;
 }
 
+/**
+ * Viewers write documents in shared collections only under `own`. Exported so the route
+ * layer can refuse BEFORE it spends a write budget token and a moderation scan; the store
+ * still runs it itself on every document write.
+ */
+export function assertShareWritable(
+  coll: DocCollection,
+  policy: WritePolicy = assertCollection(coll)
+) {
+  if (coll.config.visibility !== 'shared') return;
+  if (policy === 'owner') {
+    throw new DocStoreError('write_policy', 'only the app owner writes this collection');
+  }
+  if (policy === 'none') {
+    throw new DocStoreError(
+      'write_policy',
+      'documents in this collection are written by counters only'
+    );
+  }
+}
+
+/** A key made only of dots (`.`, `..`, …) is a path step to every URL client, not a name. */
+const DOT_ONLY_KEY = /^\.+$/;
+
 function assertKey(key: string): void {
   if (typeof key !== 'string' || !B.key.test(key)) {
     throw invalid('key must be 1–128 characters of [A-Za-z0-9._:-]');
+  }
+  if (DOT_ONLY_KEY.test(key)) {
+    throw invalid('key must not consist only of dots: it cannot be addressed in a URL path');
   }
 }
 
@@ -240,7 +274,7 @@ type IndexRow = { name: string; type: DocIndexType; vText: string | null; vNum: 
 type IndexValue = { column: 'v_text' | 'v_num'; value: string | number };
 
 function declaredIndexes(coll: DocCollection): [string, DocIndexType][] {
-  const entries = Object.entries(coll.config.indexes ?? {});
+  const entries = [...coll.config.indexes.entries()];
   if (entries.length > B.indexesPerCollection) {
     throw invalid(`at most ${B.indexesPerCollection} indexes per collection`);
   }
@@ -250,12 +284,9 @@ function declaredIndexes(coll: DocCollection): [string, DocIndexType][] {
   return entries;
 }
 
-/** A declared index's type, by OWN property only — a request field named `constructor` is undeclared. */
+/** A declared index's type. A `Map`, so a request field named `constructor` is simply undeclared. */
 function declaredIndexType(coll: DocCollection, field: string): DocIndexType | undefined {
-  const indexes = coll.config.indexes;
-  return indexes && Object.prototype.hasOwnProperty.call(indexes, field)
-    ? indexes[field]
-    : undefined;
+  return coll.config.indexes.get(field);
 }
 
 function indexColumn(type: DocIndexType): 'v_text' | 'v_num' {
@@ -476,9 +507,10 @@ const SQL_INCREMENT = `INSERT INTO appdata.doc_tally AS t (app_id, ns, coll, key
   ON CONFLICT (app_id, ns, coll, key, kind, name) DO UPDATE SET count = t.count + EXCLUDED.count
   RETURNING t.count`;
 
-// $1 app, $2 ns, $3 coll, $4 key, $5 name, $6 user, $7 reason
-const SQL_INSERT_MARK = `INSERT INTO appdata.doc_mark AS mk (app_id, ns, coll, key, name, user_id, reason)
-  VALUES ($1, $2, $3, $4, $5, $6::int, $7::text)
+// A mark carries no payload: `report` is a mark like any other. (The table's nullable
+// `reason` column is never written.) $1 app, $2 ns, $3 coll, $4 key, $5 name, $6 user
+const SQL_INSERT_MARK = `INSERT INTO appdata.doc_mark AS mk (app_id, ns, coll, key, name, user_id)
+  VALUES ($1, $2, $3, $4, $5, $6::int)
   ON CONFLICT DO NOTHING
   RETURNING 1 AS inserted`;
 
@@ -497,6 +529,12 @@ const SQL_MARK_DOWN = `UPDATE appdata.doc_tally t SET count = t.count - 1
   RETURNING t.count`;
 const SQL_MARK_COUNT = `SELECT t.count FROM appdata.doc_tally t
   WHERE t.app_id = $1 AND t.ns = $2 AND t.coll = $3 AND t.key = $4 AND t.kind = 'mark' AND t.name = $5`;
+
+// Stored usage. $1 app, $2 ns (+ $3 user). A missing row is zero.
+const SQL_USAGE_APP = `SELECT u.bytes, u.docs FROM appdata.usage_app u
+  WHERE u.app_id = $1 AND u.ns = $2`;
+const SQL_USAGE_USER = `SELECT u.bytes, u.docs FROM appdata.usage_user u
+  WHERE u.app_id = $1 AND u.ns = $2 AND u.user_id = $3::int`;
 
 // List fragments. Aliases are fixed so every fragment's predicates are visible
 // to the static isolation scan; only parameter placeholders are interpolated.
@@ -807,20 +845,6 @@ export function createDocStore(deps: DocStoreDeps) {
   const ceilingFor = (coll: DocCollection): QuotaCeiling =>
     coll.config.visibility === 'private' ? 'viewer' : 'author';
 
-  /** Viewers write documents in shared collections only under `own`. */
-  function assertShareWritable(coll: DocCollection, policy: WritePolicy) {
-    if (coll.config.visibility !== 'shared') return;
-    if (policy === 'owner') {
-      throw new DocStoreError('write_policy', 'only the app owner writes this collection');
-    }
-    if (policy === 'none') {
-      throw new DocStoreError(
-        'write_policy',
-        'documents in this collection are written by counters only'
-      );
-    }
-  }
-
   /** Under `own`, only the user who authored a shared doc changes or deletes it. */
   function assertMayModify(
     ctx: DocStoreContext,
@@ -1117,25 +1141,17 @@ export function createDocStore(deps: DocStoreDeps) {
     ctx: DocStoreContext,
     coll: DocCollection,
     key: string,
-    name: string,
-    opts: { reason?: string } = {}
+    name: string
   ): Promise<{ marked: true; count: number | null }> {
     assertCollection(coll);
     assertKey(key);
     assertMarkName(coll, name);
-    if (opts.reason !== undefined) {
-      if (name !== REPORT_MARK) throw invalid('reason is accepted on report only');
-      if (typeof opts.reason !== 'string' || opts.reason.length > B.reportReasonChars) {
-        throw invalid(`reason must be at most ${B.reportReasonChars} characters`);
-      }
-      assertStoredString(opts.reason);
-    }
     const viewer = requireViewer(ctx);
     return withTx(ctx, async (c) => {
       const doc = await c.query(SQL_SHARE_LOCK_DOC, [ctx.appId, ctx.ns, coll.name, key]);
       if (doc.rows.length === 0) throw new DocStoreError('not_found', 'document not found');
       const args = [ctx.appId, ctx.ns, coll.name, key, name];
-      const ins = await c.query(SQL_INSERT_MARK, [...args, viewer, opts.reason ?? null]);
+      const ins = await c.query(SQL_INSERT_MARK, [...args, viewer]);
       const res =
         ins.rows.length > 0
           ? await c.query(SQL_MARK_UP, args)
@@ -1304,7 +1320,33 @@ export function createDocStore(deps: DocStoreDeps) {
     };
   }
 
-  return { get, getMany, put, create, delete: remove, list, increment, mark, unmark };
+  /** The (app, ns) usage and the viewer's own share of it, in the stored unit. */
+  async function usage(ctx: DocStoreContext): Promise<DocStoreUsage> {
+    const toUsage = (row: Record<string, unknown> | undefined) => ({
+      bytes: Number(row?.bytes ?? 0),
+      docs: Number(row?.docs ?? 0),
+    });
+    return withTx(ctx, async (c) => {
+      const app = (await c.query(SQL_USAGE_APP, [ctx.appId, ctx.ns])).rows[0];
+      if (ctx.viewerUid === null) return { app: toUsage(app), viewer: null };
+      const viewer = (await c.query(SQL_USAGE_USER, [ctx.appId, ctx.ns, ctx.viewerUid])).rows[0];
+      return { app: toUsage(app), viewer: toUsage(viewer) };
+    });
+  }
+
+  return {
+    get,
+    getMany,
+    put,
+    create,
+    delete: remove,
+    list,
+    increment,
+    mark,
+    unmark,
+    usage,
+    limits,
+  };
 }
 
 function translatePgError(err: unknown): unknown {

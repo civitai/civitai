@@ -9,6 +9,7 @@ import {
   assertUsageConsistent,
   BOARD,
   ctx,
+  decl,
   freshApp,
   NS_PROD,
   POSTS,
@@ -290,11 +291,11 @@ describe.skipIf(!REAL_PG_URL)('index type change on Postgres', () => {
       const v1 = ctx(app, NS_PROD, 1);
       const asNumber: DocCollection = {
         name: 'retyped',
-        config: { visibility: 'shared', indexes: { rank: 'number' } },
+        config: decl({ visibility: 'shared', indexes: { rank: 'number' } }),
       };
       const asString: DocCollection = {
         name: 'retyped',
-        config: { visibility: 'shared', indexes: { rank: 'string' } },
+        config: decl({ visibility: 'shared', indexes: { rank: 'string' } }),
       };
       for (const [k, r] of [
         ['n1', 3],
