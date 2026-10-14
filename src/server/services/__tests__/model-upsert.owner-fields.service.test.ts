@@ -499,6 +499,14 @@ describe('flag appeals settled by a moderator save', () => {
     expect(mockSettleAppeals).not.toHaveBeenCalled();
   });
 
+  it('settles nothing for a flag the moderator did not set, even if another path cleared it', async () => {
+    mockStored({ poi: true });
+
+    await upsert({ id: MODEL_ID, userId: MODERATOR_ID, isModerator: true });
+
+    expect(mockSettleAppeals).not.toHaveBeenCalled();
+  });
+
   it('never settles for the owner, whose locks keep the flag in force', async () => {
     mockStored({ poi: true, lockedProperties: ['poi'] });
 

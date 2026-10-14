@@ -109,6 +109,7 @@ export async function settleFlagAppealsAfterModeratorLift({
     });
     if (!model || model.minor || model.poi) return;
 
+    // Every Model appeal is a flag appeal (`isModelFlagAppealable` gates creation), so no type filter.
     // Dynamic: report.service pulls the buzz and notification graph that the profile loaders avoid.
     const { resolveEntityAppeal } = await import('~/server/services/report.service');
     await resolveEntityAppeal({

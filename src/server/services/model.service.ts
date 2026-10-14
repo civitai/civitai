@@ -3170,9 +3170,10 @@ export const upsertModel = async (
       tagsChanged: !!tagsOnModels,
     });
 
-    // Only a moderator can clear these (owners are locked out above), so a lift here is theirs.
+    // A lift is the moderator's only when their input set the flag false: a sweep clearing it
+    // between the read and the write must not be stamped as their decision.
     const liftedLabels = (['minor', 'poi'] as const).filter(
-      (label) => beforeUpdate[label] && !result[label]
+      (label) => beforeUpdate[label] && data[label] === false
     );
     if (isModerator && liftedLabels.length) {
       const { settleFlagAppealsAfterModeratorLift } = await import(
