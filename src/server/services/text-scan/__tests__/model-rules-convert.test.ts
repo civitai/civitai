@@ -17,12 +17,14 @@ const legacy = (id: number, match: string, action = 'Block', reason: string | nu
   id,
   action,
   reason,
+  enabled: true,
   definition: { type: 'content', match },
 });
 const semantic = {
   id: 9,
   action: 'Block',
   reason: null,
+  enabled: true,
   definition: { type: 'semantic', subject: 'Jane' },
 };
 
@@ -30,7 +32,7 @@ const rows = [
   legacy(1, '/(?:\\b|\\s)Jane[\\s\\-_]*Doe(?:\\b|\\s)/gmi'),
   legacy(2, '/Jo+/gi'),
   legacy(3, '/John Roe/i', 'Approve'),
-  { id: 4, action: 'Block', reason: null, definition: { type: 'and', rules: [] } },
+  { id: 4, action: 'Block', reason: null, enabled: true, definition: { type: 'and', rules: [] } },
   semantic,
 ];
 
@@ -67,6 +69,50 @@ describe('convertLegacyModelRules', () => {
       });
     }
     expect(calls.every((c) => c.where.entityType === 'Model')).toBe(true);
+  });
+
+  it('appends a version for each converted rule in the same transaction as its update', async () => {
+    const order: string[] = [];
+    dbMock.dbWrite.moderationRule.update.mockImplementation(async ({ where }) => {
+      order.push(`update:${where.id}`);
+      return {};
+    });
+    dbMock.dbWrite.moderationRuleVersion.create.mockImplementation(async ({ data }) => {
+      order.push(`version:${data.ruleId}`);
+      return {};
+    });
+    await convertLegacyModelRules(77);
+    expect(order).toEqual([
+      'update:1',
+      'version:1',
+      'update:2',
+      'version:2',
+      'update:3',
+      'version:3',
+      'update:4',
+      'version:4',
+    ]);
+    expect(dbMock.dbWrite.$transaction).toHaveBeenCalledTimes(4);
+    const versions = dbMock.dbWrite.moderationRuleVersion.create.mock.calls.map(([a]) => a.data);
+    expect(versions[0]).toMatchObject({
+      ruleId: 1,
+      action: 'Block',
+      enabled: true,
+      createdById: 77,
+      definition: { type: 'semantic', subject: 'Jane Doe' },
+    });
+    expect(versions[1]).toMatchObject({ ruleId: 2, enabled: false });
+    expect(versions[2]).toMatchObject({
+      ruleId: 3,
+      enabled: false,
+      definition: { needsAttention: true },
+    });
+  });
+
+  it('records the system actor when no one is named', async () => {
+    await convertLegacyModelRules();
+    const [first] = dbMock.dbWrite.moderationRuleVersion.create.mock.calls[0];
+    expect(first.data.createdById).toBe(-1);
   });
 
   it('busts the Model rules cache after writing', async () => {

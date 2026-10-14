@@ -7,6 +7,7 @@ export type ModelRuleVersionView = {
   aliases: string[];
   note: string;
   enabled: boolean;
+  needsAttention: boolean;
   createdById: number;
   createdBy: string | null;
   createdAt: string;
@@ -18,6 +19,7 @@ export type RuleStateView = {
   aliases: readonly string[];
   note: string;
   enabled: boolean;
+  needsAttention?: boolean;
 };
 
 export type RuleDiffRow = { field: string; before: string; after: string; changed: boolean };
@@ -29,6 +31,7 @@ export function ruleVersionDiff(from: RuleStateView, to: RuleStateView): RuleDif
     ['Aliases', from.aliases.join('\n'), to.aliases.join('\n')],
     ['Internal note', from.note, to.note],
     ['Enabled', from.enabled ? 'Yes' : 'No', to.enabled ? 'Yes' : 'No'],
+    ['Needs attention', from.needsAttention ? 'Yes' : 'No', to.needsAttention ? 'Yes' : 'No'],
   ];
   return rows.map(([field, before, after]) => ({
     field,

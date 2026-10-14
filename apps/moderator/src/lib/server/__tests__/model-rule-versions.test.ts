@@ -20,11 +20,14 @@ vi.mock('$lib/server/db', async () => {
   return { dbRead: db, dbWrite: db };
 });
 vi.mock('../mod-activity', () => ({ recordModActivity: vi.fn(), recordModActivityBatch: vi.fn() }));
-vi.mock('../cache', () => ({ bustKeyBestEffort: vi.fn(async () => true) }));
+const bust = vi.hoisted(() => vi.fn(async (..._args: unknown[]) => true));
+vi.mock('../cache', () => ({ bustKeyBestEffort: bust }));
 vi.mock('../users.service', () => ({ usersByIds: vi.fn(async () => new Map()) }));
 
+const { REDIS_KEYS } = await import('@civitai/redis');
 const {
   ModelRuleStaleError,
+  RuleNeedsReviewError,
   ModelRuleVersionNotFoundError,
   RestoreRefusedError,
   createModelRule,
@@ -56,6 +59,8 @@ const versionInserts = () =>
   captured.flatMap((s, i) => (s.startsWith('insert into "ModerationRuleVersion"') ? [i] : []));
 
 beforeEach(() => {
+  bust.mockClear();
+  bust.mockResolvedValue(true);
   captured.length = 0;
   params.length = 0;
   answers.rule = [RULE];
@@ -165,20 +170,18 @@ describe('restoreModelRuleVersion', () => {
     ]);
   });
 
-  it('never brings back needsAttention from an old version', async () => {
+  it('restores a flagged version flagged, and disabled so it is never enabled-but-unscanned', async () => {
     answers.history = [{ id: 1 }];
-    answers.version = [{ ...OLD, definition: { ...OLD.definition, needsAttention: true } }];
+    answers.version = [
+      { ...OLD, enabled: true, definition: { ...OLD.definition, needsAttention: true } },
+    ];
     await restoreModelRuleVersion(7, 2, 5);
     const update = captured.findIndex((s) => s.startsWith('update "ModerationRule"'));
-    const written = [params[update], params[versionInserts()[0]]].flatMap((p) => p);
-    const definitions = written.filter(
-      (v) => typeof v === 'object' && v !== null && 'subject' in v
-    );
-    expect(definitions).toHaveLength(2);
-    for (const d of definitions) {
-      expect(d).toMatchObject({ subject: 'Older subject' });
-      expect(d).not.toHaveProperty('needsAttention');
-    }
+    const insert = versionInserts()[0];
+    expect(params[update][0]).toMatchObject({ subject: 'Older subject', needsAttention: true });
+    expect(params[update][1]).toBe(false);
+    expect(params[insert][1]).toMatchObject({ needsAttention: true });
+    expect(params[insert][2]).toBe(false);
   });
 
   it('records the pre-restore state first when the rule has no history', async () => {
@@ -238,5 +241,143 @@ describe('listModelRuleVersions', () => {
     expect(captured[0]).toMatch(/"r"."entityType" = \$2/);
     expect(captured[0]).toMatch(/order by "v"."id" desc limit \$3$/);
     expect(params[0]).toEqual([7, 'Model', 50]);
+  });
+});
+
+describe('a rule that needs attention', () => {
+  const FLAGGED = {
+    ...RULE,
+    enabled: false,
+    definition: { ...SEMANTIC, needsAttention: true, legacyMatch: '/jane/i' },
+  };
+  const UNCHANGED = {
+    subject: 'Old subject',
+    description: 'Old',
+    aliases: ['Old alias'],
+    note: '',
+  };
+
+  it('cannot be enabled until a person has reviewed it', async () => {
+    answers.rule = [FLAGGED];
+    await expect(setModelRuleEnabled(7, true, 5)).rejects.toThrow(
+      'Review and save this rule before enabling it.'
+    );
+    await expect(setModelRuleEnabled(7, true, 5)).rejects.toBeInstanceOf(RuleNeedsReviewError);
+    expect(captured.some((s) => s.startsWith('update') || s.startsWith('insert'))).toBe(false);
+    expect(bust).not.toHaveBeenCalled();
+  });
+
+  it('can still be disabled', async () => {
+    answers.rule = [{ ...FLAGGED, enabled: true }];
+    answers.history = [{ id: 1 }];
+    await setModelRuleEnabled(7, false, 5);
+    expect(versionInserts()).toHaveLength(1);
+  });
+
+  it('is reviewed by saving it unchanged: the flag clears, legacyMatch stays, a version is recorded', async () => {
+    answers.rule = [FLAGGED];
+    answers.history = [{ id: 1 }];
+    await updateModelRule(7, UNCHANGED, 5);
+    const update = captured.findIndex((s) => s.startsWith('update "ModerationRule"'));
+    const written = params[update][0] as Record<string, unknown>;
+    expect(written).not.toHaveProperty('needsAttention');
+    expect(written).toMatchObject({ subject: 'Old subject', legacyMatch: '/jane/i' });
+    expect(versionInserts()).toHaveLength(1);
+    expect(params[versionInserts()[0]][1]).not.toHaveProperty('needsAttention');
+  });
+
+  it('can be enabled once reviewed', async () => {
+    answers.rule = [
+      { ...FLAGGED, definition: { ...FLAGGED.definition, needsAttention: undefined } },
+    ];
+    answers.history = [{ id: 1 }];
+    await setModelRuleEnabled(7, true, 5);
+    expect(params[versionInserts()[0]][2]).toBe(true);
+  });
+});
+
+describe('every rule write clears the Model rules cache', () => {
+  const KEY = REDIS_KEYS.CACHES.MOD_RULES.MODELS;
+  const writes: [string, () => Promise<{ cacheStale: boolean }>][] = [
+    ['createModelRule', () => createModelRule(FORM, 5)],
+    ['updateModelRule', () => updateModelRule(7, FORM, 5)],
+    ['setModelRuleEnabled', () => setModelRuleEnabled(7, false, 5)],
+    [
+      'restoreModelRuleVersion',
+      async () => {
+        answers.version = [
+          { definition: { ...SEMANTIC, subject: 'Older' }, enabled: false, reason: null },
+        ];
+        return restoreModelRuleVersion(7, 2, 5);
+      },
+    ],
+  ];
+
+  it.each(writes)('%s busts the key and reports it fresh', async (_name, write) => {
+    answers.history = [{ id: 1 }];
+    expect(await write()).toMatchObject({ cacheStale: false });
+    expect(bust).toHaveBeenCalledTimes(1);
+    expect(bust.mock.calls[0][0]).toBe(KEY);
+  });
+
+  it.each(writes)('%s reports cacheStale when the bust fails', async (_name, write) => {
+    answers.history = [{ id: 1 }];
+    bust.mockResolvedValue(false);
+    expect(await write()).toMatchObject({ cacheStale: true });
+  });
+});
+
+describe('rule-write SQL', () => {
+  const OLDER = { definition: { ...SEMANTIC, subject: 'Older' }, enabled: false, reason: null };
+  const updates = () => captured.filter((s) => s.startsWith('update "ModerationRule"'));
+
+  it('scopes every update to Model rules and sets updatedAt', async () => {
+    answers.history = [{ id: 1 }];
+    answers.version = [OLDER];
+    await updateModelRule(7, FORM, 5);
+    await setModelRuleEnabled(7, false, 5);
+    await restoreModelRuleVersion(7, 2, 5);
+    expect(updates()).toHaveLength(3);
+    for (const sql of updates()) {
+      expect(sql).toMatch(/"updatedAt" = \$\d+/);
+      expect(sql).toMatch(/where "id" = \$\d+ and "entityType" = \$\d+$/);
+    }
+    const bound = captured.flatMap((s, i) =>
+      s.startsWith('update "ModerationRule"') ? [params[i]] : []
+    );
+    for (const p of bound) expect(p.at(-1)).toBe('Model');
+  });
+
+  it('locks the rule row, scoped to Model, before any write', async () => {
+    answers.history = [{ id: 1 }];
+    await setModelRuleEnabled(7, false, 5);
+    expect(captured[0]).toMatch(
+      /from "ModerationRule" where "id" = \$1 and "entityType" = \$2 for update$/
+    );
+    expect(params[0]).toEqual([7, 'Model']);
+  });
+
+  it('writes the enabled value it was given', async () => {
+    answers.history = [{ id: 1 }];
+    await setModelRuleEnabled(7, false, 5);
+    const update = captured.findIndex((s) => s.startsWith('update "ModerationRule"'));
+    expect(captured[update]).toMatch(/set "enabled" = \$1,/);
+    expect(params[update][0]).toBe(false);
+  });
+
+  it('keeps needsAttention and legacyMatch on a toggle, and records them in the version', async () => {
+    const flagged = { ...SEMANTIC, needsAttention: true, legacyMatch: '/x/' };
+    answers.rule = [{ ...RULE, enabled: true, definition: flagged }];
+    answers.history = [{ id: 1 }];
+    await setModelRuleEnabled(7, false, 5);
+    const update = captured.findIndex((s) => s.startsWith('update "ModerationRule"'));
+    const definition = params[update].find(
+      (v) => typeof v === 'object' && v !== null && 'subject' in v
+    );
+    expect(definition).toMatchObject({ needsAttention: true, legacyMatch: '/x/', updatedById: 5 });
+    expect(params[versionInserts()[0]][1]).toMatchObject({
+      needsAttention: true,
+      legacyMatch: '/x/',
+    });
   });
 });

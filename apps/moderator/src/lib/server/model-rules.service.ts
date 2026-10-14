@@ -115,6 +115,13 @@ export class ModelRuleVersionNotFoundError extends Error {
   }
 }
 
+export class RuleNeedsReviewError extends Error {
+  constructor() {
+    super('Review and save this rule before enabling it.');
+    this.name = 'RuleNeedsReviewError';
+  }
+}
+
 export class RestoreRefusedError extends Error {
   constructor(message: string) {
     super(message);
@@ -178,6 +185,7 @@ const viewOf = (definition: unknown, reason: string | null, enabled: boolean) =>
     aliases: semantic.aliases ?? [],
     note: reason ?? '',
     enabled,
+    needsAttention: !!semantic.needsAttention,
   };
 };
 
@@ -287,6 +295,9 @@ export async function setModelRuleEnabled(
   await dbWrite.transaction().execute(async (trx) => {
     const existing = await lockRule(trx, id);
     if (!existing) throw new ModelRuleNotFoundError();
+    // The scan ignores a flagged rule, so enabling one would only look active.
+    if (enabled && isSemanticDefinition(existing.definition) && existing.definition.needsAttention)
+      throw new RuleNeedsReviewError();
     const definition = isSemanticDefinition(existing.definition)
       ? { ...existing.definition, updatedById: userId }
       : existing.definition;
@@ -339,7 +350,7 @@ export async function listModelRuleVersions(
   }));
 }
 
-/** Writes an old version's definition and enabled state as the rule's new state, and as a new version. */
+/** Writes an old version's definition and enabled state as the rule's new state, and as a new version. A version that needed attention comes back flagged and disabled. */
 export async function restoreModelRuleVersion(
   ruleId: number,
   versionId: number,
@@ -366,16 +377,20 @@ export async function restoreModelRuleVersion(
     )
       throw new RestoreRefusedError('That version is the same as the current rule.');
 
-    const { needsAttention: _needsAttention, ...restored } = version.definition;
-    const parsed = semanticModelRuleSchema.safeParse({ ...restored, updatedById: userId });
+    const parsed = semanticModelRuleSchema.safeParse({
+      ...version.definition,
+      updatedById: userId,
+    });
     if (!parsed.success)
       throw new RestoreRefusedError(
         'That version no longer fits the rule format and cannot be restored.'
       );
     const definition = parsed.data;
+    // A flagged rule is restored flagged, and so disabled: the same state the converter leaves it in.
+    const enabled = version.enabled && !definition.needsAttention;
     await trx
       .updateTable('ModerationRule')
-      .set({ definition, enabled: version.enabled, reason: version.reason, updatedAt: new Date() })
+      .set({ definition, enabled, reason: version.reason, updatedAt: new Date() })
       .where('id', '=', ruleId)
       .where('entityType', '=', 'Model')
       .executeTakeFirstOrThrow();
@@ -383,7 +398,7 @@ export async function restoreModelRuleVersion(
       trx,
       ruleId,
       existing,
-      { definition, enabled: version.enabled, action: existing.action, reason: version.reason },
+      { definition, enabled, action: existing.action, reason: version.reason },
       userId
     );
   });

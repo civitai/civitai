@@ -12,6 +12,7 @@ import {
   ModelRuleStaleError,
   ModelRuleVersionNotFoundError,
   RestoreRefusedError,
+  RuleNeedsReviewError,
   createModelRule,
   getModelRuleMatches,
   listModelRules,
@@ -117,7 +118,11 @@ const STALE_CACHE =
 function ruleRefusal(error: unknown): { status: number; error: string } {
   if (error instanceof ModelRuleNotFoundError || error instanceof ModelRuleVersionNotFoundError)
     return { status: 404, error: error.message };
-  if (error instanceof LegacyRuleError || error instanceof ModelRuleStaleError)
+  if (
+    error instanceof LegacyRuleError ||
+    error instanceof ModelRuleStaleError ||
+    error instanceof RuleNeedsReviewError
+  )
     return { status: 409, error: error.message };
   if (error instanceof RestoreRefusedError) return { status: 400, error: error.message };
   throw error;

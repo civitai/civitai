@@ -10,6 +10,7 @@
   import { cn } from '@civitai/ui/utils.js';
   import { FormState } from '$lib/form-state.svelte';
   import { dateTime } from '$lib/format';
+  import { parseAliases } from '$lib/model-rules';
   import type { ModelRuleView } from '$lib/server/model-rules.service';
   import { EMPTY, type RuleDraftsState, type RuleFields } from '$lib/text-scan-lab/rule-drafts';
 
@@ -38,12 +39,9 @@
   const draft = $derived(drafts.get(draftId));
   const stale = $derived(rule ? drafts.isStale(rule) : false);
   const readonly = $derived(!!rule?.legacy);
-  const aliasList = $derived(
-    fields.aliases
-      .split('\n')
-      .map((a) => a.trim())
-      .filter(Boolean)
-  );
+  const aliasList = $derived(parseAliases(fields.aliases));
+  // Saving a flagged rule unchanged is how a person marks it reviewed.
+  const canSave = $derived(!!draft || !!rule?.needsAttention);
 
   function update(patch: Partial<RuleFields>) {
     const next = { ...fields, ...patch };
@@ -96,7 +94,9 @@
       <span class="break-words font-medium text-white">{fields.subject || 'New rule'}</span>
       {#if draft}<span class="text-xs text-amber-300">● unsaved</span>{/if}
       {#if !rule}<Badge variant="outline">New</Badge>{/if}
-      {#if rule?.needsAttention}<Badge variant="destructive">Needs attention</Badge>{/if}
+      {#if rule?.needsAttention}
+        <Badge variant="destructive">Needs attention — not scanned</Badge>
+      {/if}
       {#if rule?.legacy}<Badge variant="outline">Regex</Badge>{/if}
     </button>
   </TableCell>
@@ -217,8 +217,12 @@
               <input type="hidden" name="description" value={fields.description} />
               <input type="hidden" name="aliases" value={fields.aliases} />
               <input type="hidden" name="note" value={fields.note} />
-              <Button type="submit" size="sm" disabled={!draft || stale || save.submitting}>
-                {save.submitting ? 'Saving…' : 'Save'}
+              <Button type="submit" size="sm" disabled={!canSave || stale || save.submitting}>
+                {save.submitting
+                  ? 'Saving…'
+                  : rule?.needsAttention && !draft
+                    ? 'Save as reviewed'
+                    : 'Save'}
               </Button>
               <Button type="button" size="sm" variant="ghost" disabled={!draft} onclick={discard}>
                 Discard

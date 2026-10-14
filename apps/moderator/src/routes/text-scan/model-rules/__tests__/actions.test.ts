@@ -32,7 +32,7 @@ vi.mock('$lib/server/model-rules.service', async (importOriginal) => ({
 }));
 
 const { actions, load } = await import('../+page.server');
-const { ModelRuleStaleError, RestoreRefusedError } = await import(
+const { ModelRuleStaleError, RestoreRefusedError, RuleNeedsReviewError } = await import(
   '$lib/server/model-rules.service'
 );
 
@@ -213,6 +213,15 @@ describe('toggle', () => {
       cacheWarning: null,
     });
     expect(service.setModelRuleEnabled).toHaveBeenCalledExactlyOnceWith(3, false, 1);
+  });
+
+  it('answers a flagged rule with the review message, not a toast of success', async () => {
+    service.setModelRuleEnabled.mockRejectedValue(new RuleNeedsReviewError());
+    const result = await post('toggle', { id: '3', enabled: 'true' });
+    expect(result).toMatchObject({
+      status: 409,
+      data: { error: 'Review and save this rule before enabling it.' },
+    });
   });
 });
 

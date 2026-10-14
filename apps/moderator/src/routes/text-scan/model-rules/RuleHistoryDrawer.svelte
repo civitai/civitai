@@ -60,9 +60,9 @@
                   {version.createdBy ?? `user ${version.createdById}`}{i === 0 ? ' (current)' : ''}
                 </p>
                 <p class="break-words text-xs text-dark-2">
-                  {version.subject} · {version.enabled ? 'enabled' : 'disabled'}{version.legacy
-                    ? ' · regex'
-                    : ''}
+                  {version.subject} · {version.enabled ? 'enabled' : 'disabled'}{version.needsAttention
+                    ? ' · needs attention'
+                    : ''}{version.legacy ? ' · regex' : ''}
                 </p>
               </div>
               {#if canEdit && i > 0 && !version.legacy && ruleId !== null}
