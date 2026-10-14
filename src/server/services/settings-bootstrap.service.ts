@@ -183,12 +183,21 @@ export async function resolveSettingsBootstrapForRender(
     setHeader: () => undefined,
   } as unknown as AuthArgs['res'];
 
-  // The caller logs the rejection's message. Over HTTP the route's own catch swallowed these,
-  // so a raw message never reached that log; database clients put connection details in theirs,
-  // so only the name and code travel.
+  // The caller logs the rejection's message to stdout. Over HTTP the route's own catch swallowed
+  // these, so a raw message never reached that line; database clients put connection details in
+  // theirs, so only the name and code travel there. The full message goes to the structured
+  // log, like the deadline warning above, so the reason is still recoverable.
   const bootstrap = resolveSettingsBootstrap({ req, res }).catch((e: unknown) => {
     const code = (e as { code?: unknown } | null)?.code;
     const name = e instanceof Error ? e.name : 'unknown';
+    logToAxiom(
+      {
+        type: 'warning',
+        name: 'settings bootstrap failed',
+        message: e instanceof Error ? e.message : String(e),
+      },
+      'settings'
+    ).catch();
     throw new Error(
       `settings bootstrap failed: ${[name, typeof code === 'string' ? code : undefined]
         .filter(Boolean)

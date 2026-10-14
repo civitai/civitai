@@ -94,6 +94,8 @@ vi.mock('~/server/redis/caches', async (importOriginal) => ({
 import handler from '~/pages/api/user/settings';
 import { resolveSettingsBootstrapForRender } from '~/server/services/settings-bootstrap.service';
 import { setSessionCookie } from '~/server/auth/civ-cookie';
+// The unit setup replaces this export with a spy (src/__tests__/setup.ts).
+import { logToAxiom } from '~/server/logging/client';
 
 const invoke = (headers: Record<string, string> = { host: 'civitai.com' }) => {
   const json = vi.fn();
@@ -359,11 +361,34 @@ describe('settings bootstrap during a server render', () => {
     await expect(
       resolveSettingsBootstrapForRender(pageRequest() as unknown as RenderRequest)
     ).rejects.toThrow(/^settings bootstrap failed: Error P1001$/);
+    // …while the full reason is kept in the structured log.
+    expect(logToAxiom).toHaveBeenCalledWith(
+      {
+        type: 'warning',
+        name: 'settings bootstrap failed',
+        message: 'connect ECONNREFUSED db.internal.example:5432',
+      },
+      'settings'
+    );
 
     const { done, json } = invoke();
     await vi.runAllTimersAsync();
     await done;
     expect(json.mock.calls[0][0]).toEqual({});
+  });
+
+  it.each([
+    ['a non-Error rejection', 'not an error', 'settings bootstrap failed: unknown'],
+    [
+      'a non-string code',
+      Object.assign(new Error('x'), { code: 111 }),
+      'settings bootstrap failed: Error',
+    ],
+  ])('names %s without its contents', async (_label, rejection, message) => {
+    h.session.mockRejectedValue(rejection);
+    await expect(
+      resolveSettingsBootstrapForRender(pageRequest() as unknown as RenderRequest)
+    ).rejects.toThrow(new RegExp(`^${message}$`));
   });
 
   it('keeps the per-read deadlines, so one parked read degrades only its own member', async () => {
@@ -380,7 +405,7 @@ describe('settings bootstrap during a server render', () => {
     ['2500', 'settings bootstrap timed out after 2500ms'],
     // Zero is "unset", as it always was for this variable, not a 0ms deadline.
     ['0', 'settings bootstrap timed out after 8000ms'],
-    // A zero or negative override must not make every render the degraded one.
+    // A negative override must not make every render the degraded one: the floor is 1s.
     ['-1', 'settings bootstrap timed out after 1000ms'],
   ])('takes the ceiling from APP_SETTINGS_FETCH_TIMEOUT_MS=%s', async (value, message) => {
     vi.stubEnv('APP_SETTINGS_FETCH_TIMEOUT_MS', value);

@@ -205,7 +205,7 @@ export const REMEDIES = {
   'self-fetch-failing': (ctx) =>
     ctx.settingsHangs
       ? `/api/user/settings itself never answers (probed above), so this is the endpoint, not the build cache — a purge costs 45s and changes nothing (measured 2026-08-16: it still hung on a freshly built session). Find what that handler awaits. Meanwhile every page renders signed-out at exactly APP_SETTINGS_FETCH_TIMEOUT_MS.`
-      : `The render's settings bootstrap failed but /api/user/settings (the same code) answers directly, so the failure was transient or specific to the page request: read the reason on the \`[_app] settings bootstrap fetch failed\` line (node .claude/skills/dev-server/cli.mjs logs ${ctx.sessionId || '<session-id>'}).`,
+      : `The render's settings bootstrap failed but /api/user/settings (the same code) answers directly, so the failure was transient or specific to the page request: the \`[_app] settings bootstrap fetch failed\` line names the error (node .claude/skills/dev-server/cli.mjs logs ${ctx.sessionId || '<session-id>'}); its full message is in the 'settings bootstrap failed' structured log.`,
   timeout: (ctx) =>
     `Check the session is alive (node .claude/skills/dev-server/cli.mjs list). If it is running and every route behaves this way, unwedge ${ctx.sessionId || '<session-id>'}.`,
   'stopped-answering': (ctx) =>
