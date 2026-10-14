@@ -55,6 +55,7 @@ import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { ImageMetaModal } from '~/components/Post/EditV2/ImageMetaModal';
 import { MoveImageToPostModal } from '~/components/Post/EditV2/MoveImageToPostModal';
+import { usePostContestCollectionDetails } from '~/components/Post/post.utils';
 import { usePostEditStore, usePostPreviewContext } from '~/components/Post/EditV2/PostEditProvider';
 import { PostImageTechnique } from '~/components/Post/EditV2/Techniques/PostImageTechnique';
 import { ImageTechniquesPopover } from '~/components/Post/EditV2/Techniques/PostImageTechniquesPopover';
@@ -200,13 +201,16 @@ export function AddedImage({ image }: { image: PostEditImageDetail }) {
   const storedImage = useImageStore(image);
   const queryUtils = trpc.useUtils();
 
-  const [images, updateImage, setImages, postId, postPublishedAt] = usePostEditStore((state) => [
-    state.images,
-    state.updateImage,
-    state.setImages,
-    state.post?.id,
-    state.post?.publishedAt,
-  ]);
+  const [images, updateImage, setImages, postId, postPublishedAt, collectionId] = usePostEditStore(
+    (state) => [
+      state.images,
+      state.updateImage,
+      state.setImages,
+      state.post?.id,
+      state.post?.publishedAt,
+      state.collectionId,
+    ]
+  );
 
   const { id, meta, blockedFor, ingestion, nsfwLevel, hideMeta, type, needsReview } = storedImage;
   const minor = image.minor ?? false;
@@ -271,8 +275,17 @@ export function AddedImage({ image }: { image: PostEditImageDetail }) {
 
   // #region [move image]
   const isOwner = usePostEditStore((state) => state.post?.user.id) === useCurrentUserRequired().id;
+  const { collection: contestCollection } = usePostContestCollectionDetails(
+    { id: postId ?? 0 },
+    { enabled: !!postId && !!collectionId }
+  );
   const canMove =
-    isOwner && !!postId && id > 0 && !!postPublishedAt && new Date(postPublishedAt) <= new Date();
+    isOwner &&
+    !!postId &&
+    id > 0 &&
+    !contestCollection &&
+    !!postPublishedAt &&
+    new Date(postPublishedAt) <= new Date();
   const handleMove = () => {
     if (!postId) return;
     dialogStore.trigger({

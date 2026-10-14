@@ -23,7 +23,10 @@ export function MoveImageToPostModal({
   const moveMutation = trpc.post.moveImages.useMutation({
     onSuccess: async ({ postId }) => {
       onMoved(postId);
-      await queryUtils.post.getEdit.invalidate({ id: postId });
+      await Promise.all([
+        queryUtils.post.getEdit.invalidate({ id: postId }),
+        queryUtils.post.getImageMoveTargets.invalidate(),
+      ]);
       showSuccessNotification({
         title: 'Image moved',
         message: 'Its reactions, comments, tips and collection entries moved with it.',
