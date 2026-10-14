@@ -346,8 +346,9 @@ function ComposerBody({ modelId, modelVersionId }: { modelId?: number; modelVers
               : 'Pick a model version and every post is attributed to it, listing it as a resource so anyone who likes an image can open and use the model from it.'}
           </li>
           <li>
-            Posts go live one at a time over days or weeks instead of in one burst, so the model
-            keeps appearing in feeds and in its own gallery for as long as the schedule runs.
+            Posts go live one at a time over days or weeks instead of in one burst, so your images
+            keep showing up in feeds and in the model&apos;s gallery for as long as the schedule
+            runs.
           </li>
           <li>
             Each post counts toward your daily limit on the day it goes live, and you can move or
