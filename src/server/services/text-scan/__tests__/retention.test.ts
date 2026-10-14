@@ -41,6 +41,21 @@ describe('cleanupTextScanRows', () => {
     expect(result).toEqual({ shadowDeleted: 3, cleanDeleted: 0, exhausted: false });
   });
 
+  it('deletes old web-search shadow rows of graduated entities, never the live search rows', async () => {
+    em.findMany.mockResolvedValueOnce(ids(2)).mockResolvedValueOnce([]);
+    const result = await cleanupTextScanRows({
+      graduatedEntityTypes: ['Post'],
+      graduatedWebSearchEntityTypes: ['Model'],
+      cleanRowEntityTypes: [],
+      olderThanDays: 14,
+    });
+    expect(em.findMany.mock.calls[0][0].where).toEqual({
+      entityType: { in: ['Post:shadow', 'Model:search-shadow'] },
+      updatedAt: { lt: new Date('2026-09-17T00:00:00Z') },
+    });
+    expect(result.shadowDeleted).toBe(2);
+  });
+
   it('deletes only clean, succeeded, old per-item rows, live and shadow', async () => {
     em.findMany.mockResolvedValueOnce(ids(2));
     const result = await cleanupTextScanRows({ graduatedEntityTypes: [], olderThanDays: 30 });

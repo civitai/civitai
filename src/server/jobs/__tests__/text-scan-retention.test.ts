@@ -20,16 +20,24 @@ vi.mock('~/server/services/text-scan/retention', async (importOriginal) => ({
 vi.mock('~/server/services/text-scan/mode', async (importOriginal) => ({
   ...(await importOriginal<typeof ModeModule>()),
   getTextScanMode: vi.fn(),
+  getTextScanWebSearchMode: vi.fn(),
 }));
 
 const { textScanRetention } = await import('~/server/jobs/text-scan-retention');
 const { cleanupTextScanRows } = await import('~/server/services/text-scan/retention');
-const { getTextScanMode } = await import('~/server/services/text-scan/mode');
+const { getTextScanMode, getTextScanWebSearchMode } = await import(
+  '~/server/services/text-scan/mode'
+);
 
-const shadowRows: Record<string, number[]> = { 'Post:shadow': [9, 8], 'Comment:shadow': [5, 4] };
+const shadowRows: Record<string, number[]> = {
+  'Post:shadow': [9, 8],
+  'Comment:shadow': [5, 4],
+  'Model:search-shadow': [3, 2],
+};
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.mocked(getTextScanWebSearchMode).mockResolvedValue('shadow');
   vi.mocked(dbMock.dbRead.entityModeration.findMany).mockImplementation((async (args: {
     where: { entityType: string };
   }) => (shadowRows[args.where.entityType] ?? []).map((entityId) => ({ entityId }))) as never);
@@ -57,6 +65,7 @@ describe('text-scan-retention', () => {
     });
     expect(cleanupTextScanRows).toHaveBeenCalledWith({
       graduatedEntityTypes: ['Post'],
+      graduatedWebSearchEntityTypes: [],
       olderThanDays: 30,
     });
   });
@@ -66,7 +75,28 @@ describe('text-scan-retention', () => {
     await textScanRetention.run().result;
     expect(cleanupTextScanRows).toHaveBeenCalledWith({
       graduatedEntityTypes: [],
+      graduatedWebSearchEntityTypes: [],
       olderThanDays: 30,
+    });
+  });
+
+  it('graduates the web-search shadow rows once their probed ids are all search-active', async () => {
+    vi.mocked(getTextScanMode).mockResolvedValue('shadow');
+    vi.mocked(getTextScanWebSearchMode).mockImplementation(async (_, id) =>
+      id === 3 ? 'active' : 'shadow'
+    );
+    await textScanRetention.run().result;
+    expect(vi.mocked(cleanupTextScanRows).mock.calls[0][0].graduatedWebSearchEntityTypes).toEqual(
+      []
+    );
+
+    vi.mocked(getTextScanWebSearchMode).mockResolvedValue('active');
+    await expect(textScanRetention.run().result).resolves.toMatchObject({
+      graduatedWebSearch: ['Model'],
+    });
+    expect(vi.mocked(cleanupTextScanRows).mock.calls[1][0]).toMatchObject({
+      graduatedEntityTypes: [],
+      graduatedWebSearchEntityTypes: ['Model'],
     });
   });
 
