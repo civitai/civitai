@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Prisma } from '@prisma/client';
 import type * as BlocklistService from '~/server/services/blocklist.service';
 import type * as PlacementService from '~/server/services/placement.service';
+import type * as AppealTextHash from '~/server/services/text-scan/actions/appeal-text-hash';
+import type * as TextScanSubmit from '~/server/services/text-scan/submit';
 import type * as UserPreferencesService from '~/server/services/user-preferences.service';
 import type * as CacheHelpers from '~/server/utils/cache-helpers';
 import { dbMock, resetSharedMocks, setEnv } from '~/__tests__/mocks';
@@ -47,6 +49,18 @@ vi.mock('~/server/services/blocklist.service', async (importOriginal) => ({
   ...(await importOriginal<typeof BlocklistService>()),
   throwOnBlockedUserContent: vi.fn(),
 }));
+const { scanEntityInBackground, loadTextScanTextHash } = vi.hoisted(() => ({
+  scanEntityInBackground: vi.fn(),
+  loadTextScanTextHash: vi.fn(),
+}));
+vi.mock('~/server/services/text-scan/submit', async (importOriginal) => ({
+  ...(await importOriginal<typeof TextScanSubmit>()),
+  scanEntityInBackground,
+}));
+vi.mock('~/server/services/text-scan/actions/appeal-text-hash', async (importOriginal) => ({
+  ...(await importOriginal<typeof AppealTextHash>()),
+  loadTextScanTextHash,
+}));
 
 import {
   addOwnerChapter,
@@ -63,6 +77,7 @@ import {
   getStorylineEarlyAccessStatus,
   getStorylinesInfinite,
   joinStorylineEarlyAccess,
+  moderateStorylineTitle,
   recordStorylineBranchChoice,
   recordStorylineCreateClick,
   removeStorylineCollaborator,
@@ -94,6 +109,8 @@ const storylineRow = (overrides: Record<string, unknown> = {}) => ({
   whoCanContinue: 'Anyone',
   maxNsfwLevel: NsfwLevel.R,
   tosViolation: false,
+  nsfwLevel: 0,
+  moderatorNsfwLevel: null,
   createdAt: new Date('2026-10-01'),
   user: { id: OWNER, username: 'owner', ...notBanned },
   // Chapter 1, PG: inside every reader level used here unless a test says otherwise.
@@ -139,6 +156,8 @@ beforeEach(() => {
   enforceBlockedBrowsingTags.mockReset();
   enforceBlockedBrowsingTags.mockResolvedValue({ emptyResult: false });
   setFetchThroughCache.mockReset();
+  scanEntityInBackground.mockReset();
+  loadTextScanTextHash.mockReset();
   blockedPairs = [];
   answerRaw(w);
 });
@@ -662,6 +681,8 @@ describe('getStorylinesForPosts', () => {
       userId: OWNER,
       maxNsfwLevel: NsfwLevel.R,
       tosViolation: false,
+      nsfwLevel: 0,
+      moderatorNsfwLevel: null,
       user: notBanned,
       chapters: [{ post: { nsfwLevel: NsfwLevel.PG } }],
       ...overrides,
@@ -2145,6 +2166,8 @@ describe('a chapter whose placement was removed', () => {
         userId: OWNER,
         maxNsfwLevel: NsfwLevel.R,
         tosViolation: false,
+        nsfwLevel: 0,
+        moderatorNsfwLevel: null,
         user: notBanned,
         chapters: [{ post: { nsfwLevel: NsfwLevel.PG } }],
       },
@@ -3063,6 +3086,194 @@ describe('covers and cast', () => {
       });
       // An owner the read did not return still gets their name.
       expect(items[2].user).toEqual({ id: COLLABORATOR, username: 'c' });
+    });
+  });
+});
+
+describe('title moderation', () => {
+  const { PG, PG13, R, X } = NsfwLevel;
+  const PG_READER = PG | PG13;
+
+  describe("the title's rating hides the story from readers below it", () => {
+    const titled = (over: Record<string, unknown>) =>
+      storylineRow({ collaborators: [], coverImageId: null, heroImageId: null, ...over });
+
+    // Chapter 1 is PG throughout, so each hide here comes from the title alone.
+    it.each([
+      ['a scanned R title', { nsfwLevel: R }, true],
+      ['a moderator rating of R over a PG scan', { nsfwLevel: PG, moderatorNsfwLevel: R }, true],
+      [
+        'a moderator rating of PG13 over an X scan',
+        { nsfwLevel: X, moderatorNsfwLevel: PG13 },
+        false,
+      ],
+      ['a title not yet scanned', { nsfwLevel: 0 }, false],
+      ['a PG title', { nsfwLevel: PG }, false],
+    ])('getStoryline: %s -> hidden %s', async (_name, over, hidden) => {
+      r.storyline.findUnique.mockResolvedValue(titled(over) as never);
+      const read = getStoryline({ id: 10, viewer: { id: STRANGER }, browsingLevel: PG_READER });
+      if (hidden) await expect(read).rejects.toMatchObject({ code: 'NOT_FOUND' });
+      else await expect(read).resolves.toMatchObject({ id: 10 });
+      // A reader who browses at R is shown it either way, as are the owner and moderators.
+      await expect(
+        getStoryline({ id: 10, viewer: { id: STRANGER }, browsingLevel: PG_READER | R })
+      ).resolves.toMatchObject({ id: 10 });
+      for (const viewer of [{ id: OWNER }, { id: MODERATOR, isModerator: true }])
+        await expect(
+          getStoryline({ id: 10, viewer, browsingLevel: PG_READER })
+        ).resolves.toMatchObject({ id: 10 });
+    });
+
+    it('getStorylinesForPosts: leaves out a story whose title is above the reader', async () => {
+      const chapter = (postId: number, storyline: Record<string, unknown>) => ({
+        id: postId + 1000,
+        postId,
+        depth: 1,
+        removedAt: null,
+        post: { nsfwLevel: PG, userId: AUTHOR_OF_POSTS },
+        storyline: {
+          id: postId,
+          title: `s${postId}`,
+          userId: OWNER,
+          maxNsfwLevel: X,
+          tosViolation: false,
+          nsfwLevel: 0,
+          moderatorNsfwLevel: null,
+          user: notBanned,
+          chapters: [{ post: { nsfwLevel: PG } }],
+          ...storyline,
+        },
+      });
+      r.storylineChapter.findMany.mockResolvedValue([
+        chapter(1, { nsfwLevel: PG }),
+        chapter(2, { nsfwLevel: R }),
+        chapter(3, { nsfwLevel: X, moderatorNsfwLevel: PG }),
+      ] as never);
+      const result = await getStorylinesForPosts({
+        postIds: [1, 2, 3],
+        viewer: { id: STRANGER },
+        browsingLevel: PG_READER,
+      });
+      expect(Object.keys(result).map(Number)).toEqual([1, 3]);
+    });
+
+    it('getStorylinesInfinite: the level filter is the higher of chapter 1 and the title', async () => {
+      await getStorylinesInfinite({
+        filter: 'all',
+        sort: 'newest',
+        limit: 20,
+        viewer: { id: STRANGER },
+        browsingLevel: PG_READER,
+      });
+      const [strings, ...values] = r.$queryRaw.mock.calls[0] as unknown as [
+        TemplateStringsArray,
+        ...unknown[]
+      ];
+      const { sql } = Prisma.sql(strings, ...(values as Prisma.Sql[]));
+      expect(sql).toContain(
+        `OR (GREATEST(COALESCE(NULLIF(rp."nsfwLevel", 0), st."maxNsfwLevel"), ` +
+          `COALESCE(st."moderatorNsfwLevel", st."nsfwLevel")) & ?::int) <> 0)`
+      );
+    });
+  });
+
+  describe('scanning the title', () => {
+    it('scans a new storyline once it is created', async () => {
+      w.post.findUnique.mockResolvedValue(publishedPost({ userId: OWNER }) as never);
+      w.storyline.create.mockResolvedValue({ id: 10 } as never);
+      w.storylineChapter.create.mockResolvedValue({ id: 20 } as never);
+      await createStoryline({ postId: 500, title: 't', maxNsfwLevel: R, userId: OWNER });
+      expect(scanEntityInBackground.mock.calls).toEqual([
+        [{ entityType: 'Storyline', entityId: 10 }],
+      ]);
+    });
+
+    it('does not scan a storyline that was never created', async () => {
+      w.post.findUnique.mockResolvedValue(publishedPost({ userId: STRANGER }) as never);
+      await expect(
+        createStoryline({ postId: 500, title: 't', maxNsfwLevel: R, userId: OWNER })
+      ).rejects.toThrow();
+      expect(scanEntityInBackground).not.toHaveBeenCalled();
+    });
+
+    it('rescans when the title changes, and only then', async () => {
+      w.storyline.findUnique.mockResolvedValue(storylineRow({ title: 'Old' }) as never);
+      w.storyline.update.mockResolvedValue(storylineRow() as never);
+      await updateStoryline({ id: 10, title: 'Old', userId: OWNER });
+      await updateStoryline({ id: 10, status: 'Complete', userId: OWNER });
+      expect(scanEntityInBackground).not.toHaveBeenCalled();
+      await updateStoryline({ id: 10, title: 'New', userId: OWNER });
+      expect(scanEntityInBackground.mock.calls).toEqual([
+        [{ entityType: 'Storyline', entityId: 10 }],
+      ]);
+    });
+  });
+
+  describe('moderateStorylineTitle', () => {
+    beforeEach(() => {
+      w.storyline.findUnique.mockResolvedValue({ tosViolationByScan: true } as never);
+      w.storyline.updateMany.mockResolvedValue({ count: 1 } as never);
+      w.storyline.findUniqueOrThrow.mockResolvedValue({ id: 10 } as never);
+      loadTextScanTextHash.mockResolvedValue('hash-now');
+    });
+
+    it("lifts the scan's takedown and records the text it was lifted for", async () => {
+      await moderateStorylineTitle({ id: 10, liftScanTakedown: true });
+      expect(loadTextScanTextHash).toHaveBeenCalledWith('Storyline', 10);
+      expect(w.storyline.updateMany.mock.calls).toEqual([
+        [
+          {
+            where: { id: 10, tosViolationByScan: true },
+            data: {
+              moderatorNsfwLevel: undefined,
+              tosViolation: false,
+              tosViolationByScan: false,
+              scanFlagLiftedTextHash: 'hash-now',
+            },
+          },
+        ],
+      ]);
+    });
+
+    it("refuses to lift a moderator's takedown", async () => {
+      w.storyline.findUnique.mockResolvedValue({ tosViolationByScan: false } as never);
+      await expect(
+        moderateStorylineTitle({ id: 10, liftScanTakedown: true })
+      ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+      expect(w.storyline.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("refuses when the takedown stopped being the scan's in between", async () => {
+      w.storyline.updateMany.mockResolvedValue({ count: 0 } as never);
+      await expect(
+        moderateStorylineTitle({ id: 10, liftScanTakedown: true })
+      ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    });
+
+    it.each([
+      ['sets', R],
+      ['hands back to the scan', null],
+    ])('%s the rating without touching a takedown', async (_name, level) => {
+      w.storyline.findUnique.mockResolvedValue({ tosViolationByScan: false } as never);
+      await moderateStorylineTitle({ id: 10, moderatorNsfwLevel: level });
+      expect(w.storyline.updateMany.mock.calls).toEqual([
+        [{ where: { id: 10 }, data: { moderatorNsfwLevel: level } }],
+      ]);
+      expect(loadTextScanTextHash).not.toHaveBeenCalled();
+    });
+
+    it('refuses a rating that is not one level', async () => {
+      await expect(
+        moderateStorylineTitle({ id: 10, moderatorNsfwLevel: PG | R })
+      ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+      expect(w.storyline.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('is not found for a storyline that does not exist', async () => {
+      w.storyline.findUnique.mockResolvedValue(null as never);
+      await expect(moderateStorylineTitle({ id: 10, moderatorNsfwLevel: R })).rejects.toMatchObject(
+        { code: 'NOT_FOUND' }
+      );
     });
   });
 });

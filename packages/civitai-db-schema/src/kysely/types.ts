@@ -4547,6 +4547,26 @@ export type Storyline = {
    * through their posts.
    */
   tosViolation: Generated<boolean>;
+  /**
+   * Set with `tosViolation` by the title scan, which lifts it again on a clean rescan. A
+   * takedown by a moderator leaves this false, so no scan ever lifts it.
+   */
+  tosViolationByScan: Generated<boolean>;
+  /**
+   * The title text a moderator lifted a scan takedown for, as `textScanTextHash`. A scan of
+   * the same text does not take it down again; an edited title is scanned afresh.
+   */
+  scanFlagLiftedTextHash: string | null;
+  /**
+   * The title's rating from the text scan, a single `NsfwLevel` flag (0 until scanned). A
+   * reader is shown the story only if their browsing level admits the higher of this and
+   * chapter 1's level.
+   */
+  nsfwLevel: Generated<number>;
+  /**
+   * A moderator's ruling on the title's rating; used in place of `nsfwLevel` when set.
+   */
+  moderatorNsfwLevel: number | null;
   createdAt: Generated<Timestamp>;
   updatedAt: Timestamp;
   /**

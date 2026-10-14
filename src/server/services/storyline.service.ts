@@ -13,6 +13,8 @@ import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { isPlacementBlocked } from '~/server/services/placement-moderation.service';
 import { enforceBlockedBrowsingTags } from '~/server/services/blocked-browsing-tags.service';
 import { placementPriceRanges } from '~/server/services/placement.service';
+import { loadTextScanTextHash } from '~/server/services/text-scan/actions/appeal-text-hash';
+import { scanEntityInBackground } from '~/server/services/text-scan/submit';
 import { logToAxiom } from '~/server/logging/client';
 import {
   getAllHiddenForUser,
@@ -102,9 +104,16 @@ const toCastUser = <T extends { bannedAt: Date | null; deletedAt: Date | null }>
   ...user
 }: T) => user;
 
+/** The title's rating, as the text scan or a moderator set it. */
+const storylineTitleLevelSelect = {
+  nsfwLevel: true,
+  moderatorNsfwLevel: true,
+} satisfies Prisma.StorylineSelect;
+
 /** What the read paths need to decide whether the storyline is hidden from a viewer. */
 const storylineReadSelect = {
   ...storylineSelect,
+  ...storylineTitleLevelSelect,
   user: { select: { id: true, username: true, bannedAt: true, deletedAt: true } },
   // The first chapter's level is the story's level for the reader's browsing-level gate.
   chapters: {
@@ -185,21 +194,28 @@ const outsideBrowsingLevel = (nsfwLevel: number, browsingLevel: number) =>
 
 /**
  * Whether the story as a whole is outside the reader's browsing level, in which case nothing of
- * it is served: not its title, its cast, its path or its forks. The story is judged by its first
- * chapter, or by its ceiling when that chapter is gone or unrated. The owner and moderators are
- * exempt, as they are from every storyline-level hide.
+ * it is served: not its title, its cast, its path or its forks. The story is judged by the higher
+ * of its first chapter (its ceiling when that chapter is gone or unrated) and its title's rating.
+ * The owner and moderators are exempt, as they are from every storyline-level hide.
  */
 function isStorylineOutsideLevel(
   storyline: {
     userId: number;
     maxNsfwLevel: number;
+    nsfwLevel: number;
+    moderatorNsfwLevel: number | null;
     chapters: { post: { nsfwLevel: number } | null }[];
   },
   viewer: Viewer,
   browsingLevel: number
 ) {
   if (viewer?.isModerator || viewer?.id === storyline.userId) return false;
-  const storyLevel = storyline.chapters[0]?.post?.nsfwLevel || storyline.maxNsfwLevel;
+  // A title level is one flag, so comparing it with chapter 1's mask as integers compares it with
+  // that mask's highest flag.
+  const storyLevel = Math.max(
+    storyline.chapters[0]?.post?.nsfwLevel || storyline.maxNsfwLevel,
+    storyline.moderatorNsfwLevel ?? storyline.nsfwLevel
+  );
   return outsideBrowsingLevel(storyLevel, browsingLevel);
 }
 
@@ -453,8 +469,9 @@ export async function createStoryline({
   if (!isStorylineCeilingLevel(maxNsfwLevel)) throw throwBadRequestError('Invalid maximum rating');
   await throwOnBlockedUserContent(title, { isModerator, surface: 'storyline' });
 
+  let created: { id: number; rootChapterId: number };
   try {
-    return await dbWrite.$transaction(async (tx) => {
+    created = await dbWrite.$transaction(async (tx) => {
       await assertPostCanBeChapter(tx, { postId, authorId: userId, maxNsfwLevel });
       const storyline = await tx.storyline.create({
         data: { userId, title, maxNsfwLevel, whoCanContinue },
@@ -483,6 +500,8 @@ export async function createStoryline({
     if (isUniqueViolation(error)) throw throwBadRequestError('This post is already in a storyline');
     throw error;
   }
+  scanEntityInBackground({ entityType: 'Storyline', entityId: created.id });
+  return created;
 }
 
 export async function updateStoryline({
@@ -534,7 +553,7 @@ export async function updateStoryline({
   // raising it again brings them back.
   // Closing a Complete storyline to continuations is left to the placement layer reading the
   // status, so there is no second switch here to disagree with it.
-  return dbWrite.storyline.update({
+  const updated = await dbWrite.storyline.update({
     where: { id },
     data: {
       title,
@@ -546,6 +565,59 @@ export async function updateStoryline({
       heroImagePosition,
     },
     select: { ...storylineSelect, ...storylinePicksSelect },
+  });
+  // An edited title is how an owner has a title verdict looked at again.
+  if (title !== undefined && title !== current.title)
+    scanEntityInBackground({ entityType: 'Storyline', entityId: id });
+  return updated;
+}
+
+/**
+ * A moderator's ruling on a storyline's title. `moderatorNsfwLevel` stands in for the scan's
+ * rating (null hands it back to the scan). `liftScanTakedown` lifts a takedown the title scan
+ * made, and records the title text so a scan of the same text, a redelivered verdict included,
+ * does not take it down again. A takedown a moderator made is not lifted here.
+ */
+export async function moderateStorylineTitle({
+  id,
+  moderatorNsfwLevel,
+  liftScanTakedown,
+}: {
+  id: number;
+  moderatorNsfwLevel?: number | null;
+  liftScanTakedown?: boolean;
+}) {
+  if (moderatorNsfwLevel != null && !isStorylineCeilingLevel(moderatorNsfwLevel))
+    throw throwBadRequestError('Invalid rating');
+  const storyline = await dbWrite.storyline.findUnique({
+    where: { id },
+    select: { tosViolationByScan: true },
+  });
+  if (!storyline) throw throwNotFoundError('Storyline not found');
+  if (liftScanTakedown && !storyline.tosViolationByScan)
+    throw throwBadRequestError('This storyline was not taken down by its title scan');
+
+  const lift = liftScanTakedown
+    ? {
+        tosViolation: false,
+        tosViolationByScan: false,
+        scanFlagLiftedTextHash: await loadTextScanTextHash('Storyline', id),
+      }
+    : {};
+  // Conditional on the flag still being the scan's, so a takedown made in between is kept.
+  const { count } = await dbWrite.storyline.updateMany({
+    where: { id, ...(liftScanTakedown ? { tosViolationByScan: true } : {}) },
+    data: { moderatorNsfwLevel, ...lift },
+  });
+  if (!count) throw throwBadRequestError('This storyline was not taken down by its title scan');
+  return dbWrite.storyline.findUniqueOrThrow({
+    where: { id },
+    select: {
+      id: true,
+      tosViolation: true,
+      tosViolationByScan: true,
+      ...storylineTitleLevelSelect,
+    },
   });
 }
 
@@ -1158,6 +1230,7 @@ export async function getStorylinesForPosts({
             userId: true,
             maxNsfwLevel: true,
             tosViolation: true,
+            ...storylineTitleLevelSelect,
             user: { select: { bannedAt: true, deletedAt: true } },
             chapters: { where: { depth: 0 }, select: { post: { select: { nsfwLevel: true } } } },
           },
@@ -1839,8 +1912,9 @@ export async function getStorylinesInfinite({
 
   const where: Prisma.Sql[] = [
     Prisma.sql`(${isModerator} OR st."userId" = ${viewerId} OR (st."tosViolation" = false AND u."bannedAt" IS NULL AND u."deletedAt" IS NULL))`,
-    // The story's level: chapter 1's, or the ceiling when chapter 1 is gone or unrated.
-    Prisma.sql`(${isModerator} OR st."userId" = ${viewerId} OR (COALESCE(NULLIF(rp."nsfwLevel", 0), st."maxNsfwLevel") & ${browsingLevel}::int) <> 0)`,
+    // The story's level, as isStorylineOutsideLevel: the higher of chapter 1's (the ceiling when
+    // chapter 1 is gone or unrated) and the title's.
+    Prisma.sql`(${isModerator} OR st."userId" = ${viewerId} OR (GREATEST(COALESCE(NULLIF(rp."nsfwLevel", 0), st."maxNsfwLevel"), COALESCE(st."moderatorNsfwLevel", st."nsfwLevel")) & ${browsingLevel}::int) <> 0)`,
   ];
   // One array parameter, not one bind per id: the list can run to tens of thousands.
   if (excluded.length) where.push(Prisma.sql`st."userId" <> ALL(${excluded}::int[])`);

@@ -99,6 +99,12 @@ const DEFAULTS: Record<string, () => Row> = {
     lastError: null,
     createdAt: new Date(),
   }),
+  storyline: () => ({
+    tosViolationByScan: false,
+    scanFlagLiftedTextHash: null,
+    nsfwLevel: 0,
+    moderatorNsfwLevel: null,
+  }),
   storylineChapter: () => ({
     postId: null,
     placementId: null,

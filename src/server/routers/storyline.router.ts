@@ -3,6 +3,7 @@ import {
   createStorylineSchema,
   getStorylinesInfiniteSchema,
   joinStorylineEarlyAccessSchema,
+  moderateStorylineTitleSchema,
   storylineBranchChoiceSchema,
   getStorylineSchema,
   getStorylinesForPostsSchema,
@@ -27,6 +28,7 @@ import {
   getStorylinesForPosts,
   getStorylinesInfinite,
   joinStorylineEarlyAccess,
+  moderateStorylineTitle,
   recordStorylineBranchChoice,
   recordStorylineCreateClick,
   removeStorylineCollaborator,
@@ -149,6 +151,10 @@ export const storylineRouter = router({
   ),
 
   getEarlyAccessStats: moderatorProcedure.query(() => getStorylineEarlyAccessStats()),
+
+  moderateTitle: moderatorProcedure
+    .input(moderateStorylineTitleSchema)
+    .mutation(({ input }) => moderateStorylineTitle(input)),
 
   create: storylineWriteProcedure
     .input(createStorylineSchema)

@@ -71,6 +71,8 @@ const xStory = {
   status: 'Ongoing',
   maxNsfwLevel: NsfwLevel.X,
   tosViolation: false,
+  nsfwLevel: 0,
+  moderatorNsfwLevel: null,
   createdAt: new Date('2026-10-01'),
   user: { id: OWNER, username: 'owner', ...notBanned },
   chapters: [{ id: 1, postId: 101, post: { nsfwLevel: NsfwLevel.X } }],

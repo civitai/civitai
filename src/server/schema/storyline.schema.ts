@@ -85,3 +85,15 @@ export const getStorylinesInfiniteSchema = z.object({
   limit: z.number().int().min(1).max(50).default(20),
   browsingLevel: z.number().int().min(0).optional(),
 });
+
+export const moderateStorylineTitleSchema = z
+  .object({
+    id: z.number().int().positive(),
+    /** null hands the title's rating back to the scan. */
+    moderatorNsfwLevel: ceilingSchema.nullable().optional(),
+    liftScanTakedown: z.literal(true).optional(),
+  })
+  .refine((input) => input.moderatorNsfwLevel !== undefined || input.liftScanTakedown, {
+    message: 'Nothing to change',
+  });
+export type ModerateStorylineTitleInput = z.infer<typeof moderateStorylineTitleSchema>;
