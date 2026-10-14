@@ -153,3 +153,33 @@ describe('appStorageScopeErrors', () => {
     ]);
   });
 });
+
+/**
+ * Owner-written collections are refused by the feature switch before any scope rule runs,
+ * so these pin what the rules do the day `ownerWrites` flips — a path production cannot
+ * reach yet and the validator-level tests therefore cannot see.
+ */
+describe('owner-written collections (feature on)', () => {
+  const OWNER_ON = { ...APP_STORAGE_ENABLED_FEATURES, ownerWrites: true };
+  const plays = { visibility: 'shared', write: 'owner', counters: ['plays'] };
+
+  it('do not need apps:storage:publish — viewers do not author them', () => {
+    const parsed = parseManifestStorage({ storage: { collections: { plays } } }, OWNER_ON);
+    expect(parsed.errors).toEqual([]);
+    expect(appStorageScopeErrors(['apps:storage'], parsed)).toEqual([]);
+    expect(appStorageScopeErrors(['apps:storage', 'apps:storage:publish'], parsed)).toEqual([
+      'scopes includes apps:storage:publish but no storage collection is shared with write "own" or "anyone" — remove the scope, or declare the collection it is for',
+    ]);
+  });
+
+  it('refuse dailyWritesPerAuthor', () => {
+    expect(
+      parseManifestStorage(
+        { storage: { collections: { plays: { ...plays, dailyWritesPerAuthor: 5 } } } },
+        OWNER_ON
+      ).errors
+    ).toEqual([
+      'storage.collections.plays.dailyWritesPerAuthor does not apply to write "owner" — only the app owner writes that collection',
+    ]);
+  });
+});

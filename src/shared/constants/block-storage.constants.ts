@@ -22,7 +22,7 @@
  */
 
 /** The scope every app that declares a collection must request. Consent-exempt. */
-export const APP_STORAGE_SCOPE = 'apps:storage';
+export const APP_STORAGE_BASE_SCOPE = 'apps:storage';
 /**
  * The scope that lets a viewer create or edit documents OTHER viewers read, under the
  * viewer's own identity. Sensitive (needs a `scopeJustifications` entry) and consent-gated.
@@ -353,6 +353,10 @@ function parseCollection(
   const sharedOnly = (field: string) =>
     errors.push(`${at}.${field} applies only to shared collections`);
 
+  // Counters are SHARED-ONLY by decision, not by necessity: a counter is a tally on a
+  // document that many viewers increment, and on a private collection only one viewer can
+  // ever touch the document, so a counter there is a plain field of `data`. Refusing it
+  // keeps one name from meaning two things; relaxing it later breaks no manifest.
   let counters: string[] = [];
   if (raw.counters !== undefined) {
     if (!shared) sharedOnly('counters');
@@ -540,7 +544,7 @@ export function collectionNeedsPublishScope(collection: DeclaredStorageCollectio
  * declares nothing, so a scope rule evaluated against it would report a second, misleading
  * problem.
  *
- * - Declaring any collection requires {@link APP_STORAGE_SCOPE}.
+ * - Declaring any collection requires {@link APP_STORAGE_BASE_SCOPE}.
  * - Declaring a shared collection whose `write` is not `owner` requires
  *   {@link APP_STORAGE_PUBLISH_SCOPE}.
  * - REFUSED, not warned: requesting either scope with nothing in `storage` for it to
@@ -558,11 +562,11 @@ export function appStorageScopeErrors(scopes: unknown, parsed: ParsedManifestSto
     .filter(([, c]) => collectionNeedsPublishScope(c))
     .map(([name]) => name);
 
-  if (names.length > 0 && !declared.has(APP_STORAGE_SCOPE)) {
+  if (names.length > 0 && !declared.has(APP_STORAGE_BASE_SCOPE)) {
     errors.push(
       `storage declares ${names.join(
         ', '
-      )} but scopes does not include ${APP_STORAGE_SCOPE} — add it, or remove storage`
+      )} but scopes does not include ${APP_STORAGE_BASE_SCOPE} — add it, or remove storage`
     );
   }
   if (publishing.length > 0 && !declared.has(APP_STORAGE_PUBLISH_SCOPE)) {
@@ -572,9 +576,9 @@ export function appStorageScopeErrors(scopes: unknown, parsed: ParsedManifestSto
       )} lets viewers write documents other users read, which requires the ${APP_STORAGE_PUBLISH_SCOPE} scope — add it to scopes with a scopeJustifications entry`
     );
   }
-  if (names.length === 0 && declared.has(APP_STORAGE_SCOPE)) {
+  if (names.length === 0 && declared.has(APP_STORAGE_BASE_SCOPE)) {
     errors.push(
-      `scopes includes ${APP_STORAGE_SCOPE} but storage declares no collections — declare them under storage.collections, or remove the scope`
+      `scopes includes ${APP_STORAGE_BASE_SCOPE} but storage declares no collections — declare them under storage.collections, or remove the scope`
     );
   }
   if (publishing.length === 0 && declared.has(APP_STORAGE_PUBLISH_SCOPE)) {

@@ -270,15 +270,58 @@ describe('manifest storage — shape rules', () => {
       manifest({ collections: {} }, [STORAGE]),
       'storage.collections must declare at least one collection (or omit storage)',
     ],
+    [
+      'counters that are not an array',
+      withRequests({ counters: 'plays' }),
+      'storage.collections.requests.counters must be an array of names',
+    ],
+    [
+      'a collection that is not an object',
+      manifest({ collections: { prefs: null } }, [STORAGE]),
+      'storage.collections.prefs must be an object',
+    ],
+    [
+      'storage with no collections key',
+      manifest({}, [STORAGE]),
+      'storage.collections must be an object mapping collection name to declaration',
+    ],
+    [
+      'indexes that are not an object',
+      withPrefs({ indexes: ['status'] }),
+      'storage.collections.prefs.indexes must be an object mapping a field path to its type',
+    ],
     ['storage that is not an object', manifest(['prefs'], [STORAGE]), 'storage must be an object'],
   ])('refuses %s', (_label, m, message) => {
     expect(validate(isolated(m as Record<string, unknown>))).toEqual(refused(message));
     expect(validate(m)).toEqual(refused(message));
   });
 
-  it('reports an unknown storage key alongside the collections it still checks', () => {
-    expect(validate(manifest({ collections: { prefs: PREFS }, quota: 5 }, []))).toEqual(
-      refused('storage.quota is not allowed (storage takes only collections)')
+  it('reports an unknown storage key AND keeps checking the collections', () => {
+    expect(
+      validate(manifest({ collections: { prefs: { visibility: 'public' } }, quota: 5 }, []))
+    ).toEqual(
+      refused(
+        'storage.quota is not allowed (storage takes only collections)',
+        'storage.collections.prefs.visibility is required and must be one of private, shared'
+      )
+    );
+  });
+
+  // Error messages are bounded: a crafted key cannot turn the submit response into a
+  // multi-megabyte message. Keys are cut at 80 characters.
+  it('bounds a long collection name in its error', () => {
+    expect(validate(manifest({ collections: { ['a'.repeat(200)]: PREFS } }, []))).toEqual(
+      refused(
+        `storage.collections key "${'a'.repeat(
+          80
+        )}…" must be lowercase snake_case: a letter, then up to 31 of a-z, 0-9 or _`
+      )
+    );
+  });
+
+  it('bounds a long unknown field name in its error', () => {
+    expect(validate(isolated(withPrefs({ ['x'.repeat(200)]: true })))).toEqual(
+      refused(`storage.collections.prefs.${'x'.repeat(80)}… is not allowed`)
     );
   });
 });
@@ -335,6 +378,16 @@ describe('manifest storage — scope rules', () => {
     ).toEqual(
       refused(
         'storage collection requests lets viewers write documents other users read, which requires the apps:storage:publish scope — add it to scopes with a scopeJustifications entry'
+      )
+    );
+  });
+
+  it('names every collection that needs apps:storage:publish', () => {
+    expect(
+      validate(manifest({ collections: { datasets: DATASETS, items: ITEMS } }, [STORAGE]))
+    ).toEqual(
+      refused(
+        'storage collection datasets, items lets viewers write documents other users read, which requires the apps:storage:publish scope — add it to scopes with a scopeJustifications entry'
       )
     );
   });

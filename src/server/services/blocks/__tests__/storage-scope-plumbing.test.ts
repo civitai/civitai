@@ -11,7 +11,7 @@ import {
 } from '~/shared/constants/block-scope.constants';
 import {
   APP_STORAGE_PUBLISH_SCOPE,
-  APP_STORAGE_SCOPE,
+  APP_STORAGE_BASE_SCOPE,
 } from '~/shared/constants/block-storage.constants';
 import {
   consentGatedScopes,
@@ -45,7 +45,7 @@ const PUBLISH = 'apps:storage:publish';
 
 describe('storage scopes — registry', () => {
   it('the storage module names the same two strings', () => {
-    expect([APP_STORAGE_SCOPE, APP_STORAGE_PUBLISH_SCOPE]).toEqual([BASE, PUBLISH]);
+    expect([APP_STORAGE_BASE_SCOPE, APP_STORAGE_PUBLISH_SCOPE]).toEqual([BASE, PUBLISH]);
   });
 
   it.each([BASE, PUBLISH])('%s is a known scope with no OAuth bit', (scope) => {

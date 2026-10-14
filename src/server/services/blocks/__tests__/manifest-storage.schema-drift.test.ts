@@ -22,6 +22,7 @@ import {
   APP_STORAGE_WRITE_POLICIES,
   parseManifestStorage,
 } from '~/shared/constants/block-storage.constants';
+import { schemaAccepts } from './json-schema-subset.fixture';
 
 /**
  * Drift guard — manifest `storage`.
@@ -36,129 +37,18 @@ import {
  *      the production switch, the cases marked `phased` are the ONLY disagreement allowed,
  *      and in one direction: the schema accepts, the server refuses.
  *
- * The repo has no JSON Schema engine as a dependency, so (2) uses the evaluator below — the
- * one in `manifest-analytics.schema-drift.test.ts` extended with the keywords `storage` uses
- * (`if`/`then`/`else`, `not`, `minimum`/`maximum`, `minProperties`, boolean schemas). 🔴 It
- * THROWS on any keyword it does not implement, so a schema edit that introduces one fails
- * this test instead of being silently ignored.
+ * The repo has no JSON Schema engine as a dependency, so (2) uses the shared evaluator in
+ * `json-schema-subset.fixture.ts`, which THROWS on any keyword it does not implement.
  */
 const REPO_ROOT = path.resolve(__dirname, '../../../../..');
 const SCHEMA_PATH = path.join(REPO_ROOT, 'public/schemas/app-block/v1.json');
 
-type Schema = Record<string, unknown> | boolean;
 type SchemaObject = Record<string, unknown>;
 const schema = JSON.parse(readFileSync(SCHEMA_PATH, 'utf8')) as {
   required: string[];
   properties: Record<string, SchemaObject>;
 };
 const storageSchema = schema.properties.storage;
-
-const ANNOTATIONS = new Set(['description', '$comment']);
-const IMPLEMENTED = new Set([
-  'type',
-  'const',
-  'enum',
-  'properties',
-  'patternProperties',
-  'additionalProperties',
-  'required',
-  'minProperties',
-  'maxProperties',
-  'pattern',
-  'minLength',
-  'maxLength',
-  'minItems',
-  'maxItems',
-  'uniqueItems',
-  'items',
-  'oneOf',
-  'allOf',
-  'not',
-  'if',
-  'then',
-  'else',
-  'minimum',
-  'maximum',
-]);
-
-function typeOf(value: unknown): string {
-  if (value === null) return 'null';
-  if (Array.isArray(value)) return 'array';
-  if (typeof value === 'number') return Number.isInteger(value) ? 'integer' : 'number';
-  return typeof value;
-}
-
-/** Evaluate `value` against the subset of draft 2020-12 the storage schema uses. */
-function schemaAccepts(s: Schema, value: unknown): boolean {
-  if (s === true) return true;
-  if (s === false) return false;
-  for (const key of Object.keys(s)) {
-    if (!IMPLEMENTED.has(key) && !ANNOTATIONS.has(key)) {
-      throw new Error(`schema evaluator does not implement "${key}" — extend it`);
-    }
-  }
-  const t = typeOf(value);
-  if (s.type !== undefined && !(s.type === t || (s.type === 'number' && t === 'integer')))
-    return false;
-  if (Object.hasOwn(s, 'const') && s.const !== value) return false;
-  if (Array.isArray(s.enum) && !s.enum.includes(value)) return false;
-  if (typeof value === 'string') {
-    if (typeof s.pattern === 'string' && !new RegExp(s.pattern, 'u').test(value)) return false;
-    const len = [...value].length;
-    if (typeof s.minLength === 'number' && len < s.minLength) return false;
-    if (typeof s.maxLength === 'number' && len > s.maxLength) return false;
-  }
-  if (typeof value === 'number') {
-    if (typeof s.minimum === 'number' && value < s.minimum) return false;
-    if (typeof s.maximum === 'number' && value > s.maximum) return false;
-  }
-  if (Array.isArray(value)) {
-    if (typeof s.minItems === 'number' && value.length < s.minItems) return false;
-    if (typeof s.maxItems === 'number' && value.length > s.maxItems) return false;
-    if (s.uniqueItems === true) {
-      const seen = new Set(value.map((v) => JSON.stringify(v)));
-      if (seen.size !== value.length) return false;
-    }
-    if (s.items !== undefined && !value.every((v) => schemaAccepts(s.items as Schema, v)))
-      return false;
-  }
-  if (t === 'object') {
-    const obj = value as Record<string, unknown>;
-    const keys = Object.keys(obj);
-    const props = (s.properties ?? {}) as Record<string, Schema>;
-    const patterns = Object.entries((s.patternProperties ?? {}) as Record<string, Schema>);
-    if (typeof s.minProperties === 'number' && keys.length < s.minProperties) return false;
-    if (typeof s.maxProperties === 'number' && keys.length > s.maxProperties) return false;
-    // `Object.hasOwn`, never `in`: `in` walks the prototype.
-    if (Array.isArray(s.required) && !s.required.every((k: string) => Object.hasOwn(obj, k)))
-      return false;
-    for (const k of keys) {
-      // Draft 2020-12: `properties` AND every matching `patternProperties` entry apply;
-      // `additionalProperties` covers only keys matched by neither.
-      const matched = patterns.filter(([re]) => new RegExp(re, 'u').test(k));
-      for (const [, sub] of matched) if (!schemaAccepts(sub, obj[k])) return false;
-      const inProps = Object.hasOwn(props, k);
-      if (inProps && !schemaAccepts(props[k], obj[k])) return false;
-      if (inProps || matched.length > 0) continue;
-      if (s.additionalProperties === false) return false;
-      if (typeof s.additionalProperties === 'object') {
-        if (!schemaAccepts(s.additionalProperties as Schema, obj[k])) return false;
-      }
-    }
-  }
-  if (Array.isArray(s.allOf) && !(s.allOf as Schema[]).every((sub) => schemaAccepts(sub, value)))
-    return false;
-  if (Array.isArray(s.oneOf)) {
-    const matches = (s.oneOf as Schema[]).filter((sub) => schemaAccepts(sub, value)).length;
-    if (matches !== 1) return false;
-  }
-  if (s.not !== undefined && schemaAccepts(s.not as Schema, value)) return false;
-  if (s.if !== undefined) {
-    const branch = schemaAccepts(s.if as Schema, value) ? s.then : s.else;
-    if (branch !== undefined && !schemaAccepts(branch as Schema, value)) return false;
-  }
-  return true;
-}
 
 const ALL_ON = { ownerWrites: true, logCollections: true, ttl: true } as const;
 const parserAccepts = (storage: unknown, features = ALL_ON) =>
@@ -210,12 +100,13 @@ const CASES: Array<[string, unknown, boolean, boolean?]> = [
   ['8 counters, 8 marks', shared({ counters: names(8, 'c'), marks: names(8, 'm') }), true],
   ['32-char segment index path', priv({ indexes: { ['A'.repeat(32)]: 'number' } }), true],
   ['showAuthor false on shared', shared({ showAuthor: false }), true],
-  ['dailyWritesPerAuthor 1 and 1000', shared({ dailyWritesPerAuthor: 1 }), true],
+  ['dailyWritesPerAuthor 1', shared({ dailyWritesPerAuthor: 1 }), true],
   ['dailyWritesPerAuthor 1000', shared({ dailyWritesPerAuthor: 1000 }), true],
   // `constructor` is the Object.prototype member the name pattern admits.
   ['`constructor` collection', { collections: { constructor: { visibility: 'private' } } }, true],
   // accept, but phased
   ['kind log', priv({ kind: 'log' }), true, true],
+  ['kind log with maxEntries 1', priv({ kind: 'log', maxEntries: 1 }), true, true],
   ['kind log with maxEntries 10000', priv({ kind: 'log', maxEntries: 10000 }), true, true],
   ['ttlSeconds 60', priv({ ttlSeconds: 60 }), true, true],
   ['ttlSeconds 31536000', priv({ ttlSeconds: 31536000 }), true, true],

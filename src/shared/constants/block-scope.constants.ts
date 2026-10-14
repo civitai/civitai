@@ -25,6 +25,8 @@
  */
 
 import { TokenScope } from './token-scope.constants';
+// Dependency-free (imports nothing), so this adds no edge to the client graph.
+import { APP_STORAGE_BASE_SCOPE } from './block-storage.constants';
 // 🔴 `import type`, NOT a value import, and the distinction is load-bearing for this
 // module. `app-capabilities.constants` itself imports from `~/server/services/blocks/…`,
 // so a VALUE import would pull a server path into a module this file's own header keeps
@@ -256,10 +258,9 @@ export type BlockScopeString = keyof typeof BLOCK_SCOPE_TO_OAUTH_BIT;
  * those empties out, this family stops needing the manifest refusal at all.
  */
 export const APP_STORAGE_SCOPE_PREFIX = 'apps:storage:';
-const APP_STORAGE_SCOPE_FAMILY = 'apps:storage';
 /** Is `scope` in the app-storage family: `apps:storage` itself or anything under `apps:storage:`? */
 export function isAppStorageScope(scope: string): boolean {
-  return scope === APP_STORAGE_SCOPE_FAMILY || scope.startsWith(APP_STORAGE_SCOPE_PREFIX);
+  return scope === APP_STORAGE_BASE_SCOPE || scope.startsWith(APP_STORAGE_SCOPE_PREFIX);
 }
 export const APP_STORAGE_SCOPES: readonly string[] =
   Object.keys(BLOCK_SCOPE_TO_OAUTH_BIT).filter(isAppStorageScope);

@@ -29,9 +29,11 @@ import {
  * (`block-bridge-auth.service.ts`), which calls it once for all of them. Of those three, the
  * bridge asks for the strip (`consent: 'strip'`); the other two — `resolveSharedContext`
  * (`apps-shared.router.ts`) and `resolveStorageContext` (`apps/app-storage.service.ts`) —
- * re-verify the raw bearer with `consent: 'exempt-only'` and do NOT apply revocations. That is harmless because each authorizes only `apps:storage:*` /
- * `apps:storage:shared:*`, every one of which is consent-exempt, so no marker can ever name a
- * scope they check. It is harmless by a PROPERTY, not by construction, so it is asserted:
+ * re-verify the raw bearer with `consent: 'exempt-only'` and do NOT apply revocations. That is harmless because each authorizes only the four LEGACY storage
+ * scopes (`apps:storage:read|write`, `apps:storage:shared:read|write`), every one of which is
+ * consent-exempt, so no marker can ever name a scope they check. ⚠️ NOT the whole
+ * `apps:storage:` family: `apps:storage:publish` is consent-GATED, so a route authorizing it
+ * must apply revocations and must not reuse either of these two resolvers as they stand. It is harmless by a PROPERTY, not by construction, so it is asserted:
  * `src/server/services/__tests__/no-unguarded-block-rest-token.test.ts` ledgers which seams
  * apply revocations and why the other two need not, and fails if either set moves.
  *
