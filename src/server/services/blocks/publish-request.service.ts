@@ -5116,7 +5116,7 @@ export async function teardownAgentReviewForRequest(publishRequestId: string): P
 
 /**
  * Delete the DOCUMENT-STORE data moderators wrote while running a request for real — every
- * `rev:<publishRequestId>:<moderatorUid>` namespace (`DocStore.purgeReview`), called right after
+ * `rev:<publishRequestId>:<moderatorUid>` namespace (`DocStoreMaintenance.purgeReview`), called right after
  * approve, reject and withdraw. Unconditional: an on-site run-for-real review needs no sandbox
  * preview, so gating on `hadReviewPreview` would leak exactly the data this exists to delete.
  * Requests superseded rather than decided, a purge that fails here, and a write that lands after
@@ -5131,8 +5131,10 @@ export async function teardownReviewStorageForRequest(publishRequestId: string):
       .then((m) => m.recordReviewStorageCleanup(outcome))
       .catch(() => undefined);
   try {
-    const { getDocStore } = await import('~/server/services/apps/doc-store.instance');
-    const { rows } = await getDocStore().purgeReview(publishRequestId);
+    const { getDocStoreMaintenance } = await import(
+      '~/server/services/apps/doc-store-maintenance.instance'
+    );
+    const { rows } = await getDocStoreMaintenance().purgeReview(publishRequestId);
     await recordReviewStorageCleanup(rows > 0 ? 'purged' : 'nothing');
   } catch (err) {
     const { isDocStoreError } = await import('~/server/services/apps/doc-store.types');

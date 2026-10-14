@@ -206,6 +206,17 @@ export function assertShareWritable(
   }
 }
 
+/**
+ * A report cannot be withdrawn. Withdrawing and re-filing would otherwise make a fresh report
+ * after a moderator dismissed the document's reports, so one viewer could re-open it
+ * indefinitely (see DISMISSED REPORTS in the moderation section). Exported so the route refuses
+ * it before spending any budget or reading the viewer's trust; the store runs it on every
+ * `unmark` itself.
+ */
+export function refuseReportWithdrawal(name: string): void {
+  if (name === REPORT_MARK) throw invalid('a report cannot be withdrawn', { mark: name });
+}
+
 /** A key made only of dots (`.`, `..`, …) is a path step to every URL client, not a name. */
 const DOT_ONLY_KEY = /^\.+$/;
 
@@ -789,8 +800,35 @@ type UsageDelta = { bytes: number; docs: number };
 type UserCharge = UsageDelta & { uid: number; ceiling: QuotaCeiling };
 
 export type DocStore = ReturnType<typeof createDocStore>;
+export type DocStoreModeration = ReturnType<typeof createDocStoreModeration>;
 
+/** The store the block-token routes use. It carries no moderator operation. */
 export function createDocStore(deps: DocStoreDeps) {
+  return buildDocStore(deps).store;
+}
+
+/**
+ * The session-moderator operations, as a SEPARATE object from the viewer store, so holding
+ * the block-token API's store gives no path to them. Only `doc-store-moderation.instance.ts`
+ * builds one in production; its importers are pinned by a ledger test.
+ */
+export function createDocStoreModeration(deps: DocStoreDeps) {
+  return buildDocStore(deps).moderation;
+}
+
+/**
+ * Review-namespace MAINTENANCE (`purgeReview`, `listReviewAppIds`), as a separate object from
+ * the viewer store: it runs with the review-maintenance setting that reaches every `rev:` row
+ * of a request, so nothing holding the block-token routes' store may reach it. Only
+ * `doc-store-maintenance.instance.ts` builds one in production; its importers are pinned by
+ * a ledger test (`__tests__/doc-store-maintenance.ledger.test.ts`).
+ */
+export function createDocStoreMaintenance(deps: DocStoreDeps) {
+  return buildDocStore(deps).maintenance;
+}
+export type DocStoreMaintenance = ReturnType<typeof createDocStoreMaintenance>;
+
+function buildDocStore(deps: DocStoreDeps) {
   const limits = deps.limits ?? DEFAULT_DOC_STORE_LIMITS;
   // Settled only by a successful role read; a failed read is retried next call.
   let privileges: 'safe' | 'refused' | undefined;
@@ -1257,6 +1295,7 @@ export function createDocStore(deps: DocStoreDeps) {
     assertCollection(coll);
     assertKey(key);
     assertMarkName(coll, name);
+    refuseReportWithdrawal(name);
     const viewer = requireViewer(ctx);
     return withTx(ctx, async (c) => {
       const doc = await c.query(SQL_SHARE_LOCK_DOC, [ctx.appId, ctx.ns, coll.name, key]);
@@ -1451,7 +1490,7 @@ export function createDocStore(deps: DocStoreDeps) {
     );
   }
 
-  return {
+  const store = {
     get,
     getMany,
     put,
@@ -1462,9 +1501,12 @@ export function createDocStore(deps: DocStoreDeps) {
     mark,
     unmark,
     usage,
-    purgeReview,
-    listReviewAppIds,
     limits,
+  };
+  return {
+    store,
+    moderation: createModeration({ withTx, charge }),
+    maintenance: { purgeReview, listReviewAppIds },
   };
 }
 
@@ -1484,4 +1526,379 @@ function translatePgError(err: unknown): unknown {
     });
   }
   return err;
+}
+
+// ---------------------------------------------------------------------------
+// Moderation — session moderators only
+// ---------------------------------------------------------------------------
+//
+// Reachable only through `createDocStoreModeration` — a separate object from the viewer store
+// the block-token routes hold — built by `doc-store-moderation.instance.ts` and used by
+// `doc-store-moderation.service.ts` behind `moderatorProcedure`. The importer set is pinned by
+// `routers/__tests__/apps-mod-doc-store.router.test.ts` (its ledger case).
+//
+// DISMISSED REPORTS. A moderator who reviews a VISIBLE document and keeps it dismisses its
+// reports: `doc.reports_dismissed_at` records when, and only report marks made after that point
+// count as OPEN (the queue and `reports` below). The marks themselves are kept, so each
+// reporter's own "I reported this" state (`viewer.marks`) stays true. A report is one per user
+// AND cannot be withdrawn (`unmark` refuses `report`), so a reporter cannot re-open a dismissed
+// document by withdrawing and re-filing: only a report from someone who had not reported it
+// re-opens it. Deleting the marks instead would tell reporters they never reported, and let
+// each of them re-open it after every dismissal. Unhide does not touch the point, so it
+// re-surfaces no dismissed report; a hidden document is not dismissable (unhide it first), and
+// the hidden and all views list hidden documents whatever their open count. The point is the dismissing transaction's start time: a report whose own
+// transaction started later is never swept, and one made between the moderator's last look
+// and the click is (the revision binding covers the document's content, not its reports).
+//
+// CROSS-APP WITHOUT A CROSS-APP CONNECTION. Every call here runs in ONE app's
+// transaction through the same `withTx` a viewer call uses: the RLS settings are
+// bound to that (app, ns), the connection is the same least-privilege role, and every
+// statement keeps the `$1`/`$2` isolation shape. Nothing here can name a second app,
+// and RLS would hide its rows if anything tried. A cross-app view (the report queue)
+// is assembled by the caller from one call per app; there is no superuser or
+// BYPASSRLS path.
+//
+// Moderators act on SHARED documents only (`scope_uid = 0`): reports exist only
+// there, and private per-viewer documents are not a moderation surface.
+
+export type ModeratedDocStatus = 'open' | 'hidden' | 'all';
+
+export type ReportedDocRow = {
+  collection: string;
+  key: string;
+  reports: number;
+  createdAt: Date;
+  updatedAt: Date;
+  authorKind: 'user' | 'app' | 'counter';
+  /** Moderators may see it; it must never reach an app. */
+  authorUid: number | null;
+  hiddenAt: Date | null;
+  hiddenBy: number | null;
+  sizeBytes: number;
+  version: number;
+  /** The document's revision (`seq`): pass it back to bind an action to exactly this state. */
+  revision: number;
+};
+
+export type ModeratedDoc = ReportedDocRow & {
+  /** When a moderator last dismissed this document's reports; earlier reports are closed. */
+  reportsDismissedAt: Date | null;
+  data: Record<string, unknown>;
+  /** md5 of the stored jsonb text — what an audit row records instead of the content. */
+  dataMd5: string;
+  counters: Record<string, number>;
+  marks: Record<string, number>;
+};
+
+type ModerationDeps = {
+  withTx: <T>(ctx: DocStoreContext, fn: (c: DocStoreClient) => Promise<T>) => Promise<T>;
+  charge: (
+    c: DocStoreClient,
+    ctx: DocStoreContext,
+    app: UsageDelta,
+    user: UserCharge
+  ) => Promise<number>;
+};
+
+// The queue for one (app, ns). Driven by the report marks through `doc_mark_name_idx`
+// (app_id, ns, name, …), so its cost follows the app's REPORT marks — not its document count,
+// and not its other marks (votes, likes…), which that index skips: documents with at least one
+// OPEN report (made after any dismissal), counted per document. The other mark reads are served
+// by the existing indexes (`markedBy=me` by `doc_mark_user_idx`, a document's own marks by the
+// primary key). $1 app, $2 ns, $3 the report mark name; `statusCond` is a
+// fixed string chosen in `listReported`.
+const sqlModOpenReported = (statusCond: string) => `SELECT d.coll, d.key, d.author_uid,
+    d.author_kind, d.created_at, d.updated_at, d.hidden_at, d.hidden_by, d.size_bytes,
+    d.version, d.seq, count(rm.user_id) AS reports
+  FROM appdata.doc_mark rm
+  JOIN appdata.doc d ON d.app_id = $1 AND d.ns = $2 AND d.coll = rm.coll AND d.scope_uid = 0
+    AND d.key = rm.key
+  WHERE rm.app_id = $1 AND rm.ns = $2 AND rm.name = $3
+    AND (d.reports_dismissed_at IS NULL OR rm.created_at > d.reports_dismissed_at) ${statusCond}
+  GROUP BY d.app_id, d.ns, d.coll, d.scope_uid, d.key`;
+
+// The hidden and all views add every HIDDEN document with NO open report (a document hidden
+// after its reports were dismissed, or hidden without reports), so it stays reachable for
+// unhide or delete. Uses the partial `doc_hidden_idx`, so it reads hidden rows only. $1 app,
+// $2 ns, $3 the report mark name.
+const SQL_MOD_HIDDEN_UNREPORTED = `SELECT hd.coll, hd.key, hd.author_uid, hd.author_kind,
+    hd.created_at, hd.updated_at, hd.hidden_at, hd.hidden_by, hd.size_bytes, hd.version, hd.seq,
+    0::bigint AS reports
+  FROM appdata.doc hd
+  WHERE hd.app_id = $1 AND hd.ns = $2 AND hd.scope_uid = 0 AND hd.hidden_at IS NOT NULL
+    AND NOT EXISTS (SELECT 1 FROM appdata.doc_mark hm
+      WHERE hm.app_id = $1 AND hm.ns = $2 AND hm.coll = hd.coll AND hm.key = hd.key
+        AND hm.name = $3
+        AND (hd.reports_dismissed_at IS NULL OR hm.created_at > hd.reports_dismissed_at))`;
+
+/** The page: the branches above, in the queue order, `LIMIT $4`. */
+const sqlModReported = (open: string, withHiddenUnreported: boolean) => `SELECT q.* FROM (
+  ${open}${withHiddenUnreported ? `\n  UNION ALL\n  ${SQL_MOD_HIDDEN_UNREPORTED}` : ''}
+) q
+ORDER BY q.reports DESC, q.updated_at DESC, q.coll DESC, q.key DESC
+LIMIT $4::int`;
+
+// One shared document as a moderator sees it, hidden or not. $1 app, $2 ns, $3 coll, $4 key
+// $5 the report mark name.
+const SQL_MOD_GET = `SELECT d.coll, d.key, d.data, md5(d.data::text) AS data_md5, d.version, d.seq, d.size_bytes,
+    d.author_uid, d.author_kind, d.created_at, d.updated_at, d.hidden_at, d.hidden_by,
+    d.reports_dismissed_at,
+    (SELECT jsonb_object_agg(t.kind || ':' || t.name, t.count) FROM appdata.doc_tally t
+      WHERE t.app_id = $1 AND t.ns = $2 AND t.coll = d.coll AND t.key = d.key) AS tallies,
+    (SELECT count(*) FROM appdata.doc_mark rm
+      WHERE rm.app_id = $1 AND rm.ns = $2 AND rm.coll = d.coll AND rm.key = d.key AND rm.name = $5
+        AND (d.reports_dismissed_at IS NULL OR rm.created_at > d.reports_dismissed_at)) AS open_reports
+  FROM appdata.doc d
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = 0 AND d.key = $4`;
+
+// Open reports of one shared document. $1 app, $2 ns, $3 coll, $4 key, $5 the report mark name
+const SQL_MOD_OPEN_REPORTS = `SELECT count(*) AS n FROM appdata.doc_mark rm
+  JOIN appdata.doc d ON d.app_id = $1 AND d.ns = $2 AND d.coll = rm.coll AND d.scope_uid = 0 AND d.key = rm.key
+  WHERE rm.app_id = $1 AND rm.ns = $2 AND rm.coll = $3 AND rm.key = $4 AND rm.name = $5
+    AND (d.reports_dismissed_at IS NULL OR rm.created_at > d.reports_dismissed_at)`;
+
+// $1 app, $2 ns, $3 coll, $4 key
+const SQL_MOD_DISMISS = `UPDATE appdata.doc d SET reports_dismissed_at = now()
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = 0 AND d.key = $4`;
+
+// $1 app, $2 ns, $3 coll, $4 key, $5 moderator
+const SQL_MOD_HIDE = `UPDATE appdata.doc d SET hidden_at = now(), hidden_by = $5::int
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = 0 AND d.key = $4`;
+
+// Unhiding is a change a feed reader must see again: the doc takes the new seq, which
+// is above the hide's tombstone. The tombstone row stays (as it does when a deleted key is
+// re-created), so a reader must order a key's doc and tombstone by seq, never treat a
+// tombstone's presence alone as "deleted". $1 app, $2 ns, $3 coll, $4 key, $5 seq
+const SQL_MOD_UNHIDE = `UPDATE appdata.doc d SET hidden_at = NULL, hidden_by = NULL, seq = $5::bigint
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = 0 AND d.key = $4`;
+
+// The moderator's lock read: SQL_LOCK_DOC's columns plus `seq`, the revision an action is
+// bound to. $1 app, $2 ns, $3 coll, $4 key
+const SQL_MOD_LOCK = `SELECT d.version, d.seq, d.author_uid, d.size_bytes, d.hidden_at IS NOT NULL AS hidden
+  FROM appdata.doc d
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = 0 AND d.key = $4
+  FOR UPDATE`;
+
+function assertModTarget(collection: string, key: string): void {
+  if (!B.collectionName.test(collection)) throw invalid('invalid collection name');
+  assertKey(key);
+}
+
+/**
+ * Refuse, under the row lock, an action on any revision other than the one the moderator saw.
+ * The revision is the document's `seq`, not its `version`: `version` restarts at 1 when a key
+ * is deleted and re-created, while `seq` is unique per (app, ns) and changes on every document
+ * write (and on unhide), so a re-created document can never pass for the one that was reviewed.
+ */
+function assertModRevision(row: Record<string, unknown>, ifRevision: number | undefined): void {
+  if (ifRevision !== undefined && Number(row.seq) !== ifRevision) {
+    throw new DocStoreError('version_conflict', 'document changed since it was read', {
+      currentVersion: Number(row.version),
+    });
+  }
+}
+
+/**
+ * The context a moderator operation runs under. A review namespace belongs to the review
+ * itself and is deleted with it (`purgeReview`), so moderation refuses it cleanly
+ * (`invalid_request`) rather than reaching it or failing as a malformed context.
+ */
+function modCtx(appId: string, ns: string): DocStoreContext {
+  if (ns.startsWith('rev:')) {
+    throw invalid('moderation does not act on review namespaces');
+  }
+  return { appId, ns, viewerUid: null };
+}
+
+function createModeration({ withTx, charge }: ModerationDeps) {
+  /**
+   * The first `limit` reported shared documents of ONE app: most reports, then most recently
+   * updated, then collection and key (all descending). The caller asks for one more than it
+   * keeps, to know whether the app was cut off.
+   */
+  async function listReported(
+    appId: string,
+    ns: string,
+    opts: { status: ModeratedDocStatus; limit: number }
+  ): Promise<ReportedDocRow[]> {
+    if (!Number.isSafeInteger(opts.limit) || opts.limit < 1 || opts.limit > B.listLimitMax + 1) {
+      throw invalid(`limit must be 1–${B.listLimitMax + 1}`);
+    }
+    const statusCond =
+      opts.status === 'open'
+        ? 'AND d.hidden_at IS NULL'
+        : opts.status === 'hidden'
+        ? 'AND d.hidden_at IS NOT NULL'
+        : '';
+    // The hidden and all views list every hidden document; the open view needs an open report.
+    const sql = sqlModReported(sqlModOpenReported(statusCond), opts.status !== 'open');
+    const rows = await withTx(
+      modCtx(appId, ns),
+      async (c) => (await c.query(sql, [appId, ns, REPORT_MARK, opts.limit])).rows
+    );
+    return rows.map((r) => ({
+      collection: r.coll as string,
+      key: r.key as string,
+      reports: Number(r.reports),
+      createdAt: new Date(r.created_at as string | Date),
+      updatedAt: new Date(r.updated_at as string | Date),
+      authorKind: r.author_kind as ReportedDocRow['authorKind'],
+      authorUid: r.author_uid === null ? null : Number(r.author_uid),
+      hiddenAt: r.hidden_at ? new Date(r.hidden_at as string | Date) : null,
+      hiddenBy: r.hidden_by === null ? null : Number(r.hidden_by),
+      sizeBytes: Number(r.size_bytes),
+      version: Number(r.version),
+      revision: Number(r.seq),
+    }));
+  }
+
+  /** One shared document, hidden or not, with every tally (the report count included). */
+  async function get(
+    appId: string,
+    ns: string,
+    collection: string,
+    key: string
+  ): Promise<ModeratedDoc | null> {
+    assertModTarget(collection, key);
+    const row = await withTx(
+      modCtx(appId, ns),
+      async (c) => (await c.query(SQL_MOD_GET, [appId, ns, collection, key, REPORT_MARK])).rows[0]
+    );
+    if (!row) return null;
+    const counters: Record<string, number> = {};
+    const marks: Record<string, number> = {};
+    for (const [k, v] of Object.entries((row.tallies ?? {}) as Record<string, number | string>)) {
+      const sep = k.indexOf(':');
+      (k.slice(0, sep) === 'counter' ? counters : marks)[k.slice(sep + 1)] = Number(v);
+    }
+    return {
+      collection: row.coll as string,
+      key: row.key as string,
+      data: row.data as Record<string, unknown>,
+      dataMd5: row.data_md5 as string,
+      // Open reports only; `marks.report` keeps the all-time count.
+      reports: Number(row.open_reports),
+      reportsDismissedAt: row.reports_dismissed_at
+        ? new Date(row.reports_dismissed_at as string | Date)
+        : null,
+      createdAt: new Date(row.created_at as string | Date),
+      updatedAt: new Date(row.updated_at as string | Date),
+      authorKind: row.author_kind as ReportedDocRow['authorKind'],
+      authorUid: row.author_uid === null ? null : Number(row.author_uid),
+      hiddenAt: row.hidden_at ? new Date(row.hidden_at as string | Date) : null,
+      hiddenBy: row.hidden_by === null ? null : Number(row.hidden_by),
+      sizeBytes: Number(row.size_bytes),
+      version: Number(row.version),
+      revision: Number(row.seq),
+      counters,
+      marks,
+    };
+  }
+
+  /**
+   * Hide (or unhide) one shared document. A hidden document reads as not found to the
+   * app (`VISIBLE`) and keeps its data, tallies, marks and quota charge, so the action
+   * is reversible. A hide takes the next seq into a tombstone, so a feed reader drops
+   * the document; an unhide gives the document the next seq, so the reader sees it
+   * again. Already in the requested state: `changed: false`, nothing written. With
+   * `ifRevision`, a document at any other revision (`seq`) is refused (`version_conflict`).
+   */
+  async function setHidden(
+    appId: string,
+    ns: string,
+    collection: string,
+    key: string,
+    hidden: boolean,
+    moderatorUid: number,
+    opts: { ifRevision?: number } = {}
+  ): Promise<{ changed: boolean; seq: number | null }> {
+    assertModTarget(collection, key);
+    if (!(Number.isSafeInteger(moderatorUid) && moderatorUid > 0)) {
+      throw new Error('doc-store: malformed moderator id');
+    }
+    const ctx = modCtx(appId, ns);
+    return withTx(ctx, async (c) => {
+      const row = (await c.query(SQL_MOD_LOCK, [appId, ns, collection, key])).rows[0];
+      if (!row) throw new DocStoreError('not_found', 'document not found');
+      assertModRevision(row, opts.ifRevision);
+      if (row.hidden === hidden) return { changed: false, seq: null };
+      // No bytes move; the charge only takes the next seq under the usage_app lock (LOCK ORDER (2)).
+      const noCharge = { uid: 0, bytes: 0, docs: 0, ceiling: 'app' as const };
+      if (hidden) {
+        await c.query(SQL_MOD_HIDE, [appId, ns, collection, key, moderatorUid]);
+        const seq = await charge(c, ctx, { bytes: 0, docs: 0 }, noCharge);
+        await c.query(SQL_TOMBSTONE, [appId, ns, collection, 0, key, seq]);
+        return { changed: true, seq };
+      }
+      const seq = await charge(c, ctx, { bytes: 0, docs: 0 }, noCharge);
+      await c.query(SQL_MOD_UNHIDE, [appId, ns, collection, key, seq]);
+      return { changed: true, seq };
+    });
+  }
+
+  /**
+   * Dismiss the document's open reports (it was reviewed and kept): later reports open it
+   * again. Bound to the revision like the other actions. Returns how many were open.
+   */
+  async function dismissReports(
+    appId: string,
+    ns: string,
+    collection: string,
+    key: string,
+    opts: { ifRevision?: number } = {}
+  ): Promise<{ dismissed: number }> {
+    assertModTarget(collection, key);
+    return withTx(modCtx(appId, ns), async (c) => {
+      const row = (await c.query(SQL_MOD_LOCK, [appId, ns, collection, key])).rows[0];
+      if (!row) throw new DocStoreError('not_found', 'document not found');
+      assertModRevision(row, opts.ifRevision);
+      if (row.hidden) {
+        throw invalid('a hidden document is not dismissable; unhide it first');
+      }
+      const open = await c.query(SQL_MOD_OPEN_REPORTS, [appId, ns, collection, key, REPORT_MARK]);
+      await c.query(SQL_MOD_DISMISS, [appId, ns, collection, key]);
+      return { dismissed: Number(open.rows[0]?.n ?? 0) };
+    });
+  }
+
+  /**
+   * Hard-delete one shared document, hidden or not: its index rows go with it (FK
+   * cascade), its tallies and marks are deleted, the app and the charged author are
+   * refunded (a counter-created doc's `author_uid` is the user its creation was charged
+   * to), and a tombstone takes the next seq — the same accounting as an author delete.
+   */
+  async function remove(
+    appId: string,
+    ns: string,
+    collection: string,
+    key: string,
+    opts: { ifRevision?: number } = {}
+  ): Promise<{ deleted: true; sizeBytes: number; seq: number }> {
+    assertModTarget(collection, key);
+    const ctx = modCtx(appId, ns);
+    return withTx(ctx, async (c) => {
+      const row = (await c.query(SQL_MOD_LOCK, [appId, ns, collection, key])).rows[0];
+      if (!row) throw new DocStoreError('not_found', 'document not found');
+      assertModRevision(row, opts.ifRevision);
+      await c.query(SQL_DELETE_DOC, [appId, ns, collection, 0, key]);
+      await c.query(SQL_DELETE_TALLIES, [appId, ns, collection, key]);
+      await c.query(SQL_DELETE_MARKS, [appId, ns, collection, key]);
+      const size = Number(row.size_bytes);
+      const author = row.author_uid === null ? null : Number(row.author_uid);
+      const seq = await charge(
+        c,
+        ctx,
+        { bytes: -size, docs: -1 },
+        // No writer creates a shared doc without an author uid today; an app-authored doc
+        // (owner writes, not built yet) would charge no user, so none is refunded.
+        author === null
+          ? { uid: 0, bytes: 0, docs: 0, ceiling: 'author' }
+          : { uid: author, bytes: -size, docs: -1, ceiling: 'author' }
+      );
+      await c.query(SQL_TOMBSTONE, [appId, ns, collection, 0, key, seq]);
+      return { deleted: true as const, sizeBytes: size, seq };
+    });
+  }
+
+  return { listReported, get, setHidden, dismissReports, delete: remove };
 }

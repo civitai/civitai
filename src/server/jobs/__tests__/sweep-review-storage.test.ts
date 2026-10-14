@@ -2,8 +2,12 @@ import { readFileSync } from 'fs';
 import path from 'path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import type { DocStore } from '~/server/services/apps/doc-store';
-import { createDocStore, reviewNamespace } from '~/server/services/apps/doc-store';
+import type { DocStore, DocStoreMaintenance } from '~/server/services/apps/doc-store';
+import {
+  createDocStore,
+  createDocStoreMaintenance,
+  reviewNamespace,
+} from '~/server/services/apps/doc-store';
 import {
   createPgliteHarness,
   type Harness,
@@ -21,8 +25,10 @@ import { APPDATA_TABLES } from '~/server/services/apps/__tests__/doc-store.sql-s
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
 const live = vi.hoisted(() => ({ store: undefined as unknown }));
-// The job wrapper resolves the process store; point it at this file's.
-vi.mock('~/server/services/apps/doc-store.instance', () => ({ getDocStore: () => live.store }));
+// The job wrapper resolves the process maintenance object; point it at this file's.
+vi.mock('~/server/services/apps/doc-store-maintenance.instance', () => ({
+  getDocStoreMaintenance: () => live.store,
+}));
 // createJob wraps the handler in lock/metric machinery; hand back what the test asserts on.
 vi.mock('../job', () => ({
   createJob: (name: string, cron: string, fn: (ctx: unknown) => unknown) => ({ name, cron, fn }),
@@ -42,6 +48,7 @@ const { sweepReviewStorage, sweepReviewStorageJob } = await import(
 const MODS = [6_101, 6_202];
 let h: Harness;
 let store: DocStore;
+let maint: DocStoreMaintenance;
 const statuses = new Map<string, string>();
 let seq = 0;
 
@@ -75,7 +82,8 @@ async function rows(appId: string, nsLike = 'rev:%'): Promise<number> {
 beforeAll(async () => {
   h = await createPgliteHarness({ rls: true });
   store = createDocStore({ db: h.db });
-  live.store = store;
+  maint = createDocStoreMaintenance({ db: h.db });
+  live.store = maint;
 });
 
 afterAll(async () => {
@@ -84,7 +92,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   // Purge everything a previous test left, so each test lists only its own requests.
-  for (const id of await store.listReviewAppIds({ limit: 1000 })) await store.purgeReview(id);
+  for (const id of await maint.listReviewAppIds({ limit: 1000 })) await maint.purgeReview(id);
   statuses.clear();
   dbMock.dbWrite.appBlockPublishRequest.findMany.mockImplementation(
     async ({ where }: { where: { id: { in: string[] } } }) =>
@@ -108,7 +116,7 @@ describe('sweepReviewStorage', () => {
     expect(pendingRows).toBeGreaterThan(0);
     for (const id of purge) expect(await rows(id)).toBe(pendingRows);
 
-    expect(await sweepReviewStorage({ store })).toEqual({
+    expect(await sweepReviewStorage({ store: maint })).toEqual({
       scanned: 5,
       kept: 1,
       purged: 4,
@@ -126,9 +134,9 @@ describe('sweepReviewStorage', () => {
   it('is idempotent: a second run purges nothing and still leaves the pending request alone', async () => {
     const pending = await request('pending');
     await request('rejected');
-    await sweepReviewStorage({ store });
+    await sweepReviewStorage({ store: maint });
     const before = await rows(pending);
-    expect(await sweepReviewStorage({ store })).toEqual({
+    expect(await sweepReviewStorage({ store: maint })).toEqual({
       scanned: 1,
       kept: 1,
       purged: 0,
@@ -154,10 +162,10 @@ describe('sweepReviewStorage', () => {
         if (steps > 50) throw new Error('sweep did not terminate');
       },
     };
-    const first = await sweepReviewStorage({ store, batch: 2, page: 1, jobContext });
+    const first = await sweepReviewStorage({ store: maint, batch: 2, page: 1, jobContext });
     expect(first).toMatchObject({ purged: 2, kept: 2 });
     expect(await rows(decided[2])).toBeGreaterThan(0);
-    const second = await sweepReviewStorage({ store, batch: 2, page: 1, jobContext });
+    const second = await sweepReviewStorage({ store: maint, batch: 2, page: 1, jobContext });
     expect(second).toMatchObject({ purged: 1, kept: 2 });
     expect(await rows(decided[2])).toBe(0);
   });
@@ -165,11 +173,11 @@ describe('sweepReviewStorage', () => {
   it('a failed purge is counted, the run continues, and the next run finishes it', async () => {
     const stuck = await request('rejected');
     const fine = await request('rejected');
-    const flaky: DocStore = {
-      ...store,
+    const flaky: DocStoreMaintenance = {
+      ...maint,
       purgeReview: async (id: string) => {
         if (id === stuck) throw new Error('lock timeout');
-        return store.purgeReview(id);
+        return maint.purgeReview(id);
       },
     };
     const counter = async (outcome: string) => {
@@ -187,23 +195,23 @@ describe('sweepReviewStorage', () => {
     });
     expect(await rows(fine)).toBe(0);
     expect(await rows(stuck)).toBeGreaterThan(0);
-    expect(await sweepReviewStorage({ store })).toMatchObject({ purged: 1, failed: 0 });
+    expect(await sweepReviewStorage({ store: maint })).toMatchObject({ purged: 1, failed: 0 });
     expect(await rows(stuck)).toBe(0);
   });
 
   it('purges only final statuses: a status it does not know is kept', async () => {
     const unknown = await request('changes_requested');
     const before = await rows(unknown);
-    expect(await sweepReviewStorage({ store })).toMatchObject({ kept: 1, purged: 0 });
+    expect(await sweepReviewStorage({ store: maint })).toMatchObject({ kept: 1, purged: 0 });
     expect(await rows(unknown)).toBe(before);
   });
 
   it('a store with no connection stops the run (storage_disabled), it does not count a failure per request', async () => {
-    await expect(sweepReviewStorage({ store: createDocStore({ db: null }) })).rejects.toMatchObject(
-      {
-        code: 'storage_disabled',
-      }
-    );
+    await expect(
+      sweepReviewStorage({ store: createDocStoreMaintenance({ db: null }) })
+    ).rejects.toMatchObject({
+      code: 'storage_disabled',
+    });
   });
 
   it('every statement the sweep sent passed the recorder', () => {
@@ -244,7 +252,7 @@ describe('sweepReviewStorageJob', () => {
   });
 
   it('FAIL-OPEN: no store connection returns { disabled }, any other error returns { error }', async () => {
-    live.store = createDocStore({ db: null });
+    live.store = createDocStoreMaintenance({ db: null });
     try {
       expect(await job.fn({ checkIfCanceled: () => undefined })).toEqual({ disabled: true });
       live.store = {
@@ -254,7 +262,7 @@ describe('sweepReviewStorageJob', () => {
       };
       expect(await job.fn({ checkIfCanceled: () => undefined })).toEqual({ error: true });
     } finally {
-      live.store = store;
+      live.store = maint;
     }
   });
 });

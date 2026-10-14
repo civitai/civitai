@@ -1,8 +1,8 @@
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { recordReviewStorageSweep } from '~/server/metrics/app-block-runtime.metrics';
-import type { DocStore } from '~/server/services/apps/doc-store';
-import { getDocStore } from '~/server/services/apps/doc-store.instance';
+import type { DocStoreMaintenance } from '~/server/services/apps/doc-store';
+import { getDocStoreMaintenance } from '~/server/services/apps/doc-store-maintenance.instance';
 import { isDocStoreError } from '~/server/services/apps/doc-store.types';
 import type { JobContext } from './job';
 import { createJob } from './job';
@@ -21,7 +21,7 @@ import { createJob } from './job';
  *   - a request whose row no longer exists (deleted with its submitter's account).
  *
  * It lists the requests that still hold review data from the store (a review-maintenance read,
- * `DocStore.listReviewAppIds`), reads their status from the PRIMARY — a replica that has not
+ * `DocStoreMaintenance.listReviewAppIds`), reads their status from the PRIMARY — a replica that has not
  * yet seen a new request would read it as missing, and missing means "purge" — and purges each
  * one that is approved, rejected or withdrawn, or whose row is gone. A pending request is never
  * touched. Idempotent: a purged request no longer lists.
@@ -57,13 +57,13 @@ export type SweepReviewStorageResult = {
 /** Core sweep, exported for tests (the service-fn + thin-job-wrapper split of the sibling reapers). */
 export async function sweepReviewStorage(
   opts: {
-    store?: DocStore;
+    store?: DocStoreMaintenance;
     batch?: number;
     page?: number;
     jobContext?: Pick<JobContext, 'checkIfCanceled'>;
   } = {}
 ): Promise<SweepReviewStorageResult> {
-  const store = opts.store ?? getDocStore();
+  const store = opts.store ?? getDocStoreMaintenance();
   const batch = opts.batch ?? REVIEW_STORAGE_SWEEP_BATCH;
   const page = opts.page ?? REVIEW_STORAGE_SWEEP_PAGE;
   const result: SweepReviewStorageResult = { scanned: 0, kept: 0, purged: 0, failed: 0 };

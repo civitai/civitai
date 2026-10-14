@@ -90,6 +90,14 @@ CREATE TABLE IF NOT EXISTS appdata.doc (
   CONSTRAINT doc_version_positive CHECK (version >= 1)
 );
 
+-- When a moderator last dismissed the document's reports (reviewed and kept): only report
+-- marks made after it count as open. NULL = never dismissed. A separate ADD COLUMN so a
+-- re-apply over a table created before the column existed still adds it.
+ALTER TABLE appdata.doc ADD COLUMN IF NOT EXISTS reports_dismissed_at timestamptz;
+-- The moderators' hidden view: hidden documents only (few), so it never reads the whole app.
+CREATE INDEX IF NOT EXISTS doc_hidden_idx
+  ON appdata.doc (app_id, ns, scope_uid, coll, key) WHERE hidden_at IS NOT NULL;
+
 -- `author=me` lists.
 CREATE INDEX IF NOT EXISTS doc_author_idx
   ON appdata.doc (app_id, ns, coll, scope_uid, author_uid, key);
@@ -175,6 +183,11 @@ CREATE TABLE IF NOT EXISTS appdata.doc_mark (
   CONSTRAINT doc_mark_scope_nonempty CHECK (app_id <> '' AND ns <> ''),
   CONSTRAINT doc_mark_pkey PRIMARY KEY (app_id, ns, coll, key, name, user_id)
 );
+-- The moderators' report queue: every mark of ONE name in an app (`report`), without reading
+-- the app's other marks. Neither the primary key nor `doc_mark_user_idx` has `name` right
+-- after (app_id, ns). One more btree entry per mark write.
+CREATE INDEX IF NOT EXISTS doc_mark_name_idx
+  ON appdata.doc_mark (app_id, ns, name, coll, key);
 -- `markedBy=me` lists and account deletion.
 CREATE INDEX IF NOT EXISTS doc_mark_user_idx
   ON appdata.doc_mark (app_id, ns, coll, user_id, name, key);

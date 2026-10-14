@@ -37,6 +37,7 @@ import {
 import {
   assertCollection,
   assertShareWritable,
+  refuseReportWithdrawal,
   type DocStore,
 } from '~/server/services/apps/doc-store';
 import { resolveStorageAccess, type StorageAccess } from '~/server/services/apps/doc-store-access';
@@ -771,6 +772,8 @@ async function run(
     }
     case 'mark':
     case 'unmark': {
+      // Before any budget or trust lookup: a withdrawal is a 400 for everyone.
+      if (route.op === 'unmark') refuseReportWithdrawal(route.name);
       const uid = requireViewer(access);
       if (route.op === 'mark') parseBody(markBody, body);
       await charge('tally', access, req);

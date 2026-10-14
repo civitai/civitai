@@ -741,6 +741,15 @@
         },
         {
           "as": "v2@A",
+          "method": "DELETE",
+          "path": "/posts/p1/marks/report",
+          "expect": {
+            "status": 400,
+            "code": "invalid_request"
+          }
+        },
+        {
+          "as": "v2@A",
           "method": "PUT",
           "path": "/posts/p1/marks/star",
           "expect": {
