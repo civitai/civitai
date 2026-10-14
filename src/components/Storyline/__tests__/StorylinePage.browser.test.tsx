@@ -236,6 +236,20 @@ describe('StorylinePage', () => {
     );
   });
 
+  // The server answers the owner "closed" because they never continue their own storyline; the
+  // page must not tell them their storyline is closed.
+  test('the owner is not told their open storyline is closed', async () => {
+    mocks.storyline = { ...STORYLINE, viewerRole: 'owner' };
+    mocks.terms = { open: false, closedReason: 'closed', price: 0 };
+    renderWithProviders(<StorylinePage id={2} />);
+
+    await expect.element(heading()).toBeVisible();
+    expect(testIds('storyline-closed-chip')).toEqual([]);
+    expect(page.getByRole('region', { name: 'About continuing' }).element().textContent).toContain(
+      'Anyone can continue.'
+    );
+  });
+
   // Chapter 1 hidden from this reader: its post, cover and thread must not be reached through
   // the storyline, even though getById carries rootPostId.
   test('a hidden chapter 1 shows no link, cover or thread', async () => {

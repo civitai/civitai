@@ -2,7 +2,6 @@ import { ActionIcon, Alert, Button, Container, Skeleton, Text, Title } from '@ma
 import {
   IconBook2,
   IconGitFork,
-  IconMessageCircle,
   IconPlayerPlayFilled,
   IconPlus,
   IconSettings,
@@ -48,6 +47,9 @@ export function StorylinePage({ id }: { id: number }) {
   // from this reader, Continue is not offered: continuing an earlier one would make a side branch.
   const lastPost = mainPath.at(-1)?.post ?? null;
   const terms = useStorylineContinueTerms(lastPost?.id);
+  // The server tells the owner "closed": they add chapters directly, never as a continuation.
+  // That is about them, not the storyline, so the owner is shown no closed chip or sentence.
+  const shownTerms = storyline?.viewerRole === 'owner' ? null : terms;
   const cover = useStorylineFirstImage(rootPost?.id ?? null);
 
   if (storylineQuery.isLoading) return <StorylinePageSkeleton />;
@@ -69,7 +71,7 @@ export function StorylinePage({ id }: { id: number }) {
           cover={cover}
           rootPostId={rootPost?.id ?? null}
           lastPostId={lastPost?.id ?? null}
-          terms={terms}
+          terms={shownTerms}
         />
 
         <div className="grid grid-cols-1 items-start gap-5 md:grid-cols-[minmax(0,1fr)_320px]">
@@ -77,16 +79,13 @@ export function StorylinePage({ id }: { id: number }) {
           {/* Spans both rows on desktop; on a phone it comes before the discussion. */}
           <div className="flex flex-col gap-5 md:col-start-2 md:row-span-2 md:row-start-1">
             <StorylineContributors contributors={storyline.contributors} />
-            <StorylineAboutContinuing storyline={storyline} terms={terms} />
+            <StorylineAboutContinuing storyline={storyline} terms={shownTerms} />
           </div>
           {rootPost && (
-            <Section
-              icon={<IconMessageCircle size={18} />}
-              title="Discussion"
-              id="storyline-discussion"
-            >
+            // The thread brings its own "Comments" heading; the card only names the region.
+            <section aria-label="Discussion" className={clsx(cardClass, 'p-3.5 sm:p-5')}>
               <PostComments postId={rootPost.id} userId={storyline.user.id} />
-            </Section>
+            </section>
           )}
         </div>
       </Container>
@@ -157,12 +156,13 @@ function StorylineHeader({
             size="sm"
           />
         </div>
-        <div className="flex flex-col gap-2 sm:flex-row">
+        <div className="flex flex-wrap gap-2">
           {rootPostId && (
             <Button
               component={Link}
               href={`/posts/${rootPostId}`}
               size="lg"
+              className="grow basis-[140px] sm:grow-0 sm:basis-auto"
               leftSection={<IconPlayerPlayFilled size={18} />}
             >
               Start reading
@@ -172,6 +172,7 @@ function StorylineHeader({
             <Button
               variant="default"
               size="lg"
+              className="grow basis-[140px] sm:grow-0 sm:basis-auto"
               leftSection={<IconPlus size={18} />}
               onClick={() => openStorylineContinueModal({ parentPostId: lastPostId })}
             >
@@ -184,7 +185,7 @@ function StorylineHeader({
               size={50}
               radius="md"
               aria-label="Manage"
-              className="self-start sm:self-auto"
+              className="shrink-0"
               onClick={() => openStorylineManageModal({ storylineId: storyline.id })}
             >
               <IconSettings size={20} />
