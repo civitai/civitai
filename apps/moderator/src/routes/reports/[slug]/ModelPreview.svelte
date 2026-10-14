@@ -1,9 +1,7 @@
 <script lang="ts">
   import { browser } from '$app/environment';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
-  import { IconPlayerPlayFilled } from '@tabler/icons-svelte';
-  import EdgeImage from '$lib/components/EdgeImage.svelte';
-  import { getVideoUrls } from '$lib/media/edge-url';
+  import EdgeMedia from '$lib/components/EdgeMedia.svelte';
   import Lightbox from '$lib/components/Lightbox.svelte';
   import type { LightboxItem } from '$lib/lightbox';
   import { bytes, dateTime } from '$lib/format';
@@ -37,16 +35,6 @@
   // Images only: `Lightbox` renders through `EdgeImage`, which cannot play a video. Videos play inline.
   // The parent keys this component on the report, so an open frame cannot carry over to another model.
   let openIndex = $state<number | null>(null);
-
-  /**
-   * The one video playing, or null. 🔴 THUMBNAILS ARE STILL FRAMES, AND A VIDEO PLAYS ONLY WHEN CLICKED.
-   * The grid used `EdgeMedia` → `EdgeVideo`, which autoplays whatever is on screen and loops it:
-   * twelve tiles meant up to twelve videos decoding at once, and every loop restarted the decode. Mods
-   * reported the whole page freezing, and freezing again on each loop. One player, with controls, no
-   * loop, nothing fetched until it is asked for. The parent keys this component on the report, so a
-   * playing video stops when the report changes.
-   */
-  let playingId = $state<number | null>(null);
 
   const lightboxItems = (p: ModelPreview): LightboxItem[] =>
     p.images
@@ -97,8 +85,11 @@
           {#each p.images as image (image.id)}
             {@const lightboxIndex = items.findIndex((i) => i.id === image.url)}
             <div class="relative aspect-square overflow-hidden rounded-md border bg-muted/40">
-              <!-- `anim={false}` on every thumbnail: an animated WebP or GIF in the grid costs what a
-                   looping video does, and the still frame is enough to decide whether to open it. -->
+              <!-- `anim={false}` on every tile. On a video it means `EdgeVideo` never plays by itself:
+                   poster and play icon, nothing fetched until hover or click, no loop. The default
+                   autoplays what is in view and loops it, and a grid of those decoded every video at once
+                   and again on each loop — mods reported the page freezing. On an image it is the still
+                   frame, since an animated WebP or GIF costs the same. -->
               {#if image.type === 'image'}
                 <button
                   type="button"
@@ -106,51 +97,22 @@
                   aria-label={`Enlarge image #${image.id}`}
                   onclick={() => (openIndex = lightboxIndex)}
                 >
-                  <EdgeImage
+                  <EdgeMedia
                     src={image.url}
+                    type="image"
                     width={320}
                     anim={false}
-                    loading="lazy"
                     class="h-full w-full object-cover"
                   />
                 </button>
-              {:else if playingId === image.id}
-                {@const urls = getVideoUrls(image.url, { width: 450 })}
-                <video
-                  class="h-full w-full bg-black object-contain"
-                  poster={urls.poster}
-                  controls
-                  autoplay
-                  muted
-                  playsinline
-                  disablepictureinpicture
-                  preload="auto"
-                  onended={() => (playingId = null)}
-                >
-                  <source src={urls.webm} type="video/webm" />
-                  <source src={urls.mp4} type="video/mp4" />
-                </video>
               {:else}
-                <button
-                  type="button"
-                  class="relative h-full w-full"
-                  aria-label={`Play video #${image.id}`}
-                  onclick={() => (playingId = image.id)}
-                >
-                  <EdgeImage
-                    src={image.url}
-                    width={320}
-                    anim={false}
-                    loading="lazy"
-                    class="h-full w-full object-cover"
-                  />
-                  <span
-                    class="absolute inset-0 flex items-center justify-center bg-black/25 text-white"
-                    aria-hidden="true"
-                  >
-                    <IconPlayerPlayFilled size={28} />
-                  </span>
-                </button>
+                <EdgeMedia
+                  src={image.url}
+                  type="video"
+                  width={320}
+                  anim={false}
+                  class="h-full w-full object-cover"
+                />
               {/if}
               {#if image.blocked}
                 <span class="absolute inset-x-0 bottom-0 bg-black/70 px-1 text-center text-[10px]">

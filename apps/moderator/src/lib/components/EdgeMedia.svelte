@@ -11,18 +11,30 @@
     thumbnailUrl?: string | null;
     threshold?: number;
     muted?: boolean;
+    /** Videos with `anim={false}` only: play after a second's hover. See `EdgeVideo`. */
+    hoverPlay?: boolean;
     alt?: string;
     class?: string;
   };
 
-  let { src, name, type, thumbnailUrl, threshold, muted, alt, class: className, ...options }: Props =
-    $props();
+  let {
+    src,
+    name,
+    type,
+    thumbnailUrl,
+    threshold,
+    muted,
+    hoverPlay,
+    alt,
+    class: className,
+    ...options
+  }: Props = $props();
 
   const resolved = $derived(getInferredMediaType(src, { name, type }));
 </script>
 
 {#if resolved === 'video'}
-  <EdgeVideo {src} {name} {thumbnailUrl} {threshold} {muted} class={className} {...options} />
+  <EdgeVideo {src} {name} {thumbnailUrl} {threshold} {muted} {hoverPlay} class={className} {...options} />
 {:else}
   <EdgeImage {src} {name} type="image" {alt} class={className} {...options} />
 {/if}
