@@ -700,6 +700,7 @@ type Bundle = {
   consentRevocationRefusalsTotal: Counter<string>;
   consentMarkerUnavailableTotal: Counter<string>;
   storageManifestUnparseableTotal: Counter<string>;
+  reviewStorageCleanupTotal: Counter<string>;
   bridgeRateLimitRefusalsTotal: Counter<string>;
   postSubjectRefusalsTotal: Counter<string>;
   stepPriceCheckTotal: Counter<string>;
@@ -1166,6 +1167,16 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
     []
   );
 
+  // One increment per review-storage teardown attempt (publish-request.service.ts
+  // `teardownReviewStorageForRequest`), by outcome. `failed` is review data left behind until
+  // a later attempt for the same request; it is the one outcome to alert on.
+  const reviewStorageCleanupTotal = getOrCreateCounter(
+    reg,
+    'civitai_app_block_review_storage_cleanup_total',
+    'Deletions of the document-store review namespaces of a publish request leaving pending, by outcome: purged (data deleted), nothing (no review data), skipped_pending (request still pending, refused), disabled (no usable store connection), failed (data left behind; logged)',
+    ['outcome']
+  );
+
   // 🔴 THE ONLY SERIES ON THIS PLATFORM THAT COUNTS A BRIDGE RATE-LIMIT REFUSAL, and it
   // exists because every ceiling on the tRPC bridge was previously UNGRADEABLE. The one
   // App Blocks request counter, `civitai_app_block_requests_total` above, is incremented
@@ -1405,6 +1416,7 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
     consentRevocationRefusalsTotal,
     consentMarkerUnavailableTotal,
     storageManifestUnparseableTotal,
+    reviewStorageCleanupTotal,
     bridgeRateLimitRefusalsTotal,
     postSubjectRefusalsTotal,
     stepPriceCheckTotal,
@@ -1729,6 +1741,21 @@ export function recordStorageManifestUnparseable(): void {
     ensureRegisterAppBlockRuntimeMetrics().storageManifestUnparseableTotal.inc();
   } catch {
     /* instrument-only — never let a metrics error change a refusal into a 500 */
+  }
+}
+
+export type ReviewStorageCleanupOutcome =
+  | 'purged'
+  | 'nothing'
+  | 'skipped_pending'
+  | 'disabled'
+  | 'failed';
+
+export function recordReviewStorageCleanup(outcome: ReviewStorageCleanupOutcome): void {
+  try {
+    ensureRegisterAppBlockRuntimeMetrics().reviewStorageCleanupTotal.inc({ outcome });
+  } catch {
+    /* instrument-only — a metrics error must never fail a moderator decision */
   }
 }
 

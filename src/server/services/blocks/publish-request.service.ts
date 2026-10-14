@@ -59,6 +59,7 @@ import {
 // build-callback's.
 import { sanitizeBuildFailureReason } from './build-failure-reason';
 import type { BuildAttemptSignals } from '~/shared/constants/app-block-build.constants';
+import type { ReviewStorageCleanupOutcome } from '~/server/metrics/app-block-runtime.metrics';
 
 // dbRead/dbWrite/newUlid/bundle-s3 are dynamically imported inside the
 // functions that need them so the pure helpers (extract/diff) can be
@@ -1630,6 +1631,8 @@ export async function withdrawRequest(opts: {
     // an agent can run without a sandbox preview, so this must not be gated on
     // hadReviewPreview. Idempotent no-op when no agent was dispatched.
     void teardownAgentReviewForRequest(publishRequestId);
+    // Review document-store data — unconditional for the same reason (no preview needed).
+    void teardownDecidedReviewStorage([publishRequestId]);
     return;
   }
   if (count === 0) {
@@ -1648,6 +1651,7 @@ export async function withdrawRequest(opts: {
       if (hadReviewPreview) void teardownReviewForRequest(publishRequestId);
       // AGENTIC REVIEW (P1, audit #1) — unconditional agent teardown (idempotent).
       void teardownAgentReviewForRequest(publishRequestId);
+      void teardownDecidedReviewStorage([publishRequestId]);
       return;
     }
     // Raced into approved/rejected → the not-pending guarantee, now true under
@@ -1904,10 +1908,12 @@ export async function recordPendingFromPush(args: {
   // Supersede any OTHER still-pending request for this slug (older sha or a
   // dev submitVersion) so the partial unique index (one pending per slug)
   // doesn't reject the insert and the queue shows the newest unreviewed sha.
+  const supersededIds = await pendingIdsAboutToBeSuperseded({ slug: args.slug, status: 'pending' });
   await dbWrite.appBlockPublishRequest.updateMany({
     where: { slug: args.slug, status: 'pending' },
     data: { status: 'withdrawn' },
   });
+  void teardownDecidedReviewStorage(supersededIds);
 
   // Attribute the row to the app owner (OauthClient.userId). submittedByUserId
   // is required + FK-constrained, and the owner is the most meaningful actor for
@@ -3486,10 +3492,20 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
   // pending-review row for THIS approved sha; withdraw it (and any older
   // pending submission) so the queue reflects that the slug is now approved.
   // Scoped to NOT touch the row we just approved.
+  const supersededIds = await pendingIdsAboutToBeSuperseded({
+    slug: request.slug,
+    status: 'pending',
+    NOT: { id: request.id },
+  });
   await dbWrite.appBlockPublishRequest.updateMany({
     where: { slug: request.slug, status: 'pending', NOT: { id: request.id } },
     data: { status: 'withdrawn' },
   });
+
+  // Review document-store data of this request and of every request it superseded. Here, not
+  // beside the teardowns further down: the decision is durable from the status flip above, and
+  // a build-trigger failure below throws past those (leaving the request approved).
+  void teardownDecidedReviewStorage([request.id, ...supersededIds]);
 
   // (7) Trigger the Tekton build directly from the moderator-approve path.
   // This is the ONLY thing that may ship code to a live block — the webhook
@@ -5105,6 +5121,97 @@ export async function teardownAgentReviewForRequest(publishRequestId: string): P
 }
 
 /**
+ * Delete the DOCUMENT-STORE data moderators wrote while running a request for real — every
+ * `rev:<publishRequestId>:<moderatorUid>` namespace (`DocStore.purgeReview`). Called on EVERY
+ * transition out of `pending` (approve, reject, withdraw, and both supersede paths),
+ * unconditionally: an on-site run-for-real review needs no sandbox preview, so gating on
+ * `hadReviewPreview` would leak exactly the data this exists to delete.
+ *
+ * NEVER throws into the decision path, and is safe to call any number of times: the purge is
+ * idempotent and resumes where a failed attempt stopped, so a retry (this function again, from
+ * any caller) finishes the job. Unless the caller has itself just moved the request out of
+ * `pending` (`decided: true`), it re-reads the status from the primary and refuses a request
+ * that is still pending, so a stray call can never wipe a review in progress. Every outcome is
+ * counted (`civitai_app_block_review_storage_cleanup_total`); a failure is also logged.
+ */
+export async function teardownReviewStorageForRequest(
+  publishRequestId: string,
+  opts: { decided?: boolean } = {}
+): Promise<void> {
+  const recordReviewStorageCleanup = (outcome: ReviewStorageCleanupOutcome) =>
+    import('~/server/metrics/app-block-runtime.metrics')
+      .then((m) => m.recordReviewStorageCleanup(outcome))
+      .catch(() => undefined);
+  try {
+    if (opts.decided !== true) {
+      const { dbWrite } = await import('~/server/db/client');
+      const row = await dbWrite.appBlockPublishRequest.findUnique({
+        where: { id: publishRequestId },
+        select: { status: true },
+      });
+      if (row?.status === 'pending') {
+        await recordReviewStorageCleanup('skipped_pending');
+        return;
+      }
+    }
+    const { getDocStore } = await import('~/server/services/apps/doc-store.instance');
+    const { namespaces } = await getDocStore().purgeReview(publishRequestId);
+    await recordReviewStorageCleanup(namespaces > 0 ? 'purged' : 'nothing');
+  } catch (err) {
+    const { isDocStoreError } = await import('~/server/services/apps/doc-store.types');
+    if (isDocStoreError(err, 'storage_disabled')) {
+      // No store connection (or one the store refuses): nothing can have been written
+      // through it, and nothing can be deleted through it either. Counted, not logged.
+      await recordReviewStorageCleanup('disabled');
+      return;
+    }
+    await recordReviewStorageCleanup('failed');
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[teardownReviewStorageForRequest] review storage cleanup failed (id=${publishRequestId}): ${
+        err instanceof Error ? err.message : String(err)
+      }`
+    );
+  }
+}
+
+/**
+ * `teardownReviewStorageForRequest` for requests the caller has just moved out of `pending`,
+ * one after another (never concurrently, so a decision touching several requests holds at most
+ * one store connection for it). Never throws.
+ */
+async function teardownDecidedReviewStorage(publishRequestIds: string[]): Promise<void> {
+  for (const id of publishRequestIds) {
+    await teardownReviewStorageForRequest(id, { decided: true });
+  }
+}
+
+/**
+ * The ids of the still-`pending` requests a supersede is about to withdraw, so their review
+ * storage can be torn down after it lands. Best-effort: a failed read returns [] (those
+ * requests' review data then waits for a later cleanup) and never blocks the supersede.
+ */
+async function pendingIdsAboutToBeSuperseded(where: {
+  slug: string;
+  status: 'pending';
+  NOT?: { id: string };
+}): Promise<string[]> {
+  try {
+    const { dbWrite } = await import('~/server/db/client');
+    const rows = await dbWrite.appBlockPublishRequest.findMany({ where, select: { id: true } });
+    return rows.map((r) => r.id);
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[pendingIdsAboutToBeSuperseded] could not list superseded requests (slug=${where.slug}): ${
+        err instanceof Error ? err.message : String(err)
+      }`
+    );
+    return [];
+  }
+}
+
+/**
  * MANUAL teardown of a single review preview (the mod-facing "Tear down"
  * action + the way to free a slot when the concurrency cap is hit). Distinct
  * from teardownReviewForRequest (fired from approve/reject) in that it ALSO
@@ -5543,6 +5650,8 @@ export async function rejectRequest(params: RejectRequestParams): Promise<void> 
   // AGENTIC REVIEW (P1, audit #1) — tear down any review AGENT UNCONDITIONALLY
   // (an agent can run without a sandbox preview). Idempotent no-op otherwise.
   void teardownAgentReviewForRequest(row.id);
+  // Review document-store data — unconditional too (an on-site run needs no preview).
+  void teardownDecidedReviewStorage([row.id]);
 
   // POST-COMMIT, best-effort — notify the submitting developer their block was NOT
   // approved, carrying the (already-trimmed) moderator reason so it shows inline on

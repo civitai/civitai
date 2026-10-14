@@ -7,7 +7,7 @@
 //   token kind                          app id                   ns
 //   ordinary (approved app)             the approved AppBlock.id `prod`
 //   `dev` (approved app)                the approved AppBlock.id `dev:<viewer uid>`
-//   `reviewRunForReal` (pending review) the publish request id   `rev:<publish request id>`
+//   `reviewRunForReal` (pending review) the publish request id   `rev:<publish request id>:<viewer uid>`
 //
 // The approved-row read is `resolveStrictAppBlockApproval`, the storage resolvers' one
 // strict predicate: a token for an app that is not approved (including the owner dev
@@ -17,9 +17,11 @@
 // phased feature on: the store refuses a collection that uses a deferred feature at use, and
 // a manifest that does not parse at all answers a retryable 503, never "nothing declared".
 //
-// 🔴 The review branch below is UNREACHABLE from a minted token today: no mint grants a review
-// token the storage scopes. It becomes reachable with per-moderator review namespaces and the
-// deletion of a request's data at approve/reject, in a follow-up change.
+// The review branch is reached by the run-for-real review mint
+// (`REVIEW_RUN_FOR_REAL_MINT_SCOPE_ALLOWLIST`). Its namespace is per MODERATOR as well as per
+// request, so a moderator's shared collections, marks and counters are shared only with
+// themselves, and the request's review data is deleted when it leaves `pending`
+// (`teardownReviewStorageForRequest` in `publish-request.service.ts`).
 import { TRPCError } from '@trpc/server';
 import { sessionClient } from '~/server/auth/session-client';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -32,6 +34,7 @@ import {
 import { isAppBlocksAuthorEnabled } from '~/server/services/app-blocks-flag';
 import { resolveStrictAppBlockApproval } from '~/server/services/blocks/block-approval.service';
 import { assertAppBlocksEnabledForTokenUser } from '~/server/services/blocks/block-token-access.service';
+import { reviewNamespace } from '~/server/services/apps/doc-store';
 import type { DocStoreContext } from '~/server/services/apps/doc-store.types';
 import { DocStoreError } from '~/server/services/apps/doc-store.types';
 import type { SessionUser } from '~/types/session';
@@ -128,9 +131,9 @@ export async function resolveStorageAccess(
   const viewerUid = viewerOf(claims);
   const base = { scopes: claims.scopes, consentUnavailable: opts.consentUnavailable };
 
-  // A moderator running a PENDING app for real: a disposable namespace per publish request,
-  // live only while the request is pending (read from the primary, so a just-landed decision
-  // is not missed), declared by the pending manifest.
+  // A moderator running a PENDING app for real: a disposable namespace per (publish request,
+  // moderator), live only while the request is pending (read from the primary, so a
+  // just-landed decision is not missed), declared by the pending manifest.
   if (claims.reviewRunForReal === true) {
     if (viewerUid === null) throw new DocStoreError('sign_in_required', 'sign in required');
     const publishRequestId = claims.appBlockId;
@@ -151,7 +154,11 @@ export async function resolveStorageAccess(
     }
     return {
       ...base,
-      ctx: { appId: publishRequestId, ns: `rev:${publishRequestId}`, viewerUid },
+      ctx: {
+        appId: publishRequestId,
+        ns: reviewNamespace(publishRequestId, viewerUid),
+        viewerUid,
+      },
       collections: declaredCollections(publishRequestId, pr.manifest),
     };
   }

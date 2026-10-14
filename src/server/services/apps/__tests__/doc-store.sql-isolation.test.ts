@@ -131,6 +131,8 @@ describe('only the doc-store module touches the appdata tables', () => {
     'server/services/apps/__tests__/doc-store.functional.ts',
     'server/services/apps/__tests__/doc-store.pg.test.ts',
     'server/services/apps/__tests__/doc-store.pglite.test.ts',
+    // Reads back every table of a request's review namespaces before and after a purge.
+    'server/services/apps/__tests__/doc-store.review-namespaces.test.ts',
     'server/services/apps/__tests__/doc-store.rls.ts',
     'server/services/apps/__tests__/doc-store.sql-isolation.test.ts',
     'server/services/apps/doc-store.ts',

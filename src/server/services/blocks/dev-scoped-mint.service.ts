@@ -258,6 +258,10 @@ export const REVIEW_MINT_SCOPE_ALLOWLIST: ReadonlySet<string> = new Set<string>(
  *                           per-call budget AND the aggregate session cap below)
  *   - `apps:storage:read`   the mod's OWN per-app KV (see caveat *)
  *   - `apps:storage:write`  the mod's OWN per-app KV (see caveat *)
+ *   - `apps:storage`        the DOCUMENT STORE (`/api/v1/blocks/storage`), in the mod's OWN
+ *                           review namespace (see caveat **)
+ *   - `apps:storage:publish` the document store's shared-collection writes, in that same
+ *                           namespace — so "shared" means shared with the mod alone (**)
  *   - `buzz:read:self`      the mod's OWN balance/ledger (self-bound read)
  *
  * DELIBERATELY WITHHELD (clamped out regardless of what the pending manifest
@@ -296,6 +300,23 @@ export const REVIEW_MINT_SCOPE_ALLOWLIST: ReadonlySet<string> = new Set<string>(
  * preview schema is dropped on the approve/reject teardown. Generation + own-Buzz-read
  * likewise work (self-bound; no approved AppBlock row required).
  *
+ * (**) The DOCUMENT STORE resolves a run-for-real token to the namespace
+ * `rev:<publishRequestId>:<moderatorUid>` (`doc-store-access.ts`; the store refuses a review
+ * namespace paired with any other request or viewer). Two reasons kept these scopes out until
+ * that namespace existed, and both are now closed:
+ *   - ONE `rev:<publishRequestId>` namespace would have been SHARED by every moderator
+ *     reviewing the request — their shared documents, marks, counters and (with `showAuthor`)
+ *     usernames would have crossed between them. Per-moderator namespaces make every
+ *     collection, shared ones included, visible to the reviewing mod alone; that is also why
+ *     the consent-gated `apps:storage:publish` ("every user of the app can read them") has no
+ *     audience here beyond the mod, and why the run-for-real opt-in is the consent for it.
+ *   - NOTHING deleted review data when the request was decided. `teardownReviewStorageForRequest`
+ *     (`publish-request.service.ts`) now deletes every review namespace of the request on each
+ *     transition out of `pending` (approve, reject, withdraw, supersede), best-effort and
+ *     idempotent, like the `apprev_` schema drop above.
+ * The tunnel and private-run ceilings still withhold both: their tokens resolve to no review
+ * namespace (see `PRIVATE_RUN_SUBTRACTED_SCOPES`).
+ *
  * Money-OUT (`social:tip:self`) is excluded SOLELY by its ABSENCE from this
  * allowlist: the clamp keeps only scopes in the allowlist (step b), so a manifest
  * declaring `social:tip:self` gets it dropped for a review mint. NOTE this is NOT
@@ -312,6 +333,8 @@ export const REVIEW_RUN_FOR_REAL_MINT_SCOPE_ALLOWLIST: ReadonlySet<string> = new
   'ai:write:budgeted',
   'apps:storage:read',
   'apps:storage:write',
+  'apps:storage',
+  'apps:storage:publish',
   'buzz:read:self',
 ]);
 
@@ -549,7 +572,7 @@ export const PRIVATE_RUN_FORBIDDEN_SCOPES: ReadonlySet<string> = new Set(['socia
  *     `PRIVATE_RUN_BUZZ_CAP`. Editors are stripped of it at step 3.
  *   - `buzz:read:self` is NOT kept — see the subtractions below.
  *
- * ── THE THREE DELIBERATE SUBTRACTIONS ───────────────────────────────────────────
+ * ── THE DELIBERATE SUBTRACTIONS ─────────────────────────────────────────────────
  * `apps:storage:read` / `apps:storage:write` function under run-for-real ONLY because
  * `resolveStorageContext` resolves a disposable, per-publish-request `apprev_<pubreq>`
  * schema for a token carrying the signed `reviewRunForReal` claim. It grants no such
@@ -557,6 +580,10 @@ export const PRIVATE_RUN_FORBIDDEN_SCOPES: ReadonlySet<string> = new Set(['socia
  * schema or refuse outright — and granting a scope whose proc then refuses it is worse
  * than not granting it, because the block's UI offers a control that cannot work. (Net
  * effect unchanged from the tunnel ceiling, which also excludes both.)
+ *
+ * `apps:storage` / `apps:storage:publish` (the document store) are subtracted for the same
+ * reason: the store's review namespace is selected only by the signed `reviewRunForReal`
+ * claim, and a private run of a non-approved app gets no storage from its resolver at all.
  *
  * 🔴 `buzz:read:self` IS SUBTRACTED TOO, AND THIS ONE IS A REVIEW FINDING RATHER THAN A
  * MECHANICAL CARRY-OVER. It is a consent-gated SENSITIVE scope on the public path, and
@@ -582,9 +609,11 @@ export const PRIVATE_RUN_FORBIDDEN_SCOPES: ReadonlySet<string> = new Set(['socia
  * is the single `ai:write:budgeted` strip for an editor, in `clampPrivateRunScopes`.
  */
 const PRIVATE_RUN_SUBTRACTED_SCOPES: ReadonlySet<string> = new Set([
-  // Only usable under the review sandbox's disposable preview schema.
+  // Only usable under the review sandbox's disposable preview schema / review namespace.
   'apps:storage:read',
   'apps:storage:write',
+  'apps:storage',
+  'apps:storage:publish',
   // Consent-gated, and withheld by the DEFAULT review allowlist for a reason that
   // describes this surface verbatim. See the docblock above.
   'buzz:read:self',
