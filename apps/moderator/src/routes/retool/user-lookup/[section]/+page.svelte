@@ -30,6 +30,7 @@
   import SocialsPanel from '../SocialsPanel.svelte';
   import SubscriptionPanel from '../SubscriptionPanel.svelte';
   import MembershipCodePanel from '../MembershipCodePanel.svelte';
+  import CreatorScoreGrantPanel from '../CreatorScoreGrantPanel.svelte';
   import PayoutsPanel from '../PayoutsPanel.svelte';
   import TimedMutesPanel from '../TimedMutesPanel.svelte';
   import TrainingsPanel from '../TrainingsPanel.svelte';
@@ -173,6 +174,10 @@
       />
     {:else if section === 'leaderboard' || section === 'score'}
       <ReputationPanel stats={result.stats} scores={result.scores} ranks={result.ranks} />
+      <!-- Beside the score it changes, so the moderator grants against the breakdown they are reading. -->
+      {#if data.grants['user.creatorScore.grant']}
+        <CreatorScoreGrantPanel userId={result.identity.id} />
+      {/if}
     {:else if section === 'reports'}
       <ReportsPanel
         userId={result.identity.id}

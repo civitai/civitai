@@ -194,6 +194,8 @@ export type ModEndpoint =
   | 'strike/create'
   | 'text-scan'
   | 'training-data/resolve'
+  | 'user/creator-score-grant'
+  | 'user/creator-score-grant-revoke'
   | 'user/delete'
   | 'user/membership-code'
   | 'user/membership-code-revoke'
@@ -1221,6 +1223,56 @@ export async function revokeMembershipCode(input: {
   if (result.status !== undefined || result.requestNeverSent)
     return { ok: false, error: result.error };
   return { ok: false, error: REVOKE_MAY_HAVE_COMPLETED };
+}
+
+const GRANT_MAY_HAVE_COMPLETED =
+  'Could not confirm the grant. Wait a minute, then check this account’s grant list before granting again.';
+
+// CREATOR SCORE GRANT. The endpoint records the ModActivity row inside the same transaction as the
+// grant, so no `logAction` here.
+export async function grantCreatorScore(input: {
+  userId: number;
+  amount: number;
+  reason: string;
+}): Promise<{ ok: true; total: number } | { ok: false; error: string }> {
+  const result = await callModEndpoint(
+    'user/creator-score-grant',
+    { userId: input.userId, amount: input.amount, reason: input.reason },
+    'Grant Creator Score'
+  );
+  if (!result.ok) {
+    // Not idempotent: a lost response (5xx, 408, or no answer after the request left) may have
+    // granted, and a blind retry grants twice.
+    if (result.status !== undefined && (result.status >= 500 || result.status === 408))
+      return { ok: false, error: GRANT_MAY_HAVE_COMPLETED };
+    if (result.status !== undefined || result.requestNeverSent)
+      return { ok: false, error: result.error };
+    return { ok: false, error: GRANT_MAY_HAVE_COMPLETED };
+  }
+  const { total } = result.body;
+  if (typeof total !== 'number') return { ok: false, error: GRANT_MAY_HAVE_COMPLETED };
+  return { ok: true, total };
+}
+
+const GRANT_REVOKE_MAY_HAVE_COMPLETED =
+  'Could not confirm the revoke. Refresh the grant list before trying again.';
+
+export async function revokeCreatorScoreGrant(input: {
+  userId: number;
+  grantId: number;
+  reason: string;
+}): Promise<ActionResult> {
+  const result = await callModEndpoint(
+    'user/creator-score-grant-revoke',
+    { userId: input.userId, grantId: input.grantId, reason: input.reason },
+    'Revoke Creator Score grant'
+  );
+  if (result.ok) return { ok: true };
+  if (result.status !== undefined && (result.status >= 500 || result.status === 408))
+    return { ok: false, error: GRANT_REVOKE_MAY_HAVE_COMPLETED };
+  if (result.status !== undefined || result.requestNeverSent)
+    return { ok: false, error: result.error };
+  return { ok: false, error: GRANT_REVOKE_MAY_HAVE_COMPLETED };
 }
 
 export async function deleteAccount(input: {

@@ -25,6 +25,8 @@ import {
   sendBuzz,
   mintMembershipCode,
   revokeMembershipCode,
+  grantCreatorScore,
+  revokeCreatorScoreGrant,
   setRewardsEligibility,
   clearProfileText,
   deleteAccount,
@@ -43,6 +45,10 @@ import {
 } from '$lib/server/user-actions.service';
 import { resolveUsername } from '$lib/server/user-lookup.service';
 import { MEMBERSHIP_CODE_MAX_MONTHS, MEMBERSHIP_CODE_TIERS } from '$lib/membership-code';
+import {
+  CREATOR_SCORE_GRANT_MAX_AMOUNT,
+  CREATOR_SCORE_GRANT_REASON_MAX,
+} from '$lib/creator-score-grant';
 import { BUZZ_ENTITY_TYPES } from '../enforcement-options';
 import { PROFILE_FIELD_KEYS, type ProfileField } from '$lib/enforcement';
 
@@ -72,6 +78,8 @@ const contentFail = (message: string) => fail(400, { scope: 'content' as const, 
 const buzzFail = (message: string) => fail(400, { scope: 'buzz' as const, error: message });
 const membershipCodeFail = (message: string) =>
   fail(400, { scope: 'membershipCode' as const, error: message });
+const creatorScoreFail = (message: string) =>
+  fail(400, { scope: 'creatorScore' as const, error: message });
 const shopFail = (message: string) => fail(400, { scope: 'shop' as const, error: message });
 const cosmeticsFail = (message: string) =>
   fail(400, { scope: 'cosmetics' as const, error: message });
@@ -539,6 +547,37 @@ export const actions: Actions = {
     const result = await revokeMembershipCode(input);
     if (!result.ok) return membershipCodeFail(result.error);
     return { success: true, revoked: input.code };
+  }),
+
+  // Bounds are enforced again by the endpoint; these only turn a bad form into a readable refusal.
+  grantCreatorScore: requiresGrant('user.creatorScore.grant', async ({ request }) => {
+    const input = parseForm(
+      userIdSchema.extend({
+        amount: z.coerce.number().int().min(1).max(CREATOR_SCORE_GRANT_MAX_AMOUNT),
+        reason: z.string().trim().min(1).max(CREATOR_SCORE_GRANT_REASON_MAX),
+      }),
+      await request.formData()
+    );
+    if (typeof input === 'string') return creatorScoreFail(input);
+
+    const result = await grantCreatorScore(input);
+    if (!result.ok) return creatorScoreFail(result.error);
+    return { success: true, granted: { amount: input.amount, total: result.total } };
+  }),
+
+  revokeCreatorScoreGrant: requiresGrant('user.creatorScore.grant', async ({ request }) => {
+    const input = parseForm(
+      userIdSchema.extend({
+        grantId: z.coerce.number().int().positive(),
+        reason: z.string().trim().min(1).max(CREATOR_SCORE_GRANT_REASON_MAX),
+      }),
+      await request.formData()
+    );
+    if (typeof input === 'string') return creatorScoreFail(input);
+
+    const result = await revokeCreatorScoreGrant(input);
+    if (!result.ok) return creatorScoreFail(result.error);
+    return { success: true, revoked: input.grantId };
   }),
 
   // Scoped to `account`, not `buzz`: the buttons live in the Admin section's action panel, and a
