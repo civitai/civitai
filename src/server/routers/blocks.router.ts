@@ -5450,7 +5450,7 @@ export const blocksRouter = router({
    *
    * ⚠️ The 60/h `rateLimit` below does NOT bind every caller: the middleware skips moderators
    * (the current flag audience) and non-prod envs. For them the binding server bounds are the
-   * two upload buckets, plus the host's own per-page window.
+   * two upload buckets, plus the host's 8-per-60-s window per page.
    */
   persistAppUploadImage: protectedProcedure
     .meta({ blockApiKeys: true })
