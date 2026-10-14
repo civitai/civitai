@@ -1,13 +1,4 @@
-import {
-  Alert,
-  Badge,
-  Button,
-  Center,
-  Loader,
-  SegmentedControl,
-  Select,
-  Text,
-} from '@mantine/core';
+import { Alert, Badge, Button, Center, Group, Loader, Text } from '@mantine/core';
 import { useMemo, useState } from 'react';
 import { useViewerBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
@@ -18,25 +9,21 @@ import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { NoContent } from '~/components/NoContent/NoContent';
+import { SelectMenuV2 } from '~/components/SelectMenu/SelectMenu';
 import { storylineUrl } from '~/components/Storyline/storyline-routes';
+import { StorylineFiltersDropdown } from '~/components/Storyline/StorylineFiltersDropdown';
+import type { StorylineFeedFilter } from '~/components/Storyline/StorylineFiltersDropdown';
 import type { RouterOutput } from '~/types/router';
 import { trpc } from '~/utils/trpc';
 
 type StorylineCard = RouterOutput['storyline']['getInfinite']['items'][number];
 type CoverImage = ReturnType<typeof useQueryImages>['images'][number];
 
-export const STORYLINE_FEED_FILTERS = [
-  { value: 'all', label: 'All' },
-  { value: 'ongoing', label: 'Ongoing' },
-  { value: 'open', label: 'Open for continuations' },
-  { value: 'complete', label: 'Complete' },
-] as const;
 export const STORYLINE_FEED_SORTS = [
   { value: 'newest', label: 'Newest' },
   { value: 'mostChapters', label: 'Most chapters' },
 ] as const;
 
-type Filter = (typeof STORYLINE_FEED_FILTERS)[number]['value'];
 type Sort = (typeof STORYLINE_FEED_SORTS)[number]['value'];
 
 /** Each storyline's cover is the first image of its chapter 1, read for the whole page at once. */
@@ -61,7 +48,7 @@ function useCovers(items: StorylineCard[], browsingLevel: number) {
 }
 
 export function StorylinesFeed() {
-  const [filter, setFilter] = useState<Filter>('all');
+  const [filter, setFilter] = useState<StorylineFeedFilter>('all');
   const [sort, setSort] = useState<Sort>('newest');
   // The same level the covers are read at, so the list and its covers cannot disagree.
   const browsingLevel = useViewerBrowsingLevelDebounced();
@@ -75,22 +62,20 @@ export function StorylinesFeed() {
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <SegmentedControl
-          aria-label="Show"
-          value={filter}
-          onChange={(value) => setFilter(value as Filter)}
-          data={STORYLINE_FEED_FILTERS.map((f) => ({ value: f.value, label: f.label }))}
-        />
-        <Select
-          aria-label="Sort"
-          w={180}
-          allowDeselect={false}
-          value={sort}
-          onChange={(value) => value && setSort(value as Sort)}
-          data={STORYLINE_FEED_SORTS.map((s) => ({ value: s.value, label: s.label }))}
-        />
-      </div>
+      <Group justify="space-between" align="center" wrap="nowrap">
+        <Text fz="xl" fw={600}>
+          Discover storylines
+        </Text>
+        <Group gap={8} wrap="nowrap">
+          <SelectMenuV2
+            label={STORYLINE_FEED_SORTS.find((s) => s.value === sort)?.label ?? sort}
+            value={sort}
+            onClick={setSort}
+            options={[...STORYLINE_FEED_SORTS]}
+          />
+          <StorylineFiltersDropdown value={filter} onChange={setFilter} />
+        </Group>
+      </Group>
 
       {isLoading ? (
         <Center p="xl">

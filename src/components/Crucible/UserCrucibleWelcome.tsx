@@ -1,9 +1,9 @@
 import { Card, Skeleton, Stack, Text, ThemeIcon } from '@mantine/core';
-import { useEffect, useState } from 'react';
 import clsx from 'clsx';
 import { IconTrophy, IconCoin, IconMedal, IconChartBar, IconThumbUp } from '@tabler/icons-react';
 import { trpc } from '~/utils/trpc';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useIntroDismissed } from '~/hooks/useIntroDismissed';
 import { numberWithCommas } from '~/utils/number-helpers';
 import type { RouterOutput } from '~/types/router';
 import { ActiveCruciblesCarousel } from './ActiveCruciblesCarousel';
@@ -17,24 +17,7 @@ export function UserCrucibleWelcome() {
     {},
     { enabled: !!currentUser }
   );
-  // Starts dismissed so the server render and returning visitors never flash the intro before
-  // localStorage is read.
-  const [introDismissed, setIntroDismissed] = useState(true);
-
-  useEffect(() => {
-    try {
-      setIntroDismissed(localStorage.getItem(INTRO_DISMISSED_KEY) === '1');
-    } catch {
-      setIntroDismissed(false);
-    }
-  }, []);
-
-  const dismissIntro = () => {
-    setIntroDismissed(true);
-    try {
-      localStorage.setItem(INTRO_DISMISSED_KEY, '1');
-    } catch {}
-  };
+  const [introDismissed, dismissIntro] = useIntroDismissed(INTRO_DISMISSED_KEY);
 
   const isFirstTimer = !currentUser || (!isLoading && (stats?.cruciblesEntered ?? 0) === 0);
   if (isFirstTimer && !introDismissed)

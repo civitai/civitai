@@ -3,6 +3,7 @@ import { page } from 'vitest/browser';
 import { renderWithProviders } from '../../../../test/component-setup';
 import type * as TrpcMod from '~/utils/trpc';
 import type * as ImageUtilsMod from '~/components/Image/image.utils';
+import type * as IsMobileMod from '~/hooks/useIsMobile';
 import { StorylinesFeed } from '~/components/Storyline/StorylinesFeed';
 
 /**
@@ -19,6 +20,7 @@ const mocks = vi.hoisted(() => ({
   safe: true,
   failed: false,
   refetch: vi.fn(),
+  mobile: false,
 }));
 
 vi.mock('~/utils/trpc', async (importOriginal) => {
@@ -52,6 +54,11 @@ vi.mock('~/components/Image/image.utils', async (importOriginal) => ({
     return { images: mocks.images };
   },
 }));
+// Picks popover or drawer from the layout container, which the harness does not mount.
+vi.mock('~/hooks/useIsMobile', async (importOriginal) => ({
+  ...(await importOriginal<typeof IsMobileMod>()),
+  useIsMobile: () => mocks.mobile,
+}));
 vi.mock('~/components/ImageGuard/ImageGuard2', () => ({
   ImageGuard2: ({ children }: { children: (safe: boolean) => React.ReactNode }) => (
     <>{children(mocks.safe)}</>
@@ -78,6 +85,7 @@ const card = (id: number, rootPostId: number | null, extra: Record<string, unkno
 
 beforeEach(() => {
   mocks.safe = true;
+  mocks.mobile = false;
   mocks.failed = false;
   mocks.refetch.mockReset();
   mocks.feedInput.mockReset();
@@ -128,15 +136,51 @@ describe('StorylinesFeed', () => {
     ['Ongoing', 'ongoing'],
     ['Open for continuations', 'open'],
     ['Complete', 'complete'],
-  ])('the %s filter is sent to the server as %s', async (label, filter) => {
+  ])('the %s filter is sent to the server as %s once applied', async (label, filter) => {
     renderWithProviders(<StorylinesFeed />);
     await expect.element(page.getByRole('link').first()).toBeVisible();
     expect(mocks.feedInput.mock.lastCall?.[0]).toEqual(expect.objectContaining({ filter: 'all' }));
 
-    await page.getByRole('radiogroup', { name: 'Show' }).getByText(label, { exact: true }).click();
+    await page.getByRole('button', { name: 'Filters' }).click();
+    await page.getByRole('dialog').getByText(label, { exact: true }).click();
+    // Staged: picking a chip alone fetches nothing.
+    expect(mocks.feedInput.mock.lastCall?.[0]).toEqual(expect.objectContaining({ filter: 'all' }));
+
+    await page.getByRole('button', { name: 'Apply filters' }).click();
     await expect
       .poll(() => mocks.feedInput.mock.lastCall?.[0])
       .toEqual(expect.objectContaining({ filter, sort: 'newest' }));
+  });
+
+  test('on a phone the filters open in a drawer and apply the same way', async () => {
+    mocks.mobile = true;
+    renderWithProviders(<StorylinesFeed />);
+    await expect.element(page.getByRole('link').first()).toBeVisible();
+
+    await page.getByRole('button', { name: 'Filters' }).click();
+    await expect.element(page.getByRole('dialog')).toBeVisible();
+    await page.getByRole('dialog').getByText('Complete', { exact: true }).click();
+    await page.getByRole('button', { name: 'Apply filters' }).click();
+    await expect
+      .poll(() => mocks.feedInput.mock.lastCall?.[0])
+      .toEqual(expect.objectContaining({ filter: 'complete' }));
+  });
+
+  test('the Filters button counts an active filter, and "All" counts none', async () => {
+    renderWithProviders(<StorylinesFeed />);
+    const filters = page.getByRole('button', { name: 'Filters' });
+    await expect.element(filters).toBeVisible();
+    const badge = () =>
+      filters
+        .element()
+        .closest('.mantine-Indicator-root')
+        ?.querySelector('.mantine-Indicator-indicator');
+    expect(badge()).toBeFalsy();
+
+    await filters.click();
+    await page.getByRole('dialog').getByText('Complete', { exact: true }).click();
+    await page.getByRole('button', { name: 'Apply filters' }).click();
+    await expect.poll(() => badge()?.textContent).toBe('1');
   });
 
   test('passes the sort to the server', async () => {
@@ -144,13 +188,12 @@ describe('StorylinesFeed', () => {
     await expect.element(page.getByRole('link').first()).toBeVisible();
     expect(mocks.feedInput.mock.lastCall?.[0]).toEqual(expect.objectContaining({ sort: 'newest' }));
 
-    await page.getByText('Open for continuations').click();
-
-    await page.getByRole('textbox', { name: 'Sort' }).click();
-    await page.getByRole('option', { name: 'Most chapters' }).click();
+    await page.getByRole('button', { name: 'Newest' }).click();
+    await page.getByRole('menuitem', { name: 'Most chapters' }).click();
     await expect
       .poll(() => mocks.feedInput.mock.lastCall?.[0])
-      .toEqual(expect.objectContaining({ filter: 'open', sort: 'mostChapters' }));
+      .toEqual(expect.objectContaining({ filter: 'all', sort: 'mostChapters' }));
+    await expect.element(page.getByRole('button', { name: 'Most chapters' })).toBeVisible();
   });
 
   test('an unsafe cover stays blurred', async () => {
