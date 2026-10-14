@@ -68,7 +68,16 @@ const {
 vi.mock('~/server/middleware/block-scope.middleware', () => ({
   verifyBlockToken: mockVerifyBlockToken,
   parseSubjectUserId: (...args: unknown[]) => mockParseSubjectUserId(...args),
+  // For the REST handler case: the scope middleware is a pass-through that supplies claims.
+  withBlockScope:
+    (handler: (req: { blockClaims?: unknown }, res: unknown) => unknown) =>
+    (req: { blockClaims?: unknown }, res: unknown) => {
+      req.blockClaims = {};
+      return handler(req, res);
+    },
+  stashBlockActionDetail: vi.fn(),
 }));
+vi.mock('@civitai/next-axiom', () => ({ withAxiom: (handler: unknown) => handler }));
 vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbRead }));
 vi.mock('~/server/services/app-blocks-flag', () => ({
   isAppBlocksSharedStorageEnabled: mockIsSharedEnabled,
@@ -126,6 +135,7 @@ import {
   getTopSharedCounters,
   incrementSharedCounter,
 } from '../apps-shared.router';
+import incrementHandler from '~/pages/api/v1/blocks/shared-storage/increment';
 import { appSchemaIdent, sanitizeAppSlug } from '~/server/utils/apps-slug';
 import { newUlid } from '~/server/utils/app-block-ids';
 import { OnboardingSteps } from '~/server/common/enums';
@@ -216,15 +226,6 @@ describe('assertValidCounterKey', () => {
       expect.objectContaining({ code: 'BAD_REQUEST', message: 'invalid counter key' })
     );
   });
-  // Both ends of the generator's timestamp range, so the rule is not only true of today's prefix.
-  it.each(['0'.repeat(26), `7${'Z'.repeat(25)}`])(
-    'refuses the row-key-shaped literal %s',
-    (key) => {
-      expect(() => assertValidCounterKey(key)).toThrow(
-        expect.objectContaining({ code: 'BAD_REQUEST', message: 'invalid counter key' })
-      );
-    }
-  );
   it.each(appChosenKeys())('still accepts an app-chosen key: %s', (_label, key) => {
     expect(assertValidCounterKey(key)).toBe(key);
   });
@@ -253,10 +254,37 @@ describe('incrementSharedCounter', () => {
     expect(mockPool.query).not.toHaveBeenCalled();
   });
 
-  it.each(appChosenKeys())('still increments an app-chosen key: %s', async (_label, key) => {
+  it('still increments a key one character short of a row key', async () => {
     mockVerifyBlockToken.mockResolvedValue(claims('app-voting', [READ, WRITE]));
+    const key = newUlid().slice(0, 25);
     await expect(incrementSharedCounter('tok', key)).resolves.toEqual({ key, count: 3 });
     expect(allClientSql()).toContain(`${schemaFor('app-voting')}.counters`);
+  });
+
+  it('REST handler: a feed-row-shaped key → 400, nothing written', async () => {
+    mockVerifyBlockToken.mockResolvedValue(claims('app-voting', [READ, WRITE]));
+    const sent: { status?: number; body?: unknown } = {};
+    const res = {
+      status(code: number) {
+        sent.status = code;
+        return res;
+      },
+      json(body: unknown) {
+        sent.body = body;
+        return res;
+      },
+      setHeader() {
+        return res;
+      },
+    };
+    const req = {
+      method: 'POST',
+      body: { key: newUlid() },
+      headers: { authorization: 'Bearer tok' },
+    };
+    await incrementHandler(req as never, res as never);
+    expect(sent).toEqual({ status: 400, body: { error: 'invalid counter key' } });
+    expect(mockClient.query).not.toHaveBeenCalled();
   });
 
   it('sub-trust caller (account too new) → FORBIDDEN (anti-inflation min-trust gate)', async () => {

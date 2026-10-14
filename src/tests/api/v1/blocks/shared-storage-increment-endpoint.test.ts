@@ -65,8 +65,6 @@ const { mockIncrement, mockStash } = vi.hoisted(() => ({
 }));
 vi.mock('~/server/routers/apps-shared.router', () => ({
   incrementSharedCounter: mockIncrement,
-  // identity — key validation is covered against the real module in apps-shared.counters.test.ts
-  assertValidCounterKey: (k: string) => k,
 }));
 
 import handler from '~/pages/api/v1/blocks/shared-storage/increment';

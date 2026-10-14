@@ -108,7 +108,6 @@ vi.mock('~/server/routers/apps-shared.router', async () => {
   // the same failure mode the numeric bounds note below describes.
   const z = await import('zod');
   return {
-    assertValidCounterKey: vi.fn(),
     incrementSharedCounter: vi.fn(),
     getTopSharedCounters: vi.fn(),
     listSharedRows: vi.fn(),
