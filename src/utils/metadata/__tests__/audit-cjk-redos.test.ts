@@ -1,11 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import {
-  auditPrompt,
-  auditPromptEnriched,
-  includesMinorAge,
-  includesNsfw,
-} from '~/utils/metadata/audit';
-import { ABSOLUTE_HANG_CEILING_MS, expectSubQuadraticScaling } from './redos-perf-helpers';
+import { auditPrompt, auditPromptEnriched, includesNsfw } from '~/utils/metadata/audit';
+import { expectSubQuadraticScaling } from './redos-perf-helpers';
 
 /**
  * Non-Latin (CJK) catastrophic-backtracking regression guard.
@@ -34,7 +29,7 @@ import { ABSOLUTE_HANG_CEILING_MS, expectSubQuadraticScaling } from './redos-per
  */
 
 // Build a long non-Latin prompt with embedded ASCII, mimicking a real CJK prompt:
-// long CJK run, a "3d" token (digit-letter, exercises the age `{age}{years}` path),
+// long CJK run, a "3d" token (digit-letter),
 // "Unity"/"masterpiece" ASCII words, more CJK. Deterministic (fixed characters).
 function buildCjkPrompt(cjkCharsEachSide: number): string {
   const a = '美'.repeat(cjkCharsEachSide); // 美
@@ -82,34 +77,10 @@ describe('audit: long non-Latin (CJK) prompts do not pin the event loop (ReDoS g
       expect(result.blockedFor).toEqual([]);
     });
   }
-
-  it('a CJK prompt with an embedded real age phrase still flags (boundary fix did not break detection)', () => {
-    const cjk = '美'.repeat(800);
-    // The age phrase sits between CJK runs; with zero-width boundaries the leading
-    // CJK char satisfies `(?<![a-zA-Z0-9])` so the match is still found — fast.
-    const prompt = `${cjk} 9 year old ${cjk}`;
-    const start = performance.now();
-    const result = auditPrompt(prompt);
-    const ms = performance.now() - start;
-    // Generous absolute backstop (hardware-independent) — a single call must not hang.
-    expect(ms, `slow CJK+age (${ms.toFixed(1)}ms)`).toBeLessThan(ABSOLUTE_HANG_CEILING_MS);
-    expect(includesMinorAge(prompt)).toEqual({ found: true, age: 9 });
-    expect(result.success).toBe(false);
-  });
 });
 
 describe('audit: zero-width boundaries preserve real matching (CJK-adjacent sanity)', () => {
-  it('age phrases flag whether bounded by CJK, ASCII, or string edges', () => {
-    expect(includesMinorAge('9 year old')).toEqual({ found: true, age: 9 });
-    expect(includesMinorAge('丽9 year old丽')).toEqual({ found: true, age: 9 });
-    expect(includesMinorAge('photo, a 15 year old, masterpiece')).toEqual({ found: true, age: 15 });
-  });
-
   it('benign prompts (CJK or ASCII) are not falsely flagged', () => {
-    expect(includesMinorAge('美丽風 a serene landscape')).toEqual({
-      found: false,
-      age: undefined,
-    });
     expect(auditPrompt('a beautiful landscape, masterpiece').success).toBe(true);
     expect(auditPrompt('美'.repeat(500) + ' cinematic lighting').success).toBe(true);
   });

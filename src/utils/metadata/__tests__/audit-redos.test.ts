@@ -219,7 +219,7 @@ describe('audit ReDoS regression (no catastrophic backtracking)', () => {
       // Pre-fix this was a truncate-then-scan: a banned phrase buried past the cap
       // slipped through (the audit flagged it as success===true). Now an over-length
       // prompt is refused outright, so a buried banned phrase can no longer evade.
-      const blocked = '9 year old girl';
+      const blocked = 'donald j. trump giving a speech';
       const within = auditPrompt(blocked);
       expect(within.success, 'sanity: the marker phrase is blocked within the cap').toBe(false);
 

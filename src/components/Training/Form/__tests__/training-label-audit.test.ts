@@ -37,10 +37,10 @@ describe('auditTrainingLabels', () => {
     });
   });
 
-  it('keeps a minor-age label hard', () => {
+  it('keeps a hard-blocked label hard', () => {
     const result = auditTrainingLabels({
       triggerWord: '',
-      labels: labels(['a.png', '8 year old girl']),
+      labels: labels(['a.png', 'donald j. trump']),
       checkProfanity: true,
     });
     expect(result.severity).toBe('hard');
@@ -50,7 +50,7 @@ describe('auditTrainingLabels', () => {
   it('one hard label poisons an otherwise soft set', () => {
     const result = auditTrainingLabels({
       triggerWord: '',
-      labels: labels(['a.png', 'fagus tree'], ['b.png', '8 year old girl']),
+      labels: labels(['a.png', 'fagus tree'], ['b.png', 'donald j. trump']),
       checkProfanity: true,
     });
     expect(result.severity).toBe('hard');

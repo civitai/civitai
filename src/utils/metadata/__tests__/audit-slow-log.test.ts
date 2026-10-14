@@ -208,7 +208,7 @@ describe('audit RESULT is unaffected by instrumentation', () => {
     { prompt: 'a beautiful landscape, mountains, sunset', success: true },
     { prompt: 'masterpiece, best quality, portrait of a woman', success: true },
     { prompt: 'score_9, year 2025, cyberpunk city', success: true },
-    { prompt: '15 year old girl', success: false }, // minor_age
+    { prompt: 'donald j. trump giving a speech', success: false }, // poi
   ];
 
   it('returns identical results with the threshold high (never logs) vs near-zero (always logs)', async () => {
@@ -227,11 +227,11 @@ describe('audit RESULT is unaffected by instrumentation', () => {
 
   it('auditPromptEnriched triggers/blockedFor are unchanged across thresholds', () => {
     process.env.AUDIT_SLOW_LOG_MS = '999999';
-    const a = auditPromptEnriched('15 year old girl');
+    const a = auditPromptEnriched('donald j. trump giving a speech');
     process.env.AUDIT_SLOW_LOG_MS = '0';
-    const b = auditPromptEnriched('15 year old girl');
+    const b = auditPromptEnriched('donald j. trump giving a speech');
     expect(b).toEqual(a);
     expect(a.success).toBe(false);
-    expect(a.triggers[0].category).toBe('minor_age');
+    expect(a.triggers[0].category).toBe('poi');
   });
 });
