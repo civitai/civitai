@@ -1,6 +1,10 @@
 import { Alert, Anchor, Badge, Button, Card, Group, Stack, Text } from '@mantine/core';
-import { IconCheck, IconStar, IconX } from '@tabler/icons-react';
+import { IconBolt, IconCheck, IconStar, IconX } from '@tabler/icons-react';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
+import {
+  StorylineChapterImage,
+  type StorylineCoverImage,
+} from '~/components/Storyline/StorylineChapterImage';
 import { storylinePriceLabel } from '~/components/Storyline/storyline-ui';
 import { getBrowsingLevelLabel } from '~/shared/constants/browsingLevel.constants';
 import { storylineLevelAllowed } from '~/shared/utils/storyline';
@@ -12,7 +16,13 @@ export type StorylineQueueRow = {
   createdAt: Date | string;
   expiresAt: Date | string | null;
   placer: { id: number; username: string | null } | null;
-  post: { id: number; title: string | null; nsfwLevel: number };
+  /** `coverImage` is `null` when its level is above what this site serves. */
+  post: {
+    id: number;
+    title: string | null;
+    nsfwLevel: number;
+    coverImage?: StorylineCoverImage | null;
+  };
   parentPost: { id: number; title: string | null };
   /** `maxNsfwLevel` marks a row whose rating moved above the ceiling after it was sent. */
   storyline: { id: number; title: string; maxNsfwLevel?: number };
@@ -73,52 +83,93 @@ export function StorylineQueueList({
           busy?.id === row.id && busy.action === action;
 
         return (
-          <Card key={row.id} withBorder data-testid={`storyline-queue-row-${row.id}`}>
-            <Group justify="space-between" wrap="nowrap" align="flex-start">
-              <Stack gap={4} className="min-w-0">
-                <Text size="sm">
-                  <Anchor component={Link} href={`/posts/${row.post.id}`} fw={600} target="_blank">
-                    {row.post.title || 'Untitled post'}
-                  </Anchor>{' '}
-                  by{' '}
-                  <Text span fw={600}>
-                    {row.placer?.username ?? 'Someone'}
+          <Card
+            key={row.id}
+            withBorder
+            radius="lg"
+            shadow="sm"
+            className="bg-gray-0 dark:bg-dark-6"
+            data-testid={`storyline-queue-row-${row.id}`}
+          >
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:gap-4">
+              <Group wrap="nowrap" align="flex-start" gap="md" className="min-w-0 flex-1">
+                {/* Not a link: the guard's blur toggle is a button. The title links to the post. */}
+                <StorylineChapterImage
+                  image={row.post.coverImage}
+                  // Null when withheld above this site's levels; absent when no image can show yet.
+                  hidden={row.post.coverImage == null}
+                  hiddenLabel="Preview not available on this site"
+                  explain={false}
+                  className="aspect-[3/4] w-24 shrink-0"
+                />
+                <Stack gap={4} className="min-w-0 flex-1">
+                  <Text size="sm">
+                    <Anchor
+                      component={Link}
+                      href={`/posts/${row.post.id}`}
+                      fw={600}
+                      target="_blank"
+                    >
+                      {row.post.title || 'Continuation'}
+                    </Anchor>{' '}
+                    by{' '}
+                    <Text span fw={600}>
+                      {row.placer?.username ?? 'Someone'}
+                    </Text>
                   </Text>
-                </Text>
-                <Text size="xs" c="dimmed">
-                  Continues{' '}
-                  <Anchor
-                    component={Link}
-                    href={`/posts/${row.parentPost.id}`}
-                    size="xs"
-                    target="_blank"
-                  >
-                    {row.parentPost.title || 'your chapter'}
-                  </Anchor>{' '}
-                  in {row.storyline.title}
-                </Text>
-                <Group gap={6}>
-                  <Badge size="sm" variant="light" color={overCeiling ? 'red' : 'gray'}>
-                    {row.post.nsfwLevel
-                      ? getBrowsingLevelLabel(row.post.nsfwLevel)
-                      : 'Not rated yet'}
-                  </Badge>
-                  <Badge size="sm" variant="light" color={row.amount > 0 ? 'yellow' : 'green'}>
-                    {storylinePriceLabel(row.amount)}
-                  </Badge>
-                </Group>
-                {overCeiling && (
-                  <Text size="xs" c="red">
-                    Rated above this storyline&apos;s maximum of {getBrowsingLevelLabel(ceiling)}.
+                  <Text size="xs" c="dimmed">
+                    Continues{' '}
+                    <Anchor
+                      component={Link}
+                      href={`/posts/${row.parentPost.id}`}
+                      size="xs"
+                      target="_blank"
+                    >
+                      {row.parentPost.title || 'your chapter'}
+                    </Anchor>{' '}
+                    in {row.storyline.title}
                   </Text>
-                )}
-                <Text size="xs" c="dimmed">
-                  Sent {recentOrDate(row.createdAt)}
-                  {row.expiresAt ? ` — expires ${formatDate(row.expiresAt)}` : ''}
-                </Text>
-              </Stack>
+                  <Group gap={6}>
+                    <Badge
+                      size="sm"
+                      radius="xl"
+                      variant="light"
+                      color={overCeiling ? 'red' : 'gray'}
+                    >
+                      {row.post.nsfwLevel
+                        ? getBrowsingLevelLabel(row.post.nsfwLevel)
+                        : 'Not rated yet'}
+                    </Badge>
+                    {row.amount > 0 ? (
+                      <Badge
+                        size="sm"
+                        radius="xl"
+                        variant="light"
+                        color="yellow"
+                        leftSection={<IconBolt size={12} />}
+                      >
+                        {storylinePriceLabel(row.amount)}
+                      </Badge>
+                    ) : (
+                      <Badge size="sm" radius="xl" variant="light" color="green">
+                        {storylinePriceLabel(row.amount)}
+                      </Badge>
+                    )}
+                  </Group>
+                  {overCeiling && (
+                    <Text size="xs" c="red">
+                      Rated above this storyline&apos;s maximum of {getBrowsingLevelLabel(ceiling)}.
+                    </Text>
+                  )}
+                  <Text size="xs" c="dimmed">
+                    Sent {recentOrDate(row.createdAt)}
+                    {row.expiresAt ? ` — expires ${formatDate(row.expiresAt)}` : ''}
+                  </Text>
+                </Stack>
+              </Group>
 
-              <Stack gap={6} className="w-32 shrink-0">
+              {/* A column beside the row; under it on a phone, where three columns would crush the text. */}
+              <div className="grid grid-cols-3 gap-1.5 sm:flex sm:w-32 sm:shrink-0 sm:flex-col">
                 <Button
                   size="compact-sm"
                   fullWidth
@@ -151,8 +202,8 @@ export function StorylineQueueList({
                 >
                   Decline
                 </Button>
-              </Stack>
-            </Group>
+              </div>
+            </div>
           </Card>
         );
       })}

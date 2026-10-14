@@ -72,8 +72,8 @@ vi.mock('~/components/Search/QuickSearchDropdown', () => ({
 }));
 // The real guard needs the session providers. This one keeps its contract: unless told
 // `explain={false}`, a hidden picture gets an explainer with a Show button.
-vi.mock('~/components/ImageGuard/ImageGuard2', () => ({
-  ImageGuard2: ({
+vi.mock('~/components/ImageGuard/ImageGuard2', () => {
+  const ImageGuard2 = ({
     explain = true,
     children,
   }: {
@@ -85,8 +85,12 @@ vi.mock('~/components/ImageGuard/ImageGuard2', () => ({
       null,
       children(false),
       explain ? React.createElement('button', { type: 'button' }, 'Show') : null
-    ),
-}));
+    );
+  ImageGuard2.BlurToggle = function BlurToggle() {
+    return null;
+  };
+  return { ImageGuard2 };
+});
 vi.mock('~/components/UserAvatar/UserAvatar', () => ({
   UserAvatar: ({ userId }: { userId: number }) =>
     React.createElement('span', null, `user ${userId}`),
@@ -487,6 +491,77 @@ describe('StorylineQueueList rows', () => {
         busy: null,
       })
     );
+
+  it('shows the continuation cover, or says why there is none, and stays actionable', () => {
+    const cover = { id: 9, url: 'u9', nsfwLevel: NsfwLevel.PG, hash: null };
+    const el = list([
+      { ...row(7), post: { ...row(7).post, coverImage: cover } },
+      { ...row(8), post: { ...row(8).post, coverImage: null } },
+    ]);
+    const [withCover, withheld] = [7, 8].map(
+      (id) => el.querySelector(`[data-testid="storyline-queue-row-${id}"]`) as HTMLElement
+    );
+
+    // The guard mock hides every picture; one with no hash fills its slot with stripes.
+    expect(
+      withCover.querySelector('[data-testid="storyline-chapter-image-blurred"]')
+    ).not.toBeNull();
+    expect(withCover.querySelector('[data-testid="storyline-chapter-image-hidden"]')).toBeNull();
+    expect(
+      withheld.querySelector('[data-testid="storyline-chapter-image-hidden-label"]')?.textContent
+    ).toBe('Preview not available on this site');
+    expect(button(withheld, 'Accept').disabled).toBe(false);
+    expect(button(withheld, 'Endorse').disabled).toBe(false);
+  });
+
+  it('puts no control inside the cover and does not wrap it in a link', () => {
+    const cover = {
+      id: 9,
+      url: 'u9',
+      nsfwLevel: NsfwLevel.X,
+      hash: 'LKO2?U%2Tw=w',
+      width: 2,
+      height: 3,
+    };
+    const el = list([{ ...row(7), post: { ...row(7).post, coverImage: cover } }]);
+    const card = el.querySelector('[data-testid="storyline-queue-row-7"]') as HTMLElement;
+
+    // Accept, Endorse, Decline, and nothing from the guard's explainer.
+    expect([...card.querySelectorAll('button')].map((node) => node.textContent)).toEqual([
+      'Accept',
+      'Endorse',
+      'Decline',
+    ]);
+    // The title and the parent chapter; the cover is not a third link.
+    expect(card.querySelectorAll('a')).toHaveLength(2);
+  });
+
+  it('fills a hidden cover with stripes whenever there is nothing to draw', () => {
+    const covers = [
+      { id: 1, url: 'u1', nsfwLevel: NsfwLevel.X, hash: 'LKO2?U%2Tw=w', width: null, height: 3 },
+      { id: 2, url: 'u2', nsfwLevel: NsfwLevel.X, hash: 'LKO2?U%2Tw=w', width: 2, height: null },
+    ];
+    const el = list(
+      covers.map((coverImage, i) => ({ ...row(i + 1), post: { ...row(i + 1).post, coverImage } }))
+    );
+
+    expect(el.querySelectorAll('[data-testid="storyline-chapter-image-blurred"]')).toHaveLength(2);
+  });
+
+  it('says there is no preview when the row carries no cover at all', () => {
+    const el = list([row(5)]);
+
+    expect(
+      el.querySelector('[data-testid="storyline-chapter-image-hidden-label"]')?.textContent
+    ).toBe('Preview not available on this site');
+  });
+
+  it('names an untitled continuation as a continuation by its author', () => {
+    const el = list([{ ...row(9), post: { id: 109, title: null, nsfwLevel: NsfwLevel.PG } }]);
+
+    expect(visibleText(el)).toContain('Continuation by user50');
+    expect(visibleText(el)).not.toContain('Untitled post');
+  });
 
   it('will not endorse a row above the ceiling', () => {
     const el = list([{ ...row(3), post: { id: 103, title: 'Too far', nsfwLevel: NsfwLevel.R } }]);
