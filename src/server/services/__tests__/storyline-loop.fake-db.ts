@@ -1,0 +1,422 @@
+import { Prisma } from '@prisma/client';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+
+/**
+ * An in-memory stand-in for the tables the storyline continuation loop touches,
+ * installed onto the canonical `dbWrite`/`dbRead` mocks, so a test can run the
+ * real submit, approve, settle, edge and read code end to end.
+ *
+ * Strict by design: a `where` operator, a relation or a raw statement it does
+ * not model throws by name instead of matching everything. A fake that answers
+ * a question it was never taught makes the test pass for the wrong reason.
+ *
+ * What it models, because the code under test relies on it:
+ * - interactive transactions that roll every table back when the callback throws;
+ * - unique constraints that throw the real `PrismaClientKnownRequestError` P2002;
+ * - reads that return copies, so a row a caller holds does not change under it;
+ * - nested relation selects with their own `where`, `orderBy` and `take`.
+ */
+
+type Row = Record<string, unknown>;
+type Where = Record<string, unknown>;
+
+type Relation =
+  | { kind: 'one'; model: string; from: string; to: string }
+  | { kind: 'many'; model: string; from: string; to: string };
+
+const RELATIONS: Record<string, Record<string, Relation>> = {
+  placement: { placer: { kind: 'one', model: 'user', from: 'placerId', to: 'id' } },
+  post: {
+    user: { kind: 'one', model: 'user', from: 'userId', to: 'id' },
+    images: { kind: 'many', model: 'image', from: 'id', to: 'postId' },
+    storylineChapter: { kind: 'one', model: 'storylineChapter', from: 'id', to: 'postId' },
+  },
+  storyline: {
+    user: { kind: 'one', model: 'user', from: 'userId', to: 'id' },
+    chapters: { kind: 'many', model: 'storylineChapter', from: 'id', to: 'storylineId' },
+  },
+  storylineChapter: {
+    storyline: { kind: 'one', model: 'storyline', from: 'storylineId', to: 'id' },
+    post: { kind: 'one', model: 'post', from: 'postId', to: 'id' },
+  },
+  storylineChapterEdge: {
+    chapter: { kind: 'one', model: 'storylineChapter', from: 'chapterId', to: 'id' },
+  },
+};
+
+/** Column sets each table refuses to duplicate, and the compound-key names Prisma gives them. */
+const UNIQUES: Record<string, string[][]> = {
+  placementTransaction: [['placementId', 'kind']],
+  storylineChapter: [['postId'], ['placementId']],
+  // v1: one parent per chapter (a unique index on chapterId in the migration).
+  storylineChapterEdge: [['chapterId']],
+  storylineCollaborator: [['storylineId', 'userId']],
+  placementSpace: [['surface', 'entityType', 'entityId']],
+  placementSuspension: [['userId']],
+};
+const COMPOUND_KEYS: Record<string, string[]> = {
+  placementId_kind: ['placementId', 'kind'],
+  storylineId_userId: ['storylineId', 'userId'],
+  surface_entityType_entityId: ['surface', 'entityType', 'entityId'],
+};
+
+/** Columns a real row always has, filled on create when the caller leaves them out. */
+const DEFAULTS: Record<string, () => Row> = {
+  placement: () => ({
+    sellerId: null,
+    free: false,
+    spendType: null,
+    status: 'pending',
+    removedBy: null,
+    feeWaived: false,
+    expiresAt: null,
+    resolvedAt: null,
+    resolvedById: null,
+    takenDownAt: null,
+    takenDownById: null,
+    data: null,
+    createdAt: new Date(),
+  }),
+  placementTransaction: () => ({
+    transactionId: null,
+    attempts: 0,
+    lastAttemptAt: null,
+    lastError: null,
+    createdAt: new Date(),
+  }),
+  storylineChapter: () => ({ postId: null, placementId: null, createdAt: new Date() }),
+  storylineChapterEdge: () => ({ canon: false, createdAt: new Date() }),
+};
+
+const MODELS = [
+  'keyValue',
+  'user',
+  'post',
+  'image',
+  'storyline',
+  'storylineChapter',
+  'storylineChapterEdge',
+  'storylineCollaborator',
+  'placement',
+  'placementTransaction',
+  'placementSpace',
+  'placementSuspension',
+] as const;
+
+const isPlainObject = (value: unknown): value is Record<string, unknown> =>
+  !!value && typeof value === 'object' && !(value instanceof Date) && !Array.isArray(value);
+
+const same = (a: unknown, b: unknown) =>
+  a instanceof Date && b instanceof Date ? a.getTime() === b.getTime() : a === b;
+
+const OPERATORS = new Set(['in', 'notIn', 'not', 'lt', 'lte', 'gt', 'gte', 'equals', 'path']);
+
+export function createFakeDb() {
+  let tables: Record<string, Row[]> = Object.fromEntries(MODELS.map((model) => [model, []]));
+  const nextId: Record<string, number> = Object.fromEntries(MODELS.map((model) => [model, 1000]));
+
+  /** Users either side of a block, as the primary-read block check sees them. */
+  const blocks = new Set<string>();
+
+  const related = (model: string, row: Row, name: string) => {
+    const relation = RELATIONS[model]?.[name];
+    if (!relation) throw new Error(`fake db: ${model} has no relation ${name}`);
+    const matches = tables[relation.model].filter(
+      (other) => row[relation.from] != null && same(other[relation.to], row[relation.from])
+    );
+    return { relation, matches };
+  };
+
+  const matchesField = (value: unknown, condition: unknown): boolean => {
+    if (!isPlainObject(condition)) return same(value, condition);
+    for (const op of Object.keys(condition))
+      if (!OPERATORS.has(op)) throw new Error(`fake db: unsupported operator ${op}`);
+    if ('path' in condition) {
+      const path = condition.path as string[];
+      let cursor: unknown = value;
+      for (const key of path) cursor = isPlainObject(cursor) ? cursor[key] : undefined;
+      return same(cursor, condition.equals);
+    }
+    if ('equals' in condition && !same(value, condition.equals)) return false;
+    if ('in' in condition && !(condition.in as unknown[]).some((v) => same(v, value))) return false;
+    if ('notIn' in condition && (condition.notIn as unknown[]).some((v) => same(v, value)))
+      return false;
+    if ('not' in condition) {
+      const not = condition.not;
+      if (isPlainObject(not)) {
+        if (matchesField(value, not)) return false;
+      } else if (same(value, not)) return false;
+    }
+    const cmp = value as number | Date;
+    if ('lt' in condition && !(cmp < (condition.lt as typeof cmp))) return false;
+    if ('lte' in condition && !(cmp <= (condition.lte as typeof cmp))) return false;
+    if ('gt' in condition && !(cmp > (condition.gt as typeof cmp))) return false;
+    if ('gte' in condition && !(cmp >= (condition.gte as typeof cmp))) return false;
+    return true;
+  };
+
+  const matches = (model: string, row: Row, where: Where | undefined): boolean => {
+    if (!where) return true;
+    return Object.entries(where).every(([key, condition]) => {
+      if (condition === undefined) return true;
+      if (key === 'OR') return (condition as Where[]).some((w) => matches(model, row, w));
+      if (key === 'AND') return (condition as Where[]).every((w) => matches(model, row, w));
+      if (key === 'NOT') return !matches(model, row, condition as Where);
+      if (COMPOUND_KEYS[key])
+        return COMPOUND_KEYS[key].every((column) => same(row[column], (condition as Row)[column]));
+      if (RELATIONS[model]?.[key]) {
+        const { relation, matches: others } = related(model, row, key);
+        if (relation.kind !== 'one') throw new Error(`fake db: to-many filter on ${key}`);
+        if (condition === null) return others.length === 0;
+        return others.some((other) => matches(relation.model, other, condition as Where));
+      }
+      return matchesField(row[key], condition);
+    });
+  };
+
+  const order = (rows: Row[], orderBy: unknown) => {
+    if (!orderBy) return rows;
+    const keys = (Array.isArray(orderBy) ? orderBy : [orderBy]).flatMap((o) =>
+      Object.entries(o as Record<string, 'asc' | 'desc'>)
+    );
+    return [...rows].sort((a, b) => {
+      for (const [key, dir] of keys) {
+        const x = a[key] as number | Date;
+        const y = b[key] as number | Date;
+        if (x < y) return dir === 'asc' ? -1 : 1;
+        if (x > y) return dir === 'asc' ? 1 : -1;
+      }
+      return 0;
+    });
+  };
+
+  const project = (model: string, row: Row, select?: Record<string, unknown>): Row => {
+    if (!select) return structuredClone(row);
+    const out: Row = {};
+    for (const [key, spec] of Object.entries(select)) {
+      if (!spec) continue;
+      if (RELATIONS[model]?.[key]) {
+        const { relation, matches: others } = related(model, row, key);
+        const nested = (spec === true ? {} : spec) as {
+          select?: Record<string, unknown>;
+          where?: Where;
+          orderBy?: unknown;
+          take?: number;
+        };
+        if (relation.kind === 'one') {
+          out[key] = others[0] ? project(relation.model, others[0], nested.select) : null;
+        } else {
+          let list = others.filter((other) => matches(relation.model, other, nested.where));
+          list = order(list, nested.orderBy);
+          if (nested.take != null) list = list.slice(0, nested.take);
+          out[key] = list.map((other) => project(relation.model, other, nested.select));
+        }
+      } else {
+        if (!(key in row)) throw new Error(`fake db: ${model} row has no column ${key}`);
+        out[key] = structuredClone(row[key]);
+      }
+    }
+    return out;
+  };
+
+  const assertUnique = (model: string, row: Row, ignore?: Row) => {
+    for (const columns of UNIQUES[model] ?? []) {
+      if (columns.some((column) => row[column] == null)) continue;
+      const clash = tables[model].find(
+        (other) => other !== ignore && columns.every((column) => same(other[column], row[column]))
+      );
+      if (clash)
+        throw new Prisma.PrismaClientKnownRequestError(
+          `Unique constraint failed on the fields: (${columns.join(',')})`,
+          { code: 'P2002', clientVersion: 'fake' }
+        );
+    }
+  };
+
+  const applyData = (row: Row, data: Row) => {
+    for (const [key, value] of Object.entries(data)) {
+      if (value === undefined) continue;
+      if (isPlainObject(value) && 'increment' in value)
+        row[key] = (row[key] as number) + (value.increment as number);
+      else row[key] = structuredClone(value);
+    }
+  };
+
+  const insert = (model: string, data: Row) => {
+    const row: Row = { ...(DEFAULTS[model]?.() ?? {}), ...structuredClone(data) };
+    if (row.id == null && model !== 'storylineChapterEdge') row.id = nextId[model]++;
+    assertUnique(model, row);
+    tables[model].push(row);
+    return row;
+  };
+
+  const findAll = (model: string, args: { where?: Where; orderBy?: unknown; take?: number }) => {
+    let rows = order(
+      tables[model].filter((row) => matches(model, row, args.where)),
+      args.orderBy
+    );
+    if (args.take != null) rows = rows.slice(0, args.take);
+    return rows;
+  };
+
+  const delegate = (model: string) => ({
+    findUnique: async (args: { where: Where; select?: Record<string, unknown> }) => {
+      const row = tables[model].find((r) => matches(model, r, args.where));
+      return row ? project(model, row, args.select) : null;
+    },
+    findFirst: async (args: {
+      where?: Where;
+      select?: Record<string, unknown>;
+      orderBy?: unknown;
+    }) => {
+      const [row] = findAll(model, { ...args, take: 1 });
+      return row ? project(model, row, args.select) : null;
+    },
+    findMany: async (
+      args: {
+        where?: Where;
+        select?: Record<string, unknown>;
+        orderBy?: unknown;
+        take?: number;
+      } = {}
+    ) => findAll(model, args).map((row) => project(model, row, args.select)),
+    count: async (args: { where?: Where } = {}) =>
+      tables[model].filter((row) => matches(model, row, args.where)).length,
+    create: async (args: { data: Row; select?: Record<string, unknown> }) =>
+      project(model, insert(model, args.data), args.select),
+    createMany: async (args: { data: Row[]; skipDuplicates?: boolean }) => {
+      let count = 0;
+      for (const data of args.data) {
+        try {
+          insert(model, data);
+          count++;
+        } catch (error) {
+          if (!(args.skipDuplicates && error instanceof Prisma.PrismaClientKnownRequestError))
+            throw error;
+        }
+      }
+      return { count };
+    },
+    update: async (args: { where: Where; data: Row; select?: Record<string, unknown> }) => {
+      const row = tables[model].find((r) => matches(model, r, args.where));
+      if (!row)
+        throw new Prisma.PrismaClientKnownRequestError('Record to update not found', {
+          code: 'P2025',
+          clientVersion: 'fake',
+        });
+      const next = { ...row };
+      applyData(next, args.data);
+      assertUnique(model, next, row);
+      Object.assign(row, next);
+      return project(model, row, args.select);
+    },
+    updateMany: async (args: { where?: Where; data: Row }) => {
+      const rows = tables[model].filter((row) => matches(model, row, args.where));
+      for (const row of rows) applyData(row, args.data);
+      return { count: rows.length };
+    },
+    upsert: async (args: { where: Where; create: Row; update: Row }) => {
+      const row = tables[model].find((r) => matches(model, r, args.where));
+      if (row) {
+        applyData(row, args.update);
+        return structuredClone(row);
+      }
+      return structuredClone(insert(model, args.create));
+    },
+  });
+
+  /** The tagged raw statements this loop sends, by shape; anything else throws. */
+  const queryRaw = async (strings: TemplateStringsArray | Prisma.Sql, ...values: unknown[]) => {
+    const sql = Array.isArray(strings)
+      ? Prisma.sql(strings as TemplateStringsArray, ...values)
+      : (strings as Prisma.Sql);
+    const text = sql.text;
+    const v = sql.values;
+    if (text.includes('"UserEngagement"') && text.includes("'Block'")) {
+      const [ownerId, placerId] = v as number[];
+      return [
+        { exists: blocks.has(`${ownerId}:${placerId}`) || blocks.has(`${placerId}:${ownerId}`) },
+      ];
+    }
+    if (text.includes("'scores'")) return [{ score: 0 }];
+    if (text.includes('FOR NO KEY UPDATE')) return [];
+    if (text.includes('FROM "Placement" pl') && text.includes('JOIN "Post" p')) {
+      if (text.includes('pl."createdAt" >')) throw new Error('fake db: queue keyset not modelled');
+      const [surface, targetType, ownerId, limit] = v as [string, string, number, number];
+      const rows = tables.placement.filter((pl) => {
+        const data = pl.data as Row | null;
+        const post = tables.post.find((p) => same(p.id, data?.postId));
+        return (
+          !!post &&
+          pl.surface === surface &&
+          pl.targetType === targetType &&
+          pl.ownerId === ownerId &&
+          pl.status === 'pending' &&
+          data?.awaitingReadiness == null &&
+          !post.tosViolation
+        );
+      });
+      return order(rows, [{ createdAt: 'asc' }, { id: 'asc' }])
+        .slice(0, limit)
+        .map((pl) => ({ id: pl.id, createdAt: pl.createdAt }));
+    }
+    throw new Error(`fake db: raw statement not modelled: ${text.slice(0, 120)}`);
+  };
+
+  const executeRaw = async (strings: TemplateStringsArray, ...values: unknown[]) => {
+    const text = Prisma.sql(strings, ...values).text;
+    if (text.includes('pg_advisory_xact_lock')) return 0;
+    throw new Error(`fake db: raw statement not modelled: ${text.slice(0, 120)}`);
+  };
+  const executeRawUnsafe = async (text: string) => {
+    if (text.startsWith('SET LOCAL lock_timeout')) return 0;
+    throw new Error(`fake db: raw statement not modelled: ${text}`);
+  };
+
+  const install = () => {
+    for (const client of [dbMock.dbWrite, dbMock.dbRead]) {
+      for (const model of MODELS) {
+        const methods = delegate(model);
+        for (const [name, fn] of Object.entries(methods))
+          (
+            client[model][name] as unknown as { mockImplementation: (f: unknown) => void }
+          ).mockImplementation(fn);
+      }
+      client.$queryRaw.mockImplementation(queryRaw);
+      client.$executeRaw.mockImplementation(executeRaw);
+      client.$executeRawUnsafe.mockImplementation(executeRawUnsafe);
+    }
+    // Interactive transactions roll back every table when the callback throws.
+    dbMock.dbWrite.$transaction.mockImplementation(async (fn: unknown) => {
+      if (typeof fn !== 'function') throw new Error('fake db: only interactive transactions');
+      const snapshot = structuredClone(tables);
+      const ids = { ...nextId };
+      try {
+        return await (fn as (tx: unknown) => unknown)(dbMock.dbWrite);
+      } catch (error) {
+        tables = snapshot;
+        Object.assign(nextId, ids);
+        throw error;
+      }
+    });
+  };
+
+  return {
+    install,
+    insert,
+    rows: (model: (typeof MODELS)[number]) => structuredClone(tables[model]),
+    row: (model: (typeof MODELS)[number], where: Where) => {
+      const found = tables[model].find((r) => matches(model, r, where));
+      return found ? structuredClone(found) : undefined;
+    },
+    update: (model: (typeof MODELS)[number], where: Where, data: Row) => {
+      const found = tables[model].filter((r) => matches(model, r, where));
+      if (found.length !== 1)
+        throw new Error(`fake db: expected one ${model} row, got ${found.length}`);
+      applyData(found[0], data);
+    },
+    block: (a: number, b: number) => blocks.add(`${a}:${b}`),
+  };
+}
+
+export type FakeDb = ReturnType<typeof createFakeDb>;
