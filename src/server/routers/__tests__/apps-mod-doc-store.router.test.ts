@@ -368,6 +368,20 @@ describe('listReported: the cross-app queue', () => {
     expect(out.items.map(tag)).toEqual(EXPECTED_ORDER.filter((t) => !t.startsWith(APP_B.id)));
   });
 
+  it('storage switched off is the storage error, never "N apps could not be read"', async () => {
+    await seedQueue();
+    const configured = h.mod;
+    h.mod = createDocStoreModeration({ db: null });
+    try {
+      await expect(caller().listReported({})).rejects.toMatchObject({
+        code: 'PRECONDITION_FAILED',
+        message: 'document storage is not available',
+      });
+    } finally {
+      h.mod = configured;
+    }
+  });
+
   it('an app id the store refuses as malformed fails that app only, never the queue', async () => {
     await seedQueue();
     mockRead.appBlock.findMany.mockImplementationOnce(async () => [
@@ -459,6 +473,7 @@ describe('setHidden / delete: effects through the app reads, and the audit trail
         key: 'a1',
         authorUserId: VIEWER_1,
         reports: 3,
+        reportsTotal: 3,
         hiddenAt: null,
         version: 1,
         dataMd5: expect.stringMatching(/^[0-9a-f]{32}$/),
@@ -668,6 +683,23 @@ describe('setHidden / delete: effects through the app reads, and the audit trail
     ]);
     expect(APP_LISTING_MODERATION_ACTIONS as readonly string[]).toContain('storage-doc-dismiss');
     expect((await caller().get(A1)).reports).toBe(0);
+  });
+
+  it('dismiss is refused on a hidden document (unhide first); the refusal is audited as failed', async () => {
+    await seedQueue();
+    await caller().setHidden({ ...A1, hidden: true, reason: 'spam report' });
+    await expect(
+      caller().dismissReports({ ...A1, reason: 'reviewed, within the rules' })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(audit.map((r) => [r.action, r.after?.outcome])).toEqual([
+      ['storage-doc-hide', 'applied'],
+      ['storage-doc-dismiss', 'failed'],
+    ]);
+    // Still hidden, its reports still open, and still listed for moderators.
+    expect((await caller().get(A1)).reports).toBe(3);
+    expect((await caller().listReported({ status: 'hidden' })).items.map((i) => i.key)).toEqual([
+      'a1',
+    ]);
   });
 
   it('a reason is required and bounded', async () => {

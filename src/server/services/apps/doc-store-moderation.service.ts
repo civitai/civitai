@@ -155,7 +155,8 @@ export type ReportedDocItem = {
  * Documents with open reports across every app, most reported first. Not paged: at most
  * `MOD_QUEUE_PER_APP` per app and `MOD_QUEUE_MAX` in total; `truncated` says either cap cut
  * something off. An app whose read fails is skipped and counted in `failedApps` (and logged),
- * so one bad app never hides every other app's reports.
+ * so one bad app never hides every other app's reports. `storage_disabled` is not per-app and
+ * propagates.
  */
 export async function listReportedDocs(input: {
   status: ModeratedDocStatus;
@@ -180,6 +181,9 @@ export async function listReportedDocs(input: {
               .map((row) => ({ app, appId: app.appBlockId, row })),
           };
         } catch (err) {
+          // Storage as a whole being off (no pool, or a role RLS does not bind) is not one
+          // app's failure: it surfaces as such, never as "N apps could not be read".
+          if (isDocStoreError(err, 'storage_disabled')) throw err;
           logToAxiom(
             {
               type: 'error',
@@ -315,7 +319,9 @@ async function audited<T extends Record<string, unknown>>(
         key,
         authorKind: before.authorKind,
         authorUserId: before.authorUid,
+        // Open reports (after any dismissal) and every report ever filed.
         reports: before.reports,
+        reportsTotal: before.marks.report ?? 0,
         hiddenAt: before.hiddenAt?.toISOString() ?? null,
         hiddenBy: before.hiddenBy,
         version: before.version,

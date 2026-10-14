@@ -253,7 +253,7 @@ describe('AppDocStoreReportsQueue', () => {
     ]);
   });
 
-  test('a hidden document offers Unhide, which sends hidden: false', async () => {
+  test('a hidden document offers Unhide (not Dismiss), which sends hidden: false', async () => {
     m.listResult.items = [row({ hidden: { at: new Date(), byUserId: 9, byUsername: 'mod-m' } })];
     m.fetchGet = async () => doc(41, 'x', { hidden: { at: new Date(), byUserId: 9 } });
     mount();
@@ -261,6 +261,9 @@ describe('AppDocStoreReportsQueue', () => {
       .element(page.getByTestId('doc-store-report-hidden'))
       .toHaveTextContent('Hidden by mod-m');
     await userEvent.click(page.getByRole('button', { name: 'Review' }));
+    await expect.element(page.getByRole('button', { name: 'Unhide' })).toBeVisible();
+    // Dismissing is for a document kept visible: not offered on a hidden one.
+    expect(page.getByRole('button', { name: 'Dismiss reports' }).elements()).toHaveLength(0);
     await act('Unhide', 'reviewed, fine');
     await expect
       .poll(() => m.sent)

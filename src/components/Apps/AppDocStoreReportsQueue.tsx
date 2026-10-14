@@ -148,9 +148,12 @@ function ReviewModal({
             >
               {DOC_STORE_ACTION_COPY[shown.hidden ? 'unhide' : 'hide'].button}
             </Button>
-            <Button size="xs" variant="default" onClick={() => onAction(shown, 'dismiss')}>
-              {DOC_STORE_ACTION_COPY.dismiss.button}
-            </Button>
+            {/* Dismissing is for a document reviewed and KEPT visible; a hidden one is unhidden first. */}
+            {!shown.hidden && (
+              <Button size="xs" variant="default" onClick={() => onAction(shown, 'dismiss')}>
+                {DOC_STORE_ACTION_COPY.dismiss.button}
+              </Button>
+            )}
             <Button size="xs" color="red" variant="light" onClick={() => onAction(shown, 'delete')}>
               {DOC_STORE_ACTION_COPY.delete.button}
             </Button>

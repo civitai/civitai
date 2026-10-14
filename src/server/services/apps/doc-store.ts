@@ -1185,6 +1185,12 @@ function buildDocStore(deps: DocStoreDeps) {
     assertCollection(coll);
     assertKey(key);
     assertMarkName(coll, name);
+    // A report cannot be withdrawn. Withdrawing and re-filing would otherwise make a fresh
+    // report after a moderator dismissed the document's reports, so one viewer could re-open
+    // it indefinitely (see DISMISSED REPORTS in the moderation section).
+    if (name === REPORT_MARK) {
+      throw invalid('a report cannot be withdrawn', { mark: name });
+    }
     const viewer = requireViewer(ctx);
     return withTx(ctx, async (c) => {
       const doc = await c.query(SQL_SHARE_LOCK_DOC, [ctx.appId, ctx.ns, coll.name, key]);
@@ -1392,13 +1398,16 @@ function translatePgError(err: unknown): unknown {
 // `doc-store-moderation.service.ts` behind `moderatorProcedure`. The importer set is pinned by
 // `routers/__tests__/apps-mod-doc-store.router.test.ts` (its ledger case).
 //
-// DISMISSED REPORTS. A moderator who reviews a document and keeps it dismisses its reports:
-// `doc.reports_dismissed_at` records when, and only report marks made after that point count
-// as OPEN (the queue and `reports` below). The marks themselves are kept, so each reporter's
-// own "I reported this" state (`viewer.marks`) stays true and a report cannot be filed twice;
-// deleting them would tell reporters they never reported, and let one viewer re-report the
-// same document after every dismissal. Unhide does not touch the point, so it re-surfaces no
-// dismissed report. The point is the dismissing transaction's start time: a report whose own
+// DISMISSED REPORTS. A moderator who reviews a VISIBLE document and keeps it dismisses its
+// reports: `doc.reports_dismissed_at` records when, and only report marks made after that point
+// count as OPEN (the queue and `reports` below). The marks themselves are kept, so each
+// reporter's own "I reported this" state (`viewer.marks`) stays true. A report is one per user
+// AND cannot be withdrawn (`unmark` refuses `report`), so a reporter cannot re-open a dismissed
+// document by withdrawing and re-filing: only a report from someone who had not reported it
+// re-opens it. Deleting the marks instead would tell reporters they never reported, and let
+// each of them re-open it after every dismissal. Unhide does not touch the point, so it
+// re-surfaces no dismissed report; a hidden document is not dismissable (unhide it first), and
+// the hidden and all views list hidden documents whatever their open count. The point is the dismissing transaction's start time: a report whose own
 // transaction started later is never swept, and one made between the moderator's last look
 // and the click is (the revision binding covers the document's content, not its reports).
 //
@@ -1452,19 +1461,23 @@ type ModerationDeps = {
   ) => Promise<number>;
 };
 
-// Shared documents of one (app, ns) with at least one OPEN report (made after any dismissal),
-// counted from the report marks themselves. Grouped by the document's primary key, so its
-// other columns can be selected. $1 app, $2 ns, $3 the report mark name, $4 limit;
-// `statusCond` is one of the fixed strings in `listReported`.
-const sqlModReported = (statusCond: string) => `SELECT d.coll, d.key, d.author_uid, d.author_kind,
-    d.created_at, d.updated_at, d.hidden_at, d.hidden_by, d.size_bytes, d.version, d.seq,
-    count(rm.user_id) AS reports
-  FROM appdata.doc d
-  JOIN appdata.doc_mark rm ON rm.app_id = $1 AND rm.ns = $2 AND rm.coll = d.coll AND rm.key = d.key
-    AND rm.name = $3 AND (d.reports_dismissed_at IS NULL OR rm.created_at > d.reports_dismissed_at)
-  WHERE d.app_id = $1 AND d.ns = $2 AND d.scope_uid = 0 ${statusCond}
-  GROUP BY d.app_id, d.ns, d.coll, d.scope_uid, d.key
-  ORDER BY count(rm.user_id) DESC, d.updated_at DESC, d.coll DESC, d.key DESC
+// The queue for one (app, ns): shared documents with at least one OPEN report (made after any
+// dismissal), plus — when `listHidden` admits them — every HIDDEN document whatever its
+// report count, so a document hidden and then dismissed stays reachable for unhide or delete.
+// The open count comes from the report marks themselves. $1 app, $2 ns, $3 the report mark
+// name, $4 limit; `statusCond` and `listHidden` are fixed strings chosen in `listReported`.
+// Cost: one pass over the app's shared documents in this namespace.
+const sqlModReported = (statusCond: string, listHidden: string) => `SELECT q.* FROM (
+    SELECT d.coll, d.key, d.author_uid, d.author_kind, d.created_at, d.updated_at, d.hidden_at,
+      d.hidden_by, d.size_bytes, d.version, d.seq,
+      (SELECT count(*) FROM appdata.doc_mark rm
+        WHERE rm.app_id = $1 AND rm.ns = $2 AND rm.coll = d.coll AND rm.key = d.key AND rm.name = $3
+          AND (d.reports_dismissed_at IS NULL OR rm.created_at > d.reports_dismissed_at)) AS reports
+    FROM appdata.doc d
+    WHERE d.app_id = $1 AND d.ns = $2 AND d.scope_uid = 0 ${statusCond}
+  ) q
+  WHERE q.reports > 0 ${listHidden}
+  ORDER BY q.reports DESC, q.updated_at DESC, q.coll DESC, q.key DESC
   LIMIT $4::int`;
 
 // One shared document as a moderator sees it, hidden or not. $1 app, $2 ns, $3 coll, $4 key
@@ -1549,7 +1562,11 @@ function createModeration({ withTx, charge }: ModerationDeps) {
         : opts.status === 'hidden'
         ? 'AND d.hidden_at IS NOT NULL'
         : '';
-    const sql = sqlModReported(statusCond);
+    // The hidden and all views list every hidden document; the open view needs an open report.
+    const sql = sqlModReported(
+      statusCond,
+      opts.status === 'open' ? '' : 'OR q.hidden_at IS NOT NULL'
+    );
     const rows = await withTx(
       modCtx(appId, ns),
       async (c) => (await c.query(sql, [appId, ns, REPORT_MARK, opts.limit])).rows
@@ -1670,6 +1687,9 @@ function createModeration({ withTx, charge }: ModerationDeps) {
       const row = (await c.query(SQL_MOD_LOCK, [appId, ns, collection, key])).rows[0];
       if (!row) throw new DocStoreError('not_found', 'document not found');
       assertModRevision(row, opts.ifRevision);
+      if (row.hidden) {
+        throw invalid('a hidden document is not dismissable; unhide it first');
+      }
       const open = await c.query(SQL_MOD_OPEN_REPORTS, [appId, ns, collection, key, REPORT_MARK]);
       await c.query(SQL_MOD_DISMISS, [appId, ns, collection, key]);
       return { dismissed: Number(open.rows[0]?.n ?? 0) };

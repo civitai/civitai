@@ -67,8 +67,7 @@ function defineModerationSuite(rls: boolean) {
     );
 
   /**
-   * Seed: five reported shared docs with report counts 3, 1, 2, 2, 2; one unreported; one
-   * report withdrawn. Among the three with 2 reports, `board/b1` was updated last (so it
+   * Seed: five reported shared docs with report counts 3, 1, 2, 2, 2; two unreported. Among the three with 2 reports, `board/b1` was updated last (so it
    * comes first although `board` < `posts`), and `posts/p6` / `posts/p3` share an update time
    * (so only the key orders them).
    */
@@ -82,8 +81,6 @@ function defineModerationSuite(rls: boolean) {
     await report(app, POSTS, 'p3', R2, R3);
     await report(app, POSTS, 'p6', R1, R3);
     await report(app, BOARD, 'b1', R1, R3);
-    await report(app, POSTS, 'p5', R2);
-    await store.unmark(ctx(app, NS_PROD, R2), POSTS, 'p5', 'report');
     await h.raw(`UPDATE appdata.doc SET updated_at = '2026-02-01T00:00:00Z' WHERE app_id = $1`, [
       app,
     ]);
@@ -343,12 +340,19 @@ function defineModerationSuite(rls: boolean) {
       const doc = (await mod.get(app, NS_PROD, 'posts', 'p1'))!;
       expect({ open: doc.reports, total: doc.marks.report }).toEqual({ open: 0, total: 3 });
       expect(doc.reportsDismissedAt).toBeInstanceOf(Date);
-      // A reporter still sees their own report, and re-reporting is not a new report.
+      // A reporter still sees their own report; they cannot withdraw it, and re-reporting is
+      // not a new report — so they cannot re-open what was dismissed.
       expect((await store.get(ctx(app, NS_PROD, R1), POSTS, 'p1'))?.viewer?.marks).toContain(
         'report'
       );
+      await expectCode(
+        store.unmark(ctx(app, NS_PROD, R1), POSTS, 'p1', 'report'),
+        'invalid_request'
+      );
       await store.mark(ctx(app, NS_PROD, R1), POSTS, 'p1', 'report');
+      await tick();
       expect(await queue(app)).not.toContain('posts/p1:1');
+      expect((await mod.get(app, NS_PROD, 'posts', 'p1'))!.reports).toBe(0);
       // A new reporter re-opens it with exactly the new report.
       await report(app, POSTS, 'p1', R4);
       expect(await queue(app)).toContain('posts/p1:1');
@@ -357,13 +361,35 @@ function defineModerationSuite(rls: boolean) {
     it('unhide does not re-surface dismissed reports', async () => {
       const app = freshApp('moddisun');
       await seedQueue(app);
-      await mod.setHidden(app, NS_PROD, 'posts', 'p1', true, MOD);
       await tick();
       await mod.dismissReports(app, NS_PROD, 'posts', 'p1');
       await tick();
+      await mod.setHidden(app, NS_PROD, 'posts', 'p1', true, MOD);
       await mod.setHidden(app, NS_PROD, 'posts', 'p1', false, MOD);
-      expect(await queue(app, { status: 'all' })).not.toContain('posts/p1:3');
+      expect(await queue(app, { status: 'open' })).not.toContain('posts/p1:3');
       expect((await mod.get(app, NS_PROD, 'posts', 'p1'))!.reports).toBe(0);
+    });
+
+    it('a hidden document is not dismissable, and stays listed in the hidden and all views', async () => {
+      const app = freshApp('moddishid');
+      await seedQueue(app);
+      await tick();
+      // Dismissed while visible, then hidden: zero open reports, yet still reachable.
+      await mod.dismissReports(app, NS_PROD, 'posts', 'p1');
+      await mod.setHidden(app, NS_PROD, 'posts', 'p1', true, MOD);
+      // Never reported at all, hidden by a moderator.
+      await mod.setHidden(app, NS_PROD, 'posts', 'p4', true, MOD);
+      await expectCode(mod.dismissReports(app, NS_PROD, 'posts', 'p1'), 'invalid_request');
+      expect(await queue(app, { status: 'hidden' })).toEqual(['posts/p4:0', 'posts/p1:0']);
+      expect(await queue(app, { status: 'all' })).toEqual([
+        'board/b1:2',
+        'posts/p6:2',
+        'posts/p3:2',
+        'posts/p2:1',
+        'posts/p4:0',
+        'posts/p1:0',
+      ]);
+      expect(await queue(app, { status: 'open' })).not.toContain('posts/p1:0');
     });
 
     it('is bound to the revision, and refuses a missing document', async () => {
@@ -556,15 +582,12 @@ describe('runtime isolation shape of every moderation statement', () => {
   it('every appdata statement carried the bound app id and namespace as $1/$2 and passed the shape scan', () => {
     const statements = harnesses.flatMap((x) => x.statements);
     // Positive control: the recorder saw the assembled moderation SQL itself.
-    expect(
-      statements.filter((s) => /FROM appdata\.doc d\s+JOIN appdata\.doc_mark rm/.test(s.sql)).length
-    ).toBeGreaterThan(10);
+    expect(statements.filter((s) => /SELECT q\.\* FROM \(/.test(s.sql)).length).toBeGreaterThan(10);
     expect(statements.filter((s) => /SET hidden_at = now\(\)/.test(s.sql)).length).toBeGreaterThan(
       5
     );
     expect(
-      statements.filter((s) => /ORDER BY count\(rm\.user_id\) DESC, d\.updated_at DESC/.test(s.sql))
-        .length
+      statements.filter((s) => /ORDER BY q\.reports DESC, q\.updated_at DESC/.test(s.sql)).length
     ).toBeGreaterThan(0);
     expect(harnesses.flatMap((x) => x.violations)).toEqual([]);
   });
