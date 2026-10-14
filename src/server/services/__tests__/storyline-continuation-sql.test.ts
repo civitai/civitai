@@ -21,7 +21,7 @@ import type * as PlacementService from '~/server/services/placement.service';
  * Opt-in via `STORYLINE_SQL_TEST_DATABASE_URL`, which must point at a THROWAWAY database: the
  * suite drops and recreates the public schema. It deliberately does NOT fall back to
  * `DATABASE_URL`, which names a real environment in any checkout that has one. Before wiping, it
- * refuses a database holding any table it does not create, or more rows than it writes.
+ * refuses a database holding any table it does not create, or more than 100 rows in a table.
  *
  *   docker run -d --rm --name pg-storyline-sql -e POSTGRES_PASSWORD=postgres \
  *     -e POSTGRES_DB=storyline -p 127.0.0.1:54331:5432 postgres:16-alpine
@@ -33,8 +33,8 @@ import type * as PlacementService from '~/server/services/placement.service';
  * skipped and a dropped condition turns nothing red. Run it whenever one of the three statements
  * changes.
  *
- * Timestamps are written in UTC and compared with `now()` under the server's session time zone,
- * which is UTC here and in production (`Etc/UTC`, read 2026-10-14).
+ * Timestamps are written in UTC and compared with `now()` under the session time zone, so this
+ * assumes a UTC session, as the image's default is. Under another zone every interval shifts.
  */
 const testDatabaseUrl = process.env.STORYLINE_SQL_TEST_DATABASE_URL;
 
@@ -315,14 +315,19 @@ async function assertThrowaway(prisma: PrismaClient) {
   }
 }
 
+/** Wipes and seeds the database, after the guard has passed it. */
+async function seed(prisma: PrismaClient) {
+  await assertThrowaway(prisma);
+  for (const statement of [...SCHEMA, ...FIXTURE]) await prisma.$executeRawUnsafe(statement);
+}
+
 describe.skipIf(!testDatabaseUrl)('storyline continuation statements on PostgreSQL', () => {
   let prisma: PrismaClient;
   let selected: unknown[][] = [];
 
   beforeAll(async () => {
     prisma = new PrismaClient({ datasourceUrl: testDatabaseUrl });
-    await assertThrowaway(prisma);
-    for (const statement of [...SCHEMA, ...FIXTURE]) await prisma.$executeRawUnsafe(statement);
+    await seed(prisma);
   });
   afterAll(async () => {
     await prisma.$disconnect();
@@ -400,12 +405,19 @@ describe.skipIf(!testDatabaseUrl)('storyline continuation statements on PostgreS
   it('refuses to wipe a database holding a table it did not make, or more rows than it writes', async () => {
     await expect(assertThrowaway(prisma)).resolves.toBeUndefined();
 
-    // Each probe is undone in `finally`: left behind, it would make the guard refuse every
-    // later run, which reads as this suite failing for an unrelated reason.
+    // Each probe goes through `seed`, as the suite does, and checks nothing was dropped: the
+    // guard protects a database only if it runs before the wipe. Each is undone in `finally`:
+    // left behind, it would make the guard refuse every later run.
+    const placements = async () =>
+      (
+        await prisma.$queryRawUnsafe<{ n: number }[]>(`SELECT count(*)::int AS n FROM "Placement"`)
+      )[0].n;
+    const seeded = await placements();
     const refuses = async (setup: string[], undo: string, message: RegExp) => {
       try {
         for (const statement of setup) await prisma.$executeRawUnsafe(statement);
-        await expect(assertThrowaway(prisma)).rejects.toThrow(message);
+        await expect(seed(prisma)).rejects.toThrow(message);
+        expect(await placements()).toBe(seeded);
       } finally {
         await prisma.$executeRawUnsafe(undo);
       }
