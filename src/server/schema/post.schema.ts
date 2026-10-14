@@ -339,6 +339,7 @@ export const getScheduledPostsSchema = z
     from: z.coerce.date(),
     to: z.coerce.date(),
     modelVersionId: plannerId.optional(),
+    tag: z.string().trim().min(1).max(100).optional(),
   })
   .refine((range) => range.to > range.from, { message: '`to` must be after `from`' })
   .refine(

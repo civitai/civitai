@@ -651,6 +651,33 @@ describe('getScheduledPosts', () => {
     expect(values[0]).toBe(7);
     expect(sql.match(/FROM "Image"/g)).toHaveLength(1);
     expect(sql).not.toMatch(/"modelVersionId" = \?/);
+    expect(sql).not.toMatch(/"PostTag"/);
+  });
+
+  it('adds the tag filter only when asked, by tag name', async () => {
+    dbMock.dbRead.$queryRaw.mockResolvedValue([]);
+
+    await getScheduledPosts({
+      user: OWNER,
+      from: new Date(),
+      to: new Date(Date.now() + DAY),
+      tag: 'landscape',
+    });
+
+    const [, ...values] = dbMock.dbRead.$queryRaw.mock.calls[0] as [string[], ...unknown[]];
+    const fragment = values.find(
+      (value): value is Sql =>
+        typeof value === 'object' &&
+        value !== null &&
+        'strings' in value &&
+        value.strings.join('').includes('"PostTag"')
+    );
+    const sql = fragment?.strings.join('?') ?? '';
+    expect(sql).toMatch(/AND EXISTS \(/);
+    expect(sql).toMatch(/FROM "PostTag" pt/);
+    expect(sql).toMatch(/JOIN "Tag" t ON t\.id = pt\."tagId"/);
+    expect(sql).toMatch(/pt\."postId" = p\.id AND t\.name = \?/);
+    expect(fragment?.values).toEqual(['landscape']);
   });
 
   it('adds the model-version filter only when asked', async () => {

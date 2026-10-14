@@ -12,6 +12,7 @@ import type { PlannerActions } from './props';
 
 export interface DrawerProps {
   host: PlannerHost;
+  activeTag: string | undefined;
   post: PlannerPost;
   detail: PlannerPostDetail | null;
   detailLoading: boolean;
@@ -122,7 +123,16 @@ export function renderDrawer(props: DrawerProps): TemplateResult {
         ? html`<div class="section">
             <h4>Tags</h4>
             <div class="pills">
-              ${detail.tags.map((t) => html`<span class="pill">#${t}</span>`)}
+              ${detail.tags.map(
+                (t) => html`<button
+                  type="button"
+                  class="plain pill tag"
+                  aria-pressed=${t === props.activeTag ? 'true' : 'false'}
+                  @click=${() => actions.setTag(t === props.activeTag ? undefined : t)}
+                >
+                  #${t}
+                </button>`
+              )}
             </div>
           </div>`
         : nothing}
@@ -292,6 +302,17 @@ export const drawerStyles = css`
     font-size: 12px;
     background: var(--civitai-color-surface-2);
     border: 1px solid var(--civitai-color-border);
+  }
+  button.pill.tag {
+    cursor: pointer;
+  }
+  button.pill.tag:hover {
+    border-color: var(--civitai-color-primary);
+  }
+  button.pill.tag[aria-pressed='true'] {
+    color: var(--civitai-color-primary);
+    border-color: var(--civitai-color-primary);
+    background: color-mix(in srgb, var(--civitai-color-primary) 12%, transparent);
   }
   .description {
     white-space: pre-wrap;
