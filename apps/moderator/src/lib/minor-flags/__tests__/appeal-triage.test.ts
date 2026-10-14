@@ -1,16 +1,34 @@
 import { describe, expect, it } from 'vitest';
-import { formActionHref, nextUndecided, step, triageKeyAction } from '../appeal-triage';
+import {
+  failureMessage,
+  formActionHref,
+  isTypingTarget,
+  nextUndecided,
+  step,
+  TYPING_SELECTOR,
+  triageKeyAction,
+} from '../appeal-triage';
 
 const key = (k: string, over: Partial<Parameters<typeof triageKeyAction>[0]> = {}) =>
-  triageKeyAction({ key: k, ctrlKey: false, metaKey: false, altKey: false, typing: false, canUphold: true, ...over });
+  triageKeyAction({
+    key: k,
+    ctrlKey: false,
+    metaKey: false,
+    altKey: false,
+    typing: false,
+    canUphold: true,
+    defaultPrevented: false,
+    isComposing: false,
+    ...over,
+  });
 
 describe('triageKeyAction', () => {
   it.each([
     ['j', 'next'],
     ['J', 'next'],
-    ['ArrowDown', 'next'],
+    ['ArrowDown', null],
     ['k', 'previous'],
-    ['ArrowUp', 'previous'],
+    ['ArrowUp', null],
     ['u', 'uphold'],
     ['U', 'uphold'],
     ['o', 'overturn'],
@@ -24,6 +42,11 @@ describe('triageKeyAction', () => {
     expect(key('u', { canUphold: false })).toBeNull();
     expect(key('o', { canUphold: false })).toBe('overturn');
     expect(key('j', { canUphold: false })).toBe('next');
+  });
+
+  it('ignores handled and composing events', () => {
+    expect(key('j', { defaultPrevented: true })).toBeNull();
+    expect(key('j', { isComposing: true })).toBeNull();
   });
 
   it('ignores keys while typing or with a modifier', () => {
@@ -74,5 +97,38 @@ describe('formActionHref', () => {
   });
   it('is the bare action with no query', () => {
     expect(formActionHref('overturnAppeal', {})).toBe('?/overturnAppeal');
+  });
+});
+
+describe('isTypingTarget', () => {
+  it('asks for fields and for every overlay role', () => {
+    for (const part of [
+      'input',
+      'textarea',
+      'select',
+      'contenteditable',
+      'dialog',
+      'menu',
+      'listbox',
+      'combobox',
+    ])
+      expect(TYPING_SELECTOR).toContain(part);
+  });
+  it('is true only when the element matches', () => {
+    expect(isTypingTarget({ closest: () => ({}) })).toBe(true);
+    expect(isTypingTarget({ closest: () => null })).toBe(false);
+    expect(isTypingTarget(null)).toBe(false);
+    expect(isTypingTarget({})).toBe(false);
+  });
+});
+
+describe('failureMessage', () => {
+  it('is null for a success', () => {
+    expect(failureMessage({ type: 'success' })).toBeNull();
+  });
+  it('uses the action error, else a generic one', () => {
+    expect(failureMessage({ type: 'failure', data: { error: 'Nope.' } })).toBe('Nope.');
+    expect(failureMessage({ type: 'failure', data: {} })).toBe('Action failed.');
+    expect(failureMessage({ type: 'error' })).toBe('Action failed.');
   });
 });

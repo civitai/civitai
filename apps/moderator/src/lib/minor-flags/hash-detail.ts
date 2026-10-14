@@ -5,8 +5,7 @@ export type HashDetail = {
     minorModelName: string | null;
     minorModelVersionId: number | null;
     hash: string;
-    /** The version of THIS model that carried the matched hash. Only the auto/appeals tabs get it
-     *  from here — the Pending row already knows its own. */
+    /** Version of THIS model that carried the matched hash; Pending rows already know their own. */
     modelVersionId: number | null;
   } | null;
   detail: {
@@ -24,3 +23,13 @@ export type HashDetail = {
     minorFlaggedByUsername: string | null;
   } | null;
 };
+
+export async function fetchHashDetail(
+  modelId: number,
+  minorModelId: number | null = null
+): Promise<HashDetail> {
+  const query = minorModelId ? `?minorModelId=${minorModelId}` : '';
+  const res = await fetch(`/api/minor-hash-detail/${modelId}${query}`);
+  if (!res.ok) throw new Error(String(res.status));
+  return res.json();
+}

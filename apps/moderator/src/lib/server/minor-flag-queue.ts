@@ -82,7 +82,6 @@ export async function loadMinorQueue(
 
 export type MinorQueueData = Awaited<ReturnType<typeof loadMinorQueue>>;
 
-/** `fullBleed`: the appeals page owns its height so the queue and the open appeal scroll separately. */
 export async function loadAppealQueue(url: URL) {
   const { limit, page, q, offset, search } = parsePaging(url);
   const appealFilters: AppealFilters = parseQuery(url, appealFilterSchema);

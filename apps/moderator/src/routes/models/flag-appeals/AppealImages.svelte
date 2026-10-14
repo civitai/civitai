@@ -14,14 +14,14 @@
 
 {#if images.length}
   <div class="grid grid-cols-2 gap-3 xl:grid-cols-4">
-    {#each images as image (image.id)}
+    {#each images as image, i (image.id)}
       {@const hidden = shouldBlurThumbnail(image.nsfwLevel) && !revealed.has(image.id)}
       <div class="relative h-60 overflow-hidden rounded-lg border border-dark-4 bg-dark-7">
         {#if hidden}
           <button
             type="button"
             onclick={() => toggle(image.id)}
-            aria-label="Reveal image"
+            aria-label="Reveal image {i + 1} of {images.length}"
             class="size-full"
           >
             <EdgeMedia
@@ -62,7 +62,7 @@
     {/each}
   </div>
 {:else}
-  <p class="m-0 rounded-lg border border-dashed border-dark-4 p-6 text-center text-sm text-dark-2">
+  <p class="m-0 rounded-lg border border-dashed border-dark-4 p-6 text-center text-sm text-dark-0">
     No published images on this model's posts.
   </p>
 {/if}

@@ -81,8 +81,7 @@ export type AppealFacets = {
   flag: Record<AppealFlag, number>;
 };
 
-/** Each chip row counts under the OTHER row's selection, so picking a source shows how many of its
- *  appeals are minor, and vice versa, without a query per chip. */
+/** Each chip row counts under the OTHER row's selection, so no query per chip. */
 export function appealFacets(groups: AppealGroup[], filters: AppealFilters): AppealFacets {
   const source = Object.fromEntries(APPEAL_SOURCES.map((s) => [s, 0])) as AppealFacets['source'];
   const flag = Object.fromEntries(APPEAL_FLAGS.map((f) => [f, 0])) as AppealFacets['flag'];

@@ -289,17 +289,17 @@ const appealFlagPredicate = (flag: AppealFlag) =>
 
 const flaggedAtSql = sql`(m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'at')::timestamptz`;
 
-/** Tab 3 — Appeals. Deliberately NOT tab 2 narrowed by an appeal: that tab bounds itself to
- *  `source='auto'` inside `AUTO_FLAG_REVIEW_WINDOW_DAYS` and drops accepted flags, so an appeal against a moderator's own
- *  Set-as-Minor, or against a flag that has since aged out, would surface nowhere. An appeal is a
- *  human asking for review, which outranks every one of those bounds.
+/** Open appeals against a minor or real-person flag. Deliberately NOT the auto-flagged tab narrowed by
+ *  an appeal: that tab bounds itself to `source='auto'` inside `AUTO_FLAG_REVIEW_WINDOW_DAYS` and drops
+ *  accepted flags, so an appeal against a moderator's own Set-as-Minor, or against a flag that has
+ *  since aged out, would surface nowhere. An appeal is a human asking for review, which outranks every
+ *  one of those bounds.
  *
  *  No gate on the model still being minor either: reverting from tab 2 leaves the appeal Pending, and
  *  hiding it here would strand it with nowhere left to close it. `minor` is returned so the row can
  *  show that state instead.
  *
- *  The page of appeals is cut first (CTE), and only then do the per-model LATERALs run, so their cost
- *  is bounded by `limit`. */
+ *  The page is cut first (CTE) so the per-model LATERALs are bounded by limit. */
 export async function getMinorFlagAppealsForReview({
   limit,
   offset = 0,
@@ -431,8 +431,7 @@ export async function getMinorFlagAppealsForReview({
   return { items: rows.rows.slice(0, limit), hasMore: rows.rows.length > limit };
 }
 
-/** One grouped scan of the pending appeals for the chip counts. Cross-tabbed on source and flag state
- *  so both chip rows come from the same rows (see `appealFacets`). */
+/** Cross-tabbed on source and flag state so both chip rows come from one scan. */
 export async function getMinorFlagAppealGroups({ search }: { search?: MinorSearch }) {
   const rows = await sql<AppealGroup>`
     SELECT ${flagSourceSql} AS source, m.minor, m.poi, count(*)::int AS count
@@ -591,12 +590,12 @@ export async function getAutoFlaggedMinorMatch({ modelId }: { modelId: number })
   return result.rows[0] ?? null;
 }
 
-/** The Auto-flagged and Appeals tabs' detail panel. Two queries rather than one join, so the second is
+/** The Auto-flagged tab's and the appeal panel's detail. Two queries rather than one join, so the second is
  *  the exact same `getMinorHashMatchDetail` the review queue expands with — the panels stay identical
  *  by construction rather than by being kept in step.
  *
  *  The detail query runs even with no seed: a manual Set-as-Minor has no hash match by definition, and
- *  that is most of what the appeals tab reviews. Short-circuiting left those panels with no cover, no
+ *  that is most of what the appeals page reviews. Short-circuiting left those panels with no cover, no
  *  upload date and "0 models" for the uploader. */
 export async function getAutoFlaggedMinorDetail({ modelId }: { modelId: number }) {
   const match = await getAutoFlaggedMinorMatch({ modelId });
@@ -607,18 +606,18 @@ export async function getAutoFlaggedMinorDetail({ modelId }: { modelId: number }
   return { match, detail };
 }
 
-export type MinorQueueCounts = { pending: number; auto: number; appeals: number };
+export type MinorQueueCounts = { pending: number; auto: number };
 
 /**
  * Tab counts. Client-fetched and cached rather than part of `load`, because the Pending count costs
  * ~10s on its own: it has to build the same seed set and candidate CTE the queue does, then count the
- * whole population instead of one page of it. Blocking every page render on that to label three tabs
+ * whole population instead of one page of it. Blocking every page render on that to label two tabs
  * is the trade the row queries already refuse.
  *
- * All three in one round trip, since a moderator reads them together and a tab labelled with a count
+ * Both in one round trip, since a moderator reads them together and a tab labelled with a count
  * from a different moment is the thing worth avoiding.
  */
-const counts = createCache({ name: 'minor-queue-counts:v1', fetch: fetchCounts, ttlSeconds: 300 });
+const counts = createCache({ name: 'minor-queue-counts:v2', fetch: fetchCounts, ttlSeconds: 300 });
 
 export function getMinorQueueCounts(): Promise<MinorQueueCounts> {
   return counts.get({});
@@ -659,7 +658,7 @@ async function fetchCounts(): Promise<MinorQueueCounts> {
       WHERE NOT c."sameUploader"
         AND EXISTS (SELECT 1 FROM minor_src s2 WHERE s2.hash = c.hash AND s2."userId" <> c."userId")
     `.execute(dbRead),
-    sql<{ auto: number; appeals: number }>`
+    sql<{ auto: number }>`
       SELECT
         (SELECT count(*)::int FROM "Model" m
           WHERE m.meta ? ${MINOR_FLAG_SNAPSHOT_KEY}
@@ -667,17 +666,12 @@ async function fetchCounts(): Promise<MinorQueueCounts> {
             AND NOT ${humanConfirmedPredicate}
             AND NOT (m.meta ? ${MINOR_HASH_ACCEPTED_KEY})
             AND (m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'at')::timestamptz > ${reviewWindowCutoff}
-        ) AS auto,
-        (SELECT count(*)::int FROM "Appeal" a
-          JOIN "Model" m ON m.id = a."entityId"
-          WHERE a."entityType" = 'Model' AND a.status::text = 'Pending'
-        ) AS appeals
+        ) AS auto
     `.execute(dbRead),
   ]);
 
   return {
     pending: Number(pending.rows[0]?.count ?? 0),
     auto: Number(rest.rows[0]?.auto ?? 0),
-    appeals: Number(rest.rows[0]?.appeals ?? 0),
   };
 }

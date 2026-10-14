@@ -13,7 +13,7 @@
   import type { MinorQueueData } from '$lib/server/minor-flag-queue';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
   import { effectiveSource, sourceKey } from '$lib/minor-flags/appeal-filters';
-  import type { HashDetail } from '$lib/minor-flags/hash-detail';
+  import { fetchHashDetail, type HashDetail } from '$lib/minor-flags/hash-detail';
 
   type QueueForm = {
     error?: string;
@@ -80,15 +80,7 @@
     if (expanded.has(id)) return expanded.delete(id);
     expanded.add(id);
     if (details.has(id)) return;
-    const seed = n(row.minorModelId);
-    const q = seed ? `?minorModelId=${seed}` : '';
-    details.set(
-      id,
-      fetch(`/api/minor-hash-detail/${id}${q}`).then((r) => {
-        if (!r.ok) throw new Error(String(r.status));
-        return r.json() as Promise<HashDetail>;
-      })
-    );
+    details.set(id, fetchHashDetail(id, n(row.minorModelId)));
   }
 
   // Version-specific, and `view=basic`, matching the href the main app builds. Landing on the model
@@ -256,8 +248,7 @@
       )}
     >
       {t.label}
-      <!-- Absent until loaded rather than a placeholder zero: "Appeals 0" is a claim, and on these
-           queues it is the one a moderator would act on by not looking. -->
+      <!-- Absent until loaded: a placeholder 0 reads as "nothing to review". -->
       {#if counts}
         <Badge variant="secondary">{num(counts[t.value])}</Badge>
       {/if}

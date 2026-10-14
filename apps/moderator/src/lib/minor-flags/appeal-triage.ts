@@ -5,22 +5,21 @@ export type TriageKeyEvent = {
   ctrlKey: boolean;
   metaKey: boolean;
   altKey: boolean;
-  /** Focus is in a field the key would type into. */
+  defaultPrevented: boolean;
+  isComposing: boolean;
   typing: boolean;
-  /** Uphold is only meaningful while a flag is in force. */
   canUphold: boolean;
 };
 
 export const triageKeyAction = (e: TriageKeyEvent): TriageKeyAction | null => {
-  if (e.typing || e.ctrlKey || e.metaKey || e.altKey) return null;
+  if (e.typing || e.defaultPrevented || e.isComposing) return null;
+  if (e.ctrlKey || e.metaKey || e.altKey) return null;
   switch (e.key) {
     case 'j':
     case 'J':
-    case 'ArrowDown':
       return 'next';
     case 'k':
     case 'K':
-    case 'ArrowUp':
       return 'previous';
     case 'u':
     case 'U':
@@ -33,10 +32,29 @@ export const triageKeyAction = (e: TriageKeyEvent): TriageKeyAction | null => {
   }
 };
 
-export const isTypingTarget = (target: EventTarget | null): boolean =>
-  target instanceof Element &&
-  target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])') !==
-    null;
+export const TYPING_SELECTOR = [
+  'input',
+  'textarea',
+  'select',
+  '[contenteditable]:not([contenteditable="false"])',
+  '[role="dialog"]',
+  '[role="menu"]',
+  '[role="listbox"]',
+  '[role="combobox"]',
+].join(', ');
+
+/** Focus is somewhere a key means something else: a field, or an open dialog, menu or list. */
+export const isTypingTarget = (target: { closest?: (selector: string) => unknown } | null) =>
+  !!target?.closest?.(TYPING_SELECTOR);
+
+type ActionResultLike = { type: string; data?: Record<string, unknown> };
+
+/** The message to show against an appeal whose action did not succeed, or null. */
+export function failureMessage(result: ActionResultLike): string | null {
+  if (result.type === 'success') return null;
+  const error = result.type === 'failure' ? result.data?.error : null;
+  return typeof error === 'string' ? error : 'Action failed.';
+}
 
 /** One step through the queue, clamped at both ends. */
 export function step(ids: readonly number[], current: number | null, direction: 1 | -1) {
@@ -58,8 +76,11 @@ export function nextUndecided(
   return null;
 }
 
-/** A form action URL that keeps the page's query, so a no-JS submit lands back on the same filters. */
-export function formActionHref(action: string, params: Record<string, string | number | undefined>) {
+/** Keeps the page's query on a form action URL so a no-JS submit lands on the same filters. */
+export function formActionHref(
+  action: string,
+  params: Record<string, string | number | undefined>
+) {
   const query = new URLSearchParams();
   for (const [key, value] of Object.entries(params))
     if (value !== undefined && value !== '') query.set(key, String(value));

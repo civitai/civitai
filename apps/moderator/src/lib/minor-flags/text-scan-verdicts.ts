@@ -17,9 +17,12 @@ export const flagsOf = (v: unknown) =>
 export const isOpenVerdict = (flag: TextScanFlagView | undefined) =>
   !!flag?.workflowId && !flag.appealGranted;
 
-/** Is a flag still in force: minor, or real person with a text-scan verdict not yet lifted. */
-export const flagInForce = (row: { minor: boolean; poi: boolean; textScanFlags: unknown }) =>
-  row.minor || (row.poi && isOpenVerdict(flagsOf(row.textScanFlags)?.poi));
+type FlagRow = { minor: boolean; poi: boolean; textScanFlags: unknown };
+
+export const poiInForce = (row: FlagRow) =>
+  row.poi && isOpenVerdict(flagsOf(row.textScanFlags)?.poi);
+
+export const flagInForce = (row: FlagRow) => row.minor || poiInForce(row);
 
 export const openVerdicts = (v: unknown) =>
   FLAG_LABELS.flatMap((label) => {

@@ -2,6 +2,7 @@
   import { enhance } from '$app/forms';
   import { browser } from '$app/environment';
   import type { SubmitFunction } from '@sveltejs/kit';
+  import ErrorAlert from '$lib/components/ErrorAlert.svelte';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Kbd } from '@civitai/ui/components/ui/kbd/index.js';
@@ -9,14 +10,9 @@
   import { userLookupUrl } from '$lib/entity-url';
   import type { MinorFlagAppealRow } from '$lib/server/minor-hash.service';
   import { effectiveSource, sourceLabel } from '$lib/minor-flags/appeal-filters';
-  import type { HashDetail } from '$lib/minor-flags/hash-detail';
+  import { fetchHashDetail } from '$lib/minor-flags/hash-detail';
   import { clipList, pastAppealsText } from '$lib/minor-flags/appeal-row';
-  import {
-    flagInForce,
-    flagsOf,
-    isOpenVerdict,
-    openVerdicts,
-  } from '$lib/minor-flags/text-scan-verdicts';
+  import { flagInForce, openVerdicts, poiInForce } from '$lib/minor-flags/text-scan-verdicts';
   import AppealImages from './AppealImages.svelte';
   import AppealTags from './AppealTags.svelte';
 
@@ -24,6 +20,7 @@
     row,
     civitaiUrl,
     verdict,
+    error,
     submit,
     actionHref,
     upholdForm = $bindable(),
@@ -33,6 +30,7 @@
     civitaiUrl: string;
     /** The outcome already chosen for this appeal, shown in place of the actions. */
     verdict: string | undefined;
+    error: string | undefined;
     submit: (appealId: number, verdict: string) => SubmitFunction;
     actionHref: (action: string) => string;
     upholdForm?: HTMLFormElement;
@@ -44,22 +42,17 @@
 
   const origin = $derived(effectiveSource(row.flagSource, row.flagConfirmedFrom));
   const verdicts = $derived(openVerdicts(row.textScanFlags));
-  const poiOpen = $derived(row.poi && isOpenVerdict(flagsOf(row.textScanFlags)?.poi));
+  const poiOpen = $derived(poiInForce(row));
   const tags = $derived(clipList(row.tags, 12, row.tagCount));
   const words = $derived(clipList(row.trainedWords, 8, row.trainedWordCount));
   const canUphold = $derived(flagInForce(row));
   const ago = (value: Date | string) => `${shortAge(value)} ago`;
 
-  // Derived, not fetched in an effect: the component is keyed per appeal, so a new selection builds a
-  // new promise and a late response can never land on a different appeal.
-  const hashDetail: Promise<HashDetail> | null = $derived(
-    browser && origin === 'hash'
-      ? fetch(`/api/minor-hash-detail/${row.modelId}`).then((r) => {
-          if (!r.ok) throw new Error(String(r.status));
-          return r.json() as Promise<HashDetail>;
-        })
-      : null
-  );
+  // Primitives first, so a reload that hands back an equal row doesn't rebuild the promise.
+  const modelId = $derived(row.modelId);
+  const isHash = $derived(origin === 'hash');
+  // Derived, not an effect: the component is keyed per appeal, so a late response can't land on another one.
+  const hashDetail = $derived(browser && isHash ? fetchHashDetail(modelId) : null);
 </script>
 
 {#snippet card(title: string)}
@@ -181,7 +174,7 @@
             {row.appealMessage}
           </p>
         {:else}
-          <p class="m-0 text-base text-dark-2">The owner left no message.</p>
+          <p class="m-0 text-base text-dark-0">The owner left no message.</p>
         {/if}
         <p class="m-0 mt-3 text-sm text-dark-2" title={dateTime(row.appealCreatedAt)}>
           Appealed {ago(row.appealCreatedAt)}, waiting {shortAge(row.appealCreatedAt)}
@@ -209,7 +202,7 @@
       {#if words.shown.length}
         <div class="mt-3 flex flex-wrap items-center gap-1.5">
           <span class="text-sm text-dark-2">Trigger words</span>
-          {#each words.shown as word (word)}
+          {#each words.shown as word, i (i)}
             <Badge variant="outline" class="h-6 max-w-56 px-2.5 text-sm">
               <span class="truncate">{word}</span>
             </Badge>
@@ -233,12 +226,14 @@
     </section>
   </div>
 
+  {#if error}
+    <ErrorAlert class="mx-5 mb-3" message={error} />
+  {/if}
   <div
     class="sticky bottom-0 flex shrink-0 flex-wrap items-center gap-3 border-t border-dark-4 bg-dark-6 px-5 py-3"
   >
-    {#if verdict}
-      <span class="text-base font-medium text-white">{verdict}</span>
-    {:else}
+    <div role="status" class="text-base font-medium text-white empty:hidden">{#if verdict}{verdict}{/if}</div>
+    {#if !verdict}
       <form
         bind:this={upholdForm}
         method="POST"

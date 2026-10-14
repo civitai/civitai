@@ -1,6 +1,6 @@
 <script lang="ts">
-  import AppealFilterBar from '$lib/components/minor-flags/AppealFilterBar.svelte';
-  import AppealTriage from '$lib/components/minor-flags/AppealTriage.svelte';
+  import AppealFilterBar from './AppealFilterBar.svelte';
+  import AppealTriage from './AppealTriage.svelte';
   import type { ActionData, PageData } from './$types';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();

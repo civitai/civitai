@@ -1,7 +1,8 @@
 <script lang="ts">
-  import { invalidateAll, replaceState } from '$app/navigation';
+  import { afterNavigate, invalidateAll, replaceState } from '$app/navigation';
   import { page } from '$app/state';
   import type { SubmitFunction } from '@sveltejs/kit';
+  import { tick } from 'svelte';
   import { SvelteMap } from 'svelte/reactivity';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
@@ -10,6 +11,7 @@
   import { appealFilterParams } from '$lib/minor-flags/appeal-filters';
   import {
     formActionHref,
+    failureMessage,
     isTypingTarget,
     nextUndecided,
     step,
@@ -31,37 +33,58 @@
   const rows = $derived(data.items);
   const ids = $derived(rows.map((r) => r.appealId));
 
-  let selectedId = $state<number | null>(Number(page.url.searchParams.get('appeal')) || null);
+  const appealInUrl = () => Number(page.url.searchParams.get('appeal')) || null;
+
+  let selectedId = $state<number | null>(appealInUrl());
   const selected = $derived(rows.find((r) => r.appealId === selectedId) ?? rows[0]);
 
-  // appealId → outcome. Optimistic: the row dims and states the result. Cleared whenever the queue
-  // itself changes, so a stale mark can never describe a different appeal.
+  // Optimistic outcomes by appealId; cleared on reload so a mark can't outlive its appeal.
   const acted = new SvelteMap<number, string>();
+  // A refusal belongs to its appeal, so a later success elsewhere must not wipe it.
+  const errors = new SvelteMap<number, string>();
   $effect(() => {
-    data.items;
+    void data.items;
     acted.clear();
   });
 
+  // Navigation (filters, search, paging, back) rebuilds the selection from the URL it landed on.
+  let mirrored = appealInUrl();
+  afterNavigate(() => {
+    selectedId = appealInUrl();
+    mirrored = selectedId;
+  });
+
   // `page.url` does not follow a shallow `replaceState`, so the selection is its own state and the
-  // address bar only mirrors it.
-  function select(appealId: number) {
-    selectedId = appealId;
-    replaceState(urlWith(page.url, { appeal: appealId }), page.state);
-  }
+  // address bar only mirrors it. Debounced: a held J/K would otherwise call replaceState per repeat,
+  // and Safari throws past 100 calls in 30s.
+  const select = (appealId: number) => (selectedId = appealId);
+  $effect(() => {
+    const id = selectedId;
+    if (id === null || id === mirrored) return;
+    const timer = setTimeout(() => {
+      replaceState(urlWith(page.url, { appeal: id }), page.state);
+      mirrored = id;
+    }, 200);
+    return () => clearTimeout(timer);
+  });
 
   $effect(() => {
     if (selected)
       document.getElementById(`appeal-${selected.appealId}`)?.scrollIntoView({ block: 'nearest' });
   });
 
-  const advance = (decidedId: number) => {
+  const advance = async (decidedId: number) => {
     if (selected?.appealId !== decidedId) return;
     const next = nextUndecided(ids, decidedId, (id) => acted.has(id));
-    if (next !== null) select(next);
+    if (next === null) return;
+    select(next);
+    await tick();
+    document.querySelector<HTMLElement>(`#appeal-${next} a`)?.focus({ preventScroll: true });
   };
 
   const submit = (appealId: number, verdict: string): SubmitFunction => {
     const decide = optimisticEnhancer(() => {
+      errors.delete(appealId);
       acted.set(appealId, verdict);
       return () => acted.delete(appealId);
     });
@@ -69,12 +92,14 @@
       const finish = await decide(input);
       return async (outcome) => {
         await finish?.(outcome);
-        if (outcome.result.type === 'success') advance(appealId);
+        const message = failureMessage(outcome.result);
+        if (message) errors.set(appealId, message);
+        else advance(appealId);
       };
     };
   };
 
-  // A no-JS submit lands on the action URL, so it carries the page's query to render the same queue.
+  // Carries the page's query so a no-JS submit re-renders the same queue.
   const actionHref = (action: string) =>
     formActionHref(action, {
       ...appealFilterParams(data.appealFilters),
@@ -92,7 +117,9 @@
       ctrlKey: e.ctrlKey,
       metaKey: e.metaKey,
       altKey: e.altKey,
-      typing: isTypingTarget(e.target),
+      defaultPrevented: e.defaultPrevented,
+      isComposing: e.isComposing,
+      typing: isTypingTarget(e.target as Element | null),
       canUphold: !!selected && flagInForce(selected),
     });
     if (!action) return;
@@ -118,7 +145,7 @@
 <svelte:window {onkeydown} />
 
 {#if form?.error}
-  <ErrorAlert message={form.error} />
+  <ErrorAlert message={form.modelId ? `Model #${form.modelId}: ${form.error}` : form.error} />
 {/if}
 {#if form?.rescanQueued}
   <p class="m-0 rounded-md border border-blue-500/30 bg-blue-500/10 p-3 text-sm text-blue-200">
@@ -130,7 +157,7 @@
 <div class="flex min-h-0 flex-1 flex-col gap-4 lg:flex-row">
   <aside
     aria-label="Appeal queue"
-    class="flex max-h-80 min-h-0 flex-col overflow-hidden rounded-xl border border-dark-4 bg-dark-6 lg:max-h-none lg:w-[35%] lg:max-w-xl lg:min-w-80 lg:shrink-0"
+    class="flex max-h-80 min-h-0 flex-col overflow-hidden rounded-xl border border-dark-4 bg-dark-6 lg:max-h-none lg:w-[35%] lg:max-w-[36rem] lg:min-w-80 lg:shrink-0"
   >
     <div class="min-h-0 flex-1 overflow-y-auto">
       {#if rows.length}
@@ -138,6 +165,7 @@
           {rows}
           selectedId={selected?.appealId ?? null}
           verdicts={acted}
+          {errors}
           onselect={select}
         />
       {:else}
@@ -164,8 +192,7 @@
           {num(firstShown)}–{num(lastShown)}{total !== undefined ? ` of ${num(total)}` : ''}
         </span>
         {#if acted.size}
-          <!-- Later pages are offsets into a queue that has since shrunk, so paging on would skip
-               appeals; reloading re-cuts the page from what is still open. -->
+          <!-- Offsets shift once appeals are decided, so paging on would skip some; reload re-cuts the page. -->
           <Button size="sm" variant="outline" onclick={() => invalidateAll()}>
             Refresh queue ({acted.size} decided)
           </Button>
@@ -187,6 +214,7 @@
           row={selected}
           civitaiUrl={data.civitaiUrl}
           verdict={acted.get(selected.appealId)}
+          error={errors.get(selected.appealId)}
           {submit}
           {actionHref}
           bind:upholdForm
@@ -194,7 +222,7 @@
         />
       {/key}
     {:else}
-      <div class="grid flex-1 place-items-center p-10 text-center text-base text-dark-2">
+      <div class="grid flex-1 place-items-center p-10 text-center text-base text-dark-0">
         {rows.length ? 'Select an appeal from the queue.' : 'Nothing to review.'}
       </div>
     {/if}

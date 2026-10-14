@@ -24,7 +24,7 @@
     q,
   }: { filters: AppealFilters; facets: AppealFacets | null; q: string } = $props();
 
-  // Changing a filter changes the result set, so the page offset and the open appeal go with it.
+  // Page and selection index into the old result set.
   const hrefFor = (key: keyof AppealFilters, value: string) =>
     urlWith(page.url, {
       [key]: value === DEFAULT_APPEAL_FILTERS[key] ? null : value,
@@ -66,6 +66,8 @@
           {@const count = (group.counts as Record<string, number> | undefined)?.[value]}
           <a
             href={hrefFor(group.key, value)}
+            data-sveltekit-noscroll
+            data-sveltekit-keepfocus
             aria-current={active ? 'true' : undefined}
             class={cn(
               'flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm transition-colors',
@@ -86,20 +88,23 @@
     </div>
   {/each}
 
-  <form method="GET" class="ml-auto flex w-full max-w-sm items-center gap-2">
-    {#each Object.entries(appealFilterParams(filters)) as [name, value] (name)}
-      <input type="hidden" {name} {value} />
-    {/each}
-    <Input
-      name="q"
-      value={q}
-      placeholder="Model ID, user ID or username"
-      aria-label="Search appeals"
-      class="h-9 flex-1 text-sm"
-    />
-    <Button type="submit" size="lg">Search</Button>
-    {#if q}
-      <Button href={clearSearchHref} variant="outline" size="lg">Clear</Button>
-    {/if}
-  </form>
+  <!-- Keyed on q: the Input's value is bindable, so a one-way prop would latch on what was typed. -->
+  {#key q}
+    <form method="GET" class="ml-auto flex w-full max-w-[24rem] items-center gap-2">
+      {#each Object.entries(appealFilterParams(filters)) as [name, value] (name)}
+        <input type="hidden" {name} {value} />
+      {/each}
+      <Input
+        name="q"
+        value={q}
+        placeholder="Model ID, user ID or username"
+        aria-label="Search appeals"
+        class="h-9 flex-1 text-sm"
+      />
+      <Button type="submit" size="lg">Search</Button>
+      {#if q}
+        <Button href={clearSearchHref} variant="outline" size="lg">Clear</Button>
+      {/if}
+    </form>
+  {/key}
 </div>

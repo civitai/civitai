@@ -12,15 +12,16 @@
     rows,
     selectedId,
     verdicts,
+    errors,
     onselect,
   }: {
     rows: MinorFlagAppealRow[];
     selectedId: number | null;
     verdicts: ReadonlyMap<number, string>;
+    errors: ReadonlyMap<number, string>;
     onselect: (appealId: number) => void;
   } = $props();
 
-  // A modified click keeps its browser meaning (new tab); a plain one selects without a navigation.
   const onclick = (e: MouseEvent, appealId: number) => {
     if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
     e.preventDefault();
@@ -31,6 +32,7 @@
 <ul class="m-0 list-none divide-y divide-dark-4 p-0">
   {#each rows as row (row.appealId)}
     {@const verdict = verdicts.get(row.appealId)}
+    {@const error = errors.get(row.appealId)}
     {@const cover = row.coverImages[0]}
     <li id="appeal-{row.appealId}">
       <a
@@ -61,6 +63,9 @@
               waiting {shortAge(row.appealCreatedAt)}
             </span>
           </div>
+          {#if error}
+            <p class="m-0 mt-1 text-sm text-red-300">Failed: {error}</p>
+          {/if}
           {#if verdict}
             <p class="m-0 mt-1 text-sm text-dark-0">{verdict}</p>
           {:else}
