@@ -1,5 +1,6 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import type * as TrpcClientModule from '@trpc/client';
+import type * as TrpcNextModule from '@trpc/next';
 import { TRPC_MAX_BATCH_SIZE } from '~/shared/constants/trpc.constants';
 
 /**
@@ -20,7 +21,19 @@ const h = vi.hoisted(() => ({
   batchLinkOptions: [] as Record<string, unknown>[],
   plainLinkOptions: [] as Record<string, unknown>[],
   router: null as null | { pathname: string },
+  nextConfig: null as null | ((opts: { ctx?: unknown }) => unknown),
 }));
+
+vi.mock('@trpc/next', async (importOriginal) => {
+  const actual = await importOriginal<typeof TrpcNextModule>();
+  return {
+    ...actual,
+    createTRPCNext: (opts: { config: (o: { ctx?: unknown }) => unknown }) => {
+      h.nextConfig = opts.config;
+      return actual.createTRPCNext(opts as never);
+    },
+  };
+});
 
 vi.mock('next/router', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
@@ -82,14 +95,34 @@ describe('every tRPC link sends the page route header', () => {
     vi.unstubAllGlobals();
   });
 
-  it('on the batch and the non-batch links', () => {
+  function expectRouteHeader(links: Record<string, unknown>[]) {
+    expect(links.length).toBeGreaterThan(0);
+    for (const options of links) {
+      const headers = (options.headers as () => Record<string, string>)();
+      expect(headers['x-page-route']).toBe('/models/[id]/[[...slug]]');
+      expect(headers['x-client']).toBe('web');
+    }
+  }
+
+  it('on trpcVanilla, batch and non-batch', () => {
     expect(h.batchLinkOptions.length).toBeGreaterThan(0);
     expect(h.plainLinkOptions.length).toBeGreaterThan(0);
     vi.stubGlobal('window', {});
     h.router = { pathname: '/models/[id]/[[...slug]]' };
-    for (const options of [...h.batchLinkOptions, ...h.plainLinkOptions]) {
-      const headers = (options.headers as () => Record<string, string>)();
-      expect(headers['x-page-route']).toBe('/models/[id]/[[...slug]]');
-    }
+    expectRouteHeader([...h.batchLinkOptions, ...h.plainLinkOptions]);
+  });
+
+  // The React client builds its links lazily, per `config()` call.
+  it('on the createTRPCNext client', () => {
+    expect(h.nextConfig).not.toBeNull();
+    vi.stubGlobal('window', {});
+    h.router = { pathname: '/models/[id]/[[...slug]]' };
+    const batchBefore = h.batchLinkOptions.length;
+    const plainBefore = h.plainLinkOptions.length;
+    h.nextConfig!({ ctx: undefined });
+    expectRouteHeader([
+      ...h.batchLinkOptions.slice(batchBefore),
+      ...h.plainLinkOptions.slice(plainBefore),
+    ]);
   });
 });
