@@ -1,5 +1,8 @@
 import * as z from 'zod';
-import { FEEDBACK_MESSAGE_MAX_LENGTH } from '~/shared/constants/feedback.constants';
+import {
+  FEEDBACK_MESSAGE_MAX_LENGTH,
+  PLATFORM_FEEDBACK_DOC_URL_PREFIX,
+} from '~/shared/constants/feedback.constants';
 
 export const PLATFORM_FEEDBACK_ABOUT = [
   'cli',
@@ -15,7 +18,7 @@ export const PLATFORM_FEEDBACK_KINDS = ['bug', 'confusing', 'missing', 'request'
 export const PLATFORM_FEEDBACK_CLIENTS = ['civitai-cli', 'civitai-mcp', 'other'] as const;
 export type PlatformFeedbackClient = (typeof PLATFORM_FEEDBACK_CLIENTS)[number];
 
-export const PLATFORM_FEEDBACK_DOC_URL_PREFIX = 'https://developer.civitai.com/';
+export { PLATFORM_FEEDBACK_DOC_URL_PREFIX };
 export const PLATFORM_FEEDBACK_REFS_MAX = 50;
 
 const version = z

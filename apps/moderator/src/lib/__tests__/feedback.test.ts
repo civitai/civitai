@@ -133,6 +133,10 @@ describe('feedbackAreaLabel', () => {
     expect(feedbackAreaLabel('app-block')).toBe('App feedback');
   });
 
+  it('names apps-platform rows', () => {
+    expect(feedbackAreaLabel('apps-platform')).toBe('Apps platform (developers)');
+  });
+
   it('renders an unlabelled slug as itself, including one shaped like an Object.prototype key', () => {
     expect(['site-bug-report', 'constructor', 'toString'].map(feedbackAreaLabel)).toEqual([
       'site-bug-report',
@@ -141,8 +145,10 @@ describe('feedbackAreaLabel', () => {
     ]);
   });
 
-  it('says which area the no-area view leaves out', () => {
-    expect(FEEDBACK_ANY_AREA_LABEL).toBe('Area — any except App feedback');
+  it('says which areas the no-area view leaves out', () => {
+    expect(FEEDBACK_ANY_AREA_LABEL).toBe(
+      'Area — any except App feedback, Apps platform (developers)'
+    );
   });
 });
 

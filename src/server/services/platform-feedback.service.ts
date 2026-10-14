@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import semver from 'semver';
+import { parsePlatformFeedbackVersion as parseVersion } from '@civitai/shared/platform-feedback-version';
 import { dbWrite } from '~/server/db/client';
 import type {
   CreatePlatformFeedbackInput,
@@ -16,7 +17,11 @@ import {
   FEEDBACK_AREA_DISABLED_MESSAGE,
   isFeedbackAreaEnabled,
 } from '~/server/services/feedback.service';
-import { APPS_PLATFORM_FEEDBACK_AREA } from '~/shared/constants/feedback.constants';
+import {
+  APPS_PLATFORM_FEEDBACK_AREA,
+  PLATFORM_FEEDBACK_CLIENT_COMPONENT as CLIENT_COMPONENT,
+  PLATFORM_FEEDBACK_PUBLIC_NOTE_MAX_LENGTH as PUBLIC_NOTE_MAX_LENGTH,
+} from '~/shared/constants/feedback.constants';
 import type { SessionUser } from '~/types/session';
 
 /**
@@ -33,19 +38,13 @@ export const PLATFORM_FEEDBACK_SAMPLE_TEXT_MAX_LENGTH = 300;
  * of being told `not_planned`. The count is per dismissal: dismissing the row again starts it over.
  */
 export const PLATFORM_FEEDBACK_REOPEN_AFTER_REPORTERS = 3;
-const PUBLIC_NOTE_MAX_LENGTH = 300;
 const REF_SUFFIX_LENGTH = 8;
 const LOCK_TIMEOUT = '3s';
 const INT4_MAX = 2_147_483_647;
 
-/**
- * Which `resolution.fixedIn.component` a reporting client's own version can be compared against.
- * `other` is absent on purpose: its version says nothing about any component we ship.
- */
-export const PLATFORM_FEEDBACK_CLIENT_COMPONENT: Partial<Record<PlatformFeedbackClient, string>> = {
-  'civitai-cli': 'cli',
-  'civitai-mcp': 'mcp',
-};
+/** Shared with the moderator app, which explains the regression compare beside the resolution form. */
+export const PLATFORM_FEEDBACK_CLIENT_COMPONENT: Partial<Record<PlatformFeedbackClient, string>> =
+  CLIENT_COMPONENT;
 
 const normalizeMessage = (message: string) =>
   message.normalize('NFKC').toLowerCase().replace(/\s+/g, ' ').trim();
@@ -79,14 +78,6 @@ function parseRef(ref: string) {
   if (!match) return null;
   const id = Number(match[1]);
   return id <= INT4_MAX ? { id } : null;
-}
-
-/** Short forms (`2`, `1.4`) are padded because `semver.valid` only accepts three parts. */
-function parseVersion(version: string) {
-  const padded = /^v?\d+(\.\d+)?$/.test(version)
-    ? `${version}${version.includes('.') ? '.0' : '.0.0'}`
-    : version;
-  return semver.valid(padded);
 }
 
 /**
@@ -422,7 +413,8 @@ export async function getPlatformFeedbackStatus({
     const state = row ? parseServerState(row.server) : undefined;
     // Without the suffix match, counting up through ids would read out every report. The suffix
     // is not a secret for a report keyed on `report.ref` (it derives from about + ref), so anyone
-    // who knows the key can read such a row here: return aggregate status and timing only.
+    // with the area enabled who can guess the key and id reads such a row here — status, fixedIn,
+    // the moderator's public note, counts and timing. Never reporter ids or sample text.
     if (!target || !row || !state || toRef(row.id, state.fingerprint) !== ref)
       return { ref, found: false as const };
 
