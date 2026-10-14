@@ -11,7 +11,7 @@ import {
 } from './hostHandlerParity';
 import { buildBridgeNackReply } from './bridgeNackReply';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
-import { REPLY_TYPE } from '../../../test/bridgeForwardMatrix';
+import { REPLY_TYPE, ROWS, replyKeysProblems } from '../../../test/bridgeForwardMatrix';
 import { BRIDGE_BUDGET_EXEMPT_TYPES } from './usePostMessage';
 import { stripSourceComments } from './stripSourceComments';
 
@@ -98,11 +98,18 @@ function handlesMessage(src: string, type: string): boolean {
 const HOSTS: HostFile[] = ['IframeHost.tsx', 'PageBlockHost.tsx', 'InlineHost.tsx'];
 
 /**
- * Types whose replies are pinned in a test of a SHARED module, not a host test. That module is
- * the one both hosts reply through, so the pin counts for each host.
+ * Types whose replies are pinned in a test of a SHARED module, not a host test. A pin there
+ * counts for each host, because both hosts reply through that module, except for the reply a
+ * host writes itself. `hostWritesError` lists each host that writes an error reply of its own
+ * outside the module. Such a host needs an error pin from its own test.
  */
-const SHARED_MODULE_PINS: Partial<Record<InventoryType, string>> = {
-  ESTIMATE_WORKFLOW_BATCH: 'both hosts reply through handleEstimateBatch (estimateBatchGate.ts)',
+const SHARED_MODULE_PINS: Partial<
+  Record<InventoryType, { hostWritesError: Array<'IframeHost' | 'PageBlockHost'> }>
+> = {
+  // Shared module: handleEstimateBatch (estimateBatchGate.ts). It hands the no-token case back
+  // to the host (`onNoToken`). PageBlockHost answers it with the shared NACK, which the NACK
+  // sweep pins. IframeHost writes the reply inline.
+  ESTIMATE_WORKFLOW_BATCH: { hostWritesError: ['IframeHost'] },
 };
 
 /**
@@ -265,6 +272,17 @@ describe('App Blocks host↔SDK handler parity (gotcha-#73 "spins forever" guard
       ]);
     });
 
+    it('the forward matrix rows agree with the declared shapes, on each host', () => {
+      // The same check as each forward matrix's premise test, run here as well. The matrices are
+      // browser tests, and this file runs in the unit tier, so a wrong declaration for a
+      // forwarded type fails here too.
+      for (const host of ['IframeHost', 'PageBlockHost'] as const) {
+        const rows = ROWS.filter((r) => r.hosts.includes(host));
+        expect(rows.length, `${host}: positive control, the matrix has rows`).toBeGreaterThan(0);
+        expect(replyKeysProblems(rows), host).toEqual([]);
+      }
+    });
+
     it("the shared dispatcher's NACK matches every type's declared error shape", () => {
       // The NACK (`buildBridgeNackReply`) is the one error reply every NACKable type can get,
       // whichever host and handler. It must satisfy `errorKeys`. For the workflow family
@@ -310,6 +328,12 @@ describe('App Blocks host↔SDK handler parity (gotcha-#73 "spins forever" guard
             (p) => p.host === host || (p.host === 'shared' && type in SHARED_MODULE_PINS)
           );
           expect(fromHost, `${type}: no pin from a ${host} test`).toBe(true);
+          if (SHARED_MODULE_PINS[type]?.hostWritesError.includes(host)) {
+            expect(
+              mine.some((p) => p.host === host && p.outcome === 'error'),
+              `${type}: ${host} writes its own error reply, and no ${host} test pins it`
+            ).toBe(true);
+          }
         }
         for (const outcome of ['success', 'error'] as const) {
           const declared = outcome === 'success' ? spec.replyKeys : spec.errorKeys;

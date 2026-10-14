@@ -10,12 +10,15 @@ import type { ResourceSelectModalProps } from '~/components/ImageGeneration/Gene
 import type { GenerationResource } from '~/shared/types/generation.types';
 
 /**
- * The model-slot host's (IframeHost) two checkpoint bridges.
+ * Replies the model-slot host (IframeHost) writes itself, captured for the reply-key ledger in
+ * `hostHandlerParity.test.ts`.
  *
  * - SET_USER_CHECKPOINT → USER_CHECKPOINT_SET. Only this host can persist the override,
  *   because the settings row is keyed by a model-bound install.
  * - OPEN_CHECKPOINT_PICKER → CHECKPOINT_PICKER_RESULT, which this host answers with its own
  *   handler.
+ * - ESTIMATE_WORKFLOW_BATCH → ESTIMATE_BATCH_RESULT with no credential. The shared batch
+ *   handler hands that case back to the host, and this host writes the error reply inline.
  */
 
 const { updateSettings, refetchCheckpoint } = vi.hoisted(() => ({
@@ -132,12 +135,12 @@ function listen() {
   };
 }
 
-async function mountAndReady() {
+async function mountAndReady(token = 'tok_abc') {
   renderWithProviders(
     <IframeHost
       install={install}
       context={context}
-      token="tok_abc"
+      token={token}
       expiresAt={new Date(Date.now() + 15 * 60_000).toISOString()}
     />
   );
@@ -243,6 +246,24 @@ describe('IframeHost OPEN_CHECKPOINT_PICKER → CHECKPOINT_PICKER_RESULT', () =>
     const [reply] = replies.of('CHECKPOINT_PICKER_RESULT');
     expect(reply.payload).toEqual({ requestId: 'rq_cancel' });
     expectReplyKeys('OPEN_CHECKPOINT_PICKER', 'success', [], reply.payload);
+    replies.stop();
+  });
+});
+
+describe('IframeHost ESTIMATE_WORKFLOW_BATCH → ESTIMATE_BATCH_RESULT', () => {
+  test('with no block credential it replies a bare { error }', async () => {
+    await mountAndReady('');
+    const replies = listen();
+
+    post('ESTIMATE_WORKFLOW_BATCH', {
+      requestId: 'rq_batch',
+      bodies: [{ kind: 'textToImage', modelId: 7, modelVersionId: 99, params: { prompt: 'a' } }],
+    });
+
+    await vi.waitFor(() => expect(replies.of('ESTIMATE_BATCH_RESULT')).toHaveLength(1));
+    const [reply] = replies.of('ESTIMATE_BATCH_RESULT');
+    expect(reply.payload).toEqual({ requestId: 'rq_batch', error: 'block credential unavailable' });
+    expectReplyKeys('ESTIMATE_WORKFLOW_BATCH', 'error', ['error'], reply.payload);
     replies.stop();
   });
 });

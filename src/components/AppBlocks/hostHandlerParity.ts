@@ -106,7 +106,8 @@ export interface MessageSpec {
    * Checked by `checkReplyKeys` (below):
    *   - the forwarded types (`REPLY_TYPE` in `test/bridgeForwardMatrix.ts`): the premise test
    *     of each forward matrix checks every pinned reply row against this list, and requires
-   *     every listed key to appear in some row;
+   *     every listed key to appear in some row. `hostHandlerParity.test.ts` runs the same check
+   *     over the same rows, so it also runs in the unit tier;
    *   - every other REQUEST type: the per-message tests call `expectReplyKeys` (in
    *     `test/expectReplyKeys.ts`) on a reply the real host sent. `hostHandlerParity.test.ts`
    *     requires a pin from each host that must handle the type, and requires the pinned key
