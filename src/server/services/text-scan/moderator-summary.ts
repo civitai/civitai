@@ -1,3 +1,8 @@
+import type {
+  TextScanFlagDecision,
+  TextScanFlagLabel,
+} from '~/server/services/text-scan/flag-snapshot';
+import { hasOpenTextScanFlag, readTextScanFlags } from '~/server/services/text-scan/flag-snapshot';
 import type { TextScanResult } from '~/server/services/text-scan/record';
 import type { EntityModerationStatus } from '~/shared/utils/prisma/enums';
 
@@ -37,4 +42,39 @@ export function summarizeTextScan(
     ...(typeof meta.segments === 'number' && meta.segments > 1 ? { segments: meta.segments } : {}),
     updatedAt: row.updatedAt,
   };
+}
+
+export type TextScanFlagVerdict = {
+  label: TextScanFlagLabel;
+  reason: string | null;
+  names: string[];
+  at: string | null;
+  workflowId: string;
+  model: string | null;
+  appealGranted: TextScanFlagDecision | null;
+  appealUpheld: TextScanFlagDecision | null;
+  open: boolean;
+};
+
+// The scan that set a sticky flag is overwritten by every rescan; this snapshot is the only
+// record of why the flag is on.
+export function summarizeTextScanFlags(meta: unknown): TextScanFlagVerdict[] {
+  const flags = readTextScanFlags(meta);
+  return (['poi', 'minor'] as const).flatMap((label) => {
+    const entry = flags[label];
+    if (!entry?.workflowId) return [];
+    return [
+      {
+        label,
+        reason: entry.reason ?? null,
+        names: entry.names ?? [],
+        at: entry.at ?? null,
+        workflowId: entry.workflowId,
+        model: entry.model ?? null,
+        appealGranted: entry.appealGranted ?? null,
+        appealUpheld: entry.appealUpheld ?? null,
+        open: hasOpenTextScanFlag(meta, label),
+      },
+    ];
+  });
 }

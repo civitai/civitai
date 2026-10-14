@@ -54,7 +54,9 @@ export function ModelModerationCard({
     flags.push({ label, color: 'orange' });
 
   const locked = data?.lockedProperties ?? [];
+  const verdicts = data?.textScanFlags ?? [];
   const hasFooter = !!(
+    verdicts.length ||
     data?.profanity ||
     data?.textModeration ||
     data?.textScan ||
@@ -88,6 +90,7 @@ export function ModelModerationCard({
     locked.length +
     (data?.profanity ? 1 : 0) +
     (data?.textModeration ? 1 : 0) +
+    verdicts.length +
     (data?.textScan?.triggeredLabels.length ? 1 : 0) +
     (data?.unpublishedAt ? 1 : 0) +
     (data?.takenDownAt ? 1 : 0) +
@@ -199,7 +202,9 @@ export function ModelModerationCard({
                           these policies return no matched terms. */}
                       <Text size="xs" c="dimmed">
                         {data.textModeration.labels
-                          .map((l) => `${l.label} ${l.score.toFixed(2)} / ${l.threshold.toFixed(2)}`)
+                          .map(
+                            (l) => `${l.label} ${l.score.toFixed(2)} / ${l.threshold.toFixed(2)}`
+                          )
                           .join(' · ')}
                       </Text>
                       {data.textModeration.matchedTerms.length > 0 && (
@@ -214,10 +219,47 @@ export function ModelModerationCard({
                       </Text>
                     </Stack>
                   )}
+                  {verdicts.map((v) => (
+                    <Stack key={v.label} gap={4}>
+                      <Group gap={6}>
+                        <Text size="xs" fw={600} c="red">
+                          Flagged by text scan · {v.label}
+                          {v.at ? ` · ${formatDate(v.at)}` : ''}
+                        </Text>
+                        {v.open && (
+                          <Badge size="xs" radius="xl" color="red" variant="light">
+                            Open
+                          </Badge>
+                        )}
+                        {v.appealGranted && (
+                          <Badge size="xs" radius="xl" color="green" variant="light">
+                            Appeal granted
+                          </Badge>
+                        )}
+                        {v.appealUpheld && (
+                          <Badge size="xs" radius="xl" color="gray" variant="light">
+                            Appeal upheld
+                          </Badge>
+                        )}
+                      </Group>
+                      {v.reason && <Text size="xs">{v.reason}</Text>}
+                      {v.names.length > 0 && (
+                        <Group gap={4}>
+                          {v.names.map((name) => (
+                            <Code key={name}>{name}</Code>
+                          ))}
+                        </Group>
+                      )}
+                      <Text size="xs" c="dimmed">
+                        Workflow {v.workflowId}
+                        {v.model ? ` · ${v.model}` : ''}
+                      </Text>
+                    </Stack>
+                  ))}
                   {data.textScan && (
                     <Stack gap={4}>
                       <Text size="xs" fw={600} c="orange">
-                        Text scan · {data.textScan.status}
+                        Latest scan · {data.textScan.status}
                         {data.textScan.nsfwLevel
                           ? ` · ${getBrowsingLevelLabel(data.textScan.nsfwLevel)}`
                           : ''}{' '}

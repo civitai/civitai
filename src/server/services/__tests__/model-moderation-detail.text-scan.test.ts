@@ -75,3 +75,79 @@ describe('getModelModerationDetail — text scan', () => {
     expect(textScan?.reasons.map((r) => r.label)).toEqual(['poi', 'minor']);
   });
 });
+
+describe('getModelModerationDetail — text-scan flag verdicts', () => {
+  it('returns the verdict that set each flag, beside the latest scan', async () => {
+    dbMock.dbRead.model.findUnique.mockResolvedValue({
+      id: 7,
+      name: 'm',
+      poi: true,
+      minor: true,
+      meta: {
+        textScanFlags: {
+          poi: {
+            at: '2026-09-01T00:00:00.000Z',
+            workflowId: 'wf-poi',
+            reason: 'Names a real actor.',
+            names: ['Jane Doe'],
+            textHash: 'h1',
+            model: 'llm-1',
+          },
+          minor: {
+            at: '2026-09-02T00:00:00.000Z',
+            workflowId: 'wf-minor',
+            reason: 'Says the character is 15.',
+            appealGranted: { at: '2026-09-03T00:00:00.000Z', by: 4, textHash: 'h2' },
+          },
+        },
+      },
+    } as never);
+    rows = { 'Model:search': SEARCH };
+
+    const { textScanFlags } = await getModelModerationDetail({ id: 7 });
+
+    expect(textScanFlags).toEqual([
+      {
+        label: 'poi',
+        reason: 'Names a real actor.',
+        names: ['Jane Doe'],
+        at: '2026-09-01T00:00:00.000Z',
+        workflowId: 'wf-poi',
+        model: 'llm-1',
+        appealGranted: null,
+        appealUpheld: null,
+        open: true,
+      },
+      {
+        label: 'minor',
+        reason: 'Says the character is 15.',
+        names: [],
+        at: '2026-09-02T00:00:00.000Z',
+        workflowId: 'wf-minor',
+        model: null,
+        appealGranted: { at: '2026-09-03T00:00:00.000Z', by: 4, textHash: 'h2' },
+        appealUpheld: null,
+        open: false,
+      },
+    ]);
+  });
+
+  it('skips a ruling stub that carries no workflowId', async () => {
+    dbMock.dbRead.model.findUnique.mockResolvedValue({
+      id: 7,
+      name: 'm',
+      meta: {
+        textScanFlags: { poi: { appealGranted: { at: '2026-09-03T00:00:00.000Z', by: 4 } } },
+      },
+    } as never);
+
+    const { textScanFlags } = await getModelModerationDetail({ id: 7 });
+
+    expect(textScanFlags).toEqual([]);
+  });
+
+  it('is empty when the model has no textScanFlags', async () => {
+    const { textScanFlags } = await getModelModerationDetail({ id: 7 });
+    expect(textScanFlags).toEqual([]);
+  });
+});

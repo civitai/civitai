@@ -139,6 +139,7 @@ import {
 import { submitModelTextModeration } from '~/server/services/model-moderation.adapter';
 import {
   summarizeTextScan,
+  summarizeTextScanFlags,
   type TextScanModeratorSummary,
 } from '~/server/services/text-scan/moderator-summary';
 import {
@@ -5199,6 +5200,7 @@ export async function getModelModerationDetail({ id }: { id: number }) {
       : null,
     textModeration: meta.textModeration ?? null,
     textScan: withWebSearchVerdict(summarizeTextScan(scan), summarizeTextScan(searchScan)),
+    textScanFlags: summarizeTextScanFlags(model.meta),
     unpublishedAt: meta.unpublishedAt ?? null,
     unpublishedBy: meta.unpublishedBy ?? null,
     unpublishedReason: meta.unpublishedReason ?? null,
