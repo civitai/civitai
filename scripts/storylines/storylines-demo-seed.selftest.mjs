@@ -45,22 +45,34 @@ if (!DEV_URL || !NONDEV_URLS) {
   process.exit(2);
 }
 
-/** The fixture has 3 users. A database with more was not made by this test. */
-const MAX_THROWAWAY_USERS = 10;
+/** Every table this test creates: its fixture's, and the migration's. */
+const OWN_TABLES = new Set([
+  'User',
+  'Report',
+  'Post',
+  'Image',
+  ...[...migrationSql.matchAll(/CREATE TABLE "(\w+)"/g)].map((m) => m[1]),
+]);
 
+/**
+ * Fails closed: a database may be wiped only if every table in it, in any schema, is one this
+ * test creates. A fresh server has none; anything else was not made here.
+ */
 async function assertThrowaway(c, url) {
-  const { rows } = await c.query(`SELECT to_regclass('public."User"') IS NOT NULL AS has_users`);
-  if (!rows[0].has_users) return;
-  const n = Number(
-    (
-      await c.query(
-        `SELECT count(*) AS n FROM (SELECT 1 FROM "User" LIMIT ${MAX_THROWAWAY_USERS + 1}) u`
-      )
-    ).rows[0].n
+  const { rows } = await c.query(
+    `SELECT n.nspname AS schema, cl.relname AS name
+       FROM pg_class cl JOIN pg_namespace n ON n.oid = cl.relnamespace
+      WHERE cl.relkind IN ('r', 'p', 'v', 'm', 'f')
+        AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+        AND n.nspname NOT LIKE 'pg\_toast%' AND n.nspname NOT LIKE 'pg\_temp%'`
   );
-  if (n > MAX_THROWAWAY_USERS) {
+  const foreign = rows.filter((r) => r.schema !== 'public' || !OWN_TABLES.has(r.name));
+  if (foreign.length) {
+    const sample = foreign.slice(0, 3).map((r) => `${r.schema}.${r.name}`);
     throw new Error(
-      `refusing to wipe ${url}: it already has more than ${MAX_THROWAWAY_USERS} users, so it is not a throwaway database`
+      `refusing to wipe ${url}: it has ${
+        foreign.length
+      } table(s) this test did not create (${sample.join(', ')})`
     );
   }
 }
@@ -69,10 +81,13 @@ async function assertThrowaway(c, url) {
 // exclude sorts ahead of the posts it should pick:
 // - owner 102/103 and collaborator 201/202 are published in the opposite order to their ids,
 //   and 206 is the earliest usable post above the ceiling but has a higher id than 104;
-// - 105/205 unpublished, 113 scheduled in the future, 106/306 level 0, 107/108/208/304 already
-//   chapters of "Prior", 110/214/211/302 tosViolation, 111/215/212 unlisted, 112/216/213 not
-//   Public, 209/210 Blocked (alone and with R), 303 above the ceiling, 310 a third account's
-//   post above the ceiling, 207 unpublished and above the ceiling.
+// - 308 is the third account's earliest usable post but has a higher id than 301;
+// - 105/205 unpublished, 106/306 level 0, 107/108/208/304 already chapters of "Prior",
+//   110/214/211/302 tosViolation, 111/215/212/312 unlisted, 112/216/213/313 not Public,
+//   209/210 Blocked (alone and with R), 303 above the ceiling, 310 a third account's post
+//   above the ceiling;
+// - 113/217/218/314 are scheduled in the future and 207 is unpublished and above the ceiling:
+//   they sort last, so the refusal checks reach them by making each account run short.
 const FIXTURE = `
 DROP SCHEMA public CASCADE;
 CREATE SCHEMA public;
@@ -97,14 +112,17 @@ INSERT INTO "Post" (id, "userId", "publishedAt", "nsfwLevel") VALUES
   (210, 20, '2024-11-03', 36),
   (211, 20, '2024-09-01', 4), (212, 20, '2024-09-02', 4), (213, 20, '2024-09-03', 4),
   (214, 20, '2024-10-01', 1), (215, 20, '2024-10-02', 1), (216, 20, '2024-10-03', 1),
-  (301, 30, '2025-01-01', 1), (302, 30, '2024-12-01', 1), (303, 30, '2024-12-02', 4),
-  (304, 30, '2024-12-03', 1), (306, 30, '2024-12-05', 0), (310, 30, '2024-08-01', 8);
+  (217, 20, '2099-01-01', 1), (218, 20, '2099-01-01', 4),
+  (301, 30, '2025-01-01', 1), (308, 30, '2024-12-31', 1),
+  (302, 30, '2024-12-01', 1), (303, 30, '2024-12-02', 4), (304, 30, '2024-12-03', 1),
+  (306, 30, '2024-12-05', 0), (310, 30, '2024-08-01', 8),
+  (312, 30, '2024-12-10', 1), (313, 30, '2024-12-11', 1), (314, 30, '2099-01-01', 1);
 UPDATE "Post" SET "tosViolation" = true WHERE id IN (110, 211, 214, 302);
-UPDATE "Post" SET unlisted = true WHERE id IN (111, 212, 215);
-UPDATE "Post" SET availability = 'Private' WHERE id IN (112, 213, 216);
+UPDATE "Post" SET unlisted = true WHERE id IN (111, 212, 215, 312);
+UPDATE "Post" SET availability = 'Private' WHERE id IN (112, 213, 216, 313);
 INSERT INTO "Image" VALUES
   (1001, 101, 0), (1002, 101, 1), (1003, 101, 2),
-  (2005, 202, 2), (2009, 202, 0), (2007, 202, 1),
+  (2001, 202, NULL), (2005, 202, 2), (2009, 202, 0), (2007, 202, 1),
   (3003, 201, 1), (3007, 201, 0);
 `;
 
@@ -176,7 +194,7 @@ const MAIN = [
 ];
 const CANON_END = [4, 102, 'CivBot', 'canon', false, 201];
 const ENDORSED_END = [4, 203, 'CivChan', 'endorsed', false, 201];
-const COMMUNITY_END = [4, 301, 'Someone', 'community', false, 201];
+const COMMUNITY_END = [4, 308, 'Someone', 'community', false, 201];
 const ABOVE_CEILING_END = [4, 206, 'CivChan', 'endorsed', true, 201];
 const DEMO = [...MAIN, CANON_END, ENDORSED_END, ABOVE_CEILING_END];
 
@@ -221,8 +239,8 @@ await withClient(DEV_URL, async (c) => {
   async function refusal(name, setup, teardown, sql, pattern) {
     await check(name, async () => {
       await c.query(cleanupSql);
-      await c.query(setup);
       try {
+        await c.query(setup);
         await assert.rejects(c.query(sql), pattern);
         assert.equal(await demoChapters(c), 0);
       } finally {
@@ -307,8 +325,10 @@ await withClient(DEV_URL, async (c) => {
 
   await refusal(
     'seed refuses a named third account with no usable post',
-    `UPDATE "Post" SET "publishedAt" = NULL WHERE id = 301`,
-    `UPDATE "Post" SET "publishedAt" = '2025-01-01' WHERE id = 301`,
+    `UPDATE "Post" SET "publishedAt" = NULL WHERE id IN (301, 308)`,
+    `UPDATE "Post" SET "publishedAt" = v.d::timestamp
+       FROM (VALUES (301, '2025-01-01'), (308, '2024-12-31')) v(id, d)
+      WHERE "Post".id = v.id`,
     seedWithCommunity('Someone'),
     /has no post at or under the ceiling/
   );
@@ -319,13 +339,19 @@ await withClient(DEV_URL, async (c) => {
     seedWithCommunity('Nobody'),
     /account Nobody not found/
   );
-  await refusal(
-    'seed refuses a deleted owner account',
-    `UPDATE "User" SET "deletedAt" = now() WHERE id = 10`,
-    `UPDATE "User" SET "deletedAt" = NULL WHERE id = 10`,
-    seedSql,
-    /not found/
-  );
+  for (const [account, id, sql] of [
+    ['owner', 10, seedSql],
+    ['collaborator', 20, seedSql],
+    ['third', 30, seedWithCommunity('Someone')],
+  ]) {
+    await refusal(
+      `seed refuses a deleted ${account} account`,
+      `UPDATE "User" SET "deletedAt" = now() WHERE id = ${id}`,
+      `UPDATE "User" SET "deletedAt" = NULL WHERE id = ${id}`,
+      sql,
+      /not found/
+    );
+  }
 
   // Unpublished and scheduled posts sort last, so they are only reached when an account runs
   // short of usable ones.
@@ -337,7 +363,7 @@ await withClient(DEV_URL, async (c) => {
     /need 3 posts/
   );
   await refusal(
-    "seed refuses rather than use the collaborator's unpublished post",
+    "seed refuses rather than use the collaborator's unpublished or scheduled posts",
     `UPDATE "Post" SET "publishedAt" = NULL WHERE id = 203`,
     `UPDATE "Post" SET "publishedAt" = '2025-01-03' WHERE id = 203`,
     seedSql,

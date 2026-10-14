@@ -73,13 +73,15 @@ test.describe('storylines smoke', () => {
       `[data-testid="storyline-fork"][data-chapter-id="${env.aboveCeilingChapterId}"]`
     );
     await expect(aboveCeiling).toHaveAttribute('data-tombstone', 'aboveStoryRating');
-    await expect(aboveCeiling).toContainText('rated above');
-    await expect(aboveCeiling.locator('img')).toHaveCount(0);
+    await expect(aboveCeiling).toContainText("This chapter is rated above the storyline's maximum");
+    await expect(aboveCeiling.getByText(/^by /)).toHaveCount(0);
 
     const readable = page.locator('[data-testid="storyline-fork"]:not([data-tombstone])');
     await expect(readable).toHaveCount(2);
     await expect(readable.nth(0)).toHaveAttribute('data-rank', 'canon');
     await expect(readable.nth(1)).toHaveAttribute('data-rank', 'endorsed');
+    // The author line the placeholder must not have; proves the locator above can match.
+    await expect(readable.nth(1).getByText(/^by /)).toHaveCount(1);
     // Read again once settled: toHaveCount passes at the first moment it matches.
     expect(await forks.count()).toBe(3);
 

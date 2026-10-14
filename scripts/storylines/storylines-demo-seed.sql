@@ -163,8 +163,8 @@ SELECT
     ELSE 'community'
   END AS rank,
   p."nsfwLevel" > s."maxNsfwLevel" * 2 - 1 AS "aboveCeiling",
-  (SELECT i.id FROM "Image" i WHERE i."postId" = c."postId" ORDER BY i.index, i.id LIMIT 1) AS "firstImageId",
-  (SELECT i.id FROM "Image" i WHERE i."postId" = c."postId" ORDER BY i.index DESC, i.id DESC LIMIT 1) AS "lastImageId"
+  (SELECT i.id FROM "Image" i WHERE i."postId" = c."postId" ORDER BY i.index NULLS LAST, i.id LIMIT 1) AS "firstImageId",
+  (SELECT i.id FROM "Image" i WHERE i."postId" = c."postId" ORDER BY i.index DESC NULLS LAST, i.id DESC LIMIT 1) AS "lastImageId"
 FROM "Storyline" s
 JOIN "StorylineChapter" c ON c."storylineId" = s.id
 JOIN "User" u ON u.id = c."userId"
