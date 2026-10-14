@@ -88,7 +88,6 @@ export function StorylineStageOverlay({
         <StorylinePill
           title={storyline.path.storyline.title}
           depth={depth ?? end.depth}
-          withTitle
           onClick={() => storyline.setDrawerOpen(true)}
         />
       </div>
@@ -144,7 +143,7 @@ function StorylineEntryPill({ postId }: { postId: number | null }) {
         data-testid="storyline-enter"
         aria-label={`Read the storyline ${entry.title} from chapter ${entry.depth + 1}`}
       >
-        Storyline · {entry.title} · {storylineChapterLabel(entry.depth)} · Read
+        {entry.title} · {storylineChapterLabel(entry.depth)} · Read
       </Button>
     </div>
   );

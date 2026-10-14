@@ -1,10 +1,9 @@
-import { keepPreviousData, useQuery } from '@tanstack/react-query';
-import { getQueryKey } from '@trpc/react-query';
+import { keepPreviousData } from '@tanstack/react-query';
 import { useEffect, useMemo } from 'react';
 import { useViewerBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useQueryImages } from '~/components/Image/image.utils';
 import {
-  followCanon,
+  canonAheadForkStops,
   getPathImagesPaging,
   hideHiddenUsersChapters,
   orderPathImages,
@@ -66,12 +65,9 @@ export function useStorylineChildren(
   return { data, isLoading: query.isLoading };
 }
 
-/** Most canon chapters the drawer follows past the end of the path being read. */
-export const STORYLINE_CANON_AHEAD_LIMIT = 10;
-
 /**
- * The canon line after a chapter, by following each stop's canon child. One read per stop, so it
- * is capped; the services are adding a single read for this, which replaces the loop.
+ * The canon line after a chapter, in one read, with the ways off it for the stops that have
+ * any (at most `STORYLINE_DRAWER_FORK_STOPS`, nearest first).
  */
 export function useStorylineCanonAhead(
   chapterId: number | undefined,
@@ -80,37 +76,24 @@ export function useStorylineCanonAhead(
   const enabled = useStorylinesEnabled() && options.enabled && !!chapterId;
   const browsingLevel = useViewerBrowsingLevelDebounced();
   const hiddenUserIds = useHiddenUserIds();
-  const utils = trpc.useUtils();
-  const query = useQuery({
-    // Under getChildren's key, so invalidating children (a takedown) refreshes this line too.
-    queryKey: [...getQueryKey(trpc.storyline.getChildren), 'canonAhead', chapterId, browsingLevel],
-    enabled,
-    queryFn: () =>
-      followCanon(
-        (from) => utils.storyline.getChildren.fetch({ chapterId: from, browsingLevel }),
-        chapterId as number,
-        STORYLINE_CANON_AHEAD_LIMIT
-      ),
-  });
-  return useMemo(() => {
-    if (!query.data)
-      return {
-        ahead: [],
-        childrenByChapterId: new Map<number, StorylineChild[]>(),
-        isLoading: query.isLoading,
-      };
-    const childrenByChapterId = new Map(
-      [...query.data.childrenByChapterId].map(([id, children]) => [
-        id,
-        hideHiddenUsersChapters(children, hiddenUserIds),
-      ])
-    );
-    return {
-      ahead: hideHiddenUsersChapters(query.data.ahead, hiddenUserIds),
-      childrenByChapterId,
-      isLoading: false,
-    };
-  }, [query.data, query.isLoading, hiddenUserIds]);
+  const query = trpc.storyline.getCanonAhead.useQuery(
+    { chapterId: chapterId as number, browsingLevel },
+    { enabled }
+  );
+  const ahead = useMemo(
+    () => (query.data ? hideHiddenUsersChapters(query.data, hiddenUserIds) : []),
+    [query.data, hiddenUserIds]
+  );
+  const forkStopIds = useMemo(
+    () => canonAheadForkStops(query.data ?? [], STORYLINE_DRAWER_FORK_STOPS),
+    [query.data]
+  );
+  const childrenByChapterId = useStorylinePathChildren(forkStopIds, { enabled });
+  const isLoading = enabled && query.isLoading;
+  return useMemo(
+    () => ({ ahead, childrenByChapterId, isLoading }),
+    [ahead, childrenByChapterId, isLoading]
+  );
 }
 
 /** One children read per chapter on the path, for the forks the drawer draws beside it. */

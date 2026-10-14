@@ -62,6 +62,8 @@ export function StorylineDrawer({
         </div>
       }
       zIndex={400}
+      // The image stays in full view beside the line; a click outside still closes the drawer.
+      overlayProps={{ backgroundOpacity: 0 }}
     >
       <ol className="relative m-0 list-none p-0" data-testid="storyline-subway">
         <span

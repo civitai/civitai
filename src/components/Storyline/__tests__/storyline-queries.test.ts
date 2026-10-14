@@ -6,7 +6,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as TrpcModule from '~/utils/trpc';
 import type * as FeatureFlagsModule from '~/providers/FeatureFlagsProvider';
 import type * as BrowsingLevelModule from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import type * as HiddenPreferencesModule from '~/hooks/hidden-preferences';
 import {
+  useStorylineCanonAhead,
   useStorylineEarlyAccess,
   useStorylineForkShares,
   useStorylineTracking,
@@ -26,6 +28,12 @@ const mocks = vi.hoisted(() => ({
   joinMutateAsync: vi.fn<(input: unknown) => Promise<unknown>>(),
   invalidateShares: vi.fn(),
   setStatusData: vi.fn(),
+  canonAheadQuery: vi.fn(),
+  canonAheadData: undefined as unknown[] | undefined,
+  canonAheadLoading: false,
+  childrenByChapter: {} as Record<number, unknown[]>,
+  childrenReads: [] as unknown[],
+  hiddenUsers: [] as { id: number }[],
 }));
 
 // Each fake mutation runs the hook's own `onSuccess` once the server answer resolves, and never on
@@ -40,6 +48,12 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
           useQuery: (input: unknown, opts: unknown) => {
             mocks.forkSharesQuery(input, opts);
             return { data: undefined };
+          },
+        },
+        'storyline.getCanonAhead': {
+          useQuery: (input: unknown, opts: unknown) => {
+            mocks.canonAheadQuery(input, opts);
+            return { data: mocks.canonAheadData, isLoading: mocks.canonAheadLoading };
           },
         },
         'storyline.getEarlyAccessStatus': {
@@ -80,6 +94,17 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
         },
       },
       {
+        // Records which chapters the drawer reads children for, and answers from childrenByChapter.
+        useQueries: (
+          build: (t: { storyline: { getChildren: (input: unknown) => unknown } }) => unknown[]
+        ) => {
+          const inputs = build({ storyline: { getChildren: (input) => input } });
+          mocks.childrenReads.push(...inputs);
+          return inputs.map((input) => {
+            const data = mocks.childrenByChapter[(input as { chapterId: number }).chapterId];
+            return { data, dataUpdatedAt: data ? 1 : 0 };
+          });
+        },
         useUtils: () => ({
           storyline: {
             getForkShares: { invalidate: mocks.invalidateShares },
@@ -99,6 +124,10 @@ vi.mock('~/components/BrowsingLevel/BrowsingLevelProvider', async (importOrigina
   useViewerBrowsingLevelDebounced: () => 7,
 }));
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => mocks.user }));
+vi.mock('~/hooks/hidden-preferences', async (importOriginal) => ({
+  ...(await importOriginal<typeof HiddenPreferencesModule>()),
+  useHiddenPreferencesData: () => ({ hiddenUsers: mocks.hiddenUsers }),
+}));
 
 function renderHook<T>(hook: () => T): { current: T } {
   const result = {} as { current: T };
@@ -117,6 +146,12 @@ beforeEach(() => {
   mocks.storylines = true;
   mocks.user = { id: 1 };
   mocks.statusData = undefined;
+  mocks.canonAheadData = undefined;
+  mocks.canonAheadLoading = false;
+  mocks.childrenByChapter = {};
+  mocks.childrenReads = [];
+  mocks.hiddenUsers = [];
+  mocks.canonAheadQuery.mockClear();
   mocks.joinMutateAsync.mockReset();
   mocks.joinMutateAsync.mockResolvedValue(undefined);
   mocks.branchMutate.mockReset();
@@ -243,5 +278,77 @@ describe('useStorylineEarlyAccess', () => {
     const access = renderHook(() => useStorylineEarlyAccess());
     await expect(access.current.join({ storylineId: 9 })).rejects.toThrow('refused');
     expect(mocks.setStatusData).not.toHaveBeenCalled();
+  });
+});
+
+describe('useStorylineCanonAhead', () => {
+  const chapter = (chapterId: number, childCount: number, userId = 2) => ({
+    chapterId,
+    childCount,
+    depth: chapterId,
+    tombstone: null,
+    post: { id: chapterId * 10, userId },
+  });
+
+  it('reads the canon line after the chapter in one read, at the reader browsing level', () => {
+    mocks.canonAheadData = [chapter(5, 1), chapter(6, 1)];
+    const result = renderHook(() => useStorylineCanonAhead(4, { enabled: true }));
+    expect(mocks.canonAheadQuery.mock.calls).toEqual([
+      [{ chapterId: 4, browsingLevel: 7 }, { enabled: true }],
+    ]);
+    expect(result.current.ahead.map((c) => c.chapterId)).toEqual([5, 6]);
+  });
+
+  it('reads children only for the stops that fork', () => {
+    mocks.canonAheadData = [chapter(5, 1), chapter(6, 3), chapter(7, 1), chapter(8, 2)];
+    renderHook(() => useStorylineCanonAhead(4, { enabled: true }));
+    expect(mocks.childrenReads).toEqual([
+      { chapterId: 6, browsingLevel: 7 },
+      { chapterId: 8, browsingLevel: 7 },
+    ]);
+  });
+
+  it("gives each fork stop its children, without a hidden user's branch", () => {
+    mocks.canonAheadData = [chapter(5, 3), chapter(6, 1)];
+    mocks.hiddenUsers = [{ id: 99 }];
+    mocks.childrenByChapter = { 5: [chapter(6, 1), chapter(50, 0), chapter(51, 0, 99)] };
+    const result = renderHook(() => useStorylineCanonAhead(4, { enabled: true }));
+    const branches = result.current.childrenByChapterId.get(5) ?? [];
+    expect([
+      [...result.current.childrenByChapterId.keys()],
+      branches.map((c) => [c.chapterId, c.tombstone]),
+    ]).toEqual([
+      [5],
+      [
+        [6, null],
+        [50, null],
+        [51, 'unavailable'],
+      ],
+    ]);
+  });
+
+  it('is loading only while the drawer is open and the line is being read', () => {
+    mocks.canonAheadLoading = true;
+    const open = renderHook(() => useStorylineCanonAhead(4, { enabled: true }));
+    const closed = renderHook(() => useStorylineCanonAhead(4, { enabled: false }));
+    expect([open.current.isLoading, closed.current.isLoading]).toEqual([true, false]);
+  });
+
+  it('reads nothing while the drawer is closed', () => {
+    mocks.canonAheadData = [chapter(5, 3)];
+    renderHook(() => useStorylineCanonAhead(4, { enabled: false }));
+    expect([mocks.canonAheadQuery.mock.calls.map((c) => c[1]), mocks.childrenReads]).toEqual([
+      [{ enabled: false }],
+      [],
+    ]);
+  });
+
+  it('hides a canon chapter by a user the reader hid', () => {
+    mocks.canonAheadData = [chapter(5, 1, 99)];
+    mocks.hiddenUsers = [{ id: 99 }];
+    const result = renderHook(() => useStorylineCanonAhead(4, { enabled: true }));
+    expect(result.current.ahead.map((c) => [c.chapterId, c.tombstone, c.post])).toEqual([
+      [5, 'unavailable', null],
+    ]);
   });
 });

@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { isAdjacent } from '~/components/Image/DetailV2/image-detail-carousel.utils';
 import {
   buildSubwayStops,
-  followCanon,
+  canonAheadForkStops,
   getPathImagesPaging,
   getStorylineChapterName,
   getStorylineStep,
@@ -291,37 +291,24 @@ describe('getStorylineChapterName', () => {
   });
 });
 
-describe('followCanon', () => {
-  // The fake always has a canon child and stops itself at 50 calls, so a missing cap fails on
-  // the count rather than hanging.
-  const endless = () => {
-    let calls = 0;
-    const fetch = async (id: number) => {
-      calls++;
-      return calls > 50
-        ? []
-        : [
-            { chapterId: id + 1, rank: 'canon' },
-            { chapterId: id + 100, rank: 'community' },
-          ];
-    };
-    return { fetch, calls: () => calls };
-  };
+describe('canonAheadForkStops', () => {
+  const stop = (chapterId: number, childCount: number) => ({ chapterId, childCount });
 
-  it('stops at the limit on a line that keeps going', async () => {
-    const fake = endless();
-    const result = await followCanon(fake.fetch, 1, 10);
-    expect([fake.calls(), result.ahead.map((c) => c.chapterId)]).toEqual([
-      10,
-      [2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
-    ]);
+  it('takes a mid-line stop only when it has more than its canon child', () => {
+    expect(canonAheadForkStops([stop(5, 1), stop(6, 2), stop(7, 1), stop(8, 0)], 10)).toEqual([6]);
   });
 
-  it('stops where a chapter has no canon continuation, keeping its children', async () => {
-    const fetch = vi.fn(async () => [{ chapterId: 9, rank: 'community' }]);
-    const result = await followCanon(fetch, 4, 10);
-    expect([fetch.mock.calls.length, result.ahead, [...result.childrenByChapterId.keys()]]).toEqual(
-      [1, [], [4]]
-    );
+  it('takes the last stop with any child, since none of them is canon', () => {
+    expect(canonAheadForkStops([stop(5, 1), stop(6, 1)], 10)).toEqual([6]);
+  });
+
+  it('keeps the nearest stops when there are more than the limit', () => {
+    const line = [stop(1, 3), stop(2, 3), stop(3, 3), stop(4, 3)];
+    expect(canonAheadForkStops(line, 2)).toEqual([1, 2]);
+  });
+
+  it('counts the limit in forks, not in stops, so a long straight run does not hide them', () => {
+    const line = [stop(1, 1), stop(2, 1), stop(3, 3), stop(4, 1), stop(5, 3), stop(6, 2)];
+    expect(canonAheadForkStops(line, 2)).toEqual([3, 5]);
   });
 });
