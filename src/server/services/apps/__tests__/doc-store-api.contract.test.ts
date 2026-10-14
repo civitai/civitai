@@ -88,7 +88,7 @@ vi.mock('~/server/services/apps/shared-data-moderation', async (importOriginal) 
 import { BlockTokenService } from '~/server/services/block-token.service';
 import { REDIS_KEYS } from '~/server/redis/client';
 import { createDocStore } from '~/server/services/apps/doc-store';
-import { DEFAULT_DOC_STORE_LIMITS } from '~/server/services/apps/doc-store.types';
+import { DEFAULT_DOC_STORE_LIMITS, DocStoreError } from '~/server/services/apps/doc-store.types';
 import { OnboardingSteps } from '~/server/common/enums';
 import {
   matchStorageRoute,
@@ -621,10 +621,13 @@ describe('contract cases against the real handlers', () => {
 
 describe('reserved path segments cannot collide with a collection name or a document key', () => {
   // Every reserved word as a value, edge cases, plus a seeded random sample of each alphabet.
+  // mulberry32: 32-bit integer arithmetic throughout, so every bit of the state survives.
   let seed = 20261014;
   const rnd = (n: number) => {
-    seed = (seed * 1103515245 + 12345) % 2 ** 31;
-    return seed % n;
+    seed = (seed + 0x6d2b79f5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) % n;
   };
   const draw = (alphabet: string, len: number) =>
     Array.from({ length: len }, () => alphabet[rnd(alphabet.length)]).join('');
@@ -667,6 +670,14 @@ describe('reserved path segments cannot collide with a collection name or a docu
         expect(position, segment).toBe(2);
       }
     }
+  });
+
+  it('the sample really varies (positive control on the generator)', () => {
+    const random = COLLECTIONS.slice(-40);
+    expect(new Set(random.map((c) => c.length)).size).toBeGreaterThan(10);
+    const keyChars = new Set(KEYS.slice(-60).join(''));
+    expect(keyChars.size).toBeGreaterThan(55);
+    expect(keyChars.has('_')).toBe(true);
   });
 
   it('for every valid collection name and key, the parser yields exactly that collection and key', () => {
@@ -1143,4 +1154,28 @@ describe('review findings: refusal detail, usage, budget refunds, review gates, 
     ).toBe(200);
     expect(vi.mocked(scanSharedData).mock.calls.at(-1)?.[1]).toEqual({ isModerator: false });
   });
+
+  it.each([
+    ['a raw database error', () => new Error('connection refused')],
+    ['storage_disabled', () => new DocStoreError('storage_disabled', 'disabled')],
+    [
+      'lock contention',
+      () => new DocStoreError('rate_limited', 'busy', { reason: 'contention', retryAfter: 1 }),
+    ],
+  ])(
+    '%s on a shared write is our fault: refunded, never charged as a rejection',
+    async (_n, make) => {
+      const { A } = freshApps();
+      const v1 = await mint({ app: A, uid: VIEWER_IDS.v1, scopes: contract.defaultScopes });
+      h.store = { ...liveStore, put: async () => Promise.reject(make()) } as DocStore;
+      for (let i = 0; i < 12; i++) {
+        const r = await call({ token: v1, method: 'PUT', path: '/posts/x', body: { data: {} } });
+        expect(r.status).toBeGreaterThanOrEqual(429);
+      }
+      h.store = liveStore;
+      // 12 failures exceed the 10-token rejection bucket: had they been charged, this refuses.
+      const after = await call({ token: v1, method: 'PUT', path: '/posts/x', body: { data: {} } });
+      expect(after.status).toBe(200);
+    }
+  );
 });

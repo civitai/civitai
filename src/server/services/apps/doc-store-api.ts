@@ -517,14 +517,16 @@ async function moderate(
 }
 
 /**
- * Refusals that are OUR fault, refunded without charging the caller's rejection bucket: the
- * store or a dependency was unavailable, or the store timed out on a lock other writers held.
- * Everything else that fails before the write lands — a refusal about the caller's request
- * or document, or an unexpected error on the caller's own write — is charged as a rejection,
- * the same split the legacy surface makes (`withSharedWriteBudget`, `apps-shared.router.ts`).
+ * Failures that are OUR fault, refunded without charging the caller's rejection bucket: the
+ * store or a dependency was unavailable, the store timed out on a lock other writers held, or
+ * anything that is not a `DocStoreError` at all. The store validates a document fully before
+ * any SQL runs (shape, size, unstorable text, keys, indexes), so a raw error out of it is the
+ * database — a refused connection, BEGIN or COMMIT — not the caller's value. Every refusal
+ * about the caller's request or document is charged as a rejection, the same split the legacy
+ * surface makes (`withSharedWriteBudget` and `asTransactionFault`, `apps-shared.router.ts`).
  */
 function isOurFault(err: unknown): boolean {
-  if (!(err instanceof DocStoreError)) return false;
+  if (!(err instanceof DocStoreError)) return true;
   if (err.code === 'rate_limited') return err.details?.reason === 'contention';
   return (
     err.code === 'storage_disabled' ||
