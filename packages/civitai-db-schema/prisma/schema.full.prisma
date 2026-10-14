@@ -9542,8 +9542,10 @@ model ServiceDeal {
   deliveryDays              Int
   previewKind               ServicePreviewKind
   status                    ServiceDealStatus       @default(Requested)
-  /// Set once the Hold leg's Buzz call has succeeded. A deal without it was never paid
-  /// for: no other status may be acted on, and no Release or Refund may run against it.
+  /// Set once the Hold leg's Buzz call has succeeded, whatever the deal's status by then. A
+  /// deal without it was never paid for: the migration refuses any worked or payable status
+  /// without it. Release and Refund receipts are NOT tied to it in the database, so code must
+  /// claim them only against a paid Hold.
   heldAt                    DateTime?
   /// Set once the Release or Refund leg's Buzz call has succeeded.
   settledAt                 DateTime?
@@ -9574,6 +9576,8 @@ model ServiceDeal {
   files                     ServiceDealFile[]
   transactions              ServiceDealTransaction[]
 
+  /// Target of the receipt's composite FK that pins each leg to the deal's Buzz type.
+  @@unique([id, buzzType])
   @@index([buyerId, status])
   @@index([sellerId, status])
   @@index([offeringId, status])
@@ -9619,7 +9623,8 @@ model ServiceDealFile {
   @@index([dealId, round, kind])
 }
 
-/// One row per movement of Buzz for a deal, modelled on `PlacementTransaction`.
+/// One row per movement of Buzz for a deal, modelled on `PlacementTransaction`. A composite FK
+/// in the migration pins each row's `buzzType` to its deal's.
 /// `UNIQUE (dealId, leg)` makes the claim atomic, and `externalTransactionId` is
 /// derived from the row so the Buzz service's dedupe is a second line. A null
 /// `transactionId` is a claimed leg not yet paid, which the recovery job finishes.

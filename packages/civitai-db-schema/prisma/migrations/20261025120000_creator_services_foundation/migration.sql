@@ -96,7 +96,7 @@ CREATE TABLE IF NOT EXISTS "ServiceDeal" (
   "offeringId"                INTEGER NOT NULL REFERENCES "ServiceOffering"("id") ON DELETE RESTRICT ON UPDATE CASCADE,
   "buyerId"                   INTEGER NOT NULL REFERENCES "User"("id") ON DELETE RESTRICT ON UPDATE CASCADE,
   "sellerId"                  INTEGER NOT NULL REFERENCES "User"("id") ON DELETE RESTRICT ON UPDATE CASCADE,
-  "price"                     INTEGER NOT NULL CHECK ("price" > 0),
+  "price"                     INTEGER NOT NULL,
   "buzzType"                  "ServiceBuzzType" NOT NULL,
   "feeAmount"                 INTEGER NOT NULL DEFAULT 0,
   "revisionsIncluded"         INTEGER NOT NULL CHECK ("revisionsIncluded" >= 0),
@@ -126,7 +126,8 @@ CREATE TABLE IF NOT EXISTS "ServiceDeal" (
   "closeReason"               TEXT,
   "createdAt"                 TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   "updatedAt"                 TIMESTAMP(3) NOT NULL,
-  -- The seller is paid `price - feeAmount`, so the fee can never reach the price.
+  -- The seller is paid `price - feeAmount`, so the fee can never reach the price. With the fee
+  -- at least 0 this also refuses a free deal.
   CONSTRAINT "ServiceDeal_fee_below_price" CHECK ("feeAmount" >= 0 AND "feeAmount" < "price"),
   CONSTRAINT "ServiceDeal_buyer_not_seller" CHECK ("buyerId" <> "sellerId"),
   -- The release sweeper selects Completed deals by "releaseAt"; a Completed deal
@@ -140,10 +141,15 @@ CREATE TABLE IF NOT EXISTS "ServiceDeal" (
   CONSTRAINT "ServiceDeal_settled_after_held" CHECK ("settledAt" IS NULL OR "heldAt" IS NOT NULL),
   CONSTRAINT "ServiceDeal_dispute_resolution_consistent" CHECK (("disputeResolvedAt" IS NULL) = ("disputeResolution" IS NULL)),
   -- Release pays "sellerId", so it must be the offering's seller, not whatever a caller passed.
-  -- Not in the Prisma schema, which declares the offering relation on "offeringId" alone.
+  -- NO ACTION on update: moving an offering to another seller must not redirect the payout of a
+  -- deal already open on it. Not in the Prisma schema, which declares the offering relation on
+  -- "offeringId" alone.
   CONSTRAINT "ServiceDeal_offering_seller_fkey" FOREIGN KEY ("offeringId", "sellerId")
-    REFERENCES "ServiceOffering"("id", "sellerId") ON DELETE RESTRICT ON UPDATE CASCADE
+    REFERENCES "ServiceOffering"("id", "sellerId") ON DELETE RESTRICT ON UPDATE NO ACTION
 );
+
+-- Target of the receipt's composite FK that pins each leg to the deal's Buzz type.
+CREATE UNIQUE INDEX IF NOT EXISTS "ServiceDeal_id_buzzType_key" ON "ServiceDeal" ("id", "buzzType");
 
 CREATE INDEX IF NOT EXISTS "ServiceDeal_buyerId_status_idx" ON "ServiceDeal" ("buyerId", "status");
 CREATE INDEX IF NOT EXISTS "ServiceDeal_sellerId_status_idx" ON "ServiceDeal" ("sellerId", "status");
@@ -162,8 +168,9 @@ CREATE INDEX IF NOT EXISTS "ServiceDeal_status_dueAt_idx" ON "ServiceDeal" ("sta
 -- deal ever completed.
 CREATE INDEX IF NOT EXISTS "ServiceDeal_status_releaseAt_idx" ON "ServiceDeal" ("status", "releaseAt")
   WHERE "status" = 'Completed' AND "settledAt" IS NULL;
+-- A closed deal that was never held has nothing to refund and never settles, so it is left out.
 CREATE INDEX IF NOT EXISTS "ServiceDeal_status_closedAt_idx" ON "ServiceDeal" ("status", "closedAt")
-  WHERE "status" IN ('Declined', 'Expired', 'Cancelled') AND "settledAt" IS NULL;
+  WHERE "status" IN ('Declined', 'Expired', 'Cancelled') AND "heldAt" IS NOT NULL AND "settledAt" IS NULL;
 
 CREATE TABLE IF NOT EXISTS "ServiceDealEvent" (
   "id"        SERIAL PRIMARY KEY,
@@ -204,7 +211,10 @@ CREATE TABLE IF NOT EXISTS "ServiceDealTransaction" (
   "attempts"              INTEGER NOT NULL DEFAULT 0,
   "lastAttemptAt"         TIMESTAMP(3),
   "lastError"             TEXT,
-  "createdAt"             TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+  "createdAt"             TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  -- Every leg moves the deal's own Buzz type. Not in the Prisma schema.
+  CONSTRAINT "ServiceDealTransaction_deal_buzzType_fkey" FOREIGN KEY ("dealId", "buzzType")
+    REFERENCES "ServiceDeal"("id", "buzzType") ON DELETE RESTRICT ON UPDATE NO ACTION
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS "ServiceDealTransaction_externalTransactionId_key"
@@ -225,3 +235,5 @@ CREATE UNIQUE INDEX IF NOT EXISTS "ServiceDealTransaction_dealId_payout_key"
 CREATE UNIQUE INDEX IF NOT EXISTS "ServiceDealTransaction_dealId_fee_refund_key"
   ON "ServiceDealTransaction" ("dealId")
   WHERE "leg" IN ('Fee', 'Refund');
+
+RESET lock_timeout;

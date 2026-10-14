@@ -4594,8 +4594,10 @@ export type ServiceDeal = {
   previewKind: ServicePreviewKind;
   status: Generated<ServiceDealStatus>;
   /**
-   * Set once the Hold leg's Buzz call has succeeded. A deal without it was never paid
-   * for: no other status may be acted on, and no Release or Refund may run against it.
+   * Set once the Hold leg's Buzz call has succeeded, whatever the deal's status by then. A
+   * deal without it was never paid for: the migration refuses any worked or payable status
+   * without it. Release and Refund receipts are NOT tied to it in the database, so code must
+   * claim them only against a paid Hold.
    */
   heldAt: Timestamp | null;
   /**

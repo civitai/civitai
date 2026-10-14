@@ -96,8 +96,11 @@ beforeEach(async () => {
 });
 
 describe('creator services migration', () => {
-  it('re-applies cleanly, because it is applied by hand and may run twice', async () => {
+  it('re-applies cleanly over live rows, because it is applied by hand and may run twice', async () => {
+    const dealId = await insertDeal({ status: 'Accepted', heldAt: new Date() });
+    await insertLeg(dealId, 'Hold');
     await expect(holder.db.exec(readFileSync(MIGRATION, 'utf8'))).resolves.toBeDefined();
+    expect(await q(`SELECT count(*)::int AS n FROM "ServiceDealTransaction"`)).toEqual([{ n: 1 }]);
   });
 
   describe('a refunded deal can take neither half of a payout', () => {
@@ -145,15 +148,23 @@ describe('creator services migration', () => {
   });
 
   describe('a deal nobody paid for can never be worked or paid out', () => {
-    it.each(['Accepted', 'Delivered', 'InRevision', 'CancellationRequested', 'Disputed'])(
-      'refuses %s without heldAt',
-      async (status) => {
-        await expect(insertDeal({ status })).rejects.toThrow(/ServiceDeal_held_before_work/);
-        await expect(insertDeal({ status, heldAt: new Date() })).resolves.toEqual(
-          expect.any(Number)
-        );
-      }
-    );
+    // `releaseAt` is set throughout so a Completed deal can only trip the held check.
+    it.each([
+      'Accepted',
+      'Delivered',
+      'InRevision',
+      'Completed',
+      'CancellationRequested',
+      'Disputed',
+    ])('refuses %s without heldAt', async (status) => {
+      const releaseAt = new Date();
+      await expect(insertDeal({ status, releaseAt })).rejects.toThrow(
+        /ServiceDeal_held_before_work/
+      );
+      await expect(insertDeal({ status, releaseAt, heldAt: new Date() })).resolves.toEqual(
+        expect.any(Number)
+      );
+    });
 
     it('refuses a settled deal that was never held', async () => {
       await expect(insertDeal({ status: 'Declined', settledAt: new Date() })).rejects.toThrow(
@@ -186,11 +197,33 @@ describe('creator services migration', () => {
     await expect(insertDeal({ feeAmount: 999 })).resolves.toEqual(expect.any(Number));
   });
 
-  it('refuses a free deal', async () => {
-    // Either check catches it: a fee of 0 cannot be below a price of 0.
-    await expect(insertDeal({ price: 0 })).rejects.toThrow(
-      /ServiceDeal_price_check|ServiceDeal_fee_below_price/
+  it('refuses a free deal, through the fee check', async () => {
+    await expect(insertDeal({ price: 0 })).rejects.toThrow(/ServiceDeal_fee_below_price/);
+  });
+
+  it('refuses a free offering', async () => {
+    await expect(
+      q(
+        `INSERT INTO "ServiceOffering" ("sellerId", title, description, price, "deliveryDays", "updatedAt")
+         VALUES ($1, 'Free', 'desc', 0, 3, now())`,
+        [SELLER]
+      )
+    ).rejects.toThrow(/ServiceOffering_price_check/);
+  });
+
+  it('refuses a leg in a different Buzz type from its deal', async () => {
+    const dealId = await insertDeal({ buzzType: 'green' });
+    await expect(insertLeg(dealId, 'Hold')).rejects.toThrow(
+      /ServiceDealTransaction_deal_buzzType_fkey/
     );
+  });
+
+  it('refuses moving an offering to another seller while a deal on it is open, since the payout would follow', async () => {
+    await insertDeal({ status: 'Accepted', heldAt: new Date() });
+    await expect(
+      q(`UPDATE "ServiceOffering" SET "sellerId" = $1 WHERE id = $2`, [OTHER_SELLER, OFFERING])
+    ).rejects.toThrow(/ServiceDeal_offering_seller_fkey/);
+    expect(await q(`SELECT "sellerId" FROM "ServiceDeal"`)).toEqual([{ sellerId: SELLER }]);
   });
 
   it('refuses a deal with yourself', async () => {
@@ -239,9 +272,36 @@ describe('creator services migration', () => {
 
     it('refuses deleting the seller, whose offering cascades but whose deals do not', async () => {
       await insertDeal();
+      // Any of the deal's three FKs may be the one that refuses; which is a planner detail.
       await expect(q(`DELETE FROM "User" WHERE id = ${SELLER}`)).rejects.toThrow(
         /ServiceDeal_sellerId_fkey|ServiceDeal_offeringId_fkey|ServiceDeal_offering_seller_fkey/
       );
+    });
+
+    // The behavioural cases above cannot tell which FK refused: the offering's FKs mask the
+    // seller's. So the delete and update action of every money FK is read from the catalog.
+    it('declares every money FK RESTRICT on delete, and no deal FK cascades an update of the payee', async () => {
+      const rows = await q(
+        `SELECT conname, confdeltype, confupdtype FROM pg_constraint
+         WHERE contype = 'f' AND conrelid::regclass::text IN
+           ('"ServiceDeal"', '"ServiceDealEvent"', '"ServiceDealFile"', '"ServiceDealTransaction"')
+         ORDER BY conname`
+      );
+      // r = RESTRICT, a = NO ACTION, c = CASCADE
+      expect(rows).toEqual([
+        { conname: 'ServiceDealEvent_dealId_fkey', confdeltype: 'r', confupdtype: 'c' },
+        { conname: 'ServiceDealFile_dealId_fkey', confdeltype: 'r', confupdtype: 'c' },
+        { conname: 'ServiceDealTransaction_dealId_fkey', confdeltype: 'r', confupdtype: 'c' },
+        {
+          conname: 'ServiceDealTransaction_deal_buzzType_fkey',
+          confdeltype: 'r',
+          confupdtype: 'a',
+        },
+        { conname: 'ServiceDeal_buyerId_fkey', confdeltype: 'r', confupdtype: 'c' },
+        { conname: 'ServiceDeal_offeringId_fkey', confdeltype: 'r', confupdtype: 'c' },
+        { conname: 'ServiceDeal_offering_seller_fkey', confdeltype: 'r', confupdtype: 'a' },
+        { conname: 'ServiceDeal_sellerId_fkey', confdeltype: 'r', confupdtype: 'c' },
+      ]);
     });
 
     it.each([
