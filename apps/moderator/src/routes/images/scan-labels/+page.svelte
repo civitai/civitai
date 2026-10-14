@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { applyAction, enhance } from '$app/forms';
+  import { applyAction } from '$app/forms';
   import { goto, invalidateAll } from '$app/navigation';
   import { page } from '$app/state';
   import type { SubmitFunction } from '@sveltejs/kit';
