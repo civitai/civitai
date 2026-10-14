@@ -4306,6 +4306,16 @@ export interface ScanLabelClaim {
   expiresAt: Date;
 }
 
+export interface ScanLabelCopyObject {
+  key: string;
+  itemId: number;
+  imageId: number;
+  createdAt: Date;
+  withdrawnAt: Date | null;
+  withdrawReason: string | null;
+  withdrawError: string | null;
+}
+
 export interface ScanLabelQuota {
   userId: number;
   dailyVotes: number;

@@ -4493,6 +4493,15 @@ export type ScanLabelClaim = {
   userId: number;
   expiresAt: Timestamp;
 };
+export type ScanLabelCopyObject = {
+  key: string;
+  itemId: number;
+  imageId: number;
+  createdAt: Generated<Timestamp>;
+  withdrawnAt: Timestamp | null;
+  withdrawReason: string | null;
+  withdrawError: string | null;
+};
 export type ScanLabelFlag = {
   id: Generated<number>;
   itemId: number;
@@ -5532,6 +5541,7 @@ export type DB = {
   RunStrategy: RunStrategy;
   SavedModel: SavedModel;
   ScanLabelClaim: ScanLabelClaim;
+  ScanLabelCopyObject: ScanLabelCopyObject;
   ScanLabelFlag: ScanLabelFlag;
   ScanLabelItem: ScanLabelItem;
   ScanLabelQuota: ScanLabelQuota;

@@ -6923,6 +6923,17 @@ model ScanLabelClaim {
   @@index([userId])
 }
 
+// Every object the scan label copy job wrote; no FK so a copy stays tracked after its item is deleted.
+model ScanLabelCopyObject {
+  key            String    @id
+  itemId         Int
+  imageId        Int
+  createdAt      DateTime  @default(now()) @db.Timestamptz(3)
+  withdrawnAt    DateTime? @db.Timestamptz(3)
+  withdrawReason String?
+  withdrawError  String?
+}
+
 model ScanLabelQuota {
   userId     Int      @id
   dailyVotes Int      @default(50)

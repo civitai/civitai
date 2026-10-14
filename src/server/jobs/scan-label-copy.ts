@@ -8,12 +8,25 @@ import { excludedImageRow } from './appeal-decision-records';
 import { createJob } from './job';
 
 // Eligibility is decided by the "ScanLabelCopyEligibility" view, applied to the database separately.
-// The target bucket expires objects itself and accepts writes only: do not add reads or deletes.
+// The write key is put-only and the bucket expires objects itself; withdrawals are
+// `scan-label-copy-sweep`'s, with a key of their own.
 
 const JOB_LOG_NAME = 'scan-label-copy';
 const BATCH = 50;
 // Must stay under the blocked-original purge age, or the copy reads originals that are gone.
 const COPY_WINDOW = Prisma.raw(`make_interval(days => 6)`);
+
+/**
+ * An image the copy must not hold: excluded on its own row, or sharing its stored object with an image
+ * that is. NULL-safe: the exclusion is NULL, not false, for an image with no review flag.
+ */
+export const excludedObject = (img: Prisma.Sql) => Prisma.sql`(
+  COALESCE(${excludedImageRow(img)}, false)
+  OR EXISTS (
+    SELECT 1 FROM "Image" so
+    WHERE so.url = ${img}.url AND COALESCE(${excludedImageRow(Prisma.raw('so'))}, false)
+  )
+)`;
 
 export type ScanLabelCopyStore = { put: (imageUrl: string, key: string) => Promise<void> };
 
@@ -77,7 +90,7 @@ export async function scanLabelCopyStoreFromEnv(): Promise<ScanLabelCopyStore | 
   });
 }
 
-type Pending = { id: number; url: string; action: 'copy' | 'skip' };
+type Pending = { id: number; imageId: number; url: string; action: 'copy' | 'skip' };
 
 export async function copyScanLabelImages({ store }: { store?: ScanLabelCopyStore | null } = {}) {
   if (store === undefined) store = await scanLabelCopyStoreFromEnv();
@@ -91,21 +104,14 @@ export async function copyScanLabelImages({ store }: { store?: ScanLabelCopyStor
   }
 
   const img = Prisma.raw('img');
-  const so = Prisma.raw('so');
   let pending: Pending[];
   try {
     pending = await dbWrite.$queryRaw<Pending[]>`
-      SELECT i.id, img.url,
+      SELECT i.id, i."imageId", img.url,
         CASE
           WHEN i."decidedAt" > now() - ${COPY_WINDOW}
             AND e."eligibleForCopy" IS TRUE
-            -- NULL-safe: the exclusion is NULL, not false, for an image with no review flag.
-            AND NOT COALESCE(${excludedImageRow(img)}, false)
-            -- The copy is by stored object, which other image rows may share.
-            AND NOT EXISTS (
-              SELECT 1 FROM "Image" so
-              WHERE so.url = img.url AND COALESCE(${excludedImageRow(so)}, false)
-            )
+            AND NOT ${excludedObject(img)}
             THEN 'copy'
           ELSE 'skip'
         END AS action
@@ -135,9 +141,14 @@ export async function copyScanLabelImages({ store }: { store?: ScanLabelCopyStor
 
   let copied = 0;
   let failed = 0;
-  for (const { id, url } of pending.filter((p) => p.action === 'copy')) {
+  for (const { id, imageId, url } of pending.filter((p) => p.action === 'copy')) {
     const key = `${id}/${url}`;
     try {
+      // Ledgered before the upload, so a copy whose bookkeeping never lands can still be withdrawn.
+      await dbWrite.$executeRaw`
+        INSERT INTO "ScanLabelCopyObject" ("key", "itemId", "imageId") VALUES (${key}, ${id}, ${imageId})
+        ON CONFLICT ("key") DO NOTHING
+      `;
       await store.put(url, key);
       await dbWrite.$executeRaw`
         UPDATE "ScanLabelItem"
