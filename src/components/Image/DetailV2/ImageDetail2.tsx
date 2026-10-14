@@ -33,7 +33,7 @@ import {
   IconShare3,
 } from '@tabler/icons-react';
 import { useEffect, useMemo, useRef } from 'react';
-import { StorylineBanner, StorylineStageOverlay } from '~/components/Storyline/StorylineDetail';
+import { StorylineStageOverlay } from '~/components/Storyline/StorylineDetail';
 import { useStorylineMode } from '~/components/Storyline/StorylineModeProvider';
 import {
   getStorylineStep,
@@ -423,8 +423,6 @@ export function ImageDetail2() {
                           </LegacyActionIcon>
                         </div>
                       </div>
-
-                      <StorylineBanner imageId={image.id} />
 
                       {/* IMAGE CAROUSEL */}
                       <div className="relative flex min-h-0 flex-1 flex-col">
