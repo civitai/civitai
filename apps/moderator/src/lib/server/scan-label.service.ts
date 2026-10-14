@@ -1,10 +1,12 @@
-import { sql, type Kysely, type Transaction } from 'kysely';
+import { sql, type ExpressionBuilder, type Kysely, type Transaction } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { dbRead, dbWrite } from './db';
 import {
   BLOCK_MAJORITY,
-  DEFAULT_DAILY_QUOTA,
+  dayBounds,
+  effectiveQuota,
   LEASE_MS,
+  utcDayStart,
   VOTES_PER_ITEM,
   type ScanLabelFilters,
 } from '$lib/scan-labels';
@@ -32,14 +34,6 @@ export type VoteResult =
   | { ok: false; reason: 'not-open' | 'already-voted' | 'full' };
 
 type Db = Kysely<DB> | Transaction<DB>;
-
-const dayBounds = (day: string) => {
-  const start = new Date(`${day}T00:00:00.000Z`);
-  return { start, end: new Date(start.getTime() + 86_400_000) };
-};
-
-export const utcDayStart = (now: Date) =>
-  new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
 
 function openItems(db: Db, filters: ScanLabelFilters) {
   let q = db.selectFrom('ScanLabelItem as i').where('i.status', '=', 'open');
@@ -306,7 +300,7 @@ export async function getCounters(
   return {
     openInFilter: Number(open.n),
     myVotesToday: Number(mine.n),
-    myQuota: quota?.dailyVotes ?? DEFAULT_DAILY_QUOTA,
+    myQuota: effectiveQuota(quota),
     decidedToday: Number(decided.n),
   };
 }
@@ -324,3 +318,129 @@ export async function getOpenFlaggerVersions(db: Kysely<DB> = dbRead): Promise<s
     .execute();
   return rows.map((r) => r.flaggerVersion);
 }
+
+export type SweepResult = {
+  blocked: number[];
+  skipped: { itemId: number; result: 'already-blocked' | 'image-missing' }[];
+  failed: { itemId: number; error: string }[];
+};
+
+/** A claim older than this is presumed dead (a crash mid-block) and may be taken again. */
+export const ACTION_CLAIM_MS = 5 * 60_000;
+
+export type BlockDeps = {
+  block: (args: BlockImageArgs) => Promise<void>;
+  isModerationBlocked: (imageId: number) => Promise<boolean>;
+};
+
+const claimableAt = (now: Date) => (eb: ExpressionBuilder<DB, 'ScanLabelItem'>) =>
+  eb.or([
+    eb('actionStartedAt', 'is', null),
+    eb('actionStartedAt', '<', new Date(now.getTime() - ACTION_CLAIM_MS)),
+  ]);
+
+/** Reads stored state, not the triggering vote, so a failed or interrupted block is retried by the
+ *  next sweep. */
+export async function applyMajorityBlocks(
+  {
+    requester,
+    ip,
+    userAgent,
+    limit = 10,
+  }: { requester?: number; ip?: string; userAgent?: string; limit?: number },
+  { block, isModerationBlocked }: BlockDeps,
+  clock: () => Date = () => new Date()
+): Promise<SweepResult> {
+  const pending = await dbWrite
+    .selectFrom('ScanLabelItem')
+    .select(['id', 'imageId', 'actionResult'])
+    .where('blockVotes', '>=', BLOCK_MAJORITY)
+    .where('status', '!=', 'void')
+    .where('actionedAt', 'is', null)
+    .where(claimableAt(clock()))
+    // Items that keep failing go last, so they cannot starve newer majorities.
+    .orderBy(sql`"actionError" IS NOT NULL`)
+    .orderBy('id')
+    .limit(limit)
+    .execute();
+
+  const result: SweepResult = { blocked: [], skipped: [], failed: [] };
+  for (const item of pending) {
+    const claimedAt = clock();
+    // Claim first: concurrent sweeps must not double-block.
+    const claimed = await dbWrite
+      .updateTable('ScanLabelItem')
+      .set({ actionStartedAt: claimedAt })
+      .where('id', '=', item.id)
+      .where('actionedAt', 'is', null)
+      .where(claimableAt(claimedAt))
+      .executeTakeFirst();
+    if (!claimed.numUpdatedRows) continue;
+
+    try {
+      // 'blocked' with no `actionedAt` means an earlier attempt reached `block`: retry it in full
+      // rather than take its own half-finished block for someone else's, or its side effects are lost.
+      const attempted = item.actionResult === 'blocked';
+      const exists = await dbWrite
+        .selectFrom('Image')
+        .select('id')
+        .where('id', '=', item.imageId)
+        .executeTakeFirst();
+      let outcome: 'blocked' | 'already-blocked' | 'image-missing';
+      if (!exists) outcome = 'image-missing';
+      // Blocking an image moderation already blocked would notify its owner a second time.
+      else if (!attempted && (await isModerationBlocked(item.imageId))) outcome = 'already-blocked';
+      else outcome = 'blocked';
+
+      if (outcome === 'blocked') {
+        const actor = await dbWrite
+          .selectFrom('ScanLabelVote')
+          .select('userId')
+          .where('itemId', '=', item.id)
+          .where('block', '=', true)
+          .orderBy('createdAt')
+          .orderBy('userId')
+          .offset(BLOCK_MAJORITY - 1)
+          .limit(1)
+          .executeTakeFirstOrThrow();
+        await dbWrite
+          .updateTable('ScanLabelItem')
+          .set({ actionResult: 'blocked' })
+          .where('id', '=', item.id)
+          .execute();
+        await block({
+          imageId: item.imageId,
+          userId: actor.userId,
+          ...(actor.userId === requester && { ip, userAgent }),
+          violationDetails: 'Scan label majority',
+        });
+      }
+      await dbWrite
+        .updateTable('ScanLabelItem')
+        .set({ actionedAt: clock(), actionResult: outcome, actionError: null })
+        .where('id', '=', item.id)
+        .execute();
+      if (outcome === 'blocked') result.blocked.push(item.id);
+      else result.skipped.push({ itemId: item.id, result: outcome });
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      console.error('scan label block failed', { itemId: item.id, error: message });
+      result.failed.push({ itemId: item.id, error: message });
+      await dbWrite
+        .updateTable('ScanLabelItem')
+        .set({ actionStartedAt: null, actionError: message.slice(0, 500) })
+        .where('id', '=', item.id)
+        .execute()
+        .catch(() => undefined);
+    }
+  }
+  return result;
+}
+
+export type BlockImageArgs = {
+  imageId: number;
+  userId: number;
+  ip?: string;
+  userAgent?: string;
+  violationDetails?: string;
+};
