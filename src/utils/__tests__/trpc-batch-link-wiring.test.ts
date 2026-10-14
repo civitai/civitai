@@ -95,12 +95,17 @@ describe('every tRPC link sends the page route header', () => {
     vi.unstubAllGlobals();
   });
 
+  // Reads each link's headers on two different routes, so a value cached on the first request
+  // cannot pass.
   function expectRouteHeader(links: Record<string, unknown>[]) {
     expect(links.length).toBeGreaterThan(0);
-    for (const options of links) {
-      const headers = (options.headers as () => Record<string, string>)();
-      expect(headers['x-page-route']).toBe('/models/[id]/[[...slug]]');
-      expect(headers['x-client']).toBe('web');
+    for (const pathname of ['/models/[id]/[[...slug]]', '/user/[username]']) {
+      h.router = { pathname };
+      for (const options of links) {
+        const headers = (options.headers as () => Record<string, string>)();
+        expect(headers['x-page-route']).toBe(pathname);
+        expect(headers['x-client']).toBe('web');
+      }
     }
   }
 
@@ -108,7 +113,6 @@ describe('every tRPC link sends the page route header', () => {
     expect(h.batchLinkOptions.length).toBeGreaterThan(0);
     expect(h.plainLinkOptions.length).toBeGreaterThan(0);
     vi.stubGlobal('window', {});
-    h.router = { pathname: '/models/[id]/[[...slug]]' };
     expectRouteHeader([...h.batchLinkOptions, ...h.plainLinkOptions]);
   });
 
@@ -121,7 +125,6 @@ describe('every tRPC link sends the page route header', () => {
     const batchBefore = h.batchLinkOptions.length;
     const plainBefore = h.plainLinkOptions.length;
     h.nextConfig!({ ctx: undefined });
-    h.router = { pathname: '/models/[id]/[[...slug]]' };
     expectRouteHeader([
       ...h.batchLinkOptions.slice(batchBefore),
       ...h.plainLinkOptions.slice(plainBefore),
