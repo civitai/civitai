@@ -67,10 +67,7 @@ let container: HTMLDivElement | undefined;
 
 const HOW_TO_CLAIM = ' How to claim';
 
-/**
- * Each list item's text, and whether it shows the check rather than the lock. A Discord role row's
- * trailing "How to claim" is cut so the key is the reward line itself.
- */
+/** Each list item's text, and whether it shows the check rather than the lock. */
 function items(props: { total: number; earnedKeys: string[]; unlocks?: unknown[] }) {
   container = document.createElement('div');
   document.body.appendChild(container);
@@ -183,5 +180,10 @@ describe('tier rewards on the ladder', () => {
 
     act(() => (buttons[1] as HTMLButtonElement).click());
     expect(useDialogStore.getState().dialogs.map((d) => d.props)).toEqual([{ tier: 'legend' }]);
+  });
+
+  it('keeps How to claim on an earned rung', () => {
+    items({ total: 20_000_000, earnedKeys: ['score:supernova', 'score:legend'] });
+    expect(container?.querySelectorAll('li button')).toHaveLength(2);
   });
 });

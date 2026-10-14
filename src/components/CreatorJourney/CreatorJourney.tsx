@@ -86,7 +86,6 @@ export function CreatorJourney() {
   return <CreatorJourneyView journey={data} username={currentUser?.username ?? undefined} />;
 }
 
-/** `?discord=legend` opens the how-to-claim guide, so a DM can link straight to it. */
 function useDiscordClaimGuideLink() {
   const router = useRouter();
   const tier = router.isReady
@@ -101,6 +100,7 @@ function useDiscordClaimGuideLink() {
       delete query[DISCORD_CLAIM_PARAM];
       router.replace({ pathname: router.pathname, query }, undefined, { shallow: true });
     });
+    // Keyed on the tier alone: a new `router` object must not reopen the guide.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tier]);
 }

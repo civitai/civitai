@@ -19,7 +19,6 @@ export function DiscordClaimGuideModal({ tier }: { tier: DiscordRoleTier }) {
     <Modal {...dialog} title={`How to claim your ${name} role on Discord`} centered>
       <ol className="m-0 flex list-none flex-col gap-4 p-0">
         <Step number={1} text="Link your Discord account to Civitai.">
-          {/* A full page load: link-role sends the browser to the Discord authorization flow. */}
           <Button
             component="a"
             href={DISCORD_LINK_ROLE_HREF}
