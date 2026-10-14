@@ -29,3 +29,37 @@ export const openVerdicts = (v: unknown) =>
     const flag = flagsOf(v)?.[label];
     return flag && isOpenVerdict(flag) ? [{ label, flag }] : [];
   });
+
+export type LatestScanSource = 'main' | 'web search';
+
+/** One label's verdict, from whichever scan row last settled it. */
+export type LatestScanLabel = {
+  detected: boolean | null;
+  reason: string | null;
+  source: LatestScanSource;
+  status: string;
+  updatedAt: string;
+};
+
+export type LatestScan = { poi: LatestScanLabel | null; minor: LatestScanLabel | null };
+
+export const latestScanDisagrees = (scan: LatestScan | null, label: FlagLabel) =>
+  scan?.[label]?.detected === false;
+
+/** A verdict from a row whose rescan has not finished carries the rescan's updatedAt, not its own. */
+export const scanVerdictProvenance = (
+  v: Pick<LatestScanLabel, 'source' | 'status'>
+): { source: string; note: string | null } => ({
+  source: v.source === 'main' ? 'main scan' : v.source,
+  note:
+    v.status === 'Succeeded'
+      ? null
+      : v.status === 'Pending'
+      ? 'rescan pending — last verdict shown'
+      : 'last rescan failed — last verdict shown',
+});
+
+export const scanVerdictText = (v: Pick<LatestScanLabel, 'detected' | 'reason'>) => {
+  const verdict = v.detected ? 'detected' : v.detected === false ? 'not detected' : 'no verdict';
+  return v.reason ? `${verdict} — ${v.reason}` : verdict;
+};

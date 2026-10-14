@@ -139,6 +139,9 @@ import {
 import { submitModelTextModeration } from '~/server/services/model-moderation.adapter';
 import {
   summarizeTextScan,
+  summarizeTextScanFlags,
+  textScanLabelDetected,
+  type TextScanLabelVerdict,
   type TextScanModeratorSummary,
 } from '~/server/services/text-scan/moderator-summary';
 import {
@@ -5117,25 +5120,53 @@ const textScanRowSelect = {
   updatedAt: true,
 } as const;
 
-// Once the web-search pass is active, the main pass is submitted without poi/minor and those
-// verdicts live on the search row instead.
+// Once the web-search pass is active, the main pass is submitted without poi/minor, but its row
+// keeps the poi/minor it last carried, and the search mode can fall back to off. So each label
+// takes the newest Succeeded row that carries it, else whichever row carries it.
+type TextScanRow = Parameters<typeof summarizeTextScan>[0];
+
 function withWebSearchVerdict(
-  main: TextScanModeratorSummary | null,
-  search: TextScanModeratorSummary | null
+  mainRow: TextScanRow,
+  searchRow: TextScanRow
 ): TextScanModeratorSummary | null {
-  if (!main || !search) return main ?? search;
+  const main = summarizeTextScan(mainRow);
+  const search = summarizeTextScan(searchRow);
+  const base = main ?? search;
+  if (!base) return null;
+  const candidates = [
+    ...(main && mainRow ? [{ summary: main, row: mainRow, source: 'main' as const }] : []),
+    ...(search && searchRow
+      ? [{ summary: search, row: searchRow, source: 'web search' as const }]
+      : []),
+  ].sort((a, b) => b.summary.updatedAt.getTime() - a.summary.updatedAt.getTime());
+  const picks = TEXT_SCAN_WEB_SEARCH_LABELS.flatMap((label) => {
+    const carrying = candidates.filter((c) => c.summary.reasons.some((r) => r.label === label));
+    const picked = carrying.find((c) => c.summary.status === 'Succeeded') ?? carrying[0];
+    return picked ? [{ label, ...picked }] : [];
+  });
+  const labelVerdicts = picks.map(
+    ({ label, summary, row, source }): TextScanLabelVerdict => ({
+      label,
+      detected: textScanLabelDetected(row.result, label),
+      reason: summary.reasons.find((r) => r.label === label)?.reason ?? '',
+      source,
+      status: summary.status,
+      updatedAt: summary.updatedAt,
+    })
+  );
   const fromSearch = (label: string) =>
     (TEXT_SCAN_WEB_SEARCH_LABELS as readonly string[]).includes(label);
   return {
-    ...main,
+    ...base,
     triggeredLabels: [
-      ...main.triggeredLabels.filter((label) => !fromSearch(label)),
-      ...search.triggeredLabels.filter(fromSearch),
+      ...base.triggeredLabels.filter((label) => !fromSearch(label)),
+      ...picks.filter((p) => p.summary.triggeredLabels.includes(p.label)).map((p) => p.label),
     ],
     reasons: [
-      ...main.reasons.filter(({ label }) => !fromSearch(label)),
-      ...search.reasons.filter(({ label }) => fromSearch(label)),
+      ...base.reasons.filter(({ label }) => !fromSearch(label)),
+      ...labelVerdicts.map(({ label, reason }) => ({ label, reason })),
     ],
+    labelVerdicts,
   };
 }
 
@@ -5198,7 +5229,8 @@ export async function getModelModerationDetail({ id }: { id: number }) {
         }
       : null,
     textModeration: meta.textModeration ?? null,
-    textScan: withWebSearchVerdict(summarizeTextScan(scan), summarizeTextScan(searchScan)),
+    textScan: withWebSearchVerdict(scan, searchScan),
+    textScanFlags: summarizeTextScanFlags(model.meta),
     unpublishedAt: meta.unpublishedAt ?? null,
     unpublishedBy: meta.unpublishedBy ?? null,
     unpublishedReason: meta.unpublishedReason ?? null,
