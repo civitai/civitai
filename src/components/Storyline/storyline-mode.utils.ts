@@ -190,3 +190,23 @@ export function buildSubwayStops<T extends SubwayChapter>(
     return { ...stop, branches };
   });
 }
+
+/** Follow canon children from a chapter, at most `limit` steps; stops where no canon child is. */
+export async function followCanon<T extends { chapterId: number; rank: string }>(
+  fetchChildren: (chapterId: number) => Promise<T[]>,
+  startId: number,
+  limit: number
+) {
+  const ahead: T[] = [];
+  const childrenByChapterId = new Map<number, T[]>();
+  let from = startId;
+  for (let i = 0; i < limit; i++) {
+    const children = await fetchChildren(from);
+    childrenByChapterId.set(from, children);
+    const canon = children.find((child) => child.rank === 'canon');
+    if (!canon) break;
+    ahead.push(canon);
+    from = canon.chapterId;
+  }
+  return { ahead, childrenByChapterId };
+}

@@ -1,8 +1,10 @@
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
+import { getQueryKey } from '@trpc/react-query';
 import { useEffect, useMemo } from 'react';
 import { useViewerBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useQueryImages } from '~/components/Image/image.utils';
 import {
+  followCanon,
   getPathImagesPaging,
   hideHiddenUsersChapters,
   orderPathImages,
@@ -79,36 +81,35 @@ export function useStorylineCanonAhead(
   const hiddenUserIds = useHiddenUserIds();
   const utils = trpc.useUtils();
   const query = useQuery({
-    queryKey: ['storyline-canon-ahead', chapterId, browsingLevel],
+    // Under getChildren's key, so invalidating children (a takedown) refreshes this line too.
+    queryKey: [...getQueryKey(trpc.storyline.getChildren), 'canonAhead', chapterId, browsingLevel],
     enabled,
-    queryFn: async () => {
-      const ahead: StorylineChild[] = [];
-      const childrenByChapterId = new Map<number, StorylineChild[]>();
-      let from = chapterId as number;
-      for (let i = 0; i < STORYLINE_CANON_AHEAD_LIMIT; i++) {
-        const children = await utils.storyline.getChildren.fetch({
-          chapterId: from,
-          browsingLevel,
-        });
-        childrenByChapterId.set(from, children);
-        const canon = children.find((child) => child.rank === 'canon');
-        if (!canon) break;
-        ahead.push(canon);
-        from = canon.chapterId;
-      }
-      return { ahead, childrenByChapterId };
-    },
+    queryFn: () =>
+      followCanon(
+        (from) => utils.storyline.getChildren.fetch({ chapterId: from, browsingLevel }),
+        chapterId as number,
+        STORYLINE_CANON_AHEAD_LIMIT
+      ),
   });
   return useMemo(() => {
-    if (!query.data) return { ahead: [], childrenByChapterId: new Map<number, StorylineChild[]>() };
+    if (!query.data)
+      return {
+        ahead: [],
+        childrenByChapterId: new Map<number, StorylineChild[]>(),
+        isLoading: query.isLoading,
+      };
     const childrenByChapterId = new Map(
       [...query.data.childrenByChapterId].map(([id, children]) => [
         id,
         hideHiddenUsersChapters(children, hiddenUserIds),
       ])
     );
-    return { ahead: hideHiddenUsersChapters(query.data.ahead, hiddenUserIds), childrenByChapterId };
-  }, [query.data, hiddenUserIds]);
+    return {
+      ahead: hideHiddenUsersChapters(query.data.ahead, hiddenUserIds),
+      childrenByChapterId,
+      isLoading: false,
+    };
+  }, [query.data, query.isLoading, hiddenUserIds]);
 }
 
 /** One children read per chapter on the path, for the forks the drawer draws beside it. */

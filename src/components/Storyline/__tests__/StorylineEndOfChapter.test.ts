@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
     closedReason: 'closed' | 'collaboratorsOnly' | null;
   },
   openContinue: vi.fn(),
+  ready: true,
 }));
 
 vi.mock('~/components/Storyline/storyline.queries', async (importOriginal) => ({
@@ -31,7 +32,9 @@ vi.mock('~/components/Storyline/storyline.queries', async (importOriginal) => ({
 }));
 vi.mock('~/components/Dialog/dialogStore', () => ({ dialogStore: { trigger: mocks.trigger } }));
 vi.mock('~/components/Storyline/storyline-continue', () => ({
-  STORYLINE_CONTINUE_READY: true,
+  get STORYLINE_CONTINUE_READY() {
+    return mocks.ready;
+  },
   openStorylineContinue: mocks.openContinue,
 }));
 vi.mock('~/components/Storyline/StorylineEarlyAccessModal', () => ({
@@ -64,7 +67,7 @@ function child(
 }
 
 let onContinue = vi.fn();
-function render() {
+function render(props: { parentPostId?: number } = {}) {
   const container = document.createElement('div');
   document.body.appendChild(container);
   act(() => {
@@ -72,7 +75,7 @@ function render() {
       createElement(
         MantineProvider,
         { forceColorScheme: 'light' },
-        createElement(StorylineEndOfChapter, { chapterId: 4, storylineId: 9, onContinue })
+        createElement(StorylineEndOfChapter, { chapterId: 4, storylineId: 9, onContinue, ...props })
       )
     );
   });
@@ -89,6 +92,8 @@ describe('StorylineEndOfChapter', () => {
     mocks.forkShares = { enough: false, total: 0, minChoices: 20, shares: {} };
     mocks.trackCreateClick.mockClear();
     mocks.trigger.mockClear();
+    mocks.terms = null;
+    mocks.ready = true;
     onContinue = vi.fn();
   });
 
@@ -157,6 +162,18 @@ describe('StorylineEndOfChapter', () => {
     const cards = forks(container);
     expect(cards.map((c) => c.dataset.chapterId)).toEqual(['7', '5', '6']);
     expect(cards.map((c) => c.textContent?.endsWith('Read'))).toEqual([true, false, false]);
+  });
+
+  it('offers continuing with a post only once the flow is ready and the chapter has a post', () => {
+    mocks.children = [];
+    mocks.terms = { open: true, price: 0, closedReason: null };
+    const sel = '[data-testid="storyline-continue-with-post"]';
+    expect(render({ parentPostId: 15 }).querySelector(sel)).not.toBeNull();
+    document.body.innerHTML = '';
+    expect(render({}).querySelector(sel)).toBeNull();
+    document.body.innerHTML = '';
+    mocks.ready = false;
+    expect(render({ parentPostId: 15 }).querySelector(sel)).toBeNull();
   });
 
   it('records the click on Create the next section and opens the early access prompt', () => {

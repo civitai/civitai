@@ -1,4 +1,4 @@
-import { Badge, Drawer, Text, UnstyledButton } from '@mantine/core';
+import { Badge, Drawer, Loader, Text, UnstyledButton } from '@mantine/core';
 import clsx from 'clsx';
 import { useMemo } from 'react';
 import type { ActiveStorylineMode } from '~/components/Storyline/StorylineModeProvider';
@@ -130,6 +130,14 @@ export function StorylineDrawer({
           );
         })}
       </ol>
+      {canonAhead.isLoading && (
+        <div className="flex items-center gap-2 py-2 pl-7">
+          <Loader size="xs" />
+          <Text size="xs" c="dimmed">
+            Finding the rest of the story
+          </Text>
+        </div>
+      )}
     </Drawer>
   );
 }

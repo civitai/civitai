@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { isAdjacent } from '~/components/Image/DetailV2/image-detail-carousel.utils';
 import {
   buildSubwayStops,
+  followCanon,
   getPathImagesPaging,
   getStorylineChapterName,
   getStorylineStep,
@@ -286,6 +287,41 @@ describe('getStorylineChapterName', () => {
     expect(getStorylineChapterName(untitled)).toBe('Chapter 2');
     expect(getStorylineChapterName(hidden(3, 2))).toBe(
       'This chapter is hidden by your browsing level'
+    );
+  });
+});
+
+describe('followCanon', () => {
+  // The fake always has a canon child and stops itself at 50 calls, so a missing cap fails on
+  // the count rather than hanging.
+  const endless = () => {
+    let calls = 0;
+    const fetch = async (id: number) => {
+      calls++;
+      return calls > 50
+        ? []
+        : [
+            { chapterId: id + 1, rank: 'canon' },
+            { chapterId: id + 100, rank: 'community' },
+          ];
+    };
+    return { fetch, calls: () => calls };
+  };
+
+  it('stops at the limit on a line that keeps going', async () => {
+    const fake = endless();
+    const result = await followCanon(fake.fetch, 1, 10);
+    expect([fake.calls(), result.ahead.map((c) => c.chapterId)]).toEqual([
+      10,
+      [2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
+    ]);
+  });
+
+  it('stops where a chapter has no canon continuation, keeping its children', async () => {
+    const fetch = vi.fn(async () => [{ chapterId: 9, rank: 'community' }]);
+    const result = await followCanon(fetch, 4, 10);
+    expect([fetch.mock.calls.length, result.ahead, [...result.childrenByChapterId.keys()]]).toEqual(
+      [1, [], [4]]
     );
   });
 });
