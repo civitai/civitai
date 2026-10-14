@@ -2,21 +2,19 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import { renderWithProviders } from '../../../../test/component-setup';
 import type * as TrpcMod from '~/utils/trpc';
-import type * as ImageUtilsMod from '~/components/Image/image.utils';
 import type * as IsMobileMod from '~/hooks/useIsMobile';
 import { StorylinesFeed } from '~/components/Storyline/StorylinesFeed';
 
 /**
- * The storylines feed: what the server lists, in its order, each card showing chapter 1's first
- * image as its cover, and the filter and sort passed through to the server rather than applied
- * here (the server is what applies the reader's browsing level).
+ * The storylines feed: what the server lists, in its order, each card showing the cover, open flag
+ * and price the server sends, and the filter and sort passed through to the server rather than
+ * applied here (the server is what applies the reader's browsing level).
  */
 
 const mocks = vi.hoisted(() => ({
   feedInput: vi.fn(),
-  imagesInput: vi.fn(),
   items: [] as Record<string, unknown>[],
-  images: [] as Record<string, unknown>[],
+  loading: false,
   safe: true,
   failed: false,
   refetch: vi.fn(),
@@ -37,7 +35,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
               : { pages: [{ items: mocks.items, nextCursor: undefined }] },
             isError: mocks.failed,
             refetch: mocks.refetch,
-            isLoading: false,
+            isLoading: mocks.loading,
             hasNextPage: false,
             fetchNextPage: vi.fn(),
             isFetching: false,
@@ -47,13 +45,6 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
     }),
   };
 });
-vi.mock('~/components/Image/image.utils', async (importOriginal) => ({
-  ...(await importOriginal<typeof ImageUtilsMod>()),
-  useQueryImages: (input: unknown) => {
-    mocks.imagesInput(input);
-    return { images: mocks.images };
-  },
-}));
 // Picks popover or drawer from the layout container, which the harness does not mount.
 vi.mock('~/hooks/useIsMobile', async (importOriginal) => ({
   ...(await importOriginal<typeof IsMobileMod>()),
@@ -71,11 +62,27 @@ vi.mock('~/components/EdgeMedia/EdgeMedia', () => ({
   EdgeMedia: ({ src }: { src: string }) => <img alt="cover" src={`https://cdn.test/${src}`} />,
 }));
 
-const card = (id: number, rootPostId: number | null, extra: Record<string, unknown> = {}) => ({
+const cover = (id: number, url: string) => ({
+  id,
+  url,
+  type: 'image',
+  nsfwLevel: 1,
+  hash: null,
+  width: 832,
+  height: 1216,
+  userId: 1,
+  minor: false,
+  poi: false,
+});
+const card = (id: number, coverImage: ReturnType<typeof cover> | null, extra = {}) => ({
   id,
   title: `Story ${id}`,
   status: 'Ongoing',
-  rootPostId,
+  whoCanContinue: 'Anyone',
+  rootPostId: id * 10,
+  coverImage,
+  open: true,
+  continuePrice: null,
   chapterCount: 4,
   contributorCount: 2,
   createdAt: new Date('2026-10-01'),
@@ -89,23 +96,30 @@ beforeEach(() => {
   mocks.failed = false;
   mocks.refetch.mockReset();
   mocks.feedInput.mockReset();
-  mocks.imagesInput.mockReset();
+  mocks.loading = false;
   mocks.items = [
-    card(7, 70),
-    card(3, 30, { status: 'Complete', chapterCount: 1, contributorCount: 1 }),
+    card(7, cover(701, 'cover-of-7')),
+    card(3, cover(301, 'cover-of-3'), {
+      status: 'Complete',
+      open: false,
+      chapterCount: 1,
+      contributorCount: 1,
+    }),
+    // The server sends no cover when chapter 1's images are all hidden from this reader.
     card(5, null),
-  ];
-  mocks.images = [
-    // The cover is the lowest index, wherever the read returns it: one before it and one after.
-    { id: 703, postId: 70, index: 2, url: 'third-of-70' },
-    { id: 701, postId: 70, index: 0, url: 'first-of-70' },
-    { id: 702, postId: 70, index: 1, url: 'second-of-70' },
-    { id: 301, postId: 30, index: 0, url: 'first-of-30' },
   ];
 });
 
+const cardFor = (id: number) =>
+  page
+    .getByRole('link')
+    .elements()
+    .find((a) => a.getAttribute('href') === `/storylines/${id}`)!;
+const testIds = (el: Element, id: string) =>
+  [...el.querySelectorAll(`[data-testid="${id}"]`)].map((n) => n.textContent);
+
 describe('StorylinesFeed', () => {
-  test('lists storylines in the order given, with chapter 1 covers and counts', async () => {
+  test('lists storylines in the order given, with the covers and counts the server sends', async () => {
     renderWithProviders(<StorylinesFeed />);
 
     const links = page.getByRole('link');
@@ -117,19 +131,62 @@ describe('StorylinesFeed', () => {
     ]);
     expect(
       links.elements().map((a) => a.querySelector('img')?.getAttribute('src') ?? null)
-    ).toEqual(['https://cdn.test/first-of-70', 'https://cdn.test/first-of-30', null]);
-    await expect.element(page.getByText('4 chapters · 2 creators').first()).toBeVisible();
-    await expect.element(page.getByText('1 chapter · 1 creator')).toBeVisible();
-    expect(
-      links.elements().map((a) => a.querySelector('.mantine-Badge-label')?.textContent)
-    ).toEqual(['Ongoing', 'Complete', 'Ongoing']);
+    ).toEqual(['https://cdn.test/cover-of-7', 'https://cdn.test/cover-of-3', null]);
+    expect(links.elements().map((a) => testIds(a, 'storyline-status-chip'))).toEqual([
+      ['Ongoing'],
+      ['Complete'],
+      ['Ongoing'],
+    ]);
+    expect(cardFor(7).textContent).toMatch(/4 chapters.*2 creators/);
+    expect(cardFor(3).textContent).toMatch(/1 chapter.*1 creator/);
+    expect(mocks.feedInput.mock.lastCall?.[0].browsingLevel).toEqual(expect.any(Number));
+  });
 
-    // One image read for the whole page, for the chapter-1 posts it has, at the list's own level.
-    const level = mocks.feedInput.mock.lastCall?.[0].browsingLevel;
-    expect(level).toEqual(expect.any(Number));
-    expect(mocks.imagesInput).toHaveBeenLastCalledWith(
-      expect.objectContaining({ postIds: [70, 30], browsingLevel: level })
-    );
+  test('a lock chip says why a still-going storyline is not open to this reader', async () => {
+    mocks.items = [
+      card(1, null, { open: false, whoCanContinue: 'Collaborators' }),
+      card(2, null, { open: false }),
+      card(3, null),
+      // Complete says so in its status chip; no lock on top.
+      card(4, null, { open: false, status: 'Complete' }),
+    ];
+    renderWithProviders(<StorylinesFeed />);
+    await expect.element(page.getByRole('link').first()).toBeVisible();
+
+    expect([1, 2, 3, 4].map((id) => testIds(cardFor(id), 'storyline-closed-chip'))).toEqual([
+      ['Collaborators only'],
+      ['Closed'],
+      [],
+      [],
+    ]);
+  });
+
+  test('the continue price shows only on a card this reader can continue', async () => {
+    mocks.items = [
+      card(1, null, { continuePrice: 0 }),
+      card(2, null, { continuePrice: 1500 }),
+      card(3, null, { continuePrice: null }),
+      card(4, null, { open: false, continuePrice: 50 }),
+    ];
+    renderWithProviders(<StorylinesFeed />);
+    await expect.element(page.getByRole('link').first()).toBeVisible();
+
+    expect([1, 2, 3, 4].map((id) => testIds(cardFor(id), 'storyline-price-chip'))).toEqual([
+      ['Free to continue'],
+      ['1,500 to continue'],
+      [],
+      [],
+    ]);
+  });
+
+  test('loading shows card skeletons, not a spinner', async () => {
+    mocks.loading = true;
+    renderWithProviders(<StorylinesFeed />);
+
+    await expect.element(page.getByTestId('storylines-feed-skeleton')).toBeVisible();
+    expect(
+      page.getByTestId('storylines-feed-skeleton').element().querySelectorAll('li')
+    ).toHaveLength(6);
   });
 
   test.each([

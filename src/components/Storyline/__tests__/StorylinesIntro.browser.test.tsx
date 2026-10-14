@@ -51,6 +51,16 @@ describe('StorylinesIntro', () => {
     expect(document.body.textContent).not.toContain('Welcome to Storylines');
   });
 
+  test('the close button dismisses it the same way as "Got it"', async () => {
+    renderWithProviders(<StorylinesIntro />);
+    await page.getByRole('button', { name: 'Dismiss the Storylines welcome' }).click();
+
+    await expect
+      .element(page.getByRole('heading', { name: 'Welcome to Storylines' }))
+      .not.toBeInTheDocument();
+    expect(localStorage.getItem(STORYLINES_INTRO_DISMISSED_KEY)).toBe('1');
+  });
+
   test('signed out, "Start a storyline" asks them to sign in instead of linking anywhere', async () => {
     renderWithProviders(<StorylinesIntro />);
 

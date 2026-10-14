@@ -61,20 +61,26 @@ export function StorylineFiltersDropdown({
     </Indicator>
   );
 
+  const chips = (values: readonly StorylineFeedFilter[]) => (
+    <Group gap={8}>
+      {STORYLINE_FEED_FILTERS.filter((f) => values.includes(f.value)).map(({ value, label }) => (
+        <FilterChip
+          key={value}
+          checked={mergedFilters.filter === value}
+          onChange={() => patchPending({ filter: value })}
+        >
+          <span>{label}</span>
+        </FilterChip>
+      ))}
+    </Group>
+  );
+
   const dropdownBody = (
     <Stack gap="md" p="md">
-      <Divider label="Show" className="text-sm font-bold" />
-      <Group gap={8}>
-        {STORYLINE_FEED_FILTERS.map(({ value, label }) => (
-          <FilterChip
-            key={value}
-            checked={mergedFilters.filter === value}
-            onChange={() => patchPending({ filter: value })}
-          >
-            <span>{label}</span>
-          </FilterChip>
-        ))}
-      </Group>
+      <Divider label="Status" className="text-sm font-bold" />
+      {chips(['all', 'ongoing', 'complete'])}
+      <Divider label="Continuing" className="text-sm font-bold" />
+      {chips(['open'])}
     </Stack>
   );
 

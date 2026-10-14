@@ -1,4 +1,4 @@
-import { Badge, Button, Card, Group, Text, ThemeIcon, Title } from '@mantine/core';
+import { Button, Card, CloseButton, Group, Text, ThemeIcon, Title } from '@mantine/core';
 import { IconBook2, IconBrush, IconGitFork, IconPlus, IconRoute } from '@tabler/icons-react';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
@@ -42,17 +42,23 @@ export function StorylinesIntro() {
   } as const;
 
   return (
-    <Card radius="md" withBorder p="xl" className="bg-gray-0 dark:bg-dark-6">
-      <Badge
-        variant="light"
-        color="violet"
-        leftSection={<IconRoute size={12} />}
-        mb="xs"
-        className="self-start"
-      >
+    <Card
+      radius="lg"
+      withBorder
+      className="relative bg-gray-0 p-4 shadow-sm sm:p-6 dark:bg-dark-6"
+      component="section"
+      aria-labelledby="storylines-intro-title"
+    >
+      <CloseButton
+        className="absolute right-2 top-2"
+        aria-label="Dismiss the Storylines welcome"
+        onClick={dismiss}
+      />
+      <Group gap={6} c="violet" fw={700} fz={13}>
+        <IconRoute size={15} aria-hidden />
         New
-      </Badge>
-      <Title order={2} mb={4}>
+      </Group>
+      <Title order={2} id="storylines-intro-title" fz={{ base: 22, sm: 28 }} fw={800} mt={4} mb={6}>
         Welcome to Storylines
       </Title>
       <Text size="sm" c="dimmed" mb="lg">
@@ -67,7 +73,7 @@ export function StorylinesIntro() {
             radius="md"
             p="md"
             withBorder
-            className="border-gray-3 bg-white dark:border-dark-4 dark:bg-dark-5"
+            className="border-gray-3 bg-gray-1 dark:border-dark-4 dark:bg-dark-5"
           >
             <Group gap="xs" mb="xs">
               <ThemeIcon variant="light" color={color} radius="xl">
@@ -82,7 +88,7 @@ export function StorylinesIntro() {
         ))}
       </div>
 
-      <Group mt="lg" gap="sm">
+      <Group mt="lg" gap="sm" className="flex-col items-stretch sm:flex-row sm:items-center">
         {currentUser?.username ? (
           // A storyline starts from a post's menu, so this goes to the viewer's own posts.
           <Button component={Link} href={`/user/${currentUser.username}/posts`} {...startProps} />
@@ -95,6 +101,9 @@ export function StorylinesIntro() {
           Got it
         </Button>
       </Group>
+      <Text size="xs" c="dimmed" mt="xs">
+        Start a storyline opens your posts; any post you made can become chapter 1.
+      </Text>
     </Card>
   );
 }
