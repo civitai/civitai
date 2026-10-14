@@ -883,6 +883,8 @@ export async function getStorylineContinuePrice({
   return { open: true, closedReason: null, price };
 }
 
+// Read only by the storyline's owner reviewing their queue, so no per-viewer hidden images or
+// ceiling: not the readers' first-image rule.
 const summaryPostSelect = {
   id: true,
   title: true,

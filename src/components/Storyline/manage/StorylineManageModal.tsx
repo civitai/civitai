@@ -47,7 +47,18 @@ export default function StorylineManageModal({ storylineId }: { storylineId: num
   });
 
   return (
-    <Modal {...dialog} title={storyline?.title ?? 'Storyline'} size="lg">
+    <Modal
+      {...dialog}
+      title={
+        <Text component="span" fw={600}>
+          <Text component="span" c="dimmed" inherit>
+            Manage
+          </Text>{' '}
+          {storyline?.title ?? 'storyline'}
+        </Text>
+      }
+      size="lg"
+    >
       {!features.storylines ? (
         <Alert color="gray">Storylines are not available yet.</Alert>
       ) : isLoading ? (
@@ -66,7 +77,7 @@ export default function StorylineManageModal({ storylineId }: { storylineId: num
               value="collaborators"
               rightSection={
                 storyline.collaborators.length ? (
-                  <Badge size="sm" variant="light">
+                  <Badge size="sm" variant="light" radius="xl">
                     {storyline.collaborators.length}
                   </Badge>
                 ) : null
@@ -90,12 +101,8 @@ export default function StorylineManageModal({ storylineId }: { storylineId: num
                 update.mutate({ id: storylineId, whoCanContinue })
               }
               onPriceChange={space.save}
+              priceUnavailable={space.unavailable}
             />
-            {space.unavailable && (
-              <Text size="xs" c="dimmed" mt="sm">
-                The price is not available yet.
-              </Text>
-            )}
           </Tabs.Panel>
 
           <Tabs.Panel value="collaborators">

@@ -72,6 +72,18 @@ export function storylineContinuePostOptions<TImage>(
 }
 
 /**
+ * Posts that are already a chapter cannot continue another storyline (the server refuses them),
+ * so they are left out of the picker and only counted.
+ */
+export function storylineWithoutChapters<T extends { id: number }>(
+  posts: T[],
+  chapterPostIds: ReadonlySet<number>
+) {
+  const usable = posts.filter((post) => !chapterPostIds.has(post.id));
+  return { posts: usable, alreadyChapters: posts.length - usable.length };
+}
+
+/**
  * What submit sends. The price is the one the contributor was shown, so a change while they
  * decide is refused rather than charged; an unrated post is sent and waits for its rating.
  */

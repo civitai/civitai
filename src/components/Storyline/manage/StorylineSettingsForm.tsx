@@ -1,5 +1,6 @@
 import { Anchor, Group, SegmentedControl, Stack, Text } from '@mantine/core';
-import { useEffect, useState } from 'react';
+import { IconBolt, IconCircleCheck, IconShieldHalf, IconUsers } from '@tabler/icons-react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { StorylineContinueModeInput } from '~/components/Storyline/settings/StorylineContinueModeInput';
 import { StorylinePriceInput } from '~/components/Storyline/settings/StorylinePriceInput';
 import { StorylineRatingInput } from '~/components/Storyline/settings/StorylineRatingInput';
@@ -30,6 +31,8 @@ export function StorylineSettingsForm({
   onRatingChange,
   onWhoCanContinueChange,
   onPriceChange,
+  priceUnavailable,
+  coverRow,
   disabled,
 }: {
   status: StorylineStatusValue;
@@ -45,6 +48,10 @@ export function StorylineSettingsForm({
   onWhoCanContinueChange: (value: StorylineWhoCanContinue) => void;
   /** `null` returns the storyline to the creator's default price. */
   onPriceChange: (price: number | null) => void;
+  /** The space read refuses this storyline for now: no slider, only a note. */
+  priceUnavailable?: boolean;
+  /** Rendered as the first row of the card (the covers picker). */
+  coverRow?: ReactNode;
   disabled?: boolean;
 }) {
   // Local so the thumb follows the drag; the write happens on release.
@@ -55,11 +62,10 @@ export function StorylineSettingsForm({
   const hidden = chapterLevels ? storylineCeilingImpact(maxNsfwLevel, chapterLevels).hidden : 0;
 
   return (
-    <Stack gap="lg">
-      <Stack gap={4}>
-        <Text size="sm" fw={500}>
-          Status
-        </Text>
+    <div className="divide-y divide-gray-2 overflow-hidden rounded-xl border border-gray-3 bg-gray-0 shadow-sm dark:divide-dark-5 dark:border-dark-4 dark:bg-dark-6">
+      {coverRow && <div className="px-4 py-3">{coverRow}</div>}
+
+      <SettingsRow icon={<IconCircleCheck size={16} />} label="Status">
         <SegmentedControl
           aria-label="Status"
           fullWidth
@@ -74,12 +80,9 @@ export function StorylineSettingsForm({
         <Text size="xs" c="dimmed">
           Complete closes the storyline to new continuations.
         </Text>
-      </Stack>
+      </SettingsRow>
 
-      <Stack gap={4}>
-        <Text size="sm" fw={500}>
-          Who can continue
-        </Text>
+      <SettingsRow icon={<IconUsers size={16} />} label="Who can continue">
         <StorylineContinueModeInput
           value={whoCanContinue ?? 'Anyone'}
           disabled={disabled || !whoCanContinue || complete}
@@ -90,12 +93,9 @@ export function StorylineSettingsForm({
             ? 'Set the storyline back to Ongoing to accept continuations again.'
             : 'Endorsed collaborators skip review either way.'}
         </Text>
-      </Stack>
+      </SettingsRow>
 
-      <Stack gap={4}>
-        <Text size="sm" fw={500}>
-          Maximum rating
-        </Text>
+      <SettingsRow icon={<IconShieldHalf size={16} />} label="Maximum rating">
         <StorylineRatingInput
           value={maxNsfwLevel}
           disabled={disabled}
@@ -118,14 +118,16 @@ export function StorylineSettingsForm({
           from readers. Raising it again brings them back. Readers also keep their own browsing
           settings.
         </Text>
-      </Stack>
+      </SettingsRow>
 
-      <Stack gap={4}>
-        <Group justify="space-between" gap="xs" wrap="nowrap">
-          <Text size="sm" fw={500}>
-            Price to continue
-          </Text>
-          {space && space.setPrice != null && !complete && (
+      <SettingsRow
+        icon={<IconBolt size={16} />}
+        label="Price to continue"
+        action={
+          !priceUnavailable &&
+          space &&
+          space.setPrice != null &&
+          !complete && (
             <Anchor
               component="button"
               type="button"
@@ -135,25 +137,65 @@ export function StorylineSettingsForm({
             >
               Use my default
             </Anchor>
-          )}
+          )
+        }
+      >
+        {priceUnavailable ? (
+          // Says nothing about the price itself: the stored one may not be free.
+          <Text size="xs" c="dimmed">
+            The price is not available yet.
+          </Text>
+        ) : (
+          <>
+            {/* Inset: the slider's end labels hang past its track and would cross the card edge. */}
+            <div className="px-3">
+              <StorylinePriceInput
+                value={price}
+                fallback={space?.price ?? 0}
+                cap={space?.cap ?? null}
+                disabled={disabled || !space || complete}
+                onChange={setPrice}
+                onCommit={(value) => {
+                  setPrice(value);
+                  onPriceChange(value);
+                }}
+              />
+            </div>
+            <Text size="xs" c="dimmed">
+              {(space?.price ?? 0) > 0
+                ? 'Contributors pay when they submit. Accept and you keep it; decline and they are refunded minus a small fee; if it expires they are refunded in full.'
+                : 'Anyone can submit. You still review each one, and the rating limit still applies.'}
+            </Text>
+          </>
+        )}
+      </SettingsRow>
+    </div>
+  );
+}
+
+function SettingsRow({
+  icon,
+  label,
+  action,
+  children,
+}: {
+  icon: ReactNode;
+  label: string;
+  action?: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <Stack gap={6} className="px-4 py-3">
+      <Group justify="space-between" gap="xs" wrap="nowrap">
+        <Group gap={6} wrap="nowrap" className="text-gray-7 dark:text-dark-1">
+          {icon}
+          <Text size="sm" fw={500}>
+            {label}
+          </Text>
         </Group>
-        <StorylinePriceInput
-          value={price}
-          fallback={space?.price ?? 0}
-          cap={space?.cap ?? null}
-          disabled={disabled || !space || complete}
-          onChange={setPrice}
-          onCommit={(value) => {
-            setPrice(value);
-            onPriceChange(value);
-          }}
-        />
-        <Text size="xs" c="dimmed">
-          {(space?.price ?? 0) > 0
-            ? 'Contributors pay when they submit. Accept and you keep it; decline and they are refunded minus a small fee; if it expires they are refunded in full.'
-            : 'Anyone can submit. You still review each one, and the rating limit still applies.'}
-        </Text>
-      </Stack>
+        {action}
+      </Group>
+      {children}
     </Stack>
   );
 }

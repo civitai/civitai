@@ -2,6 +2,7 @@ import { describe, expect, test } from 'vitest';
 import {
   storylineCeilingImpact,
   storylineContinuePostOptions,
+  storylineWithoutChapters,
   storylineSubmitInput,
   storylinePriceCaption,
   storylinePriceLabel,
@@ -137,6 +138,18 @@ describe('storylineContinuePostOptions', () => {
         parentPostId: 3,
       })[0].cover
     ).toEqual({ id: 7 });
+  });
+});
+
+describe('storylineWithoutChapters', () => {
+  test('leaves out the posts that are already chapters, and counts them', () => {
+    expect(
+      storylineWithoutChapters([{ id: 1 }, { id: 2 }, { id: 3 }], new Set([2, 3, 99]))
+    ).toEqual({ posts: [{ id: 1 }], alreadyChapters: 2 });
+    expect(storylineWithoutChapters([{ id: 1 }], new Set())).toEqual({
+      posts: [{ id: 1 }],
+      alreadyChapters: 0,
+    });
   });
 });
 

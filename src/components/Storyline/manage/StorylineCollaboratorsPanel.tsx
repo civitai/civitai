@@ -1,5 +1,5 @@
-import { Button, Group, Stack, Text } from '@mantine/core';
-import { IconTrash, IconX } from '@tabler/icons-react';
+import { Badge, Button, Group, Stack, Text } from '@mantine/core';
+import { IconRosetteDiscountCheck, IconTrash, IconX } from '@tabler/icons-react';
 import { useState } from 'react';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { QuickSearchDropdown } from '~/components/Search/QuickSearchDropdown';
@@ -98,9 +98,20 @@ export function StorylineCollaboratorsPanel({
               withUsername
               size="sm"
               subText={
-                <Text size="xs" c="dimmed" span>
-                  Continuations skip review and are listed after canon
-                </Text>
+                <Group gap={6} wrap="nowrap" component="span">
+                  <Badge
+                    variant="light"
+                    color="teal"
+                    size="sm"
+                    radius="xl"
+                    leftSection={<IconRosetteDiscountCheck size={12} />}
+                  >
+                    Endorsed
+                  </Badge>
+                  <Text size="xs" c="dimmed" span>
+                    Continuations skip review and are listed after canon
+                  </Text>
+                </Group>
               }
               subTextForce
             />
@@ -118,9 +129,12 @@ export function StorylineCollaboratorsPanel({
           </Group>
         ))}
         {!collaborators.length && (
-          <Text size="sm" c="dimmed" px={4} py={6}>
-            No endorsed collaborators yet.
-          </Text>
+          <Stack align="center" gap={6} py="lg" className="text-gray-5 dark:text-dark-3">
+            <IconRosetteDiscountCheck size={28} stroke={1.5} />
+            <Text size="sm" c="dimmed">
+              No endorsed collaborators yet.
+            </Text>
+          </Stack>
         )}
       </Stack>
 

@@ -92,8 +92,8 @@ vi.mock('~/components/ImageGuard/ImageGuard2', () => {
   return { ImageGuard2 };
 });
 vi.mock('~/components/UserAvatar/UserAvatar', () => ({
-  UserAvatar: ({ userId }: { userId: number }) =>
-    React.createElement('span', null, `user ${userId}`),
+  UserAvatar: ({ userId, subText }: { userId: number; subText?: React.ReactNode }) =>
+    React.createElement('span', null, `user ${userId}`, subText),
 }));
 
 const { StorylineContinueForm } = await import(
@@ -345,6 +345,30 @@ describe('StorylineContinueForm post picker', () => {
 
     expect(text).toContain("Couldn't load your posts.");
     expect(text).not.toContain('You have no published posts');
+  });
+
+  it('counts the posts left out for being chapters already', () => {
+    expect(visibleText(render(continueForm({ alreadyChapters: 3 })))).toContain(
+      '3 of your posts are already chapters, so they aren’t listed.'
+    );
+    act(() => root?.unmount());
+    expect(visibleText(render(continueForm({ alreadyChapters: 1 })))).toContain(
+      '1 of your posts is already a chapter, so it isn’t listed.'
+    );
+    act(() => root?.unmount());
+    expect(visibleText(render(continueForm()))).not.toContain('listed.');
+  });
+
+  it('says every recent post is already a chapter when none is left', () => {
+    const el = render(continueForm({ posts: [], alreadyChapters: 4 }));
+    const text = visibleText(el);
+
+    expect(text).toContain(
+      'All your recent posts are already chapters. Make a new post to continue the story.'
+    );
+    expect(text).not.toContain('You have no published posts');
+    expect(text).not.toContain('aren’t listed');
+    expect([...el.querySelectorAll('a')].some((a) => a.textContent === 'Create a post')).toBe(true);
   });
 
   it('shows placeholder tiles while posts load, and a way to make one when there are none', () => {
@@ -699,6 +723,35 @@ describe('StorylineSettingsForm', () => {
     expect(option(el, 'Maximum rating', 'PG').disabled).toBe(false);
   });
 
+  it('shows no price slider while pricing is unavailable, and says the storyline is free', () => {
+    const el = render(settingsForm({ priceUnavailable: true }));
+    const text = visibleText(el);
+
+    expect(el.querySelector('[role="slider"]')).toBeNull();
+    expect(text).not.toContain('Free to continue');
+    expect(text).toContain('The price is not available yet.');
+    expect(text).not.toContain('Use my default');
+    act(() => root?.unmount());
+
+    const priced = render(settingsForm());
+    expect(priced.querySelector('[role="slider"]')).not.toBeNull();
+    expect(visibleText(priced)).not.toContain('The price is not available yet.');
+  });
+
+  it('puts the cover row first, before Status, only when given one', () => {
+    const el = render(
+      settingsForm({
+        coverRow: React.createElement('span', { 'data-testid': 'cover-row' }, 'Cover'),
+      })
+    );
+    const text = visibleText(el);
+
+    expect(el.querySelector('[data-testid="cover-row"]')).not.toBeNull();
+    expect(text.indexOf('Cover')).toBeLessThan(text.indexOf('Status'));
+    act(() => root?.unmount());
+    expect(visibleText(render(settingsForm())).startsWith('Status')).toBe(true);
+  });
+
   it('disables the controls it cannot read yet', () => {
     const el = render(settingsForm({ whoCanContinue: null, space: null }));
 
@@ -759,6 +812,14 @@ describe('StorylineCollaboratorsPanel', () => {
     expect(added).toEqual([60]);
     expect(button(el, 'Endorse').disabled).toBe(true);
     expect(el.querySelector('[aria-label="user search"]')).not.toBeNull();
+  });
+
+  it('marks each collaborator as endorsed, and says when there are none', () => {
+    expect(visibleText(panel())).toContain('Endorsed');
+    act(() => root?.unmount());
+    const empty = visibleText(panel({ collaborators: [] }));
+    expect(empty).toContain('No endorsed collaborators yet.');
+    expect(empty).not.toContain('Endorsed');
   });
 
   it('shows the list without controls to someone who cannot manage it', () => {
