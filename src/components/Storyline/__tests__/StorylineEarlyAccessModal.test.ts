@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import { MantineProvider } from '@mantine/core';
-import { act, createElement } from 'react';
+import type { ReactElement } from 'react';
+import { act, cloneElement, createElement } from 'react';
 import { createRoot } from 'react-dom/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -10,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   join: vi.fn<(input: { storylineId?: number }) => Promise<unknown>>(),
   showError: vi.fn(),
   user: { id: 1 } as { id: number } | null,
+  requireLogin: vi.fn(),
 }));
 
 vi.mock('~/components/Storyline/storyline.queries', () => ({
@@ -19,8 +21,12 @@ vi.mock('~/components/Dialog/DialogProvider', () => ({
   useDialogContext: () => ({ opened: true, onClose: vi.fn() }),
 }));
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => mocks.user }));
+// Like the real one: the wrapped button sends the reader to sign in, with a reason.
 vi.mock('~/components/LoginRedirect/LoginRedirect', () => ({
-  LoginRedirect: ({ children }: { children: unknown }) => children,
+  LoginRedirect: ({ children, reason }: { children: ReactElement; reason: string }) =>
+    cloneElement(children as ReactElement<{ onClick?: () => void }>, {
+      onClick: () => mocks.requireLogin(reason),
+    }),
 }));
 vi.mock('~/utils/notifications', () => ({ showErrorNotification: mocks.showError }));
 
@@ -52,6 +58,7 @@ describe('StorylineEarlyAccessModal', () => {
     mocks.join.mockReset();
     mocks.showError.mockClear();
     mocks.user = { id: 1 };
+    mocks.requireLogin.mockClear();
   });
 
   it('joins for this storyline and says so', async () => {
@@ -76,8 +83,11 @@ describe('StorylineEarlyAccessModal', () => {
   it('asks a signed-out reader to sign in instead of offering to join', () => {
     mocks.user = null;
     render();
-    const labels = [...document.body.querySelectorAll('button')].map((b) => b.textContent);
-    expect(labels).toContain('Sign in for early access');
-    expect(labels).not.toContain('Get early access');
+    const buttons = [...document.body.querySelectorAll('button')];
+    expect(buttons.map((b) => b.textContent)).not.toContain('Get early access');
+    const signIn = buttons.find((b) => b.textContent === 'Sign in for early access');
+    act(() => signIn?.click());
+    expect(mocks.requireLogin.mock.calls).toEqual([['storyline-early-access']]);
+    expect(mocks.join).not.toHaveBeenCalled();
   });
 });

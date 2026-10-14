@@ -20,15 +20,16 @@ const mocks = vi.hoisted(() => ({
   forkSharesQuery: vi.fn(),
   statusQuery: vi.fn(),
   statusData: undefined as { joined: boolean } | undefined,
-  branchMutate: vi.fn(),
-  createMutate: vi.fn(),
+  // The server's answer to each call: resolve, reject or hold it back per test.
+  branchMutate: vi.fn<(input: unknown) => Promise<unknown>>(),
+  createMutate: vi.fn<(input: unknown) => Promise<unknown>>(),
   joinMutateAsync: vi.fn<(input: unknown) => Promise<unknown>>(),
   invalidateShares: vi.fn(),
   setStatusData: vi.fn(),
 }));
 
-// Each fake mutation runs the hook's own `onSuccess` with the input it was sent, as react-query
-// does, so the tests see what a resolved call does rather than a callback fished out by hand.
+// Each fake mutation runs the hook's own `onSuccess` once the server answer resolves, and never on
+// a rejection, as react-query does.
 vi.mock('~/utils/trpc', async (importOriginal) => {
   const { makeTrpcProxy } = await import('../../../../test/trpcProxyStub');
   return {
@@ -50,16 +51,20 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
         'storyline.trackBranchChoice': {
           useMutation: (opts?: MutationOptions) => ({
             mutate: (input: never) => {
-              mocks.branchMutate(input);
-              void opts?.onSuccess?.(undefined, input);
+              mocks.branchMutate(input).then(
+                (data) => opts?.onSuccess?.(data, input),
+                () => undefined
+              );
             },
           }),
         },
         'storyline.trackCreateClick': {
           useMutation: (opts?: MutationOptions) => ({
             mutate: (input: never) => {
-              mocks.createMutate(input);
-              void opts?.onSuccess?.(undefined, input);
+              mocks.createMutate(input).then(
+                (data) => opts?.onSuccess?.(data, input),
+                () => undefined
+              );
             },
           }),
         },
@@ -114,11 +119,13 @@ beforeEach(() => {
   mocks.statusData = undefined;
   mocks.joinMutateAsync.mockReset();
   mocks.joinMutateAsync.mockResolvedValue(undefined);
+  mocks.branchMutate.mockReset();
+  mocks.branchMutate.mockResolvedValue(undefined);
+  mocks.createMutate.mockReset();
+  mocks.createMutate.mockResolvedValue(undefined);
   for (const fn of [
     mocks.forkSharesQuery,
     mocks.statusQuery,
-    mocks.branchMutate,
-    mocks.createMutate,
     mocks.invalidateShares,
     mocks.setStatusData,
   ])
@@ -146,17 +153,21 @@ describe('useStorylineForkShares', () => {
 });
 
 describe('useStorylineTracking', () => {
-  it('records a signed-in choice and create click with the browsing level', () => {
+  it('records a signed-in choice with the browsing level', () => {
     const tracking = renderHook(() => useStorylineTracking());
     tracking.current.trackBranchChoice({ fromChapterId: 3, toChapterId: 5 });
-    tracking.current.trackCreateClick({ chapterId: 5 });
     expect(mocks.branchMutate.mock.calls).toEqual([
       [{ fromChapterId: 3, toChapterId: 5, browsingLevel: 7 }],
     ]);
+  });
+
+  it('records a signed-in create click with the browsing level', () => {
+    const tracking = renderHook(() => useStorylineTracking());
+    tracking.current.trackCreateClick({ chapterId: 5 });
     expect(mocks.createMutate.mock.calls).toEqual([[{ chapterId: 5, browsingLevel: 7 }]]);
   });
 
-  // Paired with the test above, which proves the same setup does send when signed in.
+  // Paired with the two tests above, which prove the same setup does send when signed in.
   it('sends nothing for a signed-out reader, whom the server would refuse', () => {
     mocks.user = null;
     const tracking = renderHook(() => useStorylineTracking());
@@ -165,15 +176,32 @@ describe('useStorylineTracking', () => {
     expect([mocks.branchMutate.mock.calls, mocks.createMutate.mock.calls]).toEqual([[], []]);
   });
 
-  it('a recorded choice refreshes the shares of the chapter it was made from, not the one taken', () => {
+  // The server drops its cached shares before it answers, so a refresh sent earlier reads stale.
+  it('refreshes the shares of the chapter chosen from only once the choice is recorded', async () => {
+    let answer!: () => void;
+    mocks.branchMutate.mockReturnValueOnce(new Promise<void>((resolve) => (answer = resolve)));
     const tracking = renderHook(() => useStorylineTracking());
     tracking.current.trackBranchChoice({ fromChapterId: 3, toChapterId: 5 });
-    expect(mocks.invalidateShares.mock.calls).toEqual([[{ chapterId: 3 }]]);
+    await Promise.resolve();
+    expect(mocks.invalidateShares.mock.calls).toEqual([]);
+    answer();
+    await vi.waitFor(() => expect(mocks.invalidateShares.mock.calls).toEqual([[{ chapterId: 3 }]]));
   });
 
-  it('a create click refreshes no shares', () => {
+  it('a refused choice refreshes no shares', async () => {
+    mocks.branchMutate.mockRejectedValueOnce(new Error('refused'));
+    const tracking = renderHook(() => useStorylineTracking());
+    tracking.current.trackBranchChoice({ fromChapterId: 3, toChapterId: 5 });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(mocks.branchMutate).toHaveBeenCalledTimes(1);
+    expect(mocks.invalidateShares).not.toHaveBeenCalled();
+  });
+
+  it('a create click refreshes no shares', async () => {
     const tracking = renderHook(() => useStorylineTracking());
     tracking.current.trackCreateClick({ chapterId: 5 });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(mocks.createMutate).toHaveBeenCalledTimes(1);
     expect(mocks.invalidateShares).not.toHaveBeenCalled();
   });
 });
