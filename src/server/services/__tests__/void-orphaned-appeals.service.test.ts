@@ -227,12 +227,15 @@ describe('voidOrphanedAppeals', () => {
     const stamp = removedUpdate();
     expect(stamp).toBeDefined();
     expect(stamp!.sql).not.toMatch(/'Void'/);
-    expect(idsIn(stamp!.values)?.sort()).toEqual([removed.id, removedModel.id]);
+    expect(idsIn(stamp!.values)).toEqual([removed.id]);
 
     // Never voided, and the fee stays held for the moderator's decision.
     for (const { values } of voidUpdates()) expect(idsIn(values)).not.toContain(removed.id);
     expect(refundedPrefixes()).not.toContain(removed.buzzTransactionId);
-    expect(mockRefundTransaction).not.toHaveBeenCalled();
+    expect(mockRefundTransaction).not.toHaveBeenCalledWith(
+      removed.buzzTransactionId,
+      expect.anything()
+    );
 
     expect(notified(removed.userId)).toEqual([
       expect.objectContaining({
@@ -246,7 +249,31 @@ describe('voidOrphanedAppeals', () => {
         },
       }),
     ]);
-    expect(result).toMatchObject({ routedForReview: 2 });
+    expect(result).toMatchObject({ routedForReview: 1 });
+  });
+
+  it('closes a deleted model appeal quietly instead of routing it, whoever deleted the model', async () => {
+    // Model appeals are flag disputes: no ClickHouse owner event, so nobody owner-deleted it.
+    const byModerator = orphan({
+      id: 7,
+      userId: 70,
+      entityType: EntityType.Model,
+      entityId: 700,
+      buzzTransactionId: 'appeal-70-1700000000000',
+      modelDeletedByAppellant: false,
+    });
+    orphans = [byModerator, removedModel, removed];
+
+    const result = await voidOrphanedAppeals();
+
+    expect(idsIn(removedUpdate()!.values)).toEqual([removed.id]);
+    const quiet = closeContaining(byModerator.id);
+    expect(idsIn(quiet!.values)?.sort()).toEqual([removedModel.id, byModerator.id]);
+    expect(quiet!.values).toContain(null);
+    expect(refundedPrefixes()).toContain(byModerator.buzzTransactionId);
+    expect(notified(byModerator.userId)).toEqual([]);
+    expect(notified(removedModel.userId)).toEqual([]);
+    expect(result).toMatchObject({ closedQuietly: 2, closedOwnerDeleted: 0, routedForReview: 1 });
   });
 
   it('closes an owner-deleted appeal as Void with a reason, refunds it, and tells the user', async () => {
@@ -323,19 +350,20 @@ describe('voidOrphanedAppeals', () => {
 
     await voidOrphanedAppeals();
 
-    expect(idsIn(removedUpdate()!.values)?.sort()).toEqual([removed.id, modelSameId.id]);
+    expect(idsIn(removedUpdate()!.values)).toEqual([removed.id]);
+    expect(idsIn(closeContaining(modelSameId.id)!.values)).toEqual([modelSameId.id]);
   });
 
   it('closes the defensive-close group quietly, refunding but not notifying', async () => {
     const result = await voidOrphanedAppeals();
 
     const quiet = closeContaining(defensive.id);
-    expect(idsIn(quiet!.values)?.sort()).toEqual([defensive.id, deletedUser.id]);
+    expect(idsIn(quiet!.values)?.sort()).toEqual([removedModel.id, defensive.id, deletedUser.id]);
     expect(quiet!.values).toContain(null);
     expect(refundedPrefixes()).toContain(defensive.buzzTransactionId);
     expect(notified(defensive.userId)).toEqual([]);
     expect(notified(deletedUser.userId)).toEqual([]);
-    expect(result).toMatchObject({ closedQuietly: 2, refunded: 2, refundFailed: 0 });
+    expect(result).toMatchObject({ closedQuietly: 3, refunded: 3, refundFailed: 0 });
   });
 
   it('looks up only image appeals by image id', async () => {
@@ -347,7 +375,8 @@ describe('voidOrphanedAppeals', () => {
 
     const imageQuery = rawCalls().find(({ sql }) => /jsonb_array_elements/.test(sql))!;
     expect(idsIn(imageQuery.values)).toEqual([defensive.entityId]);
-    expect(idsIn(removedUpdate()!.values)).toEqual([modelSameId.id]);
+    expect(removedUpdate()).toBeUndefined();
+    expect(closeContaining(modelSameId.id)?.values).toContain(null);
   });
 
   it('closes quietly when the appellant is the one reported', async () => {
@@ -368,11 +397,8 @@ describe('voidOrphanedAppeals', () => {
 
     await voidOrphanedAppeals();
 
-    expect(idsIn(removedUpdate()!.values)?.sort()).toEqual([
-      ownerDeleted.id,
-      removed.id,
-      removedModel.id,
-    ]);
+    expect(idsIn(removedUpdate()!.values)?.sort()).toEqual([ownerDeleted.id, removed.id]);
+    expect(closeContaining(removedModel.id)?.values).toContain(null);
     expect(notified(ownerDeleted.userId)[0]?.details.outcome).toBe('under-review');
   });
 
@@ -396,8 +422,8 @@ describe('voidOrphanedAppeals', () => {
     expect(refundedPrefixes()).toEqual([]);
     expect(notified(ownerDeleted.userId)).toEqual([]);
     expect(notified(removed.userId)).toEqual([]);
-    expect(notified(removedModel.userId)).toHaveLength(1);
-    expect(result).toMatchObject({ closedOwnerDeleted: 0, closedQuietly: 1, routedForReview: 1 });
+    expect(notified(removedModel.userId)).toEqual([]);
+    expect(result).toMatchObject({ closedOwnerDeleted: 0, closedQuietly: 2, routedForReview: 0 });
   });
 
   it('keeps going and records the appeal when a refund fails', async () => {
