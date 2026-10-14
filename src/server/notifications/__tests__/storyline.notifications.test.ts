@@ -30,8 +30,10 @@ const CASES = [
     named: 'placerId',
     usernameKey: 'placerUsername',
     status: 'pending',
-    window: 'createdAt',
+    // Announced when it becomes reviewable: a readied continuation by readyAt, any other by createdAt.
+    window: `COALESCE((p.data->>'readyAt')::timestamptz AT TIME ZONE 'UTC', p."createdAt")`,
     expected: 'tehalex86 wants to continue your storyline "The Patch"',
+    url: '/user/placements?type=storyline&tab=received',
   },
   {
     type: 'storyline-continuation-approved',
@@ -39,8 +41,9 @@ const CASES = [
     named: 'ownerId',
     usernameKey: 'ownerUsername',
     status: 'approved',
-    window: 'resolvedAt',
+    window: 'p."resolvedAt"',
     expected: 'tehalex86 added your chapter to "The Patch"',
+    url: '/storylines/7',
   },
   {
     type: 'storyline-continuation-declined',
@@ -48,8 +51,9 @@ const CASES = [
     named: 'ownerId',
     usernameKey: 'ownerUsername',
     status: 'declined',
-    window: 'resolvedAt',
+    window: 'p."resolvedAt"',
     expected: 'tehalex86 declined your continuation of "The Patch"',
+    url: '/storylines/7',
   },
 ] as const;
 
@@ -78,7 +82,7 @@ describe('storyline continuation notifications', () => {
 
     expect(
       message(c.type, { storylineId: 7, storylineTitle: 'The Patch', [c.usernameKey]: 'tehalex86' })
-    ).toEqual({ message: c.expected, url: '/storylines/7' });
+    ).toEqual({ message: c.expected, url: c.url });
   });
 
   it.each(CASES)('$type reads only its own storyline rows, once each', async (c) => {
@@ -96,11 +100,29 @@ describe('storyline continuation notifications', () => {
 
   // An answer given after the last run to a continuation submitted before it still has to be sent,
   // so each type windows on its own actor's moment.
-  it.each(CASES)('$type windows on $window', async (c) => {
+  it.each(CASES)('$type windows on its own moment', async (c) => {
     const sql = await query(c.type);
-    expect(sql).toContain(`p."${c.window}" > '${LAST_SENT}'`);
-    const otherWindow = c.window === 'createdAt' ? 'resolvedAt' : 'createdAt';
-    expect(sql).not.toContain(`p."${otherWindow}" >`);
+    expect(sql.match(/> '2026-10-13 00:00:00'/g)).toHaveLength(1);
+    expect(sql).toContain(`${c.window} > '${LAST_SENT}'`);
+  });
+
+  it('never announces a continuation still waiting to become reviewable', async () => {
+    expect(await query('storyline-continuation-submitted')).toContain(
+      `AND NOT (p.data ? 'awaitingReadiness')`
+    );
+  });
+
+  it('does not credit the owner with an approval the system made', async () => {
+    expect(await query('storyline-continuation-approved')).toContain(
+      `'byOwner', p."resolvedById" IS NOT NULL`
+    );
+    const details = { storylineId: 7, storylineTitle: 'The Patch', ownerUsername: 'tehalex86' };
+    expect(message('storyline-continuation-approved', { ...details, byOwner: false }).message).toBe(
+      'Your chapter was added to "The Patch"'
+    );
+    expect(message('storyline-continuation-approved', { ...details, byOwner: true }).message).toBe(
+      'tehalex86 added your chapter to "The Patch"'
+    );
   });
 
   it.each(CASES)(

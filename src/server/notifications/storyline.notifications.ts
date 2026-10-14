@@ -3,6 +3,7 @@ import {
   createNotificationProcessor,
   notBlockedBetween,
 } from '~/server/notifications/base.notifications';
+import { STORYLINE_QUEUE_RECEIVED_URL } from '~/components/Placement/queue-routes';
 import { storylineUrl } from '~/components/Storyline/storyline-routes';
 
 /**
@@ -16,6 +17,13 @@ import { storylineUrl } from '~/components/Storyline/storyline-routes';
  *
  * A fee-waived decline was made by the system (a block, a host that can no longer be shown), not
  * by the owner, so it is not announced as theirs.
+ *
+ * A continuation from a post still a draft or being scanned is written pending but hidden from the
+ * owner's queue until the readiness pass clears `awaitingReadiness` and stamps `readyAt`, so it is
+ * announced when it becomes reviewable, not when it was submitted.
+ *
+ * An endorsed collaborator's continuation is approved by the system (no `resolvedById`), so its
+ * approval does not name the owner.
  *
  * Every type drops a pair with a block between them. A block declines the pair's pending
  * continuations in both directions, and without the filter that decline is announced to the
@@ -56,7 +64,8 @@ const resolvedQuery = ({
         'storylineTitle', s.title,
         'postId', p.data->'postId',
         'ownerId', p."ownerId",
-        'ownerUsername', u.username
+        'ownerUsername', u.username,
+        'byOwner', p."resolvedById" IS NOT NULL
       ) as "details"
     ${continuationRows({ named: 'owner' })}
       AND p.status = '${status}'
@@ -79,7 +88,7 @@ export const storylineNotifications = createNotificationProcessor({
     category: NotificationCategory.Creator,
     prepareMessage: ({ details }) => ({
       message: `${details.placerUsername} wants to continue your storyline "${details.storylineTitle}"`,
-      url: storylineUrl(details.storylineId as number),
+      url: STORYLINE_QUEUE_RECEIVED_URL,
     }),
     prepareQuery: async ({ lastSent }) => `
       WITH data AS (
@@ -96,7 +105,8 @@ export const storylineNotifications = createNotificationProcessor({
           ) as "details"
         ${continuationRows({ named: 'placer' })}
           AND p.status = 'pending'
-          AND p."createdAt" > '${lastSent}'
+          AND NOT (p.data ? 'awaitingReadiness')
+          AND COALESCE((p.data->>'readyAt')::timestamptz AT TIME ZONE 'UTC', p."createdAt") > '${lastSent}'
       )
       SELECT
         CONCAT('storyline-continuation-submitted:',"placementId") "key",
@@ -112,7 +122,11 @@ export const storylineNotifications = createNotificationProcessor({
     displayName: 'Your storyline continuation was added',
     category: NotificationCategory.Creator,
     prepareMessage: ({ details }) => ({
-      message: `${details.ownerUsername} added your chapter to "${details.storylineTitle}"`,
+      // `byOwner` is absent on notifications sent before it existed; those were all the owner's.
+      message:
+        details.byOwner === false
+          ? `Your chapter was added to "${details.storylineTitle}"`
+          : `${details.ownerUsername} added your chapter to "${details.storylineTitle}"`,
       url: storylineUrl(details.storylineId as number),
     }),
     prepareQuery: async ({ lastSent }) =>
