@@ -32,6 +32,11 @@ vi.mock('$lib/server/reports.service', () => ({
 vi.mock('$lib/server/moderation-board.service', () => ({ getResolvedPostReportIds: vi.fn() }));
 vi.mock('$lib/server/user-actions.service', () => ({ removePlacement: vi.fn() }));
 vi.mock('$lib/server/game-frame', () => ({ delistGame: vi.fn(), delistReason: vi.fn() }));
+vi.mock('$lib/server/storyline-takedown.service', () => ({
+  getReportedStorylines: vi.fn(async () => []),
+  getReportStorylineId: vi.fn(),
+  setStorylineTakedown: vi.fn(),
+}));
 vi.mock('$lib/server/access', () => ({ canAccess: vi.fn(() => true) }));
 
 const { load } = await import('../+page.server');

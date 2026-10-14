@@ -651,6 +651,25 @@ export async function moderateStorylineTitle({
 }
 
 /**
+ * A moderator takes a storyline down, or restores one they took down. A takedown is marked as a
+ * moderator's (`tosViolationByScan` false) even over the title scan's, so a clean scan of the
+ * title cannot lift it. A restore clears only a moderator's takedown: one the scan made is lifted
+ * through `moderateStorylineTitle`, for the title reviewed, and is left in place here.
+ */
+export async function setStorylineTakedown({ id, takenDown }: { id: number; takenDown: boolean }) {
+  await dbWrite.storyline.updateMany({
+    where: takenDown ? { id } : { id, tosViolationByScan: false },
+    data: takenDown ? { tosViolation: true, tosViolationByScan: false } : { tosViolation: false },
+  });
+  const storyline = await dbWrite.storyline.findUnique({
+    where: { id },
+    select: { id: true, tosViolation: true, tosViolationByScan: true },
+  });
+  if (!storyline) throw throwNotFoundError('Storyline not found');
+  return storyline;
+}
+
+/**
  * The cover and banner may only be images from this storyline's chapters written by its owner or
  * by an endorsed collaborator (the endorsement is their consent), not from removed chapters, and
  * rated within the ceiling. Anything else is refused, whatever the client offered.

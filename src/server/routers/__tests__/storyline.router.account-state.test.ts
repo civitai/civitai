@@ -22,6 +22,7 @@ const writers = vi.hoisted(() => ({
   setCanonChapter: vi.fn(async () => ({ id: 1 })),
   addStorylineCollaborator: vi.fn(async () => ({ id: 1 })),
   removeStorylineCollaborator: vi.fn(async () => ({ id: 1 })),
+  setStorylineTakedown: vi.fn(async () => ({ id: 1 })),
 }));
 
 // Spread the real module and override only the writers: a hand-listed mock would couple this test
@@ -76,6 +77,8 @@ const mutationNames = Object.entries(procedures)
 
 // Each state names the middleware that refuses it. Both throw FORBIDDEN, so the code alone cannot
 // say which gate fired — a call refused for the wrong reason would otherwise read as a working mute.
+// Only `muted` tells guardedProcedure from protectedProcedure: a ban is refused by both, so the
+// banned cases pin that a ban stays refused, not that these mutations are guarded.
 const REFUSED_STATES = [
   { state: 'muted', user: { muted: true }, message: /restricted/i },
   { state: 'banned', user: { bannedAt: new Date('2026-01-01') }, message: /banned/i },
@@ -139,4 +142,35 @@ describe('storyline router — account state refuses a storyline write', () => {
       expect(writer).toHaveBeenCalledTimes(1);
     });
   }
+});
+
+describe('storyline router — stepping down and taking down', () => {
+  // Removal is guarded because it changes someone else's access. A collaborator can be added
+  // without being asked, so stepping down must stay open to a muted one.
+  it('lets a muted collaborator leave, and only ever removes the caller', async () => {
+    await expect(
+      callerFor({ id: 8, muted: true }).leave({ storylineId: 10, userId: 77 })
+    ).resolves.toBeDefined();
+    expect(writers.removeStorylineCollaborator).toHaveBeenCalledWith({
+      storylineId: 10,
+      targetUserId: 8,
+      userId: 8,
+    });
+  });
+
+  it('refuses a banned collaborator leaving, as every signed-in call does', async () => {
+    await expect(
+      callerFor({ id: 8, bannedAt: new Date('2026-01-01') }).leave({ storylineId: 10 })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN', message: expect.stringMatching(/banned/i) });
+  });
+
+  it('lets only a moderator take a storyline down', async () => {
+    await expect(callerFor().setTakedown({ id: 10, takenDown: true })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
+    expect(writers.setStorylineTakedown).not.toHaveBeenCalled();
+
+    await callerFor({ isModerator: true }).setTakedown({ id: 10, takenDown: true });
+    expect(writers.setStorylineTakedown).toHaveBeenCalledWith({ id: 10, takenDown: true });
+  });
 });

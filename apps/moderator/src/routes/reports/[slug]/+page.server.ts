@@ -11,6 +11,11 @@ import {
 import { getResolvedPostReportIds } from '$lib/server/moderation-board.service';
 import { removePlacement } from '$lib/server/user-actions.service';
 import { delistGame, delistReason } from '$lib/server/game-frame';
+import {
+  getReportedStorylines,
+  getReportStorylineId,
+  setStorylineTakedown,
+} from '$lib/server/storyline-takedown.service';
 import { canAccess } from '$lib/server/access';
 import {
   DEFAULT_REPORT_REASONS,
@@ -66,6 +71,7 @@ export const load: PageServerLoad = async ({ params, url }) => {
   const entityIds = data.items.flatMap((r) => (r.entityId != null ? [r.entityId] : []));
   const games = type === 'gameFrameGame' ? await getGameMirrors(entityIds) : [];
   const ownerFlaggedMinor = type === 'model' ? await getOwnerFlaggedMinorModelIds(entityIds) : [];
+  const storylines = type === 'storyline' ? await getReportedStorylines(entityIds) : [];
 
   // The default reason set is NOT echoed into the filter control: eight pre-ticked chips read as a
   // heavily-narrowed view when it is the ordinary one. The page says what it is hiding instead, and only
@@ -82,6 +88,7 @@ export const load: PageServerLoad = async ({ params, url }) => {
     reportedBy,
     games,
     ownerFlaggedMinor,
+    storylines,
     ...data,
   };
 };
@@ -194,6 +201,63 @@ export const actions: Actions = {
     if (!result.ok)
       return fail(410, { error: `Delisted${forks}, but ${result.error}`, gone: true });
     return { success: true, delisted: `Delisted${forks}` };
+  },
+
+  /**
+   * Takes the reported storyline down, then sets the report Actioned (which pays the reporters).
+   * Marked as a moderator's takedown, so a clean rescan of its title cannot lift it.
+   */
+  takeDownStoryline: async ({ request, locals, params, getClientAddress }) => {
+    const type = reportEntityForSlug(params.slug);
+    if (type !== 'storyline' || !canAccess(locals.user, reportPath(type)))
+      return fail(403, { error: 'Not permitted.' });
+
+    const data = await request.formData();
+    const id = Number(data.get('id'));
+    if (!Number.isInteger(id) || id <= 0) return fail(400, { error: 'Invalid report.' });
+
+    const storylineId = await getReportStorylineId(id);
+    if (!storylineId) return fail(410, { error: 'That report no longer exists.', gone: true });
+    const storyline = await setStorylineTakedown({
+      storylineId,
+      takenDown: true,
+      moderatorId: locals.user.id,
+    });
+    if (!storyline) return fail(410, { error: 'That storyline no longer exists.', gone: true });
+
+    const result = await setReportStatus({
+      id,
+      status: ReportStatus.Actioned,
+      userId: locals.user.id,
+      ip: getClientAddress(),
+    });
+    if (!result.ok) return fail(410, { error: `Taken down, but ${result.error}`, gone: true });
+    return { success: true, storylineTakedown: 'Taken down' };
+  },
+
+  /** Restores a storyline a moderator took down. The report's status is left as it is. */
+  restoreStoryline: async ({ request, locals, params }) => {
+    const type = reportEntityForSlug(params.slug);
+    if (type !== 'storyline' || !canAccess(locals.user, reportPath(type)))
+      return fail(403, { error: 'Not permitted.' });
+
+    const data = await request.formData();
+    const id = Number(data.get('id'));
+    if (!Number.isInteger(id) || id <= 0) return fail(400, { error: 'Invalid report.' });
+
+    const storylineId = await getReportStorylineId(id);
+    if (!storylineId) return fail(410, { error: 'That report no longer exists.', gone: true });
+    const storyline = await setStorylineTakedown({
+      storylineId,
+      takenDown: false,
+      moderatorId: locals.user.id,
+    });
+    if (!storyline) return fail(410, { error: 'That storyline no longer exists.', gone: true });
+    if (storyline.tosViolation)
+      return fail(409, {
+        error: 'Its title scan took it down, and a restore here does not lift that.',
+      });
+    return { success: true, storylineTakedown: 'Restored' };
   },
 
   saveNotes: async ({ request }) => {

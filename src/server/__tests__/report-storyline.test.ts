@@ -39,7 +39,7 @@ describe('reporting a storyline', () => {
   // Nothing automated rates a storyline from a report (no tag votes, no nsfw flag), so a
   // mature-content report must reach a moderator. Without this it is filed Actioned and never
   // shown in the queue.
-  it('leaves a mature-content report Pending for a moderator, and folds a repeat into it', async () => {
+  it('leaves a mature-content report Pending for a moderator', async () => {
     await createReport({
       userId: 41,
       id: 17,
@@ -50,5 +50,32 @@ describe('reporting a storyline', () => {
 
     expect(reportFindFirst).toHaveBeenCalled();
     expect(reportCreate.mock.calls[0][0].data.status).toBe(ReportStatus.Pending);
+  });
+
+  // Awaiting a moderator is what routes an NSFW report through the dedupe at all: an image's or a
+  // model's skips it and is filed afresh each time.
+  it('folds a second mature-content report into the open one instead of filing another', async () => {
+    reportFindFirst.mockResolvedValueOnce({
+      id: 9,
+      alsoReportedBy: [],
+      previouslyReviewedCount: 0,
+      details: {},
+    } as never);
+    dbMock.dbWrite.report.update.mockResolvedValueOnce({ id: 9 } as never);
+
+    const result = await createReport({
+      userId: 42,
+      id: 17,
+      type: ReportEntity.Storyline,
+      reason: ReportReason.NSFW,
+      details: { comment: 'adult title on a PG storyline' },
+    });
+
+    expect(result).toEqual({ id: 9 });
+    expect(reportCreate).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.report.update.mock.calls[0][0]).toMatchObject({
+      where: { id: 9 },
+      data: { alsoReportedBy: [42] },
+    });
   });
 });
