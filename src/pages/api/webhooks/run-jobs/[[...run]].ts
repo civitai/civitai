@@ -10,6 +10,7 @@ import {
   appealTrainingCopyJob,
 } from '~/server/jobs/appeal-decision-records';
 import { announcementMediaCheckJob } from '~/server/jobs/announcement-media-check';
+import { scanLabelCopyJob } from '~/server/jobs/scan-label-copy';
 import { auditRemixSourcesJob } from '~/server/jobs/audit-remix-sources';
 import { blurbFanoutJob } from '~/server/jobs/blurb-fanout';
 import { botAccountDetection } from '~/server/jobs/bot-account-detection';
@@ -282,6 +283,7 @@ export const jobs: Job[] = [
   voidOrphanedAppealsJob,
   appealDecisionRecordsJob,
   appealTrainingCopyJob,
+  scanLabelCopyJob,
   announcementMediaCheckJob,
   blurbFanoutJob,
   ...crucibleJobs,

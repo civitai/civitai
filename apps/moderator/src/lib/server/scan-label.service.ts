@@ -7,6 +7,7 @@ import {
   effectiveQuota,
   LEASE_MS,
   utcDayStart,
+  type BlockReason,
   VOTES_PER_ITEM,
   type ScanLabelFilters,
 } from '$lib/scan-labels';
@@ -188,15 +189,20 @@ export async function claimNext(
   });
 }
 
+export type VoteChoice =
+  | { block: false }
+  | { block: true; reason: BlockReason; reasonComment: string | null };
+
 export async function castVote(
   {
     itemId,
     userId,
-    block,
+    choice,
     msOnItem,
-  }: { itemId: number; userId: number; block: boolean; msOnItem: number | null },
+  }: { itemId: number; userId: number; choice: VoteChoice; msOnItem: number | null },
   now: Date = new Date()
 ): Promise<VoteResult> {
+  const { block } = choice;
   return dbWrite.transaction().execute(async (trx): Promise<VoteResult> => {
     const item = await trx
       .selectFrom('ScanLabelItem')
@@ -221,7 +227,15 @@ export async function castVote(
 
     const inserted = await trx
       .insertInto('ScanLabelVote')
-      .values({ itemId, userId, block, msOnItem, createdAt: now })
+      .values({
+        itemId,
+        userId,
+        block,
+        reason: choice.block ? choice.reason : null,
+        reasonComment: choice.block ? choice.reasonComment : null,
+        msOnItem,
+        createdAt: now,
+      })
       .onConflict((oc) => oc.columns(['itemId', 'userId']).doNothing())
       .executeTakeFirst();
     if (!inserted.numInsertedOrUpdatedRows) return { ok: false, reason: 'already-voted' };
