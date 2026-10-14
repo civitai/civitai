@@ -85,6 +85,32 @@ describe('stampModeratorTextScanRuling', () => {
     expect(call.slice(1)).toEqual(expect.arrayContaining(['minor', 3, 7]));
   });
 
+  // The scan skips a model that is not public; a ruling on one its owner unpublished must not.
+  it('records a ruling on a model that is not public', async () => {
+    dbMock.dbWrite.model.findMany.mockResolvedValue([
+      {
+        id: 7,
+        userId: 5,
+        name: 'M',
+        description: null,
+        nsfw: false,
+        poi: false,
+        minor: true,
+        status: 'Unpublished',
+        availability: 'Public',
+        modelVersions: [],
+      },
+    ]);
+    dbMock.dbWrite.$executeRaw.mockResolvedValue(1);
+
+    expect(await stampModeratorTextScanRuling({ modelId: 7, userId: 3, label: 'minor' })).toBe(
+      true
+    );
+    expect(dbMock.dbWrite.model.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: { in: [7] }, deletedAt: null } })
+    );
+  });
+
   it('writes nothing and reports false when the text cannot be read', async () => {
     dbMock.dbWrite.model.findMany.mockResolvedValue([]);
     expect(await stampModeratorTextScanRuling({ modelId: 7, userId: 3, label: 'minor' })).toBe(

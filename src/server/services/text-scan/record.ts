@@ -21,9 +21,11 @@ export async function markTextScanPending({
   entityId,
   marker,
   contentHash,
-}: RowKey & { marker: string; contentHash: string }) {
+  rearmRetries,
+}: RowKey & { marker: string; contentHash: string; rearmRetries: boolean }) {
   // The previous verdict stays until the new callback lands; clearing it here would let
   // an edit drop a rating floor for the length of the scan, or for good if it fails.
+  // A fresh scan re-arms a row the retry cron parked at its limit.
   await dbWrite.entityModeration.upsert({
     where: { entityType_entityId: { entityType, entityId } },
     create: {
@@ -33,7 +35,12 @@ export async function markTextScanPending({
       contentHash,
       status: EntityModerationStatus.Pending,
     },
-    update: { workflowId: marker, contentHash, status: EntityModerationStatus.Pending },
+    update: {
+      workflowId: marker,
+      contentHash,
+      status: EntityModerationStatus.Pending,
+      ...(rearmRetries ? { retryCount: 0 } : {}),
+    },
   });
 }
 

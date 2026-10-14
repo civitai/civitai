@@ -896,7 +896,8 @@ export const createPost = async ({
 
   await preventReplicationLag('post', post.id);
   await userPostCountCache.refresh(userId);
-  if (data.title || data.detail) scanEntityInBackground({ entityType: 'Post', entityId: post.id });
+  if ((data.title || data.detail) && post.publishedAt)
+    scanEntityInBackground({ entityType: 'Post', entityId: post.id });
 
   let collectionTagId: null | number = null;
   let collectionItemExists = false;
@@ -1011,7 +1012,8 @@ export const updatePost = async ({
   await preventReplicationLag('post', post.id);
   if (publishedAtWritten) await afterPostPublish({ postId: post.id, userId: post.userId });
   else await userPostCountCache.refresh(post.userId);
-  if (data.title !== undefined || data.detail !== undefined)
+  const textChanged = data.title !== undefined || data.detail !== undefined;
+  if (publishedAtWritten || (textChanged && post.publishedAt))
     scanEntityInBackground({ entityType: 'Post', entityId: post.id });
 
   return post;
