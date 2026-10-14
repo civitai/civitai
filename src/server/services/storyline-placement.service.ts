@@ -101,7 +101,8 @@ export async function createStorylinePlacement({
   // consent. Matters at zero too — an owner who starts charging while someone is
   // deciding must not have the free submission they were shown turn into a
   // paid one.
-  if (expectedPrice !== space.price) throw throwBadRequestError(STORYLINE_REFUSALS.priceChanged);
+  if (expectedPrice !== space.price)
+    throw throwBadRequestError(`${STORYLINE_REFUSALS.priceChanged}: now ${space.price} Buzz`);
 
   // Outside the transaction: I/O, and read from the primary.
   await assertCanPlace({ ownerId: space.ownerId, placerId });

@@ -86,6 +86,9 @@ export type StorylineContinuationPage<T> = { items: T[]; nextCursor: string | nu
  * The refusals a submission can meet, so the UI can match them and say them up
  * front. Each is the message of a 400; the `storyline:` prefix is how every
  * storyline placement refusal reads.
+ *
+ * Match with `startsWith`: `priceChanged` is followed by the new price
+ * (`… deciding: now 100 Buzz`), so the contributor is told what it is.
  */
 export const STORYLINE_REFUSALS = {
   notAvailable: 'storylines: this is not available yet',
