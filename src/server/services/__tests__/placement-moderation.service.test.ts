@@ -19,6 +19,15 @@ const tombstoneChaptersForPlacements = vi.fn(async (..._a: unknown[]) => 0);
 vi.mock('~/server/services/storyline-chapter-removal.service', () => ({
   tombstoneChaptersForPlacements,
 }));
+// The refund of continuations under a removed chapter, so each takedown path can be seen asking
+// for it after its commit. Its own behaviour is tested in storyline-continuation-loop.test.ts.
+const settleContinuationsUnderRemovedChapters = vi.fn(async (..._a: unknown[]) => ({
+  considered: 0,
+  settled: 0,
+}));
+vi.mock('~/server/services/storyline-placement.service', () => ({
+  settleContinuationsUnderRemovedChapters,
+}));
 // The event points hook, so each takedown path can be seen handing its ids over. The hook's own
 // behaviour is tested in src/server/events/points/__tests__/hooks.test.ts.
 const onPlacementsTakenDown = vi.fn(async (..._a: unknown[]) => undefined);
@@ -629,6 +638,89 @@ describe('a storyline chapter taken down with its placement', () => {
       { placementIds: [STORYLINE_PLACEMENT] },
       tx
     );
+  });
+
+  describe('the continuations of a removed chapter', () => {
+    // Settling moves Buzz, so it runs after the takedown commits, never inside it.
+    it.each([
+      [
+        'a reported placement',
+        () => {
+          placementFindUnique.mockResolvedValue({ id: STORYLINE_PLACEMENT, status: 'approved' });
+          return removePlacementByModerator({
+            placementId: STORYLINE_PLACEMENT,
+            actorId: MODERATOR,
+          });
+        },
+        [STORYLINE_PLACEMENT],
+      ],
+      [
+        "a suspended placer's placements",
+        () => {
+          placementFindMany
+            .mockResolvedValueOnce([])
+            .mockResolvedValueOnce([{ id: STORYLINE_PLACEMENT }, { id: 5502 }]);
+          return removePlacementsByUser({ placerId: PLACER, actorId: MODERATOR });
+        },
+        [STORYLINE_PLACEMENT, 5502],
+      ],
+    ])('are settled after the takedown of %s commits', async (_, run, ids) => {
+      const events: string[] = [];
+      tombstoneChaptersForPlacements.mockImplementation(async () => {
+        events.push('tombstone');
+        return 1;
+      });
+      dbMock.dbWrite.$transaction.mockImplementation(async (fn: (client: object) => unknown) => {
+        const result = await fn(tx);
+        events.push('commit');
+        return result;
+      });
+      settleContinuationsUnderRemovedChapters.mockImplementation(async () => {
+        events.push('settle');
+        return { considered: 0, settled: 0 };
+      });
+
+      await run();
+
+      expect(events).toEqual(['tombstone', 'commit', 'settle']);
+      expect(settleContinuationsUnderRemovedChapters.mock.calls).toEqual([
+        [{ removedPlacementIds: ids }],
+      ]);
+    });
+
+    // The takedown has happened; the removed-parent job settles what this left.
+    it('does not fail the takedown when settling them fails', async () => {
+      placementFindUnique.mockResolvedValue({ id: STORYLINE_PLACEMENT, status: 'approved' });
+      settleContinuationsUnderRemovedChapters.mockRejectedValueOnce(new Error('buzz down'));
+
+      await expect(
+        removePlacementByModerator({ placementId: STORYLINE_PLACEMENT, actorId: MODERATOR })
+      ).resolves.toMatchObject({ removed: true });
+      expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+        expect.objectContaining({ error: 'buzz down', placementIds: [STORYLINE_PLACEMENT] })
+      );
+    });
+
+    it('are settled again when a removed placement is removed again, which still refuses', async () => {
+      placementFindUnique.mockResolvedValue({ id: STORYLINE_PLACEMENT, status: 'removed' });
+
+      await expect(
+        removePlacementByModerator({ placementId: STORYLINE_PLACEMENT, actorId: MODERATOR })
+      ).rejects.toThrow('already removed');
+      expect(settleContinuationsUnderRemovedChapters).toHaveBeenCalledWith({
+        removedPlacementIds: [STORYLINE_PLACEMENT],
+      });
+    });
+
+    it('are not settled when the tombstone fails, since nothing was removed', async () => {
+      placementFindUnique.mockResolvedValue({ id: STORYLINE_PLACEMENT, status: 'approved' });
+      tombstoneChaptersForPlacements.mockRejectedValue(new Error('lock timeout'));
+
+      await expect(
+        removePlacementByModerator({ placementId: STORYLINE_PLACEMENT, actorId: MODERATOR })
+      ).rejects.toThrow('lock timeout');
+      expect(settleContinuationsUnderRemovedChapters).not.toHaveBeenCalled();
+    });
   });
 
   // Pending placements have no chapter: they settle through the ordinary path,

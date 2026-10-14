@@ -79,6 +79,7 @@ async function resolveChapterTarget(postId: number) {
   const chapter = await dbWrite.storylineChapter.findUnique({
     where: { postId },
     select: {
+      removedAt: true,
       storyline: {
         select: {
           id: true,
@@ -90,10 +91,10 @@ async function resolveChapterTarget(postId: number) {
       },
     },
   });
-  // A taken-down storyline is not a target at all: refusing here, where the
-  // space is resolved, keeps every read of it (the contributor's price, the
-  // submit) from showing it as open.
-  if (!chapter || chapter.storyline.tosViolation)
+  // A taken-down storyline or a removed chapter is not a target at all:
+  // refusing here, where the space is resolved, keeps every read of it (the
+  // contributor's price, the submit) from showing it as open.
+  if (!chapter || chapter.removedAt || chapter.storyline.tosViolation)
     throw throwBadRequestError(STORYLINE_REFUSALS.notAChapter);
 
   return {

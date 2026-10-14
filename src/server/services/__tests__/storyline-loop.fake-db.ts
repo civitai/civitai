@@ -391,11 +391,19 @@ export function createFakeDb() {
     if (text.includes('FROM "Placement" pl') && text.includes('JOIN "Post" p')) {
       if (text.includes('pl."createdAt" >')) throw new Error('fake db: queue keyset not modelled');
       const [surface, targetType, ownerId, limit] = v as [string, string, number, number];
+      // Modelled only while the statement carries the clause, so dropping it is caught here.
+      const hidesRemovedParents = text
+        .replace(/\s+/g, ' ')
+        .includes(
+          'NOT EXISTS ( SELECT 1 FROM "StorylineChapter" sc WHERE sc."postId" = pl."targetId" AND sc."removedAt" IS NOT NULL )'
+        );
       const rows = tables.placement.filter((pl) => {
         const data = pl.data as Row | null;
         const post = tables.post.find((p) => same(p.id, data?.postId));
+        const parent = tables.storylineChapter.find((c) => same(c.postId, pl.targetId));
         return (
           !!post &&
+          !(hidesRemovedParents && parent?.removedAt != null) &&
           pl.surface === surface &&
           pl.targetType === targetType &&
           pl.ownerId === ownerId &&
@@ -407,6 +415,27 @@ export function createFakeDb() {
       return order(rows, [{ createdAt: 'asc' }, { id: 'asc' }])
         .slice(0, limit)
         .map((pl) => ({ id: pl.id, createdAt: pl.createdAt }));
+    }
+    if (text.includes('JOIN "StorylineChapter" sc ON sc."postId" = pl."targetId"')) {
+      // Pending continuations of removed chapters; optionally of chapters these placements added.
+      const filtered = text.includes('sc."placementId" IN (');
+      const [surface, targetType, ...rest] = v as [string, string, ...number[]];
+      const placementIds = filtered ? rest.slice(0, -1) : null;
+      const limit = rest[rest.length - 1];
+      const rows = tables.placement.filter((pl) => {
+        const parent = tables.storylineChapter.find((c) => same(c.postId, pl.targetId));
+        return (
+          !!parent &&
+          parent.removedAt != null &&
+          (!placementIds || placementIds.some((id) => same(id, parent.placementId))) &&
+          pl.surface === surface &&
+          pl.targetType === targetType &&
+          pl.status === 'pending'
+        );
+      });
+      return order(rows, [{ id: 'asc' }])
+        .slice(0, limit)
+        .map((pl) => ({ id: pl.id, amount: pl.amount }));
     }
     throw new Error(`fake db: raw statement not modelled: ${text.slice(0, 120)}`);
   };

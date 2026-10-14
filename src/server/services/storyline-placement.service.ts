@@ -497,16 +497,25 @@ export async function settleStorylineContinuation({
       // same person, or a chapter's author could accept continuations into, or
       // collect fees from, somebody else's story. Checked in this transaction,
       // whatever the submission path resolved.
+      // Locked first, so an answer and the parent's removal take turns: the
+      // removal's write waits for this lock, and this read waits for the
+      // removal's commit and then sees it.
+      if (parentPostId)
+        await tx.$queryRaw`SELECT id FROM "StorylineChapter" WHERE "postId" = ${parentPostId} FOR NO KEY UPDATE`;
       const parent = parentPostId
         ? await tx.storylineChapter.findUnique({
             where: { postId: parentPostId },
-            select: { storyline: { select: { userId: true } } },
+            select: { removedAt: true, storyline: { select: { userId: true } } },
           })
         : null;
       if (parent && parent.storyline.userId !== pending.ownerId)
         throw new Error(
           `storyline: placement ${placementId} is not owned by its storyline's owner`
         );
+      // A removed parent can never take the continuation, so declining it would
+      // pay the owner a fee for something they could not accept. It is settled
+      // as an expiry instead (`settleContinuationsUnderRemovedChapters`).
+      if (parent?.removedAt) throw throwBadRequestError(STORYLINE_REFUSALS.notAChapter);
 
       // A decline goes through without a chapter: it writes nothing, and a
       // parent post deleted since must not trap the placer's money in a queue.
@@ -930,8 +939,9 @@ const toPostSummary = (
  * The storyline creator's review queue: pending continuations, oldest first.
  *
  * A row still waiting on its post's readiness is left out until the readiness
- * pass admits it, as is one whose post has gone. Paged in SQL so a page is
- * full of rows the queue can render.
+ * pass admits it, as is one whose post has gone, and one continuing a chapter
+ * that has been removed (it can no longer be answered, only refunded). Paged in
+ * SQL so a page is full of rows the queue can render.
  */
 export async function getPendingStorylineContinuations({
   ownerId,
@@ -956,6 +966,10 @@ export async function getPendingStorylineContinuations({
       AND pl.status = 'pending'
       AND pl.data ->> 'awaitingReadiness' IS NULL
       AND NOT p."tosViolation"
+      AND NOT EXISTS (
+        SELECT 1 FROM "StorylineChapter" sc
+        WHERE sc."postId" = pl."targetId" AND sc."removedAt" IS NOT NULL
+      )
       ${
         keyset
           ? Prisma.sql`AND (pl."createdAt" > ${keyset.createdAt}
@@ -1179,4 +1193,67 @@ export async function settleStaleUnfundedContinuations({ limit = 200 }: { limit?
   }
 
   return { considered: stale.length, settled };
+}
+
+/**
+ * Settles pending continuations of chapters that have been removed, as an
+ * expiry: the placer did nothing wrong, so whatever was taken is returned in
+ * full, and the owner, who can no longer accept them, earns no fee.
+ *
+ * Run right after a takedown with the ids it took down, and by a job for every
+ * removed chapter, which finishes what a failed or interrupted run left. The
+ * removal itself does not depend on either: from its commit the owner's queue
+ * hides these rows and an approval or a decline is refused, so until one of
+ * these runs, or the row's own deadline passes, nobody can be paid for it.
+ *
+ * A priced row whose holds are not all receipted is left alone: settling it
+ * would plan the refund from the part paid so far. The unfunded sweep settles
+ * it once it is stale. Settling only claims a row that is still pending, so a
+ * second run moves no money twice.
+ */
+export async function settleContinuationsUnderRemovedChapters({
+  removedPlacementIds,
+  limit = 200,
+}: { removedPlacementIds?: number[]; limit?: number } = {}) {
+  if (removedPlacementIds && !removedPlacementIds.length) return { considered: 0, settled: 0 };
+  const rows = await dbWrite.$queryRaw<{ id: number; amount: number }[]>`
+    SELECT pl.id, pl.amount
+    FROM "Placement" pl
+    JOIN "StorylineChapter" sc ON sc."postId" = pl."targetId"
+    WHERE pl.surface = ${SURFACE}
+      AND pl."targetType" = ${TARGET_TYPE}
+      AND pl.status = 'pending'
+      AND sc."removedAt" IS NOT NULL
+      ${
+        removedPlacementIds
+          ? Prisma.sql`AND sc."placementId" IN (${Prisma.join(removedPlacementIds)})`
+          : Prisma.empty
+      }
+    ORDER BY pl.id ASC
+    LIMIT ${limit}
+  `;
+
+  let settled = 0;
+  for (const row of rows) {
+    // Caught per row, so one failure does not wedge the batch on the lowest id.
+    try {
+      if (
+        row.amount > 0 &&
+        !(await isPlacementEscrowFunded({ placementId: row.id, amount: row.amount }))
+      )
+        continue;
+      const result = await settlePlacement({ placementId: row.id, action: 'expire' });
+      if (result.settled) settled++;
+    } catch (error) {
+      await logToAxiom({
+        name: 'storyline-placement',
+        type: 'error',
+        message: 'continuation under a removed chapter: settle failed',
+        placementId: row.id,
+        error: error instanceof Error ? error.message : String(error),
+      }).catch(() => undefined);
+    }
+  }
+
+  return { considered: rows.length, settled };
 }

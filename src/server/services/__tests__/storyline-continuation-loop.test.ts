@@ -50,8 +50,15 @@ vi.mock('~/server/rewards/active/stickerPlacementAccepted.reward', () => ({
   stickerPlacementAcceptedReward: { apply: async () => undefined },
 }));
 
-const { createStorylinePlacement, actOnStorylineContinuation, getPendingStorylineContinuations } =
-  await import('~/server/services/storyline-placement.service');
+const {
+  createStorylinePlacement,
+  actOnStorylineContinuation,
+  getPendingStorylineContinuations,
+  settleContinuationsUnderRemovedChapters,
+} = await import('~/server/services/storyline-placement.service');
+const { removePlacementByModerator } = await import(
+  '~/server/services/placement-moderation.service'
+);
 const { expirePlacements } = await import('~/server/services/placement-escrow.service');
 const { getStorylineChildren } = await import('~/server/services/storyline.service');
 const { tombstoneChaptersForPlacements } = await import(
@@ -62,6 +69,7 @@ const { dbMock } = await import('~/__tests__/mocks');
 const OWNER = 10;
 const STRANGER = 20;
 const COLLABORATOR = 30;
+const MODERATOR = 40;
 const STORYLINE = 1;
 const ROOT_CHAPTER = 1;
 const ROOT_POST = 100;
@@ -480,6 +488,208 @@ describe('the storyline continuation loop', () => {
       await expect(submit(STRANGER, 501, 0, COLLABORATOR_POST)).rejects.toThrow(
         STORYLINE_REFUSALS.notAChapter
       );
+    });
+
+    // A moderator takes the collaborator's chapter down. The stranger's pending
+    // continuation of it can never be accepted, so it is refunded in full and
+    // the owner earns nothing for it.
+    describe('when a moderator takes it down', () => {
+      const collaboratorPlacement = () =>
+        db.row('placement', { placerId: COLLABORATOR })!.id as number;
+      const takeDown = () =>
+        removePlacementByModerator({ placementId: collaboratorPlacement(), actorId: MODERATOR });
+      const queue = async () =>
+        (await getPendingStorylineContinuations({ ownerId: OWNER, domainLevels: ALL_LEVELS }))
+          .items;
+
+      /** Makes the settle that follows the takedown fail, as an outage would. */
+      const failSettling = () => {
+        const real = dbMock.dbWrite.$queryRaw.getMockImplementation()!;
+        dbMock.dbWrite.$queryRaw.mockImplementation(
+          async (strings: unknown, ...values: unknown[]) => {
+            const text = Array.isArray(strings) ? strings.join('?') : String(strings);
+            if (text.includes('JOIN "StorylineChapter" sc')) throw new Error('outage');
+            return real(strings as never, ...values);
+          }
+        );
+        return () => dbMock.dbWrite.$queryRaw.mockImplementation(real);
+      };
+
+      it('refunds a priced continuation of it in full, pays the owner nothing, and empties the queue', async () => {
+        charge(100);
+        const { id } = await submit(STRANGER, STRANGER_SECOND_POST, 100, COLLABORATOR_POST);
+        expect((await queue()).map((item) => item.id)).toEqual([id]);
+
+        await takeDown();
+
+        expect(db.row('placement', { id })).toMatchObject({ status: 'expired' });
+        expect(moneyCalls().payouts).toEqual([]);
+        expect(moneyCalls().refunds.sort()).toEqual([
+          `placement-${id}-holdFee`,
+          `placement-${id}-holdPrincipal`,
+        ]);
+        expect(await queue()).toEqual([]);
+        await expect(
+          actOnStorylineContinuation({ placementId: id, ownerId: OWNER, action: 'decline' })
+        ).rejects.toThrow();
+        expect(moneyCalls().payouts).toEqual([]);
+      });
+
+      it('expires a free continuation of it, moving no money', async () => {
+        const { id } = await submit(STRANGER, STRANGER_SECOND_POST, 0, COLLABORATOR_POST);
+
+        await takeDown();
+
+        expect(db.row('placement', { id })).toMatchObject({ status: 'expired' });
+        expect(moneyCalls()).toEqual({ holds: [], payouts: [], refunds: [] });
+      });
+
+      // The takedown does not depend on the settle: from its commit, nobody can
+      // be paid for the row, whatever happens to the refund.
+      it('refuses a decline and hides the row from the instant the takedown commits, even when the refund fails', async () => {
+        charge(100);
+        const { id } = await submit(STRANGER, STRANGER_SECOND_POST, 100, COLLABORATOR_POST);
+        failSettling();
+
+        await expect(takeDown()).resolves.toMatchObject({ removed: true });
+
+        expect(db.row('placement', { id })).toMatchObject({ status: 'pending' });
+        expect(await queue()).toEqual([]);
+        await expect(
+          actOnStorylineContinuation({ placementId: id, ownerId: OWNER, action: 'decline' })
+        ).rejects.toThrow(STORYLINE_REFUSALS.notAChapter);
+        await expect(
+          actOnStorylineContinuation({ placementId: id, ownerId: OWNER, action: 'approve' })
+        ).rejects.toThrow(STORYLINE_REFUSALS.notAChapter);
+        expect(db.row('placement', { id })).toMatchObject({ status: 'pending' });
+        expect(moneyCalls().payouts).toEqual([]);
+        expect(moneyCalls().refunds).toEqual([]);
+      });
+
+      it('settles what a failed refund left when the takedown is pressed again, and never twice', async () => {
+        charge(100);
+        const { id } = await submit(STRANGER, STRANGER_SECOND_POST, 100, COLLABORATOR_POST);
+        const restore = failSettling();
+        await takeDown();
+        restore();
+
+        await expect(takeDown()).rejects.toThrow('already removed');
+        expect(db.row('placement', { id })).toMatchObject({ status: 'expired' });
+        const refunded = [`placement-${id}-holdFee`, `placement-${id}-holdPrincipal`];
+        expect(moneyCalls().refunds.sort()).toEqual(refunded);
+
+        await expect(takeDown()).rejects.toThrow('already removed');
+        await expect(settleContinuationsUnderRemovedChapters()).resolves.toEqual({
+          considered: 0,
+          settled: 0,
+        });
+        expect(moneyCalls().refunds.sort()).toEqual(refunded);
+        expect(moneyCalls().payouts).toEqual([]);
+      });
+
+      it('settles what a failed refund left on the next run of the job', async () => {
+        charge(100);
+        const { id } = await submit(STRANGER, STRANGER_SECOND_POST, 100, COLLABORATOR_POST);
+        const restore = failSettling();
+        await takeDown();
+        restore();
+
+        await expect(settleContinuationsUnderRemovedChapters()).resolves.toEqual({
+          considered: 1,
+          settled: 1,
+        });
+        expect(db.row('placement', { id })).toMatchObject({ status: 'expired' });
+        expect(moneyCalls().payouts).toEqual([]);
+        expect(moneyCalls().refunds.sort()).toEqual([
+          `placement-${id}-holdFee`,
+          `placement-${id}-holdPrincipal`,
+        ]);
+      });
+
+      it('falls back to its own deadline, refunding in full with no fee, when nothing else settles it', async () => {
+        vi.useFakeTimers({ toFake: ['Date'] });
+        const submittedAt = Date.now();
+        charge(100);
+        const { id } = await submit(STRANGER, STRANGER_SECOND_POST, 100, COLLABORATOR_POST);
+        failSettling();
+        await takeDown();
+
+        vi.setSystemTime(submittedAt + 7 * 24 * 3_600_000 + 60_000);
+        await expect(expirePlacements()).resolves.toMatchObject({ expired: 1 });
+
+        expect(db.row('placement', { id })).toMatchObject({ status: 'expired' });
+        expect(moneyCalls().payouts).toEqual([]);
+        expect(moneyCalls().refunds.sort()).toEqual([
+          `placement-${id}-holdFee`,
+          `placement-${id}-holdPrincipal`,
+        ]);
+        // Both holds came back whole: 30 and 70 of the 100 taken.
+        expect(
+          db
+            .rows('placementTransaction')
+            .filter((leg) => leg.placementId === id)
+            .map((leg) => [leg.kind, leg.amount])
+            .sort()
+        ).toEqual([
+          ['feeToPlacer', 30],
+          ['holdFee', 30],
+          ['holdPrincipal', 70],
+          ['principalToPlacer', 70],
+        ]);
+      });
+
+      // An answer racing the removal: unless the answer locks the parent row
+      // before reading `removedAt`, it can read the row as live, commit after
+      // the removal and pay the owner for a chapter that is gone. This fake has
+      // no concurrency, so the order of the two statements is what is pinned.
+      // If you are removing the lock, the race comes back with it.
+      it('locks the parent chapter before reading whether it was removed', async () => {
+        const { id } = await submit(STRANGER, STRANGER_SECOND_POST, 0, COLLABORATOR_POST);
+        const order: string[] = [];
+        const realRaw = dbMock.dbWrite.$queryRaw.getMockImplementation()!;
+        dbMock.dbWrite.$queryRaw.mockImplementation(
+          async (strings: unknown, ...values: unknown[]) => {
+            const text = Array.isArray(strings) ? strings.join('?') : String(strings);
+            if (
+              text.includes('"StorylineChapter" WHERE "postId" =') &&
+              text.includes('FOR NO KEY UPDATE')
+            )
+              order.push(`lock ${values[0]}`);
+            return realRaw(strings as never, ...values);
+          }
+        );
+        const realFind = dbMock.dbWrite.storylineChapter.findUnique.getMockImplementation()!;
+        dbMock.dbWrite.storylineChapter.findUnique.mockImplementation(async (args: never) => {
+          const where = (args as { where: { postId?: number } }).where;
+          if (where.postId === COLLABORATOR_POST) order.push(`read ${where.postId}`);
+          return realFind(args);
+        });
+
+        await actOnStorylineContinuation({ placementId: id, ownerId: OWNER, action: 'decline' });
+
+        expect(order.slice(0, 2)).toEqual([
+          `lock ${COLLABORATOR_POST}`,
+          `read ${COLLABORATOR_POST}`,
+        ]);
+      });
+
+      // Its holds are still landing: a refund now would be planned from the
+      // part paid so far. Left for the unfunded sweep, and refused meanwhile.
+      it('leaves a continuation whose payment is still landing for the unfunded sweep', async () => {
+        charge(100);
+        const { id } = await submit(STRANGER, STRANGER_SECOND_POST, 100, COLLABORATOR_POST);
+        db.update(
+          'placementTransaction',
+          { placementId: id, kind: 'holdPrincipal' },
+          { transactionId: null }
+        );
+
+        await takeDown();
+
+        expect(db.row('placement', { id })).toMatchObject({ status: 'pending' });
+        expect(moneyCalls().refunds).toEqual([]);
+        expect(await queue()).toEqual([]);
+      });
     });
   });
 });

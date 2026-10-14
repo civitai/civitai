@@ -157,6 +157,32 @@ const takeDownApproved = (
   });
 
 /**
+ * Refunds the pending continuations of the chapters these takedowns removed.
+ *
+ * After the commit, because settling moves Buzz. A failure is logged, not
+ * thrown: the takedown has happened, and from its commit those rows can no
+ * longer be answered; the removed-parent job settles whatever this left.
+ * Imported on use, because the storyline layer imports this module.
+ */
+async function settleContinuationsOf(placementIds: number[]) {
+  if (!placementIds.length) return;
+  try {
+    const { settleContinuationsUnderRemovedChapters } = await import(
+      '~/server/services/storyline-placement.service'
+    );
+    await settleContinuationsUnderRemovedChapters({ removedPlacementIds: placementIds });
+  } catch (error) {
+    await logToAxiom({
+      name: 'placement-moderation',
+      type: 'error',
+      message: 'settling continuations of removed chapters failed',
+      placementIds,
+      error: error instanceof Error ? error.message : String(error),
+    }).catch(() => undefined);
+  }
+}
+
+/**
  * Removes everything a user has placed, sitewide.
  *
  * Pending placements settle through the ordinary path, which forfeits their
@@ -222,6 +248,7 @@ export async function removePlacementsByUser({
     }
   );
   if (takenDown > 0) void onPlacementsTakenDown(approvedIds);
+  await settleContinuationsOf(approvedIds);
 
   return {
     ...settled,
@@ -267,8 +294,11 @@ export async function removePlacementByModerator({
     return { removed: settled, wasLive: false };
   }
 
-  if (placement.status !== 'approved')
+  if (placement.status !== 'approved') {
+    // Pressing remove again finishes a takedown whose refunds did not all go through.
+    if (placement.status === 'removed') await settleContinuationsOf([placementId]);
     throw new Error(`placement: that placement is already ${placement.status}`);
+  }
 
   const { count } = await takeDownApproved(
     [placementId],
@@ -284,6 +314,7 @@ export async function removePlacementByModerator({
   );
 
   if (count > 0) void onPlacementsTakenDown([placementId]);
+  await settleContinuationsOf([placementId]);
   return { removed: count > 0, wasLive: true };
 }
 
