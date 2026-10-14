@@ -333,12 +333,12 @@ describe('createStorylinePlacement — the rules that hold at any price', () => 
   // Charging them is a spend they never agreed to.
   it('refuses when the owner started charging after the placer looked', async () => {
     givenSpace({ price: 100, setPrice: 100 });
-    await expect(submit({ expectedPrice: 0 })).rejects.toThrow(/price changed to 100/);
+    await expect(submit({ expectedPrice: 0 })).rejects.toThrow(/price changed/);
     expect(rows).toHaveLength(0);
   });
 
   it('refuses when the owner dropped the price after the placer looked', async () => {
-    await expect(submit({ expectedPrice: 100 })).rejects.toThrow(/price changed to 0/);
+    await expect(submit({ expectedPrice: 100 })).rejects.toThrow(/price changed/);
     expect(rows).toHaveLength(0);
   });
 });

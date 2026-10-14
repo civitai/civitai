@@ -96,3 +96,43 @@ describe('the shared space endpoints refuse storylines', () => {
     }
   );
 });
+
+/**
+ * The storyline procedures exist and are typed so the UI can build against
+ * them, and every one refuses until storylines are routed — whatever flags the
+ * caller holds. Each is given an otherwise valid input, so the refusal is the
+ * gate and not validation.
+ */
+describe('the storyline procedures refuse until routed', () => {
+  const STORYLINE_PROCEDURES = [
+    ['getStorylineSpace', { storylineId: 1 }],
+    ['setStorylineSpace', { storylineId: 1, mode: 'review', price: 0 }],
+    ['getStorylineContinuePrice', { parentPostId: 1 }],
+    ['getPendingStorylineContinuations', {}],
+    ['actOnStorylineContinuation', { placementId: 1, action: 'approve' }],
+    ['submitStorylineContinuation', { parentPostId: 1, postId: 2, expectedPrice: 0 }],
+    ['getMyStorylineContinuations', {}],
+    ['retractStorylineContinuation', { placementId: 1 }],
+  ] as const;
+
+  it.each(STORYLINE_PROCEDURES)('%s refuses', async (name, input) => {
+    const caller = placementCaller({
+      features: {
+        stickers: true,
+        stickerPlacement: true,
+        remixGallery: true,
+        promotions: true,
+        storylines: true,
+      },
+    });
+    await expect(caller[name](input)).rejects.toThrow(/storylines: this is not available yet/);
+  });
+
+  // A required price: omitting it is a validation error, not a submission that
+  // charges whatever the creator set a moment ago.
+  it('refuses a submission without the price the contributor was shown', async () => {
+    await expect(
+      placementCaller().submitStorylineContinuation({ parentPostId: 1, postId: 2 })
+    ).rejects.toThrow(/expectedPrice/);
+  });
+});
