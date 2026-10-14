@@ -7,7 +7,12 @@ import { simpleUserSelect } from '~/server/selectors/user.selector';
 import { bustFetchThroughCache, fetchThroughCache } from '~/server/utils/cache-helpers';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { isPlacementBlocked } from '~/server/services/placement-moderation.service';
-import { getBlockedPairIds, HiddenUsers } from '~/server/services/user-preferences.service';
+import { placementPriceRanges } from '~/server/services/placement.service';
+import {
+  getAllHiddenForUser,
+  getBlockedPairIds,
+  HiddenUsers,
+} from '~/server/services/user-preferences.service';
 import {
   throwAuthorizationError,
   throwBadRequestError,
@@ -37,6 +42,9 @@ import {
   allBrowsingLevelsFlag,
   getHighestBrowsingLevelBit,
 } from '~/shared/constants/browsingLevel.constants';
+import type { PlacementSpaceMode } from '~/shared/utils/placement';
+import { effectivePlacementPrice, resolvePlacementSpace } from '~/shared/utils/placement';
+import type { MediaType } from '~/shared/utils/prisma/enums';
 
 type Db = Prisma.TransactionClient | typeof dbWrite;
 type Viewer = { id: number; isModerator?: boolean } | undefined;
@@ -1340,6 +1348,62 @@ export async function getStorylineEarlyAccessStats() {
 // Discover
 // ---------------------------------------------------------------------------
 
+export type StorylineFeedCover = {
+  id: number;
+  url: string;
+  type: MediaType;
+  nsfwLevel: number;
+  hash: string | null;
+  width: number | null;
+  height: number | null;
+  userId: number;
+  minor: boolean;
+  poi: boolean;
+};
+
+/**
+ * Each chapter 1 post's first image this reader may be shown, in one query for the page: scanned,
+ * not taken down or awaiting review, rated, inside the reader's level and the story's ceiling,
+ * not one they hid and not carrying a tag they hid. Keyed by post id; a post with no such image
+ * has no entry, so a hidden first image falls through to the next.
+ */
+async function getStorylineFeedCovers({
+  postIds,
+  viewer,
+  browsingLevel,
+}: {
+  postIds: number[];
+  viewer: Viewer;
+  browsingLevel: number;
+}) {
+  if (!postIds.length) return new Map<number, StorylineFeedCover>();
+  // The cached hidden set every image read applies: images and tags the reader hid, the tags
+  // moderated for everyone, and the site's defaults for a signed-out reader.
+  const hidden = await getAllHiddenForUser(viewer ? { userId: viewer.id } : {});
+  const hiddenIds = hidden.hiddenImages.map((image) => image.id);
+  const hiddenTagIds = hidden.hiddenTags.map((tag) => tag.id);
+  const rows = await dbRead.$queryRaw<(StorylineFeedCover & { postId: number })[]>`
+    SELECT DISTINCT ON (i."postId") i."postId", i.id, i.url, i.type, i."nsfwLevel", i.hash,
+      i.width, i.height, i."userId", i.minor, i.poi
+    FROM "Image" i
+    JOIN "StorylineChapter" c ON c."postId" = i."postId" AND c.depth = 0
+    JOIN "Storyline" st ON st.id = c."storylineId"
+    WHERE i."postId" = ANY(${postIds}::int[])
+      AND i.ingestion = 'Scanned' AND i."tosViolation" = false AND i."needsReview" IS NULL
+      AND i."nsfwLevel" <> 0
+      AND (i."nsfwLevel" & ${browsingLevel}::int) <> 0
+      AND (i."nsfwLevel" & ~(st."maxNsfwLevel" * 2 - 1)) = 0
+      AND i.id <> ALL(${hiddenIds}::int[])
+      AND NOT EXISTS (
+        SELECT 1 FROM "TagsOnImageDetails" toi
+        WHERE toi."imageId" = i.id AND toi."tagId" = ANY(${hiddenTagIds}::int[])
+          AND toi.disabled = false
+      )
+    ORDER BY i."postId", i.index NULLS LAST, i.id
+  `;
+  return new Map(rows.map(({ postId, ...cover }) => [postId, cover]));
+}
+
 /** Deepest offset the most-chapters order pages to. */
 const STORYLINE_FEED_MAX_OFFSET = 1000;
 
@@ -1407,13 +1471,34 @@ export async function getStorylinesInfinite({
       status: StorylineStatus;
       userId: number;
       username: string | null;
+      bannedAt: Date | null;
+      deletedAt: Date | null;
+      maxNsfwLevel: number;
+      whoCanContinue: StorylineWhoCanContinue;
+      isCollaborator: boolean;
       rootPostId: number | null;
+      rootNsfwLevel: number | null;
+      rootPublishedAt: Date | null;
+      rootTosViolation: boolean | null;
+      storylineMode: string | null;
+      storylinePrice: number | null;
+      userMode: string | null;
+      userPrice: number | null;
       chapterCount: number;
       contributorCount: number;
       createdAt: Date;
     }[]
   >`
-    SELECT st.id, st.title, st.status, st."userId", u.username, rc."postId" AS "rootPostId",
+    SELECT st.id, st.title, st.status, st."userId", u.username, u."bannedAt", u."deletedAt",
+      st."maxNsfwLevel", st."whoCanContinue",
+      EXISTS (
+        SELECT 1 FROM "StorylineCollaborator" vc
+        WHERE vc."storylineId" = st.id AND vc."userId" = ${viewerId}
+      ) AS "isCollaborator",
+      rc."postId" AS "rootPostId", rp."nsfwLevel" AS "rootNsfwLevel",
+      rp."publishedAt" AS "rootPublishedAt", rp."tosViolation" AS "rootTosViolation",
+      ss.mode AS "storylineMode", ss.price AS "storylinePrice",
+      us.mode AS "userMode", us.price AS "userPrice",
       cc."chapterCount", cc."contributorCount", st."createdAt"
     FROM "Storyline" st
     JOIN "User" u ON u.id = st."userId"
@@ -1432,10 +1517,76 @@ export async function getStorylinesInfinite({
     OFFSET ${offset} LIMIT ${limit + 1}
   `;
 
-  const items = rows.slice(0, limit).map(({ userId, username, ...row }) => ({
-    ...row,
-    user: { id: userId, username },
-  }));
+  const page = rows.slice(0, limit);
+  const blockedUserIds = new Set(excluded);
+  // Chapter 1's post, judged for this reader as the reading path judges it: no cover from a
+  // chapter they would be shown as a tombstone.
+  const coverPostIds = page.flatMap((row) =>
+    row.rootPostId != null &&
+    !getStorylineChapterTombstone({
+      post: {
+        id: row.rootPostId,
+        userId: row.userId,
+        nsfwLevel: row.rootNsfwLevel ?? 0,
+        publishedAt: row.rootPublishedAt,
+        tosViolation: !!row.rootTosViolation,
+        user: { bannedAt: row.bannedAt, deletedAt: row.deletedAt },
+      },
+      viewer,
+      maxNsfwLevel: row.maxNsfwLevel,
+      browsingLevel,
+      blockedUserIds,
+    })
+      ? [row.rootPostId]
+      : []
+  );
+  const [covers, priceRanges] = await Promise.all([
+    getStorylineFeedCovers({ postIds: coverPostIds, viewer, browsingLevel }),
+    placementPriceRanges(
+      page.map((row) => row.userId),
+      'storyline'
+    ),
+  ]);
+
+  const items = page.map(
+    ({
+      userId,
+      username,
+      bannedAt: _bannedAt,
+      deletedAt: _deletedAt,
+      isCollaborator,
+      rootNsfwLevel: _rootNsfwLevel,
+      rootPublishedAt: _rootPublishedAt,
+      rootTosViolation: _rootTosViolation,
+      storylineMode,
+      storylinePrice,
+      userMode,
+      userPrice,
+      ...row
+    }) => {
+      // The placement layer's cascade, as `resolvePlacementSpaceFor` applies it to one target.
+      const space = resolvePlacementSpace('storyline', {
+        storyline:
+          storylineMode != null
+            ? { mode: storylineMode as PlacementSpaceMode, price: storylinePrice }
+            : undefined,
+        user:
+          userMode != null ? { mode: userMode as PlacementSpaceMode, price: userPrice } : undefined,
+      });
+      const mayContinue =
+        row.whoCanContinue === 'Anyone' || viewer?.id === userId || isCollaborator;
+      return {
+        ...row,
+        user: { id: userId, username },
+        coverImage: row.rootPostId != null ? covers.get(row.rootPostId) ?? null : null,
+        // Accepting a continuation from this reader: a Complete storyline takes none, whatever
+        // its space says, as the placement layer reads it.
+        open: row.status !== 'Complete' && space.mode !== 'off' && mayContinue,
+        // In Buzz, what a continuation costs now; null when the space is unpriced.
+        continuePrice: effectivePlacementPrice(space.price, priceRanges.get(userId)?.max ?? 0),
+      };
+    }
+  );
   const more = rows.length > limit;
   const nextCursor = !more
     ? undefined
