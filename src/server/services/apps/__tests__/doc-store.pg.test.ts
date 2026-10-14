@@ -7,14 +7,12 @@ import {
   assertUsageConsistent,
   BOARD,
   ctx,
-  defineFunctionalSuite,
   freshApp,
   NS_PROD,
   POSTS,
   PREFS,
   TALLIES,
 } from './doc-store.functional';
-import { defineRlsSuite } from './doc-store.rls';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
@@ -26,9 +24,11 @@ vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
  * Needs `APPDATA_TEST_DATABASE_URL`: a superuser URL to a THROWAWAY server (the
  * suite creates and drops its own databases, and the cluster-wide role
  * `appdata_rw`). Never point it at a shared, staging or production database.
+ * CI's unit job provides one (a `postgres:18` service in `.github/workflows/lint.yml`).
  * Without it every case here is skipped, and the properties below are NOT
  * exercised by that run: quota under concurrent writers, the pre-flight-read
- * control, concurrent marks and counters, and deadlock-freedom.
+ * control, concurrent marks, counters and first increments, the lock timeout,
+ * and deadlock-freedom. Everything else is covered by `doc-store.pglite.test.ts`.
  */
 
 if (!REAL_PG_URL) {
@@ -37,18 +37,6 @@ if (!REAL_PG_URL) {
   );
 }
 
-describe.skipIf(!REAL_PG_URL)('doc-store on Postgres — superuser (RLS bypassed)', () => {
-  defineFunctionalSuite(() => createRealPgHarness({ rls: false }));
-});
-
-describe.skipIf(!REAL_PG_URL)('doc-store on Postgres — appdata_rw (RLS on)', () => {
-  defineFunctionalSuite(() => createRealPgHarness({ rls: true }));
-});
-
-describe.skipIf(!REAL_PG_URL)('doc-store RLS probes on Postgres', () => {
-  defineRlsSuite(() => createRealPgHarness({ rls: true }));
-});
-
 const N = 8;
 const DOC = { p: 'xxxxxxxxxx' }; // 19 bytes of jsonb text
 const DOC_BYTES = 19;
@@ -56,7 +44,7 @@ const DOC_BYTES = 19;
 describe.skipIf(!REAL_PG_URL)('concurrency on Postgres (appdata_rw, RLS on)', () => {
   let h: Harness;
   beforeAll(async () => {
-    h = await createRealPgHarness({ rls: true });
+    h = await createRealPgHarness();
   });
   afterAll(async () => {
     await h?.close();
@@ -257,7 +245,10 @@ describe.skipIf(!REAL_PG_URL)('concurrency on Postgres (appdata_rw, RLS on)', ()
     const r = await settle(ops);
     // Deadlocks would surface as raw pg errors (40P01); none may appear. Every
     // private write is uncontended by key ownership, so at least those succeed.
-    expect(r.codes.filter((c) => !['version_conflict', 'not_found'].includes(c))).toEqual([]);
+    // `own`: a viewer touching another's doc is refused as not_author, never a raw error.
+    expect(
+      r.codes.filter((c) => !['version_conflict', 'not_found', 'not_author'].includes(c))
+    ).toEqual([]);
     expect(r.ok).toBeGreaterThanOrEqual(12);
     await assertUsageConsistent(h, app, NS_PROD);
     const seqs = await h.raw(
@@ -271,7 +262,7 @@ describe.skipIf(!REAL_PG_URL)('concurrency on Postgres (appdata_rw, RLS on)', ()
 
 describe.skipIf(!REAL_PG_URL)('runtime isolation shape on Postgres', () => {
   it('the statement recorders saw traffic and no violations', async () => {
-    const h = await createRealPgHarness({ rls: true });
+    const h = await createRealPgHarness();
     try {
       const store = createDocStore({ db: h.db });
       const app = freshApp('pg_recorder');

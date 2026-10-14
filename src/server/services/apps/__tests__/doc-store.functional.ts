@@ -1,7 +1,7 @@
-// Behavioural suite for the document store, run against every harness (PGlite
-// and real Postgres; superuser with RLS bypassed, and `appdata_rw` with RLS on).
-// Running it as the superuser is what makes the isolation cases a test of the
-// module's own predicates: with RLS bypassed, a dropped `app_id = $1` leaks.
+// Behavioural suite for the document store, run on the embedded Postgres (PGlite)
+// as `appdata_rw` twice: with row-level security DISABLED on the tables, and with it on.
+// The RLS-disabled run is what makes the isolation cases a test of the module's
+// own predicates: without RLS, a dropped `app_id = $1` leaks.
 //
 // Expected values are literals, never derived from the store under test. Usage
 // counters are cross-checked against a recompute (`sum(size_bytes)`), a different
@@ -38,7 +38,7 @@ export const POSTS: DocCollection = {
 };
 export const BOARD: DocCollection = {
   name: 'board',
-  config: { visibility: 'shared', write: 'anyone' },
+  config: { visibility: 'shared', write: 'own' },
 };
 /** Counter-only: no document writes by anyone; documents exist through increments. */
 export const TALLIES: DocCollection = {
@@ -265,29 +265,6 @@ export function defineFunctionalSuite(makeHarness: () => Promise<Harness>) {
       expect(created.author).toEqual({ kind: 'user', uid: VIEWER_2, isViewer: true });
     });
 
-    it('anyone: any viewer edits; the author stays the creator and is still charged', async () => {
-      const app = freshApp('any');
-      await store.put(ctx(app, NS_PROD, VIEWER_1), BOARD, 'k', { t: 'x' });
-      const edited = await store.put(ctx(app, NS_PROD, VIEWER_2), BOARD, 'k', { t: 'xyz' });
-      expect(edited.author).toEqual({ kind: 'user', uid: VIEWER_1, isViewer: false });
-      const [u1] = await h.raw(
-        `SELECT bytes FROM appdata.usage_user WHERE app_id = $1 AND user_id = $2`,
-        [app, VIEWER_1]
-      );
-      // `{"t": "xyz"}` is 12 bytes of jsonb text.
-      expect(Number(u1.bytes)).toBe(12);
-      expect(
-        await h.raw(
-          `SELECT 1 FROM appdata.usage_user WHERE app_id = $1 AND user_id = $2 AND bytes <> 0`,
-          [app, VIEWER_2]
-        )
-      ).toEqual([]);
-      expect(await store.delete(ctx(app, NS_PROD, VIEWER_2), BOARD, 'k')).toEqual({
-        deleted: true,
-      });
-      await assertUsageConsistent(h, app, NS_PROD);
-    });
-
     it('owner: viewers cannot write documents, but may increment declared counters', async () => {
       const app = freshApp('owner');
       await expectCode(
@@ -309,6 +286,24 @@ export function defineFunctionalSuite(makeHarness: () => Promise<Harness>) {
       expect(doc?.author).toEqual({ kind: 'app' });
       expect(doc?.counters).toEqual({ plays: 3 });
       expect(doc?.viewer).toBeNull();
+    });
+
+    it('write: anyone and ttlSeconds are refused as not supported yet, for every operation', async () => {
+      const app = freshApp('unsupported');
+      const v1 = ctx(app, NS_PROD, VIEWER_1);
+      const anyone: DocCollection = {
+        name: 'anyone',
+        config: { visibility: 'shared', write: 'anyone' },
+      };
+      const ttl: DocCollection = { name: 'ttl', config: { visibility: 'private', ttlSeconds: 60 } };
+      for (const coll of [anyone, ttl]) {
+        await expectCode(store.put(v1, coll, 'k', { a: 1 }), 'invalid_request');
+        await expectCode(store.create(v1, coll, { a: 1 }), 'invalid_request');
+        await expectCode(store.get(v1, coll, 'k'), 'invalid_request');
+        await expectCode(store.list(v1, coll), 'invalid_request');
+        await expectCode(store.delete(v1, coll, 'k'), 'invalid_request');
+      }
+      expect(await h.raw(`SELECT 1 FROM appdata.doc WHERE app_id = $1`, [app])).toEqual([]);
     });
 
     it('anonymous viewers read shared collections and nothing else', async () => {
@@ -408,32 +403,31 @@ export function defineFunctionalSuite(makeHarness: () => Promise<Harness>) {
       );
     });
 
-    it("a counter declared after a doc was created reaches tally sorts on the doc's next write", async () => {
+    it('a counter declared after a doc was created sorts it as 0 straight away', async () => {
       const app = freshApp('latedecl');
       const before: DocCollection = {
         name: 'late',
-        config: { visibility: 'shared', write: 'anyone' },
+        config: { visibility: 'shared', write: 'own' },
       };
       const after: DocCollection = {
         name: 'late',
-        config: { visibility: 'shared', write: 'anyone', counters: ['hits'] },
+        config: { visibility: 'shared', write: 'own', counters: ['hits'] },
       };
       const v1 = ctx(app, NS_PROD, VIEWER_1);
       await store.put(v1, before, 'old', { a: 1 });
       await store.put(v1, after, 'new', { a: 1 });
+      await store.increment(v1, after, 'new', 'hits');
       const keys = async () =>
         (await store.list(v1, after, { sort: '-counter:hits' })).items.map((d) => d.key);
-      // Documented gap: not written since the declaration change → no tally row yet.
-      expect(await keys()).toEqual(['new']);
-      await store.put(v1, after, 'old', { a: 2 });
-      expect(await keys()).toEqual(['old', 'new']);
+      expect(await keys()).toEqual(['new', 'old']);
+      expect((await store.get(v1, after, 'old'))?.counters).toEqual({ hits: 0 });
     });
 
     it('report stays unexposed even when a collection declares it as a mark', async () => {
       const app = freshApp('report_decl');
       const coll: DocCollection = {
         name: 'flagged',
-        config: { visibility: 'shared', write: 'anyone', marks: ['vote', 'report'] },
+        config: { visibility: 'shared', write: 'own', marks: ['vote', 'report'] },
       };
       await store.put(ctx(app, NS_PROD, VIEWER_1), coll, 'k', { a: 1 });
       await store.mark(ctx(app, NS_PROD, VIEWER_2), coll, 'k', 'report');
@@ -543,22 +537,39 @@ export function defineFunctionalSuite(makeHarness: () => Promise<Harness>) {
       await expectCode(store.delete(v1, TALLIES, 'k'), 'write_policy');
     });
 
-    it('under write: own the incrementer does not own the created doc, and author=me never lists it', async () => {
+    it('under write: own an increment on an absent key is not_found — nobody squats keys by counting', async () => {
+      const app = freshApp('squat');
+      const v1 = ctx(app, NS_PROD, VIEWER_1);
+      await expectCode(store.increment(v1, POSTS, 'squatted', 'views'), 'not_found');
+      expect(await h.raw(`SELECT 1 FROM appdata.doc WHERE app_id = $1`, [app])).toEqual([]);
+      // The key stays free for its real author.
+      expect(
+        (await store.put(ctx(app, NS_PROD, VIEWER_2), POSTS, 'squatted', { status: 'mine' })).author
+      ).toEqual({
+        kind: 'user',
+        uid: VIEWER_2,
+        isViewer: true,
+      });
+    });
+
+    it('a counter-created doc is never owned: author=me never lists it, and own never lets anyone edit it', async () => {
       const app = freshApp('ctrown');
       const v1 = ctx(app, NS_PROD, VIEWER_1);
-      await store.put(v1, POSTS, 'mine', { status: 'open' });
-      expect(await store.increment(v1, POSTS, 'counted', 'views')).toEqual({ value: 1 });
+      await store.increment(v1, TALLIES, 'counted', 'plays');
+      // The same collection later declared `own`: its counter docs stay unowned.
+      const flipped: DocCollection = {
+        name: TALLIES.name,
+        config: { visibility: 'shared', write: 'own', counters: ['plays'] },
+      };
+      await store.put(v1, flipped, 'mine', { a: 1 });
       const keys = (q: Parameters<DocStore['list']>[2]) =>
-        store.list(v1, POSTS, q).then((r) => r.items.map((d) => d.key));
+        store.list(v1, flipped, q).then((r) => r.items.map((d) => d.key));
       expect(await keys({})).toEqual(['counted', 'mine']);
       expect(await keys({ author: 'me' })).toEqual(['mine']);
-      await expectCode(store.put(v1, POSTS, 'counted', { status: 'mine now' }), 'not_author');
-      await expectCode(store.delete(v1, POSTS, 'counted'), 'not_author');
-      await expectCode(
-        store.put(v1, POSTS, 'counted', { status: 'x' }, { ifVersion: 1 }),
-        'not_author'
-      );
-      expect((await store.get(v1, POSTS, 'counted'))?.author).toEqual({ kind: 'counter' });
+      await expectCode(store.put(v1, flipped, 'counted', { a: 2 }), 'not_author');
+      await expectCode(store.put(v1, flipped, 'counted', { a: 2 }, { ifVersion: 1 }), 'not_author');
+      await expectCode(store.delete(v1, flipped, 'counted'), 'not_author');
+      expect((await store.get(v1, flipped, 'counted'))?.author).toEqual({ kind: 'counter' });
     });
 
     it("the create is charged to the incrementer's own ceiling", async () => {
@@ -578,54 +589,13 @@ export function defineFunctionalSuite(makeHarness: () => Promise<Harness>) {
       await assertUsageConsistent(h, app, NS_PROD);
     });
 
-    it('owner collections gain no documents from increments; anyone-collections keep the counter author on edit', async () => {
+    it('owner collections gain no documents from increments', async () => {
       const app = freshApp('ctrpolicy');
-      const v1 = ctx(app, NS_PROD, VIEWER_1);
-      await expectCode(store.increment(v1, PLAYS, 'absent', 'plays'), 'not_found');
+      await expectCode(
+        store.increment(ctx(app, NS_PROD, VIEWER_1), PLAYS, 'absent', 'plays'),
+        'not_found'
+      );
       expect(await h.raw(`SELECT 1 FROM appdata.doc WHERE app_id = $1`, [app])).toEqual([]);
-      const counted: DocCollection = {
-        name: 'counted',
-        config: { visibility: 'shared', write: 'anyone', counters: ['n'] },
-      };
-      await store.increment(v1, counted, 'k', 'n');
-      // The creator's ceiling binds another viewer's edit, and is reported as the author's.
-      const tight = createDocStore({
-        db: h.db,
-        limits: { appBytes: 10_000, appDocs: 100, userBytes: 10, userDocs: 10 },
-      });
-      const over = await expectCode(
-        tight.put(ctx(app, NS_PROD, VIEWER_2), counted, 'k', { note: 'x'.repeat(20) }),
-        'quota_exceeded'
-      );
-      expect(over.details).toEqual({ ceiling: 'author' });
-      const edited = await store.put(ctx(app, NS_PROD, VIEWER_2), counted, 'k', { note: 'hi' });
-      expect(edited.author).toEqual({ kind: 'counter' });
-      expect(edited.version).toBe(2);
-      expect(edited.counters).toEqual({ n: 1 });
-      const mine = await store.list(ctx(app, NS_PROD, VIEWER_2), counted, { author: 'me' });
-      expect(mine.items).toEqual([]);
-      await assertUsageConsistent(h, app, NS_PROD);
-    });
-
-    it('incrementing an expired user-authored doc credits its author back', async () => {
-      const app = freshApp('ctrcredit');
-      await store.put(ctx(app, NS_PROD, VIEWER_1), POSTS, 'k', { status: 'open' });
-      await h.raw(
-        `UPDATE appdata.doc SET expires_at = now() - interval '1 second' WHERE app_id = $1`,
-        [app]
-      );
-      expect(await store.increment(ctx(app, NS_PROD, VIEWER_2), POSTS, 'k', 'views')).toEqual({
-        value: 1,
-      });
-      const users = await h.raw(
-        `SELECT user_id, bytes, docs FROM appdata.usage_user WHERE app_id = $1 ORDER BY user_id`,
-        [app]
-      );
-      expect(users.map((r) => [r.user_id, Number(r.bytes), Number(r.docs)])).toEqual([
-        [VIEWER_1, 0, 0],
-        [VIEWER_2, 2, 1],
-      ]);
-      await assertUsageConsistent(h, app, NS_PROD);
     });
 
     it('the create is refused by the app quota; an existing doc still counts', async () => {
@@ -646,20 +616,14 @@ export function defineFunctionalSuite(makeHarness: () => Promise<Harness>) {
       await assertUsageConsistent(h, app, NS_PROD);
     });
 
-    it('a hidden key stays not found; an expired one is replaced from zero', async () => {
+    it('a hidden key stays not found', async () => {
       const app = freshApp('ctrhidden');
       const v1 = ctx(app, NS_PROD, VIEWER_1);
       await store.increment(v1, TALLIES, 'h', 'plays', 3);
-      await store.increment(v1, TALLIES, 'e', 'plays', 3);
       await h.raw(`UPDATE appdata.doc SET hidden_at = now() WHERE app_id = $1 AND key = 'h'`, [
         app,
       ]);
-      await h.raw(
-        `UPDATE appdata.doc SET expires_at = now() - interval '1 second' WHERE app_id = $1 AND key = 'e'`,
-        [app]
-      );
       await expectCode(store.increment(v1, TALLIES, 'h', 'plays'), 'not_found');
-      expect(await store.increment(v1, TALLIES, 'e', 'plays')).toEqual({ value: 1 });
       await assertUsageConsistent(h, app, NS_PROD);
     });
   });
@@ -735,7 +699,7 @@ export function defineFunctionalSuite(makeHarness: () => Promise<Harness>) {
         ks(
           await store.list(who, POSTS, {
             sort: 'at',
-            where: { at: { gte: '2026-01-01T00:00:00Z' } },
+            where: { at: '2026-01-01T00:00:00Z' },
           })
         )
       ).toEqual(['t']);
@@ -805,7 +769,7 @@ export function defineFunctionalSuite(makeHarness: () => Promise<Harness>) {
       ]);
     });
 
-    it('sorts by a mark or counter, zero-seeded docs included, key as tiebreak', async () => {
+    it('sorts by a mark or counter, absent tallies as 0, key as tiebreak', async () => {
       expect(ks(await store.list(me(), POSTS, { sort: '-mark:vote' }))).toEqual([
         'b-1',
         'c-1',
@@ -819,18 +783,22 @@ export function defineFunctionalSuite(makeHarness: () => Promise<Harness>) {
       ]);
     });
 
-    it('filters: equality on up to two indexes, combined with AND', async () => {
+    it('filters: equality on one declared index', async () => {
       expect(ks(await store.list(me(), POSTS, { where: { status: 'open' } }))).toEqual([
         'a-1',
         'b-1',
         'b-2',
       ]);
-      expect(
-        ks(await store.list(me(), POSTS, { where: { status: 'open', 'meta.tag': 'y' } }))
-      ).toEqual(['b-1']);
+      expect(ks(await store.list(me(), POSTS, { where: { 'meta.tag': 'y' } }))).toEqual([
+        'a-2',
+        'b-1',
+      ]);
       expect(ks(await store.list(me(), POSTS, { where: { score: 20 } }))).toEqual(['b-2']);
+      expect(
+        ks(await store.list(me(), POSTS, { where: { status: 'open' }, sort: '-score' }))
+      ).toEqual(['b-1', 'a-1', 'b-2']);
       await expectCode(
-        store.list(me(), POSTS, { where: { status: 'open', 'meta.tag': 'y', score: 50 } }),
+        store.list(me(), POSTS, { where: { status: 'open', 'meta.tag': 'y' } }),
         'invalid_request'
       );
       await expectCode(store.list(me(), POSTS, { where: { title: 'x' } }), 'index_not_declared');
@@ -838,29 +806,9 @@ export function defineFunctionalSuite(makeHarness: () => Promise<Harness>) {
       await expectCode(store.list(me(), POSTS, { where: { score: 'high' } }), 'invalid_request');
     });
 
-    it('filters: range and prefix on the sort index only', async () => {
-      expect(
-        ks(await store.list(me(), POSTS, { sort: 'score', where: { score: { gte: 20, lte: 40 } } }))
-      ).toEqual(['b-2', 'a-1', 'c-1']);
-      expect(
-        ks(await store.list(me(), POSTS, { sort: '-status', where: { status: { prefix: 'do' } } }))
-      ).toEqual(['c-1', 'a-2']);
-      expect(
-        ks(
-          await store.list(me(), POSTS, {
-            sort: 'at',
-            where: { at: { gte: '2026-01-02T00:00:00Z' } },
-          })
-        )
-      ).toEqual(['b-2', 'a-1', 'b-1']);
-      await expectCode(
-        store.list(me(), POSTS, { where: { score: { gte: 1 } } }),
-        'invalid_request'
-      );
-      await expectCode(
-        store.list(me(), POSTS, { sort: 'score', where: { score: { prefix: '1' } } }),
-        'invalid_request'
-      );
+    it('range and prefix filters are not supported', async () => {
+      const where = { score: { gte: 20 } } as unknown as Record<string, number>;
+      await expectCode(store.list(me(), POSTS, { sort: 'score', where }), 'invalid_request');
     });
 
     it('filters: author=me, markedBy=me, keyPrefix, and all at once', async () => {
@@ -915,7 +863,7 @@ export function defineFunctionalSuite(makeHarness: () => Promise<Harness>) {
       }
     });
 
-    it('refuses a cursor from another query, a tampered one, or an oversized one', async () => {
+    it('refuses a cursor from another sort or direction, a malformed one, or an oversized one', async () => {
       const first = await store.list(me(), POSTS, { sort: 'score', limit: 1 });
       expect(first.nextCursor).not.toBeNull();
       await expectCode(
@@ -923,20 +871,11 @@ export function defineFunctionalSuite(makeHarness: () => Promise<Harness>) {
         'invalid_request'
       );
       await expectCode(
-        store.list(me(), POSTS, {
-          sort: 'score',
-          where: { score: { gte: 0 } },
-          cursor: first.nextCursor!,
-        }),
+        store.list(me(), POSTS, { sort: 'createdAt', cursor: first.nextCursor! }),
         'invalid_request'
       );
-      // Rewrite the query-hash characters: the cursor no longer belongs to this query.
-      const tampered = first.nextCursor!.replace(
-        /^(..)(.{8})/,
-        (_, head: string, hash: string) => head + (hash === 'AAAAAAAA' ? 'BBBBBBBB' : 'AAAAAAAA')
-      );
       await expectCode(
-        store.list(me(), POSTS, { sort: 'score', cursor: tampered }),
+        store.list(me(), POSTS, { sort: 'score', cursor: `${first.nextCursor!}~extra` }),
         'invalid_request'
       );
       await expectCode(
@@ -955,7 +894,7 @@ export function defineFunctionalSuite(makeHarness: () => Promise<Harness>) {
       const app = freshApp('cursor');
       const coll: DocCollection = {
         name: 'wide',
-        config: { visibility: 'shared', write: 'anyone', indexes: { label: 'string' } },
+        config: { visibility: 'shared', write: 'own', indexes: { label: 'string' } },
       };
       // 128 bytes each: 3-byte chars, 4-byte chars (surrogate pairs in JS), mixed.
       const labels = [
@@ -991,8 +930,8 @@ export function defineFunctionalSuite(makeHarness: () => Promise<Harness>) {
       }
       expect(paged).toEqual(expected);
       expect(cursors).toHaveLength(4);
-      // The designed worst case: 1+1+8 head, '~', 171 base64url chars, '~', 128-char key.
-      for (const c of cursors) expect(c.length).toBe(311);
+      // The designed worst case: 2-char head, '~', 171 base64url chars, '~', 128-char key.
+      for (const c of cursors) expect(c.length).toBe(303);
       await expectCode(
         store.put(ctx(app, NS_PROD, VIEWER_1), coll, 'k', { label: 'x'.repeat(129) }),
         'invalid_request'
@@ -1072,9 +1011,9 @@ export function defineFunctionalSuite(makeHarness: () => Promise<Harness>) {
       );
       expect(docs.details).toEqual({ ceiling: 'viewer' });
       await tight.put(ctx(app, NS_PROD, VIEWER_2), BOARD, 's', { p: 'xxxxxxxxxx' });
-      // VIEWER_1 edits VIEWER_2's doc in an `anyone` collection: the author's ceiling binds.
+      // Growing a shared doc past its author's ceiling is labelled `author`.
       const author = await expectCode(
-        tight.put(ctx(app, NS_PROD, VIEWER_1), BOARD, 's', { p: 'x'.repeat(40) }),
+        tight.put(ctx(app, NS_PROD, VIEWER_2), BOARD, 's', { p: 'x'.repeat(40) }),
         'quota_exceeded'
       );
       expect(author.details).toEqual({ ceiling: 'author' });
@@ -1145,53 +1084,6 @@ export function defineFunctionalSuite(makeHarness: () => Promise<Harness>) {
       expect(await store.delete(me, POSTS, 'k')).toEqual({ deleted: false });
       await expectCode(store.mark(me, POSTS, 'k', 'vote'), 'not_found');
       await expectCode(store.increment(me, POSTS, 'k', 'views'), 'not_found');
-    });
-
-    it('an expired doc reads as absent and is replaced cleanly by the next write', async () => {
-      const app = freshApp('expired');
-      const me = ctx(app, NS_PROD, VIEWER_1);
-      await store.put(
-        me,
-        POSTS,
-        'k',
-        { status: 'open' },
-        { expiresAt: new Date(Date.now() + 60_000) }
-      );
-      await store.mark(ctx(app, NS_PROD, VIEWER_2), POSTS, 'k', 'vote');
-      await h.raw(
-        `UPDATE appdata.doc SET expires_at = now() - interval '1 second' WHERE app_id = $1`,
-        [app]
-      );
-      expect(await store.get(me, POSTS, 'k')).toBeNull();
-      expect((await store.list(me, POSTS)).items).toEqual([]);
-      const fresh = await store.put(
-        ctx(app, NS_PROD, VIEWER_2),
-        POSTS,
-        'k',
-        { status: 'new' },
-        { ifVersion: 0 }
-      );
-      expect(fresh.version).toBe(1);
-      expect(fresh.author).toEqual({ kind: 'user', uid: VIEWER_2, isViewer: true });
-      expect(fresh.marks.vote).toBe(0);
-      expect(fresh.expiresAt).toBeNull();
-      await assertUsageConsistent(h, app, NS_PROD);
-      await expectCode(
-        store.put(me, POSTS, 'z', { status: 'a' }, { expiresAt: new Date(Date.now() - 1) }),
-        'invalid_request'
-      );
-    });
-
-    it('ttlSeconds sets expiresAt when the write does not', async () => {
-      const coll: DocCollection = {
-        name: 'drafts',
-        config: { visibility: 'private', ttlSeconds: 3600 },
-      };
-      const before = Date.now();
-      const doc = await store.put(ctx(freshApp('ttl'), NS_PROD, VIEWER_1), coll, 'k', { a: 1 });
-      const delta = (doc.expiresAt?.getTime() ?? 0) - before;
-      expect(delta).toBeGreaterThan(3_590_000);
-      expect(delta).toBeLessThan(3_610_000);
     });
   });
 

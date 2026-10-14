@@ -1,14 +1,15 @@
 // Test harnesses for the document store: an in-process PGlite (always available)
 // and a real Postgres server (when APPDATA_TEST_DATABASE_URL names one). Both
-// apply the REAL migration file, unmodified, and both can run the store either
-// as the superuser (row-level security bypassed — exercises the module's own
-// predicates alone) or as the migration's `appdata_rw` role (both layers).
+// apply the REAL migration file, unmodified, and the store always connects as
+// the migration's `appdata_rw` role (it refuses a superuser). The PGlite harness
+// can additionally DISABLE row-level security on the tables after migrating, so
+// a suite exercises the module's own predicates alone.
 import { readFileSync } from 'fs';
 import path from 'path';
 import { PGlite } from '@electric-sql/pglite';
 import { Client } from 'pg';
 import type { DocStoreClient, DocStoreDb } from '~/server/services/apps/doc-store';
-import { scanStatement } from './doc-store.sql-scan';
+import { APPDATA_TABLES, scanStatement } from './doc-store.sql-scan';
 
 export const MIGRATION_UP = path.resolve(
   __dirname,
@@ -25,12 +26,14 @@ export type StatementRecord = { sql: string; params: unknown[]; app: string; ns:
 
 export type Harness = {
   label: string;
-  /** Whether store connections run as `appdata_rw` (RLS on) or as the superuser. */
+  /** Whether row-level security is enabled on the tables (store connections are always `appdata_rw`). */
   rls: boolean;
   concurrent: boolean;
   db: DocStoreDb;
   /** Superuser query, RLS bypassed — for seeding and asserting. */
   raw(sql: string, params?: unknown[]): Promise<Row[]>;
+  /** A store connection as an arbitrary role (null = the superuser) — for the role check. */
+  dbAs(role: string | null): DocStoreDb;
   /** A connection as `appdata_rw` with no store involvement — for RLS probes. */
   rawAsRole(): Promise<{
     query(sql: string, params?: unknown[]): Promise<Row[]>;
@@ -85,6 +88,11 @@ function recording(inner: DocStoreClient, h: Pick<Harness, 'statements' | 'viola
 export async function createPgliteHarness(opts: { rls: boolean }): Promise<Harness> {
   const pg = new PGlite();
   await pg.exec(readFileSync(MIGRATION_UP, 'utf8'));
+  if (!opts.rls) {
+    for (const t of APPDATA_TABLES) {
+      await pg.exec(`ALTER TABLE appdata.${t} DISABLE ROW LEVEL SECURITY`);
+    }
+  }
 
   async function run(sql: string, params?: unknown[]): Promise<Row[]> {
     if (params && params.length > 0) return (await pg.query<Row>(sql, params)).rows;
@@ -92,15 +100,10 @@ export async function createPgliteHarness(opts: { rls: boolean }): Promise<Harne
     return (results[results.length - 1]?.rows ?? []) as Row[];
   }
 
-  const h: Harness = {
-    label: `pglite (${opts.rls ? 'appdata_rw, RLS on' : 'superuser, RLS bypassed'})`,
-    rls: opts.rls,
-    concurrent: false,
-    statements: [],
-    violations: [],
-    db: {
+  function dbAs(role: string | null): DocStoreDb {
+    return {
       async connect() {
-        if (opts.rls) await pg.exec('SET ROLE appdata_rw');
+        await pg.exec(role ? `SET ROLE ${role}` : 'RESET ROLE');
         const inner: DocStoreClient = {
           async query(sql, params) {
             const rows = await run(sql, params);
@@ -112,7 +115,17 @@ export async function createPgliteHarness(opts: { rls: boolean }): Promise<Harne
         };
         return recording(inner, h);
       },
-    },
+    };
+  }
+
+  const h: Harness = {
+    label: `pglite (appdata_rw, RLS ${opts.rls ? 'on' : 'disabled'})`,
+    rls: opts.rls,
+    concurrent: false,
+    statements: [],
+    violations: [],
+    db: dbAs('appdata_rw'),
+    dbAs,
     async raw(sql, params) {
       await pg.exec('RESET ROLE');
       return run(sql, params);
@@ -145,7 +158,8 @@ function withDatabase(url: string, db: string): string {
   return u.toString();
 }
 
-export async function createRealPgHarness(opts: { rls: boolean }): Promise<Harness> {
+/** Real Postgres, RLS on, store connections as `appdata_rw`. */
+export async function createRealPgHarness(): Promise<Harness> {
   if (!REAL_PG_URL) throw new Error('APPDATA_TEST_DATABASE_URL is not set');
   const dbName = `appdata_t_${process.pid}_${Math.random().toString(36).slice(2, 10)}`;
   const admin = new Client({ connectionString: REAL_PG_URL });
@@ -157,23 +171,18 @@ export async function createRealPgHarness(opts: { rls: boolean }): Promise<Harne
   await su.query(readFileSync(MIGRATION_UP, 'utf8'));
   const open = new Set<Client>();
 
-  async function newClient(asRole: boolean): Promise<Client> {
+  async function newClient(role: string | null): Promise<Client> {
     const c = new Client({ connectionString: dbUrl });
     await c.connect();
-    if (asRole) await c.query('SET ROLE appdata_rw');
+    if (role) await c.query(`SET ROLE ${role}`);
     open.add(c);
     return c;
   }
 
-  const h: Harness = {
-    label: `postgres (${opts.rls ? 'appdata_rw, RLS on' : 'superuser, RLS bypassed'})`,
-    rls: opts.rls,
-    concurrent: true,
-    statements: [],
-    violations: [],
-    db: {
+  function dbAs(role: string | null): DocStoreDb {
+    return {
       async connect() {
-        const c = await newClient(opts.rls);
+        const c = await newClient(role);
         const inner: DocStoreClient = {
           async query(sql, params) {
             const r = await c.query(sql, params as unknown[]);
@@ -188,12 +197,22 @@ export async function createRealPgHarness(opts: { rls: boolean }): Promise<Harne
         };
         return recording(inner, h);
       },
-    },
+    };
+  }
+
+  const h: Harness = {
+    label: 'postgres (appdata_rw, RLS on)',
+    rls: true,
+    concurrent: true,
+    statements: [],
+    violations: [],
+    db: dbAs('appdata_rw'),
+    dbAs,
     async raw(sql, params) {
       return (await su.query(sql, params)).rows as Row[];
     },
     async rawAsRole() {
-      const c = await newClient(true);
+      const c = await newClient('appdata_rw');
       return {
         query: async (sql: string, params?: unknown[]) =>
           (await c.query(sql, params)).rows as Row[],
