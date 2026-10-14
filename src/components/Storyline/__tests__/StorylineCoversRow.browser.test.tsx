@@ -238,8 +238,10 @@ describe('StorylineCoversRow', () => {
 
     await page.getByRole('button', { name: 'Drag' }).click();
     await expect.element(page.getByTestId('banner-focus')).toHaveAttribute('data-position', '33');
-    expect(mocks.mutate).not.toHaveBeenCalled();
-    await expect.poll(() => mocks.mutate.mock.calls).toEqual([[{ id: 2, heroImagePosition: 33 }]]);
+    // One save for the whole drag: without the debounce each move would save (31, 32, 33).
+    await expect
+      .poll(() => mocks.mutate.mock.calls, { timeout: 5000 })
+      .toEqual([[{ id: 2, heroImagePosition: 33 }]]);
     // The feed shows no banner, so a focus change leaves it alone.
     expect(mocks.invalidateInfinite).not.toHaveBeenCalled();
   });
