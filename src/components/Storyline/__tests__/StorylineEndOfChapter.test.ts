@@ -17,7 +17,6 @@ const mocks = vi.hoisted(() => ({
     closedReason: 'closed' | 'collaboratorsOnly' | null;
   },
   openContinue: vi.fn(),
-  ready: true,
 }));
 
 vi.mock('~/components/Storyline/storyline.queries', async (importOriginal) => ({
@@ -31,11 +30,8 @@ vi.mock('~/components/Storyline/storyline.queries', async (importOriginal) => ({
   }),
 }));
 vi.mock('~/components/Dialog/dialogStore', () => ({ dialogStore: { trigger: mocks.trigger } }));
-vi.mock('~/components/Storyline/storyline-continue', () => ({
-  get STORYLINE_CONTINUE_READY() {
-    return mocks.ready;
-  },
-  openStorylineContinue: mocks.openContinue,
+vi.mock('~/components/Storyline/continue/openStorylineContinueModal', () => ({
+  openStorylineContinueModal: mocks.openContinue,
 }));
 vi.mock('~/components/Storyline/StorylineEarlyAccessModal', () => ({
   StorylineEarlyAccessModal: () => null,
@@ -93,7 +89,6 @@ describe('StorylineEndOfChapter', () => {
     mocks.trackCreateClick.mockClear();
     mocks.trigger.mockClear();
     mocks.terms = null;
-    mocks.ready = true;
     onContinue = vi.fn();
   });
 
@@ -164,16 +159,13 @@ describe('StorylineEndOfChapter', () => {
     expect(cards.map((c) => c.textContent?.endsWith('Read'))).toEqual([true, false, false]);
   });
 
-  it('offers continuing with a post only once the flow is ready and the chapter has a post', () => {
+  it('offers continuing with a post only when the chapter has a post', () => {
     mocks.children = [];
     mocks.terms = { open: true, price: 0, closedReason: null };
     const sel = '[data-testid="storyline-continue-with-post"]';
     expect(render({ parentPostId: 15 }).querySelector(sel)).not.toBeNull();
     document.body.innerHTML = '';
     expect(render({}).querySelector(sel)).toBeNull();
-    document.body.innerHTML = '';
-    mocks.ready = false;
-    expect(render({ parentPostId: 15 }).querySelector(sel)).toBeNull();
   });
 
   it('records the click on Create the next section and opens the early access prompt', () => {
