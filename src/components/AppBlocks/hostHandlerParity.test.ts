@@ -110,7 +110,8 @@ const SHARED_MODULE_PINS: Partial<Record<InventoryType, string>> = {
 /**
  * The `send('<reply>', …)` calls in a host's own source, comments stripped. `count` is every
  * such call; `literals` is the text of each one whose payload is an object literal. Only a
- * quoted reply type is seen: a send through a variable, as the shared modules do, is not.
+ * quoted reply type is seen, so a test below requires every `send(` in a host's source to quote
+ * its type. (The shared modules send through a variable, but they are not host source.)
  */
 function sendsOf(
   host: 'IframeHost' | 'PageBlockHost',
@@ -389,6 +390,21 @@ describe('App Blocks host↔SDK handler parity (gotcha-#73 "spins forever" guard
       // Positive control for the host-written check above: IframeHost writes the batch
       // no-token reply inline. If no host writes one any more, delete this line.
       expect(ownSharedSends, 'host-written replies of SHARED_MODULE_PINS types').toBeGreaterThan(0);
+    });
+
+    it("every send in a host's own source names its reply type with a quoted literal", () => {
+      // The source checks around this one find a host's replies by their quoted type. A send
+      // whose type is a variable or a constant, such as `send(ESTIMATE_BATCH_REPLY, …)`, would
+      // be invisible to them.
+      for (const host of ['IframeHost', 'PageBlockHost'] as const) {
+        const src = HOST_SRC[`${host}.tsx`];
+        const all = src.match(/\bsend\(/g) ?? [];
+        const quoted = src.match(/\bsend\(\s*'/g) ?? [];
+        expect(all.length, `${host}: positive control, the host sends replies`).toBeGreaterThan(0);
+        expect(quoted.length, `${host}: a send( whose reply type is not a quoted literal`).toBe(
+          all.length
+        );
+      }
     });
 
     it('a NACK_ONLY_ERRORS type has no host-written error reply', () => {
