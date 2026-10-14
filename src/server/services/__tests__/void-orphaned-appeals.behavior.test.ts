@@ -28,7 +28,8 @@ vi.mock('~/server/services/notification.service', async (importOriginal) => ({
   ...(await importOriginal<typeof NotificationService>()),
   createNotification: holder.notify,
 }));
-// Must match APPEALS rows 1 and 9: each appellant deleted the image after filing.
+// Must match APPEALS rows 1 and 9 (image deleted by the appellant after filing), 18 (model soft-deleted
+// by its owner) and 19 (model soft-deleted by a moderator).
 vi.mock('~/server/clickhouse/client', async (importOriginal) => ({
   ...(await importOriginal<typeof ClickhouseClient>()),
   clickhouse: {
@@ -38,6 +39,11 @@ vi.mock('~/server/clickhouse/client', async (importOriginal) => ({
           ? [
               { entityId: '1001', userId: '11', t: String(Date.UTC(2026, 8, 2) / 1000) },
               { entityId: '1009', userId: '19', t: String(Date.UTC(2026, 8, 2) / 1000) },
+            ]
+          : /FROM modelEvents/.test(strings.join('?'))
+          ? [
+              { entityId: '2018', userId: '28', t: String(Date.UTC(2026, 8, 2) / 1000) },
+              { entityId: '2019', userId: '999', t: String(Date.UTC(2026, 8, 2) / 1000) },
             ]
           : []
       )
@@ -68,6 +74,8 @@ const APPEALS: [number, number, string, number, string, string | null, string | 
   [15, 25, 'Image', 1015, 'Pending', null, null], // appellant's other image blocked for another reason
   [16, 26, 'Image', 1016, 'Pending', null, null], // deleted account
   [17, 27, 'Model', 1009, 'Pending', null, null], // model sharing a reported image's id
+  [18, 28, 'Model', 2018, 'Pending', null, 'appeal-28-1'], // model soft-deleted by its owner
+  [19, 29, 'Model', 2019, 'Pending', null, null], // model soft-deleted by a moderator: routed
 ];
 
 beforeAll(async () => {
@@ -77,7 +85,7 @@ beforeAll(async () => {
     CREATE TYPE "EntityType" AS ENUM ('Image', 'Model');
     CREATE TABLE "User" (id int PRIMARY KEY, "deletedAt" timestamp(3));
     CREATE TABLE "Image" (id int PRIMARY KEY, "userId" int NOT NULL, "blockedFor" text);
-    CREATE TABLE "Model" (id int PRIMARY KEY);
+    CREATE TABLE "Model" (id int PRIMARY KEY, "deletedAt" timestamp(3));
     CREATE TABLE "Report" (id int PRIMARY KEY, reason text NOT NULL);
     CREATE TABLE "UserReport" ("userId" int NOT NULL, "reportId" int NOT NULL);
     CREATE TABLE "CsamReport" (id int PRIMARY KEY, "userId" int, images jsonb NOT NULL DEFAULT '[]');
@@ -117,13 +125,16 @@ beforeEach(async () => {
   holder.afterPick = null;
   await holder.db.exec(`
     TRUNCATE "User", "Image", "Model", "Report", "UserReport", "CsamReport", "Appeal";
-    INSERT INTO "User" (id, "deletedAt") SELECT g, NULL FROM generate_series(11, 27) g;
+    INSERT INTO "User" (id, "deletedAt") SELECT g, NULL FROM generate_series(11, 29) g;
     UPDATE "User" SET "deletedAt" = now() WHERE id = 26;
     INSERT INTO "Image" (id, "userId", "blockedFor") VALUES
       (1003, 13, NULL),
       (5014, 24, 'CSAM'),
       (5015, 25, 'moderated');
-    INSERT INTO "Model" (id) VALUES (2006);
+    INSERT INTO "Model" (id, "deletedAt") VALUES
+      (2006, NULL),
+      (2018, '2026-09-02 00:00:00'),
+      (2019, '2026-09-02 00:00:00');
     INSERT INTO "Report" (id, reason) VALUES (1, 'TOSViolation'), (2, 'CSAM');
     INSERT INTO "UserReport" ("userId", "reportId") VALUES (22, 1), (23, 2);
     INSERT INTO "CsamReport" (id, "userId", images) VALUES
@@ -194,17 +205,24 @@ describe('voidOrphanedAppeals against Postgres', () => {
       15: 'Pending:routed',
       16: 'void:quiet',
       17: 'Pending:routed',
+      18: 'void:deleted-by-owner',
+      19: 'Pending:routed',
     });
-    expect(result).toMatchObject({ closedQuietly: 6, closedOwnerDeleted: 1, routedForReview: 5 });
+    expect(result).toMatchObject({ closedQuietly: 6, closedOwnerDeleted: 2, routedForReview: 6 });
     // Only Pending, unstamped orphans are candidates: decided or existing models are never looked up.
     const modelLookup = vi
       .mocked(clickhouse!.$query)
       .mock.calls.find((c) => /FROM modelEvents/.test((c[0] as TemplateStringsArray).join('?')));
-    expect([...(modelLookup?.[1] as number[])].sort()).toEqual([1009, 2005]);
+    expect([...(modelLookup?.[1] as number[])].sort()).toEqual([1009, 2005, 2018, 2019]);
 
     // Routed fees stay held; the quiet group is refunded but never told.
-    expect(refundedPrefixes()).toEqual(['appeal-11-1', 'appeal-19-1', 'appeal-23-1']);
-    expect(notifiedUsers()).toEqual([11, 12, 15, 22, 25, 27]);
+    expect(refundedPrefixes()).toEqual([
+      'appeal-11-1',
+      'appeal-19-1',
+      'appeal-23-1',
+      'appeal-28-1',
+    ]);
+    expect(notifiedUsers()).toEqual([11, 12, 15, 22, 25, 27, 28, 29]);
   });
 
   it('stamps closed appeals resolved and leaves routed ones unresolved', async () => {
@@ -212,8 +230,8 @@ describe('voidOrphanedAppeals against Postgres', () => {
     await voidOrphanedAppeals();
     const rows = await appeals();
 
-    for (const id of [1, 9, 16]) expect(rows.get(id)!.resolvedAt).not.toBeNull();
-    for (const id of [2, 5]) expect(rows.get(id)!.resolvedAt).toBeNull();
+    for (const id of [1, 9, 16, 18]) expect(rows.get(id)!.resolvedAt).not.toBeNull();
+    for (const id of [2, 5, 19]) expect(rows.get(id)!.resolvedAt).toBeNull();
     expect(rows.get(8)!.entityRemovedAt).toEqual(before);
     expect(before).not.toBeNull();
   });
@@ -248,9 +266,9 @@ describe('voidOrphanedAppeals against Postgres', () => {
     });
     expect(rows.get(2)).toMatchObject({ status: 'Rejected', entityRemovedAt: null });
     expect(rows.get(12)!.entityRemovedAt).toEqual(await routedMeanwhile());
-    expect(refundedPrefixes()).toEqual([]);
-    expect(notifiedUsers()).toEqual([15, 25, 27]);
-    expect(result).toMatchObject({ closedQuietly: 4, closedOwnerDeleted: 0, routedForReview: 3 });
+    expect(refundedPrefixes()).toEqual(['appeal-28-1']);
+    expect(notifiedUsers()).toEqual([15, 25, 27, 28, 29]);
+    expect(result).toMatchObject({ closedQuietly: 4, closedOwnerDeleted: 1, routedForReview: 4 });
   });
 
   it('does nothing on a second run', async () => {

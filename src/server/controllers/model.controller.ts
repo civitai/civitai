@@ -136,6 +136,7 @@ import {
   queueModelEarlyAccessReindex,
   upsertModel,
 } from '~/server/services/model.service';
+import { closeAppealsDeletedByOwner } from '~/server/services/report.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { getLatestAppeal } from '~/server/services/report.service';
 import { getHighestTierSubscription } from '~/server/services/subscriptions.service';
@@ -941,6 +942,14 @@ export const deleteModelHandler = async ({
     const deleteModel = permanently ? permaDeleteModelById : deleteModelById;
     const model = await deleteModel({ id, userId: ctx.user.id, isModerator: ctx.user.isModerator });
     if (!model) throw throwNotFoundError(`No model with id ${id}`);
+
+    // A moderator removing someone's model leaves their appeal to the sweep's review routing.
+    if (model.userId === ctx.user.id)
+      await closeAppealsDeletedByOwner({
+        entityType: EntityType.Model,
+        entityIds: [id],
+        ownerId: ctx.user.id,
+      });
 
     await ctx.track.modelEvent({
       type: permanently ? 'PermanentDelete' : 'Delete',

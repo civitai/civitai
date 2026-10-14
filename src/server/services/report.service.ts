@@ -1190,7 +1190,7 @@ export async function voidOrphanedAppeals({ limit = 1000 }: { limit?: number } =
       AND a."entityRemovedAt" IS NULL
       AND (
         (a."entityType" = 'Image' AND NOT EXISTS (SELECT 1 FROM "Image" i WHERE i.id = a."entityId"))
-        OR (a."entityType" = 'Model' AND NOT EXISTS (SELECT 1 FROM "Model" m WHERE m.id = a."entityId"))
+        OR (a."entityType" = 'Model' AND NOT EXISTS (SELECT 1 FROM "Model" m WHERE m.id = a."entityId" AND m."deletedAt" IS NULL))
       )
     LIMIT ${limit}
   `;
