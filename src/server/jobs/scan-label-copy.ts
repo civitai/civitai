@@ -91,6 +91,7 @@ export async function copyScanLabelImages({ store }: { store?: ScanLabelCopyStor
   }
 
   const img = Prisma.raw('img');
+  const so = Prisma.raw('so');
   let pending: Pending[];
   try {
     pending = await dbWrite.$queryRaw<Pending[]>`
@@ -100,6 +101,11 @@ export async function copyScanLabelImages({ store }: { store?: ScanLabelCopyStor
             AND e."eligibleForCopy" IS TRUE
             -- NULL-safe: the exclusion is NULL, not false, for an image with no review flag.
             AND NOT COALESCE(${excludedImageRow(img)}, false)
+            -- The copy is by stored object, which other image rows may share.
+            AND NOT EXISTS (
+              SELECT 1 FROM "Image" so
+              WHERE so.url = img.url AND COALESCE(${excludedImageRow(so)}, false)
+            )
             THEN 'copy'
           ELSE 'skip'
         END AS action

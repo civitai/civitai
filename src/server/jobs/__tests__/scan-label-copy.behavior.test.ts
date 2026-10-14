@@ -133,6 +133,17 @@ describe('copyScanLabelImages', () => {
     expect(puts).toEqual([]);
   });
 
+  it('never copies a stored object another image in the CSAM path shares', async () => {
+    await decided(1, { eligible: true });
+    await holder.db.exec(
+      `INSERT INTO "Image" ("id", "url", "needsReview") VALUES (50, 'key-1', 'csam')`
+    );
+    const { puts, store } = recordingStore();
+    await copyScanLabelImages({ store });
+    expect(puts).toEqual([]);
+    expect((await state())[0].copyState).toBe('skipped');
+  });
+
   it('skips an item decided before the originals are purged', async () => {
     await decided(1, { eligible: true, daysAgo: 7 });
     const { puts, store } = recordingStore();
