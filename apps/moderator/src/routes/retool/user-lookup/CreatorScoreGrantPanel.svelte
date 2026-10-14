@@ -21,11 +21,10 @@
   let amount = $state('');
   let reason = $state('');
   let confirming = $state(false);
-  // The endpoint's total after the last write. The Reputation panel above re-reads from a replica that
-  // can lag, so this is the number to trust right after a grant or revoke.
+  // The endpoint's own total: the Reputation panel above reads a replica that can lag.
   let outcome = $state<CreatorScoreGrantResult | null>(null);
 
-  // Bumped after a grant or revoke so the list refetches; it comes from `/api/*`, not the page load.
+  // Bump to refetch the list. It comes from `/api/*`, so the form's invalidateAll does not reach it.
   let version = $state(0);
   const grants = $derived(browser ? fetchCreatorScoreGrants(userId, version) : null);
   let revoking = $state<number | null>(null);
@@ -36,8 +35,8 @@
     Number.isInteger(amountValue) && amountValue >= 1 && amountValue <= CREATOR_SCORE_GRANT_MAX_AMOUNT
   );
 
-  // `reload`: the Reputation panel's total comes from the page load, so it must re-run to show the new
-  // score. `reset: false` so the inputs are cleared through their state, not behind it.
+  // reload: the Reputation panel's score comes from the page load. reset: false: the inputs are bound
+  // state, cleared in onSuccess, and the native form reset would desync them.
   const form = new FormState({
     reload: true,
     reset: false,
@@ -52,8 +51,7 @@
       reason = '';
       revoke.error = null;
     },
-    // After every answer, failures included: disarm, so a "could not confirm" warning never sits above
-    // a live confirm button, and refetch the list.
+    // Runs on failures too: disarm so an error never sits over a live confirm button, and refetch.
     onSettled: () => {
       confirming = false;
       version += 1;
@@ -72,8 +70,8 @@
       revoking = null;
       revokeReason = '';
     },
-    // After any answer, including "could not confirm": the list is what tells the operator. A refused
-    // revoke keeps its row open with the reason, so the moderator can fix and resubmit.
+    // Refetch on failures too (a lost response may have committed). Closing the row stays in onSuccess
+    // so a refusal can be fixed and resubmitted.
     onSettled: () => {
       version += 1;
     },
@@ -98,7 +96,7 @@
       class="mb-3 rounded-md border border-green-500/30 bg-green-500/10 p-3 text-sm text-green-200"
       role="status"
     >
-      {outcome.kind === 'granted' ? `Granted ${num(outcome.amount ?? 0)} points.` : 'Grant revoked.'}
+      {outcome.kind === 'granted' ? `Granted ${num(outcome.amount)} points.` : 'Grant revoked.'}
       Creator Score is now {num(outcome.total)}.
     </div>
   {/if}
@@ -134,7 +132,7 @@
         class="mt-1"
       />
     </div>
-    <!-- Two steps: the points move a creator's tier, and a mistyped amount is only undone by a revoke. -->
+    <!-- Two steps: a mistyped amount can only be undone by a revoke. -->
     <div class="flex items-center gap-2 sm:col-span-2">
       {#if confirming}
         <Button type="submit" disabled={form.submitting}>Grant {num(amountValue)} points</Button>
@@ -153,8 +151,7 @@
 
   <div class="mt-5 mb-2 flex items-center justify-between">
     <h4 class="text-xs font-semibold text-white">Grants on this account</h4>
-    <!-- Always offered: after a "could not confirm" answer the moderator is told to check this list, and
-         a write that committed after the automatic refetch only shows up on a later one. -->
+    <!-- Manual refetch: after "could not confirm", a write can commit after the automatic refetch. -->
     <Button size="sm" variant="ghost" onclick={() => (version += 1)}>Refresh</Button>
   </div>
   {#if revoke.error}

@@ -2,7 +2,7 @@ import { dbWrite } from '$lib/server/db';
 
 /**
  * Creator Score grants on one account, newest first, revoked ones included so the list is the audit
- * trail. Rides the (userId, createdAt) index.
+ * trail.
  */
 export async function listCreatorScoreGrants(userId: number) {
   // The primary: the panel refetches this the moment a grant or revoke returns, and a lagging replica

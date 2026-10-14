@@ -174,7 +174,6 @@
       />
     {:else if section === 'leaderboard' || section === 'score'}
       <ReputationPanel stats={result.stats} scores={result.scores} ranks={result.ranks} />
-      <!-- Beside the score it changes, so the moderator grants against the breakdown they are reading. -->
       {#if data.grants['user.creatorScore.grant']}
         <CreatorScoreGrantPanel userId={result.identity.id} />
       {/if}

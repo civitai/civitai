@@ -13,7 +13,7 @@ const capturedParams = vi.hoisted(() => [] as unknown[][]);
 vi.mock('$lib/server/db', async () => {
   const { capturingDb } = await import('../../../test/capture-sql');
   const db = capturingDb(captured, [], capturedParams);
-  // dbRead throws: the list must read the primary, or a just-revoked grant shows as active.
+  // dbRead throws, so any replica read fails the test.
   const replica = new Proxy(
     {},
     {

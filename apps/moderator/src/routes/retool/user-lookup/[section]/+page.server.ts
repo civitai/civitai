@@ -550,7 +550,6 @@ export const actions: Actions = {
     return { success: true, revoked: input.code };
   }),
 
-  // Bounds are enforced again by the endpoint; these only turn a bad form into a readable refusal.
   grantCreatorScore: requiresGrant('user.creatorScore.grant', async ({ request }) => {
     const input = parseForm(
       userIdSchema.extend({

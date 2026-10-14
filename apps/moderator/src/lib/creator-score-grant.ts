@@ -1,10 +1,10 @@
-// Shared by the panel, its form actions and the service, and free of server imports so the panel can
-// read it. These mirror `src/server/services/creator-score-grant.constants.ts` in the main app, which
-// is what enforces them: a drift here only makes the form offer or refuse the wrong values.
+// Client-importable (no server imports). Mirrors CREATOR_SCORE_GRANT_LIMITS in the main app's
+// src/server/services/creator-score-grant.constants.ts, which enforces them.
 
 export const CREATOR_SCORE_GRANT_MAX_AMOUNT = 10_000;
 export const CREATOR_SCORE_GRANT_DAILY_CAP = 20;
 export const CREATOR_SCORE_GRANT_REASON_MAX = 500;
 
-/** What a grant or revoke action hands the panel: the endpoint's own total after the write. */
-export type CreatorScoreGrantResult = { kind: 'granted' | 'revoked'; amount?: number; total: number };
+export type CreatorScoreGrantResult =
+  | { kind: 'granted'; amount: number; total: number }
+  | { kind: 'revoked'; total: number };

@@ -1178,9 +1178,8 @@ const MINT_MAY_HAVE_COMPLETED =
   'Could not confirm the code was minted. Wait a minute, then check this account’s code list before minting again.';
 
 /**
- * The operator-facing error for a failed non-idempotent write. A lost response (5xx, 408, or no answer
- * after the request left) may have written, and a blind retry writes twice, so it gets `mayHaveCompleted`;
- * a refusal or a request that never left keeps the far side's own message.
+ * Operator-facing error for a failed non-idempotent write. A lost response (5xx, 408, or no answer after
+ * the request left) may have written, and a blind retry writes twice, so it gets `mayHaveCompleted`.
  */
 function writeFailureError(
   result: Extract<JsonResult, { ok: false }>,
@@ -1231,8 +1230,7 @@ export async function revokeMembershipCode(input: {
 const GRANT_MAY_HAVE_COMPLETED =
   'Could not confirm the grant. Wait a minute, then check this account’s grant list before granting again.';
 
-// CREATOR SCORE GRANT. The endpoint records the ModActivity row inside the same transaction as the
-// grant, so no `logAction` here.
+// The endpoint records the ModActivity row in the grant's transaction, so no `logAction` here.
 export async function grantCreatorScore(input: {
   userId: number;
   amount: number;

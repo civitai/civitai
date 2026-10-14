@@ -1,5 +1,3 @@
-// The `/api/creator-score-grants` payload, shared by the endpoint and the panel.
-
 import type { Jsonified } from '$lib/format';
 import type { CreatorScoreGrantRow } from '$lib/server/creator-score-grant.service';
 
