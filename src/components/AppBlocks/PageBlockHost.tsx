@@ -123,6 +123,7 @@ import {
   resolveHostConsentNotice,
   resolveRequestConsent,
   resolveUngrantableConsentNotice,
+  resolveUngrantableConsentPrompt,
   UNGRANTABLE_CONSENT_TOAST,
 } from './requestConsentGate';
 import { BlockConsentNotice } from './BlockConsentNotice';
@@ -1280,6 +1281,9 @@ export function PageBlockHost({
   // #3/#6: the scopes the minted JWT ACTUALLY carries. See
   // requestConsentGate.resolveAdvertisedScopes. Posting `[]` (the old hardcode)
   // lied to the block about its capabilities.
+  // A boolean, not `viewer`: the run page builds that object inline, so its
+  // identity changes every render and would re-subscribe handlers keyed on it.
+  const viewerSignedIn = viewer != null;
   const grantedScopes = useMemo<string[]>(
     () => resolveAdvertisedScopes(declaredScopes, missingScopes, signedScopes),
     [declaredScopes, missingScopes, signedScopes]
@@ -1971,8 +1975,14 @@ export function PageBlockHost({
       send('CONSENT_UNAVAILABLE', { reason: 'ungrantable', scopes: ungrantable.scopes });
       // Copy shared with IframeHost's twin of this path — see the constant for why
       // the wording is surface-neutral (the old "in this preview" clause was false
-      // on the live page too, and outright wrong on a model page).
-      showNotification({ color: 'yellow', ...UNGRANTABLE_CONSENT_TOAST });
+      // on the live page too, and outright wrong on a model page). Signed out →
+      // offer sign-in instead — see `resolveUngrantableConsentPrompt`.
+      const prompt = resolveUngrantableConsentPrompt(gateStatus, viewerSignedIn);
+      if (prompt === 'toast') showNotification({ color: 'yellow', ...UNGRANTABLE_CONSENT_TOAST });
+      else if (prompt === 'sign-in') {
+        const here = window.location.pathname + window.location.search + window.location.hash;
+        openLoginPopup(here, 'image-gen');
+      }
     });
     return off;
     // `status` is deliberately ABSENT: the handler reads it through
@@ -1990,6 +2000,7 @@ export function PageBlockHost({
     onConsentGranted,
     reviewMode,
     reviewRunForReal,
+    viewerSignedIn,
   ]);
 
   // Deep-link bridge — the block asks the host to navigate. TWO spaces, selected

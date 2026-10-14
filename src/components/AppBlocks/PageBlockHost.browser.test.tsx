@@ -9,6 +9,7 @@ import { renderWithProviders } from '../../../test/component-setup';
 // which the repo's `consistent-type-imports` rule forbids (this file was the
 // last lint error in src/components/AppBlocks).
 import type * as MantineNotifications from '@mantine/notifications';
+import type * as AuthHelpers from '~/utils/auth-helpers';
 
 // PageBlockHost wires the money-path workflow bridge AND the storage bridge,
 // which call `trpc.blocks.*.useMutation()`, `trpc.apps.storage.*.useMutation()`,
@@ -29,6 +30,14 @@ vi.mock('@mantine/notifications', async (importOriginal) => {
   const actual = await importOriginal<typeof MantineNotifications>();
   return { ...actual, showNotification: (args: unknown) => showNotificationSpy(args) };
 });
+
+// A signed-out viewer's un-grantable REQUEST_CONSENT opens the sign-in popup
+// instead of the toast; spy on it rather than open a real window.
+const openLoginPopupSpy = vi.fn();
+vi.mock('~/utils/auth-helpers', async (importOriginal) => ({
+  ...(await importOriginal<typeof AuthHelpers>()),
+  openLoginPopup: (...args: unknown[]) => openLoginPopupSpy(...args),
+}));
 
 vi.mock('~/utils/trpc', () => ({
   // FeatureFlagsProvider (pulled into PageBlockHost's real render graph) statically
@@ -433,6 +442,7 @@ describe('PageBlockHost REQUEST_CONSENT (W10 lazy-consent wiring)', () => {
     // dialogStore is a module-level zustand store shared across tests — reset it.
     useDialogStore.getState().closeAll();
     showNotificationSpy.mockClear();
+    openLoginPopupSpy.mockClear();
   });
 
   test('after BLOCK_READY, REQUEST_CONSENT opens the consent dialog with the server-known missing set', async () => {
@@ -551,6 +561,8 @@ describe('PageBlockHost REQUEST_CONSENT (W10 lazy-consent wiring)', () => {
     });
     // No consent dialog is opened for an un-grantable scope.
     expect(useDialogStore.getState().dialogs).toHaveLength(0);
+    // Signed in (`viewer` is set): the toast, never the sign-in popup.
+    expect(openLoginPopupSpy).not.toHaveBeenCalled();
   });
 
   /**
@@ -788,7 +800,10 @@ describe('PageBlockHost REQUEST_CONSENT (W10 lazy-consent wiring)', () => {
         reason: 'ungrantable',
         scopes: ['apps:storage:publish'],
       });
-      expect(showNotificationSpy).toHaveBeenCalledTimes(1);
+      // Signed out: the host offers sign-in (it would make the scope grantable),
+      // never the "isn't available here" toast.
+      expect(openLoginPopupSpy).toHaveBeenCalledTimes(1);
+      expect(showNotificationSpy).not.toHaveBeenCalled();
       // Invariant guard, not regression coverage: with `missingScopes: []` no modal
       // can open on main either.
       expect(useDialogStore.getState().dialogs).toHaveLength(0);

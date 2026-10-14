@@ -8,6 +8,7 @@ import { renderWithProviders } from '../../../test/component-setup';
 // `@typescript-eslint/consistent-type-imports` rejects an inline
 // `typeof import('...')` annotation, so the types have to arrive this way.
 import type * as MantineNotifications from '@mantine/notifications';
+import type * as AuthHelpers from '~/utils/auth-helpers';
 import type * as Trpc from '~/utils/trpc';
 
 /**
@@ -58,7 +59,20 @@ import type * as Trpc from '~/utils/trpc';
 
 // AppBlockChrome calls useCurrentUser() for the platform-nav moderator gate; this
 // scaffold mounts no CivitaiSessionProvider.
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
+// Signed in by default — the viewer `context.viewerUserId` describes. The
+// anonymous seam test sets it to null: IframeHost reads the live session from
+// this hook, and it decides whether an un-grantable REQUEST_CONSENT toasts or
+// offers sign-in.
+const session = vi.hoisted(() => ({
+  user: { id: 42, username: 'tester' } as null | { id: number; username: string },
+}));
+vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => session.user }));
+
+const openLoginPopupSpy = vi.fn();
+vi.mock('~/utils/auth-helpers', async (importOriginal) => ({
+  ...(await importOriginal<typeof AuthHelpers>()),
+  openLoginPopup: (...args: unknown[]) => openLoginPopupSpy(...args),
+}));
 
 // The REAL useFeatureFlags THROWS without a FeatureFlagsProvider, which this
 // scaffold does not mount, so every test that MOUNTS IframeHost would crash.
@@ -272,6 +286,8 @@ describe('IframeHost consent backstop — the BlockHost → useBlockToken → If
   beforeEach(() => {
     useDialogStore.getState().closeAll();
     showNotificationSpy.mockClear();
+    openLoginPopupSpy.mockClear();
+    session.user = { id: 42, username: 'tester' };
     vi.useFakeTimers({ shouldAdvanceTime: true });
     fetchSpy = vi.fn();
     vi.stubGlobal('fetch', fetchSpy);
@@ -401,6 +417,7 @@ describe('IframeHost consent backstop — the BlockHost → useBlockToken → If
           }),
         } as unknown as Response)
     );
+    session.user = null;
     renderWithProviders(
       <BlockHost
         blockInstall={anonInstall}
@@ -450,7 +467,10 @@ describe('IframeHost consent backstop — the BlockHost → useBlockToken → If
         reason: 'ungrantable',
         scopes: [GATED],
       });
-      expect(showNotificationSpy).toHaveBeenCalledTimes(1);
+      // Signed out: the host offers sign-in (it would make the scope grantable),
+      // never the "isn't available here" toast.
+      expect(openLoginPopupSpy).toHaveBeenCalledTimes(1);
+      expect(showNotificationSpy).not.toHaveBeenCalled();
       // Invariant guard, not regression coverage: with `missingScopes: []` no modal
       // can open on main either.
       expect(useDialogStore.getState().dialogs).toHaveLength(0);
@@ -495,6 +515,8 @@ describe('IframeHost consent backstop — the surface', () => {
   beforeEach(() => {
     useDialogStore.getState().closeAll();
     showNotificationSpy.mockClear();
+    openLoginPopupSpy.mockClear();
+    session.user = { id: 42, username: 'tester' };
   });
 
   afterEach(() => cleanup());
@@ -704,6 +726,8 @@ describe('IframeHost consent backstop — the surface', () => {
       // 🔴 NO "preview" CLAIM. The un-grantable state is reachable from an ordinary
       // mint clamp on a live model page, so the old page-host wording was false here.
       expect(toast.message).toBe('This app requested a permission that isn’t available here.');
+      // Signed in: the toast, never the sign-in popup.
+      expect(openLoginPopupSpy).not.toHaveBeenCalled();
       // No modal: there is nothing consent can add.
       expect(useDialogStore.getState().dialogs).toHaveLength(0);
     } finally {

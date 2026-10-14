@@ -45,6 +45,7 @@ import {
   resolveHostConsentNotice,
   resolveRequestConsent,
   resolveUngrantableConsentNotice,
+  resolveUngrantableConsentPrompt,
   UNGRANTABLE_CONSENT_TOAST,
 } from './requestConsentGate';
 import { BlockConsentNotice } from './BlockConsentNotice';
@@ -2065,11 +2066,25 @@ export function IframeHost({
       // still sends, with `scopes: []`. The refusal is the signal; the names are
       // advisory. Delivered solely to the frame that asked.
       send('CONSENT_UNAVAILABLE', { reason: 'ungrantable', scopes: ungrantable.scopes });
-      showNotification({ color: 'yellow', ...UNGRANTABLE_CONSENT_TOAST });
+      // Signed out → offer sign-in, not "unavailable" — see the shared gate.
+      const prompt = resolveUngrantableConsentPrompt(readGateStatus(), currentUser?.id != null);
+      if (prompt === 'toast') showNotification({ color: 'yellow', ...UNGRANTABLE_CONSENT_TOAST });
+      else if (prompt === 'sign-in') {
+        const here = window.location.pathname + window.location.search + window.location.hash;
+        openLoginPopup(here, 'image-gen');
+      }
     });
     return off;
     // `status` deliberately absent — see the RESIZE_IFRAME deps note.
-  }, [onMessage, send, readGateStatus, missingScopes, grantedScopes, openConsentModal]);
+  }, [
+    onMessage,
+    send,
+    readGateStatus,
+    missingScopes,
+    grantedScopes,
+    openConsentModal,
+    currentUser?.id,
+  ]);
 
   // SDK workflow bridge: receive SUBMIT/ESTIMATE/POLL requests from the block,
   // forward to blocks.* tRPC, echo the response back with matching requestId.

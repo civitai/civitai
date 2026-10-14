@@ -4,6 +4,7 @@ import {
   resolveHostConsentNotice,
   resolveRequestConsent,
   resolveUngrantableConsentNotice,
+  resolveUngrantableConsentPrompt,
   UNGRANTABLE_CONSENT_TOAST,
   type HostConsentNoticeInput,
 } from '../requestConsentGate';
@@ -22,17 +23,6 @@ describe('resolveAdvertisedScopes', () => {
       // all three here.
       const signed = ['apps:storage:read'];
       expect(resolveAdvertisedScopes(DECLARED, [], signed)).toEqual(['apps:storage:read']);
-    });
-
-    it('anonymous viewer: a REQUEST_CONSENT for a stripped gated scope is refused, not dropped', () => {
-      // The seam the bug lived in: the refusal gate reads the advertised set as
-      // "already granted". With the stripped scope advertised it returned
-      // notify:false and the block's request never resolved.
-      const advertised = resolveAdvertisedScopes(DECLARED, [], ['apps:storage:read']);
-      expect(resolveUngrantableConsentNotice(['apps:storage:publish'], advertised, [])).toEqual({
-        notify: true,
-        scopes: ['apps:storage:publish'],
-      });
     });
 
     it('signed-in viewer: equals declared − missing when the manifest holds only known scopes', () => {
@@ -327,6 +317,27 @@ describe('resolveHostConsentNotice (the host-side missing-permissions backstop)'
           resolveRequestConsent(status, missingScopes)
         );
       }
+    }
+  });
+});
+
+describe('resolveUngrantableConsentPrompt (what the HOST shows; the block always gets CONSENT_UNAVAILABLE)', () => {
+  it('signed-in viewer → the "unavailable" toast, at any status', () => {
+    for (const status of ['loading', 'ready', 'timeout', 'fatal', 'no_token'] as const) {
+      expect(resolveUngrantableConsentPrompt(status, true)).toBe('toast');
+    }
+  });
+
+  it('signed-out viewer after BLOCK_READY → sign-in, never the toast', () => {
+    // Signing in is what makes an anon viewer's gated scope grantable, so
+    // "isn't available here" would be false.
+    expect(resolveUngrantableConsentPrompt('ready', false)).toBe('sign-in');
+  });
+
+  it('signed-out viewer before BLOCK_READY → nothing (no pre-handshake login popup)', () => {
+    // Same refusal REQUEST_SIGN_IN applies, via the shared `resolveRequestSignIn`.
+    for (const status of ['loading', 'timeout', 'fatal', 'no_token'] as const) {
+      expect(resolveUngrantableConsentPrompt(status, false)).toBe('none');
     }
   });
 });
