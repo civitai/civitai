@@ -1,21 +1,17 @@
 import type * as CacheHelpers from '~/server/utils/cache-helpers';
-import type * as DbClient from '~/server/db/client';
 import type { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 import { PostSort } from '~/server/common/enums';
 import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 import type { SessionUser } from '~/types/session';
 
-const { findFirst, issued, bound } = vi.hoisted(() => ({
-  findFirst: vi.fn(),
+const { issued, bound } = vi.hoisted(() => ({
   issued: [] as string[],
   bound: [] as unknown[][],
 }));
 
-vi.mock('~/server/db/client', async (importOriginal) => ({
-  ...(await importOriginal<typeof DbClient>()),
-  dbRead: { user: { findFirst } },
-}));
+const findFirst = dbMock.dbRead.user.findFirst;
 
 // Records the SQL and stops: what the query selects is the whole question here, and stopping
 // keeps the rest of `getPostsInfinite` (images, stats, cosmetics) out of the test.

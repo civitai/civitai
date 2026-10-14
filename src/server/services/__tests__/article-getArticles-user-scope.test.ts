@@ -1,32 +1,22 @@
-import type * as DbClient from '~/server/db/client';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { Prisma } from '@prisma/client';
+import { beforeEach, describe, expect, it } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 import { ArticleSort } from '~/server/common/enums';
+import { getArticles } from '~/server/services/article.service';
 import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 
-const { findUnique, issued, bound } = vi.hoisted(() => ({
-  findUnique: vi.fn(),
-  issued: [] as string[],
-  bound: [] as unknown[][],
-}));
+const issued: string[] = [];
+const bound: unknown[][] = [];
+const findUnique = dbMock.dbRead.user.findUnique;
 
 // Records the SQL and stops: what the query selects is the whole question here, and stopping
 // keeps the rest of `getArticles` (stats, images, cosmetics) out of the test.
-vi.mock('~/server/db/client', async (importOriginal) => {
-  const { Prisma } = await import('@prisma/client');
-  const queryRaw = (strings: TemplateStringsArray, ...values: unknown[]) => {
-    const sql = Prisma.sql(strings, ...values);
-    issued.push(sql.sql);
-    bound.push(sql.values);
-    throw new Error('query issued');
-  };
-  return {
-    ...(await importOriginal<typeof DbClient>()),
-    dbRead: { user: { findUnique }, $queryRaw: queryRaw },
-    dbWrite: { user: { findUnique } },
-  };
-});
-
-const { getArticles } = await import('~/server/services/article.service');
+function recordQuery(strings: TemplateStringsArray, ...values: unknown[]) {
+  const sql = Prisma.sql(strings, ...values);
+  issued.push(sql.sql);
+  bound.push(sql.values);
+  throw new Error('query issued');
+}
 
 const viewer = { id: 7, username: 'john-doe', isModerator: false };
 
@@ -46,6 +36,8 @@ async function run(input: Partial<Parameters<typeof getArticles>[0]>) {
 
 beforeEach(() => {
   findUnique.mockReset();
+  dbMock.dbWrite.user.findUnique.mockResolvedValue(null);
+  dbMock.dbRead.$queryRaw.mockImplementation(recordQuery);
   issued.length = 0;
   bound.length = 0;
 });
