@@ -33,6 +33,7 @@ const IMPLEMENTED = new Set([
   'uniqueItems',
   'items',
   'oneOf',
+  'anyOf',
   'allOf',
   'not',
   'if',
@@ -110,6 +111,8 @@ export function schemaAccepts(s: Schema, value: unknown): boolean {
     }
   }
   if (Array.isArray(s.allOf) && !(s.allOf as Schema[]).every((sub) => schemaAccepts(sub, value)))
+    return false;
+  if (Array.isArray(s.anyOf) && !(s.anyOf as Schema[]).some((sub) => schemaAccepts(sub, value)))
     return false;
   if (Array.isArray(s.oneOf)) {
     const matches = (s.oneOf as Schema[]).filter((sub) => schemaAccepts(sub, value)).length;

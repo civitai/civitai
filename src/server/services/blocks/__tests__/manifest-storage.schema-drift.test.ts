@@ -104,6 +104,8 @@ const CASES: Array<[string, unknown, boolean, boolean?]> = [
   ['dailyWritesPerAuthor 1000', shared({ dailyWritesPerAuthor: 1000 }), true],
   // `constructor` is the Object.prototype member the name pattern admits.
   ['`constructor` collection', { collections: { constructor: { visibility: 'private' } } }, true],
+  ['write none with counters', shared({ write: 'none', counters: ['plays'] }), true],
+  ['write none with marks only', shared({ write: 'none', marks: ['vote'] }), true],
   // accept, but phased
   ['kind log', priv({ kind: 'log' }), true, true],
   ['kind log with maxEntries 1', priv({ kind: 'log', maxEntries: 1 }), true, true],
@@ -183,6 +185,14 @@ const CASES: Array<[string, unknown, boolean, boolean?]> = [
   [
     'dailyWritesPerAuthor with write owner',
     shared({ write: 'owner', dailyWritesPerAuthor: 5 }),
+    false,
+  ],
+  // `write: "none"` is written only through tallies, so it must declare one (schema: anyOf).
+  ['write none with neither', shared({ write: 'none' }), false],
+  ['write none with empty lists', shared({ write: 'none', counters: [], marks: [] }), false],
+  [
+    'dailyWritesPerAuthor with write none',
+    shared({ write: 'none', counters: ['plays'], dailyWritesPerAuthor: 5 }),
     false,
   ],
   ['showAuthor string', shared({ showAuthor: 'yes' }), false],

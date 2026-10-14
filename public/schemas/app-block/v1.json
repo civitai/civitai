@@ -395,7 +395,7 @@
               "properties": {
                 "kind": {
                   "type": "string",
-                  "description": "\"docs\" (the default): documents with app-chosen or server-assigned keys that can be updated in place. \"log\": append-only entries with server-assigned keys, never updated, trimmed to `maxEntries` per key space. NOT AVAILABLE YET: the server's manifest validation refuses \"log\" until log collections ship.",
+                  "description": "\"docs\" (the default): documents with app-chosen or server-assigned keys that can be updated in place. \"log\": append-only entries with server-assigned keys, never updated, trimmed to `maxEntries` per key space. RESERVED: civitai.com refuses \"log\" until log collections are enabled, so declare \"docs\" (or omit `kind`).",
                   "enum": ["docs", "log"]
                 },
                 "visibility": {
@@ -405,8 +405,8 @@
                 },
                 "write": {
                   "type": "string",
-                  "description": "Shared collections only, and REQUIRED on them. Who may create, update and delete documents. \"own\": eligible signed-in viewers create documents, and only a document's author updates or deletes it. \"anyone\": eligible signed-in viewers may update or delete any document. \"owner\": only the app owner writes; viewers can still mark and count. \"own\" and \"anyone\" require the `apps:storage:publish` scope. NOT AVAILABLE YET: the server's manifest validation refuses \"owner\" until owner-written documents ship.",
-                  "enum": ["own", "anyone", "owner"]
+                  "description": "Shared collections only, and REQUIRED on them. Who may create, update and delete documents. \"own\": eligible signed-in viewers create documents, and only a document's author updates or deletes it. \"anyone\": eligible signed-in viewers may update or delete any document. \"none\": nobody creates, updates or deletes documents — viewers may only increment the declared `counters` and set the declared `marks`, and incrementing a counter on a document that does not exist creates an empty one authored by no viewer; a \"none\" collection must declare at least one counter or mark. \"owner\": only the app owner writes documents; viewers can still mark and count. Only \"own\" and \"anyone\" require the `apps:storage:publish` scope. RESERVED: civitai.com refuses \"owner\" until owner-written documents are enabled.",
+                  "enum": ["own", "anyone", "owner", "none"]
                 },
                 "counters": {
                   "type": "array",
@@ -453,19 +453,19 @@
                 },
                 "ttlSeconds": {
                   "type": "integer",
-                  "description": "Default lifetime of a document in this collection, in seconds, from 60 (one minute) to 31536000 (365 days). Omit for documents that do not expire. NOT AVAILABLE YET: the server's manifest validation refuses it until expiring documents ship.",
+                  "description": "RESERVED — civitai.com refuses this field until expiring documents are enabled, so do not declare it yet. Intended meaning: the default lifetime of a document in this collection, in seconds. The bounds (60 to 31536000, i.e. one minute to 365 days) are provisional and may change before the field is enabled.",
                   "minimum": 60,
                   "maximum": 31536000
                 },
                 "maxEntries": {
                   "type": "integer",
-                  "description": "Log collections (`kind` \"log\") only. The most entries kept per key space; the oldest are trimmed beyond it. From 1 to 10000; omitted means the maximum, 10000.",
+                  "description": "RESERVED — log collections are refused by civitai.com until enabled, so this field cannot be used yet. Intended meaning, for `kind` \"log\" only: the most entries kept per key space, the oldest trimmed beyond it, from 1 to 10000 (omitted means 10000). The default is provisional and may change before log collections are enabled.",
                   "minimum": 1,
                   "maximum": 10000
                 },
                 "dailyWritesPerAuthor": {
                   "type": "integer",
-                  "description": "Shared collections that viewers write (`write` \"own\" or \"anyone\") only. Sets the per-viewer daily budget for creating and updating documents in this collection in place of the platform default, from 1 to 1000. Shown to the moderator at review.",
+                  "description": "Shared collections that viewers write (`write` \"own\" or \"anyone\") only — refused with \"owner\" or \"none\". Sets the per-viewer daily budget for creating and updating documents in this collection in place of the platform default, from 1 to 1000. Shown to the moderator at review.",
                   "minimum": 1,
                   "maximum": 1000
                 }
@@ -497,12 +497,25 @@
                   "else": { "properties": { "maxEntries": false } }
                 },
                 {
-                  "$comment": "Only the app owner writes a write:\"owner\" collection, so it has no per-author budget.",
+                  "$comment": "No viewer authors documents in a write:\"owner\" or write:\"none\" collection, so it has no per-author budget.",
                   "if": {
                     "required": ["write"],
-                    "properties": { "write": { "const": "owner" } }
+                    "properties": { "write": { "enum": ["owner", "none"] } }
                   },
                   "then": { "properties": { "dailyWritesPerAuthor": false } }
+                },
+                {
+                  "$comment": "A write:\"none\" collection is written only through counters and marks, so it must declare at least one.",
+                  "if": {
+                    "required": ["write"],
+                    "properties": { "write": { "const": "none" } }
+                  },
+                  "then": {
+                    "anyOf": [
+                      { "required": ["counters"], "properties": { "counters": { "minItems": 1 } } },
+                      { "required": ["marks"], "properties": { "marks": { "minItems": 1 } } }
+                    ]
+                  }
                 }
               ]
             }

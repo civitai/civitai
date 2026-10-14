@@ -103,6 +103,26 @@ describe('manifest storage — accepted declarations', () => {
       }),
     ],
     [
+      // The counter-only shape: tallies keyed by something outside the store. No viewer
+      // authors a document, so `apps:storage` alone suffices — no publish scope, no prompt.
+      'plays: write "none" with a counter and a mark, on apps:storage alone',
+      manifest(
+        {
+          collections: {
+            plays: { visibility: 'shared', write: 'none', counters: ['plays'], marks: ['vote'] },
+          },
+        },
+        [STORAGE]
+      ),
+    ],
+    [
+      'write "none" with only a mark',
+      manifest(
+        { collections: { likes: { visibility: 'shared', write: 'none', marks: ['like'] } } },
+        [STORAGE]
+      ),
+    ],
+    [
       'plays: shared counters that any eligible viewer may write',
       manifest(
         { collections: { plays: { visibility: 'shared', write: 'anyone', counters: ['plays'] } } },
@@ -168,12 +188,12 @@ describe('manifest storage — shape rules', () => {
     [
       'a shared collection with no write policy',
       manifest({ collections: { requests: { visibility: 'shared' } } }, [STORAGE]),
-      'storage.collections.requests.write is required on a shared collection and must be one of own, anyone, owner',
+      'storage.collections.requests.write is required on a shared collection and must be one of own, anyone, owner, none',
     ],
     [
       'an unknown write policy',
       withRequests({ write: 'everyone' }),
-      'storage.collections.requests.write must be one of own, anyone, owner',
+      'storage.collections.requests.write must be one of own, anyone, owner, none',
     ],
     [
       'no visibility',
@@ -290,6 +310,38 @@ describe('manifest storage — shape rules', () => {
       withPrefs({ indexes: ['status'] }),
       'storage.collections.prefs.indexes must be an object mapping a field path to its type',
     ],
+    [
+      'write "none" with no counters or marks',
+      manifest({ collections: { plays: { visibility: 'shared', write: 'none' } } }, [STORAGE]),
+      'storage.collections.plays has write "none" but declares no counters or marks, so nothing could ever be written to it — declare at least one counter or mark, or choose another write policy',
+    ],
+    [
+      'write "none" with empty counter and mark lists',
+      manifest(
+        {
+          collections: { plays: { visibility: 'shared', write: 'none', counters: [], marks: [] } },
+        },
+        [STORAGE]
+      ),
+      'storage.collections.plays has write "none" but declares no counters or marks, so nothing could ever be written to it — declare at least one counter or mark, or choose another write policy',
+    ],
+    [
+      'dailyWritesPerAuthor on a write "none" collection',
+      manifest(
+        {
+          collections: {
+            plays: {
+              visibility: 'shared',
+              write: 'none',
+              counters: ['plays'],
+              dailyWritesPerAuthor: 10,
+            },
+          },
+        },
+        [STORAGE]
+      ),
+      'storage.collections.plays.dailyWritesPerAuthor does not apply to write "none" — viewers do not create or edit documents in that collection',
+    ],
     ['storage that is not an object', manifest(['prefs'], [STORAGE]), 'storage must be an object'],
   ])('refuses %s', (_label, m, message) => {
     expect(validate(isolated(m as Record<string, unknown>))).toEqual(refused(message));
@@ -344,7 +396,7 @@ describe('manifest storage — features not available yet', () => {
         { collections: { plays: { visibility: 'shared', write: 'owner', counters: ['plays'] } } },
         [STORAGE]
       ),
-      'storage.collections.plays.write "owner" is not available yet — owner-written documents arrive in a later phase of App Storage; use "own" or "anyone" for now',
+      'storage.collections.plays.write "owner" is not available yet — owner-written documents arrive in a later phase of App Storage; use "own", "anyone" or "none" for now',
     ],
   ])('refuses %s', (_label, m, message) => {
     expect(validate(isolated(m as Record<string, unknown>))).toEqual(refused(message));
@@ -427,6 +479,48 @@ describe('manifest storage — scope rules', () => {
     ).toEqual(
       refused(
         'scopes includes apps:storage:publish but no storage collection is shared with write "own" or "anyone" — remove the scope, or declare the collection it is for'
+      )
+    );
+  });
+
+  it('apps:storage:publish with only write "none" and private collections is refused', () => {
+    expect(
+      validate(
+        manifest(
+          {
+            collections: {
+              prefs: PREFS,
+              plays: { visibility: 'shared', write: 'none', counters: ['plays'] },
+            },
+          },
+          [STORAGE, PUBLISH],
+          { scopeJustifications: JUSTIFIED }
+        )
+      )
+    ).toEqual(
+      refused(
+        'scopes includes apps:storage:publish but no storage collection is shared with write "own" or "anyone" — remove the scope, or declare the collection it is for'
+      )
+    );
+  });
+
+  // Mixed: only the viewer-authored collection is named as needing the publish scope.
+  it('names only the own/anyone collections when publish is missing', () => {
+    expect(
+      validate(
+        manifest(
+          {
+            collections: {
+              plays: { visibility: 'shared', write: 'none', counters: ['plays'] },
+              requests: REQUESTS,
+            },
+          },
+          [STORAGE]
+        )
+      )
+    ).toEqual(
+      refused(
+        'storage collection requests lets viewers write documents other users read, which requires the apps:storage:publish scope — add it to scopes with a scopeJustifications entry'
       )
     );
   });

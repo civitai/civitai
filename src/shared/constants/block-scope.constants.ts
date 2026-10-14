@@ -25,7 +25,8 @@
  */
 
 import { TokenScope } from './token-scope.constants';
-// Dependency-free (imports nothing), so this adds no edge to the client graph.
+// Client-safe and import-free apart from the equally import-free `manifest-bounded-parse`,
+// so this adds no server or third-party edge to the client graph.
 import { APP_STORAGE_BASE_SCOPE } from './block-storage.constants';
 // 🔴 `import type`, NOT a value import, and the distinction is load-bearing for this
 // module. `app-capabilities.constants` itself imports from `~/server/services/blocks/…`,

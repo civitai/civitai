@@ -21,6 +21,8 @@
  * so. Turning one on later is a one-line change to that object and no schema change.
  */
 
+import { boundedManifestParse } from './manifest-bounded-parse';
+
 /** The scope every app that declares a collection must request. Consent-exempt. */
 export const APP_STORAGE_BASE_SCOPE = 'apps:storage';
 /**
@@ -78,7 +80,18 @@ export const APP_STORAGE_KINDS = ['docs', 'log'] as const;
 export type AppStorageKind = (typeof APP_STORAGE_KINDS)[number];
 export const APP_STORAGE_VISIBILITIES = ['private', 'shared'] as const;
 export type AppStorageVisibility = (typeof APP_STORAGE_VISIBILITIES)[number];
-export const APP_STORAGE_WRITE_POLICIES = ['own', 'anyone', 'owner'] as const;
+/**
+ * Who may create, update and delete documents in a SHARED collection:
+ *   - `own`    — eligible viewers create; only a document's author updates or deletes it.
+ *   - `anyone` — eligible viewers may update or delete any document.
+ *   - `owner`  — only the app owner writes documents (later phase; see the feature switch).
+ *   - `none`   — nobody creates, updates or deletes documents. Viewers may only increment
+ *                the declared counters and set the declared marks; incrementing a counter
+ *                on a document that does not exist creates an empty one authored by nobody.
+ *                For tallies keyed by something outside the store (plays per item, votes
+ *                per model) — no viewer publishes anything, so no publish scope or prompt.
+ */
+export const APP_STORAGE_WRITE_POLICIES = ['own', 'anyone', 'owner', 'none'] as const;
 export type AppStorageWritePolicy = (typeof APP_STORAGE_WRITE_POLICIES)[number];
 
 /** `ttlSeconds` bounds: one minute to 365 days. */
@@ -345,7 +358,11 @@ function parseCollection(
     write = raw.write as AppStorageWritePolicy;
     if (write === 'owner' && !features.ownerWrites) {
       errors.push(
-        notYet(`${at}.write "owner"`, 'owner-written documents', 'use "own" or "anyone" for now')
+        notYet(
+          `${at}.write "owner"`,
+          'owner-written documents',
+          'use "own", "anyone" or "none" for now'
+        )
       );
     }
   }
@@ -357,6 +374,7 @@ function parseCollection(
   // document that many viewers increment, and on a private collection only one viewer can
   // ever touch the document, so a counter there is a plain field of `data`. Refusing it
   // keeps one name from meaning two things; relaxing it later breaks no manifest.
+  const beforeTallies = errors.length;
   let counters: string[] = [];
   if (raw.counters !== undefined) {
     if (!shared) sharedOnly('counters');
@@ -376,6 +394,19 @@ function parseCollection(
     else
       marks =
         parseTallyNames(`${at}.marks`, raw.marks, APP_STORAGE_MAX_MARKS, 'mark', errors) ?? [];
+  }
+  // CROSS-FIELD: a `write: "none"` collection is written ONLY through its counters and
+  // marks, so with neither it could never hold anything. Skipped when the tally lists are
+  // themselves invalid, which already has its own error.
+  if (
+    write === 'none' &&
+    counters.length === 0 &&
+    marks.length === 0 &&
+    errors.length === beforeTallies
+  ) {
+    errors.push(
+      `${at} has write "none" but declares no counters or marks, so nothing could ever be written to it — declare at least one counter or mark, or choose another write policy`
+    );
   }
   // CROSS-FIELD: one name may not be both a counter and a mark. The two are separate
   // tallies, and `sort=counter:<n>` / `sort=mark:<n>` would then name two different
@@ -426,6 +457,10 @@ function parseCollection(
     } else if (write === 'owner') {
       errors.push(
         `${at}.dailyWritesPerAuthor does not apply to write "owner" — only the app owner writes that collection`
+      );
+    } else if (write === 'none') {
+      errors.push(
+        `${at}.dailyWritesPerAuthor does not apply to write "none" — viewers do not create or edit documents in that collection`
       );
     } else if (!isIntegerIn(raw.dailyWritesPerAuthor, 1, APP_STORAGE_MAX_DAILY_WRITES_PER_AUTHOR)) {
       errors.push(
@@ -516,25 +551,27 @@ export function parseManifestStorage(
   manifest: unknown,
   features: Readonly<Record<AppStorageFeature, boolean>> = APP_STORAGE_ENABLED_FEATURES
 ): ParsedManifestStorage {
-  try {
-    const parsed = parse(manifest, features);
-    if (parsed.errors.length === 0) return parsed;
-    const capped = parsed.errors.slice(0, APP_STORAGE_MAX_ERRORS);
-    const rest = parsed.errors.length - capped.length;
-    if (rest > 0) capped.push(`…and ${rest} more storage errors`);
-    return { declared: parsed.declared, collections: new Map(), errors: capped };
-  } catch {
-    // Reachable only via a throwing getter or Proxy; JSON input cannot get here.
-    return { declared: true, collections: new Map(), errors: ['storage could not be read'] };
-  }
+  return boundedManifestParse<ParsedManifestStorage>({
+    noun: 'storage',
+    maxErrors: APP_STORAGE_MAX_ERRORS,
+    parse: () => parse(manifest, features),
+    // A throw can only come from reading a present `storage` value, so it was declared.
+    invalid: (errors, parsed) => ({
+      declared: parsed?.declared ?? true,
+      collections: new Map(),
+      errors,
+    }),
+  });
 }
 
 /** Does this declared collection let viewers write documents other viewers read? */
 export function collectionNeedsPublishScope(collection: DeclaredStorageCollection): boolean {
+  // An allowlist of the policies under which a VIEWER authors documents, not "anything but
+  // owner": a new policy must be classified here deliberately, and `none` (counters and
+  // marks only) must never require the consent-gated publish scope.
   return (
     collection.visibility === 'shared' &&
-    collection.write !== undefined &&
-    collection.write !== 'owner'
+    (collection.write === 'own' || collection.write === 'anyone')
   );
 }
 
@@ -545,8 +582,9 @@ export function collectionNeedsPublishScope(collection: DeclaredStorageCollectio
  * problem.
  *
  * - Declaring any collection requires {@link APP_STORAGE_BASE_SCOPE}.
- * - Declaring a shared collection whose `write` is not `owner` requires
- *   {@link APP_STORAGE_PUBLISH_SCOPE}.
+ * - Declaring a shared collection whose `write` is `own` or `anyone` requires
+ *   {@link APP_STORAGE_PUBLISH_SCOPE}. `owner` and `none` do not: no viewer authors a
+ *   document in them (marks and counters are `apps:storage`).
  * - REFUSED, not warned: requesting either scope with nothing in `storage` for it to
  *   reach. The validator has no warning channel, and a permission that can reach nothing
  *   is over-asking at review and, for the publish scope, a consent prompt about nothing.
