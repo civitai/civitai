@@ -14,7 +14,8 @@ import { isPlacementBlocked } from '~/server/services/placement-moderation.servi
 import { enforceBlockedBrowsingTags } from '~/server/services/blocked-browsing-tags.service';
 import { placementPriceRanges } from '~/server/services/placement.service';
 import { raiseNsfwLevelText } from '@civitai/shared/rated-entity-sql';
-import { loadTextScanTextHash } from '~/server/services/text-scan/actions/appeal-text-hash';
+import { storylineTextScanSubject } from '~/server/services/text-scan/profiles/storyline.profile';
+import { textScanTextHash } from '~/server/services/text-scan/prompt';
 import { scanEntityInBackground } from '~/server/services/text-scan/submit';
 import { logToAxiom } from '~/server/logging/client';
 import {
@@ -606,7 +607,7 @@ export async function moderateStorylineTitle({
     throw throwBadRequestError('Invalid rating');
   const storyline = await dbWrite.storyline.findUnique({
     where: { id },
-    select: { tosViolationByScan: true, title: true },
+    select: { tosViolationByScan: true, title: true, userId: true },
   });
   if (!storyline) throw throwNotFoundError('Storyline not found');
   if (liftScanTakedown && !storyline.tosViolationByScan)
@@ -614,11 +615,18 @@ export async function moderateStorylineTitle({
   if (liftScanTakedown && storyline.title !== liftScanTakedown.reviewedTitle)
     throw throwBadRequestError('The title has changed since it was reviewed');
 
+  // The hash of the reviewed text itself, not a fresh read: the title could change and change
+  // back between a read and the update below, which only checks the text at the end.
   const lift = liftScanTakedown
     ? {
         tosViolation: false,
         tosViolationByScan: false,
-        scanFlagLiftedTextHash: await loadTextScanTextHash('Storyline', id),
+        scanFlagLiftedTextHash: textScanTextHash(
+          storylineTextScanSubject({
+            userId: storyline.userId,
+            title: liftScanTakedown.reviewedTitle,
+          })
+        ),
       }
     : {};
   // Conditional on the flag still being the scan's and the title the reviewed one, so neither a

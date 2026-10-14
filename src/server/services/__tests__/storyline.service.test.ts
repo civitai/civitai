@@ -2,13 +2,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Prisma } from '@prisma/client';
 import type * as BlocklistService from '~/server/services/blocklist.service';
 import type * as PlacementService from '~/server/services/placement.service';
-import type * as AppealTextHash from '~/server/services/text-scan/actions/appeal-text-hash';
 import type * as TextScanSubmit from '~/server/services/text-scan/submit';
 import type * as UserPreferencesService from '~/server/services/user-preferences.service';
 import type * as CacheHelpers from '~/server/utils/cache-helpers';
 import { dbMock, resetSharedMocks, setEnv } from '~/__tests__/mocks';
 import { NsfwLevel } from '~/server/common/enums';
 import { raiseNsfwLevelText } from '@civitai/shared/rated-entity-sql';
+import { storylineTextScanSubject } from '~/server/services/text-scan/profiles/storyline.profile';
+import { textScanTextHash } from '~/server/services/text-scan/prompt';
 
 const {
   enforceBlockedBrowsingTags,
@@ -50,17 +51,10 @@ vi.mock('~/server/services/blocklist.service', async (importOriginal) => ({
   ...(await importOriginal<typeof BlocklistService>()),
   throwOnBlockedUserContent: vi.fn(),
 }));
-const { scanEntityInBackground, loadTextScanTextHash } = vi.hoisted(() => ({
-  scanEntityInBackground: vi.fn(),
-  loadTextScanTextHash: vi.fn(),
-}));
+const { scanEntityInBackground } = vi.hoisted(() => ({ scanEntityInBackground: vi.fn() }));
 vi.mock('~/server/services/text-scan/submit', async (importOriginal) => ({
   ...(await importOriginal<typeof TextScanSubmit>()),
   scanEntityInBackground,
-}));
-vi.mock('~/server/services/text-scan/actions/appeal-text-hash', async (importOriginal) => ({
-  ...(await importOriginal<typeof AppealTextHash>()),
-  loadTextScanTextHash,
 }));
 
 import {
@@ -158,7 +152,6 @@ beforeEach(() => {
   enforceBlockedBrowsingTags.mockResolvedValue({ emptyResult: false });
   setFetchThroughCache.mockReset();
   scanEntityInBackground.mockReset();
-  loadTextScanTextHash.mockReset();
   blockedPairs = [];
   answerRaw(w);
 });
@@ -3254,15 +3247,21 @@ describe('title moderation', () => {
   describe('moderateStorylineTitle', () => {
     const lift = { reviewedTitle: 'Bad' };
     beforeEach(() => {
-      w.storyline.findUnique.mockResolvedValue({ tosViolationByScan: true, title: 'Bad' } as never);
+      w.storyline.findUnique.mockResolvedValue({
+        tosViolationByScan: true,
+        title: 'Bad',
+        userId: OWNER,
+      } as never);
       w.storyline.updateMany.mockResolvedValue({ count: 1 } as never);
       w.storyline.findUniqueOrThrow.mockResolvedValue({ id: 10 } as never);
-      loadTextScanTextHash.mockResolvedValue('hash-now');
     });
 
-    it("lifts the scan's takedown and records the text it was lifted for", async () => {
+    // Any later read of the title answers 'Worse' here: the hash must be of the text reviewed,
+    // which the update's WHERE re-checks, not of whatever a second read returns.
+    it("lifts the scan's takedown and records the hash of the title reviewed", async () => {
+      w.storyline.findMany.mockResolvedValue([{ id: 10, userId: OWNER, title: 'Worse' }] as never);
       await moderateStorylineTitle({ id: 10, liftScanTakedown: lift });
-      expect(loadTextScanTextHash).toHaveBeenCalledWith('Storyline', 10);
+      const reviewed = textScanTextHash(storylineTextScanSubject({ userId: OWNER, title: 'Bad' }));
       expect(w.storyline.updateMany.mock.calls).toEqual([
         [
           {
@@ -3271,7 +3270,7 @@ describe('title moderation', () => {
               moderatorNsfwLevel: undefined,
               tosViolation: false,
               tosViolationByScan: false,
-              scanFlagLiftedTextHash: 'hash-now',
+              scanFlagLiftedTextHash: reviewed,
             },
           },
         ],
@@ -3317,7 +3316,6 @@ describe('title moderation', () => {
       expect(w.storyline.updateMany.mock.calls).toEqual([
         [{ where: { id: 10 }, data: { moderatorNsfwLevel: level } }],
       ]);
-      expect(loadTextScanTextHash).not.toHaveBeenCalled();
     });
 
     it('refuses a rating that is not one level', async () => {

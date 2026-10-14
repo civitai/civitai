@@ -8,10 +8,7 @@ import { getTextScanProfile } from '~/server/services/text-scan/profiles';
 import '~/server/services/text-scan/profiles/index';
 import { textScanTextHash } from '~/server/services/text-scan/prompt';
 
-export async function loadTextScanTextHash(
-  entityType: 'Model' | 'Bounty' | 'Storyline',
-  entityId: number
-) {
+export async function loadTextScanTextHash(entityType: 'Model' | 'Bounty', entityId: number) {
   const subject = (await getTextScanProfile(entityType)?.load([entityId]))?.get(entityId);
   return subject ? textScanTextHash(subject) : null;
 }

@@ -29,11 +29,11 @@ const { getModerationAdapter } = await import('~/server/services/moderation-adap
 const { isFlipt } = await import('~/server/flipt/client');
 const { createNotification } = await import('~/server/services/notification.service');
 const { submitWorkflow } = await import('@civitai/client');
-const { getActiveTextScanPrompts, getTextScanConfig } = await import(
+const { getActiveTextScanPrompts, getTextScanConfig, textScanTextHash } = await import(
   '~/server/services/text-scan/prompt'
 );
-const { loadTextScanTextHash } = await import(
-  '~/server/services/text-scan/actions/appeal-text-hash'
+const { storylineTextScanSubject } = await import(
+  '~/server/services/text-scan/profiles/storyline.profile'
 );
 
 const PROMPTS = Object.fromEntries(
@@ -140,9 +140,9 @@ describe('Storyline rollout', () => {
     expect(w.storyline.findMany).toHaveBeenCalledTimes(1);
   });
 
-  // A moderator's lift records loadTextScanTextHash; the verdict compares the textHash the scan
-  // submitted. If the two ever hashed different text, a redelivered verdict would take down a
-  // title a moderator had cleared.
+  // A moderator's lift records the hash of storylineTextScanSubject(reviewed title); the verdict
+  // compares the textHash the scan submitted. If the two ever hashed different text, a
+  // redelivered verdict would take down a title a moderator had cleared.
   it('submits the same text hash a moderator lift records', async () => {
     rollout('{"shadow":100,"active":100}');
     w.storyline.findMany.mockResolvedValue([
@@ -159,7 +159,9 @@ describe('Storyline rollout', () => {
       vi.mocked(submitWorkflow).mock.calls[0][0].body!.metadata as { textHash: string }
     ).textHash;
     expect(submitted).toEqual(expect.any(String));
-    expect(await loadTextScanTextHash('Storyline', ID)).toBe(submitted);
+    expect(textScanTextHash(storylineTextScanSubject({ userId: OWNER, title: 'Dark Road' }))).toBe(
+      submitted
+    );
   });
 
   it.each([
