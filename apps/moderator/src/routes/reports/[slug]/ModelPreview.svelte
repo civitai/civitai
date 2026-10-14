@@ -32,14 +32,17 @@
       : null
   );
 
-  // Images only: `Lightbox` renders through `EdgeImage`, which cannot play a video. Videos play inline.
-  // The parent keys this component on the report, so an open frame cannot carry over to another model.
+  // Every tile opens the large view, images and videos alike — a video is watched there, with
+  // controls, not in a 6rem square. The parent keys this component on the report, so an open frame
+  // cannot carry over to another model.
   let openIndex = $state<number | null>(null);
 
   const lightboxItems = (p: ModelPreview): LightboxItem[] =>
-    p.images
-      .filter((i) => i.type === 'image')
-      .map((i) => ({ id: i.url, caption: `Image #${i.id}${i.blocked ? ' · already removed' : ''}` }));
+    p.images.map((i) => ({
+      id: i.url,
+      type: i.type,
+      caption: `${i.type === 'video' ? 'Video' : 'Image'} #${i.id}${i.blocked ? ' · already removed' : ''}`,
+    }));
 
   // Clean files say nothing: a column of "Success" badges would bury the one that is not.
   const scanState = (f: { pickleScan: string; virusScan: string }) => {
@@ -82,38 +85,27 @@
 
       {#if p.images.length}
         <div class="grid grid-cols-3 gap-1.5 2xl:grid-cols-4">
-          {#each p.images as image (image.id)}
-            {@const lightboxIndex = items.findIndex((i) => i.id === image.url)}
+          {#each p.images as image, i (image.id)}
             <div class="relative aspect-square overflow-hidden rounded-md border bg-muted/40">
-              <!-- `anim={false}` on every tile. On a video it means `EdgeVideo` never plays by itself:
-                   poster and play icon, nothing fetched until hover or click, no loop. The default
-                   autoplays what is in view and loops it, and a grid of those decoded every video at once
-                   and again on each loop — mods reported the page freezing. On an image it is the still
-                   frame, since an animated WebP or GIF costs the same. -->
-              {#if image.type === 'image'}
-                <button
-                  type="button"
-                  class="h-full w-full"
-                  aria-label={`Enlarge image #${image.id}`}
-                  onclick={() => (openIndex = lightboxIndex)}
-                >
-                  <EdgeMedia
-                    src={image.url}
-                    type="image"
-                    width={320}
-                    anim={false}
-                    class="h-full w-full object-cover"
-                  />
-                </button>
-              {:else}
+              <!-- `anim={false}`: a still frame. On a video `EdgeVideo` then never plays by itself —
+                   poster and play icon, nothing fetched until hovered, no loop — and leaves the click to
+                   this button. Its default autoplays what is in view and loops it, and a grid of those
+                   decoded every video at once and again on each loop: mods reported the page freezing.
+                   An animated WebP or GIF costs the same, so images get the still frame too. -->
+              <button
+                type="button"
+                class="h-full w-full"
+                aria-label={`Open ${image.type} #${image.id}`}
+                onclick={() => (openIndex = i)}
+              >
                 <EdgeMedia
                   src={image.url}
-                  type="video"
+                  type={image.type}
                   width={320}
                   anim={false}
                   class="h-full w-full object-cover"
                 />
-              {/if}
+              </button>
               {#if image.blocked}
                 <span class="absolute inset-x-0 bottom-0 bg-black/70 px-1 text-center text-[10px]">
                   Removed

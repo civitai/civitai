@@ -41,7 +41,9 @@
      * while in view, pause out of it, loop.
      *
      * FALSE: never plays by itself. Shows its poster with a play icon, fetches nothing until asked
-     * (`preload="none"`), plays on click or after a second's hover, and does not loop. For a GRID of
+     * (`preload="none"`), plays after a second's hover (`hoverPlay`), and does not loop. A click is
+     * NOT handled here: as in the main app, without `controls` it bubbles to whatever wraps the video
+     * (a button opening a lightbox, a link); pass `controls` for the browser's own player. For a GRID of
      * videos: autoplaying a dozen at once decoded them all together, and every loop started the decode
      * again — the model reports preview froze the page that way.
      *
@@ -102,15 +104,6 @@
     clearTimeout(hoverTimer);
     video?.pause();
   };
-  const toggle = (e: MouseEvent) => {
-    // A video inside a link or a clickable card must not also trigger it.
-    e.preventDefault();
-    e.stopPropagation();
-    clearTimeout(hoverTimer);
-    if (!video) return;
-    if (video.paused) void video.play().catch(() => {});
-    else video.pause();
-  };
   $effect(() => () => clearTimeout(hoverTimer));
 </script>
 
@@ -147,7 +140,6 @@
       onended={() => (playing = false)}
       onmouseenter={onEnter}
       onmouseleave={onLeave}
-      onclick={toggle}
       {...rest}
     >
       <source src={urls.webm} type="video/webm" />
