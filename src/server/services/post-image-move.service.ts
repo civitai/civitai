@@ -1,7 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { uniq } from 'lodash-es';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
-import { dbWrite } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
 import { preventReplicationLag } from '~/server/db/db-lag-helpers';
 import { logToAxiom, safeError } from '~/server/logging/client';
 import { postMetrics } from '~/server/metrics';
@@ -170,7 +170,7 @@ export async function getImageMoveTargets({
   fromPostId: number;
   userId: number;
 }): Promise<ImageMoveTarget[]> {
-  return dbWrite.$queryRaw<ImageMoveTarget[]>`
+  return dbRead.$queryRaw<ImageMoveTarget[]>`
     SELECT p.id, p.title, p."publishedAt", img."imageCount"::int AS "imageCount", img."coverUrl"
     FROM "Post" src
     JOIN "Post" p ON p."userId" = src."userId"
