@@ -27,10 +27,12 @@ export const articleModerationAdapter: ModerationAdapter = {
     );
   },
 
+  // Only the retry cron calls submit.
   submit: ({ entityId, content }) =>
     submitTextModerationOrScan({
       entityType: 'Article',
       entityId,
+      fromRetry: true,
       xguard: () =>
         submitTextModeration({
           entityType: 'Article',

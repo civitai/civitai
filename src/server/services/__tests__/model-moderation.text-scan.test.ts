@@ -66,7 +66,7 @@ describe('modelModerationAdapter — text scan', () => {
     expect(await modelModerationAdapter.submit({ entityId: 5, content: 'x' })).toBeUndefined();
     expect(submitTextModeration).not.toHaveBeenCalled();
     expect(submitTextModerationOrScan).toHaveBeenCalledWith(
-      expect.objectContaining({ entityType: 'Model', entityId: 5 })
+      expect.objectContaining({ entityType: 'Model', entityId: 5, fromRetry: true })
     );
   });
 

@@ -2,6 +2,7 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { createJob } from '~/server/jobs/job';
 import { logToAxiom } from '~/server/logging/client';
 import { getModerationAdapter } from '~/server/services/moderation-adapters';
+import { TEXT_SCAN_ENTITY_GONE } from '~/server/services/text-scan/route';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { EntityModerationStatus } from '~/shared/utils/prisma/enums';
 import { decreaseDate } from '~/utils/date-helpers';
@@ -147,7 +148,10 @@ export const retryFailedTextModeration = createJob(
 
         try {
           const workflow = await adapter.submit({ entityId: item.entityId, content });
-          if (workflow?.id) retried++;
+          if (workflow === TEXT_SCAN_ENTITY_GONE) {
+            missingRowIds.push(item.id);
+            missing++;
+          } else if (workflow?.id) retried++;
           else errors++;
         } catch (error) {
           errors++;
@@ -164,7 +168,7 @@ export const retryFailedTextModeration = createJob(
       await limitConcurrency(submissions, SUBMIT_CONCURRENCY);
     }
 
-    // Clean up rows whose underlying entity no longer exists
+    // Clean up rows whose entity no longer exists or is no longer scannable
     if (missingRowIds.length) {
       await dbWrite.entityModeration.deleteMany({ where: { id: { in: missingRowIds } } });
     }

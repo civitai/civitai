@@ -184,7 +184,7 @@ async function recordForensics({
 export const modelModerationAdapter: ModerationAdapter = {
   resolveContent: async (ids) => {
     const rows = await dbRead.model.findMany({
-      where: { id: { in: ids } },
+      where: { id: { in: ids }, deletedAt: null },
       select: { id: true, name: true, description: true },
     });
     return new Map(rows.map((r) => [r.id, buildModelModerationText(r)]));
@@ -203,6 +203,7 @@ export const modelModerationAdapter: ModerationAdapter = {
     submitTextModerationOrScan({
       entityType: MODEL_MODERATION_ENTITY_TYPE,
       entityId,
+      fromRetry: true,
       // Gated as well as `isEnabled`: a caller that reaches the hook directly must not be
       // able to request an XGuard scan the flag has turned off. Undefined is contractual
       // here — the same shape as a submit the helper itself declined.

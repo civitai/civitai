@@ -20,6 +20,7 @@ const {
   textScanWebSearchAdapters,
   TEXT_SCAN_RETRY_CONTENT,
 } = await import('~/server/services/text-scan/adapter');
+const { TEXT_SCAN_ENTITY_GONE } = await import('~/server/services/text-scan/route');
 const { registerTextScanProfile } = await import('~/server/services/text-scan/profiles');
 const { scanEntity } = await import('~/server/services/text-scan/submit');
 const { getTextScanMode, getTextScanWebSearchMode } = await import(
@@ -66,6 +67,14 @@ describe('createTextScanAdapter', () => {
     expect(await adapter.submit({ entityId: 1, content: '' })).toBeNull();
     vi.mocked(scanEntity).mockResolvedValue({ status: 'failed' });
     expect(await adapter.submit({ entityId: 1, content: '' })).toBeNull();
+  });
+
+  it('returns the gone marker when the entity can no longer be loaded', async () => {
+    vi.mocked(scanEntity).mockResolvedValue({ status: 'skipped', reason: 'missing' });
+    expect(await adapter.submit({ entityId: 1, content: '' })).toBe(TEXT_SCAN_ENTITY_GONE);
+    expect(
+      await textScanWebSearchAdapters()['Model:search'].submit({ entityId: 1, content: '' })
+    ).toBe(TEXT_SCAN_ENTITY_GONE);
   });
 
   it.each([

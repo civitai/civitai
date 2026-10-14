@@ -8,6 +8,7 @@ import {
 } from '~/server/services/text-scan/mode';
 import { getTextScanProfile } from '~/server/services/text-scan/profiles';
 import { subjectTextLength } from '~/server/services/text-scan/prompt';
+import { toSubmittedWorkflow } from '~/server/services/text-scan/route';
 import { scanEntity } from '~/server/services/text-scan/submit';
 import type { TextScanEntityType } from '~/server/services/text-scan/types';
 
@@ -15,8 +16,7 @@ export const TEXT_SCAN_RETRY_CONTENT = 'text-scan';
 
 // Only the retry cron calls an adapter's submit, and it has already bumped the row it resubmits.
 export async function submitViaTextScan(entityType: TextScanEntityType, entityId: number) {
-  const result = await scanEntity({ entityType, entityId, fromRetry: true });
-  return result.status === 'submitted' ? { id: result.workflowId } : null;
+  return toSubmittedWorkflow(await scanEntity({ entityType, entityId, fromRetry: true }));
 }
 
 export function createTextScanShadowAdapter(entityType: TextScanEntityType): ModerationAdapter {
@@ -43,15 +43,10 @@ export function textScanWebSearchAdapters() {
         textScanEmEntityType(entityType, mode, 'web-search'),
         {
           ...createTextScanAdapter(entityType, {}),
-          submit: async ({ entityId }) => {
-            const result = await scanEntity({
-              entityType,
-              entityId,
-              fromRetry: true,
-              pass: 'web-search',
-            });
-            return result.status === 'submitted' ? { id: result.workflowId } : null;
-          },
+          submit: async ({ entityId }) =>
+            toSubmittedWorkflow(
+              await scanEntity({ entityType, entityId, fromRetry: true, pass: 'web-search' })
+            ),
           isEnabled: async ({ entityId }) =>
             (await getTextScanWebSearchMode(entityType, entityId)) === mode,
         },
