@@ -13,15 +13,19 @@ export type PlacementSurface =
   | 'modelPromotion'
   | 'storyline';
 
-/** Where a space can be configured. Resolution runs image -> post -> account. */
-export type PlacementSpaceEntity = 'image' | 'post' | 'user';
+/**
+ * Where a space can be configured. Resolution runs image -> post -> account,
+ * and storyline -> account for a storyline continuation.
+ */
+export type PlacementSpaceEntity = 'image' | 'post' | 'user' | 'storyline';
 
 /**
  * What a placement sits on. Not the same set as `PlacementSpaceEntity`: a
  * gallery promotion sits on a model, but its space is configured on the
- * owner's account only.
+ * owner's account only. A storyline continuation sits on the chapter post it
+ * continues.
  */
-export type PlacementTargetType = 'image' | 'model';
+export type PlacementTargetType = 'image' | 'model' | 'post';
 
 export type PlacementSpaceMode =
   /** Nothing may be placed. */
@@ -321,10 +325,9 @@ export const PLACEMENT_SURFACES = {
    */
   storyline: {
     label: 'storylines',
-    // Placeholder until `post` is a placement target: a continuation sits on the
-    // chapter post it continues. Nothing creates a storyline placement until
-    // then, and `PlacementTargetType` does not have `post` yet.
-    targets: ['image'],
+    // The chapter post being continued, never one of its images: a chapter is
+    // a post, and forks happen only at its end.
+    targets: ['post'],
     defaultMode: 'review',
     // Free to continue unless the creator chooses to charge. Same decision as
     // the mode, per the sticker note: the default is reachable because 0 is a
@@ -550,6 +553,7 @@ export type PlacementSpaceSetting = {
 export function resolvePlacementSpace(
   surface: PlacementSurface,
   levels: {
+    storyline?: PlacementSpaceSetting;
     image?: PlacementSpaceSetting;
     post?: PlacementSpaceSetting;
     user?: PlacementSpaceSetting;
@@ -559,7 +563,10 @@ export function resolvePlacementSpace(
   // nullable here for a real reason — an unpriced space must not be charged for
   // — where an unset slot count has an unambiguous answer.
 ): PlacementSpaceSetting & { freeSlots: number } {
-  const ordered = [levels.image, levels.post, levels.user];
+  // A storyline level only ever arrives without image or post levels beside it
+  // (its target resolves to the storyline and the creator's account), so its
+  // place at the front decides nothing between them; it outranks the account.
+  const ordered = [levels.storyline, levels.image, levels.post, levels.user];
   return {
     mode:
       ordered.find((level) => level?.mode !== undefined)?.mode ??

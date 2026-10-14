@@ -10,6 +10,7 @@ import type {
   PlacementSurface,
   PlacementTargetType,
 } from '~/shared/utils/placement';
+import { STORYLINE_REFUSALS } from '~/shared/utils/storyline-placement';
 import {
   effectiveFreeSlots,
   declineFeeAmount,
@@ -60,11 +61,56 @@ async function resolveModelTarget(modelId: number) {
   return { ownerId: model.userId, postId: null, ownerUsername: model.user?.username ?? null };
 }
 
-const resolveTarget = (targetType: PlacementTargetType, targetId: number) =>
-  targetType === 'model' ? resolveModelTarget(targetId) : resolveImageTarget(targetId);
+/**
+ * A post target is a storyline chapter: the only surface that takes posts is
+ * `storyline`, and a continuation sits on the chapter post it continues.
+ *
+ * 🔴 **The owner is the storyline's creator, not the chapter post's author.**
+ * Chapters can be written by collaborators, and a continuation of one still
+ * goes to the storyline creator's queue and is priced by their space and
+ * their cap. Taking the post's author would hand a collaborator someone else's
+ * review queue and earnings.
+ *
+ * Its space cascades storyline -> the creator's account -> surface default,
+ * with no post or image level.
+ */
+async function resolveChapterTarget(postId: number) {
+  const chapter = await dbWrite.storylineChapter.findUnique({
+    where: { postId },
+    select: {
+      storyline: {
+        select: { id: true, userId: true, user: { select: { username: true } } },
+      },
+    },
+  });
+  if (!chapter) throw throwBadRequestError(STORYLINE_REFUSALS.notAChapter);
+
+  return {
+    ownerId: chapter.storyline.userId,
+    postId: null,
+    storylineId: chapter.storyline.id,
+    ownerUsername: chapter.storyline.user?.username ?? null,
+  };
+}
+
+const resolveTarget = (
+  targetType: PlacementTargetType,
+  targetId: number
+): Promise<{
+  ownerId: number;
+  postId: number | null;
+  storylineId?: number;
+  ownerUsername: string | null;
+}> => {
+  if (targetType === 'model') return resolveModelTarget(targetId);
+  if (targetType === 'post') return resolveChapterTarget(targetId);
+  return resolveImageTarget(targetId);
+};
 
 export type ResolvedPlacementSpace = {
   ownerId: number;
+  /** The storyline a chapter target belongs to; absent for every other target. */
+  storylineId?: number;
   /**
    * Who the placer is paying, by name.
    *
@@ -184,12 +230,13 @@ export async function resolvePlacementSpaceFor({
   if (!surfaceAcceptsTarget(surface, targetType))
     throw throwBadRequestError(`placement: ${surface} cannot be placed on a ${targetType}`);
 
-  const { ownerId, postId, ownerUsername } = await resolveTarget(targetType, targetId);
+  const { ownerId, postId, storylineId, ownerUsername } = await resolveTarget(targetType, targetId);
 
   const rows = await dbWrite.placementSpace.findMany({
     where: {
       surface,
       OR: [
+        ...(storylineId ? [{ entityType: 'storyline', entityId: storylineId }] : []),
         ...(targetType === 'image' ? [{ entityType: 'image', entityId: targetId }] : []),
         ...(postId ? [{ entityType: 'post', entityId: postId }] : []),
         { entityType: 'user', entityId: ownerId },
@@ -211,6 +258,7 @@ export async function resolvePlacementSpaceFor({
   };
 
   const resolved = resolvePlacementSpace(surface, {
+    storyline: at('storyline'),
     image: at('image'),
     post: at('post'),
     user: at('user'),
@@ -245,6 +293,7 @@ export async function resolvePlacementSpaceFor({
 
   return {
     ownerId,
+    ...(storylineId ? { storylineId } : {}),
     ownerUsername,
     mode: resolved.mode,
     setPrice: resolved.price,
@@ -290,6 +339,19 @@ async function assertOwnsSpaceEntity({
 }) {
   if (entityType === 'user') {
     if (entityId !== userId) throw throwAuthorizationError('placement: that is not your account');
+    return;
+  }
+
+  // Its own branch, never the post lookup below: a storyline id and a post id
+  // are different tables, and the same number would name someone else's post.
+  if (entityType === 'storyline') {
+    const storyline = await dbWrite.storyline.findUnique({
+      where: { id: entityId },
+      select: { userId: true },
+    });
+    if (!storyline) throw throwBadRequestError('placement: that storyline no longer exists');
+    if (storyline.userId !== userId)
+      throw throwAuthorizationError('placement: that is not your storyline');
     return;
   }
 
@@ -451,6 +513,16 @@ async function inheritedPrice({
   userId: number;
 }) {
   if (entityType === 'user') return null;
+
+  // A storyline inherits from its creator's account only. Read as a post here,
+  // its id would pull some unrelated post's price into the guard.
+  if (entityType === 'storyline') {
+    const row = await dbWrite.placementSpace.findUnique({
+      where: { surface_entityType_entityId: { surface, entityType: 'user', entityId: userId } },
+      select: { price: true },
+    });
+    return row?.price ?? null;
+  }
 
   const postId =
     entityType === 'image'

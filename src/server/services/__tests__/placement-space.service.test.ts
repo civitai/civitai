@@ -487,3 +487,162 @@ describe('the host decline fee', () => {
     ]);
   });
 });
+
+/**
+ * A storyline continuation sits on the chapter POST it continues. The owner and
+ * the space come from the storyline, never from the post: chapters may be
+ * written by collaborators, and a continuation of one still belongs in the
+ * storyline creator's queue at the creator's price.
+ */
+describe('resolvePlacementSpaceFor — a storyline chapter', () => {
+  const chapterFindUnique = dbMock.dbWrite.storylineChapter.findUnique;
+  const STORYLINE = 31;
+  const resolveChapter = () =>
+    resolvePlacementSpaceFor({ surface: 'storyline', targetType: 'post', targetId: 55 });
+
+  beforeEach(() => {
+    chapterFindUnique.mockResolvedValue({
+      storyline: { id: STORYLINE, userId: OWNER, user: { username: 'storyteller' } },
+    });
+  });
+
+  it('takes the owner from the storyline, not from the chapter post', async () => {
+    const space = await resolveChapter();
+
+    expect(chapterFindUnique).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { postId: 55 } })
+    );
+    expect(space).toMatchObject({
+      ownerId: OWNER,
+      storylineId: STORYLINE,
+      ownerUsername: 'storyteller',
+    });
+    // Neither id is read as an image or a post of its own.
+    expect(imageFindUnique).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.post.findUnique).not.toHaveBeenCalled();
+  });
+
+  it('reads the storyline and account levels only', async () => {
+    await resolveChapter();
+
+    expect(spaceFindMany.mock.calls[0][0].where).toEqual({
+      surface: 'storyline',
+      OR: [
+        { entityType: 'storyline', entityId: STORYLINE },
+        { entityType: 'user', entityId: OWNER },
+      ],
+    });
+  });
+
+  it('resolves an unconfigured storyline open at zero', async () => {
+    const space = await resolveChapter();
+
+    expect(space).toMatchObject({ mode: 'review', setPrice: 0, price: 0 });
+  });
+
+  // What makes Complete bite: the storyline's own row outranks the creator's
+  // account default.
+  it('lets the storyline row outrank the account row', async () => {
+    spaceFindMany.mockResolvedValue([
+      { entityType: 'user', mode: 'review', price: 200, freeSlots: null, settings: {} },
+      { entityType: 'storyline', mode: 'off', price: null, freeSlots: null, settings: {} },
+    ]);
+
+    const space = await resolveChapter();
+
+    expect(space.mode).toBe('off');
+    // Price resolves independently of mode, so the account price still applies.
+    expect(space.setPrice).toBe(200);
+  });
+
+  // The cascade test from the plan: storyline A priced, storyline B left at
+  // the default.
+  it('keeps one storyline’s price off another', async () => {
+    spaceFindMany.mockResolvedValueOnce([
+      { entityType: 'storyline', mode: 'review', price: 50, freeSlots: null, settings: {} },
+    ]);
+    await expect(resolveChapter()).resolves.toMatchObject({ setPrice: 50 });
+
+    chapterFindUnique.mockResolvedValue({
+      storyline: { id: STORYLINE + 1, userId: OWNER, user: { username: 'storyteller' } },
+    });
+    spaceFindMany.mockResolvedValueOnce([]);
+    await expect(resolveChapter()).resolves.toMatchObject({ setPrice: 0 });
+  });
+
+  it('refuses a post that is not a storyline chapter', async () => {
+    chapterFindUnique.mockResolvedValue(null);
+
+    await expect(resolveChapter()).rejects.toThrow(/not a chapter of an open storyline/);
+    expect(spaceFindMany).not.toHaveBeenCalled();
+  });
+
+  it('refuses a post target on a surface that does not take posts', async () => {
+    await expect(
+      resolvePlacementSpaceFor({ surface: 'sticker', targetType: 'post', targetId: 55 })
+    ).rejects.toThrow(/sticker cannot be placed on a post/);
+    expect(chapterFindUnique).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * A storyline space is configured on the storyline itself. Its id is neither a
+ * post id nor an image id, and both of the paths below once read any unknown
+ * entity as a post.
+ */
+describe('setPlacementSpace — a storyline entity', () => {
+  const storylineFindUnique = dbMock.dbWrite.storyline.findUnique;
+  const onStoryline = {
+    surface: 'storyline' as const,
+    entityType: 'storyline' as const,
+    entityId: 31,
+  };
+
+  it('lets the storyline creator set it, checked against the storyline', async () => {
+    storylineFindUnique.mockResolvedValue({ userId: OWNER });
+
+    await setPlacementSpace({ ...onStoryline, userId: OWNER, mode: 'review', price: 0 });
+
+    expect(storylineFindUnique).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 31 } })
+    );
+    expect(dbMock.dbWrite.post.findUnique).not.toHaveBeenCalled();
+    expect(spaceUpsert.mock.calls[0][0].create).toMatchObject({
+      entityType: 'storyline',
+      entityId: 31,
+      price: 0,
+    });
+  });
+
+  it('refuses anyone else, even the author of a post with the same id', async () => {
+    storylineFindUnique.mockResolvedValue({ userId: OWNER + 1 });
+    dbMock.dbWrite.post.findUnique.mockResolvedValue({ userId: OWNER });
+
+    await expect(
+      setPlacementSpace({ ...onStoryline, userId: OWNER, mode: 'review', price: 0 })
+    ).rejects.toThrow(/not your storyline/);
+    expect(spaceUpsert).not.toHaveBeenCalled();
+  });
+
+  // Opening a storyline with no price of its own inherits the creator's
+  // account price, never the price of an unrelated post that shares its id.
+  it('inherits from the creator’s account only', async () => {
+    storylineFindUnique.mockResolvedValue({ userId: OWNER });
+
+    await setPlacementSpace({ ...onStoryline, userId: OWNER, mode: 'review' });
+
+    expect(imageFindUnique).not.toHaveBeenCalled();
+    expect(spaceFindMany).not.toHaveBeenCalled();
+    expect(spaceFindUnique).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          surface_entityType_entityId: {
+            surface: 'storyline',
+            entityType: 'user',
+            entityId: OWNER,
+          },
+        },
+      })
+    );
+  });
+});
