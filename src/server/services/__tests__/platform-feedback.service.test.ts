@@ -30,8 +30,12 @@ vi.mock('~/server/services/feedback.service', async (importOriginal) => ({
   isFeedbackAreaEnabled: mocks.isFeedbackAreaEnabled,
 }));
 
-const { createPlatformFeedback, getPlatformFeedbackStatus, platformFeedbackFingerprint } =
-  await import('../platform-feedback.service');
+const {
+  createPlatformFeedback,
+  getPlatformFeedbackStatus,
+  platformFeedbackFingerprint,
+  PLATFORM_FEEDBACK_REOPEN_AFTER_REPORTERS,
+} = await import('../platform-feedback.service');
 
 // printf 'v1\ncli\nsubmit.server-refused' | sha256sum
 const FP_CLI_REF = 'ccb33a3af2f5981c140b409d7cd44a50d469685d7c0b5966d4c18609f3681819';
@@ -69,6 +73,8 @@ type ServerState = {
   lastSeenAt: string;
   samples: Array<{ userId: number; text: string; clientVersion: string }>;
   regressionOf?: number;
+  reopenOf?: number;
+  postCloseReporters?: number;
   resolution?: unknown;
 };
 type StoredRow = {
@@ -516,6 +522,15 @@ describe('createPlatformFeedback — a repeat of a closed report', () => {
         reporters: 2,
       });
       expect(await countRows(pg, 'Feedback')).toBe(2);
+
+      // The declared version is not verified, so the bound that matters is this one: once the
+      // regression row exists, another high-version report from anyone lands on it too.
+      await expect(send(5001, 'me too', '99.0.0')).resolves.toMatchObject({
+        ref: '2-ccb33a3a',
+        duplicate: true,
+        reporters: 3,
+      });
+      expect(await countRows(pg, 'Feedback')).toBe(2);
     }
   );
 
@@ -610,6 +625,20 @@ describe('createPlatformFeedback — a repeat of a closed report', () => {
     ).resolves.toMatchObject({ ref: '2-ccb33a3a', duplicate: false });
   });
 
+  it.each(['', '   '])(
+    'actioned with a blank fixed version (%j) reads as no fixedIn',
+    async (v) => {
+      await actioned({ fixedIn: { component: 'cli', version: v }, publicNote: 'Docs updated.' });
+      await expect(send(bob, SECOND_MESSAGE, '9.9.9')).resolves.toMatchObject({
+        ref: '1-ccb33a3a',
+        duplicate: true,
+        status: 'addressed',
+        fixedIn: null,
+      });
+      expect(await status('1-ccb33a3a')).toMatchObject([{ status: 'addressed', fixedIn: null }]);
+    }
+  );
+
   it('actioned without a fixed version: addressed, and never a regression', async () => {
     await actioned({ publicNote: 'Docs updated.' });
     await expect(send(bob, SECOND_MESSAGE, '9.9.9')).resolves.toEqual({
@@ -621,6 +650,184 @@ describe('createPlatformFeedback — a repeat of a closed report', () => {
       reporters: 2,
       reports: 2,
     });
+  });
+});
+
+/**
+ * A report keyed on `report.ref` is one row for everyone, so a dismissed first report would
+ * otherwise answer `not_planned` to every later reporter of that failure site for good.
+ */
+describe('createPlatformFeedback — a dismissed report reopens', () => {
+  const NOT_PLANNED = { ref: '1-ccb33a3a', duplicate: true, status: 'not_planned' };
+  const postClose = async () => (await storedRows())[0].context.server.postCloseReporters;
+
+  async function dismissed() {
+    await send(alice);
+    await setStatus(1, 'dismissed');
+  }
+
+  it('the threshold is three new reporters', () => {
+    expect(PLATFORM_FEEDBACK_REOPEN_AFTER_REPORTERS).toBe(3);
+  });
+
+  it('counts each new reporter after the close once, however often they repeat', async () => {
+    await dismissed();
+    for (let i = 0; i < 5; i++) await expect(send(bob)).resolves.toMatchObject(NOT_PLANNED);
+    // The original reporter was already on the row when it was closed.
+    for (let i = 0; i < 5; i++) await expect(send(alice)).resolves.toMatchObject(NOT_PLANNED);
+    expect(await postClose()).toBe(1);
+    expect(await countRows(pg, 'Feedback')).toBe(1);
+  });
+
+  it('opens a new row for the fourth new reporter, not the third', async () => {
+    await dismissed();
+    await setResolution(1, { publicNote: 'Working as designed.' });
+    // Real users for the third and fourth reporter: whoever opens a row becomes its `userId`, a
+    // foreign key, so an early or late reopen must fail on the assertion and not on the insert.
+    const carol = await seedUser(pg, 'carol');
+    const dave = await seedUser(pg, 'dave');
+    expect([carol, dave]).toEqual([3, 4]);
+
+    await expect(send(5001)).resolves.toMatchObject(NOT_PLANNED);
+    expect(await postClose()).toBe(1);
+    await expect(send(5002)).resolves.toMatchObject(NOT_PLANNED);
+    expect(await postClose()).toBe(2);
+    // The third brings the count TO the threshold and is still answered from the closed row.
+    await expect(send(carol)).resolves.toMatchObject(NOT_PLANNED);
+    expect(await postClose()).toBe(3);
+    // At the threshold, someone already counted still cannot reopen it.
+    await expect(send(5002)).resolves.toMatchObject(NOT_PLANNED);
+    await expect(send(alice)).resolves.toMatchObject(NOT_PLANNED);
+    expect(await countRows(pg, 'Feedback')).toBe(1);
+
+    vi.setSystemTime(new Date(T2));
+    await expect(send(dave, SECOND_MESSAGE)).resolves.toEqual({
+      ref: '2-ccb33a3a',
+      duplicate: false,
+      status: 'received',
+      fixedIn: null,
+      note: null,
+      reporters: 1,
+      reports: 1,
+    });
+
+    const [closed, reopened, ...rest] = await storedRows();
+    expect(rest).toEqual([]);
+    expect([closed.status, closed.context.server.reports, closed.context.server.reporters]).toEqual(
+      ['dismissed', 6, 4]
+    );
+    expect(closed.context.server.postCloseReporters).toBe(3);
+    expect(reopened).toEqual({
+      id: 2,
+      area: 'apps-platform',
+      userId: 4,
+      message: SECOND_MESSAGE,
+      status: 'new',
+      context: {
+        report: cliReport(),
+        server: {
+          fingerprint: FP_CLI_REF,
+          reporters: 1,
+          reports: 1,
+          reporterIds: [4],
+          firstSeenAt: T2,
+          lastSeenAt: T2,
+          samples: [],
+          reopenOf: 1,
+        },
+      },
+    });
+
+    // Later reports, from anyone, land on the reopened row.
+    await expect(send(5005)).resolves.toMatchObject({
+      ref: '2-ccb33a3a',
+      duplicate: true,
+      status: 'received',
+      reporters: 2,
+    });
+    await expect(send(5001)).resolves.toMatchObject({ ref: '2-ccb33a3a', duplicate: true });
+    expect(await countRows(pg, 'Feedback')).toBe(2);
+  });
+
+  it('getStatus does not expose that a row is a reopening', async () => {
+    await dismissed();
+    for (const id of [5001, 5002, 5003, await seedUser(pg, 'carol')]) await send(id);
+    const result = await status('2-ccb33a3a', '1-ccb33a3a');
+    expect(result.map((r) => [r.ref, r.found, 'status' in r && r.status])).toEqual([
+      ['2-ccb33a3a', true, 'received'],
+      ['1-ccb33a3a', true, 'not_planned'],
+    ]);
+    for (const entry of result)
+      expect(Object.keys(entry).sort()).toEqual([
+        'firstSeenAt',
+        'fixedIn',
+        'found',
+        'note',
+        'ref',
+        'reporters',
+        'status',
+        'updatedAt',
+      ]);
+    expect(JSON.stringify(result)).not.toMatch(/reopenOf|postCloseReporters/);
+  });
+
+  // 47 ids at the close: the three who reach the threshold also fill the list, so the next
+  // reporter is unknown to the row but cannot be shown to be new.
+  it('does not reopen for a reporter the full list cannot vouch for', async () => {
+    await send(alice);
+    for (let id = 5001; id <= 5046; id++) await send(id);
+    await setStatus(1, 'dismissed');
+    for (const id of [6001, 6002, 6003]) await send(id);
+    const [row] = await storedRows();
+    expect([row.context.server.reporterIds.length, row.context.server.postCloseReporters]).toEqual([
+      50, 3,
+    ]);
+
+    await expect(send(await seedUser(pg, 'carol'))).resolves.toMatchObject(NOT_PLANNED);
+    expect(await countRows(pg, 'Feedback')).toBe(1);
+  });
+
+  it('does not reopen a row a moderator has moved out of dismissed', async () => {
+    await dismissed();
+    for (const id of [5001, 5002, 5003]) await send(id);
+    expect(await postClose()).toBe(3);
+    await setStatus(1, 'reviewed');
+
+    await expect(send(await seedUser(pg, 'carol'))).resolves.toMatchObject({
+      ref: '1-ccb33a3a',
+      duplicate: true,
+      status: 'acknowledged',
+    });
+    expect(await postClose()).toBe(3);
+    expect(await countRows(pg, 'Feedback')).toBe(1);
+  });
+
+  it.each(['new', 'reviewed', 'actioned'])('a %s row never reopens', async (stored) => {
+    await send(alice);
+    await setStatus(1, stored);
+    for (const id of [5001, 5002, 5003, 5004, 5005, 5006])
+      await expect(send(id)).resolves.toMatchObject({ ref: '1-ccb33a3a', duplicate: true });
+    const [row, ...rest] = await storedRows();
+    expect(rest).toEqual([]);
+    expect(row.context.server).not.toHaveProperty('postCloseReporters');
+    expect(row.context.server.reporters).toBe(7);
+  });
+
+  // With the id list full nobody can be shown to be new, so nobody past it counts towards a
+  // reopen. 49 ids at the close leaves room for exactly one.
+  it('stops counting towards a reopen once the reporter list is full', async () => {
+    await send(alice);
+    for (let id = 5001; id <= 5048; id++) await send(id);
+    await setStatus(1, 'dismissed');
+
+    for (const id of [6001, 6002, 6003, 6004, 6005, 6006])
+      await expect(send(id)).resolves.toMatchObject(NOT_PLANNED);
+
+    const [row, ...rest] = await storedRows();
+    expect(rest).toEqual([]);
+    expect(row.context.server.reporterIds).toHaveLength(50);
+    expect(row.context.server.reporterIds[49]).toBe(6001);
+    expect(row.context.server.postCloseReporters).toBe(1);
   });
 });
 

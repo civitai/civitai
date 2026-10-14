@@ -28,6 +28,11 @@ import type { SessionUser } from '~/types/session';
 export const PLATFORM_FEEDBACK_REPORTER_IDS_MAX = 50;
 export const PLATFORM_FEEDBACK_SAMPLES_MAX = 5;
 export const PLATFORM_FEEDBACK_SAMPLE_TEXT_MAX_LENGTH = 300;
+/**
+ * How many reporters must arrive after a report was dismissed before the next new one opens a
+ * fresh row instead of being told `not_planned`.
+ */
+export const PLATFORM_FEEDBACK_REOPEN_AFTER_REPORTERS = 3;
 const PUBLIC_NOTE_MAX_LENGTH = 300;
 const REF_SUFFIX_LENGTH = 8;
 const LOCK_TIMEOUT = '3s';
@@ -87,6 +92,10 @@ function parseVersion(version: string) {
 /**
  * Has this reporter already got the fix? Only then is a repeat of a fixed report a regression.
  * A version that does not parse counts as not having it, so it never opens a regression row.
+ *
+ * The client name and version are whatever the caller declares, so anyone can open a regression
+ * row by declaring a high version. That is bounded to one row per fix: the new row becomes the
+ * newest for the fingerprint and is not `actioned`, so later reports are counted on it.
  */
 function hasFix(report: PlatformFeedbackReport, state: PlatformFeedbackServerState) {
   const fixedIn = state.resolution?.fixedIn;
@@ -116,10 +125,11 @@ function readbackStatus(status: string, hasFixedVersion: boolean): PlatformFeedb
 }
 
 function toReadback(status: string, state: PlatformFeedbackServerState) {
-  const fixedIn = state.resolution?.fixedIn ?? null;
+  const stored = state.resolution?.fixedIn;
+  const fixedIn = stored?.version.trim() ? stored : null;
   const note = state.resolution?.publicNote?.slice(0, PUBLIC_NOTE_MAX_LENGTH) || null;
   return {
-    status: readbackStatus(status, !!fixedIn?.version),
+    status: readbackStatus(status, !!fixedIn),
     fixedIn: fixedIn ? { component: fixedIn.component, version: fixedIn.version } : null,
     note,
     reporters: state.reporters,
@@ -133,6 +143,8 @@ async function assertCollecting(user: SessionUser) {
 }
 
 type ExistingRow = { id: number; status: string; server: unknown };
+/** `provablyNew`: the caller is not in `reporterIds` and the list still has room to say so. */
+type LookupRow = ExistingRow & { provablyNew: boolean };
 
 /**
  * `context.server` without the two fields only moderators read. Every read here selects this, so
@@ -157,14 +169,15 @@ async function insertReport(
     report,
     fingerprint,
     now,
-    regressionOf,
+    link,
   }: {
     userId: number;
     message: string;
     report: PlatformFeedbackReport;
     fingerprint: string;
     now: string;
-    regressionOf?: number;
+    /** The closed row this one follows, when it is not the first for its fingerprint. */
+    link?: { regressionOf: number } | { reopenOf: number };
   }
 ) {
   const context = {
@@ -177,7 +190,7 @@ async function insertReport(
       firstSeenAt: now,
       lastSeenAt: now,
       samples: [],
-      ...(regressionOf === undefined ? {} : { regressionOf }),
+      ...link,
     },
   };
   const [{ id }] = await tx.$queryRaw<Array<{ id: number }>>(Prisma.sql`
@@ -195,6 +208,9 @@ async function insertReport(
  * other's increment. `reporters`, `reporterIds` and `samples` move only for a user the row has not
  * seen. Once `reporterIds` is full it stops recording new users, so past that many distinct
  * reporters a returning one is counted again and `reporters` is an upper bound.
+ *
+ * On a dismissed row (`closed`) a new reporter is also counted in `postCloseReporters`, but only
+ * while their id can still be recorded: past the cap nobody can be shown to be new.
  */
 async function countRepeat(
   tx: RawTx,
@@ -204,7 +220,15 @@ async function countRepeat(
     message,
     report,
     now,
-  }: { id: number; userId: number; message: string; report: PlatformFeedbackReport; now: string }
+    closed,
+  }: {
+    id: number;
+    userId: number;
+    message: string;
+    report: PlatformFeedbackReport;
+    now: string;
+    closed: boolean;
+  }
 ) {
   const sample = JSON.stringify({
     userId,
@@ -238,7 +262,14 @@ async function countRepeat(
                      THEN COALESCE(f."context"->'server'->'samples', '[]'::jsonb) || jsonb_build_array(${sample}::jsonb)
                    ELSE f."context"->'server'->'samples'
                  END
-             )
+             ) || CASE
+               WHEN ${closed}::boolean
+                 AND jsonb_array_length(COALESCE(f."context"->'server'->'reporterIds', '[]'::jsonb)) < ${PLATFORM_FEEDBACK_REPORTER_IDS_MAX}::int
+                 THEN jsonb_build_object(
+                   'postCloseReporters', COALESCE((f."context"->'server'->>'postCloseReporters')::int, 0) + 1
+                 )
+               ELSE '{}'::jsonb
+             END
            END
     )
     WHERE f."id" = ${id}::int
@@ -271,8 +302,11 @@ export async function createPlatformFeedback({
       Prisma.sql`SELECT pg_advisory_xact_lock(hashtextextended(${`${APPS_PLATFORM_FEEDBACK_AREA}:${fingerprint}`}::text, 0))`
     );
 
-    const [existing] = await tx.$queryRaw<ExistingRow[]>(Prisma.sql`
-      SELECT f."id", f."status", ${SERVER_STATE} AS "server"
+    const [existing] = await tx.$queryRaw<LookupRow[]>(Prisma.sql`
+      SELECT f."id", f."status", ${SERVER_STATE} AS "server",
+             (NOT COALESCE(f."context"->'server'->'reporterIds' @> to_jsonb(${userId}::int), false)
+               AND jsonb_array_length(COALESCE(f."context"->'server'->'reporterIds', '[]'::jsonb)) < ${PLATFORM_FEEDBACK_REPORTER_IDS_MAX}::int
+             ) AS "provablyNew"
       FROM "Feedback" f
       WHERE f."area" = ${APPS_PLATFORM_FEEDBACK_AREA}
         AND f."context"->'server'->>'fingerprint' = ${fingerprint}
@@ -280,17 +314,28 @@ export async function createPlatformFeedback({
       LIMIT 1
     `);
 
-    const regression =
-      existing?.status === 'actioned' && hasFix(report, parseServerState(existing.server));
+    const before = existing && parseServerState(existing.server);
+    const regression = existing?.status === 'actioned' && !!before && hasFix(report, before);
+    // A report keyed on `report.ref` is one row for every user, so without this a dismissed first
+    // report would answer `not_planned` to everyone who hits that failure site afterwards.
+    const reopen =
+      existing?.status === 'dismissed' &&
+      existing.provablyNew &&
+      !!before &&
+      before.postCloseReporters >= PLATFORM_FEEDBACK_REOPEN_AFTER_REPORTERS;
 
-    if (!existing || regression) {
+    if (!existing || regression || reopen) {
       const id = await insertReport(tx, {
         userId,
         message,
         report,
         fingerprint,
         now,
-        regressionOf: existing?.id,
+        link: !existing
+          ? undefined
+          : regression
+          ? { regressionOf: existing.id }
+          : { reopenOf: existing.id },
       });
       return {
         ref: toRef(id, fingerprint),
@@ -303,7 +348,14 @@ export async function createPlatformFeedback({
       };
     }
 
-    const state = await countRepeat(tx, { id: existing.id, userId, message, report, now });
+    const state = await countRepeat(tx, {
+      id: existing.id,
+      userId,
+      message,
+      report,
+      now,
+      closed: existing.status === 'dismissed',
+    });
     return {
       ref: toRef(existing.id, fingerprint),
       duplicate: true,
