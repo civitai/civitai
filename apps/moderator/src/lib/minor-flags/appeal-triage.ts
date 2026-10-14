@@ -7,6 +7,8 @@ export type TriageKeyEvent = {
   altKey: boolean;
   /** Focus is in a field the key would type into. */
   typing: boolean;
+  /** Uphold is only meaningful while a flag is in force. */
+  canUphold: boolean;
 };
 
 export const triageKeyAction = (e: TriageKeyEvent): TriageKeyAction | null => {
@@ -22,7 +24,7 @@ export const triageKeyAction = (e: TriageKeyEvent): TriageKeyAction | null => {
       return 'previous';
     case 'u':
     case 'U':
-      return 'uphold';
+      return e.canUphold ? 'uphold' : null;
     case 'o':
     case 'O':
       return 'overturn';

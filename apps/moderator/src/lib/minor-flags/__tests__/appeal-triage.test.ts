@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { formActionHref, nextUndecided, step, triageKeyAction } from '../appeal-triage';
 
 const key = (k: string, over: Partial<Parameters<typeof triageKeyAction>[0]> = {}) =>
-  triageKeyAction({ key: k, ctrlKey: false, metaKey: false, altKey: false, typing: false, ...over });
+  triageKeyAction({ key: k, ctrlKey: false, metaKey: false, altKey: false, typing: false, canUphold: true, ...over });
 
 describe('triageKeyAction', () => {
   it.each([
@@ -18,6 +18,12 @@ describe('triageKeyAction', () => {
     ['Enter', null],
   ])('%s -> %s', (k, action) => {
     expect(key(k)).toBe(action);
+  });
+
+  it('makes uphold a no-op when no flag is in force, leaving the other keys alone', () => {
+    expect(key('u', { canUphold: false })).toBeNull();
+    expect(key('o', { canUphold: false })).toBe('overturn');
+    expect(key('j', { canUphold: false })).toBe('next');
   });
 
   it('ignores keys while typing or with a modifier', () => {

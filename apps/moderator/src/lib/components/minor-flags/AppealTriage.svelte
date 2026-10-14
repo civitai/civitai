@@ -15,6 +15,7 @@
     step,
     triageKeyAction,
   } from '$lib/minor-flags/appeal-triage';
+  import { flagInForce } from '$lib/minor-flags/text-scan-verdicts';
   import type { AppealQueueData } from '$lib/server/minor-flag-queue';
   import { urlWith } from '$lib/url';
   import AppealDetail from './AppealDetail.svelte';
@@ -92,6 +93,7 @@
       metaKey: e.metaKey,
       altKey: e.altKey,
       typing: isTypingTarget(e.target),
+      canUphold: !!selected && flagInForce(selected),
     });
     if (!action) return;
     e.preventDefault();

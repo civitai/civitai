@@ -11,7 +11,12 @@
   import { effectiveSource, sourceLabel } from '$lib/minor-flags/appeal-filters';
   import type { HashDetail } from '$lib/minor-flags/hash-detail';
   import { clipList, pastAppealsText } from '$lib/minor-flags/appeal-row';
-  import { flagsOf, isOpenVerdict, openVerdicts } from '$lib/minor-flags/text-scan-verdicts';
+  import {
+    flagInForce,
+    flagsOf,
+    isOpenVerdict,
+    openVerdicts,
+  } from '$lib/minor-flags/text-scan-verdicts';
   import AppealImages from './AppealImages.svelte';
   import AppealTags from './AppealTags.svelte';
 
@@ -42,6 +47,7 @@
   const poiOpen = $derived(row.poi && isOpenVerdict(flagsOf(row.textScanFlags)?.poi));
   const tags = $derived(clipList(row.tags, 12, row.tagCount));
   const words = $derived(clipList(row.trainedWords, 8, row.trainedWordCount));
+  const canUphold = $derived(flagInForce(row));
   const ago = (value: Date | string) => `${shortAge(value)} ago`;
 
   // Derived, not fetched in an effect: the component is keyed per appeal, so a new selection builds a
@@ -160,7 +166,7 @@
             </p>
           {/if}
 
-          {#if !row.minor && !row.poi}
+          {#if !canUphold}
             <p class="m-0 text-sm text-emerald-300">
               The flag is already lifted, so upholding has nothing left to keep.
             </p>
@@ -240,7 +246,13 @@
         use:enhance={submit(row.appealId, 'Appeal rejected')}
       >
         <input type="hidden" name="modelId" value={row.modelId} />
-        <Button type="submit" size="lg" class="h-11 px-5 text-base">
+        <Button
+          type="submit"
+          size="lg"
+          class="h-11 px-5 text-base"
+          disabled={!canUphold}
+          title={canUphold ? undefined : 'Not flagged any more. Unflag closes the request.'}
+        >
           Keep flagged <Kbd>U</Kbd>
         </Button>
       </form>
