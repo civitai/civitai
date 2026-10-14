@@ -199,7 +199,9 @@ describe('StorylineEndOfChapter', () => {
       within(other, 'storyline-chapter-image'),
       within(other, 'blur-toggle'),
       !!within(other, 'storyline-chapter-image-empty'),
-    ]).toEqual(['cover-501', null, null, true]);
+      // Capped on a phone so Read stays in the first screen.
+      [...lead.querySelectorAll('*')].some((e) => e.classList.contains('max-h-[45vh]')),
+    ]).toEqual(['cover-501', null, null, true, true]);
   });
 
   // A missing picture is not a hidden chapter: the gradient, never the stripes.
