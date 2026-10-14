@@ -787,6 +787,37 @@ describe('POST /api/v1/block-tokens — W10 page mint', () => {
     expect(res._body.missingScopes).toEqual([]);
   });
 
+  it('anon page mint: response `scopes` is the signed exempt subset, not [] and not the manifest', async () => {
+    // Exempt + gated, so the signed set is NON-EMPTY and differs from the declared
+    // set — an empty-vs-empty comparison cannot tell a correct response from a
+    // hardcoded `scopes: []`.
+    (mockFlags.getFeatureFlags as any).mockImplementation(() => ({
+      appBlocks: true,
+      appBlocksPages: true,
+    }));
+    mockSession.value = null;
+    const block = PAGE_BUDGET_BLOCK();
+    const declared = ['apps:storage:read', 'apps:storage:publish'];
+    mockBlockRegistry.resolvePageBlock.mockResolvedValue({
+      ...block,
+      appBlock: {
+        ...block.appBlock,
+        manifest: { ...block.appBlock.manifest, scopes: declared },
+        approvedScopes: declared,
+      },
+    });
+    const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
+    const res = makeRes();
+    await handler(makeReq({ origin: 'https://civitai.com', body: pageBody() }), res);
+
+    expect(res._status).toBe(200);
+    const signArg = mockTokenService.sign.mock.calls[0][0];
+    expect(signArg.scopes).toEqual(['apps:storage:read']);
+    expect(res._body.scopes).toEqual(['apps:storage:read']);
+    expect(res._body.missingScopes).toEqual([]);
+    expect(res._body.needsConsent).toBe(false);
+  });
+
   it('BYTE-IDENTICAL model path: ctx is exactly { modelId, slotId } (no entityType) for generate-from-model', async () => {
     mockBlockRegistry.resolveBlockInstance.mockResolvedValue(MODEL_INSTALL);
     mockDbWrite.appUserScopeGrant.findUnique.mockResolvedValue({
