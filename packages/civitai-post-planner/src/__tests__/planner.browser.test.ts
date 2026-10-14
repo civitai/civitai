@@ -248,4 +248,26 @@ describe('<civitai-post-planner>', () => {
     );
     expect(backend.shift).not.toHaveBeenCalled();
   });
+
+  it('shows a still for a video cover in the calendar and the drawer strip', async () => {
+    const video = post(1, POST_A, { cover: { url: 'vid-1', type: 'video' } });
+    const { backend } = await mount({ view: 'month', anchor: '2026-10-01' }, [video]);
+    backend.getPostDetail.mockImplementationOnce(async (id: number) => ({
+      ...(await backend.getPostDetail.getMockImplementation()!(id)),
+      media: [{ id: 11, url: 'vid-1', type: 'video', nsfwLevel: 1, width: 100, height: 100 }],
+    }));
+
+    const chipImg = chipA().element().querySelector('img')!;
+    expect(chipImg.getAttribute('src')).toBe(
+      'https://img.test/vid-1/anim=false,transcode=true,width=48/vid-1.jpeg'
+    );
+
+    await userEvent.click(chipA());
+    const strip = page.getByRole('button', { name: 'Open item 1 of 1' });
+    await expect.element(strip).toBeInTheDocument();
+    expect(strip.element().querySelector('img')!.getAttribute('src')).toBe(
+      'https://img.test/vid-1/anim=false,transcode=true,width=192/vid-1.jpeg'
+    );
+  });
+
 });
