@@ -1,3 +1,4 @@
+import type { StoredModelRuleMatch } from '@civitai/moderation/model-rules';
 import { NsfwLevel } from '~/server/common/enums';
 
 export const TEXT_SCAN_LABELS = ['nsfw', 'poi', 'minor', 'scam', 'modelRules'] as const;
@@ -62,7 +63,8 @@ export type TextScanOutput = {
   modelRules?: { matched: ModelRuleMatch[] };
 };
 
-export type ModelRuleMatch = { ruleId: number; reason: string };
+/** The match as the model returns it; the moderator app reads it back as `StoredModelRuleMatch`. */
+export type ModelRuleMatch = Required<StoredModelRuleMatch>;
 
 /** `base` plus one entry per label, each the `TextScanPrompt.id` used. */
 export type PromptIds = Record<string, number>;

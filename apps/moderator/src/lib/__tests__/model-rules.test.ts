@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { MODEL_RULES_RESULT_PG_PATHS } from '@civitai/moderation/model-rules';
 import { describe, expect, it } from 'vitest';
 import {
   isHeldAtPublish,
@@ -137,7 +138,9 @@ describe('Matches list and its partial index', () => {
   });
 
   it('filters by rule id on literal hits as well as model matches', () => {
-    expect(service).toContain("{modelRules,literalRuleIds}'");
+    expect(service).toContain('MODEL_RULES_RESULT_PG_PATHS.literalRuleIds');
+    expect(MODEL_RULES_RESULT_PG_PATHS.literalRuleIds).toBe('{modelRules,literalRuleIds}');
+    expect(MODEL_RULES_RESULT_PG_PATHS.matched).toBe('{labels,modelRules,matched}');
   });
 });
 

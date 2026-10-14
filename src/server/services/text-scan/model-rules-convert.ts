@@ -1,5 +1,5 @@
 import { convertLegacyModelRule } from '@civitai/moderation/model-rules-convert';
-import { isSemanticDefinition, semanticModelRuleSchema } from '@civitai/moderation/model-rules';
+import { isSemanticDefinition, storedModelRuleSchema } from '@civitai/moderation/model-rules';
 import type { Prisma } from '@prisma/client';
 import { dbWrite } from '~/server/db/client';
 import { REDIS_KEYS } from '~/server/redis/client';
@@ -13,7 +13,7 @@ type LegacyRow = { id: number; definition: unknown; reason: string | null; actio
 function plan(row: LegacyRow) {
   const conversion = convertLegacyModelRule(row.definition, row.reason);
   const flagged = !!conversion.needsAttention || row.action === 'Approve';
-  const definition = semanticModelRuleSchema.parse({
+  const definition = storedModelRuleSchema.parse({
     ...conversion,
     ...(flagged ? { needsAttention: true } : {}),
   });

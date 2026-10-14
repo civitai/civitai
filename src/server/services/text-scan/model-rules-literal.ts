@@ -1,3 +1,4 @@
+import { MODEL_RULE_LIMITS } from '@civitai/moderation/model-rules';
 import type { TextScanSubject } from '~/server/services/text-scan/types';
 import { foldConfusables } from '~/server/utils/confusable-fold';
 import { foldDiacritics } from '~/utils/fold-diacritics';
@@ -18,6 +19,8 @@ function normalizeForLiteralMatch(value: string) {
     .trim();
 }
 
+const wordsIn = (term: string) => term.split(' ').length;
+
 type CompiledRules = {
   rules: { id: number; terms: string[] }[];
   maxWords: number;
@@ -25,6 +28,8 @@ type CompiledRules = {
 
 let memo: { key: string; compiled: CompiledRules } | undefined;
 
+// A term over the word cap is ignored, never thrown: a rule stored before the cap existed must not
+// make every run of the text that long.
 // Normalizing is the expensive part and the rule set rarely changes, so one compiled set is kept.
 // The key carries the terms themselves: an edited rule can never match against a stale compile.
 function compileRules(rules: LiteralModelRule[]): CompiledRules {
@@ -38,10 +43,12 @@ function compileRules(rules: LiteralModelRule[]): CompiledRules {
       ...new Set(
         [rule.subject, ...rule.aliases]
           .map(normalizeForLiteralMatch)
-          .filter((term) => term.length >= MIN_TERM_LENGTH)
+          .filter(
+            (term) => term.length >= MIN_TERM_LENGTH && wordsIn(term) <= MODEL_RULE_LIMITS.termWords
+          )
       ),
     ];
-    for (const term of terms) maxWords = Math.max(maxWords, term.split(' ').length);
+    for (const term of terms) maxWords = Math.max(maxWords, wordsIn(term));
     return { id: rule.id, terms };
   });
   const result = { rules: compiled, maxWords };

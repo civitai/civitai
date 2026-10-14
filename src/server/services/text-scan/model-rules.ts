@@ -1,4 +1,7 @@
-import { semanticModelRuleSchema } from '@civitai/moderation/model-rules';
+import {
+  storedModelRuleSchema,
+  type StoredModelRuleSnapshot,
+} from '@civitai/moderation/model-rules';
 import { CacheTTL } from '~/server/common/constants';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
@@ -30,7 +33,7 @@ export async function getModelRulesForPrompt(): Promise<ModelRuleForPrompt[]> {
       });
       return rows.flatMap((row) => {
         // A regex definition, or a converted rule a person has not reviewed yet, never reaches the scan.
-        const parsed = semanticModelRuleSchema.safeParse(row.definition);
+        const parsed = storedModelRuleSchema.safeParse(row.definition);
         if (!parsed.success || parsed.data.needsAttention) return [];
         const { subject, description, aliases } = parsed.data;
         return [{ id: row.id, subject, description, aliases, updatedAt: row.updatedAt.getTime() }];
@@ -54,12 +57,7 @@ export function modelRulesFingerprint(rules: ModelRuleForPrompt[]) {
   return hashContent(rules.map((rule) => `${rule.id}:${rule.updatedAt}`).join(','));
 }
 
-export type ModelRuleSnapshot = {
-  id: number;
-  subject: string;
-  description: string;
-  aliases: string[];
-};
+export type ModelRuleSnapshot = StoredModelRuleSnapshot;
 
 /**
  * Read by id from the primary, not from the cache, and enabled only: a rule disabled after the
@@ -72,7 +70,7 @@ export async function getModelRuleSnapshots(ids: number[]): Promise<ModelRuleSna
     select: { id: true, definition: true },
   });
   return rows.flatMap((row) => {
-    const parsed = semanticModelRuleSchema.safeParse(row.definition);
+    const parsed = storedModelRuleSchema.safeParse(row.definition);
     if (!parsed.success) return [];
     const { subject, description, aliases } = parsed.data;
     return [{ id: row.id, subject, description, aliases }];
@@ -100,15 +98,6 @@ export function filterModelRuleMatches<T extends { ruleId: number }>(
   }
   return { kept, dropped };
 }
-
-/** Mirrors the moderator app's rule form limits. */
-export const MODEL_RULE_OVERRIDE_LIMITS = {
-  rules: 500,
-  subjectChars: 200,
-  descriptionChars: 2000,
-  aliasChars: 200,
-  aliasesPerRule: 100,
-} as const;
 
 /** A lab-only edit of a rule: a positive id replaces that rule, a negative id is a new, unsaved one. */
 export type ModelRuleOverride = {
@@ -161,7 +150,7 @@ export async function getModelRuleSubjects(ids: number[]): Promise<Map<number, s
   });
   return new Map(
     rows.flatMap((row) => {
-      const parsed = semanticModelRuleSchema.safeParse(row.definition);
+      const parsed = storedModelRuleSchema.safeParse(row.definition);
       return parsed.success ? [[row.id, parsed.data.subject] as const] : [];
     })
   );

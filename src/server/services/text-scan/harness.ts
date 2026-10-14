@@ -1,4 +1,10 @@
 import { submitWorkflow } from '@civitai/client';
+import {
+  MODEL_RULE_LIMITS,
+  modelRuleAliasesField,
+  modelRuleDescriptionField,
+  modelRuleSubjectField,
+} from '@civitai/moderation/model-rules';
 import pLimit from 'p-limit';
 import * as z from 'zod';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -16,7 +22,6 @@ import {
 import {
   applyModelRuleOverrides,
   getModelRulesForPrompt,
-  MODEL_RULE_OVERRIDE_LIMITS,
   type ModelRuleOverride,
 } from '~/server/services/text-scan/model-rules';
 import { findLiteralHitsInSubject } from '~/server/services/text-scan/model-rules-literal';
@@ -78,15 +83,13 @@ const ruleOverrides = z
         .number()
         .int()
         .refine((id) => id !== 0, 'rule id 0 is not a rule'),
-      subject: z.string().trim().min(1).max(MODEL_RULE_OVERRIDE_LIMITS.subjectChars),
-      description: z.string().trim().max(MODEL_RULE_OVERRIDE_LIMITS.descriptionChars),
-      aliases: z
-        .array(z.string().trim().min(1).max(MODEL_RULE_OVERRIDE_LIMITS.aliasChars))
-        .max(MODEL_RULE_OVERRIDE_LIMITS.aliasesPerRule),
+      subject: modelRuleSubjectField(),
+      description: modelRuleDescriptionField,
+      aliases: modelRuleAliasesField,
       enabled: z.boolean(),
     })
   )
-  .max(MODEL_RULE_OVERRIDE_LIMITS.rules)
+  .max(MODEL_RULE_LIMITS.rulesPerTry)
   .refine(
     (rules) => new Set(rules.map((rule) => rule.id)).size === rules.length,
     'duplicate rule id in ruleOverrides'

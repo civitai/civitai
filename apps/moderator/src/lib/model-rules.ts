@@ -1,11 +1,16 @@
 import {
+  MODEL_RULE_LIMITS,
   isSemanticDefinition,
+  modelRuleAliasesField,
+  modelRuleDescriptionField,
+  modelRuleSubjectField,
+  parseModelRulesStoredResult,
   semanticModelRuleSchema,
   type SemanticModelRule,
 } from '@civitai/moderation/model-rules';
 import { z } from 'zod';
 
-export { isSemanticDefinition, semanticModelRuleSchema, type SemanticModelRule };
+export { MODEL_RULE_LIMITS, isSemanticDefinition, semanticModelRuleSchema, type SemanticModelRule };
 
 const isRecord = (v: unknown): v is Record<string, unknown> =>
   typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -25,38 +30,10 @@ export function parseAliases(raw: string): string[] {
   return out;
 }
 
-/** Mirrored by the main app's MODEL_RULE_OVERRIDE_LIMITS (src/server/services/text-scan/model-rules.ts). */
-export const MODEL_RULE_LIMITS = {
-  subjectChars: 200,
-  descriptionChars: 2000,
-  aliasChars: 200,
-  aliasesPerRule: 100,
-  rulesPerTry: 500,
-} as const;
-
 export const modelRuleFormSchema = z.object({
-  subject: z
-    .string()
-    .trim()
-    .min(1, 'Subject is required.')
-    .max(MODEL_RULE_LIMITS.subjectChars, 'Subject is too long.'),
-  description: z
-    .string()
-    .trim()
-    .max(MODEL_RULE_LIMITS.descriptionChars, 'Description is too long.')
-    .default(''),
-  aliases: z
-    .string()
-    .default('')
-    .transform(parseAliases)
-    .pipe(
-      z
-        .array(z.string().max(MODEL_RULE_LIMITS.aliasChars, 'An alias is too long.'))
-        .max(
-          MODEL_RULE_LIMITS.aliasesPerRule,
-          `At most ${MODEL_RULE_LIMITS.aliasesPerRule} aliases per rule.`
-        )
-    ),
+  subject: modelRuleSubjectField(),
+  description: modelRuleDescriptionField.default(''),
+  aliases: z.string().default('').transform(parseAliases).pipe(modelRuleAliasesField),
   note: z.string().trim().max(2000, 'Note is too long.').default(''),
 });
 export type ModelRuleForm = z.infer<typeof modelRuleFormSchema>;
@@ -112,22 +89,9 @@ export function mergeRuleMatches(
 }
 
 export function parseRuleMatches(result: unknown): RuleMatch[] {
-  if (!isRecord(result)) return [];
-  const labels = result.labels;
-  const matched =
-    isRecord(labels) && isRecord(labels.modelRules) && Array.isArray(labels.modelRules.matched)
-      ? labels.modelRules.matched
-      : [];
-  const stored = isRecord(result.modelRules) ? result.modelRules : null;
-  const subjects = new Map<number, string>();
-  if (Array.isArray(stored?.snapshot))
-    for (const s of stored.snapshot)
-      if (isRecord(s) && typeof s.id === 'number' && typeof s.subject === 'string')
-        subjects.set(s.id, s.subject);
-  const literalIds = Array.isArray(stored?.literalRuleIds)
-    ? stored.literalRuleIds.filter((id): id is number => typeof id === 'number')
-    : [];
-  return mergeRuleMatches(matched, literalIds, subjects);
+  const { matched, snapshot, literalRuleIds } = parseModelRulesStoredResult(result);
+  const subjects = new Map(snapshot.map((rule) => [rule.id, rule.subject]));
+  return mergeRuleMatches(matched, literalRuleIds, subjects);
 }
 
 export const matchSourceLabel = (match: Pick<RuleMatch, 'llm' | 'literal'>) =>
@@ -146,4 +110,4 @@ export function parseMatchCursor(cursor: string | undefined) {
 
 /** A row written by the publish-time literal hold rather than by a scan. */
 export const isHeldAtPublish = (result: unknown): boolean =>
-  isRecord(result) && isRecord(result.meta) && result.meta.heldAtPublish === true;
+  parseModelRulesStoredResult(result).heldAtPublish;

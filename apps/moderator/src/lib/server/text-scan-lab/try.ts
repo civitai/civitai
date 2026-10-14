@@ -1,6 +1,11 @@
 import { fail, type ActionFailure } from '@sveltejs/kit';
 import { z } from 'zod';
-import { MODEL_RULE_LIMITS } from '$lib/model-rules';
+import {
+  MODEL_RULE_LIMITS,
+  modelRuleAliasesField,
+  modelRuleDescriptionField,
+  modelRuleSubjectField,
+} from '@civitai/moderation/model-rules';
 import { jsonField, parseForm } from '$lib/server/query';
 import { userIdByUsername } from '$lib/server/users.service';
 import { normaliseLabFields } from '$lib/text-scan-lab/compose';
@@ -63,23 +68,9 @@ export const ruleOverridesField = jsonField(
           .number()
           .int()
           .refine((id) => id !== 0, 'Malformed rule.'),
-        subject: z
-          .string()
-          .trim()
-          .min(1, 'A rule needs a subject.')
-          .max(MODEL_RULE_LIMITS.subjectChars, 'Subject is too long.'),
-        description: z
-          .string()
-          .trim()
-          .max(MODEL_RULE_LIMITS.descriptionChars, 'Description is too long.'),
-        aliases: z
-          .array(
-            z.string().trim().min(1).max(MODEL_RULE_LIMITS.aliasChars, 'An alias is too long.')
-          )
-          .max(
-            MODEL_RULE_LIMITS.aliasesPerRule,
-            `At most ${MODEL_RULE_LIMITS.aliasesPerRule} aliases per rule.`
-          ),
+        subject: modelRuleSubjectField('A rule needs a subject.'),
+        description: modelRuleDescriptionField,
+        aliases: modelRuleAliasesField,
         enabled: z.boolean(),
       })
     )

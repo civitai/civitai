@@ -1,6 +1,7 @@
 import { sql, type Insertable, type Transaction } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { REDIS_KEYS, type RedisKeyTemplateCache } from '@civitai/redis';
+import { MODEL_RULES_RESULT_PG_PATHS } from '@civitai/moderation/model-rules';
 import { convertLegacyModelRule } from '@civitai/moderation/model-rules-convert';
 import {
   isHeldAtPublish,
@@ -455,11 +456,11 @@ export async function getModelRuleMatches({
     );
   if (ruleId !== undefined)
     query = query.where(
-      sql<boolean>`(em.result #> '{labels,modelRules,matched}' @> ${JSON.stringify([
-        { ruleId },
-      ])}::jsonb OR em.result #> '{modelRules,literalRuleIds}' @> ${JSON.stringify([
-        ruleId,
-      ])}::jsonb)`
+      sql<boolean>`(em.result #> ${sql.lit(
+        MODEL_RULES_RESULT_PG_PATHS.matched
+      )} @> ${JSON.stringify([{ ruleId }])}::jsonb OR em.result #> ${sql.lit(
+        MODEL_RULES_RESULT_PG_PATHS.literalRuleIds
+      )} @> ${JSON.stringify([ruleId])}::jsonb)`
     );
   const after = parseMatchCursor(cursor);
   if (after)

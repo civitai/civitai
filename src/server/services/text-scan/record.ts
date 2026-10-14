@@ -1,6 +1,10 @@
+import {
+  MODEL_RULES_RESULT_KEYS,
+  type StoredModelRules,
+  type StoredModelRuleSnapshot,
+} from '@civitai/moderation/model-rules';
 import { Prisma } from '@prisma/client';
 import { dbWrite } from '~/server/db/client';
-import type { ModelRuleSnapshot } from '~/server/services/text-scan/model-rules';
 import { MODEL_RULES_LITERAL_LABEL } from '~/server/services/text-scan/model-rules-literal';
 import type { StoredTextScanVerdict } from '~/server/services/text-scan/merge';
 import type { PromptIds, TextScanOutcome, TextScanOutput } from '~/server/services/text-scan/types';
@@ -19,8 +23,16 @@ export type TextScanResult = {
    * `literalRuleIds` are the rules the text names literally, whether or not the model matched them;
    * `snapshot` covers both.
    */
-  modelRules?: { fingerprint?: string; snapshot: ModelRuleSnapshot[]; literalRuleIds?: number[] };
+  modelRules?: StoredModelRules;
 };
+
+// The moderator app reads these keys back through @civitai/moderation; a rename here must not compile.
+export type ModelRulesReadKeys = Pick<
+  TextScanResult,
+  | typeof MODEL_RULES_RESULT_KEYS.labels
+  | typeof MODEL_RULES_RESULT_KEYS.modelRules
+  | typeof MODEL_RULES_RESULT_KEYS.meta
+>;
 
 type RowKey = { entityType: string; entityId: number };
 
@@ -159,7 +171,7 @@ export async function recordModelRulesLiteralHold({
   workflowId: string;
   textHash: string;
   literalRuleIds: number[];
-  snapshot: ModelRuleSnapshot[];
+  snapshot: StoredModelRuleSnapshot[];
 }) {
   const result: TextScanResult = {
     version: 1,
@@ -167,7 +179,7 @@ export async function recordModelRulesLiteralHold({
     promptIds: {},
     model: 'literal',
     textHash,
-    meta: { heldAtPublish: true },
+    meta: { [MODEL_RULES_RESULT_KEYS.heldAtPublish]: true },
     modelRules: { snapshot, literalRuleIds },
   };
   const data = {

@@ -1,4 +1,5 @@
 import { getWorkflow } from '@civitai/client';
+import type { StoredModelRules } from '@civitai/moderation/model-rules';
 import { logToAxiom } from '~/server/logging/client';
 import { getModerationAdapter } from '~/server/services/moderation-adapters';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
@@ -29,7 +30,6 @@ import {
   recordTextScanRaise,
   revertTextScanRaise,
   recordTextScanSuccess,
-  type TextScanResult,
 } from '~/server/services/text-scan/record';
 import type {
   PromptIds,
@@ -87,7 +87,7 @@ async function scopeModelRules(
   output: TextScanOutput,
   metadata: TextScanWorkflowMetadata,
   ctx: Record<string, unknown>
-): Promise<TextScanResult['modelRules']> {
+): Promise<StoredModelRules | undefined> {
   if (!output.modelRules) return undefined;
   const { kept, dropped } = filterModelRuleMatches(output.modelRules.matched, metadata.ruleIds);
   if (dropped.length)

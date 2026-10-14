@@ -120,3 +120,18 @@ describe('findLiteralHitsInSubject', () => {
     expect(findLiteralHitsInSubject(subject('beta', null, 'alpha'), rules)).toEqual([2, 1]);
   });
 });
+
+describe('term word cap', () => {
+  const long = Array.from({ length: 5000 }, (_, i) => `w${i}`).join(' ');
+
+  it('ignores a stored term longer than the cap and still matches the rest', () => {
+    const rules = [rule(1, 'Jane Doe', [long]), rule(2, long)];
+    expect(findLiteralModelRuleHits(`${long} met Jane Doe`, rules)).toEqual([1]);
+  });
+
+  it('keeps every run short even when a legacy rule carries a huge alias', () => {
+    const started = Date.now();
+    findLiteralModelRuleHits(long, [rule(1, 'Jane Doe', [long])]);
+    expect(Date.now() - started).toBeLessThan(500);
+  });
+});
