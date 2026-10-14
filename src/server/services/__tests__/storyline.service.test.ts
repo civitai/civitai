@@ -3124,6 +3124,20 @@ describe('title moderation', () => {
         ).resolves.toMatchObject({ id: 10 });
     });
 
+    // The db mock returns the fixture whatever is selected; without these the real read would
+    // leave the title's rating out and the gate would judge on nothing.
+    it('reads the title rating wherever the gate runs', async () => {
+      const levels = { nsfwLevel: true, moderatorNsfwLevel: true };
+      r.storyline.findUnique.mockResolvedValue(titled({}) as never);
+      await getStoryline({ id: 10, viewer: { id: STRANGER }, browsingLevel: PG_READER });
+      expect(r.storyline.findUnique.mock.calls[0][0]).toMatchObject({ select: levels });
+      r.storylineChapter.findMany.mockResolvedValue([] as never);
+      await getStorylinesForPosts({ postIds: [1], viewer: undefined, browsingLevel: PG });
+      expect(r.storylineChapter.findMany.mock.calls[0][0]).toMatchObject({
+        select: { storyline: { select: levels } },
+      });
+    });
+
     it('getStorylinesForPosts: leaves out a story whose title is above the reader', async () => {
       const chapter = (postId: number, storyline: Record<string, unknown>) => ({
         id: postId + 1000,

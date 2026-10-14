@@ -355,3 +355,13 @@ describe('storyline router: chapter levels and the ceiling floor', () => {
     expect(w.storyline.update).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('storyline router: moderating a title', () => {
+  it('is for moderators only, the owner included', async () => {
+    dbMock.dbWrite.storyline.findUnique.mockResolvedValue({ tosViolationByScan: true } as never);
+    await expect(
+      callerFor(OWNER).moderateTitle({ id: 10, liftScanTakedown: true })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(dbMock.dbWrite.storyline.updateMany).not.toHaveBeenCalled();
+  });
+});
