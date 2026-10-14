@@ -18,14 +18,19 @@ import { onPlacementsTakenDown } from '~/server/events/points/hooks';
  * `getBlockedPairIds` already unions both and a one-sided guard here would let
  * someone place on a user who blocked them.
  */
-export async function isPlacementBlocked({
-  ownerId,
-  placerId,
-}: {
-  ownerId: number;
-  placerId: number;
-}) {
-  const rows = await dbWrite.$queryRaw<{ exists: boolean }[]>`
+export async function isPlacementBlocked(
+  {
+    ownerId,
+    placerId,
+  }: {
+    ownerId: number;
+    placerId: number;
+  },
+  // A caller inside a transaction passes its client, so the check reads what that
+  // transaction sees and runs on its connection.
+  db: Prisma.TransactionClient | typeof dbWrite = dbWrite
+) {
+  const rows = await db.$queryRaw<{ exists: boolean }[]>`
     SELECT EXISTS (
       SELECT 1 FROM "UserEngagement"
       WHERE type = 'Block'

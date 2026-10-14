@@ -9412,7 +9412,8 @@ model StorylineChapterEdge {
   createdAt       DateTime         @default(now())
 
   @@id([chapterId, parentChapterId])
-  @@index([parentChapterId])
+  /// Children of a chapter, oldest first, without a sort.
+  @@index([parentChapterId, createdAt])
 }
 
 /// Collaborators the storyline owner has endorsed. Their continuations skip review and
