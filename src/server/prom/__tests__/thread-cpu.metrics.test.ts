@@ -105,6 +105,17 @@ describe(THREAD_CPU_METRIC, () => {
     expect(after.main).toBe(1.5);
   });
 
+  it('counts a reused tid with fewer ticks from zero instead of throwing on a negative increment', async () => {
+    writeThread(MAIN, 'node', 0, 0);
+    writeThread(MAIN + 1, 'libuv-worker', 500, 0);
+    const registry = new client.Registry();
+    buildThreadCpuCounter({ registry, taskDir, mainTid: MAIN, platform: 'linux' });
+    expect((await read(registry)).libuv_worker).toBe(5);
+
+    writeThread(MAIN + 1, 'libuv-worker', 30, 0);
+    expect((await read(registry)).libuv_worker).toBe(5.3);
+  });
+
   it('keeps a fixed label set however many distinct thread names exist', async () => {
     writeThread(MAIN, 'node', 1, 0);
     for (let i = 1; i <= 200; i++) writeThread(MAIN + i, `worker-${i}`, 1, 0);

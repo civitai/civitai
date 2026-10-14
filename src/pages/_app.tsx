@@ -655,6 +655,7 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
           route: appContext.ctx.pathname,
           authed: !!session?.user,
           headers: request.headers,
+          url: request.url,
         });
       } catch {
         // A metric must never fail the render.

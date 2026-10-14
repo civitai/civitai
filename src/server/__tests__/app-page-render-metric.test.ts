@@ -42,13 +42,13 @@ const getInitialProps = (
   AppWithTRPC as unknown as { getInitialProps: (c: AppContext) => Promise<unknown> }
 ).getInitialProps;
 
-function makeCtx(req: unknown, pathname: string): AppContext {
+function makeCtx(req: unknown, pathname: string, res?: unknown): AppContext {
   const noop = () => null;
   return {
     Component: noop,
     AppTree: noop,
     router: {},
-    ctx: { req, pathname, query: {}, asPath: '/models/1/slug', AppTree: noop },
+    ctx: { req, res, pathname, query: {}, asPath: '/models/1/slug', AppTree: noop },
   } as unknown as AppContext;
 }
 
@@ -71,6 +71,7 @@ describe('_app page_render_total', () => {
       route: '/models/[id]/[[...slug]]',
       authed: false,
       headers,
+      url: '/models/1/slug',
     });
   });
 
@@ -80,10 +81,26 @@ describe('_app page_render_total', () => {
       settings: { features: {} },
     }));
     await getInitialProps(makeCtx({ headers: { host: 'civitai.com' }, url: '/' }, '/'));
+    expect(h.recordPageRender).toHaveBeenCalledTimes(1);
     expect(h.recordPageRender).toHaveBeenCalledWith(expect.objectContaining({ authed: true }));
   });
 
-  it('records nothing on a client-side navigation', async () => {
+  it('records nothing when the auth guard redirects instead of rendering', async () => {
+    const res = { writeHead: vi.fn(), end: vi.fn() };
+    await getInitialProps(
+      makeCtx(
+        { headers: { host: 'civitai.com' }, url: '/moderator/x' },
+        '/moderator/[[...slug]]',
+        res
+      )
+    );
+    expect(res.writeHead).toHaveBeenCalledWith(302, expect.anything());
+    expect(h.recordPageRender).not.toHaveBeenCalled();
+  });
+
+  // Guards the pre-existing `if (!request)` early return; the new block's own `typeof window`
+  // check cannot be observed under the node test environment.
+  it('records nothing when getInitialProps runs in the browser (no request)', async () => {
     await getInitialProps(makeCtx(undefined, '/models/[id]/[[...slug]]'));
     expect(h.recordPageRender).not.toHaveBeenCalled();
   });

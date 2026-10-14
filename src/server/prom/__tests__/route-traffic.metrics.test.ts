@@ -5,7 +5,7 @@ import type * as ServerDomain from '~/server/utils/server-domain';
 
 vi.mock('~/server/utils/server-domain', async (importOriginal) => ({
   ...(await importOriginal<typeof ServerDomain>()),
-  getAllServerHosts: () => ['civitai.com', 'civitai.green', 'civitai.red'],
+  getAllServerHosts: () => ['civitai.com', 'civitai.green', 'civitai.red', 'localhost:3000'],
 }));
 
 import {
@@ -65,8 +65,14 @@ describe(PAGE_RENDER_METRIC, () => {
       route: '/models/[id]/[[...slug]]',
       authed: false,
       headers: { host: 'civitai.com', 'x-civitai-verified-bot': 'googlebot' },
+      url: '/models/1/slug',
     });
-    recordPageRender({ route: '/', authed: true, headers: { host: 'CIVITAI.GREEN:443' } });
+    recordPageRender({
+      route: '/',
+      authed: true,
+      headers: { host: 'CIVITAI.GREEN:443' },
+      url: '/',
+    });
     expect(await rows(PAGE_RENDER_METRIC)).toEqual(
       expect.arrayContaining([
         {
@@ -92,10 +98,34 @@ describe(PAGE_RENDER_METRIC, () => {
         route: `/invented/${i}`,
         authed: false,
         headers: { host: `attacker-${i}.example`, 'x-civitai-verified-bot': `bot-${i}` },
+        url: `/invented/${i}`,
       });
     }
     expect(await rows(PAGE_RENDER_METRIC)).toEqual([
       { value: 500, labels: { route: 'other', authed: 'false', bot_class: 'none', host: 'other' } },
+    ]);
+  });
+
+  it('skips /_next/data requests, which run getInitialProps but render no HTML', async () => {
+    const headers = { host: 'civitai.com' };
+    recordPageRender({ route: '/images', authed: false, headers, url: '/images' });
+    recordPageRender({
+      route: '/images',
+      authed: false,
+      headers: { ...headers, 'x-nextjs-data': '1' },
+      url: '/images',
+    });
+    recordPageRender({
+      route: '/images',
+      authed: false,
+      headers,
+      url: '/_next/data/build-id/images.json',
+    });
+    expect(await rows(PAGE_RENDER_METRIC)).toEqual([
+      {
+        value: 1,
+        labels: { route: '/images', authed: 'false', bot_class: 'none', host: 'civitai.com' },
+      },
     ]);
   });
 });
@@ -104,6 +134,8 @@ describe('label helpers', () => {
   it('hostLabel accepts only configured hosts', () => {
     expect(hostLabel('civitai.red')).toBe('civitai.red');
     expect(hostLabel('civitai.com:3000')).toBe('civitai.com');
+    expect(hostLabel('localhost:3000')).toBe('localhost:3000');
+    expect(hostLabel('localhost:4000')).toBe('other');
     expect(hostLabel('evil.civitai.com')).toBe('other');
     expect(hostLabel(undefined)).toBe('other');
   });

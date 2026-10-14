@@ -6,7 +6,8 @@ import {
   registerInstrumentationMetric,
 } from '@civitai/telemetry/client';
 import { parseVerifiedBotHeader, VERIFIED_BOT_HEADER } from '~/server/utils/bot-detection/header';
-import { PAGE_ROUTE_HEADER, pageRouteLabel } from '~/server/utils/page-routes';
+import { pageRouteLabel } from '~/server/utils/page-routes';
+import { PAGE_ROUTE_HEADER } from '~/utils/page-route-header';
 import { getAllServerHosts } from '~/server/utils/server-domain';
 
 export const TRPC_CALLS_METRIC = PROM_PREFIX + 'trpc_calls_total';
@@ -36,7 +37,7 @@ function pageRenderCounter(): Counter<'route' | 'authed' | 'bot_class' | 'host'>
     () =>
       new client.Counter({
         name: PAGE_RENDER_METRIC,
-        help: 'Server-side page renders by route pattern, sign-in state, verified-bot class and host',
+        help: 'Server-side HTML page renders (not /_next/data requests) by route pattern, sign-in state, verified-bot class (set only where bot verification runs) and host',
         labelNames: ['route', 'authed', 'bot_class', 'host'] as const,
         registers: [instrumentationRegistry],
       })
@@ -45,8 +46,20 @@ function pageRenderCounter(): Counter<'route' | 'authed' | 'bot_class' | 'host'>
 
 export function hostLabel(host: string | undefined): string {
   if (!host) return OTHER;
-  const bare = host.toLowerCase().replace(/:\d+$/, '');
-  return getAllServerHosts().includes(bare) ? bare : OTHER;
+  const hosts = getAllServerHosts();
+  const lower = host.toLowerCase();
+  if (hosts.includes(lower)) return lower;
+  // Configured hosts may carry a port (local dev) or not (production); accept either.
+  const bare = lower.replace(/:\d+$/, '');
+  return hosts.includes(bare) ? bare : OTHER;
+}
+
+/**
+ * A client-side navigation to a `getServerSideProps` page runs `_app.getInitialProps` on the
+ * server too, but returns JSON without rendering.
+ */
+export function isNextDataRequest(headers: HeaderBag, url: string | undefined): boolean {
+  return !!headers['x-nextjs-data'] || !!url?.startsWith('/_next/data/');
 }
 
 export function botClassLabel(raw: string | string[] | null | undefined): string {
@@ -71,12 +84,15 @@ export function recordPageRender({
   route,
   authed,
   headers,
+  url,
 }: {
   route: string;
   authed: boolean;
   headers: HeaderBag;
+  url: string | undefined;
 }) {
   try {
+    if (isNextDataRequest(headers, url)) return;
     pageRenderCounter().inc({
       route: pageRouteLabel(route),
       authed: String(authed),

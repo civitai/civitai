@@ -1,7 +1,5 @@
 import { PAGE_ROUTES } from '~/server/utils/page-routes.list';
 
-export const PAGE_ROUTE_HEADER = 'x-page-route';
-
 /** No route was reported (non-web clients, server-side callers). */
 export const PAGE_ROUTE_NONE = 'none';
 /** A route was reported but is not a known page pattern. */
