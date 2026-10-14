@@ -89,10 +89,8 @@ export default function StorylineManageModal({ storylineId }: { storylineId: num
           </Tabs.List>
 
           <Tabs.Panel value="settings">
-            <div className="mb-6">
-              <StorylineCoversRow storylineId={storylineId} />
-            </div>
             <StorylineSettingsForm
+              coverRow={<StorylineCoversRow storylineId={storylineId} />}
               status={storyline.status}
               maxNsfwLevel={storyline.maxNsfwLevel}
               whoCanContinue={storyline.whoCanContinue}
