@@ -70,6 +70,14 @@ const CREATE_CALLS = [
   },
 ] as const;
 
+/**
+ * Placement-writing mutations that are guarded but not yet routed: they refuse
+ * every caller until their feature is wired, so they have no writer to assert
+ * on and no ordinary caller who gets through. When one is routed it moves into
+ * `CREATE_CALLS` above, with its writer and its control.
+ */
+const GATED_CREATE_MUTATIONS = ['submitStorylineContinuation'] as const;
+
 type ProcedureDef = { _def: { type: string; middlewares: unknown[] } };
 
 const procedures = (placementRouter as unknown as { _def: { procedures: Record<string, unknown> } })
@@ -112,7 +120,9 @@ describe('placement router — account state refuses a placement', () => {
 
     const guarded = mutationNames.filter((name) => isGuarded(procedures[name]));
 
-    expect(guarded.sort()).toEqual([...new Set(CREATE_CALLS.map((call) => call.name))].sort());
+    expect(guarded.sort()).toEqual(
+      [...new Set([...CREATE_CALLS.map((call) => call.name), ...GATED_CREATE_MUTATIONS])].sort()
+    );
   });
 
   for (const { label, name, writer, input } of CREATE_CALLS) {
