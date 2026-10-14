@@ -102,6 +102,21 @@ export function StorylineOpenToAnyoneChip() {
   );
 }
 
+/** A way on's share of the readers who chose at a fork, laid over its cover. */
+export function StorylineShareChip({
+  percent,
+  className,
+}: {
+  percent: number;
+  className?: string;
+}) {
+  return (
+    <Chip onImage color="dark" className={className} data-testid="storyline-share-chip">
+      {percent}%
+    </Chip>
+  );
+}
+
 /** What continuing costs. `short` drops "to continue" where space is tight, keeping it as a tooltip. */
 export function StorylinePriceChip({
   price,

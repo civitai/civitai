@@ -60,7 +60,7 @@ const img = (id: number, postId: number, extra: Record<string, unknown> = {}) =>
 
 type MutationOptions = {
   onMutate?: () => void;
-  onSuccess?: () => unknown;
+  onSuccess?: (data: unknown, input: Record<string, unknown>) => unknown;
   onError?: (e: { message: string }) => void;
 };
 
@@ -70,6 +70,8 @@ const mocks = vi.hoisted(() => ({
   imageQuery: vi.fn(),
   mutate: vi.fn(),
   refusal: null as string | null,
+  pending: false,
+  safe: true,
   invalidateById: vi.fn(async () => undefined),
   invalidateInfinite: vi.fn(async () => undefined),
 }));
@@ -83,12 +85,12 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
         'storyline.getById': { useQuery: () => ({ data: mocks.storyline, isLoading: false }) },
         'storyline.update': {
           useMutation: (options: MutationOptions) => ({
-            isPending: false,
-            mutate: (input: unknown) => {
+            isPending: mocks.pending,
+            mutate: (input: Record<string, unknown>) => {
               mocks.mutate(input);
               options.onMutate?.();
               if (mocks.refusal) options.onError?.({ message: mocks.refusal });
-              else void options.onSuccess?.();
+              else void options.onSuccess?.(undefined, input);
             },
           }),
         },
@@ -124,10 +126,31 @@ vi.mock('~/components/Storyline/StorylineThumb', () => ({
     </div>
   ),
 }));
+// A drag is three moves in a row, as pointer moves arrive.
 vi.mock('~/components/Comics/HeroPositionPicker', () => ({
-  HeroPositionPicker: ({ url, position }: { url: string; position: number }) => (
-    <div data-testid="banner-focus" data-image={url} data-position={String(position)} />
+  HeroPositionPicker: ({
+    url,
+    position,
+    onPositionChange,
+  }: {
+    url: string;
+    position: number;
+    onPositionChange: (position: number) => void;
+  }) => (
+    <div data-testid="banner-focus" data-image={url} data-position={String(position)}>
+      <button type="button" onClick={() => [31, 32, 33].forEach(onPositionChange)}>
+        Drag
+      </button>
+    </div>
   ),
+}));
+vi.mock('~/components/ImageGuard/ImageGuard2', () => ({
+  ImageGuard2: ({ children }: { children: (safe: boolean) => React.ReactNode }) => (
+    <>{children(mocks.safe)}</>
+  ),
+}));
+vi.mock('~/components/ImageHash/ImageHash', () => ({
+  MediaHash: () => <span data-testid="hash" />,
 }));
 
 beforeEach(() => {
@@ -135,6 +158,8 @@ beforeEach(() => {
   mocks.storyline = { ...STORYLINE };
   mocks.images = [];
   mocks.refusal = null;
+  mocks.pending = false;
+  mocks.safe = true;
   for (const fn of [mocks.imageQuery, mocks.mutate, mocks.invalidateById, mocks.invalidateInfinite])
     fn.mockClear();
 });
@@ -193,9 +218,71 @@ describe('StorylineCoversRow', () => {
     expect(mocks.mutate).toHaveBeenLastCalledWith({ id: 2, coverImageId: null });
     await page.getByRole('button', { name: 'Remove banner' }).click();
     expect(mocks.mutate).toHaveBeenLastCalledWith({ id: 2, heroImageId: null });
-    // The page and the feed's card both show the cover.
+    // The page shows both; the feed's card shows only the cover.
+    expect(mocks.invalidateById).toHaveBeenCalledTimes(2);
     expect(mocks.invalidateById).toHaveBeenCalledWith({ id: 2 });
-    expect(mocks.invalidateInfinite).toHaveBeenCalled();
+    expect(mocks.invalidateInfinite).toHaveBeenCalledTimes(1);
+  });
+
+  const BANNER = {
+    ...STORYLINE,
+    heroImageId: 40,
+    heroImage: { id: 40, url: 'banner-pick', type: 'image', nsfwLevel: 1 },
+    heroIsBanner: true,
+    heroImagePosition: 70,
+  };
+
+  test('dragging the focus follows the pointer and saves once the drag pauses', async () => {
+    mocks.storyline = BANNER;
+    renderWithProviders(<Row />);
+
+    await page.getByRole('button', { name: 'Drag' }).click();
+    await expect.element(page.getByTestId('banner-focus')).toHaveAttribute('data-position', '33');
+    expect(mocks.mutate).not.toHaveBeenCalled();
+    await expect.poll(() => mocks.mutate.mock.calls).toEqual([[{ id: 2, heroImagePosition: 33 }]]);
+    // The feed shows no banner, so a focus change leaves it alone.
+    expect(mocks.invalidateInfinite).not.toHaveBeenCalled();
+  });
+
+  test('removing the banner sends a focus still waiting first, then the removal', async () => {
+    mocks.storyline = BANNER;
+    renderWithProviders(<Row />);
+
+    await page.getByRole('button', { name: 'Drag' }).click();
+    await page.getByRole('button', { name: 'Remove banner' }).click();
+    expect(mocks.mutate.mock.calls).toEqual([
+      [{ id: 2, heroImagePosition: 33 }],
+      [{ id: 2, heroImageId: null }],
+    ]);
+  });
+
+  test('closing Manage mid-drag still saves the focus', async () => {
+    mocks.storyline = BANNER;
+    const screen = await renderWithProviders(<Row />);
+
+    await page.getByRole('button', { name: 'Drag' }).click();
+    await screen.unmount();
+    expect(mocks.mutate.mock.calls).toEqual([[{ id: 2, heroImagePosition: 33 }]]);
+  });
+
+  test("a banner the owner's settings blur shows blurred, with no focus control", async () => {
+    mocks.storyline = BANNER;
+    mocks.safe = false;
+    renderWithProviders(<Row />);
+
+    await expect.element(page.getByTestId('storyline-banner-hidden')).toBeInTheDocument();
+    expect(page.getByTestId('banner-focus').elements()).toHaveLength(0);
+  });
+
+  test('while a save is in flight the slots cannot be changed again', async () => {
+    mocks.storyline = { ...BANNER, coverImageId: 30 };
+    mocks.pending = true;
+    renderWithProviders(<Row />);
+
+    for (const name of ['Use chapter 1', 'Remove banner'])
+      await expect.element(page.getByRole('button', { name })).toBeDisabled();
+    for (const slotName of ['Card cover', 'Banner'])
+      await expect.element(slot(slotName).getByRole('button', { name: 'Change' })).toBeDisabled();
   });
 
   test('the picker offers only images the server would accept, grouped by chapter', async () => {
@@ -237,6 +324,18 @@ describe('StorylineCoversRow', () => {
     await confirm.click();
     expect(mocks.mutate).toHaveBeenLastCalledWith({ id: 2, heroImageId: 4 });
     expect(mocks.mutate).toHaveBeenCalledTimes(1);
+    await expect.element(page.getByRole('dialog')).not.toBeInTheDocument();
+  });
+
+  test('cancelling the picker closes it and saves nothing', async () => {
+    mocks.images = [img(1, 501)];
+    renderWithProviders(<Row />);
+
+    await slot('Card cover').getByRole('button', { name: 'Change' }).click();
+    await page.getByRole('radio', { name: 'Chapter 1, image 1' }).click();
+    await page.getByRole('button', { name: 'Cancel' }).click();
+    await expect.element(page.getByRole('dialog')).not.toBeInTheDocument();
+    expect(mocks.mutate).not.toHaveBeenCalled();
   });
 
   test('the picker opens on the current pick and does not resend it unchanged', async () => {
@@ -263,5 +362,11 @@ describe('StorylineCoversRow', () => {
     await expect
       .element(page.getByTestId('storyline-covers-error'))
       .toHaveTextContent('That image cannot be used as a cover');
+    expect(mocks.invalidateById).not.toHaveBeenCalled();
+
+    // The next save that goes through clears it.
+    mocks.refusal = null;
+    await page.getByRole('button', { name: 'Use chapter 1' }).click();
+    await expect.element(page.getByTestId('storyline-covers-error')).not.toBeInTheDocument();
   });
 });

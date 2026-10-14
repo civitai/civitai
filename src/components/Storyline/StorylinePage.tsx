@@ -20,6 +20,7 @@ import {
   StorylinePriceChip,
   StorylineRankChip,
   StorylineRoleChip,
+  StorylineShareChip,
   StorylineStat,
   StorylineStatusChip,
   storylineCardClass,
@@ -384,7 +385,12 @@ function StorylineForkPaths({ chapterId, count }: { chapterId: number; count: nu
                         <span className="absolute left-1.5 top-1.5">
                           <StorylineRankChip rank={child.rank} onImage />
                         </span>
-                        {share && <ForkShare percent={share.percent} />}
+                        {share && (
+                          <StorylineShareChip
+                            percent={share.percent}
+                            className="absolute bottom-1.5 right-1.5"
+                          />
+                        )}
                       </StorylineThumb>
                       <Text
                         size="sm"
@@ -408,7 +414,12 @@ function StorylineForkPaths({ chapterId, count }: { chapterId: number; count: nu
                     <Text size="xs" c="dimmed" lh={1.25}>
                       {name}
                     </Text>
-                    {share && <ForkShare percent={share.percent} />}
+                    {share && (
+                      <StorylineShareChip
+                        percent={share.percent}
+                        className="absolute bottom-1.5 right-1.5"
+                      />
+                    )}
                   </div>
                 )}
               </li>
@@ -417,14 +428,6 @@ function StorylineForkPaths({ chapterId, count }: { chapterId: number; count: nu
         </ul>
       )}
     </div>
-  );
-}
-
-function ForkShare({ percent }: { percent: number }) {
-  return (
-    <span className="absolute bottom-1.5 right-1.5 rounded-full bg-black/55 px-2 py-0.5 text-xs font-bold text-white backdrop-blur-sm">
-      {percent}%
-    </span>
   );
 }
 

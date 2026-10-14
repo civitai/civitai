@@ -7,6 +7,8 @@ import { HeroPositionPicker } from '~/components/Comics/HeroPositionPicker';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useQueryImages } from '~/components/Image/image.utils';
+import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
+import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { StorylineThumb, type StorylineThumbImage } from '~/components/Storyline/StorylineThumb';
 import { ImageSort } from '~/server/common/enums';
 import { MetricTimeframe } from '~/shared/utils/prisma/enums';
@@ -34,17 +36,18 @@ export function StorylineCoversRow({ storylineId }: { storylineId: number }) {
 
   const update = trpc.storyline.update.useMutation({
     onMutate: () => setError(null),
-    onSuccess: () =>
+    onSuccess: (_data, input) =>
       Promise.all([
         utils.storyline.getById.invalidate({ id: storylineId }),
-        // The feed's cards show the cover too.
-        utils.storyline.getInfinite.invalidate(),
+        // The feed's cards show the cover, and nothing else this row sets.
+        'coverImageId' in input ? utils.storyline.getInfinite.invalidate() : undefined,
       ]),
     onError: (e) => setError(e.message),
   });
+  // Saved once the drag pauses, and on closing Manage mid-drag.
   const savePosition = useDebouncedCallback(
     (heroImagePosition: number) => update.mutate({ id: storylineId, heroImagePosition }),
-    400
+    { delay: 400, flushOnUnmount: true }
   );
 
   if (!storyline) return null;
@@ -59,6 +62,8 @@ export function StorylineCoversRow({ storylineId }: { storylineId: number }) {
         slot,
         onPick: (imageId: number) => {
           if (slot === 'banner') {
+            // A focus still waiting to save goes first, so it cannot land after the new banner.
+            savePosition.flush();
             setPosition(null);
             save({ heroImageId: imageId });
           } else save({ coverImageId: imageId });
@@ -92,21 +97,43 @@ export function StorylineCoversRow({ storylineId }: { storylineId: number }) {
         <CoverSlot
           label="Banner"
           onChange={() => openPicker('banner')}
-          onReset={storyline.heroImageId != null ? () => save({ heroImageId: null }) : undefined}
+          onReset={
+            storyline.heroImageId != null
+              ? () => {
+                  savePosition.flush();
+                  setPosition(null);
+                  save({ heroImageId: null });
+                }
+              : undefined
+          }
           resetLabel="Remove banner"
           disabled={update.isPending}
         >
           {storyline.heroIsBanner && storyline.heroImage ? (
-            <HeroPositionPicker
-              url={storyline.heroImage.url}
-              aspectRatio="16 / 6"
-              position={position ?? storyline.heroImagePosition}
-              onPositionChange={(next) => {
-                setPosition(next);
-                savePosition(next);
-              }}
-              className="w-[240px] max-w-full"
-            />
+            // The owner's own blur preferences apply here as on the page.
+            <ImageGuard2 image={storyline.heroImage} explain={false}>
+              {(safe) =>
+                safe ? (
+                  <HeroPositionPicker
+                    url={storyline.heroImage!.url}
+                    aspectRatio="16 / 6"
+                    position={position ?? storyline.heroImagePosition}
+                    onPositionChange={(next) => {
+                      setPosition(next);
+                      savePosition(next);
+                    }}
+                    className="w-[240px] max-w-full"
+                  />
+                ) : (
+                  <div
+                    className="relative aspect-[16/6] w-[240px] max-w-full overflow-hidden rounded-lg"
+                    data-testid="storyline-banner-hidden"
+                  >
+                    <MediaHash {...storyline.heroImage!} className="absolute inset-0" />
+                  </div>
+                )
+              }
+            </ImageGuard2>
           ) : (
             <div className="flex aspect-[16/6] w-[240px] max-w-full items-center justify-center rounded-lg border border-dashed border-gray-4 p-3 text-center dark:border-dark-3">
               <Text size="xs" c="dimmed">
