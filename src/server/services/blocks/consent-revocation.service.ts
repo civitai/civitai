@@ -90,7 +90,8 @@ import {
  * no consent-gated scope cannot be affected by any marker. That keeps every app whose
  * scopes are all exempt — the four legacy `apps:storage:*` scopes, `apps:storage`,
  * `collections:read:self`/`write:self` — out of the coupling (an app declaring the
- * consent-gated `apps:storage:publish` is IN it)
+ * consent-gated `apps:storage:publish` is IN it only for a viewer who granted it, since the
+ * mint withholds an ungranted gated scope from the token)
  * entirely, which is keyed on the app's MANIFEST, not on the route.
  *
  * ⚠️ DO NOT QUOTE "20 of the 29 scope-bound routes" FOR THIS PREDICATE — that figure belongs to
@@ -250,7 +251,8 @@ export type ConsentRevocationVerdict =
  *     and `blocks.revokeScopes` refuses to record a suppression for one — so a marker can
  *     never name a scope such a token carries. An app whose whole manifest is exempt
  *     (the four legacy `apps:storage:*` scopes, `apps:storage`, `collections:read:self`) never
- *     reads the marker. `apps:storage:publish` is consent-gated, so a manifest carrying it does.
+ *     reads the marker. `apps:storage:publish` is consent-gated, so a token carrying a
+ *     granted one does; an ungranted one is withheld at mint and never reaches this check.
  *
  *     ⚠️ NO ROUTE FIGURE HERE. "20 of the 29 scope-bound REST routes" was retracted in this
  *     file's header and again in the middleware, and survived in THIS docblock — the one both
