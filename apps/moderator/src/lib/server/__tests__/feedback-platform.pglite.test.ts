@@ -332,6 +332,52 @@ describe('the resolution write', () => {
     expect(await countRows(db, 'ModActivity')).toBe(0);
   });
 
+  it('still writes a triage note posted with an unchanged resolution', async () => {
+    const context = { report: REPORT, server: { ...SERVER, resolution: PRIOR_RESOLUTION } };
+    const id = await seedPlatform({ status: 'reviewed', context });
+    const result = await triageAction(
+      event(
+        resolutionForm(id, {
+          expectedStatus: 'reviewed',
+          status: 'reviewed',
+          expectedResolutionAt: PRIOR_RESOLUTION.at,
+          fixedInComponent: PRIOR_RESOLUTION.fixedIn.component,
+          fixedInVersion: PRIOR_RESOLUTION.fixedIn.version,
+          publicNote: PRIOR_RESOLUTION.publicNote,
+          note: 'internal: tracked upstream',
+        })
+      )
+    );
+    expect(result).toEqual({ success: true, triaged: id });
+    expect((await readFeedback(db, id)).triageNote).toBe('internal: tracked upstream');
+  });
+
+  it.each([
+    ['only the version', { fixedInVersion: '2.4.0' }, { component: 'sdk', version: '2.4.0' }],
+    ['only the component', { fixedInComponent: 'cli' }, { component: 'cli', version: '0.9.0' }],
+  ])('still writes a resolution-only save that changes %s (control)', async (_l, over, fixedIn) => {
+    const context = { report: REPORT, server: { ...SERVER, resolution: PRIOR_RESOLUTION } };
+    const id = await seedPlatform({ status: 'reviewed', context });
+    const result = await triageAction(
+      event(
+        resolutionForm(id, {
+          expectedStatus: 'reviewed',
+          status: 'reviewed',
+          expectedResolutionAt: PRIOR_RESOLUTION.at,
+          fixedInComponent: PRIOR_RESOLUTION.fixedIn.component,
+          fixedInVersion: PRIOR_RESOLUTION.fixedIn.version,
+          publicNote: PRIOR_RESOLUTION.publicNote,
+          ...over,
+        })
+      )
+    );
+    expect(result).toEqual({ success: true, triaged: id });
+    expect(
+      ((await contextOf(id)) as { server: { resolution: { fixedIn: unknown } } }).server.resolution
+        .fixedIn
+    ).toEqual(fixedIn);
+  });
+
   it('still writes a resolution-only save that changes either field (control)', async () => {
     const context = { report: REPORT, server: { ...SERVER, resolution: PRIOR_RESOLUTION } };
     const id = await seedPlatform({ status: 'reviewed', context });

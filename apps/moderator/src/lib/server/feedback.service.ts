@@ -617,10 +617,11 @@ export async function triageFeedback(input: {
     sql<boolean>`(CASE WHEN jsonb_typeof("context"->'server'->'resolution'->'at') = 'string' THEN "context"->'server'->'resolution'->>'at' END) IS NOT DISTINCT FROM ${resolution.expectedAt}`;
   /**
    * Re-saving what is stored would move `at` — the `updatedAt` agents poll — and log a triage that
-   * changed nothing, so a resolution-only save of the stored values writes nothing.
+   * changed nothing, so a resolution-only save of the stored values writes nothing — unless it also
+   * carries a triage note, which must still land.
    */
   const sameAsStored =
-    resolutionOnly && resolution?.kind === 'set'
+    resolutionOnly && resolution?.kind === 'set' && input.note === undefined
       ? sql<boolean>`(("context"->'server'->'resolution'->'fixedIn') IS NOT DISTINCT FROM ${
           resolution.fixedIn ? JSON.stringify(resolution.fixedIn) : null
         }::jsonb AND ("context"->'server'->'resolution'->>'publicNote') IS NOT DISTINCT FROM ${
