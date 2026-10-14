@@ -1,6 +1,10 @@
-import { Container, Text, Title } from '@mantine/core';
+import { Stack, Title } from '@mantine/core';
+import { FeedLayout } from '~/components/AppLayout/FeedLayout';
+import { Page } from '~/components/AppLayout/Page';
+import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { Meta } from '~/components/Meta/Meta';
 import { StorylinesFeed } from '~/components/Storyline/StorylinesFeed';
+import { StorylinesIntro } from '~/components/Storyline/StorylinesIntro';
 import { STORYLINES_URL } from '~/components/Storyline/storyline-routes';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 
@@ -11,20 +15,19 @@ export const getServerSideProps = createServerSideProps({
   },
 });
 
-export default function StorylinesRoute() {
+function StorylinesPage() {
   return (
     <>
       <Meta title="Storylines" canonical={STORYLINES_URL} />
-      <Container size="xl" py="md" className="flex flex-col gap-4">
-        <div>
+      <MasonryContainer>
+        <Stack gap="md">
           <Title order={1}>Storylines</Title>
-          <Text c="dimmed">
-            Stories told in posts, one chapter at a time. Pick one up from the start, or continue
-            it.
-          </Text>
-        </div>
-        <StorylinesFeed />
-      </Container>
+          <StorylinesIntro />
+          <StorylinesFeed />
+        </Stack>
+      </MasonryContainer>
     </>
   );
 }
+
+export default Page(StorylinesPage, { InnerLayout: FeedLayout });
