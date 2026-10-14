@@ -139,26 +139,28 @@
             </div>
           {/each}
 
-          <div class="rounded-md bg-dark-6 p-3 text-sm">
-            <p class="m-0 font-medium text-white">Latest scan</p>
-            {#each scanLabels as { label, value } (label)}
-              {@const provenance = scanVerdictProvenance(value)}
-              <p class="m-0 mt-1">
-                <span class="text-white">{labelName(label)}:</span>
-                {scanVerdictText(value)}
-              </p>
-              <p class="m-0 text-dark-2">
-                {provenance.source} ·
-                {#if provenance.note}
-                  <span title={dateTime(value.updatedAt)}>{provenance.note}</span>
-                {:else}
-                  <span title={dateTime(value.updatedAt)}>{ago(value.updatedAt)}</span>
-                {/if}
-              </p>
-            {:else}
-              <p class="m-0 text-sm text-dark-2">No text scan on record.</p>
-            {/each}
-          </div>
+          {#if verdicts.length || scanLabels.length}
+            <div class="rounded-md bg-dark-6 p-3 text-sm">
+              <p class="m-0 font-medium text-white">Latest scan</p>
+              {#each scanLabels as { label, value } (label)}
+                {@const provenance = scanVerdictProvenance(value)}
+                <p class="m-0 mt-1">
+                  <span class="text-white">{labelName(label)}:</span>
+                  {scanVerdictText(value)}
+                </p>
+                <p class="m-0 text-dark-2">
+                  {provenance.source} ·
+                  {#if provenance.note}
+                    <span title={dateTime(value.updatedAt)}>{provenance.note}</span>
+                  {:else}
+                    <span title={dateTime(value.updatedAt)}>{ago(value.updatedAt)}</span>
+                  {/if}
+                </p>
+              {:else}
+                <p class="m-0 text-sm text-dark-2">No text scan on record.</p>
+              {/each}
+            </div>
+          {/if}
 
           {#if hashDetail}
             {#await hashDetail}
