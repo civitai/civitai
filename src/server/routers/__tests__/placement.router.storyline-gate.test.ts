@@ -45,13 +45,17 @@ beforeEach(() => vi.clearAllMocks());
  */
 const SURFACE_ENDPOINTS = (surface: string) =>
   [
-    ['getSpace', { surface, targetType: 'image', targetId: 1 }],
-    ['getSpaceRow', { surface, entityType: 'post', entityId: 1 }],
-    ['clearSpace', { surface, entityType: 'post', entityId: 1 }],
-    ['getMySpaces', { surface }],
-    ['getPriceRange', { surface }],
-    ['setSpace', { surface, entityType: 'post', entityId: 1, mode: 'review', price: 0 }],
-    ['getFreeStanding', { surface, targetType: 'image', targetId: 1 }],
+    ['getSpace', { surface, targetType: 'image', targetId: 1 }, 'resolvePlacementSpaceFor'],
+    ['getSpaceRow', { surface, entityType: 'post', entityId: 1 }, 'getPlacementSpaceRow'],
+    ['clearSpace', { surface, entityType: 'post', entityId: 1 }, 'clearPlacementSpace'],
+    ['getMySpaces', { surface }, 'getPlacementSpaces'],
+    ['getPriceRange', { surface }, 'placementPriceRange'],
+    [
+      'setSpace',
+      { surface, entityType: 'post', entityId: 1, mode: 'review', price: 100 },
+      'setPlacementSpace',
+    ],
+    ['getFreeStanding', { surface, targetType: 'image', targetId: 1 }, 'hasUsedFreePlacementOn'],
   ] as const;
 
 /**
@@ -84,7 +88,11 @@ describe('the shared space endpoints refuse storylines', () => {
 
   // The positive arm: the same calls on a launched surface reach their service,
   // so the refusal above is about the surface and not about the input shape.
-  it.each(SURFACE_ENDPOINTS('sticker'))('%s still serves a sticker space', async (name, input) => {
-    await expect(caller()[name](input)).resolves.not.toThrow();
-  });
+  it.each(SURFACE_ENDPOINTS('sticker'))(
+    '%s still serves a sticker space',
+    async (name, input, service) => {
+      await caller()[name](input);
+      expect(services[service]).toHaveBeenCalledTimes(1);
+    }
+  );
 });

@@ -26,46 +26,84 @@ vi.mock('~/server/services/placement-escrow.service', async (importOriginal) => 
 }));
 
 const { createStorylinePlacement } = await import('~/server/services/storyline-placement.service');
+// Real, not stubbed: the D2 tests below run the free tier's own predicates over
+// the rows a storyline submission writes.
+const { getFreePlacementAllowance, hasUsedFreePlacementOn } = await import(
+  '~/server/services/free-placement.service'
+);
 
 const OWNER = 10;
 const PLACER = 20;
 const CHAPTER = 77;
+const PLACER_LOCK_CLASS = 0x74ee0003;
 
-const placementCount = dbMock.dbWrite.placement.count;
-const placementCreate = dbMock.dbWrite.placement.create;
-const executeRaw = dbMock.dbWrite.$executeRaw;
+type Row = Record<string, unknown>;
+type Where = Record<string, unknown>;
 
 /**
- * A table the fake count and create share, so the pending cap is decided by rows
- * this test actually wrote rather than by a number handed to the count.
- *
- * Any count that is not the pending cap throws. The free tier's questions — the
- * daily allowance and the reserved slots — both select on `free: true`, and a
- * zero-priced continuation must ask neither; a count this fake does not
- * recognise is that mistake, reported by name instead of answered with 0.
+ * One table every fake reads and writes, so a cap or an allowance is decided by
+ * rows the code under test actually wrote rather than by a number handed back.
  */
-let rows: Record<string, unknown>[];
+let rows: Row[];
+
+/**
+ * The subset of Prisma `where` these services use, evaluated over `rows`. An
+ * operator it does not know throws rather than matching, so a predicate this
+ * fake cannot see is a failure by name instead of a silent pass.
+ */
+const matches = (row: Row, where: Where) =>
+  Object.entries(where).every(([key, condition]) => {
+    if (condition === undefined) return true;
+    if (condition !== null && typeof condition === 'object' && !(condition instanceof Date)) {
+      const ops = condition as Record<string, unknown>;
+      for (const op of Object.keys(ops))
+        if (op !== 'gte' && op !== 'in') throw new Error(`fake: unsupported operator ${op}`);
+      if ('gte' in ops && !((row[key] as Date) >= (ops.gte as Date))) return false;
+      if ('in' in ops && !(ops.in as unknown[]).includes(row[key])) return false;
+      return true;
+    }
+    return row[key] === condition;
+  });
+
+/**
+ * The transaction gets its own client, distinct from `dbWrite`, and every call
+ * on it is recorded in order. A lock or a count made on `dbWrite` outside the
+ * callback lands on the wrong client and is visible as such: an xact lock taken
+ * outside a transaction is released at the end of its own statement.
+ */
+let txLog: string[];
+const tx = {
+  $executeRawUnsafe: vi.fn(async (sql: string) => {
+    txLog.push(`unsafe ${sql}`);
+    return 0;
+  }),
+  $executeRaw: vi.fn(async (strings: TemplateStringsArray, ...values: unknown[]) => {
+    txLog.push(`raw ${strings.join('?')} [${values.join(',')}]`);
+    return 0;
+  }),
+  placement: {
+    count: vi.fn(async ({ where }: { where: Where }) => {
+      txLog.push('count');
+      return rows.filter((row) => matches(row, where)).length;
+    }),
+    create: vi.fn(async ({ data }: { data: Row }) => {
+      txLog.push('create');
+      rows.push({ createdAt: new Date(), ...data });
+      return { id: rows.length };
+    }),
+  },
+};
+
 const givenTable = () => {
   rows = [];
-  placementCount.mockImplementation(async ({ where }: { where: Record<string, unknown> }) => {
-    if ('free' in where || 'createdAt' in where)
-      throw new Error(
-        `a storyline continuation asked a free-tier question: ${JSON.stringify(where)}`
-      );
-    if (where.status !== 'pending' || where.ownerId === undefined)
-      throw new Error(`unrecognised count: ${JSON.stringify(where)}`);
-    return rows.filter(
-      (row) =>
-        row.surface === where.surface &&
-        row.ownerId === where.ownerId &&
-        row.placerId === where.placerId &&
-        row.status === 'pending'
-    ).length;
-  });
-  placementCreate.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => {
-    rows.push(data);
-    return { id: rows.length };
-  });
+  txLog = [];
+  dbMock.dbWrite.$transaction.mockImplementation(async (fn: (client: typeof tx) => unknown) =>
+    fn(tx)
+  );
+  // The free tier's display reads, against the same table.
+  dbMock.dbRead.placement.count.mockImplementation(
+    async ({ where }: { where: Where }) => rows.filter((row) => matches(row, where)).length
+  );
 };
 
 const givenSpace = (overrides: Partial<ResolvedPlacementSpace> = {}) =>
@@ -88,11 +126,12 @@ const givenSpace = (overrides: Partial<ResolvedPlacementSpace> = {}) =>
     ...overrides,
   } satisfies ResolvedPlacementSpace);
 
-const submit = (overrides: { expectedPrice?: number } = {}) =>
+const submit = (overrides: { expectedPrice?: number; placerId?: number } = {}) =>
   createStorylinePlacement({
     placerId: PLACER,
     targetType: 'image',
     targetId: CHAPTER,
+    expectedPrice: 0,
     spendType: 'yellow',
     data: { postId: 1 },
     ...overrides,
@@ -129,16 +168,6 @@ describe('createStorylinePlacement — priced at zero', () => {
       });
   });
 
-  // `free: false` is what keeps a zero-priced continuation out of both free-tier
-  // counts. Written `true`, it would spend the placer's one free sticker or remix
-  // of the day, and hold one of the creator's free slots.
-  it('writes an ordinary row worth nothing, never a free one', async () => {
-    await submit();
-
-    expect(rows[0].free).toBe(false);
-    expect(rows[0].amount).toBe(0);
-  });
-
   // Nothing to hold. The escrow would return harmlessly for zero, but a call
   // here would also re-stamp and re-check a row that has no money behind it.
   it('takes no escrow', async () => {
@@ -156,11 +185,64 @@ describe('createStorylinePlacement — priced at zero', () => {
     const hours = (expiresAt.getTime() - before) / 3_600_000;
     expect(hours).toBeGreaterThanOrEqual(PLACEMENT_SURFACES.storyline.expiryHours - 0.01);
     expect(hours).toBeLessThan(PLACEMENT_SURFACES.storyline.expiryHours + 0.01);
+    // Its own figure: 48h is what every other surface uses, so a fallback to
+    // another surface's expiry would not pass the window above.
+    expect(PLACEMENT_SURFACES.storyline.expiryHours).not.toBe(
+      PLACEMENT_SURFACES.sticker.expiryHours
+    );
+  });
+});
+
+/**
+ * D2, end to end: a zero-priced continuation spends neither the placer's daily
+ * free allowance nor their once-per-target free placement. Run through the free
+ * tier's own predicates (`getFreePlacementAllowance`, `hasUsedFreePlacementOn`),
+ * over the rows the storyline path wrote, so this goes red if either side moves:
+ * a storyline row written as `free`, or an allowance count that stops selecting
+ * on `free`.
+ */
+describe('createStorylinePlacement — the free allowance is untouched', () => {
+  it('leaves the daily allowance and the free-on-target rule unspent after five', async () => {
+    for (let i = 0; i < 5; i++) await submit();
+
+    await expect(getFreePlacementAllowance({ placerId: PLACER })).resolves.toMatchObject({
+      used: 0,
+      remaining: 1,
+    });
+    await expect(
+      hasUsedFreePlacementOn({
+        surface: 'storyline',
+        targetType: 'image',
+        targetId: CHAPTER,
+        placerId: PLACER,
+      })
+    ).resolves.toBe(false);
   });
 
-  // With no price, the cap is the spam control an owner has left. It is counted
-  // from rows this test wrote, so a cap that read the wrong predicate would let
-  // the eleventh through.
+  // The control for the test above: the same reads DO see a free row made
+  // today, so their zeros there are the rows' doing and not the fake's.
+  it('would see a free placement made today', async () => {
+    await submit();
+    rows.push({
+      surface: 'sticker',
+      targetType: 'image',
+      targetId: 5,
+      placerId: PLACER,
+      free: true,
+      createdAt: new Date(),
+    });
+
+    await expect(getFreePlacementAllowance({ placerId: PLACER })).resolves.toMatchObject({
+      used: 1,
+      remaining: 0,
+    });
+  });
+});
+
+describe('createStorylinePlacement — the pending cap', () => {
+  // With no price, the cap is the spam control an owner has left. Counted from
+  // rows this test wrote, so a cap that read the wrong predicate would let the
+  // eleventh through.
   it('refuses the continuation past the per-owner pending cap', async () => {
     const cap = PLACEMENT_SURFACES.storyline.maxPendingPerOwner;
     for (let i = 0; i < cap; i++) await submit();
@@ -169,17 +251,41 @@ describe('createStorylinePlacement — priced at zero', () => {
     expect(rows).toHaveLength(cap);
   });
 
-  // A spammer pays nothing to race the cap, so it is counted under a lock in the
-  // same transaction as the insert.
-  it('counts the pending cap under a per-placer lock', async () => {
+  // Rows that must not count: someone else's, another owner's, ones already
+  // answered, and pending ones on another surface. Seeded at the cap each, so a
+  // predicate that dropped any one column refuses the first submission.
+  it('counts only this placer’s pending continuations with this owner', async () => {
+    const cap = PLACEMENT_SURFACES.storyline.maxPendingPerOwner;
+    const seed = (row: Row) => {
+      for (let i = 0; i < cap; i++) rows.push({ createdAt: new Date(), ...row });
+    };
+    const base = { surface: 'storyline', ownerId: OWNER, placerId: PLACER, status: 'pending' };
+    seed({ ...base, placerId: PLACER + 1 });
+    seed({ ...base, ownerId: OWNER + 1 });
+    seed({ ...base, status: 'approved' });
+    seed({ ...base, status: 'declined' });
+    seed({ ...base, surface: 'remixGallery' });
+
+    for (let i = 0; i < cap; i++) await expect(submit()).resolves.toBeDefined();
+    await expect(submit()).rejects.toThrow(/maximum continuations waiting/);
+  });
+
+  // A spammer pays nothing to race the cap, so the count and the insert happen
+  // after the lock, in the transaction, in this order — and nothing of it on
+  // `dbWrite` outside the callback.
+  it('counts and inserts under a per-placer lock, inside the transaction', async () => {
     await submit();
 
-    const lock = executeRaw.mock.calls.find(([strings]: [TemplateStringsArray]) =>
-      strings.join('?').includes('pg_advisory_xact_lock')
-    );
-    expect(lock).toBeDefined();
-    expect(lock![0].join('?')).toBe('SELECT pg_advisory_xact_lock(?::int, ?::int)');
-    expect(lock![2]).toBe(PLACER);
+    expect(txLog).toEqual([
+      "unsafe SET LOCAL lock_timeout = '3s'",
+      `raw SELECT pg_advisory_xact_lock(?::int, ?::int) [${PLACER_LOCK_CLASS},${PLACER}]`,
+      'count',
+      'create',
+    ]);
+    expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.$executeRawUnsafe).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.placement.count).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.placement.create).not.toHaveBeenCalled();
   });
 });
 
@@ -202,6 +308,12 @@ describe('createStorylinePlacement — the rules that hold at any price', () => 
     expect(rows).toHaveLength(0);
   });
 
+  it('refuses a hand-edited space with no price', async () => {
+    givenSpace({ price: null, setPrice: null });
+    await expect(submit()).rejects.toThrow(/not set a price/);
+    expect(rows).toHaveLength(0);
+  });
+
   it('refuses a blocked or suspended placer', async () => {
     assertCanPlace.mockRejectedValue(
       new Error('placement: your placement privileges are suspended')
@@ -210,19 +322,31 @@ describe('createStorylinePlacement — the rules that hold at any price', () => 
     expect(rows).toHaveLength(0);
   });
 
+  // Blocks and suspension are a statement about this pair, the right way round.
+  // Swapped, a suspended placer would be checked as an owner and pass.
+  it('checks the placer against the owner it resolved', async () => {
+    await submit();
+    expect(assertCanPlace).toHaveBeenCalledWith({ ownerId: OWNER, placerId: PLACER });
+  });
+
   // The price the placer saw was free; the owner has since started charging.
   // Charging them is a spend they never agreed to.
-  it('refuses when the price moved off the one the placer was shown', async () => {
+  it('refuses when the owner started charging after the placer looked', async () => {
     givenSpace({ price: 100, setPrice: 100 });
     await expect(submit({ expectedPrice: 0 })).rejects.toThrow(/price changed to 100/);
+    expect(rows).toHaveLength(0);
+  });
+
+  it('refuses when the owner dropped the price after the placer looked', async () => {
+    await expect(submit({ expectedPrice: 100 })).rejects.toThrow(/price changed to 0/);
     expect(rows).toHaveLength(0);
   });
 });
 
 describe('createStorylinePlacement — priced above zero', () => {
-  it('writes the price and takes the escrow for it', async () => {
-    givenSpace({ price: 100, setPrice: 100 });
+  beforeEach(() => givenSpace({ price: 100, setPrice: 100 }));
 
+  it('writes the price and takes the escrow for it', async () => {
     await submit({ expectedPrice: 100 });
 
     expect(rows[0]).toMatchObject({ free: false, amount: 100 });
@@ -236,10 +360,9 @@ describe('createStorylinePlacement — priced above zero', () => {
   });
 
   it('expires the row it just wrote when the escrow cannot be taken', async () => {
-    givenSpace({ price: 100, setPrice: 100 });
     holdPlacementEscrow.mockRejectedValue(new Error('insufficient funds'));
 
-    await expect(submit()).rejects.toThrow(/insufficient funds/);
+    await expect(submit({ expectedPrice: 100 })).rejects.toThrow(/insufficient funds/);
     expect(settlePlacement).toHaveBeenCalledWith({ placementId: 1, action: 'expire' });
   });
 });

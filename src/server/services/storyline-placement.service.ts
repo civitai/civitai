@@ -28,8 +28,14 @@ export type CreateStorylinePlacement = {
   placerId: number;
   targetType: PlacementTargetType;
   targetId: number;
-  /** What the placer was shown. Refused if the owner has moved it since. */
-  expectedPrice?: number;
+  /**
+   * What the placer was shown. Refused if the owner has moved it since.
+   *
+   * Required, unlike the remix gallery's: a storyline is free by default, so a
+   * caller that omitted it would let an owner who starts charging mid-decision
+   * turn a submission the placer saw as free into a paid one.
+   */
+  expectedPrice: number;
   /**
    * The domain's currency, decided at the router from the request's own flags.
    * Recorded on a zero-priced row too, so `spendType IS NULL` keeps meaning a
@@ -94,7 +100,7 @@ export async function createStorylinePlacement({
   // consent. Matters at zero too — an owner who starts charging while someone is
   // deciding must not have the free submission they were shown turn into a
   // paid one.
-  if (expectedPrice != null && expectedPrice !== space.price)
+  if (expectedPrice !== space.price)
     throw throwBadRequestError(
       `storyline: the price changed to ${space.price} Buzz while you were deciding`
     );
