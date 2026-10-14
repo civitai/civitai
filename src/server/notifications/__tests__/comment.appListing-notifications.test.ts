@@ -753,6 +753,8 @@ describe('generated SQL — the blanket exclusion is gone, the slug join is live
       LEFT JOIN "app_listings" al ON al."serial_id" = COALESCE(root."appListingId", t."appListingId")
       WHERE c."createdAt" > '2026-01-01T00:00:00.000Z'::timestamp - interval '1 day'
       AND (c."createdAt" > '2026-01-01T00:00:00.000Z' OR c."updatedAt" > '2026-01-01T00:00:00.000Z')
+      AND c."tosViolation" = false
+      AND c.hidden IS NOT TRUE
       AND c.content LIKE '%"mention:%'
       AND t."questionId" IS NULL
       AND t."answerId" IS NULL
@@ -776,6 +778,8 @@ describe('generated SQL — the blanket exclusion is gone, the slug join is live
       WHERE m."userId" > 0
       AND c."createdAt" > '2026-01-01T00:00:00.000Z'::timestamp - interval '1 day'
       AND (c."createdAt" > '2026-01-01T00:00:00.000Z' OR c."updatedAt" > '2026-01-01T00:00:00.000Z')
+      AND c."tosViolation" = false
+      AND c.hidden IS NOT TRUE
       AND c.content LIKE '%"mention:%'
       UNION
       SELECT DISTINCT

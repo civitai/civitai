@@ -13,12 +13,14 @@ import {
   withIndefiniteArticle,
 } from '~/server/notifications/comment.notifications';
 
-// An edit re-emits the comment's notification key; recipients already told are skipped by
-// UserNotification's unique (notificationId, userId). That row is eventually cleaned up, so only
-// edits to recent comments are re-read — the window also keeps the scan on the createdAt index.
-const commentCreatedOrEditedSince = (lastSent: string) =>
+// Edits re-emit the comment's key, relying on UserNotification's unique (notificationId, userId) to
+// skip people already told. Those rows are cleaned up, so don't widen the window to old comments.
+// An author can still edit a comment moderation removed, hence the visibility filters.
+const liveCommentCreatedOrEditedSince = (lastSent: string) =>
   `c."createdAt" > '${lastSent}'::timestamp - interval '1 day'
-          AND (c."createdAt" > '${lastSent}' OR c."updatedAt" > '${lastSent}')`;
+          AND (c."createdAt" > '${lastSent}' OR c."updatedAt" > '${lastSent}')
+          AND c."tosViolation" = false
+          AND c.hidden IS NOT TRUE`;
 
 // Moveable (possibly)
 
@@ -157,7 +159,7 @@ export const mentionNotifications = createNotificationProcessor({
         JOIN "Thread" t ON t.id = c."threadId"
         LEFT JOIN "Thread" root ON root.id = t."rootThreadId"
         ${appListingSlugJoin('COALESCE(root."appListingId", t."appListingId")')}
-        WHERE ${commentCreatedOrEditedSince(lastSent)}
+        WHERE ${liveCommentCreatedOrEditedSince(lastSent)}
           AND c.content LIKE '%"mention:%'
           -- Unhandled thread types...
           AND t."questionId" IS NULL
@@ -184,7 +186,7 @@ export const mentionNotifications = createNotificationProcessor({
         JOIN "User" u ON c."userId" = u.id
         JOIN "Model" m ON m.id = c."modelId"
         WHERE m."userId" > 0
-          AND ${commentCreatedOrEditedSince(lastSent)}
+          AND ${liveCommentCreatedOrEditedSince(lastSent)}
           AND c.content LIKE '%"mention:%'
 
         UNION
