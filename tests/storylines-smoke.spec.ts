@@ -68,6 +68,12 @@ test.describe('storylines smoke', () => {
     await page.getByTestId('storyline-next').click();
     await expect(page.getByTestId('storyline-end-of-chapter')).toBeVisible();
 
+    // The chip stays usable over the end card: a click only lands if nothing covers it.
+    await page.getByTestId('storyline-mode-chip').getByTestId('storyline-pill').click();
+    await expect(page.getByTestId('storyline-subway')).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(page.getByTestId('storyline-subway')).toBeHidden();
+
     const forks = page.getByTestId('storyline-fork');
     await expect(forks).toHaveCount(3);
 

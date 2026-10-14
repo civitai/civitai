@@ -36,7 +36,8 @@ export function StorylineStageOverlay({
 
   return (
     <>
-      <div className="absolute left-3 top-3 z-10">
+      {/* Above the end-of-chapter card too, so the map and leaving stay one tap away there. */}
+      <div className="absolute left-3 top-3 z-30">
         <StorylineModeChip
           title={storyline.path.storyline.title}
           depth={depth ?? end.depth}
