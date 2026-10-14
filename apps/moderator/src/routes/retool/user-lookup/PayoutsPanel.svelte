@@ -1,5 +1,6 @@
 <script lang="ts">
   import { browser } from '$app/environment';
+  import { SSR_PENDING } from '$lib/ssr-pending';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { dateTime, num } from '$lib/format';
   import type { Jsonified } from '$lib/format';
@@ -13,7 +14,7 @@
           (r): Promise<{ items: Jsonified<Payout>[]; truncated: boolean }> =>
             r.ok ? r.json() : Promise.reject(new Error(String(r.status)))
         )
-      : null
+      : SSR_PENDING
   );
 
   // Anything that is not a completed transfer is what a moderator is looking for here — a rejected or

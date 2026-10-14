@@ -1,11 +1,15 @@
 <script lang="ts">
   import { browser } from '$app/environment';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
+  import { Button } from '@civitai/ui/components/ui/button/index.js';
+  import { IconDownload } from '@tabler/icons-svelte';
   import EdgeMedia from '$lib/components/EdgeMedia.svelte';
   import Lightbox from '$lib/components/Lightbox.svelte';
+  import TrainingDataSheet from '$lib/components/TrainingDataSheet.svelte';
   import type { LightboxItem } from '$lib/lightbox';
   import { bytes, dateTime } from '$lib/format';
   import type { ModelPreview } from '$lib/server/model-preview.service';
+  import { SSR_PENDING } from '$lib/ssr-pending';
 
   /**
    * What the model page shows a visitor first — its showcase images and description — with the files
@@ -17,10 +21,18 @@
     modelId,
     reportId,
     civitaiUrl,
-  }: { modelId: number; reportId: number; civitaiUrl: string } = $props();
+    canViewTrainingData,
+  }: {
+    modelId: number;
+    reportId: number;
+    civitaiUrl: string;
+    /** Holds a training page grant — the same test `/api/training-data` applies to the viewer's fetch. */
+    canViewTrainingData: boolean;
+  } = $props();
 
   // Derived, never assigned from an effect: a new report is a new promise, so a slow response for the
-  // previous one can never land over this one.
+  // previous one can never land over this one. `SSR_PENDING`, not `null`, on the server: with null the
+  // previous report's preview stayed stuck above every later one (see that file).
   const preview = $derived(
     browser
       ? fetch(`/api/model-preview/${modelId}?report=${reportId}`).then(
@@ -29,13 +41,19 @@
             return r.json();
           }
         )
-      : null
+      : SSR_PENDING
   );
 
   // Every tile opens the large view, images and videos alike — a video is watched there, with
   // controls, not in a 6rem square. The parent keys this component on the report, so an open frame
   // cannot carry over to another model.
   let openIndex = $state<number | null>(null);
+
+  // Training data is viewed, never downloaded: it can be CSAM, and a download leaves a copy on the
+  // moderator's disk. The sheet unpacks the zip in memory and releases it on close.
+  let trainingVersion = $state<{ id: number; title: string } | null>(null);
+  let trainingOpen = $state(false);
+  const isTrainingData = (f: { type: string }) => f.type === 'Training Data';
 
   const lightboxItems = (p: ModelPreview): LightboxItem[] =>
     p.images.map((i) => ({
@@ -147,6 +165,33 @@
                     </span>
                     {#if file.visibility !== 'Public'}<Badge variant="outline">{file.visibility}</Badge>{/if}
                     {#if flagged}<Badge class={flagged.class}>{flagged.label}</Badge>{/if}
+                    {#if isTrainingData(file)}
+                      {#if canViewTrainingData}
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          class="h-6 px-2 text-xs"
+                          onclick={() => {
+                            trainingVersion = { id: v.id, title: `Training data · ${v.name}` };
+                            trainingOpen = true;
+                          }}
+                        >
+                          View
+                        </Button>
+                      {/if}
+                    {:else}
+                      <!-- The site's own download route, by file id, on the moderator's civitai.com
+                           session — so the file they get is the one listed, scan state and all. -->
+                      <a
+                        href={`${civitaiUrl}/api/download/models/${v.id}?fileId=${file.id}`}
+                        class="link inline-flex items-center"
+                        aria-label={`Download ${file.name}`}
+                        title="Download from Civitai"
+                      >
+                        <IconDownload size={14} />
+                      </a>
+                    {/if}
                   </li>
                 {/each}
               </ul>
@@ -184,6 +229,10 @@
         {/if}
       </p>
     </div>
+
+    {#if trainingVersion}
+      <TrainingDataSheet bind:open={trainingOpen} versionId={trainingVersion.id} title={trainingVersion.title} />
+    {/if}
 
     <Lightbox
       {items}

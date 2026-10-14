@@ -1,6 +1,7 @@
 <script lang="ts">
   import BanConfirmForm from '$lib/components/BanConfirmForm.svelte';
   import { browser } from '$app/environment';
+  import { SSR_PENDING } from '$lib/ssr-pending';
   import { enhance } from '$app/forms';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
@@ -48,7 +49,7 @@
   // One flag for the whole panel: these actions all act on the same account, and none of them is safe to
   // interleave with another.
 
-  const support = $derived(browser ? fetchSupport(identity.id, version) : null);
+  const support = $derived(browser ? fetchSupport(identity.id, version) : SSR_PENDING);
   const mutesUrl = $derived(userLookupUrl(identity.id, 'mutes'));
 
   // A restriction of a type with no verdict path cannot be ruled on ANYWHERE — `resolveUserRestriction`

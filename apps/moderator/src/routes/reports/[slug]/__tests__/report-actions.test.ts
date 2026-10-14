@@ -33,6 +33,7 @@ const modelActions = {
   takeDownReportedModel: vi.fn(),
   bringBackReportedModel: vi.fn(),
   setReportedModelSfwOnly: vi.fn(),
+  setReportedModelPoi: vi.fn(),
   setReportedModelMinor: vi.fn(),
   unsetReportedModelMinor: vi.fn(),
 };
@@ -333,6 +334,8 @@ describe('moderateModel action', () => {
     ['unsetMinor', 'unsetReportedModelMinor', [4201], 'Unflagged as minor'],
     ['setSfwOnly', 'setReportedModelSfwOnly', [4201, true], 'Set as SFW-only'],
     ['unsetSfwOnly', 'setReportedModelSfwOnly', [4201, false], 'Allowed NSFW on'],
+    ['setPoi', 'setReportedModelPoi', [4201, true], 'Flagged as a real person'],
+    ['unsetPoi', 'setReportedModelPoi', [4201, false], 'Unflagged as a real person'],
     ['bringBack', 'bringBackReportedModel', [4201], 'Brought back'],
   ] as const)('%s calls %s', async (modelAction, fn, args, done) => {
     const result = await moderate({ modelAction });
@@ -340,15 +343,18 @@ describe('moderateModel action', () => {
     expect(result).toEqual({ success: true, moderated: `${done} model #4201` });
   });
 
-  it.each(['takeDown', 'bringBack'])('%s needs model.takeDown — both directions, one grant', async (modelAction) => {
-    grants = {};
-    expect(failure(await moderate({ modelAction }))).toEqual({
-      status: 403,
-      error: 'This action requires the “Take down a model (ownership / claim)” permission.',
-    });
-    expect(modelActions.takeDownReportedModel).not.toHaveBeenCalled();
-    expect(modelActions.bringBackReportedModel).not.toHaveBeenCalled();
-  });
+  it.each(['takeDown', 'bringBack'])(
+    '%s needs model.takeDown — both directions, one grant',
+    async (modelAction) => {
+      grants = {};
+      expect(failure(await moderate({ modelAction }))).toEqual({
+        status: 403,
+        error: 'This action requires the “Take down a model (ownership / claim)” permission.',
+      });
+      expect(modelActions.takeDownReportedModel).not.toHaveBeenCalled();
+      expect(modelActions.bringBackReportedModel).not.toHaveBeenCalled();
+    }
+  );
 
   it('has no republish: undoing a violation unpublish is an appeal, not a report button', async () => {
     expect(failure(await moderate({ modelAction: 'republish' })).status).toBe(400);
@@ -360,7 +366,10 @@ describe('moderateModel action', () => {
   });
 
   it('passes a refusal from the main app straight through', async () => {
-    modelActions.takeDownReportedModel.mockResolvedValue({ ok: false, error: 'Take down returned 500.' });
+    modelActions.takeDownReportedModel.mockResolvedValue({
+      ok: false,
+      error: 'Take down returned 500.',
+    });
 
     expect(failure(await moderate({ modelAction: 'takeDown' }))).toEqual({
       status: 400,

@@ -187,6 +187,7 @@ export type ModEndpoint =
   | 'minor-flag/set-minor'
   | 'model/bring-back'
   | 'model/set-sfw-only'
+  | 'model/set-poi'
   | 'model/take-down'
   | 'model/unpublish'
   | 'restriction/resolve'

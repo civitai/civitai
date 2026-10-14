@@ -85,6 +85,7 @@ import type {
   PublishPrivateModelInput,
   SetModelCollectionShowcaseInput,
   SetModelMinorInput,
+  SetModelPoiInput,
   SetModelSfwOnlyInput,
   SetModelOfficialInput,
   ToggleCheckpointCoverageInput,
@@ -145,7 +146,10 @@ import {
   TEXT_SCAN_WEB_SEARCH_LABELS,
   textScanEmEntityType,
 } from '~/server/services/text-scan/mode';
-import { reassertModelPoiRestrictions } from '~/server/services/text-scan/actions/model-poi-minor';
+import {
+  POI_LOCKED_PROPERTIES,
+  reassertModelPoiRestrictions,
+} from '~/server/services/text-scan/actions/model-poi-minor';
 import { legacyProfanityAutoNsfwApplies } from '~/server/services/text-scan/route';
 import {
   scanEntitiesInBackground,
@@ -2705,6 +2709,138 @@ export async function setModelSfwOnly({
       .catch(() => null);
   }
   await applyModelFlagSideEffects({ before, after: result });
+
+  return result;
+}
+
+/**
+ * Set or lift a model's "depicts a real person" flag, as a moderator — what the model edit form's POI
+ * checkbox does, without the form. Setting it applies the restrictions a POI model always carries
+ * (SFW-only, not NSFW, SFW gallery, those fields locked against the creator), the same set
+ * `reassertModelPoiRestrictions` keeps in force; `applyModelFlagSideEffects` then carries `poi` to the
+ * model's images and the search index, which is what flags images made with it.
+ *
+ * Lifting mirrors `setModelMinor`'s unset: the ruling is stamped BEFORE the write, so a text scan
+ * landing mid-lift sees it and does not re-flag; sfwOnly/nsfw are left as they are; and the owner's
+ * now-moot appeal is closed.
+ */
+export async function setModelPoi({
+  id,
+  poi,
+  userId,
+  tracker,
+  isModerator,
+}: SetModelPoiInput & { userId: number; tracker?: Tracker; isModerator?: boolean }) {
+  const before = await dbRead.model.findUnique({
+    where: { id },
+    select: {
+      userId: true,
+      poi: true,
+      minor: true,
+      sfwOnly: true,
+      nsfw: true,
+      gallerySettings: true,
+      lockedProperties: true,
+    },
+  });
+  if (!before) throw throwNotFoundError(`No model with id ${id}`);
+
+  const loadAppealTextHash = () => import('~/server/services/text-scan/actions/appeal-text-hash');
+  const lifting = !poi && before.poi;
+  if (lifting) {
+    const { stampModeratorTextScanRuling } = await loadAppealTextHash();
+    const stamped = await stampModeratorTextScanRuling({ modelId: id, userId, label: 'poi' });
+    if (!stamped)
+      logToAxiom({
+        type: 'error',
+        name: 'text-scan',
+        message: 'moderator poi ruling not recorded: model text unreadable',
+        modelId: id,
+      }).catch(() => null);
+  }
+
+  const prevLockedProperties = before.lockedProperties ?? [];
+  // A lift keeps whatever a minor flag still locks: the two share nsfw/sfwOnly.
+  const lockedProperties = poi
+    ? uniq([...prevLockedProperties, ...POI_LOCKED_PROPERTIES])
+    : uniq([
+        ...prevLockedProperties.filter((prop) => !POI_LOCKED_PROPERTIES.includes(prop)),
+        ...(before.minor ? MINOR_LOCKED_PROPERTIES : []),
+      ]);
+
+  const prevGallerySettings = before.gallerySettings as ModelGallerySettingsSchema;
+  const data = poi
+    ? {
+        poi: true,
+        nsfw: false,
+        sfwOnly: true,
+        gallerySettings: { ...prevGallerySettings, level: sfwBrowsingLevelsFlag },
+        lockedProperties,
+      }
+    : {
+        poi: false,
+        lockedProperties,
+      };
+
+  const result = await dbWrite.model.update({
+    where: { id },
+    data,
+    select: {
+      id: true,
+      name: true,
+      description: true,
+      poi: true,
+      nsfw: true,
+      minor: true,
+      sfwOnly: true,
+      status: true,
+      gallerySettings: true,
+    },
+  });
+
+  await preventReplicationLag('model', id);
+  const modActivity = poi ? 'setPoi' : 'unsetPoi';
+  await trackModActivity(userId, {
+    entityType: 'model',
+    entityId: id,
+    activity: modActivity,
+  }).catch((error) =>
+    logToAxiom({
+      type: 'error',
+      name: 'set-model-poi-track-activity',
+      message: `Failed to track mod activity for model ${id}`,
+      error,
+    })
+  );
+  if (tracker) {
+    tracker
+      .entityChanges(
+        diffEntityChanges({
+          entityType: 'Model',
+          entityId: id,
+          ownerId: before.userId,
+          before,
+          after: data as Record<string, unknown>,
+          actorRole: resolveActorRole({
+            actorUserId: userId,
+            ownerId: before.userId,
+            isModerator,
+          }),
+          reason: modActivity,
+        })
+      )
+      .catch(() => null);
+  }
+  await applyModelFlagSideEffects({ before, after: result });
+  if (lifting) {
+    const { settleFlagAppealsAfterModeratorLift } = await loadAppealTextHash();
+    await settleFlagAppealsAfterModeratorLift({
+      modelId: id,
+      userId,
+      liftedLabels: ['poi'],
+      recordRulings: false,
+    });
+  }
 
   return result;
 }
