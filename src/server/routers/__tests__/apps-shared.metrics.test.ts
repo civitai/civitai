@@ -20,7 +20,6 @@ import {
 const {
   mockVerifyBlockToken,
   mockParseSubjectUserId,
-  mockDbRead,
   mockIsSharedEnabled,
   mockPool,
   mockClient,
@@ -56,7 +55,6 @@ const {
   return {
     mockVerifyBlockToken: vi.fn(),
     mockParseSubjectUserId: vi.fn(),
-    mockDbRead: { appBlock: { findUnique: vi.fn() }, account: { count: vi.fn() } },
     mockIsSharedEnabled: vi.fn(async () => true),
     mockPool,
     mockClient,
@@ -87,7 +85,6 @@ vi.mock('~/server/middleware/block-scope.middleware', () => ({
   stashBlockActionDetail: vi.fn(),
 }));
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (handler: unknown) => handler }));
-vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbRead }));
 vi.mock('~/server/services/app-blocks-flag', () => ({
   isAppBlocksSharedStorageEnabled: mockIsSharedEnabled,
 }));
@@ -126,7 +123,6 @@ vi.mock('~/server/services/orchestrator/promptAuditing', () => ({
 vi.mock('~/server/services/block-revocation.service', () => ({
   BlockRevocation: { isRevoked: async () => false },
 }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: async () => undefined }));
 vi.mock('~/server/services/blocks/app-sub-listing.service', () => ({
   syncSubListingForSharedRow: async () => undefined,
 }));
@@ -154,6 +150,7 @@ import {
 import listHandler from '~/pages/api/v1/blocks/shared-storage/list';
 import topHandler from '~/pages/api/v1/blocks/shared-storage/top';
 import incrementHandler from '~/pages/api/v1/blocks/shared-storage/increment';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 import { newUlid } from '~/server/utils/app-block-ids';
 import { OnboardingSteps } from '~/server/common/enums';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
@@ -257,8 +254,8 @@ beforeEach(() => {
     sub === 'anon' ? null : Number(sub.split(':')[1])
   );
   mockGetSessionUser.mockResolvedValue(trustedUser());
-  mockDbRead.appBlock.findUnique.mockResolvedValue({ id: 'apb_test', status: 'approved' });
-  mockDbRead.account.count.mockResolvedValue(0);
+  dbMock.dbRead.appBlock.findUnique.mockResolvedValue({ id: 'apb_test', status: 'approved' });
+  dbMock.dbRead.account.count.mockResolvedValue(0);
   mockIsSharedEnabled.mockResolvedValue(true);
   mockPool.query.mockReset();
   mockPool.query.mockResolvedValue({ rows: [], rowCount: 0 });
