@@ -102,11 +102,14 @@ describe('price copy', () => {
 });
 
 describe('storylineContinuePostOptions', () => {
-  const post = (id: number, userId: number) => ({
+  const post = (id: number, userId: number, images: { id: number }[] = []) => ({
     id,
     title: `Post ${id}`,
     nsfwLevel: NsfwLevel.PG,
+    publishedAt: null,
+    imageCount: images.length,
     user: { id: userId },
+    images,
   });
 
   test("keeps only the viewer's own posts and never the chapter being continued", () => {
@@ -115,7 +118,25 @@ describe('storylineContinuePostOptions', () => {
         viewerId: contributor,
         parentPostId: 3,
       })
-    ).toEqual([{ id: 1, title: 'Post 1', nsfwLevel: NsfwLevel.PG }]);
+    ).toEqual([
+      {
+        id: 1,
+        title: 'Post 1',
+        nsfwLevel: NsfwLevel.PG,
+        publishedAt: null,
+        imageCount: 0,
+        cover: null,
+      },
+    ]);
+  });
+
+  test("takes each post's first image as its picture", () => {
+    expect(
+      storylineContinuePostOptions([post(1, contributor, [{ id: 7 }, { id: 8 }])], {
+        viewerId: contributor,
+        parentPostId: 3,
+      })[0].cover
+    ).toEqual({ id: 7 });
   });
 });
 
