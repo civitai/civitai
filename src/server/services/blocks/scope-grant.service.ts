@@ -1475,6 +1475,14 @@ const CONSENT_EXEMPT_SCOPES = new Set([
   // min-trust gate + content moderation + rate limits, not per-scope consent.
   'apps:storage:shared:read',
   'apps:storage:shared:write',
+  // DOCUMENT STORE — `apps:storage` reaches only this app's own store: the viewer's private
+  // collections, reads of shared ones, marks and counters. Each is bounded by the app's
+  // reviewed `storage` declaration and by the server-side per-op checks of the storage
+  // routes. Its sibling `apps:storage:publish` is deliberately ABSENT: authoring documents
+  // other viewers read, under the viewer's identity, needs a grant — one prompt per app.
+  // (Unlike `apps:storage:shared:write` above, which signs consent-free today and which the
+  // publish scope replaces.)
+  'apps:storage',
   'models:read:self',
   // Collections — server-side visibility/ownership (read) + self-bound subject
   // (follow) are the gate; see the block collections endpoints. #3090: exempting
