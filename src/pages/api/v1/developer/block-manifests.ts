@@ -7,7 +7,7 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { isAppBlocksEnabled } from '~/server/services/app-blocks-flag';
 import { newAppBlockId } from '~/server/utils/app-block-ids';
 import { BlockManifestValidator } from '~/server/services/block-manifest-validator.service';
-import { storageSlugConflictMessage } from '~/server/services/apps/storage-slug-claims';
+import { newBlockIdHyphenRunError } from '~/server/utils/apps-slug';
 
 // B5: cap the body parser BEFORE the JSON.stringify size check. Next's
 // default is 1MB; we want to reject oversize uploads before they hit
@@ -169,11 +169,9 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
   }
 
   if (!existing) {
-    const storageConflict = await storageSlugConflictMessage(manifest.blockId, {
-      includePendingRequests: true,
-    });
-    if (storageConflict) {
-      res.status(409).json({ error: 'blockId conflict', details: [storageConflict] });
+    const hyphenRunError = newBlockIdHyphenRunError(manifest.blockId);
+    if (hyphenRunError) {
+      res.status(422).json({ error: 'Invalid manifest', details: [hyphenRunError] });
       return;
     }
   }

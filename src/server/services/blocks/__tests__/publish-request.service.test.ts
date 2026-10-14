@@ -33,9 +33,6 @@ const dbMocks = vi.hoisted(() => ({
   // listing review is open for the slug. Null = no listing review, the shape every
   // test in this file assumes.
   listingReqFindFirst: vi.fn(async () => null),
-  // Read off the primary (`dbWrite`) by the storage-slug conflict check.
-  appBlockFindMany: vi.fn<(...args: unknown[]) => Promise<unknown[]>>(async () => []),
-  pubReqFindMany: vi.fn<(...args: unknown[]) => Promise<unknown[]>>(async () => []),
 }));
 
 vi.mock('~/server/db/client', () => ({
@@ -47,11 +44,7 @@ vi.mock('~/server/db/client', () => ({
     user: { findUnique: dbMocks.userFindUnique },
   },
   dbWrite: {
-    appBlockPublishRequest: {
-      create: dbMocks.createPublishRequest,
-      findMany: dbMocks.pubReqFindMany,
-    },
-    appBlock: { findMany: dbMocks.appBlockFindMany },
+    appBlockPublishRequest: { create: dbMocks.createPublishRequest },
     appListing: { create: dbMocks.appListingCreate },
   },
 }));
@@ -778,7 +771,7 @@ describe('submitVersion — sensitive-scope justification gate (enforced AT SUBM
   });
 });
 
-describe('submitVersion — storage slug collision', () => {
+describe('submitVersion — consecutive hyphens in a NEW blockId', () => {
   async function makeBundle(blockId: string): Promise<Buffer> {
     const zip = new JSZip();
     zip.file(
@@ -790,83 +783,40 @@ describe('submitVersion — storage slug collision', () => {
   }
 
   const SUBMITTER = 61;
-  let existingBlockIds: string[];
-  let publishRequests: { slug: string; status: string }[];
 
   beforeEach(() => {
     vi.clearAllMocks();
-    existingBlockIds = ['my-app', 'gallery-kit'];
-    publishRequests = [];
     dbMocks.pubReqFindFirst.mockResolvedValue(null);
     dbMocks.listingReqFindFirst.mockResolvedValue(null);
+    dbMocks.appBlockFindFirst.mockResolvedValue(null);
     dbMocks.createPublishRequest.mockResolvedValue({});
     dbMocks.appListingFindFirst.mockResolvedValue(null);
     dbMocks.appListingCreate.mockResolvedValue({ id: 'apl_fixture' });
-    // Both block reads answer from ONE list, so "is this my own app" and "who else
-    // claims this storage slug" cannot disagree the way two independent stubs could.
-    dbMocks.appBlockFindFirst.mockImplementation(
-      async ({ where }: { where: { blockId: string } }) =>
-        existingBlockIds.includes(where.blockId) ? { id: 'apb_fixture', appId: 'app_9' } : null
-    );
-    dbMocks.appBlockFindMany.mockImplementation(async () =>
-      existingBlockIds.map((blockId) => ({ blockId }))
-    );
-    dbMocks.pubReqFindMany.mockImplementation(async (args: unknown) => {
-      const { where } = args as { where: { status: string; slug: { not: string } } };
-      return publishRequests.filter((r) => r.status === where.status && r.slug !== where.slug.not);
-    });
   });
 
-  it('refuses a new blockId whose storage slug an existing app already uses', async () => {
-    const buf = await makeBundle('my--app');
+  it.each(['my--app', 'a---b'])('refuses a first version of %s', async (blockId) => {
+    const buf = await makeBundle(blockId);
     await expect(
       submitVersion({ bundleBuffer: buf, submittedByUserId: SUBMITTER })
     ).rejects.toThrow(
-      'blockId "my--app" is too similar to the existing app "my-app": both would use the storage name "my_app", because a run of hyphens counts as a single separator. Choose a different blockId.'
+      `blockId "${blockId}" must not contain consecutive hyphens ("--"): app storage treats a run of hyphens as a single separator, so it could share storage with another app. Use single hyphens.`
     );
     expect(dbMocks.createPublishRequest).not.toHaveBeenCalled();
     expect(dbMocks.appListingCreate).not.toHaveBeenCalled();
   });
 
-  it('accepts a new version of an existing app (the check applies to first versions only)', async () => {
-    const buf = await makeBundle('my-app');
+  it.each(['my-app', 'a-b-c', 'plainapp'])('accepts a first version of %s', async (blockId) => {
+    const buf = await makeBundle(blockId);
     const result = await submitVersion({ bundleBuffer: buf, submittedByUserId: SUBMITTER });
-    expect(result.slug).toBe('my-app');
+    expect(result.slug).toBe(blockId);
     expect(dbMocks.createPublishRequest).toHaveBeenCalledTimes(1);
   });
 
-  it('accepts a new version of an existing app even when a colliding sibling exists', async () => {
-    existingBlockIds = ['my-app', 'my--app'];
-    const buf = await makeBundle('my--app');
+  it('accepts a new version of an EXISTING app whose blockId contains consecutive hyphens', async () => {
+    dbMocks.appBlockFindFirst.mockResolvedValue({ id: 'apb_legacy', appId: 'app_9' });
+    const buf = await makeBundle('old--name');
     const result = await submitVersion({ bundleBuffer: buf, submittedByUserId: SUBMITTER });
-    expect(result.slug).toBe('my--app');
-  });
-
-  it('accepts an unrelated new blockId', async () => {
-    const buf = await makeBundle('photo-tool');
-    const result = await submitVersion({ bundleBuffer: buf, submittedByUserId: SUBMITTER });
-    expect(result.slug).toBe('photo-tool');
+    expect(result.slug).toBe('old--name');
     expect(dbMocks.createPublishRequest).toHaveBeenCalledTimes(1);
-  });
-
-  it('refuses a new blockId whose storage slug a pending first submission would use', async () => {
-    publishRequests = [{ slug: 'photo-tool', status: 'pending' }];
-    const buf = await makeBundle('photo---tool');
-    await expect(
-      submitVersion({ bundleBuffer: buf, submittedByUserId: SUBMITTER })
-    ).rejects.toThrow(
-      'blockId "photo---tool" is too similar to the blockId of another app that is awaiting review: both would use the storage name "photo_tool", because a run of hyphens counts as a single separator. Choose a different blockId.'
-    );
-    expect(dbMocks.createPublishRequest).not.toHaveBeenCalled();
-  });
-
-  it('is not blocked by a colliding submission that is no longer pending', async () => {
-    publishRequests = [
-      { slug: 'photo-tool', status: 'withdrawn' },
-      { slug: 'photo-tool', status: 'rejected' },
-    ];
-    const buf = await makeBundle('photo---tool');
-    const result = await submitVersion({ bundleBuffer: buf, submittedByUserId: SUBMITTER });
-    expect(result.slug).toBe('photo---tool');
   });
 });

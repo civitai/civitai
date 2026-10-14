@@ -44,8 +44,7 @@ import { recordListingRatingChangeAfterCommit } from '~/server/services/blocks/a
 // the (3c) storage-provision-on-approve block; matches the admin backfill's
 // derivation exactly. The provisioner VALUE is dynamically imported at use so
 // appsDb/pg stay out of this module's static graph (mirrors the (3b) mapper).
-import { sanitizeAppSlug } from '~/server/utils/apps-slug';
-import { storageSlugConflictMessage } from '~/server/services/apps/storage-slug-claims';
+import { newBlockIdHyphenRunError, sanitizeAppSlug } from '~/server/utils/apps-slug';
 // Pure const (no env/Prisma). THE SAME threshold the owner-facing UI uses to call
 // a deploy "stalled" — shared so the mod retrigger gate and the badge can never
 // disagree about whether a build is stuck.
@@ -1163,10 +1162,8 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
   // treated as TAKEN, exactly like any other foreign listing on the slug.
   let createDraftListing = false;
   if (existingApp == null) {
-    const storageConflict = await storageSlugConflictMessage(slug, {
-      includePendingRequests: true,
-    });
-    if (storageConflict) throw new Error(storageConflict);
+    const hyphenRunError = newBlockIdHyphenRunError(slug);
+    if (hyphenRunError) throw new Error(hyphenRunError);
 
     const existingSlugListing = await dbRead.appListing.findFirst({
       where: { slug },
@@ -2665,11 +2662,8 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
   let repoUrl: string;
 
   if (isFirstVersion) {
-    // Pending requests are not counted here: of two colliding ones, the first approved wins.
-    const storageConflict = await storageSlugConflictMessage(request.slug, {
-      includePendingRequests: false,
-    });
-    if (storageConflict) throw new Error(`Cannot approve: ${storageConflict}`);
+    const hyphenRunError = newBlockIdHyphenRunError(request.slug);
+    if (hyphenRunError) throw new Error(`Cannot approve: ${hyphenRunError}`);
 
     // (1) Auto-create OauthClient — public client scoped to the per-app
     // subdomain so the existing git-push manifest validator passes the
