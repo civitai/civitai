@@ -41,7 +41,11 @@ const { load } = await import('../+page.server');
 
 /** `load` for one slug and query string. `redirect()`/`error()` throw, so callers that expect one catch. */
 const run = (slug: string, query = '?status=Pending') =>
-  load({ params: { slug }, url: new URL(`https://mod.example/reports/${slug}${query}`) } as never);
+  load({
+    params: { slug },
+    url: new URL(`https://mod.example/reports/${slug}${query}`),
+    locals: { user: { id: 1 } },
+  } as never);
 
 const caught = async (slug: string, query?: string) => {
   try {

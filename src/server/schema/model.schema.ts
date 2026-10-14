@@ -315,6 +315,8 @@ export const setModelMinorSchema = z.object({ id: z.number(), minor: z.boolean()
 
 export type SetModelSfwOnlyInput = z.infer<typeof setModelSfwOnlySchema>;
 export const setModelSfwOnlySchema = z.object({ id: z.number(), sfwOnly: z.boolean() });
+export type SetModelPoiInput = z.infer<typeof setModelPoiSchema>;
+export const setModelPoiSchema = z.object({ id: z.number(), poi: z.boolean() });
 
 export type MinorFlagSnapshot = {
   at: string;

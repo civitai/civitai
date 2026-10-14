@@ -23,6 +23,8 @@ export type ModelReportAction =
   | 'unsetMinor'
   | 'setSfwOnly'
   | 'unsetSfwOnly'
+  | 'setPoi'
+  | 'unsetPoi'
   | 'takeDown'
   | 'bringBack';
 
@@ -63,8 +65,17 @@ export const bringBackReportedModel = (modelId: number): Promise<ActionResult> =
  *  service does that on purpose, since the model may have been SFW before it was ever flagged. */
 export const setReportedModelSfwOnly = (modelId: number, sfwOnly: boolean): Promise<ActionResult> =>
   done(
-    callModEndpoint('model/set-sfw-only', { modelId, sfwOnly }, sfwOnly ? 'Set as SFW' : 'Allow NSFW')
+    callModEndpoint(
+      'model/set-sfw-only',
+      { modelId, sfwOnly },
+      sfwOnly ? 'Set as SFW' : 'Allow NSFW'
+    )
   );
+
+/** Both directions. Setting also makes the model SFW-only, as a POI model always is; lifting leaves
+ *  that as it is, the way unflagging minor does. */
+export const setReportedModelPoi = (modelId: number, poi: boolean): Promise<ActionResult> =>
+  done(callModEndpoint('model/set-poi', { modelId, poi }, poi ? 'Flag as POI' : 'Unflag POI'));
 
 export const setReportedModelMinor = (modelId: number): Promise<ActionResult> =>
   setModelMinorFlag(modelId);

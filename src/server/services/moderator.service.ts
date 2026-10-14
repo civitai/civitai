@@ -12,6 +12,8 @@ type ModelModActivity = {
     | 'unsetMinor'
     | 'setSfwOnly'
     | 'unsetSfwOnly'
+    | 'setPoi'
+    | 'unsetPoi'
     | 'setMinorAutoHash'
     | 'setMinorTextScan'
     | 'rollbackMinorAutoHash'

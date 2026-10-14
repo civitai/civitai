@@ -2,6 +2,7 @@
   import type { Snippet } from 'svelte';
   import type { SubmitFunction } from '@sveltejs/kit';
   import { browser } from '$app/environment';
+  import { SSR_PENDING } from '$lib/ssr-pending';
   import { enhance } from '$app/forms';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Checkbox } from '@civitai/ui/components/ui/checkbox/index.js';
@@ -69,7 +70,7 @@
           if (!r.ok) throw new Error(String(r.status));
           return r.json();
         })
-      : null
+      : SSR_PENDING
   );
 </script>
 
