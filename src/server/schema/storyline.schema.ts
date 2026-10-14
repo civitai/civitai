@@ -59,6 +59,7 @@ export const getStorylinesForPostsSchema = z.object({
 export const storylineBranchChoiceSchema = z.object({
   fromChapterId: z.number().int().positive(),
   toChapterId: z.number().int().positive(),
+  browsingLevel: z.number().int().min(0).optional(),
 });
 
 export const joinStorylineEarlyAccessSchema = z

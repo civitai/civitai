@@ -100,12 +100,23 @@ export const storylineRouter = router({
   // cannot be stuffed by repeated anonymous requests.
   trackBranchChoice: storylineMemberProcedure
     .input(storylineBranchChoiceSchema)
-    .mutation(({ input, ctx }) => recordStorylineBranchChoice({ ...input, userId: ctx.user.id })),
+    .mutation(({ input, ctx }) =>
+      recordStorylineBranchChoice({
+        fromChapterId: input.fromChapterId,
+        toChapterId: input.toChapterId,
+        viewer: ctx.user,
+        browsingLevel: storylineReaderLevel(ctx, input.browsingLevel),
+      })
+    ),
 
   trackCreateClick: storylineMemberProcedure
-    .input(storylineChapterSchema)
+    .input(storylineChapterReadSchema)
     .mutation(({ input, ctx }) =>
-      recordStorylineCreateClick({ chapterId: input.chapterId, userId: ctx.user.id })
+      recordStorylineCreateClick({
+        chapterId: input.chapterId,
+        viewer: ctx.user,
+        browsingLevel: storylineReaderLevel(ctx, input.browsingLevel),
+      })
     ),
 
   joinEarlyAccess: storylineMemberProcedure

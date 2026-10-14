@@ -6,7 +6,8 @@ import { simpleUserSelect } from '~/server/selectors/user.selector';
 import { bustFetchThroughCache, fetchThroughCache } from '~/server/utils/cache-helpers';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { isPlacementBlocked } from '~/server/services/placement-moderation.service';
-import { getAllHiddenForUser, getBlockedPairIds } from '~/server/services/user-preferences.service';
+import { getBlockedPairIds, HiddenUsers } from '~/server/services/user-preferences.service';
+import { MAX_EXCLUDED_USER_IDS } from '~/server/utils/excluded-user-ids';
 import {
   throwAuthorizationError,
   throwBadRequestError,
@@ -126,11 +127,12 @@ function isStorylineHidden(
  */
 async function getViewerExcludedIds(viewer: Viewer): Promise<ReadonlySet<number>> {
   if (!viewer) return new Set();
+  // The hidden-users cache alone, not the whole hidden-preferences object.
   const [blocked, hidden] = await Promise.all([
     getBlockedPairIds(viewer.id),
-    getAllHiddenForUser({ userId: viewer.id }),
+    HiddenUsers.getCached({ userId: viewer.id }),
   ]);
-  return new Set([...blocked, ...hidden.hiddenUsers.map((u) => u.id)]);
+  return new Set([...blocked, ...hidden.map((u) => u.id)].slice(0, MAX_EXCLUDED_USER_IDS));
 }
 
 /** A level outside the reader's browsing level. 0 (unrated) is not "outside": nothing is known. */
@@ -631,16 +633,30 @@ export async function getStoryline({
     .map(({ bannedAt: _b, deletedAt: _d, ...u }) => u);
   const collaboratorIds = new Set(storyline.collaborators.map((c) => c.user.id));
 
+  // A contributor is credited only through a chapter this reader would be shown: published,
+  // rated, not taken down, within the story's ceiling and the reader's level. Otherwise the cast
+  // list would name the author of a chapter the path shows as a tombstone.
+  const ceilingMask = storyline.maxNsfwLevel * 2 - 1;
+  const visibleChapter = Prisma.sql`
+    p."tosViolation" = false AND p."publishedAt" < now() AND p."nsfwLevel" <> 0
+    AND (p."nsfwLevel" & ${browsingLevel}::int) <> 0
+    AND (p."nsfwLevel" & ~${ceilingMask}::int) = 0`;
   const [counts, authors, mainPath] = await Promise.all([
     dbRead.$queryRaw<{ chapters: number; contributors: number }[]>`
-      SELECT COUNT(*)::int AS chapters, COUNT(DISTINCT "userId")::int AS contributors
-      FROM "StorylineChapter" WHERE "storylineId" = ${id}
+      SELECT COUNT(*)::int AS chapters,
+        COUNT(DISTINCT c."userId") FILTER (WHERE p.id IS NOT NULL AND ${visibleChapter})::int
+          AS contributors
+      FROM "StorylineChapter" c
+      LEFT JOIN "Post" p ON p.id = c."postId"
+      WHERE c."storylineId" = ${id}
     `,
-    // Everyone else who wrote a chapter, most chapters first.
+    // Everyone else credited, most visible chapters first.
     dbRead.$queryRaw<{ userId: number }[]>`
-      SELECT "userId" FROM "StorylineChapter"
-      WHERE "storylineId" = ${id} AND "userId" <> ${storyline.userId}
-      GROUP BY "userId" ORDER BY COUNT(*) DESC, "userId" LIMIT ${STORYLINE_MAX_CONTRIBUTORS}
+      SELECT c."userId" FROM "StorylineChapter" c
+      JOIN "Post" p ON p.id = c."postId"
+      WHERE c."storylineId" = ${id} AND c."userId" <> ${storyline.userId} AND ${visibleChapter}
+      GROUP BY c."userId" ORDER BY COUNT(*) DESC, c."userId"
+      LIMIT ${STORYLINE_MAX_CONTRIBUTORS}
     `,
     root
       ? getStorylineMainPath({
@@ -1048,7 +1064,9 @@ const forkCountsKey = (chapterId: number) =>
 /** Readers' latest choice per way on from a chapter, as `[childChapterId, readers]` pairs. */
 function getForkCounts(chapterId: number) {
   return fetchThroughCache(forkCountsKey(chapterId), async () => {
-    const rows = await dbRead.storylineBranchChoice.groupBy({
+    // The primary, not a replica: a reader's choice clears this key, and a refill from a lagging
+    // replica would cache the count from before their choice.
+    const rows = await dbWrite.storylineBranchChoice.groupBy({
       by: ['chapterId'],
       where: { parentChapterId: chapterId },
       _count: { _all: true },
@@ -1066,6 +1084,20 @@ export async function getStorylineReaderCounts(chapterId: number) {
  * Each way on's share of the readers who chose at the end of a chapter. Below the minimum
  * (`STORYLINE_SHARE_MIN_CHOICES`, default 20) `enough` is false and no share is given.
  */
+/** Not found unless this reader can see the storyline `chapterId` belongs to. */
+async function assertStorylineReadableByChapter(
+  chapterId: number,
+  viewer: Viewer,
+  browsingLevel: number
+) {
+  const chapter = await dbRead.storylineChapter.findUnique({
+    where: { id: chapterId },
+    select: { storylineId: true },
+  });
+  if (!chapter) throw throwNotFoundError('Chapter not found');
+  await getStorylineForRead(chapter.storylineId, viewer, browsingLevel);
+}
+
 export async function getStorylineForkShares({
   chapterId,
   viewer,
@@ -1075,26 +1107,26 @@ export async function getStorylineForkShares({
   viewer: Viewer;
   browsingLevel: number;
 }) {
-  const parent = await dbRead.storylineChapter.findUnique({
-    where: { id: chapterId },
-    select: { storylineId: true },
-  });
-  if (!parent) throw throwNotFoundError('Chapter not found');
-  await getStorylineForRead(parent.storylineId, viewer, browsingLevel);
+  await assertStorylineReadableByChapter(chapterId, viewer, browsingLevel);
   const counts = await getStorylineReaderCounts(chapterId);
   return toStorylineForkShares(counts, storylineShareMinChoices(env.STORYLINE_SHARE_MIN_CHOICES));
 }
 
 /** A signed-in reader took `toChapterId` at the end of `fromChapterId`. Their latest choice counts. */
 export async function recordStorylineBranchChoice({
-  userId,
+  viewer,
+  browsingLevel,
   fromChapterId,
   toChapterId,
 }: {
-  userId: number;
+  viewer: { id: number; isModerator?: boolean };
+  browsingLevel: number;
   fromChapterId: number;
   toChapterId: number;
 }) {
+  const userId = viewer.id;
+  // Only a reader who can see the story gets a say in how its ways on are ordered.
+  await assertStorylineReadableByChapter(fromChapterId, viewer, browsingLevel);
   const edge = await dbWrite.storylineChapterEdge.findUnique({
     where: {
       chapterId_parentChapterId: { chapterId: toChapterId, parentChapterId: fromChapterId },
@@ -1118,17 +1150,16 @@ export async function recordStorylineBranchChoice({
  * are not counted in v1.
  */
 export async function recordStorylineCreateClick({
-  userId,
+  viewer,
+  browsingLevel,
   chapterId,
 }: {
-  userId: number;
+  viewer: { id: number; isModerator?: boolean };
+  browsingLevel: number;
   chapterId: number;
 }) {
-  const chapter = await dbWrite.storylineChapter.findUnique({
-    where: { id: chapterId },
-    select: { id: true },
-  });
-  if (!chapter) throw throwNotFoundError('Chapter not found');
+  const userId = viewer.id;
+  await assertStorylineReadableByChapter(chapterId, viewer, browsingLevel);
   await dbWrite.storylineCreateClick.upsert({
     where: { userId_parentChapterId: { userId, parentChapterId: chapterId } },
     create: { userId, parentChapterId: chapterId },
@@ -1174,6 +1205,9 @@ export async function getStorylineEarlyAccessStats() {
 // Discover
 // ---------------------------------------------------------------------------
 
+/** Deepest offset the most-chapters order pages to. */
+const STORYLINE_FEED_MAX_OFFSET = 1000;
+
 export type StorylineFeedFilter = 'all' | 'ongoing' | 'complete' | 'open';
 export type StorylineFeedSort = 'newest' | 'mostChapters';
 
@@ -1196,7 +1230,7 @@ export async function getStorylinesInfinite({
 }: {
   filter: StorylineFeedFilter;
   sort: StorylineFeedSort;
-  /** Offset into the ordered list. */
+  /** The last id seen when newest first; an offset when by most chapters. */
   cursor?: number;
   limit: number;
   viewer: Viewer;
@@ -1211,10 +1245,22 @@ export async function getStorylinesInfinite({
     // The story's level: chapter 1's, or the ceiling when chapter 1 is gone or unrated.
     Prisma.sql`(${isModerator} OR st."userId" = ${viewerId} OR (COALESCE(NULLIF(rp."nsfwLevel", 0), st."maxNsfwLevel") & ${browsingLevel}::int) <> 0)`,
   ];
-  if (excluded.length) where.push(Prisma.sql`st."userId" NOT IN (${Prisma.join(excluded)})`);
+  // One array parameter, not one bind per id: the list can run to tens of thousands.
+  if (excluded.length) where.push(Prisma.sql`st."userId" <> ALL(${excluded}::int[])`);
   if (filter === 'ongoing') where.push(Prisma.sql`st.status = 'Ongoing'`);
   if (filter === 'complete') where.push(Prisma.sql`st.status = 'Complete'`);
-  if (filter === 'open') where.push(Prisma.sql`COALESCE(ss.mode, us.mode, 'review') <> 'off'`);
+  if (filter === 'open') {
+    where.push(Prisma.sql`COALESCE(ss.mode, us.mode, 'review') <> 'off'`);
+    // Open to this reader: collaborators-only storylines are open only to their collaborators.
+    where.push(Prisma.sql`(st."whoCanContinue" = 'Anyone' OR st."userId" = ${viewerId} OR EXISTS (
+      SELECT 1 FROM "StorylineCollaborator" sc
+      WHERE sc."storylineId" = st.id AND sc."userId" = ${viewerId}
+    ))`);
+  }
+  // Newest pages by id (stable while storylines are added); most-chapters by offset, capped,
+  // because its order depends on counts computed per storyline.
+  if (sort === 'newest' && cursor) where.push(Prisma.sql`st.id < ${cursor}`);
+  const offset = sort === 'mostChapters' ? Math.min(cursor, STORYLINE_FEED_MAX_OFFSET) : 0;
 
   const orderBy =
     sort === 'mostChapters' ? Prisma.sql`"chapterCount" DESC, st.id DESC` : Prisma.sql`st.id DESC`;
@@ -1248,12 +1294,20 @@ export async function getStorylinesInfinite({
     ) cc
     WHERE ${Prisma.join(where, ' AND ')}
     ORDER BY ${orderBy}
-    OFFSET ${cursor} LIMIT ${limit + 1}
+    OFFSET ${offset} LIMIT ${limit + 1}
   `;
 
   const items = rows.slice(0, limit).map(({ userId, username, ...row }) => ({
     ...row,
     user: { id: userId, username },
   }));
-  return { items, nextCursor: rows.length > limit ? cursor + limit : undefined };
+  const more = rows.length > limit;
+  const nextCursor = !more
+    ? undefined
+    : sort === 'newest'
+    ? items[items.length - 1]?.id
+    : offset + limit <= STORYLINE_FEED_MAX_OFFSET
+    ? offset + limit
+    : undefined;
+  return { items, nextCursor };
 }
