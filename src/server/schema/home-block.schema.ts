@@ -64,6 +64,8 @@ export const homeBlockMetaSchema = z
     description: getSanitizedStringSchema(),
     stackedHeader: z.boolean(),
     descriptionAlwaysVisible: z.boolean(),
+    // Shown only inside the signed-in info popover, never inline, so it stays out of anonymous view.
+    selectionNote: getSanitizedStringSchema(),
     withIcon: z.boolean(),
     collection: z.object({
       id: z.number(),
