@@ -183,10 +183,11 @@ export async function resolveSettingsBootstrapForRender(
     setHeader: () => undefined,
   } as unknown as AuthArgs['res'];
 
-  // The caller logs the rejection's message to stdout. Over HTTP the route's own catch swallowed
-  // these, so a raw message never reached that line; database clients put connection details in
-  // theirs, so only the name and code travel there. The full message goes to the structured
-  // log, like the deadline warning above, so the reason is still recoverable.
+  // `_app` interpolates the rejection's message into its `console.warn` marker line. Over HTTP the
+  // route's own catch swallowed these, so a raw message never reached that line; database clients
+  // put connection details in theirs, so only the name and code travel there. The full message
+  // goes through the structured logger instead — the sink the deadline warning above and the
+  // central error handlers use (it writes its own JSON line too) — so the reason is recoverable.
   const bootstrap = resolveSettingsBootstrap({ req, res }).catch((e: unknown) => {
     const code = (e as { code?: unknown } | null)?.code;
     const name = e instanceof Error ? e.name : 'unknown';
