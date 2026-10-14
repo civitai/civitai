@@ -118,17 +118,45 @@ export async function declinePlacementsOnBlock({
 
   const pending = await dbWrite.placement.findMany({
     where: { ownerId, placerId, status: 'pending' },
-    select: { id: true },
+    select: { id: true, surface: true, targetType: true, targetId: true },
     take: limit,
   });
+  const orphaned = await orphanedContinuationIds(pending);
 
   return settleEach(pending, (id) =>
     settlePlacement({
       placementId: id,
-      action: waiveFee ? 'declineByBlock' : 'decline',
+      // A continuation the owner could never accept is refunded in full, as it
+      // would be without the block: the block must not earn the owner its fee.
+      action: orphaned.has(id) ? 'expire' : waiveFee ? 'declineByBlock' : 'decline',
       actorId: ownerId,
     })
   );
+}
+
+/**
+ * The storyline continuations among `rows` whose parent is no longer a live
+ * chapter: removed, its post deleted (no chapter holds the post), or in a
+ * taken-down storyline. The same rule the owner's own answer is refused by.
+ */
+async function orphanedContinuationIds(
+  rows: { id: number; surface: string; targetType: string; targetId: number }[]
+) {
+  const continuations = rows.filter(
+    (row) => row.surface === 'storyline' && row.targetType === 'post'
+  );
+  if (!continuations.length) return new Set<number>();
+
+  const chapters = await dbWrite.storylineChapter.findMany({
+    where: { postId: { in: continuations.map((row) => row.targetId) } },
+    select: { postId: true, removedAt: true, storyline: { select: { tosViolation: true } } },
+  });
+  const live = new Set(
+    chapters
+      .filter((chapter) => !chapter.removedAt && !chapter.storyline.tosViolation)
+      .map((chapter) => chapter.postId)
+  );
+  return new Set(continuations.filter((row) => !live.has(row.targetId)).map((row) => row.id));
 }
 
 /**

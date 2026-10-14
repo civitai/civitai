@@ -56,7 +56,7 @@ const {
   getPendingStorylineContinuations,
   settleOrphanedContinuations,
 } = await import('~/server/services/storyline-placement.service');
-const { removePlacementByModerator } = await import(
+const { removePlacementByModerator, declinePlacementsOnBlock } = await import(
   '~/server/services/placement-moderation.service'
 );
 const { expirePlacements } = await import('~/server/services/placement-escrow.service');
@@ -844,6 +844,76 @@ describe('a continuation of a taken-down storyline', () => {
     ).rejects.toThrow(STORYLINE_REFUSALS.notAChapter);
     expect(db.row('placement', { id })).toMatchObject({ status: 'pending' });
     expect(moneyCalls().payouts).toEqual([]);
+  });
+
+  // Accepted, not an oversight: the orphaned-continuation job selects by the
+  // chapter, and a taken-down storyline's chapters stay live. Such a row is
+  // refused above and refunded in full at its own deadline instead.
+  it('is left to its deadline, which refunds it in full', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const submittedAt = Date.now();
+    charge(100);
+    const { id } = await submit(STRANGER, STRANGER_POST, 100);
+    db.update('storyline', { id: STORYLINE }, { tosViolation: true });
+
+    await expect(settleOrphanedContinuations()).resolves.toEqual({ considered: 0, settled: 0 });
+    vi.setSystemTime(submittedAt + 7 * 24 * 3_600_000 + 60_000);
+    await expect(expirePlacements()).resolves.toMatchObject({ expired: 1 });
+
+    expect(db.row('placement', { id })).toMatchObject({ status: 'expired' });
+    expect(moneyCalls().payouts).toEqual([]);
+    expect(moneyCalls().refunds.sort()).toEqual([
+      `placement-${id}-holdFee`,
+      `placement-${id}-holdPrincipal`,
+    ]);
+  });
+});
+
+// The block cascade declines the blocker's pending placements on the person
+// they blocked, keeping the fee for the owner. A continuation the owner could
+// never accept is refunded in full instead, as it would be without the block.
+describe('a placer blocking the owner', () => {
+  const blockOwner = () => {
+    db.block(STRANGER, OWNER);
+    return declinePlacementsOnBlock({ ownerId: OWNER, placerId: STRANGER, waiveFee: false });
+  };
+
+  it('still pays the owner the fee for a continuation they could have accepted', async () => {
+    charge(100);
+    const { id } = await submit(STRANGER, STRANGER_POST, 100);
+
+    await blockOwner();
+
+    expect(db.row('placement', { id })).toMatchObject({ status: 'declined' });
+    expect(moneyCalls().payouts).toEqual([[OWNER, 30]]);
+  });
+
+  it.each([
+    [
+      'removed',
+      () => db.update('storylineChapter', { postId: ROOT_POST }, { removedAt: new Date() }),
+    ],
+    [
+      'whose post was deleted',
+      () => db.update('storylineChapter', { postId: ROOT_POST }, { postId: null }),
+    ],
+    [
+      'in a taken-down storyline',
+      () => db.update('storyline', { id: STORYLINE }, { tosViolation: true }),
+    ],
+  ])('refunds in full, with no fee, a continuation of a chapter %s', async (_, orphan) => {
+    charge(100);
+    const { id } = await submit(STRANGER, STRANGER_POST, 100);
+    orphan();
+
+    await blockOwner();
+
+    expect(db.row('placement', { id })).toMatchObject({ status: 'expired' });
+    expect(moneyCalls().payouts).toEqual([]);
+    expect(moneyCalls().refunds.sort()).toEqual([
+      `placement-${id}-holdFee`,
+      `placement-${id}-holdPrincipal`,
+    ]);
   });
 });
 
