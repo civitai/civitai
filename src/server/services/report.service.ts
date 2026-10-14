@@ -942,7 +942,12 @@ type ClaimedOrphan = Omit<AppealFeeRef, 'buzzTransactionId'> & {
   buzzTransactionId: string | null;
 };
 
-type OrphanCandidate = ClaimedOrphan & { createdAt: Date; userDeleted: boolean };
+type OrphanCandidate = ClaimedOrphan & {
+  createdAt: Date;
+  userDeleted: boolean;
+  // Set only for a soft-deleted model: whether the appellant deleted it. Otherwise ClickHouse decides.
+  modelDeletedByAppellant?: boolean | null;
+};
 
 /**
  * Appeals whose appellant deleted the entity after filing. `null` when ClickHouse cannot answer,
@@ -1183,7 +1188,10 @@ export async function closeAppealsDeletedByOwner({
 export async function voidOrphanedAppeals({ limit = 1000 }: { limit?: number } = {}) {
   const candidates = await dbWrite.$queryRaw<OrphanCandidate[]>`
     SELECT a.id, a."userId", a."entityType", a."entityId", a."buzzTransactionId", a."createdAt",
-      (u."deletedAt" IS NOT NULL) AS "userDeleted"
+      (u."deletedAt" IS NOT NULL) AS "userDeleted",
+      (SELECT m."deletedBy" = a."userId" FROM "Model" m
+        WHERE m.id = a."entityId" AND m."deletedAt" IS NOT NULL
+          AND a."entityType" = 'Model') AS "modelDeletedByAppellant"
     FROM "Appeal" a
     JOIN "User" u ON u.id = a."userId"
     WHERE a.status = 'Pending'::"AppealStatus"
@@ -1199,7 +1207,14 @@ export async function voidOrphanedAppeals({ limit = 1000 }: { limit?: number } =
   const isQuiet = (a: OrphanCandidate) => a.userDeleted || defensiveIds.has(a.id);
   const quiet = candidates.filter(isQuiet);
   const rest = candidates.filter((a) => !isQuiet(a));
-  const ownerDeletedIds = (await getOwnerDeletedAppealIds(rest)) ?? new Set<number>();
+  // A soft-deleted model records its deleter, so only images and hard-deleted models need ClickHouse.
+  const clickhouseIds =
+    (await getOwnerDeletedAppealIds(rest.filter((a) => a.modelDeletedByAppellant == null))) ??
+    new Set<number>();
+  const ownerDeletedIds = new Set([
+    ...clickhouseIds,
+    ...rest.filter((a) => a.modelDeletedByAppellant === true).map((a) => a.id),
+  ]);
 
   const closedQuietly = await closeOrphans(
     quiet.map((a) => a.id),

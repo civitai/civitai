@@ -17,6 +17,7 @@ const holder = vi.hoisted(() => ({
   db: null as unknown as PGlite,
   // SQL run once after the pick query, standing in for a moderator acting before the claims.
   afterPick: null as string | null,
+  clickhouse: 'normal' as 'normal' | 'throw' | 'empty',
 }));
 
 vi.mock('~/server/services/buzz.service', async (importOriginal) => ({
@@ -28,26 +29,24 @@ vi.mock('~/server/services/notification.service', async (importOriginal) => ({
   ...(await importOriginal<typeof NotificationService>()),
   createNotification: holder.notify,
 }));
-// Must match APPEALS rows 1 and 9 (image deleted by the appellant after filing), 18 (model soft-deleted
-// by its owner) and 19 (model soft-deleted by a moderator).
+// Must match APPEALS rows 1 and 9: each appellant deleted the image after filing. A model delete
+// is read from `Model.deletedBy`, so this fake answers only the two delete-event queries.
 vi.mock('~/server/clickhouse/client', async (importOriginal) => ({
   ...(await importOriginal<typeof ClickhouseClient>()),
   clickhouse: {
-    $query: vi.fn((strings: TemplateStringsArray) =>
-      Promise.resolve(
-        /FROM images/.test(strings.join('?'))
-          ? [
-              { entityId: '1001', userId: '11', t: String(Date.UTC(2026, 8, 2) / 1000) },
-              { entityId: '1009', userId: '19', t: String(Date.UTC(2026, 8, 2) / 1000) },
-            ]
-          : /FROM modelEvents/.test(strings.join('?'))
-          ? [
-              { entityId: '2018', userId: '28', t: String(Date.UTC(2026, 8, 2) / 1000) },
-              { entityId: '2019', userId: '999', t: String(Date.UTC(2026, 8, 2) / 1000) },
-            ]
-          : []
-      )
-    ),
+    $query: vi.fn((strings: TemplateStringsArray) => {
+      const sql = strings.join('?');
+      if (holder.clickhouse === 'throw') return Promise.reject(new Error('clickhouse down'));
+      if (holder.clickhouse === 'empty') return Promise.resolve([]);
+      if (/FROM images WHERE type = 'Delete' AND imageId IN/.test(sql))
+        return Promise.resolve([
+          { entityId: '1001', userId: '11', t: String(Date.UTC(2026, 8, 2) / 1000) },
+          { entityId: '1009', userId: '19', t: String(Date.UTC(2026, 8, 2) / 1000) },
+        ]);
+      if (/FROM modelEvents WHERE type IN \('Delete', 'PermanentDelete'\) AND modelId IN/.test(sql))
+        return Promise.resolve([]);
+      return Promise.reject(new Error(`unexpected ClickHouse query: ${sql}`));
+    }),
   },
 }));
 
@@ -85,7 +84,7 @@ beforeAll(async () => {
     CREATE TYPE "EntityType" AS ENUM ('Image', 'Model');
     CREATE TABLE "User" (id int PRIMARY KEY, "deletedAt" timestamp(3));
     CREATE TABLE "Image" (id int PRIMARY KEY, "userId" int NOT NULL, "blockedFor" text);
-    CREATE TABLE "Model" (id int PRIMARY KEY, "deletedAt" timestamp(3));
+    CREATE TABLE "Model" (id int PRIMARY KEY, "deletedAt" timestamp(3), "deletedBy" int);
     CREATE TABLE "Report" (id int PRIMARY KEY, reason text NOT NULL);
     CREATE TABLE "UserReport" ("userId" int NOT NULL, "reportId" int NOT NULL);
     CREATE TABLE "CsamReport" (id int PRIMARY KEY, "userId" int, images jsonb NOT NULL DEFAULT '[]');
@@ -123,6 +122,7 @@ beforeEach(async () => {
   holder.refundMulti.mockResolvedValue(undefined);
   holder.notify.mockResolvedValue(undefined);
   holder.afterPick = null;
+  holder.clickhouse = 'normal';
   await holder.db.exec(`
     TRUNCATE "User", "Image", "Model", "Report", "UserReport", "CsamReport", "Appeal";
     INSERT INTO "User" (id, "deletedAt") SELECT g, NULL FROM generate_series(11, 29) g;
@@ -131,10 +131,10 @@ beforeEach(async () => {
       (1003, 13, NULL),
       (5014, 24, 'CSAM'),
       (5015, 25, 'moderated');
-    INSERT INTO "Model" (id, "deletedAt") VALUES
-      (2006, NULL),
-      (2018, '2026-09-02 00:00:00'),
-      (2019, '2026-09-02 00:00:00');
+    INSERT INTO "Model" (id, "deletedAt", "deletedBy") VALUES
+      (2006, NULL, NULL),
+      (2018, '2026-09-02 00:00:00', 28),
+      (2019, '2026-09-02 00:00:00', 999);
     INSERT INTO "Report" (id, reason) VALUES (1, 'TOSViolation'), (2, 'CSAM');
     INSERT INTO "UserReport" ("userId", "reportId") VALUES (22, 1), (23, 2);
     INSERT INTO "CsamReport" (id, "userId", images) VALUES
@@ -213,7 +213,7 @@ describe('voidOrphanedAppeals against Postgres', () => {
     const modelLookup = vi
       .mocked(clickhouse!.$query)
       .mock.calls.find((c) => /FROM modelEvents/.test((c[0] as TemplateStringsArray).join('?')));
-    expect([...(modelLookup?.[1] as number[])].sort()).toEqual([1009, 2005, 2018, 2019]);
+    expect([...(modelLookup?.[1] as number[])].sort()).toEqual([1009, 2005]);
 
     // Routed fees stay held; the quiet group is refunded but never told.
     expect(refundedPrefixes()).toEqual([
@@ -224,6 +224,22 @@ describe('voidOrphanedAppeals against Postgres', () => {
     ]);
     expect(notifiedUsers()).toEqual([11, 12, 15, 22, 25, 27, 28, 29]);
   });
+
+  it.each(['throw', 'empty'] as const)(
+    'still closes a model its appellant soft-deleted when ClickHouse is %s',
+    async (mode) => {
+      holder.clickhouse = mode;
+
+      const result = await voidOrphanedAppeals();
+      const rows = await appeals();
+
+      expect(rows.get(18)).toMatchObject({ status: 'Void', resolvedReason: 'deleted-by-owner' });
+      expect(rows.get(19)).toMatchObject({ status: 'Pending' });
+      expect(rows.get(19)!.entityRemovedAt).not.toBeNull();
+      expect(refundedPrefixes()).toContain('appeal-28-1');
+      expect(result.closedOwnerDeleted).toBeGreaterThanOrEqual(1);
+    }
+  );
 
   it('stamps closed appeals resolved and leaves routed ones unresolved', async () => {
     const before = (await appeals()).get(8)!.entityRemovedAt;

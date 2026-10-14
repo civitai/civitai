@@ -943,8 +943,11 @@ export const deleteModelHandler = async ({
     const model = await deleteModel({ id, userId: ctx.user.id, isModerator: ctx.user.isModerator });
     if (!model) throw throwNotFoundError(`No model with id ${id}`);
 
-    // A moderator removing someone's model leaves their appeal to the sweep's review routing.
-    if (model.userId === ctx.user.id)
+    // Anyone else's delete, including a moderator's earlier one that this call repeats, leaves the
+    // appeal to the sweep's review routing. A permanent delete leaves no row to read `deletedBy` from.
+    const deletedByCaller =
+      permanently || ('deletedBy' in model && model.deletedBy === ctx.user.id);
+    if (model.userId === ctx.user.id && deletedByCaller)
       await closeAppealsDeletedByOwner({
         entityType: EntityType.Model,
         entityIds: [id],

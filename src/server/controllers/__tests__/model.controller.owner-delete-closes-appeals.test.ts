@@ -3,7 +3,7 @@ import type * as ModelService from '~/server/services/model.service';
 import type * as ReportService from '~/server/services/report.service';
 import type * as Caches from '~/server/redis/caches';
 
-// The sweep only sees hard-deleted rows, so the delete itself has to close the owner's appeal.
+// The delete itself closes the owner's appeal; the sweep only reviews what the owner did not delete.
 
 const { deleteModelByIdMock, permaDeleteModelByIdMock, closeMock } = vi.hoisted(() => ({
   deleteModelByIdMock: vi.fn(),
@@ -34,6 +34,8 @@ const MODEL_ID = 42;
 const OWNER_ID = 7;
 const MODERATOR_ID = 1;
 
+const OTHER_ID = 9;
+
 const remove = (userId: number, isModerator: boolean, permanently = false) =>
   deleteModelHandler({
     input: { id: MODEL_ID, permanently },
@@ -43,7 +45,13 @@ const remove = (userId: number, isModerator: boolean, permanently = false) =>
 beforeEach(() => {
   vi.clearAllMocks();
   closeMock.mockResolvedValue(undefined);
-  deleteModelByIdMock.mockResolvedValue({ id: MODEL_ID, userId: OWNER_ID, nsfwLevel: 1 });
+  // The row as the delete left it: `deletedBy` is whoever deleted first.
+  deleteModelByIdMock.mockImplementation(async ({ userId }: { userId: number }) => ({
+    id: MODEL_ID,
+    userId: OWNER_ID,
+    nsfwLevel: 1,
+    deletedBy: userId,
+  }));
   permaDeleteModelByIdMock.mockResolvedValue({ id: MODEL_ID, userId: OWNER_ID, nsfwLevel: 1 });
 });
 
@@ -63,6 +71,42 @@ describe('deleteModelHandler', () => {
     await remove(MODERATOR_ID, true);
 
     expect(deleteModelByIdMock).toHaveBeenCalled();
+    expect(closeMock).not.toHaveBeenCalled();
+  });
+
+  it('closes the appeal when a moderator deletes their own model', async () => {
+    deleteModelByIdMock.mockResolvedValue({
+      id: MODEL_ID,
+      userId: MODERATOR_ID,
+      nsfwLevel: 1,
+      deletedBy: MODERATOR_ID,
+    });
+
+    await remove(MODERATOR_ID, true);
+
+    expect(closeMock).toHaveBeenCalledWith({
+      entityType: 'Model',
+      entityIds: [MODEL_ID],
+      ownerId: MODERATOR_ID,
+    });
+  });
+
+  it('closes nothing for a caller who does not own the model', async () => {
+    await remove(OTHER_ID, false);
+
+    expect(closeMock).not.toHaveBeenCalled();
+  });
+
+  it('closes nothing when the owner re-deletes a model a moderator already deleted', async () => {
+    deleteModelByIdMock.mockResolvedValue({
+      id: MODEL_ID,
+      userId: OWNER_ID,
+      nsfwLevel: 1,
+      deletedBy: MODERATOR_ID,
+    });
+
+    await remove(OWNER_ID, false);
+
     expect(closeMock).not.toHaveBeenCalled();
   });
 
