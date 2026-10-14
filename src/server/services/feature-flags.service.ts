@@ -393,6 +393,11 @@ const featureFlags = createFeatureFlags({
     displayName: 'Batch post scheduling',
   },
   postPresets: { availability: ['mod'], fliptKey: 'post-presets', displayName: 'Post presets' },
+  articleScheduling: {
+    availability: ['mod'],
+    fliptKey: 'article-scheduling',
+    displayName: 'Article scheduling',
+  },
   // Gates CREATING stickers, seeing them in shops, and the picker. Deliberately
   // does NOT gate rendering — a sticker already in a comment or DM must render
   // for everyone, or flipping this off orphans content that is already out there.

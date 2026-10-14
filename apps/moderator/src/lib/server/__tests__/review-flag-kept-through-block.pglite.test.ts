@@ -12,11 +12,14 @@ import { pgliteDialect } from './abuse-detection-pglite.harness';
 // PGlite boots a WASM Postgres; under a full parallel run that alone can pass the default hook budget.
 vi.setConfig({ hookTimeout: 60_000 });
 
-const { dbHandle, recordModActivity, applyBlockSideEffects } = vi.hoisted(() => ({
-  dbHandle: { current: null as unknown },
-  recordModActivity: vi.fn(async () => undefined),
-  applyBlockSideEffects: vi.fn(async () => undefined),
-}));
+const { dbHandle, recordModActivity, applyBlockSideEffects, trackImageRestore } = vi.hoisted(
+  () => ({
+    dbHandle: { current: null as unknown },
+    recordModActivity: vi.fn(async () => undefined),
+    applyBlockSideEffects: vi.fn(async () => undefined),
+    trackImageRestore: vi.fn(async () => undefined),
+  })
+);
 
 vi.mock('../db', () => ({
   get dbRead() {
@@ -35,6 +38,7 @@ vi.mock('../image-moderation-effects', () => ({
   refundAppealFee: vi.fn(async () => undefined),
   notifyAppealResolved: vi.fn(async () => undefined),
   emailAppealResolution: vi.fn(async () => undefined),
+  trackImageRestore,
 }));
 vi.mock('../thumbnail-cache', async (importOriginal) => ({
   ...(await importOriginal<typeof ThumbnailCache>()),
@@ -99,6 +103,7 @@ beforeAll(async () => {
 beforeEach(async () => {
   recordModActivity.mockClear();
   applyBlockSideEffects.mockClear();
+  trackImageRestore.mockClear();
   await db.exec(`TRUNCATE "Image", "Appeal", "User"`);
   await db.query(
     `INSERT INTO "Image" ("id", "userId", "needsReview", "blockedFor", "ingestion", "nsfwLevel") VALUES
@@ -160,12 +165,25 @@ describe('an image removed with only the review flag left', () => {
     await acceptImage({ imageId: FLAGGED_REMOVED, userId: 2, restoreRemoved: true });
 
     expect(await imageRow(FLAGGED_REMOVED)).toEqual({ needsReview: null, ingestion: 'Scanned' });
+    expect(trackImageRestore).toHaveBeenCalledWith({ imageId: FLAGGED_REMOVED, actorUserId: 2 });
   });
 
   it('is accepted like any other image while it is still live', async () => {
     await acceptImage({ imageId: FLAGGED, userId: 2 });
 
     expect(await imageRow(FLAGGED)).toEqual({ needsReview: null, ingestion: 'Scanned' });
+    expect(trackImageRestore).not.toHaveBeenCalled();
+  });
+
+  it('logs no restore for a scanner block, which was never logged as a removal', async () => {
+    await db.query(
+      `INSERT INTO "Image" ("id", "userId", "needsReview", "blockedFor", "ingestion", "nsfwLevel")
+       VALUES (54, 7, 'tag', 'AiNotVerified', 'Blocked', 32)`
+    );
+    await acceptImage({ imageId: 54, userId: 2 });
+
+    expect(await imageRow(54)).toEqual({ needsReview: null, ingestion: 'Scanned' });
+    expect(trackImageRestore).not.toHaveBeenCalled();
   });
 
   it('is not removed a second time', async () => {
