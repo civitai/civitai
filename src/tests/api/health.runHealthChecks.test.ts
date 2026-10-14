@@ -342,7 +342,8 @@ describe('/api/health reuses a recent clean run', () => {
 
   it('a dependency that breaks after a clean run is reported once the window ends', async () => {
     await probe(healthHandler);
-    mocks.dbWrite.$transaction.mockRejectedValue(new Error('db write down'));
+    // A read failure, which every criticality rule treats as fatal.
+    mocks.dbRead.$transaction.mockRejectedValue(new Error('db read down'));
     now += 9_000;
     const inWindow = await probe(healthHandler);
     now += 1_001;
@@ -350,6 +351,6 @@ describe('/api/health reuses a recent clean run', () => {
 
     expect(inWindow.statusCode).toBe(200);
     expect(afterWindow.statusCode).toBe(500);
-    expect(afterWindow.body).toMatchObject({ healthy: false, write: false });
+    expect(afterWindow.body).toMatchObject({ healthy: false, read: false });
   });
 });
