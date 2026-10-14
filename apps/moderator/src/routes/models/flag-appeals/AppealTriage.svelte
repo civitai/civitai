@@ -45,6 +45,12 @@
   $effect(() => {
     void data.items;
     acted.clear();
+    errors.clear();
+  });
+
+  // After a reload the selection may be an appeal that is gone; null lets the URL mirror follow.
+  $effect(() => {
+    if (selectedId !== null && !ids.includes(selectedId)) selectedId = null;
   });
 
   // Navigation (filters, search, paging, back) rebuilds the selection from the URL it landed on.
@@ -93,8 +99,19 @@
       return async (outcome) => {
         await finish?.(outcome);
         const message = failureMessage(outcome.result);
-        if (message) errors.set(appealId, message);
-        else advance(appealId);
+        if (message) {
+          errors.set(appealId, message);
+          if (selected?.appealId === appealId) {
+            await tick();
+            document
+              .querySelector<HTMLElement>('[data-appeal-actions] button:not([disabled])')
+              ?.focus();
+          }
+        } else {
+          // A reload mid-flight clears the mark; the decision is final, so put it back.
+          acted.set(appealId, verdict);
+          advance(appealId);
+        }
       };
     };
   };
@@ -144,7 +161,7 @@
 
 <svelte:window {onkeydown} />
 
-{#if form?.error}
+{#if form?.error && errors.size === 0}
   <ErrorAlert message={form.modelId ? `Model #${form.modelId}: ${form.error}` : form.error} />
 {/if}
 {#if form?.rescanQueued}

@@ -230,6 +230,7 @@
     <ErrorAlert class="mx-5 mb-3" message={error} />
   {/if}
   <div
+    data-appeal-actions
     class="sticky bottom-0 flex shrink-0 flex-wrap items-center gap-3 border-t border-dark-4 bg-dark-6 px-5 py-3"
   >
     <div role="status" class="text-base font-medium text-white empty:hidden">{#if verdict}{verdict}{/if}</div>

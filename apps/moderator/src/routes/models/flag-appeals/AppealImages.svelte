@@ -42,7 +42,7 @@
             href={getEdgeUrl(image.url, { type: 'image', original: true })}
             target="_blank"
             rel="noreferrer"
-            aria-label="Open full size"
+            aria-label="Open image {i + 1} of {images.length} full size"
             class="block size-full"
           >
             <EdgeMedia src={image.url} type="image" width={450} class="size-full object-cover" />
@@ -51,6 +51,7 @@
             <Button
               size="sm"
               variant="secondary"
+              aria-label="Blur image {i + 1}"
               class="absolute bottom-2 left-2"
               onclick={() => toggle(image.id)}
             >
