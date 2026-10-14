@@ -293,7 +293,6 @@ describe('<civitai-post-planner>', () => {
     expect(el.shadowRoot!.activeElement).toBe(control('Close'));
   });
 
-
   it('filters by a tag clicked in the drawer, shows it in the toolbar and clears it', async () => {
     const { el, host, backend } = await mount({ view: 'month', anchor: '2026-10-01' });
     backend.getPostDetail.mockImplementationOnce(async (id: number) => ({
@@ -311,7 +310,9 @@ describe('<civitai-post-planner>', () => {
     });
 
     el.location = { view: 'month', anchor: '2026-10-01', tag: 'landscape' };
-    await expect.element(page.getByLabelText('Tag filter', { exact: true })).toHaveTextContent('#landscape');
+    await expect
+      .element(page.getByLabelText('Tag filter', { exact: true }))
+      .toHaveTextContent('#landscape');
     await vi.waitFor(() =>
       expect(backend.getScheduled).toHaveBeenLastCalledWith(
         expect.objectContaining({ tag: 'landscape' })
@@ -326,5 +327,4 @@ describe('<civitai-post-planner>', () => {
       tag: undefined,
     });
   });
-
 });
