@@ -11,6 +11,7 @@ import {
   parseReactorQuery,
   REACTOR_TYPES,
   REACTORS_PAGE_SIZE,
+  type ReactorCursor,
   type ReactorPage,
   type ReactorQuery,
   type ReactorType,
@@ -22,6 +23,39 @@ const TABLES = {
   image: { content: 'Image', reactions: 'ImageReaction', fk: 'imageId' },
   article: { content: 'Article', reactions: 'ArticleReaction', fk: 'articleId' },
 } as const;
+
+export async function ownsContent(
+  db: typeof dbRead,
+  ownerId: number,
+  entity: ReactorEntity,
+  entityId: number
+): Promise<boolean> {
+  const owned = await sql<{ id: number }>`
+    SELECT id FROM ${sql.table(TABLES[entity].content)} WHERE id = ${entityId} AND "userId" = ${ownerId}
+  `.execute(db);
+  return owned.rows.length > 0;
+}
+
+/** The item column of a content table's rows in `CollectionItem`, `ImageReaction`, and the like. */
+export const contentFk = (entity: ReactorEntity) => TABLES[entity].fk;
+
+/** `after` pages older accounts (id below the cursor, descending); `before` pages newer ones (ascending). */
+export function keysetClause(column: string, cursor: ReactorCursor) {
+  const col = sql.ref(column);
+  const bound = !cursor
+    ? sql``
+    : cursor.dir === 'after'
+      ? sql`AND ${col} < ${cursor.userId}`
+      : sql`AND ${col} > ${cursor.userId}`;
+  return { bound, order: cursor?.dir === 'before' ? sql`ASC` : sql`DESC` };
+}
+
+/** Only a scanned, safe-level profile picture; the legacy User.image is unmoderated. Reads alias `p` (Image). */
+export const safeProfilePictureUrl = () => sql`
+  CASE
+    WHEN p.ingestion = 'Scanned' AND p."nsfwLevel" > 0
+      AND (p."nsfwLevel" & ~${sql.lit(sfwBrowsingLevelsFlag)}) = 0 THEN p.url
+  END`;
 
 /**
  * Who reacted to one piece of the caller's content, one reaction type at a time. Returns null when the entity is
@@ -40,10 +74,7 @@ export async function getReactors(
 ): Promise<ReactorPage | null> {
   const t = TABLES[entity];
 
-  const owned = await sql<{ id: number }>`
-    SELECT id FROM ${sql.table(t.content)} WHERE id = ${entityId} AND "userId" = ${ownerId}
-  `.execute(db);
-  if (!owned.rows.length) return null;
+  if (!(await ownsContent(db, ownerId, entity, entityId))) return null;
 
   const countRows = await sql<{ reaction: string; n: number }>`
     SELECT reaction, count(*)::int AS n FROM ${sql.table(t.reactions)}
@@ -61,12 +92,7 @@ export async function getReactors(
     return { reaction, counts, reactors: [], next: null, prev: null };
 
   const { cursor } = query;
-  const bound = !cursor
-    ? sql``
-    : cursor.dir === 'after'
-      ? sql`AND "userId" < ${cursor.userId}`
-      : sql`AND "userId" > ${cursor.userId}`;
-  const order = cursor?.dir === 'before' ? sql`ASC` : sql`DESC`;
+  const { bound, order } = keysetClause('userId', cursor);
 
   const { rows } = await sql<{
     userId: number;
@@ -77,11 +103,7 @@ export async function getReactors(
     image: string | null;
   }>`
     SELECT r."userId", r."createdAt", u.username, u."deletedAt", u."bannedAt",
-      -- Only a scanned, safe-level profile picture; the legacy User.image is unmoderated. Otherwise initials.
-      CASE
-        WHEN p.ingestion = 'Scanned' AND p."nsfwLevel" > 0
-          AND (p."nsfwLevel" & ~${sql.lit(sfwBrowsingLevelsFlag)}) = 0 THEN p.url
-      END AS image
+      ${safeProfilePictureUrl()} AS image
     FROM (
       SELECT "userId", "createdAt" FROM ${sql.table(t.reactions)}
       WHERE ${sql.ref(t.fk)} = ${entityId} AND reaction = ${reaction} ${bound}
