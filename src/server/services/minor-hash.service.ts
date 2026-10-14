@@ -12,6 +12,7 @@ import { throwBadRequestError } from '~/server/utils/errorHandling';
 import type { ModelMeta } from '~/server/schema/model.schema';
 import {
   loadGrantTextHash,
+  settleFlagAppealsAfterModeratorLift,
   stampModeratorTextScanRuling,
 } from '~/server/services/text-scan/actions/appeal-text-hash';
 import {
@@ -663,6 +664,16 @@ export async function revertMinorHashAutoFlag({
     entityId: modelId,
     activity: 'rollbackMinorAutoHash',
   });
+
+  // After the lift, and only for a moderator's own revert: an appeal's revert is followed by its
+  // own resolution, which must not be pre-empted.
+  if (recordTextScanRuling)
+    await settleFlagAppealsAfterModeratorLift({
+      modelId,
+      userId,
+      liftedLabels: ['minor'],
+      recordRulings: false,
+    });
 
   return report;
 }

@@ -2482,11 +2482,11 @@ export async function setModelMinor({
   });
   if (!before) throw throwNotFoundError(`No model with id ${id}`);
 
+  // Dynamic: model.service is imported almost everywhere; only the ruling branches need the profiles.
+  const loadAppealTextHash = () => import('~/server/services/text-scan/actions/appeal-text-hash');
+
   if (!minor && recordTextScanRuling) {
-    // Dynamic: model.service is imported almost everywhere; only this branch needs the profiles.
-    const { stampModeratorTextScanRuling } = await import(
-      '~/server/services/text-scan/actions/appeal-text-hash'
-    );
+    const { stampModeratorTextScanRuling } = await loadAppealTextHash();
     const stamped = await stampModeratorTextScanRuling({ modelId: id, userId, label: 'minor' });
     if (!stamped)
       logToAxiom({
@@ -2578,6 +2578,16 @@ export async function setModelMinor({
   }
   await applyModelFlagSideEffects({ before, after: result });
   if (!minor && result.poi) await reassertModelPoiRestrictions(id);
+  // The ruling went in ahead of the write above; this only closes the owner's now-moot appeal.
+  if (!minor && recordTextScanRuling && before.minor) {
+    const { settleFlagAppealsAfterModeratorLift } = await loadAppealTextHash();
+    await settleFlagAppealsAfterModeratorLift({
+      modelId: id,
+      userId,
+      liftedLabels: ['minor'],
+      recordRulings: false,
+    });
+  }
 
   return result;
 }
@@ -3159,6 +3169,17 @@ export const upsertModel = async (
       after: result,
       tagsChanged: !!tagsOnModels,
     });
+
+    // Only a moderator can clear these (owners are locked out above), so a lift here is theirs.
+    const liftedLabels = (['minor', 'poi'] as const).filter(
+      (label) => beforeUpdate[label] && !result[label]
+    );
+    if (isModerator && liftedLabels.length) {
+      const { settleFlagAppealsAfterModeratorLift } = await import(
+        '~/server/services/text-scan/actions/appeal-text-hash'
+      );
+      await settleFlagAppealsAfterModeratorLift({ modelId: result.id, userId, liftedLabels });
+    }
 
     // GenerationCoverage is a view over these columns, but the orchestrator holds its own copy of
     // each resource: without this, a creator who adds RentCivit is told the model is "not enabled

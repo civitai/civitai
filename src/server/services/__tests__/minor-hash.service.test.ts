@@ -16,6 +16,7 @@ const {
   mockReassertModelPoiRestrictions,
   mockLoadGrantTextHash,
   mockStampModeratorTextScanRuling,
+  mockSettleFlagAppeals,
 } = vi.hoisted(() => ({
   mockSetModelMinor: vi.fn(),
   mockTrackModActivity: vi.fn(),
@@ -26,6 +27,7 @@ const {
   mockReassertModelPoiRestrictions: vi.fn(),
   mockLoadGrantTextHash: vi.fn(),
   mockStampModeratorTextScanRuling: vi.fn(),
+  mockSettleFlagAppeals: vi.fn(),
 }));
 
 // MINOR_FLAG_SNAPSHOT_KEY is read at module scope by the service's Prisma.sql
@@ -53,6 +55,7 @@ vi.mock('~/server/services/text-scan/actions/model-poi-minor', () => ({
 vi.mock('~/server/services/text-scan/actions/appeal-text-hash', () => ({
   loadGrantTextHash: mockLoadGrantTextHash,
   stampModeratorTextScanRuling: mockStampModeratorTextScanRuling,
+  settleFlagAppealsAfterModeratorLift: mockSettleFlagAppeals,
 }));
 
 import { AppealStatus, EntityType } from '~/shared/utils/prisma/enums';
@@ -964,6 +967,31 @@ describe('revertMinorHashAutoFlag', () => {
       entityId: 77,
       activity: 'rollbackMinorAutoHash',
     });
+  });
+
+  it("settles the model's pending appeal after a moderator's revert, once the lift has run", async () => {
+    mockDbRead.$queryRaw.mockResolvedValue([rollbackRow({ modelId: 77 })]);
+    mockStampModeratorTextScanRuling.mockResolvedValue(true);
+
+    await revertMinorHashAutoFlag({ modelId: 77, userId: 4, recordTextScanRuling: true });
+
+    expect(mockSettleFlagAppeals).toHaveBeenCalledWith({
+      modelId: 77,
+      userId: 4,
+      liftedLabels: ['minor'],
+      recordRulings: false,
+    });
+    expect(mockSettleFlagAppeals.mock.invocationCallOrder[0]).toBeGreaterThan(
+      mockSetModelMinor.mock.invocationCallOrder[0]
+    );
+  });
+
+  it('leaves appeals alone when the caller is the appeal resolution itself', async () => {
+    mockDbRead.$queryRaw.mockResolvedValue([rollbackRow({ modelId: 77 })]);
+
+    await revertMinorHashAutoFlag({ modelId: 77, userId: 4 });
+
+    expect(mockSettleFlagAppeals).not.toHaveBeenCalled();
   });
 });
 

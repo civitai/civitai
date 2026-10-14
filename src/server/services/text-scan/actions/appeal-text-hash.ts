@@ -1,5 +1,6 @@
 import { textScanResultTextHash } from '@civitai/shared/rating-review';
 import { dbWrite } from '~/server/db/client';
+import { logToAxiom } from '~/server/logging/client';
 import {
   TEXT_SCAN_FLAGS_KEY,
   type TextScanFlagLabel,
@@ -13,6 +14,7 @@ import { getTextScanProfile } from '~/server/services/text-scan/profiles';
 // `text-scan/profiles` resolves to the registry file; only the barrel registers the profiles.
 import '~/server/services/text-scan/profiles/index';
 import { textScanTextHash } from '~/server/services/text-scan/prompt';
+import { AppealStatus, EntityType } from '~/shared/utils/prisma/enums';
 
 export async function loadTextScanTextHash(entityType: 'Model' | 'Bounty', entityId: number) {
   const subject = (await getTextScanProfile(entityType)?.load([entityId]))?.get(entityId);
@@ -52,7 +54,7 @@ export async function stampModeratorTextScanRuling({
   userId: number;
   label: TextScanFlagLabel;
 }) {
-  const textHash = await loadTextScanTextHash('Model', modelId);
+  const textHash = await loadGrantTextHash('Model', modelId, label);
   if (!textHash) return false;
   await dbWrite.$executeRaw`
     UPDATE "Model" m
@@ -68,4 +70,60 @@ export async function stampModeratorTextScanRuling({
     WHERE m.id = ${modelId}
   `;
   return true;
+}
+
+// A moderator lifting a flag outside the appeals page leaves nothing for the owner's appeal to
+// decide, so it closes the way an overturn would. The flags are read back rather than trusted from
+// the caller: a lift that failed, or a second flag still in force, keeps the appeal open. Never
+// throws, since the moderator's own edit has already been made.
+export async function settleFlagAppealsAfterModeratorLift({
+  modelId,
+  userId,
+  liftedLabels,
+  recordRulings = true,
+}: {
+  modelId: number;
+  userId: number;
+  liftedLabels: TextScanFlagLabel[];
+  /** False when the caller stamped the rulings ahead of its lift, as a rescan landing mid-lift must see them. */
+  recordRulings?: boolean;
+}) {
+  try {
+    if (recordRulings)
+      for (const label of liftedLabels) {
+        const stamped = await stampModeratorTextScanRuling({ modelId, userId, label }).catch(
+          () => false
+        );
+        if (!stamped)
+          logToAxiom({
+            type: 'error',
+            name: 'text-scan',
+            message: `moderator ${label} ruling not recorded: model text unreadable`,
+            modelId,
+          }).catch(() => null);
+      }
+
+    const model = await dbWrite.model.findUnique({
+      where: { id: modelId },
+      select: { minor: true, poi: true },
+    });
+    if (!model || model.minor || model.poi) return;
+
+    // Dynamic: report.service pulls the buzz and notification graph that the profile loaders avoid.
+    const { resolveEntityAppeal } = await import('~/server/services/report.service');
+    await resolveEntityAppeal({
+      ids: [modelId],
+      entityType: EntityType.Model,
+      status: AppealStatus.Approved,
+      userId,
+    });
+  } catch (error) {
+    logToAxiom({
+      type: 'error',
+      name: 'text-scan',
+      message: 'flag appeal not settled after moderator lift',
+      modelId,
+      error: error instanceof Error ? error.message : String(error),
+    }).catch(() => null);
+  }
 }

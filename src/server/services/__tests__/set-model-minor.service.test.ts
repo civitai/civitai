@@ -28,10 +28,14 @@ vi.mock('~/server/db/db-lag-helpers', () => ({
   getDbWithoutLag: vi.fn(async () => mockDbRead),
   preventModelVersionLagBatch: vi.fn(),
 }));
-const { mockStampRuling } = vi.hoisted(() => ({ mockStampRuling: vi.fn() }));
+const { mockStampRuling, mockSettleAppeals } = vi.hoisted(() => ({
+  mockStampRuling: vi.fn(),
+  mockSettleAppeals: vi.fn(),
+}));
 // Hand-listed: the real module loads every text-scan profile, whose graph this file stubs piecemeal.
 vi.mock('~/server/services/text-scan/actions/appeal-text-hash', () => ({
   stampModeratorTextScanRuling: mockStampRuling,
+  settleFlagAppealsAfterModeratorLift: mockSettleAppeals,
 }));
 const { mockReassertPoi } = vi.hoisted(() => ({ mockReassertPoi: vi.fn() }));
 vi.mock('~/server/services/text-scan/actions/model-poi-minor', async (importOriginal) => ({
@@ -558,11 +562,7 @@ describe('setModelMinor — change history', () => {
     });
 
     const rows = changeRowsFrom(tracker);
-    expect(rows.map((r) => r.field).sort()).toEqual([
-      'lockedProperties',
-      'minor',
-      'sfwOnly',
-    ]);
+    expect(rows.map((r) => r.field).sort()).toEqual(['lockedProperties', 'minor', 'sfwOnly']);
     expect(rows.every((r) => r.entityType === 'Model' && r.entityId === MODEL_ID)).toBe(true);
     expect(rows.every((r) => r.ownerId === OWNER_ID)).toBe(true);
     expect(rows.every((r) => r.actorRole === 'moderator')).toBe(true);
@@ -669,9 +669,18 @@ describe('setModelMinor — moderator ruling on unset', () => {
     mockBefore({ minor: true, lockedProperties: [...MINOR_LOCKED_PROPERTIES] });
     mockStampRuling.mockResolvedValue(true);
 
-    await setModelMinor({ id: MODEL_ID, minor: false, userId: MODERATOR_ID, recordTextScanRuling: true });
+    await setModelMinor({
+      id: MODEL_ID,
+      minor: false,
+      userId: MODERATOR_ID,
+      recordTextScanRuling: true,
+    });
 
-    expect(mockStampRuling).toHaveBeenCalledWith({ modelId: MODEL_ID, userId: MODERATOR_ID, label: 'minor' });
+    expect(mockStampRuling).toHaveBeenCalledWith({
+      modelId: MODEL_ID,
+      userId: MODERATOR_ID,
+      label: 'minor',
+    });
     expect(mockStampRuling.mock.invocationCallOrder[0]).toBeLessThan(
       mockDbWrite.model.update.mock.invocationCallOrder[0]
     );
@@ -679,17 +688,78 @@ describe('setModelMinor — moderator ruling on unset', () => {
 
   it('records no ruling for a rollback-style unset or for a set', async () => {
     mockBefore({ minor: true, lockedProperties: [...MINOR_LOCKED_PROPERTIES] });
-    await setModelMinor({ id: MODEL_ID, minor: false, userId: -1, activity: 'rollbackMinorAutoHash' });
+    await setModelMinor({
+      id: MODEL_ID,
+      minor: false,
+      userId: -1,
+      activity: 'rollbackMinorAutoHash',
+    });
     mockBefore({});
-    await setModelMinor({ id: MODEL_ID, minor: true, userId: MODERATOR_ID, recordTextScanRuling: true });
+    await setModelMinor({
+      id: MODEL_ID,
+      minor: true,
+      userId: MODERATOR_ID,
+      recordTextScanRuling: true,
+    });
     expect(mockStampRuling).not.toHaveBeenCalled();
+  });
+
+  it("settles the model's pending appeal after the unset, ruling already recorded", async () => {
+    mockBefore({ minor: true, lockedProperties: [...MINOR_LOCKED_PROPERTIES] });
+    mockStampRuling.mockResolvedValue(true);
+
+    await setModelMinor({
+      id: MODEL_ID,
+      minor: false,
+      userId: MODERATOR_ID,
+      recordTextScanRuling: true,
+    });
+
+    expect(mockSettleAppeals).toHaveBeenCalledWith({
+      modelId: MODEL_ID,
+      userId: MODERATOR_ID,
+      liftedLabels: ['minor'],
+      recordRulings: false,
+    });
+    expect(mockSettleAppeals.mock.invocationCallOrder[0]).toBeGreaterThan(
+      mockDbWrite.model.update.mock.invocationCallOrder[0]
+    );
+  });
+
+  it('settles no appeal for a rollback-style unset, a set, or a model that was not minor', async () => {
+    mockBefore({ minor: true, lockedProperties: [...MINOR_LOCKED_PROPERTIES] });
+    await setModelMinor({
+      id: MODEL_ID,
+      minor: false,
+      userId: -1,
+      activity: 'rollbackMinorAutoHash',
+    });
+    mockBefore({});
+    await setModelMinor({
+      id: MODEL_ID,
+      minor: true,
+      userId: MODERATOR_ID,
+      recordTextScanRuling: true,
+    });
+    await setModelMinor({
+      id: MODEL_ID,
+      minor: false,
+      userId: MODERATOR_ID,
+      recordTextScanRuling: true,
+    });
+    expect(mockSettleAppeals).not.toHaveBeenCalled();
   });
 
   it('still unsets when the text cannot be read, and logs the miss', async () => {
     mockBefore({ minor: true, lockedProperties: [...MINOR_LOCKED_PROPERTIES] });
     mockStampRuling.mockResolvedValue(false);
 
-    await setModelMinor({ id: MODEL_ID, minor: false, userId: MODERATOR_ID, recordTextScanRuling: true });
+    await setModelMinor({
+      id: MODEL_ID,
+      minor: false,
+      userId: MODERATOR_ID,
+      recordTextScanRuling: true,
+    });
 
     expect(mockDbWrite.model.update).toHaveBeenCalled();
     expect(mockLogToAxiom).toHaveBeenCalledWith(
