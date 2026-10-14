@@ -186,14 +186,6 @@ describe('AppDocStoreReportsQueue', () => {
     expect(page.getByTestId('doc-store-reports-failed-apps').elements()).toHaveLength(0);
   });
 
-  test('a document whose author account was deleted names a deleted account, not the app', async () => {
-    m.listResult.items = [row({ author: { kind: 'deleted', userId: null, username: null } })];
-    mount();
-    const r = page.getByTestId('doc-store-report-row');
-    await expect.element(r).toHaveTextContent('Author: a deleted account');
-    await expect.element(r).not.toHaveTextContent('the app');
-  });
-
   test('defaults to visible docs; status and Refresh re-query', async () => {
     mount();
     await expect

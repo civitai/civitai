@@ -168,10 +168,12 @@ describe('removeAllContent → document store', () => {
 
     const after = await state(app);
     expect(after.targetPrivate).toEqual([]);
-    expect(after.targetPost).toEqual({ author_kind: 'deleted', author_uid: null });
+    // The target's shared post is deleted, and with it the bystander's vote on it.
+    expect(after.targetPost).toBeUndefined();
     expect(after.targetMarks).toEqual([]);
     expect(after.bystander).toEqual(before.bystander);
-    expect(after.bystanderMarks).toEqual(before.bystanderMarks);
+    expect(before.bystanderMarks).toEqual([{ key: `post-${TARGET}` }]);
+    expect(after.bystanderMarks).toEqual([]);
     await assertUsageConsistent(h, app, NS_PROD);
     expect(recorded).toEqual(['wiped']);
   });
@@ -190,7 +192,7 @@ describe('removeAllContent → document store', () => {
       true
     );
     expect(recorded).toEqual(['wiped']);
-    expect((await state(app)).targetPost).toEqual({ author_kind: 'deleted', author_uid: null });
+    expect((await state(app)).targetPost).toBeUndefined();
     warn.mockRestore();
   });
 
@@ -236,7 +238,7 @@ describe('removeAllContent → document store', () => {
     recorded.length = 0;
     await removeAllContent({ id: TARGET, actorUserId: 9 });
     expect(recorded).toEqual(['wiped']);
-    expect((await state(app)).targetPost).toEqual({ author_kind: 'deleted', author_uid: null });
+    expect((await state(app)).targetPost).toBeUndefined();
     warn.mockRestore();
   });
 

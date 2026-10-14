@@ -1661,7 +1661,7 @@ export const removeAllContent = async ({
 
 /**
  * The App Blocks DOCUMENT STORE half of an account wipe (`DocStoreMaintenance.wipeAccount`):
- * private documents and marks deleted, authored shared documents anonymised, usage released, in
+ * private documents, authored shared documents and marks deleted, usage released, in
  * every app. Same posture as the per-user storage purge above, for the same reasons: it runs
  * LAST, in a separate database with no transaction spanning the two, and NEVER throws into the
  * wipe — every outcome is counted (`civitai_app_block_doc_store_account_wipe_total`), and a

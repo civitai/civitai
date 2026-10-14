@@ -389,9 +389,7 @@ function whereValue(decl: DeclaredStorageCollection, field: string, raw: string)
 export type PresentedAuthor =
   | { kind: 'user'; isViewer: boolean; username?: string }
   | { kind: 'app' }
-  | { kind: 'counter' }
-  /** Written by an account that has since been deleted: no username, not even to that account. */
-  | { kind: 'deleted' };
+  | { kind: 'counter' };
 
 export type PresentedDoc = {
   key: string;
@@ -428,7 +426,6 @@ async function presentDocs(
     }
   }
   const author = (a: DocAuthor): PresentedAuthor => {
-    // `app`, `counter` and `deleted` carry nothing but their kind.
     if (a.kind !== 'user') return { kind: a.kind };
     const username = decl.showAuthor ? usernames.get(a.uid) : undefined;
     return { kind: 'user', isViewer: a.isViewer, ...(username ? { username } : {}) };

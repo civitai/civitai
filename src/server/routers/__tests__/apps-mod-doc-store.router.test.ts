@@ -436,22 +436,6 @@ describe('get', () => {
     // Not audited: a shared document is readable by every viewer of the app.
     expect(audit).toEqual([]);
   });
-
-  it('a document whose author account was wiped shows a deleted author with no id or username, in the queue and on get', async () => {
-    await seedQueue();
-    // What `DocStoreMaintenance.wipeAccount` leaves on a document the account authored.
-    await harness.raw(
-      `UPDATE appdata.doc SET author_kind = 'deleted', author_uid = NULL, last_writer_uid = NULL
-        WHERE app_id = $1 AND key = 'a1'`,
-      [APP_A.id]
-    );
-    const deleted = { kind: 'deleted', userId: null, username: null };
-    const row = (await caller().listReported({})).items.find((i) => i.key === 'a1');
-    expect(row?.author).toEqual(deleted);
-    expect(
-      (await caller().get({ appBlockId: APP_A.id, collection: 'posts', key: 'a1' })).author
-    ).toEqual(deleted);
-  });
 });
 
 describe('setHidden / delete: effects through the app reads, and the audit trail', () => {

@@ -42,7 +42,7 @@
 --   Only the purge and sweep functions in `doc-store.ts` set it.
 --
 --   The other exception is ACCOUNT WIPE enumeration: finding every (app, namespace)
---   in which one deleted account has rows. A transaction that sets
+--   in which one wiped account has rows. A transaction that sets
 --   `appdata.account_wipe_uid` to a user id may READ the `usage_user` and
 --   `doc_mark` rows of that ONE user, in every app and namespace. Nothing else:
 --   no other table, no other user, no insert, update or delete. The wipe itself
@@ -98,18 +98,16 @@ CREATE TABLE IF NOT EXISTS appdata.doc (
 
 -- Who wrote a document. 'user': a viewer, `author_uid`. 'app': the app owner (no uid).
 -- 'counter': created by the first increment of a counter; `author_uid` is only the user its
--- creation was charged to (NULL once that account is deleted). 'deleted': authored by an
--- account that has since been deleted — anonymised, so it carries no user id at all.
--- Dropped and re-added so a re-apply over a table created with an older list converges.
+-- creation was charged to (NULL once that account's content is wiped).
+-- Dropped and re-added so a re-apply over a table created with another list converges.
 ALTER TABLE appdata.doc DROP CONSTRAINT IF EXISTS doc_author_kind;
 ALTER TABLE appdata.doc ADD CONSTRAINT doc_author_kind
-  CHECK (author_kind IN ('user', 'app', 'counter', 'deleted'));
--- A user-authored document names its author; an anonymised one names nobody, not even as its
--- last writer. Without the first half a NULL uid would read as some other kind of author.
+  CHECK (author_kind IN ('user', 'app', 'counter'));
+-- A user-authored document names its author: readers map the author from `author_kind` alone, so
+-- a 'user' row without a uid would have no author to show.
 ALTER TABLE appdata.doc DROP CONSTRAINT IF EXISTS doc_author_identity;
 ALTER TABLE appdata.doc ADD CONSTRAINT doc_author_identity
-  CHECK ((author_kind <> 'user' OR author_uid IS NOT NULL)
-    AND (author_kind <> 'deleted' OR (author_uid IS NULL AND last_writer_uid IS NULL)));
+  CHECK (author_kind <> 'user' OR author_uid IS NOT NULL);
 
 -- When a moderator last dismissed the document's reports (reviewed and kept): only report
 -- marks made after it count as open. NULL = never dismissed. A separate ADD COLUMN so a

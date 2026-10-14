@@ -683,14 +683,14 @@ const SQL_WIPE_NAMESPACE = [
 const SQL_WIPE_PRIVATE_DOCS = `WITH gone AS (DELETE FROM appdata.doc d
     WHERE d.app_id = $1 AND d.ns = $2 AND d.scope_uid = $3::int RETURNING d.size_bytes)
   SELECT count(*)::int AS docs, COALESCE(sum(gone.size_bytes), 0)::bigint AS bytes FROM gone`;
-// Shared documents the user authored: kept (the owner's decision: anonymise, moderators can still
-// delete) and stripped of every trace of the uid. Data, version, seq and tallies are unchanged.
-const SQL_WIPE_ANONYMISE = `WITH done AS (UPDATE appdata.doc d
-    SET author_kind = 'deleted', author_uid = NULL, last_writer_uid = NULL
-    WHERE d.app_id = $1 AND d.ns = $2 AND d.scope_uid = 0 AND d.author_kind = 'user'
-      AND d.author_uid = $3::int
-    RETURNING 1)
-  SELECT count(*)::int AS n FROM done`;
+// Shared documents the user authored, hidden or not, locked in key order. They are DELETED — the
+// owner's decision for this moderator content-removal path — through the same
+// `deleteLockedSharedDocs` the moderator delete uses (tallies, marks, refunds, tombstone).
+const SQL_WIPE_LOCK_AUTHORED = `SELECT d.coll, d.key, d.size_bytes, d.author_uid FROM appdata.doc d
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.scope_uid = 0 AND d.author_kind = 'user'
+    AND d.author_uid = $3::int
+  ORDER BY d.coll, d.key
+  FOR UPDATE OF d`;
 // Counter-created documents whose creation was charged to the user: the uid was kept ONLY for
 // that charge, and the charge is released with the user's usage rows below, so the uid goes too.
 const SQL_WIPE_RELEASE_COUNTER_DOCS = `WITH done AS (UPDATE appdata.doc d
@@ -741,8 +741,8 @@ const SQL_WIPE_MARKS = `WITH gone AS (DELETE FROM appdata.doc_mark mk
 // where every writer of a tombstone takes it.
 const SQL_WIPE_PRIVATE_TOMBS = `DELETE FROM appdata.doc_tomb tb
   WHERE tb.app_id = $1 AND tb.ns = $2 AND tb.scope_uid = $3::int`;
-// The user's usage row: every byte it counted is gone from it (deleted) or released (anonymised
-// and counter documents now charge no user).
+// The user's usage row: every byte it counted is gone (deleted documents) or released (counter
+// documents now charge no user).
 const SQL_WIPE_USAGE_USER = `DELETE FROM appdata.usage_user u
   WHERE u.app_id = $1 AND u.ns = $2 AND u.user_id = $3::int`;
 
@@ -784,10 +784,9 @@ const listMarkedByMe = (name: string, user: string) => `EXISTS (SELECT 1 FROM ap
 // ---------------------------------------------------------------------------
 
 /**
- * The author is read from `author_kind` alone, never inferred from a NULL `author_uid`: a NULL
- * uid is what an anonymised (`deleted`) and a released counter document both have, and reading
- * it as "the app wrote it" would misattribute them. The `doc_author_identity` CHECK guarantees a
- * `user` row has a uid.
+ * The author is read from `author_kind` alone, never inferred from a NULL `author_uid`: a counter
+ * document whose creator's account was wiped has a NULL uid too. The `doc_author_identity` CHECK
+ * guarantees a `user` row has a uid.
  */
 function toDocAuthor(row: Record<string, unknown>, ctx: DocStoreContext): DocAuthor {
   switch (row.author_kind) {
@@ -797,7 +796,6 @@ function toDocAuthor(row: Record<string, unknown>, ctx: DocStoreContext): DocAut
     }
     case 'app':
     case 'counter':
-    case 'deleted':
       return { kind: row.author_kind };
     default:
       throw new Error(`doc-store: unknown author kind ${String(row.author_kind)}`);
@@ -1694,7 +1692,8 @@ function buildDocStore(deps: DocStoreDeps) {
       mode: ownsNamespace(userId, ns) ? 'namespace' : 'user',
       privateDocs: 0,
       privateBytes: 0,
-      anonymised: 0,
+      sharedDocs: 0,
+      sharedBytes: 0,
       counterDocsReleased: 0,
       marks: 0,
       namespaceRows: 0,
@@ -1707,34 +1706,44 @@ function buildDocStore(deps: DocStoreDeps) {
         return result;
       }
       const args = [appId, ns, userId];
-      /** The documents naming the user; refunds the app for the private ones it deleted. */
+      /**
+       * The document rows naming the user (LOCK ORDER (1)): the shared documents they authored
+       * are locked, their private documents deleted, counter documents released. Nothing is
+       * charged here; `settle` does that once every row lock is held.
+       */
       const wipeDocs = async () => {
+        const authored = (await c.query(SQL_WIPE_LOCK_AUTHORED, args)).rows.map(toLockedSharedDoc);
         const priv = await c.query(SQL_WIPE_PRIVATE_DOCS, args);
-        const docs = n(priv, 'docs');
-        const bytes = n(priv, 'bytes');
-        result.privateDocs += docs;
-        result.privateBytes += bytes;
-        result.anonymised += n(await c.query(SQL_WIPE_ANONYMISE, args));
+        const deleted = { docs: n(priv, 'docs'), bytes: n(priv, 'bytes') };
+        result.privateDocs += deleted.docs;
+        result.privateBytes += deleted.bytes;
         result.counterDocsReleased += n(await c.query(SQL_WIPE_RELEASE_COUNTER_DOCS, args));
         await c.query(SQL_WIPE_LAST_WRITER, args);
-        return { docs, bytes };
+        return { authored, deleted };
       };
-      const refund = async (deleted: { docs: number; bytes: number }) => {
-        if (deleted.docs === 0) return;
-        // The app's usage loses the deleted documents (an anonymised one is still stored, so it
-        // stays counted). No user is charged: the account's own row is deleted below.
-        await charge(
-          c,
-          ctx,
-          { bytes: -deleted.bytes, docs: -deleted.docs },
-          { uid: 0, bytes: 0, docs: 0, ceiling: 'viewer' }
-        );
+      /**
+       * Delete the locked authored documents exactly as a moderator delete does (tallies, marks,
+       * app and author refunds, tombstones), then refund the app for the private documents. No
+       * user is charged for those: the account's own usage row is deleted below.
+       */
+      const settle = async (pass: Awaited<ReturnType<typeof wipeDocs>>) => {
+        result.sharedDocs += pass.authored.length;
+        result.sharedBytes += pass.authored.reduce((sum, d) => sum + d.sizeBytes, 0);
+        await deleteLockedSharedDocs(c, ctx, charge, pass.authored);
+        if (pass.deleted.docs > 0) {
+          await charge(
+            c,
+            ctx,
+            { bytes: -pass.deleted.bytes, docs: -pass.deleted.docs },
+            { uid: 0, bytes: 0, docs: 0, ceiling: 'viewer' }
+          );
+        }
       };
       const first = await wipeDocs();
       await c.query(SQL_WIPE_LOCK_MARKED, args);
       await c.query(SQL_WIPE_LOCK_TALLIES, args);
       result.marks = n(await c.query(SQL_WIPE_MARKS, args), 'marks');
-      await refund(first);
+      await settle(first);
       // A write by this user that was in flight when the statements above took their snapshots
       // holds its `usage_user` row until it commits; this delete waits for it, and then deletes
       // the row that counted that document. The second pass (a new statement, so a new
@@ -1745,25 +1754,29 @@ function buildDocStore(deps: DocStoreDeps) {
       // concurrent write; Postgres then aborts this namespace's transaction whole, and it is
       // reported in `failures` for a re-run.
       await c.query(SQL_WIPE_USAGE_USER, args);
-      await refund(await wipeDocs());
+      await settle(await wipeDocs());
+      // The second pass refunds the author of any document it deleted, which re-creates the
+      // usage row it just charged (as a negative); remove it again.
+      await c.query(SQL_WIPE_USAGE_USER, args);
       await c.query(SQL_WIPE_PRIVATE_TOMBS, args);
       return result;
     });
   }
 
   /**
-   * ACCOUNT DELETION: remove one user from the document store, in every app and namespace they
-   * have rows in. Per namespace, in one transaction:
+   * ACCOUNT WIPE (`removeAllContent`, a moderator content-removal action): remove one user from
+   * the document store, in every app and namespace they have rows in. Per namespace, in one
+   * transaction:
    *   - their own namespaces (`dev:<uid>`, `rev:<request>:<uid>`) are deleted outright;
    *   - elsewhere, their private documents are deleted (index rows with them) and refunded to the
    *     app; their marks — reports included — are deleted and each tally decremented; the shared
-   *     documents they authored are ANONYMISED (`author_kind = 'deleted'`, no uid: readers see a
-   *     deleted author, `author=me` matches nobody, nobody may edit or delete them under `own`,
-   *     moderators can still hide or delete them); counter-created documents charged to them keep
-   *     their counters but lose the uid; their usage rows and private tombstones are deleted.
+   *     documents they authored are DELETED, hidden or not, exactly as a moderator delete does
+   *     (index rows, tallies, every user's marks on them, app and author refunds, tombstones);
+   *     counter-created documents charged to them keep their counters but lose the uid; their
+   *     usage rows and private tombstones are deleted.
    * Idempotent: a re-run finds nothing left that names the user. A namespace whose transaction
    * fails is reported in `failures` (it rolled back in full) and the rest continue; a disabled
-   * store throws `storage_disabled`. Called by the account wipe (`removeAllContent`).
+   * store throws `storage_disabled`.
    */
   async function wipeAccount(userId: number): Promise<AccountWipeResult> {
     assertWipeUserId(userId);
@@ -1862,8 +1875,7 @@ export type ReportedDocRow = {
   reports: number;
   createdAt: Date;
   updatedAt: Date;
-  /** `deleted`: authored by an account since deleted; `authorUid` is then null. */
-  authorKind: 'user' | 'app' | 'counter' | 'deleted';
+  authorKind: 'user' | 'app' | 'counter';
   /** Moderators may see it; it must never reach an app. */
   authorUid: number | null;
   hiddenAt: Date | null;
@@ -2002,6 +2014,57 @@ function modCtx(appId: string, ns: string): DocStoreContext {
     throw invalid('moderation does not act on review namespaces');
   }
   return { appId, ns, viewerUid: null };
+}
+
+/** A shared document already locked FOR UPDATE, as `deleteLockedSharedDocs` needs it. */
+type LockedSharedDoc = { coll: string; key: string; sizeBytes: number; authorUid: number | null };
+
+function toLockedSharedDoc(row: Record<string, unknown>): LockedSharedDoc {
+  return {
+    coll: row.coll as string,
+    key: row.key as string,
+    sizeBytes: Number(row.size_bytes),
+    authorUid:
+      row.author_uid === null || row.author_uid === undefined ? null : Number(row.author_uid),
+  };
+}
+
+/**
+ * Hard-delete shared documents the caller has ALREADY locked FOR UPDATE — the one implementation
+ * behind the moderator delete and the account wipe. Each document's index rows go with it (FK
+ * cascade), its tallies and marks are deleted, the app and the user its creation was charged to
+ * are refunded, and a tombstone takes the next seq: the same accounting as an author delete.
+ * Every document, tally and mark row is deleted before any usage row is charged (LOCK ORDER (1),
+ * (1b), then (2), (3)). Returns each document's tombstone seq, in input order.
+ */
+async function deleteLockedSharedDocs(
+  c: DocStoreClient,
+  ctx: DocStoreContext,
+  charge: ModerationDeps['charge'],
+  docs: LockedSharedDoc[]
+): Promise<number[]> {
+  for (const d of docs) {
+    await c.query(SQL_DELETE_DOC, [ctx.appId, ctx.ns, d.coll, 0, d.key]);
+    await c.query(SQL_DELETE_TALLIES, [ctx.appId, ctx.ns, d.coll, d.key]);
+    await c.query(SQL_DELETE_MARKS, [ctx.appId, ctx.ns, d.coll, d.key]);
+  }
+  const seqs: number[] = [];
+  for (const d of docs) {
+    const seq = await charge(
+      c,
+      ctx,
+      { bytes: -d.sizeBytes, docs: -1 },
+      // No user carries a doc without an author uid: a counter document whose creator's account
+      // was wiped had its charge released with that account's usage row, and an app-authored
+      // doc never charged one.
+      d.authorUid === null
+        ? { uid: 0, bytes: 0, docs: 0, ceiling: 'author' }
+        : { uid: d.authorUid, bytes: -d.sizeBytes, docs: -1, ceiling: 'author' }
+    );
+    await c.query(SQL_TOMBSTONE, [ctx.appId, ctx.ns, d.coll, 0, d.key, seq]);
+    seqs.push(seq);
+  }
+  return seqs;
 }
 
 function createModeration({ withTx, charge }: ModerationDeps) {
@@ -2160,8 +2223,8 @@ function createModeration({ withTx, charge }: ModerationDeps) {
    * cascade), its tallies and marks are deleted, the app and the charged author are
    * refunded (a counter-created doc's `author_uid` is the user its creation was charged
    * to), and a tombstone takes the next seq — the same accounting as an author delete.
-   * A document with no `author_uid` (anonymised by an account wipe, a counter document
-   * whose creator was wiped, or app-authored) refunds the app only: no user carries it.
+   * A document with no `author_uid` (a counter document whose creator's account was wiped,
+   * or app-authored) refunds the app only: no user carries it.
    */
   async function remove(
     appId: string,
@@ -2176,23 +2239,9 @@ function createModeration({ withTx, charge }: ModerationDeps) {
       const row = (await c.query(SQL_MOD_LOCK, [appId, ns, collection, key])).rows[0];
       if (!row) throw new DocStoreError('not_found', 'document not found');
       assertModRevision(row, opts.ifRevision);
-      await c.query(SQL_DELETE_DOC, [appId, ns, collection, 0, key]);
-      await c.query(SQL_DELETE_TALLIES, [appId, ns, collection, key]);
-      await c.query(SQL_DELETE_MARKS, [appId, ns, collection, key]);
-      const size = Number(row.size_bytes);
-      const author = row.author_uid === null ? null : Number(row.author_uid);
-      const seq = await charge(
-        c,
-        ctx,
-        { bytes: -size, docs: -1 },
-        // No user carries a doc without an author uid: an account wipe released its charge
-        // with the account's usage row, and an app-authored doc never charged one.
-        author === null
-          ? { uid: 0, bytes: 0, docs: 0, ceiling: 'author' }
-          : { uid: author, bytes: -size, docs: -1, ceiling: 'author' }
-      );
-      await c.query(SQL_TOMBSTONE, [appId, ns, collection, 0, key, seq]);
-      return { deleted: true as const, sizeBytes: size, seq };
+      const doc = toLockedSharedDoc({ ...row, coll: collection, key });
+      const [seq] = await deleteLockedSharedDocs(c, ctx, charge, [doc]);
+      return { deleted: true as const, sizeBytes: doc.sizeBytes, seq };
     });
   }
 

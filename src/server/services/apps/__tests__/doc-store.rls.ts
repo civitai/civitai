@@ -320,34 +320,32 @@ export function defineRlsSuite(makeHarness: () => Promise<Harness>) {
   });
 
   describe('doc_author_identity: who a document names', () => {
-    const insert = (key: string, kind: string, author: number | null, writer: number | null) =>
+    const insert = (key: string, kind: string, author: number | null) =>
       h.raw(
-        `INSERT INTO appdata.doc (app_id, ns, coll, scope_uid, key, data, version, seq, author_kind, author_uid, last_writer_uid)
-         VALUES ('ab_RLSAUTHORID', 'prod', 'c', 0, $1, '{}', 1, 1, $2, $3, $4)`,
-        [key, kind, author, writer]
+        `INSERT INTO appdata.doc (app_id, ns, coll, scope_uid, key, data, version, seq, author_kind, author_uid)
+         VALUES ('ab_RLSAUTHORID', 'prod', 'c', 0, $1, '{}', 1, 1, $2, $3)`,
+        [key, kind, author]
       );
-    it('a user document must name its author; a deleted one must name nobody, not even as last writer', async () => {
-      for (const [key, kind, author, writer] of [
-        ['u-null', 'user', null, null],
-        ['d-author', 'deleted', 7, null],
-        ['d-writer', 'deleted', null, 7],
-        ['x-kind', 'someone', null, null],
+    it('a user document must name its author, and the kind is one of user, app, counter', async () => {
+      for (const [key, kind, author] of [
+        ['u-null', 'user', null],
+        ['x-deleted', 'deleted', null],
+        ['x-kind', 'someone', null],
       ] as const) {
-        expect({ key, msg: await rejects(insert(key, kind, author, writer)) }).toEqual({
+        expect({ key, msg: await rejects(insert(key, kind, author)) }).toEqual({
           key,
           msg: expect.stringMatching(/check constraint "doc_author_(identity|kind)"/),
         });
       }
       // Positive controls: each kind in its valid shape is accepted.
-      await insert('ok-user', 'user', 7, 7);
-      await insert('ok-deleted', 'deleted', null, null);
-      await insert('ok-counter-released', 'counter', null, null);
-      await insert('ok-app', 'app', null, null);
+      await insert('ok-user', 'user', 7);
+      await insert('ok-counter-released', 'counter', null);
+      await insert('ok-app', 'app', null);
       expect(
         (
           await h.raw(`SELECT key FROM appdata.doc WHERE app_id = 'ab_RLSAUTHORID' ORDER BY key`)
         ).map((r) => r.key)
-      ).toEqual(['ok-app', 'ok-counter-released', 'ok-deleted', 'ok-user']);
+      ).toEqual(['ok-app', 'ok-counter-released', 'ok-user']);
     });
   });
 

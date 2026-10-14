@@ -67,7 +67,7 @@
     "appStatus": "optional, per case: the backing app's status, default approved",
     "storage": "optional, per case: \"disabled\" for a store with no database configured",
     "repeat": "optional: send the step this many times, each expected to match",
-    "accountWipe": "instead of a request (no as, method or expect): the platform deletes this viewer's account, in every app and namespace. Their private documents are deleted; their marks, reports included, are deleted and each tally decremented; the shared documents they authored are kept but anonymised (author {\"kind\": \"deleted\"} to every reader, never matching author=me, and nobody may update or delete them); a document a counter created on their increment keeps its counters; their usage is released; their dev namespace is deleted"
+    "accountWipe": "instead of a request (no as, method or expect): the platform removes this viewer's content, in every app and namespace. Their private documents are deleted; the shared documents they authored are deleted with their counters and every viewer's marks on them; their own marks, reports included, are deleted and each tally decremented; a document a counter created on their increment keeps its counters; their usage is released; their dev namespace is deleted"
   },
   "cases": [
     {
@@ -1613,7 +1613,7 @@
       ]
     },
     {
-      "name": "account deletion: private documents and marks go, authored shared documents stay anonymised",
+      "name": "account wipe: private documents, authored shared documents and marks are deleted",
       "steps": [
         {
           "as": "v1@A",
@@ -1652,22 +1652,22 @@
           "expect": { "status": 200 }
         },
         {
-          "as": "v1@A",
-          "method": "PUT",
-          "path": "/posts/p1/marks/vote",
-          "expect": { "status": 200, "body": { "count": 1 } }
-        },
-        {
           "as": "v2@A",
           "method": "PUT",
           "path": "/posts/p1/marks/vote",
-          "expect": { "status": 200, "body": { "count": 2 } }
+          "expect": { "status": 200, "body": { "count": 1 } }
         },
         {
           "as": "v1@A",
           "method": "PUT",
           "path": "/posts/p2/marks/vote",
           "expect": { "status": 200, "body": { "count": 1 } }
+        },
+        {
+          "as": "v2@A",
+          "method": "PUT",
+          "path": "/posts/p2/marks/vote",
+          "expect": { "status": 200, "body": { "count": 2 } }
         },
         {
           "as": "v1@A",
@@ -1683,29 +1683,14 @@
           "as": "v2@A",
           "method": "GET",
           "path": "/posts/p1",
-          "expect": {
-            "status": 200,
-            "body": {
-              "key": "p1",
-              "data": { "status": "open" },
-              "version": 1,
-              "author": { "kind": "deleted", "isViewer": "$absent", "username": "$absent" },
-              "marks": { "vote": 1 },
-              "viewer": { "marks": ["vote"] }
-            }
-          }
+          "expect": { "status": 404, "code": "not_found" }
         },
         {
           "as": "v2@A",
           "method": "GET",
-          "path": "/posts/p2",
-          "expect": {
-            "status": 200,
-            "body": {
-              "author": { "kind": "user", "isViewer": true, "username": "contract_v2" },
-              "marks": { "vote": 0 }
-            }
-          }
+          "path": "/posts",
+          "query": { "markedBy": "me", "mark": "vote" },
+          "expect": { "status": 200, "body": { "items": [{ "key": "p2" }] } }
         },
         {
           "as": "anon@A",
@@ -1715,24 +1700,14 @@
             "status": 200,
             "body": {
               "items": [
-                { "key": "p1", "author": { "kind": "deleted", "username": "$absent" } },
-                { "key": "p2", "author": { "kind": "user", "username": "contract_v2" } }
+                {
+                  "key": "p2",
+                  "author": { "kind": "user", "username": "contract_v2" },
+                  "marks": { "vote": 1 }
+                }
               ]
             }
           }
-        },
-        {
-          "as": "v2@A",
-          "method": "PUT",
-          "path": "/posts/p1",
-          "body": { "data": { "status": "closed" } },
-          "expect": { "status": 403, "code": "not_author" }
-        },
-        {
-          "as": "v2@A",
-          "method": "DELETE",
-          "path": "/posts/p1",
-          "expect": { "status": 403, "code": "not_author" }
         },
         {
           "as": "v2@A",
@@ -1749,11 +1724,11 @@
           "path": "",
           "expect": {
             "status": 200,
-            "body": { "usage": { "app": { "docs": 3 }, "viewer": { "docs": 1 } } }
+            "body": { "usage": { "app": { "docs": 2 }, "viewer": { "docs": 1 } } }
           }
         },
         {
-          "$comment": "A token still minted for the deleted account owns nothing any more.",
+          "$comment": "The account itself is not deleted; a token minted for it afterwards finds none of its content.",
           "as": "v1@A",
           "method": "GET",
           "path": "/posts",
@@ -1763,18 +1738,8 @@
         {
           "as": "v1@A",
           "method": "GET",
-          "path": "/posts/p1",
-          "expect": {
-            "status": 200,
-            "body": { "author": { "kind": "deleted", "isViewer": "$absent" }, "viewer": { "marks": [] } }
-          }
-        },
-        {
-          "as": "v1@A",
-          "method": "PUT",
-          "path": "/posts/p1",
-          "body": { "data": { "status": "closed" } },
-          "expect": { "status": 403, "code": "not_author" }
+          "path": "/posts/p2",
+          "expect": { "status": 200, "body": { "viewer": { "marks": [] } } }
         },
         {
           "as": "v1@A",
