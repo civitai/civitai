@@ -553,6 +553,7 @@ export interface User {
   reports?: Report[];
   feedback?: Feedback[];
   feedbackHandled?: Feedback[];
+  feedbackOwnerStatus?: Feedback[];
   questions?: Question[];
   answers?: Answer[];
   commentsv2?: CommentV2[];
@@ -658,6 +659,7 @@ export interface User {
   issuedStrikes?: UserStrike[];
   voidedStrikes?: UserStrike[];
   generationPresets?: GenerationPreset[];
+  postPresets?: PostPreset[];
   generationSizePresets?: GenerationSizePreset[];
   ownedWildcardSets?: WildcardSet[];
   blurbs?: Blurb[];
@@ -720,6 +722,7 @@ export interface User {
   crucibleEntries?: CrucibleEntry[];
   crucibleEngagements?: CrucibleEngagement[];
   prizes?: Prize[];
+  gameFrameGames?: GameFrameGame[];
 }
 
 export interface CustomerSubscription {
@@ -1200,9 +1203,12 @@ export interface ModelMetric {
   nsfwLevel: number;
   userId: number;
   lastVersionAt: Date | null;
+  publishedAt: Date | null;
   mode: ModelModifier | null;
   status: ModelStatus;
   availability: Availability;
+  hotScore: number | null;
+  uniqueGeneratorCount: number;
 }
 
 export interface ModelVersionMetric {
@@ -1235,6 +1241,10 @@ export interface ModelBaseModelMetric {
   poi: boolean;
   minor: boolean;
   updatedAt: Date;
+  hotScore: number | null;
+  generationCount: number | null;
+  uniqueGeneratorCount: number | null;
+  publishedAt: Date | null;
 }
 
 export interface ModelMetricDaily {
@@ -1311,6 +1321,8 @@ export interface Report {
   model3dReview?: Model3DReviewReport | null;
   announcement?: AnnouncementReport | null;
   crucible?: CrucibleReport | null;
+  gameFrameGame?: GameFrameGameReport | null;
+  gameFrameReceipts?: GameFrameReportReceipt[];
 }
 
 export interface ResourceReviewReport {
@@ -1450,6 +1462,28 @@ export interface ResourceInsight {
   model: string;
   createdAt: Date;
   stale: boolean;
+}
+
+export interface ResourceIntentCoocSnapshot {
+  id: string;
+  kind: string;
+  status: string;
+  contentHash: string | null;
+  specHash: string;
+  trainStart: Date;
+  trainEnd: Date;
+  seed: number;
+  pinnedUntil: Date | null;
+  builtAt: Date;
+  trainCreatedAtMin: Date | null;
+  trainCreatedAtMax: Date | null;
+  idsTried: number | null;
+  trainRows: number | null;
+  vocab: number | null;
+  models: number | null;
+  keptPairs: number | null;
+  payload: Buffer | null;
+  trainImageIds: Buffer | null;
 }
 
 export interface Post {
@@ -1961,6 +1995,16 @@ export interface Feedback {
   handledAt: Date | null;
   bugId: number | null;
   bug?: Bug | null;
+  appListingId: string | null;
+  appListing?: AppListing | null;
+  appBlockVersion: string | null;
+  appBlockSha: string | null;
+  ownerStatus: string | null;
+  ownerStatusAt: Date | null;
+  ownerStatusById: number | null;
+  ownerStatusBy?: User | null;
+  ownerFlaggedAt: Date | null;
+  hiddenFromOwnerAt: Date | null;
 }
 
 export interface ApiKey {
@@ -2154,6 +2198,20 @@ export interface AppBlockPublishRequest {
   updatedAt: Date;
 }
 
+export interface AppBlockBuildAttempt {
+  id: number;
+  publishRequestId: string | null;
+  slug: string;
+  sha: string;
+  runId: string | null;
+  mode: string;
+  status: string;
+  failedStep: string | null;
+  failedReason: string | null;
+  failureClass: string | null;
+  createdAt: Date;
+}
+
 export interface AppListing {
   id: string;
   serialId: number;
@@ -2200,6 +2258,7 @@ export interface AppListing {
   ownershipTransfers?: AppOwnershipTransfer[];
   subListings?: AppSubListing[];
   subListingParent?: AppSubListingParent | null;
+  feedback?: Feedback[];
 }
 
 export interface AppListingScreenshot {
@@ -2302,6 +2361,7 @@ export interface AppSubListingParent {
   parentListing?: AppListing;
   enabled: boolean;
   maxPerAuthor: number;
+  linkTemplate: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -2854,6 +2914,8 @@ export interface Thread {
   model3dReview?: Model3DReview | null;
   appListingId: number | null;
   appListing?: AppListing | null;
+  crucibleId: number | null;
+  crucible?: Crucible | null;
   metadata: JsonValue;
   commentCount: number;
   comments?: CommentV2[];
@@ -3068,11 +3130,45 @@ export interface UserCosmetic {
   remaining: number | null;
 }
 
+export interface EventCosmeticPlacement {
+  id: bigint;
+  event: string;
+  userId: number;
+  cosmeticId: number;
+  claimKey: string;
+  team: string;
+  entityType: CosmeticEntity;
+  entityId: number;
+  entityOwnerId: number | null;
+  startedAt: Date;
+  endedAt: Date | null;
+  updatedAt: Date;
+}
+
+export interface EventCosmeticScoreDaily {
+  event: string;
+  day: Date;
+  userId: number;
+  cosmeticId: number;
+  claimKey: string;
+  team: string;
+  impressions: number;
+  anonImpressions: number;
+  reactions: number;
+  comments: number;
+  stickers: number;
+  remixes: number;
+  modelLikes: number;
+  points: number;
+  updatedAt: Date;
+}
+
 export interface CreatorMilestone {
   key: string;
   track: string;
   threshold: number | null;
   hidden: boolean;
+  unlisted: boolean;
   hint: string | null;
   name: string;
   description: string | null;
@@ -3088,6 +3184,18 @@ export interface CreatorMilestoneCosmetic {
   milestone?: CreatorMilestone;
   cosmeticId: number;
   cosmetic?: Cosmetic;
+}
+
+export interface CreatorScoreGrant {
+  id: number;
+  userId: number;
+  amount: number;
+  reason: string;
+  grantedById: number | null;
+  createdAt: Date;
+  revokedAt: Date | null;
+  revokedById: number | null;
+  revokeReason: string | null;
 }
 
 export interface UserCreatorMilestone {
@@ -3191,6 +3299,17 @@ export interface UserCosmeticShopPurchases {
   components?: UserCosmeticShopPurchaseCosmetic[];
 }
 
+export interface CosmeticShopPurchaseClaim {
+  transactionId: string;
+  userId: number;
+  shopItemId: number;
+  amount: number;
+  status: string;
+  attempts: number;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 export interface UserCosmeticShopPurchaseCosmetic {
   buzzTransactionId: string;
   purchase?: UserCosmeticShopPurchases;
@@ -3227,6 +3346,7 @@ export interface Article {
   coverId: number | null;
   coverImage?: Image | null;
   publishedAt: Date | null;
+  scheduledAt: Date | null;
   contentScannedAt: Date | null;
   ingestion: ArticleIngestionStatus;
   scanRequestedAt: Date | null;
@@ -4102,6 +4222,96 @@ export interface Appeal {
   resolvedReason: string | null;
   internalNotes: string | null;
   buzzTransactionId: string | null;
+  entityRemovedAt: Date | null;
+}
+
+export interface AppealDecisionRecord {
+  id: bigint;
+  appealId: number;
+  imageId: number;
+  imageUrl: string;
+  pHash: bigint | null;
+  promptHash: string | null;
+  nsfwLevel: number;
+  nsfwLevelLocked: boolean;
+  nsfwLevelReason: string | null;
+  aiNsfwLevel: number | null;
+  blockedFor: string | null;
+  decision: string;
+  resolvedReason: string | null;
+  decidedAt: Date;
+  removalLabel: string | null;
+  removalNsfw: string | null;
+  restoredLevel: number | null;
+  trainingLabelCorrectedAt: Date | null;
+  trainingCopyState: string | null;
+  trainingObjectKey: string | null;
+  ownerHash: string | null;
+  createdAt: Date;
+}
+
+export interface AppealTrainingObjectDeletion {
+  key: string;
+  createdAt: Date;
+}
+
+export interface ScanLabelItem {
+  id: number;
+  imageId: number;
+  lane: string;
+  firstFlaggedAt: Date;
+  status: string;
+  voidReason: string | null;
+  votes: number;
+  blockVotes: number;
+  outcome: string | null;
+  unanimous: boolean | null;
+  decidedAt: Date | null;
+  actionedAt: Date | null;
+  actionStartedAt: Date | null;
+  actionResult: string | null;
+  actionError: string | null;
+  copyState: string | null;
+  copyKey: string | null;
+  copiedAt: Date | null;
+  copyError: string | null;
+  createdAt: Date;
+}
+
+export interface ScanLabelFlag {
+  id: number;
+  itemId: number;
+  source: string;
+  flaggerVersion: string;
+  reason: string | null;
+  workflowId: string;
+  flaggedAt: Date;
+  snapshot: JsonValue | null;
+  createdAt: Date;
+}
+
+export interface ScanLabelVote {
+  itemId: number;
+  userId: number;
+  block: boolean;
+  reason: string | null;
+  reasonComment: string | null;
+  msOnItem: number | null;
+  createdAt: Date;
+}
+
+export interface ScanLabelClaim {
+  itemId: number;
+  userId: number;
+  expiresAt: Date;
+}
+
+export interface ScanLabelQuota {
+  userId: number;
+  dailyVotes: number;
+  active: boolean;
+  updatedBy: number | null;
+  updatedAt: Date;
 }
 
 export interface AuctionBase {
@@ -5448,6 +5658,16 @@ export interface UserStrike {
   issuedByUser?: User | null;
 }
 
+export interface PostPreset {
+  id: number;
+  userId: number;
+  user?: User;
+  name: string;
+  data: JsonValue;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 export interface GenerationPreset {
   id: number;
   userId: number;
@@ -5883,9 +6103,11 @@ export interface Crucible {
   ingestion: CrucibleIngestionStatus;
   scannedAt: Date | null;
   textNsfw: boolean;
+  timeAdjustedPlacement: boolean;
   entries?: CrucibleEntry[];
   reports?: CrucibleReport[];
   engagements?: CrucibleEngagement[];
+  thread?: Thread | null;
 }
 
 export interface CrucibleEngagement {
@@ -5902,6 +6124,36 @@ export interface CrucibleReport {
   crucible?: Crucible;
   reportId: number;
   report?: Report;
+}
+
+export interface GameFrameGame {
+  id: number;
+  slug: string;
+  title: string;
+  userId: number | null;
+  user?: User | null;
+  official: boolean;
+  visibility: string;
+  url: string;
+  coverUrl: string | null;
+  stateAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+  reports?: GameFrameGameReport[];
+}
+
+export interface GameFrameGameReport {
+  gameFrameGameId: number;
+  gameFrameGame?: GameFrameGame;
+  reportId: number;
+  report?: Report;
+}
+
+export interface GameFrameReportReceipt {
+  gfReportId: string;
+  reportId: number;
+  report?: Report;
+  createdAt: Date;
 }
 
 export interface CrucibleEntry {

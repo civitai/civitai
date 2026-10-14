@@ -23,6 +23,10 @@ import {
   removeCosmetic,
   refundShopPurchase,
   sendBuzz,
+  mintMembershipCode,
+  revokeMembershipCode,
+  grantCreatorScore,
+  revokeCreatorScoreGrant,
   setRewardsEligibility,
   clearProfileText,
   deleteAccount,
@@ -40,6 +44,12 @@ import {
   setMuted,
 } from '$lib/server/user-actions.service';
 import { resolveUsername } from '$lib/server/user-lookup.service';
+import { MEMBERSHIP_CODE_MAX_MONTHS, MEMBERSHIP_CODE_TIERS } from '$lib/membership-code';
+import {
+  CREATOR_SCORE_GRANT_MAX_AMOUNT,
+  CREATOR_SCORE_GRANT_REASON_MAX,
+  type CreatorScoreGrantResult,
+} from '$lib/creator-score-grant';
 import { BUZZ_ENTITY_TYPES } from '../enforcement-options';
 import { PROFILE_FIELD_KEYS, type ProfileField } from '$lib/enforcement';
 
@@ -67,6 +77,10 @@ const socialsFail = (message: string) => fail(400, { scope: 'socials' as const, 
 const profileFail = (message: string) => fail(400, { scope: 'profile' as const, error: message });
 const contentFail = (message: string) => fail(400, { scope: 'content' as const, error: message });
 const buzzFail = (message: string) => fail(400, { scope: 'buzz' as const, error: message });
+const membershipCodeFail = (message: string) =>
+  fail(400, { scope: 'membershipCode' as const, error: message });
+const creatorScoreFail = (message: string) =>
+  fail(400, { scope: 'creatorScore' as const, error: message });
 const shopFail = (message: string) => fail(400, { scope: 'shop' as const, error: message });
 const cosmeticsFail = (message: string) =>
   fail(400, { scope: 'cosmetics' as const, error: message });
@@ -497,6 +511,79 @@ export const actions: Actions = {
         transactionType: input.transactionType,
       },
     };
+  }),
+
+  // Bounds are enforced again by the endpoint; these only turn a bad form into a readable refusal.
+  mintMembershipCode: requiresGrant('user.membership.code', async ({ request }) => {
+    const input = parseForm(
+      userIdSchema.extend({
+        tier: z.enum(MEMBERSHIP_CODE_TIERS),
+        months: z.coerce.number().int().min(1).max(MEMBERSHIP_CODE_MAX_MONTHS),
+        reason: z.string().trim().min(1).max(500),
+      }),
+      await request.formData()
+    );
+    if (typeof input === 'string') return membershipCodeFail(input);
+
+    const result = await mintMembershipCode(input);
+    if (!result.ok) return membershipCodeFail(result.error);
+    return {
+      success: true,
+      minted: {
+        code: result.code,
+        expiresAt: result.expiresAt,
+        tier: input.tier,
+        months: input.months,
+      },
+    };
+  }),
+
+  revokeMembershipCode: requiresGrant('user.membership.code', async ({ request }) => {
+    const input = parseForm(
+      userIdSchema.extend({ code: z.string().regex(/^MB-[A-Z0-9]{4}-[A-Z0-9]{4}$/) }),
+      await request.formData()
+    );
+    if (typeof input === 'string') return membershipCodeFail(input);
+
+    const result = await revokeMembershipCode(input);
+    if (!result.ok) return membershipCodeFail(result.error);
+    return { success: true, revoked: input.code };
+  }),
+
+  grantCreatorScore: requiresGrant('user.creatorScore.grant', async ({ request }) => {
+    const input = parseForm(
+      userIdSchema.extend({
+        amount: z.coerce.number().int().min(1).max(CREATOR_SCORE_GRANT_MAX_AMOUNT),
+        reason: z.string().trim().min(1).max(CREATOR_SCORE_GRANT_REASON_MAX),
+      }),
+      await request.formData()
+    );
+    if (typeof input === 'string') return creatorScoreFail(input);
+
+    const result = await grantCreatorScore(input);
+    if (!result.ok) return creatorScoreFail(result.error);
+    const outcome: CreatorScoreGrantResult = {
+      kind: 'granted',
+      amount: input.amount,
+      total: result.total,
+    };
+    return { success: true, outcome };
+  }),
+
+  revokeCreatorScoreGrant: requiresGrant('user.creatorScore.grant', async ({ request }) => {
+    const input = parseForm(
+      userIdSchema.extend({
+        grantId: z.coerce.number().int().positive(),
+        reason: z.string().trim().min(1).max(CREATOR_SCORE_GRANT_REASON_MAX),
+      }),
+      await request.formData()
+    );
+    if (typeof input === 'string') return creatorScoreFail(input);
+
+    const result = await revokeCreatorScoreGrant(input);
+    if (!result.ok) return creatorScoreFail(result.error);
+    const outcome: CreatorScoreGrantResult = { kind: 'revoked', total: result.total };
+    return { success: true, outcome };
   }),
 
   // Scoped to `account`, not `buzz`: the buttons live in the Admin section's action panel, and a

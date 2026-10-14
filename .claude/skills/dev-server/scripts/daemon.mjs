@@ -84,6 +84,10 @@ function loadSkillConfig() {
     //
     // It stays FIRST in the list: any page route ahead of it would trigger the same compile from
     // inside a render, which is the thing being avoided.
+    //
+    // 🔴 Measured when `_app` reached the settings bootstrap over HTTP. It now calls the same code
+    // in-process, so a page render compiles that graph itself rather than waiting on the route's
+    // compile; whether this prewarm still buys anything is unmeasured. Kept until it is.
     prewarmRoutes: ['/api/user/settings'],
     prewarmTimeout: 300000,
     testConcurrency: 1,

@@ -25,4 +25,6 @@ Operational runbooks, security reviews, incident handoffs and content-policy rec
 | Civitai Link | [docs/features/civitai-link.md](civitai-link.md) |
 | App Store sub-listings (items inside an app as store cards) | [docs/features/app-store-sub-listings.md](app-store-sub-listings.md) |
 | Generator model onboarding (new ecosystem / model / version) | [docs/features/generator-model-onboarding.md](generator-model-onboarding.md) |
-| Avatar Gen (portrait to stylised avatar workflow) | [docs/features/avatar-gen.md](avatar-gen.md) |
+| Batch post scheduling and the post planner                   | [docs/features/batch-post-scheduling.md](batch-post-scheduling.md)           |
+| Article scheduling                                           | [docs/features/article-scheduling.md](article-scheduling.md)                 |
+| Avatar Gen (portrait to stylised avatar workflow)            | [docs/features/avatar-gen.md](avatar-gen.md)                                 |

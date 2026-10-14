@@ -272,6 +272,18 @@ export const creatorCompAmountPaidCounter = registerCounterWithLabels({
   labelNames: ['account_type'] as const,
 });
 
+export const generationTipCreatorsPaidCounter = registerCounterWithLabels({
+  name: 'generation_tip_creators_paid_total',
+  help: 'Total number of creators who received generation tips',
+  labelNames: ['account_type'] as const,
+});
+
+export const generationTipAmountPaidCounter = registerCounterWithLabels({
+  name: 'generation_tip_amount_paid_total',
+  help: 'Total buzz amount paid to creators as generation tips',
+  labelNames: ['account_type'] as const,
+});
+
 // License fee payout metrics
 export const licenseFeeCreatorsPaidCounter = registerCounterWithLabels({
   name: 'license_fee_creators_paid_total',
@@ -734,6 +746,24 @@ export const appStorageLatencyHistogram = registerHistogram({
   help: 'App Blocks KV procedure latency',
   labelNames: ['op'] as const,
   buckets: [0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5],
+});
+
+// App Blocks SHARED (cross-user) storage. Separate from the KV pair, not a `storage` label on it:
+// a shared write can wait on external moderation, so the histogram needs buckets past 2.5s and a
+// histogram has one bucket set; the op and outcome domains also differ. No per-app, per-key or
+// per-user label: the number of apps is unbounded. Exposed names are pinned by
+// `__tests__/app-block-storage-metric-names.test.ts`.
+export const appSharedStorageOpsCounter = registerCounterWithLabels({
+  name: 'block_shared_storage_ops_total',
+  help: 'App Blocks shared storage operations by op and outcome',
+  labelNames: ['op', 'outcome'] as const,
+});
+
+export const appSharedStorageLatencyHistogram = registerHistogram({
+  name: 'block_shared_storage_latency_seconds',
+  help: 'App Blocks shared storage operation latency, including moderation and rate-limit checks',
+  labelNames: ['op'] as const,
+  buckets: [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10],
 });
 
 // Image ingestion / scan pipeline. The image-ingestion path (submit → scanner →

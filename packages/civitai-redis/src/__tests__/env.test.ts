@@ -7,6 +7,20 @@ const base = {
   REDIS_SYS_URL: 'redis://localhost:6380',
 };
 
+describe('redisEnvSchema — REDIS_CLUSTER_ERROR_REDISCOVER_ENABLED', () => {
+  it('defaults ON; only the literal "false" turns it off', () => {
+    expect(redisEnvSchema.parse(base).REDIS_CLUSTER_ERROR_REDISCOVER_ENABLED).toBe(true);
+    expect(
+      redisEnvSchema.parse({ ...base, REDIS_CLUSTER_ERROR_REDISCOVER_ENABLED: 'false' })
+        .REDIS_CLUSTER_ERROR_REDISCOVER_ENABLED
+    ).toBe(false);
+    expect(
+      redisEnvSchema.parse({ ...base, REDIS_CLUSTER_ERROR_REDISCOVER_ENABLED: 'true' })
+        .REDIS_CLUSTER_ERROR_REDISCOVER_ENABLED
+    ).toBe(true);
+  });
+});
+
 describe('redisEnvSchema — HA defaults', () => {
   it('applies the sysRedis HA / socket defaults', () => {
     const parsed = redisEnvSchema.parse(base);
@@ -135,5 +149,56 @@ describe('redisEnvSchema — slow-settle < reaper invariant', () => {
       REDIS_CLUSTER_SELFHEAL_SLOW_COMMAND_MS: '0',
     });
     expect(result.success).toBe(true);
+  });
+});
+
+describe('redisEnvSchema — sys self-heal invariants', () => {
+  const issuePaths = (env: Record<string, string>) => {
+    const r = redisEnvSchema.safeParse({ ...base, ...env });
+    return r.success ? [] : r.error.issues.map((i) => i.path.join('.'));
+  };
+
+  it('defaults: 30s sys command backstop, above the 20s sustained window', () => {
+    const parsed = redisEnvSchema.parse(base);
+    expect(parsed.REDIS_SYS_COMMAND_TIMEOUT_MS).toBe(30000);
+    expect(parsed.REDIS_SYS_COMMAND_TIMEOUT_MS).toBeGreaterThan(
+      parsed.REDIS_SYS_SELFHEAL_SUSTAINED_MS
+    );
+  });
+
+  it('REJECTS a sys backstop at or under the sustained window (it would blind the watchdog)', () => {
+    expect(issuePaths({ REDIS_SYS_COMMAND_TIMEOUT_MS: '20000' })).toEqual([
+      'REDIS_SYS_COMMAND_TIMEOUT_MS',
+    ]);
+    expect(
+      issuePaths({ REDIS_SYS_COMMAND_TIMEOUT_MS: '9000', REDIS_SYS_SELFHEAL_SUSTAINED_MS: '15000' })
+    ).toEqual(['REDIS_SYS_COMMAND_TIMEOUT_MS']);
+    expect(issuePaths({ REDIS_SYS_COMMAND_TIMEOUT_MS: '20001' })).toEqual([]);
+  });
+
+  it('REJECTS an in-flight cap at or under the inflight threshold', () => {
+    expect(issuePaths({ REDIS_SYS_COMMANDS_QUEUE_MAX_LENGTH: '500' })).toEqual([
+      'REDIS_SYS_COMMANDS_QUEUE_MAX_LENGTH',
+    ]);
+    expect(issuePaths({ REDIS_SYS_COMMANDS_QUEUE_MAX_LENGTH: '501' })).toEqual([]);
+  });
+
+  it('REDIS_SYS_COMMAND_TIMEOUT_MS=0 parses to 0 (the off switch) with the sys watchdog on', () => {
+    const parsed = redisEnvSchema.parse({ ...base, REDIS_SYS_COMMAND_TIMEOUT_MS: '0' });
+    expect(parsed.REDIS_SYS_COMMAND_TIMEOUT_MS).toBe(0);
+    expect(parsed.REDIS_SYS_SELFHEAL_ENABLED).toBe(true);
+  });
+
+  it('does NOT enforce either when disabled (0) or when the sys watchdog is off', () => {
+    expect(
+      issuePaths({ REDIS_SYS_COMMAND_TIMEOUT_MS: '0', REDIS_SYS_COMMANDS_QUEUE_MAX_LENGTH: '0' })
+    ).toEqual([]);
+    expect(
+      issuePaths({
+        REDIS_SYS_SELFHEAL_ENABLED: 'false',
+        REDIS_SYS_COMMAND_TIMEOUT_MS: '1000',
+        REDIS_SYS_COMMANDS_QUEUE_MAX_LENGTH: '10',
+      })
+    ).toEqual([]);
   });
 });

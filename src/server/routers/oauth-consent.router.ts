@@ -47,7 +47,7 @@ export const oauthConsentRouter = router({
   // the consent so it persists across access-token rotations — refresh-issued
   // tokens for the same consent inherit it automatically.
   setBuzzLimit: protectedProcedure
-    .meta({ requiredScope: TokenScope.UserWrite })
+    .meta({ requiredScope: TokenScope.UserWrite, requireFullUserCredential: true })
     .input(
       z.object({
         clientId: z.string(),
@@ -55,22 +55,6 @@ export const oauthConsentRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
-      // Self-modify guard: an OAuth-issued token must not be able to raise or
-      // clear the limit on the consent it was issued under. Session auth is
-      // unaffected.
-      const subject = (
-        ctx as unknown as {
-          subject?: { type: string; id: number | string } | null;
-        }
-      ).subject;
-      if (subject && subject.type === 'oauth' && subject.id === input.clientId) {
-        throw new TRPCError({
-          code: 'FORBIDDEN',
-          message:
-            'An OAuth token cannot modify its own consent spend limit. Use a different key or session auth.',
-        });
-      }
-
       const consent = await dbWrite.oauthConsent.findUnique({
         where: { userId_clientId: { userId: ctx.user.id, clientId: input.clientId } },
         select: { id: true },
@@ -116,7 +100,7 @@ export const oauthConsentRouter = router({
 
   // Revoke access for a connected app (delete all tokens + consent)
   revokeApp: protectedProcedure
-    .meta({ requiredScope: TokenScope.UserWrite })
+    .meta({ requiredScope: TokenScope.UserWrite, requireFullUserCredential: true })
     .input(z.object({ clientId: z.string() }))
     .mutation(async ({ ctx, input }) => {
       const consent = await dbWrite.oauthConsent.findUnique({
@@ -155,6 +139,17 @@ export const oauthConsentRouter = router({
       // stop authenticating immediately instead of lingering until TTL.
       await invalidateCivitaiUser({ userId: ctx.user.id });
 
+      // Last, after the tokens, consent and auth cache are gone, so neither a slow nor a failed
+      // withdraw delays or blocks revoking access. `null` = it failed; the client tells the user
+      // to withdraw the items from account settings instead.
+      const catalogItemsWithdrawn = await import(
+        '~/server/services/blocks/oauth-consent-sync.service'
+      )
+        .then(({ withdrawCatalogItemsOnConsentRevoke }) =>
+          withdrawCatalogItemsOnConsentRevoke({ userId: ctx.user.id, clientId: input.clientId })
+        )
+        .catch(() => null);
+
       logOAuthEvent({
         type: 'authorization.denied',
         userId: ctx.user.id,
@@ -162,7 +157,7 @@ export const oauthConsentRouter = router({
         metadata: { action: 'revoked_by_user' },
       });
 
-      return { success: true };
+      return { success: true, catalogItemsWithdrawn };
     }),
 
   // (the limit-set audit fire is added on `setBuzzLimit` below)

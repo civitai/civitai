@@ -79,6 +79,7 @@ import type {
   ImageBlob,
   VideoBlob,
 } from '~/shared/orchestrator/workflow-data';
+import { NSFW_CAPPED } from '~/shared/orchestrator/workflow-data';
 import { formatBytes, numberWithCommas } from '~/utils/number-helpers';
 import {
   DownloadBoostPanel,
@@ -623,6 +624,9 @@ function StepOutputs({
     .filter((img): img is ImageBlob | VideoBlob | AudioBlob => img.type !== 'model3d')
     .filter((img) => matchesMarkerTags(img, markerTags));
   const blockedReasons = step ? step.blockedReasons : request.blockedReasons;
+  const pendingRating = (step ? step.pendingRatingOutput : request.pendingRatingOutput).filter(
+    (img) => matchesMarkerTags(img, markerTags)
+  );
 
   const stepFailure = step
     ? step.errors?.join(',\n') ||
@@ -651,6 +655,18 @@ function StepOutputs({
             <GeneratedOutput key={image.id} image={image} />
           )
         )}
+        {pendingRating.map((image) => (
+          <TwCard
+            key={image.id}
+            className="items-center justify-center border"
+            style={{ aspectRatio: image.aspect ?? 1 }}
+          >
+            <Loader size={24} />
+            <Text c="dimmed" size="xs" align="center">
+              Rating
+            </Text>
+          </TwCard>
+        ))}
         <BlockedBlocks
           blockedReasons={blockedReasons.filter((r) => r !== 'siteRestricted')}
           workflowId={request.id}
@@ -823,6 +839,8 @@ const imageBlockedReasonMap: Record<string, string | React.ComponentType<any>> =
     'If your input image lacks valid metadata, generation is restricted to PG or PG-13 outputs only.',
   // the following keys are managed in generationRequestHooks.ts
   privateGen: 'Private Generation is limited to PG and PG-13 content.',
+  [NSFW_CAPPED]:
+    "This output was rated mature, and this generation is limited to PG-13, so it can't be shown.",
   siteRestricted: 'Images with mature ratings are unavailable on this site',
   enableNsfw: EnableNsfwBlock,
   canUpgrade: CanUpgradeBlock,

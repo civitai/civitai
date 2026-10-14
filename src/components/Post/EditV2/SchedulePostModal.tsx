@@ -2,7 +2,10 @@ import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { Button, Group, Modal, Stack, Text } from '@mantine/core';
 import * as z from 'zod';
 import { Form, InputDateTimePicker, useForm } from '~/libs/form';
-import { POST_MINIMUM_SCHEDULE_MINUTES } from '~/server/common/constants';
+import {
+  POST_MAXIMUM_SCHEDULE_MONTHS,
+  POST_MINIMUM_SCHEDULE_MINUTES,
+} from '~/server/common/constants';
 import { increaseDate } from '~/utils/date-helpers';
 import { getDefaultScheduleDate } from './schedule-post.utils';
 
@@ -22,11 +25,11 @@ const schema = z.object({
     .refine(
       (date) => {
         const now = new Date();
-        const maxDate = increaseDate(now, 3, 'months');
+        const maxDate = increaseDate(now, POST_MAXIMUM_SCHEDULE_MONTHS, 'months');
         return date <= maxDate;
       },
       {
-        message: 'Schedule date cannot be more than 3 months in the future',
+        message: `Schedule date cannot be more than ${POST_MAXIMUM_SCHEDULE_MONTHS} months in the future`,
       }
     ),
 });
@@ -35,15 +38,18 @@ export function SchedulePostModal({
   onSubmit,
   publishedAt,
   publishingModel,
+  entity = 'post',
 }: {
   onSubmit: (date: Date) => void;
   publishedAt?: Date | null;
   publishingModel?: boolean;
+  entity?: 'post' | 'article';
 }) {
+  const noun = publishingModel ? 'model' : entity;
   const dialog = useDialogContext();
   const today = new Date();
   const minDate = increaseDate(today, POST_MINIMUM_SCHEDULE_MINUTES, 'minutes');
-  const maxDate = increaseDate(today, 3, 'months');
+  const maxDate = increaseDate(today, POST_MAXIMUM_SCHEDULE_MONTHS, 'months');
 
   const form = useForm({
     schema,
@@ -58,19 +64,13 @@ export function SchedulePostModal({
   return (
     <Modal
       {...dialog}
-      title={
-        <Text className="font-semibold">
-          {publishingModel ? 'Schedule your model' : 'Schedule your post'}
-        </Text>
-      }
+      title={<Text className="font-semibold">Schedule your {noun}</Text>}
       size="md"
       centered
     >
       <Stack gap="md">
         <Text size="sm" c="dimmed">
-          {publishingModel
-            ? 'Select the date and time you want to publish this model.'
-            : 'Select the date and time you want to publish this post.'}
+          Select the date and time you want to publish this {noun}.
         </Text>
         <Form form={form} onSubmit={handleSubmit}>
           <Stack gap="xl">

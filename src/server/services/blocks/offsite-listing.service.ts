@@ -46,6 +46,7 @@ import { MATERIAL_LISTING_PATCH_FIELDS } from '~/shared/constants/app-capabiliti
 import { isAppBlockOauthClientId } from '~/shared/constants/block-scope.constants';
 import {
   connectScopesSubsetOfCeiling,
+  consentableScopes,
   validateConnectScopeJustifications,
   SENSITIVE_TOKEN_SCOPES,
   tokenScopeMaskToList,
@@ -56,6 +57,7 @@ import {
   resolveListingRatingFloorInTx,
 } from '~/server/services/blocks/app-listing-assets.service';
 import { assertOffsiteListingActionable } from '~/server/services/blocks/app-listing-actionable.service';
+import { recordListingRatingChangeAfterCommit } from '~/server/services/blocks/app-listing-rating';
 import {
   isOwnerUnpublishedListing,
   readLastModerationAction,
@@ -65,6 +67,7 @@ import {
 // TYPE-ONLY (erased at compile time) — the runtime reach into `app-access.service` stays
 // a dynamic import, so this adds nothing to the module graph. See `resolveListingRole`.
 import type { AppRole } from '~/server/services/blocks/app-access.service';
+import { declaredListingRating } from '~/shared/utils/listing-rating-display';
 import {
   computeListingProblems,
   type ListingProblemKind,
@@ -266,7 +269,7 @@ export async function submitExternalListing(opts: {
 
   // Load + gate the caller's OAuth client (exists / owned / not-app-block). The
   // listing's requested scopes are AUTO-DERIVED from the client's CURRENT
-  // `allowedScopes` — the client already declares its scopes at creation, so a
+  // consentable scopes — the client already declares its scopes at creation, so a
   // form-supplied `input.requestedScopes` mask is IGNORED (server-authoritative
   // snapshot). This snapshots the reviewed set: a later widening of the client's
   // allowedScopes does NOT silently expand a live/approved listing (a re-submit /
@@ -395,7 +398,8 @@ export async function submitExternalListing(opts: {
  * Load an OAuth client and assert it is eligible to back an external listing: it must
  * EXIST and NOT be an App-Block client (`isAppBlockOauthClientId` — those are managed
  * by the App Blocks flow, not hand-listed). By default it must also be OWNED by
- * `userId` (IDOR). Returns the client's `allowedScopes` ceiling. An external listing
+ * `userId` (IDOR). Returns the client's consentable scopes as its
+ * `allowedScopes` ceiling. An external listing
  * does NOT require the client to be `isVerified` (decision Q4). All failures are
  * friendly TRPCErrors (parity with `submitExternalListing`'s validation style).
  *
@@ -433,7 +437,8 @@ export async function loadConnectClientForListing(
       message: 'you can only list an OAuth client you own',
     });
   }
-  return { id: client.id, allowedScopes: client.allowedScopes };
+  // A client_credentials-only bit is never something a user is asked to consent to.
+  return { id: client.id, allowedScopes: consentableScopes(client.allowedScopes) };
 }
 
 /**
@@ -467,7 +472,7 @@ function assertConnectScopesValid(opts: {
  * For an EDIT patch that touches the OAuth-connect scope disclosure (carries
  * `requestedScopes` and/or `scopeJustifications`), resolve the listing's connect
  * client and return an `effectivePatch` whose `requestedScopes` is DERIVED from the
- * client's CURRENT `allowedScopes` (server-authoritative — a form-supplied mask is
+ * client's CURRENT consentable scopes (server-authoritative — a form-supplied mask is
  * ignored) plus that ceiling. A non-scope patch is passed through unchanged.
  *
  * Re-asserts the caller still OWNS the client (mirrors `loadConnectClientForListing`):
@@ -480,7 +485,7 @@ function assertConnectScopesValid(opts: {
  * `isModerator`: when true, that owner re-assertion is intentionally BYPASSED — a mod
  * may edit a listing that links a client they don't own (mirroring the mod-only
  * client search on submit). The existence check + scope-subset / justification
- * validation (server-authoritative snapshot from the client's CURRENT allowedScopes)
+ * validation (server-authoritative snapshot from the client's CURRENT consentable scopes)
  * are UNCHANGED. A non-mod is still refused a foreign client.
  */
 export async function deriveScopePatch(opts: {
@@ -515,9 +520,9 @@ export async function deriveScopePatch(opts: {
       message: 'you can only list an OAuth client you own',
     });
   }
-  const connectAllowedScopes = client.allowedScopes;
+  const connectAllowedScopes = consentableScopes(client.allowedScopes);
   // SERVER-AUTHORITATIVE snapshot: the disclosed set is ALWAYS the client's CURRENT
-  // allowedScopes; the form-supplied `patch.requestedScopes` is overwritten. A drift
+  // consentable scopes; the form-supplied `patch.requestedScopes` is overwritten. A drift
   // from the stored snapshot is then a MATERIAL change (patchHasMaterialChange) → the
   // approved edit re-enters mod review via a shadow revision.
   const effectivePatch: UpdateListingPatch = { ...patch, requestedScopes: connectAllowedScopes };
@@ -2024,7 +2029,7 @@ export type GetMyListingForEditResult = {
   /** The linked OAuth client id (null for a non-connect listing — none in the merged model). */
   connectClientId: string | null;
   /**
-   * The client's CURRENT `allowedScopes` (null when no client / not found). This IS
+   * The client's CURRENT consentable scopes (null when no client / not found). This IS
    * the derived requested-scope set the edit form displays read-only + submits — the
    * server re-snapshots `requestedScopes` from it on save.
    */
@@ -2281,7 +2286,7 @@ export async function getMyListingForEdit(opts: {
     listingId
   );
 
-  // Resolve the connect client's CURRENT allowedScopes — this is the derived
+  // Resolve the connect client's CURRENT consentable scopes — this is the derived
   // requested-scope set the edit form displays read-only + re-submits (the server
   // re-snapshots `requestedScopes` from it on save). null when the listing has no
   // client or the client no longer exists.
@@ -2291,7 +2296,7 @@ export async function getMyListingForEdit(opts: {
       where: { id: listing.connectClientId },
       select: { allowedScopes: true },
     });
-    connectAllowedScopes = client?.allowedScopes ?? null;
+    connectAllowedScopes = client ? consentableScopes(client.allowedScopes) : null;
   }
 
   return {
@@ -2339,6 +2344,8 @@ export type GetMyListingForAppResult = {
    * `null`. Mirrors `GetMyListingForEditResult.shadowId`.
    */
   shadowId: string | null;
+  /** The rating the author declared, which approval may have raised `contentRating` above. */
+  declaredContentRating: string | null;
   /**
    * The id the client hands to the asset procs: `shadowId` when a shadow already
    * exists, else `appListingId`. Under LAZY shadow creation the first asset mutation
@@ -2431,9 +2438,11 @@ export async function getMyListingForApp(opts: {
   // an access check is an invitation to compare against it again.
   const entrySelect = {
     id: true,
+    kind: true,
     status: true,
     contentRating: true,
     revisionOfId: true,
+    appBlock: { select: { contentRating: true } },
   } as const;
   let listing = appBlockId
     ? await dbRead.appListing.findUnique({
@@ -2572,6 +2581,11 @@ export async function getMyListingForApp(opts: {
     // Nullable column; fall back to the safest rating so the asset step's scan
     // threshold is always defined.
     contentRating: listing.contentRating ?? 'g',
+    declaredContentRating: declaredListingRating({
+      kind: listing.kind,
+      appRating: listing.appBlock?.contentRating,
+      listingRating: listing.contentRating,
+    }),
     hasPendingRevision: !!pendingRevisionReq,
     shadowId,
     editTargetId: effectiveId,
@@ -2700,7 +2714,7 @@ export async function updateRevisionDraft(opts: {
   // Derive the requested-scope snapshot from the shadow's connect client (the shadow
   // carries the parent's connectClientId) when the patch touches scopes — same
   // server-authoritative rule as updateListing, so a scope justification staged on a
-  // shadow re-snapshots against the client's CURRENT allowedScopes.
+  // shadow re-snapshots against the client's CURRENT consentable scopes.
   const { effectivePatch, connectAllowedScopes } = await deriveScopePatch({
     connectClientId: shadow.connectClientId,
     patch,
@@ -3173,7 +3187,7 @@ export async function approveExternalRequest(opts: {
 
   // (5) One transaction: RE-ASSERT the asset gate on the PRIMARY (row-consistent
   // with the flip) + guarded request flip + guarded listing flip + supersede.
-  await dbWrite.$transaction(async (tx) => {
+  const rating = await dbWrite.$transaction(async (tx) => {
     // AUTHORITATIVE asset gate — re-read from the PRIMARY (`tx`), not the replica.
     // The sibling asset mutators (add/reorder/removeListingScreenshot,
     // setListingIcon/Cover) deliberately read+write dbWrite to avoid replica-lag
@@ -3395,6 +3409,13 @@ export async function approveExternalRequest(opts: {
       },
       data: { status: 'withdrawn' },
     });
+    return { before: primaryListing.contentRating, after: finalRating };
+  });
+  await recordListingRatingChangeAfterCommit({
+    appListingId,
+    slug: listing.slug,
+    ...rating,
+    actorUserId: reviewerUserId,
   });
 
   // Post-commit, best-effort: notify the listing OWNER their app went live. Emitted
@@ -3457,7 +3478,7 @@ async function applyApprovedRevision(opts: {
   // asset columns and leaves name/tagline/description/category/contentRating untouched.
   const parent = await dbRead.appListing.findUnique({
     where: { id: parentId },
-    select: { id: true, slug: true, status: true, kind: true },
+    select: { id: true, slug: true, status: true, kind: true, contentRating: true },
   });
   if (!parent) {
     throw new OffsiteRequestError('NOT_FOUND', `parent listing ${parentId} not found`);
@@ -3486,7 +3507,9 @@ async function applyApprovedRevision(opts: {
   // of this path rather than merely intended.
   const sourceRepoColumnAvailable = await isSourceRepoColumnAvailable(dbWrite);
 
-  await dbWrite.$transaction(async (tx) => {
+  const appliedRating = await dbWrite.$transaction(async (tx) => {
+    // Set by the off-site branch only; the on-site one leaves the rating alone.
+    let appliedOffsiteRating: OffsiteContentRating | null = null;
     // (1) AUTHORITATIVE re-read of the shadow on the PRIMARY (row-consistent with
     // the copy). The sibling asset mutators write to dbWrite, so a pre-tx replica
     // gate could pass on stale-complete state — re-assert here.
@@ -3685,6 +3708,7 @@ async function applyApprovedRevision(opts: {
         coverId: shadow.coverId,
         override: opts.contentRating,
       });
+      appliedOffsiteRating = finalRating;
       await tx.appListing.update({
         where: { id: parentId },
         data: {
@@ -3738,7 +3762,17 @@ async function applyApprovedRevision(opts: {
     await tx.appListing.deleteMany({
       where: { id: shadowId, revisionOfId: { not: null } },
     });
+    return appliedOffsiteRating;
   });
+  if (appliedRating != null) {
+    await recordListingRatingChangeAfterCommit({
+      appListingId: parentId,
+      slug: parent.slug,
+      before: parent.contentRating ?? null,
+      after: appliedRating,
+      actorUserId: reviewerUserId,
+    });
+  }
 
   // 🔴 Catalog bust. THIS PATH IS NOT COVERED BY THE ONE IN `approveExternalRequest` —
   // that caller `return`s into this function BEFORE reaching its bust, and it does so
@@ -4054,6 +4088,7 @@ const mySubmissionSelect = {
        * read); the mod queues that spread the base `submissionSelect` are untouched.
        */
       kind: true,
+      appBlock: { select: { contentRating: true } },
       iconId: true,
       coverId: true,
       description: true,
@@ -4341,6 +4376,13 @@ export async function listMySubmissions(opts: { userId: number } & ListOffsiteRe
           tagline: r.appListing.tagline,
           category: r.appListing.category,
           assetScans: assetScansFor(r.appListing),
+          status: r.appListing.status,
+          contentRating: r.appListing.contentRating,
+          declaredContentRating: declaredListingRating({
+            kind: r.appListing.kind ?? 'offsite',
+            appRating: r.appListing.appBlock?.contentRating,
+            listingRating: r.appListing.contentRating,
+          }),
         }).problems
       : [],
   }));

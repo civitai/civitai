@@ -19,7 +19,9 @@ import { appRouter } from '~/server/routers';
 import { runWithSerializeCtx, serializeCtxFromRequest } from '~/server/logging/trpc-serialize-log';
 import { getTrpcMaxBatchSize } from '~/server/trpc/batch-cap';
 import { getClientSafeError } from '~/server/trpc/client-safe-error';
-import { willEdgeCache } from '~/server/trpc/edge-cache-headers';
+import { buildTrpcCacheHeaders } from '~/server/trpc/edge-cache-headers';
+import { redactBlockTokens } from '~/server/logging/redact-block-token';
+import { recordBlockTokenGetRequest } from '~/server/prom/block-token-transport.metrics';
 
 export const config = {
   api: {
@@ -55,21 +57,17 @@ const trpcHandler = createNextApiHandler({
   // server's — which is why RAISING this is safe and lowering it below the constant is not. See
   // `getTrpcMaxBatchSize`.
   maxBatchSize: getTrpcMaxBatchSize(),
-  responseMeta: ({ ctx, type, errors }) => {
-    const headers: Record<string, string> = {};
+  responseMeta: ({ ctx, type, errors, info, paths }) => {
     // Single-sourced in `~/server/trpc/edge-cache-headers` so that tests asserting a
-    // middleware chain's cache outcome import THIS predicate instead of re-declaring it.
-    const cache = ctx?.cache;
-    if (willEdgeCache(cache) && type === 'query' && errors.length === 0) {
-      ctx?.res?.removeHeader('Set-Cookie');
-      headers['Cache-Control'] = [
-        'public',
-        `max-age=${cache.browserTTL ?? 0}`,
-        `s-maxage=${cache.edgeTTL ?? 0}`,
-        `stale-while-revalidate=${cache.staleWhileRevalidate ?? 0}`,
-      ].join(', ');
-      if (cache.tags) headers['Cache-Tag'] = cache.tags.join(', ');
-    }
+    // middleware chain's cache outcome import THAT logic instead of re-declaring it. It also
+    // forces `no-store` on block-token queries, keyed on the request's procedure paths.
+    const { headers, edgeCached } = buildTrpcCacheHeaders({
+      cache: ctx?.cache,
+      type,
+      errorCount: errors.length,
+      paths: info?.calls.map((call) => call.path) ?? paths,
+    });
+    if (edgeCached) ctx?.res?.removeHeader('Set-Cookie');
 
     return Object.keys(headers).length > 0 ? { headers } : {};
   },
@@ -103,7 +101,7 @@ const trpcHandler = createNextApiHandler({
       if (shouldSkipBatchCapLog(req, error)) return error;
 
       // Uninformative 404s. `image.getGenerationData` answers NOT_FOUND only when the image id
-      // does not exist (an image without generation metadata still returns normally). Most of
+      // does not exist or `image.get` would not show it to this viewer (an image without generation metadata still returns normally). Most of
       // that volume comes from clients calling the procedure directly to enumerate ids, and at
       // that rate its lines were most of this route's Axiom ingest, each paying
       // JSON.stringify(input) + an ingest for a line that says nothing the 404 doesn't.
@@ -164,7 +162,11 @@ const trpcHandler = createNextApiHandler({
       let axInput: string | undefined;
       if (!!input) {
         try {
-          axInput = JSON.stringify(input);
+          // `blockToken` (a bearer credential) is replaced, key kept — see redactBlockTokens.
+          // Stringify first and redact only when the key appears, so the common case pays one
+          // walk of the input rather than two.
+          const raw = JSON.stringify(input);
+          axInput = raw?.includes('"blockToken"') ? JSON.stringify(redactBlockTokens(input)) : raw;
         } catch {
           axInput = undefined;
         }
@@ -241,6 +243,11 @@ export default withAxiom(async (req: NextApiRequest, res: NextApiResponse) => {
   // and non-throwing: on any internal failure it reports width 1, which cannot mark a request
   // over-cap, so a broken metric degrades to "log normally" rather than "silently suppress".
   instrumentTrpcBatchRequest(req);
+
+  // Count block-token queries still arriving as GET (token in the URL). Old published SDK dev
+  // hosts send them that way and must keep working; this is the signal that gates refusing GET
+  // later. Non-throwing, and a no-op for anything that is not a GET carrying `blockToken`.
+  recordBlockTokenGetRequest(req);
 
   // Seed the request-scoped procedure-path context so the transformer's serialize
   // step (an awaited descendant of trpcHandler) can name the offending procedure

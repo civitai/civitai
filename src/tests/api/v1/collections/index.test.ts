@@ -4,6 +4,7 @@ import { getHTTPStatusCodeFromError } from '@trpc/server/http';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { CollectionReadConfiguration } from '~/shared/utils/prisma/enums';
 import { NsfwLevel } from '~/server/common/enums';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 const {
   mockGetAllCollections,
@@ -23,6 +24,8 @@ const {
   mockIsRegionRestricted: vi.fn(),
 }));
 
+const mockImageFindUnique = dbMock.dbRead.image.findUnique;
+
 vi.mock('~/server/services/collection.service', () => ({
   getAllCollections: mockGetAllCollections,
   getCollectionItemCount: mockGetCollectionItemCount,
@@ -39,10 +42,7 @@ vi.mock('~/client-utils/edge-url', () => ({
 }));
 
 vi.mock('~/server/utils/endpoint-helpers', () => ({
-  MixedAuthEndpoint:
-    (handler: any) =>
-    (req: any, res: any) =>
-      handler(req, res, req.user),
+  MixedAuthEndpoint: (handler: any) => (req: any, res: any) => handler(req, res, req.user),
   handleEndpointError: (res: any, e: any) => {
     if (e instanceof TRPCError) {
       const status = getHTTPStatusCodeFromError(e);
@@ -123,6 +123,7 @@ beforeEach(() => {
   mockGetCollectionItemCount.mockResolvedValue([]);
   mockGetRegion.mockReturnValue({});
   mockIsRegionRestricted.mockReturnValue(false);
+  mockImageFindUnique.mockResolvedValue({ poi: false, minor: false });
 });
 
 describe('GET /api/v1/collections (list)', () => {
@@ -173,7 +174,10 @@ describe('GET /api/v1/collections (list)', () => {
     const anon = createMocks({ query: { limit: '5' } });
     await listHandler(anon.req, anon.res);
 
-    const authed = createMocks({ query: { limit: '5' }, user: { id: 42, username: 'me', isModerator: true } });
+    const authed = createMocks({
+      query: { limit: '5' },
+      user: { id: 42, username: 'me', isModerator: true },
+    });
     await listHandler(authed.req, authed.res);
 
     expect(anon.res._getStatusCode()).toBe(200);
@@ -210,6 +214,55 @@ describe('GET /api/v1/collections (list)', () => {
     expect(res._getStatusCode()).toBe(200);
     expect(mockGetAllCollections).toHaveBeenCalled();
     expect(mockGetAllCollections.mock.calls[0][0].input.sort).toBe('Most Followers');
+  });
+
+  describe('cover poi/minor exclusion', () => {
+    const listRow = (image: Record<string, unknown>) => ({
+      id: 10,
+      name: 'c',
+      description: null,
+      read: CollectionReadConfiguration.Public,
+      type: 'Image',
+      nsfwLevel: 1,
+      userId: 2,
+      user: { id: 2, username: 'bob' },
+      image: { url: 'img-key', type: 'image', nsfwLevel: NsfwLevel.PG, ...image },
+    });
+
+    it('selects poi and minor on the cover image', async () => {
+      mockGetAllCollections.mockResolvedValue([]);
+      const { req, res } = createMocks({ query: {} });
+
+      await listHandler(req, res);
+
+      expect(mockGetAllCollections.mock.calls[0][0].select.image).toEqual({
+        select: { url: true, type: true, nsfwLevel: true, poi: true, minor: true },
+      });
+    });
+
+    it('keeps a cover with neither flag', async () => {
+      mockGetAllCollections.mockResolvedValue([listRow({ poi: false, minor: false })]);
+      const { req, res } = createMocks({ query: {} });
+
+      await listHandler(req, res);
+
+      expect(res._getJSONData().items[0].coverImageUrl).toBe('edge:img-key');
+    });
+
+    it.each([
+      ['poi', { poi: true, minor: false }],
+      ['minor', { poi: false, minor: true }],
+    ])('nulls the cover when it is flagged %s, keeping the collection', async (_flag, flags) => {
+      mockGetAllCollections.mockResolvedValue([listRow(flags)]);
+      const { req, res } = createMocks({ query: {} });
+
+      await listHandler(req, res);
+
+      const items = res._getJSONData().items;
+      expect(items).toHaveLength(1);
+      expect(items[0].id).toBe(10);
+      expect(items[0].coverImageUrl).toBeNull();
+    });
   });
 
   it('RATE LIMIT: 429 + Retry-After, no service call', async () => {
@@ -304,6 +357,7 @@ describe('GET /api/v1/collections/[id] (detail)', () => {
     // R does NOT intersect the PG-only public flag → cover URL nulled. Under the
     // old `allBrowsingLevels` clamp this R cover would have leaked.
     expect(res._getJSONData().coverImageUrl).toBeNull();
+    expect(mockImageFindUnique).not.toHaveBeenCalled();
   });
 
   it('MATURITY/CACHEABILITY: the clamp reads NO per-user data — an authed (mod) caller gets byte-identical clamped output to an anon caller', async () => {
@@ -362,6 +416,64 @@ describe('GET /api/v1/collections/[id] (detail)', () => {
     // Restricted → SFW ceiling (PG + PG-13) → the PG-13 cover survives, proving
     // the clamp tracks the region helper (not a fixed max, not a per-user value).
     expect(res._getJSONData().coverImageUrl).toBe('edge:img-key');
+  });
+
+  describe('cover poi/minor exclusion', () => {
+    beforeEach(() => {
+      mockGetUserCollectionPermissionsById.mockResolvedValue({
+        read: true,
+        write: false,
+        manage: false,
+      });
+      mockGetCollectionById.mockResolvedValue({
+        id: 55,
+        name: 'pub',
+        description: 'd',
+        type: 'Image',
+        nsfwLevel: NsfwLevel.PG,
+        read: CollectionReadConfiguration.Public,
+        userId: 2,
+        user: { id: 2, username: 'bob' },
+        image: { id: 99, url: 'img-key', type: 'image', nsfwLevel: NsfwLevel.PG },
+        tags: [],
+      });
+    });
+
+    it('looks up the flags for the cover image and keeps a cover with neither', async () => {
+      const { req, res } = createMocks({ query: { id: '55' } });
+
+      await detailHandler(req, res);
+
+      expect(mockImageFindUnique).toHaveBeenCalledWith({
+        where: { id: 99 },
+        select: { poi: true, minor: true },
+      });
+      expect(res._getJSONData().coverImageUrl).toBe('edge:img-key');
+    });
+
+    it.each([
+      ['poi', { poi: true, minor: false }],
+      ['minor', { poi: false, minor: true }],
+    ])('nulls the cover when it is flagged %s', async (_flag, flags) => {
+      mockImageFindUnique.mockResolvedValue(flags);
+      const { req, res } = createMocks({ query: { id: '55' } });
+
+      await detailHandler(req, res);
+
+      expect(res._getStatusCode()).toBe(200);
+      const body = res._getJSONData();
+      expect(body.id).toBe(55);
+      expect(body.coverImageUrl).toBeNull();
+    });
+
+    it('nulls the cover when its image row is not found', async () => {
+      mockImageFindUnique.mockResolvedValue(null);
+      const { req, res } = createMocks({ query: { id: '55' } });
+
+      await detailHandler(req, res);
+
+      expect(res._getJSONData().coverImageUrl).toBeNull();
+    });
   });
 
   it('404s (via handleEndpointError) when the collection row is gone despite a permission grant', async () => {

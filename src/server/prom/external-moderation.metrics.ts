@@ -68,9 +68,11 @@ import { registerCounterWithLabels, registerHistogram } from '@civitai/telemetry
  *                   🔴 EVERY NUMBER ABOVE IS A CEILING, NOT A RATE — which is the whole reason the
  *                   series cannot be divided back into submissions. Three things stand between a
  *                   submission and a classifier call, all of them ahead of `moderatePrompt`
- *                   (`promptAuditing.ts:295`): `auditPromptServer` returns early on an empty prompt
- *                   (`:244`), a HARD regex block throws (`:288`), and `generateFromGraph` audits
- *                   only when `data.prompt` is a non-blank string — which a preset submission need
+ *                   (`promptAuditing.ts:295`): `classifyPromptServer` never calls the classifier on
+ *                   an empty prompt (it is only ever sent the prompt, so a negative prompt alone is
+ *                   audited by the regex layer only), a HARD regex block throws (`:288`), and
+ *                   `generateFromGraph` reaches the classifier only when `data.prompt` is a
+ *                   non-blank string — which a preset submission need
  *                   not carry, since `buildPresetGraphInput` omits an empty prompt
  *                   (`preset-image-gen.service.ts:218`) and `iterateGenerate` hands it
  *                   `fullPrompt || undefined`. So an empty-prompt interactive submission contributes

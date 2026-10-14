@@ -15,7 +15,9 @@
   <h1 class="text-xl font-semibold text-white">Versions</h1>
   {#if config}
     <p class="text-xs text-dark-2">
-      Model {config.model} · max input {config.maxInputChars.toLocaleString()} chars · thinking
+      Model {config.model} · {config.maxInputChars.toLocaleString()} chars per call{config.maxSegments
+        ? ` · up to ${config.maxSegments} calls`
+        : ''} · thinking
       {config.thinking ? 'on' : 'off'}
     </p>
   {/if}

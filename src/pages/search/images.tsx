@@ -20,6 +20,7 @@ import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { ImagesProvider } from '~/components/Image/Providers/ImagesProvider';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { ImagesCardMemoized } from '~/components/Image/Infinite/ImagesCard';
+import { useSearchEventDecorations } from '~/components/Decorations/useSearchEventDecorations';
 import { useInfiniteHitsTransformed } from '~/components/Search/search.utils2';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { MediaType } from '~/shared/utils/prisma/enums';
@@ -140,6 +141,7 @@ function ImagesHitList() {
     type: 'images',
     data: hits,
   });
+  const decorated = useSearchEventDecorations(hits, items as { id: number }[], { entity: 'Image' });
 
   if (hits.length === 0) {
     const NotFound = (
@@ -215,9 +217,9 @@ function ImagesHitList() {
         </ImagesProvider>
       </div> */}
       <div>
-        <ImagesProvider images={items as any} hideReactions>
+        <ImagesProvider images={decorated as any} hideReactions>
           <MasonryColumnsVirtual
-            data={items as any}
+            data={decorated as any}
             imageDimensions={(data) => {
               const width = data?.width ?? 450;
               const height = data?.height ?? 450;

@@ -108,7 +108,6 @@ vi.mock('~/server/routers/apps-shared.router', async () => {
   // the same failure mode the numeric bounds note below describes.
   const z = await import('zod');
   return {
-    assertValidCounterKey: vi.fn(),
     incrementSharedCounter: vi.fn(),
     getTopSharedCounters: vi.fn(),
     listSharedRows: vi.fn(),
@@ -246,6 +245,14 @@ const ENDPOINTS: Array<{ module: string; requiredScope: string; allowOpaqueOrigi
   // that half of each entry is the authorization claim, not a transport one, and
   // a route that silently downgraded to `:read` would still pass a CORS-only
   // check.
+  // The DOCUMENT STORE — one catch-all route for every storage operation. Same opaque-origin
+  // argument as the shared-storage routes; its scope is the consent-exempt base scope (the
+  // consent-gated publish scope is an in-handler sub-check).
+  {
+    module: '~/pages/api/v1/blocks/storage/[[...path]]',
+    requiredScope: 'apps:storage',
+    allowOpaqueOrigin: true,
+  },
   {
     module: '~/pages/api/v1/blocks/shared-storage/append',
     requiredScope: 'apps:storage:shared:write',
@@ -446,6 +453,11 @@ describe('scoped block endpoints — opaque-origin CORS wiring', () => {
         );
         // CORS-only change: the per-user authorization gate must be unchanged.
         expect(opts.requiredScope, `${module} requiredScope`).toBe(requiredScope);
+        // PUT/DELETE in the preflight: only the document store writes with them, and a
+        // browser refuses a cross-origin PUT or DELETE the preflight does not allow.
+        expect(opts.extraCorsMethods, `${module} extraCorsMethods`).toEqual(
+          module === '~/pages/api/v1/blocks/storage/[[...path]]' ? ['PUT', 'DELETE'] : undefined
+        );
       });
     }
   );

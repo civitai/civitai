@@ -244,6 +244,54 @@ describe('classifyPromptServer — the verdict', () => {
   });
 });
 
+/**
+ * REGRESSION: a regex refusal that names no trigger must still be a block. The block used to be
+ * raised only when `triggers.length > 0`, so a trigger-less `success: false` fell through to the
+ * external classifier ALONE — which, here not flagging, let the refused prompt pass.
+ */
+describe('classifyPromptServer — a trigger-less regex refusal fails CLOSED', () => {
+  const refuseWithoutTriggers = (blockedFor: string[]) =>
+    mockAuditPromptEnriched.mockReturnValue({ blockedFor, triggers: [], success: false });
+
+  it('is a HARD regex verdict carrying the regex layer’s reason, and skips the classifier', async () => {
+    refuseWithoutTriggers(['Refused for a reason with no trigger']);
+    await expect(classifyPromptServer({ prompt: PROMPT, isGreen: false })).resolves.toEqual({
+      outcome: 'hard',
+      source: 'regex',
+      triggers: [],
+      blockedFor: ['Refused for a reason with no trigger'],
+      categories: [],
+      externalError: null,
+    });
+    expect(mockModeratePrompt).not.toHaveBeenCalled();
+  });
+
+  it('falls back to a generic reason when the refusal names none', async () => {
+    refuseWithoutTriggers([]);
+    await expect(classifyPromptServer({ prompt: PROMPT, isGreen: false })).resolves.toMatchObject({
+      outcome: 'hard',
+      source: 'regex',
+      blockedFor: ['Prompt failed the content audit'],
+    });
+  });
+
+  it('the wrapper refuses it as a hard block — no click-through — and records it', async () => {
+    refuseWithoutTriggers(['Refused for a reason with no trigger']);
+    const err = await auditPromptServer({
+      prompt: PROMPT,
+      userId: 9,
+      isGreen: false,
+      acknowledgedSoftBlock: true,
+    }).then(
+      () => undefined,
+      (e: unknown) => e as Error & { cause?: { softBlock?: boolean } }
+    );
+    expect(err?.message).toBe('Your prompt was flagged: Refused for a reason with no trigger');
+    expect(err?.cause?.softBlock).toBeUndefined();
+    expect(sysRedis.lPush).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('classifyPromptServer — INVARIANT GUARDS: no side effects on any verdict', () => {
   const scenarios: Array<[string, () => void]> = [
     ['pass', () => undefined],
@@ -251,6 +299,15 @@ describe('classifyPromptServer — INVARIANT GUARDS: no side effects on any verd
     ['soft regex', () => flagWith(SOFT)],
     ['hard external', () => externalFlags('violence')],
     ['external failure', () => mockModeratePrompt.mockRejectedValueOnce(new Error('down'))],
+    [
+      'trigger-less regex refusal',
+      () =>
+        mockAuditPromptEnriched.mockReturnValue({
+          blockedFor: ['x'],
+          triggers: [],
+          success: false,
+        }),
+    ],
   ];
 
   it.each(scenarios)(

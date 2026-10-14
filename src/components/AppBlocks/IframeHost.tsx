@@ -28,10 +28,15 @@ import {
 } from './ChromeSurface';
 import type { ChromeSurfaceControl } from './ChromeSurface';
 import { ChromeReviewMenuItem } from './ChromeReviewEntry';
+import type { AppFeedbackModalTarget } from './ChromeFeedbackEntry';
+import { AppFeedbackModal, ChromeFeedbackButton } from './ChromeFeedbackEntry';
+import { resolveAppFeedbackRequest } from './appFeedbackChrome';
 import { ReviewListingModal } from '~/components/Apps/ReviewListingButton';
 import { AppPermissionsActivityDrawer } from './AppPermissionsActivityDrawer';
 import { BlockFallback } from './BlockFallback';
-import { failureSnapshot } from './failureSnapshot';
+import { BRIDGE_NACK_NO_TOKEN } from './bridgeLabels';
+import { handleEstimateBatch } from './estimateBatchGate';
+import { failureSnapshot, pollFailureSnapshot } from './failureSnapshot';
 import { hostRenderDecision } from './hostRenderDecision';
 import { resolveBuzzPurchaseRequest } from './openBuzzPurchaseGate';
 import { resolveRequestSignIn } from './requestSignInGate';
@@ -49,6 +54,7 @@ import { sanitizeAppChromeName } from './appChromeName';
 import { resolveChromeGeometry } from './chromeGeometry';
 import type { ChromeGeometry } from './chromeGeometry';
 import { useResizeObserver } from '~/hooks/useResizeObserver';
+import { createBlockEventRecorder } from './blockEventBeacon';
 import { sendBlockRender } from './sendBlockRender';
 import { effectiveSandboxIsOpaque, intersectSandbox } from './sandbox';
 import {
@@ -59,6 +65,7 @@ import {
 import { IframeInitController, shouldStartInit } from './iframeInitController';
 import { useIframeAwareMenu } from './useIframeAwareMenu';
 import { blockInitFragmentEnabled } from './blockInitFragmentGate';
+import type { BlockHostSurface } from './blockInitFragmentGate';
 import { useBlockIframeSrc } from './useBlockIframeSrc';
 import { usePostMessage } from './usePostMessage';
 import type { BlockInitPayload, BlockInstall, ModelSlotContext, SlotContext } from './types';
@@ -76,6 +83,10 @@ import type { BuyBuzzModalProps } from '~/components/Modals/BuyBuzzModal';
 import { openResourceSelectModal } from '~/components/Dialog/triggers/resource-select';
 import { getBaseModelGroup, getBaseModelsByGroup } from '~/shared/constants/basemodel.constants';
 import { trpc } from '~/utils/trpc';
+import {
+  sharedStorageErrorReply,
+  storageErrorMessage,
+} from '~/components/AppBlocks/sharedStorageError';
 import {
   BLOCK_STORAGE_READ_OPTS,
   invalidatePrivateStorageReads,
@@ -104,6 +115,9 @@ interface IframeHostProps {
   /** ISO-8601 — surfaces in BLOCK_INIT.token.expiresAt for the iframe. */
   expiresAt: string;
   tokenKind?: 'block' | 'oauth';
+  /** The per-call Buzz budget `token` carries, as the mint reported it.
+   *  Forwarded to the block as-is; never derived here. */
+  buzzBudget?: number;
   /** A6 lazy consent: consent-gated scopes the app's approved manifest declares
    *  but the viewer hasn't granted, so they were WITHHELD from `token`. The
    *  block sees a token without them and fires REQUEST_CONSENT on the action;
@@ -161,9 +175,11 @@ const HARD_HEIGHT_CEILING = 8_000;
  * a 0px iframe because we could not read the viewport is a worse outcome than
  * the over-tall iframe the clamp exists to prevent.
  *
- * `window.innerHeight` deliberately, not `visualViewport.height` — nothing else
- * in `src/` reads `visualViewport`, and the pinch-zoom/keyboard-inset precision
- * it would add buys nothing for a bound whose whole job is "roughly one screen".
+ * `window.innerHeight` deliberately, not `visualViewport.height` — the
+ * pinch-zoom/keyboard-inset precision it would add buys nothing for a bound
+ * whose whole job is "roughly one screen". (A keyboard inset is a real concern
+ * for a fixed sheet holding a text field; that is
+ * `useVisualViewportBottomInset`'s job, not this clamp's.)
  */
 function viewportHeightPx(): number | null {
   if (typeof window === 'undefined') return null;
@@ -303,19 +319,6 @@ const RECENTLY_RUN_LIMIT = 5;
 
 type Status = 'loading' | 'ready' | 'timeout' | 'fatal' | 'no_token';
 
-// Reduce a thrown tRPC error to a single short string the block can surface.
-// TRPCClientError exposes `.message` which is already the server message
-// (apps.storage.* throws with explicit code + message strings); everything
-// else gets a generic fallback. Keep this conservative — the iframe is
-// untrusted and we don't want to leak server stack traces.
-function storageErrorMessage(err: unknown): string {
-  if (err && typeof err === 'object' && 'message' in err) {
-    const message = (err as { message?: unknown }).message;
-    if (typeof message === 'string' && message.length > 0) return message;
-  }
-  return 'storage request failed';
-}
-
 /**
  * Renders a block inside a sandboxed iframe and drives the postMessage
  * lifecycle. Implements the @civitai/app-sdk/blocks v1 contract — see
@@ -377,6 +380,7 @@ export function AppBlockChrome({
   modelId,
   modelName,
   slotId,
+  hostSurface,
   canOpenPage = false,
 }: {
   blockInstanceId: string;
@@ -416,13 +420,16 @@ export function AppBlockChrome({
    *  `getServerSideProps` 404s on `appBlocks && appBlocksPages` for every
    *  viewer regardless of where they came from. So every mounter passes
    *  `!!features.appBlocksPages`, exactly like `AppListingCard`,
-   *  `AppListingDetailBody`, `MySubmissionsList` and `MarketplaceBody` do.
+   *  `AppListingDetailBody` and `MarketplaceBody` do.
    *  Pinned by the source-level guard in `recentAppsRail.test.ts`.
    *
    *  🔴 DEFAULTS TO FALSE (no dead links) so a NEW mounter that forgets the
    *  prop hides the menu rather than offering guaranteed-404 links.
    */
   canOpenPage?: boolean;
+  /** The host that mounted this chrome. Decides whether it offers app feedback
+   *  (`APP_FEEDBACK_HOST_SURFACES`); omitted → no Feedback button. */
+  hostSurface?: BlockHostSurface;
 }) {
   // Gate the platform-nav "Review" item with the SAME greppable predicate the
   // /apps/review page + its server gate use (isAppReviewer), so the run-nav
@@ -447,6 +454,11 @@ export function AppBlockChrome({
   // only when there is something to review: an id is what the entry point resolved
   // and handed up, so there is no window in which the modal exists without one.
   const [reviewListingId, setReviewListingId] = useState<string | null>(null);
+  // The feedback modal's target, `null` while closed. Owned here beside `reviewListingId` so the
+  // chrome's modals all mount in one place, outside the bar; the entry point (a bar button) hands
+  // up the snapshot it took at click time.
+  const [feedbackTarget, setFeedbackTarget] = useState<AppFeedbackModalTarget | null>(null);
+  const feedbackRequest = resolveAppFeedbackRequest({ slug, appBlockId, slotId, modelId });
 
   // Recently-run apps (client-only personalisation from localStorage). Seeded
   // empty so SSR + the first client render match (no hydration mismatch); the
@@ -732,9 +744,10 @@ export function AppBlockChrome({
           literal-href items) correctly does not treat it as a destination the
           store subnav must also list.
 
-          Placed directly under "Manage apps" so the two whole-app actions that
-          are ALWAYS about the running app ("rate it", "see what it can do") sit
-          together above the dismissal, and "Hide app" stays last.
+          Placed directly under "Manage apps" so the whole-app actions about the
+          running app (rate it, see what it can do) sit together above the
+          dismissal, and "Hide app" stays last. Sending feedback is not here: it is its
+          own button in the bar, beside this menu's trigger.
 
           🔴 THE ITEM RENDERS ITS OWN GATES AND MAY RETURN NULL. It is offered
           only to a viewer the server would accept: signed in, not the owner,
@@ -829,9 +842,10 @@ export function AppBlockChrome({
             >
               <IconChevronLeft size={16} stroke={1.5} />
             </ActionIcon>
-            {/* The centered app name. `flex: 1 1 auto` between two 22px icon buttons is
-              what centers it, and `minWidth: 0` is what lets the name truncate rather
-              than push a control off the row.
+            {/* The centered app name. `flex: 1 1 auto` between the back chevron and the
+              trailing cluster is what centers it — exactly when only ⋮ trails, slightly left
+              of true center when the feedback button renders too — and `minWidth: 0` is
+              what lets the name truncate rather than push a control off the row.
 
               The provenance icon rides along rather than being dropped with the
               platform-nav trigger it used to live in. That trigger is GONE on this
@@ -868,50 +882,66 @@ export function AppBlockChrome({
             onOpenReview={setReviewListingId}
           />
         )}
-        {/* The ⋮ overflow. On a desktop-width bar it is the same dropdown it always
-          was. Below `sm` it becomes a bottom sheet AND absorbs the platform nav,
-          because the mobile bar has no second trigger to hang that behind — the
-          operator's call, and the reason `platformNavItems` is authored as a fragment
-          rather than inline in its own dropdown.
+        {/* The trailing cluster: the feedback button, then the ⋮ trigger, with a tighter gap
+          than the bar's own so the pair reads as one group of app actions. The button renders
+          its own gates and may be null. */}
+        <Group gap={4} wrap="nowrap">
+          {/* Labelled on a wide bar, icon-only below `sm`: the bar-width test the mobile shell
+            uses, but WITHOUT the `isPage` term of the local `compact` above. Two different
+            questions, so do not unify them: a narrow model sidebar has no shell but is just as
+            short of room. An unmeasured bar (SSR, first paint) is not compact, so it starts
+            labelled. */}
+          <ChromeFeedbackButton
+            request={feedbackRequest}
+            hostSurface={hostSurface}
+            labelled={!geometry.compact}
+            onOpenFeedback={setFeedbackTarget}
+          />
+          {/* The ⋮ overflow. On a desktop-width bar it is the same dropdown it always
+            was. Below `sm` it becomes a bottom sheet AND absorbs the platform nav,
+            because the mobile bar has no second trigger to hang that behind — the
+            operator's call, and the reason `platformNavItems` is authored as a fragment
+            rather than inline in its own dropdown.
 
-          Order: the running app's own actions first (that is what ⋮ has always
-          meant), then the platform destinations. The back chevron already covers the
-          most common of those, so the folded-in nav is the secondary half of the
-          sheet, not its headline. */}
-        <ChromeSurface
-          compact={compact}
-          kind="menu"
-          control={overflowMenu}
-          title="App menu"
-          width={180}
-          position="bottom-end"
-          dropdownTestId="app-block-menu-dropdown"
-          target={
-            /* `data-testid` alongside the accessible name: the sibling controls in
-             this chrome (`app-block-back`, `app-block-name`, `app-block-breadcrumb*`)
-             are all addressable that way, and a test reaching this trigger by
-             accessible name alone breaks on a copy change that is not a behaviour
-             change. */
-            <ActionIcon
-              variant="subtle"
-              color="gray"
-              size="sm"
-              aria-label="App menu"
-              data-testid="app-block-menu-trigger"
-              // The row is `wrap="nowrap"` (it must stay one line — CHROME_BAR_PX).
-              // Without this the ⋯ trigger is a shrinkable flex item and a long name
-              // at a narrow width can squeeze it below its resting `ActionIcon
-              // size="sm"` (22px in @mantine/core 7.17.8); its sibling on the left
-              // has carried `flexShrink: 0` all along.
-              style={{ flexShrink: 0 }}
-            >
-              <IconDots size={16} stroke={1.5} />
-            </ActionIcon>
-          }
-        >
-          {appMenuItems}
-          {compact && platformNavItems}
-        </ChromeSurface>
+            Order: the running app's own actions first (that is what ⋮ has always
+            meant), then the platform destinations. The back chevron already covers the
+            most common of those, so the folded-in nav is the secondary half of the
+            sheet, not its headline. */}
+          <ChromeSurface
+            compact={compact}
+            kind="menu"
+            control={overflowMenu}
+            title="App menu"
+            width={180}
+            position="bottom-end"
+            dropdownTestId="app-block-menu-dropdown"
+            target={
+              /* `data-testid` alongside the accessible name: the sibling controls in
+               this chrome (`app-block-back`, `app-block-name`, `app-block-breadcrumb*`)
+               are all addressable that way, and a test reaching this trigger by
+               accessible name alone breaks on a copy change that is not a behaviour
+               change. */
+              <ActionIcon
+                variant="subtle"
+                color="gray"
+                size="sm"
+                aria-label="App menu"
+                data-testid="app-block-menu-trigger"
+                // The row is `wrap="nowrap"` (it must stay one line — CHROME_BAR_PX).
+                // Without this the ⋯ trigger is a shrinkable flex item and a long name
+                // at a narrow width can squeeze it below its resting `ActionIcon
+                // size="sm"` (22px in @mantine/core 7.17.8); its sibling on the left
+                // has carried `flexShrink: 0` all along.
+                style={{ flexShrink: 0 }}
+              >
+                <IconDots size={16} stroke={1.5} />
+              </ActionIcon>
+            }
+          >
+            {appMenuItems}
+            {compact && platformNavItems}
+          </ChromeSurface>
+        </Group>
       </Group>
       {/* Per-app transparency drawer (Part B). Rendered only when the caller
         threaded an appBlockId; the body's queries fire only once opened. */}
@@ -942,6 +972,9 @@ export function AppBlockChrome({
           opened
           onClose={() => setReviewListingId(null)}
         />
+      )}
+      {feedbackTarget && (
+        <AppFeedbackModal target={feedbackTarget} onClose={() => setFeedbackTarget(null)} />
       )}
     </>
   );
@@ -1152,6 +1185,7 @@ export function IframeHost({
   token,
   expiresAt,
   tokenKind,
+  buzzBudget,
   missingScopes,
   needsConsent,
   domain,
@@ -1459,25 +1493,6 @@ export function IframeHost({
     const withheld = new Set(missingScopes);
     return declared.filter((s) => !withheld.has(s));
   }, [install.manifest.scopes, missingScopes]);
-
-  // Mirror the server's buzzBudget resolution (publisher's
-  // buzz_budget_per_gen → manifest default → 10, capped at 1000) so blocks
-  // can display the budget without a JWT decode. Only present when the token
-  // actually carries ai:write:budgeted (i.e. after consent); absent otherwise —
-  // a budget cap is meaningless without the spend scope it bounds.
-  //
-  // Must stay in lockstep with the server's `resolveBuzzBudget`
-  // (src/pages/api/v1/block-tokens/index.ts): require an INTEGER (not merely a
-  // finite number) so a fractional / Infinity / NaN value falls back to the
-  // default here exactly as the server mints it — otherwise the UI would show a
-  // per-gen budget the server never signed.
-  const buzzBudget = useMemo<number | undefined>(() => {
-    if (!grantedScopes.includes('ai:write:budgeted')) return undefined;
-    const raw = install.publisherSettings?.buzz_budget_per_gen;
-    const candidate = typeof raw === 'number' && Number.isInteger(raw) ? raw : 10;
-    if (candidate <= 0) return undefined;
-    return Math.min(candidate, 1000);
-  }, [grantedScopes, install.publisherSettings]);
 
   // Effective Checkpoint after publisher-default ∪ viewer-override merge.
   // Anon viewers see publisher default; authenticated viewers see their
@@ -1931,6 +1946,15 @@ export function IframeHost({
     return off;
   }, [onMessage]);
 
+  useEffect(() => {
+    const record = createBlockEventRecorder({
+      appBlockId: install.appBlockId,
+      blockInstanceId: install.blockInstanceId,
+    });
+    const off = onMessage<unknown>('TRACK_EVENT', record);
+    return off;
+  }, [onMessage, install.appBlockId, install.blockInstanceId]);
+
   // Anonymous conversion: the block (rendered for a logged-out viewer from the
   // scope-free BLOCK_INIT context) asks the host to start the civitai login
   // flow when the user clicks an action that needs auth/money (e.g. Generate).
@@ -2160,8 +2184,9 @@ export function IframeHost({
           // The "30 seconds" above is the SDK-side request timeout carried over
           // from #3680's reasoning. It is NOT verifiable in this repo:
           // `@civitai/blocks-react` is not a dependency (0 hits in
-          // pnpm-lock.yaml; the installed SDK is `@civitai/app-sdk@0.14.0`,
-          // which implements neither OPEN_BUZZ_PURCHASE nor a request timeout).
+          // pnpm-lock.yaml; when this was written the installed SDK was
+          // `@civitai/app-sdk@0.14.0`, which implements neither
+          // OPEN_BUZZ_PURCHASE nor a request timeout — not re-checked at 0.65.1).
           // Treat it as the reasonable inference it is, not a measurement.
           //
           // `!raw` is implied by requestId != null; the compound condition also
@@ -2400,16 +2425,21 @@ export function IframeHost({
           return;
         }
         const requestId = raw.requestId;
+        const workflowId = raw.workflowId;
+        const { waitSeconds } = raw as { waitSeconds?: unknown };
         try {
           const { snapshot } = await pollWorkflowMutation.mutateAsync({
             blockToken: token,
             workflowId: raw.workflowId,
+            ...(typeof waitSeconds === 'number' && Number.isFinite(waitSeconds)
+              ? { waitSeconds }
+              : {}),
           });
           send('WORKFLOW_STATUS', { requestId, snapshot });
         } catch (err) {
           send('WORKFLOW_STATUS', {
             requestId,
-            snapshot: failureSnapshot(err),
+            snapshot: pollFailureSnapshot(err, workflowId),
           });
         }
       }
@@ -2486,6 +2516,29 @@ export function IframeHost({
   const trpcUtils = trpc.useUtils();
   const storageSetMutation = trpc.apps.storage.set.useMutation();
   const storageDeleteMutation = trpc.apps.storage.delete.useMutation();
+
+  // ESTIMATE_WORKFLOW_BATCH → ESTIMATE_BATCH_RESULT. The batch twin of
+  // ESTIMATE_WORKFLOW above: a list of bodies in, one snapshot per body plus a
+  // run total out. Estimate only — nothing is submitted. Decision + reply live in
+  // `estimateBatchGate.ts`, shared with the page host so the two cannot answer
+  // the same message differently. There is no review preview on a model slot, so
+  // `refusal` is always null here.
+  useEffect(() => {
+    const off = onMessage<unknown>('ESTIMATE_WORKFLOW_BATCH', (raw) => {
+      void handleEstimateBatch({
+        raw,
+        refusal: null,
+        token,
+        estimateBatch: (input) => trpcUtils.client.blocks.estimateWorkflowBatch.mutate(input),
+        send,
+        onNoToken: (requestId) => {
+          reportNoToken('ESTIMATE_WORKFLOW_BATCH');
+          send('ESTIMATE_BATCH_RESULT', { requestId, error: BRIDGE_NACK_NO_TOKEN });
+        },
+      });
+    });
+    return off;
+  }, [onMessage, send, token, trpcUtils, reportNoToken]);
 
   useEffect(() => {
     const off = onMessage<{ requestId?: unknown; key?: unknown } | undefined>(
@@ -2822,7 +2875,7 @@ export function IframeHost({
           await invalidateSharedStorageReads(trpcUtils);
           send('SHARED_APPEND_RESULT', { requestId, key: result.key });
         } catch (err) {
-          send('SHARED_APPEND_RESULT', { requestId, error: storageErrorMessage(err) });
+          send('SHARED_APPEND_RESULT', { requestId, ...sharedStorageErrorReply(err) });
         }
       }
     );
@@ -2860,7 +2913,7 @@ export function IframeHost({
           await invalidateSharedStorageReads(trpcUtils);
           send('SHARED_UPDATE_RESULT', { requestId, ok: true });
         } catch (err) {
-          send('SHARED_UPDATE_RESULT', { requestId, ok: false, error: storageErrorMessage(err) });
+          send('SHARED_UPDATE_RESULT', { requestId, ok: false, ...sharedStorageErrorReply(err) });
         }
       }
     );
@@ -2880,7 +2933,7 @@ export function IframeHost({
           await invalidateSharedStorageReads(trpcUtils);
           send('SHARED_VOTE_RESULT', { requestId, count: result.count });
         } catch (err) {
-          send('SHARED_VOTE_RESULT', { requestId, error: storageErrorMessage(err) });
+          send('SHARED_VOTE_RESULT', { requestId, ...sharedStorageErrorReply(err) });
         }
       }
     );
@@ -2903,7 +2956,7 @@ export function IframeHost({
           await invalidateSharedStorageReads(trpcUtils);
           send('SHARED_UNVOTE_RESULT', { requestId, count: result.count });
         } catch (err) {
-          send('SHARED_UNVOTE_RESULT', { requestId, error: storageErrorMessage(err) });
+          send('SHARED_UNVOTE_RESULT', { requestId, ...sharedStorageErrorReply(err) });
         }
       }
     );
@@ -2926,7 +2979,7 @@ export function IframeHost({
           await invalidateSharedStorageReads(trpcUtils);
           send('SHARED_WITHDRAW_RESULT', { requestId, ok: result.ok, deleted: result.deleted });
         } catch (err) {
-          send('SHARED_WITHDRAW_RESULT', { requestId, error: storageErrorMessage(err) });
+          send('SHARED_WITHDRAW_RESULT', { requestId, ...sharedStorageErrorReply(err) });
         }
       }
     );
@@ -2996,7 +3049,7 @@ export function IframeHost({
           await invalidateSharedStorageReads(trpcUtils);
           send('SHARED_REPORT_RESULT', { requestId, ok: true });
         } catch (err) {
-          send('SHARED_REPORT_RESULT', { requestId, ok: false, error: storageErrorMessage(err) });
+          send('SHARED_REPORT_RESULT', { requestId, ok: false, ...sharedStorageErrorReply(err) });
         }
       }
     );
@@ -3181,6 +3234,7 @@ export function IframeHost({
         modelId={modelCtx.modelId}
         modelName={modelCtx.modelName}
         slotId={slotId}
+        hostSurface="model-slot"
         canOpenPage={!!(features.appBlocks && features.appBlocksPages)}
       />
       {/* 🔴 THE MISSING-PERMISSIONS BACKSTOP — the model-slot half, which did not

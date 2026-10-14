@@ -235,6 +235,25 @@ describe('POST /api/v1/block-tokens — dev-tunnel OWNED non-approved mint', () 
     });
   });
 
+  it.each([
+    ['at the cap', { path: '/', buzzBudgetPerGen: 5000 }, 5000],
+    ['one over the cap', { path: '/', buzzBudgetPerGen: 5001 }, 5000],
+    ['far over the cap', { path: '/', buzzBudgetPerGen: 6301 }, 5000],
+    ['undeclared', { path: '/' }, 1000],
+    ['a non-integer', { path: '/', buzzBudgetPerGen: 12.5 }, 1000],
+    ['negative', { path: '/', buzzBudgetPerGen: -5 }, 1000],
+  ])('a manifest budget, %s, mints the owner’s dev-tunnel buzzBudget', async (_l, page, minted) => {
+    mockBlockRegistry.resolveOwnedNonApprovedPageBlock.mockResolvedValue(
+      OWNED_RESOLUTION({
+        manifest: { name: 'My App', page, scopes: ['ai:write:budgeted', 'user:read:self'] },
+      })
+    );
+    const res = await invoke(DEV_BODY());
+    expect(res._status).toBe(200);
+    expect((mockTokenService.sign.mock.calls[0][0] as any).buzzBudget).toBe(minted);
+    expect(res._body.buzzBudget).toBe(minted);
+  });
+
   it('owner + SUSPENDED app + active tunnel + flags → mints a self-bound token (real ids, dev:true, forced-SFW)', async () => {
     const res = await invoke(DEV_BODY());
     expect(res._status).toBe(200);
@@ -252,7 +271,7 @@ describe('POST /api/v1/block-tokens — dev-tunnel OWNED non-approved mint', () 
     expect(arg.blockInstanceId).toBe('page_apb_real');
     expect(arg.dev).toBe(true);
     expect(arg.domain).toBeNull();
-    // Budget from the manifest page.buzzBudgetPerGen (75), clamped to the dev cap (250).
+    // Budget from the manifest page.buzzBudgetPerGen (75), under the dev cap.
     expect(arg.buzzBudget).toBe(75);
     // Ownership resolve was called with the real id + caller + write db.
     expect(mockBlockRegistry.resolveOwnedNonApprovedPageBlock).toHaveBeenCalledWith(

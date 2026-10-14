@@ -37,7 +37,6 @@ import { useRouter } from 'next/router';
 import clsx from 'clsx';
 import { STICKER_REVEAL_PARAM, stickerRevealRequested } from '~/components/Placement/queue-routes';
 import { useStickerRevealParam } from '~/store/sticker-reveal.store';
-import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { env } from '~/env/client';
 import { AdhesiveAd } from '~/components/Ads/AdhesiveAd';
 import { AdUnitSide_2, AdUnitSide_3 } from '~/components/Ads/AdUnit';
@@ -75,6 +74,8 @@ import { StickerPlacementBar } from '~/components/Sticker/StickerPlacementBar';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { Gated } from '~/components/Gated/Gated';
 import { buildBreadcrumbSchema } from '~/components/Meta/site-schema';
+import { buildImageMediaSchema } from '~/components/Image/DetailV2/image-media-schema';
+import { imageDetailGateLevel } from '~/components/Image/DetailV2/image-detail-gate';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { Metrics } from '~/components/Metrics';
 import { Reactions } from '~/components/Reaction/Reactions';
@@ -286,70 +287,11 @@ export function ImageDetail2() {
     image.user.username ? `by ${image.user.username}` : 'to civitai'
   }`;
 
-  const creator =
-    image.user.username && !image.user.deletedAt
-      ? {
-          '@type': 'Person',
-          name: image.user.username,
-          url: env.NEXT_PUBLIC_BASE_URL
-            ? `${env.NEXT_PUBLIC_BASE_URL}/user/${image.user.username}`
-            : undefined,
-        }
-      : { '@type': 'Person', name: 'Civitai user' };
-  const creditText = image.user.username && !image.user.deletedAt ? image.user.username : undefined;
-  const copyrightNotice =
-    image.user.username && !image.user.deletedAt ? `© ${image.user.username}` : undefined;
-
-  // Poster/thumbnail params mirror EdgeVideo's poster generation (anim=false,
-  // transcode=true) so Google fetches the same static frame we render.
-  const mediaSchema = isVideo
-    ? {
-        '@context': 'https://schema.org',
-        '@type': 'VideoObject',
-        name: title,
-        description: title,
-        contentUrl: getEdgeUrl(image.url, {
-          type: 'video',
-          width: 450,
-          transcode: true,
-          optimized: true,
-          anim: true,
-        }),
-        thumbnailUrl: getEdgeUrl(image.url, {
-          width: 450,
-          anim: false,
-          transcode: true,
-          optimized: true,
-          original: false,
-        }),
-        width: image.width ?? undefined,
-        height: image.height ?? undefined,
-        creator,
-        creditText,
-        copyrightNotice,
-        uploadDate: image.createdAt,
-      }
-    : {
-        '@context': 'https://schema.org',
-        '@type': 'ImageObject',
-        contentUrl: getEdgeUrl(image.url),
-        thumbnailUrl: getEdgeUrl(image.url, { width: 450 }),
-        caption: image.user.username ? `Image by ${image.user.username}` : 'Image on Civitai',
-        width: image.width ?? undefined,
-        height: image.height ?? undefined,
-        creator,
-        creditText,
-        copyrightNotice,
-        acquireLicensePage: env.NEXT_PUBLIC_BASE_URL
-          ? `${env.NEXT_PUBLIC_BASE_URL}/images/${image.id}`
-          : undefined,
-        uploadDate: image.createdAt,
-        datePublished: image.createdAt,
-      };
+  const mediaSchema = buildImageMediaSchema({ image, title, baseUrl: env.NEXT_PUBLIC_BASE_URL });
 
   return (
     <Gated
-      contentNsfwLevel={forcedBrowsingLevel || image.nsfwLevel}
+      contentNsfwLevel={imageDetailGateLevel(image, forcedBrowsingLevel)}
       bypassRating={isOwner || !!currentUser?.isModerator}
       meta={{
         title,

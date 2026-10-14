@@ -73,26 +73,20 @@ const cases: [file: string, start: string, call: string, times: number][] = [
   ],
   [
     'src/server/services/model.service.ts',
-    'export const privateModelFromTraining',
-    "scanEntityInBackground({ entityType: 'Model', entityId: result.id })",
-    1,
-  ],
-  [
-    'src/server/services/model.service.ts',
     'export async function migrateResourceToCollection',
     "scanEntityInBackground({ entityType: 'Model', entityId })",
     1,
   ],
   [
-    'src/server/services/post.service.ts',
-    'export const createPost',
-    "scanEntityInBackground({ entityType: 'Post', entityId: post.id })",
+    'src/server/services/model-version.service.ts',
+    'export const publishModelVersionById',
+    'scanEntitiesInBackground(',
     1,
   ],
   [
-    'src/server/services/post.service.ts',
-    'export const updatePost',
-    "scanEntityInBackground({ entityType: 'Post', entityId: post.id })",
+    'src/server/jobs/process-scheduled-publishing.ts',
+    'export const processScheduledPublishing',
+    'scanEntitiesInBackground(',
     1,
   ],
   [

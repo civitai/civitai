@@ -456,6 +456,31 @@ jobs:
     # Per-shard, not the whole suite: 555.5/4 + overhead is ~3.4m, so 15m is
     # ~4x headroom. It is NOT 30/4 — the fixed 66.5s does not shard.
     timeout-minutes: 15
+    # A real Redis for the tests that must see what Redis itself does: Lua scripts, sorted-set
+    # order of equal scores, increment exactness (roster.real-redis.test.ts). Such a test skips
+    # itself without its URL, so a shard that does not hold it pays only the container start.
+    services:
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 2s --health-timeout 2s --health-retries 15
+      # A real Postgres for the App Blocks document store's concurrency tests (quota under racing
+      # writers, concurrent marks/counters, lock timeout — doc-store.pg.test.ts). Same pattern as
+      # Redis above: the file skips itself without its URL, so other shards pay only the container
+      # start. The suite creates and drops its own databases on this throwaway server.
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 2s --health-timeout 2s --health-retries 15
+    env:
+      ROSTER_REDIS_URL: redis://localhost:6379/15
+      APPDATA_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
     steps:
       - uses: actions/checkout@v4
         with:
@@ -922,7 +947,7 @@ jobs:
           // the whole point of it — and leave MIN_TESTS alone, which is what "a fraction of
           // current" below means. (An earlier pairing of these comments told you to raise
           // both, which contradicted that.)
-          const MIN_FILES = 11;
+          const MIN_FILES = 14;
           // It was 10 — which had ZERO headroom when it was written (the tier was 10 tests
           // then, the same configuration this comment praises the FILE floor for), and became
           // unfailable as the tier grew past it. The GATE was not that weak — it is

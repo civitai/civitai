@@ -41,6 +41,8 @@ import { Reactions } from '~/components/Reaction/Reactions';
 import { ThumbsDownIcon, ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 import { TwCard } from '~/components/TwCard/TwCard';
 import { TwCosmeticWrapper } from '~/components/TwCosmeticWrapper/TwCosmeticWrapper';
+import { EventDecorationOverlay } from '~/components/Cosmetics/EventDecoration/EventDecorationOverlay';
+import { getEventDecorationClearLeft } from '~/components/Cosmetics/EventDecoration/event-decoration-placement';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { ImagesAsPostModel } from '~/server/controllers/image.controller';
@@ -56,6 +58,8 @@ import classes from './ImagesAsPostsCard.module.css';
 import clsx from 'clsx';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { ImagesAsPostsContextMenu } from '~/components/Image/ContextMenu/ImagesAsPostsContextMenu';
+import { ImpressionSentinel } from '~/components/TrackView/ImpressionSentinel';
+import { useTrackImpression } from '~/components/TrackView/useTrackImpression';
 
 type ImagesAsPostsCardProps = {
   data: ImagesAsPostModel;
@@ -98,6 +102,11 @@ function ImagesAsPostsCardNoMemo(props: ImagesAsPostsCardProps) {
         : undefined),
     };
   }, [cosmetic?.data, pinned, theme, colorScheme]);
+  // The cover only: further images are recorded per slide as they are swiped to.
+  const impressionRef = useTrackImpression<HTMLElement>([
+    ...(data.postId ? [{ entityType: 'Post' as const, entityId: data.postId }] : []),
+    ...(image ? [{ entityType: 'Image' as const, entityId: image.id }] : []),
+  ]);
 
   return (
     <TwCosmeticWrapper
@@ -110,6 +119,7 @@ function ImagesAsPostsCardNoMemo(props: ImagesAsPostsCardProps) {
           <PinnedIndicator radius="xl" color="orange" size="md" iconProps={pinnedIconProps} />
         )}
         <TwCard
+          ref={impressionRef}
           style={!cosmeticData ? { height } : undefined}
           className={clsx({ ['border']: !pinned })}
         >
@@ -186,7 +196,8 @@ function ImagesAsPostsCardHeader({
 
   return (
     <Paper
-      p="xs"
+      py="xs"
+      px="xs"
       radius={0}
       className={clsx(
         'z-[2] flex h-[58px] items-start justify-between gap-2',
@@ -285,7 +296,11 @@ function ImagesAsPostsCardContent({ data }: { data: ImagesAsPostModel }) {
       {(safe) => (
         <>
           {image.onSite && <OnsiteIndicator isRemix={!!image.remixOfId} />}
-          <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
+          <MediaHat image={image} />
+          <ImageGuard2.BlurToggle
+            className="absolute left-[max(0.5rem,var(--event-decoration-clear-left,0px))] top-2 z-10"
+            style={mediaHatClearLeft(image)}
+          />
           {safe && (
             <div className="absolute right-2 top-2 z-10 flex flex-col gap-2">
               <ImagesAsPostsContextMenu image={image} />
@@ -377,6 +392,28 @@ function ImagesAsPostsCardContent({ data }: { data: ImagesAsPostModel }) {
   );
 }
 
+/**
+ * The image's own hat, on its media. Each image in a post wears its own, so the card never wears
+ * one for another slide; the slide clips at its edge, so the hat stays inside (as on ModelCarousel).
+ */
+function MediaHat({ image }: { image: ImagesAsPostModel['images'][number] }) {
+  if (!image.eventDecoration) return null;
+  return (
+    <EventDecorationOverlay
+      decoration={image.eventDecoration.data}
+      placement="inside"
+      wornOn={{ entityType: 'Image', entityId: image.id }}
+    />
+  );
+}
+
+/** Steps the browsing-level badge clear of the image's hat. */
+function mediaHatClearLeft(image: ImagesAsPostModel['images'][number]) {
+  if (!image.eventDecoration) return undefined;
+  const clearLeft = getEventDecorationClearLeft(image.eventDecoration.data, 'inside');
+  return { '--event-decoration-clear-left': clearLeft + 'px' } as React.CSSProperties;
+}
+
 const carouselIndicatorProps = {
   className: 'flex w-full gap-px',
   indicatorClassName: 'h-2 flex-1 bg-white opacity-60 shadow-sm data-[active]:opacity-100',
@@ -409,8 +446,13 @@ function PostCarouselSlide({
     <ImageGuard2 image={image} connectType="post" connectId={postId}>
       {(safe) => (
         <>
+          <ImpressionSentinel impressions={[{ entityType: 'Image', entityId: image.id }]} />
           {image.onSite && <OnsiteIndicator isRemix={!!image.remixOfId} />}
-          <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
+          <MediaHat image={image} />
+          <ImageGuard2.BlurToggle
+            className="absolute left-[max(0.5rem,var(--event-decoration-clear-left,0px))] top-2 z-10"
+            style={mediaHatClearLeft(image)}
+          />
           {safe && (
             <div className="absolute right-2 top-2 z-10 flex flex-col gap-2">
               <ImagesAsPostsContextMenu image={image} />

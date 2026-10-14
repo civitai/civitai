@@ -210,6 +210,20 @@ describe('nightly grant', () => {
     ]);
   });
 
+  // A model a moderator takes down stops counting, so a total can fall below a tier already held.
+  it('revokes and announces nothing when a total falls below tiers already held', async () => {
+    const cosmeticId = await attachCosmetic('score:spark');
+    await runNight();
+    const before = await held(ELIGIBLE);
+    expect(before).toHaveLength(2);
+
+    const transitions = await applyUserScoreUpdates(pg, [[String(ELIGIBLE), { models: 0 }]]);
+    expect(transitions).toEqual([{ userId: ELIGIBLE, oldTotal: 1200, newTotal: 0 }]);
+    expect(await grantScoreTierMilestones(pg, transitions)).toEqual([]);
+    expect(await held(ELIGIBLE)).toEqual(before);
+    expect(await cosmeticsOf(ELIGIBLE)).toEqual([{ cosmeticId, claimKey: 'score:spark' }]);
+  });
+
   it('grants nothing twice', async () => {
     const { transitions } = await runNight();
     expect(await grantScoreTierMilestones(pg, transitions)).toEqual([]);
@@ -548,14 +562,14 @@ describe('nightly grant before a definition launches', () => {
     await q(`UPDATE "User" SET "isModerator" = true WHERE id = $1`, [ELIGIBLE]);
   });
 
-  async function runBatch(now: Date) {
+  async function runBatch(now: Date, models = 600) {
     const ctx = {
       pg,
       jobContext: { on: vi.fn(), checkIfCanceled: vi.fn() } as never,
       tierUnlocks: [],
       tierGrantErrors: [] as unknown[],
     };
-    await persistScoreBatch(ctx, [[String(ELIGIBLE), { models: 600 }]], { now });
+    await persistScoreBatch(ctx, [[String(ELIGIBLE), { models }]], { now });
     expect(ctx.tierGrantErrors).toEqual([]);
   }
 
@@ -579,5 +593,16 @@ describe('nightly grant before a definition launches', () => {
     await runBatch(AFTER_LAUNCH);
     expect(await held(ELIGIBLE)).toEqual([{ milestoneKey: 'score:spark', seen: false }]);
     expect(notifiedKeys()).toEqual([`creator-score-tier-reached:${ELIGIBLE}:score:spark`]);
+  });
+
+  it('keeps a held tier and announces nothing when the total falls below it', async () => {
+    await runBatch(AFTER_LAUNCH);
+    const before = await held(ELIGIBLE);
+    expect(before).toEqual([{ milestoneKey: 'score:spark', seen: false }]);
+    mocks.createNotification.mockClear();
+
+    await runBatch(AFTER_LAUNCH, 0);
+    expect(await held(ELIGIBLE)).toEqual(before);
+    expect(notifiedKeys()).toEqual([]);
   });
 });

@@ -10,11 +10,20 @@ export const appRouter = router({
   appListings: lazy(() =>
     import('~/server/routers/app-listings.router').then((m) => m.appListingsRouter)
   ),
+  appFeedback: lazy(() =>
+    import('~/server/routers/app-feedback.router').then((m) => m.appFeedbackRouter)
+  ),
   appCollaborators: lazy(() =>
     import('~/server/routers/app-collaborators.router').then((m) => m.appCollaboratorsRouter)
   ),
   blockImageUpload: lazy(() =>
     import('~/server/routers/block-image-upload.router').then((m) => m.blockImageUploadRouter)
+  ),
+  blockImagePicker: lazy(() =>
+    import('~/server/routers/block-image-picker.router').then((m) => m.blockImagePickerRouter)
+  ),
+  platformFeedback: lazy(() =>
+    import('~/server/routers/platform-feedback.router').then((m) => m.platformFeedbackRouter)
   ),
   account: lazy(() => import('./account.router').then((m) => m.accountRouter)),
   announcement: lazy(() => import('./announcement.router').then((m) => m.announcementRouter)),
@@ -49,6 +58,7 @@ export const appRouter = router({
   partner: lazy(() => import('./partner.router').then((m) => m.partnerRouter)),
   placement: lazy(() => import('./placement.router').then((m) => m.placementRouter)),
   post: lazy(() => import('./post.router').then((m) => m.postRouter)),
+  postPreset: lazy(() => import('./post-preset.router').then((m) => m.postPresetRouter)),
   promotion: lazy(() => import('./promotion.router').then((m) => m.promotionRouter)),
   question: lazy(() => import('./question.router').then((m) => m.questionRouter)),
   ratingReview: lazy(() => import('./rating-review.router').then((m) => m.ratingReviewRouter)),

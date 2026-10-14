@@ -1,12 +1,21 @@
 import * as z from 'zod';
-import { CacheTTL, constants } from '~/server/common/constants';
+import {
+  POST_BATCH_CHUNK_MAX_IMAGES,
+  POST_BATCH_CHUNK_POSTS,
+  POST_BATCH_MAX_POSTS,
+} from '@civitai/shared/post-scheduling';
+import { CacheTTL, constants, POST_IMAGE_LIMIT, POST_TAG_LIMIT } from '~/server/common/constants';
 import { PostSort } from '~/server/common/enums';
 import type { RateLimit } from '~/server/middleware.trpc';
 import { baseQuerySchema, periodModeSchema } from '~/server/schema/base.schema';
 import { toStringList } from '~/utils/array-helpers';
 import { isBetweenToday } from '~/utils/date-helpers';
 import { numberWithCommas } from '~/utils/number-helpers';
-import { imageMetaSchema, imageSchema } from '~/server/schema/image.schema';
+import {
+  imageInputSchema,
+  imageMetaSchema,
+  imagePositionSchema,
+} from '~/server/schema/image.schema';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { MediaType, MetricTimeframe } from '~/shared/utils/prisma/enums';
 import type { SessionUser } from '~/types/session';
@@ -72,6 +81,21 @@ function dailyPostLimitMessage({
 const hasReputation = (user: SessionUser, minScore: number) =>
   (user.meta?.scores?.total ?? 0) >= minScore;
 const isPaidMember = (user: SessionUser) => !!user.tier && user.tier !== 'free';
+
+/**
+ * The daily post cap `postRateLimits` ends up applying to this user: the highest reputation tier
+ * they meet, scaled by `MEMBER_DAILY_POST_MULTIPLIER` for members. Batch scheduling counts
+ * scheduled posts against it on the day they go live (`validateBatchSchedule`), so it needs the
+ * number, not the middleware's refusal.
+ */
+export function getDailyPostLimit(user: SessionUser): number {
+  const tier = dailyPostTiers.reduce(
+    (best, candidate) =>
+      hasReputation(user, candidate.minScore) && candidate.limit > best.limit ? candidate : best,
+    dailyPostTiers[0]
+  );
+  return isPaidMember(user) ? tier.limit * MEMBER_DAILY_POST_MULTIPLIER : tier.limit;
+}
 
 export const postRateLimits: RateLimit[] = [
   // Newly created accounts: tight hourly clamp for the rest of the calendar day
@@ -176,10 +200,8 @@ export const postUpdateSchema = z.object({
 });
 
 // Composite create-with-images input for headless/agent (MCP) use. Each image
-// reuses the shared imageSchema shape (without postId — the server fills it in
-// after creating the post) and requires an explicit ordering index. The post is
-// created, images are attached in order, and the post is optionally published in
-// a single server-side round-trip.
+// requires an explicit ordering index. The post is created, images are attached in
+// order, and the post is optionally published in a single server-side round-trip.
 export type CreatePostWithImagesInput = z.infer<typeof createPostWithImagesSchema>;
 export const createPostWithImagesSchema = z.object({
   title: z.string().trim().nullish(),
@@ -190,13 +212,21 @@ export const createPostWithImagesSchema = z.object({
   collectionId: z.number().optional(),
   publish: z.boolean().optional(),
   images: z
-    .array(
-      // Omit `id` as well: this is a create path, so a caller-supplied Image PK
-      // would be forwarded into createImage and fail (or clobber). The server
-      // fills postId, and index is required for explicit ordering.
-      imageSchema.omit({ postId: true, index: true, id: true }).extend({ index: z.number().min(0) })
-    )
+    .array(imageInputSchema.extend({ index: imagePositionSchema }))
     .min(1, 'At least one image must be provided'),
+});
+
+/** `post.addImage`: the target post is the caller's to name, and the server checks it. */
+export const postAddImageInput = imageInputSchema.extend({
+  postId: z.number(),
+  index: imagePositionSchema.optional(),
+  /**
+   * The generation this upload claims to be an output of. Only ever used to
+   * look up provenance the server itself signed, against a workflow the
+   * session user owns — see remix-provenance.ts. Never stored, and kept off
+   * the shared image schemas so it can't ride into a Prisma create.
+   */
+  generationWorkflowId: z.string().optional(),
 });
 
 export type RemovePostTagInput = z.infer<typeof removePostTagSchema>;
@@ -293,4 +323,98 @@ export type UpdatePostCollectionTagIdInput = z.infer<typeof updatePostCollection
 export const updatePostCollectionTagIdInput = z.object({
   id: z.number(),
   collectionTagId: z.number(),
+});
+
+// Post planner (docs/batch-scheduling-planner-element.md §3). Coerced so the REST twins can hand
+// query strings and JSON bodies to the same procedures the tRPC hosts call.
+const PLANNER_MAX_RANGE_DAYS = 45;
+const PLANNER_MAX_BATCH = 200;
+const PLANNER_MAX_SHIFT_MINUTES = 90 * 24 * 60;
+const plannerId = z.coerce.number().int().positive();
+export const postScheduleScopeSchema = z.enum(['post', 'version', 'model']);
+
+export type GetScheduledPostsInput = z.infer<typeof getScheduledPostsSchema>;
+export const getScheduledPostsSchema = z
+  .object({
+    from: z.coerce.date(),
+    to: z.coerce.date(),
+    modelVersionId: plannerId.optional(),
+  })
+  .refine((range) => range.to > range.from, { message: '`to` must be after `from`' })
+  .refine(
+    (range) => range.to.getTime() - range.from.getTime() <= PLANNER_MAX_RANGE_DAYS * 86_400_000,
+    { message: `A planner range spans at most ${PLANNER_MAX_RANGE_DAYS} days` }
+  );
+
+export type PlannerPostIdInput = z.infer<typeof plannerPostIdSchema>;
+export const plannerPostIdSchema = z.object({ id: plannerId });
+
+export type PlannerRescheduleInput = z.infer<typeof plannerRescheduleSchema>;
+export const plannerRescheduleSchema = z.object({
+  id: plannerId,
+  publishedAt: z.coerce.date(),
+  expectedScope: postScheduleScopeSchema,
+});
+
+export type PlannerPublishNowInput = z.infer<typeof plannerPublishNowSchema>;
+export const plannerPublishNowSchema = z.object({
+  id: plannerId,
+  expectedScope: postScheduleScopeSchema,
+});
+
+export type PlannerUnscheduleInput = z.infer<typeof plannerUnscheduleSchema>;
+export const plannerUnscheduleSchema = z.object({
+  ids: z.array(plannerId).min(1).max(PLANNER_MAX_BATCH),
+});
+
+export type PlannerShiftInput = z.infer<typeof plannerShiftSchema>;
+export const plannerShiftSchema = z.object({
+  ids: z.array(plannerId).min(1).max(PLANNER_MAX_BATCH),
+  deltaMinutes: z.coerce
+    .number()
+    .int()
+    .refine((minutes) => minutes !== 0 && Math.abs(minutes) <= PLANNER_MAX_SHIFT_MINUTES, {
+      message: 'Shift between 1 minute and 90 days in either direction',
+    }),
+});
+
+// Batch scheduling (docs/batch-scheduling-phase1-tech.md §2, §3). The composer validates the whole
+// batch up front, then sends it as chunks of complete posts.
+export type ValidateBatchScheduleInput = z.infer<typeof validateBatchScheduleSchema>;
+export const validateBatchScheduleSchema = z.object({
+  publishedAts: z.array(z.coerce.date()).max(POST_BATCH_MAX_POSTS),
+});
+
+// Only an upload key, like `post.addImage`: a batch is the first server path that writes
+// `Image.url` from the body, and an arbitrary URL would be served as-is.
+export const scheduleBatchImageSchema = addPostImageSchema
+  .omit({ postId: true, index: true, modelVersionId: true })
+  .extend({ url: z.string().uuid() });
+
+export const scheduleBatchPostSchema = z.object({
+  title: z.string().trim().max(255).nullish(),
+  publishedAt: z.coerce.date(),
+  images: z.array(scheduleBatchImageSchema).min(1).max(POST_IMAGE_LIMIT),
+});
+
+export type ScheduleBatchInput = z.infer<typeof scheduleBatchSchema>;
+export const scheduleBatchSchema = z.object({
+  /** One per chunk per attempt; the server refuses a repeat so a re-sent request cannot double-post. */
+  idempotencyKey: z.string().uuid().optional(),
+  modelVersionId: z.number().int().positive().nullish(),
+  tags: z.array(z.string().trim().min(1)).max(POST_TAG_LIMIT).default([]),
+  tools: z.array(z.number().int().positive()).default([]),
+  techniques: z.array(z.number().int().positive()).default([]),
+  posts: z
+    .array(scheduleBatchPostSchema)
+    .min(1)
+    .max(POST_BATCH_CHUNK_POSTS)
+    .superRefine((posts, ctx) => {
+      const imageCount = posts.reduce((count, post) => count + post.images.length, 0);
+      if (imageCount > POST_BATCH_CHUNK_MAX_IMAGES)
+        ctx.addIssue({
+          code: 'custom',
+          message: `One call can attach up to ${POST_BATCH_CHUNK_MAX_IMAGES} images; this one has ${imageCount}.`,
+        });
+    }),
 });

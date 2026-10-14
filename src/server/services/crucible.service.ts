@@ -54,6 +54,7 @@ import {
   CRUCIBLE_ENTRIES_CLOSED_MESSAGE,
   CRUCIBLE_ENTRY_CUTOFF_PERCENT,
   CRUCIBLE_ENTRY_WARNING_PERCENT,
+  CRUCIBLE_JUDGING_SUGGESTION_CANDIDATES,
   CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY,
   crucibleRankingsAreFinal,
   crucibleSupportsVideoSettings,
@@ -82,7 +83,7 @@ import {
   resolveWatchSeconds,
 } from '~/server/services/crucible-judging-session';
 import type { RedisKeyTemplateSys, RedisKeyTemplateCache } from '~/server/redis/client';
-import { sysRedis, REDIS_SYS_KEYS, REDIS_KEYS } from '~/server/redis/client';
+import { redis, sysRedis, REDIS_SYS_KEYS, REDIS_KEYS } from '~/server/redis/client';
 import { CacheTTL, constants } from '~/server/common/constants';
 import { fetchThroughCache } from '~/server/utils/cache-helpers';
 import {
@@ -96,14 +97,19 @@ import { createLogger } from '~/utils/logging';
 import { createNotification } from '~/server/services/notification.service';
 import { resolveCoverImageId } from '~/server/services/cover-image.service';
 import { isNonSfwForGreen } from '~/server/games/daily-challenge/challenge-currency';
-import { getEffectiveBrowsingLevel } from '~/server/games/daily-challenge/challenge-visibility';
+import {
+  getEffectiveBrowsingLevel,
+  isImageHiddenFromGreenViewer,
+} from '~/server/games/daily-challenge/challenge-visibility';
 import { checkCrucibleSettings } from '~/server/schema/crucible.schema';
 import { createPost, afterPostPublish, afterPostsPublish } from '~/server/services/post.service';
 import { NotificationCategory } from '~/server/common/enums';
 import { imageResourcesCache } from '~/server/redis/caches';
 import {
   areCrucibleEntriesClosed,
+  getCrucibleLiveMinVotes,
   getCrucibleMinVotes,
+  getCrucibleTimeAdjustedMinVotes,
   baseModelMakesMediaType,
   getAverageFinishTopPercent,
   getCreatorFinish,
@@ -523,7 +529,7 @@ type CrucibleViewer = {
   viewerId?: number;
   isModerator?: boolean;
   isGreen?: boolean;
-  blockedByUserIds?: number[];
+  blockedCreatorIds?: number[];
 };
 type CrucibleVisibilityRow = {
   userId: number;
@@ -543,16 +549,40 @@ export const isCrucibleHiddenByScan = (
   (crucible.ingestion !== CrucibleIngestionStatus.Scanned ||
     crucible.image?.ingestion !== ImageIngestionStatus.Scanned);
 
-/** As on its detail page, a creator who blocked the viewer hides the crucible from them. */
-const isCrucibleBlockedForViewer = (
+/**
+ * A block hides the crucible whichever side made it: `blockedCreatorIds` holds the creators who
+ * blocked the viewer and those the viewer blocked.
+ */
+export const isCrucibleBlockedForViewer = (
   crucible: Pick<CrucibleVisibilityRow, 'userId'>,
-  { isModerator, blockedByUserIds = [] }: CrucibleViewer
-) => !isModerator && blockedByUserIds.includes(crucible.userId);
+  { isModerator, blockedCreatorIds = [] }: CrucibleViewer
+) => !isModerator && blockedCreatorIds.includes(crucible.userId);
 
 const isCrucibleOffSite = (
   crucible: Pick<CrucibleVisibilityRow, 'userId' | 'nsfwLevel' | 'textNsfw'>,
   { viewerId, isModerator, isGreen }: CrucibleViewer
 ) => !!isGreen && !isModerator && crucible.userId !== viewerId && !isCrucibleSfw(crucible);
+
+/** Throws NotFound unless this viewer could open the crucible's own page. */
+export const assertCrucibleVisible = async (crucibleId: number, viewer: CrucibleViewer) => {
+  const crucible = await dbRead.crucible.findUnique({
+    where: { id: crucibleId },
+    select: {
+      userId: true,
+      nsfwLevel: true,
+      textNsfw: true,
+      ingestion: true,
+      image: { select: { ingestion: true } },
+    },
+  });
+  if (
+    !crucible ||
+    isCrucibleHiddenByScan(crucible, viewer) ||
+    isCrucibleOffSite(crucible, viewer) ||
+    isCrucibleBlockedForViewer(crucible, viewer)
+  )
+    throw throwNotFoundError('Crucible not found');
+};
 
 const greenSiteSql = (isGreen: boolean) =>
   isGreen
@@ -1054,9 +1084,34 @@ export async function getPaidEntryCounts(crucibleIds: number[], db: typeof dbRea
   return counts;
 }
 
-export async function withPaidEntryCount<T extends { id: number }>(rows: T[]) {
-  const counts = await getPaidEntryCounts(rows.map(({ id }) => id));
-  return rows.map((row) => ({ ...row, paidEntryCount: counts.get(row.id) ?? 0 }));
+/**
+ * Distinct entrants per crucible, host excluded. The same definition as the "10+ entrants"
+ * creator milestone (`competeWinsSource`): every entry row counts, whatever became of its media.
+ */
+export async function getEntrantCounts(crucibleIds: number[], db: typeof dbRead = dbRead) {
+  const counts = new Map(crucibleIds.map((id) => [id, 0]));
+  if (!crucibleIds.length) return counts;
+
+  const rows = await db.$queryRaw<{ crucibleId: number; entrants: number }[]>`
+    SELECT e."crucibleId", count(DISTINCT e."userId")::int AS entrants
+    FROM "CrucibleEntry" e
+    JOIN "Crucible" c ON c.id = e."crucibleId"
+    WHERE e."crucibleId" = ANY(${crucibleIds}::int[])
+      AND e."userId" <> c."userId"
+    GROUP BY e."crucibleId"
+  `;
+  for (const { crucibleId, entrants } of rows) counts.set(crucibleId, entrants);
+  return counts;
+}
+
+export async function withEntryCounts<T extends { id: number }>(rows: T[]) {
+  const ids = rows.map(({ id }) => id);
+  const [paid, entrants] = await Promise.all([getPaidEntryCounts(ids), getEntrantCounts(ids)]);
+  return rows.map((row) => ({
+    ...row,
+    paidEntryCount: paid.get(row.id) ?? 0,
+    entrantCount: entrants.get(row.id) ?? 0,
+  }));
 }
 
 export type CrucibleDetailEntry = Omit<CrucibleEntryRow, 'score' | 'position'> & {
@@ -1066,6 +1121,7 @@ export type CrucibleDetailEntry = Omit<CrucibleEntryRow, 'score' | 'position'> &
 
 export type CrucibleDetail = CrucibleDetailRow & {
   paidEntryCount: number;
+  entrantCount: number;
   /** The caller's own entries; everyone else's are paged through `getCrucibleEntries`. */
   viewerEntries: CrucibleEntryRow[];
   /** Entries whose image was deleted or withdrawn don't count, as in `submitEntry`'s limit. */
@@ -1107,29 +1163,39 @@ export const getCruciblesPrizeWinners = async (crucibles: PrizeCrucible[]) => {
 export const getCrucibleDetail = async ({
   id,
   userId,
-}: GetCrucibleByIdSchema & { userId?: number }): Promise<CrucibleDetail | null> => {
+  isModerator = false,
+  blockedCreatorIds,
+}: GetCrucibleByIdSchema & {
+  userId?: number;
+  isModerator?: boolean;
+  blockedCreatorIds?: number[];
+}): Promise<CrucibleDetail | null> => {
   const crucible = await dbRead.crucible.findUnique({
     where: { id },
     select: crucibleDetailSelect,
   });
 
-  if (!crucible) return null;
+  if (!crucible || isCrucibleBlockedForViewer(crucible, { isModerator, blockedCreatorIds }))
+    return null;
 
-  const [paidEntryCounts, { viewerEntries, viewerEntriesSoFar }] = await Promise.all([
-    getPaidEntryCounts([id]),
-    userId
-      ? dbRead.crucibleEntry
-          .findMany({
-            where: { crucibleId: id, userId },
-            select: crucibleEntrySelect,
-            orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
-          })
-          .then((entries) => ({
-            viewerEntries: entries.filter(hasEntryImage),
-            viewerEntriesSoFar: entries.length,
-          }))
-      : { viewerEntries: [], viewerEntriesSoFar: 0 },
-  ]);
+  const [paidEntryCounts, entrantCounts, { viewerEntries, viewerEntriesSoFar }] = await Promise.all(
+    [
+      getPaidEntryCounts([id]),
+      getEntrantCounts([id]),
+      userId
+        ? dbRead.crucibleEntry
+            .findMany({
+              where: { crucibleId: id, userId },
+              select: crucibleEntrySelect,
+              orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+            })
+            .then((entries) => ({
+              viewerEntries: entries.filter(hasEntryImage),
+              viewerEntriesSoFar: entries.length,
+            }))
+        : { viewerEntries: [], viewerEntriesSoFar: 0 },
+    ]
+  );
 
   const paidEntryCount = paidEntryCounts.get(id) ?? 0;
   const prizeWinners =
@@ -1154,6 +1220,7 @@ export const getCrucibleDetail = async ({
   return {
     ...crucible,
     paidEntryCount,
+    entrantCount: entrantCounts.get(id) ?? 0,
     viewerEntries,
     viewerEntryCount: viewerEntries.length,
     viewerEntriesSoFar,
@@ -1170,12 +1237,12 @@ export const getCrucibleEntries = async ({
   browsingLevel,
   isGreen = false,
   isModerator = false,
-  blockedByUserIds,
+  blockedCreatorIds,
 }: GetCrucibleEntriesSchema & {
   userId?: number;
   isGreen?: boolean;
   isModerator?: boolean;
-  blockedByUserIds?: number[];
+  blockedCreatorIds?: number[];
 }) => {
   const crucible = await dbRead.crucible.findUnique({
     where: { id: crucibleId },
@@ -1189,7 +1256,7 @@ export const getCrucibleEntries = async ({
       image: { select: { ingestion: true } },
     },
   });
-  const viewer = { viewerId: userId, isModerator, isGreen, blockedByUserIds };
+  const viewer = { viewerId: userId, isModerator, isGreen, blockedCreatorIds };
   if (
     !crucible ||
     isCrucibleHiddenByScan(crucible, viewer) ||
@@ -1230,7 +1297,9 @@ export const getCrucibleEntries = async ({
           crucibleId,
           prizePositions: parsePrizePositions(crucible.prizePositions),
           viewerId: userId,
-          visibleImage: page.visibleImage,
+          isGreen,
+          // The viewer's own level is left to the card's blur, as challenge winners are.
+          visibleImage: visibleEntryImageSql(crucible.nsfwLevel, 0),
         })
       : [];
 
@@ -1239,13 +1308,19 @@ export const getCrucibleEntries = async ({
 
 const PODIUM_PLACES = 3;
 
+/**
+ * Every podium winner, as challenge winners are shown: a paid place never drops off. A winner whose
+ * image was deleted or failed moderation comes without one, and on green a mature one without its url.
+ */
 const getPodiumEntries = async ({
   crucibleId,
   prizePositions,
   viewerId,
+  isGreen,
   visibleImage,
 }: Pick<EntryPageArgs, 'crucibleId' | 'viewerId' | 'visibleImage'> & {
   prizePositions: PrizePosition[];
+  isGreen: boolean;
 }) => {
   const winners = (
     (await getCruciblesPrizeWinners([{ id: crucibleId, prizePositions, totalPrizePool: 0 }])).get(
@@ -1254,20 +1329,37 @@ const getPodiumEntries = async ({
   ).filter(({ prizePlace }) => prizePlace <= PODIUM_PLACES);
   if (!winners.length) return [];
 
-  const ids = await dbRead.$queryRaw<{ id: number }[]>`
-    SELECT ce.id
-    FROM "CrucibleEntry" ce
-    JOIN "Image" i ON i.id = ce."imageId"
-    WHERE ce.id = ANY(${winners.map(({ entryId }) => entryId)}::int[])
-      AND ${entryVisibleToViewerSql(viewerId, visibleImage)}
-  `;
-  const prizePlaceById = new Map(winners.map(({ entryId, prizePlace }) => [entryId, prizePlace]));
-  return (await loadEntriesInOrder(ids))
-    .flatMap((entry) => {
-      const prizePlace = prizePlaceById.get(entry.id);
-      return prizePlace ? [{ ...entry, prizePlace }] : [];
-    })
-    .sort((a, b) => a.prizePlace - b.prizePlace);
+  const ids = winners.map(({ entryId }) => entryId);
+  const [visibility, entries] = await Promise.all([
+    dbRead.$queryRaw<{ id: number; imageVisible: boolean }[]>`
+      SELECT ce.id, COALESCE(${entryVisibleToViewerSql(
+        viewerId,
+        visibleImage
+      )}, false) AS "imageVisible"
+      FROM "CrucibleEntry" ce
+      LEFT JOIN "Image" i ON i.id = ce."imageId"
+      WHERE ce.id = ANY(${ids}::int[])
+    `,
+    dbRead.crucibleEntry.findMany({ where: { id: { in: ids } }, select: crucibleEntrySelect }),
+  ]);
+  const visibleIds = new Set(visibility.filter((row) => row.imageVisible).map(({ id }) => id));
+  const entryById = new Map(entries.map((entry) => [entry.id, entry]));
+
+  return winners.flatMap(({ entryId, prizePlace }) => {
+    const entry = entryById.get(entryId);
+    if (!entry) return [];
+    const image =
+      entry.image && visibleIds.has(entry.id)
+        ? {
+            ...entry.image,
+            url:
+              isGreen && isImageHiddenFromGreenViewer(entry.image.nsfwLevel, viewerId)
+                ? null
+                : entry.image.url,
+          }
+        : null;
+    return [{ ...entry, imageId: image?.id ?? null, image, prizePlace }];
+  });
 };
 
 type EntryPageArgs = {
@@ -1502,12 +1594,12 @@ export const createCrucibleEntryPost = async ({
   userId,
   isGreen = false,
   isModerator = false,
-  blockedByUserIds,
+  blockedCreatorIds,
 }: CreateEntryPostSchema & {
   userId: number;
   isGreen?: boolean;
   isModerator?: boolean;
-  blockedByUserIds?: number[];
+  blockedCreatorIds?: number[];
 }) => {
   const crucible = await dbRead.crucible.findUnique({
     where: { id: crucibleId },
@@ -1524,7 +1616,7 @@ export const createCrucibleEntryPost = async ({
       image: { select: { ingestion: true } },
     },
   });
-  const viewer = { viewerId: userId, isGreen, isModerator, blockedByUserIds };
+  const viewer = { viewerId: userId, isGreen, isModerator, blockedCreatorIds };
   if (
     !crucible ||
     isCrucibleHiddenByScan(crucible, viewer) ||
@@ -1638,12 +1730,25 @@ export const checkCrucibleEntryEligibility = async ({
   crucibleId,
   imageIds,
   userId,
-}: CheckCrucibleEntryEligibilitySchema & { userId: number }) => {
+  isModerator = false,
+  blockedCreatorIds,
+}: CheckCrucibleEntryEligibilitySchema & {
+  userId: number;
+  isModerator?: boolean;
+  blockedCreatorIds?: number[];
+}) => {
   const crucible = await dbRead.crucible.findUnique({
     where: { id: crucibleId },
-    select: { startAt: true, createdAt: true, allowedResources: true, allowedBaseModels: true },
+    select: {
+      userId: true,
+      startAt: true,
+      createdAt: true,
+      allowedResources: true,
+      allowedBaseModels: true,
+    },
   });
-  if (!crucible) throw throwNotFoundError('Crucible not found');
+  if (!crucible || isCrucibleBlockedForViewer(crucible, { isModerator, blockedCreatorIds }))
+    throw throwNotFoundError('Crucible not found');
 
   const images = await dbRead.image.findMany({
     where: { id: { in: imageIds }, userId },
@@ -1726,12 +1831,12 @@ export const submitEntry = async ({
   userId,
   isGreen = false,
   isModerator = false,
-  blockedByUserIds,
+  blockedCreatorIds,
 }: SubmitEntrySchema & {
   userId: number;
   isGreen?: boolean;
   isModerator?: boolean;
-  blockedByUserIds?: number[];
+  blockedCreatorIds?: number[];
 }) => {
   const lockToken = await acquireEntryLock(crucibleId, userId);
   if (!lockToken) {
@@ -1771,7 +1876,7 @@ export const submitEntry = async ({
       },
     });
 
-    const viewer = { viewerId: userId, isGreen, isModerator, blockedByUserIds };
+    const viewer = { viewerId: userId, isGreen, isModerator, blockedCreatorIds };
     if (
       !crucible ||
       isCrucibleHiddenByScan(crucible, viewer) ||
@@ -2514,6 +2619,32 @@ export function countRemainingPairs({
   return Math.max(0, Math.min(unjudgedPairs, byEntry, byVotes));
 }
 
+/** `countRemainingPairs` for a judge with no votes yet, in O(1). */
+export function countUnjudgedRemainingPairs(entryCount: number, maxVotesPerEntry: number) {
+  const n = entryCount;
+  return Math.max(
+    0,
+    Math.min((n * (n - 1)) / 2, n * Math.min(maxVotesPerEntry, n - 1), n * maxVotesPerEntry - 1)
+  );
+}
+
+/**
+ * The most pairs this judge can reach in a crucible, for a progress total. Depends only on how many
+ * entries they can see, never on how they voted, so a vote can't shrink it the way it shrinks
+ * `countRemainingPairs`. Clamped to the pairs already judged so "judged of total" never overflows.
+ */
+export function countTotalPairs({
+  entryCount,
+  judgedPairs,
+  maxVotesPerEntry,
+}: {
+  entryCount: number;
+  judgedPairs: number;
+  maxVotesPerEntry: number;
+}) {
+  return Math.max(judgedPairs, countUnjudgedRemainingPairs(entryCount, maxVotesPerEntry));
+}
+
 /** Pairs this judge voted on where both entries are still visible to them. */
 export function countJudgedPairs({
   entryIds,
@@ -2534,6 +2665,7 @@ export function countJudgedPairs({
 export type JudgingPairCount = {
   remainingPairs: number;
   judgedPairs: number;
+  totalPairs: number;
   visibleEntries: number;
   judged: boolean;
 };
@@ -2588,6 +2720,7 @@ export async function countJudgingPairs({
 
   for (const { id: crucibleId, judgeEntryVotes, votedPairKeys } of counted) {
     const visible = entryIds.get(crucibleId) ?? [];
+    const judgedPairs = countJudgedPairs({ entryIds: visible, votedPairKeys });
     counts.set(crucibleId, {
       remainingPairs: countRemainingPairs({
         entryIds: visible,
@@ -2595,7 +2728,12 @@ export async function countJudgingPairs({
         votedPairKeys,
         maxVotesPerEntry: CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY,
       }),
-      judgedPairs: countJudgedPairs({ entryIds: visible, votedPairKeys }),
+      judgedPairs,
+      totalPairs: countTotalPairs({
+        entryCount: visible.length,
+        judgedPairs,
+        maxVotesPerEntry: CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY,
+      }),
       visibleEntries: visible.length,
       judged: votedPairKeys.length > 0,
     });
@@ -2609,12 +2747,12 @@ export const getJudgingProgress = async ({
   browsingLevel,
   isGreen = false,
   isModerator = false,
-  blockedByUserIds,
+  blockedCreatorIds,
 }: GetJudgingProgressSchema & {
   userId: number;
   isGreen?: boolean;
   isModerator?: boolean;
-  blockedByUserIds?: number[];
+  blockedCreatorIds?: number[];
 }) => {
   const crucible = await dbRead.crucible.findUnique({
     where: { id: crucibleId },
@@ -2628,7 +2766,7 @@ export const getJudgingProgress = async ({
       image: { select: { ingestion: true } },
     },
   });
-  const viewer = { viewerId: userId, isModerator, isGreen, blockedByUserIds };
+  const viewer = { viewerId: userId, isModerator, isGreen, blockedCreatorIds };
   if (
     !crucible ||
     isCrucibleHiddenByScan(crucible, viewer) ||
@@ -2637,7 +2775,7 @@ export const getJudgingProgress = async ({
   )
     throw throwNotFoundError('Crucible not found');
   if (crucible.status !== CrucibleStatus.Active || (crucible.endAt && crucible.endAt <= new Date()))
-    return { remainingPairs: 0, judgedPairs: 0, votesUsedUp: false };
+    return { remainingPairs: 0, judgedPairs: 0, totalPairs: 0, votesUsedUp: false };
 
   const viewerLevel = getEffectiveBrowsingLevel({
     isGreen,
@@ -2653,6 +2791,7 @@ export const getJudgingProgress = async ({
   return {
     remainingPairs,
     judgedPairs: counted?.judgedPairs ?? 0,
+    totalPairs: counted?.totalPairs ?? 0,
     votesUsedUp: remainingPairs === 0 && (counted?.visibleEntries ?? 0) >= 2,
   };
 };
@@ -2664,12 +2803,12 @@ export const getJudgingStatuses = async ({
   userId,
   isGreen = false,
   isModerator = false,
-  blockedByUserIds,
+  blockedCreatorIds,
 }: GetJudgingStatusesSchema & {
   userId: number;
   isGreen?: boolean;
   isModerator?: boolean;
-  blockedByUserIds?: number[];
+  blockedCreatorIds?: number[];
 }): Promise<CrucibleJudgingStatus[]> => {
   const crucibles = await dbRead.crucible.findMany({
     where: {
@@ -2687,7 +2826,7 @@ export const getJudgingStatuses = async ({
       image: { select: { ingestion: true } },
     },
   });
-  const viewer = { viewerId: userId, isModerator, isGreen, blockedByUserIds };
+  const viewer = { viewerId: userId, isModerator, isGreen, blockedCreatorIds };
   const open = crucibles.filter(
     (crucible) =>
       !isCrucibleHiddenByScan(crucible, viewer) &&
@@ -2774,12 +2913,12 @@ export const getJudgingPair = async ({
   judgingSessionId,
   isGreen = false,
   isModerator = false,
-  blockedByUserIds,
+  blockedCreatorIds,
 }: GetJudgingPairSchema & {
   userId: number;
   isGreen?: boolean;
   isModerator?: boolean;
-  blockedByUserIds?: number[];
+  blockedCreatorIds?: number[];
 }): Promise<JudgingPair> => {
   const crucible = await dbRead.crucible.findUnique({
     where: { id: crucibleId },
@@ -2795,7 +2934,7 @@ export const getJudgingPair = async ({
       image: { select: { ingestion: true } },
     },
   });
-  const viewer = { viewerId: userId, isModerator, isGreen, blockedByUserIds };
+  const viewer = { viewerId: userId, isModerator, isGreen, blockedCreatorIds };
 
   if (
     !crucible ||
@@ -2934,10 +3073,10 @@ export const submitVote = async ({
   loserWatchedMs,
   judgingSessionId,
   userId,
-  blockedByUserIds,
+  blockedCreatorIds,
 }: SubmitVoteSchema & {
   userId: number;
-  blockedByUserIds?: number[];
+  blockedCreatorIds?: number[];
 }): Promise<SubmitVoteResult> => {
   log(
     `Vote submission started: user ${userId}, crucible ${crucibleId}, winner ${winnerEntryId}, loser ${loserEntryId}`
@@ -2959,7 +3098,7 @@ export const submitVote = async ({
     },
   });
 
-  if (!crucible || isCrucibleBlockedForViewer(crucible, { blockedByUserIds })) {
+  if (!crucible || isCrucibleBlockedForViewer(crucible, { blockedCreatorIds })) {
     throw throwNotFoundError('Crucible not found');
   }
 
@@ -3190,7 +3329,12 @@ export const getCrucibleRequiredModels = async ({
       image: { select: { ingestion: true } },
     },
   });
-  if (!crucible || isCrucibleHiddenByScan(crucible, viewer) || isCrucibleOffSite(crucible, viewer))
+  if (
+    !crucible ||
+    isCrucibleHiddenByScan(crucible, viewer) ||
+    isCrucibleOffSite(crucible, viewer) ||
+    isCrucibleBlockedForViewer(crucible, viewer)
+  )
     throw throwNotFoundError('Crucible not found');
 
   const versionIds = Array.isArray(crucible.allowedResources)
@@ -3220,11 +3364,34 @@ export const getCrucibleMinVotesToPlace = async ({
       textNsfw: true,
       nsfwLevel: true,
       ingestion: true,
+      startAt: true,
+      endAt: true,
+      timeAdjustedPlacement: true,
       image: { select: { ingestion: true } },
     },
   });
-  if (!crucible || isCrucibleHiddenByScan(crucible, viewer) || isCrucibleOffSite(crucible, viewer))
+  if (
+    !crucible ||
+    isCrucibleHiddenByScan(crucible, viewer) ||
+    isCrucibleOffSite(crucible, viewer) ||
+    isCrucibleBlockedForViewer(crucible, viewer)
+  )
     throw throwNotFoundError('Crucible not found');
+
+  if (crucible.timeAdjustedPlacement && crucible.endAt) {
+    const entries = await dbRead.crucibleEntry.findMany({
+      where: rankableEntryWhere(crucibleId, crucible.nsfwLevel),
+      select: { voteCount: true, createdAt: true },
+    });
+    return {
+      minVotes: getCrucibleLiveMinVotes({
+        entries,
+        startAt: crucible.startAt,
+        endAt: crucible.endAt,
+        now: new Date(),
+      }),
+    };
+  }
 
   const { _sum, _count } = await dbRead.crucibleEntry.aggregate({
     where: rankableEntryWhere(crucibleId, crucible.nsfwLevel),
@@ -3234,6 +3401,23 @@ export const getCrucibleMinVotesToPlace = async ({
   return {
     minVotes: getCrucibleMinVotes({ totalVotes: _sum.voteCount ?? 0, entryCount: _count._all }),
   };
+};
+
+export const getCrucibleJudgesCount = async ({
+  crucibleId,
+  viewer,
+}: {
+  crucibleId: number;
+  viewer: CrucibleViewer;
+}) => {
+  const crucible = await dbRead.crucible.findUnique({
+    where: { id: crucibleId },
+    select: { userId: true },
+  });
+  if (!crucible || isCrucibleBlockedForViewer(crucible, viewer))
+    throw throwNotFoundError('Crucible not found');
+
+  return getJudgesCount(crucibleId);
 };
 
 /**
@@ -3274,7 +3458,9 @@ export const finalizeCrucible = async (crucibleId: number): Promise<FinalizeCruc
       seededPrizePool: true,
       seedTransactionId: true,
       prizePositions: true,
+      startAt: true,
       endAt: true,
+      timeAdjustedPlacement: true,
       nsfwLevel: true,
       _count: {
         select: { entries: true },
@@ -3417,6 +3603,10 @@ export const finalizeCrucible = async (crucibleId: number): Promise<FinalizeCruc
     redisVoteCounts,
     prizePositions,
     totalPrizePool,
+    timeWindow:
+      crucible.timeAdjustedPlacement && crucible.endAt
+        ? { startAt: crucible.startAt, endAt: crucible.endAt }
+        : null,
   });
   // Written only if no run has written one, under the crucible's row lock: an earlier attempt may
   // have paid part of its ranking before failing, and an overlapping run would pay a second one.
@@ -3485,6 +3675,7 @@ export const finalizeCrucible = async (crucibleId: number): Promise<FinalizeCruc
         }))
       );
       log(`Awarded ${prizes.length} prizes for crucible ${crucibleId}`);
+      await bustUserBuzzWon(prizeWinners.map((winner) => winner.userId));
     } catch (error) {
       // Still Active, so the next run retries; the insert is keyed per entry and place.
       logToAxiom({
@@ -3607,7 +3798,13 @@ function rankEntries(
     redisVoteCounts,
     prizePositions,
     totalPrizePool,
-  }: PrizeContext & { redisElos: Record<number, number>; redisVoteCounts: Record<number, number> }
+    timeWindow,
+  }: PrizeContext & {
+    redisElos: Record<number, number>;
+    redisVoteCounts: Record<number, number>;
+    /** Set for crucibles whose placement bar follows the time each entry was live. */
+    timeWindow: { startAt: Date | null; endAt: Date } | null;
+  }
 ): FinalizedEntry[] {
   // Redis can lose a crucible's hashes (a reset or redeploy); the last sync is the fallback.
   const entriesWithElo = entries.map((entry) => ({
@@ -3618,17 +3815,20 @@ function rankEntries(
     createdAt: entry.createdAt,
   }));
 
+  const minVotesByEntry = timeWindow
+    ? getCrucibleTimeAdjustedMinVotes(entriesWithElo, timeWindow)
+    : null;
   const minVotes = getCrucibleMinVotes({
     totalVotes: entriesWithElo.reduce((sum, entry) => sum + entry.voteCount, 0),
     entryCount: entriesWithElo.length,
   });
+  const isPlaced = (entry: (typeof entriesWithElo)[number], index: number) =>
+    entry.voteCount >= (minVotesByEntry?.[index] ?? minVotes);
   const byScoreThenEntryTime = (a: (typeof entriesWithElo)[number], b: typeof a) =>
     b.finalScore - a.finalScore || a.createdAt.getTime() - b.createdAt.getTime();
-  const placedEntries = entriesWithElo
-    .filter((entry) => entry.voteCount >= minVotes)
-    .sort(byScoreThenEntryTime);
+  const placedEntries = entriesWithElo.filter(isPlaced).sort(byScoreThenEntryTime);
   const unplacedEntries = entriesWithElo
-    .filter((entry) => entry.voteCount < minVotes)
+    .filter((entry, index) => !isPlaced(entry, index))
     .sort(byScoreThenEntryTime);
 
   return withPrizes(
@@ -4148,7 +4348,14 @@ export const withdrawCrucibleEntry = async ({
 
   await revealCrucibleEntryPosts({ imageId });
 
-  logToAxiom({ type: 'info', name: 'crucible-entry-withdrawn', crucibleId, entryId, userId, imageId });
+  logToAxiom({
+    type: 'info',
+    name: 'crucible-entry-withdrawn',
+    crucibleId,
+    entryId,
+    userId,
+    imageId,
+  });
 
   return { entryId, crucibleId };
 };
@@ -4396,70 +4603,70 @@ export const cancelCrucible = async ({
 // User Crucible Stats
 // ============================================================================
 
+const userBuzzWonKey = (userId: number) =>
+  `${REDIS_KEYS.CRUCIBLE.USER_BUZZ_WON}:${userId}` as RedisKeyTemplateCache;
+
 /**
- * Get user's crucible stats for the discovery page welcome section
+ * Awarded prizes count toward Buzz Won before they are claimed, so finalize drops the cache.
+ * `redis.del` (forced refetch) is deliberate, not `bustFetchThroughCache` (stale-while-revalidate).
+ */
+const bustUserBuzzWon = (userIds: number[]) =>
+  Promise.all([...new Set(userIds)].map((id) => redis.del(userBuzzWonKey(id)))).catch((error) =>
+    log(`Failed to bust Buzz Won cache: ${error instanceof Error ? error.message : String(error)}`)
+  );
+
+/**
+ * Get user's crucible stats for the discovery page welcome section.
  *
- * Stats include:
- * - Total crucibles entered (not created)
- * - Total Buzz won from crucible prizes
- * - Best placement (lowest position number)
- * - Average finish, as the top percent of the field
- * - Prizes won (crucibles where the user took a prize)
+ * Participation counts every crucible the user entered while it was running or has ended;
+ * results (Buzz won, win rate, finishes) come from ended crucibles only. Cancelled crucibles are
+ * refunded and pending ones are not open for entries, so neither counts.
  */
 export const getUserCrucibleStats = async ({
   userId,
 }: {
   userId: number;
 }): Promise<{
-  totalCrucibles: number;
+  cruciblesEntered: number;
+  /** Ended crucibles entered: the denominator of the win rate. */
+  cruciblesEnded: number;
+  /** Ended crucibles in which the user took a prize of more than 0 Buzz. */
+  cruciblesWon: number;
   buzzWon: number;
-  bestPlacement: number | null;
+  bestFinish: { position: number; fieldSize: number } | null;
   avgFinishTopPercent: number | null;
-  prizesWon: number;
+  votesCast: number;
 }> => {
-  // Get all entries for this user in completed crucibles
-  const entries = await dbRead.crucibleEntry.findMany({
-    where: {
-      userId,
-      crucible: {
-        status: CrucibleStatus.Completed,
+  const [entries, votesCast, buzzWon] = await Promise.all([
+    dbRead.crucibleEntry.findMany({
+      where: {
+        userId,
+        crucible: { status: { in: [CrucibleStatus.Active, CrucibleStatus.Completed] } },
       },
-    },
-    select: {
-      id: true,
-      position: true,
-      crucibleId: true,
-      crucible: {
-        select: {
-          prizePositions: true,
-          entryFee: true,
-          seededPrizePool: true,
+      select: {
+        id: true,
+        position: true,
+        crucibleId: true,
+        crucible: {
+          select: {
+            status: true,
+            prizePositions: true,
+            entryFee: true,
+            seededPrizePool: true,
+          },
         },
       },
-    },
-  });
+    }),
+    getUserVoteCount(userId),
+    getUserBuzzWon(userId),
+  ]);
 
-  if (entries.length === 0) {
-    return {
-      totalCrucibles: 0,
-      buzzWon: 0,
-      bestPlacement: null,
-      avgFinishTopPercent: null,
-      prizesWon: 0,
-    };
-  }
-
-  // Calculate unique crucibles entered
-  const uniqueCrucibleIds = new Set(entries.map((e) => e.crucibleId));
-  const totalCrucibles = uniqueCrucibleIds.size;
-
-  // Calculate best placement (lowest non-null position)
-  const positions = entries.map((e) => e.position).filter((p): p is number => p !== null);
-  const bestPlacement = positions.length > 0 ? Math.min(...positions) : null;
-
-  const cruciblesById = new Map(entries.map((e) => [e.crucibleId, e.crucible]));
+  const cruciblesEntered = new Set(entries.map((e) => e.crucibleId)).size;
+  const ended = entries.filter((e) => e.crucible.status === CrucibleStatus.Completed);
+  const cruciblesById = new Map(ended.map((e) => [e.crucibleId, e.crucible]));
+  const cruciblesEnded = cruciblesById.size;
   const placedCrucibleIds = [
-    ...new Set(entries.filter((e) => e.position !== null).map((e) => e.crucibleId)),
+    ...new Set(ended.filter((e) => e.position !== null).map((e) => e.crucibleId)),
   ];
   const [placed, paidEntryCounts] = placedCrucibleIds.length
     ? await Promise.all([
@@ -4474,7 +4681,7 @@ export const getUserCrucibleStats = async ({
     else placedByCrucible.set(row.crucibleId, [row]);
   }
 
-  let prizesWon = 0;
+  let cruciblesWon = 0;
   const finishes: { rank: number; field: number }[] = [];
   for (const crucibleId of placedCrucibleIds) {
     const crucible = cruciblesById.get(crucibleId);
@@ -4489,38 +4696,48 @@ export const getUserCrucibleStats = async ({
         seededPrizePool: crucible?.seededPrizePool ?? 0,
       }),
     });
-    if (winners.some((winner) => winner.userId === userId && winner.prizeAmount > 0)) prizesWon++;
+    if (winners.some((winner) => winner.userId === userId && winner.prizeAmount > 0))
+      cruciblesWon++;
     const finish = getCreatorFinish({ placed: crucibleRows, userId });
     if (finish) finishes.push(finish);
   }
-  const avgFinishTopPercent = getAverageFinishTopPercent(finishes);
 
-  // Calculate total Buzz won from crucible prizes
-  // Uses externalTransactionId prefix which is more specific and potentially better indexed
-  // Results are cached since prize totals only change when new crucibles complete
-  const cacheKey = `${REDIS_KEYS.CRUCIBLE.USER_BUZZ_WON}:${userId}` as RedisKeyTemplateCache;
-  const buzzWon = await fetchThroughCache(
-    cacheKey,
-    async () => {
-      const buzzWonResult = await dbRead.$queryRaw<[{ total: bigint }]>`
-        SELECT COALESCE(SUM(amount), 0) as total
-        FROM "BuzzTransaction"
-        WHERE "toUserId" = ${userId}
-          AND "externalTransactionId" LIKE 'crucible-prize-%'
-      `;
-      return Number(buzzWonResult[0]?.total ?? 0);
-    },
-    { ttl: CacheTTL.hour }
+  // Best rank wins; between equal ranks the bigger field is the better result.
+  const best = finishes.reduce<{ rank: number; field: number } | null>(
+    (top, finish) =>
+      !top || finish.rank < top.rank || (finish.rank === top.rank && finish.field > top.field)
+        ? finish
+        : top,
+    null
   );
 
   return {
-    totalCrucibles,
+    cruciblesEntered,
+    cruciblesEnded,
+    cruciblesWon,
     buzzWon,
-    bestPlacement,
-    avgFinishTopPercent,
-    prizesWon,
+    bestFinish: best ? { position: best.rank, fieldSize: best.field } : null,
+    avgFinishTopPercent: getAverageFinishTopPercent(finishes),
+    votesCast,
   };
 };
+
+/**
+ * Gross prize Buzz from the Prize table, claimed or not. Buzz transactions live in an external
+ * service, so there is no ledger table to sum. Cached; finalize busts it.
+ */
+const getUserBuzzWon = (userId: number) =>
+  fetchThroughCache(
+    userBuzzWonKey(userId),
+    async () => {
+      const { _sum } = await dbRead.prize.aggregate({
+        where: { userId, sourceType: PrizeSourceType.Crucible, voidedAt: null },
+        _sum: { amount: true },
+      });
+      return _sum.amount ?? 0;
+    },
+    { ttl: CacheTTL.hour }
+  );
 
 // ============================================================================
 // User Active Crucibles
@@ -4561,8 +4778,10 @@ function formatTimeRemaining(endAt: Date): string {
  */
 export const getUserActiveCrucibles = async ({
   userId,
+  blockedCreatorIds,
 }: {
   userId: number;
+  blockedCreatorIds?: number[];
 }): Promise<
   Array<{
     id: number;
@@ -4589,6 +4808,7 @@ export const getUserActiveCrucibles = async ({
       crucible: {
         select: {
           id: true,
+          userId: true,
           name: true,
           entryFee: true,
           seededPrizePool: true,
@@ -4636,6 +4856,7 @@ export const getUserActiveCrucibles = async ({
   >();
 
   for (const entry of entries) {
+    if (isCrucibleBlockedForViewer(entry.crucible, { blockedCreatorIds })) continue;
     const crucibleId = entry.crucibleId;
     const existing = crucibleMap.get(crucibleId);
 
@@ -4833,9 +5054,6 @@ export const getJudgeStats = async ({
   };
 };
 
-// Enough to cover every open crucible today; the caught-up filter runs after the SQL limit.
-const JUDGING_SUGGESTION_CANDIDATES = 50;
-
 /**
  * Still judgeable by this viewer, and inside their browsing level on both the crucible's rating and
  * its cover — the rule the landing feed applies client-side in useApplyHiddenPreferences.
@@ -4885,7 +5103,7 @@ export const getJudgingSuggestions = async ({
         ) judgeable
       ) = 2
     ORDER BY c."createdAt" DESC, c.id DESC
-    LIMIT ${JUDGING_SUGGESTION_CANDIDATES}
+    LIMIT ${CRUCIBLE_JUDGING_SUGGESTION_CANDIDATES}
   `;
   if (!rows.length) return [];
 
@@ -4902,11 +5120,19 @@ export const getJudgingSuggestions = async ({
     .slice(0, limit);
   if (!ids.length) return [];
 
-  return withPaidEntryCount(
+  const suggestions = await withEntryCounts(
     await dbRead.crucible.findMany({
       where: { id: { in: ids } },
       select: crucibleListSelect,
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
     })
   );
+  // countJudgingPairs skips crucibles the judge never voted in (judgedOnly), so estimate those from
+  // the raw entry count: an overestimate, fine for weighting.
+  return suggestions.map((crucible) => ({
+    ...crucible,
+    remainingPairs:
+      counts.get(crucible.id)?.remainingPairs ??
+      countUnjudgedRemainingPairs(crucible._count.entries, CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY),
+  }));
 };

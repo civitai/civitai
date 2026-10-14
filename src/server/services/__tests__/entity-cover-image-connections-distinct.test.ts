@@ -49,6 +49,7 @@ vi.mock('~/env/server', () => ({
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: {} }));
 vi.mock('~/server/services/cosmetic.service', () => ({
   getCosmeticsForEntity: vi.fn().mockResolvedValue({}),
+  getEventDecorationsForEntity: vi.fn().mockResolvedValue({}),
 }));
 
 import { getEntityCoverImage } from '../image.service';
@@ -134,7 +135,13 @@ function outerFilter(sql: string) {
   // assertion below a statement about an empty string.
   expect(start, 'the outer UNION join is gone -- re-anchor this slice').toBeGreaterThan(-1);
 
-  return sql.slice(start).replace(/\s+/g, ' ').trim();
+  return sql
+    .slice(start)
+    .split('\n')
+    .map((line) => line.replace(/--.*$/, ''))
+    .join('\n')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 /**
@@ -217,11 +224,23 @@ describe('getEntityCoverImage bounds the CONNECTIONS branch to one row per entit
     expect(branch).toBe(
       'SELECT * FROM ( ' +
         'SELECT DISTINCT ON (e."entityId", e."entityType") ' +
-        'e."entityId", e."entityType", i.id AS "imageId", 0 "order1", 0 "order2", 0 "order3" ' +
+        'e."entityId", e."entityType", i.id AS "imageId", 0 "order1", 0 "order2", 0 "order3", 1 "coverRank" ' +
         'FROM entities e ' +
         'JOIN "ImageConnection" ic ON ic."entityId" = e."entityId" AND ic."entityType" = e."entityType" ' +
         'JOIN "Image" i ON i.id = ic."imageId" ' +
+        `LEFT JOIN "BountyEntry" be ON e."entityType" = 'BountyEntry' AND be.id = e."entityId" ` +
+        'LEFT JOIN "Bounty" b ON b.id = CASE e."entityType" ' +
+        `WHEN 'Bounty' THEN e."entityId" WHEN 'BountyEntry' THEN be."bountyId" END ` +
+        `LEFT JOIN "Article" a ON e."entityType" = 'Article' AND a.id = e."entityId" ` +
         `WHERE i."ingestion" = 'Scanned' AND i."needsReview" IS NULL ` +
+        // Only types with a visibility rule here, then canViewBounty or the article rule.
+        `AND e."entityType" IN ('Bounty', 'BountyEntry', 'Article') ` +
+        'AND ( ?::boolean ' +
+        `OR ( e."entityType" IN ('Bounty', 'BountyEntry') ` +
+        `AND (b.availability <> 'Private' OR (?::boolean AND b."userId" = ?)) ) ` +
+        `OR ( e."entityType" = 'Article' AND ( ` +
+        `(a.status = 'Published' AND a."publishedAt" IS NOT NULL AND a.ingestion = 'Scanned') ` +
+        'OR (?::boolean AND a."userId" = ?) ) ) ) ' +
         'ORDER BY e."entityId", e."entityType", i.id ' +
         ') t ) t'
     );
@@ -292,7 +311,8 @@ describe('getEntityCoverImage bounds the CONNECTIONS branch to one row per entit
       'the outer eligibility filter is gone, so the IMAGES branch can serve unscanned or needs-review images'
     ).toBe(
       'JOIN "Image" i ON i.id = t."imageId" ' +
-        `WHERE i."ingestion" = 'Scanned' AND i."needsReview" IS NULL`
+        `WHERE i."ingestion" = 'Scanned' AND i."needsReview" IS NULL ` +
+        'ORDER BY t."coverRank"'
     );
   });
 });

@@ -1,9 +1,6 @@
 import {
-  Anchor,
   Badge,
   Button,
-  Code,
-  Collapse,
   Divider,
   Group,
   Image,
@@ -13,10 +10,8 @@ import {
   ThemeIcon,
   Title,
 } from '@mantine/core';
-import { useDisclosure } from '@mantine/hooks';
 import {
   IconBrandGithub,
-  IconChevronDown,
   IconDatabase,
   IconPalette,
   IconPhoto,
@@ -28,13 +23,9 @@ import {
   APP_SDK_NPM_URL,
   BLOCKS_REACT_NPM_URL,
   CIVITAI_CLI_GITHUB_URL,
-  CLI_CREATE_SAMPLE_COMMAND,
-  CLI_INSTALL_BREW,
-  CLI_INSTALL_GO,
-  CLI_RUN_COMMAND,
 } from '~/components/Apps/cliCommands';
 import { AgentOnboardingCard } from '~/components/Apps/AgentOnboardingCard';
-import { CopyableCommand } from '~/components/Apps/CopyableCommand';
+import { ManualSetupCollapse } from '~/components/Apps/ManualSetupCollapse';
 
 /**
  * "App builders" get-started body — the Scope-A soft-launch funnel.
@@ -49,18 +40,15 @@ import { CopyableCommand } from '~/components/Apps/CopyableCommand';
  * else has to move. (The earlier version of this note said "one-line flag change" and
  * pointed at `/apps/get-started`, a page this consolidation deletes.)
  *
- * Copy is QUICKSTART-FIRST (devs scan + copy-paste; minimal prose). Honesty /
- * scope: this page points would-be developers at the LOCAL build tooling. The
- * `dev:live` (`/api/v1/blocks/dev-token`) path is `isModerator`-gated server
- * side, so a non-mod can install the CLI, scaffold, and build/test locally
- * against the mock harness.
+ * Copy is AGENT-FIRST: the copyable agent prompt leads, and the manual CLI steps sit in a
+ * closed collapse at the bottom. Honesty / scope: both routes point would-be developers at
+ * the LOCAL build tooling. The `dev:live` (`/api/v1/blocks/dev-token`) path is
+ * `isModerator`-gated server side, so a non-mod can install the CLI, scaffold, and
+ * build/test locally against the mock harness.
  *
  * Pure presentational (props-only, no tRPC / no network) so it renders in
  * isolation in component tests.
  */
-
-// CLI commands + ecosystem links are single-sourced in `./cliCommands`. The
-// quickstart uses the with-sample-name create form (`CLI_CREATE_SAMPLE_COMMAND`).
 
 /**
  * `onCopyCommand` is OPTIONAL and threads the `/apps/build` funnel's `cli_copy` step
@@ -81,19 +69,8 @@ export function GetStartedBody({
   onCopyCommand?: (c: string) => void;
   onCopyAgentPrompt?: (prompt: string) => void;
 } = {}) {
-  const [opened, { toggle }] = useDisclosure(false);
-
   return (
     <Stack gap="xl">
-      {/* Banner — 3:2 hero image (public asset, no layout shift) */}
-      <Image
-        src="/images/apps/civitai-apps-banner.webp"
-        alt="Build apps on Civitai"
-        radius="md"
-        w="100%"
-        style={{ aspectRatio: '3 / 2' }}
-      />
-
       {/* Hero — one line, no wall of text */}
       <Stack gap="xs">
         <Group gap="xs">
@@ -109,24 +86,22 @@ export function GetStartedBody({
       </Stack>
 
       {/*
-        The agent route, directly under the hero.
-        🔴 ABOVE "What you get" ON PURPOSE AND BELOW THE BANNER ON PURPOSE. This is the ONE
-        indexable state of `/apps/build`, so the card must not sit above the hero image that
-        is this page's LCP element — and the hero image declares a fixed `aspect-ratio`, so
-        nothing below it shifts.
-
-        ⚠️ THE CARD IS NOT CLS-FREE, THOUGH, AND THIS COMMENT CLAIMED IT WAS. It read "the
-        card itself introduces no asynchronous content, so it adds no layout shift of its
-        own", which is wrong in a way worth stating here rather than only in the card: its
-        blinking caret is inline content that exists only in the ANIMATED tree, so one commit
-        after hydration it can push the prompt's last word onto a new line. Estimated at
-        ~0.009 CLS — one line of ~21px against a ~900px viewport, over the ~40% of the page
-        below this card — i.e. an order of magnitude under the 0.1 "good" threshold, and
-        accepted on that basis. See `AgentOnboardingCard`'s header for the alternative that
-        was weighed and declined. Corrected because this is the comment someone would trust
-        if a CLS regression ever shows up on this route.
+        Above the banner on purpose: the agent route is this state's primary action. The
+        banner is therefore not guaranteed to be the LCP element of this indexable state, and
+        LCP has not been measured for this order, so do not tune the image's loading on that
+        assumption. The card can also shift what follows it by one line just after hydration;
+        see `AgentOnboardingCard`'s header.
       */}
       <AgentOnboardingCard onCopy={onCopyAgentPrompt} tone="prominent" />
+
+      {/* Banner: 3:2 public asset. The fixed aspect ratio reserves its box before it loads. */}
+      <Image
+        src="/images/apps/civitai-apps-banner.webp"
+        alt="Build apps on Civitai"
+        radius="md"
+        w="100%"
+        style={{ aspectRatio: '3 / 2' }}
+      />
 
       {/* What you get — the platform leverage a dev gets, then the toolkit links */}
       <Stack gap="sm">
@@ -226,45 +201,7 @@ export function GetStartedBody({
 
       <Divider />
 
-      {/* Quickstart — copy 3 lines, you're running. Collapsed by default so the
-          "what you get" pitch leads; the commands are one click away. */}
-      <Stack gap="sm">
-        <Title order={2}>Quickstart</Title>
-        <Text size="sm" c="dimmed">
-          Create a local Civitai app in 3 steps with the{' '}
-          <Anchor href={CIVITAI_CLI_GITHUB_URL} target="_blank" rel="noopener noreferrer">
-            Civitai CLI
-          </Anchor>
-        </Text>
-        <Button
-          variant="subtle"
-          size="xs"
-          onClick={toggle}
-          aria-expanded={opened}
-          w="fit-content"
-          rightSection={
-            <IconChevronDown
-              size={16}
-              style={{
-                transform: opened ? 'rotate(180deg)' : undefined,
-                transition: 'transform 150ms ease',
-              }}
-            />
-          }
-        >
-          {opened ? 'Hide commands' : 'Show commands'}
-        </Button>
-        <Collapse in={opened} data-testid="quickstart-commands">
-          <Stack gap="sm">
-            <CopyableCommand command={CLI_INSTALL_BREW} onCopy={onCopyCommand} />
-            <Text size="xs" c="dimmed">
-              or: <Code>{CLI_INSTALL_GO}</Code>
-            </Text>
-            <CopyableCommand command={CLI_CREATE_SAMPLE_COMMAND} onCopy={onCopyCommand} />
-            <CopyableCommand command={CLI_RUN_COMMAND} onCopy={onCopyCommand} />
-          </Stack>
-        </Collapse>
-      </Stack>
+      <ManualSetupCollapse onCopyCommand={onCopyCommand} />
     </Stack>
   );
 }

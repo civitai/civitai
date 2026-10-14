@@ -9,35 +9,38 @@ import type {
   GetLeaderboardsInput,
   GetLeaderboardsWithResultsInput,
 } from '~/server/schema/leaderboard.schema';
+import { leaderboardPopulatedKey } from '~/server/services/new-creators.service';
 import { getCosmeticsForUsers, getProfilePicturesForUsers } from '~/server/services/user.service';
 
-export async function isLeaderboardPopulated() {
-  const [{ populated }] = await dbWrite.$queryRaw<{ populated: boolean }[]>`
-      SELECT (
-        SELECT
-          COUNT(DISTINCT lr."leaderboardId")
-        FROM "LeaderboardResult" lr
-        JOIN "Leaderboard" l ON l.id = lr."leaderboardId"
-        WHERE l.query != '' AND date = current_date::date
-      ) = (SELECT COUNT(*) FROM "Leaderboard" WHERE query != '' AND active) as "populated"
-    `;
-
-  return populated;
-}
-
+/**
+ * A board is populated for today when it has rows dated today, or when `prepare-leaderboard` marked it
+ * complete for today. The marker covers a board that legitimately yields no rows, which the rows cannot
+ * show. The job writes the marker with `current_date + addDays` at 23:00, so the 00:01 readers see it as
+ * `current_date`.
+ */
 export async function getUnpopulatedLeaderboards() {
-  const rows = await dbWrite.$queryRaw<{ id: string }[]>`
-      SELECT l.id
-      FROM "Leaderboard" l
-      WHERE l.query != '' AND l.active
-        AND NOT EXISTS (
+  const rows = await dbWrite.$queryRaw<
+    { id: string; hasRows: boolean; marker: string | null; today: string }[]
+  >`
+      SELECT
+        l.id,
+        EXISTS (
           SELECT 1
           FROM "LeaderboardResult" lr
           WHERE lr."leaderboardId" = l.id AND lr.date = current_date::date
-        )
+        ) AS "hasRows",
+        kv.value #>> '{}' AS "marker",
+        current_date::text AS "today"
+      FROM "Leaderboard" l
+      LEFT JOIN "KeyValue" kv ON kv.key = ${leaderboardPopulatedKey('')}::text || l.id
+      WHERE l.query != '' AND l.active
     `;
 
-  return rows.map((x) => x.id);
+  return rows.filter((x) => !x.hasRows && x.marker !== x.today).map((x) => x.id);
+}
+
+export async function isLeaderboardPopulated() {
+  return (await getUnpopulatedLeaderboards()).length === 0;
 }
 
 // A board is visible on a domain when its `domain` array contains that color or

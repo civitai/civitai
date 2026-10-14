@@ -8,6 +8,7 @@ import { logToAxiom } from '~/server/logging/client';
 import { placementUnfundedSettlementsGauge } from '~/server/prom/client';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import type * as Award from '~/server/events/points/award';
 const dbWriteMock = dbMock.dbWrite;
 
 const createMultiAccountBuzzTransaction = vi.fn();
@@ -37,6 +38,19 @@ vi.mock('~/server/rewards/active/stickerPlacementAccepted.reward', () => ({
 const applyRemixReward = vi.fn();
 vi.mock('~/server/rewards/active/remixAccept.reward', () => ({
   remixAcceptReward: { apply: applyRemixReward },
+}));
+
+// Event points: an approval is the moment a sticker or remix earns the placer points on a hatted
+// image. Only the engine's entry points are replaced; the hook in between is real.
+const awardEventPoints = vi.fn(async (..._a: unknown[]) => undefined);
+const hattedImages = new Set<number>();
+vi.mock('~/server/events/points/award', async (importOriginal) => ({
+  ...(await importOriginal<typeof Award>()),
+  awardEventPoints,
+  isHattedEntity: (entityType: string, entityId: number) =>
+    entityType === 'Image' && hattedImages.has(entityId),
+  isHattedEntityOnceLoaded: async (entityType: string, entityId: number) =>
+    entityType === 'Image' && hattedImages.has(entityId),
 }));
 
 // A real mutex, not a pass-through: the lock is what stops two callers both
@@ -2357,5 +2371,135 @@ describe('what a placement says in the Buzz ledger', () => {
       expect(description).not.toMatch(/placement \d/i);
       expect(String(description).length).toBeLessThanOrEqual(100);
     }
+  });
+});
+
+describe('event points on approval', () => {
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+  const hold = () =>
+    holdPlacementEscrow({
+      spendType: 'yellow',
+      placementId: 1,
+      placerId: PLACER,
+      surface: 'sticker',
+      amount: 1000,
+    });
+
+  beforeEach(() => {
+    awardEventPoints.mockReset();
+    awardEventPoints.mockResolvedValue(undefined);
+    hattedImages.clear();
+    hattedImages.add(99);
+  });
+
+  it('awards the placer a sticker on the approved image', async () => {
+    givenPlacement();
+    await hold();
+
+    await settlePlacement({ placementId: 1, action: 'approve', actorId: OWNER });
+    await settle();
+
+    expect(awardEventPoints).toHaveBeenCalledWith([
+      {
+        type: 'sticker',
+        actorId: PLACER,
+        entityType: 'Image',
+        entityId: 99,
+        time: expect.any(Date),
+        sourceId: `Placement:sticker:99:${PLACER}`,
+      },
+    ]);
+  });
+
+  it('awards the submitter a remix when the owner accepts it into their remix gallery', async () => {
+    givenPlacement({ surface: 'remixGallery' });
+    await holdPlacementEscrow({
+      spendType: 'yellow',
+      placementId: 1,
+      placerId: PLACER,
+      surface: 'remixGallery',
+      amount: 1000,
+    });
+
+    await settlePlacement({ placementId: 1, action: 'approve', actorId: OWNER });
+    await settle();
+
+    expect(awardEventPoints).toHaveBeenCalledTimes(1);
+    expect(awardEventPoints).toHaveBeenCalledWith([
+      {
+        type: 'remix',
+        actorId: PLACER,
+        entityType: 'Image',
+        entityId: 99,
+        time: expect.any(Date),
+        sourceId: `Placement:remix:99:${PLACER}`,
+      },
+    ]);
+  });
+
+  it('awards on the approval, before the payout runs', async () => {
+    givenPlacement();
+    await hold();
+
+    await settlePlacement({ placementId: 1, action: 'approve', actorId: OWNER });
+    await settle();
+
+    // A payout that throws is resumed by a sweeper that never awards, so the award cannot wait on it.
+    expect(awardEventPoints).toHaveBeenCalledTimes(1);
+    expect(createBuzzTransaction).toHaveBeenCalled();
+    expect(awardEventPoints.mock.invocationCallOrder[0]).toBeLessThan(
+      createBuzzTransaction.mock.invocationCallOrder[0]
+    );
+  });
+
+  it('awards nothing on a decline', async () => {
+    givenPlacement();
+    await hold();
+
+    await settlePlacement({ placementId: 1, action: 'decline', actorId: OWNER });
+    await settle();
+
+    expect(awardEventPoints).not.toHaveBeenCalled();
+  });
+
+  it('awards nothing to the loser of a racing second approval', async () => {
+    givenPlacement();
+    await hold();
+    await settlePlacement({ placementId: 1, action: 'approve', actorId: OWNER });
+    await settle();
+
+    await settlePlacement({ placementId: 1, action: 'approve', actorId: OWNER });
+    await settle();
+
+    expect(awardEventPoints).toHaveBeenCalledTimes(1);
+  });
+
+  it('settles while the points call is still pending', async () => {
+    givenPlacement();
+    await hold();
+    awardEventPoints.mockReturnValueOnce(new Promise(() => undefined));
+
+    const outcome = await Promise.race([
+      settlePlacement({ placementId: 1, action: 'approve', actorId: OWNER }).then(() => 'done'),
+      settle()
+        .then(() => settle())
+        .then(() => 'pending'),
+    ]);
+    expect(outcome).toBe('done');
+    expect(awardEventPoints).toHaveBeenCalledTimes(1);
+  });
+
+  it('is not failed by a failing points call', async () => {
+    givenPlacement();
+    await hold();
+    awardEventPoints.mockRejectedValueOnce(new Error('redis down'));
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    await expect(
+      settlePlacement({ placementId: 1, action: 'approve', actorId: OWNER })
+    ).resolves.toMatchObject({ settled: true });
+    await settle();
+    expect(awardEventPoints).toHaveBeenCalledTimes(1);
+    error.mockRestore();
   });
 });

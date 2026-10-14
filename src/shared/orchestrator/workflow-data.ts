@@ -12,7 +12,11 @@ import type {
   NormalizedModel3DOutput,
 } from '~/server/services/orchestrator/orchestration-new.service';
 import type { ColorDomain } from '~/shared/constants/domain.constants';
-import { isPrivateMature, isMature } from '~/shared/constants/orchestrator.constants';
+import {
+  exceedsNsfwLevel,
+  isPrivateMature,
+  isMature,
+} from '~/shared/constants/orchestrator.constants';
 import { canUseWorkflowOutput } from '~/shared/generation/config/output-uses';
 import type { OutputUse } from '~/shared/generation/config/types';
 import {
@@ -37,9 +41,28 @@ export const defaultWorkflowCost: WorkflowCost = {
 export interface WorkflowDataOptions {
   domain: Record<ColorDomain, boolean>;
   nsfwEnabled: boolean;
+  holdUnrated?: boolean;
 }
 
-type BlobOptions = WorkflowDataOptions & { allowMatureContent?: boolean | null };
+export const PENDING_RATING = 'pendingRating';
+export const NSFW_CAPPED = 'nsfwCapped';
+
+/**
+ * An image or video reported available before it is rated. Audio is never rated, and a 3D mesh
+ * takes its rating from its preview images, so neither counts.
+ */
+export function isUnratedOutput(
+  output: Pick<NormalizedWorkflowStepOutput, 'type' | 'available' | 'nsfwLevel' | 'blockedReason'>
+) {
+  if (output.type !== 'image' && output.type !== 'video') return false;
+  if (!output.available || output.nsfwLevel != null) return false;
+  return !output.blockedReason || output.blockedReason === 'none';
+}
+
+type BlobOptions = WorkflowDataOptions & {
+  allowMatureContent?: boolean | null;
+  nsfwCap?: NsfwLevel | null;
+};
 
 // =============================================================================
 // WorkflowData
@@ -65,7 +88,11 @@ export class WorkflowData {
     Object.assign(this, workflow);
 
     // Initialize chain: StepData → BlobData with parent refs
-    const blobOptions: BlobOptions = { allowMatureContent: this.allowMatureContent, ...options };
+    const blobOptions: BlobOptions = {
+      allowMatureContent: this.allowMatureContent,
+      nsfwCap: this.nsfwCap,
+      ...options,
+    };
     this.steps = (this.steps ?? []).map((rawStep: any) => {
       if (rawStep instanceof StepData) {
         rawStep._setWorkflow(this);
@@ -98,6 +125,9 @@ export class WorkflowData {
   /** All displayable outputs across all steps (includes upgradeable). */
   get displayOutput() {
     return this.steps.flatMap((s) => s.displayOutput);
+  }
+  get pendingRatingOutput() {
+    return this.steps.flatMap((s) => s.pendingRatingOutput);
   }
 
   /** Total completed outputs across all steps. */
@@ -255,6 +285,10 @@ export class StepData {
     if (this.suppressOutput) return [];
     return this.output.filter((x) => x.displayable);
   }
+  get pendingRatingOutput(): Array<ImageBlob | VideoBlob | AudioBlob | Model3DBlob> {
+    if (this.suppressOutput) return [];
+    return this.output.filter((x) => x.pendingRating && !x.hidden);
+  }
   /** Count of outputs that have landed (available). */
   get completedCount(): number {
     return this.output.filter((x) => x.available).length;
@@ -266,11 +300,13 @@ export class StepData {
   }
   /** Count of outputs with a blockedReason. */
   get blockedCount(): number {
-    return this.output.filter((x) => !!x.blockedReason).length;
+    return this.blockedReasons.length;
   }
-  /** Blocked reason strings (for display grouping). */
+  /** Blocked reason strings (for display grouping), not counting those only waiting on a rating. */
   get blockedReasons(): string[] {
-    return this.output.map((x) => x.blockedReason).filter((x): x is string => !!x);
+    return this.output
+      .map((x) => x.blockedReason)
+      .filter((x): x is string => !!x && x !== PENDING_RATING);
   }
   /**
    * Whether this step still owes the user an output. A non-terminal status is not
@@ -321,7 +357,16 @@ export abstract class BlobData {
   #step: StepData;
   #index: number;
 
-  constructor({ data, allowMatureContent, step, index, domain, nsfwEnabled }: BlobConstructorArgs) {
+  constructor({
+    data,
+    allowMatureContent,
+    nsfwCap,
+    step,
+    index,
+    domain,
+    nsfwEnabled,
+    holdUnrated,
+  }: BlobConstructorArgs) {
     Object.assign(this, data);
     this.#step = step;
     this.#index = index;
@@ -344,7 +389,14 @@ export abstract class BlobData {
     if (data.blockedReason === 'none') this.blockedReason = null;
 
     if (!this.blockedReason) {
-      if (isPrivateGeneration && isPrivateMature(data.nsfwLevel)) {
+      // Stored as a blockedReason so every `!blockedReason` check downstream treats the output as
+      // not yet shown.
+      if (holdUnrated && isUnratedOutput(data)) {
+        this.blockedReason = PENDING_RATING;
+      } else if (nsfwCap && exceedsNsfwLevel(data.nsfwLevel, nsfwCap)) {
+        // The orchestrator reports these available but serves a placeholder in their place.
+        this.blockedReason = NSFW_CAPPED;
+      } else if (isPrivateGeneration && isPrivateMature(data.nsfwLevel)) {
         this.blockedReason = 'privateGen';
       } else if (isMature(data.nsfwLevel)) {
         if (domain.green) this.blockedReason = 'siteRestricted';
@@ -379,6 +431,10 @@ export abstract class BlobData {
 
   get canUpgrade() {
     return this.blockedReason === 'canUpgrade';
+  }
+
+  get pendingRating() {
+    return this.blockedReason === PENDING_RATING;
   }
 
   /** Whether this output can be used for `use`, by the workflow that made it. */

@@ -91,11 +91,15 @@ export function UserDraftArticles() {
                     </Link>
                   </Table.Td>
                   <Table.Td>
-                    {
+                    {article.scheduledAt ? (
+                      <Badge color="blue">
+                        Scheduled {formatDate(article.scheduledAt, 'MMM D, h:mm A')}
+                      </Badge>
+                    ) : (
                       <Badge color={article.status === 'Draft' ? 'gray' : 'yellow'}>
                         {article.status}
                       </Badge>
-                    }
+                    )}
                   </Table.Td>
                   <Table.Td>
                     {article.category ? <Badge>{article.category.name}</Badge> : 'N/A'}

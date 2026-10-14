@@ -24,7 +24,7 @@ import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import classes from './EditPostTags.module.scss';
 
-type TagProps = {
+export type TagProps = {
   id?: number;
   name: string;
 };
@@ -50,6 +50,8 @@ export function EditPostTags({
   autosuggest?: boolean;
 }) {
   const [tags, setTags] = useState<TagProps[]>(post.tags);
+  // Applying a preset writes tags to the store from the sidebar; the picker owns its own list.
+  useEffect(() => setTags(post.tags), [post.tags]);
   const handleSetTags = (cb: (tags: TagProps[]) => TagProps[]) => setTags(cb);
   return (
     <EditPostTagsContext.Provider
@@ -63,7 +65,7 @@ export function EditPostTags({
             canRemove={post.publishedAt ? post.tags.length > 1 : true}
           />
         ))}
-        {tags.length < POST_TAG_LIMIT && <TagPicker />}
+        {tags.length < POST_TAG_LIMIT && <PostTagPicker />}
       </Group>
     </EditPostTagsContext.Provider>
   );
@@ -119,34 +121,9 @@ function PostTag({ tag, canRemove }: { tag: TagProps; canRemove?: boolean }) {
   );
 }
 
-function TagPicker() {
-  const colorScheme = useComputedColorScheme('dark');
+function PostTagPicker() {
   const { postId, tags, setTags, autosuggest } = useEditPostTagsContext();
 
-  const [active, setActive] = useState<number>();
-  const [editing, setEditing] = useState(false);
-  const [query, setQuery] = useState<string>('');
-  const [debounced] = useDebouncedValue(query, 300);
-
-  const [dropdown, setDropdown] = useState<HTMLDivElement | null>(null);
-  const [control, setControl] = useState<HTMLDivElement | null>(null);
-
-  const browsingLevel = useBrowsingLevelDebounced();
-  const { data, isFetching } = trpc.post.getTags.useQuery(
-    { query: debounced, nsfwLevel: browsingLevel },
-    { placeholderData: keepPreviousData }
-  );
-
-  // const test = trpc.tag.getAll.useQuery(
-  //   {
-  //     query: debounced,
-  //     entityType: [TagTarget.Post],
-  //     nsfwLevel: browsingLevel,
-  //     sort: TagSort.MostPosts,
-  //     include: ['nsfwLevel'],
-  //   },
-  //   { placeholderData: keepPreviousData }
-  // );
   const { mutate } = trpc.post.addTag.useMutation({
     onSuccess: async (response) => {
       setTags((tags) => [...tags.filter((x) => !!x.id && x.id !== response.id), response]);
@@ -167,6 +144,34 @@ function TagPicker() {
       setTags((tags) => [...tags, tag]);
     },
     [mutate, postId, setTags]
+  );
+
+  return <TagPicker tags={tags} onAdd={handleAddTag} autosuggest={autosuggest} />;
+}
+
+export type TagPickerProps = {
+  tags: TagProps[];
+  onAdd: (tag: TagProps) => void;
+  autosuggest?: boolean;
+};
+
+/** The "+ Tag" chip with its trending/recommended dropdown. Controlled: the caller owns the tag
+ *  list and whatever persisting a pick means. */
+export function TagPicker({ tags, onAdd: handleAddTag, autosuggest }: TagPickerProps) {
+  const colorScheme = useComputedColorScheme('dark');
+
+  const [active, setActive] = useState<number>();
+  const [editing, setEditing] = useState(false);
+  const [query, setQuery] = useState<string>('');
+  const [debounced] = useDebouncedValue(query, 300);
+
+  const [dropdown, setDropdown] = useState<HTMLDivElement | null>(null);
+  const [control, setControl] = useState<HTMLDivElement | null>(null);
+
+  const browsingLevel = useBrowsingLevelDebounced();
+  const { data, isFetching } = trpc.post.getTags.useQuery(
+    { query: debounced, nsfwLevel: browsingLevel },
+    { placeholderData: keepPreviousData }
   );
 
   useEffect(() => {

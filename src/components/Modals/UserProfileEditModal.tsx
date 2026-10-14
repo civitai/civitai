@@ -198,11 +198,19 @@ export default function UserProfileEditModal() {
     { username: currentUser ? currentUser.username : '' },
     { enabled: !!currentUser?.username }
   );
+  // claimKey is null on anyone else's profile; this editor only ever loads the owner's.
+  const owned = useMemo(
+    () =>
+      (user?.cosmetics ?? []).flatMap(({ claimKey, ...c }) =>
+        claimKey ? [{ ...c, claimKey }] : []
+      ),
+    [user]
+  );
 
   const badges = useMemo(
     () =>
       user
-        ? user.cosmetics
+        ? owned
             .filter(({ cosmetic: c }) => c.type === CosmeticType.Badge && !!c.data)
             .filter((item, index, self) => {
               const data = (item.cosmetic.data ?? {}) as BadgeCosmetic['data'];
@@ -222,13 +230,13 @@ export default function UserProfileEditModal() {
               data: cosmetic.data as BadgeCosmetic['data'],
             }))
         : [],
-    [user]
+    [user, owned]
   );
 
   const nameplates = useMemo(
     () =>
       user
-        ? user.cosmetics
+        ? owned
             .filter(({ cosmetic: c }) => c.type === CosmeticType.NamePlate && !!c.data)
             .map(({ cosmetic, cosmeticId, ...c }) => ({
               ...c,
@@ -236,13 +244,13 @@ export default function UserProfileEditModal() {
               data: cosmetic.data as NamePlateCosmetic['data'],
             }))
         : [],
-    [user]
+    [user, owned]
   );
 
   const decorations = useMemo(
     () =>
       user
-        ? user.cosmetics
+        ? owned
             .filter(({ cosmetic: c }) => c.type === CosmeticType.ProfileDecoration && !!c.data)
             .map(({ cosmetic, cosmeticId, ...c }) => ({
               ...c,
@@ -250,13 +258,13 @@ export default function UserProfileEditModal() {
               data: cosmetic.data as ContentDecorationCosmetic['data'],
             }))
         : [],
-    [user]
+    [user, owned]
   );
 
   const backgrounds = useMemo(
     () =>
       user
-        ? user.cosmetics
+        ? owned
             .filter(({ cosmetic: c }) => c.type === CosmeticType.ProfileBackground && !!c.data)
             .map(({ cosmetic, cosmeticId, ...c }) => ({
               ...c,
@@ -264,7 +272,7 @@ export default function UserProfileEditModal() {
               data: cosmetic.data as ProfileBackgroundCosmetic['data'],
             }))
         : [],
-    [user]
+    [user, owned]
   );
 
   // `getLeaderboards` is already domain-scoped, so this list is whatever is visible
@@ -322,7 +330,7 @@ export default function UserProfileEditModal() {
 
   useEffect(() => {
     if (user && user?.profile) {
-      const equippedCosmetics = user.cosmetics
+      const equippedCosmetics = owned
         .filter((c) => !!c.equippedAt)
         .map(({ cosmetic, data, ...rest }) => ({ ...rest, ...cosmetic }));
       const selectedBadge = equippedCosmetics.find((c) => c.type === CosmeticType.Badge);

@@ -1,5 +1,6 @@
 import { isDev } from '~/env/other';
 import { Tracker } from '~/server/clickhouse/client';
+import { awardViewPoints, hattedImpressionEntities } from '~/server/events/points/hooks';
 import { trackBatchSchema } from '~/server/schema/track.schema';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 
@@ -77,6 +78,12 @@ export default PublicEndpoint(
         void tracker.action(event.data);
       }
     }
+
+    // Event points for views of hatted content. The in-memory hat check is all a batch without
+    // hatted content pays; the session is only resolved (and shared with the Tracker) past it, and
+    // signed-out viewers earn nothing.
+    const hatted = hattedImpressionEntities(result.data);
+    if (hatted.length) void awardViewPoints(() => tracker.getSession(), hatted);
 
     return res.status(200).end();
   },

@@ -509,7 +509,8 @@ export default MixedAuthEndpoint(async function handler(
     canGenerate,
     isFeatured,
     isPromoted: modelVersion.isPromoted,
-    evictable: isEvictable(modelVersion.versionFlags),
+    // Computed, not written to the flag, so the pin lifts by itself when the promotion ends.
+    evictable: !modelVersion.isPromoted && isEvictable(modelVersion.versionFlags),
     requireAuth: modelVersion.requireAuth,
     checkPermission: modelVersion.checkPermission,
     earlyAccessEndsAt: modelVersion.checkPermission ? modelVersion.earlyAccessEndsAt : undefined,

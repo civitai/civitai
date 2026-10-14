@@ -40,7 +40,10 @@ import { handleEndpointError } from '~/server/utils/endpoint-helpers';
  * request is up to three vendor calls (stage 1, then two stage-3 calls in
  * parallel). Flag: `resourceIntentJev` (Flipt
  * `resource-intent-jev`, default-deny when absent) is checked BEFORE the
- * response cache so a dark flag never reads, never spends.
+ * response cache so a dark flag never reads, never spends. Behind it,
+ * `resourceIntentPoolMerge` picks the co-occurrence POOL_MERGE list over HYBRID_10, and
+ * `resourceIntentCheckpoint` admits `kind: 'checkpoint'` (400 while it is off). Checkpoint mode
+ * makes no vendor call but still spends from the same LLM bucket: kept, not split, while it is dark.
  *
  * Any failure inside the primitive returns 200 with `degraded: true` and empty
  * suggestions — never a stack trace, never fabricated suggestions. ⚠️ ONE
@@ -85,6 +88,12 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
     res.status(400).json({ error: parsed.error });
     return;
   }
+  // Refused rather than answered as add-ons: a caller that asked for checkpoints must not get a
+  // list of a different kind. An absent `kind` (or 'addon') is unaffected by this flag.
+  if (parsed.data.kind === 'checkpoint' && !features.resourceIntentCheckpoint) {
+    res.status(400).json({ error: "kind 'checkpoint' is not enabled" });
+    return;
+  }
 
   const rateLimit = await checkBlockLLMRateLimit(claims.blockInstanceId);
   if (!rateLimit.allowed) {
@@ -97,9 +106,13 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
   const { browsingLevel, isSfwCeiling } = resolveCatalogBrowsingLevel(claims, { regionRestricted });
 
   try {
-    // Coverage is resolved INSIDE the service, on the cache-miss path only —
-    // a Flipt eval on every cache hit would be pure waste.
-    const result = await getResourceIntent(parsed.data, { browsingLevel });
+    // Coverage is resolved INSIDE the service: in add-on mode on the cache-miss
+    // path only (a Flipt eval on every hit would be waste); in checkpoint mode
+    // before the cache read, because it is a term of that mode's cache key.
+    const result = await getResourceIntent(parsed.data, {
+      browsingLevel,
+      poolMerge: !!features.resourceIntentPoolMerge,
+    });
     res.status(200).json({
       ...result,
       // Echo the applied ceiling (advisory — the clamp is authoritative).

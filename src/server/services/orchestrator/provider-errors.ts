@@ -18,6 +18,7 @@ export const providerNameMap: Record<string, string> = {
   'flux1-kontext': 'Fal.ai (Flux Kontext)',
   seedream: 'Fal.ai (SeeDream)',
   zimage: 'Fal.ai (zImage)',
+  seedance: 'Seedance',
 };
 
 export function providerName(engine?: string): string | undefined {
@@ -73,7 +74,7 @@ const UNSAFE_PATTERNS: RegExp[] = [
 
 const MAX_SAFE_LENGTH = 300;
 
-function isLikelySafeMessage(msg: string): boolean {
+export function isLikelySafeMessage(msg: string): boolean {
   if (!msg || msg.length > MAX_SAFE_LENGTH) return false;
   if (/[\r\n]/.test(msg)) return false; // multi-line ⇒ almost always a dump/trace
   return !UNSAFE_PATTERNS.some((re) => re.test(msg));
@@ -104,4 +105,25 @@ export function sanitizeProviderError(rawMessage: string, engine?: string): stri
     .filter(Boolean);
   const alreadyMentioned = aliases.some((a) => msg.toLowerCase().includes(a));
   return alreadyMentioned ? msg : `${provider}: ${msg}`;
+}
+
+// Providers name the offending request part by index, e.g. "input image 'content[1]'". The
+// bracket rule in UNSAFE_PATTERNS would redact the whole refusal for that token alone.
+const PROVIDER_INDEX_TOKEN = /\s*'?\b\w+\[\d+\]'?/g;
+
+/**
+ * Sanitised, user-facing errors for a failed step. A provider content refusal
+ * (`externalTOSViolation`) keeps its reason; every other message is sanitised unchanged.
+ */
+export function sanitizeStepErrors(step: unknown, engine?: string): string[] {
+  const output = (step as { output?: { externalTOSViolation?: unknown; message?: unknown } } | null)
+    ?.output;
+  const refusal =
+    output && 'externalTOSViolation' in output && typeof output.message === 'string'
+      ? output.message.trim()
+      : undefined;
+
+  return extractStepErrors(step).map((msg) =>
+    sanitizeProviderError(msg === refusal ? msg.replace(PROVIDER_INDEX_TOKEN, '') : msg, engine)
+  );
 }

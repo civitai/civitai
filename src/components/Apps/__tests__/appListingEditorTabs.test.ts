@@ -450,6 +450,103 @@ describe('🔴 History is on EVERY shape the route opens — the set is never em
   });
 });
 
+/**
+ * 🔴 THE FEEDBACK TAB EXISTS ONLY ONCE THE LISTING HAS FEEDBACK (operator decision, 2026-10-09).
+ *
+ * `hasFeedback` is `appFeedback.hasAnyForListing`, which applies the inbox list's own visibility
+ * predicate — so "hidden from owner" and "banned reporter" rows are already excluded before the
+ * value gets here (that half is pinned against real rows in `app-feedback.service.test.ts`).
+ */
+describe('🔴 Feedback appears only when the listing has feedback — then on every shape, LAST', () => {
+  const shapes = () =>
+    (['draft', 'pending', 'approved', 'removed', 'rejected'] as const).flatMap((status) =>
+      (['owner', 'editor'] as const).flatMap((role) =>
+        (['onsite', 'offsite'] as const).flatMap((kind) =>
+          [null, OWNER_UNPUBLISH_ACTION, 'other'].map((lastModerationAction) => ({
+            kind,
+            appBlockId: kind === 'onsite' ? 'ab_x' : null,
+            role,
+            status,
+            capabilities: capabilitiesForKind(kind),
+            lastModerationAction,
+          }))
+        )
+      )
+    );
+
+  it('positive control: the sweep covers every status x role x kind x last-action', () => {
+    expect(shapes()).toHaveLength(5 * 2 * 2 * 3);
+  });
+
+  it('🔴 NO feedback: no tab, on any shape', () => {
+    for (const ctx of shapes()) {
+      const where = `${ctx.kind}/${ctx.role}/${ctx.status}/${ctx.lastModerationAction}`;
+      expect(editorTabsFor({ ...ctx, hasFeedback: false }), where).not.toContain('feedback');
+    }
+  });
+
+  it('🔴 WITH feedback: the tab, once, LAST, on every shape — reports on a delisted app stay readable', () => {
+    for (const ctx of shapes()) {
+      const where = `${ctx.kind}/${ctx.role}/${ctx.status}/${ctx.lastModerationAction}`;
+      const tabs = editorTabsFor({ ...ctx, hasFeedback: true });
+      expect(tabs.at(-1), where).toBe('feedback');
+      expect(
+        tabs.filter((t) => t === 'feedback'),
+        where
+      ).toHaveLength(1);
+      // Adding it changes nothing else in the set.
+      expect(tabs.slice(0, -1), where).toEqual(editorTabsFor({ ...ctx, hasFeedback: false }));
+    }
+  });
+
+  it('🔴 an OMITTED field fails closed (a JS caller, or an `as` cast past the type)', () => {
+    const [ctx] = shapes();
+    expect(editorTabsFor(ctx as Parameters<typeof editorTabsFor>[0])).not.toContain('feedback');
+  });
+
+  it('🔴 INVARIANT: feedback never moves the landing tab — what lets `myAppListingHref` pass `false`', () => {
+    // INVARIANT GUARD, not regression coverage: it pins why the `/apps/build` row href may ignore
+    // feedback existence. That href reads only `tabs[0]`.
+    for (const ctx of shapes()) {
+      const where = `${ctx.kind}/${ctx.role}/${ctx.status}/${ctx.lastModerationAction}`;
+      const withIt = editorTabsFor({ ...ctx, hasFeedback: true });
+      const without = editorTabsFor({ ...ctx, hasFeedback: false });
+      expect(withIt[0], where).toBe(without[0]);
+      expect(resolveEditorTab(undefined, withIt), where).toBe(resolveEditorTab(undefined, without));
+    }
+  });
+
+  it('🔴 `?tab=feedback` with no feedback falls back like any unavailable tab', () => {
+    const live = {
+      kind: 'onsite',
+      appBlockId: 'ab_x',
+      role: 'owner',
+      status: 'approved',
+      capabilities: onsite,
+      lastModerationAction: null,
+    } as const;
+    expect(resolveEditorTab('feedback', editorTabsFor({ ...live, hasFeedback: false }))).toBe(
+      'details'
+    );
+    expect(resolveEditorTab('feedback', editorTabsFor({ ...live, hasFeedback: true }))).toBe(
+      'feedback'
+    );
+    // A narrowed set has no `details`, so the fallback is its FIRST tab — a different answer.
+    const removedEditor = { ...live, role: 'editor', status: 'removed' } as const;
+    expect(
+      resolveEditorTab('feedback', editorTabsFor({ ...removedEditor, hasFeedback: false }))
+    ).toBe('history');
+    expect(
+      resolveEditorTab('feedback', editorTabsFor({ ...removedEditor, hasFeedback: true }))
+    ).toBe('feedback');
+  });
+
+  it('has a label and a canonical deep link', () => {
+    expect(EDITOR_TAB_LABELS.feedback).toBe('Feedback');
+    expect(listingEditHref('apl_1', 'feedback')).toBe('/apps/listing/apl_1/edit?tab=feedback');
+  });
+});
+
 describe('resolveEditorTab', () => {
   it('returns a tab that is in the allowed set', () => {
     expect(resolveEditorTab('media', ['details', 'media', 'collaborators'])).toBe('media');

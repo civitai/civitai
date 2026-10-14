@@ -1,4 +1,5 @@
 import { appDisplayName } from '~/shared/utils/app-display-name';
+import { sniffImageFormat } from '~/shared/utils/image-magic-bytes';
 import { reviewUserChipSelect } from '~/server/selectors/review-user-chip.selector';
 import { GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import type { Prisma } from '@prisma/client';
@@ -38,23 +39,27 @@ import { isMarketplaceCategory } from '~/server/services/blocks/marketplace-cate
 // AppBlock→AppListing mapper consumes (see the (3b) auto-create block in
 // approveRequest). The mapper VALUE itself is dynamically imported at use.
 import type { SourceAppBlock } from '~/server/services/blocks/app-listing-mapper';
+import { recordListingRatingChangeAfterCommit } from '~/server/services/blocks/app-listing-rating';
 // Pure util (no env/Prisma) — folds a blockId to the appsDb schema slug. Used by
 // the (3c) storage-provision-on-approve block; matches the admin backfill's
 // derivation exactly. The provisioner VALUE is dynamically imported at use so
 // appsDb/pg stay out of this module's static graph (mirrors the (3b) mapper).
-import { sanitizeAppSlug } from '~/server/utils/apps-slug';
+import { newBlockIdHyphenRunError, sanitizeAppSlug } from '~/server/utils/apps-slug';
 // Pure const (no env/Prisma). THE SAME threshold the owner-facing UI uses to call
 // a deploy "stalled" — shared so the mod retrigger gate and the badge can never
 // disagree about whether a build is stuck.
 import {
   DEPLOY_PENDING_GRACE_MS,
   DEPLOY_STALE_AFTER_MS,
+  RETRIGGER_FAILED_AUTHOR_DETAIL,
 } from '~/shared/constants/app-block-deploy.constants';
 // Pure, dependency-free sanitizer. Applied to EVERY value written to the
 // owner-visible `deploy_detail`, so the "guaranteed printable, bounded text"
 // invariant that module documents holds on all write paths — not just the
 // build-callback's.
 import { sanitizeBuildFailureReason } from './build-failure-reason';
+import type { BuildAttemptSignals } from '~/shared/constants/app-block-build.constants';
+import type { ReviewStorageCleanupOutcome } from '~/server/metrics/app-block-runtime.metrics';
 
 // dbRead/dbWrite/newUlid/bundle-s3 are dynamically imported inside the
 // functions that need them so the pure helpers (extract/diff) can be
@@ -390,21 +395,17 @@ export function detectImageType(
   buf: Buffer,
   claimedExt: ScreenshotExtension
 ): ScreenshotExtension | null {
-  const isPng =
-    buf.length >= 8 &&
-    buf[0] === 0x89 &&
-    buf[1] === 0x50 &&
-    buf[2] === 0x4e &&
-    buf[3] === 0x47 &&
-    buf[4] === 0x0d &&
-    buf[5] === 0x0a &&
-    buf[6] === 0x1a &&
-    buf[7] === 0x0a;
-  const isJpeg = buf.length >= 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff;
-  const isWebp =
-    buf.length >= 12 &&
-    buf.toString('ascii', 0, 4) === 'RIFF' &&
-    buf.toString('ascii', 8, 12) === 'WEBP';
+  // Shared sniffer ({@link sniffImageFormat}) under this caller's rules: full 8-byte PNG
+  // signature, no GIF, no minimum length beyond each signature's own. The WebP markers ignore the
+  // high bit only because this function's original `toString('ascii')` comparison did.
+  const format = sniffImageFormat(buf, {
+    formats: ['png', 'jpeg', 'webp'],
+    pngSignature: 'full',
+    webpFourCcIgnoresHighBit: true,
+  });
+  const isPng = format === 'png';
+  const isJpeg = format === 'jpeg';
+  const isWebp = format === 'webp';
 
   // The bytes must match the claimed extension's family. `.jpg`/`.jpeg` are the
   // same format → both require the JPEG signature and normalise to `jpg`.
@@ -1162,6 +1163,9 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
   // treated as TAKEN, exactly like any other foreign listing on the slug.
   let createDraftListing = false;
   if (existingApp == null) {
+    const hyphenRunError = newBlockIdHyphenRunError(slug);
+    if (hyphenRunError) throw new Error(hyphenRunError);
+
     const existingSlugListing = await dbRead.appListing.findFirst({
       where: { slug },
       select: { id: true, kind: true, status: true, appBlockId: true, userId: true },
@@ -1627,6 +1631,8 @@ export async function withdrawRequest(opts: {
     // an agent can run without a sandbox preview, so this must not be gated on
     // hadReviewPreview. Idempotent no-op when no agent was dispatched.
     void teardownAgentReviewForRequest(publishRequestId);
+    // Review document-store data — unconditional for the same reason (no preview needed).
+    void teardownReviewStorageForRequest(publishRequestId);
     return;
   }
   if (count === 0) {
@@ -1645,6 +1651,7 @@ export async function withdrawRequest(opts: {
       if (hadReviewPreview) void teardownReviewForRequest(publishRequestId);
       // AGENTIC REVIEW (P1, audit #1) — unconditional agent teardown (idempotent).
       void teardownAgentReviewForRequest(publishRequestId);
+      void teardownReviewStorageForRequest(publishRequestId);
       return;
     }
     // Raced into approved/rejected → the not-pending guarantee, now true under
@@ -2002,10 +2009,23 @@ type ListingJoinSubject = {
   slug: string;
   appBlockId: string | null;
   submittedBy: { id: number } | null;
+  manifest?: unknown;
 };
 
-/** A slug-resolved listing, reduced to what the ownership test and the projection read. */
+/**
+ * {@link ListingQueueFacts} plus the joined listing's id and, when approving the request
+ * re-rates a listing from its imagery, which listing and from what declared rating.
+ */
+type RequestListingFacts = ListingQueueFacts & {
+  appListingId: string | null;
+  approveRating: { listingId: string; declared: string | null } | null;
+};
+
+/** A slug-resolved listing, reduced to what {@link listingFactsForRequests} reads. */
 type JoinedListing = {
+  id: string;
+  status: string;
+  contentRating: string | null;
   slug: string;
   kind: string;
   appBlockId: string | null;
@@ -2074,9 +2094,45 @@ function listingBelongsToRequest(listing: JoinedListing, req: ListingJoinSubject
   return listing.userId === req.submittedBy?.id;
 }
 
+/** The rating a manifest declares; an app that declares none is approved as `g`. */
+function manifestRatingOrDefault(manifest: unknown): string {
+  const rating = (manifest as { contentRating?: unknown } | null)?.contentRating;
+  return typeof rating === 'string' ? rating : 'g';
+}
+
 /**
- * The store-listing facts a moderator queue shows beside a CODE request — lifetime plays
- * and the listing's media — for a whole page of requests.
+ * The pre-approval draft listing a FIRST approve of `slug` transitions in place and rates
+ * from the request's manifest (`approveRequest`, 3b-transition). Owner-scoped: a draft
+ * another user holds on the same slug is never adopted.
+ */
+export function draftTransitionWhere(args: { slug: string; submittedByUserId: number }) {
+  return {
+    slug: args.slug,
+    kind: 'onsite',
+    appBlockId: null,
+    status: 'draft',
+    userId: args.submittedByUserId,
+  } satisfies Prisma.AppListingWhereInput;
+}
+
+/**
+ * The reset-to-pending listing an approve of `appBlockId` restores to `approved` and rates
+ * from the rating it already carries (`approveRequest`, 3b-reset) — only while no listing
+ * request of its own is pending, since that queue then owns the listing's review.
+ */
+export function resetRestoreWhere(appBlockId: string) {
+  return {
+    appBlockId,
+    kind: 'onsite',
+    status: 'pending',
+    publishRequests: { none: { status: 'pending' } },
+  } satisfies Prisma.AppListingWhereInput;
+}
+
+/**
+ * The store-listing facts a moderator queue shows beside a CODE request — lifetime plays,
+ * the listing's media, its id and whether approving re-rates it — for a whole page of
+ * requests.
  *
  * 🔴 RESOLVED BY `AppListing.slug`, NOT `appBlockId`, because that FK is NULL while an
  * app's first request is pending and an id-keyed join would blank exactly the rows a
@@ -2087,21 +2143,30 @@ function listingBelongsToRequest(listing: JoinedListing, req: ListingJoinSubject
  * `rev-<ulid>` slug, so it can never match an app slug. The `revisionOfId: null` term is
  * belt only.
  *
- * 🔴 A FIXED NUMBER OF QUERIES FOR THE WHOLE PAGE, never one per row — one parent plus one
- * per relation, since Prisma loads each separately. Keyed on the REQUEST id rather than the
+ * 🔴 A FIXED NUMBER OF QUERIES FOR THE WHOLE PAGE, never one per row: the slug join (one
+ * parent plus one per relation, since Prisma loads each separately) and one query each
+ * for the draft-transition and reset-restore lookups. Keyed on the REQUEST id rather than the
  * slug: two decided requests can share a slug while disagreeing about which listing is
  * theirs, so a slug-keyed result cannot hold both verdicts.
  */
 async function listingFactsForRequests(
   requests: ListingJoinSubject[]
-): Promise<(requestId: string) => ListingQueueFacts> {
+): Promise<(requestId: string) => RequestListingFacts> {
   const { NO_LISTING_QUEUE_FACTS, listingQueueFacts } = await import('./app-listing.service');
+  const noListing: RequestListingFacts = {
+    ...NO_LISTING_QUEUE_FACTS,
+    appListingId: null,
+    approveRating: null,
+  };
   const slugs = [...new Set(requests.map((r) => r.slug))];
-  if (slugs.length === 0) return () => NO_LISTING_QUEUE_FACTS;
+  if (slugs.length === 0) return () => noListing;
   const { dbRead } = await import('~/server/db/client');
   const rows = (await dbRead.appListing.findMany({
     where: { slug: { in: slugs }, kind: 'onsite', revisionOfId: null },
     select: {
+      id: true,
+      status: true,
+      contentRating: true,
       slug: true,
       kind: true,
       appBlockId: true,
@@ -2112,15 +2177,53 @@ async function listingFactsForRequests(
     },
   })) as JoinedListing[];
 
+  // Whether an approve re-rates a listing is answered with approveRequest's OWN `where`
+  // builders, so this warning and that write cannot disagree about which listing it is.
+  const draftWheres = requests.flatMap((r) =>
+    r.submittedBy
+      ? [draftTransitionWhere({ slug: r.slug, submittedByUserId: r.submittedBy.id })]
+      : []
+  );
+  const resetWheres = requests.flatMap((r) =>
+    r.appBlockId ? [resetRestoreWhere(r.appBlockId)] : []
+  );
+  const [drafts, resets] = await Promise.all([
+    draftWheres.length
+      ? dbRead.appListing.findMany({
+          where: { OR: draftWheres },
+          select: { id: true, slug: true, userId: true },
+        })
+      : [],
+    resetWheres.length
+      ? dbRead.appListing.findMany({
+          where: { OR: resetWheres },
+          select: { id: true, appBlockId: true, contentRating: true },
+        })
+      : [],
+  ]);
+  const approveRatingFor = (req: ListingJoinSubject): RequestListingFacts['approveRating'] => {
+    const draft = (drafts as { id: string; slug: string; userId: number }[]).find(
+      (d) => d.slug === req.slug && d.userId === req.submittedBy?.id
+    );
+    if (draft) return { listingId: draft.id, declared: manifestRatingOrDefault(req.manifest) };
+    const reset = (
+      resets as { id: string; appBlockId: string | null; contentRating: string | null }[]
+    ).find((l) => req.appBlockId != null && l.appBlockId === req.appBlockId);
+    return reset ? { listingId: reset.id, declared: reset.contentRating } : null;
+  };
+
   const bySlug = new Map(rows.map((r) => [r.slug, r]));
-  const out = new Map<string, ListingQueueFacts>();
+  const out = new Map<string, RequestListingFacts>();
   for (const req of requests) {
     const listing = bySlug.get(req.slug);
-    if (listing && listingBelongsToRequest(listing, req)) {
-      out.set(req.id, listingQueueFacts(listing));
-    }
+    const belongs = listing && listingBelongsToRequest(listing, req);
+    out.set(req.id, {
+      ...(belongs ? listingQueueFacts(listing) : NO_LISTING_QUEUE_FACTS),
+      appListingId: belongs ? listing.id : null,
+      approveRating: approveRatingFor(req),
+    });
   }
-  return (requestId: string) => out.get(requestId) ?? NO_LISTING_QUEUE_FACTS;
+  return (requestId: string) => out.get(requestId) ?? noListing;
 }
 
 /**
@@ -2214,10 +2317,14 @@ export async function listApprovedRequests(opts: ListPendingRequestsOptions = {}
       forgejoCommitSha: true,
       // Build/deploy lifecycle — additive. The Approved tab is where a moderator
       // sees that an approved app never actually built (deployState null =
-      // STRANDED) and can re-trigger it; without these three the queue shows a
+      // STRANDED) and can re-trigger it; without these two the queue shows a
       // uniformly-healthy list of approvals regardless of what actually shipped.
+      //
+      // 🔴 `deployDetail` IS NOT SELECTED. It carries the tenant-influenced build-log
+      // excerpt, which only the app's own team may see (the listing's History tab).
+      // Moderators get the structured state above, never the excerpt, and leaving it
+      // out of the query keeps it out of the payload too.
       deployState: true,
-      deployDetail: true,
       deployUpdatedAt: true,
       submittedBy: { select: reviewUserChipSelect },
       reviewedBy: { select: reviewUserChipSelect },
@@ -2226,10 +2333,18 @@ export async function listApprovedRequests(opts: ListPendingRequestsOptions = {}
   const hasNext = rows.length > limit;
   const items = hasNext ? rows.slice(0, limit) : rows;
   const listingFacts = await listingFactsForRequests(items as ListingJoinSubject[]);
+  const buildSignals = await failedBuildSignals(
+    items
+      .filter((r: (typeof rows)[number]) => r.deployState === 'failed')
+      .map((r: (typeof rows)[number]) => ({ id: r.id, deployUpdatedAt: r.deployUpdatedAt }))
+  );
   return {
     items: items.map((r: (typeof rows)[number]) => ({
       ...r,
       ...listingFacts(r.id),
+      // The latest build attempt's failed step + class, on failed rows: structured values
+      // the server derived, the moderator-safe counterpart of the excerpt not selected above.
+      buildSignals: buildSignals.get(r.id) ?? null,
       bundleSizeBytes: r.bundleSizeBytes.toString(),
       reviewRepoUrl: reviewRepoUrl(r.slug),
       // Push rows have empty bundle pointers; bundleSha256 (selected, NOT NULL)
@@ -2430,8 +2545,7 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
   // `approvedScopes = []` ⟹ its dev token is read-only + cannot spend. Writing
   // `approvedScopes` anywhere OUTSIDE this approval flow would break that safety.
   const manifestScopes = Array.isArray(manifest.scopes) ? (manifest.scopes as string[]) : [];
-  const manifestContentRating =
-    typeof manifest.contentRating === 'string' ? manifest.contentRating : 'g';
+  const manifestContentRating = manifestRatingOrDefault(manifest);
   const manifestRenderMode =
     typeof manifest.renderMode === 'string' ? manifest.renderMode : 'iframe';
   // W13 category-on-approve: the OPTIONAL marketplace `category` the manifest
@@ -2552,6 +2666,9 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
   let repoUrl: string;
 
   if (isFirstVersion) {
+    const hyphenRunError = newBlockIdHyphenRunError(request.slug);
+    if (hyphenRunError) throw new Error(`Cannot approve: ${hyphenRunError}`);
+
     // (1) Auto-create OauthClient — public client scoped to the per-app
     // subdomain so the existing git-push manifest validator passes the
     // H8 origin binding check.
@@ -2826,14 +2943,12 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
     // `AppListing.userId`). A foreign same-slug draft does NOT match here and falls
     // through to the legacy create path below.
     let handledByDraftTransition = false;
+    // Shared with the moderator's pre-approve warning (`listingFactsForRequests`).
     const draftListing = await dbWrite.appListing.findFirst({
-      where: {
+      where: draftTransitionWhere({
         slug: request.slug,
-        kind: 'onsite',
-        appBlockId: null,
-        status: 'draft',
-        userId: request.submittedByUserId,
-      },
+        submittedByUserId: request.submittedByUserId,
+      }),
       select: { id: true },
     });
     if (draftListing) {
@@ -2895,7 +3010,15 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
             }),
           },
         });
-        if (transitioned.count === 0) {
+        if (transitioned.count > 0) {
+          await recordListingRatingChangeAfterCommit({
+            appListingId: draftListing.id,
+            slug: request.slug,
+            before: abForTransition.contentRating,
+            after: flooredRating,
+            actorUserId: params.reviewerUserId,
+          });
+        } else {
           // eslint-disable-next-line no-console
           console.warn(
             `[approveRequest] draft→approved transition matched 0 rows (slug=${request.slug}, appBlockId=${appBlockId}); ` +
@@ -3110,12 +3233,8 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
     // Scoped through the relation (= `appListingId`), NOT by slug: a pending SHADOW media
     // revision denormalizes the parent slug but targets a different row and is a
     // legitimate concurrent review that must not block a reset restore.
-    const resetListingWhere = {
-      appBlockId,
-      kind: 'onsite',
-      status: 'pending',
-      publishRequests: { none: { status: 'pending' } },
-    } satisfies Prisma.AppListingWhereInput;
+    // Shared with the moderator's pre-approve warning (`listingFactsForRequests`).
+    const resetListingWhere = resetRestoreWhere(appBlockId);
     const resetListing = await dbWrite.appListing.findFirst({
       where: resetListingWhere,
       select: { id: true, contentRating: true },
@@ -3169,6 +3288,15 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
         where: { id: appBlockId, status: 'suspended' },
         data: { status: 'approved' },
       });
+      if (resetListing) {
+        await recordListingRatingChangeAfterCommit({
+          appListingId: resetListing.id,
+          slug: request.slug,
+          before: resetListing.contentRating,
+          after: flooredRating,
+          actorUserId: params.reviewerUserId,
+        });
+      }
     }
   } catch (err) {
     // eslint-disable-next-line no-console
@@ -3357,6 +3485,12 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
     },
   });
 
+  // Review document-store data of this request, started the moment the decision is durable:
+  // the supersede below and the build trigger after it can each throw past every later teardown
+  // (a build-trigger failure leaves the request approved). Never rejects. The requests this
+  // approve supersedes are left to the sweep (`jobs/sweep-review-storage.ts`).
+  void teardownReviewStorageForRequest(request.id);
+
   // (6b) Supersede any OTHER request still 'pending' for this slug. If the
   // git-push webhook raced ahead of (6) it may have parked a duplicate
   // pending-review row for THIS approved sha; withdraw it (and any older
@@ -3378,6 +3512,7 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
     /\/$/,
     ''
   )}/api/internal/blocks/build-callback`;
+  let buildRun: { name: string } | undefined;
   try {
     await setCommitStatus({
       slug: request.slug,
@@ -3386,7 +3521,7 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
       context: 'civitai/build',
       description: 'Build queued',
     }).catch(() => undefined);
-    await triggerBuild({
+    buildRun = await triggerBuild({
       slug: request.slug,
       sha: forgejoCommitSha,
       appBlockId,
@@ -3410,6 +3545,7 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
   // /apps/my-submissions. triggerBuild succeeded above (the catch re-throws),
   // so the build is now queued: mark the request 'building'. build-callback
   // advances it deploying → live, or flips it to failed.
+  await recordRunTriggered('build', request.id, request.slug, forgejoCommitSha, buildRun?.name);
   await markRequestDeployState(request.slug, forgejoCommitSha, 'building');
 
   // MOD REVIEW SANDBOX (#2831) — tear down any review env the mod spun up while
@@ -3488,6 +3624,49 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
   };
 }
 
+/**
+ * The latest build attempt's signals for each of these request ids. Never throws: the
+ * import is inside the `try`, and the read itself already degrades to an empty map.
+ */
+async function failedBuildSignals(
+  requests: Array<{ id: string; deployUpdatedAt: Date | null }>
+): Promise<Map<string, BuildAttemptSignals>> {
+  try {
+    const { latestBuildAttemptSignals } = await import('./build-attempts.service');
+    return await latestBuildAttemptSignals(requests);
+  } catch {
+    return new Map();
+  }
+}
+
+/**
+ * Record the run a trigger just started, for the build callbacks' stale-run guard.
+ *
+ * Best-effort, like every write to the attempts table, AND the import is inside the `try`:
+ * by the time this runs the build is already triggered, so nothing here may throw out of
+ * the caller. A missing table or a failed import only leaves the
+ * guard inactive for this run.
+ */
+async function recordRunTriggered(
+  mode: 'build' | 'review',
+  publishRequestId: string,
+  slug: string,
+  sha: string,
+  runName: string | undefined
+): Promise<void> {
+  try {
+    const { recordBuildTriggered } = await import('./build-attempts.service');
+    await recordBuildTriggered({ mode, publishRequestId, slug, sha, runName });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[recordRunTriggered] skipped (id=${publishRequestId}): ${
+        err instanceof Error ? err.message : String(err)
+      }`
+    );
+  }
+}
+
 /** Build/deploy lifecycle states surfaced on /apps/my-submissions (Phase 2). */
 export type DeployState = 'building' | 'deploying' | 'live' | 'failed';
 
@@ -3496,10 +3675,10 @@ export type DeployState = 'building' | 'deploying' | 'live' | 'failed';
  * request for `(slug, sha)`. Keyed on `forgejo_commit_sha` (unique per approved
  * version; parked unreviewed requests carry an empty sha so they never match)
  * + `status='approved'`. Best-effort — a status-write failure must never break
- * the approve flow or the build-callback, so errors are swallowed. The build is
- * triggered only by approveRequest, so this is the single source of these
- * transitions: approveRequest sets 'building'; build-callback sets
- * 'deploying'/'live'/'failed'.
+ * the approve flow or the build-callback, so errors are swallowed. Writers:
+ * approveRequest and retriggerBuild set 'building'; build-callback sets
+ * 'deploying'/'live'/'failed' (but skips a failure from a superseded run);
+ * retriggerBuild also sets 'failed' when its trigger cannot be sent.
  */
 export async function markRequestDeployState(
   slug: string,
@@ -3539,24 +3718,6 @@ export async function markRequestDeployState(
 // ---------------------------------------------------------------------------
 // MOD-ONLY BUILD RE-TRIGGER — recover an APPROVED request whose build never ran.
 // ---------------------------------------------------------------------------
-
-/**
- * The EXACT `deploy_detail` an app author sees when the moderator's re-trigger
- * could not be handed to the build service.
- *
- * 🔴 FIXED STRING, never derived from the thrown error. `deploy_detail` is
- * owner-visible on both `blocks.listMyPublishRequests` and
- * `GET /api/v1/blocks/submissions`, and the errors `triggerBuild` throws carry
- * infrastructure detail (the trigger receiver's raw response body, the names of
- * the trigger env vars). Those go to the server log instead.
- *
- * It says what the author actually needs: this is our failure, not their code, and
- * they should not resubmit.
- */
-export const RETRIGGER_FAILED_AUTHOR_DETAIL =
-  'Build re-trigger failed: Civitai could not reach the build service. ' +
-  'This is a problem on our side, not with your app — a moderator has to retry it. ' +
-  'No new version submission is needed.';
 
 /** Typed failure from {@link retriggerBuild}; `code` drives the tRPC mapping. */
 export class RetriggerBuildError extends Error {
@@ -3821,8 +3982,9 @@ export async function retriggerBuild(params: RetriggerBuildParams): Promise<Retr
     description: 'Build re-queued by a moderator',
   }).catch(() => undefined);
 
+  let buildRun: { name: string };
   try {
-    await triggerBuild({ slug: request.slug, sha, appBlockId, callbackUrl });
+    buildRun = await triggerBuild({ slug: request.slug, sha, appBlockId, callbackUrl });
   } catch (err) {
     // Free the single-flight slot so the moderator can retry immediately rather
     // than waiting out the TTL after a visible failure.
@@ -3885,6 +4047,12 @@ export async function retriggerBuild(params: RetriggerBuildParams): Promise<Retr
       'The build re-trigger could not be sent to the build service. The request is now marked failed; try again once the build service is reachable.'
     );
   }
+
+  // The run this retrigger started is now the version's CURRENT run, so a late failure
+  // callback from the run before it is recognised as stale by the build callback.
+  // Recorded BEFORE the 'building' write below, so there is no instant at which the row
+  // reads 'building' while the old run still looks current.
+  await recordRunTriggered('build', request.id, request.slug, sha, buildRun.name);
 
   // Build is queued — advance the lifecycle exactly as approveRequest does, with
   // an attributable detail so the mod queue shows who re-fired it and when.
@@ -4369,6 +4537,7 @@ export async function previewRequest(params: PreviewRequestParams): Promise<Prev
     });
     throw new Error(`could not start review build: ${(err as Error).message}`);
   }
+  await recordRunTriggered('review', request.id, request.slug, sha, run.name);
 
   return {
     publishRequestId: request.id,
@@ -4946,6 +5115,44 @@ export async function teardownAgentReviewForRequest(publishRequestId: string): P
 }
 
 /**
+ * Delete the DOCUMENT-STORE data moderators wrote while running a request for real — every
+ * `rev:<publishRequestId>:<moderatorUid>` namespace (`DocStore.purgeReview`), called right after
+ * approve, reject and withdraw. Unconditional: an on-site run-for-real review needs no sandbox
+ * preview, so gating on `hadReviewPreview` would leak exactly the data this exists to delete.
+ * Requests superseded rather than decided, a purge that fails here, and a write that lands after
+ * it are all finished by the sweep (`jobs/sweep-review-storage.ts`).
+ *
+ * NEVER throws into the decision path. Every outcome is counted
+ * (`civitai_app_block_review_storage_cleanup_total`); a failure is also logged.
+ */
+export async function teardownReviewStorageForRequest(publishRequestId: string): Promise<void> {
+  const recordReviewStorageCleanup = (outcome: ReviewStorageCleanupOutcome) =>
+    import('~/server/metrics/app-block-runtime.metrics')
+      .then((m) => m.recordReviewStorageCleanup(outcome))
+      .catch(() => undefined);
+  try {
+    const { getDocStore } = await import('~/server/services/apps/doc-store.instance');
+    const { rows } = await getDocStore().purgeReview(publishRequestId);
+    await recordReviewStorageCleanup(rows > 0 ? 'purged' : 'nothing');
+  } catch (err) {
+    const { isDocStoreError } = await import('~/server/services/apps/doc-store.types');
+    if (isDocStoreError(err, 'storage_disabled')) {
+      // No store connection (or one the store refuses): nothing can have been written
+      // through it, and nothing can be deleted through it either. Counted, not logged.
+      await recordReviewStorageCleanup('disabled');
+      return;
+    }
+    await recordReviewStorageCleanup('failed');
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[teardownReviewStorageForRequest] review storage cleanup failed (id=${publishRequestId}): ${
+        err instanceof Error ? err.message : String(err)
+      }`
+    );
+  }
+}
+
+/**
  * MANUAL teardown of a single review preview (the mod-facing "Tear down"
  * action + the way to free a slot when the concurrency cap is hit). Distinct
  * from teardownReviewForRequest (fired from approve/reject) in that it ALSO
@@ -5384,6 +5591,8 @@ export async function rejectRequest(params: RejectRequestParams): Promise<void> 
   // AGENTIC REVIEW (P1, audit #1) — tear down any review AGENT UNCONDITIONALLY
   // (an agent can run without a sandbox preview). Idempotent no-op otherwise.
   void teardownAgentReviewForRequest(row.id);
+  // Review document-store data — unconditional too (an on-site run needs no preview).
+  void teardownReviewStorageForRequest(row.id);
 
   // POST-COMMIT, best-effort — notify the submitting developer their block was NOT
   // approved, carrying the (already-trimmed) moderator reason so it shows inline on

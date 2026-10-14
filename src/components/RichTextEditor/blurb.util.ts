@@ -1,6 +1,5 @@
 import type { Editor } from '@tiptap/react';
-import { decode } from 'he';
-import { removeTags } from '~/utils/string-helpers';
+import { getBlurbText } from '~/utils/html-sanitize-helpers';
 
 export type BlurbItem = {
   id: number;
@@ -8,14 +7,8 @@ export type BlurbItem = {
   content: string;
 };
 
-/**
- * The preview in the manager and the picker is the on-screen stand-in for the snippet's own
- * words, so an un-decoded `&amp;` reads as a typo the creator cannot fix. `removeTags` only
- * strips tags.
- */
-export function blurbPreview(content: string) {
-  return decode(removeTags(content));
-}
+// An un-decoded `&amp;` in the preview reads as a typo the creator cannot fix.
+export const blurbPreview = getBlurbText;
 
 export function matchBlurbs(blurbs: BlurbItem[], query: string, limit = 8) {
   const normalized = query.trim().toLowerCase();

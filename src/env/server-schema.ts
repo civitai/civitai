@@ -32,6 +32,11 @@ export const serverSchema = z
     // so PR previews + dev environments that haven't provisioned the apps DB
     // yet keep starting (the storage tRPC procedures throw cleanly when unset).
     APPS_DATABASE_URL: z.url().optional(),
+    // App Blocks document store — a SEPARATE least-privilege connection to the
+    // same datastore, as a role holding only `appdata_rw` (never superuser or
+    // BYPASSRLS; the store checks and refuses). Unset → the document store is
+    // disabled (`storage_disabled`); it never falls back to APPS_DATABASE_URL.
+    APPDATA_DATABASE_URL: z.url().optional(),
     DATABASE_CONNECTION_TIMEOUT: z.coerce.number().default(0),
     DATABASE_POOL_MAX: z.coerce.number().default(20),
     NOTIFICATION_POOL_MAX: z.coerce.number().optional(),
@@ -311,9 +316,10 @@ export const serverSchema = z
     // of silently disabling the guard (withTimeoutFallback passes through unbounded
     // when ms<=0 → the exact multi-minute hang this exists to prevent, with no signal).
     CLICKHOUSE_IMAGE_METRICS_TIMEOUT_MS: z.coerce.number().int().positive().default(3000),
-    // Per-read deadline for `/api/user/settings`, which `_app` self-fetches on every SSR
-    // render. Must stay well under `APP_SETTINGS_FETCH_TIMEOUT_MS` (8s): a response the
-    // caller has stopped waiting for is the same outage. .int().positive() for the same
+    // Per-read deadline for the settings bootstrap (`settings-bootstrap.service`), which
+    // `_app` reads on every SSR render and `/api/user/settings` serves. Must stay well under
+    // `APP_SETTINGS_FETCH_TIMEOUT_MS` (8s, the whole-bootstrap render ceiling): a result the
+    // render has stopped waiting for is the same outage. .int().positive() for the same
     // reason as above — withTimeoutFallback passes through unbounded when ms<=0.
     SETTINGS_READ_DEADLINE_MS: z.coerce.number().int().positive().default(2000),
     NODE_ENV: z.enum(['development', 'test', 'production']),
@@ -386,6 +392,11 @@ export const serverSchema = z
     // fallback to WEBHOOK_TOKEN has to stay. (Named for the value, not for the direction of any one
     // caller: it is one secret, and the sibling jobs that call in already use this name.)
     MOD_INBOUND_TOKEN: z.string().optional(),
+    // Civitai Games (Game Frame) → /api/internal/game-frame/*. Both unset (or '') means the endpoint
+    // answers 503 and Game Frame keeps reports in its outbox. '' is accepted for the same ConfigMap
+    // reason as MODERATOR_APP_INTERNAL_URL above.
+    GF_REPORT_TOKEN: z.string().optional(),
+    GAMES_GUEST_USER_ID: z.union([z.coerce.number().int().positive(), z.literal('')]).optional(),
     UNAUTHENTICATED_DOWNLOAD: zc.booleanString,
     UNAUTHENTICATED_LIST_NSFW: zc.booleanString,
     LOGGING: commaDelimitedStringArray(),
@@ -553,15 +564,35 @@ export const serverSchema = z
     // Prod-required + non-empty: the app disables its auth gate on an empty token, so a blank value here
     // would produce an unauthenticated producer API. Fail-fast at monolith boot instead.
     NOTIFICATIONS_TOKEN: isProd ? z.string().min(1) : z.string().optional(),
-    // Per-call signals timeout in ms. Calls wrapped via withSignals() fail
-    // fast with SignalsCallTimeoutError once exceeded, instead of hanging
-    // until Traefik's 30s router timeout fires. Default tuned for signals
-    // normal latency (higher than Meili due to Orleans grain init).
+    // Per-call signals deadline in ms, measured from withSignals() entry — it
+    // covers time spent queued for a concurrency slot as well as the call.
+    // Calls fail fast with SignalsCallTimeoutError once exceeded (a call that
+    // reaches its slot with less than half of it left is never started),
+    // instead of hanging until Traefik's
+    // 30s router timeout fires. Default tuned for signals normal latency
+    // (higher than Meili due to Orleans grain init).
     SIGNALS_CALL_TIMEOUT_MS: z.coerce.number().int().min(1).optional().default(5000),
-    // Per-pod cap on in-flight signals HTTP calls wrapped via withSignals().
-    // When saturated, additional calls fail fast with SignalsCallTimeoutError
-    // rather than queueing forever and pressuring the event loop.
+    // Per-pod cap on in-flight signals HTTP calls in withSignals()' 'default'
+    // lane (everything except getToken; the pod-wide cap adds
+    // SIGNALS_TOKEN_CALL_CONCURRENCY). Calls beyond it wait in a queue bounded
+    // by SIGNALS_CALL_MAX_QUEUE.
     SIGNALS_CALL_CONCURRENCY: z.coerce.number().int().min(1).optional().default(30),
+    // Per-pod cap on 'default'-lane calls waiting for a SIGNALS_CALL_CONCURRENCY slot. When
+    // full, further calls fail at 0ms with SignalsCallTimeoutError('concurrency')
+    // instead of piling up requests that can only time out. A queue-full
+    // rejection counts toward the circuit only when the window also holds a
+    // real backend failure, so a healthy burst is shed without opening it.
+    SIGNALS_CALL_MAX_QUEUE: z.coerce.number().int().min(0).optional().default(200),
+    // Separate lane (own limiter + queue) for signals.getToken / getAccessToken
+    // only, so a client reconnect storm cannot crowd out signal pushes. Defaults
+    // equal the shared limiter getToken used before (30 / 200), so getToken's
+    // bounds are unchanged; the 'default' lane keeps SIGNALS_CALL_*. The circuit
+    // breaker stays shared across lanes: token-lane queue-side failures never
+    // count toward it (they measure demand), but token-lane backend timeouts
+    // do — so a storm against a backend whose tail nears half the deadline can
+    // still open it for pushes. See src/server/signals/wrapper.ts.
+    SIGNALS_TOKEN_CALL_CONCURRENCY: z.coerce.number().int().min(1).optional().default(30),
+    SIGNALS_TOKEN_CALL_MAX_QUEUE: z.coerce.number().int().min(0).optional().default(200),
     // Single-backend circuit breaker for signals (see src/server/signals/wrapper.ts).
     // If `SIGNALS_CIRCUIT_TRIP_THRESHOLD` SignalsCallTimeoutErrors accumulate
     // within `SIGNALS_CIRCUIT_WINDOW_SECONDS`, the circuit OPENs and all calls
@@ -926,6 +957,20 @@ export const serverSchema = z
     S3_IMAGE_B2_BUCKET: z.string().optional(),
     S3_IMAGE_B2_REGION: z.string().optional(),
 
+    // Appeal training copies; endpoint and region come from S3_IMAGE_B2_*. Any unset: no copies, no holds.
+    APPEAL_TRAINING_B2_BUCKET: z.string().optional(),
+    APPEAL_TRAINING_B2_ACCESS_KEY: z.string().optional(),
+    APPEAL_TRAINING_B2_SECRET_KEY: z.string().optional(),
+    // Stored copies are matched through it: do not rotate or unset it while copies exist.
+    APPEAL_OWNER_HASH_KEY: z.string().optional(),
+
+    // Scan label review copies. Any unset: no copies.
+    SCAN_LABEL_P3_B2_BUCKET: z.string().optional(),
+    SCAN_LABEL_P3_B2_ENDPOINT: z.string().optional(),
+    SCAN_LABEL_P3_B2_REGION: z.string().optional(),
+    SCAN_LABEL_P3_B2_ACCESS_KEY: z.string().optional(),
+    SCAN_LABEL_P3_B2_SECRET_KEY: z.string().optional(),
+
     // Storage resolver internal API (for registering B2 uploads)
     STORAGE_RESOLVER_INTERNAL_URL: z.string().optional(),
     STORAGE_RESOLVER_INTERNAL_TOKEN: z.string().optional(),
@@ -1027,6 +1072,9 @@ export const serverSchema = z
     APPS_TEKTON_REVIEW_TRIGGER_URL: z.string().url().optional(),
     APPS_KUBE_NAMESPACE: z.string().default('civitai-apps'),
     APPS_DOMAIN: z.string().default('civit.ai'),
+    // App Assistant's hosted sandbox service, which the browser calls. Server-side so it is read per
+    // request and set per environment; a NEXT_PUBLIC_ var would be frozen into the client at build.
+    APP_ASSISTANT_SANDBOX_URL: z.url().optional(),
     // How long the review-build callback waits for a freshly-deployed review
     // preview's PUBLIC host to become reachable before giving up and marking the
     // preview failed. The dominant lag is the per-host DNS record's creation +

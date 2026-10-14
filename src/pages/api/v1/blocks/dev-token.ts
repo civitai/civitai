@@ -248,7 +248,7 @@ type AxiomAPIRequest = NextApiRequest & { log: Logger };
  *    pending request's un-reviewed `manifest.scopes` (local-manifest mode, where
  *    the absent OAuth ceiling is replaced by 7f). Unknown / out-of-allowlist
  *    scopes are STRIPPED, never error.
- *  - BUDGET CAP: a LOWER dev cap (DEV_BUZZ_BUDGET_CAP) than the prod 1000. The
+ *  - BUDGET CAP: the per-call DEV_BUZZ_BUDGET_CAP (= the install-token BUZZ_BUDGET_CAP). The
  *    existing per-user daily cumulative cap (reserveBlockBuzzSpend) is untouched.
  *  - FORCED SFW: maxBrowsingLevel = domainBrowsingCeiling(null) UNCONDITIONALLY
  *    (localhost has no color domain; we never read the request host, so a
@@ -633,7 +633,7 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
       // which id it is written under.
       blockInstanceId: `${PAGE_INSTANCE_PREFIX}${block.id}`,
       // DEV budget default = the APPROVED manifest's declared per-gen budget so
-      // an app whose `page.buzzBudgetPerGen` exceeds the flat 50 default is
+      // an app whose `page.buzzBudgetPerGen` exceeds the flat default is
       // dev-testable without a manual `buzzBudget` request. Clamped to
       // DEV_BUZZ_BUDGET_CAP by resolveDevBuzzBudget; undefined → the flat default.
       manifestBudgetDefault: parseManifestBuzzBudget(manifest.page),
@@ -728,7 +728,7 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
         // only raises the per-call BUDGET (never a spend AUTHORITY): spend is
         // still bounded by DEV_BUZZ_BUDGET_CAP (the clamp in resolveDevBuzzBudget),
         // the per-user daily cap, the dev-session cap, and the 7f AIServicesWrite
-        // bearer gate. Mirrors the approved path so a pending recipe with a >50
+        // bearer gate. Mirrors the approved path so a pending recipe with its own
         // budget is dev-testable pre-approval without a manual `buzzBudget`.
         manifestBudgetDefault: parseManifestBuzzBudget(manifest.page),
       };
@@ -782,7 +782,7 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
         // dev's LOCAL `block.manifest.json`, which the CLI does not send on this
         // path (only `scopes`/`buzzBudget` cross the wire). So the dev default
         // stays the flat DEV_BUZZ_BUDGET_DEFAULT here; a dev iterating on a
-        // brand-new (unsubmitted) app whose recipe ceiling exceeds 50 must pass
+        // brand-new (unsubmitted) app whose recipe ceiling exceeds that default must pass
         // an explicit `buzzBudget` in the request body (still clamped to
         // DEV_BUZZ_BUDGET_CAP). To auto-default this mode, the CLI would need to
         // send the local manifest's `page.buzzBudgetPerGen` in the body — deferred.
@@ -851,7 +851,7 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
 
   // 8. BUDGET CAP — only meaningful when ai:write:budgeted survived the clamp.
   // DEFAULT to the resolved app manifest's `page.buzzBudgetPerGen` (approved +
-  // pending modes) so an app/recipe whose per-gen budget exceeds the flat 50
+  // pending modes) so an app/recipe whose per-gen budget exceeds the flat
   // default is dev-testable WITHOUT a manual `buzzBudget` request; an explicit
   // caller `requestedBudget` still wins, and DEV_BUZZ_BUDGET_CAP still clamps.
   // The ephemeral no-row mode carries no manifest default → the flat fallback.
@@ -986,7 +986,7 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
   //
   // What DOES bound it is only what the token itself carries: it is SELF-BOUND (the
   // `sub` is the minter, so any spend is their OWN Buzz), per-call budget capped at
-  // the lower DEV_BUZZ_BUDGET_CAP, subject to the same cumulative per-user daily cap
+  // DEV_BUZZ_BUDGET_CAP, subject to the same cumulative per-user daily cap
   // as everything else, forced-SFW, and revocable through BlockRevocation on its
   // `blockInstanceId`. That bounds the HARM (self-inflicted, capped) — it does not
   // bound the LIFETIME, and no comment here should imply otherwise.

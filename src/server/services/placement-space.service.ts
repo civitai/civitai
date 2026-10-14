@@ -216,8 +216,9 @@ export async function resolvePlacementSpaceFor({
     user: at('user'),
   });
 
-  const { max: cap, freeSlotCap } = await placementPriceRange(ownerId, surface);
+  // One read: the price range needs the same row.
   const config = await getPlacementConfig();
+  const { max: cap, freeSlotCap } = await placementPriceRange(ownerId, surface, config);
   const shares = config.approvalShares(surface);
   const hostDeclineFeePercent = isDeclineFeeHostAdjustable(surface)
     ? resolveHostDeclineFeePercent(surface, resolved.settings)

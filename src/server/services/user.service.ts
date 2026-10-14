@@ -19,6 +19,9 @@ import {
 import { clickhouse } from '~/server/clickhouse/client';
 import { listModelEngagements } from '@civitai/db-queries/model';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { onModelReviewsChanged } from '~/server/events/points/hooks';
+import { syncEventRosterMember } from '~/server/events/points/roster-sync';
+import { syncOwnerEventHats } from '~/server/events/points/sync';
 import { kyselyRead } from '~/server/db/kyselyDb';
 
 import { preventReplicationLag } from '~/server/db/db-lag-helpers';
@@ -69,6 +72,7 @@ import { simpleUserSelect, userWithCosmeticsSelect } from '~/server/selectors/us
 import { deleteBidsForModel } from '~/server/services/auction.service';
 import { bustUserMetricPrivacyDefaultsCache } from '~/server/services/creator-membership.service';
 import { isCosmeticAvailable } from '~/server/services/cosmetic.service';
+import { bustModelSaleCacheForModels } from '~/server/services/paid-access.service';
 import {
   countPendingAccountDeletionImageRestores,
   disarmAccountDeletionImagePurge,
@@ -80,6 +84,7 @@ import { refreshOwnedStickerCache, userModelCountCache } from '~/server/redis/ca
 import { createNotification } from '~/server/services/notification.service';
 import { createBuzzTransactionMany } from '~/server/services/buzz.service';
 import { TransactionType } from '~/shared/constants/buzz.constants';
+import { isEventDecorationData } from '~/shared/constants/event-decoration.constants';
 import { formatDate } from '~/utils/date-helpers';
 import {
   cancelAllPaddleSubscriptions,
@@ -94,7 +99,6 @@ import {
 import { clearUserEngagement } from '~/server/services/user-engagement';
 import { createCachedObject, fetchThroughCache } from '~/server/utils/cache-helpers';
 import { bustRatingTotalsCache } from '~/server/services/resourceReview.cache';
-import { getResourceReviewsByUserId } from '~/server/services/resourceReview.service';
 import {
   handleLogError,
   isPrismaUniqueViolation,
@@ -221,7 +225,7 @@ export const getUserCreator = async ({
           },
         },
         cosmetics: {
-          where: { equippedAt: { not: null } },
+          where: { equippedAt: { not: null }, equippedToId: null },
           select: {
             data: true,
             cosmetic: {
@@ -698,7 +702,10 @@ export const getUserEngagedModelsByIds = async ({
 }) => {
   const [engagements, recommendedReviews] = await Promise.all([
     listModelEngagements(kyselyRead, { userId: id, modelIds }),
-    getResourceReviewsByUserId({ userId: id, recommended: true, modelIds }),
+    // Lazy: a static import here closes the image.service import cycle (no-image-service-import-cycle).
+    import('~/server/services/resourceReview.service').then(({ getResourceReviewsByUserId }) =>
+      getResourceReviewsByUserId({ userId: id, recommended: true, modelIds })
+    ),
   ]);
 
   const engagedModels = engagements.reduce<Record<EngagedModelType, number[]>>((acc, model) => {
@@ -1151,6 +1158,8 @@ export const deleteUser = async ({ id, username, removeModels, removeImages }: D
   ]);
 
   userUpdateCounter?.inc({ location: 'user.service:deleteUser' });
+  void syncOwnerEventHats(user.id);
+  void syncEventRosterMember(user.id);
 
   // The account is deleted from here on. A failing step must not skip a later one (a skipped
   // cancel keeps billing a user who can no longer log in to stop it), and must not surface as
@@ -1200,6 +1209,8 @@ export async function setLeaderboardEligibility({ id, setTo }: { id: number; set
     WHERE id = ${id}
   `);
   userUpdateCounter?.inc({ location: 'user.service:setLeaderboardEligibility' });
+  void syncOwnerEventHats(id);
+  void syncEventRosterMember(id);
 }
 
 /**
@@ -1330,11 +1341,27 @@ export const restoreUser = async ({ id, username, email, restoreModels }: Restor
   if (imagesPendingRestore > 0) await recordPendingImageRestore(id);
 
   userUpdateCounter?.inc({ location: 'user.service:restoreUser' });
+  void syncOwnerEventHats(id);
+  void syncEventRosterMember(id);
   await usersSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
   // deleteUser refreshes userBasicCache (username/deletedAt/image, 1-day TTL) after scrubbing the
   // row; mirror that here so the restored identity is visible immediately instead of serving the
   // stale "deleted" values until the cache expires.
   await deleteBasicDataForUser(id);
+  // The sale badge only counts a sale whose owner owns the model, so while these models sat at
+  // userId -1 the cache recorded "no sale" for them, and that marker outlives a short TTL. Best-effort:
+  // the restore has committed, so a failed bust is logged rather than failing it.
+  try {
+    await bustModelSaleCacheForModels(restoredModelIds);
+  } catch (error) {
+    logToAxiom({
+      name: 'restore-user-model-sale-cache',
+      type: 'error',
+      source: 'restoreUser',
+      userId: id,
+      message: (error as Error)?.message,
+    }).catch(() => null);
+  }
 
   return {
     id,
@@ -1922,7 +1949,9 @@ async function bulkUnpublishModelsForBannedUser({
         UPDATE "Model"
         SET
           status = ${ModelStatus.UnpublishedViolation}::"ModelStatus",
-          meta = COALESCE(meta, '{}'::jsonb) || ${unpublishedMeta}::jsonb
+          meta = COALESCE(meta, '{}'::jsonb) || ${unpublishedMeta}::jsonb,
+          -- Raw SQL skips @updatedAt; the creator score re-scores owners from it.
+          "updatedAt" = now()
         WHERE id IN (${Prisma.join(modelIds)})
       `;
 
@@ -2113,6 +2142,8 @@ export const toggleBan = async ({
     data: { bannedAt: bannedAt ? null : new Date(), meta: updatedMeta },
     updateSource: 'toggleBan',
   });
+  void syncOwnerEventHats(id);
+  void syncEventRosterMember(id);
 
   await invalidateSession(id, 'ban');
 
@@ -2531,11 +2562,17 @@ const collectionEntityProps: Partial<Record<CollectionType, string>> = {
 };
 // Image intentionally absent: its metrics are ClickHouse-owned (the legacy PG
 // ImageMetric processor was retired), so image bookmarks skip the PG queueUpdate.
-const collectionEntityMetrics: Partial<Record<CollectionType, typeof articleMetrics>> = {
-  [CollectionType.Article]: articleMetrics,
-  [CollectionType.Model]: modelMetrics,
-  [CollectionType.Post]: postMetrics,
-};
+// A function, not a module-level map: ~/server/metrics reaches this file again through the
+// image.service import cycle, so at load time it can still be half-initialised. A process that
+// imports image.service or post.service first crashed here.
+const collectionEntityMetrics = (type: CollectionType): typeof articleMetrics | undefined =>
+  ((
+    {
+      [CollectionType.Article]: articleMetrics,
+      [CollectionType.Model]: modelMetrics,
+      [CollectionType.Post]: postMetrics,
+    } as Partial<Record<CollectionType, typeof articleMetrics>>
+  )[type]);
 export const toggleBookmarked = async ({
   entityId,
   type,
@@ -2578,7 +2615,7 @@ export const toggleBookmarked = async ({
   }
 
   const entityProp = collectionEntityProps[type];
-  const metricsEngine = collectionEntityMetrics[type];
+  const metricsEngine = collectionEntityMetrics(type);
   if (!entityProp) {
     // TODO(model3d-workstream-E): Model3D bookmarks land here until model3dMetrics ships.
     throw new Error(`toggleBookmarked: no bookmark route for CollectionType.${type}`);
@@ -2686,6 +2723,7 @@ export async function toggleReview({
   }
 
   await preventReplicationLag('resourceReview', userId);
+  void onModelReviewsChanged([{ modelId, userId }]);
 
   return setTo;
 }
@@ -2930,9 +2968,13 @@ export async function equipCosmetic({
 
   const userCosmetics = await dbRead.userCosmetic.findMany({
     where: { userId, cosmeticId: { in: cosmeticId } },
-    select: { obtainedAt: true, cosmetic: { select: { type: true } } },
+    select: { obtainedAt: true, cosmetic: { select: { type: true, data: true } } },
   });
   if (!userCosmetics.length) throw new Error("You don't have that cosmetic");
+  // An event decoration is placed on content, never worn by the user: equipped here it would show
+  // on every user-level read, none of which applies the event's preview gate.
+  if (userCosmetics.some((x) => isEventDecorationData(x.cosmetic.data)))
+    throw new Error('Event decorations are placed on content, not equipped');
 
   const types = [...new Set(userCosmetics.map((x) => x.cosmetic.type))];
   // Stickers are owned, not equipped — everything you own is already in the

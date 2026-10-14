@@ -26,6 +26,7 @@ import { arrayMove, SortableContext, verticalListSortingStrategy } from '@dnd-ki
 import { SortableItem } from '~/components/ImageUpload/SortableItem';
 import { isEqual } from 'lodash-es';
 import { withController } from '~/libs/form/hoc/withController';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 type ProfileSectionsSettingsInputProps = Omit<InputWrapperProps, 'children' | 'onChange'> & {
   value?: ProfileSectionSchema[];
@@ -38,6 +39,7 @@ export const ProfileSectionsSettingsInput = ({
   ...props
 }: ProfileSectionsSettingsInputProps) => {
   const theme = useMantineTheme();
+  const features = useFeatureFlags();
   const colorScheme = useComputedColorScheme('dark');
   const [sections, setSections] = useState<ProfileSectionSchema[]>(
     getAllAvailableProfileSections(value || [])
@@ -92,32 +94,35 @@ export const ProfileSectionsSettingsInput = ({
             strategy={verticalListSortingStrategy}
           >
             <Stack>
-              {sections.map((s) => (
-                <SortableItem key={s.key} id={s.key}>
-                  <Paper
-                    style={{
-                      backgroundColor:
-                        colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[1],
-                    }}
-                    withBorder
-                    key={s.key}
-                    p="xs"
-                    radius="md"
-                  >
-                    <Group wrap="nowrap">
-                      <IconArrowsMoveVertical />
-                      <Text size="sm">{profileSectionLabels[s.key]}</Text>
-                      <Switch
-                        checked={s.enabled}
-                        onChange={() => onToggleSection(s.key)}
-                        labelPosition="left"
-                        aria-label={profileSectionLabels[s.key]}
-                        ml="auto"
-                      />
-                    </Group>
-                  </Paper>
-                </SortableItem>
-              ))}
+              {sections.map((s) =>
+                // Kept in the saved list either way; only the toggle waits for the flag.
+                s.key === 'creatorJourney' && !features.creatorJourney ? null : (
+                  <SortableItem key={s.key} id={s.key}>
+                    <Paper
+                      style={{
+                        backgroundColor:
+                          colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[1],
+                      }}
+                      withBorder
+                      key={s.key}
+                      p="xs"
+                      radius="md"
+                    >
+                      <Group wrap="nowrap">
+                        <IconArrowsMoveVertical />
+                        <Text size="sm">{profileSectionLabels[s.key]}</Text>
+                        <Switch
+                          checked={s.enabled}
+                          onChange={() => onToggleSection(s.key)}
+                          labelPosition="left"
+                          aria-label={profileSectionLabels[s.key]}
+                          ml="auto"
+                        />
+                      </Group>
+                    </Paper>
+                  </SortableItem>
+                )
+              )}
             </Stack>
           </SortableContext>
         </DndContext>

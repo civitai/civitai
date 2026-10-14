@@ -79,9 +79,19 @@ class FakeXHR {
 let presignMode: 'ok' | 'hang' | 'unavailable-once' | 'throttle-once' | 'rejected';
 let rejectedStatus: number;
 let presignCount: number;
+// The first N presigns fail before `presignMode` applies: an upstream outage.
+let presignOutage: { failures: number; as: 'http-502' | 'network-error'; afterMs?: number };
 const fetchMock = vi.fn((url: string, init?: RequestInit) => {
   if (url === PRESIGN_PATH) {
     presignCount++;
+    if (presignCount <= presignOutage.failures) {
+      const fail = () =>
+        presignOutage.as === 'http-502'
+          ? Promise.resolve({ ok: false, status: 502, headers: new Headers() })
+          : Promise.reject(new TypeError('Failed to fetch'));
+      const after = presignOutage.afterMs;
+      return after ? new Promise((r) => setTimeout(r, after)).then(fail) : fail();
+    }
     if (presignMode === 'hang')
       return new Promise((_, reject) =>
         init?.signal?.addEventListener('abort', () =>
@@ -122,12 +132,17 @@ function track<T>(p: Promise<T>) {
 const jpeg = () => new Blob([new Uint8Array(1024)], { type: 'image/jpeg' });
 const mp4 = () => new Blob([new Uint8Array(1024)], { type: 'video/mp4' });
 const kinds = () => reportApplicationError.mock.calls.map((c) => (c[0] as Error).message);
+const attempts = () =>
+  reportApplicationError.mock.calls.map((c) => (c as unknown[])[1] as { message: string });
+// Upper bound of each presign retry wait (its delay plus up to 1s jitter).
+const PRESIGN_WAITS_MS = [3_000, 7_000, 13_000, 21_000];
 
 beforeEach(() => {
   vi.useFakeTimers();
   FakeXHR.instances = [];
   presignMode = 'ok';
   presignCount = 0;
+  presignOutage = { failures: 0, as: 'http-502' };
   fetchMock.mockClear();
   reportApplicationError.mockClear();
   vi.stubGlobal('fetch', fetchMock);
@@ -135,6 +150,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.restoreAllMocks();
   vi.useRealTimers();
   vi.unstubAllGlobals();
 });
@@ -268,15 +284,69 @@ describe('uploadConsumerBlob', () => {
     expect(kinds()).toEqual(['consumer blob upload failed: http-422']);
   });
 
-  it('retries a presign 5xx', async () => {
+  it('retries a presign 5xx without reporting it once the retry succeeds', async () => {
     presignMode = 'unavailable-once';
     const result = track(uploadConsumerBlob(jpeg()));
-    await vi.advanceTimersByTimeAsync(BACKOFF_MS);
+    await vi.advanceTimersByTimeAsync(PRESIGN_WAITS_MS[0]);
     FakeXHR.instances[0].respond(200, JSON.stringify({ id: 'b1' }));
     await vi.advanceTimersByTimeAsync(0);
 
     expect(result.value).toEqual({ id: 'b1' });
+    expect(presignCount).toBe(2);
+    expect(reportApplicationError).not.toHaveBeenCalled();
+  });
+
+  it.each(['http-502', 'network-error'] as const)(
+    'rides out a ~35 s presign outage (%s) and uploads with no failure report',
+    async (as) => {
+      const start = Date.now();
+      // Four failures: the fifth try, after waits of 2+6+12+20 s, succeeds.
+      presignOutage = { failures: 4, as };
+      vi.spyOn(Math, 'random').mockReturnValue(0);
+      const result = track(uploadConsumerBlob(jpeg()));
+      // The try count just before and at each cumulative wait boundary, with no jitter.
+      const counts: number[] = [];
+      for (const at of [1_999, 2_000, 7_999, 8_000, 19_999, 20_000, 39_999, 40_000]) {
+        await vi.advanceTimersByTimeAsync(at - Date.now() + start);
+        counts.push(presignCount);
+      }
+      expect(counts).toEqual([1, 2, 2, 3, 3, 4, 4, 5]);
+
+      expect(presignCount).toBe(5);
+      expect(FakeXHR.instances).toHaveLength(1);
+      FakeXHR.instances[0].respond(200, JSON.stringify({ id: 'b1' }));
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(result.value).toEqual({ id: 'b1' });
+      expect(reportApplicationError).not.toHaveBeenCalled();
+    }
+  );
+
+  it('starts no presign try past the 50 s budget when each 5xx arrives slowly', async () => {
+    // Each 502 takes 14 s, just under the timeout: tries start at 0, 16 and 36 s; a fourth
+    // would start at 62 s, past the budget, so the third failure at 50 s is the last.
+    presignOutage = { failures: Infinity, as: 'http-502', afterMs: 14_000 };
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+    const result = track(uploadConsumerBlob(jpeg()));
+    await vi.advanceTimersByTimeAsync(49_999);
+    expect(result.settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+
+    expect(result.error?.message).toBe('Failed to get upload URL');
+    expect(presignCount).toBe(3);
     expect(kinds()).toEqual(['consumer blob upload failed: presign-http-502']);
+  });
+
+  it('reports presign-http-502 once, in the existing format, when the outage outlasts the retries', async () => {
+    presignOutage = { failures: Infinity, as: 'http-502' };
+    const result = track(uploadConsumerBlob(jpeg()));
+    await vi.advanceTimersByTimeAsync(PRESIGN_WAITS_MS.reduce((a, b) => a + b) + 60_000);
+
+    expect(result.error?.message).toBe('Failed to get upload URL');
+    expect(presignCount).toBe(5);
+    expect(FakeXHR.instances).toHaveLength(0);
+    expect(kinds()).toEqual(['consumer blob upload failed: presign-http-502']);
+    expect(attempts().map((a) => a.message)).toEqual(['attempt 1/2']);
   });
 
   it('retries a throttled presign after its Retry-After', async () => {
@@ -298,10 +368,12 @@ describe('uploadConsumerBlob', () => {
       presignMode = 'rejected';
       rejectedStatus = status;
       const result = track(uploadConsumerBlob(jpeg()));
-      await vi.advanceTimersByTimeAsync(BACKOFF_MS);
+      // Past every presign retry wait, so a retried rejection would show.
+      await vi.advanceTimersByTimeAsync(60_000);
 
       expect(result.error?.message).toBe('Not allowed');
       expect(presignCount).toBe(1);
+      expect(kinds()).toEqual([`consumer blob upload failed: presign-http-${status}`]);
     }
   );
 
@@ -309,7 +381,7 @@ describe('uploadConsumerBlob', () => {
     presignMode = 'rejected';
     rejectedStatus = 401;
     const result = track(uploadConsumerBlob(jpeg()));
-    await vi.advanceTimersByTimeAsync(BACKOFF_MS);
+    await vi.advanceTimersByTimeAsync(60_000);
 
     expect(result.error?.message).toBe('Sign in to upload images.');
     expect(presignCount).toBe(1);
@@ -330,5 +402,45 @@ describe('uploadConsumerBlob', () => {
       'consumer blob upload failed: presign-timeout',
       'consumer blob upload failed: presign-timeout',
     ]);
+    // Unchanged from before the presign retries: a timeout keeps the single outer retry.
+    expect(attempts().map((a) => a.message)).toEqual(['attempt 1/2', 'attempt 2/2']);
+  });
+
+  it('ends on a presign timeout that follows a presign retry, reporting it once', async () => {
+    presignOutage = { failures: 1, as: 'http-502' };
+    presignMode = 'hang';
+    const result = track(uploadConsumerBlob(jpeg()));
+    await vi.advanceTimersByTimeAsync(PRESIGN_WAITS_MS[0] + 15_000 + 60_000);
+
+    expect(result.error?.message).toMatch(/Timed out preparing the upload/);
+    expect(presignCount).toBe(2);
+    expect(FakeXHR.instances).toHaveLength(0);
+    expect(kinds()).toEqual(['consumer blob upload failed: presign-timeout']);
+    expect(attempts().map((a) => a.message)).toEqual(['attempt 1/2']);
+  });
+
+  it('adds up to 1 s of jitter to each presign wait', async () => {
+    presignOutage = { failures: 1, as: 'http-502' };
+    vi.spyOn(Math, 'random').mockReturnValue(0.999);
+    track(uploadConsumerBlob(jpeg()));
+    await vi.advanceTimersByTimeAsync(2_998);
+    expect(presignCount).toBe(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(presignCount).toBe(2);
+  });
+
+  it('runs the presign retries again for the second attempt after a body failure', async () => {
+    const result = track(uploadConsumerBlob(jpeg()));
+    await vi.advanceTimersByTimeAsync(0);
+    // `failures` counts from the first presign: this fails the second (the first retry's) only.
+    presignOutage = { failures: 2, as: 'http-502' };
+    FakeXHR.instances[0].respond(503, 'unavailable');
+    await vi.advanceTimersByTimeAsync(BACKOFF_MS + PRESIGN_WAITS_MS[0]);
+
+    expect(presignCount).toBe(3);
+    FakeXHR.instances[1].respond(200, JSON.stringify({ id: 'b2' }));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(result.value).toEqual({ id: 'b2' });
+    expect(kinds()).toEqual(['consumer blob upload failed: http-503']);
   });
 });

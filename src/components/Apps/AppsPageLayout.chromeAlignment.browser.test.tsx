@@ -114,6 +114,7 @@ import { page } from 'vitest/browser';
 import { cleanup } from 'vitest-browser-react';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+import { makeTrpcProxy } from '../../../test/trpcProxyStub';
 import type * as TrpcMod from '~/utils/trpc';
 import type { AppsMeasure } from './appsPageWidths';
 
@@ -133,7 +134,7 @@ vi.mock('~/hooks/useCurrentUser', () => ({
 // module-mock) — see the sibling browser tests for why.
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof TrpcMod>()),
-  trpc: { blocks: { getNavSummary: { useQuery: () => ({ data: undefined }) } } },
+  trpc: makeTrpcProxy({ 'blocks.getNavSummary': { useQuery: () => ({ data: undefined }) } }),
 }));
 
 const { AppsPageLayout } = await import('./AppsPageLayout');
@@ -278,7 +279,7 @@ async function renderAndMeasure(measurePx: AppsMeasure | undefined, collapsed: b
 }
 
 describe('the /apps route set that renders the shared chrome', () => {
-  test('🔴 is exactly these 12 routes (fails when it GROWS or SHRINKS)', () => {
+  test('🔴 is exactly these 13 routes (fails when it GROWS or SHRINKS)', () => {
     // A ledger, not a floor. The alignment assertions below loop over this set, so a
     // set that silently shrank — or emptied — would make them pass while checking
     // nothing. Adding an apps page is meant to fail here and be added deliberately.
@@ -294,6 +295,7 @@ describe('the /apps route set that renders the shared chrome', () => {
       // repointed ('a' < 'b', where 'i' > 'b'), so the position moving is not a second
       // change to review.
       '/apps/activity',
+      '/apps/assistant',
       '/apps/build',
       '/apps/invites',
       '/apps/listing/[appListingId]/edit',
@@ -304,13 +306,8 @@ describe('the /apps route set that renders the shared chrome', () => {
       '/apps/submit',
     ]);
     // Both classes are represented, so the loops below exercise the measured AND the
-    // measure-free branch of the layout rather than one of them 13 times. 6/7 since
-    // `/apps/review` gave up its 1368 cap and joined the full-container list. `/apps/build`
-    // joins it too — its workbench state renders the submissions table, whose 1424px scroll
-    // floor the readable band's 1368 ceiling cannot clear — while `/apps/get-started`, which
-    // WAS measured, left with the merge. Net: the full-container half holds at 6 (one in,
-    // one out) and the measured half drops from 7 to 6.
-    expect(ROUTES.filter((r) => r.measure === undefined)).toHaveLength(6);
+    // measure-free branch of the layout rather than one of them 13 times.
+    expect(ROUTES.filter((r) => r.measure === undefined)).toHaveLength(7);
     expect(ROUTES.filter((r) => r.measure !== undefined)).toHaveLength(6);
   });
 });
@@ -322,7 +319,7 @@ describe.each(VIEWPORTS)(
       const railWidth = collapsed ? APPS_RAIL_COLLAPSED_WIDTH : APPS_RAIL_WIDTH;
       const railChrome = appsRailChromeWidth(collapsed);
 
-      test('nav left AND width are the same on all 12 routes', async () => {
+      test('nav left AND width are the same on all 13 routes', async () => {
         await page.viewport(width, height);
         const seen: Record<string, [number, number]> = {};
         const container: Record<string, [number, number]> = {};
@@ -418,7 +415,7 @@ describe.each(VIEWPORTS)(
         expect(bodyLefts.size, `the body starts at ${[...bodyLefts]} across routes`).toBe(1);
 
         // And the measured routes are genuinely DISTINCT widths, so the fixture varies
-        // the dimension under test instead of feeding one value 12 times. TWO classes
+        // the dimension under test instead of feeding one value 13 times. TWO classes
         // since the narrow-table cap was deleted.
         const measuredWidths = new Set(
           ROUTES.filter((r) => r.measure !== undefined).map((r) => seen[r.route][1])

@@ -29,6 +29,8 @@
   import ShopPanel from '../ShopPanel.svelte';
   import SocialsPanel from '../SocialsPanel.svelte';
   import SubscriptionPanel from '../SubscriptionPanel.svelte';
+  import MembershipCodePanel from '../MembershipCodePanel.svelte';
+  import CreatorScoreGrantPanel from '../CreatorScoreGrantPanel.svelte';
   import PayoutsPanel from '../PayoutsPanel.svelte';
   import TimedMutesPanel from '../TimedMutesPanel.svelte';
   import TrainingsPanel from '../TrainingsPanel.svelte';
@@ -75,6 +77,9 @@
       <!-- On the first screen because the enforcement history and the paying relationship are what it
            is read FOR; both were two clicks and a scroll away. -->
       <SubscriptionPanel subscription={result.subscription} />
+      {#if data.grants['user.membership.code']}
+        <MembershipCodePanel userId={result.identity.id} civitaiUrl={data.civitaiUrl} />
+      {/if}
       <ModerationMemoryPanel userId={result.identity.id} canAct={data.canAct} />
       <AddressesPanel {signals} />
       <!-- Folded in from its own tab: once avatar, bio and location moved onto this section, Socials
@@ -169,6 +174,9 @@
       />
     {:else if section === 'leaderboard' || section === 'score'}
       <ReputationPanel stats={result.stats} scores={result.scores} ranks={result.ranks} />
+      {#if data.grants['user.creatorScore.grant']}
+        <CreatorScoreGrantPanel userId={result.identity.id} />
+      {/if}
     {:else if section === 'reports'}
       <ReportsPanel
         userId={result.identity.id}

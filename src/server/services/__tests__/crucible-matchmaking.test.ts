@@ -99,13 +99,13 @@ describe('getJudgingPair — crucible state', () => {
 
   it('is not found for a judge the creator blocked, unless a moderator', async () => {
     queryRaw.mockResolvedValue([rawEntry(1, 99), rawEntry(2, 98)]);
-    const blockedByUserIds = [activeCrucible.userId];
+    const blockedCreatorIds = [activeCrucible.userId];
 
-    await expect(getJudgingPair({ crucibleId: 1, userId: 1, blockedByUserIds })).rejects.toThrow(
+    await expect(getJudgingPair({ crucibleId: 1, userId: 1, blockedCreatorIds })).rejects.toThrow(
       'Crucible not found'
     );
     await expect(
-      getJudgingPair({ crucibleId: 1, userId: 1, blockedByUserIds, isModerator: true })
+      getJudgingPair({ crucibleId: 1, userId: 1, blockedCreatorIds, isModerator: true })
     ).resolves.not.toBeNull();
   });
 

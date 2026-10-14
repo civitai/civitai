@@ -1,4 +1,5 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as DevTunnelFrameService from '~/server/services/blocks/dev-tunnel-frame.service';
 
 /**
  * APP DEV TUNNEL — `/apps/dev/[blockId]` SSR resolver.
@@ -43,13 +44,27 @@ vi.mock('~/server/services/block-registry.service', () => ({
     resolvePageBlockBySlug: mockResolvePageBySlug,
   },
 }));
+const { mockDevTunnelEnabled, mockResolveFrame, mockHostPublished } = vi.hoisted(() => ({
+  mockHostPublished: vi.fn<(host: string) => Promise<boolean>>(async () => true),
+  mockDevTunnelEnabled: vi.fn<(...a: unknown[]) => Promise<boolean>>(async () => true),
+  mockResolveFrame: vi.fn(),
+}));
 vi.mock('~/server/services/app-blocks-flag', () => ({
-  isAppBlocksDevTunnelEnabled: vi.fn(async () => true),
+  isAppBlocksDevTunnelEnabled: (...a: unknown[]) => mockDevTunnelEnabled(...a),
   isAppBlocksDevTunnelUnsubmittedSpendEnabled: (...a: unknown[]) =>
     mockUnsubmittedSpend(...(a as [])),
 }));
+// The real resolver, observed: a spy that delegates, so a call can be asserted absent.
+vi.mock('~/server/services/blocks/dev-tunnel-frame.service', async (importOriginal) => {
+  const real = await importOriginal<typeof DevTunnelFrameService>();
+  mockResolveFrame.mockImplementation(real.resolveDevTunnelFrame);
+  return { ...real, resolveDevTunnelFrame: mockResolveFrame };
+});
 vi.mock('~/server/services/blocks/dev-tunnel.service', () => ({
   getActiveDevTunnel: (...a: unknown[]) => mockGetActiveTunnel(...(a as [])),
+}));
+vi.mock('~/server/services/blocks/dev-tunnel-dns.service', () => ({
+  isDevTunnelHostPublished: (host: string) => mockHostPublished(host),
 }));
 // Real dev-tunnel-session (pure) — signs a real token + validates the host.
 vi.mock('~/env/server', () => ({ env: { APPS_DOMAIN: 'civit.ai' } }));
@@ -66,6 +81,7 @@ vi.mock('@mantine/core', () => ({
   useComputedColorScheme: () => 'dark',
 }));
 vi.mock('~/components/AppBlocks/PageBlockHost', () => ({ PageBlockHost: () => null }));
+vi.mock('~/components/AppBlocks/DevTunnelDnsGate', () => ({ DevTunnelDnsGate: () => null }));
 vi.mock('~/components/AppBlocks/useBlockToken', () => ({ useBlockToken: () => ({}) }));
 vi.mock('~/components/Meta/Meta', () => ({ Meta: () => null }));
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
@@ -154,6 +170,33 @@ describe('/apps/dev/[blockId] SSR resolver', () => {
     mockGetActiveTunnel.mockReset();
     mockUnsubmittedSpend.mockReset();
     mockUnsubmittedSpend.mockResolvedValue(true);
+    mockDevTunnelEnabled.mockReset();
+    mockDevTunnelEnabled.mockResolvedValue(true);
+    mockResolveFrame.mockClear();
+    mockHostPublished.mockReset();
+    mockHostPublished.mockResolvedValue(true);
+  });
+
+  it('kill switch off → notFound before anything is resolved or signed, and no CSP', async () => {
+    const resolver = await loadDevResolver();
+    mockDevTunnelEnabled.mockResolvedValue(false);
+    mockResolveDev.mockResolvedValue(DEV_APP);
+    mockGetActiveTunnel.mockResolvedValue(activeTunnel('dev-0123456789abcdef.civit.ai'));
+    const headers: Record<string, string> = {};
+    const res = await resolver(makeCtx({ user: AUTHOR, setHeader: (k, v) => (headers[k] = v) }));
+    expect(res).toEqual({ notFound: true });
+    expect(mockDevTunnelEnabled).toHaveBeenCalledWith({ user: AUTHOR });
+    expect(mockResolveFrame).not.toHaveBeenCalled();
+    expect(mockGetActiveTunnel).not.toHaveBeenCalled();
+    expect(headers).toEqual({});
+  });
+
+  it('POSITIVE CONTROL: with the kill switch on, the same request resolves the frame', async () => {
+    const resolver = await loadDevResolver();
+    mockResolveDev.mockResolvedValue(DEV_APP);
+    mockGetActiveTunnel.mockResolvedValue(activeTunnel('dev-0123456789abcdef.civit.ai'));
+    await resolver(makeCtx({ user: AUTHOR, setHeader: () => undefined }));
+    expect(mockResolveFrame).toHaveBeenCalledTimes(1);
   });
   afterAll(() => {
     process.env.NEXTAUTH_SECRET = prev;
@@ -169,6 +212,23 @@ describe('/apps/dev/[blockId] SSR resolver', () => {
     // ROUTE-SCOPED CSP: frame-src pinned to the exact dev host, plus
     // frame-ancestors 'none', on THIS response. Pinned as a WHOLE string — a
     // substring assertion would pass while a directive was dropped or widened.
+    expect(headers['Content-Security-Policy']).toBe(
+      "frame-src https://dev-0123456789abcdef.civit.ai; frame-ancestors 'none'"
+    );
+  });
+
+  it('active tunnel whose host is not published yet → dnsPending, no entry URL or token in the props, and the CSP already names the host', async () => {
+    const resolver = await loadDevResolver();
+    mockResolveDev.mockResolvedValue(DEV_APP);
+    mockGetActiveTunnel.mockResolvedValue(activeTunnel('dev-0123456789abcdef.civit.ai'));
+    mockHostPublished.mockResolvedValue(false);
+    const headers: Record<string, string> = {};
+    const res = await resolver(makeCtx({ user: AUTHOR, setHeader: (k, v) => (headers[k] = v) }));
+    expect(mockHostPublished).toHaveBeenCalledExactlyOnceWith('dev-0123456789abcdef.civit.ai');
+    expect(res.props).toMatchObject({ iframeSrc: null, dnsPending: true });
+    expect(JSON.stringify(res.props)).not.toContain('?dev=');
+    // The page reaches the frame by a client-side transition once the host resolves, which
+    // keeps THIS document's policy — so it has to allow the host already.
     expect(headers['Content-Security-Policy']).toBe(
       "frame-src https://dev-0123456789abcdef.civit.ai; frame-ancestors 'none'"
     );

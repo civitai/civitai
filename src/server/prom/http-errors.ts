@@ -226,7 +226,8 @@ export function recordTrpcError(error: unknown, path?: string): void {
  * only — never a prefix, never "every NOT_FOUND". Adding a procedure is one line here; the
  * test pins the full set, so the addition is visible in review.
  *
- * - `image.getGenerationData` / NOT_FOUND: thrown only when the image id does not exist. The
+ * - `image.getGenerationData` / NOT_FOUND: thrown only when the image id does not exist or
+ *   `image.get` would not show it to the viewer. The
  *   volume is dominated by clients calling the procedure directly to enumerate ids.
  */
 export const EXPECTED_NOT_FOUND_LOG_SKIPS: ReadonlyArray<{

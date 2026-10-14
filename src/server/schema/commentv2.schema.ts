@@ -26,6 +26,7 @@ export const commentConnectorSchema = z.object({
     'model3d',
     'model3dReview',
     'appListing',
+    'crucible',
   ]),
   parentThreadId: z.number().optional(),
   excludedUserIds: z.array(z.number()).optional(),
@@ -69,6 +70,7 @@ export const toggleHideCommentSchema = z.object({
     'model3d',
     'model3dReview',
     'appListing',
+    'crucible',
   ]),
 });
 

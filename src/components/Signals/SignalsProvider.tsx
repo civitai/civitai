@@ -103,8 +103,8 @@ export const useSignalTopic = (topic: TopicString | undefined, notify?: boolean)
 };
 
 // On a signal-hub disruption, ALL connected clients drop and reconnect within
-// the same few seconds (the worker's `withAutomaticReconnect` backoff schedule
-// starts at 0). Previously each reconnect invalidated `buzz.getBuzzAccount` and
+// a few seconds (the worker's reconnect backoff makes its first attempt within
+// 0.5-3s, jittered — see `~/utils/signals/backoff`). Previously each reconnect invalidated `buzz.getBuzzAccount` and
 // `orchestrator.queryGeneratedImages` after only an ~8-15s debounce, so a
 // fleet-wide reconnect produced tens of thousands of synchronized refetches in
 // a single ~10s window — saturating the API's single Node thread (CPU-pin /
@@ -131,7 +131,7 @@ const RECONNECT_INVALIDATE_DELAY_MAX_MS = 90_000;
 // Minimum disconnect duration before a reconnect is allowed to invalidate.
 // Live balance/generation deltas are pushed continuously via signal and applied
 // with `setData` while connected, so a brief disconnect can't have dropped
-// meaningful state. The worker reconnects with backoff [0,2,10,18,...]s and the
+// meaningful state. The worker's first reconnect attempts land within seconds and the
 // hub keeps group memberships briefly; a disconnect shorter than this almost
 // certainly missed no pushes, so refetching would be pure wasted load. We pick
 // 10s as a conservative floor: long enough to skip the common instant/near-

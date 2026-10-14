@@ -129,7 +129,8 @@ describe(METRIC, () => {
   it('NEVER THROWS — a metrics fault must not become a 500, or a throw on a returning path', async () => {
     // 🔴 THE PROPERTY THE TWO RETURNING LIMITERS DEPEND ON. `pollWorkflow` and
     // `cancelWorkflow` return a non-terminal snapshot instead of throwing, because a throw
-    // is converted by both hosts into a TERMINAL `failed` snapshot on a paid workflow. If
+    // can reach the block as a TERMINAL `failed` snapshot on a paid workflow (always for a
+    // cancel, and for a poll from a host bundle older than its error classification). If
     // this emitter could throw, it would reintroduce exactly that failure from inside the
     // branch built to avoid it.
     //

@@ -1,4 +1,5 @@
 import { TRPCError } from '@trpc/server';
+import { dbRead } from '~/server/db/client';
 import { OnboardingSteps } from '~/server/common/enums';
 import type { SessionUser } from '~/types/session';
 import { Flags } from '~/shared/utils/flags';
@@ -55,27 +56,55 @@ export const MIN_ACCOUNT_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 // materializes. `free`/absent tier fails when on.
 export const REQUIRE_PAID_TIER = false;
 
+/** Why the gate refused, as a stable code for surfaces that report it (the document store). */
+export type SharedWriteTrustRefusalReason =
+  | 'ineligible'
+  | 'restricted'
+  | 'onboarding_incomplete'
+  | 'email_unverified'
+  | 'account_too_new'
+  | 'membership_required';
+
+/**
+ * The gate's verdict without throwing: `null` admits, otherwise the reason and the deny
+ * message. `assertSharedWriteTrust` is this plus the throw, so the two cannot disagree.
+ */
+export function sharedWriteTrustRefusal(
+  user: SessionUser | null,
+  hasLinkedOAuth: boolean
+): { reason: SharedWriteTrustRefusalReason; message: string } | null {
+  const deny = (reason: SharedWriteTrustRefusalReason, message: string) => ({ reason, message });
+  if (!user) return deny('ineligible', 'Your account is not eligible for this action');
+  if (user.bannedAt) return deny('ineligible', 'Your account is not eligible for this action');
+  if (user.muted) return deny('restricted', 'Your account has been restricted');
+  if (!Flags.hasFlag(user.onboarding ?? 0, OnboardingSteps.Buzz)) {
+    return deny('onboarding_incomplete', 'Complete onboarding before contributing');
+  }
+  if (!user.emailVerified && !hasLinkedOAuth) {
+    return deny('email_unverified', 'Verify your email before contributing');
+  }
+  const createdAt = user.createdAt ? new Date(user.createdAt).getTime() : NaN;
+  if (!Number.isFinite(createdAt) || Date.now() - createdAt < MIN_ACCOUNT_AGE_MS) {
+    return deny('account_too_new', 'Your account is too new to contribute');
+  }
+  if (REQUIRE_PAID_TIER && (!user.tier || user.tier === 'free')) {
+    return deny('membership_required', 'A membership is required to contribute');
+  }
+  return null;
+}
+
 export function assertSharedWriteTrust(
   user: SessionUser | null,
   hasLinkedOAuth: boolean
 ): asserts user is SessionUser {
-  const deny = (message: string): never => {
-    throw new TRPCError({ code: 'FORBIDDEN', message });
-  };
-  if (!user) return deny('Your account is not eligible for this action');
-  if (user.bannedAt) return deny('Your account is not eligible for this action');
-  if (user.muted) return deny('Your account has been restricted');
-  if (!Flags.hasFlag(user.onboarding ?? 0, OnboardingSteps.Buzz)) {
-    return deny('Complete onboarding before contributing');
-  }
-  if (!user.emailVerified && !hasLinkedOAuth) {
-    return deny('Verify your email before contributing');
-  }
-  const createdAt = user.createdAt ? new Date(user.createdAt).getTime() : NaN;
-  if (!Number.isFinite(createdAt) || Date.now() - createdAt < MIN_ACCOUNT_AGE_MS) {
-    return deny('Your account is too new to contribute');
-  }
-  if (REQUIRE_PAID_TIER && (!user.tier || user.tier === 'free')) {
-    return deny('A membership is required to contribute');
-  }
+  const refusal = sharedWriteTrustRefusal(user, hasLinkedOAuth);
+  if (refusal) throw new TRPCError({ code: 'FORBIDDEN', message: refusal.message });
+}
+
+/** `assertSharedWriteTrust`'s `hasLinkedOAuth` for `user`; only looked up when the email is unverified. */
+export async function hasLinkedOAuthAccount(
+  user: Pick<SessionUser, 'id' | 'emailVerified'>
+): Promise<boolean> {
+  if (user.emailVerified) return false;
+  return (await dbRead.account.count({ where: { userId: user.id } })) > 0;
 }

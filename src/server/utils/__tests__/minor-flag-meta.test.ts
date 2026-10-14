@@ -6,7 +6,12 @@ import {
   resolveMinorFlagged,
   resolvePoiFlagged,
   stripMinorHashMeta,
+  MODERATION_FLOW_META_KEYS,
   stripModerationOwnedMeta,
+  pickModerationOwnedMeta,
+  pickServerOwnedMeta,
+  stripServerOwnedMeta,
+  withPrivateCannotPromote,
 } from '~/server/utils/minor-flag-meta';
 import type { MinorFlagSnapshot, ModelMeta } from '~/server/schema/model.schema';
 
@@ -249,6 +254,20 @@ describe('stripModerationOwnedMeta', () => {
     expect(stripModerationOwnedMeta(undefined)).toBeUndefined();
   });
 });
+describe('moderation-flow keys', () => {
+  const flow = Object.fromEntries(MODERATION_FLOW_META_KEYS.map((key) => [key, 1])) as ModelMeta;
+  const meta = { ...flow, hideBuzz: true } as ModelMeta;
+
+  it('are dropped for a non-moderator and kept for a moderator', () => {
+    expect(stripModerationOwnedMeta(meta, false)).toEqual({ hideBuzz: true });
+    expect(stripModerationOwnedMeta(meta, true)).toBe(meta);
+  });
+
+  it('stay visible to the owner on the way out', () => {
+    expect(stripMinorHashMeta(meta)).toEqual(meta);
+  });
+});
+
 describe('textScanFlags is moderation-owned', () => {
   const textScanFlags = {
     poi: { at: 'x', workflowId: 'wf-1', reason: 'Names a real actor.', names: ['Jane Doe'] },
@@ -264,6 +283,47 @@ describe('textScanFlags is moderation-owned', () => {
     const meta = { textScanFlags, commentsLocked: true } as ModelMeta;
     expect(stripModerationOwnedMeta(meta, false)).toEqual({ commentsLocked: true });
     expect(stripModerationOwnedMeta(meta, true)).toEqual(meta);
+  });
+});
+
+describe('pickModerationOwnedMeta', () => {
+  const stored = {
+    cannotPublish: true,
+    declinedReason: 'x',
+    textScanFlags: { poi: { at: 'x', workflowId: 'wf', reason: 'r', names: [] } },
+    minorFlagSnapshot: snapshot(),
+    commentsLocked: true,
+  } as ModelMeta;
+
+  it('returns exactly the moderation-owned and flow keys that are present', () => {
+    const picked = pickModerationOwnedMeta(stored);
+    expect(Object.keys(picked).sort()).toEqual(
+      ['cannotPublish', 'declinedReason', 'minorFlagSnapshot', 'textScanFlags'].sort()
+    );
+  });
+
+  it('is empty for null and undefined', () => {
+    expect(pickModerationOwnedMeta(null)).toEqual({});
+    expect(pickModerationOwnedMeta(undefined)).toEqual({});
+  });
+});
+
+describe('server-only keys', () => {
+  const meta = {
+    trainingStudioWorkflowId: 'wf',
+    restoreCannotPromote: true,
+    commentsLocked: true,
+  } as ModelMeta;
+
+  it('strips the cannotPromote restore marker from client meta, moderators included', () => {
+    expect(stripServerOwnedMeta(meta)).toEqual({ commentsLocked: true });
+  });
+
+  it('carries the restore marker across a wholesale meta write', () => {
+    expect(pickServerOwnedMeta(meta)).toEqual({
+      trainingStudioWorkflowId: 'wf',
+      restoreCannotPromote: true,
+    });
   });
 });
 
@@ -287,5 +347,24 @@ describe('resolveMinorFlagged — text-scan minor', () => {
     } as ModelMeta;
     expect(resolveMinorFlagged({ isOwner: true, minor: true, meta })).toBe(true);
     expect(resolveMinorFlagged({ isOwner: true, minor: false, meta })).toBe(false);
+  });
+});
+
+describe('withPrivateCannotPromote', () => {
+  it('forces cannotPromote on and records a ban in the marker', () => {
+    expect(withPrivateCannotPromote({ hideBuzz: true }, true)).toEqual({
+      hideBuzz: true,
+      cannotPromote: true,
+      restoreCannotPromote: true,
+    });
+  });
+
+  it('forces cannotPromote on and drops a stale marker when not banned', () => {
+    const result = withPrivateCannotPromote(
+      { cannotPromote: true, restoreCannotPromote: true },
+      false
+    );
+    expect(result).toEqual({ cannotPromote: true });
+    expect(result).not.toHaveProperty('restoreCannotPromote');
   });
 });

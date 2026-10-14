@@ -10,6 +10,7 @@ import { unpublishArticleById, upsertArticle } from '~/server/services/article.s
 import { getCategoryTags } from '~/server/services/system-cache';
 import {
   throwAuthorizationError,
+  throwBadRequestError,
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
@@ -38,6 +39,9 @@ export const upsertArticleHandler = async ({
     // the mark — `upsertArticle` leaves the column alone when the field is undefined.
     const { isOfficial, ...articleInput } = input;
     const official = ctx.user.isModerator ? isOfficial : undefined;
+
+    if (input.scheduledAt && !ctx.features.articleScheduling)
+      throw throwBadRequestError('Scheduling articles is not available');
 
     const scanContent = ctx.features.articleImageScanning ?? false;
 

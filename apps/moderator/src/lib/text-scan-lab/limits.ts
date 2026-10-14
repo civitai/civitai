@@ -8,7 +8,7 @@ import type { LabField } from './types';
 export const HARNESS_LIMITS = {
   textsPerRequest: 50,
   fieldsPerText: 500,
-  charsPerText: 200_000,
+  charsPerText: 600_000,
   charsPerRequest: 1_000_000,
   headingChars: 100,
 } as const;

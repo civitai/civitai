@@ -324,6 +324,8 @@ describe('createDraftModelFromWorkflow', () => {
 
     const file = mockCreateFile.mock.calls[0][0];
     expect(file.modelVersionId).toBe(200);
+    expect(file.type).toBe('Training Data');
+    expect(file.visibility).toBe('Private');
     expect(file.metadata.selectedEpochUrl).toBe('https://blobs/epoch-1');
     expect(file.metadata.trainingResults.epochs).toHaveLength(2);
   });

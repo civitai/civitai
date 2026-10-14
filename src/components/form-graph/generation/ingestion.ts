@@ -377,13 +377,17 @@ export function applyGenerationData(store: GenerationStore, data: GenerationData
     const existingResources = (snap.resources ?? []) as ResourceData[];
     const incomingIds = new Set(split.resources.map((r) => r.id));
 
+    const incomingEcosystem = data.params.ecosystem as string | undefined;
+    // An empty resource list is compatible with every ecosystem, so it can't be the reason
+    // to keep the current one over an ecosystem the caller named (the workflow picker).
+    const switchesEcosystem = !!incomingEcosystem && data.resources.length === 0;
+
     // Preserve the current ecosystem when ALL incoming resources are
     // compatible with it; switch only on a truly incompatible resource.
     const currentEcosystem = snap.ecosystem as string | undefined;
     const currentEco = currentEcosystem ? ecosystemByKey.get(currentEcosystem) : undefined;
-    const allCompatible = currentEco && areResourcesCompatible(currentEco.id, data.resources);
-
-    const incomingEcosystem = data.params.ecosystem as string | undefined;
+    const allCompatible =
+      !switchesEcosystem && currentEco && areResourcesCompatible(currentEco.id, data.resources);
 
     const currentWorkflow = snap.workflow as string | undefined;
     const currentWorkflowConfig = currentWorkflow
@@ -421,7 +425,7 @@ export function applyGenerationData(store: GenerationStore, data: GenerationData
 
     // No current ecosystem and incoming resources fit several — let the
     // user choose rather than silently picking one.
-    if (!currentEco && !allCompatible) {
+    if (!currentEco && !allCompatible && !switchesEcosystem) {
       const resolvedWorkflow = targetWorkflow ?? currentWorkflow ?? 'txt2img';
       const workflowEcosystemIds = getEcosystemsForWorkflow(resolvedWorkflow);
       const compatibleEcosystemIds = workflowEcosystemIds.filter((ecoId) =>
@@ -503,6 +507,13 @@ export function applyGenerationData(store: GenerationStore, data: GenerationData
       ...(split.upscaler && { upscaler: split.upscaler }),
       ...(split.vae && { vae: split.vae }),
     };
+    // Discriminators first, for the reasons on `applyRemix`.
+    if (switchesEcosystem) {
+      store.set({
+        ecosystem: incomingEcosystem,
+        ...(targetWorkflow && { workflow: targetWorkflow }),
+      });
+    }
     store.set(values);
   }
 

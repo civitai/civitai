@@ -279,8 +279,7 @@ export const computePackOwnershipDiscount = ({
  *
  * The buyer is neither charged for it, paid for it, nor granted it — charging
  * and then paying them back through the bank would cost them the platform's cut
- * to buy their own work, and a creator cannot buy their own cosmetic at all (see
- * purchaseCosmeticShopItem). The charge and the grant derive from here; while
+ * to buy their own work. The charge and the grant derive from here; while
  * the grant read its own rule, a subtracted member was still granted, and a pack
  * of the buyer's own uncapped stickers minted free top-ups indefinitely.
  *
@@ -712,7 +711,8 @@ export const getCommunityCosmeticsSchema = z.object({
   // Capped quantity and/or a hard end date.
   limited: z.boolean().optional(),
   acceptsBlueBuzz: z.boolean().optional(),
-  // Matched against the listing title and the cosmetic's own name. Empty after
+  // Matched against the listing title and description, the cosmetic's own name,
+  // and a sticker's slug. Empty after
   // trimming is dropped so a cleared search box doesn't filter on ''.
   query: z
     .string()

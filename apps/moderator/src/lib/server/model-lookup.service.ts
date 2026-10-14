@@ -301,7 +301,7 @@ export function parseEnumArray(value: unknown): string[] {
   return inner ? inner.split(',').map((v) => v.replace(/^"|"$/g, '')) : [];
 }
 
-async function getModel(modelId: number): Promise<ModelDetail | null> {
+export async function getModel(modelId: number): Promise<ModelDetail | null> {
   const row = await dbRead
     .selectFrom('Model as m')
     .leftJoin('User as u', 'u.id', 'm.userId')
@@ -461,7 +461,7 @@ export async function getVersions(modelId: number): Promise<ModelVersionRow[]> {
 
 /** Newest reports, capped. The total is counted separately so the header can state it — a brigaded
  *  model carries thousands and the page holds one page of them. */
-async function getReports(
+export async function getReports(
   modelId: number,
   limit = 50
 ): Promise<{ rows: ModelReportRow[]; total: number }> {
@@ -542,7 +542,7 @@ async function getModActivity(
   };
 }
 
-async function getTags(modelId: number): Promise<ModelTagRow[]> {
+export async function getTags(modelId: number): Promise<ModelTagRow[]> {
   // `TagsOnModels` has no `automated`/`confidence`/`disabled` columns the way the image table does, so a
   // row says only that the tag is on the model.
   return dbRead

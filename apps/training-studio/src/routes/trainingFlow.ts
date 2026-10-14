@@ -156,7 +156,15 @@ export function recommendedCardFor(
 
 export type ImgStatus = 'uploading' | 'uploaded' | 'blocked' | 'error';
 
-export type DatasetFilter = 'all' | 'labeled' | 'unlabeled' | 'mature';
+export type DatasetFilter = 'all' | 'labeled' | 'unlabeled' | 'mature' | 'failed';
+
+/** File-browser order — natural (`clip2` before `clip10`) and case-insensitive. A zip's entry order is
+ *  whatever the archiver wrote (a tester reported theirs arriving sorted by video duration; their zip
+ *  wasn't inspected), which made a failed upload impossible to place against the user's own folder. */
+export const compareFileNames: (a: string, b: string) => number = new Intl.Collator(undefined, {
+  numeric: true,
+  sensitivity: 'base',
+}).compare;
 
 let imgSeq = 0;
 /** Client id for a dataset tile. Module-level because the flow keeps `images` across Back/Continue
@@ -198,9 +206,24 @@ export interface Img {
   caption: string;
 }
 
+/** Start one auto-label pass over `targets`. Each step is charged, so every target is marked tried
+ *  here, at submit, rather than when its result lands — a tile whose result never maps back can't be
+ *  resent by the drain. Results map back by position, not tile id: when two tiles shared an id, the
+ *  second was never marked and was resent every pass until the user's Buzz ran out. */
+export function startLabelPass(targets: Img[]) {
+  const byKey = new Map(targets.map((t, i) => [String(i), t]));
+  for (const t of targets) Object.assign(t, { labeling: true, labelTried: true });
+  const items = [...byKey].map(([key, t]) => ({ key, mediaUrl: t.blobUrl ?? '' }));
+  return { byKey, items };
+}
+
 /** An image counts toward the trainable dataset once its bytes are uploaded and it passed the scan. */
 export function isTrainable(img: Img): boolean {
   return img.status === 'uploaded';
+}
+
+export function isFailed(img: Img): boolean {
+  return img.status === 'blocked' || img.status === 'error';
 }
 
 /** The training-data `air` reference for a blob-backed item (a generation / reused dataset). The

@@ -102,6 +102,18 @@ export enum FLIPT_FEATURE_FLAGS {
   // the profanity filter stays solely in charge of the column. For a path that
   // auto-restricts other people's models, not flagging is the safe failure.
   MODEL_TEXT_MODERATION_XGUARD_APPLY = 'model-text-moderation-xguard-apply',
+  // LOCAL moderation of App Blocks shared-storage `data` leaves and counter keys, in SHADOW: scan
+  // after the write commits and record what would have been blocked, without rejecting anything.
+  // Same submit/apply split as the XGuard pair above. DEFAULT-OFF.
+  //
+  // 🔴 EVALUATED PER APP — entityId = the app block id, NO context — so ramp by boolean, by
+  // percentage (a sticky subset of apps), or by an ENTITY_ID segment listing app block ids. A
+  // context-reading segment (moderators, testers, any cohort) matches nothing here and returns the
+  // base value. See `shared-data-moderation.ts`.
+  APP_BLOCKS_SHARED_DATA_MODERATION = 'app-blocks-shared-data-moderation',
+  // ENFORCE: reject a hit inline, with the title/body belt's consequences. Implies the scan — with
+  // this on, the shadow flag no longer changes anything. Same evaluation as above. DEFAULT-OFF.
+  APP_BLOCKS_SHARED_DATA_MODERATION_ENFORCE = 'app-blocks-shared-data-moderation-enforce',
   // Text scan's kill switch. Off (or Flipt unreachable) puts every entity type back on XGuard,
   // Clavata and the profanity filter, whatever the per-entity rollout in sysRedis says.
   TEXT_SCAN = 'text-scan',
@@ -158,14 +170,38 @@ export enum FLIPT_FEATURE_FLAGS {
   // surfaces. The link-domain half throws either way — this flag has never governed it.
   USER_CONTENT_PATTERN_ENFORCE = 'user-content-pattern-enforce',
 
+  // Kill switch for the event points engine (src/server/events/points). DEFAULT-OFF: an unknown
+  // flag, or a client that never initialised, stops every award, removal, hat sync, signals tick
+  // and referee run. Evaluated with no context and one fixed entity, so set the boolean and add no
+  // rules: a ramp is all or nothing, and a rule can override the boolean.
+  EVENT_POINTS_ENGINE = 'event-points-engine',
+
   // Submits image ingestion as one imageScanning step instead of wdTagging + mediaRating.
   // DEFAULT-OFF — an unknown flag or unreachable Flipt keeps the two-step path. Evaluated
   // with the imageId and no context, so ramp by percentage or boolean; a segment matches nothing.
   IMAGE_INGESTION_IMAGE_SCANNING = 'image-ingestion-image-scanning',
 
+  // Records image-scan flags in the moderator label queue. DEFAULT-OFF: leave it off until the queue's
+  // tables exist. Labels only; it never changes an image's visibility. Evaluated with the imageId.
+  SCAN_LABEL_QUEUE_WRITER = 'scan-label-queue-writer',
+
   // Runs sync-generator-loaded-resources. DEFAULT-OFF: while off, ModelVersion.generatorLoaded
   // freezes at its last value — once a UI reads it, clear it if this stays off. Boolean only.
   SYNC_GENERATOR_LOADED_RESOURCES = 'sync-generator-loaded-resources',
+
+  // Runs build-resource-intent-cooc (the weekly co-occurrence index build). DEFAULT-OFF. Turn it on
+  // only after the ResourceIntentCoocSnapshot migration is applied in that environment, or every
+  // run fails at the insert. Boolean only.
+  RESOURCE_INTENT_COOC_BUILD = 'resource-intent-cooc-build',
+
+  // Whether a co-occurrence build (the weekly job AND scripts/build-resource-intent-cooc.ts)
+  // writes checkpoint mode's attachment section into the snapshot payload. DEFAULT-OFF: off, an
+  // unknown flag or an unreachable Flipt writes the 11-element payload older decoders read.
+  // 🔴 Turn it on only after the release carrying the section reader has fully rolled out AND its
+  // rollback window has passed: a decoder from before that release refuses a payload carrying
+  // the section, so a rolled-back pod would find the production snapshot unservable.
+  // Boolean only.
+  RESOURCE_INTENT_COOC_CHECKPOINT_SECTION = 'resource-intent-cooc-checkpoint-section',
 
   // Which of GenerationCoverage's two columns answers "can this generate": ON = `coveredNext`
   // (community checkpoints, downloaded on demand); OFF = `covered` (the weekly auction's list only).

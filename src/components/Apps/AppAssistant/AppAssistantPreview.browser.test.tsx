@@ -1,0 +1,95 @@
+import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { page } from 'vitest/browser';
+import type * as PreviewFrameMod from '~/components/Apps/AppAssistant/previewFrame';
+import type { PreviewFrame } from '~/components/Apps/AppAssistant/previewFrame';
+// `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
+import { renderWithProviders } from '../../../../test/component-setup';
+
+const HOST = 'dev-0123456789abcdef.apps.example';
+const FRAME: PreviewFrame = {
+  appBlockId: 'ephemeral-my-app',
+  blockId: 'my-app',
+  appId: 'appblk-my-app',
+  appName: 'My App',
+  trustTier: 'unverified',
+  sandbox: 'allow-scripts',
+  scopes: [],
+  bootSkeleton: false,
+  host: HOST,
+  iframeSrc: `https://${HOST}/?dev=entry-token`,
+  dnsPending: false,
+};
+const SESSION = { blockId: 'my-app', sessionId: 'bki_1', host: HOST };
+
+const m = vi.hoisted(() => ({
+  fetchFrame: vi.fn(),
+  gate: null as null | { blockId: string; onSettled: () => void },
+}));
+
+vi.mock('~/components/Apps/AppAssistant/previewFrame', async (importOriginal) => ({
+  ...(await importOriginal<typeof PreviewFrameMod>()),
+  fetchPreviewFrame: m.fetchFrame,
+}));
+vi.mock('~/components/AppBlocks/DevTunnelBlockHost', () => ({
+  DevTunnelBlockHost: ({ iframeSrc }: { iframeSrc: string }) => (
+    <div data-testid="frame" data-src={iframeSrc} />
+  ),
+}));
+vi.mock('~/components/AppBlocks/DevTunnelDnsGate', () => ({
+  DevTunnelDnsGate: (props: NonNullable<typeof m.gate>) => {
+    m.gate = props;
+    return <div data-testid="dns-gate" />;
+  },
+}));
+
+const { AppAssistantPreview } = await import('./AppAssistantPreview');
+
+beforeEach(() => {
+  m.gate = null;
+  m.fetchFrame.mockReset();
+});
+
+describe('AppAssistantPreview — a preview whose host is not resolvable yet', () => {
+  test('shows the gate for the session’s app and mounts no frame', async () => {
+    m.fetchFrame.mockResolvedValue({ preparing: true });
+    await renderWithProviders(<AppAssistantPreview canPreview session={SESSION} />);
+
+    // Wait for whichever of the two rendered, so a framed app fails on the line that names it.
+    const gate = page.getByTestId('dns-gate');
+    const frame = page.getByTestId('frame');
+    await vi.waitFor(() => expect(gate.query() ?? frame.query()).not.toBeNull());
+    expect(frame.query(), 'the app was framed before its host resolved').toBeNull();
+    await expect.element(gate).toBeInTheDocument();
+    expect(m.gate!.blockId).toBe('my-app');
+    expect(m.fetchFrame).toHaveBeenCalledTimes(1);
+  });
+
+  test('mounts the frame, with a freshly fetched entry URL, once the gate settles', async () => {
+    m.fetchFrame.mockResolvedValueOnce({ preparing: true }).mockResolvedValue(FRAME);
+    await renderWithProviders(<AppAssistantPreview canPreview session={SESSION} />);
+    await expect.element(page.getByTestId('dns-gate')).toBeInTheDocument();
+
+    m.gate!.onSettled();
+    await expect.element(page.getByTestId('frame')).toHaveAttribute('data-src', FRAME.iframeSrc);
+    expect(page.getByTestId('dns-gate').query()).toBeNull();
+    expect(m.fetchFrame).toHaveBeenCalledTimes(2);
+  });
+
+  test('keeps the gate, and still no frame, when the server is not ready after all', async () => {
+    m.fetchFrame.mockResolvedValue({ preparing: true });
+    await renderWithProviders(<AppAssistantPreview canPreview session={SESSION} />);
+    await expect.element(page.getByTestId('dns-gate')).toBeInTheDocument();
+
+    m.gate!.onSettled();
+    await vi.waitFor(() => expect(m.fetchFrame).toHaveBeenCalledTimes(2));
+    await expect.element(page.getByTestId('dns-gate')).toBeInTheDocument();
+    expect(page.getByTestId('frame').query()).toBeNull();
+  });
+
+  test('CONTROL: a resolvable preview mounts its frame straight away, with no gate', async () => {
+    m.fetchFrame.mockResolvedValue(FRAME);
+    await renderWithProviders(<AppAssistantPreview canPreview session={SESSION} />);
+    await expect.element(page.getByTestId('frame')).toHaveAttribute('data-src', FRAME.iframeSrc);
+    expect(m.gate).toBeNull();
+  });
+});

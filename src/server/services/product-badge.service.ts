@@ -311,7 +311,7 @@ export const upsertProductBadge = async (input: UpsertProductBadgeInput) => {
           name,
           type: CosmeticType.Badge,
           source: CosmeticSource.Membership,
-          permanentUnlock: false,
+          permanentUnlock: true,
           data: { url: resolvedBadgeUrl, animated },
           productId,
           availableStart,

@@ -4,7 +4,8 @@ import { isConfirmedNonApprovedAppBlockId } from '~/server/services/blocks/known
 
 /**
  * Is this host mount a PRIVATE RUN, and therefore invisible to the app's owner in
- * analytics? Called by BOTH `blockRenders` writers to skip the insert.
+ * analytics? Called by both `blockRenders` writers, and by the custom-events ingest
+ * (`block-event-ingest.service.ts`), to skip the insert.
  *
  * Mechanism, the shape that was rejected, the over-filtering bound and the acceptance
  * step are recorded ONCE, at the read site: `blocks/app-views.service.ts`. What follows

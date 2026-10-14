@@ -3,6 +3,7 @@
 // (no RTL — civitai-web's unit project runs `environment: 'node'` and only
 // collects `*.test.ts`). Mirrors the IframeHost `hostRenderDecision` pattern.
 
+import { BLOCK_ESTIMATE_BATCH_MAX_CELLS } from '~/shared/constants/block-estimate-batch.constants';
 import { isKnownBlockScope } from '~/shared/constants/block-scope.constants';
 import { maxInitPostsWithin } from './iframeInitController';
 import type { HostStatus } from './openBuzzPurchaseGate';
@@ -307,6 +308,109 @@ export function resolveResourcePickerRequest(raw: unknown): ResourcePickerReques
   };
 }
 
+// ── OPEN_RESOURCE_PICKER multi-select (`multiple: { max }`) ──────────────────
+//
+// A block that stacks several LoRAs asks for them in ONE picker session instead
+// of reopening the picker per resource. This is a SEPARATE resolver, read off
+// the same raw payload AFTER resolveResourcePickerRequest has accepted it, so
+// that function — and the closed {requestId, resourceType, baseModelGroup?}
+// shape its tests pin — is untouched: a request without `multiple` takes exactly
+// the path it always has.
+//
+// Wire contract (mirrored by the SDK's `useResourcePicker` `multiple` option):
+//   request  OPEN_RESOURCE_PICKER   { requestId, resourceType, baseModelGroup?, multiple?: { max } }
+//   reply    RESOURCE_PICKER_RESULT { requestId, selectedResources: SafeGenerationResource[] }
+//            — pick order; `[]` when the viewer dismissed. `selected` is NOT set.
+//   refusal  RESOURCE_PICKER_RESULT { requestId, error }
+// A single-pick request still answers { requestId, selected? } and nothing else,
+// so the two reply shapes cannot be mistaken for one another: a list reply is
+// recognisable by the `selectedResources` array, and a host that predates this
+// (which never reads `multiple`, opens a single pick and answers `selected`) is
+// recognisable by its absence.
+//
+// Rules:
+//   - `multiple` absent or null → not a multi request.
+//   - `max` above the cap is CLAMPED to PAGE_RESOURCE_PICKER_MULTI_MAX.
+//   - `multiple` that is not `{ max: <integer ≥ 1> }` → REFUSED.
+//   - a resourceType outside the LoRA family (i.e. Checkpoint) → REFUSED. A
+//     generation takes one checkpoint (`body.modelVersionId`) and a list of
+//     LoRA-family resources (`body.additionalResources`), so "several" only has
+//     a meaning for the latter.
+// A refusal is ANSWERED (with `error`) rather than dropped: only an SDK that
+// knows about multi-select can send the key, and it turns an `error` reply into
+// a thrown error — better than a block waiting on a picker that never opens. It
+// is never downgraded to a single pick, which would hand back a different
+// result shape than the one asked for.
+
+/** The LoRA family within PAGE_RESOURCE_PICKER_TYPES — the only multi-selectable types. */
+export const PAGE_RESOURCE_PICKER_MULTI_TYPES = ['LORA', 'LoCon', 'DoRA'] as const;
+
+/**
+ * Most resources ONE multi-select request can return. Equal to the page body's
+ * `additionalResources` cap (`MAX_ADDITIONAL_RESOURCES` in the block workflow
+ * schema — a parity test pins the two together), so a full batch is always one
+ * the submit path accepts.
+ */
+export const PAGE_RESOURCE_PICKER_MULTI_MAX = 5;
+
+export type ResourcePickerMultiple =
+  | { kind: 'single' }
+  | { kind: 'multiple'; max: number }
+  | { kind: 'refused'; reason: string };
+
+/**
+ * Decide whether an ALREADY-ACCEPTED OPEN_RESOURCE_PICKER payload is a
+ * multi-select request. `resourceType` is the canonical type
+ * resolveResourcePickerRequest returned for the same payload. Pure — see the
+ * section comment above for the rules.
+ */
+export function resolveResourcePickerMultiple(
+  raw: unknown,
+  resourceType: PageResourcePickerType
+): ResourcePickerMultiple {
+  const multiple =
+    raw && typeof raw === 'object' ? (raw as Record<string, unknown>).multiple : undefined;
+  if (multiple === undefined || multiple === null) return { kind: 'single' };
+
+  if (!(PAGE_RESOURCE_PICKER_MULTI_TYPES as readonly string[]).includes(resourceType)) {
+    return {
+      kind: 'refused',
+      reason: `OPEN_RESOURCE_PICKER: multiple is only supported for LoRA-family resource types, not ${resourceType}.`,
+    };
+  }
+  const max = typeof multiple === 'object' ? (multiple as Record<string, unknown>).max : undefined;
+  if (typeof max !== 'number' || !Number.isInteger(max) || max < 1) {
+    return {
+      kind: 'refused',
+      reason: 'OPEN_RESOURCE_PICKER: multiple.max must be a whole number of at least 1.',
+    };
+  }
+  return { kind: 'multiple', max: Math.min(max, PAGE_RESOURCE_PICKER_MULTI_MAX) };
+}
+
+/**
+ * The resources a multi-select request answers with, from what the native modal
+ * handed back: pick order kept, a repeated resource collapsed onto its first
+ * occurrence, and never more than `max` entries. The modal already enforces
+ * both while the viewer is choosing; this is the belt that keeps the reply
+ * inside the request's cap whatever the modal does in future. It only ever
+ * REMOVES entries — every resource returned is one the viewer picked.
+ */
+export function capPickedResources<T extends { id: number }>(
+  picked: readonly T[],
+  max: number
+): T[] {
+  const seen = new Set<number>();
+  const out: T[] = [];
+  for (const resource of picked) {
+    if (out.length >= max) break;
+    if (seen.has(resource.id)) continue;
+    seen.add(resource.id);
+    out.push(resource);
+  }
+  return out;
+}
+
 // ── OPEN_CHECKPOINT_PICKER (parity with the model-slot IframeHost) ────────────
 //
 // The SDK hook `useCheckpointPicker()` posts OPEN_CHECKPOINT_PICKER and awaits
@@ -481,6 +585,54 @@ export function resolveGetImagesByIdsRequest(raw: unknown): GetImagesByIdsReques
     ? obj.imageIds.filter((n): n is number => typeof n === 'number' && Number.isInteger(n) && n > 0)
     : [];
   return { requestId: obj.requestId, imageIds };
+}
+
+// ── ESTIMATE_WORKFLOW_BATCH ──────────────────────────────────────────────────
+// A grid app asks for the price of several generations in one message: a list of
+// workflow bodies, each the body ESTIMATE_WORKFLOW carries. The host forwards the
+// list to `blocks.estimateWorkflowBatch`; nothing is submitted.
+//
+// 🔴 THE HOST CHECKS THE LIST, NEVER A CELL. Each body is validated server-side,
+// per cell, so that one malformed body becomes that cell's error and the others
+// still price. Parsing bodies here would either duplicate the server schema or
+// fail the whole message on one bad cell — the opposite of what the batch is for.
+// What IS refused here is what the server would refuse for the whole call anyway
+// (not an array, empty, longer than the cap), so the block gets a legible error
+// without a round trip.
+
+/** The refusals the HOST itself emits for a batch estimate, before any round trip. */
+export const ESTIMATE_BATCH_HOST_ERRORS = [
+  /** `bodies` is missing, not an array, or empty. */
+  'invalid estimate batch',
+  /** `bodies` is longer than `BLOCK_ESTIMATE_BATCH_MAX_CELLS`. */
+  'estimate batch too large',
+] as const satisfies readonly string[];
+
+export type EstimateBatchHostError = (typeof ESTIMATE_BATCH_HOST_ERRORS)[number];
+
+export type EstimateBatchDecision =
+  | { kind: 'drop' }
+  | { kind: 'refuse'; requestId: string; error: EstimateBatchHostError }
+  | { kind: 'proceed'; request: { requestId: string; bodies: unknown[] } };
+
+/**
+ * Validate a raw ESTIMATE_WORKFLOW_BATCH payload from an untrusted iframe and
+ * decide drop / refuse / proceed. A payload with no string `requestId` is DROPPED
+ * (there is nothing to correlate a reply to — mirrors ESTIMATE_WORKFLOW); every
+ * later refusal carries a reply. `bodies` is passed through untouched.
+ */
+export function resolveEstimateBatchRequest(raw: unknown): EstimateBatchDecision {
+  if (!raw || typeof raw !== 'object') return { kind: 'drop' };
+  const obj = raw as Record<string, unknown>;
+  if (typeof obj.requestId !== 'string') return { kind: 'drop' };
+  const requestId = obj.requestId;
+  if (!Array.isArray(obj.bodies) || obj.bodies.length === 0) {
+    return { kind: 'refuse', requestId, error: 'invalid estimate batch' };
+  }
+  if (obj.bodies.length > BLOCK_ESTIMATE_BATCH_MAX_CELLS) {
+    return { kind: 'refuse', requestId, error: 'estimate batch too large' };
+  }
+  return { kind: 'proceed', request: { requestId, bodies: obj.bodies as unknown[] } };
 }
 
 // ── NAVIGATE (#5209) ─────────────────────────────────────────────────────────

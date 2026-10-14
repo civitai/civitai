@@ -13,6 +13,10 @@ import { getImageScanRetryLimit } from '~/server/services/image-scan-failure';
 import { CSAM_HOLD_MAX_DAYS } from '~/server/services/image-appeal-flag';
 import { BLOCKED_IMAGE_RETENTION_DAYS } from '@civitai/shared/job-queue';
 import { decreaseDate } from '~/utils/date-helpers';
+import {
+  appealTrainingHeld,
+  isAppealTrainingConfigured,
+} from '~/server/jobs/appeal-decision-records';
 
 const IMAGE_SCANNING_ERROR_DELAY = 60 * 1; // 1 hour
 const IMAGE_SCANNING_RETRY_LIMIT = 9;
@@ -553,7 +557,10 @@ export const MODERATOR_TAKEDOWN_ACTIVITIES = ['review', 'bulkRemove'] as const;
  * `reportHoldExpiredUserIds` are the owners this run already decided to purge despite an open
  * report, past `CSAM_HOLD_MAX_DAYS`. Only valid on a statement over an unaliased "Image".
  */
-export function purgeHoldGuard(reportHoldExpiredUserIds: number[]) {
+export function purgeHoldGuard(
+  reportHoldExpiredUserIds: number[],
+  { holdForTrainingCopy }: { holdForTrainingCopy: boolean }
+) {
   return Prisma.sql`
     "Image".ingestion = 'Blocked'::"ImageIngestionStatus"
     AND "Image"."needsReview" IS DISTINCT FROM 'appeal'
@@ -566,6 +573,11 @@ export function purgeHoldGuard(reportHoldExpiredUserIds: number[]) {
           AND (c."reportSentAt" IS NULL OR c."archivedAt" IS NULL)
       )
     )
+    ${
+      holdForTrainingCopy
+        ? Prisma.sql`AND NOT ${appealTrainingHeld(Prisma.raw('"Image"'))}`
+        : Prisma.empty
+    }
   `;
 }
 
@@ -848,7 +860,9 @@ export const removeBlockedImages = createJob(
     };
     const takedowns = takedownCandidateIds.filter(isTakedown);
     const deletedWithoutRetraction = takedownCandidateIds.filter((id) => !isTakedown(id));
-    const onlyWhere = purgeHoldGuard(expiredUserIds);
+    const onlyWhere = purgeHoldGuard(expiredUserIds, {
+      holdForTrainingCopy: isAppealTrainingConfigured(),
+    });
     const deleted: number[] = [];
     if (takedowns.length > 0) {
       const rows = await deleteImages(takedowns, true, { retractPublicBlobs: true, onlyWhere });

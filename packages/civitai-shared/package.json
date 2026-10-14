@@ -24,16 +24,20 @@
     "./rating-review": "./src/rating-review.ts",
     "./crucible": "./src/crucible.ts",
     "./json-ld": "./src/json-ld.ts",
-    "./resolution-reasons": "./src/resolution-reasons.ts"
+    "./resolution-reasons": "./src/resolution-reasons.ts",
+    "./post-scheduling": "./src/post-scheduling.ts",
+    "./platform-feedback-version": "./src/platform-feedback-version.ts"
   },
   "scripts": {
     "test": "vitest run",
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@civitai/db-schema": "workspace:*"
+    "@civitai/db-schema": "workspace:*",
+    "semver": "^7.6.0"
   },
   "devDependencies": {
+    "@types/semver": "^7.7.1",
     "vitest": "^4.1.11"
   }
 }

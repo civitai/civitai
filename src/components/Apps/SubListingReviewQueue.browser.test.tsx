@@ -80,6 +80,7 @@ function row(over: Row = {}): Row {
     itemKey: 'neon',
     parent: { id: 'apl_P', slug: 'custom-generators', name: 'Custom Generators' },
     author: { id: 7, username: 'pixelwitch', image: null },
+    externalHref: null,
     live,
     pending: null,
     createdAt: new Date(),
@@ -127,6 +128,24 @@ describe('subListingRowActions', () => {
 });
 
 describe('SubListingReviewQueue', () => {
+  test('an off-site parent’s item shows the link its card opens, in a new tab', async () => {
+    const href = 'https://games.example.com/?game=neon';
+    m.rows = [row({ externalHref: href, live: { ...live, subPath: 'neon' } })];
+    renderWithProviders(<SubListingReviewQueue />);
+    const link = page.getByTestId('sub-listing-external-link');
+    await expect.element(link).toHaveTextContent(href);
+    expect(link.element().getAttribute('href')).toBe(href);
+    expect(link.element().getAttribute('target')).toBe('_blank');
+    expect(page.getByText('/neon').elements()).toHaveLength(0);
+  });
+
+  test('an on-site item shows its path, not a link (negative control)', async () => {
+    m.rows = [row()];
+    renderWithProviders(<SubListingReviewQueue />);
+    await expect.element(page.getByText('/g/NEON')).toBeVisible();
+    expect(page.getByTestId('sub-listing-external-link').elements()).toHaveLength(0);
+  });
+
   test('approving a new item sends approve and refreshes the queue and the tab count', async () => {
     m.rows = [row()];
     renderWithProviders(<SubListingReviewQueue />);

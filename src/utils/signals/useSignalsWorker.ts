@@ -13,11 +13,25 @@ import type {
   WorkerOutgoingMessage,
 } from './types';
 import { PORT_HEARTBEAT_INTERVAL_MS, SIGNALS_WORKER_VERSION } from './types';
+import {
+  getBackoffDelay,
+  HUB_STABLE_CONNECTION_MS,
+  TOKEN_FETCH_RETRY_BACKOFF,
+  TOKEN_REFRESH_BACKOFF,
+} from './backoff';
 import { EventEmitter, teardownSignalWorker } from './utils';
 
 const WORKER_PING_TIMEOUT_MS = 3000;
 const STALE_SCRIPT_MAX_RETRIES = 3;
 const STALE_SCRIPT_RETRY_DELAY_MS = 60_000;
+// A tab left without a token keeps re-fetching on the backoff below, so the query's own retries only
+// cover a one-off blip. Every retry is a `signals.getToken` against an API that, in
+// an outage, is often the thing already saturated.
+const TOKEN_FETCH_MAX_RETRIES = 2;
+
+function getTokenFetchRetryDelay(failureCount: number) {
+  return getBackoffDelay(failureCount, TOKEN_FETCH_RETRY_BACKOFF);
+}
 
 export type TopicStatusEvent = Omit<SignalTopicStatus, 'type'>;
 export type TopicStatusHandler = (event: TopicStatusEvent) => void;
@@ -61,14 +75,27 @@ export function useSignalsWorker(options?: {
   const [staleScriptRetry, setStaleScriptRetry] = useState(0);
   const staleScriptTimerRef = useRef<ReturnType<typeof setTimeout>>();
   const [reconnectCount, setReconnectCount] = useState(0);
-  const shouldInitialize = connection === 'closed';
+  // A tab fetches its token (once — the query never goes stale) when the worker is 'closed', or
+  // 'reconnecting' in a tab that has never seen it connected. A lost connection never reaches
+  // 'closed' any more, so a tab loaded during an outage must still be able to hand the worker a fresh
+  // token — that is what lets a reload recover from a token the hub stopped accepting. A tab that was
+  // already connected when the hub dropped stays quiet: the worker holds a working token, and every
+  // such tab fetching at the instant of the drop would be a synchronized burst.
+  const sawConnectedRef = useRef(false);
+  if (connection === 'connected') sawConnectedRef.current = true;
+  const shouldInitialize =
+    connection === 'closed' || (connection === 'reconnecting' && !sawConnectedRef.current);
 
   const queryUtils = trpc.useUtils();
   const tokenQuery = trpc.signals.getToken.useQuery(undefined, {
     enabled: !!userId && shouldInitialize,
-    retry: isDev ? false : 3,
+    retry: isDev ? false : TOKEN_FETCH_MAX_RETRIES,
+    // React Query's default delay is deterministic, so every tab that failed together retried together.
+    retryDelay: getTokenFetchRetryDelay,
   });
   const accessToken = tokenQuery.data?.accessToken;
+  // Re-mints since the hub last accepted a connection; picks the next step of the backoff below.
+  const tokenRefreshAttemptRef = useRef(0);
 
   const emitterRef = useRef(new EventEmitter());
   const debugStateRef = useRef<SignalsWorkerDebugState>();
@@ -175,15 +202,46 @@ export function useSignalsWorker(options?: {
       } else if (data.type === 'connection:state') {
         setConnection(data.state ?? 'closed');
         onStateChange?.({ state: data.state, message: data.message });
-        // `null` is a worker that never connected, e.g. one replaced mid-session: the cached token
-        // (staleTime: Infinity) may have expired since page load.
-        if (data.state === 'closed' || data.state === null) {
-          queryUtils.signals.getToken.invalidate();
-        }
+        // The token is NOT re-minted here: signals tokens carry no expiry, so the one this tab holds
+        // is handed back to the worker as is. (A lost connection never even reaches 'closed': the
+        // worker reports 'reconnecting' and retries with the token it already has.)
         if (data.state === 'closed') setReconnectCount((c) => c + 1);
       }
     };
   }, [worker]);
+
+  // A tab WITHOUT a token (the degraded `{}` response, or a failed fetch) never opens a connection
+  // and gets no further state change, so it re-fetches on a jittered backoff — ~5-30s, doubling to a
+  // 10 min ceiling — instead of waiting for a reload as it used to. A tab that holds a token never
+  // re-mints it: it does not expire. Re-minting on every 'closed', in every tab at once, multiplied
+  // `signals.getToken` ~50x in one outage. Each settled fetch re-arms the timer with the next step.
+  // Deliberately keyed on the query's own state only — anything that re-rendered more often would
+  // keep pushing the timer back and the refresh would never fire.
+  const tokenIsFetching = tokenQuery.isFetching;
+  const hasToken = !!accessToken;
+  useEffect(() => {
+    if (connection === 'connected') {
+      // Like the worker's own backoff, reset only once the connection has proved stable: a hub that
+      // accepts and then drops connections must not restart the schedule every cycle.
+      const timer = setTimeout(() => {
+        tokenRefreshAttemptRef.current = 0;
+      }, HUB_STABLE_CONNECTION_MS);
+      return () => clearTimeout(timer);
+    }
+    if (!userId || hasToken || connection !== 'closed' || tokenIsFetching) return;
+    const timer = setTimeout(() => {
+      tokenRefreshAttemptRef.current += 1;
+      queryUtils.signals.getToken.invalidate();
+    }, getBackoffDelay(tokenRefreshAttemptRef.current, TOKEN_REFRESH_BACKOFF));
+    return () => clearTimeout(timer);
+  }, [
+    userId,
+    connection,
+    hasToken,
+    tokenIsFetching,
+    tokenQuery.dataUpdatedAt,
+    tokenQuery.errorUpdatedAt,
+  ]);
 
   // init
   useEffect(() => {
@@ -280,7 +338,17 @@ export function useSignalsWorker(options?: {
           SERVER_PONG_EVENT,
           timeoutMs
         ),
-      forceReconnect: () => worker?.port.postMessage({ type: 'debug:reconnect' }),
+      /**
+       * Skips every backoff: an immediate hub attempt with the token the tab holds, while a fresh
+       * token is fetched in parallel and used from the next attempt on.
+       */
+      forceReconnect: () => {
+        tokenRefreshAttemptRef.current = 0;
+        // The query is disabled while connected; invalidating marks it stale, so it refetches the
+        // moment the worker reports 'closed'.
+        queryUtils.signals.getToken.invalidate();
+        worker?.port.postMessage({ type: 'debug:reconnect' });
+      },
       toggleVerbose: () => worker?.port.postMessage({ type: 'debug:toggle-verbose' }),
       getSubscriberCounts: () =>
         Object.fromEntries(

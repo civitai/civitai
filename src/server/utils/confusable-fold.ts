@@ -23,6 +23,15 @@ const INVISIBLE =
   /[\p{Cf}\u034F\u115F\u1160\u17B4\u17B5\u180B-\u180D\u3164\uFE00-\uFE0F\uFFA0\u{E0100}-\u{E01EF}]/gu;
 
 /**
+ * Just the invisible strip, for a caller that must keep case and spelling \u2014 e.g. text handed to
+ * detectors that do their own normalisation. Same class as `foldConfusables` uses, so the two
+ * cannot disagree about what renders as nothing.
+ */
+export function stripInvisible(value: string) {
+  return value.replace(INVISIBLE, '');
+}
+
+/**
  * Text as a blocklist should see it: one spelling per glyph, whatever alphabet it was typed in.
  *
  * 19 of the 90 live `MessagePattern` entries are non-ASCII, and several are Unicode skins of an

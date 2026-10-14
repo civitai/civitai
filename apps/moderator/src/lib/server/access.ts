@@ -1,5 +1,6 @@
 import { error, fail, type ActionFailure, type RequestEvent } from '@sveltejs/kit';
 import type { SessionUser } from '@civitai/auth';
+import { APPS_PLATFORM_FEEDBACK_AREA } from '@civitai/shared/feedback.constants';
 import { GENERATOR_RESTRICTIONS_PATH, SCAM_RESTRICTIONS_PATH } from '$lib/restriction-types';
 import { FLAG_APPEALS_PATH, MINOR_HASH_PATH } from '$lib/minor-flags/paths';
 import { reportCountKey, reportEntities, reportEntityLabels, reportPath } from '$lib/reports';
@@ -37,6 +38,8 @@ export type NavLink = {
   // The section is granted as one page and its children are neither granted nor checked individually. Making
   // these children grantable would drop the grants already stored against the parent path.
   sharedAccess?: boolean;
+  // Hover-preloading runs the page's `load`; for a page whose load takes a lease, that is a write.
+  noPreload?: boolean;
   children?: NavLink[];
 };
 
@@ -79,7 +82,14 @@ export const NAVIGATION: NavLink[] = [
       { path: '/images/remixSource', label: 'Remix Source', countKey: 'remixSource' },
       { path: '/images/reported', label: 'Reported', countKey: 'reported' },
       { path: '/images/appeals', label: 'Appeals', countKey: 'appeals' },
+      {
+        path: '/images/removed-appeals',
+        label: 'Appeals: Content Removed',
+        countKey: 'removedAppeals',
+      },
       { path: '/images/csam', label: 'CSAM', countKey: 'csam' },
+      { path: '/images/scan-labels', label: 'Scan Labels', noPreload: true },
+      { path: '/images/scan-label-metrics', label: 'Scan Label Metrics' },
       { path: '/images/tags', label: 'Image Tags', countKey: 'imageTags' },
       { path: '/images/ratings', label: 'Image Ratings', countKey: 'imageRatings' },
       { path: '/images/downleveled', label: 'Downleveled' },
@@ -183,7 +193,22 @@ export const NAVIGATION: NavLink[] = [
   // One grant covers the queue and its per-report page (`/feedback/<id>`), which resolves here by
   // prefix rather than being listed — the same shape as `/abuse` below. A report is a row of this
   // queue, and granting the list without the rows would show a moderator a count they cannot open.
-  { path: '/feedback', label: 'Feedback', countKey: 'feedbackNew' },
+  //
+  // `sharedAccess`, like `/reports`: both children are views of one page, so the grant stays on
+  // `/feedback`.
+  {
+    path: '/feedback',
+    label: 'Feedback',
+    sharedAccess: true,
+    children: [
+      { path: '/feedback', label: 'General queue', countKey: 'feedbackNew' },
+      {
+        path: `/feedback?area=${APPS_PLATFORM_FEEDBACK_AREA}&status=new`,
+        label: 'Apps platform (developers)',
+        countKey: 'feedbackAppsPlatformNew',
+      },
+    ],
+  },
   // One grant covers the section. Its detail view (`/abuse/<runId>`) resolves here by prefix rather
   // than being listed: a run and its findings are one thing, and granting the list without the rows
   // would show a moderator a count they cannot open.

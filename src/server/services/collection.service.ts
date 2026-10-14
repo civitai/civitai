@@ -17,6 +17,7 @@ import {
   SearchIndexUpdateQueueAction,
 } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { getEntityOwnerId } from '~/server/services/entity-owner.service';
 import { logToAxiom } from '~/server/logging/client';
 import { queueCollectionMembershipUpdate } from '~/server/services/collection-index-sync';
 import { UserHubSourceType } from '~/shared/utils/prisma/enums';
@@ -55,7 +56,6 @@ import {
 } from '~/server/selectors/collection.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import type { ArticleGetAll } from '~/server/services/article.service';
-import { getArticles } from '~/server/services/article.service';
 import { homeBlockCacheBust } from '~/server/services/home-block-cache.service';
 import { getModeratedTags } from '~/server/services/system-cache';
 import { applyTagRules, insertTagsOnImageNew } from '~/server/services/tagsOnImageNew.service';
@@ -63,13 +63,10 @@ import type { ImagesInfiniteModel } from '~/server/services/image.service';
 import type { IngestImageInput } from '~/server/schema/image.schema';
 import { getAllImages, enqueueImageIngestion } from '~/server/services/image.service';
 import type { GetModelsWithImagesAndModelVersions } from '~/server/services/model.service';
-import {
-  bustFeaturedModelsCache,
-  getModelsWithImagesAndModelVersions,
-} from '~/server/services/model.service';
 import { createNotification } from '~/server/services/notification.service';
 import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
 import { sanitizeProvenance } from '~/server/services/orchestrator/remix-provenance';
+import { pickClientImageColumns } from '~/server/utils/image-columns';
 import type { PostsInfiniteModel } from '~/server/services/post.service';
 import { getPostsInfinite } from '~/server/services/post.service';
 import { enqueueJobs } from '~/server/services/job-queue.service';
@@ -112,11 +109,18 @@ import { isDefined } from '~/utils/type-guards';
 import { assertUserChallengeAcceptingEntries } from '~/server/games/daily-challenge/challenge-entry-gate';
 import { detachPostsFromCollection } from '~/server/services/collection-post-detach';
 import { liveInviteWhere } from '~/server/services/collection-invite.utils';
+import { stripBlockProvenanceMetadata } from '~/shared/utils/block-provenance-metadata';
 import {
   collectionSupportsCollaborators,
   freeGrantBaseline,
   isCollaboratorRow,
 } from '~/server/services/collection-permission.utils';
+
+// Lazy: a static import here closes the image.service import cycle (no-image-service-import-cycle).
+const modelService = () => import('~/server/services/model.service');
+
+// Lazy: a static import here closes the image.service import cycle (no-image-service-import-cycle).
+const articleService = () => import('~/server/services/article.service');
 
 export type CollectionContributorPermissionFlags = {
   collectionId: number;
@@ -1221,7 +1225,7 @@ export const saveItemInCollections = async ({
 
   // Check for updates to featured models
   if (input.modelId && collections.some((c) => c.id === FEATURED_MODEL_COLLECTION_ID)) {
-    await bustFeaturedModelsCache();
+    await (await modelService()).bustFeaturedModelsCache();
     const versions = await dbRead.modelVersion.findMany({
       where: { id: input.modelId },
       select: { id: true },
@@ -1411,11 +1415,12 @@ export const upsertCollection = async ({
                   connectOrCreate: {
                     where: { id: image.id ?? -1 },
                     create: {
-                      ...image,
+                      ...pickClientImageColumns(image),
                       meta:
                         (sanitizeProvenance(
                           image?.meta as Record<string, unknown> | null | undefined
                         ) as Prisma.JsonObject | undefined) ?? Prisma.JsonNull,
+                      metadata: stripBlockProvenanceMetadata(image.metadata),
                       userId,
                       resources: undefined,
                       id: undefined,
@@ -1733,10 +1738,17 @@ export const AI_REVIEW_SYSTEM_USER_ID = -1;
 export const getCollectionItemsByCollectionId = async ({
   input,
   user,
+  imagesAsPublicCatalog = false,
 }: {
   input: UserPreferencesInput & GetAllCollectionItemsSchema;
   // Requires user here because models service uses it
   user?: SessionUser;
+  /**
+   * Read image items the way the public image catalog (`runImageSearch`) does: with no
+   * viewer, so no owner or moderator carve-outs, and with the poi/minor exclusion. The
+   * collection permission check above still uses `user`.
+   */
+  imagesAsPublicCatalog?: boolean;
 }): Promise<CollectionItemsResult> => {
   const {
     statuses = [CollectionItemStatus.ACCEPTED],
@@ -2009,7 +2021,9 @@ export const getCollectionItemsByCollectionId = async ({
 
   const models =
     modelIds.length > 0
-      ? await getModelsWithImagesAndModelVersions({
+      ? await (
+          await modelService()
+        ).getModelsWithImagesAndModelVersions({
           user,
           input: {
             limit: modelIds.length,
@@ -2029,7 +2043,9 @@ export const getCollectionItemsByCollectionId = async ({
 
   const articles =
     articleIds.length > 0
-      ? await getArticles({
+      ? await (
+          await articleService()
+        ).getArticles({
           limit: articleIds.length,
           period: MetricTimeframe.AllTime,
           periodMode: 'stats',
@@ -2054,7 +2070,8 @@ export const getCollectionItemsByCollectionId = async ({
           sort: ImageSort.Newest,
           ...userPreferencesInput,
           browsingLevel: input.browsingLevel,
-          user,
+          user: imagesAsPublicCatalog ? undefined : user,
+          ...(imagesAsPublicCatalog && { disablePoi: true, disableMinor: true }),
           ids: imageIds,
           headers: { src: 'getCollectionItemsByCollectionId' },
           includeBaseModel: true,
@@ -2150,7 +2167,7 @@ export const getCollectionItemsByCollectionId = async ({
 // Who authored the entity itself. `removeCollectionItem` lets an author pull their own work out of
 // any collection, so the flag below has to account for them or the action is authorized on the
 // server and missing from the UI.
-async function getEntityOwnerId({
+async function getCollectionItemOwnerId({
   modelId,
   imageId,
   articleId,
@@ -2163,27 +2180,11 @@ async function getEntityOwnerId({
   postId?: number;
   model3dId?: number;
 }): Promise<number | null> {
-  const select = { userId: true };
-  if (modelId) {
-    const model = await dbRead.model.findUnique({ where: { id: modelId }, select });
-    return model?.userId ?? null;
-  }
-  if (imageId) {
-    const image = await dbRead.image.findUnique({ where: { id: imageId }, select });
-    return image?.userId ?? null;
-  }
-  if (postId) {
-    const post = await dbRead.post.findUnique({ where: { id: postId }, select });
-    return post?.userId ?? null;
-  }
-  if (articleId) {
-    const article = await dbRead.article.findUnique({ where: { id: articleId }, select });
-    return article?.userId ?? null;
-  }
-  if (model3dId) {
-    const model3d = await dbRead.model3D.findUnique({ where: { id: model3dId }, select });
-    return model3d?.userId ?? null;
-  }
+  if (modelId) return getEntityOwnerId('Model', modelId);
+  if (imageId) return getEntityOwnerId('Image', imageId);
+  if (postId) return getEntityOwnerId('Post', postId);
+  if (articleId) return getEntityOwnerId('Article', articleId);
+  if (model3dId) return getEntityOwnerId('Model3D', model3dId);
   return null;
 }
 
@@ -2207,7 +2208,13 @@ export const getUserCollectionItemsByItem = async ({
 
   if (userCollections.length === 0) return [];
 
-  const entityOwnerId = await getEntityOwnerId({ modelId, imageId, articleId, postId, model3dId });
+  const entityOwnerId = await getCollectionItemOwnerId({
+    modelId,
+    imageId,
+    articleId,
+    postId,
+    model3dId,
+  });
   const ownsEntity = entityOwnerId !== null && entityOwnerId === userId;
 
   const collectionItems = await dbRead.collectionItem.findMany({

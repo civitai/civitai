@@ -17,6 +17,13 @@ export const flagsOf = (v: unknown) =>
 export const isOpenVerdict = (flag: TextScanFlagView | undefined) =>
   !!flag?.workflowId && !flag.appealGranted;
 
+type FlagRow = { minor: boolean; poi: boolean; textScanFlags: unknown };
+
+export const poiInForce = (row: FlagRow) =>
+  row.poi && isOpenVerdict(flagsOf(row.textScanFlags)?.poi);
+
+export const flagInForce = (row: FlagRow) => row.minor || poiInForce(row);
+
 export const openVerdicts = (v: unknown) =>
   FLAG_LABELS.flatMap((label) => {
     const flag = flagsOf(v)?.[label];

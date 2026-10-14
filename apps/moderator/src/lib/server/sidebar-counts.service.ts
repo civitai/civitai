@@ -1,5 +1,6 @@
 import { sql } from '@civitai/db/kysely';
 import { NsfwLevel } from '@civitai/shared';
+import { APPS_PLATFORM_FEEDBACK_AREA } from '@civitai/shared/feedback.constants';
 import { createCache } from './cache';
 import { dbRead } from './db';
 import { bounded } from './bounded';
@@ -10,6 +11,7 @@ import { countModeratorArticles } from './articles.service';
 import { getRatingReviewCounts } from './rating-reviews.service';
 import { getReportCounts } from './reports.service';
 import { countNewFeedback } from './feedback.service';
+import { countRemovedAppeals } from './removed-appeals.service';
 
 export type SidebarCounts = Record<string, number>;
 
@@ -32,6 +34,8 @@ async function fetchCounts(): Promise<SidebarCounts> {
     stuckIngestion,
     ingestionErrors,
     feedbackNew,
+    feedbackAppsPlatformNew,
+    removedAppeals,
   ] = await Promise.all([
     getImageReviewCounts(),
     // Bitmask predicates must match the TagsOnImageNew_needsReview_idx partial index (bit 9 set, bit 10 clear).
@@ -64,10 +68,13 @@ async function fetchCounts(): Promise<SidebarCounts> {
     // Bounded: neither count is served by an index alone; see `bounded`.
     bounded(countStuckIngestion),
     bounded(countIngestionErrorImages),
-    // NOT bounded: an index-only count over a table the producer can only grow five rows per user
-    // per hour. `bounded` exists for aggregates with no index of their own — wrapping this one in a
-    // 3-second race would add a timer and a nullable to buy nothing.
+    // NOT bounded: a count over a small table the producer can only grow five rows per user per
+    // hour, behind the 60-second cache (plan shape varies with size and vacuum state; see
+    // `countNewFeedback`). Wrapping it in a 3-second race would add a timer and a nullable to buy
+    // nothing.
     countNewFeedback(),
+    countNewFeedback(APPS_PLATFORM_FEEDBACK_AREA),
+    countRemovedAppeals(),
   ]);
   return {
     ...modes,
@@ -79,6 +86,8 @@ async function fetchCounts(): Promise<SidebarCounts> {
     articles,
     ratingReviews: ratingReviews.Pending,
     feedbackNew,
+    feedbackAppsPlatformNew,
+    removedAppeals,
     ...(stuckIngestion != null ? { stuckIngestion } : {}),
     ...(ingestionErrors != null ? { ingestionErrors } : {}),
   };

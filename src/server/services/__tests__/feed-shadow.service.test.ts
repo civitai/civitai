@@ -182,6 +182,20 @@ describe('mapSearchInputToFeedQuery', () => {
     expect(reason({ tags: [0, 5] })).toBe('ok');
   });
 
+  it('serves a post page to the public API only, in the requested sort', () => {
+    const website = mapSearchInputToFeedQuery({ ...base, postId: 4 }, 'primary', 'website');
+    expect(website).toEqual({ ok: false, reason: 'input:postId' });
+    const rest = mapSearchInputToFeedQuery({ ...base, postId: 4, sort: 'Newest' }, 'primary', 'rest');
+    expect(rest.ok).toBe(true);
+    const q = rest.ok ? new URLSearchParams(rest.query) : new URLSearchParams();
+    expect(q.get('postIds')).toBe('4');
+    expect(q.get('sort')).toBe('newest');
+    const both = mapSearchInputToFeedQuery({ ...base, postId: 4, postIds: [5, 4] }, 'primary', 'rest');
+    expect(both.ok && new URLSearchParams(both.query).get('postIds')).toBe('5,4');
+    const many = { ...base, postIds: Array.from({ length: 51 }, (_, i) => i + 1) };
+    expect(mapSearchInputToFeedQuery(many, 'primary', 'rest')).toEqual({ ok: false, reason: 'postIds>50' });
+  });
+
   it('serves a follow feed only from a resolved follow list the feed can take', () => {
     const signedIn = { ...base, currentUserId: 9, followed: true };
     const m = mapSearchInputToFeedQuery({ ...signedIn, followedUserIds: [7, 3, 0] });
@@ -290,6 +304,11 @@ describe('hub feeds', () => {
     );
     const noVersions = { ...sources, modelVersionIds: [] };
     expect(reason({ hubSources: noVersions, hideAutoResources: true })).toBe('ok');
+  });
+
+  it('refuses a post page next to the hub', () => {
+    const m = mapSearchInputToFeedQuery({ ...base, hubId: 1, hubSources: { userIds: [1], modelVersionIds: [], tagGroups: [], excluded: { userIds: [], modelVersionIds: [], tagGroups: [] } }, postId: 4 } as any, 'primary', 'rest');
+    expect(m).toEqual({ ok: false, reason: 'hub:driver' });
   });
 
   it('refuses a second driver next to the hub', () => {

@@ -612,6 +612,9 @@ async function throwOnBlockedText(
   }
 }
 
+/** What `throwOnBlockedCommentContent` hands its `onBlocked` hook. */
+export type CommentContentBlock = { kind: 'link'; urls: string[] } | { kind: 'pattern' };
+
 /**
  * Comments never called the pattern list at all until 2026-08-24, which is how 366 accounts
  * posted phishing comments in four hours while the same patterns were being enforced on DMs.
@@ -623,16 +626,32 @@ async function throwOnBlockedText(
  *
  * The DM precedent is not uniform and should not be cited as though it were: chat SEND exempts
  * moderators from both lists, chat EDIT exempts nobody.
+ *
+ * `onBlocked` replaces the thrown comment-worded `BAD_REQUEST` for a surface that reuses this
+ * check under its own wording (app feedback). It is handed the blocked URLs on a link hit, so the
+ * caller never parses them back out of the `invalid urls: …` prose; a pattern hit carries NO
+ * matched text on purpose — echoing a pattern to the writer teaches them what to misspell. The
+ * URLs are the matched link text as scanned, i.e. lowercased and possibly from a normalised form
+ * (an `href`, a confusable-folded spelling), not always byte-identical to what was typed.
  */
 export async function throwOnBlockedCommentContent(
   content: string,
-  { isModerator = false }: { isModerator?: boolean } = {}
+  {
+    isModerator = false,
+    onBlocked,
+  }: { isModerator?: boolean; onBlocked?: (block: CommentContentBlock) => never } = {}
 ) {
   await throwOnBlockedText([content], {
     exemptFromLinks: isModerator,
     exemptFromPatterns: isModerator,
-    onLinkMatch: (blockedFor) => throwBadRequestError(`invalid urls: ${blockedFor.join(', ')}`),
-    onPatternMatch: () => throwBadRequestError('Comment blocked by content filter'),
+    onLinkMatch: (blockedFor) => {
+      if (onBlocked) onBlocked({ kind: 'link', urls: blockedFor });
+      throwBadRequestError(`invalid urls: ${blockedFor.join(', ')}`);
+    },
+    onPatternMatch: () => {
+      if (onBlocked) onBlocked({ kind: 'pattern' });
+      throwBadRequestError('Comment blocked by content filter');
+    },
   });
 }
 
