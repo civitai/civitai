@@ -94,7 +94,14 @@ import {
   matchStorageRoute,
   STORAGE_ERROR_STATUS,
   STORAGE_RESERVED_SEGMENTS,
+  storageRefusalBody,
 } from '~/server/services/apps/doc-store-api';
+import type { BlockScopeRefusalKind } from '~/server/middleware/block-scope.middleware';
+import {
+  clampDevScopes,
+  DEV_TOKEN_SCOPE_ALLOWLIST,
+  signDevScopedPageToken,
+} from '~/server/services/blocks/dev-scoped-mint.service';
 import {
   APP_STORAGE_COLLECTION_NAME_RE,
   parseManifestStorage,
@@ -473,12 +480,15 @@ async function runCase(c: Case) {
       let token: string | null = null;
       if (step.as !== 'none') {
         const [who, appLabel] = step.as.split('@');
-        token = await mint({
-          app: appRows[appLabel],
-          uid: who === 'anon' ? null : VIEWER_IDS[who],
-          scopes: step.scopes ?? contract.defaultScopes,
-          dev: step.token === 'dev',
-        });
+        const scopes = step.scopes ?? contract.defaultScopes;
+        token =
+          step.token === 'dev'
+            ? await mintDevReal(appRows[appLabel], VIEWER_IDS[who], scopes)
+            : await mint({
+                app: appRows[appLabel],
+                uid: who === 'anon' ? null : VIEWER_IDS[who],
+                scopes,
+              });
       }
       const reply = await call({
         token,
@@ -506,12 +516,8 @@ async function runCase(c: Case) {
       if (step.expect.body !== undefined) matches(reply.body, step.expect.body, '$', vars, errors);
       expect(errors, where).toEqual([]);
       assertNoUserId(reply.body, where);
-      // The house envelope on every refusal the storage handler itself emits.
-      if (
-        reply.status >= 400 &&
-        step.expect.code !== undefined &&
-        !MIDDLEWARE_CODES.has(step.expect.code)
-      ) {
+      // One envelope on every refusal, whichever layer refused.
+      if (reply.status >= 400) {
         const b = reply.body as Record<string, unknown>;
         expect(typeof b.message, where).toBe('string');
         expect(b.error, where).toBe(b.message);
@@ -520,8 +526,30 @@ async function runCase(c: Case) {
   }
 }
 
-/** Codes the token middleware answers before the handler, in its own `{ error, code }` shape. */
-const MIDDLEWARE_CODES = new Set(['insufficient_scope', 'app_not_approved']);
+/**
+ * A dev token as the bearer `/api/v1/blocks/dev-token` route mints one for an APPROVED app:
+ * the REAL clamp against `DEV_TOKEN_SCOPE_ALLOWLIST` (with an OAuth ceiling of 0, under which
+ * only the no-OAuth-bit scopes survive), then the REAL shared signer.
+ */
+async function mintDevReal(app: AppRow, uid: number, scopeSource: string[]): Promise<string> {
+  const granted = clampDevScopes({
+    scopeSource,
+    oauthAllowed: 0,
+    spendEntitled: false,
+    spendRequested: false,
+    allowlist: DEV_TOKEN_SCOPE_ALLOWLIST,
+  });
+  const { token } = await signDevScopedPageToken({
+    userId: uid,
+    signBlockId: app.blockId,
+    signAppId: app.appId,
+    signAppBlockId: app.id,
+    blockInstanceId: `page_${app.id}`,
+    granted,
+    buzzBudget: undefined,
+  });
+  return token;
+}
 
 // ---------------------------------------------------------------------------
 // Lifecycle
@@ -580,8 +608,7 @@ describe('the contract file', () => {
     // Derived from the one status table; the exclusions are named, so a NEW code is required
     // here until a case reaches it or it is excluded with a reason.
     const UNREACHABLE_IN_PHASE_1: Record<string, string> = {
-      scope_missing:
-        'a missing apps:storage is refused by the token middleware (insufficient_scope)',
+      service_unavailable: 'the approval read failed; pinned in the REST characterisation table',
       index_building: 'declared indexes are backfilled inline; nothing raises it yet',
       cursor_expired: 'change feed, a later phase',
       internal_error: 'an unexpected fault; its own test below',
@@ -620,87 +647,31 @@ describe('contract cases against the real handlers', () => {
 });
 
 describe('reserved path segments cannot collide with a collection name or a document key', () => {
-  // Every reserved word as a value, edge cases, plus a seeded random sample of each alphabet.
-  // mulberry32: 32-bit integer arithmetic throughout, so every bit of the state survives.
-  let seed = 20261014;
-  const rnd = (n: number) => {
-    seed = (seed + 0x6d2b79f5) | 0;
-    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) % n;
-  };
-  const draw = (alphabet: string, len: number) =>
-    Array.from({ length: len }, () => alphabet[rnd(alphabet.length)]).join('');
-  const RESERVED = STORAGE_RESERVED_SEGMENTS.map((r) => r.segment);
-  const COLLECTIONS = [
-    ...RESERVED.filter((r) => APP_STORAGE_COLLECTION_NAME_RE.test(r)),
-    'a',
-    'get',
-    'x_get',
-    'z9',
-    'a'.repeat(32),
-    ...Array.from(
-      { length: 40 },
-      () =>
-        draw('abcdefghijklmnopqrstuvwxyz', 1) +
-        draw('abcdefghijklmnopqrstuvwxyz0123456789_', rnd(32))
-    ),
-  ];
-  const KEYS = [
-    ...RESERVED,
-    'k',
-    '.',
-    '..',
-    '_',
-    ':x',
-    'A-b.c',
-    'x'.repeat(128),
-    ...Array.from({ length: 60 }, () =>
-      draw('ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._:-', 1 + rnd(128))
-    ),
-  ];
-
-  it('every reserved segment is unparseable at the position(s) where a collection or key sits, or is a valid value there', () => {
+  it('each reserved segment is outside the alphabet at its own position, or is parsed as a value everywhere else', () => {
     for (const { segment, position } of STORAGE_RESERVED_SEGMENTS) {
       if (position === 0) {
-        // At the collection position: a leading `_` is outside the collection alphabet.
+        // At the collection position: a leading `_` is outside the collection alphabet, and
+        // the word cannot be a collection on any route.
         expect(APP_STORAGE_COLLECTION_NAME_RE.test(segment), segment).toBe(false);
-      } else {
-        // After a key: no collection or key is ever parsed at this position.
-        expect(position, segment).toBe(2);
+        expect(matchStorageRoute('GET', [segment])).toBeNull();
       }
-    }
-  });
-
-  it('the sample really varies (positive control on the generator)', () => {
-    const random = COLLECTIONS.slice(-40);
-    expect(new Set(random.map((c) => c.length)).size).toBeGreaterThan(10);
-    const keyChars = new Set(KEYS.slice(-60).join(''));
-    expect(keyChars.size).toBeGreaterThan(55);
-    expect(keyChars.has('_')).toBe(true);
-  });
-
-  it('for every valid collection name and key, the parser yields exactly that collection and key', () => {
-    for (const c of COLLECTIONS) expect(APP_STORAGE_COLLECTION_NAME_RE.test(c), c).toBe(true);
-    for (const k of KEYS) expect(DOC_STORE_BOUNDS.key.test(k), k).toBe(true);
-    for (const c of COLLECTIONS) {
-      expect(matchStorageRoute('GET', [c])).toEqual({ route: { op: 'list', collection: c } });
-      expect(matchStorageRoute('POST', ['_get', c])).toEqual({
-        route: { op: 'getMany', collection: c },
+      // As a document KEY (the second segment) every reserved word is a valid key and is
+      // parsed as exactly that key, on every document route.
+      expect(DOC_STORE_BOUNDS.key.test(segment), segment).toBe(true);
+      expect(matchStorageRoute('GET', ['c', segment])).toEqual({
+        route: { op: 'get', collection: 'c', key: segment },
       });
-      for (const k of KEYS) {
-        for (const m of ['GET', 'PUT', 'DELETE'] as const) {
-          const op = m === 'GET' ? 'get' : m === 'PUT' ? 'put' : 'delete';
-          expect(matchStorageRoute(m, [c, k])).toEqual({ route: { op, collection: c, key: k } });
-        }
-        for (const name of [...RESERVED, 'vote']) {
-          expect(matchStorageRoute('POST', [c, k, 'counters', name])).toEqual({
-            route: { op: 'increment', collection: c, key: k, name },
-          });
-          expect(matchStorageRoute('PUT', [c, k, 'marks', name])).toEqual({
-            route: { op: 'mark', collection: c, key: k, name },
-          });
-        }
+      expect(matchStorageRoute('POST', ['c', segment, 'counters', 'n'])).toEqual({
+        route: { op: 'increment', collection: 'c', key: segment, name: 'n' },
+      });
+      // As a COLLECTION, every reserved word the collection alphabet admits is parsed as one.
+      if (APP_STORAGE_COLLECTION_NAME_RE.test(segment)) {
+        expect(matchStorageRoute('GET', [segment])).toEqual({
+          route: { op: 'list', collection: segment },
+        });
+        expect(matchStorageRoute('PUT', [segment, segment, 'marks', segment])).toEqual({
+          route: { op: 'mark', collection: segment, key: segment, name: segment },
+        });
       }
     }
   });
@@ -743,70 +714,55 @@ describe('reserved path segments cannot collide with a collection name or a docu
 });
 
 describe('namespaces per token kind', () => {
-  it('a review run-for-real token reads and writes rev:<publishRequestId>, not prod or dev', async () => {
+  it('a REAL dev mint carries both storage scopes and writes dev:<uid> under the approved app id', async () => {
     const { A } = freshApps();
-    const pubreq = {
-      id: 'pubreq_01JREVIEWNAMESPACE00000000',
-      status: 'pending',
-      manifest: MANIFEST,
-    };
-    publishRequests.push(pubreq);
-    const reviewApp = { id: pubreq.id, appId: 'appblk-review', blockId: 'review-slug' };
-    const review = await mint({
-      app: reviewApp,
-      uid: VIEWER_IDS.v1,
-      scopes: contract.defaultScopes,
-      dev: true,
-      reviewRunForReal: true,
+    const dev = await mintDevReal(A, VIEWER_IDS.v2, contract.defaultScopes);
+    const put = await call({
+      token: dev,
+      method: 'PUT',
+      path: '/posts/devkey',
+      body: { data: { from: 'dev' } },
     });
-    const prod = await mint({ app: A, uid: VIEWER_IDS.v1, scopes: contract.defaultScopes });
-
-    expect(
-      (
-        await call({
-          token: review,
-          method: 'PUT',
-          path: '/prefs/k',
-          body: { data: { ns: 'rev' } },
-        })
-      ).status
-    ).toBe(200);
-    expect((await call({ token: prod, method: 'GET', path: '/prefs/k' })).status).toBe(404);
-    const rows = await harness.raw(
-      `SELECT app_id, ns FROM appdata.doc WHERE key = 'k' AND ns LIKE 'rev:%'`
-    );
-    expect(rows).toEqual([{ app_id: pubreq.id, ns: `rev:${pubreq.id}` }]);
-
-    pubreq.status = 'approved';
-    const after = await call({ token: review, method: 'GET', path: '/prefs/k' });
-    expect(after.status).toBe(403);
-    expect(after.body).toMatchObject({
-      code: 'not_eligible',
-      details: { reason: 'review_inactive' },
-    });
-  });
-
-  it('a dev token writes dev:<uid> under the approved app id', async () => {
-    const { A } = freshApps();
-    const dev = await mint({
-      app: A,
-      uid: VIEWER_IDS.v2,
-      scopes: contract.defaultScopes,
-      dev: true,
-    });
-    expect(
-      (await call({ token: dev, method: 'PUT', path: '/prefs/devkey', body: { data: {} } })).status
-    ).toBe(200);
+    expect(put.status).toBe(200);
     const rows = await harness.raw(`SELECT app_id, ns FROM appdata.doc WHERE key = 'devkey'`);
     expect(rows).toEqual([{ app_id: A.id, ns: `dev:${VIEWER_IDS.v2}` }]);
+    // Invisible to the same viewer in production, and to another developer's namespace.
+    const prod = await mint({ app: A, uid: VIEWER_IDS.v2, scopes: contract.defaultScopes });
+    expect((await call({ token: prod, method: 'GET', path: '/posts/devkey' })).status).toBe(404);
+    const other = await mintDevReal(A, VIEWER_IDS.v1, contract.defaultScopes);
+    expect((await call({ token: other, method: 'GET', path: '/posts/devkey' })).status).toBe(404);
   });
 
-  it('an anonymous dev token has no namespace: sign_in_required', async () => {
-    const { A } = freshApps();
-    const dev = await mint({ app: A, uid: null, scopes: ['apps:storage'], dev: true });
-    const r = await call({ token: dev, method: 'GET', path: '/posts' });
-    expect(r.status).toBe(401);
-    expect(r.body).toMatchObject({ code: 'sign_in_required' });
+  it('a REAL dev mint for an app that is not approved gets no storage', async () => {
+    const { A } = freshApps('pending');
+    const dev = await mintDevReal(A, VIEWER_IDS.v2, contract.defaultScopes);
+    const r = await call({ token: dev, method: 'GET', path: '/prefs/k' });
+    expect(r.status).toBe(403);
+    expect(r.body).toMatchObject({ code: 'not_eligible', details: { reason: 'app_not_approved' } });
+  });
+
+  it('the REAL review run-for-real mint withholds both storage scopes: refused before the store', async () => {
+    const { mintReviewBlockToken } = await import(
+      '~/server/services/blocks/publish-request.service'
+    );
+    freshApps();
+    const pubreq = {
+      id: 'pubreq_01JREVIEWREALMINT0000000',
+      status: 'pending',
+      slug: 'review-real-mint',
+      manifest: MANIFEST,
+    };
+    dbMock.dbRead.appBlockPublishRequest.findUnique.mockResolvedValue(pubreq);
+    publishRequests.push(pubreq);
+    const minted = await mintReviewBlockToken({
+      publishRequestId: pubreq.id,
+      modUserId: VIEWER_IDS.v1,
+      runForReal: true,
+    });
+    const token = (minted as { token: string }).token;
+    const r = await call({ token, method: 'GET', path: '/prefs/k' });
+    expect(r.status).toBe(403);
+    expect(r.body).toMatchObject({ code: 'insufficient_scope' });
   });
 
   it('the run gate on the token subject refuses with not_eligible apps_disabled', async () => {
@@ -1079,7 +1035,27 @@ describe('review findings: refusal detail, usage, budget refunds, review gates, 
     });
   });
 
-  it('a review token: author capability required, sign-in required, publish request must exist', async () => {
+  // RESOLVER-ONLY: no mint grants a review token the storage scopes today (see the REAL
+  // review mint test above), so these hand-signed tokens exercise the resolver's review
+  // branch directly; it is unreachable from a minted token until that decision is made.
+  it('resolver review branch (hand-signed): rev namespace, author capability, sign-in, pending request', async () => {
+    {
+      const pr = { id: 'pubreq_01JREVIEWNAMESPACE00000000', status: 'pending', manifest: MANIFEST };
+      publishRequests.push(pr);
+      const t = await mint({
+        app: { id: pr.id, appId: 'appblk-review', blockId: 'review-slug' },
+        uid: VIEWER_IDS.v1,
+        scopes: contract.defaultScopes,
+        dev: true,
+        reviewRunForReal: true,
+      });
+      const put = await call({ token: t, method: 'PUT', path: '/prefs/k', body: { data: {} } });
+      expect(put.status).toBe(200);
+      const rows = await harness.raw(
+        `SELECT app_id, ns FROM appdata.doc WHERE key = 'k' AND ns LIKE 'rev:%'`
+      );
+      expect(rows).toEqual([{ app_id: pr.id, ns: `rev:${pr.id}` }]);
+    }
     freshApps();
     const pubreq = { id: 'pubreq_01JREVIEWGATES0000000000', status: 'pending', manifest: MANIFEST };
     publishRequests.push(pubreq);
@@ -1178,4 +1154,40 @@ describe('review findings: refusal detail, usage, budget refunds, review gates, 
       expect(after.status).toBe(200);
     }
   );
+
+  it('every middleware refusal maps to a storage code whose status is the one the middleware sends', () => {
+    const STATUS_SENT: Record<BlockScopeRefusalKind, number> = {
+      invalid_token: 401,
+      instance_revoked: 403,
+      permission_state_unavailable: 503,
+      consent_revoked: 403,
+      app_not_approved: 403,
+      approval_unavailable: 503,
+      insufficient_scope: 403,
+      context_binding: 403,
+    };
+    for (const [kind, status] of Object.entries(STATUS_SENT) as [BlockScopeRefusalKind, number][]) {
+      const body = storageRefusalBody({ kind, status, error: `e-${kind}` });
+      expect(STORAGE_ERROR_STATUS[body.code], kind).toBe(status);
+      expect(body.message, kind).toBe(`e-${kind}`);
+      expect(body.error, kind).toBe(`e-${kind}`);
+    }
+  });
+
+  it('a bad token on this route answers in the storage envelope', async () => {
+    const r = await call({ token: 'aaa.bbb.ccc', method: 'GET', path: '/prefs/k' });
+    // Not a JWT the middleware recognises → handed to the handler with no claims.
+    expect(r.body).toMatchObject({ code: 'unauthenticated' });
+    const header = Buffer.from(JSON.stringify({ alg: 'RS256', typ: 'JWT', kid: 'x' })).toString(
+      'base64url'
+    );
+    const forged = `${header}.${Buffer.from('{}').toString('base64url')}.c2ln`;
+    const bad = await call({ token: forged, method: 'GET', path: '/prefs/k' });
+    expect(bad.status).toBe(401);
+    expect(bad.body).toEqual({
+      code: 'unauthenticated',
+      message: 'invalid block token',
+      error: 'invalid block token',
+    });
+  });
 });

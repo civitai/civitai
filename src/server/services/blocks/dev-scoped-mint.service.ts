@@ -93,6 +93,17 @@ export const DEV_TOKEN_SCOPE_ALLOWLIST: ReadonlySet<string> = new Set<string>([
   'ai:write:budgeted',
   'apps:storage:read',
   'apps:storage:write',
+  // apps:storage / apps:storage:publish — the DOCUMENT STORE (`/api/v1/blocks/storage`).
+  // INCLUDED here, on this bearer path only. The storage resolver routes a dev token to
+  // the namespace `dev:<uid>` of the token's own subject, so every document, mark and
+  // counter it writes — shared collections included — is read back only by the same
+  // developer and never by a production viewer; and it resolves an APPROVED app only (a
+  // pending or local mint's synthetic ids are refused), so the pre-approval collision that
+  // keeps App Storage off the tunnel allowlist cannot arise. The publish scope is consent-
+  // gated in production; here, as for `collections:read:private`, the only identity it
+  // publishes under is the developer's own, into their own namespace.
+  'apps:storage',
+  'apps:storage:publish',
   // collections:* — INCLUDED in the dev allowlists (both this bearer path and the
   // tunnel path below). Unlike apps:storage:shared:* (deliberately withheld pre-
   // approval because a pre-approval app's storage NAMESPACE is synthetic and could

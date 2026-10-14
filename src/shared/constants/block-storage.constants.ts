@@ -111,7 +111,12 @@ export const APP_STORAGE_MAX_DAILY_WRITES_PER_AUTHOR = 1_000;
 export const APP_STORAGE_MAX_ERRORS = 20;
 
 /** The storage features that ship in later phases than the declaration itself. */
-export type AppStorageFeature = 'anyoneWrites' | 'ownerWrites' | 'logCollections' | 'ttl';
+export type AppStorageFeature =
+  | 'anyoneWrites'
+  | 'ownerWrites'
+  | 'logCollections'
+  | 'ttl'
+  | 'perAuthorWriteBudget';
 
 /**
  * 🔴 THE ONE SWITCH for which declared storage features the platform accepts. Everything
@@ -122,6 +127,9 @@ export type AppStorageFeature = 'anyoneWrites' | 'ownerWrites' | 'logCollections
  *   - `ownerWrites`    — `write: "owner"` (documents written by the app owner, not viewers).
  *   - `logCollections` — `kind: "log"` (append-only, trimmed to `maxEntries`).
  *   - `ttl`            — `ttlSeconds` (documents that expire).
+ *   - `perAuthorWriteBudget` — `dailyWritesPerAuthor` (a per-collection daily write budget
+ *                      in place of the platform default; the storage routes do not read it
+ *                      yet, so a declared limit must not read as working).
  *
  * Flip one only in the same change that ships the runtime behind it: an accepted
  * declaration with nothing behind it reads as a working feature to the author and the
@@ -133,6 +141,7 @@ export const APP_STORAGE_ENABLED_FEATURES: Readonly<Record<AppStorageFeature, bo
     ownerWrites: false,
     logCollections: false,
     ttl: false,
+    perAuthorWriteBudget: false,
   });
 
 export type DeclaredStorageCollection = {
@@ -473,6 +482,14 @@ function parseCollection(
     } else if (!isIntegerIn(raw.dailyWritesPerAuthor, 1, APP_STORAGE_MAX_DAILY_WRITES_PER_AUTHOR)) {
       errors.push(
         `${at}.dailyWritesPerAuthor must be a whole number from 1 to ${APP_STORAGE_MAX_DAILY_WRITES_PER_AUTHOR}`
+      );
+    } else if (!features.perAuthorWriteBudget) {
+      errors.push(
+        notYet(
+          `${at}.dailyWritesPerAuthor`,
+          'per-collection write budgets',
+          'remove dailyWritesPerAuthor for now (the platform default applies)'
+        )
       );
     }
   }

@@ -107,7 +107,6 @@ export const DOC_STORE_BOUNDS = {
   getManyMax: 100,
   cursorChars: 512,
   incrementMax: 100,
-  reportReasonChars: 500,
 } as const;
 
 export const REPORT_MARK = 'report';
@@ -118,7 +117,7 @@ export type DocStoreErrorCode =
   | 'index_not_declared'
   | 'unauthenticated'
   | 'sign_in_required'
-  | 'scope_missing'
+  | 'insufficient_scope'
   | 'consent_required'
   | 'not_eligible'
   | 'not_author'
@@ -135,7 +134,9 @@ export type DocStoreErrorCode =
   | 'storage_disabled'
   | 'moderation_unavailable'
   /** The viewer's consent state could not be read; retryable (raised by the route layer). */
-  | 'consent_unavailable';
+  | 'consent_unavailable'
+  /** A dependency of the token check could not be read; retryable (raised by the route layer). */
+  | 'service_unavailable';
 
 export type QuotaCeiling = 'app' | 'viewer' | 'author';
 

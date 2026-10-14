@@ -1,6 +1,10 @@
 import { withAxiom } from '@civitai/next-axiom';
 import { withBlockScope } from '~/server/middleware/block-scope.middleware';
-import { createStorageHandler, storageEndpointLabel } from '~/server/services/apps/doc-store-api';
+import {
+  createStorageHandler,
+  storageEndpointLabel,
+  storageRefusalBody,
+} from '~/server/services/apps/doc-store-api';
 
 /**
  * `/api/v1/blocks/storage/…` — the App Blocks document store. Every path, the reserved
@@ -26,4 +30,6 @@ export default withBlockScope(withAxiom(createStorageHandler()), {
   requiredScope: 'apps:storage',
   allowOpaqueOrigin: true,
   extraCorsMethods: ['PUT', 'DELETE'],
+  // The middleware's own refusals in this route's envelope, so every response has one shape.
+  formatRefusal: storageRefusalBody,
 });

@@ -24,7 +24,11 @@ import { sessionClient } from '~/server/auth/session-client';
 import { dbRead } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import type { SessionUser } from '~/types/session';
-import type { BlockScopedNextApiRequest } from '~/server/middleware/block-scope.middleware';
+import type {
+  BlockScopedNextApiRequest,
+  BlockScopeRefusal,
+  BlockScopeRefusalKind,
+} from '~/server/middleware/block-scope.middleware';
 import type { AppBlockEndpoint } from '~/server/metrics/app-block-runtime.metrics';
 import {
   hasLinkedOAuthAccount,
@@ -165,7 +169,7 @@ export const STORAGE_ERROR_STATUS: Record<StorageApiCode, number> = {
   index_not_declared: 400,
   unauthenticated: 401,
   sign_in_required: 401,
-  scope_missing: 403,
+  insufficient_scope: 403,
   consent_required: 403,
   not_eligible: 403,
   not_author: 403,
@@ -182,6 +186,7 @@ export const STORAGE_ERROR_STATUS: Record<StorageApiCode, number> = {
   storage_disabled: 503,
   moderation_unavailable: 503,
   consent_unavailable: 503,
+  service_unavailable: 503,
   internal_error: 500,
 };
 
@@ -232,6 +237,28 @@ function sendError(res: NextApiResponse, err: unknown): void {
   res.status(STORAGE_ERROR_STATUS[err.code]).json(body);
 }
 
+/**
+ * The token middleware's refusals, in this route's envelope with stable storage codes, so a
+ * client sees ONE shape whichever layer refused. The status stays the middleware's; each code
+ * below maps to that same status in `STORAGE_ERROR_STATUS` (pinned by a test).
+ */
+const MIDDLEWARE_REFUSAL: Record<BlockScopeRefusalKind, { code: StorageApiCode; reason?: string }> =
+  {
+    invalid_token: { code: 'unauthenticated' },
+    instance_revoked: { code: 'not_eligible', reason: 'instance_revoked' },
+    permission_state_unavailable: { code: 'consent_unavailable' },
+    consent_revoked: { code: 'consent_required' },
+    app_not_approved: { code: 'not_eligible', reason: 'app_not_approved' },
+    approval_unavailable: { code: 'service_unavailable' },
+    insufficient_scope: { code: 'insufficient_scope' },
+    context_binding: { code: 'not_eligible', reason: 'context_binding' },
+  };
+
+export function storageRefusalBody(refusal: BlockScopeRefusal): StorageErrorBody {
+  const { code, reason } = MIDDLEWARE_REFUSAL[refusal.kind];
+  return envelope(code, refusal.error, reason ? { reason } : undefined);
+}
+
 const invalid = (message: string, details?: Record<string, unknown>) =>
   new DocStoreError('invalid_request', message, details);
 
@@ -244,7 +271,8 @@ const putBody = z.strictObject({ data: dataSchema, ifVersion: z.number().optiona
 const createBody = z.strictObject({ data: dataSchema });
 const getManyBody = z.strictObject({ keys: z.array(z.string()) });
 const incrementBody = z.strictObject({ by: z.number().optional() });
-const markBody = z.strictObject({ reason: z.string().optional() });
+// A mark carries no payload; `report` included.
+const markBody = z.strictObject({});
 
 function parseBody<T>(schema: z.ZodType<T>, body: unknown): T {
   // A body Next could not parse arrives as a string; an absent one as undefined / ''.
@@ -583,8 +611,10 @@ async function run(
 ): Promise<Reply> {
   const { ctx } = access;
   const ok = (body: unknown, status = 200): Reply => ({ status, body });
+  // Info is signed-in only: its body carries the app-wide usage (documents, bytes).
   // Every read is charged first, so a read of an undeclared collection is limited too.
   // Writes are charged below, once the collection says which bucket they spend.
+  if (route.op === 'info') requireViewer(access);
   if (route.op === 'info' || route.op === 'list' || route.op === 'get' || route.op === 'getMany') {
     await charge('read', access, req);
   }
@@ -687,14 +717,13 @@ async function run(
     case 'mark':
     case 'unmark': {
       const uid = requireViewer(access);
-      const { reason } =
-        route.op === 'mark' ? parseBody(markBody, req.body) : { reason: undefined };
+      if (route.op === 'mark') parseBody(markBody, req.body);
       await charge('tally', access, req);
       if (route.op === 'mark' && route.name === REPORT_MARK) await charge('report', access, req);
       if (shared) await assertTrusted(uid);
       const result =
         route.op === 'mark'
-          ? await store.mark(ctx, coll, route.key, route.name, { reason })
+          ? await store.mark(ctx, coll, route.key, route.name)
           : await store.unmark(ctx, coll, route.key, route.name);
       // A report count is never exposed.
       return ok(

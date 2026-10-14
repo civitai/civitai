@@ -495,9 +495,10 @@ const SQL_INCREMENT = `INSERT INTO appdata.doc_tally AS t (app_id, ns, coll, key
   ON CONFLICT (app_id, ns, coll, key, kind, name) DO UPDATE SET count = t.count + EXCLUDED.count
   RETURNING t.count`;
 
-// $1 app, $2 ns, $3 coll, $4 key, $5 name, $6 user, $7 reason
-const SQL_INSERT_MARK = `INSERT INTO appdata.doc_mark AS mk (app_id, ns, coll, key, name, user_id, reason)
-  VALUES ($1, $2, $3, $4, $5, $6::int, $7::text)
+// A mark carries no payload: `report` is a mark like any other. (The table's nullable
+// `reason` column is never written.) $1 app, $2 ns, $3 coll, $4 key, $5 name, $6 user
+const SQL_INSERT_MARK = `INSERT INTO appdata.doc_mark AS mk (app_id, ns, coll, key, name, user_id)
+  VALUES ($1, $2, $3, $4, $5, $6::int)
   ON CONFLICT DO NOTHING
   RETURNING 1 AS inserted`;
 
@@ -1128,25 +1129,17 @@ export function createDocStore(deps: DocStoreDeps) {
     ctx: DocStoreContext,
     coll: DocCollection,
     key: string,
-    name: string,
-    opts: { reason?: string } = {}
+    name: string
   ): Promise<{ marked: true; count: number | null }> {
     assertCollection(coll);
     assertKey(key);
     assertMarkName(coll, name);
-    if (opts.reason !== undefined) {
-      if (name !== REPORT_MARK) throw invalid('reason is accepted on report only');
-      if (typeof opts.reason !== 'string' || opts.reason.length > B.reportReasonChars) {
-        throw invalid(`reason must be at most ${B.reportReasonChars} characters`);
-      }
-      assertStoredString(opts.reason);
-    }
     const viewer = requireViewer(ctx);
     return withTx(ctx, async (c) => {
       const doc = await c.query(SQL_SHARE_LOCK_DOC, [ctx.appId, ctx.ns, coll.name, key]);
       if (doc.rows.length === 0) throw new DocStoreError('not_found', 'document not found');
       const args = [ctx.appId, ctx.ns, coll.name, key, name];
-      const ins = await c.query(SQL_INSERT_MARK, [...args, viewer, opts.reason ?? null]);
+      const ins = await c.query(SQL_INSERT_MARK, [...args, viewer]);
       const res =
         ins.rows.length > 0
           ? await c.query(SQL_MARK_UP, args)

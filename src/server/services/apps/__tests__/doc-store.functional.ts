@@ -458,7 +458,7 @@ export function defineFunctionalSuite(makeHarness: () => Promise<Harness>) {
       const app = freshApp('report');
       await store.put(ctx(app, NS_PROD, VIEWER_1), POSTS, 'k', { status: 'a' });
       expect(
-        await store.mark(ctx(app, NS_PROD, VIEWER_2), POSTS, 'k', 'report', { reason: 'spam' })
+        await store.mark(ctx(app, NS_PROD, VIEWER_2), POSTS, 'k', 'report')
       ).toEqual({
         marked: true,
         count: null,
@@ -466,10 +466,6 @@ export function defineFunctionalSuite(makeHarness: () => Promise<Harness>) {
       const doc = await store.get(ctx(app, NS_PROD, VIEWER_2), POSTS, 'k');
       expect(doc?.marks).toEqual({ vote: 0, star: 0 });
       expect(doc?.viewer).toEqual({ marks: ['report'] });
-      await expectCode(
-        store.mark(ctx(app, NS_PROD, VIEWER_2), POSTS, 'k', 'vote', { reason: 'x' }),
-        'invalid_request'
-      );
       await expectCode(
         store.list(ctx(app, NS_PROD, VIEWER_2), POSTS, { sort: '-mark:report' }),
         'index_not_declared'

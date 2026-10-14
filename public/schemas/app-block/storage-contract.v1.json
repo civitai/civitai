@@ -59,7 +59,7 @@
   "defaultScopes": ["apps:storage", "apps:storage:publish"],
   "stepFields": {
     "as": "\"<viewer>@<app>\", \"anon@<app>\", or \"none\" (no token at all)",
-    "token": "optional: \"dev\" for a dev token (namespace dev:<uid>)",
+    "token": "optional: \"dev\" for a dev token as the bearer dev-token route mints one for an approved app (namespace dev:<uid>)",
     "scopes": "optional: the token's scopes, default defaultScopes",
     "consentMarker": "optional, per case: \"unavailable\", or the list of scopes the viewer revoked",
     "appStatus": "optional, per case: the backing app's status, default approved",
@@ -119,12 +119,8 @@
           "method": "GET",
           "path": "",
           "expect": {
-            "status": 200,
-            "body": {
-              "usage": {
-                "viewer": "$null"
-              }
-            }
+            "status": 401,
+            "code": "sign_in_required"
           }
         }
       ]
@@ -695,9 +691,6 @@
           "as": "v2@A",
           "method": "PUT",
           "path": "/posts/p1/marks/report",
-          "body": {
-            "reason": "spam"
-          },
           "expect": {
             "status": 200,
             "body": {
@@ -725,7 +718,19 @@
           "method": "PUT",
           "path": "/posts/p1/marks/vote",
           "body": {
-            "reason": "only reports carry one"
+            "note": "marks carry no payload"
+          },
+          "expect": {
+            "status": 400,
+            "code": "invalid_request"
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "PUT",
+          "path": "/posts/p1/marks/report",
+          "body": {
+            "reason": "marks carry no payload"
           },
           "expect": {
             "status": 400,
@@ -970,7 +975,7 @@
           }
         },
         {
-          "$comment": "Refused by the token middleware before the storage handler runs, in the middleware's own body shape: { error, code }.",
+          "$comment": "Refused by the token middleware before the storage handler runs, in the same envelope.",
           "as": "v1@A",
           "scopes": ["apps:storage:publish"],
           "method": "GET",
@@ -1838,7 +1843,7 @@
       ]
     },
     {
-      "name": "a suspended app gets nothing (refused by the token middleware)",
+      "name": "a suspended app gets nothing",
       "appStatus": "suspended",
       "steps": [
         {
@@ -1847,7 +1852,12 @@
           "path": "/posts",
           "expect": {
             "status": 403,
-            "code": "app_not_approved"
+            "code": "not_eligible",
+            "body": {
+              "details": {
+                "reason": "app_not_approved"
+              }
+            }
           }
         }
       ]

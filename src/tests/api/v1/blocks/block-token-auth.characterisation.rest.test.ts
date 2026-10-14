@@ -5540,10 +5540,22 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
       [],
       null
     ),
-    'bad JWT': X(401, { error: 'invalid block token' }, false, [], [], null),
+    'bad JWT': X(
+      401,
+      { code: 'unauthenticated', message: 'invalid block token', error: 'invalid block token' },
+      false,
+      [],
+      [],
+      null
+    ),
     revoked: X(
       403,
-      { error: 'block instance revoked', code: 'instance_revoked' },
+      {
+        code: 'not_eligible',
+        message: 'block instance revoked',
+        error: 'block instance revoked',
+        details: { reason: 'instance_revoked' },
+      },
       false,
       [],
       [],
@@ -5551,7 +5563,12 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
     ),
     'not approved': X(
       403,
-      { error: 'app block is not approved', code: 'app_not_approved' },
+      {
+        code: 'not_eligible',
+        message: 'app block is not approved',
+        error: 'app block is not approved',
+        details: { reason: 'app_not_approved' },
+      },
       false,
       [],
       [],
@@ -5559,7 +5576,12 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
     ),
     'revoked AND not approved': X(
       403,
-      { error: 'block instance revoked', code: 'instance_revoked' },
+      {
+        code: 'not_eligible',
+        message: 'block instance revoked',
+        error: 'block instance revoked',
+        details: { reason: 'instance_revoked' },
+      },
       false,
       [],
       [],
@@ -5567,7 +5589,11 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
     ),
     'missing scope': X(
       403,
-      { error: 'missing required scope: apps:storage', code: 'insufficient_scope' },
+      {
+        code: 'insufficient_scope',
+        message: 'missing required scope: apps:storage',
+        error: 'missing required scope: apps:storage',
+      },
       false,
       [],
       [],
@@ -5575,7 +5601,12 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
     ),
     'token carries an unknown scope': X(
       403,
-      { error: 'unknown scope: made:up:scope', code: 'context_binding' },
+      {
+        code: 'not_eligible',
+        message: 'unknown scope: made:up:scope',
+        error: 'unknown scope: made:up:scope',
+        details: { reason: 'context_binding' },
+      },
       false,
       [],
       ['consent-lookup:{"userId":42,"appBlockId":"apb_claim"}'],
@@ -5649,7 +5680,11 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
     ),
     'approval row read throws': X(
       503,
-      { error: 'app block status unavailable' },
+      {
+        code: 'service_unavailable',
+        message: 'app block status unavailable',
+        error: 'app block status unavailable',
+      },
       false,
       [],
       [],
@@ -5683,7 +5718,12 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
     ),
     'consent marker unavailable AND not approved': X(
       403,
-      { error: 'app block is not approved', code: 'app_not_approved' },
+      {
+        code: 'not_eligible',
+        message: 'app block is not approved',
+        error: 'app block is not approved',
+        details: { reason: 'app_not_approved' },
+      },
       false,
       [],
       ['consent-lookup:{"userId":42,"appBlockId":"apb_claim"}'],
