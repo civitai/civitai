@@ -11,6 +11,7 @@
  */
 import calculateSlot from 'cluster-key-slot';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { createCacheBuilders } from '../cached-array';
 import { createCacheRedis } from '../client';
 import { DockerRedisCluster, dockerAvailable } from './helpers/docker-redis-cluster';
 
@@ -119,6 +120,60 @@ describe.skipIf(!ENABLED)('packed.mGet on a real cluster', () => {
     expect(logs.filter((l) => l.includes('fell back'))).toEqual([]);
   });
 
+  it('a per-id cache behaves identically on both read paths: miss-fill, hit, bust, refresh', async () => {
+    // The same cache built twice over one keyspace prefix per client, so each starts cold.
+    const run = async (redis: any, prefix: string) => {
+      const db = new Map(ids.map((id) => [id, { imageId: id, tags: [id * 7] }]));
+      const lookups: number[][] = [];
+      const { createCachedObject } = createCacheBuilders({
+        redis,
+        defaultTtl: 60,
+        metrics: {
+          hit: () => undefined,
+          miss: () => undefined,
+          revalidate: () => undefined,
+          failOpenDegraded: () => undefined,
+          failOpenOriginFetch: () => undefined,
+          missWouldJoin: () => undefined,
+        },
+        logFailOpen: (_k, msg) => logs.push(`failopen ${msg}`),
+        logRefreshError: () => undefined,
+        log: () => undefined,
+        clearByPattern: async () => undefined,
+      });
+      const cache = createCachedObject<{ imageId: number; tags: number[] }>({
+        key: prefix as any,
+        idKey: 'imageId',
+        ttl: 60,
+        debounceTime: 1,
+        lookupFn: async (want) => {
+          lookups.push([...want]);
+          return Object.fromEntries(want.filter((id) => db.has(id)).map((id) => [id, db.get(id)!]));
+        },
+      });
+      const want = [...ids, 100_001]; // one id the origin does not have (negative cache)
+      const steps: unknown[] = [];
+      steps.push(await cache.fetch(want)); // cold: every id misses and is filled
+      steps.push(await cache.fetch(want)); // warm: all hits (incl. the cached not-found)
+      db.set(3, { imageId: 3, tags: [999] });
+      await cache.refresh(3); // write-path refill from origin
+      steps.push(await cache.fetch([3, 4]));
+      await cache.bust([4]); // SWR cache: invalidate() back-dates the entry
+      steps.push(await cache.fetch([4]));
+      return { steps, lookups: lookups.map((l) => l.length) };
+    };
+
+    const batched = await run(client, `${PREFIX}-cache-b`);
+    const perKey = await run(perKeyClient, `${PREFIX}-cache-p`);
+    expect(batched).toEqual(perKey);
+    // Cold fill looked up all N+1 ids once; the warm read looked up nothing.
+    expect(batched.lookups[0]).toBe(N + 1);
+    expect(batched.lookups).toHaveLength(2); // cold fill + refresh(3); no lookup on the warm read
+    expect((batched.steps[1] as Record<string, unknown>)['100001']).toBeUndefined();
+    expect((batched.steps[2] as Record<string, any>)['3'].tags).toEqual([999]);
+    expect(logs.filter((l) => l.startsWith('failopen'))).toEqual([]);
+  }, 60_000);
+
   it('a key whose slot is migrating away is still read correctly (per-key fallback follows ASK)', async () => {
     // Two keys on the same master, in different slots; move the first one's slot's key away.
     const moved = keyOf(1);
@@ -163,4 +218,54 @@ describe.skipIf(!ENABLED)('packed.mGet on a real cluster', () => {
     const after = await client.packed.mGet(ids.map(keyOf));
     expect(after).toEqual(expected);
   }, 60_000);
+
+  // The script's FIRST key has already moved, so Redis answers ASK and the client re-sends the
+  // script to the importing node with ASKING. ASKING lets that node serve EVERY key of the
+  // importing slot, including ones still on the source — which it does not have. Without the
+  // node-identity check those come back as false misses.
+  it.each([
+    ['moved key first (script is ASK-redirected)', ['a', 'b', 'c']],
+    ['moved key not first (script refused on the source)', ['b', 'a', 'c']],
+  ])(
+    'same-slot keys mid-migration: %s',
+    async (_label, order) => {
+      const k = (s: string) => `${PREFIX}:{ask-tag}:${s}`;
+      for (const s of ['a', 'b', 'c']) await client.packed.set(k(s), { v: s });
+      const src = cluster.ownerOf(k('a'));
+      const dst = (src + 1) % 3;
+      const slot = cluster.redisCli(src, ['cluster', 'keyslot', k('a')]);
+      const srcId = cluster.nodeId(src);
+      const dstId = cluster.nodeId(dst);
+      // A fresh client: no script cooldown left over from another test.
+      const fresh = await connect({});
+      expect(cluster.redisCli(dst, ['cluster', 'setslot', slot, 'importing', srcId])).toBe('OK');
+      expect(cluster.redisCli(src, ['cluster', 'setslot', slot, 'migrating', dstId])).toBe('OK');
+      expect(
+        cluster.redisCli(src, ['migrate', cluster.ips[dst], '6379', k('a'), '0', '5000'])
+      ).toBe('OK');
+      try {
+        const out = await fresh.packed.mGet(order.map(k));
+        expect(out).toEqual(order.map((s) => ({ v: s })));
+        // The script did run and its reply was refused (so this is not a per-key-only pass).
+        expect(logs.some((l) => l.includes('fell back'))).toBe(true);
+      } finally {
+        // Move whatever is left in the slot, then hand the slot over, so the cluster is whole again.
+        const left = cluster.redisCli(src, ['cluster', 'getkeysinslot', slot, '1000']);
+        for (const key of left.split('\n').filter(Boolean))
+          cluster.redisCli(src, ['migrate', cluster.ips[dst], '6379', key, '0', '5000']);
+        for (const i of [0, 1, 2]) cluster.redisCli(i, ['cluster', 'setslot', slot, 'node', dstId]);
+        try {
+          fresh.destroy();
+        } catch {
+          // already closed
+        }
+      }
+      expect(await client.packed.mGet(['a', 'b', 'c'].map(k))).toEqual([
+        { v: 'a' },
+        { v: 'b' },
+        { v: 'c' },
+      ]);
+    },
+    60_000
+  );
 });

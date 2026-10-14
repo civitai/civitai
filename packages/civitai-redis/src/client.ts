@@ -13,7 +13,7 @@ import {
   createThrottle,
 } from './cluster-reconnect';
 import { withClusterRoutingRetry } from './cluster-routing-retry';
-import { batchedGet } from './cluster-batched-get';
+import { createClusterBufferGet } from './cluster-batched-get';
 import { ClusterSelfHealWatchdog } from './cluster-selfheal';
 import type { ClusterSelfHealTrigger } from './cluster-selfheal';
 import {
@@ -1632,26 +1632,12 @@ function getClient<K extends RedisKeyTemplates>(type: 'cache' | 'system') {
   // REDIS_CLUSTER_BATCHED_GET_ENABLED=false, it is the original per-key GETs.
   // The script runs through bufferClient like the GETs did, so it is instrumented, deadline-bound
   // and routing-retried by the same `_execute` wrapper, and its reply elements are Buffers.
-  const clusterSelf = (client as any)._self ?? client;
-  const batchedGetEnabled =
-    type === 'cache' && config.cluster && config.clusterBatchedGetEnabled !== false;
-  const getBuffers = (keys: K[]): Promise<(Buffer | null)[]> => {
-    if (!batchedGetEnabled || keys.length <= 1)
-      return Promise.all(keys.map((key) => bufferClient.get<Buffer>(key)));
-    return batchedGet<Buffer>(keys, {
-      get: (key) => bufferClient.get<Buffer>(key as K),
-      evalSha: (sha, args) => (bufferClient as any).evalSha(sha, args),
-      eval: (script, args) => (bufferClient as any).eval(script, args),
-      nodeOf: (slot) => clusterSelf.slots?.[slot]?.master?.address,
-      isValue: (v): v is Buffer => Buffer.isBuffer(v),
-      onFallback: (err, keyCount) =>
-        log(
-          `Batched cluster GET fell back to per-key GETs for ${keyCount} keys: ${
-            err instanceof Error ? err.message : String(err)
-          }`
-        ),
-    });
-  };
+  const batchedGet =
+    type === 'cache' && config.cluster && config.clusterBatchedGetEnabled !== false
+      ? createClusterBufferGet(bufferClient as any, (client as any)._self ?? client, log)
+      : undefined;
+  const getBuffers = (keys: K[]): Promise<(Buffer | null)[]> =>
+    batchedGet ? batchedGet(keys) : Promise.all(keys.map((key) => bufferClient.get<Buffer>(key)));
 
   client.packed = {
     async get<T>(key: K, packedOptions?: PackedOptions): Promise<T | null> {
@@ -1833,7 +1819,8 @@ function getClient<K extends RedisKeyTemplates>(type: 'cache' | 'system') {
     }
   };
 
-  // Wrap mGet to avoid CROSSSLOT errors - fetch keys individually
+  // Wrap mGet to avoid CROSSSLOT errors - fetch keys individually. (packed.mGet batches per master
+  // via ./cluster-batched-get; this string-mode wrapper has no hot caller and stays per-key.)
   const originalMGet = baseClient.mGet?.bind(baseClient);
   client.mGet = async function (...args: any[]): Promise<any> {
     const keys = args[0] as K[];
