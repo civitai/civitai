@@ -307,13 +307,16 @@ export const REVIEW_MINT_SCOPE_ALLOWLIST: ReadonlySet<string> = new Set<string>(
  *   - ONE `rev:<publishRequestId>` namespace would have been SHARED by every moderator
  *     reviewing the request — their shared documents, marks, counters and (with `showAuthor`)
  *     usernames would have crossed between them. Per-moderator namespaces make every
- *     collection, shared ones included, visible to the reviewing mod alone; that is also why
- *     the consent-gated `apps:storage:publish` ("every user of the app can read them") has no
- *     audience here beyond the mod, and why the run-for-real opt-in is the consent for it.
- *   - NOTHING deleted review data when the request was decided. `teardownReviewStorageForRequest`
- *     (`publish-request.service.ts`) now deletes every review namespace of the request on each
- *     transition out of `pending` (approve, reject, withdraw, supersede), best-effort and
- *     idempotent, like the `apprev_` schema drop above.
+ *     collection, shared ones included, visible to the reviewing mod alone, so the
+ *     consent-gated `apps:storage:publish` ("every user of the app can read them") has no
+ *     audience here beyond the mod. OWNER DECISION: the moderator's run-for-real opt-in counts
+ *     as the consent for `apps:storage:publish`; the review mint runs no per-scope consent
+ *     partition, and the consent-revocation marker still applies at the route.
+ *   - NOTHING deleted review data when the request was decided. Approve, reject and withdraw
+ *     now delete every review namespace of the request (`teardownReviewStorageForRequest`,
+ *     `publish-request.service.ts`), and the hourly sweep (`jobs/sweep-review-storage.ts`)
+ *     deletes whatever is left for any request no longer pending — superseded requests and
+ *     failed inline purges included.
  * The tunnel and private-run ceilings still withhold both: their tokens resolve to no review
  * namespace (see `PRIVATE_RUN_SUBTRACTED_SCOPES`).
  *

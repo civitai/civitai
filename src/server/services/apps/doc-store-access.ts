@@ -21,7 +21,8 @@
 // (`REVIEW_RUN_FOR_REAL_MINT_SCOPE_ALLOWLIST`). Its namespace is per MODERATOR as well as per
 // request, so a moderator's shared collections, marks and counters are shared only with
 // themselves, and the request's review data is deleted when it leaves `pending`
-// (`teardownReviewStorageForRequest` in `publish-request.service.ts`).
+// (`teardownReviewStorageForRequest` in `publish-request.service.ts`, and the sweep in
+// `jobs/sweep-review-storage.ts`).
 import { TRPCError } from '@trpc/server';
 import { sessionClient } from '~/server/auth/session-client';
 import { dbRead, dbWrite } from '~/server/db/client';

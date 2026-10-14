@@ -5,9 +5,9 @@ import type { DocStore } from '~/server/services/apps/doc-store';
 import type * as RuntimeMetrics from '~/server/metrics/app-block-runtime.metrics';
 
 /**
- * Review document-store data is deleted when a publish request LEAVES `pending`, on every
- * transition out of it: approve, reject, owner withdraw, and the two supersedes (a newer push
- * for the slug, and an approve of another request for the slug).
+ * Review document-store data is deleted inline when a moderator or owner DECIDES a publish
+ * request: approve, reject, owner withdraw. (Supersedes, failures and stragglers are the
+ * sweep's: `src/server/jobs/__tests__/sweep-review-storage.test.ts`.)
  *
  * The decision paths run for real against an in-memory `app_block_publish_requests` table
  * (their other DB reads answer empty, and the build/forgejo/notification edges are stubbed as
@@ -173,13 +173,8 @@ const { PREFS, POSTS, TALLIES, ctx } = await import(
   '~/server/services/apps/__tests__/doc-store.functional'
 );
 const { APPDATA_TABLES } = await import('~/server/services/apps/__tests__/doc-store.sql-scan');
-const {
-  approveRequest,
-  rejectRequest,
-  withdrawRequest,
-  recordPendingFromPush,
-  teardownReviewStorageForRequest,
-} = await import('~/server/services/blocks/publish-request.service');
+const { approveRequest, rejectRequest, withdrawRequest, teardownReviewStorageForRequest } =
+  await import('~/server/services/blocks/publish-request.service');
 
 type Harness = Awaited<ReturnType<typeof createPgliteHarness>>;
 let harness: Harness;
@@ -219,7 +214,7 @@ async function seedReview(publishRequestId: string) {
   }
 }
 
-/** Rows of this request in every appdata table, all namespaces, the registry included. */
+/** Rows of this request in every appdata table, all namespaces. */
 async function rows(publishRequestId: string): Promise<number> {
   let n = 0;
   for (const t of APPDATA_TABLES) {
@@ -258,14 +253,14 @@ beforeEach(() => {
   h.store = liveStore;
 });
 
-describe('review storage is deleted on every transition out of pending', () => {
+describe('review storage is deleted inline when a request is decided', () => {
   it('reject: every moderator namespace of the request is gone; another request is untouched', async () => {
     const pr = pending('rej-app');
     const bystander = pending('other-app');
     await seedReview(pr.id);
     await seedReview(bystander.id);
     const bystanderRows = await rows(bystander.id);
-    // Positive control: both moderators' rows and their registry rows exist.
+    // Positive control: both moderators' rows exist.
     expect(await rows(pr.id)).toBe(bystanderRows);
     expect(bystanderRows).toBeGreaterThan(10);
 
@@ -280,20 +275,14 @@ describe('review storage is deleted on every transition out of pending', () => {
     expect(await rows(bystander.id)).toBe(bystanderRows);
   });
 
-  it('approve: the approved request AND the other pending request it supersedes', async () => {
+  it('approve', async () => {
     const pr = pending('cool-app');
-    // Unique-pending is per slug in production; the in-memory table does not enforce it, so a
-    // second pending row stands for one an earlier code path left behind.
-    const older = pending('cool-app');
     await seedReview(pr.id);
-    await seedReview(older.id);
 
     await approveRequest({ publishRequestId: pr.id, reviewerUserId: MODS[0] });
 
     expect(h.requests.get(pr.id)?.status).toBe('approved');
-    expect(h.requests.get(older.id)?.status).toBe('withdrawn');
     await expectPurged(pr.id);
-    await expectPurged(older.id);
   });
 
   it('approve whose build trigger fails: the request stays approved, and its review data still goes', async () => {
@@ -335,27 +324,10 @@ describe('review storage is deleted on every transition out of pending', () => {
 
     await expectPurged(pr.id);
   });
-
-  it('supersede by a newer push for the slug', async () => {
-    const pr = pending('push-app', { forgejoCommitSha: 'oldsha' });
-    await seedReview(pr.id);
-
-    const { publishRequestId } = await recordPendingFromPush({
-      slug: 'push-app',
-      sha: 'newsha',
-      appBlockId: 'apb_existing',
-      manifest: { name: 'Cool App' },
-      version: '1.3.0',
-    });
-
-    expect(publishRequestId).not.toBe(pr.id);
-    expect(h.requests.get(pr.id)?.status).toBe('withdrawn');
-    await expectPurged(pr.id);
-  });
 });
 
 describe('teardownReviewStorageForRequest', () => {
-  it('a cleanup FAILURE never blocks the decision, is counted, and a later call finishes it', async () => {
+  it('a cleanup FAILURE never blocks the decision, is counted, and a later call (the sweep) finishes it', async () => {
     const pr = pending('fail-app');
     await seedReview(pr.id);
     const before = await rows(pr.id);
@@ -393,7 +365,7 @@ describe('teardownReviewStorageForRequest', () => {
     await expect(teardownReviewStorageForRequest(pr.id)).resolves.toBeUndefined();
     expect(h.outcomes).toEqual(['failed']);
 
-    // The retry (any later call) finishes it…
+    // A later purge finishes it…
     h.store = liveStore;
     await teardownReviewStorageForRequest(pr.id);
     expect(await rows(pr.id)).toBe(0);
@@ -401,33 +373,6 @@ describe('teardownReviewStorageForRequest', () => {
     // …and is idempotent.
     await teardownReviewStorageForRequest(pr.id);
     expect(h.outcomes).toEqual(['failed', 'purged', 'nothing']);
-  });
-
-  it('refuses a request that is still pending: a stray call never wipes a review in progress', async () => {
-    const pr = pending('live-app');
-    await seedReview(pr.id);
-    const before = await rows(pr.id);
-
-    await teardownReviewStorageForRequest(pr.id);
-
-    expect(h.outcomes).toEqual(['skipped_pending']);
-    expect(await rows(pr.id)).toBe(before);
-  });
-
-  it('reads the status from the PRIMARY: a replica still saying pending does not stop the purge', async () => {
-    const pr = pending('lag-app', { status: 'rejected' });
-    await seedReview(pr.id);
-    dbMock.dbRead.appBlockPublishRequest.findUnique.mockImplementation(
-      async ({ where }: { where: { id: string } }) => ({
-        ...h.requests.get(where.id),
-        status: 'pending',
-      })
-    );
-
-    await teardownReviewStorageForRequest(pr.id);
-
-    expect(h.outcomes).toEqual(['purged']);
-    expect(await rows(pr.id)).toBe(0);
   });
 
   it('no store connection: counted as disabled, never thrown', async () => {
@@ -463,5 +408,30 @@ describe('civitai_app_block_review_storage_cleanup_total', () => {
     });
     expect(before.failed).toBeGreaterThanOrEqual(1);
     expect(before.purged).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe('civitai_app_block_review_storage_sweep_total', () => {
+  it('the real recorder increments the labelled series', async () => {
+    const real = await vi.importActual<typeof RuntimeMetrics>(
+      '~/server/metrics/app-block-runtime.metrics'
+    );
+    const prom = await import('prom-client');
+    const read = async (outcome: string) => {
+      const metric = prom.register.getSingleMetric('civitai_app_block_review_storage_sweep_total');
+      const values = metric ? (await metric.get()).values : [];
+      return values.find((v) => v.labels.outcome === outcome)?.value ?? 0;
+    };
+    real.recordReviewStorageSweep('failed');
+    real.recordReviewStorageSweep('purged');
+    const before = { failed: await read('failed'), purged: await read('purged') };
+    real.recordReviewStorageSweep('purged');
+    real.recordReviewStorageSweep('purged');
+    real.recordReviewStorageSweep('failed');
+    expect({ failed: await read('failed'), purged: await read('purged') }).toEqual({
+      failed: before.failed + 1,
+      purged: before.purged + 2,
+    });
+    expect(before.failed).toBeGreaterThanOrEqual(1);
   });
 });

@@ -701,6 +701,7 @@ type Bundle = {
   consentMarkerUnavailableTotal: Counter<string>;
   storageManifestUnparseableTotal: Counter<string>;
   reviewStorageCleanupTotal: Counter<string>;
+  reviewStorageSweepTotal: Counter<string>;
   bridgeRateLimitRefusalsTotal: Counter<string>;
   postSubjectRefusalsTotal: Counter<string>;
   stepPriceCheckTotal: Counter<string>;
@@ -1167,13 +1168,22 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
     []
   );
 
-  // One increment per review-storage teardown attempt (publish-request.service.ts
-  // `teardownReviewStorageForRequest`), by outcome. `failed` is review data left behind, and
-  // nothing retries it automatically; it is the one outcome to alert on.
+  // One increment per inline review-storage teardown (publish-request.service.ts
+  // `teardownReviewStorageForRequest`, on approve/reject/withdraw), by outcome. A `failed` one is
+  // finished by the sweep, counted below.
   const reviewStorageCleanupTotal = getOrCreateCounter(
     reg,
     'civitai_app_block_review_storage_cleanup_total',
-    'Deletions of the document-store review namespaces of a publish request leaving pending, by outcome: purged (data deleted), nothing (no review data), skipped_pending (request still pending, refused), disabled (no usable store connection), failed (data left behind and not retried automatically; logged)',
+    'Inline deletions of a decided publish request review namespaces, by outcome: purged (data deleted), nothing (no review data), disabled (no usable store connection), failed (left to the sweep; logged)',
+    ['outcome']
+  );
+
+  // One increment per request the review-storage sweep (jobs/sweep-review-storage.ts) tried to
+  // purge. A steady `failed` means review data is outliving its request.
+  const reviewStorageSweepTotal = getOrCreateCounter(
+    reg,
+    'civitai_app_block_review_storage_sweep_total',
+    'Publish requests whose leftover review namespaces the sweep purged, by outcome: purged, failed (retried next run)',
     ['outcome']
   );
 
@@ -1417,6 +1427,7 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
     consentMarkerUnavailableTotal,
     storageManifestUnparseableTotal,
     reviewStorageCleanupTotal,
+    reviewStorageSweepTotal,
     bridgeRateLimitRefusalsTotal,
     postSubjectRefusalsTotal,
     stepPriceCheckTotal,
@@ -1744,18 +1755,21 @@ export function recordStorageManifestUnparseable(): void {
   }
 }
 
-export type ReviewStorageCleanupOutcome =
-  | 'purged'
-  | 'nothing'
-  | 'skipped_pending'
-  | 'disabled'
-  | 'failed';
+export type ReviewStorageCleanupOutcome = 'purged' | 'nothing' | 'disabled' | 'failed';
 
 export function recordReviewStorageCleanup(outcome: ReviewStorageCleanupOutcome): void {
   try {
     ensureRegisterAppBlockRuntimeMetrics().reviewStorageCleanupTotal.inc({ outcome });
   } catch {
     /* instrument-only — a metrics error must never fail a moderator decision */
+  }
+}
+
+export function recordReviewStorageSweep(outcome: 'purged' | 'failed'): void {
+  try {
+    ensureRegisterAppBlockRuntimeMetrics().reviewStorageSweepTotal.inc({ outcome });
+  } catch {
+    /* instrument-only — a metrics error must never fail the sweep */
   }
 }
 

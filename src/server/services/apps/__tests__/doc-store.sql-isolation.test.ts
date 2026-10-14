@@ -2,7 +2,7 @@ import { readdirSync, readFileSync, statSync } from 'fs';
 import path from 'path';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
-import { APPDATA_TABLES, scanStatement } from './doc-store.sql-scan';
+import { APPDATA_TABLES, isReviewMaintenanceStatement, scanStatement } from './doc-store.sql-scan';
 
 /**
  * Static half of the isolation guard for the shared `appdata` tables.
@@ -53,6 +53,9 @@ describe('scanner controls', () => {
       `INSERT INTO appdata.doc_tally AS t (app_id, ns, coll) VALUES ($1, $2, $3)`,
       `INSERT INTO appdata.usage_user AS u (app_id, ns, user_id) SELECT $1, $2, $3::int`,
       `BEGIN; SELECT set_config('appdata.app_id', 'x', true), set_config('appdata.ns', 'prod', true)`,
+      // Review maintenance: keyed on the request; the usage_app-only listing need not be.
+      `WITH gone AS (DELETE FROM appdata.doc d WHERE d.app_id = $1 AND d.ns LIKE 'rev:%' RETURNING 1) SELECT 1`,
+      `SELECT u.app_id FROM appdata.usage_app u WHERE u.ns LIKE 'rev:%' AND u.app_id > $1`,
     ]) {
       expect({ ok, v: scanStatement(ok) }).toEqual({ ok, v: [] });
     }
@@ -90,6 +93,20 @@ describe('scanner controls', () => {
       [`SELECT 1 FROM AppData.doc d WHERE d.app_id = $1 AND d.ns = $2`, /non-canonical spelling/],
       [`SET LOCAL search_path = appdata; SELECT 1 FROM doc d`, /search_path change/],
       [`SELECT 1 FROM appdata.doc d WHERE -- d.app_id = $1 AND d.ns = $2\n true`, /comment inside/],
+      // Maintenance shape: a delete or a non-usage_app read must still be keyed on the request.
+      [
+        `WITH gone AS (DELETE FROM appdata.doc d WHERE d.ns LIKE 'rev:%' RETURNING 1) SELECT 1`,
+        /lacks d\.app_id = \$1/,
+      ],
+      [
+        `WITH gone AS (DELETE FROM appdata.usage_app u WHERE u.ns LIKE 'rev:%' RETURNING 1) SELECT 1`,
+        /lacks u\.app_id = \$1/,
+      ],
+      [`SELECT d.key FROM appdata.doc d WHERE d.ns LIKE 'rev:%'`, /lacks d\.app_id = \$1/],
+      [
+        `UPDATE appdata.doc d SET version = 1 WHERE d.app_id = $1 AND d.ns LIKE 'rev:%'`,
+        /is not a SELECT or DELETE/,
+      ],
     ];
     for (const [sql, want] of bad) {
       expect({ sql, v: scanStatement(sql).join('; ') }).toEqual({
@@ -122,6 +139,93 @@ describe('doc-store.ts SQL', () => {
   });
 });
 
+describe('review maintenance is confined to the purge and the sweep listing', () => {
+  const source = ts.createSourceFile(
+    MODULE,
+    readFileSync(MODULE, 'utf8'),
+    ts.ScriptTarget.Latest,
+    true
+  );
+  /** Name of the nearest enclosing function or variable declaration of a node. */
+  function owner(node: ts.Node, kind: 'function' | 'variable'): string | null {
+    for (let n: ts.Node | undefined = node.parent; n; n = n.parent) {
+      if (kind === 'function' && ts.isFunctionDeclaration(n)) return n.name?.text ?? null;
+      if (kind === 'variable' && ts.isVariableDeclaration(n) && ts.isIdentifier(n.name)) {
+        return n.name.text;
+      }
+    }
+    return null;
+  }
+  function collect(test: (n: ts.Node) => boolean): ts.Node[] {
+    const out: ts.Node[] = [];
+    const visit = (n: ts.Node) => {
+      if (test(n)) out.push(n);
+      ts.forEachChild(n, visit);
+    };
+    visit(source);
+    return out;
+  }
+  const literalText = (n: ts.Node) =>
+    ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n)
+      ? n.text
+      : ts.isTemplateExpression(n)
+      ? n.head.text + n.templateSpans.map((sp) => sp.literal.text).join('')
+      : null;
+
+  it('every maintenance-shaped statement is one of the eight in SQL_REVIEW_PURGE / SQL_REVIEW_APP_IDS', () => {
+    const maint = collect((n) => {
+      const t = literalText(n);
+      return t !== null && /appdata\./.test(t) && isReviewMaintenanceStatement(t);
+    });
+    expect(maint.map((n) => owner(n, 'variable')).sort()).toEqual([
+      'SQL_REVIEW_APP_IDS',
+      ...Array(7).fill('SQL_REVIEW_PURGE'),
+    ]);
+  });
+
+  it('the maintenance setting is set in exactly one place, `maintenanceTx`, which only the purge and the listing call', () => {
+    const setting = collect((n) => (literalText(n) ?? '').includes('appdata.review_maintenance'));
+    const nearestFn = (n: ts.Node) => {
+      for (let p: ts.Node | undefined = n.parent; p; p = p.parent) {
+        if ((ts.isFunctionDeclaration(p) || ts.isFunctionExpression(p)) && p.name)
+          return p.name.text;
+      }
+      return null;
+    };
+    expect(setting.map(nearestFn)).toEqual(['maintenanceTx']);
+    const calls = collect(
+      (n) =>
+        ts.isCallExpression(n) &&
+        ts.isIdentifier(n.expression) &&
+        n.expression.text === 'maintenanceTx'
+    );
+    expect(calls.map(nearestFn).sort()).toEqual(['listReviewAppIds', 'purgeReview']);
+  });
+
+  it('no other server code mentions the setting (only the store, the migration and tests)', () => {
+    const found: string[] = [];
+    const walkAll = (dir: string) => {
+      for (const name of readdirSync(dir)) {
+        if (name === 'node_modules' || name.startsWith('.')) continue;
+        const full = path.join(dir, name);
+        if (statSync(full).isDirectory()) walkAll(full);
+        else if (
+          /\.(ts|tsx|js|mjs|cjs|sql)$/.test(name) &&
+          readFileSync(full, 'utf8').includes('review_maintenance')
+        ) {
+          found.push(path.relative(SRC_ROOT, full).split(path.sep).join('/'));
+        }
+      }
+    };
+    walkAll(path.join(SRC_ROOT, 'server'));
+    walkAll(path.join(SRC_ROOT, 'pages'));
+    expect(found.filter((f) => !f.includes('/__tests__/')).sort()).toEqual([
+      'server/services/apps/doc-store.ts',
+      'server/services/apps/migrations/20261013120000_appdata_document_store.sql',
+    ]);
+  });
+});
+
 describe('only the doc-store module touches the appdata tables', () => {
   // Enumerated with fs, not grep: the wrapped grep honours .gitignore. A seam
   // guard pins the RELATIONSHIP — it fails when the set grows or shrinks.
@@ -131,8 +235,6 @@ describe('only the doc-store module touches the appdata tables', () => {
     'server/services/apps/__tests__/doc-store.functional.ts',
     'server/services/apps/__tests__/doc-store.pg.test.ts',
     'server/services/apps/__tests__/doc-store.pglite.test.ts',
-    // Reads back every table of a request's review namespaces before and after a purge.
-    'server/services/apps/__tests__/doc-store.review-namespaces.test.ts',
     'server/services/apps/__tests__/doc-store.rls.ts',
     'server/services/apps/__tests__/doc-store.sql-isolation.test.ts',
     'server/services/apps/doc-store.ts',

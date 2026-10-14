@@ -22,8 +22,8 @@ vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
  * Review namespaces of the document store: one per (publish request, moderator), and their
  * deletion when the request is decided (`DocStore.purgeReview`). Run on the embedded Postgres
  * as `appdata_rw` with row-level security ON (both layers) and OFF (the module's own
- * predicates alone — without RLS a purge statement that lost its `ns = $2` would delete other
- * namespaces, and the "untouched" assertions below would see it).
+ * predicates alone — without RLS a purge statement that lost its `ns LIKE 'rev:%'` would delete
+ * prod and dev rows, and the "untouched" assertions below would see it).
  */
 
 // Pairwise distinct, and distinct from every id the functional suite uses.
@@ -35,17 +35,24 @@ const freshRequest = (tag: string) => `pubreq_${tag}${(reqSeq += 1)}`;
 const asMod = (publishRequestId: string, uid: number) =>
   ctx(publishRequestId, reviewNamespace(publishRequestId, uid), uid);
 
-/** Rows per appdata table for one app id, every namespace (superuser read, RLS bypassed). */
-async function rowsByTable(h: Harness, appId: string): Promise<Record<string, number>> {
+/** Rows per appdata table for one app id (superuser read, RLS bypassed); `nsLike` narrows. */
+async function rowsByTable(
+  h: Harness,
+  appId: string,
+  nsLike = '%'
+): Promise<Record<string, number>> {
   const out: Record<string, number> = {};
   for (const t of APPDATA_TABLES) {
-    const [r] = await h.raw(`SELECT count(*)::int AS n FROM appdata.${t} WHERE app_id = $1`, [
-      appId,
-    ]);
+    const [r] = await h.raw(
+      `SELECT count(*)::int AS n FROM appdata.${t} WHERE app_id = $1 AND ns LIKE $2`,
+      [appId, nsLike]
+    );
     out[t] = Number(r.n);
   }
   return out;
 }
+
+const NONE = Object.fromEntries(APPDATA_TABLES.map((t) => [t, 0]));
 
 /** A full snapshot of one app id's rows, for "untouched" comparisons. */
 async function snapshot(h: Harness, appId: string) {
@@ -122,14 +129,14 @@ function defineReviewSuite(makeHarness: () => Promise<Harness>) {
       }
     });
 
-    it('a review namespace is refused with any other request or viewer, and the bare request namespace is no context', async () => {
+    it('a review namespace is refused with any other request or viewer', async () => {
       const pr = freshRequest('CTX');
       const ns = reviewNamespace(pr, MOD_1);
       for (const bad of [
         ctx(pr, ns, MOD_2), // another moderator's namespace
         ctx(pr, ns, null), // anonymous
         ctx(freshRequest('CTXOTHER'), ns, MOD_1), // another request's app id
-        ctx(pr, `rev:${pr}`, MOD_1), // the registry namespace
+        ctx(pr, `rev:${pr}`, MOD_1), // no moderator
       ]) {
         // A shared collection, so an anonymous context reaches the context check rather than
         // the private collection's sign-in refusal.
@@ -137,108 +144,72 @@ function defineReviewSuite(makeHarness: () => Promise<Harness>) {
       }
       expect(() => reviewNamespace('has space', MOD_1)).toThrow(/malformed/);
       expect(() => reviewNamespace(pr, 0)).toThrow(/malformed/);
-      expect(await rowsByTable(h, pr)).toEqual(
-        Object.fromEntries(APPDATA_TABLES.map((t) => [t, 0]))
-      );
+      expect(await rowsByTable(h, pr)).toEqual(NONE);
     });
-
-    it('every moderator is registered under the request before anything lands in their namespace', async () => {
-      const pr = freshRequest('REG');
-      await store.get(asMod(pr, MOD_2), PREFS, 'k'); // a read registers too
-      await store.put(asMod(pr, MOD_1), PREFS, 'k', { a: 1 });
-      const reg = await h.raw(
-        `SELECT user_id, bytes::int, docs FROM appdata.usage_user WHERE app_id = $1 AND ns = $2 ORDER BY user_id`,
-        [pr, `rev:${pr}`]
-      );
-      expect(reg).toEqual([
-        { user_id: MOD_1, bytes: 0, docs: 0 },
-        { user_id: MOD_2, bytes: 0, docs: 0 },
-      ]);
-    });
-  });
-
-  it('a review write whose registration fails writes nothing, so no review data is ever unregistered', async () => {
-    const pr = freshRequest('NOREG');
-    const refuseRegistration: DocStoreDb = {
-      async connect() {
-        const inner = await h.db.connect();
-        const client: DocStoreClient = {
-          async query(sql, params) {
-            if (/INSERT INTO appdata\.usage_user AS u \(app_id, ns, user_id\)\s+VALUES/.test(sql)) {
-              throw new Error('injected registration failure');
-            }
-            return inner.query(sql, params);
-          },
-          release: (err) => inner.release(err),
-        };
-        return client;
-      },
-    };
-    await expect(
-      createDocStore({ db: refuseRegistration }).put(asMod(pr, MOD_1), PREFS, 'k', { a: 1 })
-    ).rejects.toThrow('injected registration failure');
-    expect(await rowsByTable(h, pr)).toEqual(Object.fromEntries(APPDATA_TABLES.map((t) => [t, 0])));
   });
 
   describe('purgeReview', () => {
-    it('deletes every row of every moderator namespace of the request, and nothing else', async () => {
+    it('deletes every review row of the request in one go — not its prod or dev rows, not another request', async () => {
       const pr = freshRequest('PURGE');
       const other = freshRequest('KEEP');
       const app = freshApp('REVKEEP');
       for (const uid of [MOD_1, MOD_2]) await seedModerator(store, pr, uid);
       await seedModerator(store, other, MOD_1);
+      // prod and dev rows under the request's OWN app id: the purge must not reach them.
+      await store.put(ctx(pr, NS_PROD, MOD_1), POSTS, 'p1', { status: 'open' });
+      await store.mark(ctx(pr, NS_PROD, MOD_1), POSTS, 'p1', 'vote');
+      await store.put(ctx(pr, NS_DEV, MOD_1), PREFS, 'k', { a: 1 });
       await store.put(ctx(app, NS_PROD, MOD_1), POSTS, 'p1', { status: 'open' });
-      await store.mark(ctx(app, NS_PROD, MOD_1), POSTS, 'p1', 'vote');
       await store.put(ctx(app, NS_DEV, MOD_1), PREFS, 'k', { a: 1 });
 
       // Positive control: the seed reached EVERY table, so "0 after" is not vacuous.
-      const before = await rowsByTable(h, pr);
+      const before = await rowsByTable(h, pr, 'rev:%');
       for (const t of APPDATA_TABLES) expect({ t, n: before[t] > 0 }).toEqual({ t, n: true });
+      const keepProdDev = {
+        prod: await rowsByTable(h, pr, 'prod'),
+        dev: await rowsByTable(h, pr, 'dev:%'),
+      };
+      expect(keepProdDev.prod.doc).toBe(1);
+      expect(keepProdDev.dev.doc).toBe(1);
       const keepOther = await snapshot(h, other);
       const keepApp = await snapshot(h, app);
 
       const out = await store.purgeReview(pr);
-      expect(out.namespaces).toBe(2);
-      // Everything but the two registry rows (deleted, not counted) and the index rows (deleted
-      // by the document delete's foreign-key cascade, so the count does not see them).
+      // Index rows go by the document delete's foreign-key cascade, so the count omits them.
       const total = Object.values(before).reduce((a, b) => a + b, 0);
-      expect(out.rows).toBe(total - 2 - before.doc_index);
+      expect(out.rows).toBe(total - before.doc_index);
 
-      expect(await rowsByTable(h, pr)).toEqual(
-        Object.fromEntries(APPDATA_TABLES.map((t) => [t, 0]))
-      );
+      expect(await rowsByTable(h, pr, 'rev:%')).toEqual(NONE);
+      expect({
+        prod: await rowsByTable(h, pr, 'prod'),
+        dev: await rowsByTable(h, pr, 'dev:%'),
+      }).toEqual(keepProdDev);
       expect(await snapshot(h, other)).toEqual(keepOther);
       expect(await snapshot(h, app)).toEqual(keepApp);
+      await assertUsageConsistent(h, pr, NS_PROD);
       await assertUsageConsistent(h, other, reviewNamespace(other, MOD_1));
       await assertUsageConsistent(h, app, NS_PROD);
       await assertUsageConsistent(h, app, NS_DEV);
     });
 
-    it('is idempotent: a second purge finds nothing, and a request with no review data is a no-op', async () => {
+    it('is idempotent: a second purge deletes nothing, and a request with no review data is a no-op', async () => {
       const pr = freshRequest('TWICE');
       await seedModerator(store, pr, MOD_1);
-      expect((await store.purgeReview(pr)).namespaces).toBe(1);
-      expect(await store.purgeReview(pr)).toEqual({ namespaces: 0, rows: 0 });
-      expect(await store.purgeReview(freshRequest('NEVER'))).toEqual({ namespaces: 0, rows: 0 });
+      expect((await store.purgeReview(pr)).rows).toBeGreaterThan(0);
+      expect(await store.purgeReview(pr)).toEqual({ rows: 0 });
+      expect(await store.purgeReview(freshRequest('NEVER'))).toEqual({ rows: 0 });
     });
 
-    it('resumes after a failure part-way: the finished moderator stays gone, a retry finishes the rest', async () => {
-      const pr = freshRequest('RESUME');
+    it('is one transaction: a failure on the last table leaves every row in place, and a retry finishes', async () => {
+      const pr = freshRequest('ATOMIC');
       for (const uid of [MOD_1, MOD_2]) await seedModerator(store, pr, uid);
-      const failOn = reviewNamespace(pr, MOD_2);
-      // A pool whose connection refuses moderator 2's document delete, once.
-      let failures = 0;
-      const flaky: DocStoreDb = {
+      const before = await rowsByTable(h, pr);
+      const failing: DocStoreDb = {
         async connect() {
           const inner = await h.db.connect();
           const client: DocStoreClient = {
             async query(sql, params) {
-              if (
-                /DELETE FROM appdata\.doc d/.test(sql) &&
-                params?.[1] === failOn &&
-                failures === 0
-              ) {
-                failures += 1;
+              if (/DELETE FROM appdata\.usage_user u/.test(sql)) {
                 throw new Error('injected purge failure');
               }
               return inner.query(sql, params);
@@ -248,36 +219,48 @@ function defineReviewSuite(makeHarness: () => Promise<Harness>) {
           return client;
         },
       };
-      await expect(createDocStore({ db: flaky }).purgeReview(pr)).rejects.toThrow(
+      await expect(createDocStore({ db: failing }).purgeReview(pr)).rejects.toThrow(
         'injected purge failure'
       );
-      expect(failures).toBe(1);
-      const docsByNs = async () =>
-        (
-          await h.raw(
-            `SELECT ns, count(*)::int AS n FROM appdata.doc WHERE app_id = $1 GROUP BY ns ORDER BY ns`,
-            [pr]
-          )
-        ).map((r) => [r.ns, r.n]);
-      // Moderator 1 (purged first) is gone; moderator 2's transaction rolled back whole.
-      expect(await docsByNs()).toEqual([[failOn, 3]]);
-      const reg = await h.raw(
-        `SELECT user_id FROM appdata.usage_user WHERE app_id = $1 AND ns = $2`,
-        [pr, `rev:${pr}`]
-      );
-      expect(reg.map((r) => r.user_id)).toEqual([MOD_2]);
-
-      expect((await store.purgeReview(pr)).namespaces).toBe(1);
-      expect(await rowsByTable(h, pr)).toEqual(
-        Object.fromEntries(APPDATA_TABLES.map((t) => [t, 0]))
-      );
+      expect(await rowsByTable(h, pr)).toEqual(before);
+      expect((await store.purgeReview(pr)).rows).toBeGreaterThan(0);
+      expect(await rowsByTable(h, pr)).toEqual(NONE);
     });
   });
 
-  it('every appdata statement carried its bound app id and namespace as $1/$2', () => {
-    // Positive control: the recorder saw the registry and purge statements.
+  describe('listReviewAppIds', () => {
+    it('lists exactly the requests holding review data, in id order, by keyset page', async () => {
+      // A fresh harness's ids are global to it, so compare against the ids this test seeds.
+      const tag = `LIST${(reqSeq += 1)}`;
+      const ids = [`pubreq_${tag}a`, `pubreq_${tag}b`, `pubreq_${tag}c`];
+      for (const id of ids) await seedModerator(store, id, MOD_1);
+      const prodOnly = `pubreq_${tag}p`;
+      await store.put(ctx(prodOnly, NS_PROD, MOD_1), PREFS, 'k', { a: 1 });
+      await store.put(ctx(prodOnly, NS_DEV, MOD_1), PREFS, 'k', { a: 1 });
+
+      const seen: string[] = [];
+      let after = '';
+      for (;;) {
+        const page = await store.listReviewAppIds({ after, limit: 2 });
+        if (page.length === 0) break;
+        seen.push(...page);
+        after = page[page.length - 1];
+      }
+      expect(seen).toEqual([...seen].sort());
+      expect(seen.filter((id) => id.startsWith(`pubreq_${tag}`))).toEqual(ids);
+      // A request whose review data is purged no longer lists.
+      await store.purgeReview(ids[1]);
+      const again = await store.listReviewAppIds({ after: `pubreq_${tag}`, limit: 10 });
+      expect(again.filter((id) => id.startsWith(`pubreq_${tag}`))).toEqual([ids[0], ids[2]]);
+    });
+  });
+
+  it('every appdata statement carried its bound app id and namespace (or request) as $1', () => {
+    // Positive control: the recorder saw the purge and the listing.
     expect(h.statements.some((s) => /DELETE FROM appdata\.usage_app u/.test(s.sql))).toBe(true);
-    expect(h.statements.some((s) => /INSERT INTO appdata\.usage_user AS u/.test(s.sql))).toBe(true);
+    expect(h.statements.some((s) => /SELECT u\.app_id FROM appdata\.usage_app u/.test(s.sql))).toBe(
+      true
+    );
     expect(h.violations).toEqual([]);
   });
 }

@@ -890,7 +890,7 @@ describe('namespaces per token kind', () => {
         )[0].n
       );
     for (const t of TABLES) expect({ t, rows: (await count(t)) > 0 }).toEqual({ t, rows: true });
-    expect((await liveStore.purgeReview(pubreq.id)).namespaces).toBe(2);
+    expect((await liveStore.purgeReview(pubreq.id)).rows).toBeGreaterThan(0);
     for (const t of TABLES) expect({ t, rows: await count(t) }).toEqual({ t, rows: 0 });
   });
 

@@ -3,11 +3,17 @@
 //
 // 🔴 THIS IS THE ONLY CODE THAT TOUCHES THE `appdata` TABLES. Every app's data
 // lives in the same tables, so isolation is a predicate: every statement below
-// takes `app_id = $1 AND ns = $2` from the resolved `DocStoreContext` (the review
-// registry and `purgeReview`: from a publish request id), for every table it references, and `__tests__/doc-store.sql-isolation.test.ts` fails if
+// takes `app_id = $1 AND ns = $2` from the resolved `DocStoreContext`, for every
+// table it references, and `__tests__/doc-store.sql-isolation.test.ts` fails if
 // one does not. Row-level security keyed on the transaction-local settings
 // `appdata.app_id` / `appdata.ns` (set at the top of every transaction in
-// `inTx`) is the second, independent layer.
+// `withTx`) is the second, independent layer.
+//
+// The ONE exception is review maintenance (`purgeReview`, `listReviewAppIds`):
+// statements keyed on `app_id = $1 AND ns LIKE 'rev:%'` (listing: `ns LIKE 'rev:%'`
+// on `usage_app` alone), run only inside `maintenanceTx`, whose transaction-local
+// `appdata.review_maintenance` setting is what the migration's review policies
+// admit — review namespaces only, read and delete only.
 //
 // Row-level security does not bind a superuser or BYPASSRLS role, so the store
 // requires its own least-privilege connection (`APPDATA_DATABASE_URL`, see
@@ -152,16 +158,6 @@ export function reviewNamespace(publishRequestId: string, moderatorUid: number):
     throw new Error('doc-store: malformed review namespace');
   }
   return ns;
-}
-
-/**
- * The REGISTRY namespace of a publish request: `rev:<publishRequestId>`, no moderator. No
- * context can carry it (`NS_SHAPE` refuses it); only the registry statements below run in it.
- * See `purgeReview` for why it exists.
- */
-function reviewRegistryNamespace(publishRequestId: string): string {
-  if (!APP_ID_SHAPE.test(publishRequestId)) throw new Error('doc-store: malformed review id');
-  return `rev:${publishRequestId}`;
 }
 
 type WritePolicy = 'own' | 'owner' | 'none';
@@ -567,37 +563,35 @@ const SQL_USAGE_APP = `SELECT u.bytes, u.docs FROM appdata.usage_app u
 const SQL_USAGE_USER = `SELECT u.bytes, u.docs FROM appdata.usage_user u
   WHERE u.app_id = $1 AND u.ns = $2 AND u.user_id = $3::int`;
 
-// The review registry: one zero-usage `usage_user` row per moderator who has ever opened a
-// review namespace of the request, kept in the request's registry namespace (see `purgeReview`).
-// $1 publish request id, $2 `rev:<publish request id>`, $3 moderator
-const SQL_REGISTER_REVIEWER = `INSERT INTO appdata.usage_user AS u (app_id, ns, user_id)
-  VALUES ($1, $2, $3::int)
-  ON CONFLICT (app_id, ns, user_id) DO NOTHING`;
-const SQL_LIST_REVIEWERS = `SELECT u.user_id FROM appdata.usage_user u
-  WHERE u.app_id = $1 AND u.ns = $2 ORDER BY u.user_id`;
-const SQL_UNREGISTER_REVIEWER = `DELETE FROM appdata.usage_user u
-  WHERE u.app_id = $1 AND u.ns = $2 AND u.user_id = $3::int`;
-
-// Every row of one (app, ns), table by table, in the store's lock order (document first —
-// its index rows go with it by the foreign-key cascade — then tallies and marks, then
-// usage_app before usage_user), so a write racing the purge cannot deadlock against it.
-// $1 app, $2 ns. Each returns the number of rows it deleted.
-const SQL_PURGE_NAMESPACE = [
-  `WITH gone AS (DELETE FROM appdata.doc d WHERE d.app_id = $1 AND d.ns = $2 RETURNING 1)
+// Review maintenance (see the module header). Every row of every review namespace of one
+// publish request, table by table, in the store's lock order (document first — its index rows
+// go with it by the foreign-key cascade — then tallies and marks, then usage_app before
+// usage_user), so a write racing the purge cannot deadlock against it. $1 publish request id.
+// Each returns the number of rows it deleted.
+const SQL_REVIEW_PURGE = [
+  `WITH gone AS (DELETE FROM appdata.doc d WHERE d.app_id = $1 AND d.ns LIKE 'rev:%' RETURNING 1)
   SELECT count(*)::int AS n FROM gone`,
-  `WITH gone AS (DELETE FROM appdata.doc_index ix WHERE ix.app_id = $1 AND ix.ns = $2 RETURNING 1)
+  `WITH gone AS (DELETE FROM appdata.doc_index ix WHERE ix.app_id = $1 AND ix.ns LIKE 'rev:%' RETURNING 1)
   SELECT count(*)::int AS n FROM gone`,
-  `WITH gone AS (DELETE FROM appdata.doc_tally t WHERE t.app_id = $1 AND t.ns = $2 RETURNING 1)
+  `WITH gone AS (DELETE FROM appdata.doc_tally t WHERE t.app_id = $1 AND t.ns LIKE 'rev:%' RETURNING 1)
   SELECT count(*)::int AS n FROM gone`,
-  `WITH gone AS (DELETE FROM appdata.doc_mark mk WHERE mk.app_id = $1 AND mk.ns = $2 RETURNING 1)
+  `WITH gone AS (DELETE FROM appdata.doc_mark mk WHERE mk.app_id = $1 AND mk.ns LIKE 'rev:%' RETURNING 1)
   SELECT count(*)::int AS n FROM gone`,
-  `WITH gone AS (DELETE FROM appdata.doc_tomb tb WHERE tb.app_id = $1 AND tb.ns = $2 RETURNING 1)
+  `WITH gone AS (DELETE FROM appdata.doc_tomb tb WHERE tb.app_id = $1 AND tb.ns LIKE 'rev:%' RETURNING 1)
   SELECT count(*)::int AS n FROM gone`,
-  `WITH gone AS (DELETE FROM appdata.usage_app u WHERE u.app_id = $1 AND u.ns = $2 RETURNING 1)
+  `WITH gone AS (DELETE FROM appdata.usage_app u WHERE u.app_id = $1 AND u.ns LIKE 'rev:%' RETURNING 1)
   SELECT count(*)::int AS n FROM gone`,
-  `WITH gone AS (DELETE FROM appdata.usage_user u WHERE u.app_id = $1 AND u.ns = $2 RETURNING 1)
+  `WITH gone AS (DELETE FROM appdata.usage_user u WHERE u.app_id = $1 AND u.ns LIKE 'rev:%' RETURNING 1)
   SELECT count(*)::int AS n FROM gone`,
 ] as const;
+
+// The publish requests that still have review data, in id order after a keyset cursor. Every
+// review namespace that holds any row has a `usage_app` row (a document create charges it, and
+// marks, counters and tombstones exist only beside a document), so listing that table is
+// complete. $1 cursor (exclusive), $2 limit.
+const SQL_REVIEW_APP_IDS = `SELECT u.app_id FROM appdata.usage_app u
+  WHERE u.ns LIKE 'rev:%' AND u.app_id > $1
+  GROUP BY u.app_id ORDER BY u.app_id LIMIT $2::int`;
 
 // List fragments. Aliases are fixed so every fragment's predicates are visible
 // to the static isolation scan; only parameter placeholders are interpolated.
@@ -834,34 +828,39 @@ export function createDocStore(deps: DocStoreDeps) {
     fn: (c: DocStoreClient) => Promise<T>
   ): Promise<T> {
     assertContext(ctx);
-    // A review namespace is registered under its request in a transaction of its own that
-    // COMMITS before anything runs in the namespace, so no review data can exist that
-    // `purgeReview` cannot find. Idempotent; review traffic only.
-    const review = REVIEW_NS.exec(ctx.ns);
-    if (review) {
-      const registry = reviewRegistryNamespace(ctx.appId);
-      await inTx(ctx.appId, registry, (c) =>
-        c.query(SQL_REGISTER_REVIEWER, [ctx.appId, registry, Number(review[2])])
-      );
-    }
-    return inTx(ctx.appId, ctx.ns, fn);
+    return runTx(
+      `BEGIN; SELECT set_config('appdata.app_id', ${escapeLiteral(
+        ctx.appId
+      )}, true), set_config('appdata.ns', ${escapeLiteral(
+        ctx.ns
+      )}, true), set_config('lock_timeout', '${LOCK_TIMEOUT}', true)`,
+      fn
+    );
   }
 
   /**
-   * One transaction bound to (appId, ns). Callers validate the context first (`assertContext`).
-   * The shape re-check below is defence in depth that NO current caller reaches — `withTx` has
-   * run `assertContext`, and `purgeReview` builds both values through the validating
-   * `reviewNamespace` / `reviewRegistryNamespace` — and no test exercises it. It exists for a
-   * future caller that passes a namespace of its own.
+   * A REVIEW MAINTENANCE transaction: no namespace bound, `appdata.review_maintenance` on —
+   * which the migration's review policies admit for `rev:` rows only, read and delete only —
+   * and `appdata.app_id` bound to `publishRequestId` (the only app whose rows a delete reaches),
+   * or to nothing when listing. Transaction-local like every other setting. 🔴 Called by
+   * `purgeReview` and `listReviewAppIds` ONLY (pinned by `doc-store.sql-isolation.test.ts`).
    */
-  async function inTx<T>(
-    appId: string,
-    ns: string,
+  async function maintenanceTx<T>(
+    publishRequestId: string | null,
     fn: (c: DocStoreClient) => Promise<T>
   ): Promise<T> {
-    if (!APP_ID_SHAPE.test(appId) || !(NS_SHAPE.test(ns) || ns === `rev:${appId}`)) {
-      throw new Error('doc-store: malformed transaction scope');
+    if (publishRequestId !== null && !APP_ID_SHAPE.test(publishRequestId)) {
+      throw new Error('doc-store: malformed publish request id');
     }
+    return runTx(
+      `BEGIN; SELECT set_config('appdata.app_id', ${escapeLiteral(
+        publishRequestId ?? ''
+      )}, true), set_config('appdata.ns', '', true), set_config('appdata.review_maintenance', 'on', true), set_config('lock_timeout', '${LOCK_TIMEOUT}', true)`,
+      fn
+    );
+  }
+
+  async function runTx<T>(begin: string, fn: (c: DocStoreClient) => Promise<T>): Promise<T> {
     if (!deps.db) {
       throw new DocStoreError('storage_disabled', 'document storage is not configured');
     }
@@ -874,13 +873,7 @@ export function createDocStore(deps: DocStoreDeps) {
       throw err;
     }
     try {
-      await client.query(
-        `BEGIN; SELECT set_config('appdata.app_id', ${escapeLiteral(
-          appId
-        )}, true), set_config('appdata.ns', ${escapeLiteral(
-          ns
-        )}, true), set_config('lock_timeout', '${LOCK_TIMEOUT}', true)`
-      );
+      await client.query(begin);
       const out = await fn(client);
       await client.query('COMMIT');
       return out;
@@ -1426,54 +1419,33 @@ export function createDocStore(deps: DocStoreDeps) {
   }
 
   /**
-   * Delete every row of every review namespace of one publish request — called once the request
-   * leaves `pending` (`publish-request.service.ts`, `teardownReviewStorageForRequest`).
-   *
-   * UNDER ROW-LEVEL SECURITY a transaction sees exactly one (app, ns), so the request's
-   * moderator namespaces cannot be enumerated from the data tables themselves (`usage_app`
-   * included: a transaction bound to one namespace sees only that namespace's row). They are
-   * enumerated from the request's REGISTRY instead: a zero-usage `usage_user` row per moderator
-   * in the namespace `rev:<publishRequestId>`, which `withTx` writes and commits before
-   * anything runs in that moderator's namespace. Then one transaction per moderator deletes
-   * that namespace from every table (usage rows included: the namespace is gone, so its usage
-   * is zero), and a further one removes the moderator from the registry.
-   *
-   * IDEMPOTENT and RESUMABLE: a moderator leaves the registry only after their namespace is
-   * gone, so a failure part-way leaves exactly the unfinished moderators registered, and the
-   * next call finishes them (if one is made — see `teardownReviewStorageForRequest`). A second
-   * call after a complete one finds nothing to do.
-   *
-   * ⚠️ NOT COVERED: a write already past the resolver's `pending` check when the decision lands
-   * can commit after its namespace was purged and its moderator unregistered. That row is then
-   * unreachable (its request is decided) and unregistered, so no later call finds it.
-   *
-   * Returns the moderator namespaces purged and the rows deleted from them (index rows removed by
-   * the document delete's foreign-key cascade are not counted).
+   * Delete every row of every review namespace (`rev:<publishRequestId>:<moderatorUid>`) of one
+   * publish request, from all seven tables, usage rows included, in ONE maintenance transaction:
+   * all of it goes or none of it does. Idempotent. Called when the request is decided
+   * (`teardownReviewStorageForRequest`) and by the sweep (`jobs/sweep-review-storage.ts`).
+   * Returns the rows deleted (index rows removed by the document delete's foreign-key cascade are
+   * not counted).
    */
-  async function purgeReview(
-    publishRequestId: string
-  ): Promise<{ namespaces: number; rows: number }> {
-    const registry = reviewRegistryNamespace(publishRequestId);
-    const moderators = await inTx(publishRequestId, registry, async (c) =>
-      (
-        await c.query(SQL_LIST_REVIEWERS, [publishRequestId, registry])
-      ).rows.map((r) => Number(r.user_id))
-    );
-    let rows = 0;
-    for (const uid of moderators) {
-      const ns = reviewNamespace(publishRequestId, uid);
-      rows += await inTx(publishRequestId, ns, async (c) => {
-        let n = 0;
-        for (const sql of SQL_PURGE_NAMESPACE) {
-          n += Number((await c.query(sql, [publishRequestId, ns])).rows[0]?.n ?? 0);
-        }
-        return n;
-      });
-      await inTx(publishRequestId, registry, (c) =>
-        c.query(SQL_UNREGISTER_REVIEWER, [publishRequestId, registry, uid])
-      );
+  async function purgeReview(publishRequestId: string): Promise<{ rows: number }> {
+    return maintenanceTx(publishRequestId, async (c) => {
+      let rows = 0;
+      for (const sql of SQL_REVIEW_PURGE) {
+        rows += Number((await c.query(sql, [publishRequestId])).rows[0]?.n ?? 0);
+      }
+      return { rows };
+    });
+  }
+
+  /** Publish request ids that still hold review data, after `after`, at most `limit`. */
+  async function listReviewAppIds(opts: { after?: string; limit: number }): Promise<string[]> {
+    if (!Number.isSafeInteger(opts.limit) || opts.limit < 1 || opts.limit > 1000) {
+      throw new Error('doc-store: limit must be 1–1000');
     }
-    return { namespaces: moderators.length, rows };
+    return maintenanceTx(null, async (c) =>
+      (await c.query(SQL_REVIEW_APP_IDS, [opts.after ?? '', opts.limit])).rows.map(
+        (r) => r.app_id as string
+      )
+    );
   }
 
   return {
@@ -1488,6 +1460,7 @@ export function createDocStore(deps: DocStoreDeps) {
     unmark,
     usage,
     purgeReview,
+    listReviewAppIds,
     limits,
   };
 }
