@@ -1,10 +1,7 @@
 import type { StorylineSubmitOutcome } from '~/components/Storyline/continue/StorylineContinueForm';
 import type { StorylineSpaceSettings } from '~/components/Storyline/manage/StorylineSettingsForm';
 import type { StorylineQueueRow } from '~/components/Storyline/queue/StorylineQueueList';
-import type {
-  StorylineClosedReason,
-  StorylineWhoCanContinue,
-} from '~/components/Storyline/storyline-ui';
+import type { StorylineClosedReason } from '~/components/Storyline/storyline-ui';
 import { STORYLINE_REFUSALS } from '~/shared/utils/storyline-placement';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -53,18 +50,6 @@ export function useStorylineSpace(
       if (space) mutation.mutate({ storylineId, mode: space.mode, price });
     },
   };
-}
-
-/**
- * Who may continue, from the storyline itself. The `whoCanContinue` column is not in the router
- * yet; until it is this reports `null` and the settings form disables the control.
- */
-export function useStorylineWhoCanContinue(_storylineId: number): {
-  value: StorylineWhoCanContinue | null;
-  isSaving: boolean;
-  save: (value: StorylineWhoCanContinue) => void;
-} {
-  return { value: null, isSaving: false, save: () => undefined };
 }
 
 /** What a contributor is told before submitting: the price, and whether they may continue. */

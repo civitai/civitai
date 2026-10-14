@@ -457,6 +457,14 @@ describe('StorylineSettingsForm', () => {
     expect(visibleText(inherited)).not.toContain('Use my default');
   });
 
+  it('warns that lowering the ceiling hides chapters, and that raising it brings them back', () => {
+    const text = visibleText(render(settingsForm()));
+
+    expect(text).toContain(
+      'chapters rated above this are hidden from readers. Raising it again brings them back.'
+    );
+  });
+
   it('disables the controls it cannot read yet', () => {
     const el = render(settingsForm({ whoCanContinue: null, space: null }));
 
