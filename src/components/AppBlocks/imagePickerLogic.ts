@@ -260,6 +260,9 @@ export function pickerGridLayout(
   return { columns, tile };
 }
 
+/** How long a jump-to date has to hold still before the list is refetched for it. */
+export const PICKER_JUMP_DEBOUNCE_MS = 400;
+
 /**
  * A native date input's `YYYY-MM-DD` as the newest moment a "jump to date" list may show: the END
  * of that day in the viewer's time zone, so images from the chosen day itself are listed. `null`

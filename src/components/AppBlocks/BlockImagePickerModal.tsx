@@ -35,6 +35,7 @@ import {
   jumpDateToBound,
   MAX_EMPTY_AUTO_PAGES,
   PICKER_TILE_GAP_PX,
+  PICKER_JUMP_DEBOUNCE_MS,
   pickerGridLayout,
   projectGeneratedPick,
   projectPostedPick,
@@ -76,8 +77,6 @@ const TRAY_THUMB_PX = 48;
  * blurry image. One width also lets the tray reuse the grid's image.
  */
 const THUMB_WIDTH = 320;
-/** How long a jump-to date has to hold still before the list is refetched for it. */
-const JUMP_DEBOUNCE_MS = 400;
 
 /**
  * Host modal behind PageBlockHost's `OPEN_IMAGE_PICKER`: the viewer picks from their own posted
@@ -367,7 +366,7 @@ function JumpToDate({
   const isMobile = useIsMobile({ type: 'media' });
   // What the input holds while the viewer edits it. A native date input reports `''` until every
   // part of the date is filled in, and steps through a whole date per arrow-key press, so a whole
-  // date is applied once it has held still for `JUMP_DEBOUNCE_MS`.
+  // date is applied once it has held still for `PICKER_JUMP_DEBOUNCE_MS`.
   const [draft, setDraft] = useState(value);
   useEffect(() => setDraft(value), [value]);
   const pending = useRef<number>();
@@ -396,7 +395,7 @@ function JumpToDate({
           setDraft(next);
           window.clearTimeout(pending.current);
           if (jumpDateToBound(next)) {
-            pending.current = window.setTimeout(() => apply.current(next), JUMP_DEBOUNCE_MS);
+            pending.current = window.setTimeout(() => apply.current(next), PICKER_JUMP_DEBOUNCE_MS);
           }
         }}
         onBlur={(event) => {
