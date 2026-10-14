@@ -1,0 +1,211 @@
+-- App Blocks document store — the `appdata` schema. MANUAL-APPLY migration.
+--
+-- TARGET DATABASE: the App Blocks datastore (the database `APPS_DATABASE_URL`
+--   points at — the same one that holds the per-app `app_<slug>` schemas), NOT
+--   the main civitai database. Apply it by hand (psql) as a role that can
+--   create schemas and roles, once per environment that has that datastore.
+--   Nothing applies this automatically: not CI, not a deploy, not the app.
+--
+-- WHAT IT CREATES: one fixed schema `appdata` with seven tables shared by every
+--   app (an `app_id` column, not a schema per app), their indexes, row-level
+--   security policies, and one NOLOGIN role `appdata_rw` holding the DML grants.
+--   After applying, grant that role to the role the web app connects as:
+--     GRANT appdata_rw TO <web app role>;
+--   Row-level security does NOT apply to a superuser or a BYPASSRLS role, so
+--   the web app role must be neither for the second isolation layer to bind.
+--
+-- ISOLATION: the only code that touches these tables is
+--   `src/server/services/apps/doc-store.ts`. Every statement there carries
+--   `app_id = $1 AND ns = $2` (pinned by `__tests__/doc-store.sql-isolation.test.ts`),
+--   and the policies below refuse any row whose `(app_id, ns)` differs from the
+--   transaction-local settings `appdata.app_id` / `appdata.ns` that the module sets
+--   with `set_config(…, true)` (`SET LOCAL` semantics) at the start of every
+--   transaction. A statement run without those settings sees no rows and cannot
+--   insert any.
+--
+-- IDEMPOTENT: every statement is IF NOT EXISTS, or a DROP IF EXISTS + CREATE
+--   inside this one transaction; safe to re-run. ROLLBACK: the sibling file
+--   `20261013120000_appdata_document_store.down.sql` (destroys all data in it).
+--
+-- No per-app DDL exists anywhere: approving an app, adding a collection or adding
+-- an index is DML only.
+
+BEGIN;
+
+CREATE SCHEMA IF NOT EXISTS appdata;
+
+-- Every identifier and key column is COLLATE "C": ordering is bytewise, so list
+-- order, keyset cursors and key-prefix ranges do not depend on the server's
+-- locale, and a prefix scan can use the primary-key btree.
+
+-- One row per document. `scope_uid` is 0 for a shared collection and the viewer's
+-- user id for a private one, so a private collection is one key space per viewer.
+CREATE TABLE IF NOT EXISTS appdata.doc (
+  app_id          text COLLATE "C" NOT NULL,
+  ns              text COLLATE "C" NOT NULL,
+  coll            text COLLATE "C" NOT NULL,
+  scope_uid       integer NOT NULL,
+  key             text COLLATE "C" NOT NULL,
+  data            jsonb NOT NULL,
+  -- The quota unit and the per-document cap are both measured on this column:
+  -- the canonical text of the stored jsonb. `octet_length(jsonb::text)` is
+  -- IMMUTABLE (a generated column requires that; `pg_column_size` is only
+  -- STABLE and would also move with TOAST compression settings). Because the
+  -- cap below is a CHECK on the same number the quota counters add up, no
+  -- payload can pass a cap measured in one unit and be charged in another.
+  size_bytes      integer GENERATED ALWAYS AS (octet_length(data::text)) STORED,
+  version         integer NOT NULL,
+  seq             bigint NOT NULL,
+  author_uid      integer,
+  author_kind     text COLLATE "C" NOT NULL,
+  last_writer_uid integer,
+  created_at      timestamptz NOT NULL DEFAULT now(),
+  updated_at      timestamptz NOT NULL DEFAULT now(),
+  expires_at      timestamptz,
+  hidden_at       timestamptz,
+  hidden_by       integer,
+  CONSTRAINT doc_pkey PRIMARY KEY (app_id, ns, coll, scope_uid, key),
+  CONSTRAINT doc_size_cap CHECK (size_bytes <= 65536),
+  CONSTRAINT doc_author_kind CHECK (author_kind IN ('user', 'app')),
+  CONSTRAINT doc_version_positive CHECK (version >= 1)
+);
+
+-- `author=me` lists.
+CREATE INDEX IF NOT EXISTS doc_author_idx
+  ON appdata.doc (app_id, ns, coll, scope_uid, author_uid, key);
+CREATE INDEX IF NOT EXISTS doc_created_idx
+  ON appdata.doc (app_id, ns, coll, scope_uid, created_at, key);
+CREATE INDEX IF NOT EXISTS doc_updated_idx
+  ON appdata.doc (app_id, ns, coll, scope_uid, updated_at, key);
+-- The TTL reaper scans only rows that can expire.
+CREATE INDEX IF NOT EXISTS doc_expires_idx
+  ON appdata.doc (expires_at) WHERE expires_at IS NOT NULL;
+
+-- Declared indexes, one row per (doc, index name). A side table rather than
+-- expression indexes, which would be per-app DDL.
+CREATE TABLE IF NOT EXISTS appdata.doc_index (
+  app_id    text COLLATE "C" NOT NULL,
+  ns        text COLLATE "C" NOT NULL,
+  coll      text COLLATE "C" NOT NULL,
+  scope_uid integer NOT NULL,
+  name      text COLLATE "C" NOT NULL,
+  key       text COLLATE "C" NOT NULL,
+  v_text    text COLLATE "C",
+  v_num     double precision,
+  CONSTRAINT doc_index_pkey PRIMARY KEY (app_id, ns, coll, scope_uid, name, key),
+  CONSTRAINT doc_index_doc_fkey FOREIGN KEY (app_id, ns, coll, scope_uid, key)
+    REFERENCES appdata.doc (app_id, ns, coll, scope_uid, key) ON DELETE CASCADE,
+  CONSTRAINT doc_index_one_value CHECK ((v_text IS NULL) <> (v_num IS NULL))
+);
+CREATE INDEX IF NOT EXISTS doc_index_text_idx
+  ON appdata.doc_index (app_id, ns, coll, scope_uid, name, v_text, key);
+CREATE INDEX IF NOT EXISTS doc_index_num_idx
+  ON appdata.doc_index (app_id, ns, coll, scope_uid, name, v_num, key);
+
+-- Counters and mark counts. `kind` is in the primary key, so a counter and a mark
+-- of the same name on the same document are separate rows and incrementing a
+-- counter can never move a mark count. Tallies exist on shared documents only.
+CREATE TABLE IF NOT EXISTS appdata.doc_tally (
+  app_id text COLLATE "C" NOT NULL,
+  ns     text COLLATE "C" NOT NULL,
+  coll   text COLLATE "C" NOT NULL,
+  key    text COLLATE "C" NOT NULL,
+  kind   text COLLATE "C" NOT NULL,
+  name   text COLLATE "C" NOT NULL,
+  count  bigint NOT NULL DEFAULT 0,
+  CONSTRAINT doc_tally_pkey PRIMARY KEY (app_id, ns, coll, key, kind, name),
+  CONSTRAINT doc_tally_kind CHECK (kind IN ('counter', 'mark')),
+  CONSTRAINT doc_tally_nonnegative CHECK (count >= 0)
+);
+-- "Top N by counter/mark" lists.
+CREATE INDEX IF NOT EXISTS doc_tally_top_idx
+  ON appdata.doc_tally (app_id, ns, coll, kind, name, count, key);
+
+-- One row per (doc, mark name, user): the uniqueness that makes a mark count
+-- equal the number of distinct users who marked.
+CREATE TABLE IF NOT EXISTS appdata.doc_mark (
+  app_id     text COLLATE "C" NOT NULL,
+  ns         text COLLATE "C" NOT NULL,
+  coll       text COLLATE "C" NOT NULL,
+  key        text COLLATE "C" NOT NULL,
+  name       text COLLATE "C" NOT NULL,
+  user_id    integer NOT NULL,
+  reason     text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT doc_mark_pkey PRIMARY KEY (app_id, ns, coll, key, name, user_id)
+);
+-- `markedBy=me` lists and account deletion.
+CREATE INDEX IF NOT EXISTS doc_mark_user_idx
+  ON appdata.doc_mark (app_id, ns, coll, user_id, name, key);
+
+-- Deletion tombstones for the change feed; reaped after 7 days.
+CREATE TABLE IF NOT EXISTS appdata.doc_tomb (
+  app_id     text COLLATE "C" NOT NULL,
+  ns         text COLLATE "C" NOT NULL,
+  coll       text COLLATE "C" NOT NULL,
+  scope_uid  integer NOT NULL,
+  key        text COLLATE "C" NOT NULL,
+  seq        bigint NOT NULL,
+  deleted_at timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT doc_tomb_pkey PRIMARY KEY (app_id, ns, coll, scope_uid, key)
+);
+CREATE INDEX IF NOT EXISTS doc_tomb_deleted_idx ON appdata.doc_tomb (deleted_at);
+
+-- Per-(app, namespace) usage. The row is also the lock that orders `seq`: it is
+-- updated, and so row-locked until commit, by every document write.
+CREATE TABLE IF NOT EXISTS appdata.usage_app (
+  app_id   text COLLATE "C" NOT NULL,
+  ns       text COLLATE "C" NOT NULL,
+  bytes    bigint NOT NULL DEFAULT 0,
+  docs     integer NOT NULL DEFAULT 0,
+  last_seq bigint NOT NULL DEFAULT 0,
+  CONSTRAINT usage_app_pkey PRIMARY KEY (app_id, ns)
+);
+
+-- Per-(app, namespace, user) usage: a private doc is charged to its viewer, a
+-- user-authored shared doc to its author.
+CREATE TABLE IF NOT EXISTS appdata.usage_user (
+  app_id  text COLLATE "C" NOT NULL,
+  ns      text COLLATE "C" NOT NULL,
+  user_id integer NOT NULL,
+  bytes   bigint NOT NULL DEFAULT 0,
+  docs    integer NOT NULL DEFAULT 0,
+  CONSTRAINT usage_user_pkey PRIMARY KEY (app_id, ns, user_id)
+);
+
+-- Row-level security: the second isolation layer. FORCE makes it bind the table
+-- owner too; it never binds a superuser or a BYPASSRLS role.
+DO $rls$
+DECLARE
+  t text;
+BEGIN
+  FOREACH t IN ARRAY ARRAY['doc', 'doc_index', 'doc_tally', 'doc_mark', 'doc_tomb', 'usage_app', 'usage_user']
+  LOOP
+    EXECUTE format('ALTER TABLE appdata.%I ENABLE ROW LEVEL SECURITY', t);
+    EXECUTE format('ALTER TABLE appdata.%I FORCE ROW LEVEL SECURITY', t);
+    EXECUTE format('DROP POLICY IF EXISTS appdata_scope ON appdata.%I', t);
+    -- `current_setting(…, true)` is NULL when the setting is absent, so the
+    -- predicate is NULL (not true) and the row is invisible / the write refused.
+    EXECUTE format(
+      'CREATE POLICY appdata_scope ON appdata.%I '
+      'USING (app_id = current_setting(''appdata.app_id'', true) '
+      'AND ns = current_setting(''appdata.ns'', true)) '
+      'WITH CHECK (app_id = current_setting(''appdata.app_id'', true) '
+      'AND ns = current_setting(''appdata.ns'', true))',
+      t);
+  END LOOP;
+END
+$rls$;
+
+DO $role$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'appdata_rw') THEN
+    CREATE ROLE appdata_rw NOLOGIN NOSUPERUSER NOBYPASSRLS;
+  END IF;
+END
+$role$;
+
+GRANT USAGE ON SCHEMA appdata TO appdata_rw;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA appdata TO appdata_rw;
+
+COMMIT;

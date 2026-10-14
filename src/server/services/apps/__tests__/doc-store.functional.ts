@@ -1,0 +1,865 @@
+// Behavioural suite for the document store, run against every harness (PGlite
+// and real Postgres; superuser with RLS bypassed, and `appdata_rw` with RLS on).
+// Running it as the superuser is what makes the isolation cases a test of the
+// module's own predicates: with RLS bypassed, a dropped `app_id = $1` leaks.
+//
+// Expected values are literals, never derived from the store under test. Usage
+// counters are cross-checked against a recompute (`sum(size_bytes)`), a different
+// mechanism from the incremental one under test.
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { createDocStore } from '~/server/services/apps/doc-store';
+import type { DocStore } from '~/server/services/apps/doc-store';
+import type {
+  DocCollection,
+  DocStoreContext,
+  DocStoreErrorCode,
+} from '~/server/services/apps/doc-store.types';
+import { DocStoreError } from '~/server/services/apps/doc-store.types';
+import type { Harness } from './doc-store.harness';
+
+// Pairwise-distinct identities, distinct from every literal the assertions use.
+export const APP_A = 'ab_ISOLATIONAPPA';
+export const APP_B = 'ab_ISOLATIONAPPB';
+export const NS_PROD = 'prod';
+export const NS_DEV = 'dev:4711';
+export const VIEWER_1 = 101;
+export const VIEWER_2 = 202;
+
+export const PREFS: DocCollection = { name: 'prefs', config: { visibility: 'private' } };
+export const POSTS: DocCollection = {
+  name: 'posts',
+  config: {
+    visibility: 'shared',
+    write: 'own',
+    marks: ['vote', 'star'],
+    counters: ['vote', 'views'],
+    indexes: { status: 'string', score: 'number', 'meta.tag': 'string', at: 'time' },
+  },
+};
+export const BOARD: DocCollection = {
+  name: 'board',
+  config: { visibility: 'shared', write: 'anyone' },
+};
+export const PLAYS: DocCollection = {
+  name: 'plays',
+  config: { visibility: 'shared', write: 'owner', counters: ['plays'] },
+};
+
+export const ctx = (appId: string, ns: string, viewerUid: number | null): DocStoreContext => ({
+  appId,
+  ns,
+  viewerUid,
+});
+
+export async function expectCode(p: Promise<unknown>, code: DocStoreErrorCode) {
+  try {
+    await p;
+  } catch (err) {
+    expect(err).toBeInstanceOf(DocStoreError);
+    expect((err as DocStoreError).code).toBe(code);
+    return err as DocStoreError;
+  }
+  throw new Error(`expected ${code}, but the call succeeded`);
+}
+
+let appSeq = 0;
+/** A fresh app id per test so tests never share rows. */
+export const freshApp = (tag: string) => `ab_${tag}_${(appSeq += 1)}`;
+
+/** Recompute usage from the documents themselves and compare with the counters. */
+export async function assertUsageConsistent(h: Harness, appId: string, ns: string) {
+  const [recomputed] = await h.raw(
+    `SELECT COALESCE(sum(size_bytes), 0)::bigint AS bytes, count(*)::int AS docs
+       FROM appdata.doc WHERE app_id = $1 AND ns = $2`,
+    [appId, ns]
+  );
+  const [usage] = await h.raw(
+    `SELECT bytes, docs FROM appdata.usage_app WHERE app_id = $1 AND ns = $2`,
+    [appId, ns]
+  );
+  expect({ bytes: Number(usage?.bytes ?? 0), docs: Number(usage?.docs ?? 0) }).toEqual({
+    bytes: Number(recomputed.bytes),
+    docs: Number(recomputed.docs),
+  });
+  const perUser = await h.raw(
+    `SELECT u.user_id, u.bytes, u.docs,
+            COALESCE((SELECT sum(d.size_bytes) FROM appdata.doc d WHERE d.app_id = u.app_id AND d.ns = u.ns
+                        AND ((d.scope_uid = u.user_id) OR (d.scope_uid = 0 AND d.author_kind = 'user' AND d.author_uid = u.user_id))), 0)::bigint AS want_bytes,
+            (SELECT count(*) FROM appdata.doc d WHERE d.app_id = u.app_id AND d.ns = u.ns
+                        AND ((d.scope_uid = u.user_id) OR (d.scope_uid = 0 AND d.author_kind = 'user' AND d.author_uid = u.user_id)))::int AS want_docs
+       FROM appdata.usage_user u WHERE u.app_id = $1 AND u.ns = $2`,
+    [appId, ns]
+  );
+  for (const r of perUser) {
+    expect({ user: r.user_id, bytes: Number(r.bytes), docs: Number(r.docs) }).toEqual({
+      user: r.user_id,
+      bytes: Number(r.want_bytes),
+      docs: Number(r.want_docs),
+    });
+  }
+}
+
+export function defineFunctionalSuite(makeHarness: () => Promise<Harness>) {
+  let h: Harness;
+  let store: DocStore;
+
+  beforeAll(async () => {
+    h = await makeHarness();
+    store = createDocStore({ db: h.db });
+  });
+  afterAll(async () => {
+    await h?.close();
+  });
+
+  describe('isolation between apps, namespaces and viewers', () => {
+    const combos = [APP_A, APP_B].flatMap((app) =>
+      [NS_PROD, NS_DEV].flatMap((ns) => [VIEWER_1, VIEWER_2].map((v) => ({ app, ns, v })))
+    );
+    const tag = (c: { app: string; ns: string; v: number }) => `${c.app}|${c.ns}|${c.v}`;
+
+    it('private docs: the same key in 8 (app, ns, viewer) key spaces stays 8 documents', async () => {
+      for (const c of combos) {
+        await store.put(ctx(c.app, c.ns, c.v), PREFS, 'same', { who: tag(c) });
+        await store.put(ctx(c.app, c.ns, c.v), PREFS, `only-${combos.indexOf(c)}`, { who: tag(c) });
+      }
+      for (const c of combos) {
+        const me = ctx(c.app, c.ns, c.v);
+        expect((await store.get(me, PREFS, 'same'))?.data).toEqual({ who: tag(c) });
+        const listed = await store.list(me, PREFS, { limit: 100 });
+        expect(listed.items.map((d) => d.key).sort()).toEqual(
+          ['same', `only-${combos.indexOf(c)}`].sort()
+        );
+        for (const other of combos) {
+          if (other === c) continue;
+          expect(await store.get(me, PREFS, `only-${combos.indexOf(other)}`)).toBeNull();
+        }
+      }
+    });
+
+    it('shared docs: one key space per (app, ns), whichever viewer reads', async () => {
+      const spaces = [APP_A, APP_B].flatMap((app) => [NS_PROD, NS_DEV].map((ns) => ({ app, ns })));
+      for (const [i, s] of spaces.entries()) {
+        await store.put(ctx(s.app, s.ns, VIEWER_1), BOARD, 'same', { space: i });
+        await store.put(ctx(s.app, s.ns, VIEWER_1), BOARD, `only-${i}`, { space: i });
+      }
+      for (const [i, s] of spaces.entries()) {
+        for (const v of [VIEWER_1, VIEWER_2, null]) {
+          const me = ctx(s.app, s.ns, v);
+          expect((await store.get(me, BOARD, 'same'))?.data).toEqual({ space: i });
+          const many = await store.getMany(
+            me,
+            BOARD,
+            spaces.map((_, j) => `only-${j}`)
+          );
+          expect(many.map((d) => d?.data ?? null)).toEqual(
+            spaces.map((_, j) => (j === i ? { space: i } : null))
+          );
+        }
+      }
+    });
+
+    it('marks, counters and deletes in one app do not reach another', async () => {
+      await store.put(ctx(APP_A, NS_PROD, VIEWER_1), POSTS, 'p', { status: 'open' });
+      await store.put(ctx(APP_B, NS_PROD, VIEWER_1), POSTS, 'p', { status: 'open' });
+      await store.mark(ctx(APP_A, NS_PROD, VIEWER_2), POSTS, 'p', 'vote');
+      await store.increment(ctx(APP_A, NS_PROD, VIEWER_2), POSTS, 'p', 'views', 7);
+      const b = await store.get(ctx(APP_B, NS_PROD, VIEWER_2), POSTS, 'p');
+      expect(b?.marks.vote).toBe(0);
+      expect(b?.counters.views).toBe(0);
+      expect(b?.viewer).toEqual({ marks: [] });
+      await store.delete(ctx(APP_A, NS_PROD, VIEWER_1), POSTS, 'p');
+      expect(await store.get(ctx(APP_B, NS_PROD, VIEWER_1), POSTS, 'p')).not.toBeNull();
+    });
+  });
+
+  describe('conditional writes', () => {
+    it('ifVersion: n writes only at version n; 0 only when absent', async () => {
+      const me = ctx(freshApp('ver'), NS_PROD, VIEWER_1);
+      const v1 = await store.put(me, PREFS, 'k', { n: 1 }, { ifVersion: 0 });
+      expect(v1.version).toBe(1);
+      const err0 = await expectCode(
+        store.put(me, PREFS, 'k', { n: 9 }, { ifVersion: 0 }),
+        'version_conflict'
+      );
+      expect(err0.details).toEqual({ currentVersion: 1 });
+      const v2 = await store.put(me, PREFS, 'k', { n: 2 }, { ifVersion: 1 });
+      expect(v2.version).toBe(2);
+      const stale = await expectCode(
+        store.put(me, PREFS, 'k', { n: 3 }, { ifVersion: 1 }),
+        'version_conflict'
+      );
+      expect(stale.details).toEqual({ currentVersion: 2 });
+      await expectCode(
+        store.put(me, PREFS, 'absent', { n: 1 }, { ifVersion: 4 }),
+        'version_conflict'
+      );
+      expect((await store.get(me, PREFS, 'k'))?.data).toEqual({ n: 2 });
+      await expectCode(store.delete(me, PREFS, 'k', { ifVersion: 1 }), 'version_conflict');
+      expect(await store.delete(me, PREFS, 'k', { ifVersion: 2 })).toEqual({ deleted: true });
+      expect(await store.delete(me, PREFS, 'k')).toEqual({ deleted: false });
+      expect(await store.get(me, PREFS, 'k')).toBeNull();
+      const again = await store.put(me, PREFS, 'k', { n: 4 }, { ifVersion: 0 });
+      expect(again.version).toBe(1);
+    });
+
+    it('counter and mark changes do not bump the version', async () => {
+      const app = freshApp('verc');
+      await store.put(ctx(app, NS_PROD, VIEWER_1), POSTS, 'k', { status: 'a' });
+      await store.increment(ctx(app, NS_PROD, VIEWER_2), POSTS, 'k', 'views');
+      await store.mark(ctx(app, NS_PROD, VIEWER_2), POSTS, 'k', 'vote');
+      expect((await store.get(ctx(app, NS_PROD, VIEWER_2), POSTS, 'k'))?.version).toBe(1);
+    });
+  });
+
+  describe('write policy and authorship', () => {
+    it('own: only the author updates or deletes', async () => {
+      const app = freshApp('own');
+      const doc = await store.put(ctx(app, NS_PROD, VIEWER_1), POSTS, 'k', { status: 'a' });
+      expect(doc.author).toEqual({ kind: 'user', uid: VIEWER_1, isViewer: true });
+      const seen = await store.get(ctx(app, NS_PROD, VIEWER_2), POSTS, 'k');
+      expect(seen?.author).toEqual({ kind: 'user', uid: VIEWER_1, isViewer: false });
+      await expectCode(
+        store.put(ctx(app, NS_PROD, VIEWER_2), POSTS, 'k', { status: 'b' }),
+        'not_author'
+      );
+      await expectCode(store.delete(ctx(app, NS_PROD, VIEWER_2), POSTS, 'k'), 'not_author');
+      const created = await store.create(ctx(app, NS_PROD, VIEWER_2), POSTS, { status: 'c' });
+      expect(created.key).toMatch(/^[0-9A-HJKMNP-TV-Z]{26}$/);
+      expect(created.author).toEqual({ kind: 'user', uid: VIEWER_2, isViewer: true });
+    });
+
+    it('anyone: any viewer edits; the author stays the creator and is still charged', async () => {
+      const app = freshApp('any');
+      await store.put(ctx(app, NS_PROD, VIEWER_1), BOARD, 'k', { t: 'x' });
+      const edited = await store.put(ctx(app, NS_PROD, VIEWER_2), BOARD, 'k', { t: 'xyz' });
+      expect(edited.author).toEqual({ kind: 'user', uid: VIEWER_1, isViewer: false });
+      const [u1] = await h.raw(
+        `SELECT bytes FROM appdata.usage_user WHERE app_id = $1 AND user_id = $2`,
+        [app, VIEWER_1]
+      );
+      // `{"t": "xyz"}` is 12 bytes of jsonb text.
+      expect(Number(u1.bytes)).toBe(12);
+      expect(
+        await h.raw(
+          `SELECT 1 FROM appdata.usage_user WHERE app_id = $1 AND user_id = $2 AND bytes <> 0`,
+          [app, VIEWER_2]
+        )
+      ).toEqual([]);
+      expect(await store.delete(ctx(app, NS_PROD, VIEWER_2), BOARD, 'k')).toEqual({
+        deleted: true,
+      });
+      await assertUsageConsistent(h, app, NS_PROD);
+    });
+
+    it('owner: viewers cannot write documents, but may increment declared counters', async () => {
+      const app = freshApp('owner');
+      await expectCode(
+        store.put(ctx(app, NS_PROD, VIEWER_1), PLAYS, 'k', { a: 1 }),
+        'write_policy'
+      );
+      await expectCode(store.create(ctx(app, NS_PROD, VIEWER_1), PLAYS, { a: 1 }), 'write_policy');
+      await expectCode(store.delete(ctx(app, NS_PROD, VIEWER_1), PLAYS, 'k'), 'write_policy');
+      // Owner writes are a later phase; seed an app-authored doc directly.
+      await h.raw(
+        `INSERT INTO appdata.doc (app_id, ns, coll, scope_uid, key, data, version, seq, author_kind)
+         VALUES ($1, $2, 'plays', 0, 'col-1', '{}', 1, 1, 'app')`,
+        [app, NS_PROD]
+      );
+      expect(
+        await store.increment(ctx(app, NS_PROD, VIEWER_1), PLAYS, 'col-1', 'plays', 3)
+      ).toEqual({ value: 3 });
+      const doc = await store.get(ctx(app, NS_PROD, null), PLAYS, 'col-1');
+      expect(doc?.author).toEqual({ kind: 'app' });
+      expect(doc?.counters).toEqual({ plays: 3 });
+      expect(doc?.viewer).toBeNull();
+    });
+
+    it('anonymous viewers read shared collections and nothing else', async () => {
+      const app = freshApp('anon');
+      await store.put(ctx(app, NS_PROD, VIEWER_1), BOARD, 'k', { a: 1 });
+      expect((await store.get(ctx(app, NS_PROD, null), BOARD, 'k'))?.data).toEqual({ a: 1 });
+      await expectCode(store.get(ctx(app, NS_PROD, null), PREFS, 'k'), 'sign_in_required');
+      await expectCode(store.list(ctx(app, NS_PROD, null), PREFS), 'sign_in_required');
+      await expectCode(
+        store.put(ctx(app, NS_PROD, null), BOARD, 'k2', { a: 1 }),
+        'sign_in_required'
+      );
+      await expectCode(store.mark(ctx(app, NS_PROD, null), POSTS, 'k', 'vote'), 'sign_in_required');
+      await expectCode(
+        store.list(ctx(app, NS_PROD, null), BOARD, { author: 'me' }),
+        'sign_in_required'
+      );
+    });
+  });
+
+  describe('counters and marks', () => {
+    it('a mark is one per user; the count is the number of distinct markers', async () => {
+      const app = freshApp('mark');
+      await store.put(ctx(app, NS_PROD, VIEWER_1), POSTS, 'k', { status: 'a' });
+      expect(await store.mark(ctx(app, NS_PROD, VIEWER_1), POSTS, 'k', 'vote')).toEqual({
+        marked: true,
+        count: 1,
+      });
+      expect(await store.mark(ctx(app, NS_PROD, VIEWER_1), POSTS, 'k', 'vote')).toEqual({
+        marked: true,
+        count: 1,
+      });
+      expect(await store.mark(ctx(app, NS_PROD, VIEWER_2), POSTS, 'k', 'vote')).toEqual({
+        marked: true,
+        count: 2,
+      });
+      expect(await store.mark(ctx(app, NS_PROD, VIEWER_2), POSTS, 'k', 'star')).toEqual({
+        marked: true,
+        count: 1,
+      });
+      const asV2 = await store.get(ctx(app, NS_PROD, VIEWER_2), POSTS, 'k');
+      expect(asV2?.marks).toEqual({ vote: 2, star: 1 });
+      expect(asV2?.viewer).toEqual({ marks: ['star', 'vote'] });
+      expect(await store.unmark(ctx(app, NS_PROD, VIEWER_1), POSTS, 'k', 'vote')).toEqual({
+        marked: false,
+        count: 1,
+      });
+      expect(await store.unmark(ctx(app, NS_PROD, VIEWER_1), POSTS, 'k', 'vote')).toEqual({
+        marked: false,
+        count: 1,
+      });
+      await expectCode(
+        store.mark(ctx(app, NS_PROD, VIEWER_1), POSTS, 'k', 'undeclared'),
+        'invalid_request'
+      );
+      await expectCode(
+        store.mark(ctx(app, NS_PROD, VIEWER_1), POSTS, 'missing', 'vote'),
+        'not_found'
+      );
+      await expectCode(
+        store.mark(ctx(app, NS_PROD, VIEWER_1), PREFS, 'k', 'vote'),
+        'invalid_request'
+      );
+    });
+
+    it('a counter and a mark of the same name are separate tallies', async () => {
+      const app = freshApp('sep');
+      await store.put(ctx(app, NS_PROD, VIEWER_1), POSTS, 'k', { status: 'a' });
+      await store.mark(ctx(app, NS_PROD, VIEWER_2), POSTS, 'k', 'vote');
+      expect(await store.increment(ctx(app, NS_PROD, VIEWER_2), POSTS, 'k', 'vote', 100)).toEqual({
+        value: 100,
+      });
+      const doc = await store.get(ctx(app, NS_PROD, VIEWER_2), POSTS, 'k');
+      expect(doc?.marks.vote).toBe(1);
+      expect(doc?.counters.vote).toBe(100);
+    });
+
+    it('report is built in; its count is never exposed', async () => {
+      const app = freshApp('report');
+      await store.put(ctx(app, NS_PROD, VIEWER_1), POSTS, 'k', { status: 'a' });
+      expect(
+        await store.mark(ctx(app, NS_PROD, VIEWER_2), POSTS, 'k', 'report', { reason: 'spam' })
+      ).toEqual({
+        marked: true,
+        count: null,
+      });
+      const doc = await store.get(ctx(app, NS_PROD, VIEWER_2), POSTS, 'k');
+      expect(doc?.marks).toEqual({ vote: 0, star: 0 });
+      expect(doc?.viewer).toEqual({ marks: ['report'] });
+      await expectCode(
+        store.mark(ctx(app, NS_PROD, VIEWER_2), POSTS, 'k', 'vote', { reason: 'x' }),
+        'invalid_request'
+      );
+      await expectCode(
+        store.list(ctx(app, NS_PROD, VIEWER_2), POSTS, { sort: '-mark:report' }),
+        'index_not_declared'
+      );
+    });
+
+    it('increment takes 1..100 on an existing doc and a declared counter only', async () => {
+      const app = freshApp('inc');
+      await store.put(ctx(app, NS_PROD, VIEWER_1), POSTS, 'k', { status: 'a' });
+      await expectCode(
+        store.increment(ctx(app, NS_PROD, VIEWER_1), POSTS, 'k', 'views', 0),
+        'invalid_request'
+      );
+      await expectCode(
+        store.increment(ctx(app, NS_PROD, VIEWER_1), POSTS, 'k', 'views', 101),
+        'invalid_request'
+      );
+      await expectCode(
+        store.increment(ctx(app, NS_PROD, VIEWER_1), POSTS, 'k', 'nope'),
+        'invalid_request'
+      );
+      await expectCode(
+        store.increment(ctx(app, NS_PROD, VIEWER_1), POSTS, 'gone', 'views'),
+        'not_found'
+      );
+      await expectCode(
+        store.increment(ctx(app, NS_PROD, VIEWER_1), PREFS, 'k', 'views'),
+        'invalid_request'
+      );
+      expect(await store.increment(ctx(app, NS_PROD, VIEWER_1), POSTS, 'k', 'views')).toEqual({
+        value: 1,
+      });
+      expect(await store.increment(ctx(app, NS_PROD, VIEWER_1), POSTS, 'k', 'views', 41)).toEqual({
+        value: 42,
+      });
+    });
+
+    it('deleting a doc deletes its tallies and marks; re-creating starts from zero', async () => {
+      const app = freshApp('deltally');
+      await store.put(ctx(app, NS_PROD, VIEWER_1), POSTS, 'k', { status: 'a' });
+      await store.mark(ctx(app, NS_PROD, VIEWER_2), POSTS, 'k', 'vote');
+      await store.increment(ctx(app, NS_PROD, VIEWER_2), POSTS, 'k', 'views', 5);
+      await store.delete(ctx(app, NS_PROD, VIEWER_1), POSTS, 'k');
+      expect(await h.raw(`SELECT 1 FROM appdata.doc_tally WHERE app_id = $1`, [app])).toEqual([]);
+      expect(await h.raw(`SELECT 1 FROM appdata.doc_mark WHERE app_id = $1`, [app])).toEqual([]);
+      const fresh = await store.put(ctx(app, NS_PROD, VIEWER_1), POSTS, 'k', { status: 'a' });
+      expect(fresh.counters).toEqual({ vote: 0, views: 0 });
+      expect(fresh.marks).toEqual({ vote: 0, star: 0 });
+    });
+  });
+
+  describe('list', () => {
+    let app: string;
+    const keys = ['a-1', 'a-2', 'b-1', 'b-2', 'c-1'];
+    beforeAll(async () => {
+      app = freshApp('list');
+      // Created in key order, one viewer per parity, statuses and scores distinct.
+      const rows: [string, Record<string, unknown>, number][] = [
+        [
+          'a-1',
+          { status: 'open', score: 30, meta: { tag: 'x' }, at: '2026-01-03T00:00:00Z' },
+          VIEWER_1,
+        ],
+        [
+          'a-2',
+          { status: 'done', score: 10, meta: { tag: 'y' }, at: '2026-01-01T00:00:00Z' },
+          VIEWER_2,
+        ],
+        [
+          'b-1',
+          { status: 'open', score: 50, meta: { tag: 'y' }, at: '2026-01-05T00:00:00Z' },
+          VIEWER_1,
+        ],
+        ['b-2', { status: 'open', score: 20, at: '2026-01-02T00:00:00Z' }, VIEWER_2],
+        ['c-1', { status: 'done', score: 40, meta: { tag: 'x' } }, VIEWER_1],
+      ];
+      for (const [key, data, v] of rows) await store.put(ctx(app, NS_PROD, v), POSTS, key, data);
+      await store.mark(ctx(app, NS_PROD, VIEWER_2), POSTS, 'b-1', 'vote');
+      await store.mark(ctx(app, NS_PROD, VIEWER_1), POSTS, 'b-1', 'vote');
+      await store.mark(ctx(app, NS_PROD, VIEWER_2), POSTS, 'c-1', 'vote');
+      await store.increment(ctx(app, NS_PROD, VIEWER_1), POSTS, 'a-2', 'views', 9);
+    });
+    const ks = (r: { items: { key: string }[] }) => r.items.map((d) => d.key);
+    const me = (v: number | null = VIEWER_1) => ctx(app, NS_PROD, v);
+
+    it('built-in sorts', async () => {
+      expect(ks(await store.list(me(), POSTS))).toEqual(keys);
+      expect(ks(await store.list(me(), POSTS, { sort: '-key' }))).toEqual([...keys].reverse());
+      expect(ks(await store.list(me(), POSTS, { sort: 'createdAt' }))).toEqual(keys);
+      expect(ks(await store.list(me(), POSTS, { sort: '-updatedAt' }))).toEqual(
+        [...keys].reverse()
+      );
+    });
+
+    it('pages through every sort with a cursor and no duplicates or gaps', async () => {
+      for (const sort of [
+        'key',
+        '-key',
+        'createdAt',
+        '-createdAt',
+        'score',
+        '-score',
+        'status',
+        'mark:vote',
+        '-counter:views',
+        'at',
+      ]) {
+        const all = ks(await store.list(me(), POSTS, { sort, limit: 100 }));
+        const paged: string[] = [];
+        let cursor: string | undefined;
+        for (let i = 0; i < 10; i++) {
+          const page = await store.list(me(), POSTS, { sort, limit: 2, cursor });
+          paged.push(...ks(page));
+          if (!page.nextCursor) break;
+          cursor = page.nextCursor;
+        }
+        expect({ sort, paged }).toEqual({ sort, paged: all });
+      }
+    });
+
+    it('index sorts list only docs holding the value, in value order', async () => {
+      expect(ks(await store.list(me(), POSTS, { sort: 'score' }))).toEqual([
+        'a-2',
+        'b-2',
+        'a-1',
+        'c-1',
+        'b-1',
+      ]);
+      expect(ks(await store.list(me(), POSTS, { sort: '-score' }))).toEqual([
+        'b-1',
+        'c-1',
+        'a-1',
+        'b-2',
+        'a-2',
+      ]);
+      expect(ks(await store.list(me(), POSTS, { sort: 'at' }))).toEqual([
+        'a-2',
+        'b-2',
+        'a-1',
+        'b-1',
+      ]);
+      expect(ks(await store.list(me(), POSTS, { sort: 'meta.tag' }))).toEqual([
+        'a-1',
+        'c-1',
+        'a-2',
+        'b-1',
+      ]);
+    });
+
+    it('sorts by a mark or counter, zero when absent, key as tiebreak', async () => {
+      expect(ks(await store.list(me(), POSTS, { sort: '-mark:vote' }))).toEqual([
+        'b-1',
+        'c-1',
+        'b-2',
+        'a-2',
+        'a-1',
+      ]);
+      expect(ks(await store.list(me(), POSTS, { sort: '-counter:views', limit: 2 }))).toEqual([
+        'a-2',
+        'c-1',
+      ]);
+    });
+
+    it('filters: equality on up to two indexes, combined with AND', async () => {
+      expect(ks(await store.list(me(), POSTS, { where: { status: 'open' } }))).toEqual([
+        'a-1',
+        'b-1',
+        'b-2',
+      ]);
+      expect(
+        ks(await store.list(me(), POSTS, { where: { status: 'open', 'meta.tag': 'y' } }))
+      ).toEqual(['b-1']);
+      expect(ks(await store.list(me(), POSTS, { where: { score: 20 } }))).toEqual(['b-2']);
+      await expectCode(
+        store.list(me(), POSTS, { where: { status: 'open', 'meta.tag': 'y', score: 50 } }),
+        'invalid_request'
+      );
+      await expectCode(store.list(me(), POSTS, { where: { title: 'x' } }), 'index_not_declared');
+      await expectCode(store.list(me(), POSTS, { sort: 'title' }), 'index_not_declared');
+      await expectCode(store.list(me(), POSTS, { where: { score: 'high' } }), 'invalid_request');
+    });
+
+    it('filters: range and prefix on the sort index only', async () => {
+      expect(
+        ks(await store.list(me(), POSTS, { sort: 'score', where: { score: { gte: 20, lte: 40 } } }))
+      ).toEqual(['b-2', 'a-1', 'c-1']);
+      expect(
+        ks(await store.list(me(), POSTS, { sort: '-status', where: { status: { prefix: 'do' } } }))
+      ).toEqual(['c-1', 'a-2']);
+      expect(
+        ks(
+          await store.list(me(), POSTS, {
+            sort: 'at',
+            where: { at: { gte: '2026-01-02T00:00:00Z' } },
+          })
+        )
+      ).toEqual(['b-2', 'a-1', 'b-1']);
+      await expectCode(
+        store.list(me(), POSTS, { where: { score: { gte: 1 } } }),
+        'invalid_request'
+      );
+      await expectCode(
+        store.list(me(), POSTS, { sort: 'score', where: { score: { prefix: '1' } } }),
+        'invalid_request'
+      );
+    });
+
+    it('filters: author=me, markedBy=me, keyPrefix, and all at once', async () => {
+      expect(ks(await store.list(me(VIEWER_2), POSTS, { author: 'me' }))).toEqual(['a-2', 'b-2']);
+      expect(ks(await store.list(me(VIEWER_2), POSTS, { markedBy: 'me', mark: 'vote' }))).toEqual([
+        'b-1',
+        'c-1',
+      ]);
+      expect(ks(await store.list(me(), POSTS, { keyPrefix: 'b-' }))).toEqual(['b-1', 'b-2']);
+      expect(
+        ks(
+          await store.list(me(VIEWER_2), POSTS, {
+            keyPrefix: 'b',
+            markedBy: 'me',
+            mark: 'vote',
+            where: { status: 'open' },
+            sort: '-score',
+          })
+        )
+      ).toEqual(['b-1']);
+      await expectCode(store.list(me(), POSTS, { markedBy: 'me' }), 'invalid_request');
+      await expectCode(store.list(me(), POSTS, { keyPrefix: 'bad prefix' }), 'invalid_request');
+    });
+
+    it('refuses a cursor from another query, a tampered one, or an oversized one', async () => {
+      const first = await store.list(me(), POSTS, { sort: 'score', limit: 1 });
+      expect(first.nextCursor).not.toBeNull();
+      await expectCode(
+        store.list(me(), POSTS, { sort: '-score', cursor: first.nextCursor! }),
+        'invalid_request'
+      );
+      await expectCode(
+        store.list(me(), POSTS, {
+          sort: 'score',
+          where: { score: { gte: 0 } },
+          cursor: first.nextCursor!,
+        }),
+        'invalid_request'
+      );
+      // Rewrite the query-hash characters: the cursor no longer belongs to this query.
+      const tampered = first.nextCursor!.replace(
+        /^(..)(.{8})/,
+        (_, head: string, hash: string) => head + (hash === 'AAAAAAAA' ? 'BBBBBBBB' : 'AAAAAAAA')
+      );
+      await expectCode(
+        store.list(me(), POSTS, { sort: 'score', cursor: tampered }),
+        'invalid_request'
+      );
+      await expectCode(
+        store.list(me(), POSTS, { sort: 'score', cursor: 'no-separators' }),
+        'invalid_request'
+      );
+      await expectCode(
+        store.list(me(), POSTS, { sort: 'score', cursor: 'x'.repeat(513) }),
+        'invalid_request'
+      );
+    });
+  });
+
+  describe('cursor bound at the maximum key and index value lengths', () => {
+    it('round-trips 128-char keys and 128-byte multi-byte index values; every cursor ≤ 512', async () => {
+      const app = freshApp('cursor');
+      const coll: DocCollection = {
+        name: 'wide',
+        config: { visibility: 'shared', write: 'anyone', indexes: { label: 'string' } },
+      };
+      // 128 bytes each: 3-byte chars, 4-byte chars (surrogate pairs in JS), mixed.
+      const labels = [
+        '€'.repeat(42) + 'ab',
+        '😀'.repeat(32),
+        'é'.repeat(64),
+        '中'.repeat(42) + 'z' + 'y',
+        '\u0001'.repeat(128),
+      ];
+      for (const l of labels) expect(Buffer.byteLength(l, 'utf8')).toBe(128);
+      const docs = labels.map((label, i) => ({
+        key: `${String.fromCharCode(97 + i)}`.repeat(128),
+        label,
+      }));
+      for (const d of docs)
+        await store.put(ctx(app, NS_PROD, VIEWER_1), coll, d.key, { label: d.label });
+      const expected = [...docs]
+        .sort((x, y) => Buffer.compare(Buffer.from(x.label), Buffer.from(y.label)))
+        .map((d) => d.key);
+      const paged: string[] = [];
+      const cursors: string[] = [];
+      let cursor: string | undefined;
+      for (let i = 0; i < 10; i++) {
+        const page = await store.list(ctx(app, NS_PROD, VIEWER_1), coll, {
+          sort: 'label',
+          limit: 1,
+          cursor,
+        });
+        paged.push(...page.items.map((d) => d.key));
+        if (!page.nextCursor) break;
+        cursors.push(page.nextCursor);
+        cursor = page.nextCursor;
+      }
+      expect(paged).toEqual(expected);
+      expect(cursors).toHaveLength(4);
+      // The designed worst case: 1+1+8 head, '~', 171 base64url chars, '~', 128-char key.
+      for (const c of cursors) expect(c.length).toBe(311);
+      await expectCode(
+        store.put(ctx(app, NS_PROD, VIEWER_1), coll, 'k', { label: 'x'.repeat(129) }),
+        'invalid_request'
+      );
+      await expectCode(
+        store.put(ctx(app, NS_PROD, VIEWER_1), coll, 'k'.repeat(129), { label: 'x' }),
+        'invalid_request'
+      );
+    });
+  });
+
+  describe('quota (sequential)', () => {
+    it('refuses the write that would cross a ceiling, and a delete or shrink always passes', async () => {
+      const app = freshApp('quota');
+      // `{"p": "xxxxxxxxxx"}` is 19 bytes of jsonb text; 3 fit under 60, a 4th does not.
+      const tight = createDocStore({
+        db: h.db,
+        limits: { appBytes: 60, appDocs: 100, userBytes: 1000, userDocs: 100 },
+      });
+      const me = ctx(app, NS_PROD, VIEWER_1);
+      for (const k of ['q1', 'q2', 'q3']) await tight.put(me, PREFS, k, { p: 'xxxxxxxxxx' });
+      const err = await expectCode(
+        tight.put(me, PREFS, 'q4', { p: 'xxxxxxxxxx' }),
+        'quota_exceeded'
+      );
+      expect(err.details).toEqual({ ceiling: 'app' });
+      expect(await tight.get(me, PREFS, 'q4')).toBeNull();
+      // Growing an existing doc past the ceiling is refused; shrinking is not.
+      // 19 → 23 bytes takes 57 to 61.
+      await expectCode(tight.put(me, PREFS, 'q1', { p: 'xxxxxxxxxxxxxx' }), 'quota_exceeded');
+      await tight.put(me, PREFS, 'q1', { p: 'x' });
+      await tight.delete(me, PREFS, 'q2');
+      await tight.put(me, PREFS, 'q4', { p: 'xxxxxxxxxx' });
+      await assertUsageConsistent(h, app, NS_PROD);
+      const [u] = await h.raw(`SELECT bytes, docs FROM appdata.usage_app WHERE app_id = $1`, [app]);
+      expect({ bytes: Number(u.bytes), docs: Number(u.docs) }).toEqual({ bytes: 48, docs: 3 });
+    });
+
+    it('per-user ceilings: viewer for private docs, author for shared, doc counts too', async () => {
+      const app = freshApp('uquota');
+      const tight = createDocStore({
+        db: h.db,
+        limits: { appBytes: 10_000, appDocs: 100, userBytes: 40, userDocs: 2 },
+      });
+      await tight.put(ctx(app, NS_PROD, VIEWER_1), PREFS, 'a', { p: 'xxxxxxxxxx' });
+      await tight.put(ctx(app, NS_PROD, VIEWER_1), PREFS, 'b', { p: 'x' });
+      const docs = await expectCode(
+        tight.put(ctx(app, NS_PROD, VIEWER_1), PREFS, 'c', { p: 'x' }),
+        'quota_exceeded'
+      );
+      expect(docs.details).toEqual({ ceiling: 'viewer' });
+      await tight.put(ctx(app, NS_PROD, VIEWER_2), BOARD, 's', { p: 'xxxxxxxxxx' });
+      // VIEWER_1 edits VIEWER_2's doc in an `anyone` collection: the author's ceiling binds.
+      const author = await expectCode(
+        tight.put(ctx(app, NS_PROD, VIEWER_1), BOARD, 's', { p: 'x'.repeat(40) }),
+        'quota_exceeded'
+      );
+      expect(author.details).toEqual({ ceiling: 'author' });
+      await assertUsageConsistent(h, app, NS_PROD);
+    });
+  });
+
+  describe('size, shape and the stored unit', () => {
+    it('caps a document at 65536 bytes of stored jsonb text, including a payload that only grows once stored', async () => {
+      const app = freshApp('size');
+      const me = ctx(app, NS_PROD, VIEWER_1);
+      await expectCode(store.put(me, PREFS, 'big', { s: 'x'.repeat(70_000) }), 'too_large');
+      // 400 × 1e308: ~2.8 KB as JSON, ~124 KB as stored jsonb text (numbers print in full).
+      await expectCode(store.put(me, PREFS, 'num', { n: Array(400).fill(1e308) }), 'too_large');
+      expect(await store.get(me, PREFS, 'num')).toBeNull();
+      await assertUsageConsistent(h, app, NS_PROD);
+    });
+
+    it('refuses data Postgres cannot store or that is not a JSON object', async () => {
+      const me = ctx(freshApp('shape'), NS_PROD, VIEWER_1);
+      let deep: Record<string, unknown> = { leaf: 1 };
+      for (let i = 0; i < 16; i++) deep = { d: deep };
+      for (const bad of [
+        { s: 'a\u0000b' },
+        { s: '\ud800' },
+        { ['\udc00']: 1 },
+        deep,
+        [1, 2] as unknown as Record<string, unknown>,
+        { d: new Date(0) },
+        { u: undefined },
+      ]) {
+        await expectCode(store.put(me, PREFS, 'k', bad), 'invalid_request');
+      }
+      let ok: Record<string, unknown> = { leaf: 1 };
+      for (let i = 0; i < 14; i++) ok = { d: ok };
+      expect((await store.put(me, PREFS, 'k', ok)).version).toBe(1);
+    });
+  });
+
+  describe('hidden and expired documents', () => {
+    it('a hidden doc is not found by every operation', async () => {
+      const app = freshApp('hidden');
+      await store.put(ctx(app, NS_PROD, VIEWER_1), POSTS, 'k', { status: 'open' });
+      await h.raw(`UPDATE appdata.doc SET hidden_at = now(), hidden_by = 9 WHERE app_id = $1`, [
+        app,
+      ]);
+      const me = ctx(app, NS_PROD, VIEWER_1);
+      expect(await store.get(me, POSTS, 'k')).toBeNull();
+      expect((await store.list(me, POSTS)).items).toEqual([]);
+      expect((await store.list(me, POSTS, { where: { status: 'open' } })).items).toEqual([]);
+      await expectCode(store.put(me, POSTS, 'k', { status: 'x' }), 'not_found');
+      expect(await store.delete(me, POSTS, 'k')).toEqual({ deleted: false });
+      await expectCode(store.mark(me, POSTS, 'k', 'vote'), 'not_found');
+      await expectCode(store.increment(me, POSTS, 'k', 'views'), 'not_found');
+    });
+
+    it('an expired doc reads as absent and is replaced cleanly by the next write', async () => {
+      const app = freshApp('expired');
+      const me = ctx(app, NS_PROD, VIEWER_1);
+      await store.put(
+        me,
+        POSTS,
+        'k',
+        { status: 'open' },
+        { expiresAt: new Date(Date.now() + 60_000) }
+      );
+      await store.mark(ctx(app, NS_PROD, VIEWER_2), POSTS, 'k', 'vote');
+      await h.raw(
+        `UPDATE appdata.doc SET expires_at = now() - interval '1 second' WHERE app_id = $1`,
+        [app]
+      );
+      expect(await store.get(me, POSTS, 'k')).toBeNull();
+      expect((await store.list(me, POSTS)).items).toEqual([]);
+      const fresh = await store.put(
+        ctx(app, NS_PROD, VIEWER_2),
+        POSTS,
+        'k',
+        { status: 'new' },
+        { ifVersion: 0 }
+      );
+      expect(fresh.version).toBe(1);
+      expect(fresh.author).toEqual({ kind: 'user', uid: VIEWER_2, isViewer: true });
+      expect(fresh.marks.vote).toBe(0);
+      expect(fresh.expiresAt).toBeNull();
+      await assertUsageConsistent(h, app, NS_PROD);
+      await expectCode(
+        store.put(me, POSTS, 'z', { status: 'a' }, { expiresAt: new Date(Date.now() - 1) }),
+        'invalid_request'
+      );
+    });
+
+    it('ttlSeconds sets expiresAt when the write does not', async () => {
+      const coll: DocCollection = {
+        name: 'drafts',
+        config: { visibility: 'private', ttlSeconds: 3600 },
+      };
+      const before = Date.now();
+      const doc = await store.put(ctx(freshApp('ttl'), NS_PROD, VIEWER_1), coll, 'k', { a: 1 });
+      const delta = (doc.expiresAt?.getTime() ?? 0) - before;
+      expect(delta).toBeGreaterThan(3_590_000);
+      expect(delta).toBeLessThan(3_610_000);
+    });
+  });
+
+  describe('seq and tombstones', () => {
+    it('every document write and delete takes the next seq of its (app, ns); a delete leaves a tombstone', async () => {
+      const app = freshApp('seq');
+      const me = ctx(app, NS_PROD, VIEWER_1);
+      await store.put(me, PREFS, 'a', { n: 1 });
+      await store.put(me, PREFS, 'b', { n: 1 });
+      await store.put(me, PREFS, 'a', { n: 2 });
+      await store.put(ctx(app, NS_DEV, VIEWER_1), PREFS, 'a', { n: 1 });
+      await store.delete(me, PREFS, 'b');
+      const seqs = await h.raw(
+        `SELECT ns, key, seq FROM appdata.doc WHERE app_id = $1 ORDER BY ns, key`,
+        [app]
+      );
+      expect(seqs.map((r) => [r.ns, r.key, Number(r.seq)])).toEqual([
+        [NS_DEV, 'a', 1],
+        [NS_PROD, 'a', 3],
+      ]);
+      const tombs = await h.raw(`SELECT key, seq FROM appdata.doc_tomb WHERE app_id = $1`, [app]);
+      expect(tombs.map((r) => [r.key, Number(r.seq)])).toEqual([['b', 4]]);
+      const [u] = await h.raw(
+        `SELECT last_seq FROM appdata.usage_app WHERE app_id = $1 AND ns = $2`,
+        [app, NS_PROD]
+      );
+      expect(Number(u.last_seq)).toBe(4);
+    });
+  });
+
+  return {
+    harness: () => h,
+    store: () => store,
+  };
+}

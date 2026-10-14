@@ -1,0 +1,156 @@
+import { readdirSync, readFileSync, statSync } from 'fs';
+import path from 'path';
+import ts from 'typescript';
+import { describe, expect, it } from 'vitest';
+import { APPDATA_TABLES, scanStatement } from './doc-store.sql-scan';
+
+/**
+ * Static half of the isolation guard for the shared `appdata` tables.
+ *
+ * Every app's documents live in the same tables, so a statement that forgets
+ * `app_id = $1 AND ns = $2` for one table it touches is a cross-app (or
+ * cross-namespace) read or write. This parses `doc-store.ts`, extracts every
+ * string and template literal that mentions `appdata.`, and runs the shape scan
+ * over each. The runtime half — every statement the store actually sent, with
+ * its parameters checked against the bound context — is the last case in
+ * `doc-store.pglite.test.ts`; it covers the SQL the list builder assembles.
+ */
+
+const SRC_ROOT = path.resolve(__dirname, '../../../..');
+const MODULE = path.resolve(__dirname, '../doc-store.ts');
+
+/** Literal text of every string / template in a file, `${…}` replaced by a placeholder. */
+function sqlLiterals(file: string): { line: number; text: string }[] {
+  const source = ts.createSourceFile(
+    file,
+    readFileSync(file, 'utf8'),
+    ts.ScriptTarget.Latest,
+    true
+  );
+  const out: { line: number; text: string }[] = [];
+  const visit = (node: ts.Node) => {
+    let text: string | null = null;
+    if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) text = node.text;
+    else if (ts.isTemplateExpression(node)) {
+      text = node.head.text + node.templateSpans.map((s) => ` \${…} ${s.literal.text}`).join('');
+    }
+    if (text !== null && /appdata\./.test(text)) {
+      out.push({ line: source.getLineAndCharacterOfPosition(node.getStart()).line + 1, text });
+    }
+    if (!ts.isTemplateExpression(node)) ts.forEachChild(node, visit);
+  };
+  visit(source);
+  return out;
+}
+
+describe('scanner controls', () => {
+  it('passes the canonical shapes', () => {
+    for (const ok of [
+      `SELECT 1 FROM appdata.doc d WHERE d.app_id = $1 AND d.ns = $2`,
+      `UPDATE appdata.usage_app u SET bytes = 1 WHERE u.app_id = $1 AND u.ns = $2`,
+      `DELETE FROM appdata.doc_mark mk WHERE mk.app_id = $1 AND mk.ns = $2 AND mk.key = $3`,
+      `INSERT INTO appdata.doc_tally AS t (app_id, ns, coll) VALUES ($1, $2, $3)`,
+      `INSERT INTO appdata.usage_user AS u (app_id, ns, user_id) SELECT $1, $2, $3::int`,
+      `BEGIN; SELECT set_config('appdata.app_id', 'x', true), set_config('appdata.ns', 'prod', true)`,
+    ]) {
+      expect({ ok, v: scanStatement(ok) }).toEqual({ ok, v: [] });
+    }
+  });
+
+  it('fails each way a statement can lose its isolation', () => {
+    const bad: [string, RegExp][] = [
+      [`SELECT 1 FROM appdata.doc d WHERE d.ns = $2`, /lacks d\.app_id = \$1/],
+      [`SELECT 1 FROM appdata.doc d WHERE d.app_id = $1`, /lacks d\.ns = \$2/],
+      [`SELECT 1 FROM appdata.doc d WHERE d.app_id = $12 AND d.ns = $2`, /lacks d\.app_id = \$1/],
+      [`SELECT 1 FROM appdata.doc d WHERE d.app_id = $3 AND d.ns = $2`, /lacks d\.app_id = \$1/],
+      [`SELECT 1 FROM appdata.doc WHERE app_id = $1 AND ns = $2`, /has no alias/],
+      // A second table whose own predicates are missing, although the first has them.
+      [
+        `SELECT 1 FROM appdata.doc d JOIN appdata.doc_index ix ON ix.key = d.key WHERE d.app_id = $1 AND d.ns = $2`,
+        /lacks ix\.app_id = \$1/,
+      ],
+      [
+        `SELECT 1 FROM appdata.secrets s WHERE s.app_id = $1 AND s.ns = $2`,
+        /unknown appdata relation/,
+      ],
+      [`SELECT appdata.doc.key FROM x`, /only 0 in a FROM/],
+      [
+        `INSERT INTO appdata.doc AS d (ns, app_id) VALUES ($2, $1)`,
+        /does not list app_id, ns first/,
+      ],
+      [
+        `INSERT INTO appdata.doc AS d (app_id, ns, key) VALUES ($3, $2, $1)`,
+        /does not write \$1, \$2/,
+      ],
+    ];
+    for (const [sql, want] of bad) {
+      expect({ sql, v: scanStatement(sql).join('; ') }).toEqual({
+        sql,
+        v: expect.stringMatching(want),
+      });
+    }
+  });
+});
+
+describe('doc-store.ts SQL', () => {
+  const literals = sqlLiterals(MODULE);
+
+  it('finds the statements (positive control: the extractor sees the module SQL)', () => {
+    const refs = literals.flatMap((l) => [
+      ...l.text.matchAll(
+        /appdata\.(doc|doc_index|doc_tally|doc_mark|doc_tomb|usage_app|usage_user)\b/g
+      ),
+    ]);
+    expect(literals.length).toBeGreaterThanOrEqual(25);
+    // Every table is touched somewhere, so a table cannot drop out of the scan unnoticed.
+    expect(new Set(refs.map((r) => r[1]))).toEqual(new Set(APPDATA_TABLES));
+  });
+
+  it('every literal that mentions appdata has the isolation shape', () => {
+    const violations = literals.flatMap((l) =>
+      scanStatement(l.text).map((v) => `doc-store.ts:${l.line}: ${v}`)
+    );
+    expect(violations).toEqual([]);
+  });
+});
+
+describe('only the doc-store module touches the appdata tables', () => {
+  // Enumerated with fs, not grep: the wrapped grep honours .gitignore. A seam
+  // guard pins the RELATIONSHIP — it fails when the set grows or shrinks.
+  const EXPECTED = [
+    'server/services/apps/__tests__/doc-store.functional.ts',
+    'server/services/apps/__tests__/doc-store.pg.test.ts',
+    'server/services/apps/__tests__/doc-store.pglite.test.ts',
+    'server/services/apps/__tests__/doc-store.rls.ts',
+    'server/services/apps/__tests__/doc-store.sql-isolation.test.ts',
+    'server/services/apps/doc-store.ts',
+    'server/services/apps/migrations/20261013120000_appdata_document_store.down.sql',
+    'server/services/apps/migrations/20261013120000_appdata_document_store.sql',
+  ];
+  const PATTERN =
+    /appdata\.(doc|doc_index|doc_tally|doc_mark|doc_tomb|usage_app|usage_user)\b|SCHEMA (IF (NOT )?EXISTS )?appdata\b/;
+
+  function walk(dir: string, out: string[]) {
+    for (const name of readdirSync(dir)) {
+      if (name === 'node_modules' || name.startsWith('.')) continue;
+      const full = path.join(dir, name);
+      if (statSync(full).isDirectory()) walk(full, out);
+      else if (
+        /\.(ts|tsx|js|mjs|cjs|sql)$/.test(name) &&
+        PATTERN.test(readFileSync(full, 'utf8'))
+      ) {
+        out.push(path.relative(SRC_ROOT, full).split(path.sep).join('/'));
+      }
+    }
+    return out;
+  }
+
+  // Server code and API routes: the only places with database access.
+  it('the set of files under src/server and src/pages referencing appdata tables is exactly the module, its migration and its tests', () => {
+    const found = [
+      ...walk(path.join(SRC_ROOT, 'server'), []),
+      ...walk(path.join(SRC_ROOT, 'pages'), []),
+    ];
+    expect(found.sort()).toEqual(EXPECTED);
+  });
+});
