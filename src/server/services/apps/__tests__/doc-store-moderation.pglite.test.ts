@@ -68,19 +68,22 @@ function defineModerationSuite(rls: boolean) {
       })
     ).map((r) => `${r.collection}/${r.key}:${r.reports}`);
 
-  /** Seed: four reported shared docs with report counts 3, 1, 2, 2; one unreported; one report withdrawn. */
+  /** Seed: five reported shared docs with report counts 3, 1, 2, 2, 2; one unreported; one report withdrawn. */
   async function seedQueue(app: string) {
     const v1 = ctx(app, NS_PROD, VIEWER_1);
-    for (const k of ['p1', 'p2', 'p3', 'p4', 'p5'])
+    for (const k of ['p1', 'p2', 'p3', 'p4', 'p5', 'p6'])
       await store.put(v1, POSTS, k, { status: 'open' });
     await store.put(v1, BOARD, 'b1', { text: 'hi' });
     await report(app, POSTS, 'p1', R1, R2, R3);
     await report(app, POSTS, 'p2', R1);
     await report(app, POSTS, 'p3', R2, R3);
+    // Ties p3 on count AND collection, so only the key orders them.
+    await report(app, POSTS, 'p6', R1, R3);
     await report(app, BOARD, 'b1', R1, R3);
     await report(app, POSTS, 'p5', R2);
     await store.unmark(ctx(app, NS_PROD, R2), POSTS, 'p5', 'report');
-    // Distinct latest-report times, in an order unlike the count order: p2, b1, p1, p3.
+    // Distinct latest-report times, in an order unlike the count order: p2, b1, p1, p3
+    // (p6 keeps the baseline time, so it is last).
     const latest: [string, string, string][] = [
       ['posts', 'p2', '2026-03-04T00:00:00Z'],
       ['board', 'b1', '2026-03-03T00:00:00Z'],
@@ -105,7 +108,13 @@ function defineModerationSuite(rls: boolean) {
     it('lists only reported shared docs, most-reported first, collection then key DESC on ties', async () => {
       const app = freshApp('modq');
       await seedQueue(app);
-      expect(await queue(app)).toEqual(['posts/p1:3', 'posts/p3:2', 'board/b1:2', 'posts/p2:1']);
+      expect(await queue(app)).toEqual([
+        'posts/p1:3',
+        'posts/p6:2',
+        'posts/p3:2',
+        'board/b1:2',
+        'posts/p2:1',
+      ]);
     });
 
     it('newest: by the latest report time, not by count or key', async () => {
@@ -116,6 +125,7 @@ function defineModerationSuite(rls: boolean) {
         'board/b1:2',
         'posts/p1:3',
         'posts/p3:2',
+        'posts/p6:2',
       ]);
     });
 
@@ -152,6 +162,12 @@ function defineModerationSuite(rls: boolean) {
             after,
           })
         ).map((r) => `${r.collection}/${r.key}`);
+      // Same app, same count and collection: only the key separates p6 from p3.
+      expect(await page({ sortValue: '2', appId: app, collection: 'posts', key: 'p6' })).toEqual([
+        'posts/p3',
+        'board/b1',
+        'posts/p2',
+      ]);
       // Same app: strictly after (2, posts, p3).
       expect(await page({ sortValue: '2', appId: app, collection: 'posts', key: 'p3' })).toEqual([
         'board/b1',
@@ -159,6 +175,7 @@ function defineModerationSuite(rls: boolean) {
       ]);
       // Cursor in an app that sorts AFTER this one (DESC): equal counts of this app come later.
       expect(await page({ sortValue: '2', appId: 'zz_after', collection: 'a', key: 'a' })).toEqual([
+        'posts/p6',
         'posts/p3',
         'board/b1',
         'posts/p2',
@@ -183,12 +200,13 @@ function defineModerationSuite(rls: boolean) {
       await seedQueue(app);
       await store.moderation.setHidden(app, NS_PROD, 'posts', 'p1', true, MOD);
       expect(await queue(app, { status: 'open' })).toEqual([
+        'posts/p6:2',
         'posts/p3:2',
         'board/b1:2',
         'posts/p2:1',
       ]);
       expect(await queue(app, { status: 'hidden' })).toEqual(['posts/p1:3']);
-      expect(await queue(app, { status: 'all' })).toHaveLength(4);
+      expect(await queue(app, { status: 'all' })).toHaveLength(5);
       const [hidden] = await store.moderation.listReported(app, NS_PROD, {
         sort: 'reports',
         status: 'hidden',
@@ -376,6 +394,29 @@ function defineModerationSuite(rls: boolean) {
         store.moderation.setHidden(app, NS_PROD, 'posts', 'nope', true, MOD),
         'not_found'
       );
+    });
+  });
+
+  describe('version binding', () => {
+    it('with ifVersion, hide and delete refuse a document that changed; nothing is written', async () => {
+      const app = freshApp('modver');
+      const v1 = ctx(app, NS_PROD, VIEWER_1);
+      await store.put(v1, BOARD, 'x', { text: 'seen' });
+      await store.put(v1, BOARD, 'x', { text: 'edited after the moderator looked' });
+      await expectCode(
+        store.moderation.setHidden(app, NS_PROD, 'board', 'x', true, MOD, { ifVersion: 1 }),
+        'version_conflict'
+      );
+      await expectCode(
+        store.moderation.delete(app, NS_PROD, 'board', 'x', { ifVersion: 1 }),
+        'version_conflict'
+      );
+      expect(await store.get(v1, BOARD, 'x')).toMatchObject({ version: 2 });
+      expect(await h.raw(`SELECT 1 FROM appdata.doc_tomb WHERE app_id = $1`, [app])).toEqual([]);
+      // Positive control: the current version is accepted.
+      expect(
+        await store.moderation.delete(app, NS_PROD, 'board', 'x', { ifVersion: 2 })
+      ).toMatchObject({ deleted: true });
     });
   });
 

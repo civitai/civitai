@@ -1,6 +1,6 @@
 import { readdirSync, readFileSync, statSync } from 'fs';
 import path from 'path';
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DocStore, DocStoreDb } from '~/server/services/apps/doc-store';
 
 /**
@@ -23,6 +23,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { appsModRouter } from '~/server/routers/apps-shared.router';
 import { createDocStore } from '~/server/services/apps/doc-store';
 import { MOD_APP_CONCURRENCY } from '~/server/services/apps/doc-store-moderation.service';
+import { DocStoreError } from '~/server/services/apps/doc-store.types';
 import { APP_LISTING_MODERATION_ACTIONS } from '~/server/schema/blocks/offsite-moderation.schema';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import {
@@ -121,6 +122,11 @@ async function reset() {
   audit = [];
 }
 
+// Spies on the store are restored even when the case that installed them fails.
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
 beforeEach(async () => {
   await reset();
   const toRow = (a: (typeof APPS)[number]) => ({
@@ -153,18 +159,21 @@ async function report(app: { id: string }, coll: typeof POSTS, key: string, n: n
 }
 
 /**
- * A: posts/a1 ×3, board/a2 ×1.   B: posts/b1 ×2, posts/b2 ×1.   C: posts/c1 ×3.
+ * A: posts/a1 ×3, posts/a0 ×3, board/a2 ×1.   B: posts/b1 ×2, posts/b2 ×1.   C: posts/c1 ×3.
  * Cross-app order by reports (DESC on reports, app, collection, key):
- *   C/posts/c1:3, A/posts/a1:3, B/posts/b1:2, B/posts/b2:1, A/board/a2:1
+ *   C/posts/c1:3, A/posts/a1:3, A/posts/a0:3, B/posts/b1:2, B/posts/b2:1, A/board/a2:1
+ * (a1/a0 tie on count, app and collection, so the TypeScript merge must order them by key.)
  */
 async function seedQueue() {
   await h.store.put(v(APP_A), POSTS, 'a1', { status: 'open', score: 5 });
+  await h.store.put(v(APP_A), POSTS, 'a0', { status: 'open' });
   await h.store.put(v(APP_A), BOARD, 'a2', { text: 'x' });
   await h.store.put(v(APP_B, VIEWER_2), POSTS, 'b1', { status: 'open' });
   await h.store.put(v(APP_B, VIEWER_2), POSTS, 'b2', { status: 'open' });
   await h.store.put(v(APP_C), POSTS, 'c1', { status: 'open' });
   await h.store.put(v(APP_C), POSTS, 'unreported', { status: 'open' });
   await report(APP_A, POSTS, 'a1', 3);
+  await report(APP_A, POSTS, 'a0', 3);
   await report(APP_A, BOARD, 'a2', 1);
   await report(APP_B, POSTS, 'b1', 2);
   await report(APP_B, POSTS, 'b2', 1);
@@ -173,6 +182,7 @@ async function seedQueue() {
 const EXPECTED_ORDER = [
   'apb_MODC/posts/c1:3',
   'apb_MODA/posts/a1:3',
+  'apb_MODA/posts/a0:3',
   'apb_MODB/posts/b1:2',
   'apb_MODB/posts/b2:1',
   'apb_MODA/board/a2:1',
@@ -219,7 +229,7 @@ describe('access: session moderators only', () => {
 
   it('positive control: the same calls succeed for a moderator session', async () => {
     await seedQueue();
-    expect((await caller().listReported({})).items).toHaveLength(5);
+    expect((await caller().listReported({})).items).toHaveLength(6);
     expect((await caller().get(target)).key).toBe('a1');
   });
 });
@@ -262,6 +272,7 @@ describe('listReported: the cross-app queue', () => {
       [APP_C.id, 'c1', '2026-05-03T00:00:00Z'],
       [APP_A.id, 'a1', '2026-05-02T00:00:00Z'],
       [APP_B.id, 'b1', '2026-05-01T00:00:00Z'],
+      [APP_A.id, 'a0', '2026-04-30T00:00:00Z'],
     ];
     for (const [app, key, t] of at) {
       await harness.raw(
@@ -296,13 +307,39 @@ describe('listReported: the cross-app queue', () => {
     });
   });
 
-  it('asks the store once per app, never more than MOD_APP_CONCURRENCY at a time', async () => {
+  it('asks the store once per app', async () => {
     await seedQueue();
     const spy = vi.spyOn(h.store.moderation, 'listReported');
     await caller().listReported({});
     expect(spy.mock.calls.map((c) => c[0]).sort()).toEqual(APPS.map((a) => a.id).sort());
-    expect(MOD_APP_CONCURRENCY).toBeGreaterThanOrEqual(1);
-    spy.mockRestore();
+  });
+
+  it('keeps exactly MOD_APP_CONCURRENCY per-app store calls in flight, not more', async () => {
+    // More apps than the limit, and store calls that overlap for as long as they are allowed
+    // to, so an unbounded fan-out would reach the app count instead of the limit.
+    const ids = Array.from({ length: MOD_APP_CONCURRENCY + 3 }, (_, i) => `apb_FAN${i}`);
+    mockRead.appBlock.findMany.mockImplementationOnce(async () =>
+      ids.map((id) => ({ id, blockId: id.toLowerCase(), appListing: null }))
+    );
+    let inFlight = 0;
+    let peak = 0;
+    const spy = vi.spyOn(h.store.moderation, 'listReported').mockImplementation(async () => {
+      inFlight += 1;
+      peak = Math.max(peak, inFlight);
+      await new Promise((r) => setTimeout(r, 20));
+      inFlight -= 1;
+      return [];
+    });
+    await caller().listReported({});
+    expect({ calls: spy.mock.calls.length, peak }).toEqual({
+      calls: ids.length,
+      peak: MOD_APP_CONCURRENCY,
+    });
+  });
+
+  it('accepts the largest page size (the store is asked for limit + 1)', async () => {
+    await seedQueue();
+    expect((await caller().listReported({ limit: 100 })).items.map(tag)).toEqual(EXPECTED_ORDER);
   });
 });
 
@@ -342,7 +379,7 @@ describe('setHidden / delete: effects through the app reads, and the audit trail
     expect(out).toMatchObject({ changed: true, auditEventId: expect.stringMatching(/^alme_/) });
     expect(visibleWhenAudited).toBe(true);
     expect(await h.store.get(v(APP_A), POSTS, 'a1')).toBeNull();
-    expect((await h.store.list(v(APP_A), POSTS)).items).toEqual([]);
+    expect((await h.store.list(v(APP_A), POSTS)).items.map((d) => d.key)).toEqual(['a0']);
 
     expect(audit).toHaveLength(1);
     const [row] = audit;
@@ -372,7 +409,9 @@ describe('setHidden / delete: effects through the app reads, and the audit trail
 
     // The queue still shows it, as hidden, to moderators.
     const hidden = await caller().listReported({ status: 'hidden' });
-    expect(hidden.items.map((i) => [i.key, i.hidden?.byUserId])).toEqual([['a1', MOD.id]]);
+    expect(hidden.items.map((i) => [i.key, i.hidden?.byUserId, i.hidden?.byUsername])).toEqual([
+      ['a1', MOD.id, `user${MOD.id}`],
+    ]);
     expect((await caller().listReported({})).items.map((i) => i.key)).not.toContain('a1');
   });
 
@@ -451,6 +490,48 @@ describe('setHidden / delete: effects through the app reads, and the audit trail
     ).rejects.toThrow();
     await expect(caller().delete({ ...A1, reason: 'spam report' })).rejects.toThrow();
     expect(await h.store.get(v(APP_A), POSTS, 'a1')).not.toBeNull();
+  });
+
+  it('an action carrying the version the moderator saw is refused once the author edits', async () => {
+    await seedQueue();
+    const seen = await caller().get(A1);
+    await h.store.put(v(APP_A), POSTS, 'a1', { status: 'edited', score: 1 });
+    await expect(
+      caller().delete({ ...A1, version: seen.version, reason: 'illegal content' })
+    ).rejects.toMatchObject({ code: 'CONFLICT' });
+    await expect(
+      caller().setHidden({ ...A1, hidden: true, version: seen.version, reason: 'spam report' })
+    ).rejects.toMatchObject({ code: 'CONFLICT' });
+    expect(await h.store.get(v(APP_A), POSTS, 'a1')).toMatchObject({ version: 2 });
+    expect(audit).toEqual([]);
+    // The current version goes through.
+    await caller().delete({ ...A1, version: 2, reason: 'illegal content' });
+    expect(await h.store.get(v(APP_A), POSTS, 'a1')).toBeNull();
+  });
+
+  it('the store action is bound to the audited snapshot version', async () => {
+    await seedQueue();
+    const spy = vi.spyOn(h.store.moderation, 'delete');
+    await caller().delete({ ...A1, reason: 'illegal content' });
+    expect(spy.mock.calls[0][4]).toEqual({ ifVersion: audit[0].before.version });
+  });
+
+  it('a store refusal after the audit row is stamped failed; any other error unknown', async () => {
+    await seedQueue();
+    const spy = vi
+      .spyOn(h.store.moderation, 'setHidden')
+      .mockRejectedValueOnce(new DocStoreError('rate_limited', 'storage is busy; retry'))
+      .mockRejectedValueOnce(new Error('connection reset after commit'));
+    await expect(
+      caller().setHidden({ ...A1, hidden: true, reason: 'spam report' })
+    ).rejects.toMatchObject({ code: 'TOO_MANY_REQUESTS' });
+    await expect(
+      caller().setHidden({ ...A1, hidden: true, reason: 'spam report' })
+    ).rejects.toMatchObject({ code: 'INTERNAL_SERVER_ERROR' });
+    expect(audit.map((r) => [r.action, r.after?.outcome])).toEqual([
+      ['storage-doc-hide', 'failed'],
+      ['storage-doc-hide', 'unknown'],
+    ]);
   });
 
   it('a reason is required and bounded', async () => {

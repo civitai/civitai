@@ -137,6 +137,7 @@ function row(over: Row = {}): Row {
     author: { kind: 'user', userId: 31, username: 'author-a' },
     hidden: null,
     sizeBytes: 120,
+    version: 3,
     ...over,
   };
 }
@@ -177,6 +178,17 @@ describe('AppDocStoreReportsQueue', () => {
       .toBeVisible();
   });
 
+  test('changing status and sort re-queries with them', async () => {
+    renderWithProviders(<AppDocStoreReportsQueue />);
+    await userEvent.click(page.getByTestId('doc-store-reports-status'));
+    await userEvent.click(page.getByRole('option', { name: 'Hidden' }));
+    await userEvent.click(page.getByTestId('doc-store-reports-sort'));
+    await userEvent.click(page.getByRole('option', { name: 'Newest report' }));
+    await expect
+      .poll(() => m.listInputs.at(-1))
+      .toStrictEqual({ status: 'hidden', sort: 'newest', limit: 50 });
+  });
+
   test('hide needs a reason, then sends the target and the reason, and refreshes the queue', async () => {
     m.rows = [row()];
     renderWithProviders(<AppDocStoreReportsQueue />);
@@ -186,7 +198,9 @@ describe('AppDocStoreReportsQueue', () => {
     await userEvent.fill(page.getByTestId('doc-store-report-reason'), 'spam link');
     await expect.element(confirm).toBeEnabled();
     await userEvent.click(confirm);
-    expect(m.hideCalls).toStrictEqual([{ ...TARGET, reason: 'spam link', hidden: true }]);
+    expect(m.hideCalls).toStrictEqual([
+      { ...TARGET, version: 3, reason: 'spam link', hidden: true },
+    ]);
     expect(m.deleteCalls).toEqual([]);
     expect(m.successes).toEqual([DOC_STORE_ACTION_COPY.hide.done]);
     expect(m.invalidated).toBe(1);
@@ -201,7 +215,9 @@ describe('AppDocStoreReportsQueue', () => {
     await userEvent.click(page.getByRole('button', { name: 'Unhide' }));
     await userEvent.fill(page.getByTestId('doc-store-report-reason'), 'reviewed, fine');
     await userEvent.click(page.getByTestId('doc-store-report-confirm'));
-    expect(m.hideCalls).toStrictEqual([{ ...TARGET, reason: 'reviewed, fine', hidden: false }]);
+    expect(m.hideCalls).toStrictEqual([
+      { ...TARGET, version: 3, reason: 'reviewed, fine', hidden: false },
+    ]);
     expect(m.successes).toEqual([DOC_STORE_ACTION_COPY.unhide.done]);
   });
 
@@ -212,7 +228,7 @@ describe('AppDocStoreReportsQueue', () => {
     await expect.element(page.getByText(DOC_STORE_ACTION_COPY.delete.title)).toBeVisible();
     await userEvent.fill(page.getByTestId('doc-store-report-reason'), 'illegal content');
     await userEvent.click(page.getByTestId('doc-store-report-confirm'));
-    expect(m.deleteCalls).toStrictEqual([{ ...TARGET, reason: 'illegal content' }]);
+    expect(m.deleteCalls).toStrictEqual([{ ...TARGET, version: 3, reason: 'illegal content' }]);
     expect(m.hideCalls).toEqual([]);
   });
 

@@ -1375,7 +1375,7 @@ function translatePgError(err: unknown): unknown {
 //
 // Called ONLY by `doc-store-moderation.service.ts`, behind `moderatorProcedure`; the
 // block-token routes never reach it (the caller set is pinned by
-// `__tests__/doc-store-moderation.test.ts`).
+// `routers/__tests__/apps-mod-doc-store.router.test.ts`, its caller-ledger case).
 //
 // CROSS-APP WITHOUT A CROSS-APP CONNECTION. Every call here runs in ONE app's
 // transaction through the same `withTx` a viewer call uses: the RLS settings are
@@ -1458,7 +1458,9 @@ const SQL_MOD_HIDE = `UPDATE appdata.doc d SET hidden_at = now(), hidden_by = $5
   WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = 0 AND d.key = $4`;
 
 // Unhiding is a change a feed reader must see again: the doc takes the new seq, which
-// is above the hide's tombstone. $1 app, $2 ns, $3 coll, $4 key, $5 seq
+// is above the hide's tombstone. The tombstone row stays (as it does when a deleted key is
+// re-created), so a reader must order a key's doc and tombstone by seq, never treat a
+// tombstone's presence alone as "deleted". $1 app, $2 ns, $3 coll, $4 key, $5 seq
 const SQL_MOD_UNHIDE = `UPDATE appdata.doc d SET hidden_at = NULL, hidden_by = NULL, seq = $5::bigint
   WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = 0 AND d.key = $4`;
 
@@ -1467,6 +1469,15 @@ const SORT_VALUE_SHAPE = /^[0-9]{1,18}$/;
 function assertModTarget(collection: string, key: string): void {
   if (!B.collectionName.test(collection)) throw invalid('invalid collection name');
   assertKey(key);
+}
+
+/** Refuse, under the row lock, an action on a version other than the one the moderator saw. */
+function assertModVersion(row: Record<string, unknown>, ifVersion: number | undefined): void {
+  if (ifVersion !== undefined && Number(row.version) !== ifVersion) {
+    throw new DocStoreError('version_conflict', 'document changed since it was read', {
+      currentVersion: Number(row.version),
+    });
+  }
 }
 
 const modCtx = (appId: string, ns: string): DocStoreContext => ({ appId, ns, viewerUid: null });
@@ -1591,7 +1602,8 @@ function createModeration({ withTx, charge }: ModerationDeps) {
    * app (`VISIBLE`) and keeps its data, tallies, marks and quota charge, so the action
    * is reversible. A hide takes the next seq into a tombstone, so a feed reader drops
    * the document; an unhide gives the document the next seq, so the reader sees it
-   * again. Already in the requested state: `changed: false`, nothing written.
+   * again. Already in the requested state: `changed: false`, nothing written. With
+   * `ifVersion`, a document at any other version is refused (`version_conflict`).
    */
   async function setHidden(
     appId: string,
@@ -1599,7 +1611,8 @@ function createModeration({ withTx, charge }: ModerationDeps) {
     collection: string,
     key: string,
     hidden: boolean,
-    moderatorUid: number
+    moderatorUid: number,
+    opts: { ifVersion?: number } = {}
   ): Promise<{ changed: boolean; seq: number | null }> {
     assertModTarget(collection, key);
     if (!(Number.isSafeInteger(moderatorUid) && moderatorUid > 0)) {
@@ -1609,6 +1622,7 @@ function createModeration({ withTx, charge }: ModerationDeps) {
     return withTx(ctx, async (c) => {
       const row = (await c.query(SQL_LOCK_DOC, [appId, ns, collection, 0, key])).rows[0];
       if (!row) throw new DocStoreError('not_found', 'document not found');
+      assertModVersion(row, opts.ifVersion);
       if (row.hidden === hidden) return { changed: false, seq: null };
       // No bytes move; the charge only takes the next seq under the usage_app lock (LOCK ORDER (2)).
       const noCharge = { uid: 0, bytes: 0, docs: 0, ceiling: 'app' as const };
@@ -1634,13 +1648,15 @@ function createModeration({ withTx, charge }: ModerationDeps) {
     appId: string,
     ns: string,
     collection: string,
-    key: string
+    key: string,
+    opts: { ifVersion?: number } = {}
   ): Promise<{ deleted: true; sizeBytes: number; seq: number }> {
     assertModTarget(collection, key);
     const ctx = modCtx(appId, ns);
     return withTx(ctx, async (c) => {
       const row = (await c.query(SQL_LOCK_DOC, [appId, ns, collection, 0, key])).rows[0];
       if (!row) throw new DocStoreError('not_found', 'document not found');
+      assertModVersion(row, opts.ifVersion);
       await c.query(SQL_DELETE_DOC, [appId, ns, collection, 0, key]);
       await c.query(SQL_DELETE_TALLIES, [appId, ns, collection, key]);
       await c.query(SQL_DELETE_MARKS, [appId, ns, collection, key]);

@@ -11,10 +11,10 @@ import {
   Select,
   Stack,
   Text,
-  Textarea,
 } from '@mantine/core';
 import { useMemo, useState } from 'react';
 import { ModQueryError, isModAuthzError } from '~/components/Apps/ModQuerySurface';
+import { ReasonGatedActionModal } from '~/components/Apps/ReasonGatedActionModal';
 import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -33,7 +33,6 @@ type Action = 'hide' | 'unhide' | 'delete';
 
 const DATE_FORMAT = 'MMM D, YYYY HH:mm';
 const PAGE_LIMIT = 50;
-const REASON_MIN = 3;
 
 const STATUS_OPTIONS = [
   { value: 'open', label: 'Visible to the app' },
@@ -236,7 +235,9 @@ export function AppDocStoreReportsQueue() {
 
   const confirm = () => {
     if (!pending) return;
-    const input = { ...targetOf(pending.row), reason: reason.trim() };
+    // `version` ties the action to the version this row showed: a document edited since is
+    // refused (CONFLICT) instead of acted on unseen.
+    const input = { ...targetOf(pending.row), version: pending.row.version, reason: reason.trim() };
     if (pending.action === 'delete') remove.mutate(input);
     else setHidden.mutate({ ...input, hidden: pending.action === 'hide' });
   };
@@ -308,40 +309,26 @@ export function AppDocStoreReportsQueue() {
 
       <DocDataModal row={viewing} onClose={() => setViewing(null)} />
 
-      <Modal
+      <ReasonGatedActionModal
         opened={pending != null}
-        onClose={close}
+        onCancel={close}
         title={pending ? DOC_STORE_ACTION_COPY[pending.action].title : ''}
-      >
-        <Stack gap="sm">
-          <Text size="sm">{pending ? DOC_STORE_ACTION_COPY[pending.action].body : ''}</Text>
-          <Textarea
-            label="Reason"
-            description="Recorded in the app's moderation history."
-            required
-            autosize
-            minRows={2}
-            maxLength={1000}
-            value={reason}
-            onChange={(e) => setReason(e.currentTarget.value)}
-            data-testid="doc-store-report-reason"
-          />
-          <Group justify="flex-end">
-            <Button variant="default" onClick={close}>
-              Cancel
-            </Button>
-            <Button
-              color={pending?.action === 'unhide' ? undefined : 'red'}
-              loading={submitting}
-              disabled={reason.trim().length < REASON_MIN}
-              onClick={confirm}
-              data-testid="doc-store-report-confirm"
-            >
-              {pending ? DOC_STORE_ACTION_COPY[pending.action].button : ''}
-            </Button>
-          </Group>
-        </Stack>
-      </Modal>
+        busy={submitting}
+        reason={reason}
+        onReasonChange={setReason}
+        reasonPlaceholder="Why this action — recorded in the moderation audit log."
+        reasonTestId="doc-store-report-reason"
+        destructive={pending?.action === 'delete'}
+        destructiveWarning={<Text size="sm">{DOC_STORE_ACTION_COPY.delete.body}</Text>}
+        extraSlot={
+          pending && pending.action !== 'delete' ? (
+            <Text size="sm">{DOC_STORE_ACTION_COPY[pending.action].body}</Text>
+          ) : undefined
+        }
+        submitLabel={pending ? DOC_STORE_ACTION_COPY[pending.action].button : ''}
+        submitTestId="doc-store-report-confirm"
+        onSubmit={confirm}
+      />
     </Stack>
   );
 }

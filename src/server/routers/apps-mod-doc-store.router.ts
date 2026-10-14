@@ -13,6 +13,10 @@
 // the feature kill-switch is dark.
 import { TRPCError } from '@trpc/server';
 import * as z from 'zod';
+import {
+  OFFSITE_MOD_REASON_MAX,
+  OFFSITE_MOD_REASON_MIN,
+} from '~/server/schema/blocks/offsite-moderation.schema';
 import { moderatorProcedure, router } from '~/server/trpc';
 import {
   DocStoreModerationError,
@@ -26,8 +30,10 @@ import { DOC_STORE_BOUNDS, isDocStoreError } from '~/server/services/apps/doc-st
 const appBlockIdInput = z.string().min(1).max(64);
 const collectionInput = z.string().regex(DOC_STORE_BOUNDS.collectionName);
 const keyInput = z.string().regex(DOC_STORE_BOUNDS.key);
-/** Same floor and ceiling as the per-user storage purge and the listing takedown verbs. */
-const reasonInput = z.string().trim().min(3).max(1000);
+/** The listing takedown verbs' floor and ceiling, trimmed like the per-user storage purge. */
+const reasonInput = z.string().trim().min(OFFSITE_MOD_REASON_MIN).max(OFFSITE_MOD_REASON_MAX);
+/** The version the moderator saw; the action is refused (CONFLICT) if the document changed. */
+const versionInput = z.number().int().min(1).optional();
 const target = { appBlockId: appBlockIdInput, collection: collectionInput, key: keyInput };
 
 /** Map service and store refusals to tRPC codes. Messages are fixed; the original is the `cause`. */
@@ -36,6 +42,13 @@ async function mapped<T>(fn: () => Promise<T>): Promise<T> {
     return await fn();
   } catch (err) {
     if (err instanceof DocStoreModerationError) {
+      if (err.kind === 'version_conflict') {
+        throw new TRPCError({
+          code: 'CONFLICT',
+          message: 'document changed since it was read; reload and retry',
+          cause: err,
+        });
+      }
       if (err.kind === 'invalid_cursor') {
         throw new TRPCError({ code: 'BAD_REQUEST', message: 'invalid cursor', cause: err });
       }
@@ -87,14 +100,14 @@ export const appsModDocStoreRouter = router({
 
   /** Hide (reads as not found to the app) or unhide. Reversible. */
   setHidden: moderatorProcedure
-    .input(z.object({ ...target, hidden: z.boolean(), reason: reasonInput }))
+    .input(z.object({ ...target, hidden: z.boolean(), reason: reasonInput, version: versionInput }))
     .mutation(({ ctx, input }) =>
       mapped(() => setModeratedDocHidden({ ...input, actorUserId: ctx.user.id }))
     ),
 
   /** Hard delete, with its tallies, marks and index rows; refunds usage. Irreversible. */
   delete: moderatorProcedure
-    .input(z.object({ ...target, reason: reasonInput }))
+    .input(z.object({ ...target, reason: reasonInput, version: versionInput }))
     .mutation(({ ctx, input }) =>
       mapped(() => deleteModeratedDoc({ ...input, actorUserId: ctx.user.id }))
     ),

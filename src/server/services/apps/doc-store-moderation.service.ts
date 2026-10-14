@@ -25,6 +25,7 @@
 // Reading a document is not audited: a shared document is readable by every viewer of
 // the app, so a moderator reading it reads nothing private.
 import type { Prisma } from '@prisma/client';
+import pLimit from 'p-limit';
 import { dbRead, dbWrite } from '~/server/db/client';
 import type {
   ModeratedDoc,
@@ -50,7 +51,9 @@ export const DOC_STORE_MOD_ACTIONS = {
 } as const;
 
 export class DocStoreModerationError extends Error {
-  constructor(readonly kind: 'app_not_found' | 'doc_not_found' | 'invalid_cursor') {
+  constructor(
+    readonly kind: 'app_not_found' | 'doc_not_found' | 'invalid_cursor' | 'version_conflict'
+  ) {
     super(kind);
     this.name = 'DocStoreModerationError';
   }
@@ -134,20 +137,6 @@ function compareDesc(a: ModeratedDocPosition, b: ModeratedDocPosition): number {
   return 0;
 }
 
-async function mapLimited<T, R>(items: T[], n: number, fn: (t: T) => Promise<R>): Promise<R[]> {
-  const out: R[] = new Array(items.length);
-  let next = 0;
-  await Promise.all(
-    Array.from({ length: Math.min(n, items.length) }, async () => {
-      while (next < items.length) {
-        const i = next++;
-        out[i] = await fn(items[i]);
-      }
-    })
-  );
-  return out;
-}
-
 async function usernames(ids: (number | null)[]): Promise<Map<number, string | null>> {
   const unique = [...new Set(ids.filter((id): id is number => id !== null))];
   if (unique.length === 0) return new Map();
@@ -170,6 +159,8 @@ export type ReportedDocItem = {
   author: { kind: ReportedDocRow['authorKind']; userId: number | null; username: string | null };
   hidden: { at: Date; byUserId: number | null; byUsername: string | null } | null;
   sizeBytes: number;
+  /** Pass back on an action so it refuses if the document changed since this row was read. */
+  version: number;
 };
 
 /**
@@ -188,15 +179,20 @@ export async function listReportedDocs(input: {
   const store = getDocStore();
   // Each app's page holds at most `limit + 1` rows after the cursor, so the merged top
   // `limit` is exact and one extra row in the union means there is a next page.
-  const perApp = await mapLimited(apps, MOD_APP_CONCURRENCY, async (app) =>
-    (
-      await store.moderation.listReported(app.appBlockId, MOD_NS, {
-        sort: input.sort,
-        status: input.status,
-        after,
-        limit: input.limit + 1,
-      })
-    ).map((row) => ({ app, row, pos: { ...row, appId: app.appBlockId } }))
+  const limit = pLimit(MOD_APP_CONCURRENCY);
+  const perApp = await Promise.all(
+    apps.map((app) =>
+      limit(async () =>
+        (
+          await store.moderation.listReported(app.appBlockId, MOD_NS, {
+            sort: input.sort,
+            status: input.status,
+            after,
+            limit: input.limit + 1,
+          })
+        ).map((row) => ({ app, row, pos: { ...row, appId: app.appBlockId } }))
+      )
+    )
   );
   const merged = perApp.flat().sort((a, b) => compareDesc(a.pos, b.pos));
   const page = merged.slice(0, input.limit);
@@ -225,6 +221,7 @@ export async function listReportedDocs(input: {
           }
         : null,
       sizeBytes: row.sizeBytes,
+      version: row.version,
     })),
     nextCursor:
       merged.length > input.limit && last
@@ -285,6 +282,10 @@ type ModAction = keyof typeof DOC_STORE_MOD_ACTIONS;
  * Audit row first, then the store call, then the outcome stamp. A store refusal
  * (`DocStoreError`, raised inside the transaction before COMMIT) is recorded as
  * `failed`; any other error as `unknown`, because it may have struck after COMMIT.
+ *
+ * The action is bound to the snapshot's version (and to `expectedVersion`, the version the
+ * moderator saw, when given): the store refuses under its row lock if the document changed,
+ * so what the audit row describes is exactly what was hidden or deleted.
  */
 async function audited<T extends Record<string, unknown>>(
   args: {
@@ -294,13 +295,17 @@ async function audited<T extends Record<string, unknown>>(
     app: AppIdentity;
     collection: string;
     key: string;
+    expectedVersion?: number;
   },
-  run: () => Promise<T>
+  run: (ifVersion: number) => Promise<T>
 ): Promise<T & { auditEventId: string }> {
   const { app, collection, key } = args;
-  // The snapshot is what the moderator acted on; a missing document refuses the action
-  // before any audit row exists.
+  // The snapshot is what the moderator acted on; a missing or changed document refuses the
+  // action before any audit row exists.
   const before = await readDoc(app, collection, key);
+  if (args.expectedVersion !== undefined && args.expectedVersion !== before.version) {
+    throw new DocStoreModerationError('version_conflict');
+  }
   const id = newAppListingModerationEventId();
   await dbWrite.appListingModerationEvent.create({
     data: {
@@ -329,7 +334,7 @@ async function audited<T extends Record<string, unknown>>(
   });
   let result: T;
   try {
-    result = await run();
+    result = await run(before.version);
   } catch (err) {
     await dbWrite.appListingModerationEvent
       .update({
@@ -344,6 +349,9 @@ async function audited<T extends Record<string, unknown>>(
       })
       .catch(() => undefined);
     if (isDocStoreError(err, 'not_found')) throw new DocStoreModerationError('doc_not_found');
+    if (isDocStoreError(err, 'version_conflict')) {
+      throw new DocStoreModerationError('version_conflict');
+    }
     throw err;
   }
   // Best-effort: the action has happened; failing here would report that it had not.
@@ -370,17 +378,21 @@ export async function setModeratedDocHidden(input: {
   key: string;
   hidden: boolean;
   reason: string;
+  version?: number;
 }) {
   const app = await resolveApp(input.appBlockId);
-  return audited({ ...input, app, action: input.hidden ? 'hide' : 'unhide' }, async () =>
-    getDocStore().moderation.setHidden(
-      app.appBlockId,
-      MOD_NS,
-      input.collection,
-      input.key,
-      input.hidden,
-      input.actorUserId
-    )
+  return audited(
+    { ...input, app, action: input.hidden ? 'hide' : 'unhide', expectedVersion: input.version },
+    async (ifVersion) =>
+      getDocStore().moderation.setHidden(
+        app.appBlockId,
+        MOD_NS,
+        input.collection,
+        input.key,
+        input.hidden,
+        input.actorUserId,
+        { ifVersion }
+      )
   );
 }
 
@@ -391,9 +403,14 @@ export async function deleteModeratedDoc(input: {
   collection: string;
   key: string;
   reason: string;
+  version?: number;
 }) {
   const app = await resolveApp(input.appBlockId);
-  return audited({ ...input, app, action: 'delete' }, async () =>
-    getDocStore().moderation.delete(app.appBlockId, MOD_NS, input.collection, input.key)
+  return audited(
+    { ...input, app, action: 'delete', expectedVersion: input.version },
+    async (ifVersion) =>
+      getDocStore().moderation.delete(app.appBlockId, MOD_NS, input.collection, input.key, {
+        ifVersion,
+      })
   );
 }
