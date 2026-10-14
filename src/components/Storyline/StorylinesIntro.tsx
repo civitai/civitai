@@ -39,6 +39,7 @@ export function StorylinesIntro() {
     radius: 'xl',
     leftSection: <IconPlus size={16} />,
     children: 'Start a storyline',
+    className: 'flex-1 sm:flex-none',
   } as const;
 
   return (
@@ -66,29 +67,27 @@ export function StorylinesIntro() {
         start, or pick it up where it ends and write what happens next.
       </Text>
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+      {/* Compact rows on a phone, so the first storylines start on the first screen. */}
+      <div className="grid grid-cols-1 gap-1 sm:grid-cols-3 sm:gap-4">
         {steps.map(({ icon: Icon, color, title, text }) => (
-          <Card
+          <div
             key={title}
-            radius="md"
-            p="md"
-            withBorder
-            className="border-gray-3 bg-gray-1 dark:border-dark-4 dark:bg-dark-5"
+            className="flex items-start gap-3 p-2 sm:rounded-md sm:border sm:border-solid sm:border-gray-3 sm:bg-gray-1 sm:p-4 sm:dark:border-dark-4 sm:dark:bg-dark-5"
           >
-            <Group gap="xs" mb="xs">
-              <ThemeIcon variant="light" color={color} radius="xl">
-                <Icon size={16} />
-              </ThemeIcon>
+            <ThemeIcon variant="light" color={color} radius="xl" className="shrink-0">
+              <Icon size={16} />
+            </ThemeIcon>
+            <div>
               <Text fw={700}>{title}</Text>
-            </Group>
-            <Text size="sm" c="dimmed">
-              {text}
-            </Text>
-          </Card>
+              <Text size="sm" c="dimmed">
+                {text}
+              </Text>
+            </div>
+          </div>
         ))}
       </div>
 
-      <Group mt="lg" gap="sm" className="flex-col items-stretch sm:flex-row sm:items-center">
+      <Group mt="lg" gap="sm" wrap="nowrap">
         {currentUser?.username ? (
           // A storyline starts from a post's menu, so this goes to the viewer's own posts.
           <Button component={Link} href={`/user/${currentUser.username}/posts`} {...startProps} />

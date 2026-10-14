@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
+import { MantineProvider } from '@mantine/core';
+import { renderToString } from 'react-dom/server';
 import { renderWithProviders } from '../../../../test/component-setup';
 import {
   STORYLINES_INTRO_DISMISSED_KEY,
@@ -21,6 +23,7 @@ vi.mock('~/components/LoginRedirect/LoginRedirect', () => ({
 
 beforeEach(() => {
   mocks.user = null;
+  vi.restoreAllMocks();
   localStorage.removeItem(STORYLINES_INTRO_DISMISSED_KEY);
 });
 
@@ -45,10 +48,48 @@ describe('StorylinesIntro', () => {
     expect(localStorage.getItem(STORYLINES_INTRO_DISMISSED_KEY)).toBe('1');
 
     await first.unmount();
+    const read = vi.spyOn(Storage.prototype, 'getItem');
     renderWithProviders(<StorylinesIntro />);
-    // Give the storage read its effect before asserting the absence.
-    await new Promise((r) => setTimeout(r, 50));
+    // Absence only counts once the stored value has been read.
+    await expect
+      .poll(() => read.mock.calls.some(([k]) => k === STORYLINES_INTRO_DISMISSED_KEY))
+      .toBe(true);
     expect(document.body.textContent).not.toContain('Welcome to Storylines');
+  });
+
+  test('the server render shows nothing, so a returning visitor never sees it flash', () => {
+    expect(
+      renderToString(
+        <MantineProvider>
+          <StorylinesIntro />
+        </MantineProvider>
+      )
+    ).not.toContain('Welcome to Storylines');
+  });
+
+  test('a stored value other than the dismissal shows it', async () => {
+    localStorage.setItem(STORYLINES_INTRO_DISMISSED_KEY, '0');
+    renderWithProviders(<StorylinesIntro />);
+    await expect
+      .element(page.getByRole('heading', { name: 'Welcome to Storylines' }))
+      .toBeVisible();
+  });
+
+  test('with storage blocked it still shows, and dismissing still hides it', async () => {
+    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+      throw new Error('blocked');
+    });
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new Error('blocked');
+    });
+    renderWithProviders(<StorylinesIntro />);
+    await expect
+      .element(page.getByRole('heading', { name: 'Welcome to Storylines' }))
+      .toBeVisible();
+    await page.getByRole('button', { name: 'Got it' }).click();
+    await expect
+      .element(page.getByRole('heading', { name: 'Welcome to Storylines' }))
+      .not.toBeInTheDocument();
   });
 
   test('the close button dismisses it the same way as "Got it"', async () => {

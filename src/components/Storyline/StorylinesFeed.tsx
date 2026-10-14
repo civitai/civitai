@@ -12,6 +12,7 @@ import { storylineUrl } from '~/components/Storyline/storyline-routes';
 import { StorylineFiltersDropdown } from '~/components/Storyline/StorylineFiltersDropdown';
 import type { StorylineFeedFilter } from '~/components/Storyline/StorylineFiltersDropdown';
 import { StorylineThumb } from '~/components/Storyline/StorylineThumb';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { RouterOutput } from '~/types/router';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
@@ -105,16 +106,19 @@ export function StorylinesFeed() {
 
 /**
  * Why this reader cannot continue a storyline that is still going, or null when they can. A
- * Complete storyline says so with its status chip instead.
+ * Complete storyline says so with its status chip instead. Collaborators only never shuts out
+ * the owner, so when it is closed to them it is simply Closed.
  */
-function closedLabel(storyline: StorylineCard) {
+function closedLabel(storyline: StorylineCard, viewerId: number | undefined) {
   if (storyline.open || storyline.status === 'Complete') return null;
-  return storyline.whoCanContinue === 'Collaborators' ? 'Collaborators only' : 'Closed';
+  const isOwner = viewerId != null && viewerId === storyline.user.id;
+  return storyline.whoCanContinue === 'Collaborators' && !isOwner ? 'Collaborators only' : 'Closed';
 }
 
 export function StorylineFeedCard({ storyline }: { storyline: StorylineCard }) {
   const complete = storyline.status === 'Complete';
-  const closed = closedLabel(storyline);
+  const currentUser = useCurrentUser();
+  const closed = closedLabel(storyline, currentUser?.id);
   const price = storyline.open ? storyline.continuePrice : null;
 
   return (
@@ -150,7 +154,7 @@ export function StorylineFeedCard({ storyline }: { storyline: StorylineCard }) {
             {closed}
           </Badge>
         )}
-        <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/75 to-transparent px-3 pb-2.5 pt-7">
+        <div className="absolute inset-x-0 bottom-0 flex h-[45%] flex-col justify-end bg-gradient-to-t from-black/80 to-transparent px-3 pb-2.5 [text-shadow:0_1px_2px_rgba(0,0,0,.6)]">
           <Text fz={17} fw={800} lh={1.2} c="white" lineClamp={2}>
             {storyline.title}
           </Text>
@@ -177,8 +181,9 @@ export function StorylineFeedCard({ storyline }: { storyline: StorylineCard }) {
             color={price > 0 ? 'yellow' : 'green'}
             leftSection={price > 0 ? <IconBolt size={12} /> : undefined}
             data-testid="storyline-price-chip"
+            title={price > 0 ? `${numberWithCommas(price)} Buzz to continue` : 'Free to continue'}
           >
-            {price > 0 ? `${numberWithCommas(price)} to continue` : 'Free to continue'}
+            {price > 0 ? numberWithCommas(price) : 'Free'}
           </Badge>
         )}
       </div>

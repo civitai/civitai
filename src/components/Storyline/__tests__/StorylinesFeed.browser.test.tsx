@@ -3,6 +3,7 @@ import { page } from 'vitest/browser';
 import { renderWithProviders } from '../../../../test/component-setup';
 import type * as TrpcMod from '~/utils/trpc';
 import type * as IsMobileMod from '~/hooks/useIsMobile';
+import type * as BrowsingLevelMod from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { StorylinesFeed } from '~/components/Storyline/StorylinesFeed';
 
 /**
@@ -19,7 +20,9 @@ const mocks = vi.hoisted(() => ({
   failed: false,
   refetch: vi.fn(),
   mobile: false,
+  user: null as { id: number } | null,
 }));
+vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => mocks.user }));
 
 vi.mock('~/utils/trpc', async (importOriginal) => {
   const { makeTrpcProxy } = await import('../../../../test/trpcProxyStub');
@@ -45,6 +48,11 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
     }),
   };
 });
+// A level no default produces, so the assertion below can only pass if this one is what is sent.
+vi.mock('~/components/BrowsingLevel/BrowsingLevelProvider', async (importOriginal) => ({
+  ...(await importOriginal<typeof BrowsingLevelMod>()),
+  useViewerBrowsingLevelDebounced: () => 12,
+}));
 // Picks popover or drawer from the layout container, which the harness does not mount.
 vi.mock('~/hooks/useIsMobile', async (importOriginal) => ({
   ...(await importOriginal<typeof IsMobileMod>()),
@@ -93,6 +101,7 @@ const card = (id: number, coverImage: ReturnType<typeof cover> | null, extra = {
 beforeEach(() => {
   mocks.safe = true;
   mocks.mobile = false;
+  mocks.user = null;
   mocks.failed = false;
   mocks.refetch.mockReset();
   mocks.feedInput.mockReset();
@@ -139,7 +148,7 @@ describe('StorylinesFeed', () => {
     ]);
     expect(cardFor(7).textContent).toMatch(/4 chapters.*2 creators/);
     expect(cardFor(3).textContent).toMatch(/1 chapter.*1 creator/);
-    expect(mocks.feedInput.mock.lastCall?.[0].browsingLevel).toEqual(expect.any(Number));
+    expect(mocks.feedInput.mock.lastCall?.[0].browsingLevel).toBe(12);
   });
 
   test('a lock chip says why a still-going storyline is not open to this reader', async () => {
@@ -161,6 +170,22 @@ describe('StorylinesFeed', () => {
     ]);
   });
 
+  test('a collaborators-only storyline closed to its own owner says Closed, not Collaborators only', async () => {
+    // card(1) is owned by user 11.
+    mocks.user = { id: 11 };
+    mocks.items = [
+      card(1, null, { open: false, whoCanContinue: 'Collaborators' }),
+      card(2, null, { open: false, whoCanContinue: 'Collaborators' }),
+    ];
+    renderWithProviders(<StorylinesFeed />);
+    await expect.element(page.getByRole('link').first()).toBeVisible();
+
+    expect([1, 2].map((id) => testIds(cardFor(id), 'storyline-closed-chip'))).toEqual([
+      ['Closed'],
+      ['Collaborators only'],
+    ]);
+  });
+
   test('the continue price shows only on a card this reader can continue', async () => {
     mocks.items = [
       card(1, null, { continuePrice: 0 }),
@@ -172,8 +197,8 @@ describe('StorylinesFeed', () => {
     await expect.element(page.getByRole('link').first()).toBeVisible();
 
     expect([1, 2, 3, 4].map((id) => testIds(cardFor(id), 'storyline-price-chip'))).toEqual([
-      ['Free to continue'],
-      ['1,500 to continue'],
+      ['Free'],
+      ['1,500'],
       [],
       [],
     ]);
@@ -199,6 +224,9 @@ describe('StorylinesFeed', () => {
     expect(mocks.feedInput.mock.lastCall?.[0]).toEqual(expect.objectContaining({ filter: 'all' }));
 
     await page.getByRole('button', { name: 'Filters' }).click();
+    // A popover on desktop, not the phone drawer.
+    await expect.element(page.getByRole('dialog')).toBeVisible();
+    expect(page.getByRole('dialog').element().closest('.mantine-Popover-dropdown')).not.toBeNull();
     await page.getByRole('dialog').getByText(label, { exact: true }).click();
     // Staged: picking a chip alone fetches nothing.
     expect(mocks.feedInput.mock.lastCall?.[0]).toEqual(expect.objectContaining({ filter: 'all' }));
@@ -216,11 +244,14 @@ describe('StorylinesFeed', () => {
 
     await page.getByRole('button', { name: 'Filters' }).click();
     await expect.element(page.getByRole('dialog')).toBeVisible();
+    // Mantine gives the popover dropdown role="dialog" too; this is what makes it the drawer.
+    expect(document.querySelector('.mantine-Drawer-content')).not.toBeNull();
+    expect(document.querySelector('.mantine-Popover-dropdown')).toBeNull();
     await page.getByRole('dialog').getByText('Complete', { exact: true }).click();
     await page.getByRole('button', { name: 'Apply filters' }).click();
     await expect
       .poll(() => mocks.feedInput.mock.lastCall?.[0])
-      .toEqual(expect.objectContaining({ filter: 'complete' }));
+      .toEqual(expect.objectContaining({ filter: 'complete', browsingLevel: 12 }));
   });
 
   test('the Filters button counts an active filter, and "All" counts none', async () => {
