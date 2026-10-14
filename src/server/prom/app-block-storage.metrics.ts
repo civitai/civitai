@@ -7,6 +7,7 @@
 // Imports the handles from `@civitai/telemetry/client` rather than the `~/server/prom/client`
 // shim, matching `external-moderation.metrics.ts`: the shim builds the pg pool gauges at module
 // load, and `src/__tests__/setup.ts` replaces it wholesale, which would make this untestable.
+import type { Histogram } from 'prom-client';
 import {
   appStorageLatencyHistogram,
   appStorageOpsCounter,
@@ -61,15 +62,20 @@ export const REACHABLE_OPS_SERIES: ReadonlyArray<{ op: AppStorageOp; outcome: Ap
  *
  * The check narrows that window rather than closing it: `present` is snapshotted before the
  * `await` resumes, so an `observe()` landing in that microtask on an op with no prior child is
- * still lost. Bounded to a pod's first scrape — after it, all five children exist.
+ * still lost. Bounded to a pod's first scrape — after it, every op's child exists.
+ *
+ * Shared with the shared-storage seeder, so this rule has one implementation.
  */
-async function zeroMissingLatencyChildren(): Promise<void> {
-  const { values } = await appStorageLatencyHistogram.get();
+export async function zeroMissingLatencyChildren(
+  histogram: Histogram<'op'>,
+  ops: readonly string[]
+): Promise<void> {
+  const { values } = await histogram.get();
   const present = new Set(
     values.filter((v) => v.metricName?.endsWith('_count')).map((v) => v.labels.op)
   );
-  for (const op of APP_STORAGE_OPS) {
-    if (!present.has(op)) appStorageLatencyHistogram.zero({ op });
+  for (const op of ops) {
+    if (!present.has(op)) histogram.zero({ op });
   }
 }
 
@@ -108,7 +114,7 @@ export async function seedAppBlockStorageMetrics(): Promise<void> {
     // real refusal creates a NEW child that materialises AT 1. `increase()` cannot see a 0→1
     // edge with no prior 0 sample, so use `max_over_time`. The seeded rows above are NOT that
     // case: they omit `app_block_id` and stay 0 forever.
-    await zeroMissingLatencyChildren();
+    await zeroMissingLatencyChildren(appStorageLatencyHistogram, APP_STORAGE_OPS);
   } catch {
     // Seeding is a readability nicety; losing it must not cost the scrape.
   }
