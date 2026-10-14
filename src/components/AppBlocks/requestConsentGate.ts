@@ -221,8 +221,9 @@ export function resolveUngrantableConsentNotice(
  * A signed-out viewer's scopes are un-grantable only because they are signed out:
  * the anon mint strips every consent-gated scope, and signing in makes them
  * grantable. "This permission isn't available here" is false for them, and the
- * SDK's `withConsentRetry` sends REQUEST_CONSENT on every failed gated call, so it
- * would fire on every gated click. Offer sign-in instead, through the same
+ * SDK's `withConsentRetry` sends REQUEST_CONSENT automatically on the first failed
+ * gated call per missing scope set (it then remembers the refusal until the token
+ * rotates), so a viewer who never asked for a permission would see it. Offer sign-in instead, through the same
  * `resolveRequestSignIn` gate REQUEST_SIGN_IN uses (it refuses before BLOCK_READY,
  * so nothing pops pre-handshake). Signed-in viewers keep the toast.
  */
