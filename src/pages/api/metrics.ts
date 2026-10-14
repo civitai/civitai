@@ -62,7 +62,6 @@ import { ensureRegisterCsamArchiveMetrics } from '~/server/metrics/csam-archive.
 // otherwise indistinguishable from an unloaded module.
 import { seedGenerationValidationMetrics } from '~/server/prom/generation-validation.metrics';
 import { seedAppBlockStorageMetrics } from '~/server/prom/app-block-storage.metrics';
-// The shared-storage counterpart, seeded the same way for the same reason.
 import { seedAppBlockSharedStorageMetrics } from '~/server/prom/app-block-shared-storage.metrics';
 // Seeds civitai_app_block_builds_total's reachable series at 0, so "no failed builds" reads
 // as zeros rather than as an absent series on every pod that has not received a callback.

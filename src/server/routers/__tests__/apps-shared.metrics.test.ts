@@ -32,6 +32,7 @@ const {
   mockGetBlocklistData,
   mockIsFlipt,
   mockFindBlocked,
+  mockIsRevoked,
 } = vi.hoisted(() => {
   type QueryFn = (
     sql: string,
@@ -69,6 +70,7 @@ const {
       async () => false
     ),
     mockFindBlocked: vi.fn<(values: unknown, opts?: unknown) => Promise<unknown[]>>(async () => []),
+    mockIsRevoked: vi.fn<() => Promise<boolean>>(async () => false),
   };
 });
 
@@ -121,7 +123,7 @@ vi.mock('~/server/services/orchestrator/promptAuditing', () => ({
   auditPromptServer: (args: unknown) => mockAuditPromptServer(args),
 }));
 vi.mock('~/server/services/block-revocation.service', () => ({
-  BlockRevocation: { isRevoked: async () => false },
+  BlockRevocation: { isRevoked: () => mockIsRevoked() },
 }));
 vi.mock('~/server/services/blocks/app-sub-listing.service', () => ({
   syncSubListingForSharedRow: async () => undefined,
@@ -219,10 +221,12 @@ function poolAnswers(answers: Array<[fragment: string, answer: PoolRow | (() => 
   });
 }
 
-const quotaRow = (usedBytes: number, storedSize = 10): [string, PoolRow] => [
+const quotaRow = (usedBytes: number, storedSize = 10, rowCount = 0): [string, PoolRow] => [
   '.quota',
   {
-    rows: [{ used_bytes: String(usedBytes), row_count: '0', stored_size_bytes: storedSize }],
+    rows: [
+      { used_bytes: String(usedBytes), row_count: String(rowCount), stored_size_bytes: storedSize },
+    ],
     rowCount: 1,
   },
 ];
@@ -272,6 +276,7 @@ beforeEach(() => {
   mockIsFlipt.mockResolvedValue(false);
   mockFindBlocked.mockReset();
   mockFindBlocked.mockResolvedValue([]);
+  mockIsRevoked.mockResolvedValue(false);
 
   incSpy = vi.spyOn(appSharedStorageOpsCounter, 'inc');
   observeSpy = vi.spyOn(appSharedStorageLatencyHistogram, 'observe');
@@ -515,6 +520,83 @@ const CASES: Case[] = [
     act: ACT.update,
   },
 
+  // Every other `unauthorized` / token-refusal path, on one read and one write.
+  {
+    op: 'get',
+    outcome: 'unauthorized',
+    path: 'block instance revoked',
+    arrange: () => mockIsRevoked.mockResolvedValueOnce(true),
+    act: ACT.get,
+  },
+  {
+    op: 'get',
+    outcome: 'unauthorized',
+    path: "token's app block not found",
+    arrange: () => dbMock.dbRead.appBlock.findUnique.mockResolvedValueOnce(null),
+    act: ACT.get,
+  },
+  {
+    op: 'get',
+    outcome: 'unauthorized',
+    path: "token's app block not approved",
+    arrange: () =>
+      dbMock.dbRead.appBlock.findUnique.mockResolvedValueOnce({ id: 'apb_x', status: 'pending' }),
+    act: ACT.get,
+  },
+  {
+    op: 'get',
+    outcome: 'unauthorized',
+    path: 'read scope missing',
+    arrange: () => mockVerifyBlockToken.mockResolvedValueOnce(claims({ scopes: [WRITE] })),
+    act: ACT.get,
+  },
+  {
+    op: 'get',
+    outcome: 'unauthorized',
+    path: 'token subject malformed',
+    arrange: () =>
+      mockParseSubjectUserId.mockImplementationOnce(() => {
+        throw new Error('bad sub');
+      }),
+    act: ACT.get,
+  },
+  {
+    op: 'get',
+    outcome: 'unauthorized',
+    path: 'token subject no longer resolves',
+    arrange: () => mockGetSessionUser.mockResolvedValueOnce(null),
+    act: ACT.get,
+  },
+  {
+    op: 'get',
+    outcome: 'error',
+    path: 'token block id is not a storage slug',
+    arrange: () => mockVerifyBlockToken.mockResolvedValueOnce(claims({ blockId: '!!!' })),
+    act: ACT.get,
+  },
+  {
+    op: 'withdraw',
+    outcome: 'unauthorized',
+    path: 'anonymous write',
+    arrange: () => mockVerifyBlockToken.mockResolvedValueOnce(claims({ sub: 'anon' })),
+    act: ACT.withdraw,
+  },
+  {
+    op: 'withdraw',
+    outcome: 'unauthorized',
+    path: 'write scope missing',
+    arrange: () => mockVerifyBlockToken.mockResolvedValueOnce(claims({ scopes: [READ] })),
+    act: ACT.withdraw,
+  },
+  {
+    op: 'append',
+    outcome: 'quota_exceeded',
+    path: 'APP_ROW_LIMIT',
+    arrange: () =>
+      poolAnswers([['count(*)', { rows: [{ n: '0' }], rowCount: 1 }], quotaRow(0, 10, 1_000_000)]),
+    act: ACT.append,
+  },
+
   // vote / report
   { op: 'vote', outcome: 'not_found', path: 'row missing or hidden', act: ACT.vote },
   { op: 'report', outcome: 'not_found', path: 'row missing', act: ACT.report },
@@ -568,7 +650,8 @@ describe('every shared storage call records one (op, outcome) and one latency sa
     const covered = new Set(CASES.map((c) => `${c.op}/${c.outcome}`));
     const seeded = new Set(SHARED_STORAGE_REACHABLE_SERIES.map((s) => `${s.op}/${s.outcome}`));
     expect([...covered].sort()).toEqual([...seeded].sort());
-    expect(covered.size, 'no duplicate cases').toBe(CASES.length);
+    const names = new Set(CASES.map((c) => `${c.op}/${c.outcome}/${c.path}`));
+    expect(names.size, 'no duplicate cases').toBe(CASES.length);
   });
 });
 
@@ -591,19 +674,22 @@ describe('a thrown error is recorded once and reaches the caller unchanged', () 
     expect(recordedExactlyOnce()).toEqual({ op: 'append', outcome: 'error' });
   });
 
-  it('a metrics handle that throws changes neither the result nor the error', async () => {
-    incSpy.mockImplementation(() => {
-      throw new Error('registry broken');
-    });
-    await expect(listSharedRows('t', { limit: 10 })).resolves.toEqual({
-      items: [],
-      nextCursor: undefined,
-    });
+  it.each(['inc', 'observe'] as const)(
+    'a metrics handle whose `%s` throws changes neither the result nor the error',
+    async (method) => {
+      (method === 'inc' ? incSpy : observeSpy).mockImplementation(() => {
+        throw new Error('registry broken');
+      });
+      await expect(listSharedRows('t', { limit: 10 })).resolves.toEqual({
+        items: [],
+        nextCursor: undefined,
+      });
 
-    const failure = new Error('connection reset');
-    mockPool.query.mockRejectedValueOnce(failure);
-    await expect(listSharedRows('t', { limit: 10 })).rejects.toBe(failure);
-  });
+      const failure = new Error('connection reset');
+      mockPool.query.mockRejectedValueOnce(failure);
+      await expect(listSharedRows('t', { limit: 10 })).rejects.toBe(failure);
+    }
+  );
 });
 
 describe('both transports record once per call', () => {
@@ -711,11 +797,37 @@ describe('both transports record once per call', () => {
 });
 
 describe('the router has one metered entry point per op', () => {
-  const ROUTER = path.resolve(__dirname, '../apps-shared.router.ts');
-  const code = fs
-    .readFileSync(ROUTER, 'utf8')
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .replace(/\/\/[^\n]*/g, '');
+  const SRC = path.resolve(__dirname, '../../..');
+  // Comments stripped; a `//` preceded by `:` is a URL inside a string, not a comment.
+  const codeOf = (file: string) =>
+    fs
+      .readFileSync(file, 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+  const code = codeOf(path.join(SRC, 'server/routers/apps-shared.router.ts'));
+
+  it('🔴 only the router and the module that defines it call the wrapper', () => {
+    // A wrapper added anywhere else (a REST route, a service) would count a call twice.
+    const callers: string[] = [];
+    const walk = (dir: string) => {
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          if (entry.name !== 'node_modules' && entry.name !== '__tests__') walk(full);
+        } else if (
+          /\.tsx?$/.test(entry.name) &&
+          /\bwithSharedStorageMetrics\b/.test(codeOf(full))
+        ) {
+          callers.push(path.relative(SRC, full).split(path.sep).join('/'));
+        }
+      }
+    };
+    walk(SRC);
+    expect(callers.sort()).toEqual([
+      'server/prom/app-block-shared-storage.metrics.ts',
+      'server/routers/apps-shared.router.ts',
+    ]);
+  });
 
   it('🔴 each op is wrapped exactly once, and every wrapper is an exported function', () => {
     // A second wrapper for one op double-counts it; a missing one leaves it unrecorded. Read
@@ -736,13 +848,14 @@ describe('the router has one metered entry point per op', () => {
   it('🔴 nothing but its own wrapper calls an op body', () => {
     // An internal caller of an `…Unmetered` body (a new procedure, or one op delegating to
     // another) would serve a call that is never recorded.
-    for (const [, body] of code.matchAll(/async function (\w+Unmetered)\(/g)) {
-      const calls = code.match(new RegExp(`\\b${body}\\(`, 'g')) ?? [];
+    // Any REFERENCE counts, not just a call: `.map(xUnmetered)` or `.call` would reach it too.
+    const bodies = [...code.matchAll(/\b(\w+Unmetered)\b/g)].map((m) => m[1]);
+    const distinct = [...new Set(bodies)];
+    expect(distinct.length).toBe(SHARED_STORAGE_OPS.length);
+    for (const body of distinct) {
       // The declaration plus the one call in its wrapper.
-      expect(calls.length, body).toBe(2);
+      expect(bodies.filter((b) => b === body).length, body).toBe(2);
+      expect(code, body).toMatch(new RegExp(`\\nasync function ${body}\\(`));
     }
-    expect([...code.matchAll(/async function (\w+Unmetered)\(/g)].length).toBe(
-      SHARED_STORAGE_OPS.length
-    );
   });
 });

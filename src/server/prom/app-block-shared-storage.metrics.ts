@@ -1,19 +1,14 @@
-// App Blocks SHARED storage metrics: the op and outcome domains, the one wrapper every shared
-// storage operation records through, and the zero-seeding of both series.
-//
-// Imports the handles from `@civitai/telemetry/client` rather than the `~/server/prom/client`
-// shim, for the reason `app-block-storage.metrics.ts` gives: `src/__tests__/setup.ts` replaces
-// the shim wholesale, which would leave these untestable against the real registry.
+// Imports the handles from `@civitai/telemetry/client`, not the `~/server/prom/client` shim:
+// `src/__tests__/setup.ts` replaces the shim wholesale, which would leave these untestable
+// against the real registry.
 import { TRPCError } from '@trpc/server';
 import {
   appSharedStorageLatencyHistogram,
   appSharedStorageOpsCounter,
 } from '@civitai/telemetry/client';
+import { zeroMissingLatencyChildren } from '~/server/prom/app-block-storage.metrics';
 
 /**
- * Every shared storage operation. `apps-shared.router.ts`'s `SharedOp` derives from this, so an
- * op cannot be added there without being seeded here.
- *
  * `getCount` covers both the single-key and the batch read: `apps.shared.getCount`,
  * `apps.shared.getCounts` and `/shared-storage/counts` all run `getSharedCounts`. `list` with
  * `mine` set is still `list`.
@@ -39,7 +34,6 @@ export type SharedStorageOp = (typeof SHARED_STORAGE_OPS)[number];
  *
  * - `unauthorized` — the block token, its scopes or its subject were refused, or an anonymous
  *   caller tried to write.
- * - `disabled` — the shared storage flag is off for this caller.
  * - `trust_refused` — the account failed the minimum-trust gate for writes.
  * - `forbidden` — an edit of a row the caller did not author.
  * - `rate_limited` — a per-user, per-app rate limit or write budget refused the call.
@@ -48,9 +42,7 @@ export type SharedStorageOp = (typeof SHARED_STORAGE_OPS)[number];
  * - `payload_too_large` — one value over the per-value byte cap.
  * - `user_row_cap_exceeded` — the caller already has the most rows one user may hold in an app.
  * - `quota_exceeded` — the app's byte or row budget is spent. Shared by every user of the app.
- * - `bad_request` — a counter key or value the server will not accept.
- * - `not_found` — the row does not exist or is hidden.
- * - `error` — anything else, including a database failure.
+ * - `not_found` — a shared row, never the token's app block (that is `unauthorized`).
  */
 export type SharedStorageOutcome =
   | 'ok'
@@ -186,22 +178,6 @@ export async function withSharedStorageMetrics<T>(
 }
 
 /**
- * Zeroes the latency child of each op that has none yet. Never zeroes one that exists:
- * `Histogram.zero` replaces that child's values, and this runs on a scrape, after the pod may
- * already have served calls. See `zeroMissingLatencyChildren` in `app-block-storage.metrics.ts`
- * for the remaining window this leaves.
- */
-async function zeroMissingLatencyChildren(): Promise<void> {
-  const { values } = await appSharedStorageLatencyHistogram.get();
-  const present = new Set(
-    values.filter((v) => v.metricName?.endsWith('_count')).map((v) => v.labels.op)
-  );
-  for (const op of SHARED_STORAGE_OPS) {
-    if (!present.has(op)) appSharedStorageLatencyHistogram.zero({ op });
-  }
-}
-
-/**
  * Publishes every reachable (op, outcome) pair and one latency child per op at 0, so an op no
  * one has called reads as 0 rather than absent. Idempotent; called on every scrape.
  */
@@ -212,7 +188,7 @@ export async function seedAppBlockSharedStorageMetrics(): Promise<void> {
     }
     // Last, because it is the only step that awaits and so the only one that can reject; the
     // counter series are already published if it does.
-    await zeroMissingLatencyChildren();
+    await zeroMissingLatencyChildren(appSharedStorageLatencyHistogram, SHARED_STORAGE_OPS);
   } catch {
     // Losing the seed must not cost the scrape.
   }

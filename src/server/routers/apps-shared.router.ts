@@ -240,8 +240,6 @@ function requireFiniteCounter(raw: string | null | undefined, label: string): nu
 // `appsSharedRouter`/`appsModRouter` and the counter helpers. Import the
 // predicate from the service that owns it.
 
-// `update` is an author-only edit of an own row; `increment` (play-counts) is a write and
-// min-trust gated like `vote`; `getTop` is an anon-allowed read.
 type SharedOp = SharedStorageOp;
 const READ_OPS: ReadonlySet<SharedOp> = new Set<SharedOp>(['list', 'get', 'getCount', 'getTop']);
 
@@ -594,6 +592,14 @@ function toSharedKvItem(r: SharedKvRow): SharedKvItem {
  * Do not restore the security framing; it would read as an invariant that the
  * response shape contradicts two functions up.
  */
+export async function listSharedRows(
+  blockToken: string,
+  opts: { prefix?: string; limit: number; cursor?: string; mine?: boolean }
+) {
+  return withSharedStorageMetrics('list', () => listSharedRowsUnmetered(blockToken, opts));
+}
+
+/** The unmetered body of `listSharedRows`; call that instead. */
 async function listSharedRowsUnmetered(
   blockToken: string,
   {
@@ -699,6 +705,11 @@ async function listSharedRowsUnmetered(
  * direct key fetch can NOT leak a withdrawn / moderator-hidden row the paged
  * list excludes.
  */
+export async function getSharedRow(blockToken: string, key: string) {
+  return withSharedStorageMetrics('get', () => getSharedRowUnmetered(blockToken, key));
+}
+
+/** The unmetered body of `getSharedRow`; call that instead. */
 async function getSharedRowUnmetered(
   blockToken: string,
   key: string
@@ -726,6 +737,11 @@ async function getSharedRowUnmetered(
  * entry per requested key (the single-key `getCount` procedure is this function
  * with a one-element array; there is no second query shape for it).
  */
+export async function getSharedCounts(blockToken: string, keys: string[]) {
+  return withSharedStorageMetrics('getCount', () => getSharedCountsUnmetered(blockToken, keys));
+}
+
+/** The unmetered body of `getSharedCounts`; call that instead. */
 async function getSharedCountsUnmetered(
   blockToken: string,
   keys: string[]
@@ -836,6 +852,11 @@ function asTransactionFault<T>(op: Promise<T>): Promise<T> {
  * (C2/C3/M1) synchronously, the per-user + per-app row caps + byte quota, and the
  * per-(user,app) write budget — all before the row lands.
  */
+export async function appendSharedRow(blockToken: string, value: SharedValueInput) {
+  return withSharedStorageMetrics('append', () => appendSharedRowUnmetered(blockToken, value));
+}
+
+/** The unmetered body of `appendSharedRow`; call that instead. */
 async function appendSharedRowUnmetered(
   blockToken: string,
   value: SharedValueInput
@@ -986,6 +1007,11 @@ async function appendWithinBudget(
  * author_user_id, created_at, and the row's votes/counters/reports are PRESERVED.
  * Shares append's write budget so an edit isn't an unbounded write.
  */
+export async function updateSharedRow(blockToken: string, key: string, value: SharedValueInput) {
+  return withSharedStorageMetrics('update', () => updateSharedRowUnmetered(blockToken, key, value));
+}
+
+/** The unmetered body of `updateSharedRow`; call that instead. */
 async function updateSharedRowUnmetered(
   blockToken: string,
   key: string,
@@ -1202,6 +1228,11 @@ async function updateWithinBudget(
  * increment is ATOMICALLY gated on the vote row actually inserting (H1: a double
  * vote is a no-op, the counter never inflates). Rate-limited per (user, app).
  */
+export async function voteSharedRow(blockToken: string, key: string) {
+  return withSharedStorageMetrics('vote', () => voteSharedRowUnmetered(blockToken, key));
+}
+
+/** The unmetered body of `voteSharedRow`; call that instead. */
 async function voteSharedRowUnmetered(blockToken: string, key: string): Promise<{ count: number }> {
   const { userId, schema, appBlockId } = await resolveSharedContext(blockToken, 'vote');
   const uid = userId as number;
@@ -1251,6 +1282,11 @@ async function voteSharedRowUnmetered(blockToken: string, key: string): Promise<
  * number of vote rows deleted (0 or 1); the `CHECK(count >= 0)` constraint blocks
  * any underflow (H1). Rate-limited on the same per (user, app) vote bucket.
  */
+export async function unvoteSharedRow(blockToken: string, key: string) {
+  return withSharedStorageMetrics('unvote', () => unvoteSharedRowUnmetered(blockToken, key));
+}
+
+/** The unmetered body of `unvoteSharedRow`; call that instead. */
 async function unvoteSharedRowUnmetered(
   blockToken: string,
   key: string
@@ -1282,6 +1318,11 @@ async function unvoteSharedRowUnmetered(
  * row ONLY when author_user_id = subject; the FK cascade drops its votes +
  * counter. SET LOCAL GUC so the quota trigger reclaims the bytes/row.
  */
+export async function withdrawSharedRow(blockToken: string, key: string) {
+  return withSharedStorageMetrics('withdraw', () => withdrawSharedRowUnmetered(blockToken, key));
+}
+
+/** The unmetered body of `withdrawSharedRow`; call that instead. */
 async function withdrawSharedRowUnmetered(
   blockToken: string,
   key: string
@@ -1344,6 +1385,13 @@ async function syncStoreItem(args: SyncSubListingForSharedRowArgs): Promise<void
  * the write scope + trust gate (only eligible users can report, to bound report
  * spam). Does not hide the row — a moderator decides via `apps.mod.purgeSharedRow`.
  */
+export async function reportSharedRow(blockToken: string, key: string, reasonInput?: string) {
+  return withSharedStorageMetrics('report', () =>
+    reportSharedRowUnmetered(blockToken, key, reasonInput)
+  );
+}
+
+/** The unmetered body of `reportSharedRow`; call that instead. */
 async function reportSharedRowUnmetered(
   blockToken: string,
   key: string,
@@ -1407,74 +1455,6 @@ async function reportSharedRowUnmetered(
   ).catch(() => {});
 
   return { ok: true as const };
-}
-
-// The exported entry point of every shared storage op. The tRPC procedures below and the REST
-// routes under `src/pages/api/v1/blocks/shared-storage/` call these, never the `…Unmetered`
-// bodies, which is what makes each call record exactly once whichever transport it came in on.
-
-/** @see listSharedRowsUnmetered */
-export async function listSharedRows(
-  blockToken: string,
-  opts: { prefix?: string; limit: number; cursor?: string; mine?: boolean }
-) {
-  return withSharedStorageMetrics('list', () => listSharedRowsUnmetered(blockToken, opts));
-}
-
-/** @see getSharedRowUnmetered */
-export async function getSharedRow(blockToken: string, key: string) {
-  return withSharedStorageMetrics('get', () => getSharedRowUnmetered(blockToken, key));
-}
-
-/** @see getSharedCountsUnmetered */
-export async function getSharedCounts(blockToken: string, keys: string[]) {
-  return withSharedStorageMetrics('getCount', () => getSharedCountsUnmetered(blockToken, keys));
-}
-
-/** @see appendSharedRowUnmetered */
-export async function appendSharedRow(blockToken: string, value: SharedValueInput) {
-  return withSharedStorageMetrics('append', () => appendSharedRowUnmetered(blockToken, value));
-}
-
-/** @see updateSharedRowUnmetered */
-export async function updateSharedRow(blockToken: string, key: string, value: SharedValueInput) {
-  return withSharedStorageMetrics('update', () => updateSharedRowUnmetered(blockToken, key, value));
-}
-
-/** @see voteSharedRowUnmetered */
-export async function voteSharedRow(blockToken: string, key: string) {
-  return withSharedStorageMetrics('vote', () => voteSharedRowUnmetered(blockToken, key));
-}
-
-/** @see unvoteSharedRowUnmetered */
-export async function unvoteSharedRow(blockToken: string, key: string) {
-  return withSharedStorageMetrics('unvote', () => unvoteSharedRowUnmetered(blockToken, key));
-}
-
-/** @see withdrawSharedRowUnmetered */
-export async function withdrawSharedRow(blockToken: string, key: string) {
-  return withSharedStorageMetrics('withdraw', () => withdrawSharedRowUnmetered(blockToken, key));
-}
-
-/** @see reportSharedRowUnmetered */
-export async function reportSharedRow(blockToken: string, key: string, reasonInput?: string) {
-  return withSharedStorageMetrics('report', () =>
-    reportSharedRowUnmetered(blockToken, key, reasonInput)
-  );
-}
-
-/** @see incrementSharedCounterUnmetered */
-export async function incrementSharedCounter(blockToken: string, key: string) {
-  return withSharedStorageMetrics('increment', () =>
-    incrementSharedCounterUnmetered(blockToken, key)
-  );
-}
-
-/** @see getTopSharedCountersUnmetered */
-export async function getTopSharedCounters(blockToken: string, prefix: string, limit: number) {
-  return withSharedStorageMetrics('getTop', () =>
-    getTopSharedCountersUnmetered(blockToken, prefix, limit)
-  );
 }
 
 export const appsSharedRouter = router({
@@ -1601,6 +1581,13 @@ const COUNTER_KEY_MAX = 64;
  * write-scope + min-trust gate + rate limit + the app byte/row quota trigger are
  * the bounds.
  */
+export async function incrementSharedCounter(blockToken: string, key: string) {
+  return withSharedStorageMetrics('increment', () =>
+    incrementSharedCounterUnmetered(blockToken, key)
+  );
+}
+
+/** The unmetered body of `incrementSharedCounter`; call that instead. */
 async function incrementSharedCounterUnmetered(
   blockToken: string,
   key: string
@@ -1712,6 +1699,13 @@ async function incrementSharedCounterUnmetered(
  * the shared:read scope). Hidden anchor rows are excluded. `limit` is bounded by
  * the caller. Returns `[{ key, count }]`.
  */
+export async function getTopSharedCounters(blockToken: string, prefix: string, limit: number) {
+  return withSharedStorageMetrics('getTop', () =>
+    getTopSharedCountersUnmetered(blockToken, prefix, limit)
+  );
+}
+
+/** The unmetered body of `getTopSharedCounters`; call that instead. */
 async function getTopSharedCountersUnmetered(
   blockToken: string,
   prefix: string,

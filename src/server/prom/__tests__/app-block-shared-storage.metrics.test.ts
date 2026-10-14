@@ -62,8 +62,7 @@ describe('seedAppBlockSharedStorageMetrics', () => {
   });
 
   it('🔴 publishes 230 series per scraped pod — 76 of them (op, outcome) pairs', async () => {
-    // Literal, because this is the figure a cardinality budget is sized against: the histogram's
-    // 11 children x (11 buckets + `+Inf` + `_sum` + `_count`) = 154 outweigh the 76 pairs.
+    // Literal, because a cardinality budget is sized against this figure.
     expect(SHARED_STORAGE_REACHABLE_SERIES.length).toBe(76);
     expect((await valuesOf(OPS)).length + (await valuesOf(LATENCY)).length).toBe(230);
   });
@@ -119,6 +118,36 @@ describe('recording', () => {
     expect(await latencyCount('report')).toBe(latencyBefore + 1);
   });
 
+  it('🔴 observes the elapsed time in SECONDS, measured around the call', async () => {
+    // 1.75 s between the two clock reads. Not a bucket boundary, so a value scaled by any power
+    // of ten, or a clock read after the call (0 s), lands somewhere else.
+    async function sumAndBucket(op: string) {
+      const values = await valuesOf(LATENCY);
+      const of = (suffix: string, le?: string) =>
+        values.find(
+          (v) =>
+            (v.metricName ?? '').endsWith(suffix) &&
+            v.labels.op === op &&
+            (le === undefined || String(v.labels.le) === le)
+        )?.value ?? 0;
+      return { sum: of('_sum'), le1: of('_bucket', '1'), le2_5: of('_bucket', '2.5') };
+    }
+    const before = await sumAndBucket('withdraw');
+    const clock = vi
+      .spyOn(process.hrtime, 'bigint')
+      .mockReturnValueOnce(BigInt(1_000_000_000))
+      .mockReturnValueOnce(BigInt(2_750_000_000));
+    try {
+      await withSharedStorageMetrics('withdraw', async () => 'done');
+    } finally {
+      clock.mockRestore();
+    }
+    const after = await sumAndBucket('withdraw');
+    expect(after.sum - before.sum).toBeCloseTo(1.75, 9);
+    expect(after.le1 - before.le1).toBe(0);
+    expect(after.le2_5 - before.le2_5).toBe(1);
+  });
+
   it('a failing latency read costs the seed, never the scrape', async () => {
     const handle = client.register.getSingleMetric(LATENCY) as unknown as {
       get: () => Promise<unknown>;
@@ -143,9 +172,9 @@ describe('sharedStorageOutcomeOf', () => {
 
   it('tagging returns the same object and adds nothing to it', () => {
     const err = new TRPCError({ code: 'BAD_REQUEST', message: 'x' });
-    const keysBefore = Object.keys(err);
+    const keysBefore = Reflect.ownKeys(err);
     expect(tagSharedStorageOutcome(err, 'moderation_blocked')).toBe(err);
-    expect(Object.keys(err)).toEqual(keysBefore);
+    expect(Reflect.ownKeys(err)).toEqual(keysBefore);
   });
 
   it.each([
