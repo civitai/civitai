@@ -10,9 +10,7 @@ import {
 } from '~/server/services/text-scan/merge';
 import {
   getTextScanMode,
-  getTextScanWebSearchMode,
   isTextScanWebSearchEntityType,
-  TEXT_SCAN_WEB_SEARCH_LABELS,
   textScanEmEntityType,
 } from '~/server/services/text-scan/mode';
 import { parseTextScanSteps } from '~/server/services/text-scan/parse';
@@ -26,14 +24,7 @@ import {
   revertTextScanRaise,
   recordTextScanSuccess,
 } from '~/server/services/text-scan/record';
-import type {
-  PromptIds,
-  TextScanDeclared,
-  TextScanEntityType,
-  TextScanLabel,
-  TextScanOutcome,
-  TextScanOutput,
-} from '~/server/services/text-scan/types';
+import type { PromptIds, TextScanLabel, TextScanOutput } from '~/server/services/text-scan/types';
 import { logScanVerdict } from '~/server/services/text-scan/verdict-log';
 import { EntityModerationStatus } from '~/shared/utils/prisma/enums';
 
@@ -83,44 +74,6 @@ function inputMeta(metadata: TextScanWorkflowMetadata, flaggedSegments: FlaggedS
         }),
     ...(Object.keys(flaggedSegments).length ? { flaggedSegments } : {}),
   };
-}
-
-const searchOwned = (label: TextScanLabel) =>
-  (TEXT_SCAN_WEB_SEARCH_LABELS as readonly TextScanLabel[]).includes(label);
-
-/**
- * The part of `outcome` the live adapter may act on. An active search pass owns poi/minor: a main
- * pass submitted before it went active still asked for them, and must not act on them now.
- */
-async function applicableOutcome({
-  outcome,
-  output,
-  declared,
-  labels,
-  submittedActive,
-  variant,
-  entityType,
-  entityId,
-}: {
-  outcome: TextScanOutcome;
-  output: TextScanOutput;
-  declared: TextScanDeclared;
-  labels: TextScanLabel[];
-  submittedActive: boolean;
-  variant?: string;
-  entityType: TextScanEntityType;
-  entityId: number;
-}) {
-  return submittedActive &&
-    !variant &&
-    labels.some(searchOwned) &&
-    (await getTextScanWebSearchMode(entityType, entityId, 'active')) === 'active'
-    ? evaluateTextScan(
-        output,
-        declared,
-        labels.filter((label) => !searchOwned(label))
-      )
-    : outcome;
 }
 
 export async function handleTextScanCallback(event: { workflowId: string; status: string }) {
@@ -173,11 +126,10 @@ export async function handleTextScanCallback(event: { workflowId: string; status
   const submittedActive = mode === 'active';
   const ctx = { workflowId, entityType, entityId, emEntityType };
 
-  // After a rollback the old pipeline owns the live row again, and plan 02's floor reads it.
-  const currentMode = variant
-    ? await getTextScanWebSearchMode(entityType, entityId)
-    : await getTextScanMode(entityType, entityId);
-  if (submittedActive && currentMode !== 'active')
+  // After a rollback the old pipeline owns the live row again, and plan 02's floor reads it. A search
+  // pass only follows the main mode: its edit's main pass was submitted without poi/minor, so
+  // ignoring it after a search-only rollback would leave that edit with no poi/minor verdict.
+  if (submittedActive && (await getTextScanMode(entityType, entityId)) !== 'active')
     return log('info', 'mode left active before the callback; live row not written', ctx);
 
   // Shadow verdicts must not drive the live adapter's failure hooks either (e.g. Article ingestion).
@@ -239,29 +191,19 @@ export async function handleTextScanCallback(event: { workflowId: string; status
       meta: metadata.subjectMeta ?? subject.meta,
     });
     if (!recorded) return;
-    const applied = await applicableOutcome({
-      outcome,
-      output,
-      declared: subject.declared,
-      labels: raised,
-      submittedActive,
-      variant,
-      entityType,
-      entityId,
-    });
     await log('warning', 'partial verdict raised', {
       ...ctx,
       raised,
       parsedSegments: outputs.length,
       segments,
-      acted: !!adapter?.applyTextScan && applied.triggeredLabels.length > 0,
+      acted: !!adapter?.applyTextScan && outcome.triggeredLabels.length > 0,
     });
-    if (!applied.triggeredLabels.length && !applied.nsfw) return;
+    if (!outcome.triggeredLabels.length && !outcome.nsfw) return;
     try {
       await adapter?.applyTextScan?.({
         entityId,
         workflowId,
-        outcome: applied,
+        outcome,
         subject,
         textHash: metadata.textHash ?? textScanTextHash(subject),
       });
@@ -328,17 +270,6 @@ export async function handleTextScanCallback(event: { workflowId: string; status
   });
   if (!recorded) return log('warning', 'stale callback ignored', ctx);
 
-  const applied = await applicableOutcome({
-    outcome,
-    output,
-    declared: subject.declared,
-    labels,
-    submittedActive,
-    variant,
-    entityType,
-    entityId,
-  });
-
   void logScanVerdict({
     system: 'text-scan',
     entityType,
@@ -347,7 +278,7 @@ export async function handleTextScanCallback(event: { workflowId: string; status
     mode,
     workflowId,
     flagged: outcome.triggeredLabels.length > 0,
-    acted: submittedActive && applied.triggeredLabels.length > 0,
+    acted: submittedActive && outcome.triggeredLabels.length > 0,
     nsfwLevel: outcome.nsfw?.detectedLevel,
     declaredNsfwLevel: outcome.nsfw?.declaredLevel,
     poi: outcome.poi?.detected,
@@ -362,7 +293,7 @@ export async function handleTextScanCallback(event: { workflowId: string; status
     await adapter?.applyTextScan?.({
       entityId,
       workflowId,
-      outcome: applied,
+      outcome,
       subject,
       textHash: metadata.textHash ?? textScanTextHash(subject),
     });

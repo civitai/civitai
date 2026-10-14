@@ -178,6 +178,39 @@ describe('scanEntity with the web-search pass', () => {
     expect(bodies().map((b) => b.metadata.emEntityType)).toEqual(['Model:shadow']);
   });
 
+  it('a search-rollout flip either way rescans unchanged text on the main row', async () => {
+    const mainHash = async (search: 'shadow' | 'active') => {
+      modes('active', search);
+      em.findUnique.mockResolvedValue(null);
+      vi.mocked(em.upsert).mockClear();
+      await scanEntity({ entityType: 'Model', entityId: 7 });
+      return vi.mocked(em.upsert).mock.calls[0][0].update.contentHash;
+    };
+    const succeededAt = (contentHash: string) =>
+      em.findUnique.mockImplementation((async ({ where }: any) =>
+        where.entityType_entityId.entityType === 'Model'
+          ? {
+              status: 'Succeeded',
+              contentHash,
+              workflowId: 'wf-m',
+              retryCount: 0,
+              updatedAt: new Date(),
+            }
+          : null) as any);
+    const [whole, split] = [await mainHash('shadow'), await mainHash('active')];
+
+    for (const [stored, search] of [
+      [whole, 'active'],
+      [split, 'shadow'],
+    ] as const) {
+      modes('active', search);
+      succeededAt(stored);
+      vi.mocked(submitWorkflow).mockClear();
+      await scanEntity({ entityType: 'Model', entityId: 7 });
+      expect(bodies()[0].metadata.emEntityType).toBe('Model');
+    }
+  });
+
   it('a main-row retry does not bypass the in-flight window of the search pass', async () => {
     modes('shadow', 'shadow');
     await scanEntity({ entityType: 'Model', entityId: 7 });
