@@ -1698,10 +1698,21 @@ describe('getStorylinesInfinite: card cover, open and continue price', () => {
     );
   });
 
+  // hiddenTags also lists every tag rated above PG (9 here) and hiddenImages every image the
+  // reader voted a tag onto (78, 79): as the image feeds, only tags the reader hid count, and an
+  // image hidden through a tag only while that tag is one of them.
   it('asks for covers from chapter 1 posts only, at the reader level, the ceiling, minus hidden', async () => {
     getAllHiddenForUser.mockResolvedValue({
-      hiddenImages: [{ id: 77 }, { id: 78 }],
-      hiddenTags: [{ id: 5 }, { id: 6 }],
+      hiddenImages: [
+        { id: 77, hidden: true },
+        { id: 78, tagId: 5 },
+        { id: 79, tagId: 9 },
+      ],
+      hiddenTags: [
+        { id: 5, hidden: true },
+        { id: 6, hidden: true },
+        { id: 9, name: 'suggestive', nsfwLevel: NsfwLevel.PG13 },
+      ],
     });
     answer([feedRow(1)]);
     await feed({ id: STRANGER });
@@ -1715,6 +1726,7 @@ describe('getStorylinesInfinite: card cover, open and continue price', () => {
     expect(sql).toContain(
       `i.ingestion = 'Scanned' AND i."tosViolation" = false AND i."needsReview" IS NULL`
     );
+    expect(sql).toContain('AND i.minor = false AND i.poi = false');
     expect(sql).toContain('AND (i."nsfwLevel" & ?::int) <> 0');
     expect(sql).toContain('AND (i."nsfwLevel" & ~(st."maxNsfwLevel" * 2 - 1)) = 0');
     expect(sql).toContain('AND i.id <> ALL(?::int[])');
@@ -1858,7 +1870,13 @@ describe('getStorylinesInfinite: card cover, open and continue price', () => {
       input.excludedTagIds = [6, 9];
       return { emptyResult: false };
     }) as never);
-    getAllHiddenForUser.mockResolvedValue({ hiddenImages: [], hiddenTags: [{ id: 5 }, { id: 6 }] });
+    getAllHiddenForUser.mockResolvedValue({
+      hiddenImages: [],
+      hiddenTags: [
+        { id: 5, hidden: true },
+        { id: 6, hidden: true },
+      ],
+    });
     answer([feedRow(1)]);
     await feed({ id: STRANGER });
     expect(enforceBlockedBrowsingTags).toHaveBeenCalledWith(
@@ -2637,8 +2655,8 @@ describe('covers and cast', () => {
 
     it('applies the image gate to first images: level, ceiling, hidden images and tags', async () => {
       getAllHiddenForUser.mockResolvedValue({
-        hiddenImages: [{ id: 77 }],
-        hiddenTags: [{ id: 5 }],
+        hiddenImages: [{ id: 77, hidden: true }],
+        hiddenTags: [{ id: 5, hidden: true }],
       });
       r.storylineChapter.findUnique.mockResolvedValue({ storylineId: 10, depth: 0 } as never);
       answerRaw([{ id: 1, postId: 101, depth: 0, removedAt: null }]);
@@ -2773,8 +2791,8 @@ describe('covers and cast', () => {
 
     it('reads the picks through the image gate and the chapter they are in', async () => {
       getAllHiddenForUser.mockResolvedValue({
-        hiddenImages: [{ id: 77 }],
-        hiddenTags: [{ id: 5 }],
+        hiddenImages: [{ id: 77, hidden: true }],
+        hiddenTags: [{ id: 5, hidden: true }],
       });
       withPicks({ heroImageId: 7, coverImageId: 8 });
       answerRaw([{ id: 1, postId: 101, depth: 0, removedAt: null }]);
