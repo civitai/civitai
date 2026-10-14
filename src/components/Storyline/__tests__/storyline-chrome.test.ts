@@ -4,6 +4,7 @@ import { act, createElement } from 'react';
 import { createRoot } from 'react-dom/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type * as ImageGuardModule from '~/components/ImageGuard/ImageGuard2';
 import type * as QueriesModule from '~/components/Storyline/storyline.queries';
 import type * as ModeModule from '~/components/Storyline/StorylineModeProvider';
 import { StorylineToolbarChip } from '~/components/Storyline/StorylineDetail';
@@ -42,6 +43,17 @@ vi.mock('~/hooks/useIsMobile', async (importOriginal) => ({
   useIsMobile: (o?: { breakpoint?: string; type?: string }) =>
     o?.breakpoint === 'md' && o?.type === undefined ? mocks.narrowStage : mocks.mobile,
 }));
+// The guard needs the session; here every image is blurred, and its pill leaves a marker.
+vi.mock('~/components/ImageGuard/ImageGuard2', async (importOriginal) => {
+  const { createElement: h } = await import('react');
+  return {
+    ...(await importOriginal<typeof ImageGuardModule>()),
+    ImageGuard2: Object.assign(
+      ({ children }: { children: (safe: boolean) => unknown }) => children(false),
+      { BlurToggle: () => h('button', { 'data-testid': 'blur-toggle' }) }
+    ),
+  };
+});
 vi.mock('~/components/Storyline/StorylineModeProvider', async (importOriginal) => ({
   ...(await importOriginal<typeof ModeModule>()),
   useStorylineMode: () => mocks.mode,
@@ -290,6 +302,22 @@ describe('where the chip goes', () => {
       !!q('storyline-map-sheet'),
       !!document.body.querySelector('.mantine-Drawer-content'),
     ]).toEqual([true, false]);
+  });
+});
+
+// Sunita, 2026-10-14: the guard's rating pill truncates to "P..." on thumbs this small and reads as
+// broken. The map drops it; the blur stays. The end card's larger covers keep theirs.
+describe('the map thumbs', () => {
+  it('stay blurred but carry no rating pill', () => {
+    const image = { id: 9, url: 'u', nsfwLevel: 4 };
+    mocks.pathChildren = new Map([[1, [{ ...branch(2), firstImage: image }]]]);
+    renderMap({
+      chapters: [{ ...chapter(1, 0), firstImage: image } as ReturnType<typeof chapter>],
+    });
+    expect([
+      document.body.querySelectorAll('[data-testid="storyline-chapter-image-blurred"]').length,
+      document.body.querySelectorAll('[data-testid="blur-toggle"]').length,
+    ]).toEqual([3, 0]);
   });
 });
 

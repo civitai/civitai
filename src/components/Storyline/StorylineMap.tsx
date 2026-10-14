@@ -177,6 +177,7 @@ function StorylineMap({
           image={coverOf(path.chapters[0])}
           hidden={false}
           explain={false}
+          ratingBadge={false}
           emptyIcon="photo"
           className="size-10 shrink-0"
         />
@@ -260,6 +261,7 @@ function StorylineMap({
                     image={coverOf(chapter)}
                     hidden={!chapter.post}
                     explain={false}
+                    ratingBadge={false}
                     emptyIcon="photo"
                     className="aspect-[3/4] w-12 shrink-0"
                   />
@@ -394,6 +396,7 @@ function BranchRow({
           image={coverOf(child)}
           hidden={!child.post}
           explain={false}
+          ratingBadge={false}
           emptyIcon="photo"
           className="aspect-[3/4] w-8 shrink-0"
         />
