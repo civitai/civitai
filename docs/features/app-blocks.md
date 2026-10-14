@@ -396,6 +396,42 @@ read that file. As of this writing the families are:
   the picked resources in pick order, `[]` on dismiss. `multiple` with a
   Checkpoint, or a `max` that is not a whole number of at least 1, is answered
   with `{ requestId, error }` and the picker does not open.
+- **Image picker** (host chrome over the viewer's own library; page host only, no
+  scope): `OPEN_IMAGE_PICKER` (→ `IMAGE_PICKER_RESULT`) lets the viewer pick from
+  images they posted and images they made with the on-site generator. The app
+  never lists the library; it receives only the pick. Request
+  `{ requestId, sources?, multiple? }`: `sources` is a non-empty list of
+  `'posted'` / `'generated'` (omitted = both), `multiple: { max }` asks for
+  several (`max` above 20 is clamped to 20). A single pick answers
+  `{ requestId, selected? }` (no `selected` on dismiss); a multi pick answers
+  `{ requestId, selectedImages }` (`[]` on dismiss). An invalid `sources` or `max`
+  is answered `{ requestId, error }` and the picker does not open. Each pick is
+  `{ source, url, width, height, nsfwLevel, imageId? }`. `imageId` is present for
+  a posted pick only (a generator output has no `Image` row). `nsfwLevel` is never
+  0 and may be a mature level.
+  What is listed is decided by the host, and the ceiling is the **viewer's own
+  browsing level** on the current domain, not a fixed SFW ceiling (a product
+  decision: the viewer is choosing among their own images). Posted: the viewer's
+  own images in a published post, scan complete, with no `needsReview` /
+  `tosViolation` / `poi` / `minor` flag, rated at a level their browsing level
+  includes; an unrated image (level 0) is not listed. The rule is one query
+  filter (`postedPickableWhere`), and the level is read server-side from the
+  session and request domain (`getRequestBrowsingLevel`), never from the input.
+  Generated: the viewer's succeeded generator image outputs as the generator
+  lists them, whose rating maps to one known level their browsing level
+  includes; an unrated or unrecognised rating is not listed.
+  A posted pick's `url` is an image-CDN rendition and `width`/`height` are the
+  size that rendition is **requested** at. The CDN normally serves exactly that,
+  but can answer with the original while a rendition is not ready. The width is
+  the widest CDN rung at which both sides fit the generation source-image bounds
+  (64..2048); an image no rung fits is not listed. A generated pick's `url` is the
+  generator's own output URL and may be time-limited.
+  The grid loads further pages on scroll, but stops doing so by itself after
+  `MAX_EMPTY_AUTO_PAGES` consecutive pages add nothing pickable, or after a page
+  fails, and offers a button instead. Review mode and a block that is not ready
+  answer as a dismissal, and a signed-out viewer is offered sign-in. Logic:
+  `src/components/AppBlocks/imagePickerLogic.ts` and
+  `src/server/services/blocks/block-image-picker.logic.ts`.
 - **App Storage** (per-app KV; `apps:storage:*` scopes): `APP_STORAGE_GET` /
   `_SET` / `_DELETE` / `_LIST` / `_QUOTA`.
 - **Navigation**: `NAVIGATE` — page host only; the model slot intentionally does
