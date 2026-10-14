@@ -9,6 +9,7 @@ import {
   storylineChapterReadSchema,
   storylineChapterSchema,
   storylineCollaboratorSchema,
+  storylineIdSchema,
   updateStorylineSchema,
 } from '~/server/schema/storyline.schema';
 import {
@@ -16,6 +17,8 @@ import {
   addStorylineCollaborator,
   createStoryline,
   getStoryline,
+  getStorylineCanonAhead,
+  getStorylineChapterLevels,
   getStorylineChildren,
   getStorylinePath,
   getStorylineEarlyAccessStats,
@@ -74,6 +77,22 @@ export const storylineRouter = router({
       chapterId: input.chapterId,
       viewer: ctx.user,
       browsingLevel: storylineReaderLevel(ctx, input.browsingLevel),
+    })
+  ),
+
+  getCanonAhead: storylineReadProcedure.input(storylineChapterReadSchema).query(({ input, ctx }) =>
+    getStorylineCanonAhead({
+      chapterId: input.chapterId,
+      viewer: ctx.user,
+      browsingLevel: storylineReaderLevel(ctx, input.browsingLevel),
+    })
+  ),
+
+  getChapterLevels: storylineMemberProcedure.input(storylineIdSchema).query(({ input, ctx }) =>
+    getStorylineChapterLevels({
+      id: input.id,
+      userId: ctx.user.id,
+      isModerator: ctx.user.isModerator,
     })
   ),
 

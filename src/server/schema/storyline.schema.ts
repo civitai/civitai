@@ -46,6 +46,8 @@ export const storylineChapterReadSchema = storylineChapterSchema.extend({
 });
 export type StorylineChapterReadInput = z.infer<typeof storylineChapterReadSchema>;
 
+export const storylineIdSchema = z.object({ id: z.number().int().positive() });
+
 export const getStorylineSchema = z.object({
   id: z.number().int().positive(),
   browsingLevel: z.number().int().min(0).optional(),

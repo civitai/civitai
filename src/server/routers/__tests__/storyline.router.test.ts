@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as UserPreferencesService from '~/server/services/user-preferences.service';
 import type * as CacheHelpers from '~/server/utils/cache-helpers';
 import { dbMock, resetSharedMocks } from '~/__tests__/mocks';
-import { NsfwLevel } from '~/server/common/enums';
+import { NsfwLevel, OnboardingSteps } from '~/server/common/enums';
 
 /**
  * Storyline reads through the router, as a reader gets them: the flag gate, the reader's browsing
@@ -42,7 +42,14 @@ const r = dbMock.dbRead;
 /** A signed-in reader granted the storylines flag, on a domain that allows mature content. */
 function callerFor(userId: number, permissions: string[] = ['storylines']) {
   return storylineRouter.createCaller({
-    user: { id: userId, permissions, showNsfw: true, browsingLevel: NsfwLevel.PG },
+    user: {
+      id: userId,
+      permissions,
+      showNsfw: true,
+      browsingLevel: NsfwLevel.PG,
+      // Onboarded, so the write procedures' guards let the call reach the service.
+      onboarding: OnboardingSteps.Buzz,
+    },
     acceptableOrigin: true,
     tokenScope: TokenScope.Full,
     apiKeyId: null,
@@ -233,5 +240,103 @@ describe('storyline router: who may call the engagement procedures', () => {
     expect(dbMock.dbWrite.storylineBranchChoice.upsert.mock.calls[0][0]).toMatchObject({
       create: { userId: READER, parentChapterId: 1, chapterId: 2 },
     });
+  });
+});
+
+describe('storyline router: canon ahead', () => {
+  beforeEach(() => {
+    r.storyline.findUnique.mockResolvedValue(xStory as never);
+    r.storylineChapter.findUnique.mockResolvedValue({ storylineId: 10 } as never);
+    r.$queryRaw.mockResolvedValue([
+      { id: 2, postId: 102, depth: 1 },
+      { id: 3, postId: 103, depth: 2 },
+    ] as never);
+    r.post.findMany.mockResolvedValue([post(102, OWNER), post(103, AUTHOR)] as never);
+    r.storylineChapterEdge.groupBy.mockResolvedValue([] as never);
+  });
+
+  it('refuses a reader whose level does not include the story', async () => {
+    await expect(
+      callerFor(READER).getCanonAhead({ chapterId: 2, browsingLevel: NsfwLevel.PG })
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+
+  it('serves the canon after the chapter to a reader whose level includes the story', async () => {
+    await expect(
+      callerFor(READER).getCanonAhead({ chapterId: 2, browsingLevel: NsfwLevel.PG | NsfwLevel.X })
+    ).resolves.toEqual([
+      {
+        chapterId: 3,
+        depth: 2,
+        tombstone: null,
+        post: { id: 103, title: 'post 103', userId: AUTHOR, username: `u${AUTHOR}` },
+        childCount: 0,
+      },
+    ]);
+  });
+
+  it('refuses a reader without the storylines flag', async () => {
+    await expect(
+      callerFor(READER, []).getCanonAhead({ chapterId: 2, browsingLevel: NsfwLevel.X })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+  });
+});
+
+describe('storyline router: chapter levels and the ceiling floor', () => {
+  const w = dbMock.dbWrite;
+  const shownChapter = {
+    publishedAt: new Date('2026-10-01'),
+    tosViolation: false,
+    ...notBanned,
+  };
+
+  beforeEach(() => {
+    w.storyline.findUnique.mockResolvedValue(xStory as never);
+    r.$queryRaw.mockResolvedValue([
+      { depth: 0, userId: OWNER, nsfwLevel: NsfwLevel.X, ...shownChapter },
+      { depth: 1, userId: AUTHOR, nsfwLevel: NsfwLevel.PG, ...shownChapter },
+    ] as never);
+  });
+
+  it('gives the owner the chapter levels', async () => {
+    await expect(callerFor(OWNER).getChapterLevels({ id: 10 })).resolves.toEqual({
+      rootNsfwLevel: NsfwLevel.X,
+      chapterLevels: [NsfwLevel.PG],
+    });
+  });
+
+  it('refuses a reader who is not the owner, and anyone signed out', async () => {
+    await expect(callerFor(READER).getChapterLevels({ id: 10 })).rejects.toMatchObject({
+      code: 'UNAUTHORIZED',
+    });
+    const signedOut = storylineRouter.createCaller({
+      user: undefined,
+      acceptableOrigin: true,
+      tokenScope: TokenScope.Full,
+      apiKeyId: null,
+      req: { headers: {} },
+      res: { setHeader: () => undefined },
+      cache: { edgeTTL: 0 },
+      features: { canViewNsfw: true, isGreen: false },
+      track: { action: vi.fn(() => Promise.resolve(true)) },
+    } as never);
+    await expect(signedOut.getChapterLevels({ id: 10 })).rejects.toMatchObject({
+      code: 'UNAUTHORIZED',
+    });
+    expect(r.$queryRaw).not.toHaveBeenCalled();
+  });
+
+  it('refuses the owner a ceiling below chapter 1, and allows one at it', async () => {
+    w.storyline.findUnique.mockResolvedValue({ ...xStory, maxNsfwLevel: NsfwLevel.XXX } as never);
+    w.storylineChapter.findFirst.mockResolvedValue({
+      post: { nsfwLevel: NsfwLevel.X, tosViolation: false },
+    } as never);
+    await expect(
+      callerFor(OWNER).update({ id: 10, maxNsfwLevel: NsfwLevel.R })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(w.storyline.update).not.toHaveBeenCalled();
+    w.storyline.update.mockResolvedValue(xStory as never);
+    await callerFor(OWNER).update({ id: 10, maxNsfwLevel: NsfwLevel.X });
+    expect(w.storyline.update).toHaveBeenCalledTimes(1);
   });
 });
