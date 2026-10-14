@@ -81,6 +81,8 @@ const requestsModel = {
 function installDb() {
   for (const client of [dbMock.dbRead, dbMock.dbWrite]) {
     const pr = client.appBlockPublishRequest;
+    // mockReset drops any `…Once` value a previous test queued but did not consume.
+    pr.findUnique.mockReset();
     pr.findUnique.mockImplementation(requestsModel.findUnique);
     pr.findFirst.mockImplementation(requestsModel.findFirst);
     pr.findMany.mockImplementation(requestsModel.findMany);
@@ -450,10 +452,16 @@ describe('civitai_app_block_review_storage_cleanup_total', () => {
       return values.find((v) => v.labels.outcome === outcome)?.value ?? 0;
     };
     real.recordReviewStorageCleanup('failed');
-    const before = await read('failed');
+    real.recordReviewStorageCleanup('purged');
+    const before = { failed: await read('failed'), purged: await read('purged') };
     real.recordReviewStorageCleanup('failed');
     real.recordReviewStorageCleanup('purged');
-    expect(await read('failed')).toBe(before + 1);
-    expect(before).toBeGreaterThanOrEqual(1);
+    real.recordReviewStorageCleanup('purged');
+    expect({ failed: await read('failed'), purged: await read('purged') }).toEqual({
+      failed: before.failed + 1,
+      purged: before.purged + 2,
+    });
+    expect(before.failed).toBeGreaterThanOrEqual(1);
+    expect(before.purged).toBeGreaterThanOrEqual(1);
   });
 });

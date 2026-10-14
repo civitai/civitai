@@ -868,9 +868,11 @@ describe('namespaces per token kind', () => {
     );
 
     // The purge a decision runs finds exactly the namespaces the route wrote: nothing of the
-    // request is left in any table.
-    expect((await liveStore.purgeReview(pubreq.id)).namespaces).toBe(2);
-    for (const t of [
+    // request is left in any table. A delete first, so the tombstone table has a row too, and a
+    // positive control that every table HAS rows before the purge.
+    expect((await req(m1, 'PUT', '/notes/n1', { data: { t: 'x' } })).status).toBe(200);
+    expect((await req(m1, 'DELETE', '/notes/n1')).status).toBe(200);
+    const TABLES = [
       'doc',
       'doc_index',
       'doc_tally',
@@ -878,12 +880,18 @@ describe('namespaces per token kind', () => {
       'doc_tomb',
       'usage_app',
       'usage_user',
-    ]) {
-      expect(
-        await harness.raw(`SELECT 1 FROM appdata.${t} WHERE app_id = $1`, [pubreq.id]),
-        t
-      ).toEqual([]);
-    }
+    ];
+    const count = async (t: string) =>
+      Number(
+        (
+          await harness.raw(`SELECT count(*)::int AS n FROM appdata.${t} WHERE app_id = $1`, [
+            pubreq.id,
+          ])
+        )[0].n
+      );
+    for (const t of TABLES) expect({ t, rows: (await count(t)) > 0 }).toEqual({ t, rows: true });
+    expect((await liveStore.purgeReview(pubreq.id)).namespaces).toBe(2);
+    for (const t of TABLES) expect({ t, rows: await count(t) }).toEqual({ t, rows: 0 });
   });
 
   it('the run gate on the token subject refuses with not_eligible apps_disabled', async () => {

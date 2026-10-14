@@ -848,8 +848,11 @@ export function createDocStore(deps: DocStoreDeps) {
   }
 
   /**
-   * One transaction bound to (appId, ns). Callers validate the context first (`assertContext`);
-   * this re-checks only the shapes, so no caller can bind a namespace the store does not know.
+   * One transaction bound to (appId, ns). Callers validate the context first (`assertContext`).
+   * The shape re-check below is defence in depth that NO current caller reaches — `withTx` has
+   * run `assertContext`, and `purgeReview` builds both values through the validating
+   * `reviewNamespace` / `reviewRegistryNamespace` — and no test exercises it. It exists for a
+   * future caller that passes a namespace of its own.
    */
   async function inTx<T>(
     appId: string,
