@@ -249,7 +249,7 @@
           disabled={!canUphold}
           title={canUphold ? undefined : 'Not flagged any more. Unflag closes the request.'}
         >
-          Keep flagged <Kbd>U</Kbd>
+          Keep flagged <Kbd>1</Kbd>
         </Button>
       </form>
       <form
@@ -260,7 +260,7 @@
       >
         <input type="hidden" name="modelId" value={row.modelId} />
         <Button type="submit" size="lg" variant="destructive" class="h-11 px-5 text-base">
-          Unflag <Kbd>O</Kbd>
+          Unflag <Kbd>2</Kbd>
         </Button>
       </form>
       {#if row.minor && poiOpen}

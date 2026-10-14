@@ -21,11 +21,9 @@ export const triageKeyAction = (e: TriageKeyEvent): TriageKeyAction | null => {
     case 'k':
     case 'K':
       return 'previous';
-    case 'u':
-    case 'U':
+    case '1':
       return e.canUphold ? 'uphold' : null;
-    case 'o':
-    case 'O':
+    case '2':
       return 'overturn';
     default:
       return null;

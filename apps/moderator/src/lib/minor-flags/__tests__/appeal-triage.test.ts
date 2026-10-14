@@ -29,9 +29,10 @@ describe('triageKeyAction', () => {
     ['ArrowDown', null],
     ['k', 'previous'],
     ['ArrowUp', null],
-    ['u', 'uphold'],
-    ['U', 'uphold'],
-    ['o', 'overturn'],
+    ['1', 'uphold'],
+    ['2', 'overturn'],
+    ['u', null],
+    ['o', null],
     ['x', null],
     ['Enter', null],
   ])('%s -> %s', (k, action) => {
@@ -39,8 +40,8 @@ describe('triageKeyAction', () => {
   });
 
   it('makes uphold a no-op when no flag is in force, leaving the other keys alone', () => {
-    expect(key('u', { canUphold: false })).toBeNull();
-    expect(key('o', { canUphold: false })).toBe('overturn');
+    expect(key('1', { canUphold: false })).toBeNull();
+    expect(key('2', { canUphold: false })).toBe('overturn');
     expect(key('j', { canUphold: false })).toBe('next');
   });
 
@@ -50,9 +51,9 @@ describe('triageKeyAction', () => {
   });
 
   it('ignores keys while typing or with a modifier', () => {
-    expect(key('u', { typing: true })).toBeNull();
+    expect(key('1', { typing: true })).toBeNull();
     expect(key('j', { metaKey: true })).toBeNull();
-    expect(key('o', { ctrlKey: true })).toBeNull();
+    expect(key('2', { ctrlKey: true })).toBeNull();
     expect(key('k', { altKey: true })).toBeNull();
   });
 });
