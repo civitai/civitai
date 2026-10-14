@@ -176,7 +176,7 @@ describe('StorylineEndOfChapter', () => {
       b.textContent?.includes('Create the next section')
     );
     act(() => button?.click());
-    expect(mocks.trackCreateClick).toHaveBeenCalledWith({ chapterId: 4 });
+    expect(mocks.trackCreateClick.mock.calls).toEqual([[{ chapterId: 4 }]]);
     expect(mocks.trigger).toHaveBeenCalledWith(
       expect.objectContaining({ props: { chapterId: 4, storylineId: 9 } })
     );

@@ -9,6 +9,7 @@ import { StorylineEarlyAccessModal } from '~/components/Storyline/StorylineEarly
 const mocks = vi.hoisted(() => ({
   join: vi.fn<(input: { storylineId?: number }) => Promise<unknown>>(),
   showError: vi.fn(),
+  user: { id: 1 } as { id: number } | null,
 }));
 
 vi.mock('~/components/Storyline/storyline.queries', () => ({
@@ -17,7 +18,10 @@ vi.mock('~/components/Storyline/storyline.queries', () => ({
 vi.mock('~/components/Dialog/DialogProvider', () => ({
   useDialogContext: () => ({ opened: true, onClose: vi.fn() }),
 }));
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => ({ id: 1 }) }));
+vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => mocks.user }));
+vi.mock('~/components/LoginRedirect/LoginRedirect', () => ({
+  LoginRedirect: ({ children }: { children: unknown }) => children,
+}));
 vi.mock('~/utils/notifications', () => ({ showErrorNotification: mocks.showError }));
 
 function render() {
@@ -47,6 +51,7 @@ describe('StorylineEarlyAccessModal', () => {
     document.body.innerHTML = '';
     mocks.join.mockReset();
     mocks.showError.mockClear();
+    mocks.user = { id: 1 };
   });
 
   it('joins for this storyline and says so', async () => {
@@ -66,5 +71,13 @@ describe('StorylineEarlyAccessModal', () => {
     expect(mocks.showError).toHaveBeenCalledWith(
       expect.objectContaining({ title: 'Could not join early access' })
     );
+  });
+
+  it('asks a signed-out reader to sign in instead of offering to join', () => {
+    mocks.user = null;
+    render();
+    const labels = [...document.body.querySelectorAll('button')].map((b) => b.textContent);
+    expect(labels).toContain('Sign in for early access');
+    expect(labels).not.toContain('Get early access');
   });
 });

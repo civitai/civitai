@@ -197,7 +197,7 @@ describe('StorylineModeProvider', () => {
   it('taking a branch opens its first image and records the choice', () => {
     open(30, 3);
     act(() => active().continueTo({ chapterId: 4 }));
-    expect(mocks.trackBranchChoice).toHaveBeenCalledWith({ fromChapterId: 3, toChapterId: 4 });
+    expect(mocks.trackBranchChoice.mock.calls).toEqual([[{ fromChapterId: 3, toChapterId: 4 }]]);
     expect(mocks.replace).toHaveBeenLastCalledWith(
       expect.objectContaining({ imageId: 40, storylineChapter: 4 }),
       '/images/40'
@@ -285,7 +285,7 @@ describe('StorylineModeProvider', () => {
     act(() => active().continueTo({ chapterId: 9 }, { from: 2 }));
     // Image 30 is not on 9's path, and the branch has not resolved yet.
     expect(mode.active).toBe(true);
-    expect(mocks.trackBranchChoice).toHaveBeenCalledWith({ fromChapterId: 2, toChapterId: 9 });
+    expect(mocks.trackBranchChoice.mock.calls).toEqual([[{ fromChapterId: 2, toChapterId: 9 }]]);
   });
 
   it('a jump along the canon line is not recorded as a choice at a fork', () => {
