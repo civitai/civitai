@@ -180,6 +180,22 @@ describe('handleTextScanCallback', () => {
     });
   });
 
+  it('adds inputChars and inputCut from the submit metadata to result.meta', async () => {
+    vi.mocked(getWorkflow).mockResolvedValue(
+      workflow({ nsfw: { level: 'x', reason: 'r' } }, undefined, {
+        ...metadata,
+        subjectMeta: { messageIds: [5] },
+        inputChars: 250000,
+        inputCut: true,
+      }) as any
+    );
+    await handleTextScanCallback({ workflowId: 'wf-1', status: 'succeeded' });
+    expect(vi.mocked(updateMany).mock.calls[0][0].data.result).toMatchObject({
+      version: 1,
+      meta: { messageIds: [5], inputChars: 250000, inputCut: true },
+    });
+  });
+
   it('records result.textHash from the metadata captured at submit', async () => {
     vi.mocked(getWorkflow).mockResolvedValue(
       workflow({ nsfw: { level: 'x', reason: 'r' } }, undefined, {

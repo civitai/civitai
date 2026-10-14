@@ -176,7 +176,6 @@ export default function TagPage({
             </Group>
             <ModelsInfinite
               filters={{ ...queryFilters, followed: false, newCreators: false, hidden: false }}
-              periodFallback
               showEof
               showAds
             />

@@ -174,6 +174,7 @@
                                       : childLink.path}
                                     target={childLink.external ? '_blank' : undefined}
                                     rel={childLink.external ? 'noreferrer' : undefined}
+                                    data-sveltekit-preload-data={childLink.noPreload ? 'off' : undefined}
                                     {...props}
                                   >
                                     <span>{childLink.label}{childLink.external ? ' ↗' : ''}</span>

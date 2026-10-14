@@ -18,6 +18,8 @@ single orchestrator `chatCompletion` step with a strict JSON schema; the verdict
 | Actions per label                                                                     | `text-scan/actions/` and each entity's moderation adapter   |
 | Model-rule storage and history (append-only versions, written with every rule change) | `ModerationRule`, `ModerationRuleVersion`                   |
 
+**Input cap.** An entity's fields are composed into one text and cut to `maxInputChars` (default 200,000 characters, overridable in the config above). Every result's `meta` records `inputChars` (full composed length) and `inputCut` (whether the cap cut it), so a scan that did not see the whole text can be told apart.
+
 ## Entities
 
 The scanned entities, and the fields and labels each scans, are the profiles in
@@ -112,6 +114,34 @@ Turning it off does not undo verdicts already applied.
 - **active** — verdicts are written to the entity's row and actions run.
 
 A verdict that arrives after the mode has left `active` is not written to the live row.
+
+## Web-search pass (Model poi/minor)
+
+Whether a name is a real person, or how old a named character is, often needs outside knowledge.
+For Model only, a second scan can run with the orchestrator's `civitai:web_search` tool, asking only
+for `poi` and `minor`. It is slower and uses many more tokens than the main scan, so it has its own
+rollout: the sysRedis hash `system:text-scan:web-search`, same shape and bucket as the modes hash
+(`{ "shadow": 0-100, "active": 0-100 }`, field `Model`). A missing field is off. An id's search mode
+never exceeds its main mode, and the `text-scan` kill switch turns both off.
+
+- **shadow** — the main scan is unchanged; the search scan writes to its own `Model:search-shadow`
+  row and logs `scan-verdict` with `variant: 'web-search'` and `acted: false`. It never acts.
+- **active** (main scan also active) — the main scan stops asking for `poi`/`minor`; the search scan
+  writes to `Model:search` and its `poi`/`minor` verdict goes through the Model adapter. `nsfw` only
+  ever comes from the main scan, and neither scan clears a flag the other set.
+
+Both scans share the subject, input cap, prompt rows and dedupe rules; each row has its own retry
+adapter. Set it with the harness action `putWebSearchModes` on `/api/mod/text-scan`:
+
+```json
+{ "action": "putWebSearchModes", "entityType": "Model", "rollout": { "shadow": 10 } }
+{ "action": "putWebSearchModes", "entityType": "Model", "rollout": { "shadow": 100, "active": 10 }, "allowActive": true }
+{ "action": "putWebSearchModes", "entityType": "Model", "rollout": null }
+```
+
+Any entity type other than Model is refused, any `active` share needs `allowActive: true`, and the
+change is attributed to the signed-in moderator. `getPrompts` returns the current value as
+`webSearchModes`.
 
 ## Comparing with the existing systems
 

@@ -67,15 +67,31 @@ describe('collection sort options', () => {
     expect(feed.collectionOptions[0]).toBe(feed.recentlyAdded);
   });
 
-  // The image collection menu was a deliberate two-sort subset before this sort existed;
-  // it is asserted exactly, below.
-  it.each(feeds.filter((f) => f.name !== 'images'))(
+  // Images and models are both deliberate subsets, asserted exactly further down.
+  it.each(feeds.filter((f) => f.name !== 'images' && f.name !== 'models'))(
     '$name collection menu still offers every general sort',
     (feed) => {
       const generalMenu = feed.all.filter((x) => !feed.hidden.includes(x as never));
       for (const sort of generalMenu) expect(feed.collectionOptions).toContain(sort);
     }
   );
+
+  // Hot is browse-only: it must not reach a collection menu or the contest re-roll. These
+  // two are what stop a later `...spread` from re-coupling the menus to the enum.
+  it('keeps Hot out of the model collection menu while the general feed offers it', () => {
+    const generalMenu = Object.values(ModelSort).filter(
+      (x) => !Object.values(ModelSortHidden).includes(x)
+    );
+    expect(generalMenu).toContain(ModelSort.Hot);
+    expect(modelCollectionSortOptions).not.toContain(ModelSort.Hot);
+
+    for (const sort of generalMenu.filter((x) => x !== ModelSort.Hot))
+      expect(modelCollectionSortOptions).toContain(sort);
+  });
+
+  it('keeps Hot out of the contest re-roll pool', () => {
+    expect(contestModelSorts as readonly string[]).not.toContain(ModelSort.Hot);
+  });
 
   // Recently Added is opt-in for every collection type, images included: no viewer gets a
   // reordered feed without asking.

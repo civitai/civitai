@@ -46,4 +46,22 @@ describe('minimax H3 Max and HeyGen variants', () => {
     expect(slots(minimaxVersionIds.heygen)).toHaveLength(1);
     expect(slots(minimaxVersionIds.max)).toHaveLength(2);
   });
+
+  it('HeyGen and the API build start duration at 5; comfy and Max at 4', () => {
+    const min = (modelId: number) =>
+      (storeOn('txt2vid', modelId).getField('duration')?.meta as { min?: number })?.min;
+
+    expect(min(minimaxVersionIds.heygen)).toBe(5);
+    expect(min(minimaxVersionIds['v1.0'])).toBe(5);
+    expect(min(minimaxVersionIds.comfy)).toBe(4);
+    expect(min(minimaxVersionIds.max)).toBe(4);
+  });
+
+  it('a 4s duration picked on comfy does not reach HeyGen', () => {
+    const store = storeOn('txt2vid', minimaxVersionIds.comfy);
+    store.set({ duration: 4 });
+    store.set({ model: { id: minimaxVersionIds.heygen } });
+
+    expect(store.getField('duration')?.value).toBeGreaterThanOrEqual(5);
+  });
 });

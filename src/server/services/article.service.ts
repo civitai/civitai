@@ -35,6 +35,7 @@ import type {
 import { imageSelect, profileImageSelect } from '~/server/selectors/image.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { deriveArticleIngestionState } from '~/server/services/article-ingestion.helpers';
+import { getArticleScheduleError } from '~/server/services/article-schedule.helpers';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import {
   expandBlurbs,
@@ -765,7 +766,7 @@ export const getArticleById = async ({
       // edit form can render the override banner / picker. The public article
       // read payload is served by `getArticles`, not this function, so the
       // field doesn't flow into external webhook / search-index payloads.
-      select: { ...articleDetailSelect, moderatorNsfwLevel: true },
+      select: { ...articleDetailSelect, moderatorNsfwLevel: true, scheduledAt: true },
     });
 
     if (!article) throw throwNotFoundError(`No article with id ${id}`);
@@ -842,6 +843,7 @@ export const upsertArticle = async ({
   coverImage,
   isModerator,
   scanContent,
+  scheduledAt,
   ...data
 }: UpsertArticleInput & {
   userId: number;
@@ -849,6 +851,8 @@ export const upsertArticle = async ({
   metadata?: ArticleMetadata;
   scanContent?: boolean;
 }) => {
+  // Set only while the guarded draft write below is in flight, so its P2025 is told apart.
+  let writingNeverPublishedDraft = false;
   try {
     await throwOnBlockedUserContent([data.title, data.content], {
       isModerator,
@@ -901,6 +905,23 @@ export const upsertArticle = async ({
       storedLockedProperties: article?.lockedProperties,
       isModerator,
     });
+
+    // Scheduling stays a plain Draft (publishedAt NULL). Publishing now, or an explicit null, clears
+    // the schedule.
+    const scheduling = !!scheduledAt;
+    let scheduledAtWrite: Date | null | undefined;
+    if (scheduledAt) {
+      const scheduleError = getArticleScheduleError(article, scheduledAt, new Date());
+      if (scheduleError) throw throwBadRequestError(scheduleError);
+      data.status = ArticleStatus.Draft;
+      scheduledAtWrite = scheduledAt;
+    } else if (
+      scheduledAt === null ||
+      data.status === ArticleStatus.Published ||
+      data.status === ArticleStatus.Processing
+    ) {
+      scheduledAtWrite = null;
+    }
     if (!isModerator) {
       // moderatorNsfwLevel is a mod-only field. Silently strip it from
       // non-moderator payloads rather than throwing: the form never exposes
@@ -972,6 +993,7 @@ export const upsertArticle = async ({
           data: {
             ...data,
             publishedAt,
+            scheduledAt: scheduledAtWrite,
             coverId,
             userId,
             tags: tags
@@ -1103,7 +1125,8 @@ export const upsertArticle = async ({
     // SECURITY: Validate image scan status before allowing publish
     // Prevent publishing articles with blocked or failed images
     // Note: Pending images are allowed - article will remain in Processing status until scan completes
-    if (!isModerator && data.status === ArticleStatus.Published && scanContent) {
+    // Scheduling is a publish decided now, so it is refused on the same images.
+    if (!isModerator && (data.status === ArticleStatus.Published || scheduling) && scanContent) {
       const scanStatus = await getArticleScanStatus({ id });
       const hasProblematicImages = scanStatus.blocked > 0 || scanStatus.error > 0;
 
@@ -1199,14 +1222,21 @@ export const upsertArticle = async ({
       publishedAt = article.publishedAt;
     }
 
+    // Guarded: the job may have taken this draft live since the read, and an unguarded write would
+    // revert it to Draft and re-fire the go-live side effects on the next publish.
+    writingNeverPublishedDraft = article.status === ArticleStatus.Draft && !article.publishedAt;
+    const updateWhere: Prisma.ArticleWhereUniqueInput = writingNeverPublishedDraft
+      ? { id, status: ArticleStatus.Draft, publishedAt: null }
+      : { id };
     const result = await dbWrite.$transaction(async (tx) => {
       const updated = await tx.article.update({
-        where: { id },
+        where: updateWhere,
         data: {
           ...data,
           ...(moderatorNsfwLevelBasis !== undefined ? { moderatorNsfwLevelBasis } : {}),
           metadata: { ...prevMetadata, ...data.metadata },
           publishedAt,
+          scheduledAt: scheduledAtWrite,
           coverId,
           tags: tags
             ? {
@@ -1268,6 +1298,7 @@ export const upsertArticle = async ({
 
       return updated;
     });
+    writingNeverPublishedDraft = false;
 
     if (!result) throw throwNotFoundError(`No article with id ${id}`);
 
@@ -1315,6 +1346,14 @@ export const upsertArticle = async ({
     return { ...result, hasModeratorOverride };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
+    if (
+      writingNeverPublishedDraft &&
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === 'P2025'
+    )
+      throw throwBadRequestError(
+        'This article was published while you were editing it. Reload it and save again.'
+      );
     throw throwDbError(error);
   }
 };
@@ -1608,6 +1647,7 @@ export const getDraftArticlesByUserId = async ({
         createdAt: true,
         updatedAt: true,
         status: true,
+        scheduledAt: true,
         tags: {
           where: { tag: { isCategory: true } },
           select: { tag: { select: { id: true, name: true } } },

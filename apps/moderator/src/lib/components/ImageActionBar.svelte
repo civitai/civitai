@@ -24,6 +24,7 @@
     flags = true,
     blockedIds,
     maxSelection,
+    bare = false,
   }: {
     selected: SvelteSet<string | number>;
     /** Every id currently on screen, for the select-all helpers. */
@@ -41,6 +42,8 @@
     blockedIds?: Set<string | number>;
     /** The action's id cap, when the caller has one. Submitting past it is refused server-side. */
     maxSelection?: number;
+    /** No box of its own, for a host that folds the bar into its own toolbar card. */
+    bare?: boolean;
   } = $props();
 
   // Scopes the strike checkbox's `for`/`id` pair — this bar is mounted on three routes.
@@ -109,10 +112,12 @@
 </script>
 
 <section
-  class={cn(
-    'mb-4 rounded-xl border p-5',
-    count > 0 ? 'border-blue-500/40 bg-blue-500/5' : 'border-dark-4 bg-dark-6'
-  )}
+  class={bare
+    ? undefined
+    : cn(
+        'mb-4 rounded-xl border p-5',
+        count > 0 ? 'border-blue-500/40 bg-blue-500/5' : 'border-dark-4 bg-dark-6'
+      )}
 >
   <div class="flex flex-wrap items-center justify-between gap-3">
     <p class="text-sm text-dark-2">

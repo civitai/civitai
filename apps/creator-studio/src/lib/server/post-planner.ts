@@ -32,12 +32,3 @@ export function callPlanner<T>(
     timeoutMs: 30_000,
   });
 }
-
-/** Only the hub's session cookies cross to the main app; this app's own test-simulator cookies stay here. */
-export function sessionCookies(request: Request): string {
-  return (request.headers.get('cookie') ?? '')
-    .split(';')
-    .map((part) => part.trim())
-    .filter((part) => part.startsWith('civ-'))
-    .join('; ');
-}

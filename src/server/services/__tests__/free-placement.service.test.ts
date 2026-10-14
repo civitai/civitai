@@ -427,13 +427,19 @@ describe('the advisory locks have exactly one call site', () => {
   // slug), always in that order, so a resent report cannot be filed twice and mirror writes serialise.
   // support-membership-code takes one per moderator (0x4d430001) for the daily mint cap's
   // count-then-insert, never nested inside another lock.
+  // creator-score-grant takes one per moderator (0x43530001) for the daily grant cap's
+  // count-then-insert, then the target's User row lock; never nested inside another advisory lock.
+  // text-scan/prompt takes one per prompt key (single-arg hashtext form) so two saves from the same
+  // base version cannot both insert as newest; never nested inside another lock.
   const ALLOWED = [
     'services/article.service.ts',
     'services/creator-announcement.service.ts',
     'services/creator-gallery-hidden-users.service.ts',
+    'services/creator-score-grant.service.ts',
     'services/free-placement.service.ts',
     'services/game-frame-report.service.ts',
     'services/support-membership-code.service.ts',
+    'services/text-scan/prompt.ts',
   ];
 
   it('is taken only inside createFreePlacement', () => {

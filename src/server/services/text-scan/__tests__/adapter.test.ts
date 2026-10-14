@@ -12,6 +12,7 @@ vi.mock('~/server/services/text-scan/submit', async (importOriginal) => ({
 vi.mock('~/server/services/text-scan/mode', async (importOriginal) => ({
   ...(await importOriginal<typeof ModeModule>()),
   getTextScanMode: vi.fn(),
+  getTextScanWebSearchMode: vi.fn(),
 }));
 vi.mock('~/server/services/text-scan/prompt', async (importOriginal) => ({
   ...(await importOriginal<typeof PromptModule>()),
@@ -20,12 +21,17 @@ vi.mock('~/server/services/text-scan/prompt', async (importOriginal) => ({
     .mockResolvedValue({ model: 'm', maxInputChars: 1000, thinking: false }),
 }));
 
-const { createTextScanAdapter, createTextScanShadowAdapter, textScanShadowAdapters } = await import(
-  '~/server/services/text-scan/adapter'
-);
+const {
+  createTextScanAdapter,
+  createTextScanShadowAdapter,
+  textScanShadowAdapters,
+  textScanWebSearchAdapters,
+} = await import('~/server/services/text-scan/adapter');
 const { registerTextScanProfile } = await import('~/server/services/text-scan/profiles');
 const { scanEntity } = await import('~/server/services/text-scan/submit');
-const { getTextScanMode } = await import('~/server/services/text-scan/mode');
+const { getTextScanMode, getTextScanWebSearchMode } = await import(
+  '~/server/services/text-scan/mode'
+);
 
 const load = vi.fn();
 registerTextScanProfile({ entityType: 'Post', labels: ['nsfw'], minChars: 5, load });
@@ -126,5 +132,42 @@ describe('submitViaTextScan (retry cron)', () => {
     vi.mocked(scanEntity).mockResolvedValue({ status: 'skipped', reason: 'off' });
     await adapter.submit({ entityId: 9, content: '' });
     expect(dbMock.dbWrite.entityModeration.updateMany).not.toHaveBeenCalled();
+  });
+});
+
+describe('textScanWebSearchAdapters', () => {
+  const adapters = textScanWebSearchAdapters();
+
+  it('registers a hookless adapter per web-search row, Model only', () => {
+    expect(Object.keys(adapters).sort()).toEqual(['Model:search', 'Model:search-shadow']);
+    for (const a of Object.values(adapters)) {
+      expect(a.applyTextScan).toBeUndefined();
+      expect(a.applyFailure).toBeUndefined();
+    }
+  });
+
+  it.each([
+    ['Model:search', 'active', true],
+    ['Model:search', 'shadow', false],
+    ['Model:search-shadow', 'shadow', true],
+    ['Model:search-shadow', 'active', false],
+    ['Model:search-shadow', 'off', false],
+  ] as const)('%s is enabled in search mode %s: %s', async (key, mode, enabled) => {
+    vi.mocked(getTextScanWebSearchMode).mockResolvedValue(mode);
+    expect(await adapters[key].isEnabled!({ entityId: 1 })).toBe(enabled);
+    expect(getTextScanWebSearchMode).toHaveBeenCalledWith('Model', 1);
+  });
+
+  it('resubmits only the web-search pass', async () => {
+    vi.mocked(scanEntity).mockResolvedValue({ status: 'submitted', workflowId: 'wf-s' });
+    expect(await adapters['Model:search'].submit({ entityId: 1, content: '' })).toEqual({
+      id: 'wf-s',
+    });
+    expect(scanEntity).toHaveBeenCalledWith({
+      entityType: 'Model',
+      entityId: 1,
+      fromRetry: true,
+      pass: 'web-search',
+    });
   });
 });

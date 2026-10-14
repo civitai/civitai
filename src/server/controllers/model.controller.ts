@@ -158,6 +158,7 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { getRequestBoardDomainColor } from '~/server/utils/server-domain';
+import { resolveRequestBrowsingLevels } from '~/server/utils/browsing-level';
 import { getPrimaryFile, selectLiveLinkedComponents } from '~/server/utils/model-helpers';
 import {
   GET_ALL_IMAGES_PER_MODEL,
@@ -608,6 +609,10 @@ export const getModelsInfiniteHandler = async ({
   ctx: Context;
 }) => {
   try {
+    // The input schema leaves `browsingLevel` optional with no default, so a signed-in
+    // caller who omits it where the domain caps nothing would otherwise reach the query
+    // with no level and get no rows.
+    resolveRequestBrowsingLevels(input, ctx);
     let loopCount = 0;
     let isPrivate = false;
     let nextCursor: string | bigint | undefined;
@@ -623,8 +628,6 @@ export const getModelsInfiniteHandler = async ({
     // value so the feed-hydration path skips the metric-privacy resolution when OFF.
     const metricPrivacyEnabled = !!ctx.features.modelMetricPrivacyReadtime;
     const results: Awaited<ReturnType<typeof getModelsWithImagesAndModelVersions>>['items'] = [];
-    // The loop below advances `input.cursor`, so capture what the caller actually asked for.
-    const requestedCursor = input.cursor;
     while (results.length < (input.limit ?? 100) && loopCount < 3) {
       const result = await getModelsWithImagesAndModelVersions({
         input,
@@ -643,36 +646,6 @@ export const getModelsInfiniteHandler = async ({
       input.cursor = result.nextCursor;
       nextCursor = result.nextCursor;
       loopCount++;
-    }
-
-    // A period-filtered feed that finds nothing is a dead end on surfaces whose whole
-    // purpose is to list one collection — /tag/:name promises "N models tagged X" in its
-    // meta description and CollectionPage schema, then renders an empty grid whenever
-    // none of those models shipped inside the window. Retry once at AllTime so the page
-    // shows the content it advertises. First page only: deep paging legitimately runs out.
-    if (
-      !results.length &&
-      !requestedCursor &&
-      input.periodFallback &&
-      input.period !== MetricTimeframe.AllTime
-    ) {
-      const fallback = await getModelsWithImagesAndModelVersions({
-        input: { ...input, cursor: undefined, period: MetricTimeframe.AllTime },
-        user: ctx.user,
-        domain: getRequestBoardDomainColor(ctx.req),
-        imagesPerModel,
-        biasImageSlice: slim,
-        metricPrivacyEnabled,
-        // model.getAll never edge-caches a signed-in response (skipEdgeCache).
-        eventDecorationViewer: ctx.user,
-      });
-      if (fallback.isPrivate) isPrivate = true;
-      if (isPrivate) ctx.cache.canCache = false;
-      return {
-        items: fallback.items,
-        nextCursor: fallback.nextCursor,
-        periodFallbackApplied: true,
-      };
     }
 
     if (isPrivate) ctx.cache.canCache = false;

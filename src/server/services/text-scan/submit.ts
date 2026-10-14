@@ -6,7 +6,13 @@ import { logToAxiom } from '~/server/logging/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { hashContent } from '~/server/services/entity-moderation.service';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
-import { getTextScanMode, textScanEmEntityType } from '~/server/services/text-scan/mode';
+import {
+  getTextScanMode,
+  getTextScanWebSearchMode,
+  TEXT_SCAN_WEB_SEARCH_LABELS,
+  textScanEmEntityType,
+  type TextScanVariant,
+} from '~/server/services/text-scan/mode';
 import { getModelRulesForPrompt } from '~/server/services/text-scan/model-rules';
 import { findLiteralHitsInSubject } from '~/server/services/text-scan/model-rules-literal';
 import { getTextScanProfile } from '~/server/services/text-scan/profiles';
@@ -71,12 +77,14 @@ export function buildTextScanStep({
   model,
   labels,
   thinking,
+  webSearch = false,
 }: {
   system: string;
   user: string;
   model: string;
   labels: TextScanLabel[];
   thinking: boolean;
+  webSearch?: boolean;
 }) {
   // The generated ChatCompletionMessage type declares only `role`; content is untyped upstream.
   const input: Record<string, unknown> = {
@@ -89,6 +97,8 @@ export function buildTextScanStep({
     maxTokens: MAX_OUTPUT_TOKENS,
     chatTemplateKwargs: { enable_thinking: thinking },
     responseFormat: buildTextScanResponseFormat(labels),
+    // Auto tool choice: the model decides whether a name needs looking up.
+    ...(webSearch ? { tools: [{ type: 'civitai:web_search' }] } : {}),
   };
   return { $type: 'chatCompletion', name: 'textScan', input } as ChatCompletionStepTemplate;
 }
@@ -99,12 +109,14 @@ export function textScanContentHash({
   model,
   thinking,
   rulesFingerprint,
+  variant,
 }: {
   user: string;
   promptIds: PromptIds;
   model: string;
   thinking: boolean;
   rulesFingerprint?: string;
+  variant?: TextScanVariant;
 }) {
   const ids = Object.keys(promptIds)
     .sort()
@@ -112,7 +124,8 @@ export function textScanContentHash({
     .join(',');
   // Appended only when present, so every existing row's hash is unchanged.
   const rules = rulesFingerprint ? `\u0000rules=${rulesFingerprint}` : '';
-  return hashContent(`${user}\u0000${ids}\u0000${model}\u0000thinking=${thinking}${rules}`);
+  const tail = variant ? `\u0000${variant}` : '';
+  return hashContent(`${user}\u0000${ids}\u0000${model}\u0000thinking=${thinking}${rules}${tail}`);
 }
 
 export function textScanExternalId({
@@ -159,17 +172,15 @@ const NO_TEXT_REASON = 'No text left to scan.';
 async function clearStaleVerdict({
   entityType,
   entityId,
-  mode,
-  labels,
+  pass: { mode, labels, variant },
   subject,
 }: {
   entityType: TextScanEntityType;
   entityId: number;
-  mode: Exclude<TextScanMode, 'off'>;
-  labels: TextScanLabel[];
+  pass: TextScanPass;
   subject: TextScanSubject;
 }) {
-  const emEntityType = textScanEmEntityType(entityType, mode);
+  const emEntityType = textScanEmEntityType(entityType, mode, variant);
   const existing = await dbWrite.entityModeration.findUnique({
     where: { entityType_entityId: { entityType: emEntityType, entityId } },
     select: {
@@ -217,28 +228,64 @@ async function clearStaleVerdict({
   });
 }
 
+export type TextScanPass = {
+  mode: Exclude<TextScanMode, 'off'>;
+  labels: TextScanLabel[];
+  variant?: TextScanVariant;
+};
+
+/**
+ * The main pass, plus the web-search pass when its rollout covers the entity. In shadow the search
+ * pass only duplicates poi/minor; in active it owns them, so the main pass stops asking for them.
+ */
+export function planTextScanPasses(
+  labels: TextScanLabel[],
+  mode: Exclude<TextScanMode, 'off'>,
+  searchMode: TextScanMode
+): TextScanPass[] {
+  const isSearchLabel = (label: TextScanLabel) =>
+    (TEXT_SCAN_WEB_SEARCH_LABELS as readonly TextScanLabel[]).includes(label);
+  const searchLabels = labels.filter(isSearchLabel);
+  if (searchMode === 'off' || !searchLabels.length) return [{ mode, labels }];
+  const mainLabels = searchMode === 'active' ? labels.filter((l) => !isSearchLabel(l)) : labels;
+  return [
+    ...(mainLabels.length ? [{ mode, labels: mainLabels }] : []),
+    { mode: searchMode, labels: searchLabels, variant: 'web-search' as const },
+  ];
+}
+
 export async function scanEntity({
   entityType,
   entityId,
   force = false,
   fromRetry = false,
+  pass: only,
 }: {
   entityType: TextScanEntityType;
   entityId: number;
   force?: boolean;
   /** The retry cron already judged this row's Pending state as timed out. */
   fromRetry?: boolean;
+  /** One pass only, for the retry cron's per-row adapters; both run when omitted. */
+  pass?: 'main' | 'web-search';
 }): Promise<ScanEntityResult> {
   const mode = await getTextScanMode(entityType, entityId);
   if (mode === 'off') return { status: 'skipped', reason: 'off' };
+  const searchMode = await getTextScanWebSearchMode(entityType, entityId, mode);
+  if (only === 'web-search' && searchMode === 'off') return { status: 'skipped', reason: 'off' };
 
   const profile = getTextScanProfile(entityType);
   if (!profile) return { status: 'skipped', reason: 'no-profile' };
 
+  const passes = planTextScanPasses(profile.labels, mode, searchMode).filter(
+    (p) => !only || (only === 'web-search') === (p.variant === 'web-search')
+  );
+  if (!passes.length) return { status: 'skipped', reason: 'off' };
+
   const subject = (await profile.load([entityId])).get(entityId);
   if (!subject) return { status: 'skipped', reason: 'missing' };
   if (subjectTextLength(subject) < (profile.minChars ?? 1)) {
-    await clearStaleVerdict({ entityType, entityId, mode, labels: profile.labels, subject });
+    for (const pass of passes) await clearStaleVerdict({ entityType, entityId, pass, subject });
     return { status: 'skipped', reason: 'too-short' };
   }
 
@@ -247,12 +294,53 @@ export async function scanEntity({
     getActiveTextScanPrompts(),
     profile.labels.includes('modelRules') ? getModelRulesForPrompt() : undefined,
   ]);
+  const ctx = { entityType, entityId, subject, config, prompts, modelRules, force };
 
+  const [first, ...rest] = passes;
+  const result = await submitTextScanPass({ ...ctx, fromRetry, pass: first });
+  for (const pass of rest) {
+    // The retry cron judged only the main row stuck; the search row has its own adapter.
+    // The main verdict is already submitted; a search-pass error must not report it as failed.
+    await submitTextScanPass({ ...ctx, fromRetry: false, pass }).catch((e) =>
+      logToAxiom({
+        name: 'text-scan',
+        type: 'error',
+        message: 'web-search pass threw',
+        entityType,
+        entityId,
+        error: (e as Error).message,
+      })
+    );
+  }
+  return result;
+}
+
+async function submitTextScanPass({
+  entityType,
+  entityId,
+  subject,
+  config,
+  prompts,
+  modelRules,
+  force,
+  fromRetry,
+  pass: { mode, labels, variant },
+}: {
+  entityType: TextScanEntityType;
+  entityId: number;
+  subject: TextScanSubject;
+  config: Awaited<ReturnType<typeof getTextScanConfig>>;
+  prompts: Awaited<ReturnType<typeof getActiveTextScanPrompts>>;
+  modelRules: Awaited<ReturnType<typeof getModelRulesForPrompt>> | undefined;
+  force: boolean;
+  fromRetry: boolean;
+  pass: TextScanPass;
+}): Promise<ScanEntityResult> {
   let composed: ReturnType<typeof composeTextScanMessages>;
   try {
     composed = composeTextScanMessages({
       prompts,
-      labels: profile.labels,
+      labels,
       subject,
       maxInputChars: config.maxInputChars,
       modelRules,
@@ -269,9 +357,10 @@ export async function scanEntity({
     model: config.model,
     thinking: config.thinking,
     rulesFingerprint: composed.rulesFingerprint,
+    variant,
   });
 
-  const emEntityType = textScanEmEntityType(entityType, mode);
+  const emEntityType = textScanEmEntityType(entityType, mode, variant);
   // Primary, not replica: the retry cron bumps retryCount on dbWrite, and a lagging read
   // would rebuild the previous attempt's externalId and get its dead workflow back.
   const existing = await dbWrite.entityModeration.findUnique({
@@ -317,12 +406,15 @@ export async function scanEntity({
     entityId,
     emEntityType,
     mode,
+    ...(variant ? { variant } : {}),
     externalId,
-    labels: profile.labels,
+    labels,
     promptIds: composed.promptIds,
     model: config.model,
     thinking: config.thinking,
     textHash: textScanTextHash(subject),
+    inputChars: composed.inputChars,
+    inputCut: composed.inputCut,
     ...(subject.meta ? { subjectMeta: subject.meta } : {}),
     ...(composed.ruleIds
       ? { ruleIds: composed.ruleIds, rulesFingerprint: composed.rulesFingerprint }
@@ -347,7 +439,7 @@ export async function scanEntity({
       client: internalOrchestratorClient,
       body: {
         metadata,
-        tags: ['text-scan', entityType, mode],
+        tags: ['text-scan', entityType, mode, ...(variant ? [variant] : [])],
         externalId,
         currencies: [],
         steps: [
@@ -355,8 +447,9 @@ export async function scanEntity({
             system: composed.system,
             user: composed.user,
             model: config.model,
-            labels: profile.labels,
+            labels,
             thinking: config.thinking,
+            webSearch: variant === 'web-search',
           }),
         ],
         callbacks: [
@@ -385,6 +478,7 @@ export async function scanEntity({
       message: 'submit failed',
       entityType,
       entityId,
+      ...(variant ? { variant } : {}),
       error: error instanceof Error ? error.message : error,
     });
     await markTextScanSubmitFailed({ entityType: emEntityType, entityId, marker: externalId });
@@ -404,6 +498,7 @@ export async function scanEntity({
     entityType,
     entityId,
     mode,
+    ...(variant ? { variant } : {}),
     workflowId,
   }).catch(() => null);
   return { status: 'submitted', workflowId };

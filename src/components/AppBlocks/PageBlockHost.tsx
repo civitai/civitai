@@ -85,6 +85,11 @@ import { projectSafeGenerationResource } from '~/server/schema/blocks/generation
 import type { GenerationResource } from '~/shared/types/generation.types';
 import type { BlockUploadedImageInfo } from './BlockImageUploadModal';
 import type { BlockSourceImageInfo } from './BlockGenerationSourceUploadModal';
+import {
+  buildImagePickerReply,
+  resolveImagePickerRequest,
+  type BlockPickedImageInfo,
+} from './imagePickerLogic';
 import { BlockImageScanPoller } from './BlockImageScanPoller';
 import { BlockImageBytesUploader } from './BlockImageBytesUploader';
 import type { BlockImageScanResult } from './blockImageScanLogic';
@@ -183,6 +188,8 @@ const BlockGenerationSourceUploadModal = dynamic(
   () => import('./BlockGenerationSourceUploadModal'),
   { ssr: false }
 );
+
+const BlockImagePickerModal = dynamic(() => import('./BlockImagePickerModal'), { ssr: false });
 
 // Login flow for anonymous-conversion (REQUEST_SIGN_IN). The page route renders
 // for logged-out viewers (the BLOCK_INIT context is viewer-scoped, viewer:null),
@@ -4235,6 +4242,45 @@ export function PageBlockHost({
     return off;
     // `status` deliberately absent — see the REQUEST_CONSENT deps note.
   }, [onMessage, send, readGateStatus, reviewMode, token, reportNoToken]);
+
+  // OPEN_IMAGE_PICKER → IMAGE_PICKER_RESULT. Every request carrying a requestId is answered: a
+  // silent return strands the block until its picker timeout.
+  useEffect(() => {
+    const off = onMessage<unknown>('OPEN_IMAGE_PICKER', (raw) => {
+      const decision = resolveImagePickerRequest(raw);
+      if (decision.kind === 'drop') return;
+      if (decision.kind === 'refuse') {
+        send('IMAGE_PICKER_RESULT', { requestId: decision.requestId, error: decision.error });
+        return;
+      }
+      const { request } = decision;
+
+      // The modal lists a private library under the real session, so unapproved review code and a
+      // pre-handshake block are answered as a dismissal instead of opening it.
+      if (reviewMode || readGateStatus() !== 'ready') {
+        send('IMAGE_PICKER_RESULT', buildImagePickerReply(request, []));
+        return;
+      }
+
+      let picked: BlockPickedImageInfo[] = [];
+      dialogStore.trigger({
+        id: `block-image-picker-${request.requestId}`,
+        component: BlockImagePickerModal,
+        props: {
+          sources: request.sources,
+          max: request.max,
+          onResolved: (result: BlockPickedImageInfo[]) => {
+            picked = result;
+          },
+        },
+        options: {
+          onClose: () => send('IMAGE_PICKER_RESULT', buildImagePickerReply(request, picked)),
+        },
+      });
+    });
+    return off;
+    // `status` deliberately absent — see the REQUEST_CONSENT deps note.
+  }, [onMessage, send, readGateStatus, reviewMode]);
 
   // ── SET_USER_CHECKPOINT → USER_CHECKPOINT_SET (fail-fast NACK on a page) ──────
   //

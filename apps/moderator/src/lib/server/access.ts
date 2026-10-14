@@ -37,6 +37,8 @@ export type NavLink = {
   // The section is granted as one page and its children are neither granted nor checked individually. Making
   // these children grantable would drop the grants already stored against the parent path.
   sharedAccess?: boolean;
+  // Hover-preloading runs the page's `load`; for a page whose load takes a lease, that is a write.
+  noPreload?: boolean;
   children?: NavLink[];
 };
 
@@ -85,6 +87,8 @@ export const NAVIGATION: NavLink[] = [
         countKey: 'removedAppeals',
       },
       { path: '/images/csam', label: 'CSAM', countKey: 'csam' },
+      { path: '/images/scan-labels', label: 'Scan Labels', noPreload: true },
+      { path: '/images/scan-label-metrics', label: 'Scan Label Metrics' },
       { path: '/images/tags', label: 'Image Tags', countKey: 'imageTags' },
       { path: '/images/ratings', label: 'Image Ratings', countKey: 'imageRatings' },
       { path: '/images/downleveled', label: 'Downleveled' },

@@ -69,6 +69,7 @@ import {
   WITHDRAWAL_FEES,
 } from '~/shared/constants/creator-program.constants';
 import { getCapForDefinition } from '~/shared/utils/creator-program.utils';
+import { creatorScoreCategorySumSql } from '~/shared/utils/creator-score';
 import { Flags } from '~/shared/utils/flags';
 import { CashWithdrawalMethod, CashWithdrawalStatus } from '~/shared/utils/prisma/enums';
 import { withRetries } from '~/utils/errorHandling';
@@ -261,12 +262,7 @@ export async function getCreatorRequirements(userId: number) {
     -- We are doing greatest in case the meta->'scores'->'total' is not properly computated.
     -- Noticed a few cases where it was different than the total sum (lower). Safeguard here.
     GREATEST(
-      COALESCE((u.meta->'scores'->>'models')::numeric, 0)
-      + COALESCE((u.meta->'scores'->>'articles')::numeric, 0)
-      + COALESCE((u.meta->'scores'->>'images')::numeric, 0)
-      + COALESCE((u.meta->'scores'->>'users')::numeric, 0)
-      + COALESCE((u.meta->'scores'->>'reportsActioned')::numeric, 0)
-      + COALESCE((u.meta->'scores'->>'reportsAgainst')::numeric, 0),
+      ${Prisma.raw(creatorScoreCategorySumSql('u.meta'))},
       COALESCE((meta->'scores'->'total')::numeric, 0)
     ) as score,
     (

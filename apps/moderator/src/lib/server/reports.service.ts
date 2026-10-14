@@ -262,6 +262,25 @@ export async function getReports({
   return { items, totalItems, page, limit };
 }
 
+/**
+ * Which of these models the owner marked minor themselves. Excluded: a flag in `lockedProperties`,
+ * and any model carrying a flag snapshot or a text-scan minor record, since those are written only
+ * by moderator and automated flagging. Read at render time: an unflag or a lock drops the model.
+ */
+export async function getOwnerFlaggedMinorModelIds(ids: number[]): Promise<number[]> {
+  if (!ids.length) return [];
+  const rows = await dbRead
+    .selectFrom('Model')
+    .select('id')
+    .where('id', 'in', ids)
+    .where('minor', '=', true)
+    .where(sql<boolean>`not ('minor' = any(coalesce("lockedProperties", '{}')))`)
+    .where(sql<boolean>`not (coalesce("meta", '{}'::jsonb) ? 'minorFlagSnapshot')`)
+    .where(sql<boolean>`not (coalesce("meta"->'textScanFlags', '{}'::jsonb) ? 'minor')`)
+    .execute();
+  return rows.map((r) => r.id);
+}
+
 // Who has been working a queue (Retool's ReportHistory), so two moderators do not action the same
 // subject twice. Lives here rather than beside a page: it is keyed on nothing page-specific, and every
 // report surface eventually wants it.
@@ -446,6 +465,8 @@ export type MostReportedRow = {
   /** Site-relative deep link for entities with no page of their own — see `commentContextUrl`. */
   contextUrl: string | null;
   reportedByUsername: string | null;
+  /** See `getOwnerFlaggedMinorModelIds`. Always false for anything but a model. */
+  ownerFlaggedMinor: boolean;
 };
 
 // Content the community is piling reports onto — the signal moderators use to find the worst
@@ -456,7 +477,7 @@ export type MostReportedRow = {
 // started before an action writes its pre-action rows back after it. This is a list moderators WORK —
 // ten rows at a time, deciding on each — so it has to answer for the database, not for a snapshot.
 export async function getMostReported(params: MostReportedParams): Promise<MostReportedRow[]> {
-  const rows = await fetchMostReported(params);
+  const rows = await withOwnerFlaggedMinor(await fetchMostReported(params));
   if (!rows.length) return rows;
 
   // Even uncached, the read is a replica and the decision that just resolved these went to the
@@ -473,6 +494,20 @@ export async function getMostReported(params: MostReportedParams): Promise<MostR
     return rows;
   }
   return rows.filter((_, i) => !resolved[i]);
+}
+
+async function withOwnerFlaggedMinor(
+  rows: Omit<MostReportedRow, 'ownerFlaggedMinor'>[]
+): Promise<MostReportedRow[]> {
+  const flagged = new Set(
+    await getOwnerFlaggedMinorModelIds(
+      rows.flatMap((r) => (r.entity === 'model' && r.entityId != null ? [r.entityId] : []))
+    )
+  );
+  return rows.map((r) => ({
+    ...r,
+    ownerFlaggedMinor: r.entity === 'model' && r.entityId != null && flagged.has(r.entityId),
+  }));
 }
 
 /**
@@ -575,7 +610,7 @@ async function fetchMostReported({
   limit,
   offset = 0,
   days = 7,
-}: MostReportedParams): Promise<MostReportedRow[]> {
+}: MostReportedParams): Promise<Omit<MostReportedRow, 'ownerFlaggedMinor'>[]> {
   // Raw sql throughout: `alsoReportedBy` is a Postgres array and the ordering key, and the
   // per-type id columns are generated from `reportEntityJoin` rather than written out.
   //
@@ -671,6 +706,63 @@ export async function getReportedGame(reportId: number): Promise<ReportedGame | 
     reason: row.reason,
     violation: typeof details?.violation === 'string' ? details.violation : null,
   };
+}
+
+/**
+ * The model a report is about, read through its join row — never taken from the form. A posted model
+ * id would let a stale tab unpublish one model and action a report about another. Null for a report
+ * that is not a model's, or no longer exists.
+ */
+export async function getReportedModelId(reportId: number): Promise<number | null> {
+  // The primary, not the replica: the moderator is acting on a row they just opened.
+  const row = await dbWrite
+    .selectFrom('ModelReport')
+    .select('modelId')
+    .where('reportId', '=', reportId)
+    .executeTakeFirst();
+  return row?.modelId ?? null;
+}
+
+/**
+ * Where each reported model stands now, so the panel can say it plainly and offer only the actions
+ * that would change it. In the page load rather than the client-fetched preview: an action reloads the
+ * load, so the status beside the buttons is never the one from before the click.
+ */
+export type ReportedModelState = {
+  id: number;
+  name: string;
+  status: string;
+  mode: string | null;
+  minor: boolean;
+  sfwOnly: boolean;
+  poi: boolean;
+  nsfw: boolean;
+  deleted: boolean;
+  /** From `meta`, as the main app wrote it when the model was unpublished or taken down. */
+  unpublishedReason: string | null;
+  unpublishedAt: string | null;
+  takenDownAt: string | null;
+};
+
+const metaString = (meta: unknown, key: string): string | null => {
+  const v = meta && typeof meta === 'object' ? (meta as Record<string, unknown>)[key] : undefined;
+  return typeof v === 'string' && v ? v : null;
+};
+
+export async function getReportedModelStates(ids: number[]): Promise<ReportedModelState[]> {
+  if (!ids.length) return [];
+  const rows = await dbRead
+    .selectFrom('Model')
+    .select(['id', 'name', 'status', 'mode', 'minor', 'sfwOnly', 'poi', 'nsfw', 'deletedAt', 'meta'])
+    .where('id', 'in', ids)
+    .execute();
+  return rows.map(({ deletedAt, meta, ...r }) => ({
+    ...r,
+    deleted: deletedAt != null,
+    unpublishedReason: metaString(meta, 'unpublishedReason'),
+    unpublishedAt: metaString(meta, 'unpublishedAt'),
+    takenDownAt: metaString(meta, 'takenDownAt'),
+  }));
 }
 
 export type GameMirror = { id: number; title: string; visibility: string; official: boolean };

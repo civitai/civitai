@@ -5,7 +5,8 @@ import {
   PLANNER_READ_PARAMS,
 } from '@civitai/post-planner/contract';
 import type { RequestHandler } from './$types';
-import { callPlanner, postPlannerEnabled, sessionCookies } from '$lib/server/post-planner';
+import { callPlanner, postPlannerEnabled } from '$lib/server/post-planner';
+import { sessionCookies } from '$lib/server/session-cookies';
 
 /** Same-site pages share the session cookie, so a write must look like this app's own fetch: JSON,
  *  and same-origin when the browser says where it came from. SvelteKit's CSRF check covers form

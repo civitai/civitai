@@ -41,6 +41,10 @@ export const PERMISSIONS = [
   { id: 'user.ban', label: 'Ban or unban an account' },
   { id: 'user.purge', label: 'Purge an account’s content (irreversible)' },
   { id: 'user.comments.bulk', label: 'Bulk delete or ToS an account’s comments' },
+  // The main site gates this on the moderator role alone. Narrower here because a take-down answers
+  // an ownership or claim dispute — a legal question, not a content one — and the model reports panel
+  // puts the button one click from every report in the queue.
+  { id: 'model.takeDown', label: 'Take down a model (ownership / claim)' },
 
   // Also destructive, but never behind the page grant: an erasure request, carried out by the
   // main app's `deleteUser`. That app checks this id by its literal (`ModeratorGrantId` in
@@ -89,6 +93,7 @@ export const PERMISSIONS = [
   // Support tickets carry the requester's email, a different class of data from anything moderation
   // shows. Without this the email is never even selected — see `ticketSql`.
   { id: 'decisions.support.pii', label: 'See support-ticket requester emails on Decisions' },
+  { id: 'scan-label.quota.edit', label: 'Set scan label voters and their daily quotas' },
 ] as const satisfies readonly { id: string; label: string }[];
 
 export type Permission = (typeof PERMISSIONS)[number];

@@ -136,8 +136,14 @@ const reportedPlacementFilter = ({
  * Game reports are all filed against one game, and most of Game Frame's reasons share
  * `TOSViolation`. Without the violation in the match, a "Child abuse and exploitation" report folds
  * into an earlier "Hate or harassment" one, and the queue shows the moderator the hate label.
+ *
+ * A game report is also about a subject: the game itself (`game`) or one player's picture in it
+ * (`image:<key>`). Matching on it keeps a report about a picture from folding into one about the
+ * game or about another picture, where its picture would be dropped with the rest of its details.
+ * Reports filed before subjects existed carry none, so a new game report won't fold into them: a
+ * duplicate in the queue, never a lost picture.
  */
-const reportedViolationFilter = ({
+const reportedGameFrameFilter = ({
   reportType,
   reason,
   details,
@@ -145,12 +151,16 @@ const reportedViolationFilter = ({
   reportType: ReportEntity;
   reason: ReportReason;
   details?: MixedObject;
-}) => {
-  if (reportType !== ReportEntity.GameFrameGame || reason !== ReportReason.TOSViolation) return {};
-  const violation = (details as { violation?: unknown } | undefined)?.violation;
+}): Prisma.ReportWhereInput[] => {
+  if (reportType !== ReportEntity.GameFrameGame) return [];
+  const { subject, violation } = (details ?? {}) as { subject?: unknown; violation?: unknown };
+  if (typeof subject !== 'string' || !subject)
+    throw throwBadRequestError('report: a game report must name its subject');
+  const filters: Prisma.ReportWhereInput[] = [{ details: { path: ['subject'], equals: subject } }];
+  if (reason !== ReportReason.TOSViolation) return filters;
   if (typeof violation !== 'string' || !violation)
     throw throwBadRequestError('report: a game TOS report must name its violation');
-  return { details: { path: ['violation'], equals: violation } };
+  return [...filters, { details: { path: ['violation'], equals: violation } }];
 };
 
 /** The existing report a new one on this entity would be folded into, if any. */
@@ -169,19 +179,23 @@ export const findReportToFoldInto = ({
 }) => {
   const db = tx ?? dbWrite;
   const entityIdField = reportType === ReportEntity.User ? 'userId' : `${reportType}Id`;
+  // A sticker report names one placement, and an image can carry several.
+  // Deduping on (reason, image) alone folds a report about placement 2 into
+  // an existing one about placement 1 and drops the new details, so a
+  // moderator acting on it removes the wrong person's sticker and keeps
+  // their Buzz. Narrowed to the placement so the same one still dedupes and
+  // a different one does not. Every other reason is unaffected — the
+  // predicate is only added when there is a placement to add it for.
+  const placement = reportedPlacementFilter({ reason, details });
+  const narrowing = [
+    ...(('AND' in placement ? placement.AND : undefined) ?? []),
+    ...reportedGameFrameFilter({ reportType, reason, details }),
+  ];
   return db.report.findFirst({
     where: {
       reason,
       [reportType]: { [entityIdField]: entityReportId },
-      // A sticker report names one placement, and an image can carry several.
-      // Deduping on (reason, image) alone folds a report about placement 2 into
-      // an existing one about placement 1 and drops the new details, so a
-      // moderator acting on it removes the wrong person's sticker and keeps
-      // their Buzz. Narrowed to the placement so the same one still dedupes and
-      // a different one does not. Every other reason is unaffected — the
-      // predicate is only added when there is a placement to add it for.
-      ...reportedPlacementFilter({ reason, details }),
-      ...reportedViolationFilter({ reportType, reason, details }),
+      ...(narrowing.length ? { AND: narrowing } : {}),
     },
     orderBy: { id: 'desc' },
   });
