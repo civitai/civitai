@@ -1,7 +1,20 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import type * as ModeModule from '~/server/services/text-scan/mode';
+
+const { mockResolveEntityAppeal } = vi.hoisted(() => ({ mockResolveEntityAppeal: vi.fn() }));
+vi.mock('~/server/services/report.service', () => ({
+  resolveEntityAppeal: mockResolveEntityAppeal,
+}));
+// The rollout lives in redis; the row lookup the grant hash does after it stays real.
+vi.mock('~/server/services/text-scan/mode', async (importOriginal) => ({
+  ...(await importOriginal<typeof ModeModule>()),
+  getTextScanWebSearchMode: async () => 'off',
+}));
+import { AppealStatus, EntityType } from '~/shared/utils/prisma/enums';
 import {
   loadTextScanTextHash,
+  settleFlagAppealsAfterModeratorLift,
   stampModeratorTextScanRuling,
 } from '~/server/services/text-scan/actions/appeal-text-hash';
 import { textScanTextHash } from '~/server/services/text-scan/prompt';
@@ -117,5 +130,105 @@ describe('stampModeratorTextScanRuling', () => {
       false
     );
     expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
+  });
+});
+
+describe('settleFlagAppealsAfterModeratorLift', () => {
+  const modelRow = {
+    id: 7,
+    userId: 5,
+    name: 'M',
+    description: null,
+    nsfw: false,
+    poi: false,
+    minor: false,
+    modelVersions: [],
+  };
+  const stampedValues = () => dbMock.dbWrite.$executeRaw.mock.calls.flatMap((c) => c.slice(1));
+
+  beforeEach(() => {
+    dbMock.dbWrite.model.findMany.mockResolvedValue([modelRow]);
+    dbMock.dbWrite.model.findUnique.mockResolvedValue({ minor: false, poi: false });
+    dbMock.dbWrite.entityModeration.findUnique.mockResolvedValue(null);
+    dbMock.dbWrite.$executeRaw.mockResolvedValue(1);
+    mockResolveEntityAppeal.mockResolvedValue([]);
+  });
+
+  it('approves the pending appeal and records the ruling once nothing is flagged', async () => {
+    await settleFlagAppealsAfterModeratorLift({ modelId: 7, userId: 3, liftedLabels: ['minor'] });
+
+    expect(stampedValues()).toEqual(expect.arrayContaining(['minor', 3, 7]));
+    expect(mockResolveEntityAppeal).toHaveBeenCalledWith({
+      ids: [7],
+      entityType: EntityType.Model,
+      status: AppealStatus.Approved,
+      userId: 3,
+    });
+  });
+
+  it('records a ruling per lifted label', async () => {
+    await settleFlagAppealsAfterModeratorLift({
+      modelId: 7,
+      userId: 3,
+      liftedLabels: ['minor', 'poi'],
+    });
+
+    expect(dbMock.dbWrite.$executeRaw).toHaveBeenCalledTimes(2);
+    expect(stampedValues()).toEqual(expect.arrayContaining(['minor', 'poi']));
+    expect(mockResolveEntityAppeal).toHaveBeenCalledTimes(1);
+  });
+
+  it('stamps the hash of the latest completed scan, as an overturn does', async () => {
+    dbMock.dbWrite.entityModeration.findUnique.mockResolvedValue({
+      result: { version: 1, textHash: 'scanned-hash' },
+    });
+
+    await settleFlagAppealsAfterModeratorLift({ modelId: 7, userId: 3, liftedLabels: ['poi'] });
+
+    expect(stampedValues()).toContain('scanned-hash');
+  });
+
+  it('leaves the appeal open while the other flag is still set', async () => {
+    dbMock.dbWrite.model.findUnique.mockResolvedValue({ minor: false, poi: true });
+    await settleFlagAppealsAfterModeratorLift({ modelId: 7, userId: 3, liftedLabels: ['minor'] });
+    dbMock.dbWrite.model.findUnique.mockResolvedValue({ minor: true, poi: false });
+    await settleFlagAppealsAfterModeratorLift({ modelId: 7, userId: 3, liftedLabels: ['poi'] });
+
+    expect(mockResolveEntityAppeal).not.toHaveBeenCalled();
+  });
+
+  it('still approves when the text cannot be read, recording nothing', async () => {
+    dbMock.dbWrite.model.findMany.mockResolvedValue([]);
+
+    await settleFlagAppealsAfterModeratorLift({ modelId: 7, userId: 3, liftedLabels: ['minor'] });
+
+    expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
+    expect(mockResolveEntityAppeal).toHaveBeenCalledTimes(1);
+  });
+
+  it('never throws, and still approves when recording the ruling fails', async () => {
+    dbMock.dbWrite.$executeRaw.mockRejectedValue(new Error('db down'));
+
+    await expect(
+      settleFlagAppealsAfterModeratorLift({ modelId: 7, userId: 3, liftedLabels: ['minor'] })
+    ).resolves.toBeUndefined();
+    expect(mockResolveEntityAppeal).toHaveBeenCalledTimes(1);
+
+    mockResolveEntityAppeal.mockRejectedValue(new Error('appeal write failed'));
+    await expect(
+      settleFlagAppealsAfterModeratorLift({ modelId: 7, userId: 3, liftedLabels: ['minor'] })
+    ).resolves.toBeUndefined();
+  });
+
+  it('skips the rulings a caller already recorded', async () => {
+    await settleFlagAppealsAfterModeratorLift({
+      modelId: 7,
+      userId: 3,
+      liftedLabels: ['minor'],
+      recordRulings: false,
+    });
+
+    expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
+    expect(mockResolveEntityAppeal).toHaveBeenCalledTimes(1);
   });
 });

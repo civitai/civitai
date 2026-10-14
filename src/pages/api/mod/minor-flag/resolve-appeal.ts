@@ -10,7 +10,7 @@ export default defineModeratorEndpoint('minorFlag.resolveAppeal', {
     'Upholding refuses if the model is no longer flagged.',
     '`minor` / `poi` rule on one label each and override `uphold` for that label.',
     'Overturning refuses, leaving the appeal open, when the model text cannot be read.',
-    '`rescanQueued` is true when the text changed while the appeal was pending.',
+    '`rescanQueued` is always false and kept for compatibility: an overturn covers the text as last scanned.',
   ],
   rateLimit: minorFlagRateLimit,
   input: z.object({
