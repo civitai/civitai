@@ -517,6 +517,11 @@ export async function settleStorylineContinuation({
       // The image-level rules the edge does not check. Hidden from the queue
       // is not refused: an owner can still name an unfinished one by id, and an
       // image can be flagged after the row was admitted.
+      // `pending` was read before this transaction, so the marker may be stale.
+      // That only ever refuses wrongly: the marker is written only by the insert
+      // in `createStorylinePlacement` and only cleared, by the guarded update in
+      // `startReadyStorylineContinuations`. Anything that sets it on an admitted
+      // row must move this check into the status flip's WHERE.
       if ((pending.data as StorylinePlacementData | null)?.awaitingReadiness)
         throw throwBadRequestError(STORYLINE_REFUSALS.notReady);
       const post = await tx.post.findUnique({
