@@ -133,24 +133,27 @@ INSERT INTO "Post" (id, "userId", "publishedAt", "nsfwLevel") VALUES
   (301, 30, '2025-01-01', 1), (308, 30, '2024-12-31', 1),
   (302, 30, '2024-12-01', 1), (303, 30, '2024-12-02', 4), (304, 30, '2024-12-03', 1),
   (306, 30, '2024-12-05', 0), (310, 30, '2024-08-01', 8),
-  (312, 30, '2024-12-10', 1), (313, 30, '2024-12-11', 1), (314, 30, '2099-01-01', 1);
+  (312, 30, '2024-12-10', 1), (313, 30, '2024-12-11', 1), (314, 30, '2099-01-01', 1),
+  (320, 30, '2024-01-01', 1), (321, 30, '2024-01-02', 1);
 UPDATE "Post" SET "tosViolation" = true WHERE id IN (110, 211, 214, 302);
 UPDATE "Post" SET unlisted = true WHERE id IN (111, 212, 215, 312);
 UPDATE "Post" SET availability = 'Private' WHERE id IN (112, 213, 216, 313);
 INSERT INTO "Image" VALUES
   (1001, 101, 0), (1002, 101, 1), (1003, 101, 2),
-  (2001, 202, NULL), (2005, 202, 2), (2009, 202, 0), (2007, 202, 1),
+  (2001, 202, NULL), (2004, 202, 2), (2005, 202, 2), (2009, 202, 0), (2007, 202, 1),
   (3003, 201, 1), (3007, 201, 0);
 `;
 
 // Other storylines the seed and cleanup must leave alone. "Prior" already uses posts 107, 108,
-// 208 and 304; the two decoys each share one half of the demo's (owner, title) key.
+// 208 and 304; the two decoys each share one half of the demo's (owner, title) key, and each
+// has a chapter so the seed's printed summary would show them if it matched on one half only.
 const OTHER_STORYLINES = `
 INSERT INTO "Storyline" (id, "userId", title, "maxNsfwLevel", "updatedAt") VALUES
   (901, 30, 'Prior', 4, now()), (902, 10, 'Other', 1, now()), (903, 20, 'The Patch', 1, now());
 SELECT setval(pg_get_serial_sequence('"Storyline"', 'id'), 1000);
 INSERT INTO "StorylineChapter" ("storylineId", "postId", "userId", depth) VALUES
-  (901, 107, 10, 0), (901, 208, 20, 1), (901, 108, 10, 1), (901, 304, 30, 1);
+  (901, 107, 10, 0), (901, 208, 20, 1), (901, 108, 10, 1), (901, 304, 30, 1),
+  (902, 320, 30, 0), (903, 321, 30, 0);
 `;
 
 async function withClient(url, fn) {
@@ -343,8 +346,11 @@ await withClient(DEV_URL, async (c) => {
     assert.equal(await demoChapters(c), 0);
     assert.deepEqual(await otherStorylines(c), others);
     assert.equal(
-      await count(c, `SELECT count(*)::int AS n FROM "StorylineChapter" WHERE "storylineId" = 901`),
-      4
+      await count(
+        c,
+        `SELECT count(*)::int AS n FROM "StorylineChapter" WHERE "storylineId" IN (901, 902, 903)`
+      ),
+      6
     );
     assert.equal(await count(c, `SELECT count(*)::int AS n FROM "StorylineChapterEdge"`), 0);
     assert.equal(await count(c, `SELECT count(*)::int AS n FROM "StorylineCollaborator"`), 0);
