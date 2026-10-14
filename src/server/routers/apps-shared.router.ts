@@ -95,6 +95,7 @@ import {
   type SharedStorageOutcome,
 } from '~/server/prom/app-block-shared-storage.metrics';
 import { moderatorProcedure, publicProcedure, router } from '~/server/trpc';
+import { appsModDocStoreRouter } from '~/server/routers/apps-mod-doc-store.router';
 import { appsModUserStorageRouter } from '~/server/routers/apps-mod-storage.router';
 
 // ── Limits (design M2/M3) ─────────────────────────────────────────────────────
@@ -1763,6 +1764,12 @@ export const appsModRouter = router({
    * other's tables — see `user-storage-purge.service.ts` for why they stay apart.
    */
   userStorage: appsModUserStorageRouter,
+
+  /**
+   * DOCUMENT STORE moderation (`apps.mod.docStore.*`): the report queue for shared
+   * documents and hide / unhide / delete. The new store's counterpart of `purgeSharedRow`.
+   */
+  docStore: appsModDocStoreRouter,
 
   purgeSharedRow: moderatorProcedure
     .input(

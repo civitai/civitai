@@ -181,6 +181,15 @@ export const APP_LISTING_MODERATION_ACTIONS = [
   // `detail` — the cause, a `ListingRatingChangeCause`.
   // `before` — { contentRating }.   `after` — { contentRating }.
   'rating-change',
+  // App Blocks DOCUMENT STORE takedown (`apps.mod.docStore.*`): a moderator hid, unhid or
+  // hard-deleted one SHARED document in an app's store. Like `purge-user-storage` it changes
+  // no listing state and acts on content a USER authored, so it is withheld from the owner's
+  // history. `reason` is the moderator's rationale; `before` is the document snapshot
+  // (collection, key, author user id, report count, hidden state, size, md5 of the data —
+  // never the data); `after` is the outcome. `doc-store-moderation.service.ts` writes them.
+  'storage-doc-hide',
+  'storage-doc-unhide',
+  'storage-doc-delete',
 ] as const;
 export type AppListingModerationAction = (typeof APP_LISTING_MODERATION_ACTIONS)[number];
 

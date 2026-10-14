@@ -1287,7 +1287,13 @@ const ownerModerationEventSelect = {
  * The MOD-facing per-listing history (`listModerationEvents`) is unaffected and
  * still shows these events in place.
  */
-const OWNER_HIDDEN_MODERATION_ACTIONS = ['purge-user-storage'] as const;
+const OWNER_HIDDEN_MODERATION_ACTIONS = [
+  'purge-user-storage',
+  // Same reasoning: an act against a document ANOTHER user authored in this app.
+  'storage-doc-hide',
+  'storage-doc-unhide',
+  'storage-doc-delete',
+] as const;
 
 /**
  * Per-listing moderation history, NEWEST-first, keyset-paginated. The cursor is the
@@ -1311,9 +1317,7 @@ async function queryModerationEvents(opts: {
       // See OWNER_HIDDEN_MODERATION_ACTIONS: an action about a THIRD PARTY's data
       // is withheld from the owner's history outright, because the owner select
       // keeps `reason` and the reason is about someone else.
-      ...(opts.ownerScoped
-        ? { action: { notIn: [...OWNER_HIDDEN_MODERATION_ACTIONS] } }
-        : {}),
+      ...(opts.ownerScoped ? { action: { notIn: [...OWNER_HIDDEN_MODERATION_ACTIONS] } } : {}),
     },
     orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
     take: limit + 1,

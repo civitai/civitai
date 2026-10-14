@@ -130,6 +130,11 @@ const MOD_ACTION_CHIPS: Record<string, Chip> = {
   // The label is therefore written for the MOD queue and names whose data moved —
   // "User storage purged", not the second-person voice the `owner-*` labels use.
   'purge-user-storage': { label: 'User storage purged', color: 'red' },
+  // Document-store takedowns of one user-authored shared document; mod-view only, like
+  // `purge-user-storage` (`OWNER_HIDDEN_MODERATION_ACTIONS`).
+  'storage-doc-hide': { label: 'Stored document hidden', color: 'orange' },
+  'storage-doc-unhide': { label: 'Stored document unhidden', color: 'blue' },
+  'storage-doc-delete': { label: 'Stored document deleted', color: 'red' },
 };
 
 /** Chip for a moderation-event action, for the per-listing history view. */

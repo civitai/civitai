@@ -1346,6 +1346,8 @@ export function createDocStore(deps: DocStoreDeps) {
     unmark,
     usage,
     limits,
+    /** Session-moderator operations; never reachable from a block token (see the section below). */
+    moderation: createModeration({ withTx, charge }),
   };
 }
 
@@ -1365,4 +1367,297 @@ function translatePgError(err: unknown): unknown {
     });
   }
   return err;
+}
+
+// ---------------------------------------------------------------------------
+// Moderation — session moderators only
+// ---------------------------------------------------------------------------
+//
+// Called ONLY by `doc-store-moderation.service.ts`, behind `moderatorProcedure`; the
+// block-token routes never reach it (the caller set is pinned by
+// `__tests__/doc-store-moderation.test.ts`).
+//
+// CROSS-APP WITHOUT A CROSS-APP CONNECTION. Every call here runs in ONE app's
+// transaction through the same `withTx` a viewer call uses: the RLS settings are
+// bound to that (app, ns), the connection is the same least-privilege role, and every
+// statement keeps the `$1`/`$2` isolation shape. Nothing here can name a second app,
+// and RLS would hide its rows if anything tried. A cross-app view (the report queue)
+// is assembled by the caller from one call per app; there is no superuser or
+// BYPASSRLS path.
+//
+// Moderators act on SHARED documents only (`scope_uid = 0`): reports exist only
+// there, and private per-viewer documents are not a moderation surface.
+
+export type ModeratedDocSort = 'reports' | 'newest';
+export type ModeratedDocStatus = 'open' | 'hidden' | 'all';
+
+/** A keyset position in the cross-app order `(sortValue, appId, collection, key)`, all descending. */
+export type ModeratedDocPosition = {
+  sortValue: string;
+  appId: string;
+  collection: string;
+  key: string;
+};
+
+export type ReportedDocRow = {
+  collection: string;
+  key: string;
+  reports: number;
+  lastReportedAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+  authorKind: 'user' | 'app' | 'counter';
+  /** Moderators may see it; it must never reach an app. */
+  authorUid: number | null;
+  hiddenAt: Date | null;
+  hiddenBy: number | null;
+  sizeBytes: number;
+  version: number;
+  /** The keyset value for the requested sort, as a decimal bigint. */
+  sortValue: string;
+};
+
+export type ModeratedDoc = Omit<ReportedDocRow, 'sortValue' | 'lastReportedAt'> & {
+  data: Record<string, unknown>;
+  /** md5 of the stored jsonb text — what an audit row records instead of the content. */
+  dataMd5: string;
+  counters: Record<string, number>;
+  marks: Record<string, number>;
+};
+
+type ModerationDeps = {
+  withTx: <T>(ctx: DocStoreContext, fn: (c: DocStoreClient) => Promise<T>) => Promise<T>;
+  charge: (
+    c: DocStoreClient,
+    ctx: DocStoreContext,
+    app: UsageDelta,
+    user: UserCharge
+  ) => Promise<number>;
+};
+
+// Reported shared documents of one (app, ns): a positive `report` mark tally joined to
+// its document. $1 app, $2 ns, $3 the report mark name.
+const SQL_MOD_REPORTED = `SELECT d.coll, d.key, d.author_uid, d.author_kind, d.created_at, d.updated_at,
+    d.hidden_at, d.hidden_by, d.size_bytes, d.version, t.count AS reports,
+    (SELECT max(rm.created_at) FROM appdata.doc_mark rm
+      WHERE rm.app_id = $1 AND rm.ns = $2 AND rm.coll = t.coll AND rm.key = t.key AND rm.name = $3) AS last_reported_at
+  FROM appdata.doc_tally t
+  JOIN appdata.doc d ON d.app_id = $1 AND d.ns = $2 AND d.coll = t.coll AND d.scope_uid = 0 AND d.key = t.key
+  WHERE t.app_id = $1 AND t.ns = $2 AND t.kind = 'mark' AND t.name = $3 AND t.count > 0`;
+
+// One shared document as a moderator sees it, hidden or not. $1 app, $2 ns, $3 coll, $4 key
+const SQL_MOD_GET = `SELECT d.coll, d.key, d.data, md5(d.data::text) AS data_md5, d.version, d.size_bytes,
+    d.author_uid, d.author_kind, d.created_at, d.updated_at, d.hidden_at, d.hidden_by,
+    (SELECT jsonb_object_agg(t.kind || ':' || t.name, t.count) FROM appdata.doc_tally t
+      WHERE t.app_id = $1 AND t.ns = $2 AND t.coll = d.coll AND t.key = d.key) AS tallies
+  FROM appdata.doc d
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = 0 AND d.key = $4`;
+
+// $1 app, $2 ns, $3 coll, $4 key, $5 moderator
+const SQL_MOD_HIDE = `UPDATE appdata.doc d SET hidden_at = now(), hidden_by = $5::int
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = 0 AND d.key = $4`;
+
+// Unhiding is a change a feed reader must see again: the doc takes the new seq, which
+// is above the hide's tombstone. $1 app, $2 ns, $3 coll, $4 key, $5 seq
+const SQL_MOD_UNHIDE = `UPDATE appdata.doc d SET hidden_at = NULL, hidden_by = NULL, seq = $5::bigint
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = 0 AND d.key = $4`;
+
+const SORT_VALUE_SHAPE = /^[0-9]{1,18}$/;
+
+function assertModTarget(collection: string, key: string): void {
+  if (!B.collectionName.test(collection)) throw invalid('invalid collection name');
+  assertKey(key);
+}
+
+const modCtx = (appId: string, ns: string): DocStoreContext => ({ appId, ns, viewerUid: null });
+
+function createModeration({ withTx, charge }: ModerationDeps) {
+  /**
+   * Reported shared documents of ONE app, in the cross-app order
+   * `(sortValue DESC, appId DESC, collection DESC, key DESC)`, after `after` and at most
+   * `limit`. `reports` sorts by report count; `newest` by the latest report's time
+   * (microseconds since epoch). The caller merges apps; `appId` is constant here, so
+   * the app component of the keyset is resolved in TypeScript (app ids are ASCII, so
+   * JS order equals the bytewise order the columns use).
+   */
+  async function listReported(
+    appId: string,
+    ns: string,
+    opts: {
+      sort: ModeratedDocSort;
+      status: ModeratedDocStatus;
+      after?: ModeratedDocPosition;
+      limit: number;
+    }
+  ): Promise<ReportedDocRow[]> {
+    if (!Number.isSafeInteger(opts.limit) || opts.limit < 1 || opts.limit > B.listLimitMax + 1) {
+      throw invalid(`limit must be 1–${B.listLimitMax + 1}`);
+    }
+    const params: unknown[] = [appId, ns, REPORT_MARK];
+    const p = (v: unknown) => {
+      params.push(v);
+      return `$${params.length}`;
+    };
+    const statusCond =
+      opts.status === 'open'
+        ? 'AND q.hidden_at IS NULL'
+        : opts.status === 'hidden'
+        ? 'AND q.hidden_at IS NOT NULL'
+        : '';
+    const sv =
+      opts.sort === 'reports'
+        ? 'q.reports'
+        : `COALESCE((extract(epoch FROM q.last_reported_at) * 1000000)::bigint, 0)`;
+    let cursorCond = '';
+    if (opts.after) {
+      const a = opts.after;
+      if (!SORT_VALUE_SHAPE.test(a.sortValue) || !APP_ID_SHAPE.test(a.appId)) {
+        throw invalid('invalid cursor');
+      }
+      assertModTarget(a.collection, a.key);
+      const v = `${p(a.sortValue)}::bigint`;
+      if (appId < a.appId) cursorCond = `AND r.sv <= ${v}`;
+      else if (appId > a.appId) cursorCond = `AND r.sv < ${v}`;
+      else {
+        cursorCond = `AND (r.sv, r.coll, r.key) < (${v}, ${p(a.collection)}::text, ${p(
+          a.key
+        )}::text)`;
+      }
+    }
+    const sql = [
+      `SELECT r.* FROM (SELECT q.*, ${sv} AS sv FROM (${SQL_MOD_REPORTED}) q WHERE true ${statusCond}) r`,
+      `WHERE true ${cursorCond}`,
+      `ORDER BY r.sv DESC, r.coll DESC, r.key DESC`,
+      `LIMIT ${p(opts.limit)}::int`,
+    ].join('\n');
+    const rows = await withTx(modCtx(appId, ns), async (c) => (await c.query(sql, params)).rows);
+    return rows.map((r) => ({
+      collection: r.coll as string,
+      key: r.key as string,
+      reports: Number(r.reports),
+      lastReportedAt: r.last_reported_at ? new Date(r.last_reported_at as string | Date) : null,
+      createdAt: new Date(r.created_at as string | Date),
+      updatedAt: new Date(r.updated_at as string | Date),
+      authorKind: r.author_kind as ReportedDocRow['authorKind'],
+      authorUid: r.author_uid === null ? null : Number(r.author_uid),
+      hiddenAt: r.hidden_at ? new Date(r.hidden_at as string | Date) : null,
+      hiddenBy: r.hidden_by === null ? null : Number(r.hidden_by),
+      sizeBytes: Number(r.size_bytes),
+      version: Number(r.version),
+      sortValue: String(r.sv),
+    }));
+  }
+
+  /** One shared document, hidden or not, with every tally (the report count included). */
+  async function get(
+    appId: string,
+    ns: string,
+    collection: string,
+    key: string
+  ): Promise<ModeratedDoc | null> {
+    assertModTarget(collection, key);
+    const row = await withTx(
+      modCtx(appId, ns),
+      async (c) => (await c.query(SQL_MOD_GET, [appId, ns, collection, key])).rows[0]
+    );
+    if (!row) return null;
+    const counters: Record<string, number> = {};
+    const marks: Record<string, number> = {};
+    for (const [k, v] of Object.entries((row.tallies ?? {}) as Record<string, number | string>)) {
+      const sep = k.indexOf(':');
+      (k.slice(0, sep) === 'counter' ? counters : marks)[k.slice(sep + 1)] = Number(v);
+    }
+    return {
+      collection: row.coll as string,
+      key: row.key as string,
+      data: row.data as Record<string, unknown>,
+      dataMd5: row.data_md5 as string,
+      reports: marks[REPORT_MARK] ?? 0,
+      createdAt: new Date(row.created_at as string | Date),
+      updatedAt: new Date(row.updated_at as string | Date),
+      authorKind: row.author_kind as ReportedDocRow['authorKind'],
+      authorUid: row.author_uid === null ? null : Number(row.author_uid),
+      hiddenAt: row.hidden_at ? new Date(row.hidden_at as string | Date) : null,
+      hiddenBy: row.hidden_by === null ? null : Number(row.hidden_by),
+      sizeBytes: Number(row.size_bytes),
+      version: Number(row.version),
+      counters,
+      marks,
+    };
+  }
+
+  /**
+   * Hide (or unhide) one shared document. A hidden document reads as not found to the
+   * app (`VISIBLE`) and keeps its data, tallies, marks and quota charge, so the action
+   * is reversible. A hide takes the next seq into a tombstone, so a feed reader drops
+   * the document; an unhide gives the document the next seq, so the reader sees it
+   * again. Already in the requested state: `changed: false`, nothing written.
+   */
+  async function setHidden(
+    appId: string,
+    ns: string,
+    collection: string,
+    key: string,
+    hidden: boolean,
+    moderatorUid: number
+  ): Promise<{ changed: boolean; seq: number | null }> {
+    assertModTarget(collection, key);
+    if (!(Number.isSafeInteger(moderatorUid) && moderatorUid > 0)) {
+      throw new Error('doc-store: malformed moderator id');
+    }
+    const ctx = modCtx(appId, ns);
+    return withTx(ctx, async (c) => {
+      const row = (await c.query(SQL_LOCK_DOC, [appId, ns, collection, 0, key])).rows[0];
+      if (!row) throw new DocStoreError('not_found', 'document not found');
+      if (row.hidden === hidden) return { changed: false, seq: null };
+      // No bytes move; the charge only takes the next seq under the usage_app lock (LOCK ORDER (2)).
+      const noCharge = { uid: 0, bytes: 0, docs: 0, ceiling: 'app' as const };
+      if (hidden) {
+        await c.query(SQL_MOD_HIDE, [appId, ns, collection, key, moderatorUid]);
+        const seq = await charge(c, ctx, { bytes: 0, docs: 0 }, noCharge);
+        await c.query(SQL_TOMBSTONE, [appId, ns, collection, 0, key, seq]);
+        return { changed: true, seq };
+      }
+      const seq = await charge(c, ctx, { bytes: 0, docs: 0 }, noCharge);
+      await c.query(SQL_MOD_UNHIDE, [appId, ns, collection, key, seq]);
+      return { changed: true, seq };
+    });
+  }
+
+  /**
+   * Hard-delete one shared document, hidden or not: its index rows go with it (FK
+   * cascade), its tallies and marks are deleted, the app and the charged author are
+   * refunded (a counter-created doc's `author_uid` is the user its creation was charged
+   * to), and a tombstone takes the next seq — the same accounting as an author delete.
+   */
+  async function remove(
+    appId: string,
+    ns: string,
+    collection: string,
+    key: string
+  ): Promise<{ deleted: true; sizeBytes: number; seq: number }> {
+    assertModTarget(collection, key);
+    const ctx = modCtx(appId, ns);
+    return withTx(ctx, async (c) => {
+      const row = (await c.query(SQL_LOCK_DOC, [appId, ns, collection, 0, key])).rows[0];
+      if (!row) throw new DocStoreError('not_found', 'document not found');
+      await c.query(SQL_DELETE_DOC, [appId, ns, collection, 0, key]);
+      await c.query(SQL_DELETE_TALLIES, [appId, ns, collection, key]);
+      await c.query(SQL_DELETE_MARKS, [appId, ns, collection, key]);
+      const size = Number(row.size_bytes);
+      const author = row.author_uid === null ? null : Number(row.author_uid);
+      const seq = await charge(
+        c,
+        ctx,
+        { bytes: -size, docs: -1 },
+        author === null
+          ? { uid: 0, bytes: 0, docs: 0, ceiling: 'author' }
+          : { uid: author, bytes: -size, docs: -1, ceiling: 'author' }
+      );
+      await c.query(SQL_TOMBSTONE, [appId, ns, collection, 0, key, seq]);
+      return { deleted: true as const, sizeBytes: size, seq };
+    });
+  }
+
+  return { listReported, get, setHidden, delete: remove };
 }
