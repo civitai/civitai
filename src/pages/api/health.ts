@@ -401,28 +401,34 @@ export async function runHealthChecks(
   }
 }
 
-// Readiness probes call this every few seconds. A run in which EVERY check passed is reused for
-// this long, so a dependency that breaks just after a clean run is noticed up to this much later.
-// Anything less than a clean sweep is never reused: a failing or soft-failing dependency, a
+// Readiness probes call /api/health every few seconds. A run in which EVERY check passed is reused
+// for this long, so a dependency that breaks just after a clean run is noticed up to this much
+// later. Anything less than a clean sweep is never reused: a failing or soft-failing dependency, a
 // deadline overrun or an aborted run all re-run the full suite on the next probe, so recovery is
-// seen as fast as before. Reusing only clean sweeps also keeps the verdict independent of which
-// checks a caller treats as critical.
+// seen as fast as before.
 const CLEAN_RUN_REUSE_MS = 10_000;
 let lastCleanRun: { startedAt: number; results: Record<CheckKey, boolean> } | undefined;
 // Overlapping probes can finish out of order: a slow clean run must not overwrite a failure that a
 // later-started run already reported.
 let lastNonCleanFinishedAt = -Infinity;
 
+/** Test-only: forget any reusable run, so one test can never be answered by another's. */
+export function resetHealthCheckReuseForTests() {
+  lastCleanRun = undefined;
+  lastNonCleanFinishedAt = -Infinity;
+}
+
 export async function runHealthChecksReusingCleanRun(
-  signal: AbortSignal
+  ...args: Parameters<typeof runHealthChecks>
 ): ReturnType<typeof runHealthChecks> {
+  const [signal] = args;
   // Monotonic, so a wall-clock step backwards cannot keep a stale verdict fresh.
   const startedAt = performance.now();
   if (lastCleanRun && startedAt - lastCleanRun.startedAt < CLEAN_RUN_REUSE_MS) {
     return { healthy: true, results: { ...lastCleanRun.results }, deadlineTimedOut: false };
   }
 
-  const run = await runHealthChecks(signal);
+  const run = await runHealthChecks(...args);
   // Every check true implies `healthy`, and a deadline overrun leaves an unsettled check false.
   const clean =
     !signal.aborted &&

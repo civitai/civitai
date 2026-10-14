@@ -98,7 +98,11 @@ vi.mock('~/server/warmup', () => ({
   didFailOpenTimeout: () => false,
 }));
 
-import healthHandler, { runHealthChecks, runHealthChecksReusingCleanRun } from '~/pages/api/health';
+import healthHandler, {
+  resetHealthCheckReuseForTests,
+  runHealthChecks,
+  runHealthChecksReusingCleanRun,
+} from '~/pages/api/health';
 import readyHandler from '~/pages/api/ready';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
@@ -107,6 +111,7 @@ const liveSignal = () => new AbortController().signal;
 
 beforeEach(() => {
   vi.clearAllMocks();
+  resetHealthCheckReuseForTests();
   // Reset every backing mock to the HEALTHY default before each test.
   mocks.sysRedis.isReady = true;
   mocks.sysRedis.ping.mockImplementation(async () => 'PONG');
@@ -212,14 +217,13 @@ describe('runHealthChecks — sysRedis soft dependency', () => {
   });
 });
 
-// The probe routes reuse a run in which every check passed for 10 s, so a probe every few seconds
-// does not hit every dependency each time. Only a clean sweep is reused; the module-level verdict
-// persists across tests, so each test starts on a clock past the previous one's window.
-describe('probe routes reuse a recent clean run', () => {
+// /api/health reuses a run in which every check passed for 10 s, so a probe every few seconds does
+// not hit every dependency each time. Only a clean sweep is reused. The reuse slot is module-level,
+// so the file-wide beforeEach resets it.
+describe('/api/health reuses a recent clean run', () => {
   let now = 1_000_000;
 
   beforeEach(() => {
-    now += 60_000;
     vi.spyOn(performance, 'now').mockImplementation(() => now);
   });
 
@@ -255,14 +259,13 @@ describe('probe routes reuse a recent clean run', () => {
     expect(mocks.sysRedis.ping).toHaveBeenCalledTimes(1);
   });
 
-  it('/api/ready shares the clean verdict /api/health just produced', async () => {
+  it('/api/ready never reuses a verdict: it runs the full suite after a clean /api/health run', async () => {
     await probe(healthHandler);
     now += 2_000;
     const ready = await probe(readyHandler);
 
     expect(ready.statusCode).toBe(200);
-    expect(ready.body).toMatchObject({ ready: true, deps: { write: true, read: true } });
-    expect(mocks.dbWrite.$transaction).toHaveBeenCalledTimes(1);
+    expect(mocks.dbWrite.$transaction).toHaveBeenCalledTimes(2);
   });
 
   it('control: once the window has passed the full suite runs again', async () => {
