@@ -26,7 +26,7 @@ export function getDocStore(): DocStore {
           superuser: role.superuser,
           bypassRls: role.bypassRls,
         },
-        'app-blocks-doc-store'
+        'app-blocks'
       ).catch(() => undefined);
     },
   }));
