@@ -1901,12 +1901,14 @@ async function assertSharedValueSafeAndSerialize(params: {
         { policy: e.category, category: e.category, reason: `auto:${e.category}` }
       );
       const refusal = new TRPCError({ code: 'BAD_REQUEST', message: e.message, cause: e });
+      // `unchecked`, not escalation, picks the outcome: a scan that threw is unchecked but charged.
+      const outcome = e.unchecked ? 'moderation_unavailable' : 'moderation_blocked';
       // An outage the belt refused on (its blocklist read failing) stays our fault on the
       // refusal too, so the write budget refunds it instead of charging the caller.
       if (isEscalatedServerFault(e)) {
-        throw tagSharedStorageOutcome(escalateToServerFault(refusal), 'moderation_unavailable');
+        throw tagSharedStorageOutcome(escalateToServerFault(refusal), outcome);
       }
-      throw tagSharedStorageOutcome(refusal, 'moderation_blocked');
+      throw tagSharedStorageOutcome(refusal, outcome);
     }
     throw e;
   }

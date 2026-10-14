@@ -38,7 +38,12 @@ export type SharedStorageOp = (typeof SHARED_STORAGE_OPS)[number];
  * - `forbidden` — an edit of a row the caller did not author.
  * - `rate_limited` — a per-user, per-app rate limit or write budget refused the call.
  * - `moderation_blocked` — content moderation refused the title, body, `data` or counter key.
- * - `moderation_unavailable` — moderation could not run, so the write was refused unchecked.
+ *   This includes the title/body platform audit THROWING for any reason, not only on a verdict:
+ *   the belt treats every throw from it as a block, so an outage inside that audit is counted
+ *   here, not as `moderation_unavailable`.
+ * - `moderation_unavailable` — moderation could not run, so the write was refused unchecked: a
+ *   blocklist read failing, the title/body blocklist scan throwing, or a `data` / counter-key
+ *   scan failing.
  * - `payload_too_large` — one value over the per-value byte cap.
  * - `user_row_cap_exceeded` — the caller already has the most rows one user may hold in an app.
  * - `quota_exceeded` — the app's byte or row budget is spent. Shared by every user of the app.
@@ -69,7 +74,9 @@ const MODERATED_WRITE = ['bad_request', 'moderation_blocked', 'moderation_unavai
 /**
  * The outcomes each op can actually produce. Only these pairs are seeded: a seeded pair no code
  * path can move reads as "this never happens" rather than "this cannot happen". The router
- * metrics suite drives every pair here and fails if a call produces one that is not listed.
+ * metrics suite drives every pair here at least once. It catches an unlisted pair only on the
+ * paths it drives: a path the suite never calls can produce a pair missing from this list and
+ * no test fails.
  */
 export const SHARED_STORAGE_REACHABLE_OUTCOMES: {
   readonly [op in SharedStorageOp]: readonly SharedStorageOutcome[];
