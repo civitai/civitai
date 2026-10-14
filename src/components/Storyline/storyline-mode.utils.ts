@@ -7,7 +7,7 @@ import type { StorylinePathChapter } from '~/server/services/storyline.service';
  */
 export const STORYLINE_CHAPTER_PARAM = 'storylineChapter';
 
-export function parseStorylineChapterParam(value: unknown) {
+export function parseIdParam(value: unknown) {
   const raw = Array.isArray(value) ? value[0] : value;
   const id = typeof raw === 'number' ? raw : Number(raw);
   return Number.isInteger(id) && id > 0 ? id : undefined;
@@ -57,4 +57,51 @@ const tombstoneLabels: Record<NonNullable<StorylinePathChapter['tombstone']>, st
 
 export function getStorylineTombstoneLabel(reason: NonNullable<StorylinePathChapter['tombstone']>) {
   return tombstoneLabels[reason];
+}
+
+/**
+ * A chapter by someone the reader hid reads as unavailable, like one by someone they blocked:
+ * the server only knows about blocks, and the image read already drops hidden users' images.
+ */
+export function hideHiddenUsersChapters<
+  T extends { tombstone: StorylinePathChapter['tombstone']; post: { userId: number } | null }
+>(chapters: T[], hiddenUserIds: ReadonlySet<number>): T[] {
+  if (!hiddenUserIds.size) return chapters;
+  return chapters.map((chapter) =>
+    chapter.post && hiddenUserIds.has(chapter.post.userId)
+      ? ({ ...chapter, tombstone: 'unavailable', post: null } as T)
+      : chapter
+  );
+}
+
+export type PendingContinue =
+  | { kind: 'wait' }
+  | { kind: 'open'; imageId: number }
+  | { kind: 'end' };
+
+/**
+ * After a reader takes a branch: wait until the branch's path and images have arrived, then open
+ * its first image, or, when it has none this reader can see, show its end-of-chapter view so
+ * what follows a hidden chapter stays reachable.
+ */
+export function resolvePendingContinue({
+  pendingChapterId,
+  pathEndId,
+  imagesFetching,
+  firstImageIdByChapterId,
+}: {
+  pendingChapterId: number;
+  pathEndId: number | undefined;
+  imagesFetching: boolean;
+  firstImageIdByChapterId: ReadonlyMap<number, number>;
+}): PendingContinue {
+  if (pathEndId !== pendingChapterId || imagesFetching) return { kind: 'wait' };
+  const imageId = firstImageIdByChapterId.get(pendingChapterId);
+  return imageId ? { kind: 'open', imageId } : { kind: 'end' };
+}
+
+/** A storyline is walked, not looped: past its last image is the end-of-chapter view. */
+export function getStorylineStep(index: number, length: number, direction: 'next' | 'previous') {
+  if (direction === 'next') return index >= length - 1 ? 'end' : 'move';
+  return index > 0 ? 'move' : 'stay';
 }

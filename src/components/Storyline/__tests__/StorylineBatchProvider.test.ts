@@ -10,6 +10,11 @@ import type * as BrowsingLevelModule from '~/components/BrowsingLevel/BrowsingLe
 const mocks = vi.hoisted(() => ({
   storylines: true,
   getForPosts: vi.fn(),
+  // Each chunk answers only for its own posts, so a merge that kept one chunk shows.
+  dataFor: (input: { postIds: number[] }) =>
+    Object.fromEntries(
+      Object.entries(mocks.byPost).filter(([id]) => input.postIds.includes(Number(id)))
+    ),
   byPost: {} as Record<
     number,
     { chapterId: number; depth: number; storylineId: number; title: string }
@@ -37,7 +42,10 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
                 return input;
               },
             },
-          }).map(() => ({ data: mocks.byPost, dataUpdatedAt: 1 })),
+          }).map((input) => ({
+            data: mocks.dataFor(input as { postIds: number[] }),
+            dataUpdatedAt: 1,
+          })),
       }
     ),
   };
@@ -65,10 +73,19 @@ function Card({ postId }: { postId: number }) {
   return null;
 }
 
+function feed(postIds: number[]) {
+  return createElement(
+    StorylineBatchProvider,
+    { postIds },
+    postIds.map((postId) => createElement(Card, { key: postId, postId }))
+  );
+}
+
 function renderFeed(postIds: number[]) {
   const container = document.createElement('div');
+  const root = createRoot(container);
   act(() => {
-    createRoot(container).render(
+    root.render(
       createElement(
         StorylineBatchProvider,
         { postIds },
@@ -76,6 +93,7 @@ function renderFeed(postIds: number[]) {
       )
     );
   });
+  return { rerender: (next: number[]) => act(() => root.render(feed(next))) };
 }
 
 const range = (from: number, count: number) => Array.from({ length: count }, (_, i) => from + i);
@@ -99,6 +117,29 @@ describe('StorylineBatchProvider', () => {
     expect(mocks.getForPosts.mock.calls.map(([input]) => input.postIds.length)).toEqual([
       100, 100, 50,
     ]);
+  });
+
+  it('merges every chunk, so a card in the third chunk still gets its pill', () => {
+    mocks.byPost = {
+      5: { chapterId: 50, depth: 0, storylineId: 1, title: 'First' },
+      230: { chapterId: 230, depth: 1, storylineId: 2, title: 'Third' },
+    };
+    renderFeed(range(1, 250));
+    expect([seen[5], seen[230]]).toEqual(['First ch 1', 'Third ch 2']);
+  });
+
+  it('an appended page re-reads only the chunk it changed', () => {
+    // A feed pages towards lower ids, so arrival order is descending: sorted chunking would
+    // move every boundary on append.
+    const descending = (count: number) => range(1, count).map((i) => 1001 - i);
+    const { rerender } = renderFeed(descending(150));
+    const before = mocks.getForPosts.mock.calls.map(([input]) => input.postIds.join(','));
+    mocks.getForPosts.mockClear();
+    rerender(descending(200));
+    const after = mocks.getForPosts.mock.calls.map(([input]) => input.postIds.join(','));
+    // The first chunk's input (its cache key) is identical; only the tail grew.
+    expect(after[0]).toBe(before[0]);
+    expect(after[1].split(',')).toHaveLength(100);
   });
 
   it('reads nothing at all with the flag off', () => {

@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
+  getStorylineStep,
   getStorylineWalk,
+  hideHiddenUsersChapters,
   orderPathImages,
-  parseStorylineChapterParam,
+  parseIdParam,
+  resolvePendingContinue,
 } from '~/components/Storyline/storyline-mode.utils';
 import type { StorylinePathChapter } from '~/server/services/storyline.service';
 
@@ -53,7 +56,7 @@ describe('getStorylineWalk', () => {
   });
 });
 
-describe('parseStorylineChapterParam', () => {
+describe('parseIdParam', () => {
   it.each([
     ['12', 12],
     [12, 12],
@@ -64,6 +67,88 @@ describe('parseStorylineChapterParam', () => {
     ['1.5', undefined],
     [undefined, undefined],
   ])('%j -> %j', (value, expected) => {
-    expect(parseStorylineChapterParam(value)).toBe(expected);
+    expect(parseIdParam(value)).toBe(expected);
+  });
+});
+
+describe('orderPathImages tie-breaks', () => {
+  it('falls back to id when two images in one post share or lack an index', () => {
+    const images = [
+      { id: 12, postId: 100, index: null },
+      { id: 11, postId: 100, index: null },
+      { id: 10, postId: 100, index: 0 },
+    ];
+    expect(orderPathImages(images, [100]).map((i) => i.id)).toEqual([10, 11, 12]);
+  });
+});
+
+describe('hideHiddenUsersChapters', () => {
+  it("turns a hidden user's chapter into an unavailable tombstone and leaves the rest", () => {
+    const chapters = [
+      visible(1, 0, 100),
+      { ...visible(2, 1, 200), post: { ...visible(2, 1, 200).post!, userId: 7 } },
+    ];
+    const result = hideHiddenUsersChapters(chapters, new Set([7]));
+    expect(result.map((c) => [c.chapterId, c.tombstone, c.post?.id ?? null])).toEqual([
+      [1, null, 100],
+      [2, 'unavailable', null],
+    ]);
+  });
+});
+
+describe('resolvePendingContinue', () => {
+  const first = new Map([[5, 50]]);
+  it('waits while the path still ends at the previous chapter', () => {
+    expect(
+      resolvePendingContinue({
+        pendingChapterId: 5,
+        pathEndId: 4,
+        imagesFetching: false,
+        firstImageIdByChapterId: first,
+      })
+    ).toEqual({ kind: 'wait' });
+  });
+  it("waits while the branch's images are still loading", () => {
+    expect(
+      resolvePendingContinue({
+        pendingChapterId: 5,
+        pathEndId: 5,
+        imagesFetching: true,
+        firstImageIdByChapterId: new Map(),
+      })
+    ).toEqual({ kind: 'wait' });
+  });
+  it("opens the branch's first image once it has arrived", () => {
+    expect(
+      resolvePendingContinue({
+        pendingChapterId: 5,
+        pathEndId: 5,
+        imagesFetching: false,
+        firstImageIdByChapterId: first,
+      })
+    ).toEqual({ kind: 'open', imageId: 50 });
+  });
+  it('shows the end-of-chapter view for a branch with nothing this reader can see', () => {
+    expect(
+      resolvePendingContinue({
+        pendingChapterId: 5,
+        pathEndId: 5,
+        imagesFetching: false,
+        firstImageIdByChapterId: new Map(),
+      })
+    ).toEqual({ kind: 'end' });
+  });
+});
+
+describe('getStorylineStep', () => {
+  it.each([
+    [0, 3, 'next', 'move'],
+    [1, 3, 'next', 'move'],
+    [2, 3, 'next', 'end'],
+    [0, 1, 'next', 'end'],
+    [0, 3, 'previous', 'stay'],
+    [2, 3, 'previous', 'move'],
+  ] as const)('index %i of %i, %s -> %s', (index, length, direction, expected) => {
+    expect(getStorylineStep(index, length, direction)).toBe(expected);
   });
 });

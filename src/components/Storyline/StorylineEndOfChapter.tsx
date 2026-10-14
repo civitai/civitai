@@ -94,10 +94,16 @@ export function StorylineEndOfChapter({
           <Loader className="mx-auto" />
         ) : (
           <>
+            {forkShares && !forkShares.enough && !!children?.length && (
+              <Text size="xs" c="dimmed" data-testid="storyline-shares-pending">
+                Not enough readers yet to show where people go ({forkShares.total} of{' '}
+                {forkShares.minChoices} choices)
+              </Text>
+            )}
             {main && (
               <ForkCard
                 child={main}
-                share={forkShares.shares[main.chapterId]}
+                share={forkShares?.enough ? forkShares.shares[main.chapterId] ?? 0 : undefined}
                 onContinue={onContinue}
                 big
               />
@@ -112,7 +118,9 @@ export function StorylineEndOfChapter({
                     <ForkCard
                       key={child.chapterId}
                       child={child}
-                      share={forkShares.shares[child.chapterId]}
+                      share={
+                        forkShares?.enough ? forkShares.shares[child.chapterId] ?? 0 : undefined
+                      }
                       onContinue={onContinue}
                     />
                   ))}
@@ -163,6 +171,8 @@ function ForkCard({
       )}
       data-testid="storyline-fork"
       data-rank={child.rank}
+      data-chapter-id={child.chapterId}
+      data-tombstone={child.tombstone ?? undefined}
     >
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2">

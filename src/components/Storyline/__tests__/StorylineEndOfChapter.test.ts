@@ -8,7 +8,7 @@ import type { StorylineChild } from '~/components/Storyline/storyline.queries';
 
 const mocks = vi.hoisted(() => ({
   children: [] as StorylineChild[],
-  shares: {} as Record<number, number>,
+  forkShares: { enough: false, total: 0, minChoices: 20, shares: {} as Record<number, number> },
   trackCreateClick: vi.fn(),
   trigger: vi.fn(),
 }));
@@ -16,7 +16,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock('~/components/Storyline/storyline.queries', async (importOriginal) => ({
   ...(await importOriginal<typeof QueriesModule>()),
   useStorylineChildren: () => ({ data: mocks.children, isLoading: false }),
-  useStorylineForkShares: () => ({ data: { total: null, shares: mocks.shares } }),
+  useStorylineForkShares: () => ({ data: mocks.forkShares }),
   useStorylineTracking: () => ({
     trackBranchChoice: vi.fn(),
     trackCreateClick: mocks.trackCreateClick,
@@ -72,7 +72,7 @@ const forks = (container: HTMLElement) => [
 describe('StorylineEndOfChapter', () => {
   beforeEach(() => {
     document.body.innerHTML = '';
-    mocks.shares = {};
+    mocks.forkShares = { enough: false, total: 0, minChoices: 20, shares: {} };
     mocks.trackCreateClick.mockClear();
     mocks.trigger.mockClear();
     onContinue = vi.fn();
@@ -100,13 +100,49 @@ describe('StorylineEndOfChapter', () => {
     expect(forks(container)[1].textContent).toContain('This chapter was removed');
   });
 
-  it('shows a fork share only when the read has one for it', () => {
+  it('shows every fork with its share once enough readers have chosen', () => {
     mocks.children = [child(5, 'canon', 'Kept'), child(6, 'community', 'Other')];
-    mocks.shares = { 5: 0.73 };
+    mocks.forkShares = { enough: true, total: 40, minChoices: 20, shares: { 5: 0.73 } };
     const container = render();
     const [main, other] = forks(container);
     expect(main.textContent).toContain('73% of readers');
-    expect(other.textContent).not.toContain('% of readers');
+    // A fork nobody has taken yet reads 0%, not blank, once the split is shown.
+    expect(other.textContent).toContain('0% of readers');
+    expect(container.querySelector('[data-testid="storyline-shares-pending"]')).toBeNull();
+  });
+
+  it('shows no percentages and says how far off the threshold is when too few have chosen', () => {
+    mocks.children = [child(5, 'canon', 'Kept'), child(6, 'community', 'Other')];
+    mocks.forkShares = { enough: false, total: 3, minChoices: 20, shares: {} };
+    const container = render();
+    expect(forks(container).map((f) => f.textContent?.includes('% of readers'))).toEqual([
+      false,
+      false,
+    ]);
+    expect(
+      container.querySelector('[data-testid="storyline-shares-pending"]')?.textContent
+    ).toContain('3 of 20 choices');
+  });
+
+  it('tags each fork with its chapter id and any tombstone, for the end-to-end spec', () => {
+    mocks.children = [child(5, 'canon', 'Kept'), child(8, 'community', null)];
+    const container = render();
+    expect(forks(container).map((f) => [f.dataset.chapterId, f.dataset.tombstone])).toEqual([
+      ['5', undefined],
+      ['8', 'removed'],
+    ]);
+  });
+
+  it('keeps the server order even where it differs from rank order', () => {
+    mocks.children = [
+      child(7, 'community', 'Most read'),
+      child(5, 'canon', 'Canon'),
+      child(6, 'endorsed', 'Endorsed'),
+    ];
+    const container = render();
+    const cards = forks(container);
+    expect(cards.map((c) => c.dataset.chapterId)).toEqual(['7', '5', '6']);
+    expect(cards.map((c) => c.textContent?.endsWith('Read'))).toEqual([true, false, false]);
   });
 
   it('records the click on Create the next section and opens the early access prompt', () => {

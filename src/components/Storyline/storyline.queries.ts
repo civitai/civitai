@@ -2,7 +2,11 @@ import { keepPreviousData } from '@tanstack/react-query';
 import { useMemo } from 'react';
 import { useViewerBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useQueryImages } from '~/components/Image/image.utils';
-import { orderPathImages } from '~/components/Storyline/storyline-mode.utils';
+import {
+  hideHiddenUsersChapters,
+  orderPathImages,
+} from '~/components/Storyline/storyline-mode.utils';
+import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { StorylinePathChapter } from '~/server/services/storyline.service';
 import type { RouterOutput } from '~/types/router';
@@ -22,6 +26,14 @@ export function useStorylinesEnabled() {
   return !!useFeatureFlags().storylines;
 }
 
+export function useHiddenUserIds() {
+  const hiddenUsers = useHiddenPreferencesData()?.hiddenUsers;
+  return useMemo(() => new Set((hiddenUsers ?? []).map((u) => u.id)), [hiddenUsers]);
+}
+
+/** The drawer reads forks for the stops nearest the end only, so a long path is not N reads. */
+export const STORYLINE_DRAWER_FORK_STOPS = 10;
+
 export function useStorylinePath(chapterId: number | undefined) {
   const enabled = useStorylinesEnabled();
   const browsingLevel = useViewerBrowsingLevelDebounced();
@@ -37,16 +49,23 @@ export function useStorylineChildren(
 ) {
   const enabled = useStorylinesEnabled() && (options?.enabled ?? true);
   const browsingLevel = useViewerBrowsingLevelDebounced();
-  return trpc.storyline.getChildren.useQuery(
+  const hiddenUserIds = useHiddenUserIds();
+  const query = trpc.storyline.getChildren.useQuery(
     { chapterId: chapterId as number, browsingLevel },
     { enabled: enabled && !!chapterId }
   );
+  const data = useMemo(
+    () => query.data && hideHiddenUsersChapters(query.data, hiddenUserIds),
+    [query.data, hiddenUserIds]
+  );
+  return { data, isLoading: query.isLoading };
 }
 
 /** One children read per chapter on the path, for the forks the drawer draws beside it. */
 export function useStorylinePathChildren(chapterIds: number[], options: { enabled: boolean }) {
   const enabled = useStorylinesEnabled() && options.enabled;
   const browsingLevel = useViewerBrowsingLevelDebounced();
+  const hiddenUserIds = useHiddenUserIds();
   const queries = trpc.useQueries((t) =>
     (enabled ? chapterIds : []).map((chapterId) =>
       t.storyline.getChildren({ chapterId, browsingLevel })
@@ -55,11 +74,12 @@ export function useStorylinePathChildren(chapterIds: number[], options: { enable
   return useMemo(() => {
     const byChapterId = new Map<number, StorylineChild[]>();
     queries.forEach((query, i) => {
-      if (query.data) byChapterId.set(chapterIds[i], query.data);
+      if (query.data)
+        byChapterId.set(chapterIds[i], hideHiddenUsersChapters(query.data, hiddenUserIds));
     });
     return byChapterId;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chapterIds.join(','), queries.map((q) => q.dataUpdatedAt).join(',')]);
+  }, [chapterIds.join(','), hiddenUserIds, queries.map((q) => q.dataUpdatedAt).join(',')]);
 }
 
 /**
@@ -84,24 +104,37 @@ export function useStorylinePathImages(chapters: StorylinePathChapter[] | undefi
 // The procedures below are owned by the storyline services and are not on the router yet; these
 // keep the viewer's call sites final so swapping each one in is a one-line change.
 
-export type StorylineForkShares = { total: number | null; shares: Record<number, number> };
-const NO_SHARES: StorylineForkShares = { total: null, shares: {} };
+/** Below `minChoices` choices, `enough` is false and `shares` is empty. */
+export type StorylineForkShares = {
+  enough: boolean;
+  total: number;
+  minChoices: number;
+  shares: Record<number, number>;
+};
+const NO_SHARES: StorylineForkShares = { enough: false, total: 0, minChoices: 20, shares: {} };
 
-export function useStorylineForkShares(_chapterId: number | undefined) {
-  return { data: NO_SHARES };
+export function useStorylineForkShares(chapterId: number | undefined) {
+  return { data: chapterId ? NO_SHARES : undefined };
 }
 
 export function useStorylineTracking() {
   return {
-    trackBranchChoice: (_input: { fromChapterId: number; toChapterId: number }) => undefined,
-    trackCreateClick: (_input: { chapterId: number }) => undefined,
+    /** Once real: invalidate `getForkShares` for `fromChapterId` when it resolves. */
+    trackBranchChoice: (input: { fromChapterId: number; toChapterId: number }) => {
+      void input;
+    },
+    trackCreateClick: (input: { chapterId: number }) => {
+      void input;
+    },
   };
 }
 
 export function useStorylineEarlyAccess() {
   return {
     joined: false,
-    join: async (_input: { storylineId?: number }) => undefined,
+    join: async (input: { storylineId?: number }) => {
+      void input;
+    },
     isJoining: false,
   };
 }

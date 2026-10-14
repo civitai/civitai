@@ -10,9 +10,12 @@ import {
 } from '~/components/Storyline/storyline.queries';
 import {
   getStorylineWalk,
-  parseStorylineChapterParam,
+  hideHiddenUsersChapters,
+  parseIdParam,
+  resolvePendingContinue,
   STORYLINE_CHAPTER_PARAM,
 } from '~/components/Storyline/storyline-mode.utils';
+import { useHiddenUserIds } from '~/components/Storyline/storyline.queries';
 import type { ImagesInfiniteModel } from '~/server/services/image.service';
 import { QS } from '~/utils/qs';
 
@@ -47,7 +50,8 @@ export function useStorylineMode(): StorylineModeState {
 
 function useStorylineRoute() {
   const browserRouter = useBrowserRouter();
-  const chapterId = parseStorylineChapterParam(browserRouter.query[STORYLINE_CHAPTER_PARAM]);
+  const chapterId = parseIdParam(browserRouter.query[STORYLINE_CHAPTER_PARAM]);
+  const imageId = parseIdParam(browserRouter.query.imageId);
 
   const go = useCallback(
     ({ imageId, chapterId }: { imageId?: number; chapterId: number | undefined }) => {
@@ -70,7 +74,7 @@ function useStorylineRoute() {
     [browserRouter]
   );
 
-  return { chapterId, go };
+  return { chapterId, imageId, go };
 }
 
 /**
@@ -90,12 +94,20 @@ export function StorylineModeProvider({
   ) => React.ReactNode;
 }) {
   const enabled = useStorylinesEnabled();
-  const { chapterId: routeChapterId, go } = useStorylineRoute();
+  const { chapterId: routeChapterId, imageId: routeImageId, go } = useStorylineRoute();
   const chapterId = enabled ? routeChapterId : undefined;
   const tracking = useStorylineTracking();
 
   const pathQuery = useStorylinePath(chapterId);
-  const path = pathQuery.data;
+  const hiddenUserIds = useHiddenUserIds();
+  const path = useMemo(
+    () =>
+      pathQuery.data && {
+        ...pathQuery.data,
+        chapters: hideHiddenUsersChapters(pathQuery.data.chapters, hiddenUserIds),
+      },
+    [pathQuery.data, hiddenUserIds]
+  );
   const {
     images,
     isLoading: imagesLoading,
@@ -145,16 +157,27 @@ export function StorylineModeProvider({
   // hidden chapter stays reachable.
   const pathEndId = path?.chapters[path.chapters.length - 1]?.chapterId;
   useEffect(() => {
-    if (!pendingChapterId || pathEndId !== pendingChapterId || imagesFetching) return;
+    if (!pendingChapterId) return;
+    const next = resolvePendingContinue({
+      pendingChapterId,
+      pathEndId,
+      imagesFetching,
+      firstImageIdByChapterId: walk.firstImageIdByChapterId,
+    });
+    if (next.kind === 'wait') return;
     setPendingChapterId(undefined);
-    const imageId = walk.firstImageIdByChapterId.get(pendingChapterId);
-    if (!imageId) return;
+    if (next.kind === 'end') return setEndOpen(true);
     setEndOpen(false);
-    go({ imageId, chapterId: pendingChapterId });
+    go({ imageId: next.imageId, chapterId: pendingChapterId });
   }, [pendingChapterId, pathEndId, imagesFetching, walk, go]);
 
+  // The URL's chapter is only trusted for the image it is shown with: a link pairing an image
+  // with an unrelated storyline must not put that image under the storyline's banner.
+  const onPath = !!routeImageId && walk.chapterIdByImageId.has(routeImageId);
+  const inStoryline = !!chapterId && !!path && (onPath || !!pendingChapterId || endOpen);
+
   const value = useMemo<StorylineModeState>(() => {
-    if (!chapterId || !path) return { active: false, enter };
+    if (!chapterId || !path || !inStoryline) return { active: false, enter };
     return {
       active: true,
       enter,
@@ -170,13 +193,23 @@ export function StorylineModeProvider({
       drawerOpen,
       setDrawerOpen,
     };
-  }, [chapterId, path, images, walk, enter, leave, jumpToChapter, continueTo, endOpen, drawerOpen]);
+  }, [
+    chapterId,
+    path,
+    inStoryline,
+    images,
+    walk,
+    enter,
+    leave,
+    jumpToChapter,
+    continueTo,
+    endOpen,
+    drawerOpen,
+  ]);
 
-  if (chapterId && !path && pathQuery.isLoading) return <PageLoader />;
-  if (value.active && imagesLoading && !images.length) return <PageLoader />;
+  if (chapterId && !pathQuery.data && pathQuery.isLoading) return <PageLoader />;
+  if (chapterId && path && imagesLoading && !images.length) return <PageLoader />;
 
-  // A path whose every chapter is hidden from this reader has nothing to walk, so the detail
-  // keeps the images it was opened with and the banner still offers the end-of-chapter view.
   const storylineImages = value.active && images.length ? images : undefined;
 
   return (

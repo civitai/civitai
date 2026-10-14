@@ -4,6 +4,7 @@ import { useMemo } from 'react';
 import type { ActiveStorylineMode } from '~/components/Storyline/StorylineModeProvider';
 import type { StorylineChild } from '~/components/Storyline/storyline.queries';
 import {
+  STORYLINE_DRAWER_FORK_STOPS,
   useStorylineForkShares,
   useStorylinePathChildren,
 } from '~/components/Storyline/storyline.queries';
@@ -23,9 +24,12 @@ export function StorylineDrawer({
 }) {
   const isMobile = useIsMobile({ type: 'media' });
   const { path, drawerOpen, setDrawerOpen, jumpToChapter, continueTo } = storyline;
-  const chapterIds = useMemo(() => path.chapters.map((c) => c.chapterId), [path.chapters]);
-  const childrenByChapterId = useStorylinePathChildren(chapterIds, { enabled: drawerOpen });
-  const endChapterId = chapterIds[chapterIds.length - 1];
+  const forkStopIds = useMemo(
+    () => path.chapters.slice(-STORYLINE_DRAWER_FORK_STOPS).map((c) => c.chapterId),
+    [path.chapters]
+  );
+  const childrenByChapterId = useStorylinePathChildren(forkStopIds, { enabled: drawerOpen });
+  const endChapterId = path.chapters[path.chapters.length - 1]?.chapterId;
   const { data: endShares } = useStorylineForkShares(drawerOpen ? endChapterId : undefined);
 
   return (
@@ -94,10 +98,21 @@ export function StorylineDrawer({
                     <BranchRow
                       key={child.chapterId}
                       child={child}
-                      share={isEnd ? endShares.shares[child.chapterId] : undefined}
+                      share={
+                        isEnd && endShares?.enough
+                          ? endShares.shares[child.chapterId] ?? 0
+                          : undefined
+                      }
                       onClick={() => continueTo(child)}
                     />
                   ))}
+                  {isEnd && endShares && !endShares.enough && (
+                    <li>
+                      <Text size="xs" c="dimmed" data-testid="storyline-shares-pending">
+                        Not enough readers yet ({endShares.total} of {endShares.minChoices} choices)
+                      </Text>
+                    </li>
+                  )}
                 </ul>
               )}
             </li>
@@ -123,6 +138,8 @@ function BranchRow({
         onClick={onClick}
         className="flex w-full items-center gap-2 rounded border border-dashed border-violet-5 px-2 py-1 text-left"
         data-testid="storyline-branch"
+        data-chapter-id={child.chapterId}
+        data-tombstone={child.tombstone ?? undefined}
       >
         <Text size="xs" c="dimmed" lineClamp={1} className="flex-1">
           {child.post

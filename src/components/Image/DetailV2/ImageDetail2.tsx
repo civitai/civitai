@@ -35,6 +35,7 @@ import {
 import { useEffect, useMemo, useRef } from 'react';
 import { StorylineBanner, StorylineStageOverlay } from '~/components/Storyline/StorylineDetail';
 import { useStorylineMode } from '~/components/Storyline/StorylineModeProvider';
+import { getStorylineStep } from '~/components/Storyline/storyline-mode.utils';
 import { useRouter } from 'next/router';
 import clsx from 'clsx';
 import { STICKER_REVEAL_PARAM, stickerRevealRequested } from '~/components/Placement/queue-routes';
@@ -169,15 +170,19 @@ export function ImageDetail2() {
 
   const carouselNavigation = useCarouselNavigation({ items: images, initialIndex: index });
 
-  // A storyline is walked, not looped: past its last image is the end-of-chapter view.
   const storyline = useStorylineMode();
-  const isLastImage = carouselNavigation.index >= images.length - 1;
+  const isLastImage = getStorylineStep(carouselNavigation.index, images.length, 'next') === 'end';
   const navigation = storyline.active
     ? {
         ...carouselNavigation,
-        next: () => (isLastImage ? storyline.setEndOpen(true) : carouselNavigation.next()),
+        next: () => {
+          const step = getStorylineStep(carouselNavigation.index, images.length, 'next');
+          if (step === 'end') storyline.setEndOpen(true);
+          else carouselNavigation.next();
+        },
         previous: () => {
-          if (carouselNavigation.index > 0) carouselNavigation.previous();
+          const step = getStorylineStep(carouselNavigation.index, images.length, 'previous');
+          if (step === 'move') carouselNavigation.previous();
         },
       }
     : carouselNavigation;
