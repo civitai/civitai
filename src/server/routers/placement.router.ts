@@ -27,6 +27,13 @@ import {
   setStickerCommentHiddenSchema,
   submitToRemixGallerySchema,
   suspendPlacerSchema,
+  actOnStorylineContinuationSchema,
+  setStorylineSpaceSchema,
+  storylineContinuationCursorSchema,
+  storylineContinuePriceSchema,
+  storylineIdSchema,
+  storylinePlacementIdSchema,
+  submitStorylineContinuationSchema,
 } from '~/server/schema/placement.schema';
 import {
   getFreePlacementAllowance,
@@ -84,6 +91,14 @@ import { domainSpendType } from '~/server/utils/buzz-helpers';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
 import { domainServableLevels, viewerBrowsingLevel } from '~/server/utils/browsing-level';
 import type { PlacementSurface } from '~/shared/utils/placement';
+import type {
+  MyStorylineContinuation,
+  StorylineContinuationPage,
+  StorylineContinuationQueueItem,
+  StorylineContinuePrice,
+  StorylineSpace,
+} from '~/shared/utils/storyline-placement';
+import { STORYLINE_REFUSALS } from '~/shared/utils/storyline-placement';
 import { isPromotionSurface } from '~/shared/utils/promotion';
 import { assertPromotionsEnabled } from '~/server/utils/promotion-gate';
 import type { Context } from '~/server/createContext';
@@ -151,9 +166,13 @@ function assertPromotionSurfaceReadable(ctx: Context, surface: PlacementSurface)
  * nothing may configure or read one through these routes.
  */
 function assertSurfaceRouted(surface: PlacementSurface) {
-  if (surface === 'storyline')
-    throw throwAuthorizationError('storylines: this is not available yet');
+  if (surface === 'storyline') throw throwAuthorizationError(STORYLINE_REFUSALS.notAvailable);
 }
+
+/** The storyline procedures' whole body until they are routed. */
+const storylinesNotRouted = async (): Promise<never> => {
+  throw throwAuthorizationError(STORYLINE_REFUSALS.notAvailable);
+};
 
 export const placementRouter = router({
   getSpace: publicProcedure.input(getPlacementSpaceSchema).query(({ input, ctx }) => {
@@ -557,4 +576,54 @@ export const placementRouter = router({
         viewerLevels: viewerBrowsingLevel(ctx, input.browsingLevel),
       })
     ),
+
+  // -------------------------------------------------------------------------
+  // Storyline continuations
+  //
+  // Typed and refusing. Each answers with `storylines: this is not available
+  // yet` until the submission path refuses a target that is not a chapter of
+  // an open storyline: the surface opens at price 0 by default, which is safe
+  // only behind that check. The UI builds against these shapes meanwhile.
+  //
+  // 🔴 Whoever implements `submitStorylineContinuation` owes it a rate limit:
+  // a zero-priced submission costs the placer nothing, and the per-placer
+  // pending cap bounds one placer, not many placers on one creator.
+  // -------------------------------------------------------------------------
+
+  getStorylineSpace: protectedProcedure
+    .input(storylineIdSchema)
+    .query((): Promise<StorylineSpace> => storylinesNotRouted()),
+
+  setStorylineSpace: protectedProcedure
+    .input(setStorylineSpaceSchema)
+    .mutation((): Promise<StorylineSpace> => storylinesNotRouted()),
+
+  getStorylineContinuePrice: publicProcedure
+    .input(storylineContinuePriceSchema)
+    .query((): Promise<StorylineContinuePrice> => storylinesNotRouted()),
+
+  getPendingStorylineContinuations: protectedProcedure
+    .input(storylineContinuationCursorSchema)
+    .query(
+      (): Promise<StorylineContinuationPage<StorylineContinuationQueueItem>> =>
+        storylinesNotRouted()
+    ),
+
+  actOnStorylineContinuation: protectedProcedure
+    .input(actOnStorylineContinuationSchema)
+    .mutation((): Promise<{ settled: boolean }> => storylinesNotRouted()),
+
+  submitStorylineContinuation: guardedProcedure
+    .input(submitStorylineContinuationSchema)
+    .mutation((): Promise<{ id: number }> => storylinesNotRouted()),
+
+  getMyStorylineContinuations: protectedProcedure
+    .input(storylineContinuationCursorSchema)
+    .query(
+      (): Promise<StorylineContinuationPage<MyStorylineContinuation>> => storylinesNotRouted()
+    ),
+
+  retractStorylineContinuation: protectedProcedure
+    .input(storylinePlacementIdSchema)
+    .mutation((): Promise<{ retracted: boolean }> => storylinesNotRouted()),
 });

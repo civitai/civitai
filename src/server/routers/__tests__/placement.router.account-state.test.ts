@@ -70,6 +70,14 @@ const CREATE_CALLS = [
   },
 ] as const;
 
+/**
+ * Placement-writing mutations that are guarded but not yet routed: they refuse
+ * every caller until their feature is wired, so they have no writer to assert
+ * on and no ordinary caller who gets through. When one is routed it moves into
+ * `CREATE_CALLS` above, with its writer and its control.
+ */
+const GATED_CREATE_MUTATIONS = ['submitStorylineContinuation'] as const;
+
 type ProcedureDef = { _def: { type: string; middlewares: unknown[] } };
 
 const procedures = (placementRouter as unknown as { _def: { procedures: Record<string, unknown> } })
@@ -98,7 +106,7 @@ beforeEach(() => vi.clearAllMocks());
 describe('placement router — account state refuses a placement', () => {
   /**
    * The load-bearing case, and the one that does not lean on the caller tests
-   * below: exactly the two placement-writing mutations are built from
+   * below: exactly the placement-writing mutations are built from
    * `guardedProcedure`, read off each procedure's middleware chain.
    *
    * A list of names would have been silenced by pasting the new name into it,
@@ -112,8 +120,25 @@ describe('placement router — account state refuses a placement', () => {
 
     const guarded = mutationNames.filter((name) => isGuarded(procedures[name]));
 
-    expect(guarded.sort()).toEqual([...new Set(CREATE_CALLS.map((call) => call.name))].sort());
+    expect(guarded.sort()).toEqual(
+      [...new Set([...CREATE_CALLS.map((call) => call.name), ...GATED_CREATE_MUTATIONS])].sort()
+    );
   });
+
+  // A gated entry has no writer and no control, which is only honest while it
+  // refuses everyone. The moment one is routed this goes red, and the entry has
+  // to move into `CREATE_CALLS` with its writer and its control.
+  it.each(GATED_CREATE_MUTATIONS)(
+    '%s still refuses everyone, so it may stay gated',
+    async (name) => {
+      await expect(placementCaller()[name]({})).rejects.toThrow(
+        /storylines: this is not available yet|expectedPrice/
+      );
+      await expect(
+        placementCaller()[name]({ parentPostId: 1, postId: 2, expectedPrice: 0 })
+      ).rejects.toThrow(/storylines: this is not available yet/);
+    }
+  );
 
   for (const { label, name, writer, input } of CREATE_CALLS) {
     for (const { state, user, message } of REFUSED_STATES) {

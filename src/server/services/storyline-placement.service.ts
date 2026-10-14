@@ -9,6 +9,8 @@ import { throwBadRequestError } from '~/server/utils/errorHandling';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import type { PlacementSpaceMode, PlacementTargetType } from '~/shared/utils/placement';
 import { PLACEMENT_SURFACES } from '~/shared/utils/placement';
+import type { StorylineSpaceMode } from '~/shared/utils/storyline-placement';
+import { STORYLINE_REFUSALS } from '~/shared/utils/storyline-placement';
 
 const SURFACE = 'storyline' as const;
 
@@ -86,10 +88,9 @@ export async function createStorylinePlacement({
 
   const allowedModes = PLACEMENT_SURFACES[SURFACE].allowedModes as readonly PlacementSpaceMode[];
   if (space.mode === 'off' || !allowedModes.includes(space.mode))
-    throw throwBadRequestError('storyline: this creator is not accepting continuations here');
+    throw throwBadRequestError(STORYLINE_REFUSALS.notOpen);
 
-  if (space.ownerId === placerId)
-    throw throwBadRequestError('storyline: you cannot submit a continuation to your own storyline');
+  if (space.ownerId === placerId) throw throwBadRequestError(STORYLINE_REFUSALS.ownStoryline);
 
   // `setPlacementSpace` never writes an open space without a price, and the
   // surface default is 0 rather than null, so this is a hand-edited row.
@@ -101,9 +102,7 @@ export async function createStorylinePlacement({
   // deciding must not have the free submission they were shown turn into a
   // paid one.
   if (expectedPrice !== space.price)
-    throw throwBadRequestError(
-      `storyline: the price changed to ${space.price} Buzz while you were deciding`
-    );
+    throw throwBadRequestError(`${STORYLINE_REFUSALS.priceChanged}: now ${space.price} Buzz`);
 
   // Outside the transaction: I/O, and read from the primary.
   await assertCanPlace({ ownerId: space.ownerId, placerId });
@@ -124,9 +123,7 @@ export async function createStorylinePlacement({
       where: { surface: SURFACE, ownerId: space.ownerId, placerId, status: 'pending' },
     });
     if (pending >= PLACEMENT_SURFACES[SURFACE].maxPendingPerOwner)
-      throw throwBadRequestError(
-        'storyline: you already have the maximum continuations waiting with this creator'
-      );
+      throw throwBadRequestError(STORYLINE_REFUSALS.pendingCap);
 
     return tx.placement.create({
       data: {
@@ -173,4 +170,41 @@ export async function createStorylinePlacement({
   }
 
   return placement;
+}
+
+/**
+ * Opens or closes a storyline to continuations, inside the caller's
+ * transaction.
+ *
+ * For the storyline service, which marks a storyline Complete and closes it in
+ * one transaction: the status and the space cannot disagree after a crash.
+ * Ownership is the caller's to have checked. Postgres only, through `tx`, so it
+ * is safe inside a transaction (`no-io-in-transaction`).
+ *
+ * Writes the mode alone. A storyline's price stays where its creator left it, so
+ * reopening a completed storyline does not reset what it charges.
+ *
+ * Keyed on the storyline itself (`entityType 'storyline'`): the per-storyline
+ * level of the space, above the creator's account default.
+ */
+export async function setStorylineSpaceMode(
+  { storylineId, mode }: { storylineId: number; mode: StorylineSpaceMode },
+  tx: Pick<Prisma.TransactionClient, 'placementSpace'>
+) {
+  // Refused here as well as in the type: `auto` would put arbitrary media on
+  // someone's story unreviewed, and a caller casting a string would reach it.
+  if (!(PLACEMENT_SURFACES[SURFACE].allowedModes as readonly string[]).includes(mode))
+    throw new Error(`storyline: ${mode} is not a mode a storyline may be in`);
+
+  await tx.placementSpace.upsert({
+    where: {
+      surface_entityType_entityId: {
+        surface: SURFACE,
+        entityType: 'storyline',
+        entityId: storylineId,
+      },
+    },
+    create: { surface: SURFACE, entityType: 'storyline', entityId: storylineId, mode },
+    update: { mode },
+  });
 }
