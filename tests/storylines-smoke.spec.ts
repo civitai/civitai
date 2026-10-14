@@ -1,4 +1,7 @@
-import { expect, test } from '@playwright/test';
+import { expect as baseExpect, test } from '@playwright/test';
+
+// A dev server compiles routes on demand and loads real data: the default 5s is too short.
+const expect = baseExpect.configure({ timeout: 30_000 });
 
 /**
  * Smoke path through the demo storyline built by scripts/storylines/storylines-demo-seed.sql:
@@ -75,14 +78,15 @@ test.describe('storylines smoke', () => {
     );
     await expect(aboveCeiling).toHaveAttribute('data-tombstone', 'aboveStoryRating');
     await expect(aboveCeiling).toContainText("This chapter is rated above the storyline's maximum");
-    await expect(aboveCeiling.getByText(/^by /)).toHaveCount(0);
+    await expect(aboveCeiling).not.toContainText(' by ');
 
     const readable = page.locator('[data-testid="storyline-fork"]:not([data-tombstone])');
     await expect(readable).toHaveCount(2);
     await expect(readable.nth(0)).toHaveAttribute('data-rank', 'canon');
     await expect(readable.nth(1)).toHaveAttribute('data-rank', 'endorsed');
-    // The author line the placeholder must not have; proves the locator above can match.
-    await expect(readable.nth(1).getByText(/^by /)).toHaveCount(1);
+    // The author credit the placeholder must not show ("Chapter 5 by CivChan"); proves the
+    // pattern above can match.
+    await expect(readable.nth(1)).toContainText(' by ');
     // Read again once settled: toHaveCount passes at the first moment it matches.
     expect(await forks.count()).toBe(3);
 
