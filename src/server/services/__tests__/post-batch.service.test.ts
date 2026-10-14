@@ -93,7 +93,11 @@ beforeEach(() => {
   dbMock.dbWrite.$queryRaw.mockReset();
   dbMock.dbWrite.$queryRaw.mockResolvedValue([]);
   dbMock.dbWrite.modelVersion.findUnique.mockReset();
-  dbMock.dbWrite.modelVersion.findUnique.mockResolvedValue({ id: 30, status: 'Published' });
+  dbMock.dbWrite.modelVersion.findUnique.mockResolvedValue({
+    id: 30,
+    status: 'Published',
+    model: { status: 'Published' },
+  });
   canViewVersion.mockResolvedValue(true);
   let nextPostId = 100;
   let nextImageId = 1000;
@@ -201,8 +205,28 @@ describe('scheduleBatch', () => {
     nothingWritten();
   });
 
+  it('refuses a version whose model is not published, before any write', async () => {
+    dbMock.dbWrite.modelVersion.findUnique.mockResolvedValue({
+      id: 30,
+      status: 'Published',
+      model: { status: 'UnpublishedViolation' },
+    });
+
+    await expect(
+      scheduleBatch({ input: batchOf([at(2)], { modelVersionId: 30 }), ctx: ctxFor() })
+    ).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: expect.stringContaining('model is not published'),
+    });
+    nothingWritten();
+  });
+
   it('refuses a version that is not published, before any write', async () => {
-    dbMock.dbWrite.modelVersion.findUnique.mockResolvedValue({ id: 30, status: 'Scheduled' });
+    dbMock.dbWrite.modelVersion.findUnique.mockResolvedValue({
+      id: 30,
+      status: 'Scheduled',
+      model: { status: 'Published' },
+    });
 
     await expect(
       scheduleBatch({ input: batchOf([at(2)], { modelVersionId: 30 }), ctx: ctxFor() })
