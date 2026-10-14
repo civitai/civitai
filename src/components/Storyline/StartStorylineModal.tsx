@@ -4,7 +4,14 @@ import { useRouter } from 'next/router';
 import { useState } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
+import { useQueryImages } from '~/components/Image/image.utils';
 import { StorylineContinueModeInput } from '~/components/Storyline/settings/StorylineContinueModeInput';
+import {
+  StorylineClosedChip,
+  StorylineOpenToAnyoneChip,
+  StorylinePriceChip,
+} from '~/components/Storyline/StorylineChips';
+import { StorylineThumb, type StorylineThumbImage } from '~/components/Storyline/StorylineThumb';
 import { StorylineRatingInput } from '~/components/Storyline/settings/StorylineRatingInput';
 import type { StorylineWhoCanContinue } from '~/components/Storyline/storyline-ui';
 import type { StorylineSourcePost } from '~/components/Storyline/storyline.utils';
@@ -44,6 +51,12 @@ export function StartStorylineModal({
     allowed.find((level) => level >= NsfwLevel.PG13) ?? allowed[0] ?? NsfwLevel.PG13
   );
   const [whoCanContinue, setWhoCanContinue] = useState<StorylineWhoCanContinue>('Anyone');
+  // No storyline exists yet to carry a cover, so the post's first image is read as the page would.
+  const { images, isLoading: coverLoading } = useQueryImages(
+    { postId, limit: 1, withMeta: false, include: [] },
+    { enabled: canStart }
+  );
+  const cover = coverLoading ? undefined : (images[0] as StorylineThumbImage | undefined) ?? null;
 
   const create = trpc.storyline.create.useMutation({
     onSuccess: async ({ id }) => {
@@ -72,13 +85,28 @@ export function StartStorylineModal({
           </Alert>
         ) : (
           <>
-            <TextInput
-              label="Title"
-              value={title}
-              onChange={(e) => setTitle(e.currentTarget.value)}
-              maxLength={255}
-              required
-            />
+            <div className="flex items-start gap-3.5">
+              <figure className="m-0 w-[120px] shrink-0" data-testid="storyline-start-cover">
+                <StorylineThumb
+                  image={cover}
+                  width={120}
+                  ratio="4/5"
+                  fluid
+                  className="rounded-lg"
+                />
+                <Text component="figcaption" size="xs" c="dimmed" mt={4} lh={1.3}>
+                  Chapter 1 and the cover
+                </Text>
+              </figure>
+              <TextInput
+                label="Title"
+                value={title}
+                onChange={(e) => setTitle(e.currentTarget.value)}
+                maxLength={255}
+                required
+                className="min-w-0 flex-1"
+              />
+            </div>
             <Stack gap={4}>
               <Text size="sm" fw={500}>
                 Max rating
@@ -98,8 +126,16 @@ export function StartStorylineModal({
                 Who can continue
               </Text>
               <StorylineContinueModeInput value={whoCanContinue} onChange={setWhoCanContinue} />
+              <div className="mt-1.5 flex flex-wrap gap-1.5" data-testid="storyline-start-terms">
+                <StorylinePriceChip price={0} />
+                {whoCanContinue === 'Anyone' ? (
+                  <StorylineOpenToAnyoneChip />
+                ) : (
+                  <StorylineClosedChip label="Collaborators only" />
+                )}
+              </div>
               <Text size="xs" c="dimmed">
-                Free to continue. You can set a price from Manage on the storyline&apos;s page.
+                You can set a price from Manage on the storyline&apos;s page.
               </Text>
             </Stack>
           </>

@@ -2738,6 +2738,8 @@ describe('covers and cast', () => {
       answerRaw([{ id: 1, postId: 101, depth: 0, removedAt: null }], chosenRows);
       const storyline = await page({ id: 99 });
       expect(storyline.heroImage?.id).toBe(heroId);
+      // Only the banner pick (7 in every case) is shown as a banner; any fallback is a portrait.
+      expect(storyline.heroIsBanner).toBe(heroId === 7);
       expect(storyline.heroImagePosition).toBe(30);
       expect(rawCalls().filter((call) => isChosenImageRead(call.text))).toHaveLength(1);
     });

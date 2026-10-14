@@ -8,6 +8,7 @@ import {
   IconRosetteDiscountCheck,
   IconRoute,
   IconShieldHalf,
+  IconUsers,
 } from '@tabler/icons-react';
 import type { Icon as TablerIcon } from '@tabler/icons-react';
 import clsx from 'clsx';
@@ -92,6 +93,15 @@ export function StorylineClosedChip({
   );
 }
 
+/** Anyone may continue, and the creator reviews each continuation. */
+export function StorylineOpenToAnyoneChip() {
+  return (
+    <Chip color="blue" leftSection={<IconUsers size={12} />} data-testid="storyline-who-chip">
+      Anyone · you review
+    </Chip>
+  );
+}
+
 /** What continuing costs. `short` drops "to continue" where space is tight, keeping it as a tooltip. */
 export function StorylinePriceChip({
   price,
@@ -148,11 +158,18 @@ export function StorylineRoleChip({ role }: { role: 'creator' | 'endorsed' | 'co
 }
 
 /** A way on from a chapter: the owner's canon, or an endorsed collaborator's. */
-export function StorylineRankChip({ rank }: { rank: 'canon' | 'endorsed' | 'community' }) {
+export function StorylineRankChip({
+  rank,
+  onImage,
+}: {
+  rank: 'canon' | 'endorsed' | 'community';
+  onImage?: boolean;
+}) {
   if (rank === 'community') return null;
   const canon = rank === 'canon';
   return (
     <Chip
+      onImage={onImage}
       color={canon ? 'blue' : 'teal'}
       leftSection={canon ? <IconCrown size={12} /> : <IconRosetteDiscountCheck size={12} />}
       data-testid="storyline-rank-chip"

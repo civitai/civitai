@@ -19,12 +19,14 @@ export type StorylineThumbImage = {
 };
 
 /**
- * A 3:4 portrait thumb, cropped near the top so faces survive. `undefined` while the image is
- * loading, `null` when there is none to show (or none this viewer may see).
+ * A portrait thumb, 3:4 unless `ratio` says 4:5, cropped near the top so faces survive.
+ * `undefined` while the image is loading, `null` when there is none to show (or none this viewer
+ * may see).
  */
 export function StorylineThumb({
   image,
   width,
+  ratio = '3/4',
   fluid,
   dimmed,
   className,
@@ -33,6 +35,7 @@ export function StorylineThumb({
   image: StorylineThumbImage | null | undefined;
   /** Rendered width in px; also sizes the image request. */
   width: number;
+  ratio?: '3/4' | '4/5';
   /** Fill the parent's width instead; `width` then only sizes the image request. */
   fluid?: boolean;
   /** Fades the picture, not what is laid over it. */
@@ -44,7 +47,8 @@ export function StorylineThumb({
   return (
     <div
       className={clsx(
-        'relative aspect-[3/4] overflow-hidden rounded-md',
+        'relative overflow-hidden rounded-md',
+        ratio === '4/5' ? 'aspect-[4/5]' : 'aspect-[3/4]',
         fluid && 'w-full',
         className
       )}

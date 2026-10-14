@@ -29,9 +29,20 @@ const chapter = (
   chapterId: [130, 104, 121, 102, 150][depth],
   depth,
   tombstone: postId ? null : 'browsingLevel',
-  post: postId ? { id: postId, title: title ?? null, userId, username: AUTHORS[userId] } : null,
+  post: postId
+    ? {
+        id: postId,
+        title: title ?? null,
+        userId,
+        username: AUTHORS[userId],
+        user: { id: userId, username: AUTHORS[userId] },
+      }
+    : null,
   childCount,
+  firstImage: postId ? image(postId) : null,
 });
+/** The first image the server picked for a chapter's post. */
+const image = (postId: number) => ({ id: postId * 10, url: `first-of-${postId}`, type: 'image' });
 
 // The ways on from chapter 2 (chapter id 104), in the order the end of the chapter ranks them.
 const FORK_104 = [
@@ -48,6 +59,10 @@ const STORYLINE = {
   maxNsfwLevel: 2,
   userId: 10,
   user: { id: 10, username: 'Sillycat83' },
+  coverImage: { id: 9001, url: 'cover-pick', type: 'image', nsfwLevel: 1 },
+  heroImage: { id: 9001, url: 'cover-pick', type: 'image', nsfwLevel: 1 },
+  heroIsBanner: false,
+  heroImagePosition: 30,
   rootChapterId: 100,
   rootPostId: 501,
   chapterCount: 7,
@@ -61,20 +76,17 @@ const STORYLINE = {
     chapter(3, 504, 2, 'Framed'),
   ],
   contributors: [
-    { user: { id: 10, username: 'Sillycat83' }, role: 'creator' },
-    { user: { id: 11, username: 'tehalex86' }, role: 'endorsed' },
-    { user: { id: 12, username: 'Tar_Tarj' }, role: 'contributor' },
+    { user: { id: 10, username: 'Sillycat83' }, role: 'creator', chapterCount: 1 },
+    { user: { id: 11, username: 'tehalex86' }, role: 'endorsed', chapterCount: 3 },
+    { user: { id: 12, username: 'Tar_Tarj' }, role: 'contributor', chapterCount: 0 },
   ],
 };
-
-const COVER = { id: 9001, url: 'cover-of-501', type: 'image', nsfwLevel: 1, userId: 10 };
 
 const mocks = vi.hoisted(() => ({
   storyline: undefined as Record<string, unknown> | undefined,
   loading: false,
   terms: null as { open: boolean; closedReason: string | null; price: number } | null,
   termsFor: vi.fn(),
-  coverFor: vi.fn(),
   commentsPostId: vi.fn(),
   openContinue: vi.fn(),
   openManage: vi.fn(),
@@ -108,23 +120,41 @@ vi.mock('~/components/Storyline/continue/openStorylineContinueModal', () => ({
 vi.mock('~/components/Storyline/manage/openStorylineManageModal', () => ({
   openStorylineManageModal: mocks.openManage,
 }));
-// Chapter 1's first image, read per post: the hero and the card cover both show what it returns.
 vi.mock('~/components/Storyline/StorylineCover', () => ({
-  useStorylineFirstImage: (postId: number | null) => {
-    mocks.coverFor(postId);
-    return postId ? COVER : null;
-  },
-  StorylineHero: ({ image, backdrop }: { image: { url: string } | null; backdrop?: boolean }) => (
+  StorylineHero: ({
+    image,
+    position,
+    backdrop,
+  }: {
+    image: { url: string } | null;
+    position?: number;
+    backdrop?: boolean;
+  }) => (
     <div
       data-testid="storyline-hero"
       data-image={image?.url ?? 'none'}
+      data-position={String(position)}
       data-backdrop={String(!!backdrop)}
     />
   ),
 }));
 vi.mock('~/components/Storyline/StorylineThumb', () => ({
-  StorylineThumb: ({ image }: { image: { url: string } | null }) => (
-    <div data-testid="storyline-card-cover" data-image={image?.url ?? 'none'} />
+  StorylineThumb: ({
+    image,
+    ratio,
+    children,
+  }: {
+    image: { url: string } | null;
+    ratio?: string;
+    children?: React.ReactNode;
+  }) => (
+    <div
+      data-testid="storyline-thumb"
+      data-image={image?.url ?? 'none'}
+      data-ratio={ratio ?? '3/4'}
+    >
+      {children}
+    </div>
   ),
 }));
 vi.mock('~/components/Post/Detail/PostComments', () => ({
@@ -134,7 +164,12 @@ vi.mock('~/components/Post/Detail/PostComments', () => ({
   },
 }));
 vi.mock('~/components/UserAvatar/UserAvatar', () => ({
-  UserAvatar: ({ user }: { user: { username: string } }) => <span>{user.username}</span>,
+  UserAvatar: ({ user, subText }: { user: { username: string }; subText?: string }) => (
+    <span>
+      {user.username}
+      {subText}
+    </span>
+  ),
 }));
 
 beforeEach(() => {
@@ -143,13 +178,7 @@ beforeEach(() => {
   mocks.terms = null;
   mocks.children = { 104: FORK_104 };
   mocks.shares = { 104: { total: 20, shares: { 121: 0.62, 160: 0.29, 161: 0.09 } } };
-  for (const fn of [
-    mocks.termsFor,
-    mocks.coverFor,
-    mocks.commentsPostId,
-    mocks.openContinue,
-    mocks.openManage,
-  ])
+  for (const fn of [mocks.termsFor, mocks.commentsPostId, mocks.openContinue, mocks.openManage])
     fn.mockReset();
 });
 
@@ -173,6 +202,21 @@ const forks = () =>
       href: row.querySelector('a')?.getAttribute('href') ?? null,
     }));
   });
+/** The image each thumb under `root` shows, in order. */
+const thumbs = (root: Element) =>
+  [...root.querySelectorAll('[data-testid="storyline-thumb"]')].map((n) => ({
+    image: n.getAttribute('data-image'),
+    ratio: n.getAttribute('data-ratio'),
+  }));
+const cardCover = () => thumbs(page.getByRole('banner').element());
+const hero = () => {
+  const el = page.getByTestId('storyline-hero').element();
+  return {
+    image: el.getAttribute('data-image'),
+    backdrop: el.getAttribute('data-backdrop'),
+    position: el.getAttribute('data-position'),
+  };
+};
 const testIds = (id: string) =>
   [...document.querySelectorAll(`[data-testid="${id}"]`)].map((n) => n.textContent);
 
@@ -181,36 +225,42 @@ describe('StorylinePage', () => {
     renderWithProviders(<StorylinePage id={2} />);
 
     await expect.element(heading()).toBeVisible();
-    // The hero and the card cover are chapter 1's first image, read for chapter 1's post.
-    expect(mocks.coverFor).toHaveBeenLastCalledWith(501);
-    expect(page.getByTestId('storyline-hero').element().getAttribute('data-image')).toBe(
-      'cover-of-501'
-    );
-    // No banner can be picked yet, so chapter 1's portrait is a backdrop, never a wide crop.
-    expect(page.getByTestId('storyline-hero').element().getAttribute('data-backdrop')).toBe('true');
-    expect(page.getByTestId('storyline-card-cover').element().getAttribute('data-image')).toBe(
-      'cover-of-501'
-    );
+    // No banner picked: the server's hero is a portrait, so it is a backdrop, never a wide crop.
+    expect(hero()).toEqual({ image: 'cover-pick', backdrop: 'true', position: '30' });
+    expect(cardCover()).toEqual([{ image: 'cover-pick', ratio: '3/4' }]);
     expect(testIds('storyline-ceiling-chip')).toContain('Up to PG-13');
     await expect
       .element(page.getByRole('link', { name: 'Start reading' }))
       .toHaveAttribute('href', '/posts/501');
 
     expect(stops()).toEqual([
-      '1Chapter 1The cat patchby Sillycat83',
+      '1Chapter 1The cat patchSillycat83',
       // Untitled: named by its number once, not as an eyebrow and a name. A collaborator's
       // chapter carries the Endorsed chip.
-      '2Chapter 2by tehalex86Endorsed',
+      '2Chapter 2tehalex86Endorsed',
       '3This chapter is hidden by your browsing level',
-      '4Chapter 4Framedby tehalex86Endorsed',
+      '4Chapter 4Framedtehalex86Endorsed',
+    ]);
+    // Each chapter shows its own first image as a 4:5 thumb; a hidden chapter shows none.
+    expect(
+      stopElements().map((li) => {
+        const own = li.cloneNode(true) as HTMLElement;
+        own.querySelector('[data-testid="storyline-fork"]')?.remove();
+        return thumbs(own);
+      })
+    ).toEqual([
+      [{ image: 'first-of-501', ratio: '4/5' }],
+      [{ image: 'first-of-502', ratio: '4/5' }],
+      [],
+      [{ image: 'first-of-504', ratio: '4/5' }],
     ]);
     // Each way on from a fork, ranked, named, linked to its post, with its share; a hidden one
     // keeps its place without a link.
     expect(forks()).toEqual([
       null,
       [
-        { text: 'CanonChapter 3by Sillycat8362%', href: '/posts/503' },
-        { text: 'EndorsedRest in piecesby tehalex8629%', href: '/posts/560' },
+        { text: 'Canon62%Chapter 3Sillycat83', href: '/posts/503' },
+        { text: 'Endorsed29%Rest in piecestehalex86', href: '/posts/560' },
         { text: "This chapter is rated above the storyline's maximum9%", href: null },
       ],
       null,
@@ -224,12 +274,32 @@ describe('StorylinePage', () => {
         )
         .filter(Boolean)
     ).toEqual(['The story forks here · 3 paths', 'The story forks here · 2 paths']);
+    // Each way on shows its own first image as a 3:4 cover; the hidden one shows none.
+    expect(thumbs(stopElements()[1].querySelector('[data-testid="storyline-fork"]')!)).toEqual([
+      { image: 'first-of-503', ratio: '3/4' },
+      { image: 'first-of-560', ratio: '3/4' },
+    ]);
 
     expect(page.getByRole('region', { name: 'Contributors' }).element().textContent).toBe(
-      'ContributorsSillycat83Creatortehalex86EndorsedTar_Tarj'
+      'ContributorsSillycat831 chapterCreatortehalex863 chaptersEndorsedTar_Tarj0 chapters'
     );
     await expect.element(page.getByText('Comments for post 501')).toBeVisible();
     expect(mocks.commentsPostId).toHaveBeenCalledWith(501);
+  });
+
+  test('a picked banner shows sharp at its focus', async () => {
+    mocks.storyline = {
+      ...STORYLINE,
+      heroImage: { id: 77, url: 'banner-pick', type: 'image', nsfwLevel: 1 },
+      heroIsBanner: true,
+      heroImagePosition: 80,
+    };
+    renderWithProviders(<StorylinePage id={2} />);
+
+    await expect.element(heading()).toBeVisible();
+    expect(hero()).toEqual({ image: 'banner-pick', backdrop: 'false', position: '80' });
+    // The card keeps the cover, not the banner.
+    expect(cardCover()).toEqual([{ image: 'cover-pick', ratio: '3/4' }]);
   });
 
   test('only collaborators are marked Endorsed: the owner and other contributors are not', async () => {
@@ -352,13 +422,16 @@ describe('StorylinePage', () => {
   test('a hidden chapter 1 shows no link, cover or thread', async () => {
     mocks.storyline = {
       ...STORYLINE,
+      // The server drops chapter 1's image from the hero and cover when it is hidden.
+      heroImage: null,
+      coverImage: null,
       mainPath: [chapter(0, null), ...STORYLINE.mainPath.slice(1)],
     };
     renderWithProviders(<StorylinePage id={2} />);
 
     await expect.element(heading()).toBeVisible();
-    expect(mocks.coverFor).not.toHaveBeenCalledWith(501);
-    expect(page.getByTestId('storyline-hero').element().getAttribute('data-image')).toBe('none');
+    expect(hero().image).toBe('none');
+    expect(cardCover()).toEqual([{ image: 'none', ratio: '3/4' }]);
     expect(stops()[0]).toBe('1This chapter is hidden by your browsing level');
     expect(page.getByText('Start reading').elements()).toHaveLength(0);
     expect(mocks.commentsPostId).not.toHaveBeenCalled();

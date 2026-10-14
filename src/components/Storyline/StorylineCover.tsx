@@ -1,24 +1,9 @@
 import { Skeleton } from '@mantine/core';
 import clsx from 'clsx';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import { useQueryImages } from '~/components/Image/image.utils';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import type { StorylineThumbImage } from '~/components/Storyline/StorylineThumb';
-
-/**
- * The first image of chapter 1, through the normal image read so the viewer's level applies.
- * `undefined` while it loads, `null` when there is none this viewer may see.
- */
-export function useStorylineFirstImage(postId: number | null) {
-  const { images, isLoading } = useQueryImages(
-    { postId: postId ?? undefined, limit: 1, withMeta: false, include: [] },
-    { enabled: !!postId }
-  );
-  if (!postId) return null;
-  if (isLoading) return undefined;
-  return (images[0] as StorylineThumbImage | undefined) ?? null;
-}
 
 /**
  * The page's wide banner, fading into the page at the bottom so the header card can sit over it.
