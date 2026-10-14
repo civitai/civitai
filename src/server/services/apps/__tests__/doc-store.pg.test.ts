@@ -12,6 +12,7 @@ import {
   NS_PROD,
   POSTS,
   PREFS,
+  TALLIES,
 } from './doc-store.functional';
 import { defineRlsSuite } from './doc-store.rls';
 
@@ -180,6 +181,26 @@ describe.skipIf(!REAL_PG_URL)('concurrency on Postgres (appdata_rw, RLS on)', ()
       await holder.close();
     }
     expect(await store.get(ctx(app, NS_PROD, 1), PREFS, 'blocked')).toBeNull();
+  });
+
+  it('concurrent first increments of one absent key create ONE doc and lose no count', async () => {
+    const app = freshApp('race_ctrcreate');
+    const store = createDocStore({ db: h.db });
+    const r = await settle(
+      Array.from({ length: 10 }, (_, i) =>
+        store.increment(ctx(app, NS_PROD, 700 + i), TALLIES, 'col-1', 'plays', 2)
+      )
+    );
+    expect(r.codes).toEqual([]);
+    expect(r.ok).toBe(10);
+    const docs = await h.raw(`SELECT key, author_kind FROM appdata.doc WHERE app_id = $1`, [app]);
+    expect(docs).toEqual([{ key: 'col-1', author_kind: 'counter' }]);
+    expect((await store.get(ctx(app, NS_PROD, null), TALLIES, 'col-1'))?.counters.plays).toBe(20);
+    const [u] = await h.raw(`SELECT docs, last_seq FROM appdata.usage_app WHERE app_id = $1`, [
+      app,
+    ]);
+    expect({ docs: Number(u.docs), seq: Number(u.last_seq) }).toEqual({ docs: 1, seq: 1 });
+    await assertUsageConsistent(h, app, NS_PROD);
   });
 
   it('marks: 12 users, each racing 3 identical marks on one doc — count 12, then 0 after racing unmarks', async () => {

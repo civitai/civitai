@@ -27,13 +27,15 @@
 // never both pass a check that only one fits under; zero rows returned rolls the
 // whole transaction back as `quota_exceeded`. There is no pre-flight read.
 //
-// LOCK ORDER, which is what makes it deadlock-free: (1) the document row(s) of
-// the one key being written, (2) `usage_app` for (app, ns), (3) `usage_user`
-// rows in ascending user id. Nothing takes a document lock after (2), and every
-// path that takes (3) holds (2) first — so at most one transaction per
-// (app, ns) is ever waiting on a `usage_user` row, and no cycle can form.
-// Counters and marks take only a KEY SHARE lock on the document and the tally
-// row; they take no usage lock, exactly as the proposal specifies.
+// LOCK ORDER, which is what makes it deadlock-free: (1) the document row of the
+// one key being written, (1b) that document's tally and mark rows, (2)
+// `usage_app` for (app, ns), (3) `usage_user` rows in ascending user id.
+// Nothing takes a document or tally lock after (2), and every path that takes
+// (3) holds (2) first — so at most one transaction per (app, ns) is ever waiting
+// on a `usage_user` row, and no cycle can form. Incrementing an EXISTING
+// document and marking take only a KEY SHARE lock on the document and the tally
+// row, and no usage lock, as the proposal specifies; the first increment of an
+// absent key creates the document and is charged like any other create.
 //
 // `seq` comes from `usage_app.last_seq`, incremented in the same statement that
 // charges the quota and therefore row-locked until commit: per-(app, ns) seq
@@ -313,10 +315,14 @@ function docColumns(viewerParam: string): string {
 }
 
 /**
- * Transaction-local cap on waiting for a row lock. A burst of writes to one app
- * queues on its `usage_app` row, and in a transaction-pooled setup a waiter holds
- * a server connection the whole time; this bounds how long one busy app can hold
- * connections other apps share.
+ * Transaction-local cap on waiting for ANY lock in a store transaction. The case
+ * it exists for: a burst of writes to one app queues on its `usage_app` row, and
+ * in a transaction-pooled setup a waiter holds a server connection the whole
+ * time; this bounds how long one busy app can hold connections other apps share.
+ * It equally bounds waits on a document row (a writer holds FOR UPDATE through
+ * that queue, so a mark or increment on a document being edited in the burst can
+ * time out too), on a hot tally row, on a conflicting insert, and on relation
+ * locks taken by DDL on `appdata`. All of them surface as `rate_limited`.
  */
 const LOCK_TIMEOUT = '3s';
 
@@ -340,6 +346,15 @@ const SQL_LOCK_DOC = `SELECT d.version, d.author_uid, d.author_kind, d.size_byte
 const SQL_INSERT_DOC = `INSERT INTO appdata.doc AS d
     (app_id, ns, coll, scope_uid, key, data, version, seq, author_uid, author_kind, last_writer_uid, expires_at)
   VALUES ($1, $2, $3, $4::int, $5, $6::jsonb, 1, 0, $7::int, 'user', $7::int, $8::timestamptz)
+  ON CONFLICT DO NOTHING
+  RETURNING d.size_bytes`;
+
+// A shared document created by the first increment of one of its counters:
+// empty data, no user author (so `author=me` never lists it and `own` never
+// makes the incrementer its owner). $1 app, $2 ns, $3 coll, $4 key, $5 incrementer, $6 expires_at
+const SQL_INSERT_COUNTER_DOC = `INSERT INTO appdata.doc AS d
+    (app_id, ns, coll, scope_uid, key, data, version, seq, author_uid, author_kind, last_writer_uid, expires_at)
+  VALUES ($1, $2, $3, 0, $4, '{}'::jsonb, 1, 0, NULL, 'counter', $5::int, $6::timestamptz)
   ON CONFLICT DO NOTHING
   RETURNING d.size_bytes`;
 
@@ -510,7 +525,9 @@ function toDocRecord(
     updatedAt: new Date(row.updated_at as string | Date),
     expiresAt: row.expires_at ? new Date(row.expires_at as string | Date) : null,
     author:
-      row.author_kind === 'app' || authorUid === null
+      row.author_kind === 'counter'
+        ? { kind: 'counter' }
+        : row.author_kind === 'app' || authorUid === null
         ? { kind: 'app' }
         : { kind: 'user', uid: authorUid, isViewer: authorUid === ctx.viewerUid },
     counters,
@@ -635,8 +652,11 @@ function decodeCursor(
     // float8 text, as Postgres printed it.
     if (!/^-?[0-9.eE+-]{1,32}$/.test(payload) || !Number.isFinite(Number(payload))) throw bad();
   } else if (sort.kind !== 'key') {
-    // Microseconds or a tally count: a bigint, so anything else would be a 500 from the cast.
-    if (!/^-?[0-9]{1,19}$/.test(payload)) throw bad();
+    // Microseconds since epoch (17 digits reach year 5138) or a tally count (never
+    // negative; 18 digits stay under the bigint maximum). Anything else would be a
+    // 500 from the cast or the interval arithmetic.
+    const digits = sort.kind === 'tally' ? 18 : 17;
+    if (!new RegExp(`^[0-9]{1,${digits}}$`).test(payload)) throw bad();
   }
   return { value, key };
 }
@@ -744,7 +764,7 @@ export function createDocStore(deps: DocStoreDeps) {
     return seq;
   }
 
-  /** Who a document's bytes are charged to, besides the app. */
+  /** Who a document's bytes are charged to, besides the app. Counter- and app-authored docs: nobody. */
   function chargee(
     coll: DocCollection,
     scope: number,
@@ -772,8 +792,16 @@ export function createDocStore(deps: DocStoreDeps) {
   }
 
   function assertShareWritable(ctx: DocStoreContext, coll: DocCollection) {
-    if (coll.config.visibility === 'shared' && (coll.config.write ?? 'own') === 'owner') {
+    if (coll.config.visibility !== 'shared') return;
+    const write = coll.config.write ?? 'own';
+    if (write === 'owner') {
       throw new DocStoreError('write_policy', 'only the app owner writes this collection');
+    }
+    if (write === 'none') {
+      throw new DocStoreError(
+        'write_policy',
+        'documents in this collection are written by counters only'
+      );
     }
   }
 
@@ -862,7 +890,6 @@ export function createDocStore(deps: DocStoreDeps) {
         const ins = await c.query(SQL_INSERT_DOC, [...base, json, viewer, expiresAt]);
         if (ins.rows.length === 0) continue; // lost the race; re-read
         const size = Number(ins.rows[0].size_bytes);
-        await seedTallies(c, ctx, coll, key);
         app.bytes += size;
         app.docs += 1;
         addUserDelta(users, chargee(coll, scope, 'user', viewer), size, 1);
@@ -885,6 +912,9 @@ export function createDocStore(deps: DocStoreDeps) {
     app: UsageDelta,
     users: Map<number, UsageDelta & { ceiling: QuotaCeiling }>
   ): Promise<DocRecord> {
+    // Every write, not only a create, so a counter or mark declared after the
+    // document was created gets its row on the document's next write.
+    await seedTallies(c, ctx, coll, key);
     if (hasIndexes) {
       await c.query(SQL_SYNC_INDEX, [
         ctx.appId,
@@ -1058,12 +1088,62 @@ export function createDocStore(deps: DocStoreDeps) {
     if (!Number.isSafeInteger(by) || by < 1 || by > B.incrementMax) {
       throw invalid(`by must be an integer from 1 to ${B.incrementMax}`);
     }
-    requireViewer(ctx);
+    const viewer = requireViewer(ctx);
+    const expiresAt = resolveExpiresAt(coll, undefined);
     return withTx(ctx, async (c) => {
-      const doc = await c.query(SQL_SHARE_LOCK_DOC, [ctx.appId, ctx.ns, coll.name, key]);
-      if (doc.rows.length === 0) throw new DocStoreError('not_found', 'document not found');
-      const res = await c.query(SQL_INCREMENT, [ctx.appId, ctx.ns, coll.name, key, counter, by]);
-      return { value: Number(res.rows[0].count) };
+      const bump = async () =>
+        (await c.query(SQL_INCREMENT, [ctx.appId, ctx.ns, coll.name, key, counter, by])).rows[0];
+      // Two passes at most, as in writeDoc: a concurrent first increment of the
+      // same key can win the INSERT; the loser's insert waits for it to commit,
+      // inserts nothing, and the second pass increments the winner's document.
+      for (let attempt = 0; attempt < 2; attempt++) {
+        // Existing visible doc: KEY SHARE only, so increments never serialise on it.
+        const doc = await c.query(SQL_SHARE_LOCK_DOC, [ctx.appId, ctx.ns, coll.name, key]);
+        if (doc.rows.length > 0) return { value: Number((await bump()).count) };
+
+        // Absent, hidden or expired. Hidden stays not-found; expired is replaced.
+        const app: UsageDelta = { bytes: 0, docs: 0 };
+        const users = new Map<number, UsageDelta & { ceiling: QuotaCeiling }>();
+        const existing = (await c.query(SQL_LOCK_DOC, [ctx.appId, ctx.ns, coll.name, 0, key]))
+          .rows[0];
+        if (existing && !existing.expired) {
+          if (existing.hidden) throw new DocStoreError('not_found', 'document not found');
+          continue; // became visible between the two reads: increment it
+        }
+        if (existing) {
+          await purgeLocked(c, ctx, coll, 0, key);
+          const oldSize = Number(existing.size_bytes);
+          app.bytes -= oldSize;
+          app.docs -= 1;
+          addUserDelta(
+            users,
+            chargee(coll, 0, existing.author_kind, existing.author_uid),
+            -oldSize,
+            -1
+          );
+        }
+        const ins = await c.query(SQL_INSERT_COUNTER_DOC, [
+          ctx.appId,
+          ctx.ns,
+          coll.name,
+          key,
+          viewer,
+          expiresAt,
+        ]);
+        if (ins.rows.length === 0) continue; // lost the race; increment the winner's doc
+        // Same accounting as any document create: tallies, then the app charge
+        // (no user is charged — the document has no user author), then the seq.
+        await seedTallies(c, ctx, coll, key);
+        const value = Number((await bump()).count);
+        app.bytes += Number(ins.rows[0].size_bytes);
+        app.docs += 1;
+        const seq = await charge(c, ctx, app, users);
+        await c.query(SQL_STAMP_SEQ, [ctx.appId, ctx.ns, coll.name, 0, key, seq, ctx.viewerUid]);
+        return { value };
+      }
+      throw new DocStoreError('version_conflict', 'concurrent write; retry', {
+        currentVersion: null,
+      });
     });
   }
 
@@ -1252,9 +1332,12 @@ export function createDocStore(deps: DocStoreDeps) {
       }
       case 'tally':
         joins.push(listSortTallyJoin(`${p(sort.tally)}::text`, `${p(sort.name)}::text`));
-        // Every document is created with a zero row per declared counter and mark
-        // (SQL_SEED_TALLIES), so an inner join loses nothing and the tally index
-        // (`doc_tally_top_idx`) drives the scan instead of a sort of the collection.
+        // Every document write seeds a zero row per declared counter and mark
+        // (SQL_SEED_TALLIES), so the inner join lets the tally index
+        // (`doc_tally_top_idx`) drive the scan instead of sorting the collection.
+        // A document NOT written since a counter or mark was added to the
+        // declaration has no row and is absent from this sort until it is written,
+        // incremented or marked — the same backfill gap a newly declared index has.
         sortExpr = `st.count`;
         keyExpr = 'st.key';
         sortValueExpr = `st.count::text`;

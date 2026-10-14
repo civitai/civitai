@@ -10,8 +10,16 @@
 export type DocCollectionConfig = {
   kind?: 'docs' | 'log';
   visibility: 'private' | 'shared';
-  /** Shared collections only. Defaults to `own`. */
-  write?: 'own' | 'anyone' | 'owner';
+  /**
+   * Shared collections only. Defaults to `own`.
+   *   own    — viewers create; only the author updates or deletes.
+   *   anyone — viewers create, update and delete any document.
+   *   owner  — only the app owner writes documents.
+   *   none   — nobody writes documents; they exist only because a declared
+   *            counter was incremented (which creates the document).
+   * Counters and marks are not document writes and are allowed under all four.
+   */
+  write?: 'own' | 'anyone' | 'owner' | 'none';
   counters?: string[];
   /** Shared collections only. `report` is built in and need not be declared. */
   marks?: string[];
@@ -42,7 +50,10 @@ export type DocStoreContext = {
 
 export type DocAuthor =
   /** `uid` is for the envelope layer to resolve a username from; it must never reach a reader. */
-  { kind: 'user'; uid: number; isViewer: boolean } | { kind: 'app' };
+  | { kind: 'user'; uid: number; isViewer: boolean }
+  | { kind: 'app' }
+  /** Created by the first increment of a counter; nobody owns it. */
+  | { kind: 'counter' };
 
 export type DocRecord = {
   key: string;

@@ -40,6 +40,11 @@ export const BOARD: DocCollection = {
   name: 'board',
   config: { visibility: 'shared', write: 'anyone' },
 };
+/** Counter-only: no document writes by anyone; documents exist through increments. */
+export const TALLIES: DocCollection = {
+  name: 'tallies',
+  config: { visibility: 'shared', write: 'none', counters: ['plays'] },
+};
 export const PLAYS: DocCollection = {
   name: 'plays',
   config: { visibility: 'shared', write: 'owner', counters: ['plays'] },
@@ -403,6 +408,27 @@ export function defineFunctionalSuite(makeHarness: () => Promise<Harness>) {
       );
     });
 
+    it("a counter declared after a doc was created reaches tally sorts on the doc's next write", async () => {
+      const app = freshApp('latedecl');
+      const before: DocCollection = {
+        name: 'late',
+        config: { visibility: 'shared', write: 'anyone' },
+      };
+      const after: DocCollection = {
+        name: 'late',
+        config: { visibility: 'shared', write: 'anyone', counters: ['hits'] },
+      };
+      const v1 = ctx(app, NS_PROD, VIEWER_1);
+      await store.put(v1, before, 'old', { a: 1 });
+      await store.put(v1, after, 'new', { a: 1 });
+      const keys = async () =>
+        (await store.list(v1, after, { sort: '-counter:hits' })).items.map((d) => d.key);
+      // Documented gap: not written since the declaration change → no tally row yet.
+      expect(await keys()).toEqual(['new']);
+      await store.put(v1, after, 'old', { a: 2 });
+      expect(await keys()).toEqual(['old', 'new']);
+    });
+
     it('report stays unexposed even when a collection declares it as a mark', async () => {
       const app = freshApp('report_decl');
       const coll: DocCollection = {
@@ -435,8 +461,8 @@ export function defineFunctionalSuite(makeHarness: () => Promise<Harness>) {
         'invalid_request'
       );
       await expectCode(
-        store.increment(ctx(app, NS_PROD, VIEWER_1), POSTS, 'gone', 'views'),
-        'not_found'
+        store.increment(ctx(app, NS_PROD, VIEWER_1), POSTS, 'bad key!', 'views'),
+        'invalid_request'
       );
       await expectCode(
         store.increment(ctx(app, NS_PROD, VIEWER_1), PREFS, 'k', 'views'),
@@ -461,6 +487,106 @@ export function defineFunctionalSuite(makeHarness: () => Promise<Harness>) {
       const fresh = await store.put(ctx(app, NS_PROD, VIEWER_1), POSTS, 'k', { status: 'a' });
       expect(fresh.counters).toEqual({ vote: 0, views: 0 });
       expect(fresh.marks).toEqual({ vote: 0, star: 0 });
+    });
+  });
+
+  describe('create on first increment', () => {
+    it('creates an empty, author-less version-1 doc, charged like any create; later increments only count', async () => {
+      const app = freshApp('ctrcreate');
+      const v1 = ctx(app, NS_PROD, VIEWER_1);
+      expect(await store.increment(v1, TALLIES, 'col-9', 'plays', 4)).toEqual({ value: 4 });
+      const doc = await store.get(ctx(app, NS_PROD, VIEWER_2), TALLIES, 'col-9');
+      expect(doc).toMatchObject({
+        key: 'col-9',
+        data: {},
+        version: 1,
+        author: { kind: 'counter' },
+        counters: { plays: 4 },
+      });
+      expect(await store.increment(ctx(app, NS_PROD, VIEWER_2), TALLIES, 'col-9', 'plays')).toEqual(
+        { value: 5 }
+      );
+      expect((await store.get(v1, TALLIES, 'col-9'))?.version).toBe(1);
+      const [u] = await h.raw(
+        `SELECT bytes, docs, last_seq FROM appdata.usage_app WHERE app_id = $1`,
+        [app]
+      );
+      // `{}` is 2 bytes of jsonb text; one create took one seq; the increment took none.
+      expect({ bytes: Number(u.bytes), docs: Number(u.docs), seq: Number(u.last_seq) }).toEqual({
+        bytes: 2,
+        docs: 1,
+        seq: 1,
+      });
+      expect(await h.raw(`SELECT 1 FROM appdata.usage_user WHERE app_id = $1`, [app])).toEqual([]);
+      await assertUsageConsistent(h, app, NS_PROD);
+      await expectCode(store.increment(v1, TALLIES, 'k'.repeat(129), 'plays'), 'invalid_request');
+      await expectCode(
+        store.increment(ctx(app, NS_PROD, null), TALLIES, 'col-10', 'plays'),
+        'sign_in_required'
+      );
+    });
+
+    it('write: none refuses every document write, but not increments', async () => {
+      const app = freshApp('none');
+      const v1 = ctx(app, NS_PROD, VIEWER_1);
+      await store.increment(v1, TALLIES, 'k', 'plays');
+      await expectCode(store.put(v1, TALLIES, 'k', { a: 1 }), 'write_policy');
+      await expectCode(store.put(v1, TALLIES, 'k2', { a: 1 }), 'write_policy');
+      await expectCode(store.create(v1, TALLIES, { a: 1 }), 'write_policy');
+      await expectCode(store.delete(v1, TALLIES, 'k'), 'write_policy');
+    });
+
+    it('under write: own the incrementer does not own the created doc, and author=me never lists it', async () => {
+      const app = freshApp('ctrown');
+      const v1 = ctx(app, NS_PROD, VIEWER_1);
+      await store.put(v1, POSTS, 'mine', { status: 'open' });
+      expect(await store.increment(v1, POSTS, 'counted', 'views')).toEqual({ value: 1 });
+      const keys = (q: Parameters<DocStore['list']>[2]) =>
+        store.list(v1, POSTS, q).then((r) => r.items.map((d) => d.key));
+      expect(await keys({})).toEqual(['counted', 'mine']);
+      expect(await keys({ author: 'me' })).toEqual(['mine']);
+      await expectCode(store.put(v1, POSTS, 'counted', { status: 'mine now' }), 'not_author');
+      await expectCode(store.delete(v1, POSTS, 'counted'), 'not_author');
+      await expectCode(
+        store.put(v1, POSTS, 'counted', { status: 'x' }, { ifVersion: 1 }),
+        'not_author'
+      );
+      expect((await store.get(v1, POSTS, 'counted'))?.author).toEqual({ kind: 'counter' });
+    });
+
+    it('the create is refused by the app quota; an existing doc still counts', async () => {
+      const app = freshApp('ctrquota');
+      const v1 = ctx(app, NS_PROD, VIEWER_1);
+      const tight = createDocStore({
+        db: h.db,
+        limits: { appBytes: 10_000, appDocs: 1, userBytes: 10_000, userDocs: 10 },
+      });
+      await tight.increment(v1, TALLIES, 'first', 'plays');
+      const err = await expectCode(
+        tight.increment(v1, TALLIES, 'second', 'plays'),
+        'quota_exceeded'
+      );
+      expect(err.details).toEqual({ ceiling: 'app' });
+      expect(await tight.get(v1, TALLIES, 'second')).toBeNull();
+      expect(await tight.increment(v1, TALLIES, 'first', 'plays', 9)).toEqual({ value: 10 });
+      await assertUsageConsistent(h, app, NS_PROD);
+    });
+
+    it('a hidden key stays not found; an expired one is replaced from zero', async () => {
+      const app = freshApp('ctrhidden');
+      const v1 = ctx(app, NS_PROD, VIEWER_1);
+      await store.increment(v1, TALLIES, 'h', 'plays', 3);
+      await store.increment(v1, TALLIES, 'e', 'plays', 3);
+      await h.raw(`UPDATE appdata.doc SET hidden_at = now() WHERE app_id = $1 AND key = 'h'`, [
+        app,
+      ]);
+      await h.raw(
+        `UPDATE appdata.doc SET expires_at = now() - interval '1 second' WHERE app_id = $1 AND key = 'e'`,
+        [app]
+      );
+      await expectCode(store.increment(v1, TALLIES, 'h', 'plays'), 'not_found');
+      expect(await store.increment(v1, TALLIES, 'e', 'plays')).toEqual({ value: 1 });
+      await assertUsageConsistent(h, app, NS_PROD);
     });
   });
 
@@ -605,7 +731,7 @@ export function defineFunctionalSuite(makeHarness: () => Promise<Harness>) {
       ]);
     });
 
-    it('sorts by a mark or counter, zero when absent, key as tiebreak', async () => {
+    it('sorts by a mark or counter, zero-seeded docs included, key as tiebreak', async () => {
       expect(ks(await store.list(me(), POSTS, { sort: '-mark:vote' }))).toEqual([
         'b-1',
         'c-1',
@@ -699,7 +825,13 @@ export function defineFunctionalSuite(makeHarness: () => Promise<Harness>) {
       for (const sort of ['createdAt', '-mark:vote']) {
         const first = await store.list(me(), POSTS, { sort, limit: 1 });
         const parts = first.nextCursor!.split('~');
-        for (const payload of ['1.5', '1e3', '99999999999999999999999']) {
+        for (const payload of [
+          '1.5',
+          '1e3',
+          '-1',
+          '9999999999999999999',
+          '99999999999999999999999',
+        ]) {
           const edited = [parts[0], payload, parts[2]].join('~');
           await expectCode(
             store.list(me(), POSTS, { sort, limit: 1, cursor: edited }),

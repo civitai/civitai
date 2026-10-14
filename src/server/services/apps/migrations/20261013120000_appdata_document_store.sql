@@ -66,7 +66,8 @@ CREATE TABLE IF NOT EXISTS appdata.doc (
   hidden_by       integer,
   CONSTRAINT doc_pkey PRIMARY KEY (app_id, ns, coll, scope_uid, key),
   CONSTRAINT doc_size_cap CHECK (size_bytes <= 65536),
-  CONSTRAINT doc_author_kind CHECK (author_kind IN ('user', 'app')),
+  -- 'counter': created by the first increment of a counter; no user author.
+  CONSTRAINT doc_author_kind CHECK (author_kind IN ('user', 'app', 'counter')),
   CONSTRAINT doc_version_positive CHECK (version >= 1)
 );
 
