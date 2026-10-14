@@ -56,8 +56,8 @@ test.describe('storylines smoke', () => {
     await expect(page).toHaveURL(/[?&]storylineChapter=\d+/);
     await expect(page.getByTestId('storyline-mode-chip')).toContainText('The Patch');
 
-    // The chip opens the map.
-    await page.getByTestId('storyline-mode-chip').getByTestId('storyline-pill').click();
+    // The chip opens the map sheet; it is a single button.
+    await page.getByTestId('storyline-mode-chip').click();
     await expect(page.getByTestId('storyline-subway')).toBeVisible();
   });
 
@@ -68,8 +68,9 @@ test.describe('storylines smoke', () => {
     await page.getByTestId('storyline-next').click();
     await expect(page.getByTestId('storyline-end-of-chapter')).toBeVisible();
 
-    // The chip stays usable over the end card: a click only lands if nothing covers it.
-    await page.getByTestId('storyline-mode-chip').getByTestId('storyline-pill').click();
+    // The toolbar chip stays clickable with the end card open: a click only lands if nothing
+    // covers it. Esc then closes the sheet, which holds focus once open.
+    await page.getByTestId('storyline-mode-chip').click();
     await expect(page.getByTestId('storyline-subway')).toBeVisible();
     await page.keyboard.press('Escape');
     await expect(page.getByTestId('storyline-subway')).toBeHidden();

@@ -41,6 +41,7 @@ export function StorylineChapterImage({
   className,
   overlay,
   explain = true,
+  ratingBadge = true,
   emptyIcon,
 }: {
   image: StorylineCoverImage | null | undefined;
@@ -50,6 +51,11 @@ export function StorylineChapterImage({
   overlay?: ReactNode;
   /** The guard's "This image is rated / Show" overlay; too big for a small thumb. */
   explain?: boolean;
+  /**
+   * The guard's rating pill and blur toggle. It truncates to "P..." on a thumb under ~60px, so
+   * the map's thumbs drop it; a blurred thumb stays blurred.
+   */
+  ratingBadge?: boolean;
   /** Draw a missing picture as the storyline gradient with this icon (otherwise a plain surface). */
   emptyIcon?: 'route' | 'photo';
 }) {
@@ -112,9 +118,11 @@ export function StorylineChapterImage({
                   data-testid="storyline-chapter-image-blurred"
                 />
               )}
-              <div className="absolute right-2 top-2 z-10">
-                <ImageGuard2.BlurToggle radius="xl" />
-              </div>
+              {ratingBadge && (
+                <div className="absolute right-2 top-2 z-10">
+                  <ImageGuard2.BlurToggle radius="xl" />
+                </div>
+              )}
             </>
           )}
         </ImageGuard2>
